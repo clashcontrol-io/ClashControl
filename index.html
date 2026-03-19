@@ -160,17 +160,22 @@ function startApp() {
 
   // ── Reducer ────────────────────────────────────────────────────
 
+  var INIT_FILTERS = {
+    search:'', status:'all', type:'all', discipline:'all',
+    floor:'all', distMin:0, distMax:9999, elementId:'', selfClash:'all'
+  };
   var INIT = {
     models:[], clashes:[], issues:[], activeId:null, showModal:false, tab:'clashes',
     rules:{ modelA:'all', modelB:'all', hard:true, soft:true, clearance:50 },
     detecting:false, sectionAxis:null, sectionPos:0.5,
+    filters:Object.assign({},INIT_FILTERS), floors:[]
   };
   function reducer(s,a) {
     switch(a.t) {
       case 'ADD_MODEL':   return Object.assign({},s,{models:s.models.concat([a.v])});
       case 'DEL_MODEL':   return Object.assign({},s,{models:s.models.filter(function(m){return m.id!==a.id})});
       case 'UPD_MODEL':   return Object.assign({},s,{models:s.models.map(function(m){return m.id===a.id?Object.assign({},m,a.u):m})});
-      case 'SET_CLASHES': return Object.assign({},s,{clashes:a.v, detecting:false, activeId:null});
+      case 'SET_CLASHES': return Object.assign({},s,{clashes:a.v, detecting:false, activeId:null, floors:deriveFloors(a.v), filters:Object.assign({},INIT_FILTERS)});
       case 'DETECTING':   return Object.assign({},s,{detecting:true});
       case 'ADD_ISSUE':   return Object.assign({},s,{issues:s.issues.concat([a.v])});
       case 'UPD_ISSUE':   return Object.assign({},s,{issues:s.issues.map(function(i){return i.id===a.id?Object.assign({},i,a.u):i})});
@@ -178,6 +183,8 @@ function startApp() {
       case 'ACTIVE':      return Object.assign({},s,{activeId:a.id});
       case 'MODAL':       return Object.assign({},s,{showModal:a.v});
       case 'UPD_RULES':   return Object.assign({},s,{rules:Object.assign({},s.rules,a.u)});
+      case 'UPD_FILTERS': return Object.assign({},s,{filters:Object.assign({},s.filters,a.u)});
+      case 'RESET_FILTERS': return Object.assign({},s,{filters:Object.assign({},INIT_FILTERS)});
       case 'SECTION':     return Object.assign({},s,{sectionAxis:a.axis, sectionPos:a.pos!=null?a.pos:s.sectionPos});
       case 'TAB':         return Object.assign({},s,{tab:a.v});
       default:            return s;
@@ -254,17 +261,46 @@ function startApp() {
         var isSoft = !isHard && rules.soft && bA.clone().expandByScalar(rules.clearance/1000).intersectsBox(bB);
         if ((isHard && rules.hard) || isSoft) {
           var ctr = new THREE.Vector3(); bA.getCenter(ctr);
+          // Compute distance between bounding boxes (mm)
+          var gx=Math.max(0,bB.min.x-bA.max.x,bA.min.x-bB.max.x);
+          var gy=Math.max(0,bB.min.y-bA.max.y,bA.min.y-bB.max.y);
+          var gz=Math.max(0,bB.min.z-bA.max.z,bA.min.z-bB.max.z);
+          var dist=Math.round(Math.sqrt(gx*gx+gy*gy+gz*gz)*1000);
           clashes.push({
             id:uid(), source:'auto', type:isHard?'hard':'soft', status:'open',
-            title:sameModel?mA.discipline.toUpperCase()+' (self)':mA.discipline.toUpperCase()+' \u2194 '+mB.discipline.toUpperCase(),
+            title:sameModel?mA.name+' (self)':mA.discipline.toUpperCase()+' \u2194 '+mB.discipline.toUpperCase(),
             description:'#'+eA.expressId+' ('+mA.name+') vs #'+eB.expressId+' ('+mB.name+')',
             modelAId:mA.id, modelBId:mB.id, elemA:eA.expressId, elemB:eB.expressId,
-            point:[ctr.x,ctr.y,ctr.z], createdAt:new Date().toISOString()
+            point:[ctr.x,ctr.y,ctr.z], createdAt:new Date().toISOString(),
+            distance:dist, elevation:Math.round(ctr.y*1000)/1000,
+            disciplines:[mA.discipline,mB.discipline], selfClash:sameModel
           });
         }
       }); });
     }); });
     return clashes;
+  }
+
+  function deriveFloors(clashes) {
+    if (!clashes.length) return [];
+    var ys = clashes.map(function(c){return c.elevation||0}).sort(function(a,b){return a-b});
+    var tol = 0.5; // 500mm tolerance
+    var floors = [], cur = {yMin:ys[0],yMax:ys[0],sum:ys[0],count:1};
+    for (var i=1;i<ys.length;i++) {
+      if (ys[i]-cur.yMax > tol) {
+        cur.yMax = cur.sum/cur.count + tol/2;
+        cur.yMin = cur.sum/cur.count - tol/2;
+        floors.push(cur);
+        cur = {yMin:ys[i],yMax:ys[i],sum:ys[i],count:1};
+      } else {
+        cur.yMax = ys[i]; cur.sum += ys[i]; cur.count++;
+      }
+    }
+    floors.push(cur);
+    return floors.map(function(f,idx){
+      var avg = f.sum/f.count;
+      return {id:'L'+idx, label:'Level '+(idx+1)+' ('+avg.toFixed(1)+'m)', yMin:f.yMin-0.25, yMax:f.yMax+0.25};
+    });
   }
 
   // ── Save / Load Project ────────────────────────────────────────
@@ -280,6 +316,7 @@ function startApp() {
       }),
       clashes: s.clashes,
       issues:  s.issues,
+      floors:  s.floors,
     };
     var blob = new Blob([JSON.stringify(data, null, 2)], {type:'application/json'});
     var a = document.createElement('a');
@@ -635,18 +672,51 @@ function startApp() {
   // ── Issue Panel ────────────────────────────────────────────────
 
   function IssuePanel(props) {
-    var s=props.s, d=props.d;
-    var sq=useState(''), search=sq[0], setSearch=sq[1];
-    var sf=useState('all'), statusFilter=sf[0], setStatusFilter=sf[1];
-    var rawItems = s.tab==='clashes' ? s.clashes : s.issues;
+    var s=props.s, d=props.d, f=s.filters;
+    var fo=useState(false), filtersOpen=fo[0], setFiltersOpen=fo[1];
+    var isClashTab = s.tab==='clashes';
+    var rawItems = isClashTab ? s.clashes : s.issues;
+
+    // Count active filters
+    var activeCount = 0;
+    if(f.status!=='all') activeCount++;
+    if(f.type!=='all') activeCount++;
+    if(f.discipline!=='all') activeCount++;
+    if(f.floor!=='all') activeCount++;
+    if(f.selfClash!=='all') activeCount++;
+    if(f.elementId) activeCount++;
+    if(f.distMin>0||f.distMax<9999) activeCount++;
+
+    // Apply all filters
     var items = rawItems.filter(function(it){
-      if(statusFilter!=='all' && it.status!==statusFilter) return false;
-      if(search){var q=search.toLowerCase();if((it.title||'').toLowerCase().indexOf(q)===-1&&(it.description||'').toLowerCase().indexOf(q)===-1)return false;}
+      if(f.status!=='all' && it.status!==f.status) return false;
+      if(f.search){var q=f.search.toLowerCase();if((it.title||'').toLowerCase().indexOf(q)===-1&&(it.description||'').toLowerCase().indexOf(q)===-1)return false;}
+      if(isClashTab) {
+        if(f.type!=='all' && it.type!==f.type) return false;
+        if(f.discipline!=='all' && it.disciplines && it.disciplines.indexOf(f.discipline)===-1) return false;
+        if(f.floor!=='all') {
+          var fl = s.floors.find(function(x){return x.id===f.floor});
+          if(fl && (it.elevation<fl.yMin||it.elevation>fl.yMax)) return false;
+        }
+        if(f.distMin>0 && (it.distance||0)<f.distMin) return false;
+        if(f.distMax<9999 && (it.distance||0)>f.distMax) return false;
+        if(f.elementId) {
+          var eid=f.elementId;
+          if(String(it.elemA).indexOf(eid)===-1 && String(it.elemB).indexOf(eid)===-1) return false;
+        }
+        if(f.selfClash==='self' && !it.selfClash) return false;
+        if(f.selfClash==='cross' && it.selfClash) return false;
+      }
       return true;
     });
+
     var oC=s.clashes.filter(function(c){return c.status==='open'}).length;
     var oI=s.issues.filter(function(i){return i.status==='open'}).length;
-    return html`<aside style=${{...S_PANELR,width:264}}>
+    var FL={fontSize:'.6rem',color:'#64748b',marginBottom:'.15rem',display:'block'};
+    var PILL=function(active){return Object.assign({},S_BTN,{fontSize:'.6rem',padding:'.15rem .35rem',background:active?'#2563eb':'#1e293b',color:active?'#fff':'#475569'});};
+    var SELSTYLE={fontSize:'.65rem',padding:'.2rem .3rem',borderRadius:4,background:'#1e293b',color:'#94a3b8',border:'1px solid #334155',width:'100%'};
+
+    return html`<aside style=${{...S_PANELR,width:280}}>
       <div style=${{display:'flex',borderBottom:'1px solid #1e293b',flexShrink:0}}>
         ${[{id:'clashes',label:'Clashes',n:oC,bg:'#ef4444'},{id:'issues',label:'Issues',n:oI,bg:'#f59e0b'}].map(function(t){return html`
           <button key=${t.id} onClick=${function(){d({t:'TAB',v:t.id})}}
@@ -655,25 +725,87 @@ function startApp() {
           </button>`})}
       </div>
       <div style=${{padding:'.4rem',borderBottom:'1px solid #1e293b',flexShrink:0,display:'flex',gap:'.3rem'}}>
-        <input type="text" placeholder="Search…" value=${search} onInput=${function(e){setSearch(e.target.value)}}
+        <input type="text" placeholder="Search…" value=${f.search} onInput=${function(e){d({t:'UPD_FILTERS',u:{search:e.target.value}})}}
           style=${{...S_INPUT,fontSize:'.7rem',padding:'.25rem .4rem',flex:1}} />
-        <select value=${statusFilter} onChange=${function(e){setStatusFilter(e.target.value)}}
-          style=${{fontSize:'.65rem',padding:'.2rem .3rem',borderRadius:4,background:'#1e293b',color:'#94a3b8',border:'1px solid #334155'}}>
-          <option value="all">All</option>
-          <option value="open">Open</option>
-          <option value="in_progress">In progress</option>
-          <option value="resolved">Resolved</option>
-        </select>
+        <button onClick=${function(){setFiltersOpen(!filtersOpen)}}
+          style=${{...S_BTN,padding:'.25rem .4rem',background:filtersOpen||activeCount>0?'#1e3a5f':'#1e293b',color:filtersOpen||activeCount>0?'#93c5fd':'#475569',border:'1px solid #334155',fontSize:'.65rem',whiteSpace:'nowrap'}}>
+          ⚙ ${activeCount>0?activeCount:''}
+        </button>
       </div>
+      ${filtersOpen && html`<div style=${{padding:'.5rem',borderBottom:'1px solid #1e293b',flexShrink:0,display:'flex',flexDirection:'column',gap:'.4rem',background:'#0c1222'}}>
+        <div style=${{display:'flex',justifyContent:'space-between',alignItems:'center'}}>
+          <span style=${{fontSize:'.65rem',fontWeight:600,color:'#64748b',textTransform:'uppercase',letterSpacing:'.05em'}}>Filters</span>
+          <button onClick=${function(){d({t:'RESET_FILTERS'})}} style=${{...S_BTN,fontSize:'.55rem',padding:'.1rem .3rem',background:'none',color:'#475569',textDecoration:'underline'}}>Clear all</button>
+        </div>
+
+        <div>
+          <span style=${FL}>Status</span>
+          <div style=${{display:'flex',gap:'.2rem',flexWrap:'wrap'}}>
+            ${['all','open','in_progress','resolved'].map(function(v){return html`<button key=${v} onClick=${function(){d({t:'UPD_FILTERS',u:{status:v}})}}
+              style=${PILL(f.status===v)}>${v==='all'?'All':v==='in_progress'?'In prog':v.charAt(0).toUpperCase()+v.slice(1)}</button>`})}
+          </div>
+        </div>
+
+        ${isClashTab && html`<div>
+          <span style=${FL}>Type</span>
+          <div style=${{display:'flex',gap:'.2rem'}}>
+            ${['all','hard','soft'].map(function(v){return html`<button key=${v} onClick=${function(){d({t:'UPD_FILTERS',u:{type:v}})}}
+              style=${PILL(f.type===v)}>${v==='all'?'All':v.charAt(0).toUpperCase()+v.slice(1)}</button>`})}
+          </div>
+        </div>`}
+
+        ${isClashTab && html`<div>
+          <span style=${FL}>Self / Cross-model</span>
+          <div style=${{display:'flex',gap:'.2rem'}}>
+            ${['all','self','cross'].map(function(v){return html`<button key=${v} onClick=${function(){d({t:'UPD_FILTERS',u:{selfClash:v}})}}
+              style=${PILL(f.selfClash===v)}>${v==='all'?'All':v==='self'?'Self':'Cross'}</button>`})}
+          </div>
+        </div>`}
+
+        ${isClashTab && html`<div>
+          <span style=${FL}>Discipline</span>
+          <select value=${f.discipline} onChange=${function(e){d({t:'UPD_FILTERS',u:{discipline:e.target.value}})}} style=${SELSTYLE}>
+            <option value="all">All disciplines</option>
+            ${DISC.map(function(p){return html`<option key=${p.id} value=${p.id}>${p.label}</option>`})}
+          </select>
+        </div>`}
+
+        ${isClashTab && s.floors.length>0 && html`<div>
+          <span style=${FL}>Floor / Level</span>
+          <select value=${f.floor} onChange=${function(e){d({t:'UPD_FILTERS',u:{floor:e.target.value}})}} style=${SELSTYLE}>
+            <option value="all">All levels</option>
+            ${s.floors.map(function(fl){return html`<option key=${fl.id} value=${fl.id}>${fl.label}</option>`})}
+          </select>
+        </div>`}
+
+        ${isClashTab && html`<div>
+          <span style=${FL}>Distance (mm)</span>
+          <div style=${{display:'flex',gap:'.3rem',alignItems:'center'}}>
+            <input type="number" min="0" value=${f.distMin} onInput=${function(e){d({t:'UPD_FILTERS',u:{distMin:+e.target.value||0}})}}
+              placeholder="Min" style=${{...S_INPUT,fontSize:'.65rem',padding:'.2rem .3rem',width:'50%'}} />
+            <span style=${{fontSize:'.6rem',color:'#475569'}}>–</span>
+            <input type="number" min="0" value=${f.distMax} onInput=${function(e){d({t:'UPD_FILTERS',u:{distMax:+e.target.value||9999}})}}
+              placeholder="Max" style=${{...S_INPUT,fontSize:'.65rem',padding:'.2rem .3rem',width:'50%'}} />
+          </div>
+        </div>`}
+
+        ${isClashTab && html`<div>
+          <span style=${FL}>Element ID</span>
+          <input type="text" placeholder="e.g. 12345" value=${f.elementId} onInput=${function(e){d({t:'UPD_FILTERS',u:{elementId:e.target.value}})}}
+            style=${{...S_INPUT,fontSize:'.65rem',padding:'.2rem .3rem'}} />
+        </div>`}
+
+        <div style=${{fontSize:'.6rem',color:'#334155',textAlign:'right'}}>${items.length} / ${rawItems.length} shown</div>
+      </div>`}
       ${s.tab==='issues' && html`<div style=${{padding:'.4rem',borderBottom:'1px solid #1e293b',flexShrink:0}}>
         <button onClick=${function(){d({t:'MODAL',v:true})}} style=${{...S_BTN,width:'100%',background:'#2563eb',color:'#fff'}}>+ New Issue</button>
       </div>`}
       <div style=${{flex:1,overflowY:'auto'}}>
         ${items.length===0 && html`<div style=${{textAlign:'center',color:'#334155',fontSize:'.75rem',padding:'2.5rem 1rem'}}>
-          <div style=${{fontSize:'2rem',marginBottom:'.3rem'}}>${s.tab==='clashes'?'✅':'📋'}</div>
-          ${search||statusFilter!=='all'?'No matches':'No '+(s.tab==='clashes'?'clashes found yet':'issues yet')}
+          <div style=${{fontSize:'2rem',marginBottom:'.3rem'}}>${isClashTab?'✅':'📋'}</div>
+          ${activeCount>0||f.search?'No matches':'No '+(isClashTab?'clashes found yet':'issues yet')}
         </div>`}
-        ${items.map(function(it){return html`<${IssueRow} key=${it.id} item=${it} active=${s.activeId===it.id} d=${d} isClash=${s.tab==='clashes'} />`})}
+        ${items.map(function(it){return html`<${IssueRow} key=${it.id} item=${it} active=${s.activeId===it.id} d=${d} isClash=${isClashTab} />`})}
       </div>
     </aside>`;
   }
@@ -692,6 +824,7 @@ function startApp() {
             <span style=${{width:7,height:7,borderRadius:'50%',background:stBg,flexShrink:0}}></span>
           </div>
           <p style=${{color:'#475569',fontSize:'.65rem',marginTop:'.1rem'}} class="lc2">${it.description}</p>
+          ${it.distance!=null && html`<span style=${{fontSize:'.55rem',color:'#64748b',marginTop:'.1rem',display:'inline-block'}}>${it.distance} mm${it.selfClash?' · self':''}</span>`}
         </div>
       </div>
       ${active && html`<div style=${{marginTop:'.4rem',paddingTop:'.4rem',borderTop:'1px solid #334155',display:'flex',gap:'.25rem'}}>
