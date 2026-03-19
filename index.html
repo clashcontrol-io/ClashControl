@@ -244,10 +244,11 @@ function startApp() {
     var grpA = pick(rules.modelA), grpB = pick(rules.modelB);
     var clashes = [], seen = {};
     grpA.forEach(function(mA) { grpB.forEach(function(mB) {
-      if (mA.id === mB.id) return;
+      var sameModel = mA.id === mB.id;
       var key = [mA.id, mB.id].sort().join('|');
       if (seen[key]) return; seen[key] = true;
-      (mA.elements||[]).forEach(function(eA) { (mB.elements||[]).forEach(function(eB) {
+      (mA.elements||[]).forEach(function(eA, iA) { (mB.elements||[]).forEach(function(eB, iB) {
+        if (sameModel && iB <= iA) return;
         var bA = eA.box.clone(), bB = eB.box.clone();
         var isHard = bA.intersectsBox(bB);
         var isSoft = !isHard && rules.soft && bA.clone().expandByScalar(rules.clearance/1000).intersectsBox(bB);
@@ -255,7 +256,7 @@ function startApp() {
           var ctr = new THREE.Vector3(); bA.getCenter(ctr);
           clashes.push({
             id:uid(), source:'auto', type:isHard?'hard':'soft', status:'open',
-            title:mA.discipline.toUpperCase()+' \u2194 '+mB.discipline.toUpperCase(),
+            title:sameModel?mA.discipline.toUpperCase()+' (self)':mA.discipline.toUpperCase()+' \u2194 '+mB.discipline.toUpperCase(),
             description:'#'+eA.expressId+' ('+mA.name+') vs #'+eB.expressId+' ('+mB.name+')',
             modelAId:mA.id, modelBId:mB.id, elemA:eA.expressId, elemB:eB.expressId,
             point:[ctr.x,ctr.y,ctr.z], createdAt:new Date().toISOString()
