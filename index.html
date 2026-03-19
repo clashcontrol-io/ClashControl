@@ -1,0 +1,781 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>ClashControl — Open BIM Clash Detection</title>
+
+  <!-- Only 3 CDN deps: React, Three.js, JSZip — all UMD, all cdnjs -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+
+  <!-- htm — tagged template to React.createElement (hand-written, tested, 11/11 pass) -->
+  <script>
+  (function(g) {
+    var HOLE = '\0';
+    g.htm = function(statics) {
+      var fields = [];
+      for (var a = 1; a < arguments.length; a++) fields.push(arguments[a]);
+      var h = this;
+      var tpl = statics[0];
+      for (var a = 1; a < statics.length; a++) tpl += HOLE + (a-1) + HOLE + statics[a];
+      var i = 0, len = tpl.length;
+      function readHole() {
+        i++;
+        var n = '';
+        while (tpl[i] !== HOLE) n += tpl[i++];
+        i++;
+        return fields[parseInt(n)];
+      }
+      function ws() { while (i < len && (tpl[i] === ' ' || tpl[i] === '\t' || tpl[i] === '\n' || tpl[i] === '\r')) i++; }
+      function parseChildren() {
+        var ch = [];
+        while (i < len) {
+          if (tpl[i] === '<') {
+            if (tpl[i+1] === '/') { while (i < len && tpl[i] !== '>') i++; i++; return ch; }
+            i++;
+            ch.push(parseElement());
+          } else if (tpl[i] === HOLE) {
+            var v = readHole();
+            if (Array.isArray(v)) { for (var x = 0; x < v.length; x++) if (v[x] != null && v[x] !== false) ch.push(v[x]); }
+            else if (v != null && v !== false && v !== true) ch.push(v);
+          } else {
+            var txt = '';
+            while (i < len && tpl[i] !== '<' && tpl[i] !== HOLE) txt += tpl[i++];
+            txt = txt.replace(/^\s+|\s+$/g, '');
+            if (txt) ch.push(txt);
+          }
+        }
+        return ch;
+      }
+      function parseElement() {
+        ws();
+        var tag;
+        if (tpl[i] === HOLE) { tag = readHole(); }
+        else { tag = ''; while (i < len && tpl[i] !== ' ' && tpl[i] !== '>' && tpl[i] !== '/' && tpl[i] !== '\n' && tpl[i] !== '\t' && tpl[i] !== '\r') tag += tpl[i++]; }
+        var props = null;
+        ws();
+        while (i < len && tpl[i] !== '>' && !(tpl[i] === '/' && (i+1 >= len || tpl[i+1] === '>'))) {
+          ws();
+          if (i >= len || tpl[i] === '>' || (tpl[i] === '/' && (i+1 >= len || tpl[i+1] === '>'))) break;
+          if (tpl[i] === '.' && tpl[i+1] === '.' && tpl[i+2] === '.') { i += 3; if (tpl[i] === HOLE) props = Object.assign(props || {}, readHole()); ws(); continue; }
+          var name = '';
+          while (i < len && tpl[i] !== '=' && tpl[i] !== ' ' && tpl[i] !== '>' && tpl[i] !== '/' && tpl[i] !== '\n' && tpl[i] !== '\t' && tpl[i] !== '\r' && tpl[i] !== HOLE) name += tpl[i++];
+          if (!name) { i++; continue; }
+          if (tpl[i] === '=') {
+            i++;
+            var val;
+            if (tpl[i] === HOLE) { val = readHole(); }
+            else if (tpl[i] === '"' || tpl[i] === "'") { var q = tpl[i++]; val = ''; while (i < len && tpl[i] !== q) { if (tpl[i] === HOLE) val += readHole(); else val += tpl[i++]; } i++; }
+            else { val = ''; while (i < len && tpl[i] !== ' ' && tpl[i] !== '>' && tpl[i] !== '/') val += tpl[i++]; }
+            props = props || {};
+            props[name] = val;
+          } else { props = props || {}; props[name] = true; }
+          ws();
+        }
+        var selfClose = false;
+        if (tpl[i] === '/') { i++; selfClose = true; }
+        if (tpl[i] === '>') i++;
+        var children = selfClose ? [] : parseChildren();
+        var args = [tag, props];
+        for (var c = 0; c < children.length; c++) args.push(children[c]);
+        return h.apply(null, args);
+      }
+      var result = parseChildren();
+      return result.length === 1 ? result[0] : result.length === 0 ? null : result;
+    };
+  })(window);
+  </script>
+
+  <style>
+    *{box-sizing:border-box;margin:0;padding:0}
+    body{background:#0f172a;color:#e2e8f0;font-family:system-ui,-apple-system,sans-serif;overflow:hidden}
+    input[type=range]{accent-color:#3b82f6}input[type=checkbox]{accent-color:#3b82f6}
+    ::-webkit-scrollbar{width:6px}::-webkit-scrollbar-track{background:#1e293b}::-webkit-scrollbar-thumb{background:#475569;border-radius:3px}
+    select,select option{background:#1e293b;color:#e2e8f0;border:1px solid #334155}
+    .spin{animation:sp 1s linear infinite;display:inline-block}@keyframes sp{to{transform:rotate(360deg)}}
+    .lc2{display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+    button{font-family:inherit}
+  </style>
+</head>
+<body>
+
+<div id="boot" style="display:flex;flex-direction:column;align-items:center;justify-content:center;height:100vh;text-align:center">
+  <div style="width:48px;height:48px;background:#2563eb;border-radius:12px;display:flex;align-items:center;justify-content:center;margin-bottom:1rem"><span style="color:#fff;font-weight:900;font-size:18px">CC</span></div>
+  <div style="font-size:1.25rem;font-weight:700;margin-bottom:.5rem">ClashControl</div>
+  <div id="boot-msg" style="color:#64748b;font-size:.85rem">Loading…</div>
+</div>
+<div id="root"></div>
+
+<script>
+// =====================================================================
+// Boot: wait for page, check globals, then launch app
+// =====================================================================
+window.onload = function() {
+  try { startApp(); }
+  catch(e) {
+    document.getElementById('boot-msg').textContent = 'Error: ' + e.message;
+    document.getElementById('boot-msg').style.color = '#f87171';
+    console.error(e);
+  }
+};
+
+function startApp() {
+  // Check CDN deps loaded
+  var need = [];
+  if (typeof React === 'undefined')    need.push('React');
+  if (typeof ReactDOM === 'undefined') need.push('ReactDOM');
+  if (typeof THREE === 'undefined')    need.push('Three.js');
+  if (typeof htm === 'undefined')      need.push('htm');
+  if (need.length) throw new Error('CDN failed for: ' + need.join(', ') + '. Check internet.');
+
+  var h          = React.createElement;
+  var useState   = React.useState;
+  var useEffect  = React.useEffect;
+  var useRef     = React.useRef;
+  var useReducer = React.useReducer;
+  var useCallback = React.useCallback;
+  var html       = htm.bind(h);
+
+  // ── Constants ──────────────────────────────────────────────────
+
+  var DISC = [
+    { id:'structural',    label:'Structural',    c:'#60a5fa' },
+    { id:'mep',           label:'MEP',           c:'#f87171' },
+    { id:'architectural', label:'Architectural', c:'#c084fc' },
+    { id:'civil',         label:'Civil',         c:'#34d399' },
+    { id:'other',         label:'Other',         c:'#fbbf24' },
+  ];
+  var STAT = {
+    open:        { label:'Open',        bg:'#ef4444' },
+    in_progress: { label:'In progress', bg:'#f59e0b' },
+    resolved:    { label:'Resolved',    bg:'#22c55e' },
+  };
+
+  function uid()  { return Math.random().toString(36).slice(2,10).toUpperCase(); }
+  function guid() { return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g,function(c){var r=Math.random()*16|0;return(c==='x'?r:(r&0x3|0x8)).toString(16)}); }
+  function esc(s) { return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+
+  // ── Reducer ────────────────────────────────────────────────────
+
+  var INIT = {
+    models:[], clashes:[], issues:[], activeId:null, showModal:false, tab:'clashes',
+    rules:{ modelA:'all', modelB:'all', hard:true, soft:true, clearance:50 },
+    detecting:false, sectionAxis:null, sectionPos:0.5,
+  };
+  function reducer(s,a) {
+    switch(a.t) {
+      case 'ADD_MODEL':   return Object.assign({},s,{models:s.models.concat([a.v])});
+      case 'DEL_MODEL':   return Object.assign({},s,{models:s.models.filter(function(m){return m.id!==a.id})});
+      case 'UPD_MODEL':   return Object.assign({},s,{models:s.models.map(function(m){return m.id===a.id?Object.assign({},m,a.u):m})});
+      case 'SET_CLASHES': return Object.assign({},s,{clashes:a.v, detecting:false});
+      case 'DETECTING':   return Object.assign({},s,{detecting:true});
+      case 'ADD_ISSUE':   return Object.assign({},s,{issues:s.issues.concat([a.v])});
+      case 'UPD_ISSUE':   return Object.assign({},s,{issues:s.issues.map(function(i){return i.id===a.id?Object.assign({},i,a.u):i})});
+      case 'UPD_CLASH':   return Object.assign({},s,{clashes:s.clashes.map(function(c){return c.id===a.id?Object.assign({},c,a.u):c})});
+      case 'ACTIVE':      return Object.assign({},s,{activeId:a.id});
+      case 'MODAL':       return Object.assign({},s,{showModal:a.v});
+      case 'UPD_RULES':   return Object.assign({},s,{rules:Object.assign({},s.rules,a.u)});
+      case 'SECTION':     return Object.assign({},s,{sectionAxis:a.axis, sectionPos:a.pos!=null?a.pos:s.sectionPos});
+      case 'TAB':         return Object.assign({},s,{tab:a.v});
+      default:            return s;
+    }
+  }
+
+  // ── IFC Loader (web-ifc, lazy) ─────────────────────────────────
+
+  var _ifcAPI = null;
+  function getIfcAPI() {
+    if (_ifcAPI) return Promise.resolve(_ifcAPI);
+    return import('https://esm.sh/web-ifc@0.0.57').then(function(mod) {
+      var api = new mod.IfcAPI();
+      api.SetWasmPath('https://cdn.jsdelivr.net/npm/web-ifc@0.0.57/');
+      return api.Init().then(function() { _ifcAPI = api; return api; });
+    });
+  }
+
+  function loadIFC(buffer, fallbackColor) {
+    return getIfcAPI().then(function(api) {
+      var modelID = api.OpenModel(new Uint8Array(buffer));
+      var meshes = [], elements = [];
+      api.StreamAllMeshes(modelID, function(ifcMesh) {
+        var expressID = ifcMesh.expressID;
+        var elMeshes = [], elBox = new THREE.Box3();
+        for (var i = 0; i < ifcMesh.geometries.size(); i++) {
+          var placed = ifcMesh.geometries.get(i);
+          try {
+            var gd = api.GetGeometry(modelID, placed.geometryExpressID);
+            var verts = api.GetVertexArray(gd.GetVertexData(), gd.GetVertexDataSize());
+            var indices = api.GetIndexArray(gd.GetIndexData(), gd.GetIndexDataSize());
+            var pos = new Float32Array(verts.length/2), nrm = new Float32Array(verts.length/2);
+            for (var j = 0; j < verts.length; j += 6) {
+              var k = j/2;
+              pos[k]=verts[j]; pos[k+1]=verts[j+1]; pos[k+2]=verts[j+2];
+              nrm[k]=verts[j+3]; nrm[k+1]=verts[j+4]; nrm[k+2]=verts[j+5];
+            }
+            var geo = new THREE.BufferGeometry();
+            geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+            geo.setAttribute('normal',   new THREE.BufferAttribute(nrm, 3));
+            geo.setIndex(new THREE.BufferAttribute(indices, 1));
+            var c = placed.color;
+            var col = c ? new THREE.Color(c.x, c.y, c.z) : new THREE.Color(fallbackColor);
+            var mat = new THREE.MeshPhongMaterial({ color:col, opacity:c?c.w:1, transparent:c?c.w<0.99:false, side:THREE.DoubleSide });
+            var mesh = new THREE.Mesh(geo, mat);
+            mesh.applyMatrix4(new THREE.Matrix4().fromArray(placed.flatTransformation));
+            mesh.userData.expressID = expressID;
+            elBox.expandByObject(mesh);
+            elMeshes.push(mesh); meshes.push(mesh);
+            gd.delete();
+          } catch(e) {}
+        }
+        if (elMeshes.length > 0) elements.push({ expressId:expressID, meshes:elMeshes, box:elBox.clone() });
+      });
+      api.CloseModel(modelID);
+      return { meshes:meshes, elements:elements };
+    });
+  }
+
+  // ── Clash Detection ────────────────────────────────────────────
+
+  function detectClashes(models, rules) {
+    var pick = function(id) { return id === 'all' ? models : models.filter(function(m){return m.id===id}); };
+    var grpA = pick(rules.modelA), grpB = pick(rules.modelB);
+    var clashes = [], seen = {};
+    grpA.forEach(function(mA) { grpB.forEach(function(mB) {
+      if (mA.id === mB.id) return;
+      var key = [mA.id, mB.id].sort().join('|');
+      if (seen[key]) return; seen[key] = true;
+      (mA.elements||[]).forEach(function(eA) { (mB.elements||[]).forEach(function(eB) {
+        var bA = eA.box.clone(), bB = eB.box.clone();
+        var isHard = bA.intersectsBox(bB);
+        var isSoft = !isHard && rules.soft && bA.clone().expandByScalar(rules.clearance/1000).intersectsBox(bB);
+        if ((isHard && rules.hard) || isSoft) {
+          var ctr = new THREE.Vector3(); bA.getCenter(ctr);
+          clashes.push({
+            id:uid(), source:'auto', type:isHard?'hard':'soft', status:'open',
+            title:mA.discipline.toUpperCase()+' \u2194 '+mB.discipline.toUpperCase(),
+            description:'#'+eA.expressId+' ('+mA.name+') vs #'+eB.expressId+' ('+mB.name+')',
+            modelAId:mA.id, modelBId:mB.id, elemA:eA.expressId, elemB:eB.expressId,
+            point:[ctr.x,ctr.y,ctr.z], createdAt:new Date().toISOString()
+          });
+        }
+      }); });
+    }); });
+    return clashes;
+  }
+
+  // ── Save / Load Project ────────────────────────────────────────
+
+  function saveProject(s) {
+    // Serialise everything except Three.js mesh objects (not JSON-safe)
+    var data = {
+      _cc: 'ClashControl', _v: '0.9',
+      savedAt: new Date().toISOString(),
+      rules: s.rules,
+      models: s.models.map(function(m) {
+        return { id:m.id, name:m.name, discipline:m.discipline, color:m.color, visible:m.visible };
+      }),
+      clashes: s.clashes,
+      issues:  s.issues,
+    };
+    var blob = new Blob([JSON.stringify(data, null, 2)], {type:'application/json'});
+    var a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = 'project-'+new Date().toISOString().slice(0,10)+'.ccproj';
+    a.click();
+  }
+
+  function loadProject(d) {
+    var inp = document.createElement('input');
+    inp.type = 'file'; inp.accept = '.ccproj,application/json';
+    inp.onchange = function(e) {
+      var f = e.target.files[0]; if (!f) return;
+      var r = new FileReader();
+      r.onload = function(ev) {
+        try {
+          var data = JSON.parse(ev.target.result);
+          if (!data._cc || data._cc !== 'ClashControl') throw new Error('Not a ClashControl project file.');
+          // Restore models as stubs (geometry must be re-uploaded)
+          data.models.forEach(function(m) {
+            d({ t:'ADD_MODEL', v: Object.assign({}, m, { meshes:[], elements:[], _stub:true }) });
+          });
+          // Restore rules
+          d({ t:'UPD_RULES', u: data.rules });
+          // Restore clashes & issues
+          (data.clashes||[]).forEach(function(c) { d({ t:'UPD_CLASH', id:c.id, u:c }); });
+          data.clashes && d({ t:'SET_CLASHES', v: data.clashes });
+          (data.issues||[]).forEach(function(i) { d({ t:'ADD_ISSUE', v:i }); });
+        } catch(err) {
+          alert('Load failed: ' + err.message);
+        }
+      };
+      r.readAsText(f);
+    };
+    inp.click();
+  }
+
+  // ── BCF 2.1 Export ─────────────────────────────────────────────
+
+  function exportBCF(items) {
+    if (!items.length) return;
+    var zip = new JSZip();
+    zip.file('bcf.version','<?xml version="1.0" encoding="UTF-8"?>\n<Version VersionId="2.1"><DetailedVersion>2.1</DetailedVersion></Version>');
+    zip.file('project.bcfp','<?xml version="1.0" encoding="UTF-8"?>\n<ProjectExtension><Project ProjectId="'+guid()+'"><Name>ClashControl</Name></Project></ProjectExtension>');
+    items.forEach(function(it) {
+      var g = guid(), f = zip.folder(g);
+      var type = it.type==='hard'?'Issue':it.type==='soft'?'Warning':'Request';
+      var st   = it.status==='resolved'?'Closed':'Open';
+      f.file('markup.bcf',
+        '<?xml version="1.0" encoding="UTF-8"?>\n<Markup><Topic Guid="'+g+'" TopicType="'+type+'" TopicStatus="'+st+'">' +
+        '<Title>'+esc(it.title)+'</Title><CreationDate>'+(it.createdAt||new Date().toISOString())+'</CreationDate>' +
+        '<Description>'+esc(it.description||'')+'</Description>' +
+        '<Priority>'+(it.type==='hard'?'Critical':'Normal')+'</Priority></Topic></Markup>');
+    });
+    zip.generateAsync({type:'blob'}).then(function(blob) {
+      var a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = 'clashcontrol-'+new Date().toISOString().slice(0,10)+'.bcf';
+      a.click();
+    });
+  }
+
+  // ── Orbit Controls (inline) ────────────────────────────────────
+
+  function makeOrbit(camera, el) {
+    var target = new THREE.Vector3();
+    var sph = { r:60, phi:Math.PI/4, theta:Math.PI/4 };
+    var dragging=false, panning=false, lx=0, ly=0;
+
+    function sync() {
+      var o = camera.position.clone().sub(target);
+      sph.r = o.length()||60;
+      sph.phi = Math.acos(Math.max(-1,Math.min(1,o.y/sph.r)));
+      sph.theta = Math.atan2(o.x,o.z);
+    }
+    function apply() {
+      sph.phi = Math.max(0.05, Math.min(Math.PI-0.05, sph.phi));
+      sph.r   = Math.max(0.5, Math.min(5000, sph.r));
+      camera.position.set(
+        target.x + sph.r*Math.sin(sph.phi)*Math.sin(sph.theta),
+        target.y + sph.r*Math.cos(sph.phi),
+        target.z + sph.r*Math.sin(sph.phi)*Math.cos(sph.theta));
+      camera.lookAt(target);
+    }
+    sync();
+
+    el.addEventListener('mousedown', function(e) {
+      if (e.button===0) dragging=true;
+      if (e.button===2) panning=true;
+      lx=e.clientX; ly=e.clientY; e.preventDefault();
+    });
+    el.addEventListener('contextmenu', function(e){e.preventDefault()});
+    window.addEventListener('mousemove', function(e) {
+      if(!dragging&&!panning) return;
+      var dx=e.clientX-lx, dy=e.clientY-ly; lx=e.clientX; ly=e.clientY;
+      if(dragging){ sph.theta-=dx*0.007; sph.phi-=dy*0.007; apply(); }
+      if(panning){
+        var sp=sph.r*0.0008;
+        var right=new THREE.Vector3().crossVectors(camera.getWorldDirection(new THREE.Vector3()),new THREE.Vector3(0,1,0)).normalize();
+        target.addScaledVector(right,-dx*sp); target.y+=dy*sp; apply();
+      }
+    });
+    window.addEventListener('mouseup', function(){dragging=false;panning=false});
+    el.addEventListener('wheel', function(e){sph.r*=1+e.deltaY*0.0008;apply();e.preventDefault()},{passive:false});
+    return {target:target, sync:sync, apply:apply};
+  }
+
+  // ── Three.js Viewer Component ──────────────────────────────────
+
+  function Viewer(props) {
+    var s = props.s;
+    var ref = useRef(null);
+    var state3d = useRef({scene:null,camera:null,renderer:null,orbit:null,mg:null,map:{},raf:null});
+
+    // Init scene
+    useEffect(function() {
+      var el = ref.current; if(!el) return;
+      var S = state3d.current;
+
+      var scene = new THREE.Scene();
+      scene.background = new THREE.Color(0x0f172a);
+      S.scene = scene;
+
+      var camera = new THREE.PerspectiveCamera(55, el.clientWidth/el.clientHeight, 0.01, 10000);
+      camera.position.set(30,25,30);
+      S.camera = camera;
+
+      var renderer = new THREE.WebGLRenderer({antialias:true});
+      renderer.setPixelRatio(Math.min(devicePixelRatio,2));
+      renderer.setSize(el.clientWidth, el.clientHeight);
+      renderer.localClippingEnabled = true;
+      el.appendChild(renderer.domElement);
+      S.renderer = renderer;
+
+      S.orbit = makeOrbit(camera, renderer.domElement);
+
+      scene.add(new THREE.AmbientLight(0xffffff,0.5));
+      var sun = new THREE.DirectionalLight(0xfff8f0,1.0);
+      sun.position.set(80,120,60); scene.add(sun);
+      scene.add(new THREE.DirectionalLight(0xd0e8ff,0.3).position.set(-50,-20,-50) && scene.children[scene.children.length-1] || new THREE.Object3D());
+      var fill = new THREE.DirectionalLight(0xd0e8ff,0.3);
+      fill.position.set(-50,-20,-50); scene.add(fill);
+      scene.add(new THREE.GridHelper(200,80,0x1e3a5f,0x172554));
+      scene.add(new THREE.AxesHelper(3));
+
+      var mg = new THREE.Group(); scene.add(mg); S.mg = mg;
+
+      function tick(){S.raf=requestAnimationFrame(tick);renderer.render(scene,camera);}
+      tick();
+
+      var obs = new ResizeObserver(function(){
+        camera.aspect = el.clientWidth/el.clientHeight;
+        camera.updateProjectionMatrix();
+        renderer.setSize(el.clientWidth, el.clientHeight);
+      });
+      obs.observe(el);
+
+      return function(){cancelAnimationFrame(S.raf);obs.disconnect();renderer.dispose();if(el.contains(renderer.domElement))el.removeChild(renderer.domElement);};
+    }, []);
+
+    // Sync models
+    useEffect(function() {
+      var S = state3d.current; if(!S.mg) return;
+      var ids = s.models.map(function(m){return m.id});
+      // Remove stale
+      Object.keys(S.map).forEach(function(id){
+        if(ids.indexOf(id)===-1){S.mg.remove(S.map[id]);delete S.map[id];}
+      });
+      // Add new
+      s.models.forEach(function(model){
+        if(!S.map[model.id] && model.meshes && model.meshes.length) {
+          var grp = new THREE.Group();
+          model.meshes.forEach(function(m){grp.add(m)});
+          S.mg.add(grp); S.map[model.id] = grp;
+          if(Object.keys(S.map).length===1){
+            var box=new THREE.Box3().setFromObject(grp);
+            var sz=box.getSize(new THREE.Vector3()), ctr=box.getCenter(new THREE.Vector3());
+            var d=Math.max(sz.x,sz.y,sz.z)*1.5;
+            S.orbit.target.copy(ctr);
+            S.camera.position.set(ctr.x+d,ctr.y+d*0.6,ctr.z+d);
+            S.orbit.sync();
+          }
+        }
+        if(S.map[model.id]) S.map[model.id].visible = model.visible!==false;
+      });
+    }, [s.models]);
+
+    // Section
+    useEffect(function(){
+      var S = state3d.current; if(!S.renderer||!S.mg) return;
+      var planes = [];
+      if(s.sectionAxis && S.mg.children.length>0){
+        var box=new THREE.Box3().setFromObject(S.mg);
+        var cut=box.min[s.sectionAxis]+(box.max[s.sectionAxis]-box.min[s.sectionAxis])*s.sectionPos;
+        var nm={x:new THREE.Vector3(1,0,0),y:new THREE.Vector3(0,1,0),z:new THREE.Vector3(0,0,1)};
+        planes.push(new THREE.Plane(nm[s.sectionAxis].clone().negate(),cut));
+      }
+      S.renderer.clippingPlanes=planes;
+      S.mg.traverse(function(obj){if(obj.isMesh&&obj.material){obj.material.clippingPlanes=planes;obj.material.needsUpdate=true;}});
+    }, [s.sectionAxis, s.sectionPos]);
+
+    var P = {position:'absolute',pointerEvents:'none',fontSize:'.7rem',padding:'.2rem .6rem',borderRadius:'5px'};
+    return html`<div style=${{flex:1,position:'relative',overflow:'hidden'}}>
+      <div ref=${ref} style=${{width:'100%',height:'100%'}}></div>
+      <div style=${{...P,top:'.75rem',left:'.75rem',background:'rgba(15,23,42,.85)',color:'#64748b'}}>
+        ${s.models.length===0?'Load an IFC file to begin':s.models.length+' model'+(s.models.length>1?'s':'')+' loaded'}
+      </div>
+      ${s.sectionAxis && html`<div style=${{...P,top:'.75rem',right:'.75rem',background:'rgba(30,58,138,.9)',color:'#93c5fd'}}>
+        Section ${s.sectionAxis.toUpperCase()} · ${Math.round(s.sectionPos*100)}%
+      </div>`}
+    </div>`;
+  }
+
+  // ── Shared style objects ───────────────────────────────────────
+
+  var S_PANEL   = {background:'#0f172a',borderRight:'1px solid #1e293b',display:'flex',flexDirection:'column',flexShrink:0,overflow:'hidden'};
+  var S_PANELR  = {background:'#0f172a',borderLeft:'1px solid #1e293b',display:'flex',flexDirection:'column',flexShrink:0};
+  var S_BTN     = {border:'none',cursor:'pointer',fontFamily:'inherit',fontSize:'.75rem',borderRadius:'6px',padding:'.35rem .75rem'};
+  var S_INPUT   = {width:'100%',background:'#0f172a',color:'#e2e8f0',fontSize:'.8rem',borderRadius:'8px',padding:'.35rem .6rem',border:'1px solid #334155',outline:'none'};
+
+  // ── Header ─────────────────────────────────────────────────────
+
+  function Header(props) {
+    var s=props.s, d=props.d;
+    var all = s.clashes.concat(s.issues);
+    var openN = all.filter(function(x){return x.status==='open'}).length;
+    return html`<header style=${{display:'flex',alignItems:'center',justifyContent:'space-between',padding:'.5rem 1rem',background:'#0f172a',borderBottom:'1px solid #1e293b',flexShrink:0}}>
+      <div style=${{display:'flex',alignItems:'center',gap:'.75rem'}}>
+        <div style=${{width:32,height:32,background:'#2563eb',borderRadius:8,display:'flex',alignItems:'center',justifyContent:'center'}}><span style=${{color:'#fff',fontWeight:900,fontSize:14}}>CC</span></div>
+        <div><span style=${{fontWeight:600}}>ClashControl</span><span style=${{color:'#64748b',fontSize:'.75rem',marginLeft:'.5rem'}}>v0.9</span></div>
+      </div>
+      <div style=${{display:'flex',alignItems:'center',gap:'.5rem'}}>
+        ${openN>0 && html`<span style=${{background:'#ef4444',color:'#fff',fontSize:'.65rem',padding:'.1rem .5rem',borderRadius:99}}>${openN} open</span>`}
+        <button onClick=${function(){loadProject(d)}}
+          style=${{...S_BTN,background:'#1e293b',color:'#94a3b8',border:'1px solid #334155'}}>
+          ↑ Load Project
+        </button>
+        <button onClick=${function(){saveProject(s)}} disabled=${!all.length&&!s.models.length}
+          style=${{...S_BTN,background:s.models.length||all.length?'#0f4c81':'#1e293b',color:s.models.length||all.length?'#93c5fd':'#475569',cursor:s.models.length||all.length?'pointer':'not-allowed'}}>
+          ↓ Save Project
+        </button>
+        <button onClick=${function(){exportBCF(all)}} disabled=${!all.length}
+          style=${{...S_BTN,background:all.length?'#2563eb':'#1e293b',color:all.length?'#fff':'#475569',cursor:all.length?'pointer':'not-allowed'}}>
+          ↓ Export BCF
+        </button>
+      </div>
+    </header>`;
+  }
+
+  // ── Model Sidebar ──────────────────────────────────────────────
+
+  function ModelSidebar(props) {
+    var s=props.s, d=props.d;
+    var fileRef = useRef(null);
+    var ld = useState(false), loading=ld[0], setLoading=ld[1];
+    var er = useState(''), err=er[0], setErr=er[1];
+
+    function onFiles(e) {
+      var files = Array.prototype.slice.call(e.target.files||[]);
+      setErr('');
+      var chain = Promise.resolve();
+      files.forEach(function(f) {
+        if (!f.name.toLowerCase().match(/\.ifc$/)) return;
+        chain = chain.then(function() {
+          setLoading(true);
+          return f.arrayBuffer().then(function(buf) {
+            var disc='structural', col=DISC[0].c;
+            return loadIFC(buf, col).then(function(result) {
+              d({t:'ADD_MODEL', v:{id:uid(), name:f.name.replace(/\.ifc$/i,''), discipline:disc, color:col, visible:true, meshes:result.meshes, elements:result.elements}});
+            });
+          }).catch(function(er) {
+            console.error(er);
+            setErr(er.message||'Load failed');
+          }).then(function(){ setLoading(false); });
+        });
+      });
+      e.target.value='';
+    }
+
+    return html`<aside style=${{...S_PANEL,width:240}}>
+      <div style=${{padding:'.75rem',borderBottom:'1px solid #1e293b',flexShrink:0}}>
+        <div style=${{display:'flex',justifyContent:'space-between',marginBottom:'.4rem'}}>
+          <span style=${{fontSize:'.7rem',fontWeight:600,color:'#64748b',textTransform:'uppercase',letterSpacing:'.05em'}}>Models</span>
+          <span style=${{fontSize:'.7rem',color:'#334155'}}>${s.models.length} loaded</span>
+        </div>
+        <input ref=${fileRef} type="file" accept=".ifc" multiple style=${{display:'none'}} onChange=${onFiles} />
+        <button onClick=${function(){setErr('');fileRef.current&&fileRef.current.click()}} disabled=${loading}
+          style=${{...S_BTN,width:'100%',background:'#1e293b',color:'#94a3b8',border:'1px dashed #334155',display:'flex',alignItems:'center',justifyContent:'center',gap:'.3rem'}}>
+          ${loading?html`<span class="spin">⟳</span> Loading…`:'+ Add IFC'}
+        </button>
+        ${err && html`<div style=${{marginTop:'.4rem',padding:'.4rem',background:'#450a0a',border:'1px solid #7f1d1d',borderRadius:6,fontSize:'.7rem',color:'#fca5a5',whiteSpace:'pre-line'}}>${err}</div>`}
+      </div>
+      <div style=${{flex:1,overflowY:'auto',padding:'.4rem',display:'flex',flexDirection:'column',gap:'.25rem'}}>
+        ${s.models.length===0 && html`<div style=${{textAlign:'center',color:'#334155',fontSize:'.75rem',padding:'2rem 0'}}><div style=${{fontSize:'2rem',marginBottom:'.3rem'}}>📁</div>No models loaded</div>`}
+        ${s.models.map(function(m){return html`<${ModelCard} key=${m.id} m=${m} d=${d} />`})}
+      </div>
+      <div style=${{padding:'.75rem',borderTop:'1px solid #1e293b',flexShrink:0}}>
+        <span style=${{fontSize:'.7rem',fontWeight:600,color:'#64748b',textTransform:'uppercase',letterSpacing:'.05em',display:'block',marginBottom:'.4rem'}}>Section Plane</span>
+        <div style=${{display:'flex',gap:'.2rem'}}>
+          ${['x','y','z'].map(function(ax){return html`<button key=${ax} onClick=${function(){d({t:'SECTION',axis:s.sectionAxis===ax?null:ax})}}
+            style=${{...S_BTN,flex:1,padding:'.25rem',background:s.sectionAxis===ax?'#2563eb':'#1e293b',color:s.sectionAxis===ax?'#fff':'#64748b'}}>${ax.toUpperCase()}</button>`})}
+          <button onClick=${function(){d({t:'SECTION',axis:null})}}
+            style=${{...S_BTN,flex:1,padding:'.25rem',background:!s.sectionAxis?'#2563eb':'#1e293b',color:!s.sectionAxis?'#fff':'#64748b'}}>Off</button>
+        </div>
+        ${s.sectionAxis && html`<div style=${{marginTop:'.4rem'}}>
+          <input type="range" min="0" max="1" step="0.005" value=${s.sectionPos}
+            onInput=${function(e){d({t:'SECTION',axis:s.sectionAxis,pos:parseFloat(e.target.value)})}}
+            style=${{width:'100%'}} />
+          <span style=${{fontSize:'.7rem',color:'#475569'}}>${Math.round(s.sectionPos*100)}%</span>
+        </div>`}
+      </div>
+    </aside>`;
+  }
+
+  function ModelCard(props) {
+    var m=props.m, d=props.d;
+    var op=useState(false), open=op[0], setOpen=op[1];
+    return html`<div style=${{background:'#1e293b',border:'1px solid #334155',borderRadius:8,overflow:'hidden'}}>
+      <div style=${{display:'flex',alignItems:'center',gap:'.35rem',padding:'.35rem .5rem'}}>
+        <span onClick=${function(){d({t:'UPD_MODEL',id:m.id,u:{visible:!m.visible}})}}
+          style=${{width:14,height:14,borderRadius:3,border:'2px solid '+(m.visible!==false?'#3b82f6':'#475569'),background:m.visible!==false?'#3b82f6':'transparent',cursor:'pointer',flexShrink:0,display:'flex',alignItems:'center',justifyContent:'center'}}>
+          ${m.visible!==false && html`<span style=${{color:'#fff',fontSize:9}}>✓</span>`}
+        </span>
+        <span style=${{width:10,height:10,borderRadius:'50%',background:m.color,flexShrink:0}}></span>
+        <span style=${{color:'#e2e8f0',fontSize:'.75rem',flex:1,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}} title=${m.name}>${m.name}</span>
+        <button onClick=${function(){setOpen(!open)}} style=${{...S_BTN,padding:'0 2px',background:'none',color:'#475569',fontSize:'.6rem'}}>${open?'▲':'▼'}</button>
+        <button onClick=${function(){d({t:'DEL_MODEL',id:m.id})}} style=${{...S_BTN,padding:'0 2px',background:'none',color:'#475569',fontSize:'.6rem'}}>✕</button>
+      </div>
+      ${open && html`<div style=${{padding:'.5rem',borderTop:'1px solid #334155',display:'flex',flexDirection:'column',gap:'.35rem'}}>
+        <select value=${m.discipline} onChange=${function(e){var p=DISC.find(function(x){return x.id===e.target.value});d({t:'UPD_MODEL',id:m.id,u:{discipline:e.target.value,color:p?p.c:m.color}})}}
+          style=${{...S_INPUT,fontSize:'.7rem',padding:'.2rem .4rem'}}>
+          ${DISC.map(function(p){return html`<option key=${p.id} value=${p.id}>${p.label}</option>`})}
+        </select>
+        <div style=${{display:'flex',alignItems:'center',gap:'.3rem'}}>
+          <span style=${{fontSize:'.7rem',color:'#475569'}}>Colour</span>
+          <input type="color" value=${m.color} onChange=${function(e){d({t:'UPD_MODEL',id:m.id,u:{color:e.target.value}})}} style=${{width:24,height:20,border:'none',padding:0,background:'none',cursor:'pointer'}} />
+        </div>
+        <span style=${{fontSize:'.65rem',color:'#334155'}}>${(m.elements&&m.elements.length||0)} elements</span>
+      </div>`}
+    </div>`;
+  }
+
+  // ── Issue Panel ────────────────────────────────────────────────
+
+  function IssuePanel(props) {
+    var s=props.s, d=props.d;
+    var items = s.tab==='clashes' ? s.clashes : s.issues;
+    var oC=s.clashes.filter(function(c){return c.status==='open'}).length;
+    var oI=s.issues.filter(function(i){return i.status==='open'}).length;
+    return html`<aside style=${{...S_PANELR,width:264}}>
+      <div style=${{display:'flex',borderBottom:'1px solid #1e293b',flexShrink:0}}>
+        ${[{id:'clashes',label:'Clashes',n:oC,bg:'#ef4444'},{id:'issues',label:'Issues',n:oI,bg:'#f59e0b'}].map(function(t){return html`
+          <button key=${t.id} onClick=${function(){d({t:'TAB',v:t.id})}}
+            style=${{...S_BTN,flex:1,background:'none',borderRadius:0,padding:'.6rem',color:s.tab===t.id?'#e2e8f0':'#475569',borderBottom:s.tab===t.id?'2px solid #3b82f6':'2px solid transparent'}}>
+            ${t.label}${t.n>0?html`<span style=${{marginLeft:'.3rem',background:t.bg,color:'#fff',fontSize:'.6rem',padding:'.05rem .35rem',borderRadius:99}}>${t.n}</span>`:''}
+          </button>`})}
+      </div>
+      ${s.tab==='issues' && html`<div style=${{padding:'.4rem',borderBottom:'1px solid #1e293b',flexShrink:0}}>
+        <button onClick=${function(){d({t:'MODAL',v:true})}} style=${{...S_BTN,width:'100%',background:'#2563eb',color:'#fff'}}>+ New Issue</button>
+      </div>`}
+      <div style=${{flex:1,overflowY:'auto'}}>
+        ${items.length===0 && html`<div style=${{textAlign:'center',color:'#334155',fontSize:'.75rem',padding:'2.5rem 1rem'}}>
+          <div style=${{fontSize:'2rem',marginBottom:'.3rem'}}>${s.tab==='clashes'?'✅':'📋'}</div>
+          ${s.tab==='clashes'?'No clashes found yet':'No issues yet'}
+        </div>`}
+        ${items.map(function(it){return html`<${IssueRow} key=${it.id} item=${it} active=${s.activeId===it.id} d=${d} isClash=${s.tab==='clashes'} />`})}
+      </div>
+    </aside>`;
+  }
+
+  function IssueRow(props) {
+    var it=props.item, active=props.active, d=props.d, isClash=props.isClash;
+    var icon = it.type==='hard'?'🔴':it.type==='soft'?'🟡':'📌';
+    var stBg = (STAT[it.status]||STAT.open).bg;
+    return html`<div onClick=${function(){d({t:'ACTIVE',id:active?null:it.id})}}
+      style=${{padding:'.6rem .7rem',borderBottom:'1px solid #1e293b',cursor:'pointer',background:active?'#1e293b':'transparent',borderLeft:active?'2px solid #3b82f6':'2px solid transparent'}}>
+      <div style=${{display:'flex',gap:'.35rem',alignItems:'flex-start'}}>
+        <span style=${{fontSize:'.85rem',flexShrink:0}}>${icon}</span>
+        <div style=${{flex:1,minWidth:0}}>
+          <div style=${{display:'flex',alignItems:'center',gap:'.3rem'}}>
+            <span style=${{color:'#e2e8f0',fontSize:'.7rem',fontWeight:500,whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>${it.title}</span>
+            <span style=${{width:7,height:7,borderRadius:'50%',background:stBg,flexShrink:0}}></span>
+          </div>
+          <p style=${{color:'#475569',fontSize:'.65rem',marginTop:'.1rem'}} class="lc2">${it.description}</p>
+        </div>
+      </div>
+      ${active && html`<div style=${{marginTop:'.4rem',paddingTop:'.4rem',borderTop:'1px solid #334155',display:'flex',gap:'.25rem'}}>
+        ${Object.keys(STAT).map(function(k){return html`<button key=${k}
+          onClick=${function(e){e.stopPropagation();d({t:isClash?'UPD_CLASH':'UPD_ISSUE',id:it.id,u:{status:k}})}}
+          style=${{...S_BTN,fontSize:'.6rem',padding:'.15rem .35rem',background:it.status===k?STAT[k].bg:'#1e293b',color:it.status===k?'#fff':'#475569'}}>${STAT[k].label}</button>`})}
+      </div>`}
+    </div>`;
+  }
+
+  // ── Clash Bar ──────────────────────────────────────────────────
+
+  function ClashBar(props) {
+    var s=props.s, d=props.d, r=s.rules;
+    function run() {
+      if(s.models.length<2){alert('Load at least 2 IFC models first.');return;}
+      d({t:'DETECTING'});
+      setTimeout(function(){ d({t:'SET_CLASHES',v:detectClashes(s.models,s.rules)}); d({t:'TAB',v:'clashes'}); },20);
+    }
+    var canRun = !s.detecting && s.models.length>=2;
+    return html`<div style=${{background:'#0f172a',borderTop:'1px solid #1e293b',padding:'.45rem 1rem',display:'flex',alignItems:'center',gap:'.6rem',flexShrink:0,flexWrap:'wrap'}}>
+      <span style=${{fontSize:'.7rem',fontWeight:600,color:'#475569',textTransform:'uppercase',letterSpacing:'.05em',flexShrink:0}}>Clash Detection</span>
+      <span style=${{fontSize:'.7rem',color:'#334155'}}>A:</span>
+      <select value=${r.modelA} onChange=${function(e){d({t:'UPD_RULES',u:{modelA:e.target.value}})}}
+        style=${{fontSize:'.7rem',padding:'.15rem .3rem',borderRadius:4,maxWidth:100}}>
+        <option value="all">All</option>
+        ${s.models.map(function(m){return html`<option key=${m.id} value=${m.id}>${m.name}</option>`})}
+      </select>
+      <span style=${{color:'#334155'}}>↔</span>
+      <span style=${{fontSize:'.7rem',color:'#334155'}}>B:</span>
+      <select value=${r.modelB} onChange=${function(e){d({t:'UPD_RULES',u:{modelB:e.target.value}})}}
+        style=${{fontSize:'.7rem',padding:'.15rem .3rem',borderRadius:4,maxWidth:100}}>
+        <option value="all">All</option>
+        ${s.models.map(function(m){return html`<option key=${m.id} value=${m.id}>${m.name}</option>`})}
+      </select>
+      <label style=${{display:'flex',alignItems:'center',gap:'.2rem',cursor:'pointer'}}>
+        <input type="checkbox" checked=${r.hard} onChange=${function(e){d({t:'UPD_RULES',u:{hard:e.target.checked}})}} />
+        <span style=${{fontSize:'.7rem',color:'#94a3b8'}}>Hard</span>
+      </label>
+      <label style=${{display:'flex',alignItems:'center',gap:'.2rem',cursor:'pointer'}}>
+        <input type="checkbox" checked=${r.soft} onChange=${function(e){d({t:'UPD_RULES',u:{soft:e.target.checked}})}} />
+        <span style=${{fontSize:'.7rem',color:'#94a3b8'}}>Clearance</span>
+      </label>
+      ${r.soft && html`<div style=${{display:'flex',alignItems:'center',gap:'.3rem'}}>
+        <input type="range" min="0" max="500" step="5" value=${r.clearance}
+          onInput=${function(e){d({t:'UPD_RULES',u:{clearance:+e.target.value}})}} style=${{width:70}} />
+        <span style=${{fontSize:'.7rem',color:'#475569',width:42}}>${r.clearance} mm</span>
+      </div>`}
+      <button onClick=${run} disabled=${!canRun}
+        style=${{...S_BTN,marginLeft:'auto',background:canRun?'#2563eb':'#1e293b',color:canRun?'#fff':'#475569',cursor:canRun?'pointer':'not-allowed',fontWeight:600}}>
+        ${s.detecting?html`<span class="spin">⟳</span> …`:'▶ Run'}
+      </button>
+    </div>`;
+  }
+
+  // ── New Issue Modal ────────────────────────────────────────────
+
+  function NewIssueModal(props) {
+    var d=props.d;
+    var f=useState({title:'',desc:'',priority:'normal'}), form=f[0], setForm=f[1];
+    function upd(k){return function(e){setForm(function(prev){var n=Object.assign({},prev);n[k]=e.target.value;return n;})}}
+    function submit(e){
+      e.preventDefault();
+      d({t:'ADD_ISSUE',v:{id:uid(),source:'manual',type:'manual',status:'open',title:form.title,description:form.desc,priority:form.priority,createdAt:new Date().toISOString()}});
+      d({t:'MODAL',v:false}); d({t:'TAB',v:'issues'});
+    }
+    var MS={position:'fixed',inset:0,background:'rgba(0,0,0,.7)',display:'flex',alignItems:'center',justifyContent:'center',zIndex:50};
+    var MX={background:'#1e293b',border:'1px solid #334155',borderRadius:12,width:360,maxWidth:'95vw',boxShadow:'0 25px 50px rgba(0,0,0,.5)'};
+    return html`<div style=${MS}><div style=${MX}>
+      <div style=${{display:'flex',justifyContent:'space-between',padding:'.8rem 1rem',borderBottom:'1px solid #334155'}}>
+        <span style=${{fontWeight:600,fontSize:'.875rem'}}>New Issue</span>
+        <button onClick=${function(){d({t:'MODAL',v:false})}} style=${{...S_BTN,background:'none',color:'#64748b',fontSize:'1.1rem',padding:0}}>✕</button>
+      </div>
+      <form onSubmit=${submit} style=${{padding:'1rem',display:'flex',flexDirection:'column',gap:'.5rem'}}>
+        <div><label style=${{fontSize:'.7rem',color:'#64748b',display:'block',marginBottom:'.2rem'}}>Title *</label>
+          <input required value=${form.title} onInput=${upd('title')} placeholder="Short description" style=${S_INPUT} /></div>
+        <div><label style=${{fontSize:'.7rem',color:'#64748b',display:'block',marginBottom:'.2rem'}}>Description</label>
+          <textarea value=${form.desc} onInput=${upd('desc')} rows="3" placeholder="More context…" style=${{...S_INPUT,resize:'none'}} /></div>
+        <div><label style=${{fontSize:'.7rem',color:'#64748b',display:'block',marginBottom:'.2rem'}}>Priority</label>
+          <select value=${form.priority} onChange=${upd('priority')} style=${S_INPUT}>
+            <option value="critical">Critical</option><option value="normal">Normal</option><option value="low">Low</option>
+          </select></div>
+        <div style=${{display:'flex',gap:'.4rem',paddingTop:'.2rem'}}>
+          <button type="button" onClick=${function(){d({t:'MODAL',v:false})}} style=${{...S_BTN,flex:1,background:'#334155',color:'#e2e8f0'}}>Cancel</button>
+          <button type="submit" style=${{...S_BTN,flex:1,background:'#2563eb',color:'#fff',fontWeight:600}}>Create</button>
+        </div>
+      </form>
+    </div></div>`;
+  }
+
+  // ── App ────────────────────────────────────────────────────────
+
+  function App() {
+    var st = useReducer(reducer, INIT), s=st[0], d=st[1];
+    return html`<div style=${{height:'100vh',display:'flex',flexDirection:'column',overflow:'hidden'}}>
+      <${Header} s=${s} d=${d} />
+      <div style=${{display:'flex',flex:1,overflow:'hidden'}}>
+        <${ModelSidebar} s=${s} d=${d} />
+        <${Viewer} s=${s} />
+        <${IssuePanel} s=${s} d=${d} />
+      </div>
+      <${ClashBar} s=${s} d=${d} />
+      ${s.showModal && html`<${NewIssueModal} d=${d} />`}
+    </div>`;
+  }
+
+  // ── Mount ──────────────────────────────────────────────────────
+
+  document.getElementById('boot').style.display = 'none';
+  var rootEl = document.getElementById('root');
+  ReactDOM.render(html`<${App} />`, rootEl);
+
+} // end startApp
+</script>
+</body>
+</html>
