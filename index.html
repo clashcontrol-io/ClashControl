@@ -657,6 +657,10 @@ function startApp() {
     var s = props.s;
     var ref = useRef(null);
     var state3d = useRef({scene:null,camera:null,renderer:null,orbit:null,mg:null,map:{},raf:null});
+    var se = useState(null), selectedEl=se[0], setSelectedEl=se[1];
+    var hlRef = useRef(null); // highlighted mesh outline
+    var modelsRef = useRef(s.models);
+    modelsRef.current = s.models;
 
     // Init scene
     useEffect(function() {
@@ -686,6 +690,47 @@ function startApp() {
         S.camera.position.set(pt[0]+15,pt[1]+10,pt[2]+15);
         d.sync(); d.apply();
       };
+
+      // Raycaster for element picking
+      var raycaster = new THREE.Raycaster();
+      var mouse = new THREE.Vector2();
+      var downPos = {x:0,y:0};
+      renderer.domElement.addEventListener('mousedown', function(e){downPos.x=e.clientX;downPos.y=e.clientY;});
+      renderer.domElement.addEventListener('mouseup', function(e){
+        // Only pick if the mouse didn't move (not a drag)
+        if(Math.abs(e.clientX-downPos.x)>3 || Math.abs(e.clientY-downPos.y)>3) return;
+        var rect = renderer.domElement.getBoundingClientRect();
+        mouse.x = ((e.clientX-rect.left)/rect.width)*2-1;
+        mouse.y = -((e.clientY-rect.top)/rect.height)*2+1;
+        raycaster.setFromCamera(mouse, camera);
+        var hits = raycaster.intersectObjects(S.mg.children, true);
+        if(hits.length>0) {
+          var hit = hits[0].object;
+          var eid = hit.userData.expressID;
+          if(eid!=null) {
+            // Find element props from models
+            var found = null;
+            var curModels = modelsRef.current;
+            for(var mi=0;mi<curModels.length&&!found;mi++){
+              var els = curModels[mi].elements||[];
+              for(var ei=0;ei<els.length;ei++){
+                if(els[ei].expressId===eid){ found={el:els[ei],model:curModels[mi]}; break; }
+              }
+            }
+            // Highlight
+            if(hlRef.current){scene.remove(hlRef.current);hlRef.current=null;}
+            var box = new THREE.BoxHelper(hit, 0x3b82f6);
+            box.material.linewidth = 2;
+            scene.add(box);
+            hlRef.current = box;
+            setSelectedEl(found ? {props:found.el.props||{}, modelName:found.model.name, expressId:eid} : {props:{expressId:eid}, modelName:'Unknown', expressId:eid});
+          }
+        } else {
+          // Click on empty space — deselect
+          if(hlRef.current){scene.remove(hlRef.current);hlRef.current=null;}
+          setSelectedEl(null);
+        }
+      });
 
       scene.add(new THREE.AmbientLight(0xffffff,0.5));
       var sun = new THREE.DirectionalLight(0xfff8f0,1.0);
@@ -755,6 +800,11 @@ function startApp() {
     }, [s.sectionAxis, s.sectionPos]);
 
     var P = {position:'absolute',pointerEvents:'none',fontSize:'.7rem',padding:'.2rem .6rem',borderRadius:'5px'};
+    var ep = selectedEl ? selectedEl.props : null;
+    var epQ = ep && ep.quantities ? Object.keys(ep.quantities) : [];
+    var epP = ep && ep.psets ? Object.keys(ep.psets) : [];
+    var ROW={display:'flex',justifyContent:'space-between',padding:'.1rem 0'};
+    var LS={fontSize:'.6rem',color:'#64748b'}; var VS={fontSize:'.6rem',color:'#cbd5e1'};
     return html`<div style=${{flex:1,position:'relative',overflow:'hidden'}}>
       <div ref=${ref} style=${{width:'100%',height:'100%'}}></div>
       <div style=${{...P,top:'.75rem',left:'.75rem',background:'rgba(15,23,42,.85)',color:'#64748b'}}>
@@ -762,6 +812,32 @@ function startApp() {
       </div>
       ${s.sectionAxis && html`<div style=${{...P,top:'.75rem',right:'.75rem',background:'rgba(30,58,138,.9)',color:'#93c5fd'}}>
         Section ${s.sectionAxis.toUpperCase()} · ${Math.round(s.sectionPos*100)}%
+      </div>`}
+      ${selectedEl && html`<div style=${{position:'absolute',bottom:'.75rem',left:'.75rem',width:280,maxHeight:'50%',overflowY:'auto',background:'rgba(15,23,42,.95)',border:'1px solid #334155',borderRadius:8,padding:'.6rem',pointerEvents:'auto',boxShadow:'0 4px 20px rgba(0,0,0,.5)'}}>
+        <div style=${{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:'.4rem'}}>
+          <span style=${{fontSize:'.7rem',fontWeight:600,color:'#93c5fd'}}>Element Properties</span>
+          <button onClick=${function(){setSelectedEl(null);if(hlRef.current&&state3d.current.scene){state3d.current.scene.remove(hlRef.current);hlRef.current=null;}}}
+            style=${{...S_BTN,padding:'0 4px',background:'none',color:'#475569',fontSize:'.7rem'}}>✕</button>
+        </div>
+        <div style=${{fontSize:'.65rem',color:'#f59e0b',marginBottom:'.3rem'}}>${selectedEl.modelName}</div>
+        ${ep && ep.ifcType && html`<div style=${ROW}><span style=${LS}>Type</span><span style=${VS}>${ep.ifcType}</span></div>`}
+        ${ep && ep.name && html`<div style=${ROW}><span style=${LS}>Name</span><span style=${VS}>${ep.name}</span></div>`}
+        ${ep && ep.objectType && html`<div style=${ROW}><span style=${LS}>Object Type</span><span style=${VS}>${ep.objectType}</span></div>`}
+        ${ep && ep.description && html`<div style=${ROW}><span style=${LS}>Description</span><span style=${VS}>${ep.description}</span></div>`}
+        ${ep && ep.storey && html`<div style=${ROW}><span style=${LS}>Storey</span><span style=${VS}>${ep.storey}</span></div>`}
+        ${ep && ep.material && html`<div style=${ROW}><span style=${LS}>Material</span><span style=${VS}>${ep.material}</span></div>`}
+        <div style=${ROW}><span style=${LS}>Express ID</span><span style=${VS}>#${selectedEl.expressId}</span></div>
+        ${epQ.length>0 && html`<div style=${{marginTop:'.3rem',borderTop:'1px solid #1e293b',paddingTop:'.3rem'}}>
+          <div style=${{fontSize:'.6rem',fontWeight:600,color:'#64748b',marginBottom:'.15rem'}}>Quantities</div>
+          ${epQ.map(function(k){return html`<div key=${k} style=${ROW}><span style=${LS}>${k}</span><span style=${VS}>${typeof ep.quantities[k]==='number'?ep.quantities[k].toFixed(3):ep.quantities[k]}</span></div>`})}
+        </div>`}
+        ${epP.map(function(setName){
+          var ps=ep.psets[setName]; var keys=Object.keys(ps);
+          return html`<div key=${setName} style=${{marginTop:'.3rem',borderTop:'1px solid #1e293b',paddingTop:'.3rem'}}>
+            <div style=${{fontSize:'.6rem',fontWeight:600,color:'#64748b',marginBottom:'.15rem'}}>${setName}</div>
+            ${keys.map(function(k){return html`<div key=${k} style=${ROW}><span style=${LS}>${k}</span><span style=${VS}>${String(ps[k])}</span></div>`})}
+          </div>`;
+        })}
       </div>`}
     </div>`;
   }
