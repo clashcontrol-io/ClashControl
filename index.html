@@ -507,7 +507,7 @@ function startApp() {
             description:tA+': '+nA+' ('+mA.name+') vs '+tB+': '+nB+' ('+mB.name+')',
             modelAId:mA.id, modelBId:mB.id, elemA:eA.expressId, elemB:eB.expressId,
             point:[ctr.x,ctr.y,ctr.z], createdAt:new Date().toISOString(),
-            distance:dist, elevation:Math.round(ctr.y*1000)/1000,
+            distance:dist, elevation:Math.round(ctr.z*1000)/1000,
             disciplines:[mA.discipline,mB.discipline], selfClash:sameModel,
             elemAType:tA, elemBType:tB, elemAName:nA, elemBName:nB,
             elemAStorey:pA.storey||'', elemBStorey:pB.storey||'',
@@ -621,22 +621,23 @@ function startApp() {
 
   function makeOrbit(camera, el) {
     var target = new THREE.Vector3();
+    // Z-up spherical: phi = angle from Z-axis (0=top, PI=bottom), theta = rotation around Z
     var sph = { r:60, phi:Math.PI/4, theta:Math.PI/4 };
     var dragging=false, panning=false, lx=0, ly=0;
 
     function sync() {
       var o = camera.position.clone().sub(target);
       sph.r = o.length()||60;
-      sph.phi = Math.acos(Math.max(-1,Math.min(1,o.y/sph.r)));
-      sph.theta = Math.atan2(o.x,o.z);
+      sph.phi = Math.acos(Math.max(-1,Math.min(1,o.z/sph.r)));
+      sph.theta = Math.atan2(o.y,o.x);
     }
     function apply() {
       sph.phi = Math.max(0.05, Math.min(Math.PI-0.05, sph.phi));
       sph.r   = Math.max(0.5, Math.min(5000, sph.r));
       camera.position.set(
-        target.x + sph.r*Math.sin(sph.phi)*Math.sin(sph.theta),
-        target.y + sph.r*Math.cos(sph.phi),
-        target.z + sph.r*Math.sin(sph.phi)*Math.cos(sph.theta));
+        target.x + sph.r*Math.sin(sph.phi)*Math.cos(sph.theta),
+        target.y + sph.r*Math.sin(sph.phi)*Math.sin(sph.theta),
+        target.z + sph.r*Math.cos(sph.phi));
       camera.lookAt(target);
     }
     sync();
@@ -653,8 +654,8 @@ function startApp() {
       if(dragging){ sph.theta-=dx*0.007; sph.phi-=dy*0.007; apply(); }
       if(panning){
         var sp=sph.r*0.0008;
-        var right=new THREE.Vector3().crossVectors(camera.getWorldDirection(new THREE.Vector3()),new THREE.Vector3(0,1,0)).normalize();
-        target.addScaledVector(right,-dx*sp); target.y+=dy*sp; apply();
+        var right=new THREE.Vector3().crossVectors(camera.getWorldDirection(new THREE.Vector3()),new THREE.Vector3(0,0,1)).normalize();
+        target.addScaledVector(right,-dx*sp); target.z+=dy*sp; apply();
       }
     });
     window.addEventListener('mouseup', function(){dragging=false;panning=false});
@@ -686,7 +687,8 @@ function startApp() {
       S.scene = scene;
 
       var camera = new THREE.PerspectiveCamera(55, el.clientWidth/el.clientHeight, 0.01, 10000);
-      camera.position.set(30,25,30);
+      camera.up.set(0,0,1);
+      camera.position.set(30,30,25);
       S.camera = camera;
 
       var renderer = new THREE.WebGLRenderer({antialias:true});
@@ -701,7 +703,7 @@ function startApp() {
         if(!pt||pt.length<3) return;
         var t=S.orbit.target, d=S.orbit;
         t.set(pt[0],pt[1],pt[2]);
-        S.camera.position.set(pt[0]+15,pt[1]+10,pt[2]+15);
+        S.camera.position.set(pt[0]+15,pt[1]+15,pt[2]+10);
         d.sync(); d.apply();
       };
       _highlightById = function(expressId) {
@@ -790,10 +792,11 @@ function startApp() {
 
       scene.add(new THREE.AmbientLight(0xffffff,0.5));
       var sun = new THREE.DirectionalLight(0xfff8f0,1.0);
-      sun.position.set(80,120,60); scene.add(sun);
+      sun.position.set(80,60,120); scene.add(sun);
       var fill = new THREE.DirectionalLight(0xd0e8ff,0.3);
-      fill.position.set(-50,-20,-50); scene.add(fill);
+      fill.position.set(-50,-50,-20); scene.add(fill);
       S.grid = new THREE.GridHelper(200,80,0x1e3a5f,0x172554);
+      S.grid.rotation.x = Math.PI/2; // Rotate grid to XY plane (Z-up)
       scene.add(S.grid);
       S.axes = new THREE.AxesHelper(3);
       scene.add(S.axes);
@@ -835,7 +838,7 @@ function startApp() {
             var sz=box.getSize(new THREE.Vector3()), ctr=box.getCenter(new THREE.Vector3());
             var d=Math.max(sz.x,sz.y,sz.z)*1.5;
             S.orbit.target.copy(ctr);
-            S.camera.position.set(ctr.x+d,ctr.y+d*0.6,ctr.z+d);
+            S.camera.position.set(ctr.x+d,ctr.y+d,ctr.z+d*0.6);
             S.orbit.sync();
           }
         }
