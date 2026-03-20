@@ -123,6 +123,9 @@ window.onload = function() {
 };
 
 function startApp() {
+  // ── Version (auto-updated by pre-commit hook) ──
+  var CC_VERSION = {v:'1.1.1',hash:'0161e69',date:'2026-03-20T08:13:23Z'};
+
   // Check CDN deps loaded
   var need = [];
   if (typeof React === 'undefined')    need.push('React');
@@ -581,7 +584,7 @@ function startApp() {
   function saveProject(s) {
     // Serialise everything except Three.js mesh objects (not JSON-safe)
     var data = {
-      _cc: 'ClashControl', _v: '1.0',
+      _cc: 'ClashControl', _v: CC_VERSION.v,
       savedAt: new Date().toISOString(),
       rules: s.rules,
       models: s.models.map(function(m) {
@@ -1289,7 +1292,22 @@ function startApp() {
 
       var mg = new THREE.Group(); scene.add(mg); S.mg = mg;
 
-      function tick(){S.raf=requestAnimationFrame(tick);renderer.render(scene,camera);}
+      // FPS tracking
+      S.perf = {fps:0, frameCount:0, lastTime:performance.now(), tris:0, meshCount:0, drawCalls:0};
+      function tick(){
+        S.raf=requestAnimationFrame(tick);
+        renderer.render(scene,camera);
+        S.perf.frameCount++;
+        var now = performance.now();
+        if(now - S.perf.lastTime >= 1000) {
+          S.perf.fps = S.perf.frameCount;
+          S.perf.frameCount = 0;
+          S.perf.lastTime = now;
+          S.perf.drawCalls = renderer.info.render.calls;
+          S.perf.tris = renderer.info.render.triangles;
+          S.perf.meshCount = renderer.info.memory.geometries;
+        }
+      }
       tick();
 
       var obs = new ResizeObserver(function(){
@@ -1402,6 +1420,27 @@ function startApp() {
       if(S.axes) S.axes.visible = s.prefs.showAxes!==false;
     }, [s.prefs.showGrid, s.prefs.showAxes]);
 
+    // Performance stats
+    var ps = useState(false), perfOpen=ps[0], setPerfOpen=ps[1];
+    var pd = useState({fps:0,tris:0,meshCount:0,drawCalls:0}), perfData=pd[0], setPerfData=pd[1];
+    useEffect(function(){
+      var iv = setInterval(function(){
+        var S = state3d.current;
+        if(!S.perf) return;
+        var totalEls = 0, totalMeshes = 0;
+        modelsRef.current.forEach(function(m){
+          totalEls += (m.elements||[]).length;
+          totalMeshes += (m.meshes||[]).length;
+        });
+        setPerfData({
+          fps:S.perf.fps, tris:S.perf.tris, drawCalls:S.perf.drawCalls,
+          meshCount:S.perf.meshCount, totalEls:totalEls, totalMeshes:totalMeshes,
+          mem: performance.memory ? Math.round(performance.memory.usedJSHeapSize/1048576) : null
+        });
+      }, 1000);
+      return function(){clearInterval(iv);};
+    }, []);
+
     // Items Finder state
     var fs = useState(''), findQuery=fs[0], setFindQuery=fs[1];
     var fr = useState([]), findResults=fr[0], setFindResults=fr[1];
@@ -1425,7 +1464,47 @@ function startApp() {
       <div style=${{...P,top:'.75rem',left:'.75rem',background:'rgba(15,23,42,.85)',color:'#64748b',display:'flex',alignItems:'center',gap:'.5rem'}}>
         <span>${s.models.length===0?'Load an IFC file to begin':s.models.length+' model'+(s.models.length>1?'s':'')+' loaded'}</span>
         ${s.clashes.length>0 && html`<span style=${{color:'#ef4444'}}>· ${s.clashes.length} clashes</span>`}
+        <span style=${{color:perfData.fps>=50?'#22c55e':perfData.fps>=25?'#f59e0b':'#ef4444',cursor:'pointer',pointerEvents:'auto'}}
+          onClick=${function(){setPerfOpen(!perfOpen)}}>${perfData.fps} fps</span>
       </div>
+      ${perfOpen && html`<div style=${{position:'absolute',top:'2.2rem',left:'.75rem',background:'rgba(15,23,42,.95)',border:'1px solid #334155',borderRadius:8,padding:'.5rem',pointerEvents:'auto',fontSize:'.6rem',color:'#94a3b8',minWidth:170,boxShadow:'0 4px 12px rgba(0,0,0,.4)'}}>
+        <div style=${{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:'.3rem'}}>
+          <span style=${{fontWeight:600,color:'#e2e8f0',fontSize:'.65rem'}}>Performance</span>
+          <button onClick=${function(){setPerfOpen(false)}} style=${{...S_BTN,padding:'0 3px',background:'none',color:'#475569',fontSize:'.6rem'}}>✕</button>
+        </div>
+        <div style=${{display:'flex',justifyContent:'space-between',padding:'.1rem 0'}}>
+          <span>FPS</span>
+          <span style=${{color:perfData.fps>=50?'#22c55e':perfData.fps>=25?'#f59e0b':'#ef4444',fontWeight:600}}>${perfData.fps}</span>
+        </div>
+        <div style=${{display:'flex',justifyContent:'space-between',padding:'.1rem 0'}}>
+          <span>Triangles</span>
+          <span style=${{color:'#cbd5e1'}}>${perfData.tris>999999?(perfData.tris/1000000).toFixed(1)+'M':perfData.tris>999?(perfData.tris/1000).toFixed(1)+'K':perfData.tris}</span>
+        </div>
+        <div style=${{display:'flex',justifyContent:'space-between',padding:'.1rem 0'}}>
+          <span>Draw calls</span>
+          <span style=${{color:'#cbd5e1'}}>${perfData.drawCalls}</span>
+        </div>
+        <div style=${{display:'flex',justifyContent:'space-between',padding:'.1rem 0'}}>
+          <span>Geometries</span>
+          <span style=${{color:'#cbd5e1'}}>${perfData.meshCount}</span>
+        </div>
+        <div style=${{display:'flex',justifyContent:'space-between',padding:'.1rem 0',borderTop:'1px solid #1e293b',marginTop:'.2rem',paddingTop:'.2rem'}}>
+          <span>Elements</span>
+          <span style=${{color:'#cbd5e1'}}>${perfData.totalEls}</span>
+        </div>
+        <div style=${{display:'flex',justifyContent:'space-between',padding:'.1rem 0'}}>
+          <span>Meshes</span>
+          <span style=${{color:'#cbd5e1'}}>${perfData.totalMeshes}</span>
+        </div>
+        ${perfData.mem!=null && html`<div style=${{display:'flex',justifyContent:'space-between',padding:'.1rem 0'}}>
+          <span>JS Heap</span>
+          <span style=${{color:'#cbd5e1'}}>${perfData.mem} MB</span>
+        </div>`}
+        <div style=${{borderTop:'1px solid #1e293b',marginTop:'.2rem',paddingTop:'.2rem',display:'flex',justifyContent:'space-between'}}>
+          <span>Version</span>
+          <span style=${{color:'#64748b'}}>${CC_VERSION.v} (${CC_VERSION.hash})</span>
+        </div>
+      </div>`}
       ${s.clashes.length>0 && html`<div style=${{position:'absolute',top:'.75rem',left:'50%',transform:'translateX(-50%)',display:'flex',gap:'.3rem',pointerEvents:'auto'}}>
         <button onClick=${function(){if(_fitToClashes)_fitToClashes(s.clashes);}}
           style=${{...S_BTN,background:'rgba(30,41,59,.9)',color:'#93c5fd',border:'1px solid #334155',fontSize:'.65rem',padding:'.25rem .5rem'}}>
@@ -1573,7 +1652,11 @@ function startApp() {
     return html`<header style=${{display:'flex',alignItems:'center',justifyContent:'space-between',padding:'.5rem 1rem',background:'#0f172a',borderBottom:'1px solid #1e293b',flexShrink:0}}>
       <div style=${{display:'flex',alignItems:'center',gap:'.75rem'}}>
         <div style=${{width:32,height:32,background:'#2563eb',borderRadius:8,display:'flex',alignItems:'center',justifyContent:'center'}}><span style=${{color:'#fff',fontWeight:900,fontSize:14}}>CC</span></div>
-        <div><span style=${{fontWeight:600}}>ClashControl</span><span style=${{color:'#64748b',fontSize:'.75rem',marginLeft:'.5rem'}}>v1.0</span></div>
+        <div>
+          <span style=${{fontWeight:600}}>ClashControl</span>
+          <span style=${{color:'#64748b',fontSize:'.7rem',marginLeft:'.4rem'}}>v${CC_VERSION.v}</span>
+          <span style=${{color:'#334155',fontSize:'.55rem',marginLeft:'.3rem'}} title=${'Build: '+CC_VERSION.date+' ('+CC_VERSION.hash+')'}>${CC_VERSION.hash}</span>
+        </div>
       </div>
       <div style=${{display:'flex',alignItems:'center',gap:'.5rem'}}>
         ${openN>0 && html`<span style=${{background:'#ef4444',color:'#fff',fontSize:'.65rem',padding:'.1rem .5rem',borderRadius:99}}>${openN} open</span>`}
