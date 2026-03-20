@@ -124,7 +124,7 @@ window.onload = function() {
 
 function startApp() {
   // ── Version (auto-updated by pre-commit hook) ──
-  var CC_VERSION = {v:'1.1.11',hash:'2cd76ae',date:'2026-03-20T19:59:20Z'};
+  var CC_VERSION = {v:'1.1.12',hash:'9d434ca',date:'2026-03-20T20:01:26Z'};
 
   // Check CDN deps loaded
   var need = [];
@@ -1288,7 +1288,7 @@ function startApp() {
       var mouse = new THREE.Vector2();
 
       // ── Section Box handle drag system ──
-      var _sboxDragState = null; // {type:'face'|'corner'|'rotate', axis, side, cornerSigns, startMouse, startSb, dragPlane}
+      var _sboxDragState = null; // {type:'face'|'rotate', axis, side, startMouse, startSb, dragPlane}
       renderer.domElement.addEventListener('mousedown', function(e){
         if(e.button!==0) return;
         var S2=state3d.current;
@@ -1311,14 +1311,6 @@ function startApp() {
           if(hitH.userData._sboxRotation){
             // Rotation drag
             _sboxDragState={type:'rotate',startX:e.clientX,startRot:curSb.rotation||0,startSb:Object.assign({},curSb,{min:curSb.min.slice(),max:curSb.max.slice()})};
-          } else if(hitH.userData._cornerHandle){
-            // Corner drag - scale uniformly from opposite corner
-            var cs=hitH.userData._cornerSigns;
-            // Create a plane perpendicular to camera at the handle position
-            var camDir=new THREE.Vector3();
-            camera.getWorldDirection(camDir);
-            var dp=new THREE.Plane().setFromNormalAndCoplanarPoint(camDir,hitH.position.clone());
-            _sboxDragState={type:'corner',cornerSigns:cs,startMouse:{x:e.clientX,y:e.clientY},startSb:Object.assign({},curSb,{min:curSb.min.slice(),max:curSb.max.slice()}),dragPlane:dp,startPos:hitH.position.clone()};
           } else if(hitH.userData._sboxHandle){
             // Face handle drag
             var ax=hitH.userData._handleAxis;
@@ -1363,28 +1355,6 @@ function startApp() {
               if(ds.side==='max') newSb.max[ds.axis]=newSb.min[ds.axis]+0.01;
               else newSb.min[ds.axis]=newSb.max[ds.axis]-0.01;
             }
-            if(ds.startSb.rotation) newSb.rotation=ds.startSb.rotation;
-            if(window._ccDispatch) window._ccDispatch({t:'SECTION_BOX',v:newSb});
-          }
-        } else if(ds.type==='corner'){
-          // Corner drag: scale from center proportionally
-          var intPt2=new THREE.Vector3();
-          if(raycaster.ray.intersectPlane(ds.dragPlane,intPt2)){
-            var delta2=intPt2.clone().sub(ds.startPos);
-            var cs=ds.cornerSigns;
-            var newSb=Object.assign({},ds.startSb,{min:ds.startSb.min.slice(),max:ds.startSb.max.slice()});
-            // Apply delta along each axis based on corner sign
-            var rot2=ds.startSb.rotation||0;
-            var cosR2=Math.cos(rot2),sinR2=Math.sin(rot2);
-            // Project delta into local axes
-            var localX=delta2.x*cosR2+delta2.z*sinR2;
-            var localY=delta2.y;
-            var localZ=-delta2.x*sinR2+delta2.z*cosR2;
-            if(cs[0]>0) newSb.max[0]=ds.startSb.max[0]+localX; else newSb.min[0]=ds.startSb.min[0]+localX;
-            if(cs[1]>0) newSb.max[1]=ds.startSb.max[1]+localY; else newSb.min[1]=ds.startSb.min[1]+localY;
-            if(cs[2]>0) newSb.max[2]=ds.startSb.max[2]+localZ; else newSb.min[2]=ds.startSb.min[2]+localZ;
-            // Prevent inversion
-            for(var i=0;i<3;i++){if(newSb.min[i]>=newSb.max[i]-0.01) newSb.min[i]=newSb.max[i]-0.01;}
             if(ds.startSb.rotation) newSb.rotation=ds.startSb.rotation;
             if(window._ccDispatch) window._ccDispatch({t:'SECTION_BOX',v:newSb});
           }
@@ -1917,24 +1887,6 @@ function startApp() {
         handles.push(mesh);
       });
 
-      // --- 8 corner handles (smaller cubes) ---
-      var cornerSize=handleSize*0.7;
-      var cornerGeo=new THREE.BoxGeometry(cornerSize,cornerSize,cornerSize);
-      var cornerMat=new THREE.MeshBasicMaterial({color:0xfbbf24,transparent:true,opacity:0.8,depthTest:false});
-      for(var cx=-1;cx<=1;cx+=2){
-        for(var cy=-1;cy<=1;cy+=2){
-          for(var cz=-1;cz<=1;cz+=2){
-            var cm=new THREE.Mesh(cornerGeo,cornerMat.clone());
-            cm.position.copy(ctr).addScaledVector(axX,hx*cx).addScaledVector(axY,hy*cy).addScaledVector(axZ,hz*cz);
-            cm.userData._sboxHandle=true;
-            cm.userData._cornerHandle=true;
-            cm.userData._cornerSigns=[cx,cy,cz];
-            cm.renderOrder=999;
-            S.scene.add(cm);
-            handles.push(cm);
-          }
-        }
-      }
       S._sboxHandles=handles;
 
       // --- Rotation ring on top face ---
@@ -2386,7 +2338,6 @@ function startApp() {
           <span style=${{display:'inline-flex',alignItems:'center',gap:'.15rem'}}><span style=${{width:6,height:6,borderRadius:'50%',background:'#ef4444',display:'inline-block'}}></span>X</span>
           <span style=${{display:'inline-flex',alignItems:'center',gap:'.15rem'}}><span style=${{width:6,height:6,borderRadius:'50%',background:'#22c55e',display:'inline-block'}}></span>Y</span>
           <span style=${{display:'inline-flex',alignItems:'center',gap:'.15rem'}}><span style=${{width:6,height:6,borderRadius:'50%',background:'#3b82f6',display:'inline-block'}}></span>Z</span>
-          <span style=${{display:'inline-flex',alignItems:'center',gap:'.15rem'}}><span style=${{width:6,height:6,background:'#fbbf24',display:'inline-block'}}></span>Corner</span>
           <span style=${{display:'inline-flex',alignItems:'center',gap:'.15rem'}}><span style=${{width:6,height:6,borderRadius:'50%',background:'#f59e0b',display:'inline-block'}}></span>Rotate</span>
         </div>
         ${sb.rotation ? html`<button onClick=${resetRotation} style=${{...S_BTN,marginTop:'.2rem',padding:'.1rem .3rem',background:'#1e293b',color:'#f59e0b',fontSize:'.55rem',border:'1px solid #334155'}}>Reset Rotation (${Math.round((sb.rotation||0)*180/Math.PI)}°)</button>` : null}
