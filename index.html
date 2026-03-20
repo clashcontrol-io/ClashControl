@@ -124,7 +124,7 @@ window.onload = function() {
 
 function startApp() {
   // ── Version (auto-updated by pre-commit hook) ──
-  var CC_VERSION = {v:'1.1.15',hash:'f55f454',date:'2026-03-20T20:15:47Z'};
+  var CC_VERSION = {v:'1.1.16',hash:'caf4ef8',date:'2026-03-20T20:20:30Z'};
 
   // Check CDN deps loaded
   var need = [];
@@ -953,7 +953,20 @@ function startApp() {
       }
     });
     window.addEventListener('mouseup', function(){dragging=false;panning=false});
-    el.addEventListener('wheel', function(e){sph.r*=1+e.deltaY*0.0008;apply();e.preventDefault()},{passive:false});
+    el.addEventListener('wheel', function(e){
+      // Ctrl+scroll adjusts floor plan cut height
+      if(e.ctrlKey && window._ccFloorPlanActive && window._ccDispatch){
+        e.preventDefault();
+        var fp = window._ccCurrentFloorPlan;
+        if(fp){
+          var delta = e.deltaY > 0 ? -0.15 : 0.15;
+          var newElev = fp.elevation + delta;
+          window._ccDispatch({t:'FLOOR_PLAN',v:Object.assign({},fp,{elevation:newElev})});
+        }
+        return;
+      }
+      sph.r*=1+e.deltaY*0.0008;apply();e.preventDefault();
+    },{passive:false});
     return {target:target, sync:sync, apply:apply, sph:sph};
   }
 
@@ -1937,18 +1950,22 @@ function startApp() {
       S._sboxRotRing=ring;
     }, [s.sectionBox]);
 
-    // Floor plan: horizontal section cut at storey elevation + top-down camera
+    // Floor plan: Dalux-style 3D section cut (single clip from above, angled 3D view)
     var floorPlanCamRef = useRef(null);
     useEffect(function(){
       var S = state3d.current; if(!S.renderer||!S.mg) return;
       if(!s.floorPlan){
-        // Restore perspective camera if we were in floor plan mode
+        window._ccFloorPlanActive = false;
+        window._ccCurrentFloorPlan = null;
+        // Restore camera if we were in floor plan mode
         if(floorPlanCamRef.current){
           S.camera.position.copy(floorPlanCamRef.current.pos);
           S.orbit.target.copy(floorPlanCamRef.current.target);
           S.orbit.sync(); S.orbit.apply();
           floorPlanCamRef.current = null;
         }
+        // Remove cut plane indicator
+        if(S._cutPlaneHelper){S.scene.remove(S._cutPlaneHelper);S._cutPlaneHelper=null;}
         // Don't clear clipping if another section mode is active
         if(!s.sectionAxis && !s.sectionCustom && !s.sectionBox){
           S.renderer.clippingPlanes=[];
@@ -1957,27 +1974,43 @@ function startApp() {
       }
       var fp = s.floorPlan;
       var cutElev = fp.elevation;
-      var cutHeight = fp.cutHeight || 1.2; // default 1.2m above floor level (standard plan cut height)
-      // Two horizontal clipping planes: one cuts from below at the elevation, one from above at cutElev+cutHeight
+      var cutHeight = fp.cutHeight || 1.2;
+      var cutAt = cutElev + cutHeight;
+      window._ccFloorPlanActive = true;
+      window._ccCurrentFloorPlan = fp;
+      // Single clipping plane: remove everything above cut elevation
+      // Everything below remains visible in full color (Dalux style)
       var planes = [
-        new THREE.Plane(new THREE.Vector3(0,1,0), -cutElev),         // remove everything below this level
-        new THREE.Plane(new THREE.Vector3(0,-1,0), cutElev+cutHeight) // remove everything above cut height
+        new THREE.Plane(new THREE.Vector3(0,-1,0), cutAt)
       ];
       S.renderer.clippingPlanes = planes;
-      // Switch to top-down orthographic-like view
-      if(!floorPlanCamRef.current){
-        floorPlanCamRef.current = {pos:S.camera.position.clone(), target:S.orbit.target.clone()};
-      }
-      // Compute model center at this level
+      // Visual cut plane indicator (subtle translucent plane at cut level)
+      if(S._cutPlaneHelper){S.scene.remove(S._cutPlaneHelper);S._cutPlaneHelper=null;}
       var box = new THREE.Box3().setFromObject(S.mg);
       var ctr = box.getCenter(new THREE.Vector3());
       var sz = box.getSize(new THREE.Vector3());
-      var viewDist = Math.max(sz.x,sz.z)*1.2;
-      // Position camera directly above looking down
-      S.orbit.target.set(ctr.x, cutElev+cutHeight*0.5, ctr.z);
-      S.camera.position.set(ctr.x, cutElev+viewDist, ctr.z+0.001);
-      S.camera.lookAt(S.orbit.target);
-      S.orbit.sync();
+      var planeSize = Math.max(sz.x,sz.z)*1.5;
+      var cutGeo = new THREE.PlaneGeometry(planeSize, planeSize);
+      var cutMat = new THREE.MeshBasicMaterial({color:0x3b82f6, transparent:true, opacity:0.04, side:THREE.DoubleSide, depthWrite:false});
+      var cutMesh = new THREE.Mesh(cutGeo, cutMat);
+      cutMesh.rotation.x = -Math.PI/2;
+      cutMesh.position.set(ctr.x, cutAt, ctr.z);
+      S.scene.add(cutMesh);
+      S._cutPlaneHelper = cutMesh;
+      // Position camera at angled 3D perspective (Dalux-style, not straight down)
+      // Only reposition on first activation, let user navigate freely after
+      if(!floorPlanCamRef.current){
+        floorPlanCamRef.current = {pos:S.camera.position.clone(), target:S.orbit.target.clone()};
+        var viewDist = Math.max(sz.x,sz.z)*0.9;
+        // Angled view: 55° from horizontal, looking at cut level from one corner
+        var angle = Math.PI/3.3; // ~55 degrees from horizontal
+        var camY = cutAt + viewDist * Math.sin(angle);
+        var camOffset = viewDist * Math.cos(angle);
+        S.orbit.target.set(ctr.x, cutAt - cutHeight*0.5, ctr.z);
+        S.camera.position.set(ctr.x + camOffset*0.7, camY, ctr.z + camOffset*0.7);
+        S.camera.lookAt(S.orbit.target);
+        S.orbit.sync();
+      }
     }, [s.floorPlan]);
 
     // Classification visibility: hide/show groups
@@ -2220,8 +2253,8 @@ function startApp() {
       </div>`}
       ${s.floorPlan && html`<div style=${{...P,top:'.75rem',right:'.75rem',background:'rgba(91,33,182,.9)',color:'#c084fc',pointerEvents:'auto',cursor:'pointer',display:'flex',alignItems:'center',gap:'.4rem'}}
         onClick=${function(){d({t:'FLOOR_PLAN',v:null})}}>
-        <span>Floor Plan: ${s.floorPlan.storeyName} · ${s.floorPlan.elevation.toFixed(1)}m</span>
-        <span style=${{fontSize:'.6rem',opacity:.7}} title="Exit floor plan">✕</span>
+        <span>3D Section: ${s.floorPlan.storeyName} · ${(s.floorPlan.elevation+(s.floorPlan.cutHeight||1.2)).toFixed(1)}m</span>
+        <span style=${{fontSize:'.6rem',opacity:.7}} title="Exit 3D section">✕</span>
       </div>`}
       ${selectedEl && html`<div style=${{position:'absolute',bottom:'.75rem',left:'.75rem',width:280,maxHeight:'50%',overflowY:'auto',background:'rgba(15,23,42,.95)',border:'1px solid #334155',borderRadius:8,padding:'.6rem',pointerEvents:'auto',boxShadow:'0 4px 20px rgba(0,0,0,.5)'}}>
         <div style=${{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:'.4rem'}}>
@@ -2560,19 +2593,20 @@ function startApp() {
                 else{d({t:'FLOOR_PLAN',v:{storeyName:st,elevation:elev,cutHeight:1.2}});}
               }}
                 style=${{...S_BTN,fontSize:'.4rem',padding:'.05rem .2rem',background:isPlanActive?'#7c3aed':'#1e293b',color:isPlanActive?'#fff':'#a78bfa',border:'1px solid '+(isPlanActive?'#7c3aed':'#334155'),flexShrink:0}}
-                title=${'Floor plan cut at '+st+' (+1.2m)'}>${isPlanActive?'Exit':'Plan'}</button>`}
+                title=${'3D section cut at '+st}>${isPlanActive?'Exit':'Cut'}</button>`}
             </div>`;
           })}
           ${activePlan && html`<div style=${{marginTop:'.3rem',padding:'.3rem',background:'#1e1338',border:'1px solid #3b0764',borderRadius:6}}>
-            <div style=${{fontSize:'.55rem',color:'#c084fc',fontWeight:600,marginBottom:'.2rem'}}>Floor Plan: ${activePlan.storeyName}</div>
-            <div style=${{fontSize:'.5rem',color:'#64748b',marginBottom:'.2rem'}}>Cut at ${activePlan.elevation.toFixed(2)}m + ${activePlan.cutHeight}m height</div>
-            <div style=${{display:'flex',alignItems:'center',gap:'.2rem'}}>
+            <div style=${{fontSize:'.55rem',color:'#c084fc',fontWeight:600,marginBottom:'.2rem'}}>3D Section: ${activePlan.storeyName}</div>
+            <div style=${{fontSize:'.5rem',color:'#64748b',marginBottom:'.2rem'}}>Cut at ${(activePlan.elevation+(activePlan.cutHeight||1.2)).toFixed(2)}m</div>
+            <div style=${{display:'flex',alignItems:'center',gap:'.2rem',marginBottom:'.15rem'}}>
               <span style=${{fontSize:'.5rem',color:'#64748b'}}>Cut height:</span>
-              <input type="range" min="0.3" max="3" step="0.1" value=${activePlan.cutHeight||1.2}
+              <input type="range" min="0.3" max="4" step="0.1" value=${activePlan.cutHeight||1.2}
                 onInput=${function(e){d({t:'FLOOR_PLAN',v:Object.assign({},activePlan,{cutHeight:parseFloat(e.target.value)})});}}
                 style=${{flex:1,height:10}} />
               <span style=${{fontSize:'.5rem',color:'#a78bfa',minWidth:25}}>${(activePlan.cutHeight||1.2).toFixed(1)}m</span>
             </div>
+            <div style=${{fontSize:'.45rem',color:'#475569'}}>Ctrl + scroll to move cut up/down</div>
           </div>`}
         </div>`;
       }()}
