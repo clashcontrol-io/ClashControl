@@ -124,7 +124,7 @@ window.onload = function() {
 
 function startApp() {
   // ── Version (auto-updated by pre-commit hook) ──
-  var CC_VERSION = {v:'1.1.3',hash:'8d7e1af',date:'2026-03-20T12:24:55Z'};
+  var CC_VERSION = {v:'1.1.4',hash:'b2e286c',date:'2026-03-20T12:46:11Z'};
 
   // Check CDN deps loaded
   var need = [];
@@ -874,7 +874,7 @@ function startApp() {
     });
     window.addEventListener('mouseup', function(){dragging=false;panning=false});
     el.addEventListener('wheel', function(e){sph.r*=1+e.deltaY*0.0008;apply();e.preventDefault()},{passive:false});
-    return {target:target, sync:sync, apply:apply};
+    return {target:target, sync:sync, apply:apply, sph:sph};
   }
 
   // ── Three.js Viewer Component ──────────────────────────────────
@@ -887,6 +887,9 @@ function startApp() {
   var _clearClashMarkers = null;
   var _findAndHighlightElements = null;
   var _clearFoundElements = null;
+  var _ghostOthers = null;
+  var _unghostAll = null;
+  var _sboxAroundElements = null;
   function Viewer(props) {
     var s = props.s, d = props.d;
     var ref = useRef(null);
@@ -928,14 +931,66 @@ function startApp() {
       S.renderer = renderer;
 
       S.orbit = makeOrbit(camera, renderer.domElement);
-      _flyTo = function(pt) {
+
+      // Animated fly-to with easing (1.5s)
+      var _flyAnim = null;
+      function easeInOut(t){return t<0.5?4*t*t*t:(1-Math.pow(-2*t+2,3)/2);}
+      _flyTo = function(pt, dist) {
         if(!pt||pt.length<3) return;
-        var t=S.orbit.target, d=S.orbit;
-        t.set(pt[0],pt[1],pt[2]);
-        S.camera.position.set(pt[0]+15,pt[1]+10,pt[2]+15);
-        d.sync(); d.apply();
+        if(_flyAnim) cancelAnimationFrame(_flyAnim);
+        var startTarget = S.orbit.target.clone();
+        var startPos = S.camera.position.clone();
+        var d2 = dist || 15;
+        var endTarget = new THREE.Vector3(pt[0],pt[1],pt[2]);
+        var endPos = new THREE.Vector3(pt[0]+d2*0.6,pt[1]+d2*0.4,pt[2]+d2*0.6);
+        var startTime = performance.now();
+        var duration = 1500;
+        function animate(){
+          var elapsed = performance.now()-startTime;
+          var t = Math.min(elapsed/duration,1);
+          var e = easeInOut(t);
+          S.orbit.target.lerpVectors(startTarget,endTarget,e);
+          S.camera.position.lerpVectors(startPos,endPos,e);
+          S.camera.lookAt(S.orbit.target);
+          S.orbit.sync();
+          if(t<1) _flyAnim=requestAnimationFrame(animate);
+          else _flyAnim=null;
+        }
+        animate();
       };
-      _highlightById = function(expressId) {
+
+      // Ghost/transparency: make all non-highlighted meshes semi-transparent
+      var _ghostedMeshes = [];
+      function ghostOthers(targetExpressIds) {
+        unghostAll();
+        if(!targetExpressIds||!targetExpressIds.length) return;
+        var idSet = {};
+        targetExpressIds.forEach(function(id){idSet[id]=true;});
+        S.mg.traverse(function(obj){
+          if(!obj.isMesh||!obj.material) return;
+          var eid = obj.userData.expressID;
+          if(eid!=null && !idSet[eid]){
+            _ghostedMeshes.push({mesh:obj, origOpacity:obj.material.opacity, origTransparent:obj.material.transparent});
+            obj.material.transparent = true;
+            obj.material.opacity = 0.15;
+            obj.material.needsUpdate = true;
+          }
+        });
+      }
+      function unghostAll(){
+        _ghostedMeshes.forEach(function(g){
+          g.mesh.material.opacity = g.origOpacity;
+          g.mesh.material.transparent = g.origTransparent;
+          g.mesh.material.needsUpdate = true;
+        });
+        _ghostedMeshes = [];
+      }
+      S._ghostOthers = ghostOthers;
+      S._unghostAll = unghostAll;
+      _ghostOthers = ghostOthers;
+      _unghostAll = unghostAll;
+
+      _highlightById = function(expressId, alsoGhost) {
         if(!expressId||!S.mg) return;
         if(hlRef.current){scene.remove(hlRef.current);hlRef.current=null;}
         if(outlineRef.current){scene.remove(outlineRef.current);outlineRef.current=null;}
@@ -954,7 +1009,6 @@ function startApp() {
               var outGeo = found.geometry.clone();
               var outMat = new THREE.MeshBasicMaterial({color:0x3b82f6, side:THREE.BackSide, transparent:true, opacity:0.35});
               var outMesh = new THREE.Mesh(outGeo, outMat);
-              // Copy the world transform, then slightly scale up from center
               outMesh.applyMatrix4(found.matrixWorld);
               var outBox = new THREE.Box3().setFromObject(outMesh);
               var outCtr = outBox.getCenter(new THREE.Vector3());
@@ -966,6 +1020,8 @@ function startApp() {
             } catch(e){}
           }
         }
+        // Ghost non-selected elements
+        if(alsoGhost!==false) ghostOthers([expressId]);
       };
 
       // ── Clash Markers ──
@@ -1016,9 +1072,7 @@ function startApp() {
         var ctr = box.getCenter(new THREE.Vector3());
         var sz = box.getSize(new THREE.Vector3());
         var dist = Math.max(sz.x,sz.y,sz.z,5)*2;
-        S.orbit.target.copy(ctr);
-        S.camera.position.set(ctr.x+dist,ctr.y+dist*0.6,ctr.z+dist);
-        S.orbit.sync(); S.orbit.apply();
+        _flyTo([ctr.x,ctr.y,ctr.z], dist);
       };
       _fitToElement = function(expressId) {
         if(!expressId||!S.mg||!S.orbit) return;
@@ -1030,10 +1084,8 @@ function startApp() {
         var box = new THREE.Box3().setFromObject(found);
         var ctr = box.getCenter(new THREE.Vector3());
         var sz = box.getSize(new THREE.Vector3());
-        var dist = Math.max(sz.x,sz.y,sz.z,2)*2.5;
-        S.orbit.target.copy(ctr);
-        S.camera.position.set(ctr.x+dist,ctr.y+dist*0.5,ctr.z+dist);
-        S.orbit.sync(); S.orbit.apply();
+        var dist = Math.max(sz.x,sz.y,sz.z,1)*1.5;
+        _flyTo([ctr.x,ctr.y,ctr.z], dist);
       };
 
       // ── Section Box helper ──
@@ -1041,9 +1093,27 @@ function startApp() {
         if(!S.mg||!S.mg.children.length) return null;
         var box=new THREE.Box3().setFromObject(S.mg);
         if(box.isEmpty()) return null;
-        // Add small padding
         box.expandByScalar(0.5);
         return box;
+      };
+
+      // Section box around specific elements (for clash isolation)
+      _sboxAroundElements = function(expressIds) {
+        if(!expressIds||!expressIds.length||!S.mg) return;
+        var box = new THREE.Box3();
+        expressIds.forEach(function(eid){
+          S.mg.traverse(function(obj){
+            if(obj.isMesh && obj.userData.expressID===eid){
+              box.expandByObject(obj);
+            }
+          });
+        });
+        if(box.isEmpty()) return;
+        box.expandByScalar(1.5); // padding around elements
+        // Dispatch section box via the dispatch function stored on window
+        if(window._ccDispatch){
+          window._ccDispatch({t:'SECTION_BOX',v:{enabled:true,min:[box.min.x,box.min.y,box.min.z],max:[box.max.x,box.max.y,box.max.z]}});
+        }
       };
 
       // ── Items Finder: search and highlight elements by name/type ──
@@ -1244,12 +1314,14 @@ function startApp() {
             var hitBox = new THREE.Box3().setFromObject(hit);
             var hitCtr = hitBox.getCenter(new THREE.Vector3());
             var hitPt = [hitCtr.x, hitCtr.y, hitCtr.z];
-            setSelectedEl(found ? {props:found.el.props||{}, modelName:found.model.name, expressId:eid, point:hitPt} : {props:{expressId:eid}, modelName:'Unknown', expressId:eid, point:hitPt});
+            setSelectedEl(found ? {props:found.el.props||{}, modelName:found.model.name, expressId:eid, point:hitPt, box:hitBox} : {props:{expressId:eid}, modelName:'Unknown', expressId:eid, point:hitPt, box:hitBox});
+            ghostOthers([eid]);
           }
         } else {
           // Click on empty space — deselect
           if(hlRef.current){scene.remove(hlRef.current);hlRef.current=null;}
           if(outlineRef.current){scene.remove(outlineRef.current);outlineRef.current=null;}
+          unghostAll();
           setSelectedEl(null);
         }
       });
@@ -1779,7 +1851,9 @@ function startApp() {
           <div style=${{display:'flex',gap:'.3rem'}}>
             <button onClick=${function(){d({t:'MODAL',v:true,el:selectedEl});d({t:'TAB',v:'issues'});}}
               style=${{...S_BTN,padding:'.1rem .4rem',background:'#2563eb',color:'#fff',fontSize:'.65rem',fontWeight:600,borderRadius:4}}>Create Issue</button>
-            <button onClick=${function(){setSelectedEl(null);if(hlRef.current&&state3d.current.scene){state3d.current.scene.remove(hlRef.current);hlRef.current=null;}if(outlineRef.current&&state3d.current.scene){state3d.current.scene.remove(outlineRef.current);outlineRef.current=null;}}}
+            <button onClick=${function(){if(_sboxAroundElements)_sboxAroundElements([selectedEl.expressId]);}}
+              style=${{...S_BTN,padding:'.1rem .3rem',background:'#3b0764',color:'#c084fc',fontSize:'.6rem',borderRadius:4}} title="Section box around element">Box</button>
+            <button onClick=${function(){setSelectedEl(null);if(_unghostAll)_unghostAll();if(hlRef.current&&state3d.current.scene){state3d.current.scene.remove(hlRef.current);hlRef.current=null;}if(outlineRef.current&&state3d.current.scene){state3d.current.scene.remove(outlineRef.current);outlineRef.current=null;}}}
               style=${{...S_BTN,padding:'0 4px',background:'none',color:'#475569',fontSize:'.7rem'}}>✕</button>
           </div>
         </div>
@@ -1791,6 +1865,29 @@ function startApp() {
         ${ep && ep.storey && html`<div style=${ROW}><span style=${LS}>Storey</span><span style=${VS}>${ep.storey}</span></div>`}
         ${ep && ep.material && html`<div style=${ROW}><span style=${LS}>Material</span><span style=${VS}>${ep.material}</span></div>`}
         <div style=${ROW}><span style=${LS}>Express ID</span><span style=${VS}>#${selectedEl.expressId}</span></div>
+        ${function(){
+          // Show IFC quantities for length/width/height if available, otherwise bounding box
+          var q = ep&&ep.quantities||{};
+          var hasIfcDims = q.Length||q.Width||q.Height||q.Depth||q.Perimeter;
+          var ifcDims = [];
+          if(q.Length) ifcDims.push({l:'Length',v:q.Length});
+          if(q.Width) ifcDims.push({l:'Width',v:q.Width});
+          if(q.Height) ifcDims.push({l:'Height',v:q.Height});
+          if(q.Depth) ifcDims.push({l:'Depth',v:q.Depth});
+          if(q.Perimeter) ifcDims.push({l:'Perimeter',v:q.Perimeter});
+          return html`<div style=${{marginTop:'.2rem',borderTop:'1px solid #1e293b',paddingTop:'.2rem'}}>
+            <div style=${{fontSize:'.6rem',fontWeight:600,color:'#64748b',marginBottom:'.1rem'}}>Dimensions${hasIfcDims?' (IFC)':' (bounding box)'}</div>
+            ${hasIfcDims ? ifcDims.map(function(d){
+              var val = typeof d.v==='number'?(d.v>=1?(d.v.toFixed(3)+' m'):((d.v*1000).toFixed(0)+' mm')):String(d.v);
+              return html`<div key=${d.l} style=${ROW}><span style=${LS}>${d.l}</span><span style=${VS}>${val}</span></div>`;
+            }) : selectedEl.box ? function(){
+              var sz = selectedEl.box.getSize(new THREE.Vector3());
+              return [{l:'Length (X)',v:sz.x},{l:'Width (Z)',v:sz.z},{l:'Height (Y)',v:sz.y}].map(function(d){
+                return html`<div key=${d.l} style=${ROW}><span style=${LS}>${d.l}</span><span style=${VS}>${(d.v*1000).toFixed(0)} mm (${d.v.toFixed(3)} m)</span></div>`;
+              });
+            }() : null}
+          </div>`;
+        }()}
         ${epQ.length>0 && html`<div style=${{marginTop:'.3rem',borderTop:'1px solid #1e293b',paddingTop:'.3rem'}}>
           <div style=${{fontSize:'.6rem',fontWeight:600,color:'#64748b',marginBottom:'.15rem'}}>Quantities</div>
           ${epQ.map(function(k){return html`<div key=${k} style=${ROW}><span style=${LS}>${k}</span><span style=${VS}>${typeof ep.quantities[k]==='number'?ep.quantities[k].toFixed(3):ep.quantities[k]}</span></div>`})}
@@ -2035,6 +2132,45 @@ function startApp() {
         ${s.models.length===0 && html`<div style=${{textAlign:'center',color:'#334155',fontSize:'.75rem',padding:'2rem 0'}}><div style=${{fontSize:'2rem',marginBottom:'.3rem'}}>📁</div>No models loaded</div>`}
         ${s.models.map(function(m){return html`<${ModelCard} key=${m.id} m=${m} d=${d} />`})}
       </div>
+      ${function(){
+        // Collect all unique storeys across all models for global toggle
+        var allStoreys = {};
+        s.models.forEach(function(m){
+          (m.storeys||[]).forEach(function(st){
+            if(!allStoreys[st]) allStoreys[st]={models:[]};
+            allStoreys[st].models.push(m.id);
+          });
+        });
+        var stKeys = Object.keys(allStoreys).sort();
+        if(stKeys.length===0) return null;
+        return html`<div style=${{padding:'.5rem .75rem',borderTop:'1px solid #1e293b',flexShrink:0,maxHeight:140,overflowY:'auto'}}>
+          <div style=${{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:'.3rem'}}>
+            <span style=${{fontSize:'.65rem',fontWeight:600,color:'#64748b',textTransform:'uppercase',letterSpacing:'.05em'}}>Levels</span>
+            <div style=${{display:'flex',gap:'.2rem'}}>
+              <button onClick=${function(){s.models.forEach(function(m){d({t:'TOGGLE_ALL_STOREYS',id:m.id,storeys:m.storeys||[],hide:false})})}}
+                style=${{...S_BTN,fontSize:'.45rem',padding:'.05rem .2rem',background:'#0f172a',color:'#64748b'}}>All on</button>
+              <button onClick=${function(){s.models.forEach(function(m){d({t:'TOGGLE_ALL_STOREYS',id:m.id,storeys:m.storeys||[],hide:true})})}}
+                style=${{...S_BTN,fontSize:'.45rem',padding:'.05rem .2rem',background:'#0f172a',color:'#64748b'}}>All off</button>
+            </div>
+          </div>
+          ${stKeys.map(function(st){
+            // Check if this storey is hidden in ANY model
+            var hidden = s.models.every(function(m){return m.hiddenStoreys&&m.hiddenStoreys[st]});
+            return html`<label key=${st} style=${{display:'flex',alignItems:'center',gap:'.25rem',cursor:'pointer',padding:'.1rem 0'}}>
+              <span onClick=${function(e){e.preventDefault();s.models.forEach(function(m){
+                if((m.storeys||[]).indexOf(st)!==-1){
+                  // Toggle this storey for all models that have it
+                  d({t:'TOGGLE_STOREY',id:m.id,storey:st});
+                }
+              });}}
+                style=${{width:11,height:11,borderRadius:2,border:'2px solid '+(hidden?'#475569':'#34d399'),background:hidden?'transparent':'#34d399',cursor:'pointer',flexShrink:0,display:'flex',alignItems:'center',justifyContent:'center'}}>
+                ${!hidden && html`<span style=${{color:'#fff',fontSize:7}}>✓</span>`}
+              </span>
+              <span style=${{fontSize:'.6rem',color:hidden?'#475569':'#e2e8f0',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}} title=${st}>${st}</span>
+            </label>`;
+          })}
+        </div>`;
+      }()}
       <div style=${{padding:'.75rem',borderTop:'1px solid #1e293b',flexShrink:0}}>
         <span style=${{fontSize:'.7rem',fontWeight:600,color:'#64748b',textTransform:'uppercase',letterSpacing:'.05em',display:'block',marginBottom:'.4rem'}}>Section / Clipping</span>
         <div style=${{display:'flex',gap:'.2rem',marginBottom:'.3rem'}}>
@@ -2514,6 +2650,8 @@ function startApp() {
           style=${{...S_BTN,fontSize:'.5rem',padding:'.1rem .3rem',background:'#0f3a5f',color:'#93c5fd',flex:1}}>Zoom A</button>
         <button onClick=${function(){if(_fitToElement&&it.elemB)_fitToElement(it.elemB);if(_highlightById&&it.elemB)_highlightById(it.elemB);}}
           style=${{...S_BTN,fontSize:'.5rem',padding:'.1rem .3rem',background:'#0f3a5f',color:'#93c5fd',flex:1}}>Zoom B</button>
+        <button onClick=${function(){if(_fitToElement&&it.elemA)_fitToElement(it.elemA);if(_highlightById)_highlightById(it.elemA,false);_sboxAroundElements&&_sboxAroundElements([it.elemA,it.elemB]);}}
+          style=${{...S_BTN,fontSize:'.5rem',padding:'.1rem .3rem',background:'#3b0764',color:'#c084fc',flex:1}} title="Section box around both elements">Box</button>
       </div>
       <button onClick=${function(){setDetailOpen(!detailOpen)}}
         style=${{...S_BTN,fontSize:'.55rem',padding:'.15rem .35rem',background:'#0f172a',color:'#64748b',width:'100%',textAlign:'left',border:'1px solid #1e293b'}}>
@@ -2530,7 +2668,28 @@ function startApp() {
     var it=props.item, active=props.active, d=props.d, isClash=props.isClash, pr=props.prefs||{};
     var icon = it.type==='hard'?'🔴':it.type==='soft'?'🟡':it.source==='element'?'🏗':'📌';
     var stBg = (STAT[it.status]||STAT.open).bg;
-    return html`<div onClick=${function(){d({t:'ACTIVE',id:active?null:it.id});if(!active&&it.point&&_flyTo&&pr.autoFlyTo!==false){_flyTo(it.point);if(it.elementId&&_highlightById&&pr.autoHighlight!==false)_highlightById(it.elementId);}}}
+    return html`<div onClick=${function(){
+        var wasActive=active;
+        d({t:'ACTIVE',id:wasActive?null:it.id});
+        if(wasActive){
+          // Deselecting: restore transparency
+          if(_unghostAll)_unghostAll();
+          return;
+        }
+        if(it.point&&_flyTo&&pr.autoFlyTo!==false){
+          _flyTo(it.point);
+        }
+        if(pr.autoHighlight!==false){
+          // For clashes, ghost everything except the two clash elements
+          var ids=[];
+          if(it.elemA) ids.push(it.elemA);
+          if(it.elemB) ids.push(it.elemB);
+          if(it.elementId) ids.push(it.elementId);
+          if(ids.length&&_ghostOthers) _ghostOthers(ids);
+          if(it.elemA&&_highlightById) _highlightById(it.elemA,false);
+          if(it.elementId&&_highlightById) _highlightById(it.elementId,false);
+        }
+      }}
       style=${{padding:'.6rem .7rem',borderBottom:'1px solid #1e293b',cursor:'pointer',background:active?'#1e293b':'transparent',borderLeft:active?'2px solid #3b82f6':'2px solid transparent'}}>
       <div style=${{display:'flex',gap:'.35rem',alignItems:'flex-start'}}>
         <span style=${{fontSize:'.85rem',flexShrink:0}}>${icon}</span>
@@ -2793,6 +2952,7 @@ function startApp() {
 
   function App() {
     var st = useReducer(reducer, INIT), s=st[0], d=st[1];
+    window._ccDispatch = d;
     return html`<div style=${{height:'100vh',display:'flex',flexDirection:'column',overflow:'hidden'}}>
       <${Header} s=${s} d=${d} />
       <div style=${{display:'flex',flex:1,overflow:'hidden'}}>
