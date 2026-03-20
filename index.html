@@ -124,7 +124,7 @@ window.onload = function() {
 
 function startApp() {
   // ── Version (auto-updated by pre-commit hook) ──
-  var CC_VERSION = {v:'1.1.6',hash:'d2fc529',date:'2026-03-20T13:06:55Z'};
+  var CC_VERSION = {v:'1.1.7',hash:'d5e45f6',date:'2026-03-20T13:20:26Z'};
 
   // Check CDN deps loaded
   var need = [];
@@ -953,14 +953,36 @@ function startApp() {
       // Animated fly-to with easing (1.5s)
       var _flyAnim = null;
       function easeInOut(t){return t<0.5?4*t*t*t:(1-Math.pow(-2*t+2,3)/2);}
-      _flyTo = function(pt, dist) {
+      _flyTo = function(pt, dist, hint) {
+        // hint: optional {normal:[x,y,z]} for surface normal, or {from:[x,y,z]} for preferred direction
         if(!pt||pt.length<3) return;
         if(_flyAnim) cancelAnimationFrame(_flyAnim);
         var startTarget = S.orbit.target.clone();
         var startPos = S.camera.position.clone();
         var d2 = dist || 15;
         var endTarget = new THREE.Vector3(pt[0],pt[1],pt[2]);
-        var endPos = new THREE.Vector3(pt[0]+d2*0.6,pt[1]+d2*0.4,pt[2]+d2*0.6);
+
+        // Compute smart camera offset: use hint, or direction from model center outward
+        var dir = new THREE.Vector3(0.6, 0.4, 0.6).normalize();
+        if(hint && hint.normal) {
+          // Place camera on the side the surface faces
+          dir.set(hint.normal[0], hint.normal[1], hint.normal[2]).normalize();
+          // Bias slightly upward so we get a nice viewing angle
+          dir.y = Math.max(dir.y, 0.25);
+          dir.normalize();
+        } else if(S.mg && S.mg.children.length > 0) {
+          // Direction from model center to target element — camera goes on the outside
+          var modelBox = new THREE.Box3().setFromObject(S.mg);
+          var modelCtr = modelBox.getCenter(new THREE.Vector3());
+          dir.subVectors(endTarget, modelCtr);
+          if(dir.length() < 0.01) dir.set(0.6, 0.4, 0.6);
+          dir.normalize();
+          // Bias upward for a better viewing angle
+          dir.y = Math.max(dir.y, 0.3);
+          dir.normalize();
+        }
+        var endPos = endTarget.clone().addScaledVector(dir, d2);
+
         var startTime = performance.now();
         var duration = 1500;
         function animate(){
@@ -1367,8 +1389,22 @@ function startApp() {
             var hitBox = new THREE.Box3().setFromObject(hit);
             var hitCtr = hitBox.getCenter(new THREE.Vector3());
             var hitPt = [hitCtr.x, hitCtr.y, hitCtr.z];
-            setSelectedEl(found ? {props:found.el.props||{}, modelName:found.model.name, expressId:eid, point:hitPt, box:hitBox} : {props:{expressId:eid}, modelName:'Unknown', expressId:eid, point:hitPt, box:hitBox});
+            // Capture hit face normal for smart fly-to direction
+            var hitNormal = null;
+            if(hits[0].face && hits[0].face.normal) {
+              var fn = hits[0].face.normal.clone();
+              // Transform face normal to world space
+              fn.transformDirection(hit.matrixWorld);
+              hitNormal = [fn.x, fn.y, fn.z];
+            }
+            setSelectedEl(found ? {props:found.el.props||{}, modelName:found.model.name, expressId:eid, point:hitPt, box:hitBox, normal:hitNormal} : {props:{expressId:eid}, modelName:'Unknown', expressId:eid, point:hitPt, box:hitBox, normal:hitNormal});
             ghostOthers([eid]);
+            // Fly to element on click (if autoFlyTo enabled)
+            if(prefsRef.current.autoFlyTo!==false && _flyTo) {
+              var elSz = hitBox.getSize(new THREE.Vector3());
+              var elDist = Math.max(elSz.x,elSz.y,elSz.z,1)*2.5;
+              _flyTo(hitPt, elDist, hitNormal ? {normal:hitNormal} : null);
+            }
           }
         } else {
           // Click on empty space — deselect
