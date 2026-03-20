@@ -124,7 +124,7 @@ window.onload = function() {
 
 function startApp() {
   // ── Version (auto-updated by pre-commit hook) ──
-  var CC_VERSION = {v:'1.1.7',hash:'d5e45f6',date:'2026-03-20T13:20:26Z'};
+  var CC_VERSION = {v:'1.1.9',hash:'c3b2df5',date:'2026-03-20T17:21:09Z'};
 
   // Check CDN deps loaded
   var need = [];
@@ -140,6 +140,7 @@ function startApp() {
   var useEffect  = React.useEffect;
   var useRef     = React.useRef;
   var useReducer = React.useReducer;
+  var useMemo    = React.useMemo;
   var html       = htm.bind(h);
 
   // ── Constants ──────────────────────────────────────────────────
@@ -190,8 +191,6 @@ function startApp() {
     classifications:{}, // { byType:{}, byStorey:{}, byDiscipline:{}, byMaterial:{} }
     hiddenClasses:{}, // { 'byType:IfcWall':true, ... } – toggle visibility per classification group
     colorByClass:null, // null, 'byType', 'byStorey', 'byDiscipline', 'byMaterial'
-    // Exploder
-    explodeAmount:0, // 0=off, 0.01-1=exploded
     // Model tree
     treeOpen:false,
     // Floor plan cut
@@ -231,7 +230,7 @@ function startApp() {
       case 'SHOW_ALL_CLASSES': return Object.assign({},s,{hiddenClasses:{}});
       case 'HIDE_ALL_CLASSES': var hca={}; if(s.classifications[a.view]){Object.keys(s.classifications[a.view]).forEach(function(k){hca[a.view+':'+k]=true;});} return Object.assign({},s,{hiddenClasses:hca});
       case 'COLOR_BY_CLASS': return Object.assign({},s,{colorByClass:s.colorByClass===a.v?null:a.v});
-      case 'EXPLODE':      return Object.assign({},s,{explodeAmount:a.v});
+
       case 'TREE':         return Object.assign({},s,{treeOpen:a.v});
       case 'FLOOR_PLAN':   return Object.assign({},s,{floorPlan:a.v, sectionAxis:null, sectionCustom:null, sectionBox:null});
       default:            return s;
@@ -1496,29 +1495,38 @@ function startApp() {
 
       // FPS tracking
       S.perf = {fps:0, frameCount:0, lastTime:performance.now(), tris:0, meshCount:0, drawCalls:0};
+      // Cached mini-map bounds (invalidated on model add/remove)
+      S._mmBoxCache = null;
+      S._mmBoxCacheTime = 0;
       function tick(){
         S.raf=requestAnimationFrame(tick);
         // Main render
         renderer.setViewport(0,0,el.clientWidth,el.clientHeight);
         renderer.setScissorTest(false);
         renderer.render(scene,camera);
-        // Mini-map render
+        // Mini-map render (recalculate bounds only every 2s)
         if(S.miniMapEnabled && S.mg && S.mg.children.length>0){
           var mmSize = 140;
-          // Update mini-map camera to cover model bounds
-          var mmBox = new THREE.Box3().setFromObject(S.mg);
-          if(!mmBox.isEmpty()){
-            var mmCtr = mmBox.getCenter(new THREE.Vector3());
-            var mmSz = mmBox.getSize(new THREE.Vector3());
-            var extent = Math.max(mmSz.x, mmSz.z) * 0.7;
-            miniCam.left = -extent; miniCam.right = extent;
-            miniCam.top = extent; miniCam.bottom = -extent;
-            miniCam.position.set(mmCtr.x, mmCtr.y + Math.max(mmSz.y,50)*2, mmCtr.z);
-            miniCam.lookAt(mmCtr.x, mmCtr.y, mmCtr.z);
-            miniCam.updateProjectionMatrix();
-            // Update camera indicator position
+          var now2 = performance.now();
+          if(!S._mmBoxCache || now2 - S._mmBoxCacheTime > 2000){
+            S._mmBoxCache = new THREE.Box3().setFromObject(S.mg);
+            S._mmBoxCacheTime = now2;
+            if(!S._mmBoxCache.isEmpty()){
+              var mmCtr2 = S._mmBoxCache.getCenter(new THREE.Vector3());
+              var mmSz2 = S._mmBoxCache.getSize(new THREE.Vector3());
+              var extent = Math.max(mmSz2.x, mmSz2.z) * 0.7;
+              miniCam.left = -extent; miniCam.right = extent;
+              miniCam.top = extent; miniCam.bottom = -extent;
+              miniCam.position.set(mmCtr2.x, mmCtr2.y + Math.max(mmSz2.y,50)*2, mmCtr2.z);
+              miniCam.lookAt(mmCtr2.x, mmCtr2.y, mmCtr2.z);
+              miniCam.updateProjectionMatrix();
+              S._mmCtr = mmCtr2;
+            }
+          }
+          if(S._mmCtr){
+            // Only camera indicator needs per-frame update (cheap)
             camIndicator.position.copy(camera.position);
-            camIndicator.position.y = mmCtr.y + 0.5;
+            camIndicator.position.y = S._mmCtr.y + 0.5;
             var lookDir = new THREE.Vector3();
             camera.getWorldDirection(lookDir);
             camIndicator.rotation.y = Math.atan2(lookDir.x, lookDir.z);
@@ -1580,19 +1588,29 @@ function startApp() {
         }
         if(S.map[model.id]) {
           S.map[model.id].visible = model.visible!==false;
-          // Apply storey visibility
+          // Apply storey visibility — cache elMap and skip if unchanged
           var hs = model.hiddenStoreys||{};
-          var elMap = {};
-          (model.elements||[]).forEach(function(el){
-            var st = el.props&&el.props.storey||'';
-            elMap[el.expressId] = st;
-          });
-          S.map[model.id].traverse(function(obj){
-            if(obj.isMesh && obj.userData.expressID!=null){
-              var st = elMap[obj.userData.expressID]||'';
-              obj.visible = !hs[st];
+          var hsKey = Object.keys(hs).filter(function(k){return hs[k]}).sort().join(',');
+          if(!S._elMapCache) S._elMapCache = {};
+          if(!S._hsCache) S._hsCache = {};
+          if(S._hsCache[model.id] !== hsKey) {
+            S._hsCache[model.id] = hsKey;
+            if(!S._elMapCache[model.id]) {
+              var elMap = {};
+              (model.elements||[]).forEach(function(el){
+                var st = el.props&&el.props.storey||'';
+                elMap[el.expressId] = st;
+              });
+              S._elMapCache[model.id] = elMap;
             }
-          });
+            var em = S._elMapCache[model.id];
+            S.map[model.id].traverse(function(obj){
+              if(obj.isMesh && obj.userData.expressID!=null){
+                var st = em[obj.userData.expressID]||'';
+                obj.visible = !hs[st];
+              }
+            });
+          }
         }
       });
     }, [s.models]);
@@ -1619,17 +1637,14 @@ function startApp() {
         planes.push(plane);
       }
       S.renderer.clippingPlanes=planes;
-      S.mg.traverse(function(obj){if(obj.isMesh&&obj.material){obj.material.clippingPlanes=planes;obj.material.needsUpdate=true;}});
     }, [s.sectionAxis, s.sectionPos, s.sectionCustom]);
 
     // Section Box: 6 clipping planes forming a box
     useEffect(function(){
       var S = state3d.current; if(!S.renderer||!S.mg) return;
       if(!s.sectionBox||!s.sectionBox.enabled) {
-        // Only clear if section box was active (don't interfere with regular section planes)
         if(S._sectionBoxActive) {
           S.renderer.clippingPlanes=[];
-          S.mg.traverse(function(obj){if(obj.isMesh&&obj.material){obj.material.clippingPlanes=[];obj.material.needsUpdate=true;}});
           S._sectionBoxActive=false;
         }
         // Clean up box helper
@@ -1646,7 +1661,6 @@ function startApp() {
         new THREE.Plane(new THREE.Vector3(0,0,-1),sb.max[2])
       ];
       S.renderer.clippingPlanes=planes;
-      S.mg.traverse(function(obj){if(obj.isMesh&&obj.material){obj.material.clippingPlanes=planes;obj.material.needsUpdate=true;}});
       S._sectionBoxActive=true;
       // Box wireframe helper
       if(S._sboxHelper){S.scene.remove(S._sboxHelper);S._sboxHelper=null;}
@@ -1672,7 +1686,6 @@ function startApp() {
         // Don't clear clipping if another section mode is active
         if(!s.sectionAxis && !s.sectionCustom && !s.sectionBox){
           S.renderer.clippingPlanes=[];
-          S.mg.traverse(function(obj){if(obj.isMesh&&obj.material){obj.material.clippingPlanes=[];obj.material.needsUpdate=true;}});
         }
         return;
       }
@@ -1685,7 +1698,6 @@ function startApp() {
         new THREE.Plane(new THREE.Vector3(0,-1,0), cutElev+cutHeight) // remove everything above cut height
       ];
       S.renderer.clippingPlanes = planes;
-      S.mg.traverse(function(obj){if(obj.isMesh&&obj.material){obj.material.clippingPlanes=planes;obj.material.needsUpdate=true;}});
       // Switch to top-down orthographic-like view
       if(!floorPlanCamRef.current){
         floorPlanCamRef.current = {pos:S.camera.position.clone(), target:S.orbit.target.clone()};
@@ -1703,33 +1715,32 @@ function startApp() {
     }, [s.floorPlan]);
 
     // Classification visibility: hide/show groups
+    var lastHiddenRef = useRef(null);
     useEffect(function(){
       var S = state3d.current; if(!S.mg) return;
       var cls = s.classifications;
       var hidden = s.hiddenClasses;
-      if(!cls||!Object.keys(hidden).length){
-        // Show all
+      var hiddenKeys = Object.keys(hidden);
+      // Skip if nothing changed
+      var hiddenStr = hiddenKeys.join(',');
+      if(lastHiddenRef.current === hiddenStr) return;
+      lastHiddenRef.current = hiddenStr;
+      if(!cls||!hiddenKeys.length){
         S.mg.traverse(function(obj){if(obj.isMesh)obj.visible=true;});
         return;
       }
-      // Build a set of hidden expressIDs
-      var hiddenIds={};
-      Object.keys(hidden).forEach(function(key){
+      // Build hidden set once
+      var hiddenIds = new Set();
+      hiddenKeys.forEach(function(key){
         var parts=key.split(':'); var view=parts[0]; var grpKey=parts.slice(1).join(':');
         var grp = cls[view]&&cls[view][grpKey];
-        if(grp&&grp.items){
-          grp.items.forEach(function(it){hiddenIds[it.modelId+'_'+it.expressId]=true;});
-        }
+        if(grp&&grp.items) grp.items.forEach(function(it){hiddenIds.add(it.modelId+'_'+it.expressId);});
       });
       S.mg.traverse(function(obj){
         if(!obj.isMesh) return;
-        var eid=obj.userData.expressID;
-        if(eid==null) return;
-        // Check all parent groups to find model
-        var parent=obj.parent;
-        var modelId=parent?parent.userData.modelId:null;
-        if(modelId&&hiddenIds[modelId+'_'+eid]){obj.visible=false;}
-        else{obj.visible=true;}
+        var eid=obj.userData.expressID; if(eid==null) return;
+        var modelId=obj.parent?obj.parent.userData.modelId:null;
+        obj.visible = !(modelId&&hiddenIds.has(modelId+'_'+eid));
       });
     }, [s.hiddenClasses, s.classifications]);
 
@@ -1778,38 +1789,6 @@ function startApp() {
       });
       origColorsRef.current=saved;
     }, [s.colorByClass, s.classifications]);
-
-    // Exploder: spread elements outward from center
-    var explodeOrigRef = useRef(null);
-    useEffect(function(){
-      var S = state3d.current; if(!S.mg) return;
-      if(s.explodeAmount<=0){
-        // Restore
-        if(explodeOrigRef.current){
-          explodeOrigRef.current.forEach(function(e){e.mesh.position.copy(e.pos);});
-          explodeOrigRef.current=null;
-        }
-        return;
-      }
-      // Save originals if not saved
-      if(!explodeOrigRef.current){
-        var saved=[];
-        S.mg.traverse(function(obj){if(obj.isMesh)saved.push({mesh:obj,pos:obj.position.clone()});});
-        explodeOrigRef.current=saved;
-      }
-      // Compute center
-      var box=new THREE.Box3().setFromObject(S.mg);
-      var center=box.getCenter(new THREE.Vector3());
-      var maxDist=box.getSize(new THREE.Vector3()).length()/2;
-      var factor=s.explodeAmount*2;
-      explodeOrigRef.current.forEach(function(e){
-        var meshBox=new THREE.Box3().setFromObject(e.mesh);
-        var meshCenter=meshBox.getCenter(new THREE.Vector3());
-        var dir=meshCenter.clone().sub(center);
-        if(dir.length()<0.001) return;
-        e.mesh.position.copy(e.pos).addScaledVector(dir.normalize(),dir.length()*factor);
-      });
-    }, [s.explodeAmount]);
 
     // Sync clash markers when clashes change
     useEffect(function(){
@@ -2355,15 +2334,6 @@ function startApp() {
         </div>`}
         <${SectionBoxUI} s=${s} d=${d} />
       </div>
-      <div style=${{padding:'.5rem .75rem',borderTop:'1px solid #1e293b',flexShrink:0}}>
-        <span style=${{fontSize:'.65rem',fontWeight:600,color:'#64748b',textTransform:'uppercase',letterSpacing:'.05em',display:'block',marginBottom:'.3rem'}}>Exploder</span>
-        <div style=${{display:'flex',alignItems:'center',gap:'.3rem'}}>
-          <input type="range" min="0" max="1" step="0.01" value=${s.explodeAmount}
-            onInput=${function(e){d({t:'EXPLODE',v:parseFloat(e.target.value)});}}
-            style=${{flex:1}} />
-          <span style=${{fontSize:'.6rem',color:'#475569',minWidth:30,textAlign:'right'}}>${s.explodeAmount>0?Math.round(s.explodeAmount*100)+'%':'Off'}</span>
-        </div>
-      </div>
     </aside>`;
   }
 
@@ -2528,9 +2498,15 @@ function startApp() {
     var cls = s.classifications;
     var cv = useState('byType'), classView=cv[0], setClassView=cv[1];
     var hasCls = cls && Object.keys(cls).length>0;
-    // Auto-classify when models change
+    // Auto-classify when models are added/removed (skip storey/visibility toggles)
+    var lastClassifyRef = useRef('');
     useEffect(function(){
-      if(s.models.length>0) d({t:'SET_CLASSIFICATIONS',v:classifyModels(s.models)});
+      if(s.models.length===0) return;
+      // Only reclassify when model set or element counts change
+      var sig = s.models.map(function(m){return m.id+':'+(m.elements?m.elements.length:0)}).join(',');
+      if(sig===lastClassifyRef.current) return;
+      lastClassifyRef.current = sig;
+      d({t:'SET_CLASSIFICATIONS',v:classifyModels(s.models)});
     }, [s.models]);
     var groups = hasCls ? cls[classView] || {} : {};
     var keys = Object.keys(groups).sort(function(a,b){return (groups[b].count||0)-(groups[a].count||0)});
@@ -2594,21 +2570,24 @@ function startApp() {
     var isClassifyTab = s.tab==='classify';
     var rawItems = isClashTab ? s.clashes : s.issues;
 
-    // Collect unique values for dynamic filter dropdowns
-    var uniqueTypes = {}, uniqueStoreys = {}, uniqueMaterials = {};
-    if (isClashTab) {
-      s.clashes.forEach(function(c) {
-        if(c.elemAType) uniqueTypes[c.elemAType]=true;
-        if(c.elemBType) uniqueTypes[c.elemBType]=true;
-        if(c.elemAStorey) uniqueStoreys[c.elemAStorey]=true;
-        if(c.elemBStorey) uniqueStoreys[c.elemBStorey]=true;
-        if(c.elemAMaterial) uniqueMaterials[c.elemAMaterial]=true;
-        if(c.elemBMaterial) uniqueMaterials[c.elemBMaterial]=true;
-      });
-    }
-    var typeList = Object.keys(uniqueTypes).sort();
-    var storeyList = Object.keys(uniqueStoreys).sort();
-    var materialList = Object.keys(uniqueMaterials).sort();
+    // Collect unique values for dynamic filter dropdowns (memoized)
+    var filterLists = useMemo(function(){
+      var uTypes={}, uStoreys={}, uMats={};
+      if(isClashTab){
+        s.clashes.forEach(function(c){
+          if(c.elemAType) uTypes[c.elemAType]=true;
+          if(c.elemBType) uTypes[c.elemBType]=true;
+          if(c.elemAStorey) uStoreys[c.elemAStorey]=true;
+          if(c.elemBStorey) uStoreys[c.elemBStorey]=true;
+          if(c.elemAMaterial) uMats[c.elemAMaterial]=true;
+          if(c.elemBMaterial) uMats[c.elemBMaterial]=true;
+        });
+      }
+      return {types:Object.keys(uTypes).sort(), storeys:Object.keys(uStoreys).sort(), materials:Object.keys(uMats).sort()};
+    }, [s.clashes, isClashTab]);
+    var typeList = filterLists.types;
+    var storeyList = filterLists.storeys;
+    var materialList = filterLists.materials;
 
     // Count active filters
     var activeCount = 0;
@@ -2624,33 +2603,40 @@ function startApp() {
     if(f.material!=='all') activeCount++;
 
     // Apply all filters
-    var items = rawItems.filter(function(it){
-      if(f.status!=='all' && it.status!==f.status) return false;
-      if(f.search){var q=f.search.toLowerCase();if((it.title||'').toLowerCase().indexOf(q)===-1&&(it.description||'').toLowerCase().indexOf(q)===-1)return false;}
-      if(isClashTab) {
-        if(f.type!=='all' && it.type!==f.type) return false;
-        if(f.discipline!=='all' && it.disciplines && it.disciplines.indexOf(f.discipline)===-1) return false;
-        if(f.floor!=='all') {
-          var fl = s.floors.find(function(x){return x.id===f.floor});
-          if(fl && (it.elevation<fl.yMin||it.elevation>fl.yMax)) return false;
+    var items = useMemo(function(){
+      return rawItems.filter(function(it){
+        if(f.status!=='all' && it.status!==f.status) return false;
+        if(f.search){var q=f.search.toLowerCase();if((it.title||'').toLowerCase().indexOf(q)===-1&&(it.description||'').toLowerCase().indexOf(q)===-1)return false;}
+        if(isClashTab) {
+          if(f.type!=='all' && it.type!==f.type) return false;
+          if(f.discipline!=='all' && it.disciplines && it.disciplines.indexOf(f.discipline)===-1) return false;
+          if(f.floor!=='all') {
+            var fl = s.floors.find(function(x){return x.id===f.floor});
+            if(fl && (it.elevation<fl.yMin||it.elevation>fl.yMax)) return false;
+          }
+          if(f.distMin>0 && (it.distance||0)<f.distMin) return false;
+          if(f.distMax<9999 && (it.distance||0)>f.distMax) return false;
+          if(f.elementId) {
+            var eid=f.elementId;
+            if(String(it.elemA).indexOf(eid)===-1 && String(it.elemB).indexOf(eid)===-1) return false;
+          }
+          if(f.selfClash==='self' && !it.selfClash) return false;
+          if(f.selfClash==='cross' && it.selfClash) return false;
+          if(f.ifcType!=='all' && it.elemAType!==f.ifcType && it.elemBType!==f.ifcType) return false;
+          if(f.storey!=='all' && it.elemAStorey!==f.storey && it.elemBStorey!==f.storey) return false;
+          if(f.material!=='all' && it.elemAMaterial!==f.material && it.elemBMaterial!==f.material) return false;
         }
-        if(f.distMin>0 && (it.distance||0)<f.distMin) return false;
-        if(f.distMax<9999 && (it.distance||0)>f.distMax) return false;
-        if(f.elementId) {
-          var eid=f.elementId;
-          if(String(it.elemA).indexOf(eid)===-1 && String(it.elemB).indexOf(eid)===-1) return false;
-        }
-        if(f.selfClash==='self' && !it.selfClash) return false;
-        if(f.selfClash==='cross' && it.selfClash) return false;
-        if(f.ifcType!=='all' && it.elemAType!==f.ifcType && it.elemBType!==f.ifcType) return false;
-        if(f.storey!=='all' && it.elemAStorey!==f.storey && it.elemBStorey!==f.storey) return false;
-        if(f.material!=='all' && it.elemAMaterial!==f.material && it.elemBMaterial!==f.material) return false;
-      }
-      return true;
-    });
+        return true;
+      });
+    }, [rawItems, f, isClashTab, s.floors]);
 
-    var oC=s.clashes.filter(function(c){return c.status==='open'}).length;
-    var oI=s.issues.filter(function(i){return i.status==='open'}).length;
+    var counts = useMemo(function(){
+      return {
+        oC: s.clashes.filter(function(c){return c.status==='open'}).length,
+        oI: s.issues.filter(function(i){return i.status==='open'}).length
+      };
+    }, [s.clashes, s.issues]);
+    var oC=counts.oC, oI=counts.oI;
     var FL={fontSize:'.6rem',color:'#64748b',marginBottom:'.15rem',display:'block'};
     var PILL=function(active){return Object.assign({},S_BTN,{fontSize:'.6rem',padding:'.15rem .35rem',background:active?'#2563eb':'#1e293b',color:active?'#fff':'#475569'});};
     var SELSTYLE={fontSize:'.65rem',padding:'.2rem .3rem',borderRadius:4,background:'#1e293b',color:'#94a3b8',border:'1px solid #334155',width:'100%'};
@@ -2765,13 +2751,7 @@ function startApp() {
       ${!isClassifyTab && s.tab!=='tree' && s.tab==='issues' && html`<div style=${{padding:'.4rem',borderBottom:'1px solid #1e293b',flexShrink:0}}>
         <button onClick=${function(){d({t:'MODAL',v:true})}} style=${{...S_BTN,width:'100%',background:'#2563eb',color:'#fff'}}>+ New Issue</button>
       </div>`}
-      ${!isClassifyTab && s.tab!=='tree' && html`<div style=${{flex:1,overflowY:'auto'}}>
-        ${items.length===0 && html`<div style=${{textAlign:'center',color:'#334155',fontSize:'.75rem',padding:'2.5rem 1rem'}}>
-          <div style=${{fontSize:'2rem',marginBottom:'.3rem'}}>${isClashTab?'✅':'📋'}</div>
-          ${activeCount>0||f.search?'No matches':'No '+(isClashTab?'clashes found yet':'issues yet')}
-        </div>`}
-        ${items.map(function(it){return html`<${IssueRow} key=${it.id} item=${it} active=${s.activeId===it.id} d=${d} isClash=${isClashTab} prefs=${s.prefs} />`})}
-      </div>`}
+      ${!isClassifyTab && s.tab!=='tree' && html`<${VirtualList} items=${items} activeId=${s.activeId} d=${d} isClash=${isClashTab} prefs=${s.prefs} />`}
     </aside>`;
   }
 
@@ -2825,6 +2805,38 @@ function startApp() {
         <${PropBlock} p=${it.propsA} label=${'Element A: '+(it.elemAName||'#'+it.elemA)} />
         <${PropBlock} p=${it.propsB} label=${'Element B: '+(it.elemBName||'#'+it.elemB)} />
       </div>`}
+    </div>`;
+  }
+
+  // Virtualized list: only render visible rows for large lists
+  var ROW_HEIGHT = 65; // approx height of IssueRow in px
+  function VirtualList(props) {
+    var items=props.items, activeId=props.activeId, d=props.d, isClash=props.isClash, prefs=props.prefs;
+    var scrollRef = useRef(null);
+    var _st = useState(0), scrollTop=_st[0], setScrollTop=_st[1];
+    if(items.length===0) return html`<div style=${{flex:1,overflowY:'auto'}}>
+      <div style=${{textAlign:'center',color:'#334155',fontSize:'.75rem',padding:'2.5rem 1rem'}}>
+        <div style=${{fontSize:'2rem',marginBottom:'.3rem'}}>${isClash?'✅':'📋'}</div>
+        ${'No '+(isClash?'clashes found yet':'issues yet')}
+      </div>
+    </div>`;
+    // For small lists, render all (no virtualization overhead)
+    if(items.length <= 50) return html`<div style=${{flex:1,overflowY:'auto'}}>
+      ${items.map(function(it){return html`<${IssueRow} key=${it.id} item=${it} active=${activeId===it.id} d=${d} isClash=${isClash} prefs=${prefs} />`})}
+    </div>`;
+    // Virtualized rendering for large lists
+    var totalHeight = items.length * ROW_HEIGHT;
+    var containerH = scrollRef.current ? scrollRef.current.clientHeight : 600;
+    var overscan = 5;
+    var startIdx = Math.max(0, Math.floor(scrollTop / ROW_HEIGHT) - overscan);
+    var endIdx = Math.min(items.length, Math.ceil((scrollTop + containerH) / ROW_HEIGHT) + overscan);
+    var visible = items.slice(startIdx, endIdx);
+    return html`<div ref=${scrollRef} onScroll=${function(e){setScrollTop(e.target.scrollTop);}} style=${{flex:1,overflowY:'auto'}}>
+      <div style=${{height:totalHeight,position:'relative'}}>
+        <div style=${{position:'absolute',top:startIdx*ROW_HEIGHT,left:0,right:0}}>
+          ${visible.map(function(it){return html`<${IssueRow} key=${it.id} item=${it} active=${activeId===it.id} d=${d} isClash=${isClash} prefs=${prefs} />`})}
+        </div>
+      </div>
     </div>`;
   }
 
