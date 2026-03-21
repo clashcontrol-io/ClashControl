@@ -150,7 +150,7 @@ window.onload = function() {
 
 function startApp() {
   // ── Version (auto-updated by pre-commit hook) ──
-  var CC_VERSION = {v:'1.2.11',hash:'9fa4722',date:'2026-03-21T08:47:22Z'};
+  var CC_VERSION = {v:'1.2.12',hash:'c584b5a',date:'2026-03-21T08:52:34Z'};
 
   // Check CDN deps loaded
   var need = [];
@@ -947,6 +947,9 @@ function startApp() {
 
   // Global flag: set true when dragging section box handles to suppress orbit
   var _sboxDragging = false;
+  // Render-on-demand: only render when something changes
+  var _needsRender = 2; // start with a couple frames to initialize
+  function invalidate(frames) { _needsRender = Math.max(_needsRender, frames||2); }
 
   function makeOrbit(camera, el) {
     var target = new THREE.Vector3();
@@ -980,11 +983,11 @@ function startApp() {
     window.addEventListener('mousemove', function(e) {
       if(!dragging&&!panning) return;
       var dx=e.clientX-lx, dy=e.clientY-ly; lx=e.clientX; ly=e.clientY;
-      if(dragging){ sph.theta-=dx*0.007; sph.phi-=dy*0.007; apply(); }
+      if(dragging){ sph.theta-=dx*0.007; sph.phi-=dy*0.007; apply(); invalidate(); }
       if(panning){
         var sp=sph.r*0.0008;
         var right=new THREE.Vector3().crossVectors(camera.getWorldDirection(new THREE.Vector3()),new THREE.Vector3(0,1,0)).normalize();
-        target.addScaledVector(right,-dx*sp); target.y+=dy*sp; apply();
+        target.addScaledVector(right,-dx*sp); target.y+=dy*sp; apply(); invalidate();
       }
     });
     window.addEventListener('mouseup', function(){dragging=false;panning=false});
@@ -1018,7 +1021,7 @@ function startApp() {
           return;
         }
       }
-      sph.r*=1+e.deltaY*0.0008;apply();e.preventDefault();
+      sph.r*=1+e.deltaY*0.0008;apply();invalidate();e.preventDefault();
     },{passive:false});
     return {target:target, sync:sync, apply:apply, sph:sph};
   }
@@ -1108,6 +1111,7 @@ function startApp() {
           S.camera.position.lerpVectors(startPos,endPos,e);
           S.camera.lookAt(S.orbit.target);
           S.orbit.sync();
+          invalidate();
           if(t<1) _flyAnim=requestAnimationFrame(animate);
           else _flyAnim=null;
         }
@@ -1198,12 +1202,14 @@ function startApp() {
             obj.material = _ghostMat;
           }
         });
+        invalidate();
       }
       function unghostAll(){
         _ghostedMeshes.forEach(function(g){
           g.mesh.material = g.origMaterial;
         });
         _ghostedMeshes = [];
+        invalidate();
       }
       S._ghostOthers = ghostOthers;
       S._unghostAll = unghostAll;
@@ -1272,6 +1278,7 @@ function startApp() {
         }
         // Ghost non-selected elements
         if(alsoGhost!==false) ghostOthers([expressId]);
+        invalidate();
       };
 
       // ── Active Clash Point Marker (bright blue) ──
@@ -1299,12 +1306,14 @@ function startApp() {
         grp.add(ring3);
         scene.add(grp);
         _activeClashMarker = grp;
+        invalidate();
       };
       window._ccRemoveActiveClashMarker = function() {
         if(_activeClashMarker) {
           _activeClashMarker.traverse(function(obj){if(obj.isMesh){if(obj.geometry)obj.geometry.dispose();if(obj.material)obj.material.dispose();}});
           scene.remove(_activeClashMarker);
           _activeClashMarker = null;
+          invalidate();
         }
       };
 
@@ -1334,12 +1343,14 @@ function startApp() {
         });
         scene.add(grp);
         clashMarkersRef.current = grp;
+        invalidate();
       };
       _clearClashMarkers = function() {
         if(clashMarkersRef.current){
           clashMarkersRef.current.traverse(function(obj){if(obj.isMesh){obj.geometry&&obj.geometry.dispose();obj.material&&obj.material.dispose();}});
           scene.remove(clashMarkersRef.current);
           clashMarkersRef.current = null;
+          invalidate();
         }
       };
 
@@ -1529,6 +1540,7 @@ function startApp() {
           renderer.domElement.style.cursor = '';
         }
         lastHoveredMesh = hitMesh;
+        invalidate();
       });
 
       // Raycaster for element picking
@@ -1924,6 +1936,19 @@ function startApp() {
 
       function tick(){
         S.raf=requestAnimationFrame(tick);
+        // FPS counter runs always (measures actual renders)
+        var now = performance.now();
+        if(now - S.perf.lastTime >= 1000) {
+          S.perf.fps = S.perf.frameCount;
+          S.perf.frameCount = 0;
+          S.perf.lastTime = now;
+          S.perf.drawCalls = renderer.info.render.calls;
+          S.perf.tris = renderer.info.render.triangles;
+          S.perf.meshCount = renderer.info.memory.geometries;
+        }
+        // Render on demand: skip if nothing changed
+        if(_needsRender <= 0) return;
+        _needsRender--;
         // Frustum culling (every N frames for performance)
         cullFrame++;
         if(cullFrame >= cullEvery && S.mg && S.mg.children.length > 0){
@@ -1935,15 +1960,6 @@ function startApp() {
         renderer.setScissorTest(false);
         renderer.render(scene,camera);
         S.perf.frameCount++;
-        var now = performance.now();
-        if(now - S.perf.lastTime >= 1000) {
-          S.perf.fps = S.perf.frameCount;
-          S.perf.frameCount = 0;
-          S.perf.lastTime = now;
-          S.perf.drawCalls = renderer.info.render.calls;
-          S.perf.tris = renderer.info.render.triangles;
-          S.perf.meshCount = renderer.info.memory.geometries;
-        }
       }
       tick();
 
@@ -1951,6 +1967,7 @@ function startApp() {
         camera.aspect = el.clientWidth/el.clientHeight;
         camera.updateProjectionMatrix();
         renderer.setSize(el.clientWidth, el.clientHeight);
+        invalidate();
       });
       obs.observe(el);
 
@@ -2007,6 +2024,7 @@ function startApp() {
           }
         }
       });
+      invalidate();
     }, [s.models]);
 
     // Section
@@ -2035,6 +2053,7 @@ function startApp() {
         planes.push(plane);
       }
       S.renderer.clippingPlanes=planes;
+      invalidate();
     }, [s.sectionAxis, s.sectionPos, s.sectionCustom]);
 
     // Section Box: 6 clipping planes + interactive drag handles + rotation
@@ -2180,6 +2199,7 @@ function startApp() {
       S.scene.add(connLine);
       if(!S._sboxFacePanels) S._sboxFacePanels=[];
       S._sboxFacePanels.push(connLine); // cleaned up with face panels
+      invalidate();
     }, [s.sectionBox]);
 
     // Floor plan: Dalux-style 3D section cut (single clip from above, angled 3D view)
@@ -2243,6 +2263,7 @@ function startApp() {
         S.camera.lookAt(S.orbit.target);
         S.orbit.sync();
       }
+      invalidate();
     }, [s.floorPlan]);
 
     // Classification visibility: hide/show groups
@@ -2273,6 +2294,7 @@ function startApp() {
         var modelId=obj.parent?obj.parent.userData.modelId:null;
         obj.visible = !(modelId&&hiddenIds.has(modelId+'_'+eid));
       });
+      invalidate();
     }, [s.hiddenClasses, s.classifications]);
 
     // Color-by-classification: recolor meshes by group
@@ -2319,6 +2341,7 @@ function startApp() {
         }
       });
       origColorsRef.current=saved;
+      invalidate();
     }, [s.colorByClass, s.classifications]);
 
     // Sync clash markers when clashes change
@@ -2342,6 +2365,7 @@ function startApp() {
         measureObjsRef.current = [];
         measurePtsRef.current = [];
       }
+      invalidate();
     }, [s.measurements.length]);
 
     // Prefs: grid & axes visibility
@@ -2349,6 +2373,7 @@ function startApp() {
       var S = state3d.current;
       if(S.grid) S.grid.visible = s.prefs.showGrid!==false;
       if(S.axes) S.axes.visible = s.prefs.showAxes!==false;
+      invalidate();
     }, [s.prefs.showGrid, s.prefs.showAxes]);
 
     // Theme: update scene background and grid colors
@@ -2363,6 +2388,7 @@ function startApp() {
         S.grid.visible = s.prefs.showGrid!==false;
         S.scene.add(S.grid);
       }
+      invalidate();
     }, [s.prefs.theme]);
 
     // Render style: swap materials on model meshes
@@ -2407,6 +2433,7 @@ function startApp() {
           obj.material = orig;
         }
       });
+      invalidate();
     }, [s.prefs.renderStyle, s.prefs.theme, s.models.length]);
 
     // Performance stats
@@ -2799,10 +2826,9 @@ function startApp() {
       var cubeRAF;
       function renderCube(){
         cubeRAF=requestAnimationFrame(renderCube);
+        if(_needsRender <= 0) return; // only render when main scene renders
         var S=state3d.current;
         if(!S||!S.camera||!S.orbit) return;
-        // Standard view cube: rotate cube group by inverse of camera quaternion
-        // This makes the cube act as a miniature model matching the viewport orientation
         cubeGroup.quaternion.copy(S.camera.quaternion).invert();
         cubeRenderer.render(cubeScene,cubeCamera);
       }
