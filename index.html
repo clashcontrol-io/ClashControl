@@ -124,7 +124,7 @@ window.onload = function() {
 
 function startApp() {
   // ── Version (auto-updated by pre-commit hook) ──
-  var CC_VERSION = {v:'1.2.9',hash:'d32b74b',date:'2026-03-21T08:34:48Z'};
+  var CC_VERSION = {v:'1.2.10',hash:'5926acf',date:'2026-03-21T08:39:59Z'};
 
   // Check CDN deps loaded
   var need = [];
@@ -1086,30 +1086,35 @@ function startApp() {
         animate();
       }
       _flyTo = function(pt, dist, hint) {
-        // hint: optional {normal:[x,y,z]} for surface normal, {vertical:true} for level shifts
+        // hint: optional {normal:[x,y,z]} for surface normal
         if(!pt||pt.length<3) return;
         var d2 = dist || 15;
         var endTarget = new THREE.Vector3(pt[0],pt[1],pt[2]);
+        var curTarget = S.orbit.target.clone();
 
-        // PRESERVE current camera direction for calm, consistent navigation
-        var dir = S.camera.position.clone().sub(S.orbit.target);
-        if(dir.length() < 0.01) dir.set(0.6, 0.4, 0.6);
-        dir.normalize();
+        // Camera offset from current orbit target
+        var offset = S.camera.position.clone().sub(curTarget);
+        if(offset.length() < 0.01) offset.set(0.6, 0.4, 0.6);
+        var curDist = offset.length();
 
-        if(hint && hint.vertical) {
-          // Vertical shift: keep horizontal angle + distance, just move Y
-          var offset = S.camera.position.clone().sub(S.orbit.target);
-          var endPos = endTarget.clone().add(offset);
-          // Optionally adjust distance if a new dist was given
-          if(dist) {
-            var hLen = Math.sqrt(offset.x*offset.x + offset.z*offset.z);
-            var curDist = offset.length();
-            var scale = d2 / curDist;
-            endPos = endTarget.clone().add(offset.multiplyScalar(scale));
-          }
+        // Smart transition: preserve camera angle when moving to nearby targets.
+        // Works for vertical (level switching), horizontal (adjacent elements),
+        // and zoom-only (same area, different scale) transitions.
+        // Only re-orient the camera when a surface normal hint demands it.
+        var delta = endTarget.clone().sub(curTarget);
+        var moveLen = delta.length();
+        var preserveAngle = !(hint && hint.normal) && (moveLen < curDist * 3);
+
+        if(preserveAngle) {
+          // Keep viewing angle, slide camera to new target, adjust distance
+          var scale = d2 / curDist;
+          var endPos = endTarget.clone().add(offset.clone().multiplyScalar(scale));
           _animateFly(endTarget, endPos);
           return;
         }
+
+        // Full re-orient: use surface normal hint to pick camera direction
+        var dir = offset.clone().normalize();
 
         if(hint && hint.normal) {
           var hintDir = new THREE.Vector3(hint.normal[0], hint.normal[1], hint.normal[2]).normalize();
@@ -1148,8 +1153,9 @@ function startApp() {
         _animateFly(endTarget, endPos);
       };
 
-      // Ghost/transparency: make all non-highlighted meshes semi-transparent
+      // Ghost: swap non-highlighted meshes to a ghostly grey material
       var _ghostedMeshes = [];
+      var _ghostMat = new THREE.MeshBasicMaterial({color:0x334155, transparent:true, opacity:0.08, depthWrite:false});
       function ghostOthers(targetExpressIds) {
         unghostAll();
         if(!targetExpressIds||!targetExpressIds.length) return;
@@ -1159,18 +1165,14 @@ function startApp() {
           if(!obj.isMesh||!obj.material) return;
           var eid = obj.userData.expressID;
           if(eid!=null && !idSet[eid]){
-            _ghostedMeshes.push({mesh:obj, origOpacity:obj.material.opacity, origTransparent:obj.material.transparent});
-            obj.material.transparent = true;
-            obj.material.opacity = 0.2;
-            obj.material.needsUpdate = true;
+            _ghostedMeshes.push({mesh:obj, origMaterial:obj.material});
+            obj.material = _ghostMat;
           }
         });
       }
       function unghostAll(){
         _ghostedMeshes.forEach(function(g){
-          g.mesh.material.opacity = g.origOpacity;
-          g.mesh.material.transparent = g.origTransparent;
-          g.mesh.material.needsUpdate = true;
+          g.mesh.material = g.origMaterial;
         });
         _ghostedMeshes = [];
       }
@@ -1350,8 +1352,8 @@ function startApp() {
         _flyTo([ctr.x,ctr.y,ctr.z], dist, hint||null);
       };
 
-      // Fly to element(s) — hint: {vertical:true} for level shifts
-      _flyToElements = function(expressIds, fallbackPt, hint) {
+      // Fly to element(s) — auto-detects vertical shift vs full reframe
+      _flyToElements = function(expressIds, fallbackPt) {
         if(!S.mg||!S.orbit) return;
         if(!expressIds||!expressIds.length){
           if(fallbackPt) _flyTo(fallbackPt);
@@ -1380,8 +1382,7 @@ function startApp() {
         var scaleFactor = 2.5 - (Math.min(maxDim, 20) / 20) * 1.3;
         scaleFactor = Math.max(1.2, Math.min(2.5, scaleFactor));
         var dist = maxDim * scaleFactor;
-        var pt = [ctr.x, ctr.y, ctr.z];
-        _flyTo(pt, dist, hint||null);
+        _flyTo([ctr.x, ctr.y, ctr.z], dist);
       };
 
       // ── Section Box helper ──
@@ -2969,8 +2970,7 @@ function startApp() {
                 });
                 if(ids.length){
                   if(_ghostOthers) _ghostOthers(ids);
-                  var useVertical = s._highlightedStorey != null;
-                  if(_flyToElements) _flyToElements(ids, null, useVertical ? {vertical:true} : null);
+                  if(_flyToElements) _flyToElements(ids);
                 }
                 d({t:'SET_HIGHLIGHTED_STOREY',v:st});
               }}
