@@ -1,9 +1,52 @@
-# clash-control
+# ClashControl
 > Version: **v1.2.16** (2026-03-21)
 
-The free open source Clash Control webapp
+**Free, open-source IFC clash detection — right in your browser.**
 
-No more paying a lot of money for a license to just do your job. 
-Of course donations to keep the project running and expand more are welcome. 
+No installs. No licenses. No subscriptions. Just open the file and start checking your models.
 
-Use it at your office to Clash Control. Its not complete nor perfect and you should always check yourselves. Besides that, it will save you lots of money and frustration. 
+## What is it?
+
+ClashControl is a lightweight web app for BIM coordination. Load your IFC models, detect geometric clashes between building elements, create and manage issues, and export everything to BCF — all without leaving your browser.
+
+Built for architects, engineers, and BIM coordinators who are tired of paying thousands for clash detection software that does the same thing.
+
+## Features
+
+- **Load multiple IFC models** — drag & drop or browse, supports any IFC 2x3/4 file
+- **Geometric clash detection** — hard clashes (intersections) and soft clashes (clearance violations) using OBB-based collision detection
+- **3D viewer** — orbit, pan, zoom, section planes, section boxes, floor plan cuts, measurement tools
+- **Model explorer** — browse elements by storey, IFC type, discipline, or material with visibility toggles and color-by-classification
+- **Issue management** — create issues linked to elements, set priority/status/category, assign to team members
+- **BCF import/export** — standard BCF 2.1 format for interoperability with other BIM tools
+- **Viewpoints** — save and restore camera positions with snapshots
+- **Dark & light mode** — full theme support
+- **Works offline** — PWA with service worker caching, no server required
+- **Zero dependencies** — single HTML file, no build step, no node_modules
+
+## How to use
+
+1. Open `index.html` in a modern browser (Chrome, Edge, Firefox)
+2. Load two or more IFC models via the sidebar
+3. Configure clash rules (model A vs B, hard/soft, clearance distance)
+4. Hit **Run** — clashes appear in the right panel
+5. Click a clash to fly to it, inspect element properties, change status
+6. Export to BCF when done
+
+## Why free?
+
+BIM coordination shouldn't be locked behind expensive licenses. ClashControl gives every project team access to clash detection, regardless of budget. No more paying a lot of money for a license to just do your job.
+
+Of course donations to keep the project running and expand more are welcome.
+
+## Important
+
+ClashControl is not complete nor perfect and you should always verify results yourselves. That said, it will save you lots of money and frustration.
+
+## Tech
+
+Single-file app built with Preact, Three.js, and web-ifc. No build tools, no bundler — just open and go. See [CLAUDE.md](CLAUDE.md) for architecture details.
+
+## License
+
+See [LICENSE](LICENSE) for details.
