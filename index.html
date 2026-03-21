@@ -124,7 +124,7 @@ window.onload = function() {
 
 function startApp() {
   // ── Version (auto-updated by pre-commit hook) ──
-  var CC_VERSION = {v:'1.2.1',hash:'7b94747',date:'2026-03-20T22:37:13Z'};
+  var CC_VERSION = {v:'1.2.2',hash:'89d77e6',date:'2026-03-21T07:34:32Z'};
 
   // Check CDN deps loaded
   var need = [];
@@ -196,7 +196,8 @@ function startApp() {
     // Model tree
     treeOpen:false,
     // Floor plan cut
-    floorPlan:null // {storeyName, elevation, cutHeight} or null
+    floorPlan:null, // {storeyName, elevation, cutHeight} or null
+    _highlightedStorey:null
   };
   function reducer(s,a) {
     switch(a.t) {
@@ -235,6 +236,7 @@ function startApp() {
 
       case 'TREE':         return Object.assign({},s,{treeOpen:a.v});
       case 'FLOOR_PLAN':   return Object.assign({},s,{floorPlan:a.v, sectionAxis:null, sectionCustom:null, sectionBox:null});
+      case 'SET_HIGHLIGHTED_STOREY': return Object.assign({},s,{_highlightedStorey:a.v});
       default:            return s;
     }
   }
@@ -2552,14 +2554,14 @@ function startApp() {
       });
       // Render loop sync
       var cubeRAF;
+      var _cubeQ = new THREE.Quaternion();
       function renderCube(){
         cubeRAF=requestAnimationFrame(renderCube);
         var S=state3d.current;
-        if(!S||!S.camera) return;
-        // Mirror main camera orientation onto cube camera
-        var mainDir=new THREE.Vector3();
-        S.camera.getWorldDirection(mainDir);
-        cubeCamera.position.copy(mainDir.negate().multiplyScalar(5));
+        if(!S||!S.camera||!S.orbit) return;
+        // Mirror main camera orientation: rotate cube group to match camera view
+        var relPos = S.camera.position.clone().sub(S.orbit.target).normalize().multiplyScalar(5);
+        cubeCamera.position.copy(relPos);
         cubeCamera.lookAt(0,0,0);
         cubeRenderer.render(cubeScene,cubeCamera);
       }
@@ -2769,26 +2771,36 @@ function startApp() {
             </div>
           </div>
           ${stKeys.map(function(st){
-            var hidden = s.models.every(function(m){return m.hiddenStoreys&&m.hiddenStoreys[st]});
             var elev = elevMap[st];
             var hasElev = elev!=null;
             var isPlanActive = activePlan && activePlan.storeyName===st;
-            return html`<div key=${st} style=${{display:'flex',alignItems:'center',gap:'.25rem',padding:'.1rem 0'}}>
-              <span onClick=${function(e){e.preventDefault();s.models.forEach(function(m){
-                if((m.storeys||[]).indexOf(st)!==-1) d({t:'TOGGLE_STOREY',id:m.id,storey:st});
-              });}}
-                style=${{width:11,height:11,borderRadius:2,border:'2px solid '+(hidden?'#475569':'#34d399'),background:hidden?'transparent':'#34d399',cursor:'pointer',flexShrink:0,display:'flex',alignItems:'center',justifyContent:'center'}}>
-                ${!hidden && html`<span style=${{color:'#fff',fontSize:7}}>✓</span>`}
-              </span>
-              <span style=${{fontSize:'.6rem',color:hidden?'#475569':'#e2e8f0',flex:1,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}} title=${st+(hasElev?' ('+elev.toFixed(1)+'m)':'')}>${st}</span>
-              ${hasElev && html`<span style=${{fontSize:'.55rem',color:'#475569',flexShrink:0}}>${elev.toFixed(1)}m</span>`}
-              ${hasElev && html`<button onClick=${function(e){
-                e.stopPropagation();
+            var isHighlighted = s._highlightedStorey===st;
+            return html`<div key=${st}
+              onClick=${function(e){
+                e.preventDefault();
+                // Single click: highlight all elements on this storey
+                var ids=[];
+                s.models.forEach(function(m){
+                  (m.elements||[]).forEach(function(el){
+                    if(el.props&&el.props.storey===st) ids.push(el.expressId);
+                  });
+                });
+                if(ids.length){
+                  if(_ghostOthers) _ghostOthers(ids);
+                  if(_flyToElements) _flyToElements(ids);
+                }
+                d({t:'SET_HIGHLIGHTED_STOREY',v:isHighlighted?null:st});
+              }}
+              onDblClick=${function(e){
+                e.preventDefault(); e.stopPropagation();
+                if(!hasElev) return;
+                // Double click: toggle floor plan cut
                 if(isPlanActive){d({t:'FLOOR_PLAN',v:null});}
                 else{d({t:'FLOOR_PLAN',v:{storeyName:st,elevation:elev,cutHeight:1.2}});}
               }}
-                style=${{...S_BTN,fontSize:'.55rem',padding:'.1rem .25rem',background:isPlanActive?'#7c3aed':'#1e293b',color:isPlanActive?'#fff':'#a78bfa',border:'1px solid '+(isPlanActive?'#7c3aed':'#334155'),flexShrink:0}}
-                title=${'3D section cut at '+st}>${isPlanActive?'Exit':'Cut'}</button>`}
+              style=${{display:'flex',alignItems:'center',gap:'.25rem',padding:'.2rem .3rem',cursor:'pointer',borderRadius:4,background:isPlanActive?'#2d1a4e':isHighlighted?'#1e293b':'transparent',transition:'background .15s'}}>
+              <span style=${{fontSize:'.6rem',color:isPlanActive?'#c084fc':isHighlighted?'#38bdf8':'#e2e8f0',flex:1,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',fontWeight:isHighlighted||isPlanActive?600:400}} title=${st+(hasElev?' ('+elev.toFixed(1)+'m)':'')}>${st}</span>
+              ${hasElev && html`<span style=${{fontSize:'.55rem',color:isPlanActive?'#a78bfa':'#475569',flexShrink:0}}>${elev.toFixed(1)}m</span>`}
             </div>`;
           })}
           ${activePlan && html`<div style=${{marginTop:'.3rem',padding:'.3rem',background:'#1e1338',border:'1px solid #3b0764',borderRadius:6}}>
