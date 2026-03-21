@@ -1,5 +1,8 @@
 # Changelog
 
+## v1.2.15 (2026-03-21)
+- Add CSP, PWA, global error handling, and accessibility
+
 ## v1.2.14 (2026-03-21)
 - Fix critical crash on element click and multiple viewer bugs
 

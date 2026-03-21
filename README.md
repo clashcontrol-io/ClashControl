@@ -1,5 +1,5 @@
 # clash-control
-> Version: **v1.2.14** (2026-03-21)
+> Version: **v1.2.15** (2026-03-21)
 
 The free open source Clash Control webapp
 
