@@ -124,7 +124,7 @@ window.onload = function() {
 
 function startApp() {
   // ── Version (auto-updated by pre-commit hook) ──
-  var CC_VERSION = {v:'1.2.8',hash:'020a5af',date:'2026-03-21T08:30:07Z'};
+  var CC_VERSION = {v:'1.2.10',hash:'5926acf',date:'2026-03-21T08:39:59Z'};
 
   // Check CDN deps loaded
   var need = [];
@@ -1054,83 +1054,91 @@ function startApp() {
       S.orbit = makeOrbit(camera, renderer.domElement);
       S.orbit.apply(); // ensure camera looks at orbit target on init
 
-      // Animated fly-to with easing (1.5s)
+      // ── Animated fly-to system ─────────────────────────────────────
       var _flyAnim = null;
       function easeInOut(t){return t<0.5?4*t*t*t:(1-Math.pow(-2*t+2,3)/2);}
-      _flyTo = function(pt, dist, hint) {
-        // hint: optional {normal:[x,y,z]} for surface normal, or {from:[x,y,z]} for preferred direction
-        if(!pt||pt.length<3) return;
+      // Compute animation duration based on travel distance: short moves are snappy, long moves get time to breathe
+      function flyDuration(startTarget, endTarget, startPos, endPos) {
+        var targetDist = startTarget.distanceTo(endTarget);
+        var camDist = startPos.distanceTo(endPos);
+        var travel = Math.max(targetDist, camDist);
+        // 400ms minimum, scale up for longer flights, cap at 1200ms
+        return Math.max(400, Math.min(1200, travel * 40));
+      }
+      // Core animation runner — all fly functions funnel through this
+      function _animateFly(endTarget, endPos, durationOverride) {
         if(_flyAnim) cancelAnimationFrame(_flyAnim);
         var startTarget = S.orbit.target.clone();
         var startPos = S.camera.position.clone();
+        var duration = durationOverride || flyDuration(startTarget, endTarget, startPos, endPos);
+        var startTime = performance.now();
+        function animate(){
+          var elapsed = performance.now()-startTime;
+          var t = Math.min(elapsed/duration,1);
+          var e = easeInOut(t);
+          S.orbit.target.lerpVectors(startTarget,endTarget,e);
+          S.camera.position.lerpVectors(startPos,endPos,e);
+          S.camera.lookAt(S.orbit.target);
+          S.orbit.sync();
+          if(t<1) _flyAnim=requestAnimationFrame(animate);
+          else _flyAnim=null;
+        }
+        animate();
+      }
+      _flyTo = function(pt, dist, hint) {
+        // hint: optional {normal:[x,y,z]} for surface normal
+        if(!pt||pt.length<3) return;
         var d2 = dist || 15;
         var endTarget = new THREE.Vector3(pt[0],pt[1],pt[2]);
+        var curTarget = S.orbit.target.clone();
 
-        // Default: PRESERVE current camera direction for calm, consistent navigation
-        // This prevents dizzying rotations when flying between nearby elements
-        var dir = startPos.clone().sub(startTarget);
-        if(dir.length() < 0.01) dir.set(0.6, 0.4, 0.6);
-        dir.normalize();
+        // Camera offset from current orbit target
+        var offset = S.camera.position.clone().sub(curTarget);
+        if(offset.length() < 0.01) offset.set(0.6, 0.4, 0.6);
+        var curDist = offset.length();
+
+        // Smart transition: preserve camera angle when moving to nearby targets.
+        // Works for vertical (level switching), horizontal (adjacent elements),
+        // and zoom-only (same area, different scale) transitions.
+        // Only re-orient the camera when a surface normal hint demands it.
+        var delta = endTarget.clone().sub(curTarget);
+        var moveLen = delta.length();
+        var preserveAngle = !(hint && hint.normal) && (moveLen < curDist * 3);
+
+        if(preserveAngle) {
+          // Keep viewing angle, slide camera to new target, adjust distance
+          var scale = d2 / curDist;
+          var endPos = endTarget.clone().add(offset.clone().multiplyScalar(scale));
+          _animateFly(endTarget, endPos);
+          return;
+        }
+
+        // Full re-orient: use surface normal hint to pick camera direction
+        var dir = offset.clone().normalize();
 
         if(hint && hint.normal) {
-          // Only override direction when explicitly given a surface normal
           var hintDir = new THREE.Vector3(hint.normal[0], hint.normal[1], hint.normal[2]).normalize();
-          // For top-facing surfaces (floors/slabs), use angled view not straight down
           if(Math.abs(hintDir.y) > 0.9) {
             hintDir.set(0.5, 0.7, 0.5).normalize();
           } else {
             hintDir.y = Math.max(hintDir.y, 0.25);
             hintDir.normalize();
           }
-          // Blend 70% hint with 30% current direction for smoother transitions
           dir.lerp(hintDir, 0.7).normalize();
         }
 
         var endPos = endTarget.clone().addScaledVector(dir, d2);
-
-        var startTime = performance.now();
-        var duration = 1200; // slightly faster for snappier feel
-        function animate(){
-          var elapsed = performance.now()-startTime;
-          var t = Math.min(elapsed/duration,1);
-          var e = easeInOut(t);
-          S.orbit.target.lerpVectors(startTarget,endTarget,e);
-          S.camera.position.lerpVectors(startPos,endPos,e);
-          S.camera.lookAt(S.orbit.target);
-          S.orbit.sync();
-          if(t<1) _flyAnim=requestAnimationFrame(animate);
-          else _flyAnim=null;
-        }
-        animate();
+        _animateFly(endTarget, endPos);
       };
 
       // Fly to a specific view (used by view cube)
       window._ccFlyToView = function(target, pos) {
-        if(_flyAnim) cancelAnimationFrame(_flyAnim);
-        var startTarget = S.orbit.target.clone();
-        var startPos = S.camera.position.clone();
-        var endTarget = target.clone();
-        var endPos = pos.clone();
-        var startTime = performance.now();
-        var duration = 1200;
-        function animate(){
-          var elapsed = performance.now()-startTime;
-          var t = Math.min(elapsed/duration,1);
-          var e = easeInOut(t);
-          S.orbit.target.lerpVectors(startTarget,endTarget,e);
-          S.camera.position.lerpVectors(startPos,endPos,e);
-          S.camera.lookAt(S.orbit.target);
-          S.orbit.sync();
-          if(t<1) _flyAnim=requestAnimationFrame(animate);
-          else _flyAnim=null;
-        }
-        animate();
+        _animateFly(target.clone(), pos.clone(), 800);
       };
 
       // Reset view: fit camera to all loaded geometry
       _resetView = function() {
         if(!S.mg||S.mg.children.length===0){
-          // No models loaded, reset to default
           S.orbit.target.set(0,0,0);
           S.camera.position.set(30,25,30);
           S.camera.lookAt(S.orbit.target);
@@ -1142,28 +1150,12 @@ function startApp() {
         var d=Math.max(sz.x,sz.y,sz.z)*1.5;
         var endTarget = ctr;
         var endPos = new THREE.Vector3(ctr.x+d, ctr.y+d*0.6, ctr.z+d);
-        // Animated fly
-        if(_flyAnim) cancelAnimationFrame(_flyAnim);
-        var startTarget = S.orbit.target.clone();
-        var startPos = S.camera.position.clone();
-        var startTime = performance.now();
-        var duration = 1200;
-        function animate(){
-          var elapsed = performance.now()-startTime;
-          var t = Math.min(elapsed/duration,1);
-          var e = easeInOut(t);
-          S.orbit.target.lerpVectors(startTarget,endTarget,e);
-          S.camera.position.lerpVectors(startPos,endPos,e);
-          S.camera.lookAt(S.orbit.target);
-          S.orbit.sync();
-          if(t<1) _flyAnim=requestAnimationFrame(animate);
-          else _flyAnim=null;
-        }
-        animate();
+        _animateFly(endTarget, endPos);
       };
 
-      // Ghost/transparency: make all non-highlighted meshes semi-transparent
+      // Ghost: swap non-highlighted meshes to a ghostly grey material
       var _ghostedMeshes = [];
+      var _ghostMat = new THREE.MeshBasicMaterial({color:0x334155, transparent:true, opacity:0.08, depthWrite:false});
       function ghostOthers(targetExpressIds) {
         unghostAll();
         if(!targetExpressIds||!targetExpressIds.length) return;
@@ -1173,18 +1165,14 @@ function startApp() {
           if(!obj.isMesh||!obj.material) return;
           var eid = obj.userData.expressID;
           if(eid!=null && !idSet[eid]){
-            _ghostedMeshes.push({mesh:obj, origOpacity:obj.material.opacity, origTransparent:obj.material.transparent});
-            obj.material.transparent = true;
-            obj.material.opacity = 0.2;
-            obj.material.needsUpdate = true;
+            _ghostedMeshes.push({mesh:obj, origMaterial:obj.material});
+            obj.material = _ghostMat;
           }
         });
       }
       function unghostAll(){
         _ghostedMeshes.forEach(function(g){
-          g.mesh.material.opacity = g.origOpacity;
-          g.mesh.material.transparent = g.origTransparent;
-          g.mesh.material.needsUpdate = true;
+          g.mesh.material = g.origMaterial;
         });
         _ghostedMeshes = [];
       }
@@ -1364,7 +1352,7 @@ function startApp() {
         _flyTo([ctr.x,ctr.y,ctr.z], dist, hint||null);
       };
 
-      // Fly to element(s) with same camera alignment as element click
+      // Fly to element(s) — auto-detects vertical shift vs full reframe
       _flyToElements = function(expressIds, fallbackPt) {
         if(!S.mg||!S.orbit) return;
         if(!expressIds||!expressIds.length){
@@ -1377,7 +1365,6 @@ function startApp() {
         expressIds.forEach(function(eid){
           S.mg.traverse(function(obj){
             if(obj.isMesh && obj.userData.expressID===eid){
-              // Temporarily show frustum-culled meshes for bounding box
               if(!obj.visible && obj.userData._frustumCulled){obj.visible=true;hiddenMeshes.push(obj);}
               box.expandByObject(obj);
               foundAny = true;
@@ -1395,8 +1382,7 @@ function startApp() {
         var scaleFactor = 2.5 - (Math.min(maxDim, 20) / 20) * 1.3;
         scaleFactor = Math.max(1.2, Math.min(2.5, scaleFactor));
         var dist = maxDim * scaleFactor;
-        var pt = [ctr.x, ctr.y, ctr.z];
-        _flyTo(pt, dist);
+        _flyTo([ctr.x, ctr.y, ctr.z], dist);
       };
 
       // ── Section Box helper ──
@@ -2974,7 +2960,8 @@ function startApp() {
               }}
               onDblClick=${function(e){
                 e.preventDefault(); e.stopPropagation();
-                // Double click: fly-to + highlight
+                // Double click: fly-to + ghost others
+                // If already viewing a level, use vertical shift (no rotation)
                 var ids=[];
                 s.models.forEach(function(m){
                   (m.elements||[]).forEach(function(el){
