@@ -9,7 +9,7 @@ ClashControl uses the following open source libraries and components:
 | [React](https://reactjs.org/) | 18.2.0 | MIT | UI rendering framework |
 | [ReactDOM](https://reactjs.org/) | 18.2.0 | MIT | React DOM renderer |
 | [Three.js](https://threejs.org/) | r128 | MIT | 3D WebGL rendering engine |
-| [JSZip](https://stuk.github.io/jszip/) | 3.10.1 | MIT / GPLv3 | ZIP file creation for BCF export/import |
+| [JSZip](https://stuk.github.io/jszip/) | 3.10.1 | MIT / GPLv3 (used under MIT) | ZIP file creation for BCF export/import |
 
 ## Runtime Dependencies (ESM-loaded)
 
@@ -29,10 +29,18 @@ ClashControl uses the following open source libraries and components:
 |------|---------|
 | Git pre-commit hooks | Auto version bumping on commit |
 
+## License compatibility
+
+- **ClashControl** is released under the **MIT** license.
+- **JSZip** is dual-licensed MIT/GPLv3. This project uses it under the **MIT** license.
+- **web-ifc** is licensed under **MPL-2.0** (file-level copyleft). ClashControl loads it unmodified from a CDN, which is compliant with MPL-2.0. If web-ifc source files are ever modified, those modifications must be released under MPL-2.0.
+- **htm** is Apache-2.0. ClashControl includes a custom minimal reimplementation inspired by htm, not a direct copy.
+- All other dependencies (React, ReactDOM, Three.js) are MIT-licensed — fully compatible.
+
 ## Notes
 
 - **web-ifc** is developed by [ThatOpen](https://github.com/ThatOpen) (formerly IFC.js). It provides the WebAssembly-based IFC parser that reads Industry Foundation Classes files and streams geometry data for 3D rendering.
 - **Three.js** handles all 3D rendering including mesh display, clipping planes, section boxes, orbit controls, raycasting, and the view cube.
 - **React** powers the entire UI with functional components using hooks (useState, useEffect, useRef, useReducer, useMemo).
 - **htm** is a lightweight alternative to JSX that works without a build step, enabling the single-file architecture.
-- All dependencies are loaded from CDNs (cdnjs, esm.sh, jsdelivr) - no build step or package manager required.
+- All dependencies are loaded from CDNs (cdnjs, esm.sh, jsdelivr) — no build step or package manager required.

@@ -22,7 +22,7 @@ The file follows this layout top to bottom:
 5. **Main `<script>`** — everything else:
    - `startApp()` wraps the entire application
    - Constants, state shape (`INIT`), reducer
-   - IFC parser (reads IFC STEP files directly, no wasm)
+   - IFC loader (uses web-ifc WASM library, lazy-loaded via ESM)
    - Three.js scene setup, orbit controls, render loop
    - Fly-to system, ghost/highlight system, section planes, section box
    - Clash detection engine (OBB-based)
@@ -58,7 +58,7 @@ The file follows this layout top to bottom:
 
 ### Things NOT to touch without good reason
 - The htm parser at the top of the script — it's hand-written and tested
-- The IFC STEP parser — complex but working, handles property/material extraction
+- The IFC loader (web-ifc integration) — complex but working, handles property/material extraction
 - The OBB clash detection engine — geometrically sensitive code
 - The render-on-demand system (`_needsRender` / `invalidate`) — breaking this causes either no rendering or constant GPU waste
 
