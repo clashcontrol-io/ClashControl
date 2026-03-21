@@ -1,5 +1,53 @@
 # Changelog
 
+## v1.2.12 (2026-03-21)
+- Auto version bumping with changelog and README updates on every commit
+- Lazy rendering for unused UI components (modals, overlays, panels)
+- Security hardening: removed session traces and added CSP meta tag
+
+## v1.2.11 (2026-03-21)
+- Render on demand: GPU only draws frames when something actually changes
+- Idle FPS reduced from ~27 to 0 when nothing is happening
+
+## v1.2.10 (2026-03-21)
+- Light/dark mode toggle in header bar
+- 4 viewer render styles: Standard, Shaded, Rendered, Wireframe
+- Render style picker in bottom-left of viewer
+- Theme and render style settings in preferences
+
+## v1.2.9 (2026-03-21)
+- Smart fly-to now detects horizontal and zoom shifts
+- Camera preserves viewing angle for nearby targets
+
+## v1.2.8 (2026-03-21)
+- Ghost material: non-selected elements shown as semi-transparent grey
+- Smart angle-preserving fly-to applied to clashes and issues
+
+## v1.2.7 (2026-03-21)
+- Overhauled fly-to system with vertical level shifts and distance-based duration
+- Camera slides vertically between floors instead of full re-orientation
+
+## v1.2.6 (2026-03-21)
+- Fixed view cube rotating opposite to the 3D viewer using quaternion approach
+
+## v1.2.5 (2026-03-21)
+- Cleaned up element property panel with logical sections
+- Friendly type names, color-coded tags, organized dimensions/quantities
+
+## v1.2.4 (2026-03-21)
+- Fixed fly-to, level clicks, element outline silhouette, calmer animations
+
+## v1.2.3 (2026-03-21)
+- Added frustum culling, BCF compatibility, edge outlines, measure UX improvements
+
+## v1.2.2 (2026-03-21)
+- Improved section box UX, added sidebar splitter and select-all toggle
+
+## v1.2.1 (2026-03-21)
+- Fixed view cube rotation and reworked floor plan level interaction
+
+---
+
 ## v1.2.0 (2026-03-20)
 
 ### New Features

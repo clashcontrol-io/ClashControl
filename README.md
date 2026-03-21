@@ -1,5 +1,7 @@
 # clash-control
-The free open source Clash Controle webapp
+> Version: **v1.2.12** (2026-03-21)
+
+The free open source Clash Control webapp
 
 No more paying a lot of money for a license to just do your job. 
 Of course donations to keep the project running and expand more are welcome. 
