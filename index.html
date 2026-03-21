@@ -124,7 +124,7 @@ window.onload = function() {
 
 function startApp() {
   // ── Version (auto-updated by pre-commit hook) ──
-  var CC_VERSION = {v:'1.2.6',hash:'e5afd2b',date:'2026-03-21T08:18:01Z'};
+  var CC_VERSION = {v:'1.2.7',hash:'41b881e',date:'2026-03-21T08:28:29Z'};
 
   // Check CDN deps loaded
   var need = [];
@@ -2714,15 +2714,13 @@ function startApp() {
       });
       // Render loop sync
       var cubeRAF;
-      var _cubeQ = new THREE.Quaternion();
       function renderCube(){
         cubeRAF=requestAnimationFrame(renderCube);
         var S=state3d.current;
         if(!S||!S.camera||!S.orbit) return;
-        // Mirror main camera orientation: rotate cube group to match camera view
-        var relPos = S.camera.position.clone().sub(S.orbit.target).normalize().multiplyScalar(5);
-        cubeCamera.position.copy(relPos);
-        cubeCamera.lookAt(0,0,0);
+        // Standard view cube: rotate cube group by inverse of camera quaternion
+        // This makes the cube act as a miniature model matching the viewport orientation
+        cubeGroup.quaternion.copy(S.camera.quaternion).invert();
         cubeRenderer.render(cubeScene,cubeCamera);
       }
       renderCube();
