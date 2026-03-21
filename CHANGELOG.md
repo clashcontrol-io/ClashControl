@@ -1,0 +1,50 @@
+# Changelog
+
+## v1.2.0 (2026-03-20)
+
+### New Features
+- **View Cube**: Added interactive view cube in top-right corner of the 3D viewer. Click any face (Front, Back, Left, Right, Top, Bottom) to fly to that view direction with smooth animation.
+- **Ctrl+Scroll for Section Planes**: Ctrl+scroll now adjusts the position of active section planes (X/Y/Z axis and surface sections), in addition to the existing floor plan cut height adjustment.
+- **Blue Clash Point Marker**: When selecting a clash, a bright blue 3D marker (sphere + rings) now appears at the exact clash point for better visibility.
+- **Open Source Components Documentation**: Added `OPEN_SOURCE_COMPONENTS.md` listing all third-party libraries used.
+
+### Improvements
+- **Fly-to Distance Scaling**: Camera fly-to distance now scales based on object size — smaller objects get a *2.5 multiplier while larger objects use a minimum of *1.2, providing better framing for all element sizes.
+- **Tree Panel Interaction**: Single-click on a tree element now only highlights and shows properties. Double-click triggers the fly-to animation. This prevents accidental camera jumps when browsing the model tree.
+- **Floor Element Camera Angle**: Flying to floor/slab elements now positions the camera at an angle instead of straight from the top, giving a better 3D perspective.
+- **Property Box Redesign**: Reorganized the element property panel for clarity — element type and name are now prominent headers, storey/material/ID shown as color-coded tags, duplicate Pset dimension properties removed when IFC quantities exist, and dimension quantities separated from other quantities.
+- **Enlarged Small Text**: Increased font sizes for tree tab buttons (Expand all/Collapse all), classification view tabs, storey level buttons (All on/All off, Cut, elevation labels) for better readability.
+- **Transparency Level**: Ghost/transparency for non-selected elements changed from 85% to 80% transparent (opacity 0.2) for better visibility of context.
+- **Clearance Slider Label**: Renamed "Clearance" to "Soft clashes" with "Max gap" label and tooltip explaining that higher values detect more clashes.
+
+### Bug Fixes
+- **Clash Selection Fly-to**: Fixed clash/issue click to properly fly to the clash location with transparency applied and elements highlighted.
+- **Section Box Auto-off**: Selecting a different clash or issue now automatically turns off the section box, preventing confusion with stale section views.
+- **Removed Duplicate Pset Dimensions**: Property sets ending with "Dimensions" (e.g., Pset_WallCommon) that duplicate IFC quantity values are now filtered out to avoid showing the same measurements twice.
+
+---
+
+## v1.1.16 (2026-03-20)
+- Dalux-style 3D section cut for floor plans
+- Camera fly-to fixes for issue/clash clicks
+
+## v1.1.15 (2026-03-20)
+- Issue filters and merged Classify+Tree into Explorer tab
+
+## v1.1.14 (2026-03-20)
+- Mini-map removed, material extraction improved, IFC dimensions only
+
+## v1.1.13 (2026-03-20)
+- Section box with face handles only (corner handles removed)
+
+## v1.1.12 (2026-03-20)
+- Interactive section box with drag handles and rotation
+
+## v1.1.11 (2026-03-20)
+- Transparency only on clash/issue selection, not normal clicks
+
+## v1.1.10 (2026-03-20)
+- Exploder feature removed
+
+## v1.1.9 (2026-03-20)
+- Performance optimizations across rendering, traversals, and DOM

@@ -124,7 +124,7 @@ window.onload = function() {
 
 function startApp() {
   // ── Version (auto-updated by pre-commit hook) ──
-  var CC_VERSION = {v:'1.1.16',hash:'caf4ef8',date:'2026-03-20T20:20:30Z'};
+  var CC_VERSION = {v:'1.2.1',hash:'7b94747',date:'2026-03-20T22:37:13Z'};
 
   // Check CDN deps loaded
   var need = [];
@@ -965,6 +965,24 @@ function startApp() {
         }
         return;
       }
+      // Ctrl+scroll adjusts section plane position
+      if(e.ctrlKey && window._ccDispatch){
+        var cs = window._ccCurrentSection;
+        if(cs && cs.axis){
+          e.preventDefault();
+          var delta2 = e.deltaY > 0 ? -0.02 : 0.02;
+          var newPos = Math.max(0, Math.min(1, cs.pos + delta2));
+          window._ccDispatch({t:'SECTION',axis:cs.axis,pos:newPos});
+          return;
+        }
+        if(cs && cs.custom){
+          e.preventDefault();
+          var delta3 = e.deltaY > 0 ? -0.02 : 0.02;
+          var newPos2 = Math.max(0, Math.min(1, cs.pos + delta3));
+          window._ccDispatch({t:'SECTION_CUSTOM',v:cs.custom,pos:newPos2});
+          return;
+        }
+      }
       sph.r*=1+e.deltaY*0.0008;apply();e.preventDefault();
     },{passive:false});
     return {target:target, sync:sync, apply:apply, sph:sph};
@@ -1046,8 +1064,13 @@ function startApp() {
         if(hint && hint.normal) {
           // Place camera on the side the surface faces
           dir.set(hint.normal[0], hint.normal[1], hint.normal[2]).normalize();
-          // Bias slightly upward so we get a nice viewing angle
-          dir.y = Math.max(dir.y, 0.25);
+          // For top-facing surfaces (floors/slabs), use angled view not straight down
+          if(Math.abs(dir.y) > 0.9) {
+            dir.set(0.5, 0.7, 0.5).normalize();
+          } else {
+            // Bias slightly upward so we get a nice viewing angle
+            dir.y = Math.max(dir.y, 0.25);
+          }
           dir.normalize();
         } else if(S.mg && S.mg.children.length > 0) {
           // Direction from model center to target element — camera goes on the outside
@@ -1064,6 +1087,29 @@ function startApp() {
 
         var startTime = performance.now();
         var duration = 1500;
+        function animate(){
+          var elapsed = performance.now()-startTime;
+          var t = Math.min(elapsed/duration,1);
+          var e = easeInOut(t);
+          S.orbit.target.lerpVectors(startTarget,endTarget,e);
+          S.camera.position.lerpVectors(startPos,endPos,e);
+          S.camera.lookAt(S.orbit.target);
+          S.orbit.sync();
+          if(t<1) _flyAnim=requestAnimationFrame(animate);
+          else _flyAnim=null;
+        }
+        animate();
+      };
+
+      // Fly to a specific view (used by view cube)
+      window._ccFlyToView = function(target, pos) {
+        if(_flyAnim) cancelAnimationFrame(_flyAnim);
+        var startTarget = S.orbit.target.clone();
+        var startPos = S.camera.position.clone();
+        var endTarget = target.clone();
+        var endPos = pos.clone();
+        var startTime = performance.now();
+        var duration = 1200;
         function animate(){
           var elapsed = performance.now()-startTime;
           var t = Math.min(elapsed/duration,1);
@@ -1126,7 +1172,7 @@ function startApp() {
           if(eid!=null && !idSet[eid]){
             _ghostedMeshes.push({mesh:obj, origOpacity:obj.material.opacity, origTransparent:obj.material.transparent});
             obj.material.transparent = true;
-            obj.material.opacity = 0.15;
+            obj.material.opacity = 0.2;
             obj.material.needsUpdate = true;
           }
         });
@@ -1176,6 +1222,40 @@ function startApp() {
         }
         // Ghost non-selected elements
         if(alsoGhost!==false) ghostOthers([expressId]);
+      };
+
+      // ── Active Clash Point Marker (bright blue) ──
+      var _activeClashMarker = null;
+      window._ccShowActiveClashMarker = function(point) {
+        window._ccRemoveActiveClashMarker();
+        if(!point||point.length<3) return;
+        var grp = new THREE.Group();
+        // Bright blue pulsing sphere
+        var sphereGeo = new THREE.SphereGeometry(0.25, 16, 16);
+        var sphereMat = new THREE.MeshBasicMaterial({color:0x00aaff, transparent:true, opacity:0.9});
+        var sphere = new THREE.Mesh(sphereGeo, sphereMat);
+        sphere.position.set(point[0], point[1], point[2]);
+        grp.add(sphere);
+        // Outer ring for visibility
+        var ringGeo2 = new THREE.RingGeometry(0.35, 0.55, 32);
+        var ringMat2 = new THREE.MeshBasicMaterial({color:0x00ccff, transparent:true, opacity:0.6, side:THREE.DoubleSide});
+        var ring2 = new THREE.Mesh(ringGeo2, ringMat2);
+        ring2.position.set(point[0], point[1], point[2]);
+        ring2.rotation.x = -Math.PI/2;
+        grp.add(ring2);
+        // Vertical ring for 3D visibility
+        var ring3 = new THREE.Mesh(ringGeo2, ringMat2.clone());
+        ring3.position.set(point[0], point[1], point[2]);
+        grp.add(ring3);
+        scene.add(grp);
+        _activeClashMarker = grp;
+      };
+      window._ccRemoveActiveClashMarker = function() {
+        if(_activeClashMarker) {
+          _activeClashMarker.traverse(function(obj){if(obj.isMesh){if(obj.geometry)obj.geometry.dispose();if(obj.material)obj.material.dispose();}});
+          scene.remove(_activeClashMarker);
+          _activeClashMarker = null;
+        }
       };
 
       // ── Clash Markers ──
@@ -1228,7 +1308,7 @@ function startApp() {
         var dist = Math.max(sz.x,sz.y,sz.z,5)*2;
         _flyTo([ctr.x,ctr.y,ctr.z], dist);
       };
-      _fitToElement = function(expressId) {
+      _fitToElement = function(expressId, hint) {
         if(!expressId||!S.mg||!S.orbit) return;
         var found = null;
         S.mg.traverse(function(obj){
@@ -1238,8 +1318,12 @@ function startApp() {
         var box = new THREE.Box3().setFromObject(found);
         var ctr = box.getCenter(new THREE.Vector3());
         var sz = box.getSize(new THREE.Vector3());
-        var dist = Math.max(sz.x,sz.y,sz.z,1)*1.5;
-        _flyTo([ctr.x,ctr.y,ctr.z], dist);
+        var maxDim = Math.max(sz.x,sz.y,sz.z,0.5);
+        // Scale factor: smaller objects *2.5, larger objects approach *1.2
+        var scaleFactor = 2.5 - (Math.min(maxDim, 20) / 20) * 1.3; // 2.5 for tiny, 1.2 for 20m+
+        scaleFactor = Math.max(1.2, Math.min(2.5, scaleFactor));
+        var dist = maxDim * scaleFactor;
+        _flyTo([ctr.x,ctr.y,ctr.z], dist, hint||null);
       };
 
       // Fly to element(s) with same camera alignment as element click
@@ -1265,7 +1349,10 @@ function startApp() {
         }
         var ctr = box.getCenter(new THREE.Vector3());
         var sz = box.getSize(new THREE.Vector3());
-        var dist = Math.max(sz.x, sz.y, sz.z, 1) * 2.5;
+        var maxDim = Math.max(sz.x, sz.y, sz.z, 0.5);
+        var scaleFactor = 2.5 - (Math.min(maxDim, 20) / 20) * 1.3;
+        scaleFactor = Math.max(1.2, Math.min(2.5, scaleFactor));
+        var dist = maxDim * scaleFactor;
         var pt = [ctr.x, ctr.y, ctr.z];
         _flyTo(pt, dist);
       };
@@ -1638,7 +1725,10 @@ function startApp() {
             // Fly to element on click (if autoFlyTo enabled)
             if(prefsRef.current.autoFlyTo!==false && _flyTo) {
               var elSz = hitBox.getSize(new THREE.Vector3());
-              var elDist = Math.max(elSz.x,elSz.y,elSz.z,1)*2.5;
+              var elMaxDim = Math.max(elSz.x,elSz.y,elSz.z,0.5);
+              var elScale = 2.5 - (Math.min(elMaxDim, 20) / 20) * 1.3;
+              elScale = Math.max(1.2, Math.min(2.5, elScale));
+              var elDist = elMaxDim * elScale;
               _flyTo(hitPt, elDist, hitNormal ? {normal:hitNormal} : null);
             }
           }
@@ -1801,6 +1891,10 @@ function startApp() {
     // Section
     useEffect(function(){
       var S = state3d.current; if(!S.renderer||!S.mg) return;
+      // Expose current section state for Ctrl+scroll
+      if(s.sectionAxis) window._ccCurrentSection = {axis:s.sectionAxis, pos:s.sectionPos, custom:null};
+      else if(s.sectionCustom) window._ccCurrentSection = {axis:null, pos:s.sectionPos, custom:s.sectionCustom};
+      else window._ccCurrentSection = null;
       var planes = [];
       if(s.sectionAxis && S.mg.children.length>0){
         var box=new THREE.Box3().setFromObject(S.mg);
@@ -2246,73 +2340,75 @@ function startApp() {
           ${findQuery&&findResults.length===0 && html`<div style=${{fontSize:'.6rem',color:'#475569',textAlign:'center',padding:'.5rem'}}>No matches</div>`}
         </div>`}
       </div>`}
-      ${(s.sectionAxis||s.sectionCustom) && html`<div style=${{...P,top:'.75rem',right:'.75rem',background:'rgba(30,58,138,.9)',color:'#93c5fd',pointerEvents:'auto',cursor:'pointer',display:'flex',alignItems:'center',gap:'.4rem'}}
+      ${html`<${ViewCube} state3d=${state3d} />`}
+      ${(s.sectionAxis||s.sectionCustom) && html`<div style=${{...P,top:'7.5rem',right:'.75rem',background:'rgba(30,58,138,.9)',color:'#93c5fd',pointerEvents:'auto',cursor:'pointer',display:'flex',alignItems:'center',gap:'.4rem'}}
         onClick=${function(){d({t:'SECTION',axis:null})}}>
         <span>Section ${s.sectionAxis?(s.sectionAxis==='y'?'Z':s.sectionAxis==='z'?'Y':s.sectionAxis.toUpperCase()):'Surface'} · ${Math.round(s.sectionPos*100)}%</span>
         <span style=${{fontSize:'.6rem',opacity:.7}} title="Clear section">✕</span>
       </div>`}
-      ${s.floorPlan && html`<div style=${{...P,top:'.75rem',right:'.75rem',background:'rgba(91,33,182,.9)',color:'#c084fc',pointerEvents:'auto',cursor:'pointer',display:'flex',alignItems:'center',gap:'.4rem'}}
+      ${s.floorPlan && html`<div style=${{...P,top:'7.5rem',right:'.75rem',background:'rgba(91,33,182,.9)',color:'#c084fc',pointerEvents:'auto',cursor:'pointer',display:'flex',alignItems:'center',gap:'.4rem'}}
         onClick=${function(){d({t:'FLOOR_PLAN',v:null})}}>
         <span>3D Section: ${s.floorPlan.storeyName} · ${(s.floorPlan.elevation+(s.floorPlan.cutHeight||1.2)).toFixed(1)}m</span>
         <span style=${{fontSize:'.6rem',opacity:.7}} title="Exit 3D section">✕</span>
       </div>`}
-      ${selectedEl && html`<div style=${{position:'absolute',bottom:'.75rem',left:'.75rem',width:280,maxHeight:'50%',overflowY:'auto',background:'rgba(15,23,42,.95)',border:'1px solid #334155',borderRadius:8,padding:'.6rem',pointerEvents:'auto',boxShadow:'0 4px 20px rgba(0,0,0,.5)'}}>
-        <div style=${{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:'.4rem'}}>
-          <span style=${{fontSize:'.7rem',fontWeight:600,color:'#93c5fd'}}>Element Properties</span>
+      ${selectedEl && html`<div style=${{position:'absolute',bottom:'.75rem',left:'.75rem',width:290,maxHeight:'55%',overflowY:'auto',background:'rgba(15,23,42,.95)',border:'1px solid #334155',borderRadius:8,padding:'.6rem',pointerEvents:'auto',boxShadow:'0 4px 20px rgba(0,0,0,.5)'}}>
+        <div style=${{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:'.3rem'}}>
+          <span style=${{fontSize:'.75rem',fontWeight:700,color:'#e2e8f0'}}>${ep&&ep.ifcType||'Element'}</span>
           <div style=${{display:'flex',gap:'.3rem'}}>
             <button onClick=${function(){d({t:'MODAL',v:true,el:selectedEl});d({t:'TAB',v:'issues'});}}
-              style=${{...S_BTN,padding:'.1rem .4rem',background:'#2563eb',color:'#fff',fontSize:'.65rem',fontWeight:600,borderRadius:4}}>Create Issue</button>
+              style=${{...S_BTN,padding:'.15rem .4rem',background:'#2563eb',color:'#fff',fontSize:'.7rem',fontWeight:600,borderRadius:4}}>Create Issue</button>
             <button onClick=${function(){if(_sboxAroundElements)_sboxAroundElements([selectedEl.expressId]);}}
-              style=${{...S_BTN,padding:'.1rem .3rem',background:'#3b0764',color:'#c084fc',fontSize:'.6rem',borderRadius:4}} title="Section box around element">Box</button>
+              style=${{...S_BTN,padding:'.15rem .3rem',background:'#3b0764',color:'#c084fc',fontSize:'.65rem',borderRadius:4}} title="Section box around element">Box</button>
             <button onClick=${function(){setSelectedEl(null);if(_unghostAll)_unghostAll();if(hlRef.current&&state3d.current.scene){state3d.current.scene.remove(hlRef.current);hlRef.current=null;}if(outlineRef.current&&state3d.current.scene){state3d.current.scene.remove(outlineRef.current);outlineRef.current=null;}}}
-              style=${{...S_BTN,padding:'0 4px',background:'none',color:'#475569',fontSize:'.7rem'}}>✕</button>
+              style=${{...S_BTN,padding:'0 4px',background:'none',color:'#475569',fontSize:'.75rem'}}>✕</button>
           </div>
         </div>
-        <div style=${{fontSize:'.65rem',color:'#f59e0b',marginBottom:'.3rem'}}>${selectedEl.modelName}</div>
-        ${ep && ep.ifcType && html`<div style=${ROW}><span style=${LS}>Type</span><span style=${VS}>${ep.ifcType}</span></div>`}
-        ${ep && ep.name && html`<div style=${ROW}><span style=${LS}>Name</span><span style=${VS}>${ep.name}</span></div>`}
-        ${ep && ep.objectType && html`<div style=${ROW}><span style=${LS}>Object Type</span><span style=${VS}>${ep.objectType}</span></div>`}
-        ${ep && ep.description && html`<div style=${ROW}><span style=${LS}>Description</span><span style=${VS}>${ep.description}</span></div>`}
-        ${ep && ep.storey && html`<div style=${ROW}><span style=${LS}>Storey</span><span style=${VS}>${ep.storey}</span></div>`}
-        ${ep && ep.material && html`<div style=${ROW}><span style=${LS}>Material</span><span style=${VS}>${ep.material}</span></div>`}
-        <div style=${ROW}><span style=${LS}>Express ID</span><span style=${VS}>#${selectedEl.expressId}</span></div>
+        ${ep && ep.name && html`<div style=${{fontSize:'.7rem',color:'#e2e8f0',marginBottom:'.15rem',fontWeight:500}}>${ep.name}</div>`}
+        <div style=${{fontSize:'.65rem',color:'#f59e0b',marginBottom:'.2rem'}}>${selectedEl.modelName}</div>
+        <div style=${{display:'flex',flexWrap:'wrap',gap:'.15rem',marginBottom:'.3rem'}}>
+          ${ep && ep.storey && html`<span style=${{fontSize:'.65rem',background:'#1e293b',color:'#34d399',padding:'.1rem .35rem',borderRadius:4}}>${ep.storey}</span>`}
+          ${ep && ep.material && html`<span style=${{fontSize:'.65rem',background:'#1e293b',color:'#fbbf24',padding:'.1rem .35rem',borderRadius:4}}>${ep.material}</span>`}
+          <span style=${{fontSize:'.65rem',background:'#1e293b',color:'#64748b',padding:'.1rem .35rem',borderRadius:4}}>#${selectedEl.expressId}</span>
+        </div>
+        ${ep && ep.objectType && ep.objectType!==ep.ifcType && html`<div style=${{...ROW,fontSize:'.65rem'}}><span style=${{color:'#64748b'}}>Object Type</span><span style=${{color:'#cbd5e1'}}>${ep.objectType}</span></div>`}
+        ${ep && ep.description && html`<div style=${{...ROW,fontSize:'.65rem'}}><span style=${{color:'#64748b'}}>Description</span><span style=${{color:'#cbd5e1'}}>${ep.description}</span></div>`}
         ${function(){
-          // Show IFC dimensions from quantities and property sets
-          var q = ep&&ep.quantities||{};
-          var psets = ep&&ep.psets||{};
+          // Show IFC dimensions from quantities
+          var q2 = ep&&ep.quantities||{};
           var ifcDims = [];
-          // Collect from IFC quantities
           var dimKeys = ['Length','Width','Height','Depth','Perimeter','Thickness','Area','Volume','GrossArea','NetArea','GrossSideArea','NetSideArea','GrossVolume','NetVolume','GrossFootprintArea'];
-          dimKeys.forEach(function(k){ if(q[k]!=null) ifcDims.push({l:k,v:q[k]}); });
-          // Also scan property sets for dimension-like properties
-          var dimPropKeys = ['Height','Width','Length','Depth','Thickness','Span','Diameter','Radius','OverallHeight','OverallWidth','OverallDepth','NominalHeight','NominalWidth','NominalLength'];
-          Object.keys(psets).forEach(function(setName){
-            var ps=psets[setName];
-            dimPropKeys.forEach(function(k){
-              if(ps[k]!=null && !ifcDims.some(function(d){return d.l===k;})){
-                var v=ps[k];
-                if(typeof v==='number'||(!isNaN(parseFloat(v))&&isFinite(v))) ifcDims.push({l:k,v:typeof v==='number'?v:parseFloat(v),src:setName});
-              }
-            });
-          });
+          dimKeys.forEach(function(k){ if(q2[k]!=null) ifcDims.push({l:k,v:q2[k]}); });
           if(!ifcDims.length) return null;
-          return html`<div style=${{marginTop:'.2rem',borderTop:'1px solid #1e293b',paddingTop:'.2rem'}}>
-            <div style=${{fontSize:'.6rem',fontWeight:600,color:'#64748b',marginBottom:'.1rem'}}>Dimensions (IFC)</div>
-            ${ifcDims.map(function(d){
-              var val = typeof d.v==='number'?(d.v>=1?(d.v.toFixed(3)+' m'):((d.v*1000).toFixed(0)+' mm')):String(d.v);
-              return html`<div key=${d.l} style=${ROW}><span style=${LS}>${d.l}</span><span style=${VS}>${val}</span></div>`;
+          return html`<div style=${{marginTop:'.3rem',borderTop:'1px solid #1e293b',paddingTop:'.3rem'}}>
+            <div style=${{fontSize:'.65rem',fontWeight:600,color:'#93c5fd',marginBottom:'.15rem'}}>Dimensions</div>
+            ${ifcDims.map(function(dd){
+              var val = typeof dd.v==='number'?(dd.v>=1?(dd.v.toFixed(3)+' m'):((dd.v*1000).toFixed(0)+' mm')):String(dd.v);
+              return html`<div key=${dd.l} style=${{...ROW,fontSize:'.65rem'}}><span style=${{color:'#64748b'}}>${dd.l}</span><span style=${{color:'#cbd5e1'}}>${val}</span></div>`;
             })}
           </div>`;
         }()}
-        ${epQ.length>0 && html`<div style=${{marginTop:'.3rem',borderTop:'1px solid #1e293b',paddingTop:'.3rem'}}>
-          <div style=${{fontSize:'.6rem',fontWeight:600,color:'#64748b',marginBottom:'.15rem'}}>Quantities</div>
-          ${epQ.map(function(k){return html`<div key=${k} style=${ROW}><span style=${LS}>${k}</span><span style=${VS}>${typeof ep.quantities[k]==='number'?ep.quantities[k].toFixed(3):ep.quantities[k]}</span></div>`})}
-        </div>`}
+        ${epQ.length>0 && function(){
+          // Show non-dimension quantities only (filter out ones already in Dimensions)
+          var dimKeys2 = ['Length','Width','Height','Depth','Perimeter','Thickness','Area','Volume','GrossArea','NetArea','GrossSideArea','NetSideArea','GrossVolume','NetVolume','GrossFootprintArea'];
+          var otherQ = epQ.filter(function(k){return dimKeys2.indexOf(k)===-1;});
+          if(!otherQ.length) return null;
+          return html`<div style=${{marginTop:'.3rem',borderTop:'1px solid #1e293b',paddingTop:'.3rem'}}>
+            <div style=${{fontSize:'.65rem',fontWeight:600,color:'#93c5fd',marginBottom:'.15rem'}}>Quantities</div>
+            ${otherQ.map(function(k){return html`<div key=${k} style=${{...ROW,fontSize:'.65rem'}}><span style=${{color:'#64748b'}}>${k}</span><span style=${{color:'#cbd5e1'}}>${typeof ep.quantities[k]==='number'?ep.quantities[k].toFixed(3):ep.quantities[k]}</span></div>`})}
+          </div>`;
+        }()}
         ${epP.map(function(setName){
           var ps=ep.psets[setName]; var keys=Object.keys(ps);
+          // Filter out Pset_*Dimensions property sets that duplicate IFC quantities
+          if(setName.match(/Dimensions$/i)){
+            var q3 = ep&&ep.quantities||{};
+            var dimPropNames = ['Height','Width','Length','Depth','Thickness'];
+            var allDuplicates = keys.every(function(k){return dimPropNames.indexOf(k)!==-1 && q3[k]!=null;});
+            if(allDuplicates) return null;
+          }
           return html`<div key=${setName} style=${{marginTop:'.3rem',borderTop:'1px solid #1e293b',paddingTop:'.3rem'}}>
-            <div style=${{fontSize:'.6rem',fontWeight:600,color:'#64748b',marginBottom:'.15rem'}}>${setName}</div>
-            ${keys.map(function(k){return html`<div key=${k} style=${ROW}><span style=${LS}>${k}</span><span style=${VS}>${String(ps[k])}</span></div>`})}
+            <div style=${{fontSize:'.65rem',fontWeight:600,color:'#93c5fd',marginBottom:'.15rem'}}>${setName}</div>
+            ${keys.map(function(k){return html`<div key=${k} style=${{...ROW,fontSize:'.65rem'}}><span style=${{color:'#64748b'}}>${k}</span><span style=${{color:'#cbd5e1'}}>${String(ps[k])}</span></div>`})}
           </div>`;
         })}
       </div>`}
@@ -2378,6 +2474,105 @@ function startApp() {
       </div>`}
     </div>`;
   }
+
+  // ── View Cube ────────────────────────────────────────────────
+  function ViewCube(props) {
+    var state3d = props.state3d;
+    var canvasRef = useRef(null);
+    var cubeSceneRef = useRef(null);
+    useEffect(function(){
+      var canvas = canvasRef.current; if(!canvas) return;
+      var cubeScene = new THREE.Scene();
+      var cubeCamera = new THREE.OrthographicCamera(-1.8,1.8,-1.8,1.8,0.1,10);
+      cubeCamera.position.set(0,0,5);
+      cubeCamera.lookAt(0,0,0);
+      var cubeRenderer = new THREE.WebGLRenderer({canvas:canvas,alpha:true,antialias:true});
+      cubeRenderer.setSize(120,120);
+      cubeRenderer.setPixelRatio(Math.min(devicePixelRatio,2));
+      cubeRenderer.setClearColor(0x000000,0);
+      // Build cube with face labels
+      var faces=[
+        {label:'Front',color:0x334155,pos:[0,0,0.5],rot:[0,0,0],dir:[0,0,1]},
+        {label:'Back',color:0x334155,pos:[0,0,-0.5],rot:[0,Math.PI,0],dir:[0,0,-1]},
+        {label:'Right',color:0x374151,pos:[0.5,0,0],rot:[0,Math.PI/2,0],dir:[1,0,0]},
+        {label:'Left',color:0x374151,pos:[-0.5,0,0],rot:[0,-Math.PI/2,0],dir:[-1,0,0]},
+        {label:'Top',color:0x1e3a5f,pos:[0,0.5,0],rot:[-Math.PI/2,0,0],dir:[0,1,0]},
+        {label:'Bottom',color:0x1e293b,pos:[0,-0.5,0],rot:[Math.PI/2,0,0],dir:[0,-1,0]}
+      ];
+      var cubeGroup = new THREE.Group();
+      faces.forEach(function(f){
+        // Create face plane with text
+        var c2d = document.createElement('canvas');
+        c2d.width=128;c2d.height=128;
+        var ctx=c2d.getContext('2d');
+        ctx.fillStyle='#'+f.color.toString(16).padStart(6,'0');
+        ctx.fillRect(0,0,128,128);
+        ctx.strokeStyle='#475569';ctx.lineWidth=2;ctx.strokeRect(1,1,126,126);
+        ctx.fillStyle='#94a3b8';ctx.font='bold 22px system-ui';ctx.textAlign='center';ctx.textBaseline='middle';
+        ctx.fillText(f.label,64,64);
+        var tex=new THREE.CanvasTexture(c2d);
+        var mat=new THREE.MeshBasicMaterial({map:tex,transparent:true,opacity:0.9});
+        var geo=new THREE.PlaneGeometry(0.98,0.98);
+        var mesh=new THREE.Mesh(geo,mat);
+        mesh.position.set(f.pos[0],f.pos[1],f.pos[2]);
+        mesh.rotation.set(f.rot[0],f.rot[1],f.rot[2]);
+        mesh.userData._cubeDir=f.dir;
+        mesh.userData._cubeLabel=f.label;
+        cubeGroup.add(mesh);
+      });
+      cubeScene.add(cubeGroup);
+      cubeScene.add(new THREE.AmbientLight(0xffffff,1));
+      cubeSceneRef.current = {scene:cubeScene,camera:cubeCamera,renderer:cubeRenderer,group:cubeGroup};
+      // Click handler for cube faces
+      var cubeRay = new THREE.Raycaster();
+      var cubeMouse = new THREE.Vector2();
+      canvas.addEventListener('click', function(e){
+        var S=state3d.current; if(!S||!S.orbit||!S.mg) return;
+        var rect=canvas.getBoundingClientRect();
+        cubeMouse.x=((e.clientX-rect.left)/rect.width)*2-1;
+        cubeMouse.y=-((e.clientY-rect.top)/rect.height)*2+1;
+        cubeRay.setFromCamera(cubeMouse,cubeCamera);
+        var hits=cubeRay.intersectObjects(cubeGroup.children,false);
+        if(hits.length>0){
+          var dir=hits[0].object.userData._cubeDir;
+          if(dir){
+            // Fly to that view direction
+            var modelBox=S.mg.children.length>0?new THREE.Box3().setFromObject(S.mg):new THREE.Box3(new THREE.Vector3(-5,-5,-5),new THREE.Vector3(5,5,5));
+            var ctr=modelBox.getCenter(new THREE.Vector3());
+            var sz=modelBox.getSize(new THREE.Vector3());
+            var dist=Math.max(sz.x,sz.y,sz.z)*1.5;
+            // For top/bottom add slight angle
+            var viewDir=new THREE.Vector3(dir[0],dir[1],dir[2]);
+            if(Math.abs(viewDir.y)>0.9) viewDir.set(0.3,viewDir.y>0?0.85:-0.85,0.3).normalize();
+            var endPos=ctr.clone().addScaledVector(viewDir,dist);
+            // Animated fly
+            if(window._ccFlyToView) window._ccFlyToView(ctr,endPos);
+          }
+        }
+      });
+      // Render loop sync
+      var cubeRAF;
+      function renderCube(){
+        cubeRAF=requestAnimationFrame(renderCube);
+        var S=state3d.current;
+        if(!S||!S.camera) return;
+        // Mirror main camera orientation onto cube camera
+        var mainDir=new THREE.Vector3();
+        S.camera.getWorldDirection(mainDir);
+        cubeCamera.position.copy(mainDir.negate().multiplyScalar(5));
+        cubeCamera.lookAt(0,0,0);
+        cubeRenderer.render(cubeScene,cubeCamera);
+      }
+      renderCube();
+      return function(){cancelAnimationFrame(cubeRAF);cubeRenderer.dispose();};
+    },[]);
+    return html`<div style=${{position:'absolute',top:'.5rem',right:'.5rem',pointerEvents:'auto',cursor:'pointer',borderRadius:8,overflow:'hidden'}}>
+      <canvas ref=${canvasRef} width="120" height="120" style=${{display:'block',borderRadius:8}} />
+    </div>`;
+  }
+
+  // Expose fly-to-view for the cube
+  var _flyToViewFn = null;
 
   // ── Section Box UI ──────────────────────────────────────────
   var _getSectionBoxFromScene = null; // set in Viewer
@@ -2566,11 +2761,11 @@ function startApp() {
             <span style=${{fontSize:'.65rem',fontWeight:600,color:'#64748b',textTransform:'uppercase',letterSpacing:'.05em'}}>Levels</span>
             <div style=${{display:'flex',gap:'.2rem'}}>
               ${activePlan && html`<button onClick=${function(){d({t:'FLOOR_PLAN',v:null})}}
-                style=${{...S_BTN,fontSize:'.45rem',padding:'.05rem .25rem',background:'#7c3aed',color:'#fff'}}>Exit Plan</button>`}
+                style=${{...S_BTN,fontSize:'.6rem',padding:'.1rem .3rem',background:'#7c3aed',color:'#fff'}}>Exit Plan</button>`}
               <button onClick=${function(){s.models.forEach(function(m){d({t:'TOGGLE_ALL_STOREYS',id:m.id,storeys:m.storeys||[],hide:false})})}}
-                style=${{...S_BTN,fontSize:'.45rem',padding:'.05rem .2rem',background:'#0f172a',color:'#64748b'}}>All on</button>
+                style=${{...S_BTN,fontSize:'.6rem',padding:'.1rem .3rem',background:'#0f172a',color:'#94a3b8'}}>All on</button>
               <button onClick=${function(){s.models.forEach(function(m){d({t:'TOGGLE_ALL_STOREYS',id:m.id,storeys:m.storeys||[],hide:true})})}}
-                style=${{...S_BTN,fontSize:'.45rem',padding:'.05rem .2rem',background:'#0f172a',color:'#64748b'}}>All off</button>
+                style=${{...S_BTN,fontSize:'.6rem',padding:'.1rem .3rem',background:'#0f172a',color:'#94a3b8'}}>All off</button>
             </div>
           </div>
           ${stKeys.map(function(st){
@@ -2586,13 +2781,13 @@ function startApp() {
                 ${!hidden && html`<span style=${{color:'#fff',fontSize:7}}>✓</span>`}
               </span>
               <span style=${{fontSize:'.6rem',color:hidden?'#475569':'#e2e8f0',flex:1,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}} title=${st+(hasElev?' ('+elev.toFixed(1)+'m)':'')}>${st}</span>
-              ${hasElev && html`<span style=${{fontSize:'.45rem',color:'#475569',flexShrink:0}}>${elev.toFixed(1)}m</span>`}
+              ${hasElev && html`<span style=${{fontSize:'.55rem',color:'#475569',flexShrink:0}}>${elev.toFixed(1)}m</span>`}
               ${hasElev && html`<button onClick=${function(e){
                 e.stopPropagation();
                 if(isPlanActive){d({t:'FLOOR_PLAN',v:null});}
                 else{d({t:'FLOOR_PLAN',v:{storeyName:st,elevation:elev,cutHeight:1.2}});}
               }}
-                style=${{...S_BTN,fontSize:'.4rem',padding:'.05rem .2rem',background:isPlanActive?'#7c3aed':'#1e293b',color:isPlanActive?'#fff':'#a78bfa',border:'1px solid '+(isPlanActive?'#7c3aed':'#334155'),flexShrink:0}}
+                style=${{...S_BTN,fontSize:'.55rem',padding:'.1rem .25rem',background:isPlanActive?'#7c3aed':'#1e293b',color:isPlanActive?'#fff':'#a78bfa',border:'1px solid '+(isPlanActive?'#7c3aed':'#334155'),flexShrink:0}}
                 title=${'3D section cut at '+st}>${isPlanActive?'Exit':'Cut'}</button>`}
             </div>`;
           })}
@@ -2729,15 +2924,15 @@ function startApp() {
       <div style=${{padding:'.4rem',borderBottom:'1px solid #1e293b',flexShrink:0}}>
         <div style=${{display:'flex',gap:'.2rem',flexWrap:'wrap',marginBottom:'.3rem'}}>
           ${VIEWS.map(function(v){return html`<button key=${v.id} onClick=${function(){setViewMode(v.id)}}
-            style=${{...S_BTN,fontSize:'.55rem',padding:'.15rem .35rem',background:viewMode===v.id?'#2563eb':'#1e293b',color:viewMode===v.id?'#fff':'#475569'}}>${v.label}</button>`})}
+            style=${{...S_BTN,fontSize:'.65rem',padding:'.2rem .4rem',background:viewMode===v.id?'#2563eb':'#1e293b',color:viewMode===v.id?'#fff':'#94a3b8'}}>${v.label}</button>`})}
         </div>
         ${viewMode==='tree' && html`<div>
           <input type="text" placeholder="Search elements…" value=${treeSearch}
             onInput=${function(e){setTreeSearch(e.target.value);}}
             style=${{...S_INPUT,fontSize:'.65rem',padding:'.2rem .4rem',marginBottom:'.3rem'}} />
           <div style=${{display:'flex',gap:'.2rem'}}>
-            <button onClick=${expandAll} style=${{...S_BTN,fontSize:'.5rem',padding:'.1rem .3rem',background:'#0f172a',color:'#64748b'}}>Expand all</button>
-            <button onClick=${function(){setExpanded({});}} style=${{...S_BTN,fontSize:'.5rem',padding:'.1rem .3rem',background:'#0f172a',color:'#64748b'}}>Collapse all</button>
+            <button onClick=${expandAll} style=${{...S_BTN,fontSize:'.65rem',padding:'.15rem .4rem',background:'#0f172a',color:'#94a3b8'}}>Expand all</button>
+            <button onClick=${function(){setExpanded({});}} style=${{...S_BTN,fontSize:'.65rem',padding:'.15rem .4rem',background:'#0f172a',color:'#94a3b8'}}>Collapse all</button>
           </div>
         </div>`}
         ${classView && total>0 && html`<div style=${{display:'flex',justifyContent:'space-between',alignItems:'center',marginTop:'.15rem'}}>
@@ -2793,7 +2988,9 @@ function startApp() {
                   ${sOpen && html`<div style=${{paddingLeft:'.4rem'}}>
                     ${filtered.slice(0,200).map(function(el){
                       var p=el.props||{};
-                      return html`<div key=${el.expressId} onClick=${function(){if(_fitToElement)_fitToElement(el.expressId);if(_highlightById)_highlightById(el.expressId);}}
+                      return html`<div key=${el.expressId}
+                        onClick=${function(){if(_highlightById)_highlightById(el.expressId,false);}}
+                        onDblClick=${function(e){e.stopPropagation();if(_fitToElement){var isFloor=(p.ifcType||'').match(/slab|floor/i);_fitToElement(el.expressId,isFloor?{normal:[0,1,0]}:null);}if(_highlightById)_highlightById(el.expressId);}}
                         style=${{padding:'.15rem .3rem',cursor:'pointer',display:'flex',alignItems:'center',gap:'.2rem',borderBottom:'1px solid #0f172a'}}>
                         <span style=${{color:'#c084fc',flexShrink:0}}>${p.ifcType||'Element'}</span>
                         <span style=${{color:'#94a3b8',flex:1,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>${p.name||'#'+el.expressId}</span>
@@ -2812,7 +3009,9 @@ function startApp() {
                 ${expanded['s_'+model.id+'_none'] && html`<div style=${{paddingLeft:'.4rem'}}>
                   ${noStorey.filter(function(el){if(!q)return true;var p=el.props||{};return (p.name||'').toLowerCase().indexOf(q)!==-1||(p.ifcType||'').toLowerCase().indexOf(q)!==-1;}).slice(0,100).map(function(el){
                     var p=el.props||{};
-                    return html`<div key=${el.expressId} onClick=${function(){if(_fitToElement)_fitToElement(el.expressId);if(_highlightById)_highlightById(el.expressId);}}
+                    return html`<div key=${el.expressId}
+                      onClick=${function(){if(_highlightById)_highlightById(el.expressId,false);}}
+                      onDblClick=${function(e){e.stopPropagation();if(_fitToElement){var isFloor=(p.ifcType||'').match(/slab|floor/i);_fitToElement(el.expressId,isFloor?{normal:[0,1,0]}:null);}if(_highlightById)_highlightById(el.expressId);}}
                       style=${{padding:'.15rem .3rem',cursor:'pointer',display:'flex',alignItems:'center',gap:'.2rem',borderBottom:'1px solid #0f172a'}}>
                       <span style=${{color:'#c084fc',flexShrink:0}}>${p.ifcType||'Element'}</span>
                       <span style=${{color:'#94a3b8',flex:1,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>${p.name||'#'+el.expressId}</span>
@@ -3196,18 +3395,15 @@ function startApp() {
     return html`<div onClick=${function(){
         var wasActive=active;
         d({t:'ACTIVE',id:wasActive?null:it.id});
-        if(wasActive){
-          // Deselecting: restore transparency
-          if(_unghostAll)_unghostAll();
-          return;
+        // Auto turn off section box when selecting a different clash/issue
+        if(!wasActive && window._ccCurrentSbox && window._ccDispatch){
+          window._ccDispatch({t:'SECTION_BOX',v:null});
         }
-        if(pr.autoFlyTo!==false){
-          var flyIds=[];
-          if(it.elemA) flyIds.push(it.elemA);
-          if(it.elemB) flyIds.push(it.elemB);
-          if(it.elementId) flyIds.push(it.elementId);
-          if(_flyToElements && flyIds.length) _flyToElements(flyIds, it.point);
-          else if(it.point && _flyTo) _flyTo(it.point);
+        if(wasActive){
+          // Deselecting: restore transparency, remove clash marker
+          if(_unghostAll)_unghostAll();
+          if(window._ccRemoveActiveClashMarker) window._ccRemoveActiveClashMarker();
+          return;
         }
         if(pr.autoHighlight!==false){
           var ids=[];
@@ -3217,6 +3413,16 @@ function startApp() {
           if(ids.length&&_ghostOthers) _ghostOthers(ids);
           if(it.elemA&&_highlightById) _highlightById(it.elemA,false);
           if(it.elementId&&_highlightById) _highlightById(it.elementId,false);
+          // Show bright blue marker at clash point
+          if(it.point && window._ccShowActiveClashMarker) window._ccShowActiveClashMarker(it.point);
+        }
+        if(pr.autoFlyTo!==false){
+          var flyIds=[];
+          if(it.elemA) flyIds.push(it.elemA);
+          if(it.elemB) flyIds.push(it.elemB);
+          if(it.elementId) flyIds.push(it.elementId);
+          if(_flyToElements && flyIds.length) _flyToElements(flyIds, it.point);
+          else if(it.point && _flyTo) _flyTo(it.point);
         }
       }}
       style=${{padding:'.6rem .7rem',borderBottom:'1px solid #1e293b',cursor:'pointer',background:active?'#1e293b':'transparent',borderLeft:active?'2px solid #3b82f6':'2px solid transparent'}}>
@@ -3281,9 +3487,10 @@ function startApp() {
       </label>
       <label style=${{display:'flex',alignItems:'center',gap:'.2rem',cursor:'pointer'}}>
         <input type="checkbox" checked=${r.soft} onChange=${function(e){d({t:'UPD_RULES',u:{soft:e.target.checked}})}} />
-        <span style=${{fontSize:'.7rem',color:'#94a3b8'}}>Clearance</span>
+        <span style=${{fontSize:'.7rem',color:'#94a3b8'}}>Soft clashes</span>
       </label>
-      ${r.soft && html`<div style=${{display:'flex',alignItems:'center',gap:'.3rem'}}>
+      ${r.soft && html`<div style=${{display:'flex',alignItems:'center',gap:'.3rem'}} title="Max gap between elements to count as a clash. Higher = more clashes detected.">
+        <span style=${{fontSize:'.6rem',color:'#475569'}}>Max gap:</span>
         <input type="range" min="0" max="500" step="5" value=${r.clearance}
           onInput=${function(e){d({t:'UPD_RULES',u:{clearance:+e.target.value}})}} style=${{width:70}} />
         <span style=${{fontSize:'.7rem',color:'#475569',width:42}}>${r.clearance} mm</span>
