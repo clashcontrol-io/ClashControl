@@ -1,5 +1,8 @@
 # Changelog
 
+## v1.2.20 (2026-03-22)
+- Add clash grouping, duplicate detection, tolerance, ortho/perspective, drag-orbit ViewCube
+
 ## v1.2.19 (2026-03-22)
 - Add Revit-style 3D ViewCube, project system, and fix CSP/perf issues
 

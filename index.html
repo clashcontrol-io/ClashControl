@@ -8,7 +8,7 @@
   <meta name="theme-color" content="#0f172a">
 
   <!-- CSP: restrict resource loading to known CDN origins -->
-  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval' 'wasm-unsafe-eval' https://cdnjs.cloudflare.com https://esm.sh https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline'; connect-src https://esm.sh https://cdn.jsdelivr.net blob:; worker-src blob:; img-src 'self' blob: data:;">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval' 'wasm-unsafe-eval' https://cdnjs.cloudflare.com https://esm.sh https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline'; connect-src https://esm.sh https://cdn.jsdelivr.net https://cdnjs.cloudflare.com blob:; worker-src blob:; img-src 'self' blob: data:;">
 
   <!-- CDN deps: React, Three.js, JSZip — all UMD, all cdnjs -->
   <!-- SRI hashes: regenerate with `node scripts/generate-sri.js` if you change versions -->
@@ -16,6 +16,7 @@
   <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js" integrity="sha384-bm7MnzvK++ykSwVJ2tynSE5TRdN+xL418osEVF2DE/L/gfWHj91J2Sphe582B1Bh" crossorigin="anonymous"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js" integrity="sha384-CI3ELBVUz9XQO+97x6nwMDPosPR5XvsxW2ua7N1Xeygeh1IxtgqtCkGfQY9WWdHu" crossorigin="anonymous"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js" integrity="sha384-+mbV2IY1Zk/X1p/nWllGySJSUN8uMs+gUAN10Or95UBH0fpj6GfKgPmgC5EXieXG" crossorigin="anonymous"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js" crossorigin="anonymous"></script>
 
   <!-- htm — tagged template to React.createElement (hand-written, tested, 11/11 pass) -->
   <script>
@@ -171,7 +172,7 @@ window.onload = function() {
 
 function startApp() {
   // ── Version (auto-updated by pre-commit hook) ──
-  var CC_VERSION = {v:'1.2.19',hash:'e7d0fb4',date:'2026-03-22T07:37:50Z'};
+  var CC_VERSION = {v:'1.2.20',hash:'1e53859',date:'2026-03-22T08:23:29Z'};
 
   // Check CDN deps loaded
   var need = [];
@@ -250,7 +251,13 @@ function startApp() {
     _highlightedStorey:null,
     // Projects
     activeProject:getActiveProjectId(),
-    projectList:ensureDefaultProject()
+    projectList:ensureDefaultProject(),
+    // 2D Underlays
+    underlays:[], // [{id, name, type:'dxf'|'pdf', canvasData, offsetX, offsetY, scale, rotation, opacity, visible, storeyName, extentW, extentH, page}]
+    activeUnderlay:null,
+    underlayMode:null, // null, 'view2d', 'compare'
+    markups:[], // [{id, type:'line'|'rect'|'text'|'arrow', points, color, text}]
+    markupTool:null // null, 'line', 'rect', 'text', 'arrow', 'erase'
   };
   function reducer(s,a) {
     switch(a.t) {
@@ -295,6 +302,16 @@ function startApp() {
       case 'LOAD_PROJECT_STATE': return Object.assign({},s,a.data);
       case 'CLASH_GROUP_BY': return Object.assign({},s,{clashGroupBy:a.v});
       case 'TOGGLE_PROJECTION': return Object.assign({},s,{projection:s.projection==='ortho'?'perspective':'ortho'});
+      // 2D Underlays
+      case 'ADD_UNDERLAY':    return Object.assign({},s,{underlays:s.underlays.concat([a.v]),activeUnderlay:a.v.id});
+      case 'DEL_UNDERLAY':    return Object.assign({},s,{underlays:s.underlays.filter(function(u){return u.id!==a.id}),activeUnderlay:s.activeUnderlay===a.id?null:s.activeUnderlay});
+      case 'UPD_UNDERLAY':    return Object.assign({},s,{underlays:s.underlays.map(function(u){return u.id===a.id?Object.assign({},u,a.u):u})});
+      case 'SET_UNDERLAY':    return Object.assign({},s,{activeUnderlay:a.id});
+      case 'UNDERLAY_MODE':   return Object.assign({},s,{underlayMode:a.v});
+      case 'ADD_MARKUP':      return Object.assign({},s,{markups:s.markups.concat([a.v])});
+      case 'DEL_MARKUP':      return Object.assign({},s,{markups:s.markups.filter(function(m){return m.id!==a.id})});
+      case 'CLEAR_MARKUPS':   return Object.assign({},s,{markups:[]});
+      case 'MARKUP_TOOL':     return Object.assign({},s,{markupTool:a.v});
       default:            return s;
     }
   }
@@ -3568,6 +3585,69 @@ function startApp() {
     return 'architectural';
   }
 
+  // ── 2D Underlay Import ────────────────────────────────────────
+  function UnderlayImport(props) {
+    var d = props.d;
+    var fRef = useRef(null);
+    var ldSt = useState(false), isLoading = ldSt[0], setLoading = ldSt[1];
+
+    function importFile(file) {
+      var name = file.name;
+      var ext = name.split('.').pop().toLowerCase();
+      setLoading(true);
+
+      if (ext === 'dxf') {
+        file.text().then(function(text) {
+          var dxfData = parseDXF(text);
+          if (dxfData.entities.length === 0) { alert('No entities found in DXF file.'); setLoading(false); return; }
+          var result = renderDXFToCanvas(dxfData, 2048, 2048);
+          var canvasData = result.canvas.toDataURL('image/png');
+          d({ t: 'ADD_UNDERLAY', v: {
+            id: uid(), name: name, type: 'dxf', canvasData: canvasData,
+            offsetX: 0, offsetY: 0, scale: 1, rotation: 0, opacity: 0.7, visible: true,
+            extentW: result.extentW, extentH: result.extentH, storeyName: null
+          }});
+          d({ t: 'UNDERLAY_MODE', v: 'view2d' });
+          setLoading(false);
+        }).catch(function(e) { alert('DXF parse error: ' + e.message); setLoading(false); });
+      } else if (ext === 'pdf') {
+        file.arrayBuffer().then(function(buf) {
+          return loadPDFPage(buf, 1);
+        }).then(function(result) {
+          var canvasData = result.canvas.toDataURL('image/png');
+          d({ t: 'ADD_UNDERLAY', v: {
+            id: uid(), name: name, type: 'pdf', canvasData: canvasData,
+            offsetX: 0, offsetY: 0, scale: 1, rotation: 0, opacity: 0.7, visible: true,
+            extentW: result.extentW, extentH: result.extentH, storeyName: null,
+            numPages: result.numPages, page: 1, _pdfBuffer: buf
+          }});
+          d({ t: 'UNDERLAY_MODE', v: 'view2d' });
+          setLoading(false);
+        }).catch(function(e) { alert('PDF load error: ' + e.message); setLoading(false); });
+      } else if (ext === 'dwg') {
+        alert('DWG is a proprietary Autodesk format and cannot be parsed in the browser.\n\nPlease convert to DXF first:\n• AutoCAD: SAVEAS → DXF\n• FreeCAD: File → Export as DXF\n• ODA File Converter (free): dwg → dxf\n\nAlternatively, export as PDF for visual reference.');
+        setLoading(false);
+      } else {
+        alert('Unsupported format. Use .dxf or .pdf files.');
+        setLoading(false);
+      }
+    }
+
+    function onFileChange(e) {
+      var files = Array.prototype.slice.call(e.target.files || []);
+      files.forEach(importFile);
+      e.target.value = '';
+    }
+
+    return html`<div style=${{ marginTop: '.3rem' }}>
+      <input ref=${fRef} type="file" accept=".dxf,.pdf,.dwg" style=${{ display: 'none' }} onChange=${onFileChange} />
+      <button onClick=${function() { fRef.current && fRef.current.click(); }} disabled=${isLoading}
+        style=${{ ...S_BTN, width: '100%', fontSize: '.65rem', padding: '.3rem', background: 'none', color: 'var(--text-faint)', border: '1px dashed var(--border-subtle)' }}>
+        ${isLoading ? html`<span class="spin">⟳</span> Loading…` : '+ 2D Underlay (DXF / PDF)'}
+      </button>
+    </div>`;
+  }
+
   function ModelSidebar(props) {
     var s=props.s, d=props.d;
     var fileRef = useRef(null);
@@ -3629,6 +3709,32 @@ function startApp() {
       setErr('');
       var chain = Promise.resolve();
       files.forEach(function(f) {
+        var ext = f.name.split('.').pop().toLowerCase();
+        if (ext === 'dxf' || ext === 'pdf' || ext === 'dwg') {
+          // Delegate to underlay import
+          if (ext === 'dwg') { alert('DWG cannot be parsed in-browser. Convert to DXF first (AutoCAD SAVEAS, ODA File Converter, or FreeCAD).'); return; }
+          if (ext === 'dxf') {
+            chain = chain.then(function() {
+              return f.text().then(function(text) {
+                var dxfData = parseDXF(text);
+                if (dxfData.entities.length === 0) return;
+                var result = renderDXFToCanvas(dxfData, 2048, 2048);
+                d({ t: 'ADD_UNDERLAY', v: { id: uid(), name: f.name, type: 'dxf', canvasData: result.canvas.toDataURL('image/png'),
+                  offsetX: 0, offsetY: 0, scale: 1, rotation: 0, opacity: 0.7, visible: true,
+                  extentW: result.extentW, extentH: result.extentH, storeyName: null }});
+              });
+            });
+          } else if (ext === 'pdf') {
+            chain = chain.then(function() {
+              return f.arrayBuffer().then(function(buf) { return loadPDFPage(buf, 1); }).then(function(result) {
+                d({ t: 'ADD_UNDERLAY', v: { id: uid(), name: f.name, type: 'pdf', canvasData: result.canvas.toDataURL('image/png'),
+                  offsetX: 0, offsetY: 0, scale: 1, rotation: 0, opacity: 0.7, visible: true,
+                  extentW: result.extentW, extentH: result.extentH, storeyName: null, numPages: result.numPages, page: 1 }});
+              });
+            });
+          }
+          return;
+        }
         if (!f.name.toLowerCase().match(/\.ifc$/)) return;
         chain = chain.then(function() {
           setLoading(true);
@@ -3688,16 +3794,34 @@ function startApp() {
           <span style=${{fontSize:'.7rem',fontWeight:600,color:'var(--text-muted)',textTransform:'uppercase',letterSpacing:'.05em'}}>Models</span>
           <span style=${{fontSize:'.7rem',color:'var(--text-faint)'}}>${s.models.length} loaded</span>
         </div>
-        <input ref=${fileRef} type="file" accept=".ifc" multiple style=${{display:'none'}} onChange=${onFiles} />
+        <input ref=${fileRef} type="file" accept=".ifc,.dxf,.pdf,.dwg" multiple style=${{display:'none'}} onChange=${onFiles} />
         <button onClick=${function(){setErr('');fileRef.current&&fileRef.current.click()}} disabled=${loading}
           style=${{...S_BTN,width:'100%',background:dragging?'#1e3a5f':'var(--bg-secondary)',color:dragging?'#93c5fd':'var(--text-secondary)',border:dragging?'2px dashed #3b82f6':'1px dashed var(--border)',display:'flex',alignItems:'center',justifyContent:'center',gap:'.3rem',transition:'all .15s'}}>
-          ${loading?html`<span class="spin">⟳</span> ${loadMsg||'Loading…'}`:dragging?'Drop IFC files here':'+ Add IFC (or drag & drop)'}
+          ${loading?html`<span class="spin">⟳</span> ${loadMsg||'Loading…'}`:dragging?'Drop files here':'+ Add IFC / DXF / PDF'}
         </button>
+        <${UnderlayImport} d=${d} />
         ${err && html`<div style=${{marginTop:'.4rem',padding:'.4rem',background:'#450a0a',border:'1px solid #7f1d1d',borderRadius:6,fontSize:'.7rem',color:'#fca5a5',whiteSpace:'pre-line'}}>${err}</div>`}
       </div>
       <div style=${{flex:splitPct,overflowY:'auto',padding:'.4rem',display:'flex',flexDirection:'column',gap:'.25rem',minHeight:0}}>
         ${s.models.length===0 && html`<div style=${{textAlign:'center',color:'var(--text-faint)',fontSize:'.75rem',padding:'2rem 0'}}><div style=${{fontSize:'2rem',marginBottom:'.3rem'}}>📁</div>No models loaded</div>`}
         ${s.models.map(function(m){return html`<${ModelCard} key=${m.id} m=${m} d=${d} />`})}
+        ${s.underlays.length > 0 && html`<div style=${{marginTop:'.4rem',borderTop:'1px solid var(--border-subtle)',paddingTop:'.4rem'}}>
+          <div style=${{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:'.3rem'}}>
+            <span style=${{fontSize:'.6rem',fontWeight:600,color:'var(--text-muted)',textTransform:'uppercase',letterSpacing:'.05em'}}>2D Underlays</span>
+            <button onClick=${function(){d({t:'UNDERLAY_MODE',v:'view2d'})}}
+              style=${{...S_BTN,fontSize:'.55rem',padding:'.1rem .3rem',background:'#7c3aed',color:'#fff'}}>View 2D</button>
+          </div>
+          ${s.underlays.map(function(ul){
+            return html`<div key=${ul.id} style=${{display:'flex',alignItems:'center',gap:'.3rem',padding:'.25rem .3rem',background:s.activeUnderlay===ul.id?'var(--bg-tertiary)':'transparent',borderRadius:4,cursor:'pointer'}}
+              onClick=${function(){d({t:'SET_UNDERLAY',id:ul.id})}}>
+              <span style=${{width:8,height:8,borderRadius:2,background:ul.type==='dxf'?'#22c55e':'#ef4444',flexShrink:0}}></span>
+              <span style=${{fontSize:'.6rem',color:'var(--text-primary)',flex:1,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>${ul.name}</span>
+              <span style=${{fontSize:'.5rem',color:'var(--text-faint)',textTransform:'uppercase'}}>${ul.type}</span>
+              <button onClick=${function(e){e.stopPropagation();d({t:'DEL_UNDERLAY',id:ul.id})}}
+                style=${{...S_BTN,padding:'0 3px',background:'none',color:'var(--text-faint)',fontSize:'.6rem'}}>✕</button>
+            </div>`;
+          })}
+        </div>`}
       </div>
       <div onMouseDown=${onSplitDown}
         style=${{height:6,flexShrink:0,cursor:'row-resize',background:'var(--bg-secondary)',borderTop:'1px solid var(--border)',borderBottom:'1px solid var(--border)',display:'flex',alignItems:'center',justifyContent:'center'}}>
@@ -4779,6 +4903,505 @@ function startApp() {
     return EB;
   })();
 
+  // ── Minimal DXF Parser ────────────────────────────────────────
+  // Parses LINE, LWPOLYLINE, POLYLINE, CIRCLE, ARC, TEXT entities from DXF ASCII files
+  function parseDXF(text) {
+    var lines = text.split(/\r?\n/);
+    var entities = [], i = 0;
+    // Find ENTITIES section
+    while (i < lines.length) {
+      if (lines[i].trim() === 'ENTITIES') { i++; break; }
+      i++;
+    }
+    var bounds = { minX: Infinity, minY: Infinity, maxX: -Infinity, maxY: -Infinity };
+    function addPt(x, y) {
+      if (x < bounds.minX) bounds.minX = x;
+      if (y < bounds.minY) bounds.minY = y;
+      if (x > bounds.maxX) bounds.maxX = x;
+      if (y > bounds.maxY) bounds.maxY = y;
+    }
+    function readEntity() {
+      var type = lines[i].trim(); i++;
+      var ent = { type: type, props: {} };
+      var pts = [];
+      while (i < lines.length - 1) {
+        var code = parseInt(lines[i].trim(), 10);
+        var val = (lines[i + 1] || '').trim();
+        i += 2;
+        if (code === 0) { i -= 2; break; }
+        if (code === 10 || code === 11) ent.props['x' + (code === 11 ? '2' : '1')] = parseFloat(val);
+        else if (code === 20 || code === 21) ent.props['y' + (code === 21 ? '2' : '1')] = parseFloat(val);
+        else if (code === 40) ent.props.radius = parseFloat(val);
+        else if (code === 50) ent.props.startAngle = parseFloat(val);
+        else if (code === 51) ent.props.endAngle = parseFloat(val);
+        else if (code === 1) ent.props.text = val;
+        else if (code === 8) ent.props.layer = val;
+        else if (code === 62) ent.props.color = parseInt(val, 10);
+        // LWPOLYLINE vertex collection
+        if (type === 'LWPOLYLINE') {
+          if (code === 10) { pts.push({ x: parseFloat(val) }); }
+          else if (code === 20 && pts.length > 0) { pts[pts.length - 1].y = parseFloat(val); }
+        }
+      }
+      if (type === 'LWPOLYLINE') ent.vertices = pts;
+      return ent;
+    }
+    while (i < lines.length) {
+      var code2 = parseInt(lines[i].trim(), 10);
+      if (code2 === 0) {
+        var val2 = (lines[i + 1] || '').trim();
+        i += 2;
+        if (val2 === 'ENDSEC' || val2 === 'EOF') break;
+        i -= 2; i += 2; // skip code 0
+        // Parse the entity
+        var ent = readEntity();
+        if (ent.type === 'LINE') {
+          addPt(ent.props.x1, ent.props.y1); addPt(ent.props.x2, ent.props.y2);
+          entities.push(ent);
+        } else if (ent.type === 'LWPOLYLINE' && ent.vertices) {
+          ent.vertices.forEach(function(v) { if (v.x != null && v.y != null) addPt(v.x, v.y); });
+          entities.push(ent);
+        } else if (ent.type === 'CIRCLE' || ent.type === 'ARC') {
+          var r = ent.props.radius || 0;
+          addPt(ent.props.x1 - r, ent.props.y1 - r);
+          addPt(ent.props.x1 + r, ent.props.y1 + r);
+          entities.push(ent);
+        } else if (ent.type === 'TEXT' || ent.type === 'MTEXT') {
+          addPt(ent.props.x1, ent.props.y1);
+          entities.push(ent);
+        }
+      } else { i++; }
+    }
+    return { entities: entities, bounds: bounds };
+  }
+
+  // Render DXF entities to a canvas
+  function renderDXFToCanvas(dxfData, width, height) {
+    var canvas = document.createElement('canvas');
+    canvas.width = width; canvas.height = height;
+    var ctx = canvas.getContext('2d');
+    var b = dxfData.bounds;
+    var dw = b.maxX - b.minX || 1, dh = b.maxY - b.minY || 1;
+    var pad = 0.05;
+    var scale = Math.min(width * (1 - 2 * pad) / dw, height * (1 - 2 * pad) / dh);
+    var ox = (width - dw * scale) / 2 - b.minX * scale;
+    var oy = (height + dh * scale) / 2 + b.minY * scale; // flip Y
+    function tx(x) { return x * scale + ox; }
+    function ty(y) { return -y * scale + oy; }
+    ctx.fillStyle = '#0f172a';
+    ctx.fillRect(0, 0, width, height);
+    ctx.strokeStyle = '#94a3b8'; ctx.lineWidth = 1; ctx.lineCap = 'round';
+    dxfData.entities.forEach(function(ent) {
+      if (ent.type === 'LINE') {
+        ctx.beginPath();
+        ctx.moveTo(tx(ent.props.x1), ty(ent.props.y1));
+        ctx.lineTo(tx(ent.props.x2), ty(ent.props.y2));
+        ctx.stroke();
+      } else if (ent.type === 'LWPOLYLINE' && ent.vertices) {
+        ctx.beginPath();
+        ent.vertices.forEach(function(v, idx) {
+          if (v.x == null || v.y == null) return;
+          if (idx === 0) ctx.moveTo(tx(v.x), ty(v.y));
+          else ctx.lineTo(tx(v.x), ty(v.y));
+        });
+        ctx.stroke();
+      } else if (ent.type === 'CIRCLE') {
+        ctx.beginPath();
+        ctx.arc(tx(ent.props.x1), ty(ent.props.y1), (ent.props.radius || 1) * scale, 0, Math.PI * 2);
+        ctx.stroke();
+      } else if (ent.type === 'ARC') {
+        var sa = -(ent.props.startAngle || 0) * Math.PI / 180;
+        var ea = -(ent.props.endAngle || 360) * Math.PI / 180;
+        ctx.beginPath();
+        ctx.arc(tx(ent.props.x1), ty(ent.props.y1), (ent.props.radius || 1) * scale, sa, ea, true);
+        ctx.stroke();
+      } else if (ent.type === 'TEXT' || ent.type === 'MTEXT') {
+        ctx.fillStyle = '#94a3b8';
+        ctx.font = Math.max(8, 12 * scale / 100) + 'px monospace';
+        ctx.fillText(ent.props.text || '', tx(ent.props.x1), ty(ent.props.y1));
+      }
+    });
+    return { canvas: canvas, originX: ox, originY: oy, scale: scale, extentW: dw, extentH: dh };
+  }
+
+  // Load PDF page to canvas
+  function loadPDFPage(arrayBuffer, pageNum) {
+    if (!window.pdfjsLib) return Promise.reject(new Error('PDF.js not loaded'));
+    pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+    return pdfjsLib.getDocument({ data: new Uint8Array(arrayBuffer) }).promise.then(function(doc) {
+      return doc.getPage(pageNum || 1).then(function(page) {
+        var vp = page.getViewport({ scale: 2 });
+        var canvas = document.createElement('canvas');
+        canvas.width = vp.width; canvas.height = vp.height;
+        var ctx = canvas.getContext('2d');
+        return page.render({ canvasContext: ctx, viewport: vp }).promise.then(function() {
+          return { canvas: canvas, width: vp.width, height: vp.height, numPages: doc.numPages,
+                   extentW: vp.width / 2, extentH: vp.height / 2 }; // extent in "points"
+        });
+      });
+    });
+  }
+
+  // ── 2D View Component ──────────────────────────────────────────
+  function View2D(props) {
+    var s = props.s, d = props.d;
+    var canvasRef = useRef(null);
+    var panRef = useRef({ x: 0, y: 0, zoom: 1, dragging: false, lx: 0, ly: 0 });
+    var markupPtsRef = useRef([]);
+    var activeUl = s.underlays.find(function(u) { return u.id === s.activeUnderlay; });
+
+    function redraw() {
+      var cvs = canvasRef.current; if (!cvs) return;
+      var ctx = cvs.getContext('2d');
+      var w = cvs.width, h = cvs.height;
+      var pan = panRef.current;
+      ctx.clearRect(0, 0, w, h);
+      ctx.fillStyle = '#0f172a';
+      ctx.fillRect(0, 0, w, h);
+      ctx.save();
+      ctx.translate(w / 2 + pan.x, h / 2 + pan.y);
+      ctx.scale(pan.zoom, pan.zoom);
+
+      // Draw grid
+      ctx.strokeStyle = '#1e293b'; ctx.lineWidth = 0.5 / pan.zoom;
+      var gridStep = 50;
+      var range = Math.max(w, h) / pan.zoom;
+      for (var gx = -range; gx < range; gx += gridStep) {
+        ctx.beginPath(); ctx.moveTo(gx, -range); ctx.lineTo(gx, range); ctx.stroke();
+      }
+      for (var gy = -range; gy < range; gy += gridStep) {
+        ctx.beginPath(); ctx.moveTo(-range, gy); ctx.lineTo(range, gy); ctx.stroke();
+      }
+      // Origin cross
+      ctx.strokeStyle = '#ef4444'; ctx.lineWidth = 2 / pan.zoom;
+      ctx.beginPath(); ctx.moveTo(-15 / pan.zoom, 0); ctx.lineTo(15 / pan.zoom, 0); ctx.stroke();
+      ctx.strokeStyle = '#22c55e';
+      ctx.beginPath(); ctx.moveTo(0, -15 / pan.zoom); ctx.lineTo(0, 15 / pan.zoom); ctx.stroke();
+
+      // Draw each visible underlay
+      s.underlays.forEach(function(ul) {
+        if (!ul.visible || !ul.canvasData) return;
+        ctx.save();
+        ctx.globalAlpha = ul.opacity != null ? ul.opacity : 0.7;
+        ctx.translate(ul.offsetX || 0, ul.offsetY || 0);
+        ctx.rotate((ul.rotation || 0) * Math.PI / 180);
+        var sc = ul.scale || 1;
+        var img = ul._imgEl;
+        if (!img) {
+          img = new Image();
+          img.src = ul.canvasData;
+          ul._imgEl = img;
+          img.onload = function() { redraw(); };
+        }
+        if (img.complete && img.naturalWidth > 0) {
+          var dw = (ul.extentW || img.naturalWidth) * sc;
+          var dh = (ul.extentH || img.naturalHeight) * sc;
+          ctx.drawImage(img, -dw / 2, -dh / 2, dw, dh);
+        }
+        ctx.restore();
+      });
+
+      // Draw 3D model floor plan outline (if in compare mode)
+      if (s.underlayMode === 'compare' && s.floorPlan && window._cc2DOutlines) {
+        ctx.strokeStyle = '#3b82f6'; ctx.lineWidth = 2 / pan.zoom; ctx.globalAlpha = 0.8;
+        window._cc2DOutlines.forEach(function(seg) {
+          ctx.beginPath();
+          ctx.moveTo(seg[0], -seg[1]); // flip Z to Y
+          ctx.lineTo(seg[2], -seg[3]);
+          ctx.stroke();
+        });
+        ctx.globalAlpha = 1;
+      }
+
+      // Draw markups
+      ctx.lineWidth = 2 / pan.zoom; ctx.lineCap = 'round';
+      s.markups.forEach(function(mk) {
+        ctx.strokeStyle = mk.color || '#f59e0b'; ctx.fillStyle = mk.color || '#f59e0b';
+        if (mk.type === 'line' && mk.points && mk.points.length >= 4) {
+          ctx.beginPath();
+          ctx.moveTo(mk.points[0], mk.points[1]);
+          ctx.lineTo(mk.points[2], mk.points[3]);
+          ctx.stroke();
+        } else if (mk.type === 'rect' && mk.points && mk.points.length >= 4) {
+          ctx.strokeRect(mk.points[0], mk.points[1], mk.points[2] - mk.points[0], mk.points[3] - mk.points[1]);
+        } else if (mk.type === 'arrow' && mk.points && mk.points.length >= 4) {
+          ctx.beginPath();
+          ctx.moveTo(mk.points[0], mk.points[1]);
+          ctx.lineTo(mk.points[2], mk.points[3]);
+          ctx.stroke();
+          // Arrowhead
+          var dx = mk.points[2] - mk.points[0], dy = mk.points[3] - mk.points[1];
+          var ang = Math.atan2(dy, dx);
+          var hl = 10 / pan.zoom;
+          ctx.beginPath();
+          ctx.moveTo(mk.points[2], mk.points[3]);
+          ctx.lineTo(mk.points[2] - hl * Math.cos(ang - 0.4), mk.points[3] - hl * Math.sin(ang - 0.4));
+          ctx.moveTo(mk.points[2], mk.points[3]);
+          ctx.lineTo(mk.points[2] - hl * Math.cos(ang + 0.4), mk.points[3] - hl * Math.sin(ang + 0.4));
+          ctx.stroke();
+        } else if (mk.type === 'text' && mk.points && mk.text) {
+          ctx.font = Math.max(10, 14 / pan.zoom) + 'px sans-serif';
+          ctx.fillText(mk.text, mk.points[0], mk.points[1]);
+        }
+      });
+
+      // Current markup in progress
+      if (s.markupTool && markupPtsRef.current.length >= 2) {
+        ctx.strokeStyle = '#f59e0b'; ctx.setLineDash([5 / pan.zoom, 5 / pan.zoom]);
+        var mp = markupPtsRef.current;
+        if (s.markupTool === 'line' || s.markupTool === 'arrow') {
+          ctx.beginPath(); ctx.moveTo(mp[0], mp[1]); ctx.lineTo(mp[2] || mp[0], mp[3] || mp[1]); ctx.stroke();
+        } else if (s.markupTool === 'rect') {
+          ctx.strokeRect(mp[0], mp[1], (mp[2] || mp[0]) - mp[0], (mp[3] || mp[1]) - mp[1]);
+        }
+        ctx.setLineDash([]);
+      }
+      ctx.restore();
+    }
+
+    useEffect(function() { redraw(); }, [s.underlays, s.activeUnderlay, s.markups, s.markupTool, s.underlayMode, s.floorPlan]);
+
+    useEffect(function() {
+      var cvs = canvasRef.current; if (!cvs) return;
+      var el = cvs.parentElement;
+      function resize() { cvs.width = el.clientWidth; cvs.height = el.clientHeight; redraw(); }
+      resize();
+      var obs = new ResizeObserver(resize);
+      obs.observe(el);
+      return function() { obs.disconnect(); };
+    }, []);
+
+    function toWorld(e) {
+      var cvs = canvasRef.current; if (!cvs) return [0, 0];
+      var rect = cvs.getBoundingClientRect();
+      var pan = panRef.current;
+      var px = e.clientX - rect.left - cvs.width / 2 - pan.x;
+      var py = e.clientY - rect.top - cvs.height / 2 - pan.y;
+      return [px / pan.zoom, py / pan.zoom];
+    }
+
+    function onDown(e) {
+      if (s.markupTool && s.markupTool !== 'erase') {
+        var pt = toWorld(e);
+        if (s.markupTool === 'text') {
+          var txt = prompt('Enter text:');
+          if (txt) d({ t: 'ADD_MARKUP', v: { id: uid(), type: 'text', points: pt, color: '#f59e0b', text: txt } });
+          return;
+        }
+        markupPtsRef.current = [pt[0], pt[1], pt[0], pt[1]];
+        return;
+      }
+      panRef.current.dragging = true;
+      panRef.current.lx = e.clientX; panRef.current.ly = e.clientY;
+    }
+    function onMove(e) {
+      if (s.markupTool && markupPtsRef.current.length >= 2) {
+        var pt = toWorld(e);
+        markupPtsRef.current[2] = pt[0]; markupPtsRef.current[3] = pt[1];
+        redraw();
+        return;
+      }
+      if (!panRef.current.dragging) return;
+      panRef.current.x += e.clientX - panRef.current.lx;
+      panRef.current.y += e.clientY - panRef.current.ly;
+      panRef.current.lx = e.clientX; panRef.current.ly = e.clientY;
+      redraw();
+    }
+    function onUp() {
+      if (s.markupTool && markupPtsRef.current.length >= 4) {
+        var mp = markupPtsRef.current;
+        d({ t: 'ADD_MARKUP', v: { id: uid(), type: s.markupTool, points: [mp[0], mp[1], mp[2], mp[3]], color: '#f59e0b' } });
+        markupPtsRef.current = [];
+      }
+      panRef.current.dragging = false;
+    }
+    function onWheel(e) {
+      e.preventDefault();
+      var factor = e.deltaY > 0 ? 0.9 : 1.1;
+      panRef.current.zoom = Math.max(0.05, Math.min(50, panRef.current.zoom * factor));
+      redraw();
+    }
+
+    var toolBtns = ['line', 'rect', 'arrow', 'text', 'erase'];
+    var toolIcons = { line: '╱', rect: '▭', arrow: '→', text: 'T', erase: '✕' };
+    return html`<div style=${{ position: 'relative', flex: 1, overflow: 'hidden' }}>
+      <canvas ref=${canvasRef} onMouseDown=${onDown} onMouseMove=${onMove} onMouseUp=${onUp} onWheel=${onWheel}
+        style=${{ width: '100%', height: '100%', cursor: s.markupTool ? 'crosshair' : 'grab' }} />
+      <div style=${{ position: 'absolute', top: '.5rem', left: '.5rem', display: 'flex', gap: '.2rem', pointerEvents: 'auto' }}>
+        ${toolBtns.map(function(t) {
+          return html`<button key=${t} onClick=${function() { d({ t: 'MARKUP_TOOL', v: s.markupTool === t ? null : t }); }}
+            style=${{ ...S_BTN, fontSize: '.65rem', padding: '.25rem .4rem',
+              background: s.markupTool === t ? '#2563eb' : 'var(--overlay-bg)',
+              color: s.markupTool === t ? '#fff' : 'var(--text-muted)',
+              border: '1px solid var(--border)' }} title=${t}>${toolIcons[t]}</button>`;
+        })}
+        ${s.markups.length > 0 && html`<button onClick=${function() { d({ t: 'CLEAR_MARKUPS' }); }}
+          style=${{ ...S_BTN, fontSize: '.55rem', padding: '.25rem .4rem', background: 'var(--overlay-bg)', color: '#ef4444', border: '1px solid var(--border)' }}>Clear all</button>`}
+      </div>
+      <div style=${{ position: 'absolute', top: '.5rem', right: '.5rem', display: 'flex', gap: '.3rem', pointerEvents: 'auto' }}>
+        <button onClick=${function() { d({ t: 'UNDERLAY_MODE', v: null }); }}
+          style=${{ ...S_BTN, fontSize: '.6rem', padding: '.2rem .5rem', background: '#2563eb', color: '#fff', border: '1px solid #3b82f6' }}>Back to 3D</button>
+        ${s.floorPlan && html`<button onClick=${function() { d({ t: 'UNDERLAY_MODE', v: s.underlayMode === 'compare' ? 'view2d' : 'compare' }); }}
+          style=${{ ...S_BTN, fontSize: '.6rem', padding: '.2rem .5rem',
+            background: s.underlayMode === 'compare' ? '#7c3aed' : 'var(--overlay-bg)',
+            color: s.underlayMode === 'compare' ? '#fff' : 'var(--text-muted)',
+            border: '1px solid var(--border)' }}>${s.underlayMode === 'compare' ? 'Compare ON' : 'Compare'}</button>`}
+      </div>
+      ${activeUl && html`<div style=${{ position: 'absolute', bottom: '.5rem', left: '.5rem', background: 'var(--overlay-bg)', border: '1px solid var(--border)', borderRadius: 8, padding: '.4rem .6rem', pointerEvents: 'auto', display: 'flex', flexDirection: 'column', gap: '.3rem', maxWidth: 220 }}>
+        <div style=${{ fontSize: '.65rem', fontWeight: 600, color: 'var(--text-primary)' }}>${activeUl.name}</div>
+        <label style=${{ fontSize: '.55rem', color: 'var(--text-muted)', display: 'flex', alignItems: 'center', gap: '.3rem' }}>
+          Opacity <input type="range" min="0" max="100" value=${(activeUl.opacity || 0.7) * 100}
+            onInput=${function(e) { d({ t: 'UPD_UNDERLAY', id: activeUl.id, u: { opacity: +e.target.value / 100 } }); }}
+            style=${{ width: 80 }} /> ${Math.round((activeUl.opacity || 0.7) * 100)}%</label>
+        <label style=${{ fontSize: '.55rem', color: 'var(--text-muted)', display: 'flex', alignItems: 'center', gap: '.3rem' }}>
+          Scale <input type="range" min="1" max="500" value=${Math.round((activeUl.scale || 1) * 100)}
+            onInput=${function(e) { d({ t: 'UPD_UNDERLAY', id: activeUl.id, u: { scale: +e.target.value / 100 } }); }}
+            style=${{ width: 80 }} /> ${Math.round((activeUl.scale || 1) * 100)}%</label>
+        <label style=${{ fontSize: '.55rem', color: 'var(--text-muted)', display: 'flex', alignItems: 'center', gap: '.3rem' }}>
+          Rotate <input type="range" min="0" max="360" step="1" value=${activeUl.rotation || 0}
+            onInput=${function(e) { d({ t: 'UPD_UNDERLAY', id: activeUl.id, u: { rotation: +e.target.value } }); }}
+            style=${{ width: 80 }} /> ${activeUl.rotation || 0}°</label>
+        <div style=${{ display: 'flex', gap: '.2rem' }}>
+          <label style=${{ fontSize: '.55rem', color: 'var(--text-muted)' }}>X <input type="number" step="1" value=${Math.round(activeUl.offsetX || 0)}
+            onInput=${function(e) { d({ t: 'UPD_UNDERLAY', id: activeUl.id, u: { offsetX: +e.target.value } }); }}
+            style=${{ ...S_INPUT, width: 50, fontSize: '.55rem', padding: '.1rem .2rem' }} /></label>
+          <label style=${{ fontSize: '.55rem', color: 'var(--text-muted)' }}>Y <input type="number" step="1" value=${Math.round(activeUl.offsetY || 0)}
+            onInput=${function(e) { d({ t: 'UPD_UNDERLAY', id: activeUl.id, u: { offsetY: +e.target.value } }); }}
+            style=${{ ...S_INPUT, width: 50, fontSize: '.55rem', padding: '.1rem .2rem' }} /></label>
+        </div>
+      </div>`}
+      ${s.underlays.length > 1 && html`<div style=${{ position: 'absolute', bottom: '.5rem', right: '.5rem', background: 'var(--overlay-bg)', border: '1px solid var(--border)', borderRadius: 8, padding: '.3rem', pointerEvents: 'auto', display: 'flex', flexDirection: 'column', gap: '.2rem' }}>
+        ${s.underlays.map(function(ul) {
+          return html`<div key=${ul.id} style=${{ display: 'flex', alignItems: 'center', gap: '.2rem' }}>
+            <input type="checkbox" checked=${ul.visible} onChange=${function() { d({ t: 'UPD_UNDERLAY', id: ul.id, u: { visible: !ul.visible } }); }} />
+            <span onClick=${function() { d({ t: 'SET_UNDERLAY', id: ul.id }); }}
+              style=${{ fontSize: '.55rem', color: s.activeUnderlay === ul.id ? '#3b82f6' : 'var(--text-muted)', cursor: 'pointer' }}>${ul.name}</span>
+          </div>`;
+        })}
+      </div>`}
+    </div>`;
+  }
+
+  // ── 2D Generation & Export ──────────────────────────────────────
+  // Generate floor plan outlines from 3D geometry at a given elevation
+  function generate2DOutlines(models, elevation, cutHeight) {
+    var outlines = [];
+    var cutAt = elevation + (cutHeight || 1.2);
+    models.forEach(function(m) {
+      if (!m.visible) return;
+      (m.elements || []).forEach(function(el) {
+        if (!el.box) return;
+        var b = el.box;
+        // Skip elements entirely above or below cut
+        if (b.min.y > cutAt || b.max.y < elevation) return;
+        // Project bounding box edges at cut level (XZ plane)
+        var x1 = b.min.x, z1 = b.min.z, x2 = b.max.x, z2 = b.max.z;
+        outlines.push([x1, z1, x2, z1]); // bottom
+        outlines.push([x2, z1, x2, z2]); // right
+        outlines.push([x2, z2, x1, z2]); // top
+        outlines.push([x1, z2, x1, z1]); // left
+      });
+    });
+    return outlines;
+  }
+
+  // Export outlines to DXF format string
+  function exportDXF(outlines, models, elevation) {
+    var dxf = '0\nSECTION\n2\nHEADER\n0\nENDSEC\n';
+    dxf += '0\nSECTION\n2\nTABLES\n0\nENDSEC\n';
+    dxf += '0\nSECTION\n2\nENTITIES\n';
+    outlines.forEach(function(seg) {
+      dxf += '0\nLINE\n8\nFloorPlan\n';
+      dxf += '10\n' + seg[0].toFixed(4) + '\n20\n' + seg[1].toFixed(4) + '\n30\n0.0\n';
+      dxf += '11\n' + seg[2].toFixed(4) + '\n21\n' + seg[3].toFixed(4) + '\n31\n0.0\n';
+    });
+    dxf += '0\nENDSEC\n0\nEOF\n';
+    return dxf;
+  }
+
+  // Export 2D view to PNG (captures the 2D canvas)
+  function export2DPNG(canvasEl) {
+    if (!canvasEl) return;
+    var link = document.createElement('a');
+    link.download = 'floorplan_' + new Date().toISOString().slice(0, 10) + '.png';
+    link.href = canvasEl.toDataURL('image/png');
+    link.click();
+  }
+
+  // Export 2D view to PDF using canvas
+  function export2DPDF(canvasEl) {
+    if (!canvasEl) return;
+    var imgData = canvasEl.toDataURL('image/png');
+    var w = canvasEl.width, h = canvasEl.height;
+    // Simple single-page PDF with embedded image
+    // Use A3 landscape if wide, A4 portrait otherwise
+    var isLand = w > h;
+    var pw = isLand ? 1190.7 : 841.89, ph = isLand ? 841.89 : 1190.7;
+    var scale = Math.min(pw / w, ph / h) * 0.95;
+    var sw = w * scale, sh = h * scale;
+    var ox = (pw - sw) / 2, oy = (ph - sh) / 2;
+    // Build minimal PDF
+    var imgBytes = atob(imgData.split(',')[1]);
+    var imgArr = new Uint8Array(imgBytes.length);
+    for (var i2 = 0; i2 < imgBytes.length; i2++) imgArr[i2] = imgBytes.charCodeAt(i2);
+    // Use blob approach: render to a temporary canvas at print resolution, then download as PNG
+    // For true PDF we'd need a PDF library — instead, open print dialog
+    var win = window.open('', '_blank');
+    if (win) {
+      win.document.write('<html><head><title>Floor Plan Export</title><style>@page{size:'+(isLand?'landscape':'portrait')+';margin:0}body{margin:0;display:flex;align-items:center;justify-content:center;height:100vh}img{max-width:100%;max-height:100%}</style></head><body><img src="' + imgData + '" onload="window.print();"/></body></html>');
+      win.document.close();
+    }
+  }
+
+  // ── Export Bar (shown in 2D mode) ───────────────────────────────
+  function ExportBar(props) {
+    var s = props.s, d = props.d;
+
+    function doExportDXF() {
+      if (!s.floorPlan && !s.models.length) { alert('Load a model and activate a floor plan cut first.'); return; }
+      var elev = s.floorPlan ? s.floorPlan.elevation : 0;
+      var cutH = s.floorPlan ? s.floorPlan.cutHeight || 1.2 : 3;
+      var outlines = generate2DOutlines(s.models, elev, cutH);
+      if (outlines.length === 0) { alert('No geometry found at this elevation.'); return; }
+      var dxfStr = exportDXF(outlines, s.models, elev);
+      var blob = new Blob([dxfStr], { type: 'application/dxf' });
+      var link = document.createElement('a');
+      link.download = 'floorplan_' + (s.floorPlan ? s.floorPlan.storeyName || '' : '') + '.dxf';
+      link.href = URL.createObjectURL(blob);
+      link.click();
+      URL.revokeObjectURL(link.href);
+    }
+
+    function doExportPNG() {
+      var cvs = document.querySelector('canvas');
+      if (cvs) export2DPNG(cvs);
+      else alert('No 2D view canvas found.');
+    }
+
+    function doExportPDF() {
+      var cvs = document.querySelector('canvas');
+      if (cvs) export2DPDF(cvs);
+      else alert('No 2D view canvas found.');
+    }
+
+    var EBTN = Object.assign({}, S_BTN, { fontSize: '.65rem', padding: '.25rem .6rem', border: '1px solid var(--border)' });
+    return html`<div style=${{ background: 'var(--bg-primary)', borderTop: '1px solid var(--border-subtle)', padding: '.45rem 1rem', display: 'flex', alignItems: 'center', gap: '.6rem', flexShrink: 0, flexWrap: 'wrap' }}>
+      <span style=${{ fontSize: '.7rem', fontWeight: 600, color: 'var(--text-faint)', textTransform: 'uppercase', letterSpacing: '.05em' }}>2D Export</span>
+      <button onClick=${doExportDXF} style=${{ ...EBTN, background: '#1e3a5f', color: '#93c5fd' }}>DXF (AutoCAD)</button>
+      <button onClick=${doExportPNG} style=${{ ...EBTN, background: '#1e3a5f', color: '#93c5fd' }}>PNG (Image)</button>
+      <button onClick=${doExportPDF} style=${{ ...EBTN, background: '#1e3a5f', color: '#93c5fd' }}>PDF (Print)</button>
+      <span style=${{ fontSize: '.55rem', color: 'var(--text-faint)', marginLeft: 'auto' }}>DXF export generates floor plan from 3D model geometry at the active storey cut · PNG/PDF exports the current 2D view</span>
+    </div>`;
+  }
+
+  // ── ifc-lite Migration Notice ──────────────────────────────────
+  // NOTE: The 2D generation below uses bounding-box projections from web-ifc geometry.
+  // For higher-fidelity 2D plans (true wall outlines, door swings, MEP routing),
+  // consider migrating to ifc-lite (https://github.com/louistrue/ifc-lite) which
+  // provides native 2D floor plan, section, and elevation generation from the
+  // IFC4X3 schema with full geometric accuracy. Migration would replace the
+  // getIfcAPI() loader and generate2DOutlines() with ifc-lite's built-in pipeline.
+
   // ── App ────────────────────────────────────────────────────────
 
   function App() {
@@ -4795,14 +5418,25 @@ function startApp() {
       }, 2000);
       return function(){ clearTimeout(timer); };
     }, [s.clashes, s.issues, s.viewpoints, s.measurements, s.rules]);
+    // Generate 2D outlines for compare mode
+    useEffect(function() {
+      if (s.underlayMode === 'compare' && s.floorPlan && s.models.length) {
+        window._cc2DOutlines = generate2DOutlines(s.models, s.floorPlan.elevation, s.floorPlan.cutHeight);
+      } else {
+        window._cc2DOutlines = null;
+      }
+    }, [s.underlayMode, s.floorPlan, s.models]);
+
+    var is2D = s.underlayMode === 'view2d' || s.underlayMode === 'compare';
     return html`<div style=${{height:'100vh',display:'flex',flexDirection:'column',overflow:'hidden'}}>
       <${Header} s=${s} d=${d} />
       <div style=${{display:'flex',flex:1,overflow:'hidden'}}>
         <${ModelSidebar} s=${s} d=${d} />
-        <${Viewer} s=${s} d=${d} />
+        ${is2D ? html`<${View2D} s=${s} d=${d} />` : html`<${Viewer} s=${s} d=${d} />`}
         <${IssuePanel} s=${s} d=${d} />
       </div>
-      <${ClashBar} s=${s} d=${d} />
+      ${!is2D && html`<${ClashBar} s=${s} d=${d} />`}
+      ${is2D && html`<${ExportBar} s=${s} d=${d} />`}
       ${s.showModal && html`<${NewIssueModal} d=${d} el=${s.modalElement} prefs=${s.prefs} />`}
       ${s.showSettings && html`<${SettingsModal} d=${d} prefs=${s.prefs} />`}
     </div>`;
