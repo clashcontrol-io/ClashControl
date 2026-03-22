@@ -1,5 +1,8 @@
 # Changelog
 
+## v1.2.22 (2026-03-22)
+- Fix web-ifc import to use browser-specific entry point
+
 ## v1.2.21 (2026-03-22)
 - Add 2D underlay system (DXF/PDF import), markup tools, and 2D export
 
