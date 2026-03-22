@@ -172,7 +172,7 @@ window.onload = function() {
 
 function startApp() {
   // ── Version (auto-updated by pre-commit hook) ──
-  var CC_VERSION = {v:'1.2.21',hash:'9ab5903',date:'2026-03-22T17:54:44Z'};
+  var CC_VERSION = {v:'1.2.22',hash:'3f47c63',date:'2026-03-22T18:03:11Z'};
 
   // Check CDN deps loaded
   var need = [];
@@ -960,13 +960,13 @@ function startApp() {
     var blob = new Blob([JSON.stringify(data, null, 2)], {type:'application/json'});
     var a = document.createElement('a');
     a.href = URL.createObjectURL(blob);
-    a.download = 'project-'+new Date().toISOString().slice(0,10)+'.ccproj';
+    a.download = 'project-'+new Date().toISOString().slice(0,10)+'.json';
     a.click();
   }
 
   function loadProject(d) {
     var inp = document.createElement('input');
-    inp.type = 'file'; inp.accept = '.ccproj,application/json';
+    inp.type = 'file'; inp.accept = '.json,.ccproj,application/json';
     inp.onchange = function(e) {
       var f = e.target.files[0]; if (!f) return;
       var r = new FileReader();
@@ -3541,11 +3541,11 @@ function startApp() {
         ${openN>0 && html`<span style=${{background:'#ef4444',color:'#fff',fontSize:'.65rem',padding:'.1rem .5rem',borderRadius:99}}>${openN} open</span>`}
         <button onClick=${function(){loadProject(d)}}
           style=${{...S_BTN,background:'var(--bg-secondary)',color:'var(--text-secondary)',border:'1px solid var(--border)',fontSize:'.65rem'}}>
-          ↑ .ccproj
+          Open Project
         </button>
         <button onClick=${function(){saveProject(s)}} disabled=${!all.length&&!s.models.length}
           style=${{...S_BTN,background:s.models.length||all.length?'#0f4c81':'var(--bg-secondary)',color:s.models.length||all.length?'#93c5fd':'var(--text-faint)',cursor:s.models.length||all.length?'pointer':'not-allowed',fontSize:'.65rem'}}>
-          ↓ .ccproj
+          Save Project
         </button>
         <button onClick=${function(){importBCF(d)}}
           style=${{...S_BTN,background:'var(--bg-secondary)',color:'var(--text-secondary)',border:'1px solid var(--border)'}}>
@@ -3585,68 +3585,7 @@ function startApp() {
     return 'architectural';
   }
 
-  // ── 2D Underlay Import ────────────────────────────────────────
-  function UnderlayImport(props) {
-    var d = props.d;
-    var fRef = useRef(null);
-    var ldSt = useState(false), isLoading = ldSt[0], setLoading = ldSt[1];
-
-    function importFile(file) {
-      var name = file.name;
-      var ext = name.split('.').pop().toLowerCase();
-      setLoading(true);
-
-      if (ext === 'dxf') {
-        file.text().then(function(text) {
-          var dxfData = parseDXF(text);
-          if (dxfData.entities.length === 0) { alert('No entities found in DXF file.'); setLoading(false); return; }
-          var result = renderDXFToCanvas(dxfData, 2048, 2048);
-          var canvasData = result.canvas.toDataURL('image/png');
-          d({ t: 'ADD_UNDERLAY', v: {
-            id: uid(), name: name, type: 'dxf', canvasData: canvasData,
-            offsetX: 0, offsetY: 0, scale: 1, rotation: 0, opacity: 0.7, visible: true,
-            extentW: result.extentW, extentH: result.extentH, storeyName: null
-          }});
-          d({ t: 'UNDERLAY_MODE', v: 'view2d' });
-          setLoading(false);
-        }).catch(function(e) { alert('DXF parse error: ' + e.message); setLoading(false); });
-      } else if (ext === 'pdf') {
-        file.arrayBuffer().then(function(buf) {
-          return loadPDFPage(buf, 1);
-        }).then(function(result) {
-          var canvasData = result.canvas.toDataURL('image/png');
-          d({ t: 'ADD_UNDERLAY', v: {
-            id: uid(), name: name, type: 'pdf', canvasData: canvasData,
-            offsetX: 0, offsetY: 0, scale: 1, rotation: 0, opacity: 0.7, visible: true,
-            extentW: result.extentW, extentH: result.extentH, storeyName: null,
-            numPages: result.numPages, page: 1, _pdfBuffer: buf
-          }});
-          d({ t: 'UNDERLAY_MODE', v: 'view2d' });
-          setLoading(false);
-        }).catch(function(e) { alert('PDF load error: ' + e.message); setLoading(false); });
-      } else if (ext === 'dwg') {
-        alert('DWG is a proprietary Autodesk format and cannot be parsed in the browser.\n\nPlease convert to DXF first:\n• AutoCAD: SAVEAS → DXF\n• FreeCAD: File → Export as DXF\n• ODA File Converter (free): dwg → dxf\n\nAlternatively, export as PDF for visual reference.');
-        setLoading(false);
-      } else {
-        alert('Unsupported format. Use .dxf or .pdf files.');
-        setLoading(false);
-      }
-    }
-
-    function onFileChange(e) {
-      var files = Array.prototype.slice.call(e.target.files || []);
-      files.forEach(importFile);
-      e.target.value = '';
-    }
-
-    return html`<div style=${{ marginTop: '.3rem' }}>
-      <input ref=${fRef} type="file" accept=".dxf,.pdf,.dwg" style=${{ display: 'none' }} onChange=${onFileChange} />
-      <button onClick=${function() { fRef.current && fRef.current.click(); }} disabled=${isLoading}
-        style=${{ ...S_BTN, width: '100%', fontSize: '.65rem', padding: '.3rem', background: 'none', color: 'var(--text-faint)', border: '1px dashed var(--border-subtle)' }}>
-        ${isLoading ? html`<span class="spin">⟳</span> Loading…` : '+ 2D Underlay (DXF / PDF)'}
-      </button>
-    </div>`;
-  }
+  // (UnderlayImport removed — unified into the main import button in ModelSidebar)
 
   function ModelSidebar(props) {
     var s=props.s, d=props.d;
@@ -3655,6 +3594,7 @@ function startApp() {
     var lm = useState(''), loadMsg=lm[0], setLoadMsg=lm[1];
     var er = useState(''), err=er[0], setErr=er[1];
     var dg = useState(false), dragging=dg[0], setDragging=dg[1];
+    var dragCounter = useRef(0);
 
     // Auto-load stored IFC files from IndexedDB for the active project
     function _restoreProjectFiles(projectId) {
@@ -3707,56 +3647,72 @@ function startApp() {
 
     function processFiles(files) {
       setErr('');
+      var errors = [];
       var chain = Promise.resolve();
+      var totalIfc = 0, doneIfc = 0;
       files.forEach(function(f) {
         var ext = f.name.split('.').pop().toLowerCase();
-        if (ext === 'dxf' || ext === 'pdf' || ext === 'dwg') {
-          // Delegate to underlay import
-          if (ext === 'dwg') { alert('DWG cannot be parsed in-browser. Convert to DXF first (AutoCAD SAVEAS, ODA File Converter, or FreeCAD).'); return; }
-          if (ext === 'dxf') {
-            chain = chain.then(function() {
-              return f.text().then(function(text) {
-                var dxfData = parseDXF(text);
-                if (dxfData.entities.length === 0) return;
-                var result = renderDXFToCanvas(dxfData, 2048, 2048);
-                d({ t: 'ADD_UNDERLAY', v: { id: uid(), name: f.name, type: 'dxf', canvasData: result.canvas.toDataURL('image/png'),
-                  offsetX: 0, offsetY: 0, scale: 1, rotation: 0, opacity: 0.7, visible: true,
-                  extentW: result.extentW, extentH: result.extentH, storeyName: null }});
-              });
-            });
-          } else if (ext === 'pdf') {
-            chain = chain.then(function() {
-              return f.arrayBuffer().then(function(buf) { return loadPDFPage(buf, 1); }).then(function(result) {
-                d({ t: 'ADD_UNDERLAY', v: { id: uid(), name: f.name, type: 'pdf', canvasData: result.canvas.toDataURL('image/png'),
-                  offsetX: 0, offsetY: 0, scale: 1, rotation: 0, opacity: 0.7, visible: true,
-                  extentW: result.extentW, extentH: result.extentH, storeyName: null, numPages: result.numPages, page: 1 }});
-              });
-            });
-          }
+        if (ext === 'ifc') totalIfc++;
+      });
+      files.forEach(function(f) {
+        var ext = f.name.split('.').pop().toLowerCase();
+        if (ext === 'dwg') {
+          errors.push(f.name + ': DWG cannot be parsed in-browser. Convert to DXF first.');
           return;
         }
-        if (!f.name.toLowerCase().match(/\.ifc$/)) return;
+        if (ext === 'dxf') {
+          chain = chain.then(function() {
+            setLoadMsg('Loading ' + f.name + '…');
+            return f.text().then(function(text) {
+              var dxfData = parseDXF(text);
+              if (dxfData.entities.length === 0) { errors.push(f.name + ': No entities found in DXF file.'); return; }
+              var result = renderDXFToCanvas(dxfData, 2048, 2048);
+              d({ t: 'ADD_UNDERLAY', v: { id: uid(), name: f.name, type: 'dxf', canvasData: result.canvas.toDataURL('image/png'),
+                offsetX: 0, offsetY: 0, scale: 1, rotation: 0, opacity: 0.7, visible: true,
+                extentW: result.extentW, extentH: result.extentH, storeyName: null }});
+              d({ t: 'UNDERLAY_MODE', v: 'view2d' });
+            }).catch(function(e) { errors.push(f.name + ': ' + (e.message || 'DXF parse failed')); });
+          });
+          return;
+        }
+        if (ext === 'pdf') {
+          chain = chain.then(function() {
+            setLoadMsg('Loading ' + f.name + '…');
+            return f.arrayBuffer().then(function(buf) { return loadPDFPage(buf, 1); }).then(function(result) {
+              d({ t: 'ADD_UNDERLAY', v: { id: uid(), name: f.name, type: 'pdf', canvasData: result.canvas.toDataURL('image/png'),
+                offsetX: 0, offsetY: 0, scale: 1, rotation: 0, opacity: 0.7, visible: true,
+                extentW: result.extentW, extentH: result.extentH, storeyName: null, numPages: result.numPages, page: 1 }});
+              d({ t: 'UNDERLAY_MODE', v: 'view2d' });
+            }).catch(function(e) { errors.push(f.name + ': ' + (e.message || 'PDF load failed')); });
+          });
+          return;
+        }
+        if (ext !== 'ifc') return;
         chain = chain.then(function() {
           setLoading(true);
-          setLoadMsg('Reading ' + f.name + '…');
+          setLoadMsg(totalIfc > 1 ? f.name + ' (' + (doneIfc + 1) + '/' + totalIfc + ')…' : 'Loading ' + f.name + '…');
           return f.arrayBuffer().then(function(buf) {
             var disc='structural', col=DISC[0].c;
             return loadIFC(buf, col, function(msg){ setLoadMsg(f.name + ': ' + msg); }).then(function(result) {
-              // Auto-detect discipline
               disc = detectDiscipline(result.elements);
               var dObj = DISC.find(function(x){return x.id===disc;});
               col = dObj ? dObj.c : col;
               var fSize = result.stats ? result.stats.fileSize : buf.byteLength;
               var modelId = uid();
               d({t:'ADD_MODEL', v:{id:modelId, name:f.name.replace(/\.ifc$/i,''), discipline:disc, color:col, visible:true, meshes:result.meshes, elements:result.elements, storeys:result.storeys||[], storeyData:result.storeyData||[], stats:result.stats||{fileSize:fSize}}});
-              // Persist raw IFC file for reload across sessions
               idbSaveFile(modelId, f.name, buf, s.activeProject||'default');
             });
           }).catch(function(er) {
             console.error(er);
-            setErr(er.message||'Load failed');
-          }).then(function(){ setLoading(false); setLoadMsg(''); });
+            errors.push(f.name + ': ' + (er.message || 'Load failed'));
+          }).then(function(){ doneIfc++; });
         });
+      });
+      // After all files processed, update loading state once and show accumulated errors
+      chain.then(function() {
+        setLoading(false);
+        setLoadMsg('');
+        if (errors.length) setErr(errors.join('\n'));
       });
     }
     function onFiles(e) {
@@ -3764,12 +3720,14 @@ function startApp() {
       e.target.value='';
     }
     function onDrop(e) {
-      e.preventDefault(); e.stopPropagation(); setDragging(false);
+      e.preventDefault(); e.stopPropagation();
+      dragCounter.current = 0; setDragging(false);
       var files = Array.prototype.slice.call(e.dataTransfer.files||[]);
       if(files.length) processFiles(files);
     }
-    function onDragOver(e){e.preventDefault();e.stopPropagation();setDragging(true);}
-    function onDragLeave(e){e.preventDefault();e.stopPropagation();setDragging(false);}
+    function onDragOver(e){e.preventDefault();e.stopPropagation();}
+    function onDragEnter(e){e.preventDefault();e.stopPropagation();dragCounter.current++;setDragging(true);}
+    function onDragLeave(e){e.preventDefault();e.stopPropagation();dragCounter.current--;if(dragCounter.current<=0){dragCounter.current=0;setDragging(false);}}
 
     var splitSt = useState(50), splitPct=splitSt[0], setSplitPct=splitSt[1];
     var splitDrag = useRef(null);
@@ -3788,7 +3746,7 @@ function startApp() {
       window.addEventListener('mousemove',onMove);
       window.addEventListener('mouseup',onUp);
     }
-    return html`<aside style=${{...S_PANEL,width:240}} onDrop=${onDrop} onDragOver=${onDragOver} onDragLeave=${onDragLeave}>
+    return html`<aside style=${{...S_PANEL,width:240}} onDrop=${onDrop} onDragOver=${onDragOver} onDragEnter=${onDragEnter} onDragLeave=${onDragLeave}>
       <div style=${{padding:'.75rem',borderBottom:'1px solid var(--border-subtle)',flexShrink:0}}>
         <div style=${{display:'flex',justifyContent:'space-between',marginBottom:'.4rem'}}>
           <span style=${{fontSize:'.7rem',fontWeight:600,color:'var(--text-muted)',textTransform:'uppercase',letterSpacing:'.05em'}}>Models</span>
@@ -3799,7 +3757,6 @@ function startApp() {
           style=${{...S_BTN,width:'100%',background:dragging?'#1e3a5f':'var(--bg-secondary)',color:dragging?'#93c5fd':'var(--text-secondary)',border:dragging?'2px dashed #3b82f6':'1px dashed var(--border)',display:'flex',alignItems:'center',justifyContent:'center',gap:'.3rem',transition:'all .15s'}}>
           ${loading?html`<span class="spin">⟳</span> ${loadMsg||'Loading…'}`:dragging?'Drop files here':'+ Add IFC / DXF / PDF'}
         </button>
-        <${UnderlayImport} d=${d} />
         ${err && html`<div style=${{marginTop:'.4rem',padding:'.4rem',background:'#450a0a',border:'1px solid #7f1d1d',borderRadius:6,fontSize:'.7rem',color:'#fca5a5',whiteSpace:'pre-line'}}>${err}</div>`}
       </div>
       <div style=${{flex:splitPct,overflowY:'auto',padding:'.4rem',display:'flex',flexDirection:'column',gap:'.25rem',minHeight:0}}>
@@ -4981,6 +4938,8 @@ function startApp() {
     canvas.width = width; canvas.height = height;
     var ctx = canvas.getContext('2d');
     var b = dxfData.bounds;
+    // Guard against Infinity bounds (no geometry matched)
+    if (!isFinite(b.minX)) { b.minX = 0; b.maxX = 1; b.minY = 0; b.maxY = 1; }
     var dw = b.maxX - b.minX || 1, dh = b.maxY - b.minY || 1;
     var pad = 0.05;
     var scale = Math.min(width * (1 - 2 * pad) / dw, height * (1 - 2 * pad) / dh);
