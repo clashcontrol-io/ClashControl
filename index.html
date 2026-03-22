@@ -1507,35 +1507,7 @@ function startApp() {
 
           var grp = new THREE.Group();
 
-          // 1. Inverted hull outline: slightly scaled back-face shell creates silhouette border
-          try {
-            var hullGeo = found.geometry.clone();
-            var hullMat = new THREE.MeshBasicMaterial({
-              color:0x2563eb, side:THREE.BackSide,
-              transparent:true, opacity:0.95,
-              depthTest:true, depthWrite:false
-            });
-            var hullMesh = new THREE.Mesh(hullGeo, hullMat);
-            hullMesh.applyMatrix4(found.matrixWorld);
-            var hullBox = new THREE.Box3().setFromObject(hullMesh);
-            if(!hullBox.isEmpty()){
-              var hullCtr = hullBox.getCenter(new THREE.Vector3());
-              var hullSize = hullBox.getSize(new THREE.Vector3());
-              var borderWidth = 0.03;
-              var sx = 1 + (hullSize.x > 0.01 ? borderWidth*2/hullSize.x : 0.04);
-              var sy = 1 + (hullSize.y > 0.01 ? borderWidth*2/hullSize.y : 0.04);
-              var sz = 1 + (hullSize.z > 0.01 ? borderWidth*2/hullSize.z : 0.04);
-              if(isFinite(sx)&&isFinite(sy)&&isFinite(sz)){
-                hullMesh.position.sub(hullCtr);
-                hullMesh.scale.set(sx, sy, sz);
-                hullMesh.position.add(hullCtr);
-              }
-            }
-            hullMesh.renderOrder = 997;
-            grp.add(hullMesh);
-          } catch(e){}
-
-          // 2. Top hard edges only (skip for large geometries >50K faces to avoid freeze)
+          // Hard edges only (skip for large geometries >50K faces to avoid freeze)
           try {
             var faceCount = found.geometry.index ? found.geometry.index.count/3 : (found.geometry.attributes.position?found.geometry.attributes.position.count/3:0);
             if(faceCount < 50000) {
@@ -2053,29 +2025,6 @@ function startApp() {
               scene.remove(hlRef.current);hlRef.current=null;
             }
             var hlGrp = new THREE.Group();
-            try {
-              var hullGeo2 = hit.geometry.clone();
-              var hullMat2 = new THREE.MeshBasicMaterial({color:0x2563eb, side:THREE.BackSide, transparent:true, opacity:0.95, depthTest:true, depthWrite:false});
-              var hullMesh2 = new THREE.Mesh(hullGeo2, hullMat2);
-              hullMesh2.applyMatrix4(hit.matrixWorld);
-              var hb = new THREE.Box3().setFromObject(hullMesh2);
-              if(!hb.isEmpty()){
-                var hc = hb.getCenter(new THREE.Vector3());
-                var hs = hb.getSize(new THREE.Vector3());
-                var bw = 0.03;
-                var sx2 = 1+(hs.x>0.01?bw*2/hs.x:0.04);
-                var sy2 = 1+(hs.y>0.01?bw*2/hs.y:0.04);
-                var sz2 = 1+(hs.z>0.01?bw*2/hs.z:0.04);
-                // Guard against NaN/Infinity from degenerate geometry
-                if(isFinite(sx2)&&isFinite(sy2)&&isFinite(sz2)){
-                  hullMesh2.position.sub(hc);
-                  hullMesh2.scale.set(sx2,sy2,sz2);
-                  hullMesh2.position.add(hc);
-                }
-              }
-              hullMesh2.renderOrder = 997;
-              hlGrp.add(hullMesh2);
-            } catch(e){}
             try {
               var fc2 = hit.geometry.index ? hit.geometry.index.count/3 : (hit.geometry.attributes.position?hit.geometry.attributes.position.count/3:0);
               if(fc2 < 50000) {
@@ -2942,15 +2891,13 @@ function startApp() {
         var SEC={marginTop:'.35rem',borderTop:'1px solid var(--border-subtle)',paddingTop:'.35rem'};
         var SECHDR={fontSize:'.6rem',fontWeight:600,color:'var(--text-muted)',textTransform:'uppercase',letterSpacing:'.03em',marginBottom:'.15rem'};
 
-        return html`<div style=${{position:'absolute',bottom:'.75rem',left:'.75rem',width:290,maxHeight:'55%',overflowY:'auto',background:'var(--overlay-bg-strong)',border:'1px solid var(--border)',borderRadius:8,padding:'.6rem',pointerEvents:'auto',boxShadow:'0 4px 20px rgba(0,0,0,.5)'}}>
+        return html`<div style=${{position:'absolute',bottom:'3.5rem',left:'.75rem',width:290,maxHeight:'calc(100% - 5rem)',overflowY:'auto',background:'var(--overlay-bg-strong)',border:'1px solid var(--border)',borderRadius:8,padding:'.6rem',pointerEvents:'auto',boxShadow:'0 4px 20px rgba(0,0,0,.5)'}}>
           <div style=${{display:'flex',justifyContent:'space-between',alignItems:'flex-start',marginBottom:'.2rem'}}>
             <div style=${{flex:1,minWidth:0}}>
               <div style=${{fontSize:'.6rem',color:'var(--text-muted)',marginBottom:'.1rem'}}>${typeName}</div>
               <div style=${{fontSize:'.8rem',fontWeight:700,color:'var(--text-primary)',lineHeight:1.2}}>${ep&&ep.name||'Unnamed element'}</div>
             </div>
             <div style=${{display:'flex',gap:'.2rem',flexShrink:0,marginLeft:'.3rem'}}>
-              <button onClick=${function(){d({t:'MODAL',v:true,el:selectedEl});d({t:'TAB',v:'issues'});}}
-                style=${{...S_BTN,padding:'.15rem .35rem',background:'#2563eb',color:'#fff',fontSize:'.6rem',borderRadius:4}}>Issue</button>
               <button onClick=${function(){if(_sboxAroundElements)_sboxAroundElements([selectedEl.expressId]);}}
                 style=${{...S_BTN,padding:'.15rem .25rem',background:'#3b0764',color:'#c084fc',fontSize:'.6rem',borderRadius:4}} title="Section box around element" aria-label="Section box around element">Box</button>
               <button onClick=${function(){setSelectedEl(null);if(_unghostAll)_unghostAll();if(hlRef.current&&state3d.current.scene){if(hlRef.current.isGroup)hlRef.current.traverse(function(c){if(c.isMesh||c.isLine||c.isLineSegments){if(c.geometry)c.geometry.dispose();if(c.material)c.material.dispose();}});state3d.current.scene.remove(hlRef.current);hlRef.current=null;}if(outlineRef.current&&state3d.current.scene){state3d.current.scene.remove(outlineRef.current);outlineRef.current=null;}}}
@@ -2986,10 +2933,14 @@ function startApp() {
             <div style=${SECHDR}>${sec.name}</div>
             ${sec.props.map(function(p){return html`<div key=${p.k} style=${{...ROW,fontSize:'.65rem'}}><span style=${{color:'var(--text-muted)'}}>${p.k}</span><span style=${{color:'var(--text-primary)',maxWidth:'55%',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',textAlign:'right'}} title=${p.v}>${p.v}</span></div>`})}
           </div>`})}
-          <div style=${{marginTop:'.3rem',paddingTop:'.2rem',borderTop:'1px solid var(--border-subtle)',display:'flex',justifyContent:'space-between',fontSize:'.55rem',color:'var(--text-faint)'}}>
+          <div style=${{marginTop:'.3rem',paddingTop:'.2rem',borderTop:'1px solid var(--border-subtle)',display:'flex',justifyContent:'space-between',fontSize:'.55rem',color:'var(--text-faint)',marginBottom:'.35rem'}}>
             <span>${ep&&ep.ifcType||''}</span>
             <span>#${selectedEl.expressId}</span>
           </div>
+          <button onClick=${function(){d({t:'MODAL',v:true,el:selectedEl});d({t:'TAB',v:'issues'});}}
+            style=${{...S_BTN,width:'100%',padding:'.4rem',background:'#2563eb',color:'#fff',fontSize:'.7rem',fontWeight:600,borderRadius:6,textAlign:'center',justifyContent:'center'}}>
+            + Create Issue from Element
+          </button>
         </div>`;
       } catch(renderErr) {
         console.warn('Property panel render error:', renderErr);
@@ -2999,7 +2950,7 @@ function startApp() {
           <button onClick=${function(){setSelectedEl(null)}} style=${{...S_BTN,marginTop:'.3rem',padding:'.2rem .5rem',background:'var(--bg-secondary)',color:'var(--text-secondary)',fontSize:'.6rem'}}>Dismiss</button>
         </div>`;
       }}()}
-      ${!selectedEl && html`<div style=${{position:'absolute',bottom:'.75rem',left:'.75rem',pointerEvents:'auto'}}>
+      <div style=${{position:'absolute',bottom:'.75rem',left:'.75rem',pointerEvents:'auto'}}>
         <div style=${{display:'flex',gap:'.2rem',background:'var(--overlay-bg)',border:'1px solid var(--border)',borderRadius:8,padding:'.3rem'}}>
           ${['standard','shaded','rendered','wireframe'].map(function(rs){
             var cur = s.prefs.renderStyle||'standard';
@@ -3036,7 +2987,7 @@ function startApp() {
             ${(function(){var S=state3d.current;return S&&S.camera&&S.camera.isOrthographicCamera?'Persp':'Ortho'})()}
           </button>
         </div>
-      </div>`}
+      </div>
       <div style=${{position:'absolute',bottom:'.75rem',right:'.75rem',pointerEvents:'auto',display:'flex',flexDirection:'column',gap:'.3rem',alignItems:'flex-end'}}>
         <div style=${{display:'flex',gap:'.2rem',background:'var(--overlay-bg)',border:'1px solid var(--border)',borderRadius:8,padding:'.3rem'}}>
           <button onClick=${function(){d({t:'MEASURE_MODE',v:s.measureMode?null:'length'});measurePtsRef.current=[];}}
