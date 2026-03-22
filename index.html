@@ -8,6 +8,7 @@
   <meta name="theme-color" content="#0f172a">
 
   <!-- CSP: restrict resource loading to known CDN origins -->
+  <!-- 'unsafe-eval' required by pdf.js v3 for custom font rendering (CFF/Type1 font programs) -->
   <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval' 'wasm-unsafe-eval' https://cdnjs.cloudflare.com https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline'; connect-src https://cdn.jsdelivr.net https://cdnjs.cloudflare.com blob:; worker-src blob:; img-src 'self' blob: data:;">
 
   <!-- CDN deps: React, Three.js, JSZip — all UMD, all cdnjs -->
@@ -16,7 +17,7 @@
   <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js" integrity="sha384-bm7MnzvK++ykSwVJ2tynSE5TRdN+xL418osEVF2DE/L/gfWHj91J2Sphe582B1Bh" crossorigin="anonymous"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js" integrity="sha384-CI3ELBVUz9XQO+97x6nwMDPosPR5XvsxW2ua7N1Xeygeh1IxtgqtCkGfQY9WWdHu" crossorigin="anonymous"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js" integrity="sha384-+mbV2IY1Zk/X1p/nWllGySJSUN8uMs+gUAN10Or95UBH0fpj6GfKgPmgC5EXieXG" crossorigin="anonymous"></script>
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js" crossorigin="anonymous"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js" integrity="sha384-OLBgp1GsljhM2TJ+sbHjaiH9txEUvgdDTAzHv2P24donTt6/529l+9Ua0vFImLlb" crossorigin="anonymous"></script>
 
   <!-- htm — tagged template to React.createElement (hand-written, tested, 11/11 pass) -->
   <script>
@@ -173,7 +174,7 @@ window.onload = function() {
 
 function startApp() {
   // ── Version (auto-updated by pre-commit hook) ──
-  var CC_VERSION = {v:'1.2.22',hash:'3f47c63',date:'2026-03-22T18:03:11Z'};
+  var CC_VERSION = {v:'1.2.23',hash:'8116c28',date:'2026-03-22T19:21:05Z'};
 
   // Check CDN deps loaded
   var need = [];
@@ -813,6 +814,10 @@ function startApp() {
 
   // Store element hashes for change-aware re-detection
   var _prevElementHashes = {};
+  // Cache for underlay Image elements — keyed by underlay id, avoids mutating state objects
+  var _underlayImgCache = {};
+  // 2D floor plan outlines for compare mode — module-level, not window global
+  var _cc2DOutlines = null;
 
   function _hashElement(el) {
     var b = el.box;
@@ -4848,7 +4853,6 @@ function startApp() {
         var val2 = (lines[i + 1] || '').trim();
         i += 2;
         if (val2 === 'ENDSEC' || val2 === 'EOF') break;
-        i -= 2; i += 2; // skip code 0
         // Parse the entity
         var ent = readEntity();
         if (ent.type === 'LINE') {
@@ -4946,10 +4950,16 @@ function startApp() {
     var canvasRef = useRef(null);
     var panRef = useRef({ x: 0, y: 0, zoom: 1, dragging: false, lx: 0, ly: 0 });
     var markupPtsRef = useRef([]);
+    // Keep a ref to latest state so event-handler closures always read fresh values
+    var sRef = useRef(s);
+    sRef.current = s;
+    var dRef = useRef(d);
+    dRef.current = d;
     var activeUl = s.underlays.find(function(u) { return u.id === s.activeUnderlay; });
 
     function redraw() {
       var cvs = canvasRef.current; if (!cvs) return;
+      var s = sRef.current; // always use latest state
       var ctx = cvs.getContext('2d');
       var w = cvs.width, h = cvs.height;
       var pan = panRef.current;
@@ -4984,11 +4994,12 @@ function startApp() {
         ctx.translate(ul.offsetX || 0, ul.offsetY || 0);
         ctx.rotate((ul.rotation || 0) * Math.PI / 180);
         var sc = ul.scale || 1;
-        var img = ul._imgEl;
-        if (!img) {
+        var img = _underlayImgCache[ul.id];
+        if (!img || img._src !== ul.canvasData) {
           img = new Image();
+          img._src = ul.canvasData;
           img.src = ul.canvasData;
-          ul._imgEl = img;
+          _underlayImgCache[ul.id] = img;
           img.onload = function() { redraw(); };
         }
         if (img.complete && img.naturalWidth > 0) {
@@ -5000,9 +5011,9 @@ function startApp() {
       });
 
       // Draw 3D model floor plan outline (if in compare mode)
-      if (s.underlayMode === 'compare' && s.floorPlan && window._cc2DOutlines) {
+      if (s.underlayMode === 'compare' && s.floorPlan && _cc2DOutlines) {
         ctx.strokeStyle = '#3b82f6'; ctx.lineWidth = 2 / pan.zoom; ctx.globalAlpha = 0.8;
-        window._cc2DOutlines.forEach(function(seg) {
+        _cc2DOutlines.forEach(function(seg) {
           ctx.beginPath();
           ctx.moveTo(seg[0], -seg[1]); // flip Z to Y
           ctx.lineTo(seg[2], -seg[3]);
@@ -5057,16 +5068,22 @@ function startApp() {
       ctx.restore();
     }
 
-    useEffect(function() { redraw(); }, [s.underlays, s.activeUnderlay, s.markups, s.markupTool, s.underlayMode, s.floorPlan]);
+    useEffect(function() {
+      // Purge image cache for removed underlays
+      var ids = s.underlays.reduce(function(acc, u) { acc[u.id] = true; return acc; }, {});
+      Object.keys(_underlayImgCache).forEach(function(k) { if (!ids[k]) delete _underlayImgCache[k]; });
+      redraw();
+    }, [s.underlays, s.activeUnderlay, s.markups, s.markupTool, s.underlayMode, s.floorPlan]);
 
     useEffect(function() {
       var cvs = canvasRef.current; if (!cvs) return;
+      window._cc2DCanvas = cvs;
       var el = cvs.parentElement;
       function resize() { cvs.width = el.clientWidth; cvs.height = el.clientHeight; redraw(); }
       resize();
       var obs = new ResizeObserver(resize);
       obs.observe(el);
-      return function() { obs.disconnect(); };
+      return function() { obs.disconnect(); window._cc2DCanvas = null; };
     }, []);
 
     function toWorld(e) {
@@ -5079,11 +5096,12 @@ function startApp() {
     }
 
     function onDown(e) {
-      if (s.markupTool && s.markupTool !== 'erase') {
+      var sc = sRef.current, dc = dRef.current;
+      if (sc.markupTool && sc.markupTool !== 'erase') {
         var pt = toWorld(e);
-        if (s.markupTool === 'text') {
+        if (sc.markupTool === 'text') {
           var txt = prompt('Enter text:');
-          if (txt) d({ t: 'ADD_MARKUP', v: { id: uid(), type: 'text', points: pt, color: '#f59e0b', text: txt } });
+          if (txt) dc({ t: 'ADD_MARKUP', v: { id: uid(), type: 'text', points: pt, color: '#f59e0b', text: txt } });
           return;
         }
         markupPtsRef.current = [pt[0], pt[1], pt[0], pt[1]];
@@ -5093,7 +5111,8 @@ function startApp() {
       panRef.current.lx = e.clientX; panRef.current.ly = e.clientY;
     }
     function onMove(e) {
-      if (s.markupTool && markupPtsRef.current.length >= 2) {
+      var sc = sRef.current;
+      if (sc.markupTool && markupPtsRef.current.length >= 2) {
         var pt = toWorld(e);
         markupPtsRef.current[2] = pt[0]; markupPtsRef.current[3] = pt[1];
         redraw();
@@ -5106,9 +5125,10 @@ function startApp() {
       redraw();
     }
     function onUp() {
-      if (s.markupTool && markupPtsRef.current.length >= 4) {
+      var sc = sRef.current, dc = dRef.current;
+      if (sc.markupTool && markupPtsRef.current.length >= 4) {
         var mp = markupPtsRef.current;
-        d({ t: 'ADD_MARKUP', v: { id: uid(), type: s.markupTool, points: [mp[0], mp[1], mp[2], mp[3]], color: '#f59e0b' } });
+        dc({ t: 'ADD_MARKUP', v: { id: uid(), type: sc.markupTool, points: [mp[0], mp[1], mp[2], mp[3]], color: '#f59e0b' } });
         markupPtsRef.current = [];
       }
       panRef.current.dragging = false;
@@ -5226,24 +5246,11 @@ function startApp() {
     link.click();
   }
 
-  // Export 2D view to PDF using canvas
+  // Export 2D view to PDF — opens print dialog in a new window
   function export2DPDF(canvasEl) {
     if (!canvasEl) return;
     var imgData = canvasEl.toDataURL('image/png');
-    var w = canvasEl.width, h = canvasEl.height;
-    // Simple single-page PDF with embedded image
-    // Use A3 landscape if wide, A4 portrait otherwise
-    var isLand = w > h;
-    var pw = isLand ? 1190.7 : 841.89, ph = isLand ? 841.89 : 1190.7;
-    var scale = Math.min(pw / w, ph / h) * 0.95;
-    var sw = w * scale, sh = h * scale;
-    var ox = (pw - sw) / 2, oy = (ph - sh) / 2;
-    // Build minimal PDF
-    var imgBytes = atob(imgData.split(',')[1]);
-    var imgArr = new Uint8Array(imgBytes.length);
-    for (var i2 = 0; i2 < imgBytes.length; i2++) imgArr[i2] = imgBytes.charCodeAt(i2);
-    // Use blob approach: render to a temporary canvas at print resolution, then download as PNG
-    // For true PDF we'd need a PDF library — instead, open print dialog
+    var isLand = canvasEl.width > canvasEl.height;
     var win = window.open('', '_blank');
     if (win) {
       win.document.write('<html><head><title>Floor Plan Export</title><style>@page{size:'+(isLand?'landscape':'portrait')+';margin:0}body{margin:0;display:flex;align-items:center;justify-content:center;height:100vh}img{max-width:100%;max-height:100%}</style></head><body><img src="' + imgData + '" onload="window.print();"/></body></html>');
@@ -5271,13 +5278,13 @@ function startApp() {
     }
 
     function doExportPNG() {
-      var cvs = document.querySelector('canvas');
+      var cvs = window._cc2DCanvas;
       if (cvs) export2DPNG(cvs);
       else alert('No 2D view canvas found.');
     }
 
     function doExportPDF() {
-      var cvs = document.querySelector('canvas');
+      var cvs = window._cc2DCanvas;
       if (cvs) export2DPDF(cvs);
       else alert('No 2D view canvas found.');
     }
@@ -5310,18 +5317,29 @@ function startApp() {
       document.documentElement.setAttribute('data-theme', s.prefs.theme||'dark');
     }, [s.prefs.theme]);
     // Auto-save project data (debounced) when clashes/issues/viewpoints change
+    var _latestSRef = useRef(s);
+    _latestSRef.current = s;
     useEffect(function(){
       var timer = setTimeout(function(){
         if(s.models.length||s.clashes.length||s.issues.length) _saveCurrentProjectData(s);
       }, 2000);
       return function(){ clearTimeout(timer); };
     }, [s.clashes, s.issues, s.viewpoints, s.measurements, s.rules]);
+    // Flush project save synchronously on tab close so data isn't lost
+    useEffect(function(){
+      function onUnload() {
+        var cur = _latestSRef.current;
+        if(cur.models.length||cur.clashes.length||cur.issues.length) _saveCurrentProjectData(cur);
+      }
+      window.addEventListener('beforeunload', onUnload);
+      return function(){ window.removeEventListener('beforeunload', onUnload); };
+    }, []);
     // Generate 2D outlines for compare mode
     useEffect(function() {
       if (s.underlayMode === 'compare' && s.floorPlan && s.models.length) {
-        window._cc2DOutlines = generate2DOutlines(s.models, s.floorPlan.elevation, s.floorPlan.cutHeight);
+        _cc2DOutlines = generate2DOutlines(s.models, s.floorPlan.elevation, s.floorPlan.cutHeight);
       } else {
-        window._cc2DOutlines = null;
+        _cc2DOutlines = null;
       }
     }, [s.underlayMode, s.floorPlan, s.models]);
 
