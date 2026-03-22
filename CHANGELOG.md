@@ -1,5 +1,8 @@
 # Changelog
 
+## v1.2.21 (2026-03-22)
+- Add 2D underlay system (DXF/PDF import), markup tools, and 2D export
+
 ## v1.2.20 (2026-03-22)
 - Add clash grouping, duplicate detection, tolerance, ortho/perspective, drag-orbit ViewCube
 
