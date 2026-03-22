@@ -1,5 +1,15 @@
 # Changelog
 
+## v1.2.27 (2026-03-22)
+- Restore element ghost effect on viewer click
+
+## v1.2.26 (2026-03-22)
+- Restore element ghost effect on viewer click
+
+## v1.2.25 (2026-03-22)
+- Add natural language command panel (ClashControl AI)
+- Refocus NL panel on clash setup, Q&A and workflow — not spatial interactions
+
 ## v1.2.24 (2026-03-22)
 - Fix 8 code review issues: CSP, SRI, state mutation, stale closures, dead code
 

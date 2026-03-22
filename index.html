@@ -131,6 +131,7 @@
     ::-webkit-scrollbar{width:6px}::-webkit-scrollbar-track{background:var(--bg-secondary)}::-webkit-scrollbar-thumb{background:var(--text-faint);border-radius:3px}
     select,select option{background:var(--bg-secondary);color:var(--text-primary);border:1px solid var(--border)}
     .spin{animation:sp 1s linear infinite;display:inline-block}@keyframes sp{to{transform:rotate(360deg)}}
+    @keyframes nlDots{0%,20%{opacity:.2}50%{opacity:1}80%,100%{opacity:.2}}
     .lc2{display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
     button{font-family:inherit}
   </style>
@@ -174,7 +175,7 @@ window.onload = function() {
 
 function startApp() {
   // ── Version (auto-updated by pre-commit hook) ──
-  var CC_VERSION = {v:'1.2.24',hash:'7c6d995',date:'2026-03-22T19:33:19Z'};
+  var CC_VERSION = {v:'1.2.27',hash:'3ee36b1',date:'2026-03-22T19:53:03Z'};
 
   // Check CDN deps loaded
   var need = [];
@@ -2058,8 +2059,7 @@ function startApp() {
               hitNormal = [fn.x, fn.y, fn.z];
             }
             setSelectedEl(found ? {props:found.el.props||{}, modelName:found.model.name, expressId:eid, point:hitPt, box:hitBox, normal:hitNormal} : {props:{expressId:eid}, modelName:'Unknown', expressId:eid, point:hitPt, box:hitBox, normal:hitNormal});
-            // Normal click: outline only, no transparency
-            unghostAll();
+            ghostOthers([eid]);
             if(outlineRef.current){scene.remove(outlineRef.current);outlineRef.current=null;}
             // Fly to element on click (if autoFlyTo enabled)
             if(prefsRef.current.autoFlyTo!==false && _flyTo) {
@@ -5316,6 +5316,287 @@ function startApp() {
   // IFC4X3 schema with full geometric accuracy. Migration would replace the
   // getIfcAPI() loader and generate2DOutlines() with ifc-lite's built-in pipeline.
 
+  // ── Natural Language Command Engine ────────────────────────────
+  // Scope: clash setup, Q&A, result navigation, issue management, export.
+  // Spatial interactions (measuring, section planes, camera) stay as traditional UI.
+
+  function processNLCommand(raw, s, d) {
+    var text = raw.trim().toLowerCase();
+
+    // ── Help ───────────────────────────────────────────────────────
+    if (/^help$|what can you do|how do i use this/.test(text)) {
+      return 'You can describe a clash check in plain English — e.g. "check structural vs MEP with 50mm clearance" or "run hard clashes only". Ask questions like "how many open clashes?" or "what models are loaded?" You can also filter, group, and export: "show only new clashes", "group by storey", "export BCF".';
+    }
+
+    // ── Q&A ────────────────────────────────────────────────────────
+    if (/how many clashes|clash count|number of clashes/.test(text)) {
+      if (!s.clashes.length) return 'No clashes detected yet. Describe a check and I\'ll run it — e.g. "check all models for hard clashes".';
+      var total = s.clashes.length;
+      var byStatus = {};
+      s.clashes.forEach(function(c){ var st = c.status||'new'; byStatus[st]=(byStatus[st]||0)+1; });
+      var parts = Object.keys(byStatus).map(function(k){ return byStatus[k] + ' ' + k; });
+      return total + ' clash' + (total===1?'':'es') + ' — ' + parts.join(', ') + '.';
+    }
+    if (/how many issues|issue count|number of issues/.test(text)) {
+      if (!s.issues.length) return 'No issues yet. Open a clash and use "Create Issue" to log one.';
+      var ti = s.issues.length;
+      var oi = s.issues.filter(function(i){return (i.status||'open')==='open';}).length;
+      return ti + ' issue' + (ti===1?'':'s') + ' — ' + oi + ' open, ' + (ti-oi) + ' closed.';
+    }
+    if (/what models|models loaded|which models|list models/.test(text)) {
+      if (!s.models.length) return 'No models loaded yet. Drag and drop IFC files onto the viewer.';
+      return 'Loaded: ' + s.models.map(function(m){ return m.name + (m.hidden?' (hidden)':''); }).join(', ') + '.';
+    }
+    if (/what.*rules?|current.*settings?|clash.*settings?|current.*rules?/.test(text)) {
+      var r = s.rules;
+      var types = [r.hard&&'hard', r.soft&&'soft'].filter(Boolean).join(' + ') || 'none';
+      var against = r.modelA==='all'&&r.modelB==='all' ? 'all models against all' : (r.modelA||'all') + ' vs ' + (r.modelB||'all');
+      return 'Current setup: ' + types + ' clashes, ' + against + ', clearance ' + (r.clearance||50) + 'mm' + (r.hardTolerance?' tolerance '+r.hardTolerance+'mm':'') + (r.duplicates?', including duplicates':'.') ;
+    }
+    if (/what.*storey|worst.*storey|most clashes.*storey/.test(text)) {
+      if (!s.clashes.length) return 'No clashes to analyse yet.';
+      var storeyCounts = {};
+      s.clashes.forEach(function(c){ var st = c.storey||'Unknown'; storeyCounts[st]=(storeyCounts[st]||0)+1; });
+      var worst = Object.keys(storeyCounts).sort(function(a,b){return storeyCounts[b]-storeyCounts[a];})[0];
+      return 'Most clashes on: ' + worst + ' (' + storeyCounts[worst] + ' clashes).';
+    }
+    if (/what.*project|current project|active project/.test(text)) {
+      var proj = (s.projectList||[]).find(function(p){return p.id===s.activeProject;});
+      return proj ? 'Active project: ' + proj.name + '.' : 'No active project.';
+    }
+
+    // ── Clash setup via natural language ───────────────────────────
+    // "check structural vs MEP", "compare arch against structure", "run pipes vs beams"
+    var setupMatch = text.match(/(?:check|compare|run|detect|find clashes?(?:\s+(?:between|in))?)\s+(.+?)\s+(?:vs\.?|versus|against|with|and)\s+(.+?)(?:\s+with\s+(.+))?$/);
+    if (setupMatch) {
+      if (!s.models.length) return 'No models loaded yet — drop IFC files onto the viewer first.';
+      var rawA = setupMatch[1].trim(), rawB = setupMatch[2].trim(), opts = setupMatch[3]||'';
+      var foundA = s.models.find(function(m){return m.name.toLowerCase().indexOf(rawA)!==-1;}) || (rawA==='all'?{id:'all'}:null);
+      var foundB = s.models.find(function(m){return m.name.toLowerCase().indexOf(rawB)!==-1;}) || (rawB==='all'?{id:'all'}:null);
+      var updRules = { modelA: foundA?foundA.id:'all', modelB: foundB?foundB.id:'all' };
+      var clrMatch = opts.match(/(\d+)\s*mm\s*clearance|clearance\s*(?:of\s*)?(\d+)\s*mm/);
+      if (clrMatch) updRules.clearance = parseInt(clrMatch[1]||clrMatch[2]);
+      if (/soft/.test(opts)||/soft/.test(text)) { updRules.soft=true; updRules.hard=true; }
+      if (/hard only/.test(opts)||/hard only/.test(text)) { updRules.hard=true; updRules.soft=false; }
+      if (/duplicates/.test(opts)||/duplicates/.test(text)) updRules.duplicates=true;
+      d({t:'UPD_RULES', u:updRules});
+      if (s.detecting) return 'Rules updated — detection already running.';
+      d({t:'DETECTING'}); d({t:'TAB',v:'clashes'});
+      setTimeout(function(){d({t:'SET_CLASHES',v:detectClashes(s.models,Object.assign({},s.rules,updRules))});},20);
+      var aName = foundA&&foundA.id!=='all'?foundA.name:'all models';
+      var bName = foundB&&foundB.id!=='all'?foundB.name:'all models';
+      return 'Running: ' + aName + ' vs ' + bName + (updRules.clearance?' with '+updRules.clearance+'mm clearance':'') + '…';
+    }
+
+    // Adjust individual rule settings
+    var clrSet = text.match(/(?:set\s+)?clearance\s+(?:to\s+)?(\d+)\s*mm/);
+    if (clrSet) {
+      d({t:'UPD_RULES', u:{clearance:parseInt(clrSet[1])}});
+      return 'Clearance set to ' + clrSet[1] + 'mm. Run clash detection to apply.';
+    }
+    var tolSet = text.match(/(?:set\s+)?tolerance\s+(?:to\s+)?(\d+)\s*mm/);
+    if (tolSet) {
+      d({t:'UPD_RULES', u:{hardTolerance:parseInt(tolSet[1])}});
+      return 'Hard clash tolerance set to ' + tolSet[1] + 'mm.';
+    }
+    if (/include soft|enable soft|soft clashes on/.test(text)) { d({t:'UPD_RULES',u:{soft:true}}); return 'Soft clashes enabled. Re-run detection to apply.'; }
+    if (/exclude soft|disable soft|hard only|soft clashes off/.test(text)) { d({t:'UPD_RULES',u:{soft:false}}); return 'Soft clashes off — hard clashes only.'; }
+    if (/include duplicates|enable duplicates/.test(text)) { d({t:'UPD_RULES',u:{duplicates:true}}); return 'Duplicate clashes will be included.'; }
+    if (/exclude duplicates|ignore duplicates|no duplicates/.test(text)) { d({t:'UPD_RULES',u:{duplicates:false}}); return 'Duplicate clashes will be filtered out.'; }
+
+    // Plain "run" without vs
+    if (/^(?:run|go|start|detect|check for clashes?)$/.test(text) || /^run\s+(?:it|detection|clashes?)$/.test(text)) {
+      if (!s.models.length) return 'No models loaded yet.';
+      if (s.detecting) return 'Already running…';
+      d({t:'DETECTING'}); d({t:'TAB',v:'clashes'});
+      setTimeout(function(){d({t:'SET_CLASHES',v:detectClashes(s.models,s.rules)});},20);
+      var r2 = s.rules, types2 = [r2.hard&&'hard',r2.soft&&'soft'].filter(Boolean).join('+');
+      return 'Running ' + types2 + ' clash detection with ' + (r2.clearance||50) + 'mm clearance…';
+    }
+
+    // ── Result filtering & grouping ────────────────────────────────
+    var statusMap = {open:'open',new:'new',active:'open',resolved:'resolved',closed:'resolved',all:'all'};
+    var statusMatch = text.match(/\b(open|new|active|resolved|closed|all)\b/) && /filter|show|display/.test(text);
+    if (statusMatch) {
+      var sw = text.match(/\b(open|new|active|resolved|closed|all)\b/)[1];
+      d({t:'UPD_FILTERS', u:{status:statusMap[sw]||'all'}});
+      d({t:'TAB',v:'clashes'});
+      return sw==='all' ? 'Showing all clashes.' : 'Filtered to ' + sw + ' clashes.';
+    }
+    if (/reset filters?|clear filters?|show all/.test(text)) {
+      d({t:'RESET_FILTERS'});
+      return 'Filters cleared.';
+    }
+    var groupMatch = text.match(/group\s+by\s+(storey|floor|level|discipline|status|type|none)/);
+    if (groupMatch) {
+      var gv = {storey:'storey',floor:'storey',level:'storey',discipline:'discipline',status:'status',type:'type',none:'none'}[groupMatch[1]];
+      d({t:'CLASH_GROUP_BY',v:gv}); d({t:'TAB',v:'clashes'});
+      return 'Grouped by ' + groupMatch[1] + '.';
+    }
+
+    // ── Export ─────────────────────────────────────────────────────
+    if (/export\s+bcf|bcf\s+export|download\s+bcf/.test(text)) {
+      if (!s.issues.length && !s.clashes.length) return 'Nothing to export yet.';
+      var items = s.issues.length ? s.issues : s.clashes;
+      exportBCF(items, '2.1', s.viewpoints);
+      return 'Exported ' + items.length + ' item' + (items.length===1?'':'s') + ' as BCF 2.1.';
+    }
+
+    return null;
+  }
+
+  // ── Natural Language Command Panel ─────────────────────────────
+
+  function NLCommandPanel(props) {
+    var s = props.s, d = props.d;
+    var stOpen = useState(false), open = stOpen[0], setOpen = stOpen[1];
+    var stMsgs = useState([{role:'assistant', text:'Describe a clash check and I\'ll set it up — e.g. "check structural vs MEP with 75mm clearance" or "run hard clashes only". Ask "help" for more.'}]);
+    var msgs = stMsgs[0], setMsgs = stMsgs[1];
+    var stInput = useState(''), input = stInput[0], setInput = stInput[1];
+    var stLoading = useState(false), loading = stLoading[0], setLoading = stLoading[1];
+    var inputRef = useRef(null);
+    var bottomRef = useRef(null);
+
+    useEffect(function() {
+      function onKey(e) {
+        if ((e.ctrlKey || e.metaKey) && e.key === '/') {
+          e.preventDefault();
+          setOpen(function(o){ return !o; });
+        }
+      }
+      window.addEventListener('keydown', onKey);
+      return function() { window.removeEventListener('keydown', onKey); };
+    }, []);
+
+    useEffect(function() {
+      if (open && inputRef.current) setTimeout(function(){ inputRef.current && inputRef.current.focus(); }, 80);
+    }, [open]);
+
+    useEffect(function() {
+      if (bottomRef.current) bottomRef.current.scrollIntoView({behavior:'smooth'});
+    }, [msgs]);
+
+    function send() {
+      var text = input.trim();
+      if (!text) return;
+      setMsgs(function(m){ return m.concat([{role:'user', text:text}]); });
+      setInput('');
+      setLoading(true);
+      setTimeout(function() {
+        var result = processNLCommand(text, s, d);
+        var reply = result !== null ? result
+          : 'Not sure what you mean. Try: "check structural vs MEP with 50mm clearance", "how many clashes?", "group by storey", "export BCF", or "help".';
+        setMsgs(function(m){ return m.concat([{role:'assistant', text:reply}]); });
+        setLoading(false);
+      }, 120);
+    }
+
+    function onKeyDown(e) {
+      if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); }
+      if (e.key === 'Escape') setOpen(false);
+    }
+
+    var isDark = (s.prefs && s.prefs.theme) !== 'light';
+    var panelBg  = isDark ? '#1e2736' : '#ffffff';
+    var borderCol = isDark ? '#334155' : '#d1d5db';
+    var textCol  = isDark ? '#e2e8f0' : '#1f2937';
+    var mutedCol = isDark ? '#64748b' : '#9ca3af';
+    var inputBg  = isDark ? '#0f172a' : '#f9fafb';
+    var aiBubbleBg = isDark ? '#273244' : '#f3f4f6';
+
+    if (!open) {
+      return html`<button
+        onClick=${function(){ setOpen(true); }}
+        title="Set up clash detection in plain English (Ctrl+/)"
+        style=${{
+          position:'fixed', bottom:'1rem', left:'50%', transform:'translateX(-50%)',
+          zIndex:1200, display:'flex', alignItems:'center', gap:'.4rem',
+          padding:'.45rem 1.1rem', borderRadius:999,
+          background:panelBg, border:'1px solid ' + borderCol,
+          color:mutedCol, fontSize:'.74rem', cursor:'pointer',
+          boxShadow:'0 2px 10px rgba(0,0,0,.25)', whiteSpace:'nowrap'
+        }}>
+        <svg width="12" height="12" viewBox="0 0 16 16" fill="none" style=${{flexShrink:0}}>
+          <path d="M2 4h12M2 8h8M2 12h10" stroke="${isDark?'#60a5fa':'#2563eb'}" stroke-width="1.6" stroke-linecap="round"/>
+        </svg>
+        Set up clash detection…
+        <span style=${{fontSize:'.6rem', opacity:.5, marginLeft:'.15rem'}}>Ctrl+/</span>
+      </button>`;
+    }
+
+    return html`<div style=${{
+      position:'fixed', bottom:'1rem', left:'50%', transform:'translateX(-50%)',
+      zIndex:1200, width:'min(500px, calc(100vw - 2rem))',
+      background:panelBg, border:'1px solid '+borderCol,
+      borderRadius:12, boxShadow:'0 8px 32px rgba(0,0,0,.35)',
+      display:'flex', flexDirection:'column', overflow:'hidden'
+    }}>
+      <div style=${{
+        display:'flex', alignItems:'center', padding:'.55rem .8rem',
+        borderBottom:'1px solid '+borderCol, gap:'.5rem'
+      }}>
+        <svg width="13" height="13" viewBox="0 0 16 16" fill="none" style=${{flexShrink:0}}>
+          <path d="M2 4h12M2 8h8M2 12h10" stroke="#60a5fa" stroke-width="1.6" stroke-linecap="round"/>
+        </svg>
+        <span style=${{fontSize:'.76rem', fontWeight:600, color:textCol, flex:1}}>Clash Setup</span>
+        <button onClick=${function(){ setOpen(false); }} style=${{
+          background:'none', border:'none', cursor:'pointer',
+          color:mutedCol, fontSize:'1.1rem', lineHeight:1, padding:'0 .1rem'
+        }}>×</button>
+      </div>
+
+      <div style=${{
+        overflowY:'auto', padding:'.7rem .8rem',
+        display:'flex', flexDirection:'column', gap:'.55rem',
+        maxHeight:300, minHeight:80
+      }}>
+        ${msgs.map(function(m, i) {
+          var isUser = m.role === 'user';
+          return html`<div key=${i} style=${{display:'flex', justifyContent: isUser?'flex-end':'flex-start'}}>
+            <div style=${{
+              maxWidth:'85%', padding:'.4rem .65rem',
+              borderRadius: isUser ? '12px 12px 3px 12px' : '12px 12px 12px 3px',
+              background: isUser ? '#2563eb' : aiBubbleBg,
+              color: isUser ? '#fff' : textCol,
+              fontSize:'.73rem', lineHeight:1.55, wordBreak:'break-word'
+            }}>${m.text}</div>
+          </div>`;
+        })}
+        ${loading && html`<div style=${{display:'flex'}}>
+          <div style=${{
+            padding:'.4rem .65rem', borderRadius:'12px 12px 12px 3px',
+            background:aiBubbleBg, color:mutedCol, fontSize:'.73rem'
+          }}>…</div>
+        </div>`}
+        <div ref=${bottomRef}></div>
+      </div>
+
+      <div style=${{
+        padding:'.5rem .65rem', borderTop:'1px solid '+borderCol,
+        display:'flex', gap:'.4rem', alignItems:'flex-end'
+      }}>
+        <textarea
+          ref=${inputRef}
+          value=${input}
+          onInput=${function(e){ setInput(e.target.value); }}
+          onKeyDown=${onKeyDown}
+          placeholder=${'e.g. check structural vs MEP with 50mm clearance'}
+          rows="2"
+          style=${{
+            flex:1, resize:'none', background:inputBg, border:'1px solid '+borderCol,
+            borderRadius:7, padding:'.35rem .55rem', color:textCol,
+            fontSize:'.73rem', lineHeight:1.5, outline:'none', fontFamily:'inherit'
+          }}
+        ></textarea>
+        <button onClick=${send} disabled=${!input.trim()||loading} style=${{
+          background:'#2563eb', color:'#fff', border:'none', borderRadius:7,
+          padding:'.35rem .6rem', cursor:'pointer', fontSize:'.73rem',
+          opacity:(!input.trim()||loading)?0.45:1, alignSelf:'flex-end'
+        }}>Send</button>
+      </div>
+    </div>`;
+  }
+
   // ── App ────────────────────────────────────────────────────────
 
   function App() {
@@ -5365,6 +5646,7 @@ function startApp() {
       ${is2D && html`<${ExportBar} s=${s} d=${d} />`}
       ${s.showModal && html`<${NewIssueModal} d=${d} el=${s.modalElement} prefs=${s.prefs} />`}
       ${s.showSettings && html`<${SettingsModal} d=${d} prefs=${s.prefs} />`}
+      <${NLCommandPanel} s=${s} d=${d} />
     </div>`;
   }
 
