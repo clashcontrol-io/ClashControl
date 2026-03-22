@@ -8,7 +8,7 @@
   <meta name="theme-color" content="#0f172a">
 
   <!-- CSP: restrict resource loading to known CDN origins -->
-  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval' 'wasm-unsafe-eval' https://cdnjs.cloudflare.com https://esm.sh https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline'; connect-src https://esm.sh https://cdn.jsdelivr.net https://cdnjs.cloudflare.com blob:; worker-src blob:; img-src 'self' blob: data:;">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval' 'wasm-unsafe-eval' https://cdnjs.cloudflare.com https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline'; connect-src https://cdn.jsdelivr.net https://cdnjs.cloudflare.com blob:; worker-src blob:; img-src 'self' blob: data:;">
 
   <!-- CDN deps: React, Three.js, JSZip — all UMD, all cdnjs -->
   <!-- SRI hashes: regenerate with `node scripts/generate-sri.js` if you change versions -->
@@ -447,7 +447,7 @@ function startApp() {
   var _ifcAPI = null;
   function getIfcAPI() {
     if (_ifcAPI) return Promise.resolve(_ifcAPI);
-    return import('https://esm.sh/web-ifc@0.0.76/web-ifc-api.js').then(function(mod) {
+    return import('https://cdn.jsdelivr.net/npm/web-ifc@0.0.76/web-ifc-api.js').then(function(mod) {
       var api = new mod.IfcAPI();
       api.SetWasmPath('https://cdn.jsdelivr.net/npm/web-ifc@0.0.76/');
       return api.Init().then(function() { _ifcAPI = api; return api; });
