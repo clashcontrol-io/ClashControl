@@ -174,7 +174,7 @@ window.onload = function() {
 
 function startApp() {
   // ── Version (auto-updated by pre-commit hook) ──
-  var CC_VERSION = {v:'1.2.24',hash:'7c6d995',date:'2026-03-22T19:33:19Z'};
+  var CC_VERSION = {v:'1.2.25',hash:'ecba016',date:'2026-03-23T11:09:32Z'};
 
   // Check CDN deps loaded
   var need = [];
@@ -303,7 +303,6 @@ function startApp() {
       case 'SET_PROJECT_LIST': return Object.assign({},s,{projectList:a.v});
       case 'LOAD_PROJECT_STATE': return Object.assign({},s,a.data);
       case 'CLASH_GROUP_BY': return Object.assign({},s,{clashGroupBy:a.v});
-      case 'TOGGLE_PROJECTION': return Object.assign({},s,{projection:s.projection==='ortho'?'perspective':'ortho'});
       // 2D Underlays
       case 'ADD_UNDERLAY':    return Object.assign({},s,{underlays:s.underlays.concat([a.v]),activeUnderlay:a.v.id});
       case 'DEL_UNDERLAY':    return Object.assign({},s,{underlays:s.underlays.filter(function(u){return u.id!==a.id}),activeUnderlay:s.activeUnderlay===a.id?null:s.activeUnderlay});
@@ -970,6 +969,7 @@ function startApp() {
     a.href = URL.createObjectURL(blob);
     a.download = 'project-'+new Date().toISOString().slice(0,10)+'.json';
     a.click();
+    URL.revokeObjectURL(a.href);
   }
 
   function loadProject(d) {
@@ -1187,6 +1187,7 @@ function startApp() {
       a.href = URL.createObjectURL(blob);
       a.download = 'clashcontrol-'+versionId+'-'+new Date().toISOString().slice(0,10)+'.bcf';
       a.click();
+      URL.revokeObjectURL(a.href);
     });
   }
 
@@ -1279,7 +1280,6 @@ function startApp() {
     },{passive:false});
     var orbit = {target:target, sync:sync, apply:apply, sph:sph, camera:camera};
     // Override apply to use orbit.camera (supports projection switching)
-    var _origApply = apply;
     orbit.apply = function() {
       camera = orbit.camera; // keep local camera in sync
       sph.phi = Math.max(0.05, Math.min(Math.PI-0.05, sph.phi));
@@ -1559,6 +1559,7 @@ function startApp() {
         // Vertical ring for 3D visibility
         var ring3 = new THREE.Mesh(ringGeo2, ringMat2.clone());
         ring3.position.set(point[0], point[1], point[2]);
+        ring3.rotation.y = Math.PI / 2;
         grp.add(ring3);
         scene.add(grp);
         _activeClashMarker = grp;
@@ -1766,7 +1767,7 @@ function startApp() {
         var rect = renderer.domElement.getBoundingClientRect();
         hoverMouse.x = ((e.clientX-rect.left)/rect.width)*2-1;
         hoverMouse.y = -((e.clientY-rect.top)/rect.height)*2+1;
-        hoverRaycaster.setFromCamera(hoverMouse, camera);
+        hoverRaycaster.setFromCamera(hoverMouse, S.camera);
         var hits = hoverRaycaster.intersectObjects(S.mg.children, true);
         var hitMesh = null;
         if(hits.length>0 && hits[0].object.isMesh) hitMesh = hits[0].object;
@@ -1822,7 +1823,7 @@ function startApp() {
         var rect=renderer.domElement.getBoundingClientRect();
         var mx=((e.clientX-rect.left)/rect.width)*2-1;
         var my=-((e.clientY-rect.top)/rect.height)*2+1;
-        raycaster.setFromCamera(new THREE.Vector2(mx,my), camera);
+        raycaster.setFromCamera(new THREE.Vector2(mx,my), S2.camera);
         // Check rotation ring first
         var allHandles=[];
         if(S2._sboxRotRing) allHandles.push(S2._sboxRotRing);
@@ -1859,7 +1860,7 @@ function startApp() {
         var rect=renderer.domElement.getBoundingClientRect();
         var mx=((e.clientX-rect.left)/rect.width)*2-1;
         var my=-((e.clientY-rect.top)/rect.height)*2+1;
-        raycaster.setFromCamera(new THREE.Vector2(mx,my), camera);
+        raycaster.setFromCamera(new THREE.Vector2(mx,my), state3d.current.camera);
 
         if(ds.type==='rotate'){
           // Rotation: horizontal mouse movement maps to Y rotation
@@ -1903,7 +1904,7 @@ function startApp() {
         var rect=renderer.domElement.getBoundingClientRect();
         var mx=((e.clientX-rect.left)/rect.width)*2-1;
         var my=-((e.clientY-rect.top)/rect.height)*2+1;
-        raycaster.setFromCamera(new THREE.Vector2(mx,my), camera);
+        raycaster.setFromCamera(new THREE.Vector2(mx,my), S2.camera);
         var allH=[];
         if(S2._sboxRotRing) allH.push(S2._sboxRotRing);
         if(S2._sboxHandles) allH=allH.concat(S2._sboxHandles);
@@ -1932,7 +1933,7 @@ function startApp() {
         var rect = renderer.domElement.getBoundingClientRect();
         mouse.x = ((e.clientX-rect.left)/rect.width)*2-1;
         mouse.y = -((e.clientY-rect.top)/rect.height)*2+1;
-        raycaster.setFromCamera(mouse, camera);
+        raycaster.setFromCamera(mouse, S.camera);
         if(!S.mg) return;
         // Filter out ghosted meshes — clicking them would corrupt shared ghost material
         var hits = raycaster.intersectObjects(S.mg.children, true).filter(function(h){
@@ -2091,7 +2092,7 @@ function startApp() {
         var rect = renderer.domElement.getBoundingClientRect();
         mouse.x = ((e.clientX-rect.left)/rect.width)*2-1;
         mouse.y = -((e.clientY-rect.top)/rect.height)*2+1;
-        raycaster.setFromCamera(mouse, camera);
+        raycaster.setFromCamera(mouse, S.camera);
         var hits = raycaster.intersectObjects(S.mg.children, true).filter(function(h){
           return h.object.material !== _ghostMat;
         });
@@ -2701,6 +2702,8 @@ function startApp() {
         var orig = obj.userData._origMaterial;
         // Skip if currently ghosted
         if(obj.material === S._ghostMat) return;
+        // Dispose the current non-original material before replacing to prevent leaks
+        if(obj.material !== orig) { obj.material.dispose(); }
         if(style==='wireframe'){
           obj.material = new THREE.MeshBasicMaterial({
             color: orig.color ? orig.color.clone() : new THREE.Color(0x64748b),
@@ -2720,7 +2723,6 @@ function startApp() {
             side: THREE.DoubleSide, envMapIntensity:0.5
           });
         } else {
-          // standard: restore original
           obj.material = orig;
         }
       });
@@ -4610,7 +4612,7 @@ function startApp() {
     var defaultTitle = hasEl ? ('Issue: '+(ep.ifcType||'Element')+' '+(ep.name||'#'+el.expressId)) : '';
     var defaultDesc = hasEl ? ('Model: '+el.modelName+'\nType: '+(ep.ifcType||'Unknown')+'\nName: '+(ep.name||'N/A')+'\nStorey: '+(ep.storey||'N/A')+'\nMaterial: '+(ep.material||'N/A')+'\nExpress ID: #'+el.expressId) : '';
 
-    var f=useState({title:defaultTitle,desc:'',priority:pr.defaultPriority||'normal',status:pr.defaultStatus||'open',category:pr.defaultCategory||'design',assignee:'',dueDate:''}), form=f[0], setForm=f[1];
+    var f=useState({title:defaultTitle,desc:defaultDesc,priority:pr.defaultPriority||'normal',status:pr.defaultStatus||'open',category:pr.defaultCategory||'design',assignee:'',dueDate:''}), form=f[0], setForm=f[1];
     useEffect(function(){
       function onKey(e){if(e.key==='Escape')d({t:'MODAL',v:false});}
       window.addEventListener('keydown',onKey);

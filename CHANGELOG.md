@@ -1,5 +1,8 @@
 # Changelog
 
+## v1.2.25 (2026-03-23)
+- Simplify: remove dRef, fix img cache pattern, deduplicate hasProjectData, fix unmount leak
+
 ## v1.2.24 (2026-03-22)
 - Fix 8 code review issues: CSP, SRI, state mutation, stale closures, dead code
 
