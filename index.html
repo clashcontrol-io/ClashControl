@@ -178,7 +178,7 @@ window.onload = function() {
 
 function startApp() {
   // ── Version (auto-updated by pre-commit hook) ──
-  var CC_VERSION = {v:'1.2.44',hash:'555f55e',date:'2026-03-23T15:08:29Z'};
+  var CC_VERSION = {v:'1.2.46',hash:'fecff92',date:'2026-03-23T15:46:45Z'};
 
   // Check CDN deps loaded
   var need = [];
@@ -222,7 +222,7 @@ function startApp() {
   var INIT_FILTERS = {
     search:'', status:'all', type:'all', discipline:'all',
     floor:'all', distMin:0, distMax:9999, elementId:'', selfClash:'all',
-    ifcType:'all', storey:'all', material:'all', excludedTypes:[],
+    ifcType:'all', storey:'all', material:'all', excludedTypes:[], excludedStoreys:[], excludedMaterials:[],
     // Issue-specific filters
     priority:'all', category:'all', assignee:'all', issueElementType:'all', issueStorey:'all'
   };
@@ -2626,6 +2626,7 @@ function startApp() {
             }
           });
         }
+        S.renderer.clippingPlanes=[];
         invalidate();
       };
 
@@ -3021,6 +3022,17 @@ function startApp() {
       }
       invalidate();
     }, [s.floorPlan]);
+
+    // Safety net: force-clear clipping planes when all section modes are off
+    useEffect(function(){
+      var S = state3d.current; if(!S.renderer) return;
+      if(!s.sectionAxis && !s.sectionCustom && (!s.sectionBox||!s.sectionBox.enabled) && !s.floorPlan){
+        if(S.renderer.clippingPlanes.length>0){
+          S.renderer.clippingPlanes=[];
+          invalidate();
+        }
+      }
+    }, [s.sectionAxis, s.sectionCustom, s.sectionBox, s.floorPlan]);
 
     // Classification visibility: hide/show groups
     var lastHiddenRef = useRef(null);
@@ -4542,6 +4554,50 @@ function startApp() {
     </div>`;
   }
 
+  // Reusable multi-select dropdown with checkboxes
+  function MultiSelectDropdown(props) {
+    var label=props.label, items=props.items, excluded=props.excluded||[], onToggle=props.onToggle, onToggleAll=props.onToggleAll;
+    var op=useState(false), open=op[0], setOpen=op[1];
+    var ref=useRef(null);
+    var activeCount = items.length - excluded.length;
+    var allVisible = excluded.length===0;
+    var summary = allVisible ? 'All ('+items.length+')' : activeCount+' of '+items.length;
+
+    // Close on outside click
+    useEffect(function(){
+      if(!open) return;
+      function handler(e){ if(ref.current && !ref.current.contains(e.target)) setOpen(false); }
+      document.addEventListener('mousedown', handler);
+      return function(){ document.removeEventListener('mousedown', handler); };
+    },[open]);
+
+    return html`<div ref=${ref} style=${{position:'relative'}}>
+      <button onClick=${function(){setOpen(!open)}}
+        style=${{fontSize:'.65rem',padding:'.2rem .3rem',borderRadius:4,background:'var(--bg-secondary)',color:allVisible?'var(--text-secondary)':'var(--accent)',border:'1px solid var(--border)',width:'100%',textAlign:'left',cursor:'pointer',display:'flex',alignItems:'center',justifyContent:'space-between'}}>
+        <span style=${{overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>${summary}</span>
+        <span style=${{fontSize:'.5rem',color:'var(--text-faint)',marginLeft:'.3rem',flexShrink:0}}>${open?'▲':'▼'}</span>
+      </button>
+      ${open && html`<div style=${{position:'absolute',top:'100%',left:0,right:0,marginTop:2,background:'var(--bg-secondary)',border:'1px solid var(--border)',borderRadius:6,boxShadow:'0 6px 20px rgba(0,0,0,.35)',zIndex:50,overflow:'hidden',maxHeight:'12rem',display:'flex',flexDirection:'column'}}>
+        <div style=${{display:'flex',alignItems:'center',justifyContent:'space-between',padding:'.25rem .4rem',borderBottom:'1px solid var(--border-subtle)',flexShrink:0}}>
+          <span style=${{fontSize:'.58rem',color:'var(--text-muted)'}}>${activeCount} selected</span>
+          <button onClick=${onToggleAll} style=${{fontSize:'.55rem',padding:'1px 5px',background:'none',color:allVisible?'var(--text-faint)':'var(--accent)',border:'1px solid var(--border)',borderRadius:3,cursor:'pointer'}}>
+            ${allVisible?'Exclude all':'Show all'}
+          </button>
+        </div>
+        <div style=${{overflowY:'auto',padding:'.15rem'}}>
+          ${items.map(function(t){
+            var isExcluded = excluded.indexOf(t)!==-1;
+            return html`<label key=${t} style=${{display:'flex',alignItems:'center',gap:'.3rem',padding:'.18rem .3rem',borderRadius:3,cursor:'pointer',background:isExcluded?'rgba(239,68,68,.06)':'transparent',opacity:isExcluded?.55:1}}>
+              <input type="checkbox" checked=${!isExcluded} onChange=${function(){onToggle(t)}}
+                style=${{accentColor:'var(--accent)',cursor:'pointer',flexShrink:0}} />
+              <span style=${{fontSize:'.62rem',color:isExcluded?'var(--text-faint)':'var(--text-primary)',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>${t}</span>
+            </label>`;
+          })}
+        </div>
+      </div>`}
+    </div>`;
+  }
+
   function IssuePanel(props) {
     var s=props.s, d=props.d, f=s.filters, hideTabBar=props.hideTabBar;
     var fo=useState(false), filtersOpen=fo[0], setFiltersOpen=fo[1];
@@ -4590,6 +4646,8 @@ function startApp() {
     if(f.distMin>0||f.distMax<9999) activeCount++;
     if(f.ifcType!=='all') activeCount++;
     if(f.excludedTypes&&f.excludedTypes.length) activeCount++;
+    if(f.excludedStoreys&&f.excludedStoreys.length) activeCount++;
+    if(f.excludedMaterials&&f.excludedMaterials.length) activeCount++;
     if(f.storey!=='all') activeCount++;
     if(f.material!=='all') activeCount++;
     if(f.priority!=='all') activeCount++;
@@ -4632,6 +4690,8 @@ function startApp() {
           if(f.selfClash==='cross' && it.selfClash) return false;
           if(f.ifcType!=='all' && it.elemAType!==f.ifcType && it.elemBType!==f.ifcType) return false;
           if(f.excludedTypes&&f.excludedTypes.length){var ex=f.excludedTypes;if(ex.indexOf(it.elemAType)!==-1||ex.indexOf(it.elemBType)!==-1) return false;}
+          if(f.excludedStoreys&&f.excludedStoreys.length){var exs=f.excludedStoreys;if(exs.indexOf(it.elemAStorey)!==-1||exs.indexOf(it.elemBStorey)!==-1) return false;}
+          if(f.excludedMaterials&&f.excludedMaterials.length){var exm=f.excludedMaterials;if(exm.indexOf(it.elemAMaterial)!==-1||exm.indexOf(it.elemBMaterial)!==-1) return false;}
           if(f.storey!=='all' && it.elemAStorey!==f.storey && it.elemBStorey!==f.storey) return false;
           if(f.material!=='all' && it.elemAMaterial!==f.material && it.elemBMaterial!==f.material) return false;
         } else {
@@ -4740,50 +4800,25 @@ function startApp() {
           </div>
         </div>`}
 
-        ${isClashTab && typeList.length>0 && function(){
-          var excl = f.excludedTypes||[];
-          var allVisible = excl.length===0;
-          function toggleType(t){
-            var next = excl.indexOf(t)===-1 ? excl.concat(t) : excl.filter(function(x){return x!==t;});
-            d({t:'UPD_FILTERS',u:{excludedTypes:next}});
-          }
-          function toggleAll(){
-            d({t:'UPD_FILTERS',u:{excludedTypes:allVisible?typeList.slice():[]}});
-          }
-          return html`<div>
-            <div style=${{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:'.2rem'}}>
-              <span style=${FL}>Element Type</span>
-              <button onClick=${toggleAll} style=${{...S_BTN,padding:'1px 5px',fontSize:'.55rem',background:'none',color:allVisible?'var(--text-faint)':'var(--accent)',border:'1px solid var(--border)',borderRadius:3}}>
-                ${allVisible?'Exclude all':'Show all'}
-              </button>
-            </div>
-            <div style=${{display:'flex',flexDirection:'column',gap:'1px',maxHeight:'9rem',overflowY:'auto',background:'var(--bg-primary)',border:'1px solid var(--border)',borderRadius:4,padding:'.15rem'}}>
-              ${typeList.map(function(t){
-                var excluded = excl.indexOf(t)!==-1;
-                return html`<label key=${t} style=${{display:'flex',alignItems:'center',gap:'.3rem',padding:'.18rem .3rem',borderRadius:3,cursor:'pointer',background:excluded?'rgba(239,68,68,.06)':'transparent',opacity:excluded?.55:1}}>
-                  <input type="checkbox" checked=${!excluded} onChange=${function(){toggleType(t)}}
-                    style=${{accentColor:'var(--accent)',cursor:'pointer',flexShrink:0}} />
-                  <span style=${{fontSize:'.62rem',color:excluded?'var(--text-faint)':'var(--text-primary)',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>${t}</span>
-                </label>`;
-              })}
-            </div>
-          </div>`;
-        }()}
+        ${isClashTab && typeList.length>0 && html`<div>
+          <span style=${FL}>Element Type</span>
+          <${MultiSelectDropdown} items=${typeList} excluded=${f.excludedTypes||[]}
+            onToggle=${function(t){var ex=f.excludedTypes||[];d({t:'UPD_FILTERS',u:{excludedTypes:ex.indexOf(t)===-1?ex.concat(t):ex.filter(function(x){return x!==t;})}});}}
+            onToggleAll=${function(){var ex=f.excludedTypes||[];d({t:'UPD_FILTERS',u:{excludedTypes:ex.length===0?typeList.slice():[]}});}} />
+        </div>`}
 
         ${isClashTab && storeyList.length>0 && html`<div>
           <span style=${FL}>Storey</span>
-          <select value=${f.storey} onChange=${function(e){d({t:'UPD_FILTERS',u:{storey:e.target.value}})}} style=${SELSTYLE}>
-            <option value="all">All storeys</option>
-            ${storeyList.map(function(t){return html`<option key=${t} value=${t}>${t}</option>`})}
-          </select>
+          <${MultiSelectDropdown} items=${storeyList} excluded=${f.excludedStoreys||[]}
+            onToggle=${function(t){var ex=f.excludedStoreys||[];d({t:'UPD_FILTERS',u:{excludedStoreys:ex.indexOf(t)===-1?ex.concat(t):ex.filter(function(x){return x!==t;})}});}}
+            onToggleAll=${function(){var ex=f.excludedStoreys||[];d({t:'UPD_FILTERS',u:{excludedStoreys:ex.length===0?storeyList.slice():[]}});}} />
         </div>`}
 
         ${isClashTab && materialList.length>0 && html`<div>
           <span style=${FL}>Material</span>
-          <select value=${f.material} onChange=${function(e){d({t:'UPD_FILTERS',u:{material:e.target.value}})}} style=${SELSTYLE}>
-            <option value="all">All materials</option>
-            ${materialList.map(function(t){return html`<option key=${t} value=${t}>${t}</option>`})}
-          </select>
+          <${MultiSelectDropdown} items=${materialList} excluded=${f.excludedMaterials||[]}
+            onToggle=${function(t){var ex=f.excludedMaterials||[];d({t:'UPD_FILTERS',u:{excludedMaterials:ex.indexOf(t)===-1?ex.concat(t):ex.filter(function(x){return x!==t;})}});}}
+            onToggleAll=${function(){var ex=f.excludedMaterials||[];d({t:'UPD_FILTERS',u:{excludedMaterials:ex.length===0?materialList.slice():[]}});}} />
         </div>`}
 
         ${isClashTab && html`<div>
@@ -6475,8 +6510,17 @@ function startApp() {
     var isDark=(s.prefs.theme||'dark')==='dark';
     var all=s.clashes.concat(s.issues);
     var po=useState(false), projOpen=po[0], setProjOpen=po[1];
+    var cd=useState(null), confirmDel=cd[0], setConfirmDel=cd[1];
     var projects=s.projectList||[];
     var activeProj=projects.find(function(p){return p.id===s.activeProject;})||projects[0]||{name:'Default'};
+    function delProject(id){
+      idbDeleteProjectFiles(id); idbDeleteProjectData(id);
+      var list=getProjects().filter(function(p){return p.id!==id;});
+      if(!list.length) list=[{id:'default',name:'Default Project',createdAt:Date.now()}];
+      saveProjects(list); d({t:'SET_PROJECT_LIST',v:list});
+      if(s.activeProject===id) _switchProject(list[0].id,s,d);
+      setConfirmDel(null); setProjOpen(false);
+    }
 
     function iconBtn(onClick, content, title) {
       return html`<button class="cc-tip" data-tip=${title} onClick=${onClick}
@@ -6536,14 +6580,27 @@ function startApp() {
           </div>
           ${projects.map(function(p){
             var isActive=p.id===s.activeProject;
-            return html`<div key=${p.id}
-              onClick=${function(){if(!isActive){_switchProject(p.id,s,d);}setProjOpen(false);}}
-              style=${{display:'flex',alignItems:'center',gap:'.4rem',padding:'.4rem .6rem',cursor:'pointer',
-                background:isActive?'rgba(37,99,235,.1)':'transparent',
-                borderLeft:isActive?'2px solid #3b82f6':'2px solid transparent'}}>
-              <span style=${{fontSize:'.6rem',flex:1,color:isActive?'#93c5fd':'var(--text-primary)',
-                whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>${p.name}</span>
-              ${isActive && html`<span style=${{fontSize:'.5rem',color:'#22c55e'}}>✓</span>`}
+            var isConfirming=confirmDel===p.id;
+            return html`<div key=${p.id} style=${{borderBottom:'1px solid var(--border-subtle)'}}>
+              <div style=${{display:'flex',alignItems:'center',gap:'.4rem',padding:'.4rem .6rem',cursor:'pointer',
+                  background:isActive?'rgba(37,99,235,.1)':'transparent',
+                  borderLeft:isActive?'2px solid #3b82f6':'2px solid transparent'}}>
+                <span onClick=${function(){if(!isActive){_switchProject(p.id,s,d);}setProjOpen(false);setConfirmDel(null);}}
+                  style=${{fontSize:'.6rem',flex:1,color:isActive?'#93c5fd':'var(--text-primary)',
+                  whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>${p.name}</span>
+                ${isActive && html`<span style=${{fontSize:'.5rem',color:'#22c55e'}}>✓</span>`}
+                <button onClick=${function(e){e.stopPropagation();setConfirmDel(isConfirming?null:p.id);}}
+                  style=${{background:'none',border:'none',cursor:'pointer',padding:'1px 3px',fontSize:'.55rem',lineHeight:1,
+                    color:isConfirming?'#ef4444':'var(--text-faint)',opacity:isConfirming?1:.5,flexShrink:0}}
+                  title="Delete project">🗑</button>
+              </div>
+              ${isConfirming && html`<div style=${{padding:'.3rem .6rem',borderTop:'1px solid var(--border-subtle)',display:'flex',alignItems:'center',gap:'.3rem',background:'rgba(239,68,68,.06)'}}>
+                <span style=${{flex:1,fontSize:'.58rem',color:'var(--text-secondary)'}}>Delete "${p.name}"?</span>
+                <button onClick=${function(e){e.stopPropagation();delProject(p.id);}}
+                  style=${{...S_BTN,padding:'2px 8px',background:'#ef4444',color:'#fff',fontSize:'.58rem',fontWeight:600}}>Delete</button>
+                <button onClick=${function(e){e.stopPropagation();setConfirmDel(null);}}
+                  style=${{...S_BTN,padding:'2px 8px',background:'none',color:'var(--text-muted)',fontSize:'.58rem',border:'1px solid var(--border)'}}>Cancel</button>
+              </div>`}
             </div>`;
           })}
         </div>`}
