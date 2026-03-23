@@ -1,5 +1,8 @@
 # Changelog
 
+## v1.2.31 (2026-03-23)
+- Significantly broaden NL panel regex parsing
+
 ## v1.2.30 (2026-03-23)
 - Fix LLM model load: q4f16→q4, add error details and retry button
 
