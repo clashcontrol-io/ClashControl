@@ -1,5 +1,8 @@
 # Changelog
 
+## v1.2.56 (2026-03-23)
+- Improve UI readability, spacing, and visual polish across the app
+
 ## v1.2.55 (2026-03-23)
 - Redesign welcome popup with polished card-based UI
 
