@@ -1,5 +1,11 @@
 # Changelog
 
+## v1.2.39 (2026-03-23)
+- Fix tooltips rendering behind the 3D viewer
+
+## v1.2.38 (2026-03-23)
+- Fix viewcube fly-to and improve visual style
+
 ## v1.2.37 (2026-03-23)
 - Split icon rail into left (utility) and right (nav tabs) rails
 
