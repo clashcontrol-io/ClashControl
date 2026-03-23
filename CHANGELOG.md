@@ -1,5 +1,8 @@
 # Changelog
 
+## v1.2.35 (2026-03-23)
+- Add folder-with-plus SVG icon to file upload button and empty state
+
 ## v1.2.34 (2026-03-23)
 - Redesign UI: vertical icon sidebar + slide-out panel, maximized viewer
 
