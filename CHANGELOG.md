@@ -1,5 +1,8 @@
 # Changelog
 
+## v1.2.37 (2026-03-23)
+- Replace AABB-only clash detection with geometry-accurate narrow phase
+
 ## v1.2.36 (2026-03-23)
 - Fix: load project files immediately on page load, not on models tab open
 

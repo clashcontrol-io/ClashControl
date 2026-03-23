@@ -178,7 +178,7 @@ window.onload = function() {
 
 function startApp() {
   // ── Version (auto-updated by pre-commit hook) ──
-  var CC_VERSION = {v:'1.2.36',hash:'2658e5c',date:'2026-03-23T14:12:04Z'};
+  var CC_VERSION = {v:'1.2.37',hash:'81c4ba7',date:'2026-03-23T14:18:15Z'};
 
   // Check CDN deps loaded
   var need = [];
@@ -5856,7 +5856,25 @@ function startApp() {
     if (betweenMatch && /check|compare|find|detect|look|scan|anal[yz]se?|run|clashes?|conflicts?|collisions?/.test(text))
       return runSetup(betweenMatch[1].trim(), betweenMatch[2].split(/\s+with\s+/)[0].trim());
 
-    // ── Individual rule settings ────────────────────────────────────
+    // ── "run clash …" with inline options (no vs/between needed) ──
+    // Matches: "run clash on both models, exclude self, with clearance of 10mm"
+    //          "detect clashes with 50mm clearance exclude self"
+    //          "run detection soft clashes 20mm clearance"
+    if (/(?:run|start|do|execute|detect|find|check|scan|re-?run|again)\s+(?:the\s+)?(?:clash|detection|conflicts?|collisions?|scan|check)/i.test(text) && !/\b(?:vs\.?|versus|against|between)\b/.test(text)) {
+      if (!s.models.length) return 'No models loaded yet.';
+      var updRun = applyClashOpts({ modelA:'all', modelB:'all' });
+      d({t:'UPD_RULES', u:updRun});
+      if (s.detecting) return 'Rules updated — detection already running.';
+      d({t:'DETECTING'}); d({t:'TAB',v:'clashes'});
+      setTimeout(function(){ d({t:'SET_CLASHES', v:detectClashes(s.models, Object.assign({},s.rules,updRun))}); }, 20);
+      var parts = [];
+      if (updRun.clearance) parts.push(updRun.clearance + 'mm clearance');
+      if (updRun.excludeSelf) parts.push('cross-model only');
+      if (updRun.soft) parts.push('soft+hard');
+      return 'Running clash detection' + (parts.length ? ' (' + parts.join(', ') + ')' : '') + '…';
+    }
+
+    // ── Individual rule settings (no run, just tweak) ────────────
     var clrSet = text.match(/clearance\s+(?:to\s+|of\s+)?(\d+(?:\.\d+)?)\s*(mm|cm)|(\d+(?:\.\d+)?)\s*(mm|cm)\s+(?:clearance|gap)/);
     if (clrSet) {
       var cv = clrSet[1]||clrSet[3], cu = clrSet[2]||clrSet[4];
@@ -5879,9 +5897,10 @@ function startApp() {
     if (/(?:include|enable|allow)\s+self[\s-]*clash|self[\s-]*clash.*on/.test(text)) { d({t:'UPD_RULES',u:{excludeSelf:false}}); return 'Self-clashes included.'; }
 
     // ── Plain run ──────────────────────────────────────────────────
-    if (/^(?:run|go|start|detect|execute|scan|proceed)$/.test(text) ||
-        /^(?:run|start|do|execute)\s+(?:it|the\s+)?(?:detection|clashes?|check|scan)?$/.test(text) ||
-        /^(?:find|detect|check\s+for|scan\s+for)\s+(?:all\s+)?(?:clashes?|conflicts?|collisions?)$/.test(text)) {
+    if (/^(?:run|go|start|detect|execute|scan|proceed|re-?run|again)$/.test(text) ||
+        /^(?:run|start|do|execute|re-?run)\s+(?:it|the\s+)?(?:detection|clashes?|check|scan|again)?$/.test(text) ||
+        /^(?:find|detect|check\s+for|scan\s+for)\s+(?:all\s+)?(?:clashes?|conflicts?|collisions?)$/.test(text) ||
+        /^(?:run|detect)\s+(?:it\s+)?again$/.test(text)) {
       if (!s.models.length) return 'No models loaded yet.';
       if (s.detecting) return 'Already running…';
       d({t:'DETECTING'}); d({t:'TAB',v:'clashes'});
