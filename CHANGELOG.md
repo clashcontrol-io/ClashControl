@@ -1,5 +1,11 @@
 # Changelog
 
+## v1.2.34 (2026-03-23)
+- Reduce memory usage by ~2GB: remove LLM, trim clash data, reuse boxes
+
+## v1.2.33 (2026-03-23)
+- Make unchecked model elements non-clickable and non-hoverable
+
 ## v1.2.32 (2026-03-23)
 - Hide clashes from unchecked models in the clash list
 

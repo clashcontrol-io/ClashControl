@@ -9,7 +9,7 @@
 
   <!-- CSP: restrict resource loading to known CDN origins -->
   <!-- 'unsafe-eval' required by pdf.js v3 for custom font rendering (CFF/Type1 font programs) -->
-  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval' 'wasm-unsafe-eval' https://cdnjs.cloudflare.com https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline'; connect-src https://cdn.jsdelivr.net https://cdnjs.cloudflare.com https://huggingface.co https://cdn-lfs.huggingface.co https://cdn-lfs-us-1.huggingface.co blob:; worker-src blob:; img-src 'self' blob: data:;">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval' 'wasm-unsafe-eval' https://cdnjs.cloudflare.com https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline'; connect-src https://cdn.jsdelivr.net https://cdnjs.cloudflare.com https://huggingface.co https://cdn-lfs.huggingface.co https://cdn-lfs-us-1.huggingface.co http://localhost:11434 blob:; worker-src blob:; img-src 'self' blob: data:;">
 
   <!-- CDN deps: React, Three.js, JSZip — all UMD, all cdnjs -->
   <!-- SRI hashes: regenerate with `node scripts/generate-sri.js` if you change versions -->
@@ -178,7 +178,7 @@ window.onload = function() {
 
 function startApp() {
   // ── Version (auto-updated by pre-commit hook) ──
-  var CC_VERSION = {v:'1.2.32',hash:'841379c',date:'2026-03-23T13:24:11Z'};
+  var CC_VERSION = {v:'1.2.34',hash:'9b7ee5a',date:'2026-03-23T13:46:39Z'};
 
   // Check CDN deps loaded
   var need = [];
@@ -930,6 +930,10 @@ function startApp() {
     var pick = function(id) { return id === 'all' ? models : models.filter(function(m){return m.id===id}); };
     var grpA = pick(rules.modelA), grpB = pick(rules.modelB);
     var clashes = [], seen = {};
+    // Reusable temp boxes to avoid O(n²) clone allocations
+    var _tmpBoxA = new THREE.Box3(), _tmpBoxB = new THREE.Box3();
+    var _tmpSizeA = new THREE.Vector3(), _tmpSizeB = new THREE.Vector3();
+    var _tmpCtrA = new THREE.Vector3(), _tmpCtrB = new THREE.Vector3();
     var hardTol = (rules.hardTolerance||0)/1000; // mm to m
 
     // Change-aware: track which elements changed since last run
@@ -956,14 +960,14 @@ function startApp() {
         // Change-aware: skip pairs where neither element changed
         if (rules.changeAware && !changedElements[mA.id+':'+eA.expressId] && !changedElements[mB.id+':'+eB.expressId]) return;
 
-        var bA = eA.box.clone(), bB = eB.box.clone();
+        var bA = eA.box, bB = eB.box;
 
         // Duplicate detection: identical bounding boxes at same location
         if (rules.duplicates) {
-          var sizeA = bA.getSize(new THREE.Vector3());
-          var sizeB = bB.getSize(new THREE.Vector3());
-          var ctrA = bA.getCenter(new THREE.Vector3());
-          var ctrB = bB.getCenter(new THREE.Vector3());
+          var sizeA = bA.getSize(_tmpSizeA);
+          var sizeB = bB.getSize(_tmpSizeB);
+          var ctrA = bA.getCenter(_tmpCtrA);
+          var ctrB = bB.getCenter(_tmpCtrB);
           var sizeDiff = Math.abs(sizeA.x-sizeB.x) + Math.abs(sizeA.y-sizeB.y) + Math.abs(sizeA.z-sizeB.z);
           var posDiff = ctrA.distanceTo(ctrB);
           if (sizeDiff < 0.01 && posDiff < 0.01) {
@@ -980,22 +984,30 @@ function startApp() {
               disciplines:[mA.discipline,mB.discipline], selfClash:sameModel,
               elemAType:tA, elemBType:tB, elemAName:nA, elemBName:nB,
               elemAStorey:pA.storey||'', elemBStorey:pB.storey||'',
-              elemAMaterial:pA.material||'', elemBMaterial:pB.material||'',
-              propsA:pA, propsB:pB
+              elemAMaterial:pA.material||'', elemBMaterial:pB.material||''
             });
             return; // don't also report as hard/soft
           }
         }
 
-        // Hard clash with tolerance
-        var isHard = hardTol > 0
-          ? bA.clone().expandByScalar(-hardTol).intersectsBox(bB.clone().expandByScalar(-hardTol))
-          : bA.intersectsBox(bB);
-        if (!isHard && hardTol > 0) isHard = bA.intersectsBox(bB); // still intersecting without shrink = hard
+        // Hard clash with tolerance (use temp boxes to avoid cloning)
+        var isHard;
+        if (hardTol > 0) {
+          _tmpBoxA.copy(bA).expandByScalar(-hardTol);
+          _tmpBoxB.copy(bB).expandByScalar(-hardTol);
+          isHard = _tmpBoxA.intersectsBox(_tmpBoxB);
+          if (!isHard) isHard = bA.intersectsBox(bB); // still intersecting without shrink = hard
+        } else {
+          isHard = bA.intersectsBox(bB);
+        }
         // Soft/clearance clash
-        var isSoft = !isHard && rules.soft && bA.clone().expandByScalar(rules.clearance/1000).intersectsBox(bB);
+        var isSoft = false;
+        if (!isHard && rules.soft) {
+          _tmpBoxA.copy(bA).expandByScalar(rules.clearance/1000);
+          isSoft = _tmpBoxA.intersectsBox(bB);
+        }
         if ((isHard && rules.hard) || isSoft) {
-          var ctr = new THREE.Vector3(); bA.getCenter(ctr);
+          var ctr = bA.getCenter(_tmpCtrA);
           var gx=Math.max(0,bB.min.x-bA.max.x,bA.min.x-bB.max.x);
           var gy=Math.max(0,bB.min.y-bA.max.y,bA.min.y-bB.max.y);
           var gz=Math.max(0,bB.min.z-bA.max.z,bA.min.z-bB.max.z);
@@ -1013,8 +1025,7 @@ function startApp() {
             disciplines:[mA.discipline,mB.discipline], selfClash:sameModel,
             elemAType:tA, elemBType:tB, elemAName:nA, elemBName:nB,
             elemAStorey:pA.storey||'', elemBStorey:pB.storey||'',
-            elemAMaterial:pA.material||'', elemBMaterial:pB.material||'',
-            propsA:pA, propsB:pB
+            elemAMaterial:pA.material||'', elemBMaterial:pB.material||''
           });
         }
       }); });
@@ -1408,12 +1419,15 @@ function startApp() {
   var _clearFoundElements = null;
   var _ghostOthers = null;
 
-  // ── NL Panel LLM state (lazy-loaded on first panel open) ───────
+  // ── NL Panel LLM state (Ollama preferred → in-browser fallback) ──
+  var _nlBackend = 'none'; // 'ollama' | 'browser' | 'none'
   var _nlPipeline = null;
   var _nlModelStatus = 'idle'; // 'idle'|'loading'|'ready'|'error'
   var _nlModelProgress = 0;
   var _nlModelError = '';
   var _nlModelListeners = [];
+  var _nlIdleTimer = null;
+  var _nlIdleTimeout = 5 * 60 * 1000; // 5 minutes
   var _unghostAll = null;
   var _sboxAroundElements = null;
   function Viewer(props) {
@@ -2390,6 +2404,9 @@ function startApp() {
         if(ids.indexOf(id)===-1){
           S.map[id].traverse(function(obj){if(obj.isMesh){obj.geometry&&obj.geometry.dispose();obj.material&&obj.material.dispose();}});
           S.mg.remove(S.map[id]);delete S.map[id];
+          // Clear cached maps for removed model
+          if(S._elMapCache) delete S._elMapCache[id];
+          if(S._hsCache) delete S._hsCache[id];
         }
       });
       // Add new
@@ -3700,6 +3717,10 @@ function startApp() {
     useEffect(function(){
       function onSwitch() {
         var newProjId = window._ccProjectSwitch||'default';
+        // Clear stale caches from previous project
+        _prevElementHashes = {};
+        _underlayImgCache = {};
+        _underlayImgDataCache = {};
         _restoreProjectFiles(newProjId);
         // Also load saved project session data (clashes, issues, etc.)
         idbGetProjectData(newProjId).then(function(data){
@@ -4471,7 +4492,7 @@ function startApp() {
         ${['none','storey','discipline','status','type'].map(function(g){return html`<button key=${g} onClick=${function(){d({t:'CLASH_GROUP_BY',v:g})}}
           style=${{...S_BTN,fontSize:'.55rem',padding:'.1rem .3rem',background:s.clashGroupBy===g?'#2563eb':'var(--bg-secondary)',color:s.clashGroupBy===g?'#fff':'var(--text-faint)'}}>${g==='none'?'None':g.charAt(0).toUpperCase()+g.slice(1)}</button>`})}
       </div>`}
-      ${!isExplorerTab && html`<${VirtualList} items=${items} activeId=${s.activeId} d=${d} isClash=${isClashTab} prefs=${s.prefs} groupBy=${isClashTab?s.clashGroupBy:'none'} />`}
+      ${!isExplorerTab && html`<${VirtualList} items=${items} activeId=${s.activeId} d=${d} isClash=${isClashTab} prefs=${s.prefs} models=${s.models} groupBy=${isClashTab?s.clashGroupBy:'none'} />`}
     </div>`;
   }
 
@@ -4505,9 +4526,20 @@ function startApp() {
     </div>`;
   }
 
+  // Look up element props from model data on-demand (avoids storing full props on each clash)
+  function _lookupElProps(models, modelId, expressId) {
+    var m = models.find(function(m){ return m.id === modelId; });
+    if (!m) return null;
+    var el = (m.elements||[]).find(function(e){ return e.expressId === expressId; });
+    return el ? el.props : null;
+  }
+
   function ClashProps(props) {
-    var it=props.item;
+    var it=props.item, models=props.models;
     var dp=useState(false), detailOpen=dp[0], setDetailOpen=dp[1];
+    // Lazy-load props only when detail panel is opened
+    var pA = detailOpen ? (it.propsA || _lookupElProps(models, it.modelAId, it.elemA)) : null;
+    var pB = detailOpen ? (it.propsB || _lookupElProps(models, it.modelBId, it.elemB)) : null;
     return html`<div onClick=${function(e){e.stopPropagation();}}>
       <div style=${{display:'flex',gap:'.2rem',marginBottom:'.2rem'}}>
         <button onClick=${function(){if(_fitToElement&&it.elemA)_fitToElement(it.elemA);if(_highlightById&&it.elemA)_highlightById(it.elemA);}}
@@ -4522,8 +4554,8 @@ function startApp() {
         ${detailOpen?'▼':'▶'} Element Properties
       </button>
       ${detailOpen && html`<div style=${{marginTop:'.3rem',maxHeight:'300px',overflowY:'auto'}}>
-        <${PropBlock} p=${it.propsA} label=${'Element A: '+(it.elemAName||'#'+it.elemA)} />
-        <${PropBlock} p=${it.propsB} label=${'Element B: '+(it.elemBName||'#'+it.elemB)} />
+        <${PropBlock} p=${pA} label=${'Element A: '+(it.elemAName||'#'+it.elemA)} />
+        <${PropBlock} p=${pB} label=${'Element B: '+(it.elemBName||'#'+it.elemB)} />
       </div>`}
     </div>`;
   }
@@ -4553,7 +4585,7 @@ function startApp() {
   var ROW_HEIGHT = 78; // approx height of IssueRow in px (clash rows are taller with extra metadata)
   var GROUP_PAGE_SIZE = 50; // max items rendered per group before "show more"
   function VirtualList(props) {
-    var items=props.items, activeId=props.activeId, d=props.d, isClash=props.isClash, prefs=props.prefs;
+    var items=props.items, activeId=props.activeId, d=props.d, isClash=props.isClash, prefs=props.prefs, models=props.models||[];
     var groupBy = props.groupBy || 'none';
     var scrollRef = useRef(null);
     var _st = useState(0), scrollTop=_st[0], setScrollTop=_st[1];
@@ -4598,7 +4630,7 @@ function startApp() {
               <span style=${{fontSize:'.65rem',fontWeight:600,color:'var(--text-primary)',flex:1}}>${g.label}</span>
               <span style=${{fontSize:'.6rem',color:'var(--text-faint)',background:'var(--bg-secondary)',padding:'.1rem .35rem',borderRadius:10}}>${g.items.length}</span>
             </div>
-            ${isOpen && visibleItems.map(function(it){return html`<${IssueRow} key=${it.id} item=${it} active=${activeId===it.id} d=${d} isClash=${isClash} prefs=${prefs} />`})}
+            ${isOpen && visibleItems.map(function(it){return html`<${IssueRow} key=${it.id} item=${it} active=${activeId===it.id} d=${d} isClash=${isClash} prefs=${prefs} models=${models} />`})}
             ${isOpen && hasMore && html`<button onClick=${function(e){e.stopPropagation();showMore(g.label);}}
               style=${{...S_BTN,width:'100%',padding:'.4rem',background:'var(--bg-tertiary)',color:'var(--accent)',fontSize:'.65rem',borderTop:'1px solid var(--border-subtle)',borderRadius:0}}>
               Show more (${limit} of ${g.items.length})…
@@ -4609,7 +4641,7 @@ function startApp() {
     }
     // For small lists, render all (no virtualization overhead)
     if(items.length <= 50) return html`<div style=${{flex:1,overflowY:'auto'}}>
-      ${items.map(function(it){return html`<${IssueRow} key=${it.id} item=${it} active=${activeId===it.id} d=${d} isClash=${isClash} prefs=${prefs} />`})}
+      ${items.map(function(it){return html`<${IssueRow} key=${it.id} item=${it} active=${activeId===it.id} d=${d} isClash=${isClash} prefs=${prefs} models=${models} />`})}
     </div>`;
     // Virtualized rendering for large lists
     var totalHeight = items.length * ROW_HEIGHT;
@@ -4621,14 +4653,14 @@ function startApp() {
     return html`<div ref=${scrollRef} onScroll=${function(e){setScrollTop(e.target.scrollTop);}} style=${{flex:1,overflowY:'auto'}}>
       <div style=${{height:totalHeight,position:'relative'}}>
         <div style=${{position:'absolute',top:startIdx*ROW_HEIGHT,left:0,right:0}}>
-          ${visible.map(function(it){return html`<${IssueRow} key=${it.id} item=${it} active=${activeId===it.id} d=${d} isClash=${isClash} prefs=${prefs} />`})}
+          ${visible.map(function(it){return html`<${IssueRow} key=${it.id} item=${it} active=${activeId===it.id} d=${d} isClash=${isClash} prefs=${prefs} models=${models} />`})}
         </div>
       </div>
     </div>`;
   }
 
   function IssueRow(props) {
-    var it=props.item, active=props.active, d=props.d, isClash=props.isClash, pr=props.prefs||{};
+    var it=props.item, active=props.active, d=props.d, isClash=props.isClash, pr=props.prefs||{}; pr._models=props.models||[];
     var icon = it.type==='hard'?'🔴':it.type==='soft'?'🟡':it.source==='element'?'🏗':'📌';
     var stBg = (STAT[it.status]||STAT.open).bg;
     // Clash type colours
@@ -4704,7 +4736,7 @@ function startApp() {
             onClick=${function(e){e.stopPropagation();d({t:isClash?'UPD_CLASH':'UPD_ISSUE',id:it.id,u:{status:k}})}}
             style=${{...S_BTN,fontSize:'.6rem',padding:'.15rem .35rem',background:it.status===k?STAT[k].bg:'var(--bg-secondary)',color:it.status===k?'#fff':'var(--text-faint)'}}>${STAT[k].label}</button>`})}
         </div>
-        ${(it.propsA||it.propsB) && html`<${ClashProps} item=${it} />`}
+        ${html`<${ClashProps} item=${it} models=${pr._models||[]} />`}
         ${!isClash && it.elementProps && html`<${PropBlock} p=${it.elementProps} label=${'Linked: '+(it.elementType||'')+' '+(it.elementName||'#'+it.elementId)} />`}
         ${!isClash && it.assignee && html`<div style=${{fontSize:'.55rem',color:'var(--text-secondary)',marginTop:'.2rem'}}>Assigned: ${it.assignee}</div>`}
         ${!isClash && it.dueDate && html`<div style=${{fontSize:'.55rem',color:'var(--text-secondary)'}}>Due: ${it.dueDate}</div>`}
@@ -5434,7 +5466,54 @@ function startApp() {
   // Scope: clash setup, Q&A, result navigation, issue management, export.
   // Spatial interactions (measuring, section planes, camera) stay as traditional UI.
 
-  // ── LLM loader ─────────────────────────────────────────────────
+  // ── Ollama detection ─────────────────────────────────────────────
+  var _ollamaAvailable = false;
+  var _ollamaModel = 'qwen2.5:7b';
+  var _ollamaChecked = false;
+
+  function checkOllama() {
+    if (_ollamaChecked) return Promise.resolve(_ollamaAvailable);
+    return fetch('http://localhost:11434/api/tags', {method:'GET'})
+      .then(function(r){ return r.json(); })
+      .then(function(data){
+        _ollamaChecked = true;
+        _ollamaAvailable = true;
+        // Check if our preferred model is available
+        var models = (data.models||[]).map(function(m){ return m.name||m.model||''; });
+        if (models.some(function(n){ return n.indexOf('qwen2.5') !== -1; })) _ollamaModel = models.find(function(n){ return n.indexOf('qwen2.5') !== -1; });
+        else if (models.some(function(n){ return n.indexOf('mistral') !== -1; })) _ollamaModel = models.find(function(n){ return n.indexOf('mistral') !== -1; });
+        else if (models.some(function(n){ return n.indexOf('llama') !== -1; })) _ollamaModel = models.find(function(n){ return n.indexOf('llama') !== -1; });
+        else if (models.length > 0) _ollamaModel = models[0];
+        _nlBackend = 'ollama';
+        _nlModelStatus = 'ready';
+        _nlModelListeners.forEach(function(cb){ cb('ready', 100); });
+        return true;
+      })
+      .catch(function(){
+        _ollamaChecked = true;
+        _ollamaAvailable = false;
+        return false;
+      });
+  }
+
+  function callOllama(systemPrompt, userMsg) {
+    return fetch('http://localhost:11434/api/chat', {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({
+        model: _ollamaModel,
+        messages: [
+          {role:'system', content:systemPrompt},
+          {role:'user', content:userMsg}
+        ],
+        stream: false,
+        options: {temperature:0, num_predict:150}
+      })
+    }).then(function(r){ return r.json(); })
+      .then(function(data){ return (data.message && data.message.content) || null; });
+  }
+
+  // ── In-browser LLM (fallback when Ollama not available) ────────
   function getNLPipeline() {
     if (_nlPipeline) return Promise.resolve(_nlPipeline);
     if (_nlModelStatus === 'loading') return new Promise(function(res, rej) {
@@ -5445,6 +5524,7 @@ function startApp() {
     });
     if (_nlModelStatus === 'error') return Promise.reject(new Error('LLM failed to load'));
     _nlModelStatus = 'loading';
+    _nlModelListeners.forEach(function(cb){ cb('loading', 0); });
     return import('https://cdn.jsdelivr.net/npm/@huggingface/transformers@3/dist/transformers.min.js')
       .then(function(mod) {
         try { if (mod.env) mod.env.useBrowserCache = true; } catch(e) {}
@@ -5460,24 +5540,39 @@ function startApp() {
       })
       .then(function(pipe) {
         _nlPipeline = pipe;
+        _nlBackend = 'browser';
         _nlModelStatus = 'ready';
         _nlModelListeners.forEach(function(cb) { cb('ready', 100); });
-        _nlModelListeners = [];
+        _resetIdleTimer();
         return pipe;
       })
       .catch(function(err) {
         _nlModelStatus = 'error';
         _nlModelError = (err && (err.message || String(err))) || 'Unknown error';
-        console.error('[NL-LLM] load failed:', err);
         _nlModelListeners.forEach(function(cb) { cb('error', 0); });
-        _nlModelListeners = [];
         throw err;
       });
   }
 
-  // ── LLM system prompt (tokens filled in at call time) ──────────
+  // ── Idle auto-unload for in-browser LLM (frees ~2GB after 5min) ──
+  function _resetIdleTimer() {
+    if (_nlIdleTimer) clearTimeout(_nlIdleTimer);
+    if (_nlBackend !== 'browser' || !_nlPipeline) return;
+    _nlIdleTimer = setTimeout(function() {
+      if (_nlPipeline && _nlBackend === 'browser') {
+        try { if (_nlPipeline.dispose) _nlPipeline.dispose(); } catch(e){}
+        _nlPipeline = null;
+        _nlBackend = 'none';
+        _nlModelStatus = 'idle';
+        _nlModelListeners.forEach(function(cb){ cb('idle', 0); });
+        console.log('[ClashControl] In-browser LLM unloaded after idle timeout (memory freed)');
+      }
+    }, _nlIdleTimeout);
+  }
+
+  // ── LLM system prompt ──────────────────────────────────────────
   var NL_SYSTEM_PROMPT = [
-    'You are a command parser for a BIM clash detection app.',
+    'You are a command parser for a BIM clash detection app called ClashControl.',
     'Output ONLY a single JSON object. No explanation, no markdown fences, no extra text.',
     '',
     'Loaded models: {{MODEL_LIST}}',
@@ -5486,26 +5581,26 @@ function startApp() {
     'Convert all lengths to mm (5cm→50, 2in→51). Use model name substrings from the loaded list, or "all".',
     '',
     'Intent values and their fields:',
-    'run_detection: {intent, modelA, modelB, clearance, tolerance, soft, hard, duplicates}',
+    'run_detection: {intent, modelA, modelB, clearance, tolerance, soft, hard, duplicates, excludeSelf}',
     'set_clearance: {intent, value}',
     'set_tolerance: {intent, value}',
     'set_soft: {intent, enabled}',
     'set_duplicates: {intent, enabled}',
-    'filter_status: {intent, status: "open"|"new"|"resolved"|"all"}',
+    'filter_status: {intent, status: "open"|"resolved"|"all"}',
     'reset_filters: {intent}',
     'group_by: {intent, groupBy: "storey"|"discipline"|"status"|"type"|"none"}',
     'export_bcf: {intent}',
-    'query: {intent, query: "clash_count"|"issue_count"|"model_list"|"current_rules"|"worst_storey"|"active_project"}',
+    'query: {intent, query: "clash_count"|"issue_count"|"model_list"|"current_rules"|"worst_storey"}',
     'help: {intent}',
     'unknown: {intent}',
     '',
     'Examples:',
     'User: look for pipe beam conflicts with 5cm gap',
     '{"intent":"run_detection","modelA":"pipe","modelB":"beam","clearance":50,"hard":true,"soft":false,"duplicates":false}',
+    'User: structural vs all others',
+    '{"intent":"run_detection","modelA":"structural","modelB":"all","excludeSelf":true,"hard":true}',
     'User: show resolved clashes',
-    '{"intent":"filter_status","status":"resolved"}',
-    'User: how many open clashes',
-    '{"intent":"query","query":"clash_count"}'
+    '{"intent":"filter_status","status":"resolved"}'
   ].join('\n');
 
   // ── LLM JSON→action dispatcher ─────────────────────────────────
@@ -5516,9 +5611,7 @@ function startApp() {
       var b0 = clean.indexOf('{'), b1 = clean.lastIndexOf('}');
       if (b0 === -1 || b1 === -1) throw new Error('no JSON');
       action = JSON.parse(clean.slice(b0, b1 + 1));
-    } catch(e) {
-      return null;
-    }
+    } catch(e) { return null; }
     var intent = action.intent;
     if (!intent) return null;
 
@@ -5532,86 +5625,60 @@ function startApp() {
       case 'run_detection': {
         if (!s.models.length) return 'No models loaded yet — drop IFC files onto the viewer first.';
         var mA = resolveModel(action.modelA), mB = resolveModel(action.modelB);
-        var upd = {
-          modelA: mA ? mA.id : 'all',
-          modelB: mB ? mB.id : 'all',
-          hard:   action.hard !== false,
-          soft:   action.soft === true,
-          duplicates: action.duplicates === true
-        };
+        var upd = { modelA: mA?mA.id:'all', modelB: mB?mB.id:'all', hard: action.hard!==false, soft: action.soft===true, duplicates: action.duplicates===true };
+        if (action.excludeSelf) upd.excludeSelf = true;
         if (typeof action.clearance === 'number') upd.clearance = action.clearance;
         if (typeof action.tolerance === 'number') upd.hardTolerance = action.tolerance;
         d({t:'UPD_RULES', u:upd});
         if (s.detecting) return 'Rules updated — detection already running.';
         d({t:'DETECTING'}); d({t:'TAB', v:'clashes'});
         setTimeout(function() { d({t:'SET_CLASHES', v:detectClashes(s.models, Object.assign({}, s.rules, upd))}); }, 20);
-        var aN = mA ? mA.name : 'all models', bN = mB ? mB.name : 'all models';
-        return 'Running: ' + aN + ' vs ' + bN + (upd.clearance ? ' with ' + upd.clearance + 'mm clearance' : '') + '…';
+        var aN = mA?mA.name:'all models', bN = mB?mB.name:'all models';
+        return 'Running: ' + aN + ' vs ' + bN + (upd.excludeSelf?' (cross-model only)':'') + (upd.clearance?' with '+upd.clearance+'mm clearance':'') + '…';
       }
-      case 'set_clearance':
-        if (typeof action.value !== 'number') return null;
-        d({t:'UPD_RULES', u:{clearance: action.value}});
-        return 'Clearance set to ' + action.value + 'mm. Re-run detection to apply.';
-      case 'set_tolerance':
-        if (typeof action.value !== 'number') return null;
-        d({t:'UPD_RULES', u:{hardTolerance: action.value}});
-        return 'Tolerance set to ' + action.value + 'mm.';
-      case 'set_soft':
-        d({t:'UPD_RULES', u:{soft: !!action.enabled}});
-        return action.enabled ? 'Soft clashes enabled. Re-run to apply.' : 'Soft clashes off — hard only.';
-      case 'set_duplicates':
-        d({t:'UPD_RULES', u:{duplicates: !!action.enabled}});
-        return action.enabled ? 'Duplicates included.' : 'Duplicates excluded.';
-      case 'filter_status': {
-        var sm = {open:'open',new:'new',resolved:'resolved',all:'all'};
-        var sv = sm[action.status] || 'all';
-        d({t:'UPD_FILTERS', u:{status:sv}}); d({t:'TAB', v:'clashes'});
-        return sv === 'all' ? 'Showing all clashes.' : 'Filtered to ' + sv + ' clashes.';
-      }
-      case 'reset_filters':
-        d({t:'RESET_FILTERS'});
-        return 'Filters cleared.';
-      case 'group_by': {
-        var gm = {storey:'storey',floor:'storey',level:'storey',discipline:'discipline',status:'status',type:'type',none:'none'};
-        var gv = gm[action.groupBy] || 'none';
-        d({t:'CLASH_GROUP_BY', v:gv}); d({t:'TAB', v:'clashes'});
-        return 'Grouped by ' + (action.groupBy || gv) + '.';
-      }
-      case 'export_bcf': {
-        if (!s.issues.length && !s.clashes.length) return 'Nothing to export yet.';
-        var items = s.issues.length ? s.issues : s.clashes;
-        exportBCF(items, '2.1', s.viewpoints);
-        return 'Exported ' + items.length + ' item' + (items.length === 1 ? '' : 's') + ' as BCF 2.1.';
-      }
-      case 'query':
-        return processNLCommand(action.query || '', s, d);
-      case 'help':
-        return processNLCommand('help', s, d);
-      case 'unknown':
-      default:
-        return null;
+      case 'set_clearance': if (typeof action.value !== 'number') return null; d({t:'UPD_RULES', u:{clearance:action.value}}); return 'Clearance set to '+action.value+'mm.';
+      case 'set_tolerance': if (typeof action.value !== 'number') return null; d({t:'UPD_RULES', u:{hardTolerance:action.value}}); return 'Tolerance set to '+action.value+'mm.';
+      case 'set_soft': d({t:'UPD_RULES', u:{soft:!!action.enabled}}); return action.enabled ? 'Soft clashes enabled.' : 'Soft clashes off.';
+      case 'set_duplicates': d({t:'UPD_RULES', u:{duplicates:!!action.enabled}}); return action.enabled ? 'Duplicates included.' : 'Duplicates excluded.';
+      case 'filter_status': var sv = {open:'open',resolved:'resolved',all:'all'}[action.status]||'all'; d({t:'UPD_FILTERS', u:{status:sv}}); d({t:'TAB',v:'clashes'}); return sv==='all'?'Showing all.':'Filtered to '+sv+'.';
+      case 'reset_filters': d({t:'RESET_FILTERS'}); return 'Filters cleared.';
+      case 'group_by': var gv = {storey:'storey',floor:'storey',level:'storey',discipline:'discipline',status:'status',type:'type',none:'none'}[action.groupBy]||'none'; d({t:'CLASH_GROUP_BY',v:gv}); d({t:'TAB',v:'clashes'}); return 'Grouped by '+gv+'.';
+      case 'export_bcf': if (!s.issues.length&&!s.clashes.length) return 'Nothing to export.'; var items=s.issues.length?s.issues:s.clashes; exportBCF(items,'2.1',s.viewpoints); return 'Exported '+items.length+' items as BCF.';
+      case 'query': return processNLCommand(action.query||'', s, d);
+      case 'help': return processNLCommand('help', s, d);
+      default: return null;
     }
   }
 
-  // ── Async NL handler: regex fast-path → LLM fallback ───────────
+  // ── Async NL handler: regex fast-path → Ollama/browser LLM fallback ──
   function processNLCommandWithLLM(raw, s, d) {
+    // 1. Try regex (instant, no LLM needed)
     var regexResult = processNLCommand(raw, s, d);
     if (regexResult !== null) return Promise.resolve(regexResult);
-    if (_nlModelStatus !== 'ready') return Promise.resolve(null);
 
-    var modelList = s.models.length ? s.models.map(function(m) { return m.name; }).join(', ') : 'none';
+    // 2. Build prompt context
+    var modelList = s.models.length ? s.models.map(function(m){ return m.name; }).join(', ') : 'none';
     var r = s.rules || {};
     var prompt = NL_SYSTEM_PROMPT
       .replace('{{MODEL_LIST}}', modelList)
       .replace('{{CLEARANCE}}', r.clearance || 50)
-      .replace('{{HARD}}', !!r.hard)
-      .replace('{{SOFT}}', !!r.soft)
-      .replace('{{MODEL_A}}', r.modelA || 'all')
-      .replace('{{MODEL_B}}', r.modelB || 'all');
+      .replace('{{HARD}}', !!r.hard).replace('{{SOFT}}', !!r.soft)
+      .replace('{{MODEL_A}}', r.modelA || 'all').replace('{{MODEL_B}}', r.modelB || 'all');
 
+    // 3. Try Ollama first (local, fast, bigger model)
+    if (_ollamaAvailable) {
+      _resetIdleTimer();
+      return callOllama(prompt, raw)
+        .then(function(text) { return text ? dispatchLLMAction(text, s, d) : null; })
+        .catch(function() { return null; });
+    }
+
+    // 4. Fall back to in-browser LLM
+    if (_nlModelStatus !== 'ready' || !_nlPipeline) return Promise.resolve(null);
+    _resetIdleTimer();
     return _nlPipeline(
       [{role:'system', content:prompt}, {role:'user', content:raw}],
-      {max_new_tokens: 100, temperature: 0.0, do_sample: false}
+      {max_new_tokens: 150, temperature: 0.0, do_sample: false}
     ).then(function(out) {
       var text = out[0].generated_text;
       if (Array.isArray(text)) text = text[text.length - 1].content;
@@ -5778,14 +5845,15 @@ function startApp() {
     var s = props.s, d = props.d;
     var stOpen = useState(false), open = stOpen[0], setOpen = stOpen[1];
     window._ccNLOpen = function(){ setOpen(true); };
-    var stMsgs = useState([{role:'assistant', text:'Try: "structural vs MEP with 50mm clearance", "find conflicts between pipes and beams", "show only resolved clashes", "group by storey", "how many clashes?" — or ask "help" for all commands.'}]);
+    var stMsgs = useState([{role:'assistant', text:'Describe a clash check in plain English — e.g. "structural vs MEP with 50mm clearance", "find pipe vs beam conflicts", "show resolved", "group by storey". Ask "help" for all commands.'}]);
     var msgs = stMsgs[0], setMsgs = stMsgs[1];
     var stInput = useState(''), input = stInput[0], setInput = stInput[1];
     var stLoading = useState(false), loading = stLoading[0], setLoading = stLoading[1];
+    var stModelLoading = useState(!!window._ccModelLoading), modelLoading = stModelLoading[0], setModelLoading = stModelLoading[1];
     var stLLMStatus = useState(_nlModelStatus), llmStatus = stLLMStatus[0], setLLMStatus = stLLMStatus[1];
     var stLLMProgress = useState(0), llmProgress = stLLMProgress[0], setLLMProgress = stLLMProgress[1];
-    var stLLMError = useState(''), llmError = stLLMError[0], setLLMError = stLLMError[1];
-    var stModelLoading = useState(!!window._ccModelLoading), modelLoading = stModelLoading[0], setModelLoading = stModelLoading[1];
+    var stBackend = useState(_nlBackend), backend = stBackend[0], setBackend = stBackend[1];
+    var stShowOllamaTip = useState(false), showOllamaTip = stShowOllamaTip[0], setShowOllamaTip = stShowOllamaTip[1];
     var inputRef = useRef(null);
     var bottomRef = useRef(null);
 
@@ -5807,23 +5875,32 @@ function startApp() {
       return function() { window.removeEventListener('keydown', onKey); };
     }, []);
 
+    // On first open: check Ollama → fallback to browser LLM
     useEffect(function() {
-      if (open && inputRef.current) setTimeout(function(){ inputRef.current && inputRef.current.focus(); }, 80);
+      if (!open) return;
+      // Sync state
+      setLLMStatus(_nlModelStatus);
+      setBackend(_nlBackend);
+      if (_nlBackend === 'ollama' || _nlModelStatus === 'ready') return;
+      // Check for Ollama
+      var listener = function(st, pct) {
+        setLLMStatus(st); setBackend(_nlBackend);
+        if (typeof pct === 'number') setLLMProgress(pct);
+      };
+      _nlModelListeners.push(listener);
+      checkOllama().then(function(hasOllama) {
+        setBackend(_nlBackend);
+        setLLMStatus(_nlModelStatus);
+        if (!hasOllama) {
+          // Show Ollama tip, then start loading browser LLM
+          setShowOllamaTip(true);
+          if (_nlModelStatus === 'idle') getNLPipeline().catch(function(){});
+        }
+      });
     }, [open]);
 
     useEffect(function() {
-      if (!open) return;
-      // Sync local status in case model already loaded
-      if (_nlModelStatus === 'ready') { setLLMStatus('ready'); return; }
-      if (_nlModelStatus === 'error') { setLLMStatus('error'); return; }
-      // Kick off lazy load on first open
-      var listener = function(st, pct) {
-        setLLMStatus(st);
-        if (typeof pct === 'number') setLLMProgress(pct);
-        if (st === 'error') setLLMError(_nlModelError);
-      };
-      _nlModelListeners.push(listener);
-      if (_nlModelStatus === 'idle') getNLPipeline().catch(function(){});
+      if (open && inputRef.current) setTimeout(function(){ inputRef.current && inputRef.current.focus(); }, 80);
     }, [open]);
 
     useEffect(function() {
@@ -5880,11 +5957,10 @@ function startApp() {
       </button>`;
     }
 
-    var panelAnimation = modelLoading ? 'nlBorderPulse 2s ease-in-out infinite'
-                       : llmStatus === 'loading' ? 'nlBorderPulse 2s ease-in-out infinite'
-                       : llmStatus === 'ready'   ? 'nlBorderReady .8s ease-out forwards'
-                       : 'none';
+    var panelAnimation = (modelLoading || llmStatus === 'loading') ? 'nlBorderPulse 2s ease-in-out infinite' : 'none';
     var panelBorderCol = (modelLoading || llmStatus === 'loading') ? 'rgba(96,165,250,.5)' : borderCol;
+    var backendLabel = backend === 'ollama' ? 'Ollama (' + _ollamaModel + ')' : backend === 'browser' ? 'In-browser (0.5B)' : null;
+    var backendColor = backend === 'ollama' ? '#22c55e' : backend === 'browser' ? '#f59e0b' : mutedCol;
     return html`<div style=${{
       position:'fixed', bottom:'1rem', left:'50%', transform:'translateX(-50%)',
       zIndex:1200, width:'min(500px, calc(100vw - 2rem))',
@@ -5905,14 +5981,13 @@ function startApp() {
           <span class="spin" style=${{display:'inline-block', width:'.55rem', height:'.55rem', borderRadius:'50%', border:'1.5px solid rgba(96,165,250,.3)', borderTopColor:'#60a5fa'}}></span>
           Loading model…
         </span>`}
-        ${!modelLoading && llmStatus === 'loading' && html`<span title=${'Loading AI model… ' + llmProgress + '%'} style=${{
-          fontSize:'.6rem', color:'#60a5fa', display:'flex', alignItems:'center', gap:'.25rem'
-        }}>
+        ${!modelLoading && llmStatus === 'loading' && html`<span style=${{fontSize:'.6rem', color:'#60a5fa', display:'flex', alignItems:'center', gap:'.25rem'}}>
           <span class="spin" style=${{display:'inline-block', width:'.55rem', height:'.55rem', borderRadius:'50%', border:'1.5px solid rgba(96,165,250,.3)', borderTopColor:'#60a5fa'}}></span>
           AI ${llmProgress}%
         </span>`}
-        ${llmStatus === 'ready' && html`<span title="AI model ready — full natural language active" style=${{fontSize:'.6rem', color:'#22c55e', display:'flex', alignItems:'center', gap:'.2rem'}}>
-          <span style=${{width:'.45rem', height:'.45rem', borderRadius:'50%', background:'#22c55e', display:'inline-block'}}></span>AI ready
+        ${!modelLoading && llmStatus === 'ready' && backendLabel && html`<span style=${{fontSize:'.55rem', color:backendColor, display:'flex', alignItems:'center', gap:'.2rem'}}>
+          <span style=${{width:'.4rem', height:'.4rem', borderRadius:'50%', background:backendColor, display:'inline-block'}}></span>
+          ${backendLabel}
         </span>`}
         <button onClick=${function(){ setOpen(false); }} style=${{
           background:'none', border:'none', cursor:'pointer',
@@ -5920,20 +5995,20 @@ function startApp() {
         }}>×</button>
       </div>
 
-      ${llmStatus === 'error' && html`<div style=${{
-        padding:'.25rem .8rem', borderBottom:'1px solid '+borderCol,
-        fontSize:'.6rem', color:mutedCol, display:'flex', alignItems:'center', gap:'.5rem'
+      ${showOllamaTip && backend !== 'ollama' && html`<div style=${{
+        padding:'.4rem .8rem', borderBottom:'1px solid '+borderCol,
+        background: isDark ? '#0c1a2e' : '#eff6ff',
+        fontSize:'.63rem', color:mutedCol, display:'flex', alignItems:'center', gap:'.5rem'
       }}>
-        <span style=${{flex:1}}>Enhanced AI unavailable${/fetch/i.test(llmError)?' (network restricted)':''} — all commands still work.</span>
-        <button onClick=${function(){
-          _nlModelStatus='idle'; _nlModelError=''; _nlModelListeners=[];
-          setLLMStatus('idle'); setLLMProgress(0); setLLMError('');
-          _nlModelListeners.push(function(st,pct){setLLMStatus(st);if(typeof pct==='number')setLLMProgress(pct);if(st==='error')setLLMError(_nlModelError);});
-          getNLPipeline().catch(function(){});
-        }} style=${{
-          background:'none', border:'1px solid '+borderCol, borderRadius:4, color:mutedCol,
-          fontSize:'.6rem', padding:'.1rem .35rem', cursor:'pointer', whiteSpace:'nowrap'
-        }}>Retry</button>
+        <span style=${{flex:1, lineHeight:1.5}}>
+          <strong style=${{color:textCol}}>Speed tip:</strong> Install <a href="https://ollama.com" target="_blank" rel="noopener"
+            style=${{color:'#60a5fa', textDecoration:'underline'}}>Ollama</a> and run
+          <code style=${{background:isDark?'#1e293b':'#e2e8f0', padding:'.1rem .25rem', borderRadius:3, fontSize:'.58rem'}}>ollama pull qwen2.5:7b</code>
+          for a faster, smarter local AI — no cloud, runs on your machine.
+        </span>
+        <button onClick=${function(){ setShowOllamaTip(false); }} style=${{
+          background:'none', border:'none', cursor:'pointer', color:mutedCol, fontSize:'.8rem', padding:'0 .1rem', lineHeight:1
+        }}>×</button>
       </div>`}
 
       <div style=${{
