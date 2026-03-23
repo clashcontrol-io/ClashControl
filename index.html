@@ -178,7 +178,7 @@ window.onload = function() {
 
 function startApp() {
   // ── Version (auto-updated by pre-commit hook) ──
-  var CC_VERSION = {v:'1.2.26',hash:'f0e9195',date:'2026-03-23T11:10:00Z'};
+  var CC_VERSION = {v:'1.2.27',hash:'812342f',date:'2026-03-23T11:32:35Z'};
 
   // Check CDN deps loaded
   var need = [];
@@ -238,7 +238,7 @@ function startApp() {
     models:[], clashes:[], issues:[], activeId:null, showModal:false, showSettings:false, modalElement:null, tab:null,
     rules:{ modelA:'all', modelB:'all', hard:true, soft:false, clearance:50, hardTolerance:0, duplicates:false, changeAware:false },
     clashGroupBy:'none', // 'none','storey','discipline','status','type'
-    detecting:false, sectionAxis:null, sectionPos:0.5, sectionCustom:null,
+    detecting:false, switchingProject:false, sectionAxis:null, sectionPos:0.5, sectionCustom:null,
     sectionBox:null, // {enabled, min:[x,y,z], max:[x,y,z]} – 6-plane box clipping
     filters:Object.assign({},INIT_FILTERS), floors:[],
     prefs:Object.assign({},INIT_PREFS),
@@ -274,6 +274,7 @@ function startApp() {
       case 'TOGGLE_ALL_STOREYS': return Object.assign({},s,{models:s.models.map(function(m){if(m.id!==a.id)return m;return Object.assign({},m,{hiddenStoreys:a.hide?a.storeys.reduce(function(o,st){o[st]=true;return o;},{}):{}}); })});
       case 'SET_CLASHES': var newSt={clashes:a.v, detecting:false, activeId:null, floors:deriveFloors(a.v)}; if(s.prefs.resetFiltersOnRun!==false) newSt.filters=Object.assign({},INIT_FILTERS); return Object.assign({},s,newSt);
       case 'DETECTING':   return Object.assign({},s,{detecting:true});
+      case 'SWITCHING_PROJECT': return Object.assign({},s,{switchingProject:!!a.v});
       case 'ADD_ISSUE':   return Object.assign({},s,{issues:s.issues.concat([a.v])});
       case 'UPD_ISSUE':   return Object.assign({},s,{issues:s.issues.map(function(i){return i.id===a.id?Object.assign({},i,a.u):i})});
       case 'UPD_CLASH':   return Object.assign({},s,{clashes:s.clashes.map(function(c){return c.id===a.id?Object.assign({},c,a.u):c})});
@@ -2780,6 +2781,20 @@ function startApp() {
     var LS={fontSize:'.6rem',color:'var(--text-muted)'}; var VS={fontSize:'.6rem',color:'var(--text-primary)'};
     return html`<div style=${{flex:1,position:'relative',overflow:'hidden'}}>
       <div ref=${ref} style=${{width:'100%',height:'100%'}}></div>
+      ${s.switchingProject && html`<div style=${{
+        position:'absolute',inset:0,zIndex:50,
+        background:'rgba(15,23,42,.82)',
+        display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',gap:'1rem',
+        backdropFilter:'blur(3px)'
+      }}>
+        <div style=${{
+          width:48,height:48,borderRadius:'50%',
+          border:'3px solid rgba(96,165,250,.25)',
+          borderTopColor:'#3b82f6',
+          animation:'sp 0.8s linear infinite'
+        }}></div>
+        <span style=${{fontSize:'.85rem',color:'#93c5fd',fontWeight:500,letterSpacing:'.03em'}}>Switching project…</span>
+      </div>`}
       <div style=${{...P,top:'.75rem',left:'.75rem',background:'var(--overlay-bg)',color:'var(--text-muted)',display:'flex',alignItems:'center',gap:'.5rem'}}>
         <span>${s.models.length===0?'Load an IFC file to begin':s.models.length+' model'+(s.models.length>1?'s':'')+' loaded'}</span>
         ${s.clashes.length>0 && html`<span style=${{color:'#ef4444'}}>· ${s.clashes.length} clashes</span>`}
@@ -3363,13 +3378,15 @@ function startApp() {
   }
 
   function _switchProject(newProjId, s, d) {
+    d({t:'SWITCHING_PROJECT', v:true});
     // Save current project first
     _saveCurrentProjectData(s).then(function(){
       // Clear current scene
       if(window._ccClearScene) window._ccClearScene();
-      // Reset state to fresh
+      // Reset state to fresh (keep switchingProject:true while files load)
       d({t:'LOAD_PROJECT_STATE', data:{
         models:[], clashes:[], issues:[], activeId:null, detecting:false,
+        switchingProject:true,
         sectionAxis:null, sectionPos:0.5, sectionCustom:null, sectionBox:null,
         filters:Object.assign({},INIT_FILTERS), floors:[],
         measurements:[], measureMode:null, viewpoints:[],
@@ -3526,7 +3543,7 @@ function startApp() {
     // Auto-load stored IFC files from IndexedDB for the active project
     function _restoreProjectFiles(projectId) {
       idbGetProjectFiles(projectId||'default').then(function(stored){
-        if(!stored.length) return;
+        if(!stored.length) { d({t:'SWITCHING_PROJECT', v:false}); return; }
         var chain = Promise.resolve();
         stored.forEach(function(entry){
           chain = chain.then(function(){
@@ -3544,6 +3561,7 @@ function startApp() {
               .then(function(){ setLoading(false); setLoadMsg(''); });
           });
         });
+        chain.then(function(){ d({t:'SWITCHING_PROJECT', v:false}); });
       });
     }
 

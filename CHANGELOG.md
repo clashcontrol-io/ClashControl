@@ -1,5 +1,8 @@
 # Changelog
 
+## v1.2.27 (2026-03-23)
+- Show loading overlay on viewer when switching projects
+
 ## v1.2.26 (2026-03-23)
 - Fix 7 bugs found in review: stale camera, material leak, dead code, URL leaks
 
