@@ -1,5 +1,8 @@
 # Changelog
 
+## v1.2.34 (2026-03-23)
+- Redesign UI: vertical icon sidebar + slide-out panel, maximized viewer
+
 ## v1.2.33 (2026-03-23)
 - Tone down LLM error banner; improve welcome message
 
