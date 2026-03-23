@@ -1,65 +1,10 @@
 # Changelog
 
-## v1.2.45 (2026-03-23)
-- Add project switcher to left sidebar
+## v1.2.26 (2026-03-23)
+- Fix 7 bugs found in review: stale camera, material leak, dead code, URL leaks
 
-## v1.2.44 (2026-03-23)
-- Fix duplicate models on tab switch; improve clash panel UX
-
-## v1.2.43 (2026-03-23)
-- Fix hooks-after-return in SidePanel causing blackout on tab open
-
-## v1.2.42 (2026-03-23)
-- Fix view cube 3D depth, orientation stability, IFC/2D buttons, resizable panel
-
-## v1.2.41 (2026-03-23)
-- Replace folder icon in left rail with IFC and 2D label buttons
-
-## v1.2.40 (2026-03-23)
-- Split upload button into IFC and 2D buttons
-
-## v1.2.39 (2026-03-23)
-- Fix tooltips rendering behind the 3D viewer
-
-## v1.2.38 (2026-03-23)
-- Fix viewcube fly-to and improve visual style
-
-## v1.2.37 (2026-03-23)
-- Split icon rail into left (utility) and right (nav tabs) rails
-
-## v1.2.36 (2026-03-23)
-- Replace text labels with animated hover tooltips on sidebar icons
-
-## v1.2.35 (2026-03-23)
-- Add folder-with-plus SVG icon to file upload button and empty state
-
-## v1.2.34 (2026-03-23)
-- Redesign UI: vertical icon sidebar + slide-out panel, maximized viewer
-
-## v1.2.33 (2026-03-23)
-- Tone down LLM error banner; improve welcome message
-
-## v1.2.32 (2026-03-23)
-- Add animated loading border + status indicator to NL panel
-
-## v1.2.31 (2026-03-23)
-- Significantly broaden NL panel regex parsing
-
-## v1.2.30 (2026-03-23)
-- Fix LLM model load: q4f16→q4, add error details and retry button
-
-## v1.2.29 (2026-03-23)
-- Add in-browser LLM to NL command panel (Qwen2.5-0.5B via Transformers.js)
-
-## v1.2.27 (2026-03-22)
-- Restore element ghost effect on viewer click
-
-## v1.2.26 (2026-03-22)
-- Restore element ghost effect on viewer click
-
-## v1.2.25 (2026-03-22)
-- Add natural language command panel (ClashControl AI)
-- Refocus NL panel on clash setup, Q&A and workflow — not spatial interactions
+## v1.2.25 (2026-03-23)
+- Simplify: remove dRef, fix img cache pattern, deduplicate hasProjectData, fix unmount leak
 
 ## v1.2.24 (2026-03-22)
 - Fix 8 code review issues: CSP, SRI, state mutation, stale closures, dead code
