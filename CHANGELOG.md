@@ -1,5 +1,8 @@
 # Changelog
 
+## v1.2.32 (2026-03-23)
+- Add animated loading border + status indicator to NL panel
+
 ## v1.2.31 (2026-03-23)
 - Significantly broaden NL panel regex parsing
 

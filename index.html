@@ -177,7 +177,7 @@ window.onload = function() {
 
 function startApp() {
   // ── Version (auto-updated by pre-commit hook) ──
-  var CC_VERSION = {v:'1.2.31',hash:'5712ec6',date:'2026-03-23T08:07:56Z'};
+  var CC_VERSION = {v:'1.2.32',hash:'8baf479',date:'2026-03-23T08:45:14Z'};
 
   // Check CDN deps loaded
   var need = [];
@@ -5668,7 +5668,7 @@ function startApp() {
   function NLCommandPanel(props) {
     var s = props.s, d = props.d;
     var stOpen = useState(false), open = stOpen[0], setOpen = stOpen[1];
-    var stMsgs = useState([{role:'assistant', text:'Describe a clash check and I\'ll set it up — e.g. "check structural vs MEP with 75mm clearance" or "run hard clashes only". Ask "help" for more.'}]);
+    var stMsgs = useState([{role:'assistant', text:'Try: "structural vs MEP with 50mm clearance", "find conflicts between pipes and beams", "show only resolved clashes", "group by storey", "how many clashes?" — or ask "help" for all commands.'}]);
     var msgs = stMsgs[0], setMsgs = stMsgs[1];
     var stInput = useState(''), input = stInput[0], setInput = stInput[1];
     var stLoading = useState(false), loading = stLoading[0], setLoading = stLoading[1];
@@ -5794,17 +5794,17 @@ function startApp() {
       </div>
 
       ${llmStatus === 'error' && html`<div style=${{
-        padding:'.3rem .8rem', borderBottom:'1px solid '+borderCol,
-        fontSize:'.65rem', color:'#f97316', display:'flex', alignItems:'center', gap:'.5rem'
+        padding:'.25rem .8rem', borderBottom:'1px solid '+borderCol,
+        fontSize:'.6rem', color:mutedCol, display:'flex', alignItems:'center', gap:'.5rem'
       }}>
-        <span style=${{flex:1}}>AI model failed${llmError ? ': ' + llmError : ''} — keyword mode active.</span>
+        <span style=${{flex:1}}>Enhanced AI unavailable${/fetch/i.test(llmError)?' (network restricted)':''} — all commands still work.</span>
         <button onClick=${function(){
           _nlModelStatus='idle'; _nlModelError=''; _nlModelListeners=[];
           setLLMStatus('idle'); setLLMProgress(0); setLLMError('');
           _nlModelListeners.push(function(st,pct){setLLMStatus(st);if(typeof pct==='number')setLLMProgress(pct);if(st==='error')setLLMError(_nlModelError);});
           getNLPipeline().catch(function(){});
         }} style=${{
-          background:'none', border:'1px solid #f97316', borderRadius:4, color:'#f97316',
+          background:'none', border:'1px solid '+borderCol, borderRadius:4, color:mutedCol,
           fontSize:'.6rem', padding:'.1rem .35rem', cursor:'pointer', whiteSpace:'nowrap'
         }}>Retry</button>
       </div>`}
@@ -5844,7 +5844,7 @@ function startApp() {
           value=${input}
           onInput=${function(e){ setInput(e.target.value); }}
           onKeyDown=${onKeyDown}
-          placeholder=${llmStatus === 'ready' ? 'Describe your clash check in plain English…' : 'e.g. check structural vs MEP with 50mm clearance'}
+          placeholder="e.g. structural vs MEP with 50mm clearance"
           rows="2"
           style=${{
             flex:1, resize:'none', background:inputBg, border:'1px solid '+borderCol,
