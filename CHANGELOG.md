@@ -1,5 +1,14 @@
 # Changelog
 
+## v1.2.32 (2026-03-23)
+- Hide clashes from unchecked models in the clash list
+
+## v1.2.31 (2026-03-23)
+- Install pre-commit hook for auto version bumping
+
+## v1.2.30 (2026-03-23)
+- Fix model visibility, add cross-model clash detection, virtualize large lists
+
 ## v1.2.29 (2026-03-23)
 - Speed up project switch by not blocking on IDB save
 
