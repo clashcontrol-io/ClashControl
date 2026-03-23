@@ -1,5 +1,8 @@
 # Changelog
 
+## v1.2.36 (2026-03-23)
+- Replace text labels with animated hover tooltips on sidebar icons
+
 ## v1.2.35 (2026-03-23)
 - Add folder-with-plus SVG icon to file upload button and empty state
 
