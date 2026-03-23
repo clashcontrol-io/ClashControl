@@ -178,7 +178,7 @@ window.onload = function() {
 
 function startApp() {
   // ── Version (auto-updated by pre-commit hook) ──
-  var CC_VERSION = {v:'1.2.35',hash:'a581d4d',date:'2026-03-23T14:00:43Z'};
+  var CC_VERSION = {v:'1.2.36',hash:'2658e5c',date:'2026-03-23T14:12:04Z'};
 
   // Check CDN deps loaded
   var need = [];
@@ -926,6 +926,109 @@ function startApp() {
             b.max.x.toFixed(3), b.max.y.toFixed(3), b.max.z.toFixed(3)].join('|');
   }
 
+  // ── Geometry-accurate narrow-phase clash detection ──────────────
+  // After AABB broad-phase identifies candidates, this verifies using
+  // actual mesh vertices with a spatial hash grid for O(n+m) speed.
+
+  // Extract world-space vertex positions from an element (cached as Float32Array)
+  function _getWorldVerts(el) {
+    if (el._wvCache) return el._wvCache;
+    var all = [];
+    (el.meshes || []).forEach(function(mesh) {
+      var pos = mesh.geometry && mesh.geometry.attributes && mesh.geometry.attributes.position;
+      if (!pos) return;
+      // Ensure matrixWorld is current (may not have rendered yet)
+      mesh.updateMatrixWorld(true);
+      var mat = mesh.matrixWorld;
+      var v = new THREE.Vector3();
+      for (var i = 0; i < pos.count; i++) {
+        v.set(pos.getX(i), pos.getY(i), pos.getZ(i));
+        v.applyMatrix4(mat);
+        all.push(v.x, v.y, v.z);
+      }
+    });
+    el._wvCache = new Float32Array(all);
+    return el._wvCache;
+  }
+
+  // Spatial hash grid: bucket vertices into cells for O(1) proximity lookup
+  function _SpatialHash(cellSize) {
+    this.cs = cellSize;
+    this.inv = 1 / cellSize;
+    this.map = {};
+  }
+  _SpatialHash.prototype.key = function(x, y, z) {
+    return Math.floor(x * this.inv) + ',' + Math.floor(y * this.inv) + ',' + Math.floor(z * this.inv);
+  };
+  _SpatialHash.prototype.insert = function(verts) {
+    for (var i = 0; i < verts.length; i += 3) {
+      var k = this.key(verts[i], verts[i + 1], verts[i + 2]);
+      if (!this.map[k]) this.map[k] = [];
+      this.map[k].push(i);
+    }
+  };
+  // Query: find minimum squared distance from point to any vertex in the grid
+  // Searches the cell containing the point + all 26 neighbours
+  _SpatialHash.prototype.minDistSq = function(px, py, pz, verts) {
+    var best = Infinity;
+    var cx = Math.floor(px * this.inv), cy = Math.floor(py * this.inv), cz = Math.floor(pz * this.inv);
+    for (var dx = -1; dx <= 1; dx++) {
+      for (var dy = -1; dy <= 1; dy++) {
+        for (var dz = -1; dz <= 1; dz++) {
+          var bucket = this.map[(cx + dx) + ',' + (cy + dy) + ',' + (cz + dz)];
+          if (!bucket) continue;
+          for (var b = 0; b < bucket.length; b++) {
+            var idx = bucket[b];
+            var ex = px - verts[idx], ey = py - verts[idx + 1], ez = pz - verts[idx + 2];
+            var d2 = ex * ex + ey * ey + ez * ez;
+            if (d2 < best) best = d2;
+          }
+        }
+      }
+    }
+    return best;
+  };
+
+  // Narrow-phase: compute actual minimum distance between two elements' geometry
+  // Returns distance in metres. Uses spatial hash for speed.
+  // thresholdM: early-exit if we find a distance below this (metres)
+  function _meshMinDist(elA, elB, thresholdM) {
+    var vA = _getWorldVerts(elA), vB = _getWorldVerts(elB);
+    if (!vA.length || !vB.length) return Infinity;
+
+    // Cell size = threshold (clamped to reasonable range)
+    var cs = Math.max(thresholdM || 0.05, 0.02);
+    // Build grid from the smaller set
+    var grid, queryVerts, gridVerts;
+    if (vA.length <= vB.length) {
+      gridVerts = vA; queryVerts = vB;
+    } else {
+      gridVerts = vB; queryVerts = vA;
+    }
+    grid = new _SpatialHash(cs);
+    grid.insert(gridVerts);
+
+    var tSq = thresholdM * thresholdM;
+    var minSq = Infinity;
+    // Query every vertex of the other element (sample if very large)
+    var step = queryVerts.length > 30000 ? 3 * Math.ceil(queryVerts.length / 30000) : 3;
+    for (var i = 0; i < queryVerts.length; i += step) {
+      var d2 = grid.minDistSq(queryVerts[i], queryVerts[i + 1], queryVerts[i + 2], gridVerts);
+      if (d2 < minSq) {
+        minSq = d2;
+        if (minSq <= tSq) return Math.sqrt(minSq); // early exit
+      }
+    }
+    return Math.sqrt(minSq);
+  }
+
+  // Flush vertex caches (called on project switch / model unload)
+  function _flushVertCache(models) {
+    (models || []).forEach(function(m) {
+      (m.elements || []).forEach(function(el) { delete el._wvCache; });
+    });
+  }
+
   function detectClashes(models, rules) {
     var pick = function(id) { return id === 'all' ? models : models.filter(function(m){return m.id===id}); };
     var grpA = pick(rules.modelA), grpB = pick(rules.modelB);
@@ -990,28 +1093,29 @@ function startApp() {
           }
         }
 
-        // Hard clash with tolerance (use temp boxes to avoid cloning)
-        var isHard;
-        if (hardTol > 0) {
-          _tmpBoxA.copy(bA).expandByScalar(-hardTol);
-          _tmpBoxB.copy(bB).expandByScalar(-hardTol);
-          isHard = _tmpBoxA.intersectsBox(_tmpBoxB);
-          if (!isHard) isHard = bA.intersectsBox(bB); // still intersecting without shrink = hard
+        // ── Broad phase: AABB overlap check (fast reject) ──────────
+        var clearanceM = (rules.clearance || 0) / 1000;
+        var broadMargin = Math.max(hardTol, rules.soft ? clearanceM : 0);
+        if (broadMargin > 0) {
+          _tmpBoxA.copy(bA).expandByScalar(broadMargin);
+          if (!_tmpBoxA.intersectsBox(bB)) return; // AABBs don't overlap even with margin
         } else {
-          isHard = bA.intersectsBox(bB);
+          if (!bA.intersectsBox(bB)) return; // AABBs don't overlap at all
         }
-        // Soft/clearance clash
-        var isSoft = false;
-        if (!isHard && rules.soft) {
-          _tmpBoxA.copy(bA).expandByScalar(rules.clearance/1000);
-          isSoft = _tmpBoxA.intersectsBox(bB);
-        }
-        if ((isHard && rules.hard) || isSoft) {
+
+        // ── Narrow phase: actual mesh geometry distance ───────────
+        // Compute real minimum distance between mesh vertices
+        var hardThreshM = Math.max(hardTol, 0.001); // 1mm minimum for "touching"
+        var softThreshM = rules.soft ? clearanceM : 0;
+        var checkThreshM = Math.max(hardThreshM, softThreshM);
+        var geoDist = _meshMinDist(eA, eB, checkThreshM);
+
+        var isHard = rules.hard && (geoDist <= hardThreshM);
+        var isSoft = !isHard && rules.soft && (geoDist <= softThreshM);
+
+        if (isHard || isSoft) {
           var ctr = bA.getCenter(_tmpCtrA);
-          var gx=Math.max(0,bB.min.x-bA.max.x,bA.min.x-bB.max.x);
-          var gy=Math.max(0,bB.min.y-bA.max.y,bA.min.y-bB.max.y);
-          var gz=Math.max(0,bB.min.z-bA.max.z,bA.min.z-bB.max.z);
-          var dist=Math.round(Math.sqrt(gx*gx+gy*gy+gz*gz)*1000);
+          var dist = Math.round(geoDist * 1000); // metres → mm
           var pA = eA.props||{}, pB = eB.props||{};
           var tA = pA.ifcType||'Element', tB = pB.ifcType||'Element';
           var nA = pA.name||('#'+eA.expressId), nB = pB.name||('#'+eB.expressId);

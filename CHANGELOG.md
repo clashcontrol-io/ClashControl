@@ -1,5 +1,8 @@
 # Changelog
 
+## v1.2.36 (2026-03-23)
+- Fix: load project files immediately on page load, not on models tab open
+
 ## v1.2.35 (2026-03-23)
 - Add Ollama-first LLM with in-browser fallback and idle auto-unload
 
