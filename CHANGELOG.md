@@ -1,5 +1,8 @@
 # Changelog
 
+## v1.2.32 (2026-03-23)
+- Hide clashes from unchecked models in the clash list
+
 ## v1.2.31 (2026-03-23)
 - Install pre-commit hook for auto version bumping
 

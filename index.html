@@ -178,7 +178,7 @@ window.onload = function() {
 
 function startApp() {
   // ── Version (auto-updated by pre-commit hook) ──
-  var CC_VERSION = {v:'1.2.31',hash:'108944e',date:'2026-03-23T13:23:01Z'};
+  var CC_VERSION = {v:'1.2.32',hash:'841379c',date:'2026-03-23T13:24:11Z'};
 
   // Check CDN deps loaded
   var need = [];
@@ -1881,6 +1881,8 @@ function startApp() {
         if(hits.length>0 && hits[0].object.isMesh) hitMesh = hits[0].object;
         // Skip ghosted meshes — don't mutate the shared ghost material
         if(hitMesh && hitMesh.material === _ghostMat) hitMesh = null;
+        // Skip meshes from hidden (unchecked) model groups
+        if(hitMesh && hitMesh.parent && hitMesh.parent.userData.modelId && !hitMesh.parent.visible) hitMesh = null;
         if(hitMesh===lastHoveredMesh) return;
         // Restore previous
         if(lastHoveredMesh && lastHoverOriginals && lastHoveredMesh.material && lastHoveredMesh.material !== _ghostMat){
@@ -2043,9 +2045,11 @@ function startApp() {
         mouse.y = -((e.clientY-rect.top)/rect.height)*2+1;
         raycaster.setFromCamera(mouse, S.camera);
         if(!S.mg) return;
-        // Filter out ghosted meshes — clicking them would corrupt shared ghost material
+        // Filter out ghosted meshes and meshes from hidden (unchecked) model groups
         var hits = raycaster.intersectObjects(S.mg.children, true).filter(function(h){
-          return h.object.material !== _ghostMat;
+          if(h.object.material === _ghostMat) return false;
+          if(h.object.parent && h.object.parent.userData.modelId && !h.object.parent.visible) return false;
+          return true;
         });
 
         // ── Measurement mode: intercept clicks ──
@@ -2201,7 +2205,9 @@ function startApp() {
         mouse.y = -((e.clientY-rect.top)/rect.height)*2+1;
         raycaster.setFromCamera(mouse, S.camera);
         var hits = raycaster.intersectObjects(S.mg.children, true).filter(function(h){
-          return h.object.material !== _ghostMat;
+          if(h.object.material === _ghostMat) return false;
+          if(h.object.parent && h.object.parent.userData.modelId && !h.object.parent.visible) return false;
+          return true;
         });
         if(hits.length>0 && hits[0].face) {
           var hit = hits[0];
