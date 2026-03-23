@@ -178,7 +178,7 @@ window.onload = function() {
 
 function startApp() {
   // ── Version (auto-updated by pre-commit hook) ──
-  var CC_VERSION = {v:'1.2.36',hash:'96f9e01',date:'2026-03-23T09:31:23Z'};
+  var CC_VERSION = {v:'1.2.37',hash:'f0aecd8',date:'2026-03-23T09:50:31Z'};
 
   // Check CDN deps loaded
   var need = [];
@@ -3109,36 +3109,56 @@ function startApp() {
     ];
 
     function flyToDir(dir) {
-      var S=state3d.current; if(!S||!S.orbit||!S.mg) return;
-      var modelBox=S.mg.children.length>0?new THREE.Box3().setFromObject(S.mg):new THREE.Box3(new THREE.Vector3(-5,-5,-5),new THREE.Vector3(5,5,5));
-      var ctr=modelBox.getCenter(new THREE.Vector3());
-      var sz=modelBox.getSize(new THREE.Vector3());
-      var dist=Math.max(sz.x,sz.y,sz.z)*1.5;
-      var viewDir=new THREE.Vector3(dir[0],dir[1],dir[2]).normalize();
-      var endPos=ctr.clone().addScaledVector(viewDir,dist);
-      if(window._ccFlyToView) window._ccFlyToView(ctr,endPos);
+      var S=state3d.current; if(!S||!S.orbit) return;
+      // Compute model center as new orbit target
+      var ctr=new THREE.Vector3();
+      if(S.mg&&S.mg.children.length>0) new THREE.Box3().setFromObject(S.mg).getCenter(ctr);
+      // Convert direction to orbit spherical angles
+      var d=new THREE.Vector3(dir[0],dir[1],dir[2]).normalize();
+      var targetTheta=Math.atan2(d.x,d.z);
+      var targetPhi=Math.max(0.05,Math.min(Math.PI-0.05,Math.acos(d.y)));
+      // Shortest arc for theta
+      var startTheta=S.orbit.sph.theta, startPhi=S.orbit.sph.phi;
+      var dTheta=targetTheta-startTheta;
+      while(dTheta>Math.PI) dTheta-=2*Math.PI;
+      while(dTheta<-Math.PI) dTheta+=2*Math.PI;
+      var dPhi=targetPhi-startPhi;
+      var startTarget=S.orbit.target.clone();
+      var t0=performance.now(), dur=550;
+      function step(){
+        var t=Math.min((performance.now()-t0)/dur,1);
+        var e=t<0.5?2*t*t:-1+(4-2*t)*t;
+        S.orbit.sph.theta=startTheta+dTheta*e;
+        S.orbit.sph.phi=startPhi+dPhi*e;
+        S.orbit.target.lerpVectors(startTarget,ctr,e);
+        S.orbit.apply(); invalidate();
+        if(t<1) requestAnimationFrame(step);
+      }
+      step();
     }
 
-    // Create face texture with label
+    // Axis-coded face colors: Z=blue-grey, X=warm-grey, Y=cool-grey
+    var FACE_COLORS={FRONT:'#2d3f55',BACK:'#2d3f55',RIGHT:'#3a3a50',LEFT:'#3a3a50',TOP:'#283d50',BOTTOM:'#283d50'};
     function makeFaceTexture(label, isHovered) {
       var c = document.createElement('canvas');
       c.width=128; c.height=128;
       var ctx=c.getContext('2d');
-      // Background
-      ctx.fillStyle = isHovered ? '#3b82f6' : 'rgba(51,65,85,0.85)';
+      // Background with rounded rect
+      var bg=isHovered?'#2563eb':(FACE_COLORS[label]||'#334155');
+      ctx.fillStyle=bg;
       ctx.fillRect(0,0,128,128);
-      // Border
-      ctx.strokeStyle = 'rgba(148,163,184,0.4)';
-      ctx.lineWidth = 2;
+      // Thin border
+      ctx.strokeStyle=isHovered?'#93c5fd':'rgba(148,163,184,0.35)';
+      ctx.lineWidth=2;
       ctx.strokeRect(1,1,126,126);
       // Label
-      ctx.fillStyle = isHovered ? '#ffffff' : '#cbd5e1';
-      ctx.font = 'bold 18px system-ui, sans-serif';
-      ctx.textAlign = 'center';
-      ctx.textBaseline = 'middle';
-      ctx.fillText(label, 64, 64);
-      var tex = new THREE.CanvasTexture(c);
-      tex.minFilter = THREE.LinearFilter;
+      ctx.fillStyle=isHovered?'#fff':'#e2e8f0';
+      ctx.font='bold 20px system-ui,sans-serif';
+      ctx.textAlign='center';
+      ctx.textBaseline='middle';
+      ctx.fillText(label,64,64);
+      var tex=new THREE.CanvasTexture(c);
+      tex.minFilter=THREE.LinearFilter;
       return tex;
     }
 
@@ -3181,7 +3201,7 @@ function startApp() {
 
       // Wireframe edges for the cube
       var edgeGeo = new THREE.BoxGeometry(1,1,1);
-      var edgeMat = new THREE.LineBasicMaterial({color:0x94a3b8, transparent:true, opacity:0.6});
+      var edgeMat = new THREE.LineBasicMaterial({color:0x64748b, transparent:true, opacity:0.9});
       var edges = new THREE.LineSegments(new THREE.EdgesGeometry(edgeGeo), edgeMat);
       cubeGroup.add(edges);
 

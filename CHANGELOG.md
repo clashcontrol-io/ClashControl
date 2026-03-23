@@ -1,5 +1,8 @@
 # Changelog
 
+## v1.2.37 (2026-03-23)
+- Split icon rail into left (utility) and right (nav tabs) rails
+
 ## v1.2.36 (2026-03-23)
 - Replace text labels with animated hover tooltips on sidebar icons
 
