@@ -178,7 +178,7 @@ window.onload = function() {
 
 function startApp() {
   // ── Version (auto-updated by pre-commit hook) ──
-  var CC_VERSION = {v:'1.2.42',hash:'0001676',date:'2026-03-23T10:30:24Z'};
+  var CC_VERSION = {v:'1.2.43',hash:'96b1c7f',date:'2026-03-23T10:42:39Z'};
 
   // Check CDN deps loaded
   var need = [];
@@ -3545,10 +3545,11 @@ function startApp() {
       });
     }
 
-    var didRestore = useRef(false);
     useEffect(function(){
-      if(didRestore.current) return;
-      didRestore.current = true;
+      // Use a window-level flag so restoration doesn't re-run when the tab unmounts/remounts
+      var key = '_ccRestored_' + (s.activeProject || 'default');
+      if(window[key]) return;
+      window[key] = true;
       _restoreProjectFiles(s.activeProject);
       // Also restore saved project session data (clashes, issues, etc.)
       idbGetProjectData(s.activeProject).then(function(data){
@@ -4113,7 +4114,7 @@ function startApp() {
     var items = useMemo(function(){
       return rawItems.filter(function(it){
         if(f.status!=='all' && it.status!==f.status) return false;
-        if(f.search){var q=f.search.toLowerCase();if((it.title||'').toLowerCase().indexOf(q)===-1&&(it.description||'').toLowerCase().indexOf(q)===-1)return false;}
+        if(f.search){var q=f.search.toLowerCase();var hay=isClashTab?[it.title,it.description,it.type,it.elemAStorey,it.elemBStorey,it.elemAType,it.elemBType,it.elemAMaterial,it.elemBMaterial,it.status].filter(Boolean).join(' ').toLowerCase():(it.title||'').toLowerCase()+' '+(it.description||'').toLowerCase();if(hay.indexOf(q)===-1)return false;}
         if(isClashTab) {
           if(f.type!=='all' && it.type!==f.type) return false;
           if(f.discipline!=='all' && it.disciplines && it.disciplines.indexOf(f.discipline)===-1) return false;
@@ -4164,13 +4165,22 @@ function startApp() {
           </button>`})}
       </div>`}
       ${s.tab==='explorer' && html`<${ExplorerPanel} s=${s} d=${d} />`}
-      ${s.tab!=='explorer' && html`<div style=${{padding:'.4rem',borderBottom:'1px solid var(--border-subtle)',flexShrink:0,display:'flex',gap:'.3rem'}}>
-        <input type="text" placeholder="Search…" value=${f.search} onInput=${function(e){d({t:'UPD_FILTERS',u:{search:e.target.value}})}}
-          style=${{...S_INPUT,fontSize:'.7rem',padding:'.25rem .4rem',flex:1}} />
-        <button onClick=${function(){setFiltersOpen(!filtersOpen)}}
-          style=${{...S_BTN,padding:'.25rem .4rem',background:filtersOpen||activeCount>0?'#1e3a5f':'var(--bg-secondary)',color:filtersOpen||activeCount>0?'#93c5fd':'var(--text-faint)',border:'1px solid var(--border)',fontSize:'.65rem',whiteSpace:'nowrap'}} aria-label="Toggle filters">
-          ⚙ ${activeCount>0?activeCount:''}
-        </button>
+      ${s.tab!=='explorer' && html`<div style=${{padding:'.4rem .4rem .35rem',borderBottom:'1px solid var(--border-subtle)',flexShrink:0}}>
+        <div style=${{display:'flex',gap:'.3rem',alignItems:'center'}}>
+          <div style=${{flex:1,position:'relative',display:'flex',alignItems:'center'}}>
+            <svg width="13" height="13" viewBox="0 0 16 16" fill="none" style=${{position:'absolute',left:'.45rem',pointerEvents:'none',flexShrink:0}}>
+              <path d="M2 4h12M2 8h8M2 12h10" stroke="#60a5fa" stroke-width="1.6" stroke-linecap="round"/>
+            </svg>
+            <input type="text" placeholder=${isClashTab ? 'Filter… e.g. "hard on floor 2" or "open pipes"' : 'Search…'} value=${f.search}
+              onInput=${function(e){d({t:'UPD_FILTERS',u:{search:e.target.value}})}}
+              style=${{...S_INPUT,fontSize:'.7rem',padding:'.3rem .4rem .3rem 1.85rem',width:'100%',background:f.search?'#0f1e33':'var(--bg-secondary)',border:f.search?'1px solid #3b82f6':'1px solid var(--border)',transition:'all .15s'}} />
+            ${f.search && html`<button onClick=${function(){d({t:'UPD_FILTERS',u:{search:''}})}} style=${{position:'absolute',right:'.35rem',background:'none',border:'none',cursor:'pointer',color:'var(--text-faint)',fontSize:'.75rem',padding:0,lineHeight:1}}>✕</button>`}
+          </div>
+          <button onClick=${function(){setFiltersOpen(!filtersOpen)}}
+            style=${{...S_BTN,padding:'.3rem .5rem',background:filtersOpen||activeCount>0?'#1e3a5f':'var(--bg-secondary)',color:filtersOpen||activeCount>0?'#93c5fd':'var(--text-faint)',border:'1px solid var(--border)',fontSize:'.65rem',whiteSpace:'nowrap',flexShrink:0}} aria-label="Toggle filters">
+            ⚙${activeCount>0?html`<span style=${{background:'#3b82f6',color:'#fff',borderRadius:99,padding:'.05rem .3rem',fontSize:'.55rem',marginLeft:'.2rem'}}>${activeCount}</span>`:''}
+          </button>
+        </div>
       </div>`}
       ${!isExplorerTab && filtersOpen && html`<div style=${{padding:'.5rem',borderBottom:'1px solid var(--border-subtle)',flexShrink:0,display:'flex',flexDirection:'column',gap:'.4rem',background:'var(--bg-tertiary)'}}>
         <div style=${{display:'flex',justifyContent:'space-between',alignItems:'center'}}>
@@ -4388,7 +4398,7 @@ function startApp() {
   }
 
   // Virtualized list: only render visible rows for large lists
-  var ROW_HEIGHT = 65; // approx height of IssueRow in px
+  var ROW_HEIGHT = 78; // approx height of IssueRow in px (clash rows are taller with extra metadata)
   function VirtualList(props) {
     var items=props.items, activeId=props.activeId, d=props.d, isClash=props.isClash, prefs=props.prefs;
     var groupBy = props.groupBy || 'none';
@@ -4453,6 +4463,17 @@ function startApp() {
     var it=props.item, active=props.active, d=props.d, isClash=props.isClash, pr=props.prefs||{};
     var icon = it.type==='hard'?'🔴':it.type==='soft'?'🟡':it.source==='element'?'🏗':'📌';
     var stBg = (STAT[it.status]||STAT.open).bg;
+    // Clash type colours
+    var typeBg = it.type==='hard'?'#7f1d1d':it.type==='soft'?'#78350f':it.type==='duplicate'?'#4c1d95':'#1e3a5f';
+    var typeCol = it.type==='hard'?'#fca5a5':it.type==='soft'?'#fcd34d':it.type==='duplicate'?'#c4b5fd':'#93c5fd';
+    var typeLabel = it.type ? it.type.charAt(0).toUpperCase()+it.type.slice(1) : null;
+    // Storey: prefer shared storey, else A / B
+    var storeyLabel = (function(){
+      var a=it.elemAStorey||'', b=it.elemBStorey||'';
+      if(!a&&!b) return null;
+      if(a===b) return a;
+      return [a,b].filter(Boolean).join(' / ');
+    })();
     return html`<div onClick=${function(){
         var wasActive=active;
         d({t:'ACTIVE',id:wasActive?null:it.id});
@@ -4488,14 +4509,21 @@ function startApp() {
       }}
       style=${{padding:'.6rem .7rem',borderBottom:'1px solid var(--border-subtle)',cursor:'pointer',background:active?'var(--bg-secondary)':'transparent',borderLeft:active?'2px solid #3b82f6':'2px solid transparent'}}>
       <div style=${{display:'flex',gap:'.35rem',alignItems:'flex-start'}}>
-        <span style=${{fontSize:'.85rem',flexShrink:0}}>${icon}</span>
+        ${!isClash && html`<span style=${{fontSize:'.85rem',flexShrink:0}}>${icon}</span>`}
         <div style=${{flex:1,minWidth:0}}>
           <div style=${{display:'flex',alignItems:'center',gap:'.3rem'}}>
+            ${isClash && typeLabel && html`<span style=${{fontSize:'.55rem',padding:'.1rem .3rem',borderRadius:3,background:typeBg,color:typeCol,fontWeight:700,flexShrink:0}}>${typeLabel}</span>`}
             <span style=${{color:'var(--text-primary)',fontSize:'.7rem',fontWeight:500,whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis',flex:1}}>${it.title}</span>
             <span style=${{fontSize:'.55rem',padding:'.1rem .35rem',borderRadius:4,background:stBg+'22',color:stBg,fontWeight:600,flexShrink:0,whiteSpace:'nowrap'}}>${(STAT[it.status]||STAT.open).label}</span>
           </div>
           <p style=${{color:'var(--text-faint)',fontSize:'.65rem',marginTop:'.1rem'}} class="lc2">${it.description}</p>
-          ${it.distance!=null && html`<span style=${{fontSize:'.55rem',color:'var(--text-muted)',marginTop:'.1rem',display:'inline-block'}}>${it.distance} mm${it.selfClash?' · self':''}</span>`}
+          ${isClash && html`<div style=${{display:'flex',gap:'.3rem',marginTop:'.2rem',flexWrap:'wrap',alignItems:'center'}}>
+            ${it.distance!=null && html`<span style=${{fontSize:'.6rem',color:it.distance<0?'#fca5a5':'var(--text-muted)',background:'var(--bg-secondary)',padding:'.05rem .3rem',borderRadius:3,fontWeight:500}}>
+              ${it.distance<0?'⬤ '+Math.abs(it.distance)+'mm penetration':it.distance===0?'⬤ touching':it.distance+'mm gap'}
+            </span>`}
+            ${storeyLabel && html`<span style=${{fontSize:'.6rem',color:'var(--text-secondary)',background:'var(--bg-secondary)',padding:'.05rem .3rem',borderRadius:3}}>🏢 ${storeyLabel}</span>`}
+            ${it.selfClash && html`<span style=${{fontSize:'.55rem',color:'#a78bfa',background:'#2e1065',padding:'.05rem .25rem',borderRadius:3}}>self</span>`}
+          </div>`}
           ${!isClash && it.elementType && html`<div style=${{display:'flex',gap:'.2rem',marginTop:'.15rem',flexWrap:'wrap'}}>
             <span style=${{fontSize:'.5rem',background:'#1e3a5f',color:'#93c5fd',padding:'.05rem .25rem',borderRadius:3}}>${it.elementType}</span>
             ${it.storey && html`<span style=${{fontSize:'.5rem',background:'var(--bg-secondary)',color:'var(--text-secondary)',padding:'.05rem .25rem',borderRadius:3}}>${it.storey}</span>`}
@@ -5981,7 +6009,7 @@ function startApp() {
             fontSize:'1rem',lineHeight:1,padding:'0 .1rem'}} title="Close panel">×</button>
       </div>
       ${tab==='models'   && html`<${ModelSidebar}  s=${s} d=${d} />`}
-      ${tab==='clashes'  && html`<${ClashBar} s=${s} d=${d} embedded=${true} /><${IssuePanel} s=${s} d=${d} hideTabBar=${true} />`}
+      ${tab==='clashes'  && html`<${IssuePanel} s=${s} d=${d} hideTabBar=${true} />`}
       ${tab==='issues'   && html`<${IssuePanel} s=${s} d=${d} hideTabBar=${true} />`}
       ${tab==='explorer' && html`<${IssuePanel} s=${s} d=${d} hideTabBar=${true} />`}
     </div>`;
