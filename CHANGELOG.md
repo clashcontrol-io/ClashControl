@@ -1,5 +1,8 @@
 # Changelog
 
+## v1.2.67 (2026-03-24)
+- Reduce max intersection sample points from 150 to 24
+
 ## v1.2.66 (2026-03-24)
 - Fix clash marker positioning: use actual triangle intersection point
 
