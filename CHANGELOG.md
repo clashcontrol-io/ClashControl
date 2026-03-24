@@ -1,5 +1,8 @@
 # Changelog
 
+## v1.2.86 (2026-03-24)
+- Add sort-within-group for clash list (group by storey, sort by gap)
+
 ## v1.2.85 (2026-03-24)
 - Show model loading status in open chat panel input area
 

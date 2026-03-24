@@ -193,7 +193,7 @@ window.onload = function() {
 
 function startApp() {
   // ── Version (auto-updated by pre-commit hook) ──
-  var CC_VERSION = {v:'1.2.85',hash:'577a26f',date:'2026-03-24T09:38:26Z'};
+  var CC_VERSION = {v:'1.2.86',hash:'1154f5a',date:'2026-03-24T09:40:43Z'};
 
   // Check CDN deps loaded
   var need = [];
@@ -252,8 +252,8 @@ function startApp() {
   var INIT = {
     models:[], clashes:[], issues:[], activeId:null, showModal:false, showSettings:false, modalElement:null, tab:null,
     rules:{ modelA:'all', modelB:'all', hard:true, maxGap:50, duplicates:false, changeAware:false, excludeSelf:false, excludeTypes:[] },
-    clashGroupBy:'none', // 'none','storey','discipline','status','type'
-    clashSortBy:'none', // 'none','distance_asc','distance_desc'
+    clashGroupBy:'none', clashSortBy:'none',
+    issueGroupBy:'none', issueSortBy:'none',
     detecting:false, switchingProject:false, sectionAxis:null, sectionPos:0.5, sectionCustom:null,
     sectionBox:null, // {enabled, min:[x,y,z], max:[x,y,z]} – 6-plane box clipping
     filters:Object.assign({},INIT_FILTERS), floors:[],
@@ -340,6 +340,8 @@ function startApp() {
       case 'LOAD_PROJECT_STATE': return Object.assign({},s,a.data);
       case 'CLASH_GROUP_BY': return Object.assign({},s,{clashGroupBy:a.v});
       case 'CLASH_SORT_BY': return Object.assign({},s,{clashSortBy:a.v});
+      case 'ISSUE_GROUP_BY': return Object.assign({},s,{issueGroupBy:a.v});
+      case 'ISSUE_SORT_BY': return Object.assign({},s,{issueSortBy:a.v});
       // 2D Underlays
       case 'ADD_UNDERLAY':    return Object.assign({},s,{underlays:s.underlays.concat([a.v]),activeUnderlay:a.v.id});
       case 'DEL_UNDERLAY':    return Object.assign({},s,{underlays:s.underlays.filter(function(u){return u.id!==a.id}),activeUnderlay:s.activeUnderlay===a.id?null:s.activeUnderlay});
@@ -5418,20 +5420,33 @@ function startApp() {
           ${s.prefs.showIssueMarkers!==false?'Markers On':'Markers Off'}
         </button>
       </div>`}
-      ${!isExplorerTab && isClashTab && items.length>0 && html`<div style=${{padding:'.25rem .5rem',borderBottom:'1px solid var(--border-subtle)',display:'flex',flexDirection:'column',gap:'.25rem',flexShrink:0}}>
-        <div style=${{display:'flex',alignItems:'center',gap:'.3rem'}}>
-          <span style=${{fontSize:'.6rem',color:'var(--text-faint)'}}>Group:</span>
-          ${['none','storey','discipline','status','type'].map(function(g){return html`<button key=${g} onClick=${function(){d({t:'CLASH_GROUP_BY',v:g})}}
-            style=${{...S_BTN,fontSize:'.55rem',padding:'.1rem .3rem',background:s.clashGroupBy===g?'var(--accent)':'var(--bg-secondary)',color:s.clashGroupBy===g?'#fff':'var(--text-faint)'}}>${g==='none'?'None':g.charAt(0).toUpperCase()+g.slice(1)}</button>`})}
-        </div>
-        <div style=${{display:'flex',alignItems:'center',gap:'.3rem'}}>
-          <span style=${{fontSize:'.6rem',color:'var(--text-faint)'}}>Sort:</span>
-          ${[['none','None'],['distance_asc','Gap ↑'],['distance_desc','Gap ↓']].map(function(sv){return html`<button key=${sv[0]} onClick=${function(){d({t:'CLASH_SORT_BY',v:sv[0]})}}
-            style=${{...S_BTN,fontSize:'.55rem',padding:'.1rem .3rem',background:s.clashSortBy===sv[0]?'var(--accent)':'var(--bg-secondary)',color:s.clashSortBy===sv[0]?'#fff':'var(--text-faint)'}}>${sv[1]}</button>`})}
-        </div>
-      </div>`}
+      ${!isExplorerTab && items.length>0 && function(){
+        var grpAction = isClashTab ? 'CLASH_GROUP_BY' : 'ISSUE_GROUP_BY';
+        var sortAction = isClashTab ? 'CLASH_SORT_BY' : 'ISSUE_SORT_BY';
+        var curGrp = isClashTab ? s.clashGroupBy : s.issueGroupBy;
+        var curSort = isClashTab ? s.clashSortBy : s.issueSortBy;
+        var grpOpts = isClashTab
+          ? ['none','storey','discipline','status','type']
+          : ['none','status','priority','category','assignee'];
+        var sortOpts = isClashTab
+          ? [['none','None'],['distance_asc','Gap ↑'],['distance_desc','Gap ↓'],['date_asc','Date ↑'],['date_desc','Date ↓']]
+          : [['none','None'],['priority_asc','Priority ↑'],['priority_desc','Priority ↓'],['date_asc','Date ↑'],['date_desc','Date ↓']];
+        function pill(active){return {...S_BTN,fontSize:'.55rem',padding:'.1rem .3rem',background:active?'var(--accent)':'var(--bg-secondary)',color:active?'#fff':'var(--text-faint)'};}
+        return html`<div style=${{padding:'.25rem .5rem',borderBottom:'1px solid var(--border-subtle)',display:'flex',flexDirection:'column',gap:'.25rem',flexShrink:0}}>
+          <div style=${{display:'flex',alignItems:'center',gap:'.3rem',flexWrap:'wrap'}}>
+            <span style=${{fontSize:'.6rem',color:'var(--text-faint)'}}>Group:</span>
+            ${grpOpts.map(function(g){return html`<button key=${g} onClick=${function(){d({t:grpAction,v:g})}}
+              style=${pill(curGrp===g)}>${g==='none'?'None':g.charAt(0).toUpperCase()+g.slice(1)}</button>`})}
+          </div>
+          <div style=${{display:'flex',alignItems:'center',gap:'.3rem',flexWrap:'wrap'}}>
+            <span style=${{fontSize:'.6rem',color:'var(--text-faint)'}}>Sort:</span>
+            ${sortOpts.map(function(sv){return html`<button key=${sv[0]} onClick=${function(){d({t:sortAction,v:sv[0]})}}
+              style=${pill(curSort===sv[0])}>${sv[1]}</button>`})}
+          </div>
+        </div>`;
+      }()}
       ${!isExplorerTab && items.length>0 && html`<${BulkActionBar} s=${s} d=${d} items=${items} isClash=${isClashTab} />`}
-      ${!isExplorerTab && html`<${VirtualList} items=${items} activeId=${s.activeId} d=${d} isClash=${isClashTab} prefs=${s.prefs} models=${s.models} groupBy=${isClashTab?s.clashGroupBy:'none'} sortBy=${isClashTab?s.clashSortBy:'none'} selectMode=${s.selectMode} selected=${s.selected} />`}
+      ${!isExplorerTab && html`<${VirtualList} items=${items} activeId=${s.activeId} d=${d} isClash=${isClashTab} prefs=${s.prefs} models=${s.models} groupBy=${isClashTab?s.clashGroupBy:s.issueGroupBy} sortBy=${isClashTab?s.clashSortBy:s.issueSortBy} selectMode=${s.selectMode} selected=${s.selected} />`}
     </div>`;
   }
 
@@ -5501,14 +5516,17 @@ function startApp() {
   }
 
   // Group clashes by a field
-  function _clashSortFn(sortBy) {
-    if (sortBy === 'distance_asc') return function(a,b){ return (a.distance||0)-(b.distance||0); };
-    if (sortBy === 'distance_desc') return function(a,b){ return (b.distance||0)-(a.distance||0); };
-    return null;
-  }
+  var SORT_FNS = {
+    distance_asc: function(a,b){ return (a.distance||0)-(b.distance||0); },
+    distance_desc: function(a,b){ return (b.distance||0)-(a.distance||0); },
+    date_asc: function(a,b){ return (a.createdAt||'').localeCompare(b.createdAt||''); },
+    date_desc: function(a,b){ return (b.createdAt||'').localeCompare(a.createdAt||''); },
+    priority_asc: function(a,b){ var o={critical:0,high:1,normal:2,low:3}; return (o[a.priority]||2)-(o[b.priority]||2); },
+    priority_desc: function(a,b){ var o={critical:0,high:1,normal:2,low:3}; return (o[b.priority]||2)-(o[a.priority]||2); }
+  };
 
-  function groupClashes(items, groupBy, sortBy) {
-    var sortFn = _clashSortFn(sortBy);
+  function groupAndSort(items, groupBy, sortBy) {
+    var sortFn = SORT_FNS[sortBy] || null;
     if (!groupBy || groupBy === 'none') {
       if (sortFn) return [{ label: 'All', items: items.slice().sort(sortFn) }];
       return null;
@@ -5517,10 +5535,13 @@ function startApp() {
     items.forEach(function(it) {
       var key;
       switch(groupBy) {
-        case 'storey': key = it.elemAStorey || it.elemBStorey || 'Unknown'; break;
-        case 'discipline': key = (it.disciplines||[]).sort().join(' ↔ ') || 'Unknown'; break;
+        case 'storey': key = it.elemAStorey || it.elemBStorey || it.storey || 'Unknown'; break;
+        case 'discipline': key = (it.disciplines||[]).sort().join(' \u2194 ') || 'Unknown'; break;
         case 'status': key = it.status || 'open'; break;
         case 'type': key = it.type || 'hard'; break;
+        case 'priority': key = it.priority || 'normal'; break;
+        case 'category': key = it.category || 'other'; break;
+        case 'assignee': key = it.assignee || 'Unassigned'; break;
         default: key = 'All';
       }
       if (!groups[key]) groups[key] = [];
@@ -5550,7 +5571,7 @@ function startApp() {
       </div>
     </div>`;
     // Grouped rendering
-    var groups = groupClashes(items, groupBy, sortBy);
+    var groups = groupAndSort(items, groupBy, sortBy);
     if (groups) {
       function toggleGroup(label) {
         setCollapsed(function(prev) {
