@@ -157,10 +157,10 @@
     @media(max-width:768px){
       /* Hide rails on tablet/mobile — replaced by bottom nav */
       .cc-left-rail,.cc-right-rail{display:none!important}
-      /* Side panel becomes full-width overlay */
-      .cc-side-panel{position:fixed!important;inset:0!important;width:100%!important;z-index:1100!important;border:none!important}
-      /* Bottom mobile nav bar */
-      .cc-mobile-nav{display:flex!important}
+      /* Side panel becomes full-width overlay, leaving room for bottom nav */
+      .cc-side-panel{position:fixed!important;top:0!important;left:0!important;right:0!important;bottom:56px!important;width:100%!important;z-index:1040!important;border:none!important}
+      /* Bottom mobile nav bar — above side panel */
+      .cc-mobile-nav{display:flex!important;z-index:1050!important}
       /* Header: compact */
       .cc-header{padding:.35rem .5rem!important}
       .cc-header-actions{gap:.25rem!important}
@@ -176,8 +176,8 @@
       .cc-overlay-top button{font-size:.58rem!important;padding:.2rem .35rem!important}
       /* Tooltips: hide on touch */
       .cc-tip::after{display:none!important}
-      /* Training button on 3D view */
-      .cc-training-btn-3d{display:none!important}
+      /* Training button on 3D view — compact on mobile */
+      .cc-training-btn-3d{padding:.3rem .7rem!important;font-size:.65rem!important}
     }
     @media(max-width:480px){
       .cc-header-brand-text{display:none!important}
@@ -240,7 +240,7 @@ window.onload = function() {
 
 function startApp() {
   // ── Version (auto-updated by pre-commit hook) ──
-  var CC_VERSION = {v:'2.0.31',hash:'dca7ffd',date:'2026-03-24T20:32:29Z'};
+  var CC_VERSION = {v:'2.0.37',hash:'1571162',date:'2026-03-24T20:58:15Z'};
 
   // Check CDN deps loaded
   var need = [];
@@ -2398,6 +2398,57 @@ function startApp() {
       }
       orbit.apply();invalidate();e.preventDefault();
     },{passive:false});
+    // ── Touch support (mobile orbit/pan/pinch-zoom) ──
+    var touchState = {type:null, lx:0, ly:0, dist:0};
+    el.style.touchAction = 'none'; // prevent browser scroll/zoom on canvas
+    el.addEventListener('touchstart', function(e) {
+      if(_sboxDragging) return;
+      e.preventDefault();
+      var t = e.touches;
+      if(t.length===1) {
+        touchState.type='rotate'; touchState.lx=t[0].clientX; touchState.ly=t[0].clientY;
+      } else if(t.length===2) {
+        touchState.type='pinch-pan';
+        touchState.lx=(t[0].clientX+t[1].clientX)/2;
+        touchState.ly=(t[0].clientY+t[1].clientY)/2;
+        touchState.dist=Math.hypot(t[1].clientX-t[0].clientX,t[1].clientY-t[0].clientY);
+      }
+    },{passive:false});
+    el.addEventListener('touchmove', function(e) {
+      if(!touchState.type) return;
+      e.preventDefault();
+      var t = e.touches;
+      if(touchState.type==='rotate' && t.length===1) {
+        var dx=t[0].clientX-touchState.lx, dy=t[0].clientY-touchState.ly;
+        touchState.lx=t[0].clientX; touchState.ly=t[0].clientY;
+        sph.theta-=dx*0.007; sph.phi-=dy*0.007; orbit.apply(); invalidate();
+      } else if(touchState.type==='pinch-pan' && t.length===2) {
+        var mx=(t[0].clientX+t[1].clientX)/2, my=(t[0].clientY+t[1].clientY)/2;
+        var d=Math.hypot(t[1].clientX-t[0].clientX,t[1].clientY-t[0].clientY);
+        // Pan
+        var pdx=mx-touchState.lx, pdy=my-touchState.ly;
+        var sp=sph.r*0.0008;
+        var right=new THREE.Vector3().crossVectors(orbit.camera.getWorldDirection(new THREE.Vector3()),new THREE.Vector3(0,1,0)).normalize();
+        target.addScaledVector(right,-pdx*sp); target.y+=pdy*sp;
+        // Pinch zoom
+        if(touchState.dist>0) {
+          var scale=touchState.dist/d;
+          sph.r*=scale;
+          if(orbit.camera.isOrthographicCamera) {
+            orbit.camera.zoom=Math.max(0.01,orbit.camera.zoom/scale);
+            orbit.camera.updateProjectionMatrix();
+          }
+        }
+        touchState.lx=mx; touchState.ly=my; touchState.dist=d;
+        orbit.apply(); invalidate();
+      }
+    },{passive:false});
+    el.addEventListener('touchend', function(e) {
+      if(e.touches.length===0) touchState.type=null;
+      else if(e.touches.length===1) {
+        touchState.type='rotate'; touchState.lx=e.touches[0].clientX; touchState.ly=e.touches[0].clientY;
+      }
+    });
     var orbit = {target:target, sync:sync, apply:apply, sph:sph, camera:camera};
     // Override apply to use orbit.camera (supports projection switching)
     orbit.apply = function() {
@@ -4163,7 +4214,7 @@ function startApp() {
           ${s.prefs.showIssueMarkers!==false?'Issue Markers On':'Issue Markers Off'}
         </button>
       </div>`}
-      ${s.clashes.length>0 && html`<button class="cc-training-btn-3d" onClick=${function(){d({t:'TRAINING_MODE'});}}
+      ${html`<button class="cc-training-btn-3d" onClick=${function(){d({t:'TRAINING_MODE'});}}
         style=${{position:'absolute',top:'2.6rem',left:'50%',transform:'translateX(-50%)',
           zIndex:20,display:'flex',alignItems:'center',gap:'.4rem',pointerEvents:'auto',
           padding:'.45rem 1.1rem',borderRadius:999,
@@ -4436,7 +4487,7 @@ function startApp() {
     // BoxGeometry material group order: +X, -X, +Y, -Y, +Z, -Z = RIGHT, LEFT, TOP, BOTTOM, FRONT, BACK
     var BOX_FACE_MAP = [2, 3, 4, 5, 0, 1]; // boxGeo slot → FACES index
     // Base face colors (dark-theme palette; lighting provides per-face variation)
-    var FACE_CLR = {FRONT:0x1c3550, BACK:0x1c3550, RIGHT:0x1c3550, LEFT:0x1c3550, TOP:0x1c3550, BOTTOM:0x1c3550};
+    var FACE_CLR = {FRONT:0x2a4a6b, BACK:0x253f5e, RIGHT:0x2a4a6b, LEFT:0x253f5e, TOP:0x304f72, BOTTOM:0x1f3650};
 
     function flyToDir(dir) {
       var S=state3d.current; if(!S||!S.orbit) return;
@@ -4471,9 +4522,6 @@ function startApp() {
       c.width=128; c.height=128;
       var ctx=c.getContext('2d');
       ctx.clearRect(0,0,128,128);
-      ctx.strokeStyle = isHovered ? 'rgba(147,197,253,0.95)' : 'rgba(148,163,184,0.22)';
-      ctx.lineWidth = 4;
-      ctx.strokeRect(3,3,122,122);
       ctx.fillStyle = isHovered ? '#ffffff' : 'rgba(226,232,240,0.88)';
       ctx.font = 'bold 21px system-ui,sans-serif';
       ctx.textAlign = 'center';
@@ -4516,19 +4564,14 @@ function startApp() {
         var f = FACES[fi];
         return new THREE.MeshPhongMaterial({
           map: makeFaceTexture(f.label, false),
-          color: new THREE.Color(FACE_CLR[f.label] || 0x1c3550),
+          color: new THREE.Color(FACE_CLR[f.label] || 0x2a4a6b),
           transparent: true,
-          shininess: 35,
-          specular: new THREE.Color(0x1a2e44)
+          shininess: 50,
+          specular: new THREE.Color(0x3a5a7a)
         });
       });
       var cubeMesh = new THREE.Mesh(new THREE.BoxGeometry(1, 1, 1), materials);
       cubeGroup.add(cubeMesh);
-
-      // Sharp wireframe edges slightly proud of the cube surface
-      var edgeMat = new THREE.LineBasicMaterial({color:0x5577aa, transparent:true, opacity:0.9});
-      cubeGroup.add(new THREE.LineSegments(
-        new THREE.EdgesGeometry(new THREE.BoxGeometry(1.004, 1.004, 1.004)), edgeMat));
 
       // Axis indicators at cube corner — match the AxesHelper at the grid origin
       // X=red, Y=green, Z=blue. Extends from the -X/-Y/-Z corner outward along each axis.
@@ -4629,7 +4672,7 @@ function startApp() {
           var isHov = !!hovSet[fi];
           mat.map = makeFaceTexture(FACES[fi].label, isHov);
           mat.map.needsUpdate = true;
-          mat.color.setHex(isHov ? 0x2563eb : (FACE_CLR[FACES[fi].label]||0x1c3550));
+          mat.color.setHex(isHov ? 0x2563eb : (FACE_CLR[FACES[fi].label]||0x2a4a6b));
         });
       }
 
@@ -8219,7 +8262,7 @@ function startApp() {
         '**Analysis:** "how many clashes?", "analyze clashes", "summary"\n' +
         '**Theme:** "switch to light", "dark mode"\n' +
         '**Files:** "load ifc", "load 2d", "import bcf", "export bcf"\n' +
-        '**Navigation:** "show clashes tab", "open settings", "open bridge"\n' +
+        '**Navigation:** "show clashes tab", "open settings", "open bridge", "training mode"\n' +
         '**Viewer:** "section x", "wireframe mode", "show markers", "hide grid"\n' +
         '**Tools:** "measure length", "save viewpoint", "save project"\n' +
         '**Display:** "color by discipline", "show model tree", "reset view"';
@@ -8546,6 +8589,17 @@ function startApp() {
     if (/(?:show|open|go\s+to|switch\s+to)\s+(?:the\s+)?clashes?\s*(?:tab|panel|sidebar)?/.test(text)) { d({t:'TAB',v:'clashes'}); return 'Opened Clashes tab.'; }
     if (/(?:show|open|go\s+to|switch\s+to)\s+(?:the\s+)?issues?\s*(?:tab|panel|sidebar)?/.test(text)) { d({t:'TAB',v:'issues'}); return 'Opened Issues tab.'; }
     if (/(?:show|open|go\s+to|switch\s+to)\s+(?:the\s+)?explorer?\s*(?:tab|panel)?/.test(text)) { d({t:'TAB',v:'explorer'}); return 'Opened Explorer tab.'; }
+
+    // ── Training Mode ─────────────────────────────────────────────
+    if (/training\s*mode|(?:enable|start|activate|turn\s+on)\s+training|(?:open|show)\s+(?:the\s+)?training/.test(text)) {
+      if(!s.trainingMode) d({t:'TRAINING_MODE'});
+      else d({t:'TAB',v:'training'});
+      return s.trainingMode ? 'Training tab opened.' : 'Training Mode enabled. Open the Training tab on the right to annotate clashes.';
+    }
+    if (/(?:disable|stop|deactivate|turn\s+off|exit)\s+training/.test(text)) {
+      if(s.trainingMode) d({t:'TRAINING_MODE'});
+      return 'Training Mode disabled.';
+    }
 
     // ── Settings & Modals ────────────────────────────────────────
     if (/(?:open|show)\s+(?:the\s+)?settings?/.test(text)) { d({t:'SETTINGS',v:true}); return 'Opened settings.'; }
@@ -8964,7 +9018,7 @@ function startApp() {
           <span style=${{width:'.4rem', height:'.4rem', borderRadius:'50%', background:backendColor, display:'inline-block'}}></span>
           ${backendLabel}
         </span>`}
-        ${s.clashes.length>0 && html`<button onClick=${function(){d({t:'TRAINING_MODE'});}} style=${{
+        <button onClick=${function(){d({t:'TRAINING_MODE'});}} style=${{
           background:s.trainingMode?'rgba(124,58,237,.85)':'none', border:'1px solid '+(s.trainingMode?'#a78bfa':'var(--border)'),
           borderRadius:6, cursor:'pointer', display:'flex', alignItems:'center', gap:'.25rem',
           padding:'.15rem .45rem', color:s.trainingMode?'#e9d5ff':mutedCol, fontSize:'.6rem', whiteSpace:'nowrap',
@@ -8974,7 +9028,7 @@ function startApp() {
             <path d="M12 2a4 4 0 0 1 4 4c0 1.95-1.4 3.58-3.25 3.93V12h3.5a2.25 2.25 0 0 1 0 4.5h-3.5v1.25A3.25 3.25 0 0 1 9.5 21 3.25 3.25 0 0 1 6.25 17.75V14.5h-1A2.25 2.25 0 0 1 3 12.25 2.25 2.25 0 0 1 5.25 10h3.5V9.93A4 4 0 0 1 12 2z"/>
           </svg>
           ${s.trainingMode?'Training On':'Training'}
-        </button>`}
+        </button>
         <button onClick=${function(){ setOpen(false); }} style=${{
           background:'none', border:'none', cursor:'pointer',
           color:mutedCol, fontSize:'1.1rem', lineHeight:1, padding:'0 .1rem'
@@ -9470,7 +9524,7 @@ function startApp() {
     var d = props.d;
     var isDark = (props.theme||'dark')==='dark';
     var stShow = useState(function(){
-      try { return !localStorage.getItem('cc_welcomed'); } catch(e){ return true; }
+      try { return !sessionStorage.getItem('cc_session_seen'); } catch(e){ return true; }
     });
     var show = stShow[0], setShow = stShow[1];
     // Animate in
@@ -9479,7 +9533,7 @@ function startApp() {
     function dismiss() {
       setVis(false);
       setTimeout(function(){
-        try { localStorage.setItem('cc_welcomed','1'); } catch(e){}
+        try { sessionStorage.setItem('cc_session_seen','1'); } catch(e){}
         setShow(false);
       }, 200);
     }
@@ -9489,97 +9543,98 @@ function startApp() {
       window.addEventListener('keydown', onKey);
       return function(){window.removeEventListener('keydown', onKey);};
     },[show]);
-    function openBridge() { dismiss(); setTimeout(function(){ d({t:'REVIT_BRIDGE',v:true}); },250); }
     if (!show) return null;
 
     var cardBg = 'var(--card-bg)';
     var cardBorder = 'var(--card-border)';
-    var codeBg = 'var(--tag-bg)';
-    var CARD = {background:cardBg,border:'1px solid '+cardBorder,borderRadius:10,padding:'.65rem .75rem',display:'flex',gap:'.6rem',alignItems:'flex-start',cursor:'default',transition:'border-color .15s'};
-    var ICON_WRAP = {width:32,height:32,borderRadius:8,display:'flex',alignItems:'center',justifyContent:'center',flexShrink:0};
+    var CARD = {background:cardBg,border:'1px solid '+cardBorder,borderRadius:10,padding:'.65rem .75rem',display:'flex',gap:'.6rem',alignItems:'flex-start',cursor:'default'};
 
     return html`<div style=${{position:'fixed',inset:0,background:vis?'var(--modal-bg)':'transparent',display:'flex',alignItems:'center',justifyContent:'center',zIndex:60,transition:'background .2s'}}
       onClick=${function(e){if(e.target===e.currentTarget)dismiss();}}>
-      <div style=${{background:'var(--bg-secondary)',border:'1px solid var(--border)',borderRadius:16,width:440,maxWidth:'92vw',boxShadow:'var(--shadow-lg)',overflow:'hidden',transform:vis?'translateY(0) scale(1)':'translateY(12px) scale(.97)',opacity:vis?1:0,transition:'transform .25s cubic-bezier(.16,1,.3,1), opacity .2s'}}>
+      <div style=${{background:'var(--bg-secondary)',border:'1px solid var(--border)',borderRadius:16,width:480,maxWidth:'92vw',boxShadow:'var(--shadow-lg)',overflow:'hidden',transform:vis?'translateY(0) scale(1)':'translateY(12px) scale(.97)',opacity:vis?1:0,transition:'transform .25s cubic-bezier(.16,1,.3,1), opacity .2s'}}>
 
         <!-- Header -->
-        <div style=${{background:'linear-gradient(135deg,#0f2744 0%,#1e3a5f 40%,#2563eb 100%)',padding:'1.4rem 1.4rem 1.2rem',position:'relative',overflow:'hidden'}}>
-          <div style=${{position:'absolute',top:'-30%',right:'-10%',width:180,height:180,borderRadius:'50%',background:'rgba(37,99,235,.2)',filter:'blur(40px)'}}></div>
+        <div style=${{background:'linear-gradient(135deg,#1a0533 0%,#3b1764 40%,#7c3aed 100%)',padding:'1.4rem 1.4rem 1.2rem',position:'relative',overflow:'hidden'}}>
+          <div style=${{position:'absolute',top:'-30%',right:'-10%',width:180,height:180,borderRadius:'50%',background:'rgba(124,58,237,.25)',filter:'blur(40px)'}}></div>
           <div style=${{display:'flex',alignItems:'center',gap:'.75rem',position:'relative'}}>
             <div style=${{width:42,height:42,background:'rgba(255,255,255,.12)',borderRadius:12,display:'flex',alignItems:'center',justifyContent:'center',flexShrink:0,backdropFilter:'blur(8px)',border:'1px solid rgba(255,255,255,.1)'}}>
-              <span style=${{color:'#fff',fontWeight:900,fontSize:16}}>CC</span>
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#e9d5ff" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M12 2a4 4 0 0 1 4 4c0 1.95-1.4 3.58-3.25 3.93V12h3.5a2.25 2.25 0 0 1 0 4.5h-3.5v1.25A3.25 3.25 0 0 1 9.5 21 3.25 3.25 0 0 1 6.25 17.75V14.5h-1A2.25 2.25 0 0 1 3 12.25 2.25 2.25 0 0 1 5.25 10h3.5V9.93A4 4 0 0 1 12 2z"/>
+              </svg>
             </div>
             <div>
-              <div style=${{color:'#fff',fontWeight:700,fontSize:'1.05rem',letterSpacing:'-.01em'}}>Welcome to ClashControl</div>
-              <div style=${{color:'rgba(255,255,255,.6)',fontSize:'.65rem',marginTop:'.15rem'}}>Free, open-source BIM clash detection</div>
+              <div style=${{color:'#fff',fontWeight:700,fontSize:'1.05rem',letterSpacing:'-.01em'}}>Help Build the First Open-Source Clash AI</div>
+              <div style=${{color:'rgba(255,255,255,.6)',fontSize:'.65rem',marginTop:'.15rem'}}>ClashControl Training Mode</div>
             </div>
           </div>
         </div>
 
         <!-- Body -->
         <div style=${{padding:'1rem 1.3rem 1.2rem'}}>
-          <div style=${{fontSize:'.74rem',color:'var(--text-secondary)',lineHeight:1.6,marginBottom:'.85rem'}}>
-            Connect your own LLM to run clash checks with plain English and sync with Revit:
+          <div style=${{fontSize:'.76rem',color:'var(--text-secondary)',lineHeight:1.7,marginBottom:'.85rem'}}>
+            We're training an <strong style=${{color:'var(--text-primary)'}}>open-source AI model</strong> to automatically classify BIM clashes \u2014 making ClashControl the world's first AI-powered clash detection engine. Your expertise makes it possible.
           </div>
 
           <div style=${{display:'flex',flexDirection:'column',gap:'.5rem',marginBottom:'1rem'}}>
 
-            <!-- Option 1: Local -->
+            <!-- What is Training Mode -->
             <div style=${CARD}>
-              <div style=${{...ICON_WRAP,background:'var(--pill-green-bg)'}}>
+              <div style=${{width:32,height:32,borderRadius:8,display:'flex',alignItems:'center',justifyContent:'center',flexShrink:0,background:'rgba(124,58,237,.15)'}}>
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#a78bfa" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <path d="M9 18l6-6-6-6"/>
+                </svg>
+              </div>
+              <div style=${{flex:1,minWidth:0}}>
+                <div style=${{fontSize:'.72rem',fontWeight:600,color:'var(--text-primary)',marginBottom:'.15rem'}}>How it works</div>
+                <div style=${{fontSize:'.63rem',color:'var(--text-secondary)',lineHeight:1.6}}>
+                  Enable <strong style=${{color:'#a78bfa'}}>Training Mode</strong> from the chat bar at the bottom or the button above the 3D view. Review clashes, confirm their type (hard/soft), select reasons, and add notes. This teaches the AI to think like you do.
+                </div>
+              </div>
+            </div>
+
+            <!-- What data is shared -->
+            <div style=${CARD}>
+              <div style=${{width:32,height:32,borderRadius:8,display:'flex',alignItems:'center',justifyContent:'center',flexShrink:0,background:'rgba(34,197,94,.12)'}}>
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--pill-green)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                  <rect x="2" y="2" width="20" height="8" rx="2" ry="2"/><rect x="2" y="14" width="20" height="8" rx="2" ry="2"/>
-                  <line x1="6" y1="6" x2="6.01" y2="6"/><line x1="6" y1="18" x2="6.01" y2="18"/>
-                </svg>
-              </div>
-              <div style=${{flex:1,minWidth:0}}>
-                <div style=${{fontSize:'.72rem',fontWeight:600,color:'var(--text-primary)',marginBottom:'.15rem'}}>Local AI <span style=${{fontSize:'.55rem',fontWeight:600,color:'var(--pill-green)',background:'var(--pill-green-bg)',padding:'1px 5px',borderRadius:99,marginLeft:'.3rem'}}>Free</span></div>
-                <div style=${{fontSize:'.63rem',color:'var(--text-secondary)',lineHeight:1.5}}>
-                  Install <a href="https://ollama.com" target="_blank" rel="noopener" style=${{color:'#60a5fa',textDecoration:'none',fontWeight:500}}>Ollama</a> and run:
-                  <code style=${{display:'inline-block',background:codeBg,padding:'1px 5px',borderRadius:4,fontSize:'.58rem',marginLeft:'.2rem',fontFamily:'monospace'}}>ollama pull qwen2.5:7b</code>
-                  <br/>Auto-detected when running. No data leaves your machine.
-                </div>
-              </div>
-            </div>
-
-            <!-- Option 2: Cloud -->
-            <div style=${CARD}>
-              <div style=${{...ICON_WRAP,background:'var(--pill-blue-bg)'}}>
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--pill-blue)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                  <path d="M18 10h-1.26A8 8 0 1 0 9 20h9a5 5 0 0 0 0-10z"/>
-                </svg>
-              </div>
-              <div style=${{flex:1,minWidth:0}}>
-                <div style=${{fontSize:'.72rem',fontWeight:600,color:'var(--text-primary)',marginBottom:'.15rem'}}>Cloud API <span style=${{fontSize:'.55rem',fontWeight:500,color:'var(--text-muted)'}}>Bring your own key</span></div>
-                <div style=${{fontSize:'.63rem',color:'var(--text-secondary)',lineHeight:1.5}}>
-                  Connect <strong style=${{color:'var(--text-primary)',fontWeight:500}}>Claude</strong>, <strong style=${{color:'var(--text-primary)',fontWeight:500}}>GPT-4o</strong>, or <strong style=${{color:'var(--text-primary)',fontWeight:500}}>Gemini</strong> via the
-                  <button onClick=${openBridge} style=${{background:'none',border:'none',color:'#60a5fa',cursor:'pointer',fontFamily:'inherit',fontSize:'.63rem',padding:0,fontWeight:600,textDecoration:'underline',textUnderlineOffset:2}}>Revit Bridge</button>
-                  panel. Enables AI-powered push/pull to Revit via MCP.
-                </div>
-              </div>
-            </div>
-
-            <!-- Option 3: No AI -->
-            <div style=${CARD}>
-              <div style=${{...ICON_WRAP,background:'var(--pill-amber-bg)'}}>
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--pill-amber)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                   <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
                 </svg>
               </div>
               <div style=${{flex:1,minWidth:0}}>
-                <div style=${{fontSize:'.72rem',fontWeight:600,color:'var(--text-primary)',marginBottom:'.15rem'}}>No AI needed</div>
-                <div style=${{fontSize:'.63rem',color:'var(--text-secondary)',lineHeight:1.5}}>
-                  Everything works without AI — load IFC models, detect clashes, manage issues, and export BCF. All processing runs in your browser.
+                <div style=${{fontSize:'.72rem',fontWeight:600,color:'var(--text-primary)',marginBottom:'.15rem'}}>What data is shared <span style=${{fontSize:'.55rem',fontWeight:500,color:'var(--pill-green)'}}>Privacy-safe</span></div>
+                <div style=${{fontSize:'.63rem',color:'var(--text-secondary)',lineHeight:1.6}}>
+                  Only anonymous metadata: IFC element types (e.g. IfcWall, IfcBeam), disciplines, bounding box dimensions, penetration depth, overlap volume, and your verdicts/reasons. <strong style=${{color:'var(--text-primary)'}}>No</strong> element names, coordinates, project names, file names, GUIDs, or personal information. Ever.
+                </div>
+              </div>
+            </div>
+
+            <!-- How to share -->
+            <div style=${CARD}>
+              <div style=${{width:32,height:32,borderRadius:8,display:'flex',alignItems:'center',justifyContent:'center',flexShrink:0,background:'rgba(37,99,235,.12)'}}>
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--pill-blue)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <path d="M4 12v8a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-8"/><polyline points="16 6 12 2 8 6"/><line x1="12" y1="2" x2="12" y2="15"/>
+                </svg>
+              </div>
+              <div style=${{flex:1,minWidth:0}}>
+                <div style=${{fontSize:'.72rem',fontWeight:600,color:'var(--text-primary)',marginBottom:'.15rem'}}>Sharing is manual & optional</div>
+                <div style=${{fontSize:'.63rem',color:'var(--text-secondary)',lineHeight:1.6}}>
+                  Nothing is sent automatically. When you're ready, open the <strong style=${{color:'var(--text-primary)'}}>Training</strong> tab in the side panel and click <em>Export</em> to download a JSON file or <em>Share</em> to submit anonymously. You decide when and if.
                 </div>
               </div>
             </div>
           </div>
 
+          <!-- GDPR notice -->
+          <div style=${{fontSize:'.54rem',color:'var(--text-faint)',lineHeight:1.6,marginBottom:'.9rem',padding:'.5rem .6rem',background:'var(--tag-bg)',borderRadius:6}}>
+            <strong style=${{color:'var(--text-muted)'}}>Data protection notice:</strong> Training data contains no personal data as defined under GDPR Art.\u00a04(1). Exported records consist exclusively of IFC schema type identifiers, anonymous geometric metrics, and user-provided classification labels. No IP addresses, device identifiers, cookies, or project-identifying information are collected or transmitted. Sharing is initiated solely by user action. You may review the full exported payload before submitting. ClashControl is open source \u2014 the export logic can be audited in the source code at any time.
+          </div>
+
           <!-- Footer actions -->
           <div style=${{display:'flex',alignItems:'center',justifyContent:'space-between'}}>
-            <span style=${{fontSize:'.58rem',color:'var(--text-muted)'}}>You can configure this anytime in Settings</span>
-            <button onClick=${dismiss} style=${{border:'none',cursor:'pointer',fontFamily:'inherit',fontSize:'.75rem',borderRadius:8,padding:'.5rem 1.4rem',background:'var(--accent)',color:'#fff',fontWeight:600,boxShadow:'0 2px 8px rgba(37,99,235,.25)',transition:'background .15s'}}>
-              Get Started
+            <button onClick=${dismiss} style=${{border:'1px solid var(--border)',cursor:'pointer',fontFamily:'inherit',fontSize:'.7rem',borderRadius:8,padding:'.5rem 1rem',background:'none',color:'var(--text-secondary)',transition:'background .15s'}}>
+              Skip for now
+            </button>
+            <button onClick=${function(){dismiss();setTimeout(function(){d({t:'TRAINING_MODE'});},250);}} style=${{border:'none',cursor:'pointer',fontFamily:'inherit',fontSize:'.75rem',borderRadius:8,padding:'.5rem 1.4rem',background:'#7c3aed',color:'#fff',fontWeight:600,boxShadow:'0 2px 8px rgba(124,58,237,.3)',transition:'background .15s'}}>
+              Enable Training Mode
             </button>
           </div>
         </div>

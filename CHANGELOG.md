@@ -1,5 +1,23 @@
 # Changelog
 
+## v2.0.37 (2026-03-24)
+- Always show training toggle in chatbox header, not just when clashes exist
+
+## v2.0.36 (2026-03-24)
+- Add 'training mode' as a chat command in NL parser
+
+## v2.0.35 (2026-03-24)
+- Solid nav cube faces, better contrast, fix mobile panel covering tabs
+
+## v2.0.34 (2026-03-24)
+- Add touch controls for mobile 3D viewer (rotate, pan, pinch-zoom)
+
+## v2.0.33 (2026-03-24)
+- Rewrite welcome popup as training mode intro shown each session
+
+## v2.0.32 (2026-03-24)
+- Remove compass labels, add training toggle to chatbox, add mobile responsive UI
+
 ## v2.0.31 (2026-03-24)
 - Move AI training annotations to a dedicated Training Mode tab
 
