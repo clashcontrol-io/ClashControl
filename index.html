@@ -193,7 +193,7 @@ window.onload = function() {
 
 function startApp() {
   // ── Version (auto-updated by pre-commit hook) ──
-  var CC_VERSION = {v:'2.0.26',hash:'f80ca08',date:'2026-03-24T16:55:54Z'};
+  var CC_VERSION = {v:'2.0.27',hash:'d9f99e3',date:'2026-03-24T17:00:03Z'};
 
   // Check CDN deps loaded
   var need = [];
@@ -4255,7 +4255,9 @@ function startApp() {
     </div>`;
   }
 
-  // ── View Cube (Revit-style 3D cube with compass) ──────────────
+  // ── Navigation Cube (Revit-style 3D cube with compass) ────────
+  // Supports face, edge, and corner clicks for 26 snap directions.
+  // Touch-enabled for mobile. Drag to orbit the main viewport.
   function ViewCube(props) {
     var state3d = props.state3d;
     var canvasRef = useRef(null);
@@ -4401,7 +4403,7 @@ function startApp() {
 
       vcState.current = {renderer:renderer, scene:scene, camera:camera,
         cubeGroup:cubeGroup, cubeMesh:cubeMesh, materials:materials,
-        compassGroup:compassGroup, raycaster:raycaster, mouse:mouse, hoveredIdx:null};
+        compassGroup:compassGroup, raycaster:raycaster, mouse:mouse, hoveredKey:null};
 
       // ── Animation loop ──────────────────────────────────────────
       // Rotation is derived from orbit spherical angles (theta/phi) rather than
@@ -4426,38 +4428,70 @@ function startApp() {
       }
       animate();
 
-      // ── Hover / click helpers ───────────────────────────────────
-      function getHit(e) {
+      // ── Hit-zone detection (face / edge / corner) ─────────────
+      // Returns {dir:[x,y,z], faces:[indices]} or null.
+      // Edge threshold: hits within this distance of a cube edge
+      // trigger a 2-face (edge) or 3-face (corner) navigation.
+      var EDGE_T = 0.15;
+      function getHitZone(cx, cy) {
         var vc = vcState.current; if(!vc) return null;
         var rect = canvas.getBoundingClientRect();
-        mouse.x = ((e.clientX-rect.left)/rect.width)*2-1;
-        mouse.y = -((e.clientY-rect.top)/rect.height)*2+1;
+        mouse.x = ((cx-rect.left)/rect.width)*2-1;
+        mouse.y = -((cy-rect.top)/rect.height)*2+1;
         raycaster.setFromCamera(mouse, camera);
         var hits = raycaster.intersectObject(cubeMesh);
-        return hits.length>0 ? BOX_FACE_MAP[hits[0].face.materialIndex] : null;
+        if(hits.length===0) return null;
+        var hit = hits[0];
+        var faceIdx = BOX_FACE_MAP[hit.face.materialIndex];
+        // Convert hit point to cube local space (unrotated unit cube -0.5..0.5)
+        var lp = cubeMesh.worldToLocal(hit.point.clone());
+        var comps = [lp.x, lp.y, lp.z];
+        var fn = FACES[faceIdx].normal;
+        var dir = [fn[0], fn[1], fn[2]];
+        var faces = [faceIdx];
+        // For axes perpendicular to the face normal, check if near an edge
+        for(var i=0;i<3;i++){
+          if(fn[i]!==0) continue;
+          if(Math.abs(comps[i]) > 0.5 - EDGE_T){
+            var sign = comps[i]>0?1:-1;
+            dir[i] = sign;
+            for(var j=0;j<FACES.length;j++){
+              if(FACES[j].normal[i]===sign){ faces.push(j); break; }
+            }
+          }
+        }
+        // Normalize direction
+        var len = Math.sqrt(dir[0]*dir[0]+dir[1]*dir[1]+dir[2]*dir[2]);
+        if(len>0){ dir[0]/=len; dir[1]/=len; dir[2]/=len; }
+        return {dir:dir, faces:faces};
       }
-      function updateHover(newIdx) {
+
+      // ── Hover highlight (supports multi-face for edges/corners) ─
+      function updateHover(zone) {
         var vc = vcState.current; if(!vc) return;
-        if(newIdx === vc.hoveredIdx) return;
-        vc.hoveredIdx = newIdx;
+        var newKey = zone ? zone.faces.slice().sort().join(',') : null;
+        if(newKey === vc.hoveredKey) return;
+        vc.hoveredKey = newKey;
+        var hovSet = {};
+        if(zone) zone.faces.forEach(function(f){ hovSet[f]=true; });
         vc.materials.forEach(function(mat, boxIdx) {
           var fi = BOX_FACE_MAP[boxIdx];
-          var isHov = fi === newIdx;
+          var isHov = !!hovSet[fi];
           mat.map = makeFaceTexture(FACES[fi].label, isHov);
           mat.map.needsUpdate = true;
           mat.color.setHex(isHov ? 0x2563eb : (FACE_CLR[FACES[fi].label]||0x1c3550));
         });
       }
 
-      // ── Drag-to-orbit / click ───────────────────────────────────
+      // ── Drag-to-orbit / click (mouse + touch) ────────────────
       var isDragging=false, dragStart={x:0,y:0}, didDrag=false;
-      function onDown(e) { isDragging=true; didDrag=false; dragStart.x=e.clientX; dragStart.y=e.clientY; canvas.style.cursor='grabbing'; }
-      function onDrag(e) {
-        if(!isDragging){ updateHover(getHit(e)); return; }
-        var dx=e.clientX-dragStart.x, dy=e.clientY-dragStart.y;
+
+      function onPointerDown(cx, cy) { isDragging=true; didDrag=false; dragStart.x=cx; dragStart.y=cy; canvas.style.cursor='grabbing'; }
+      function onPointerDrag(cx, cy) {
+        var dx=cx-dragStart.x, dy=cy-dragStart.y;
         if(Math.abs(dx)>3||Math.abs(dy)>3) didDrag=true;
         if(!didDrag) return;
-        dragStart.x=e.clientX; dragStart.y=e.clientY;
+        dragStart.x=cx; dragStart.y=cy;
         var S=state3d.current;
         if(S&&S.orbit){
           S.orbit.sph.theta -= dx*0.007;
@@ -4465,14 +4499,36 @@ function startApp() {
           S.orbit.apply(); invalidate();
         }
       }
-      function onUp(e) {
-        if(isDragging&&!didDrag){ var fi=getHit(e); if(fi!==null) flyToDir(FACES[fi].normal); }
+      function onPointerUp(cx, cy) {
+        if(isDragging&&!didDrag){ var zone=getHitZone(cx,cy); if(zone) flyToDir(zone.dir); }
         isDragging=false; canvas.style.cursor='pointer';
       }
-      canvas.addEventListener('mousedown', onDown);
-      canvas.addEventListener('mousemove', onDrag);
-      canvas.addEventListener('mouseup',   onUp);
+
+      // Mouse events
+      canvas.addEventListener('mousedown', function(e){ onPointerDown(e.clientX, e.clientY); });
+      canvas.addEventListener('mousemove', function(e){
+        if(!isDragging){ updateHover(getHitZone(e.clientX, e.clientY)); return; }
+        onPointerDrag(e.clientX, e.clientY);
+      });
+      canvas.addEventListener('mouseup', function(e){ onPointerUp(e.clientX, e.clientY); });
       canvas.addEventListener('mouseleave', function(){ isDragging=false; canvas.style.cursor='pointer'; updateHover(null); });
+
+      // Touch events (navigation cube works on mobile)
+      canvas.addEventListener('touchstart', function(e){
+        e.preventDefault();
+        var t=e.touches[0]; if(!t) return;
+        onPointerDown(t.clientX, t.clientY);
+      }, {passive:false});
+      canvas.addEventListener('touchmove', function(e){
+        e.preventDefault();
+        var t=e.touches[0]; if(!t) return;
+        onPointerDrag(t.clientX, t.clientY);
+      }, {passive:false});
+      canvas.addEventListener('touchend', function(e){
+        e.preventDefault();
+        var t=e.changedTouches[0]; if(!t) return;
+        onPointerUp(t.clientX, t.clientY);
+      }, {passive:false});
 
       return function(){ cancelAnimationFrame(animId); renderer.dispose(); };
     }, []);
