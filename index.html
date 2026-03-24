@@ -193,7 +193,7 @@ window.onload = function() {
 
 function startApp() {
   // ── Version (auto-updated by pre-commit hook) ──
-  var CC_VERSION = {v:'1.2.73',hash:'f514f9d',date:'2026-03-24T08:56:22Z'};
+  var CC_VERSION = {v:'1.2.74',hash:'4dabbc3',date:'2026-03-24T08:58:43Z'};
 
   // Check CDN deps loaded
   var need = [];
@@ -2071,6 +2071,20 @@ function startApp() {
           if(obj.isMesh && obj.userData.expressID===expressId && !found) found=obj;
         });
         if(found){
+          // Look up discipline color from model
+          var discColor = 0x60a5fa;
+          var curModels = modelsRef.current;
+          for(var mi=0;mi<curModels.length;mi++){
+            var els=curModels[mi].elements||[];
+            for(var ei=0;ei<els.length;ei++){
+              if(els[ei].expressId===expressId){
+                var dObj=DISC.find(function(x){return x.id===curModels[mi].discipline;});
+                if(dObj) discColor=new THREE.Color(dObj.c).getHex();
+                mi=curModels.length; break;
+              }
+            }
+          }
+
           // Ensure visible for outline computation (may be frustum-culled)
           var wasHidden = !found.visible;
           if(wasHidden) found.visible = true;
@@ -2082,7 +2096,7 @@ function startApp() {
             var faceCount = found.geometry.index ? found.geometry.index.count/3 : (found.geometry.attributes.position?found.geometry.attributes.position.count/3:0);
             if(faceCount < 50000) {
               var edgeGeo = new THREE.EdgesGeometry(found.geometry, 50);
-              var edgeMat = new THREE.LineBasicMaterial({color:0x60a5fa, transparent:true, opacity:0.4, depthTest:false});
+              var edgeMat = new THREE.LineBasicMaterial({color:discColor, transparent:true, opacity:0.4, depthTest:false});
               var edgeLines = new THREE.LineSegments(edgeGeo, edgeMat);
               edgeLines.applyMatrix4(found.matrixWorld);
               edgeLines.renderOrder = 999;
@@ -2629,17 +2643,22 @@ function startApp() {
                 if(els[ei].expressId===eid){ found={el:els[ei],model:curModels[mi]}; break; }
               }
             }
-            // Highlight with silhouette outline (same as _highlightById)
+            // Highlight with silhouette outline in discipline color
             if(hlRef.current){
               if(hlRef.current.isGroup) hlRef.current.traverse(function(c){if(c.isMesh||c.isLine||c.isLineSegments){if(c.geometry)c.geometry.dispose();if(c.material)c.material.dispose();}});
               scene.remove(hlRef.current);hlRef.current=null;
+            }
+            var clickDiscColor = 0x60a5fa;
+            if(found && found.model) {
+              var dObj2 = DISC.find(function(x){return x.id===found.model.discipline;});
+              if(dObj2) clickDiscColor = new THREE.Color(dObj2.c).getHex();
             }
             var hlGrp = new THREE.Group();
             try {
               var fc2 = hit.geometry.index ? hit.geometry.index.count/3 : (hit.geometry.attributes.position?hit.geometry.attributes.position.count/3:0);
               if(fc2 < 50000) {
                 var edgeGeo2 = new THREE.EdgesGeometry(hit.geometry, 50);
-                var edgeMat2 = new THREE.LineBasicMaterial({color:0x60a5fa, transparent:true, opacity:0.4, depthTest:false});
+                var edgeMat2 = new THREE.LineBasicMaterial({color:clickDiscColor, transparent:true, opacity:0.4, depthTest:false});
                 var edgeLines2 = new THREE.LineSegments(edgeGeo2, edgeMat2);
                 edgeLines2.applyMatrix4(hit.matrixWorld);
                 edgeLines2.renderOrder = 999;

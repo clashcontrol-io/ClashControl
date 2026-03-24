@@ -1,5 +1,8 @@
 # Changelog
 
+## v1.2.74 (2026-03-24)
+- Fix soft clash marker position and remove penetration depth display
+
 ## v1.2.73 (2026-03-24)
 - Show detection status in chat input area with glowing animation
 
