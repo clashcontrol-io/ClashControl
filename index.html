@@ -144,7 +144,7 @@
     @keyframes nlBorderReady{0%{box-shadow:0 8px 32px rgba(0,0,0,.35),0 0 0 4px rgba(34,197,94,.5),0 0 20px rgba(34,197,94,.4)}100%{box-shadow:0 8px 32px rgba(0,0,0,.35),0 0 0 0 rgba(34,197,94,0),0 0 0 rgba(34,197,94,0)}}
     .lc2{display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
     button{font-family:inherit}
-    .cc-tip{position:relative}.cc-tip::after{content:attr(data-tip);position:absolute;left:calc(100% + 8px);top:50%;transform:translateY(-50%) translateX(-4px);background:var(--bg-secondary);color:var(--text-primary);border:1px solid var(--border);border-radius:6px;padding:.3rem .6rem;font-size:.7rem;white-space:nowrap;pointer-events:none;opacity:0;transition:opacity .15s,transform .15s;z-index:9999;box-shadow:0 4px 12px rgba(0,0,0,.2)}.cc-tip:hover::after{opacity:1;transform:translateY(-50%) translateX(0)}.cc-tip-up::after{left:50%;top:auto;bottom:calc(100% + 7px);transform:translateX(-50%) translateY(4px)}.cc-tip-up:hover::after{transform:translateX(-50%) translateY(0)}.cc-tip-left::after{left:auto;right:calc(100% + 8px);transform:translateY(-50%) translateX(4px)}.cc-tip-left:hover::after{transform:translateY(-50%) translateX(0)}
+    .cc-tip{position:relative}.cc-tip::after{content:attr(data-tip);position:absolute;left:calc(100% + 8px);top:50%;transform:translateY(-50%) translateX(-4px);background:var(--bg-secondary);color:var(--text-primary);border:1px solid var(--border);border-radius:6px;padding:.3rem .6rem;font-size:.7rem;white-space:nowrap;pointer-events:none;opacity:0;transition:opacity .15s,transform .15s;z-index:9999;box-shadow:0 4px 12px rgba(0,0,0,.2)}.cc-tip:hover::after{opacity:1;transform:translateY(-50%) translateX(0)}.cc-tip-delay::after{transition-delay:0s}.cc-tip-delay:hover::after{transition-delay:1s}.cc-tip-up::after{left:50%;top:auto;bottom:calc(100% + 7px);transform:translateX(-50%) translateY(4px)}.cc-tip-up:hover::after{transform:translateX(-50%) translateY(0)}.cc-tip-left::after{left:auto;right:calc(100% + 8px);transform:translateY(-50%) translateX(4px)}.cc-tip-left:hover::after{transform:translateY(-50%) translateX(0)}
     button:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
     input:focus-visible,select:focus-visible,textarea:focus-visible{outline:2px solid var(--accent);outline-offset:0;border-color:var(--accent)}
     [role=switch]:focus-visible{outline:2px solid var(--accent);outline-offset:2px;border-radius:10px}
@@ -193,7 +193,7 @@ window.onload = function() {
 
 function startApp() {
   // ── Version (auto-updated by pre-commit hook) ──
-  var CC_VERSION = {v:'1.2.70',hash:'35341e3',date:'2026-03-24T08:16:24Z'};
+  var CC_VERSION = {v:'1.2.71',hash:'bef2859',date:'2026-03-24T08:22:19Z'};
 
   // Check CDN deps loaded
   var need = [];
@@ -4957,7 +4957,7 @@ function startApp() {
           <${MiniToggle} on=${rules.soft} onToggle=${function(){d({t:'UPD_RULES',u:{soft:!rules.soft}})}} />
         </div>
         ${rules.soft && html`<div style=${{marginBottom:'.25rem'}}>
-          <span style=${FL}>Clearance (mm)</span>
+          <span class="cc-tip cc-tip-delay" data-tip="Max gap between elements to flag as a soft/proximity clash" style=${{...FL,cursor:'help'}}>Clearance (mm)</span>
           <div style=${{display:'flex',alignItems:'center',gap:'.3rem'}}>
             <input type="range" min="10" max="500" step="5" value=${rules.clearance||50}
               onInput=${function(e){d({t:'UPD_RULES',u:{clearance:+e.target.value}})}}
@@ -4966,7 +4966,7 @@ function startApp() {
           </div>
         </div>`}
         <div style=${TOGROW}>
-          <span style=${{fontSize:'.68rem',color:'var(--text-primary)'}}>Hard tolerance (mm)</span>
+          <span class="cc-tip cc-tip-delay" data-tip="Ignore minor intersections smaller than this value (filters modelling noise)" style=${{fontSize:'.68rem',color:'var(--text-primary)',cursor:'help'}}>Hard tolerance (mm)</span>
           <input type="number" min="0" max="100" step="1" value=${rules.hardTolerance||0}
             onChange=${function(e){d({t:'UPD_RULES',u:{hardTolerance:+e.target.value}})}}
             style=${{...S_INPUT,width:50,fontSize:'.65rem',padding:'.15rem .3rem',textAlign:'center'}} />
@@ -7464,7 +7464,8 @@ function startApp() {
       </div>
 
       ${rules.soft && html`<div style=${{display:'flex',alignItems:'center',gap:'.4rem',marginTop:'.4rem'}}>
-        <span style=${{fontSize:'.65rem',color:'var(--text-muted)'}}>Clearance</span>
+        <span class="cc-tip cc-tip-up cc-tip-delay" data-tip="Max gap between elements to flag as a soft/proximity clash"
+          style=${{fontSize:'.65rem',color:'var(--text-muted)',cursor:'help'}}>Clearance</span>
         <input type="number" min="1" max="9999" value=${rules.clearance}
           onChange=${function(e){upd('clearance',Math.max(1,parseInt(e.target.value)||50))}}
           style=${numSt} />
@@ -7472,7 +7473,8 @@ function startApp() {
       </div>`}
 
       ${rules.hard && html`<div style=${{display:'flex',alignItems:'center',gap:'.4rem',marginTop:'.3rem'}}>
-        <span style=${{fontSize:'.65rem',color:'var(--text-muted)'}}>Tolerance</span>
+        <span class="cc-tip cc-tip-up cc-tip-delay" data-tip="Ignore minor intersections smaller than this value (filters modelling noise)"
+          style=${{fontSize:'.65rem',color:'var(--text-muted)',cursor:'help'}}>Tolerance</span>
         <input type="number" min="0" max="999" value=${rules.hardTolerance}
           onChange=${function(e){upd('hardTolerance',Math.max(0,parseInt(e.target.value)||0))}}
           style=${numSt} />

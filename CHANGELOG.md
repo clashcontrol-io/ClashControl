@@ -1,5 +1,8 @@
 # Changelog
 
+## v1.2.71 (2026-03-24)
+- Extract IFC GlobalId from loaded elements
+
 ## v1.2.70 (2026-03-24)
 - Fix clash marker placement using exact intersection line midpoints
 
