@@ -193,7 +193,7 @@ window.onload = function() {
 
 function startApp() {
   // ── Version (auto-updated by pre-commit hook) ──
-  var CC_VERSION = {v:'1.2.77',hash:'08da472',date:'2026-03-24T09:13:31Z'};
+  var CC_VERSION = {v:'1.2.78',hash:'8166dfe',date:'2026-03-24T09:16:22Z'};
 
   // Check CDN deps loaded
   var need = [];
@@ -981,8 +981,8 @@ function startApp() {
     (el.meshes || []).forEach(function(mesh) {
       var pos = mesh.geometry && mesh.geometry.attributes && mesh.geometry.attributes.position;
       if (!pos) return;
-      mesh.updateMatrix();
-      var mat = mesh.matrix; // parent groups are identity
+      mesh.updateWorldMatrix(true, false);
+      var mat = mesh.matrixWorld;
       var v = new THREE.Vector3();
       for (var i = 0; i < pos.count; i++) {
         v.set(pos.getX(i), pos.getY(i), pos.getZ(i));
@@ -1003,8 +1003,8 @@ function startApp() {
       var geo = mesh.geometry;
       var pos = geo && geo.attributes && geo.attributes.position;
       if (!pos) return;
-      mesh.updateMatrix();
-      var mat = mesh.matrix;
+      mesh.updateWorldMatrix(true, false);
+      var mat = mesh.matrixWorld;
       var va = new THREE.Vector3(), vb = new THREE.Vector3(), vc = new THREE.Vector3();
       var idx = geo.index;
       var count = idx ? idx.count : pos.count;
@@ -1039,31 +1039,35 @@ function startApp() {
     var e1x=b1x-b0x,e1y=b1y-b0y,e1z=b1z-b0z;
     var e2x=b2x-b0x,e2y=b2y-b0y,e2z=b2z-b0z;
     var n2x=e1y*e2z-e1z*e2y, n2y=e1z*e2x-e1x*e2z, n2z=e1x*e2y-e1y*e2x;
+    // Degenerate triangle check (zero-area) — early exit
+    var nl2=n2x*n2x+n2y*n2y+n2z*n2z;
+    if(nl2<1e-10) return false;
     var d2=-(n2x*b0x+n2y*b0y+n2z*b0z);
     // Signed distances of A's vertices to plane B
     var da0=n2x*a0x+n2y*a0y+n2z*a0z+d2;
     var da1=n2x*a1x+n2y*a1y+n2z*a1z+d2;
     var da2=n2x*a2x+n2y*a2y+n2z*a2z+d2;
-    // All on same side → no intersection
-    if(da0>0&&da1>0&&da2>0) return false;
-    if(da0<0&&da1<0&&da2<0) return false;
+    // Epsilon: scale by plane normal length to handle large coordinates
+    // 1e-6 * sqrt(nl2) ≈ relative tolerance matching IFC precision (sub-mm)
+    var eps2 = 1e-6 * Math.sqrt(nl2);
+    // All on same side → no intersection (with epsilon for near-coplanar rejection)
+    if(da0>eps2&&da1>eps2&&da2>eps2) return false;
+    if(da0<-eps2&&da1<-eps2&&da2<-eps2) return false;
 
     // Plane of A: normal n1, distance d1
     var f1x=a1x-a0x,f1y=a1y-a0y,f1z=a1z-a0z;
     var f2x=a2x-a0x,f2y=a2y-a0y,f2z=a2z-a0z;
     var n1x=f1y*f2z-f1z*f2y, n1y=f1z*f2x-f1x*f2z, n1z=f1x*f2y-f1y*f2x;
+    var nl1=n1x*n1x+n1y*n1y+n1z*n1z;
+    if(nl1<1e-10) return false;
     var d1=-(n1x*a0x+n1y*a0y+n1z*a0z);
     // Signed distances of B's vertices to plane A
     var db0=n1x*b0x+n1y*b0y+n1z*b0z+d1;
     var db1=n1x*b1x+n1y*b1y+n1z*b1z+d1;
     var db2=n1x*b2x+n1y*b2y+n1z*b2z+d1;
-    if(db0>0&&db1>0&&db2>0) return false;
-    if(db0<0&&db1<0&&db2<0) return false;
-
-    // Degenerate triangle check (zero-area)
-    var nl1=n1x*n1x+n1y*n1y+n1z*n1z;
-    var nl2=n2x*n2x+n2y*n2y+n2z*n2z;
-    if(nl1<1e-12||nl2<1e-12) return false;
+    var eps1 = 1e-6 * Math.sqrt(nl1);
+    if(db0>eps1&&db1>eps1&&db2>eps1) return false;
+    if(db0<-eps1&&db1<-eps1&&db2<-eps1) return false;
 
     // Intersection line direction D = n1 × n2
     var Dx=n1y*n2z-n1z*n2y, Dy=n1z*n2x-n1x*n2z, Dz=n1x*n2y-n1y*n2x;
@@ -1193,9 +1197,26 @@ function startApp() {
     var pts = [];
     _bvhTraverseAll(bA.root, bA.tris, bB.root, bB.tris, pts, 24);
     if (!pts.length) return false;
-    // Average all intersection points for accurate centroid
-    var sx=0, sy=0, sz=0, n=pts.length/3;
-    for (var i=0; i<pts.length; i+=3) { sx+=pts[i]; sy+=pts[i+1]; sz+=pts[i+2]; }
+    // Validate: reject intersection points outside both elements' AABBs
+    // (catches false positives from near-coplanar/degenerate triangles)
+    var boxA = elA.box, boxB = elB.box;
+    var margin = 0.01; // 10mm tolerance for point-in-box check
+    var valid = [];
+    for (var i=0; i<pts.length; i+=3) {
+      var px=pts[i], py=pts[i+1], pz=pts[i+2];
+      if (px >= boxA.min.x-margin && px <= boxA.max.x+margin &&
+          py >= boxA.min.y-margin && py <= boxA.max.y+margin &&
+          pz >= boxA.min.z-margin && pz <= boxA.max.z+margin &&
+          px >= boxB.min.x-margin && px <= boxB.max.x+margin &&
+          py >= boxB.min.y-margin && py <= boxB.max.y+margin &&
+          pz >= boxB.min.z-margin && pz <= boxB.max.z+margin) {
+        valid.push(px, py, pz);
+      }
+    }
+    if (!valid.length) return false;
+    // Average validated intersection points for accurate centroid
+    var sx=0, sy=0, sz=0, n=valid.length/3;
+    for (var i=0; i<valid.length; i+=3) { sx+=valid[i]; sy+=valid[i+1]; sz+=valid[i+2]; }
     return [sx/n, sy/n, sz/n];
   }
 
@@ -5161,6 +5182,7 @@ function startApp() {
               style=${{...S_INPUT,fontSize:'.7rem',padding:'.3rem .4rem .3rem 1.85rem',width:'100%',background:f.search?'#0f1e33':'var(--bg-secondary)',border:f.search?'1px solid #3b82f6':'1px solid var(--border)',transition:'all .15s'}} />
             ${f.search && html`<button onClick=${function(){d({t:'UPD_FILTERS',u:{search:''}})}} style=${{position:'absolute',right:'.35rem',background:'none',border:'none',cursor:'pointer',color:'var(--text-faint)',fontSize:'.75rem',padding:0,lineHeight:1}}>✕</button>`}
           </div>
+          <span style=${{fontSize:'.58rem',color:items.length<rawItems.length?'#60a5fa':'var(--text-faint)',fontWeight:items.length<rawItems.length?600:400,whiteSpace:'nowrap',flexShrink:0}}>${items.length}${items.length<rawItems.length?' / '+rawItems.length:''}</span>
           <button onClick=${function(){setFiltersOpen(!filtersOpen)}}
             style=${{...S_BTN,padding:'.3rem .5rem',background:filtersOpen||activeCount>0?'#1e3a5f':'var(--bg-secondary)',color:filtersOpen||activeCount>0?'#93c5fd':'var(--text-faint)',border:'1px solid var(--border)',fontSize:'.65rem',whiteSpace:'nowrap',flexShrink:0}} aria-label="Toggle filters">
             ⚙${activeCount>0?html`<span style=${{background:'#3b82f6',color:'#fff',borderRadius:99,padding:'.05rem .3rem',fontSize:'.55rem',marginLeft:'.2rem'}}>${activeCount}</span>`:''}

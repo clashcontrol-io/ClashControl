@@ -1,5 +1,8 @@
 # Changelog
 
+## v1.2.78 (2026-03-24)
+- Replace Clearance/Tolerance with single Max Gap setting
+
 ## v1.2.77 (2026-03-24)
 - Add What's New section to README
 
