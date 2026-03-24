@@ -1,5 +1,8 @@
 # Changelog
 
+## v2.0.23 (2026-03-24)
+- Add semantic clash filter and extend IFC type coverage
+
 ## v2.0.22 (2026-03-24)
 - Fix empty clash list when switching between issues and clashes tabs
 
