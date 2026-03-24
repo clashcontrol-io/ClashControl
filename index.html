@@ -193,7 +193,7 @@ window.onload = function() {
 
 function startApp() {
   // ── Version (auto-updated by pre-commit hook) ──
-  var CC_VERSION = {v:'2.0.14',hash:'b221a69',date:'2026-03-24T12:12:15Z'};
+  var CC_VERSION = {v:'2.0.15',hash:'f58c254',date:'2026-03-24T12:12:58Z'};
 
   // Check CDN deps loaded
   var need = [];
@@ -3824,7 +3824,11 @@ function startApp() {
         </button>
         <button onClick=${function(){d({t:'UPD_PREFS',u:{showClashMarkers:!s.prefs.showClashMarkers}})}}
           style=${{...S_BTN,background:s.prefs.showClashMarkers!==false?'rgba(37,99,235,.7)':'var(--overlay-bg)',color:s.prefs.showClashMarkers!==false?'#fff':'var(--text-muted)',border:'1px solid var(--border)',fontSize:'.65rem',padding:'.25rem .5rem'}}>
-          ${s.prefs.showClashMarkers!==false?'Markers On':'Markers Off'}
+          ${s.prefs.showClashMarkers!==false?'Clash Markers On':'Clash Markers Off'}
+        </button>
+        <button onClick=${function(){d({t:'UPD_PREFS',u:{showIssueMarkers:!s.prefs.showIssueMarkers}})}}
+          style=${{...S_BTN,background:s.prefs.showIssueMarkers!==false?'rgba(34,197,94,.7)':'var(--overlay-bg)',color:s.prefs.showIssueMarkers!==false?'#fff':'var(--text-muted)',border:'1px solid var(--border)',fontSize:'.65rem',padding:'.25rem .5rem'}}>
+          ${s.prefs.showIssueMarkers!==false?'Issue Markers On':'Issue Markers Off'}
         </button>
       </div>`}
       ${s.models.length>0 && html`<div style=${{position:'absolute',top:'.75rem',right:'50%',transform:'translateX(50%)',marginRight:'-45%',pointerEvents:'auto'}}>
@@ -5848,10 +5852,6 @@ function startApp() {
       </div>`}
       ${s.tab==='issues' && html`<div style=${{padding:'.4rem',borderBottom:'1px solid var(--border-subtle)',flexShrink:0,display:'flex',gap:'.3rem'}}>
         <button onClick=${function(){d({t:'MODAL',v:true,el:window._ccSelectedEl||undefined})}} style=${{...S_BTN,flex:1,background:'#2563eb',color:'#fff'}}>+ New Issue</button>
-        <button onClick=${function(){d({t:'UPD_PREFS',u:{showIssueMarkers:!s.prefs.showIssueMarkers}})}}
-          style=${{...S_BTN,background:s.prefs.showIssueMarkers!==false?'rgba(34,197,94,.7)':'var(--overlay-bg)',color:s.prefs.showIssueMarkers!==false?'#fff':'var(--text-muted)',border:'1px solid var(--border)',fontSize:'.65rem',padding:'.25rem .5rem',whiteSpace:'nowrap'}}>
-          ${s.prefs.showIssueMarkers!==false?'Markers On':'Markers Off'}
-        </button>
       </div>`}
       ${!isExplorerTab && items.length>0 && function(){
         var grpAction = isClashTab ? 'CLASH_GROUP_BY' : 'ISSUE_GROUP_BY';

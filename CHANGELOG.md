@@ -1,5 +1,8 @@
 # Changelog
 
+## v2.0.15 (2026-03-24)
+- Persist model visibility on refresh, clear issue description box
+
 ## v2.0.14 (2026-03-24)
 - Fix issue panel: adapt ClashProps for single-element issues, pass selected element to new issue modal
 
