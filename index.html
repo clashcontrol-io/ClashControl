@@ -193,7 +193,7 @@ window.onload = function() {
 
 function startApp() {
   // ── Version (auto-updated by pre-commit hook) ──
-  var CC_VERSION = {v:'2.0.27',hash:'d9f99e3',date:'2026-03-24T17:00:03Z'};
+  var CC_VERSION = {v:'2.0.28',hash:'a8f171a',date:'2026-03-24T17:15:47Z'};
 
   // Check CDN deps loaded
   var need = [];
@@ -4258,9 +4258,11 @@ function startApp() {
   // ── Navigation Cube (Revit-style 3D cube with compass) ────────
   // Supports face, edge, and corner clicks for 26 snap directions.
   // Touch-enabled for mobile. Drag to orbit the main viewport.
+  // Camera is along +Z so cube orientation directly matches the grid axes.
   function ViewCube(props) {
     var state3d = props.state3d;
     var canvasRef = useRef(null);
+    var compassRef = useRef(null);
     var vcState = useRef(null);
 
     // Face definitions: label + normal. Order MUST stay fixed (BOX_FACE_MAP depends on it).
@@ -4333,15 +4335,17 @@ function startApp() {
       renderer.setPixelRatio(window.devicePixelRatio);
 
       var scene = new THREE.Scene();
-      // Perspective camera gives real depth cues
-      var camera = new THREE.PerspectiveCamera(40, 1, 0.1, 20);
-      camera.position.set(2.3, 2.3, 2.3);
+      // Camera along +Z axis so cube rotation directly maps to main viewport orientation.
+      // This ensures FRONT face points toward camera when main camera is at +Z (front view),
+      // aligning the nav cube with the grid axes at origin.
+      var camera = new THREE.PerspectiveCamera(28, 1, 0.1, 20);
+      camera.position.set(0, 0, 4);
       camera.lookAt(0, 0, 0);
 
-      // Strong key light from upper-right-front + dim fill from opposite side
-      scene.add(new THREE.AmbientLight(0xffffff, 0.45));
-      var dKey = new THREE.DirectionalLight(0xffffff, 1.1);
-      dKey.position.set(3, 5, 4);
+      // Lighting: key light from upper-right-front + dim fill from opposite side
+      scene.add(new THREE.AmbientLight(0xffffff, 0.5));
+      var dKey = new THREE.DirectionalLight(0xffffff, 0.95);
+      dKey.position.set(2, 4, 5);
       scene.add(dKey);
       var dFill = new THREE.DirectionalLight(0x6688aa, 0.3);
       dFill.position.set(-3, -2, -3);
@@ -4367,30 +4371,19 @@ function startApp() {
       cubeGroup.add(new THREE.LineSegments(
         new THREE.EdgesGeometry(new THREE.BoxGeometry(1.004, 1.004, 1.004)), edgeMat));
 
-      scene.add(cubeGroup);
-
-      // Compass ring
-      var compassGroup = new THREE.Group();
-      var ring = new THREE.Mesh(
-        new THREE.RingGeometry(1.25, 1.38, 64),
-        new THREE.MeshBasicMaterial({color:0x475569, side:THREE.DoubleSide, transparent:true, opacity:0.5}));
-      ring.rotation.x = -Math.PI/2;
-      ring.position.y = -0.02;
-      compassGroup.add(ring);
-      [{l:'N',a:0},{l:'E',a:Math.PI/2},{l:'S',a:Math.PI},{l:'W',a:-Math.PI/2}].forEach(function(cl){
-        var lc=document.createElement('canvas'); lc.width=32; lc.height=32;
-        var lctx=lc.getContext('2d');
-        lctx.fillStyle = cl.l==='N'?'#ef4444':'#94a3b8';
-        lctx.font='bold 22px system-ui'; lctx.textAlign='center'; lctx.textBaseline='middle';
-        lctx.fillText(cl.l,16,16);
-        var lt=new THREE.CanvasTexture(lc); lt.minFilter=THREE.LinearFilter;
-        var ls=new THREE.Mesh(new THREE.PlaneGeometry(0.22,0.22),
-          new THREE.MeshBasicMaterial({map:lt,transparent:true,side:THREE.DoubleSide,depthTest:false}));
-        ls.position.set(Math.sin(cl.a)*1.52, 0, -Math.cos(cl.a)*1.52);
-        ls.rotation.x=-Math.PI/2;
-        compassGroup.add(ls);
+      // Axis indicators at cube corner — match the AxesHelper at the grid origin
+      // X=red, Y=green, Z=blue. Extends from the -X/-Y/-Z corner outward along each axis.
+      var axLen = 0.4;
+      [{d:[1,0,0],c:0xef4444},{d:[0,1,0],c:0x22c55e},{d:[0,0,1],c:0x3b82f6}].forEach(function(ax){
+        var p0 = new THREE.Vector3(-0.5,-0.5,-0.5);
+        var p1 = new THREE.Vector3(-0.5+ax.d[0]*axLen, -0.5+ax.d[1]*axLen, -0.5+ax.d[2]*axLen);
+        var geo = new THREE.BufferGeometry().setFromPoints([p0, p1]);
+        var line = new THREE.Line(geo, new THREE.LineBasicMaterial({color:ax.c, depthTest:false}));
+        line.renderOrder = 1;
+        cubeGroup.add(line);
       });
-      scene.add(compassGroup);
+
+      scene.add(cubeGroup);
 
       var raycaster = new THREE.Raycaster();
       var mouse = new THREE.Vector2();
@@ -4403,12 +4396,18 @@ function startApp() {
 
       vcState.current = {renderer:renderer, scene:scene, camera:camera,
         cubeGroup:cubeGroup, cubeMesh:cubeMesh, materials:materials,
-        compassGroup:compassGroup, raycaster:raycaster, mouse:mouse, hoveredKey:null};
+        raycaster:raycaster, mouse:mouse, hoveredKey:null};
 
       // ── Animation loop ──────────────────────────────────────────
       // Rotation is derived from orbit spherical angles (theta/phi) rather than
       // camera.quaternion, which suffers gimbal-lock when looking straight up/down.
       var animId;
+      // HTML compass: cache label elements once, update positions per frame
+      var compEl = compassRef.current;
+      var compLabels = compEl ? compEl.querySelectorAll('[data-compass]') : [];
+      // Compass angles: N at top (-PI/2 in screen coords), E=right(0), S=bottom(PI/2), W=left(PI)
+      var COMP_A = [-Math.PI/2, 0, Math.PI/2, Math.PI];
+      var COMP_R = 62, COMP_CX = 70, COMP_CY = 70;
       function animate() {
         animId = requestAnimationFrame(animate);
         var S = state3d.current;
@@ -4422,9 +4421,13 @@ function startApp() {
         _qCam.multiplyQuaternions(_qY, _qX);
         // Invert so the face in the camera's direction faces the mini-camera
         vc.cubeGroup.quaternion.copy(_qCam).invert();
-        // Compass rotates only around Y (keeps N/S/E/W correct)
-        vc.compassGroup.quaternion.setFromAxisAngle(_AY, -theta);
         vc.renderer.render(vc.scene, vc.camera);
+        // Update HTML compass labels — orbit around center, text stays upright
+        for(var i=0;i<compLabels.length;i++){
+          var a = COMP_A[i] - theta;
+          compLabels[i].style.left = (COMP_CX + Math.cos(a) * COMP_R) + 'px';
+          compLabels[i].style.top  = (COMP_CY + Math.sin(a) * COMP_R) + 'px';
+        }
       }
       animate();
 
@@ -4533,8 +4536,15 @@ function startApp() {
       return function(){ cancelAnimationFrame(animId); renderer.dispose(); };
     }, []);
 
-    return html`<div style=${{position:'absolute',top:'.5rem',right:'.5rem',pointerEvents:'auto',width:120,height:120}}>
-      <canvas ref=${canvasRef} width="120" height="120" style=${{cursor:'pointer',width:'100%',height:'100%'}} />
+    var compassLblStyle = {position:'absolute',transform:'translate(-50%,-50%)',fontSize:'10px',fontWeight:'bold',pointerEvents:'none',userSelect:'none'};
+    return html`<div style=${{position:'absolute',top:'.5rem',right:'.5rem',pointerEvents:'auto',width:140,height:140}}>
+      <div ref=${compassRef} style=${{position:'absolute',top:0,left:0,width:'100%',height:'100%',pointerEvents:'none'}}>
+        <span data-compass style=${{...compassLblStyle,color:'#ef4444'}}>N</span>
+        <span data-compass style=${{...compassLblStyle,color:'#94a3b8'}}>E</span>
+        <span data-compass style=${{...compassLblStyle,color:'#94a3b8'}}>S</span>
+        <span data-compass style=${{...compassLblStyle,color:'#94a3b8'}}>W</span>
+      </div>
+      <canvas ref=${canvasRef} width="120" height="120" style=${{cursor:'pointer',position:'absolute',top:10,left:10,width:120,height:120}} />
     </div>`;
   }
 

@@ -1,5 +1,8 @@
 # Changelog
 
+## v2.0.28 (2026-03-24)
+- Change viewcube into a proper navigation cube with touch + edge/corner support
+
 ## v2.0.27 (2026-03-24)
 - Fix React hooks violation in WelcomePopup causing crash on dismiss
 
