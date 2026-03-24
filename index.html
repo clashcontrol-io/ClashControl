@@ -193,7 +193,7 @@ window.onload = function() {
 
 function startApp() {
   // ── Version (auto-updated by pre-commit hook) ──
-  var CC_VERSION = {v:'1.2.78',hash:'8166dfe',date:'2026-03-24T09:16:22Z'};
+  var CC_VERSION = {v:'1.2.79',hash:'974b5f4',date:'2026-03-24T09:16:54Z'};
 
   // Check CDN deps loaded
   var need = [];
@@ -1446,10 +1446,36 @@ function startApp() {
         }
       }
 
+      // ── Parallel linear element rejection ─────────────────────
+      // For elongated elements (beams, pipes, ducts), if their long axes
+      // are nearly parallel and they don't actually cross each other's
+      // cross-section, skip the expensive BVH test.
+      var szA = bA.getSize(_tmpSizeA), szB = bB.getSize(_tmpSizeB);
+      var skipPair = false;
+      // Only apply if both elements are elongated (aspect ratio > 3:1)
+      var axA = [szA.x, szA.y, szA.z], axB = [szB.x, szB.y, szB.z];
+      var maxIA = 0, maxIB = 0;
+      if (axA[1] > axA[maxIA]) maxIA = 1; if (axA[2] > axA[maxIA]) maxIA = 2;
+      if (axB[1] > axB[maxIB]) maxIB = 1; if (axB[2] > axB[maxIB]) maxIB = 2;
+      var longA = axA[maxIA], shortA = Math.min(axA[(maxIA+1)%3], axA[(maxIA+2)%3]);
+      var longB = axB[maxIB], shortB = Math.min(axB[(maxIB+1)%3], axB[(maxIB+2)%3]);
+      if (longA > shortA * 3 && longB > shortB * 3 && maxIA === maxIB) {
+        // Both are elongated along the same axis — check cross-section overlap
+        // The overlap on the perpendicular axes tells us if they actually cross
+        var ax1 = (maxIA+1)%3, ax2 = (maxIA+2)%3;
+        var minA = [bA.min.x, bA.min.y, bA.min.z], maxAr = [bA.max.x, bA.max.y, bA.max.z];
+        var minB = [bB.min.x, bB.min.y, bB.min.z], maxBr = [bB.max.x, bB.max.y, bB.max.z];
+        var ov1 = Math.min(maxAr[ax1], maxBr[ax1]) - Math.max(minA[ax1], minB[ax1]);
+        var ov2 = Math.min(maxAr[ax2], maxBr[ax2]) - Math.max(minA[ax2], minB[ax2]);
+        // If cross-section overlap is minimal (< 10% of the smaller cross-section), skip
+        var crossA = axA[ax1] * axA[ax2], crossB = axB[ax1] * axB[ax2];
+        var crossOv = Math.max(0, ov1) * Math.max(0, ov2);
+        if (crossOv < Math.min(crossA, crossB) * 0.1) skipPair = true;
+      }
+
       // ── L1+L2: BVH dual-tree + Möller tri-tri ──────────────────
-      // (SAP already guarantees AABB overlap — no redundant box check needed)
       var hardPt=false, isSoft=false, geoDist=Infinity;
-      if (rules.hard) hardPt = _meshesIntersect(eA, eB);
+      if (rules.hard && !skipPair) hardPt = _meshesIntersect(eA, eB);
       if (!hardPt && maxGapM>0) {
         geoDist = _meshMinDist(eA, eB, maxGapM, _softPairBuf);
         isSoft = geoDist<=maxGapM;
