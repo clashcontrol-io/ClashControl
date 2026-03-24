@@ -240,7 +240,7 @@ window.onload = function() {
 
 function startApp() {
   // ── Version (auto-updated by pre-commit hook) ──
-  var CC_VERSION = {v:'2.0.34',hash:'4166ef3',date:'2026-03-24T20:53:49Z'};
+  var CC_VERSION = {v:'2.0.35',hash:'b74648d',date:'2026-03-24T20:55:28Z'};
 
   // Check CDN deps loaded
   var need = [];
@@ -8262,7 +8262,7 @@ function startApp() {
         '**Analysis:** "how many clashes?", "analyze clashes", "summary"\n' +
         '**Theme:** "switch to light", "dark mode"\n' +
         '**Files:** "load ifc", "load 2d", "import bcf", "export bcf"\n' +
-        '**Navigation:** "show clashes tab", "open settings", "open bridge"\n' +
+        '**Navigation:** "show clashes tab", "open settings", "open bridge", "training mode"\n' +
         '**Viewer:** "section x", "wireframe mode", "show markers", "hide grid"\n' +
         '**Tools:** "measure length", "save viewpoint", "save project"\n' +
         '**Display:** "color by discipline", "show model tree", "reset view"';
@@ -8589,6 +8589,17 @@ function startApp() {
     if (/(?:show|open|go\s+to|switch\s+to)\s+(?:the\s+)?clashes?\s*(?:tab|panel|sidebar)?/.test(text)) { d({t:'TAB',v:'clashes'}); return 'Opened Clashes tab.'; }
     if (/(?:show|open|go\s+to|switch\s+to)\s+(?:the\s+)?issues?\s*(?:tab|panel|sidebar)?/.test(text)) { d({t:'TAB',v:'issues'}); return 'Opened Issues tab.'; }
     if (/(?:show|open|go\s+to|switch\s+to)\s+(?:the\s+)?explorer?\s*(?:tab|panel)?/.test(text)) { d({t:'TAB',v:'explorer'}); return 'Opened Explorer tab.'; }
+
+    // ── Training Mode ─────────────────────────────────────────────
+    if (/training\s*mode|(?:enable|start|activate|turn\s+on)\s+training|(?:open|show)\s+(?:the\s+)?training/.test(text)) {
+      if(!s.trainingMode) d({t:'TRAINING_MODE'});
+      else d({t:'TAB',v:'training'});
+      return s.trainingMode ? 'Training tab opened.' : 'Training Mode enabled. Open the Training tab on the right to annotate clashes.';
+    }
+    if (/(?:disable|stop|deactivate|turn\s+off|exit)\s+training/.test(text)) {
+      if(s.trainingMode) d({t:'TRAINING_MODE'});
+      return 'Training Mode disabled.';
+    }
 
     // ── Settings & Modals ────────────────────────────────────────
     if (/(?:open|show)\s+(?:the\s+)?settings?/.test(text)) { d({t:'SETTINGS',v:true}); return 'Opened settings.'; }

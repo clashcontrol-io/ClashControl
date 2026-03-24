@@ -1,5 +1,8 @@
 # Changelog
 
+## v2.0.35 (2026-03-24)
+- Solid nav cube faces, better contrast, fix mobile panel covering tabs
+
 ## v2.0.34 (2026-03-24)
 - Add touch controls for mobile 3D viewer (rotate, pan, pinch-zoom)
 
