@@ -157,10 +157,10 @@
     @media(max-width:768px){
       /* Hide rails on tablet/mobile — replaced by bottom nav */
       .cc-left-rail,.cc-right-rail{display:none!important}
-      /* Side panel becomes full-width overlay */
-      .cc-side-panel{position:fixed!important;inset:0!important;width:100%!important;z-index:1100!important;border:none!important}
-      /* Bottom mobile nav bar */
-      .cc-mobile-nav{display:flex!important}
+      /* Side panel becomes full-width overlay, leaving room for bottom nav */
+      .cc-side-panel{position:fixed!important;top:0!important;left:0!important;right:0!important;bottom:56px!important;width:100%!important;z-index:1040!important;border:none!important}
+      /* Bottom mobile nav bar — above side panel */
+      .cc-mobile-nav{display:flex!important;z-index:1050!important}
       /* Header: compact */
       .cc-header{padding:.35rem .5rem!important}
       .cc-header-actions{gap:.25rem!important}
@@ -240,7 +240,7 @@ window.onload = function() {
 
 function startApp() {
   // ── Version (auto-updated by pre-commit hook) ──
-  var CC_VERSION = {v:'2.0.33',hash:'0cd82bf',date:'2026-03-24T20:52:32Z'};
+  var CC_VERSION = {v:'2.0.34',hash:'4166ef3',date:'2026-03-24T20:53:49Z'};
 
   // Check CDN deps loaded
   var need = [];
@@ -4487,7 +4487,7 @@ function startApp() {
     // BoxGeometry material group order: +X, -X, +Y, -Y, +Z, -Z = RIGHT, LEFT, TOP, BOTTOM, FRONT, BACK
     var BOX_FACE_MAP = [2, 3, 4, 5, 0, 1]; // boxGeo slot → FACES index
     // Base face colors (dark-theme palette; lighting provides per-face variation)
-    var FACE_CLR = {FRONT:0x1c3550, BACK:0x1c3550, RIGHT:0x1c3550, LEFT:0x1c3550, TOP:0x1c3550, BOTTOM:0x1c3550};
+    var FACE_CLR = {FRONT:0x2a4a6b, BACK:0x253f5e, RIGHT:0x2a4a6b, LEFT:0x253f5e, TOP:0x304f72, BOTTOM:0x1f3650};
 
     function flyToDir(dir) {
       var S=state3d.current; if(!S||!S.orbit) return;
@@ -4522,9 +4522,6 @@ function startApp() {
       c.width=128; c.height=128;
       var ctx=c.getContext('2d');
       ctx.clearRect(0,0,128,128);
-      ctx.strokeStyle = isHovered ? 'rgba(147,197,253,0.95)' : 'rgba(148,163,184,0.22)';
-      ctx.lineWidth = 4;
-      ctx.strokeRect(3,3,122,122);
       ctx.fillStyle = isHovered ? '#ffffff' : 'rgba(226,232,240,0.88)';
       ctx.font = 'bold 21px system-ui,sans-serif';
       ctx.textAlign = 'center';
@@ -4567,19 +4564,14 @@ function startApp() {
         var f = FACES[fi];
         return new THREE.MeshPhongMaterial({
           map: makeFaceTexture(f.label, false),
-          color: new THREE.Color(FACE_CLR[f.label] || 0x1c3550),
+          color: new THREE.Color(FACE_CLR[f.label] || 0x2a4a6b),
           transparent: true,
-          shininess: 35,
-          specular: new THREE.Color(0x1a2e44)
+          shininess: 50,
+          specular: new THREE.Color(0x3a5a7a)
         });
       });
       var cubeMesh = new THREE.Mesh(new THREE.BoxGeometry(1, 1, 1), materials);
       cubeGroup.add(cubeMesh);
-
-      // Sharp wireframe edges slightly proud of the cube surface
-      var edgeMat = new THREE.LineBasicMaterial({color:0x5577aa, transparent:true, opacity:0.9});
-      cubeGroup.add(new THREE.LineSegments(
-        new THREE.EdgesGeometry(new THREE.BoxGeometry(1.004, 1.004, 1.004)), edgeMat));
 
       // Axis indicators at cube corner — match the AxesHelper at the grid origin
       // X=red, Y=green, Z=blue. Extends from the -X/-Y/-Z corner outward along each axis.
@@ -4680,7 +4672,7 @@ function startApp() {
           var isHov = !!hovSet[fi];
           mat.map = makeFaceTexture(FACES[fi].label, isHov);
           mat.map.needsUpdate = true;
-          mat.color.setHex(isHov ? 0x2563eb : (FACE_CLR[FACES[fi].label]||0x1c3550));
+          mat.color.setHex(isHov ? 0x2563eb : (FACE_CLR[FACES[fi].label]||0x2a4a6b));
         });
       }
 

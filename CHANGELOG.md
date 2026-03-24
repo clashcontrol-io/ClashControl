@@ -1,5 +1,8 @@
 # Changelog
 
+## v2.0.34 (2026-03-24)
+- Add touch controls for mobile 3D viewer (rotate, pan, pinch-zoom)
+
 ## v2.0.33 (2026-03-24)
 - Rewrite welcome popup as training mode intro shown each session
 
