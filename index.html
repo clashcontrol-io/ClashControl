@@ -193,7 +193,7 @@ window.onload = function() {
 
 function startApp() {
   // ── Version (auto-updated by pre-commit hook) ──
-  var CC_VERSION = {v:'2.0.6',hash:'b58bb1d',date:'2026-03-24T11:09:44Z'};
+  var CC_VERSION = {v:'2.0.7',hash:'7d991b5',date:'2026-03-24T11:17:44Z'};
 
   // Check CDN deps loaded
   var need = [];
@@ -4295,6 +4295,12 @@ function startApp() {
     var active=sb&&sb.enabled;
     function toggleSectionBox(){
       if(active){d({t:'SECTION_BOX',v:null});return;}
+      // If an element is selected, section box around it; otherwise around whole scene
+      var selEid = window._ccSelectedExpressId;
+      if(selEid!=null && _sboxAroundElements){
+        _sboxAroundElements([selEid]);
+        return;
+      }
       if(_getSectionBoxFromScene){
         var box=_getSectionBoxFromScene();
         if(box) d({t:'SECTION_BOX',v:{enabled:true,min:[box.min.x,box.min.y,box.min.z],max:[box.max.x,box.max.y,box.max.z]}});
@@ -4670,8 +4676,8 @@ function startApp() {
           return;
         }
         if (ext !== 'ifc') return;
-        // File size warning: >200 MB IFC files can exhaust browser memory
-        if (f.size > 200 * 1024 * 1024) {
+        // File size warning: >500 MB IFC files can exhaust browser memory
+        if (f.size > 500 * 1024 * 1024) {
           var sizeMB = Math.round(f.size / (1024 * 1024));
           if (!confirm(f.name + ' is ' + sizeMB + ' MB. Large IFC files may freeze or crash the tab. Continue?')) {
             errors.push(f.name + ': Skipped (file too large)');
@@ -4908,7 +4914,7 @@ function startApp() {
         <span style=${{color:'var(--text-primary)',fontSize:'.75rem',flex:1,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}} title=${m.name}>${m.name}</span>
         ${m._stub && html`<span style=${{fontSize:'.55rem',color:'#f59e0b',background:'var(--pill-amber-bg)',padding:'.05rem .3rem',borderRadius:4,flexShrink:0}}>stub</span>`}
         <button onClick=${function(){setOpen(!open)}} style=${{...S_BTN,padding:'0 2px',background:'none',color:'var(--text-faint)',fontSize:'.6rem'}}>${open?'▲':'▼'}</button>
-        <button onClick=${function(){d({t:'DEL_MODEL',id:m.id});idbDeleteFile(m.id);idbDeleteGeoCache(m.id);}} style=${{...S_BTN,padding:'0 2px',background:'none',color:'var(--text-faint)',fontSize:'.6rem'}}>✕</button>
+        <button onClick=${function(){if(!confirm('Remove "'+m.name+'" from this project?'))return;d({t:'DEL_MODEL',id:m.id});idbDeleteFile(m.id);idbDeleteGeoCache(m.id);}} style=${{...S_BTN,padding:'0 2px',background:'none',color:'var(--text-faint)',fontSize:'.6rem'}}>✕</button>
       </div>
       ${open && html`<div style=${{padding:'.5rem',borderTop:'1px solid var(--border)',display:'flex',flexDirection:'column',gap:'.35rem'}}>
         <select value=${m.discipline} onChange=${function(e){var p=DISC.find(function(x){return x.id===e.target.value});d({t:'UPD_MODEL',id:m.id,u:{discipline:e.target.value,color:p?p.c:m.color}})}}
@@ -8116,7 +8122,7 @@ function startApp() {
     // Collect all IFC types from loaded models
     var allIfcTypes = useMemo(function(){
       var types = {};
-      s.models.forEach(function(m){(m.elements||[]).forEach(function(el){if(el.props&&el.props.ifcType)types[el.props.ifcType]=true;});});
+      s.models.filter(function(m){return m.visible!==false}).forEach(function(m){(m.elements||[]).forEach(function(el){if(el.props&&el.props.ifcType)types[el.props.ifcType]=true;});});
       return Object.keys(types).sort();
     },[s.models]);
 

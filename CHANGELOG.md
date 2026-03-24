@@ -1,5 +1,8 @@
 # Changelog
 
+## v2.0.7 (2026-03-24)
+- Improve IFC loading: fix WASM leak, material dedup, early model close, file size warning, cache GC, progress
+
 ## v2.0.6 (2026-03-24)
 - Add clash detection improvements: overlap volume gate, accurate depth, type-pair tolerances, saved presets
 
