@@ -1,5 +1,8 @@
 # Changelog
 
+## v2.0.39 (2026-03-24)
+- Make welcome popup scrollable so buttons aren't hidden behind mobile nav
+
 ## v2.0.38 (2026-03-24)
 - Always show training mode toggle on all screens and before clashes
 

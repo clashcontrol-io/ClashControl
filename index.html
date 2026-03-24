@@ -188,6 +188,9 @@
       .cc-viewcube-wrap{width:80px!important;height:80px!important;top:.25rem!important;right:.25rem!important}
       .cc-viewcube-wrap canvas{width:64px!important;height:64px!important;top:8px!important;left:8px!important}
     }
+    /* Header hidden on desktop, shown on mobile via media query */
+    .cc-header{display:none!important}
+    @media(max-width:768px){.cc-header{display:flex!important}}
     /* Mobile nav hidden by default, shown via media query */
     .cc-mobile-nav{display:none;position:fixed;bottom:0;left:0;right:0;z-index:1050;
       background:var(--bg-primary);border-top:1px solid var(--border-subtle);
@@ -240,7 +243,7 @@ window.onload = function() {
 
 function startApp() {
   // ── Version (auto-updated by pre-commit hook) ──
-  var CC_VERSION = {v:'2.0.38',hash:'0ea2b6d',date:'2026-03-24T21:01:37Z'};
+  var CC_VERSION = {v:'2.0.39',hash:'d80824a',date:'2026-03-24T21:31:11Z'};
 
   // Check CDN deps loaded
   var need = [];
@@ -4259,7 +4262,7 @@ function startApp() {
           ${findQuery&&findResults.length===0 && html`<div style=${{fontSize:'.6rem',color:'var(--text-faint)',textAlign:'center',padding:'.5rem'}}>No matches</div>`}
         </div>`}
       </div>`}
-      ${html`<${ViewCube} state3d=${state3d} />`}
+      ${html`<${ViewCube} state3d=${state3d} theme=${s.prefs.theme||'dark'} />`}
       ${(s.sectionAxis||s.sectionCustom) && html`<div style=${{...P,top:'7.5rem',right:'.75rem',background:'rgba(30,58,138,.9)',color:'#93c5fd',pointerEvents:'auto',cursor:'pointer',display:'flex',alignItems:'center',gap:'.4rem'}}
         onClick=${function(){d({t:'SECTION',axis:null})}}>
         <span>Section ${s.sectionAxis?(s.sectionAxis==='y'?'Z':s.sectionAxis==='z'?'Y':s.sectionAxis.toUpperCase()):'Surface'} · ${Math.round(s.sectionPos*100)}%</span>
@@ -4472,6 +4475,7 @@ function startApp() {
   // Camera is along +Z so cube orientation directly matches the grid axes.
   function ViewCube(props) {
     var state3d = props.state3d;
+    var theme = props.theme || 'dark';
     var canvasRef = useRef(null);
     var vcState = useRef(null);
 
@@ -4486,8 +4490,10 @@ function startApp() {
     ];
     // BoxGeometry material group order: +X, -X, +Y, -Y, +Z, -Z = RIGHT, LEFT, TOP, BOTTOM, FRONT, BACK
     var BOX_FACE_MAP = [2, 3, 4, 5, 0, 1]; // boxGeo slot → FACES index
-    // Base face colors (dark-theme palette; lighting provides per-face variation)
-    var FACE_CLR = {FRONT:0x2a4a6b, BACK:0x253f5e, RIGHT:0x2a4a6b, LEFT:0x253f5e, TOP:0x304f72, BOTTOM:0x1f3650};
+    // Base face colors — light-on-dark / dark-on-light for contrast with viewer background
+    var FACE_CLR = theme==='light'
+      ? {FRONT:0xc8d0dc, BACK:0xbfc7d3, RIGHT:0xc8d0dc, LEFT:0xbfc7d3, TOP:0xd0d8e4, BOTTOM:0xb8c0cc}
+      : {FRONT:0x2a4a6b, BACK:0x253f5e, RIGHT:0x2a4a6b, LEFT:0x253f5e, TOP:0x304f72, BOTTOM:0x1f3650};
 
     function flyToDir(dir) {
       var S=state3d.current; if(!S||!S.orbit) return;
@@ -4725,6 +4731,35 @@ function startApp() {
 
       return function(){ cancelAnimationFrame(animId); renderer.dispose(); };
     }, []);
+
+    // Update cube face colors when theme changes
+    useEffect(function(){
+      var vc = vcState.current; if(!vc) return;
+      var light = theme==='light';
+      var clr = light
+        ? {FRONT:0xc8d0dc, BACK:0xbfc7d3, RIGHT:0xc8d0dc, LEFT:0xbfc7d3, TOP:0xd0d8e4, BOTTOM:0xb8c0cc}
+        : {FRONT:0x2a4a6b, BACK:0x253f5e, RIGHT:0x2a4a6b, LEFT:0x253f5e, TOP:0x304f72, BOTTOM:0x1f3650};
+      var txtClr = light ? '#1e293b' : 'rgba(226,232,240,0.88)';
+      BOX_FACE_MAP.forEach(function(fi, i){
+        var f = FACES[fi];
+        vc.materials[i].color.set(clr[f.label] || 0x2a4a6b);
+        // Rebuild face texture with correct text color
+        var c = document.createElement('canvas');
+        c.width=128; c.height=128;
+        var ctx=c.getContext('2d');
+        ctx.clearRect(0,0,128,128);
+        ctx.fillStyle = txtClr;
+        ctx.font = 'bold 21px system-ui,sans-serif';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText(f.label, 64, 64);
+        var tex = new THREE.CanvasTexture(c);
+        tex.minFilter = THREE.LinearFilter;
+        vc.materials[i].map.dispose();
+        vc.materials[i].map = tex;
+        vc.materials[i].needsUpdate = true;
+      });
+    }, [theme]);
 
     return html`<div class="cc-viewcube-wrap" style=${{position:'absolute',top:'.5rem',right:'.5rem',pointerEvents:'auto',width:140,height:140}}>
       <canvas ref=${canvasRef} width="120" height="120" style=${{cursor:'pointer',position:'absolute',top:10,left:10,width:120,height:120}} />
@@ -9919,6 +9954,7 @@ function startApp() {
     return html`<div style=${{height:'100vh',display:'flex',flexDirection:'row',overflow:'hidden'}}>
       <${LeftRail} s=${s} d=${d} />
       <div style=${{flex:1,display:'flex',flexDirection:'column',overflow:'hidden',position:'relative',minWidth:0}}>
+        <${Header} s=${s} d=${d} />
         ${is2D ? html`<${View2D} s=${s} d=${d} />` : html`<${Viewer} s=${s} d=${d} />`}
         ${is2D && html`<${ExportBar} s=${s} d=${d} />`}
       </div>
