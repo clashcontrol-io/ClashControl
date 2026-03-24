@@ -1,5 +1,8 @@
 # Changelog
 
+## v2.0.37 (2026-03-24)
+- Always show training toggle in chatbox header, not just when clashes exist
+
 ## v2.0.36 (2026-03-24)
 - Add 'training mode' as a chat command in NL parser
 
