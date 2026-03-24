@@ -193,7 +193,7 @@ window.onload = function() {
 
 function startApp() {
   // ── Version (auto-updated by pre-commit hook) ──
-  var CC_VERSION = {v:'2.0.11',hash:'4cf80aa',date:'2026-03-24T11:25:40Z'};
+  var CC_VERSION = {v:'2.0.13',hash:'94d7278',date:'2026-03-24T12:01:44Z'};
 
   // Check CDN deps loaded
   var need = [];
@@ -2115,6 +2115,7 @@ function startApp() {
     var state3d = useRef({scene:null,camera:null,renderer:null,orbit:null,mg:null,map:{},raf:null});
     var se = useState(null), selectedEl=se[0], setSelectedEl=se[1];
     window._ccSelectedExpressId = selectedEl ? selectedEl.expressId : null;
+    window._ccSelectedEl = selectedEl || null;
     var cm = useState(null), ctxMenu=cm[0], setCtxMenu=cm[1];
     var hlRef = useRef(null); // highlighted mesh outline
     var outlineRef = useRef(null); // outliner mesh
@@ -2915,7 +2916,8 @@ function startApp() {
           for(var mhi=0;mhi<markerHits.length;mhi++){
             var mh = markerHits[mhi].object;
             if(mh.userData.clashId){
-              // Select this clash — dispatch ACTIVE and let IssueRow handle highlight/fly
+              // Select this clash and switch to clashes tab
+              d({t:'TAB',v:'clashes'});
               d({t:'ACTIVE',id:mh.userData.clashId});
               // Find the clash and do highlight/fly
               var allClashes = clashesRef.current||[];
@@ -2941,6 +2943,7 @@ function startApp() {
           for(var imhi=0;imhi<iMarkerHits.length;imhi++){
             var imh = iMarkerHits[imhi].object;
             if(imh.userData.issueId){
+              d({t:'TAB',v:'issues'});
               d({t:'ACTIVE',id:imh.userData.issueId});
               var allIssues = issuesRef.current||[];
               var hitIssue = null;
@@ -5844,7 +5847,7 @@ function startApp() {
         <div style=${{fontSize:'.6rem',color:'var(--text-faint)',textAlign:'right'}}>${items.length} / ${rawItems.length} shown</div>
       </div>`}
       ${s.tab==='issues' && html`<div style=${{padding:'.4rem',borderBottom:'1px solid var(--border-subtle)',flexShrink:0,display:'flex',gap:'.3rem'}}>
-        <button onClick=${function(){d({t:'MODAL',v:true})}} style=${{...S_BTN,flex:1,background:'#2563eb',color:'#fff'}}>+ New Issue</button>
+        <button onClick=${function(){d({t:'MODAL',v:true,el:window._ccSelectedEl||undefined})}} style=${{...S_BTN,flex:1,background:'#2563eb',color:'#fff'}}>+ New Issue</button>
         <button onClick=${function(){d({t:'UPD_PREFS',u:{showIssueMarkers:!s.prefs.showIssueMarkers}})}}
           style=${{...S_BTN,background:s.prefs.showIssueMarkers!==false?'rgba(34,197,94,.7)':'var(--overlay-bg)',color:s.prefs.showIssueMarkers!==false?'#fff':'var(--text-muted)',border:'1px solid var(--border)',fontSize:'.65rem',padding:'.25rem .5rem',whiteSpace:'nowrap'}}>
           ${s.prefs.showIssueMarkers!==false?'Markers On':'Markers Off'}
@@ -5920,27 +5923,42 @@ function startApp() {
   }
 
   function ClashProps(props) {
-    var it=props.item, models=props.models;
+    var it=props.item, models=props.models, isClash=props.isClash!==false;
     var dp=useState(false), detailOpen=dp[0], setDetailOpen=dp[1];
+    // For issues: single element via elementId; for clashes: elemA + elemB
+    var hasA = !!it.elemA, hasB = !!it.elemB, hasEl = !!it.elementId;
+    var isSingle = !isClash && hasEl && !hasB;
     // Lazy-load props only when detail panel is opened
     var pA = detailOpen ? (it.propsA || _lookupElProps(models, it.modelAId, it.elemA)) : null;
     var pB = detailOpen ? (it.propsB || _lookupElProps(models, it.modelBId, it.elemB)) : null;
+    var pEl = detailOpen && isSingle ? (it.elementProps || _lookupElProps(models, it.modelId, it.elementId)) : null;
     return html`<div onClick=${function(e){e.stopPropagation();}}>
       <div style=${{display:'flex',gap:'.2rem',marginBottom:'.2rem'}}>
-        <button onClick=${function(){if(_fitToElement&&it.elemA)_fitToElement(it.elemA);if(_highlightById&&it.elemA)_highlightById(it.elemA);}}
-          style=${{...S_BTN,fontSize:'.5rem',padding:'.1rem .3rem',background:'#0f3a5f',color:'#93c5fd',flex:1}}>Zoom A</button>
-        <button onClick=${function(){if(_fitToElement&&it.elemB)_fitToElement(it.elemB);if(_highlightById&&it.elemB)_highlightById(it.elemB);}}
-          style=${{...S_BTN,fontSize:'.5rem',padding:'.1rem .3rem',background:'#0f3a5f',color:'#93c5fd',flex:1}}>Zoom B</button>
-        <button onClick=${function(){if(_fitToElement&&it.elemA)_fitToElement(it.elemA);if(_highlightById)_highlightById(it.elemA,false);_sboxAroundElements&&_sboxAroundElements([it.elemA,it.elemB]);}}
-          style=${{...S_BTN,fontSize:'.5rem',padding:'.1rem .3rem',background:'#3b0764',color:'#c084fc',flex:1}} title="Section box around both elements">Box</button>
+        ${isSingle ? html`
+          <button onClick=${function(){if(_fitToElement&&it.elementId)_fitToElement(it.elementId);if(_highlightById&&it.elementId)_highlightById(it.elementId);}}
+            style=${{...S_BTN,fontSize:'.5rem',padding:'.1rem .3rem',background:'#0f3a5f',color:'#93c5fd',flex:1}}>Zoom</button>
+          <button onClick=${function(){if(_fitToElement&&it.elementId)_fitToElement(it.elementId);if(_highlightById)_highlightById(it.elementId,false);_sboxAroundElements&&_sboxAroundElements([it.elementId]);}}
+            style=${{...S_BTN,fontSize:'.5rem',padding:'.1rem .3rem',background:'#3b0764',color:'#c084fc',flex:1}} title="Section box around element">Box</button>
+        ` : html`
+          <button onClick=${function(){if(_fitToElement&&it.elemA)_fitToElement(it.elemA);if(_highlightById&&it.elemA)_highlightById(it.elemA);}}
+            style=${{...S_BTN,fontSize:'.5rem',padding:'.1rem .3rem',background:'#0f3a5f',color:'#93c5fd',flex:1}}>Zoom A</button>
+          <button onClick=${function(){if(_fitToElement&&it.elemB)_fitToElement(it.elemB);if(_highlightById&&it.elemB)_highlightById(it.elemB);}}
+            style=${{...S_BTN,fontSize:'.5rem',padding:'.1rem .3rem',background:'#0f3a5f',color:'#93c5fd',flex:1}}>Zoom B</button>
+          <button onClick=${function(){if(_fitToElement&&it.elemA)_fitToElement(it.elemA);if(_highlightById)_highlightById(it.elemA,false);_sboxAroundElements&&_sboxAroundElements([it.elemA,it.elemB]);}}
+            style=${{...S_BTN,fontSize:'.5rem',padding:'.1rem .3rem',background:'#3b0764',color:'#c084fc',flex:1}} title="Section box around both elements">Box</button>
+        `}
       </div>
       <button onClick=${function(){setDetailOpen(!detailOpen)}}
         style=${{...S_BTN,fontSize:'.55rem',padding:'.15rem .35rem',background:'var(--bg-primary)',color:'var(--text-muted)',width:'100%',textAlign:'left',border:'1px solid var(--border-subtle)'}}>
         ${detailOpen?'▼':'▶'} Element Properties
       </button>
       ${detailOpen && html`<div style=${{marginTop:'.3rem',maxHeight:'300px',overflowY:'auto'}}>
-        <${PropBlock} p=${pA} label=${'Element A: '+(it.elemAName||'#'+it.elemA)} />
-        <${PropBlock} p=${pB} label=${'Element B: '+(it.elemBName||'#'+it.elemB)} />
+        ${isSingle ? html`
+          <${PropBlock} p=${pEl} label=${'Element: '+(it.elementName||it.elementType||'#'+it.elementId)} />
+        ` : html`
+          <${PropBlock} p=${pA} label=${'Element A: '+(it.elemAName||'#'+it.elemA)} />
+          <${PropBlock} p=${pB} label=${'Element B: '+(it.elemBName||'#'+it.elemB)} />
+        `}
       </div>`}
     </div>`;
   }
@@ -6259,7 +6277,7 @@ function startApp() {
           <button onClick=${function(e){e.stopPropagation();d({t:'ACTIVE',id:null});if(_unghostAll)_unghostAll();if(window._ccRemoveActiveClashMarker)window._ccRemoveActiveClashMarker();}}
             title="Collapse" style=${{...S_BTN,marginLeft:'auto',padding:'0 4px',background:'none',color:'var(--text-faint)',fontSize:'.7rem',flexShrink:0}}>▲</button>
         </div>
-        ${html`<${ClashProps} item=${it} models=${pr._models||[]} />`}
+        ${html`<${ClashProps} item=${it} models=${pr._models||[]} isClash=${isClash} />`}
         ${!isClash && it.elementProps && html`<${PropBlock} p=${it.elementProps} label=${'Linked: '+(it.elementType||'')+' '+(it.elementName||'#'+it.elementId)} />`}
         ${!isClash && it.assignee && html`<div style=${{fontSize:'.55rem',color:'var(--text-secondary)',marginTop:'.2rem'}}>Assigned: ${it.assignee}</div>`}
         ${!isClash && it.dueDate && html`<div style=${{fontSize:'.55rem',color:'var(--text-secondary)'}}>Due: ${it.dueDate}</div>`}
