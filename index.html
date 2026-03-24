@@ -193,7 +193,7 @@ window.onload = function() {
 
 function startApp() {
   // ── Version (auto-updated by pre-commit hook) ──
-  var CC_VERSION = {v:'2.0.7',hash:'7d991b5',date:'2026-03-24T11:17:44Z'};
+  var CC_VERSION = {v:'2.0.8',hash:'88d0621',date:'2026-03-24T11:20:05Z'};
 
   // Check CDN deps loaded
   var need = [];
@@ -1430,8 +1430,11 @@ function startApp() {
 
         // Apply model rules
         if (sameModel) {
-          // Self-clash: skip if excluded, or if model isn't in any selected group
-          if (rules.excludeSelf) continue;
+          // Self-clash: check selfClashGroup ('both','a','b') or legacy excludeSelf boolean
+          var scg = rules.selfClashGroup || (rules.excludeSelf ? 'none' : 'both');
+          if (scg === 'none') continue;
+          if (scg === 'a' && !inA[cur.m.id]) continue;
+          if (scg === 'b' && !inB[cur.m.id]) continue;
           if (!inA[cur.m.id] && !inB[cur.m.id]) continue;
         } else {
           // Cross-model: one must be from A, the other from B
@@ -5532,9 +5535,15 @@ function startApp() {
           <span style=${{fontSize:'.68rem',color:'var(--text-primary)'}}>Duplicates</span>
           <${MiniToggle} on=${rules.duplicates} onToggle=${function(){d({t:'UPD_RULES',u:{duplicates:!rules.duplicates}})}} />
         </div>
-        <div style=${TOGROW}>
-          <span style=${{fontSize:'.68rem',color:'var(--text-primary)'}}>Include self-clashes</span>
-          <${MiniToggle} on=${!rules.excludeSelf} onToggle=${function(){d({t:'UPD_RULES',u:{excludeSelf:!rules.excludeSelf}})}} />
+        <div style=${{marginBottom:'.25rem'}}>
+          <span style=${{...FL,cursor:'help'}} class="cc-tip cc-tip-delay" data-tip="Check elements within the same model for clashes. Can target just Model A, just Model B, or both.">Self-clashes</span>
+          <select value=${rules.selfClashGroup||(rules.excludeSelf?'none':'both')} onChange=${function(e){d({t:'UPD_RULES',u:{selfClashGroup:e.target.value,excludeSelf:e.target.value==='none'}})}}
+            style=${{...S_INPUT,fontSize:'.65rem',padding:'.2rem .3rem'}}>
+            <option value="none">Off</option>
+            <option value="both">Both groups</option>
+            <option value="a">Model A only</option>
+            <option value="b">Model B only</option>
+          </select>
         </div>
         <div style=${TOGROW}>
           <span style=${{fontSize:'.68rem',color:'var(--text-primary)'}}>Change-aware</span>
@@ -8187,9 +8196,15 @@ function startApp() {
           <input type="checkbox" checked=${rules.duplicates} onChange=${function(e){upd('duplicates',e.target.checked)}} />
           Duplicates
         </label>
-        <label style=${chkRow}>
-          <input type="checkbox" checked=${!rules.excludeSelf} onChange=${function(e){upd('excludeSelf',!e.target.checked)}} />
-          Include self-clashes
+        <label style=${{...chkRow,gap:'.3rem'}}>
+          Self-clashes:
+          <select value=${rules.selfClashGroup||(rules.excludeSelf?'none':'both')} onChange=${function(e){upd('selfClashGroup',e.target.value);upd('excludeSelf',e.target.value==='none')}}
+            style=${{fontSize:'.62rem',background:'var(--input-bg)',color:'var(--text-primary)',border:'1px solid var(--border)',borderRadius:4,padding:'1px 3px'}}>
+            <option value="none">Off</option>
+            <option value="both">Both</option>
+            <option value="a">A only</option>
+            <option value="b">B only</option>
+          </select>
         </label>
       </div>
 
@@ -8480,6 +8495,7 @@ function startApp() {
         ${msgs.map(function(m, i) {
           var isUser = m.role === 'user';
           if (m.setup) return html`<${ClashSetupCard} key=${i} setup=${m.setup} s=${s} d=${d} onRun=${executeDetection} setMsgs=${setMsgs} idx=${i} />`;
+          if (m.detecting) return null;
           return html`<div key=${i} style=${{display:'flex', justifyContent: isUser?'flex-end':'flex-start'}}>
             <div style=${{
               maxWidth:'85%', padding:'.45rem .7rem',
@@ -8488,10 +8504,7 @@ function startApp() {
               color: isUser ? '#fff' : textCol,
               fontSize:'.76rem', lineHeight:1.55, wordBreak:'break-word'
             }}>
-              ${m.detecting ? html`<span style=${{display:'flex',alignItems:'center',gap:'.4rem',color:'#60a5fa'}}>
-                <span class="spin" style=${{display:'inline-block',width:'.6rem',height:'.6rem',borderRadius:'50%',border:'1.5px solid rgba(96,165,250,.3)',borderTopColor:'#60a5fa',flexShrink:0}}></span>
-                Detecting clashes…
-              </span>` : m.text}
+              ${m.text}
             </div>
           </div>`;
         })}

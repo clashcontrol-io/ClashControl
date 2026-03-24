@@ -1,5 +1,8 @@
 # Changelog
 
+## v2.0.8 (2026-03-24)
+- Section box on selected element, filter IFC types by visible models, model delete confirmation, bump file size warning to 500MB
+
 ## v2.0.7 (2026-03-24)
 - Improve IFC loading: fix WASM leak, material dedup, early model close, file size warning, cache GC, progress
 
