@@ -1,5 +1,8 @@
 # Changelog
 
+## v1.2.73 (2026-03-24)
+- Show detection status in chat input area with glowing animation
+
 ## v1.2.72 (2026-03-24)
 - Add delayed hover tooltips explaining Clearance vs Tolerance
 

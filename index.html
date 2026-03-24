@@ -193,7 +193,7 @@ window.onload = function() {
 
 function startApp() {
   // ── Version (auto-updated by pre-commit hook) ──
-  var CC_VERSION = {v:'1.2.72',hash:'90a6bf3',date:'2026-03-24T08:50:16Z'};
+  var CC_VERSION = {v:'1.2.73',hash:'f514f9d',date:'2026-03-24T08:56:22Z'};
 
   // Check CDN deps loaded
   var need = [];
@@ -1213,7 +1213,7 @@ function startApp() {
       this.map[k].push(i);
     }
   };
-  _SpatialHash.prototype.minDistSq = function(px, py, pz, verts) {
+  _SpatialHash.prototype.minDistSq = function(px, py, pz, verts, out) {
     var best = Infinity;
     var cx = Math.floor(px * this.inv), cy = Math.floor(py * this.inv), cz = Math.floor(pz * this.inv);
     for (var dx = -1; dx <= 1; dx++) for (var dy = -1; dy <= 1; dy++) for (var dz = -1; dz <= 1; dz++) {
@@ -1223,14 +1223,15 @@ function startApp() {
         var idx = bucket[b];
         var ex = px - verts[idx], ey = py - verts[idx + 1], ez = pz - verts[idx + 2];
         var d2 = ex * ex + ey * ey + ez * ez;
-        if (d2 < best) best = d2;
+        if (d2 < best) { best = d2; if (out) { out[0]=px; out[1]=py; out[2]=pz; out[3]=verts[idx]; out[4]=verts[idx+1]; out[5]=verts[idx+2]; } }
       }
     }
     return best;
   };
 
   // Minimum vertex-to-vertex distance (for soft/clearance clashes)
-  function _meshMinDist(elA, elB, thresholdM) {
+  // Returns distance, or if outPair is provided, also fills [qx,qy,qz,gx,gy,gz] with closest pair
+  function _meshMinDist(elA, elB, thresholdM, outPair) {
     var vA = _getWorldVerts(elA), vB = _getWorldVerts(elB);
     if (!vA.length || !vB.length) return Infinity;
     var cs = Math.max(thresholdM || 0.05, 0.02);
@@ -1241,9 +1242,10 @@ function startApp() {
     grid.insert(gridVerts);
     var tSq = thresholdM * thresholdM, minSq = Infinity;
     var step = queryVerts.length > 30000 ? 3 * Math.ceil(queryVerts.length / 30000) : 3;
+    var bestPair = outPair ? [0,0,0,0,0,0] : null;
     for (var i = 0; i < queryVerts.length; i += step) {
-      var d2 = grid.minDistSq(queryVerts[i], queryVerts[i + 1], queryVerts[i + 2], gridVerts);
-      if (d2 < minSq) { minSq = d2; if (minSq <= tSq) return Math.sqrt(minSq); }
+      var d2 = grid.minDistSq(queryVerts[i], queryVerts[i + 1], queryVerts[i + 2], gridVerts, bestPair);
+      if (d2 < minSq) { minSq = d2; if (outPair) { outPair[0]=bestPair[0]; outPair[1]=bestPair[1]; outPair[2]=bestPair[2]; outPair[3]=bestPair[3]; outPair[4]=bestPair[4]; outPair[5]=bestPair[5]; } if (minSq <= tSq && !outPair) return Math.sqrt(minSq); }
     }
     return Math.sqrt(minSq);
   }
@@ -1418,8 +1420,10 @@ function startApp() {
       // (SAP already guarantees AABB overlap — no redundant box check needed)
       var hardPt=false, isSoft=false, geoDist=Infinity;
       if (rules.hard) hardPt = _meshesIntersect(eA, eB);
+      var softPair = null;
       if (!hardPt && rules.soft && clearanceM>0) {
-        geoDist = _meshMinDist(eA, eB, clearanceM);
+        softPair = [0,0,0,0,0,0];
+        geoDist = _meshMinDist(eA, eB, clearanceM, softPair);
         isSoft = geoDist<=clearanceM;
       }
 
@@ -1429,9 +1433,12 @@ function startApp() {
           // Use actual triangle intersection point from BVH traversal
           cpx=hardPt[0]; cpy=hardPt[1]; cpz=hardPt[2];
         } else {
-          // Soft clash — midpoint between the two elements' bbox centers
-          var cA = bA.getCenter(_tmpCtrA), cB = bB.getCenter(_tmpCtrB);
-          cpx=(cA.x+cB.x)/2; cpy=(cA.y+cB.y)/2; cpz=(cA.z+cB.z)/2;
+          // Soft clash — weighted point between closest vertices, biased toward smaller element
+          var sA = bA.getSize(_tmpCtrA), sB = bB.getSize(_tmpCtrB);
+          var volA = sA.x * sA.y * sA.z, volB = sB.x * sB.y * sB.z;
+          // Weight: smaller bbox pulls the marker closer (higher weight = closer to that side)
+          var wB = volA / (volA + volB + 1e-10); // wB→1 when A is big, so marker near B (the small one)
+          cpx=softPair[0]*(1-wB)+softPair[3]*wB; cpy=softPair[1]*(1-wB)+softPair[4]*wB; cpz=softPair[2]*(1-wB)+softPair[5]*wB;
         }
         // Penetration depth for hard clashes: min overlap of the two AABBs (stored as negative mm)
         var dist;
@@ -5520,8 +5527,8 @@ function startApp() {
           </div>
           <p style=${{color:'var(--text-faint)',fontSize:'.65rem',marginTop:'.1rem'}} class="lc2">${it.description}</p>
           ${isClash && html`<div style=${{display:'flex',gap:'.3rem',marginTop:'.2rem',flexWrap:'wrap',alignItems:'center'}}>
-            ${it.distance!=null && html`<span style=${{fontSize:'.6rem',color:it.distance<0?'#fca5a5':'var(--text-muted)',background:'var(--bg-secondary)',padding:'.05rem .3rem',borderRadius:3,fontWeight:500}}>
-              ${it.distance<0?'⬤ '+Math.abs(it.distance)+'mm penetration':it.distance===0?'⬤ touching':it.distance+'mm gap'}
+            ${it.distance!=null && it.distance>=0 && html`<span style=${{fontSize:'.6rem',color:'var(--text-muted)',background:'var(--bg-secondary)',padding:'.05rem .3rem',borderRadius:3,fontWeight:500}}>
+              ${it.distance===0?'⬤ touching':'⬤ '+it.distance+'mm gap'}
             </span>`}
             ${storeyLabel && html`<span style=${{fontSize:'.6rem',color:'var(--text-secondary)',background:'var(--bg-secondary)',padding:'.05rem .3rem',borderRadius:3}}>🏢 ${storeyLabel}</span>`}
             ${it.selfClash && html`<span style=${{fontSize:'.55rem',color:'#a78bfa',background:'#2e1065',padding:'.05rem .25rem',borderRadius:3}}>self</span>`}
