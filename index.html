@@ -193,7 +193,7 @@ window.onload = function() {
 
 function startApp() {
   // ── Version (auto-updated by pre-commit hook) ──
-  var CC_VERSION = {v:'2.0.22',hash:'972d291',date:'2026-03-24T15:35:07Z'};
+  var CC_VERSION = {v:'2.0.23',hash:'937b276',date:'2026-03-24T15:48:35Z'};
 
   // Check CDN deps loaded
   var need = [];
@@ -5546,6 +5546,7 @@ function startApp() {
     var stSavedPresets = useState(_getClashPresets), savedPresets = stSavedPresets[0], setSavedPresets = stSavedPresets[1];
     var stSaveName = useState(''), saveName = stSaveName[0], setSaveName = stSaveName[1];
     var stShowSave = useState(false), showSave = stShowSave[0], setShowSave = stShowSave[1];
+    var stTP = useState({a:'',b:'',mm:'50'}), tpState = stTP[0], setTPState = stTP[1];
     var models = s.models;
     var canRun = models.length > 0 && !s.detecting;
 
@@ -5706,14 +5707,13 @@ function startApp() {
               </div>`;
             })}
             ${typeList.length>=2 && function(){
-              var stTP=useState({a:typeList[0]||'',b:typeList[1]||'',mm:'50'});
-              var tp=stTP[0],setTP=stTP[1];
+              var tp=tpState.a?tpState:{a:typeList[0]||'',b:typeList[1]||typeList[0]||'',mm:'50'};
               return html`<div style=${{display:'flex',gap:'.15rem',alignItems:'center',flexWrap:'wrap'}}>
-                <select value=${tp.a} onChange=${function(e){setTP(Object.assign({},tp,{a:e.target.value}))}}
+                <select value=${tp.a} onChange=${function(e){setTPState(Object.assign({},tp,{a:e.target.value}))}}
                   style=${{...S_INPUT,fontSize:'.55rem',padding:'1px 2px',flex:1,minWidth:60}}>${typeList.map(function(t){return html`<option key=${t} value=${t}>${t.replace('Ifc','')}</option>`})}</select>
-                <select value=${tp.b} onChange=${function(e){setTP(Object.assign({},tp,{b:e.target.value}))}}
+                <select value=${tp.b} onChange=${function(e){setTPState(Object.assign({},tp,{b:e.target.value}))}}
                   style=${{...S_INPUT,fontSize:'.55rem',padding:'1px 2px',flex:1,minWidth:60}}>${typeList.map(function(t){return html`<option key=${t} value=${t}>${t.replace('Ifc','')}</option>`})}</select>
-                <input type="number" value=${tp.mm} onInput=${function(e){setTP(Object.assign({},tp,{mm:e.target.value}))}}
+                <input type="number" value=${tp.mm} onInput=${function(e){setTPState(Object.assign({},tp,{mm:e.target.value}))}}
                   style=${{...S_INPUT,fontSize:'.55rem',padding:'1px 2px',width:35}} placeholder="mm" />
                 <button onClick=${function(){
                   if(!tp.a||!tp.b||tp.a===tp.b) return;
@@ -5744,7 +5744,7 @@ function startApp() {
           <${MiniToggle} on=${rules.changeAware} onToggle=${function(){d({t:'UPD_RULES',u:{changeAware:!rules.changeAware}})}} />
         </div>
         <div style=${TOGROW}>
-          <span class="cc-tip cc-tip-delay" data-tip="Suppress hard clashes between intentionally related elements (doors in walls, assembly parts, openings). Uses IFC relationship data." style=${{fontSize:'.68rem',color:'var(--text-primary)',cursor:'help'}}>Semantic filter</span>
+          <span class="cc-tip cc-tip-delay" data-tip=${'Suppress hard clashes between intentionally related elements such as doors in walls, assembly parts, and openings. Uses IFC relationship data.'} style=${{fontSize:'.68rem',color:'var(--text-primary)',cursor:'help'}}>Semantic filter</span>
           <${MiniToggle} on=${rules.useSemanticFilter!==false} onToggle=${function(){d({t:'UPD_RULES',u:{useSemanticFilter:rules.useSemanticFilter===false?true:false}})}} />
         </div>
         <button onClick=${runDetection} disabled=${!canRun}
