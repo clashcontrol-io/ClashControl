@@ -240,7 +240,7 @@ window.onload = function() {
 
 function startApp() {
   // ── Version (auto-updated by pre-commit hook) ──
-  var CC_VERSION = {v:'2.0.32',hash:'7c1663d',date:'2026-03-24T20:51:23Z'};
+  var CC_VERSION = {v:'2.0.33',hash:'0cd82bf',date:'2026-03-24T20:52:32Z'};
 
   // Check CDN deps loaded
   var need = [];
@@ -2398,6 +2398,57 @@ function startApp() {
       }
       orbit.apply();invalidate();e.preventDefault();
     },{passive:false});
+    // ── Touch support (mobile orbit/pan/pinch-zoom) ──
+    var touchState = {type:null, lx:0, ly:0, dist:0};
+    el.style.touchAction = 'none'; // prevent browser scroll/zoom on canvas
+    el.addEventListener('touchstart', function(e) {
+      if(_sboxDragging) return;
+      e.preventDefault();
+      var t = e.touches;
+      if(t.length===1) {
+        touchState.type='rotate'; touchState.lx=t[0].clientX; touchState.ly=t[0].clientY;
+      } else if(t.length===2) {
+        touchState.type='pinch-pan';
+        touchState.lx=(t[0].clientX+t[1].clientX)/2;
+        touchState.ly=(t[0].clientY+t[1].clientY)/2;
+        touchState.dist=Math.hypot(t[1].clientX-t[0].clientX,t[1].clientY-t[0].clientY);
+      }
+    },{passive:false});
+    el.addEventListener('touchmove', function(e) {
+      if(!touchState.type) return;
+      e.preventDefault();
+      var t = e.touches;
+      if(touchState.type==='rotate' && t.length===1) {
+        var dx=t[0].clientX-touchState.lx, dy=t[0].clientY-touchState.ly;
+        touchState.lx=t[0].clientX; touchState.ly=t[0].clientY;
+        sph.theta-=dx*0.007; sph.phi-=dy*0.007; orbit.apply(); invalidate();
+      } else if(touchState.type==='pinch-pan' && t.length===2) {
+        var mx=(t[0].clientX+t[1].clientX)/2, my=(t[0].clientY+t[1].clientY)/2;
+        var d=Math.hypot(t[1].clientX-t[0].clientX,t[1].clientY-t[0].clientY);
+        // Pan
+        var pdx=mx-touchState.lx, pdy=my-touchState.ly;
+        var sp=sph.r*0.0008;
+        var right=new THREE.Vector3().crossVectors(orbit.camera.getWorldDirection(new THREE.Vector3()),new THREE.Vector3(0,1,0)).normalize();
+        target.addScaledVector(right,-pdx*sp); target.y+=pdy*sp;
+        // Pinch zoom
+        if(touchState.dist>0) {
+          var scale=touchState.dist/d;
+          sph.r*=scale;
+          if(orbit.camera.isOrthographicCamera) {
+            orbit.camera.zoom=Math.max(0.01,orbit.camera.zoom/scale);
+            orbit.camera.updateProjectionMatrix();
+          }
+        }
+        touchState.lx=mx; touchState.ly=my; touchState.dist=d;
+        orbit.apply(); invalidate();
+      }
+    },{passive:false});
+    el.addEventListener('touchend', function(e) {
+      if(e.touches.length===0) touchState.type=null;
+      else if(e.touches.length===1) {
+        touchState.type='rotate'; touchState.lx=e.touches[0].clientX; touchState.ly=e.touches[0].clientY;
+      }
+    });
     var orbit = {target:target, sync:sync, apply:apply, sph:sph, camera:camera};
     // Override apply to use orbit.camera (supports projection switching)
     orbit.apply = function() {

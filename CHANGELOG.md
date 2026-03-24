@@ -1,5 +1,8 @@
 # Changelog
 
+## v2.0.33 (2026-03-24)
+- Rewrite welcome popup as training mode intro shown each session
+
 ## v2.0.32 (2026-03-24)
 - Remove compass labels, add training toggle to chatbox, add mobile responsive UI
 
