@@ -1,5 +1,20 @@
 # Changelog
 
+## v1.2.61 (2026-03-24)
+- Add clash detection setup card and fix marker positioning
+
+## v1.2.60 (2026-03-24)
+- Add logo/version tooltips and quick start guide
+
+## v1.2.59 (2026-03-24)
+- Add comprehensive NL commands for full app control via chat
+
+## v1.2.58 (2026-03-23)
+- Add classical UI controls, bulk actions, and deeper AI integration
+
+## v1.2.57 (2026-03-23)
+- Polish light mode: CSS variables for theme coherence across all components
+
 ## v1.2.56 (2026-03-23)
 - Improve UI readability, spacing, and visual polish across the app
 

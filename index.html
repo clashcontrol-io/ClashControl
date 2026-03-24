@@ -193,7 +193,7 @@ window.onload = function() {
 
 function startApp() {
   // ── Version (auto-updated by pre-commit hook) ──
-  var CC_VERSION = {v:'1.2.56',hash:'83dfb80',date:'2026-03-23T20:20:16Z'};
+  var CC_VERSION = {v:'1.2.61',hash:'3505082',date:'2026-03-24T07:11:59Z'};
 
   // Check CDN deps loaded
   var need = [];
@@ -243,7 +243,7 @@ function startApp() {
   };
   var INIT_PREFS = {
     autoFlyTo:true, autoHighlight:true, showGrid:true, showAxes:true,
-    showClashMarkers:false, hoverHighlight:true, outlineSelected:true,
+    showClashMarkers:false, showIssueMarkers:true, hoverHighlight:true, outlineSelected:true,
     defaultPriority:'normal', defaultCategory:'design', defaultStatus:'open',
     defaultClearance:50, resetFiltersOnRun:true,
     theme:(function(){ try { return localStorage.getItem('cc_theme')||'dark'; } catch(e){ return 'dark'; } })(),
@@ -279,6 +279,9 @@ function startApp() {
     underlayMode:null, // null, 'view2d', 'compare'
     markups:[], // [{id, type:'line'|'rect'|'text'|'arrow', points, color, text}]
     markupTool:null, // null, 'line', 'rect', 'text', 'arrow', 'erase'
+    // Bulk selection
+    selected:{}, // {id:true} — selected clash/issue IDs
+    selectMode:false,
     // Revit Bridge (AI-powered)
     revitBridge:{
       provider:'',       // 'anthropic','openai','google'
@@ -345,6 +348,13 @@ function startApp() {
       case 'DEL_MARKUP':      return Object.assign({},s,{markups:s.markups.filter(function(m){return m.id!==a.id})});
       case 'CLEAR_MARKUPS':   return Object.assign({},s,{markups:[]});
       case 'MARKUP_TOOL':     return Object.assign({},s,{markupTool:a.v});
+      // Bulk selection
+      case 'SELECT_TOGGLE':  var sel2=Object.assign({},s.selected); if(sel2[a.id])delete sel2[a.id];else sel2[a.id]=true; return Object.assign({},s,{selected:sel2});
+      case 'SELECT_ALL':     var sa={}; (a.ids||[]).forEach(function(id){sa[id]=true;}); return Object.assign({},s,{selected:sa});
+      case 'SELECT_NONE':    return Object.assign({},s,{selected:{}});
+      case 'SELECT_MODE':    return Object.assign({},s,{selectMode:a.v,selected:a.v?s.selected:{}});
+      case 'BATCH_UPD_CLASH':  return Object.assign({},s,{clashes:s.clashes.map(function(c){return s.selected[c.id]?Object.assign({},c,a.u):c;}),selected:{}});
+      case 'BATCH_UPD_ISSUE':  return Object.assign({},s,{issues:s.issues.map(function(i){return s.selected[i.id]?Object.assign({},i,a.u):i;}),selected:{}});
       // Revit Bridge
       case 'UPD_BRIDGE':      return Object.assign({},s,{revitBridge:Object.assign({},s.revitBridge,a.u)});
       case 'BRIDGE_LOG':      return Object.assign({},s,{revitBridge:Object.assign({},s.revitBridge,{log:s.revitBridge.log.concat([{ts:Date.now(),type:a.logType||'info',text:a.text}])})});
@@ -1382,7 +1392,19 @@ function startApp() {
       }
 
       if (isHard || isSoft) {
-        var ctr = bA.getCenter(_tmpCtrA);
+        // Clash point = center of AABB intersection region (where elements meet)
+        var ix0 = Math.max(bA.min.x,bB.min.x), iy0 = Math.max(bA.min.y,bB.min.y), iz0 = Math.max(bA.min.z,bB.min.z);
+        var ix1 = Math.min(bA.max.x,bB.max.x), iy1 = Math.min(bA.max.y,bB.max.y), iz1 = Math.min(bA.max.z,bB.max.z);
+        var hasOverlap = ix0<=ix1 && iy0<=iy1 && iz0<=iz1;
+        var cpx, cpy, cpz;
+        if (hasOverlap) {
+          // Center of the overlap region — this is where the clash actually occurs
+          cpx=(ix0+ix1)/2; cpy=(iy0+iy1)/2; cpz=(iz0+iz1)/2;
+        } else {
+          // Soft clash with gap — midpoint between the two closest faces
+          var cA = bA.getCenter(_tmpCtrA), cB = bB.getCenter(_tmpCtrB);
+          cpx=(cA.x+cB.x)/2; cpy=(cA.y+cB.y)/2; cpz=(cA.z+cB.z)/2;
+        }
         var dist = isHard ? 0 : Math.round(geoDist*1000);
         var pA=eA.props||{}, pB=eB.props||{};
         var tA=pA.ifcType||'Element', tB=pB.ifcType||'Element';
@@ -1392,8 +1414,8 @@ function startApp() {
           title:sameModel?mA.name+' (self)':mA.discipline.toUpperCase()+' \u2194 '+mB.discipline.toUpperCase(),
           description:tA+': '+nA+' ('+mA.name+') vs '+tB+': '+nB+' ('+mB.name+')',
           modelAId:mA.id, modelBId:mB.id, elemA:eA.expressId, elemB:eB.expressId,
-          point:[ctr.x,ctr.y,ctr.z], createdAt:new Date().toISOString(),
-          distance:dist, elevation:Math.round(ctr.y*1000)/1000,
+          point:[cpx,cpy,cpz], createdAt:new Date().toISOString(),
+          distance:dist, elevation:Math.round(cpy*1000)/1000,
           disciplines:[mA.discipline,mB.discipline], selfClash:sameModel,
           elemAType:tA, elemBType:tB, elemAName:nA, elemBName:nB,
           elemAStorey:pA.storey||'', elemBStorey:pB.storey||'',
@@ -1786,6 +1808,8 @@ function startApp() {
   var _flyToElements = null;
   var _showClashMarkers = null;
   var _clearClashMarkers = null;
+  var _showIssueMarkers = null;
+  var _clearIssueMarkers = null;
   var _findAndHighlightElements = null;
   var _clearFoundElements = null;
   var _ghostOthers = null;
@@ -1811,6 +1835,7 @@ function startApp() {
     var outlineRef = useRef(null); // outliner mesh
     var hoverRef = useRef(null); // hover highlight mesh
     var clashMarkersRef = useRef(null); // group of clash markers
+    var issueMarkersRef = useRef(null); // group of issue markers
     var foundMarkersRef = useRef([]); // items finder highlights
     var measureObjsRef = useRef([]); // measurement 3D objects
     var measurePtsRef = useRef([]); // current measurement click points
@@ -2100,6 +2125,41 @@ function startApp() {
           clashMarkersRef.current.traverse(function(obj){if(obj.isMesh){obj.geometry&&obj.geometry.dispose();obj.material&&obj.material.dispose();}});
           scene.remove(clashMarkersRef.current);
           clashMarkersRef.current = null;
+          invalidate();
+        }
+      };
+
+      // ── Issue Markers (green) ──
+      _showIssueMarkers = function(issues) {
+        _clearIssueMarkers();
+        if(!issues||!issues.length) return;
+        var withPt = issues.filter(function(i){return i.point&&i.point.length>=3;});
+        if(!withPt.length) return;
+        var grp = new THREE.Group();
+        grp.name = 'issueMarkers';
+        var issueMat = new THREE.MeshBasicMaterial({color:0x22c55e, transparent:true, opacity:0.85});
+        var pinGeo = new THREE.SphereGeometry(0.15, 12, 12);
+        var ringGeo = new THREE.RingGeometry(0.25, 0.4, 24);
+        var ringMat = new THREE.MeshBasicMaterial({color:0x86efac, transparent:true, opacity:0.4, side:THREE.DoubleSide});
+        withPt.forEach(function(iss){
+          var pin = new THREE.Mesh(pinGeo, issueMat);
+          pin.position.set(iss.point[0],iss.point[1],iss.point[2]);
+          pin.userData.issueId = iss.id;
+          grp.add(pin);
+          var ring = new THREE.Mesh(ringGeo, ringMat);
+          ring.position.set(iss.point[0],iss.point[1],iss.point[2]);
+          ring.rotation.x = -Math.PI/2;
+          grp.add(ring);
+        });
+        scene.add(grp);
+        issueMarkersRef.current = grp;
+        invalidate();
+      };
+      _clearIssueMarkers = function() {
+        if(issueMarkersRef.current){
+          issueMarkersRef.current.traverse(function(obj){if(obj.isMesh){obj.geometry&&obj.geometry.dispose();obj.material&&obj.material.dispose();}});
+          scene.remove(issueMarkersRef.current);
+          issueMarkersRef.current = null;
           invalidate();
         }
       };
@@ -3167,6 +3227,15 @@ function startApp() {
       }
     }, [s.clashes, s.prefs.showClashMarkers]);
 
+    // Sync issue markers when issues change
+    useEffect(function(){
+      if(s.prefs.showIssueMarkers!==false && s.issues.length>0 && _showIssueMarkers){
+        _showIssueMarkers(s.issues);
+      } else if(_clearIssueMarkers){
+        _clearIssueMarkers();
+      }
+    }, [s.issues, s.prefs.showIssueMarkers]);
+
     // Clear measurement 3D objects when measurements list is cleared
     useEffect(function(){
       if(s.measurements.length===0 && measureObjsRef.current.length>0) {
@@ -3960,6 +4029,7 @@ function startApp() {
     var rn = useState(false), renaming=rn[0], setRenaming=rn[1];
     var rnv = useState(''), renameVal=rnv[0], setRenameVal=rnv[1];
     var cf = useState(null), confirmDelete=cf[0], setConfirmDelete=cf[1];
+    var tut = useState(false), showTutorial=tut[0], setShowTutorial=tut[1];
 
     function createProject() {
       var name = prompt('New project name:');
@@ -4001,11 +4071,14 @@ function startApp() {
 
     return html`<header style=${{display:'flex',alignItems:'center',justifyContent:'space-between',padding:'.5rem 1rem',background:'var(--bg-primary)',borderBottom:'1px solid var(--border-subtle)',flexShrink:0}}>
       <div style=${{display:'flex',alignItems:'center',gap:'.75rem'}}>
-        <div style=${{width:32,height:32,background:'var(--accent)',borderRadius:8,display:'flex',alignItems:'center',justifyContent:'center'}}><span style=${{color:'#fff',fontWeight:900,fontSize:14}}>CC</span></div>
+        <div style=${{width:32,height:32,background:'var(--accent)',borderRadius:8,display:'flex',alignItems:'center',justifyContent:'center',cursor:'default'}} title="ClashControl — Free, open-source IFC clash detection for the browser. Load BIM models, detect geometric clashes, manage issues, and export to BCF."><span style=${{color:'#fff',fontWeight:900,fontSize:14}}>CC</span></div>
         <div>
-          <span style=${{fontWeight:600}}>ClashControl</span>
-          <span style=${{color:'var(--text-muted)',fontSize:'.7rem',marginLeft:'.4rem',cursor:'default'}} title=${'Released: '+new Date(CC_VERSION.date).toLocaleDateString('en-GB',{day:'numeric',month:'long',year:'numeric'})+' at '+new Date(CC_VERSION.date).toLocaleTimeString('en-GB',{hour:'2-digit',minute:'2-digit'})+'\nBuild: '+CC_VERSION.hash}>v${CC_VERSION.v}</span>
+          <span style=${{fontWeight:600,cursor:'default'}} title="ClashControl — Free, open-source IFC clash detection for the browser. Load BIM models, detect geometric clashes, manage issues, and export to BCF.">ClashControl</span>
+          <span style=${{color:'var(--text-muted)',fontSize:'.7rem',marginLeft:'.4rem',cursor:'default'}} title=${'v'+CC_VERSION.v+' — Latest features:\n• Natural language app control (theme, files, viewer, tools)\n• Revit Bridge: AI-powered sync with Autodesk Revit\n• Soft clash / proximity detection\n• Light & dark theme with full UI polish\n• BCF 2.1 & 3.0 import/export\n• Floor plans, section planes & measurements\n\nBuild: '+CC_VERSION.hash+' ('+new Date(CC_VERSION.date).toLocaleDateString('en-GB',{day:'numeric',month:'long',year:'numeric'})+')'}>v${CC_VERSION.v}</span>
         </div>
+        <button onClick=${function(){setShowTutorial(!showTutorial)}}
+          style=${{...S_BTN,background:'none',border:'1px solid var(--border)',color:'var(--text-muted)',width:22,height:22,borderRadius:'50%',display:'flex',alignItems:'center',justifyContent:'center',fontSize:'.7rem',padding:0,cursor:'pointer',flexShrink:0}}
+          title="Quick start guide">ⓘ</button>
         <div style=${{position:'relative'}}>
           <button onClick=${function(){setProjOpen(!projOpen)}}
             style=${{...S_BTN,background:'var(--bg-secondary)',color:'var(--text-primary)',border:'1px solid var(--border)',display:'flex',alignItems:'center',gap:'.3rem',fontSize:'.7rem',padding:'.3rem .6rem'}}>
@@ -4073,6 +4146,46 @@ function startApp() {
           style=${{...S_BTN,background:'var(--bg-secondary)',color:'var(--text-secondary)',border:'1px solid var(--border)',fontSize:'.85rem',padding:'.3rem .5rem'}}
           title="Settings" aria-label="Open settings">⚙</button>
       </div>
+      ${showTutorial && html`<div onClick=${function(e){if(e.target===e.currentTarget)setShowTutorial(false)}} style=${{position:'fixed',inset:0,background:'rgba(0,0,0,.6)',zIndex:9999,display:'flex',alignItems:'center',justifyContent:'center',backdropFilter:'blur(4px)'}}>
+        <div style=${{background:'var(--bg-primary)',border:'1px solid var(--border)',borderRadius:12,padding:'1.5rem',maxWidth:520,width:'90vw',maxHeight:'80vh',overflowY:'auto',boxShadow:'0 16px 48px rgba(0,0,0,.5)'}}>
+          <div style=${{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:'1rem'}}>
+            <span style=${{fontSize:'1.1rem',fontWeight:700}}>Quick Start Guide</span>
+            <button onClick=${function(){setShowTutorial(false)}} style=${{...S_BTN,background:'none',color:'var(--text-muted)',fontSize:'1.2rem',padding:'0 .3rem',lineHeight:1}}>✕</button>
+          </div>
+          <div style=${{display:'flex',flexDirection:'column',gap:'.85rem',fontSize:'.78rem',color:'var(--text-secondary)',lineHeight:1.6}}>
+            <div>
+              <div style=${{fontWeight:600,color:'var(--text-primary)',marginBottom:'.25rem'}}>1. Load a model</div>
+              <div>Click <b>Models</b> in the sidebar, then <b>+ Load IFC</b> to open a BIM file. You can load multiple models to check clashes between them.</div>
+            </div>
+            <div>
+              <div style=${{fontWeight:600,color:'var(--text-primary)',marginBottom:'.25rem'}}>2. Detect clashes</div>
+              <div>Open the <b>AI Chat</b> at the bottom and type something like <i>"check structural vs MEP"</i> or <i>"find clashes within 50mm"</i>. Or use the <b>Clashes</b> tab to configure rules manually.</div>
+            </div>
+            <div>
+              <div style=${{fontWeight:600,color:'var(--text-primary)',marginBottom:'.25rem'}}>3. Review & manage</div>
+              <div>Click any clash to fly to it in 3D. Change status, create issues, filter by type/storey/discipline, or batch-update via chat: <i>"mark all open as resolved"</i>.</div>
+            </div>
+            <div>
+              <div style=${{fontWeight:600,color:'var(--text-primary)',marginBottom:'.25rem'}}>4. Export</div>
+              <div>Export results as <b>BCF 2.1</b> or <b>3.0</b> to share with Revit, Navisworks, Solibri, or BIMcollab. You can also save/load project files.</div>
+            </div>
+            <div style=${{borderTop:'1px solid var(--border-subtle)',paddingTop:'.7rem'}}>
+              <div style=${{fontWeight:600,color:'var(--text-primary)',marginBottom:'.25rem'}}>AI Chat commands</div>
+              <div>The chat understands natural language. Try these:</div>
+              <div style=${{display:'grid',gridTemplateColumns:'1fr 1fr',gap:'.25rem .75rem',marginTop:'.35rem',fontSize:'.72rem',color:'var(--text-muted)'}}>
+                <span><i>"switch to light"</i> — theme</span>
+                <span><i>"load ifc"</i> — open file</span>
+                <span><i>"section x"</i> — section plane</span>
+                <span><i>"wireframe mode"</i> — render style</span>
+                <span><i>"measure length"</i> — tools</span>
+                <span><i>"save viewpoint"</i> — camera</span>
+                <span><i>"show clashes tab"</i> — navigation</span>
+                <span><i>"color by discipline"</i> — display</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>`}
     </header>`;
   }
 
@@ -4638,6 +4751,207 @@ function startApp() {
     </div>`;
   }
 
+  // ── Clash Stats Bar ──────────────────────────────────────────
+  function ClashStatsBar(props) {
+    var items = props.items, isClash = props.isClash;
+    if (!items.length) return null;
+    var total = items.length;
+    var open = items.filter(function(c){return c.status==='open';}).length;
+    var inProg = items.filter(function(c){return c.status==='in_progress';}).length;
+    var resolved = items.filter(function(c){return c.status==='resolved'||c.status==='closed';}).length;
+    // For clashes: type breakdown
+    var hard = isClash ? items.filter(function(c){return c.type==='hard';}).length : 0;
+    var soft = isClash ? items.filter(function(c){return c.type==='soft';}).length : 0;
+    var dup = isClash ? items.filter(function(c){return c.type==='duplicate';}).length : 0;
+    // Resolution progress
+    var pct = total > 0 ? Math.round(resolved / total * 100) : 0;
+    var barCol = pct >= 80 ? '#22c55e' : pct >= 40 ? '#f59e0b' : '#ef4444';
+
+    var CHIP = function(label, n, bg, fg) {
+      return html`<span style=${{fontSize:'.58rem',padding:'1px 5px',borderRadius:99,background:bg,color:fg,fontWeight:600,whiteSpace:'nowrap'}}>${label} ${n}</span>`;
+    };
+    return html`<div style=${{padding:'.35rem .5rem',borderBottom:'1px solid var(--border-subtle)',flexShrink:0,background:'var(--bg-tertiary)'}}>
+      <!-- Progress bar -->
+      <div style=${{display:'flex',alignItems:'center',gap:'.4rem',marginBottom:'.3rem'}}>
+        <div style=${{flex:1,height:4,borderRadius:2,background:'var(--border)',overflow:'hidden'}}>
+          <div style=${{width:pct+'%',height:'100%',borderRadius:2,background:barCol,transition:'width .4s ease'}}></div>
+        </div>
+        <span style=${{fontSize:'.6rem',fontWeight:600,color:barCol,minWidth:28,textAlign:'right'}}>${pct}%</span>
+      </div>
+      <!-- Chips row -->
+      <div style=${{display:'flex',gap:'.25rem',flexWrap:'wrap',alignItems:'center'}}>
+        ${CHIP('Total', total, 'var(--tag-bg)', 'var(--text-secondary)')}
+        ${CHIP('Open', open, '#7f1d1d', '#fca5a5')}
+        ${inProg > 0 && CHIP('In Prog', inProg, '#78350f', '#fcd34d')}
+        ${CHIP('Resolved', resolved, '#052e16', '#4ade80')}
+        ${isClash && hard > 0 && html`<span style=${{width:1,height:12,background:'var(--border)',margin:'0 .1rem'}}></span>`}
+        ${isClash && hard > 0 && CHIP('Hard', hard, '#7f1d1d', '#fca5a5')}
+        ${isClash && soft > 0 && CHIP('Soft', soft, '#78350f', '#fcd34d')}
+        ${isClash && dup > 0 && CHIP('Dup', dup, '#4c1d95', '#c4b5fd')}
+      </div>
+    </div>`;
+  }
+
+  // ── Bulk Action Bar ──────────────────────────────────────────
+  function BulkActionBar(props) {
+    var s = props.s, d = props.d, items = props.items, isClash = props.isClash;
+    var sel = s.selected;
+    var count = Object.keys(sel).length;
+    if (!s.selectMode) {
+      return html`<div style=${{padding:'.25rem .5rem',borderBottom:'1px solid var(--border-subtle)',flexShrink:0,display:'flex',alignItems:'center',justifyContent:'space-between'}}>
+        <button onClick=${function(){d({t:'SELECT_MODE',v:true})}}
+          style=${{...S_BTN,fontSize:'.58rem',padding:'.15rem .4rem',background:'none',color:'var(--text-faint)',border:'1px solid var(--border)'}}>
+          Select Multiple
+        </button>
+      </div>`;
+    }
+    return html`<div style=${{padding:'.35rem .5rem',borderBottom:'1px solid var(--border-subtle)',flexShrink:0,background:'var(--accent-bg)'}}>
+      <div style=${{display:'flex',alignItems:'center',gap:'.3rem',marginBottom:count>0?'.3rem':0}}>
+        <button onClick=${function(){var ids=items.map(function(i){return i.id;}); d({t:'SELECT_ALL',ids:ids})}}
+          style=${{...S_BTN,fontSize:'.55rem',padding:'.15rem .3rem',background:'var(--accent)',color:'#fff'}}>All</button>
+        <button onClick=${function(){d({t:'SELECT_NONE'})}}
+          style=${{...S_BTN,fontSize:'.55rem',padding:'.15rem .3rem',background:'var(--bg-secondary)',color:'var(--text-secondary)',border:'1px solid var(--border)'}}>None</button>
+        <span style=${{flex:1,fontSize:'.62rem',color:'var(--accent-subtle)',fontWeight:600}}>${count} selected</span>
+        <button onClick=${function(){d({t:'SELECT_MODE',v:false})}}
+          style=${{...S_BTN,fontSize:'.55rem',padding:'.15rem .3rem',background:'none',color:'var(--text-muted)'}}>Cancel</button>
+      </div>
+      ${count > 0 && html`<div style=${{display:'flex',gap:'.25rem',flexWrap:'wrap'}}>
+        <select onChange=${function(e){if(!e.target.value)return;d({t:isClash?'BATCH_UPD_CLASH':'BATCH_UPD_ISSUE',u:{status:e.target.value}});e.target.value='';}}
+          style=${{...S_INPUT,fontSize:'.6rem',padding:'.15rem .25rem',width:'auto',flex:1}}>
+          <option value="">Set status...</option>
+          ${Object.keys(STAT).map(function(k){return html`<option key=${k} value=${k}>${STAT[k].label}</option>`})}
+        </select>
+        ${!isClash && html`<input type="text" placeholder="Assign to..." onKeyDown=${function(e){
+            if(e.key==='Enter'&&e.target.value.trim()){d({t:'BATCH_UPD_ISSUE',u:{assignee:e.target.value.trim()}});e.target.value='';}
+          }} style=${{...S_INPUT,fontSize:'.6rem',padding:'.15rem .25rem',width:'auto',flex:1}} />`}
+      </div>`}
+    </div>`;
+  }
+
+  // ── Clash Rules Panel (Classical UI) ────────────────────────────
+  function ClashRulesPanel(props) {
+    var s = props.s, d = props.d;
+    var rules = s.rules;
+    var stExpanded = useState(false), expanded = stExpanded[0], setExpanded = stExpanded[1];
+    var models = s.models;
+    var canRun = models.length > 0 && !s.detecting;
+
+    // Presets
+    var PRESETS = [
+      {label:'All vs All',      desc:'Every model against every other',                     r:{modelA:'all',modelB:'all',hard:true,soft:false,clearance:50,duplicates:false,excludeSelf:false}},
+      {label:'Struct vs MEP',   desc:'Structural against MEP disciplines',                  r:{modelA:'disc:structural',modelB:'disc:mep',hard:true,soft:true,clearance:50,duplicates:false,excludeSelf:false}},
+      {label:'Arch vs MEP',     desc:'Architectural against MEP',                           r:{modelA:'disc:architectural',modelB:'disc:mep',hard:true,soft:true,clearance:50,duplicates:false,excludeSelf:false}},
+      {label:'Cross-discipline',desc:'All models, exclude self-clashes',                    r:{modelA:'all',modelB:'all',hard:true,soft:false,clearance:50,duplicates:false,excludeSelf:true}},
+      {label:'Near misses',     desc:'Soft clashes within clearance zone',                  r:{modelA:'all',modelB:'all',hard:false,soft:true,clearance:100,duplicates:false,excludeSelf:true}},
+      {label:'Duplicates',      desc:'Find duplicate elements at same location',            r:{modelA:'all',modelB:'all',hard:false,soft:false,clearance:0,duplicates:true,excludeSelf:false}}
+    ];
+
+    function applyPreset(preset) {
+      d({t:'UPD_RULES', u:preset.r});
+    }
+    function runDetection() {
+      if (!canRun) return;
+      d({t:'DETECTING'}); d({t:'TAB',v:'clashes'});
+      setTimeout(function(){ d({t:'SET_CLASHES', v:detectClashes(s.models, s.rules)}); }, 20);
+    }
+    function applyAndRun(preset) {
+      if (!canRun) return;
+      var merged = Object.assign({}, s.rules, preset.r);
+      d({t:'UPD_RULES', u:preset.r});
+      d({t:'DETECTING'}); d({t:'TAB',v:'clashes'});
+      setTimeout(function(){ d({t:'SET_CLASHES', v:detectClashes(s.models, merged)}); }, 20);
+    }
+
+    var FL={fontSize:'.62rem',fontWeight:600,color:'var(--text-muted)',marginBottom:'.15rem',display:'block'};
+    var TOGROW={display:'flex',justifyContent:'space-between',alignItems:'center',padding:'.3rem 0'};
+    function MiniToggle(tp) {
+      var on=tp.on;
+      return html`<div onClick=${tp.onToggle} role="switch" aria-checked=${on} style=${{width:30,height:16,borderRadius:8,background:on?'var(--accent)':'var(--text-faint)',cursor:'pointer',position:'relative',transition:'background .2s',flexShrink:0}}>
+        <div style=${{width:12,height:12,borderRadius:6,background:'#fff',position:'absolute',top:2,left:on?16:2,transition:'left .2s',boxShadow:'0 1px 2px rgba(0,0,0,.2)'}}></div>
+      </div>`;
+    }
+
+    return html`<div style=${{borderBottom:'1px solid var(--border-subtle)',flexShrink:0}}>
+      <!-- Quick Presets -->
+      <div style=${{padding:'.4rem .5rem .35rem'}}>
+        <div style=${{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:'.3rem'}}>
+          <span style=${{fontSize:'.68rem',fontWeight:600,color:'var(--text-muted)',textTransform:'uppercase',letterSpacing:'.05em'}}>Quick Run</span>
+          <button onClick=${function(){setExpanded(!expanded)}} style=${{...S_BTN,fontSize:'.55rem',padding:'1px 5px',background:'none',color:'var(--text-faint)'}}>
+            ${expanded ? 'Simple' : 'Advanced'}
+          </button>
+        </div>
+        <div style=${{display:'flex',gap:'.25rem',flexWrap:'wrap'}}>
+          ${PRESETS.map(function(p) {
+            return html`<button key=${p.label} onClick=${function(){applyAndRun(p)}} disabled=${!canRun} title=${p.desc}
+              style=${{...S_BTN,fontSize:'.58rem',padding:'.2rem .4rem',background:'var(--accent-bg)',color:'var(--accent-subtle)',
+                opacity:canRun?1:.5,transition:'background .15s'}}>
+              ${p.label}
+            </button>`;
+          })}
+        </div>
+      </div>
+
+      <!-- Advanced Rules (expandable) -->
+      ${expanded && html`<div style=${{padding:'0 .5rem .4rem',borderTop:'1px solid var(--border-subtle)'}}>
+        <div style=${{marginTop:'.3rem'}}>
+          <span style=${FL}>Model A</span>
+          <select value=${rules.modelA} onChange=${function(e){d({t:'UPD_RULES',u:{modelA:e.target.value}})}}
+            style=${{...S_INPUT,fontSize:'.65rem',padding:'.2rem .3rem',marginBottom:'.25rem'}}>
+            <option value="all">All models</option>
+            ${DISC.map(function(p){return html`<option key=${p.id} value=${'disc:'+p.id}>${p.label} models</option>`})}
+            ${models.map(function(m){return html`<option key=${m.id} value=${m.id}>${m.name}</option>`})}
+          </select>
+          <span style=${FL}>Model B</span>
+          <select value=${rules.modelB} onChange=${function(e){d({t:'UPD_RULES',u:{modelB:e.target.value}})}}
+            style=${{...S_INPUT,fontSize:'.65rem',padding:'.2rem .3rem',marginBottom:'.25rem'}}>
+            <option value="all">All models</option>
+            ${DISC.map(function(p){return html`<option key=${p.id} value=${'disc:'+p.id}>${p.label} models</option>`})}
+            ${models.map(function(m){return html`<option key=${m.id} value=${m.id}>${m.name}</option>`})}
+          </select>
+        </div>
+        <div style=${TOGROW}>
+          <span style=${{fontSize:'.68rem',color:'var(--text-primary)'}}>Hard clashes</span>
+          <${MiniToggle} on=${rules.hard} onToggle=${function(){d({t:'UPD_RULES',u:{hard:!rules.hard}})}} />
+        </div>
+        <div style=${TOGROW}>
+          <span style=${{fontSize:'.68rem',color:'var(--text-primary)'}}>Soft clashes (proximity)</span>
+          <${MiniToggle} on=${rules.soft} onToggle=${function(){d({t:'UPD_RULES',u:{soft:!rules.soft}})}} />
+        </div>
+        ${rules.soft && html`<div style=${{marginBottom:'.25rem'}}>
+          <span style=${FL}>Clearance (mm)</span>
+          <div style=${{display:'flex',alignItems:'center',gap:'.3rem'}}>
+            <input type="range" min="10" max="500" step="5" value=${rules.clearance||50}
+              onInput=${function(e){d({t:'UPD_RULES',u:{clearance:+e.target.value}})}}
+              style=${{flex:1,height:4}} />
+            <span style=${{fontSize:'.65rem',color:'var(--accent-subtle)',fontWeight:600,minWidth:30,textAlign:'right'}}>${rules.clearance||50}</span>
+          </div>
+        </div>`}
+        <div style=${TOGROW}>
+          <span style=${{fontSize:'.68rem',color:'var(--text-primary)'}}>Hard tolerance (mm)</span>
+          <input type="number" min="0" max="100" step="1" value=${rules.hardTolerance||0}
+            onChange=${function(e){d({t:'UPD_RULES',u:{hardTolerance:+e.target.value}})}}
+            style=${{...S_INPUT,width:50,fontSize:'.65rem',padding:'.15rem .3rem',textAlign:'center'}} />
+        </div>
+        <div style=${TOGROW}>
+          <span style=${{fontSize:'.68rem',color:'var(--text-primary)'}}>Duplicates</span>
+          <${MiniToggle} on=${rules.duplicates} onToggle=${function(){d({t:'UPD_RULES',u:{duplicates:!rules.duplicates}})}} />
+        </div>
+        <div style=${TOGROW}>
+          <span style=${{fontSize:'.68rem',color:'var(--text-primary)'}}>Exclude self-clashes</span>
+          <${MiniToggle} on=${rules.excludeSelf} onToggle=${function(){d({t:'UPD_RULES',u:{excludeSelf:!rules.excludeSelf}})}} />
+        </div>
+        <div style=${TOGROW}>
+          <span style=${{fontSize:'.68rem',color:'var(--text-primary)'}}>Change-aware</span>
+          <${MiniToggle} on=${rules.changeAware} onToggle=${function(){d({t:'UPD_RULES',u:{changeAware:!rules.changeAware}})}} />
+        </div>
+        <button onClick=${runDetection} disabled=${!canRun}
+          style=${{...S_BTN,width:'100%',background:canRun?'var(--accent)':'var(--bg-secondary)',color:canRun?'#fff':'var(--text-faint)',marginTop:'.3rem',fontWeight:600}}>
+          ${s.detecting ? 'Detecting...' : 'Run Detection'}
+        </button>
+      </div>`}
+    </div>`;
+  }
+
   function IssuePanel(props) {
     var s=props.s, d=props.d, f=s.filters, hideTabBar=props.hideTabBar;
     var fo=useState(false), filtersOpen=fo[0], setFiltersOpen=fo[1];
@@ -4768,6 +5082,10 @@ function startApp() {
             ${t.label}${t.n>0?html`<span style=${{marginLeft:'.3rem',background:t.bg,color:'#fff',fontSize:'.6rem',padding:'.05rem .35rem',borderRadius:99}}>${t.n}</span>`:''}
           </button>`})}
       </div>`}
+
+      ${!isExplorerTab && rawItems.length > 0 && html`<${ClashStatsBar} items=${rawItems} isClash=${isClashTab} />`}
+      ${isClashTab && html`<${ClashRulesPanel} s=${s} d=${d} />`}
+
       ${s.tab==='explorer' && html`<${ExplorerPanel} s=${s} d=${d} />`}
       ${s.tab!=='explorer' && html`<div style=${{padding:'.4rem .4rem .35rem',borderBottom:'1px solid var(--border-subtle)',flexShrink:0}}>
         <div style=${{display:'flex',gap:'.3rem',alignItems:'center'}}>
@@ -4933,15 +5251,20 @@ function startApp() {
 
         <div style=${{fontSize:'.6rem',color:'var(--text-faint)',textAlign:'right'}}>${items.length} / ${rawItems.length} shown</div>
       </div>`}
-      ${s.tab==='issues' && html`<div style=${{padding:'.4rem',borderBottom:'1px solid var(--border-subtle)',flexShrink:0}}>
-        <button onClick=${function(){d({t:'MODAL',v:true})}} style=${{...S_BTN,width:'100%',background:'#2563eb',color:'#fff'}}>+ New Issue</button>
+      ${s.tab==='issues' && html`<div style=${{padding:'.4rem',borderBottom:'1px solid var(--border-subtle)',flexShrink:0,display:'flex',gap:'.3rem'}}>
+        <button onClick=${function(){d({t:'MODAL',v:true})}} style=${{...S_BTN,flex:1,background:'#2563eb',color:'#fff'}}>+ New Issue</button>
+        <button onClick=${function(){d({t:'UPD_PREFS',u:{showIssueMarkers:!s.prefs.showIssueMarkers}})}}
+          style=${{...S_BTN,background:s.prefs.showIssueMarkers!==false?'rgba(34,197,94,.7)':'var(--overlay-bg)',color:s.prefs.showIssueMarkers!==false?'#fff':'var(--text-muted)',border:'1px solid var(--border)',fontSize:'.65rem',padding:'.25rem .5rem',whiteSpace:'nowrap'}}>
+          ${s.prefs.showIssueMarkers!==false?'Markers On':'Markers Off'}
+        </button>
       </div>`}
       ${!isExplorerTab && isClashTab && items.length>0 && html`<div style=${{padding:'.25rem .5rem',borderBottom:'1px solid var(--border-subtle)',display:'flex',alignItems:'center',gap:'.3rem',flexShrink:0}}>
         <span style=${{fontSize:'.6rem',color:'var(--text-faint)'}}>Group:</span>
         ${['none','storey','discipline','status','type'].map(function(g){return html`<button key=${g} onClick=${function(){d({t:'CLASH_GROUP_BY',v:g})}}
-          style=${{...S_BTN,fontSize:'.55rem',padding:'.1rem .3rem',background:s.clashGroupBy===g?'#2563eb':'var(--bg-secondary)',color:s.clashGroupBy===g?'#fff':'var(--text-faint)'}}>${g==='none'?'None':g.charAt(0).toUpperCase()+g.slice(1)}</button>`})}
+          style=${{...S_BTN,fontSize:'.55rem',padding:'.1rem .3rem',background:s.clashGroupBy===g?'var(--accent)':'var(--bg-secondary)',color:s.clashGroupBy===g?'#fff':'var(--text-faint)'}}>${g==='none'?'None':g.charAt(0).toUpperCase()+g.slice(1)}</button>`})}
       </div>`}
-      ${!isExplorerTab && html`<${VirtualList} items=${items} activeId=${s.activeId} d=${d} isClash=${isClashTab} prefs=${s.prefs} models=${s.models} groupBy=${isClashTab?s.clashGroupBy:'none'} />`}
+      ${!isExplorerTab && items.length>0 && html`<${BulkActionBar} s=${s} d=${d} items=${items} isClash=${isClashTab} />`}
+      ${!isExplorerTab && html`<${VirtualList} items=${items} activeId=${s.activeId} d=${d} isClash=${isClashTab} prefs=${s.prefs} models=${s.models} groupBy=${isClashTab?s.clashGroupBy:'none'} selectMode=${s.selectMode} selected=${s.selected} />`}
     </div>`;
   }
 
@@ -5036,6 +5359,7 @@ function startApp() {
   function VirtualList(props) {
     var items=props.items, activeId=props.activeId, d=props.d, isClash=props.isClash, prefs=props.prefs, models=props.models||[];
     var groupBy = props.groupBy || 'none';
+    var selectMode=props.selectMode, selected=props.selected||{};
     var scrollRef = useRef(null);
     var _st = useState(0), scrollTop=_st[0], setScrollTop=_st[1];
     var coll = useState({}), collapsed=coll[0], setCollapsed=coll[1];
@@ -5079,7 +5403,7 @@ function startApp() {
               <span style=${{fontSize:'.65rem',fontWeight:600,color:'var(--text-primary)',flex:1}}>${g.label}</span>
               <span style=${{fontSize:'.6rem',color:'var(--text-faint)',background:'var(--bg-secondary)',padding:'.1rem .35rem',borderRadius:10}}>${g.items.length}</span>
             </div>
-            ${isOpen && visibleItems.map(function(it){return html`<${IssueRow} key=${it.id} item=${it} active=${activeId===it.id} d=${d} isClash=${isClash} prefs=${prefs} models=${models} />`})}
+            ${isOpen && visibleItems.map(function(it){return html`<${IssueRow} key=${it.id} item=${it} active=${activeId===it.id} d=${d} isClash=${isClash} prefs=${prefs} models=${models} selectMode=${selectMode} isSelected=${!!selected[it.id]} />`})}
             ${isOpen && hasMore && html`<button onClick=${function(e){e.stopPropagation();showMore(g.label);}}
               style=${{...S_BTN,width:'100%',padding:'.4rem',background:'var(--bg-tertiary)',color:'var(--accent)',fontSize:'.65rem',borderTop:'1px solid var(--border-subtle)',borderRadius:0}}>
               Show more (${limit} of ${g.items.length})…
@@ -5090,7 +5414,7 @@ function startApp() {
     }
     // For small lists, render all (no virtualization overhead)
     if(items.length <= 50) return html`<div style=${{flex:1,overflowY:'auto'}}>
-      ${items.map(function(it){return html`<${IssueRow} key=${it.id} item=${it} active=${activeId===it.id} d=${d} isClash=${isClash} prefs=${prefs} models=${models} />`})}
+      ${items.map(function(it){return html`<${IssueRow} key=${it.id} item=${it} active=${activeId===it.id} d=${d} isClash=${isClash} prefs=${prefs} models=${models} selectMode=${selectMode} isSelected=${!!selected[it.id]} />`})}
     </div>`;
     // Virtualized rendering for large lists
     var totalHeight = items.length * ROW_HEIGHT;
@@ -5102,7 +5426,7 @@ function startApp() {
     return html`<div ref=${scrollRef} onScroll=${function(e){setScrollTop(e.target.scrollTop);}} style=${{flex:1,overflowY:'auto'}}>
       <div style=${{height:totalHeight,position:'relative'}}>
         <div style=${{position:'absolute',top:startIdx*ROW_HEIGHT,left:0,right:0}}>
-          ${visible.map(function(it){return html`<${IssueRow} key=${it.id} item=${it} active=${activeId===it.id} d=${d} isClash=${isClash} prefs=${prefs} models=${models} />`})}
+          ${visible.map(function(it){return html`<${IssueRow} key=${it.id} item=${it} active=${activeId===it.id} d=${d} isClash=${isClash} prefs=${prefs} models=${models} selectMode=${selectMode} isSelected=${!!selected[it.id]} />`})}
         </div>
       </div>
     </div>`;
@@ -5110,6 +5434,7 @@ function startApp() {
 
   function IssueRow(props) {
     var it=props.item, active=props.active, d=props.d, isClash=props.isClash, pr=props.prefs||{}; pr._models=props.models||[];
+    var selectMode=props.selectMode, isSelected=props.isSelected;
     var icon = it.type==='hard'?'🔴':it.type==='soft'?'🟡':it.source==='element'?'🏗':'📌';
     var stBg = (STAT[it.status]||STAT.open).bg;
     // Clash type colours
@@ -5158,6 +5483,8 @@ function startApp() {
       }}
       style=${{padding:'.6rem .7rem',borderBottom:'1px solid var(--border-subtle)',cursor:'pointer',background:active?'var(--bg-secondary)':'transparent',borderLeft:active?'2px solid #3b82f6':'2px solid transparent'}}>
       <div style=${{display:'flex',gap:'.35rem',alignItems:'flex-start'}}>
+        ${selectMode && html`<input type="checkbox" checked=${isSelected} onClick=${function(e){e.stopPropagation();d({t:'SELECT_TOGGLE',id:it.id});}}
+          style=${{marginTop:3,flexShrink:0,accentColor:'var(--accent)',cursor:'pointer'}} />`}
         ${!isClash && html`<span style=${{fontSize:'.85rem',flexShrink:0}}>${icon}</span>`}
         <div style=${{flex:1,minWidth:0}}>
           <div style=${{display:'flex',alignItems:'center',gap:'.3rem'}}>
@@ -5339,6 +5666,10 @@ function startApp() {
           <${Toggle} on=${p.showClashMarkers!==false} onToggle=${tog('showClashMarkers')} />
         </div>
         <div style=${TROW}>
+          <div><div style=${TLBL}>Show issue markers</div><div style=${TSUB}>Display green 3D markers at issue locations</div></div>
+          <${Toggle} on=${p.showIssueMarkers!==false} onToggle=${tog('showIssueMarkers')} />
+        </div>
+        <div style=${TROW}>
           <div><div style=${TLBL}>Hover highlight</div><div style=${TSUB}>Highlight elements on mouse hover with wireframe overlay</div></div>
           <${Toggle} on=${p.hoverHighlight!==false} onToggle=${tog('hoverHighlight')} />
         </div>
@@ -5435,6 +5766,31 @@ function startApp() {
         name: 'get_revit_status',
         description: 'Check if Revit MCP server is running and responsive.',
         parameters: { type: 'object', properties: {} }
+      },
+      {
+        name: 'analyze_clashes',
+        description: 'Analyze clash detection results. Returns statistics, patterns, hotspots, and priority recommendations. Use this to understand the overall clash situation.',
+        parameters: { type: 'object', properties: {} }
+      },
+      {
+        name: 'suggest_resolution',
+        description: 'Get AI-powered resolution suggestions for a specific clash or set of clashes. Returns recommended actions based on element types, disciplines, and spatial context.',
+        parameters: { type: 'object', properties: { clash_id: { type: 'string', description: 'Specific clash ID to analyze, or omit for top-priority clashes' } } }
+      },
+      {
+        name: 'generate_report',
+        description: 'Generate a coordination report summarizing clashes by discipline, storey, priority, and status. Suitable for sharing with project teams.',
+        parameters: { type: 'object', properties: { format: { type: 'string', enum: ['summary','detailed','discipline'], description: 'Report format' } } }
+      },
+      {
+        name: 'batch_update_status',
+        description: 'Batch update status of multiple clashes or issues at once. Use for bulk operations like marking all resolved, closing old clashes, etc.',
+        parameters: { type: 'object', properties: { ids: { type: 'array', items: { type: 'string' }, description: 'Array of clash/issue IDs to update' }, status: { type: 'string', enum: ['open','in_progress','resolved','closed'] }, item_type: { type: 'string', enum: ['clash','issue'], description: 'Whether these are clash IDs or issue IDs' } }, required: ['ids','status','item_type'] }
+      },
+      {
+        name: 'batch_assign',
+        description: 'Batch assign multiple issues to a person.',
+        parameters: { type: 'object', properties: { ids: { type: 'array', items: { type: 'string' }, description: 'Array of issue IDs' }, assignee: { type: 'string', description: 'Name of the person to assign to' } }, required: ['ids','assignee'] }
       }
     ];
   }
@@ -5486,6 +5842,68 @@ function startApp() {
       }
       case 'get_revit_status': {
         return JSON.stringify({ action:'forward_to_revit_mcp', tool:'get_revit_status', note:'AI should call Revit MCP get_revit_status' });
+      }
+      case 'analyze_clashes': {
+        var clashes = s.clashes;
+        var total = clashes.length;
+        var byStatus = {}; clashes.forEach(function(c){ byStatus[c.status] = (byStatus[c.status]||0)+1; });
+        var byType = {}; clashes.forEach(function(c){ byType[c.type] = (byType[c.type]||0)+1; });
+        var byStorey = {}; clashes.forEach(function(c){
+          var st = c.elemAStorey || c.elemBStorey || 'Unknown';
+          byStorey[st] = (byStorey[st]||0)+1;
+        });
+        var byDisc = {}; clashes.forEach(function(c){
+          if(c.disciplines) c.disciplines.forEach(function(dd){ byDisc[dd]=(byDisc[dd]||0)+1; });
+        });
+        // Find hotspot storey
+        var hotStorey = Object.keys(byStorey).sort(function(a,b){return byStorey[b]-byStorey[a];})[0]||'N/A';
+        // Element type pairs
+        var typePairs = {}; clashes.forEach(function(c){
+          var pair = [c.elemAType||'?',c.elemBType||'?'].sort().join(' vs ');
+          typePairs[pair] = (typePairs[pair]||0)+1;
+        });
+        var topPairs = Object.keys(typePairs).sort(function(a,b){return typePairs[b]-typePairs[a];}).slice(0,5);
+        return JSON.stringify({ total:total, byStatus:byStatus, byType:byType, byStorey:byStorey, byDiscipline:byDisc,
+          hotspotStorey:hotStorey, hotspotCount:byStorey[hotStorey]||0,
+          topElementTypePairs:topPairs.map(function(p){return {pair:p,count:typePairs[p]};})
+        });
+      }
+      case 'suggest_resolution': {
+        var target = args.clash_id ? s.clashes.filter(function(c){return c.id===args.clash_id;}) : s.clashes.filter(function(c){return c.status==='open';}).slice(0,5);
+        return JSON.stringify(target.map(function(c){
+          return { id:c.id, type:c.type, elemAType:c.elemAType, elemBType:c.elemBType, elemAName:c.elemAName, elemBName:c.elemBName,
+            elemAStorey:c.elemAStorey, distance:c.distance, disciplines:c.disciplines,
+            context:'Provide resolution suggestions based on these element types, disciplines, and spatial relationship.' };
+        }));
+      }
+      case 'generate_report': {
+        var fmt = args.format || 'summary';
+        var cl = s.clashes, is = s.issues;
+        var data = { format:fmt, totalClashes:cl.length, totalIssues:is.length,
+          clashBreakdown:{ open:cl.filter(function(c){return c.status==='open';}).length, resolved:cl.filter(function(c){return c.status==='resolved'||c.status==='closed';}).length, hard:cl.filter(function(c){return c.type==='hard';}).length, soft:cl.filter(function(c){return c.type==='soft';}).length },
+          issueBreakdown:{ open:is.filter(function(i){return i.status==='open';}).length, inProgress:is.filter(function(i){return i.status==='in_progress';}).length, resolved:is.filter(function(i){return i.status==='resolved'||i.status==='closed';}).length }
+        };
+        if (fmt === 'detailed' || fmt === 'discipline') {
+          var discData = {};
+          cl.forEach(function(c){ (c.disciplines||[]).forEach(function(dd){ if(!discData[dd])discData[dd]={total:0,open:0,hard:0}; discData[dd].total++; if(c.status==='open')discData[dd].open++; if(c.type==='hard')discData[dd].hard++; }); });
+          data.byDiscipline = discData;
+        }
+        return JSON.stringify(data);
+      }
+      case 'batch_update_status': {
+        if (args.ids && args.status && args.item_type) {
+          var actionType = args.item_type === 'clash' ? 'UPD_CLASH' : 'UPD_ISSUE';
+          args.ids.forEach(function(id) { d({ t:actionType, id:id, u:{status:args.status} }); });
+          return JSON.stringify({ success:true, updated:args.ids.length, newStatus:args.status });
+        }
+        return JSON.stringify({ success:false, error:'Missing ids, status, or item_type' });
+      }
+      case 'batch_assign': {
+        if (args.ids && args.assignee) {
+          args.ids.forEach(function(id) { d({ t:'UPD_ISSUE', id:id, u:{assignee:args.assignee} }); });
+          return JSON.stringify({ success:true, assigned:args.ids.length, assignee:args.assignee });
+        }
+        return JSON.stringify({ success:false, error:'Missing ids or assignee' });
       }
       default:
         return JSON.stringify({ error:'Unknown tool: ' + name });
@@ -6516,12 +6934,7 @@ function startApp() {
         if (action.excludeSelf) upd.excludeSelf = true;
         if (typeof action.clearance === 'number') upd.clearance = action.clearance;
         if (typeof action.tolerance === 'number') upd.hardTolerance = action.tolerance;
-        d({t:'UPD_RULES', u:upd});
-        if (s.detecting) return 'Rules updated — detection already running.';
-        d({t:'DETECTING'}); d({t:'TAB', v:'clashes'});
-        setTimeout(function() { d({t:'SET_CLASHES', v:detectClashes(s.models, Object.assign({}, s.rules, upd))}); }, 20);
-        var aN = mA?mA.name:'all models', bN = mB?mB.name:'all models';
-        return 'Running: ' + aN + ' vs ' + bN + (upd.excludeSelf?' (cross-model only)':'') + (upd.clearance?' with '+upd.clearance+'mm clearance':'') + '…';
+        return {_clashSetup:true, rules:upd, nameA:mA?mA.name:'All models', nameB:mB?mB.name:'All models'};
       }
       case 'set_clearance': if (typeof action.value !== 'number') return null; d({t:'UPD_RULES', u:{clearance:action.value}}); return 'Clearance set to '+action.value+'mm.';
       case 'set_tolerance': if (typeof action.value !== 'number') return null; d({t:'UPD_RULES', u:{hardTolerance:action.value}}); return 'Tolerance set to '+action.value+'mm.';
@@ -6578,7 +6991,17 @@ function startApp() {
 
     // ── Help ───────────────────────────────────────────────────────
     if (/^help$|what can you do|how (?:do i|to) use|what.*commands?/.test(text)) {
-      return 'Describe a clash check in plain English:\n• Hard clashes: "check structural vs MEP"\n• Near misses: "check clashes within 100mm" or "find near misses"\n• Both: "structural vs MEP with 50mm clearance"\n• Set distance: "clearance 75mm"\nAlso: "how many clashes?", "group by storey", "show resolved", "export BCF".';
+      return 'I can control ClashControl with plain English:\n\n' +
+        '**Clash detection:** "check structural vs MEP", "find near misses", "clearance 75mm"\n' +
+        '**Filters:** "show open", "group by storey", "reset filters"\n' +
+        '**Batch:** "mark all open clashes as resolved", "assign all issues to John"\n' +
+        '**Analysis:** "how many clashes?", "analyze clashes", "summary"\n' +
+        '**Theme:** "switch to light", "dark mode"\n' +
+        '**Files:** "load ifc", "load 2d", "import bcf", "export bcf"\n' +
+        '**Navigation:** "show clashes tab", "open settings", "open bridge"\n' +
+        '**Viewer:** "section x", "wireframe mode", "show markers", "hide grid"\n' +
+        '**Tools:** "measure length", "save viewpoint", "save project"\n' +
+        '**Display:** "color by discipline", "show model tree", "reset view"';
     }
 
     // ── Q&A ────────────────────────────────────────────────────────
@@ -6655,12 +7078,8 @@ function startApp() {
       if (!s.models.length) return 'No models loaded yet — drop IFC files onto the viewer first.';
       var mA = resolveModel(rawA), mB = resolveModel(rawB);
       var updRules = applyClashOpts({ modelA: mA?mA.id:'all', modelB: mB?mB.id:'all' });
-      d({t:'UPD_RULES', u:updRules});
-      if (s.detecting) return 'Rules updated — detection already running.';
-      d({t:'DETECTING'}); d({t:'TAB',v:'clashes'});
-      setTimeout(function(){ d({t:'SET_CLASHES', v:detectClashes(s.models, Object.assign({},s.rules,updRules))}); }, 20);
-      var aN = mA?mA.name:'all models', bN = mB?mB.name:'all models';
-      return 'Running: ' + aN + ' vs ' + bN + (updRules.clearance?' with '+updRules.clearance+'mm clearance':'') + '…';
+      // Return a setup card object instead of immediately running
+      return {_clashSetup:true, rules:updRules, nameA:mA?mA.name:'All models', nameB:mB?mB.name:'All models'};
     }
 
     // "X vs/versus/against Y"
@@ -6698,15 +7117,10 @@ function startApp() {
       });
       if(foundRefs.length>=2) return runSetup(foundRefs[0].word, foundRefs[1].word);
       if(foundRefs.length===1) {
-        // One reference found → run it against all others
         if(!s.models.length) return 'No models loaded yet.';
         var ref = foundRefs[0];
         var updSingle = applyClashOpts({ modelA:ref.id, modelB:'all' });
-        d({t:'UPD_RULES', u:updSingle});
-        if(!s.detecting){ d({t:'DETECTING'}); d({t:'TAB',v:'clashes'});
-          setTimeout(function(){ d({t:'SET_CLASHES', v:detectClashes(s.models, Object.assign({},s.rules,updSingle))}); }, 20);
-        }
-        return 'Running: ' + ref.name + ' vs all others…';
+        return {_clashSetup:true, rules:updSingle, nameA:ref.name, nameB:'All models'};
       }
     }
 
@@ -6717,35 +7131,19 @@ function startApp() {
       var wv = parseFloat(withinMatch[1]), wu = withinMatch[2];
       var wmm = wu==='cm' ? Math.round(wv*10) : wu==='m' ? Math.round(wv*1000) : Math.round(wv);
       var updW = applyClashOpts({ modelA:'all', modelB:'all', clearance:wmm, soft:true, hard:true });
-      d({t:'UPD_RULES', u:updW});
-      if (!s.detecting){ d({t:'DETECTING'}); d({t:'TAB',v:'clashes'});
-        setTimeout(function(){ d({t:'SET_CLASHES', v:detectClashes(s.models, Object.assign({},s.rules,updW))}); }, 20);
-      }
-      return 'Running: hard clashes + soft clashes within ' + wmm + 'mm…';
+      return {_clashSetup:true, rules:updW, nameA:'All models', nameB:'All models'};
     }
     if (/(?:find|check|detect|run|scan)\s+(?:for\s+)?(?:near[\s-]*miss|proximity|soft\s+clash|clearance\s+clash)/.test(text)) {
       if (!s.models.length) return 'No models loaded yet.';
       var updNM = applyClashOpts({ modelA:'all', modelB:'all', soft:true, hard:true });
-      d({t:'UPD_RULES', u:updNM});
-      if (!s.detecting){ d({t:'DETECTING'}); d({t:'TAB',v:'clashes'});
-        setTimeout(function(){ d({t:'SET_CLASHES', v:detectClashes(s.models, Object.assign({},s.rules,updNM))}); }, 20);
-      }
-      return 'Running: hard + soft clashes (' + (updNM.clearance||s.rules.clearance||50) + 'mm clearance)…';
+      return {_clashSetup:true, rules:updNM, nameA:'All models', nameB:'All models'};
     }
 
     // ── "run clash …" generic fallback (no model/discipline found) ──
     if (/(?:run|start|do|execute|detect|find|check|scan|re-?run|again)\s+(?:the\s+)?(?:clash|detection|conflicts?|collisions?|scan|check|clashcontrol)/i.test(text)) {
       if (!s.models.length) return 'No models loaded yet.';
       var updRun = applyClashOpts({ modelA:'all', modelB:'all' });
-      d({t:'UPD_RULES', u:updRun});
-      if (s.detecting) return 'Rules updated — detection already running.';
-      d({t:'DETECTING'}); d({t:'TAB',v:'clashes'});
-      setTimeout(function(){ d({t:'SET_CLASHES', v:detectClashes(s.models, Object.assign({},s.rules,updRun))}); }, 20);
-      var parts = [];
-      if (updRun.clearance) parts.push(updRun.clearance + 'mm clearance');
-      if (updRun.excludeSelf) parts.push('cross-model only');
-      if (updRun.soft) parts.push('soft+hard');
-      return 'Running clash detection' + (parts.length ? ' (' + parts.join(', ') + ')' : '') + '…';
+      return {_clashSetup:true, rules:updRun, nameA:'All models', nameB:'All models'};
     }
 
     // ── Individual rule settings (no run, just tweak) ────────────
@@ -6803,6 +7201,47 @@ function startApp() {
       return 'Grouped by ' + groupMatch[1] + '.';
     }
 
+    // ── Batch Operations ───────────────────────────────────────────
+    var batchStatusMatch = text.match(/(?:mark|set|change|update)\s+all\s+(?:(open|resolved|hard|soft)\s+)?(?:clashes?|issues?)\s+(?:as\s+|to\s+)(open|in.?progress|resolved|closed)/);
+    if (batchStatusMatch) {
+      var filterKey = batchStatusMatch[1];
+      var newStatus = batchStatusMatch[2].replace(/\s+/g,'_');
+      var isIssue = /issues?/.test(text);
+      var pool = isIssue ? s.issues : s.clashes;
+      var targets = pool;
+      if (filterKey === 'open') targets = pool.filter(function(x){return x.status==='open';});
+      else if (filterKey === 'resolved') targets = pool.filter(function(x){return x.status==='resolved';});
+      else if (filterKey === 'hard') targets = pool.filter(function(x){return x.type==='hard';});
+      else if (filterKey === 'soft') targets = pool.filter(function(x){return x.type==='soft';});
+      var actionT = isIssue ? 'UPD_ISSUE' : 'UPD_CLASH';
+      targets.forEach(function(x){ d({t:actionT, id:x.id, u:{status:newStatus}}); });
+      return 'Updated ' + targets.length + (isIssue?' issues':' clashes') + ' to ' + newStatus + '.';
+    }
+
+    var batchAssignMatch = text.match(/(?:assign|give|set)\s+all\s+(?:(open|unassigned)\s+)?issues?\s+to\s+(.+)/i);
+    if (batchAssignMatch) {
+      var assignFilter = batchAssignMatch[1];
+      var assignee = batchAssignMatch[2].trim();
+      var issueTargets = s.issues;
+      if (assignFilter === 'open') issueTargets = issueTargets.filter(function(i){return i.status==='open';});
+      else if (assignFilter === 'unassigned') issueTargets = issueTargets.filter(function(i){return !i.assignee;});
+      issueTargets.forEach(function(i){ d({t:'UPD_ISSUE', id:i.id, u:{assignee:assignee}}); });
+      return 'Assigned ' + issueTargets.length + ' issues to ' + assignee + '.';
+    }
+
+    // Analyze / report commands → open Revit Bridge if configured, else give summary
+    if (/(?:analyze|analyse|analysis|summarize|summarise|summary|report|insights?|overview)\s*(?:clashes?|results?|detection)?/.test(text)) {
+      var cl=s.clashes, op=cl.filter(function(c){return c.status==='open';}), hd=cl.filter(function(c){return c.type==='hard';}), sf=cl.filter(function(c){return c.type==='soft';});
+      var storeys = {}; cl.forEach(function(c){ var st=c.elemAStorey||c.elemBStorey||'Unknown'; storeys[st]=(storeys[st]||0)+1; });
+      var hotStorey = Object.keys(storeys).sort(function(a,b){return storeys[b]-storeys[a];})[0];
+      var pct = cl.length>0 ? Math.round((cl.length - op.length) / cl.length * 100) : 0;
+      var lines = [cl.length + ' total clashes: ' + hd.length + ' hard, ' + sf.length + ' soft, ' + op.length + ' open.'];
+      lines.push('Resolution progress: ' + pct + '%.');
+      if (hotStorey) lines.push('Hotspot: ' + hotStorey + ' (' + storeys[hotStorey] + ' clashes).');
+      if (s.revitBridge.provider && s.revitBridge.apiKey) lines.push('Tip: Use Revit Bridge for deeper AI-powered analysis.');
+      return lines.join('\n');
+    }
+
     // ── Export ─────────────────────────────────────────────────────
     if (/(?:export|download|save|get)\s+(?:as\s+)?bcf|bcf\s+(?:export|download|file)|save\s+as\s+bcf/.test(text)) {
       if (!s.issues.length && !s.clashes.length) return 'Nothing to export yet.';
@@ -6811,7 +7250,209 @@ function startApp() {
       return 'Exported ' + items.length + ' item' + (items.length===1?'':'s') + ' as BCF 2.1.';
     }
 
+    // ── Theme ──────────────────────────────────────────────────────
+    if (/(?:switch|change|toggle|set|go)\s+(?:to\s+)?(?:light|dark)\s*(?:mode|theme)?/.test(text) || /(?:light|dark)\s+(?:mode|theme)/.test(text)) {
+      var wantLight = /light/.test(text);
+      d({t:'UPD_PREFS',u:{theme:wantLight?'light':'dark'}});
+      return 'Switched to ' + (wantLight?'light':'dark') + ' mode.';
+    }
+
+    // ── File Loading ─────────────────────────────────────────────
+    if (/(?:load|open|import|add)\s+(?:an?\s+)?ifc|ifc\s+(?:file|model)/.test(text)) {
+      if(window._ccOpenIFC) window._ccOpenIFC();
+      else { window._ccPendingOpen='ifc'; d({t:'TAB',v:'models'}); }
+      return 'Opening IFC file picker...';
+    }
+    if (/(?:load|open|import|add)\s+(?:an?\s+)?(?:2d|dxf|pdf|dwg|underlay|drawing)/.test(text)) {
+      if(window._ccOpen2D) window._ccOpen2D();
+      else { window._ccPendingOpen='2d'; d({t:'TAB',v:'models'}); }
+      return 'Opening 2D file picker...';
+    }
+    if (/(?:import|load|open)\s+(?:a\s+)?bcf/.test(text)) {
+      importBCF(d);
+      return 'Opening BCF file picker...';
+    }
+
+    // ── Tab Navigation ───────────────────────────────────────────
+    if (/(?:show|open|go\s+to|switch\s+to)\s+(?:the\s+)?models?\s*(?:tab|panel|sidebar)?/.test(text)) { d({t:'TAB',v:'models'}); return 'Opened Models tab.'; }
+    if (/(?:show|open|go\s+to|switch\s+to)\s+(?:the\s+)?clashes?\s*(?:tab|panel|sidebar)?/.test(text)) { d({t:'TAB',v:'clashes'}); return 'Opened Clashes tab.'; }
+    if (/(?:show|open|go\s+to|switch\s+to)\s+(?:the\s+)?issues?\s*(?:tab|panel|sidebar)?/.test(text)) { d({t:'TAB',v:'issues'}); return 'Opened Issues tab.'; }
+    if (/(?:show|open|go\s+to|switch\s+to)\s+(?:the\s+)?explorer?\s*(?:tab|panel)?/.test(text)) { d({t:'TAB',v:'explorer'}); return 'Opened Explorer tab.'; }
+
+    // ── Settings & Modals ────────────────────────────────────────
+    if (/(?:open|show)\s+(?:the\s+)?settings?/.test(text)) { d({t:'SETTINGS',v:true}); return 'Opened settings.'; }
+    if (/(?:open|show)\s+(?:the\s+)?(?:revit\s+)?bridge/.test(text)) { d({t:'REVIT_BRIDGE',v:true}); return 'Opened Revit Bridge.'; }
+    if (/(?:new|create|add)\s+(?:an?\s+)?issue/.test(text)) { d({t:'MODAL',v:true}); return 'Opened new issue form.'; }
+
+    // ── Viewer Controls ──────────────────────────────────────────
+    if (/(?:reset|home|default)\s+(?:the\s+)?(?:view|camera)|(?:fit|zoom)\s+(?:to\s+)?all/.test(text)) {
+      if(_resetView) _resetView();
+      return 'View reset to default.';
+    }
+
+    // Section planes
+    if (/(?:section|cut|slice)\s+(?:plane\s+)?(?:on\s+)?x|x\s+(?:section|cut)/.test(text)) { d({t:'SECTION',axis:'x'}); return 'Section plane set on X axis.'; }
+    if (/(?:section|cut|slice)\s+(?:plane\s+)?(?:on\s+)?y|y\s+(?:section|cut)/.test(text)) { d({t:'SECTION',axis:'y'}); return 'Section plane set on Y axis.'; }
+    if (/(?:section|cut|slice)\s+(?:plane\s+)?(?:on\s+)?z|z\s+(?:section|cut)/.test(text)) { d({t:'SECTION',axis:'z'}); return 'Section plane set on Z axis.'; }
+    if (/(?:remove|clear|off|disable|hide)\s+(?:the\s+)?(?:section|cut|slice|clipping)/.test(text)) { d({t:'SECTION',axis:null}); d({t:'SECTION_BOX',v:null}); return 'Section planes cleared.'; }
+
+    // Render style
+    var renderMatch = text.match(/(?:switch|change|set)\s+(?:to\s+)?(?:render\s+)?(?:style\s+)?(?:to\s+)?(standard|shaded|rendered|wireframe)/);
+    if (!renderMatch) renderMatch = text.match(/(standard|shaded|rendered|wireframe)\s+(?:mode|style|view|render)/);
+    if (renderMatch) { d({t:'UPD_PREFS',u:{renderStyle:renderMatch[1]}}); return 'Render style set to ' + renderMatch[1] + '.'; }
+
+    // Clash markers
+    if (/(?:show|enable|turn\s+on|display)\s+(?:clash\s+)?markers?/.test(text)) { d({t:'UPD_PREFS',u:{showClashMarkers:true}}); return 'Clash markers enabled.'; }
+    if (/(?:hide|disable|turn\s+off|remove)\s+(?:clash\s+)?markers?/.test(text)) { d({t:'UPD_PREFS',u:{showClashMarkers:false}}); return 'Clash markers disabled.'; }
+
+    // Grid & axes
+    if (/(?:show|enable|turn\s+on)\s+(?:the\s+)?grid/.test(text)) { d({t:'UPD_PREFS',u:{showGrid:true}}); return 'Grid enabled.'; }
+    if (/(?:hide|disable|turn\s+off|remove)\s+(?:the\s+)?grid/.test(text)) { d({t:'UPD_PREFS',u:{showGrid:false}}); return 'Grid hidden.'; }
+    if (/(?:show|enable|turn\s+on)\s+(?:the\s+)?axes?/.test(text)) { d({t:'UPD_PREFS',u:{showAxes:true}}); return 'Axes enabled.'; }
+    if (/(?:hide|disable|turn\s+off|remove)\s+(?:the\s+)?axes?/.test(text)) { d({t:'UPD_PREFS',u:{showAxes:false}}); return 'Axes hidden.'; }
+
+    // Ghost / unghost
+    if (/(?:unghost|unghostall|clear\s+ghost|show\s+all\s+elements?|restore\s+all)/.test(text)) { if(_unghostAll)_unghostAll(); return 'All elements restored.'; }
+
+    // Measurements
+    if (/(?:measure|measurement)\s+(?:length|distance)/.test(text)) { d({t:'MEASURE_MODE',v:'length'}); return 'Length measurement mode activated. Click two points.'; }
+    if (/(?:measure|measurement)\s+angle/.test(text)) { d({t:'MEASURE_MODE',v:'angle'}); return 'Angle measurement mode activated.'; }
+    if (/(?:measure|measurement)\s+area/.test(text)) { d({t:'MEASURE_MODE',v:'area'}); return 'Area measurement mode activated.'; }
+    if (/(?:stop|exit|cancel|end)\s+measur/.test(text)) { d({t:'MEASURE_MODE',v:null}); return 'Measurement mode deactivated.'; }
+    if (/(?:clear|delete|remove)\s+(?:all\s+)?measurements?/.test(text)) { d({t:'CLEAR_MEASUREMENTS'}); return 'All measurements cleared.'; }
+
+    // Save viewpoint
+    if (/(?:save|capture|store)\s+(?:this\s+)?(?:view|viewpoint|camera)/.test(text)) {
+      if(_captureViewpoint) { _captureViewpoint('Viewpoint ' + (s.viewpoints.length+1)); return 'Viewpoint saved.'; }
+      return 'No 3D view to capture.';
+    }
+
+    // Save project
+    if (/(?:save|store)\s+(?:the\s+)?project/.test(text)) { if(typeof saveProject==='function') saveProject(s); return 'Project saved.'; }
+
+    // Floor plan
+    if (/(?:exit|close|leave|cancel)\s+(?:the\s+)?(?:floor\s*plan|plan\s+view|2d\s+view)/.test(text)) { d({t:'FLOOR_PLAN',v:null}); return 'Exited floor plan view.'; }
+
+    // Classifications / color by
+    if (/color\s+by\s+(type|storey|discipline|material)/.test(text)) {
+      var cbMatch = text.match(/color\s+by\s+(type|storey|discipline|material)/);
+      var cbView = 'by'+cbMatch[1].charAt(0).toUpperCase()+cbMatch[1].slice(1);
+      d({t:'COLOR_BY_CLASS',v:cbView});
+      return 'Coloring by ' + cbMatch[1] + '.';
+    }
+    if (/(?:remove|clear|reset)\s+color/.test(text)) { d({t:'COLOR_BY_CLASS',v:null}); return 'Color-by-class cleared.'; }
+
+    // Model tree
+    if (/(?:show|open)\s+(?:the\s+)?(?:model\s+)?tree/.test(text)) { d({t:'TREE',v:true}); return 'Model tree opened.'; }
+    if (/(?:hide|close)\s+(?:the\s+)?(?:model\s+)?tree/.test(text)) { d({t:'TREE',v:false}); return 'Model tree closed.'; }
+
     return null;
+  }
+
+  // ── Clash Setup Card (inline chat confirmation) ────────────────
+
+  function ClashSetupCard(props) {
+    var setup = props.setup, s = props.s, d = props.d, onRun = props.onRun, setMsgs = props.setMsgs, idx = props.idx;
+    var init = setup.rules;
+    var st = useState(Object.assign({hard:true,soft:false,clearance:s.rules.clearance||50,hardTolerance:s.rules.hardTolerance||0,duplicates:false,excludeSelf:false},init));
+    var rules = st[0], setRules = st[1];
+    var stRan = useState(false), ran = stRan[0], setRan = stRan[1];
+
+    // Build model/discipline options for dropdowns
+    var opts = [{id:'all',label:'All models'}];
+    DISC.forEach(function(dc){
+      if(s.models.some(function(m){return m.discipline===dc.id;}))
+        opts.push({id:'disc:'+dc.id, label:dc.label+' models'});
+    });
+    s.models.forEach(function(m){ opts.push({id:m.id, label:m.name}); });
+
+    function upd(k,v){ setRules(function(r){var n=Object.assign({},r);n[k]=v;return n;}); }
+
+    function run(){
+      setRan(true);
+      var nameA=opts.find(function(o){return o.id===rules.modelA;})||{label:'All'};
+      var nameB=opts.find(function(o){return o.id===rules.modelB;})||{label:'All'};
+      setMsgs(function(prev){
+        var next=prev.slice();
+        next[idx]={role:'assistant',text:'Running: '+nameA.label+' vs '+nameB.label
+          +(rules.hard?' | hard':'')+(rules.soft?' | soft '+rules.clearance+'mm':'')
+          +(rules.duplicates?' | duplicates':'')+(rules.excludeSelf?' | cross-model only':'')+'…',ran:true};
+        return next;
+      });
+      onRun(rules);
+    }
+
+    if(ran) return null;
+
+    var lblSt={fontSize:'.62rem',color:'var(--text-muted)',marginBottom:2};
+    var selSt={...S_INPUT,fontSize:'.68rem',padding:'.22rem .35rem',width:'100%',background:'var(--input-bg)',color:'var(--text-primary)',border:'1px solid var(--border)',borderRadius:5};
+    var chkRow={display:'flex',alignItems:'center',gap:'.3rem',fontSize:'.68rem',color:'var(--text-secondary)',cursor:'pointer'};
+    var numSt={...S_INPUT,fontSize:'.68rem',padding:'.2rem .3rem',width:60,background:'var(--input-bg)',color:'var(--text-primary)',border:'1px solid var(--border)',borderRadius:5,textAlign:'right'};
+
+    return html`<div style=${{maxWidth:'100%',background:'var(--card-bg)',border:'1px solid var(--border)',borderRadius:10,padding:'.65rem .75rem',fontSize:'.74rem'}}>
+      <div style=${{fontWeight:600,marginBottom:'.5rem',color:'var(--text-primary)',display:'flex',alignItems:'center',gap:'.3rem'}}>
+        <span style=${{fontSize:'.85rem'}}>⚡</span> Clash Detection Setup
+      </div>
+
+      <div style=${{display:'grid',gridTemplateColumns:'1fr 1fr',gap:'.45rem .6rem'}}>
+        <div>
+          <div style=${lblSt}>Set A</div>
+          <select value=${rules.modelA} onChange=${function(e){upd('modelA',e.target.value)}} style=${selSt}>
+            ${opts.map(function(o){return html`<option key=${o.id} value=${o.id}>${o.label}</option>`;})}
+          </select>
+        </div>
+        <div>
+          <div style=${lblSt}>Set B</div>
+          <select value=${rules.modelB} onChange=${function(e){upd('modelB',e.target.value)}} style=${selSt}>
+            ${opts.map(function(o){return html`<option key=${o.id} value=${o.id}>${o.label}</option>`;})}
+          </select>
+        </div>
+      </div>
+
+      <div style=${{display:'flex',flexWrap:'wrap',gap:'.45rem .8rem',marginTop:'.5rem'}}>
+        <label style=${chkRow}>
+          <input type="checkbox" checked=${rules.hard} onChange=${function(e){upd('hard',e.target.checked)}} />
+          Hard clashes
+        </label>
+        <label style=${chkRow}>
+          <input type="checkbox" checked=${rules.soft} onChange=${function(e){upd('soft',e.target.checked)}} />
+          Soft clashes
+        </label>
+        <label style=${chkRow}>
+          <input type="checkbox" checked=${rules.duplicates} onChange=${function(e){upd('duplicates',e.target.checked)}} />
+          Duplicates
+        </label>
+        <label style=${chkRow}>
+          <input type="checkbox" checked=${rules.excludeSelf} onChange=${function(e){upd('excludeSelf',e.target.checked)}} />
+          Cross-model only
+        </label>
+      </div>
+
+      ${rules.soft && html`<div style=${{display:'flex',alignItems:'center',gap:'.4rem',marginTop:'.4rem'}}>
+        <span style=${{fontSize:'.65rem',color:'var(--text-muted)'}}>Clearance</span>
+        <input type="number" min="1" max="9999" value=${rules.clearance}
+          onChange=${function(e){upd('clearance',Math.max(1,parseInt(e.target.value)||50))}}
+          style=${numSt} />
+        <span style=${{fontSize:'.62rem',color:'var(--text-faint)'}}>mm</span>
+      </div>`}
+
+      ${rules.hard && html`<div style=${{display:'flex',alignItems:'center',gap:'.4rem',marginTop:'.3rem'}}>
+        <span style=${{fontSize:'.65rem',color:'var(--text-muted)'}}>Tolerance</span>
+        <input type="number" min="0" max="999" value=${rules.hardTolerance}
+          onChange=${function(e){upd('hardTolerance',Math.max(0,parseInt(e.target.value)||0))}}
+          style=${numSt} />
+        <span style=${{fontSize:'.62rem',color:'var(--text-faint)'}}>mm</span>
+      </div>`}
+
+      <div style=${{display:'flex',gap:'.4rem',marginTop:'.55rem',justifyContent:'flex-end'}}>
+        <button onClick=${function(){setMsgs(function(prev){var n=prev.slice();n[idx]={role:'assistant',text:'Setup cancelled.'};return n;});}}
+          style=${{...S_BTN,padding:'.25rem .6rem',fontSize:'.68rem',background:'none',color:'var(--text-muted)',border:'1px solid var(--border)'}}>Cancel</button>
+        <button onClick=${run} disabled=${!rules.hard&&!rules.soft&&!rules.duplicates}
+          style=${{...S_BTN,padding:'.25rem .8rem',fontSize:'.68rem',background:'var(--accent)',color:'#fff',fontWeight:600,opacity:(!rules.hard&&!rules.soft&&!rules.duplicates)?0.4:1}}>
+          Run Detection
+        </button>
+      </div>
+    </div>`;
   }
 
   // ── Natural Language Command Panel ─────────────────────────────
@@ -6820,7 +7461,7 @@ function startApp() {
     var s = props.s, d = props.d;
     var stOpen = useState(false), open = stOpen[0], setOpen = stOpen[1];
     window._ccNLOpen = function(){ setOpen(true); };
-    var stMsgs = useState([{role:'assistant', text:'Describe a clash check — e.g. "structural vs MEP", "check clashes within 100mm", "find near misses". Set a distance to include elements that are close but not touching. Ask "help" for all commands.'}]);
+    var stMsgs = useState([{role:'assistant', text:'Control ClashControl with plain English — try "load ifc", "structural vs MEP", "switch to light", "analyze clashes", or "help" for all commands.'}]);
     var msgs = stMsgs[0], setMsgs = stMsgs[1];
     var stInput = useState(''), input = stInput[0], setInput = stInput[1];
     var stLoading = useState(false), loading = stLoading[0], setLoading = stLoading[1];
@@ -6914,6 +7555,13 @@ function startApp() {
       if (bottomRef.current) bottomRef.current.scrollIntoView({behavior:'smooth'});
     }, [msgs]);
 
+    function executeDetection(rules) {
+      d({t:'UPD_RULES', u:rules});
+      if (s.detecting) return;
+      d({t:'DETECTING'}); d({t:'TAB',v:'clashes'});
+      setTimeout(function(){ d({t:'SET_CLASHES', v:detectClashes(s.models, Object.assign({},s.rules,rules))}); }, 20);
+    }
+
     function send() {
       var text = input.trim();
       if (!text) return;
@@ -6921,9 +7569,13 @@ function startApp() {
       setInput('');
       setLoading(true);
       processNLCommandWithLLM(text, s, d).then(function(result) {
-        var reply = result !== null ? result
-          : 'Not sure what you mean. Try: "check structural vs MEP", "check clashes within 100mm", "find near misses", "how many clashes?", or "help".';
-        setMsgs(function(m){ return m.concat([{role:'assistant', text:reply}]); });
+        if (result && result._clashSetup) {
+          setMsgs(function(m){ return m.concat([{role:'assistant', setup:result}]); });
+        } else {
+          var reply = result !== null ? result
+            : 'Not sure what you mean. Try: "check structural vs MEP", "check clashes within 100mm", "find near misses", "how many clashes?", or "help".';
+          setMsgs(function(m){ return m.concat([{role:'assistant', text:reply}]); });
+        }
         setLoading(false);
       });
     }
@@ -7029,6 +7681,7 @@ function startApp() {
       }}>
         ${msgs.map(function(m, i) {
           var isUser = m.role === 'user';
+          if (m.setup) return html`<${ClashSetupCard} key=${i} setup=${m.setup} s=${s} d=${d} onRun=${executeDetection} setMsgs=${setMsgs} idx=${i} />`;
           return html`<div key=${i} style=${{display:'flex', justifyContent: isUser?'flex-end':'flex-start'}}>
             <div style=${{
               maxWidth:'85%', padding:'.45rem .7rem',
