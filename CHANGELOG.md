@@ -1,5 +1,8 @@
 # Changelog
 
+## v1.2.64 (2026-03-24)
+- Bring camera closer to model on initial load and reset view
+
 ## v1.2.63 (2026-03-24)
 - Keep project panel open on delete/cancel, reset view on project switch
 

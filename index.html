@@ -193,7 +193,7 @@ window.onload = function() {
 
 function startApp() {
   // ── Version (auto-updated by pre-commit hook) ──
-  var CC_VERSION = {v:'1.2.63',hash:'2d55e62',date:'2026-03-24T07:37:02Z'};
+  var CC_VERSION = {v:'1.2.64',hash:'f40f23b',date:'2026-03-24T07:40:08Z'};
 
   // Check CDN deps loaded
   var need = [];
@@ -251,7 +251,7 @@ function startApp() {
   };
   var INIT = {
     models:[], clashes:[], issues:[], activeId:null, showModal:false, showSettings:false, modalElement:null, tab:null,
-    rules:{ modelA:'all', modelB:'all', hard:true, soft:false, clearance:50, hardTolerance:0, duplicates:false, changeAware:false, excludeSelf:false },
+    rules:{ modelA:'all', modelB:'all', hard:true, soft:false, clearance:50, hardTolerance:0, duplicates:false, changeAware:false, excludeSelf:false, excludeTypes:[] },
     clashGroupBy:'none', // 'none','storey','discipline','status','type'
     detecting:false, switchingProject:false, sectionAxis:null, sectionPos:0.5, sectionCustom:null,
     sectionBox:null, // {enabled, min:[x,y,z], max:[x,y,z]} – 6-plane box clipping
@@ -1244,11 +1244,14 @@ function startApp() {
     grpB.forEach(function(m){ inB[m.id]=true; });
 
     // Collect unique elements across all relevant models (no duplicates)
+    var exTypes = rules.excludeTypes&&rules.excludeTypes.length ? rules.excludeTypes : null;
     var seenModels = {}, items = [];
     grpA.concat(grpB).forEach(function(m) {
       if (seenModels[m.id]) return; seenModels[m.id]=true;
       (m.elements||[]).forEach(function(el) {
-        if (el.box) items.push({el:el, m:m});
+        if (!el.box) return;
+        if (exTypes && el.props && exTypes.indexOf(el.props.ifcType)!==-1) return;
+        items.push({el:el, m:m});
       });
     });
     if (items.length < 2) return [];
@@ -7357,9 +7360,17 @@ function startApp() {
   function ClashSetupCard(props) {
     var setup = props.setup, s = props.s, d = props.d, onRun = props.onRun, setMsgs = props.setMsgs, idx = props.idx;
     var init = setup.rules;
-    var st = useState(Object.assign({hard:true,soft:false,clearance:s.rules.clearance||50,hardTolerance:s.rules.hardTolerance||0,duplicates:false,excludeSelf:false},init));
+    var st = useState(Object.assign({hard:true,soft:false,clearance:s.rules.clearance||50,hardTolerance:s.rules.hardTolerance||0,duplicates:false,excludeSelf:false,excludeTypes:[]},init));
     var rules = st[0], setRules = st[1];
     var stRan = useState(false), ran = stRan[0], setRan = stRan[1];
+    var stExOpen = useState(false), exOpen = stExOpen[0], setExOpen = stExOpen[1];
+
+    // Collect all IFC types from loaded models
+    var allIfcTypes = useMemo(function(){
+      var types = {};
+      s.models.forEach(function(m){(m.elements||[]).forEach(function(el){if(el.props&&el.props.ifcType)types[el.props.ifcType]=true;});});
+      return Object.keys(types).sort();
+    },[s.models]);
 
     // Build model/discipline options for dropdowns
     var opts = [{id:'all',label:'All models'}];
@@ -7379,7 +7390,8 @@ function startApp() {
         var next=prev.slice();
         next[idx]={role:'assistant',text:'Running: '+nameA.label+' vs '+nameB.label
           +(rules.hard?' | hard':'')+(rules.soft?' | soft '+rules.clearance+'mm':'')
-          +(rules.duplicates?' | duplicates':'')+(rules.excludeSelf?' | cross-model only':'')+'…',ran:true};
+          +(rules.duplicates?' | duplicates':'')+(rules.excludeSelf?' | cross-model only':'')
+          +(rules.excludeTypes&&rules.excludeTypes.length?' | excl: '+rules.excludeTypes.join(', '):'')+'…',ran:true};
         return next;
       });
       onRun(rules);
@@ -7445,6 +7457,25 @@ function startApp() {
           onChange=${function(e){upd('hardTolerance',Math.max(0,parseInt(e.target.value)||0))}}
           style=${numSt} />
         <span style=${{fontSize:'.62rem',color:'var(--text-faint)'}}>mm</span>
+      </div>`}
+
+      ${allIfcTypes.length>0 && html`<div style=${{marginTop:'.45rem'}}>
+        <div onClick=${function(){setExOpen(!exOpen)}} style=${{fontSize:'.65rem',color:'var(--text-muted)',cursor:'pointer',display:'flex',alignItems:'center',gap:'.25rem',userSelect:'none'}}>
+          <span style=${{fontSize:'.5rem',transition:'transform .15s',transform:exOpen?'rotate(90deg)':'rotate(0)'}}>▶</span>
+          Exclude IFC types${rules.excludeTypes&&rules.excludeTypes.length?' ('+rules.excludeTypes.length+')':''}
+        </div>
+        ${exOpen && html`<div style=${{marginTop:'.3rem',maxHeight:120,overflowY:'auto',border:'1px solid var(--border)',borderRadius:5,background:'var(--input-bg)',padding:'.25rem'}}>
+          ${allIfcTypes.map(function(t){
+            var excluded = (rules.excludeTypes||[]).indexOf(t)!==-1;
+            return html`<label key=${t} style=${{display:'flex',alignItems:'center',gap:'.3rem',fontSize:'.62rem',color:excluded?'var(--text-faint)':'var(--text-secondary)',padding:'.1rem .2rem',cursor:'pointer'}}>
+              <input type="checkbox" checked=${!excluded} onChange=${function(){
+                var ex=rules.excludeTypes||[];
+                upd('excludeTypes',excluded?ex.filter(function(x){return x!==t}):ex.concat(t));
+              }} />
+              ${t}
+            </label>`;
+          })}
+        </div>`}
       </div>`}
 
       <div style=${{display:'flex',gap:'.4rem',marginTop:'.55rem',justifyContent:'flex-end'}}>
