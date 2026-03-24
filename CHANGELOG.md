@@ -1,5 +1,8 @@
 # Changelog
 
+## v2.0.9 (2026-03-24)
+- Per-group self-clash control, remove duplicate detecting bubble
+
 ## v2.0.8 (2026-03-24)
 - Section box on selected element, filter IFC types by visible models, model delete confirmation, bump file size warning to 500MB
 

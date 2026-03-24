@@ -193,7 +193,7 @@ window.onload = function() {
 
 function startApp() {
   // ── Version (auto-updated by pre-commit hook) ──
-  var CC_VERSION = {v:'2.0.8',hash:'88d0621',date:'2026-03-24T11:20:05Z'};
+  var CC_VERSION = {v:'2.0.9',hash:'ea81622',date:'2026-03-24T11:23:27Z'};
 
   // Check CDN deps loaded
   var need = [];
@@ -5859,7 +5859,7 @@ function startApp() {
           ? ['none','storey','discipline','status','type']
           : ['none','status','priority','category','assignee'];
         var sortOpts = isClashTab
-          ? [['none','None'],['distance_asc','Gap ↑'],['distance_desc','Gap ↓'],['date_asc','Date ↑'],['date_desc','Date ↓']]
+          ? [['none','None'],['spatial','Spatial'],['distance_asc','Gap ↑'],['distance_desc','Gap ↓'],['date_asc','Date ↑'],['date_desc','Date ↓']]
           : [['none','None'],['priority_asc','Priority ↑'],['priority_desc','Priority ↓'],['date_asc','Date ↑'],['date_desc','Date ↓']];
         function pill(active){return {...S_BTN,fontSize:'.55rem',padding:'.1rem .3rem',background:active?'var(--accent)':'var(--bg-secondary)',color:active?'#fff':'var(--text-faint)'};}
         return html`<div style=${{padding:'.25rem .5rem',borderBottom:'1px solid var(--border-subtle)',display:'flex',flexDirection:'column',gap:'.25rem',flexShrink:0}}>
@@ -5952,7 +5952,16 @@ function startApp() {
     date_asc: function(a,b){ return (a.createdAt||'').localeCompare(b.createdAt||''); },
     date_desc: function(a,b){ return (b.createdAt||'').localeCompare(a.createdAt||''); },
     priority_asc: function(a,b){ var o={critical:0,high:1,normal:2,low:3}; return (o[a.priority]||2)-(o[b.priority]||2); },
-    priority_desc: function(a,b){ var o={critical:0,high:1,normal:2,low:3}; return (o[b.priority]||2)-(o[a.priority]||2); }
+    priority_desc: function(a,b){ var o={critical:0,high:1,normal:2,low:3}; return (o[b.priority]||2)-(o[a.priority]||2); },
+    // Spatial: sort by elevation → element A → distance so you walk floor-by-floor, element-by-element
+    spatial: function(a,b){
+      var ea = a.elevation||0, eb = b.elevation||0;
+      if (ea !== eb) return ea - eb;
+      // Same floor: group by element A (keeps clashes on the same element together)
+      if (a.elemA !== b.elemA) return (a.elemA||0) - (b.elemA||0);
+      // Same element: sort by distance (deepest penetration first)
+      return (a.distance||0) - (b.distance||0);
+    }
   };
 
   function groupAndSort(items, groupBy, sortBy) {
