@@ -1,5 +1,8 @@
 # Changelog
 
+## v1.2.83 (2026-03-24)
+- Allow deleting default project — resets to clean startup state
+
 ## v1.2.82 (2026-03-24)
 - Add IFC axis-based parallel element rejection for clash detection
 

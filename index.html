@@ -193,7 +193,7 @@ window.onload = function() {
 
 function startApp() {
   // ── Version (auto-updated by pre-commit hook) ──
-  var CC_VERSION = {v:'1.2.82',hash:'b1b91dc',date:'2026-03-24T09:32:57Z'};
+  var CC_VERSION = {v:'1.2.83',hash:'125e9a6',date:'2026-03-24T09:34:30Z'};
 
   // Check CDN deps loaded
   var need = [];
@@ -4201,16 +4201,19 @@ function startApp() {
     var rnv = useState(''), renameVal=rnv[0], setRenameVal=rnv[1];
     var cf = useState(null), confirmDelete=cf[0], setConfirmDelete=cf[1];
     var tut = useState(false), showTutorial=tut[0], setShowTutorial=tut[1];
+    var cr = useState(false), creating=cr[0], setCreating=cr[1];
+    var cnv = useState(''), createName=cnv[0], setCreateName=cnv[1];
     window._ccToggleTutorial = function(){ setShowTutorial(function(v){return !v;}); };
 
-    function createProject() {
-      var name = prompt('New project name:');
-      if(!name||!name.trim()) return;
+    function startCreate() { setCreating(true); setCreateName(''); }
+    function finishCreate() {
+      if(!createName.trim()) { setCreating(false); return; }
       var id = uid();
-      var list = getProjects().concat([{id:id, name:name.trim(), createdAt:Date.now()}]);
+      var list = getProjects().concat([{id:id, name:createName.trim(), createdAt:Date.now()}]);
       saveProjects(list);
       d({t:'SET_PROJECT_LIST', v:list});
       _switchProject(id, s, d);
+      setCreating(false);
       setProjOpen(false);
     }
     function switchTo(id) {
@@ -4282,7 +4285,16 @@ function startApp() {
                 </div>`}
               </div>`;
             })}
-            <button onClick=${createProject} style=${{...S_BTN,width:'100%',textAlign:'left',padding:'.4rem .6rem',background:'none',color:'var(--accent)',fontSize:'.7rem',borderRadius:0}}>+ New Project</button>
+            ${creating ? html`<div style=${{padding:'.35rem .5rem',display:'flex',gap:'.3rem',alignItems:'center'}}>
+              <input type="text" value=${createName} autofocus placeholder="Project name…"
+                onInput=${function(e){setCreateName(e.target.value)}}
+                onKeyDown=${function(e){if(e.key==='Enter')finishCreate();if(e.key==='Escape')setCreating(false);}}
+                style=${{...S_INPUT,fontSize:'.68rem',padding:'.25rem .4rem',flex:1}} />
+              <button onClick=${finishCreate} disabled=${!createName.trim()}
+                style=${{...S_BTN,fontSize:'.6rem',padding:'.2rem .45rem',background:'var(--accent)',color:'#fff',opacity:createName.trim()?1:0.4}}>Create</button>
+              <button onClick=${function(){setCreating(false)}}
+                style=${{...S_BTN,fontSize:'.7rem',padding:'.1rem .3rem',background:'none',color:'var(--text-faint)',lineHeight:1}}>✕</button>
+            </div>` : html`<button onClick=${startCreate} style=${{...S_BTN,width:'100%',textAlign:'left',padding:'.4rem .6rem',background:'none',color:'var(--accent)',fontSize:'.7rem',borderRadius:0}}>+ New Project</button>`}
           </div>`}
         </div>
       </div>
@@ -7925,6 +7937,8 @@ function startApp() {
     var all=s.clashes.concat(s.issues);
     var po=useState(false), projOpen=po[0], setProjOpen=po[1];
     var cd=useState(null), confirmDel=cd[0], setConfirmDel=cd[1];
+    var _lrc=useState(false), _lrCreating=_lrc[0], _setLrCreating=_lrc[1];
+    var _lrn=useState(''), _lrName=_lrn[0], _setLrName=_lrn[1];
     var projects=s.projectList||[];
     var activeProj=projects.find(function(p){return p.id===s.activeProject;})||projects[0]||{name:'Default'};
     function delProject(id){
@@ -7983,17 +7997,31 @@ function startApp() {
           boxShadow:'0 8px 24px rgba(0,0,0,.4)',minWidth:200,zIndex:200,overflow:'hidden'}}>
           <div style=${{padding:'.4rem .6rem',borderBottom:'1px solid var(--border-subtle)',display:'flex',alignItems:'center',justifyContent:'space-between'}}>
             <span style=${{fontSize:'.65rem',fontWeight:600,color:'var(--text-muted)',textTransform:'uppercase',letterSpacing:'.05em'}}>Projects</span>
-            <button onClick=${function(){
-              var name=prompt('New project name:');
-              if(!name||!name.trim()) return;
-              var id=uid();
-              var list=getProjects().concat([{id:id,name:name.trim(),createdAt:Date.now()}]);
-              saveProjects(list);
-              d({t:'SET_PROJECT_LIST',v:list});
-              _switchProject(id,s,d);
-              setProjOpen(false);
-            }} style=${{...S_BTN,fontSize:'.6rem',padding:'.1rem .35rem',background:'#1e3a5f',color:'#93c5fd'}}>+ New</button>
+            ${!_lrCreating && html`<button onClick=${function(){_setLrCreating(true);_setLrName('');}}
+              style=${{...S_BTN,fontSize:'.6rem',padding:'.1rem .35rem',background:'#1e3a5f',color:'#93c5fd'}}>+ New</button>`}
           </div>
+          ${_lrCreating && html`<div style=${{padding:'.35rem .5rem',borderBottom:'1px solid var(--border-subtle)',display:'flex',gap:'.3rem',alignItems:'center'}}>
+            <input type="text" value=${_lrName} autofocus placeholder="Project name…"
+              onInput=${function(e){_setLrName(e.target.value)}}
+              onKeyDown=${function(e){
+                if(e.key==='Enter'&&_lrName.trim()){
+                  var id=uid();var list=getProjects().concat([{id:id,name:_lrName.trim(),createdAt:Date.now()}]);
+                  saveProjects(list);d({t:'SET_PROJECT_LIST',v:list});_switchProject(id,s,d);
+                  _setLrCreating(false);setProjOpen(false);
+                }
+                if(e.key==='Escape')_setLrCreating(false);
+              }}
+              style=${{flex:1,fontSize:'.62rem',padding:'.2rem .35rem',background:'var(--input-bg)',color:'var(--text-primary)',border:'1px solid var(--border)',borderRadius:4,outline:'none'}} />
+            <button onClick=${function(){
+              if(!_lrName.trim()){_setLrCreating(false);return;}
+              var id=uid();var list=getProjects().concat([{id:id,name:_lrName.trim(),createdAt:Date.now()}]);
+              saveProjects(list);d({t:'SET_PROJECT_LIST',v:list});_switchProject(id,s,d);
+              _setLrCreating(false);setProjOpen(false);
+            }} disabled=${!_lrName.trim()}
+              style=${{...S_BTN,fontSize:'.55rem',padding:'.15rem .35rem',background:'var(--accent)',color:'#fff',opacity:_lrName.trim()?1:0.4}}>Create</button>
+            <button onClick=${function(){_setLrCreating(false)}}
+              style=${{background:'none',border:'none',cursor:'pointer',color:'var(--text-faint)',fontSize:'.7rem',padding:0,lineHeight:1}}>✕</button>
+          </div>`}
           ${projects.map(function(p){
             var isActive=p.id===s.activeProject;
             var isConfirming=confirmDel===p.id;
