@@ -193,7 +193,7 @@ window.onload = function() {
 
 function startApp() {
   // ── Version (auto-updated by pre-commit hook) ──
-  var CC_VERSION = {v:'1.2.81',hash:'a19647b',date:'2026-03-24T09:28:20Z'};
+  var CC_VERSION = {v:'1.2.82',hash:'b1b91dc',date:'2026-03-24T09:32:57Z'};
 
   // Check CDN deps loaded
   var need = [];
@@ -4225,8 +4225,9 @@ function startApp() {
       if(!list.length) { list = [{id:'default', name:'Default Project', createdAt:Date.now()}]; }
       saveProjects(list);
       d({t:'SET_PROJECT_LIST', v:list});
-      if(s.activeProject===id) _switchProject(list[0].id, s, d);
+      _switchProject(list[0].id, s, d);
       setConfirmDelete(null);
+      setProjOpen(false);
     }
     function startRename(p) {
       setRenaming(p.id);
@@ -7931,7 +7932,7 @@ function startApp() {
       var list=getProjects().filter(function(p){return p.id!==id;});
       if(!list.length) list=[{id:'default',name:'Default Project',createdAt:Date.now()}];
       saveProjects(list); d({t:'SET_PROJECT_LIST',v:list});
-      if(s.activeProject===id) _switchProject(list[0].id,s,d);
+      _switchProject(list[0].id,s,d);
       setConfirmDel(null);
     }
 

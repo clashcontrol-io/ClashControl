@@ -1,5 +1,8 @@
 # Changelog
 
+## v1.2.82 (2026-03-24)
+- Add IFC axis-based parallel element rejection for clash detection
+
 ## v1.2.81 (2026-03-24)
 - Remove parallel element heuristic to prevent false negatives
 
