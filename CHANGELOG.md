@@ -1,5 +1,8 @@
 # Changelog
 
+## v1.2.80 (2026-03-24)
+- Add parallel linear element rejection to reduce false hard clashes
+
 ## v1.2.79 (2026-03-24)
 - Fix false hard clashes, show filtered count, improve detection accuracy
 
