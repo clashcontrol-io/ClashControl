@@ -1,5 +1,8 @@
 # Changelog
 
+## v2.0.10 (2026-03-24)
+- Add spatial sort for clashes: floor-by-floor, element-by-element walkthrough
+
 ## v2.0.9 (2026-03-24)
 - Per-group self-clash control, remove duplicate detecting bubble
 

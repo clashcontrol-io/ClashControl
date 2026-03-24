@@ -193,7 +193,7 @@ window.onload = function() {
 
 function startApp() {
   // ── Version (auto-updated by pre-commit hook) ──
-  var CC_VERSION = {v:'2.0.9',hash:'ea81622',date:'2026-03-24T11:23:27Z'};
+  var CC_VERSION = {v:'2.0.10',hash:'dbc8ece',date:'2026-03-24T11:24:32Z'};
 
   // Check CDN deps loaded
   var need = [];
@@ -6245,10 +6245,12 @@ function startApp() {
         </div>
       </div>
       ${active && html`<div style=${{marginTop:'.4rem',paddingTop:'.4rem',borderTop:'1px solid var(--border)'}}>
-        <div style=${{display:'flex',gap:'.25rem',marginBottom:'.4rem',flexWrap:'wrap'}}>
+        <div style=${{display:'flex',gap:'.25rem',marginBottom:'.4rem',flexWrap:'wrap',alignItems:'center'}}>
           ${Object.keys(STAT).map(function(k){return html`<button key=${k}
             onClick=${function(e){e.stopPropagation();d({t:isClash?'UPD_CLASH':'UPD_ISSUE',id:it.id,u:{status:k}})}}
             style=${{...S_BTN,fontSize:'.6rem',padding:'.15rem .35rem',background:it.status===k?STAT[k].bg:'var(--bg-secondary)',color:it.status===k?'#fff':'var(--text-faint)'}}>${STAT[k].label}</button>`})}
+          <button onClick=${function(e){e.stopPropagation();d({t:'ACTIVE',id:null});if(_unghostAll)_unghostAll();if(window._ccRemoveActiveClashMarker)window._ccRemoveActiveClashMarker();}}
+            title="Collapse" style=${{...S_BTN,marginLeft:'auto',padding:'0 4px',background:'none',color:'var(--text-faint)',fontSize:'.7rem',flexShrink:0}}>▲</button>
         </div>
         ${html`<${ClashProps} item=${it} models=${pr._models||[]} />`}
         ${!isClash && it.elementProps && html`<${PropBlock} p=${it.elementProps} label=${'Linked: '+(it.elementType||'')+' '+(it.elementName||'#'+it.elementId)} />`}
