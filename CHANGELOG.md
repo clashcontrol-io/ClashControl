@@ -1,5 +1,8 @@
 # Changelog
 
+## v1.2.68 (2026-03-24)
+- Bump version for distance slider and clash detection fixes
+
 ## v1.2.67 (2026-03-24)
 - Reduce max intersection sample points from 150 to 24
 
