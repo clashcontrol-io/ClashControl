@@ -46,8 +46,10 @@ else
   # MAJOR signals: CDN/dependency swaps or INIT state shape rewrite.
   # Only triggers when a script tag or INIT definition is CHANGED (added AND removed),
   # not when lines are merely moved or new globals are added.
-  ADDED_SCRIPTS=$(echo "$DIFF" | grep -cE '^\+.*<script.*(src=|cdn)' 2>/dev/null || echo 0)
-  REMOVED_SCRIPTS=$(echo "$DIFF" | grep -cE '^\-.*<script.*(src=|cdn)' 2>/dev/null || echo 0)
+  ADDED_SCRIPTS=$(printf '%s\n' "$DIFF" | grep -cE '^\+.*<script.*(src=|cdn)' || true)
+  REMOVED_SCRIPTS=$(printf '%s\n' "$DIFF" | grep -cE '^\-.*<script.*(src=|cdn)' || true)
+  ADDED_SCRIPTS=${ADDED_SCRIPTS:-0}
+  REMOVED_SCRIPTS=${REMOVED_SCRIPTS:-0}
   if [ "$ADDED_SCRIPTS" -gt 0 ] && [ "$REMOVED_SCRIPTS" -gt 0 ]; then
     LEVEL="major"
   elif echo "$DIFF" | grep -qE '^\+.*var INIT\s*=' && echo "$DIFF" | grep -qE '^\-.*var INIT\s*='; then
