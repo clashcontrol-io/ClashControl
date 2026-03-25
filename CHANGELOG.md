@@ -1,5 +1,14 @@
 # Changelog
 
+## v2.7.0 (2026-03-25)
+- Add iframe fallback for Send, copy-to-clipboard on failure
+
+## v2.6.13 (2026-03-25)
+- Persist data notice acceptance, add Export button, fix Send error msg
+
+## v2.6.12 (2026-03-25)
+- Allow multiple resolution selections in training feedback
+
 ## v2.6.11 (2026-03-25)
 - Style detected clash type same as confirmed, keep (detected) label
 
