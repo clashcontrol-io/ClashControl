@@ -1,5 +1,8 @@
 # Changelog
 
+## v2.10.0 (2026-03-25)
+- Add Deny button for clashes alongside Confirm
+
 ## v2.9.3 (2026-03-25)
 - Reserve right-click for element context menu, pan with middle button only
 

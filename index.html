@@ -245,7 +245,7 @@ window.onload = function() {
 
 function startApp() {
   // ── Version (auto-updated by pre-commit hook) ──
-  var CC_VERSION = {v:'2.9.3',hash:'139843c',date:'2026-03-25T15:56:49Z'};
+  var CC_VERSION = {v:'2.10.0',hash:'d0e5b82',date:'2026-03-25T16:18:59Z'};
 
   // Check CDN deps loaded
   var need = [];
@@ -394,7 +394,10 @@ function startApp() {
         }
         return Object.assign({},c,upd2);
       })});
-      case 'CLEAR_TRAINING_DATA': return Object.assign({},s,{
+      case 'CLEAR_TRAINING_DATA':
+        try{localStorage.removeItem('cc_clash_training_data');}catch(e){}
+        try{localStorage.removeItem('cc_trainingFeedback');}catch(e){}
+        return Object.assign({},s,{
         clashes:s.clashes.map(function(c){
           return Object.assign({},c,{aiFeedback:null,aiReasons:[],aiResolution:[],aiNote:'',aiSignals:[],clashTypeConfirmed:null});
         }),
@@ -10345,7 +10348,7 @@ function startApp() {
     var confirmedFromClash = s.issues.filter(function(i){return i.source==='clash';});
     var allTrainable = clashes.concat(confirmedFromClash);
     var reviewedCount = allTrainable.filter(function(c){return c.status!=='open';}).length;
-    var feedbackCount = allTrainable.filter(function(c){return c.aiFeedback||c.clashTypeConfirmed||(c.aiReasons&&c.aiReasons.length)||(c.aiResolution&&c.aiResolution.length)||c.aiNote||c.source==='clash';}).length;
+    var feedbackCount = allTrainable.filter(function(c){return c.aiFeedback||c.clashTypeConfirmed||(c.aiReasons&&c.aiReasons.length)||(c.aiResolution&&c.aiResolution.length)||c.aiNote;}).length;
     var totalCount = allTrainable.length;
 
     // Global guard: warn before turning off if unsent data exists
