@@ -245,7 +245,7 @@ window.onload = function() {
 
 function startApp() {
   // ── Version (auto-updated by pre-commit hook) ──
-  var CC_VERSION = {v:'2.5.1',hash:'7715de3',date:'2026-03-25T09:09:50Z'};
+  var CC_VERSION = {v:'2.5.2',hash:'3d5eac5',date:'2026-03-25T09:57:22Z'};
 
   // Check CDN deps loaded
   var need = [];
@@ -420,7 +420,7 @@ function startApp() {
               point:cClash.point, distance:cClash.distance,
               created:Date.now()
             };
-            return Object.assign({},s,{clashes:remainClashes,issues:s.issues.concat([newIssue]),activeId:null,tab:'issues'});
+            return Object.assign({},s,{clashes:remainClashes,issues:s.issues.concat([newIssue]),activeId:null});
           }
         }
         return Object.assign({},s,{clashes:s.clashes.map(function(c){
@@ -6644,7 +6644,7 @@ function startApp() {
     var counts = useMemo(function(){
       return {
         oC: s.clashes.filter(function(c){return c.status==='open'}).length,
-        oI: s.issues.filter(function(i){return i.status==='open'}).length
+        oI: s.issues.filter(function(i){return i.status!=='resolved'&&i.status!=='closed';}).length
       };
     }, [s.clashes, s.issues]);
     var oC=counts.oC, oI=counts.oI;
@@ -7304,8 +7304,12 @@ function startApp() {
       ${active && html`<div style=${{marginTop:'.4rem',paddingTop:'.4rem',borderTop:'1px solid var(--border)'}}>
         <div style=${{display:'flex',gap:'.25rem',marginBottom:'.4rem',flexWrap:'wrap',alignItems:'center'}}>
           ${isClash && html`<span style=${{fontSize:'.55rem',padding:'.15rem .35rem',borderRadius:4,background:'var(--bg-secondary)',color:'var(--text-muted)',fontWeight:600}}>${(STAT[it.status||'open']||STAT.open).label}</span>`}
-          ${isClash && it.status!=='confirmed' && html`<button onClick=${function(e){e.stopPropagation();d({t:'UPD_CLASH',id:it.id,u:{status:'confirmed'}});}}
-            style=${{...S_BTN,fontSize:'.6rem',padding:'.15rem .5rem',background:'#166534',color:'#4ade80',border:'1px solid #22c55e66',fontWeight:600}}>Confirmed</button>`}
+          ${isClash && it.status!=='confirmed' && html`<button onClick=${function(e){
+              e.stopPropagation();
+              var btn=e.target;btn.style.color='#4ade80';btn.style.background='#166534';btn.style.borderColor='#22c55e66';btn.textContent='Confirmed ✓';
+              setTimeout(function(){d({t:'UPD_CLASH',id:it.id,u:{status:'confirmed'}});},600);
+            }}
+            style=${{...S_BTN,fontSize:'.6rem',padding:'.15rem .5rem',background:'var(--bg-secondary)',color:'#ef4444',border:'1px solid var(--border)',fontWeight:600,transition:'all .2s'}}>Confirm</button>`}
           ${!isClash && EDITABLE_STATUSES.map(function(k){return html`<button key=${k}
             onClick=${function(e){e.stopPropagation();d({t:'UPD_ISSUE',id:it.id,u:{status:k}})}}
             style=${{...S_BTN,fontSize:'.6rem',padding:'.15rem .35rem',background:it.status===k?STAT[k].bg:'var(--bg-secondary)',color:it.status===k?'#fff':'var(--text-faint)'}}>${STAT[k].label}</button>`})}
@@ -7656,112 +7660,126 @@ function startApp() {
 
   function AdvancedSettingsTab(props) {
     var d=props.d, p=props.prefs, models=props.models||[], rules=props.rules||{};
-    var SEC=props.SEC, TROW=props.TROW, TLBL=props.TLBL, TSUB=props.TSUB, LBL=props.LBL;
+    var SEC=props.SEC, TROW=props.TROW, TLBL=props.TLBL, TSUB=props.TSUB;
 
-    // Collect IFC types from loaded models + defaults
-    var ifcTypes = {};
-    DEFAULT_IFC_TYPES.forEach(function(t){ifcTypes[t]=true;});
-    models.forEach(function(m){(m.elements||[]).forEach(function(el){if(el.props&&el.props.ifcType)ifcTypes[el.props.ifcType]=true;});});
+    var tolEnabled = !!p.useTypePairTolerances;
+    var stExpanded = useState(false), expanded=stExpanded[0], setExpanded=stExpanded[1];
+
+    // Collect IFC types: from loaded models first, then fill with defaults
+    var modelTypes = {};
+    models.forEach(function(m){(m.elements||[]).forEach(function(el){if(el.props&&el.props.ifcType)modelTypes[el.props.ifcType]=true;});});
+    var hasModels = Object.keys(modelTypes).length > 0;
+    var ifcTypes = hasModels ? modelTypes : {};
+    if(!hasModels) DEFAULT_IFC_TYPES.forEach(function(t){ifcTypes[t]=true;});
     var typeList = Object.keys(ifcTypes).sort();
 
-    // Default tolerances stored in prefs, keyed as "TypeA:TypeB" → mm
+    // Default tolerances stored in prefs
     var defaultTols = p.defaultTolerances||{};
-    var tolKeys = Object.keys(defaultTols).sort();
+    var defaultGap = p.defaultMaxGap||50;
 
-    // Add pair state
-    var stAdd = useState({a:typeList[0]||'',b:typeList[1]||typeList[0]||'',mm:'50'});
-    var addState=stAdd[0], setAddState=stAdd[1];
+    function shortName(t){return t.replace(/^Ifc/,'');}
+
+    function pairKey(a,b){return a<b?a+':'+b:b+':'+a;}
 
     function setTol(key, val) {
       var u = Object.assign({}, defaultTols);
-      if(val===null||val===undefined) delete u[key]; else u[key]=val;
+      if(val===null||val===undefined||val==='') delete u[key]; else u[key]=+val;
       d({t:'UPD_PREFS',u:{defaultTolerances:u}});
     }
 
-    function addPair() {
-      if(!addState.a||!addState.b) return;
-      var key = addState.a < addState.b ? addState.a+':'+addState.b : addState.b+':'+addState.a;
-      setTol(key, +addState.mm||0);
+    function toggleEnabled() {
+      d({t:'UPD_PREFS',u:{useTypePairTolerances:!tolEnabled}});
+      if(!tolEnabled) setExpanded(true);
     }
 
     function applyToRules() {
       d({t:'UPD_RULES',u:{toleranceByTypePair:Object.assign({},defaultTols)}});
     }
 
-    // Short type name helper
-    function shortName(t){return t.replace(/^Ifc/,'');}
+    // Build unique pairs for the matrix (upper triangle only, no self-pairs)
+    var pairs = [];
+    for(var i=0;i<typeList.length;i++){
+      for(var j=i+1;j<typeList.length;j++){
+        pairs.push({a:typeList[i],b:typeList[j],key:pairKey(typeList[i],typeList[j])});
+      }
+    }
+
+    var filledCount = Object.keys(defaultTols).length;
 
     return html`<div style=${{padding:'.2rem 1.2rem 1rem 1.2rem'}}>
-      <div style=${SEC}>Default Type-Pair Tolerances</div>
-      <div style=${{fontSize:'.62rem',color:'var(--text-muted)',lineHeight:1.5,marginBottom:'.6rem'}}>
-        Set default spatial tolerances per IFC type pair. These are saved as your user defaults and can be applied to any detection run.
+      <div style=${SEC}>Type-Pair Tolerances</div>
+
+      <div style=${TROW}>
+        <div>
+          <div style=${TLBL}>Custom tolerances per type pair</div>
+          <div style=${TSUB}>Override the default gap (${defaultGap}mm) for specific IFC type combinations${filledCount?' — '+filledCount+' set':''}</div>
+        </div>
+        <div onClick=${toggleEnabled} role="switch" aria-checked=${tolEnabled} tabindex="0"
+          style=${{width:38,height:22,borderRadius:11,background:tolEnabled?'var(--accent)':'var(--text-faint)',cursor:'pointer',position:'relative',transition:'background .2s',flexShrink:0}}>
+          <div style=${{width:18,height:18,borderRadius:9,background:'#fff',position:'absolute',top:2,left:tolEnabled?18:2,transition:'left .2s',boxShadow:'0 1px 3px rgba(0,0,0,.2)'}}></div>
+        </div>
       </div>
 
-      ${tolKeys.length>0 && html`<div style=${{marginBottom:'.5rem'}}>
-        <table style=${{width:'100%',borderCollapse:'collapse',fontSize:'.62rem'}}>
-          <thead><tr>
-            <th style=${{textAlign:'left',padding:'.25rem .4rem',color:'var(--text-muted)',borderBottom:'1px solid var(--border)',fontWeight:600}}>Type A</th>
-            <th style=${{textAlign:'left',padding:'.25rem .4rem',color:'var(--text-muted)',borderBottom:'1px solid var(--border)',fontWeight:600}}>Type B</th>
-            <th style=${{textAlign:'right',padding:'.25rem .4rem',color:'var(--text-muted)',borderBottom:'1px solid var(--border)',fontWeight:600}}>Tolerance</th>
-            <th style=${{width:24,borderBottom:'1px solid var(--border)'}}></th>
-          </tr></thead>
-          <tbody>
-            ${tolKeys.map(function(k){
-              var parts=k.split(':');
-              return html`<tr key=${k} style=${{borderBottom:'1px solid var(--border-subtle)'}}>
-                <td style=${{padding:'.25rem .4rem',color:'var(--text-secondary)'}}>${shortName(parts[0])}</td>
-                <td style=${{padding:'.25rem .4rem',color:'var(--text-secondary)'}}>${shortName(parts[1]||parts[0])}</td>
-                <td style=${{padding:'.25rem .4rem',textAlign:'right'}}>
-                  <input type="number" value=${defaultTols[k]} min="0" max="9999" step="5"
-                    onChange=${function(e){setTol(k,+e.target.value||0);}}
-                    style=${{...S_INPUT,width:50,textAlign:'center',fontSize:'.6rem',padding:'1px 3px'}} />
-                  <span style=${{color:'var(--text-faint)',marginLeft:2}}>mm</span>
-                </td>
-                <td style=${{padding:'.25rem .2rem',textAlign:'center'}}>
-                  <button onClick=${function(){setTol(k,null);}}
-                    style=${{...S_BTN,background:'none',color:'var(--text-faint)',fontSize:'.55rem',padding:'0 3px',border:'none'}}>✕</button>
-                </td>
-              </tr>`;
-            })}
-          </tbody>
-        </table>
+      ${tolEnabled && html`<div style=${{marginTop:'.5rem'}}>
+        <button onClick=${function(){setExpanded(!expanded);}}
+          style=${{...S_BTN,width:'100%',padding:'.35rem',fontSize:'.65rem',
+            background:'var(--bg-primary)',color:'var(--text-secondary)',
+            border:'1px solid var(--border)',borderRadius:6,
+            display:'flex',justifyContent:'space-between',alignItems:'center'}}>
+          <span>${expanded?'Hide':'Show'} tolerance matrix (${typeList.length} types, ${pairs.length} pairs)</span>
+          <span style=${{fontSize:'.55rem',color:'var(--text-faint)'}}>${expanded?'▲':'▼'}</span>
+        </button>
+
+        ${expanded && html`<div style=${{marginTop:'.4rem',maxHeight:400,overflowY:'auto',border:'1px solid var(--border)',borderRadius:6,background:'var(--bg-primary)'}}>
+          ${typeList.length<2 && html`<div style=${{padding:'1rem',fontSize:'.65rem',color:'var(--text-faint)',textAlign:'center'}}>
+            Load IFC models to populate the type list, or types from the default set will be shown.
+          </div>`}
+          ${typeList.length>=2 && html`<table style=${{width:'100%',borderCollapse:'collapse',fontSize:'.58rem'}}>
+            <tbody>
+              ${pairs.map(function(pr){
+                var val = defaultTols[pr.key];
+                var hasVal = val!==undefined && val!==null;
+                return html`<tr key=${pr.key} style=${{borderBottom:'1px solid var(--border-subtle)'}}>
+                  <td style=${{padding:'.3rem .4rem',color:'var(--text-secondary)',whiteSpace:'nowrap',width:'38%'}}>
+                    ${shortName(pr.a)}
+                  </td>
+                  <td style=${{padding:'.3rem 0',color:'var(--text-faint)',width:16,textAlign:'center'}}>↔</td>
+                  <td style=${{padding:'.3rem .4rem',color:'var(--text-secondary)',whiteSpace:'nowrap',width:'38%'}}>
+                    ${shortName(pr.b)}
+                  </td>
+                  <td style=${{padding:'.2rem .4rem',textAlign:'right',width:80}}>
+                    <input type="number" min="0" max="9999" step="5"
+                      value=${hasVal?val:''}
+                      placeholder=${defaultGap}
+                      onFocus=${function(e){e.target.select();}}
+                      onChange=${function(e){
+                        var v=e.target.value;
+                        if(v===''||v===null) setTol(pr.key,null);
+                        else setTol(pr.key,Math.max(0,+v||0));
+                      }}
+                      onClick=${function(e){e.stopPropagation();}}
+                      style=${{...S_INPUT,width:48,textAlign:'center',fontSize:'.58rem',padding:'2px 3px',
+                        background:hasVal?'rgba(37,99,235,.1)':'var(--bg-secondary)',
+                        borderColor:hasVal?'rgba(37,99,235,.3)':'var(--border)',
+                        color:hasVal?'var(--text-primary)':'var(--text-faint)'}} />
+                    <span style=${{color:'var(--text-faint)',fontSize:'.5rem',marginLeft:2}}>mm</span>
+                  </td>
+                </tr>`;
+              })}
+            </tbody>
+          </table>`}
+        </div>`}
+
+        ${expanded && filledCount>0 && html`<button onClick=${applyToRules}
+          style=${{...S_BTN,width:'100%',padding:'.35rem',fontSize:'.65rem',fontWeight:600,marginTop:'.4rem',
+            background:'var(--accent)',color:'#fff',border:'none',borderRadius:6}}>
+          Apply ${filledCount} tolerance${filledCount!==1?'s':''} to Current Detection Rules
+        </button>`}
+
+        <div style=${{fontSize:'.55rem',color:'var(--text-faint)',lineHeight:1.5,marginTop:'.4rem'}}>
+          Empty cells use the default gap (${defaultGap}mm). Set 0 for hard-clash-only on that pair. Changes are saved automatically.
+        </div>
       </div>`}
-
-      ${tolKeys.length===0 && html`<div style=${{fontSize:'.62rem',color:'var(--text-faint)',padding:'.5rem',background:'var(--bg-primary)',borderRadius:6,marginBottom:'.5rem',textAlign:'center'}}>
-        No type-pair tolerances defined yet. Add one below.
-      </div>`}
-
-      <div style=${{display:'flex',gap:'.2rem',alignItems:'center',flexWrap:'wrap',marginBottom:'.5rem'}}>
-        <select value=${addState.a} onChange=${function(e){setAddState(Object.assign({},addState,{a:e.target.value}));}}
-          style=${{...S_INPUT,fontSize:'.6rem',padding:'2px 3px',flex:1,minWidth:80}}>
-          ${typeList.map(function(t){return html`<option key=${t} value=${t}>${shortName(t)}</option>`;})}
-        </select>
-        <span style=${{color:'var(--text-faint)',fontSize:'.6rem'}}>↔</span>
-        <select value=${addState.b} onChange=${function(e){setAddState(Object.assign({},addState,{b:e.target.value}));}}
-          style=${{...S_INPUT,fontSize:'.6rem',padding:'2px 3px',flex:1,minWidth:80}}>
-          ${typeList.map(function(t){return html`<option key=${t} value=${t}>${shortName(t)}</option>`;})}
-        </select>
-        <input type="number" value=${addState.mm} min="0" max="9999" step="5"
-          onInput=${function(e){setAddState(Object.assign({},addState,{mm:e.target.value}));}}
-          style=${{...S_INPUT,fontSize:'.6rem',padding:'2px 3px',width:45,textAlign:'center'}} />
-        <span style=${{color:'var(--text-faint)',fontSize:'.55rem'}}>mm</span>
-        <button onClick=${addPair}
-          style=${{...S_BTN,fontSize:'.6rem',padding:'.15rem .5rem',background:'var(--accent)',color:'#fff',border:'none'}}>Add</button>
-      </div>
-
-      <button onClick=${applyToRules}
-        disabled=${!tolKeys.length}
-        style=${{...S_BTN,width:'100%',padding:'.35rem',fontSize:'.68rem',fontWeight:600,
-          background:tolKeys.length?'var(--accent)':'var(--bg-primary)',
-          color:tolKeys.length?'#fff':'var(--text-faint)',
-          border:'1px solid '+(tolKeys.length?'var(--accent)':'var(--border)'),
-          borderRadius:6,marginBottom:'.6rem'}}>
-        Apply to Current Detection Rules
-      </button>
-
-      <div style=${{fontSize:'.58rem',color:'var(--text-faint)',lineHeight:1.5}}>
-        Tip: Set 0mm for hard-clash-only on a type pair. These defaults persist across sessions and can be applied to any detection run via the button above.
-      </div>
     </div>`;
   }
 
@@ -10271,7 +10289,7 @@ function startApp() {
   function RightRail(props) {
     var s=props.s, d=props.d;
     var clashN=s.clashes.filter(function(c){return (c.status||'new')!=='resolved';}).length;
-    var issueN=s.issues.filter(function(i){return (i.status||'open')==='open';}).length;
+    var issueN=s.issues.filter(function(i){var st=i.status||'open';return st!=='resolved'&&st!=='closed';}).length;
 
     function tabBtn(id, svgPath, title, badge) {
       var active=s.tab===id;
@@ -10544,7 +10562,7 @@ function startApp() {
   function MobileNav(props) {
     var s=props.s, d=props.d;
     var clashN=s.clashes.filter(function(c){return (c.status||'new')!=='resolved';}).length;
-    var issueN=s.issues.filter(function(i){return (i.status||'open')==='open';}).length;
+    var issueN=s.issues.filter(function(i){var st=i.status||'open';return st!=='resolved'&&st!=='closed';}).length;
     function navBtn(id, svgPath, label, badge) {
       var active=s.tab===id;
       return html`<button class=${active?'active':''} onClick=${function(){d({t:'TAB',v:s.tab===id?null:id});}}>

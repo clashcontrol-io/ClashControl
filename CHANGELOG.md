@@ -1,5 +1,8 @@
 # Changelog
 
+## v2.5.2 (2026-03-25)
+- Add -type exclusion syntax, fix / key always focuses chat input
+
 ## v2.5.1 (2026-03-25)
 - Add Advanced settings tab with tolerance matrix
 
