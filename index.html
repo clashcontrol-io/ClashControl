@@ -245,7 +245,7 @@ window.onload = function() {
 
 function startApp() {
   // ── Version (auto-updated by pre-commit hook) ──
-  var CC_VERSION = {v:'2.6.9',hash:'b27fd19',date:'2026-03-25T10:44:29Z'};
+  var CC_VERSION = {v:'2.6.10',hash:'72eb968',date:'2026-03-25T10:49:18Z'};
 
   // Check CDN deps loaded
   var need = [];
@@ -7369,10 +7369,9 @@ function startApp() {
               ${CTYPES.map(function(ct){var confirmed=it.clashTypeConfirmed!=null;var sel=curCT===ct.k;var isDefault=!confirmed&&it.type===ct.k;return html`<button key=${ct.k}
                 onClick=${function(e){e.stopPropagation();d({t:'UPD_CLASH',id:it.id,u:{clashTypeConfirmed:ct.k}});}}
                 style=${{...S_BTN,fontSize:'.55rem',padding:'.1rem .35rem',
-                  background:sel&&confirmed?'#1e3a5f':isDefault?'var(--bg-primary)':'var(--bg-secondary)',
-                  color:sel&&confirmed?'#93c5fd':isDefault?'var(--text-muted)':'var(--text-faint)',
-                  border:'1px solid '+(sel&&confirmed?'#3b82f6':isDefault?'var(--border)':'var(--border)'),
-                  opacity:isDefault&&!confirmed?0.7:1}}>${ct.l}${isDefault&&!confirmed?' (detected)':''}</button>`})}
+                  background:sel||isDefault?'#1e3a5f':'var(--bg-secondary)',
+                  color:sel||isDefault?'#93c5fd':'var(--text-faint)',
+                  border:'1px solid '+(sel||isDefault?'#3b82f6':'var(--border)')}}>${ct.l}${isDefault?' (detected)':''}</button>`})}
             </div>
             <div style=${{fontSize:'.55rem',fontWeight:600,color:'var(--text-muted)',marginBottom:'.15rem'}}>Reason</div>
             <div style=${{display:'flex',gap:'.2rem',marginBottom:'.3rem',flexWrap:'wrap'}}>
