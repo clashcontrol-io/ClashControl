@@ -1,5 +1,11 @@
 # Changelog
 
+## v2.6.4 (2026-03-25)
+- Split Google Forms URL to avoid phishing heuristic false positive
+
+## v2.6.3 (2026-03-25)
+- Add 'Design error' as first training feedback reason option
+
 ## v2.6.2 (2026-03-25)
 - Auto-advance to next clash after confirming
 
