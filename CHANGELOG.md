@@ -1,5 +1,8 @@
 # Changelog
 
+## v2.0.41 (2026-03-25)
+- Make all overflow-prone UI elements scrollable on any screen size
+
 ## v2.0.40 (2026-03-24)
 - Show header bar on mobile and make nav cube theme-aware
 

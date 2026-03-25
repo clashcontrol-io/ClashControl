@@ -245,7 +245,7 @@ window.onload = function() {
 
 function startApp() {
   // ── Version (auto-updated by pre-commit hook) ──
-  var CC_VERSION = {v:'2.0.40',hash:'028f1bf',date:'2026-03-24T21:37:49Z'};
+  var CC_VERSION = {v:'2.0.41',hash:'be8db5e',date:'2026-03-25T05:16:09Z'};
 
   // Check CDN deps loaded
   var need = [];
@@ -4492,10 +4492,10 @@ function startApp() {
     ];
     // BoxGeometry material group order: +X, -X, +Y, -Y, +Z, -Z = RIGHT, LEFT, TOP, BOTTOM, FRONT, BACK
     var BOX_FACE_MAP = [2, 3, 4, 5, 0, 1]; // boxGeo slot → FACES index
-    // Base face colors — light-on-dark / dark-on-light for contrast with viewer background
+    // Base face colors — dark faces on light theme, brighter faces on dark theme for readability
     var FACE_CLR = theme==='light'
-      ? {FRONT:0xc8d0dc, BACK:0xbfc7d3, RIGHT:0xc8d0dc, LEFT:0xbfc7d3, TOP:0xd0d8e4, BOTTOM:0xb8c0cc}
-      : {FRONT:0x2a4a6b, BACK:0x253f5e, RIGHT:0x2a4a6b, LEFT:0x253f5e, TOP:0x304f72, BOTTOM:0x1f3650};
+      ? {FRONT:0x8494a7, BACK:0x7a8a9d, RIGHT:0x8494a7, LEFT:0x7a8a9d, TOP:0x8ea0b5, BOTTOM:0x708090}
+      : {FRONT:0x3a5f8a, BACK:0x34537a, RIGHT:0x3a5f8a, LEFT:0x34537a, TOP:0x406690, BOTTOM:0x2e4a6e};
 
     function flyToDir(dir) {
       var S=state3d.current; if(!S||!S.orbit) return;
@@ -4530,7 +4530,8 @@ function startApp() {
       c.width=128; c.height=128;
       var ctx=c.getContext('2d');
       ctx.clearRect(0,0,128,128);
-      ctx.fillStyle = isHovered ? '#ffffff' : 'rgba(226,232,240,0.88)';
+      var light = theme==='light';
+      ctx.fillStyle = isHovered ? (light ? '#1e293b' : '#ffffff') : (light ? 'rgba(15,23,42,0.85)' : 'rgba(226,232,240,0.88)');
       ctx.font = 'bold 21px system-ui,sans-serif';
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
@@ -4578,8 +4579,16 @@ function startApp() {
           specular: new THREE.Color(0x3a5a7a)
         });
       });
-      var cubeMesh = new THREE.Mesh(new THREE.BoxGeometry(1, 1, 1), materials);
+      var boxGeo = new THREE.BoxGeometry(1, 1, 1);
+      var cubeMesh = new THREE.Mesh(boxGeo, materials);
       cubeGroup.add(cubeMesh);
+
+      // Wireframe edges for visibility
+      var edgeGeo = new THREE.EdgesGeometry(boxGeo);
+      var edgeColor = theme==='light' ? 0x64748b : 0x94a3b8;
+      var edgeMat = new THREE.LineBasicMaterial({color:edgeColor, transparent:true, opacity:0.6, depthTest:true});
+      var edgeLines = new THREE.LineSegments(edgeGeo, edgeMat);
+      cubeGroup.add(edgeLines);
 
       // Axis indicators at cube corner — match the AxesHelper at the grid origin
       // X=red, Y=green, Z=blue. Extends from the -X/-Y/-Z corner outward along each axis.
@@ -4606,6 +4615,7 @@ function startApp() {
 
       vcState.current = {renderer:renderer, scene:scene, camera:camera,
         cubeGroup:cubeGroup, cubeMesh:cubeMesh, materials:materials,
+        edgeLines:edgeLines,
         raycaster:raycaster, mouse:mouse, hoveredKey:null};
 
       // ── Animation loop ──────────────────────────────────────────
@@ -4680,7 +4690,7 @@ function startApp() {
           var isHov = !!hovSet[fi];
           mat.map = makeFaceTexture(FACES[fi].label, isHov);
           mat.map.needsUpdate = true;
-          mat.color.setHex(isHov ? 0x2563eb : (FACE_CLR[FACES[fi].label]||0x2a4a6b));
+          mat.color.setHex(isHov ? 0x2563eb : (FACE_CLR[FACES[fi].label]||0x3a5f8a));
         });
       }
 
@@ -4734,33 +4744,23 @@ function startApp() {
       return function(){ cancelAnimationFrame(animId); renderer.dispose(); };
     }, []);
 
-    // Update cube face colors when theme changes
+    // Update cube face colors + edges when theme changes
     useEffect(function(){
       var vc = vcState.current; if(!vc) return;
       var light = theme==='light';
       var clr = light
-        ? {FRONT:0xc8d0dc, BACK:0xbfc7d3, RIGHT:0xc8d0dc, LEFT:0xbfc7d3, TOP:0xd0d8e4, BOTTOM:0xb8c0cc}
-        : {FRONT:0x2a4a6b, BACK:0x253f5e, RIGHT:0x2a4a6b, LEFT:0x253f5e, TOP:0x304f72, BOTTOM:0x1f3650};
-      var txtClr = light ? '#1e293b' : 'rgba(226,232,240,0.88)';
+        ? {FRONT:0x8494a7, BACK:0x7a8a9d, RIGHT:0x8494a7, LEFT:0x7a8a9d, TOP:0x8ea0b5, BOTTOM:0x708090}
+        : {FRONT:0x3a5f8a, BACK:0x34537a, RIGHT:0x3a5f8a, LEFT:0x34537a, TOP:0x406690, BOTTOM:0x2e4a6e};
       BOX_FACE_MAP.forEach(function(fi, i){
         var f = FACES[fi];
-        vc.materials[i].color.set(clr[f.label] || 0x2a4a6b);
-        // Rebuild face texture with correct text color
-        var c = document.createElement('canvas');
-        c.width=128; c.height=128;
-        var ctx=c.getContext('2d');
-        ctx.clearRect(0,0,128,128);
-        ctx.fillStyle = txtClr;
-        ctx.font = 'bold 21px system-ui,sans-serif';
-        ctx.textAlign = 'center';
-        ctx.textBaseline = 'middle';
-        ctx.fillText(f.label, 64, 64);
-        var tex = new THREE.CanvasTexture(c);
-        tex.minFilter = THREE.LinearFilter;
+        vc.materials[i].color.set(clr[f.label] || 0x3a5f8a);
+        // Rebuild face texture with correct text color for theme
         vc.materials[i].map.dispose();
-        vc.materials[i].map = tex;
+        vc.materials[i].map = makeFaceTexture(f.label, false);
         vc.materials[i].needsUpdate = true;
       });
+      // Update edge color
+      if(vc.edgeLines) vc.edgeLines.material.color.setHex(light ? 0x64748b : 0x94a3b8);
     }, [theme]);
 
     return html`<div class="cc-viewcube-wrap" style=${{position:'absolute',top:'.5rem',right:'.5rem',pointerEvents:'auto',width:140,height:140}}>
