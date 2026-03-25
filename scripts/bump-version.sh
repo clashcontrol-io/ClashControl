@@ -131,9 +131,16 @@ if [ -f "$CHANGELOG_FILE" ] && [ -f "$COMMIT_MSG_FILE" ]; then
   fi
 fi
 
+# Update service worker cache version
+SW_FILE="$REPO_ROOT/sw.js"
+if [ -f "$SW_FILE" ]; then
+  sed -i "s|var CACHE = 'clashcontrol-v[^']*';|var CACHE = 'clashcontrol-v${VERSION}';|" "$SW_FILE"
+fi
+
 # Re-stage the modified files
 git add "$VERSION_FILE" "$INDEX_FILE"
 [ -f "$README_FILE" ] && git add "$README_FILE"
 [ -f "$CHANGELOG_FILE" ] && git add "$CHANGELOG_FILE"
+[ -f "$SW_FILE" ] && git add "$SW_FILE"
 
 echo "  Version: $VERSION (${GIT_HASH}, ${BUILD_DATE})"

@@ -1,7 +1,7 @@
 // ClashControl Service Worker — offline caching
 // Updates automatically when index.html changes (cache name includes version)
 
-var CACHE = 'clashcontrol-v1.2.22';
+var CACHE = 'clashcontrol-v2.11.3';
 
 var PRECACHE = [
   './',
@@ -36,13 +36,32 @@ self.addEventListener('activate', function(e) {
 });
 
 self.addEventListener('fetch', function(e) {
+  var url = e.request.url;
+  var isNav = e.request.mode === 'navigate';
+  var isHTML = url.indexOf('index.html') !== -1 || url.endsWith('/');
+
+  // Network-first for HTML / navigation — always get the latest app version
+  if (isNav || isHTML) {
+    e.respondWith(
+      fetch(e.request).then(function(response) {
+        if (response.status === 200) {
+          var clone = response.clone();
+          caches.open(CACHE).then(function(cache) { cache.put(e.request, clone); });
+        }
+        return response;
+      }).catch(function() {
+        return caches.match(e.request);
+      })
+    );
+    return;
+  }
+
+  // Cache-first for CDN / static assets
   e.respondWith(
     caches.match(e.request).then(function(cached) {
       if (cached) return cached;
       return fetch(e.request).then(function(response) {
-        // Cache successful GET responses for CDN resources
         if (e.request.method === 'GET' && response.status === 200) {
-          var url = e.request.url;
           if (url.indexOf('cdnjs.cloudflare.com') !== -1 ||
               url.indexOf('esm.sh') !== -1 ||
               url.indexOf('cdn.jsdelivr.net') !== -1) {
