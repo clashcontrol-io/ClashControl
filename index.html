@@ -245,7 +245,7 @@ window.onload = function() {
 
 function startApp() {
   // ── Version (auto-updated by pre-commit hook) ──
-  var CC_VERSION = {v:'2.9.2',hash:'d5563fd',date:'2026-03-25T15:52:33Z'};
+  var CC_VERSION = {v:'2.9.3',hash:'139843c',date:'2026-03-25T15:56:49Z'};
 
   // Check CDN deps loaded
   var need = [];
@@ -277,6 +277,7 @@ function startApp() {
   var STAT = {
     open:          { label:'Open',          bg:'#ef4444' },
     confirmed:     { label:'Confirmed',     bg:'#3b82f6' },
+    denied:        { label:'Denied',        bg:'#6b7280' },
     in_progress:   { label:'In progress',   bg:'#f59e0b' },
     resolved:      { label:'Resolved',      bg:'#22c55e' },
     auto_resolved: { label:'Auto-resolved', bg:'#475569' },
@@ -403,6 +404,29 @@ function startApp() {
         })
       });
       case 'UPD_CLASH':
+        // When denied, remove clash from list (training data recorded via dispatch wrapper)
+        if(a.u&&a.u.status==='denied'){
+          var dClash=null;
+          var dRemain=s.clashes.filter(function(c){
+            if(c.id===a.id){dClash=c;return false;}
+            return true;
+          });
+          if(dClash){
+            var dIdx=s.clashes.indexOf(dClash);
+            var dNext=dRemain[Math.min(dIdx,dRemain.length-1)]||null;
+            var dNextId=dNext?dNext.id:null;
+            if(dNext) setTimeout(function(){
+              var ids=[];
+              if(dNext.elemA) ids.push(dNext.elemA);
+              if(dNext.elemB) ids.push(dNext.elemB);
+              if(ids.length&&_ghostOthers) _ghostOthers(ids);
+              if(dNext.elemA&&_highlightById) _highlightById(dNext.elemA,false);
+              if(dNext.point&&window._ccShowActiveClashMarker) window._ccShowActiveClashMarker(dNext.point);
+              if(_flyToElements&&ids.length) _flyToElements(ids, dNext.point);
+            },100);
+            return Object.assign({},s,{clashes:dRemain,activeId:dNextId});
+          }
+        }
         // When confirmed, move clash to issues tab
         if(a.u&&a.u.status==='confirmed'){
           var cClash=null;
@@ -2585,7 +2609,7 @@ function startApp() {
   // user identifiers are included. See the AI Layer Implementation Guide
   // for the full GDPR rationale.
 
-  var _AI_VERDICT_MAP = {open:'unreviewed', confirmed:'true_clash', in_progress:'true_clash', resolved:'acceptable', closed:'false_positive'};
+  var _AI_VERDICT_MAP = {open:'unreviewed', confirmed:'true_clash', denied:'false_positive', in_progress:'true_clash', resolved:'acceptable', closed:'false_positive'};
 
   function _buildAITrainingPayload(clashes, detectionSettings, models, defaultTolerances, issues) {
     // Include confirmed clashes that moved to issues
@@ -7460,7 +7484,13 @@ function startApp() {
               var btn=e.target;btn.style.color='#4ade80';btn.style.background='#166534';btn.style.borderColor='#22c55e66';btn.textContent='Confirmed ✓';
               setTimeout(function(){d({t:'UPD_CLASH',id:it.id,u:{status:'confirmed'}});},600);
             }}
-            style=${{...S_BTN,fontSize:'.6rem',padding:'.15rem .5rem',background:'var(--bg-secondary)',color:'#ef4444',border:'1px solid var(--border)',fontWeight:600,transition:'all .2s'}}>Confirm</button>`}
+            style=${{...S_BTN,fontSize:'.6rem',padding:'.15rem .5rem',background:'var(--bg-secondary)',color:'#4ade80',border:'1px solid #22c55e44',fontWeight:600,transition:'all .2s'}}>Confirm</button>`}
+          ${isClash && it.status!=='confirmed' && html`<button onClick=${function(e){
+              e.stopPropagation();
+              var btn=e.target;btn.style.color='#fca5a5';btn.style.background='#7f1d1d';btn.style.borderColor='#ef444466';btn.textContent='Denied ✗';
+              setTimeout(function(){d({t:'UPD_CLASH',id:it.id,u:{status:'denied'}});},600);
+            }}
+            style=${{...S_BTN,fontSize:'.6rem',padding:'.15rem .5rem',background:'var(--bg-secondary)',color:'#f87171',border:'1px solid #ef444444',fontWeight:600,transition:'all .2s'}}>Deny</button>`}
           ${!isClash && EDITABLE_STATUSES.map(function(k){return html`<button key=${k}
             onClick=${function(e){e.stopPropagation();d({t:'UPD_ISSUE',id:it.id,u:{status:k}})}}
             style=${{...S_BTN,fontSize:'.6rem',padding:'.15rem .35rem',background:it.status===k?STAT[k].bg:'var(--bg-secondary)',color:it.status===k?'#fff':'var(--text-faint)'}}>${STAT[k].label}</button>`})}
@@ -10786,8 +10816,8 @@ function startApp() {
         if (a.t==='UPD_CLASH' && a.u && a.u.status) {
           var c = s.clashes.find(function(c){return c.id===a.id;});
           if (c && c._trainFV && a.u.status !== c.status) {
-            var labelMap = {in_progress:0.8, resolved:0.7, closed:0.2};
-            if (labelMap[a.u.status] != null) _saveClashTrainRecord(c.id, c._trainFV, labelMap[a.u.status], 'status_change', false);
+            var labelMap = {confirmed:1.0, denied:0.0, in_progress:0.8, resolved:0.7, closed:0.2};
+            if (labelMap[a.u.status] != null) _saveClashTrainRecord(c.id, c._trainFV, labelMap[a.u.status], a.u.status==='denied'?'explicit_feedback':'status_change', false);
           }
         }
         if (a.t==='AI_FEEDBACK' && a.v) {
@@ -10799,10 +10829,10 @@ function startApp() {
           if (c3 && c3._trainFV) _saveClashTrainRecord(c3.id, c3._trainFV, 1.0, 'issue_created', false);
         }
         if (a.t==='BATCH_UPD_CLASH' && a.u && a.u.status) {
-          var labelMap2 = {in_progress:0.8, resolved:0.7, closed:0.2};
+          var labelMap2 = {confirmed:1.0, denied:0.0, in_progress:0.8, resolved:0.7, closed:0.2};
           if (labelMap2[a.u.status] != null) {
             s.clashes.forEach(function(c){
-              if (s.selected[c.id] && c._trainFV && c.status !== a.u.status) _saveClashTrainRecord(c.id, c._trainFV, labelMap2[a.u.status], 'status_change', false);
+              if (s.selected[c.id] && c._trainFV && c.status !== a.u.status) _saveClashTrainRecord(c.id, c._trainFV, labelMap2[a.u.status], a.u.status==='denied'?'explicit_feedback':'status_change', false);
             });
           }
         }

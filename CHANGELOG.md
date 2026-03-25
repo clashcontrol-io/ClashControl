@@ -1,5 +1,8 @@
 # Changelog
 
+## v2.9.3 (2026-03-25)
+- Reserve right-click for element context menu, pan with middle button only
+
 ## v2.9.2 (2026-03-25)
 - Enable middle mouse button (wheel click) for panning the 3D view
 
