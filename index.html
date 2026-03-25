@@ -245,7 +245,7 @@ window.onload = function() {
 
 function startApp() {
   // ── Version (auto-updated by pre-commit hook) ──
-  var CC_VERSION = {v:'2.2.5',hash:'edb1fc8',date:'2026-03-25T08:36:02Z'};
+  var CC_VERSION = {v:'2.3.0',hash:'4f371ba',date:'2026-03-25T08:43:07Z'};
 
   // Check CDN deps loaded
   var need = [];
@@ -300,7 +300,7 @@ function startApp() {
   };
   var INIT_PREFS = {
     autoFlyTo:true, autoHighlight:true, showGrid:true, showAxes:true,
-    showClashMarkers:false, showIssueMarkers:false, hoverHighlight:true, outlineSelected:true,
+    showMarkers:false, hoverHighlight:true, outlineSelected:true,
     defaultPriority:'normal', defaultCategory:'design', defaultStatus:'open',
     defaultMaxGap:50, resetFiltersOnRun:true,
     theme:(function(){ try { return localStorage.getItem('cc_theme')||'dark'; } catch(e){ return 'dark'; } })(),
@@ -389,6 +389,9 @@ function startApp() {
           upd2.aiSignals=sigs;
         }
         return Object.assign({},c,upd2);
+      })});
+      case 'CLEAR_TRAINING_DATA': return Object.assign({},s,{clashes:s.clashes.map(function(c){
+        return Object.assign({},c,{aiFeedback:null,aiReasons:[],aiNote:'',aiSignals:[],clashTypeConfirmed:null});
       })});
       case 'UPD_CLASH':   return Object.assign({},s,{clashes:s.clashes.map(function(c){
         if(c.id!==a.id) return c;
@@ -4296,23 +4299,19 @@ function startApp() {
       invalidate();
     }, [s.colorByClass, s.classifications]);
 
-    // Sync clash markers when clashes change
+    // Sync markers when clashes/issues change
     useEffect(function(){
-      if(s.prefs.showClashMarkers!==false && s.clashes.length>0 && _showClashMarkers){
+      if(s.prefs.showMarkers && s.clashes.length>0 && _showClashMarkers){
         _showClashMarkers(s.clashes);
       } else if(_clearClashMarkers){
         _clearClashMarkers();
       }
-    }, [s.clashes, s.prefs.showClashMarkers]);
-
-    // Sync issue markers when issues change
-    useEffect(function(){
-      if(s.prefs.showIssueMarkers!==false && s.issues.length>0 && _showIssueMarkers){
+      if(s.prefs.showMarkers && s.issues.length>0 && _showIssueMarkers){
         _showIssueMarkers(s.issues);
       } else if(_clearIssueMarkers){
         _clearIssueMarkers();
       }
-    }, [s.issues, s.prefs.showIssueMarkers]);
+    }, [s.clashes, s.issues, s.prefs.showMarkers]);
 
     // Clear measurement 3D objects when measurements list is cleared
     useEffect(function(){
@@ -4503,13 +4502,9 @@ function startApp() {
           style=${{...S_BTN,background:'var(--overlay-bg)',color:'#93c5fd',border:'1px solid var(--border)',fontSize:'.65rem',padding:'.25rem .5rem'}}>
           Fit All Clashes
         </button>
-        <button onClick=${function(){d({t:'UPD_PREFS',u:{showClashMarkers:!s.prefs.showClashMarkers}})}}
-          style=${{...S_BTN,background:s.prefs.showClashMarkers!==false?'rgba(37,99,235,.7)':'var(--overlay-bg)',color:s.prefs.showClashMarkers!==false?'#fff':'var(--text-muted)',border:'1px solid var(--border)',fontSize:'.65rem',padding:'.25rem .5rem'}}>
-          ${s.prefs.showClashMarkers!==false?'Clash Markers On':'Clash Markers Off'}
-        </button>
-        <button onClick=${function(){d({t:'UPD_PREFS',u:{showIssueMarkers:!s.prefs.showIssueMarkers}})}}
-          style=${{...S_BTN,background:s.prefs.showIssueMarkers!==false?'rgba(34,197,94,.7)':'var(--overlay-bg)',color:s.prefs.showIssueMarkers!==false?'#fff':'var(--text-muted)',border:'1px solid var(--border)',fontSize:'.65rem',padding:'.25rem .5rem'}}>
-          ${s.prefs.showIssueMarkers!==false?'Issue Markers On':'Issue Markers Off'}
+        <button onClick=${function(){d({t:'UPD_PREFS',u:{showMarkers:!s.prefs.showMarkers}})}}
+          style=${{...S_BTN,background:s.prefs.showMarkers?'rgba(37,99,235,.7)':'var(--overlay-bg)',color:s.prefs.showMarkers?'#fff':'var(--text-muted)',border:'1px solid var(--border)',fontSize:'.65rem',padding:'.25rem .5rem'}}>
+          ${s.prefs.showMarkers?'Markers On':'Markers Off'}
         </button>
       </div>`}
       ${html`<${TrainingPill} s=${s} d=${d} />`}
@@ -7491,12 +7486,8 @@ function startApp() {
           <${Toggle} on=${p.showAxes!==false} onToggle=${tog('showAxes')} />
         </div>
         <div style=${TROW}>
-          <div><div style=${TLBL}>Show clash markers</div><div style=${TSUB}>Display 3D markers at clash points (red=hard, yellow=soft)</div></div>
-          <${Toggle} on=${p.showClashMarkers!==false} onToggle=${tog('showClashMarkers')} />
-        </div>
-        <div style=${TROW}>
-          <div><div style=${TLBL}>Show issue markers</div><div style=${TSUB}>Display green 3D markers at issue locations</div></div>
-          <${Toggle} on=${p.showIssueMarkers!==false} onToggle=${tog('showIssueMarkers')} />
+          <div><div style=${TLBL}>Show markers</div><div style=${TSUB}>Display 3D markers — red/amber for clashes, green for issues</div></div>
+          <${Toggle} on=${!!p.showMarkers} onToggle=${tog('showMarkers')} />
         </div>
         <div style=${TROW}>
           <div><div style=${TLBL}>Hover highlight</div><div style=${TSUB}>Highlight elements on mouse hover with wireframe overlay</div></div>
@@ -9219,8 +9210,8 @@ function startApp() {
       return s.trainingMode ? 'Training Mode is already active. Use thumbs up/down on clash rows to label data.' : 'Training Mode enabled. Use the thumbs up/down buttons on each clash to label true/false positives.';
     }
     if (/(?:disable|stop|deactivate|turn\s+off|exit)\s+training/.test(text)) {
-      if(s.trainingMode) d({t:'TRAINING_MODE'});
-      return 'Training Mode disabled.';
+      if(s.trainingMode){if(window._ccToggleTraining)window._ccToggleTraining();else d({t:'TRAINING_MODE'});}
+      return s.trainingMode ? 'Check the warning popup to confirm.' : 'Training Mode is already off.';
     }
 
     // ── Settings & Modals ────────────────────────────────────────
@@ -9246,8 +9237,8 @@ function startApp() {
     if (renderMatch) { d({t:'UPD_PREFS',u:{renderStyle:renderMatch[1]}}); return 'Render style set to ' + renderMatch[1] + '.'; }
 
     // Clash markers
-    if (/(?:show|enable|turn\s+on|display)\s+(?:clash\s+)?markers?/.test(text)) { d({t:'UPD_PREFS',u:{showClashMarkers:true}}); return 'Clash markers enabled.'; }
-    if (/(?:hide|disable|turn\s+off|remove)\s+(?:clash\s+)?markers?/.test(text)) { d({t:'UPD_PREFS',u:{showClashMarkers:false}}); return 'Clash markers disabled.'; }
+    if (/(?:show|enable|turn\s+on|display)\s+markers?/.test(text)) { d({t:'UPD_PREFS',u:{showMarkers:true}}); return 'Markers enabled.'; }
+    if (/(?:hide|disable|turn\s+off|remove)\s+markers?/.test(text)) { d({t:'UPD_PREFS',u:{showMarkers:false}}); return 'Markers disabled.'; }
 
     // Grid & axes
     if (/(?:show|enable|turn\s+on)\s+(?:the\s+)?grid/.test(text)) { d({t:'UPD_PREFS',u:{showGrid:true}}); return 'Grid enabled.'; }
@@ -9636,7 +9627,7 @@ function startApp() {
           <span style=${{width:'.4rem', height:'.4rem', borderRadius:'50%', background:backendColor, display:'inline-block'}}></span>
           ${backendLabel}
         </span>`}
-        <button onClick=${function(){d({t:'TRAINING_MODE'});}} style=${{
+        <button onClick=${function(){if(window._ccToggleTraining)window._ccToggleTraining();else d({t:'TRAINING_MODE'});}} style=${{
           background:s.trainingMode?'rgba(124,58,237,.85)':'none', border:'1px solid '+(s.trainingMode?'#a78bfa':'var(--border)'),
           borderRadius:6, cursor:'pointer', display:'flex', alignItems:'center', gap:'.25rem',
           padding:'.15rem .45rem', color:s.trainingMode?'#e9d5ff':mutedCol, fontSize:'.6rem', whiteSpace:'nowrap',
@@ -9905,6 +9896,8 @@ function startApp() {
     var ss = useState({status:null,msg:null}), shareState=ss[0], setShareState=ss[1];
     var stExpanded = useState(false), isExpanded=stExpanded[0], setExpanded=stExpanded[1];
     var stNotice = useState(false), showNotice=stNotice[0], setShowNotice=stNotice[1];
+    var stWarn = useState(false), showWarn=stWarn[0], setShowWarn=stWarn[1];
+    var stDelConfirm = useState(false), showDelConfirm=stDelConfirm[0], setShowDelConfirm=stDelConfirm[1];
     var prevTraining = useRef(false);
     useEffect(function(){
       if(s.trainingMode && !prevTraining.current){setExpanded(true);setShowNotice(true);}
@@ -9916,13 +9909,19 @@ function startApp() {
     var feedbackCount = clashes.filter(function(c){return c.aiFeedback;}).length;
     var totalCount = clashes.length;
 
-    function doExport() { exportAITrainingData(clashes, s.detectionSettings, s.models); }
-    function doShare() {
+    // Global guard: warn before turning off if unsent data exists
+    window._ccToggleTraining = function(){
+      if(s.trainingMode && feedbackCount > 0){setShowWarn(true);return;}
+      d({t:'TRAINING_MODE'});
+    };
+
+    function doSend() {
       shareAITrainingData(clashes, s.detectionSettings, s.models, function(status, msg) {
         setShareState({status:status, msg:msg});
         if (status==='ok') setTimeout(function(){ setShareState({status:null,msg:null}); }, 4000);
       });
     }
+    function doDelete() { d({t:'CLEAR_TRAINING_DATA'}); }
     var isSending = shareState.status==='sending';
     var hasData = reviewedCount > 0 || feedbackCount > 0;
 
@@ -9934,7 +9933,7 @@ function startApp() {
           border:'1px solid '+(s.trainingMode?'#a78bfa':'var(--border)'),
           boxShadow:s.trainingMode?'0 0 20px rgba(124,58,237,.3)':'var(--shadow-md)',
           overflow:'hidden'}}>
-        <button onClick=${function(){d({t:'TRAINING_MODE'}); if(!s.trainingMode) setExpanded(false);}}
+        <button onClick=${function(){if(window._ccToggleTraining)window._ccToggleTraining();else d({t:'TRAINING_MODE'}); if(!s.trainingMode) setExpanded(false);}}
           style=${{display:'flex',alignItems:'center',gap:'.4rem',
             padding:'.45rem .7rem .45rem 1.1rem',background:'none',border:'none',
             color:s.trainingMode?'#e9d5ff':'var(--text-muted)',fontSize:'.74rem',cursor:'pointer',whiteSpace:'nowrap'}}>
@@ -9972,17 +9971,44 @@ function startApp() {
           <div style=${{width:(hasData?Math.max(feedbackCount,reviewedCount)/Math.max(totalCount,1)*100:0)+'%',height:'100%',background:'#7c3aed',borderRadius:2}}></div>
         </div>
         <div style=${{display:'flex',gap:'.25rem',flexWrap:'wrap',marginBottom:'.2rem'}}>
-          <button onClick=${doExport} disabled=${!hasData}
-            style=${{...S_BTN,fontSize:'.55rem',padding:'.2rem .4rem',background:'var(--bg-secondary)',color:hasData?'var(--text-secondary)':'var(--text-faint)',border:'1px solid var(--border)',flex:1}}>Export JSON</button>
-          <button onClick=${doShare} disabled=${isSending || !hasData}
+          <button onClick=${doSend} disabled=${isSending || !hasData}
             style=${{...S_BTN,fontSize:'.55rem',padding:'.2rem .4rem',
               background:isSending||!hasData?'var(--bg-secondary)':'#7c3aed',
               color:isSending||!hasData?'var(--text-faint)':'#fff',
               border:'1px solid '+(isSending||!hasData?'var(--border)':'#7c3aed'),
-              opacity:isSending?0.6:1,flex:1}}>${isSending?'Sending\u2026':'Share'}</button>
+              opacity:isSending?0.6:1,flex:1}}>${isSending?'Sending\u2026':'Send'}</button>
+          ${!showDelConfirm && html`<button onClick=${function(){if(hasData)setShowDelConfirm(true);}} disabled=${!hasData}
+            style=${{...S_BTN,fontSize:'.55rem',padding:'.2rem .4rem',background:hasData?'#7f1d1d':'var(--bg-secondary)',color:hasData?'#fca5a5':'var(--text-faint)',border:'1px solid '+(hasData?'#ef444444':'var(--border)'),flex:1}}>Delete</button>`}
+          ${showDelConfirm && html`<button onClick=${function(){doDelete();setShowDelConfirm(false);}}
+            style=${{...S_BTN,fontSize:'.55rem',padding:'.2rem .4rem',background:'#ef4444',color:'#fff',border:'1px solid #ef4444',flex:1,animation:'pulse .6s ease-in-out infinite alternate'}}>Confirm Delete?</button>`}
         </div>
         ${shareState.status==='ok' && html`<div style=${{fontSize:'.55rem',color:'#22c55e'}}>Submitted, thank you!</div>`}
         ${shareState.status==='error' && shareState.msg && html`<div style=${{fontSize:'.55rem',color:'#ef4444'}}>${shareState.msg}</div>`}
+      </div>`}
+      ${showWarn && html`<div style=${{position:'fixed',top:0,left:0,right:0,bottom:0,zIndex:2000,
+        background:'rgba(0,0,0,.6)',display:'flex',alignItems:'flex-start',justifyContent:'center',padding:'3rem 0'}}
+        onClick=${function(){setShowWarn(false);setShowDelConfirm(false);}}>
+        <div onClick=${function(e){e.stopPropagation();}}
+          style=${{background:'var(--bg-primary)',border:'1px solid #a78bfa',borderRadius:10,
+            padding:'1.2rem',maxWidth:360,width:'90%',boxShadow:'0 8px 32px rgba(0,0,0,.4)'}}>
+          <div style=${{display:'flex',alignItems:'center',gap:'.4rem',marginBottom:'.6rem'}}>
+            <span style=${{fontSize:'1rem'}}>⚠</span>
+            <span style=${{fontSize:'.85rem',fontWeight:700,color:'var(--text-primary)'}}>Unsent Training Data</span>
+          </div>
+          <p style=${{fontSize:'.72rem',color:'var(--text-secondary)',lineHeight:1.55,marginBottom:'.8rem'}}>
+            You have <strong style=${{color:'#a78bfa'}}>${feedbackCount} labelled</strong> clash${feedbackCount!==1?'es':''} that ${feedbackCount!==1?'have':'has'}n't been shared or exported yet. Turning off Training Mode won't delete your labels, but you may forget to submit them.
+          </p>
+          <div style=${{display:'flex',gap:'.35rem',flexDirection:'column'}}>
+            <button onClick=${function(){setShowWarn(false);doSend();}}
+              style=${{...S_BTN,padding:'.4rem',fontSize:'.7rem',fontWeight:600,background:'#7c3aed',color:'#fff',border:'none',borderRadius:6}}>Send Now</button>
+            <button onClick=${function(){setShowWarn(false);d({t:'TRAINING_MODE'});}}
+              style=${{...S_BTN,padding:'.4rem',fontSize:'.7rem',fontWeight:600,background:'var(--bg-secondary)',color:'var(--text-secondary)',border:'1px solid var(--border)',borderRadius:6}}>Turn Off (keep data)</button>
+            ${!showDelConfirm && html`<button onClick=${function(){setShowDelConfirm(true);}}
+              style=${{...S_BTN,padding:'.4rem',fontSize:'.7rem',fontWeight:600,background:'none',color:'var(--text-muted)',border:'1px solid var(--border)',borderRadius:6}}>Delete Data & Turn Off</button>`}
+            ${showDelConfirm && html`<button onClick=${function(){setShowDelConfirm(false);setShowWarn(false);doDelete();d({t:'TRAINING_MODE'});}}
+              style=${{...S_BTN,padding:'.4rem',fontSize:'.7rem',fontWeight:700,background:'#ef4444',color:'#fff',border:'none',borderRadius:6}}>Are you sure? This cannot be undone.</button>`}
+          </div>
+        </div>
       </div>`}
     </div>`;
   }
@@ -10268,14 +10294,13 @@ function startApp() {
       <div style=${{padding:'.75rem',borderBottom:'1px solid var(--border-subtle)'}}>
         <span style=${SEC}>Markers</span>
         <div style=${{display:'flex',flexDirection:'column',gap:'.3rem'}}>
-          <button onClick=${function(){d({t:'UPD_PREFS',u:{showClashMarkers:!(s.prefs.showClashMarkers!==false)}})}}
+          <button onClick=${function(){d({t:'UPD_PREFS',u:{showMarkers:!s.prefs.showMarkers}})}}
             style=${{...S_BTN,justifyContent:'space-between',padding:'.4rem .5rem',background:'var(--bg-secondary)',border:'1px solid var(--border)',color:'var(--text-primary)',fontSize:'.7rem'}}>
-            Clash Markers <span style=${{color:s.prefs.showClashMarkers!==false?'#22c55e':'#ef4444',fontWeight:600}}>${s.prefs.showClashMarkers!==false?'On':'Off'}</span>
+            Markers <span style=${{color:s.prefs.showMarkers?'#22c55e':'#ef4444',fontWeight:600}}>${s.prefs.showMarkers?'On':'Off'}</span>
           </button>
-          <button onClick=${function(){d({t:'UPD_PREFS',u:{showIssueMarkers:!(s.prefs.showIssueMarkers!==false)}})}}
-            style=${{...S_BTN,justifyContent:'space-between',padding:'.4rem .5rem',background:'var(--bg-secondary)',border:'1px solid var(--border)',color:'var(--text-primary)',fontSize:'.7rem'}}>
-            Issue Markers <span style=${{color:s.prefs.showIssueMarkers!==false?'#22c55e':'#ef4444',fontWeight:600}}>${s.prefs.showIssueMarkers!==false?'On':'Off'}</span>
-          </button>
+          <div style=${{fontSize:'.55rem',color:'var(--text-muted)',lineHeight:1.4}}>
+            Clash markers are shown in red/amber, issue markers in green.
+          </div>
         </div>
       </div>
 
@@ -10292,7 +10317,7 @@ function startApp() {
       <!-- Training Mode -->
       <div style=${{padding:'.75rem'}}>
         <span style=${SEC}>Training Data</span>
-        <button onClick=${function(){d({t:'TRAINING_MODE'});}}
+        <button onClick=${function(){if(window._ccToggleTraining)window._ccToggleTraining();else d({t:'TRAINING_MODE'});}}
           style=${{...S_BTN,width:'100%',justifyContent:'space-between',padding:'.4rem .5rem',
             background:s.trainingMode?'rgba(124,58,237,.15)':'var(--bg-secondary)',
             border:'1px solid '+(s.trainingMode?'#a78bfa':'var(--border)'),

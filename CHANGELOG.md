@@ -1,5 +1,8 @@
 # Changelog
 
+## v2.3.0 (2026-03-25)
+- Replace +Issue button with Confirmed status on clashes
+
 ## v2.2.5 (2026-03-25)
 - Move thumbs up/down into expanded training feedback section
 
