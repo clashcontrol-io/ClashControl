@@ -1,5 +1,8 @@
 # Changelog
 
+## v2.7.6 (2026-03-25)
+- Clear training data after send, sanitize GDPR-sensitive fields
+
 ## v2.7.5 (2026-03-25)
 - Add Google Forms to CSP connect-src and frame-src
 
