@@ -1,5 +1,8 @@
 # Changelog
 
+## v2.6.12 (2026-03-25)
+- Allow multiple resolution selections in training feedback
+
 ## v2.6.11 (2026-03-25)
 - Style detected clash type same as confirmed, keep (detected) label
 

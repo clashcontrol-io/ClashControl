@@ -245,7 +245,7 @@ window.onload = function() {
 
 function startApp() {
   // ── Version (auto-updated by pre-commit hook) ──
-  var CC_VERSION = {v:'2.6.11',hash:'12173fb',date:'2026-03-25T10:53:36Z'};
+  var CC_VERSION = {v:'2.6.12',hash:'856752f',date:'2026-03-25T12:03:07Z'};
 
   // Check CDN deps loaded
   var need = [];
@@ -2583,8 +2583,8 @@ function startApp() {
       method:'POST', mode:'no-cors', body:fd
     }).then(function(){
       onStatus('ok', null);
-    }).catch(function(){
-      onStatus('error', 'Submission failed \u2014 try exporting instead.');
+    }).catch(function(e){
+      onStatus('error', 'Submission blocked (possibly by an ad blocker or browser extension). Use Export instead.');
     });
   }
 
@@ -10163,12 +10163,13 @@ function startApp() {
     var clashes = s.clashes;
     var ss = useState({status:null,msg:null}), shareState=ss[0], setShareState=ss[1];
     var stExpanded = useState(false), isExpanded=stExpanded[0], setExpanded=stExpanded[1];
+    var _noticeAccepted = (function(){try{return localStorage.getItem('cc_dataNoticeAccepted')==='1';}catch(e){return false;}})();
     var stNotice = useState(false), showNotice=stNotice[0], setShowNotice=stNotice[1];
     var stWarn = useState(false), showWarn=stWarn[0], setShowWarn=stWarn[1];
     var stDelConfirm = useState(false), showDelConfirm=stDelConfirm[0], setShowDelConfirm=stDelConfirm[1];
     var prevTraining = useRef(false);
     useEffect(function(){
-      if(s.trainingMode && !prevTraining.current){setExpanded(true);setShowNotice(true);}
+      if(s.trainingMode && !prevTraining.current){setExpanded(true);if(!_noticeAccepted)setShowNotice(true);}
       if(!s.trainingMode){setShowNotice(false);setExpanded(false);}
       prevTraining.current = s.trainingMode;
     },[s.trainingMode]);
@@ -10226,7 +10227,7 @@ function startApp() {
           <div style=${{fontSize:'.58rem',fontWeight:700,color:'#c4b5fd',marginBottom:'.2rem'}}>Data Collection Notice</div>
           <div style=${{fontSize:'.52rem',color:'var(--text-secondary)',marginBottom:'.25rem'}}>By using Training Mode you agree that clash labels, IFC type metadata, and geometric metrics may be collected to improve clash detection. No element names, coordinates, project names, or personal data is included.</div>
           <div style=${{fontSize:'.5rem',color:'var(--text-muted)',marginBottom:'.3rem'}}>Sharing is optional — nothing is sent without your action. You can export or delete your data at any time.</div>
-          <button onClick=${function(){setShowNotice(false);}} style=${{...S_BTN,fontSize:'.5rem',padding:'.15rem .5rem',
+          <button onClick=${function(){setShowNotice(false);try{localStorage.setItem('cc_dataNoticeAccepted','1');}catch(e){}}} style=${{...S_BTN,fontSize:'.5rem',padding:'.15rem .5rem',
             background:'rgba(124,58,237,.3)',color:'#e9d5ff',border:'1px solid rgba(167,139,250,.4)',width:'100%'}}>Understood</button>
         </div>`}
         <div style=${{fontSize:'.55rem',color:'var(--text-muted)',marginBottom:'.3rem',lineHeight:1.4}}>
@@ -10247,6 +10248,8 @@ function startApp() {
               color:isSending||!hasData?'var(--text-faint)':'#fff',
               border:'1px solid '+(isSending||!hasData?'var(--border)':'#7c3aed'),
               opacity:isSending?0.6:1,flex:1}}>${isSending?'Sending\u2026':'Send'}</button>
+          <button onClick=${function(){exportAITrainingData(clashes, s.detectionSettings, s.models, s.prefs.defaultTolerances, s.issues);}} disabled=${!hasData}
+            style=${{...S_BTN,fontSize:'.55rem',padding:'.2rem .4rem',background:'var(--bg-secondary)',color:hasData?'var(--text-secondary)':'var(--text-faint)',border:'1px solid var(--border)',flex:1}}>Export</button>
           ${!showDelConfirm && html`<button onClick=${function(){if(hasData)setShowDelConfirm(true);}} disabled=${!hasData}
             style=${{...S_BTN,fontSize:'.55rem',padding:'.2rem .4rem',background:'var(--bg-secondary)',color:hasData?'var(--text-secondary)':'var(--text-faint)',border:'1px solid var(--border)',flex:1}}>Delete</button>`}
           ${showDelConfirm && html`<button onClick=${function(){doDelete();setShowDelConfirm(false);}}
