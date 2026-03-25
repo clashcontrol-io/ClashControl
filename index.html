@@ -245,7 +245,7 @@ window.onload = function() {
 
 function startApp() {
   // ── Version (auto-updated by pre-commit hook) ──
-  var CC_VERSION = {v:'2.6.0',hash:'63bfbb5',date:'2026-03-25T09:59:31Z'};
+  var CC_VERSION = {v:'2.6.1',hash:'f4a6a0c',date:'2026-03-25T10:01:44Z'};
 
   // Check CDN deps loaded
   var need = [];
@@ -420,7 +420,21 @@ function startApp() {
               point:cClash.point, distance:cClash.distance,
               created:Date.now()
             };
-            return Object.assign({},s,{clashes:remainClashes,issues:s.issues.concat([newIssue]),activeId:null});
+            // Find next clash in remaining list
+            var clashIdx = s.clashes.indexOf(cClash);
+            var nextClash = remainClashes[Math.min(clashIdx, remainClashes.length-1)] || null;
+            var nextId = nextClash ? nextClash.id : null;
+            // Schedule camera fly-to for the next clash
+            if(nextClash) setTimeout(function(){
+              var ids=[];
+              if(nextClash.elemA) ids.push(nextClash.elemA);
+              if(nextClash.elemB) ids.push(nextClash.elemB);
+              if(ids.length&&_ghostOthers) _ghostOthers(ids);
+              if(nextClash.elemA&&_highlightById) _highlightById(nextClash.elemA,false);
+              if(nextClash.point&&window._ccShowActiveClashMarker) window._ccShowActiveClashMarker(nextClash.point);
+              if(_flyToElements&&ids.length) _flyToElements(ids, nextClash.point);
+            },100);
+            return Object.assign({},s,{clashes:remainClashes,issues:s.issues.concat([newIssue]),activeId:nextId});
           }
         }
         return Object.assign({},s,{clashes:s.clashes.map(function(c){

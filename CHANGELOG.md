@@ -1,5 +1,8 @@
 # Changelog
 
+## v2.6.1 (2026-03-25)
+- Persist training mode on/off across page refreshes
+
 ## v2.6.0 (2026-03-25)
 - Tolerance matrix toggle, confirm button UX, issue tab badge
 
