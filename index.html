@@ -245,7 +245,7 @@ window.onload = function() {
 
 function startApp() {
   // ── Version (auto-updated by pre-commit hook) ──
-  var CC_VERSION = {v:'2.1.4',hash:'e964cfe',date:'2026-03-25T08:05:12Z'};
+  var CC_VERSION = {v:'3.0.0',hash:'2e6331d',date:'2026-03-25T08:09:10Z'};
 
   // Check CDN deps loaded
   var need = [];
@@ -5177,6 +5177,113 @@ function startApp() {
     window.dispatchEvent(new Event('cc-project-switch'));
   }
 
+  // ── Guided Tour ──────────────────────────────────────────────
+  var TOUR_STEPS = [
+    {sel:'.cc-left-rail', pos:'right', title:'Sidebar',
+      text:'Your main navigation. Access models, project files, import/export, and settings from here.'},
+    {sel:'.cc-header-brand-text', pos:'bottom', title:'Header Bar',
+      text:'Shows the active project name. Click it to switch between projects or create new ones.'},
+    {sel:'.cc-header-actions', pos:'bottom', title:'Quick Actions',
+      text:'Open/save projects, import/export BCF files, toggle light/dark theme, and open settings.'},
+    {sel:'.cc-viewcube-wrap', pos:'left', title:'Navigation Cube',
+      text:'Click any face to snap to that view (Front, Top, Right, etc.). Drag to orbit. Helps you stay oriented in 3D.'},
+    {sel:'.cc-training-btn-3d', pos:'bottom', title:'Training Mode',
+      text:'Toggle training mode to label clashes as true/false positives. This helps improve future clash detection. Click the arrow to see stats and export data.'},
+    {sel:'.cc-side-panel', pos:'left', title:'Side Panel',
+      text:'Shows details for the active tab — clash list, issue tracker, or model explorer. Click items to fly to them in 3D.'},
+    {sel:'.cc-nlpanel-closed,.cc-nlpanel', pos:'top', title:'AI Chat',
+      text:'Press / to open. Type natural language commands like "check structural vs MEP", "find clashes within 50mm", or "help" to see all available commands.'},
+    {sel:'.cc-overlay-info', pos:'bottom', title:'Viewport Info',
+      text:'Shows loaded model count, detected clashes, and rendering performance. Click to see detailed stats.'}
+  ];
+
+  function GuidedTour(props) {
+    var step = props.step, setStep = props.setStep;
+    var total = TOUR_STEPS.length;
+    var cur = TOUR_STEPS[step] || TOUR_STEPS[0];
+    var posState = useState(null), spotPos=posState[0], setSpotPos=posState[1];
+
+    useEffect(function() {
+      function update() {
+        // Try each selector in comma-separated list
+        var sels = cur.sel.split(',');
+        var el = null;
+        for (var i=0; i<sels.length; i++) {
+          el = document.querySelector(sels[i].trim());
+          if (el) break;
+        }
+        if (!el) { setSpotPos(null); return; }
+        var r = el.getBoundingClientRect();
+        setSpotPos({x:r.left, y:r.top, w:r.width, h:r.height});
+      }
+      update();
+      var id = setInterval(update, 300);
+      return function(){ clearInterval(id); };
+    }, [step]);
+
+    function next() { if (step < total-1) setStep(step+1); else setStep(null); }
+    function prev() { if (step > 0) setStep(step-1); }
+    function skip() { setStep(null); }
+
+    // Calculate tooltip position
+    var tipStyle = {position:'fixed', zIndex:10002, background:'var(--bg-primary)',
+      border:'1px solid var(--accent)', borderRadius:10, padding:'1rem',
+      boxShadow:'0 8px 32px rgba(0,0,0,.5)', width:280, maxWidth:'80vw'};
+    if (spotPos) {
+      var pad = 12;
+      if (cur.pos === 'right') { tipStyle.left = spotPos.x + spotPos.w + pad; tipStyle.top = spotPos.y; }
+      else if (cur.pos === 'left') { tipStyle.right = window.innerWidth - spotPos.x + pad; tipStyle.top = spotPos.y; }
+      else if (cur.pos === 'bottom') { tipStyle.left = spotPos.x; tipStyle.top = spotPos.y + spotPos.h + pad; }
+      else { tipStyle.left = spotPos.x; tipStyle.bottom = window.innerHeight - spotPos.y + pad; }
+      // Clamp to viewport
+      if (tipStyle.left != null && tipStyle.left + 280 > window.innerWidth - 16) tipStyle.left = window.innerWidth - 296;
+      if (tipStyle.left != null && tipStyle.left < 16) tipStyle.left = 16;
+      if (tipStyle.top != null && tipStyle.top + 200 > window.innerHeight - 16) tipStyle.top = window.innerHeight - 216;
+      if (tipStyle.top != null && tipStyle.top < 16) tipStyle.top = 16;
+    } else {
+      tipStyle.left = '50%'; tipStyle.top = '50%'; tipStyle.transform = 'translate(-50%,-50%)';
+    }
+
+    // Spotlight cutout via clip-path
+    var overlayStyle = {position:'fixed',inset:0,zIndex:10001,cursor:'default'};
+    var clipPath = 'none';
+    if (spotPos) {
+      var m = 6; // margin around element
+      var sx = spotPos.x - m, sy = spotPos.y - m, sw = spotPos.w + m*2, sh = spotPos.h + m*2;
+      var r = 8;
+      // Outer rect (full viewport) + inner rounded rect cutout using polygon + inset
+      clipPath = 'polygon(0% 0%, 100% 0%, 100% 100%, 0% 100%, 0% 0%, ' +
+        sx+'px '+sy+'px, '+sx+'px '+(sy+sh)+'px, '+(sx+sw)+'px '+(sy+sh)+'px, '+(sx+sw)+'px '+sy+'px, '+sx+'px '+sy+'px)';
+      overlayStyle.background = 'rgba(0,0,0,.55)';
+      overlayStyle.clipPath = clipPath;
+      overlayStyle.WebkitClipPath = clipPath;
+    } else {
+      overlayStyle.background = 'rgba(0,0,0,.55)';
+    }
+
+    return html`<div>
+      <div style=${overlayStyle} onClick=${skip}></div>
+      ${spotPos && html`<div style=${{position:'fixed',left:spotPos.x-6,top:spotPos.y-6,
+        width:spotPos.w+12,height:spotPos.h+12,zIndex:10001,
+        border:'2px solid var(--accent)',borderRadius:8,pointerEvents:'none',
+        boxShadow:'0 0 0 4px rgba(37,99,235,.25)',animation:'nlBorderPulse 2s ease-in-out infinite'}}></div>`}
+      <div style=${tipStyle}>
+        <div style=${{fontSize:'.65rem',color:'var(--accent)',marginBottom:'.25rem',fontWeight:600}}>Step ${step+1} of ${total}</div>
+        <div style=${{fontSize:'.88rem',fontWeight:700,color:'var(--text-primary)',marginBottom:'.3rem'}}>${cur.title}</div>
+        <div style=${{fontSize:'.76rem',color:'var(--text-secondary)',lineHeight:1.55,marginBottom:'.75rem'}}>${cur.text}</div>
+        <div style=${{display:'flex',justifyContent:'space-between',alignItems:'center'}}>
+          <button onClick=${skip} style=${{...S_BTN,background:'none',border:'none',color:'var(--text-faint)',fontSize:'.7rem',cursor:'pointer',padding:'.2rem'}}>Skip tour</button>
+          <div style=${{display:'flex',gap:'.35rem'}}>
+            ${step > 0 && html`<button onClick=${prev} style=${{...S_BTN,padding:'.3rem .65rem',fontSize:'.72rem',background:'var(--bg-secondary)',color:'var(--text-secondary)',border:'1px solid var(--border)',borderRadius:6,cursor:'pointer'}}>Back</button>`}
+            <button onClick=${next} style=${{...S_BTN,padding:'.3rem .65rem',fontSize:'.72rem',background:'var(--accent)',color:'#fff',border:'none',borderRadius:6,cursor:'pointer',fontWeight:600}}>
+              ${step < total-1 ? 'Next' : 'Finish'}
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>`;
+  }
+
   function Header(props) {
     var s=props.s, d=props.d;
     var all = s.clashes.concat(s.issues);
@@ -5196,9 +5303,11 @@ function startApp() {
     }, [showVer]);
     var cf = useState(null), confirmDelete=cf[0], setConfirmDelete=cf[1];
     var tut = useState(false), showTutorial=tut[0], setShowTutorial=tut[1];
+    var tourSt = useState(null), tourStep=tourSt[0], setTourStep=tourSt[1];
     var cr = useState(false), creating=cr[0], setCreating=cr[1];
     var cnv = useState(''), createName=cnv[0], setCreateName=cnv[1];
-    window._ccToggleTutorial = function(){ setShowTutorial(function(v){return !v;}); };
+    window._ccToggleTutorial = function(){ setShowTutorial(function(v){return !v;}); setTourStep(null); };
+    window._ccStartTour = function(){ setShowTutorial(false); setTourStep(0); };
 
     function startCreate() { setCreating(true); setCreateName(''); }
     function finishCreate() {
@@ -5332,45 +5441,72 @@ function startApp() {
           title="Settings" aria-label="Open settings">⚙</button>
       </div>
       ${showTutorial && html`<div onClick=${function(e){if(e.target===e.currentTarget)setShowTutorial(false)}} style=${{position:'fixed',inset:0,background:'rgba(0,0,0,.6)',zIndex:9999,display:'flex',alignItems:'flex-start',justifyContent:'center',overflowY:'auto',WebkitOverflowScrolling:'touch',padding:'2rem 0',backdropFilter:'blur(4px)'}}>
-        <div style=${{background:'var(--bg-primary)',border:'1px solid var(--border)',borderRadius:12,padding:'1.5rem',maxWidth:520,width:'90vw',overflowY:'auto',boxShadow:'0 16px 48px rgba(0,0,0,.5)',flexShrink:0,marginBottom:'4rem'}}>
+        <div style=${{background:'var(--bg-primary)',border:'1px solid var(--border)',borderRadius:12,padding:'1.5rem',maxWidth:560,width:'90vw',overflowY:'auto',boxShadow:'0 16px 48px rgba(0,0,0,.5)',flexShrink:0,marginBottom:'4rem'}}>
           <div style=${{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:'1rem'}}>
             <span style=${{fontSize:'1.1rem',fontWeight:700}}>Quick Start Guide</span>
             <button onClick=${function(){setShowTutorial(false)}} style=${{...S_BTN,background:'none',color:'var(--text-muted)',fontSize:'1.2rem',padding:'0 .3rem',lineHeight:1}}>✕</button>
           </div>
+
+          <div style=${{background:'rgba(37,99,235,.08)',border:'1px solid rgba(37,99,235,.25)',borderRadius:8,padding:'.75rem',marginBottom:'1rem'}}>
+            <div style=${{fontSize:'.82rem',fontWeight:600,color:'var(--text-primary)',marginBottom:'.3rem'}}>What is ClashControl?</div>
+            <div style=${{fontSize:'.75rem',color:'var(--text-secondary)',lineHeight:1.6}}>
+              A free, open-source tool for detecting geometric clashes in IFC building models — right in your browser. Load BIM files, find collisions between building systems (structural vs MEP, pipes vs ducts, etc.), manage issues, and export results to BCF for coordination.
+            </div>
+          </div>
+
           <div style=${{display:'flex',flexDirection:'column',gap:'.85rem',fontSize:'.78rem',color:'var(--text-secondary)',lineHeight:1.6}}>
             <div>
-              <div style=${{fontWeight:600,color:'var(--text-primary)',marginBottom:'.25rem'}}>1. Load a model</div>
-              <div>Click <b>Models</b> in the sidebar, then <b>+ Load IFC</b> to open a BIM file. You can load multiple models to check clashes between them.</div>
+              <div style=${{fontWeight:600,color:'var(--text-primary)',marginBottom:'.25rem'}}>1. Load models</div>
+              <div>Click the <b>folder icon</b> in the left sidebar or drag & drop IFC files onto the 3D view. Load multiple models to check clashes between different disciplines.</div>
             </div>
             <div>
               <div style=${{fontWeight:600,color:'var(--text-primary)',marginBottom:'.25rem'}}>2. Detect clashes</div>
-              <div>Open the <b>AI Chat</b> at the bottom and type something like <i>"check structural vs MEP"</i> or <i>"find clashes within 50mm"</i>. Or use the <b>Clashes</b> tab to configure rules manually.</div>
+              <div>Press <b>/</b> to open the AI chat and type something like <i>"check structural vs MEP"</i> or <i>"find clashes within 50mm"</i>. You can also configure rules manually in the Clashes tab.</div>
             </div>
             <div>
-              <div style=${{fontWeight:600,color:'var(--text-primary)',marginBottom:'.25rem'}}>3. Review & manage</div>
-              <div>Click any clash to fly to it in 3D. Change status, create issues, filter by type/storey/discipline, or batch-update via chat: <i>"mark all open as resolved"</i>.</div>
+              <div style=${{fontWeight:600,color:'var(--text-primary)',marginBottom:'.25rem'}}>3. Review results</div>
+              <div>Click any clash to fly to it in 3D. Change status (new / active / resolved), assign responsibility, add notes, or use the chat: <i>"mark all open as resolved"</i>.</div>
             </div>
             <div>
-              <div style=${{fontWeight:600,color:'var(--text-primary)',marginBottom:'.25rem'}}>4. Export</div>
-              <div>Export results as <b>BCF 2.1</b> or <b>3.0</b> to share with Revit, Navisworks, Solibri, or BIMcollab. You can also save/load project files.</div>
+              <div style=${{fontWeight:600,color:'var(--text-primary)',marginBottom:'.25rem'}}>4. Create issues & export</div>
+              <div>Create issues from clashes for team coordination. Export as <b>BCF 2.1/3.0</b> for Revit, Navisworks, Solibri, or BIMcollab. Save projects locally to continue later.</div>
             </div>
             <div style=${{borderTop:'1px solid var(--border-subtle)',paddingTop:'.7rem'}}>
-              <div style=${{fontWeight:600,color:'var(--text-primary)',marginBottom:'.25rem'}}>AI Chat commands</div>
-              <div>The chat understands natural language. Try these:</div>
-              <div style=${{display:'grid',gridTemplateColumns:'1fr 1fr',gap:'.25rem .75rem',marginTop:'.35rem',fontSize:'.72rem',color:'var(--text-muted)'}}>
-                <span><i>"switch to light"</i> — theme</span>
+              <div style=${{fontWeight:600,color:'var(--text-primary)',marginBottom:'.25rem'}}>Keyboard shortcuts</div>
+              <div style=${{display:'grid',gridTemplateColumns:'auto 1fr',gap:'.2rem .6rem',marginTop:'.25rem',fontSize:'.72rem',color:'var(--text-muted)'}}>
+                <kbd style=${{background:'var(--bg-secondary)',padding:'0 .3rem',borderRadius:3,fontFamily:'inherit',fontSize:'.68rem'}}>/</kbd><span>Open AI chat</span>
+                <kbd style=${{background:'var(--bg-secondary)',padding:'0 .3rem',borderRadius:3,fontFamily:'inherit',fontSize:'.68rem'}}>1 2 3</kbd><span>Switch tabs (Clashes, Issues, Explorer)</span>
+                <kbd style=${{background:'var(--bg-secondary)',padding:'0 .3rem',borderRadius:3,fontFamily:'inherit',fontSize:'.68rem'}}>M</kbd><span>Measure tool</span>
+                <kbd style=${{background:'var(--bg-secondary)',padding:'0 .3rem',borderRadius:3,fontFamily:'inherit',fontSize:'.68rem'}}>F</kbd><span>Find elements</span>
+                <kbd style=${{background:'var(--bg-secondary)',padding:'0 .3rem',borderRadius:3,fontFamily:'inherit',fontSize:'.68rem'}}>X Y</kbd><span>Section planes</span>
+                <kbd style=${{background:'var(--bg-secondary)',padding:'0 .3rem',borderRadius:3,fontFamily:'inherit',fontSize:'.68rem'}}>G</kbd><span>Toggle grid</span>
+              </div>
+            </div>
+            <div style=${{borderTop:'1px solid var(--border-subtle)',paddingTop:'.7rem'}}>
+              <div style=${{fontWeight:600,color:'var(--text-primary)',marginBottom:'.25rem'}}>AI Chat examples</div>
+              <div style=${{display:'grid',gridTemplateColumns:'1fr 1fr',gap:'.25rem .75rem',marginTop:'.25rem',fontSize:'.72rem',color:'var(--text-muted)'}}>
                 <span><i>"load ifc"</i> — open file</span>
+                <span><i>"switch to light"</i> — theme</span>
                 <span><i>"section x"</i> — section plane</span>
                 <span><i>"wireframe mode"</i> — render style</span>
                 <span><i>"measure length"</i> — tools</span>
                 <span><i>"save viewpoint"</i> — camera</span>
-                <span><i>"show clashes tab"</i> — navigation</span>
+                <span><i>"how many clashes?"</i> — queries</span>
                 <span><i>"color by discipline"</i> — display</span>
               </div>
             </div>
           </div>
+
+          <button onClick=${function(){window._ccStartTour();}}
+            style=${{...S_BTN,width:'100%',marginTop:'1.1rem',padding:'.55rem',borderRadius:8,
+              background:'var(--accent)',color:'#fff',fontSize:'.82rem',fontWeight:600,
+              border:'none',cursor:'pointer',display:'flex',alignItems:'center',justifyContent:'center',gap:'.4rem'}}>
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polygon points="10 8 16 12 10 16 10 8"/></svg>
+            Take the Interactive Tour
+          </button>
         </div>
       </div>`}
+      ${tourStep!=null && html`<${GuidedTour} step=${tourStep} setStep=${setTourStep} d=${d} />`}
     </header>`;
   }
 
