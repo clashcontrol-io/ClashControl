@@ -245,7 +245,7 @@ window.onload = function() {
 
 function startApp() {
   // ── Version (auto-updated by pre-commit hook) ──
-  var CC_VERSION = {v:'2.0.45',hash:'48bb1a3',date:'2026-03-25T07:04:30Z'};
+  var CC_VERSION = {v:'2.0.47',hash:'d28a8d7',date:'2026-03-25T07:10:42Z'};
 
   // Check CDN deps loaded
   var need = [];
@@ -9928,7 +9928,7 @@ function startApp() {
     if (!tab) return null;
     var projects=s.projectList||[];
     var activeProj=projects.find(function(p){return p.id===s.activeProject;})||projects[0]||{name:'Default'};
-    var TITLES={models:'Models',clashes:'Clashes',issues:'Issues',explorer:'Explorer'};
+    var TITLES={models:'Models',clashes:'Clashes',issues:'Issues',explorer:'Explorer',tools:'Tools'};
     function onResizeDown(e){
       e.preventDefault();
       dragRef.current={startX:e.clientX,startW:panelW};
@@ -9960,6 +9960,7 @@ function startApp() {
       ${tab==='clashes'  && html`<${IssuePanel} key="clashes" s=${s} d=${d} hideTabBar=${true} />`}
       ${tab==='issues'   && html`<${IssuePanel} key="issues" s=${s} d=${d} hideTabBar=${true} />`}
       ${tab==='explorer' && html`<${IssuePanel} key="explorer" s=${s} d=${d} hideTabBar=${true} />`}
+      ${tab==='tools'    && html`<${ToolsPanel} s=${s} d=${d} />`}
     </div>`;
   }
 
@@ -10087,6 +10088,71 @@ function startApp() {
     </div>`;
   }
 
+  // ── Tools Panel ───────────────────────────────────────────────
+  function ToolsPanel(props) {
+    var s=props.s, d=props.d;
+    var SEC={fontSize:'.65rem',fontWeight:600,color:'var(--text-muted)',textTransform:'uppercase',letterSpacing:'.05em',display:'block',marginBottom:'.4rem'};
+    var sectionActive = s.sectionAxis || s.sectionCustom || (s.sectionBox && s.sectionBox.enabled);
+    return html`<div style=${{display:'flex',flexDirection:'column',gap:0,overflowY:'auto',flex:1}}>
+
+      <!-- Section / Clipping -->
+      <div style=${{padding:'.75rem',borderBottom:'1px solid var(--border-subtle)'}}>
+        <span style=${SEC}>Section / Clipping</span>
+        <div style=${{display:'flex',gap:'.2rem',marginBottom:'.3rem'}}>
+          ${[{axis:'x',label:'X'},{axis:'z',label:'Y'},{axis:'y',label:'Z'}].map(function(item){return html`<button key=${item.axis}
+            onClick=${function(){d({t:'SECTION_BOX',v:null});d({t:'SECTION',axis:s.sectionAxis===item.axis?null:item.axis});}}
+            style=${{...S_BTN,flex:1,padding:'.3rem',background:s.sectionAxis===item.axis?'#2563eb':'var(--bg-secondary)',color:s.sectionAxis===item.axis?'#fff':'var(--text-muted)'}}>${item.label}</button>`})}
+          <button onClick=${function(){d({t:'SECTION',axis:null});d({t:'SECTION_BOX',v:null});}}
+            style=${{...S_BTN,flex:1,padding:'.3rem',background:!sectionActive?'#2563eb':'var(--bg-secondary)',color:!sectionActive?'#fff':'var(--text-muted)'}}>Off</button>
+        </div>
+        ${(s.sectionAxis||s.sectionCustom) && html`<div>
+          <input type="range" min="0" max="1" step="0.005" value=${s.sectionPos}
+            onInput=${function(e){var pos=parseFloat(e.target.value);if(s.sectionAxis)d({t:'SECTION',axis:s.sectionAxis,pos:pos});else if(s.sectionCustom)d({t:'SECTION_CUSTOM',v:s.sectionCustom,pos:pos});}}
+            style=${{width:'100%',marginBottom:'.2rem'}} />
+          <span style=${{fontSize:'.6rem',color:'var(--text-faint)'}}>${Math.round(s.sectionPos*100)}%</span>
+        </div>`}
+        <${SectionBoxUI} s=${s} d=${d} />
+      </div>
+
+      <!-- View Markers -->
+      <div style=${{padding:'.75rem',borderBottom:'1px solid var(--border-subtle)'}}>
+        <span style=${SEC}>Markers</span>
+        <div style=${{display:'flex',flexDirection:'column',gap:'.3rem'}}>
+          <button onClick=${function(){d({t:'UPD_PREFS',u:{showClashMarkers:!(s.prefs.showClashMarkers!==false)}})}}
+            style=${{...S_BTN,justifyContent:'space-between',padding:'.4rem .5rem',background:'var(--bg-secondary)',border:'1px solid var(--border)',color:'var(--text-primary)',fontSize:'.7rem'}}>
+            Clash Markers <span style=${{color:s.prefs.showClashMarkers!==false?'#22c55e':'#ef4444',fontWeight:600}}>${s.prefs.showClashMarkers!==false?'On':'Off'}</span>
+          </button>
+          <button onClick=${function(){d({t:'UPD_PREFS',u:{showIssueMarkers:!(s.prefs.showIssueMarkers!==false)}})}}
+            style=${{...S_BTN,justifyContent:'space-between',padding:'.4rem .5rem',background:'var(--bg-secondary)',border:'1px solid var(--border)',color:'var(--text-primary)',fontSize:'.7rem'}}>
+            Issue Markers <span style=${{color:s.prefs.showIssueMarkers!==false?'#22c55e':'#ef4444',fontWeight:600}}>${s.prefs.showIssueMarkers!==false?'On':'Off'}</span>
+          </button>
+        </div>
+      </div>
+
+      <!-- Render Style -->
+      <div style=${{padding:'.75rem',borderBottom:'1px solid var(--border-subtle)'}}>
+        <span style=${SEC}>Render Style</span>
+        <div style=${{display:'flex',gap:'.2rem',flexWrap:'wrap'}}>
+          ${['standard','shaded','rendered','wireframe'].map(function(rs){return html`<button key=${rs}
+            onClick=${function(){d({t:'UPD_PREFS',u:{renderStyle:rs}});if(window._ccSetRenderStyle)window._ccSetRenderStyle(rs);}}
+            style=${{...S_BTN,padding:'.25rem .5rem',fontSize:'.65rem',background:(s.prefs.renderStyle||'standard')===rs?'#2563eb':'var(--bg-secondary)',color:(s.prefs.renderStyle||'standard')===rs?'#fff':'var(--text-muted)'}}>${rs.charAt(0).toUpperCase()+rs.slice(1)}</button>`})}
+        </div>
+      </div>
+
+      <!-- Training Mode -->
+      <div style=${{padding:'.75rem'}}>
+        <span style=${SEC}>Training Data</span>
+        <button onClick=${function(){d({t:'TRAINING_MODE'});}}
+          style=${{...S_BTN,width:'100%',justifyContent:'space-between',padding:'.4rem .5rem',
+            background:s.trainingMode?'rgba(124,58,237,.15)':'var(--bg-secondary)',
+            border:'1px solid '+(s.trainingMode?'#a78bfa':'var(--border)'),
+            color:s.trainingMode?'#e9d5ff':'var(--text-primary)',fontSize:'.7rem'}}>
+          Training Mode <span style=${{fontWeight:600,color:s.trainingMode?'#a78bfa':'var(--text-faint)'}}>${s.trainingMode?'On':'Off'}</span>
+        </button>
+      </div>
+    </div>`;
+  }
+
   // ── Mobile Bottom Nav ─────────────────────────────────────────
 
   function MobileNav(props) {
@@ -10107,12 +10173,7 @@ function startApp() {
       ${navBtn('clashes','<path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/>','Clashes',clashN)}
       ${navBtn('issues','<path d="M4 15s1-1 4-1 5 2 8 2 4-1 4-1V3s-1 1-4 1-5-2-8-2-4 1-4 1z"/><line x1="4" y1="22" x2="4" y2="15"/>','Issues',issueN)}
       ${navBtn('explorer','<rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/>','Explorer',0)}
-      <button onClick=${function(){window._ccNLOpen&&window._ccNLOpen();}}>
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
-          <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
-        </svg>
-        <span>Chat</span>
-      </button>
+      ${navBtn('tools','<circle cx="12" cy="12" r="3"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14"/><path d="M4.93 4.93a10 10 0 0 0 0 14.14"/>','Tools',0)}
     </nav>`;
   }
 
