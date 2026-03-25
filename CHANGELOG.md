@@ -1,5 +1,8 @@
 # Changelog
 
+## v2.7.3 (2026-03-25)
+- Replace thumbs up/down with Real clash / Acceptable / False positive
+
 ## v2.7.2 (2026-03-25)
 - Add Duplicate option to clash type confirmation in training feedback
 
