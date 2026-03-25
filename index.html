@@ -245,7 +245,7 @@ window.onload = function() {
 
 function startApp() {
   // ── Version (auto-updated by pre-commit hook) ──
-  var CC_VERSION = {v:'2.6.5',hash:'6a24506',date:'2026-03-25T10:30:46Z'};
+  var CC_VERSION = {v:'2.6.6',hash:'d62e473',date:'2026-03-25T10:32:23Z'};
 
   // Check CDN deps loaded
   var need = [];
@@ -10161,7 +10161,7 @@ function startApp() {
     },[s.trainingMode]);
 
     var reviewedCount = clashes.filter(function(c){return c.status!=='open';}).length;
-    var feedbackCount = clashes.filter(function(c){return c.aiFeedback;}).length;
+    var feedbackCount = clashes.filter(function(c){return c.aiFeedback||c.clashTypeConfirmed||(c.aiReasons&&c.aiReasons.length)||c.aiResolution||c.aiNote;}).length;
     var totalCount = clashes.length;
 
     // Global guard: warn before turning off if unsent data exists
