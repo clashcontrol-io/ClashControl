@@ -1,5 +1,8 @@
 # Changelog
 
+## v2.10.1 (2026-03-25)
+- Fix training pill counter not clearing after Send
+
 ## v2.10.0 (2026-03-25)
 - Add Deny button for clashes alongside Confirm
 

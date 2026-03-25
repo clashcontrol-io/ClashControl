@@ -245,7 +245,7 @@ window.onload = function() {
 
 function startApp() {
   // ── Version (auto-updated by pre-commit hook) ──
-  var CC_VERSION = {v:'2.10.0',hash:'d0e5b82',date:'2026-03-25T16:18:59Z'};
+  var CC_VERSION = {v:'2.10.1',hash:'15dd054',date:'2026-03-25T16:20:20Z'};
 
   // Check CDN deps loaded
   var need = [];
@@ -407,13 +407,14 @@ function startApp() {
         })
       });
       case 'UPD_CLASH':
-        // When denied, remove clash from list (training data recorded via dispatch wrapper)
+        // When denied, remove clash from list and suppress on future re-detection
         if(a.u&&a.u.status==='denied'){
           var dClash=null;
           var dRemain=s.clashes.filter(function(c){
             if(c.id===a.id){dClash=c;return false;}
             return true;
           });
+          if(dClash) _saveDeniedClash(dClash);
           if(dClash){
             var dIdx=s.clashes.indexOf(dClash);
             var dNext=dRemain[Math.min(dIdx,dRemain.length-1)]||null;
@@ -2192,7 +2193,35 @@ function startApp() {
     return pair + '@' + gx + ',' + gy + ',' + gz;
   }
 
+  // ── Denied clash suppression ──────────────────────────────────
+  // Store denied clash identity keys so they are suppressed on re-detection,
+  // unless the elements have moved (contact point shifted beyond adjacent cells).
+  function _getDeniedClashStore() {
+    try { return JSON.parse(localStorage.getItem('cc_denied_clashes')||'{}'); } catch(e) { return {}; }
+  }
+  function _saveDeniedClash(clash) {
+    try {
+      var store = _getDeniedClashStore();
+      var pair = computeClashPair(clash);
+      var p = clash.point||[0,0,0];
+      store[pair] = {point:[p[0],p[1],p[2]], ts:Date.now()};
+      localStorage.setItem('cc_denied_clashes', JSON.stringify(store));
+    } catch(e) {}
+  }
+  function _isDeniedClash(clash) {
+    var store = _getDeniedClashStore();
+    var pair = computeClashPair(clash);
+    var denied = store[pair];
+    if (!denied) return false;
+    // If contact point moved more than 500mm, elements likely moved — allow re-detection
+    var p = clash.point||[0,0,0], dp = denied.point||[0,0,0];
+    var distMm = Math.sqrt(Math.pow((p[0]-dp[0])*1000,2)+Math.pow((p[1]-dp[1])*1000,2)+Math.pow((p[2]-dp[2])*1000,2));
+    return distMm <= 500;
+  }
+
   function mergeDetectionResults(newClashes, prevClashes) {
+    // Filter out previously denied clashes (unless elements moved)
+    newClashes = newClashes.filter(function(c){ return !_isDeniedClash(c); });
     if (!prevClashes || prevClashes.length === 0) {
       // First ever run — tag everything as new
       var now0 = Date.now();
