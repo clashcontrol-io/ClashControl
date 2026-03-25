@@ -245,7 +245,7 @@ window.onload = function() {
 
 function startApp() {
   // ── Version (auto-updated by pre-commit hook) ──
-  var CC_VERSION = {v:'2.3.2',hash:'ab56112',date:'2026-03-25T08:54:13Z'};
+  var CC_VERSION = {v:'2.4.0',hash:'ec82c40',date:'2026-03-25T08:55:45Z'};
 
   // Check CDN deps loaded
   var need = [];
@@ -393,7 +393,36 @@ function startApp() {
       case 'CLEAR_TRAINING_DATA': return Object.assign({},s,{clashes:s.clashes.map(function(c){
         return Object.assign({},c,{aiFeedback:null,aiReasons:[],aiNote:'',aiSignals:[],clashTypeConfirmed:null});
       })});
-      case 'UPD_CLASH':   return Object.assign({},s,{clashes:s.clashes.map(function(c){
+      case 'UPD_CLASH':
+        // When confirmed, move clash to issues tab
+        if(a.u&&a.u.status==='confirmed'){
+          var cClash=null;
+          var remainClashes=s.clashes.filter(function(c){
+            if(c.id===a.id){cClash=c;return false;}
+            return true;
+          });
+          if(cClash){
+            var newIssue={
+              id:'iss_'+Date.now()+'_'+Math.random().toString(36).substr(2,6),
+              title:cClash.title,
+              description:cClash.description,
+              status:'confirmed',
+              priority:cClash.priority||'normal',
+              source:'clash',
+              clashId:cClash.id,
+              type:cClash.type,
+              elemA:cClash.elemA, elemB:cClash.elemB,
+              elemAType:cClash.elemAType, elemBType:cClash.elemBType,
+              elemAName:cClash.elemAName, elemBName:cClash.elemBName,
+              elemAStorey:cClash.elemAStorey, elemBStorey:cClash.elemBStorey,
+              modelAName:cClash.modelAName, modelBName:cClash.modelBName,
+              point:cClash.point, distance:cClash.distance,
+              created:Date.now()
+            };
+            return Object.assign({},s,{clashes:remainClashes,issues:s.issues.concat([newIssue]),activeId:null,tab:'issues'});
+          }
+        }
+        return Object.assign({},s,{clashes:s.clashes.map(function(c){
         if(c.id!==a.id) return c;
         var upd=Object.assign({},c,a.u);
         // Implicit training signal when status changes

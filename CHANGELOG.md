@@ -1,5 +1,8 @@
 # Changelog
 
+## v2.4.0 (2026-03-25)
+- Simplify clash row to status label + green Confirmed button
+
 ## v2.3.2 (2026-03-25)
 - Style Delete button neutral, improve error fallback
 
