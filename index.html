@@ -245,7 +245,7 @@ window.onload = function() {
 
 function startApp() {
   // ── Version (auto-updated by pre-commit hook) ──
-  var CC_VERSION = {v:'2.6.9',hash:'b27fd19',date:'2026-03-25T10:44:29Z'};
+  var CC_VERSION = {v:'2.6.11',hash:'12173fb',date:'2026-03-25T10:53:36Z'};
 
   // Check CDN deps loaded
   var need = [];
@@ -392,7 +392,7 @@ function startApp() {
         return Object.assign({},c,upd2);
       })});
       case 'CLEAR_TRAINING_DATA': return Object.assign({},s,{clashes:s.clashes.map(function(c){
-        return Object.assign({},c,{aiFeedback:null,aiReasons:[],aiResolution:null,aiNote:'',aiSignals:[],clashTypeConfirmed:null});
+        return Object.assign({},c,{aiFeedback:null,aiReasons:[],aiResolution:[],aiNote:'',aiSignals:[],clashTypeConfirmed:null});
       })});
       case 'UPD_CLASH':
         // When confirmed, move clash to issues tab
@@ -2538,7 +2538,7 @@ function startApp() {
         bbox_b: c.bboxB || {dx:0,dy:0,dz:0},
         verdict: _AI_VERDICT_MAP[c.status] || 'unreviewed',
         reasons: c.aiReasons || [],
-        resolution: c.aiResolution || null,
+        resolution: c.aiResolution || [],
         type_pair_tolerance_mm: function(){
           var tA=c.elemAType||'',tB=c.elemBType||'';
           if(!tA||!tB) return null;
@@ -7369,10 +7369,9 @@ function startApp() {
               ${CTYPES.map(function(ct){var confirmed=it.clashTypeConfirmed!=null;var sel=curCT===ct.k;var isDefault=!confirmed&&it.type===ct.k;return html`<button key=${ct.k}
                 onClick=${function(e){e.stopPropagation();d({t:'UPD_CLASH',id:it.id,u:{clashTypeConfirmed:ct.k}});}}
                 style=${{...S_BTN,fontSize:'.55rem',padding:'.1rem .35rem',
-                  background:sel&&confirmed?'#1e3a5f':isDefault?'var(--bg-primary)':'var(--bg-secondary)',
-                  color:sel&&confirmed?'#93c5fd':isDefault?'var(--text-muted)':'var(--text-faint)',
-                  border:'1px solid '+(sel&&confirmed?'#3b82f6':isDefault?'var(--border)':'var(--border)'),
-                  opacity:isDefault&&!confirmed?0.7:1}}>${ct.l}${isDefault&&!confirmed?' (detected)':''}</button>`})}
+                  background:sel||isDefault?'#1e3a5f':'var(--bg-secondary)',
+                  color:sel||isDefault?'#93c5fd':'var(--text-faint)',
+                  border:'1px solid '+(sel||isDefault?'#3b82f6':'var(--border)')}}>${ct.l}${isDefault?' (detected)':''}</button>`})}
             </div>
             <div style=${{fontSize:'.55rem',fontWeight:600,color:'var(--text-muted)',marginBottom:'.15rem'}}>Reason</div>
             <div style=${{display:'flex',gap:'.2rem',marginBottom:'.3rem',flexWrap:'wrap'}}>
@@ -7386,9 +7385,10 @@ function startApp() {
             <div style=${{fontSize:'.55rem',fontWeight:600,color:'var(--text-muted)',marginBottom:'.15rem'}}>Resolution</div>
             <div style=${{display:'flex',gap:'.2rem',marginBottom:'.3rem',flexWrap:'wrap'}}>
               ${[{k:'move_a',l:'Move A'},{k:'move_b',l:'Move B'},{k:'redesign',l:'Redesign'},{k:'accept',l:'Accept'}].map(function(r){
-                var sel=(it.aiResolution||null)===r.k;
+                var curRes=it.aiResolution||[];if(typeof curRes==='string')curRes=curRes?[curRes]:[];
+                var sel=curRes.indexOf(r.k)>=0;
                 return html`<span key=${r.k}
-                  onClick=${function(e){e.stopPropagation();d({t:'UPD_CLASH',id:it.id,u:{aiResolution:sel?null:r.k}});}}
+                  onClick=${function(e){e.stopPropagation();var nr=sel?curRes.filter(function(x){return x!==r.k}):curRes.concat([r.k]);d({t:'UPD_CLASH',id:it.id,u:{aiResolution:nr}});}}
                   style=${{fontSize:'.55rem',padding:'.1rem .35rem',borderRadius:10,cursor:'pointer',whiteSpace:'nowrap',
                     border:'1px solid '+(sel?'#3b82f6':'var(--border)'),
                     background:sel?'#1e3a5f':'var(--bg-secondary)',
@@ -10176,7 +10176,7 @@ function startApp() {
     var confirmedFromClash = s.issues.filter(function(i){return i.source==='clash';});
     var allTrainable = clashes.concat(confirmedFromClash);
     var reviewedCount = allTrainable.filter(function(c){return c.status!=='open';}).length;
-    var feedbackCount = allTrainable.filter(function(c){return c.aiFeedback||c.clashTypeConfirmed||(c.aiReasons&&c.aiReasons.length)||c.aiResolution||c.aiNote||c.source==='clash';}).length;
+    var feedbackCount = allTrainable.filter(function(c){return c.aiFeedback||c.clashTypeConfirmed||(c.aiReasons&&c.aiReasons.length)||(c.aiResolution&&c.aiResolution.length)||c.aiNote||c.source==='clash';}).length;
     var totalCount = allTrainable.length;
 
     // Global guard: warn before turning off if unsent data exists
@@ -10698,8 +10698,8 @@ function startApp() {
       var fb={};
       var hasFb=false;
       s.clashes.forEach(function(c){
-        if(c.aiFeedback||c.aiReasons&&c.aiReasons.length||c.aiNote||c.aiResolution||c.clashTypeConfirmed){
-          fb[c.id]={f:c.aiFeedback||null,r:c.aiReasons||[],res:c.aiResolution||null,n:c.aiNote||'',ct:c.clashTypeConfirmed||null,sig:c.aiSignals||[]};
+        if(c.aiFeedback||c.aiReasons&&c.aiReasons.length||c.aiNote||(c.aiResolution&&c.aiResolution.length)||c.clashTypeConfirmed){
+          fb[c.id]={f:c.aiFeedback||null,r:c.aiReasons||[],res:c.aiResolution||[],n:c.aiNote||'',ct:c.clashTypeConfirmed||null,sig:c.aiSignals||[]};
           hasFb=true;
         }
       });

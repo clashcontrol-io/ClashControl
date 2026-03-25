@@ -1,5 +1,11 @@
 # Changelog
 
+## v2.6.11 (2026-03-25)
+- Style detected clash type same as confirmed, keep (detected) label
+
+## v2.6.10 (2026-03-25)
+- Add /reload command to chatbox
+
 ## v2.6.9 (2026-03-25)
 - Include confirmed clashes in training data count and export
 
