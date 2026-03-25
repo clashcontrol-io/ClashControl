@@ -245,7 +245,7 @@ window.onload = function() {
 
 function startApp() {
   // ── Version (auto-updated by pre-commit hook) ──
-  var CC_VERSION = {v:'2.1.2',hash:'52b0848',date:'2026-03-25T07:59:53Z'};
+  var CC_VERSION = {v:'2.1.4',hash:'e964cfe',date:'2026-03-25T08:05:12Z'};
 
   // Check CDN deps loaded
   var need = [];
@@ -9446,7 +9446,7 @@ function startApp() {
       var closedLabel = isDetecting ? 'Detecting clashes…' : modelLoading ? 'Model loading…' : 'ClashControl';
       return html`<button class="cc-nlpanel-closed"
         onClick=${function(){ setOpen(true); }}
-        title=${isDetecting ? 'Clash detection running…' : modelLoading ? 'Model is loading… click to set up clashes' : 'ClashControl — describe tasks in plain English (Ctrl+/)'}
+        title=${isDetecting ? 'Clash detection running…' : modelLoading ? 'Model is loading… click to set up clashes' : 'ClashControl — describe tasks in plain English ( / )'}
         style=${{
           position:'fixed', bottom:'1rem', left:'50%', transform:'translateX(-50%)',
           zIndex:1200, display:'flex', alignItems:'center', gap:'.4rem',
@@ -9460,7 +9460,7 @@ function startApp() {
           <path d="M2 4h12M2 8h8M2 12h10" stroke="var(--accent)" stroke-width="1.6" stroke-linecap="round"/>
         </svg>`}
         ${closedLabel}
-        <span style=${{fontSize:'.6rem', opacity:.5, marginLeft:'.15rem'}}>Ctrl+/</span>
+        <span style=${{fontSize:'.6rem', opacity:.5, marginLeft:'.15rem'}}>/</span>
       </button>`;
     }
 
@@ -9779,26 +9779,29 @@ function startApp() {
     var isSending = shareState.status==='sending';
     var hasData = reviewedCount > 0 || feedbackCount > 0;
 
-    function handleClick() {
-      if (s.trainingMode) { setExpanded(!isExpanded); }
-      else { d({t:'TRAINING_MODE'}); }
-    }
-
     return html`<div style=${{position:'absolute',top:'2.6rem',left:'50%',transform:'translateX(-50%)',
       zIndex:20,pointerEvents:'auto',display:'flex',flexDirection:'column',alignItems:'center'}}>
-      <button class="cc-training-btn-3d" onClick=${handleClick}
-        style=${{display:'flex',alignItems:'center',gap:'.4rem',
-          padding:'.45rem 1.1rem',borderRadius:999,
+      <div class="cc-training-btn-3d" style=${{display:'flex',alignItems:'center',
+          borderRadius:999,
           background:s.trainingMode?'rgba(124,58,237,.85)':'var(--overlay-bg)',
           border:'1px solid '+(s.trainingMode?'#a78bfa':'var(--border)'),
-          color:s.trainingMode?'#e9d5ff':'var(--text-muted)',fontSize:'.74rem',cursor:'pointer',
-          boxShadow:s.trainingMode?'0 0 20px rgba(124,58,237,.3)':'var(--shadow-md)',whiteSpace:'nowrap'}}>
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
-          <path d="M12 2a4 4 0 0 1 4 4c0 1.95-1.4 3.58-3.25 3.93V12h3.5a2.25 2.25 0 0 1 0 4.5h-3.5v1.25A3.25 3.25 0 0 1 9.5 21 3.25 3.25 0 0 1 6.25 17.75V14.5h-1A2.25 2.25 0 0 1 3 12.25 2.25 2.25 0 0 1 5.25 10h3.5V9.93A4 4 0 0 1 12 2z"/>
-        </svg>
-        ${s.trainingMode?'Training Mode On':'Training Mode'}
-        ${s.trainingMode && html`<span style=${{fontSize:'.5rem',marginLeft:'.1rem',color:'#c4b5fd'}}>${isExpanded?'▲':'▼'}</span>`}
-      </button>
+          boxShadow:s.trainingMode?'0 0 20px rgba(124,58,237,.3)':'var(--shadow-md)',
+          overflow:'hidden'}}>
+        <button onClick=${function(){d({t:'TRAINING_MODE'}); if(!s.trainingMode) setExpanded(false);}}
+          style=${{display:'flex',alignItems:'center',gap:'.4rem',
+            padding:'.45rem .7rem .45rem 1.1rem',background:'none',border:'none',
+            color:s.trainingMode?'#e9d5ff':'var(--text-muted)',fontSize:'.74rem',cursor:'pointer',whiteSpace:'nowrap'}}>
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M12 2a4 4 0 0 1 4 4c0 1.95-1.4 3.58-3.25 3.93V12h3.5a2.25 2.25 0 0 1 0 4.5h-3.5v1.25A3.25 3.25 0 0 1 9.5 21 3.25 3.25 0 0 1 6.25 17.75V14.5h-1A2.25 2.25 0 0 1 3 12.25 2.25 2.25 0 0 1 5.25 10h3.5V9.93A4 4 0 0 1 12 2z"/>
+          </svg>
+          ${s.trainingMode?'Training Mode On':'Training Mode'}
+        </button>
+        ${s.trainingMode && html`<button onClick=${function(e){e.stopPropagation();setExpanded(!isExpanded);}}
+          style=${{display:'flex',alignItems:'center',padding:'.45rem .7rem .45rem .3rem',background:'none',border:'none',
+            borderLeft:'1px solid rgba(196,181,253,.3)',cursor:'pointer',color:'#c4b5fd',fontSize:'.55rem'}}>
+          ${isExpanded?'▲':'▼'}
+        </button>`}
+      </div>
       ${s.trainingMode && isExpanded && html`<div style=${{marginTop:'.35rem',
         background:'var(--overlay-bg-strong)',border:'1px solid rgba(124,58,237,.4)',borderRadius:10,
         boxShadow:'0 4px 16px rgba(0,0,0,.3)',width:260,padding:'.5rem'}}>
@@ -9825,8 +9828,6 @@ function startApp() {
         </div>
         ${shareState.status==='ok' && html`<div style=${{fontSize:'.55rem',color:'#22c55e'}}>Submitted, thank you!</div>`}
         ${shareState.status==='error' && shareState.msg && html`<div style=${{fontSize:'.55rem',color:'#ef4444'}}>${shareState.msg}</div>`}
-        <button onClick=${function(){d({t:'TRAINING_MODE'}); setExpanded(false);}}
-          style=${{...S_BTN,width:'100%',fontSize:'.55rem',padding:'.2rem',marginTop:'.2rem',background:'none',color:'var(--text-faint)',border:'1px solid var(--border)'}}>Exit Training Mode</button>
       </div>`}
     </div>`;
   }
@@ -10429,6 +10430,8 @@ function startApp() {
           if(e.key==='a'){d({t:'MEASURE_MODE',v:'angle'});return;}
           if(e.key==='r'){d({t:'MEASURE_MODE',v:'area'});return;}
         }
+        // / — Open AI chat input
+        if(e.key==='/'&&!ctrl){ e.preventDefault(); if(window._ccNLOpen) window._ccNLOpen(); return; }
         // F — Toggle finder search
         if(e.key==='f'&&!ctrl){ if(window._ccToggleFinder) window._ccToggleFinder(); return; }
         // X/Y/Z — Section planes (direct toggle)
