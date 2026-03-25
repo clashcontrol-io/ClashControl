@@ -245,7 +245,7 @@ window.onload = function() {
 
 function startApp() {
   // ── Version (auto-updated by pre-commit hook) ──
-  var CC_VERSION = {v:'2.7.6',hash:'b4ccc1c',date:'2026-03-25T15:25:03Z'};
+  var CC_VERSION = {v:'2.8.0',hash:'5ff35ad',date:'2026-03-25T15:36:01Z'};
 
   // Check CDN deps loaded
   var need = [];
@@ -392,9 +392,15 @@ function startApp() {
         }
         return Object.assign({},c,upd2);
       })});
-      case 'CLEAR_TRAINING_DATA': return Object.assign({},s,{clashes:s.clashes.map(function(c){
-        return Object.assign({},c,{aiFeedback:null,aiReasons:[],aiResolution:[],aiNote:'',aiSignals:[],clashTypeConfirmed:null});
-      })});
+      case 'CLEAR_TRAINING_DATA': return Object.assign({},s,{
+        clashes:s.clashes.map(function(c){
+          return Object.assign({},c,{aiFeedback:null,aiReasons:[],aiResolution:[],aiNote:'',aiSignals:[],clashTypeConfirmed:null});
+        }),
+        issues:s.issues.map(function(i){
+          if(i.source!=='clash') return i;
+          return Object.assign({},i,{aiFeedback:null,aiReasons:[],aiResolution:[],aiNote:'',aiSignals:[],clashTypeConfirmed:null});
+        })
+      });
       case 'UPD_CLASH':
         // When confirmed, move clash to issues tab
         if(a.u&&a.u.status==='confirmed'){

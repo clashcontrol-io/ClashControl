@@ -1,5 +1,8 @@
 # Changelog
 
+## v2.8.0 (2026-03-25)
+- Carry over all training feedback and detection metadata to issues
+
 ## v2.7.6 (2026-03-25)
 - Clear training data after send, sanitize GDPR-sensitive fields
 
