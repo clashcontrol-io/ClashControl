@@ -245,7 +245,7 @@ window.onload = function() {
 
 function startApp() {
   // ── Version (auto-updated by pre-commit hook) ──
-  var CC_VERSION = {v:'2.6.4',hash:'7403090',date:'2026-03-25T10:17:43Z'};
+  var CC_VERSION = {v:'2.6.6',hash:'d62e473',date:'2026-03-25T10:32:23Z'};
 
   // Check CDN deps loaded
   var need = [];
@@ -416,8 +416,11 @@ function startApp() {
               elemAType:cClash.elemAType, elemBType:cClash.elemBType,
               elemAName:cClash.elemAName, elemBName:cClash.elemBName,
               elemAStorey:cClash.elemAStorey, elemBStorey:cClash.elemBStorey,
+              elemAMaterial:cClash.elemAMaterial, elemBMaterial:cClash.elemBMaterial,
+              modelAId:cClash.modelAId, modelBId:cClash.modelBId,
               modelAName:cClash.modelAName, modelBName:cClash.modelBName,
               point:cClash.point, distance:cClash.distance,
+              assignee:cClash.assignee||'',
               created:Date.now()
             };
             // Find next clash in remaining list
@@ -6921,7 +6924,7 @@ function startApp() {
     var dp=useState(false), detailOpen=dp[0], setDetailOpen=dp[1];
     // For issues: single element via elementId; for clashes: elemA + elemB
     var hasA = !!it.elemA, hasB = !!it.elemB, hasEl = !!it.elementId;
-    var isSingle = !isClash && hasEl && !hasB;
+    var isSingle = !hasA && !hasB && hasEl;
     // Lazy-load props only when detail panel is opened
     var pA = detailOpen ? (it.propsA || _lookupElProps(models, it.modelAId, it.elemA)) : null;
     var pB = detailOpen ? (it.propsB || _lookupElProps(models, it.modelBId, it.elemB)) : null;
@@ -7334,9 +7337,16 @@ function startApp() {
             title="Collapse" style=${{...S_BTN,marginLeft:'auto',padding:'0 4px',background:'none',color:'var(--text-faint)',fontSize:'.7rem',flexShrink:0}}>▲</button>
         </div>
         ${html`<${ClashProps} item=${it} models=${pr._models||[]} isClash=${isClash} />`}
+        <div style=${{display:'flex',gap:'.3rem',alignItems:'center',marginTop:'.3rem',marginBottom:'.2rem'}}>
+          <span style=${{fontSize:'.55rem',color:'var(--text-muted)',flexShrink:0}}>Assign:</span>
+          <input type="text" value=${it.assignee||''} placeholder="Name or team"
+            onClick=${function(e){e.stopPropagation();}}
+            onInput=${function(e){d({t:isClash?'UPD_CLASH':'UPD_ISSUE',id:it.id,u:{assignee:e.target.value}});}}
+            style=${{...S_INPUT,fontSize:'.55rem',padding:'.15rem .3rem',flex:1}} />
+        </div>
         ${isClash && trainingMode && function(){
           var CTYPES=[{k:'hard',l:'Hard'},{k:'soft',l:'Soft'},{k:'no_clash',l:'None'}];
-          var REASONS=['Design error','Within tolerance','Already resolved','Modelling error','Missing opening','Shared space allowed','Duplicate geometry','Not relevant'];
+          var REASONS=['Design error','Within tolerance','Needs more tolerance','Already resolved','Modelling error','Missing opening','Shared space allowed','Duplicate geometry','Not relevant'];
           var curCT=it.clashTypeConfirmed!=null?it.clashTypeConfirmed:it.type;
           var curReasons=it.aiReasons||[];
           var curNote=it.aiNote||'';
@@ -10151,7 +10161,7 @@ function startApp() {
     },[s.trainingMode]);
 
     var reviewedCount = clashes.filter(function(c){return c.status!=='open';}).length;
-    var feedbackCount = clashes.filter(function(c){return c.aiFeedback;}).length;
+    var feedbackCount = clashes.filter(function(c){return c.aiFeedback||c.clashTypeConfirmed||(c.aiReasons&&c.aiReasons.length)||c.aiResolution||c.aiNote;}).length;
     var totalCount = clashes.length;
 
     // Global guard: warn before turning off if unsent data exists

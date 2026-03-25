@@ -1,5 +1,11 @@
 # Changelog
 
+## v2.6.6 (2026-03-25)
+- Fix element properties in issues, add assignee field, add reason
+
+## v2.6.5 (2026-03-25)
+- Persist training feedback in localStorage backup
+
 ## v2.6.4 (2026-03-25)
 - Split Google Forms URL to avoid phishing heuristic false positive
 
