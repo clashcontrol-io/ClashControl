@@ -245,7 +245,7 @@ window.onload = function() {
 
 function startApp() {
   // ── Version (auto-updated by pre-commit hook) ──
-  var CC_VERSION = {v:'2.0.47',hash:'d28a8d7',date:'2026-03-25T07:10:42Z'};
+  var CC_VERSION = {v:'2.1.0',hash:'69c7613',date:'2026-03-25T07:55:27Z'};
 
   // Check CDN deps loaded
   var need = [];
@@ -2369,7 +2369,7 @@ function startApp() {
   }
   function _saveNLTrainRecord(input, output, meta) {
     try {
-      if (!input || !output) return;
+      if (!input) return;
       if (input.trim().split(/\s+/).length < 2) return; // skip single-word
       var store = _getNLTrainStore();
       store.push({input:input, output:output, meta:meta});
@@ -2416,14 +2416,18 @@ function startApp() {
     if (!store.length) return;
     var sysMsg = 'You are ClashControl\'s command parser. Given a user command about IFC clash detection, output a JSON action object or a plain text response. Valid intents: run_detection, set_max_gap, filter_status, reset_filters, group_by, sort_by, export_bcf, import_bcf, query, help, theme, settings, open_tab, training_mode, measure, viewpoint, section, floor_plan.';
     var lines = store.map(function(r){
-      var outStr = typeof r.output === 'object' ? JSON.stringify(r.output) : String(r.output);
-      return JSON.stringify({
+      var matched = r.output != null;
+      var outStr = matched ? (typeof r.output === 'object' ? JSON.stringify(r.output) : String(r.output)) : '';
+      var rec = {
         messages:[
           {role:'system',content:sysMsg},
-          {role:'user',content:r.input},
-          {role:'assistant',content:outStr}
+          {role:'user',content:r.input}
         ]
-      });
+      };
+      if (matched) rec.messages.push({role:'assistant',content:outStr});
+      rec.matched = matched;
+      if (r.meta && r.meta.path) rec.path = r.meta.path;
+      return JSON.stringify(rec);
     });
     var blob = new Blob([lines.join('\n') + '\n'], {type:'application/jsonl'});
     var url = URL.createObjectURL(blob);
@@ -4493,7 +4497,6 @@ function startApp() {
           <span style=${{color:'var(--text-muted)'}}>${CC_VERSION.v} (${CC_VERSION.hash})</span>
         </div>
       </div>`}
-      ${s.trainingMode && html`<${TrainingOverlay} s=${s} d=${d} />`}
       ${s.clashes.length>0 && html`<div class="cc-overlay-top" style=${{position:'absolute',top:'.75rem',left:'50%',transform:'translateX(-50%)',display:'flex',gap:'.3rem',pointerEvents:'auto'}}>
         <button onClick=${function(){if(_fitToClashes)_fitToClashes(s.clashes);}}
           style=${{...S_BTN,background:'var(--overlay-bg)',color:'#93c5fd',border:'1px solid var(--border)',fontSize:'.65rem',padding:'.25rem .5rem'}}>
@@ -4508,19 +4511,7 @@ function startApp() {
           ${s.prefs.showIssueMarkers!==false?'Issue Markers On':'Issue Markers Off'}
         </button>
       </div>`}
-      ${html`<button class="cc-training-btn-3d" onClick=${function(){d({t:'TRAINING_MODE'});}}
-        style=${{position:'absolute',top:'2.6rem',left:'50%',transform:'translateX(-50%)',
-          zIndex:20,display:'flex',alignItems:'center',gap:'.4rem',pointerEvents:'auto',
-          padding:'.45rem 1.1rem',borderRadius:999,
-          background:s.trainingMode?'rgba(124,58,237,.85)':'var(--overlay-bg)',
-          border:'1px solid '+(s.trainingMode?'#a78bfa':'var(--border)'),
-          color:s.trainingMode?'#e9d5ff':'var(--text-muted)',fontSize:'.74rem',cursor:'pointer',
-          boxShadow:s.trainingMode?'0 0 20px rgba(124,58,237,.3)':'var(--shadow-md)',whiteSpace:'nowrap'}}>
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
-          <path d="M12 2a4 4 0 0 1 4 4c0 1.95-1.4 3.58-3.25 3.93V12h3.5a2.25 2.25 0 0 1 0 4.5h-3.5v1.25A3.25 3.25 0 0 1 9.5 21 3.25 3.25 0 0 1 6.25 17.75V14.5h-1A2.25 2.25 0 0 1 3 12.25 2.25 2.25 0 0 1 5.25 10h3.5V9.93A4 4 0 0 1 12 2z"/>
-        </svg>
-        ${s.trainingMode?'Training Mode On':'Training Mode'}
-      </button>`}
+      ${html`<${TrainingPill} s=${s} d=${d} />`}
       ${s.models.length>0 && html`<div style=${{position:'absolute',top:'.75rem',right:'50%',transform:'translateX(50%)',marginRight:'-45%',pointerEvents:'auto'}}>
         <div style=${{display:'flex',alignItems:'center',gap:'.2rem'}}>
           <button onClick=${function(){setFinderOpen(!finderOpen);if(finderOpen){doFind('');setFindQuery('');}}}
@@ -8710,12 +8701,11 @@ function startApp() {
 
   // ── Async NL handler: regex fast-path → Ollama/browser LLM fallback ──
   function processNLCommandWithLLM(raw, s, d) {
-    // Capture hook: write successful results to NL training store
+    // Capture hook: write all inputs to NL training store (including unmatched)
     function _captureNL(result, path) {
-      if (result == null) return result;
       try {
-        var output = typeof result === 'object' ? result : String(result);
-        _saveNLTrainRecord(raw, output, {ts:Date.now(), path:path, v:CC_VERSION.v});
+        var output = result != null ? (typeof result === 'object' ? result : String(result)) : null;
+        _saveNLTrainRecord(raw, output, {ts:Date.now(), path:path, matched:result!=null, v:CC_VERSION.v});
       } catch(e) {}
       return result;
     }
@@ -8738,11 +8728,11 @@ function startApp() {
       _resetIdleTimer();
       return callOllama(prompt, raw)
         .then(function(text) { return _captureNL(text ? dispatchLLMAction(text, s, d) : null, 'ollama'); })
-        .catch(function() { return null; });
+        .catch(function() { return _captureNL(null, 'ollama'); });
     }
 
     // 4. Fall back to in-browser LLM
-    if (_nlModelStatus !== 'ready' || !_nlPipeline) return Promise.resolve(null);
+    if (_nlModelStatus !== 'ready' || !_nlPipeline) return Promise.resolve(_captureNL(null, 'no-llm'));
     _resetIdleTimer();
     return _nlPipeline(
       [{role:'system', content:prompt}, {role:'user', content:raw}],
@@ -8751,7 +8741,7 @@ function startApp() {
       var text = out[0].generated_text;
       if (Array.isArray(text)) text = text[text.length - 1].content;
       return _captureNL(dispatchLLMAction(text, s, d), 'browser-llm');
-    }).catch(function() { return null; });
+    }).catch(function() { return _captureNL(null, 'browser-llm'); });
   }
 
   function processNLCommand(raw, s, d) {
@@ -9509,15 +9499,11 @@ function startApp() {
           <path d="M2 4h12M2 8h8M2 12h10" stroke="#60a5fa" stroke-width="1.6" stroke-linecap="round"/>
         </svg>
         <span style=${{fontSize:'.76rem', fontWeight:600, color:textCol, flex:1}}>ClashControl</span>
-        ${(isDetecting || modelLoading) && html`<span style=${{fontSize:'.6rem', color:'#60a5fa', display:'flex', alignItems:'center', gap:'.25rem'}}>
-          <span class="spin" style=${{display:'inline-block', width:'.55rem', height:'.55rem', borderRadius:'50%', border:'1.5px solid rgba(96,165,250,.3)', borderTopColor:'#60a5fa'}}></span>
-          ${isDetecting ? 'Detecting…' : 'Loading model…'}
-        </span>`}
-        ${!modelLoading && llmStatus === 'loading' && html`<span style=${{fontSize:'.6rem', color:'#60a5fa', display:'flex', alignItems:'center', gap:'.25rem'}}>
+        ${llmStatus === 'loading' && html`<span style=${{fontSize:'.6rem', color:'#60a5fa', display:'flex', alignItems:'center', gap:'.25rem'}}>
           <span class="spin" style=${{display:'inline-block', width:'.55rem', height:'.55rem', borderRadius:'50%', border:'1.5px solid rgba(96,165,250,.3)', borderTopColor:'#60a5fa'}}></span>
           AI ${llmProgress}%
         </span>`}
-        ${!modelLoading && llmStatus === 'ready' && backendLabel && html`<span style=${{fontSize:'.55rem', color:backendColor, display:'flex', alignItems:'center', gap:'.2rem'}}>
+        ${llmStatus === 'ready' && backendLabel && html`<span style=${{fontSize:'.55rem', color:backendColor, display:'flex', alignItems:'center', gap:'.2rem'}}>
           <span style=${{width:'.4rem', height:'.4rem', borderRadius:'50%', background:backendColor, display:'inline-block'}}></span>
           ${backendLabel}
         </span>`}
@@ -9783,13 +9769,12 @@ function startApp() {
     </div>`;
   }
 
-  // ── Training Overlay (floating, replaces old Training tab) ──────
-  // Shown in 3D viewport when trainingMode is on. Contains progress and export controls.
-  function TrainingOverlay(props) {
+  // ── Training Pill (top-center, expandable when active) ──────
+  function TrainingPill(props) {
     var s = props.s, d = props.d;
     var clashes = s.clashes;
     var ss = useState({status:null,msg:null}), shareState=ss[0], setShareState=ss[1];
-    var stCollapsed = useState(false), isCollapsed=stCollapsed[0], setCollapsed=stCollapsed[1];
+    var stExpanded = useState(false), isExpanded=stExpanded[0], setExpanded=stExpanded[1];
 
     var reviewedCount = clashes.filter(function(c){return c.status!=='open';}).length;
     var feedbackCount = clashes.filter(function(c){return c.aiFeedback;}).length;
@@ -9805,19 +9790,29 @@ function startApp() {
     var isSending = shareState.status==='sending';
     var hasData = reviewedCount > 0 || feedbackCount > 0;
 
-    return html`<div style=${{position:'absolute',top:'2.2rem',left:'.75rem',zIndex:30,pointerEvents:'auto',
-      background:'var(--overlay-bg-strong)',border:'1px solid rgba(124,58,237,.4)',borderRadius:10,
-      boxShadow:'0 4px 16px rgba(0,0,0,.3)',minWidth:isCollapsed?'auto':220,maxWidth:280}}>
-      <div onClick=${function(){setCollapsed(!isCollapsed);}}
-        style=${{display:'flex',alignItems:'center',gap:'.3rem',padding:'.35rem .5rem',cursor:'pointer',
-          borderBottom:isCollapsed?'none':'1px solid rgba(124,58,237,.2)'}}>
-        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#a78bfa" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+    function handleClick() {
+      if (s.trainingMode) { setExpanded(!isExpanded); }
+      else { d({t:'TRAINING_MODE'}); }
+    }
+
+    return html`<div style=${{position:'absolute',top:'2.6rem',left:'50%',transform:'translateX(-50%)',
+      zIndex:20,pointerEvents:'auto',display:'flex',flexDirection:'column',alignItems:'center'}}>
+      <button class="cc-training-btn-3d" onClick=${handleClick}
+        style=${{display:'flex',alignItems:'center',gap:'.4rem',
+          padding:'.45rem 1.1rem',borderRadius:999,
+          background:s.trainingMode?'rgba(124,58,237,.85)':'var(--overlay-bg)',
+          border:'1px solid '+(s.trainingMode?'#a78bfa':'var(--border)'),
+          color:s.trainingMode?'#e9d5ff':'var(--text-muted)',fontSize:'.74rem',cursor:'pointer',
+          boxShadow:s.trainingMode?'0 0 20px rgba(124,58,237,.3)':'var(--shadow-md)',whiteSpace:'nowrap'}}>
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
           <path d="M12 2a4 4 0 0 1 4 4c0 1.95-1.4 3.58-3.25 3.93V12h3.5a2.25 2.25 0 0 1 0 4.5h-3.5v1.25A3.25 3.25 0 0 1 9.5 21 3.25 3.25 0 0 1 6.25 17.75V14.5h-1A2.25 2.25 0 0 1 3 12.25 2.25 2.25 0 0 1 5.25 10h3.5V9.93A4 4 0 0 1 12 2z"/>
         </svg>
-        <span style=${{fontSize:'.62rem',fontWeight:600,color:'#c4b5fd',flex:1}}>Training Mode</span>
-        <span style=${{fontSize:'.5rem',color:'var(--text-faint)'}}>${isCollapsed?'▼':'▲'}</span>
-      </div>
-      ${!isCollapsed && html`<div style=${{padding:'.4rem .5rem'}}>
+        ${s.trainingMode?'Training Mode On':'Training Mode'}
+        ${s.trainingMode && html`<span style=${{fontSize:'.5rem',marginLeft:'.1rem',color:'#c4b5fd'}}>${isExpanded?'▲':'▼'}</span>`}
+      </button>
+      ${s.trainingMode && isExpanded && html`<div style=${{marginTop:'.35rem',
+        background:'var(--overlay-bg-strong)',border:'1px solid rgba(124,58,237,.4)',borderRadius:10,
+        boxShadow:'0 4px 16px rgba(0,0,0,.3)',width:260,padding:'.5rem'}}>
         <div style=${{fontSize:'.55rem',color:'var(--text-muted)',marginBottom:'.3rem',lineHeight:1.4}}>
           Use ▲▼ on each clash to label true/false positives. Annotations appear when you expand a clash row.
         </div>
@@ -9841,7 +9836,7 @@ function startApp() {
         </div>
         ${shareState.status==='ok' && html`<div style=${{fontSize:'.55rem',color:'#22c55e'}}>Submitted, thank you!</div>`}
         ${shareState.status==='error' && shareState.msg && html`<div style=${{fontSize:'.55rem',color:'#ef4444'}}>${shareState.msg}</div>`}
-        <button onClick=${function(){d({t:'TRAINING_MODE'});}}
+        <button onClick=${function(){d({t:'TRAINING_MODE'}); setExpanded(false);}}
           style=${{...S_BTN,width:'100%',fontSize:'.55rem',padding:'.2rem',marginTop:'.2rem',background:'none',color:'var(--text-faint)',border:'1px solid var(--border)'}}>Exit Training Mode</button>
       </div>`}
     </div>`;
