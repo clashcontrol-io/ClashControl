@@ -1,5 +1,8 @@
 # Changelog
 
+## v2.6.0 (2026-03-25)
+- Tolerance matrix toggle, confirm button UX, issue tab badge
+
 ## v2.5.2 (2026-03-25)
 - Add -type exclusion syntax, fix / key always focuses chat input
 

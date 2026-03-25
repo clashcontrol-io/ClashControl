@@ -245,7 +245,7 @@ window.onload = function() {
 
 function startApp() {
   // ── Version (auto-updated by pre-commit hook) ──
-  var CC_VERSION = {v:'2.5.2',hash:'3d5eac5',date:'2026-03-25T09:57:22Z'};
+  var CC_VERSION = {v:'2.6.0',hash:'63bfbb5',date:'2026-03-25T09:59:31Z'};
 
   // Check CDN deps loaded
   var need = [];
@@ -311,7 +311,7 @@ function startApp() {
     models:[], clashes:[], issues:[], activeId:null, showModal:false, showSettings:false, modalElement:null, tab:null,
     rules:{ modelA:'all', modelB:'all', hard:true, maxGap:50, duplicates:false, changeAware:false, excludeSelf:true, excludeTypes:[], minOverlapVolM3:1e-5, toleranceByTypePair:{}, useSemanticFilter:true },
     detectionSettings:null, // Captured at detection run time: {clearance_mm, discipline_filters}
-    trainingMode:false, // When true, overlays feedback UI on clash rows
+    trainingMode:(function(){try{return localStorage.getItem('cc_trainingMode')==='1';}catch(e){return false;}}()),
     clashGroupBy:'none', clashSortBy:'none',
     issueGroupBy:'none', issueSortBy:'none',
     detecting:false, switchingProject:false, sectionAxis:null, sectionPos:0.5, sectionCustom:null,
@@ -444,7 +444,7 @@ function startApp() {
       case 'SECTION_CUSTOM': return Object.assign({},s,{sectionAxis:null, sectionCustom:a.v, sectionPos:a.pos!=null?a.pos:0.5});
       case 'TAB':         var tabUpd={tab:a.v}; if(a.v!==s.tab&&(a.v==='clashes'||a.v==='issues'||s.tab==='clashes'||s.tab==='issues'))tabUpd.activeId=null; return Object.assign({},s,tabUpd);
       case 'SETTINGS':    return Object.assign({},s,{showSettings:a.v});
-      case 'TRAINING_MODE': return Object.assign({},s,{trainingMode:!s.trainingMode});
+      case 'TRAINING_MODE': var tm=!s.trainingMode;try{localStorage.setItem('cc_trainingMode',tm?'1':'0');}catch(e){}return Object.assign({},s,{trainingMode:tm});
       case 'UPD_PREFS':
         if(a.u&&a.u.defaultTolerances!==undefined){try{localStorage.setItem('cc_defaultTolerances',JSON.stringify(a.u.defaultTolerances));}catch(e){}}
         return Object.assign({},s,{prefs:Object.assign({},s.prefs,a.u)});
