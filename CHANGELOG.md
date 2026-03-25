@@ -1,5 +1,8 @@
 # Changelog
 
+## v2.11.0 (2026-03-25)
+- Keep denied clashes in state for training data, hide from UI
+
 ## v2.10.3 (2026-03-25)
 - Tighten denied clash suppression to 150mm, fix hasData after Send
 

@@ -245,7 +245,11 @@ window.onload = function() {
 
 function startApp() {
   // ── Version (auto-updated by pre-commit hook) ──
-  var CC_VERSION = {v:'2.10.3',hash:'24527c8',date:'2026-03-25T17:31:10Z'};
+  var CC_VERSION = {v:'2.11.0',hash:'cc98081',date:'2026-03-25T17:53:29Z'};
+
+  // ── AI Data Collection (Phase 0.5) ──
+  var CLASH_DATA_ENDPOINT = 'https://your-server.com/api/clash-data';
+  var _beaconSentIds = {}; // in-memory dedup Set (reset each session)
 
   // Check CDN deps loaded
   var need = [];
@@ -10360,14 +10364,13 @@ function startApp() {
     var clashes = s.clashes;
     var ss = useState({status:null,msg:null}), shareState=ss[0], setShareState=ss[1];
     var stExpanded = useState(false), isExpanded=stExpanded[0], setExpanded=stExpanded[1];
-    var _noticeAccepted = (function(){try{return localStorage.getItem('cc_dataNoticeAccepted')==='1';}catch(e){return false;}})();
-    var stNotice = useState(false), showNotice=stNotice[0], setShowNotice=stNotice[1];
     var stWarn = useState(false), showWarn=stWarn[0], setShowWarn=stWarn[1];
     var stDelConfirm = useState(false), showDelConfirm=stDelConfirm[0], setShowDelConfirm=stDelConfirm[1];
     var prevTraining = useRef(false);
+    var stConsent = useState(function(){try{return localStorage.getItem('cc_data_consent')==='granted';}catch(e){return false;}}), dataConsent=stConsent[0], setDataConsent=stConsent[1];
     useEffect(function(){
-      if(s.trainingMode && !prevTraining.current){setExpanded(true);if(!_noticeAccepted)setShowNotice(true);}
-      if(!s.trainingMode){setShowNotice(false);setExpanded(false);}
+      if(s.trainingMode && !prevTraining.current) setExpanded(true);
+      if(!s.trainingMode) setExpanded(false);
       prevTraining.current = s.trainingMode;
     },[s.trainingMode]);
 
@@ -10422,14 +10425,15 @@ function startApp() {
       ${s.trainingMode && isExpanded && html`<div style=${{marginTop:'.35rem',
         background:'var(--overlay-bg-strong)',border:'1px solid rgba(124,58,237,.4)',borderRadius:10,
         boxShadow:'0 4px 16px rgba(0,0,0,.3)',width:260,padding:'.5rem'}}>
-        ${showNotice && html`<div style=${{background:'rgba(124,58,237,.12)',border:'1px solid rgba(167,139,250,.35)',
-          borderRadius:6,padding:'.4rem .5rem',marginBottom:'.4rem',lineHeight:1.45}}>
-          <div style=${{fontSize:'.58rem',fontWeight:700,color:'#c4b5fd',marginBottom:'.2rem'}}>Data Collection Notice</div>
-          <div style=${{fontSize:'.52rem',color:'var(--text-secondary)',marginBottom:'.25rem'}}>By using Training Mode you agree that clash labels, IFC type metadata, and geometric metrics may be collected to improve clash detection. No element names, coordinates, project names, or personal data is included.</div>
-          <div style=${{fontSize:'.5rem',color:'var(--text-muted)',marginBottom:'.3rem'}}>Sharing is optional — nothing is sent without your action. You can export or delete your data at any time.</div>
-          <button onClick=${function(){setShowNotice(false);try{localStorage.setItem('cc_dataNoticeAccepted','1');}catch(e){}}} style=${{...S_BTN,fontSize:'.5rem',padding:'.15rem .5rem',
-            background:'rgba(124,58,237,.3)',color:'#e9d5ff',border:'1px solid rgba(167,139,250,.4)',width:'100%'}}>Understood</button>
-        </div>`}
+        <div style=${{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:'.35rem',padding:'.25rem 0',borderBottom:'1px solid rgba(124,58,237,.2)'}}>
+          <div style=${{fontSize:'.55rem',color:'var(--text-muted)'}}>Share anonymous clash data</div>
+          <div onClick=${function(){var nv=!dataConsent;setDataConsent(nv);try{localStorage.setItem('cc_data_consent',nv?'granted':'denied');}catch(e){}}}
+            role="switch" aria-checked=${dataConsent} tabindex="0"
+            onKeyDown=${function(e){if(e.key==='Enter'||e.key===' '){e.preventDefault();var nv2=!dataConsent;setDataConsent(nv2);try{localStorage.setItem('cc_data_consent',nv2?'granted':'denied');}catch(e){}}}}
+            style=${{width:30,height:16,borderRadius:8,background:dataConsent?'#7c3aed':'var(--text-faint)',cursor:'pointer',position:'relative',transition:'background .2s',flexShrink:0}}>
+            <div style=${{width:12,height:12,borderRadius:6,background:'#fff',position:'absolute',top:2,left:dataConsent?16:2,transition:'left .2s',boxShadow:'0 1px 2px rgba(0,0,0,.2)'}}></div>
+          </div>
+        </div>
         <div style=${{fontSize:'.55rem',color:'var(--text-muted)',marginBottom:'.3rem',lineHeight:1.4}}>
           Use ▲▼ on each clash to label true/false positives. Annotations appear when you expand a clash row.
         </div>
@@ -10495,6 +10499,75 @@ function startApp() {
   }
 
   // ── Training Mode Info Popup ──────────────────────────────────
+  // ── Data Consent Popup (GDPR — Phase 0.5) ────────────────────
+  function DataConsentPopup() {
+    var stShow = useState(function(){
+      try { var v=localStorage.getItem('cc_data_consent'); return v!=='granted'&&v!=='denied'; } catch(e){ return true; }
+    });
+    var show=stShow[0], setShow=stShow[1];
+    if(!show) return null;
+    function decide(v){ try{localStorage.setItem('cc_data_consent',v);}catch(e){} setShow(false); }
+    var EQ_BTN={cursor:'pointer',padding:'.55rem 1.2rem',fontSize:'.8rem',fontWeight:600,
+      borderRadius:6,border:'1px solid var(--border)',background:'var(--bg-secondary)',color:'var(--text-primary)',flex:1};
+    return html`<div style=${{position:'fixed',top:0,left:0,right:0,bottom:0,zIndex:2100,
+      background:'rgba(0,0,0,.55)',display:'flex',alignItems:'flex-start',justifyContent:'center',
+      overflowY:'auto',WebkitOverflowScrolling:'touch',padding:'3rem 1rem'}}>
+      <div onClick=${function(e){e.stopPropagation();}}
+        style=${{background:'var(--bg-primary)',border:'1px solid var(--border)',borderRadius:14,
+          padding:'1.6rem',maxWidth:480,width:'100%',boxShadow:'0 12px 40px rgba(0,0,0,.5)',flexShrink:0}}>
+        <div style=${{fontSize:'1.05rem',fontWeight:700,color:'var(--text-primary)',marginBottom:'.8rem'}}>Help improve ClashControl</div>
+        <p style=${{fontSize:'.76rem',color:'var(--text-secondary)',lineHeight:1.65,marginBottom:'.7rem'}}>
+          When you review clashes, ClashControl can anonymously share your verdicts at the end of each session to help train a smarter clash classifier.
+        </p>
+        <p style=${{fontSize:'.76rem',color:'var(--text-secondary)',lineHeight:1.65,marginBottom:'.2rem'}}><strong style=${{color:'var(--text-primary)'}}>What is shared:</strong></p>
+        <ul style=${{fontSize:'.72rem',color:'var(--text-secondary)',lineHeight:1.65,marginBottom:'.7rem',paddingLeft:'1.2rem'}}>
+          <li>IFC element types and disciplines</li>
+          <li>Bounding box dimensions (size only, not position)</li>
+          <li>Penetration depth and overlap volume</li>
+          <li>Your verdict per clash</li>
+          <li>Detection settings used (clearance tolerance, discipline filters)</li>
+          <li>Any notes you write \u2014 do not include project names or locations</li>
+        </ul>
+        <p style=${{fontSize:'.76rem',color:'var(--text-secondary)',lineHeight:1.65,marginBottom:'.2rem'}}><strong style=${{color:'var(--text-primary)'}}>What is never shared:</strong></p>
+        <ul style=${{fontSize:'.72rem',color:'var(--text-secondary)',lineHeight:1.65,marginBottom:'.7rem',paddingLeft:'1.2rem'}}>
+          <li>Element names, GUIDs, or coordinates</li>
+          <li>Project or file names</li>
+          <li>Your identity</li>
+        </ul>
+        <p style=${{fontSize:'.68rem',color:'var(--text-muted)',lineHeight:1.55,marginBottom:'.5rem'}}>
+          Your IP address reaches our server briefly during transmission but is never logged or stored.
+        </p>
+        <p style=${{fontSize:'.68rem',color:'var(--text-muted)',lineHeight:1.55,marginBottom:'1rem'}}>
+          You can change this decision at any time in the Training Mode panel.
+        </p>
+        <div style=${{display:'flex',gap:'.5rem'}}>
+          <button onClick=${function(){decide('denied');}} style=${EQ_BTN}>No thanks</button>
+          <button onClick=${function(){decide('granted');}} style=${EQ_BTN}>Yes, share my data</button>
+        </div>
+      </div>
+    </div>`;
+  }
+
+  // ── sendBeacon auto-send (Phase 0.5) ──────────────────────────
+  function _beaconSendTrainingData(clashes, detectionSettings, models, defaultTolerances, issues) {
+    try {
+      if(localStorage.getItem('cc_data_consent')!=='granted') return;
+    } catch(e){ return; }
+    // Merge clashes + confirmed-from-clash issues, then filter to unsent reviewed only
+    var allClashData = clashes.slice();
+    if(issues) issues.forEach(function(i){if(i.source==='clash') allClashData.push(i);});
+    var unsent = allClashData.filter(function(c){
+      return c.status!=='open' && !_beaconSentIds[c.id];
+    });
+    if(!unsent.length) return;
+    // Pass empty issues array — we already merged them into unsent
+    var payload = _buildAITrainingPayload(unsent, detectionSettings, models, defaultTolerances, []);
+    if(!payload) return;
+    var blob = new Blob([JSON.stringify(payload)], {type:'application/json'});
+    navigator.sendBeacon(CLASH_DATA_ENDPOINT, blob);
+    unsent.forEach(function(c){ _beaconSentIds[c.id]=true; });
+  }
+
   function TrainingModePopup(props) {
     var d = props.d;
     var stShow = useState(function(){
@@ -10949,10 +11022,24 @@ function startApp() {
       function onUnload() {
         var cur = _latestSRef.current;
         if(_hasProjectData(cur)) _saveCurrentProjectData(cur);
+        // Phase 0.5: beacon training data on tab close
+        _beaconSendTrainingData(cur.clashes, cur.detectionSettings, cur.models, cur.prefs.defaultTolerances, cur.issues);
       }
       window.addEventListener('beforeunload', onUnload);
       return function(){ window.removeEventListener('beforeunload', onUnload); };
     }, []);
+    // Phase 0.5: periodic auto-send every 25 reviewed clashes
+    var _beaconReviewRef = useRef(0);
+    useEffect(function(){
+      var allData = s.clashes.slice();
+      s.issues.forEach(function(i){if(i.source==='clash') allData.push(i);});
+      var reviewedNow = allData.filter(function(c){ return c.status!=='open' && !_beaconSentIds[c.id]; }).length;
+      if(reviewedNow >= 25 && reviewedNow !== _beaconReviewRef.current) {
+        _beaconReviewRef.current = reviewedNow;
+        _beaconSendTrainingData(s.clashes, s.detectionSettings, s.models, s.prefs.defaultTolerances, s.issues);
+      }
+      if(reviewedNow < _beaconReviewRef.current) _beaconReviewRef.current = reviewedNow;
+    }, [s.clashes, s.issues]);
     // ── Periodic memory cleanup (runs every 2 minutes) ──
     useEffect(function(){
       var timer = setInterval(function(){
@@ -11161,6 +11248,7 @@ function startApp() {
       <${MobileNav} s=${s} d=${d} />
       <${WelcomePopup} d=${d} theme=${s.prefs.theme} />
       <${TrainingModePopup} d=${d} active=${s.trainingMode} />
+      <${DataConsentPopup} />
     </div>`;
   }
 
