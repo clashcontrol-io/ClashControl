@@ -1,5 +1,8 @@
 # Changelog
 
+## v2.9.2 (2026-03-25)
+- Enable middle mouse button (wheel click) for panning the 3D view
+
 ## v2.9.1 (2026-03-25)
 - Persist sort/group and all preferences across page refresh
 

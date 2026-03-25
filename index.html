@@ -245,7 +245,7 @@ window.onload = function() {
 
 function startApp() {
   // ── Version (auto-updated by pre-commit hook) ──
-  var CC_VERSION = {v:'2.9.1',hash:'2c08e8d',date:'2026-03-25T15:51:01Z'};
+  var CC_VERSION = {v:'2.9.2',hash:'d5563fd',date:'2026-03-25T15:52:33Z'};
 
   // Check CDN deps loaded
   var need = [];
@@ -2834,10 +2834,10 @@ function startApp() {
     el.addEventListener('mousedown', function(e) {
       if(_sboxDragging) return; // don't orbit while dragging section box handles
       if (e.button===0) dragging=true;
-      if (e.button===1||e.button===2) panning=true;
+      if (e.button===1) { panning=true; e.preventDefault(); }
+      if (e.button===2) return; // reserved for context menu
       lx=e.clientX; ly=e.clientY; e.preventDefault();
     });
-    el.addEventListener('contextmenu', function(e){e.preventDefault()});
     window.addEventListener('mousemove', function(e) {
       if(!dragging&&!panning) return;
       var dx=e.clientX-lx, dy=e.clientY-ly; lx=e.clientX; ly=e.clientY;
