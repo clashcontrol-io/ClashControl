@@ -1,5 +1,14 @@
 # Changelog
 
+## v2.6.2 (2026-03-25)
+- Auto-advance to next clash after confirming
+
+## v2.6.1 (2026-03-25)
+- Persist training mode on/off across page refreshes
+
+## v2.6.0 (2026-03-25)
+- Tolerance matrix toggle, confirm button UX, issue tab badge
+
 ## v2.5.2 (2026-03-25)
 - Add -type exclusion syntax, fix / key always focuses chat input
 

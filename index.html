@@ -245,7 +245,7 @@ window.onload = function() {
 
 function startApp() {
   // ── Version (auto-updated by pre-commit hook) ──
-  var CC_VERSION = {v:'2.5.2',hash:'3d5eac5',date:'2026-03-25T09:57:22Z'};
+  var CC_VERSION = {v:'2.6.2',hash:'bde76f6',date:'2026-03-25T10:03:04Z'};
 
   // Check CDN deps loaded
   var need = [];
@@ -311,7 +311,7 @@ function startApp() {
     models:[], clashes:[], issues:[], activeId:null, showModal:false, showSettings:false, modalElement:null, tab:null,
     rules:{ modelA:'all', modelB:'all', hard:true, maxGap:50, duplicates:false, changeAware:false, excludeSelf:true, excludeTypes:[], minOverlapVolM3:1e-5, toleranceByTypePair:{}, useSemanticFilter:true },
     detectionSettings:null, // Captured at detection run time: {clearance_mm, discipline_filters}
-    trainingMode:false, // When true, overlays feedback UI on clash rows
+    trainingMode:(function(){try{return localStorage.getItem('cc_trainingMode')==='1';}catch(e){return false;}}()),
     clashGroupBy:'none', clashSortBy:'none',
     issueGroupBy:'none', issueSortBy:'none',
     detecting:false, switchingProject:false, sectionAxis:null, sectionPos:0.5, sectionCustom:null,
@@ -420,7 +420,21 @@ function startApp() {
               point:cClash.point, distance:cClash.distance,
               created:Date.now()
             };
-            return Object.assign({},s,{clashes:remainClashes,issues:s.issues.concat([newIssue]),activeId:null});
+            // Find next clash in remaining list
+            var clashIdx = s.clashes.indexOf(cClash);
+            var nextClash = remainClashes[Math.min(clashIdx, remainClashes.length-1)] || null;
+            var nextId = nextClash ? nextClash.id : null;
+            // Schedule camera fly-to for the next clash
+            if(nextClash) setTimeout(function(){
+              var ids=[];
+              if(nextClash.elemA) ids.push(nextClash.elemA);
+              if(nextClash.elemB) ids.push(nextClash.elemB);
+              if(ids.length&&_ghostOthers) _ghostOthers(ids);
+              if(nextClash.elemA&&_highlightById) _highlightById(nextClash.elemA,false);
+              if(nextClash.point&&window._ccShowActiveClashMarker) window._ccShowActiveClashMarker(nextClash.point);
+              if(_flyToElements&&ids.length) _flyToElements(ids, nextClash.point);
+            },100);
+            return Object.assign({},s,{clashes:remainClashes,issues:s.issues.concat([newIssue]),activeId:nextId});
           }
         }
         return Object.assign({},s,{clashes:s.clashes.map(function(c){
@@ -444,7 +458,7 @@ function startApp() {
       case 'SECTION_CUSTOM': return Object.assign({},s,{sectionAxis:null, sectionCustom:a.v, sectionPos:a.pos!=null?a.pos:0.5});
       case 'TAB':         var tabUpd={tab:a.v}; if(a.v!==s.tab&&(a.v==='clashes'||a.v==='issues'||s.tab==='clashes'||s.tab==='issues'))tabUpd.activeId=null; return Object.assign({},s,tabUpd);
       case 'SETTINGS':    return Object.assign({},s,{showSettings:a.v});
-      case 'TRAINING_MODE': return Object.assign({},s,{trainingMode:!s.trainingMode});
+      case 'TRAINING_MODE': var tm=!s.trainingMode;try{localStorage.setItem('cc_trainingMode',tm?'1':'0');}catch(e){}return Object.assign({},s,{trainingMode:tm});
       case 'UPD_PREFS':
         if(a.u&&a.u.defaultTolerances!==undefined){try{localStorage.setItem('cc_defaultTolerances',JSON.stringify(a.u.defaultTolerances));}catch(e){}}
         return Object.assign({},s,{prefs:Object.assign({},s.prefs,a.u)});
@@ -7319,7 +7333,7 @@ function startApp() {
         ${html`<${ClashProps} item=${it} models=${pr._models||[]} isClash=${isClash} />`}
         ${isClash && trainingMode && function(){
           var CTYPES=[{k:'hard',l:'Hard'},{k:'soft',l:'Soft'},{k:'no_clash',l:'None'}];
-          var REASONS=['Within tolerance','Already resolved','Modelling error','Missing opening','Shared space allowed','Duplicate geometry','Not relevant'];
+          var REASONS=['Design error','Within tolerance','Already resolved','Modelling error','Missing opening','Shared space allowed','Duplicate geometry','Not relevant'];
           var curCT=it.clashTypeConfirmed!=null?it.clashTypeConfirmed:it.type;
           var curReasons=it.aiReasons||[];
           var curNote=it.aiNote||'';
