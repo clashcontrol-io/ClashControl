@@ -1,5 +1,8 @@
 # Changelog
 
+## v2.12.0 (2026-03-25)
+- Fix training mode not activating from popup + force SW update on iOS
+
 ## v2.11.4 (2026-03-25)
 - Fix stale popup on mobile: service worker cache-first → network-first for HTML, fix text spacing in WelcomePopup
 

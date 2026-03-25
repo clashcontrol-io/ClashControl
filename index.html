@@ -262,7 +262,7 @@ window.onload = function() {
 
 function startApp() {
   // ── Version (auto-updated by pre-commit hook) ──
-  var CC_VERSION = {v:'2.11.5',hash:'b45b4db',date:'2026-03-25T20:59:51Z'};
+  var CC_VERSION = {v:'2.12.0',hash:'09f0ab2',date:'2026-03-25T21:03:28Z'};
 
   // ── AI Data Collection (Phase 0.5) ──
   var CLASH_DATA_ENDPOINT = 'https://your-server.com/api/clash-data';
@@ -530,7 +530,7 @@ function startApp() {
       case 'SECTION_CUSTOM': return Object.assign({},s,{sectionAxis:null, sectionCustom:a.v, sectionPos:a.pos!=null?a.pos:0.5});
       case 'TAB':         var tabUpd={tab:a.v}; if(a.v!==s.tab&&(a.v==='clashes'||a.v==='issues'||s.tab==='clashes'||s.tab==='issues'))tabUpd.activeId=null; return Object.assign({},s,tabUpd);
       case 'SETTINGS':    return Object.assign({},s,{showSettings:a.v});
-      case 'TRAINING_MODE': var tm=!s.trainingMode;try{localStorage.setItem('cc_trainingMode',tm?'1':'0');}catch(e){}return Object.assign({},s,{trainingMode:tm});
+      case 'TRAINING_MODE': var tm=a.v!=null?!!a.v:!s.trainingMode;try{localStorage.setItem('cc_trainingMode',tm?'1':'0');}catch(e){}return Object.assign({},s,{trainingMode:tm});
       case 'UPD_PREFS':
         if(a.u&&a.u.defaultTolerances!==undefined){try{localStorage.setItem('cc_defaultTolerances',JSON.stringify(a.u.defaultTolerances));}catch(e){}}
         if(a.u){var _pk=['autoFlyTo','autoHighlight','showGrid','showAxes','showMarkers','hoverHighlight','outlineSelected','defaultPriority','defaultCategory','defaultStatus','defaultMaxGap','resetFiltersOnRun','renderStyle'];_pk.forEach(function(k){if(a.u[k]!==undefined){try{localStorage.setItem('cc_'+k,JSON.stringify(a.u[k]));}catch(e){}}});}
@@ -10743,6 +10743,7 @@ function startApp() {
     },[show]);
     if (!show) return null;
 
+    var stDetails = useState(false), showDetails = stDetails[0], setShowDetails = stDetails[1];
     var cardBg = 'var(--card-bg)';
     var cardBorder = 'var(--card-border)';
     var CARD = {background:cardBg,border:'1px solid '+cardBorder,borderRadius:10,padding:'.65rem .75rem',display:'flex',gap:'.6rem',alignItems:'flex-start',cursor:'default'};
@@ -10821,21 +10822,51 @@ function startApp() {
             </div>
           </div>
 
-          <!-- GDPR notice -->
-          <div style=${{fontSize:'.54rem',color:'var(--text-faint)',lineHeight:1.6,marginBottom:'.9rem',padding:'.5rem .6rem',background:'var(--tag-bg)',borderRadius:6}}>
-            <strong style=${{color:'var(--text-muted)'}}>Data protection notice:</strong> Training data contains no personal data as defined under GDPR Art.\u00a04(1). Exported records consist exclusively of IFC schema type identifiers, anonymous geometric metrics, and user-provided classification labels. No IP addresses, device identifiers, cookies, or project-identifying information are collected or transmitted. Sharing is initiated solely by user action. You may review the full exported payload before submitting. ClashControl is open source \u2014 the export logic can be audited in the source code at any time.
+          <!-- Expandable data & privacy details -->
+          <div style=${{marginBottom:'.9rem',borderRadius:8,border:'1px solid var(--border-subtle)',overflow:'hidden'}}>
+            <button onClick=${function(){setShowDetails(!showDetails);}}
+              style=${{width:'100%',display:'flex',alignItems:'center',justifyContent:'space-between',
+                padding:'.5rem .65rem',background:'var(--tag-bg)',border:'none',cursor:'pointer',
+                fontFamily:'inherit',fontSize:'.63rem',fontWeight:600,color:'var(--text-muted)'}}>
+              <span>Data & privacy details</span>
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"
+                style=${{transform:showDetails?'rotate(180deg)':'rotate(0)',transition:'transform .2s'}}>
+                <polyline points="6 9 12 15 18 9"/>
+              </svg>
+            </button>
+            ${showDetails && html`<div style=${{padding:'.6rem .65rem',fontSize:'.6rem',color:'var(--text-secondary)',lineHeight:1.65}}>
+              <div style=${{marginBottom:'.5rem'}}>
+                <strong style=${{color:'var(--text-primary)',fontSize:'.62rem'}}>What is shared:</strong>
+                <ul style=${{paddingLeft:'1.1rem',margin:'.2rem 0 0'}}>
+                  <li>IFC element types and disciplines</li>
+                  <li>Bounding box dimensions (size only, not position)</li>
+                  <li>Penetration depth and overlap volume</li>
+                  <li>Your verdict per clash</li>
+                  <li>Detection settings (clearance tolerance, discipline filters)</li>
+                  <li>Any notes you write \u2014 do not include project names or locations</li>
+                </ul>
+              </div>
+              <div style=${{marginBottom:'.5rem'}}>
+                <strong style=${{color:'var(--text-primary)',fontSize:'.62rem'}}>What is never shared:</strong>
+                <ul style=${{paddingLeft:'1.1rem',margin:'.2rem 0 0'}}>
+                  <li>Element names, GUIDs, or coordinates</li>
+                  <li>Project or file names</li>
+                  <li>Your identity or IP address</li>
+                </ul>
+              </div>
+              <div style=${{fontSize:'.54rem',color:'var(--text-faint)',lineHeight:1.6,padding:'.4rem .5rem',background:'var(--tag-bg)',borderRadius:6}}>
+                <strong style=${{color:'var(--text-muted)'}}>Data protection notice:</strong>${' '}Training data contains no personal data as defined under GDPR Art.\u00a04(1). Exported records consist exclusively of IFC schema type identifiers, anonymous geometric metrics, and user-provided classification labels. No IP addresses, device identifiers, cookies, or project-identifying information are collected or transmitted. Sharing is initiated solely by user action. You may review the full exported payload before submitting.
+              </div>
+            </div>`}
           </div>
 
           <!-- Footer actions -->
           ${needsConsent ? html`
-          <div style=${{fontSize:'.63rem',color:'var(--text-muted)',lineHeight:1.5,marginBottom:'.6rem',textAlign:'center'}}>
-            Help improve ClashControl by sharing anonymous training data?
-          </div>
           <div style=${{display:'flex',gap:'.5rem'}}>
             <button onClick=${function(){dismiss('denied');}} style=${{flex:1,border:'1px solid var(--border)',cursor:'pointer',fontFamily:'inherit',fontSize:'.7rem',borderRadius:8,padding:'.5rem 1rem',background:'none',color:'var(--text-secondary)',transition:'background .15s'}}>
               No thanks
             </button>
-            <button onClick=${function(){dismiss('granted',true);setTimeout(function(){if(window._ccDispatch)window._ccDispatch({t:'TRAINING_MODE'});},300);}} style=${{flex:1,border:'none',cursor:'pointer',fontFamily:'inherit',fontSize:'.75rem',borderRadius:8,padding:'.5rem 1.4rem',background:'#7c3aed',color:'#fff',fontWeight:600,boxShadow:'0 2px 8px rgba(124,58,237,.3)',transition:'background .15s'}}>
+            <button onClick=${function(){dismiss('granted',true);setTimeout(function(){if(window._ccDispatch)window._ccDispatch({t:'TRAINING_MODE',v:true});},300);}} style=${{flex:1,border:'none',cursor:'pointer',fontFamily:'inherit',fontSize:'.75rem',borderRadius:8,padding:'.5rem 1.4rem',background:'#7c3aed',color:'#fff',fontWeight:600,boxShadow:'0 2px 8px rgba(124,58,237,.3)',transition:'background .15s'}}>
               Enable Training Mode
             </button>
           </div>
@@ -10844,7 +10875,7 @@ function startApp() {
             <button onClick=${function(){dismiss();}} style=${{border:'1px solid var(--border)',cursor:'pointer',fontFamily:'inherit',fontSize:'.7rem',borderRadius:8,padding:'.5rem 1rem',background:'none',color:'var(--text-secondary)',transition:'background .15s'}}>
               Skip for now
             </button>
-            <button onClick=${function(){dismiss(null,true);setTimeout(function(){if(window._ccDispatch)window._ccDispatch({t:'TRAINING_MODE'});},300);}} style=${{border:'none',cursor:'pointer',fontFamily:'inherit',fontSize:'.75rem',borderRadius:8,padding:'.5rem 1.4rem',background:'#7c3aed',color:'#fff',fontWeight:600,boxShadow:'0 2px 8px rgba(124,58,237,.3)',transition:'background .15s'}}>
+            <button onClick=${function(){dismiss(null,true);setTimeout(function(){if(window._ccDispatch)window._ccDispatch({t:'TRAINING_MODE',v:true});},300);}} style=${{border:'none',cursor:'pointer',fontFamily:'inherit',fontSize:'.75rem',borderRadius:8,padding:'.5rem 1.4rem',background:'#7c3aed',color:'#fff',fontWeight:600,boxShadow:'0 2px 8px rgba(124,58,237,.3)',transition:'background .15s'}}>
               Enable Training Mode
             </button>
           </div>
