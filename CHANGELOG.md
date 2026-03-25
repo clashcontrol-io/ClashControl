@@ -1,5 +1,8 @@
 # Changelog
 
+## v2.7.0 (2026-03-25)
+- Add iframe fallback for Send, copy-to-clipboard on failure
+
 ## v2.6.13 (2026-03-25)
 - Persist data notice acceptance, add Export button, fix Send error msg
 
