@@ -1,5 +1,17 @@
 # Changelog
 
+## v2.10.3 (2026-03-25)
+- Tighten denied clash suppression to 150mm, fix hasData after Send
+
+## v2.10.2 (2026-03-25)
+- Suppress denied clashes on re-detection unless elements moved
+
+## v2.10.1 (2026-03-25)
+- Fix training pill counter not clearing after Send
+
+## v2.10.0 (2026-03-25)
+- Add Deny button for clashes alongside Confirm
+
 ## v2.9.3 (2026-03-25)
 - Reserve right-click for element context menu, pan with middle button only
 

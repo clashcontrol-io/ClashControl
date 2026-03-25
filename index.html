@@ -245,7 +245,7 @@ window.onload = function() {
 
 function startApp() {
   // ── Version (auto-updated by pre-commit hook) ──
-  var CC_VERSION = {v:'2.9.3',hash:'139843c',date:'2026-03-25T15:56:49Z'};
+  var CC_VERSION = {v:'2.10.3',hash:'24527c8',date:'2026-03-25T17:31:10Z'};
 
   // Check CDN deps loaded
   var need = [];
@@ -283,7 +283,7 @@ function startApp() {
     auto_resolved: { label:'Auto-resolved', bg:'#475569' },
     closed:      { label:'Closed',      bg:'#64748b' },
   };
-  var EDITABLE_STATUSES = Object.keys(STAT).filter(function(k){return k!=='auto_resolved';});
+  var EDITABLE_STATUSES = Object.keys(STAT).filter(function(k){return k!=='auto_resolved'&&k!=='denied';});
 
   function uid()  { return Math.random().toString(36).slice(2,10).toUpperCase(); }
   function guid() { return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g,function(c){var r=Math.random()*16|0;return(c==='x'?r:(r&0x3|0x8)).toString(16)}); }
@@ -394,8 +394,11 @@ function startApp() {
         }
         return Object.assign({},c,upd2);
       })});
-      case 'CLEAR_TRAINING_DATA': return Object.assign({},s,{
-        clashes:s.clashes.map(function(c){
+      case 'CLEAR_TRAINING_DATA':
+        try{localStorage.removeItem('cc_clash_training_data');}catch(e){}
+        try{localStorage.removeItem('cc_trainingFeedback');}catch(e){}
+        return Object.assign({},s,{
+        clashes:s.clashes.filter(function(c){return c.status!=='denied';}).map(function(c){
           return Object.assign({},c,{aiFeedback:null,aiReasons:[],aiResolution:[],aiNote:'',aiSignals:[],clashTypeConfirmed:null});
         }),
         issues:s.issues.map(function(i){
@@ -404,16 +407,14 @@ function startApp() {
         })
       });
       case 'UPD_CLASH':
-        // When denied, remove clash from list (training data recorded via dispatch wrapper)
+        // When denied, keep in state (for training data) but auto-advance to next
         if(a.u&&a.u.status==='denied'){
-          var dClash=null;
-          var dRemain=s.clashes.filter(function(c){
-            if(c.id===a.id){dClash=c;return false;}
-            return true;
-          });
+          var dClash=s.clashes.find(function(c){return c.id===a.id;});
+          if(dClash) _saveDeniedClash(dClash);
+          var dVisible=s.clashes.filter(function(c){return c.id!==a.id&&c.status!=='denied';});
           if(dClash){
-            var dIdx=s.clashes.indexOf(dClash);
-            var dNext=dRemain[Math.min(dIdx,dRemain.length-1)]||null;
+            var dIdx=dVisible.indexOf(dClash);if(dIdx<0)dIdx=0;
+            var dNext=dVisible[Math.min(dIdx,dVisible.length-1)]||null;
             var dNextId=dNext?dNext.id:null;
             if(dNext) setTimeout(function(){
               var ids=[];
@@ -424,7 +425,7 @@ function startApp() {
               if(dNext.point&&window._ccShowActiveClashMarker) window._ccShowActiveClashMarker(dNext.point);
               if(_flyToElements&&ids.length) _flyToElements(ids, dNext.point);
             },100);
-            return Object.assign({},s,{clashes:dRemain,activeId:dNextId});
+            return Object.assign({},s,{clashes:s.clashes.map(function(c){return c.id===a.id?Object.assign({},c,{status:'denied'}):c;}),activeId:dNextId});
           }
         }
         // When confirmed, move clash to issues tab
@@ -2189,7 +2190,35 @@ function startApp() {
     return pair + '@' + gx + ',' + gy + ',' + gz;
   }
 
+  // ── Denied clash suppression ──────────────────────────────────
+  // Store denied clash identity keys so they are suppressed on re-detection,
+  // unless the elements have moved (contact point shifted beyond adjacent cells).
+  function _getDeniedClashStore() {
+    try { return JSON.parse(localStorage.getItem('cc_denied_clashes')||'{}'); } catch(e) { return {}; }
+  }
+  function _saveDeniedClash(clash) {
+    try {
+      var store = _getDeniedClashStore();
+      var pair = computeClashPair(clash);
+      var p = clash.point||[0,0,0];
+      store[pair] = {point:[p[0],p[1],p[2]], ts:Date.now()};
+      localStorage.setItem('cc_denied_clashes', JSON.stringify(store));
+    } catch(e) {}
+  }
+  function _isDeniedClash(clash) {
+    var store = _getDeniedClashStore();
+    var pair = computeClashPair(clash);
+    var denied = store[pair];
+    if (!denied) return false;
+    // If contact point moved more than 150mm, elements likely moved — allow re-detection
+    var p = clash.point||[0,0,0], dp = denied.point||[0,0,0];
+    var distMm = Math.sqrt(Math.pow((p[0]-dp[0])*1000,2)+Math.pow((p[1]-dp[1])*1000,2)+Math.pow((p[2]-dp[2])*1000,2));
+    return distMm <= 150;
+  }
+
   function mergeDetectionResults(newClashes, prevClashes) {
+    // Filter out previously denied clashes (unless elements moved)
+    newClashes = newClashes.filter(function(c){ return !_isDeniedClash(c); });
     if (!prevClashes || prevClashes.length === 0) {
       // First ever run — tag everything as new
       var now0 = Date.now();
@@ -6708,7 +6737,7 @@ function startApp() {
     var fo=useState(false), filtersOpen=fo[0], setFiltersOpen=fo[1];
     var isClashTab = s.tab==='clashes';
     var isExplorerTab = s.tab==='explorer';
-    var rawItems = isClashTab ? s.clashes : s.issues;
+    var rawItems = isClashTab ? s.clashes.filter(function(c){return c.status!=='denied';}) : s.issues;
 
     // Build set of visible model IDs for filtering
     var visibleModelIds = useMemo(function(){
@@ -10345,7 +10374,7 @@ function startApp() {
     var confirmedFromClash = s.issues.filter(function(i){return i.source==='clash';});
     var allTrainable = clashes.concat(confirmedFromClash);
     var reviewedCount = allTrainable.filter(function(c){return c.status!=='open';}).length;
-    var feedbackCount = allTrainable.filter(function(c){return c.aiFeedback||c.clashTypeConfirmed||(c.aiReasons&&c.aiReasons.length)||(c.aiResolution&&c.aiResolution.length)||c.aiNote||c.source==='clash';}).length;
+    var feedbackCount = allTrainable.filter(function(c){return c.aiFeedback||c.clashTypeConfirmed||(c.aiReasons&&c.aiReasons.length)||(c.aiResolution&&c.aiResolution.length)||c.aiNote;}).length;
     var totalCount = allTrainable.length;
 
     // Global guard: warn before turning off if unsent data exists
@@ -10365,7 +10394,7 @@ function startApp() {
     }
     function doDelete() { d({t:'CLEAR_TRAINING_DATA'}); }
     var isSending = shareState.status==='sending';
-    var hasData = reviewedCount > 0 || feedbackCount > 0;
+    var hasData = feedbackCount > 0;
 
     return html`<div style=${{position:'absolute',top:'2.6rem',left:'50%',transform:'translateX(-50%)',
       zIndex:20,pointerEvents:'auto',display:'flex',flexDirection:'column',alignItems:'center'}}>
@@ -10511,7 +10540,7 @@ function startApp() {
 
   function RightRail(props) {
     var s=props.s, d=props.d;
-    var clashN=s.clashes.filter(function(c){return (c.status||'new')!=='resolved';}).length;
+    var clashN=s.clashes.filter(function(c){var st=c.status||'new';return st!=='resolved'&&st!=='denied';}).length;
     var issueN=s.issues.filter(function(i){var st=i.status||'open';return st!=='resolved'&&st!=='closed';}).length;
 
     function tabBtn(id, svgPath, title, badge) {
@@ -10784,7 +10813,7 @@ function startApp() {
 
   function MobileNav(props) {
     var s=props.s, d=props.d;
-    var clashN=s.clashes.filter(function(c){return (c.status||'new')!=='resolved';}).length;
+    var clashN=s.clashes.filter(function(c){var st=c.status||'new';return st!=='resolved'&&st!=='denied';}).length;
     var issueN=s.issues.filter(function(i){var st=i.status||'open';return st!=='resolved'&&st!=='closed';}).length;
     function navBtn(id, svgPath, label, badge) {
       var active=s.tab===id;
