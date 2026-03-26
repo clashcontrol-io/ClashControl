@@ -4,6 +4,7 @@
   <meta charset="UTF-8"/>
   <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
   <title>ClashControl — Open BIM Clash Detection</title>
+  <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 48 48'%3E%3Crect width='48' height='48' rx='10' fill='%232563eb'/%3E%3Ctext x='24' y='30' text-anchor='middle' font-family='system-ui,sans-serif' font-weight='900' font-size='18' fill='white'%3ECC%3C/text%3E%3C/svg%3E">
   <!-- <link rel="manifest" href="manifest.json"> -->
   <meta name="theme-color" content="#0f172a">
 
@@ -248,7 +249,7 @@ window.onload = function() {
 
 function startApp() {
   // ── Version (auto-updated by pre-commit hook) ──
-  var CC_VERSION = {v:'3.0.0',hash:'dcffdb0',date:'2026-03-26T08:08:42Z'};
+  var CC_VERSION = {v:'3.0.5',hash:'d422622',date:'2026-03-26T08:24:18Z'};
 
   // ── AI Data Collection (Phase 0.5) ──
   var CLASH_DATA_ENDPOINT = 'https://your-server.com/api/clash-data';
@@ -3413,13 +3414,7 @@ function startApp() {
         window._ccRemoveActiveClashMarker();
         if(!point||point.length<3) return;
         var grp = new THREE.Group();
-        // Bright blue pulsing sphere
-        var sphereGeo = new THREE.SphereGeometry(0.25, 16, 16);
-        var sphereMat = new THREE.MeshBasicMaterial({color:0x00aaff, transparent:true, opacity:0.9});
-        var sphere = new THREE.Mesh(sphereGeo, sphereMat);
-        sphere.position.set(point[0], point[1], point[2]);
-        grp.add(sphere);
-        // Outer ring for visibility
+        // Crosshair rings only — no inner sphere (obscures small elements)
         var ringGeo2 = new THREE.RingGeometry(0.35, 0.55, 32);
         var ringMat2 = new THREE.MeshBasicMaterial({color:0x00ccff, transparent:true, opacity:0.6, side:THREE.DoubleSide});
         var ring2 = new THREE.Mesh(ringGeo2, ringMat2);
@@ -7223,10 +7218,10 @@ function startApp() {
           <button onClick=${function(){if(_fitToElement&&it.elementId)_fitToElement(it.elementId);if(_highlightById)_highlightById(it.elementId,false);_sboxAroundElements&&_sboxAroundElements([it.elementId]);}}
             style=${{...S_BTN,fontSize:'0.57rem',padding:'.1rem .3rem',background:'#3b0764',color:'#c084fc',flex:1}} title="Section box around element">Box</button>
         ` : html`
-          <button onClick=${function(){if(_fitToElement&&it.elemA)_fitToElement(it.elemA);if(_highlightById&&it.elemA)_highlightById(it.elemA);}}
-            style=${{...S_BTN,fontSize:'0.57rem',padding:'.1rem .3rem',background:'#0f3a5f',color:'#93c5fd',flex:1}}>Zoom A</button>
-          <button onClick=${function(){if(_fitToElement&&it.elemB)_fitToElement(it.elemB);if(_highlightById&&it.elemB)_highlightById(it.elemB);}}
-            style=${{...S_BTN,fontSize:'0.57rem',padding:'.1rem .3rem',background:'#0f3a5f',color:'#93c5fd',flex:1}}>Zoom B</button>
+          <button onClick=${function(){_zoomToggle(it.elemA,'A');}}
+            style=${{...S_BTN,fontSize:'0.57rem',padding:'.1rem .3rem',background:zoomedTo==='A'?'#1e40af':'#0f3a5f',color:'#93c5fd',flex:1}}>${zoomedTo==='A'?'Zoom Clash':'Zoom A'}</button>
+          <button onClick=${function(){_zoomToggle(it.elemB,'B');}}
+            style=${{...S_BTN,fontSize:'0.57rem',padding:'.1rem .3rem',background:zoomedTo==='B'?'#1e40af':'#0f3a5f',color:'#93c5fd',flex:1}}>${zoomedTo==='B'?'Zoom Clash':'Zoom B'}</button>
           <button onClick=${function(){if(_fitToElement&&it.elemA)_fitToElement(it.elemA);if(_highlightById)_highlightById(it.elemA,false);_sboxAroundElements&&_sboxAroundElements([it.elemA,it.elemB]);}}
             style=${{...S_BTN,fontSize:'0.57rem',padding:'.1rem .3rem',background:'#3b0764',color:'#c084fc',flex:1}} title="Section box around both elements">Box</button>
         `}
@@ -7527,6 +7522,27 @@ function startApp() {
       if(a===b) return a;
       return [a,b].filter(Boolean).join(' / ');
     })();
+    var stZoomed = useState(null), zoomedTo = stZoomed[0], setZoomedTo = stZoomed[1];
+    function _zoomToggle(elemId, label) {
+      if (zoomedTo === label) {
+        // Second click — fly to clash point (same as clicking title)
+        setZoomedTo(null);
+        var reIds = [];
+        if (it.elemA) reIds.push(it.elemA);
+        if (it.elemB) reIds.push(it.elemB);
+        if (it._groupedElems) it._groupedElems.forEach(function(eid){reIds.push(eid);});
+        if (reIds.length && _ghostOthers) _ghostOthers(reIds);
+        if (it.elemA && _highlightById) _highlightById(it.elemA, false);
+        if (it.point && window._ccShowActiveClashMarker) window._ccShowActiveClashMarker(it.point);
+        if (_flyToElements && reIds.length) _flyToElements(reIds, it.point);
+        else if (it.point && _flyTo) _flyTo(it.point);
+      } else {
+        // First click — zoom to individual element
+        setZoomedTo(label);
+        if (_fitToElement && elemId) _fitToElement(elemId);
+        if (_highlightById && elemId) _highlightById(elemId);
+      }
+    }
     return html`<div onClick=${function(){
         var wasActive=active;
         if(wasActive){
@@ -10993,15 +11009,24 @@ function startApp() {
       try { return !localStorage.getItem('cc_training_informed'); } catch(e){ return true; }
     });
     var show = stShow[0], setShow = stShow[1];
-    if (!show || !props.active) return null;
-    function dismiss() {
+    // Also show when training mode is activated but consent is undecided
+    var needsConsent = useState(function(){
+      try { var v=localStorage.getItem('cc_data_consent'); return v!=='granted'&&v!=='denied'; } catch(e){ return true; }
+    })[0];
+    var showConsent = props.active && needsConsent && !show; // consent-only mode (already seen training info)
+    if ((!show && !showConsent) || !props.active) return null;
+    function dismiss(consentVal) {
       try { localStorage.setItem('cc_training_informed','1'); } catch(e){}
+      if (consentVal) {
+        try { localStorage.setItem('cc_data_consent', consentVal); } catch(e){}
+        window.dispatchEvent(new Event('cc-consent-change'));
+      }
       setShow(false);
     }
     return html`<div style=${{position:'fixed',top:0,left:0,right:0,bottom:0,zIndex:2000,
       background:'rgba(0,0,0,.6)',display:'flex',alignItems:'flex-start',justifyContent:'center',
       overflowY:'auto',WebkitOverflowScrolling:'touch',padding:'2rem 0'}}
-      onClick=${dismiss}>
+      onClick=${function(){dismiss('denied');}}>
       <div onClick=${function(e){e.stopPropagation();}}
         style=${{background:'var(--bg-primary)',border:'1px solid var(--border)',borderRadius:12,
           padding:'1.5rem',maxWidth:440,width:'90%',boxShadow:'0 8px 32px rgba(0,0,0,.4)',
@@ -11010,20 +11035,25 @@ function startApp() {
           <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#a78bfa" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
             <path d="M12 2a4 4 0 0 1 4 4c0 1.95-1.4 3.58-3.25 3.93V12h3.5a2.25 2.25 0 0 1 0 4.5h-3.5v1.25A3.25 3.25 0 0 1 9.5 21 3.25 3.25 0 0 1 6.25 17.75V14.5h-1A2.25 2.25 0 0 1 3 12.25 2.25 2.25 0 0 1 5.25 10h3.5V9.93A4 4 0 0 1 12 2z"/>
           </svg>
-          <span style=${{fontSize:'1.09rem',fontWeight:700,color:'var(--text-primary)'}}>AI Training Mode</span>
+          <span style=${{fontSize:'1.09rem',fontWeight:700,color:'var(--text-primary)'}}>${showConsent?'Share Training Data?':'AI Training Mode'}</span>
         </div>
+        ${!showConsent && html`<p style=${{fontSize:'0.86rem',color:'var(--text-secondary)',lineHeight:1.6,marginBottom:'.6rem'}}>
+          You are helping improve ClashControl's AI clash classifier. Thumbs up/down buttons (\u25b2\u25bc) now appear on each clash row in the Clashes panel. Expand a clash to annotate its type, reasons, and notes. Your normal workflow \u2014 changing status, creating issues \u2014 also generates training signals automatically.
+        </p>`}
         <p style=${{fontSize:'0.86rem',color:'var(--text-secondary)',lineHeight:1.6,marginBottom:'.6rem'}}>
-          You are helping improve ClashControl's AI clash classifier. Thumbs up/down buttons (▲▼) now appear on each clash row in the Clashes panel. Expand a clash to annotate its type, reasons, and notes. Your normal workflow \u2014 changing status, creating issues \u2014 also generates training signals automatically.
-        </p>
-        <p style=${{fontSize:'0.86rem',color:'var(--text-secondary)',lineHeight:1.6,marginBottom:'.6rem'}}>
-          Training data contains${' '}<strong style=${{color:'var(--text-primary)'}}>only IFC type metadata and geometric metrics</strong>${' '}\u2014 no element names, coordinates, project names, or personal information. Export or share data from the floating overlay or Settings \u2192 Developer / Fine-Tuning.
+          Training data contains${' '}<strong style=${{color:'var(--text-primary)'}}>only IFC type metadata and geometric metrics</strong>${' '}\u2014 no element names, coordinates, project names, or personal information.
         </p>
         <p style=${{fontSize:'0.8rem',color:'var(--text-muted)',lineHeight:1.5,marginBottom:'1rem'}}>
-          Sharing is completely optional. Nothing is sent without your explicit action. Turn off Training Mode at any time.
+          Would you like to automatically share anonymous training data at the end of each session to help improve the AI? You can change this at any time in the training overlay.
         </p>
-        <button onClick=${dismiss}
-          style=${{...S_BTN,width:'100%',padding:'.5rem',fontSize:'0.92rem',fontWeight:600,
-            background:'#7c3aed',color:'#fff',border:'none',borderRadius:6}}>Got it, let's start</button>
+        <div style=${{display:'flex',gap:'.5rem'}}>
+          <button onClick=${function(){dismiss('denied');}}
+            style=${{...S_BTN,flex:1,padding:'.5rem',fontSize:'0.86rem',fontWeight:600,
+              background:'var(--bg-secondary)',color:'var(--text-secondary)',border:'1px solid var(--border)',borderRadius:6}}>No thanks</button>
+          <button onClick=${function(){dismiss('granted');}}
+            style=${{...S_BTN,flex:1,padding:'.5rem',fontSize:'0.92rem',fontWeight:600,
+              background:'#7c3aed',color:'#fff',border:'none',borderRadius:6}}>Yes, share data</button>
+        </div>
       </div>
     </div>`;
   }

@@ -1,5 +1,20 @@
 # Changelog
 
+## v3.0.5 (2026-03-26)
+- Zoom A/B toggle: second click flies to clash point
+
+## v3.0.4 (2026-03-26)
+- Ask for data sharing consent when training mode is activated
+
+## v3.0.3 (2026-03-26)
+- Add inline SVG favicon with CC logo
+
+## v3.0.2 (2026-03-26)
+- Auto-enable data sharing when training mode is turned on
+
+## v3.0.1 (2026-03-26)
+- Fix app not loading: remove extra } brace + fix pdf.js SRI integrity failure
+
 ## v2.12.19 (2026-03-26)
 - Fix NL training data form field ID to entry.908589612
 
