@@ -250,7 +250,7 @@ window.onload = function() {
 
 function startApp() {
   // ── Version (auto-updated by pre-commit hook) ──
-  var CC_VERSION = {v:'3.2.28',hash:'6c1b6d3',date:'2026-03-26T21:10:33Z'};
+  var CC_VERSION = {v:'3.2.29',hash:'7f70a70',date:'2026-03-26T21:29:50Z'};
 
   // ── AI Data Collection (Phase 0.5) ──
   var CLASH_DATA_ENDPOINT = 'https://your-server.com/api/clash-data';
@@ -1432,6 +1432,8 @@ function startApp() {
       var rawElements = [];
       var meshes = [];
       var matCache = {}; // material dedup: "r,g,b,a" → MeshPhongMaterial
+      var geoCache = {}; // geometryExpressID → BufferGeometry (shared across identical elements)
+      var _geoReused = 0;
       api.StreamAllMeshes(modelID, function(ifcMesh) {
         var expressID = ifcMesh.expressID;
         var elMeshes = [], elBox = new THREE.Box3();
@@ -1439,20 +1441,25 @@ function startApp() {
           var placed = ifcMesh.geometries.get(i);
           var gd = null;
           try {
-            gd = api.GetGeometry(modelID, placed.geometryExpressID);
-            var verts = api.GetVertexArray(gd.GetVertexData(), gd.GetVertexDataSize());
-            var indices = api.GetIndexArray(gd.GetIndexData(), gd.GetIndexDataSize());
-            var nVerts = verts.length / 6;
-            var pos = new Float32Array(nVerts * 3), nrm = new Float32Array(nVerts * 3);
-            // Fast deinterleave: read src once per component, write dst sequentially
-            for (var v = 0, s = 0, d = 0; v < nVerts; v++, s += 6, d += 3) {
-              pos[d]=verts[s]; pos[d+1]=verts[s+1]; pos[d+2]=verts[s+2];
-              nrm[d]=verts[s+3]; nrm[d+1]=verts[s+4]; nrm[d+2]=verts[s+5];
-            }
-            var geo = new THREE.BufferGeometry();
-            geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
-            geo.setAttribute('normal',   new THREE.BufferAttribute(nrm, 3));
-            geo.setIndex(new THREE.BufferAttribute(indices, 1));
+            var geoExpId = placed.geometryExpressID;
+            var geo = geoCache[geoExpId];
+            if (!geo) {
+              gd = api.GetGeometry(modelID, geoExpId);
+              var verts = api.GetVertexArray(gd.GetVertexData(), gd.GetVertexDataSize());
+              var indices = api.GetIndexArray(gd.GetIndexData(), gd.GetIndexDataSize());
+              var nVerts = verts.length / 6;
+              var pos = new Float32Array(nVerts * 3), nrm = new Float32Array(nVerts * 3);
+              // Fast deinterleave: read src once per component, write dst sequentially
+              for (var v = 0, s = 0, d = 0; v < nVerts; v++, s += 6, d += 3) {
+                pos[d]=verts[s]; pos[d+1]=verts[s+1]; pos[d+2]=verts[s+2];
+                nrm[d]=verts[s+3]; nrm[d+1]=verts[s+4]; nrm[d+2]=verts[s+5];
+              }
+              geo = new THREE.BufferGeometry();
+              geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+              geo.setAttribute('normal',   new THREE.BufferAttribute(nrm, 3));
+              geo.setIndex(new THREE.BufferAttribute(indices, 1));
+              geoCache[geoExpId] = geo;
+            } else { _geoReused++; }
             var c = placed.color;
             var col = c ? new THREE.Color(c.x, c.y, c.z) : new THREE.Color(fallbackColor);
             var matKey = (col.r).toFixed(3)+','+(col.g).toFixed(3)+','+(col.b).toFixed(3)+','+(c?c.w:1).toFixed(3);
@@ -1499,7 +1506,8 @@ function startApp() {
           } else {
             _lmark('Element processing');
             var loadTime = Math.round(performance.now() - loadStart);
-            var stats = {loadTime:loadTime, fileSize:buffer.byteLength, elementCount:elements.length, meshCount:meshes.length, phases:_lp.phases};
+            var _geoUnique = Object.keys(geoCache).length;
+            var stats = {loadTime:loadTime, fileSize:buffer.byteLength, elementCount:elements.length, meshCount:meshes.length, geoUnique:_geoUnique, geoReused:_geoReused, phases:_lp.phases};
             // Print IFC load profile to console
             (function() {
               var ph = _lp.phases, prev = 0;
@@ -1514,7 +1522,7 @@ function startApp() {
                 prev = ph[name];
               });
               rows.push({Phase: 'TOTAL', Time: loadTime+'ms', 'Pct': '100%', 'Cumulative': loadTime+'ms'});
-              console.groupCollapsed('%c[IFC Load Profile] ' + elements.length + ' elements · ' + (buffer.byteLength/1024/1024).toFixed(1) + ' MB · ' + loadTime + 'ms total', 'color:#38bdf8;font-weight:bold');
+              console.groupCollapsed('%c[IFC Load Profile] ' + elements.length + ' elements · ' + (buffer.byteLength/1024/1024).toFixed(1) + ' MB · ' + loadTime + 'ms total · geo dedup: ' + _geoUnique + ' unique / ' + (_geoUnique+_geoReused) + ' total (' + _geoReused + ' reused)', 'color:#38bdf8;font-weight:bold');
               console.table(rows);
               console.groupEnd();
               window._ccLoadProfile = rows;
@@ -1572,6 +1580,8 @@ function startApp() {
         progress('Streaming geometry\u2026');
         var rawEls = [];
         var xfer = [];
+        var _geoTable = {}; // geometryExpressID → {pos, nrm, idx} (dedup)
+        var _geoReused = 0;
 
         api.StreamAllMeshes(modelID, function(ifcMesh) {
           var eid = ifcMesh.expressID;
@@ -1580,22 +1590,26 @@ function startApp() {
             var placed = ifcMesh.geometries.get(i);
             var gd = null;
             try {
-              gd = api.GetGeometry(modelID, placed.geometryExpressID);
-              var verts = api.GetVertexArray(gd.GetVertexData(), gd.GetVertexDataSize());
-              var indices = api.GetIndexArray(gd.GetIndexData(), gd.GetIndexDataSize());
-              var nV = verts.length / 6;
-              var pos = new Float32Array(nV * 3), nrm = new Float32Array(nV * 3);
-              for (var v = 0, s = 0, d = 0; v < nV; v++, s += 6, d += 3) {
-                pos[d]=verts[s]; pos[d+1]=verts[s+1]; pos[d+2]=verts[s+2];
-                nrm[d]=verts[s+3]; nrm[d+1]=verts[s+4]; nrm[d+2]=verts[s+5];
-              }
+              var geoExpId = placed.geometryExpressID;
+              if (!_geoTable[geoExpId]) {
+                gd = api.GetGeometry(modelID, geoExpId);
+                var verts = api.GetVertexArray(gd.GetVertexData(), gd.GetVertexDataSize());
+                var indices = api.GetIndexArray(gd.GetIndexData(), gd.GetIndexDataSize());
+                var nV = verts.length / 6;
+                var pos = new Float32Array(nV * 3), nrm = new Float32Array(nV * 3);
+                for (var v = 0, s = 0, d = 0; v < nV; v++, s += 6, d += 3) {
+                  pos[d]=verts[s]; pos[d+1]=verts[s+1]; pos[d+2]=verts[s+2];
+                  nrm[d]=verts[s+3]; nrm[d+1]=verts[s+4]; nrm[d+2]=verts[s+5];
+                }
+                _geoTable[geoExpId] = {pos:pos, nrm:nrm, idx:new Uint32Array(indices)};
+                xfer.push(pos.buffer, nrm.buffer, _geoTable[geoExpId].idx.buffer);
+              } else { _geoReused++; }
               var c = placed.color;
               var tf = new Float32Array(placed.flatTransformation);
-              var idx = new Uint32Array(indices);
-              geos.push({pos:pos, nrm:nrm, idx:idx,
+              geos.push({geoId:geoExpId,
                 color: c ? {r:c.x, g:c.y, b:c.z, a:c.w} : null,
                 tf:tf});
-              xfer.push(pos.buffer, nrm.buffer, idx.buffer, tf.buffer);
+              xfer.push(tf.buffer);
             } catch(ex) {}
             finally { if (gd) try { gd.delete(); } catch(e2) {} }
           }
@@ -1612,7 +1626,9 @@ function startApp() {
         api.CloseModel(modelID);
         mark('Geometry stream');
 
-        self.postMessage({type:'result', rawEls:rawEls,
+        var _geoUnique = Object.keys(_geoTable).length;
+        self.postMessage({type:'result', rawEls:rawEls, geoTable:_geoTable,
+          geoUnique:_geoUnique, geoReused:_geoReused,
           storeys:Object.keys(allStoreys).sort(), storeyData:storeyData,
           relatedPairs:relatedPairs, fileSize:buf.byteLength, phases:phases}, xfer);
       }).catch(function(err) {
@@ -1660,11 +1676,13 @@ function startApp() {
         }
         if (msg.type === 'result') {
           if (onProgress) onProgress('Building 3D scene\u2026');
-          // Build Three.js objects from raw geometry arrays
+          // Build Three.js objects from raw geometry arrays (with geometry dedup)
           var rawEls = msg.rawEls;
+          var gt = msg.geoTable || {};
           var meshes = [];
           var elements = [];
           var matCache = {};
+          var geoCache = {}; // geoId → BufferGeometry (shared across identical elements)
 
           for (var i = 0; i < rawEls.length; i++) {
             var raw = rawEls[i];
@@ -1672,10 +1690,18 @@ function startApp() {
             var elBox = new THREE.Box3();
             for (var g = 0; g < raw.geos.length; g++) {
               var gData = raw.geos[g];
-              var geo = new THREE.BufferGeometry();
-              geo.setAttribute('position', new THREE.BufferAttribute(gData.pos, 3));
-              geo.setAttribute('normal', new THREE.BufferAttribute(gData.nrm, 3));
-              geo.setIndex(new THREE.BufferAttribute(gData.idx, 1));
+              var geoId = gData.geoId;
+              var geo = geoCache[geoId];
+              if (!geo) {
+                var gEntry = gt[geoId];
+                if (gEntry) {
+                  geo = new THREE.BufferGeometry();
+                  geo.setAttribute('position', new THREE.BufferAttribute(gEntry.pos, 3));
+                  geo.setAttribute('normal', new THREE.BufferAttribute(gEntry.nrm, 3));
+                  geo.setIndex(new THREE.BufferAttribute(gEntry.idx, 1));
+                  geoCache[geoId] = geo;
+                } else { continue; }
+              }
               var c = gData.color;
               var col = c ? new THREE.Color(c.r, c.g, c.b) : new THREE.Color(fallbackColor);
               var matKey = col.r.toFixed(3)+','+col.g.toFixed(3)+','+col.b.toFixed(3)+','+(c?c.a:1).toFixed(3);
@@ -1695,7 +1721,8 @@ function startApp() {
           var loadTime = Math.round(performance.now() - loadStart);
           var phases = msg.phases || {};
           phases['Scene build'] = performance.now() - loadStart;
-          var stats = {loadTime:loadTime, fileSize:msg.fileSize, elementCount:elements.length, meshCount:meshes.length, phases:phases};
+          var _gu = msg.geoUnique || Object.keys(geoCache).length, _gr = msg.geoReused || 0;
+          var stats = {loadTime:loadTime, fileSize:msg.fileSize, elementCount:elements.length, meshCount:meshes.length, geoUnique:_gu, geoReused:_gr, phases:phases};
 
           // Print profile
           (function() {
@@ -1711,7 +1738,7 @@ function startApp() {
               prev = ph[name];
             });
             rows.push({Phase: 'TOTAL', Time: loadTime+'ms', Pct: '100%', Cumulative: loadTime+'ms'});
-            console.groupCollapsed('%c[IFC Load Profile · Worker] ' + elements.length + ' elements \xb7 ' + (msg.fileSize/1024/1024).toFixed(1) + ' MB \xb7 ' + loadTime + 'ms total', 'color:#38bdf8;font-weight:bold');
+            console.groupCollapsed('%c[IFC Load Profile · Worker] ' + elements.length + ' elements · ' + (msg.fileSize/1024/1024).toFixed(1) + ' MB · ' + loadTime + 'ms total · geo dedup: ' + _gu + ' unique / ' + (_gu+_gr) + ' total (' + _gr + ' reused)', 'color:#38bdf8;font-weight:bold');
             console.table(rows);
             console.groupEnd();
             window._ccLoadProfile = rows;
