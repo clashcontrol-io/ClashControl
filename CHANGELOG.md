@@ -1,5 +1,8 @@
 # Changelog
 
+## v3.0.10 (2026-03-26)
+- Move Zoom A/B toggle to ClashProps where buttons actually live
+
 ## v3.0.9 (2026-03-26)
 - Fix zoomedTo crash + add NL training feedback + resolved action in records
 
