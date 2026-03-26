@@ -1,7 +1,7 @@
 // ClashControl Service Worker — offline caching
 // Updates automatically when index.html changes (cache name includes version)
 
-var CACHE = 'clashcontrol-v2.12.19';
+var CACHE = 'clashcontrol-v3.0.0';
 
 var PRECACHE = [
   './',
