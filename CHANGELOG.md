@@ -1,5 +1,8 @@
 # Changelog
 
+## v2.12.14 (2026-03-26)
+- Increase font size 15% across entire app (outside already-bumped panels)
+
 ## v2.12.13 (2026-03-26)
 - Replace hardcoded _IFC_SHORT map with dynamic fuzzy IFC type resolver
 

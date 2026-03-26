@@ -257,7 +257,7 @@ window.onload = function() {
 
 function startApp() {
   // ── Version (auto-updated by pre-commit hook) ──
-  var CC_VERSION = {v:'2.12.13',hash:'88b6681',date:'2026-03-26T06:58:47Z'};
+  var CC_VERSION = {v:'2.12.14',hash:'d703b00',date:'2026-03-26T07:00:34Z'};
 
   // ── AI Data Collection (Phase 0.5) ──
   var CLASH_DATA_ENDPOINT = 'https://your-server.com/api/clash-data';
@@ -9970,6 +9970,75 @@ function startApp() {
     // Model tree
     if (/(?:show|open)\s+(?:the\s+)?(?:model\s+)?tree/.test(text)) { d({t:A.TREE,v:true}); return 'Model tree opened.'; }
     if (/(?:hide|close)\s+(?:the\s+)?(?:model\s+)?tree/.test(text)) { d({t:A.TREE,v:false}); return 'Model tree closed.'; }
+
+    // ── Fuzzy intent fallback ─────────────────────────────────────
+    // Catches near-misses when rigid regex patterns above don't fire.
+    // Each intent: [keywords, action, minKeywordsToMatch]
+    var _intents = [
+      [['dark','night'],          function(){d({t:A.UPD_PREFS,u:{theme:'dark'}});return 'Dark mode.';}, 1],
+      [['light','bright'],        function(){d({t:A.UPD_PREFS,u:{theme:'light'}});return 'Light mode.';}, 1],
+      [['grid','show','enable'],  function(){d({t:A.UPD_PREFS,u:{showGrid:true}});return 'Grid on.';}, 2],
+      [['grid','hide','off'],     function(){d({t:A.UPD_PREFS,u:{showGrid:false}});return 'Grid off.';}, 2],
+      [['axes','axis','show'],    function(){d({t:A.UPD_PREFS,u:{showAxes:true}});return 'Axes on.';}, 2],
+      [['axes','axis','hide'],    function(){d({t:A.UPD_PREFS,u:{showAxes:false}});return 'Axes off.';}, 2],
+      [['markers','show','on'],   function(){d({t:A.UPD_PREFS,u:{showMarkers:true}});return 'Markers on.';}, 2],
+      [['markers','hide','off'],  function(){d({t:A.UPD_PREFS,u:{showMarkers:false}});return 'Markers off.';}, 2],
+      [['wireframe','wire'],      function(){d({t:A.UPD_PREFS,u:{renderStyle:'wireframe'}});if(window._ccSetRenderStyle)window._ccSetRenderStyle('wireframe');return 'Wireframe.';}, 1],
+      [['shaded','shade'],        function(){d({t:A.UPD_PREFS,u:{renderStyle:'shaded'}});if(window._ccSetRenderStyle)window._ccSetRenderStyle('shaded');return 'Shaded.';}, 1],
+      [['rendered','realistic'],  function(){d({t:A.UPD_PREFS,u:{renderStyle:'rendered'}});if(window._ccSetRenderStyle)window._ccSetRenderStyle('rendered');return 'Rendered.';}, 1],
+      [['reset','view','home','fit'],function(){if(_resetView)_resetView();return 'View reset.';}, 2],
+      [['section','cut','clear','off','none'],function(){d({t:A.SECTION,axis:null});d({t:A.SECTION_BOX,v:null});return 'Sections cleared.';}, 2],
+      [['section','cut','x'],     function(){d({t:A.SECTION,axis:'x'});return 'Section X.';}, 2],
+      [['section','cut','y'],     function(){d({t:A.SECTION,axis:'y'});return 'Section Y.';}, 2],
+      [['section','cut','z'],     function(){d({t:A.SECTION,axis:'z'});return 'Section Z.';}, 2],
+      [['models','tab','open'],   function(){d({t:A.TAB,v:'models'});return 'Models tab.';}, 2],
+      [['clashes','tab','open'],  function(){d({t:A.TAB,v:'clashes'});return 'Clashes tab.';}, 2],
+      [['issues','tab','open'],   function(){d({t:A.TAB,v:'issues'});return 'Issues tab.';}, 2],
+      [['explorer','tab','open'], function(){d({t:A.TAB,v:'explorer'});return 'Explorer tab.';}, 2],
+      [['settings','preferences','config'],function(){d({t:A.SETTINGS,v:true});return 'Settings.';}, 1],
+      [['measure','length','distance'],function(){d({t:A.MEASURE_MODE,v:'length'});return 'Measure length.';}, 1],
+      [['measure','angle'],       function(){d({t:A.MEASURE_MODE,v:'angle'});return 'Measure angle.';}, 2],
+      [['measure','area'],        function(){d({t:A.MEASURE_MODE,v:'area'});return 'Measure area.';}, 2],
+      [['stop','cancel','measure'],function(){d({t:A.MEASURE_MODE,v:null});return 'Measurement off.';}, 2],
+      [['clear','measurement'],   function(){d({t:A.CLEAR_MEASUREMENTS});return 'Measurements cleared.';}, 2],
+      [['save','viewpoint','capture'],function(){if(_captureViewpoint){_captureViewpoint('Viewpoint '+(s.viewpoints.length+1));return 'Viewpoint saved.';}return 'No view.';}, 2],
+      [['save','project'],        function(){if(typeof saveProject==='function')saveProject(s);return 'Project saved.';}, 2],
+      [['unghost','restore','unhide'],function(){if(_unghostAll)_unghostAll();return 'All restored.';}, 1],
+      [['training','enable','on','start'],function(){if(!s.trainingMode)d({t:A.TRAINING_MODE,v:true});return 'Training on.';}, 2],
+      [['training','disable','off','stop'],function(){if(s.trainingMode){if(window._ccToggleTraining)window._ccToggleTraining();else d({t:A.TRAINING_MODE});}return 'Training off.';}, 2],
+      [['filter','reset','clear'],function(){d({t:A.RESET_FILTERS});return 'Filters cleared.';}, 2],
+      [['export','bcf','download'],function(){if(!s.issues.length&&!s.clashes.length)return 'Nothing to export.';exportBCF(s.issues.length?s.issues:s.clashes,'2.1',s.viewpoints);return 'BCF exported.';}, 2],
+      [['import','bcf'],          function(){importBCF(d);return 'BCF picker opened.';}, 2],
+      [['load','open','ifc'],     function(){if(window._ccOpenIFC)window._ccOpenIFC();else{window._ccPendingOpen='ifc';d({t:A.TAB,v:'models'});}return 'IFC picker opened.';}, 2],
+      [['bridge','revit'],        function(){d({t:A.REVIT_BRIDGE,v:true});return 'Bridge opened.';}, 1],
+      [['color','type'],          function(){d({t:A.COLOR_BY_CLASS,v:'byType'});return 'Colored by type.';}, 2],
+      [['color','storey','floor'],function(){d({t:A.COLOR_BY_CLASS,v:'byStorey'});return 'Colored by storey.';}, 2],
+      [['color','discipline'],    function(){d({t:A.COLOR_BY_CLASS,v:'byDiscipline'});return 'Colored by discipline.';}, 2],
+      [['color','material'],      function(){d({t:A.COLOR_BY_CLASS,v:'byMaterial'});return 'Colored by material.';}, 2],
+      [['color','reset','clear','off'],function(){d({t:A.COLOR_BY_CLASS,v:null});return 'Colors reset.';}, 2],
+      [['duplicates','enable','include','find'],function(){d({t:A.UPD_RULES,u:{duplicates:true}});return 'Duplicates on.';}, 1],
+      [['duplicates','disable','exclude','no'],function(){d({t:A.UPD_RULES,u:{duplicates:false}});return 'Duplicates off.';}, 2],
+      [['self','exclude','cross','only'],function(){d({t:A.UPD_RULES,u:{excludeSelf:true}});return 'Self-clashes excluded.';}, 2],
+      [['self','include','allow'],function(){d({t:A.UPD_RULES,u:{excludeSelf:false}});return 'Self-clashes included.';}, 2],
+      [['semantic','filter','on','enable'],function(){d({t:A.UPD_RULES,u:{useSemanticFilter:true}});return 'Semantic filter on.';}, 2],
+      [['semantic','filter','off','disable'],function(){d({t:A.UPD_RULES,u:{useSemanticFilter:false}});return 'Semantic filter off.';}, 2],
+      [['tree','open','show'],    function(){d({t:A.TREE,v:true});return 'Tree opened.';}, 2],
+      [['tree','close','hide'],   function(){d({t:A.TREE,v:false});return 'Tree closed.';}, 2],
+      [['floor','plan','exit','close'],function(){d({t:A.FLOOR_PLAN,v:null});return 'Floor plan closed.';}, 2],
+      [['new','create','issue'],  function(){d({t:A.MODAL,v:true});return 'New issue form.';}, 2],
+      [['reload','refresh'],      function(){setTimeout(function(){window.location.reload();},300);return 'Reloading\u2026';}, 1]
+    ];
+    var inputWords = text.replace(/[,;:!?.]+/g,' ').split(/\s+/);
+    var bestIntent = null, bestScore = 0;
+    _intents.forEach(function(intent) {
+      var kws = intent[0], minHits = intent[2] || 2;
+      var hits = 0;
+      kws.forEach(function(kw) {
+        if (inputWords.some(function(w) { return w === kw || (w.length > 3 && kw.length > 3 && (w.indexOf(kw) !== -1 || kw.indexOf(w) !== -1)); })) hits++;
+      });
+      if (hits >= minHits && hits > bestScore) { bestScore = hits; bestIntent = intent; }
+    });
+    if (bestIntent) return bestIntent[1]();
 
     return null;
   }
