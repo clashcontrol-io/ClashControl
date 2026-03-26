@@ -1,5 +1,8 @@
 # Changelog
 
+## v3.2.21 (2026-03-26)
+- Add fun progress messages during clash detection
+
 ## v3.2.20 (2026-03-26)
 - Show detection progress percentage in NL command bar
 
