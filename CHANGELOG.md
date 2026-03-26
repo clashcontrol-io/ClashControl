@@ -1,5 +1,8 @@
 # Changelog
 
+## v2.12.6 (2026-03-26)
+- Replace action type strings with A.constants object
+
 ## v2.12.5 (2026-03-26)
 - Standardize expressID → expressId on mesh userData for consistency
 
