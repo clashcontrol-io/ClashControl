@@ -249,7 +249,7 @@ window.onload = function() {
 
 function startApp() {
   // ── Version (auto-updated by pre-commit hook) ──
-  var CC_VERSION = {v:'3.1.10',hash:'7b82164',date:'2026-03-26T09:46:11Z'};
+  var CC_VERSION = {v:'3.1.11',hash:'a374de7',date:'2026-03-26T09:47:45Z'};
 
   // ── AI Data Collection (Phase 0.5) ──
   var CLASH_DATA_ENDPOINT = 'https://your-server.com/api/clash-data';
@@ -1961,6 +1961,7 @@ function startApp() {
     if (rules.excludeTypePairs && rules.excludeTypePairs.length) {
       rules.excludeTypePairs.forEach(function(p) { _exPairSet[p] = true; });
     }
+    var _suppressedFVs = []; // semantic filter negatives for training
 
     // ── L0: Sweep and Prune — O(n log n + k) candidate pairs ───────
     var candidates = _sweepAndPrune(grpA, grpB, rules, maxGapM);
@@ -2065,7 +2066,7 @@ function startApp() {
             overlap_vol_m3:_sfOv.vol,pen_depth_mm:0,clearance_mm:null,
             bbox_a:_bboxMm(_sfSzA),bbox_b:_bboxMm(_sfSzB),
             mat_a:_sfPA.material||'',mat_b:_sfPB.material||'',storey:_sfPA.storey||_sfPB.storey||'',max_gap_mm:Math.round(maxGapM*1000)};
-          _saveClashTrainRecord('sem_'+eA.expressId+'_'+eB.expressId+'_'+mA.id, _sfFV, 0.0, 'semantic_filter', true);
+          if (_suppressedFVs.length < 500) _suppressedFVs.push(_sfFV);
         } catch(e) {}
       }
       if (rules.hard && !_semanticSkipHard) hardPt = _meshesIntersect(eA, eB);
@@ -2249,7 +2250,11 @@ function startApp() {
         // Feature vectors for all detected clashes (anonymous geometric data only)
         clashFeatures: merged.slice(0, 500).map(function(c) {
           return c._trainFV || null;
-        }).filter(Boolean)
+        }).filter(Boolean),
+        // Semantic filter negatives: pairs suppressed as intentional relationships
+        // (labelled 0.0 = not a real clash — e.g. door in wall, pipe through sleeve)
+        suppressedPairs: _suppressedFVs,
+        suppressedCount: _suppressedFVs.length
       };
       // Store in localStorage for sending
       var runs = [];

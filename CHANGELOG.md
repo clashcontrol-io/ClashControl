@@ -1,5 +1,8 @@
 # Changelog
 
+## v3.1.11 (2026-03-26)
+- Rename NL training path labels: regex→matched, no-llm→unmatched
+
 ## v3.1.10 (2026-03-26)
 - Collect detection run summaries as training data
 
