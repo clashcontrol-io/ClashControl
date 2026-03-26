@@ -1,5 +1,8 @@
 # Changelog
 
+## v3.0.2 (2026-03-26)
+- Auto-enable data sharing when training mode is turned on
+
 ## v3.0.1 (2026-03-26)
 - Fix app not loading: remove extra } brace + fix pdf.js SRI integrity failure
 
