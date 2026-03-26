@@ -257,7 +257,7 @@ window.onload = function() {
 
 function startApp() {
   // ── Version (auto-updated by pre-commit hook) ──
-  var CC_VERSION = {v:'2.12.2',hash:'53397cb',date:'2026-03-25T21:14:24Z'};
+  var CC_VERSION = {v:'2.12.3',hash:'681538b',date:'2026-03-26T06:18:44Z'};
 
   // ── AI Data Collection (Phase 0.5) ──
   var CLASH_DATA_ENDPOINT = 'https://your-server.com/api/clash-data';
@@ -1864,6 +1864,39 @@ function startApp() {
     var _tmpCtrA  = new THREE.Vector3(), _tmpCtrB  = new THREE.Vector3();
     var _softPairBuf = [0,0,0,0,0,0]; // reusable buffer for soft clash closest-pair output
 
+    // ── Shared helpers for clash object construction ──
+    function _aabbOverlap(bA, bB) {
+      var ox=Math.max(0,Math.min(bA.max.x,bB.max.x)-Math.max(bA.min.x,bB.min.x));
+      var oy=Math.max(0,Math.min(bA.max.y,bB.max.y)-Math.max(bA.min.y,bB.min.y));
+      var oz=Math.max(0,Math.min(bA.max.z,bB.max.z)-Math.max(bA.min.z,bB.min.z));
+      return {x:ox, y:oy, z:oz, vol:ox*oy*oz};
+    }
+    function _bboxMm(sz) {
+      return {dx:Math.round(sz.x*1000*10)/10, dy:Math.round(sz.y*1000*10)/10, dz:Math.round(sz.z*1000*10)/10};
+    }
+    function _buildClashBase(eA, eB, mA, mB, point, sameModel) {
+      var pA=eA.props||{}, pB=eB.props||{};
+      var tA=pA.ifcType||'Element', tB=pB.ifcType||'Element';
+      var nA=pA.name||('#'+eA.expressId), nB=pB.name||('#'+eB.expressId);
+      var szA=eA.box.getSize(_tmpSizeA), szB=eB.box.getSize(_tmpSizeB);
+      var bbA=_bboxMm(szA), bbB=_bboxMm(szB);
+      return {
+        obj:{
+          id:uid(), source:'auto', status:'open', createdAt:new Date().toISOString(),
+          modelAId:mA.id, modelBId:mB.id, elemA:eA.expressId, elemB:eB.expressId,
+          point:point, elevation:Math.round(point[1]*1000)/1000,
+          disciplines:[mA.discipline,mB.discipline], selfClash:sameModel,
+          elemAType:tA, elemBType:tB, elemAName:nA, elemBName:nB,
+          globalIdA:pA.globalId||'', globalIdB:pB.globalId||'',
+          elemAStorey:pA.storey||'', elemBStorey:pB.storey||'',
+          elemAMaterial:pA.material||'', elemBMaterial:pB.material||'',
+          objectTypeA:pA.objectType||'', objectTypeB:pB.objectType||'',
+          bboxA:bbA, bboxB:bbB
+        },
+        pA:pA, pB:pB, tA:tA, tB:tB, nA:nA, nB:nB
+      };
+    }
+
     // Semantic filter: build per-model relatedPairs lookup for same-model suppression
     var _modelRelPairs = {};
     if (rules.useSemanticFilter !== false) {
@@ -1904,25 +1937,13 @@ function startApp() {
         var ctrA=bA.getCenter(_tmpCtrA), ctrB=bB.getCenter(_tmpCtrB);
         var sizeDiff=Math.abs(sizeA.x-sizeB.x)+Math.abs(sizeA.y-sizeB.y)+Math.abs(sizeA.z-sizeB.z);
         if (sizeDiff<0.01 && ctrA.distanceTo(ctrB)<0.01) {
-          var pA=eA.props||{}, pB=eB.props||{};
-          var tA=pA.ifcType||'Element', tB=pB.ifcType||'Element';
-          var nA=pA.name||('#'+eA.expressId), nB=pB.name||('#'+eB.expressId);
-          clashes.push({
-            id:uid(), source:'auto', type:'duplicate', status:'open',
-            title:'Duplicate: '+tA,
-            description:nA+' ≡ '+nB+' (same location & size)',
-            modelAId:mA.id, modelBId:mB.id, elemA:eA.expressId, elemB:eB.expressId,
-            point:[ctrA.x,ctrA.y,ctrA.z], createdAt:new Date().toISOString(),
-            distance:0, elevation:Math.round(ctrA.y*1000)/1000,
-            disciplines:[mA.discipline,mB.discipline], selfClash:sameModel,
-            elemAType:tA, elemBType:tB, elemAName:nA, elemBName:nB,
-            globalIdA:pA.globalId||'', globalIdB:pB.globalId||'',
-            elemAStorey:pA.storey||'', elemBStorey:pB.storey||'',
-            elemAMaterial:pA.material||'', elemBMaterial:pB.material||'',
-            objectTypeA:pA.objectType||'', objectTypeB:pB.objectType||'',
-            overlapVolM3:sizeA.x*sizeA.y*sizeA.z, bboxA:{dx:Math.round(sizeA.x*1000*10)/10,dy:Math.round(sizeA.y*1000*10)/10,dz:Math.round(sizeA.z*1000*10)/10},
-            bboxB:{dx:Math.round(sizeB.x*1000*10)/10,dy:Math.round(sizeB.y*1000*10)/10,dz:Math.round(sizeB.z*1000*10)/10}, clearanceMm:null
-          });
+          var b=_buildClashBase(eA, eB, mA, mB, [ctrA.x,ctrA.y,ctrA.z], sameModel);
+          clashes.push(Object.assign(b.obj, {
+            type:'duplicate', distance:0,
+            title:'Duplicate: '+b.tA,
+            description:b.nA+' \u2261 '+b.nB+' (same location & size)',
+            overlapVolM3:sizeA.x*sizeA.y*sizeA.z, clearanceMm:null
+          }));
           return;
         }
       }
@@ -1988,14 +2009,11 @@ function startApp() {
           var _sfPA=eA.props||{}, _sfPB=eB.props||{};
           var _sfTA=_sfPA.ifcType||'Element', _sfTB=_sfPB.ifcType||'Element';
           var _sfSzA=bA.getSize(_tmpSizeA), _sfSzB=bB.getSize(_tmpSizeB);
-          var _sfOvx=Math.max(0,Math.min(bA.max.x,bB.max.x)-Math.max(bA.min.x,bB.min.x));
-          var _sfOvy=Math.max(0,Math.min(bA.max.y,bB.max.y)-Math.max(bA.min.y,bB.min.y));
-          var _sfOvz=Math.max(0,Math.min(bA.max.z,bB.max.z)-Math.max(bA.min.z,bB.min.z));
+          var _sfOv=_aabbOverlap(bA, bB);
           var _sfFV={type_pair:[_sfTA,_sfTB].sort().join(':'),disc_pair:[mA.discipline,mB.discipline].sort().join(':'),
             same_storey:(_sfPA.storey||'')===(_sfPB.storey||'')&&!!(_sfPA.storey||_sfPB.storey),same_model:sameModel,
-            overlap_vol_m3:_sfOvx*_sfOvy*_sfOvz,pen_depth_mm:0,clearance_mm:null,
-            bbox_a:{dx:Math.round(_sfSzA.x*1000*10)/10,dy:Math.round(_sfSzA.y*1000*10)/10,dz:Math.round(_sfSzA.z*1000*10)/10},
-            bbox_b:{dx:Math.round(_sfSzB.x*1000*10)/10,dy:Math.round(_sfSzB.y*1000*10)/10,dz:Math.round(_sfSzB.z*1000*10)/10},
+            overlap_vol_m3:_sfOv.vol,pen_depth_mm:0,clearance_mm:null,
+            bbox_a:_bboxMm(_sfSzA),bbox_b:_bboxMm(_sfSzB),
             mat_a:_sfPA.material||'',mat_b:_sfPB.material||'',storey:_sfPA.storey||_sfPB.storey||'',max_gap_mm:Math.round(maxGapM*1000)};
           _saveClashTrainRecord('sem_'+eA.expressId+'_'+eB.expressId+'_'+mA.id, _sfFV, 0.0, 'semantic_filter', true);
         } catch(e) {}
@@ -2003,10 +2021,7 @@ function startApp() {
       if (rules.hard && !_semanticSkipHard) hardPt = _meshesIntersect(eA, eB);
       // Overlap volume gate: reject hard clashes with trivial AABB overlap (surface contact noise)
       if (hardPt && rules.minOverlapVolM3 > 0) {
-        var ovx = Math.max(0, Math.min(bA.max.x,bB.max.x) - Math.max(bA.min.x,bB.min.x));
-        var ovy = Math.max(0, Math.min(bA.max.y,bB.max.y) - Math.max(bA.min.y,bB.min.y));
-        var ovz = Math.max(0, Math.min(bA.max.z,bB.max.z) - Math.max(bA.min.z,bB.min.z));
-        if (ovx * ovy * ovz < rules.minOverlapVolM3) hardPt = false;
+        if (_aabbOverlap(bA, bB).vol < rules.minOverlapVolM3) hardPt = false;
       }
       if (!hardPt && pairGapM>0) {
         geoDist = _meshMinDist(eA, eB, pairGapM, _softPairBuf);
@@ -2045,48 +2060,29 @@ function startApp() {
         } else {
           dist = Math.round(geoDist*1000);
         }
-        var pA=eA.props||{}, pB=eB.props||{};
-        var tA=pA.ifcType||'Element', tB=pB.ifcType||'Element';
-        var nA=pA.name||('#'+eA.expressId), nB=pB.name||('#'+eB.expressId);
-        // AABB overlap volume (m³) and bbox dimensions (mm) for AI training data
-        var _ovx=Math.max(0,Math.min(bA.max.x,bB.max.x)-Math.max(bA.min.x,bB.min.x));
-        var _ovy=Math.max(0,Math.min(bA.max.y,bB.max.y)-Math.max(bA.min.y,bB.min.y));
-        var _ovz=Math.max(0,Math.min(bA.max.z,bB.max.z)-Math.max(bA.min.z,bB.min.z));
-        var _szA=bA.getSize(_tmpSizeA), _szB=bB.getSize(_tmpSizeB);
-        clashes.push({
-          id:uid(), source:'auto', type:hardPt?'hard':'soft', status:'open',
+        var b=_buildClashBase(eA, eB, mA, mB, [cpx,cpy,cpz], sameModel);
+        var ov=_aabbOverlap(bA, bB);
+        var clrMm=isSoft?Math.round(geoDist*1000):null;
+        clashes.push(Object.assign(b.obj, {
+          type:hardPt?'hard':'soft', distance:dist,
           title:sameModel?mA.name+' (self)':mA.discipline.toUpperCase()+' \u2194 '+mB.discipline.toUpperCase(),
-          description:tA+': '+nA+' ('+mA.name+') vs '+tB+': '+nB+' ('+mB.name+')',
-          modelAId:mA.id, modelBId:mB.id, elemA:eA.expressId, elemB:eB.expressId,
-          point:[cpx,cpy,cpz], createdAt:new Date().toISOString(),
-          distance:dist, elevation:Math.round(cpy*1000)/1000,
-          disciplines:[mA.discipline,mB.discipline], selfClash:sameModel,
-          elemAType:tA, elemBType:tB, elemAName:nA, elemBName:nB,
-          globalIdA:pA.globalId||'', globalIdB:pB.globalId||'',
-          elemAStorey:pA.storey||'', elemBStorey:pB.storey||'',
-          elemAMaterial:pA.material||'', elemBMaterial:pB.material||'',
-          objectTypeA:pA.objectType||'', objectTypeB:pB.objectType||'',
-          overlapVolM3:_ovx*_ovy*_ovz,
-          bboxA:{dx:Math.round(_szA.x*1000*10)/10,dy:Math.round(_szA.y*1000*10)/10,dz:Math.round(_szA.z*1000*10)/10},
-          bboxB:{dx:Math.round(_szB.x*1000*10)/10,dy:Math.round(_szB.y*1000*10)/10,dz:Math.round(_szB.z*1000*10)/10},
-          clearanceMm:isSoft?Math.round(geoDist*1000):null,
-          // Feature vector for ML training (non-displayed, carried with clash)
+          description:b.tA+': '+b.nA+' ('+mA.name+') vs '+b.tB+': '+b.nB+' ('+mB.name+')',
+          overlapVolM3:ov.vol, clearanceMm:clrMm,
           _trainFV:{
-            type_pair:[tA,tB].sort().join(':'),
+            type_pair:[b.tA,b.tB].sort().join(':'),
             disc_pair:[mA.discipline,mB.discipline].sort().join(':'),
-            same_storey:(pA.storey||'')===(pB.storey||'')&&!!(pA.storey||pB.storey),
+            same_storey:(b.pA.storey||'')===(b.pB.storey||'')&&!!(b.pA.storey||b.pB.storey),
             same_model:sameModel,
-            overlap_vol_m3:_ovx*_ovy*_ovz,
+            overlap_vol_m3:ov.vol,
             pen_depth_mm:hardPt?(dist<0?Math.abs(dist):0):0,
-            clearance_mm:isSoft?Math.round(geoDist*1000):null,
-            bbox_a:{dx:Math.round(_szA.x*1000*10)/10,dy:Math.round(_szA.y*1000*10)/10,dz:Math.round(_szA.z*1000*10)/10},
-            bbox_b:{dx:Math.round(_szB.x*1000*10)/10,dy:Math.round(_szB.y*1000*10)/10,dz:Math.round(_szB.z*1000*10)/10},
-            mat_a:pA.material||'',
-            mat_b:pB.material||'',
-            storey:pA.storey||pB.storey||'',
+            clearance_mm:clrMm,
+            bbox_a:b.obj.bboxA, bbox_b:b.obj.bboxB,
+            mat_a:b.pA.material||'',
+            mat_b:b.pB.material||'',
+            storey:b.pA.storey||b.pB.storey||'',
             max_gap_mm:Math.round(maxGapM*1000)
           }
-        });
+        }));
       }
     });
 

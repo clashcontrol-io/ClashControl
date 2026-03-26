@@ -1,5 +1,8 @@
 # Changelog
 
+## v2.12.3 (2026-03-26)
+- Code review cleanup: fix reload loop, texture leak, dead code, stale closures
+
 ## v2.12.2 (2026-03-25)
 - Fix React error #300: move useState for details toggle before early return
 
