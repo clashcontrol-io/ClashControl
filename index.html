@@ -249,7 +249,7 @@ window.onload = function() {
 
 function startApp() {
   // ── Version (auto-updated by pre-commit hook) ──
-  var CC_VERSION = {v:'3.1.28',hash:'483ca51',date:'2026-03-26T12:51:33Z'};
+  var CC_VERSION = {v:'3.1.29',hash:'7575537',date:'2026-03-26T13:02:24Z'};
 
   // ── AI Data Collection (Phase 0.5) ──
   var CLASH_DATA_ENDPOINT = 'https://your-server.com/api/clash-data';
@@ -11137,7 +11137,7 @@ function startApp() {
       return function(){ window.removeEventListener('cc-training-data-change', sync); window.removeEventListener('cc-training-sent', flash); };
     },[]);
 
-    return html`<div style=${{position:'absolute',top:'3.5rem',left:'50%',transform:'translateX(-50%)',
+    return html`<div style=${{position:'fixed',top:'3.5rem',left:'50%',transform:'translateX(-50%)',
       zIndex:20,pointerEvents:'auto',display:'flex',flexDirection:'column',alignItems:'center'}}>
       <div class="cc-training-btn-3d" style=${{display:'flex',alignItems:'center',
           borderRadius:999,
@@ -11240,15 +11240,15 @@ function startApp() {
     var payload = _buildAITrainingPayload(unsent, detectionSettings, models, defaultTolerances, []);
     if(!payload) return;
     var json = JSON.stringify(payload);
+    _clearClashTrainStore();
+    unsent.forEach(function(c){ _beaconSentIds[c.id]=true; });
     var fd = new FormData();
     fd.append('entry.1450623071', json);
     var _gf = ['https://docs','google','com/forms/d/e/','1FAIpQLSdSMbfjcApszFebuvQXHKiWhH-zQJhk','_38m1vvMQ-_bMP_6eA'];
     var baseUrl = _gf[0]+'.'+_gf[1]+'.'+_gf[2]+_gf[3]+_gf[4];
     fetch(baseUrl+'/formResponse',{method:'POST',mode:'no-cors',body:fd}).then(function(){
-      _clearClashTrainStore();
       window.dispatchEvent(new Event('cc-training-sent'));
     }).catch(function(){});
-    unsent.forEach(function(c){ _beaconSentIds[c.id]=true; });
   }
 
   function _beaconSendNLTrainingData(models) {
@@ -11256,29 +11256,29 @@ function startApp() {
       if(localStorage.getItem('cc_data_consent')!=='granted') return;
     } catch(e){ return; }
     var store = _getNLTrainStore();
-    if(store.length <= _beaconNLSentIdx) return;
-    var unsent = store.slice(_beaconNLSentIdx);
-    if(!unsent.length) return;
-    var records = unsent.map(function(r){
+    if(!store.length) return;
+    var records = store.map(function(r){
       return {
         input: _sanitizeNLInput(r.input||'', models),
         matched: !!(r.output!=null),
+        action: r.meta&&r.meta.action||null,
         path: r.meta&&r.meta.path||'unknown',
+        user_intent: r.meta&&r.meta.user_intent||null,
         v: r.meta&&r.meta.v||'',
         ts: r.meta&&r.meta.ts||0
       };
     });
     var payload = {type:'nl_training', version:'1.0', app_version:CC_VERSION.v, count:records.length, records:records};
     var json = JSON.stringify(payload);
+    // Clear BEFORE sending — ensures no re-sends even if fetch fails silently
+    _clearNLTrainStore();
     var fd = new FormData();
     fd.append('entry.908589612', json);
     var _gf = ['https://docs','google','com/forms/d/e/','1FAIpQLSdSMbfjcApszFebuvQXHKiWhH-zQJhk','_38m1vvMQ-_bMP_6eA'];
     var baseUrl = _gf[0]+'.'+_gf[1]+'.'+_gf[2]+_gf[3]+_gf[4];
     fetch(baseUrl+'/formResponse',{method:'POST',mode:'no-cors',body:fd}).then(function(){
-      _clearNLTrainStore();
       window.dispatchEvent(new Event('cc-training-sent'));
     }).catch(function(){});
-    _beaconNLSentIdx = store.length;
   }
 
   function _beaconSendDetectionRuns() {
@@ -11290,13 +11290,13 @@ function startApp() {
     if (!runs.length) return;
     var payload = {type:'detection_runs', version:'1.0', app_version:CC_VERSION.v, count:runs.length, runs:runs};
     var json = JSON.stringify(payload);
+    try { localStorage.removeItem('cc_detection_runs'); } catch(e){}
+    window.dispatchEvent(new Event('cc-training-data-change'));
     var fd = new FormData();
     fd.append('entry.39972213', json);
     var _gf = ['https://docs','google','com/forms/d/e/','1FAIpQLSdSMbfjcApszFebuvQXHKiWhH-zQJhk','_38m1vvMQ-_bMP_6eA'];
     var baseUrl = _gf[0]+'.'+_gf[1]+'.'+_gf[2]+_gf[3]+_gf[4];
     fetch(baseUrl+'/formResponse',{method:'POST',mode:'no-cors',body:fd}).then(function(){
-      try { localStorage.removeItem('cc_detection_runs'); } catch(e){}
-      window.dispatchEvent(new Event('cc-training-data-change'));
       window.dispatchEvent(new Event('cc-training-sent'));
     }).catch(function(){});
   }
