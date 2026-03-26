@@ -249,7 +249,7 @@ window.onload = function() {
 
 function startApp() {
   // ── Version (auto-updated by pre-commit hook) ──
-  var CC_VERSION = {v:'3.1.6',hash:'62c0dd8',date:'2026-03-26T09:36:46Z'};
+  var CC_VERSION = {v:'3.1.7',hash:'0bc5f7e',date:'2026-03-26T09:38:05Z'};
 
   // ── AI Data Collection (Phase 0.5) ──
   var CLASH_DATA_ENDPOINT = 'https://your-server.com/api/clash-data';
@@ -2554,7 +2554,17 @@ function startApp() {
     window.dispatchEvent(new Event('cc-training-data-change'));
   }
   function _getClashTrainCount() {
-    try { var s = localStorage.getItem('cc_clash_training_data'); return s ? Object.keys(JSON.parse(s)).length : 0; } catch(e) { return 0; }
+    try {
+      var s = localStorage.getItem('cc_clash_training_data');
+      if (!s) return 0;
+      var store = JSON.parse(s);
+      var count = 0;
+      Object.keys(store).forEach(function(k) {
+        var r = store[k];
+        if (!r.synthetic && r.label_source && r.label_source !== 'semantic_filter') count++;
+      });
+      return count;
+    } catch(e) { return 0; }
   }
   function _shareClashTrainStore(onStatus) {
     var store = _getClashTrainStore();

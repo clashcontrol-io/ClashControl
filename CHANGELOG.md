@@ -1,5 +1,8 @@
 # Changelog
 
+## v3.1.7 (2026-03-26)
+- Smooth camera restore on Zoom Both — saves clash view after fly-to
+
 ## v3.1.6 (2026-03-26)
 - Add descriptions to each roadmap milestone in Quick Start Guide
 
