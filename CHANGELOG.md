@@ -1,5 +1,8 @@
 # Changelog
 
+## v2.12.15 (2026-03-26)
+- Add fuzzy intent fallback to NL command parser
+
 ## v2.12.14 (2026-03-26)
 - Increase font size 15% across entire app (outside already-bumped panels)
 

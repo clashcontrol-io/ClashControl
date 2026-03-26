@@ -257,7 +257,7 @@ window.onload = function() {
 
 function startApp() {
   // ── Version (auto-updated by pre-commit hook) ──
-  var CC_VERSION = {v:'2.12.14',hash:'d703b00',date:'2026-03-26T07:00:34Z'};
+  var CC_VERSION = {v:'2.12.15',hash:'3a97006',date:'2026-03-26T07:02:49Z'};
 
   // ── AI Data Collection (Phase 0.5) ──
   var CLASH_DATA_ENDPOINT = 'https://your-server.com/api/clash-data';
@@ -9378,6 +9378,14 @@ function startApp() {
   function processNLCommand(raw, s, d) {
     var text = raw.trim().toLowerCase();
 
+    // ── Handle yes/no response to fuzzy confirmation ──────────────
+    if (window._ccFuzzyPending) {
+      var pending = window._ccFuzzyPending;
+      window._ccFuzzyPending = null;
+      if (/^(?:yes|yeah|yep|sure|ok|y|correct|right|do it)\b/i.test(text)) return pending();
+      if (/^(?:no|nah|nope|n|wrong|cancel)\b/i.test(text)) return 'OK, cancelled. Try rephrasing your command.';
+    }
+
     // ── Help ───────────────────────────────────────────────────────
     if (/^help$|what can you do|how (?:do i|to) use|what.*commands?/.test(text)) {
       return 'I can control ClashControl with plain English:\n\n' +
@@ -10029,16 +10037,26 @@ function startApp() {
       [['reload','refresh'],      function(){setTimeout(function(){window.location.reload();},300);return 'Reloading\u2026';}, 1]
     ];
     var inputWords = text.replace(/[,;:!?.]+/g,' ').split(/\s+/);
-    var bestIntent = null, bestScore = 0;
+    var bestIntent = null, bestScore = 0, bestKwCount = 0;
     _intents.forEach(function(intent) {
       var kws = intent[0], minHits = intent[2] || 2;
       var hits = 0;
       kws.forEach(function(kw) {
         if (inputWords.some(function(w) { return w === kw || (w.length > 3 && kw.length > 3 && (w.indexOf(kw) !== -1 || kw.indexOf(w) !== -1)); })) hits++;
       });
-      if (hits >= minHits && hits > bestScore) { bestScore = hits; bestIntent = intent; }
+      if (hits >= minHits && hits > bestScore) { bestScore = hits; bestIntent = intent; bestKwCount = kws.length; }
     });
-    if (bestIntent) return bestIntent[1]();
+    if (bestIntent) {
+      var confidence = bestScore / bestKwCount;
+      // High confidence → execute immediately
+      if (confidence > 0.4) return bestIntent[1]();
+      // Low confidence → ask for confirmation
+      var _pendingAction = bestIntent[1];
+      // Store pending action for yes/no response via _fuzzyPending
+      window._ccFuzzyPending = _pendingAction;
+      var guess = bestIntent[0].slice(0, 3).join(' ');
+      return 'Did you mean **' + guess + '**? *(yes/no)*';
+    }
 
     return null;
   }
@@ -10307,19 +10325,107 @@ function startApp() {
       setTimeout(function(){ d({t:A.MERGE_CLASHES, v:detectClashes(s.models, Object.assign({},s.rules,rules))}); }, 20);
     }
 
+    // ── Conversational clash setup context ──────────────────────
+    var clashCtxRef = useRef(null); // {rules, asked, nameA, nameB}
+    function _clashConverse(text, result) {
+      var ctx = clashCtxRef.current;
+      var tl = text.trim().toLowerCase();
+      // If there's a pending context, check if this message answers it
+      if (ctx && ctx.asked) {
+        var answered = false;
+        if (ctx.asked === 'selfClash') {
+          if (/yes|yeah|yep|sure|ok|include|enable|on|true/i.test(tl)) { ctx.rules.excludeSelf = false; answered = true; }
+          else if (/no|nah|nope|off|exclude|skip|false|cross/i.test(tl)) { ctx.rules.excludeSelf = true; answered = true; }
+        }
+        if (ctx.asked === 'gap') {
+          var gapVal = tl.match(/(\d+(?:\.\d+)?)\s*(mm|cm|m(?!m))?/);
+          if (gapVal) {
+            var u = gapVal[2] || 'mm';
+            ctx.rules.maxGap = u==='cm' ? Math.round(parseFloat(gapVal[1])*10) : u==='m' ? Math.round(parseFloat(gapVal[1])*1000) : Math.round(parseFloat(gapVal[1]));
+            ctx.rules.hard = true;
+            answered = true;
+          }
+          if (/no|none|zero|0|hard\s+only|skip/i.test(tl)) { ctx.rules.maxGap = 0; ctx.rules.hard = true; answered = true; }
+        }
+        if (ctx.asked === 'confirm') {
+          if (/yes|yeah|yep|sure|ok|go|run|start|do it|proceed|execute/i.test(tl)) {
+            clashCtxRef.current = null;
+            return {_clashSetup:true, rules:ctx.rules, nameA:ctx.nameA, nameB:ctx.nameB, _multiSelf:ctx._multiSelf};
+          }
+          if (/no|nah|cancel|stop|abort/i.test(tl)) { clashCtxRef.current = null; return 'Clash setup cancelled.'; }
+        }
+        if (answered) { ctx.asked = null; } // Continue to next question
+        else if (ctx.asked) {
+          // Didn't understand — re-ask
+          return _askNext(ctx);
+        }
+      }
+      // New setup result → start conversation
+      if (result && result._clashSetup) {
+        ctx = {rules:Object.assign({},result.rules), nameA:result.nameA, nameB:result.nameB, asked:null, _multiSelf:result._multiSelf};
+        clashCtxRef.current = ctx;
+      }
+      if (!ctx) return result; // Not a clash conversation
+      return _askNext(ctx);
+    }
+    function _askNext(ctx) {
+      var r = ctx.rules;
+      // Check what's unspecified
+      if (r.excludeSelf === undefined) {
+        ctx.asked = 'selfClash';
+        clashCtxRef.current = ctx;
+        return 'Got it: **' + ctx.nameA + '** vs **' + ctx.nameB + '**'
+          + (r.hard ? ', hard clashes' : '') + (r.maxGap ? ', ' + r.maxGap + 'mm gap' : '')
+          + '.\n\nShould I include **self-clashes** (elements within the same model)? *(yes/no)*';
+      }
+      if (r.maxGap === undefined || r.maxGap === null) {
+        ctx.asked = 'gap';
+        clashCtxRef.current = ctx;
+        return 'Do you want to detect **near misses**? If so, what max gap distance? *(e.g. 50mm, or "no" for hard clashes only)*';
+      }
+      // Everything specified → confirm
+      ctx.asked = 'confirm';
+      clashCtxRef.current = ctx;
+      var summary = '**' + ctx.nameA + '** vs **' + ctx.nameB + '**\n'
+        + (r.hard ? '- Hard clashes: yes\n' : '- Hard clashes: no\n')
+        + '- Max gap: ' + (r.maxGap || 0) + 'mm\n'
+        + '- Self-clashes: ' + (r.excludeSelf ? 'excluded' : 'included') + '\n'
+        + (r.duplicates ? '- Duplicates: yes\n' : '')
+        + (r.excludeTypes && r.excludeTypes.length ? '- Excluding: ' + r.excludeTypes.join(', ') + '\n' : '')
+        + (r.excludeTypePairs && r.excludeTypePairs.length ? '- Pair exclusions: ' + r.excludeTypePairs.map(function(p){return p.replace(':',' vs ');}).join(', ') + '\n' : '')
+        + '\nReady to run? *(yes/no)*';
+      return summary;
+    }
+
     function send() {
       var text = input.trim();
       if (!text) return;
       setMsgs(function(m){ return m.concat([{role:'user', text:text}]); });
       setInput('');
+      // Check if this is a response to a pending clash conversation
+      var ctxResult = _clashConverse(text, null);
+      if (ctxResult !== null && ctxResult !== undefined) {
+        if (ctxResult && ctxResult._clashSetup) {
+          setMsgs(function(m){ return m.concat([{role:'assistant', setup:ctxResult}]); });
+        } else if (typeof ctxResult === 'string') {
+          setMsgs(function(m){ return m.concat([{role:'assistant', text:ctxResult}]); });
+        }
+        return;
+      }
       setLoading(true);
-      processNLCommandWithLLM(text, s, d).then(function(result) {
-        if (result && result._clashSetup) {
-          setMsgs(function(m){ return m.concat([{role:'assistant', setup:result}]); });
+      processNLCommandWithLLM(text, s, d).then(function(rawResult) {
+        // If it's a clash setup, run through conversation flow
+        if (rawResult && rawResult._clashSetup) {
+          var convResult = _clashConverse(text, rawResult);
+          if (convResult && convResult._clashSetup) {
+            setMsgs(function(m){ return m.concat([{role:'assistant', setup:convResult}]); });
+          } else {
+            setMsgs(function(m){ return m.concat([{role:'assistant', text:convResult||''}]); });
+          }
+        } else if (rawResult !== null) {
+          setMsgs(function(m){ return m.concat([{role:'assistant', text:rawResult}]); });
         } else {
-          var reply = result !== null ? result
-            : 'Not sure what you mean. Try: "check structural vs MEP", "check clashes within 100mm", "find near misses", "how many clashes?", or "help".';
-          setMsgs(function(m){ return m.concat([{role:'assistant', text:reply}]); });
+          setMsgs(function(m){ return m.concat([{role:'assistant', text:'Not sure what you mean. Try: "check structural vs MEP", "find near misses", "how many clashes?", or "help".'}]); });
         }
         setLoading(false);
       });
