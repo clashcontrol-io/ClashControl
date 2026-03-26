@@ -249,7 +249,7 @@ window.onload = function() {
 
 function startApp() {
   // ── Version (auto-updated by pre-commit hook) ──
-  var CC_VERSION = {v:'3.0.13',hash:'aac4834',date:'2026-03-26T09:06:48Z'};
+  var CC_VERSION = {v:'3.1.5',hash:'29fd93d',date:'2026-03-26T09:31:50Z'};
 
   // ── AI Data Collection (Phase 0.5) ──
   var CLASH_DATA_ENDPOINT = 'https://your-server.com/api/clash-data';
@@ -2602,6 +2602,7 @@ function startApp() {
   }
   function _clearNLTrainStore() {
     try { localStorage.removeItem('cc_nl_training_data'); } catch(e) {}
+    _beaconNLSentIdx = 0;
     window.dispatchEvent(new Event('cc-training-data-change'));
   }
   function _getNLTrainCount() {
@@ -5633,12 +5634,10 @@ function startApp() {
       return function(){document.removeEventListener('click', close);};
     }, [showVer]);
     var cf = useState(null), confirmDelete=cf[0], setConfirmDelete=cf[1];
-    var tut = useState(false), showTutorial=tut[0], setShowTutorial=tut[1];
-    var tourSt = useState(null), tourStep=tourSt[0], setTourStep=tourSt[1];
+    var tut = useState(false), showTutorial=tut[0], setShowTutorial=tut[1]; // kept for hook order
+    var tourSt = useState(null), tourStep=tourSt[0], setTourStep=tourSt[1]; // kept for hook order
     var cr = useState(false), creating=cr[0], setCreating=cr[1];
     var cnv = useState(''), createName=cnv[0], setCreateName=cnv[1];
-    window._ccToggleTutorial = function(){ setShowTutorial(function(v){return !v;}); setTourStep(null); };
-    window._ccStartTour = function(){ setShowTutorial(false); setTourStep(0); };
 
     function startCreate() { setCreating(true); setCreateName(''); }
     function finishCreate() {
@@ -5771,73 +5770,6 @@ function startApp() {
           style=${{...S_BTN,background:'var(--bg-secondary)',color:'var(--text-secondary)',border:'1px solid var(--border)',fontSize:'0.98rem',padding:'.3rem .5rem'}}
           title="Settings" aria-label="Open settings">⚙</button>
       </div>
-      ${showTutorial && html`<div onClick=${function(e){if(e.target===e.currentTarget)setShowTutorial(false)}} style=${{position:'fixed',inset:0,background:'rgba(0,0,0,.6)',zIndex:9999,display:'flex',alignItems:'flex-start',justifyContent:'center',overflowY:'auto',WebkitOverflowScrolling:'touch',padding:'2rem 0',backdropFilter:'blur(4px)'}}>
-        <div style=${{background:'var(--bg-primary)',border:'1px solid var(--border)',borderRadius:12,padding:'1.5rem',maxWidth:560,width:'90vw',overflowY:'auto',boxShadow:'0 16px 48px rgba(0,0,0,.5)',flexShrink:0,marginBottom:'4rem'}}>
-          <div style=${{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:'1rem'}}>
-            <span style=${{fontSize:'1.26rem',fontWeight:700}}>Quick Start Guide</span>
-            <button onClick=${function(){setShowTutorial(false)}} style=${{...S_BTN,background:'none',color:'var(--text-muted)',fontSize:'1.38rem',padding:'0 .3rem',lineHeight:1}}>✕</button>
-          </div>
-
-          <div style=${{background:'rgba(37,99,235,.08)',border:'1px solid rgba(37,99,235,.25)',borderRadius:8,padding:'.75rem',marginBottom:'1rem'}}>
-            <div style=${{fontSize:'0.94rem',fontWeight:600,color:'var(--text-primary)',marginBottom:'.3rem'}}>What is ClashControl?</div>
-            <div style=${{fontSize:'0.86rem',color:'var(--text-secondary)',lineHeight:1.6}}>
-              A free, open-source tool for detecting geometric clashes in IFC building models — right in your browser. Load BIM files, find collisions between building systems (structural vs MEP, pipes vs ducts, etc.), manage issues, and export results to BCF for coordination.
-            </div>
-          </div>
-
-          <div style=${{display:'flex',flexDirection:'column',gap:'.85rem',fontSize:'0.9rem',color:'var(--text-secondary)',lineHeight:1.6}}>
-            <div>
-              <div style=${{fontWeight:600,color:'var(--text-primary)',marginBottom:'.25rem'}}>1. Load models</div>
-              <div>Click the <b>folder icon</b> in the left sidebar or drag & drop IFC files onto the 3D view. Load multiple models to check clashes between different disciplines.</div>
-            </div>
-            <div>
-              <div style=${{fontWeight:600,color:'var(--text-primary)',marginBottom:'.25rem'}}>2. Detect clashes</div>
-              <div>Press <b>/</b> to open the AI chat and type something like <i>"check structural vs MEP"</i> or <i>"find clashes within 50mm"</i>. You can also configure rules manually in the Clashes tab.</div>
-            </div>
-            <div>
-              <div style=${{fontWeight:600,color:'var(--text-primary)',marginBottom:'.25rem'}}>3. Review results</div>
-              <div>Click any clash to fly to it in 3D. Change status (new / active / resolved), assign responsibility, add notes, or use the chat: <i>"mark all open as resolved"</i>.</div>
-            </div>
-            <div>
-              <div style=${{fontWeight:600,color:'var(--text-primary)',marginBottom:'.25rem'}}>4. Create issues & export</div>
-              <div>Create issues from clashes for team coordination. Export as <b>BCF 2.1/3.0</b> for Revit, Navisworks, Solibri, or BIMcollab. Save projects locally to continue later.</div>
-            </div>
-            <div style=${{borderTop:'1px solid var(--border-subtle)',paddingTop:'.7rem'}}>
-              <div style=${{fontWeight:600,color:'var(--text-primary)',marginBottom:'.25rem'}}>Keyboard shortcuts</div>
-              <div style=${{display:'grid',gridTemplateColumns:'auto 1fr',gap:'.2rem .6rem',marginTop:'.25rem',fontSize:'0.83rem',color:'var(--text-muted)'}}>
-                <kbd style=${{background:'var(--bg-secondary)',padding:'0 .3rem',borderRadius:3,fontFamily:'inherit',fontSize:'0.78rem'}}>/</kbd><span>Open AI chat</span>
-                <kbd style=${{background:'var(--bg-secondary)',padding:'0 .3rem',borderRadius:3,fontFamily:'inherit',fontSize:'0.78rem'}}>1 2 3</kbd><span>Switch tabs (Clashes, Issues, Explorer)</span>
-                <kbd style=${{background:'var(--bg-secondary)',padding:'0 .3rem',borderRadius:3,fontFamily:'inherit',fontSize:'0.78rem'}}>M</kbd><span>Measure tool</span>
-                <kbd style=${{background:'var(--bg-secondary)',padding:'0 .3rem',borderRadius:3,fontFamily:'inherit',fontSize:'0.78rem'}}>F</kbd><span>Find elements</span>
-                <kbd style=${{background:'var(--bg-secondary)',padding:'0 .3rem',borderRadius:3,fontFamily:'inherit',fontSize:'0.78rem'}}>X Y</kbd><span>Section planes</span>
-                <kbd style=${{background:'var(--bg-secondary)',padding:'0 .3rem',borderRadius:3,fontFamily:'inherit',fontSize:'0.78rem'}}>G</kbd><span>Toggle grid</span>
-              </div>
-            </div>
-            <div style=${{borderTop:'1px solid var(--border-subtle)',paddingTop:'.7rem'}}>
-              <div style=${{fontWeight:600,color:'var(--text-primary)',marginBottom:'.25rem'}}>AI Chat examples</div>
-              <div style=${{display:'grid',gridTemplateColumns:'1fr 1fr',gap:'.25rem .75rem',marginTop:'.25rem',fontSize:'0.83rem',color:'var(--text-muted)'}}>
-                <span><i>"load ifc"</i> — open file</span>
-                <span><i>"switch to light"</i> — theme</span>
-                <span><i>"section x"</i> — section plane</span>
-                <span><i>"wireframe mode"</i> — render style</span>
-                <span><i>"measure length"</i> — tools</span>
-                <span><i>"save viewpoint"</i> — camera</span>
-                <span><i>"how many clashes?"</i> — queries</span>
-                <span><i>"color by discipline"</i> — display</span>
-              </div>
-            </div>
-          </div>
-
-          <button onClick=${function(){window._ccStartTour();}}
-            style=${{...S_BTN,width:'100%',marginTop:'1.1rem',padding:'.55rem',borderRadius:8,
-              background:'var(--accent)',color:'#fff',fontSize:'0.94rem',fontWeight:600,
-              border:'none',cursor:'pointer',display:'flex',alignItems:'center',justifyContent:'center',gap:'.4rem'}}>
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polygon points="10 8 16 12 10 16 10 8"/></svg>
-            Take the Interactive Tour
-          </button>
-        </div>
-      </div>`}
-      ${tourStep!=null && html`<${GuidedTour} step=${tourStep} setStep=${setTourStep} d=${d} />`}
     </header>`;
   }
 
@@ -11109,6 +11041,113 @@ function startApp() {
 
   // ── Right Rail (navigation tabs) ───────────────────────────────
 
+  // ── Tutorial Portal (renders Quick Start + Tour at App level) ──
+  function TutorialPortal(props) {
+    var d = props.d;
+    var tut = useState(false), showTutorial=tut[0], setShowTutorial=tut[1];
+    var tourSt = useState(null), tourStep=tourSt[0], setTourStep=tourSt[1];
+    window._ccToggleTutorial = function(){ setShowTutorial(function(v){return !v;}); setTourStep(null); };
+    window._ccStartTour = function(){ setShowTutorial(false); setTourStep(0); };
+    if (!showTutorial && tourStep == null) return null;
+    return html`<div>
+      ${showTutorial && html`<div onClick=${function(e){if(e.target===e.currentTarget)setShowTutorial(false)}} style=${{position:'fixed',inset:0,background:'rgba(0,0,0,.6)',zIndex:9999,display:'flex',alignItems:'flex-start',justifyContent:'center',overflowY:'auto',WebkitOverflowScrolling:'touch',padding:'2rem 0',backdropFilter:'blur(4px)'}}>
+        <div style=${{background:'var(--bg-primary)',border:'1px solid var(--border)',borderRadius:12,padding:'1.5rem',maxWidth:560,width:'90vw',overflowY:'auto',boxShadow:'0 16px 48px rgba(0,0,0,.5)',flexShrink:0,marginBottom:'4rem'}}>
+          <div style=${{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:'1rem'}}>
+            <span style=${{fontSize:'1.26rem',fontWeight:700}}>Quick Start Guide</span>
+            <button onClick=${function(){setShowTutorial(false)}} style=${{...S_BTN,background:'none',color:'var(--text-muted)',fontSize:'1.38rem',padding:'0 .3rem',lineHeight:1}}>✕</button>
+          </div>
+          <div style=${{background:'rgba(37,99,235,.08)',border:'1px solid rgba(37,99,235,.25)',borderRadius:8,padding:'.75rem',marginBottom:'1rem'}}>
+            <div style=${{fontSize:'0.94rem',fontWeight:600,color:'var(--text-primary)',marginBottom:'.3rem'}}>What is ClashControl?</div>
+            <div style=${{fontSize:'0.86rem',color:'var(--text-secondary)',lineHeight:1.6}}>
+              A free, open-source tool for detecting geometric clashes in IFC building models \u2014 right in your browser. Load BIM files, find collisions between building systems, manage issues, and export results to BCF.
+            </div>
+          </div>
+          <div style=${{display:'flex',flexDirection:'column',gap:'.85rem',fontSize:'0.9rem',color:'var(--text-secondary)',lineHeight:1.6}}>
+            <div><div style=${{fontWeight:600,color:'var(--text-primary)',marginBottom:'.25rem'}}>1. Load models</div><div>Click the folder icon in the left sidebar or drag & drop IFC files onto the 3D view.</div></div>
+            <div><div style=${{fontWeight:600,color:'var(--text-primary)',marginBottom:'.25rem'}}>2. Detect clashes</div><div>Press <b>/</b> to open the AI chat and type something like "check structural vs MEP" or "find clashes within 50mm".</div></div>
+            <div><div style=${{fontWeight:600,color:'var(--text-primary)',marginBottom:'.25rem'}}>3. Review results</div><div>Click any clash to fly to it in 3D. Change status, assign responsibility, or use the chat: "mark all open as resolved".</div></div>
+            <div><div style=${{fontWeight:600,color:'var(--text-primary)',marginBottom:'.25rem'}}>4. Create issues & export</div><div>Create issues from clashes. Export as BCF 2.1/3.0 for Revit, Navisworks, Solibri, or BIMcollab.</div></div>
+            <div style=${{borderTop:'1px solid var(--border-subtle)',paddingTop:'.7rem'}}>
+              <div style=${{fontWeight:600,color:'var(--text-primary)',marginBottom:'.25rem'}}>Keyboard shortcuts</div>
+              <div style=${{display:'grid',gridTemplateColumns:'auto 1fr',gap:'.2rem .6rem',fontSize:'0.83rem',color:'var(--text-muted)'}}>
+                <kbd style=${{background:'var(--bg-secondary)',padding:'0 .3rem',borderRadius:3,fontFamily:'inherit',fontSize:'0.78rem'}}>/</kbd><span>Open AI chat</span>
+                <kbd style=${{background:'var(--bg-secondary)',padding:'0 .3rem',borderRadius:3,fontFamily:'inherit',fontSize:'0.78rem'}}>1 2 3</kbd><span>Switch tabs</span>
+                <kbd style=${{background:'var(--bg-secondary)',padding:'0 .3rem',borderRadius:3,fontFamily:'inherit',fontSize:'0.78rem'}}>M</kbd><span>Measure tool</span>
+                <kbd style=${{background:'var(--bg-secondary)',padding:'0 .3rem',borderRadius:3,fontFamily:'inherit',fontSize:'0.78rem'}}>F</kbd><span>Find elements</span>
+                <kbd style=${{background:'var(--bg-secondary)',padding:'0 .3rem',borderRadius:3,fontFamily:'inherit',fontSize:'0.78rem'}}>X Y</kbd><span>Section planes</span>
+                <kbd style=${{background:'var(--bg-secondary)',padding:'0 .3rem',borderRadius:3,fontFamily:'inherit',fontSize:'0.78rem'}}>G</kbd><span>Toggle grid</span>
+              </div>
+            </div>
+          </div>
+          <button onClick=${function(){window._ccStartTour();}}
+            style=${{...S_BTN,width:'100%',marginTop:'1.1rem',padding:'.55rem',borderRadius:8,
+              background:'var(--accent)',color:'#fff',fontSize:'0.94rem',fontWeight:600,
+              border:'none',cursor:'pointer',display:'flex',alignItems:'center',justifyContent:'center',gap:'.4rem'}}>
+            Take the Interactive Tour
+          </button>
+
+          <!-- Roadmap -->
+          <div style=${{borderTop:'1px solid var(--border-subtle)',marginTop:'1.1rem',paddingTop:'.8rem'}}>
+            <div style=${{fontSize:'0.94rem',fontWeight:700,color:'var(--text-primary)',marginBottom:'.5rem'}}>Roadmap</div>
+            <div style=${{display:'flex',flexDirection:'column',gap:'.6rem',fontSize:'0.83rem'}}>
+              <div>
+                <div style=${{display:'flex',alignItems:'center',gap:'.4rem'}}>
+                  <span style=${{color:'#a78bfa',fontSize:'0.9rem',animation:'nlBorderPulse 2s ease-in-out infinite'}}>◉</span>
+                  <span style=${{color:'var(--text-primary)',fontWeight:600}}>Open-source launch</span>
+                </div>
+                <div style=${{fontSize:'0.75rem',color:'var(--text-muted)',marginLeft:'1.3rem',lineHeight:1.5,marginTop:'.15rem'}}>Publish the full source code on GitHub. Free for everyone to use, inspect, and contribute to. No sign-up, no paywall \u2014 just open your browser and start clashing.</div>
+              </div>
+              <div>
+                <div style=${{display:'flex',alignItems:'center',gap:'.4rem'}}>
+                  <span style=${{color:'#a78bfa',fontSize:'0.9rem',animation:'nlBorderPulse 2s ease-in-out infinite'}}>◉</span>
+                  <span style=${{color:'var(--text-primary)',fontWeight:600}}>Gather training data for AI clash classifier</span>
+                </div>
+                <div style=${{fontSize:'0.75rem',color:'var(--text-muted)',marginLeft:'1.3rem',lineHeight:1.5,marginTop:'.15rem'}}>When you label clashes as true/false positives and use the NL command panel, anonymous metadata is collected (with your consent). This builds the dataset needed to train ClashControl\u2019s AI to automatically classify clashes.</div>
+              </div>
+              <div>
+                <div style=${{display:'flex',alignItems:'center',gap:'.4rem'}}>
+                  <span style=${{color:'var(--text-faint)',fontSize:'0.9rem'}}>○</span>
+                  <span style=${{color:'var(--text-muted)'}}>Train & deploy open-source LLM for clash detection</span>
+                </div>
+                <div style=${{fontSize:'0.75rem',color:'var(--text-faint)',marginLeft:'1.3rem',lineHeight:1.5,marginTop:'.15rem'}}>Once enough data is gathered, train a specialised open-source model that can predict which clashes are real issues and which are false positives \u2014 saving hours of manual review per project.</div>
+              </div>
+              <div>
+                <div style=${{display:'flex',alignItems:'center',gap:'.4rem'}}>
+                  <span style=${{color:'var(--text-faint)',fontSize:'0.9rem'}}>○</span>
+                  <span style=${{color:'var(--text-muted)'}}>Move to dedicated domain</span>
+                </div>
+                <div style=${{fontSize:'0.75rem',color:'var(--text-faint)',marginLeft:'1.3rem',lineHeight:1.5,marginTop:'.15rem'}}>Host ClashControl on its own domain with faster loading, better SEO, and a more professional presence. The app stays free and open source.</div>
+              </div>
+              <div>
+                <div style=${{display:'flex',alignItems:'center',gap:'.4rem'}}>
+                  <span style=${{color:'var(--text-faint)',fontSize:'0.9rem'}}>○</span>
+                  <span style=${{color:'var(--text-muted)'}}>User accounts & cloud project storage</span>
+                </div>
+                <div style=${{fontSize:'0.75rem',color:'var(--text-faint)',marginLeft:'1.3rem',lineHeight:1.5,marginTop:'.15rem'}}>Optional sign-in to save projects in the cloud, collaborate with team members, and sync across devices. The core app remains fully functional without an account.</div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Feedback & links -->
+          <div style=${{borderTop:'1px solid var(--border-subtle)',marginTop:'.8rem',paddingTop:'.8rem',display:'flex',gap:'.5rem',flexWrap:'wrap'}}>
+            <a href="https://github.com/thomhoffer-arch/clash-control/issues/new?template=bug_report.md" target="_blank" rel="noopener"
+              style=${{...S_BTN,flex:1,padding:'.4rem .6rem',borderRadius:6,fontSize:'0.8rem',fontWeight:600,
+                background:'var(--bg-secondary)',color:'var(--text-secondary)',border:'1px solid var(--border)',
+                textDecoration:'none',textAlign:'center',cursor:'pointer'}}>Report a Bug</a>
+            <a href="https://github.com/thomhoffer-arch/clash-control/issues/new?template=feature_request.md" target="_blank" rel="noopener"
+              style=${{...S_BTN,flex:1,padding:'.4rem .6rem',borderRadius:6,fontSize:'0.8rem',fontWeight:600,
+                background:'var(--bg-secondary)',color:'var(--text-secondary)',border:'1px solid var(--border)',
+                textDecoration:'none',textAlign:'center',cursor:'pointer'}}>Request a Feature</a>
+          </div>
+          <div style=${{fontSize:'0.72rem',color:'var(--text-faint)',marginTop:'.6rem',textAlign:'center'}}>
+            ClashControl v${CC_VERSION.v} \u2014 Free & open source
+          </div>
+        </div>
+      </div>`}
+      ${tourStep!=null && html`<${GuidedTour} step=${tourStep} setStep=${setTourStep} d=${d} />`}
+    </div>`;
+  }
+
   function RightRail(props) {
     var s=props.s, d=props.d;
     var clashN=s.clashes.filter(function(c){var st=c.status||'new';return st!=='resolved'&&st!=='denied';}).length;
@@ -11808,6 +11847,7 @@ function startApp() {
       <${MobileNav} s=${s} d=${d} />
       <${WelcomePopup} d=${d} />
       <${TrainingModePopup} d=${d} active=${s.trainingMode} />
+      <${TutorialPortal} d=${d} />
     </div>`;
   }
 

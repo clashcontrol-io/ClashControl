@@ -1,5 +1,23 @@
 # Changelog
 
+## v3.1.5 (2026-03-26)
+- Add descriptions to each roadmap milestone in Quick Start Guide
+
+## v3.1.4 (2026-03-26)
+- Roadmap: mark training data gathering as also active (already happening)
+
+## v3.1.3 (2026-03-26)
+- Fix roadmap: open-source launch is current milestone, not completed
+
+## v3.1.2 (2026-03-26)
+- Add roadmap, bug report & feature request links to Quick Start Guide
+
+## v3.1.1 (2026-03-26)
+- Fix Quick Start Guide not showing on desktop + NL counter not resetting
+
+## v3.1.0 (2026-03-26)
+- Clear localStorage after training data is sent + event-driven counter
+
 ## v3.0.13 (2026-03-26)
 - Set orbit target to clash point when marker is shown
 
