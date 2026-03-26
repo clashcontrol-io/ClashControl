@@ -250,7 +250,7 @@ window.onload = function() {
 
 function startApp() {
   // ── Version (auto-updated by pre-commit hook) ──
-  var CC_VERSION = {v:'3.2.16',hash:'c92d86b',date:'2026-03-26T17:45:36Z'};
+  var CC_VERSION = {v:'3.2.17',hash:'cbe61b3',date:'2026-03-26T17:48:19Z'};
 
   // ── AI Data Collection (Phase 0.5) ──
   var CLASH_DATA_ENDPOINT = 'https://your-server.com/api/clash-data';
@@ -5272,17 +5272,17 @@ function startApp() {
           <span style=${{color:'var(--text-muted)'}}>${CC_VERSION.v} (${CC_VERSION.hash})</span>
         </div>
       </div>`}
-      ${s.models.length>0 && html`<div class="cc-overlay-top" style=${{position:'absolute',top:'.75rem',left:'50%',transform:'translateX(-50%)',display:'flex',gap:'.3rem',pointerEvents:'auto'}}>
-        ${s.clashes.length>0 && html`<button onClick=${function(){if(_fitToClashes)_fitToClashes(s.clashes);}}
+      ${s.clashes.length>0 && html`<div class="cc-overlay-top" style=${{position:'absolute',top:'.75rem',left:'50%',transform:'translateX(-50%)',display:'flex',gap:'.3rem',pointerEvents:'auto'}}>
+        <button onClick=${function(){if(_fitToClashes)_fitToClashes(s.clashes);}}
           style=${{...S_BTN,background:'var(--overlay-bg)',color:'#93c5fd',border:'1px solid var(--border)',fontSize:'0.75rem',padding:'.25rem .5rem'}}>
           Fit All Clashes
-        </button>`}
+        </button>
         <button onClick=${function(){d({t:A.UPD_PREFS,u:{showMarkers:!s.prefs.showMarkers}})}}
           style=${{...S_BTN,background:s.prefs.showMarkers?'rgba(37,99,235,.7)':'var(--overlay-bg)',color:s.prefs.showMarkers?'#fff':'var(--text-muted)',border:'1px solid var(--border)',fontSize:'0.75rem',padding:'.25rem .5rem'}}>
           ${s.prefs.showMarkers?'Markers On':'Markers Off'}
         </button>
       </div>`}
-      ${html`<${TrainingPill} s=${s} d=${d} />`}
+      ${html`<${TrainingPill} s=${s} d=${d} topOffset=${s.clashes.length>0} />`}
       ${s.models.length>0 && html`<div style=${{position:'absolute',top:'.75rem',right:'50%',transform:'translateX(50%)',marginRight:'-45%',pointerEvents:'auto'}}>
         <div style=${{display:'flex',alignItems:'center',gap:'.2rem'}}>
           <button onClick=${function(){setFinderOpen(!finderOpen);if(finderOpen){doFind('');setFindQuery('');}}}
@@ -11593,8 +11593,9 @@ function startApp() {
       return function(){ window.removeEventListener('cc-training-data-change', sync); window.removeEventListener('cc-training-sent', flash); };
     },[]);
 
-    return html`<div style=${{position:'absolute',top:'3.5rem',left:'50%',transform:'translateX(-50%)',
-      zIndex:20,pointerEvents:'auto',display:'flex',flexDirection:'column',alignItems:'center'}}>
+    var _pillTop = props.topOffset ? '3.5rem' : '.75rem';
+    return html`<div style=${{position:'absolute',top:_pillTop,left:'50%',transform:'translateX(-50%)',
+      zIndex:20,pointerEvents:'auto',display:'flex',flexDirection:'column',alignItems:'center',transition:'top .2s'}}>
       <div class="cc-training-btn-3d" style=${{display:'flex',alignItems:'center',
           borderRadius:999,
           background:sentFlash?'rgba(34,197,94,.85)':s.trainingMode?'rgba(124,58,237,.85)':'var(--overlay-bg)',
