@@ -1,5 +1,8 @@
 # Changelog
 
+## v3.2.6 (2026-03-26)
+- Fix training pill counter and form send reliability
+
 ## v3.2.5 (2026-03-26)
 - Add 'Functional clearance' reason chip for element-type clearance envelopes
 

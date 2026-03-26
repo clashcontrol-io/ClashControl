@@ -250,7 +250,7 @@ window.onload = function() {
 
 function startApp() {
   // ── Version (auto-updated by pre-commit hook) ──
-  var CC_VERSION = {v:'3.2.5',hash:'ef62cc5',date:'2026-03-26T17:09:14Z'};
+  var CC_VERSION = {v:'3.2.6',hash:'cbb9f9e',date:'2026-03-26T17:24:59Z'};
 
   // ── AI Data Collection (Phase 0.5) ──
   var CLASH_DATA_ENDPOINT = 'https://your-server.com/api/clash-data';
@@ -10144,6 +10144,7 @@ function startApp() {
       if (/hard\s+only|no\s+gap|gap\s*(?:=\s*)?0/.test(text)) { updRules.hard=true; updRules.maxGap=0; }
       if (/\bduplicates?\b/.test(text) && !/no\s+dup|exclude\s+dup|ignore\s+dup/.test(text)) updRules.duplicates=true;
       if (/\bcross[\s-]*(?:model\s+)?only\b|\bno\s+self[\s-]*clash|\bexclude\s+self|\bnot?\s+with\s+itself|\b(?:against|vs)\s+(?:all\s+)?others?\b/.test(text)) updRules.excludeSelf=true;
+      else if (/\bself[\s-]*clash|\bself\b|\binclude\s+self|\bintra[\s-]*model|\bwithin\s+(?:same\s+)?model/i.test(text)) updRules.excludeSelf=false;
       // Parse type-pair exclusions: -beam vs pipe, -IfcBeam x IfcPipe, -wall vs duct, etc.
       var pairExcludes = (updRules.excludeTypePairs||[]).slice();
       var pairMatches = text.match(/-\s*(\w+)\s*(?:vs\.?|versus|against|x|×)\s*(\w+)/gi);
