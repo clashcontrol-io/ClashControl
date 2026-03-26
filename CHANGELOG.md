@@ -1,5 +1,8 @@
 # Changelog
 
+## v3.0.4 (2026-03-26)
+- Ask for data sharing consent when training mode is activated
+
 ## v3.0.3 (2026-03-26)
 - Add inline SVG favicon with CC logo
 

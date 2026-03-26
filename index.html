@@ -249,7 +249,7 @@ window.onload = function() {
 
 function startApp() {
   // ── Version (auto-updated by pre-commit hook) ──
-  var CC_VERSION = {v:'3.0.3',hash:'684baeb',date:'2026-03-26T08:22:20Z'};
+  var CC_VERSION = {v:'3.0.4',hash:'8661b46',date:'2026-03-26T08:23:49Z'};
 
   // ── AI Data Collection (Phase 0.5) ──
   var CLASH_DATA_ENDPOINT = 'https://your-server.com/api/clash-data';
@@ -7224,10 +7224,10 @@ function startApp() {
           <button onClick=${function(){if(_fitToElement&&it.elementId)_fitToElement(it.elementId);if(_highlightById)_highlightById(it.elementId,false);_sboxAroundElements&&_sboxAroundElements([it.elementId]);}}
             style=${{...S_BTN,fontSize:'0.57rem',padding:'.1rem .3rem',background:'#3b0764',color:'#c084fc',flex:1}} title="Section box around element">Box</button>
         ` : html`
-          <button onClick=${function(){if(_fitToElement&&it.elemA)_fitToElement(it.elemA);if(_highlightById&&it.elemA)_highlightById(it.elemA);}}
-            style=${{...S_BTN,fontSize:'0.57rem',padding:'.1rem .3rem',background:'#0f3a5f',color:'#93c5fd',flex:1}}>Zoom A</button>
-          <button onClick=${function(){if(_fitToElement&&it.elemB)_fitToElement(it.elemB);if(_highlightById&&it.elemB)_highlightById(it.elemB);}}
-            style=${{...S_BTN,fontSize:'0.57rem',padding:'.1rem .3rem',background:'#0f3a5f',color:'#93c5fd',flex:1}}>Zoom B</button>
+          <button onClick=${function(){_zoomToggle(it.elemA,'A');}}
+            style=${{...S_BTN,fontSize:'0.57rem',padding:'.1rem .3rem',background:zoomedTo==='A'?'#1e40af':'#0f3a5f',color:'#93c5fd',flex:1}}>${zoomedTo==='A'?'Zoom Clash':'Zoom A'}</button>
+          <button onClick=${function(){_zoomToggle(it.elemB,'B');}}
+            style=${{...S_BTN,fontSize:'0.57rem',padding:'.1rem .3rem',background:zoomedTo==='B'?'#1e40af':'#0f3a5f',color:'#93c5fd',flex:1}}>${zoomedTo==='B'?'Zoom Clash':'Zoom B'}</button>
           <button onClick=${function(){if(_fitToElement&&it.elemA)_fitToElement(it.elemA);if(_highlightById)_highlightById(it.elemA,false);_sboxAroundElements&&_sboxAroundElements([it.elemA,it.elemB]);}}
             style=${{...S_BTN,fontSize:'0.57rem',padding:'.1rem .3rem',background:'#3b0764',color:'#c084fc',flex:1}} title="Section box around both elements">Box</button>
         `}
@@ -7528,6 +7528,27 @@ function startApp() {
       if(a===b) return a;
       return [a,b].filter(Boolean).join(' / ');
     })();
+    var stZoomed = useState(null), zoomedTo = stZoomed[0], setZoomedTo = stZoomed[1];
+    function _zoomToggle(elemId, label) {
+      if (zoomedTo === label) {
+        // Second click — fly to clash point (same as clicking title)
+        setZoomedTo(null);
+        var reIds = [];
+        if (it.elemA) reIds.push(it.elemA);
+        if (it.elemB) reIds.push(it.elemB);
+        if (it._groupedElems) it._groupedElems.forEach(function(eid){reIds.push(eid);});
+        if (reIds.length && _ghostOthers) _ghostOthers(reIds);
+        if (it.elemA && _highlightById) _highlightById(it.elemA, false);
+        if (it.point && window._ccShowActiveClashMarker) window._ccShowActiveClashMarker(it.point);
+        if (_flyToElements && reIds.length) _flyToElements(reIds, it.point);
+        else if (it.point && _flyTo) _flyTo(it.point);
+      } else {
+        // First click — zoom to individual element
+        setZoomedTo(label);
+        if (_fitToElement && elemId) _fitToElement(elemId);
+        if (_highlightById && elemId) _highlightById(elemId);
+      }
+    }
     return html`<div onClick=${function(){
         var wasActive=active;
         if(wasActive){
