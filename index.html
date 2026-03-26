@@ -250,7 +250,7 @@ window.onload = function() {
 
 function startApp() {
   // ── Version (auto-updated by pre-commit hook) ──
-  var CC_VERSION = {v:'3.2.27',hash:'ccd2f12',date:'2026-03-26T19:12:10Z'};
+  var CC_VERSION = {v:'3.2.28',hash:'6c1b6d3',date:'2026-03-26T21:10:33Z'};
 
   // ── AI Data Collection (Phase 0.5) ──
   var CLASH_DATA_ENDPOINT = 'https://your-server.com/api/clash-data';
@@ -1410,7 +1410,7 @@ function startApp() {
 
     return getIfcAPI().then(function(api) {
       _lmark('WASM ready');
-      var modelID = api.OpenModel(new Uint8Array(buffer));
+      var modelID = api.OpenModel(new Uint8Array(buffer), {USE_FAST_BOOLS: true});
       _lmark('Model open');
 
       if(onProgress) onProgress('Building property maps…');
@@ -1524,6 +1524,209 @@ function startApp() {
         }
         processChunk(0);
       });
+    });
+  }
+
+  // ── IFC Web Worker (off-main-thread parsing) ──────────────────
+  // Moves WASM parsing + property extraction to a Worker so the UI stays responsive.
+  // Three.js objects are built on the main thread after the Worker returns raw arrays.
+
+  var _ifcWorkerUrl = null;
+
+  function _ifcWorkerMain() {
+    var _api = null;
+    self.onmessage = function(e) {
+      var buf = e.data.buffer;
+      var phases = {};
+      var t0 = performance.now();
+      function mark(n) { phases[n] = performance.now() - t0; }
+      function progress(msg) { self.postMessage({type:'progress', msg:msg}); }
+
+      var ready;
+      if (_api) {
+        ready = Promise.resolve(_api);
+      } else {
+        ready = import('https://cdn.jsdelivr.net/npm/web-ifc@0.0.76/web-ifc-api.js').then(function(mod) {
+          _api = new mod.IfcAPI();
+          _api.SetWasmPath('https://cdn.jsdelivr.net/npm/web-ifc@0.0.76/');
+          return _api.Init().then(function() { return _api; });
+        });
+      }
+
+      ready.then(function(api) {
+        mark('WASM ready');
+        var modelID = api.OpenModel(new Uint8Array(buf), {USE_FAST_BOOLS: true});
+        mark('Model open');
+
+        progress('Building property maps\u2026');
+        var storeyResult = extractStoreys(api, modelID);
+        var storeyMap = storeyResult.map;
+        var storeyData = storeyResult.data;
+        var matMap = buildMaterialMap(api, modelID);
+        var propMap = buildPropertyMap(api, modelID, progress);
+        var relatedPairs = buildRelationsMap(api, modelID);
+        var allStoreys = {};
+        Object.keys(storeyMap).forEach(function(k) { allStoreys[storeyMap[k]] = true; });
+        mark('Property maps');
+
+        progress('Streaming geometry\u2026');
+        var rawEls = [];
+        var xfer = [];
+
+        api.StreamAllMeshes(modelID, function(ifcMesh) {
+          var eid = ifcMesh.expressID;
+          var geos = [];
+          for (var i = 0; i < ifcMesh.geometries.size(); i++) {
+            var placed = ifcMesh.geometries.get(i);
+            var gd = null;
+            try {
+              gd = api.GetGeometry(modelID, placed.geometryExpressID);
+              var verts = api.GetVertexArray(gd.GetVertexData(), gd.GetVertexDataSize());
+              var indices = api.GetIndexArray(gd.GetIndexData(), gd.GetIndexDataSize());
+              var nV = verts.length / 6;
+              var pos = new Float32Array(nV * 3), nrm = new Float32Array(nV * 3);
+              for (var v = 0, s = 0, d = 0; v < nV; v++, s += 6, d += 3) {
+                pos[d]=verts[s]; pos[d+1]=verts[s+1]; pos[d+2]=verts[s+2];
+                nrm[d]=verts[s+3]; nrm[d+1]=verts[s+4]; nrm[d+2]=verts[s+5];
+              }
+              var c = placed.color;
+              var tf = new Float32Array(placed.flatTransformation);
+              var idx = new Uint32Array(indices);
+              geos.push({pos:pos, nrm:nrm, idx:idx,
+                color: c ? {r:c.x, g:c.y, b:c.z, a:c.w} : null,
+                tf:tf});
+              xfer.push(pos.buffer, nrm.buffer, idx.buffer, tf.buffer);
+            } catch(ex) {}
+            finally { if (gd) try { gd.delete(); } catch(e2) {} }
+          }
+          if (geos.length > 0) {
+            var elProps = extractProperties(api, modelID, eid);
+            elProps.storey = storeyMap[eid] || '';
+            elProps.material = matMap[eid] || '';
+            var pm = propMap[eid];
+            if (pm) { elProps.quantities = pm.quantities; elProps.psets = pm.psets; }
+            rawEls.push({expressId:eid, geos:geos, props:elProps});
+          }
+        });
+
+        api.CloseModel(modelID);
+        mark('Geometry stream');
+
+        self.postMessage({type:'result', rawEls:rawEls,
+          storeys:Object.keys(allStoreys).sort(), storeyData:storeyData,
+          relatedPairs:relatedPairs, fileSize:buf.byteLength, phases:phases}, xfer);
+      }).catch(function(err) {
+        self.postMessage({type:'error', msg: err.message || String(err)});
+      });
+    };
+  }
+
+  function _getIFCWorkerUrl() {
+    if (_ifcWorkerUrl) return _ifcWorkerUrl;
+    var src = 'var IFC=' + JSON.stringify(IFC) + ';\n'
+      + 'var IFC_TYPE_NAMES=' + JSON.stringify(IFC_TYPE_NAMES) + ';\n'
+      + 'var _SPATIAL_CONTAINERS=' + JSON.stringify(_SPATIAL_CONTAINERS) + ';\n'
+      + 'var safeStr=' + safeStr.toString() + ';\n'
+      + 'var _extractAxis=' + _extractAxis.toString() + ';\n'
+      + 'var extractProperties=' + extractProperties.toString() + ';\n'
+      + 'var extractStoreys=' + extractStoreys.toString() + ';\n'
+      + 'var resolveMaterialName=' + resolveMaterialName.toString() + ';\n'
+      + 'var buildMaterialMap=' + buildMaterialMap.toString() + ';\n'
+      + 'var buildPropertyMap=' + buildPropertyMap.toString() + ';\n'
+      + 'var buildRelationsMap=' + buildRelationsMap.toString() + ';\n'
+      + '(' + _ifcWorkerMain.toString() + ')();\n';
+    var blob = new Blob([src], {type:'text/javascript'});
+    _ifcWorkerUrl = URL.createObjectURL(blob);
+    return _ifcWorkerUrl;
+  }
+
+  function loadIFCWorker(buffer, fallbackColor, onProgress) {
+    var loadStart = performance.now();
+    return new Promise(function(resolve, reject) {
+      var worker;
+      try { worker = new Worker(_getIFCWorkerUrl()); }
+      catch(e) { reject(e); return; }
+
+      worker.onmessage = function(e) {
+        var msg = e.data;
+        if (msg.type === 'progress') {
+          if (onProgress) onProgress(msg.msg);
+          return;
+        }
+        if (msg.type === 'error') {
+          worker.terminate();
+          reject(new Error(msg.msg));
+          return;
+        }
+        if (msg.type === 'result') {
+          if (onProgress) onProgress('Building 3D scene\u2026');
+          // Build Three.js objects from raw geometry arrays
+          var rawEls = msg.rawEls;
+          var meshes = [];
+          var elements = [];
+          var matCache = {};
+
+          for (var i = 0; i < rawEls.length; i++) {
+            var raw = rawEls[i];
+            var elMeshes = [];
+            var elBox = new THREE.Box3();
+            for (var g = 0; g < raw.geos.length; g++) {
+              var gData = raw.geos[g];
+              var geo = new THREE.BufferGeometry();
+              geo.setAttribute('position', new THREE.BufferAttribute(gData.pos, 3));
+              geo.setAttribute('normal', new THREE.BufferAttribute(gData.nrm, 3));
+              geo.setIndex(new THREE.BufferAttribute(gData.idx, 1));
+              var c = gData.color;
+              var col = c ? new THREE.Color(c.r, c.g, c.b) : new THREE.Color(fallbackColor);
+              var matKey = col.r.toFixed(3)+','+col.g.toFixed(3)+','+col.b.toFixed(3)+','+(c?c.a:1).toFixed(3);
+              var mat = matCache[matKey];
+              if (!mat) { mat = new THREE.MeshPhongMaterial({color:col, opacity:c?c.a:1, transparent:c?c.a<0.99:false, side:THREE.DoubleSide}); matCache[matKey] = mat; }
+              var mesh = new THREE.Mesh(geo, mat);
+              mesh.applyMatrix4(new THREE.Matrix4().fromArray(gData.tf));
+              mesh.userData.expressId = raw.expressId;
+              elBox.expandByObject(mesh);
+              elMeshes.push(mesh); meshes.push(mesh);
+            }
+            if (elMeshes.length > 0) {
+              elements.push({expressId:raw.expressId, meshes:elMeshes, box:elBox, props:raw.props});
+            }
+          }
+
+          var loadTime = Math.round(performance.now() - loadStart);
+          var phases = msg.phases || {};
+          phases['Scene build'] = performance.now() - loadStart;
+          var stats = {loadTime:loadTime, fileSize:msg.fileSize, elementCount:elements.length, meshCount:meshes.length, phases:phases};
+
+          // Print profile
+          (function() {
+            var ph = phases, prev = 0;
+            var rows = [];
+            var phaseNames = ['WASM ready','Model open','Property maps','Geometry stream','Scene build'];
+            phaseNames.forEach(function(name) {
+              if (ph[name] === undefined) return;
+              var t = Math.round(ph[name]);
+              var dt = Math.round(ph[name] - prev);
+              var pct = Math.round(dt / loadTime * 100);
+              rows.push({Phase: name, Time: dt+'ms', Pct: pct+'%', Cumulative: t+'ms'});
+              prev = ph[name];
+            });
+            rows.push({Phase: 'TOTAL', Time: loadTime+'ms', Pct: '100%', Cumulative: loadTime+'ms'});
+            console.groupCollapsed('%c[IFC Load Profile · Worker] ' + elements.length + ' elements \xb7 ' + (msg.fileSize/1024/1024).toFixed(1) + ' MB \xb7 ' + loadTime + 'ms total', 'color:#38bdf8;font-weight:bold');
+            console.table(rows);
+            console.groupEnd();
+            window._ccLoadProfile = rows;
+          })();
+
+          resolve({meshes:meshes, elements:elements, storeys:msg.storeys, storeyData:msg.storeyData, relatedPairs:msg.relatedPairs, stats:stats});
+          worker.terminate();
+        }
+      };
+      worker.onerror = function(err) {
+        worker.terminate();
+        reject(new Error('IFC Worker failed: ' + (err.message || err)));
+      };
+      // Copy buffer to Worker (don't transfer — keep original for IndexedDB save + fallback)
+      worker.postMessage({buffer:buffer});
     });
   }
 
@@ -6410,7 +6613,12 @@ function startApp() {
           setLoadMsg(totalIfc > 1 ? f.name + ' (' + (doneIfc + 1) + '/' + totalIfc + ')…' : 'Loading ' + f.name + '…');
           return f.arrayBuffer().then(function(buf) {
             var disc='structural', col=DISC[0].c;
-            return loadIFC(buf, col, function(msg){ setLoadMsg(f.name + ': ' + msg); }).then(function(result) {
+            var _onProg = function(msg){ setLoadMsg(f.name + ': ' + msg); };
+            var _loadP = loadIFCWorker(buf, col, _onProg).catch(function(workerErr) {
+              console.warn('[IFC Worker fallback]', workerErr.message || workerErr);
+              return loadIFC(buf, col, _onProg);
+            });
+            return _loadP.then(function(result) {
               disc = detectDiscipline(result.elements);
               var dObj = DISC.find(function(x){return x.id===disc;});
               col = dObj ? dObj.c : col;

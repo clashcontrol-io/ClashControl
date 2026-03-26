@@ -1,5 +1,8 @@
 # Changelog
 
+## v3.2.28 (2026-03-26)
+- Faster vertex deinterleave in IFC geometry streaming
+
 ## v3.2.27 (2026-03-26)
 - Optimize spatial hash + add IFC load profiler
 
