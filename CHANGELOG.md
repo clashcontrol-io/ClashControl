@@ -1,5 +1,8 @@
 # Changelog
 
+## v3.2.15 (2026-03-26)
+- Use atomic REPLACE_MODEL for model versioning, fix Three.js mesh swap
+
 ## v3.2.14 (2026-03-26)
 - Auto-version models when reloading IFC with same filename
 

@@ -250,7 +250,7 @@ window.onload = function() {
 
 function startApp() {
   // ── Version (auto-updated by pre-commit hook) ──
-  var CC_VERSION = {v:'3.2.14',hash:'eb55e78',date:'2026-03-26T17:40:25Z'};
+  var CC_VERSION = {v:'3.2.15',hash:'b228d2a',date:'2026-03-26T17:43:26Z'};
 
   // ── AI Data Collection (Phase 0.5) ──
   var CLASH_DATA_ENDPOINT = 'https://your-server.com/api/clash-data';
@@ -10932,6 +10932,12 @@ function startApp() {
     var detectMsgIdx = useRef(-1);
     var prevDetecting = useRef(s.detecting);
 
+    // Clear messages on project switch
+    useEffect(function() {
+      function onSwitch() { setMsgs([{role:'assistant', text:'New project loaded. How can I help?'}]); }
+      window.addEventListener('cc-project-switch', onSwitch);
+      return function(){ window.removeEventListener('cc-project-switch', onSwitch); };
+    }, []);
     // Track model loading state for glow effect
     useEffect(function() {
       function onModelLoad(e) { setModelLoading(!!(e.detail && e.detail.loading)); }
