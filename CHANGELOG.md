@@ -1,5 +1,8 @@
 # Changelog
 
+## v3.0.11 (2026-03-26)
+- Improve text contrast on dark theme for readability
+
 ## v3.0.10 (2026-03-26)
 - Move Zoom A/B toggle to ClashProps where buttons actually live
 

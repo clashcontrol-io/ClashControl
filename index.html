@@ -249,7 +249,7 @@ window.onload = function() {
 
 function startApp() {
   // ── Version (auto-updated by pre-commit hook) ──
-  var CC_VERSION = {v:'3.0.10',hash:'adf5052',date:'2026-03-26T09:02:22Z'};
+  var CC_VERSION = {v:'3.0.11',hash:'c21fac6',date:'2026-03-26T09:03:25Z'};
 
   // ── AI Data Collection (Phase 0.5) ──
   var CLASH_DATA_ENDPOINT = 'https://your-server.com/api/clash-data';
@@ -10901,6 +10901,13 @@ function startApp() {
 
     function doDelete() { d({t:A.CLEAR_TRAINING_DATA}); }
     var hasData = feedbackCount > 0;
+    // Reactive data counts — poll localStorage so pill updates after sends/new records
+    var stNlN = useState(function(){return _getNLTrainCount();}), nlN=stNlN[0], setNlN=stNlN[1];
+    var stClN = useState(function(){return _getClashTrainCount();}), clashN=stClN[0], setClashN=stClN[1];
+    useEffect(function(){
+      var iv = setInterval(function(){ setNlN(_getNLTrainCount()); setClashN(_getClashTrainCount()); }, 3000);
+      return function(){ clearInterval(iv); };
+    },[]);
 
     return html`<div style=${{position:'absolute',top:'2.6rem',left:'50%',transform:'translateX(-50%)',
       zIndex:20,pointerEvents:'auto',display:'flex',flexDirection:'column',alignItems:'center'}}>
@@ -10926,8 +10933,6 @@ function startApp() {
         </button>`}
       </div>
       ${s.trainingMode && isExpanded && function(){
-        var nlN = _getNLTrainCount();
-        var clashN = _getClashTrainCount();
         var anyData = hasData || nlN > 0 || clashN > 0;
         return html`<div style=${{marginTop:'.35rem',
           background:'var(--overlay-bg-strong)',border:'1px solid rgba(124,58,237,.4)',borderRadius:10,
@@ -10953,7 +10958,7 @@ function startApp() {
           <div style=${{display:'flex',gap:'.25rem',flexWrap:'wrap'}}>
             ${!showDelConfirm && html`<button onClick=${function(){if(anyData)setShowDelConfirm(true);}} disabled=${!anyData}
               style=${{...S_BTN,fontSize:'0.63rem',padding:'.2rem .4rem',background:'var(--bg-secondary)',color:anyData?'var(--text-secondary)':'var(--text-faint)',border:'1px solid var(--border)',flex:1}}>Delete all</button>`}
-            ${showDelConfirm && html`<button onClick=${function(){doDelete();_clearClashTrainStore();_clearNLTrainStore();setShowDelConfirm(false);}}
+            ${showDelConfirm && html`<button onClick=${function(){doDelete();_clearClashTrainStore();_clearNLTrainStore();setNlN(0);setClashN(0);setShowDelConfirm(false);}}
               style=${{...S_BTN,fontSize:'0.63rem',padding:'.2rem .4rem',background:'#ef4444',color:'#fff',border:'none',flex:1}}>Confirm delete all?</button>`}
           </div>
         </div>`;
