@@ -1,5 +1,8 @@
 # Changelog
 
+## v3.1.22 (2026-03-26)
+- Add half-circle rotation indicator on section plane arrow handle
+
 ## v3.1.21 (2026-03-26)
 - Add section plane rotation: Shift+drag rotates around vertical Y axis
 
