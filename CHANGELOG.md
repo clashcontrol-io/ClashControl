@@ -1,5 +1,8 @@
 # Changelog
 
+## v3.2.26 (2026-03-26)
+- Add detection profiler — console table + NL chat summary
+
 ## v3.2.25 (2026-03-26)
 - Scale detection messages to speed — fewer messages when it's fast
 

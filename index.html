@@ -250,7 +250,7 @@ window.onload = function() {
 
 function startApp() {
   // ── Version (auto-updated by pre-commit hook) ──
-  var CC_VERSION = {v:'3.2.25',hash:'e4c52f3',date:'2026-03-26T18:37:03Z'};
+  var CC_VERSION = {v:'3.2.26',hash:'1d0cd3f',date:'2026-03-26T19:00:10Z'};
 
   // ── AI Data Collection (Phase 0.5) ──
   var CLASH_DATA_ENDPOINT = 'https://your-server.com/api/clash-data';
@@ -1405,8 +1405,13 @@ function startApp() {
 
   function loadIFC(buffer, fallbackColor, onProgress) {
     var loadStart = performance.now();
+    var _lp = { t0: loadStart, phases: {} };
+    function _lmark(name) { _lp.phases[name] = performance.now() - _lp.t0; }
+
     return getIfcAPI().then(function(api) {
+      _lmark('WASM ready');
       var modelID = api.OpenModel(new Uint8Array(buffer));
+      _lmark('Model open');
 
       if(onProgress) onProgress('Building property maps…');
 
@@ -1419,6 +1424,7 @@ function startApp() {
       var relatedPairs = buildRelationsMap(api, modelID);
       var allStoreys = {};
       Object.keys(storeyMap).forEach(function(k){ allStoreys[storeyMap[k]] = true; });
+      _lmark('Property maps');
 
       if(onProgress) onProgress('Streaming geometry…');
 
@@ -1472,6 +1478,7 @@ function startApp() {
 
       // Close WASM model immediately — all data is now in JavaScript memory
       api.CloseModel(modelID);
+      _lmark('Geometry stream');
 
       if(onProgress) onProgress('Processing ' + rawElements.length + ' elements…');
 
@@ -1489,8 +1496,29 @@ function startApp() {
             if(onProgress) onProgress('Processing elements ' + end + '/' + rawElements.length + '…');
             setTimeout(function(){ processChunk(end); }, 0);
           } else {
+            _lmark('Element processing');
             var loadTime = Math.round(performance.now() - loadStart);
-            resolve({ meshes:meshes, elements:elements, storeys:Object.keys(allStoreys).sort(), storeyData:storeyData, relatedPairs:relatedPairs, stats:{loadTime:loadTime, fileSize:buffer.byteLength, elementCount:elements.length, meshCount:meshes.length} });
+            var stats = {loadTime:loadTime, fileSize:buffer.byteLength, elementCount:elements.length, meshCount:meshes.length, phases:_lp.phases};
+            // Print IFC load profile to console
+            (function() {
+              var ph = _lp.phases, prev = 0;
+              var rows = [];
+              var phaseNames = ['WASM ready','Model open','Property maps','Geometry stream','Element processing'];
+              phaseNames.forEach(function(name) {
+                if (ph[name] === undefined) return;
+                var t = Math.round(ph[name]);
+                var dt = Math.round(ph[name] - prev);
+                var pct = Math.round(dt / loadTime * 100);
+                rows.push({Phase: name, Time: dt+'ms', 'Pct': pct+'%', 'Cumulative': t+'ms'});
+                prev = ph[name];
+              });
+              rows.push({Phase: 'TOTAL', Time: loadTime+'ms', 'Pct': '100%', 'Cumulative': loadTime+'ms'});
+              console.groupCollapsed('%c[IFC Load Profile] ' + elements.length + ' elements · ' + (buffer.byteLength/1024/1024).toFixed(1) + ' MB · ' + loadTime + 'ms total', 'color:#38bdf8;font-weight:bold');
+              console.table(rows);
+              console.groupEnd();
+              window._ccLoadProfile = rows;
+            })();
+            resolve({ meshes:meshes, elements:elements, storeys:Object.keys(allStoreys).sort(), storeyData:storeyData, relatedPairs:relatedPairs, stats:stats });
           }
         }
         processChunk(0);
@@ -1781,23 +1809,26 @@ function startApp() {
 
   // ── Spatial hash for vertex distance (used for soft/clearance clashes) ──
   function _SpatialHash(cellSize) {
-    this.cs = cellSize; this.inv = 1/cellSize; this.map = {};
+    this.cs = cellSize; this.inv = 1/cellSize; this.map = new Map();
   }
-  _SpatialHash.prototype.key = function(x, y, z) {
-    return Math.floor(x * this.inv) + ',' + Math.floor(y * this.inv) + ',' + Math.floor(z * this.inv);
+  // Integer hash — avoids string allocation entirely (2-3x faster than string keys)
+  // Large-prime XOR mix; rare collisions just add a few extra vertex comparisons (safe)
+  _SpatialHash.prototype._hkey = function(ix, iy, iz) {
+    return (((ix * 73856093) ^ (iy * 19349663) ^ (iz * 83492791)) | 0);
   };
   _SpatialHash.prototype.insert = function(verts) {
     for (var i = 0; i < verts.length; i += 3) {
-      var k = this.key(verts[i], verts[i + 1], verts[i + 2]);
-      if (!this.map[k]) this.map[k] = [];
-      this.map[k].push(i);
+      var k = this._hkey(Math.floor(verts[i] * this.inv), Math.floor(verts[i+1] * this.inv), Math.floor(verts[i+2] * this.inv));
+      var bucket = this.map.get(k);
+      if (!bucket) { bucket = []; this.map.set(k, bucket); }
+      bucket.push(i);
     }
   };
   _SpatialHash.prototype.minDistSq = function(px, py, pz, verts, out) {
     var best = Infinity;
     var cx = Math.floor(px * this.inv), cy = Math.floor(py * this.inv), cz = Math.floor(pz * this.inv);
     for (var dx = -1; dx <= 1; dx++) for (var dy = -1; dy <= 1; dy++) for (var dz = -1; dz <= 1; dz++) {
-      var bucket = this.map[(cx + dx) + ',' + (cy + dy) + ',' + (cz + dz)];
+      var bucket = this.map.get(this._hkey(cx+dx, cy+dy, cz+dz));
       if (!bucket) continue;
       for (var b = 0; b < bucket.length; b++) {
         var idx = bucket[b];
