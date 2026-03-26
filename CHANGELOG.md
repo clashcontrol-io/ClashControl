@@ -1,5 +1,8 @@
 # Changelog
 
+## v3.2.18 (2026-03-26)
+- Move training pill up when clash overlay buttons aren't visible
+
 ## v3.2.17 (2026-03-26)
 - Show Markers toggle when models are loaded, not just after detection
 

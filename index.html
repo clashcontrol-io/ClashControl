@@ -250,7 +250,7 @@ window.onload = function() {
 
 function startApp() {
   // ── Version (auto-updated by pre-commit hook) ──
-  var CC_VERSION = {v:'3.2.17',hash:'cbe61b3',date:'2026-03-26T17:48:19Z'};
+  var CC_VERSION = {v:'3.2.18',hash:'b9b75b7',date:'2026-03-26T17:49:12Z'};
 
   // ── AI Data Collection (Phase 0.5) ──
   var CLASH_DATA_ENDPOINT = 'https://your-server.com/api/clash-data';
@@ -11160,7 +11160,8 @@ function startApp() {
             setMsgs(function(m){ return m.concat([{role:'assistant', text:'Running: **' + rNameA + '** vs **' + rNameB + '**'
               + (rRules.hard?' | hard':'') + (rRules.maxGap?' | max gap '+rRules.maxGap+'mm':'')
               + (rRules.duplicates?' | duplicates':'') + (rRules.excludeSelf?' | cross-model only':'') + '…'}]); });
-            executeDetection(rRules);
+            // Delay detection start so React can paint the "Running..." message first
+            setTimeout(function(){ executeDetection(rRules); }, 80);
           } else {
             setMsgs(function(m){ return m.concat([{role:'assistant', setup:ctxResult}]); });
           }
