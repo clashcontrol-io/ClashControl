@@ -249,7 +249,7 @@ window.onload = function() {
 
 function startApp() {
   // ── Version (auto-updated by pre-commit hook) ──
-  var CC_VERSION = {v:'3.1.20',hash:'edffadb',date:'2026-03-26T12:39:06Z'};
+  var CC_VERSION = {v:'3.1.21',hash:'4a8aae5',date:'2026-03-26T12:39:49Z'};
 
   // ── AI Data Collection (Phase 0.5) ──
   var CLASH_DATA_ENDPOINT = 'https://your-server.com/api/clash-data';
@@ -4527,6 +4527,24 @@ function startApp() {
         // Arrowhead - (backward)
         var a2 = [new THREE.Vector3(-tipW,0,-stemLen+tipLen), new THREE.Vector3(0,0,-stemLen), new THREE.Vector3(tipW,0,-stemLen+tipLen)];
         grp.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints(a2), arrowMat));
+        // Half-circle rotation indicator around the arrow
+        var arcR = stemLen * 0.6;
+        var arcPts = [];
+        for (var ai = 0; ai <= 16; ai++) {
+          var ang = (ai / 16) * Math.PI; // 0 to PI = half circle
+          arcPts.push(new THREE.Vector3(Math.cos(ang) * arcR, 0, Math.sin(ang) * arcR));
+        }
+        var arcMat = new THREE.LineBasicMaterial({color:0xfbbf24, transparent:true, opacity:0.5});
+        arcMat.clippingPlanes = [];
+        grp.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints(arcPts), arcMat));
+        // Small arrowhead at arc end to indicate rotation direction
+        var arcEnd = arcPts[arcPts.length-1];
+        var arcPrev = arcPts[arcPts.length-2];
+        var arcDir = arcEnd.clone().sub(arcPrev).normalize();
+        var arcPerp = new THREE.Vector3(-arcDir.z, 0, arcDir.x);
+        var at1 = arcEnd.clone().sub(arcDir.clone().multiplyScalar(tipLen)).add(arcPerp.clone().multiplyScalar(tipW*0.5));
+        var at2 = arcEnd.clone().sub(arcDir.clone().multiplyScalar(tipLen)).sub(arcPerp.clone().multiplyScalar(tipW*0.5));
+        grp.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints([at1, arcEnd, at2]), arcMat));
         grp.position.copy(position);
         if (quaternion) grp.quaternion.copy(quaternion);
         grp.renderOrder = 999;

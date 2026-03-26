@@ -1,5 +1,8 @@
 # Changelog
 
+## v3.1.21 (2026-03-26)
+- Add section plane rotation: Shift+drag rotates around vertical Y axis
+
 ## v3.1.20 (2026-03-26)
 - Fix section plane alignment + line-arrow handles
 
