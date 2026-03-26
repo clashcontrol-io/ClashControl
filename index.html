@@ -257,7 +257,7 @@ window.onload = function() {
 
 function startApp() {
   // ── Version (auto-updated by pre-commit hook) ──
-  var CC_VERSION = {v:'2.12.8',hash:'41dd443',date:'2026-03-26T06:32:11Z'};
+  var CC_VERSION = {v:'2.12.9',hash:'4c53fe0',date:'2026-03-26T06:34:55Z'};
 
   // ── AI Data Collection (Phase 0.5) ──
   var CLASH_DATA_ENDPOINT = 'https://your-server.com/api/clash-data';
@@ -9550,6 +9550,67 @@ function startApp() {
       return {_clashSetup:true, rules:updRules, nameA:mA?mA.name:'All models', nameB:mB?mB.name:'All models'};
     }
 
+    // ── Self-clash patterns ────────────────────────────────────────
+    // "self:architectural" → clash architectural vs itself
+    // "self:architectural, mep" → architectural vs architectural AND mep vs mep
+    // "self: all" → every model vs itself
+    // "intra architectural" / "internal mep" / "within structural"
+    var selfMatch = text.match(/(?:self\s*[:=]\s*|intra[\s-]*|internal\s+|within\s+)(.+?)(?:\s+with\s+.*)?$/i);
+    if (selfMatch && /self|intra|internal|within/.test(text)) {
+      if (!s.models.length) return 'No models loaded yet.';
+      var selfTargets = selfMatch[1].split(/\s*[,;&]\s*|\s+and\s+/i).map(function(t){return t.trim();}).filter(Boolean);
+      if (selfTargets.length === 1 && /^all$/i.test(selfTargets[0])) {
+        // Self-clash every model individually
+        var updSelf = applyClashOpts({ modelA:'all', modelB:'all', excludeSelf:false });
+        return {_clashSetup:true, rules:updSelf, nameA:'All models', nameB:'All models (self)', _selfMode:'all'};
+      }
+      if (selfTargets.length === 1) {
+        var ref = resolveModel(selfTargets[0]);
+        if (ref) {
+          var updSelf1 = applyClashOpts({ modelA:ref.id, modelB:ref.id, excludeSelf:false });
+          return {_clashSetup:true, rules:updSelf1, nameA:ref.name, nameB:ref.name+' (self)', _selfMode:'single'};
+        }
+      }
+      // Multiple self-clash groups: queue them as a multi-pass
+      var selfPasses = [];
+      selfTargets.forEach(function(t) {
+        var ref = resolveModel(t);
+        if (ref) selfPasses.push({id:ref.id, name:ref.name});
+      });
+      if (selfPasses.length) {
+        var baseRules = applyClashOpts({ excludeSelf:false });
+        return {_clashSetup:true, _multiSelf:selfPasses, rules:baseRules,
+          nameA:selfPasses.map(function(p){return p.name;}).join(', '),
+          nameB:'(self-clash each)', _selfMode:'multi'};
+      }
+    }
+
+    // ── "each" / "all self" / "every model against itself" ─────────
+    if (/(?:each|every)\s+(?:model|discipline)\s+(?:against|vs\.?|versus)\s+itself|all\s+self[\s-]*clash/i.test(text)) {
+      if (!s.models.length) return 'No models loaded yet.';
+      var discs = [];
+      DISC.forEach(function(dd) {
+        if (s.models.some(function(m){ return m.discipline===dd.id; })) discs.push({id:'disc:'+dd.id, name:dd.label});
+      });
+      var baseR = applyClashOpts({ excludeSelf:false });
+      return {_clashSetup:true, _multiSelf:discs, rules:baseR,
+        nameA:discs.map(function(p){return p.name;}).join(', '),
+        nameB:'(self-clash each)', _selfMode:'multi'};
+    }
+
+    // ── "only between" / "only within" (restrict to same-discipline) ──
+    if (/(?:only\s+)?(?:between|within)\s+same\s+(?:discipline|category|type)/i.test(text)) {
+      if (!s.models.length) return 'No models loaded yet.';
+      var samePasses = [];
+      DISC.forEach(function(dd) {
+        if (s.models.some(function(m){ return m.discipline===dd.id; })) samePasses.push({id:'disc:'+dd.id, name:dd.label});
+      });
+      var baseSD = applyClashOpts({ excludeSelf:false });
+      return {_clashSetup:true, _multiSelf:samePasses, rules:baseSD,
+        nameA:samePasses.map(function(p){return p.name;}).join(', '),
+        nameB:'(same discipline)', _selfMode:'multi'};
+    }
+
     // "X vs/versus/against Y"
     var vsMatch = text.match(/(.+?)\s+(?:vs\.?|versus|against)\s+(.+?)(?:\s+with\s+.*)?$/);
     if (vsMatch) return runSetup(vsMatch[1].replace(/^(?:check|compare|run|detect|find|look\s+for|scan|anal[yz]se?|test|search\s+for)\s+(?:(?:for\s+)?(?:clashes?|conflicts?|collisions?|clashcontrol)\s+)?(?:on\s+)?/,'').trim(), vsMatch[2].split(/\s+with\s+/)[0].replace(/\s*models?\s*$/i,'').trim());
@@ -9910,6 +9971,31 @@ function startApp() {
 
     function run(){
       setRan(true);
+      var multiSelf = setup._multiSelf;
+      if (multiSelf && multiSelf.length) {
+        // Multi-pass self-clash: run each group against itself
+        var labels = multiSelf.map(function(p){return p.name;}).join(', ');
+        setMsgs(function(prev){
+          var next=prev.slice();
+          next[idx]={role:'assistant',text:'Running self-clash: '+labels
+            +(rules.hard?' | hard':'')+(rules.maxGap?' | max gap '+rules.maxGap+'mm':'')+'…',ran:true};
+          return next;
+        });
+        d({t:A.UPD_RULES, u:rules});
+        if (s.detecting) return;
+        d({t:A.DETECTING}); d({t:A.TAB,v:'clashes'});
+        setTimeout(function(){
+          var allClashes = [];
+          var mergedRules = Object.assign({},s.rules,rules);
+          multiSelf.forEach(function(pass){
+            var passRules = Object.assign({}, mergedRules, {modelA:pass.id, modelB:pass.id, excludeSelf:false});
+            var result = detectClashes(s.models, passRules);
+            allClashes = allClashes.concat(result);
+          });
+          d({t:A.MERGE_CLASHES, v:allClashes});
+        }, 20);
+        return;
+      }
       var nameA=opts.find(function(o){return o.id===rules.modelA;})||{label:'All'};
       var nameB=opts.find(function(o){return o.id===rules.modelB;})||{label:'All'};
       setMsgs(function(prev){
@@ -9934,6 +10020,9 @@ function startApp() {
       <div style=${{fontWeight:600,marginBottom:'.5rem',color:'var(--text-primary)',display:'flex',alignItems:'center',gap:'.3rem'}}>
         <span style=${{fontSize:'.85rem'}}>⚡</span> Clash Detection Setup
       </div>
+      ${setup._multiSelf && html`<div style=${{background:'rgba(124,58,237,.1)',border:'1px solid rgba(124,58,237,.3)',borderRadius:6,padding:'.35rem .5rem',marginBottom:'.5rem',fontSize:'.62rem',color:'#a78bfa'}}>
+        Self-clash mode: ${setup._multiSelf.map(function(p){return p.name;}).join(', ')} — each group checked against itself
+      </div>`}
 
       <div style=${{display:'grid',gridTemplateColumns:'1fr 1fr',gap:'.45rem .6rem'}}>
         <div>

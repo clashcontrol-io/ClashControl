@@ -1,5 +1,8 @@
 # Changelog
 
+## v2.12.9 (2026-03-26)
+- Add multi-model clash grouping, custom tags, and NL group syntax
+
 ## v2.12.8 (2026-03-26)
 - Add type-pair exclusion in NL commands + 15% font size increase in panels
 
