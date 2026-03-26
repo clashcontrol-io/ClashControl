@@ -249,7 +249,7 @@ window.onload = function() {
 
 function startApp() {
   // ── Version (auto-updated by pre-commit hook) ──
-  var CC_VERSION = {v:'3.1.8',hash:'943eb3d',date:'2026-03-26T09:40:50Z'};
+  var CC_VERSION = {v:'3.1.12',hash:'1353029',date:'2026-03-26T09:49:54Z'};
 
   // ── AI Data Collection (Phase 0.5) ──
   var CLASH_DATA_ENDPOINT = 'https://your-server.com/api/clash-data';
@@ -1961,6 +1961,7 @@ function startApp() {
     if (rules.excludeTypePairs && rules.excludeTypePairs.length) {
       rules.excludeTypePairs.forEach(function(p) { _exPairSet[p] = true; });
     }
+    var _suppressedFVs = []; // semantic filter negatives for training
 
     // ── L0: Sweep and Prune — O(n log n + k) candidate pairs ───────
     var candidates = _sweepAndPrune(grpA, grpB, rules, maxGapM);
@@ -2065,7 +2066,7 @@ function startApp() {
             overlap_vol_m3:_sfOv.vol,pen_depth_mm:0,clearance_mm:null,
             bbox_a:_bboxMm(_sfSzA),bbox_b:_bboxMm(_sfSzB),
             mat_a:_sfPA.material||'',mat_b:_sfPB.material||'',storey:_sfPA.storey||_sfPB.storey||'',max_gap_mm:Math.round(maxGapM*1000)};
-          _saveClashTrainRecord('sem_'+eA.expressId+'_'+eB.expressId+'_'+mA.id, _sfFV, 0.0, 'semantic_filter', true);
+          if (_suppressedFVs.length < 500) _suppressedFVs.push(_sfFV);
         } catch(e) {}
       }
       if (rules.hard && !_semanticSkipHard) hardPt = _meshesIntersect(eA, eB);
@@ -2208,6 +2209,61 @@ function startApp() {
 
     // Free clash geometry caches — they're large Float32Arrays only needed during detection
     _flushGeoCache(models);
+
+    // ── Store detection run summary for AI training ──────────────
+    try {
+      var runHard = merged.filter(function(c){return c.type==='hard';}).length;
+      var runSoft = merged.filter(function(c){return c.type==='soft';}).length;
+      var runDup = merged.filter(function(c){return c.type==='duplicate';}).length;
+      // Collect type-pair distribution (anonymous — no names/IDs)
+      var typePairs = {};
+      merged.forEach(function(c) {
+        if (c.elemAType && c.elemBType) {
+          var key = c.elemAType < c.elemBType ? c.elemAType+':'+c.elemBType : c.elemBType+':'+c.elemAType;
+          typePairs[key] = (typePairs[key]||0) + 1;
+        }
+      });
+      var runSummary = {
+        type: 'detection_run',
+        ts: Date.now(),
+        v: CC_VERSION.v,
+        settings: {
+          hard: !!rules.hard,
+          maxGap: rules.maxGap||0,
+          duplicates: !!rules.duplicates,
+          excludeSelf: !!rules.excludeSelf,
+          minOverlapVolM3: rules.minOverlapVolM3||0,
+          semanticFilter: rules.useSemanticFilter!==false,
+          excludeTypes: rules.excludeTypes||[],
+          excludeTypePairs: rules.excludeTypePairs||[]
+        },
+        results: {
+          total: merged.length,
+          hard: runHard,
+          soft: runSoft,
+          duplicate: runDup,
+          candidatesChecked: candidates.length,
+          elementsScanned: items.length,
+          modelCount: Object.keys(seenModels).length,
+          typePairDistribution: typePairs
+        },
+        // Feature vectors for all detected clashes (anonymous geometric data only)
+        clashFeatures: merged.slice(0, 500).map(function(c) {
+          return c._trainFV || null;
+        }).filter(Boolean),
+        // Semantic filter negatives: pairs suppressed as intentional relationships
+        // (labelled 0.0 = not a real clash — e.g. door in wall, pipe through sleeve)
+        suppressedPairs: _suppressedFVs,
+        suppressedCount: _suppressedFVs.length
+      };
+      // Store in localStorage for sending
+      var runs = [];
+      try { runs = JSON.parse(localStorage.getItem('cc_detection_runs')||'[]'); } catch(e){}
+      runs.push(runSummary);
+      while (runs.length > 20) runs.shift(); // keep last 20 runs
+      localStorage.setItem('cc_detection_runs', JSON.stringify(runs));
+      window.dispatchEvent(new Event('cc-training-data-change'));
+    } catch(e) {}
 
     return merged;
   }
@@ -9358,7 +9414,7 @@ function startApp() {
 
     // 1. Try regex (instant, no LLM needed)
     var regexResult = processNLCommand(raw, s, d);
-    if (regexResult !== null) return Promise.resolve(_captureNL(regexResult, 'regex'));
+    if (regexResult !== null) return Promise.resolve(_captureNL(regexResult, 'matched'));
 
     // 2. Build prompt context
     var modelList = s.models.length ? s.models.map(function(m){ return m.name; }).join(', ') : 'none';
@@ -9378,7 +9434,7 @@ function startApp() {
     }
 
     // 4. Fall back to in-browser LLM
-    if (_nlModelStatus !== 'ready' || !_nlPipeline) return Promise.resolve(_captureNL(null, 'no-llm'));
+    if (_nlModelStatus !== 'ready' || !_nlPipeline) return Promise.resolve(_captureNL(null, 'unmatched'));
     _resetIdleTimer();
     return _nlPipeline(
       [{role:'system', content:prompt}, {role:'user', content:raw}],
@@ -10869,8 +10925,9 @@ function startApp() {
     // Reactive data counts — update when training data changes
     var stNlN = useState(function(){return _getNLTrainCount();}), nlN=stNlN[0], setNlN=stNlN[1];
     var stClN = useState(function(){return _getClashTrainCount();}), clashN=stClN[0], setClashN=stClN[1];
+    var stRunN = useState(function(){try{return JSON.parse(localStorage.getItem('cc_detection_runs')||'[]').length;}catch(e){return 0;}}), runN=stRunN[0], setRunN=stRunN[1];
     useEffect(function(){
-      function sync(){ setNlN(_getNLTrainCount()); setClashN(_getClashTrainCount()); }
+      function sync(){ setNlN(_getNLTrainCount()); setClashN(_getClashTrainCount()); try{setRunN(JSON.parse(localStorage.getItem('cc_detection_runs')||'[]').length);}catch(e){setRunN(0);} }
       window.addEventListener('cc-training-data-change', sync);
       return function(){ window.removeEventListener('cc-training-data-change', sync); };
     },[]);
@@ -10899,7 +10956,7 @@ function startApp() {
         </button>`}
       </div>
       ${s.trainingMode && isExpanded && function(){
-        var anyData = hasData || nlN > 0 || clashN > 0;
+        var anyData = hasData || nlN > 0 || clashN > 0 || runN > 0;
         return html`<div style=${{marginTop:'.35rem',
           background:'var(--overlay-bg-strong)',border:'1px solid rgba(124,58,237,.4)',borderRadius:10,
           boxShadow:'0 4px 16px rgba(0,0,0,.3)',width:260,padding:'.5rem'}}>
@@ -10915,7 +10972,13 @@ function startApp() {
           </div>
           <!-- Data recorded -->
           <div style=${{fontSize:'0.57rem',color:'var(--text-faint)',marginBottom:'.25rem'}}>
-            ${clashN>0?clashN+' clash record'+(clashN!==1?'s':''):''}${clashN>0&&nlN>0?' \u2022 ':''}${nlN>0?nlN+' NL command'+(nlN!==1?'s':''):''}${!clashN&&!nlN?'No data recorded yet':''}
+            ${function(){
+              var parts=[];
+              if(runN>0) parts.push(runN+' detection run'+(runN!==1?'s':''));
+              if(clashN>0) parts.push(clashN+' clash verdict'+(clashN!==1?'s':''));
+              if(nlN>0) parts.push(nlN+' NL command'+(nlN!==1?'s':''));
+              return parts.length ? parts.join(' \u2022 ') : 'No data recorded yet';
+            }()}
           </div>
           <!-- Status -->
           ${dataConsent && html`<div style=${{fontSize:'0.57rem',color:'#a78bfa',marginBottom:'.3rem'}}>Data sent periodically and at end of session.</div>`}
@@ -10924,7 +10987,7 @@ function startApp() {
           <div style=${{display:'flex',gap:'.25rem',flexWrap:'wrap'}}>
             ${!showDelConfirm && html`<button onClick=${function(){if(anyData)setShowDelConfirm(true);}} disabled=${!anyData}
               style=${{...S_BTN,fontSize:'0.63rem',padding:'.2rem .4rem',background:'var(--bg-secondary)',color:anyData?'var(--text-secondary)':'var(--text-faint)',border:'1px solid var(--border)',flex:1}}>Delete all</button>`}
-            ${showDelConfirm && html`<button onClick=${function(){doDelete();_clearClashTrainStore();_clearNLTrainStore();setNlN(0);setClashN(0);setShowDelConfirm(false);}}
+            ${showDelConfirm && html`<button onClick=${function(){doDelete();_clearClashTrainStore();_clearNLTrainStore();try{localStorage.removeItem('cc_detection_runs');}catch(e){}setNlN(0);setClashN(0);setRunN(0);setShowDelConfirm(false);}}
               style=${{...S_BTN,fontSize:'0.63rem',padding:'.2rem .4rem',background:'#ef4444',color:'#fff',border:'none',flex:1}}>Confirm delete all?</button>`}
           </div>
         </div>`;
@@ -11008,6 +11071,25 @@ function startApp() {
       _clearNLTrainStore();
     }).catch(function(){});
     _beaconNLSentIdx = store.length;
+  }
+
+  function _beaconSendDetectionRuns() {
+    try {
+      if(localStorage.getItem('cc_data_consent')!=='granted') return;
+    } catch(e){ return; }
+    var runs = [];
+    try { runs = JSON.parse(localStorage.getItem('cc_detection_runs')||'[]'); } catch(e){ return; }
+    if (!runs.length) return;
+    var payload = {type:'detection_runs', version:'1.0', app_version:CC_VERSION.v, count:runs.length, runs:runs};
+    var json = JSON.stringify(payload);
+    var fd = new FormData();
+    fd.append('entry.39972213', json);
+    var _gf = ['https://docs','google','com/forms/d/e/','1FAIpQLSdSMbfjcApszFebuvQXHKiWhH-zQJhk','_38m1vvMQ-_bMP_6eA'];
+    var baseUrl = _gf[0]+'.'+_gf[1]+'.'+_gf[2]+_gf[3]+_gf[4];
+    fetch(baseUrl+'/formResponse',{method:'POST',mode:'no-cors',body:fd}).then(function(){
+      try { localStorage.removeItem('cc_detection_runs'); } catch(e){}
+      window.dispatchEvent(new Event('cc-training-data-change'));
+    }).catch(function(){});
   }
 
   function TrainingModePopup(props) {
@@ -11639,6 +11721,7 @@ function startApp() {
         // Phase 0.5: beacon training data on tab close
         _beaconSendTrainingData(cur.clashes, cur.detectionSettings, cur.models, cur.prefs.defaultTolerances, cur.issues);
         _beaconSendNLTrainingData(cur.models);
+        _beaconSendDetectionRuns();
       }
       window.addEventListener('beforeunload', onUnload);
       return function(){ window.removeEventListener('beforeunload', onUnload); };

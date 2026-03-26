@@ -1,5 +1,17 @@
 # Changelog
 
+## v3.1.12 (2026-03-26)
+- Include semantic filter negatives in detection run summary
+
+## v3.1.11 (2026-03-26)
+- Rename NL training path labels: regex→matched, no-llm→unmatched
+
+## v3.1.10 (2026-03-26)
+- Collect detection run summaries as training data
+
+## v3.1.9 (2026-03-26)
+- Don't store incomplete clash training records at all
+
 ## v3.1.8 (2026-03-26)
 - Only count user-confirmed/denied clashes in training data counter
 
