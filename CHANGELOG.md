@@ -1,5 +1,8 @@
 # Changelog
 
+## v3.1.9 (2026-03-26)
+- Don't store incomplete clash training records at all
+
 ## v3.1.8 (2026-03-26)
 - Only count user-confirmed/denied clashes in training data counter
 
