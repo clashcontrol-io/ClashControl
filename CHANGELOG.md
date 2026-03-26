@@ -1,5 +1,8 @@
 # Changelog
 
+## v3.2.23 (2026-03-26)
+- Reset markers to off when switching projects
+
 ## v3.2.22 (2026-03-26)
 - Add time-based fun messages for long-running clash detection
 

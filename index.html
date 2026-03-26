@@ -250,7 +250,7 @@ window.onload = function() {
 
 function startApp() {
   // ── Version (auto-updated by pre-commit hook) ──
-  var CC_VERSION = {v:'3.2.22',hash:'b7317e6',date:'2026-03-26T17:58:55Z'};
+  var CC_VERSION = {v:'3.2.23',hash:'0eff56f',date:'2026-03-26T17:59:50Z'};
 
   // ── AI Data Collection (Phase 0.5) ──
   var CLASH_DATA_ENDPOINT = 'https://your-server.com/api/clash-data';
@@ -11175,6 +11175,14 @@ function startApp() {
       if (!text) return;
       setMsgs(function(m){ return m.concat([{role:'user', text:text}]); });
       setInput('');
+      // "stop" / "cancel" / "clear" — reset chat state, cancel any pending conversation
+      if (/^(?:stop|cancel|clear|reset|nevermind)$/i.test(text)) {
+        clashCtxRef.current = null;
+        nlFeedbackRef.current = null;
+        setLoading(false);
+        setMsgs(function(m){ return m.concat([{role:'assistant', text:'Stopped. What would you like to do?'}]); });
+        return;
+      }
       // Check if this is a response to NL feedback prompt
       var feedbackResult = _checkNLFeedback(text);
       if (feedbackResult) {
