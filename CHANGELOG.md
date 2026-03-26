@@ -1,5 +1,8 @@
 # Changelog
 
+## v3.2.20 (2026-03-26)
+- Show detection progress percentage in NL command bar
+
 ## v3.2.19 (2026-03-26)
 - Delay detection start 80ms so 'Running...' message paints first
 

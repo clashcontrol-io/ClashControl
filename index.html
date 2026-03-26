@@ -250,7 +250,7 @@ window.onload = function() {
 
 function startApp() {
   // ── Version (auto-updated by pre-commit hook) ──
-  var CC_VERSION = {v:'3.2.19',hash:'fdeba5b',date:'2026-03-26T17:55:49Z'};
+  var CC_VERSION = {v:'3.2.20',hash:'b1dd634',date:'2026-03-26T17:56:27Z'};
 
   // ── AI Data Collection (Phase 0.5) ──
   var CLASH_DATA_ENDPOINT = 'https://your-server.com/api/clash-data';
@@ -11378,7 +11378,11 @@ function startApp() {
           animation:(!isDetecting||detectPct===0)?'nlBorderPulse 2s ease-in-out infinite':'none'
         }}>
           <span class="spin" style=${{display:'inline-block',width:'.7rem',height:'.7rem',borderRadius:'50%',border:'1.5px solid rgba(96,165,250,.3)',borderTopColor:'#60a5fa',flexShrink:0}}></span>
-          <span style=${{fontSize:'0.85rem',color:'#60a5fa',fontWeight:500}}>${isDetecting ? 'Running clash detection'+(detectPct>0?' — '+detectPct+'%':'')+'…' : 'Model loading…'}</span>
+          <span style=${{fontSize:'0.85rem',color:'#60a5fa',fontWeight:500}}>${isDetecting ? (function(){
+            var p=detectPct;
+            var msg=p===0?'Running clash detection':p<15?'Running clash detection':p<30?'Crunching triangles':p<45?'Working hard':p<60?'Running as fast as I can':p<75?'Almost halfway… just kidding, past it':p<85?'So many clashes to check':p<93?'Wrapping things up':p>=93?'Final stretch':'Detecting';
+            return msg+(p>0?' — '+p+'%':'')+'…';
+          }()) : 'Model loading…'}</span>
         </div>
       </div>` : html`<div style=${{
         padding:'.55rem .7rem', borderTop:'1px solid '+borderCol,
