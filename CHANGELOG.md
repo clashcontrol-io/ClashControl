@@ -1,5 +1,8 @@
 # Changelog
 
+## v2.12.11 (2026-03-26)
+- Expand _IFC_SHORT to cover all IFC types from IFC_TYPE_NAMES map
+
 ## v2.12.10 (2026-03-26)
 - Add self-clash NL commands: self:discipline, intra, within same discipline
 

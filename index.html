@@ -257,7 +257,7 @@ window.onload = function() {
 
 function startApp() {
   // ── Version (auto-updated by pre-commit hook) ──
-  var CC_VERSION = {v:'2.12.10',hash:'5374776',date:'2026-03-26T06:35:42Z'};
+  var CC_VERSION = {v:'2.12.11',hash:'544841e',date:'2026-03-26T06:39:07Z'};
 
   // ── AI Data Collection (Phase 0.5) ──
   var CLASH_DATA_ENDPOINT = 'https://your-server.com/api/clash-data';
@@ -9529,23 +9529,57 @@ function startApp() {
       }
       return updRules;
     }
+    // Fuzzy model resolver — matches against loaded model names, tags, and
+    // disciplines dynamically. No hardcoded name lists; works with any language
+    // or custom labels the user assigns (e.g. "bouwkundig", "electrical", "water").
+    function _fuzzyScore(needle, haystack) {
+      if (!haystack) return 0;
+      var n = needle.toLowerCase(), h = haystack.toLowerCase();
+      if (h === n) return 100;                        // exact
+      if (h.indexOf(n) === 0) return 90;              // starts with
+      if (h.indexOf(n) !== -1) return 80;             // contains
+      if (n.indexOf(h) !== -1) return 70;             // needle contains haystack (short tag)
+      // Strip common prefixes/suffixes and retry
+      var stripped = n.replace(/[-_ ]+/g,'');
+      var hStripped = h.replace(/[-_ ]+/g,'');
+      if (hStripped === stripped) return 85;
+      if (hStripped.indexOf(stripped) !== -1) return 75;
+      if (stripped.indexOf(hStripped) !== -1) return 65;
+      return 0;
+    }
     function resolveModelSingle(h) {
-      h = h.trim().toLowerCase();
-      if (!h || h === 'all') return null;
-      // Try matching by model name first
-      var byName = s.models.find(function(m){ return m.name.toLowerCase().indexOf(h) !== -1; });
-      if (byName) return {type:'model', id:byName.id, name:byName.name};
-      // Try matching by custom tag
-      var byTag = s.models.filter(function(m){ return m.tag && m.tag.toLowerCase() === h; });
-      if (byTag.length) return {type:'tag', id:'tag:'+h, name:byTag.map(function(m){return m.name;}).join('+')};
-      // Try matching by discipline label or id
-      var disc = DISC.find(function(d){ return d.id.toLowerCase()===h || d.label.toLowerCase()===h
-        || h.indexOf(d.id.toLowerCase())!==-1 || h.indexOf(d.label.toLowerCase())!==-1; });
-      if (disc) {
-        var matching = s.models.filter(function(m){ return m.discipline===disc.id; });
-        if (matching.length) return {type:'disc', id:'disc:'+disc.id, name:disc.label+' model'+(matching.length>1?'s':'')};
-      }
-      return null;
+      h = h.trim();
+      if (!h || /^all$/i.test(h)) return null;
+      var hl = h.toLowerCase();
+      // 1. Score every loaded model by name, tag, and discipline
+      var best = null, bestScore = 0;
+      s.models.forEach(function(m) {
+        var scores = [
+          _fuzzyScore(hl, m.name),
+          m.tag ? _fuzzyScore(hl, m.tag) : 0
+        ];
+        var top = Math.max.apply(null, scores);
+        if (top > bestScore) { bestScore = top; best = {type:'model', id:m.id, name:m.name}; }
+        // If tag matches, group all models with the same tag
+        if (m.tag && _fuzzyScore(hl, m.tag) >= 80) {
+          var tagged = s.models.filter(function(mm){ return mm.tag && mm.tag.toLowerCase() === m.tag.toLowerCase(); });
+          if (tagged.length > 1 && _fuzzyScore(hl, m.tag) > bestScore) {
+            bestScore = _fuzzyScore(hl, m.tag);
+            best = {type:'tag', id:'tag:'+m.tag.toLowerCase(), name:tagged.map(function(mm){return mm.name;}).join('+')};
+          }
+        }
+      });
+      // 2. Score disciplines (using both id and label — works for any language)
+      DISC.forEach(function(dd) {
+        var ds = Math.max(_fuzzyScore(hl, dd.id), _fuzzyScore(hl, dd.label));
+        if (ds > bestScore && s.models.some(function(m){return m.discipline===dd.id;})) {
+          bestScore = ds;
+          var matching = s.models.filter(function(m){return m.discipline===dd.id;});
+          best = {type:'disc', id:'disc:'+dd.id, name:dd.label+' model'+(matching.length>1?'s':'')};
+        }
+      });
+      // Require a minimum confidence to avoid false matches on short/ambiguous input
+      return bestScore >= 65 ? best : null;
     }
     function resolveModel(hint) {
       if (!hint || /^all$/i.test(hint.trim())) return null;
@@ -9640,34 +9674,26 @@ function startApp() {
     if (betweenMatch && /check|compare|find|detect|look|scan|anal[yz]se?|run|clashes?|conflicts?|collisions?/.test(text))
       return runSetup(betweenMatch[1].trim(), betweenMatch[2].split(/\s+with\s+/)[0].trim());
 
-    // ── Word-based: scan for action words + discipline/model keywords ──
-    // Handles loose input like "run architectural structural", "check mep structural 50mm"
+    // ── Word-based: scan for action words + model/tag/discipline keywords ──
+    // Uses the same fuzzy resolver — works with any custom labels or language
     var actionWords = /\b(?:run|start|do|execute|detect|find|check|scan|re-?run|again|clashcontrol|clash)\b/i;
     if (actionWords.test(text)) {
-      // Collect all words that match a discipline or model name
+      var NOISE = /^(?:run|start|do|execute|detect|find|check|scan|again|clash|clashcontrol|on|the|with|and|for|of|a|an|model|models|re-?run|clashes?|detection|conflicts?|collisions?|hard|soft|near|miss|all)$/;
       var words = text.toLowerCase().replace(/[,;:!?.]+/g,' ').split(/\s+/);
       var foundRefs = [];
-      var usedWords = {};
+      var usedIds = {};
       words.forEach(function(w){
-        if(usedWords[w]) return;
-        // Check disciplines
-        var disc = DISC.find(function(dd){ return dd.id===w || dd.label.toLowerCase()===w; });
-        if(disc && s.models.some(function(m){return m.discipline===disc.id;})){
-          foundRefs.push({type:'disc', id:'disc:'+disc.id, name:disc.label+' model', word:w});
-          usedWords[w]=true; return;
-        }
-        // Check model names (skip noise words)
-        if(/^(?:run|start|do|execute|detect|find|check|scan|again|clash|clashcontrol|on|the|with|and|for|of|a|an|model|models|re-?run|clashes|detection|conflicts?|collisions?)$/.test(w)) return;
-        var byName = s.models.find(function(m){ return m.name.toLowerCase().indexOf(w)!==-1; });
-        if(byName && !usedWords[byName.id]){
-          foundRefs.push({type:'model', id:byName.id, name:byName.name, word:w});
-          usedWords[byName.id]=true;
+        if (NOISE.test(w) || w.length < 2) return;
+        var ref = resolveModelSingle(w);
+        if (ref && !usedIds[ref.id]) {
+          foundRefs.push({ref:ref, word:w});
+          usedIds[ref.id] = true;
         }
       });
       if(foundRefs.length>=2) return runSetup(foundRefs[0].word, foundRefs[1].word);
       if(foundRefs.length===1) {
         if(!s.models.length) return 'No models loaded yet.';
-        var ref = foundRefs[0];
+        var ref = foundRefs[0].ref;
         var updSingle = applyClashOpts({ modelA:ref.id, modelB:'all' });
         return {_clashSetup:true, rules:updSingle, nameA:ref.name, nameB:'All models'};
       }
