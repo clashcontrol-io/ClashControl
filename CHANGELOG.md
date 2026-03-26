@@ -1,5 +1,8 @@
 # Changelog
 
+## v3.2.27 (2026-03-26)
+- Optimize spatial hash + add IFC load profiler
+
 ## v3.2.26 (2026-03-26)
 - Add detection profiler — console table + NL chat summary
 

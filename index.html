@@ -250,7 +250,7 @@ window.onload = function() {
 
 function startApp() {
   // ── Version (auto-updated by pre-commit hook) ──
-  var CC_VERSION = {v:'3.2.26',hash:'1d0cd3f',date:'2026-03-26T19:00:10Z'};
+  var CC_VERSION = {v:'3.2.27',hash:'ccd2f12',date:'2026-03-26T19:12:10Z'};
 
   // ── AI Data Collection (Phase 0.5) ──
   var CLASH_DATA_ENDPOINT = 'https://your-server.com/api/clash-data';
@@ -1442,11 +1442,12 @@ function startApp() {
             gd = api.GetGeometry(modelID, placed.geometryExpressID);
             var verts = api.GetVertexArray(gd.GetVertexData(), gd.GetVertexDataSize());
             var indices = api.GetIndexArray(gd.GetIndexData(), gd.GetIndexDataSize());
-            var pos = new Float32Array(verts.length/2), nrm = new Float32Array(verts.length/2);
-            for (var j = 0; j < verts.length; j += 6) {
-              var k = j/2;
-              pos[k]=verts[j]; pos[k+1]=verts[j+1]; pos[k+2]=verts[j+2];
-              nrm[k]=verts[j+3]; nrm[k+1]=verts[j+4]; nrm[k+2]=verts[j+5];
+            var nVerts = verts.length / 6;
+            var pos = new Float32Array(nVerts * 3), nrm = new Float32Array(nVerts * 3);
+            // Fast deinterleave: read src once per component, write dst sequentially
+            for (var v = 0, s = 0, d = 0; v < nVerts; v++, s += 6, d += 3) {
+              pos[d]=verts[s]; pos[d+1]=verts[s+1]; pos[d+2]=verts[s+2];
+              nrm[d]=verts[s+3]; nrm[d+1]=verts[s+4]; nrm[d+2]=verts[s+5];
             }
             var geo = new THREE.BufferGeometry();
             geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
