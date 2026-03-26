@@ -1,5 +1,8 @@
 # Changelog
 
+## v3.1.31 (2026-03-26)
+- Move NL panel inside viewport div so it aligns with training pill
+
 ## v3.1.30 (2026-03-26)
 - Fix training data re-send + align training pill with NL button
 

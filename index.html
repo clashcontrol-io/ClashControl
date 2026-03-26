@@ -141,6 +141,7 @@
     select,select option{background:var(--bg-tertiary);color:var(--text-primary);border:1px solid var(--border)}
     .spin{animation:sp 1s linear infinite;display:inline-block}@keyframes sp{to{transform:rotate(360deg)}}
     @keyframes nlDots{0%,20%{opacity:.2}50%{opacity:1}80%,100%{opacity:.2}}
+    @keyframes roadmapGlow{0%,100%{text-shadow:0 0 4px rgba(167,139,250,.3);opacity:.7}50%{text-shadow:0 0 10px rgba(167,139,250,.7);opacity:1}}
     @keyframes nlBorderPulse{0%,100%{box-shadow:0 8px 32px rgba(0,0,0,.35),0 0 0 0 rgba(96,165,250,0),0 0 12px rgba(96,165,250,.15);border-color:rgba(96,165,250,.5)}50%{box-shadow:0 8px 32px rgba(0,0,0,.35),0 0 0 3px rgba(96,165,250,.35),0 0 22px rgba(96,165,250,.35);border-color:rgba(96,165,250,.9)}}
     @keyframes nlBorderReady{0%{box-shadow:0 8px 32px rgba(0,0,0,.35),0 0 0 4px rgba(34,197,94,.5),0 0 20px rgba(34,197,94,.4)}100%{box-shadow:0 8px 32px rgba(0,0,0,.35),0 0 0 0 rgba(34,197,94,0),0 0 0 rgba(34,197,94,0)}}
     .lc2{display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
@@ -249,7 +250,7 @@ window.onload = function() {
 
 function startApp() {
   // ── Version (auto-updated by pre-commit hook) ──
-  var CC_VERSION = {v:'3.1.30',hash:'e1f40e7',date:'2026-03-26T13:06:01Z'};
+  var CC_VERSION = {v:'3.1.31',hash:'6227a7a',date:'2026-03-26T16:19:19Z'};
 
   // ── AI Data Collection (Phase 0.5) ──
   var CLASH_DATA_ENDPOINT = 'https://your-server.com/api/clash-data';
@@ -456,6 +457,9 @@ function startApp() {
           var dClash=s.clashes.find(function(c){return c.id===a.id;});
           if(dClash) _saveDeniedClash(dClash);
           var dVisible=s.clashes.filter(function(c){return c.id!==a.id&&c.status!=='denied';});
+          // Apply current sort order so next clash matches what user sees in the list
+          var dSortFn=SORT_FNS&&SORT_FNS[s.clashSortBy]||null;
+          if(dSortFn) dVisible=dVisible.slice().sort(dSortFn);
           if(dClash){
             var dIdx=dVisible.indexOf(dClash);if(dIdx<0)dIdx=0;
             var dNext=dVisible[Math.min(dIdx,dVisible.length-1)]||null;
@@ -513,9 +517,15 @@ function startApp() {
               objectTypeA:cClash.objectTypeA, objectTypeB:cClash.objectTypeB,
               created:Date.now()
             };
-            // Find next clash in remaining list
-            var clashIdx = s.clashes.indexOf(cClash);
-            var nextClash = remainClashes[Math.min(clashIdx, remainClashes.length-1)] || null;
+            // Find next clash in remaining list, respecting current sort order
+            var cSortFn=SORT_FNS&&SORT_FNS[s.clashSortBy]||null;
+            var sortedRemain = cSortFn ? remainClashes.slice().sort(cSortFn) : remainClashes;
+            var clashIdx = cSortFn ? sortedRemain.findIndex(function(c2){
+              // Find position where the confirmed clash would have been in sorted order
+              return cSortFn(c2, cClash) >= 0;
+            }) : s.clashes.indexOf(cClash);
+            if(clashIdx<0) clashIdx=0;
+            var nextClash = sortedRemain[Math.min(clashIdx, sortedRemain.length-1)] || null;
             var nextId = nextClash ? nextClash.id : null;
             // Schedule camera fly-to for the next clash
             if(nextClash) setTimeout(function(){
@@ -2591,7 +2601,7 @@ function startApp() {
       var existing = store[id];
       // Keep strongest label (higher wins, except explicit feedback always wins)
       if (existing && existing.label != null && label != null) {
-        var srcPri = {explicit_feedback:3, issue_created:2, status_change:1, semantic_filter:0};
+        var srcPri = {explicit_feedback:3, verdict:3, thumbs_feedback:3, issue_created:2, status_change:1, semantic_filter:0};
         if ((srcPri[labelSource]||0) < (srcPri[existing.label_source]||0)) return;
         if ((srcPri[labelSource]||0) === (srcPri[existing.label_source]||0) && label <= existing.label) return;
       }
@@ -2628,8 +2638,8 @@ function startApp() {
     var json = JSON.stringify(payload);
     onStatus('sending', null);
     var fd = new FormData();
-    fd.append('entry.1450623071', json);
-    var _gf = ['https://docs','google','com/forms/d/e/','1FAIpQLSdSMbfjcApszFebuvQXHKiWhH-zQJhk','_38m1vvMQ-_bMP_6eA'];
+    fd.append('entry.1252313993', json);
+    var _gf = ['https://docs','google','com/forms/d/e/','1FAIpQLSc51xdQw_8JY2lN1aw8OZOT2Jzdx42m','vilJzqMGVw4tXo7wtA'];
     var baseUrl = _gf[0]+'.'+_gf[1]+'.'+_gf[2]+_gf[3]+_gf[4];
     fetch(baseUrl+'/formResponse',{method:'POST',mode:'no-cors',body:fd}).then(function(){
       _clearClashTrainStore();
@@ -2639,7 +2649,7 @@ function startApp() {
         var iframe=document.createElement('iframe');iframe.name='cc_clash_frame';iframe.style.cssText='display:none';
         document.body.appendChild(iframe);
         var form=document.createElement('form');form.method='POST';form.action=baseUrl+'/formResponse';form.target='cc_clash_frame';
-        var input=document.createElement('input');input.type='hidden';input.name='entry.1450623071';input.value=json;
+        var input=document.createElement('input');input.type='hidden';input.name='entry.1252313993';input.value=json;
         form.appendChild(input);document.body.appendChild(form);form.submit();
         setTimeout(function(){document.body.removeChild(form);document.body.removeChild(iframe);},5000);
         onStatus('ok',null);
@@ -2771,8 +2781,8 @@ function startApp() {
     var json = JSON.stringify(payload);
     onStatus('sending',null);
     var fd = new FormData();
-    fd.append('entry.908589612', json);
-    var _gf = ['https://docs','google','com/forms/d/e/','1FAIpQLSdSMbfjcApszFebuvQXHKiWhH-zQJhk','_38m1vvMQ-_bMP_6eA'];
+    fd.append('entry.65932609', json);
+    var _gf = ['https://docs','google','com/forms/d/e/','1FAIpQLSc51xdQw_8JY2lN1aw8OZOT2Jzdx42m','vilJzqMGVw4tXo7wtA'];
     var baseUrl = _gf[0]+'.'+_gf[1]+'.'+_gf[2]+_gf[3]+_gf[4];
     fetch(baseUrl+'/formResponse',{method:'POST',mode:'no-cors',body:fd}).then(function(){
       _clearNLTrainStore();
@@ -2782,7 +2792,7 @@ function startApp() {
         var iframe=document.createElement('iframe');iframe.name='cc_nl_frame';iframe.style.cssText='display:none';
         document.body.appendChild(iframe);
         var form=document.createElement('form');form.method='POST';form.action=baseUrl+'/formResponse';form.target='cc_nl_frame';
-        var input=document.createElement('input');input.type='hidden';input.name='entry.908589612';input.value=json;
+        var input=document.createElement('input');input.type='hidden';input.name='entry.65932609';input.value=json;
         form.appendChild(input);document.body.appendChild(form);form.submit();
         setTimeout(function(){document.body.removeChild(form);document.body.removeChild(iframe);},5000);
         onStatus('ok',null);
@@ -2893,9 +2903,9 @@ function startApp() {
     var json = JSON.stringify(payload);
     onStatus('sending', null);
     var fd = new FormData();
-    fd.append('entry.1450623071', json);
+    fd.append('entry.1252313993', json);
     // URL split to avoid heuristic phishing scanners flagging a Google Forms endpoint in static source
-    var _gf = ['https://docs','google','com/forms/d/e/','1FAIpQLSdSMbfjcApszFebuvQXHKiWhH-zQJhk','_38m1vvMQ-_bMP_6eA'];
+    var _gf = ['https://docs','google','com/forms/d/e/','1FAIpQLSc51xdQw_8JY2lN1aw8OZOT2Jzdx42m','vilJzqMGVw4tXo7wtA'];
     var baseUrl = _gf[0]+'.'+_gf[1]+'.'+_gf[2]+_gf[3]+_gf[4];
 
     // Try fetch first
@@ -2915,7 +2925,7 @@ function startApp() {
         form.action = baseUrl+'/formResponse';
         form.target = 'cc_submit_frame';
         var input = document.createElement('input');
-        input.type = 'hidden'; input.name = 'entry.1450623071'; input.value = json;
+        input.type = 'hidden'; input.name = 'entry.1252313993'; input.value = json;
         form.appendChild(input);
         document.body.appendChild(form);
         form.submit();
@@ -3047,7 +3057,7 @@ function startApp() {
     el.addEventListener('mousedown', function(e) {
       if(_sboxDragging) return; // don't orbit while dragging section box handles
       if (e.button===0) dragging=true;
-      if (e.button===1) { panning=true; e.preventDefault(); }
+      if (e.button===1) { panning=true; e.preventDefault(); el.style.cursor='move'; }
       if (e.button===2) return; // reserved for context menu
       lx=e.clientX; ly=e.clientY; e.preventDefault();
     });
@@ -3061,7 +3071,7 @@ function startApp() {
         target.addScaledVector(right,-dx*sp); target.y+=dy*sp; orbit.apply(); invalidate();
       }
     });
-    window.addEventListener('mouseup', function(){dragging=false;panning=false});
+    window.addEventListener('mouseup', function(){dragging=false;if(panning){panning=false;el.style.cursor='';}});
     el.addEventListener('wheel', function(e){
       // Ctrl+scroll adjusts floor plan cut height
       if(e.ctrlKey && window._ccFloorPlanActive && window._ccDispatch){
@@ -5165,7 +5175,10 @@ function startApp() {
         function fmtArea(v){return typeof v==='number'?(v>=1?v.toFixed(2)+' m²':(v*10000).toFixed(0)+' cm²'):String(v);}
         function fmtVol(v){return typeof v==='number'?(v>=0.01?v.toFixed(3)+' m³':(v*1000000).toFixed(0)+' cm³'):String(v);}
         // Collect all pset properties, clean up names, group logically
+        // Deduplicate: track seen key+value pairs so the same property (e.g. Length=650)
+        // isn't shown multiple times across different psets
         var propSections = [];
+        var _seenPropKV = {};
         epP.forEach(function(setName){
           var ps = ep.psets[setName]; var keys = Object.keys(ps);
           // Skip dimension psets that fully duplicate quantities
@@ -5173,9 +5186,17 @@ function startApp() {
             var allDup = keys.every(function(k){return q2[k]!=null;});
             if(allDup) return;
           }
+          // Filter out properties already seen with the same value in a previous pset
+          var uniqueKeys = keys.filter(function(k){
+            var sig = k + '=' + String(ps[k]);
+            if (_seenPropKV[sig]) return false;
+            _seenPropKV[sig] = true;
+            return true;
+          });
+          if (!uniqueKeys.length) return; // Skip entirely empty sections after dedup
           // Clean up section name: remove Pset_ prefix, split CamelCase
           var cleanName = setName.replace(/^Pset_/,'').replace(/^Qto_/,'').replace(/([a-z])([A-Z])/g,'$1 $2');
-          propSections.push({name:cleanName,props:keys.map(function(k){return {k:k,v:String(ps[k])};})});
+          propSections.push({name:cleanName,props:uniqueKeys.map(function(k){return {k:k,v:String(ps[k])};})});
         });
         // Friendly type name: "IfcWallStandardCase" → "Wall"
         var typeName = String(ep&&ep.ifcType||'Element').replace(/^Ifc/,'').replace(/StandardCase$/,'').replace(/([a-z])([A-Z])/g,'$1 $2');
@@ -10645,9 +10666,29 @@ function startApp() {
         if (ctx.asked === 'confirm') {
           if (/yes|yeah|yep|sure|ok|go|run|start|do it|proceed|execute/i.test(tl)) {
             clashCtxRef.current = null;
-            return {_clashSetup:true, rules:ctx.rules, nameA:ctx.nameA, nameB:ctx.nameB, _multiSelf:ctx._multiSelf};
+            return {_clashSetup:true, _runNow:true, rules:ctx.rules, nameA:ctx.nameA, nameB:ctx.nameB, _multiSelf:ctx._multiSelf};
           }
-          if (/no|nah|cancel|stop|abort/i.test(tl)) { clashCtxRef.current = null; return 'Clash setup cancelled.'; }
+          if (/cancel|stop|abort/i.test(tl)) { clashCtxRef.current = null; return 'Clash setup cancelled.'; }
+          if (/no|nah|nope|change|adjust|edit|modify/i.test(tl)) {
+            ctx.asked = 'adjust';
+            clashCtxRef.current = ctx;
+            return 'What would you like to change?\n- **Sets** (e.g. "check structural vs architectural")\n- **Max gap** (e.g. "set gap to 50mm" or "no gap")\n- **Self-clashes** (e.g. "include self-clashes")\n- **Hard clashes** / **Duplicates**\n- **Exclude types** (e.g. "exclude IfcWall")\n\nOr say **cancel** to stop.';
+          }
+        }
+        if (ctx.asked === 'adjust') {
+          if (/cancel|stop|abort|nevermind/i.test(tl)) { clashCtxRef.current = null; return 'Clash setup cancelled.'; }
+          // Parse adjustments
+          var gapMatch = tl.match(/(?:gap|distance|tolerance|near)[^\d]*(\d+(?:\.\d+)?)\s*(mm|cm|m(?!m))?/);
+          if (gapMatch) { var gu = gapMatch[2]||'mm'; ctx.rules.maxGap = gu==='cm'?Math.round(parseFloat(gapMatch[1])*10):gu==='m'?Math.round(parseFloat(gapMatch[1])*1000):Math.round(parseFloat(gapMatch[1])); }
+          if (/no\s*(gap|near|clearance)|gap\s*0|zero\s*gap|hard\s*only/i.test(tl)) { ctx.rules.maxGap = 0; }
+          if (/include\s*self|self.?clash.*on|self.?clash.*yes|enable\s*self/i.test(tl)) { ctx.rules.excludeSelf = false; }
+          if (/exclude\s*self|self.?clash.*off|self.?clash.*no|disable\s*self|no\s*self|cross.?model/i.test(tl)) { ctx.rules.excludeSelf = true; }
+          if (/(?:add|include|enable|with)\s*dup/i.test(tl)) { ctx.rules.duplicates = true; }
+          if (/(?:no|remove|disable|without)\s*dup/i.test(tl)) { ctx.rules.duplicates = false; }
+          if (/(?:no|disable|remove|without)\s*hard/i.test(tl)) { ctx.rules.hard = false; }
+          if (/(?:add|enable|include|with)\s*hard/i.test(tl)) { ctx.rules.hard = true; }
+          ctx.asked = null;
+          return _askNext(ctx);
         }
         if (answered) { ctx.asked = null; } // Continue to next question
         else if (ctx.asked) {
@@ -10707,7 +10748,15 @@ function startApp() {
       var ctxResult = _clashConverse(text, null);
       if (ctxResult !== null && ctxResult !== undefined) {
         if (ctxResult && ctxResult._clashSetup) {
-          setMsgs(function(m){ return m.concat([{role:'assistant', setup:ctxResult}]); });
+          if (ctxResult._runNow) {
+            var rNameA = ctxResult.nameA, rNameB = ctxResult.nameB, rRules = ctxResult.rules;
+            setMsgs(function(m){ return m.concat([{role:'assistant', text:'Running: **' + rNameA + '** vs **' + rNameB + '**'
+              + (rRules.hard?' | hard':'') + (rRules.maxGap?' | max gap '+rRules.maxGap+'mm':'')
+              + (rRules.duplicates?' | duplicates':'') + (rRules.excludeSelf?' | cross-model only':'') + '…'}]); });
+            executeDetection(rRules);
+          } else {
+            setMsgs(function(m){ return m.concat([{role:'assistant', setup:ctxResult}]); });
+          }
         } else if (typeof ctxResult === 'string') {
           setMsgs(function(m){ return m.concat([{role:'assistant', text:ctxResult}]); });
         }
@@ -11189,10 +11238,25 @@ function startApp() {
           <!-- Status -->
           ${dataConsent && html`<div style=${{fontSize:'0.57rem',color:'#a78bfa',marginBottom:'.3rem'}}>Data sent periodically and at end of session.</div>`}
           ${!dataConsent && html`<div style=${{fontSize:'0.57rem',color:'var(--text-faint)',marginBottom:'.3rem'}}>Data stays local. Enable toggle to share.</div>`}
-          <!-- Delete -->
+          <!-- Send Now / Delete -->
           <div style=${{display:'flex',gap:'.25rem',flexWrap:'wrap'}}>
+            ${!showDelConfirm && html`<button onClick=${function(){
+              if(!anyData) return;
+              // Trigger all beacon sends immediately
+              try{
+                var cur=window._ccLatestState;
+                if(cur){
+                  _beaconSendTrainingData(cur.clashes, cur.detectionSettings, cur.models, cur.prefs.defaultTolerances, cur.issues);
+                  _beaconSendNLTrainingData(cur.models);
+                }
+                _beaconSendDetectionRuns();
+              }catch(e){}
+            }} disabled=${!anyData||!dataConsent}
+              style=${{...S_BTN,fontSize:'0.63rem',padding:'.2rem .4rem',background:anyData&&dataConsent?'rgba(124,58,237,.25)':'var(--bg-secondary)',color:anyData&&dataConsent?'#c4b5fd':'var(--text-faint)',border:'1px solid '+(anyData&&dataConsent?'rgba(124,58,237,.4)':'var(--border)'),flex:1}}>Send now</button>`}
             ${!showDelConfirm && html`<button onClick=${function(){if(anyData)setShowDelConfirm(true);}} disabled=${!anyData}
-              style=${{...S_BTN,fontSize:'0.63rem',padding:'.2rem .4rem',background:'var(--bg-secondary)',color:anyData?'var(--text-secondary)':'var(--text-faint)',border:'1px solid var(--border)',flex:1}}>Delete all</button>`}
+              style=${{...S_BTN,fontSize:'0.63rem',padding:'.2rem .35rem',background:'none',color:anyData?'var(--text-faint)':'var(--text-faint)',border:'1px solid var(--border)',opacity:anyData?0.7:0.4,minWidth:0}}>
+              <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2"/></svg>
+            </button>`}
             ${showDelConfirm && html`<button onClick=${function(){doDelete();_clearClashTrainStore();_clearNLTrainStore();try{localStorage.removeItem('cc_detection_runs');}catch(e){}setNlN(0);setClashN(0);setRunN(0);setShowDelConfirm(false);}}
               style=${{...S_BTN,fontSize:'0.63rem',padding:'.2rem .4rem',background:'#ef4444',color:'#fff',border:'none',flex:1}}>Confirm delete all?</button>`}
           </div>
@@ -11243,8 +11307,8 @@ function startApp() {
     _clearClashTrainStore();
     unsent.forEach(function(c){ _beaconSentIds[c.id]=true; });
     var fd = new FormData();
-    fd.append('entry.1450623071', json);
-    var _gf = ['https://docs','google','com/forms/d/e/','1FAIpQLSdSMbfjcApszFebuvQXHKiWhH-zQJhk','_38m1vvMQ-_bMP_6eA'];
+    fd.append('entry.1252313993', json);
+    var _gf = ['https://docs','google','com/forms/d/e/','1FAIpQLSc51xdQw_8JY2lN1aw8OZOT2Jzdx42m','vilJzqMGVw4tXo7wtA'];
     var baseUrl = _gf[0]+'.'+_gf[1]+'.'+_gf[2]+_gf[3]+_gf[4];
     fetch(baseUrl+'/formResponse',{method:'POST',mode:'no-cors',body:fd}).then(function(){
       window.dispatchEvent(new Event('cc-training-sent'));
@@ -11273,8 +11337,8 @@ function startApp() {
     // Clear BEFORE sending — ensures no re-sends even if fetch fails silently
     _clearNLTrainStore();
     var fd = new FormData();
-    fd.append('entry.908589612', json);
-    var _gf = ['https://docs','google','com/forms/d/e/','1FAIpQLSdSMbfjcApszFebuvQXHKiWhH-zQJhk','_38m1vvMQ-_bMP_6eA'];
+    fd.append('entry.65932609', json);
+    var _gf = ['https://docs','google','com/forms/d/e/','1FAIpQLSc51xdQw_8JY2lN1aw8OZOT2Jzdx42m','vilJzqMGVw4tXo7wtA'];
     var baseUrl = _gf[0]+'.'+_gf[1]+'.'+_gf[2]+_gf[3]+_gf[4];
     fetch(baseUrl+'/formResponse',{method:'POST',mode:'no-cors',body:fd}).then(function(){
       window.dispatchEvent(new Event('cc-training-sent'));
@@ -11293,8 +11357,8 @@ function startApp() {
     try { localStorage.removeItem('cc_detection_runs'); } catch(e){}
     window.dispatchEvent(new Event('cc-training-data-change'));
     var fd = new FormData();
-    fd.append('entry.39972213', json);
-    var _gf = ['https://docs','google','com/forms/d/e/','1FAIpQLSdSMbfjcApszFebuvQXHKiWhH-zQJhk','_38m1vvMQ-_bMP_6eA'];
+    fd.append('entry.61454827', json);
+    var _gf = ['https://docs','google','com/forms/d/e/','1FAIpQLSc51xdQw_8JY2lN1aw8OZOT2Jzdx42m','vilJzqMGVw4tXo7wtA'];
     var baseUrl = _gf[0]+'.'+_gf[1]+'.'+_gf[2]+_gf[3]+_gf[4];
     fetch(baseUrl+'/formResponse',{method:'POST',mode:'no-cors',body:fd}).then(function(){
       window.dispatchEvent(new Event('cc-training-sent'));
@@ -11409,14 +11473,14 @@ function startApp() {
             <div style=${{display:'flex',flexDirection:'column',gap:'.6rem',fontSize:'0.83rem'}}>
               <div>
                 <div style=${{display:'flex',alignItems:'center',gap:'.4rem'}}>
-                  <span style=${{color:'#a78bfa',fontSize:'0.9rem',animation:'nlBorderPulse 2s ease-in-out infinite'}}>◉</span>
+                  <span style=${{color:'#a78bfa',fontSize:'0.9rem',animation:'roadmapGlow 2s ease-in-out infinite'}}>◉</span>
                   <span style=${{color:'var(--text-primary)',fontWeight:600}}>Open-source launch</span>
                 </div>
                 <div style=${{fontSize:'0.75rem',color:'var(--text-muted)',marginLeft:'1.3rem',lineHeight:1.5,marginTop:'.15rem'}}>Publish the full source code on GitHub. Free for everyone to use, inspect, and contribute to. No sign-up, no paywall \u2014 just open your browser and start clashing.</div>
               </div>
               <div>
                 <div style=${{display:'flex',alignItems:'center',gap:'.4rem'}}>
-                  <span style=${{color:'#a78bfa',fontSize:'0.9rem',animation:'nlBorderPulse 2s ease-in-out infinite'}}>◉</span>
+                  <span style=${{color:'#a78bfa',fontSize:'0.9rem',animation:'roadmapGlow 2s ease-in-out infinite'}}>◉</span>
                   <span style=${{color:'var(--text-primary)',fontWeight:600}}>Gather training data for AI clash classifier</span>
                 </div>
                 <div style=${{fontSize:'0.75rem',color:'var(--text-muted)',marginLeft:'1.3rem',lineHeight:1.5,marginTop:'.15rem'}}>When you label clashes as true/false positives and use the NL command panel, anonymous metadata is collected (with your consent). This builds the dataset needed to train ClashControl\u2019s AI to automatically classify clashes.</div>
@@ -11848,6 +11912,7 @@ function startApp() {
       } catch(e) {}
     }, [s.clashes, s.selected]);
     window._ccDispatch = d;
+    window._ccLatestState = s;
     // Apply theme to document and persist to localStorage
     useEffect(function(){
       var t = s.prefs.theme||'dark';
@@ -11935,7 +12000,11 @@ function startApp() {
         _beaconSendDetectionRuns();
       }
       window.addEventListener('beforeunload', onUnload);
-      return function(){ window.removeEventListener('beforeunload', onUnload); };
+      // Also send any unsent detection runs from previous session on startup
+      var startupTimer = setTimeout(function(){
+        _beaconSendDetectionRuns();
+      }, 5000);
+      return function(){ window.removeEventListener('beforeunload', onUnload); clearTimeout(startupTimer); };
     }, []);
     // Phase 0.5: periodic auto-send every 25 reviewed clashes
     var _beaconReviewRef = useRef(0);
