@@ -1,5 +1,8 @@
 # Changelog
 
+## v3.2.4 (2026-03-26)
+- Add 'Expected clash' to training reason chips
+
 ## v3.2.3 (2026-03-26)
 - Optimize clash detection performance and fix denied clash training data
 
