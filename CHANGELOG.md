@@ -1,5 +1,8 @@
 # Changelog
 
+## v2.12.18 (2026-03-26)
+- Unify training pill: show clash + NL stats, auto-share both via Google Form
+
 ## v2.12.17 (2026-03-26)
 - Separate NL data submission from clash data using different form fields
 
