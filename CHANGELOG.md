@@ -1,5 +1,8 @@
 # Changelog
 
+## v3.0.1 (2026-03-26)
+- Fix app not loading: remove extra } brace + fix pdf.js SRI integrity failure
+
 ## v2.12.19 (2026-03-26)
 - Fix NL training data form field ID to entry.908589612
 
