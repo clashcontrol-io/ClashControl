@@ -1,5 +1,8 @@
 # Changelog
 
+## v3.1.3 (2026-03-26)
+- Fix roadmap: open-source launch is current milestone, not completed
+
 ## v3.1.2 (2026-03-26)
 - Add roadmap, bug report & feature request links to Quick Start Guide
 
