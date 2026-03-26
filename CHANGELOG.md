@@ -1,5 +1,8 @@
 # Changelog
 
+## v2.12.4 (2026-03-26)
+- Extract clash object factory: deduplicate clash creation in detection engine
+
 ## v2.12.3 (2026-03-26)
 - Code review cleanup: fix reload loop, texture leak, dead code, stale closures
 

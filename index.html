@@ -257,7 +257,7 @@ window.onload = function() {
 
 function startApp() {
   // ── Version (auto-updated by pre-commit hook) ──
-  var CC_VERSION = {v:'2.12.3',hash:'681538b',date:'2026-03-26T06:18:44Z'};
+  var CC_VERSION = {v:'2.12.4',hash:'5372901',date:'2026-03-26T06:19:36Z'};
 
   // ── AI Data Collection (Phase 0.5) ──
   var CLASH_DATA_ENDPOINT = 'https://your-server.com/api/clash-data';
@@ -758,7 +758,7 @@ function startApp() {
       var g = m.geometry, mat = m.material;
       // Explicitly copy typed arrays — web-ifc returns views of WASM heap that may be freed
       return {
-        eid: m.userData.expressID,
+        eid: m.userData.expressId,
         pos: new Float32Array(g.attributes.position.array).buffer,
         nrm: new Float32Array(g.attributes.normal.array).buffer,
         idx: new Uint32Array(g.index.array).buffer,
@@ -789,7 +789,7 @@ function startApp() {
       var mat = new THREE.MeshPhongMaterial({color:new THREE.Color(c[0],c[1],c[2]), opacity:c[3], transparent:!!md.tr, side:THREE.DoubleSide});
       var mesh = new THREE.Mesh(geo, mat);
       mesh.applyMatrix4(new THREE.Matrix4().fromArray(md.mtx));
-      mesh.userData.expressID = md.eid;
+      mesh.userData.expressId = md.eid;
       if(!meshByEid[md.eid]) meshByEid[md.eid] = [];
       meshByEid[md.eid].push(mesh);
       return mesh;
@@ -1368,7 +1368,7 @@ function startApp() {
             if (!mat) { mat = new THREE.MeshPhongMaterial({ color:col, opacity:c?c.w:1, transparent:c?c.w<0.99:false, side:THREE.DoubleSide }); matCache[matKey] = mat; }
             var mesh = new THREE.Mesh(geo, mat);
             mesh.applyMatrix4(new THREE.Matrix4().fromArray(placed.flatTransformation));
-            mesh.userData.expressID = expressID;
+            mesh.userData.expressId = expressID;
             elBox.expandByObject(mesh);
             elMeshes.push(mesh); meshes.push(mesh);
           } catch(e) { console.warn('Skipped element geometry #'+expressID+': '+(e.message||e)); }
@@ -3211,7 +3211,7 @@ function startApp() {
         targetExpressIds.forEach(function(id){idSet[id]=true;});
         S.mg.traverse(function(obj){
           if(!obj.isMesh||!obj.material) return;
-          var eid = obj.userData.expressID;
+          var eid = obj.userData.expressId;
           if(eid!=null && !idSet[eid]){
             _ghostedMeshes.push({mesh:obj, origMaterial:obj.material});
             obj.material = _ghostMat;
@@ -3252,7 +3252,7 @@ function startApp() {
         expressIds.forEach(function(id){idSet[id]=true;});
         S.mg.traverse(function(obj){
           if(!obj.isMesh) return;
-          var eid = obj.userData.expressID;
+          var eid = obj.userData.expressId;
           if(eid!=null && idSet[eid] && obj.visible){
             obj.visible = false;
             _tempHiddenMeshes.push(obj);
@@ -3285,7 +3285,7 @@ function startApp() {
         if(outlineRef.current){scene.remove(outlineRef.current);outlineRef.current=null;}
         var found = null;
         S.mg.traverse(function(obj){
-          if(obj.isMesh && obj.userData.expressID===expressId && !found) found=obj;
+          if(obj.isMesh && obj.userData.expressId===expressId && !found) found=obj;
         });
         if(found){
           // Look up discipline color from model
@@ -3463,7 +3463,7 @@ function startApp() {
         if(!expressId||!S.mg||!S.orbit) return;
         var found = null;
         S.mg.traverse(function(obj){
-          if(obj.isMesh && obj.userData.expressID===expressId && !found) found=obj;
+          if(obj.isMesh && obj.userData.expressId===expressId && !found) found=obj;
         });
         if(!found) return;
         // Ensure mesh is visible for bounding box computation (may be frustum-culled)
@@ -3494,7 +3494,7 @@ function startApp() {
         var hiddenMeshes = [];
         expressIds.forEach(function(eid){
           S.mg.traverse(function(obj){
-            if(obj.isMesh && obj.userData.expressID===eid){
+            if(obj.isMesh && obj.userData.expressId===eid){
               if(!obj.visible && obj.userData._frustumCulled){obj.visible=true;hiddenMeshes.push(obj);}
               box.expandByObject(obj);
               foundAny = true;
@@ -3530,7 +3530,7 @@ function startApp() {
         var box = new THREE.Box3();
         expressIds.forEach(function(eid){
           S.mg.traverse(function(obj){
-            if(obj.isMesh && obj.userData.expressID===eid){
+            if(obj.isMesh && obj.userData.expressId===eid){
               box.expandByObject(obj);
             }
           });
@@ -3565,7 +3565,7 @@ function startApp() {
         var markers = [];
         results.forEach(function(r){
           S.mg.traverse(function(obj){
-            if(obj.isMesh && obj.userData.expressID===r.el.expressId){
+            if(obj.isMesh && obj.userData.expressId===r.el.expressId){
               var box = new THREE.BoxHelper(obj, 0x22c55e);
               box.material.linewidth = 2;
               scene.add(box);
@@ -3904,7 +3904,7 @@ function startApp() {
 
         if(hits.length>0) {
           var hit = hits[0].object;
-          var eid = hit.userData.expressID;
+          var eid = hit.userData.expressId;
           if(eid!=null) {
             try {
             // Find element props from models
@@ -3997,7 +3997,7 @@ function startApp() {
           // Transform normal from object space to world space
           faceNormal.transformDirection(hit.object.matrixWorld);
           var pt = hit.point;
-          var ctxEid = hit.object.userData.expressID;
+          var ctxEid = hit.object.userData.expressId;
           setCtxMenu({
             x: e.clientX - rect.left,
             y: e.clientY - rect.top,
@@ -4087,7 +4087,7 @@ function startApp() {
           if(obj.isMesh && obj.parent && obj.parent.userData.modelId && !obj.parent.visible) { obj.visible = false; return; }
           if(!obj.isMesh) return;
           // Skip non-IFC meshes (helpers etc)
-          if(obj.userData.expressID==null) return;
+          if(obj.userData.expressId==null) return;
           // Don't override storey/user visibility (marked by _storeyHidden)
           if(obj.userData._storeyHidden) return;
           // Compute bounding sphere if not cached
@@ -4207,8 +4207,8 @@ function startApp() {
             }
             var em = S._elMapCache[model.id];
             S.map[model.id].traverse(function(obj){
-              if(obj.isMesh && obj.userData.expressID!=null){
-                var st = em[obj.userData.expressID]||'';
+              if(obj.isMesh && obj.userData.expressId!=null){
+                var st = em[obj.userData.expressId]||'';
                 var hidden = !!hs[st];
                 obj.visible = !hidden;
                 obj.userData._storeyHidden = hidden;
@@ -4499,7 +4499,7 @@ function startApp() {
       });
       S.mg.traverse(function(obj){
         if(!obj.isMesh) return;
-        var eid=obj.userData.expressID; if(eid==null) return;
+        var eid=obj.userData.expressId; if(eid==null) return;
         var modelId=obj.parent?obj.parent.userData.modelId:null;
         var modelHidden = obj.parent && obj.parent.userData.modelId && !obj.parent.visible;
         if(modelHidden){ obj.visible=false; return; }
@@ -4541,7 +4541,7 @@ function startApp() {
       var saved=[];
       S.mg.traverse(function(obj){
         if(!obj.isMesh||!obj.material) return;
-        var eid=obj.userData.expressID;
+        var eid=obj.userData.expressId;
         var parent=obj.parent;
         var modelId=parent?parent.userData.modelId:null;
         if(eid==null||!modelId) return;
