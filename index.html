@@ -10,7 +10,7 @@
 
   <!-- CSP: restrict resource loading to known CDN origins -->
   <!-- 'unsafe-eval' required by pdf.js v3 for custom font rendering (CFF/Type1 font programs) -->
-  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval' 'wasm-unsafe-eval' https://cdnjs.cloudflare.com https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline'; connect-src https://cdn.jsdelivr.net https://cdnjs.cloudflare.com https://huggingface.co https://cdn-lfs.huggingface.co https://cdn-lfs-us-1.huggingface.co https://*.hf.co http://localhost:11434 https://api.anthropic.com https://api.openai.com https://generativelanguage.googleapis.com https://docs.google.com http://localhost:* ws://localhost:* blob:; frame-src https://docs.google.com; worker-src blob:; img-src 'self' blob: data:;">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval' 'wasm-unsafe-eval' https://cdnjs.cloudflare.com https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline'; connect-src https://cdn.jsdelivr.net https://cdnjs.cloudflare.com https://huggingface.co https://cdn-lfs.huggingface.co https://cdn-lfs-us-1.huggingface.co https://*.hf.co http://localhost:11434 https://api.anthropic.com https://api.openai.com https://generativelanguage.googleapis.com http://localhost:* ws://localhost:* blob:; worker-src blob:; img-src 'self' blob: data:;">
 
   <!-- CDN deps: React, Three.js, JSZip — all UMD, all cdnjs -->
   <!-- SRI hashes: regenerate with `node scripts/generate-sri.js` if you change versions -->
@@ -171,8 +171,8 @@
       .cc-viewcube-wrap{width:100px!important;height:100px!important}
       .cc-viewcube-wrap canvas{width:80px!important;height:80px!important;top:10px!important;left:10px!important}
       /* Chatbox full width — above mobile nav bar */
-      .cc-nlpanel{width:calc(100vw - 1rem)!important;bottom:5rem!important}
-      .cc-nlpanel-closed{bottom:5rem!important}
+      .cc-nlpanel{width:calc(100vw - 1rem)!important;bottom:calc(3.75rem + env(safe-area-inset-bottom, 0px))!important}
+      .cc-nlpanel-closed{bottom:calc(3.75rem + env(safe-area-inset-bottom, 0px))!important}
       /* Training pill: smaller on mobile + pushed down to avoid FPS overlay */
       .cc-training-btn-3d{padding:.25rem .5rem!important;font-size:0.7rem!important}
       .cc-training-pill-wrap{top:2.2rem!important}
@@ -252,7 +252,7 @@ window.onload = function() {
 
 function startApp() {
   // ── Version (auto-updated by pre-commit hook) ──
-  var CC_VERSION = {v:'3.3.5',hash:'12ad775',date:'2026-03-27T16:13:47Z'};
+  var CC_VERSION = {v:'3.3.6',hash:'d05358e',date:'2026-03-27T16:19:49Z'};
 
   // ── AI Data Collection (Phase 0.5) ──
   var CLASH_DATA_ENDPOINT = 'https://your-server.com/api/clash-data';
