@@ -933,6 +933,10 @@ function startApp() {
 
   // ── IFC Loader (web-ifc, lazy) ─────────────────────────────────
 
+  // Shared LOD box proxy resources (must be at startApp scope so both loader paths can access them)
+  var _lodBoxGeo = typeof THREE !== 'undefined' ? new THREE.BoxBufferGeometry(1, 1, 1) : null;
+  var _lodProxyMat = typeof THREE !== 'undefined' ? new THREE.MeshBasicMaterial({color:0x667788, transparent:true, opacity:0.25, depthWrite:false}) : null;
+
   var _ifcAPI = null;
   function getIfcAPI() {
     if (_ifcAPI) return Promise.resolve(_ifcAPI);
@@ -4923,9 +4927,7 @@ function startApp() {
       // screenRatio = r²/d² ≈ proportional to fraction of screen height the object covers.
       var LOD_HIDE_RATIO  = 0.0000005; // hide entirely — covers < ~0.07% screen (~1px at 1080p)
       var LOD_PROXY_RATIO = 0.00005;   // show box proxy — covers < ~0.7% screen (~8px at 1080p)
-      // Shared LOD box proxy resources
-      var _lodBoxGeo = new THREE.BoxBufferGeometry(1, 1, 1);
-      var _lodProxyMat = new THREE.MeshBasicMaterial({color:0x667788, transparent:true, opacity:0.25, depthWrite:false});
+      // LOD box proxy resources (defined at startApp scope, referenced here for culling)
 
       function updateCulling(){
         projScreenMatrix.multiplyMatrices(S.camera.projectionMatrix, S.camera.matrixWorldInverse);
