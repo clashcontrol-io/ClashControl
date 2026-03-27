@@ -1,5 +1,8 @@
 # Changelog
 
+## v3.2.57 (2026-03-27)
+- Tour: override AI status to show as loaded during demo
+
 ## v3.2.56 (2026-03-27)
 - Tour: caption centered in viewer, fix duplicate clash, slower modal/typing/orbit
 

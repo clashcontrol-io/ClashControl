@@ -252,7 +252,7 @@ window.onload = function() {
 
 function startApp() {
   // ── Version (auto-updated by pre-commit hook) ──
-  var CC_VERSION = {v:'3.2.56',hash:'8b05e02',date:'2026-03-27T12:45:08Z'};
+  var CC_VERSION = {v:'3.2.57',hash:'1e6ed95',date:'2026-03-27T12:53:50Z'};
 
   // ── AI Data Collection (Phase 0.5) ──
   var CLASH_DATA_ENDPOINT = 'https://your-server.com/api/clash-data';
@@ -13367,9 +13367,17 @@ function startApp() {
       smoothOrbit(-50, 2000);
     });
 
-    // ─── 5. Confirm the clash — it becomes an issue ───
+    // ─── 5. Confirm the clash — show it becoming an issue ───
     at(2500, function() {
       showCaption('Confirm a clash to create an issue');
+      var c = getClash(0);
+      if (c) {
+        // First select it so the detail panel is visible
+        d({t:'ACTIVE', id:c.id});
+      }
+    });
+    at(1500, function() {
+      // Now confirm it — user sees the status change in the panel
       var c = getClash(0);
       if (c) d({t:'UPD_CLASH', id:c.id, u:{status:'confirmed'}});
     });
@@ -13481,24 +13489,19 @@ function startApp() {
       d({t:'MEASURE_MODE', v:null});
     });
 
-    // ─── 11. Export BCF — flash the export buttons ───
+    // ─── 11. Model tree ───
     at(500, function() {
-      showCaption('Export to BCF for any BIM tool');
+      showCaption('Browse the full model tree');
+      d({t:'TAB', v:'models'});
+      smoothOrbit(30, 2500);
+    });
+
+    // ─── 11b. Set default clearances ───
+    at(3000, function() {
+      showCaption('Set default clearances for detection');
+      d({t:'UPD_RULES', u:{maxGap:75}});
       d({t:'TAB', v:'clashes'});
-      smoothOrbit(35, 2500);
-      // Flash the BCF export buttons
-      var btns = document.querySelectorAll('button');
-      btns.forEach(function(btn) {
-        if (btn.textContent.indexOf('BCF') >= 0) {
-          btn.style.transition = 'box-shadow .3s, transform .3s';
-          btn.style.boxShadow = '0 0 20px rgba(59,130,246,.8), 0 0 40px rgba(59,130,246,.3)';
-          btn.style.transform = 'scale(1.1)';
-          setTimeout(function() {
-            btn.style.boxShadow = '';
-            btn.style.transform = '';
-          }, 2000);
-        }
-      });
+      smoothOrbit(25, 2000);
     });
 
     // ─── 12. Toggle render styles — slow continuous orbit, switch mid-rotation ───
