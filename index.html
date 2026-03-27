@@ -252,7 +252,7 @@ window.onload = function() {
 
 function startApp() {
   // ── Version (auto-updated by pre-commit hook) ──
-  var CC_VERSION = {v:'3.2.69',hash:'4a11010',date:'2026-03-27T13:35:41Z'};
+  var CC_VERSION = {v:'3.2.70',hash:'06ac1fb',date:'2026-03-27T13:41:37Z'};
 
   // ── AI Data Collection (Phase 0.5) ──
   var CLASH_DATA_ENDPOINT = 'https://your-server.com/api/clash-data';
@@ -13447,11 +13447,19 @@ function startApp() {
       if (window._ccNLSetInput) window._ccNLSetInput('');
     });
 
+    // Helper: click a clash row in the list (triggers highlight, fly-to, ghost)
+    function clickClashRow(c) {
+      if (!c) return;
+      var row = document.querySelector('[data-item-id="'+c.id+'"]');
+      if (row) { row.click(); return; }
+      // Fallback: dispatch + flyTo manually
+      d({t:'ACTIVE', id:c.id}); flyToClash(c);
+    }
+
     // ─── 2. Click first clash — fly to it ───
     at(3000, function() {
       showCaption('Click a clash to inspect it');
-      var c = getClash(8);
-      if (c) { d({t:'ACTIVE', id:c.id}); flyToClash(c); }
+      clickClashRow(getClash(3));
     });
 
     // ─── 3. Orbit around the clash elements as center ───
@@ -13464,8 +13472,7 @@ function startApp() {
     // ─── 4. Click another clash — camera flies there ───
     at(3500, function() {
       showCaption('Navigate between clashes');
-      var c = getClash(10);
-      if (c) { d({t:'ACTIVE', id:c.id}); flyToClash(c); }
+      clickClashRow(getClash(13));
     });
     // Orbit around the second clash too
     at(2000, function() {
@@ -13475,15 +13482,11 @@ function startApp() {
     // ─── 5. Confirm the clash — show it becoming an issue ───
     at(2500, function() {
       showCaption('Confirm a clash to create an issue');
-      var c = getClash(8);
-      if (c) {
-        d({t:'ACTIVE', id:c.id});
-        flyToClash(c);
-      }
+      clickClashRow(getClash(3));
     });
     // Wait for expanded panel to render, then click the Confirm button
     at(2000, function() {
-      var c = getClash(8);
+      var c = getClash(3);
       if (!c) return;
       // Find the active row and click its Confirm button
       var row = document.querySelector('[data-item-id="'+c.id+'"]');
@@ -13513,8 +13516,13 @@ function startApp() {
         if (iss.elemA && iss.elemB && _ghostOthers) _ghostOthers([iss.elemA, iss.elemB]);
       }
     });
-    // Orbit while viewing the issue
+    // Orbit while viewing the issue — normalize vertical angle first
     at(1500, function() {
+      S.orbit.sync();
+      // Clamp phi to a reasonable angle so orbit stays around Y axis
+      S.orbit.sph.phi = Math.max(0.5, Math.min(1.3, S.orbit.sph.phi));
+      S.orbit.apply();
+      invalidate();
       smoothOrbit(45, 2000);
     });
 
