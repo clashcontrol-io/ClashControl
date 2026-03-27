@@ -1,5 +1,8 @@
 # Changelog
 
+## v3.2.33 (2026-03-27)
+- Fix mobile layout: command line above tabs, training pill smaller/lower
+
 ## v3.2.30 (2026-03-26)
 - Geometry dedup via geometryExpressID + USE_FAST_BOOLS
 

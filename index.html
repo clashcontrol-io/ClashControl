@@ -252,7 +252,7 @@ window.onload = function() {
 
 function startApp() {
   // ── Version (auto-updated by pre-commit hook) ──
-  var CC_VERSION = {v:'3.2.32',hash:'819deab',date:'2026-03-27T05:17:34Z'};
+  var CC_VERSION = {v:'3.2.33',hash:'0653428',date:'2026-03-27T05:26:35Z'};
 
   // ── AI Data Collection (Phase 0.5) ──
   var CLASH_DATA_ENDPOINT = 'https://your-server.com/api/clash-data';
@@ -1410,10 +1410,13 @@ function startApp() {
     return pairs;
   }
 
+  var _ccLoadGeneration = 0; // incremented each load to cancel stale in-progress loads
+
   function loadIFC(buffer, fallbackColor, onProgress) {
     var loadStart = performance.now();
     var _lp = { t0: loadStart, phases: {} };
     function _lmark(name) { _lp.phases[name] = performance.now() - _lp.t0; }
+    var _myGen = ++_ccLoadGeneration;
 
     return getIfcAPI().then(function(api) {
       _lmark('WASM ready');
@@ -1515,6 +1518,7 @@ function startApp() {
       var CHUNK = 200;
       return new Promise(function(resolve) {
         function processChunk(startIdx) {
+          if (_myGen !== _ccLoadGeneration) { resolve(null); return; } // cancelled by newer load
           var end = Math.min(startIdx + CHUNK, rawElements.length);
           for (var idx = startIdx; idx < end; idx++) {
             var raw = rawElements[idx];
@@ -1678,6 +1682,7 @@ function startApp() {
 
   function loadIFCWorker(buffer, fallbackColor, onProgress) {
     var loadStart = performance.now();
+    var _myGen = ++_ccLoadGeneration;
     return new Promise(function(resolve, reject) {
       var worker;
       try { worker = new Worker(_getIFCWorkerUrl()); }
@@ -1695,6 +1700,7 @@ function startApp() {
           return;
         }
         if (msg.type === 'result') {
+          if (_myGen !== _ccLoadGeneration) { worker.terminate(); resolve(null); return; } // cancelled
           if (onProgress) onProgress('Building 3D scene\u2026');
           // Build Three.js objects from raw geometry arrays (with geometry dedup)
           var rawEls = msg.rawEls;
@@ -1863,6 +1869,8 @@ function startApp() {
   // ── Möller triangle-triangle intersection test ──────────────────
   // Tests if two triangles (given as flat-array offsets) intersect.
   // Based on "A Fast Triangle-Triangle Intersection Test" (Möller, 1997)
+  // Pre-allocated interval buffers to avoid per-call allocations in hot path
+  var _ttIvalA = new Float64Array(8), _ttIvalB = new Float64Array(8);
   function _triTriTest(tA, oA, tB, oB) {
     // Triangle A vertices
     var a0x=tA[oA],a0y=tA[oA+1],a0z=tA[oA+2];
@@ -1917,8 +1925,8 @@ function startApp() {
     else proj=function(x,y,z){return z;};
 
     // Compute intervals on intersection line for each triangle
-    // Returns [projMin, projMax, 3D point at projMin, 3D point at projMax]
-    function interval(v0x,v0y,v0z,v1x,v1y,v1z,v2x,v2y,v2z,dd0,dd1,dd2) {
+    // Writes into pre-allocated 8-element buffer: [projMin, projMax, 3D point at projMin, 3D point at projMax]
+    function interval(out,v0x,v0y,v0z,v1x,v1y,v1z,v2x,v2y,v2z,dd0,dd1,dd2) {
       // Sort so dd0 is the lone vertex on its side
       var i0x,i0y,i0z,i1x,i1y,i1z,i2x,i2y,i2z,di0,di1,di2;
       if(dd0*dd1>0){i0x=v2x;i0y=v2y;i0z=v2z;i1x=v0x;i1y=v0y;i1z=v0z;i2x=v1x;i2y=v1y;i2z=v1z;di0=dd2;di1=dd0;di2=dd1;}
@@ -1931,10 +1939,12 @@ function startApp() {
       // 3D points where edges cross the other triangle's plane
       var q1x=i0x+(i1x-i0x)*r1, q1y=i0y+(i1y-i0y)*r1, q1z=i0z+(i1z-i0z)*r1;
       var q2x=i0x+(i2x-i0x)*r2, q2y=i0y+(i2y-i0y)*r2, q2z=i0z+(i2z-i0z)*r2;
-      return t1<t2?[t1,t2,q1x,q1y,q1z,q2x,q2y,q2z]:[t2,t1,q2x,q2y,q2z,q1x,q1y,q1z];
+      if(t1<t2){out[0]=t1;out[1]=t2;out[2]=q1x;out[3]=q1y;out[4]=q1z;out[5]=q2x;out[6]=q2y;out[7]=q2z;}
+      else{out[0]=t2;out[1]=t1;out[2]=q2x;out[3]=q2y;out[4]=q2z;out[5]=q1x;out[6]=q1y;out[7]=q1z;}
     }
-    var iA=interval(a0x,a0y,a0z,a1x,a1y,a1z,a2x,a2y,a2z,da0,da1,da2);
-    var iB=interval(b0x,b0y,b0z,b1x,b1y,b1z,b2x,b2y,b2z,db0,db1,db2);
+    var iA=_ttIvalA, iB=_ttIvalB;
+    interval(iA,a0x,a0y,a0z,a1x,a1y,a1z,a2x,a2y,a2z,da0,da1,da2);
+    interval(iB,b0x,b0y,b0z,b1x,b1y,b1z,b2x,b2y,b2z,db0,db1,db2);
     if(iA[0]>=iB[1]||iB[0]>=iA[1]) return null; // strict < to exclude edge-only touches
     // Compute 3D midpoint of the overlap segment on the intersection line
     var oMin=Math.max(iA[0],iB[0]), oMax=Math.min(iA[1],iB[1]);
@@ -2243,8 +2253,11 @@ function startApp() {
   //   3. Process candidates in chunks, yielding to UI between each chunk
   // Returns a Promise that resolves with the clash array.
   var _DETECT_CHUNK_SIZE = 80; // candidates per chunk before yielding
+  var _ccDetectGeneration = 0; // incremented each detection run to cancel stale async chunks
   window._ccDetectProgress = null; // {done, total, pct} — updated during async detection
   function detectClashesAsync(models, rules, onProgress) {
+    // Cancel any previous in-flight async detection
+    var gen = ++_ccDetectGeneration;
     var _userCb = onProgress;
     onProgress = function(done, total) {
       var pct = Math.round(done / total * 100);
@@ -2255,7 +2268,9 @@ function startApp() {
     return new Promise(function(resolve, reject) {
       try {
         // Run synchronous detection but yield between chunks
-        var result = _detectClashesCore(models, rules, onProgress, resolve);
+        var result = _detectClashesCore(models, rules, onProgress, function(r) {
+          if (gen === _ccDetectGeneration) resolve(r); // only resolve if still current
+        });
         if (result !== undefined) resolve(result); // fell through synchronously (small dataset)
       } catch(e) {
         console.error('Clash detection failed:', e);
@@ -2739,7 +2754,9 @@ function startApp() {
     }
     // Async chunked path
     var chunkIdx = 0;
+    var _myGen = _ccDetectGeneration; // snapshot generation at start
     function _runChunk() {
+      if (_myGen !== _ccDetectGeneration) return; // cancelled by newer detection
       try {
       var end = Math.min(chunkIdx + _DETECT_CHUNK_SIZE, totalCandidates);
       for (var i=chunkIdx; i<end; i++) { try { _processCandidate(candidates[i]); } catch(e) { /* skip bad candidate */ } }
@@ -3549,9 +3566,13 @@ function startApp() {
     var target = new THREE.Vector3();
     var sph = { r:60, phi:Math.PI/4, theta:Math.PI/4 };
     var dragging=false, panning=false, lx=0, ly=0;
+    // Pre-allocated vectors to avoid per-frame allocations in hot path
+    var _tmpVec = new THREE.Vector3();
+    var _tmpDir = new THREE.Vector3();
+    var _tmpRight = new THREE.Vector3();
 
     function sync() {
-      var o = camera.position.clone().sub(target);
+      var o = _tmpVec.copy(camera.position).sub(target);
       sph.r = o.length()||60;
       sph.phi = Math.acos(Math.max(-1,Math.min(1,o.y/sph.r)));
       sph.theta = Math.atan2(o.x,o.z);
@@ -3580,8 +3601,9 @@ function startApp() {
       if(dragging){ sph.theta-=dx*0.007; sph.phi-=dy*0.007; orbit.apply(); invalidate(); }
       if(panning){
         var sp=sph.r*0.0008;
-        var right=new THREE.Vector3().crossVectors(orbit.camera.getWorldDirection(new THREE.Vector3()),new THREE.Vector3(0,1,0)).normalize();
-        target.addScaledVector(right,-dx*sp); target.y+=dy*sp; orbit.apply(); invalidate();
+        orbit.camera.getWorldDirection(_tmpDir);
+        _tmpRight.set(0,1,0); _tmpRight.crossVectors(_tmpDir,_tmpRight).normalize();
+        target.addScaledVector(_tmpRight,-dx*sp); target.y+=dy*sp; orbit.apply(); invalidate();
       }
     });
     window.addEventListener('mouseup', function(){dragging=false;if(panning){panning=false;el.style.cursor='';}});
@@ -3654,8 +3676,9 @@ function startApp() {
         // Pan
         var pdx=mx-touchState.lx, pdy=my-touchState.ly;
         var sp=sph.r*0.0008;
-        var right=new THREE.Vector3().crossVectors(orbit.camera.getWorldDirection(new THREE.Vector3()),new THREE.Vector3(0,1,0)).normalize();
-        target.addScaledVector(right,-pdx*sp); target.y+=pdy*sp;
+        orbit.camera.getWorldDirection(_tmpDir);
+        _tmpRight.set(0,1,0); _tmpRight.crossVectors(_tmpDir,_tmpRight).normalize();
+        target.addScaledVector(_tmpRight,-pdx*sp); target.y+=pdy*sp;
         // Pinch zoom
         if(touchState.dist>0) {
           var scale=touchState.dist/d;
@@ -4079,7 +4102,11 @@ function startApp() {
       };
       _clearClashMarkers = function() {
         if(clashMarkersRef.current){
-          clashMarkersRef.current.traverse(function(obj){if(obj.isMesh){obj.geometry&&obj.geometry.dispose();obj.material&&obj.material.dispose();}});
+          var _dg={}, _dm={};
+          clashMarkersRef.current.traverse(function(obj){if(obj.isMesh){
+            if(obj.geometry&&!_dg[obj.geometry.id]){_dg[obj.geometry.id]=1;obj.geometry.dispose();}
+            if(obj.material&&!_dm[obj.material.id]){_dm[obj.material.id]=1;obj.material.dispose();}
+          }});
           scene.remove(clashMarkersRef.current);
           clashMarkersRef.current = null;
           invalidate();
@@ -4114,7 +4141,11 @@ function startApp() {
       };
       _clearIssueMarkers = function() {
         if(issueMarkersRef.current){
-          issueMarkersRef.current.traverse(function(obj){if(obj.isMesh){obj.geometry&&obj.geometry.dispose();obj.material&&obj.material.dispose();}});
+          var _dg={}, _dm={};
+          issueMarkersRef.current.traverse(function(obj){if(obj.isMesh){
+            if(obj.geometry&&!_dg[obj.geometry.id]){_dg[obj.geometry.id]=1;obj.geometry.dispose();}
+            if(obj.material&&!_dm[obj.material.id]){_dm[obj.material.id]=1;obj.material.dispose();}
+          }});
           scene.remove(issueMarkersRef.current);
           issueMarkersRef.current = null;
           invalidate();
@@ -4824,8 +4855,8 @@ function startApp() {
           if(child.traverse) child.traverse(function(c){
             if(c.geometry) c.geometry.dispose();
             if(c.material) {
-              if(Array.isArray(c.material)) c.material.forEach(function(m){m.dispose();});
-              else c.material.dispose();
+              var mats = Array.isArray(c.material) ? c.material : [c.material];
+              mats.forEach(function(m){ if(m.map) m.map.dispose(); m.dispose(); });
             }
           });
         }
@@ -5483,6 +5514,8 @@ function startApp() {
       S.scene.background = new THREE.Color(light ? 0xe8ecf1 : 0x0f172a);
       if(S.grid){
         S.scene.remove(S.grid);
+        S.grid.geometry.dispose();
+        S.grid.material.dispose();
         S.grid = new THREE.GridHelper(200,80, light?0x94a3b8:0x1e3a5f, light?0xcbd5e1:0x172554);
         S.grid.visible = s.prefs.showGrid!==false;
         S.scene.add(S.grid);
@@ -5510,7 +5543,7 @@ function startApp() {
         // Skip if currently ghosted
         if(obj.material === S._ghostMat) return;
         // Dispose the current non-original material before replacing to prevent leaks
-        if(obj.material !== orig) { obj.material.dispose(); }
+        if(obj.material !== orig) { if(obj.material.map) obj.material.map.dispose(); obj.material.dispose(); }
         if(style==='wireframe'){
           obj.material = new THREE.MeshBasicMaterial({
             color: orig.color ? orig.color.clone() : new THREE.Color(0x64748b),
@@ -6284,6 +6317,7 @@ function startApp() {
                 return result;
               });
           }).then(function(result){
+            if (!result) return; // load was cancelled
             var disc = detectDiscipline(result.elements);
             var dObj = DISC.find(function(x){return x.id===disc;});
             var col = dObj ? dObj.c : DISC[0].c;
@@ -6307,6 +6341,11 @@ function startApp() {
     if(_clearClashMarkers) _clearClashMarkers();
     if(_clearIssueMarkers) _clearIssueMarkers();
     if(_resetView) _resetView();
+    // Clear detection/image caches to prevent stale data and memory retention
+    _prevElementHashes = {};
+    _underlayImgCache = {};
+    _underlayImgDataCache = {};
+    _cc2DOutlines = null;
     // Reset state to fresh (keep switchingProject:true while files load)
     d({t:A.LOAD_PROJECT_STATE, data:{
       models:[], clashes:[], issues:[], activeId:null, detecting:false,
@@ -6684,6 +6723,7 @@ function startApp() {
               return loadIFC(buf, col, _onProg);
             });
             return _loadP.then(function(result) {
+              if (!result) return; // load was cancelled by a newer load
               disc = detectDiscipline(result.elements);
               var dObj = DISC.find(function(x){return x.id===disc;});
               col = dObj ? dObj.c : col;
