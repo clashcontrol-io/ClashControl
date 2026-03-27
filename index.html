@@ -252,7 +252,7 @@ window.onload = function() {
 
 function startApp() {
   // ── Version (auto-updated by pre-commit hook) ──
-  var CC_VERSION = {v:'3.2.41',hash:'14dcff5',date:'2026-03-27T09:44:00Z'};
+  var CC_VERSION = {v:'3.2.42',hash:'f571cf4',date:'2026-03-27T09:49:13Z'};
 
   // ── AI Data Collection (Phase 0.5) ──
   var CLASH_DATA_ENDPOINT = 'https://your-server.com/api/clash-data';
@@ -13222,6 +13222,18 @@ function startApp() {
       setTimeout(function(){ s.fn(); run(); }, s.delay);
     }
 
+    // Helper: fly to a clash and ghost other elements
+    function flyToClash(c) {
+      if (c.point && _flyTo) _flyTo(c.point, 8);
+      if (c.elemA && c.elemB && _ghostOthers) _ghostOthers([c.elemA, c.elemB]);
+    }
+    // Helper: get clash by index (clamped)
+    function getClash(idx) {
+      var s = window._ccLatestState;
+      if (!s || !s.clashes.length) return null;
+      return s.clashes[Math.min(idx, s.clashes.length - 1)];
+    }
+
     // ─── 1. Clashes tab — show all detected clashes ───
     at(300, function() {
       d({t:'TAB', v:'clashes'});
@@ -13229,48 +13241,42 @@ function startApp() {
       if (_unghostAll) _unghostAll();
       invalidate(10);
       showCaption('Detected clashes appear instantly');
+      // Slow orbit while viewing the list
+      smoothOrbit(30, 2500);
     });
 
     // ─── 2. Click first clash — fly to it ───
-    at(2500, function() {
+    at(3000, function() {
       showCaption('Click a clash to inspect it');
-      var s = window._ccLatestState;
-      if (s && s.clashes.length > 0) {
-        var c = s.clashes[0];
-        d({t:'ACTIVE', id:c.id});
-        if (c.point && _flyTo) _flyTo(c.point, 8);
-        if (c.elemA && c.elemB && _ghostOthers) _ghostOthers([c.elemA, c.elemB]);
-      }
+      var c = getClash(0);
+      if (c) { d({t:'ACTIVE', id:c.id}); flyToClash(c); }
     });
 
     // ─── 3. Orbit around the clash ───
     at(2500, function() {
       showCaption('Orbit to inspect from every angle');
-      smoothOrbit(70, 2500);
+      smoothOrbit(80, 3000);
     });
 
     // ─── 4. Click another clash — camera flies there ───
-    at(3000, function() {
+    at(3500, function() {
       showCaption('Navigate between clashes');
-      var s = window._ccLatestState;
-      if (s && s.clashes.length > 1) {
-        var c = s.clashes[Math.min(2, s.clashes.length-1)];
-        d({t:'ACTIVE', id:c.id});
-        if (c.point && _flyTo) _flyTo(c.point, 8);
-        if (c.elemA && c.elemB && _ghostOthers) _ghostOthers([c.elemA, c.elemB]);
-      }
+      var c = getClash(2);
+      if (c) { d({t:'ACTIVE', id:c.id}); flyToClash(c); }
+    });
+    // Orbit around the second clash too
+    at(2000, function() {
+      smoothOrbit(-50, 2000);
     });
 
     // ─── 5. Confirm the clash — it becomes an issue ───
-    at(2800, function() {
+    at(2500, function() {
       showCaption('Confirm a clash to create an issue');
-      var s = window._ccLatestState;
-      if (s && s.clashes.length > 0) {
-        d({t:'UPD_CLASH', id:s.clashes[0].id, u:{status:'confirmed'}});
-      }
+      var c = getClash(0);
+      if (c) d({t:'UPD_CLASH', id:c.id, u:{status:'confirmed'}});
     });
 
-    // ─── 6. Issues tab — click the new issue ───
+    // ─── 6. Issues tab — fly to the new issue ───
     at(2000, function() {
       showCaption('Track issues with status management');
       d({t:'TAB', v:'issues'});
@@ -13278,27 +13284,37 @@ function startApp() {
     at(1200, function() {
       var s = window._ccLatestState;
       if (s && s.issues.length > 0) {
-        var iss = s.issues[s.issues.length-1];
+        var iss = s.issues[s.issues.length - 1];
         d({t:'ACTIVE', id:iss.id});
+        // Fly to the issue location
+        if (iss.point && _flyTo) _flyTo(iss.point, 8);
+        if (iss.elemA && iss.elemB && _ghostOthers) _ghostOthers([iss.elemA, iss.elemB]);
       }
+    });
+    // Orbit while viewing the issue
+    at(1500, function() {
+      smoothOrbit(45, 2000);
     });
 
     // ─── 7. Set issue status to "In progress" ───
-    at(2000, function() {
+    at(2500, function() {
       showCaption('Update status — In progress');
       var s = window._ccLatestState;
       if (s && s.issues.length > 0) {
-        d({t:'UPD_ISSUE', id:s.issues[s.issues.length-1].id, u:{status:'in_progress'}});
+        d({t:'UPD_ISSUE', id:s.issues[s.issues.length - 1].id, u:{status:'in_progress'}});
       }
     });
 
     // ─── 8. Create issue from viewer (show modal) ───
-    at(2200, function() {
+    at(2000, function() {
       if (_unghostAll) _unghostAll();
       invalidate(10);
       showCaption('Create issues directly in the viewer');
+      // Fly to a different clash location for context
+      var c = getClash(3);
+      if (c && c.point && _flyTo) _flyTo(c.point, 10);
     });
-    at(1000, function() {
+    at(1500, function() {
       d({t:'MODAL', v:true});
     });
     at(2500, function() {
@@ -13309,8 +13325,10 @@ function startApp() {
     at(500, function() {
       showCaption('Built-in measurement tools');
       d({t:'MEASURE_MODE', v:'length'});
+      // Orbit slowly while showing measurement mode
+      smoothOrbit(40, 2200);
     });
-    at(2200, function() {
+    at(2700, function() {
       d({t:'MEASURE_MODE', v:null});
     });
 
@@ -13318,23 +13336,29 @@ function startApp() {
     at(500, function() {
       showCaption('Export to BCF for any BIM tool');
       d({t:'TAB', v:'clashes'});
+      // Fly back to a wide view — pick a clash far from current
+      var c = getClash(1);
+      if (c && c.point && _flyTo) _flyTo(c.point, 12);
     });
 
-    // ─── 11. Toggle render styles ───
+    // ─── 11. Toggle render styles — orbit through each ───
     at(2500, function() {
       showCaption('Switch rendering styles');
       d({t:'UPD_PREFS', u:{renderStyle:'wireframe'}});
       invalidate(10);
+      smoothOrbit(30, 1500);
     });
-    at(1500, function() {
+    at(1800, function() {
       d({t:'UPD_PREFS', u:{renderStyle:'shaded'}});
       invalidate(10);
+      smoothOrbit(30, 1500);
     });
-    at(1500, function() {
+    at(1800, function() {
       d({t:'UPD_PREFS', u:{renderStyle:'rendered'}});
       invalidate(10);
+      smoothOrbit(30, 1500);
     });
-    at(1500, function() {
+    at(1800, function() {
       d({t:'UPD_PREFS', u:{renderStyle:'standard'}});
       invalidate(10);
     });
@@ -13346,10 +13370,12 @@ function startApp() {
       showCaption('AI-powered clash analysis — train your own model');
       d({t:'TRAINING_MODE', v:true});
       d({t:'TAB', v:'clashes'});
+      smoothOrbit(60, 3500);
     });
-    at(3500, function() {
+    at(4000, function() {
       d({t:'TRAINING_MODE', v:false});
       showCaption('Free. Open source. No install.');
+      smoothOrbit(-30, 3000);
     });
     at(3500, function() {
       hideCaption();

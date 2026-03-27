@@ -1,5 +1,8 @@
 # Changelog
 
+## v3.2.42 (2026-03-27)
+- Rewrite demo tour from scratch — no _resetView camera animations
+
 ## v3.2.41 (2026-03-27)
 - Remove _resetView from tour step 1 to prevent camera rotation on start
 
