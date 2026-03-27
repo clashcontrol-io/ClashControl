@@ -252,12 +252,11 @@ window.onload = function() {
 
 function startApp() {
   // ── Version (auto-updated by pre-commit hook) ──
-  var CC_VERSION = {v:'3.2.34',hash:'835352b',date:'2026-03-27T05:30:55Z'};
+  var CC_VERSION = {v:'3.2.35',hash:'4e87549',date:'2026-03-27T06:14:22Z'};
 
   // ── AI Data Collection (Phase 0.5) ──
   var CLASH_DATA_ENDPOINT = 'https://your-server.com/api/clash-data';
   var NL_DATA_ENDPOINT = 'https://your-server.com/api/nl-data';
-  var _beaconSentIds = {}; // in-memory clash dedup Set (reset each session)
   var _beaconNLSentIdx = 0; // NL records sent up to this index (reset each session)
 
   // Check CDN deps loaded
@@ -12098,7 +12097,7 @@ function startApp() {
               try{
                 var cur=window._ccLatestState;
                 if(cur){
-                  _beaconSendTrainingData(cur.clashes, cur.detectionSettings, cur.models, cur.prefs.defaultTolerances, cur.issues);
+                  _beaconSendTrainingData();
                   _beaconSendNLTrainingData(cur.models);
                 }
                 _beaconSendDetectionRuns();
@@ -12143,21 +12142,17 @@ function startApp() {
   // ── Training Mode Info Popup ──────────────────────────────────
 
   // ── sendBeacon auto-send ──────────────────────────────────────
-  function _beaconSendTrainingData(clashes, detectionSettings, models, defaultTolerances, issues) {
+  function _beaconSendTrainingData() {
     try {
       if(localStorage.getItem('cc_data_consent')!=='granted') return;
     } catch(e){ return; }
-    var allClashData = clashes.slice();
-    if(issues) issues.forEach(function(i){if(i.source==='clash') allClashData.push(i);});
-    var unsent = allClashData.filter(function(c){
-      return c.status!=='open' && !_beaconSentIds[c.id];
-    });
-    if(!unsent.length) return;
-    var payload = _buildAITrainingPayload(unsent, detectionSettings, models, defaultTolerances, []);
-    if(!payload) return;
+    var store = _getClashTrainStore();
+    var keys = Object.keys(store);
+    if(!keys.length) return;
+    var records = keys.map(function(k) { return Object.assign({id:k}, store[k]); });
+    var payload = {type:'clash_training', version:'1.0', app_version:CC_VERSION.v, count:records.length, records:records};
     var json = JSON.stringify(payload);
     _clearClashTrainStore();
-    unsent.forEach(function(c){ _beaconSentIds[c.id]=true; });
     var fd = new URLSearchParams();
     fd.append('entry.1252313993', json);
     var _gf = ['https://docs','google','com/forms/d/e/','1FAIpQLSc51xdQw_8JY2lN1aw8OZOT2Jzdx42m','vilJzqMGVw4tXo7wtA'];
@@ -12877,7 +12872,7 @@ function startApp() {
         var cur = _latestSRef.current;
         if(_hasProjectData(cur)) _saveCurrentProjectData(cur);
         // Phase 0.5: beacon training data on tab close
-        _beaconSendTrainingData(cur.clashes, cur.detectionSettings, cur.models, cur.prefs.defaultTolerances, cur.issues);
+        _beaconSendTrainingData();
         _beaconSendNLTrainingData(cur.models);
         _beaconSendDetectionRuns();
       }
@@ -12888,17 +12883,15 @@ function startApp() {
       }, 5000);
       return function(){ window.removeEventListener('beforeunload', onUnload); clearTimeout(startupTimer); };
     }, []);
-    // Phase 0.5: periodic auto-send every 25 reviewed clashes
+    // Phase 0.5: periodic auto-send every 25 labeled clashes in store
     var _beaconReviewRef = useRef(0);
     useEffect(function(){
-      var allData = s.clashes.slice();
-      s.issues.forEach(function(i){if(i.source==='clash') allData.push(i);});
-      var reviewedNow = allData.filter(function(c){ return c.status!=='open' && !_beaconSentIds[c.id]; }).length;
-      if(reviewedNow >= 25 && reviewedNow !== _beaconReviewRef.current) {
-        _beaconReviewRef.current = reviewedNow;
-        _beaconSendTrainingData(s.clashes, s.detectionSettings, s.models, s.prefs.defaultTolerances, s.issues);
+      var storeCount = _getClashTrainCount();
+      if(storeCount >= 25 && storeCount !== _beaconReviewRef.current) {
+        _beaconReviewRef.current = storeCount;
+        _beaconSendTrainingData();
       }
-      if(reviewedNow < _beaconReviewRef.current) _beaconReviewRef.current = reviewedNow;
+      if(storeCount < _beaconReviewRef.current) _beaconReviewRef.current = storeCount;
     }, [s.clashes, s.issues]);
     // Phase 0.5: periodic auto-send NL training every 25 new records
     var _beaconNLRef = useRef(0);

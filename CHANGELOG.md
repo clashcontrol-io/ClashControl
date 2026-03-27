@@ -1,5 +1,8 @@
 # Changelog
 
+## v3.2.35 (2026-03-27)
+- Review fixes: cancel-safe detection, orbit crossVectors, shared dispose helper
+
 ## v3.2.34 (2026-03-27)
 - Bug fixes & performance: race conditions, memory leaks, allocation reduction
 
