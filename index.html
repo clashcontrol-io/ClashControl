@@ -252,7 +252,7 @@ window.onload = function() {
 
 function startApp() {
   // ── Version (auto-updated by pre-commit hook) ──
-  var CC_VERSION = {v:'3.2.74',hash:'2cd34cd',date:'2026-03-27T14:02:38Z'};
+  var CC_VERSION = {v:'3.3.0',hash:'14dd0cc',date:'2026-03-27T15:33:43Z'};
 
   // ── AI Data Collection (Phase 0.5) ──
   var CLASH_DATA_ENDPOINT = 'https://your-server.com/api/clash-data';
@@ -415,7 +415,14 @@ function startApp() {
       log:[]             // [{ts,type:'push'|'pull'|'info'|'error',text}]
     },
     showRevitBridge:false,
-    lastDeltaSummary: null // {new, persisting, autoResolved, ts} — set after each merge run
+    lastDeltaSummary: null, // {new, persisting, autoResolved, ts} — set after each merge run
+    // IDS Validation
+    idsValidation: {
+      results: [],       // [{specName, ruleDesc, severity, status:'pass'|'fail', elementId, globalId, ifcType, elementName, modelId}]
+      specs: [],         // [{name, rules:[{desc, applicability, requirement, severity}]}]
+      running: false,
+      summary: null      // {total, pass, fail, bySpec:{specName:{pass,fail}}}
+    }
   };
   // Action type constants — single source of truth for all dispatch/reducer references
   var A = {
@@ -449,7 +456,8 @@ function startApp() {
     SELECT_TOGGLE:'SELECT_TOGGLE', SELECT_ALL:'SELECT_ALL',
     SELECT_NONE:'SELECT_NONE', SELECT_MODE:'SELECT_MODE',
     REVIT_BRIDGE:'REVIT_BRIDGE', UPD_BRIDGE:'UPD_BRIDGE',
-    BRIDGE_LOG:'BRIDGE_LOG', CLEAR_BRIDGE_LOG:'CLEAR_BRIDGE_LOG'
+    BRIDGE_LOG:'BRIDGE_LOG', CLEAR_BRIDGE_LOG:'CLEAR_BRIDGE_LOG',
+    IDS_SET_RESULTS:'IDS_SET_RESULTS', IDS_SET_SPECS:'IDS_SET_SPECS', IDS_RUNNING:'IDS_RUNNING'
   };
   // Collect all element IDs from a clash/issue item
   function _itemEids(item) {
@@ -676,6 +684,9 @@ function startApp() {
       case A.BRIDGE_LOG:      return Object.assign({},s,{revitBridge:Object.assign({},s.revitBridge,{log:s.revitBridge.log.concat([{ts:Date.now(),type:a.logType||'info',text:a.text}])})});
       case A.CLEAR_BRIDGE_LOG:return Object.assign({},s,{revitBridge:Object.assign({},s.revitBridge,{log:[]})});
       case A.REVIT_BRIDGE:    return Object.assign({},s,{showRevitBridge:a.v});
+      case A.IDS_SET_RESULTS: return Object.assign({},s,{idsValidation:Object.assign({},s.idsValidation,{results:a.results,summary:a.summary,running:false})});
+      case A.IDS_SET_SPECS:   return Object.assign({},s,{idsValidation:Object.assign({},s.idsValidation,{specs:a.specs})});
+      case A.IDS_RUNNING:     return Object.assign({},s,{idsValidation:Object.assign({},s.idsValidation,{running:a.v})});
       default:            return s;
     }
   }
@@ -993,6 +1004,7 @@ function startApp() {
     IFCRELAGGREGATES:160246688, IFCRELCONNECTSELEMENTS:1204542856,
     // Spatial containers (for aggregate filtering)
     IFCBUILDING:4031249490, IFCSITE:4097777520,
+    IFCPROJECT:103090709,
     IFCOPENINGELEMENT:3588315303
   };
 
@@ -1101,6 +1113,36 @@ function startApp() {
     // Sort storeyData by elevation
     storeyData.sort(function(a,b){return a.elevation-b.elevation;});
     return {map:storeyMap, data:storeyData};
+  }
+
+  // Extract IFC spatial hierarchy: IfcProject -> IfcSite -> IfcBuilding
+  function extractSpatialHierarchy(api, modelID) {
+    var hierarchy = {project:null, sites:[], buildings:[]};
+    try {
+      // IfcProject
+      var projIds = api.GetLineIDsWithType(modelID, IFC.IFCPROJECT);
+      if (projIds.size() > 0) {
+        var pLine = api.GetLine(modelID, projIds.get(0));
+        hierarchy.project = {id:projIds.get(0), name:safeStr(pLine.Name)||'IfcProject', description:safeStr(pLine.Description)};
+      }
+      // IfcSite
+      var siteIds = api.GetLineIDsWithType(modelID, IFC.IFCSITE);
+      for (var i = 0; i < siteIds.size(); i++) {
+        try {
+          var sLine = api.GetLine(modelID, siteIds.get(i));
+          hierarchy.sites.push({id:siteIds.get(i), name:safeStr(sLine.Name)||'IfcSite', description:safeStr(sLine.Description)});
+        } catch(e) {}
+      }
+      // IfcBuilding
+      var bldIds = api.GetLineIDsWithType(modelID, IFC.IFCBUILDING);
+      for (var i = 0; i < bldIds.size(); i++) {
+        try {
+          var bLine = api.GetLine(modelID, bldIds.get(i));
+          hierarchy.buildings.push({id:bldIds.get(i), name:safeStr(bLine.Name)||'IfcBuilding', description:safeStr(bLine.Description)});
+        } catch(e) {}
+      }
+    } catch(e) { console.warn('Spatial hierarchy extraction failed:', e.message||e); }
+    return hierarchy;
   }
 
   // Pre-build material map: expressID -> material name (scans relations once, not per element)
@@ -1432,6 +1474,7 @@ function startApp() {
       var storeyResult = extractStoreys(api, modelID);
       var storeyMap = storeyResult.map;
       var storeyData = storeyResult.data;
+      var spatialHierarchy = extractSpatialHierarchy(api, modelID);
       var matMap = buildMaterialMap(api, modelID);
       var propMap = buildPropertyMap(api, modelID, onProgress);
       var relatedPairs = buildRelationsMap(api, modelID);
@@ -1554,7 +1597,7 @@ function startApp() {
               console.groupEnd();
               window._ccLoadProfile = rows;
             })();
-            resolve({ meshes:meshes, elements:elements, storeys:Object.keys(allStoreys).sort(), storeyData:storeyData, relatedPairs:relatedPairs, stats:stats });
+            resolve({ meshes:meshes, elements:elements, storeys:Object.keys(allStoreys).sort(), storeyData:storeyData, spatialHierarchy:spatialHierarchy, relatedPairs:relatedPairs, stats:stats });
           }
         }
         processChunk(0);
@@ -1597,6 +1640,7 @@ function startApp() {
         var storeyResult = extractStoreys(api, modelID);
         var storeyMap = storeyResult.map;
         var storeyData = storeyResult.data;
+        var spatialHierarchy = extractSpatialHierarchy(api, modelID);
         var matMap = buildMaterialMap(api, modelID);
         var propMap = buildPropertyMap(api, modelID, progress);
         var relatedPairs = buildRelationsMap(api, modelID);
@@ -1657,6 +1701,7 @@ function startApp() {
         self.postMessage({type:'result', rawEls:rawEls, geoTable:_geoTable,
           geoUnique:_geoUnique, geoReused:_geoReused,
           storeys:Object.keys(allStoreys).sort(), storeyData:storeyData,
+          spatialHierarchy:spatialHierarchy,
           relatedPairs:relatedPairs, fileSize:buf.byteLength, phases:phases}, xfer);
       }).catch(function(err) {
         self.postMessage({type:'error', msg: err.message || String(err)});
@@ -1786,7 +1831,7 @@ function startApp() {
             window._ccLoadProfile = rows;
           })();
 
-          resolve({meshes:meshes, elements:elements, storeys:msg.storeys, storeyData:msg.storeyData, relatedPairs:msg.relatedPairs, stats:stats});
+          resolve({meshes:meshes, elements:elements, storeys:msg.storeys, storeyData:msg.storeyData, spatialHierarchy:msg.spatialHierarchy||{}, relatedPairs:msg.relatedPairs, stats:stats});
           worker.terminate();
         }
       };
@@ -6383,7 +6428,7 @@ function startApp() {
             var dObj = DISC.find(function(x){return x.id===disc;});
             var col = dObj ? dObj.c : DISC[0].c;
             var fSize = result.stats ? result.stats.fileSize : entry.buffer.byteLength;
-            d({t:A.ADD_MODEL, v:{id:entry.id, name:entry.name.replace(/\.ifc$/i,''), discipline:disc, color:col, meshes:result.meshes, elements:result.elements, storeys:result.storeys||[], storeyData:result.storeyData||[], relatedPairs:result.relatedPairs||{}, stats:result.stats||{fileSize:fSize}}});
+            d({t:A.ADD_MODEL, v:{id:entry.id, name:entry.name.replace(/\.ifc$/i,''), discipline:disc, color:col, meshes:result.meshes, elements:result.elements, storeys:result.storeys||[], storeyData:result.storeyData||[], spatialHierarchy:result.spatialHierarchy||{}, relatedPairs:result.relatedPairs||{}, stats:result.stats||{fileSize:fSize}}});
           }).catch(function(e){ console.warn('Failed to restore '+entry.name+':', e); })
             .then(function(){ _setGlobalLoading(false); });
         });
@@ -6808,7 +6853,7 @@ function startApp() {
                   stats:result.stats||{fileSize:fSize}}});
               } else {
                 modelId = uid();
-                d({t:A.ADD_MODEL, v:{id:modelId, name:baseName, discipline:disc, color:col, visible:true, _version:1, meshes:result.meshes, elements:result.elements, storeys:result.storeys||[], storeyData:result.storeyData||[], relatedPairs:result.relatedPairs||{}, stats:result.stats||{fileSize:fSize}}});
+                d({t:A.ADD_MODEL, v:{id:modelId, name:baseName, discipline:disc, color:col, visible:true, _version:1, meshes:result.meshes, elements:result.elements, storeys:result.storeys||[], storeyData:result.storeyData||[], spatialHierarchy:result.spatialHierarchy||{}, relatedPairs:result.relatedPairs||{}, stats:result.stats||{fileSize:fSize}}});
               }
               idbSaveFile(modelId, f.name, buf, s.activeProject||'default');
               idbSaveGeoCache(modelId, _geoSerialize(result)); // cache geometry for fast project-switch restore
@@ -7075,9 +7120,9 @@ function startApp() {
   // ── Issue Panel ────────────────────────────────────────────────
 
   // ── Model Tree Panel ────────────────────────────────────────
-  function ExplorerPanel(props) {
+  function NavigatorPanel(props) {
     var s=props.s, d=props.d;
-    var vm = useState('tree'), viewMode=vm[0], setViewMode=vm[1];
+    var vm = useState('spatial'), viewMode=vm[0], setViewMode=vm[1];
     var sq = useState(''), treeSearch=sq[0], setTreeSearch=sq[1];
     var ex = useState({}), expanded=ex[0], setExpanded=ex[1];
     function toggle(key){setExpanded(function(prev){var n=Object.assign({},prev);if(n[key])delete n[key];else n[key]=true;return n;});}
@@ -7101,19 +7146,21 @@ function startApp() {
       d({t:A.SET_CLASSIFICATIONS,v:classifyModels(vis)});
     }, [s.models]);
     var hasCls = cls && Object.keys(cls).length>0;
-    var classView = viewMode!=='tree' ? viewMode : null;
+    var classView = viewMode!=='tree' && viewMode!=='spatial' ? viewMode : null;
     var groups = classView && hasCls ? cls[classView] || {} : {};
     var keys = classView ? Object.keys(groups).sort(function(a,b){return (groups[b].count||0)-(groups[a].count||0)}) : [];
     var total = keys.reduce(function(sum,k){return sum+(groups[k].count||0)},0);
     var hiddenCount = classView ? keys.filter(function(k){return s.hiddenClasses[classView+':'+k]}).length : 0;
     var CLASS_COLORS = ['#60a5fa','#f87171','#34d399','#fbbf24','#c084fc','#fb923c','#22d3ee','#e879f9','#a3e635','#f472b6','#38bdf8','#facc15','#4ade80','#f97316','#818cf8'];
-    var VIEWS=[{id:'tree',label:'Tree'},{id:'byType',label:'IFC Type'},{id:'byStorey',label:'Storey'},{id:'byDiscipline',label:'Discipline'},{id:'byMaterial',label:'Material'}];
+    var VIEWS=[{id:'spatial',label:'Spatial'},{id:'tree',label:'Tree'},{id:'byType',label:'IFC Type'},{id:'byStorey',label:'Storey'},{id:'byDiscipline',label:'Discipline'},{id:'byMaterial',label:'Material'}];
+    // Property inspector state for selected element
+    var _selProp = useState(null), selectedElProps=_selProp[0], setSelectedElProps=_selProp[1];
     // Explorer keyboard navigation
     var _ef = useState(null), explorerFocus=_ef[0], setExplorerFocus=_ef[1];
     var explorerScrollRef = useRef(null);
     useEffect(function(){
       function onKey(e){
-        if(s.tab!=='explorer') return;
+        if(s.tab!=='navigator') return;
         if(e.target.tagName==='INPUT'||e.target.tagName==='TEXTAREA') return;
         if(viewMode!=='tree') return;
         if(e.key!=='ArrowDown'&&e.key!=='ArrowUp'&&e.key!=='ArrowLeft'&&e.key!=='ArrowRight'&&e.key!=='Enter') return;
@@ -7227,6 +7274,98 @@ function startApp() {
       </div>
       <div ref=${explorerScrollRef} style=${{flex:1,overflowY:'auto',fontSize:'0.69rem'}}>
         ${s.models.length===0 && html`<div style=${{textAlign:'center',color:'var(--text-faint)',fontSize:'0.8rem',padding:'2rem 1rem'}}>Load models to explore</div>`}
+        ${viewMode==='spatial' && s.models.filter(function(m){return m.visible!==false}).map(function(model){
+          var sh = model.spatialHierarchy||{};
+          var projName = sh.project ? sh.project.name : model.name;
+          var sites = sh.sites && sh.sites.length ? sh.sites : [{name:'Default Site'}];
+          var buildings = sh.buildings && sh.buildings.length ? sh.buildings : [{name:'Default Building'}];
+          var pKey='sp_'+model.id;
+          var pOpen=!!expanded[pKey];
+          var disc = DISC.find(function(x){return x.id===model.discipline;});
+          return html`<div key=${model.id}>
+            <div data-tree-key=${pKey} class=${explorerFocus===pKey?'cc-tree-focus':''} onClick=${function(){toggle(pKey);setExplorerFocus(pKey);}} style=${{padding:'.3rem .5rem',cursor:'pointer',display:'flex',alignItems:'center',gap:'.3rem',background:explorerFocus===pKey?'rgba(37,99,235,.15)':pOpen?'var(--bg-secondary)':'transparent',borderBottom:'1px solid var(--border-subtle)'}}>
+              <span style=${{color:'var(--text-faint)',fontSize:'0.57rem'}}>${pOpen?'▼':'▶'}</span>
+              <span style=${{color:'#60a5fa',fontSize:'0.63rem',flexShrink:0}}>PRJ</span>
+              <span style=${{color:'var(--text-primary)',fontWeight:500,flex:1,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>${projName}</span>
+            </div>
+            ${pOpen && sites.map(function(site,si){
+              var siKey='ss_'+model.id+'_'+si;
+              var siOpen=!!expanded[siKey];
+              return html`<div key=${si} style=${{paddingLeft:'.5rem'}}>
+                <div data-tree-key=${siKey} class=${explorerFocus===siKey?'cc-tree-focus':''} onClick=${function(){toggle(siKey);setExplorerFocus(siKey);}} style=${{padding:'.2rem .4rem',cursor:'pointer',display:'flex',alignItems:'center',gap:'.25rem',borderBottom:'1px solid var(--border-subtle)',background:explorerFocus===siKey?'rgba(37,99,235,.15)':'transparent'}}>
+                  <span style=${{color:'var(--text-faint)',fontSize:'0.52rem'}}>${siOpen?'▼':'▶'}</span>
+                  <span style=${{color:'#22d3ee',fontSize:'0.63rem',flexShrink:0}}>SITE</span>
+                  <span style=${{color:'#22d3ee',flex:1,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>${site.name}</span>
+                </div>
+                ${siOpen && buildings.map(function(bld,bi){
+                  var bKey='sb_'+model.id+'_'+bi;
+                  var bOpen=!!expanded[bKey];
+                  return html`<div key=${bi} style=${{paddingLeft:'.4rem'}}>
+                    <div data-tree-key=${bKey} class=${explorerFocus===bKey?'cc-tree-focus':''} onClick=${function(){toggle(bKey);setExplorerFocus(bKey);}} style=${{padding:'.2rem .4rem',cursor:'pointer',display:'flex',alignItems:'center',gap:'.25rem',borderBottom:'1px solid var(--border-subtle)',background:explorerFocus===bKey?'rgba(37,99,235,.15)':'transparent'}}>
+                      <span style=${{color:'var(--text-faint)',fontSize:'0.52rem'}}>${bOpen?'▼':'▶'}</span>
+                      <span style=${{color:'#f59e0b',fontSize:'0.63rem',flexShrink:0}}>BLD</span>
+                      <span style=${{color:'#f59e0b',flex:1,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>${bld.name}</span>
+                    </div>
+                    ${bOpen && html`<div style=${{paddingLeft:'.4rem'}}>
+                      ${(model.storeyData||[]).map(function(sd){
+                        var stKey='st_'+model.id+'_'+sd.name;
+                        var stOpen=!!expanded[stKey];
+                        var stEls = (model.elements||[]).filter(function(el){return el.props&&el.props.storey===sd.name;});
+                        return html`<div key=${sd.name}>
+                          <div data-tree-key=${stKey} class=${explorerFocus===stKey?'cc-tree-focus':''} onClick=${function(){toggle(stKey);setExplorerFocus(stKey);}} style=${{padding:'.2rem .4rem',cursor:'pointer',display:'flex',alignItems:'center',gap:'.25rem',borderBottom:'1px solid var(--border-subtle)',background:explorerFocus===stKey?'rgba(37,99,235,.15)':'transparent'}}>
+                            <span style=${{color:'var(--text-faint)',fontSize:'0.52rem'}}>${stOpen?'▼':'▶'}</span>
+                            <span style=${{color:'#34d399',flex:1,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>${sd.name}</span>
+                            <span style=${{color:'var(--text-faint)',fontSize:'0.63rem'}}>${sd.elevation.toFixed(1)}m</span>
+                            <span style=${{color:'var(--text-faint)'}}>${stEls.length}</span>
+                          </div>
+                          ${stOpen && html`<div style=${{paddingLeft:'.4rem'}}>
+                            ${stEls.slice(0,200).map(function(el){
+                              var p=el.props||{};
+                              var eKey='e_'+el.expressId;
+                              return html`<div key=${el.expressId} data-tree-key=${eKey} class=${explorerFocus===eKey?'cc-tree-focus':''}
+                                onClick=${function(){if(_highlightById)_highlightById(el.expressId,false);setExplorerFocus(eKey);setSelectedElProps(p);}}
+                                onDblClick=${function(e){e.stopPropagation();if(_fitToElement){var isFloor=(p.ifcType||'').match(/slab|floor/i);_fitToElement(el.expressId,isFloor?{normal:[0,1,0]}:null);}if(_highlightById)_highlightById(el.expressId);}}
+                                style=${{padding:'.15rem .3rem',cursor:'pointer',display:'flex',alignItems:'center',gap:'.2rem',borderBottom:'1px solid var(--border-subtle)',background:explorerFocus===eKey?'rgba(37,99,235,.15)':'transparent'}}>
+                                <span style=${{color:'#c084fc',flexShrink:0}}>${p.ifcType||'Element'}</span>
+                                <span style=${{color:'var(--text-secondary)',flex:1,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>${p.name||'#'+el.expressId}</span>
+                              </div>`;
+                            })}
+                            ${stEls.length>200 && html`<div style=${{color:'var(--text-faint)',padding:'.2rem',textAlign:'center'}}>+${stEls.length-200} more</div>`}
+                          </div>`}
+                        </div>`;
+                      })}
+                      ${function(){var noSt=(model.elements||[]).filter(function(el){return !el.props||!el.props.storey;});
+                        if(!noSt.length) return null;
+                        var nsKey='st_'+model.id+'_none';
+                        var nsOpen=!!expanded[nsKey];
+                        return html`<div>
+                          <div data-tree-key=${nsKey} class=${explorerFocus===nsKey?'cc-tree-focus':''} onClick=${function(){toggle(nsKey);setExplorerFocus(nsKey);}} style=${{padding:'.2rem .4rem',cursor:'pointer',display:'flex',alignItems:'center',gap:'.25rem',borderBottom:'1px solid var(--border-subtle)',fontStyle:'italic',background:explorerFocus===nsKey?'rgba(37,99,235,.15)':'transparent'}}>
+                            <span style=${{color:'var(--text-faint)',fontSize:'0.52rem'}}>${nsOpen?'▼':'▶'}</span>
+                            <span style=${{color:'var(--text-muted)',flex:1}}>(No storey)</span>
+                            <span style=${{color:'var(--text-faint)'}}>${noSt.length}</span>
+                          </div>
+                          ${nsOpen && html`<div style=${{paddingLeft:'.4rem'}}>
+                            ${noSt.slice(0,100).map(function(el){
+                              var p=el.props||{};
+                              var eKey='e_'+el.expressId;
+                              return html`<div key=${el.expressId} data-tree-key=${eKey} class=${explorerFocus===eKey?'cc-tree-focus':''}
+                                onClick=${function(){if(_highlightById)_highlightById(el.expressId,false);setExplorerFocus(eKey);setSelectedElProps(p);}}
+                                onDblClick=${function(e){e.stopPropagation();if(_fitToElement)_fitToElement(el.expressId);if(_highlightById)_highlightById(el.expressId);}}
+                                style=${{padding:'.15rem .3rem',cursor:'pointer',display:'flex',alignItems:'center',gap:'.2rem',borderBottom:'1px solid var(--border-subtle)',background:explorerFocus===eKey?'rgba(37,99,235,.15)':'transparent'}}>
+                                <span style=${{color:'#c084fc',flexShrink:0}}>${p.ifcType||'Element'}</span>
+                                <span style=${{color:'var(--text-secondary)',flex:1,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>${p.name||'#'+el.expressId}</span>
+                              </div>`;
+                            })}
+                          </div>`}
+                        </div>`;
+                      }()}
+                    </div>`}
+                  </div>`;
+                })}
+              </div>`;
+            })}
+          </div>`;
+        })}
         ${viewMode==='tree' && s.models.filter(function(m){return m.visible!==false}).map(function(model){
           var mKey = 'm_'+model.id;
           var mOpen = !!expanded[mKey];
@@ -7266,7 +7405,7 @@ function startApp() {
                       var p=el.props||{};
                       var eKey='e_'+el.expressId;
                       return html`<div key=${el.expressId} data-tree-key=${eKey} class=${explorerFocus===eKey?'cc-tree-focus':''}
-                        onClick=${function(){if(_highlightById)_highlightById(el.expressId,false);setExplorerFocus(eKey);}}
+                        onClick=${function(){if(_highlightById)_highlightById(el.expressId,false);setExplorerFocus(eKey);setSelectedElProps(p);}}
                         onDblClick=${function(e){e.stopPropagation();if(_fitToElement){var isFloor=(p.ifcType||'').match(/slab|floor/i);_fitToElement(el.expressId,isFloor?{normal:[0,1,0]}:null);}if(_highlightById)_highlightById(el.expressId);}}
                         style=${{padding:'.15rem .3rem',cursor:'pointer',display:'flex',alignItems:'center',gap:'.2rem',borderBottom:'1px solid var(--border-subtle)',background:explorerFocus===eKey?'rgba(37,99,235,.15)':'transparent',outline:explorerFocus===eKey?'1px solid rgba(59,130,246,.5)':'none'}}>
                         <span style=${{color:'#c084fc',flexShrink:0}}>${p.ifcType||'Element'}</span>
@@ -7288,7 +7427,7 @@ function startApp() {
                     var p=el.props||{};
                     var eKey2='e_'+el.expressId;
                     return html`<div key=${el.expressId} data-tree-key=${eKey2} class=${explorerFocus===eKey2?'cc-tree-focus':''}
-                      onClick=${function(){if(_highlightById)_highlightById(el.expressId,false);setExplorerFocus(eKey2);}}
+                      onClick=${function(){if(_highlightById)_highlightById(el.expressId,false);setExplorerFocus(eKey2);setSelectedElProps(p);}}
                       onDblClick=${function(e){e.stopPropagation();if(_fitToElement){var isFloor=(p.ifcType||'').match(/slab|floor/i);_fitToElement(el.expressId,isFloor?{normal:[0,1,0]}:null);}if(_highlightById)_highlightById(el.expressId);}}
                       style=${{padding:'.15rem .3rem',cursor:'pointer',display:'flex',alignItems:'center',gap:'.2rem',borderBottom:'1px solid var(--border-subtle)',background:explorerFocus===eKey2?'rgba(37,99,235,.15)':'transparent',outline:explorerFocus===eKey2?'1px solid rgba(59,130,246,.5)':'none'}}>
                       <span style=${{color:'#c084fc',flexShrink:0}}>${p.ifcType||'Element'}</span>
@@ -7324,6 +7463,13 @@ function startApp() {
           </div>`;
         })}
       </div>
+      ${selectedElProps && html`<div style=${{flexShrink:0,borderTop:'2px solid var(--border)',maxHeight:'40%',overflowY:'auto',background:'var(--bg-tertiary)'}}>
+        <div style=${{display:'flex',alignItems:'center',justifyContent:'space-between',padding:'.3rem .5rem',borderBottom:'1px solid var(--border-subtle)'}}>
+          <span style=${{fontSize:'0.75rem',fontWeight:600,color:'#93c5fd'}}>Properties</span>
+          <button onClick=${function(){setSelectedElProps(null);}} style=${{background:'none',border:'none',cursor:'pointer',color:'var(--text-muted)',fontSize:'0.86rem',lineHeight:1,padding:'2px 4px'}}>×</button>
+        </div>
+        <${PropBlock} p=${selectedElProps} label=${(selectedElProps.ifcType||'Element')+': '+(selectedElProps.name||'#'+selectedElProps.expressId)} />
+      </div>`}
     </div>`;
   }
 
@@ -7714,7 +7860,7 @@ function startApp() {
     var s=props.s, d=props.d, f=s.filters, hideTabBar=props.hideTabBar;
     var fo=useState(false), filtersOpen=fo[0], setFiltersOpen=fo[1];
     var isClashTab = s.tab==='clashes';
-    var isExplorerTab = s.tab==='explorer';
+    var isExplorerTab = s.tab==='navigator';
     var isStandardsTab = s.tab==='standards';
     var rawItems = isClashTab ? s.clashes.filter(function(c){return c.status!=='denied';}) : s.issues;
 
@@ -7835,7 +7981,7 @@ function startApp() {
 
     return html`<div style=${{display:'flex',flexDirection:'column',flex:1,overflow:'hidden',minHeight:0}}>
       ${!hideTabBar && html`<div style=${{display:'flex',borderBottom:'1px solid var(--border-subtle)',flexShrink:0}} role="tablist">
-        ${[{id:'clashes',label:'Clashes',n:oC,bg:'#ef4444'},{id:'issues',label:'Issues',n:oI,bg:'#f59e0b'},{id:'explorer',label:'Explorer',n:0,bg:'#34d399'},{id:'standards',label:'Standards',n:0,bg:'#0ea5e9'}].map(function(t){return html`
+        ${[{id:'clashes',label:'Clashes',n:oC,bg:'#ef4444'},{id:'issues',label:'Issues',n:oI,bg:'#f59e0b'},{id:'navigator',label:'Navigator',n:0,bg:'#34d399'},{id:'standards',label:'Standards',n:0,bg:'#0ea5e9'}].map(function(t){return html`
           <button key=${t.id} onClick=${function(){d({t:A.TAB,v:t.id})}} role="tab" aria-selected=${s.tab===t.id}
             style=${{...S_BTN,flex:1,background:'none',borderRadius:0,padding:'.6rem',color:s.tab===t.id?'var(--text-primary)':'var(--text-faint)',borderBottom:s.tab===t.id?'2px solid #3b82f6':'2px solid transparent'}}>
             ${t.label}${t.n>0?html`<span style=${{marginLeft:'.3rem',background:t.bg,color:'#fff',fontSize:'0.69rem',padding:'.05rem .35rem',borderRadius:99}}>${t.n}</span>`:''}
@@ -7845,8 +7991,8 @@ function startApp() {
       ${!isExplorerTab && !isStandardsTab && rawItems.length > 0 && html`<${ClashStatsBar} items=${rawItems} isClash=${isClashTab} delta=${isClashTab ? s.lastDeltaSummary : null} />`}
       ${isClashTab && html`<${ClashRulesPanel} s=${s} d=${d} />`}
 
-      ${s.tab==='explorer' && html`<${ExplorerPanel} s=${s} d=${d} />`}
-      ${isStandardsTab && html`<${StandardsPanel} />`}
+      ${s.tab==='navigator' && html`<${NavigatorPanel} s=${s} d=${d} />`}
+      ${isStandardsTab && html`<${StandardsPanel} s=${s} d=${d} />`}
       ${!isExplorerTab && !isStandardsTab && html`<div style=${{padding:'.4rem .4rem .35rem',borderBottom:'1px solid var(--border-subtle)',flexShrink:0}}>
         <div style=${{display:'flex',gap:'.3rem',alignItems:'center'}}>
           <div style=${{flex:1,position:'relative',display:'flex',alignItems:'center'}}>
@@ -8042,9 +8188,525 @@ function startApp() {
     </div>`;
   }
 
+  // ── IDS Validation Engine ──────────────────────────────────────────
+
+  // Bundled IDS rule sets (simplified in-browser format)
+  var IDS_BUNDLED_SPECS = [
+    {
+      name: 'Naming Convention Check',
+      description: 'Validates that all elements have a non-empty Name property',
+      rules: [
+        {desc:'All elements must have a Name', applicability:{ifcType:'.*'}, requirement:{property:{pset:'',name:'Name',pattern:'.+'}}, severity:'error'},
+        {desc:'All elements must have a GlobalId', applicability:{ifcType:'.*'}, requirement:{property:{pset:'',name:'GlobalId',pattern:'.+'}}, severity:'warning'}
+      ]
+    },
+    {
+      name: 'Classification Check',
+      description: 'Validates that elements have classification references',
+      rules: [
+        {desc:'Walls must have a Material', applicability:{ifcType:'IfcWall'}, requirement:{property:{pset:'',name:'Material',pattern:'.+'}}, severity:'error'},
+        {desc:'Slabs must have a Material', applicability:{ifcType:'IfcSlab'}, requirement:{property:{pset:'',name:'Material',pattern:'.+'}}, severity:'error'},
+        {desc:'Columns must have an ObjectType', applicability:{ifcType:'IfcColumn'}, requirement:{property:{pset:'',name:'ObjectType',pattern:'.+'}}, severity:'warning'},
+        {desc:'Beams must have an ObjectType', applicability:{ifcType:'IfcBeam'}, requirement:{property:{pset:'',name:'ObjectType',pattern:'.+'}}, severity:'warning'}
+      ]
+    },
+    {
+      name: 'Property Completeness',
+      description: 'Validates that key elements have essential property sets',
+      rules: [
+        {desc:'Walls should have Pset_WallCommon', applicability:{ifcType:'IfcWall'}, requirement:{psetExists:'Pset_WallCommon'}, severity:'warning'},
+        {desc:'Doors should have Pset_DoorCommon', applicability:{ifcType:'IfcDoor'}, requirement:{psetExists:'Pset_DoorCommon'}, severity:'warning'},
+        {desc:'Windows should have Pset_WindowCommon', applicability:{ifcType:'IfcWindow'}, requirement:{psetExists:'Pset_WindowCommon'}, severity:'warning'},
+        {desc:'Spaces must have a Name', applicability:{ifcType:'IfcSpace'}, requirement:{property:{pset:'',name:'Name',pattern:'.+'}}, severity:'error'},
+        {desc:'Spaces should have Pset_SpaceCommon', applicability:{ifcType:'IfcSpace'}, requirement:{psetExists:'Pset_SpaceCommon'}, severity:'warning'}
+      ]
+    },
+    {
+      name: 'Storey Assignment',
+      description: 'Validates all physical elements are assigned to a building storey',
+      rules: [
+        {desc:'Elements must be assigned to a storey', applicability:{ifcType:'(?!IfcSpace|IfcZone|IfcGroup|IfcSystem).*'}, requirement:{property:{pset:'',name:'Storey',pattern:'.+'}}, severity:'error'}
+      ]
+    }
+  ];
+
+  // Parse IDS XML file into simplified spec format
+  function parseIDSXml(xmlText) {
+    var parser = new DOMParser();
+    var doc = parser.parseFromString(xmlText, 'text/xml');
+    var specs = [];
+    var specEls = doc.querySelectorAll('specification');
+    for (var i = 0; i < specEls.length; i++) {
+      var specEl = specEls[i];
+      var specName = specEl.getAttribute('name') || 'Specification ' + (i + 1);
+      var rules = [];
+      // Get applicability
+      var appEl = specEl.querySelector('applicability');
+      var reqEl = specEl.querySelector('requirements');
+      if (!appEl || !reqEl) continue;
+      // Parse applicability: entity type filter
+      var entityEl = appEl.querySelector('entity');
+      var ifcTypePattern = '.*';
+      if (entityEl) {
+        var nameEl = entityEl.querySelector('name');
+        if (nameEl) {
+          var simpleVal = nameEl.querySelector('simpleValue');
+          if (simpleVal) ifcTypePattern = simpleVal.textContent.trim();
+          var restriction = nameEl.querySelector('restriction');
+          if (restriction) {
+            var enumVals = restriction.querySelectorAll('enumeration');
+            if (enumVals.length > 0) {
+              var vals = [];
+              for (var ev = 0; ev < enumVals.length; ev++) vals.push(enumVals[ev].getAttribute('value'));
+              ifcTypePattern = '^(' + vals.join('|') + ')$';
+            }
+          }
+        }
+      }
+      // Parse requirements
+      var propEls = reqEl.querySelectorAll('property');
+      for (var j = 0; j < propEls.length; j++) {
+        var propEl = propEls[j];
+        var psetNameEl = propEl.querySelector('propertySet > simpleValue');
+        var propNameEl = propEl.querySelector('baseName > simpleValue');
+        var valueEl = propEl.querySelector('value');
+        var psetName = psetNameEl ? psetNameEl.textContent.trim() : '';
+        var propName = propNameEl ? propNameEl.textContent.trim() : '';
+        var pattern = '.+';
+        if (valueEl) {
+          var svEl = valueEl.querySelector('simpleValue');
+          if (svEl) pattern = '^' + svEl.textContent.trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '$';
+          var resEl = valueEl.querySelector('restriction');
+          if (resEl) {
+            var patEl = resEl.querySelector('pattern');
+            if (patEl) pattern = patEl.getAttribute('value') || '.+';
+          }
+        }
+        rules.push({
+          desc: specName + ': ' + (propName || 'property check'),
+          applicability: {ifcType: ifcTypePattern},
+          requirement: {property: {pset: psetName, name: propName, pattern: pattern}},
+          severity: 'error'
+        });
+      }
+      // Parse attribute requirements
+      var attrEls = reqEl.querySelectorAll('attribute');
+      for (var j = 0; j < attrEls.length; j++) {
+        var attrEl = attrEls[j];
+        var attrNameEl = attrEl.querySelector('name > simpleValue');
+        var attrName = attrNameEl ? attrNameEl.textContent.trim() : '';
+        rules.push({
+          desc: specName + ': ' + attrName + ' required',
+          applicability: {ifcType: ifcTypePattern},
+          requirement: {property: {pset: '', name: attrName, pattern: '.+'}},
+          severity: 'error'
+        });
+      }
+      if (rules.length > 0) {
+        specs.push({name: specName, description: '', rules: rules});
+      }
+    }
+    return specs;
+  }
+
+  // Run IDS validation against loaded models
+  function runIDSValidation(models, specs, dispatch) {
+    dispatch({t: A.IDS_RUNNING, v: true});
+    var results = [];
+    var summary = {total: 0, pass: 0, fail: 0, bySpec: {}};
+
+    setTimeout(function() {
+      specs.forEach(function(spec) {
+        var specPass = 0, specFail = 0;
+        spec.rules.forEach(function(rule) {
+          var typeRe = new RegExp(rule.applicability.ifcType, 'i');
+          models.forEach(function(model) {
+            if (model.visible === false) return;
+            (model.elements || []).forEach(function(el) {
+              var p = el.props || {};
+              if (!typeRe.test(p.ifcType || '')) return;
+              summary.total++;
+              var pass = true;
+              if (rule.requirement.property) {
+                var req = rule.requirement.property;
+                var val = '';
+                if (req.pset && p.psets && p.psets[req.pset]) {
+                  val = String(p.psets[req.pset][req.name] || '');
+                } else {
+                  // Check direct properties
+                  val = String(p[req.name] || p[req.name.charAt(0).toLowerCase() + req.name.slice(1)] || '');
+                }
+                try {
+                  pass = new RegExp(req.pattern).test(val);
+                } catch(e) { pass = val.length > 0; }
+              }
+              if (rule.requirement.psetExists) {
+                pass = !!(p.psets && p.psets[rule.requirement.psetExists]);
+              }
+              if (pass) {
+                specPass++;
+                summary.pass++;
+              } else {
+                specFail++;
+                summary.fail++;
+                results.push({
+                  specName: spec.name,
+                  ruleDesc: rule.desc,
+                  severity: rule.severity || 'error',
+                  status: 'fail',
+                  elementId: el.expressId,
+                  globalId: p.globalId || '',
+                  ifcType: p.ifcType || '',
+                  elementName: p.name || '#' + el.expressId,
+                  modelId: model.id,
+                  storey: p.storey || ''
+                });
+              }
+            });
+          });
+        });
+        summary.bySpec[spec.name] = {pass: specPass, fail: specFail};
+      });
+      dispatch({t: A.IDS_SET_RESULTS, results: results, summary: summary});
+    }, 50);
+  }
+
+  // Ghost all elements except failures, highlight failures in red/orange
+  function highlightValidationFailures(models, results) {
+    if (!results || !results.length) return;
+    var failIds = {};
+    results.forEach(function(r) { failIds[r.elementId] = r.severity; });
+    var failIdList = Object.keys(failIds).map(Number);
+    if (_ghostOthers) _ghostOthers(failIdList);
+    invalidate(5);
+  }
+
+  // Enhanced BCF export including validation failures
+  function exportValidationBCF(results, version) {
+    if (!results || !results.length) return;
+    var v3 = version === '3.0';
+    var zip = new JSZip();
+    var versionId = v3 ? '3.0' : '2.1';
+    var versionXmlns = v3 ? 'http://www.buildingsmart-tech.org/bcf/version/3.0' : 'http://www.buildingsmart-tech.org/bcf/version/2.1';
+    zip.file('bcf.version', '<?xml version="1.0" encoding="UTF-8"?>\n<Version VersionId="' + versionId + '" xmlns="' + versionXmlns + '"><DetailedVersion>' + versionId + '</DetailedVersion></Version>');
+
+    if (v3) {
+      zip.file('extensions.xml', '<?xml version="1.0" encoding="UTF-8"?>\n<Extensions xmlns="http://www.buildingsmart-tech.org/bcf/extensions/3.0"><TopicTypes><TopicType>IDS Validation</TopicType><TopicType>Error</TopicType><TopicType>Warning</TopicType><TopicType>Info</TopicType></TopicTypes><TopicStatuses><TopicStatus>Open</TopicStatus></TopicStatuses><Priorities><Priority>Critical</Priority><Priority>Normal</Priority><Priority>Minor</Priority></Priorities></Extensions>');
+      zip.file('project.bcfp', '<?xml version="1.0" encoding="UTF-8"?>\n<ProjectInfo xmlns="http://www.buildingsmart-tech.org/bcf/project/3.0"><Project ProjectId="' + guid() + '"><Name>ClashControl IDS Validation</Name></Project></ProjectInfo>');
+    } else {
+      zip.file('project.bcfp', '<?xml version="1.0" encoding="UTF-8"?>\n<ProjectExtension xmlns="http://www.buildingsmart-tech.org/bcf/project/2.1"><Project ProjectId="' + guid() + '"><Name>ClashControl IDS Validation</Name></Project><ExtensionSchema/></ProjectExtension>');
+    }
+
+    var severityToPriority = {error: 'Critical', warning: 'Normal', info: 'Minor'};
+    results.forEach(function(r) {
+      var g = guid();
+      var f = zip.folder(g);
+      var markupXmlns = v3 ? 'http://www.buildingsmart-tech.org/bcf/markup/3.0' : 'http://www.buildingsmart-tech.org/bcf/markup/2.1';
+      var markup = '<?xml version="1.0" encoding="UTF-8"?>\n<Markup xmlns="' + markupXmlns + '">\n';
+      markup += '  <Header>\n    <File IfcProject="" IfcSpatialStructureElement="" isExternal="true">\n      <Filename>ClashControl</Filename>\n      <Date>' + new Date().toISOString() + '</Date>\n    </File>\n  </Header>\n';
+      markup += '  <Topic Guid="' + g + '" TopicType="IDS Validation" TopicStatus="Open">\n';
+      markup += '    <Title>' + esc(r.ruleDesc) + '</Title>\n';
+      markup += '    <CreationDate>' + new Date().toISOString() + '</CreationDate>\n';
+      markup += '    <CreationAuthor>ClashControl</CreationAuthor>\n';
+      markup += '    <Description>' + esc('Element: ' + r.elementName + ' (' + r.ifcType + ') GlobalId: ' + r.globalId + ' Storey: ' + r.storey) + '</Description>\n';
+      markup += '    <Priority>' + (severityToPriority[r.severity] || 'Normal') + '</Priority>\n';
+      markup += '    <Labels><Label>' + esc(r.specName) + '</Label></Labels>\n';
+      markup += '  </Topic>\n';
+      markup += '</Markup>';
+      f.file('markup.bcf', markup);
+    });
+
+    zip.generateAsync({type: 'blob'}).then(function(blob) {
+      var a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = 'ids-validation-' + versionId + '-' + new Date().toISOString().slice(0, 10) + '.bcf';
+      a.click();
+      URL.revokeObjectURL(a.href);
+    });
+  }
+
+  // Generate styled HTML validation report
+  function generateValidationReport(results, summary, specs) {
+    var date = new Date().toISOString().slice(0, 10);
+    var h = '<!DOCTYPE html>\n<html><head><meta charset="utf-8"><title>IDS Validation Report - ' + date + '</title>\n';
+    h += '<style>\n';
+    h += 'body{font-family:system-ui,-apple-system,sans-serif;background:#0f172a;color:#e2e8f0;margin:0;padding:2rem}\n';
+    h += 'h1{color:#60a5fa;border-bottom:2px solid #1e3a5f;padding-bottom:.5rem}\n';
+    h += 'h2{color:#93c5fd;margin-top:2rem}\n';
+    h += '.summary{display:flex;gap:1rem;flex-wrap:wrap;margin:1rem 0}\n';
+    h += '.card{background:#1e293b;border-radius:8px;padding:1rem;min-width:120px;border:1px solid #334155}\n';
+    h += '.card .n{font-size:2rem;font-weight:700}\n';
+    h += '.card .l{font-size:.8rem;color:#94a3b8;text-transform:uppercase}\n';
+    h += '.pass .n{color:#4ade80} .fail .n{color:#f87171}\n';
+    h += 'table{width:100%;border-collapse:collapse;margin-top:1rem}\n';
+    h += 'th{background:#1e293b;padding:.5rem;text-align:left;font-size:.8rem;color:#94a3b8;border-bottom:2px solid #334155}\n';
+    h += 'td{padding:.5rem;border-bottom:1px solid #1e293b;font-size:.8rem}\n';
+    h += 'tr:hover{background:#1e293b}\n';
+    h += '.sev-error{color:#f87171;font-weight:600} .sev-warning{color:#fbbf24;font-weight:600} .sev-info{color:#60a5fa}\n';
+    h += '.spec-bar{height:6px;border-radius:3px;background:#334155;margin-top:.3rem;overflow:hidden}\n';
+    h += '.spec-fill{height:100%;background:#4ade80;border-radius:3px}\n';
+    h += '.footer{margin-top:2rem;padding-top:1rem;border-top:1px solid #334155;font-size:.75rem;color:#64748b}\n';
+    h += '</style></head><body>\n';
+    h += '<h1>IDS Validation Report</h1>\n';
+    h += '<p style="color:#94a3b8">Generated by ClashControl on ' + date + '</p>\n';
+
+    // Summary cards
+    if (summary) {
+      var pct = summary.total > 0 ? Math.round(summary.pass / summary.total * 100) : 0;
+      h += '<div class="summary">\n';
+      h += '<div class="card"><div class="n">' + summary.total + '</div><div class="l">Total Checks</div></div>\n';
+      h += '<div class="card pass"><div class="n">' + summary.pass + '</div><div class="l">Passed</div></div>\n';
+      h += '<div class="card fail"><div class="n">' + summary.fail + '</div><div class="l">Failed</div></div>\n';
+      h += '<div class="card"><div class="n">' + pct + '%</div><div class="l">Pass Rate</div></div>\n';
+      h += '</div>\n';
+    }
+
+    // Per-spec summary
+    if (summary && summary.bySpec) {
+      h += '<h2>Results by Specification</h2>\n';
+      Object.keys(summary.bySpec).forEach(function(sn) {
+        var ss = summary.bySpec[sn];
+        var t = ss.pass + ss.fail;
+        var p = t > 0 ? Math.round(ss.pass / t * 100) : 100;
+        h += '<div class="card" style="margin-bottom:.5rem"><strong>' + esc(sn) + '</strong> — ' + ss.pass + ' pass, ' + ss.fail + ' fail';
+        h += '<div class="spec-bar"><div class="spec-fill" style="width:' + p + '%"></div></div></div>\n';
+      });
+    }
+
+    // Failures table
+    if (results && results.length > 0) {
+      h += '<h2>Failures (' + results.length + ')</h2>\n';
+      h += '<table><thead><tr><th>Severity</th><th>Rule</th><th>Spec</th><th>Element</th><th>Type</th><th>GlobalId</th><th>Storey</th></tr></thead><tbody>\n';
+      results.forEach(function(r) {
+        h += '<tr>';
+        h += '<td class="sev-' + r.severity + '">' + r.severity.toUpperCase() + '</td>';
+        h += '<td>' + esc(r.ruleDesc) + '</td>';
+        h += '<td>' + esc(r.specName) + '</td>';
+        h += '<td>' + esc(r.elementName) + '</td>';
+        h += '<td>' + esc(r.ifcType) + '</td>';
+        h += '<td style="font-family:monospace;font-size:.7rem">' + esc(r.globalId) + '</td>';
+        h += '<td>' + esc(r.storey) + '</td>';
+        h += '</tr>\n';
+      });
+      h += '</tbody></table>\n';
+    } else {
+      h += '<h2 style="color:#4ade80">All checks passed!</h2>\n';
+    }
+
+    h += '<div class="footer">ClashControl IDS Validation Report</div>\n';
+    h += '</body></html>';
+    return h;
+  }
+
+  // glTF/GLB export via Three.js GLTFExporter
+  function exportGLTF(scene, models, format) {
+    var script = document.createElement('script');
+    script.src = 'https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/exporters/GLTFExporter.js';
+    script.onload = function() {
+      var exporter = new THREE.GLTFExporter();
+      var exportScene = new THREE.Scene();
+      models.forEach(function(model) {
+        if (model.visible === false) return;
+        (model.elements || []).forEach(function(el) {
+          (el.meshes || []).forEach(function(mesh) {
+            if (mesh.visible) exportScene.add(mesh.clone());
+          });
+        });
+      });
+      var options = {binary: format === 'glb'};
+      exporter.parse(exportScene, function(result) {
+        var blob;
+        if (format === 'glb') {
+          blob = new Blob([result], {type: 'application/octet-stream'});
+        } else {
+          var json = JSON.stringify(result);
+          blob = new Blob([json], {type: 'application/json'});
+        }
+        var a = document.createElement('a');
+        a.href = URL.createObjectURL(blob);
+        a.download = 'clashcontrol-export.' + format;
+        a.click();
+        URL.revokeObjectURL(a.href);
+        // Clean up cloned meshes
+        exportScene.traverse(function(obj) { if (obj.geometry) obj.geometry.dispose(); });
+      }, function(err) { console.error('glTF export failed:', err); }, options);
+    };
+    document.head.appendChild(script);
+  }
+
+  // ── IDS Validation Panel (shown in Standards tab) ─────────────────
+
+  function IDSValidationPanel(props) {
+    var s = props.s, d = props.d;
+    var ids = s.idsValidation;
+    var _sp = useState(null), customSpecs = _sp[0], setCustomSpecs = _sp[1];
+    var _sel = useState([]), selectedBundled = _sel[0], setSelectedBundled = _sel[1];
+    var _vf = useState('all'), viewFilter = _vf[0], setViewFilter = _vf[1];
+    var _showResults = useState(false), showResults = _showResults[0], setShowResults = _showResults[1];
+
+    function handleFileUpload(e) {
+      var file = e.target.files[0];
+      if (!file) return;
+      var reader = new FileReader();
+      reader.onload = function(ev) {
+        try {
+          var parsed = parseIDSXml(ev.target.result);
+          setCustomSpecs(parsed);
+          d({t: A.IDS_SET_SPECS, specs: parsed});
+        } catch (err) {
+          console.error('IDS parse error:', err);
+        }
+      };
+      reader.readAsText(file);
+    }
+
+    function toggleBundled(idx) {
+      setSelectedBundled(function(prev) {
+        var i = prev.indexOf(idx);
+        if (i === -1) return prev.concat([idx]);
+        var n = prev.slice(); n.splice(i, 1); return n;
+      });
+    }
+
+    function runValidation() {
+      var specsToRun = [];
+      selectedBundled.forEach(function(idx) {
+        if (IDS_BUNDLED_SPECS[idx]) specsToRun.push(IDS_BUNDLED_SPECS[idx]);
+      });
+      if (customSpecs) specsToRun = specsToRun.concat(customSpecs);
+      if (specsToRun.length === 0) return;
+      runIDSValidation(s.models, specsToRun, d);
+      setShowResults(true);
+    }
+
+    function downloadReport() {
+      var h = generateValidationReport(ids.results, ids.summary, ids.specs);
+      var blob = new Blob([h], {type: 'text/html'});
+      var a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = 'ids-validation-report-' + new Date().toISOString().slice(0, 10) + '.html';
+      a.click();
+      URL.revokeObjectURL(a.href);
+    }
+
+    var filteredResults = ids.results;
+    if (viewFilter !== 'all') {
+      filteredResults = ids.results.filter(function(r) { return r.severity === viewFilter; });
+    }
+
+    var SEC = {fontSize: '0.75rem', fontWeight: 600, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '.05em', display: 'block', marginBottom: '.35rem'};
+
+    return html`<div style=${{padding: '.6rem', display: 'flex', flexDirection: 'column', gap: '.6rem'}}>
+      <div>
+        <span style=${SEC}>IDS Validation</span>
+        <span style=${{fontSize: '0.63rem', color: 'var(--text-faint)', display: 'block', marginBottom: '.4rem'}}>Validate IFC models against Information Delivery Specifications</span>
+      </div>
+
+      <div>
+        <span style=${{fontSize: '0.69rem', color: 'var(--text-muted)', display: 'block', marginBottom: '.25rem'}}>Built-in Rule Sets</span>
+        ${IDS_BUNDLED_SPECS.map(function(spec, idx) {
+          var isSelected = selectedBundled.indexOf(idx) !== -1;
+          return html`<label key=${idx} style=${{display: 'flex', alignItems: 'flex-start', gap: '.3rem', padding: '.2rem 0', cursor: 'pointer', fontSize: '0.69rem'}}>
+            <input type="checkbox" checked=${isSelected} onChange=${function() { toggleBundled(idx); }}
+              style=${{accentColor: 'var(--accent)', marginTop: '.1rem', flexShrink: 0}} />
+            <div>
+              <div style=${{color: isSelected ? 'var(--text-primary)' : 'var(--text-secondary)', fontWeight: 500}}>${spec.name}</div>
+              <div style=${{color: 'var(--text-faint)', fontSize: '0.57rem'}}>${spec.description} (${spec.rules.length} rules)</div>
+            </div>
+          </label>`;
+        })}
+      </div>
+
+      <div>
+        <span style=${{fontSize: '0.69rem', color: 'var(--text-muted)', display: 'block', marginBottom: '.25rem'}}>Custom IDS File</span>
+        <input type="file" accept=".ids,.xml" onChange=${handleFileUpload}
+          style=${{fontSize: '0.69rem', color: 'var(--text-secondary)'}} />
+        ${customSpecs && html`<div style=${{fontSize: '0.63rem', color: '#4ade80', marginTop: '.15rem'}}>Loaded: ${customSpecs.length} specification${customSpecs.length !== 1 ? 's' : ''}</div>`}
+      </div>
+
+      <div style=${{display: 'flex', gap: '.3rem'}}>
+        <button onClick=${runValidation} disabled=${ids.running || s.models.length === 0 || (selectedBundled.length === 0 && !customSpecs)}
+          style=${{...S_BTN, flex: 1, padding: '.35rem', background: ids.running ? '#1e3a5f' : '#2563eb', color: '#fff', fontSize: '0.75rem', fontWeight: 600,
+            opacity: (ids.running || s.models.length === 0 || (selectedBundled.length === 0 && !customSpecs)) ? 0.5 : 1}}>
+          ${ids.running ? 'Validating…' : 'Run Validation'}
+        </button>
+      </div>
+
+      ${ids.summary && html`<div style=${{background: 'var(--bg-secondary)', borderRadius: 6, padding: '.4rem'}}>
+        <div style=${{display: 'flex', gap: '.4rem', marginBottom: '.3rem'}}>
+          <span style=${{fontSize: '0.69rem', padding: '2px 6px', borderRadius: 99, background: '#052e16', color: '#4ade80', fontWeight: 600}}>${ids.summary.pass} Pass</span>
+          <span style=${{fontSize: '0.69rem', padding: '2px 6px', borderRadius: 99, background: '#7f1d1d', color: '#fca5a5', fontWeight: 600}}>${ids.summary.fail} Fail</span>
+          <span style=${{fontSize: '0.69rem', padding: '2px 6px', borderRadius: 99, background: 'var(--tag-bg)', color: 'var(--text-secondary)'}}>${ids.summary.total} Total</span>
+        </div>
+        ${Object.keys(ids.summary.bySpec).map(function(sn) {
+          var ss = ids.summary.bySpec[sn];
+          var t = ss.pass + ss.fail;
+          var pct = t > 0 ? Math.round(ss.pass / t * 100) : 100;
+          return html`<div key=${sn} style=${{marginBottom: '.2rem'}}>
+            <div style=${{display: 'flex', justifyContent: 'space-between', fontSize: '0.63rem'}}>
+              <span style=${{color: 'var(--text-secondary)'}}>${sn}</span>
+              <span style=${{color: pct >= 80 ? '#4ade80' : pct >= 50 ? '#fbbf24' : '#f87171'}}>${pct}%</span>
+            </div>
+            <div style=${{height: 3, background: 'var(--bg-primary)', borderRadius: 2, overflow: 'hidden'}}>
+              <div style=${{height: '100%', width: pct + '%', background: pct >= 80 ? '#4ade80' : pct >= 50 ? '#fbbf24' : '#f87171', borderRadius: 2}}></div>
+            </div>
+          </div>`;
+        })}
+
+        <div style=${{display: 'flex', gap: '.2rem', marginTop: '.4rem', flexWrap: 'wrap'}}>
+          <button onClick=${function() { setShowResults(!showResults); }}
+            style=${{...S_BTN, fontSize: '0.63rem', padding: '.15rem .3rem', background: showResults ? '#1e3a5f' : 'var(--bg-primary)', color: showResults ? '#93c5fd' : 'var(--text-muted)'}}>
+            ${showResults ? 'Hide' : 'Show'} Failures</button>
+          <button onClick=${function() { highlightValidationFailures(s.models, ids.results); }}
+            style=${{...S_BTN, fontSize: '0.63rem', padding: '.15rem .3rem', background: 'var(--bg-primary)', color: '#f87171'}} title="Ghost passing elements, highlight failures">
+            Highlight in 3D</button>
+          <button onClick=${function() { if (_unghostAll) _unghostAll(); invalidate(5); }}
+            style=${{...S_BTN, fontSize: '0.63rem', padding: '.15rem .3rem', background: 'var(--bg-primary)', color: 'var(--text-muted)'}}>
+            Clear Highlight</button>
+          <button onClick=${downloadReport}
+            style=${{...S_BTN, fontSize: '0.63rem', padding: '.15rem .3rem', background: 'var(--bg-primary)', color: '#60a5fa'}}>
+            HTML Report</button>
+          <button onClick=${function() { exportValidationBCF(ids.results, '2.1'); }}
+            style=${{...S_BTN, fontSize: '0.63rem', padding: '.15rem .3rem', background: 'var(--bg-primary)', color: '#22d3ee'}}>
+            BCF 2.1</button>
+          <button onClick=${function() { exportValidationBCF(ids.results, '3.0'); }}
+            style=${{...S_BTN, fontSize: '0.63rem', padding: '.15rem .3rem', background: 'var(--bg-primary)', color: '#22d3ee'}}>
+            BCF 3.0</button>
+        </div>
+      </div>`}
+
+      ${showResults && ids.results.length > 0 && html`<div>
+        <div style=${{display: 'flex', gap: '.2rem', marginBottom: '.3rem'}}>
+          ${['all', 'error', 'warning', 'info'].map(function(f) {
+            var count = f === 'all' ? ids.results.length : ids.results.filter(function(r) { return r.severity === f; }).length;
+            return html`<button key=${f} onClick=${function() { setViewFilter(f); }}
+              style=${{...S_BTN, fontSize: '0.63rem', padding: '.1rem .3rem',
+                background: viewFilter === f ? (f === 'error' ? '#7f1d1d' : f === 'warning' ? '#78350f' : '#1e3a5f') : 'var(--bg-primary)',
+                color: viewFilter === f ? '#fff' : 'var(--text-faint)'}}>${f === 'all' ? 'All' : f.charAt(0).toUpperCase() + f.slice(1)} (${count})</button>`;
+          })}
+        </div>
+        <div style=${{maxHeight: '300px', overflowY: 'auto'}}>
+          ${filteredResults.slice(0, 200).map(function(r, i) {
+            return html`<div key=${i} onClick=${function() { if (_highlightById) _highlightById(r.elementId); if (_fitToElement) _fitToElement(r.elementId); }}
+              style=${{padding: '.25rem .4rem', borderBottom: '1px solid var(--border-subtle)', cursor: 'pointer', fontSize: '0.63rem',
+                display: 'flex', gap: '.3rem', alignItems: 'center'}}>
+              <span style=${{flexShrink: 0, width: 6, height: 6, borderRadius: '50%',
+                background: r.severity === 'error' ? '#ef4444' : r.severity === 'warning' ? '#f59e0b' : '#60a5fa'}}></span>
+              <span style=${{color: '#c084fc', flexShrink: 0}}>${r.ifcType}</span>
+              <span style=${{color: 'var(--text-secondary)', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap'}}>${r.elementName}</span>
+              <span style=${{color: 'var(--text-faint)', flexShrink: 0, overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: 80}}>${r.ruleDesc}</span>
+            </div>`;
+          })}
+          ${filteredResults.length > 200 && html`<div style=${{color: 'var(--text-faint)', padding: '.3rem', textAlign: 'center', fontSize: '0.63rem'}}>+${filteredResults.length - 200} more results</div>`}
+        </div>
+      </div>`}
+    </div>`;
+  }
+
   // ── Standards Panel ──────────────────────────────────────────────
   var STANDARD_DISCIPLINES = ['mechanical','electrical','structural','architectural','civil','other'];
-  function StandardsPanel() {
+  function StandardsPanel(props) {
+    var s = props && props.s, d = props && props.d;
     var st=useState(function(){return {defaultClearance:_getStandardDefaultClearance(),rules:_getStandardPairRules(),typeRules:_getStandardTypePairRules()};}),
       data=st[0],setData=st[1];
     function updateDefault(val){
@@ -8183,7 +8845,11 @@ function startApp() {
         </div>`})}
 
       <button onClick=${addRow}
-        style=${{fontSize:'0.69rem',padding:'.3rem .6rem',background:'var(--bg-secondary)',color:'#60a5fa',border:'1px solid #3b82f644',borderRadius:4,cursor:'pointer',fontWeight:600,width:'100%'}}>+ Add discipline rule</button>
+        style=${{fontSize:'0.69rem',padding:'.3rem .6rem',background:'var(--bg-secondary)',color:'#60a5fa',border:'1px solid #3b82f644',borderRadius:4,cursor:'pointer',fontWeight:600,width:'100%',marginBottom:'1.5rem'}}>+ Add discipline rule</button>
+
+      ${s && d && html`<div style=${{borderTop:'2px solid var(--border)',paddingTop:'.8rem'}}>
+        <${IDSValidationPanel} s=${s} d=${d} />
+      </div>`}
     </div>`;
   }
 
@@ -11073,7 +11739,7 @@ function startApp() {
     if (/(?:show|open|go\s+to|switch\s+to)\s+(?:the\s+)?models?\s*(?:tab|panel|sidebar)?/.test(text)) { d({t:A.TAB,v:'models'}); return 'Opened Models tab.'; }
     if (/(?:show|open|go\s+to|switch\s+to)\s+(?:the\s+)?clashes?\s*(?:tab|panel|sidebar)?/.test(text)) { d({t:A.TAB,v:'clashes'}); return 'Opened Clashes tab.'; }
     if (/(?:show|open|go\s+to|switch\s+to)\s+(?:the\s+)?issues?\s*(?:tab|panel|sidebar)?/.test(text)) { d({t:A.TAB,v:'issues'}); return 'Opened Issues tab.'; }
-    if (/(?:show|open|go\s+to|switch\s+to)\s+(?:the\s+)?explorer?\s*(?:tab|panel)?/.test(text)) { d({t:A.TAB,v:'explorer'}); return 'Opened Explorer tab.'; }
+    if (/(?:show|open|go\s+to|switch\s+to)\s+(?:the\s+)?(?:explorer?|navigator)\s*(?:tab|panel)?/.test(text)) { d({t:A.TAB,v:'navigator'}); return 'Opened Navigator tab.'; }
 
     // ── Training Mode ─────────────────────────────────────────────
     if (/training\s*mode|(?:enable|start|activate|turn\s+on)\s+training|(?:open|show)\s+(?:the\s+)?training/.test(text)) {
@@ -11175,7 +11841,7 @@ function startApp() {
       [['models','tab','open'],   function(){d({t:A.TAB,v:'models'});return 'Models tab.';}, 2],
       [['clashes','tab','open'],  function(){d({t:A.TAB,v:'clashes'});return 'Clashes tab.';}, 2],
       [['issues','tab','open'],   function(){d({t:A.TAB,v:'issues'});return 'Issues tab.';}, 2],
-      [['explorer','tab','open'], function(){d({t:A.TAB,v:'explorer'});return 'Explorer tab.';}, 2],
+      [['navigator','tab','open'], function(){d({t:A.TAB,v:'navigator'});return 'Navigator tab.';}, 2],
       [['settings','preferences','config'],function(){d({t:A.SETTINGS,v:true});return 'Settings.';}, 1],
       [['measure','length','distance'],function(){d({t:A.MEASURE_MODE,v:'length'});return 'Measure length.';}, 1],
       [['measure','angle'],       function(){d({t:A.MEASURE_MODE,v:'angle'});return 'Measure angle.';}, 2],
@@ -12523,7 +13189,7 @@ function startApp() {
       ${tabBtn('models',  SVG_MODELS,  'Models',   0)}
       ${tabBtn('clashes', SVG_CLASHES, 'Clashes',  clashN)}
       ${tabBtn('issues',  SVG_ISSUES,  'Issues',   issueN)}
-      ${tabBtn('explorer',SVG_EXPLORE, 'Explorer', 0)}
+      ${tabBtn('navigator',SVG_EXPLORE, 'Navigator', 0)}
       ${tabBtn('standards',SVG_STANDARDS,'Standards',0)}
     </div>`;
   }
@@ -12539,7 +13205,7 @@ function startApp() {
     if (!tab) return null;
     var projects=s.projectList||[];
     var activeProj=projects.find(function(p){return p.id===s.activeProject;})||projects[0]||{name:'Default'};
-    var TITLES={models:'Models',clashes:'Clashes',issues:'Issues',explorer:'Explorer',tools:'Tools'};
+    var TITLES={models:'Models',clashes:'Clashes',issues:'Issues',navigator:'Navigator',tools:'Tools'};
     function onResizeDown(e){
       e.preventDefault();
       dragRef.current={startX:e.clientX,startW:panelW};
@@ -12570,8 +13236,8 @@ function startApp() {
       ${tab==='models'   && html`<${ModelSidebar}  s=${s} d=${d} />`}
       ${tab==='clashes'  && html`<${IssuePanel} key="clashes" s=${s} d=${d} hideTabBar=${true} />`}
       ${tab==='issues'   && html`<${IssuePanel} key="issues" s=${s} d=${d} hideTabBar=${true} />`}
-      ${tab==='explorer' && html`<${IssuePanel} key="explorer" s=${s} d=${d} hideTabBar=${true} />`}
-      ${tab==='standards' && html`<${StandardsPanel} />`}
+      ${tab==='navigator' && html`<${IssuePanel} key="navigator" s=${s} d=${d} hideTabBar=${true} />`}
+      ${tab==='standards' && html`<${StandardsPanel} s=${s} d=${d} />`}
       ${tab==='tools'    && html`<${ToolsPanel} s=${s} d=${d} />`}
     </div>`;
   }
@@ -12801,6 +13467,20 @@ function startApp() {
         </div>
       </div>
 
+      <!-- Export -->
+      <div style=${{padding:'.75rem',borderBottom:'1px solid var(--border-subtle)'}}>
+        <span style=${SEC}>Export Model</span>
+        <div style=${{display:'flex',gap:'.2rem'}}>
+          <button onClick=${function(){exportGLTF(null,s.models,'glb');}}
+            disabled=${s.models.length===0}
+            style=${{...S_BTN,flex:1,padding:'.3rem',fontSize:'0.8rem',background:'var(--bg-secondary)',color:s.models.length>0?'#60a5fa':'var(--text-faint)',opacity:s.models.length>0?1:0.5}}>Export GLB</button>
+          <button onClick=${function(){exportGLTF(null,s.models,'gltf');}}
+            disabled=${s.models.length===0}
+            style=${{...S_BTN,flex:1,padding:'.3rem',fontSize:'0.8rem',background:'var(--bg-secondary)',color:s.models.length>0?'#22d3ee':'var(--text-faint)',opacity:s.models.length>0?1:0.5}}>Export glTF</button>
+        </div>
+        <span style=${{fontSize:'0.63rem',color:'var(--text-faint)',display:'block',marginTop:'.15rem'}}>Export loaded models to glTF/GLB format</span>
+      </div>
+
       <!-- Training Mode -->
       <div style=${{padding:'.75rem'}}>
         <span style=${SEC}>Training Data</span>
@@ -12834,7 +13514,7 @@ function startApp() {
       ${navBtn('models','<path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/><path d="M12 2L2 7l10 5 10-5-10-5z"/>','Models',0)}
       ${navBtn('clashes','<path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/>','Clashes',clashN)}
       ${navBtn('issues','<path d="M4 15s1-1 4-1 5 2 8 2 4-1 4-1V3s-1 1-4 1-5-2-8-2-4 1-4 1z"/><line x1="4" y1="22" x2="4" y2="15"/>','Issues',issueN)}
-      ${navBtn('explorer','<rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/>','Explorer',0)}
+      ${navBtn('navigator','<rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/>','Navigator',0)}
       ${navBtn('tools','<circle cx="12" cy="12" r="3"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14"/><path d="M4.93 4.93a10 10 0 0 0 0 14.14"/>','Tools',0)}
     </nav>`;
   }
@@ -13169,7 +13849,7 @@ function startApp() {
         if(!ctrl && !e.altKey && !e.shiftKey){
           if(e.key==='1'){ d({t:A.TAB,v:'clashes'}); return; }
           if(e.key==='2'){ d({t:A.TAB,v:'issues'}); return; }
-          if(e.key==='3'){ d({t:A.TAB,v:'explorer'}); return; }
+          if(e.key==='3'){ d({t:A.TAB,v:'navigator'}); return; }
           if(e.key==='4'){ d({t:A.TAB,v:'standards'}); return; }
         }
 
@@ -13614,7 +14294,7 @@ function startApp() {
     // ─── 10. Explorer tab ───
     at(2000, function() {
       showCaption('Search and explore all elements');
-      d({t:'TAB', v:'explorer'});
+      d({t:'TAB', v:'navigator'});
       setTimeout(function() { smoothOrbit(20, 2000); }, 300);
     });
 
