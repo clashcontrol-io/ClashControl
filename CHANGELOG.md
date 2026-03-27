@@ -1,5 +1,8 @@
 # Changelog
 
+## v3.2.71 (2026-03-27)
+- Fix clash list: click actual DOM rows, normalize issue orbit axis
+
 ## v3.2.70 (2026-03-27)
 - Fix orbit jump, use clash 10, cached mesh list, reverse ending orbit
 
