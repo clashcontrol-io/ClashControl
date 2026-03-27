@@ -1,5 +1,8 @@
 # Changelog
 
+## v3.2.48 (2026-03-27)
+- Tour: separate zoom-all step before features, consistent orbit direction
+
 ## v3.2.47 (2026-03-27)
 - Fix tour orbit breaking viewer — array vs Vector3 and stale sph
 
