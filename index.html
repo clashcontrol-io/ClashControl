@@ -933,6 +933,10 @@ function startApp() {
 
   // ── IFC Loader (web-ifc, lazy) ─────────────────────────────────
 
+  // Shared LOD box proxy resources (must be at startApp scope so both loader paths can access them)
+  var _lodBoxGeo = typeof THREE !== 'undefined' ? new THREE.BoxBufferGeometry(1, 1, 1) : null;
+  var _lodProxyMat = typeof THREE !== 'undefined' ? new THREE.MeshBasicMaterial({color:0x667788, transparent:true, opacity:0.25, depthWrite:false}) : null;
+
   var _ifcAPI = null;
   function getIfcAPI() {
     if (_ifcAPI) return Promise.resolve(_ifcAPI);
@@ -4923,9 +4927,7 @@ function startApp() {
       // screenRatio = r²/d² ≈ proportional to fraction of screen height the object covers.
       var LOD_HIDE_RATIO  = 0.0000005; // hide entirely — covers < ~0.07% screen (~1px at 1080p)
       var LOD_PROXY_RATIO = 0.00005;   // show box proxy — covers < ~0.7% screen (~8px at 1080p)
-      // Shared LOD box proxy resources
-      var _lodBoxGeo = new THREE.BoxBufferGeometry(1, 1, 1);
-      var _lodProxyMat = new THREE.MeshBasicMaterial({color:0x667788, transparent:true, opacity:0.25, depthWrite:false});
+      // LOD box proxy resources (defined at startApp scope, referenced here for culling)
 
       function updateCulling(){
         projScreenMatrix.multiplyMatrices(S.camera.projectionMatrix, S.camera.matrixWorldInverse);
@@ -13165,6 +13167,236 @@ function startApp() {
   var root = ReactDOM.createRoot ? ReactDOM.createRoot(rootEl) : null;
   if (root) { root.render(h(ErrorBoundary, null, h(App, null))); }
   else { ReactDOM.render(h(ErrorBoundary, null, h(App, null)), rootEl); }
+
+  // ── Demo Tour (console-only: window._ccDemoTour()) ─────────────
+  // Self-running 45-second feature showcase for screen recording.
+  // Trigger from browser console: _ccDemoTour()
+  window._ccDemoTour = function() {
+    var d = window._ccDispatch;
+    var S = window._ccState3d;
+    if (!d || !S) { console.error('App not ready'); return; }
+
+    // Overlay for captions
+    var overlay = document.createElement('div');
+    overlay.id = '_ccTourOverlay';
+    overlay.style.cssText = 'position:fixed;bottom:48px;left:50%;transform:translateX(-50%);z-index:99999;pointer-events:none;text-align:center;';
+    document.body.appendChild(overlay);
+
+    var caption = document.createElement('div');
+    caption.style.cssText = 'display:inline-block;background:rgba(0,0,0,0.75);color:#fff;font-family:system-ui,sans-serif;font-size:1.15rem;font-weight:500;padding:10px 28px;border-radius:12px;backdrop-filter:blur(8px);letter-spacing:0.01em;transition:opacity 0.4s;opacity:0;';
+    overlay.appendChild(caption);
+
+    function showCaption(text) { caption.textContent = text; caption.style.opacity = '1'; }
+    function hideCaption() { caption.style.opacity = '0'; }
+
+    // Smooth orbit: rotate camera around target
+    function smoothOrbit(degrees, duration, cb) {
+      var startTheta = S.orbit.sph ? S.orbit.sph.theta : 0;
+      // Access sph through the orbit object stored on S
+      var sph = S.orbit.sph;
+      if (!sph) { if (cb) cb(); return; }
+      var delta = degrees * Math.PI / 180;
+      var start = performance.now();
+      function tick() {
+        var t = Math.min((performance.now() - start) / duration, 1);
+        var e = t < 0.5 ? 2*t*t : 1-Math.pow(-2*t+2,2)/2; // easeInOut
+        sph.theta = startTheta + delta * e;
+        S.orbit.apply();
+        invalidate();
+        if (t < 1) requestAnimationFrame(tick);
+        else { if (cb) cb(); }
+      }
+      tick();
+    }
+
+    // Sequence runner
+    var steps = [];
+    var currentStep = 0;
+    function at(delay, fn) { steps.push({delay: delay, fn: fn}); }
+    function run() {
+      if (currentStep >= steps.length) {
+        // Cleanup
+        hideCaption();
+        setTimeout(function() { if (overlay.parentNode) overlay.parentNode.removeChild(overlay); }, 600);
+        console.log('%c Demo tour complete! ', 'background:#10b981;color:#fff;font-weight:bold;padding:2px 8px;border-radius:4px');
+        return;
+      }
+      var step = steps[currentStep++];
+      setTimeout(function() { step.fn(); run(); }, step.delay);
+    }
+
+    // ── STEP 1 (0-4s): Orbit around model ──
+    at(300, function() {
+      showCaption('Load & explore IFC models in your browser');
+      if (_resetView) _resetView();
+    });
+    at(1200, function() {
+      smoothOrbit(90, 2800);
+    });
+
+    // ── STEP 2 (4-8s): Models panel — toggle visibility ──
+    at(3000, function() {
+      showCaption('Manage models, toggle visibility');
+      d({t:'TAB', v:'models'});
+    });
+    at(1500, function() {
+      // Toggle first model off
+      var models = window._ccDispatch && document.querySelectorAll('[data-model-id]');
+      var s = window._ccLatestState;
+      if (s && s.models.length > 0) {
+        d({t:'UPD_MODEL', id: s.models[0].id, u:{visible:false}});
+        invalidate(10);
+      }
+    });
+    at(1200, function() {
+      // Toggle it back on
+      var s = window._ccLatestState;
+      if (s && s.models.length > 0) {
+        d({t:'UPD_MODEL', id: s.models[0].id, u:{visible:true}});
+        invalidate(10);
+      }
+    });
+
+    // ── STEP 3 (8-11s): Render mode switch ──
+    at(1000, function() {
+      showCaption('Switch rendering styles');
+      d({t:'UPD_PREFS', u:{renderStyle:'wireframe'}});
+      invalidate(10);
+    });
+    at(1500, function() {
+      d({t:'UPD_PREFS', u:{renderStyle:'shaded'}});
+      invalidate(10);
+    });
+    at(1200, function() {
+      d({t:'UPD_PREFS', u:{renderStyle:'standard'}});
+      invalidate(10);
+    });
+
+    // ── STEP 4 (11-17s): Run clash detection ──
+    at(800, function() {
+      showCaption('One-click clash detection');
+      d({t:'TAB', v:'clashes'});
+    });
+    at(800, function() {
+      // Trigger detection
+      var s = window._ccLatestState;
+      if (s && s.models.length > 0 && !s.detecting) {
+        d({t:'DETECTING'});
+        d({t:'TAB', v:'clashes'});
+        detectClashesAsync(s.models, s.rules).then(function(result) {
+          d({t:'MERGE_CLASHES', v: result});
+        });
+      }
+    });
+    at(4500, function() {
+      var s = window._ccLatestState;
+      var n = s ? s.clashes.length : 0;
+      showCaption('Found ' + n + ' clashes');
+    });
+
+    // ── STEP 5 (17-22s): Browse clashes & fly-to ──
+    at(1800, function() {
+      showCaption('Click any clash to fly to it');
+      var s = window._ccLatestState;
+      if (s && s.clashes.length > 0) {
+        var c = s.clashes[0];
+        d({t:'ACTIVE', id: c.id});
+        if (c.point && _flyTo) _flyTo(c.point, 8);
+        if (c.elemA && c.elemB && _ghostOthers) _ghostOthers([c.elemA, c.elemB]);
+      }
+    });
+    at(2500, function() {
+      var s = window._ccLatestState;
+      if (s && s.clashes.length > 2) {
+        var c = s.clashes[2];
+        d({t:'ACTIVE', id: c.id});
+        if (c.point && _flyTo) _flyTo(c.point, 8);
+        if (c.elemA && c.elemB && _ghostOthers) _ghostOthers([c.elemA, c.elemB]);
+      }
+    });
+
+    // ── STEP 6 (22-26s): Section box on clash ──
+    at(2500, function() {
+      showCaption('Section box to isolate clashes');
+      var s = window._ccLatestState;
+      if (s && s.clashes.length > 0) {
+        var c = s.clashes[Math.min(2, s.clashes.length - 1)];
+        var eids = [c.elemA, c.elemB].filter(Boolean);
+        if (eids.length && _sboxAroundElements) _sboxAroundElements(eids);
+      }
+    });
+    at(2000, function() {
+      smoothOrbit(45, 1800);
+    });
+
+    // ── STEP 7 (26-30s): Create issue from clash ──
+    at(2200, function() {
+      // Clear section box first
+      d({t:'SECTION_BOX', v:null});
+      if (_unghostAll) _unghostAll();
+      invalidate(10);
+      showCaption('Create issues from clashes');
+      d({t:'TAB', v:'issues'});
+    });
+    at(800, function() {
+      // Open the new issue modal
+      var s = window._ccLatestState;
+      var el = null;
+      if (s && s.clashes.length > 0) el = {expressId: s.clashes[0].elemA, name: s.clashes[0].titleA || 'Element'};
+      d({t:'MODAL', v:true, el: el});
+    });
+    at(2500, function() {
+      // Close modal without saving (just showing it)
+      d({t:'MODAL', v:false});
+    });
+
+    // ── STEP 8 (30-33s): Measurements ──
+    at(500, function() {
+      showCaption('Built-in measurement tools');
+      d({t:'MEASURE_MODE', v:'length'});
+      if (_resetView) _resetView();
+    });
+    at(2200, function() {
+      d({t:'MEASURE_MODE', v:null});
+    });
+
+    // ── STEP 9 (33-37s): Export BCF ──
+    at(500, function() {
+      showCaption('Export to BCF for any BIM tool');
+      d({t:'TAB', v:'clashes'});
+      // Flash the export button area — we won't actually download, just show caption
+    });
+
+    // ── STEP 10 (37-39s): Theme toggle ──
+    at(2500, function() {
+      showCaption('Light & dark themes');
+      d({t:'UPD_PREFS', u:{theme:'light'}});
+    });
+    at(1800, function() {
+      d({t:'UPD_PREFS', u:{theme:'dark'}});
+    });
+
+    // ── STEP 11 (39-45s): End card ──
+    at(1500, function() {
+      if (_resetView) _resetView();
+      if (_unghostAll) _unghostAll();
+      showCaption('Free. Open source. No install.');
+    });
+    at(4500, function() {
+      hideCaption();
+    });
+    at(800, function() {
+      // Final cleanup
+      d({t:'SECTION_BOX', v:null});
+      d({t:'MEASURE_MODE', v:null});
+      d({t:'TAB', v:'models'});
+      invalidate(10);
+    });
+
+    // Go!
+    console.log('%c Demo tour started — recording 45s ', 'background:#2563eb;color:#fff;font-weight:bold;padding:2px 8px;border-radius:4px');
+    run();
+  };
 
 } // end startApp
 </script>
