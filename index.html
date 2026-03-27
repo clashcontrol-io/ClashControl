@@ -252,7 +252,7 @@ window.onload = function() {
 
 function startApp() {
   // ── Version (auto-updated by pre-commit hook) ──
-  var CC_VERSION = {v:'3.3.0',hash:'14dd0cc',date:'2026-03-27T15:33:43Z'};
+  var CC_VERSION = {v:'3.3.1',hash:'32c4e9b',date:'2026-03-27T15:49:07Z'};
 
   // ── AI Data Collection (Phase 0.5) ──
   var CLASH_DATA_ENDPOINT = 'https://your-server.com/api/clash-data';
@@ -6842,13 +6842,18 @@ function startApp() {
               var modelId;
               if (existing) {
                 modelId = existing.id;
+                // Compute version diff before replacing
+                var versionDiff = computeModelDiff(existing.elements, result.elements);
+                console.log('%c[Model Diff] ' + baseName + ' v' + ((existing._version||1)+1) + ': +' + versionDiff.summary.added + ' added, -' + versionDiff.summary.removed + ' removed, ~' + versionDiff.summary.modified + ' modified, =' + versionDiff.summary.unchanged + ' unchanged', 'color:#60a5fa;font-weight:bold');
                 // Atomic replace: preserve user settings, update geometry
                 d({t:A.REPLACE_MODEL, id:modelId, v:{id:modelId, name:baseName,
                   discipline:existing.discipline||disc, color:existing.color||col,
                   visible:existing.visible!==false, tag:existing.tag||'',
                   _version:(existing._version||1)+1,
+                  _versionDiff:versionDiff,
                   meshes:result.meshes, elements:result.elements,
                   storeys:result.storeys||[], storeyData:result.storeyData||[],
+                  spatialHierarchy:result.spatialHierarchy||{},
                   relatedPairs:result.relatedPairs||{},
                   stats:result.stats||{fileSize:fSize}}});
               } else {
@@ -7089,6 +7094,28 @@ function startApp() {
         ${m.stats && html`<div style=${{fontSize:'0.63rem',color:'var(--text-faint)',display:'flex',gap:'.4rem',flexWrap:'wrap'}}>
           ${m.stats.fileSize && html`<span>${(m.stats.fileSize/1048576).toFixed(1)} MB</span>`}
           ${m.stats.loadTime && html`<span>${(m.stats.loadTime/1000).toFixed(1)}s load</span>`}
+        </div>`}
+        ${m._versionDiff && html`<div style=${{borderTop:'1px solid var(--border)',paddingTop:'.35rem',marginTop:'.1rem'}}>
+          <div style=${{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:'.25rem'}}>
+            <span style=${{fontSize:'0.69rem',fontWeight:600,color:'var(--text-muted)',textTransform:'uppercase',letterSpacing:'.03em'}}>Version Diff (v${(m._version-1)||1} → v${m._version})</span>
+          </div>
+          <div style=${{display:'flex',gap:'.25rem',flexWrap:'wrap',marginBottom:'.3rem'}}>
+            ${m._versionDiff.summary.added>0 && html`<span style=${{fontSize:'0.63rem',padding:'1px 5px',borderRadius:99,background:'#052e16',color:'#4ade80',fontWeight:600}}>+${m._versionDiff.summary.added} added</span>`}
+            ${m._versionDiff.summary.removed>0 && html`<span style=${{fontSize:'0.63rem',padding:'1px 5px',borderRadius:99,background:'#7f1d1d',color:'#fca5a5',fontWeight:600}}>-${m._versionDiff.summary.removed} removed</span>`}
+            ${m._versionDiff.summary.modified>0 && html`<span style=${{fontSize:'0.63rem',padding:'1px 5px',borderRadius:99,background:'#78350f',color:'#fcd34d',fontWeight:600}}>~${m._versionDiff.summary.modified} modified</span>`}
+            ${m._versionDiff.summary.unchanged>0 && html`<span style=${{fontSize:'0.63rem',padding:'1px 5px',borderRadius:99,background:'var(--tag-bg)',color:'var(--text-faint)'}}>${m._versionDiff.summary.unchanged} unchanged</span>`}
+          </div>
+          <div style=${{display:'flex',gap:'.2rem'}}>
+            <button onClick=${function(){showModelDiff(m);}}
+              style=${{...S_BTN,flex:1,fontSize:'0.63rem',padding:'.15rem .3rem',background:'#1e3a5f',color:'#93c5fd'}}>Show Diff</button>
+            <button onClick=${function(){clearModelDiff(m);}}
+              style=${{...S_BTN,flex:1,fontSize:'0.63rem',padding:'.15rem .3rem',background:'var(--bg-primary)',color:'var(--text-muted)'}}>Clear Diff</button>
+          </div>
+          <div style=${{display:'flex',gap:'.3rem',marginTop:'.25rem',fontSize:'0.57rem',color:'var(--text-faint)',alignItems:'center'}}>
+            <span style=${{width:8,height:8,borderRadius:'50%',background:'#22c55e'}}></span> Added
+            <span style=${{width:8,height:8,borderRadius:'50%',background:'#eab308',marginLeft:'.2rem'}}></span> Modified
+            <span style=${{width:8,height:8,borderRadius:'50%',background:'#334155',marginLeft:'.2rem'}}></span> Unchanged
+          </div>
         </div>`}
         ${m.storeys&&m.storeys.length>0 && html`<div style=${{borderTop:'1px solid var(--border)',paddingTop:'.35rem',marginTop:'.1rem'}}>
           <div style=${{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:'.25rem'}}>
@@ -8186,6 +8213,116 @@ function startApp() {
 
       ${!isExplorerTab && !isStandardsTab && html`<${VirtualList} items=${items} activeId=${s.activeId} d=${d} isClash=${isClashTab} prefs=${s.prefs} models=${s.models} groupBy=${isClashTab?s.clashGroupBy:s.issueGroupBy} sortBy=${isClashTab?s.clashSortBy:s.issueSortBy} selectMode=${s.selectMode} selected=${s.selected} trainingMode=${s.trainingMode} />`}
     </div>`;
+  }
+
+  // ── Model Version Diffing ──────────────────────────────────────────
+
+  // Compute a hash of element properties to detect modifications
+  function _propHash(p) {
+    if (!p) return '';
+    var parts = [p.ifcType||'', p.name||'', p.objectType||'', p.material||'', p.storey||''];
+    if (p.quantities) {
+      Object.keys(p.quantities).sort().forEach(function(k) { parts.push(k + '=' + p.quantities[k]); });
+    }
+    if (p.psets) {
+      Object.keys(p.psets).sort().forEach(function(setName) {
+        var ps = p.psets[setName];
+        Object.keys(ps).sort().forEach(function(k) { parts.push(setName + '.' + k + '=' + ps[k]); });
+      });
+    }
+    return parts.join('|');
+  }
+
+  // Compare old and new model elements by GlobalId → {added[], removed[], modified[], unchanged[]}
+  function computeModelDiff(oldElements, newElements) {
+    var oldByGid = {}, newByGid = {};
+    (oldElements || []).forEach(function(el) {
+      var gid = el.props && el.props.globalId;
+      if (gid) oldByGid[gid] = el;
+    });
+    (newElements || []).forEach(function(el) {
+      var gid = el.props && el.props.globalId;
+      if (gid) newByGid[gid] = el;
+    });
+
+    var added = [], removed = [], modified = [], unchanged = [];
+    // Elements in new but not old = added
+    Object.keys(newByGid).forEach(function(gid) {
+      if (!oldByGid[gid]) {
+        added.push(newByGid[gid].expressId);
+      } else {
+        var oldHash = _propHash(oldByGid[gid].props);
+        var newHash = _propHash(newByGid[gid].props);
+        if (oldHash !== newHash) {
+          modified.push(newByGid[gid].expressId);
+        } else {
+          unchanged.push(newByGid[gid].expressId);
+        }
+      }
+    });
+    // Elements in old but not new = removed
+    Object.keys(oldByGid).forEach(function(gid) {
+      if (!newByGid[gid]) {
+        removed.push(oldByGid[gid].expressId);
+      }
+    });
+
+    return {
+      added: added,
+      removed: removed,
+      modified: modified,
+      unchanged: unchanged,
+      summary: {
+        added: added.length,
+        removed: removed.length,
+        modified: modified.length,
+        unchanged: unchanged.length,
+        ts: new Date().toISOString()
+      }
+    };
+  }
+
+  // Diff visualization materials
+  var _diffMatAdded = new THREE.MeshBasicMaterial({color: 0x22c55e, transparent: true, opacity: 0.7, depthWrite: false});
+  var _diffMatRemoved = new THREE.MeshBasicMaterial({color: 0xef4444, transparent: true, opacity: 0.5, depthWrite: false});
+  var _diffMatModified = new THREE.MeshBasicMaterial({color: 0xeab308, transparent: true, opacity: 0.7, depthWrite: false});
+  var _diffMatUnchanged = new THREE.MeshBasicMaterial({color: 0x334155, transparent: true, opacity: 0.08, depthWrite: false});
+
+  // Apply diff visualization to model meshes
+  function showModelDiff(model) {
+    var diff = model._versionDiff;
+    if (!diff) return;
+    var addedSet = {}; diff.added.forEach(function(id) { addedSet[id] = true; });
+    var modifiedSet = {}; diff.modified.forEach(function(id) { modifiedSet[id] = true; });
+    var unchangedSet = {}; diff.unchanged.forEach(function(id) { unchangedSet[id] = true; });
+
+    (model.elements || []).forEach(function(el) {
+      (el.meshes || []).forEach(function(mesh) {
+        if (!mesh._origMaterial) mesh._origMaterial = mesh.material;
+        if (addedSet[el.expressId]) {
+          mesh.material = _diffMatAdded;
+        } else if (modifiedSet[el.expressId]) {
+          mesh.material = _diffMatModified;
+        } else if (unchangedSet[el.expressId]) {
+          mesh.material = _diffMatUnchanged;
+        } else {
+          mesh.material = _diffMatUnchanged;
+        }
+      });
+    });
+    invalidate(5);
+  }
+
+  // Clear diff visualization — restore original materials
+  function clearModelDiff(model) {
+    (model.elements || []).forEach(function(el) {
+      (el.meshes || []).forEach(function(mesh) {
+        if (mesh._origMaterial) {
+          mesh.material = mesh._origMaterial;
+        }
+      });
+    });
+    invalidate(5);
   }
 
   // ── IDS Validation Engine ──────────────────────────────────────────

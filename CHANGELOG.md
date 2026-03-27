@@ -1,5 +1,8 @@
 # Changelog
 
+## v3.3.1 (2026-03-27)
+- Add Navigator spatial tree, IDS validation, property inspector, glTF export, and BCF enhancements
+
 ## v3.2.74 (2026-03-27)
 - Fix clickClashRow: poll with setInterval, getClash reads from DOM rows
 
