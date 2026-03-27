@@ -1,5 +1,8 @@
 # Changelog
 
+## v3.2.69 (2026-03-27)
+- Fix clash list scroll: use mid-list indices, reset sort/group in tour
+
 ## v3.2.68 (2026-03-27)
 - Pre-warm render style materials at tour start for smooth switching
 

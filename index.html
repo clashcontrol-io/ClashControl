@@ -252,7 +252,7 @@ window.onload = function() {
 
 function startApp() {
   // ── Version (auto-updated by pre-commit hook) ──
-  var CC_VERSION = {v:'3.2.68',hash:'60b3997',date:'2026-03-27T13:30:37Z'};
+  var CC_VERSION = {v:'3.2.69',hash:'4a11010',date:'2026-03-27T13:35:41Z'};
 
   // ── AI Data Collection (Phase 0.5) ──
   var CLASH_DATA_ENDPOINT = 'https://your-server.com/api/clash-data';
@@ -5581,13 +5581,21 @@ function startApp() {
         S._fillLight.intensity = style==='rendered' ? 0.5 : 0.3;
         S._ambLight.intensity = style==='shaded' ? 0.85 : style==='rendered' ? 0.35 : 0.5;
       }
-      S.mg.traverse(function(obj){
-        if(!obj.isMesh) return;
+      // Use flat mesh list if available (faster than traverse)
+      var meshList = S._meshList;
+      if (!meshList || S._meshListModels !== s.models.length) {
+        meshList = [];
+        S.mg.traverse(function(obj){ if(obj.isMesh) meshList.push(obj); });
+        S._meshList = meshList;
+        S._meshListModels = s.models.length;
+      }
+      for (var _mi = 0; _mi < meshList.length; _mi++) {
+        var obj = meshList[_mi];
         // Save original material on first encounter
         if(!obj.userData._origMaterial) obj.userData._origMaterial = obj.material;
         var orig = obj.userData._origMaterial;
         // Skip if currently ghosted
-        if(obj.material === S._ghostMat) return;
+        if(obj.material === S._ghostMat) continue;
         // Use pre-warmed cached materials if available
         var cache = obj.userData._styleMats;
         if(cache && cache[style]) {
@@ -5618,7 +5626,7 @@ function startApp() {
             obj.material = orig;
           }
         }
-      });
+      }
       invalidate();
     }, [s.prefs.renderStyle, s.prefs.theme, s.models.length]);
 
@@ -13449,14 +13457,14 @@ function startApp() {
     // ─── 3. Orbit around the clash elements as center ───
     at(2500, function() {
       showCaption('Orbit to inspect from every angle');
-      var c = getClash(8);
-      orbitAround(c && c.point ? c.point : null, 80, 3000);
+      // Just orbit from current position — flyTo already set the target
+      smoothOrbit(80, 3000);
     });
 
     // ─── 4. Click another clash — camera flies there ───
     at(3500, function() {
       showCaption('Navigate between clashes');
-      var c = getClash(20);
+      var c = getClash(10);
       if (c) { d({t:'ACTIVE', id:c.id}); flyToClash(c); }
     });
     // Orbit around the second clash too
@@ -13627,8 +13635,8 @@ function startApp() {
           pill.style.transform = '';
         }, 1200);
       }
-      // Start orbit from a more leftward angle
-      smoothOrbit(80, 8000);
+      // Orbit in opposite direction for the ending
+      smoothOrbit(-80, 8000);
       // After 3.5s, open NL panel and type CTA while still orbiting
       setTimeout(function() {
         hideCaption();
