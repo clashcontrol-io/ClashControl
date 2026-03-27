@@ -1,5 +1,8 @@
 # Changelog
 
+## v3.2.44 (2026-03-27)
+- Auto-select first issue and fly to it when switching to issues tab
+
 ## v3.2.43 (2026-03-27)
 - Add continuous camera movement throughout demo tour
 

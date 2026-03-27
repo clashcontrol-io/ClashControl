@@ -252,7 +252,7 @@ window.onload = function() {
 
 function startApp() {
   // ── Version (auto-updated by pre-commit hook) ──
-  var CC_VERSION = {v:'3.2.43',hash:'a543931',date:'2026-03-27T09:56:25Z'};
+  var CC_VERSION = {v:'3.2.44',hash:'35533c1',date:'2026-03-27T09:57:33Z'};
 
   // ── AI Data Collection (Phase 0.5) ──
   var CLASH_DATA_ENDPOINT = 'https://your-server.com/api/clash-data';
@@ -11352,6 +11352,7 @@ function startApp() {
     var s = props.s, d = props.d;
     var stOpen = useState(false), open = stOpen[0], setOpen = stOpen[1];
     window._ccNLOpen = function(){ setOpen(true); if(inputRef.current) setTimeout(function(){inputRef.current&&inputRef.current.focus();},50); };
+    window._ccNLSetInput = function(text){ setInput(text); };
     var stMsgs = useState([{role:'assistant', text:'Control ClashControl with plain English — try "load ifc", "structural vs MEP", "switch to light", "analyze clashes", or "help" for all commands.'}]);
     var msgs = stMsgs[0], setMsgs = stMsgs[1];
     var stInput = useState(''), input = stInput[0], setInput = stInput[1];
@@ -13374,14 +13375,31 @@ function startApp() {
       invalidate(10);
     });
 
-    // ─── 12. LLM training mode teaser + end ───
+    // ─── 12. AI command line + training mode teaser ───
     at(1500, function() {
       if (_unghostAll) _unghostAll();
       invalidate(10);
+      showCaption('Natural language commands');
+      // Open the command panel and type a command character by character
+      if (window._ccNLOpen) window._ccNLOpen();
+      var phrase = 'show all structural vs MEP clashes';
+      var i = 0;
+      (function typeChar() {
+        if (i <= phrase.length) {
+          if (window._ccNLSetInput) window._ccNLSetInput(phrase.substring(0, i));
+          i++;
+          setTimeout(typeChar, 60);
+        }
+      })();
+      smoothOrbit(30, 3500);
+    });
+    at(4000, function() {
+      // Clear the input and show training mode
+      if (window._ccNLSetInput) window._ccNLSetInput('');
       showCaption('AI-powered clash analysis — train your own model');
       d({t:'TRAINING_MODE', v:true});
       d({t:'TAB', v:'clashes'});
-      smoothOrbit(60, 3500);
+      smoothOrbit(40, 3500);
     });
     at(4000, function() {
       d({t:'TRAINING_MODE', v:false});
