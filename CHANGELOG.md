@@ -1,5 +1,8 @@
 # Changelog
 
+## v3.2.60 (2026-03-27)
+- Tour: show models tab at start, faster modal typing, remove duplicate model tree step
+
 ## v3.2.59 (2026-03-27)
 - Tour: add F12 diagnostics, standards tab for clearances
 

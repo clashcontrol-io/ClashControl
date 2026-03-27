@@ -252,7 +252,7 @@ window.onload = function() {
 
 function startApp() {
   // ── Version (auto-updated by pre-commit hook) ──
-  var CC_VERSION = {v:'3.2.59',hash:'80913bd',date:'2026-03-27T13:00:27Z'};
+  var CC_VERSION = {v:'3.2.60',hash:'af41ff8',date:'2026-03-27T13:02:02Z'};
 
   // ── AI Data Collection (Phase 0.5) ──
   var CLASH_DATA_ENDPOINT = 'https://your-server.com/api/clash-data';
@@ -11757,8 +11757,8 @@ function startApp() {
     var panelGlow = modelLoading || llmStatus === 'loading' || isDetecting;
     var panelAnimation = panelGlow ? 'nlBorderPulse 2s ease-in-out infinite' : 'none';
     var panelBorderCol = panelGlow ? 'rgba(96,165,250,.5)' : borderCol;
-    var backendLabel = backend === 'ollama' ? 'Ollama (' + _ollamaModel + ')' : backend === 'browser' ? 'In-browser (0.5B)' : null;
-    var backendColor = backend === 'ollama' ? '#22c55e' : backend === 'browser' ? '#f59e0b' : mutedCol;
+    var backendLabel = window._ccTourActive ? 'AI loaded' : backend === 'ollama' ? 'Ollama (' + _ollamaModel + ')' : backend === 'browser' ? 'In-browser (0.5B)' : null;
+    var backendColor = window._ccTourActive ? '#a78bfa' : backend === 'ollama' ? '#22c55e' : backend === 'browser' ? '#f59e0b' : mutedCol;
     return html`<div class="cc-nlpanel" style=${{
       position:'absolute', bottom:'1rem', left:'50%', transform:'translateX(-50%)',
       zIndex:1200, width:'min('+panelW+'px, calc(100% - 2rem))',
@@ -13222,6 +13222,7 @@ function startApp() {
     // Override AI status to appear loaded during tour
     _nlModelStatus = 'ready';
     _nlBackend = 'browser';
+    window._ccTourActive = true;
 
     // ── Diagnostics (F12 console only) ──
     var _tourStart = performance.now();
@@ -13304,6 +13305,7 @@ function startApp() {
         var allFt = _frameTimes.filter(function(f){return f<200;}); // ignore outliers
         var avgFps = allFt.length ? (1000/(allFt.reduce(function(a,b){return a+b;},0)/allFt.length)).toFixed(0) : '?';
         var dropped = _frameTimes.filter(function(f){return f>33;}).length;
+        window._ccTourActive = false;
         console.log('%c Demo tour complete! ', 'background:#10b981;color:#fff;font-weight:bold;padding:2px 8px;border-radius:4px');
         console.log('%c Tour summary: '+totalTime+'s total | avg '+avgFps+' fps | '+dropped+' dropped frames (>33ms)',
           'color:#10b981;font-weight:600');
@@ -13466,10 +13468,10 @@ function startApp() {
       showCaption('Create issues directly in the viewer');
       zoomAll();
     });
-    at(2500, function() {
+    at(1500, function() {
       d({t:'MODAL', v:true});
     });
-    at(1200, function() {
+    at(500, function() {
       // Type title character by character
       var title = 'Pipe clashes with structural beam — Level 2';
       var ti = 0;
@@ -13480,7 +13482,7 @@ function startApp() {
           nativeSet.call(titleInput, title.substring(0, ti));
           titleInput.dispatchEvent(new Event('input', {bubbles:true}));
           ti++;
-          setTimeout(typeTitle, 20);
+          setTimeout(typeTitle, 35);
         }
       })();
       // Type description after title finishes
@@ -13494,10 +13496,10 @@ function startApp() {
             nativeSetTA.call(descInput, desc.substring(0, di));
             descInput.dispatchEvent(new Event('input', {bubbles:true}));
             di++;
-            setTimeout(typeDesc, 12);
+            setTimeout(typeDesc, 20);
           }
         })();
-      }, title.length * 20 + 200);
+      }, title.length * 35 + 200);
     });
     at(3500, function() {
       d({t:'MODAL', v:false});
@@ -13586,9 +13588,8 @@ function startApp() {
       smoothOrbit(40, 3500);
     });
 
-    // ─── 14. End — zoom all, type CTA in NL input ───
+    // ─── 14. End — zoom all, type CTA in NL input (keep training mode on) ───
     at(4000, function() {
-      d({t:'TRAINING_MODE', v:false});
       if (_unghostAll) _unghostAll();
       hideCaption();
       zoomAll();
