@@ -252,7 +252,7 @@ window.onload = function() {
 
 function startApp() {
   // ── Version (auto-updated by pre-commit hook) ──
-  var CC_VERSION = {v:'3.2.44',hash:'35533c1',date:'2026-03-27T09:57:33Z'};
+  var CC_VERSION = {v:'3.2.45',hash:'52cf618',date:'2026-03-27T10:28:12Z'};
 
   // ── AI Data Collection (Phase 0.5) ──
   var CLASH_DATA_ENDPOINT = 'https://your-server.com/api/clash-data';
@@ -13245,6 +13245,30 @@ function startApp() {
       if (!s || !s.clashes.length) return null;
       return s.clashes[Math.min(idx, s.clashes.length - 1)];
     }
+    // Helper: set orbit target to a specific point, then orbit
+    function orbitAround(point, degrees, duration, cb) {
+      if (point) {
+        S.orbit.target.copy(point);
+        S.orbit.sync();
+        S.orbit.apply();
+        invalidate();
+      }
+      smoothOrbit(degrees, duration, cb);
+    }
+    // Helper: reset view to show whole model and set orbit center to model center
+    function zoomAll(cb) {
+      if (!S.mg || S.mg.children.length === 0) { if (cb) cb(); return; }
+      var box = new THREE.Box3().setFromObject(S.mg);
+      var ctr = box.getCenter(new THREE.Vector3());
+      // Set orbit target to model center
+      S.orbit.target.copy(ctr);
+      S.orbit.sync();
+      S.orbit.apply();
+      invalidate();
+      // Fly to show everything
+      if (_resetView) _resetView();
+      if (cb) setTimeout(cb, 800);
+    }
 
     // ─── 1. Clashes tab — show all detected clashes ───
     at(300, function() {
@@ -13264,10 +13288,11 @@ function startApp() {
       if (c) { d({t:'ACTIVE', id:c.id}); flyToClash(c); }
     });
 
-    // ─── 3. Orbit around the clash ───
+    // ─── 3. Orbit around the clash elements as center ───
     at(2500, function() {
       showCaption('Orbit to inspect from every angle');
-      smoothOrbit(80, 3000);
+      var c = getClash(0);
+      orbitAround(c && c.point ? c.point : null, 80, 3000);
     });
 
     // ─── 4. Click another clash — camera flies there ───
@@ -13333,28 +13358,30 @@ function startApp() {
       d({t:'MODAL', v:false});
     });
 
-    // ─── 9. Measurement tools ───
+    // ─── 9. Measurement tools — zoom all, orbit around model center ───
     at(500, function() {
       showCaption('Built-in measurement tools');
       d({t:'MEASURE_MODE', v:'length'});
-      // Orbit slowly while showing measurement mode
-      smoothOrbit(40, 2200);
+      if (_unghostAll) _unghostAll();
+      zoomAll(function() {
+        smoothOrbit(40, 2200);
+      });
     });
-    at(2700, function() {
+    at(3000, function() {
       d({t:'MEASURE_MODE', v:null});
     });
 
-    // ─── 10. Export BCF ───
+    // ─── 10. Export BCF — whole model view, orbit ───
     at(500, function() {
       showCaption('Export to BCF for any BIM tool');
       d({t:'TAB', v:'clashes'});
-      // Fly back to a wide view — pick a clash far from current
-      var c = getClash(1);
-      if (c && c.point && _flyTo) _flyTo(c.point, 12);
+      zoomAll(function() {
+        smoothOrbit(-35, 2500);
+      });
     });
 
-    // ─── 11. Toggle render styles — orbit through each ───
-    at(2500, function() {
+    // ─── 11. Toggle render styles — whole model, orbit through each ───
+    at(3000, function() {
       showCaption('Switch rendering styles');
       d({t:'UPD_PREFS', u:{renderStyle:'wireframe'}});
       invalidate(10);
@@ -13375,12 +13402,9 @@ function startApp() {
       invalidate(10);
     });
 
-    // ─── 12. AI command line + training mode teaser ───
+    // ─── 12. AI command line + training mode teaser — whole model orbit ───
     at(1500, function() {
-      if (_unghostAll) _unghostAll();
-      invalidate(10);
       showCaption('Natural language commands');
-      // Open the command panel and type a command character by character
       if (window._ccNLOpen) window._ccNLOpen();
       var phrase = 'show all structural vs MEP clashes';
       var i = 0;
@@ -13394,7 +13418,6 @@ function startApp() {
       smoothOrbit(30, 3500);
     });
     at(4000, function() {
-      // Clear the input and show training mode
       if (window._ccNLSetInput) window._ccNLSetInput('');
       showCaption('AI-powered clash analysis — train your own model');
       d({t:'TRAINING_MODE', v:true});

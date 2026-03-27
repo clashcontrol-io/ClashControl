@@ -1,5 +1,8 @@
 # Changelog
 
+## v3.2.45 (2026-03-27)
+- Add typewriter effect to tour step 12 — type in AI command line
+
 ## v3.2.44 (2026-03-27)
 - Auto-select first issue and fly to it when switching to issues tab
 
