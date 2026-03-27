@@ -1,5 +1,8 @@
 # Changelog
 
+## v3.3.10 (2026-03-27)
+- Restore Ollama check on chatbox open
+
 ## v3.3.9 (2026-03-27)
 - Skip eager Ollama probe to eliminate ERR_CONNECTION_REFUSED in console
 

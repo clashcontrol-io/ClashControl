@@ -241,6 +241,21 @@ if ('serviceWorker' in navigator) {
   });
 }
 
+// ── Anonymous visitor counter (GDPR-safe: no personal data, no cookies) ──
+// Counts unique browsers only. Sends zero identifying information.
+// Set CC_COUNTER_URL to your Cloudflare Worker / endpoint, or leave empty to disable.
+var CC_COUNTER_URL = ''; // e.g. 'https://cc-counter.your-name.workers.dev'
+(function(){
+  if(!CC_COUNTER_URL) return;
+  try{
+    if(localStorage.getItem('cc_counted')) return; // already counted this browser
+    localStorage.setItem('cc_counted','1');
+  }catch(e){return;} // private browsing — skip
+  try{
+    fetch(CC_COUNTER_URL,{method:'POST',body:'1',mode:'no-cors'}).catch(function(){});
+  }catch(e){}
+})();
+
 window.onload = function() {
   try { startApp(); }
   catch(e) {
@@ -252,7 +267,7 @@ window.onload = function() {
 
 function startApp() {
   // ── Version (auto-updated by pre-commit hook) ──
-  var CC_VERSION = {v:'3.3.9',hash:'f01fe66',date:'2026-03-27T16:32:25Z'};
+  var CC_VERSION = {v:'3.3.10',hash:'cb49dbd',date:'2026-03-27T16:44:28Z'};
 
   // ── AI Data Collection (Phase 0.5) ──
   var CLASH_DATA_ENDPOINT = 'https://your-server.com/api/clash-data';
