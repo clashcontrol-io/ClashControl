@@ -252,7 +252,7 @@ window.onload = function() {
 
 function startApp() {
   // ── Version (auto-updated by pre-commit hook) ──
-  var CC_VERSION = {v:'3.2.64',hash:'18b7b47',date:'2026-03-27T13:17:22Z'};
+  var CC_VERSION = {v:'3.2.65',hash:'2e9e666',date:'2026-03-27T13:19:31Z'};
 
   // ── AI Data Collection (Phase 0.5) ──
   var CLASH_DATA_ENDPOINT = 'https://your-server.com/api/clash-data';
@@ -8481,11 +8481,12 @@ function startApp() {
         setScrollTop(scrollRef.current.scrollTop);
       }
       // For grouped/small lists or after virtualized scroll, find the DOM row
-      requestAnimationFrame(function(){
+      // Use double-rAF to wait for React re-render after setScrollTop
+      requestAnimationFrame(function(){ requestAnimationFrame(function(){
         if(!scrollRef.current) return;
         var row = scrollRef.current.querySelector('[data-item-id="'+activeId+'"]');
         if(row) row.scrollIntoView({block:'nearest',behavior:'smooth'});
-      });
+      }); });
     }, [activeId]);
 
     if(items.length===0) return html`<div style=${{flex:1,overflowY:'auto'}}>
@@ -13327,11 +13328,12 @@ function startApp() {
       if (_flyToElements && eids.length) _flyToElements(eids, c.point);
       else if (c.point && _flyTo) _flyTo(c.point);
     }
-    // Helper: get clash by index (clamped)
+    // Helper: get clash by index (clamped to first 50 for virtualized list visibility)
     function getClash(idx) {
       var s = window._ccLatestState;
       if (!s || !s.clashes.length) return null;
-      return s.clashes[Math.min(idx, s.clashes.length - 1)];
+      var maxIdx = Math.min(49, s.clashes.length - 1);
+      return s.clashes[Math.min(idx, maxIdx)];
     }
     // Helper: set orbit target to a specific point, then orbit
     function orbitAround(point, degrees, duration, cb) {
@@ -13402,15 +13404,7 @@ function startApp() {
     at(3000, function() {
       showCaption('Click a clash to inspect it');
       var c = getClash(0);
-      if (c) {
-        d({t:'ACTIVE', id:c.id});
-        flyToClash(c);
-        // Ensure it scrolls into view after render
-        setTimeout(function() {
-          var el = document.querySelector('[data-item-id="'+c.id+'"]');
-          if (el) el.scrollIntoView({behavior:'smooth', block:'nearest'});
-        }, 200);
-      }
+      if (c) { d({t:'ACTIVE', id:c.id}); flyToClash(c); }
     });
 
     // ─── 3. Orbit around the clash elements as center ───
@@ -13424,14 +13418,7 @@ function startApp() {
     at(3500, function() {
       showCaption('Navigate between clashes');
       var c = getClash(4);
-      if (c) {
-        d({t:'ACTIVE', id:c.id});
-        flyToClash(c);
-        setTimeout(function() {
-          var el = document.querySelector('[data-item-id="'+c.id+'"]');
-          if (el) el.scrollIntoView({behavior:'smooth', block:'nearest'});
-        }, 200);
-      }
+      if (c) { d({t:'ACTIVE', id:c.id}); flyToClash(c); }
     });
     // Orbit around the second clash too
     at(2000, function() {
@@ -13441,34 +13428,24 @@ function startApp() {
     // ─── 5. Confirm the clash — show it becoming an issue ───
     at(2500, function() {
       showCaption('Confirm a clash to create an issue');
-      // Select the clash so the confirm/deny buttons are visible
       var c = getClash(0);
       if (c) {
         d({t:'ACTIVE', id:c.id});
         flyToClash(c);
       }
     });
-    // Scroll to it and let the expanded panel render
-    at(800, function() {
+    // Wait for expanded panel to render, then click the Confirm button
+    at(2000, function() {
       var c = getClash(0);
-      if (c) {
-        var el = document.querySelector('[data-item-id="'+c.id+'"]');
-        if (el) el.scrollIntoView({behavior:'smooth', block:'start'});
-      }
-    });
-    // Now click the confirm button visually
-    at(1500, function() {
-      var c = getClash(0);
-      if (c) {
-        // Find and "click" the Confirm button to trigger the visual animation
-        var row = document.querySelector('[data-item-id="'+c.id+'"]');
-        if (row) {
-          var btns = row.querySelectorAll('button');
-          for (var i = 0; i < btns.length; i++) {
-            if (btns[i].textContent.trim() === 'Confirm') {
-              btns[i].click();
-              break;
-            }
+      if (!c) return;
+      // Find the active row and click its Confirm button
+      var row = document.querySelector('[data-item-id="'+c.id+'"]');
+      if (row) {
+        var btns = row.querySelectorAll('button');
+        for (var i = 0; i < btns.length; i++) {
+          if (btns[i].textContent.trim() === 'Confirm') {
+            btns[i].click();
+            break;
           }
         }
       }

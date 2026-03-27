@@ -1,5 +1,8 @@
 # Changelog
 
+## v3.2.65 (2026-03-27)
+- Tour: fix clash list visibility, click confirm button, add explorer tab
+
 ## v3.2.64 (2026-03-27)
 - Fix 'AI loaded' not showing — force React state via _ccNLSetStatus
 
