@@ -1,5 +1,8 @@
 # Changelog
 
+## v3.2.51 (2026-03-27)
+- Tour: better clash zoom, slower issue transition, faster typing, longer end caption
+
 ## v3.2.50 (2026-03-27)
 - Tour: flash training mode pill with glow + scale in step 13
 

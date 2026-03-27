@@ -252,7 +252,7 @@ window.onload = function() {
 
 function startApp() {
   // ── Version (auto-updated by pre-commit hook) ──
-  var CC_VERSION = {v:'3.2.50',hash:'3a20462',date:'2026-03-27T12:05:29Z'};
+  var CC_VERSION = {v:'3.2.51',hash:'197f98c',date:'2026-03-27T12:12:44Z'};
 
   // ── AI Data Collection (Phase 0.5) ──
   var CLASH_DATA_ENDPOINT = 'https://your-server.com/api/clash-data';
@@ -8410,6 +8410,38 @@ function startApp() {
       return function(){document.removeEventListener('keydown', onKey);};
     }, [flatItems, activeId, groupStarts]);
 
+    // Expose advance-to-next for confirm/deny buttons
+    // _ccAdvanceToNext: store the flat list index before dispatch, then pick the item at that position after re-render
+    window._ccPrepareAdvance = function(currentId) {
+      for (var i = 0; i < flatItems.length; i++) { if (flatItems[i].id === currentId) { window._ccAdvanceIdx = i; return; } }
+      window._ccAdvanceIdx = 0;
+    };
+    window._ccAdvanceToNext = function(currentId) {
+      if (!flatItems.length) return;
+      // After re-render the confirmed/denied item may be gone from flatItems
+      // Use the stored index to pick the item now at that position
+      var idx = window._ccAdvanceIdx != null ? window._ccAdvanceIdx : 0;
+      if (idx >= flatItems.length) idx = flatItems.length - 1;
+      // If the item at idx is the same one we just actioned, try next
+      if (flatItems[idx] && flatItems[idx].id === currentId) idx++;
+      if (idx >= flatItems.length) idx = Math.max(0, flatItems.length - 1);
+      if (idx < 0 || idx >= flatItems.length || (flatItems[idx] && flatItems[idx].id === currentId)) return;
+        var nxt = flatItems[nextIdx];
+        d({t:A.ACTIVE, id:nxt.id});
+        var hIds = _itemEids(nxt);
+        if (hIds.length && _ghostOthers) _ghostOthers(hIds);
+        if (nxt.elemA && _highlightById) _highlightById(nxt.elemA, false);
+        if (nxt.elementId && _highlightById) _highlightById(nxt.elementId, false);
+        if (nxt.point && window._ccShowActiveClashMarker) window._ccShowActiveClashMarker(nxt.point);
+        if (_flyToElements && hIds.length) _flyToElements(hIds, nxt.point);
+        else if (nxt.point && _flyTo) _flyTo(nxt.point);
+        if (scrollRef.current) {
+          var rows = scrollRef.current.querySelectorAll('[data-item-id]');
+          rows.forEach(function(row) { if (row.dataset.itemId === nxt.id) row.scrollIntoView({block:'nearest'}); });
+        }
+      }
+    };
+
     // Auto-scroll to active item when it changes (e.g. clicking a 3D marker)
     useEffect(function(){
       if(!activeId) return;
@@ -8619,19 +8651,19 @@ function startApp() {
           ${isClash && it.status!=='confirmed' && html`<button onClick=${function(e){
               e.stopPropagation();
               var btn=e.target;btn.style.color='#4ade80';btn.style.background='#166534';btn.style.borderColor='#22c55e66';btn.textContent='Confirmed ✓';
-              setTimeout(function(){d({t:A.UPD_CLASH,id:it.id,u:{status:'confirmed'}});},600);
+              var _advId=it.id;if(window._ccPrepareAdvance)window._ccPrepareAdvance(_advId);setTimeout(function(){d({t:A.UPD_CLASH,id:_advId,u:{status:'confirmed'}});setTimeout(function(){if(window._ccAdvanceToNext)window._ccAdvanceToNext(_advId);},50);},600);
             }}
             style=${{...S_BTN,fontSize:'0.69rem',padding:'.15rem .5rem',background:'var(--bg-secondary)',color:'#4ade80',border:'1px solid #22c55e44',fontWeight:600,transition:'all .2s'}}>Confirm</button>`}
           ${isClash && it.status!=='confirmed' && html`<button onClick=${function(e){
               e.stopPropagation();
               var btn=e.target;btn.style.color='#fca5a5';btn.style.background='#7f1d1d';btn.style.borderColor='#ef444466';btn.textContent='Denied ✗';
-              setTimeout(function(){d({t:A.UPD_CLASH,id:it.id,u:{status:'denied'}});},600);
+              var _advId=it.id;if(window._ccPrepareAdvance)window._ccPrepareAdvance(_advId);setTimeout(function(){d({t:A.UPD_CLASH,id:_advId,u:{status:'denied'}});setTimeout(function(){if(window._ccAdvanceToNext)window._ccAdvanceToNext(_advId);},50);},600);
             }}
             style=${{...S_BTN,fontSize:'0.69rem',padding:'.15rem .5rem',background:'var(--bg-secondary)',color:'#f87171',border:'1px solid #ef444444',fontWeight:600,transition:'all .2s'}}>Deny</button>`}
           ${isClash && it.status!=='confirmed' && html`<button onClick=${function(e){
               e.stopPropagation();
               var btn=e.target;btn.style.color='#7dd3fc';btn.style.background='#0c4a6e';btn.style.borderColor='#0ea5e966';btn.textContent='Accepted ✓';
-              setTimeout(function(){d({t:A.UPD_CLASH,id:it.id,u:{status:'accepted_needs_check'}});},600);
+              var _advId=it.id;if(window._ccPrepareAdvance)window._ccPrepareAdvance(_advId);setTimeout(function(){d({t:A.UPD_CLASH,id:_advId,u:{status:'accepted_needs_check'}});setTimeout(function(){if(window._ccAdvanceToNext)window._ccAdvanceToNext(_advId);},50);},600);
             }}
             title="Accept but flag for later verification"
             style=${{...S_BTN,fontSize:'0.69rem',padding:'.15rem .5rem',background:'var(--bg-secondary)',color:'#38bdf8',border:'1px solid #0ea5e944',fontWeight:600,transition:'all .2s'}}>Accept · Check</button>`}
@@ -12801,11 +12833,15 @@ function startApp() {
     // Use refs for training side-effects to always read latest state (avoids stale closure)
     var _clashesRef = useRef(s.clashes);
     var _selectedRef = useRef(s.selected);
+    var _trainingRef = useRef(s.trainingMode);
     _clashesRef.current = s.clashes;
     _selectedRef.current = s.selected;
+    _trainingRef.current = s.trainingMode;
     // Wrap dispatch to capture training signals as side-effects
     var d = useCallback(function(a) {
       _rawD(a);
+      // Only record training data when training mode is on
+      if (!_trainingRef.current) return;
       // Write clash training labels to localStorage — read from refs for latest state
       try {
         var _clashes = _clashesRef.current;
