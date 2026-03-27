@@ -10,7 +10,7 @@
 
   <!-- CSP: restrict resource loading to known CDN origins -->
   <!-- 'unsafe-eval' required by pdf.js v3 for custom font rendering (CFF/Type1 font programs) -->
-  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval' 'wasm-unsafe-eval' https://cdnjs.cloudflare.com https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline'; connect-src https://cdn.jsdelivr.net https://cdnjs.cloudflare.com https://huggingface.co https://cdn-lfs.huggingface.co https://cdn-lfs-us-1.huggingface.co https://*.hf.co http://localhost:11434 https://api.anthropic.com https://api.openai.com https://generativelanguage.googleapis.com http://localhost:* ws://localhost:* blob:; worker-src blob:; img-src 'self' blob: data:;">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval' 'wasm-unsafe-eval' https://cdnjs.cloudflare.com https://cdn.jsdelivr.net https://gc.zgo.at; style-src 'self' 'unsafe-inline'; connect-src https://cdn.jsdelivr.net https://cdnjs.cloudflare.com https://*.goatcounter.com https://huggingface.co https://cdn-lfs.huggingface.co https://cdn-lfs-us-1.huggingface.co https://*.hf.co http://localhost:11434 https://api.anthropic.com https://api.openai.com https://generativelanguage.googleapis.com http://localhost:* ws://localhost:* blob:; worker-src blob:; img-src 'self' blob: data:;">
 
   <!-- CDN deps: React, Three.js, JSZip — all UMD, all cdnjs -->
   <!-- SRI hashes: regenerate with `node scripts/generate-sri.js` if you change versions -->
@@ -19,6 +19,10 @@
   <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js" integrity="sha384-CI3ELBVUz9XQO+97x6nwMDPosPR5XvsxW2ua7N1Xeygeh1IxtgqtCkGfQY9WWdHu" crossorigin="anonymous"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js" integrity="sha384-+mbV2IY1Zk/X1p/nWllGySJSUN8uMs+gUAN10Or95UBH0fpj6GfKgPmgC5EXieXG" crossorigin="anonymous"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js" crossorigin="anonymous"></script>
+
+  <!-- GoatCounter — privacy-friendly analytics (no cookies, no personal data) -->
+  <!-- Set data-goatcounter to your GoatCounter endpoint, e.g. https://YOURSITE.goatcounter.com/count -->
+  <script data-goatcounter="" async src="//gc.zgo.at/count.js"></script>
 
   <!-- htm — tagged template to React.createElement (hand-written, tested, 11/11 pass) -->
   <script>
@@ -241,20 +245,6 @@ if ('serviceWorker' in navigator) {
   });
 }
 
-// ── Anonymous visitor counter (GDPR-safe: no personal data, no cookies) ──
-// Counts unique browsers only. Sends zero identifying information.
-// Set CC_COUNTER_URL to your Cloudflare Worker / endpoint, or leave empty to disable.
-var CC_COUNTER_URL = ''; // e.g. 'https://cc-counter.your-name.workers.dev'
-(function(){
-  if(!CC_COUNTER_URL) return;
-  try{
-    if(localStorage.getItem('cc_counted')) return; // already counted this browser
-    localStorage.setItem('cc_counted','1');
-  }catch(e){return;} // private browsing — skip
-  try{
-    fetch(CC_COUNTER_URL,{method:'POST',body:'1',mode:'no-cors'}).catch(function(){});
-  }catch(e){}
-})();
 
 window.onload = function() {
   try { startApp(); }
@@ -267,7 +257,12 @@ window.onload = function() {
 
 function startApp() {
   // ── Version (auto-updated by pre-commit hook) ──
-  var CC_VERSION = {v:'3.3.10',hash:'cb49dbd',date:'2026-03-27T16:44:28Z'};
+  var CC_VERSION = {v:'3.3.11',hash:'a68dbce',date:'2026-03-27T16:54:54Z'};
+
+  // ── GoatCounter event helper (no-op if GoatCounter not configured) ──
+  function _gcEvent(name, title) {
+    try { if(window.goatcounter && window.goatcounter.count) window.goatcounter.count({path:'event/'+name, title:title||name, event:true}); } catch(e){}
+  }
 
   // ── AI Data Collection (Phase 0.5) ──
   var CLASH_DATA_ENDPOINT = 'https://your-server.com/api/clash-data';
@@ -492,10 +487,11 @@ function startApp() {
       case A.TOGGLE_STOREY: return Object.assign({},s,{models:s.models.map(function(m){if(m.id!==a.id)return m;var hs=Object.assign({},m.hiddenStoreys||{});if(hs[a.storey])delete hs[a.storey];else hs[a.storey]=true;return Object.assign({},m,{hiddenStoreys:hs});})});
       case A.TOGGLE_ALL_STOREYS: return Object.assign({},s,{models:s.models.map(function(m){if(m.id!==a.id)return m;return Object.assign({},m,{hiddenStoreys:a.hide?a.storeys.reduce(function(o,st){o[st]=true;return o;},{}):{}}); })});
       case A.SET_CLASHES: /* falls through to MERGE_CLASHES with no prev clashes */
-      case A.MERGE_CLASHES: var _mr=mergeDetectionResults(a.v, a.t===A.MERGE_CLASHES?s.clashes:[]); var _st={clashes:_mr.clashes,detecting:false,activeId:null,floors:deriveFloors(_mr.clashes),lastDeltaSummary:_mr.deltaSummary}; if(a.detectionSettings)_st.detectionSettings=a.detectionSettings; if(s.prefs.resetFiltersOnRun!==false)_st.filters=Object.assign({},INIT_FILTERS); return Object.assign({},s,_st);
+      case A.MERGE_CLASHES: var _mr=mergeDetectionResults(a.v, a.t===A.MERGE_CLASHES?s.clashes:[]); _gcEvent('clash-detection', _mr.clashes.length+' clashes'); var _st={clashes:_mr.clashes,detecting:false,activeId:null,floors:deriveFloors(_mr.clashes),lastDeltaSummary:_mr.deltaSummary}; if(a.detectionSettings)_st.detectionSettings=a.detectionSettings; if(s.prefs.resetFiltersOnRun!==false)_st.filters=Object.assign({},INIT_FILTERS); return Object.assign({},s,_st);
       case A.DETECTING:   return Object.assign({},s,{detecting:true});
       case A.SWITCHING_PROJECT: return Object.assign({},s,{switchingProject:!!a.v});
       case A.ADD_ISSUE:
+        _gcEvent('issue-created');
         // Strong positive signal: issue created from a clash
         var aiClashes=s.clashes;
         if(a.v&&a.v.clashId){
@@ -635,7 +631,7 @@ function startApp() {
       case A.UPD_RULES:   return Object.assign({},s,{rules:Object.assign({},s.rules,a.u)});
       case A.UPD_FILTERS: return Object.assign({},s,{filters:Object.assign({},s.filters,a.u)});
       case A.RESET_FILTERS: return Object.assign({},s,{filters:Object.assign({},INIT_FILTERS)});
-      case A.SECTION:     return Object.assign({},s,{sectionAxis:a.axis, sectionPos:a.pos!=null?a.pos:s.sectionPos, sectionCustom:null});
+      case A.SECTION:     if(a.axis&&!s.sectionAxis) _gcEvent('section-plane', a.axis); return Object.assign({},s,{sectionAxis:a.axis, sectionPos:a.pos!=null?a.pos:s.sectionPos, sectionCustom:null});
       case A.SECTION_CUSTOM: return Object.assign({},s,{sectionAxis:null, sectionCustom:a.v, sectionPos:a.pos!=null?a.pos:0.5});
       case A.TAB:         var tabUpd={tab:a.v,sectionAxis:null,sectionCustom:null}; if(a.v!==s.tab&&(a.v==='clashes'||a.v==='issues'||s.tab==='clashes'||s.tab==='issues'))tabUpd.activeId=null; return Object.assign({},s,tabUpd);
       case A.SETTINGS:    return Object.assign({},s,{showSettings:a.v});
@@ -645,7 +641,7 @@ function startApp() {
         if(a.u){var _pk=['autoFlyTo','autoHighlight','showGrid','showAxes','showMarkers','hoverHighlight','outlineSelected','defaultPriority','defaultCategory','defaultStatus','defaultMaxGap','resetFiltersOnRun','renderStyle'];_pk.forEach(function(k){if(a.u[k]!==undefined){try{localStorage.setItem('cc_'+k,JSON.stringify(a.u[k]));}catch(e){}}});}
         return Object.assign({},s,{prefs:Object.assign({},s.prefs,a.u)});
       case A.MEASURE_MODE: return Object.assign({},s,{measureMode:a.v});
-      case A.ADD_MEASUREMENT: return Object.assign({},s,{measurements:s.measurements.concat([a.v])});
+      case A.ADD_MEASUREMENT: _gcEvent('measurement', a.v&&a.v.type||'length'); return Object.assign({},s,{measurements:s.measurements.concat([a.v])});
       case A.DEL_MEASUREMENT: return Object.assign({},s,{measurements:s.measurements.filter(function(m){return m.id!==a.id})});
       case A.CLEAR_MEASUREMENTS: return Object.assign({},s,{measurements:[]});
       case A.ADD_VIEWPOINT: return Object.assign({},s,{viewpoints:s.viewpoints.concat([a.v])});
@@ -3137,6 +3133,7 @@ function startApp() {
   // ── BCF Import ──────────────────────────────────────────────
 
   function importBCF(d) {
+    _gcEvent('bcf-import');
     var inp = document.createElement('input');
     inp.type = 'file'; inp.accept = '.bcf,.bcfzip';
     inp.onchange = function(e) {
@@ -3582,6 +3579,7 @@ function startApp() {
 
   function exportBCF(items, version, viewpoints) {
     if (!items.length) return;
+    _gcEvent('bcf-export', 'BCF '+version+' ('+items.length+' items)');
     var v3 = version === '3.0';
     var zip = new JSZip();
     var versionId = v3 ? '3.0' : '2.1';
@@ -6797,6 +6795,7 @@ function startApp() {
                 offsetX: 0, offsetY: 0, scale: 1, rotation: 0, opacity: 0.7, visible: true,
                 extentW: result.extentW, extentH: result.extentH, storeyName: null }});
               d({ t: 'UNDERLAY_MODE', v: 'view2d' });
+              _gcEvent('underlay-loaded', 'DXF');
             }).catch(function(e) { errors.push(f.name + ': ' + (e.message || 'DXF parse failed')); });
           });
           return;
@@ -6809,6 +6808,7 @@ function startApp() {
                 offsetX: 0, offsetY: 0, scale: 1, rotation: 0, opacity: 0.7, visible: true,
                 extentW: result.extentW, extentH: result.extentH, storeyName: null, numPages: result.numPages, page: 1 }});
               d({ t: 'UNDERLAY_MODE', v: 'view2d' });
+              _gcEvent('underlay-loaded', 'PDF');
             }).catch(function(e) { errors.push(f.name + ': ' + (e.message || 'PDF load failed')); });
           });
           return;
@@ -6878,6 +6878,7 @@ function startApp() {
         setLoading(false);
         setLoadMsg('');
         if (errors.length) setErr(errors.join('\n'));
+        if (totalIfc > 0) _gcEvent('ifc-loaded', totalIfc+' file'+(totalIfc>1?'s':''));
       });
     }
     function onFiles(e) {
@@ -8266,6 +8267,7 @@ function startApp() {
 
   // Compare old and new model elements by GlobalId → {added[], removed[], modified[], unchanged[]}
   function computeModelDiff(oldElements, newElements) {
+    _gcEvent('model-diff');
     var oldByGid = {}, newByGid = {};
     (oldElements || []).forEach(function(el) {
       var gid = el.props && el.props.globalId;
@@ -8479,6 +8481,7 @@ function startApp() {
 
   // Run IDS validation against loaded models
   function runIDSValidation(models, specs, dispatch) {
+    _gcEvent('ids-validation', specs.length+' specs');
     dispatch({t: A.IDS_RUNNING, v: true});
     var results = [];
     var summary = {total: 0, pass: 0, fail: 0, bySpec: {}};
@@ -8595,6 +8598,7 @@ function startApp() {
 
   // Generate styled HTML validation report
   function generateValidationReport(results, summary, specs) {
+    _gcEvent('html-report');
     var date = new Date().toISOString().slice(0, 10);
     var h = '<!DOCTYPE html>\n<html><head><meta charset="utf-8"><title>IDS Validation Report - ' + date + '</title>\n';
     h += '<style>\n';
@@ -8668,6 +8672,7 @@ function startApp() {
 
   // glTF/GLB export via Three.js GLTFExporter
   function exportGLTF(scene, models, format) {
+    _gcEvent('gltf-export', format.toUpperCase()+' export');
     var script = document.createElement('script');
     script.src = 'https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/exporters/GLTFExporter.js';
     script.onload = function() {
@@ -11360,6 +11365,7 @@ function startApp() {
   }
 
   function processNLCommand(raw, s, d) {
+    _gcEvent('nl-command');
     var text = raw.trim().toLowerCase();
 
     // ── Handle yes/no response to fuzzy confirmation ──────────────

@@ -1,5 +1,8 @@
 # Changelog
 
+## v3.3.11 (2026-03-27)
+- Add GDPR-safe anonymous visitor counter
+
 ## v3.3.10 (2026-03-27)
 - Restore Ollama check on chatbox open
 
