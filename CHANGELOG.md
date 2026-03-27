@@ -1,5 +1,8 @@
 # Changelog
 
+## v3.3.7 (2026-03-27)
+- Fix mobile security warning and chatbox overlapping bottom nav
+
 ## v3.3.6 (2026-03-27)
 - Fix IFC loading from chatbox not responding on non-models tab
 
