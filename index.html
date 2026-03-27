@@ -252,7 +252,7 @@ window.onload = function() {
 
 function startApp() {
   // ── Version (auto-updated by pre-commit hook) ──
-  var CC_VERSION = {v:'3.2.46',hash:'c44ce13',date:'2026-03-27T10:38:06Z'};
+  var CC_VERSION = {v:'3.2.47',hash:'64b7875',date:'2026-03-27T11:36:38Z'};
 
   // ── AI Data Collection (Phase 0.5) ──
   var CLASH_DATA_ENDPOINT = 'https://your-server.com/api/clash-data';
@@ -13360,29 +13360,31 @@ function startApp() {
       d({t:'MODAL', v:false});
     });
 
-    // ─── 9. Measurement tools — zoom all, orbit around model center ───
+    // ─── 9. Zoom all — reset to full model view ───
     at(500, function() {
+      if (_unghostAll) _unghostAll();
+      showCaption('Full model overview');
+      zoomAll();
+    });
+
+    // ─── 10. Measurement tools ───
+    at(2500, function() {
       showCaption('Built-in measurement tools');
       d({t:'MEASURE_MODE', v:'length'});
-      if (_unghostAll) _unghostAll();
-      zoomAll(function() {
-        smoothOrbit(40, 2200);
-      });
+      smoothOrbit(40, 2500);
     });
     at(3000, function() {
       d({t:'MEASURE_MODE', v:null});
     });
 
-    // ─── 10. Export BCF — whole model view, orbit ───
+    // ─── 11. Export BCF ───
     at(500, function() {
       showCaption('Export to BCF for any BIM tool');
       d({t:'TAB', v:'clashes'});
-      zoomAll(function() {
-        smoothOrbit(-35, 2500);
-      });
+      smoothOrbit(35, 2500);
     });
 
-    // ─── 11. Toggle render styles — whole model, orbit through each ───
+    // ─── 12. Toggle render styles — orbit through each ───
     at(3000, function() {
       showCaption('Switch rendering styles');
       d({t:'UPD_PREFS', u:{renderStyle:'wireframe'}});
@@ -13404,7 +13406,7 @@ function startApp() {
       invalidate(10);
     });
 
-    // ─── 12. AI command line + training mode teaser — whole model orbit ───
+    // ─── 13. AI command line + training mode teaser ───
     at(1500, function() {
       showCaption('Natural language commands');
       if (window._ccNLOpen) window._ccNLOpen();
@@ -13429,7 +13431,7 @@ function startApp() {
     at(4000, function() {
       d({t:'TRAINING_MODE', v:false});
       showCaption('Free. Open source. No install.');
-      smoothOrbit(-30, 3000);
+      smoothOrbit(30, 3000);
     });
     at(3500, function() {
       hideCaption();

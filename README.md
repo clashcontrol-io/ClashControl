@@ -1,5 +1,5 @@
 # ClashControl
-> Version: **v3.2.46** (2026-03-27)
+> Version: **v3.2.47** (2026-03-27)
 
 **Free, open-source IFC clash detection — right in your browser.**
 

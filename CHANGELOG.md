@@ -1,5 +1,8 @@
 # Changelog
 
+## v3.2.47 (2026-03-27)
+- Fix tour orbit breaking viewer — array vs Vector3 and stale sph
+
 ## v3.2.46 (2026-03-27)
 - Tour: orbit around clash point in step 3, zoom-all for steps 9+
 
