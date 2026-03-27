@@ -1,5 +1,8 @@
 # Changelog
 
+## v3.3.8 (2026-03-27)
+- Replace Advanced/Simple text with chevron dropdown icon
+
 ## v3.3.7 (2026-03-27)
 - Fix mobile security warning and chatbox overlapping bottom nav
 
