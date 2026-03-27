@@ -1,5 +1,11 @@
 # Changelog
 
+## v3.2.56 (2026-03-27)
+- Tour: caption centered in viewer, fix duplicate clash, slower modal/typing/orbit
+
+## v3.2.55 (2026-03-27)
+- Tour: caption at top, fill modal text, real measurement, continuous orbit
+
 ## v3.2.54 (2026-03-27)
 - Tour: move NL typing to step 1, zoom-all before create issue, type CTA in input
 
