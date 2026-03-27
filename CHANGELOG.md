@@ -1,5 +1,8 @@
 # Changelog
 
+## v3.3.9 (2026-03-27)
+- Skip eager Ollama probe to eliminate ERR_CONNECTION_REFUSED in console
+
 ## v3.3.8 (2026-03-27)
 - Replace Advanced/Simple text with chevron dropdown icon
 

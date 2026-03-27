@@ -252,7 +252,7 @@ window.onload = function() {
 
 function startApp() {
   // ── Version (auto-updated by pre-commit hook) ──
-  var CC_VERSION = {v:'3.3.8',hash:'63bb448',date:'2026-03-27T16:32:01Z'};
+  var CC_VERSION = {v:'3.3.9',hash:'f01fe66',date:'2026-03-27T16:32:25Z'};
 
   // ── AI Data Collection (Phase 0.5) ──
   var CLASH_DATA_ENDPOINT = 'https://your-server.com/api/clash-data';
@@ -12324,21 +12324,28 @@ function startApp() {
       return function() { window.removeEventListener('keydown', onKey); };
     }, []);
 
-    // On first open: start loading browser LLM (Ollama checked only on explicit user request)
+    // On first open: check Ollama → fallback to browser LLM
     useEffect(function() {
       if (!open) return;
       // Sync state
       setLLMStatus(_nlModelStatus);
       setBackend(_nlBackend);
       if (_nlBackend === 'ollama' || _nlModelStatus === 'ready') return;
+      // Check for Ollama
       var listener = function(st, pct) {
         setLLMStatus(st); setBackend(_nlBackend);
         if (typeof pct === 'number') setLLMProgress(pct);
       };
       _nlModelListeners.push(listener);
-      // Skip eager Ollama probe (causes ERR_CONNECTION_REFUSED in console when not installed).
-      // Go straight to in-browser LLM. Users with Ollama can trigger it via settings.
-      if (_nlModelStatus === 'idle') getNLPipeline().catch(function(){});
+      checkOllama().then(function(hasOllama) {
+        setBackend(_nlBackend);
+        setLLMStatus(_nlModelStatus);
+        if (!hasOllama) {
+          // Show Ollama tip, then start loading browser LLM
+          setShowOllamaTip(true);
+          if (_nlModelStatus === 'idle') getNLPipeline().catch(function(){});
+        }
+      });
     }, [open]);
 
     useEffect(function() {
