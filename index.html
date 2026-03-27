@@ -252,7 +252,7 @@ window.onload = function() {
 
 function startApp() {
   // ── Version (auto-updated by pre-commit hook) ──
-  var CC_VERSION = {v:'3.2.42',hash:'f571cf4',date:'2026-03-27T09:49:13Z'};
+  var CC_VERSION = {v:'3.2.43',hash:'a543931',date:'2026-03-27T09:56:25Z'};
 
   // ── AI Data Collection (Phase 0.5) ──
   var CLASH_DATA_ENDPOINT = 'https://your-server.com/api/clash-data';
@@ -12848,6 +12848,17 @@ function startApp() {
     useEffect(function(){
       if(_unghostAll) _unghostAll();
       if(window._ccRemoveActiveClashMarker) window._ccRemoveActiveClashMarker();
+      // Auto-select first issue and fly to it when switching to issues tab
+      if(s.tab==='issues' && s.issues.length>0 && !s.activeId){
+        var first=s.issues[0];
+        d({t:A.ACTIVE,id:first.id});
+        var eids=[first.elemA,first.elemB,first.elementId].filter(Boolean);
+        if(eids.length&&_ghostOthers) _ghostOthers(eids);
+        if(first.elemA&&_highlightById) _highlightById(first.elemA,false);
+        if(first.point&&window._ccShowActiveClashMarker) window._ccShowActiveClashMarker(first.point);
+        if(_flyToElements&&eids.length) _flyToElements(eids,first.point);
+        else if(first.point&&_flyTo) _flyTo(first.point);
+      }
     }, [s.tab]);
     // ── Restore project files on initial load (runs once, before any tab is opened) ──
     useEffect(function(){

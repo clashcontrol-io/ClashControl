@@ -1,5 +1,8 @@
 # Changelog
 
+## v3.2.43 (2026-03-27)
+- Add continuous camera movement throughout demo tour
+
 ## v3.2.42 (2026-03-27)
 - Rewrite demo tour from scratch — no _resetView camera animations
 
