@@ -1664,7 +1664,7 @@ function startApp() {
             _lmark('Element processing');
             var loadTime = Math.round(performance.now() - loadStart);
             var _geoUnique = Object.keys(geoCache).length;
-            var stats = {loadTime:loadTime, fileSize:buffer.byteLength, elementCount:elements.length, meshCount:meshes.length, geoUnique:_geoUnique, geoReused:_geoReused, phases:_lp.phases};
+            var stats = {loadTime:loadTime, fileSize:buffer.byteLength, elementCount:elements.length, meshCount:meshes.length, geoUnique:_geoUnique, geoReused:_geoReused, phases:_lp.phases, loadType:'IFC'};
             // Print IFC load profile to console
             (function() {
               var ph = _lp.phases, prev = 0;
@@ -1897,7 +1897,7 @@ function startApp() {
           var phases = msg.phases || {};
           phases['Scene build'] = performance.now() - loadStart;
           var _gu = msg.geoUnique || Object.keys(geoCache).length, _gr = msg.geoReused || 0;
-          var stats = {loadTime:loadTime, fileSize:msg.fileSize, elementCount:elements.length, meshCount:meshes.length, geoUnique:_gu, geoReused:_gr, phases:phases};
+          var stats = {loadTime:loadTime, fileSize:msg.fileSize, elementCount:elements.length, meshCount:meshes.length, geoUnique:_gu, geoReused:_gr, phases:phases, loadType:'IFC'};
 
           // Print profile
           (function() {
@@ -7146,6 +7146,7 @@ function startApp() {
           chain = chain.then(function() {
             setLoading(true);
             var t0 = performance.now();
+            var _phases = {};
             var _onProg = function(msg) {
               setLoadMsg(base + ': ' + msg);
               window._ccModelLoadMsg = base + ': ' + msg;
@@ -7153,13 +7154,21 @@ function startApp() {
             };
             _onProg('Loading GLB geometry…');
             return grp.glb.arrayBuffer().then(function(glbBuf) {
+              _phases['GLB read'] = performance.now() - t0;
               return loadGLB(glbBuf, base, _onProg).then(function(glbResult) {
-                // Load IFC metadata and/or sidecar
+                _phases['GLB parse'] = performance.now() - t0;
+                // Load IFC metadata and/or sidecar (run in parallel)
                 var ifcPromise = grp.ifc ? grp.ifc.arrayBuffer().then(function(ifcBuf) {
+                  _phases['IFC file read'] = performance.now() - t0;
                   return loadIFCMetadataOnly(ifcBuf, _onProg);
+                }).then(function(ifcMeta) {
+                  _phases['IFC metadata'] = performance.now() - t0;
+                  return ifcMeta;
                 }) : Promise.resolve(null);
                 var sidecarPromise = grp.ifcmeta ? grp.ifcmeta.text().then(function(txt) {
-                  return JSON.parse(txt);
+                  var parsed = JSON.parse(txt);
+                  _phases['Sidecar'] = performance.now() - t0;
+                  return parsed;
                 }) : Promise.resolve(null);
                 return Promise.all([ifcPromise, sidecarPromise]).then(function(results) {
                   var ifcMeta = results[0], sidecar = results[1];
@@ -7187,7 +7196,10 @@ function startApp() {
                   } else {
                     result = joinGLBWithSidecar(glbResult, sidecar, _onProg);
                   }
+                  _phases['Join'] = performance.now() - t0;
                   result.stats.loadTime = Math.round(performance.now() - t0);
+                  result.stats.phases = _phases;
+                  result.stats.loadType = grp.ifc ? (grp.ifcmeta ? 'GLB+IFC+meta' : 'GLB+IFC') : 'GLB+meta';
                   var totalSize = grp.glb.size;
                   if (grp.ifc) totalSize += grp.ifc.size;
                   if (grp.ifcmeta) totalSize += grp.ifcmeta.size;
@@ -7592,10 +7604,50 @@ function startApp() {
           <input type="color" value=${m.color} onChange=${function(e){d({t:A.UPD_MODEL,id:m.id,u:{color:e.target.value}})}} style=${{width:24,height:20,border:'none',padding:0,background:'none',cursor:'pointer'}} />
         </div>
         <span style=${{fontSize:'0.75rem',color:'var(--text-faint)'}}>${(m.elements&&m.elements.length||0)} elements · ${(m.meshes&&m.meshes.length||0)} meshes</span>
-        ${m.stats && html`<div style=${{fontSize:'0.63rem',color:'var(--text-faint)',display:'flex',gap:'.4rem',flexWrap:'wrap'}}>
+        ${m.stats && html`<div style=${{fontSize:'0.63rem',color:'var(--text-faint)',display:'flex',gap:'.4rem',flexWrap:'wrap',alignItems:'center'}}>
           ${m.stats.fileSize && html`<span>${(m.stats.fileSize/1048576).toFixed(1)} MB</span>`}
           ${m.stats.loadTime && html`<span>${(m.stats.loadTime/1000).toFixed(1)}s load</span>`}
+          ${m.stats.loadType && html`<span style=${{padding:'1px 5px',borderRadius:3,background:'rgba(37,99,235,.12)',color:'var(--accent)',fontWeight:600}}>${m.stats.loadType}</span>`}
         </div>`}
+        ${m.stats && m.stats.phases && m.stats.loadTime && (function() {
+          var ph = m.stats.phases;
+          var total = m.stats.loadTime;
+          // Determine phase order based on load type
+          var IFC_PHASES = ['WASM ready','Model open','Property maps','Geometry stream','Element processing','Scene build'];
+          var GLB_PHASES = ['GLB read','GLB parse','IFC file read','IFC metadata','Sidecar','Join'];
+          var ordered = (m.stats.loadType === 'IFC' ? IFC_PHASES : GLB_PHASES).filter(function(n){ return ph[n] != null; });
+          // Fallback: sort by cumulative time
+          if (!ordered.length) { ordered = Object.keys(ph).filter(function(k){return typeof ph[k]==='number';}); ordered.sort(function(a,b){return ph[a]-ph[b];}); }
+          var prev = 0;
+          var rows = ordered.map(function(name) {
+            var dt = Math.round(ph[name] - prev);
+            var pct = Math.min(100, total > 0 ? Math.round(dt / total * 100) : 0);
+            prev = ph[name];
+            return {name: name, dt: dt, pct: pct};
+          });
+          var PHASE_COLORS = {'GLB read':'#3b82f6','GLB parse':'#60a5fa','IFC file read':'#22c55e','IFC metadata':'#4ade80','Sidecar':'#f59e0b','Join':'#a855f7'};
+          return html`<div style=${{borderTop:'1px solid var(--border)',paddingTop:'.35rem',marginTop:'.1rem'}}>
+            <span style=${{fontSize:'0.63rem',fontWeight:600,color:'var(--text-muted)',textTransform:'uppercase',letterSpacing:'.03em'}}>Load Profiler</span>
+            <div style=${{marginTop:'.3rem',display:'flex',flexDirection:'column',gap:'.25rem'}}>
+              ${rows.map(function(r) {
+                var barColor = PHASE_COLORS[r.name] || 'var(--accent)';
+                return html`<div key=${r.name}>
+                  <div style=${{display:'flex',justifyContent:'space-between',marginBottom:'2px'}}>
+                    <span style=${{fontSize:'0.63rem',color:'var(--text-secondary)'}}>${r.name}</span>
+                    <span style=${{fontSize:'0.63rem',color:'var(--text-faint)',fontVariantNumeric:'tabular-nums'}}>${r.dt}ms${r.pct>0?' ('+r.pct+'%)':''}</span>
+                  </div>
+                  <div style=${{height:4,borderRadius:2,background:'var(--bg-tertiary)',overflow:'hidden'}}>
+                    <div style=${{height:'100%',width:Math.max(r.pct,r.dt>0?1:0)+'%',background:barColor,borderRadius:2,transition:'width .3s'}}></div>
+                  </div>
+                </div>`;
+              })}
+              <div style=${{display:'flex',justifyContent:'space-between',paddingTop:'.2rem',borderTop:'1px solid var(--border-subtle)'}}>
+                <span style=${{fontSize:'0.63rem',fontWeight:600,color:'var(--text-muted)'}}>Total</span>
+                <span style=${{fontSize:'0.63rem',fontWeight:700,color:'var(--text-primary)',fontVariantNumeric:'tabular-nums'}}>${total}ms</span>
+              </div>
+            </div>
+          </div>`;
+        }())}
         ${m._versionDiff && html`<div style=${{borderTop:'1px solid var(--border)',paddingTop:'.35rem',marginTop:'.1rem'}}>
           <div style=${{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:'.25rem'}}>
             <span style=${{fontSize:'0.69rem',fontWeight:600,color:'var(--text-muted)',textTransform:'uppercase',letterSpacing:'.03em'}}>Version Diff (v${(m._version-1)||1} → v${m._version})</span>
