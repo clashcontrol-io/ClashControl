@@ -7573,7 +7573,7 @@ function startApp() {
       </div>
       <div style=${{flex:splitPct,overflowY:'auto',padding:'.4rem',display:'flex',flexDirection:'column',gap:'.25rem',minHeight:0}}>
         ${s.models.length===0 && html`<div style=${{textAlign:'center',color:'var(--text-faint)',fontSize:'0.86rem',padding:'2rem 0'}}><div style=${{marginBottom:'.3rem',display:'flex',justifyContent:'center'}}><svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/><line x1="12" y1="11" x2="12" y2="17"/><line x1="9" y1="14" x2="15" y2="14"/></svg></div>No models loaded</div>`}
-        ${s.models.map(function(m){return html`<${ModelCard} key=${m.id} m=${m} d=${d} />`})}
+        ${s.models.map(function(m){return html`<${ModelCard} key=${m.id} m=${m} d=${d} s=${s} />`})}
         ${s.underlays.length > 0 && html`<div style=${{marginTop:'.4rem',borderTop:'1px solid var(--border-subtle)',paddingTop:'.4rem'}}>
           <div style=${{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:'.3rem'}}>
             <span style=${{fontSize:'0.69rem',fontWeight:600,color:'var(--text-muted)',textTransform:'uppercase',letterSpacing:'.05em'}}>2D Underlays</span>
@@ -7704,9 +7704,87 @@ function startApp() {
     </div>`;
   }
 
+  function runDataQualityChecks(elements) {
+    var GENERIC_RE = /^(basic\s+)?(wall|floor|ceiling|roof|column|beam|slab|door|window|generic model|furniture|curtain wall|curtain panel|railing|stair|ramp|mass|component|panel|mullion|structural framing|structural column)(\s+[\d\-]+)?$/i;
+    var OPENING = {IfcDoor:1, IfcWindow:1};
+    var guidSeen = {};
+    var acc = {proxy:[],genericName:[],noMaterial:[],noStorey:[],guidCollision:[],zeroLayers:[],unhostedOpenings:[]};
+    var hasHostData = (elements||[]).some(function(el){return el.props&&el.props.hostId;});
+    var hasLayerData = (elements||[]).some(function(el){return el.props&&Array.isArray(el.props.layers)&&el.props.layers.length>0;});
+    (elements||[]).forEach(function(el) {
+      var p = el.props||{};
+      var it = {name:p.name||('#'+el.expressId), gid:p.globalId, ifcType:p.ifcType, el:el};
+      if (p.globalId) { if (guidSeen[p.globalId]) acc.guidCollision.push(it); else guidSeen[p.globalId]=true; }
+      if (p.ifcType==='IfcBuildingElementProxy') acc.proxy.push(it);
+      if (GENERIC_RE.test((p.name||'').trim())) acc.genericName.push(it);
+      if (!p.material||!p.material.trim()) acc.noMaterial.push(it);
+      if (!p.storey||!p.storey.trim()) acc.noStorey.push(it);
+      if (hasLayerData&&Array.isArray(p.layers)&&p.layers.some(function(l){return typeof l==='object'&&l!==null&&(l.width===0||l.width==='0');})) acc.zeroLayers.push(it);
+      if (hasHostData&&OPENING[p.ifcType]&&!p.hostId) acc.unhostedOpenings.push(it);
+    });
+    return {
+      proxy:       {label:'IfcBuildingElementProxy (unclassified)', sev:'warn', count:acc.proxy.length,       ex:acc.proxy.slice(0,6)},
+      genericName: {label:'Generic element names',                  sev:'info', count:acc.genericName.length, ex:acc.genericName.slice(0,6)},
+      noMaterial:  {label:'No material assigned',                   sev:'info', count:acc.noMaterial.length,  ex:acc.noMaterial.slice(0,6)},
+      noStorey:    {label:'No level/storey',                        sev:'info', count:acc.noStorey.length,    ex:acc.noStorey.slice(0,6)},
+      guidCollision:{label:'GlobalId collisions',                   sev:'error',count:acc.guidCollision.length,ex:acc.guidCollision.slice(0,6)},
+      zeroLayers:  {label:'Zero-thickness layers',                  sev:'warn', count:acc.zeroLayers.length,  ex:acc.zeroLayers.slice(0,6)},
+      unhostedOpenings:{label:'Unhosted doors/windows',             sev:'warn', count:acc.unhostedOpenings.length,ex:acc.unhostedOpenings.slice(0,6)},
+      _total: (elements||[]).length
+    };
+  }
+
+  function suggestOmniClass(bridge, el) {
+    if (!bridge||!bridge.provider||!bridge.apiKey) return Promise.reject(new Error('No AI provider configured — set up Anthropic/OpenAI/Google in Revit Bridge settings.'));
+    var p = el.props||{};
+    var psetLines = '';
+    if (p.psets&&typeof p.psets==='object') {
+      Object.keys(p.psets).slice(0,3).forEach(function(g) {
+        var grp = p.psets[g];
+        if (grp&&typeof grp==='object') {
+          var pairs = Object.keys(grp).slice(0,5).map(function(k){return k+': '+grp[k];}).join(', ');
+          if (pairs) psetLines += g+' | '+pairs+'\n';
+        }
+      });
+    }
+    var prompt = 'Suggest the most specific OmniClass Table 23 (Products) code for this BIM element.\nReply with ONLY the code and title. Example: "23-13 11 11 Cast-in-Place Concrete Walls"\n\nName: '+(p.name||'?')+'\nIFC type: '+(p.ifcType||'?')+'\nRevit category: '+(p.objectType||'?')+'\nMaterial: '+(p.material||'?')+'\nLevel: '+(p.storey||'?')+'\nProperties:\n'+(psetLines||'(none)');
+    var h = {'Content-Type':'application/json'};
+    if (bridge.provider==='anthropic') {
+      return fetch('https://api.anthropic.com/v1/messages',{method:'POST',headers:Object.assign({},h,{'x-api-key':bridge.apiKey,'anthropic-version':'2023-06-01','anthropic-dangerous-direct-browser-access':'true'}),
+        body:JSON.stringify({model:'claude-haiku-4-5-20251001',max_tokens:64,messages:[{role:'user',content:prompt}]})
+      }).then(function(r){return r.json();}).then(function(res){return (res.content&&res.content[0]&&res.content[0].text||'').trim();});
+    } else if (bridge.provider==='openai') {
+      return fetch('https://api.openai.com/v1/chat/completions',{method:'POST',headers:Object.assign({},h,{'Authorization':'Bearer '+bridge.apiKey}),
+        body:JSON.stringify({model:'gpt-4o-mini',max_tokens:64,messages:[{role:'user',content:prompt}]})
+      }).then(function(r){return r.json();}).then(function(res){return (res.choices&&res.choices[0]&&res.choices[0].message&&res.choices[0].message.content||'').trim();});
+    } else if (bridge.provider==='google') {
+      return fetch('https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key='+bridge.apiKey,{method:'POST',headers:h,
+        body:JSON.stringify({contents:[{role:'user',parts:[{text:prompt}]}]})
+      }).then(function(r){return r.json();}).then(function(res){return (res.candidates&&res.candidates[0]&&res.candidates[0].content&&res.candidates[0].content.parts&&res.candidates[0].content.parts[0]&&res.candidates[0].content.parts[0].text||'').trim();});
+    }
+    return Promise.reject(new Error('Unknown provider'));
+  }
+
   function ModelCard(props) {
-    var m=props.m, d=props.d;
+    var m=props.m, d=props.d, s=props.s;
     var op=useState(false), open=op[0], setOpen=op[1];
+    var qcSt=useState(null), qc=qcSt[0], setQc=qcSt[1];
+    var qcExpSt=useState({}), qcExp=qcExpSt[0], setQcExp=qcExpSt[1];
+    var aiSugSt=useState({}), aiSug=aiSugSt[0], setAiSug=aiSugSt[1];
+    var aiLoadSt=useState({}), aiLoad=aiLoadSt[0], setAiLoad=aiLoadSt[1];
+    function runQC() { setQc(runDataQualityChecks(m.elements||[])); setQcExp({}); setAiSug({}); setAiLoad({}); }
+    function toggleQcSection(key) { setQcExp(function(p){var n=Object.assign({},p);n[key]=!n[key];return n;}); }
+    function doSuggest(key, item) {
+      var gid = item.gid||item.name;
+      setAiLoad(function(p){var n=Object.assign({},p);n[key+':'+gid]=true;return n;});
+      suggestOmniClass(s&&s.bridge, item.el).then(function(txt) {
+        setAiSug(function(p){var n=Object.assign({},p);n[key+':'+gid]=txt;return n;});
+      }).catch(function(e) {
+        setAiSug(function(p){var n=Object.assign({},p);n[key+':'+gid]='Error: '+e.message;return n;});
+      }).finally(function() {
+        setAiLoad(function(p){var n=Object.assign({},p);n[key+':'+gid]=false;return n;});
+      });
+    }
     return html`<div style=${{background:'var(--bg-secondary)',border:'1px solid var(--border)',borderRadius:8,overflow:'hidden'}}>
       <div style=${{display:'flex',alignItems:'center',gap:'.35rem',padding:'.35rem .5rem'}}>
         <span onClick=${function(){d({t:A.UPD_MODEL,id:m.id,u:{visible:!m.visible}})}}
@@ -7795,6 +7873,60 @@ function startApp() {
             <span style=${{width:8,height:8,borderRadius:'50%',background:'#334155',marginLeft:'.2rem'}}></span> Unchanged
           </div>
         </div>`}
+        <div style=${{borderTop:'1px solid var(--border)',paddingTop:'.35rem',marginTop:'.1rem'}}>
+          <div style=${{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:'.3rem'}}>
+            <span style=${{fontSize:'0.63rem',fontWeight:600,color:'var(--text-muted)',textTransform:'uppercase',letterSpacing:'.03em'}}>Data Quality</span>
+            <button onClick=${runQC} style=${{fontSize:'0.6rem',padding:'.15rem .4rem',background:'var(--bg-primary)',color:'var(--text-faint)',border:'1px solid var(--border)',borderRadius:3,cursor:'pointer'}}>
+              ${qc ? 'Re-check' : 'Check'}
+            </button>
+          </div>
+          ${qc && (function(){
+            var SEV = {error:'#ef4444', warn:'#f59e0b', info:'#60a5fa'};
+            var checks = ['guidCollision','proxy','unhostedOpenings','zeroLayers','genericName','noMaterial','noStorey'];
+            var issues = checks.reduce(function(n,k){return n+(qc[k]?qc[k].count:0);},0);
+            var canSuggest = s&&s.bridge&&s.bridge.provider&&s.bridge.apiKey;
+            return html`<div>
+              <div style=${{fontSize:'0.6rem',color:issues===0?'#4ade80':'var(--text-faint)',marginBottom:'.35rem'}}>
+                ${issues===0?'✓ All checks passed for '+qc._total+' elements':issues+' issue'+(issues===1?'':'s')+' across '+qc._total+' elements'}
+              </div>
+              ${checks.map(function(key) {
+                var ch = qc[key]; if (!ch) return null;
+                var col = SEV[ch.sev]||'#60a5fa';
+                var expanded = qcExp[key];
+                var showSuggest = key==='proxy';
+                return html`<div key=${key} style=${{marginBottom:'.2rem'}}>
+                  <div onClick=${ch.count>0?function(){toggleQcSection(key);}:null}
+                    style=${{display:'flex',alignItems:'center',gap:'.3rem',cursor:ch.count>0?'pointer':'default',padding:'.15rem 0'}}>
+                    <span style=${{fontSize:'0.6rem',fontWeight:700,minWidth:20,textAlign:'right',color:ch.count===0?'#4ade80':col}}>${ch.count===0?'✓':ch.count}</span>
+                    <span style=${{fontSize:'0.63rem',color:ch.count===0?'var(--text-faint)':'var(--text-secondary)',flex:1}}>${ch.label}</span>
+                    ${ch.count>0 && html`<span style=${{fontSize:'0.57rem',color:'var(--text-faint)'}}>${expanded?'▲':'▼'}</span>`}
+                  </div>
+                  ${expanded && ch.count>0 && html`<div style=${{paddingLeft:'1.5rem',paddingBottom:'.2rem'}}>
+                    ${ch.ex.map(function(it) {
+                      var sid = key+':'+(it.gid||it.name);
+                      var sug = aiSug[sid], loading = aiLoad[sid];
+                      return html`<div key=${it.gid||it.name} style=${{marginBottom:'.25rem'}}>
+                        <div style=${{fontSize:'0.6rem',color:'var(--text-faint)',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}} title=${it.name}>${it.name}</div>
+                        ${showSuggest && html`<div style=${{display:'flex',alignItems:'center',gap:'.3rem',marginTop:'.1rem'}}>
+                          ${!sug && html`<button onClick=${function(){doSuggest(key,it);}}
+                            disabled=${loading}
+                            style=${{fontSize:'0.57rem',padding:'.1rem .3rem',background:'rgba(139,92,246,.12)',color:'#a78bfa',border:'1px solid rgba(139,92,246,.2)',borderRadius:3,cursor:loading?'default':'pointer'}}>
+                            ${loading?'…':'✦ Suggest OmniClass'}
+                          </button>`}
+                          ${!canSuggest && !sug && html`<span style=${{fontSize:'0.57rem',color:'var(--text-faint)',fontStyle:'italic'}}>Configure AI in Revit Bridge</span>`}
+                          ${sug && html`<span style=${{fontSize:'0.6rem',color:'#a78bfa',flex:1}}>${sug}</span>`}
+                          ${sug && html`<button onClick=${function(){navigator.clipboard&&navigator.clipboard.writeText(sug);}}
+                            style=${{fontSize:'0.57rem',padding:'.1rem .25rem',background:'none',color:'var(--text-faint)',border:'none',cursor:'pointer'}}>⎘</button>`}
+                        </div>`}
+                      </div>`;
+                    })}
+                    ${ch.count>ch.ex.length && html`<div style=${{fontSize:'0.57rem',color:'var(--text-faint)',fontStyle:'italic'}}>+${ch.count-ch.ex.length} more</div>`}
+                  </div>`}
+                </div>`;
+              })}
+            </div>`;
+          }())}
+        </div>
         ${m.storeys&&m.storeys.length>0 && html`<div style=${{borderTop:'1px solid var(--border)',paddingTop:'.35rem',marginTop:'.1rem'}}>
           <div style=${{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:'.25rem'}}>
             <span style=${{fontSize:'0.69rem',fontWeight:600,color:'var(--text-muted)',textTransform:'uppercase',letterSpacing:'.03em'}}>Levels</span>
