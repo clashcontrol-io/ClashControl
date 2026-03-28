@@ -6867,10 +6867,10 @@ function startApp() {
           meshes.push(m);
         });
         if (onProgress) onProgress(meshes.length + ' meshes from GLB');
-        // Convert from IFC/Revit Z-up coordinate space to Three.js Y-up
-        // IFC uses Z=up, Three.js uses Y=up — rotate -90° around X to align
-        var zupToYup = new THREE.Matrix4().makeRotationX(-Math.PI / 2);
-        meshes.forEach(function(m) { m.applyMatrix4(zupToYup); });
+        // glTF 2.0 spec mandates Y-up, so a well-formed GLB already uses Y-up.
+        // IFC loaded via web-ifc also produces Y-up geometry (flatTransformation
+        // from IfcGeometricRepresentationContext handles the coordinate conversion).
+        // No additional rotation is applied — both paths share the same coordinate space.
         resolve({meshes: meshes, meshByGid: meshByGid});
       }, function(err) {
         reject(new Error('GLB parse failed: ' + (err.message || err)));

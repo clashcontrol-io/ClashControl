@@ -131,7 +131,7 @@ Keyed by IFC GlobalId.
 
 ## GLB conventions
 
-- **Coordinate system**: Z-up (Revit native). ClashControl auto-rotates -90° around X on load.
+- **Coordinate system**: glTF 2.0 mandates Y-up. Ifc2Ifc converts from Revit Z-up to Y-up on export. No rotation is applied by ClashControl on load.
 - **Node naming**: Each mesh node name = IFC GlobalId of the element it represents.
 - **Materials**: GLB material colors are ignored — IFC colors from `StreamAllMeshes` are applied instead.
 - **Format**: glTF 2.0 binary (`.glb`), geometry only (no animations, no cameras).

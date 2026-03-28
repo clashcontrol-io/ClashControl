@@ -37,7 +37,7 @@ Tekla Structures does not export GLB natively. Options:
 Use the Tekla Open API `ModelObject` geometry export to write mesh data directly.
 This gives full control over GLB node naming.
 
-**Coordinate system**: Tekla uses Z-up. ClashControl applies -90° X rotation automatically.
+**Coordinate system**: glTF 2.0 mandates Y-up. Ensure your GLB export pipeline (Trimble Connect, Blender, or custom exporter) converts Tekla's Z-up to Y-up. No rotation is applied by ClashControl on load.
 
 ---
 

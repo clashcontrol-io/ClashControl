@@ -23,8 +23,7 @@ See `exporters/revit/SPEC.md` for the complete file format reference.
 ArchiCAD 26+ can export glTF 2.0 directly:
 `File → Save As → glTF 2.0 (*.glb)`
 
-**Coordinate system**: ArchiCAD uses Z-up natively — same as Revit.
-ClashControl applies the same -90° X rotation on GLB load, so no adjustment needed.
+**Coordinate system**: glTF 2.0 mandates Y-up. ArchiCAD's GLB/glTF exporter handles the Z-up→Y-up conversion automatically. No rotation is applied by ClashControl on load.
 
 **Node naming**: Each mesh node must be named with the element's IFC GlobalId.
 ArchiCAD writes GlobalIds into IFC exports. When exporting GLB, check whether
