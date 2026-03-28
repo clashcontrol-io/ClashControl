@@ -29,6 +29,7 @@ Keyed by IFC GlobalId (the same GUID embedded in the GLB node name).
       "objectType": "Basic Wall",
       "storey": "Level 1",
       "material": "Concrete",
+      "revitId": 123456,
       "quantities": {
         "Width": 0.2,
         "Height": 3.0,
@@ -55,7 +56,7 @@ Keyed by IFC GlobalId (the same GUID embedded in the GLB node name).
         "topConstraint": "Unconnected",
         "topOffset": 3000.0
       },
-      "hostRelationships": []
+      "hostRelationships": ["3Ax9mWqLz1B0OvE3pQdT7k", "1Bx8nVpKy2C1PwF4qReU8j"]
     }
   },
   "storeys": ["Level 1", "Level 2", "Roof"],
@@ -64,7 +65,10 @@ Keyed by IFC GlobalId (the same GUID embedded in the GLB node name).
     { "name": "Level 2", "elevation": 3000.0 }
   ],
   "spatialHierarchy": {},
-  "relatedPairs": {}
+  "relatedPairs": {
+    "0K7w7jYlXCpOJN0oo5MIAN:3Ax9mWqLz1B0OvE3pQdT7k": true,
+    "0K7w7jYlXCpOJN0oo5MIAN:1Bx8nVpKy2C1PwF4qReU8j": true
+  }
 }
 ```
 
@@ -73,11 +77,23 @@ Keyed by IFC GlobalId (the same GUID embedded in the GLB node name).
 - `ifcType` — IFC entity type (`IfcWall`, `IfcBeam`, etc.)
 
 ### Optional Revit-specific fields
-- `phase`, `workset`, `designOption`, `hostId`
+- `revitId` — Revit integer ElementId (integer). Displayed in ClashControl's properties panel with a copy button for cross-referencing back to Revit.
+- `phase`, `workset`, `designOption`
+- `hostId` — GlobalId of the host element (e.g. the wall this door is in). Must point to the wall, **not** to the intermediate `IfcOpeningElement`. ClashControl uses this to build parent-child tree hierarchy and extend clash suppression.
+- `hostRelationships` — array of GlobalIds of all elements directly hosted in this element (reverse of `hostId`). Used by ClashControl to suppress host↔child clashes without needing the IFC STEP file.
 - `layers` — array of `{ function, material, width }` objects (or plain strings)
 - `flipState` — `{ handFlipped, facingFlipped }`
 - `constraints` — level constraints as key/value
-- `hostRelationships` — array of hosted element GlobalIds
+
+### Top-level fields
+- `relatedPairs` — pre-computed element relationships as `"globalIdA:globalIdB": true`. Keys use GlobalIds (stable across re-exports), **not** STEP expressIds. ClashControl resolves these to expressIds at load time. Include:
+  - wall↔opening pairs (from `IFCRELVOIDSELEMENT`)
+  - opening↔door/window pairs (from `IFCRELFILLELEMENT`)
+  - **transitive wall↔door pairs** (the practical pair ClashControl needs for clash suppression)
+  - assembly parent↔child pairs (from `IFCRELAGGREGATES`)
+
+### `IfcOpeningElement` handling
+`IfcOpeningElement` entities are Boolean cutters — they define the void shape in a wall. They must **not** appear as GLB mesh nodes. The wall geometry in the GLB should already have the hole cut. `IfcOpeningElement` GlobalIds should still appear in `relatedPairs` (via the transitive wall↔door pair), but not as element entries in `.ifcmeta`.
 
 ---
 
@@ -94,6 +110,7 @@ Keyed by IFC GlobalId.
       "category": "Walls",
       "type": "Basic Wall:Generic - 200mm",
       "level": "Level 1",
+      "revitId": 123456,
       "materials": ["Concrete", "Plaster"],
       "parameters": {
         "Constraints": {
@@ -124,6 +141,7 @@ Keyed by IFC GlobalId.
 | `category` | `ifcType` |
 | `type` | `objectType` |
 | `level` | `storey` |
+| `revitId` | `revitId` |
 | `materials` (string or array) | `material` |
 | `parameters` | `psets` |
 
@@ -132,9 +150,12 @@ Keyed by IFC GlobalId.
 ## GLB conventions
 
 - **Coordinate system**: glTF 2.0 mandates Y-up. Ifc2Ifc converts from Revit Z-up to Y-up on export. No rotation is applied by ClashControl on load.
-- **Node naming**: Each mesh node name = IFC GlobalId of the element it represents.
+- **Node naming**: Each mesh node name = IFC GlobalId of the element it represents. One node per IFC entity — no geometry merging between elements.
 - **Materials**: GLB material colors are ignored — IFC colors from `StreamAllMeshes` are applied instead.
 - **Format**: glTF 2.0 binary (`.glb`), geometry only (no animations, no cameras).
+- **`IfcOpeningElement` suppression**: Opening elements (wall voids for doors/windows) must NOT appear as GLB mesh nodes. The wall geometry should already have the hole cut. If opening meshes are present, ClashControl will warn in the console.
+- **Stair decomposition**: Component-based stairs (`IsByComponent = true`) must export each `StairsRun`, `StairsLanding`, and `StairsSupport` as its own GLB node with its own GlobalId. This is required for per-component clash detection (e.g. MEP crossing a specific stair run). Sketch-based stairs export as a single mesh.
+- **Hosted elements**: Doors, windows, and other hosted family instances each get their own GLB node named with their GlobalId. They are never merged into the host wall's mesh.
 
 ---
 
