@@ -1,5 +1,8 @@
 # Changelog
 
+## v3.3.35 (2026-03-28)
+- Add exporter specs for Revit, ArchiCAD, and Tekla
+
 ## v3.3.34 (2026-03-28)
 - Skip IFC STEP parsing when .ifcmeta or .ifcprops is present
 
