@@ -1,5 +1,8 @@
 # Changelog
 
+## v3.3.36 (2026-03-28)
+- Add data quality checker + OmniClass LLM suggestion to model card
+
 ## v3.3.35 (2026-03-28)
 - Add exporter specs for Revit, ArchiCAD, and Tekla
 
