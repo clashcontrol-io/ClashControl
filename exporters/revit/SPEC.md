@@ -106,6 +106,7 @@ Keyed by IFC GlobalId.
 {
   "elements": {
     "0K7w7jYlXCpOJN0oo5MIAN": {
+      "expressId": 12345,
       "name": "Basic Wall:Generic - 200mm:123456",
       "category": "Walls",
       "type": "Basic Wall:Generic - 200mm",
@@ -137,6 +138,7 @@ Keyed by IFC GlobalId.
 ### Field mapping to ClashControl element props
 | `.ifcprops` field | ClashControl prop |
 |---|---|
+| `expressId` | `expressId` (used for GlobalId→expressId map; also enables stable relatedPairs resolution without IFC STEP) |
 | `name` | `name` |
 | `category` | `ifcType` |
 | `type` | `objectType` |

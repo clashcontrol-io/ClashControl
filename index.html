@@ -7052,7 +7052,7 @@ function startApp() {
   // ─────────────────────────────────────────────────────────────────────────
 
   // Join GLB meshes with IFC metadata by GlobalId, producing the same result shape as loadIFC
-  function joinGLBWithIFC(glbResult, ifcMeta, fileName, onProgress) {
+  function joinGLBWithIFC(glbResult, ifcMeta, fileName, onProgress, sidecarMeta) {
     if (onProgress) onProgress('Joining GLB geometry with IFC metadata…');
     var meshes = glbResult.meshes;
     var meshByGid = glbResult.meshByGid;
@@ -7119,8 +7119,16 @@ function startApp() {
 
     // Filter IfcOpeningElement (defensive — exporter should suppress these from GLB)
     var _ofilt = filterOpeningElements(elements, meshes, fileName);
-    // Merge host-based pairs into existing expressId relatedPairs from IFC parse
-    var _rp = addHostPairs(Object.assign({}, ifcMeta.relatedPairs || {}), _ofilt.elements);
+    // Prefer sidecar GlobalId relatedPairs (stable across re-exports) over IFC STEP expressId pairs
+    var _baseRp;
+    if (sidecarMeta && sidecarMeta.relatedPairs && Object.keys(sidecarMeta.relatedPairs).length > 0) {
+      _baseRp = resolveGlobalIdPairs(sidecarMeta.relatedPairs, _ofilt.elements);
+      console.log('%c[GLB+IFC] Using sidecar relatedPairs (skipping IFC STEP pairs)', 'color:#22c55e');
+    } else {
+      _baseRp = Object.assign({}, ifcMeta.relatedPairs || {});
+    }
+    // Merge host-based pairs on top
+    var _rp = addHostPairs(_baseRp, _ofilt.elements);
 
     return {
       meshes: _ofilt.meshes,
@@ -7371,7 +7379,7 @@ function startApp() {
                     // Fast path: use .ifcprops JSON (no IFC STEP parsing needed)
                     result = joinGLBWithProps(glbResult, propsData, sidecar, base, _onProg);
                   } else if (ifcMeta) {
-                    result = joinGLBWithIFC(glbResult, ifcMeta, base, _onProg);
+                    result = joinGLBWithIFC(glbResult, ifcMeta, base, _onProg, sidecar);
                     // Overlay Revit sidecar data on top of IFC properties
                     if (sidecar && sidecar.elements) {
                       var sc = sidecar.elements;
