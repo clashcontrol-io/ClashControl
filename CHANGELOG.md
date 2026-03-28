@@ -1,5 +1,8 @@
 # Changelog
 
+## v3.3.19 (2026-03-28)
+- Add tour/version popup on mobile logo tap and project collaboration tour step
+
 ## v3.3.18 (2026-03-28)
 - Add Save/Import Project buttons to Tools panel
 
