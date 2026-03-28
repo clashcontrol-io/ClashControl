@@ -14,12 +14,13 @@ Built for architects, engineers, and BIM coordinators who are tired of paying th
 ## Features
 
 - **Load multiple IFC models** — drag & drop or browse, supports any IFC 2x3/4 file
-- **Fast GLB + IFC + .ifcmeta loading** — load a pre-exported GLB (geometry) alongside its matching IFC (properties) and optional `.ifcmeta` sidecar for near-instant model display without re-parsing heavy IFC geometry. Files must share the same base name (e.g. `building.glb`, `building.ifc`, `building.ifcmeta`). These bundles can be created with [Ifc2Ifc](https://github.com/thomhoffer-arch/Ifc2Ifc).
+- **Revit bridge (GLB + IFC + .ifcmeta)** — drop a GLB (pre-tessellated geometry) + IFC (properties) + `.ifcmeta` sidecar bundle for near-instant Revit model loading, preserving phase, workset, design option, and spatial hierarchy data. Files must share the same base name. Create bundles with [Ifc2Ifc](https://github.com/thomhoffer-arch/Ifc2Ifc).
 - **Geometric clash detection** — hard clashes (intersections) and soft clashes (clearance violations) using OBB-based collision detection
 - **3D viewer** — orbit, pan, zoom, section planes, section boxes, floor plan cuts, measurement tools
 - **Model explorer** — browse elements by storey, IFC type, discipline, or material with visibility toggles and color-by-classification
 - **Issue management** — create issues linked to elements, set priority/status/category, assign to team members
-- **BCF import/export** — standard BCF 2.1 format for interoperability with other BIM tools
+- **BCF import/export** — standard BCF 2.1 format for interoperability with Revit, Navisworks, Solibri, and BIMcollab
+- **Share projects** — save your entire session (clashes, issues, viewpoints, settings) as a `.ccproject` file and share it with teammates. They import it to see your exact results and continue the work.
 - **Viewpoints** — save and restore camera positions with snapshots
 - **Dark & light mode** — full theme support
 - **Works offline** — PWA with service worker caching, no server required

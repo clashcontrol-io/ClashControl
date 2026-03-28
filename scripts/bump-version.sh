@@ -1,13 +1,17 @@
 #!/usr/bin/env bash
 # Auto-increment version based on change severity and inject into index.html, README, CHANGELOG
-# Called by pre-commit hook — pure bash, no Python dependency
+# Called by pre-commit hook (on main only) or GitHub Actions CI after merge to main.
+#
+# Modes:
+#   Pre-commit (default) — runs on local commits to main; uses staged diff + COMMIT_EDITMSG
+#   CI (CI_VERSION_BUMP=1) — runs in GitHub Actions after merge; uses HEAD^..HEAD diff + git log
 #
 # Severity detection:
 #   MAJOR — breaking changes: CDN/dependency swaps, reducer shape changes, removed public APIs
 #   MINOR — new features: new components, new reducer cases, new UI sections
 #   PATCH — everything else: bug fixes, style tweaks, refactors
 #
-# Override: set BUMP=major|minor|patch before committing to force a level
+# Override: set BUMP=major|minor|patch to force a level
 
 set -e
 
@@ -16,36 +20,52 @@ VERSION_FILE="$REPO_ROOT/version.json"
 INDEX_FILE="$REPO_ROOT/index.html"
 README_FILE="$REPO_ROOT/README.md"
 CHANGELOG_FILE="$REPO_ROOT/CHANGELOG.md"
+SW_FILE="$REPO_ROOT/sw.js"
 
 if [ ! -f "$VERSION_FILE" ]; then
   echo "version.json not found, skipping version bump"
   exit 0
 fi
 
-# Check if index.html is being committed
-if ! git diff --cached --name-only | grep -q "index.html"; then
-  exit 0
+# ── Branch guard (pre-commit mode only) ──────────────────────────
+# In CI mode (CI_VERSION_BUMP=1) this guard is bypassed — the workflow
+# already ensures we only run on pushes to main.
+if [ -z "$CI_VERSION_BUMP" ]; then
+  CURRENT_BRANCH=$(git branch --show-current 2>/dev/null || echo "")
+  if [ "$CURRENT_BRANCH" != "main" ]; then
+    exit 0
+  fi
+  # Check if index.html is being committed
+  if ! git diff --cached --name-only | grep -q "index.html"; then
+    exit 0
+  fi
 fi
 
-# Read current version from version.json (pure bash, no python)
+# ── Diff source ───────────────────────────────────────────────────
+if [ -n "$CI_VERSION_BUMP" ]; then
+  # CI: look at what just landed on main
+  if ! git diff HEAD^..HEAD --name-only | grep -q "index.html"; then
+    echo "  index.html not changed in this merge, skipping version bump"
+    exit 0
+  fi
+  DIFF=$(git diff HEAD^..HEAD -- "$INDEX_FILE")
+else
+  DIFF=$(git diff --cached -- "$INDEX_FILE")
+fi
+
+# ── Read current version ──────────────────────────────────────────
 MAJOR=$(grep -o '"major"[[:space:]]*:[[:space:]]*[0-9]*' "$VERSION_FILE" | grep -o '[0-9]*$')
 MINOR=$(grep -o '"minor"[[:space:]]*:[[:space:]]*[0-9]*' "$VERSION_FILE" | grep -o '[0-9]*$')
 PATCH=$(grep -o '"patch"[[:space:]]*:[[:space:]]*[0-9]*' "$VERSION_FILE" | grep -o '[0-9]*$')
 LABEL=$(grep -o '"label"[[:space:]]*:[[:space:]]*"[^"]*"' "$VERSION_FILE" | sed 's/.*: *"//;s/"$//')
 
-# ── Determine bump level from staged diff ──
-DIFF=$(git diff --cached -- "$INDEX_FILE")
-
+# ── Determine bump level ──────────────────────────────────────────
 if [ -n "$BUMP" ]; then
-  # Manual override via environment variable
   LEVEL="$BUMP"
   echo "  Version bump forced to: $LEVEL"
 else
   LEVEL="patch"
 
-  # MAJOR signals: CDN/dependency swaps or INIT state shape rewrite.
-  # Only triggers when a script tag or INIT definition is CHANGED (added AND removed),
-  # not when lines are merely moved or new globals are added.
   ADDED_SCRIPTS=$(printf '%s\n' "$DIFF" | grep -cE '^\+.*<script.*(src=|cdn)' || true)
   REMOVED_SCRIPTS=$(printf '%s\n' "$DIFF" | grep -cE '^\-.*<script.*(src=|cdn)' || true)
   ADDED_SCRIPTS=${ADDED_SCRIPTS:-0}
@@ -56,7 +76,6 @@ else
     LEVEL="major"
   fi
 
-  # MINOR signals (only upgrade if still patch): new components, new reducer cases
   if [ "$LEVEL" = "patch" ]; then
     if echo "$DIFF" | grep -qE "^\+\s*case '[A-Z_]+'"; then
       LEVEL="minor"
@@ -67,37 +86,24 @@ else
     fi
   fi
 
-  echo "  Auto-detected bump level: $LEVEL (from staged diff)"
+  echo "  Auto-detected bump level: $LEVEL (from diff)"
 fi
 
-# Apply bump
+# ── Apply bump ────────────────────────────────────────────────────
 case "$LEVEL" in
-  major)
-    MAJOR=$((MAJOR + 1))
-    MINOR=0
-    PATCH=0
-    ;;
-  minor)
-    MINOR=$((MINOR + 1))
-    PATCH=0
-    ;;
-  *)
-    PATCH=$((PATCH + 1))
-    ;;
+  major) MAJOR=$((MAJOR + 1)); MINOR=0; PATCH=0 ;;
+  minor) MINOR=$((MINOR + 1)); PATCH=0 ;;
+  *)     PATCH=$((PATCH + 1)) ;;
 esac
 
-# Get git short hash and date
 GIT_HASH=$(git rev-parse --short HEAD 2>/dev/null || echo "dev")
 BUILD_DATE=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
 HUMAN_DATE=$(date -u +"%Y-%m-%d")
 
-# Build version string
 VERSION="${MAJOR}.${MINOR}.${PATCH}"
-if [ -n "$LABEL" ]; then
-  VERSION="${VERSION}-${LABEL}"
-fi
+if [ -n "$LABEL" ]; then VERSION="${VERSION}-${LABEL}"; fi
 
-# Update version.json (pure bash)
+# ── Write files ───────────────────────────────────────────────────
 cat > "$VERSION_FILE" << VJSON
 {
   "major": ${MAJOR},
@@ -108,10 +114,8 @@ cat > "$VERSION_FILE" << VJSON
 VJSON
 echo "  Version bumped to $VERSION"
 
-# Inject version into index.html
 sed -i "s|var CC_VERSION = .*|var CC_VERSION = {v:'${VERSION}',hash:'${GIT_HASH}',date:'${BUILD_DATE}'};|" "$INDEX_FILE"
 
-# Update README version badge
 if [ -f "$README_FILE" ]; then
   if grep -q "^> Version:" "$README_FILE"; then
     sed -i "s|^> Version:.*|> Version: **v${VERSION}** (${HUMAN_DATE})|" "$README_FILE"
@@ -120,10 +124,15 @@ if [ -f "$README_FILE" ]; then
   fi
 fi
 
-# Auto-append to CHANGELOG: get the commit message being committed
-COMMIT_MSG_FILE="$REPO_ROOT/.git/COMMIT_EDITMSG"
-if [ -f "$CHANGELOG_FILE" ] && [ -f "$COMMIT_MSG_FILE" ]; then
-  COMMIT_SUBJECT=$(head -1 "$COMMIT_MSG_FILE" | sed 's/^ *//')
+# ── CHANGELOG entry ───────────────────────────────────────────────
+if [ -f "$CHANGELOG_FILE" ]; then
+  if [ -n "$CI_VERSION_BUMP" ]; then
+    # In CI: use the most recent non-merge commit message from the landed branch
+    COMMIT_SUBJECT=$(git log --no-merges -1 --pretty=format:%s 2>/dev/null || echo "")
+  else
+    COMMIT_MSG_FILE="$REPO_ROOT/.git/COMMIT_EDITMSG"
+    COMMIT_SUBJECT=$([ -f "$COMMIT_MSG_FILE" ] && head -1 "$COMMIT_MSG_FILE" | sed 's/^ *//' || echo "")
+  fi
   if [ -n "$COMMIT_SUBJECT" ] && ! echo "$COMMIT_SUBJECT" | grep -qi "^merge"; then
     if ! grep -q "^## v${VERSION}" "$CHANGELOG_FILE"; then
       sed -i "/^# Changelog/a\\\\n## v${VERSION} (${HUMAN_DATE})\\n- ${COMMIT_SUBJECT}" "$CHANGELOG_FILE"
@@ -131,16 +140,16 @@ if [ -f "$CHANGELOG_FILE" ] && [ -f "$COMMIT_MSG_FILE" ]; then
   fi
 fi
 
-# Update service worker cache version
-SW_FILE="$REPO_ROOT/sw.js"
 if [ -f "$SW_FILE" ]; then
   sed -i "s|var CACHE = 'clashcontrol-v[^']*';|var CACHE = 'clashcontrol-v${VERSION}';|" "$SW_FILE"
 fi
 
-# Re-stage the modified files
-git add "$VERSION_FILE" "$INDEX_FILE"
-[ -f "$README_FILE" ] && git add "$README_FILE"
-[ -f "$CHANGELOG_FILE" ] && git add "$CHANGELOG_FILE"
-[ -f "$SW_FILE" ] && git add "$SW_FILE"
+# ── Re-stage (pre-commit mode only; CI commits separately) ────────
+if [ -z "$CI_VERSION_BUMP" ]; then
+  git add "$VERSION_FILE" "$INDEX_FILE"
+  [ -f "$README_FILE" ] && git add "$README_FILE"
+  [ -f "$CHANGELOG_FILE" ] && git add "$CHANGELOG_FILE"
+  [ -f "$SW_FILE" ] && git add "$SW_FILE"
+fi
 
 echo "  Version: $VERSION (${GIT_HASH}, ${BUILD_DATE})"

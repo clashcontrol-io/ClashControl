@@ -1,0 +1,36 @@
+name: Bump version on merge
+
+on:
+  push:
+    branches: [main]
+
+jobs:
+  bump:
+    # Skip if this commit is itself a version bump (prevents infinite loop)
+    if: "!startsWith(github.event.head_commit.message, 'chore: bump version')"
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Run version bump script
+        run: CI_VERSION_BUMP=1 bash scripts/bump-version.sh
+
+      - name: Commit and push if version changed
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add version.json index.html README.md CHANGELOG.md sw.js 2>/dev/null || true
+          if ! git diff --staged --quiet; then
+            MAJOR=$(grep -o '"major"[[:space:]]*:[[:space:]]*[0-9]*' version.json | grep -o '[0-9]*$')
+            MINOR=$(grep -o '"minor"[[:space:]]*:[[:space:]]*[0-9]*' version.json | grep -o '[0-9]*$')
+            PATCH=$(grep -o '"patch"[[:space:]]*:[[:space:]]*[0-9]*' version.json | grep -o '[0-9]*$')
+            git commit -m "chore: bump version to ${MAJOR}.${MINOR}.${PATCH}"
+            git push
+          else
+            echo "No version files changed, skipping commit"
+          fi
