@@ -14718,6 +14718,55 @@ function startApp() {
     }, []);
     window._ccDispatch = d;
     window._ccLatestState = s;
+    // Console helper: compare two loaded models by GlobalId
+    // Usage: _ccCompareModels() — lists models
+    //        _ccCompareModels(0, 1) — compare by index
+    //        _ccCompareModels('Snowdon IFC', 'Snowdon GLB') — compare by name
+    window._ccCompareModels = function(refA, refB) {
+      var models = (window._ccLatestState||{}).models||[];
+      if (!models.length) { console.warn('No models loaded'); return; }
+      if (refA === undefined) {
+        console.log('%cLoaded models (pass two indices or names to compare):', 'color:#38bdf8;font-weight:bold');
+        console.table(models.map(function(m,i){return {Index:i, Name:m.name, Elements:m.elements.length, LoadType:(m.stats&&m.stats.loadType)||'?'};}));
+        return;
+      }
+      var a = typeof refA==='number' ? models[refA] : models.find(function(m){return m.name===refA;});
+      var b = typeof refB==='number' ? models[refB] : models.find(function(m){return m.name===refB;});
+      if (!a||!b) { console.error('Model not found. Run _ccCompareModels() to list models.'); return; }
+
+      var bGuids = {};
+      b.elements.forEach(function(e){if(e.props.globalId) bGuids[e.props.globalId]=true;});
+      var aGuids = {};
+      a.elements.forEach(function(e){if(e.props.globalId) aGuids[e.props.globalId]=true;});
+
+      var onlyInA = a.elements.filter(function(e){return e.props.globalId && !bGuids[e.props.globalId];});
+      var onlyInB = b.elements.filter(function(e){return e.props.globalId && !aGuids[e.props.globalId];});
+
+      function byType(els) {
+        var t={};
+        els.forEach(function(e){var k=e.props.ifcType||'Unknown'; if(!t[k])t[k]=[]; t[k].push(e.props.name||e.props.globalId);});
+        return Object.keys(t).sort(function(x,y){return t[y].length-t[x].length;}).map(function(k){
+          return {'IFC Type':k, Count:t[k].length, 'Examples':t[k].slice(0,4).join(' | ')};
+        });
+      }
+
+      console.groupCollapsed('%c[Model Comparison] "'+a.name+'" ('+a.elements.length+') vs "'+b.name+'" ('+b.elements.length+')', 'color:#a78bfa;font-weight:bold');
+      if (onlyInA.length) {
+        console.log('%c← In "'+a.name+'" only: '+onlyInA.length+' elements (missing from "'+b.name+'")', 'color:#f87171;font-weight:600');
+        console.table(byType(onlyInA));
+      } else {
+        console.log('%c← No elements missing from "'+b.name+'"', 'color:#4ade80');
+      }
+      if (onlyInB.length) {
+        console.log('%c→ In "'+b.name+'" only: '+onlyInB.length+' elements (not in "'+a.name+'")', 'color:#60a5fa;font-weight:600');
+        console.table(byType(onlyInB));
+      } else {
+        console.log('%c→ No elements missing from "'+a.name+'"', 'color:#4ade80');
+      }
+      var shared = a.elements.length - onlyInA.length;
+      console.log('%c✓ Shared elements (matched by GlobalId): '+shared+' / '+Math.max(a.elements.length,b.elements.length), 'color:#94a3b8');
+      console.groupEnd();
+    };
     // Apply theme to document and persist to localStorage
     useEffect(function(){
       var t = s.prefs.theme||'dark';
