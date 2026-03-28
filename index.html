@@ -6942,11 +6942,17 @@ function startApp() {
         }
       } catch (e) {}
 
-      // Collect all element IDs that have geometry (via StreamAllMeshes, but don't extract geo)
+      // Collect element IDs and IFC colors (StreamAllMeshes gives color per element)
       var elementIds = [];
+      var colorByExpressId = {};
       try {
         api.StreamAllMeshes(modelID, function(ifcMesh) {
           elementIds.push(ifcMesh.expressID);
+          // Grab color from first geometry placement (same source as full IFC load)
+          if (ifcMesh.geometries.size() > 0) {
+            var c = ifcMesh.geometries.get(0).color;
+            if (c) colorByExpressId[ifcMesh.expressID] = {r:c.x, g:c.y, b:c.z, a:c.w};
+          }
         });
       } catch (e) {}
 
@@ -6972,6 +6978,7 @@ function startApp() {
       return {
         propsByGlobalId: propsByGlobalId,
         propsByExpressId: propsByExpressId,
+        colorByExpressId: colorByExpressId,
         storeys: sortedStoreyNames,
         storeyData: storeyResult.data,
         spatialHierarchy: spatialHierarchy,
@@ -7004,7 +7011,19 @@ function startApp() {
       }
 
       // Assign expressId to mesh userData for picking/highlighting
-      elMeshes.forEach(function(m) { m.userData.expressId = props.expressId || elements.length + 1; });
+      var eid = props.expressId || elements.length + 1;
+      elMeshes.forEach(function(m) { m.userData.expressId = eid; });
+
+      // Apply IFC color (same source as regular IFC loading)
+      var ifcCol = ifcMeta.colorByExpressId && ifcMeta.colorByExpressId[eid];
+      if (ifcCol) {
+        var col = new THREE.Color(ifcCol.r, ifcCol.g, ifcCol.b);
+        elMeshes.forEach(function(m) {
+          m.material.color.copy(col);
+          m.material.opacity = ifcCol.a < 0.99 ? ifcCol.a : 1;
+          m.material.transparent = ifcCol.a < 0.99;
+        });
+      }
 
       // Compute bounding box
       var box = new THREE.Box3();
