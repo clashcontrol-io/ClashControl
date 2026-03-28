@@ -1,5 +1,8 @@
 # Changelog
 
+## v3.3.26 (2026-03-28)
+- feat: export/import clash rules, fix + New theme, speed tip LLM line, REVIT guide link
+
 ## v3.3.25 (2026-03-28)
 - feat: show loaded model count badge on Models tab
 
