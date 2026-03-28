@@ -6559,24 +6559,22 @@ function startApp() {
 
   // ── Guided Tour ──────────────────────────────────────────────
   var TOUR_STEPS = [
-    {sel:'.cc-left-rail', pos:'right', title:'Sidebar',
-      text:'Your main navigation. Access models, project files, import/export, and settings from here. Load IFC files directly, or drop a GLB + IFC + .ifcmeta bundle for near-instant loading (create bundles with Ifc2Ifc: github.com/thomhoffer-arch/Ifc2Ifc).'},
-    {sel:'.cc-header-brand-text', pos:'bottom', title:'Header Bar',
-      text:'Shows the active project name. Click it to switch between projects or create new ones.'},
-    {sel:'.cc-header-actions', pos:'bottom', title:'Quick Actions',
-      text:'Open/save projects, import/export BCF files, toggle light/dark theme, and open settings.'},
-    {sel:'.cc-viewcube-wrap', pos:'left', title:'Navigation Cube',
-      text:'Click any face to snap to that view (Front, Top, Right, etc.). Drag to orbit. Helps you stay oriented in 3D.'},
-    {sel:'.cc-training-btn-3d', pos:'bottom', title:'Training Mode',
-      text:'Toggle training mode to label clashes as true/false positives. This helps improve future clash detection. Click the arrow to see stats and export data.'},
-    {sel:'.cc-side-panel', pos:'left', title:'Side Panel',
-      text:'Shows details for the active tab — clash list, issue tracker, or model explorer. Click items to fly to them in 3D.'},
-    {sel:'.cc-nlpanel-closed,.cc-nlpanel', pos:'top', title:'AI Chat',
-      text:'Press / to open. Type natural language commands like "check structural vs MEP", "find clashes within 50mm", or "help" to see all available commands.'},
-    {sel:'.cc-overlay-info', pos:'bottom', title:'Viewport Info',
-      text:'Shows loaded model count, detected clashes, and rendering performance. Click to see detailed stats.'},
-    {sel:'.cc-header-actions,.cc-mobile-nav', pos:'bottom', title:'Save & Share Projects',
-      text:'Use Save Project to export your clashes, issues, viewpoints, and settings as a .ccproject file. Share it with other teams — they can Import Project to see your exact results, continue your work, or add their own findings. Find these in the Tools tab or header bar.'}
+    {sel:'.cc-logo-mark', title:'What is ClashControl?',
+      text:'ClashControl is a free, open-source IFC clash detection tool that runs entirely in your browser. No installs, no licenses, no subscriptions — just open and go.'},
+    {sel:'.cc-left-rail', title:'Left Sidebar',
+      text:'Your main navigation. Load models, switch projects, save your session, import/export BCF files, and access settings — all from here.'},
+    {sel:'.cc-ifc-load-btn', title:'Load IFC / GLB / .ifcmeta',
+      text:'Click to load an IFC model. For near-instant Revit loading, drop a GLB + IFC + .ifcmeta bundle. Create bundles with Ifc2Ifc: github.com/thomhoffer-arch/Ifc2Ifc'},
+    {sel:'.cc-bcf-actions', title:'Save, Share & BCF',
+      text:'Save your entire session (clashes, issues, viewpoints) as a .ccproject file to share with teammates. Import/Export BCF for interoperability with Revit, Navisworks, and Solibri.'},
+    {sel:'.cc-right-rail', title:'Right Panel',
+      text:'The right panel gives you access to your models, clashes, issues, model navigator, and clash standards — all in context with the 3D view.'},
+    {sel:'.cc-right-rail-tabs', title:'Panel Tabs',
+      text:'Switch between Models (loaded files), Clashes (detected conflicts), Issues (tracked problems), Navigator (model tree), and Standards (clash rules).'},
+    {sel:'.cc-nlpanel-closed,.cc-nlpanel', title:'AI Command Line',
+      text:'Press / to open. Type commands like "check structural vs MEP" or "find clashes within 50mm". Type "help" for all available commands.'},
+    {sel:'.cc-training-btn-3d', title:'Training Data',
+      text:'Toggle training mode to label clashes as true or false positives. This helps improve clash detection accuracy over time. Export your training data at any time.'}
   ];
 
   function GuidedTour(props) {
@@ -6607,24 +6605,11 @@ function startApp() {
     function prev() { if (step > 0) setStep(step-1); }
     function skip() { setStep(null); }
 
-    // Calculate tooltip position
+    // Tooltip always centered on screen
     var tipStyle = {position:'fixed', zIndex:10002, background:'var(--bg-primary)',
       border:'1px solid var(--accent)', borderRadius:10, padding:'1rem',
-      boxShadow:'0 8px 32px rgba(0,0,0,.5)', width:280, maxWidth:'80vw'};
-    if (spotPos) {
-      var pad = 12;
-      if (cur.pos === 'right') { tipStyle.left = spotPos.x + spotPos.w + pad; tipStyle.top = spotPos.y; }
-      else if (cur.pos === 'left') { tipStyle.right = window.innerWidth - spotPos.x + pad; tipStyle.top = spotPos.y; }
-      else if (cur.pos === 'bottom') { tipStyle.left = spotPos.x; tipStyle.top = spotPos.y + spotPos.h + pad; }
-      else { tipStyle.left = spotPos.x; tipStyle.bottom = window.innerHeight - spotPos.y + pad; }
-      // Clamp to viewport
-      if (tipStyle.left != null && tipStyle.left + 280 > window.innerWidth - 16) tipStyle.left = window.innerWidth - 296;
-      if (tipStyle.left != null && tipStyle.left < 16) tipStyle.left = 16;
-      if (tipStyle.top != null && tipStyle.top + 200 > window.innerHeight - 16) tipStyle.top = window.innerHeight - 216;
-      if (tipStyle.top != null && tipStyle.top < 16) tipStyle.top = 16;
-    } else {
-      tipStyle.left = '50%'; tipStyle.top = '50%'; tipStyle.transform = 'translate(-50%,-50%)';
-    }
+      boxShadow:'0 8px 32px rgba(0,0,0,.5)', width:320, maxWidth:'85vw',
+      left:'50%', top:'50%', transform:'translate(-50%,-50%)'};
 
     // Spotlight cutout via clip-path
     var overlayStyle = {position:'fixed',inset:0,zIndex:10001,cursor:'default'};
@@ -6880,7 +6865,7 @@ function startApp() {
   // Load IFC metadata only — skip geometry streaming, just extract properties + spatial data.
   // Returns {propsByGlobalId, storeys, storeyData, spatialHierarchy, relatedPairs, elementExpressIds}
   function loadIFCMetadataOnly(buffer, onProgress) {
-    return _getIfcAPI().then(function(api) {
+    return getIfcAPI().then(function(api) {
       if (onProgress) onProgress('Parsing IFC metadata…');
       var modelID = api.OpenModel(new Uint8Array(buffer));
 
@@ -13356,7 +13341,7 @@ function startApp() {
     }}>
       <div style=${{height:48,display:'flex',alignItems:'center',justifyContent:'center',
         borderBottom:'1px solid var(--border-subtle)',flexShrink:0}}>
-        <div class="cc-tip" data-tip=${'ClashControl v'+CC_VERSION.v}
+        <div class="cc-logo-mark cc-tip" data-tip=${'ClashControl v'+CC_VERSION.v}
           style=${{width:28,height:28,background:'var(--accent)',borderRadius:6,
             display:'flex',alignItems:'center',justifyContent:'center',cursor:'default'}}>
           <span style=${{color:'#fff',fontWeight:900,fontSize:11}}>CC</span>
@@ -13434,25 +13419,27 @@ function startApp() {
         </div>`}
       </div>
       <div style=${{flex:1}}></div>
-      ${iconBtn(function(){
+      <div class="cc-ifc-load-btn">${iconBtn(function(){
           if(window._ccOpenIFC) window._ccOpenIFC();
         },
         html`<span style=${{fontWeight:700,fontSize:'0.8rem',letterSpacing:'.03em'}}>IFC</span>`,
-        'Load IFC model\nTip: drop GLB + .ifcmeta alongside for instant loading')}
+        'Load IFC model\nTip: drop GLB + .ifcmeta alongside for instant loading')}</div>
       ${iconBtn(function(){
           if(window._ccOpen2D) window._ccOpen2D();
         },
         html`<span style=${{fontWeight:700,fontSize:'0.8rem',letterSpacing:'.03em'}}>2D</span>`,
         'Load DXF / PDF / DWG')}
-      ${iconBtn(function(){saveProject(s);},
-        html`<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" dangerouslySetInnerHTML=${{__html:SVG_SAVE}}></svg>`,
-        'Save Project')}
-      ${iconBtn(function(){importBCF(d);},
-        html`<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" dangerouslySetInnerHTML=${{__html:SVG_IMPORT}}></svg>`,
-        'Import BCF')}
-      ${iconBtn(function(){exportBCF(all,'2.1',s.viewpoints);},
-        html`<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" dangerouslySetInnerHTML=${{__html:SVG_EXPORT}}></svg>`,
-        'Export BCF')}
+      <div class="cc-bcf-actions">
+        ${iconBtn(function(){saveProject(s);},
+          html`<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" dangerouslySetInnerHTML=${{__html:SVG_SAVE}}></svg>`,
+          'Save Project')}
+        ${iconBtn(function(){importBCF(d);},
+          html`<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" dangerouslySetInnerHTML=${{__html:SVG_IMPORT}}></svg>`,
+          'Import BCF')}
+        ${iconBtn(function(){exportBCF(all,'2.1',s.viewpoints);},
+          html`<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" dangerouslySetInnerHTML=${{__html:SVG_EXPORT}}></svg>`,
+          'Export BCF')}
+      </div>
       ${iconBtn(function(){d({t:A.UPD_PREFS,u:{theme:isDark?'light':'dark'}});},
         isDark?'☀':'☾', isDark?'Light mode':'Dark mode')}
       ${iconBtn(function(){d({t:A.REVIT_BRIDGE,v:true});},
@@ -13915,11 +13902,13 @@ function startApp() {
       display:'flex',flexDirection:'column',overflow:'visible',userSelect:'none',position:'relative',zIndex:10
     }}>
       <div style=${{height:48,borderBottom:'1px solid var(--border-subtle)',flexShrink:0}}></div>
-      ${tabBtn('models',  SVG_MODELS,  'Models',   s.models.length)}
-      ${tabBtn('clashes', SVG_CLASHES, 'Clashes',  clashN)}
-      ${tabBtn('issues',  SVG_ISSUES,  'Issues',   issueN)}
-      ${tabBtn('navigator',SVG_EXPLORE, 'Navigator', 0)}
-      ${tabBtn('standards',SVG_STANDARDS,'Standards',0)}
+      <div class="cc-right-rail-tabs" style=${{display:'flex',flexDirection:'column'}}>
+        ${tabBtn('models',  SVG_MODELS,  'Models',   s.models.length)}
+        ${tabBtn('clashes', SVG_CLASHES, 'Clashes',  clashN)}
+        ${tabBtn('issues',  SVG_ISSUES,  'Issues',   issueN)}
+        ${tabBtn('navigator',SVG_EXPLORE, 'Navigator', 0)}
+        ${tabBtn('standards',SVG_STANDARDS,'Standards',0)}
+      </div>
     </div>`;
   }
 
