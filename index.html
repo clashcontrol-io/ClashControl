@@ -9551,14 +9551,24 @@ function startApp() {
     var st=useState(function(){return {defaultClearance:_getStandardDefaultClearance(),rules:_getStandardPairRules(),typeRules:_getStandardTypePairRules()};}),
       data=st[0],setData=st[1];
     var importRef = useRef(null);
+    var importTypeRef = useRef(null);
+    var importDiscRef = useRef(null);
     var importErr = useState(''), importErrMsg=importErr[0], setImportErr=importErr[1];
 
-    function exportRules() {
-      var payload = {version:1, defaultClearance:data.defaultClearance, typeRules:data.typeRules, rules:data.rules};
+    function _dlJson(payload, filename) {
       var blob = new Blob([JSON.stringify(payload,null,2)],{type:'application/json'});
       var url = URL.createObjectURL(blob);
-      var a = document.createElement('a'); a.href=url; a.download='clash-rules.json'; a.click();
+      var a = document.createElement('a'); a.href=url; a.download=filename; a.click();
       URL.revokeObjectURL(url);
+    }
+    function exportRules() {
+      _dlJson({version:1, defaultClearance:data.defaultClearance, typeRules:data.typeRules, rules:data.rules}, 'clash-rules.json');
+    }
+    function exportTypeRules() {
+      _dlJson({version:1, typeRules:data.typeRules}, 'ifc-type-pair-rules.json');
+    }
+    function exportDiscRules() {
+      _dlJson({version:1, rules:data.rules}, 'discipline-pair-rules.json');
     }
     function onImportFile(e) {
       var file = e.target.files[0]; if(!file) return;
@@ -9577,6 +9587,34 @@ function startApp() {
           setData(newData);
           setImportErr('');
         } catch(err) { setImportErr('Invalid file — could not parse clash-rules.json'); }
+        e.target.value='';
+      };
+      reader.readAsText(file);
+    }
+    function onImportTypeFile(e) {
+      var file = e.target.files[0]; if(!file) return;
+      var reader = new FileReader();
+      reader.onload = function(ev) {
+        try {
+          var p = JSON.parse(ev.target.result);
+          if (!Array.isArray(p.typeRules)) throw new Error('missing typeRules');
+          updateTypeRules(p.typeRules);
+          setImportErr('');
+        } catch(err) { setImportErr('Invalid file — expected ifc-type-pair-rules.json'); }
+        e.target.value='';
+      };
+      reader.readAsText(file);
+    }
+    function onImportDiscFile(e) {
+      var file = e.target.files[0]; if(!file) return;
+      var reader = new FileReader();
+      reader.onload = function(ev) {
+        try {
+          var p = JSON.parse(ev.target.result);
+          if (!Array.isArray(p.rules)) throw new Error('missing rules');
+          updateRules(p.rules);
+          setImportErr('');
+        } catch(err) { setImportErr('Invalid file — expected discipline-pair-rules.json'); }
         e.target.value='';
       };
       reader.readAsText(file);
@@ -9631,6 +9669,8 @@ function startApp() {
       </div>`}
 
       <input ref=${importRef} type="file" accept=".json" style=${{display:'none'}} onChange=${onImportFile} />
+      <input ref=${importTypeRef} type="file" accept=".json" style=${{display:'none'}} onChange=${onImportTypeFile} />
+      <input ref=${importDiscRef} type="file" accept=".json" style=${{display:'none'}} onChange=${onImportDiscFile} />
       <div style=${{display:'flex',gap:'.4rem',marginBottom:'.8rem'}}>
         <button onClick=${exportRules}
           style=${{flex:1,fontSize:'0.69rem',padding:'.3rem .5rem',background:'var(--bg-secondary)',color:'var(--text-secondary)',border:'1px solid var(--border)',borderRadius:4,cursor:'pointer',fontWeight:600}}>
@@ -9652,7 +9692,15 @@ function startApp() {
         <span style=${{fontSize:'0.63rem',color:'var(--text-faint)',marginTop:'.15rem',display:'block'}}>Used for any pair not listed below</span>
       </div>
 
-      <div style=${{fontSize:'0.75rem',fontWeight:600,color:'var(--text-muted)',textTransform:'uppercase',letterSpacing:'.05em',marginBottom:'.35rem'}}>IFC type-pair rules</div>
+      <div style=${{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:'.2rem'}}>
+        <div style=${{fontSize:'0.75rem',fontWeight:600,color:'var(--text-muted)',textTransform:'uppercase',letterSpacing:'.05em'}}>IFC type-pair rules</div>
+        <div style=${{display:'flex',gap:'.25rem'}}>
+          <button onClick=${exportTypeRules} title="Export IFC type-pair rules"
+            style=${{fontSize:'0.6rem',padding:'.15rem .35rem',background:'var(--bg-secondary)',color:'var(--text-faint)',border:'1px solid var(--border)',borderRadius:3,cursor:'pointer'}}>↓ Export</button>
+          <button onClick=${function(){importTypeRef.current&&importTypeRef.current.click();}} title="Import IFC type-pair rules"
+            style=${{fontSize:'0.6rem',padding:'.15rem .35rem',background:'var(--bg-secondary)',color:'var(--text-faint)',border:'1px solid var(--border)',borderRadius:3,cursor:'pointer'}}>↑ Import</button>
+        </div>
+      </div>
       <span style=${{fontSize:'0.63rem',color:'var(--text-faint)',display:'block',marginBottom:'.35rem'}}>Highest priority — matched by IFC element type (e.g. IfcPipe vs IfcWall)</span>
 
       ${data.typeRules.length===0 && html`<div style=${{padding:'.6rem',background:'var(--bg-secondary)',borderRadius:6,fontSize:'0.69rem',color:'var(--text-faint)',textAlign:'center',marginBottom:'.5rem'}}>
@@ -9693,7 +9741,15 @@ function startApp() {
       <button onClick=${addTypeRow}
         style=${{fontSize:'0.69rem',padding:'.3rem .6rem',background:'var(--bg-secondary)',color:'#60a5fa',border:'1px solid #3b82f644',borderRadius:4,cursor:'pointer',fontWeight:600,width:'100%',marginBottom:'1rem'}}>+ Add IFC type rule</button>
 
-      <div style=${{fontSize:'0.75rem',fontWeight:600,color:'var(--text-muted)',textTransform:'uppercase',letterSpacing:'.05em',marginBottom:'.35rem'}}>Discipline-pair rules</div>
+      <div style=${{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:'.2rem'}}>
+        <div style=${{fontSize:'0.75rem',fontWeight:600,color:'var(--text-muted)',textTransform:'uppercase',letterSpacing:'.05em'}}>Discipline-pair rules</div>
+        <div style=${{display:'flex',gap:'.25rem'}}>
+          <button onClick=${exportDiscRules} title="Export discipline-pair rules"
+            style=${{fontSize:'0.6rem',padding:'.15rem .35rem',background:'var(--bg-secondary)',color:'var(--text-faint)',border:'1px solid var(--border)',borderRadius:3,cursor:'pointer'}}>↓ Export</button>
+          <button onClick=${function(){importDiscRef.current&&importDiscRef.current.click();}} title="Import discipline-pair rules"
+            style=${{fontSize:'0.6rem',padding:'.15rem .35rem',background:'var(--bg-secondary)',color:'var(--text-faint)',border:'1px solid var(--border)',borderRadius:3,cursor:'pointer'}}>↑ Import</button>
+        </div>
+      </div>
       <span style=${{fontSize:'0.63rem',color:'var(--text-faint)',display:'block',marginBottom:'.35rem'}}>Fallback when no IFC type rule matches</span>
 
       ${data.rules.length===0 && html`<div style=${{padding:'.6rem',background:'var(--bg-secondary)',borderRadius:6,fontSize:'0.69rem',color:'var(--text-faint)',textAlign:'center',marginBottom:'.5rem'}}>
