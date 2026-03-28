@@ -1,5 +1,8 @@
 # Changelog
 
+## v3.3.39 (2026-03-28)
+- Remove incorrect Z-up→Y-up rotation from GLB loader
+
 ## v3.3.38 (2026-03-28)
 - Add _ccCompareModels() console helper
 
