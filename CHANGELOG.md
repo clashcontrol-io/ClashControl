@@ -1,5 +1,8 @@
 # Changelog
 
+## v3.3.14 (2026-03-28)
+- Add GLB+IFC paired loading for fast Revit model import
+
 ## v3.3.13 (2026-03-27)
 - Add geometry compression for IndexedDB cache (Level 3)
 
