@@ -1,5 +1,8 @@
 # Changelog
 
+## v3.3.28 (2026-03-28)
+- fix: remove strikethrough on completed roadmap item, add launch date Mar 27 2026
+
 ## v3.3.27 (2026-03-28)
 - feat: move info btn to top of left rail, update roadmap
 
