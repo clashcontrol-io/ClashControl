@@ -151,7 +151,7 @@
     @keyframes nlBorderReady{0%{box-shadow:0 8px 32px rgba(0,0,0,.35),0 0 0 4px rgba(34,197,94,.5),0 0 20px rgba(34,197,94,.4)}100%{box-shadow:0 8px 32px rgba(0,0,0,.35),0 0 0 0 rgba(34,197,94,0),0 0 0 rgba(34,197,94,0)}}
     .lc2{display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
     button{font-family:inherit}
-    .cc-tip{position:relative}.cc-tip::after{content:attr(data-tip);position:absolute;left:calc(100% + 8px);top:50%;transform:translateY(-50%) translateX(-4px);background:var(--bg-secondary);color:var(--text-primary);border:1px solid var(--border);border-radius:6px;padding:.3rem .6rem;font-size:0.8rem;white-space:pre-line;max-width:240px;pointer-events:none;opacity:0;transition:opacity .15s,transform .15s;z-index:9999;box-shadow:0 4px 12px rgba(0,0,0,.2)}.cc-tip:hover::after{opacity:1;transform:translateY(-50%) translateX(0)}.cc-tip-delay::after{transition-delay:0s}.cc-tip-delay:hover::after{transition-delay:1s}.cc-tip-up::after{left:50%;top:auto;bottom:calc(100% + 7px);transform:translateX(-50%) translateY(4px)}.cc-tip-up:hover::after{transform:translateX(-50%) translateY(0)}.cc-tip-left::after{left:auto;right:calc(100% + 8px);transform:translateY(-50%) translateX(4px)}.cc-tip-left:hover::after{transform:translateY(-50%) translateX(0)}
+    .cc-tip{position:relative}.cc-tip::after{content:attr(data-tip);position:absolute;left:calc(100% + 8px);top:50%;transform:translateY(-50%) translateX(-4px);background:var(--bg-secondary);color:var(--text-primary);border:1px solid var(--border);border-radius:6px;padding:.3rem .6rem;font-size:0.8rem;white-space:pre-line;max-width:420px;pointer-events:none;opacity:0;transition:opacity .15s,transform .15s;z-index:9999;box-shadow:0 4px 12px rgba(0,0,0,.2)}.cc-tip:hover::after{opacity:1;transform:translateY(-50%) translateX(0)}.cc-tip-delay::after{transition-delay:0s}.cc-tip-delay:hover::after{transition-delay:1s}.cc-tip-up::after{left:50%;top:auto;bottom:calc(100% + 7px);transform:translateX(-50%) translateY(4px)}.cc-tip-up:hover::after{transform:translateX(-50%) translateY(0)}.cc-tip-left::after{left:auto;right:calc(100% + 8px);transform:translateY(-50%) translateX(4px)}.cc-tip-left:hover::after{transform:translateY(-50%) translateX(0)}
     button:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
     input:focus-visible,select:focus-visible,textarea:focus-visible{outline:2px solid var(--accent);outline-offset:0;border-color:var(--accent)}
     [role=switch]:focus-visible{outline:2px solid var(--accent);outline-offset:2px;border-radius:10px}
@@ -9459,6 +9459,7 @@ function startApp() {
     var selStyle={fontSize:'0.69rem',padding:'.2rem .25rem',borderRadius:4,background:'var(--bg-primary)',color:'var(--text-primary)',border:'1px solid var(--border)',flex:1};
     var rowInputStyle={fontSize:'0.69rem',padding:'.2rem .3rem',background:'var(--bg-primary)',border:'1px solid var(--border)',borderRadius:4,color:'var(--text-primary)',width:'100%',boxSizing:'border-box'};
     return html`<div style=${{flex:1,overflowY:'auto',padding:'.6rem'}}>
+      <div style=${{fontSize:'0.75rem',fontWeight:700,color:'var(--text-muted)',textTransform:'uppercase',letterSpacing:'.06em',marginBottom:'.6rem',paddingBottom:'.4rem',borderBottom:'1px solid var(--border-subtle)'}}>Clash Standards</div>
       ${s && d && html`<div style=${{marginBottom:'1rem',paddingBottom:'.8rem',borderBottom:'2px solid var(--border)'}}>
         <${ClashRulesPanel} s=${s} d=${d} />
       </div>`}
@@ -13437,7 +13438,7 @@ function startApp() {
           if(window._ccOpenIFC) window._ccOpenIFC();
         },
         html`<span style=${{fontWeight:700,fontSize:'0.8rem',letterSpacing:'.03em'}}>IFC</span>`,
-        'Load IFC model\nTip: drop GLB + .ifcmeta alongside for fast loading (create with Ifc2Ifc)')}
+        'Load IFC model\nTip: drop GLB + .ifcmeta alongside for instant loading')}
       ${iconBtn(function(){
           if(window._ccOpen2D) window._ccOpen2D();
         },
@@ -13789,19 +13790,21 @@ function startApp() {
             </div>
           </div>
           <div style=${{display:'flex',flexDirection:'column',gap:'.85rem',fontSize:'0.9rem',color:'var(--text-secondary)',lineHeight:1.6}}>
-            <div><div style=${{fontWeight:600,color:'var(--text-primary)',marginBottom:'.25rem'}}>1. Load models</div><div>Click the folder icon in the left sidebar or drag & drop files onto the 3D view. Supports <b>IFC</b> files directly, or a fast-load <b>GLB + IFC + .ifcmeta</b> bundle — drop all three files together. Bundles can be created with <a href="https://github.com/thomhoffer-arch/Ifc2Ifc" target="_blank" rel="noopener" style=${{color:'#60a5fa'}}>Ifc2Ifc</a>.</div></div>
-            <div><div style=${{fontWeight:600,color:'var(--text-primary)',marginBottom:'.25rem'}}>2. Detect clashes</div><div>Press <b>/</b> to open the AI chat and type something like "check structural vs MEP" or "find clashes within 50mm".</div></div>
+            <div><div style=${{fontWeight:600,color:'var(--text-primary)',marginBottom:'.25rem'}}>1. Load models</div><div>Click the folder icon in the left sidebar or drag & drop files onto the 3D view. Supports${' '}<b>IFC</b>${' '}files directly, or a fast-load${' '}<b>GLB + IFC + .ifcmeta</b>${' '}bundle — drop all three files together. Bundles can be created with${' '}<a href="https://github.com/thomhoffer-arch/Ifc2Ifc" target="_blank" rel="noopener" style=${{color:'#60a5fa'}}>Ifc2Ifc</a>.</div></div>
+            <div><div style=${{fontWeight:600,color:'var(--text-primary)',marginBottom:'.25rem'}}>2. Detect clashes</div><div>Press${' '}<b>/</b>${' '}to open the AI chat and type something like "check structural vs MEP" or "find clashes within 50mm".</div></div>
             <div><div style=${{fontWeight:600,color:'var(--text-primary)',marginBottom:'.25rem'}}>3. Review results</div><div>Click any clash to fly to it in 3D. Change status, assign responsibility, or use the chat: "mark all open as resolved".</div></div>
             <div><div style=${{fontWeight:600,color:'var(--text-primary)',marginBottom:'.25rem'}}>4. Create issues & export</div><div>Create issues from clashes. Export as BCF 2.1/3.0 for Revit, Navisworks, Solibri, or BIMcollab.</div></div>
             <div style=${{borderTop:'1px solid var(--border-subtle)',paddingTop:'.7rem'}}>
               <div style=${{fontWeight:600,color:'var(--text-primary)',marginBottom:'.25rem'}}>Keyboard shortcuts</div>
               <div style=${{display:'grid',gridTemplateColumns:'auto 1fr',gap:'.2rem .6rem',fontSize:'0.83rem',color:'var(--text-muted)'}}>
                 <kbd style=${{background:'var(--bg-secondary)',padding:'0 .3rem',borderRadius:3,fontFamily:'inherit',fontSize:'0.78rem'}}>/</kbd><span>Open AI chat</span>
-                <kbd style=${{background:'var(--bg-secondary)',padding:'0 .3rem',borderRadius:3,fontFamily:'inherit',fontSize:'0.78rem'}}>1 2 3 4</kbd><span>Switch tabs</span>
-                <kbd style=${{background:'var(--bg-secondary)',padding:'0 .3rem',borderRadius:3,fontFamily:'inherit',fontSize:'0.78rem'}}>M</kbd><span>Measure tool</span>
+                <kbd style=${{background:'var(--bg-secondary)',padding:'0 .3rem',borderRadius:3,fontFamily:'inherit',fontSize:'0.78rem'}}>1 2 3 4</kbd><span>Switch side panel tabs</span>
+                <kbd style=${{background:'var(--bg-secondary)',padding:'0 .3rem',borderRadius:3,fontFamily:'inherit',fontSize:'0.78rem'}}>M</kbd><span>Measure tool (length)</span>
                 <kbd style=${{background:'var(--bg-secondary)',padding:'0 .3rem',borderRadius:3,fontFamily:'inherit',fontSize:'0.78rem'}}>F</kbd><span>Find elements</span>
-                <kbd style=${{background:'var(--bg-secondary)',padding:'0 .3rem',borderRadius:3,fontFamily:'inherit',fontSize:'0.78rem'}}>X Y</kbd><span>Section planes</span>
+                <kbd style=${{background:'var(--bg-secondary)',padding:'0 .3rem',borderRadius:3,fontFamily:'inherit',fontSize:'0.78rem'}}>X / Y</kbd><span>Toggle section planes</span>
                 <kbd style=${{background:'var(--bg-secondary)',padding:'0 .3rem',borderRadius:3,fontFamily:'inherit',fontSize:'0.78rem'}}>G</kbd><span>Toggle grid</span>
+                <kbd style=${{background:'var(--bg-secondary)',padding:'0 .3rem',borderRadius:3,fontFamily:'inherit',fontSize:'0.78rem'}}>Ctrl O</kbd><span>Open IFC file</span>
+                <kbd style=${{background:'var(--bg-secondary)',padding:'0 .3rem',borderRadius:3,fontFamily:'inherit',fontSize:'0.78rem'}}>Ctrl ,</kbd><span>Settings</span>
               </div>
             </div>
           </div>
@@ -13819,7 +13822,8 @@ function startApp() {
               <div>
                 <div style=${{display:'flex',alignItems:'center',gap:'.4rem'}}>
                   <span style=${{color:'#4ade80',fontSize:'0.9rem'}}>✓</span>
-                  <span style=${{color:'var(--text-muted)',fontWeight:600,textDecoration:'line-through'}}>Open-source launch</span>
+                  <span style=${{color:'var(--text-primary)',fontWeight:600}}>Open-source launch</span>
+                  <span style=${{color:'#4ade80',fontSize:'0.72rem',fontWeight:500,marginLeft:'.2rem'}}>Mar 27, 2026</span>
                 </div>
                 <div style=${{fontSize:'0.75rem',color:'var(--text-faint)',marginLeft:'1.3rem',lineHeight:1.5,marginTop:'.15rem'}}>Publish the full source code on GitHub. Free for everyone to use, inspect, and contribute to. No sign-up, no paywall \u2014 just open your browser and start clashing.</div>
               </div>
