@@ -1,5 +1,23 @@
 # Changelog
 
+## v3.3.19 (2026-03-28)
+- Add tour/version popup on mobile logo tap and project collaboration tour step
+
+## v3.3.18 (2026-03-28)
+- Add Save/Import Project buttons to Tools panel
+
+## v3.3.17 (2026-03-28)
+- Add BCF export with version choice to Tools panel
+
+## v3.3.16 (2026-03-28)
+- Hide Developer/Fine-Tuning section from settings on mobile
+
+## v3.3.15 (2026-03-28)
+- Increase chatbox bottom offset on mobile to clear nav tabs
+
+## v3.3.14 (2026-03-28)
+- Add GLB+IFC paired loading for fast Revit model import
+
 ## v3.3.13 (2026-03-27)
 - Add geometry compression for IndexedDB cache (Level 3)
 

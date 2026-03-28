@@ -176,8 +176,8 @@
       .cc-viewcube-wrap{width:100px!important;height:100px!important}
       .cc-viewcube-wrap canvas{width:80px!important;height:80px!important;top:10px!important;left:10px!important}
       /* Chatbox full width — above mobile nav bar */
-      .cc-nlpanel{width:calc(100vw - 1rem)!important;bottom:calc(3.75rem + env(safe-area-inset-bottom, 0px))!important}
-      .cc-nlpanel-closed{bottom:calc(3.75rem + env(safe-area-inset-bottom, 0px))!important}
+      .cc-nlpanel{width:calc(100vw - 1rem)!important;bottom:calc(4.5rem + env(safe-area-inset-bottom, 0px))!important}
+      .cc-nlpanel-closed{bottom:calc(4.5rem + env(safe-area-inset-bottom, 0px))!important}
       /* Training pill: smaller on mobile + pushed down to avoid FPS overlay */
       .cc-training-btn-3d{padding:.25rem .5rem!important;font-size:0.7rem!important}
       .cc-training-pill-wrap{top:2.2rem!important}
@@ -187,6 +187,8 @@
       .cc-overlay-top button{font-size:0.67rem!important;padding:.2rem .35rem!important}
       /* Tooltips: hide on touch */
       .cc-tip::after{display:none!important}
+      /* Generic mobile-hide utility */
+      .cc-hide-mobile{display:none!important}
       /* Header actions: allow wrapping on mobile */
       .cc-header-actions{flex-wrap:wrap!important;overflow:visible!important}
     }
@@ -258,7 +260,7 @@ window.onload = function() {
 
 function startApp() {
   // ── Version (auto-updated by pre-commit hook) ──
-  var CC_VERSION = {v:'3.3.13',hash:'2779a11',date:'2026-03-27T22:10:27Z'};
+  var CC_VERSION = {v:'3.3.19',hash:'357c8a1',date:'2026-03-28T04:36:02Z'};
 
   // ── GoatCounter event helper (no-op if GoatCounter not configured) ──
   function _gcEvent(name, title) {
@@ -6572,7 +6574,9 @@ function startApp() {
     {sel:'.cc-nlpanel-closed,.cc-nlpanel', pos:'top', title:'AI Chat',
       text:'Press / to open. Type natural language commands like "check structural vs MEP", "find clashes within 50mm", or "help" to see all available commands.'},
     {sel:'.cc-overlay-info', pos:'bottom', title:'Viewport Info',
-      text:'Shows loaded model count, detected clashes, and rendering performance. Click to see detailed stats.'}
+      text:'Shows loaded model count, detected clashes, and rendering performance. Click to see detailed stats.'},
+    {sel:'.cc-header-actions,.cc-mobile-nav', pos:'bottom', title:'Save & Share Projects',
+      text:'Use Save Project to export your clashes, issues, viewpoints, and settings as a .ccproject file. Share it with other teams — they can Import Project to see your exact results, continue your work, or add their own findings. Find these in the Tools tab or header bar.'}
   ];
 
   function GuidedTour(props) {
@@ -6728,12 +6732,19 @@ function startApp() {
       <div style=${{display:'flex',alignItems:'center',gap:'.75rem'}}>
         <div style=${{position:'relative'}}>
           <div style=${{width:32,height:32,background:'var(--accent)',borderRadius:8,display:'flex',alignItems:'center',justifyContent:'center',cursor:'pointer'}} title="ClashControl — tap for version info" onClick=${function(){setShowVer(!showVer);}}><span style=${{color:'#fff',fontWeight:900,fontSize:14}}>CC</span></div>
-          ${showVer && html`<div style=${{position:'absolute',top:38,left:0,background:'var(--bg-secondary)',border:'1px solid var(--border)',borderRadius:8,padding:'.6rem .8rem',zIndex:200,minWidth:200,boxShadow:'0 8px 24px rgba(0,0,0,.4)',fontSize:'0.83rem',color:'var(--text-primary)',whiteSpace:'nowrap'}} onClick=${function(e){e.stopPropagation();}}>
+          ${showVer && html`<div onClick=${function(){setShowVer(false);}} style=${{position:'fixed',inset:0,zIndex:8999,background:'transparent'}}></div>
+          <div style=${{position:'fixed',top:50,left:12,background:'var(--bg-secondary)',border:'1px solid var(--border)',borderRadius:8,padding:'.6rem .8rem',zIndex:9000,minWidth:220,boxShadow:'0 8px 24px rgba(0,0,0,.4)',fontSize:'0.83rem',color:'var(--text-primary)',whiteSpace:'nowrap'}} onClick=${function(e){e.stopPropagation();}}>
             <div style=${{fontWeight:700,marginBottom:'.3rem'}}>ClashControl</div>
             <div style=${{color:'var(--text-muted)'}}>Version <strong>v${CC_VERSION.v}</strong></div>
             <div style=${{color:'var(--text-faint)',marginTop:'.2rem'}}>Build: ${CC_VERSION.hash}</div>
             <div style=${{color:'var(--text-faint)'}}>${new Date(CC_VERSION.date).toLocaleDateString('en-GB',{day:'numeric',month:'long',year:'numeric'})}</div>
-            <div style=${{marginTop:'.4rem',borderTop:'1px solid var(--border-subtle)',paddingTop:'.3rem',color:'var(--text-faint)',fontSize:'0.75rem'}}>Free, open-source IFC clash detection</div>
+            <div style=${{marginTop:'.5rem',borderTop:'1px solid var(--border-subtle)',paddingTop:'.4rem',display:'flex',flexDirection:'column',gap:'.3rem'}}>
+              <button onClick=${function(){setShowVer(false);if(window._ccToggleTutorial)window._ccToggleTutorial();}}
+                style=${{...S_BTN,width:'100%',padding:'.35rem .5rem',background:'var(--accent)',color:'#fff',fontSize:'0.8rem',fontWeight:600,borderRadius:6,textAlign:'center',justifyContent:'center'}}}>Quick Start Guide</button>
+              <button onClick=${function(){setShowVer(false);if(window._ccStartTour)window._ccStartTour();}}
+                style=${{...S_BTN,width:'100%',padding:'.35rem .5rem',background:'#7c3aed',color:'#fff',fontSize:'0.8rem',fontWeight:600,borderRadius:6,textAlign:'center',justifyContent:'center'}}}>Interactive Tour</button>
+            </div>
+            <div style=${{marginTop:'.3rem',fontSize:'0.69rem',color:'var(--text-faint)'}}>Free, open-source IFC clash detection</div>
           </div>`}
         </div>
         <div>
@@ -10348,8 +10359,10 @@ function startApp() {
               <option value="design">Design</option><option value="coordination">Coordination</option><option value="constructability">Constructability</option><option value="safety">Safety</option><option value="code_compliance">Code Compliance</option><option value="other">Other</option>
             </select></div>
         </div>
-        <div style=${SEC}>Developer / Fine-Tuning</div>
-        <${DevTrainingSection} models=${models} />
+        <div class="cc-hide-mobile">
+          <div style=${SEC}>Developer / Fine-Tuning</div>
+          <${DevTrainingSection} models=${models} />
+        </div>
       </div>`}
       ${settingsTab==='advanced' && html`<${AdvancedSettingsTab} d=${d} prefs=${p} models=${models} rules=${rules} SEC=${SEC} TROW=${TROW} TLBL=${TLBL} TSUB=${TSUB} LBL=${LBL} />`}
     </div></div>`;
@@ -14076,6 +14089,19 @@ function startApp() {
     var sectionActive = s.sectionAxis || s.sectionCustom || (s.sectionBox && s.sectionBox.enabled);
     return html`<div style=${{display:'flex',flexDirection:'column',gap:0,overflowY:'auto',flex:1}}>
 
+      <!-- Project -->
+      <div style=${{padding:'.75rem',borderBottom:'1px solid var(--border-subtle)'}}>
+        <span style=${SEC}>Project</span>
+        <div style=${{display:'flex',gap:'.2rem'}}>
+          <button onClick=${function(){loadProject(d);}}
+            style=${{...S_BTN,flex:1,padding:'.3rem',fontSize:'0.8rem',background:'var(--bg-secondary)',color:'var(--text-secondary)',border:'1px solid var(--border)'}}>Import Project</button>
+          <button onClick=${function(){saveProject(s);}}
+            disabled=${!s.models.length&&!s.clashes.length&&!s.issues.length}
+            style=${{...S_BTN,flex:1,padding:'.3rem',fontSize:'0.8rem',background:s.models.length||s.clashes.length||s.issues.length?'var(--accent)':'var(--bg-secondary)',color:s.models.length||s.clashes.length||s.issues.length?'#fff':'var(--text-faint)'}}>Save Project</button>
+        </div>
+        <span style=${{fontSize:'0.63rem',color:'var(--text-faint)',display:'block',marginTop:'.15rem'}}>Save/load clashes, issues, viewpoints, and settings as a .ccproject file</span>
+      </div>
+
       <!-- Section / Clipping -->
       <div style=${{padding:'.75rem',borderBottom:'1px solid var(--border-subtle)'}}>
         <span style=${SEC}>Section / Clipping</span>
@@ -14131,6 +14157,22 @@ function startApp() {
             style=${{...S_BTN,flex:1,padding:'.3rem',fontSize:'0.8rem',background:'var(--bg-secondary)',color:s.models.length>0?'#22d3ee':'var(--text-faint)',opacity:s.models.length>0?1:0.5}}>Export glTF</button>
         </div>
         <span style=${{fontSize:'0.63rem',color:'var(--text-faint)',display:'block',marginTop:'.15rem'}}>Export loaded models to glTF/GLB format</span>
+      </div>
+
+      <!-- BCF Export -->
+      <div style=${{padding:'.75rem',borderBottom:'1px solid var(--border-subtle)'}}>
+        <span style=${SEC}>BCF Exchange</span>
+        <div style=${{display:'flex',gap:'.2rem',marginBottom:'.3rem'}}>
+          <button onClick=${function(){var all=s.clashes.concat(s.issues);exportBCF(all,'2.1',s.viewpoints);}}
+            disabled=${!s.clashes.length&&!s.issues.length}
+            style=${{...S_BTN,flex:1,padding:'.3rem',fontSize:'0.8rem',background:'var(--bg-secondary)',color:s.clashes.length||s.issues.length?'#60a5fa':'var(--text-faint)',opacity:s.clashes.length||s.issues.length?1:0.5}}>Export BCF 2.1</button>
+          <button onClick=${function(){var all=s.clashes.concat(s.issues);exportBCF(all,'3.0',s.viewpoints);}}
+            disabled=${!s.clashes.length&&!s.issues.length}
+            style=${{...S_BTN,flex:1,padding:'.3rem',fontSize:'0.8rem',background:'var(--bg-secondary)',color:s.clashes.length||s.issues.length?'#818cf8':'var(--text-faint)',opacity:s.clashes.length||s.issues.length?1:0.5}}>Export BCF 3.0</button>
+        </div>
+        <button onClick=${function(){importBCF(d);}}
+          style=${{...S_BTN,width:'100%',padding:'.3rem',fontSize:'0.8rem',background:'var(--bg-secondary)',color:'var(--text-secondary)',border:'1px solid var(--border)'}}>Import BCF</button>
+        <span style=${{fontSize:'0.63rem',color:'var(--text-faint)',display:'block',marginTop:'.15rem'}}>BCF 2.1 is widely supported. BCF 3.0 adds extensions support.</span>
       </div>
 
       <!-- Training Mode -->
