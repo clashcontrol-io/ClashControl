@@ -1,5 +1,8 @@
 # Changelog
 
+## v3.3.16 (2026-03-28)
+- Hide Developer/Fine-Tuning section from settings on mobile
+
 ## v3.3.15 (2026-03-28)
 - Increase chatbox bottom offset on mobile to clear nav tabs
 

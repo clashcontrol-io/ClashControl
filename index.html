@@ -260,7 +260,7 @@ window.onload = function() {
 
 function startApp() {
   // ── Version (auto-updated by pre-commit hook) ──
-  var CC_VERSION = {v:'3.3.15',hash:'8372e5e',date:'2026-03-28T04:29:33Z'};
+  var CC_VERSION = {v:'3.3.16',hash:'0005824',date:'2026-03-28T04:31:43Z'};
 
   // ── GoatCounter event helper (no-op if GoatCounter not configured) ──
   function _gcEvent(name, title) {
@@ -14135,6 +14135,22 @@ function startApp() {
             style=${{...S_BTN,flex:1,padding:'.3rem',fontSize:'0.8rem',background:'var(--bg-secondary)',color:s.models.length>0?'#22d3ee':'var(--text-faint)',opacity:s.models.length>0?1:0.5}}>Export glTF</button>
         </div>
         <span style=${{fontSize:'0.63rem',color:'var(--text-faint)',display:'block',marginTop:'.15rem'}}>Export loaded models to glTF/GLB format</span>
+      </div>
+
+      <!-- BCF Export -->
+      <div style=${{padding:'.75rem',borderBottom:'1px solid var(--border-subtle)'}}>
+        <span style=${SEC}>BCF Exchange</span>
+        <div style=${{display:'flex',gap:'.2rem',marginBottom:'.3rem'}}>
+          <button onClick=${function(){var all=s.clashes.concat(s.issues);exportBCF(all,'2.1',s.viewpoints);}}
+            disabled=${!s.clashes.length&&!s.issues.length}
+            style=${{...S_BTN,flex:1,padding:'.3rem',fontSize:'0.8rem',background:'var(--bg-secondary)',color:s.clashes.length||s.issues.length?'#60a5fa':'var(--text-faint)',opacity:s.clashes.length||s.issues.length?1:0.5}}>Export BCF 2.1</button>
+          <button onClick=${function(){var all=s.clashes.concat(s.issues);exportBCF(all,'3.0',s.viewpoints);}}
+            disabled=${!s.clashes.length&&!s.issues.length}
+            style=${{...S_BTN,flex:1,padding:'.3rem',fontSize:'0.8rem',background:'var(--bg-secondary)',color:s.clashes.length||s.issues.length?'#818cf8':'var(--text-faint)',opacity:s.clashes.length||s.issues.length?1:0.5}}>Export BCF 3.0</button>
+        </div>
+        <button onClick=${function(){importBCF(d);}}
+          style=${{...S_BTN,width:'100%',padding:'.3rem',fontSize:'0.8rem',background:'var(--bg-secondary)',color:'var(--text-secondary)',border:'1px solid var(--border)'}}>Import BCF</button>
+        <span style=${{fontSize:'0.63rem',color:'var(--text-faint)',display:'block',marginTop:'.15rem'}}>BCF 2.1 is widely supported. BCF 3.0 adds extensions support.</span>
       </div>
 
       <!-- Training Mode -->
