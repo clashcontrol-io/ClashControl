@@ -6563,8 +6563,8 @@ function startApp() {
       text:'ClashControl is a free, open-source IFC clash detection tool that runs entirely in your browser. No installs, no licenses, no subscriptions — just open and go.'},
     {sel:'.cc-left-rail', title:'Left Sidebar',
       text:'Your main navigation. Load models, switch projects, save your session, import/export BCF files, and access settings — all from here.'},
-    {sel:'.cc-ifc-load-btn', title:'Load IFC / GLB / .ifcmeta',
-      text:'Click to load an IFC model. For near-instant Revit loading, drop a GLB + IFC + .ifcmeta bundle. Create bundles with Ifc2Ifc: github.com/thomhoffer-arch/Ifc2Ifc'},
+    {sel:'.cc-ifc-load-btn', title:'Load IFC / GLB / .ifcprops',
+      text:'Click to load an IFC model. For near-instant Revit loading, drop a GLB + .ifcprops bundle (skips slow IFC parsing). Also supports GLB + IFC + .ifcmeta. Create bundles with Ifc2Ifc.'},
     {sel:'.cc-bcf-actions', title:'Save, Share & BCF',
       text:'Save your entire session (clashes, issues, viewpoints) as a .ccproject file to share with teammates. Import/Export BCF for interoperability with Revit, Navisworks, and Solibri.'},
     {sel:'.cc-right-rail', title:'Right Panel',
@@ -6942,11 +6942,17 @@ function startApp() {
         }
       } catch (e) {}
 
-      // Collect all element IDs that have geometry (via StreamAllMeshes, but don't extract geo)
+      // Collect element IDs and IFC colors (StreamAllMeshes gives color per element)
       var elementIds = [];
+      var colorByExpressId = {};
       try {
         api.StreamAllMeshes(modelID, function(ifcMesh) {
           elementIds.push(ifcMesh.expressID);
+          // Grab color from first geometry placement (same source as full IFC load)
+          if (ifcMesh.geometries.size() > 0) {
+            var c = ifcMesh.geometries.get(0).color;
+            if (c) colorByExpressId[ifcMesh.expressID] = {r:c.x, g:c.y, b:c.z, a:c.w};
+          }
         });
       } catch (e) {}
 
@@ -6972,6 +6978,7 @@ function startApp() {
       return {
         propsByGlobalId: propsByGlobalId,
         propsByExpressId: propsByExpressId,
+        colorByExpressId: colorByExpressId,
         storeys: sortedStoreyNames,
         storeyData: storeyResult.data,
         spatialHierarchy: spatialHierarchy,
@@ -7004,7 +7011,19 @@ function startApp() {
       }
 
       // Assign expressId to mesh userData for picking/highlighting
-      elMeshes.forEach(function(m) { m.userData.expressId = props.expressId || elements.length + 1; });
+      var eid = props.expressId || elements.length + 1;
+      elMeshes.forEach(function(m) { m.userData.expressId = eid; });
+
+      // Apply IFC color (same source as regular IFC loading)
+      var ifcCol = ifcMeta.colorByExpressId && ifcMeta.colorByExpressId[eid];
+      if (ifcCol) {
+        var col = new THREE.Color(ifcCol.r, ifcCol.g, ifcCol.b);
+        elMeshes.forEach(function(m) {
+          m.material.color.copy(col);
+          m.material.opacity = ifcCol.a < 0.99 ? ifcCol.a : 1;
+          m.material.transparent = ifcCol.a < 0.99;
+        });
+      }
 
       // Compute bounding box
       var box = new THREE.Box3();
@@ -7100,6 +7119,73 @@ function startApp() {
     };
   }
 
+  // Load GLB with .ifcprops JSON (fast replacement for IFC STEP parsing)
+  function joinGLBWithProps(glbResult, propsData, sidecar, fileName, onProgress) {
+    if (onProgress) onProgress('Applying .ifcprops metadata…');
+    var meshByGid = glbResult.meshByGid;
+    var elements = [];
+    var elementMeta = (propsData && propsData.elements) || propsData || {};
+    var sidecarMeta = (sidecar && sidecar.elements) || {};
+    var matched = 0, unmatched = 0;
+
+    // Extract unique storeys
+    var storeySet = {};
+    Object.keys(elementMeta).forEach(function(gid) {
+      var e = elementMeta[gid];
+      if (e && e.level) storeySet[e.level] = true;
+    });
+    var storeys = Object.keys(storeySet);
+
+    Object.keys(meshByGid).forEach(function(gid) {
+      var elMeshes = meshByGid[gid];
+      var ep = elementMeta[gid] || null;
+      var sc = sidecarMeta[gid] || {};
+      if (ep) { matched++; } else { unmatched++; }
+      ep = ep || {};
+
+      var props = {
+        expressId: ep.expressId || sc.expressId || elements.length + 1,
+        globalId: gid,
+        ifcType: ep.category || sc.ifcType || 'Element',
+        name: ep.name || sc.name || gid,
+        description: ep.description || sc.description || '',
+        objectType: ep.type || sc.objectType || '',
+        storey: ep.level || sc.storey || '',
+        material: Array.isArray(ep.materials) ? ep.materials.join(', ') : (ep.materials || sc.material || ''),
+        quantities: ep.quantities || sc.quantities || {},
+        psets: ep.parameters || ep.psets || sc.psets || {}
+      };
+      // Overlay Revit sidecar extras
+      if (sc.phase) props.phase = sc.phase;
+      if (sc.workset) props.workset = sc.workset;
+      if (sc.designOption) props.designOption = sc.designOption;
+      if (sc.hostId) props.hostId = sc.hostId;
+      if (sc.layers) props.layers = sc.layers;
+      if (sc.flipState) props.flipState = sc.flipState;
+      if (sc.constraints) props.constraints = sc.constraints;
+      if (sc.hostRelationships) props.hostRelationships = sc.hostRelationships;
+
+      elMeshes.forEach(function(m) { m.userData.expressId = props.expressId; });
+      var box = new THREE.Box3();
+      elMeshes.forEach(function(m) { box.expandByObject(m); });
+      elements.push({expressId: props.expressId, meshes: elMeshes, box: box, props: props});
+    });
+
+    var joinRate = matched + unmatched > 0 ? Math.round(matched / (matched + unmatched) * 100) : 0;
+    console.log('%c[GLB+props] ' + fileName + ': ' + matched + ' matched, ' + unmatched + ' unmatched (' + joinRate + '% join rate)', 'color:#a78bfa;font-weight:bold');
+    if (onProgress) onProgress('Joined: ' + matched + '/' + (matched + unmatched) + ' elements (' + joinRate + '%)');
+
+    return {
+      meshes: glbResult.meshes,
+      elements: elements,
+      storeys: storeys,
+      storeyData: (propsData && propsData.storeyData) || (sidecar && sidecar.storeyData) || [],
+      spatialHierarchy: (propsData && propsData.spatialHierarchy) || (sidecar && sidecar.spatialHierarchy) || {},
+      relatedPairs: (propsData && propsData.relatedPairs) || (sidecar && sidecar.relatedPairs) || {},
+      stats: {elementCount: elements.length, meshCount: glbResult.meshes.length, glbJoinRate: joinRate, glbMatched: matched, glbUnmatched: unmatched}
+    };
+  }
+
   // ── Model Sidebar ──────────────────────────────────────────────
 
   // Auto-detect discipline from IFC types
@@ -7139,21 +7225,22 @@ function startApp() {
       var totalIfc = 0, doneIfc = 0;
 
       // ── Group files by base name to detect GLB+IFC pairs ──
-      var byBase = {}; // baseName → {glb, ifc, ifcmeta, other:[]}
+      var byBase = {}; // baseName → {glb, ifc, ifcmeta, ifcprops}
       files.forEach(function(f) {
         var ext = f.name.split('.').pop().toLowerCase();
         var base = f.name.replace(/\.[^.]+$/, '');
-        if (!byBase[base]) byBase[base] = {glb:null, ifc:null, ifcmeta:null};
+        if (!byBase[base]) byBase[base] = {glb:null, ifc:null, ifcmeta:null, ifcprops:null};
         if (ext === 'glb' || ext === 'gltf') byBase[base].glb = f;
         else if (ext === 'ifc') byBase[base].ifc = f;
-        else if (ext === 'ifcmeta' || (ext === 'json' && f.name.indexOf('.ifcmeta') !== -1)) byBase[base].ifcmeta = f;
+        else if (ext === 'ifcmeta') byBase[base].ifcmeta = f;
+        else if (ext === 'ifcprops') byBase[base].ifcprops = f;
       });
 
       // Process GLB+IFC pairs first
       var pairedBases = {};
       Object.keys(byBase).forEach(function(base) {
         var grp = byBase[base];
-        if (grp.glb && (grp.ifc || grp.ifcmeta)) {
+        if (grp.glb && (grp.ifc || grp.ifcmeta || grp.ifcprops)) {
           pairedBases[base] = true;
           chain = chain.then(function() {
             setLoading(true);
@@ -7169,8 +7256,9 @@ function startApp() {
               _phases['GLB read'] = performance.now() - t0;
               return loadGLB(glbBuf, base, _onProg).then(function(glbResult) {
                 _phases['GLB parse'] = performance.now() - t0;
-                // Load IFC metadata and/or sidecar (run in parallel)
-                var ifcPromise = grp.ifc ? grp.ifc.arrayBuffer().then(function(ifcBuf) {
+                // Load IFC metadata, sidecar and/or .ifcprops (run in parallel)
+                // .ifcprops takes priority over .ifc — no need to parse STEP if props JSON exists
+                var ifcPromise = (!grp.ifcprops && grp.ifc) ? grp.ifc.arrayBuffer().then(function(ifcBuf) {
                   _phases['IFC file read'] = performance.now() - t0;
                   return loadIFCMetadataOnly(ifcBuf, _onProg);
                 }).then(function(ifcMeta) {
@@ -7182,10 +7270,18 @@ function startApp() {
                   _phases['Sidecar'] = performance.now() - t0;
                   return parsed;
                 }) : Promise.resolve(null);
-                return Promise.all([ifcPromise, sidecarPromise]).then(function(results) {
-                  var ifcMeta = results[0], sidecar = results[1];
+                var propsPromise = grp.ifcprops ? grp.ifcprops.text().then(function(txt) {
+                  var parsed = JSON.parse(txt);
+                  _phases['Props'] = performance.now() - t0;
+                  return parsed;
+                }) : Promise.resolve(null);
+                return Promise.all([ifcPromise, sidecarPromise, propsPromise]).then(function(results) {
+                  var ifcMeta = results[0], sidecar = results[1], propsData = results[2];
                   var result;
-                  if (ifcMeta) {
+                  if (propsData) {
+                    // Fast path: use .ifcprops JSON (no IFC STEP parsing needed)
+                    result = joinGLBWithProps(glbResult, propsData, sidecar, base, _onProg);
+                  } else if (ifcMeta) {
                     result = joinGLBWithIFC(glbResult, ifcMeta, base, _onProg);
                     // Overlay Revit sidecar data on top of IFC properties
                     if (sidecar && sidecar.elements) {
@@ -7211,10 +7307,31 @@ function startApp() {
                   _phases['Join'] = performance.now() - t0;
                   result.stats.loadTime = Math.round(performance.now() - t0);
                   result.stats.phases = _phases;
-                  result.stats.loadType = grp.ifc ? (grp.ifcmeta ? 'GLB+IFC+meta' : 'GLB+IFC') : 'GLB+meta';
+                  var _loadType = propsData
+                    ? (grp.ifcmeta ? 'GLB+props+meta' : 'GLB+props')
+                    : (grp.ifc ? (grp.ifcmeta ? 'GLB+IFC+meta' : 'GLB+IFC') : 'GLB+meta');
+                  result.stats.loadType = _loadType;
+                  // Console profiler (matches IFC load profile output)
+                  (function() {
+                    var ph = _phases, prev = 0, total = result.stats.loadTime;
+                    var phaseOrder = Object.keys(ph).filter(function(k){return typeof ph[k]==='number';});
+                    phaseOrder.sort(function(a,b){return ph[a]-ph[b];});
+                    var rows = [];
+                    phaseOrder.forEach(function(name) {
+                      var cum = Math.round(ph[name]), dt = Math.round(ph[name] - prev);
+                      rows.push({Phase:name, Time:dt+'ms', Pct:Math.round(dt/total*100)+'%', Cumulative:cum+'ms'});
+                      prev = ph[name];
+                    });
+                    rows.push({Phase:'TOTAL', Time:total+'ms', Pct:'100%', Cumulative:total+'ms'});
+                    var totalSizeMB = (result.stats.fileSize/1048576).toFixed(1);
+                    console.groupCollapsed('%c['+_loadType+' Load Profile] '+result.stats.elementCount+' elements · '+totalSizeMB+' MB · '+total+'ms total', 'color:#38bdf8;font-weight:bold');
+                    console.table(rows);
+                    console.groupEnd();
+                  }());
                   var totalSize = grp.glb.size;
                   if (grp.ifc) totalSize += grp.ifc.size;
                   if (grp.ifcmeta) totalSize += grp.ifcmeta.size;
+                  if (grp.ifcprops) totalSize += grp.ifcprops.size;
                   result.stats.fileSize = totalSize;
                   var disc = detectDiscipline(result.elements);
                   var dObj = DISC.find(function(x){return x.id===disc;});
@@ -7239,7 +7356,7 @@ function startApp() {
       // Process standalone GLB files (geometry only, no IFC metadata)
       Object.keys(byBase).forEach(function(base) {
         var grp = byBase[base];
-        if (grp.glb && !grp.ifc && !grp.ifcmeta && !pairedBases[base]) {
+        if (grp.glb && !grp.ifc && !grp.ifcmeta && !grp.ifcprops && !pairedBases[base]) {
           chain = chain.then(function() {
             setLoading(true);
             var t0 = performance.now();
@@ -7294,7 +7411,7 @@ function startApp() {
         // Skip files already handled as pairs
         if (pairedBases[base]) return;
         // Skip GLB files (already handled above)
-        if (ext === 'glb' || ext === 'gltf' || ext === 'ifcmeta') return;
+        if (ext === 'glb' || ext === 'gltf' || ext === 'ifcmeta' || ext === 'ifcprops') return;
         if (ext === 'dwg') {
           errors.push(f.name + ': DWG cannot be parsed in-browser. Convert to DXF first.');
           return;
@@ -7446,7 +7563,7 @@ function startApp() {
           <span style=${{fontSize:'0.8rem',fontWeight:600,color:'var(--text-muted)',textTransform:'uppercase',letterSpacing:'.05em'}}>Models</span>
           <span style=${{fontSize:'0.8rem',color:'var(--text-faint)'}}>${s.models.length} loaded</span>
         </div>
-        <input ref=${fileRef} type="file" accept=".ifc,.glb,.gltf,.ifcmeta" multiple style=${{display:'none'}} onChange=${onFiles} />
+        <input ref=${fileRef} type="file" accept=".ifc,.glb,.gltf,.ifcmeta,.ifcprops" multiple style=${{display:'none'}} onChange=${onFiles} />
         <input ref=${file2dRef} type="file" accept=".dxf,.pdf,.dwg" multiple style=${{display:'none'}} onChange=${onFiles} />
         <button class="cc-tip cc-tip-left" data-tip=${dragging?'Drop to load':'Add IFC / GLB / DXF / PDF'} title=${'Load IFC, GLB, DXF, or PDF.\n\nFor fast Revit import: drop IFC + GLB + .ifcmeta together.\n• GLB = pre-tessellated geometry (fast)\n• IFC = properties, storeys, spatial hierarchy\n• .ifcmeta = Revit data (phase, workset, design option, layers, constraints)\n\nCreate bundles with Ifc2Ifc:\ngithub.com/thomhoffer-arch/Ifc2Ifc'} onClick=${function(){setErr('');fileRef.current&&fileRef.current.click()}} disabled=${loading}
           style=${{...S_BTN,width:'100%',background:dragging?'#1e3a5f':'var(--bg-secondary)',color:dragging?'#93c5fd':'var(--text-secondary)',border:dragging?'2px dashed #3b82f6':'1px dashed var(--border)',display:'flex',alignItems:'center',justifyContent:'center',gap:'.3rem',transition:'all .15s'}}>
@@ -7600,6 +7717,8 @@ function startApp() {
         <span style=${{color:'var(--text-primary)',fontSize:'0.86rem',flex:1,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}} title=${m.name}>${m.name}</span>
         ${m._version>1 && html`<span style=${{fontSize:'0.57rem',color:'#60a5fa',background:'#1e3a5f',padding:'.05rem .25rem',borderRadius:3,flexShrink:0,fontWeight:600}}>v${m._version}</span>`}
         ${m._stub && html`<span style=${{fontSize:'0.63rem',color:'#f59e0b',background:'var(--pill-amber-bg)',padding:'.05rem .3rem',borderRadius:4,flexShrink:0}}>stub</span>`}
+        ${m.stats && m.stats.loadType && html`<span style=${{fontSize:'0.57rem',padding:'1px 4px',borderRadius:3,background:'rgba(37,99,235,.12)',color:'var(--accent)',fontWeight:600,flexShrink:0}}>${m.stats.loadType}</span>`}
+        ${m.stats && m.stats.loadTime && html`<span style=${{fontSize:'0.63rem',color:'var(--text-faint)',flexShrink:0}}>${(m.stats.loadTime/1000).toFixed(1)}s</span>`}
         <button onClick=${function(){setOpen(!open)}} style=${{...S_BTN,padding:'0 2px',background:'none',color:'var(--text-faint)',fontSize:'0.69rem'}}>${open?'▲':'▼'}</button>
         <button onClick=${function(){if(!confirm('Remove "'+m.name+'" from this project?'))return;d({t:A.DEL_MODEL,id:m.id});idbDeleteFile(m.id);idbDeleteGeoCache(m.id);}} style=${{...S_BTN,padding:'0 2px',background:'none',color:'var(--text-faint)',fontSize:'0.69rem'}}>✕</button>
       </div>
@@ -7615,21 +7734,15 @@ function startApp() {
           <span style=${{fontSize:'0.8rem',color:'var(--text-faint)'}}>Colour</span>
           <input type="color" value=${m.color} onChange=${function(e){d({t:A.UPD_MODEL,id:m.id,u:{color:e.target.value}})}} style=${{width:24,height:20,border:'none',padding:0,background:'none',cursor:'pointer'}} />
         </div>
-        <span style=${{fontSize:'0.75rem',color:'var(--text-faint)'}}>${(m.elements&&m.elements.length||0)} elements · ${(m.meshes&&m.meshes.length||0)} meshes</span>
-        ${m.stats && html`<div style=${{fontSize:'0.63rem',color:'var(--text-faint)',display:'flex',gap:'.4rem',flexWrap:'wrap',alignItems:'center'}}>
-          ${m.stats.fileSize && html`<span>${(m.stats.fileSize/1048576).toFixed(1)} MB</span>`}
-          ${m.stats.loadTime && html`<span>${(m.stats.loadTime/1000).toFixed(1)}s load</span>`}
-          ${m.stats.loadType && html`<span style=${{padding:'1px 5px',borderRadius:3,background:'rgba(37,99,235,.12)',color:'var(--accent)',fontWeight:600}}>${m.stats.loadType}</span>`}
-        </div>`}
+        ${m.stats && m.stats.fileSize && html`<span style=${{fontSize:'0.63rem',color:'var(--text-faint)'}}>${(m.stats.fileSize/1048576).toFixed(1)} MB · ${(m.elements&&m.elements.length||0)} elements · ${(m.meshes&&m.meshes.length||0)} meshes</span>`}
+        ${!(m.stats && m.stats.fileSize) && html`<span style=${{fontSize:'0.75rem',color:'var(--text-faint)'}}>${(m.elements&&m.elements.length||0)} elements · ${(m.meshes&&m.meshes.length||0)} meshes</span>`}
         ${m.stats && m.stats.phases && m.stats.loadTime && (function() {
           var ph = m.stats.phases;
           var total = m.stats.loadTime;
           // Determine phase order based on load type
-          var IFC_PHASES = ['WASM ready','Model open','Property maps','Geometry stream','Element processing','Scene build'];
-          var GLB_PHASES = ['GLB read','GLB parse','IFC file read','IFC metadata','Sidecar','Join'];
-          var ordered = (m.stats.loadType === 'IFC' ? IFC_PHASES : GLB_PHASES).filter(function(n){ return ph[n] != null; });
-          // Fallback: sort by cumulative time
-          if (!ordered.length) { ordered = Object.keys(ph).filter(function(k){return typeof ph[k]==='number';}); ordered.sort(function(a,b){return ph[a]-ph[b];}); }
+          // Sort by actual completion time (cumulative from t0) so parallel phases stay positive
+          var ordered = Object.keys(ph).filter(function(k){return typeof ph[k]==='number';});
+          ordered.sort(function(a,b){return ph[a]-ph[b];});
           var prev = 0;
           var rows = ordered.map(function(name) {
             var dt = Math.round(ph[name] - prev);
@@ -13491,7 +13604,7 @@ function startApp() {
           if(window._ccOpenIFC) window._ccOpenIFC();
         },
         html`<span style=${{fontWeight:700,fontSize:'0.8rem',letterSpacing:'.03em'}}>IFC</span>`,
-        'Load IFC model\nTip: drop GLB + .ifcmeta alongside for instant loading')}</div>
+        'Load IFC model\nTip: drop GLB + .ifcprops for fast loading (skips IFC parsing)\nOr GLB + .ifcmeta for geometry + Revit metadata')}</div>
       ${iconBtn(function(){
           if(window._ccOpen2D) window._ccOpen2D();
         },
