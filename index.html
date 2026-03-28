@@ -7257,8 +7257,8 @@ function startApp() {
               return loadGLB(glbBuf, base, _onProg).then(function(glbResult) {
                 _phases['GLB parse'] = performance.now() - t0;
                 // Load IFC metadata, sidecar and/or .ifcprops (run in parallel)
-                // .ifcprops takes priority over .ifc — no need to parse STEP if props JSON exists
-                var ifcPromise = (!grp.ifcprops && grp.ifc) ? grp.ifc.arrayBuffer().then(function(ifcBuf) {
+                // Skip IFC STEP parsing when .ifcmeta or .ifcprops is present — JSON sidecars cover all metadata
+                var ifcPromise = (!grp.ifcprops && !grp.ifcmeta && grp.ifc) ? grp.ifc.arrayBuffer().then(function(ifcBuf) {
                   _phases['IFC file read'] = performance.now() - t0;
                   return loadIFCMetadataOnly(ifcBuf, _onProg);
                 }).then(function(ifcMeta) {
@@ -7309,7 +7309,7 @@ function startApp() {
                   result.stats.phases = _phases;
                   var _loadType = propsData
                     ? (grp.ifcmeta ? 'GLB+props+meta' : 'GLB+props')
-                    : (grp.ifc ? (grp.ifcmeta ? 'GLB+IFC+meta' : 'GLB+IFC') : 'GLB+meta');
+                    : (ifcMeta ? (grp.ifcmeta ? 'GLB+IFC+meta' : 'GLB+IFC') : 'GLB+meta');
                   result.stats.loadType = _loadType;
                   // Console profiler (matches IFC load profile output)
                   (function() {
