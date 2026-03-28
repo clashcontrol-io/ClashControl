@@ -14,7 +14,6 @@ Built for architects, engineers, and BIM coordinators who are tired of paying th
 ## Features
 
 - **Load multiple IFC models** — drag & drop or browse, supports any IFC 2x3/4 file
-- **Revit bridge (GLB + IFC + .ifcmeta)** — drop a GLB (pre-tessellated geometry) + IFC (properties) + `.ifcmeta` sidecar bundle for near-instant Revit model loading, preserving phase, workset, design option, and spatial hierarchy data. Files must share the same base name. Create bundles with [Ifc2Ifc](https://github.com/thomhoffer-arch/Ifc2Ifc).
 - **Geometric clash detection** — hard clashes (intersections) and soft clashes (clearance violations) using OBB-based collision detection
 - **3D viewer** — orbit, pan, zoom, section planes, section boxes, floor plan cuts, measurement tools
 - **Model explorer** — browse elements by storey, IFC type, discipline, or material with visibility toggles and color-by-classification
