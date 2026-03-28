@@ -5993,8 +5993,9 @@ function startApp() {
             <div style=${SECHDR}>${sec.name}</div>
             ${sec.props.map(function(p){return html`<div key=${p.k} style=${{...ROW,fontSize:'0.75rem'}}><span style=${{color:'var(--text-muted)'}}>${p.k}</span><span style=${{color:'var(--text-primary)',maxWidth:'55%',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',textAlign:'right'}} title=${p.v}>${p.v}</span></div>`})}
           </div>`})}
-          ${ep && (ep.phase||ep.workset||ep.designOption||ep.hostId||ep.layers) && html`<div style=${SEC}>
+          ${ep && (ep.revitId||ep.phase||ep.workset||ep.designOption||ep.hostId||ep.layers) && html`<div style=${SEC}>
             <div style=${SECHDR}>Revit Data</div>
+            ${ep.revitId!=null && html`<div style=${{...ROW,fontSize:'0.75rem'}}><span style=${{color:'var(--text-muted)'}}>Revit ID</span><span style=${{color:'var(--text-primary)',display:'flex',alignItems:'center',gap:'.2rem'}}>${ep.revitId}<button onClick=${function(){try{navigator.clipboard.writeText(String(ep.revitId));}catch(e){}}} style=${{background:'none',border:'none',cursor:'pointer',color:'var(--text-faint)',fontSize:'0.63rem',padding:'0 .1rem',lineHeight:1}} title="Copy Revit Element ID">⎘</button></span></div>`}
             ${ep.phase && html`<div style=${{...ROW,fontSize:'0.75rem'}}><span style=${{color:'var(--text-muted)'}}>Phase</span><span style=${{color:'var(--text-primary)'}}>${ep.phase}</span></div>`}
             ${ep.workset && html`<div style=${{...ROW,fontSize:'0.75rem'}}><span style=${{color:'var(--text-muted)'}}>Workset</span><span style=${{color:'var(--text-primary)'}}>${ep.workset}</span></div>`}
             ${ep.designOption && html`<div style=${{...ROW,fontSize:'0.75rem'}}><span style=${{color:'var(--text-muted)'}}>Design Option</span><span style=${{color:'var(--text-primary)'}}>${ep.designOption}</span></div>`}
@@ -6988,6 +6989,68 @@ function startApp() {
     });
   }
 
+  // ── GLB join helpers ─────────────────────────────────────────────────────
+
+  // Resolve a relatedPairs map keyed by "globalIdA:globalIdB" to expressId pairs.
+  // GlobalId pairs come from .ifcmeta sidecars (stable across re-exports).
+  function resolveGlobalIdPairs(gidPairs, elements) {
+    var eidByGid = {};
+    elements.forEach(function(el) { if (el.props.globalId) eidByGid[el.props.globalId] = el.expressId; });
+    var result = {};
+    Object.keys(gidPairs||{}).forEach(function(pair) {
+      var idx = pair.indexOf(':');
+      if (idx < 0) return;
+      var gA = pair.slice(0, idx), gB = pair.slice(idx + 1);
+      var eA = eidByGid[gA], eB = eidByGid[gB];
+      if (eA != null && eB != null && eA !== eB) {
+        var key = eA < eB ? eA + ':' + eB : eB + ':' + eA;
+        result[key] = true;
+      }
+    });
+    return result;
+  }
+
+  // Build expressId relatedPairs from hostId and hostRelationships on elements.
+  // Mutates and returns existingPairs.
+  function addHostPairs(existingPairs, elements) {
+    var eidByGid = {};
+    elements.forEach(function(el) { if (el.props.globalId) eidByGid[el.props.globalId] = el.expressId; });
+    function addPair(a, b) {
+      if (a == null || b == null || a === b) return;
+      var key = a < b ? a + ':' + b : b + ':' + a;
+      existingPairs[key] = true;
+    }
+    elements.forEach(function(el) {
+      var hostGid = el.props.hostId || el.props.host_global_id;
+      if (hostGid) { var hEid = eidByGid[hostGid]; if (hEid != null) addPair(el.expressId, hEid); }
+      var hr = el.props.hostRelationships;
+      if (Array.isArray(hr)) hr.forEach(function(cGid) { var cEid = eidByGid[cGid]; if (cEid != null) addPair(el.expressId, cEid); });
+    });
+    return existingPairs;
+  }
+
+  // Filter IfcOpeningElement from elements and their meshes.
+  // Warns if openings have GLB geometry (exporter should suppress them).
+  function filterOpeningElements(elements, meshes, fileName) {
+    var openingEids = {};
+    var hasGLBGeom = 0;
+    elements.forEach(function(el) {
+      if ((el.props && el.props.ifcType) === 'IfcOpeningElement') {
+        openingEids[el.expressId] = true;
+        if (el.meshes && el.meshes.length) hasGLBGeom++;
+      }
+    });
+    if (hasGLBGeom > 0)
+      console.warn('%c[GLB+IFC] ' + (fileName||'') + ': ' + hasGLBGeom + ' IfcOpeningElement meshes in GLB — exporter should suppress these', 'color:#f59e0b;font-weight:bold');
+    if (!Object.keys(openingEids).length) return {elements: elements, meshes: meshes};
+    return {
+      elements: elements.filter(function(el) { return !openingEids[el.expressId]; }),
+      meshes: meshes.filter(function(m) { return !openingEids[m.userData.expressId]; })
+    };
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────
+
   // Join GLB meshes with IFC metadata by GlobalId, producing the same result shape as loadIFC
   function joinGLBWithIFC(glbResult, ifcMeta, fileName, onProgress) {
     if (onProgress) onProgress('Joining GLB geometry with IFC metadata…');
@@ -7047,21 +7110,30 @@ function startApp() {
     }
 
     var joinRate = matched + unmatched > 0 ? Math.round(matched / (matched + unmatched) * 100) : 0;
+    if (unmatched > 0) {
+      var _sampleUnmatched = Object.keys(meshByGid).filter(function(gid){ return !ifcMeta.propsByGlobalId[gid]; }).slice(0,3);
+      console.warn('%c[GLB+IFC] ' + fileName + ': ' + unmatched + ' unmatched GlobalIds — check exporter version or GUID stability. Samples: ' + _sampleUnmatched.join(', '), 'color:#f59e0b;font-weight:bold');
+    }
     console.log('%c[GLB+IFC] ' + fileName + ': ' + matched + ' matched, ' + unmatched + ' unmatched (' + joinRate + '% join rate)', 'color:#22c55e;font-weight:bold');
     if (onProgress) onProgress('Joined: ' + matched + '/' + (matched + unmatched) + ' elements (' + joinRate + '%)');
 
+    // Filter IfcOpeningElement (defensive — exporter should suppress these from GLB)
+    var _ofilt = filterOpeningElements(elements, meshes, fileName);
+    // Merge host-based pairs into existing expressId relatedPairs from IFC parse
+    var _rp = addHostPairs(Object.assign({}, ifcMeta.relatedPairs || {}), _ofilt.elements);
+
     return {
-      meshes: meshes,
-      elements: elements,
+      meshes: _ofilt.meshes,
+      elements: _ofilt.elements,
       storeys: ifcMeta.storeys || [],
       storeyData: ifcMeta.storeyData || [],
       spatialHierarchy: ifcMeta.spatialHierarchy || {},
-      relatedPairs: ifcMeta.relatedPairs || {},
+      relatedPairs: _rp,
       stats: {
         loadTime: 0,  // will be set by caller
         fileSize: 0,
-        elementCount: elements.length,
-        meshCount: meshes.length,
+        elementCount: _ofilt.elements.length,
+        meshCount: _ofilt.meshes.length,
         glbJoinRate: joinRate,
         glbMatched: matched,
         glbUnmatched: unmatched
@@ -7093,10 +7165,11 @@ function startApp() {
         psets: sc.psets || {}
       };
       // Copy Revit-specific sidecar data (from MetadataWriter.cs)
+      if (sc.revitId || sc.revit_element_id) props.revitId = sc.revitId || sc.revit_element_id;
       if (sc.phase) props.phase = sc.phase;
       if (sc.workset) props.workset = sc.workset;
       if (sc.designOption) props.designOption = sc.designOption;
-      if (sc.hostId) props.hostId = sc.hostId;
+      if (sc.hostId || sc.host_global_id) props.hostId = sc.hostId || sc.host_global_id;
       if (sc.layers) props.layers = sc.layers;
       if (sc.flipState) props.flipState = sc.flipState;
       if (sc.constraints) props.constraints = sc.constraints;
@@ -7108,14 +7181,19 @@ function startApp() {
       elements.push({expressId: props.expressId, meshes: elMeshes, box: box, props: props});
     });
 
+    // Filter IfcOpeningElement + resolve GlobalId relatedPairs from sidecar
+    var _ofilt = filterOpeningElements(elements, glbResult.meshes, '');
+    var _rp = resolveGlobalIdPairs(meta.relatedPairs, _ofilt.elements);
+    addHostPairs(_rp, _ofilt.elements);
+
     return {
-      meshes: glbResult.meshes,
-      elements: elements,
+      meshes: _ofilt.meshes,
+      elements: _ofilt.elements,
       storeys: meta.storeys || [],
       storeyData: meta.storeyData || [],
       spatialHierarchy: meta.spatialHierarchy || {},
-      relatedPairs: meta.relatedPairs || {},
-      stats: {elementCount: elements.length, meshCount: glbResult.meshes.length}
+      relatedPairs: _rp,
+      stats: {elementCount: _ofilt.elements.length, meshCount: _ofilt.meshes.length}
     };
   }
 
@@ -7156,10 +7234,11 @@ function startApp() {
         psets: ep.parameters || ep.psets || sc.psets || {}
       };
       // Overlay Revit sidecar extras
+      if (sc.revitId || sc.revit_element_id) props.revitId = sc.revitId || sc.revit_element_id;
       if (sc.phase) props.phase = sc.phase;
       if (sc.workset) props.workset = sc.workset;
       if (sc.designOption) props.designOption = sc.designOption;
-      if (sc.hostId) props.hostId = sc.hostId;
+      if (sc.hostId || sc.host_global_id) props.hostId = sc.hostId || sc.host_global_id;
       if (sc.layers) props.layers = sc.layers;
       if (sc.flipState) props.flipState = sc.flipState;
       if (sc.constraints) props.constraints = sc.constraints;
@@ -7172,17 +7251,27 @@ function startApp() {
     });
 
     var joinRate = matched + unmatched > 0 ? Math.round(matched / (matched + unmatched) * 100) : 0;
+    if (unmatched > 0) {
+      var _sampleUnmatched2 = Object.keys(meshByGid).filter(function(gid){ return !elementMeta[gid]; }).slice(0,3);
+      console.warn('%c[GLB+props] ' + fileName + ': ' + unmatched + ' unmatched GlobalIds — check exporter version or GUID stability. Samples: ' + _sampleUnmatched2.join(', '), 'color:#f59e0b;font-weight:bold');
+    }
     console.log('%c[GLB+props] ' + fileName + ': ' + matched + ' matched, ' + unmatched + ' unmatched (' + joinRate + '% join rate)', 'color:#a78bfa;font-weight:bold');
     if (onProgress) onProgress('Joined: ' + matched + '/' + (matched + unmatched) + ' elements (' + joinRate + '%)');
 
+    // Filter IfcOpeningElement + resolve GlobalId relatedPairs (sidecar preferred over props)
+    var _ofilt2 = filterOpeningElements(elements, glbResult.meshes, fileName);
+    var _rawRp = (sidecar && sidecar.relatedPairs) || (propsData && propsData.relatedPairs) || {};
+    var _rp2 = resolveGlobalIdPairs(_rawRp, _ofilt2.elements);
+    addHostPairs(_rp2, _ofilt2.elements);
+
     return {
-      meshes: glbResult.meshes,
-      elements: elements,
+      meshes: _ofilt2.meshes,
+      elements: _ofilt2.elements,
       storeys: storeys,
       storeyData: (propsData && propsData.storeyData) || (sidecar && sidecar.storeyData) || [],
       spatialHierarchy: (propsData && propsData.spatialHierarchy) || (sidecar && sidecar.spatialHierarchy) || {},
-      relatedPairs: (propsData && propsData.relatedPairs) || (sidecar && sidecar.relatedPairs) || {},
-      stats: {elementCount: elements.length, meshCount: glbResult.meshes.length, glbJoinRate: joinRate, glbMatched: matched, glbUnmatched: unmatched}
+      relatedPairs: _rp2,
+      stats: {elementCount: _ofilt2.elements.length, meshCount: _ofilt2.meshes.length, glbJoinRate: joinRate, glbMatched: matched, glbUnmatched: unmatched}
     };
   }
 
@@ -8247,6 +8336,20 @@ function startApp() {
           var disc = DISC.find(function(x){return x.id===model.discipline;});
           var storeyGroups = {};
           var noStorey = [];
+          // Build host-child map for this model (GlobalId → expressId → children)
+          var _gidToEl = {};
+          (model.elements||[]).forEach(function(el){ if(el.props&&el.props.globalId) _gidToEl[el.props.globalId]=el; });
+          var _childrenMap = {}; // parentExpressId → [childEl, ...]
+          var _hasParent = {}; // childExpressId → true
+          (model.elements||[]).forEach(function(el){
+            var hGid = el.props&&(el.props.hostId||el.props.host_global_id);
+            if(!hGid) return;
+            var pEl = _gidToEl[hGid];
+            if(!pEl) return;
+            if(!_childrenMap[pEl.expressId]) _childrenMap[pEl.expressId]=[];
+            _childrenMap[pEl.expressId].push(el);
+            _hasParent[el.expressId]=true;
+          });
           (model.elements||[]).forEach(function(el){
             var st = (el.props&&el.props.storey)||'';
             if(!st){noStorey.push(el);return;}
@@ -8276,18 +8379,47 @@ function startApp() {
                     <span style=${{color:'var(--text-faint)'}}>${filtered.length}</span>
                   </div>
                   ${sOpen && html`<div style=${{paddingLeft:'.4rem'}}>
-                    ${filtered.slice(0,200).map(function(el){
-                      var p=el.props||{};
-                      var eKey='e_'+el.expressId;
-                      return html`<div key=${el.expressId} data-tree-key=${eKey} class=${explorerFocus===eKey?'cc-tree-focus':''}
-                        onClick=${function(){if(_highlightById)_highlightById(el.expressId,false);setExplorerFocus(eKey);setSelectedElProps(p);}}
-                        onDblClick=${function(e){e.stopPropagation();if(_fitToElement){var isFloor=(p.ifcType||'').match(/slab|floor/i);_fitToElement(el.expressId,isFloor?{normal:[0,1,0]}:null);}if(_highlightById)_highlightById(el.expressId);}}
-                        style=${{padding:'.15rem .3rem',cursor:'pointer',display:'flex',alignItems:'center',gap:'.2rem',borderBottom:'1px solid var(--border-subtle)',background:explorerFocus===eKey?'rgba(37,99,235,.15)':'transparent',outline:explorerFocus===eKey?'1px solid rgba(59,130,246,.5)':'none'}}>
-                        <span style=${{color:'#c084fc',flexShrink:0}}>${p.ifcType||'Element'}</span>
-                        <span style=${{color:'var(--text-secondary)',flex:1,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>${p.name||'#'+el.expressId}</span>
+                    ${function(){
+                      var topLevel = filtered.filter(function(el){ return !_hasParent[el.expressId]; });
+                      return html`<div>
+                        ${topLevel.slice(0,200).map(function(el){
+                          var p=el.props||{};
+                          var eKey='e_'+el.expressId;
+                          var cKey='ec_'+el.expressId;
+                          var elChildren=_childrenMap[el.expressId]||[];
+                          var hasChildren=elChildren.length>0;
+                          var cOpen=hasChildren&&!!expanded[cKey];
+                          return html`<div key=${el.expressId}>
+                            <div data-tree-key=${eKey} class=${explorerFocus===eKey?'cc-tree-focus':''}
+                              onClick=${function(){if(_highlightById)_highlightById(el.expressId,false);setExplorerFocus(eKey);setSelectedElProps(p);}}
+                              onDblClick=${function(e){e.stopPropagation();if(_fitToElement){var isFloor=(p.ifcType||'').match(/slab|floor/i);_fitToElement(el.expressId,isFloor?{normal:[0,1,0]}:null);}if(_highlightById)_highlightById(el.expressId);}}
+                              style=${{padding:'.15rem .3rem',cursor:'pointer',display:'flex',alignItems:'center',gap:'.2rem',borderBottom:'1px solid var(--border-subtle)',background:explorerFocus===eKey?'rgba(37,99,235,.15)':'transparent',outline:explorerFocus===eKey?'1px solid rgba(59,130,246,.5)':'none'}}>
+                              ${hasChildren
+                                ? html`<span onClick=${function(e2){e2.stopPropagation();toggle(cKey);}} style=${{color:'var(--text-faint)',fontSize:'0.52rem',flexShrink:0,cursor:'pointer',minWidth:8}}>${cOpen?'▼':'▶'}</span>`
+                                : html`<span style=${{minWidth:8,flexShrink:0}}></span>`}
+                              <span style=${{color:'#c084fc',flexShrink:0}}>${p.ifcType||'Element'}</span>
+                              <span style=${{color:'var(--text-secondary)',flex:1,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>${p.name||'#'+el.expressId}</span>
+                              ${hasChildren && html`<span style=${{fontSize:'0.57rem',color:'var(--text-faint)',flexShrink:0}}>${elChildren.length}</span>`}
+                            </div>
+                            ${cOpen && html`<div style=${{paddingLeft:'.8rem'}}>
+                              ${elChildren.map(function(child){
+                                var cp=child.props||{};
+                                var ceKey='e_'+child.expressId;
+                                return html`<div key=${child.expressId} data-tree-key=${ceKey} class=${explorerFocus===ceKey?'cc-tree-focus':''}
+                                  onClick=${function(){if(_highlightById)_highlightById(child.expressId,false);setExplorerFocus(ceKey);setSelectedElProps(cp);}}
+                                  onDblClick=${function(e){e.stopPropagation();if(_fitToElement){var isFloor=(cp.ifcType||'').match(/slab|floor/i);_fitToElement(child.expressId,isFloor?{normal:[0,1,0]}:null);}if(_highlightById)_highlightById(child.expressId);}}
+                                  style=${{padding:'.12rem .3rem',cursor:'pointer',display:'flex',alignItems:'center',gap:'.2rem',borderBottom:'1px solid var(--border-subtle)',background:explorerFocus===ceKey?'rgba(37,99,235,.15)':'transparent',outline:explorerFocus===ceKey?'1px solid rgba(59,130,246,.5)':'none'}}>
+                                  <span style=${{minWidth:8,flexShrink:0}}></span>
+                                  <span style=${{color:'#a78bfa',flexShrink:0,fontSize:'0.63rem'}}>${cp.ifcType||'El'}</span>
+                                  <span style=${{color:'var(--text-secondary)',flex:1,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',fontSize:'0.63rem'}}>${cp.name||'#'+child.expressId}</span>
+                                </div>`;
+                              })}
+                            </div>`}
+                          </div>`;
+                        })}
+                        ${topLevel.length>200 && html`<div style=${{color:'var(--text-faint)',padding:'.2rem',textAlign:'center'}}>+${topLevel.length-200} more</div>`}
                       </div>`;
-                    })}
-                    ${filtered.length>200 && html`<div style=${{color:'var(--text-faint)',padding:'.2rem',textAlign:'center'}}>+${filtered.length-200} more</div>`}
+                    }()}
                   </div>`}
                 </div>`;
               })}
@@ -14180,7 +14312,7 @@ function startApp() {
             </div>
           </div>
           <div style=${{display:'flex',flexDirection:'column',gap:'.85rem',fontSize:'0.9rem',color:'var(--text-secondary)',lineHeight:1.6}}>
-            <div><div style=${{fontWeight:600,color:'var(--text-primary)',marginBottom:'.25rem'}}>1. Load models</div><div>Click the folder icon in the left sidebar or drag & drop files onto the 3D view. Supports${' '}<b>IFC</b>${' '}files directly, or a fast-load${' '}<b>GLB + IFC + .ifcmeta</b>${' '}bundle — drop all three files together. Bundles can be created with${' '}<a href="https://github.com/thomhoffer-arch/Ifc2Ifc" target="_blank" rel="noopener" style=${{color:'#60a5fa'}}>Ifc2Ifc</a>.</div></div>
+            <div><div style=${{fontWeight:600,color:'var(--text-primary)',marginBottom:'.25rem'}}>1. Load models</div><div>Click the folder icon in the left sidebar or drag & drop files onto the 3D view. Supports${' '}<b>IFC</b>${' '}files directly, or a fast-load${' '}<b>GLB + IFC + .ifcmeta</b>${' '}bundle — drop all three files together. Bundles can be created with${' '}<a href="https://github.com/thomhoffer-arch/Ifc2Ifc" target="_blank" rel="noopener" style=${{color:'#60a5fa'}}>Ifc2Ifc</a>. For model version diffing, enable${' '}<b>Store IFC GUID</b>${' '}in Revit's IFC export settings to ensure stable element IDs across re-exports.</div></div>
             <div><div style=${{fontWeight:600,color:'var(--text-primary)',marginBottom:'.25rem'}}>2. Detect clashes</div><div>Press${' '}<b>/</b>${' '}to open the AI chat and type something like "check structural vs MEP" or "find clashes within 50mm".</div></div>
             <div><div style=${{fontWeight:600,color:'var(--text-primary)',marginBottom:'.25rem'}}>3. Review results</div><div>Click any clash to fly to it in 3D. Change status, assign responsibility, or use the chat: "mark all open as resolved".</div></div>
             <div><div style=${{fontWeight:600,color:'var(--text-primary)',marginBottom:'.25rem'}}>4. Create issues & export</div><div>Create issues from clashes. Export as BCF 2.1/3.0 for Revit, Navisworks, Solibri, or BIMcollab.</div></div>
