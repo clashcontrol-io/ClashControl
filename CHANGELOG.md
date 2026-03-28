@@ -1,5 +1,8 @@
 # Changelog
 
+## v3.3.31 (2026-03-28)
+- feat: add load profiler to model card
+
 ## v3.3.30 (2026-03-28)
 - fix: apply Z-up to Y-up rotation for GLB geometry from Revit/IFC exports
 
