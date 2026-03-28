@@ -1,5 +1,8 @@
 # Changelog
 
+## v3.3.33 (2026-03-28)
+- Add .ifcprops fast-loading path (replaces IFC STEP parsing)
+
 ## v3.3.32 (2026-03-28)
 - fix: handle black/missing colors in GLB material loading
 
