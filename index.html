@@ -6833,19 +6833,31 @@ function startApp() {
           // node.name = IFC GlobalId (set by Revit exporter)
           var gid = child.name || '';
           // Ensure proper material for ClashControl rendering
-          var oldMat = child.material;
-          var col = oldMat && oldMat.color ? oldMat.color.clone() : new THREE.Color(0.6, 0.6, 0.6);
-          var opacity = oldMat && oldMat.opacity != null ? oldMat.opacity : 1;
+          var rawMat = Array.isArray(child.material) ? child.material[0] : child.material;
+          var col;
+          // If glTF uses vertex colors (COLOR_0), sample the first vertex color as the element color
+          if (rawMat && rawMat.vertexColors && child.geometry.attributes.color) {
+            var vc = child.geometry.attributes.color;
+            col = new THREE.Color(vc.getX(0), vc.getY(0), vc.getZ(0));
+          } else {
+            col = rawMat && rawMat.color ? rawMat.color.clone() : new THREE.Color(0.65, 0.65, 0.65);
+          }
+          // Fall back to visible gray if color is near-black (unset / default material)
+          if (col.r < 0.05 && col.g < 0.05 && col.b < 0.05) col.set(0.65, 0.65, 0.65);
+          var opacity = rawMat && rawMat.opacity != null ? rawMat.opacity : 1;
           var mat = new THREE.MeshPhongMaterial({
             color: col, opacity: opacity,
             transparent: opacity < 0.99,
             side: THREE.DoubleSide
           });
+          if (Array.isArray(child.material)) { child.material.forEach(function(m){if(m&&m.dispose)m.dispose();}); }
+          else if (rawMat && rawMat.dispose) rawMat.dispose();
           child.material = mat;
-          if (oldMat && oldMat.dispose) oldMat.dispose();
           // Bake world transform so mesh works independently of glTF scene hierarchy
           child.updateWorldMatrix(true, false);
           var m = new THREE.Mesh(child.geometry.clone(), mat);
+          // Compute normals if the GLB didn't include them (needed for Phong shading)
+          if (!m.geometry.attributes.normal) m.geometry.computeVertexNormals();
           m.applyMatrix4(child.matrixWorld);
           if (gid) {
             m.userData.globalId = gid;
