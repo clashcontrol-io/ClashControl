@@ -1,5 +1,8 @@
 # Changelog
 
+## v3.3.41 (2026-03-28)
+- Prefer sidecar relatedPairs over IFC STEP pairs in joinGLBWithIFC; document expressId in .ifcprops
+
 ## v3.3.40 (2026-03-28)
 - feat: GLB+meta pipeline — revitId, host-child hierarchy, opening suppression, relatedPairs
 
