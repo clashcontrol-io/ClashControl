@@ -1,5 +1,8 @@
 # Changelog
 
+## v3.3.43 (2026-03-29)
+- Filter IfcOpeningElement in full loadIFC path for consistency with GLB paths
+
 ## v3.3.42 (2026-03-28)
 - Hide GLB+sidecar import UI until Ifc2Ifc is fully released
 
