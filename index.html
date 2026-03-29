@@ -501,7 +501,7 @@ function startApp() {
         if(a.v&&a.v.clashId){
           aiClashes=s.clashes.map(function(c){
             if(c.id!==a.v.clashId) return c;
-            var sigs=(c.aiSignals||[]).slice();
+            var sigs=(c.aiSignals||[]).slice(-49);
             sigs.push({type:'strong_positive',source:'issue_created',value:a.v.id,ts:Date.now()});
             return Object.assign({},c,{aiSignals:sigs});
           });
@@ -512,7 +512,7 @@ function startApp() {
         if(c.id!==a.id) return c;
         var upd2 = {aiFeedback:a.v};
         if(a.v) {
-          var sigs=(c.aiSignals||[]).slice();
+          var sigs=(c.aiSignals||[]).slice(-49);
           var sigType=a.v==='real_clash'?'strong_positive':a.v==='false_positive'?'strong_negative':'weak_positive';
           sigs.push({type:sigType,source:'explicit_feedback',value:a.v,ts:Date.now()});
           upd2.aiSignals=sigs;
@@ -623,7 +623,7 @@ function startApp() {
         var upd=Object.assign({},c,a.u);
         // Implicit training signal when status changes
         if(a.u&&a.u.status&&a.u.status!==c.status){
-          var sigs=(c.aiSignals||[]).slice();
+          var sigs=(c.aiSignals||[]).slice(-49);
           if(a.u.status==='resolved'||a.u.status==='in_progress') sigs.push({type:'weak_positive',source:'status_change',value:a.u.status,ts:Date.now()});
           else if(a.u.status==='closed') sigs.push({type:'weak_negative',source:'status_change',value:'closed',ts:Date.now()});
           upd.aiSignals=sigs;
@@ -686,7 +686,7 @@ function startApp() {
         if(!s.selected[c.id]) return c;
         var upd=Object.assign({},c,a.u);
         if(a.u&&a.u.status&&a.u.status!==c.status){
-          var sigs=(c.aiSignals||[]).slice();
+          var sigs=(c.aiSignals||[]).slice(-49);
           if(a.u.status==='resolved'||a.u.status==='in_progress') sigs.push({type:'weak_positive',source:'status_change',value:a.u.status,ts:Date.now()});
           else if(a.u.status==='closed') sigs.push({type:'weak_negative',source:'status_change',value:'closed',ts:Date.now()});
           upd.aiSignals=sigs;
@@ -3843,7 +3843,7 @@ function startApp() {
       if (e.button===2) return; // reserved for context menu
       lx=e.clientX; ly=e.clientY; e.preventDefault();
     });
-    window.addEventListener('mousemove', function(e) {
+    _wlAdd('mousemove', function(e) {
       if(!dragging&&!panning) return;
       var dx=e.clientX-lx, dy=e.clientY-ly; lx=e.clientX; ly=e.clientY;
       if(dragging){ sph.theta-=dx*0.007; sph.phi-=dy*0.007; orbit.apply(); invalidate(); }
@@ -3854,7 +3854,7 @@ function startApp() {
         target.addScaledVector(_tmpRight,-dx*sp); target.y+=dy*sp; orbit.apply(); invalidate();
       }
     });
-    window.addEventListener('mouseup', function(){dragging=false;if(panning){panning=false;el.style.cursor='';}});
+    _wlAdd('mouseup', function(){dragging=false;if(panning){panning=false;el.style.cursor='';}});
     el.addEventListener('wheel', function(e){
       // Ctrl+scroll adjusts floor plan cut height
       if(e.ctrlKey && window._ccFloorPlanActive && window._ccDispatch){
@@ -4019,6 +4019,10 @@ function startApp() {
     useEffect(function() {
       var el = ref.current; if(!el) return;
       var S = state3d.current;
+      // Track window-level listeners so they can be removed on viewer unmount
+      var _wl = []; // [{ev, fn, opts?}]
+      function _wlAdd(ev, fn, opts) { window.addEventListener(ev, fn, opts); _wl.push({ev:ev, fn:fn, opts:opts}); }
+      function _wlRemoveAll() { _wl.forEach(function(l){ window.removeEventListener(l.ev, l.fn, l.opts); }); _wl.length = 0; }
 
       var scene = new THREE.Scene();
       scene.background = new THREE.Color(0x0f172a);
@@ -4629,7 +4633,7 @@ function startApp() {
         }
       }, true); // useCapture to fire before orbit
 
-      window.addEventListener('mousemove', function(e){
+      _wlAdd('mousemove', function(e){
         if(!_sboxDragState||!_sboxDragging) return;
         var ds=_sboxDragState;
         var rect=renderer.domElement.getBoundingClientRect();
@@ -4663,7 +4667,7 @@ function startApp() {
         }
       });
 
-      window.addEventListener('mouseup', function(){
+      _wlAdd('mouseup', function(){
         if(_sboxDragging){
           _sboxDragging=false;
           _sboxDragState=null;
@@ -4987,7 +4991,7 @@ function startApp() {
           }
         }
       }, true);
-      window.addEventListener('mousemove', function(e) {
+      _wlAdd('mousemove', function(e) {
         if (!_secDrag) return;
         if (_secDrag.mode === 'rotate') {
           var dx = e.clientX - _secDrag.startX;
@@ -5010,7 +5014,7 @@ function startApp() {
           renderer.domElement.style.cursor = 'ns-resize';
         }
       });
-      window.addEventListener('mouseup', function(e) {
+      _wlAdd('mouseup', function(e) {
         if (!_secDrag) return;
         if (e.button !== _secDrag.button) return;
         if (_secDrag.button === 0) { var S2 = state3d.current; if (S2.orbit) S2.orbit.enabled = true; }
@@ -5211,7 +5215,7 @@ function startApp() {
       });
       obs.observe(el);
 
-      return function(){cancelAnimationFrame(S.raf);obs.disconnect();renderer.dispose();if(el.contains(renderer.domElement))el.removeChild(renderer.domElement);};
+      return function(){cancelAnimationFrame(S.raf);obs.disconnect();_wlRemoveAll();renderer.dispose();if(el.contains(renderer.domElement))el.removeChild(renderer.domElement);};
     }, []);
 
     // Sync models
@@ -14541,6 +14545,124 @@ function startApp() {
 
   // ── Right Rail (navigation tabs) ───────────────────────────────
 
+  // ── Memory Warning Modal ────────────────────────────────────────
+  function MemoryWarningModal(props) {
+    var onDismiss = props.onDismiss, s = props.s;
+    var mem = performance.memory || {};
+    var hasMem = !!performance.memory;
+    var usedMB = mem.usedJSHeapSize ? Math.round(mem.usedJSHeapSize / 1048576) : 0;
+    var totalMB = mem.totalJSHeapSize ? Math.round(mem.totalJSHeapSize / 1048576) : 0;
+    var limitMB = mem.jsHeapSizeLimit ? Math.round(mem.jsHeapSizeLimit / 1048576) : 0;
+    var inclNames = useState(true), includeNames=inclNames[0], setIncludeNames=inclNames[1];
+    var inclBrowser = useState(true), includeBrowser=inclBrowser[0], setIncludeBrowser=inclBrowser[1];
+
+    function buildReport() {
+      var lines = [];
+      lines.push('ClashControl Memory Report');
+      lines.push('Version: ' + CC_VERSION.v);
+      lines.push('Date: ' + new Date().toISOString());
+      lines.push('');
+      lines.push('--- Memory ---');
+      if (hasMem) {
+        lines.push('Used JS Heap: ' + (usedMB / 1024).toFixed(2) + ' GB (' + usedMB + ' MB)');
+        lines.push('Total JS Heap: ' + (totalMB / 1024).toFixed(2) + ' GB (' + totalMB + ' MB)');
+        if (limitMB) lines.push('Heap Limit: ' + (limitMB / 1024).toFixed(2) + ' GB');
+      } else {
+        lines.push('Memory stats not available (browser does not support performance.memory)');
+      }
+      lines.push('');
+      lines.push('--- Models (' + (s.models||[]).length + ') ---');
+      (s.models||[]).forEach(function(m, i) {
+        var elCount = (m.elements||[]).length;
+        var meshCount = (m.meshes||[]).length;
+        var sizeMB = m.stats && m.stats.fileSize ? (m.stats.fileSize/1048576).toFixed(1) + ' MB' : 'unknown size';
+        var loadType = m.stats && m.stats.loadType ? m.stats.loadType : '?';
+        var name = includeNames ? m.name : 'Model ' + (i+1);
+        lines.push('  [' + (i+1) + '] ' + name + ' — ' + elCount + ' elements, ' + meshCount + ' meshes, ' + sizeMB + ', type: ' + loadType);
+      });
+      lines.push('');
+      lines.push('--- Clashes (' + (s.clashes||[]).length + ' total) ---');
+      var byStatus = {};
+      (s.clashes||[]).forEach(function(c){ byStatus[c.status]=(byStatus[c.status]||0)+1; });
+      Object.keys(byStatus).forEach(function(k){ lines.push('  ' + k + ': ' + byStatus[k]); });
+      lines.push('');
+      lines.push('--- Issues (' + (s.issues||[]).length + ') ---');
+      if (includeBrowser) {
+        lines.push('');
+        lines.push('--- Browser ---');
+        lines.push(navigator.userAgent);
+      }
+      return lines.join('\n');
+    }
+
+    function onSend() {
+      var body = buildReport();
+      var subject = 'ClashControl Memory Report — ' + (usedMB/1024).toFixed(1) + ' GB';
+      var mailto = 'mailto:clashcontrol.io@gmail.com?subject=' + encodeURIComponent(subject) + '&body=' + encodeURIComponent(body);
+      window.open(mailto, '_blank');
+    }
+
+    return html`<div onClick=${function(e){if(e.target===e.currentTarget)onDismiss()}} style=${{position:'fixed',inset:0,background:'rgba(0,0,0,.65)',zIndex:10000,display:'flex',alignItems:'center',justifyContent:'center',padding:'2rem',backdropFilter:'blur(4px)'}}>
+      <div style=${{background:'var(--bg-primary)',border:'1px solid #f87171',borderRadius:12,padding:'1.5rem',maxWidth:500,width:'100%',boxShadow:'0 16px 48px rgba(0,0,0,.5)'}}>
+        <div style=${{display:'flex',alignItems:'flex-start',gap:'.75rem',marginBottom:'1rem'}}>
+          <span style=${{fontSize:'1.6rem',lineHeight:1}}>${hasMem && usedMB > 0 ? '⚠️' : '📊'}</span>
+          <div>
+            <div style=${{fontSize:'1.1rem',fontWeight:700,color:hasMem && usedMB > 0 ? '#f87171' : 'var(--text-primary)',marginBottom:'.2rem'}}>
+              ${hasMem && usedMB > 0 ? 'High Memory Usage Detected' : 'Send Memory Report'}
+            </div>
+            <div style=${{fontSize:'0.88rem',color:'var(--text-secondary)'}}>
+              ${hasMem && usedMB > 0
+                ? html`ClashControl is using <b style=${{color:'#fbbf24'}}>${(usedMB/1024).toFixed(1)} GB</b> of memory. This may cause your browser to slow down or crash.`
+                : hasMem
+                  ? html`Currently using <b>${(usedMB/1024).toFixed(1)} GB</b> of memory.`
+                  : html`Memory stats are not available in this browser, but model and clash data can still be included.`
+              }
+            </div>
+          </div>
+        </div>
+        <div style=${{background:'rgba(248,113,113,.07)',border:'1px solid rgba(248,113,113,.2)',borderRadius:8,padding:'.75rem',marginBottom:'1rem',fontSize:'0.83rem',color:'var(--text-secondary)',lineHeight:1.6}}>
+          <b style=${{color:'var(--text-primary)'}}>Help us improve ClashControl</b> by sending a short diagnostic report. This helps identify what causes high memory usage so we can fix it in future versions.
+        </div>
+        <div style=${{fontSize:'0.85rem',color:'var(--text-secondary)',marginBottom:'.75rem',fontWeight:600}}>Data that will be included:</div>
+        <div style=${{display:'flex',flexDirection:'column',gap:'.4rem',marginBottom:'1rem',fontSize:'0.83rem',color:'var(--text-secondary)'}}>
+          <label style=${{display:'flex',alignItems:'center',gap:'.5rem',cursor:'pointer'}}>
+            <input type="checkbox" checked disabled style=${{accentColor:'var(--accent)'}} />
+            <span>${hasMem ? html`Memory usage (<b>${(usedMB/1024).toFixed(1)} GB</b> used${limitMB ? ' of ' + (limitMB/1024).toFixed(1) + ' GB limit' : ''})` : 'Memory usage (not available in this browser)'}</span>
+          </label>
+          <label style=${{display:'flex',alignItems:'center',gap:'.5rem',cursor:'pointer'}}>
+            <input type="checkbox" checked disabled style=${{accentColor:'var(--accent)'}} />
+            <span>Model count, element counts, mesh counts, file sizes, load type</span>
+          </label>
+          <label style=${{display:'flex',alignItems:'center',gap:'.5rem',cursor:'pointer'}}>
+            <input type="checkbox" checked disabled style=${{accentColor:'var(--accent)'}} />
+            <span>Clash count &amp; status breakdown, issue count</span>
+          </label>
+          <label style=${{display:'flex',alignItems:'center',gap:'.5rem',cursor:'pointer'}} onClick=${function(){setIncludeNames(!includeNames)}}>
+            <input type="checkbox" checked=${includeNames} onChange=${function(){}} style=${{accentColor:'var(--accent)'}} />
+            <span>Model names <span style=${{color:'var(--text-faint)'}}>(uncheck to send as "Model 1, Model 2…")</span></span>
+          </label>
+          <label style=${{display:'flex',alignItems:'center',gap:'.5rem',cursor:'pointer'}} onClick=${function(){setIncludeBrowser(!includeBrowser)}}>
+            <input type="checkbox" checked=${includeBrowser} onChange=${function(){}} style=${{accentColor:'var(--accent)'}} />
+            <span>Browser / platform info</span>
+          </label>
+        </div>
+        <div style=${{fontSize:'0.75rem',color:'var(--text-faint)',marginBottom:'1rem',lineHeight:1.5}}>
+          Clicking "Send Report" opens your email client with a pre-filled message. Nothing is sent automatically — you review it first.
+        </div>
+        <div style=${{display:'flex',gap:'.6rem'}}>
+          <button onClick=${onSend}
+            style=${{flex:1,padding:'.5rem',borderRadius:7,background:'var(--accent)',color:'#fff',fontWeight:600,fontSize:'0.88rem',border:'none',cursor:'pointer'}}>
+            Send Report
+          </button>
+          <button onClick=${onDismiss}
+            style=${{padding:'.5rem .9rem',borderRadius:7,background:'var(--bg-secondary)',color:'var(--text-secondary)',fontWeight:600,fontSize:'0.88rem',border:'1px solid var(--border)',cursor:'pointer'}}>
+            Dismiss
+          </button>
+        </div>
+      </div>
+    </div>`;
+  }
+
   // ── Tutorial Portal (renders Quick Start + Tour at App level) ──
   function TutorialPortal(props) {
     var d = props.d;
@@ -14581,7 +14703,7 @@ function startApp() {
               </div>
             </div>
           </div>
-          <button onClick=${function(){window._ccStartTour();}}
+          <button onClick=${function(){setShowTutorial(false);window._ccStartTour&&window._ccStartTour();}}
             style=${{...S_BTN,width:'100%',marginTop:'1.1rem',padding:'.55rem',borderRadius:8,
               background:'var(--accent)',color:'#fff',fontSize:'0.94rem',fontWeight:600,
               border:'none',cursor:'pointer',display:'flex',alignItems:'center',justifyContent:'center',gap:'.4rem'}}>
@@ -14640,14 +14762,18 @@ function startApp() {
 
           <!-- Feedback & links -->
           <div style=${{borderTop:'1px solid var(--border-subtle)',marginTop:'.8rem',paddingTop:'.8rem',display:'flex',gap:'.5rem',flexWrap:'wrap'}}>
-            <a href="https://github.com/thomhoffer-arch/clash-control/issues/new?template=bug_report.md" target="_blank" rel="noopener"
+            <a href="https://github.com/clashcontrol-io/clash-control/issues/new?template=bug_report.md" target="_blank" rel="noopener"
               style=${{...S_BTN,flex:1,padding:'.4rem .6rem',borderRadius:6,fontSize:'0.8rem',fontWeight:600,
                 background:'var(--bg-secondary)',color:'var(--text-secondary)',border:'1px solid var(--border)',
                 textDecoration:'none',textAlign:'center',cursor:'pointer'}}>Report a Bug</a>
-            <a href="https://github.com/thomhoffer-arch/clash-control/issues/new?template=feature_request.md" target="_blank" rel="noopener"
+            <a href="https://github.com/clashcontrol-io/clash-control/issues/new?template=feature_request.md" target="_blank" rel="noopener"
               style=${{...S_BTN,flex:1,padding:'.4rem .6rem',borderRadius:6,fontSize:'0.8rem',fontWeight:600,
                 background:'var(--bg-secondary)',color:'var(--text-secondary)',border:'1px solid var(--border)',
                 textDecoration:'none',textAlign:'center',cursor:'pointer'}}>Request a Feature</a>
+            <button onClick=${function(){if(window._ccShowMemReport)window._ccShowMemReport();}}
+              style=${{...S_BTN,flex:1,padding:'.4rem .6rem',borderRadius:6,fontSize:'0.8rem',fontWeight:600,
+                background:'var(--bg-secondary)',color:'var(--text-secondary)',border:'1px solid var(--border)',
+                cursor:'pointer',textAlign:'center',justifyContent:'center'}}>Send Memory Report</button>
           </div>
           <div style=${{fontSize:'0.72rem',color:'var(--text-faint)',marginTop:'.6rem',textAlign:'center'}}>
             ClashControl v${CC_VERSION.v} \u2014 Free & open source
@@ -15267,6 +15393,23 @@ function startApp() {
         _beaconSendNLTrainingData(s.models);
       }
     });
+    // ── Memory usage monitor (warn at 5 GB) ──
+    var memWarnSt = useState(false), showMemWarn=memWarnSt[0], setShowMemWarn=memWarnSt[1];
+    window._ccShowMemReport = function(){ setShowMemWarn(true); };
+    var _memWarnFiredRef = useRef(false);
+    useEffect(function(){
+      if (!performance.memory) return; // only Chrome/Edge support this API
+      var _MEM_WARN_BYTES = 5 * 1024 * 1024 * 1024; // 5 GB
+      var timer = setInterval(function(){
+        if (_memWarnFiredRef.current) return;
+        if (performance.memory.usedJSHeapSize >= _MEM_WARN_BYTES) {
+          _memWarnFiredRef.current = true;
+          setShowMemWarn(true);
+        }
+      }, 15000);
+      return function(){ clearInterval(timer); };
+    }, []);
+
     // ── Periodic memory cleanup (runs every 2 minutes) ──
     useEffect(function(){
       var timer = setInterval(function(){
@@ -15493,6 +15636,7 @@ function startApp() {
       <${WelcomePopup} d=${d} />
       <${TrainingModePopup} d=${d} active=${s.trainingMode} />
       <${TutorialPortal} d=${d} />
+      ${showMemWarn && html`<${MemoryWarningModal} s=${s} onDismiss=${function(){setShowMemWarn(false);}} />`}
     </div>`;
   }
 
