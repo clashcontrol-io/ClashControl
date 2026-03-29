@@ -193,6 +193,6 @@ This gives the correct smooth/flat distinction per face without any post-process
 
 **What changes in ClashControl when this ships:**
 - Drop `computeVertexNormals()` from `loadGLB` — normals are already correct
-- Switch GLB materials from `THREE.DoubleSide` to `THREE.FrontSide`
+- Switch GLB materials from `THREE.DoubleSide` to `THREE.FrontSide` (currently kept DoubleSide until winding is confirmed correct across all element types)
 
 The quality difference is negligible for flat building elements but visible for curved MEP geometry (pipe caps, duct elbows, round columns) where the current `computeVertexNormals()` incorrectly smooths across hard edges.
