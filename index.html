@@ -501,7 +501,7 @@ function startApp() {
         if(a.v&&a.v.clashId){
           aiClashes=s.clashes.map(function(c){
             if(c.id!==a.v.clashId) return c;
-            var sigs=(c.aiSignals||[]).slice();
+            var sigs=(c.aiSignals||[]).slice(-49);
             sigs.push({type:'strong_positive',source:'issue_created',value:a.v.id,ts:Date.now()});
             return Object.assign({},c,{aiSignals:sigs});
           });
@@ -512,7 +512,7 @@ function startApp() {
         if(c.id!==a.id) return c;
         var upd2 = {aiFeedback:a.v};
         if(a.v) {
-          var sigs=(c.aiSignals||[]).slice();
+          var sigs=(c.aiSignals||[]).slice(-49);
           var sigType=a.v==='real_clash'?'strong_positive':a.v==='false_positive'?'strong_negative':'weak_positive';
           sigs.push({type:sigType,source:'explicit_feedback',value:a.v,ts:Date.now()});
           upd2.aiSignals=sigs;
@@ -623,7 +623,7 @@ function startApp() {
         var upd=Object.assign({},c,a.u);
         // Implicit training signal when status changes
         if(a.u&&a.u.status&&a.u.status!==c.status){
-          var sigs=(c.aiSignals||[]).slice();
+          var sigs=(c.aiSignals||[]).slice(-49);
           if(a.u.status==='resolved'||a.u.status==='in_progress') sigs.push({type:'weak_positive',source:'status_change',value:a.u.status,ts:Date.now()});
           else if(a.u.status==='closed') sigs.push({type:'weak_negative',source:'status_change',value:'closed',ts:Date.now()});
           upd.aiSignals=sigs;
@@ -686,7 +686,7 @@ function startApp() {
         if(!s.selected[c.id]) return c;
         var upd=Object.assign({},c,a.u);
         if(a.u&&a.u.status&&a.u.status!==c.status){
-          var sigs=(c.aiSignals||[]).slice();
+          var sigs=(c.aiSignals||[]).slice(-49);
           if(a.u.status==='resolved'||a.u.status==='in_progress') sigs.push({type:'weak_positive',source:'status_change',value:a.u.status,ts:Date.now()});
           else if(a.u.status==='closed') sigs.push({type:'weak_negative',source:'status_change',value:'closed',ts:Date.now()});
           upd.aiSignals=sigs;
@@ -3843,7 +3843,7 @@ function startApp() {
       if (e.button===2) return; // reserved for context menu
       lx=e.clientX; ly=e.clientY; e.preventDefault();
     });
-    window.addEventListener('mousemove', function(e) {
+    _wlAdd('mousemove', function(e) {
       if(!dragging&&!panning) return;
       var dx=e.clientX-lx, dy=e.clientY-ly; lx=e.clientX; ly=e.clientY;
       if(dragging){ sph.theta-=dx*0.007; sph.phi-=dy*0.007; orbit.apply(); invalidate(); }
@@ -3854,7 +3854,7 @@ function startApp() {
         target.addScaledVector(_tmpRight,-dx*sp); target.y+=dy*sp; orbit.apply(); invalidate();
       }
     });
-    window.addEventListener('mouseup', function(){dragging=false;if(panning){panning=false;el.style.cursor='';}});
+    _wlAdd('mouseup', function(){dragging=false;if(panning){panning=false;el.style.cursor='';}});
     el.addEventListener('wheel', function(e){
       // Ctrl+scroll adjusts floor plan cut height
       if(e.ctrlKey && window._ccFloorPlanActive && window._ccDispatch){
@@ -4019,6 +4019,10 @@ function startApp() {
     useEffect(function() {
       var el = ref.current; if(!el) return;
       var S = state3d.current;
+      // Track window-level listeners so they can be removed on viewer unmount
+      var _wl = []; // [{ev, fn, opts?}]
+      function _wlAdd(ev, fn, opts) { window.addEventListener(ev, fn, opts); _wl.push({ev:ev, fn:fn, opts:opts}); }
+      function _wlRemoveAll() { _wl.forEach(function(l){ window.removeEventListener(l.ev, l.fn, l.opts); }); _wl.length = 0; }
 
       var scene = new THREE.Scene();
       scene.background = new THREE.Color(0x0f172a);
@@ -4629,7 +4633,7 @@ function startApp() {
         }
       }, true); // useCapture to fire before orbit
 
-      window.addEventListener('mousemove', function(e){
+      _wlAdd('mousemove', function(e){
         if(!_sboxDragState||!_sboxDragging) return;
         var ds=_sboxDragState;
         var rect=renderer.domElement.getBoundingClientRect();
@@ -4663,7 +4667,7 @@ function startApp() {
         }
       });
 
-      window.addEventListener('mouseup', function(){
+      _wlAdd('mouseup', function(){
         if(_sboxDragging){
           _sboxDragging=false;
           _sboxDragState=null;
@@ -4987,7 +4991,7 @@ function startApp() {
           }
         }
       }, true);
-      window.addEventListener('mousemove', function(e) {
+      _wlAdd('mousemove', function(e) {
         if (!_secDrag) return;
         if (_secDrag.mode === 'rotate') {
           var dx = e.clientX - _secDrag.startX;
@@ -5010,7 +5014,7 @@ function startApp() {
           renderer.domElement.style.cursor = 'ns-resize';
         }
       });
-      window.addEventListener('mouseup', function(e) {
+      _wlAdd('mouseup', function(e) {
         if (!_secDrag) return;
         if (e.button !== _secDrag.button) return;
         if (_secDrag.button === 0) { var S2 = state3d.current; if (S2.orbit) S2.orbit.enabled = true; }
@@ -5211,7 +5215,7 @@ function startApp() {
       });
       obs.observe(el);
 
-      return function(){cancelAnimationFrame(S.raf);obs.disconnect();renderer.dispose();if(el.contains(renderer.domElement))el.removeChild(renderer.domElement);};
+      return function(){cancelAnimationFrame(S.raf);obs.disconnect();_wlRemoveAll();renderer.dispose();if(el.contains(renderer.domElement))el.removeChild(renderer.domElement);};
     }, []);
 
     // Sync models
