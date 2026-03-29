@@ -2585,18 +2585,10 @@ function startApp() {
     var candidates = _sweepAndPrune(grpA, grpB, rules, maxGapM);
     _mark('sweep_end');
 
-    // ── Pre-build BVHs for all elements in candidate pairs ────────
-    // This avoids lazy-building during the hot candidate loop and ensures
-    // each element's BVH is built exactly once (not repeatedly per pair).
-    var _bvhSeen = {};
-    for (var ci=0; ci<candidates.length; ci++) {
-      var _peA=candidates[ci].eA, _peB=candidates[ci].eB, _pmA=candidates[ci].mA, _pmB=candidates[ci].mB;
-      var _kA=_pmA.id+':'+_peA.expressId, _kB=_pmB.id+':'+_peB.expressId;
-      if (!_bvhSeen[_kA]) { _bvhSeen[_kA]=true; _getBVH(_peA); }
-      if (!_bvhSeen[_kB]) { _bvhSeen[_kB]=true; _getBVH(_peB); }
-    }
+    // BVHs are built per-chunk during processing (see _runChunk) to avoid
+    // allocating all geometry at once for large candidate sets.
     _mark('bvh_build_end');
-    _prof._nElements = Object.keys(_bvhSeen).length;
+    _prof._nElements = 0; // updated incrementally per chunk
     _prof._nCandidates = candidates.length;
 
     // ── Per-candidate timing accumulators ─────────────────────────
@@ -2980,8 +2972,14 @@ function startApp() {
     // For larger datasets, yield to UI between chunks via setTimeout.
     var totalCandidates = candidates.length;
     if (totalCandidates <= _DETECT_CHUNK_SIZE || !resolveAsync) {
-      // Synchronous path (small dataset or legacy call)
-      for (var si=0; si<totalCandidates; si++) _processCandidate(candidates[si]);
+      // Synchronous path (small dataset or legacy call) — still flush per-chunk
+      for (var si=0; si<totalCandidates; si++) {
+        var _sc=candidates[si];
+        _getBVH(_sc.eA); _getBVH(_sc.eB);
+        _processCandidate(_sc);
+        delete _sc.eA._wvCache; delete _sc.eA._triCache; delete _sc.eA._bvhCache;
+        delete _sc.eB._wvCache; delete _sc.eB._triCache; delete _sc.eB._bvhCache;
+      }
       return _finalize();
     }
     // Async chunked path
@@ -2991,7 +2989,21 @@ function startApp() {
       if (_myGen !== _ccDetectGeneration) { resolveAsync([]); return; } // cancelled by newer detection
       try {
       var end = Math.min(chunkIdx + _DETECT_CHUNK_SIZE, totalCandidates);
+      // Build BVHs for this chunk's elements only — avoids allocating all geometry upfront
+      var _chunkEls = {};
+      for (var bi=chunkIdx; bi<end; bi++) {
+        var _cp=candidates[bi];
+        var _kA=_cp.mA.id+':'+_cp.eA.expressId, _kB=_cp.mB.id+':'+_cp.eB.expressId;
+        if (!_chunkEls[_kA]) { _chunkEls[_kA]=_cp.eA; _getBVH(_cp.eA); }
+        if (!_chunkEls[_kB]) { _chunkEls[_kB]=_cp.eB; _getBVH(_cp.eB); }
+      }
+      _prof._nElements += Object.keys(_chunkEls).length;
       for (var i=chunkIdx; i<end; i++) { try { _processCandidate(candidates[i]); } catch(e) { /* skip bad candidate */ } }
+      // Flush geometry caches immediately — Float32Arrays only needed during this chunk
+      Object.keys(_chunkEls).forEach(function(k) {
+        var el = _chunkEls[k];
+        delete el._wvCache; delete el._triCache; delete el._bvhCache;
+      });
       chunkIdx = end;
       if (onProgress) onProgress(chunkIdx, totalCandidates);
       if (chunkIdx < totalCandidates) {
@@ -7465,6 +7477,31 @@ function startApp() {
 
   // ── Model Sidebar ──────────────────────────────────────────────
 
+  // Check whether a new model spatially overlaps an existing loaded model.
+  // Returns a warning string if >85% of the new model's AABB is covered, else null.
+  function _checkModelOverlap(newElements, existingModels) {
+    var newBox = new THREE.Box3();
+    newElements.forEach(function(el) { if (el.box && !el.box.isEmpty()) newBox.union(el.box); });
+    if (newBox.isEmpty()) return null;
+    var newSize = newBox.getSize(new THREE.Vector3());
+    var newVol = newSize.x * newSize.y * newSize.z;
+    if (newVol < 0.001) return null;
+    for (var mi = 0; mi < existingModels.length; mi++) {
+      var em = existingModels[mi];
+      var exBox = new THREE.Box3();
+      (em.elements||[]).forEach(function(el) { if (el.box && !el.box.isEmpty()) exBox.union(el.box); });
+      if (exBox.isEmpty()) continue;
+      var intersection = newBox.clone().intersect(exBox);
+      if (intersection.isEmpty()) continue;
+      var intSize = intersection.getSize(new THREE.Vector3());
+      var intVol = intSize.x * intSize.y * intSize.z;
+      if (intVol / newVol > 0.85) {
+        return 'Warning: this model covers the same area as "' + em.name + '". If these are the same building loaded twice, remove one — clash detection between them will produce an extremely large number of results and may use excessive memory.';
+      }
+    }
+    return null;
+  }
+
   // Auto-detect discipline from IFC types
   function detectDiscipline(elements) {
     var mepTypes = {'IfcFlowSegment':1,'IfcFlowTerminal':1,'IfcFlowFitting':1,'IfcDistributionFlowElement':1,'IfcPipeSegment':1,'IfcDuctSegment':1};
@@ -7612,6 +7649,8 @@ function startApp() {
                     console.groupEnd();
                   }());
                   consoleElementProfile(base, _loadType, result.elements);
+                  var _overlapWarn = _checkModelOverlap(result.elements, s.models);
+                  if (_overlapWarn) setErr(_overlapWarn);
                   var disc = detectDiscipline(result.elements);
                   var dObj = DISC.find(function(x){return x.id===disc;});
                   var col = dObj ? dObj.c : DISC[0].c;
@@ -7804,6 +7843,8 @@ function startApp() {
               var fSize = result.stats ? result.stats.fileSize : buf.byteLength;
               var baseName = f.name.replace(/\.ifc$/i,'');
               // Check for existing model with same name — replace it (version update)
+              var _ifcOverlapWarn = _checkModelOverlap(result.elements, s.models.filter(function(m){return m.name!==baseName;}));
+              if (_ifcOverlapWarn) setErr(_ifcOverlapWarn);
               var existing = s.models.find(function(m){ return m.name === baseName; });
               var modelId;
               if (existing) {
