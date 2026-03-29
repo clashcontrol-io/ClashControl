@@ -1,5 +1,8 @@
 # Changelog
 
+## v3.3.49 (2026-03-29)
+- Apply non-physical geometry strip to all GLB load paths
+
 ## v3.3.48 (2026-03-29)
 - Strip IfcVirtualElement, IfcAnnotation, IfcGrid geometry from viewer
 
