@@ -1,5 +1,8 @@
 # Changelog
 
+## v3.3.44 (2026-03-29)
+- Include empty GLB nodes and props/sidecar-only elements in element list
+
 ## v3.3.43 (2026-03-29)
 - Filter IfcOpeningElement in full loadIFC path for consistency with GLB paths
 
