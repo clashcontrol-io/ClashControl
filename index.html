@@ -8113,43 +8113,6 @@ function startApp() {
         </div>
         ${m.stats && m.stats.fileSize && html`<span style=${{fontSize:'0.63rem',color:'var(--text-faint)'}}>${(m.stats.fileSize/1048576).toFixed(1)} MB · ${(m.elements&&m.elements.length||0)} elements · ${(m.meshes&&m.meshes.length||0)} meshes</span>`}
         ${!(m.stats && m.stats.fileSize) && html`<span style=${{fontSize:'0.75rem',color:'var(--text-faint)'}}>${(m.elements&&m.elements.length||0)} elements · ${(m.meshes&&m.meshes.length||0)} meshes</span>`}
-        ${m.stats && m.stats.phases && m.stats.loadTime && (function() {
-          var ph = m.stats.phases;
-          var total = m.stats.loadTime;
-          // Determine phase order based on load type
-          // Sort by actual completion time (cumulative from t0) so parallel phases stay positive
-          var ordered = Object.keys(ph).filter(function(k){return typeof ph[k]==='number';});
-          ordered.sort(function(a,b){return ph[a]-ph[b];});
-          var prev = 0;
-          var rows = ordered.map(function(name) {
-            var dt = Math.round(ph[name] - prev);
-            var pct = Math.min(100, total > 0 ? Math.round(dt / total * 100) : 0);
-            prev = ph[name];
-            return {name: name, dt: dt, pct: pct};
-          });
-          var PHASE_COLORS = {'GLB read':'#3b82f6','GLB parse':'#60a5fa','IFC file read':'#22c55e','IFC metadata':'#4ade80','Sidecar':'#f59e0b','Join':'#a855f7'};
-          return html`<div style=${{borderTop:'1px solid var(--border)',paddingTop:'.35rem',marginTop:'.1rem'}}>
-            <span style=${{fontSize:'0.63rem',fontWeight:600,color:'var(--text-muted)',textTransform:'uppercase',letterSpacing:'.03em'}}>Load Profiler</span>
-            <div style=${{marginTop:'.3rem',display:'flex',flexDirection:'column',gap:'.25rem'}}>
-              ${rows.map(function(r) {
-                var barColor = PHASE_COLORS[r.name] || 'var(--accent)';
-                return html`<div key=${r.name}>
-                  <div style=${{display:'flex',justifyContent:'space-between',marginBottom:'2px'}}>
-                    <span style=${{fontSize:'0.63rem',color:'var(--text-secondary)'}}>${r.name}</span>
-                    <span style=${{fontSize:'0.63rem',color:'var(--text-faint)',fontVariantNumeric:'tabular-nums'}}>${r.dt}ms${r.pct>0?' ('+r.pct+'%)':''}</span>
-                  </div>
-                  <div style=${{height:4,borderRadius:2,background:'var(--bg-tertiary)',overflow:'hidden'}}>
-                    <div style=${{height:'100%',width:Math.max(r.pct,r.dt>0?1:0)+'%',background:barColor,borderRadius:2,transition:'width .3s'}}></div>
-                  </div>
-                </div>`;
-              })}
-              <div style=${{display:'flex',justifyContent:'space-between',paddingTop:'.2rem',borderTop:'1px solid var(--border-subtle)'}}>
-                <span style=${{fontSize:'0.63rem',fontWeight:600,color:'var(--text-muted)'}}>Total</span>
-                <span style=${{fontSize:'0.63rem',fontWeight:700,color:'var(--text-primary)',fontVariantNumeric:'tabular-nums'}}>${total}ms</span>
-              </div>
-            </div>
-          </div>`;
-        }())}
         ${m._versionDiff && html`<div style=${{borderTop:'1px solid var(--border)',paddingTop:'.35rem',marginTop:'.1rem'}}>
           <div style=${{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:'.25rem'}}>
             <span style=${{fontSize:'0.69rem',fontWeight:600,color:'var(--text-muted)',textTransform:'uppercase',letterSpacing:'.03em'}}>Version Diff (v${(m._version-1)||1} → v${m._version})</span>
