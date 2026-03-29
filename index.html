@@ -7129,6 +7129,25 @@ function startApp() {
     };
   }
 
+  // Strip geometry for non-physical element types (spaces, virtual elements, annotations, grids).
+  // Elements remain in the list with full properties but are invisible in the 3D view.
+  var _NON_PHYSICAL_TYPES = {IfcSpace:true, IfcVirtualElement:true, IfcAnnotation:true, IfcGrid:true};
+  function stripNonPhysicalGeometry(elements, meshes) {
+    var stripEids = {};
+    elements.forEach(function(el) {
+      if (el.props && _NON_PHYSICAL_TYPES[el.props.ifcType]) {
+        stripEids[el.expressId] = true;
+        el.meshes = [];
+        el.box = new THREE.Box3();
+        el._lodProxy = null;
+      }
+    });
+    var count = Object.keys(stripEids).length;
+    if (!count) return meshes;
+    console.log('%c[GLB] Stripped geometry for ' + count + ' non-physical elements (IfcSpace/IfcVirtualElement/IfcAnnotation/IfcGrid)', 'color:#94a3b8');
+    return meshes.filter(function(m) { return !stripEids[m.userData.expressId]; });
+  }
+
   // ─────────────────────────────────────────────────────────────────────────
 
   // Join GLB meshes with IFC metadata by GlobalId, producing the same result shape as loadIFC
@@ -7200,8 +7219,9 @@ function startApp() {
     console.log('%c[GLB+IFC] ' + fileName + ': ' + matched + ' matched, ' + unmatched + ' unmatched (' + joinRate + '% join rate)' + (ifcOnly ? ', ' + ifcOnly + ' IFC-only' : ''), 'color:#22c55e;font-weight:bold');
     if (onProgress) onProgress('Joined: ' + matched + '/' + (matched + unmatched) + ' elements (' + joinRate + '%)');
 
-    // Filter IfcOpeningElement (defensive — exporter should suppress these from GLB)
-    var _ofilt = filterOpeningElements(elements, meshes, fileName);
+    // Strip non-physical types + filter IfcOpeningElement (defensive — exporter should suppress these from GLB)
+    var _ifc_meshes = stripNonPhysicalGeometry(elements, meshes);
+    var _ofilt = filterOpeningElements(elements, _ifc_meshes, fileName);
     // Prefer sidecar GlobalId relatedPairs (stable across re-exports) over IFC STEP expressId pairs
     var _baseRp;
     if (sidecarMeta && sidecarMeta.relatedPairs && Object.keys(sidecarMeta.relatedPairs).length > 0) {
@@ -7300,8 +7320,9 @@ function startApp() {
       elements.push({expressId: props2.expressId, meshes: [], box: new THREE.Box3(), props: props2});
     });
 
-    // Filter IfcOpeningElement + resolve GlobalId relatedPairs from sidecar
-    var _ofilt = filterOpeningElements(elements, glbResult.meshes, '');
+    // Strip non-physical types + filter IfcOpeningElement + resolve GlobalId relatedPairs from sidecar
+    var _sc_meshes = stripNonPhysicalGeometry(elements, glbResult.meshes);
+    var _ofilt = filterOpeningElements(elements, _sc_meshes, '');
     var _rp = resolveGlobalIdPairs(meta.relatedPairs, _ofilt.elements);
     addHostPairs(_rp, _ofilt.elements);
 
@@ -7408,8 +7429,9 @@ function startApp() {
     console.log('%c[GLB+props] ' + fileName + ': ' + matched + ' matched, ' + unmatched + ' unmatched (' + joinRate + '% join rate)' + (propsOnly ? ', ' + propsOnly + ' props-only' : ''), 'color:#a78bfa;font-weight:bold');
     if (onProgress) onProgress('Joined: ' + matched + '/' + (matched + unmatched) + ' elements (' + joinRate + '%)');
 
-    // Filter IfcOpeningElement + resolve GlobalId relatedPairs (sidecar preferred over props)
-    var _ofilt2 = filterOpeningElements(elements, glbResult.meshes, fileName);
+    // Strip non-physical types + filter IfcOpeningElement + resolve GlobalId relatedPairs (sidecar preferred over props)
+    var _pr_meshes = stripNonPhysicalGeometry(elements, glbResult.meshes);
+    var _ofilt2 = filterOpeningElements(elements, _pr_meshes, fileName);
     var _rawRp = (sidecar && sidecar.relatedPairs) || (propsData && propsData.relatedPairs) || {};
     var _rp2 = resolveGlobalIdPairs(_rawRp, _ofilt2.elements);
     addHostPairs(_rp2, _ofilt2.elements);
