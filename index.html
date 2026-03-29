@@ -14551,7 +14551,7 @@ function startApp() {
     var tut = useState(false), showTutorial=tut[0], setShowTutorial=tut[1];
     var tourSt = useState(null), tourStep=tourSt[0], setTourStep=tourSt[1];
     window._ccToggleTutorial = function(){ setShowTutorial(function(v){return !v;}); setTourStep(null); };
-    window._ccStartTour = function(){ /* tour disabled */ };
+    window._ccStartTour = function(){ setShowTutorial(false); setTourStep(0); };
     if (!showTutorial && tourStep == null) return null;
     return html`<div>
       ${showTutorial && html`<div onClick=${function(e){if(e.target===e.currentTarget)setShowTutorial(false)}} style=${{position:'fixed',inset:0,background:'rgba(0,0,0,.6)',zIndex:9999,display:'flex',alignItems:'center',justifyContent:'center',overflow:'hidden',padding:'2rem 0',backdropFilter:'blur(4px)'}}>
@@ -14585,6 +14585,12 @@ function startApp() {
               </div>
             </div>
           </div>
+          <button onClick=${function(){setShowTutorial(false);window._ccStartTour&&window._ccStartTour();}}
+            style=${{...S_BTN,width:'100%',marginTop:'1.1rem',padding:'.55rem',borderRadius:8,
+              background:'var(--accent)',color:'#fff',fontSize:'0.94rem',fontWeight:600,
+              border:'none',cursor:'pointer',display:'flex',alignItems:'center',justifyContent:'center',gap:'.4rem'}}>
+            Take the Interactive Tour
+          </button>
 
           <!-- Roadmap -->
           <div style=${{borderTop:'1px solid var(--border-subtle)',marginTop:'1.1rem',paddingTop:'.8rem'}}>
