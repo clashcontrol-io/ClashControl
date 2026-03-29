@@ -171,3 +171,28 @@ ClashControl selects the fastest available path:
 .ifc only          →  GLB + IFC STEP parse                    (slow, ~25s)
 plain .ifc         →  IFC geometry + metadata                  (slow, ~25s)
 ```
+
+---
+
+## Future: Ifc2Ifc v2 — Native Revit normals via `IExportContext / OnPolymesh`
+
+> **Not implemented. Planned for a full rewrite of Ifc2Ifc.**
+
+Switch `GeometryHarvester` from the current tessellation path to `IExportContext` / `CustomExporter`. Revit calls `OnPolymesh(PolymeshTopology)` per face and provides:
+
+- `GetNormals()` — Revit's own rendering normals, same quality as the Revit viewport
+- `DistributionOfNormals` — `AtEachPoint` (smooth, curved surfaces) or `OnePerFace` (flat, planar faces)
+
+This gives the correct smooth/flat distinction per face without any post-processing:
+- Flat wall/slab faces → one flat normal per face
+- Curved pipes/ducts/columns → smooth per-vertex normals
+
+**What changes on export:**
+- Write the `NORMAL` accessor into the GLB (same axis swap as positions: `nx, nz, -ny`)
+- No need for double-sided materials — winding is correct and normals are outward-facing
+
+**What changes in ClashControl when this ships:**
+- Drop `computeVertexNormals()` from `loadGLB` — normals are already correct
+- Switch GLB materials from `THREE.DoubleSide` to `THREE.FrontSide`
+
+The quality difference is negligible for flat building elements but visible for curved MEP geometry (pipe caps, duct elbows, round columns) where the current `computeVertexNormals()` incorrectly smooths across hard edges.
