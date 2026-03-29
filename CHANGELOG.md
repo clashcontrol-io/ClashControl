@@ -1,5 +1,8 @@
 # Changelog
 
+## v3.3.50 (2026-03-29)
+- Remove load profiler from model card UI
+
 ## v3.3.49 (2026-03-29)
 - Apply non-physical geometry strip to all GLB load paths
 
