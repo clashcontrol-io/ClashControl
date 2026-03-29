@@ -1092,7 +1092,9 @@ function startApp() {
     // Spatial containers (for aggregate filtering)
     IFCBUILDING:4031249490, IFCSITE:4097777520,
     IFCPROJECT:103090709,
-    IFCOPENINGELEMENT:3588315303
+    IFCOPENINGELEMENT:3588315303,
+    // Non-physical elements (stripped from 3D view)
+    IFCVIRTUALELEMENT:2769231204, IFCANNOTATION:1674181508, IFCGRID:3009204131
   };
 
   function safeStr(v) {
@@ -1406,6 +1408,7 @@ function startApp() {
   IFC_TYPE_NAMES[1073191201] = 'IfcMember'; IFC_TYPE_NAMES[3171933400] = 'IfcPlate';
   IFC_TYPE_NAMES[900683007] = 'IfcFooting'; IFC_TYPE_NAMES[1687234759] = 'IfcPile';
   IFC_TYPE_NAMES[1973544240] = 'IfcCovering'; IFC_TYPE_NAMES[3856911033] = 'IfcSpace';
+  IFC_TYPE_NAMES[2769231204] = 'IfcVirtualElement'; IFC_TYPE_NAMES[1674181508] = 'IfcAnnotation'; IFC_TYPE_NAMES[3009204131] = 'IfcGrid';
   // MEP: energy conversion, flow moving/storage/treatment, controllers
   IFC_TYPE_NAMES[1658829314] = 'IfcEnergyConversionDevice'; IFC_TYPE_NAMES[3132237377] = 'IfcFlowMovingDevice';
   IFC_TYPE_NAMES[3508470533] = 'IfcFlowStorageDevice'; IFC_TYPE_NAMES[3310460725] = 'IfcFlowTreatmentDevice';
@@ -1651,6 +1654,22 @@ function startApp() {
       if (_openingCount > 0) {
         meshes = meshes.filter(function(m) { return !_openingEids[m.userData.expressId]; });
         console.log('%c[IFC] Filtered ' + _openingCount + ' IfcOpeningElement (void cutters)', 'color:#94a3b8');
+      }
+
+      // Strip non-physical element geometry — shown in element list but not rendered
+      var _noRenderTypes = {IfcSpace:true, IfcVirtualElement:true, IfcAnnotation:true, IfcGrid:true};
+      var _noRenderEids = {};
+      rawElements.forEach(function(el) {
+        if (_noRenderTypes[el.props.ifcType]) {
+          _noRenderEids[el.expressId] = true;
+          el.meshes = [];
+          el.box = new THREE.Box3();
+          el._lodProxy = null;
+        }
+      });
+      if (Object.keys(_noRenderEids).length > 0) {
+        meshes = meshes.filter(function(m) { return !_noRenderEids[m.userData.expressId]; });
+        console.log('%c[IFC] Stripped geometry for ' + Object.keys(_noRenderEids).length + ' non-physical elements (IfcSpace / IfcVirtualElement / IfcAnnotation / IfcGrid)', 'color:#94a3b8');
       }
 
       // IfcSpace: include even when no geometry (Revit often exports rooms as spatial containers only)
@@ -6865,19 +6884,21 @@ function startApp() {
           var gid = child.name || '';
           // Ensure proper material for ClashControl rendering
           var rawMat = Array.isArray(child.material) ? child.material[0] : child.material;
-          var col;
-          // If glTF uses vertex colors (COLOR_0), sample the first vertex color as the element color
-          if (rawMat && rawMat.vertexColors && child.geometry.attributes.color) {
-            var vc = child.geometry.attributes.color;
-            col = new THREE.Color(vc.getX(0), vc.getY(0), vc.getZ(0));
+          var hasVertexColors = !!(child.geometry.attributes.color);
+          var col, opacity;
+          opacity = rawMat && rawMat.opacity != null ? rawMat.opacity : 1;
+          if (hasVertexColors) {
+            // Vertex colors carry per-element color — keep white base so they show through unmodified
+            col = new THREE.Color(1, 1, 1);
           } else {
             col = rawMat && rawMat.color ? rawMat.color.clone() : new THREE.Color(0.65, 0.65, 0.65);
+            // Fall back to visible gray if color is near-black (unset / default material)
+            if (col.r < 0.05 && col.g < 0.05 && col.b < 0.05) col.set(0.65, 0.65, 0.65);
           }
-          // Fall back to visible gray if color is near-black (unset / default material)
-          if (col.r < 0.05 && col.g < 0.05 && col.b < 0.05) col.set(0.65, 0.65, 0.65);
-          var opacity = rawMat && rawMat.opacity != null ? rawMat.opacity : 1;
           var mat = new THREE.MeshPhongMaterial({
-            color: col, opacity: opacity,
+            color: col,
+            vertexColors: hasVertexColors ? THREE.VertexColors : THREE.NoColors,
+            opacity: opacity,
             transparent: opacity < 0.99,
             side: THREE.DoubleSide // FrontSide once Ifc2Ifc winding fix is confirmed correct
           });
