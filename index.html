@@ -7212,9 +7212,11 @@ function startApp() {
     }
 
     var joinRate = matched + unmatched > 0 ? Math.round(matched / (matched + unmatched) * 100) : 0;
+    var _warnings = [];
     if (unmatched > 0) {
-      var _sampleUnmatched = Object.keys(meshByGid).filter(function(gid){ return !ifcMeta.propsByGlobalId[gid]; }).slice(0,3);
+      var _sampleUnmatched = Object.keys(meshByGid).filter(function(gid){ return !ifcMeta.propsByGlobalId[gid]; }).slice(0,5);
       console.warn('%c[GLB+IFC] ' + fileName + ': ' + unmatched + ' unmatched GlobalIds — check exporter version or GUID stability. Samples: ' + _sampleUnmatched.join(', '), 'color:#f59e0b;font-weight:bold');
+      _warnings.push(fileName + ': ' + unmatched + ' of ' + (matched + unmatched) + ' GLB elements had no IFC metadata match (' + joinRate + '% join rate).\nUnmatched GlobalIds: ' + _sampleUnmatched.join(', ') + (unmatched > 5 ? ' (and ' + (unmatched - 5) + ' more)' : '') + '\nCheck that GLB and IFC were exported from the same model version.');
     }
     console.log('%c[GLB+IFC] ' + fileName + ': ' + matched + ' matched, ' + unmatched + ' unmatched (' + joinRate + '% join rate)' + (ifcOnly ? ', ' + ifcOnly + ' IFC-only' : ''), 'color:#22c55e;font-weight:bold');
     if (onProgress) onProgress('Joined: ' + matched + '/' + (matched + unmatched) + ' elements (' + joinRate + '%)');
@@ -7240,6 +7242,7 @@ function startApp() {
       storeyData: ifcMeta.storeyData || [],
       spatialHierarchy: ifcMeta.spatialHierarchy || {},
       relatedPairs: _rp,
+      warnings: _warnings,
       stats: {
         loadTime: 0,  // will be set by caller
         fileSize: 0,
@@ -7259,10 +7262,12 @@ function startApp() {
     var elements = [];
     var meta = sidecarJSON || {};
     var elementMeta = meta.elements || {};
+    var _scMatched = 0, _scUnmatched = 0;
 
     Object.keys(meshByGid).forEach(function(gid) {
       var elMeshes = meshByGid[gid];
       var sc = elementMeta[gid] || {};
+      if (elementMeta[gid]) _scMatched++; else _scUnmatched++;
       var props = {
         expressId: sc.expressId || elements.length + 1,
         globalId: gid,
@@ -7326,6 +7331,13 @@ function startApp() {
     var _rp = resolveGlobalIdPairs(meta.relatedPairs, _ofilt.elements);
     addHostPairs(_rp, _ofilt.elements);
 
+    var _scJoinRate = _scMatched + _scUnmatched > 0 ? Math.round(_scMatched / (_scMatched + _scUnmatched) * 100) : 0;
+    var _scWarnings = [];
+    if (_scUnmatched > 0) {
+      var _scSamples = Object.keys(meshByGid).filter(function(gid){ return !elementMeta[gid]; }).slice(0,5);
+      _scWarnings.push('ifcmeta: ' + _scUnmatched + ' of ' + (_scMatched + _scUnmatched) + ' GLB elements had no .ifcmeta match (' + _scJoinRate + '% join rate).\nUnmatched GlobalIds: ' + _scSamples.join(', ') + (_scUnmatched > 5 ? ' (and ' + (_scUnmatched - 5) + ' more)' : '') + '\nCheck that GLB and .ifcmeta were exported from the same model version.');
+    }
+
     return {
       meshes: _ofilt.meshes,
       elements: _ofilt.elements,
@@ -7333,7 +7345,8 @@ function startApp() {
       storeyData: meta.storeyData || [],
       spatialHierarchy: meta.spatialHierarchy || {},
       relatedPairs: _rp,
-      stats: {elementCount: _ofilt.elements.length, meshCount: _ofilt.meshes.length}
+      warnings: _scWarnings,
+      stats: {elementCount: _ofilt.elements.length, meshCount: _ofilt.meshes.length, glbJoinRate: _scJoinRate, glbMatched: _scMatched, glbUnmatched: _scUnmatched}
     };
   }
 
@@ -7422,9 +7435,11 @@ function startApp() {
     });
 
     var joinRate = matched + unmatched > 0 ? Math.round(matched / (matched + unmatched) * 100) : 0;
+    var _warnings2 = [];
     if (unmatched > 0) {
-      var _sampleUnmatched2 = Object.keys(meshByGid).filter(function(gid){ return !elementMeta[gid]; }).slice(0,3);
+      var _sampleUnmatched2 = Object.keys(meshByGid).filter(function(gid){ return !elementMeta[gid]; }).slice(0,5);
       console.warn('%c[GLB+props] ' + fileName + ': ' + unmatched + ' unmatched GlobalIds — check exporter version or GUID stability. Samples: ' + _sampleUnmatched2.join(', '), 'color:#f59e0b;font-weight:bold');
+      _warnings2.push(fileName + ': ' + unmatched + ' of ' + (matched + unmatched) + ' GLB elements had no .ifcprops metadata match (' + joinRate + '% join rate).\nUnmatched GlobalIds: ' + _sampleUnmatched2.join(', ') + (unmatched > 5 ? ' (and ' + (unmatched - 5) + ' more)' : '') + '\nCheck that GLB and .ifcprops were exported from the same model version.');
     }
     console.log('%c[GLB+props] ' + fileName + ': ' + matched + ' matched, ' + unmatched + ' unmatched (' + joinRate + '% join rate)' + (propsOnly ? ', ' + propsOnly + ' props-only' : ''), 'color:#a78bfa;font-weight:bold');
     if (onProgress) onProgress('Joined: ' + matched + '/' + (matched + unmatched) + ' elements (' + joinRate + '%)');
@@ -7443,6 +7458,7 @@ function startApp() {
       storeyData: (propsData && propsData.storeyData) || (sidecar && sidecar.storeyData) || [],
       spatialHierarchy: (propsData && propsData.spatialHierarchy) || (sidecar && sidecar.spatialHierarchy) || {},
       relatedPairs: _rp2,
+      warnings: _warnings2,
       stats: {elementCount: _ofilt2.elements.length, meshCount: _ofilt2.meshes.length, glbJoinRate: joinRate, glbMatched: matched, glbUnmatched: unmatched}
     };
   }
@@ -7566,6 +7582,7 @@ function startApp() {
                     result = joinGLBWithSidecar(glbResult, sidecar, _onProg);
                   }
                   _phases['Join'] = performance.now() - t0;
+                  if (result.warnings && result.warnings.length) result.warnings.forEach(function(w){ errors.push(w); });
                   result.stats.loadTime = Math.round(performance.now() - t0);
                   result.stats.phases = _phases;
                   var _loadType = propsData
@@ -7651,6 +7668,7 @@ function startApp() {
                   meshes:glbResult.meshes, elements:elements, storeys:[], storeyData:[], spatialHierarchy:{}, relatedPairs:{},
                   stats:{loadTime:Math.round(performance.now()-t0), fileSize:grp.glb.size, elementCount:elements.length, meshCount:glbResult.meshes.length}}});
                 consoleElementProfile(base, 'GLB', elements);
+                errors.push(base + '.glb loaded without metadata — clash detection type rules, storey grouping, and element properties are unavailable. For full support, drop the matching .ifcmeta or .ifcprops file alongside the GLB.');
                 _gcEvent('glb-standalone', base);
               });
             }).catch(function(er) {
@@ -7674,7 +7692,56 @@ function startApp() {
         // Skip files already handled as pairs
         if (pairedBases[base]) return;
         // Skip GLB files (already handled above)
-        if (ext === 'glb' || ext === 'gltf' || ext === 'ifcmeta' || ext === 'ifcprops') return;
+        if (ext === 'glb' || ext === 'gltf') return;
+        // Orphan sidecar files: attach metadata to an already-loaded model with the same base name
+        if (ext === 'ifcmeta' || ext === 'ifcprops') {
+          var _existingModel = s.models.find(function(m){ return m.name === base; });
+          if (!_existingModel) {
+            errors.push(f.name + ': No matching model found. Load ' + base + '.glb first, or drop all files (' + base + '.glb + ' + f.name + ') together.');
+            return;
+          }
+          chain = chain.then(function() {
+            setLoading(true);
+            setLoadMsg('Attaching ' + f.name + ' to ' + _existingModel.name + '…');
+            return f.text().then(function(txt) {
+              var parsed = JSON.parse(txt);
+              // Reconstruct meshByGid from existing model elements
+              var _rebuildByGid = {};
+              var _rebuildMeshes = _existingModel.meshes || [];
+              _existingModel.elements.forEach(function(el) {
+                var gid = el.props.globalId;
+                if (gid) _rebuildByGid[gid] = el.meshes || [];
+              });
+              var syntheticGlb = {meshes: _rebuildMeshes, meshByGid: _rebuildByGid};
+              var result;
+              if (ext === 'ifcprops') {
+                result = joinGLBWithProps(syntheticGlb, parsed, null, base, function(msg){ setLoadMsg(base + ': ' + msg); });
+              } else {
+                result = joinGLBWithSidecar(syntheticGlb, parsed, function(msg){ setLoadMsg(base + ': ' + msg); });
+              }
+              if (result.warnings && result.warnings.length) result.warnings.forEach(function(w){ errors.push(w); });
+              var disc = detectDiscipline(result.elements);
+              var dObj = DISC.find(function(x){return x.id===disc;});
+              var col = dObj ? dObj.c : _existingModel.color;
+              d({t:A.REPLACE_MODEL, id:_existingModel.id, v:{
+                id:_existingModel.id, name:base,
+                discipline:_existingModel.discipline||disc, color:_existingModel.color||col,
+                visible:_existingModel.visible!==false, tag:_existingModel.tag||'',
+                _version:(_existingModel._version||1)+1,
+                meshes:result.meshes, elements:result.elements,
+                storeys:result.storeys||[], storeyData:result.storeyData||[],
+                spatialHierarchy:result.spatialHierarchy||{},
+                relatedPairs:result.relatedPairs||{},
+                stats:Object.assign({}, _existingModel.stats||{}, result.stats, {loadType:(_existingModel.stats&&_existingModel.stats.loadType?_existingModel.stats.loadType:'GLB')+'+'+ext})
+              }});
+              console.log('%c[Sidecar Attach] ' + f.name + ' attached to model "' + base + '"', 'color:#22c55e;font-weight:bold');
+            }).catch(function(er) {
+              console.error(er);
+              errors.push(f.name + ': ' + (er.message || 'Failed to attach metadata'));
+            });
+          });
+          return;
+        }
         if (ext === 'dwg') {
           errors.push(f.name + ': DWG cannot be parsed in-browser. Convert to DXF first.');
           return;
