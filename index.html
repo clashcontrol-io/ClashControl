@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
   <title>ClashControl — Open BIM Clash Detection</title>
   <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 48 48'%3E%3Crect width='48' height='48' rx='10' fill='%232563eb'/%3E%3Ctext x='24' y='30' text-anchor='middle' font-family='system-ui,sans-serif' font-weight='900' font-size='18' fill='white'%3ECC%3C/text%3E%3C/svg%3E">
-  <!-- <link rel="manifest" href="manifest.json"> -->
+  <link rel="manifest" href="manifest.json">
   <meta name="theme-color" content="#0f172a">
 
   <!-- CSP: restrict resource loading to known CDN origins -->
@@ -238,15 +238,36 @@ window.addEventListener('unhandledrejection', function(e) {
   console.error('[ClashControl] Unhandled promise rejection:', e.reason);
 });
 
-// Service worker disabled — unregister any existing SW to clear stale caches
+// Register service worker for offline support & PWA install
 if ('serviceWorker' in navigator) {
-  navigator.serviceWorker.getRegistrations().then(function(regs) {
-    regs.forEach(function(r) { r.unregister(); });
-  });
-  caches.keys().then(function(names) {
-    names.forEach(function(n) { caches.delete(n); });
+  navigator.serviceWorker.register('sw.js').then(function(reg) {
+    // Check for updates periodically (every 60 min)
+    setInterval(function(){ reg.update(); }, 3600000);
+    // Detect waiting worker = new version available
+    function _swReady(sw) {
+      sw.addEventListener('statechange', function() {
+        if (sw.state === 'activated') window.location.reload();
+      });
+      window._ccUpdateAvailable = true;
+      window.dispatchEvent(new Event('cc-update-available'));
+    }
+    if (reg.waiting) _swReady(reg.waiting);
+    reg.addEventListener('updatefound', function() {
+      var nw = reg.installing;
+      if (!nw) return;
+      nw.addEventListener('statechange', function() {
+        if (nw.state === 'installed' && navigator.serviceWorker.controller) _swReady(nw);
+      });
+    });
   });
 }
+// PWA install prompt
+var _ccInstallPrompt = null;
+window.addEventListener('beforeinstallprompt', function(e) {
+  e.preventDefault();
+  _ccInstallPrompt = e;
+  window.dispatchEvent(new Event('cc-install-available'));
+});
 
 
 window.onload = function() {
@@ -2432,6 +2453,245 @@ function startApp() {
     return pairs;
   }
 
+  // ── GLB Worker geometry pre-extraction ──────────────────────────
+  // For GLB-loaded models, extract world-space vertices and triangles
+  // in a Web Worker by parsing the raw GLB binary directly.
+  // This avoids blocking the main thread with heavy geometry extraction.
+  var _glbGeoWorkerCode = function() {
+    // ── GLB binary parser ──
+    function parseGLB(buf) {
+      var dv = new DataView(buf);
+      // Header: magic(4) + version(4) + length(4)
+      if (dv.getUint32(0, true) !== 0x46546C67) return null; // 'glTF'
+      var off = 12;
+      var json = null, bin = null;
+      while (off < buf.byteLength) {
+        var chunkLen = dv.getUint32(off, true);
+        var chunkType = dv.getUint32(off + 4, true);
+        if (chunkType === 0x4E4F534A) { // JSON
+          var dec = new TextDecoder();
+          json = JSON.parse(dec.decode(new Uint8Array(buf, off + 8, chunkLen)));
+        } else if (chunkType === 0x004E4942) { // BIN
+          bin = buf.slice(off + 8, off + 8 + chunkLen);
+        }
+        off += 8 + chunkLen;
+      }
+      return {json: json, bin: bin};
+    }
+
+    // Read an accessor from the binary buffer
+    function readAccessor(gltf, accIdx, bin) {
+      var acc = gltf.json.accessors[accIdx];
+      var bv = gltf.json.bufferViews[acc.bufferView];
+      var offset = (bv.byteOffset || 0) + (acc.byteOffset || 0);
+      var compType = acc.componentType; // 5126=FLOAT, 5123=USHORT, 5125=UINT
+      var count = acc.count;
+      var itemSize = {SCALAR:1, VEC2:2, VEC3:3, VEC4:4, MAT4:16}[acc.type] || 1;
+      var total = count * itemSize;
+      if (compType === 5126) return new Float32Array(bin, offset, total);
+      if (compType === 5123) return new Uint16Array(bin, offset, total);
+      if (compType === 5125) return new Uint32Array(bin, offset, total);
+      return new Uint8Array(bin, offset, total);
+    }
+
+    // Compute world transforms for all nodes
+    function computeWorldTransforms(gltf) {
+      var nodes = gltf.json.nodes || [];
+      var world = new Array(nodes.length);
+      // Identity 4x4
+      function ident() { return new Float32Array([1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1]); }
+      // Multiply 4x4 matrices (column-major)
+      function mul(a, b) {
+        var r = new Float32Array(16);
+        for (var i = 0; i < 4; i++) for (var j = 0; j < 4; j++) {
+          var s = 0;
+          for (var k = 0; k < 4; k++) s += a[i + k*4] * b[k + j*4];
+          r[i + j*4] = s;
+        }
+        return r;
+      }
+      // Build local transform from TRS or matrix
+      function localTransform(node) {
+        if (node.matrix) return new Float32Array(node.matrix);
+        var m = ident();
+        // Scale
+        if (node.scale) { var s = node.scale; m[0]=s[0]; m[5]=s[1]; m[10]=s[2]; }
+        // Rotation (quaternion to matrix)
+        if (node.rotation) {
+          var q = node.rotation, x=q[0], y=q[1], z=q[2], w=q[3];
+          var x2=x+x, y2=y+y, z2=z+z;
+          var xx=x*x2, xy=x*y2, xz=x*z2, yy=y*y2, yz=y*z2, zz=z*z2;
+          var wx=w*x2, wy=w*y2, wz=w*z2;
+          var rm = new Float32Array([1-yy-zz,xy+wz,xz-wy,0, xy-wz,1-xx-zz,yz+wx,0, xz+wy,yz-wx,1-xx-yy,0, 0,0,0,1]);
+          if (node.scale) { var s2 = node.scale; rm[0]*=s2[0]; rm[1]*=s2[0]; rm[2]*=s2[0]; rm[4]*=s2[1]; rm[5]*=s2[1]; rm[6]*=s2[1]; rm[8]*=s2[2]; rm[9]*=s2[2]; rm[10]*=s2[2]; }
+          m = rm;
+        }
+        // Translation
+        if (node.translation) { var t = node.translation; m[12]=t[0]; m[13]=t[1]; m[14]=t[2]; }
+        return m;
+      }
+      // Build parent map
+      var parent = new Int32Array(nodes.length).fill(-1);
+      nodes.forEach(function(n, i) {
+        (n.children || []).forEach(function(c) { parent[c] = i; });
+      });
+      function getWorld(i) {
+        if (world[i]) return world[i];
+        var local = localTransform(nodes[i]);
+        if (parent[i] === -1) { world[i] = local; return local; }
+        world[i] = mul(getWorld(parent[i]), local);
+        return world[i];
+      }
+      for (var i = 0; i < nodes.length; i++) getWorld(i);
+      return world;
+    }
+
+    // Transform a position array by a 4x4 matrix, return Float32Array
+    function transformPositions(pos, mat) {
+      var n = pos.length / 3;
+      var out = new Float32Array(n * 3);
+      for (var i = 0; i < n; i++) {
+        var x = pos[i*3], y = pos[i*3+1], z = pos[i*3+2];
+        out[i*3]   = mat[0]*x + mat[4]*y + mat[8]*z  + mat[12];
+        out[i*3+1] = mat[1]*x + mat[5]*y + mat[9]*z  + mat[13];
+        out[i*3+2] = mat[2]*x + mat[6]*y + mat[10]*z + mat[14];
+      }
+      return out;
+    }
+
+    // Build world-space triangles from positions + optional index
+    function buildTris(wPos, index) {
+      if (!index) {
+        // Non-indexed: every 3 vertices form a triangle
+        return wPos; // already [ax,ay,az, bx,by,bz, cx,cy,cz, ...]
+      }
+      var nTri = index.length / 3;
+      var tris = new Float32Array(nTri * 9);
+      for (var t = 0; t < nTri; t++) {
+        var ia = index[t*3], ib = index[t*3+1], ic = index[t*3+2];
+        tris[t*9]   = wPos[ia*3];   tris[t*9+1] = wPos[ia*3+1]; tris[t*9+2] = wPos[ia*3+2];
+        tris[t*9+3] = wPos[ib*3];   tris[t*9+4] = wPos[ib*3+1]; tris[t*9+5] = wPos[ib*3+2];
+        tris[t*9+6] = wPos[ic*3];   tris[t*9+7] = wPos[ic*3+1]; tris[t*9+8] = wPos[ic*3+2];
+      }
+      return tris;
+    }
+
+    self.onmessage = function(e) {
+      var models = e.data.models; // [{id, buffer, globalIdMap}]
+      var results = {}; // modelId → { globalId → { wv: Float32Array, tris: Float32Array } }
+      models.forEach(function(modelData) {
+        var gltf = parseGLB(modelData.buffer);
+        if (!gltf || !gltf.json) return;
+        var worldTransforms = computeWorldTransforms(gltf);
+        var nodes = gltf.json.nodes || [];
+        var meshes = gltf.json.meshes || [];
+        var modelResult = {};
+
+        nodes.forEach(function(node, nodeIdx) {
+          if (node.mesh == null) return;
+          var gid = node.name || '';
+          if (!gid) return;
+          var mesh = meshes[node.mesh];
+          if (!mesh) return;
+          var wt = worldTransforms[nodeIdx];
+          var allVerts = [], allTris = [];
+
+          (mesh.primitives || []).forEach(function(prim) {
+            if (prim.attributes == null || prim.attributes.POSITION == null) return;
+            var pos = readAccessor(gltf, prim.attributes.POSITION, gltf.bin);
+            var idx = prim.indices != null ? readAccessor(gltf, prim.indices, gltf.bin) : null;
+            var wPos = transformPositions(pos, wt);
+            var tris = buildTris(wPos, idx);
+            // Accumulate
+            for (var i = 0; i < wPos.length; i++) allVerts.push(wPos[i]);
+            for (var i = 0; i < tris.length; i++) allTris.push(tris[i]);
+          });
+
+          if (!modelResult[gid]) modelResult[gid] = {verts:[], tris:[]};
+          var r = modelResult[gid];
+          for (var i = 0; i < allVerts.length; i++) r.verts.push(allVerts[i]);
+          for (var i = 0; i < allTris.length; i++) r.tris.push(allTris[i]);
+        });
+
+        // Convert accumulated arrays to Float32Arrays
+        var finalResult = {};
+        var transferList = [];
+        Object.keys(modelResult).forEach(function(gid) {
+          var r = modelResult[gid];
+          var wv = new Float32Array(r.verts);
+          var tr = new Float32Array(r.tris);
+          finalResult[gid] = {wv: wv, tris: tr};
+          transferList.push(wv.buffer, tr.buffer);
+        });
+        results[modelData.id] = finalResult;
+      });
+      self.postMessage({results: results});
+    };
+  }.toString();
+  // Extract function body for Worker blob
+  var _glbGeoWorkerSrc = _glbGeoWorkerCode.slice(_glbGeoWorkerCode.indexOf('{') + 1, _glbGeoWorkerCode.lastIndexOf('}'));
+
+  // Pre-extract geometry from GLB buffers in a Worker.
+  // Returns a Promise that resolves when extraction is done and caches are populated.
+  function _preExtractGLBGeometry(models) {
+    var glbModels = models.filter(function(m) { return m._glbBuffer; });
+    if (!glbModels.length) return Promise.resolve();
+
+    // Build globalId→element map per model for injecting results
+    var elMaps = {};
+    glbModels.forEach(function(m) {
+      var map = {};
+      m.elements.forEach(function(el) {
+        var gid = el.props && el.props.globalId;
+        if (gid) map[gid] = el;
+      });
+      elMaps[m.id] = map;
+    });
+
+    return new Promise(function(resolve) {
+      var blob = new Blob([_glbGeoWorkerSrc], {type: 'application/javascript'});
+      var url = URL.createObjectURL(blob);
+      var worker = new Worker(url);
+      var workerData = glbModels.map(function(m) {
+        return {id: m.id, buffer: m._glbBuffer};
+      });
+      worker.onmessage = function(e) {
+        var results = e.data.results;
+        // Inject pre-computed geometry caches onto elements
+        Object.keys(results).forEach(function(modelId) {
+          var modelResults = results[modelId];
+          var elMap = elMaps[modelId];
+          if (!elMap) return;
+          Object.keys(modelResults).forEach(function(gid) {
+            var el = elMap[gid];
+            if (!el) return;
+            var data = modelResults[gid];
+            if (data.wv && data.wv.length) el._wvCache = data.wv;
+            if (data.tris && data.tris.length) el._triCache = data.tris;
+          });
+        });
+        worker.terminate();
+        URL.revokeObjectURL(url);
+        resolve();
+      };
+      worker.onerror = function(err) {
+        console.warn('[GLB Worker] Geometry extraction failed, falling back to main thread:', err);
+        worker.terminate();
+        URL.revokeObjectURL(url);
+        resolve(); // resolve anyway — detection will extract on main thread as fallback
+      };
+      // Transfer GLB buffers to Worker (zero-copy). We keep a copy reference
+      // for future re-detection, so slice first.
+      var transfers = [];
+      var sendData = glbModels.map(function(m) {
+        var copy = m._glbBuffer.slice(0);
+        transfers.push(copy);
+        return {id: m.id, buffer: copy};
+      });
+      worker.postMessage({models: sendData}, transfers);
+    });
+  }
+
   // ── Async clash detection with chunked processing ───────────────
   // Wraps the synchronous detectClashes in a chunked async pipeline:
   //   1. Sweep-and-prune (fast, stays synchronous)
@@ -2451,17 +2711,20 @@ function startApp() {
       window.dispatchEvent(new Event('cc-detect-progress'));
       if (_userCb) _userCb(done, total);
     };
-    return new Promise(function(resolve, reject) {
-      try {
-        // Run synchronous detection but yield between chunks
-        var result = _detectClashesCore(models, rules, onProgress, function(r) {
-          resolve(gen === _ccDetectGeneration ? r : []); // discard stale results
-        });
-        if (result !== undefined) resolve(result); // fell through synchronously (small dataset)
-      } catch(e) {
-        console.error('Clash detection failed:', e);
-        resolve([]); // resolve with empty array to unblock UI (sets detecting:false)
-      }
+    // Pre-extract GLB geometry in Worker before running detection
+    return _preExtractGLBGeometry(models).then(function() {
+      return new Promise(function(resolve, reject) {
+        if (gen !== _ccDetectGeneration) { resolve([]); return; } // cancelled during pre-extraction
+        try {
+          var result = _detectClashesCore(models, rules, onProgress, function(r) {
+            resolve(gen === _ccDetectGeneration ? r : []);
+          });
+          if (result !== undefined) resolve(result);
+        } catch(e) {
+          console.error('Clash detection failed:', e);
+          resolve([]);
+        }
+      });
     });
   }
 
@@ -7663,7 +7926,7 @@ function startApp() {
                   d({t:A.ADD_MODEL, v:{id:modelId, name:base, discipline:disc, color:col, visible:true, _version:1,
                     meshes:result.meshes, elements:result.elements, storeys:result.storeys||[],
                     storeyData:result.storeyData||[], spatialHierarchy:result.spatialHierarchy||{},
-                    relatedPairs:result.relatedPairs||{}, stats:result.stats}});
+                    relatedPairs:result.relatedPairs||{}, stats:result.stats, _glbBuffer:glbBuf}});
                   _gcEvent('glb-ifc-paired', base);
                   _onProg('Model ready (' + result.stats.loadTime + 'ms)');
                 });
@@ -7710,7 +7973,7 @@ function startApp() {
                 var modelId = uid();
                 d({t:A.ADD_MODEL, v:{id:modelId, name:base, discipline:'architectural', color:DISC[2].c, visible:true, _version:1,
                   meshes:glbResult.meshes, elements:elements, storeys:[], storeyData:[], spatialHierarchy:{}, relatedPairs:{},
-                  stats:{loadTime:Math.round(performance.now()-t0), fileSize:grp.glb.size, elementCount:elements.length, meshCount:glbResult.meshes.length}}});
+                  stats:{loadTime:Math.round(performance.now()-t0), fileSize:grp.glb.size, elementCount:elements.length, meshCount:glbResult.meshes.length}, _glbBuffer:glbBuf}});
                 consoleElementProfile(base, 'GLB', elements);
                 errors.push(base + '.glb loaded without metadata — clash detection type rules, storey grouping, and element properties are unavailable. For full support, drop the matching .ifcmeta or .ifcprops file alongside the GLB.');
                 _gcEvent('glb-standalone', base);
@@ -7946,6 +8209,9 @@ function startApp() {
           style=${{...S_BTN,width:'100%',background:dragging?'#1e3a5f':'var(--bg-secondary)',color:dragging?'#93c5fd':'var(--text-secondary)',border:dragging?'2px dashed #3b82f6':'1px dashed var(--border)',display:'flex',alignItems:'center',justifyContent:'center',gap:'.3rem',transition:'all .15s'}}>
           ${loading?html`<span class="spin">⟳</span>`:html`<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/><line x1="12" y1="11" x2="12" y2="17"/><line x1="9" y1="14" x2="15" y2="14"/></svg>`}
         </button>
+        <div style=${{marginTop:'.35rem',fontSize:'0.72rem',color:'var(--text-faint)',lineHeight:1.4,textAlign:'center'}}>
+          For faster loading &amp; clash detection, use <a href="https://github.com/thomhoffer-arch/Ifc2Ifc" target="_blank" rel="noopener" style=${{color:'var(--accent)',textDecoration:'none'}}>Ifc2Ifc</a> to convert your IFC to GLB + sidecar files.
+        </div>
         ${err && html`<div style=${{marginTop:'.4rem',padding:'.4rem',background:'#450a0a',border:'1px solid #7f1d1d',borderRadius:6,fontSize:'0.8rem',color:'#fca5a5',whiteSpace:'pre-line'}}>${err}</div>`}
       </div>
       <div style=${{flex:splitPct,overflowY:'auto',padding:'.4rem',display:'flex',flexDirection:'column',gap:'.25rem',minHeight:0}}>
@@ -15424,6 +15690,17 @@ function startApp() {
     // ── Memory usage monitor (warn at 5 GB) ──
     var memWarnSt = useState(false), showMemWarn=memWarnSt[0], setShowMemWarn=memWarnSt[1];
     window._ccShowMemReport = function(){ setShowMemWarn(true); };
+    // ── PWA install & update state ──
+    var _pwaUpdate = useState(!!window._ccUpdateAvailable), pwaUpdateAvail=_pwaUpdate[0], setPwaUpdateAvail=_pwaUpdate[1];
+    var _pwaInstall = useState(!!_ccInstallPrompt), pwaInstallAvail=_pwaInstall[0], setPwaInstallAvail=_pwaInstall[1];
+    var _pwaDismissed = useState(false), pwaDismissed=_pwaDismissed[0], setPwaDismissed=_pwaDismissed[1];
+    useEffect(function(){
+      function onUpdate(){ setPwaUpdateAvail(true); }
+      function onInstall(){ setPwaInstallAvail(true); }
+      window.addEventListener('cc-update-available', onUpdate);
+      window.addEventListener('cc-install-available', onInstall);
+      return function(){ window.removeEventListener('cc-update-available', onUpdate); window.removeEventListener('cc-install-available', onInstall); };
+    }, []);
     var _memWarnFiredRef = useRef(false);
     useEffect(function(){
       if (!performance.memory) return; // only Chrome/Edge support this API
@@ -15665,6 +15942,17 @@ function startApp() {
       <${TrainingModePopup} d=${d} active=${s.trainingMode} />
       <${TutorialPortal} d=${d} />
       ${showMemWarn && html`<${MemoryWarningModal} s=${s} onDismiss=${function(){setShowMemWarn(false);}} />`}
+      ${!pwaDismissed && (pwaUpdateAvail || pwaInstallAvail) && html`<div style=${{position:'fixed',bottom:'1rem',left:'50%',transform:'translateX(-50%)',zIndex:9999,
+        background:'var(--bg-secondary)',border:'1px solid var(--border)',borderRadius:10,padding:'.6rem 1rem',display:'flex',alignItems:'center',gap:'.75rem',
+        boxShadow:'0 4px 24px rgba(0,0,0,.4)',fontSize:'0.85rem',color:'var(--text-primary)',maxWidth:'90vw'}}>
+        ${pwaUpdateAvail && html`<span>New version available</span>
+          <button onClick=${function(){navigator.serviceWorker.getRegistration().then(function(r){if(r&&r.waiting)r.waiting.postMessage({type:'SKIP_WAITING'});else window.location.reload();});}}
+            style=${{padding:'.3rem .7rem',borderRadius:6,background:'var(--accent)',color:'#fff',fontWeight:600,fontSize:'0.8rem',border:'none',cursor:'pointer',whiteSpace:'nowrap'}}>Update now</button>`}
+        ${!pwaUpdateAvail && pwaInstallAvail && html`<span>Install ClashControl as app</span>
+          <button onClick=${function(){if(_ccInstallPrompt){_ccInstallPrompt.prompt();_ccInstallPrompt.userChoice.then(function(){_ccInstallPrompt=null;setPwaInstallAvail(false);});}}}
+            style=${{padding:'.3rem .7rem',borderRadius:6,background:'var(--accent)',color:'#fff',fontWeight:600,fontSize:'0.8rem',border:'none',cursor:'pointer',whiteSpace:'nowrap'}}>Install</button>`}
+        <button onClick=${function(){setPwaDismissed(true);}} style=${{background:'none',border:'none',color:'var(--text-muted)',cursor:'pointer',fontSize:'1rem',padding:'0 .2rem',lineHeight:1}}>×</button>
+      </div>`}
     </div>`;
   }
 
