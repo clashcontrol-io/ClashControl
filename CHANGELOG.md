@@ -1,5 +1,8 @@
 # Changelog
 
+## v3.4.3 (2026-03-30)
+- Add Revit Direct Connector (WebSocket live link) and Speckle roadmap
+
 ## v3.4.2 (2026-03-30)
 - Re-enable PWA, add GLB Worker geometry extraction, IFC2IFC promotion
 
