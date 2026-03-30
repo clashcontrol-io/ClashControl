@@ -4,19 +4,13 @@
 
 ---
 
-## IMPLEMENT — High-Value Features That Fit ClashControl
+## IMPLEMENTED — Completed Features
 
-### 1. IDS Validation (Information Delivery Specification)
+### 1. IDS Validation (Information Delivery Specification) ✅
 
-**What**: Let users load an `.ids` file (buildingSMART XML standard) and validate their IFC models against it before running clash detection. Check that required properties, classifications, materials, and values are present.
+**Status**: Implemented in v3.4.x
 
-**Why**:
-- No other web-based clash tool does this — major differentiator
-- Prevents false positives from incomplete/bad models (garbage in, garbage out)
-- IDS became an official buildingSMART standard in June 2024, adoption is accelerating
-- Fits single-file architecture — IDS is just XML, parseable with native DOMParser
-- Natural companion to the existing Standards tab
-- Reference implementation exists: OpenAEC-Foundation/OpenAEC-BIM-validator (browser-based IDS checking)
+**What was built**: Users can load `.ids` files and validate IFC models against them. IDS validation results appear as clash-like items in the Clashes tab. State management (`idsValidation`), reducer actions (`IDS_SET_RESULTS`, `IDS_SET_SPECS`, `IDS_RUNNING`), and UI are all in place.
 
 **Key references**:
 - https://github.com/buildingSMART/IDS (285 stars, the spec itself)
@@ -24,16 +18,11 @@
 
 ---
 
-### 2. Model Version Diffing (Visual Change Tracking)
+### 2. Model Version Diffing (Visual Change Tracking) ✅
 
-**What**: When a user reloads an updated IFC file (same filename, new version), automatically detect and visually highlight what changed — added elements (green), removed elements (red), modified elements (yellow). Show a summary: "42 added, 12 removed, 8 modified."
+**Status**: Implemented in v3.4.x
 
-**Why**:
-- ClashControl already has model versioning — this is a natural extension
-- Massively speeds up iterative clash resolution: designers fix clashes, re-export, user instantly sees what changed instead of re-reviewing everything
-- Can be done by comparing element GlobalIds and property hashes between versions
-- No new dependencies needed
-- Inspired by bimrocket's BIM Delta tool and IfcOpenShell's ifcdiff
+**What was built**: When re-running clash detection after model changes, `mergeDetectionResults()` compares new clashes against previous results using identity keys. Clashes are tagged with `_delta: 'new'|'persisting'|'auto_resolved'`. The `deltaState` filter lets users view only new, persisting, or auto-resolved clashes. `changeAware` mode tracks element hashes between runs to detect geometry modifications. `lastDeltaSummary` shows counts of new/persisting/auto-resolved after each run.
 
 **Key references**:
 - https://github.com/bimrocket/bimrocket (82 stars, has BIM Delta tool)
@@ -41,9 +30,30 @@
 
 ---
 
+### 6. Enhanced 2D Markup & Annotation ✅ (partial)
+
+**Status**: Core features implemented in v3.4.x. Export to standalone SVG/PDF not yet done.
+
+**What was built**: DXF and PDF underlay loading, 2D view mode, compare mode, markup tools (line, rect, text, arrow, erase) with color selection. Underlays support positioning, scaling, rotation, opacity, and storey assignment. Markup data is stored in state but not yet persisted across sessions or exportable as standalone files.
+
+**What remains**:
+- Markup persistence across sessions (save to localStorage/IndexedDB)
+- Markup templates
+- Export markups as standalone SVG/PDF
+
+**Key references**:
+- https://github.com/OpenAEC-Foundation/open-2d-studio (12 stars, TypeScript 2D CAD)
+- https://github.com/OpenAEC-Foundation/open-pdf-studio (39 stars, JS PDF editor)
+
+---
+
+## IMPLEMENT — High-Value Features (Not Yet Built)
+
 ### 3. BCF-API Integration (Connected Workflows)
 
 **What**: Add ability to push/pull issues to external BCF servers (BIMcollab, Trimble Connect, OpenProject BIM) via the buildingSMART BCF-API standard, in addition to the existing file-based BCF export.
+
+**Already done**: File-based BCF 2.1 and 3.0 export/import is fully implemented (`exportBCF()`, `importBCF()`). What's missing is the HTTP API integration to push/pull directly to BCF servers without file exchange.
 
 **Why**:
 - Turns ClashControl from a standalone tool into a connected one
@@ -91,23 +101,7 @@
 
 ---
 
-### 6. Enhanced 2D Markup & Annotation Export
-
-**What**: Improve existing markup tools with inspiration from OpenAEC's open-2d-studio. Add markup persistence across sessions, markup templates, and export markups as standalone SVG/PDF.
-
-**Why**:
-- Markup tools already exist but are session-only
-- BIM coordinators need to share annotated clash screenshots in meetings
-- Low effort — extend existing canvas-based markup system
-- PDF export would complement existing BCF and DXF exports
-
-**Key references**:
-- https://github.com/OpenAEC-Foundation/open-2d-studio (12 stars, TypeScript 2D CAD)
-- https://github.com/OpenAEC-Foundation/open-pdf-studio (39 stars, JS PDF editor)
-
----
-
-### 7. Speckle Integration (Load from Speckle)
+### 6. Speckle Integration (Load from Speckle)
 
 **What**: Add a "Load from Speckle" option that connects to a user's Speckle server (cloud or self-hosted) and pulls model geometry + properties directly into ClashControl. This positions ClashControl as the clash detection engine for the Speckle ecosystem, which currently lacks production-ready clash detection.
 
@@ -136,7 +130,7 @@
 
 ---
 
-### 8. Local Clash Detection Engine (Multi-Threaded, Exact Intersection)
+### 7. Local Clash Detection Engine (Multi-Threaded, Exact Intersection)
 
 **What**: A Python service on `localhost:19800` that runs exact mesh-vs-mesh clash detection using all CPU cores. ClashControl sends model geometry + rules via HTTP, the local engine runs multi-threaded triangle intersection using Open3D/trimesh, and returns clash results. Falls back to the browser OBB engine when the server isn't running.
 
@@ -163,7 +157,7 @@
 
 ---
 
-### 9. ArchiCAD Direct Connector
+### 8. ArchiCAD Direct Connector
 
 **What**: A WebSocket connector for ArchiCAD using the same `localhost` pattern as the Revit Direct Connector. Streams model geometry + properties from ArchiCAD to ClashControl over `ws://localhost:19781`, and receives clash results back for highlighting.
 
@@ -190,7 +184,7 @@
 
 ## CONSIDER — High Value but Requires Architecture Changes
 
-### 10. ThatOpen Fragments Migration (moved from #8)
+### 9. ThatOpen Fragments Migration
 
 **What**: Replace the current IFC geometry caching with ThatOpen's Fragments binary format. Convert IFC to Fragments once, store, then load 10x faster on subsequent opens. GPU instancing for identical geometries.
 
@@ -216,7 +210,7 @@
 
 ---
 
-### 11. Point Cloud Overlay (Scan-to-BIM Clashes)
+### 10. Point Cloud Overlay (Scan-to-BIM Clashes)
 
 **What**: Load LAS/LAZ point cloud files alongside IFC models. Overlay laser scans on BIM models to detect as-built vs. as-designed discrepancies.
 
@@ -241,7 +235,7 @@
 
 ---
 
-### 12. Real-Time Multi-User Collaboration
+### 11. Real-Time Multi-User Collaboration
 
 **What**: Multiple users view the same model simultaneously. Shared cursors, shared viewpoints, real-time issue creation/updates via WebRTC or WebSocket.
 
@@ -299,24 +293,29 @@
 
 ## Implementation Priority Roadmap
 
+**Done** ✅
+- ~~Model version diffing~~ — `mergeDetectionResults()`, delta tracking, changeAware mode
+- ~~IDS validation~~ — full IDS XML parser, validation engine, results in Clashes tab
+- ~~2D markup & underlay~~ — DXF/PDF underlays, markup tools (line/rect/text/arrow/erase)
+- ~~BCF file export/import~~ — BCF 2.1 and 3.0 file-based exchange
+- ~~Revit Direct Connector (browser side)~~ — WebSocket receiver, push clashes back
+
 **Phase 1 — Quick Wins (no architecture changes)**
-1. Model version diffing
-2. IDS validation
-3. bSDD property lookup
-4. BCF-API push/pull
+1. BCF-API push/pull (HTTP integration with BCF servers)
+2. bSDD property lookup
+3. Markup persistence + SVG/PDF export (extend existing markup tools)
 
 **Phase 2 — Medium Effort**
-5. Rule-based model checking
-6. Enhanced markup persistence & export
-7. Speckle integration (Load from Speckle)
-8. Local clash detection engine (multi-threaded, exact intersection)
-9. ArchiCAD direct connector
+4. Rule-based model checking
+5. Speckle integration (Load from Speckle)
+6. Local clash detection engine (multi-threaded, exact intersection)
+7. ArchiCAD direct connector
 
 **Phase 3 — Architecture Evolution**
-10. ThatOpen Fragments migration (if single-file constraint is relaxed)
-11. Point cloud visualization (overlay only)
-12. Shared viewpoint links
-13. Three.js version upgrade
+8. ThatOpen Fragments migration (if single-file constraint is relaxed)
+9. Point cloud visualization (overlay only)
+10. Shared viewpoint links
+11. Three.js version upgrade
 
 ---
 
