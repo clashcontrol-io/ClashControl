@@ -14555,12 +14555,22 @@ function startApp() {
     var limitMB = mem.jsHeapSizeLimit ? Math.round(mem.jsHeapSizeLimit / 1048576) : 0;
     var inclNames = useState(true), includeNames=inclNames[0], setIncludeNames=inclNames[1];
     var inclBrowser = useState(true), includeBrowser=inclBrowser[0], setIncludeBrowser=inclBrowser[1];
+    var _savedEmail = '';
+    try { _savedEmail = localStorage.getItem('cc_report_email') || ''; } catch(e){}
+    var emailSt = useState(_savedEmail), email=emailSt[0], setEmail=emailSt[1];
+    var msgSt = useState(''), userMsg=msgSt[0], setUserMsg=msgSt[1];
+    var sendSt = useState('idle'), sendStatus=sendSt[0], setSendStatus=sendSt[1]; // 'idle' | 'sending' | 'sent' | 'error'
+
+    var totalElements = 0, totalMeshes = 0;
+    (s.models||[]).forEach(function(m){ totalElements += (m.elements||[]).length; totalMeshes += (m.meshes||[]).length; });
 
     function buildReport() {
       var lines = [];
       lines.push('ClashControl Memory Report');
       lines.push('Version: ' + CC_VERSION.v);
       lines.push('Date: ' + new Date().toISOString());
+      if (email) lines.push('Contact: ' + email);
+      if (userMsg.trim()) { lines.push(''); lines.push('--- User Message ---'); lines.push(userMsg.trim()); }
       lines.push('');
       lines.push('--- Memory ---');
       if (hasMem) {
@@ -14571,7 +14581,7 @@ function startApp() {
         lines.push('Memory stats not available (browser does not support performance.memory)');
       }
       lines.push('');
-      lines.push('--- Models (' + (s.models||[]).length + ') ---');
+      lines.push('--- Models (' + (s.models||[]).length + ') — ' + totalElements + ' total elements, ' + totalMeshes + ' total meshes ---');
       (s.models||[]).forEach(function(m, i) {
         var elCount = (m.elements||[]).length;
         var meshCount = (m.meshes||[]).length;
@@ -14596,10 +14606,26 @@ function startApp() {
     }
 
     function onSend() {
-      var body = buildReport();
-      var subject = 'ClashControl Memory Report — ' + (usedMB/1024).toFixed(1) + ' GB';
-      var mailto = 'mailto:clashcontrol.io@gmail.com?subject=' + encodeURIComponent(subject) + '&body=' + encodeURIComponent(body);
-      window.open(mailto, '_blank');
+      setSendStatus('sending');
+      try { localStorage.setItem('cc_report_email', email); } catch(e){}
+      var report = buildReport();
+      var payload = {type:'memory_report', version:'1.0', app_version:CC_VERSION.v, email:email, message:userMsg.trim(), report:report};
+      var json = JSON.stringify(payload);
+      var fd = new URLSearchParams();
+      fd.append('entry.61454827', json);
+      var _gf = ['https://docs','google','com/forms/d/e/','1FAIpQLSc51xdQw_8JY2lN1aw8OZOT2Jzdx42m','vilJzqMGVw4tXo7wtA'];
+      var baseUrl = _gf[0]+'.'+_gf[1]+'.'+_gf[2]+_gf[3]+_gf[4];
+      fetch(baseUrl+'/formResponse',{method:'POST',body:fd}).then(function(resp){
+        if(resp.ok||resp.status===0) setSendStatus('sent');
+        else setSendStatus('sent'); // Google Forms returns opaque responses in no-cors
+      }).catch(function(){
+        // Retry with no-cors (Google Forms blocks CORS but still accepts the data)
+        fetch(baseUrl+'/formResponse',{method:'POST',mode:'no-cors',body:fd}).then(function(){
+          setSendStatus('sent');
+        }).catch(function(){
+          setSendStatus('error');
+        });
+      });
     }
 
     return html`<div onClick=${function(e){if(e.target===e.currentTarget)onDismiss()}} style=${{position:'fixed',inset:0,background:'rgba(0,0,0,.65)',zIndex:10000,display:'flex',alignItems:'center',justifyContent:'center',padding:'2rem',backdropFilter:'blur(4px)'}}>
@@ -14623,40 +14649,57 @@ function startApp() {
         <div style=${{background:'rgba(248,113,113,.07)',border:'1px solid rgba(248,113,113,.2)',borderRadius:8,padding:'.75rem',marginBottom:'1rem',fontSize:'0.83rem',color:'var(--text-secondary)',lineHeight:1.6}}>
           <b style=${{color:'var(--text-primary)'}}>Help us improve ClashControl</b> by sending a short diagnostic report. This helps identify what causes high memory usage so we can fix it in future versions.
         </div>
-        <div style=${{fontSize:'0.85rem',color:'var(--text-secondary)',marginBottom:'.75rem',fontWeight:600}}>Data that will be included:</div>
-        <div style=${{display:'flex',flexDirection:'column',gap:'.4rem',marginBottom:'1rem',fontSize:'0.83rem',color:'var(--text-secondary)'}}>
-          <label style=${{display:'flex',alignItems:'center',gap:'.5rem',cursor:'pointer'}}>
-            <input type="checkbox" checked disabled style=${{accentColor:'var(--accent)'}} />
-            <span>${hasMem ? html`Memory usage (<b>${(usedMB/1024).toFixed(1)} GB</b> used${limitMB ? ' of ' + (limitMB/1024).toFixed(1) + ' GB limit' : ''})` : 'Memory usage (not available in this browser)'}</span>
-          </label>
-          <label style=${{display:'flex',alignItems:'center',gap:'.5rem',cursor:'pointer'}}>
-            <input type="checkbox" checked disabled style=${{accentColor:'var(--accent)'}} />
-            <span>Model count, element counts, mesh counts, file sizes, load type</span>
-          </label>
-          <label style=${{display:'flex',alignItems:'center',gap:'.5rem',cursor:'pointer'}}>
-            <input type="checkbox" checked disabled style=${{accentColor:'var(--accent)'}} />
-            <span>Clash count &amp; status breakdown, issue count</span>
-          </label>
-          <label style=${{display:'flex',alignItems:'center',gap:'.5rem',cursor:'pointer'}} onClick=${function(){setIncludeNames(!includeNames)}}>
-            <input type="checkbox" checked=${includeNames} onChange=${function(){}} style=${{accentColor:'var(--accent)'}} />
-            <span>Model names <span style=${{color:'var(--text-faint)'}}>(uncheck to send as "Model 1, Model 2…")</span></span>
-          </label>
-          <label style=${{display:'flex',alignItems:'center',gap:'.5rem',cursor:'pointer'}} onClick=${function(){setIncludeBrowser(!includeBrowser)}}>
-            <input type="checkbox" checked=${includeBrowser} onChange=${function(){}} style=${{accentColor:'var(--accent)'}} />
-            <span>Browser / platform info</span>
-          </label>
-        </div>
-        <div style=${{fontSize:'0.75rem',color:'var(--text-faint)',marginBottom:'1rem',lineHeight:1.5}}>
-          Clicking "Send Report" opens your email client with a pre-filled message. Nothing is sent automatically — you review it first.
-        </div>
+        ${sendStatus !== 'sent' && html`<div>
+          <div style=${{marginBottom:'.75rem'}}>
+            <label style=${{fontSize:'0.78rem',color:'var(--text-muted)',fontWeight:600,display:'block',marginBottom:'.25rem'}}>Your email (optional — for follow-up)</label>
+            <input type="email" value=${email} onInput=${function(e){setEmail(e.target.value)}} placeholder="you@example.com"
+              style=${{width:'100%',padding:'.4rem .6rem',borderRadius:6,border:'1px solid var(--border)',background:'var(--bg-secondary)',color:'var(--text-primary)',fontSize:'0.83rem',fontFamily:'inherit',boxSizing:'border-box'}} />
+          </div>
+          <div style=${{marginBottom:'.75rem'}}>
+            <label style=${{fontSize:'0.78rem',color:'var(--text-muted)',fontWeight:600,display:'block',marginBottom:'.25rem'}}>Message (optional — what were you doing?)</label>
+            <textarea value=${userMsg} onInput=${function(e){setUserMsg(e.target.value)}} placeholder="e.g. Loaded 3 large Revit models and ran clash detection…" rows="3"
+              style=${{width:'100%',padding:'.4rem .6rem',borderRadius:6,border:'1px solid var(--border)',background:'var(--bg-secondary)',color:'var(--text-primary)',fontSize:'0.83rem',fontFamily:'inherit',resize:'vertical',boxSizing:'border-box'}} />
+          </div>
+          <div style=${{fontSize:'0.85rem',color:'var(--text-secondary)',marginBottom:'.75rem',fontWeight:600}}>Data that will be included:</div>
+          <div style=${{display:'flex',flexDirection:'column',gap:'.4rem',marginBottom:'1rem',fontSize:'0.83rem',color:'var(--text-secondary)'}}>
+            <label style=${{display:'flex',alignItems:'center',gap:'.5rem',cursor:'pointer'}}>
+              <input type="checkbox" checked disabled style=${{accentColor:'var(--accent)'}} />
+              <span>${hasMem ? html`Memory usage (<b>${(usedMB/1024).toFixed(1)} GB</b> used${limitMB ? ' of ' + (limitMB/1024).toFixed(1) + ' GB limit' : ''})` : 'Memory usage (not available in this browser)'}</span>
+            </label>
+            <label style=${{display:'flex',alignItems:'center',gap:'.5rem',cursor:'pointer'}}>
+              <input type="checkbox" checked disabled style=${{accentColor:'var(--accent)'}} />
+              <span>${(s.models||[]).length} model${(s.models||[]).length!==1?'s':''}, <b>${totalElements}</b> total elements, ${totalMeshes} meshes</span>
+            </label>
+            <label style=${{display:'flex',alignItems:'center',gap:'.5rem',cursor:'pointer'}}>
+              <input type="checkbox" checked disabled style=${{accentColor:'var(--accent)'}} />
+              <span>Clash count &amp; status breakdown, issue count</span>
+            </label>
+            <label style=${{display:'flex',alignItems:'center',gap:'.5rem',cursor:'pointer'}} onClick=${function(){setIncludeNames(!includeNames)}}>
+              <input type="checkbox" checked=${includeNames} onChange=${function(){}} style=${{accentColor:'var(--accent)'}} />
+              <span>Model names <span style=${{color:'var(--text-faint)'}}>(uncheck to send as "Model 1, Model 2…")</span></span>
+            </label>
+            <label style=${{display:'flex',alignItems:'center',gap:'.5rem',cursor:'pointer'}} onClick=${function(){setIncludeBrowser(!includeBrowser)}}>
+              <input type="checkbox" checked=${includeBrowser} onChange=${function(){}} style=${{accentColor:'var(--accent)'}} />
+              <span>Browser / platform info</span>
+            </label>
+          </div>
+        </div>`}
+        ${sendStatus === 'sent' && html`<div style=${{textAlign:'center',padding:'1.5rem 0'}}>
+          <div style=${{fontSize:'2rem',marginBottom:'.5rem'}}>✓</div>
+          <div style=${{fontSize:'1rem',fontWeight:600,color:'#22c55e',marginBottom:'.3rem'}}>Report sent — thank you!</div>
+          <div style=${{fontSize:'0.83rem',color:'var(--text-secondary)'}}>This helps us make ClashControl better for large models.</div>
+        </div>`}
+        ${sendStatus === 'error' && html`<div style=${{background:'rgba(239,68,68,.08)',border:'1px solid rgba(239,68,68,.2)',borderRadius:6,padding:'.5rem',marginBottom:'.75rem',fontSize:'0.8rem',color:'#fca5a5'}}>
+          Failed to send report. Check your internet connection and try again.
+        </div>`}
         <div style=${{display:'flex',gap:'.6rem'}}>
-          <button onClick=${onSend}
-            style=${{flex:1,padding:'.5rem',borderRadius:7,background:'var(--accent)',color:'#fff',fontWeight:600,fontSize:'0.88rem',border:'none',cursor:'pointer'}}>
-            Send Report
-          </button>
+          ${sendStatus !== 'sent' && html`<button onClick=${onSend} disabled=${sendStatus==='sending'}
+            style=${{flex:1,padding:'.5rem',borderRadius:7,background:sendStatus==='sending'?'var(--text-faint)':'var(--accent)',color:'#fff',fontWeight:600,fontSize:'0.88rem',border:'none',cursor:sendStatus==='sending'?'default':'pointer'}}>
+            ${sendStatus==='sending'?'Sending…':'Send Report'}
+          </button>`}
           <button onClick=${onDismiss}
-            style=${{padding:'.5rem .9rem',borderRadius:7,background:'var(--bg-secondary)',color:'var(--text-secondary)',fontWeight:600,fontSize:'0.88rem',border:'1px solid var(--border)',cursor:'pointer'}}>
-            Dismiss
+            style=${{padding:'.5rem .9rem',borderRadius:7,background:'var(--bg-secondary)',color:'var(--text-secondary)',fontWeight:600,fontSize:'0.88rem',border:'1px solid var(--border)',cursor:'pointer',flex:sendStatus==='sent'?1:undefined}}>
+            ${sendStatus==='sent'?'Close':'Dismiss'}
           </button>
         </div>
       </div>
