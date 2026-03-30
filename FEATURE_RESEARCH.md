@@ -136,9 +136,61 @@
 
 ---
 
+### 8. Local Clash Detection Engine (Multi-Threaded, Exact Intersection)
+
+**What**: A Python service on `localhost:19800` that runs exact mesh-vs-mesh clash detection using all CPU cores. ClashControl sends model geometry + rules via HTTP, the local engine runs multi-threaded triangle intersection using Open3D/trimesh, and returns clash results. Falls back to the browser OBB engine when the server isn't running.
+
+**Why**:
+- Browser JS engine is single-threaded — 10K × 10K element models take 60s+ or OOM
+- Approximate OBB intersection misses edge cases and can't compute exact penetration depth or intersection volume
+- Local engine uses `ProcessPoolExecutor` across all CPU cores — 5-10x faster
+- Exact mesh boolean operations give true intersection volume and penetration depth
+- No architecture change to ClashControl — just an alternative code path for `detectClashesAsync()`
+- Same clash result shape — the UI, 3D viewer, BCF export all work without changes
+- CSP already allows `http://localhost:*` — no changes needed
+
+**Implementation approach**:
+- Python server with `http.server` + `websockets` for progress updates
+- `trimesh` for mesh operations + BVH, `open3d` for boolean intersection
+- Broad phase: vectorized sweep-and-prune with NumPy
+- Narrow phase: parallel exact triangle-triangle intersection via `ProcessPoolExecutor`
+- ClashControl checks `GET /status` on load to detect if engine is available
+- See `LOCAL_ENGINE_GUIDE.md` for the complete build specification
+
+**Key references**:
+- https://github.com/mikedh/trimesh (2,800+ stars, mesh processing)
+- https://github.com/isl-org/Open3D (11,000+ stars, 3D data processing)
+
+---
+
+### 9. ArchiCAD Direct Connector
+
+**What**: A WebSocket connector for ArchiCAD using the same `localhost` pattern as the Revit Direct Connector. Streams model geometry + properties from ArchiCAD to ClashControl over `ws://localhost:19781`, and receives clash results back for highlighting.
+
+**Why**:
+- ArchiCAD is the second most popular BIM authoring tool globally
+- ArchiCAD has a built-in [JSON API](https://archicadapi.graphisoft.com/) that is much easier to work with than Revit's .NET API — can potentially be done as a Python script rather than a compiled plugin
+- Same WebSocket protocol as Revit connector — `model-start`, `element-batch`, `model-end`, `highlight`, `push-clashes`
+- Same clash result flow — no changes to ClashControl's detection or UI
+- Expands ClashControl's reach to ArchiCAD users who currently must export IFC
+
+**Implementation approach**:
+- Python or C++ add-on using ArchiCAD's JSON API / Add-On SDK
+- WebSocket server on `localhost:19781`
+- Geometry extraction via ArchiCAD's 3D model API (tessellated bodies)
+- Property extraction via element properties API
+- Coordinate conversion: ArchiCAD is millimeters, Z-up → meters, Y-up
+- Same message protocol as Revit connector
+
+**Key references**:
+- https://archicadapi.graphisoft.com/ (official API documentation)
+- https://github.com/nicklein/bim-whale (ArchiCAD automation examples)
+
+---
+
 ## CONSIDER — High Value but Requires Architecture Changes
 
-### 8. ThatOpen Fragments Migration
+### 10. ThatOpen Fragments Migration (moved from #8)
 
 **What**: Replace the current IFC geometry caching with ThatOpen's Fragments binary format. Convert IFC to Fragments once, store, then load 10x faster on subsequent opens. GPU instancing for identical geometries.
 
@@ -164,7 +216,7 @@
 
 ---
 
-### 9. Point Cloud Overlay (Scan-to-BIM Clashes)
+### 11. Point Cloud Overlay (Scan-to-BIM Clashes)
 
 **What**: Load LAS/LAZ point cloud files alongside IFC models. Overlay laser scans on BIM models to detect as-built vs. as-designed discrepancies.
 
@@ -189,7 +241,7 @@
 
 ---
 
-### 10. Real-Time Multi-User Collaboration
+### 12. Real-Time Multi-User Collaboration
 
 **What**: Multiple users view the same model simultaneously. Shared cursors, shared viewpoints, real-time issue creation/updates via WebRTC or WebSocket.
 
@@ -257,12 +309,14 @@
 5. Rule-based model checking
 6. Enhanced markup persistence & export
 7. Speckle integration (Load from Speckle)
-8. Point cloud visualization (overlay only)
+8. Local clash detection engine (multi-threaded, exact intersection)
+9. ArchiCAD direct connector
 
 **Phase 3 — Architecture Evolution**
-9. ThatOpen Fragments migration (if single-file constraint is relaxed)
-10. Shared viewpoint links
-11. Three.js version upgrade
+10. ThatOpen Fragments migration (if single-file constraint is relaxed)
+11. Point cloud visualization (overlay only)
+12. Shared viewpoint links
+13. Three.js version upgrade
 
 ---
 
