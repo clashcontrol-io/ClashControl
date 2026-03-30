@@ -1,5 +1,8 @@
 # Changelog
 
+## v3.4.1 (2026-03-30)
+- Fix crash: pass _wlAdd to makeOrbit to fix scope error
+
 ## v3.4.0 (2026-03-29)
 - Revert Ifc2Ifc references back to thomhoffer-arch
 
