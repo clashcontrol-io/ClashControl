@@ -14555,77 +14555,53 @@ function startApp() {
     var limitMB = mem.jsHeapSizeLimit ? Math.round(mem.jsHeapSizeLimit / 1048576) : 0;
     var inclNames = useState(true), includeNames=inclNames[0], setIncludeNames=inclNames[1];
     var inclBrowser = useState(true), includeBrowser=inclBrowser[0], setIncludeBrowser=inclBrowser[1];
-    var _savedEmail = '';
-    try { _savedEmail = localStorage.getItem('cc_report_email') || ''; } catch(e){}
-    var emailSt = useState(_savedEmail), email=emailSt[0], setEmail=emailSt[1];
     var msgSt = useState(''), userMsg=msgSt[0], setUserMsg=msgSt[1];
-    var sendSt = useState('idle'), sendStatus=sendSt[0], setSendStatus=sendSt[1]; // 'idle' | 'sending' | 'sent' | 'error'
 
     var totalElements = 0, totalMeshes = 0;
     (s.models||[]).forEach(function(m){ totalElements += (m.elements||[]).length; totalMeshes += (m.meshes||[]).length; });
 
-    function buildReport() {
+    function onSend() {
       var lines = [];
-      lines.push('ClashControl Memory Report');
-      lines.push('Version: ' + CC_VERSION.v);
-      lines.push('Date: ' + new Date().toISOString());
-      if (email) lines.push('Contact: ' + email);
-      if (userMsg.trim()) { lines.push(''); lines.push('--- User Message ---'); lines.push(userMsg.trim()); }
+      lines.push('## Memory Report');
       lines.push('');
-      lines.push('--- Memory ---');
+      if (userMsg.trim()) { lines.push('### What were you doing?'); lines.push(userMsg.trim()); lines.push(''); }
+      lines.push('### Memory');
       if (hasMem) {
-        lines.push('Used JS Heap: ' + (usedMB / 1024).toFixed(2) + ' GB (' + usedMB + ' MB)');
-        lines.push('Total JS Heap: ' + (totalMB / 1024).toFixed(2) + ' GB (' + totalMB + ' MB)');
-        if (limitMB) lines.push('Heap Limit: ' + (limitMB / 1024).toFixed(2) + ' GB');
+        lines.push('- **Used JS Heap**: ' + (usedMB / 1024).toFixed(2) + ' GB (' + usedMB + ' MB)');
+        lines.push('- **Total JS Heap**: ' + (totalMB / 1024).toFixed(2) + ' GB (' + totalMB + ' MB)');
+        if (limitMB) lines.push('- **Heap Limit**: ' + (limitMB / 1024).toFixed(2) + ' GB');
       } else {
         lines.push('Memory stats not available (browser does not support performance.memory)');
       }
       lines.push('');
-      lines.push('--- Models (' + (s.models||[]).length + ') — ' + totalElements + ' total elements, ' + totalMeshes + ' total meshes ---');
+      lines.push('### Models (' + (s.models||[]).length + ') — ' + totalElements + ' total elements, ' + totalMeshes + ' total meshes');
       (s.models||[]).forEach(function(m, i) {
         var elCount = (m.elements||[]).length;
         var meshCount = (m.meshes||[]).length;
         var sizeMB = m.stats && m.stats.fileSize ? (m.stats.fileSize/1048576).toFixed(1) + ' MB' : 'unknown size';
         var loadType = m.stats && m.stats.loadType ? m.stats.loadType : '?';
         var name = includeNames ? m.name : 'Model ' + (i+1);
-        lines.push('  [' + (i+1) + '] ' + name + ' — ' + elCount + ' elements, ' + meshCount + ' meshes, ' + sizeMB + ', type: ' + loadType);
+        lines.push('- ' + name + ' — ' + elCount + ' elements, ' + meshCount + ' meshes, ' + sizeMB + ', type: ' + loadType);
       });
       lines.push('');
-      lines.push('--- Clashes (' + (s.clashes||[]).length + ' total) ---');
+      lines.push('### Clashes (' + (s.clashes||[]).length + ' total)');
       var byStatus = {};
       (s.clashes||[]).forEach(function(c){ byStatus[c.status]=(byStatus[c.status]||0)+1; });
-      Object.keys(byStatus).forEach(function(k){ lines.push('  ' + k + ': ' + byStatus[k]); });
+      Object.keys(byStatus).forEach(function(k){ lines.push('- ' + k + ': ' + byStatus[k]); });
       lines.push('');
-      lines.push('--- Issues (' + (s.issues||[]).length + ') ---');
+      lines.push('### Issues: ' + (s.issues||[]).length);
       if (includeBrowser) {
         lines.push('');
-        lines.push('--- Browser ---');
-        lines.push(navigator.userAgent);
+        lines.push('### Browser');
+        lines.push('`' + navigator.userAgent + '`');
       }
-      return lines.join('\n');
-    }
-
-    function onSend() {
-      setSendStatus('sending');
-      try { localStorage.setItem('cc_report_email', email); } catch(e){}
-      var report = buildReport();
-      var payload = {type:'memory_report', version:'1.0', app_version:CC_VERSION.v, email:email, message:userMsg.trim(), report:report};
-      var json = JSON.stringify(payload);
-      var fd = new URLSearchParams();
-      fd.append('entry.61454827', json);
-      var _gf = ['https://docs','google','com/forms/d/e/','1FAIpQLSc51xdQw_8JY2lN1aw8OZOT2Jzdx42m','vilJzqMGVw4tXo7wtA'];
-      var baseUrl = _gf[0]+'.'+_gf[1]+'.'+_gf[2]+_gf[3]+_gf[4];
-      fetch(baseUrl+'/formResponse',{method:'POST',body:fd}).then(function(resp){
-        if(resp.ok||resp.status===0) setSendStatus('sent');
-        else setSendStatus('sent'); // Google Forms returns opaque responses in no-cors
-      }).catch(function(){
-        // Retry with no-cors (Google Forms blocks CORS but still accepts the data)
-        fetch(baseUrl+'/formResponse',{method:'POST',mode:'no-cors',body:fd}).then(function(){
-          setSendStatus('sent');
-        }).catch(function(){
-          setSendStatus('error');
-        });
-      });
+      lines.push('');
+      lines.push('### Environment');
+      lines.push('- **ClashControl version**: ' + CC_VERSION.v);
+      lines.push('- **Date**: ' + new Date().toISOString());
+      var body = lines.join('\n');
+      var title = '[Memory] ' + (hasMem ? (usedMB/1024).toFixed(1) + ' GB — ' : '') + totalElements + ' elements across ' + (s.models||[]).length + ' model' + ((s.models||[]).length!==1?'s':'');
+      window.open('https://github.com/clashcontrol-io/clash-control/issues/new?template=memory_report.md&title=' + encodeURIComponent(title) + '&body=' + encodeURIComponent(body), '_blank');
     }
 
     return html`<div onClick=${function(e){if(e.target===e.currentTarget)onDismiss()}} style=${{position:'fixed',inset:0,background:'rgba(0,0,0,.65)',zIndex:10000,display:'flex',alignItems:'center',justifyContent:'center',padding:'2rem',backdropFilter:'blur(4px)'}}>
@@ -14647,59 +14623,44 @@ function startApp() {
           </div>
         </div>
         <div style=${{background:'rgba(248,113,113,.07)',border:'1px solid rgba(248,113,113,.2)',borderRadius:8,padding:'.75rem',marginBottom:'1rem',fontSize:'0.83rem',color:'var(--text-secondary)',lineHeight:1.6}}>
-          <b style=${{color:'var(--text-primary)'}}>Help us improve ClashControl</b> by sending a short diagnostic report. This helps identify what causes high memory usage so we can fix it in future versions.
+          <b style=${{color:'var(--text-primary)'}}>Help us improve ClashControl</b> by sending a short diagnostic report. Clicking "Send Report" opens a pre-filled GitHub issue where you can review the data before submitting.
         </div>
-        ${sendStatus !== 'sent' && html`<div>
-          <div style=${{marginBottom:'.75rem'}}>
-            <label style=${{fontSize:'0.78rem',color:'var(--text-muted)',fontWeight:600,display:'block',marginBottom:'.25rem'}}>Your email (optional — for follow-up)</label>
-            <input type="email" value=${email} onInput=${function(e){setEmail(e.target.value)}} placeholder="you@example.com"
-              style=${{width:'100%',padding:'.4rem .6rem',borderRadius:6,border:'1px solid var(--border)',background:'var(--bg-secondary)',color:'var(--text-primary)',fontSize:'0.83rem',fontFamily:'inherit',boxSizing:'border-box'}} />
-          </div>
-          <div style=${{marginBottom:'.75rem'}}>
-            <label style=${{fontSize:'0.78rem',color:'var(--text-muted)',fontWeight:600,display:'block',marginBottom:'.25rem'}}>Message (optional — what were you doing?)</label>
-            <textarea value=${userMsg} onInput=${function(e){setUserMsg(e.target.value)}} placeholder="e.g. Loaded 3 large Revit models and ran clash detection…" rows="3"
-              style=${{width:'100%',padding:'.4rem .6rem',borderRadius:6,border:'1px solid var(--border)',background:'var(--bg-secondary)',color:'var(--text-primary)',fontSize:'0.83rem',fontFamily:'inherit',resize:'vertical',boxSizing:'border-box'}} />
-          </div>
-          <div style=${{fontSize:'0.85rem',color:'var(--text-secondary)',marginBottom:'.75rem',fontWeight:600}}>Data that will be included:</div>
-          <div style=${{display:'flex',flexDirection:'column',gap:'.4rem',marginBottom:'1rem',fontSize:'0.83rem',color:'var(--text-secondary)'}}>
-            <label style=${{display:'flex',alignItems:'center',gap:'.5rem',cursor:'pointer'}}>
-              <input type="checkbox" checked disabled style=${{accentColor:'var(--accent)'}} />
-              <span>${hasMem ? html`Memory usage (<b>${(usedMB/1024).toFixed(1)} GB</b> used${limitMB ? ' of ' + (limitMB/1024).toFixed(1) + ' GB limit' : ''})` : 'Memory usage (not available in this browser)'}</span>
-            </label>
-            <label style=${{display:'flex',alignItems:'center',gap:'.5rem',cursor:'pointer'}}>
-              <input type="checkbox" checked disabled style=${{accentColor:'var(--accent)'}} />
-              <span>${(s.models||[]).length} model${(s.models||[]).length!==1?'s':''}, <b>${totalElements}</b> total elements, ${totalMeshes} meshes</span>
-            </label>
-            <label style=${{display:'flex',alignItems:'center',gap:'.5rem',cursor:'pointer'}}>
-              <input type="checkbox" checked disabled style=${{accentColor:'var(--accent)'}} />
-              <span>Clash count &amp; status breakdown, issue count</span>
-            </label>
-            <label style=${{display:'flex',alignItems:'center',gap:'.5rem',cursor:'pointer'}} onClick=${function(){setIncludeNames(!includeNames)}}>
-              <input type="checkbox" checked=${includeNames} onChange=${function(){}} style=${{accentColor:'var(--accent)'}} />
-              <span>Model names <span style=${{color:'var(--text-faint)'}}>(uncheck to send as "Model 1, Model 2…")</span></span>
-            </label>
-            <label style=${{display:'flex',alignItems:'center',gap:'.5rem',cursor:'pointer'}} onClick=${function(){setIncludeBrowser(!includeBrowser)}}>
-              <input type="checkbox" checked=${includeBrowser} onChange=${function(){}} style=${{accentColor:'var(--accent)'}} />
-              <span>Browser / platform info</span>
-            </label>
-          </div>
-        </div>`}
-        ${sendStatus === 'sent' && html`<div style=${{textAlign:'center',padding:'1.5rem 0'}}>
-          <div style=${{fontSize:'2rem',marginBottom:'.5rem'}}>✓</div>
-          <div style=${{fontSize:'1rem',fontWeight:600,color:'#22c55e',marginBottom:'.3rem'}}>Report sent — thank you!</div>
-          <div style=${{fontSize:'0.83rem',color:'var(--text-secondary)'}}>This helps us make ClashControl better for large models.</div>
-        </div>`}
-        ${sendStatus === 'error' && html`<div style=${{background:'rgba(239,68,68,.08)',border:'1px solid rgba(239,68,68,.2)',borderRadius:6,padding:'.5rem',marginBottom:'.75rem',fontSize:'0.8rem',color:'#fca5a5'}}>
-          Failed to send report. Check your internet connection and try again.
-        </div>`}
+        <div style=${{marginBottom:'.75rem'}}>
+          <label style=${{fontSize:'0.78rem',color:'var(--text-muted)',fontWeight:600,display:'block',marginBottom:'.25rem'}}>What were you doing? (optional)</label>
+          <textarea value=${userMsg} onInput=${function(e){setUserMsg(e.target.value)}} placeholder="e.g. Loaded 3 large Revit models and ran clash detection…" rows="3"
+            style=${{width:'100%',padding:'.4rem .6rem',borderRadius:6,border:'1px solid var(--border)',background:'var(--bg-secondary)',color:'var(--text-primary)',fontSize:'0.83rem',fontFamily:'inherit',resize:'vertical',boxSizing:'border-box'}} />
+        </div>
+        <div style=${{fontSize:'0.85rem',color:'var(--text-secondary)',marginBottom:'.75rem',fontWeight:600}}>Data that will be included:</div>
+        <div style=${{display:'flex',flexDirection:'column',gap:'.4rem',marginBottom:'1rem',fontSize:'0.83rem',color:'var(--text-secondary)'}}>
+          <label style=${{display:'flex',alignItems:'center',gap:'.5rem',cursor:'pointer'}}>
+            <input type="checkbox" checked disabled style=${{accentColor:'var(--accent)'}} />
+            <span>${hasMem ? html`Memory usage (<b>${(usedMB/1024).toFixed(1)} GB</b> used${limitMB ? ' of ' + (limitMB/1024).toFixed(1) + ' GB limit' : ''})` : 'Memory usage (not available in this browser)'}</span>
+          </label>
+          <label style=${{display:'flex',alignItems:'center',gap:'.5rem',cursor:'pointer'}}>
+            <input type="checkbox" checked disabled style=${{accentColor:'var(--accent)'}} />
+            <span>${(s.models||[]).length} model${(s.models||[]).length!==1?'s':''}, <b>${totalElements}</b> total elements, ${totalMeshes} meshes</span>
+          </label>
+          <label style=${{display:'flex',alignItems:'center',gap:'.5rem',cursor:'pointer'}}>
+            <input type="checkbox" checked disabled style=${{accentColor:'var(--accent)'}} />
+            <span>Clash count &amp; status breakdown, issue count</span>
+          </label>
+          <label style=${{display:'flex',alignItems:'center',gap:'.5rem',cursor:'pointer'}} onClick=${function(){setIncludeNames(!includeNames)}}>
+            <input type="checkbox" checked=${includeNames} onChange=${function(){}} style=${{accentColor:'var(--accent)'}} />
+            <span>Model names <span style=${{color:'var(--text-faint)'}}>(uncheck to send as "Model 1, Model 2…")</span></span>
+          </label>
+          <label style=${{display:'flex',alignItems:'center',gap:'.5rem',cursor:'pointer'}} onClick=${function(){setIncludeBrowser(!includeBrowser)}}>
+            <input type="checkbox" checked=${includeBrowser} onChange=${function(){}} style=${{accentColor:'var(--accent)'}} />
+            <span>Browser / platform info</span>
+          </label>
+        </div>
         <div style=${{display:'flex',gap:'.6rem'}}>
-          ${sendStatus !== 'sent' && html`<button onClick=${onSend} disabled=${sendStatus==='sending'}
-            style=${{flex:1,padding:'.5rem',borderRadius:7,background:sendStatus==='sending'?'var(--text-faint)':'var(--accent)',color:'#fff',fontWeight:600,fontSize:'0.88rem',border:'none',cursor:sendStatus==='sending'?'default':'pointer'}}>
-            ${sendStatus==='sending'?'Sending…':'Send Report'}
-          </button>`}
+          <button onClick=${onSend}
+            style=${{flex:1,padding:'.5rem',borderRadius:7,background:'var(--accent)',color:'#fff',fontWeight:600,fontSize:'0.88rem',border:'none',cursor:'pointer'}}>
+            Send Report
+          </button>
           <button onClick=${onDismiss}
-            style=${{padding:'.5rem .9rem',borderRadius:7,background:'var(--bg-secondary)',color:'var(--text-secondary)',fontWeight:600,fontSize:'0.88rem',border:'1px solid var(--border)',cursor:'pointer',flex:sendStatus==='sent'?1:undefined}}>
-            ${sendStatus==='sent'?'Close':'Dismiss'}
+            style=${{padding:'.5rem .9rem',borderRadius:7,background:'var(--bg-secondary)',color:'var(--text-secondary)',fontWeight:600,fontSize:'0.88rem',border:'1px solid var(--border)',cursor:'pointer'}}>
+            Dismiss
           </button>
         </div>
       </div>
@@ -14805,7 +14766,31 @@ function startApp() {
 
           <!-- Feedback & links -->
           <div style=${{borderTop:'1px solid var(--border-subtle)',marginTop:'.8rem',paddingTop:'.8rem',display:'flex',gap:'.5rem',flexWrap:'wrap'}}>
-            <a href="https://github.com/clashcontrol-io/clash-control/issues/new?template=bug_report.md" target="_blank" rel="noopener"
+            <a href="#" onClick=${function(e){
+              e.preventDefault();
+              var _s = window._ccLatestState || s;
+              var models = _s.models || [];
+              var totalEls = 0, totalMeshes = 0;
+              models.forEach(function(m){ totalEls += (m.elements||[]).length; totalMeshes += (m.meshes||[]).length; });
+              var memStr = performance.memory ? (performance.memory.usedJSHeapSize/1073741824).toFixed(1) + ' GB' : 'N/A';
+              var env = [];
+              env.push('- **ClashControl version**: ' + CC_VERSION.v);
+              env.push('- **Browser**: ' + navigator.userAgent);
+              env.push('- **Models loaded**: ' + models.length);
+              env.push('- **Total elements**: ' + totalEls + ' (' + totalMeshes + ' meshes)');
+              env.push('- **Memory usage**: ' + memStr);
+              if (models.length) {
+                env.push('- **Model details**:');
+                models.forEach(function(m, i){
+                  var elC = (m.elements||[]).length, mC = (m.meshes||[]).length;
+                  var sz = m.stats && m.stats.fileSize ? (m.stats.fileSize/1048576).toFixed(1)+'MB' : '?';
+                  var lt = m.stats && m.stats.loadType ? m.stats.loadType : '?';
+                  env.push('  - ' + m.name + ': ' + elC + ' elements, ' + mC + ' meshes, ' + sz + ', ' + lt);
+                });
+              }
+              var body = '## Describe the bug\n\n\n## Steps to reproduce\n1. \n2. \n3. \n\n## Expected behavior\n\n\n## Screenshots\n\n\n## Environment\n' + env.join('\n');
+              window.open('https://github.com/clashcontrol-io/clash-control/issues/new?template=bug_report.md&body=' + encodeURIComponent(body), '_blank');
+            }} target="_blank" rel="noopener"
               style=${{...S_BTN,flex:1,padding:'.4rem .6rem',borderRadius:6,fontSize:'0.8rem',fontWeight:600,
                 background:'var(--bg-secondary)',color:'var(--text-secondary)',border:'1px solid var(--border)',
                 textDecoration:'none',textAlign:'center',cursor:'pointer'}}>Report a Bug</a>
