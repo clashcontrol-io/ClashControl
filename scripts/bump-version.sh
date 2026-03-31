@@ -77,7 +77,7 @@ else
   fi
 
   if [ "$LEVEL" = "patch" ]; then
-    if echo "$DIFF" | grep -qE "^\+\s*case '[A-Z_]+'"; then
+    if echo "$DIFF" | grep -qE "^\+\s*case ('|A\.)[A-Z_]+"; then
       LEVEL="minor"
     elif echo "$DIFF" | grep -qE '^\+\s*function [A-Z][a-zA-Z]+\('; then
       LEVEL="minor"

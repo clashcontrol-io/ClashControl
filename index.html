@@ -281,7 +281,7 @@ window.onload = function() {
 
 function startApp() {
   // ── Version (auto-updated by pre-commit hook) ──
-  var CC_VERSION = {v:'4.0.0',hash:'',date:'2026-03-31T00:00:00Z'};
+  var CC_VERSION = {v:'4.1.0',hash:'',date:'2026-03-31T00:00:00Z'};
 
   // ── GoatCounter event helper (no-op if GoatCounter not configured) ──
   function _gcEvent(name, title) {
@@ -473,6 +473,18 @@ function startApp() {
       specs: [],         // [{name, rules:[{desc, applicability, requirement, severity}]}]
       running: false,
       summary: null      // {total, pass, fail, bySpec:{specName:{pass,fail}}}
+    },
+    // Changelog — append-only log of all clash/issue mutations (works single-user AND multi-user)
+    changelog: [],       // [{id, ts, user, type, targetId, field, value, prev}]
+    // Shared Project (File System Access API)
+    sharedProject: {
+      enabled: false,
+      folderName: '',
+      fileName: '',
+      userName: '',
+      lastSync: null,
+      syncing: false,
+      lastRemoteTs: null // timestamp of last known remote savedAt
     }
   };
   // Action type constants — single source of truth for all dispatch/reducer references
@@ -510,6 +522,8 @@ function startApp() {
     BRIDGE_LOG:'BRIDGE_LOG', CLEAR_BRIDGE_LOG:'CLEAR_BRIDGE_LOG',
     UPD_REVIT_DIRECT:'UPD_REVIT_DIRECT',
     UPD_LOCAL_ENGINE:'UPD_LOCAL_ENGINE',
+    APPEND_CHANGELOG:'APPEND_CHANGELOG', MERGE_CHANGELOG:'MERGE_CHANGELOG',
+    UPD_SHARED_PROJECT:'UPD_SHARED_PROJECT',
     IDS_SET_RESULTS:'IDS_SET_RESULTS', IDS_SET_SPECS:'IDS_SET_SPECS', IDS_RUNNING:'IDS_RUNNING'
   };
   // Collect all element IDs from a clash/issue item
@@ -740,6 +754,14 @@ function startApp() {
       case A.REVIT_BRIDGE:    return Object.assign({},s,{showRevitBridge:a.v});
       case A.UPD_REVIT_DIRECT: return Object.assign({},s,{revitDirect:Object.assign({},s.revitDirect,a.u)});
       case A.UPD_LOCAL_ENGINE: return Object.assign({},s,{localEngine:Object.assign({},s.localEngine,a.u)});
+      case A.APPEND_CHANGELOG: return Object.assign({},s,{changelog:s.changelog.concat(Array.isArray(a.v)?a.v:[a.v])});
+      case A.MERGE_CHANGELOG:
+        // Merge remote changelog entries — skip entries we already have by id
+        var known={}; s.changelog.forEach(function(e){known[e.id]=true;});
+        var newEntries=(a.v||[]).filter(function(e){return !known[e.id];});
+        if(!newEntries.length) return s;
+        return Object.assign({},s,{changelog:s.changelog.concat(newEntries).sort(function(a,b){return a.ts-b.ts;})});
+      case A.UPD_SHARED_PROJECT: return Object.assign({},s,{sharedProject:Object.assign({},s.sharedProject,a.u)});
       case A.IDS_SET_RESULTS: return Object.assign({},s,{idsValidation:Object.assign({},s.idsValidation,{results:a.results,summary:a.summary,running:false})});
       case A.IDS_SET_SPECS:   return Object.assign({},s,{idsValidation:Object.assign({},s.idsValidation,{specs:a.specs})});
       case A.IDS_RUNNING:     return Object.assign({},s,{idsValidation:Object.assign({},s.idsValidation,{running:a.v})});
@@ -3486,6 +3508,7 @@ function startApp() {
       lastDeltaSummary: s.lastDeltaSummary || null,
       viewpoints: (s.viewpoints||[]).map(function(v){return Object.assign({},v,{snapshot:undefined})}),
       measurements: s.measurements||[],
+      changelog: s.changelog||[],
     };
     var blob = new Blob([JSON.stringify(data, null, 2)], {type:'application/json'});
     var a = document.createElement('a');
@@ -3497,7 +3520,7 @@ function startApp() {
 
   function loadProject(d) {
     var inp = document.createElement('input');
-    inp.type = 'file'; inp.accept = '.json,.ccproj,application/json';
+    inp.type = 'file'; inp.accept = '.json,.ccproj,.ccproject,application/json';
     inp.onchange = function(e) {
       var f = e.target.files[0]; if (!f) return;
       var r = new FileReader();
@@ -3516,6 +3539,7 @@ function startApp() {
           (data.issues||[]).forEach(function(i) { d({ t:A.ADD_ISSUE, v:i }); });
           (data.viewpoints||[]).forEach(function(v) { d({ t:A.ADD_VIEWPOINT, v:v }); });
           if (data.measurements) data.measurements.forEach(function(m) { d({ t:A.ADD_MEASUREMENT, v:m }); });
+          if (data.changelog && data.changelog.length) d({ t:A.MERGE_CHANGELOG, v:data.changelog });
         } catch(err) {
           alert('Load failed: ' + err.message);
         }
@@ -11029,6 +11053,63 @@ function startApp() {
     </div>`;
   }
 
+  // ── Clash/Issue History (from changelog) ─────────────────────
+  function ClashHistory(props) {
+    var targetId = props.targetId;
+    var stOpen = useState(false), isOpen = stOpen[0], setOpen = stOpen[1];
+    var changelog = (window._ccLatestState && window._ccLatestState.changelog) || [];
+    var history = _getHistory(targetId, changelog);
+    if (!history.length) return null;
+    var FIELD_LABELS = {status:'Status',assignee:'Assignee',userToleranceMm:'Tolerance',
+      aiFeedback:'AI Feedback',aiReasons:'Reasons',aiResolution:'Resolution',aiNote:'Note',
+      clashTypeConfirmed:'Clash Type',expectedClash:'Expected',priority:'Priority',
+      category:'Category',description:'Description',title:'Title',created:'Created'};
+    function fmtVal(v) {
+      if (v === undefined || v === null) return '–';
+      if (Array.isArray(v)) return v.length ? v.join(', ') : '–';
+      if (typeof v === 'boolean') return v ? 'Yes' : 'No';
+      return String(v);
+    }
+    function fmtTime(ts) {
+      var d = new Date(ts);
+      var now = Date.now();
+      var diff = now - ts;
+      if (diff < 60000) return 'just now';
+      if (diff < 3600000) return Math.floor(diff/60000) + 'm ago';
+      if (diff < 86400000) return Math.floor(diff/3600000) + 'h ago';
+      return d.toLocaleDateString() + ' ' + d.toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'});
+    }
+    return html`<div style=${{marginTop:'.4rem',borderTop:'1px solid var(--border-subtle)',paddingTop:'.3rem'}}>
+      <button onClick=${function(e){e.stopPropagation();setOpen(!isOpen);}}
+        style=${{display:'flex',alignItems:'center',gap:'.3rem',background:'none',border:'none',cursor:'pointer',padding:'.1rem 0',width:'100%',color:'var(--text-muted)',fontFamily:'inherit'}}>
+        <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/>
+        </svg>
+        <span style=${{fontSize:'0.63rem',fontWeight:600}}>History</span>
+        <span style=${{fontSize:'0.57rem',color:'var(--text-faint)'}}>(${history.length})</span>
+        <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"
+          style=${{marginLeft:'auto',transform:isOpen?'rotate(180deg)':'rotate(0)',transition:'transform .15s'}}>
+          <polyline points="6 9 12 15 18 9"/>
+        </svg>
+      </button>
+      ${isOpen && html`<div style=${{maxHeight:160,overflowY:'auto',marginTop:'.2rem'}}>
+        ${history.slice(0, 50).map(function(entry) {
+          var label = FIELD_LABELS[entry.field] || entry.field;
+          var isCreated = entry.type === 'issue_created' || entry.type === 'detection_run';
+          return html`<div key=${entry.id} style=${{display:'flex',gap:'.3rem',padding:'.15rem 0',borderBottom:'1px solid var(--border-subtle)',alignItems:'flex-start',fontSize:'0.6rem'}}>
+            <span style=${{color:'var(--text-faint)',whiteSpace:'nowrap',flexShrink:0,minWidth:50}}>${fmtTime(entry.ts)}</span>
+            <span style=${{color:'#60a5fa',fontWeight:600,flexShrink:0,minWidth:55}}>${entry.user || 'anonymous'}</span>
+            ${isCreated ? html`<span style=${{color:'var(--text-secondary)'}}>${entry.type === 'detection_run' ? 'Ran detection' : 'Created issue'}</span>`
+            : html`<span style=${{color:'var(--text-secondary)'}}>
+              ${label}: <span style=${{color:'var(--text-faint)',textDecoration:'line-through'}}>${fmtVal(entry.prev)}</span>
+              ${' → '}<span style=${{color:'var(--text-primary)',fontWeight:500}}>${fmtVal(entry.value)}</span>
+            </span>`}
+          </div>`;
+        })}
+      </div>`}
+    </div>`;
+  }
+
   function IssueRow(props) {
     var it=props.item, active=props.active, d=props.d, isClash=props.isClash, pr=props.prefs||{}; pr._models=props.models||[];
     var selectMode=props.selectMode, isSelected=props.isSelected;
@@ -11269,6 +11350,7 @@ function startApp() {
         ${!isClash && it.assignee && html`<div style=${{fontSize:'0.63rem',color:'var(--text-secondary)',marginTop:'.2rem'}}>Assigned: ${it.assignee}</div>`}
         ${!isClash && it.dueDate && html`<div style=${{fontSize:'0.63rem',color:'var(--text-secondary)'}}>Due: ${it.dueDate}</div>`}
         ${!isClash && it.category && html`<div style=${{fontSize:'0.63rem',color:'var(--text-muted)'}}>Category: ${it.category}</div>`}
+        ${html`<${ClashHistory} targetId=${it.id} />`}
       </div>`}
     </div>`;
   }
@@ -11467,6 +11549,50 @@ function startApp() {
           <div><div style=${TLBL}>Reset filters after detection</div><div style=${TSUB}>Clear all filters when running a new clash detection</div></div>
           <${Toggle} on=${p.resetFiltersOnRun!==false} onToggle=${tog('resetFiltersOnRun')} />
         </div>
+
+        <div style=${SEC}>Shared Project</div>
+        <div style=${TROW}>
+          <div style=${{flex:1}}>
+            <div style=${TLBL}>Your name</div>
+            <div style=${TSUB}>Shown in clash history to identify who made changes</div>
+          </div>
+          <input type="text" value=${_ccChangelogUser} placeholder="Your name"
+            onInput=${function(e){_ccChangelogUser=e.target.value;try{localStorage.setItem('cc_username',e.target.value);}catch(ex){}}}
+            style=${{...S_INPUT,width:140,fontSize:'0.8rem',textAlign:'right'}} />
+        </div>
+        ${function(){
+          var sp = props.s ? props.s.sharedProject : {};
+          var enabled = sp && sp.enabled;
+          return html`<div>
+            <div style=${TROW}>
+              <div>
+                <div style=${TLBL}>Shared working folder</div>
+                <div style=${TSUB}>${enabled
+                  ? 'Connected to: '+sp.folderName+'/'+sp.fileName
+                  : 'Link a shared folder (OneDrive, Dropbox, NAS) to sync clashes and issues with your team. No server needed.'}</div>
+                ${enabled && sp.lastSync && html`<div style=${{fontSize:'0.69rem',color:'var(--text-faint)',marginTop:'.1rem'}}>
+                  Last sync: ${new Date(sp.lastSync).toLocaleTimeString()}
+                  ${sp.syncing ? ' (syncing...)' : ''}
+                </div>`}
+              </div>
+              ${!enabled && html`<button onClick=${function(){_pickSharedFolder(d);}}
+                style=${{...S_BTN,padding:'.35rem .7rem',background:'var(--accent)',color:'#fff',fontSize:'0.8rem',fontWeight:600,borderRadius:6,whiteSpace:'nowrap',flexShrink:0}}>
+                Link Folder</button>`}
+              ${enabled && html`<div style=${{display:'flex',gap:'.3rem',flexShrink:0}}>
+                <button onClick=${function(){_syncSharedProject(d);}}
+                  disabled=${sp.syncing}
+                  style=${{...S_BTN,padding:'.35rem .5rem',background:'var(--bg-secondary)',color:'var(--text-secondary)',fontSize:'0.75rem',border:'1px solid var(--border)',borderRadius:6}}>
+                  ${sp.syncing ? 'Syncing...' : 'Sync now'}</button>
+                <button onClick=${function(){_disconnectShared(d);}}
+                  style=${{...S_BTN,padding:'.35rem .5rem',background:'var(--bg-secondary)',color:'#f87171',fontSize:'0.75rem',border:'1px solid #ef444444',borderRadius:6}}>
+                  Unlink</button>
+              </div>`}
+            </div>
+            ${!window.showDirectoryPicker && html`<div style=${{fontSize:'0.69rem',color:'#eab308',padding:'.3rem 0'}}>
+              File System Access API not available. Use Chrome or Edge for shared working.
+            </div>`}
+          </div>`;
+        }()}
 
         <div style=${SEC}>AI / Natural Language</div>
         <div style=${TROW}>
@@ -11707,6 +11833,297 @@ function startApp() {
       var raw = localStorage.getItem('cc_revit_bridge');
       return raw ? JSON.parse(raw) : null;
     } catch(e) { return null; }
+  }
+
+  // ── Changelog System ──────────────────────────────────────────
+  // Append-only log of all clash/issue mutations. Works in both
+  // single-user (local history) and multi-user (shared project) modes.
+  // Each entry: {id, ts, user, type, targetId, field, value, prev}
+
+  var _ccChangelogUser = '';
+  try { _ccChangelogUser = localStorage.getItem('cc_username') || ''; } catch(e){}
+
+  function _clId() {
+    return Date.now().toString(36) + Math.random().toString(36).substr(2, 6);
+  }
+
+  function _buildChangelogEntry(action, clashes, state) {
+    var user = _ccChangelogUser || 'anonymous';
+    var ts = Date.now();
+    var a = action;
+    if (a.t === A.UPD_CLASH && a.u) {
+      var prev = clashes.find(function(c){return c.id===a.id;});
+      var entries = [];
+      Object.keys(a.u).forEach(function(field) {
+        // Skip internal/derived fields
+        if (field === 'aiSignals' || field === '_trainFV') return;
+        entries.push({id:_clId(), ts:ts, user:user, type:'clash_update', targetId:a.id,
+          field:field, value:a.u[field], prev:prev ? prev[field] : undefined});
+      });
+      return entries.length ? entries : null;
+    }
+    if (a.t === A.BATCH_UPD_CLASH && a.u) {
+      var entries2 = [];
+      clashes.forEach(function(c) {
+        if (!state.selected[c.id]) return;
+        Object.keys(a.u).forEach(function(field) {
+          if (field === 'aiSignals') return;
+          entries2.push({id:_clId(), ts:ts, user:user, type:'clash_update', targetId:c.id,
+            field:field, value:a.u[field], prev:c[field]});
+        });
+      });
+      return entries2.length ? entries2 : null;
+    }
+    if (a.t === A.UPD_ISSUE && a.u) {
+      var prevI = state.issues.find(function(i){return i.id===a.id;});
+      var entries3 = [];
+      Object.keys(a.u).forEach(function(field) {
+        entries3.push({id:_clId(), ts:ts, user:user, type:'issue_update', targetId:a.id,
+          field:field, value:a.u[field], prev:prevI ? prevI[field] : undefined});
+      });
+      return entries3.length ? entries3 : null;
+    }
+    if (a.t === A.ADD_ISSUE && a.v) {
+      return {id:_clId(), ts:ts, user:user, type:'issue_created', targetId:a.v.id,
+        field:'created', value:a.v.title || 'New issue', prev:undefined};
+    }
+    if (a.t === A.MERGE_CLASHES || a.t === A.SET_CLASHES) {
+      return {id:_clId(), ts:ts, user:user, type:'detection_run', targetId:null,
+        field:'clashes', value:(a.v||[]).length, prev:clashes.length};
+    }
+    if (a.t === A.AI_FEEDBACK && a.v) {
+      return {id:_clId(), ts:ts, user:user, type:'clash_update', targetId:a.id,
+        field:'aiFeedback', value:a.v, prev:undefined};
+    }
+    return null;
+  }
+
+  // Get changelog entries for a specific clash or issue
+  function _getHistory(targetId, changelog) {
+    return changelog.filter(function(e){ return e.targetId === targetId; })
+      .sort(function(a,b){ return b.ts - a.ts; }); // newest first
+  }
+
+  // ── Shared Project (File System Access API) ────────────────────
+  // Users pick a shared folder (OneDrive, Dropbox, NAS). ClashControl
+  // reads/writes a .ccproject file there every 60s. Multiple users
+  // merge via the append-only changelog — no backend needed.
+
+  var _sharedDirHandle = null;  // FileSystemDirectoryHandle
+  var _sharedFileHandle = null; // FileSystemFileHandle
+  var _sharedSyncTimer = null;
+
+  // Store/restore directory handle in IndexedDB for persistence
+  function _saveSharedHandle(dirHandle, fileName) {
+    try {
+      var req = indexedDB.open('cc_shared', 1);
+      req.onupgradeneeded = function(e) { e.target.result.createObjectStore('handles'); };
+      req.onsuccess = function(e) {
+        var db = e.target.result;
+        var tx = db.transaction('handles', 'readwrite');
+        tx.objectStore('handles').put({dirHandle:dirHandle, fileName:fileName}, 'shared');
+      };
+    } catch(e){}
+  }
+
+  function _loadSharedHandle(cb) {
+    try {
+      var req = indexedDB.open('cc_shared', 1);
+      req.onupgradeneeded = function(e) { e.target.result.createObjectStore('handles'); };
+      req.onsuccess = function(e) {
+        var db = e.target.result;
+        var tx = db.transaction('handles', 'readonly');
+        var get = tx.objectStore('handles').get('shared');
+        get.onsuccess = function() { cb(get.result || null); };
+        get.onerror = function() { cb(null); };
+      };
+      req.onerror = function() { cb(null); };
+    } catch(e) { cb(null); }
+  }
+
+  function _clearSharedHandle() {
+    try {
+      var req = indexedDB.open('cc_shared', 1);
+      req.onupgradeneeded = function(e) { e.target.result.createObjectStore('handles'); };
+      req.onsuccess = function(e) {
+        var db = e.target.result;
+        var tx = db.transaction('handles', 'readwrite');
+        tx.objectStore('handles').delete('shared');
+      };
+    } catch(e){}
+  }
+
+  // Pick a shared folder and create/open a .ccproject file
+  function _pickSharedFolder(d) {
+    if (!window.showDirectoryPicker) {
+      alert('File System Access API not supported in this browser. Use Chrome or Edge.');
+      return;
+    }
+    window.showDirectoryPicker({mode:'readwrite'}).then(function(dirHandle) {
+      _sharedDirHandle = dirHandle;
+      var fileName = 'project.ccproject';
+      // Try to find existing .ccproject file in the folder
+      dirHandle.values().then(function(iter) {
+        // Use async iteration via manual next()
+        var found = null;
+        function checkNext() {
+          iter.next().then(function(result) {
+            if (result.done) {
+              finalize(found || fileName);
+              return;
+            }
+            var entry = result.value;
+            if (entry.kind === 'file' && (entry.name.endsWith('.ccproject') || entry.name.endsWith('.json'))) {
+              found = entry.name;
+            }
+            checkNext();
+          });
+        }
+        checkNext();
+      }).catch(function() { finalize(fileName); });
+
+      function finalize(fn) {
+        _saveSharedHandle(dirHandle, fn);
+        d({t:A.UPD_SHARED_PROJECT, u:{
+          enabled:true,
+          folderName:dirHandle.name,
+          fileName:fn,
+          lastSync:null
+        }});
+        // Do initial sync
+        _syncSharedProject(d);
+      }
+    }).catch(function(e) {
+      if (e.name !== 'AbortError') console.warn('Folder picker error:', e);
+    });
+  }
+
+  // Disconnect from shared folder
+  function _disconnectShared(d) {
+    if (_sharedSyncTimer) { clearInterval(_sharedSyncTimer); _sharedSyncTimer = null; }
+    _sharedDirHandle = null;
+    _sharedFileHandle = null;
+    _clearSharedHandle();
+    d({t:A.UPD_SHARED_PROJECT, u:{enabled:false, folderName:'', fileName:'', lastSync:null, syncing:false, lastRemoteTs:null}});
+  }
+
+  // Read the shared .ccproject file
+  function _readSharedFile() {
+    if (!_sharedDirHandle) return Promise.resolve(null);
+    var state = window._ccLatestState;
+    var fn = state && state.sharedProject ? state.sharedProject.fileName : 'project.ccproject';
+    return _sharedDirHandle.getFileHandle(fn, {create:false}).then(function(fh) {
+      _sharedFileHandle = fh;
+      return fh.getFile();
+    }).then(function(file) {
+      return file.text().then(function(txt) {
+        var data = JSON.parse(txt);
+        return data._cc === 'ClashControl' ? data : null;
+      });
+    }).catch(function() { return null; }); // file doesn't exist yet
+  }
+
+  // Write the shared .ccproject file
+  function _writeSharedFile(d) {
+    if (!_sharedDirHandle) return Promise.resolve();
+    var state = window._ccLatestState;
+    if (!state) return Promise.resolve();
+    var fn = state.sharedProject ? state.sharedProject.fileName : 'project.ccproject';
+    var data = {
+      _cc: 'ClashControl', _v: CC_VERSION.v,
+      savedAt: new Date().toISOString(),
+      rules: state.rules,
+      models: state.models.map(function(m) {
+        return {id:m.id, name:m.name, discipline:m.discipline, color:m.color, visible:m.visible, tag:m.tag||''};
+      }),
+      clashes: state.clashes,
+      issues: state.issues,
+      floors: state.floors,
+      lastDeltaSummary: state.lastDeltaSummary || null,
+      viewpoints: (state.viewpoints||[]).map(function(v){return Object.assign({},v,{snapshot:undefined})}),
+      measurements: state.measurements||[],
+      changelog: state.changelog || []
+    };
+    var json = JSON.stringify(data, null, 2);
+    return _sharedDirHandle.getFileHandle(fn, {create:true}).then(function(fh) {
+      _sharedFileHandle = fh;
+      return fh.createWritable();
+    }).then(function(writable) {
+      return writable.write(json).then(function() { return writable.close(); });
+    }).then(function() {
+      d({t:A.UPD_SHARED_PROJECT, u:{lastSync:Date.now()}});
+    }).catch(function(e) {
+      console.warn('Shared project write failed:', e);
+    });
+  }
+
+  // Sync: read remote, merge changelog, write back
+  function _syncSharedProject(d) {
+    if (!_sharedDirHandle) return;
+    var state = window._ccLatestState;
+    if (!state || !state.sharedProject.enabled) return;
+    d({t:A.UPD_SHARED_PROJECT, u:{syncing:true}});
+
+    _readSharedFile().then(function(remote) {
+      if (!remote) {
+        // No file yet — write current state
+        return _writeSharedFile(d);
+      }
+      // Merge remote changelog into local
+      var remoteChangelog = remote.changelog || [];
+      if (remoteChangelog.length) {
+        d({t:A.MERGE_CHANGELOG, v:remoteChangelog});
+      }
+      // Replay remote changelog to update local clashes/issues
+      _replayRemoteChanges(remote, d);
+      // Write back (includes our local changelog entries)
+      return _writeSharedFile(d);
+    }).then(function() {
+      d({t:A.UPD_SHARED_PROJECT, u:{syncing:false, lastSync:Date.now()}});
+    }).catch(function(e) {
+      console.warn('Shared sync error:', e);
+      d({t:A.UPD_SHARED_PROJECT, u:{syncing:false}});
+    });
+  }
+
+  // Replay remote changes — apply clash/issue updates from remote changelog
+  function _replayRemoteChanges(remote, d) {
+    var state = window._ccLatestState;
+    if (!state) return;
+    var localIds = {};
+    state.changelog.forEach(function(e){ localIds[e.id] = true; });
+    var newEntries = (remote.changelog || []).filter(function(e){ return !localIds[e.id]; });
+    if (!newEntries.length) return;
+
+    // Group by targetId and apply latest value per field
+    var updates = {}; // {targetId: {field: value}}
+    newEntries.forEach(function(e) {
+      if (!e.targetId) return;
+      if (!updates[e.targetId]) updates[e.targetId] = {};
+      updates[e.targetId][e.field] = e.value;
+    });
+
+    Object.keys(updates).forEach(function(targetId) {
+      var upd = updates[targetId];
+      // Try clash first, then issue
+      var isClash = state.clashes.some(function(c){ return c.id === targetId; });
+      var isIssue = state.issues.some(function(i){ return i.id === targetId; });
+      if (isClash) {
+        d({t:A.UPD_CLASH, id:targetId, u:upd, _fromSync:true});
+      } else if (isIssue) {
+        d({t:A.UPD_ISSUE, id:targetId, u:upd, _fromSync:true});
+      }
+    });
+  }
+
+  // Start the sync timer (60s interval)
+  function _startSharedSync(d) {
+    if (_sharedSyncTimer) clearInterval(_sharedSyncTimer);
+    _sharedSyncTimer = setInterval(function() {
+      _syncSharedProject(d);
+    }, 60000);
+    // Initial sync
+    _syncSharedProject(d);
   }
 
   // ── Local Clash Detection Engine (localhost:19800) ────────────
@@ -15950,6 +16367,14 @@ function startApp() {
           }
         }
       } catch(e) {}
+      // ── Changelog recording (works both single-user and shared) ──
+      // Skip recording for sync-originated actions and changelog actions themselves
+      if (!a._fromSync && a.t !== A.APPEND_CHANGELOG && a.t !== A.MERGE_CHANGELOG) {
+        try {
+          var _clEntry = _buildChangelogEntry(a, _clashesRef.current, s);
+          if (_clEntry) _rawD({t:A.APPEND_CHANGELOG, v:_clEntry});
+        } catch(e2) {}
+      }
     }, []);
     window._ccDispatch = d;
     window._ccLatestState = s;
@@ -16163,6 +16588,21 @@ function startApp() {
       // Restore opt-in from localStorage
       try { if (localStorage.getItem('cc_local_engine')==='1') d({t:A.UPD_LOCAL_ENGINE, u:{active:true}}); } catch(e){}
       _checkLocalEngine(d);
+    }, []);
+    // ── Shared project auto-reconnect on startup ──
+    useEffect(function(){
+      _loadSharedHandle(function(saved) {
+        if (!saved || !saved.dirHandle) return;
+        // Verify permission is still granted
+        saved.dirHandle.queryPermission({mode:'readwrite'}).then(function(perm) {
+          if (perm === 'granted') {
+            _sharedDirHandle = saved.dirHandle;
+            d({t:A.UPD_SHARED_PROJECT, u:{enabled:true, folderName:saved.dirHandle.name, fileName:saved.fileName||'project.ccproject'}});
+            _startSharedSync(d);
+          }
+        }).catch(function(){});
+      });
+      return function(){ if(_sharedSyncTimer){clearInterval(_sharedSyncTimer);_sharedSyncTimer=null;} };
     }, []);
     var _memWarnFiredRef = useRef(false);
     useEffect(function(){
@@ -16398,7 +16838,7 @@ function startApp() {
       <${SidePanel} s=${s} d=${d} />
       <${RightRail} s=${s} d=${d} />
       ${s.showModal && html`<${NewIssueModal} d=${d} el=${s.modalElement} prefs=${s.prefs} clashes=${s.clashes} activeId=${s.activeId} />`}
-      ${s.showSettings && html`<${SettingsModal} d=${d} prefs=${s.prefs} models=${s.models} rules=${s.rules} />`}
+      ${s.showSettings && html`<${SettingsModal} d=${d} s=${s} prefs=${s.prefs} models=${s.models} rules=${s.rules} />`}
       ${s.showRevitBridge && html`<${RevitBridgePanel} s=${s} d=${d} />`}
       <${MobileNav} s=${s} d=${d} />
       <${WelcomePopup} s=${s} d=${d} />
