@@ -238,37 +238,7 @@ window.addEventListener('unhandledrejection', function(e) {
   console.error('[ClashControl] Unhandled promise rejection:', e.reason);
 });
 
-// Register service worker for offline support & PWA install
-if ('serviceWorker' in navigator) {
-  navigator.serviceWorker.register('sw.js').then(function(reg) {
-    // Check for updates periodically (every 60 min)
-    setInterval(function(){ reg.update(); }, 3600000);
-    // Detect waiting worker = new version available
-    function _swReady(sw) {
-      sw.addEventListener('statechange', function() {
-        if (sw.state === 'activated') window.location.reload();
-      });
-      window._ccUpdateAvailable = true;
-      window.dispatchEvent(new Event('cc-update-available'));
-    }
-    if (reg.waiting) _swReady(reg.waiting);
-    reg.addEventListener('updatefound', function() {
-      var nw = reg.installing;
-      if (!nw) return;
-      nw.addEventListener('statechange', function() {
-        if (nw.state === 'installed' && navigator.serviceWorker.controller) _swReady(nw);
-      });
-    });
-  });
-}
-// PWA install prompt
-var _ccInstallPrompt = null;
-window.addEventListener('beforeinstallprompt', function(e) {
-  e.preventDefault();
-  _ccInstallPrompt = e;
-  window.dispatchEvent(new Event('cc-install-available'));
-});
-
+// PWA service worker + install prompt handled by addons/pwa.js
 
 window.onload = function() {
   try { startApp(); }
@@ -442,35 +412,8 @@ function startApp() {
     // Bulk selection
     selected:{}, // {id:true} — selected clash/issue IDs
     selectMode:false,
-    // Revit Bridge (AI-powered)
-    revitBridge:{
-      provider:'',       // 'anthropic','openai','google'
-      apiKey:'',
-      mcpHost:'localhost',
-      mcpPort:8080,
-      connected:false,
-      syncing:false,
-      lastSync:null,
-      log:[]             // [{ts,type:'push'|'pull'|'info'|'error',text}]
-    },
-    showRevitBridge:false,
-    // Revit Direct Connector (WebSocket live link)
-    revitDirect:{
-      port:19780,
-      connected:false,
-      documentName:'',
-      loading:false,
-      progress:0,        // 0-1 during model load
-      elementCount:0,
-      lastPush:null
-    },
+    // Addon state (revitBridge, revitDirect, localEngine, sharedProject) injected by addon initState
     lastDeltaSummary: null, // {new, persisting, autoResolved, ts} — set after each merge run
-    // Local Clash Engine (localhost:19800)
-    localEngine:{
-      available:false,  // true when localhost:19800/status returns ready
-      active:false,     // true when user opted in via setup popup
-      checking:false
-    },
     // IDS Validation
     idsValidation: {
       results: [],       // [{specName, ruleDesc, severity, status:'pass'|'fail', elementId, globalId, ifcType, elementName, modelId}]
@@ -479,17 +422,7 @@ function startApp() {
       summary: null      // {total, pass, fail, bySpec:{specName:{pass,fail}}}
     },
     // Changelog — append-only log of all clash/issue mutations (works single-user AND multi-user)
-    changelog: [],       // [{id, ts, user, type, targetId, field, value, prev}]
-    // Shared Project (File System Access API)
-    sharedProject: {
-      enabled: false,
-      folderName: '',
-      fileName: '',
-      userName: '',
-      lastSync: null,
-      syncing: false,
-      lastRemoteTs: null // timestamp of last known remote savedAt
-    }
+    changelog: []        // [{id, ts, user, type, targetId, field, value, prev}]
   };
   // Action type constants — single source of truth for all dispatch/reducer references
   var A = {
@@ -522,12 +455,8 @@ function startApp() {
     MARKUP_TOOL:'MARKUP_TOOL',
     SELECT_TOGGLE:'SELECT_TOGGLE', SELECT_ALL:'SELECT_ALL',
     SELECT_NONE:'SELECT_NONE', SELECT_MODE:'SELECT_MODE',
-    REVIT_BRIDGE:'REVIT_BRIDGE', UPD_BRIDGE:'UPD_BRIDGE',
-    BRIDGE_LOG:'BRIDGE_LOG', CLEAR_BRIDGE_LOG:'CLEAR_BRIDGE_LOG',
-    UPD_REVIT_DIRECT:'UPD_REVIT_DIRECT',
-    UPD_LOCAL_ENGINE:'UPD_LOCAL_ENGINE',
+    // Addon action types dispatched via string literals (not A.xxx) — handled by addon reducerCases
     APPEND_CHANGELOG:'APPEND_CHANGELOG', MERGE_CHANGELOG:'MERGE_CHANGELOG',
-    UPD_SHARED_PROJECT:'UPD_SHARED_PROJECT',
     IDS_SET_RESULTS:'IDS_SET_RESULTS', IDS_SET_SPECS:'IDS_SET_SPECS', IDS_RUNNING:'IDS_RUNNING'
   };
 
@@ -826,21 +755,13 @@ function startApp() {
         return upd;
       }),selected:{}});
       case A.BATCH_UPD_ISSUE:  return Object.assign({},s,{issues:s.issues.map(function(i){return s.selected[i.id]?Object.assign({},i,a.u):i;}),selected:{}});
-      // Revit Bridge
-      case A.UPD_BRIDGE:      return Object.assign({},s,{revitBridge:Object.assign({},s.revitBridge,a.u)});
-      case A.BRIDGE_LOG:      return Object.assign({},s,{revitBridge:Object.assign({},s.revitBridge,{log:s.revitBridge.log.concat([{ts:Date.now(),type:a.logType||'info',text:a.text}]).slice(-100)})});
-      case A.CLEAR_BRIDGE_LOG:return Object.assign({},s,{revitBridge:Object.assign({},s.revitBridge,{log:[]})});
-      case A.REVIT_BRIDGE:    return Object.assign({},s,{showRevitBridge:a.v});
-      case A.UPD_REVIT_DIRECT: return Object.assign({},s,{revitDirect:Object.assign({},s.revitDirect,a.u)});
-      case A.UPD_LOCAL_ENGINE: return Object.assign({},s,{localEngine:Object.assign({},s.localEngine,a.u)});
+      // Changelog (core — used by both single-user and shared-project addon)
       case A.APPEND_CHANGELOG: return Object.assign({},s,{changelog:s.changelog.concat(Array.isArray(a.v)?a.v:[a.v])});
       case A.MERGE_CHANGELOG:
-        // Merge remote changelog entries — skip entries we already have by id
         var known={}; s.changelog.forEach(function(e){known[e.id]=true;});
         var newEntries=(a.v||[]).filter(function(e){return !known[e.id];});
         if(!newEntries.length) return s;
         return Object.assign({},s,{changelog:s.changelog.concat(newEntries).sort(function(a,b){return a.ts-b.ts;})});
-      case A.UPD_SHARED_PROJECT: return Object.assign({},s,{sharedProject:Object.assign({},s.sharedProject,a.u)});
       case A.IDS_SET_RESULTS: return Object.assign({},s,{idsValidation:Object.assign({},s.idsValidation,{results:a.results,summary:a.summary,running:false})});
       case A.IDS_SET_SPECS:   return Object.assign({},s,{idsValidation:Object.assign({},s.idsValidation,{specs:a.specs})});
       case A.IDS_RUNNING:     return Object.assign({},s,{idsValidation:Object.assign({},s.idsValidation,{running:a.v})});
@@ -2844,11 +2765,11 @@ function startApp() {
       window.dispatchEvent(new Event('cc-detect-progress'));
       if (_userCb) _userCb(done, total);
     };
-    // Try local engine first if user opted in and it's available
+    // Try local engine first if user opted in and it's available (provided by local-engine addon)
     var state = window._ccLatestState;
-    var useLocal = state && state.localEngine && state.localEngine.active && state.localEngine.available;
+    var useLocal = state && state.localEngine && state.localEngine.active && state.localEngine.available && window._detectOnLocalEngine;
     if (useLocal) {
-      return _detectOnLocalEngine(models, rules, onProgress).then(function(result) {
+      return window._detectOnLocalEngine(models, rules, onProgress).then(function(result) {
         if (result !== null && gen === _ccDetectGeneration) return result;
         // Fallback to browser engine
         return _browserDetect(models, rules, onProgress, gen);
