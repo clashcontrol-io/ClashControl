@@ -1,0 +1,864 @@
+// ── ClashControl Addon: Revit Bridge ─────────────────────────────
+// Part 1: Direct Connector — WebSocket live link to Revit plugin.
+// Receives geometry + properties, converts to Three.js meshes.
+// Supports model update (REPLACE_MODEL) on re-sync, linked models,
+// and manual-only push of clashes back to Revit.
+
+(function() {
+  'use strict';
+
+  // ── Direct Connector state ─────────────────────────────────────
+
+  var _revitWs = null;
+  var _revitBuf = null;
+  var _revitReconnect = null;
+  // Track which CC model ID corresponds to which Revit document name
+  // so re-exports update the existing model instead of adding a duplicate.
+  var _revitModelMap = {}; // {documentName_modelName: ccModelId}
+
+  // ── WebSocket connection ───────────────────────────────────────
+
+  function _revitDirectConnect(port, d) {
+    if (_revitWs && _revitWs.readyState <= 1) { _revitWs.close(); }
+    clearTimeout(_revitReconnect);
+    var url = 'ws://localhost:' + (port || 19780);
+    d({t:'BRIDGE_LOG', logType:'info', text:'Connecting to Revit at ' + url + '...'});
+    d({t:'UPD_REVIT_DIRECT', u:{connected:false, loading:false, progress:0}});
+    try { _revitWs = new WebSocket(url); } catch(e) {
+      d({t:'BRIDGE_LOG', logType:'error', text:'WebSocket error: ' + e.message});
+      return;
+    }
+    _revitWs.binaryType = 'arraybuffer';
+
+    _revitWs.onopen = function() {
+      d({t:'UPD_REVIT_DIRECT', u:{connected:true}});
+      d({t:'BRIDGE_LOG', logType:'info', text:'Connected to Revit plugin.'});
+      _revitWs.send(JSON.stringify({type:'ping'}));
+    };
+
+    _revitWs.onclose = function() {
+      d({t:'UPD_REVIT_DIRECT', u:{connected:false, loading:false}});
+      d({t:'BRIDGE_LOG', logType:'info', text:'Revit connection closed.'});
+      _revitWs = null;
+    };
+
+    _revitWs.onerror = function() {
+      d({t:'UPD_REVIT_DIRECT', u:{connected:false, loading:false}});
+      d({t:'BRIDGE_LOG', logType:'error', text:'Could not connect to Revit. Is the plugin running?'});
+      _revitWs = null;
+    };
+
+    _revitWs.onmessage = function(ev) {
+      var msg;
+      try { msg = JSON.parse(ev.data); } catch(e) { return; }
+      _handleRevitMessage(msg, d);
+    };
+  }
+
+  function _revitDirectDisconnect(d) {
+    clearTimeout(_revitReconnect);
+    if (_revitWs) { _revitWs.close(); _revitWs = null; }
+    _revitBuf = null;
+    d({t:'UPD_REVIT_DIRECT', u:{connected:false, loading:false, progress:0, documentName:''}});
+  }
+
+  function _revitDirectExport(categories) {
+    if (!_revitWs || _revitWs.readyState !== 1) return;
+    _revitWs.send(JSON.stringify({type:'export', categories: categories || ['all']}));
+  }
+
+  // ── Base64 decode helpers ──────────────────────────────────────
+
+  function _b64ToFloat32(b64) {
+    var bin = atob(b64), n = bin.length, buf = new ArrayBuffer(n), u8 = new Uint8Array(buf);
+    for (var i = 0; i < n; i++) u8[i] = bin.charCodeAt(i);
+    return new Float32Array(buf);
+  }
+  function _b64ToUint32(b64) {
+    var bin = atob(b64), n = bin.length, buf = new ArrayBuffer(n), u8 = new Uint8Array(buf);
+    for (var i = 0; i < n; i++) u8[i] = bin.charCodeAt(i);
+    return new Uint32Array(buf);
+  }
+
+  // ── Convert Revit element to Three.js mesh ─────────────────────
+
+  function _revitElementToMesh(el, nextId) {
+    var meshes = [], box = new THREE.Box3();
+    if (el.geometry && el.geometry.positions) {
+      var positions = _b64ToFloat32(el.geometry.positions);
+      var indices = _b64ToUint32(el.geometry.indices);
+      var geom = new THREE.BufferGeometry();
+      geom.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+      geom.setIndex(new THREE.BufferAttribute(indices, 1));
+      if (el.geometry.normals) {
+        geom.setAttribute('normal', new THREE.BufferAttribute(_b64ToFloat32(el.geometry.normals), 3));
+      } else {
+        geom.computeVertexNormals();
+      }
+      geom.computeBoundingBox();
+      var c = el.geometry.color || [0.65, 0.65, 0.65, 1.0];
+      var mat = new THREE.MeshPhongMaterial({
+        color: new THREE.Color(c[0], c[1], c[2]),
+        opacity: c[3] != null ? c[3] : 1,
+        transparent: c[3] != null && c[3] < 0.99,
+        side: THREE.DoubleSide
+      });
+      var mesh = new THREE.Mesh(geom, mat);
+      mesh.name = el.globalId || '';
+      mesh._expressId = el.expressId || nextId;
+      meshes.push(mesh);
+      box.copy(geom.boundingBox);
+    }
+    var mats = el.materials;
+    if (Array.isArray(mats)) mats = mats.join(', ');
+    return {
+      expressId: el.expressId || nextId,
+      meshes: meshes,
+      box: box,
+      props: {
+        globalId: el.globalId || '',
+        ifcType: el.category || 'IfcBuildingElementProxy',
+        name: el.name || '',
+        description: el.description || '',
+        objectType: el.type || '',
+        storey: el.level || '',
+        material: mats || '',
+        quantities: el.quantities || {},
+        psets: el.parameters || {},
+        revitId: el.revitId || null,
+        hostId: el.hostId || null,
+        hostRelationships: el.hostRelationships || null
+      }
+    };
+  }
+
+  // ── Message handler ────────────────────────────────────────────
+
+  function _handleRevitMessage(msg, d) {
+    switch (msg.type) {
+      case 'pong':
+      case 'status':
+        if (msg.documentName) d({t:'UPD_REVIT_DIRECT', u:{documentName:msg.documentName}});
+        if (msg.connected != null) d({t:'UPD_REVIT_DIRECT', u:{connected:msg.connected}});
+        break;
+
+      case 'model-start':
+        var isLink = !!msg.isLink;
+        var modelLabel = (isLink ? '[Link] ' : '') + (msg.name || 'Revit Model');
+        _revitBuf = {
+          name: modelLabel,
+          rawName: msg.name || 'Revit Model',
+          isLink: isLink,
+          elements:[], meshes:[],
+          count: msg.elementCount || 0,
+          received: 0
+        };
+        d({t:'UPD_REVIT_DIRECT', u:{loading:true, progress:0, elementCount:msg.elementCount||0}});
+        d({t:'BRIDGE_LOG', logType:'pull', text:'Receiving ' + (isLink ? 'linked model' : 'model') + ' "' + msg.name + '" (' + (msg.elementCount||'?') + ' elements)...'});
+        break;
+
+      case 'element-batch':
+        if (!_revitBuf) break;
+        var nextId = _revitBuf.elements.length + 1;
+        (msg.elements || []).forEach(function(el) {
+          var converted = _revitElementToMesh(el, nextId++);
+          _revitBuf.elements.push(converted);
+          converted.meshes.forEach(function(m) { _revitBuf.meshes.push(m); });
+        });
+        _revitBuf.received += (msg.elements || []).length;
+        var prog = _revitBuf.count > 0 ? _revitBuf.received / _revitBuf.count : 0;
+        d({t:'UPD_REVIT_DIRECT', u:{progress: Math.min(prog, 0.99)}});
+        break;
+
+      case 'model-end':
+        if (!_revitBuf) break;
+        _finalizeModel(msg, d);
+        break;
+
+      case 'model-sync':
+        // Revit project was synced — Connector sends a full re-export.
+        // This is identical to model-end but explicitly signals "update existing".
+        if (!_revitBuf) break;
+        _finalizeModel(msg, d);
+        break;
+
+      case 'element-update':
+        _handleElementUpdate(msg, d);
+        break;
+
+      case 'error':
+        d({t:'BRIDGE_LOG', logType:'error', text:'Revit: ' + (msg.message || 'Unknown error')});
+        break;
+    }
+  }
+
+  // ── Finalize a received model (add or replace) ─────────────────
+
+  function _finalizeModel(msg, d) {
+    var storeys = msg.storeys || [];
+    var storeyData = msg.storeyData || [];
+    var relatedPairs = msg.relatedPairs || {};
+
+    // Derive storeys from elements if not provided
+    if (storeys.length === 0) {
+      var seen = {};
+      _revitBuf.elements.forEach(function(el) {
+        if (el.props.storey && !seen[el.props.storey]) { storeys.push(el.props.storey); seen[el.props.storey] = true; }
+      });
+    }
+
+    // Derive relatedPairs from hostId/hostRelationships if not provided
+    if (Object.keys(relatedPairs).length === 0) {
+      _revitBuf.elements.forEach(function(el) {
+        if (el.props.hostId) {
+          relatedPairs[el.props.hostId + ':' + el.props.globalId] = true;
+        }
+        if (el.props.hostRelationships) {
+          el.props.hostRelationships.forEach(function(childGid) {
+            relatedPairs[el.props.globalId + ':' + childGid] = true;
+          });
+        }
+      });
+    }
+
+    var detectDiscipline = window._ccDetectDiscipline || function() { return 'architectural'; };
+    var DISC = window._ccDISC || [{id:'architectural', c:'#60a5fa'}];
+    var uid = window._ccUid || function() { return Math.random().toString(36).slice(2,10).toUpperCase(); };
+
+    var disc = detectDiscipline(_revitBuf.elements);
+    var dObj = DISC.find(function(x){return x.id===disc;});
+    var col = dObj ? dObj.c : DISC[0].c;
+
+    // Check if a model with this name already exists (update, don't duplicate)
+    var state = window._ccLatestState;
+    var mapKey = _revitBuf.rawName;
+    var existingId = _revitModelMap[mapKey];
+    var existingModel = null;
+
+    if (existingId && state) {
+      existingModel = state.models.find(function(m) { return m.id === existingId; });
+    }
+
+    // Also search by name + source if map doesn't have it
+    if (!existingModel && state) {
+      existingModel = state.models.find(function(m) {
+        return m.name === _revitBuf.name && m.stats && m.stats.source === 'revit-direct';
+      });
+    }
+
+    if (existingModel) {
+      // REPLACE existing model — keeps same ID, same slot, preserves clash references
+      var modelData = {
+        id: existingModel.id,
+        name: _revitBuf.name,
+        discipline: existingModel.discipline || disc,
+        color: existingModel.color || col,
+        visible: existingModel.visible !== false,
+        tag: existingModel.tag || '',
+        _version: (existingModel._version || 1) + 1,
+        meshes: _revitBuf.meshes,
+        elements: _revitBuf.elements,
+        storeys: storeys,
+        storeyData: storeyData,
+        spatialHierarchy: {},
+        relatedPairs: relatedPairs,
+        stats: {elementCount:_revitBuf.elements.length, source:'revit-direct', lastSync:Date.now()}
+      };
+      window._ccDispatch({t:'REPLACE_MODEL', id:existingModel.id, v:modelData});
+      _revitModelMap[mapKey] = existingModel.id;
+      d({t:'BRIDGE_LOG', logType:'pull', text:'Updated model "' + _revitBuf.rawName + '": ' + _revitBuf.elements.length + ' elements (v' + modelData._version + ').'});
+    } else {
+      // ADD new model
+      var modelId = uid();
+      var modelData2 = {
+        id: modelId, name: _revitBuf.name, discipline:disc, color:col, visible:true, _version:1,
+        meshes:_revitBuf.meshes, elements:_revitBuf.elements, storeys:storeys,
+        storeyData:storeyData, spatialHierarchy:{}, relatedPairs:relatedPairs,
+        stats:{elementCount:_revitBuf.elements.length, source:'revit-direct', lastSync:Date.now()}
+      };
+      window._ccDispatch({t:'ADD_MODEL', v:modelData2});
+      _revitModelMap[mapKey] = modelId;
+      d({t:'BRIDGE_LOG', logType:'pull', text:'Model "' + _revitBuf.rawName + '" loaded: ' + _revitBuf.elements.length + ' elements.'});
+    }
+
+    d({t:'UPD_REVIT_DIRECT', u:{loading:false, progress:1}});
+    _revitBuf = null;
+  }
+
+  // ── Incremental element updates ────────────────────────────────
+
+  function _handleElementUpdate(msg, d) {
+    var state = window._ccLatestState;
+    if (!state) return;
+
+    if (msg.action === 'deleted' && msg.globalIds) {
+      // Remove elements from the model that contains them
+      var removedCount = 0;
+      state.models.forEach(function(m) {
+        if (!m.stats || m.stats.source !== 'revit-direct') return;
+        var before = m.elements.length;
+        var gids = {};
+        msg.globalIds.forEach(function(gid) { gids[gid] = true; });
+        var filtered = m.elements.filter(function(el) { return !gids[el.props.globalId]; });
+        if (filtered.length < before) {
+          removedCount += (before - filtered.length);
+          // Remove meshes from scene
+          m.elements.forEach(function(el) {
+            if (gids[el.props.globalId]) {
+              el.meshes.forEach(function(mesh) {
+                if (mesh.parent) mesh.parent.remove(mesh);
+                if (mesh.geometry) mesh.geometry.dispose();
+                if (mesh.material) mesh.material.dispose();
+              });
+            }
+          });
+          m.elements = filtered;
+          m.meshes = [];
+          filtered.forEach(function(el) { el.meshes.forEach(function(mesh) { m.meshes.push(mesh); }); });
+        }
+      });
+      d({t:'BRIDGE_LOG', logType:'pull', text:removedCount + ' elements deleted from Revit.'});
+      if (window.invalidate) window.invalidate(2);
+
+    } else if (msg.action === 'modified' && msg.elements) {
+      // Replace meshes for modified elements
+      var updatedCount = 0;
+      msg.elements.forEach(function(elData) {
+        var gid = elData.globalId;
+        if (!gid) return;
+        state.models.forEach(function(m) {
+          if (!m.stats || m.stats.source !== 'revit-direct') return;
+          var idx = m.elements.findIndex(function(el) { return el.props.globalId === gid; });
+          if (idx === -1) return;
+          // Dispose old meshes
+          var oldEl = m.elements[idx];
+          oldEl.meshes.forEach(function(mesh) {
+            if (mesh.parent) mesh.parent.remove(mesh);
+            if (mesh.geometry) mesh.geometry.dispose();
+            if (mesh.material) mesh.material.dispose();
+          });
+          // Create new element
+          var newEl = _revitElementToMesh(elData, oldEl.expressId);
+          m.elements[idx] = newEl;
+          // Rebuild mesh list
+          m.meshes = [];
+          m.elements.forEach(function(el) { el.meshes.forEach(function(mesh) { m.meshes.push(mesh); }); });
+          // Add new meshes to scene
+          var S = window._ccState3d;
+          if (S && S.modelGroup) {
+            newEl.meshes.forEach(function(mesh) { S.modelGroup.add(mesh); });
+          }
+          updatedCount++;
+        });
+      });
+      d({t:'BRIDGE_LOG', logType:'pull', text:updatedCount + ' elements updated from Revit.'});
+      if (window.invalidate) window.invalidate(2);
+    }
+  }
+
+  // ── Push clashes to Revit (manual only) ────────────────────────
+
+  function _revitDirectPushClashes(s, d) {
+    if (!_revitWs || _revitWs.readyState !== 1) {
+      d({t:'BRIDGE_LOG', logType:'error', text:'Not connected to Revit.'});
+      return;
+    }
+    var clashData = s.clashes.filter(function(c) {
+      return c.status === 'open' || c.status === 'confirmed' || c.status === 'in_progress';
+    }).map(function(c) {
+      var elA = null, elB = null;
+      s.models.forEach(function(m) {
+        if (!m.elements) return;
+        m.elements.forEach(function(el) {
+          if (el.expressId === c.elemA) elA = el;
+          if (el.expressId === c.elemB) elB = el;
+        });
+      });
+      return {
+        id: c.id,
+        status: c.status,
+        priority: c.priority || 'normal',
+        type: c.type || 'hard',
+        point: c.point ? {x:c.point.x, y:c.point.y, z:c.point.z} : null,
+        elementA: elA ? {globalId:elA.props.globalId, name:elA.props.name, ifcType:elA.props.ifcType, revitId:elA.props.revitId||null} : null,
+        elementB: elB ? {globalId:elB.props.globalId, name:elB.props.name, ifcType:elB.props.ifcType, revitId:elB.props.revitId||null} : null
+      };
+    });
+    var issueData = s.issues.filter(function(i) {
+      return i.status === 'open' || i.status === 'in_progress';
+    }).map(function(i) {
+      return {
+        id: i.id,
+        title: i.title,
+        status: i.status,
+        priority: i.priority || 'normal',
+        description: i.description || '',
+        elementIds: (i.elementIds || []).map(function(eid) {
+          var found = null;
+          s.models.forEach(function(m) { if (m.elements) m.elements.forEach(function(el) { if (el.expressId === eid) found = el; }); });
+          return found ? {globalId:found.props.globalId, name:found.props.name, revitId:found.props.revitId||null} : null;
+        }).filter(Boolean)
+      };
+    });
+    _revitWs.send(JSON.stringify({
+      type:'push-clashes',
+      clashes: clashData,
+      issues: issueData
+    }));
+    d({t:'UPD_REVIT_DIRECT', u:{lastPush:Date.now()}});
+    d({t:'BRIDGE_LOG', logType:'push', text:'Pushed ' + clashData.length + ' clashes + ' + issueData.length + ' issues to Revit.'});
+  }
+
+  // ── Port persistence ───────────────────────────────────────────
+
+  function _saveDirectPort(port) {
+    try { localStorage.setItem('cc_revit_direct_port', String(port)); } catch(e) {}
+  }
+  function _loadDirectPort() {
+    try { return parseInt(localStorage.getItem('cc_revit_direct_port'), 10) || 19780; } catch(e) { return 19780; }
+  }
+
+  // ── Expose globally ────────────────────────────────────────────
+
+  window._revitDirectConnect = _revitDirectConnect;
+  window._revitDirectDisconnect = _revitDirectDisconnect;
+  window._revitDirectExport = _revitDirectExport;
+  window._revitDirectPushClashes = _revitDirectPushClashes;
+  window._saveDirectPort = _saveDirectPort;
+  window._loadDirectPort = _loadDirectPort;
+  window._revitGetWs = function() { return _revitWs; };
+
+  // ── Register addon ─────────────────────────────────────────────
+
+  window._ccRegisterAddon({
+    id: 'revit-bridge',
+    name: 'Revit Bridge',
+    description: 'Live link to Autodesk Revit via WebSocket. Pull geometry, push clashes. Supports linked models and incremental sync.',
+    autoActivate: false,
+    icon: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#60a5fa" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 14a1 1 0 0 1-.78-1.63l9.9-10.2a.5.5 0 0 1 .86.46l-1.92 6.02A1 1 0 0 0 13 10h7a1 1 0 0 1 .78 1.63l-9.9 10.2a.5.5 0 0 1-.86-.46l1.92-6.02A1 1 0 0 0 11 14z"/></svg>',
+
+    initState: {
+      revitBridge: {
+        provider: '',
+        apiKey: '',
+        mcpHost: 'localhost',
+        mcpPort: 8080,
+        connected: false,
+        syncing: false,
+        lastSync: null,
+        log: []
+      },
+      showRevitBridge: false,
+      revitDirect: {
+        port: 19780,
+        connected: false,
+        documentName: '',
+        loading: false,
+        progress: 0,
+        elementCount: 0,
+        lastPush: null
+      }
+    },
+
+    reducerCases: {
+      'UPD_BRIDGE': function(s, a) {
+        return Object.assign({}, s, {revitBridge: Object.assign({}, s.revitBridge, a.u)});
+      },
+      'BRIDGE_LOG': function(s, a) {
+        return Object.assign({}, s, {revitBridge: Object.assign({}, s.revitBridge, {
+          log: s.revitBridge.log.concat([{ts:Date.now(), type:a.logType||'info', text:a.text}]).slice(-100)
+        })});
+      },
+      'CLEAR_BRIDGE_LOG': function(s) {
+        return Object.assign({}, s, {revitBridge: Object.assign({}, s.revitBridge, {log:[]})});
+      },
+      'REVIT_BRIDGE': function(s, a) {
+        return Object.assign({}, s, {showRevitBridge: a.v});
+      },
+      'UPD_REVIT_DIRECT': function(s, a) {
+        return Object.assign({}, s, {revitDirect: Object.assign({}, s.revitDirect, a.u)});
+      }
+    },
+
+    init: function(dispatch, getState) {
+      // Nothing to auto-start — user connects manually
+    },
+
+    destroy: function() {
+      if (_revitWs) { _revitWs.close(); _revitWs = null; }
+      clearTimeout(_revitReconnect);
+      _revitBuf = null;
+    }
+  });
+
+  // ── Part 2: AI Bridge (LLM-powered MCP integration) ────────────
+  // Uses BYOK (Bring Your Own Key) to call Anthropic/OpenAI/Google APIs
+  // with tool definitions. Orchestrates push/pull between CC and Revit MCP.
+
+  // Persist bridge config to localStorage
+  function _saveBridgeConfig(bridge) {
+    try {
+      localStorage.setItem('cc_revit_bridge', JSON.stringify({
+        provider: bridge.provider,
+        apiKey: bridge.apiKey,
+        mcpHost: bridge.mcpHost,
+        mcpPort: bridge.mcpPort
+      }));
+    } catch(e) {}
+  }
+  function _loadBridgeConfig() {
+    try {
+      var raw = localStorage.getItem('cc_revit_bridge');
+      return raw ? JSON.parse(raw) : null;
+    } catch(e) { return null; }
+  }
+
+  // Build tool definitions that expose ClashControl data to the AI
+  function _buildCCTools() {
+    return [
+      {
+        name: 'get_clashes',
+        description: 'Get all clash detection results from ClashControl.',
+        parameters: { type: 'object', properties: { status: { type: 'string', enum: ['all','open','resolved','closed'], description: 'Filter by status' } } }
+      },
+      {
+        name: 'get_issues',
+        description: 'Get all issues from ClashControl.',
+        parameters: { type: 'object', properties: { status: { type: 'string', enum: ['all','open','in_progress','resolved','closed'], description: 'Filter by status' } } }
+      },
+      {
+        name: 'update_clash_status',
+        description: 'Update the status of a clash in ClashControl.',
+        parameters: { type: 'object', properties: { clash_id: { type: 'string' }, status: { type: 'string', enum: ['open','resolved','closed'] }, comment: { type: 'string' } }, required: ['clash_id','status'] }
+      },
+      {
+        name: 'update_issue_status',
+        description: 'Update the status of an issue in ClashControl.',
+        parameters: { type: 'object', properties: { issue_id: { type: 'string' }, status: { type: 'string', enum: ['open','in_progress','resolved','closed'] }, comment: { type: 'string' } }, required: ['issue_id','status'] }
+      },
+      {
+        name: 'push_to_revit',
+        description: 'Push clash/issue data to Revit via MCP.',
+        parameters: { type: 'object', properties: { item_ids: { type: 'array', items: { type: 'string' } } } }
+      },
+      {
+        name: 'pull_from_revit',
+        description: 'Pull resolution status from Revit via MCP.',
+        parameters: { type: 'object', properties: {} }
+      },
+      {
+        name: 'get_revit_status',
+        description: 'Check if Revit MCP server is running.',
+        parameters: { type: 'object', properties: {} }
+      },
+      {
+        name: 'analyze_clashes',
+        description: 'Analyze clash detection results: statistics, patterns, hotspots.',
+        parameters: { type: 'object', properties: {} }
+      },
+      {
+        name: 'suggest_resolution',
+        description: 'Get resolution suggestions for a clash.',
+        parameters: { type: 'object', properties: { clash_id: { type: 'string' } } }
+      },
+      {
+        name: 'generate_report',
+        description: 'Generate a coordination report.',
+        parameters: { type: 'object', properties: { format: { type: 'string', enum: ['summary','detailed','discipline'] } } }
+      },
+      {
+        name: 'batch_update_status',
+        description: 'Batch update status of multiple clashes or issues.',
+        parameters: { type: 'object', properties: { ids: { type: 'array', items: { type: 'string' } }, status: { type: 'string', enum: ['open','in_progress','resolved','closed'] }, item_type: { type: 'string', enum: ['clash','issue'] } }, required: ['ids','status','item_type'] }
+      },
+      {
+        name: 'batch_assign',
+        description: 'Batch assign multiple issues to a person.',
+        parameters: { type: 'object', properties: { ids: { type: 'array', items: { type: 'string' } }, assignee: { type: 'string' } }, required: ['ids','assignee'] }
+      }
+    ];
+  }
+
+  // Execute a tool call from the AI response
+  function _executeCCTool(name, args, s, d) {
+    var uid = window._ccUid || function() { return Math.random().toString(36).slice(2,10); };
+    switch(name) {
+      case 'get_clashes': {
+        var items = s.clashes;
+        if (args.status && args.status !== 'all') items = items.filter(function(c) { return c.status === args.status; });
+        return JSON.stringify(items.map(function(c) {
+          return { id:c.id, type:c.type, status:c.status, title:c.title, elemAName:c.elemAName, elemBName:c.elemBName,
+            elemAType:c.elemAType, elemBType:c.elemBType, point:c.point, distance:c.distance, elevation:c.elevation,
+            elemAStorey:c.elemAStorey, elemBStorey:c.elemBStorey, disciplines:c.disciplines };
+        }));
+      }
+      case 'get_issues': {
+        var items2 = s.issues;
+        if (args.status && args.status !== 'all') items2 = items2.filter(function(i) { return i.status === args.status; });
+        return JSON.stringify(items2.map(function(i) {
+          return { id:i.id, type:i.type, status:i.status, title:i.title, priority:i.priority, category:i.category,
+            assignee:i.assignee, elementName:i.elementName, elementType:i.elementType, point:i.point, storey:i.storey };
+        }));
+      }
+      case 'update_clash_status': {
+        if (args.clash_id && args.status) {
+          var upd = { status: args.status };
+          if (args.comment) upd.description = args.comment;
+          d({ t:'UPD_CLASH', id:args.clash_id, u:upd });
+          return JSON.stringify({ success:true, id:args.clash_id, newStatus:args.status });
+        }
+        return JSON.stringify({ success:false, error:'Missing clash_id or status' });
+      }
+      case 'update_issue_status': {
+        if (args.issue_id && args.status) {
+          var upd2 = { status: args.status };
+          if (args.comment) upd2.description = args.comment;
+          d({ t:'UPD_ISSUE', id:args.issue_id, u:upd2 });
+          return JSON.stringify({ success:true, id:args.issue_id, newStatus:args.status });
+        }
+        return JSON.stringify({ success:false, error:'Missing issue_id or status' });
+      }
+      case 'push_to_revit':
+        return JSON.stringify({ action:'forward_to_revit_mcp', tool:'place_family', note:'AI should call Revit MCP tools to place markers' });
+      case 'pull_from_revit':
+        return JSON.stringify({ action:'forward_to_revit_mcp', tool:'get_revit_model_info', note:'AI should query Revit MCP for element status' });
+      case 'get_revit_status':
+        return JSON.stringify({ action:'forward_to_revit_mcp', tool:'get_revit_status', note:'AI should call Revit MCP get_revit_status' });
+      case 'analyze_clashes': {
+        var clashes = s.clashes;
+        var total = clashes.length;
+        var byStatus = {}; clashes.forEach(function(c){ byStatus[c.status] = (byStatus[c.status]||0)+1; });
+        var byType = {}; clashes.forEach(function(c){ byType[c.type] = (byType[c.type]||0)+1; });
+        var byStorey = {}; clashes.forEach(function(c){
+          var st = c.elemAStorey || c.elemBStorey || 'Unknown';
+          byStorey[st] = (byStorey[st]||0)+1;
+        });
+        var byDisc = {}; clashes.forEach(function(c){
+          if(c.disciplines) c.disciplines.forEach(function(dd){ byDisc[dd]=(byDisc[dd]||0)+1; });
+        });
+        var hotStorey = Object.keys(byStorey).sort(function(a,b){return byStorey[b]-byStorey[a];})[0]||'N/A';
+        var typePairs = {}; clashes.forEach(function(c){
+          var pair = [c.elemAType||'?',c.elemBType||'?'].sort().join(' vs ');
+          typePairs[pair] = (typePairs[pair]||0)+1;
+        });
+        var topPairs = Object.keys(typePairs).sort(function(a,b){return typePairs[b]-typePairs[a];}).slice(0,5);
+        return JSON.stringify({ total:total, byStatus:byStatus, byType:byType, byStorey:byStorey, byDiscipline:byDisc,
+          hotspotStorey:hotStorey, hotspotCount:byStorey[hotStorey]||0,
+          topElementTypePairs:topPairs.map(function(p){return {pair:p,count:typePairs[p]};})
+        });
+      }
+      case 'suggest_resolution': {
+        var target = args.clash_id ? s.clashes.filter(function(c){return c.id===args.clash_id;}) : s.clashes.filter(function(c){return c.status==='open';}).slice(0,5);
+        return JSON.stringify(target.map(function(c){
+          return { id:c.id, type:c.type, elemAType:c.elemAType, elemBType:c.elemBType, elemAName:c.elemAName, elemBName:c.elemBName,
+            elemAStorey:c.elemAStorey, distance:c.distance, disciplines:c.disciplines,
+            context:'Provide resolution suggestions based on these element types, disciplines, and spatial relationship.' };
+        }));
+      }
+      case 'generate_report': {
+        var fmt = args.format || 'summary';
+        var cl = s.clashes, is = s.issues;
+        var data = { format:fmt, totalClashes:cl.length, totalIssues:is.length,
+          clashBreakdown:{ open:cl.filter(function(c){return c.status==='open';}).length, resolved:cl.filter(function(c){return c.status==='resolved'||c.status==='closed';}).length, hard:cl.filter(function(c){return c.type==='hard';}).length, soft:cl.filter(function(c){return c.type==='soft';}).length },
+          issueBreakdown:{ open:is.filter(function(i){return i.status==='open';}).length, inProgress:is.filter(function(i){return i.status==='in_progress';}).length, resolved:is.filter(function(i){return i.status==='resolved'||i.status==='closed';}).length }
+        };
+        if (fmt === 'detailed' || fmt === 'discipline') {
+          var discData = {};
+          cl.forEach(function(c){ (c.disciplines||[]).forEach(function(dd){ if(!discData[dd])discData[dd]={total:0,open:0,hard:0}; discData[dd].total++; if(c.status==='open')discData[dd].open++; if(c.type==='hard')discData[dd].hard++; }); });
+          data.byDiscipline = discData;
+        }
+        return JSON.stringify(data);
+      }
+      case 'batch_update_status': {
+        if (args.ids && args.status && args.item_type) {
+          var actionType = args.item_type === 'clash' ? 'UPD_CLASH' : 'UPD_ISSUE';
+          args.ids.forEach(function(id) { d({ t:actionType, id:id, u:{status:args.status} }); });
+          return JSON.stringify({ success:true, updated:args.ids.length, newStatus:args.status });
+        }
+        return JSON.stringify({ success:false, error:'Missing ids, status, or item_type' });
+      }
+      case 'batch_assign': {
+        if (args.ids && args.assignee) {
+          args.ids.forEach(function(id) { d({ t:'UPD_ISSUE', id:id, u:{assignee:args.assignee} }); });
+          return JSON.stringify({ success:true, assigned:args.ids.length, assignee:args.assignee });
+        }
+        return JSON.stringify({ success:false, error:'Missing ids or assignee' });
+      }
+      default:
+        return JSON.stringify({ error:'Unknown tool: ' + name });
+    }
+  }
+
+  // Call AI API with tools (supports Anthropic, OpenAI, Google)
+  function _callAIWithTools(provider, apiKey, systemPrompt, userMessage, tools, mcpConfig) {
+    var toolDefs = tools.map(function(t) {
+      if (provider === 'anthropic') {
+        return { name:t.name, description:t.description, input_schema:t.parameters };
+      } else if (provider === 'openai') {
+        return { type:'function', function:{ name:t.name, description:t.description, parameters:t.parameters } };
+      } else {
+        return { name:t.name, description:t.description, parameters:t.parameters };
+      }
+    });
+
+    var mcpNote = '\n\nRevit MCP server is available at ' + mcpConfig.mcpHost + ':' + mcpConfig.mcpPort + '. When you need to interact with Revit, describe the MCP tool calls needed (place_family, set_element_parameter, etc.) in your response.';
+
+    if (provider === 'anthropic') {
+      return fetch('https://api.anthropic.com/v1/messages', {
+        method:'POST',
+        headers:{
+          'Content-Type':'application/json',
+          'x-api-key':apiKey,
+          'anthropic-version':'2023-06-01',
+          'anthropic-dangerous-direct-browser-access':'true'
+        },
+        body:JSON.stringify({
+          model:'claude-sonnet-4-20250514',
+          max_tokens:4096,
+          system:systemPrompt + mcpNote,
+          messages:[{role:'user',content:userMessage}],
+          tools:toolDefs
+        })
+      }).then(function(r) { return r.json(); });
+    } else if (provider === 'openai') {
+      return fetch('https://api.openai.com/v1/chat/completions', {
+        method:'POST',
+        headers:{ 'Content-Type':'application/json', 'Authorization':'Bearer '+apiKey },
+        body:JSON.stringify({
+          model:'gpt-4o',
+          messages:[{role:'system',content:systemPrompt+mcpNote},{role:'user',content:userMessage}],
+          tools:toolDefs,
+          tool_choice:'auto'
+        })
+      }).then(function(r) { return r.json(); });
+    } else if (provider === 'google') {
+      return fetch('https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key='+apiKey, {
+        method:'POST',
+        headers:{ 'Content-Type':'application/json' },
+        body:JSON.stringify({
+          system_instruction:{parts:[{text:systemPrompt+mcpNote}]},
+          contents:[{role:'user',parts:[{text:userMessage}]}],
+          tools:[{function_declarations:toolDefs}]
+        })
+      }).then(function(r) { return r.json(); });
+    }
+    return Promise.reject(new Error('Unknown provider: '+provider));
+  }
+
+  // Parse tool calls from AI response (normalize across providers)
+  function _parseAIToolCalls(provider, response) {
+    var uid = window._ccUid || function() { return Math.random().toString(36).slice(2,10); };
+    var text = '';
+    var toolCalls = [];
+    if (provider === 'anthropic') {
+      (response.content || []).forEach(function(block) {
+        if (block.type === 'text') text += block.text;
+        if (block.type === 'tool_use') toolCalls.push({ id:block.id, name:block.name, args:block.input||{} });
+      });
+    } else if (provider === 'openai') {
+      var choice = (response.choices||[])[0]||{};
+      var msg = choice.message||{};
+      text = msg.content||'';
+      (msg.tool_calls||[]).forEach(function(tc) {
+        var fn = tc.function||{};
+        toolCalls.push({ id:tc.id, name:fn.name, args:JSON.parse(fn.arguments||'{}') });
+      });
+    } else if (provider === 'google') {
+      var parts = ((response.candidates||[])[0]||{}).content||{};
+      (parts.parts||[]).forEach(function(p) {
+        if (p.text) text += p.text;
+        if (p.functionCall) toolCalls.push({ id:uid(), name:p.functionCall.name, args:p.functionCall.args||{} });
+      });
+    }
+    return { text:text, toolCalls:toolCalls };
+  }
+
+  var BRIDGE_SYSTEM_PROMPT = 'You are the ClashControl-Revit Bridge AI. Your job is to help sync clash detection data and issues between ClashControl (a web-based BIM clash detection tool) and Autodesk Revit (via MCP server).\n\n' +
+    'You have tools to read clashes and issues from ClashControl, update their statuses, and coordinate with Revit MCP.\n\n' +
+    'When pushing clashes to Revit:\n1. Read open clashes from ClashControl using get_clashes\n2. For each clash, describe what Revit MCP calls are needed\n3. Summarize what was pushed\n\n' +
+    'When pulling status from Revit:\n1. Query Revit MCP for elements tagged with CC_ClashID parameters\n2. Check if geometries have changed\n3. Update ClashControl clash statuses using update_clash_status\n4. Summarize what changed\n\nBe concise. Use tool calls. Report results clearly.';
+
+  // High-level push/pull orchestration
+  function _revitBridgePush(s, d) {
+    var bridge = s.revitBridge;
+    if (!bridge.provider || !bridge.apiKey) return Promise.reject(new Error('Configure AI provider and API key first'));
+
+    d({t:'UPD_BRIDGE',u:{syncing:true}});
+    d({t:'BRIDGE_LOG',logType:'push',text:'Pushing ' + s.clashes.filter(function(c){return c.status==='open';}).length + ' open clashes + ' + s.issues.filter(function(i){return i.status==='open';}).length + ' open issues to Revit...'});
+
+    var tools = _buildCCTools();
+    var userMsg = 'Push all open clashes and issues from ClashControl to Revit. First use get_clashes and get_issues to read the data, then describe the Revit MCP calls needed to create markers and tag elements. Finally summarize what would be pushed.';
+
+    return _callAIWithTools(bridge.provider, bridge.apiKey, BRIDGE_SYSTEM_PROMPT, userMsg, tools, bridge)
+      .then(function(response) {
+        var parsed = _parseAIToolCalls(bridge.provider, response);
+        var toolResults = parsed.toolCalls.map(function(tc) {
+          return { id:tc.id, name:tc.name, result:_executeCCTool(tc.name, tc.args, s, d) };
+        });
+        var summary = parsed.text || 'Push completed.';
+        if (toolResults.length) {
+          summary += '\n\nTool calls executed: ' + toolResults.map(function(tr){ return tr.name; }).join(', ');
+        }
+        d({t:'BRIDGE_LOG',logType:'push',text:summary});
+        d({t:'UPD_BRIDGE',u:{syncing:false,lastSync:Date.now()}});
+        return summary;
+      })
+      .catch(function(err) {
+        d({t:'BRIDGE_LOG',logType:'error',text:'Push failed: '+err.message});
+        d({t:'UPD_BRIDGE',u:{syncing:false}});
+        throw err;
+      });
+  }
+
+  function _revitBridgePull(s, d) {
+    var bridge = s.revitBridge;
+    if (!bridge.provider || !bridge.apiKey) return Promise.reject(new Error('Configure AI provider and API key first'));
+
+    d({t:'UPD_BRIDGE',u:{syncing:true}});
+    d({t:'BRIDGE_LOG',logType:'pull',text:'Pulling status updates from Revit...'});
+
+    var tools = _buildCCTools();
+    var userMsg = 'Pull resolution status from Revit back to ClashControl. First check Revit MCP status, then check which clashes have been resolved in Revit, and update ClashControl accordingly using update_clash_status and update_issue_status tools.';
+
+    return _callAIWithTools(bridge.provider, bridge.apiKey, BRIDGE_SYSTEM_PROMPT, userMsg, tools, bridge)
+      .then(function(response) {
+        var parsed = _parseAIToolCalls(bridge.provider, response);
+        parsed.toolCalls.forEach(function(tc) {
+          _executeCCTool(tc.name, tc.args, s, d);
+        });
+        var summary = parsed.text || 'Pull completed.';
+        d({t:'BRIDGE_LOG',logType:'pull',text:summary});
+        d({t:'UPD_BRIDGE',u:{syncing:false,lastSync:Date.now()}});
+        return summary;
+      })
+      .catch(function(err) {
+        d({t:'BRIDGE_LOG',logType:'error',text:'Pull failed: '+err.message});
+        d({t:'UPD_BRIDGE',u:{syncing:false}});
+        throw err;
+      });
+  }
+
+  function _testBridgeConnection(bridge, d) {
+    d({t:'BRIDGE_LOG',logType:'info',text:'Testing connection to '+bridge.provider+'...'});
+    var tools = _buildCCTools();
+    return _callAIWithTools(bridge.provider, bridge.apiKey, BRIDGE_SYSTEM_PROMPT, 'Say "Connection successful" and nothing else.', tools.slice(0,1), bridge)
+      .then(function(response) {
+        var parsed = _parseAIToolCalls(bridge.provider, response);
+        d({t:'UPD_BRIDGE',u:{connected:true}});
+        d({t:'BRIDGE_LOG',logType:'info',text:'Connected to '+bridge.provider+': '+(parsed.text||'OK')});
+        return true;
+      })
+      .catch(function(err) {
+        d({t:'UPD_BRIDGE',u:{connected:false}});
+        d({t:'BRIDGE_LOG',logType:'error',text:'Connection failed: '+err.message});
+        return false;
+      });
+  }
+
+  // Expose AI bridge functions globally
+  window._saveBridgeConfig = _saveBridgeConfig;
+  window._loadBridgeConfig = _loadBridgeConfig;
+  window._revitBridgePush = _revitBridgePush;
+  window._revitBridgePull = _revitBridgePull;
+  window._testBridgeConnection = _testBridgeConnection;
+})();
