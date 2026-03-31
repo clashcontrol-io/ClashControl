@@ -1,5 +1,8 @@
 # Changelog
 
+## v4.3.1 (2026-03-31)
+- Remove extracted addon function bodies from index.html
+
 ## v4.3.0 (2026-03-31)
 - Add addon registry system and PWA addon
 
