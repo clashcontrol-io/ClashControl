@@ -281,7 +281,7 @@ window.onload = function() {
 
 function startApp() {
   // ── Version (auto-updated by pre-commit hook) ──
-  var CC_VERSION = {v:'3.4.3',hash:'b695814',date:'2026-03-30T15:24:26Z'};
+  var CC_VERSION = {v:'4.0.0',hash:'',date:'2026-03-31T00:00:00Z'};
 
   // ── GoatCounter event helper (no-op if GoatCounter not configured) ──
   function _gcEvent(name, title) {
@@ -461,6 +461,12 @@ function startApp() {
       lastPush:null
     },
     lastDeltaSummary: null, // {new, persisting, autoResolved, ts} — set after each merge run
+    // Local Clash Engine (localhost:19800)
+    localEngine:{
+      available:false,  // true when localhost:19800/status returns ready
+      active:false,     // true when user opted in via setup popup
+      checking:false
+    },
     // IDS Validation
     idsValidation: {
       results: [],       // [{specName, ruleDesc, severity, status:'pass'|'fail', elementId, globalId, ifcType, elementName, modelId}]
@@ -503,6 +509,7 @@ function startApp() {
     REVIT_BRIDGE:'REVIT_BRIDGE', UPD_BRIDGE:'UPD_BRIDGE',
     BRIDGE_LOG:'BRIDGE_LOG', CLEAR_BRIDGE_LOG:'CLEAR_BRIDGE_LOG',
     UPD_REVIT_DIRECT:'UPD_REVIT_DIRECT',
+    UPD_LOCAL_ENGINE:'UPD_LOCAL_ENGINE',
     IDS_SET_RESULTS:'IDS_SET_RESULTS', IDS_SET_SPECS:'IDS_SET_SPECS', IDS_RUNNING:'IDS_RUNNING'
   };
   // Collect all element IDs from a clash/issue item
@@ -732,6 +739,7 @@ function startApp() {
       case A.CLEAR_BRIDGE_LOG:return Object.assign({},s,{revitBridge:Object.assign({},s.revitBridge,{log:[]})});
       case A.REVIT_BRIDGE:    return Object.assign({},s,{showRevitBridge:a.v});
       case A.UPD_REVIT_DIRECT: return Object.assign({},s,{revitDirect:Object.assign({},s.revitDirect,a.u)});
+      case A.UPD_LOCAL_ENGINE: return Object.assign({},s,{localEngine:Object.assign({},s.localEngine,a.u)});
       case A.IDS_SET_RESULTS: return Object.assign({},s,{idsValidation:Object.assign({},s.idsValidation,{results:a.results,summary:a.summary,running:false})});
       case A.IDS_SET_SPECS:   return Object.assign({},s,{idsValidation:Object.assign({},s.idsValidation,{specs:a.specs})});
       case A.IDS_RUNNING:     return Object.assign({},s,{idsValidation:Object.assign({},s.idsValidation,{running:a.v})});
@@ -2723,10 +2731,23 @@ function startApp() {
       window.dispatchEvent(new Event('cc-detect-progress'));
       if (_userCb) _userCb(done, total);
     };
-    // Pre-extract GLB geometry in Worker before running detection
+    // Try local engine first if user opted in and it's available
+    var state = window._ccLatestState;
+    var useLocal = state && state.localEngine && state.localEngine.active && state.localEngine.available;
+    if (useLocal) {
+      return _detectOnLocalEngine(models, rules, onProgress).then(function(result) {
+        if (result !== null && gen === _ccDetectGeneration) return result;
+        // Fallback to browser engine
+        return _browserDetect(models, rules, onProgress, gen);
+      });
+    }
+    return _browserDetect(models, rules, onProgress, gen);
+  }
+
+  function _browserDetect(models, rules, onProgress, gen) {
     return _preExtractGLBGeometry(models).then(function() {
       return new Promise(function(resolve, reject) {
-        if (gen !== _ccDetectGeneration) { resolve([]); return; } // cancelled during pre-extraction
+        if (gen !== _ccDetectGeneration) { resolve([]); return; }
         try {
           var result = _detectClashesCore(models, rules, onProgress, function(r) {
             resolve(gen === _ccDetectGeneration ? r : []);
@@ -11688,6 +11709,135 @@ function startApp() {
     } catch(e) { return null; }
   }
 
+  // ── Local Clash Detection Engine (localhost:19800) ────────────
+  // Multi-threaded Python server for exact mesh intersection.
+  // Falls back to browser OBB engine when server isn't running.
+
+  var _localEngineUrl = 'http://localhost:19800';
+  var _localEngineWsUrl = 'ws://localhost:19801';
+
+  function _checkLocalEngine(d) {
+    if (d) d({t:A.UPD_LOCAL_ENGINE, u:{checking:true}});
+    return fetch(_localEngineUrl+'/status',{method:'GET',signal:AbortSignal.timeout(2000)})
+      .then(function(r){return r.json();})
+      .then(function(j){
+        var ready = j&&j.status==='ready';
+        if (d) d({t:A.UPD_LOCAL_ENGINE, u:{available:ready,checking:false}});
+        return ready;
+      })
+      .catch(function(){
+        if (d) d({t:A.UPD_LOCAL_ENGINE, u:{available:false,checking:false}});
+        return false;
+      });
+  }
+
+  // Serialize models + rules for the local engine
+  function _serializeForLocalEngine(models, rules) {
+    var elements = [];
+    models.forEach(function(m) {
+      if (!m.elements) return;
+      m.elements.forEach(function(el) {
+        if (!el.meshes || !el.meshes.length) return;
+        var verts = [], indices = [];
+        el.meshes.forEach(function(mesh) {
+          if (!mesh.geometry) return;
+          var pos = mesh.geometry.attributes.position;
+          var idx = mesh.geometry.index;
+          var offset = verts.length / 3;
+          // Apply mesh world matrix to positions
+          var v = new THREE.Vector3();
+          for (var i = 0; i < pos.count; i++) {
+            v.set(pos.getX(i), pos.getY(i), pos.getZ(i));
+            v.applyMatrix4(mesh.matrixWorld);
+            verts.push(v.x, v.y, v.z);
+          }
+          if (idx) {
+            for (var j = 0; j < idx.count; j++) indices.push(idx.getX(j) + offset);
+          } else {
+            for (var j = 0; j < pos.count; j++) indices.push(j + offset);
+          }
+        });
+        if (verts.length === 0) return;
+        elements.push({
+          id: el.expressId || el.id,
+          modelId: m.id,
+          ifcType: el.props && el.props.ifcType || '',
+          name: el.props && el.props.name || '',
+          storey: el.props && el.props.storey || '',
+          discipline: m.discipline || '',
+          vertices: verts,
+          indices: indices
+        });
+      });
+    });
+    return {elements:elements, rules:{
+      modelA: rules.modelA,
+      modelB: rules.modelB,
+      maxGap: rules.maxGap || 0,
+      mode: rules.mode || 'hard'
+    }};
+  }
+
+  // Run detection on local engine, returns promise of clash array
+  function _detectOnLocalEngine(models, rules, onProgress) {
+    var payload = _serializeForLocalEngine(models, rules);
+    var progressWs = null;
+    // Connect WebSocket for progress updates
+    try {
+      progressWs = new WebSocket(_localEngineWsUrl);
+      progressWs.onmessage = function(e) {
+        try {
+          var msg = JSON.parse(e.data);
+          if (msg.type === 'progress' && onProgress && msg.total > 0) {
+            onProgress(msg.done, msg.total);
+          }
+        } catch(ex){}
+      };
+    } catch(ex){}
+
+    return fetch(_localEngineUrl+'/detect',{
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify(payload)
+    })
+    .then(function(r){ return r.json(); })
+    .then(function(result) {
+      if (progressWs) try{progressWs.close();}catch(ex){}
+      // Convert server clash results to ClashControl format
+      if (!result || !result.clashes) return [];
+      return result.clashes.map(function(c) {
+        // Find elements from models
+        var elA = null, elB = null;
+        models.forEach(function(m) {
+          if (!m.elements) return;
+          m.elements.forEach(function(el) {
+            var eid = el.expressId || el.id;
+            if (eid === c.elementA) elA = el;
+            if (eid === c.elementB) elB = el;
+          });
+        });
+        if (!elA || !elB) return null;
+        var pt = c.point ? new THREE.Vector3(c.point[0], c.point[1], c.point[2]) : new THREE.Vector3();
+        return {
+          id: c.id || (c.elementA + '_' + c.elementB),
+          elementA: elA,
+          elementB: elB,
+          point: pt,
+          distance: c.distance != null ? c.distance : 0,
+          volume: c.volume || 0,
+          type: c.type || (rules.mode === 'soft' ? 'clearance' : 'hard'),
+          status: 'open',
+          source: 'local_engine'
+        };
+      }).filter(Boolean);
+    })
+    .catch(function(err) {
+      if (progressWs) try{progressWs.close();}catch(ex){}
+      console.warn('Local engine detection failed, falling back to browser:', err);
+      return null; // null signals fallback
+    });
+  }
+
   // ── Revit Direct Connector (WebSocket live link) ──────────────
   // Connects to the ClashControl Connector Revit plugin via WebSocket on localhost.
   // Receives geometry + properties, converts to Three.js meshes, dispatches ADD_MODEL.
@@ -15492,60 +15642,69 @@ function startApp() {
     </div>`;
   }
 
-  // ── First-Visit Welcome Popup ─────────────────────────────────
+  // ── First-Visit Setup Popup (PWA + Local Engine) ───────────────
 
   function WelcomePopup(props) {
-    var d = props.d;
+    var d = props.d, s = props.s;
     var stShow = useState(function(){
-      try { return !sessionStorage.getItem('cc_session_seen'); } catch(e){ return true; }
+      try { return !localStorage.getItem('cc_setup_seen'); } catch(e){ return true; }
     });
     var show = stShow[0], setShow = stShow[1];
-    // Check if data consent still needs to be decided
-    var needsConsent = useState(function(){
-      try { var v=localStorage.getItem('cc_data_consent'); return v!=='granted'&&v!=='denied'; } catch(e){ return true; }
-    })[0];
-    // Animate in
     var stVisible = useState(false), vis = stVisible[0], setVis = stVisible[1];
-    var stDetails = useState(false), showDetails = stDetails[0], setShowDetails = stDetails[1];
     useEffect(function(){ if(show) requestAnimationFrame(function(){ setVis(true); }); },[show]);
-    function dismiss(consentVal, enableTraining) {
-      // If consent decision provided, store it
-      if(consentVal) { try{localStorage.setItem('cc_data_consent',consentVal);}catch(e){} window.dispatchEvent(new Event('cc-consent-change')); }
-      // Mark training info as seen so TrainingModePopup won't also show
-      if(enableTraining) { try{localStorage.setItem('cc_training_informed','1');}catch(e){} }
+    // Check local engine availability on popup mount
+    var stEngineAvail = useState(false), engineAvail = stEngineAvail[0], setEngineAvail = stEngineAvail[1];
+    var stEngineChecking = useState(true), engineChecking = stEngineChecking[0], setEngineChecking = stEngineChecking[1];
+    useEffect(function(){
+      if(!show) return;
+      _checkLocalEngine(null).then(function(ready){setEngineAvail(ready);setEngineChecking(false);});
+    },[show]);
+    function dismiss() {
       setVis(false);
       setTimeout(function(){
-        try { sessionStorage.setItem('cc_session_seen','1'); } catch(e){}
+        try { localStorage.setItem('cc_setup_seen','1'); } catch(e){}
         setShow(false);
       }, 200);
     }
+    function acceptSetup() {
+      // Install PWA if available
+      if (_ccInstallPrompt) {
+        _ccInstallPrompt.prompt();
+        _ccInstallPrompt.userChoice.then(function(){ _ccInstallPrompt = null; });
+      }
+      // Enable local engine if available
+      if (engineAvail) {
+        try { localStorage.setItem('cc_local_engine','1'); } catch(e){}
+        d({t:A.UPD_LOCAL_ENGINE, u:{active:true, available:true}});
+      }
+      dismiss();
+    }
     useEffect(function(){
       if(!show) return;
-      function onKey(e){if(e.key==='Escape') dismiss(needsConsent?'denied':null);}
+      function onKey(e){if(e.key==='Escape') dismiss();}
       window.addEventListener('keydown', onKey);
       return function(){window.removeEventListener('keydown', onKey);};
-    },[show,needsConsent]);
+    },[show]);
     if (!show) return null;
-    var cardBg = 'var(--card-bg)';
-    var cardBorder = 'var(--card-border)';
-    var CARD = {background:cardBg,border:'1px solid '+cardBorder,borderRadius:10,padding:'.65rem .75rem',display:'flex',gap:'.6rem',alignItems:'flex-start',cursor:'default'};
+    var pwaAvail = !!_ccInstallPrompt;
+    var CARD = {background:'var(--card-bg)',border:'1px solid var(--card-border)',borderRadius:10,padding:'.65rem .75rem',display:'flex',gap:'.6rem',alignItems:'flex-start',cursor:'default'};
 
     return html`<div style=${{position:'fixed',inset:0,background:vis?'var(--modal-bg)':'transparent',display:'flex',alignItems:'center',justifyContent:'center',zIndex:60,transition:'background .2s',overflow:'hidden',padding:'2rem 0'}}
-      onClick=${function(e){if(e.target===e.currentTarget)dismiss(needsConsent?'denied':null);}}>
-      <div style=${{background:'var(--bg-secondary)',border:'1px solid var(--border)',borderRadius:16,width:480,maxWidth:'92vw',maxHeight:'85vh',overflowY:'auto',WebkitOverflowScrolling:'touch',boxShadow:'var(--shadow-lg)',transform:vis?'translateY(0) scale(1)':'translateY(12px) scale(.97)',opacity:vis?1:0,transition:'transform .25s cubic-bezier(.16,1,.3,1), opacity .2s',flexShrink:0}}>
+      onClick=${function(e){if(e.target===e.currentTarget)dismiss();}}>
+      <div style=${{background:'var(--bg-secondary)',border:'1px solid var(--border)',borderRadius:16,width:460,maxWidth:'92vw',maxHeight:'85vh',overflowY:'auto',WebkitOverflowScrolling:'touch',boxShadow:'var(--shadow-lg)',transform:vis?'translateY(0) scale(1)':'translateY(12px) scale(.97)',opacity:vis?1:0,transition:'transform .25s cubic-bezier(.16,1,.3,1), opacity .2s',flexShrink:0}}>
 
         <!-- Header -->
-        <div style=${{background:'linear-gradient(135deg,#1a0533 0%,#3b1764 40%,#7c3aed 100%)',padding:'1.4rem 1.4rem 1.2rem',position:'relative',overflow:'hidden'}}>
-          <div style=${{position:'absolute',top:'-30%',right:'-10%',width:180,height:180,borderRadius:'50%',background:'rgba(124,58,237,.25)',filter:'blur(40px)'}}></div>
+        <div style=${{background:'linear-gradient(135deg,#0f172a 0%,#1e3a5f 40%,#2563eb 100%)',padding:'1.4rem 1.4rem 1.2rem',position:'relative',overflow:'hidden'}}>
+          <div style=${{position:'absolute',top:'-30%',right:'-10%',width:180,height:180,borderRadius:'50%',background:'rgba(37,99,235,.25)',filter:'blur(40px)'}}></div>
           <div style=${{display:'flex',alignItems:'center',gap:'.75rem',position:'relative'}}>
             <div style=${{width:42,height:42,background:'rgba(255,255,255,.12)',borderRadius:12,display:'flex',alignItems:'center',justifyContent:'center',flexShrink:0,backdropFilter:'blur(8px)',border:'1px solid rgba(255,255,255,.1)'}}>
-              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#e9d5ff" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
-                <path d="M12 2a4 4 0 0 1 4 4c0 1.95-1.4 3.58-3.25 3.93V12h3.5a2.25 2.25 0 0 1 0 4.5h-3.5v1.25A3.25 3.25 0 0 1 9.5 21 3.25 3.25 0 0 1 6.25 17.75V14.5h-1A2.25 2.25 0 0 1 3 12.25 2.25 2.25 0 0 1 5.25 10h3.5V9.93A4 4 0 0 1 12 2z"/>
+              <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#93c5fd" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/>
               </svg>
             </div>
             <div>
-              <div style=${{color:'#fff',fontWeight:700,fontSize:'1.05rem',letterSpacing:'-.01em'}}>Help Build the First Open-Source Clash AI</div>
-              <div style=${{color:'rgba(255,255,255,.6)',fontSize:'.65rem',marginTop:'.15rem'}}>ClashControl Training Mode</div>
+              <div style=${{color:'#fff',fontWeight:700,fontSize:'1.05rem',letterSpacing:'-.01em'}}>Welcome to ClashControl</div>
+              <div style=${{color:'rgba(255,255,255,.6)',fontSize:'.65rem',marginTop:'.15rem'}}>Get the best experience</div>
             </div>
           </div>
         </div>
@@ -15553,115 +15712,74 @@ function startApp() {
         <!-- Body -->
         <div style=${{padding:'1rem 1.3rem 1.2rem'}}>
           <div style=${{fontSize:'.76rem',color:'var(--text-secondary)',lineHeight:1.7,marginBottom:'.85rem'}}>
-            We're training an${' '}<strong style=${{color:'var(--text-primary)'}}>open-source AI model</strong>${' '}to automatically classify BIM clashes \u2014 making ClashControl the world's first AI-powered clash detection engine. Your expertise makes it possible.
+            ClashControl works best as an installed app with a local clash engine for faster, more accurate detection on large models.
           </div>
 
           <div style=${{display:'flex',flexDirection:'column',gap:'.5rem',marginBottom:'1rem'}}>
 
-            <!-- What is Training Mode -->
+            <!-- Install as App -->
             <div style=${CARD}>
-              <div style=${{width:32,height:32,borderRadius:8,display:'flex',alignItems:'center',justifyContent:'center',flexShrink:0,background:'rgba(124,58,237,.15)'}}>
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#a78bfa" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                  <path d="M9 18l6-6-6-6"/>
+              <div style=${{width:32,height:32,borderRadius:8,display:'flex',alignItems:'center',justifyContent:'center',flexShrink:0,background:pwaAvail?'rgba(37,99,235,.15)':'rgba(100,100,100,.1)'}}>
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke=${pwaAvail?'#60a5fa':'var(--text-faint)'} stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/>
                 </svg>
               </div>
               <div style=${{flex:1,minWidth:0}}>
-                <div style=${{fontSize:'0.83rem',fontWeight:600,color:'var(--text-primary)',marginBottom:'.15rem'}}>How it works</div>
+                <div style=${{display:'flex',alignItems:'center',gap:'.4rem',marginBottom:'.15rem'}}>
+                  <span style=${{fontSize:'0.83rem',fontWeight:600,color:'var(--text-primary)'}}>Install as Desktop App</span>
+                  ${pwaAvail && html`<span style=${{fontSize:'0.58rem',fontWeight:600,padding:'1px 5px',borderRadius:4,background:'rgba(37,99,235,.15)',color:'#60a5fa'}}>READY</span>`}
+                  ${!pwaAvail && html`<span style=${{fontSize:'0.58rem',fontWeight:600,padding:'1px 5px',borderRadius:4,background:'var(--tag-bg)',color:'var(--text-faint)'}}>BROWSER ONLY</span>`}
+                </div>
                 <div style=${{fontSize:'0.72rem',color:'var(--text-secondary)',lineHeight:1.6}}>
-                  Enable${' '}<strong style=${{color:'#a78bfa'}}>Training Mode</strong>${' '}from the button above the 3D view. Thumbs up/down buttons appear on each clash row. Expand a clash to set type, reasons, and notes. Your normal workflow \u2014 changing status, creating issues \u2014 also generates training signals automatically.
+                  ${pwaAvail ? 'Runs in its own window with offline support, faster loading, and native file handling.'
+                             : 'Already installed or not available in this browser. You can install later from the browser menu.'}
                 </div>
               </div>
             </div>
 
-            <!-- What data is shared -->
+            <!-- Local Clash Engine -->
             <div style=${CARD}>
-              <div style=${{width:32,height:32,borderRadius:8,display:'flex',alignItems:'center',justifyContent:'center',flexShrink:0,background:'rgba(34,197,94,.12)'}}>
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--pill-green)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                  <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
-                </svg>
+              <div style=${{width:32,height:32,borderRadius:8,display:'flex',alignItems:'center',justifyContent:'center',flexShrink:0,background:engineAvail?'rgba(34,197,94,.12)':'rgba(234,179,8,.1)'}}>
+                ${engineChecking ? html`<div style=${{width:14,height:14,border:'2px solid var(--text-faint)',borderTopColor:'transparent',borderRadius:'50%',animation:'cc-spin .6s linear infinite'}}></div>`
+                  : html`<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke=${engineAvail?'var(--pill-green)':'#eab308'} stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <rect x="4" y="4" width="16" height="16" rx="2"/><path d="M9 9h6v6H9z"/><path d="M9 1v3M15 1v3M9 20v3M15 20v3M20 9h3M20 14h3M1 9h3M1 14h3"/>
+                </svg>`}
               </div>
               <div style=${{flex:1,minWidth:0}}>
-                <div style=${{fontSize:'0.83rem',fontWeight:600,color:'var(--text-primary)',marginBottom:'.15rem'}}>What data is shared${' '}<span style=${{fontSize:'0.63rem',fontWeight:500,color:'var(--pill-green)'}}>Privacy-safe</span></div>
-                <div style=${{fontSize:'0.72rem',color:'var(--text-secondary)',lineHeight:1.6}}>
-                  Only anonymous metadata: IFC element types (e.g. IfcWall, IfcBeam), disciplines, bounding box dimensions, penetration depth, overlap volume, and your verdicts/reasons.${' '}<strong style=${{color:'var(--text-primary)'}}>No</strong>${' '}element names, coordinates, project names, file names, GUIDs, or personal information. Ever.
+                <div style=${{display:'flex',alignItems:'center',gap:'.4rem',marginBottom:'.15rem'}}>
+                  <span style=${{fontSize:'0.83rem',fontWeight:600,color:'var(--text-primary)'}}>Local Clash Engine</span>
+                  ${!engineChecking && engineAvail && html`<span style=${{fontSize:'0.58rem',fontWeight:600,padding:'1px 5px',borderRadius:4,background:'rgba(34,197,94,.12)',color:'var(--pill-green)'}}>DETECTED</span>`}
+                  ${!engineChecking && !engineAvail && html`<span style=${{fontSize:'0.58rem',fontWeight:600,padding:'1px 5px',borderRadius:4,background:'rgba(234,179,8,.1)',color:'#eab308'}}>NOT FOUND</span>`}
                 </div>
+                <div style=${{fontSize:'0.72rem',color:'var(--text-secondary)',lineHeight:1.6}}>
+                  ${engineAvail ? 'Multi-threaded Python engine detected on localhost:19800. Enables exact mesh intersection and 5-10x faster detection on large models.'
+                               : 'Optional Python server for faster, exact clash detection. Not required \u2014 the built-in browser engine works fine for most projects.'}
+                </div>
+                ${!engineAvail && html`<div style=${{fontSize:'0.65rem',color:'var(--text-faint)',marginTop:'.25rem',lineHeight:1.5}}>
+                  Install later: <code style=${{fontSize:'0.63rem',background:'var(--tag-bg)',padding:'1px 4px',borderRadius:3}}>pip install clashcontrol-engine</code> then run <code style=${{fontSize:'0.63rem',background:'var(--tag-bg)',padding:'1px 4px',borderRadius:3}}>clashcontrol-engine</code>
+                </div>`}
               </div>
             </div>
-
-            <!-- How to share -->
-            <div style=${CARD}>
-              <div style=${{width:32,height:32,borderRadius:8,display:'flex',alignItems:'center',justifyContent:'center',flexShrink:0,background:'rgba(37,99,235,.12)'}}>
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--pill-blue)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                  <path d="M4 12v8a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-8"/><polyline points="16 6 12 2 8 6"/><line x1="12" y1="2" x2="12" y2="15"/>
-                </svg>
-              </div>
-              <div style=${{flex:1,minWidth:0}}>
-                <div style=${{fontSize:'0.83rem',fontWeight:600,color:'var(--text-primary)',marginBottom:'.15rem'}}>Sharing is manual & optional</div>
-                <div style=${{fontSize:'0.72rem',color:'var(--text-secondary)',lineHeight:1.6}}>
-                  Nothing is sent automatically. Use the floating overlay in the 3D view to${' '}<em>Export</em>${' '}or${' '}<em>Share</em>${' '}training data, or go to Settings \u2192 Developer / Fine-Tuning to export detailed JSONL files. You decide when and if.
-                </div>
-              </div>
-            </div>
-          </div>
-
-          <!-- Expandable data & privacy details -->
-          <div style=${{marginBottom:'.9rem',borderRadius:8,border:'1px solid var(--border-subtle)',overflow:'hidden'}}>
-            <button onClick=${function(){setShowDetails(!showDetails);}}
-              style=${{width:'100%',display:'flex',alignItems:'center',justifyContent:'space-between',
-                padding:'.5rem .65rem',background:'var(--tag-bg)',border:'none',cursor:'pointer',
-                fontFamily:'inherit',fontSize:'0.72rem',fontWeight:600,color:'var(--text-muted)'}}>
-              <span>Data & privacy details</span>
-              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"
-                style=${{transform:showDetails?'rotate(180deg)':'rotate(0)',transition:'transform .2s'}}>
-                <polyline points="6 9 12 15 18 9"/>
-              </svg>
-            </button>
-            ${showDetails && html`<div style=${{padding:'.6rem .65rem',fontSize:'0.69rem',color:'var(--text-secondary)',lineHeight:1.65}}>
-              <div style=${{marginBottom:'.5rem'}}>
-                <strong style=${{color:'var(--text-primary)',fontSize:'0.71rem'}}>What is shared:</strong>
-                <ul style=${{paddingLeft:'1.1rem',margin:'.2rem 0 0'}}>
-                  <li>IFC element types and disciplines</li>
-                  <li>Bounding box dimensions (size only, not position)</li>
-                  <li>Penetration depth and overlap volume</li>
-                  <li>Your verdict per clash</li>
-                  <li>Detection settings (clearance tolerance, discipline filters)</li>
-                  <li>Any notes you write \u2014 do not include project names or locations</li>
-                </ul>
-              </div>
-              <div style=${{marginBottom:'.5rem'}}>
-                <strong style=${{color:'var(--text-primary)',fontSize:'0.71rem'}}>What is never shared:</strong>
-                <ul style=${{paddingLeft:'1.1rem',margin:'.2rem 0 0'}}>
-                  <li>Element names, GUIDs, or coordinates</li>
-                  <li>Project or file names</li>
-                  <li>Your identity or IP address</li>
-                </ul>
-              </div>
-              <div style=${{fontSize:'0.62rem',color:'var(--text-faint)',lineHeight:1.6,padding:'.4rem .5rem',background:'var(--tag-bg)',borderRadius:6}}>
-                <strong style=${{color:'var(--text-muted)'}}>Data protection notice:</strong>${' '}Training data contains no personal data as defined under GDPR Art.\u00a04(1). Exported records consist exclusively of IFC schema type identifiers, anonymous geometric metrics, and user-provided classification labels. No IP addresses, device identifiers, cookies, or project-identifying information are collected or transmitted. Sharing is initiated solely by user action. You may review the full exported payload before submitting.
-              </div>
-            </div>`}
           </div>
 
           <!-- Footer actions -->
-          ${needsConsent ? html`
           <div style=${{display:'flex',gap:'.5rem'}}>
-            <button onClick=${function(){dismiss('denied');}} style=${{flex:1,border:'1px solid var(--border)',cursor:'pointer',fontFamily:'inherit',fontSize:'0.92rem',borderRadius:8,padding:'.5rem 1rem',background:'none',color:'var(--text-secondary)',transition:'background .15s'}}>
-              No thanks
+            <button onClick=${function(){dismiss();}}
+              style=${{flex:1,border:'1px solid var(--border)',cursor:'pointer',fontFamily:'inherit',fontSize:'0.86rem',borderRadius:8,padding:'.5rem 1rem',background:'none',color:'var(--text-secondary)',transition:'background .15s'}}>
+              Not now
             </button>
-            <button onClick=${function(){dismiss('granted',true);setTimeout(function(){if(window._ccDispatch)window._ccDispatch({t:A.TRAINING_MODE,v:true});},300);}} style=${{flex:1,border:'none',cursor:'pointer',fontFamily:'inherit',fontSize:'0.99rem',borderRadius:8,padding:'.5rem 1.4rem',background:'#7c3aed',color:'#fff',fontWeight:600,boxShadow:'0 2px 8px rgba(124,58,237,.3)',transition:'background .15s'}}>
-              Enable Training Mode
-            </button>
-          </div>
-          ` : html`
-          <div style=${{display:'flex',alignItems:'center',justifyContent:'space-between'}}>
-            <button onClick=${function(){dismiss();}} style=${{border:'1px solid var(--border)',cursor:'pointer',fontFamily:'inherit',fontSize:'0.92rem',borderRadius:8,padding:'.5rem 1rem',background:'none',color:'var(--text-secondary)',transition:'background .15s'}}>
-              Skip for now
-            </button>
-            <button onClick=${function(){dismiss(null,true);setTimeout(function(){if(window._ccDispatch)window._ccDispatch({t:A.TRAINING_MODE,v:true});},300);}} style=${{border:'none',cursor:'pointer',fontFamily:'inherit',fontSize:'0.99rem',borderRadius:8,padding:'.5rem 1.4rem',background:'#7c3aed',color:'#fff',fontWeight:600,boxShadow:'0 2px 8px rgba(124,58,237,.3)',transition:'background .15s'}}>
-              Enable Training Mode
+            <button onClick=${function(){acceptSetup();}}
+              style=${{flex:1,border:'none',cursor:'pointer',fontFamily:'inherit',fontSize:'0.92rem',borderRadius:8,padding:'.5rem 1.4rem',
+                background:pwaAvail||engineAvail?'#2563eb':'var(--bg-tertiary)',
+                color:pwaAvail||engineAvail?'#fff':'var(--text-muted)',
+                fontWeight:600,boxShadow:pwaAvail||engineAvail?'0 2px 8px rgba(37,99,235,.3)':'none',transition:'background .15s'}}>
+              ${pwaAvail && engineAvail ? 'Install App & Enable Engine' : pwaAvail ? 'Install App' : engineAvail ? 'Enable Engine' : 'Continue'}
             </button>
           </div>
-          `}
+
+          <div style=${{fontSize:'0.65rem',color:'var(--text-faint)',marginTop:'.6rem',textAlign:'center'}}>
+            ClashControl v${CC_VERSION.v} \u2014 Free & open source
+          </div>
         </div>
       </div>
     </div>`;
@@ -16040,6 +16158,12 @@ function startApp() {
       window.addEventListener('cc-install-available', onInstall);
       return function(){ window.removeEventListener('cc-update-available', onUpdate); window.removeEventListener('cc-install-available', onInstall); };
     }, []);
+    // ── Local engine check on startup ──
+    useEffect(function(){
+      // Restore opt-in from localStorage
+      try { if (localStorage.getItem('cc_local_engine')==='1') d({t:A.UPD_LOCAL_ENGINE, u:{active:true}}); } catch(e){}
+      _checkLocalEngine(d);
+    }, []);
     var _memWarnFiredRef = useRef(false);
     useEffect(function(){
       if (!performance.memory) return; // only Chrome/Edge support this API
@@ -16277,19 +16401,16 @@ function startApp() {
       ${s.showSettings && html`<${SettingsModal} d=${d} prefs=${s.prefs} models=${s.models} rules=${s.rules} />`}
       ${s.showRevitBridge && html`<${RevitBridgePanel} s=${s} d=${d} />`}
       <${MobileNav} s=${s} d=${d} />
-      <${WelcomePopup} d=${d} />
+      <${WelcomePopup} s=${s} d=${d} />
       <${TrainingModePopup} d=${d} active=${s.trainingMode} />
       <${TutorialPortal} d=${d} />
       ${showMemWarn && html`<${MemoryWarningModal} s=${s} onDismiss=${function(){setShowMemWarn(false);}} />`}
-      ${!pwaDismissed && (pwaUpdateAvail || pwaInstallAvail) && html`<div style=${{position:'fixed',bottom:'1rem',left:'50%',transform:'translateX(-50%)',zIndex:9999,
+      ${!pwaDismissed && pwaUpdateAvail && html`<div style=${{position:'fixed',bottom:'1rem',left:'50%',transform:'translateX(-50%)',zIndex:9999,
         background:'var(--bg-secondary)',border:'1px solid var(--border)',borderRadius:10,padding:'.6rem 1rem',display:'flex',alignItems:'center',gap:'.75rem',
         boxShadow:'0 4px 24px rgba(0,0,0,.4)',fontSize:'0.85rem',color:'var(--text-primary)',maxWidth:'90vw'}}>
-        ${pwaUpdateAvail && html`<span>New version available</span>
-          <button onClick=${function(){navigator.serviceWorker.getRegistration().then(function(r){if(r&&r.waiting)r.waiting.postMessage({type:'SKIP_WAITING'});else window.location.reload();});}}
-            style=${{padding:'.3rem .7rem',borderRadius:6,background:'var(--accent)',color:'#fff',fontWeight:600,fontSize:'0.8rem',border:'none',cursor:'pointer',whiteSpace:'nowrap'}}>Update now</button>`}
-        ${!pwaUpdateAvail && pwaInstallAvail && html`<span>Install ClashControl as app</span>
-          <button onClick=${function(){if(_ccInstallPrompt){_ccInstallPrompt.prompt();_ccInstallPrompt.userChoice.then(function(){_ccInstallPrompt=null;setPwaInstallAvail(false);});}}}
-            style=${{padding:'.3rem .7rem',borderRadius:6,background:'var(--accent)',color:'#fff',fontWeight:600,fontSize:'0.8rem',border:'none',cursor:'pointer',whiteSpace:'nowrap'}}>Install</button>`}
+        <span>New version available</span>
+        <button onClick=${function(){navigator.serviceWorker.getRegistration().then(function(r){if(r&&r.waiting)r.waiting.postMessage({type:'SKIP_WAITING'});else window.location.reload();});}}
+          style=${{padding:'.3rem .7rem',borderRadius:6,background:'var(--accent)',color:'#fff',fontWeight:600,fontSize:'0.8rem',border:'none',cursor:'pointer',whiteSpace:'nowrap'}}>Update now</button>
         <button onClick=${function(){setPwaDismissed(true);}} style=${{background:'none',border:'none',color:'var(--text-muted)',cursor:'pointer',fontSize:'1rem',padding:'0 .2rem',lineHeight:1}}>×</button>
       </div>`}
     </div>`;
