@@ -1,5 +1,8 @@
 # Changelog
 
+## v4.0.1 (2026-03-31)
+- v4.0.0: Add local clash engine integration and new first-run setup popup
+
 ## v3.4.3 (2026-03-30)
 - Add Revit Direct Connector (WebSocket live link) and Speckle roadmap
 
