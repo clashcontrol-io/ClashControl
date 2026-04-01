@@ -107,43 +107,39 @@
 
   // ── IndexedDB handle persistence ───────────────────────────────
 
-  function _saveSharedHandle(dirHandle, fileName) {
+  function _openSharedDB(cb) {
     try {
       var req = indexedDB.open('cc_shared', 1);
       req.onupgradeneeded = function(e) { e.target.result.createObjectStore('handles'); };
-      req.onsuccess = function(e) {
-        var db = e.target.result;
-        var tx = db.transaction('handles', 'readwrite');
-        tx.objectStore('handles').put({dirHandle:dirHandle, fileName:fileName}, 'shared');
-      };
-    } catch(e){}
-  }
-
-  function _loadSharedHandle(cb) {
-    try {
-      var req = indexedDB.open('cc_shared', 1);
-      req.onupgradeneeded = function(e) { e.target.result.createObjectStore('handles'); };
-      req.onsuccess = function(e) {
-        var db = e.target.result;
-        var tx = db.transaction('handles', 'readonly');
-        var get = tx.objectStore('handles').get('shared');
-        get.onsuccess = function() { cb(get.result || null); };
-        get.onerror = function() { cb(null); };
-      };
+      req.onsuccess = function(e) { cb(e.target.result); };
       req.onerror = function() { cb(null); };
     } catch(e) { cb(null); }
   }
 
+  function _saveSharedHandle(dirHandle, fileName) {
+    _openSharedDB(function(db) {
+      if (!db) return;
+      var tx = db.transaction('handles', 'readwrite');
+      tx.objectStore('handles').put({dirHandle:dirHandle, fileName:fileName}, 'shared');
+    });
+  }
+
+  function _loadSharedHandle(cb) {
+    _openSharedDB(function(db) {
+      if (!db) { cb(null); return; }
+      var tx = db.transaction('handles', 'readonly');
+      var get = tx.objectStore('handles').get('shared');
+      get.onsuccess = function() { cb(get.result || null); };
+      get.onerror = function() { cb(null); };
+    });
+  }
+
   function _clearSharedHandle() {
-    try {
-      var req = indexedDB.open('cc_shared', 1);
-      req.onupgradeneeded = function(e) { e.target.result.createObjectStore('handles'); };
-      req.onsuccess = function(e) {
-        var db = e.target.result;
-        var tx = db.transaction('handles', 'readwrite');
-        tx.objectStore('handles').delete('shared');
-      };
-    } catch(e){}
+    _openSharedDB(function(db) {
+      if (!db) return;
+      var tx = db.transaction('handles', 'readwrite');
+      tx.objectStore('handles').delete('shared');
+    });
   }
 
   // ── Folder picker ──────────────────────────────────────────────

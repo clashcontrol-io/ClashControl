@@ -15702,6 +15702,25 @@ function startApp() {
     </div>`;
   }
 
+  // ── Shared resize handler for resizable panels ─────────────────
+  function _makeResizeHandler(dragRef, setPanelW, minW, maxW, invert) {
+    return function(e) {
+      e.preventDefault();
+      var startX = e.clientX, startW = dragRef.current && dragRef.current.startW || 0;
+      dragRef.current = {startX:startX, startW:startW};
+      // Read current width from setPanelW's state via a sync trick
+      setPanelW(function(cur) { dragRef.current.startW = cur; return cur; });
+      function onMove(ev) {
+        if (!dragRef.current) return;
+        var dx = invert ? (dragRef.current.startX - ev.clientX) : (ev.clientX - dragRef.current.startX);
+        setPanelW(Math.max(minW, Math.min(maxW, dragRef.current.startW + dx)));
+      }
+      function onUp() { dragRef.current = null; window.removeEventListener('mousemove', onMove); window.removeEventListener('mouseup', onUp); }
+      window.addEventListener('mousemove', onMove);
+      window.addEventListener('mouseup', onUp);
+    };
+  }
+
   // ── Left Panel (Models, Clashes, Issues, etc.) ─────────────────
 
   function LeftPanel(props) {
@@ -15713,18 +15732,7 @@ function startApp() {
     var projects=s.projectList||[];
     var activeProj=projects.find(function(p){return p.id===s.activeProject;})||projects[0]||{name:'Default'};
     var TITLES={models:'Models',clashes:'Clashes',issues:'Issues',navigator:'Navigator',tools:'Tools',addons:'Addons',standards:'Standards'};
-    function onResizeDown(e){
-      e.preventDefault();
-      dragRef.current={startX:e.clientX,startW:panelW};
-      function onMove(ev){
-        if(!dragRef.current) return;
-        var dx=ev.clientX-dragRef.current.startX;
-        setPanelW(Math.max(200,Math.min(600,dragRef.current.startW+dx)));
-      }
-      function onUp(){dragRef.current=null;window.removeEventListener('mousemove',onMove);window.removeEventListener('mouseup',onUp);}
-      window.addEventListener('mousemove',onMove);
-      window.addEventListener('mouseup',onUp);
-    }
+    var onResizeDown = _makeResizeHandler(dragRef, setPanelW, 200, 600, false);
     return html`<div class="cc-left-panel" style=${{
       width:panelW,flexShrink:0,display:'flex',flexDirection:'column',overflow:'hidden',
       background:'var(--bg-primary)',borderRight:'1px solid var(--border-subtle)',position:'relative'
@@ -15756,18 +15764,7 @@ function startApp() {
     var s=props.s, d=props.d;
     var widthSt=useState(320), panelW=widthSt[0], setPanelW=widthSt[1];
     var dragRef=useRef(null);
-    function onResizeDown(e){
-      e.preventDefault();
-      dragRef.current={startX:e.clientX,startW:panelW};
-      function onMove(ev){
-        if(!dragRef.current) return;
-        var dx=dragRef.current.startX-ev.clientX;
-        setPanelW(Math.max(250,Math.min(600,dragRef.current.startW+dx)));
-      }
-      function onUp(){dragRef.current=null;window.removeEventListener('mousemove',onMove);window.removeEventListener('mouseup',onUp);}
-      window.addEventListener('mousemove',onMove);
-      window.addEventListener('mouseup',onUp);
-    }
+    var onResizeDown = _makeResizeHandler(dragRef, setPanelW, 250, 600, true);
     return html`<div class="cc-side-panel" style=${{
       width:panelW,flexShrink:0,display:'flex',flexDirection:'column',overflow:'hidden',
       background:'var(--bg-primary)',borderLeft:'1px solid var(--border-subtle)',position:'relative'
