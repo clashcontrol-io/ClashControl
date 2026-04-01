@@ -12808,6 +12808,9 @@ function startApp() {
   }
 
   // ── Async NL handler: regex fast-path → Ollama/browser LLM fallback ──
+  // Context memory for NL follow-ups ("now export those", "how many?")
+  var _nlLastContext = null;
+
   function processNLCommandWithLLM(raw, s, d) {
     // Capture hook: write all inputs to NL training store (including unmatched)
     function _captureNL(result, path) {
@@ -12824,7 +12827,26 @@ function startApp() {
         _saveNLTrainRecord(raw, result != null ? (typeof result === 'object' ? result : String(result)) : null,
           {ts:Date.now(), path:path, matched:result!=null, action:action, v:CC_VERSION.v});
       } catch(e) {}
+      // Update context memory for follow-ups
+      if (result != null) {
+        _nlLastContext = {input: raw, result: typeof result === 'string' ? result : null, ts: Date.now(),
+          clashCount: s.clashes ? s.clashes.length : 0};
+      }
       return result;
+    }
+
+    // 0. Follow-up resolution: "those", "export those", "how many?"
+    var followUp = raw.match(/^(?:(?:now\s+)?(?:export|save|download)\s+(?:those|these|them)|how\s+many\s*\??|count\s+(?:those|these|them))$/i);
+    if (followUp && _nlLastContext) {
+      if (/export|save|download/i.test(raw)) {
+        // Re-run export command
+        var expResult = processNLCommand('export to bcf', s, d);
+        if (expResult) return Promise.resolve(_captureNL(expResult, 'followup'));
+      }
+      if (/how\s+many|count/i.test(raw)) {
+        var countMsg = _nlLastContext.clashCount + ' clashes total. Last action: ' + (_nlLastContext.input || 'unknown') + '.';
+        return Promise.resolve(_captureNL(countMsg, 'followup'));
+      }
     }
 
     // 1. Try regex (instant, no LLM needed)
@@ -13357,6 +13379,60 @@ function startApp() {
       else if (assignFilter === 'unassigned') issueTargets = issueTargets.filter(function(i){return !i.assignee;});
       issueTargets.forEach(function(i){ d({t:A.UPD_ISSUE, id:i.id, u:{assignee:assignee}}); });
       return 'Assigned ' + issueTargets.length + ' issues to ' + assignee + '.';
+    }
+
+    // Batch by severity: "resolve all info clashes", "mark all critical clashes as in_progress"
+    var batchSevMatch = text.match(/(?:mark|set|change|update|resolve)\s+all\s+(critical|major|minor|info)\s+(?:clashes?|issues?)\s*(?:(?:as\s+|to\s+)(open|in.?progress|resolved|closed))?/i);
+    if (batchSevMatch) {
+      var sevKey = batchSevMatch[1].toLowerCase();
+      var sevStatus = batchSevMatch[2] ? batchSevMatch[2].replace(/\s+/g,'_') : 'resolved';
+      var sevTargets = s.clashes.filter(function(c){return c.aiSeverity===sevKey;});
+      sevTargets.forEach(function(c){ d({t:A.UPD_CLASH, id:c.id, u:{status:sevStatus}}); });
+      return 'Updated ' + sevTargets.length + ' ' + sevKey + ' clashes to ' + sevStatus + '.';
+    }
+
+    // Batch by discipline: "resolve all MEP clashes", "mark all structural clashes as confirmed"
+    var batchDiscMatch = text.match(/(?:mark|set|change|update|resolve)\s+all\s+(mep|structural|architectural|electrical|plumbing|hvac|mechanical)\s+(?:clashes?)\s*(?:(?:as\s+|to\s+)(open|in.?progress|resolved|closed|confirmed))?/i);
+    if (batchDiscMatch) {
+      var discKey = batchDiscMatch[1].toLowerCase();
+      var discStatus = batchDiscMatch[2] ? batchDiscMatch[2].replace(/\s+/g,'_') : 'resolved';
+      var discTargets = s.clashes.filter(function(c){
+        var discs = (c.disciplines||[]).map(function(x){return x.toLowerCase();}).join(' ');
+        return discs.indexOf(discKey) >= 0;
+      });
+      discTargets.forEach(function(c){ d({t:A.UPD_CLASH, id:c.id, u:{status:discStatus}}); });
+      return 'Updated ' + discTargets.length + ' ' + discKey + ' clashes to ' + discStatus + '.';
+    }
+
+    // Batch by storey: "resolve all Level 3 clashes", "mark all Ground Floor clashes as resolved"
+    var batchStoreyMatch = text.match(/(?:mark|set|change|update|resolve)\s+all\s+(.+?)\s+clashes?\s*(?:(?:as\s+|to\s+)(open|in.?progress|resolved|closed|confirmed))?$/i);
+    if (batchStoreyMatch && !batchSevMatch && !batchDiscMatch) {
+      var storeyKey = batchStoreyMatch[1];
+      var storeyStatus = batchStoreyMatch[2] ? batchStoreyMatch[2].replace(/\s+/g,'_') : 'resolved';
+      var storeyTargets = s.clashes.filter(function(c){
+        var a = (c.elemAStorey||'').toLowerCase(), b = (c.elemBStorey||'').toLowerCase();
+        var k = storeyKey.toLowerCase();
+        return a.indexOf(k) >= 0 || b.indexOf(k) >= 0;
+      });
+      if (storeyTargets.length > 0) {
+        storeyTargets.forEach(function(c){ d({t:A.UPD_CLASH, id:c.id, u:{status:storeyStatus}}); });
+        return 'Updated ' + storeyTargets.length + ' clashes on ' + storeyKey + ' to ' + storeyStatus + '.';
+      }
+    }
+
+    // Batch priority: "set all critical clashes to high priority"
+    var batchPrioMatch = text.match(/(?:set|mark|change)\s+all\s+(critical|major|minor|info|open|hard|soft)\s+(?:clashes?)\s+(?:to\s+|as\s+)(high|medium|low|none)\s+priority/i);
+    if (batchPrioMatch) {
+      var prioFilter = batchPrioMatch[1].toLowerCase();
+      var newPrio = batchPrioMatch[2].toLowerCase();
+      var prioTargets = s.clashes.filter(function(c){
+        if (prioFilter === 'critical' || prioFilter === 'major' || prioFilter === 'minor' || prioFilter === 'info') return c.aiSeverity === prioFilter;
+        if (prioFilter === 'hard' || prioFilter === 'soft') return c.type === prioFilter;
+        if (prioFilter === 'open') return c.status === 'open';
+        return false;
+      });
+      prioTargets.forEach(function(c){ d({t:A.UPD_CLASH, id:c.id, u:{priority:newPrio}}); });
+      return 'Set ' + prioTargets.length + ' ' + prioFilter + ' clashes to ' + newPrio + ' priority.';
     }
 
     // Analyze / report commands → open Revit Bridge if configured, else give summary
@@ -14000,8 +14076,29 @@ function startApp() {
     function send(overrideText) {
       var text = (overrideText || input).trim();
       if (!text) return;
-      setMsgs(function(m){ return m.concat([{role:'user', text:text}]); });
       setInput('');
+      // Multi-step: split on ";" or " then " (but not inside quotes)
+      var steps = text.split(/\s*;\s*|\s+then\s+/i).filter(function(s){return s.trim();});
+      if (steps.length > 1) {
+        setMsgs(function(m){ return m.concat([{role:'user', text:text}]); });
+        var idx = 0;
+        function runNext() {
+          if (idx >= steps.length) { setLoading(false); return; }
+          var step = steps[idx++];
+          setLoading(true);
+          processNLCommandWithLLM(step.trim(), s, d).then(function(result) {
+            if (result !== null) {
+              setMsgs(function(m){ return m.concat([{role:'assistant', text: typeof result === 'string' ? result : 'Done.'}]); });
+            }
+            // Wait a tick for state to settle, then run next step
+            setTimeout(runNext, 150);
+          });
+        }
+        runNext();
+        return;
+      }
+      // Single command — original flow
+      setMsgs(function(m){ return m.concat([{role:'user', text:text}]); });
       // "stop" / "cancel" / "clear" — reset chat state, cancel any pending conversation
       if (/^(?:stop|cancel|clear|reset|nevermind)$/i.test(text)) {
         clashCtxRef.current = null;
