@@ -374,7 +374,9 @@ function startApp() {
     defaultTolerances:(function(){try{return JSON.parse(localStorage.getItem('cc_defaultTolerances'))||{};}catch(e){return {};}}()),
     theme:(function(){ try { return localStorage.getItem('cc_theme')||'dark'; } catch(e){ return 'dark'; } })(),
     renderStyle:_ccLoadPref('renderStyle','standard'), // 'standard','shaded','rendered','wireframe'
-    ollamaEnabled:_ccLoadPref('ollamaEnabled',false) // off by default — enable in Settings to use local Ollama
+    ollamaEnabled:_ccLoadPref('ollamaEnabled',false), // off by default — enable in Settings to use local Ollama
+    nlProvider:_ccLoadPref('nlProvider','auto'), // 'auto'|'anthropic'|'openai'|'google'|'ollama_only'|'browser_only'
+    nlApiKey:(function(){try{return localStorage.getItem('cc_nlApiKey')||'';}catch(e){return '';}}())
   };
   var INIT = {
     models:[], clashes:[], issues:[], activeId:null, showModal:false, showSettings:false, modalElement:null, tab:null,
@@ -703,7 +705,7 @@ function startApp() {
       case A.TRAINING_MODE: var tm=a.v!=null?!!a.v:!s.trainingMode;try{localStorage.setItem('cc_trainingMode',tm?'1':'0');}catch(e){}return Object.assign({},s,{trainingMode:tm});
       case A.UPD_PREFS:
         if(a.u&&a.u.defaultTolerances!==undefined){try{localStorage.setItem('cc_defaultTolerances',JSON.stringify(a.u.defaultTolerances));}catch(e){}}
-        if(a.u){var _pk=['autoFlyTo','autoHighlight','showGrid','showAxes','showMarkers','hoverHighlight','outlineSelected','defaultPriority','defaultCategory','defaultStatus','defaultMaxGap','resetFiltersOnRun','renderStyle'];_pk.forEach(function(k){if(a.u[k]!==undefined){try{localStorage.setItem('cc_'+k,JSON.stringify(a.u[k]));}catch(e){}}});}
+        if(a.u){var _pk=['autoFlyTo','autoHighlight','showGrid','showAxes','showMarkers','hoverHighlight','outlineSelected','defaultPriority','defaultCategory','defaultStatus','defaultMaxGap','resetFiltersOnRun','renderStyle','ollamaEnabled','nlProvider'];_pk.forEach(function(k){if(a.u[k]!==undefined){try{localStorage.setItem('cc_'+k,JSON.stringify(a.u[k]));}catch(e){}}});}
         return Object.assign({},s,{prefs:Object.assign({},s.prefs,a.u)});
       case A.MEASURE_MODE: return Object.assign({},s,{measureMode:a.v});
       case A.ADD_MEASUREMENT: _gcEvent('measurement', a.v&&a.v.type||'length'); return Object.assign({},s,{measurements:s.measurements.concat([a.v])});
@@ -11804,6 +11806,25 @@ function startApp() {
           <div><div style=${TLBL}>Use Ollama (local AI)</div><div style=${TSUB}>Connect to a locally running Ollama instance for faster, offline NL commands. Requires Ollama installed and a model pulled (e.g. qwen2.5:7b).</div></div>
           <${Toggle} on=${!!p.ollamaEnabled} onToggle=${tog('ollamaEnabled')} />
         </div>
+        <div style=${{display:'flex',gap:'.5rem',padding:'.4rem 0'}}>
+          <div style=${{flex:1}}><label style=${LBL}>NL Provider</label>
+            <select value=${p.nlProvider||'auto'} onChange=${sel('nlProvider')} style=${S_INPUT}>
+              <option value="auto">Auto</option>
+              <option value="anthropic">Anthropic (Claude)</option>
+              <option value="openai">OpenAI</option>
+              <option value="google">Google (Gemini)</option>
+              <option value="ollama_only">Ollama only</option>
+              <option value="browser_only">Browser only</option>
+            </select></div>
+          <div style=${{flex:2}}><label style=${LBL}>API Key</label>
+            <input type="password" value=${p.nlApiKey||''} placeholder="sk-... or AIza..."
+              onInput=${function(e){var v=e.target.value;d({t:A.UPD_PREFS,u:{nlApiKey:v}});try{localStorage.setItem('cc_nlApiKey',v);}catch(x){}}}
+              style=${Object.assign({},S_INPUT,{fontFamily:'monospace',fontSize:'0.72rem'})} /></div>
+        </div>
+        <div style=${{fontSize:'0.69rem',color:'var(--text-faint)',padding:'0 0 .3rem',lineHeight:1.4}}>
+          Cloud API enables more capable NL commands. Your key is stored locally and never sent to ClashControl servers.
+          ${p.nlProvider !== 'ollama_only' && p.nlProvider !== 'browser_only' && p.nlApiKey && html`<span style=${{color:'#4ade80',marginLeft:'.3rem'}}>✓ Key set</span>`}
+        </div>
 
         <div style=${SEC}>Issue Defaults</div>
         <div style=${{display:'flex',gap:'.5rem',padding:'.5rem 0'}}>
@@ -12680,6 +12701,34 @@ function startApp() {
       .then(function(data){ return (data.message && data.message.content) || null; });
   }
 
+  // ── Cloud API for NL (Anthropic / OpenAI / Google) ────────────
+  function callCloudNL(systemPrompt, userMsg, provider, apiKey) {
+    if (!apiKey) return Promise.reject(new Error('No API key'));
+    var p = (provider || 'anthropic').toLowerCase();
+    var url, headers, body, extract;
+    if (p === 'anthropic') {
+      url = 'https://api.anthropic.com/v1/messages';
+      headers = {'Content-Type':'application/json', 'x-api-key':apiKey, 'anthropic-version':'2023-06-01', 'anthropic-dangerous-direct-browser-access':'true'};
+      body = JSON.stringify({model:'claude-haiku-4-5-20251001', max_tokens:200, system:systemPrompt, messages:[{role:'user',content:userMsg}]});
+      extract = function(d){ return d.content && d.content[0] && d.content[0].text || null; };
+    } else if (p === 'openai') {
+      url = 'https://api.openai.com/v1/chat/completions';
+      headers = {'Content-Type':'application/json', 'Authorization':'Bearer '+apiKey};
+      body = JSON.stringify({model:'gpt-4o-mini', max_tokens:200, messages:[{role:'system',content:systemPrompt},{role:'user',content:userMsg}]});
+      extract = function(d){ return d.choices && d.choices[0] && d.choices[0].message && d.choices[0].message.content || null; };
+    } else if (p === 'google') {
+      url = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key='+apiKey;
+      headers = {'Content-Type':'application/json'};
+      body = JSON.stringify({contents:[{parts:[{text:systemPrompt+'\n\nUser: '+userMsg}]}], generationConfig:{maxOutputTokens:200}});
+      extract = function(d){ return d.candidates && d.candidates[0] && d.candidates[0].content && d.candidates[0].content.parts && d.candidates[0].content.parts[0] && d.candidates[0].content.parts[0].text || null; };
+    } else {
+      return Promise.reject(new Error('Unknown provider: '+p));
+    }
+    return fetch(url, {method:'POST', headers:headers, body:body})
+      .then(function(r){ if (!r.ok) throw new Error('Cloud API '+r.status); return r.json(); })
+      .then(extract);
+  }
+
   // ── In-browser LLM (fallback when Ollama not available) ────────
   function getNLPipeline() {
     if (_nlPipeline) return Promise.resolve(_nlPipeline);
@@ -12862,7 +12911,30 @@ function startApp() {
       .replace('{{HARD}}', !!r.hard)
       .replace('{{MODEL_A}}', r.modelA || 'all').replace('{{MODEL_B}}', r.modelB || 'all');
 
-    // 3. Try Ollama first (local, fast, bigger model) — only if user enabled it in Settings
+    // 3. Try Cloud API (if user configured API key and provider allows it)
+    var pr = s.prefs || {};
+    var nlProv = pr.nlProvider || 'auto';
+    if (pr.nlApiKey && nlProv !== 'ollama_only' && nlProv !== 'browser_only') {
+      var cloudProvider = nlProv === 'auto' ? 'anthropic' : nlProv;
+      return callCloudNL(prompt, raw, cloudProvider, pr.nlApiKey)
+        .then(function(text) { return _captureNL(text ? dispatchLLMAction(text, s, d) : null, 'cloud'); })
+        .catch(function() {
+          // Cloud failed — fall through to Ollama/browser
+          if (_ollamaAvailable && pr.ollamaEnabled) {
+            return callOllama(prompt, raw)
+              .then(function(text) { return _captureNL(text ? dispatchLLMAction(text, s, d) : null, 'ollama'); })
+              .catch(function() { return _captureNL(null, 'ollama'); });
+          }
+          if (_nlModelStatus === 'ready' && _nlPipeline) {
+            return _nlPipeline([{role:'system', content:prompt}, {role:'user', content:raw}], {max_new_tokens:150, temperature:0.0, do_sample:false})
+              .then(function(out) { var text = out[0].generated_text; if (Array.isArray(text)) text = text[text.length-1].content; return _captureNL(dispatchLLMAction(text, s, d), 'browser-llm'); })
+              .catch(function() { return _captureNL(null, 'browser-llm'); });
+          }
+          return _captureNL(null, 'cloud-fallthrough');
+        });
+    }
+
+    // 4. Try Ollama (local, fast, bigger model) — only if user enabled it in Settings
     if (_ollamaAvailable && s.prefs && s.prefs.ollamaEnabled) {
       _resetIdleTimer();
       return callOllama(prompt, raw)
@@ -14189,8 +14261,10 @@ function startApp() {
 
     var isDetecting = s.detecting;
     var isDocked = !!props.docked;
-    var backendLabel = window._ccTourActive ? 'AI loaded' : backend === 'ollama' ? 'Ollama (' + _ollamaModel + ')' : backend === 'browser' ? 'In-browser (0.5B)' : null;
-    var backendColor = window._ccTourActive ? '#a78bfa' : backend === 'ollama' ? '#22c55e' : backend === 'browser' ? '#f59e0b' : mutedCol;
+    var _cloudConfigured = s.prefs && s.prefs.nlApiKey && s.prefs.nlProvider !== 'ollama_only' && s.prefs.nlProvider !== 'browser_only';
+    var _cloudName = _cloudConfigured ? ({anthropic:'Claude',openai:'GPT',google:'Gemini'}[s.prefs.nlProvider]||'Cloud API') : null;
+    var backendLabel = window._ccTourActive ? 'AI loaded' : _cloudConfigured ? _cloudName : backend === 'ollama' ? 'Ollama (' + _ollamaModel + ')' : backend === 'browser' ? 'In-browser (0.5B)' : null;
+    var backendColor = window._ccTourActive ? '#a78bfa' : _cloudConfigured ? '#22c55e' : backend === 'ollama' ? '#22c55e' : backend === 'browser' ? '#f59e0b' : mutedCol;
 
     // ── Closed-state pill (only when NOT docked and not open) ──
     if (!isDocked && !open) {
