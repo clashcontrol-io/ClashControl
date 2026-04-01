@@ -15445,7 +15445,8 @@ function startApp() {
     // Hooks MUST be called unconditionally (before any early return)
     var widthSt=useState(300), panelW=widthSt[0], setPanelW=widthSt[1];
     var dragRef=useRef(null);
-    if (!tab) return null;
+    var showAI = !tab;
+    var activeTab = tab || 'ai';
     var projects=s.projectList||[];
     var activeProj=projects.find(function(p){return p.id===s.activeProject;})||projects[0]||{name:'Default'};
     var TITLES={models:'Models',clashes:'Clashes',issues:'Issues',navigator:'Navigator',tools:'Tools',addons:'Addons',ai:'AI Chat'};
@@ -15469,21 +15470,21 @@ function startApp() {
         background:'transparent',transition:'background .15s'}} onMouseEnter=${function(e){e.currentTarget.style.background='rgba(59,130,246,0.3)';}} onMouseLeave=${function(e){e.currentTarget.style.background='transparent';}}></div>
       <div style=${{display:'flex',alignItems:'center',padding:'.6rem .85rem',
         borderBottom:'1px solid var(--border-subtle)',flexShrink:0,gap:'.5rem'}}>
-        <span style=${{fontWeight:600,fontSize:'.82rem',flex:1,color:'var(--text-primary)'}}>${TITLES[tab]||''}</span>
-        ${tab==='models' && html`<span style=${{fontSize:'.68rem',color:'var(--text-muted)',overflow:'hidden',
+        <span style=${{fontWeight:600,fontSize:'.82rem',flex:1,color:'var(--text-primary)'}}>${TITLES[activeTab]||''}</span>
+        ${activeTab==='models' && html`<span style=${{fontSize:'.68rem',color:'var(--text-muted)',overflow:'hidden',
           textOverflow:'ellipsis',whiteSpace:'nowrap',maxWidth:140}} title=${activeProj.name}>📁 ${activeProj.name}</span>`}
-        <button onClick=${function(){d({t:A.TAB,v:null});}}
+        ${!showAI && html`<button onClick=${function(){d({t:A.TAB,v:null});}}
           style=${{background:'none',border:'none',cursor:'pointer',color:'var(--text-muted)',
-            fontSize:'1.1rem',lineHeight:1,padding:'2px 4px',borderRadius:4}} title="Close panel">×</button>
+            fontSize:'1.1rem',lineHeight:1,padding:'2px 4px',borderRadius:4}} title="Close panel">×</button>`}
       </div>
-      ${tab==='models'   && html`<${ModelSidebar}  s=${s} d=${d} />`}
-      ${tab==='clashes'  && html`<${IssuePanel} key="clashes" s=${s} d=${d} hideTabBar=${true} />`}
-      ${tab==='issues'   && html`<${IssuePanel} key="issues" s=${s} d=${d} hideTabBar=${true} />`}
-      ${tab==='navigator' && html`<${IssuePanel} key="navigator" s=${s} d=${d} hideTabBar=${true} />`}
-      ${tab==='standards' && html`<${StandardsPanel} s=${s} d=${d} />`}
-      ${tab==='tools'    && html`<${ToolsPanel} s=${s} d=${d} />`}
-      ${tab==='addons'   && html`<${AddonsPanel} s=${s} d=${d} />`}
-      ${tab==='ai'       && html`<${NLCommandPanel} s=${s} d=${d} docked=${true} />`}
+      ${activeTab==='models'   && html`<${ModelSidebar}  s=${s} d=${d} />`}
+      ${activeTab==='clashes'  && html`<${IssuePanel} key="clashes" s=${s} d=${d} hideTabBar=${true} />`}
+      ${activeTab==='issues'   && html`<${IssuePanel} key="issues" s=${s} d=${d} hideTabBar=${true} />`}
+      ${activeTab==='navigator' && html`<${IssuePanel} key="navigator" s=${s} d=${d} hideTabBar=${true} />`}
+      ${activeTab==='standards' && html`<${StandardsPanel} s=${s} d=${d} />`}
+      ${activeTab==='tools'    && html`<${ToolsPanel} s=${s} d=${d} />`}
+      ${activeTab==='addons'   && html`<${AddonsPanel} s=${s} d=${d} />`}
+      ${activeTab==='ai'       && html`<${NLCommandPanel} s=${s} d=${d} docked=${true} />`}
     </div>`;
   }
 
@@ -16429,7 +16430,6 @@ function startApp() {
         <${Header} s=${s} d=${d} />
         ${is2D ? html`<${View2D} s=${s} d=${d} />` : html`<${Viewer} s=${s} d=${d} />`}
         ${is2D && html`<${ExportBar} s=${s} d=${d} />`}
-        ${s.tab !== 'ai' && html`<${NLCommandPanel} s=${s} d=${d} />`}
       </div>
       <${SidePanel} s=${s} d=${d} />
       ${s.showModal && html`<${NewIssueModal} d=${d} el=${s.modalElement} prefs=${s.prefs} clashes=${s.clashes} activeId=${s.activeId} />`}
