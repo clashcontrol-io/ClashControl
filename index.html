@@ -15442,9 +15442,22 @@ function startApp() {
             <div style=${{flex:1,minWidth:0}}>
               <div style=${{display:'flex',alignItems:'center',gap:'.4rem',marginBottom:'.15rem'}}>
                 <span style=${{fontSize:'0.83rem',fontWeight:600,color:'var(--text-primary)'}}>${addon.name}</span>
-                <span style=${{fontSize:'0.58rem',fontWeight:600,padding:'1px 5px',borderRadius:4,
-                  background:active?'rgba(34,197,94,.12)':'var(--tag-bg)',
-                  color:active?'var(--pill-green)':'var(--text-faint)'}}>${active?'ACTIVE':'OFF'}</span>
+                ${function(){
+                  var isLE = id==='local-engine';
+                  var leState = isLE ? (s.localEngine||{}) : null;
+                  // Local engine: show connection status instead of generic active/off
+                  if (isLE && active) {
+                    if (leState.checking) return html`<span style=${{fontSize:'0.58rem',fontWeight:600,padding:'1px 5px',borderRadius:4,
+                      background:'rgba(234,179,8,.12)',color:'#eab308'}}>CHECKING</span>`;
+                    if (leState.available) return html`<span style=${{fontSize:'0.58rem',fontWeight:600,padding:'1px 5px',borderRadius:4,
+                      background:'rgba(34,197,94,.12)',color:'var(--pill-green)'}}>CONNECTED</span>`;
+                    return html`<span style=${{fontSize:'0.58rem',fontWeight:600,padding:'1px 5px',borderRadius:4,
+                      background:'rgba(234,179,8,.12)',color:'#eab308'}}>SERVER NOT RUNNING</span>`;
+                  }
+                  return html`<span style=${{fontSize:'0.58rem',fontWeight:600,padding:'1px 5px',borderRadius:4,
+                    background:active?'rgba(34,197,94,.12)':'var(--tag-bg)',
+                    color:active?'var(--pill-green)':'var(--text-faint)'}}>${active?'ACTIVE':'OFF'}</span>`;
+                }()}
               </div>
               <div style=${{fontSize:'0.72rem',color:'var(--text-secondary)',lineHeight:1.6,marginBottom:'.3rem'}}>${addon.description||''}</div>
               ${function(){

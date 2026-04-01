@@ -49,7 +49,7 @@
     panel: function(html, s, d) {
       var le = s.localEngine || {};
       var statusColor = le.available ? '#22c55e' : le.checking ? '#eab308' : '#64748b';
-      var statusText = le.available ? 'Available on localhost:19800' : le.checking ? 'Checking...' : 'Not detected';
+      var statusText = le.available ? 'Connected to localhost:19800' : le.checking ? 'Checking...' : 'Server not running';
 
       return html`<div style=${{padding:'.5rem 0',fontSize:'0.78rem',color:'var(--text-secondary)',lineHeight:1.7}}>
         <div style=${{display:'flex',alignItems:'center',gap:'.4rem',marginBottom:'.4rem'}}>
@@ -73,7 +73,13 @@
             ${le.active?'Disable':'Enable for Detection'}</button>`}
         </div>
         ${!le.available && html`<div style=${{fontSize:'0.69rem',color:'var(--text-faint)',lineHeight:1.6}}>
-          Install: <code style=${{fontSize:'0.63rem',background:'var(--tag-bg)',padding:'1px 4px',borderRadius:3}}>pip install clashcontrol-engine</code>${' then run '}<code style=${{fontSize:'0.63rem',background:'var(--tag-bg)',padding:'1px 4px',borderRadius:3}}>clashcontrol-engine</code>
+          Run in your terminal to start the server:
+          <div style=${{marginTop:'.25rem',display:'flex',alignItems:'center',gap:'.4rem'}}>
+            <code style=${{fontSize:'0.63rem',background:'var(--tag-bg)',padding:'2px 6px',borderRadius:3}}>pip install clashcontrol-engine && clashcontrol-engine</code>
+            <button onClick=${function(){navigator.clipboard.writeText('pip install clashcontrol-engine && clashcontrol-engine').catch(function(){});}}
+              style=${{fontSize:'0.58rem',padding:'2px 6px',borderRadius:4,cursor:'pointer',border:'1px solid var(--border)',background:'var(--bg-secondary)',color:'var(--text-muted)',fontFamily:'inherit',whiteSpace:'nowrap'}}>Copy</button>
+          </div>
+          <div style=${{marginTop:'.25rem',color:'var(--text-faint)'}}>Detection will use the built-in browser engine until the server is running.</div>
         </div>`}
       </div>`;
     }
