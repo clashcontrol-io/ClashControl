@@ -14,40 +14,75 @@
   var _revitWs = null;
   var _revitBuf = null;
   var _revitReconnect = null;
+  var _revitReconnectDelay = 0; // exponential backoff: 0 = no reconnect scheduled
+  var _revitLastPort = 19780;
+  var _revitLastDispatch = null;
+  var _revitUserDisconnected = false; // true when user clicks Disconnect
   // Track which CC model ID corresponds to which Revit document name
   // so re-exports update the existing model instead of adding a duplicate.
   var _revitModelMap = {}; // {documentName_modelName: ccModelId}
+
+  // ── Reconnection with exponential backoff ─────────────────────
+
+  function _scheduleReconnect() {
+    if (_revitUserDisconnected || !_revitLastDispatch) return;
+    _revitReconnectDelay = Math.min((_revitReconnectDelay || 1000) * 2, 30000);
+    var delay = _revitReconnectDelay;
+    _revitLastDispatch({t:'UPD_REVIT_DIRECT', u:{reconnecting:true, reconnectIn:delay}});
+    _revitLastDispatch({t:'BRIDGE_LOG', logType:'info', text:'Reconnecting in ' + (delay/1000) + 's...'});
+    _revitReconnect = setTimeout(function() {
+      _revitDirectConnect(_revitLastPort, _revitLastDispatch);
+    }, delay);
+  }
+
+  function _resetReconnectDelay() {
+    _revitReconnectDelay = 0;
+  }
 
   // ── WebSocket connection ───────────────────────────────────────
 
   function _revitDirectConnect(port, d) {
     if (_revitWs && _revitWs.readyState <= 1) { _revitWs.close(); }
     clearTimeout(_revitReconnect);
-    var url = 'ws://localhost:' + (port || 19780);
+    _revitLastPort = port || 19780;
+    _revitLastDispatch = d;
+    _revitUserDisconnected = false;
+    var url = 'ws://localhost:' + _revitLastPort;
     d({t:'BRIDGE_LOG', logType:'info', text:'Connecting to Revit at ' + url + '...'});
-    d({t:'UPD_REVIT_DIRECT', u:{connected:false, loading:false, progress:0}});
+    d({t:'UPD_REVIT_DIRECT', u:{connected:false, loading:false, progress:0, reconnecting:false}});
     try { _revitWs = new WebSocket(url); } catch(e) {
       d({t:'BRIDGE_LOG', logType:'error', text:'WebSocket error: ' + e.message});
+      _scheduleReconnect();
       return;
     }
     _revitWs.binaryType = 'arraybuffer';
 
     _revitWs.onopen = function() {
-      d({t:'UPD_REVIT_DIRECT', u:{connected:true}});
-      d({t:'BRIDGE_LOG', logType:'info', text:'Connected to Revit plugin.'});
+      var wasReconnect = _revitReconnectDelay > 0;
+      _resetReconnectDelay();
+      d({t:'UPD_REVIT_DIRECT', u:{connected:true, reconnecting:false}});
+      d({t:'BRIDGE_LOG', logType:'info', text:wasReconnect ? 'Reconnected to Revit plugin.' : 'Connected to Revit plugin.'});
       _revitWs.send(JSON.stringify({type:'ping'}));
+      // On reconnect, re-request full export (plugin may have accumulated changes)
+      if (wasReconnect) {
+        d({t:'BRIDGE_LOG', logType:'info', text:'Re-requesting full export after reconnect...'});
+        _revitDirectExport(['all']);
+      }
     };
 
     _revitWs.onclose = function() {
       d({t:'UPD_REVIT_DIRECT', u:{connected:false, loading:false}});
       d({t:'BRIDGE_LOG', logType:'info', text:'Revit connection closed.'});
       _revitWs = null;
+      _scheduleReconnect();
     };
 
     _revitWs.onerror = function() {
       d({t:'UPD_REVIT_DIRECT', u:{connected:false, loading:false}});
-      d({t:'BRIDGE_LOG', logType:'error', text:'Could not connect to Revit. Is the plugin running?'});
+      // Only log error if not already reconnecting (avoid spam)
+      if (!_revitReconnectDelay) d({t:'BRIDGE_LOG', logType:'error', text:'Could not connect to Revit. Is the plugin running?'});
       _revitWs = null;
+      // onclose will also fire and trigger reconnect
     };
 
     _revitWs.onmessage = function(ev) {
@@ -58,15 +93,23 @@
   }
 
   function _revitDirectDisconnect(d) {
+    _revitUserDisconnected = true;
     clearTimeout(_revitReconnect);
+    _resetReconnectDelay();
     if (_revitWs) { _revitWs.close(); _revitWs = null; }
     _revitBuf = null;
-    d({t:'UPD_REVIT_DIRECT', u:{connected:false, loading:false, progress:0, documentName:''}});
+    d({t:'UPD_REVIT_DIRECT', u:{connected:false, loading:false, progress:0, documentName:'', reconnecting:false}});
   }
 
   function _revitDirectExport(categories) {
     if (!_revitWs || _revitWs.readyState !== 1) return;
     _revitWs.send(JSON.stringify({type:'export', categories: categories || ['all']}));
+  }
+
+  function _revitDirectCancelExport() {
+    if (!_revitWs || _revitWs.readyState !== 1) return;
+    _revitWs.send(JSON.stringify({type:'cancel-export'}));
+    _revitBuf = null;
   }
 
   // ── Base64 decode helpers ──────────────────────────────────────
@@ -168,7 +211,9 @@
           converted.meshes.forEach(function(m) { _revitBuf.meshes.push(m); });
         });
         _revitBuf.received += (msg.elements || []).length;
-        var prog = _revitBuf.count > 0 ? _revitBuf.received / _revitBuf.count : 0;
+        // Use batchIndex/totalBatches from Connector if available, else fall back to element count
+        var prog = msg.totalBatches > 0 ? (msg.batchIndex + 1) / msg.totalBatches
+          : _revitBuf.count > 0 ? _revitBuf.received / _revitBuf.count : 0;
         d({t:'UPD_REVIT_DIRECT', u:{progress: Math.min(prog, 0.99)}});
         break;
 
@@ -179,9 +224,19 @@
 
       case 'model-sync':
         // Revit project was synced — Connector sends a full re-export.
-        // This is identical to model-end but explicitly signals "update existing".
         if (!_revitBuf) break;
         _finalizeModel(msg, d);
+        break;
+
+      case 'model-error':
+        d({t:'UPD_REVIT_DIRECT', u:{loading:false, progress:0}});
+        d({t:'BRIDGE_LOG', logType:'error', text:'Export error: ' + (msg.message || 'Unknown') + (msg.elementsSent ? ' (' + msg.elementsSent + ' elements sent)' : '')});
+        _revitBuf = null;
+        break;
+
+      case 'push-clashes-ack':
+        d({t:'BRIDGE_LOG', logType:'push', text:'Revit applied ' + (msg.clashesApplied||0) + ' clashes, ' + (msg.issuesApplied||0) + ' issues.' +
+          (msg.errors && msg.errors.length ? ' Errors: ' + msg.errors.join('; ') : '')});
         break;
 
       case 'element-update':
@@ -197,6 +252,14 @@
   // ── Finalize a received model (add or replace) ─────────────────
 
   function _finalizeModel(msg, d) {
+    // Switch to target project if set (wired from RevitBridgePanel UI)
+    var targetProj = window._ccRevitTargetProject;
+    var state0 = window._ccLatestState;
+    if (targetProj && state0 && state0.activeProject !== targetProj) {
+      if (window._switchProject) window._switchProject(targetProj, state0, d);
+      else window._ccDispatch({t:'SET_PROJECT', v:targetProj});
+    }
+
     var storeys = msg.storeys || [];
     var storeyData = msg.storeyData || [];
     var relatedPairs = msg.relatedPairs || {};
@@ -292,15 +355,19 @@
     var state = window._ccLatestState;
     if (!state) return;
 
-    if (msg.action === 'deleted' && msg.globalIds) {
-      // Remove elements from the model that contains them
+    if (msg.action === 'deleted' && (msg.globalIds || msg.revitIds)) {
+      // Remove elements from the model that contains them (match by globalId or revitId)
       var removedCount = 0;
       state.models.forEach(function(m) {
         if (!m.stats || m.stats.source !== 'revit-direct') return;
         var before = m.elements.length;
         var gids = {};
-        msg.globalIds.forEach(function(gid) { gids[gid] = true; });
-        var filtered = m.elements.filter(function(el) { return !gids[el.props.globalId]; });
+        var rids = {};
+        if (msg.globalIds) msg.globalIds.forEach(function(gid) { gids[gid] = true; });
+        if (msg.revitIds) msg.revitIds.forEach(function(rid) { rids[rid] = true; });
+        var filtered = m.elements.filter(function(el) {
+          return !gids[el.props.globalId] && !rids[el.props.revitId];
+        });
         if (filtered.length < before) {
           removedCount += (before - filtered.length);
           // Remove meshes from scene
@@ -321,8 +388,33 @@
       d({t:'BRIDGE_LOG', logType:'pull', text:removedCount + ' elements deleted from Revit.'});
       if (window.invalidate) window.invalidate(2);
 
+    } else if (msg.action === 'properties-only' && msg.elements) {
+      // Update properties without rebuilding GPU geometry
+      var propsCount = 0;
+      msg.elements.forEach(function(elData) {
+        var gid = elData.globalId;
+        if (!gid) return;
+        state.models.forEach(function(m) {
+          if (!m.stats || m.stats.source !== 'revit-direct') return;
+          var idx = m.elements.findIndex(function(el) { return el.props.globalId === gid; });
+          if (idx === -1) return;
+          var el = m.elements[idx];
+          // Merge updated properties, keep existing meshes/geometry untouched
+          if (elData.name != null) el.props.name = elData.name;
+          if (elData.category != null) el.props.ifcType = elData.category;
+          if (elData.type != null) el.props.objectType = elData.type;
+          if (elData.level != null) el.props.storey = elData.level;
+          if (elData.materials != null) el.props.material = Array.isArray(elData.materials) ? elData.materials.join(', ') : elData.materials;
+          if (elData.parameters != null) el.props.psets = elData.parameters;
+          if (elData.quantities != null) el.props.quantities = elData.quantities;
+          if (elData.description != null) el.props.description = elData.description;
+          propsCount++;
+        });
+      });
+      d({t:'BRIDGE_LOG', logType:'pull', text:propsCount + ' element properties updated (no geometry change).'});
+
     } else if (msg.action === 'modified' && msg.elements) {
-      // Replace meshes for modified elements
+      // Replace meshes for modified elements (full geometry + properties)
       var updatedCount = 0;
       msg.elements.forEach(function(elData) {
         var gid = elData.globalId;
@@ -421,10 +513,25 @@
 
   // ── Expose globally ────────────────────────────────────────────
 
+  // ── Highlight elements in Revit (sent when user selects a clash) ──
+
+  function _revitHighlight(globalIds) {
+    if (!_revitWs || _revitWs.readyState !== 1) return;
+    _revitWs.send(JSON.stringify({type:'highlight', globalIds: globalIds || []}));
+  }
+
+  function _revitClearHighlights() {
+    if (!_revitWs || _revitWs.readyState !== 1) return;
+    _revitWs.send(JSON.stringify({type:'clear-highlights'}));
+  }
+
   window._revitDirectConnect = _revitDirectConnect;
   window._revitDirectDisconnect = _revitDirectDisconnect;
   window._revitDirectExport = _revitDirectExport;
+  window._revitDirectCancelExport = _revitDirectCancelExport;
   window._revitDirectPushClashes = _revitDirectPushClashes;
+  window._revitHighlight = _revitHighlight;
+  window._revitClearHighlights = _revitClearHighlights;
   window._saveDirectPort = _saveDirectPort;
   window._loadDirectPort = _loadDirectPort;
   window._revitGetWs = function() { return _revitWs; };
@@ -453,6 +560,8 @@
       revitDirect: {
         port: 19780,
         connected: false,
+        reconnecting: false,
+        reconnectIn: 0,
         documentName: '',
         loading: false,
         progress: 0,
@@ -486,8 +595,10 @@
     },
 
     destroy: function() {
-      if (_revitWs) { _revitWs.close(); _revitWs = null; }
+      _revitUserDisconnected = true;
       clearTimeout(_revitReconnect);
+      _resetReconnectDelay();
+      if (_revitWs) { _revitWs.close(); _revitWs = null; }
       _revitBuf = null;
     }
   });

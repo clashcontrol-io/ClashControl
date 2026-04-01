@@ -16101,10 +16101,11 @@ function startApp() {
       if (window._loadDirectPort) setPort(window._loadDirectPort());
     }, []);
 
-    // Project targeting state
+    // Project targeting state — exposed globally so revit-bridge.js can route models
     var projects = s.projectList || [];
     var targetProjSt = useState(s.activeProject || 'default');
     var targetProj = targetProjSt[0], setTargetProj = targetProjSt[1];
+    window._ccRevitTargetProject = targetProj;
 
     var S_LBL = {fontSize:'0.72rem',color:'var(--text-muted)',marginBottom:'.15rem',fontWeight:600};
     var S_INP = {width:'100%',padding:'.35rem .5rem',background:'var(--bg-primary)',color:'var(--text-primary)',border:'1px solid var(--border)',borderRadius:6,fontSize:'0.8rem',fontFamily:'inherit',outline:'none'};
@@ -16144,9 +16145,11 @@ function startApp() {
             </div>
 
             <div style=${{display:'flex',alignItems:'center',gap:'.4rem'}}>
-              <span style=${{width:8,height:8,borderRadius:'50%',background:rd.connected?'#22c55e':'#ef4444'}}></span>
-              <span style=${{fontSize:'0.78rem',color:rd.connected?'#4ade80':'var(--text-muted)'}}>
-                ${rd.connected ? 'Connected' + (rd.documentName ? ' — ' + rd.documentName : '') : 'Not connected'}
+              <span style=${{width:8,height:8,borderRadius:'50%',background:rd.connected?'#22c55e':rd.reconnecting?'#eab308':'#ef4444'}}></span>
+              <span style=${{fontSize:'0.78rem',color:rd.connected?'#4ade80':rd.reconnecting?'#facc15':'var(--text-muted)'}}>
+                ${rd.connected ? 'Connected' + (rd.documentName ? ' — ' + rd.documentName : '')
+                  : rd.reconnecting ? 'Reconnecting in ' + Math.round((rd.reconnectIn||1000)/1000) + 's\u2026'
+                  : 'Not connected'}
               </span>
             </div>
 
@@ -16160,13 +16163,18 @@ function startApp() {
 
             ${rd.connected && html`<div style=${{display:'flex',gap:'.4rem'}}>
               <button onClick=${function(){if(window._revitDirectExport) window._revitDirectExport(['all'])}}
-                style=${{...S_BTN2,flex:1,background:'#1e3a5f',color:'#93c5fd'}}>Export All from Revit</button>
+                disabled=${rd.loading}
+                style=${{...S_BTN2,flex:1,background:rd.loading?'var(--bg-tertiary)':'#1e3a5f',color:rd.loading?'var(--text-faint)':'#93c5fd'}}>Export All from Revit</button>
               <button onClick=${function(){if(window._revitDirectPushClashes) window._revitDirectPushClashes(s,d)}}
                 style=${{...S_BTN2,flex:1,background:'#052e16',color:'#4ade80'}}>Push Clashes to Revit</button>
             </div>`}
 
             ${rd.loading && html`<div>
-              <div style=${{fontSize:'0.72rem',color:'var(--text-muted)',marginBottom:'.2rem'}}>Loading... ${Math.round((rd.progress||0)*100)}%</div>
+              <div style=${{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:'.2rem'}}>
+                <span style=${{fontSize:'0.72rem',color:'var(--text-muted)'}}>Loading... ${Math.round((rd.progress||0)*100)}%${rd.elementCount ? ' (' + rd.elementCount + ' elements)' : ''}</span>
+                <button onClick=${function(){if(window._revitDirectCancelExport) window._revitDirectCancelExport(); d({t:'UPD_REVIT_DIRECT', u:{loading:false, progress:0}});}}
+                  style=${{background:'none',border:'none',color:'#f87171',fontSize:'0.7rem',fontWeight:600,cursor:'pointer',fontFamily:'inherit',padding:'0 .2rem'}}>Cancel</button>
+              </div>
               <div style=${{width:'100%',height:4,background:'var(--bg-primary)',borderRadius:2,overflow:'hidden'}}>
                 <div style=${{width:Math.round((rd.progress||0)*100)+'%',height:'100%',background:'var(--accent)',borderRadius:2,transition:'width .3s'}}></div>
               </div>
@@ -16362,9 +16370,10 @@ function startApp() {
     // ── Sync clash selection to Revit Direct Connector ──
     useEffect(function(){
       if (!s.revitDirect || !s.revitDirect.connected) return;
-      var ws = window._revitGetWs && window._revitGetWs();
-      if (!ws || ws.readyState !== 1) return;
-      if (!s.activeId) return;
+      if (!s.activeId) {
+        if (window._revitClearHighlights) window._revitClearHighlights();
+        return;
+      }
       var item = s.clashes.find(function(c){return c.id===s.activeId;}) || s.issues.find(function(i){return i.id===s.activeId;});
       if (!item) return;
       var gids = [];
@@ -16372,7 +16381,7 @@ function startApp() {
       s.models.forEach(function(m){ (m.elements||[]).forEach(function(el){
         if (eids.indexOf(el.expressId) >= 0 && el.props.globalId) gids.push(el.props.globalId);
       }); });
-      if (gids.length) ws.send(JSON.stringify({type:'highlight', globalIds:gids}));
+      if (gids.length && window._revitHighlight) window._revitHighlight(gids);
     }, [s.activeId, s.revitDirect && s.revitDirect.connected]);
     // ── Clean up 3D state when switching tabs ──
     useEffect(function(){
