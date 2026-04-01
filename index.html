@@ -13997,8 +13997,8 @@ function startApp() {
       return summary;
     }
 
-    function send() {
-      var text = input.trim();
+    function send(overrideText) {
+      var text = (overrideText || input).trim();
       if (!text) return;
       setMsgs(function(m){ return m.concat([{role:'user', text:text}]); });
       setInput('');
@@ -14203,6 +14203,34 @@ function startApp() {
             background:aiBubbleBg, color:mutedCol, fontSize:'0.84rem'
           }}>…</div>
         </div>`}
+        ${!loading && msgs.length <= 2 && function(){
+          var suggestions = [];
+          var hasModels = s.models && s.models.length > 0;
+          var hasClashes = s.clashes && s.clashes.length > 0;
+          var hasClassified = hasClashes && s.clashes.some(function(c){return c.aiSeverity;});
+          if (!hasModels) {
+            suggestions = ['What can you do?', 'Start tour', 'Help'];
+          } else if (!hasClashes) {
+            var names = s.models.map(function(m){return m.name||'model';});
+            if (names.length >= 2) suggestions.push('Check '+names[0]+' vs '+names[1]);
+            else suggestions.push('Run clash detection');
+            suggestions = suggestions.concat(['Find near misses', 'Show duplicates', 'Help']);
+          } else if (hasClassified) {
+            suggestions = ['Group by severity', 'Show only critical', 'Show worst floor', 'Export to BCF', 'Help'];
+          } else {
+            suggestions = ['Group by type', 'Show hard clashes', 'Export to BCF', 'Help'];
+          }
+          return html`<div style=${{display:'flex',gap:'.3rem',flexWrap:'wrap',marginTop:'.25rem'}}>
+            ${suggestions.map(function(sug){return html`<button key=${sug} onClick=${function(){
+              send(sug);
+            }} style=${{
+              background:'var(--accent-bg)', border:'1px solid rgba(139,92,246,.3)',
+              color:'#c4b5fd', borderRadius:99, padding:'.25rem .6rem',
+              fontSize:'0.75rem', cursor:'pointer', fontFamily:'inherit',
+              transition:'background .15s, border-color .15s'
+            }}>${sug}</button>`})}
+          </div>`;
+        }()}
         <div ref=${bottomRef}></div>
       </div>
 
