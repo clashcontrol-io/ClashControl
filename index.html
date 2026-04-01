@@ -15682,37 +15682,7 @@ function startApp() {
     var ids = Object.keys(addons);
     var SEC={fontSize:'0.72rem',fontWeight:700,color:'var(--accent-subtle)',textTransform:'uppercase',letterSpacing:'.06em',padding:'.6rem .85rem .3rem'};
     var CARD={background:'var(--card-bg)',border:'1px solid var(--card-border)',borderRadius:10,padding:'.65rem .75rem',display:'flex',gap:'.6rem',alignItems:'flex-start'};
-    var _installPollRef = useRef(null);
-    var _installCopiedSt = useState(false), installCopied = _installCopiedSt[0], setInstallCopied = _installCopiedSt[1];
-    // Clean up polling on unmount
-    useEffect(function(){ return function(){ if(_installPollRef.current) clearInterval(_installPollRef.current); }; },[]);
-    function installAndEnable(id, d) {
-      var cmd = navigator.platform&&navigator.platform.indexOf('Win')!==-1 ? 'pip install clashcontrol-engine; clashcontrol-engine' : 'pip install clashcontrol-engine && clashcontrol-engine';
-      navigator.clipboard.writeText(cmd).catch(function(){});
-      setInstallCopied(true);
-      window._ccActivateAddon(id);
-      try{localStorage.setItem('cc_local_engine','1');}catch(e){}
-      d({t:'UPD_LOCAL_ENGINE',u:{active:true}});
-      if(_installPollRef.current) clearInterval(_installPollRef.current);
-      var attempts=0;
-      var _pollInFlight = false;
-      _installPollRef.current = setInterval(function(){
-        attempts++;
-        if(attempts>60){clearInterval(_installPollRef.current);_installPollRef.current=null;setInstallCopied(false);return;}
-        if(_pollInFlight) return; // skip if previous check still pending
-        if(window._checkLocalEngine) {
-          _pollInFlight = true;
-          // Silent poll: pass null to avoid dispatching checking:true flicker
-          window._checkLocalEngine(null).then(function(ready){
-            _pollInFlight = false;
-            if(ready){
-              d({t:'UPD_LOCAL_ENGINE',u:{available:true, checking:false}});
-              clearInterval(_installPollRef.current);_installPollRef.current=null;setInstallCopied(false);
-            }
-          }).catch(function(){ _pollInFlight = false; });
-        }
-      },3000);
-    }
+    // Local engine install flow is handled entirely by the addon's panel()
 
     return html`<div style=${{display:'flex',flexDirection:'column',gap:0,overflowY:'auto',flex:1}}>
       <div style=${SEC}>Installed Addons</div>
@@ -15735,44 +15705,17 @@ function startApp() {
             <div style=${{flex:1,minWidth:0}}>
               <div style=${{display:'flex',alignItems:'center',gap:'.4rem',marginBottom:'.15rem'}}>
                 <span style=${{fontSize:'0.83rem',fontWeight:600,color:'var(--text-primary)'}}>${addon.name}</span>
-                ${function(){
-                  var isLE = id==='local-engine';
-                  var leState = isLE ? (s.localEngine||{}) : null;
-                  // Local engine: show connection status instead of generic active/off
-                  if (isLE && active) {
-                    if (leState.checking) return html`<span style=${{fontSize:'0.58rem',fontWeight:600,padding:'1px 5px',borderRadius:4,
-                      background:'rgba(234,179,8,.12)',color:'#eab308'}}>CHECKING</span>`;
-                    if (leState.available) return html`<span style=${{fontSize:'0.58rem',fontWeight:600,padding:'1px 5px',borderRadius:4,
-                      background:'rgba(34,197,94,.12)',color:'var(--pill-green)'}}>CONNECTED</span>`;
-                    return html`<span style=${{fontSize:'0.58rem',fontWeight:600,padding:'1px 5px',borderRadius:4,
-                      background:'var(--tag-bg)',color:'var(--text-faint)'}}>NOT RUNNING</span>`;
-                  }
-                  return html`<span style=${{fontSize:'0.58rem',fontWeight:600,padding:'1px 5px',borderRadius:4,
+                ${html`<span style=${{fontSize:'0.58rem',fontWeight:600,padding:'1px 5px',borderRadius:4,
                     background:active?'rgba(34,197,94,.12)':'var(--tag-bg)',
-                    color:active?'var(--pill-green)':'var(--text-faint)'}}>${active?'ACTIVE':'OFF'}</span>`;
+                    color:active?'var(--pill-green)':'var(--text-faint)'}}>${active?'ACTIVE':'OFF'}</span>`
                 }()}
               </div>
               <div style=${{fontSize:'0.72rem',color:'var(--text-secondary)',lineHeight:1.6,marginBottom:'.3rem'}}>${addon.description||''}</div>
               ${function(){
-                var isLocalEngine = id==='local-engine';
-                var le = isLocalEngine ? (s.localEngine||{}) : null;
-                var needsInstall = false; // Local engine not yet released — disable install flow
                 // PWA addon: hide Disable button when running as installed PWA
                 var isPwaInstalled = id==='pwa' && window.matchMedia && window.matchMedia('(display-mode: standalone)').matches;
                 if (isPwaInstalled && active) {
                   return html`<div style=${{fontSize:'0.69rem',color:'var(--text-faint)'}}>Always on in installed app</div>`;
-                }
-                if (needsInstall) {
-                  return html`<div>
-                    <button onClick=${function(){installAndEnable(id, d);}}
-                      style=${{padding:'.25rem .6rem',borderRadius:6,fontSize:'0.75rem',fontWeight:600,cursor:'pointer',border:'none',
-                        background:'var(--accent)',color:'#fff',fontFamily:'inherit'}}>
-                      ${installCopied?'Command copied — waiting for engine…':'Enable & Install'}</button>
-                    ${installCopied && html`<div style=${{fontSize:'0.72rem',color:'#60a5fa',lineHeight:1.6,padding:'.3rem .5rem',marginTop:'.3rem',
-                      background:'rgba(37,99,235,.08)',borderRadius:6}}>
-                      Paste the copied command in your terminal and press Enter. I'll connect automatically once the engine starts.
-                    </div>`}
-                  </div>`;
                 }
                 return html`<div>
                   <button onClick=${function(){
@@ -16606,12 +16549,7 @@ function startApp() {
       window.addEventListener('cc-install-available', onInstall);
       return function(){ window.removeEventListener('cc-update-available', onUpdate); window.removeEventListener('cc-install-available', onInstall); };
     }, []);
-    // ── Local engine check on startup ──
-    useEffect(function(){
-      // Restore opt-in from localStorage
-      try { if (localStorage.getItem('cc_local_engine')==='1') d({t:A.UPD_LOCAL_ENGINE, u:{active:true}}); } catch(e){}
-      if (window._checkLocalEngine) window._checkLocalEngine(d);
-    }, []);
+    // Local engine startup check handled by addon init()
     // ── Shared project auto-reconnect on startup ──
     useEffect(function(){
       if (!window._loadSharedHandle) return;

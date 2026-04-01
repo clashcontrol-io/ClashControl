@@ -1,17 +1,21 @@
-// ── ClashControl Addon: Local Clash Detection Engine ────────────
+// ── ClashControl Addon: ClashControlEngine ──────────────────────
 // Connects to a localhost Python server (port 19800) for exact mesh
 // intersection. Falls back to the built-in browser OBB engine when
-// the server isn't running. Completely optional.
+// the server isn't running. Desktop/PWA only — not loaded in browser.
 
 (function() {
   'use strict';
+
+  // Only load in installed PWA (standalone) — not in browser tab
+  var isDesktop = window.matchMedia && window.matchMedia('(display-mode: standalone)').matches;
+  if (!isDesktop) return;
 
   var _localEngineUrl = 'http://localhost:19800';
   var _localEngineWsUrl = 'ws://localhost:19801';
   var _pollTimer = null;
 
   // ── Download URLs for standalone executables ──────────────────
-  var _releaseBase = 'https://github.com/clashcontrol-io/clashcontrol-engine/releases/latest/download/';
+  var _releaseBase = 'https://github.com/clashcontrol-io/ClashControlEngine/releases/latest/download/';
   var _downloads = {
     win:   {url: _releaseBase + 'clashcontrol-engine-win.exe',   label: 'Windows (.exe)'},
     mac:   {url: _releaseBase + 'clashcontrol-engine-mac',       label: 'macOS'},
@@ -45,7 +49,7 @@
 
   window._ccRegisterAddon({
     id: 'local-engine',
-    name: 'Local Clash Engine',
+    name: 'ClashControlEngine',
     description: 'Multi-threaded local server for exact mesh intersection. 5-10x faster on large models. One-click install.',
     autoActivate: false,
     icon: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#60a5fa" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="4" width="16" height="16" rx="2"/><path d="M9 9h6v6H9z"/><path d="M9 1v3M15 1v3M9 20v3M15 20v3M20 9h3M20 14h3M1 9h3M1 14h3"/></svg>',
