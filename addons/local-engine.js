@@ -73,7 +73,7 @@
             ${le.active?'Disable':'Enable for Detection'}</button>`}
         </div>
         ${!le.available && html`<div style=${{fontSize:'0.69rem',color:'var(--text-faint)',lineHeight:1.6}}>
-          Install: <code style=${{fontSize:'0.63rem',background:'var(--tag-bg)',padding:'1px 4px',borderRadius:3}}>pip install clashcontrol-engine</code> then run <code style=${{fontSize:'0.63rem',background:'var(--tag-bg)',padding:'1px 4px',borderRadius:3}}>clashcontrol-engine</code>
+          Install: <code style=${{fontSize:'0.63rem',background:'var(--tag-bg)',padding:'1px 4px',borderRadius:3}}>pip install clashcontrol-engine</code>${' then run '}<code style=${{fontSize:'0.63rem',background:'var(--tag-bg)',padding:'1px 4px',borderRadius:3}}>clashcontrol-engine</code>
         </div>`}
       </div>`;
     }

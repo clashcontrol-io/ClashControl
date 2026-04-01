@@ -1236,7 +1236,7 @@ function startApp() {
           props.axis = _extractAxis(api, modelID, line);
         }
       }
-    } catch(e) {}
+    } catch(e) { console.warn('[IFC] extractProperties failed for expressID=' + expressID, e); }
     return props;
   }
 
@@ -1766,7 +1766,7 @@ function startApp() {
           if (spPm) { spProps.quantities = spPm.quantities; spProps.psets = spPm.psets; }
           rawElements.push({expressId:sid, meshes:[], box:new THREE.Box3(), props:spProps, _lodProxy:null});
         }
-      } catch(e) {}
+      } catch(e) { console.warn('[IFC] IfcSpace extraction failed:', e); }
 
       // Close WASM model immediately — all data is now in JavaScript memory
       api.CloseModel(modelID);
@@ -1896,7 +1896,7 @@ function startApp() {
                 color: c ? {r:c.x, g:c.y, b:c.z, a:c.w} : null,
                 tf:tf});
               xfer.push(tf.buffer);
-            } catch(ex) {}
+            } catch(ex) { console.warn('[IFC Worker] Geometry extraction failed for expressID=' + eid + ', geoExpId=' + (geoExpId||'?'), ex); }
             finally { if (gd) try { gd.delete(); } catch(e2) {} }
           }
           if (geos.length > 0) {
@@ -3255,7 +3255,7 @@ function startApp() {
       while (runs.length > 20) runs.shift(); // keep last 20 runs
       localStorage.setItem('cc_detection_runs', JSON.stringify(runs));
       window.dispatchEvent(new Event('cc-training-data-change'));
-    } catch(e) {}
+    } catch(e) { console.warn('[Detect] Failed to save detection run summary:', e); }
 
     // ── Profiling summary ──────────────────────────────────────────
     _mark('done');
@@ -13901,7 +13901,7 @@ function startApp() {
     window._ccNLOpen = function(){ if(window._ccDispatch) window._ccDispatch({t:'TAB',v:'ai'}); else setOpen(true); if(inputRef.current) setTimeout(function(){inputRef.current&&inputRef.current.focus();},50); };
     window._ccNLSetInput = function(text){ setInput(text); };
     window._ccNLSetStatus = function(status, back){ setLLMStatus(status); setBackend(back); };
-    var stMsgs = useState([{role:'assistant', text:'Control ClashControl with plain English — try "load ifc", "structural vs MEP", "switch to light", "analyze clashes", or "help" for all commands.'}]);
+    var stMsgs = useState([{role:'assistant', text:'Welcome to ClashControl! I\'m your AI assistant — I can help you load models, run clash detection, adjust the view, and more. Pick one of the options below to get started, or type any command in plain English.'}]);
     var msgs = stMsgs[0], setMsgs = stMsgs[1];
     var stInput = useState(''), input = stInput[0], setInput = stInput[1];
     var stLoading = useState(false), loading = stLoading[0], setLoading = stLoading[1];
@@ -15402,13 +15402,23 @@ function startApp() {
       d({t:'UPD_LOCAL_ENGINE',u:{active:true}});
       if(_installPollRef.current) clearInterval(_installPollRef.current);
       var attempts=0;
+      var _pollInFlight = false;
       _installPollRef.current = setInterval(function(){
         attempts++;
-        if(attempts>60){clearInterval(_installPollRef.current);_installPollRef.current=null;return;}
-        if(window._checkLocalEngine) window._checkLocalEngine(d).then(function(ready){
-          if(ready){clearInterval(_installPollRef.current);_installPollRef.current=null;setInstallCopied(false);}
-        });
-      },2000);
+        if(attempts>60){clearInterval(_installPollRef.current);_installPollRef.current=null;setInstallCopied(false);return;}
+        if(_pollInFlight) return; // skip if previous check still pending
+        if(window._checkLocalEngine) {
+          _pollInFlight = true;
+          // Silent poll: pass null to avoid dispatching checking:true flicker
+          window._checkLocalEngine(null).then(function(ready){
+            _pollInFlight = false;
+            if(ready){
+              d({t:'UPD_LOCAL_ENGINE',u:{available:true, checking:false}});
+              clearInterval(_installPollRef.current);_installPollRef.current=null;setInstallCopied(false);
+            }
+          }).catch(function(){ _pollInFlight = false; });
+        }
+      },3000);
     }
 
     return html`<div style=${{display:'flex',flexDirection:'column',gap:0,overflowY:'auto',flex:1}}>
@@ -15667,7 +15677,7 @@ function startApp() {
                                : 'Optional Python server for faster, exact clash detection. Not required \u2014 the built-in browser engine works fine for most projects.'}
                 </div>
                 ${!engineAvail && html`<div style=${{fontSize:'0.65rem',color:'var(--text-faint)',marginTop:'.25rem',lineHeight:1.5}}>
-                  Install later: <code style=${{fontSize:'0.63rem',background:'var(--tag-bg)',padding:'1px 4px',borderRadius:3}}>pip install clashcontrol-engine</code> then run <code style=${{fontSize:'0.63rem',background:'var(--tag-bg)',padding:'1px 4px',borderRadius:3}}>clashcontrol-engine</code>
+                  Install later: <code style=${{fontSize:'0.63rem',background:'var(--tag-bg)',padding:'1px 4px',borderRadius:3}}>pip install clashcontrol-engine</code>${' then run '}<code style=${{fontSize:'0.63rem',background:'var(--tag-bg)',padding:'1px 4px',borderRadius:3}}>clashcontrol-engine</code>
                 </div>`}
               </div>
             </div>
