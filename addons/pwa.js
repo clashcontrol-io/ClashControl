@@ -33,6 +33,7 @@
       // Register service worker
       if ('serviceWorker' in navigator) {
         navigator.serviceWorker.register('sw.js').then(function(reg) {
+          dispatch({t:'UPD_PWA', u:{swRegistered:true}});
           // Check for updates periodically (every 60 min)
           _updateCheckTimer = setInterval(function(){ reg.update(); }, 3600000);
 
@@ -51,6 +52,9 @@
               if (nw.state === 'installed' && navigator.serviceWorker.controller) _swReady(nw);
             });
           });
+        }).catch(function(err) {
+          console.warn('[PWA] Service worker registration failed:', err);
+          dispatch({t:'UPD_PWA', u:{swRegistered:false, swError:true}});
         });
       }
 
@@ -72,11 +76,19 @@
       var pwa = s.pwa || {};
       var hasUpdate = pwa.updateAvailable;
       var canInstall = pwa.installAvailable && _ccInstallPrompt;
+      var swController = navigator.serviceWorker && navigator.serviceWorker.controller;
+      var swStatus = swController ? 'active' : pwa.swError ? 'error' : pwa.swRegistered ? 'registered' : 'inactive';
+      var swColor = swStatus === 'active' ? '#22c55e' : swStatus === 'registered' ? '#eab308' : '#64748b';
+      var swText = swStatus === 'active' ? 'Service worker active'
+        : swStatus === 'registered' ? 'Service worker registered — reload to activate'
+        : swStatus === 'error' ? 'Service worker failed — requires HTTPS or localhost'
+        : !('serviceWorker' in navigator) ? 'Service workers not supported'
+        : 'Service worker not active';
 
       return html`<div style=${{padding:'.5rem 0',fontSize:'0.78rem',color:'var(--text-secondary)',lineHeight:1.7}}>
         <div style=${{display:'flex',alignItems:'center',gap:'.4rem',marginBottom:'.4rem'}}>
-          <span style=${{width:7,height:7,borderRadius:'50%',background:navigator.serviceWorker&&navigator.serviceWorker.controller?'#22c55e':'#64748b',display:'inline-block'}}></span>
-          <span>${navigator.serviceWorker&&navigator.serviceWorker.controller?'Service worker active':'Service worker not active'}</span>
+          <span style=${{width:7,height:7,borderRadius:'50%',background:swColor,display:'inline-block'}}></span>
+          <span>${swText}</span>
         </div>
         ${hasUpdate && html`<button onClick=${function(){
           navigator.serviceWorker.getRegistration().then(function(r){
