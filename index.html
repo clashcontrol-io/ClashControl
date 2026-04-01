@@ -528,7 +528,7 @@ function startApp() {
 
   // Load addon scripts — called after app mounts
   function _loadAddonScripts() {
-    var addonFiles = ['pwa', 'local-engine', 'shared-project', 'revit-bridge', 'ifc-sidecar'];
+    var addonFiles = ['pwa', 'local-engine', 'shared-project', 'revit-bridge'];
     addonFiles.forEach(function(name) {
       var script = document.createElement('script');
       script.src = 'addons/' + name + '.js';
@@ -10461,6 +10461,108 @@ function startApp() {
     document.head.appendChild(script);
   }
 
+  // ── IFCSidecar Export (GLB + .ifcmeta + .ifcprops) ──────────────
+
+  function exportSidecar(model) {
+    var baseName = (model.name || model.id || 'model').replace(/[^a-zA-Z0-9_\-. ]/g, '_').replace(/\s+/g, '_').substring(0, 80);
+    var elements = model.elements || [];
+    if (!elements.length) return;
+
+    // Build .ifcprops
+    var ifcprops = {elements: {}};
+    elements.forEach(function(el) {
+      var p = el.props || {};
+      var gid = p.globalId;
+      if (!gid) return;
+      var entry = {expressId: el.expressId || 0, globalId: gid, category: p.ifcType || '', name: p.name || '', type: p.objectType || '', level: p.storey || '', description: p.description || ''};
+      if (p.material) entry.materials = p.material;
+      if (p.quantities && Object.keys(p.quantities).length) entry.quantities = p.quantities;
+      if (p.psets && Object.keys(p.psets).length) entry.parameters = p.psets;
+      if (p.revitId != null) entry.revitId = p.revitId;
+      ifcprops.elements[gid] = entry;
+    });
+
+    // Build .ifcmeta
+    var ifcmeta = {elements: {}, storeys: [], storeyData: [], relatedPairs: {}};
+    var storeySet = {};
+    elements.forEach(function(el) {
+      var p = el.props || {};
+      var gid = p.globalId;
+      if (!gid) return;
+      var entry = {name: p.name || '', ifcType: p.ifcType || ''};
+      if (p.objectType) entry.objectType = p.objectType;
+      if (p.storey) { entry.storey = p.storey; storeySet[p.storey] = true; }
+      if (p.material) entry.material = p.material;
+      if (p.revitId != null) entry.revitId = p.revitId;
+      if (p.quantities && Object.keys(p.quantities).length) entry.quantities = p.quantities;
+      if (p.psets && Object.keys(p.psets).length) entry.psets = p.psets;
+      if (p.phase) entry.phase = p.phase;
+      if (p.workset) entry.workset = p.workset;
+      if (p.designOption != null) entry.designOption = p.designOption;
+      if (p.hostId) entry.hostId = p.hostId;
+      if (p.hostRelationships && p.hostRelationships.length) entry.hostRelationships = p.hostRelationships;
+      if (p.layers && p.layers.length) entry.layers = p.layers;
+      if (p.flipState) entry.flipState = p.flipState;
+      if (p.constraints) entry.constraints = p.constraints;
+      ifcmeta.elements[gid] = entry;
+    });
+    ifcmeta.storeys = Object.keys(storeySet).sort();
+    ifcmeta.storeyData = model.storeyData && model.storeyData.length ? model.storeyData : ifcmeta.storeys.map(function(s){ return {name:s}; });
+    if (model.relatedPairs) {
+      ifcmeta.relatedPairs = model.relatedPairs;
+    } else {
+      elements.forEach(function(el) {
+        var p = el.props || {};
+        if (!p.globalId) return;
+        if (p.hostId) { var pair = [p.globalId, p.hostId].sort().join(':'); ifcmeta.relatedPairs[pair] = true; }
+        if (p.hostRelationships) p.hostRelationships.forEach(function(cid) { var pair = [p.globalId, cid].sort().join(':'); ifcmeta.relatedPairs[pair] = true; });
+      });
+    }
+
+    // Export GLB with GlobalId as node names
+    var script = document.createElement('script');
+    script.src = 'https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/exporters/GLTFExporter.js';
+    script.onload = function() {
+      var exportScene = new THREE.Scene();
+      var meshCount = 0;
+      elements.forEach(function(el) {
+        var gid = (el.props || {}).globalId || '';
+        (el.meshes || []).forEach(function(mesh) {
+          if (!mesh.geometry) return;
+          var clone = mesh.clone();
+          if (mesh._origMaterial) clone.material = mesh._origMaterial.clone();
+          clone.name = gid;
+          clone.userData.globalId = gid;
+          clone.userData.expressId = el.expressId || 0;
+          exportScene.add(clone);
+          meshCount++;
+        });
+      });
+      if (!meshCount) return;
+      new THREE.GLTFExporter().parse(exportScene, function(result) {
+        _dlBlob(new Blob([result], {type:'application/octet-stream'}), baseName + '.glb');
+        _dlBlob(new Blob([JSON.stringify(ifcprops, null, 2)], {type:'application/json'}), baseName + '.ifcprops');
+        _dlBlob(new Blob([JSON.stringify(ifcmeta, null, 2)], {type:'application/json'}), baseName + '.ifcmeta');
+        exportScene.traverse(function(o) {
+          if (o.geometry) o.geometry.dispose();
+          if (o.material) { if (Array.isArray(o.material)) o.material.forEach(function(m){m.dispose();}); else o.material.dispose(); }
+        });
+      }, function(err) { console.error('Sidecar GLB export failed:', err); }, {binary: true});
+    };
+    if (typeof THREE !== 'undefined' && THREE.GLTFExporter) script.onload();
+    else document.head.appendChild(script);
+  }
+
+  function _dlBlob(blob, name) {
+    var a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = name;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(a.href);
+  }
+
   // ── IDS Validation Panel (shown in Standards tab) ─────────────────
 
   function IDSValidationPanel(props) {
@@ -15850,6 +15952,45 @@ function startApp() {
     </div>`;
   }
 
+  // ── Export Flyout (hover submenu for export options) ──────────
+
+  function _ExportFlyout(props) {
+    var _o = useState(false), open = _o[0], setOpen = _o[1];
+    var closeTimer = useRef(null);
+
+    function enter() { if (closeTimer.current) clearTimeout(closeTimer.current); setOpen(true); }
+    function leave() { closeTimer.current = setTimeout(function(){ setOpen(false); }, 200); }
+
+    var items = props.items || [];
+    return html`<div style=${{position:'relative'}} onMouseEnter=${enter} onMouseLeave=${leave}>
+      <button onClick=${function(){ setOpen(!open); }}
+        style=${{...S_BTN,width:'100%',padding:'.35rem .5rem',fontSize:'0.8rem',background:'var(--bg-secondary)',
+          color:'var(--text-secondary)',border:'1px solid var(--border)',justifyContent:'space-between'}}>
+        <span style=${{display:'flex',alignItems:'center',gap:'.3rem'}}>${props.icon} ${props.label}</span>
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
+      </button>
+      ${open && html`<div style=${{position:'absolute',left:0,right:0,top:'100%',zIndex:999,marginTop:2,
+          background:'var(--bg-primary)',border:'1px solid var(--border)',borderRadius:8,
+          boxShadow:'0 4px 16px rgba(0,0,0,.25)',padding:'.25rem 0',maxHeight:280,overflowY:'auto'}}
+        onMouseEnter=${enter} onMouseLeave=${leave}>
+        ${items.map(function(item, i) {
+          if (item.type === 'divider') return html`<div key=${'d'+i} style=${{height:1,background:'var(--border-subtle)',margin:'.25rem .5rem'}}></div>`;
+          return html`<button key=${i} onClick=${function(){ if (!item.disabled && item.action) { item.action(); setOpen(false); }}}
+            disabled=${item.disabled}
+            style=${{display:'flex',flexDirection:'column',gap:0,width:'100%',padding:'.35rem .7rem',border:'none',background:'transparent',
+              cursor:item.disabled?'default':'pointer',fontFamily:'inherit',textAlign:'left',
+              opacity:item.disabled?0.4:1,color:'var(--text-primary)',fontSize:'0.78rem',
+              borderRadius:0,transition:'background .1s'}}
+            onMouseOver=${function(e){if(!item.disabled)e.currentTarget.style.background='var(--bg-secondary)';}}
+            onMouseOut=${function(e){e.currentTarget.style.background='transparent';}}>
+            <span>${item.label}</span>
+            ${item.hint && html`<span style=${{fontSize:'0.63rem',color:'var(--text-faint)',marginTop:1}}>${item.hint}</span>`}
+          </button>`;
+        })}
+      </div>`}
+    </div>`;
+  }
+
   // ── Tools Panel ───────────────────────────────────────────────
   function ToolsPanel(props) {
     var s=props.s, d=props.d;
@@ -15915,20 +16056,20 @@ function startApp() {
 
 
 
-      <!-- BCF Export -->
+      <!-- Import / Export -->
       <div style=${{padding:'.75rem',borderBottom:'1px solid var(--border-subtle)'}}>
-        <span style=${SEC}>BCF Exchange</span>
-        <div style=${{display:'flex',gap:'.2rem',marginBottom:'.3rem'}}>
-          <button onClick=${function(){var all=s.clashes.concat(s.issues);exportBCF(all,'2.1',s.viewpoints);}}
-            disabled=${!s.clashes.length&&!s.issues.length}
-            style=${{...S_BTN,flex:1,padding:'.3rem',fontSize:'0.8rem',background:'var(--bg-secondary)',color:s.clashes.length||s.issues.length?'#60a5fa':'var(--text-faint)',opacity:s.clashes.length||s.issues.length?1:0.5}}>Export BCF 2.1</button>
-          <button onClick=${function(){var all=s.clashes.concat(s.issues);exportBCF(all,'3.0',s.viewpoints);}}
-            disabled=${!s.clashes.length&&!s.issues.length}
-            style=${{...S_BTN,flex:1,padding:'.3rem',fontSize:'0.8rem',background:'var(--bg-secondary)',color:s.clashes.length||s.issues.length?'#818cf8':'var(--text-faint)',opacity:s.clashes.length||s.issues.length?1:0.5}}>Export BCF 3.0</button>
+        <span style=${SEC}>Import / Export</span>
+        <div style=${{display:'flex',flexDirection:'column',gap:'.2rem'}}>
+          <${_ExportFlyout} label="Export" icon=${html`<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>`}
+            items=${[
+              {label:'BCF 2.1', hint:'Clashes & issues', disabled:!s.clashes.length&&!s.issues.length, action:function(){var all=s.clashes.concat(s.issues);exportBCF(all,'2.1',s.viewpoints);}},
+              {label:'BCF 3.0', hint:'With extensions', disabled:!s.clashes.length&&!s.issues.length, action:function(){var all=s.clashes.concat(s.issues);exportBCF(all,'3.0',s.viewpoints);}},
+              {type:'divider'},
+              {label:'IFCSidecar (all models)', hint:'GLB + .ifcprops + .ifcmeta', disabled:!s.models.length, action:function(){s.models.forEach(function(m){exportSidecar(m);});}},
+            ].concat(s.models.length>1 ? s.models.map(function(m){return {label:'Sidecar: '+(m.name||m.id), hint:(m.elements||[]).length+' elements', action:function(){exportSidecar(m);}};}) : [])} />
+          <button onClick=${function(){importBCF(d);}}
+            style=${{...S_BTN,width:'100%',padding:'.35rem .5rem',fontSize:'0.8rem',background:'var(--bg-secondary)',color:'var(--text-secondary)',border:'1px solid var(--border)'}}>Import BCF</button>
         </div>
-        <button onClick=${function(){importBCF(d);}}
-          style=${{...S_BTN,width:'100%',padding:'.3rem',fontSize:'0.8rem',background:'var(--bg-secondary)',color:'var(--text-secondary)',border:'1px solid var(--border)'}}>Import BCF</button>
-        <span style=${{fontSize:'0.63rem',color:'var(--text-faint)',display:'block',marginTop:'.15rem'}}>BCF 2.1 is widely supported. BCF 3.0 adds extensions support.</span>
       </div>
 
       <!-- Training Mode -->
