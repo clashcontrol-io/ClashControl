@@ -141,6 +141,7 @@
     }
     *{box-sizing:border-box;margin:0;padding:0}
     body{background:var(--bg-primary);color:var(--text-primary);font-family:system-ui,-apple-system,sans-serif;overflow:hidden}
+    @media not all and (display-mode: standalone){body{border-top:2px solid var(--accent)}}
     input[type=range]{accent-color:var(--accent)}input[type=checkbox]{accent-color:var(--accent)}
     ::-webkit-scrollbar{width:7px}::-webkit-scrollbar-track{background:transparent}::-webkit-scrollbar-thumb{background:var(--text-faint);border-radius:4px}::-webkit-scrollbar-thumb:hover{background:var(--text-muted)}
     select,select option{background:var(--bg-tertiary);color:var(--text-primary);border:1px solid var(--border)}
@@ -15519,7 +15520,7 @@ function startApp() {
     // Clean up polling on unmount
     useEffect(function(){ return function(){ if(_installPollRef.current) clearInterval(_installPollRef.current); }; },[]);
     function installAndEnable(id, d) {
-      var cmd = 'pip install clashcontrol-engine && clashcontrol-engine';
+      var cmd = navigator.platform&&navigator.platform.indexOf('Win')!==-1 ? 'pip install clashcontrol-engine; clashcontrol-engine' : 'pip install clashcontrol-engine && clashcontrol-engine';
       navigator.clipboard.writeText(cmd).catch(function(){});
       setInstallCopied(true);
       window._ccActivateAddon(id);
