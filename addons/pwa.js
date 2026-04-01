@@ -32,6 +32,16 @@
     init: function(dispatch, getState) {
       // Register service worker
       if ('serviceWorker' in navigator) {
+        // Listen for controller change — fires when SW calls clients.claim()
+        // This updates the status from "registered" to "active" without needing a reload
+        navigator.serviceWorker.addEventListener('controllerchange', function() {
+          dispatch({t:'UPD_PWA', u:{swActive:true}});
+        });
+        // If already controlled (e.g. return visit), mark active immediately
+        if (navigator.serviceWorker.controller) {
+          dispatch({t:'UPD_PWA', u:{swActive:true}});
+        }
+
         navigator.serviceWorker.register('sw.js').then(function(reg) {
           dispatch({t:'UPD_PWA', u:{swRegistered:true}});
           // Check for updates periodically (every 60 min)
@@ -76,11 +86,11 @@
       var pwa = s.pwa || {};
       var hasUpdate = pwa.updateAvailable;
       var canInstall = pwa.installAvailable && _ccInstallPrompt;
-      var swController = navigator.serviceWorker && navigator.serviceWorker.controller;
-      var swStatus = swController ? 'active' : pwa.swError ? 'error' : pwa.swRegistered ? 'registered' : 'inactive';
+      var swActive = pwa.swActive || (navigator.serviceWorker && navigator.serviceWorker.controller);
+      var swStatus = swActive ? 'active' : pwa.swError ? 'error' : pwa.swRegistered ? 'registered' : 'inactive';
       var swColor = swStatus === 'active' ? '#22c55e' : swStatus === 'registered' ? '#eab308' : '#64748b';
       var swText = swStatus === 'active' ? 'Service worker active'
-        : swStatus === 'registered' ? 'Service worker registered — reload to activate'
+        : swStatus === 'registered' ? 'Service worker installed — will activate on next reload'
         : swStatus === 'error' ? 'Service worker failed — requires HTTPS or localhost'
         : !('serviceWorker' in navigator) ? 'Service workers not supported'
         : 'Service worker not active';
