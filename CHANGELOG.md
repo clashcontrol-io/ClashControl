@@ -1,5 +1,8 @@
 # Changelog
 
+## v4.4.0 (2026-04-01)
+- Add donation/support link in Settings panel
+
 ## v4.3.1 (2026-03-31)
 - Remove extracted addon function bodies from index.html
 
