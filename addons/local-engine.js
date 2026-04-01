@@ -8,6 +8,7 @@
 
   var _localEngineUrl = 'http://localhost:19800';
   var _localEngineWsUrl = 'ws://localhost:19801';
+  var _pollTimer = null;
 
   window._ccRegisterAddon({
     id: 'local-engine',
@@ -20,7 +21,8 @@
       localEngine: {
         available: false,
         active: false,
-        checking: false
+        checking: false,
+        installing: false
       }
     },
 
@@ -43,20 +45,23 @@
     },
 
     destroy: function() {
-      // Nothing persistent to clean up
+      _stopPolling();
     },
 
     panel: function(html, s, d) {
       var le = s.localEngine || {};
-      var statusColor = le.available ? '#22c55e' : le.checking ? '#eab308' : '#64748b';
-      var statusText = le.available ? 'Connected to localhost:19800' : le.checking ? 'Checking...' : 'Server not running';
+      var statusColor = le.available ? '#22c55e' : le.checking ? '#eab308' : le.installing ? '#eab308' : '#64748b';
+      var statusText = le.available ? 'Connected to localhost:19800'
+        : le.installing ? 'Waiting for server to start...'
+        : le.checking ? 'Checking...'
+        : 'Server not running';
 
       return html`<div style=${{padding:'.5rem 0',fontSize:'0.78rem',color:'var(--text-secondary)',lineHeight:1.7}}>
         <div style=${{display:'flex',alignItems:'center',gap:'.4rem',marginBottom:'.4rem'}}>
           <span style=${{width:7,height:7,borderRadius:'50%',background:statusColor,display:'inline-block'}}></span>
           <span>${statusText}</span>
         </div>
-        <div style=${{display:'flex',gap:'.3rem',marginBottom:'.4rem'}}>
+        <div style=${{display:'flex',gap:'.3rem',flexWrap:'wrap',marginBottom:'.4rem'}}>
           <button onClick=${function(){_checkLocalEngine(d);}}
             disabled=${le.checking}
             style=${{padding:'.3rem .6rem',borderRadius:6,fontSize:'0.75rem',fontWeight:600,cursor:'pointer',
@@ -73,22 +78,171 @@
             ${le.active?'Disable':'Enable for Detection'}</button>`}
         </div>
         ${!le.available && html`<div style=${{fontSize:'0.69rem',color:'var(--text-faint)',lineHeight:1.6}}>
-          Run in your terminal to start the server:
-          <div style=${{marginTop:'.25rem',display:'flex',flexDirection:'column',gap:'.2rem'}}>
-            <div style=${{display:'flex',alignItems:'center',gap:'.4rem'}}>
-              <code style=${{fontSize:'0.63rem',background:'var(--tag-bg)',padding:'2px 6px',borderRadius:3}}>pip install clashcontrol-engine</code>
-            </div>
-            <div style=${{display:'flex',alignItems:'center',gap:'.4rem'}}>
-              <code style=${{fontSize:'0.63rem',background:'var(--tag-bg)',padding:'2px 6px',borderRadius:3}}>clashcontrol-engine</code>
-              <button onClick=${function(){var cmd=navigator.platform&&navigator.platform.indexOf('Win')!==-1?'pip install clashcontrol-engine; clashcontrol-engine':'pip install clashcontrol-engine && clashcontrol-engine';navigator.clipboard.writeText(cmd).catch(function(){});}}
-                style=${{fontSize:'0.58rem',padding:'2px 6px',borderRadius:4,cursor:'pointer',border:'1px solid var(--border)',background:'var(--bg-secondary)',color:'var(--text-muted)',fontFamily:'inherit',whiteSpace:'nowrap'}}>Copy both</button>
-            </div>
+          <div style=${{marginBottom:'.4rem'}}>Requires Python 3.8+. Install and start with one click:</div>
+          <div style=${{display:'flex',gap:'.3rem',flexWrap:'wrap',marginBottom:'.4rem'}}>
+            <button onClick=${function(){_downloadAndInstall(d);}}
+              disabled=${le.installing}
+              style=${{padding:'.35rem .7rem',borderRadius:6,fontSize:'0.72rem',fontWeight:600,cursor:'pointer',border:'none',fontFamily:'inherit',
+                background:le.installing?'var(--bg-secondary)':'#2563eb',
+                color:le.installing?'var(--text-secondary)':'#fff',
+                opacity:le.installing?0.6:1}}>
+              ${le.installing ? 'Waiting for server...' : '\u{2B07} Install & Start'}</button>
+            <button onClick=${function(){
+              var cmd = _isWindows() ? 'pip install clashcontrol-engine; clashcontrol-engine' : 'pip install clashcontrol-engine && clashcontrol-engine';
+              navigator.clipboard.writeText(cmd).catch(function(){});
+            }}
+              style=${{padding:'.35rem .7rem',borderRadius:6,fontSize:'0.72rem',fontWeight:600,cursor:'pointer',
+                border:'1px solid var(--border)',background:'var(--bg-secondary)',color:'var(--text-secondary)',fontFamily:'inherit'}}>
+              Copy command</button>
           </div>
-          <div style=${{marginTop:'.25rem',color:'var(--text-faint)'}}>Requires Python 3.8+. Detection uses the built-in browser engine until the server is running.</div>
+          ${le.installing && html`<div style=${{fontSize:'0.63rem',color:'var(--text-faint)',marginTop:'.2rem'}}>
+            Run the downloaded script in your terminal. This page will detect the server automatically.
+          </div>`}
+          <details style=${{marginTop:'.3rem'}}>
+            <summary style=${{cursor:'pointer',fontSize:'0.63rem',color:'var(--text-faint)'}}>Manual install</summary>
+            <div style=${{marginTop:'.25rem',display:'flex',flexDirection:'column',gap:'.2rem'}}>
+              <code style=${{fontSize:'0.63rem',background:'var(--tag-bg)',padding:'2px 6px',borderRadius:3}}>pip install clashcontrol-engine</code>
+              <code style=${{fontSize:'0.63rem',background:'var(--tag-bg)',padding:'2px 6px',borderRadius:3}}>clashcontrol-engine</code>
+            </div>
+          </details>
+          <div style=${{marginTop:'.25rem',color:'var(--text-faint)',fontSize:'0.63rem'}}>Detection uses the built-in browser engine until the server is running.</div>
         </div>`}
       </div>`;
     }
   });
+
+  // ── Platform detection ─────────────────────────────────────────
+
+  function _isWindows() {
+    return navigator.platform && navigator.platform.indexOf('Win') !== -1;
+  }
+
+  function _isMac() {
+    return navigator.platform && navigator.platform.indexOf('Mac') !== -1;
+  }
+
+  // ── Installer script generation & download ─────────────────────
+
+  function _downloadAndInstall(dispatch) {
+    dispatch({t:'UPD_LOCAL_ENGINE', u:{installing:true}});
+
+    var isWin = _isWindows();
+    var filename, content, mimeType;
+
+    if (isWin) {
+      filename = 'install-clashcontrol-engine.bat';
+      mimeType = 'application/bat';
+      content = [
+        '@echo off',
+        'echo.',
+        'echo  ClashControl Local Engine Installer',
+        'echo  ====================================',
+        'echo.',
+        '',
+        'where python >nul 2>nul',
+        'if %errorlevel% neq 0 (',
+        '    echo  [ERROR] Python not found. Install Python 3.8+ from python.org',
+        '    echo.',
+        '    pause',
+        '    exit /b 1',
+        ')',
+        '',
+        'echo  [1/2] Installing clashcontrol-engine...',
+        'pip install clashcontrol-engine',
+        'if %errorlevel% neq 0 (',
+        '    echo.',
+        '    echo  [ERROR] pip install failed. Check Python/pip is in your PATH.',
+        '    echo.',
+        '    pause',
+        '    exit /b 1',
+        ')',
+        '',
+        'echo.',
+        'echo  [2/2] Starting server...',
+        'echo  Press Ctrl+C to stop the server.',
+        'echo.',
+        'clashcontrol-engine',
+      ].join('\r\n');
+    } else {
+      filename = 'install-clashcontrol-engine.sh';
+      mimeType = 'application/x-sh';
+      content = [
+        '#!/usr/bin/env bash',
+        'set -e',
+        'echo ""',
+        'echo "  ClashControl Local Engine Installer"',
+        'echo "  ===================================="',
+        'echo ""',
+        '',
+        'if ! command -v python3 &> /dev/null && ! command -v python &> /dev/null; then',
+        '    echo "  [ERROR] Python not found. Install Python 3.8+ first."',
+        '    exit 1',
+        'fi',
+        '',
+        'PY=$(command -v python3 || command -v python)',
+        'PIP=$(command -v pip3 || command -v pip)',
+        '',
+        'echo "  [1/2] Installing clashcontrol-engine..."',
+        '$PIP install clashcontrol-engine',
+        '',
+        'echo ""',
+        'echo "  [2/2] Starting server..."',
+        'echo "  Press Ctrl+C to stop the server."',
+        'echo ""',
+        'clashcontrol-engine',
+      ].join('\n');
+    }
+
+    // Trigger download
+    var blob = new Blob([content], {type: mimeType});
+    var url = URL.createObjectURL(blob);
+    var a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+
+    // Start polling for server to come online
+    _startPolling(dispatch);
+  }
+
+  // ── Server polling ─────────────────────────────────────────────
+
+  function _startPolling(dispatch) {
+    _stopPolling();
+    var attempts = 0;
+    var maxAttempts = 60; // poll for up to 2 minutes
+
+    _pollTimer = setInterval(function() {
+      attempts++;
+      if (attempts > maxAttempts) {
+        _stopPolling();
+        dispatch({t:'UPD_LOCAL_ENGINE', u:{installing:false}});
+        return;
+      }
+      fetch(_localEngineUrl + '/status', {method:'GET', signal:AbortSignal.timeout(1500)})
+        .then(function(r){ return r.json(); })
+        .then(function(j){
+          if (j && j.status === 'ready') {
+            _stopPolling();
+            dispatch({t:'UPD_LOCAL_ENGINE', u:{
+              available:true, checking:false, installing:false, active:true
+            }});
+            try{localStorage.setItem('cc_local_engine','1');}catch(e){}
+          }
+        })
+        .catch(function(){});
+    }, 2000);
+  }
+
+  function _stopPolling() {
+    if (_pollTimer) {
+      clearInterval(_pollTimer);
+      _pollTimer = null;
+    }
+  }
 
   // ── Engine communication functions ──────────────────────────────
   // Exposed globally so the core detection system can call them
