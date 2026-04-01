@@ -14024,8 +14024,8 @@ function startApp() {
     }, [open]);
 
     useEffect(function() {
-      if (open && inputRef.current) setTimeout(function(){ inputRef.current && inputRef.current.focus(); }, 80);
-    }, [open]);
+      if ((open || isDocked) && inputRef.current) setTimeout(function(){ inputRef.current && inputRef.current.focus(); }, 80);
+    }, [open, isDocked]);
 
     useEffect(function() {
       if (bottomRef.current) bottomRef.current.scrollIntoView({behavior:'smooth'});
@@ -14399,15 +14399,19 @@ function startApp() {
           } else {
             suggestions = ['Group by type', 'Show hard clashes', 'Export to BCF', 'Help'];
           }
-          return html`<div style=${{display:'flex',gap:'.3rem',flexWrap:'wrap',marginTop:'.25rem'}}>
-            ${suggestions.map(function(sug){return html`<button key=${sug} onClick=${function(){
+          return html`<div style=${{display:'flex',flexDirection:'column',gap:'.2rem',marginTop:'.25rem'}}>
+            ${suggestions.map(function(sug){return html`<div key=${sug} onClick=${function(){
               send(sug);
             }} style=${{
-              background:'var(--accent-bg)', border:'1px solid rgba(139,92,246,.3)',
-              color:'#c4b5fd', borderRadius:99, padding:'.25rem .6rem',
-              fontSize:'0.75rem', cursor:'pointer', fontFamily:'inherit',
-              transition:'background .15s, border-color .15s'
-            }}>${sug}</button>`})}
+              background:'none', border:'none',
+              color:'var(--text-muted)', padding:'.2rem .4rem',
+              fontSize:'0.82rem', cursor:'pointer', fontFamily:'inherit',
+              borderLeft:'2px solid transparent',
+              transition:'color .15s, border-color .15s'
+            }}
+            onMouseEnter=${function(e){e.currentTarget.style.color='var(--accent)';e.currentTarget.style.borderLeftColor='var(--accent)';}}
+            onMouseLeave=${function(e){e.currentTarget.style.color='var(--text-muted)';e.currentTarget.style.borderLeftColor='transparent';}}
+            >${sug}</div>`})}
           </div>`;
         }()}
         <div ref=${bottomRef}></div>
