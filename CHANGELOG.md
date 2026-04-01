@@ -1,5 +1,8 @@
 # Changelog
 
+## v4.6.5 (2026-04-01)
+- Extend NL regex parser for more natural, conversational commands
+
 ## v4.6.4 (2026-04-01)
 - Improve Local Clash Engine addon UX and status clarity
 
