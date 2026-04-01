@@ -3479,6 +3479,11 @@ function startApp() {
           aiReasons: prev.aiReasons,
           aiResolution: prev.aiResolution,
           aiNote: prev.aiNote,
+          aiSeverity: prev.aiSeverity,
+          aiCategory: prev.aiCategory,
+          aiReason: prev.aiReason,
+          _clusterGroup: prev._clusterGroup,
+          _clusterSize: prev._clusterSize,
           clashTypeConfirmed: prev.clashTypeConfirmed,
           linkedIssueId: prev.linkedIssueId,
         });
@@ -3501,6 +3506,119 @@ function startApp() {
     var _nw=0,_pe=0,_ar=0;
     merged.forEach(function(c){if(c._delta==='new')_nw++;else if(c._delta==='persisting')_pe++;else if(c._delta==='auto_resolved')_ar++;});
     return {clashes:merged, deltaSummary:{newCount:_nw,persisting:_pe,autoResolved:_ar,ts:now}};
+  }
+
+  // ── AI Auto-Classifier ───────────────────────────────────────────
+
+  function classifyClashes(clashes) {
+    // Rule-based classifier: labels each clash with aiSeverity, aiCategory, aiReason
+    // Runs synchronously after detection, before MERGE_CLASHES dispatch
+    var FP_TYPES = ['IfcOpeningElement','IfcOpeningStandardCase','IfcSpace','IfcVirtualElement'];
+    var STRUCTURAL_DISC = 'Structural';
+    var INSULATION_MAT = 'insulation';
+
+    clashes.forEach(function(c) {
+      // Skip already-classified (e.g. persisting from prev run)
+      if (c.aiSeverity) return;
+
+      var typeA = c.elemAType || '';
+      var typeB = c.elemBType || '';
+      var discs = c.disciplines || [];
+      var crossDisc = discs.length >= 2 && discs[0] !== discs[1];
+      var hasStructural = discs.indexOf(STRUCTURAL_DISC) !== -1;
+      var fv = c._trainFV || {};
+
+      // Default
+      var sev = 'minor', cat = 'needs_review', reason = '';
+
+      // ── False positive checks (override everything) ──
+      var isFP = false;
+      for (var fi = 0; fi < FP_TYPES.length; fi++) {
+        if (typeA.indexOf(FP_TYPES[fi]) !== -1 || typeB.indexOf(FP_TYPES[fi]) !== -1) { isFP = true; break; }
+      }
+      if (isFP) {
+        sev = 'info'; cat = 'false_positive';
+        reason = 'Opening/space element pair — likely intentional';
+      } else if (fv.size_ratio > 50) {
+        sev = 'info'; cat = 'false_positive';
+        reason = 'Extreme size ratio (' + Math.round(fv.size_ratio) + ':1) — small element inside large one';
+      } else if (c.type === 'duplicate') {
+        sev = 'info'; cat = 'duplicate';
+        reason = 'Duplicate element at same location';
+      } else if (c.type === 'soft') {
+        // Soft clash severity by gap distance
+        var gap = c.clearanceMm || Math.abs(c.distance || 0);
+        if (gap < 25) {
+          sev = 'major'; cat = 'clearance';
+          reason = 'Near miss — only ' + Math.round(gap) + 'mm clearance' + (crossDisc ? ' (cross-discipline)' : '');
+        } else {
+          sev = 'minor'; cat = 'clearance';
+          reason = Math.round(gap) + 'mm clearance gap' + (crossDisc ? ' (cross-discipline)' : '');
+        }
+      } else {
+        // Hard clash
+        if (crossDisc && hasStructural) {
+          sev = 'critical'; cat = 'penetration';
+          var otherDisc = discs[0] === STRUCTURAL_DISC ? discs[1] : discs[0];
+          reason = (otherDisc || 'MEP') + ' penetrating primary structure';
+        } else if (crossDisc) {
+          sev = 'major'; cat = 'penetration';
+          reason = 'Cross-discipline clash: ' + discs.join(' vs ');
+        } else {
+          sev = 'minor'; cat = 'penetration';
+          reason = 'Same-discipline intersection';
+        }
+      }
+
+      // Insulation involvement → downgrade to minor/needs_review
+      if (cat !== 'false_positive' && cat !== 'duplicate') {
+        var matA = fv.mat_cat_a || '';
+        var matB = fv.mat_cat_b || '';
+        if (matA === INSULATION_MAT || matB === INSULATION_MAT) {
+          if (sev === 'critical') sev = 'major';
+          cat = 'needs_review';
+          reason += ' (insulation involved — may be intentional)';
+        }
+      }
+
+      c.aiSeverity = sev;
+      c.aiCategory = cat;
+      c.aiReason = reason;
+    });
+
+    // ── Cluster grouping: same type-pair + same storey + within 500mm ──
+    var CLUSTER_DIST_SQ = 0.5 * 0.5; // 500mm in meters squared
+    var groupId = 0;
+    var assigned = {};
+    for (var i = 0; i < clashes.length; i++) {
+      if (assigned[i]) continue;
+      var ci = clashes[i];
+      var pi = ci.point || [0,0,0];
+      var pairI = (ci.elemAType || '') + ':' + (ci.elemBType || '');
+      var storeyI = ci.elemAStorey || ci.elemBStorey || '';
+      var cluster = [i];
+      for (var j = i + 1; j < clashes.length; j++) {
+        if (assigned[j]) continue;
+        var cj = clashes[j];
+        var pairJ = (cj.elemAType || '') + ':' + (cj.elemBType || '');
+        if (pairJ !== pairI) continue;
+        var storeyJ = cj.elemAStorey || cj.elemBStorey || '';
+        if (storeyJ !== storeyI) continue;
+        var pj = cj.point || [0,0,0];
+        var dx = pi[0]-pj[0], dy = pi[1]-pj[1], dz = pi[2]-pj[2];
+        if (dx*dx + dy*dy + dz*dz <= CLUSTER_DIST_SQ) {
+          cluster.push(j);
+        }
+      }
+      if (cluster.length >= 2) {
+        groupId++;
+        for (var k = 0; k < cluster.length; k++) {
+          clashes[cluster[k]]._clusterGroup = groupId;
+          clashes[cluster[k]]._clusterSize = cluster.length;
+          assigned[cluster[k]] = true;
+        }
+      }
+    }
   }
 
   // ── Save / Load Project ────────────────────────────────────────
@@ -9248,7 +9366,7 @@ function startApp() {
       _confirmIfClashes(function(){
         var ds = _captureDetectionSettings(s.rules, s.models);
         d({t:A.DETECTING}); d({t:A.TAB,v:'clashes'});
-        detectClashesAsync(s.models, s.rules).then(function(result){ d({t:A.MERGE_CLASHES, v:result, detectionSettings:ds}); });
+        detectClashesAsync(s.models, s.rules).then(function(result){ classifyClashes(result); d({t:A.MERGE_CLASHES, v:result, detectionSettings:ds}); });
       });
     }
     function applyAndRun(preset) {
@@ -9258,7 +9376,7 @@ function startApp() {
         var ds = _captureDetectionSettings(merged, s.models);
         d({t:A.UPD_RULES, u:preset.r});
         d({t:A.DETECTING}); d({t:A.TAB,v:'clashes'});
-        detectClashesAsync(s.models, merged).then(function(result){ d({t:A.MERGE_CLASHES, v:result, detectionSettings:ds}); });
+        detectClashesAsync(s.models, merged).then(function(result){ classifyClashes(result); d({t:A.MERGE_CLASHES, v:result, detectionSettings:ds}); });
       });
     }
 
@@ -9321,7 +9439,7 @@ function startApp() {
                   if(!canRun)return;
                   var merged=Object.assign({},s.rules,sp.rules);
                   d({t:A.UPD_RULES,u:sp.rules});d({t:A.DETECTING});d({t:A.TAB,v:'clashes'});
-                  detectClashesAsync(s.models,merged).then(function(result){d({t:A.MERGE_CLASHES,v:result});});
+                  detectClashesAsync(s.models,merged).then(function(result){classifyClashes(result);d({t:A.MERGE_CLASHES,v:result});});
                 }} disabled=${!canRun} title="Load & Run"
                   style=${{...S_BTN,fontSize:'0.63rem',padding:'.15rem .25rem',background:'var(--accent-bg)',color:'var(--accent-subtle)',borderRadius:'0',borderLeft:'1px solid var(--border-subtle)'}}>▶</button>
                 <button onClick=${function(){
@@ -9780,10 +9898,10 @@ function startApp() {
         var curGrp = isClashTab ? s.clashGroupBy : s.issueGroupBy;
         var curSort = isClashTab ? s.clashSortBy : s.issueSortBy;
         var grpOpts = isClashTab
-          ? ['none','storey','discipline','status','type']
+          ? ['none','severity','storey','discipline','status','type']
           : ['none','status','priority','category','assignee'];
         var sortOpts = isClashTab
-          ? [['none','None'],['spatial','Spatial'],['distance_asc','Gap ↑'],['distance_desc','Gap ↓'],['date_asc','Date ↑'],['date_desc','Date ↓']]
+          ? [['none','None'],['severity_asc','Severity ↑'],['severity_desc','Severity ↓'],['spatial','Spatial'],['distance_asc','Gap ↑'],['distance_desc','Gap ↓'],['date_asc','Date ↑'],['date_desc','Date ↓']]
           : [['none','None'],['priority_asc','Priority ↑'],['priority_desc','Priority ↓'],['date_asc','Date ↑'],['date_desc','Date ↓']];
         function pill(active){return {...S_BTN,fontSize:'0.63rem',padding:'.1rem .3rem',background:active?'var(--accent)':'var(--bg-secondary)',color:active?'#fff':'var(--text-faint)'};}
         return html`<div style=${{padding:'.25rem .5rem',borderBottom:'1px solid var(--border-subtle)',display:'flex',flexDirection:'column',gap:'.25rem',flexShrink:0}}>
@@ -10789,6 +10907,8 @@ function startApp() {
     date_desc: function(a,b){ return (b.createdAt||'').localeCompare(a.createdAt||''); },
     priority_asc: function(a,b){ var o={critical:0,high:1,normal:2,low:3}; return (o[a.priority]||2)-(o[b.priority]||2); },
     priority_desc: function(a,b){ var o={critical:0,high:1,normal:2,low:3}; return (o[b.priority]||2)-(o[a.priority]||2); },
+    severity_asc: function(a,b){ var o={critical:0,major:1,minor:2,info:3}; return (o[a.aiSeverity]||2)-(o[b.aiSeverity]||2); },
+    severity_desc: function(a,b){ var o={critical:0,major:1,minor:2,info:3}; return (o[b.aiSeverity]||2)-(o[a.aiSeverity]||2); },
     // Spatial: sort by elevation → element A → distance so you walk floor-by-floor, element-by-element
     spatial: function(a,b){
       var ea = a.elevation||0, eb = b.elevation||0;
@@ -10817,6 +10937,7 @@ function startApp() {
         case 'priority': key = it.priority || 'normal'; break;
         case 'category': key = it.category || 'other'; break;
         case 'assignee': key = it.assignee || 'Unassigned'; break;
+        case 'severity': key = it.aiSeverity || 'minor'; break;
         default: key = 'All';
       }
       if (!groups[key]) groups[key] = [];
@@ -11137,6 +11258,10 @@ function startApp() {
     var typeBg = it.type==='hard'?'#7f1d1d':it.type==='soft'?'#78350f':it.type==='duplicate'?'#4c1d95':'#1e3a5f';
     var typeCol = it.type==='hard'?'#fca5a5':it.type==='soft'?'#fcd34d':it.type==='duplicate'?'#c4b5fd':'#93c5fd';
     var typeLabel = it.type ? it.type.charAt(0).toUpperCase()+it.type.slice(1) : null;
+    // AI severity badge colours
+    var sevBg = it.aiSeverity==='critical'?'#7f1d1d':it.aiSeverity==='major'?'#78350f':it.aiSeverity==='minor'?'#1e3a5f':'#334155';
+    var sevCol = it.aiSeverity==='critical'?'#fca5a5':it.aiSeverity==='major'?'#fcd34d':it.aiSeverity==='minor'?'#93c5fd':'#94a3b8';
+    var sevLabel = it.aiSeverity ? it.aiSeverity.charAt(0).toUpperCase()+it.aiSeverity.slice(1) : null;
     // Storey: prefer shared storey, else A / B
     var storeyLabel = (function(){
       var a=it.elemAStorey||'', b=it.elemBStorey||'';
@@ -11182,6 +11307,7 @@ function startApp() {
         <div style=${{flex:1,minWidth:0}}>
           <div style=${{display:'flex',alignItems:'center',gap:'.3rem'}}>
             ${isClash && typeLabel && html`<span style=${{fontSize:'0.63rem',padding:'.1rem .3rem',borderRadius:3,background:typeBg,color:typeCol,fontWeight:700,flexShrink:0}}>${typeLabel}</span>`}
+            ${isClash && sevLabel && html`<span style=${{fontSize:'0.63rem',padding:'.1rem .3rem',borderRadius:3,background:sevBg,color:sevCol,fontWeight:700,flexShrink:0}}>${sevLabel}</span>`}
             ${isClash && it._delta==='new' && html`<span title="New this run" style=${{fontSize:'0.57rem',padding:'.05rem .25rem',borderRadius:3,background:'#1e3a5f',color:'#60a5fa',fontWeight:700,flexShrink:0,letterSpacing:'.03em'}}>NEW</span>`}
             ${isClash && it._delta==='auto_resolved' && html`<span title="No longer detected" style=${{fontSize:'0.57rem',padding:'.05rem .25rem',borderRadius:3,background:'#1e293b',color:'#94a3b8',fontWeight:600,flexShrink:0}}>AUTO</span>`}
             <span style=${{color:'var(--text-primary)',fontSize:'0.8rem',fontWeight:500,whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis',flex:1}}>${it.title}</span>
@@ -13103,7 +13229,7 @@ function startApp() {
         if (/run/.test(text) && s.models.length && !s.detecting) {
           var merged = Object.assign({}, s.rules, found.rules);
           d({t:A.DETECTING}); d({t:A.TAB,v:'clashes'});
-          detectClashesAsync(s.models, merged).then(function(result){ d({t:A.MERGE_CLASHES, v:result}); });
+          detectClashesAsync(s.models, merged).then(function(result){ classifyClashes(result); d({t:A.MERGE_CLASHES, v:result}); });
           return 'Running "' + found.name + '" preset…';
         }
         return 'Loaded preset "' + found.name + '". Say "run" to detect.';
@@ -13118,7 +13244,7 @@ function startApp() {
       if (!s.models.length) return 'No models loaded yet.';
       if (s.detecting) return 'Already running…';
       d({t:A.DETECTING}); d({t:A.TAB,v:'clashes'});
-      detectClashesAsync(s.models,s.rules).then(function(result){ d({t:A.MERGE_CLASHES, v:result}); });
+      detectClashesAsync(s.models,s.rules).then(function(result){ classifyClashes(result); d({t:A.MERGE_CLASHES, v:result}); });
       var r2 = s.rules;
       return 'Running clash detection' + (r2.maxGap ? ' with ' + r2.maxGap + 'mm max gap' : '') + '…';
     }
@@ -13691,7 +13817,7 @@ function startApp() {
       d({t:A.UPD_RULES, u:rules});
       if (s.detecting) return;
       d({t:A.DETECTING}); d({t:A.TAB,v:'clashes'});
-      detectClashesAsync(s.models, Object.assign({},s.rules,rules)).then(function(result){ d({t:A.MERGE_CLASHES, v:result}); });
+      detectClashesAsync(s.models, Object.assign({},s.rules,rules)).then(function(result){ classifyClashes(result); d({t:A.MERGE_CLASHES, v:result}); });
     }
 
     // ── NL feedback for unmatched commands (training mode only) ─
