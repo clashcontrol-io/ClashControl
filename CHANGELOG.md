@@ -1,5 +1,8 @@
 # Changelog
 
+## v4.6.19 (2026-04-02)
+- fix: add Connect button to Revit Bridge addon card
+
 ## v4.6.18 (2026-04-02)
 - fix: restore bridge panel rendering, disable auto-detect probe
 
