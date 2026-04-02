@@ -10234,6 +10234,15 @@ function startApp() {
       duplicateGlobalId:[], noObjectType:[], noTypeAssignment:[],
       invalidName:[], missingArea:[], missingVolume:[]
     };
+    // Value distributions: property → {value → [{expressId, modelId, name, ifcType}]}
+    var dist = {
+      isExternal:{}, loadBearing:{}, fireRating:{}, classification:{}, objectType:{}, material:{}, storey:{}
+    };
+    function addDist(key, val, el) {
+      var v = (val==null||val==='')?'(not set)':String(val).trim();
+      if (!dist[key][v]) dist[key][v] = [];
+      dist[key][v].push({expressId:el.expressId, modelId:el._modelId, name:(el.props||{}).name||'#'+el.expressId, ifcType:(el.props||{}).ifcType||''});
+    }
     // Types where IsExternal is expected
     var EXTERNAL_TYPES = {IfcWall:1,IfcWallStandardCase:1,IfcSlab:1,IfcRoof:1,IfcDoor:1,IfcWindow:1,IfcCurtainWall:1,IfcPlate:1};
     // Types where LoadBearing is expected
@@ -10266,63 +10275,59 @@ function startApp() {
         acc.missingCommonPset.push(Object.assign({}, it, {detail: commonPsetNames[0]}));
       }
 
-      // FireRating check
-      if (FIRE_TYPES[p.ifcType]) {
-        var hasFire = false;
-        if (commonPset) {
-          Object.keys(commonPset).forEach(function(k) {
-            if (k.toLowerCase()==='firerating' && commonPset[k] && String(commonPset[k]).trim()) hasFire = true;
-          });
-        }
-        // Also check all psets for FireRating
-        if (!hasFire) {
-          Object.keys(psets).forEach(function(ps) {
-            Object.keys(psets[ps]||{}).forEach(function(k) {
-              if (k.toLowerCase()==='firerating' && psets[ps][k] && String(psets[ps][k]).trim()) hasFire = true;
-            });
-          });
-        }
-        if (!hasFire) acc.noFireRating.push(it);
+      // FireRating check + distribution
+      var fireVal = null;
+      if (commonPset) {
+        Object.keys(commonPset).forEach(function(k) {
+          if (k.toLowerCase()==='firerating' && commonPset[k] && String(commonPset[k]).trim()) fireVal = String(commonPset[k]).trim();
+        });
       }
-
-      // IsExternal check
-      if (EXTERNAL_TYPES[p.ifcType]) {
-        var hasExternal = false;
-        if (commonPset) {
-          Object.keys(commonPset).forEach(function(k) {
-            if (k.toLowerCase()==='isexternal') hasExternal = true;
+      if (!fireVal) {
+        Object.keys(psets).forEach(function(ps) {
+          Object.keys(psets[ps]||{}).forEach(function(k) {
+            if (k.toLowerCase()==='firerating' && psets[ps][k] && String(psets[ps][k]).trim()) fireVal = String(psets[ps][k]).trim();
           });
-        }
-        if (!hasExternal) {
-          Object.keys(psets).forEach(function(ps) {
-            Object.keys(psets[ps]||{}).forEach(function(k) {
-              if (k.toLowerCase()==='isexternal') hasExternal = true;
-            });
-          });
-        }
-        if (!hasExternal) acc.noIsExternal.push(it);
+        });
       }
+      if (FIRE_TYPES[p.ifcType] && !fireVal) acc.noFireRating.push(it);
+      addDist('fireRating', fireVal, el);
 
-      // LoadBearing check
-      if (LOADBEARING_TYPES[p.ifcType]) {
-        var hasLB = false;
-        if (commonPset) {
-          Object.keys(commonPset).forEach(function(k) {
-            if (k.toLowerCase()==='loadbearing') hasLB = true;
-          });
-        }
-        if (!hasLB) {
-          Object.keys(psets).forEach(function(ps) {
-            Object.keys(psets[ps]||{}).forEach(function(k) {
-              if (k.toLowerCase()==='loadbearing') hasLB = true;
-            });
-          });
-        }
-        if (!hasLB) acc.noLoadBearing.push(it);
+      // IsExternal check + distribution
+      var extVal = null;
+      if (commonPset) {
+        Object.keys(commonPset).forEach(function(k) {
+          if (k.toLowerCase()==='isexternal') extVal = commonPset[k];
+        });
       }
+      if (extVal === null) {
+        Object.keys(psets).forEach(function(ps) {
+          Object.keys(psets[ps]||{}).forEach(function(k) {
+            if (k.toLowerCase()==='isexternal') extVal = psets[ps][k];
+          });
+        });
+      }
+      if (EXTERNAL_TYPES[p.ifcType] && extVal === null) acc.noIsExternal.push(it);
+      addDist('isExternal', extVal, el);
 
-      // Assembly code / classification check
-      var hasClassification = false;
+      // LoadBearing check + distribution
+      var lbVal = null;
+      if (commonPset) {
+        Object.keys(commonPset).forEach(function(k) {
+          if (k.toLowerCase()==='loadbearing') lbVal = commonPset[k];
+        });
+      }
+      if (lbVal === null) {
+        Object.keys(psets).forEach(function(ps) {
+          Object.keys(psets[ps]||{}).forEach(function(k) {
+            if (k.toLowerCase()==='loadbearing') lbVal = psets[ps][k];
+          });
+        });
+      }
+      if (LOADBEARING_TYPES[p.ifcType] && lbVal === null) acc.noLoadBearing.push(it);
+      addDist('loadBearing', lbVal, el);
+
+      // Assembly code / classification check + distribution
+      var classVal = null;
       Object.keys(psets).forEach(function(ps) {
         var grp = psets[ps]||{};
         Object.keys(grp).forEach(function(k) {
@@ -10330,15 +10335,21 @@ function startApp() {
           if (kl==='assemblycode'||kl==='assembly code'||kl==='assembly_code'||
               kl==='classificationcode'||kl==='classification code'||kl==='classification'||
               kl==='omniclass'||kl==='omniclassnumber'||kl==='uniclass'||kl==='uniformat'||kl==='masterformat') {
-            if (grp[k] && String(grp[k]).trim()) hasClassification = true;
+            if (grp[k] && String(grp[k]).trim()) classVal = String(grp[k]).trim();
           }
         });
       });
-      if (p.objectType && /^\d{2}\s?\d{2}\s?\d{2}/.test(p.objectType)) hasClassification = true;
-      if (!hasClassification) acc.noClassification.push(it);
+      if (p.objectType && /^\d{2}\s?\d{2}\s?\d{2}/.test(p.objectType) && !classVal) classVal = p.objectType;
+      if (!classVal) acc.noClassification.push(it);
+      addDist('classification', classVal, el);
 
-      // ObjectType / type assignment check
+      // ObjectType / type assignment check + distribution
       if (!p.objectType || !p.objectType.trim()) acc.noObjectType.push(it);
+      addDist('objectType', p.objectType, el);
+
+      // Material + storey distributions (always collected)
+      addDist('material', p.material, el);
+      addDist('storey', p.storey, el);
 
       // Thickness vs name mismatch
       var nameMatch = THICKNESS_RE.exec(p.name||'');
@@ -10397,7 +10408,8 @@ function startApp() {
       invalidName:      {label:'Numeric/placeholder element names',   sev:'warn', cat:'naming',    count:acc.invalidName.length,       ex:acc.invalidName.slice(0,8)},
       missingArea:      {label:'Missing area quantity',               sev:'info', cat:'quantities', count:acc.missingArea.length,       ex:acc.missingArea.slice(0,8)},
       missingVolume:    {label:'Missing volume quantity',             sev:'info', cat:'quantities', count:acc.missingVolume.length,     ex:acc.missingVolume.slice(0,8)},
-      _total: (elements||[]).length
+      _total: (elements||[]).length,
+      _dist: dist
     };
   }
 
@@ -10410,7 +10422,7 @@ function startApp() {
     var expSt = useState({}), expanded = expSt[0], setExpanded = expSt[1];
     var selModel = useState('all'), selectedModel = selModel[0], setSelectedModel = selModel[1];
     var running = useState(false), isRunning = running[0], setRunning = running[1];
-    var secSt = useState({general:true,bim:true,ids:true}), sections = secSt[0], setSections = secSt[1];
+    var secSt = useState({general:true,bim:true,dist:true,ids:true}), sections = secSt[0], setSections = secSt[1];
 
     function toggleSection(key) { setSections(function(p){var n=Object.assign({},p);n[key]=!n[key];return n;}); }
 
@@ -10420,7 +10432,7 @@ function startApp() {
         var elements = [];
         (s.models||[]).forEach(function(m) {
           if (selectedModel !== 'all' && m.id !== selectedModel) return;
-          (m.elements||[]).forEach(function(el) { elements.push(el); });
+          (m.elements||[]).forEach(function(el) { el._modelId = m.id; elements.push(el); });
         });
         setQc(runDataQualityChecks(elements));
         setBim(runBIMModelChecks(elements));
@@ -10430,6 +10442,90 @@ function startApp() {
     }
 
     function toggleExp(key) { setExpanded(function(p){var n=Object.assign({},p);n[key]=!n[key];return n;}); }
+
+    var activeDist = useState(null), activeDistKey = activeDist[0], setActiveDistKey = activeDist[1];
+    var DQ_COLORS = ['#60a5fa','#f87171','#34d399','#fbbf24','#c084fc','#fb923c','#22d3ee','#e879f9','#a3e635','#f472b6','#38bdf8','#facc15','#4ade80','#f97316','#818cf8'];
+
+    // Color elements in 3D by distribution group
+    function colorByDistribution(distKey) {
+      var S = window._ccState3d;
+      if (!S || !S.mg || !bim || !bim._dist || !bim._dist[distKey]) {
+        if (_unghostAll) _unghostAll();
+        setActiveDistKey(null);
+        return;
+      }
+      if (activeDistKey === distKey) {
+        // Toggle off
+        if (_unghostAll) _unghostAll();
+        // Restore original colors
+        if (S._dqOrigColors) {
+          S._dqOrigColors.forEach(function(e){if(e.mesh&&e.mesh.material)e.mesh.material.color.copy(e.color);});
+          S._dqOrigColors = null;
+        }
+        setActiveDistKey(null);
+        invalidate();
+        return;
+      }
+      setActiveDistKey(distKey);
+      var groups = bim._dist[distKey];
+      var gKeys = Object.keys(groups).sort(function(a,b){return (groups[b]||[]).length - (groups[a]||[]).length;});
+      // Build expressId → colorIndex map
+      var colorMap = {};
+      gKeys.forEach(function(k, idx) {
+        (groups[k]||[]).forEach(function(item) {
+          colorMap[(item.modelId||'')+'_'+item.expressId] = idx;
+        });
+      });
+      // Ghost elements not in any group, color the rest
+      if (_unghostAll) _unghostAll();
+      if (S._dqOrigColors) {
+        S._dqOrigColors.forEach(function(e){if(e.mesh&&e.mesh.material)e.mesh.material.color.copy(e.color);});
+      }
+      var saved = [];
+      S.mg.traverse(function(obj) {
+        if (!obj.isMesh || !obj.material) return;
+        var eid = obj.userData.expressId;
+        var parent = obj.parent;
+        var modelId = parent ? parent.userData.modelId : null;
+        if (eid == null || !modelId) return;
+        saved.push({mesh:obj, color:obj.material.color.clone()});
+        var ci = colorMap[modelId+'_'+eid];
+        if (ci != null) {
+          obj.material.color.set(DQ_COLORS[ci % DQ_COLORS.length]);
+        } else {
+          obj.material.color.set(0x334155);
+          obj.material.opacity = 0.08;
+          obj.material.transparent = true;
+        }
+      });
+      S._dqOrigColors = saved;
+      invalidate();
+    }
+
+    // Highlight elements from a specific check (ghost others, highlight matching)
+    function highlightCheckElements(checkObj) {
+      if (!checkObj || !checkObj.ex || checkObj.ex.length === 0) return;
+      var eids = [];
+      (s.models||[]).forEach(function(m) {
+        (m.elements||[]).forEach(function(el) {
+          var gid = el.props && el.props.globalId;
+          if (checkObj.ex.some(function(it){return it.gid === gid;})) eids.push(el.expressId);
+        });
+      });
+      if (eids.length && _ghostOthers) _ghostOthers(eids);
+      invalidate();
+    }
+
+    // Highlight a single distribution value group
+    function highlightDistGroup(distKey, value) {
+      if (!bim || !bim._dist || !bim._dist[distKey]) return;
+      var items = bim._dist[distKey][value] || [];
+      var eidSet = {};
+      items.forEach(function(it){eidSet[it.expressId] = true;});
+      var eids = Object.keys(eidSet).map(Number);
+      if (eids.length && _ghostOthers) _ghostOthers(eids);
+      invalidate();
+    }
 
     var hasModels = s.models && s.models.length > 0;
     var totalIssues = 0;
@@ -10455,11 +10551,14 @@ function startApp() {
           var col = SEV[ch.sev]||'#60a5fa';
           var isExp = expanded[key];
           return html`<div key=${key} style=${{borderBottom:'1px solid var(--border-subtle)'}}>
-            <div onClick=${ch.count>0?function(){toggleExp(key);}:null}
-              style=${{display:'flex',alignItems:'center',gap:'.35rem',cursor:ch.count>0?'pointer':'default',padding:'.3rem .6rem'}}>
+            <div style=${{display:'flex',alignItems:'center',gap:'.35rem',padding:'.3rem .6rem'}}>
               <span style=${{fontSize:'0.69rem',fontWeight:700,minWidth:28,textAlign:'right',color:ch.count===0?'#4ade80':col}}>${ch.count===0?'✓':ch.count}</span>
-              <span style=${{fontSize:'0.72rem',color:ch.count===0?'var(--text-faint)':'var(--text-secondary)',flex:1}}>${ch.label}</span>
-              ${ch.count>0 && html`<span style=${{fontSize:'0.57rem',color:'var(--text-faint)'}}>${isExp?'▲':'▼'}</span>`}
+              <span onClick=${ch.count>0?function(){toggleExp(key);}:null}
+                style=${{fontSize:'0.72rem',color:ch.count===0?'var(--text-faint)':'var(--text-secondary)',flex:1,cursor:ch.count>0?'pointer':'default'}}>${ch.label}</span>
+              ${ch.count>0 && html`<button onClick=${function(){highlightCheckElements(ch);}}
+                title="Highlight in 3D"
+                style=${{fontSize:'0.57rem',padding:'1px 4px',background:'none',border:'1px solid '+col,borderRadius:3,color:col,cursor:'pointer',lineHeight:1.2,fontFamily:'inherit'}}>3D</button>`}
+              ${ch.count>0 && html`<span onClick=${function(){toggleExp(key);}} style=${{fontSize:'0.57rem',color:'var(--text-faint)',cursor:'pointer'}}>${isExp?'▲':'▼'}</span>`}
             </div>
             ${isExp && ch.count>0 && html`<div style=${{padding:'.2rem .6rem .3rem 2.5rem',background:'var(--bg-primary)'}}>
               ${ch.ex.map(function(it) {
@@ -10521,6 +10620,56 @@ function startApp() {
           ${sections.bim && renderCheckGroup(bim, ['thicknessMismatch','noFireRating','noIsExternal','noLoadBearing','missingCommonPset','noClassification','noObjectType','invalidName','missingArea','missingVolume'], 'BIM')}
         </div>`}
 
+        ${bim && bim._dist && html`<div>
+          <div onClick=${function(){toggleSection('dist');}} style=${SEC}>
+            <span>Property Distribution</span>
+            <span style=${{fontSize:'0.57rem',color:'var(--text-faint)'}}>${sections.dist?'▲':'▼'}</span>
+          </div>
+          ${sections.dist && html`<div style=${{padding:'.3rem 0'}}>
+            ${['isExternal','loadBearing','fireRating','classification','objectType','material','storey'].map(function(dk) {
+              var groups = bim._dist[dk]||{};
+              var gKeys = Object.keys(groups).sort(function(a,b){return (groups[b]||[]).length-(groups[a]||[]).length;});
+              var total = 0; gKeys.forEach(function(k){total+=(groups[k]||[]).length;});
+              if (total === 0) return null;
+              var labels = {isExternal:'IsExternal',loadBearing:'LoadBearing',fireRating:'FireRating',classification:'Classification',objectType:'ObjectType',material:'Material',storey:'Storey'};
+              var isActive = activeDistKey === dk;
+              return html`<div key=${dk} style=${{borderBottom:'1px solid var(--border-subtle)'}}>
+                <div style=${{display:'flex',alignItems:'center',gap:'.35rem',padding:'.3rem .6rem'}}>
+                  <span style=${{fontSize:'0.72rem',color:'var(--text-secondary)',flex:1}}>${labels[dk]||dk}</span>
+                  <span style=${{fontSize:'0.57rem',color:'var(--text-faint)'}}>${gKeys.length} values</span>
+                  <button onClick=${function(){colorByDistribution(dk);}}
+                    title=${isActive?'Clear coloring':'Color in 3D by '+dk}
+                    style=${{fontSize:'0.57rem',padding:'1px 5px',background:isActive?'var(--accent)':'none',border:'1px solid '+(isActive?'var(--accent)':'var(--border)'),borderRadius:3,
+                      color:isActive?'#fff':'var(--text-faint)',cursor:'pointer',lineHeight:1.2,fontFamily:'inherit'}}>
+                    ${isActive?'Clear':'Color'}
+                  </button>
+                  <span onClick=${function(){toggleExp('dist_'+dk);}} style=${{fontSize:'0.57rem',color:'var(--text-faint)',cursor:'pointer'}}>${expanded['dist_'+dk]?'▲':'▼'}</span>
+                </div>
+                ${expanded['dist_'+dk] && html`<div style=${{padding:'0 .6rem .3rem',background:'var(--bg-primary)'}}>
+                  ${gKeys.slice(0,30).map(function(val, idx) {
+                    var items = groups[val]||[];
+                    var pct = total > 0 ? Math.round(items.length / total * 100) : 0;
+                    var barColor = isActive ? DQ_COLORS[idx%DQ_COLORS.length] : 'var(--accent)';
+                    var isNotSet = val === '(not set)';
+                    return html`<div key=${val}
+                      onClick=${function(){highlightDistGroup(dk, val);}}
+                      style=${{display:'flex',alignItems:'center',gap:'.35rem',padding:'.2rem 0',cursor:'pointer',borderBottom:'1px solid var(--border-subtle)'}}>
+                      ${isActive && html`<span style=${{width:8,height:8,borderRadius:'50%',background:barColor,flexShrink:0}}></span>`}
+                      <span style=${{fontSize:'0.63rem',color:isNotSet?'var(--text-faint)':'var(--text-secondary)',flex:1,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',fontStyle:isNotSet?'italic':'normal'}} title=${val}>${val}</span>
+                      <span style=${{fontSize:'0.57rem',color:'var(--text-faint)',flexShrink:0}}>${items.length}</span>
+                      <div style=${{width:40,height:4,background:'var(--bg-secondary)',borderRadius:2,overflow:'hidden',flexShrink:0}}>
+                        <div style=${{width:pct+'%',height:'100%',background:barColor,borderRadius:2}}></div>
+                      </div>
+                      <span style=${{fontSize:'0.57rem',color:'var(--text-faint)',flexShrink:0,minWidth:20,textAlign:'right'}}>${pct}%</span>
+                    </div>`;
+                  })}
+                  ${gKeys.length > 30 && html`<div style=${{fontSize:'0.57rem',color:'var(--text-faint)',fontStyle:'italic',padding:'.2rem 0'}}>+${gKeys.length-30} more values</div>`}
+                </div>`}
+              </div>`;
+            })}
+          </div>`}
+        </div>`}
+
         <div>
           <div onClick=${function(){toggleSection('ids');}} style=${SEC}>
             <span>IDS Validation</span>
@@ -10530,9 +10679,14 @@ function startApp() {
         </div>
 
         ${qc && html`<div style=${{padding:'.5rem .6rem',borderTop:'1px solid var(--border-subtle)'}}>
-          <div style=${{fontSize:'0.63rem',color:'var(--text-faint)',lineHeight:1.6}}>
-            Checked ${qc._total} elements across ${selectedModel==='all'?(s.models||[]).length:1} model${selectedModel==='all'&&(s.models||[]).length!==1?'s':''}.
-            General: ${totalIssues} issue${totalIssues!==1?'s':''}. BIM: ${totalBim} issue${totalBim!==1?'s':''}.
+          <div style=${{display:'flex',alignItems:'center',gap:'.3rem',flexWrap:'wrap'}}>
+            <span style=${{fontSize:'0.63rem',color:'var(--text-faint)',flex:1}}>
+              ${qc._total} elements · ${totalIssues+totalBim} issue${totalIssues+totalBim!==1?'s':''}
+            </span>
+            ${activeDistKey && html`<button onClick=${function(){colorByDistribution(activeDistKey);}}
+              style=${{fontSize:'0.63rem',padding:'.15rem .4rem',background:'var(--bg-secondary)',color:'var(--text-muted)',border:'1px solid var(--border)',borderRadius:4,cursor:'pointer',fontFamily:'inherit'}}>Clear Coloring</button>`}
+            <button onClick=${function(){if(_unghostAll)_unghostAll();var S=window._ccState3d;if(S&&S._dqOrigColors){S._dqOrigColors.forEach(function(e){if(e.mesh&&e.mesh.material)e.mesh.material.color.copy(e.color);});S._dqOrigColors=null;}setActiveDistKey(null);invalidate();}}
+              style=${{fontSize:'0.63rem',padding:'.15rem .4rem',background:'var(--bg-secondary)',color:'var(--text-muted)',border:'1px solid var(--border)',borderRadius:4,cursor:'pointer',fontFamily:'inherit'}}>Reset View</button>
           </div>
         </div>`}
       </div>
