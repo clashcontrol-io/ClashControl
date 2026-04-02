@@ -15322,13 +15322,9 @@ function startApp() {
                     color:active?'var(--pill-green)':'var(--text-faint)'}}>${active?'ACTIVE':'OFF'}</span>`}
               </div>
               <div style=${{fontSize:'0.72rem',color:'var(--text-secondary)',lineHeight:1.6,marginBottom:'.3rem'}}>${addon.description||''}</div>
-              ${function(){
-                // PWA addon: hide Disable button when running as installed PWA
-                var isPwaInstalled = id==='pwa' && window.matchMedia && window.matchMedia('(display-mode: standalone)').matches;
-                if (isPwaInstalled && active) {
-                  return html`<div style=${{fontSize:'0.69rem',color:'var(--text-faint)'}}>Always on in installed app</div>`;
-                }
-                return html`<div style=${{display:'flex',gap:'.3rem',alignItems:'center'}}>
+              ${id==='pwa' && active && window.matchMedia && window.matchMedia('(display-mode: standalone)').matches
+                ? html`<div style=${{fontSize:'0.69rem',color:'var(--text-faint)'}}>Always on in installed app</div>`
+                : html`<div style=${{display:'flex',gap:'.3rem',alignItems:'center'}}>
                   <button onClick=${function(){
                     if (active) window._ccDeactivateAddon(id);
                     else window._ccActivateAddon(id);
@@ -15339,29 +15335,23 @@ function startApp() {
                   ${active && id==='revit-bridge' && html`<button onClick=${function(){d({t:'REVIT_BRIDGE',v:true});}}
                     style=${{padding:'.25rem .6rem',borderRadius:6,fontSize:'0.75rem',fontWeight:600,cursor:'pointer',border:'1px solid var(--border)',
                       background:'var(--bg-tertiary)',color:'var(--text-muted)',fontFamily:'inherit'}}>Settings</button>`}
-                </div>`;
-              }()}
+                </div>`}
               ${active && id==='revit-bridge' && html`<div style=${{borderTop:'1px solid var(--border-subtle)',marginTop:'.5rem',paddingTop:'.5rem',display:'flex',flexDirection:'column',gap:'.4rem'}}>
                 ${s.revitDirect && s.revitDirect.connected ? html`<div style=${{display:'flex',flexDirection:'column',gap:'.4rem'}}>
                   <div style=${{display:'flex',alignItems:'center',gap:'.4rem'}}>
                     <span style=${{width:7,height:7,borderRadius:'50%',background:'#22c55e',flexShrink:0}}></span>
                     <span style=${{fontSize:'0.75rem',color:'#4ade80',flex:1}}>Connected${s.revitDirect.documentName ? ' \u2014 ' + s.revitDirect.documentName : ''}</span>
-                    <button onClick=${function(){if(window._revitDirectDisconnect) window._revitDirectDisconnect(d)}}
-                      style=${{padding:'.2rem .5rem',borderRadius:5,fontSize:'0.69rem',fontWeight:600,cursor:'pointer',border:'none',background:'#7f1d1d',color:'#fca5a5',fontFamily:'inherit'}}>Disconnect</button>
                   </div>
                   <div style=${{display:'flex',gap:'.3rem'}}>
-                    <select value=${window._ccRevitTargetProject||s.activeProject||'default'}
-                      onChange=${function(e){window._ccRevitTargetProject=e.target.value;}}
-                      style=${{flex:1,padding:'.25rem .4rem',background:'var(--bg-primary)',color:'var(--text-primary)',border:'1px solid var(--border)',borderRadius:5,fontSize:'0.72rem',fontFamily:'inherit'}}>
-                      ${(s.projectList||[]).map(function(p){return html`<option key=${p.id} value=${p.id}>${p.name}</option>`})}
-                    </select>
                     <button onClick=${function(){if(window._revitDirectExport) window._revitDirectExport(['all'])}}
                       disabled=${s.revitDirect.loading}
-                      style=${{padding:'.25rem .5rem',borderRadius:5,fontSize:'0.69rem',fontWeight:600,cursor:'pointer',border:'none',
+                      style=${{padding:'.25rem .5rem',borderRadius:5,fontSize:'0.69rem',fontWeight:600,cursor:'pointer',border:'none',flex:1,
                         background:s.revitDirect.loading?'var(--bg-tertiary)':'#1e3a5f',color:s.revitDirect.loading?'var(--text-faint)':'#93c5fd',fontFamily:'inherit'}}>
                       ${s.revitDirect.loading ? 'Loading ' + Math.round((s.revitDirect.progress||0)*100) + '%' : 'Pull Model'}</button>
                     <button onClick=${function(){if(window._revitDirectPushClashes) window._revitDirectPushClashes(s,d)}}
-                      style=${{padding:'.25rem .5rem',borderRadius:5,fontSize:'0.69rem',fontWeight:600,cursor:'pointer',border:'none',background:'#052e16',color:'#4ade80',fontFamily:'inherit'}}>Push Clashes</button>
+                      style=${{padding:'.25rem .5rem',borderRadius:5,fontSize:'0.69rem',fontWeight:600,cursor:'pointer',border:'none',flex:1,background:'#052e16',color:'#4ade80',fontFamily:'inherit'}}>Push Clashes</button>
+                    <button onClick=${function(){if(window._revitDirectDisconnect) window._revitDirectDisconnect(d)}}
+                      style=${{padding:'.25rem .5rem',borderRadius:5,fontSize:'0.69rem',fontWeight:600,cursor:'pointer',border:'none',background:'#7f1d1d',color:'#fca5a5',fontFamily:'inherit'}}>Disconnect</button>
                   </div>
                   ${s.revitDirect.loading && html`<div style=${{width:'100%',height:3,background:'var(--bg-primary)',borderRadius:2,overflow:'hidden'}}>
                     <div style=${{width:Math.round((s.revitDirect.progress||0)*100)+'%',height:'100%',background:'var(--accent)',borderRadius:2,transition:'width .3s'}}></div>
@@ -15382,13 +15372,13 @@ function startApp() {
                     </select>
                     <button onClick=${function(){
                         var port = window._loadDirectPort ? window._loadDirectPort() : 19780;
+                        window._ccPullOnConnect = true;
                         if(window._revitDirectConnect) window._revitDirectConnect(port, d);
                       }}
                       style=${{padding:'.25rem .6rem',borderRadius:5,fontSize:'0.72rem',fontWeight:600,cursor:'pointer',border:'none',background:'var(--accent)',color:'#fff',fontFamily:'inherit'}}>Connect</button>
                   </div>
                 </div>`}
               </div>`}
-              }()}
               ${active && addon.panel && html`<div style=${{borderTop:'1px solid var(--border-subtle)',marginTop:'.4rem',paddingTop:'.2rem'}}>
                 ${addon.panel(html, s, d)}
               </div>`}
