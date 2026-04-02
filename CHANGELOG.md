@@ -1,5 +1,8 @@
 # Changelog
 
+## v4.7.0 (2026-04-02)
+- feat: color-by-property and value distributions in Data Quality tab
+
 ## v4.6.23 (2026-04-02)
 - feat: add Cancel button during Revit model pull
 
