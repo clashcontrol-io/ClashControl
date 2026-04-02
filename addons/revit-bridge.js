@@ -682,20 +682,15 @@
   // ── Auto-detect Revit on page load ────────────────────────────
 
   function _autoDetectRevit(d) {
-    // Try connecting silently to see if Revit is running
+    // Try a lightweight HTTP fetch to see if Revit plugin is running
+    // (avoids opening a real WebSocket which could interfere with the plugin)
     try {
-      var testWs = new WebSocket('ws://localhost:19780');
-      testWs.onopen = function() {
-        testWs.close();
+      var controller = typeof AbortController !== 'undefined' ? new AbortController() : null;
+      var opts = {method:'GET', mode:'no-cors'};
+      if (controller) { opts.signal = controller.signal; setTimeout(function(){ controller.abort(); }, 2000); }
+      fetch('http://localhost:19780', opts).then(function() {
         d({t:'UPD_REVIT_DIRECT', u:{autoDetected:true}});
-        d({t:'BRIDGE_LOG', logType:'info', text:'Revit detected on localhost:19780.'});
-      };
-      testWs.onerror = function() { testWs.close(); };
-      testWs.onclose = function() {};
-      // Timeout after 2 seconds
-      setTimeout(function() {
-        if (testWs.readyState === 0) testWs.close();
-      }, 2000);
+      }).catch(function() {});
     } catch(e) {}
   }
 

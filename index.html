@@ -14674,7 +14674,7 @@ function startApp() {
         </div>`}
       </div>
       <div style=${{flex:1}}></div>
-      <div class="cc-ifc-load-btn">${function(){
+      <div class="cc-ifc-load-btn">${(function(){
         var proj=(s.projectList||[]).find(function(p){return p.id===s.activeProject;});
         var isRevit=proj&&proj.sourceType==='revit';
         return iconBtn(function(){
@@ -14683,7 +14683,7 @@ function startApp() {
         },
         html`<span style=${{fontWeight:700,fontSize:'0.8rem',letterSpacing:'.03em',opacity:isRevit?0.4:1}}>IFC</span>`,
         isRevit?'IFC import disabled — Revit project':'Load IFC model');
-      }()}</div>
+      }())}</div>
       ${iconBtn(function(){
           if(window._ccOpen2D) window._ccOpen2D();
         },
@@ -15325,7 +15325,7 @@ function startApp() {
                 ${html`<span style=${{fontSize:'0.58rem',fontWeight:600,padding:'1px 5px',borderRadius:4,
                     background:active?'rgba(34,197,94,.12)':'var(--tag-bg)',
                     color:active?'var(--pill-green)':'var(--text-faint)'}}>${active?'ACTIVE':'OFF'}</span>`
-                }()}
+                }}
               </div>
               <div style=${{fontSize:'0.72rem',color:'var(--text-secondary)',lineHeight:1.6,marginBottom:'.3rem'}}>${addon.description||''}</div>
               ${function(){
@@ -15788,7 +15788,7 @@ function startApp() {
         </div>
 
         <div style=${{padding:'1rem',overflowY:'auto',flex:1}}>
-          ${tab==='direct' && function(){
+          ${tab==='direct' && (function(){
             var proj=(s.projectList||[]).find(function(p){return p.id===s.activeProject;});
             var isIfcProject=proj&&proj.sourceType==='ifc';
             return html`<div style=${{display:'flex',flexDirection:'column',gap:'.75rem'}}>
@@ -15893,7 +15893,7 @@ function startApp() {
                 Sync camera to Revit
               </label>
               ${rd.lastElementSync > 0 && html`<div style=${{fontSize:'0.63rem',color:'var(--text-faint)'}}>
-                Last synced: ${function(){var ago=Math.round((Date.now()-rd.lastElementSync)/1000); return ago<5?'just now':ago<60?ago+'s ago':Math.round(ago/60)+'m ago';}()}
+                Last synced: ${(function(){var ago=Math.round((Date.now()-rd.lastElementSync)/1000); return ago<5?'just now':ago<60?ago+'s ago':Math.round(ago/60)+'m ago';}())}
               </div>`}
             </div>`}
 
@@ -15902,7 +15902,7 @@ function startApp() {
                 style=${{color:'var(--accent)',textDecoration:'none',fontWeight:600}}>ClashControl Connector</a> Revit plugin.
               Install it in Revit, then connect here.
             </div>
-          </div>`;}()}
+          </div>`;}())}
 
           ${tab==='ai' && html`<div style=${{display:'flex',flexDirection:'column',gap:'.75rem'}}>
             <div>
