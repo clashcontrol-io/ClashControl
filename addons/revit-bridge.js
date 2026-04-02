@@ -22,6 +22,28 @@
   // so re-exports update the existing model instead of adding a duplicate.
   var _revitModelMap = {}; // {documentName_modelName: ccModelId}
 
+  // Protocol version this build expects from the Revit Connector
+  var EXPECTED_PROTOCOL_VERSION = '1.0';
+
+  // RevitId → GlobalId index for deletion fallback (populated during import)
+  var _revitIdIndex = {}; // {revitId: globalId}
+
+  // Content-addressable element hash cache (globalId → contentHash)
+  var _elementHashCache = {};
+  // Try loading from localStorage on init
+  try {
+    var _savedHashes = localStorage.getItem('cc_element_hashes');
+    if (_savedHashes) _elementHashCache = JSON.parse(_savedHashes);
+  } catch(e) {}
+
+  // Camera sync state
+  var _cameraSyncEnabled = false;
+  var _cameraSyncThrottleTimer = null;
+  var _selectionSyncEnabled = false;
+
+  // Last synced timestamp for live update indicator
+  var _lastElementSync = 0;
+
   // ── Reconnection with exponential backoff ─────────────────────
 
   function _scheduleReconnect() {
@@ -63,10 +85,17 @@
       d({t:'UPD_REVIT_DIRECT', u:{connected:true, reconnecting:false}});
       d({t:'BRIDGE_LOG', logType:'info', text:wasReconnect ? 'Reconnected to Revit plugin.' : 'Connected to Revit plugin.'});
       _revitWs.send(JSON.stringify({type:'ping'}));
-      // On reconnect, re-request full export (plugin may have accumulated changes)
+      // On reconnect, prompt user instead of auto-exporting
       if (wasReconnect) {
-        d({t:'BRIDGE_LOG', logType:'info', text:'Re-requesting full export after reconnect...'});
-        _revitDirectExport(['all']);
+        // Try session resumption first if we have cached hashes
+        var hasHashes = Object.keys(_elementHashCache).length > 0;
+        if (hasHashes) {
+          d({t:'BRIDGE_LOG', logType:'info', text:'Reconnected. Attempting session resumption...'});
+          _revitWs.send(JSON.stringify({type:'resume-session', knownElements:_elementHashCache}));
+        } else {
+          d({t:'UPD_REVIT_DIRECT', u:{reconnectPrompt:true}});
+          d({t:'BRIDGE_LOG', logType:'info', text:'Reconnected to Revit. Pull model again?'});
+        }
       }
     };
 
@@ -103,7 +132,15 @@
 
   function _revitDirectExport(categories) {
     if (!_revitWs || _revitWs.readyState !== 1) return;
-    _revitWs.send(JSON.stringify({type:'export', categories: categories || ['all']}));
+    var msg = {type:'export', categories: categories || ['all']};
+    // Include projectId for project scoping
+    var targetProj = window._ccRevitTargetProject;
+    if (targetProj) msg.projectId = targetProj;
+    // Include known element hashes for content-addressable caching (delta export)
+    if (Object.keys(_elementHashCache).length > 0) {
+      msg.knownElements = _elementHashCache;
+    }
+    _revitWs.send(JSON.stringify(msg));
   }
 
   function _revitDirectCancelExport() {
@@ -185,6 +222,17 @@
       case 'status':
         if (msg.documentName) d({t:'UPD_REVIT_DIRECT', u:{documentName:msg.documentName}});
         if (msg.connected != null) d({t:'UPD_REVIT_DIRECT', u:{connected:msg.connected}});
+        // Protocol version negotiation
+        if (msg.version && msg.version !== EXPECTED_PROTOCOL_VERSION) {
+          var major = msg.version.split('.')[0], expectedMajor = EXPECTED_PROTOCOL_VERSION.split('.')[0];
+          if (major !== expectedMajor) {
+            d({t:'BRIDGE_LOG', logType:'error', text:'Protocol version mismatch: plugin v' + msg.version + ', expected v' + EXPECTED_PROTOCOL_VERSION + '. Some features may not work correctly.'});
+            d({t:'UPD_REVIT_DIRECT', u:{versionWarning:'Plugin v' + msg.version + ' (expected v' + EXPECTED_PROTOCOL_VERSION + ')'}});
+          } else {
+            d({t:'BRIDGE_LOG', logType:'info', text:'Plugin protocol v' + msg.version + ' (minor mismatch with v' + EXPECTED_PROTOCOL_VERSION + ', should be compatible).'});
+          }
+        }
+        if (msg.version) d({t:'UPD_REVIT_DIRECT', u:{pluginVersion:msg.version}});
         break;
 
       case 'model-start':
@@ -219,7 +267,25 @@
 
       case 'model-end':
         if (!_revitBuf) break;
+        // Handle content-addressable caching: store hashes and process unchanged elements
+        if (msg.elementHashes) {
+          Object.keys(msg.elementHashes).forEach(function(gid) {
+            _elementHashCache[gid] = msg.elementHashes[gid];
+          });
+        }
+        if (msg.unchanged && Array.isArray(msg.unchanged)) {
+          // unchanged elements are still valid — keep them, remove anything not in unchanged or batches
+          var batchGids = {};
+          _revitBuf.elements.forEach(function(el) { if (el.props.globalId) batchGids[el.props.globalId] = true; });
+          var unchangedSet = {};
+          msg.unchanged.forEach(function(gid) { unchangedSet[gid] = true; });
+          // Mark unchanged elements as retained (they stay in the existing model)
+          _revitBuf._unchangedGids = unchangedSet;
+          _revitBuf._batchGids = batchGids;
+        }
         _finalizeModel(msg, d);
+        // Persist element hash cache
+        try { localStorage.setItem('cc_element_hashes', JSON.stringify(_elementHashCache)); } catch(e) {}
         break;
 
       case 'model-sync':
@@ -229,18 +295,43 @@
         break;
 
       case 'model-error':
-        d({t:'UPD_REVIT_DIRECT', u:{loading:false, progress:0}});
+        d({t:'UPD_REVIT_DIRECT', u:{loading:false, progress:0, exportError:msg.message||'Unknown error', exportErrorElementsSent:msg.elementsSent||0}});
         d({t:'BRIDGE_LOG', logType:'error', text:'Export error: ' + (msg.message || 'Unknown') + (msg.elementsSent ? ' (' + msg.elementsSent + ' elements sent)' : '')});
-        _revitBuf = null;
+        // Keep partial buffer if elements were sent — user can decide to keep or discard
+        if (!msg.elementsSent) _revitBuf = null;
         break;
 
       case 'push-clashes-ack':
-        d({t:'BRIDGE_LOG', logType:'push', text:'Revit applied ' + (msg.clashesApplied||0) + ' clashes, ' + (msg.issuesApplied||0) + ' issues.' +
-          (msg.errors && msg.errors.length ? ' Errors: ' + msg.errors.join('; ') : '')});
+        var ackMsg = (msg.clashesApplied||0) + ' clashes highlighted in Revit';
+        if (msg.issuesApplied) ackMsg += ', ' + msg.issuesApplied + ' issues applied';
+        if (msg.errors && msg.errors.length) ackMsg += '. Errors: ' + msg.errors.join('; ');
+        d({t:'BRIDGE_LOG', logType:'push', text:ackMsg});
+        // Surface confirmation to UI as a toast
+        d({t:'UPD_REVIT_DIRECT', u:{lastPushAck:ackMsg, lastPushAckTs:Date.now()}});
         break;
 
       case 'element-update':
         _handleElementUpdate(msg, d);
+        _lastElementSync = Date.now();
+        d({t:'UPD_REVIT_DIRECT', u:{lastElementSync:_lastElementSync}});
+        break;
+
+      case 'selection-changed':
+        // Revit → Browser selection sync
+        if (!_selectionSyncEnabled) break;
+        _handleSelectionChanged(msg, d);
+        break;
+
+      case 'camera-sync':
+        // Revit → Browser camera sync
+        if (!_cameraSyncEnabled) break;
+        _handleCameraSync(msg);
+        break;
+
+      case 'session-expired':
+        // Plugin has no cache — fall back to full export prompt
+        d({t:'UPD_REVIT_DIRECT', u:{reconnectPrompt:true}});
+        d({t:'BRIDGE_LOG', logType:'info', text:'Session expired on Revit side. Full re-export needed.'});
         break;
 
       case 'error':
@@ -286,6 +377,13 @@
       });
     }
 
+    // Build revitId → globalId index for deletion fallback
+    _revitBuf.elements.forEach(function(el) {
+      if (el.props.revitId != null && el.props.globalId) {
+        _revitIdIndex[el.props.revitId] = el.props.globalId;
+      }
+    });
+
     var detectDiscipline = window._ccDetectDiscipline || function() { return 'architectural'; };
     var DISC = window._ccDISC || [{id:'architectural', c:'#60a5fa'}];
 
@@ -311,6 +409,20 @@
     }
 
     if (existingModel) {
+      // Handle delta export: merge unchanged elements from existing model with new batch
+      var finalElements = _revitBuf.elements;
+      var finalMeshes = _revitBuf.meshes;
+      if (_revitBuf._unchangedGids && existingModel.elements) {
+        // Keep existing elements that are in the unchanged set
+        existingModel.elements.forEach(function(el) {
+          if (el.props.globalId && _revitBuf._unchangedGids[el.props.globalId] && !_revitBuf._batchGids[el.props.globalId]) {
+            finalElements.push(el);
+            el.meshes.forEach(function(m) { finalMeshes.push(m); });
+          }
+        });
+        // Remove elements not in unchanged or batch (they were deleted)
+      }
+
       // REPLACE existing model — keeps same ID, same slot, preserves clash references
       var modelData = {
         id: existingModel.id,
@@ -320,17 +432,17 @@
         visible: existingModel.visible !== false,
         tag: existingModel.tag || '',
         _version: (existingModel._version || 1) + 1,
-        meshes: _revitBuf.meshes,
-        elements: _revitBuf.elements,
+        meshes: finalMeshes,
+        elements: finalElements,
         storeys: storeys,
         storeyData: storeyData,
         spatialHierarchy: {},
         relatedPairs: relatedPairs,
-        stats: {elementCount:_revitBuf.elements.length, source:'revit-direct', lastSync:Date.now()}
+        stats: {elementCount:finalElements.length, source:'revit-direct', lastSync:Date.now()}
       };
       window._ccDispatch({t:'REPLACE_MODEL', id:existingModel.id, v:modelData});
       _revitModelMap[mapKey] = existingModel.id;
-      d({t:'BRIDGE_LOG', logType:'pull', text:'Updated model "' + _revitBuf.rawName + '": ' + _revitBuf.elements.length + ' elements (v' + modelData._version + ').'});
+      d({t:'BRIDGE_LOG', logType:'pull', text:'Updated model "' + _revitBuf.rawName + '": ' + finalElements.length + ' elements (v' + modelData._version + ').'});
     } else {
       // ADD new model
       var modelId = uid();
@@ -357,27 +469,38 @@
 
     if (msg.action === 'deleted' && (msg.globalIds || msg.revitIds)) {
       // Remove elements from the model that contains them (match by globalId or revitId)
+      // Use revitId→globalId index to resolve revitIds to globalIds first
       var removedCount = 0;
+      var gids = {};
+      if (msg.globalIds) msg.globalIds.forEach(function(gid) { gids[gid] = true; });
+      // Resolve revitIds to globalIds using the index, then fall back to direct revitId match
+      var unresolvedRids = {};
+      if (msg.revitIds) msg.revitIds.forEach(function(rid) {
+        if (_revitIdIndex[rid]) {
+          gids[_revitIdIndex[rid]] = true; // resolved via index
+        } else {
+          unresolvedRids[rid] = true; // fall back to direct match
+        }
+      });
       state.models.forEach(function(m) {
         if (!m.stats || m.stats.source !== 'revit-direct') return;
         var before = m.elements.length;
-        var gids = {};
-        var rids = {};
-        if (msg.globalIds) msg.globalIds.forEach(function(gid) { gids[gid] = true; });
-        if (msg.revitIds) msg.revitIds.forEach(function(rid) { rids[rid] = true; });
         var filtered = m.elements.filter(function(el) {
-          return !gids[el.props.globalId] && !rids[el.props.revitId];
+          return !gids[el.props.globalId] && !unresolvedRids[el.props.revitId];
         });
         if (filtered.length < before) {
           removedCount += (before - filtered.length);
-          // Remove meshes from scene
+          // Remove meshes from scene and clean up hash cache
           m.elements.forEach(function(el) {
-            if (gids[el.props.globalId]) {
+            if (gids[el.props.globalId] || unresolvedRids[el.props.revitId]) {
               el.meshes.forEach(function(mesh) {
                 if (mesh.parent) mesh.parent.remove(mesh);
                 if (mesh.geometry) mesh.geometry.dispose();
                 if (mesh.material) mesh.material.dispose();
               });
+              // Clean up caches
+              if (el.props.globalId) delete _elementHashCache[el.props.globalId];
+              if (el.props.revitId != null) delete _revitIdIndex[el.props.revitId];
             }
           });
           m.elements = filtered;
@@ -447,6 +570,159 @@
       d({t:'BRIDGE_LOG', logType:'pull', text:updatedCount + ' elements updated from Revit.'});
       if (window.invalidate) window.invalidate(2);
     }
+  }
+
+  // ── Selection sync (Revit → Browser) ───────────────────────────
+
+  function _handleSelectionChanged(msg, d) {
+    var globalIds = msg.globalIds || [];
+    var state = window._ccLatestState;
+    if (!state) return;
+
+    if (globalIds.length === 0) {
+      // Deselect — clear highlights
+      if (window._unghostAll) window._unghostAll();
+      if (window._ccRemoveActiveClashMarker) window._ccRemoveActiveClashMarker();
+      d({t:'ACTIVE', id:null});
+      return;
+    }
+
+    // Find elements matching these globalIds and highlight them
+    var expressIds = [];
+    state.models.forEach(function(m) {
+      (m.elements || []).forEach(function(el) {
+        if (globalIds.indexOf(el.props.globalId) >= 0) {
+          expressIds.push(el.expressId);
+        }
+      });
+    });
+
+    if (expressIds.length > 0) {
+      // Ghost other elements and highlight selected ones
+      if (window._ghostOthers) window._ghostOthers(expressIds);
+      if (window._highlightById) window._highlightById(expressIds[0], false);
+      if (window._flyToElements) window._flyToElements(expressIds);
+      if (window.invalidate) window.invalidate(2);
+    }
+
+    // Show properties for single selection
+    if (globalIds.length === 1) {
+      state.models.forEach(function(m) {
+        (m.elements || []).forEach(function(el) {
+          if (el.props.globalId === globalIds[0]) {
+            d({t:'UPD_REVIT_DIRECT', u:{revitSelectedElement:el.props}});
+          }
+        });
+      });
+    }
+  }
+
+  // ── Camera sync (bidirectional) ───────────────────────────────
+
+  function _handleCameraSync(msg) {
+    var S = window._ccState3d;
+    if (!S || !S.camera || !S.controls) return;
+
+    var pos = msg.position;
+    var tgt = msg.target;
+    if (!pos || !tgt) return;
+
+    S.camera.position.set(pos[0], pos[1], pos[2]);
+    S.controls.target.set(tgt[0], tgt[1], tgt[2]);
+    if (msg.up) S.camera.up.set(msg.up[0], msg.up[1], msg.up[2]);
+    if (msg.fov && S.camera.isPerspectiveCamera) {
+      S.camera.fov = msg.fov;
+      S.camera.updateProjectionMatrix();
+    }
+    S.controls.update();
+    if (window.invalidate) window.invalidate(2);
+  }
+
+  function _sendCameraToRevit() {
+    if (!_revitWs || _revitWs.readyState !== 1 || !_cameraSyncEnabled) return;
+    var S = window._ccState3d;
+    if (!S || !S.camera || !S.controls) return;
+
+    var cam = S.camera;
+    var tgt = S.controls.target;
+    _revitWs.send(JSON.stringify({
+      type: 'camera-sync',
+      position: [cam.position.x, cam.position.y, cam.position.z],
+      target: [tgt.x, tgt.y, tgt.z],
+      up: [cam.up.x, cam.up.y, cam.up.z],
+      fov: cam.fov || 60
+    }));
+  }
+
+  // Throttled camera sync sender (max 5/sec = 200ms interval)
+  function _throttledCameraSync() {
+    if (_cameraSyncThrottleTimer) return;
+    _cameraSyncThrottleTimer = setTimeout(function() {
+      _cameraSyncThrottleTimer = null;
+      _sendCameraToRevit();
+    }, 200);
+  }
+
+  function _setCameraSyncEnabled(enabled) {
+    _cameraSyncEnabled = enabled;
+    var S = window._ccState3d;
+    if (enabled && S && S.controls) {
+      S.controls.addEventListener('change', _throttledCameraSync);
+    } else if (!enabled && S && S.controls) {
+      S.controls.removeEventListener('change', _throttledCameraSync);
+      clearTimeout(_cameraSyncThrottleTimer);
+      _cameraSyncThrottleTimer = null;
+    }
+  }
+
+  function _setSelectionSyncEnabled(enabled) {
+    _selectionSyncEnabled = enabled;
+  }
+
+  // ── Auto-detect Revit on page load ────────────────────────────
+
+  function _autoDetectRevit(d) {
+    // Try connecting silently to see if Revit is running
+    try {
+      var testWs = new WebSocket('ws://localhost:19780');
+      testWs.onopen = function() {
+        testWs.close();
+        d({t:'UPD_REVIT_DIRECT', u:{autoDetected:true}});
+        d({t:'BRIDGE_LOG', logType:'info', text:'Revit detected on localhost:19780.'});
+      };
+      testWs.onerror = function() { testWs.close(); };
+      testWs.onclose = function() {};
+      // Timeout after 2 seconds
+      setTimeout(function() {
+        if (testWs.readyState === 0) testWs.close();
+      }, 2000);
+    } catch(e) {}
+  }
+
+  // ── Keep partial model from failed export ─────────────────────
+
+  function _keepPartialModel(d) {
+    if (!_revitBuf || _revitBuf.elements.length === 0) {
+      d({t:'BRIDGE_LOG', logType:'info', text:'No partial data to keep.'});
+      _revitBuf = null;
+      return;
+    }
+    d({t:'BRIDGE_LOG', logType:'info', text:'Keeping partial model (' + _revitBuf.elements.length + ' elements).'});
+    _finalizeModel({}, d);
+  }
+
+  function _discardPartialModel(d) {
+    if (_revitBuf) {
+      _revitBuf.elements.forEach(function(el) {
+        el.meshes.forEach(function(mesh) {
+          if (mesh.geometry) mesh.geometry.dispose();
+          if (mesh.material) mesh.material.dispose();
+        });
+      });
+    }
+    _revitBuf = null;
+    d({t:'UPD_REVIT_DIRECT', u:{exportError:null, exportErrorElementsSent:0}});
+    d({t:'BRIDGE_LOG', logType:'info', text:'Partial export data discarded.'});
   }
 
   // ── Push clashes to Revit (manual only) ────────────────────────
@@ -535,6 +811,11 @@
   window._saveDirectPort = _saveDirectPort;
   window._loadDirectPort = _loadDirectPort;
   window._revitGetWs = function() { return _revitWs; };
+  window._revitSetCameraSync = _setCameraSyncEnabled;
+  window._revitSetSelectionSync = _setSelectionSyncEnabled;
+  window._revitAutoDetect = _autoDetectRevit;
+  window._revitKeepPartialModel = _keepPartialModel;
+  window._revitDiscardPartialModel = _discardPartialModel;
 
   // ── Register addon ─────────────────────────────────────────────
 
@@ -566,7 +847,19 @@
         loading: false,
         progress: 0,
         elementCount: 0,
-        lastPush: null
+        lastPush: null,
+        pluginVersion: null,
+        versionWarning: null,
+        reconnectPrompt: false,
+        autoDetected: false,
+        exportError: null,
+        exportErrorElementsSent: 0,
+        lastPushAck: null,
+        lastPushAckTs: null,
+        lastElementSync: 0,
+        cameraSyncEnabled: false,
+        selectionSyncEnabled: false,
+        revitSelectedElement: null
       }
     },
 
@@ -591,7 +884,8 @@
     },
 
     init: function(dispatch, getState) {
-      // Nothing to auto-start — user connects manually
+      // Auto-detect Revit on page load (non-intrusive probe)
+      setTimeout(function() { _autoDetectRevit(dispatch); }, 1000);
     },
 
     destroy: function() {

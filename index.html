@@ -6838,12 +6838,13 @@ function startApp() {
     var tourSt = useState(null), tourStep=tourSt[0], setTourStep=tourSt[1]; // kept for hook order
     var cr = useState(false), creating=cr[0], setCreating=cr[1];
     var cnv = useState(''), createName=cnv[0], setCreateName=cnv[1];
+    var cst = useState('ifc'), createSource=cst[0], setCreateSource=cst[1];
 
-    function startCreate() { setCreating(true); setCreateName(''); }
+    function startCreate() { setCreating(true); setCreateName(''); setCreateSource('ifc'); }
     function finishCreate() {
       if(!createName.trim()) { setCreating(false); return; }
       var id = uid();
-      var list = getProjects().concat([{id:id, name:createName.trim(), createdAt:Date.now()}]);
+      var list = getProjects().concat([{id:id, name:createName.trim(), createdAt:Date.now(), sourceType:createSource}]);
       saveProjects(list);
       d({t:A.SET_PROJECT_LIST, v:list});
       _switchProject(id, s, d);
@@ -6904,7 +6905,7 @@ function startApp() {
         <div class="cc-header-project" style=${{position:'relative'}}>
           <button onClick=${function(){setProjOpen(!projOpen)}}
             style=${{...S_BTN,background:'var(--bg-secondary)',color:'var(--text-primary)',border:'1px solid var(--border)',display:'flex',alignItems:'center',gap:'.3rem',fontSize:'0.8rem',padding:'.3rem .6rem',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>
-            <span style=${{fontSize:'0.69rem'}}>📁</span> ${activeProj.name} <span style=${{fontSize:'0.57rem',color:'var(--text-faint)'}}>${projOpen?'▲':'▼'}</span>
+            <span style=${{fontSize:'0.69rem'}}>📁</span> ${activeProj.name}${activeProj.sourceType==='revit'?' ':''}${activeProj.sourceType==='revit'&&html`<span style=${{fontSize:'0.57rem',background:'#1e3a5f',color:'#93c5fd',padding:'.05rem .3rem',borderRadius:3,fontWeight:600}}>Revit</span>`} <span style=${{fontSize:'0.57rem',color:'var(--text-faint)'}}>${projOpen?'▲':'▼'}</span>
           </button>
           ${projOpen && html`<div style=${{position:'absolute',top:'100%',left:0,marginTop:4,background:'var(--bg-secondary)',border:'1px solid var(--border)',borderRadius:8,boxShadow:'0 8px 24px rgba(0,0,0,.4)',minWidth:220,zIndex:100,overflowY:'auto',maxHeight:'60vh'}}>
             ${projects.map(function(p){
@@ -6920,7 +6921,7 @@ function startApp() {
                     onKeyDown=${function(e){if(e.key==='Enter')finishRename(p.id);if(e.key==='Escape')setRenaming(false);}}
                     onBlur=${function(){finishRename(p.id)}}
                     style=${{...S_INPUT,fontSize:'0.75rem',padding:'.15rem .3rem',flex:1}} />` :
-                  html`<span onClick=${function(){switchTo(p.id)}} style=${{flex:1,fontSize:'0.8rem',color:txtCol,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',cursor:'pointer'}}>${p.name}</span>`}
+                  html`<span onClick=${function(){switchTo(p.id)}} style=${{flex:1,fontSize:'0.8rem',color:txtCol,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',cursor:'pointer',display:'flex',alignItems:'center',gap:'.3rem'}}>${p.name}${p.sourceType==='revit'&&html`<span style=${{fontSize:'0.55rem',background:isActive?'rgba(255,255,255,.2)':'#1e3a5f',color:isActive?'#fff':'#93c5fd',padding:'.02rem .2rem',borderRadius:2,fontWeight:600,flexShrink:0}}>Revit</span>`}</span>`}
                   <button onClick=${function(e){e.stopPropagation();startRename(p)}} style=${{...S_BTN,padding:'2px 4px',background:'none',color:mutedCol,fontSize:'0.69rem',lineHeight:1}} title="Rename">✎</button>
                   <button onClick=${function(e){e.stopPropagation();setConfirmDelete(isConfirming?null:p.id);setRenaming(false);}}
                     style=${{...S_BTN,padding:'2px 5px',background:isConfirming?(isActive?'rgba(255,255,255,.2)':'rgba(239,68,68,.15)'):'none',color:isConfirming?'#ef4444':mutedCol,fontSize:'0.75rem',lineHeight:1,borderRadius:4,border:isConfirming?'1px solid rgba(239,68,68,.4)':'1px solid transparent'}}
@@ -6935,15 +6936,25 @@ function startApp() {
                 </div>`}
               </div>`;
             })}
-            ${creating ? html`<div style=${{padding:'.35rem .5rem',display:'flex',gap:'.3rem',alignItems:'center'}}>
-              <input type="text" value=${createName} autofocus placeholder="Project name…"
-                onInput=${function(e){setCreateName(e.target.value)}}
-                onKeyDown=${function(e){if(e.key==='Enter')finishCreate();if(e.key==='Escape')setCreating(false);}}
-                style=${{...S_INPUT,fontSize:'0.78rem',padding:'.25rem .4rem',flex:1}} />
-              <button onClick=${finishCreate} disabled=${!createName.trim()}
-                style=${{...S_BTN,fontSize:'0.69rem',padding:'.2rem .45rem',background:'var(--accent)',color:'#fff',opacity:createName.trim()?1:0.4}}>Create</button>
-              <button onClick=${function(){setCreating(false)}}
-                style=${{...S_BTN,fontSize:'0.8rem',padding:'.1rem .3rem',background:'none',color:'var(--text-faint)',lineHeight:1}}>✕</button>
+            ${creating ? html`<div style=${{padding:'.35rem .5rem',display:'flex',flexDirection:'column',gap:'.3rem'}}>
+              <div style=${{display:'flex',gap:'.3rem',alignItems:'center'}}>
+                <input type="text" value=${createName} autofocus placeholder="Project name…"
+                  onInput=${function(e){setCreateName(e.target.value)}}
+                  onKeyDown=${function(e){if(e.key==='Enter')finishCreate();if(e.key==='Escape')setCreating(false);}}
+                  style=${{...S_INPUT,fontSize:'0.78rem',padding:'.25rem .4rem',flex:1}} />
+                <button onClick=${finishCreate} disabled=${!createName.trim()}
+                  style=${{...S_BTN,fontSize:'0.69rem',padding:'.2rem .45rem',background:'var(--accent)',color:'#fff',opacity:createName.trim()?1:0.4}}>Create</button>
+                <button onClick=${function(){setCreating(false)}}
+                  style=${{...S_BTN,fontSize:'0.8rem',padding:'.1rem .3rem',background:'none',color:'var(--text-faint)',lineHeight:1}}>✕</button>
+              </div>
+              <div style=${{display:'flex',gap:'.3rem',fontSize:'0.69rem'}}>
+                <label style=${{display:'flex',alignItems:'center',gap:'.2rem',cursor:'pointer',color:createSource==='ifc'?'var(--accent)':'var(--text-faint)'}}>
+                  <input type="radio" name="cc-proj-src" checked=${createSource==='ifc'} onChange=${function(){setCreateSource('ifc')}} style=${{margin:0}} /> IFC Import
+                </label>
+                <label style=${{display:'flex',alignItems:'center',gap:'.2rem',cursor:'pointer',color:createSource==='revit'?'#60a5fa':'var(--text-faint)'}}>
+                  <input type="radio" name="cc-proj-src" checked=${createSource==='revit'} onChange=${function(){setCreateSource('revit')}} style=${{margin:0}} /> Revit Live Link
+                </label>
+              </div>
             </div>` : html`<button onClick=${startCreate} style=${{...S_BTN,width:'100%',textAlign:'left',padding:'.4rem .6rem',background:'none',color:'var(--accent)',fontSize:'0.8rem',borderRadius:0}}>+ New Project</button>`}
           </div>`}
         </div>
@@ -14663,11 +14674,16 @@ function startApp() {
         </div>`}
       </div>
       <div style=${{flex:1}}></div>
-      <div class="cc-ifc-load-btn">${iconBtn(function(){
+      <div class="cc-ifc-load-btn">${function(){
+        var proj=(s.projectList||[]).find(function(p){return p.id===s.activeProject;});
+        var isRevit=proj&&proj.sourceType==='revit';
+        return iconBtn(function(){
+          if(isRevit){alert('This project is connected to Revit. Import IFC into a different project.');return;}
           if(window._ccOpenIFC) window._ccOpenIFC();
         },
-        html`<span style=${{fontWeight:700,fontSize:'0.8rem',letterSpacing:'.03em'}}>IFC</span>`,
-        'Load IFC model')}</div>
+        html`<span style=${{fontWeight:700,fontSize:'0.8rem',letterSpacing:'.03em',opacity:isRevit?0.4:1}}>IFC</span>`,
+        isRevit?'IFC import disabled — Revit project':'Load IFC model');
+      }()}</div>
       ${iconBtn(function(){
           if(window._ccOpen2D) window._ccOpen2D();
         },
@@ -15772,7 +15788,13 @@ function startApp() {
         </div>
 
         <div style=${{padding:'1rem',overflowY:'auto',flex:1}}>
-          ${tab==='direct' && html`<div style=${{display:'flex',flexDirection:'column',gap:'.75rem'}}>
+          ${tab==='direct' && function(){
+            var proj=(s.projectList||[]).find(function(p){return p.id===s.activeProject;});
+            var isIfcProject=proj&&proj.sourceType==='ifc';
+            return html`<div style=${{display:'flex',flexDirection:'column',gap:'.75rem'}}>
+            ${isIfcProject && !rd.connected && html`<div style=${{fontSize:'0.72rem',color:'#fbbf24',background:'#422006',padding:'.35rem .5rem',borderRadius:6}}>
+              This project uses IFC import. Connect Revit to a Revit Live Link project instead.
+            </div>`}
             <div>
               <div style=${S_LBL}>WebSocket Port</div>
               <div style=${{display:'flex',gap:'.4rem'}}>
@@ -15780,19 +15802,33 @@ function startApp() {
                   style=${{...S_INP,flex:1}} />
                 ${rd.connected ? html`<button onClick=${function(){if(window._revitDirectDisconnect) window._revitDirectDisconnect(d)}}
                   style=${{...S_BTN2,background:'#7f1d1d',color:'#fca5a5'}}>Disconnect</button>`
-                : html`<button onClick=${function(){if(window._saveDirectPort) window._saveDirectPort(port); if(window._revitDirectConnect) window._revitDirectConnect(port,d)}}
-                  style=${{...S_BTN2,background:'var(--accent)',color:'#fff'}}>Connect</button>`}
+                : html`<button onClick=${function(){if(isIfcProject){alert('This is an IFC project. Create a Revit Live Link project to connect.');return;} if(window._saveDirectPort) window._saveDirectPort(port); if(window._revitDirectConnect) window._revitDirectConnect(port,d)}}
+                  style=${{...S_BTN2,background:isIfcProject?'var(--bg-tertiary)':'var(--accent)',color:isIfcProject?'var(--text-faint)':'#fff'}}>Connect</button>`}
               </div>
             </div>
 
             <div style=${{display:'flex',alignItems:'center',gap:'.4rem'}}>
-              <span style=${{width:8,height:8,borderRadius:'50%',background:rd.connected?'#22c55e':rd.reconnecting?'#eab308':'#ef4444'}}></span>
-              <span style=${{fontSize:'0.78rem',color:rd.connected?'#4ade80':rd.reconnecting?'#facc15':'var(--text-muted)'}}>
-                ${rd.connected ? 'Connected' + (rd.documentName ? ' — ' + rd.documentName : '')
+              <span style=${{width:8,height:8,borderRadius:'50%',background:rd.connected?'#22c55e':rd.reconnecting?'#eab308':rd.autoDetected?'#60a5fa':'#ef4444'}}></span>
+              <span style=${{fontSize:'0.78rem',color:rd.connected?'#4ade80':rd.reconnecting?'#facc15':rd.autoDetected?'#93c5fd':'var(--text-muted)'}}>
+                ${rd.connected ? 'Connected' + (rd.documentName ? ' \u2014 ' + rd.documentName : '')
                   : rd.reconnecting ? 'Reconnecting in ' + Math.round((rd.reconnectIn||1000)/1000) + 's\u2026'
+                  : rd.autoDetected ? 'Revit detected \u2014 click Connect'
                   : 'Not connected'}
               </span>
+              ${rd.connected && rd.pluginVersion && html`<span style=${{fontSize:'0.63rem',color:'var(--text-faint)',marginLeft:'.3rem'}}>v${rd.pluginVersion}</span>`}
             </div>
+
+            ${rd.versionWarning && html`<div style=${{fontSize:'0.69rem',color:'#fbbf24',background:'#422006',padding:'.35rem .5rem',borderRadius:6}}>
+              Protocol mismatch: ${rd.versionWarning}. Some features may not work.
+            </div>`}
+
+            ${rd.reconnectPrompt && html`<div style=${{display:'flex',alignItems:'center',gap:'.4rem',padding:'.4rem .5rem',background:'#1e3a5f',borderRadius:6}}>
+              <span style=${{fontSize:'0.72rem',color:'#93c5fd',flex:1}}>Reconnected to Revit. Pull model again?</span>
+              <button onClick=${function(){d({t:'UPD_REVIT_DIRECT',u:{reconnectPrompt:false}}); if(window._revitDirectExport) window._revitDirectExport(['all']);}}
+                style=${{...S_BTN2,background:'var(--accent)',color:'#fff',fontSize:'0.7rem',padding:'.25rem .6rem'}}>Pull</button>
+              <button onClick=${function(){d({t:'UPD_REVIT_DIRECT',u:{reconnectPrompt:false}});}}
+                style=${{...S_BTN2,background:'var(--bg-tertiary)',color:'var(--text-muted)',fontSize:'0.7rem',padding:'.25rem .6rem'}}>Dismiss</button>
+            </div>`}
 
             ${rd.connected && html`<div>
               <div style=${S_LBL}>Target Project</div>
@@ -15810,6 +15846,11 @@ function startApp() {
                 style=${{...S_BTN2,flex:1,background:'#052e16',color:'#4ade80'}}>Push Clashes to Revit</button>
             </div>`}
 
+            ${rd.connected && html`<div style=${{display:'flex',gap:'.4rem'}}>
+              <button onClick=${function(){if(window._revitClearHighlights) window._revitClearHighlights(); d({t:'BRIDGE_LOG',logType:'info',text:'Cleared Revit highlights.'});}}
+                style=${{...S_BTN2,flex:1,background:'#3b0764',color:'#c084fc'}}>Clear Revit Highlights</button>
+            </div>`}
+
             ${rd.loading && html`<div>
               <div style=${{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:'.2rem'}}>
                 <span style=${{fontSize:'0.72rem',color:'var(--text-muted)'}}>Loading... ${Math.round((rd.progress||0)*100)}%${rd.elementCount ? ' (' + rd.elementCount + ' elements)' : ''}</span>
@@ -15821,12 +15862,47 @@ function startApp() {
               </div>
             </div>`}
 
+            ${rd.exportError && html`<div style=${{padding:'.5rem',background:'#450a0a',borderRadius:6,border:'1px solid #7f1d1d'}}>
+              <div style=${{fontSize:'0.75rem',color:'#fca5a5',marginBottom:'.3rem'}}>Export failed: ${rd.exportError}</div>
+              <div style=${{display:'flex',gap:'.3rem'}}>
+                <button onClick=${function(){d({t:'UPD_REVIT_DIRECT',u:{exportError:null,exportErrorElementsSent:0}}); if(window._revitDirectExport) window._revitDirectExport(['all']);}}
+                  style=${{...S_BTN2,background:'#1e3a5f',color:'#93c5fd',fontSize:'0.7rem',padding:'.25rem .5rem'}}>Retry</button>
+                ${rd.exportErrorElementsSent > 0 && html`<button onClick=${function(){d({t:'UPD_REVIT_DIRECT',u:{exportError:null,exportErrorElementsSent:0}}); if(window._revitKeepPartialModel) window._revitKeepPartialModel(d);}}
+                  style=${{...S_BTN2,background:'#052e16',color:'#4ade80',fontSize:'0.7rem',padding:'.25rem .5rem'}}>Keep ${rd.exportErrorElementsSent} elements</button>`}
+                ${rd.exportErrorElementsSent > 0 && html`<button onClick=${function(){if(window._revitDiscardPartialModel) window._revitDiscardPartialModel(d);}}
+                  style=${{...S_BTN2,background:'var(--bg-tertiary)',color:'var(--text-muted)',fontSize:'0.7rem',padding:'.25rem .5rem'}}>Discard</button>`}
+              </div>
+            </div>`}
+
+            ${rd.lastPushAck && html`<div style=${{fontSize:'0.72rem',color:'#4ade80',background:'#052e16',padding:'.35rem .5rem',borderRadius:6,display:'flex',alignItems:'center',justifyContent:'space-between'}}>
+              <span>${rd.lastPushAck}</span>
+              <button onClick=${function(){d({t:'UPD_REVIT_DIRECT',u:{lastPushAck:null}});}}
+                style=${{background:'none',border:'none',color:'#4ade80',cursor:'pointer',fontSize:'0.8rem',padding:'0 .2rem'}}>×</button>
+            </div>`}
+
+            ${rd.connected && html`<div style=${{display:'flex',flexDirection:'column',gap:'.4rem'}}>
+              <div style=${S_LBL}>Sync Settings</div>
+              <label style=${{display:'flex',alignItems:'center',gap:'.4rem',fontSize:'0.72rem',color:'var(--text-muted)',cursor:'pointer'}}>
+                <input type="checkbox" checked=${rd.selectionSyncEnabled||false}
+                  onChange=${function(e){var v=e.target.checked; d({t:'UPD_REVIT_DIRECT',u:{selectionSyncEnabled:v}}); if(window._revitSetSelectionSync) window._revitSetSelectionSync(v);}} />
+                Sync selection from Revit
+              </label>
+              <label style=${{display:'flex',alignItems:'center',gap:'.4rem',fontSize:'0.72rem',color:'var(--text-muted)',cursor:'pointer'}}>
+                <input type="checkbox" checked=${rd.cameraSyncEnabled||false}
+                  onChange=${function(e){var v=e.target.checked; d({t:'UPD_REVIT_DIRECT',u:{cameraSyncEnabled:v}}); if(window._revitSetCameraSync) window._revitSetCameraSync(v);}} />
+                Sync camera to Revit
+              </label>
+              ${rd.lastElementSync > 0 && html`<div style=${{fontSize:'0.63rem',color:'var(--text-faint)'}}>
+                Last synced: ${function(){var ago=Math.round((Date.now()-rd.lastElementSync)/1000); return ago<5?'just now':ago<60?ago+'s ago':Math.round(ago/60)+'m ago';}()}
+              </div>`}
+            </div>`}
+
             <div style=${{fontSize:'0.69rem',color:'var(--text-faint)',lineHeight:1.6,padding:'.4rem .5rem',background:'var(--bg-primary)',borderRadius:6}}>
               Requires the <a href="https://github.com/clashcontrol-io/ClashControlConnector" target="_blank" rel="noopener"
                 style=${{color:'var(--accent)',textDecoration:'none',fontWeight:600}}>ClashControl Connector</a> Revit plugin.
               Install it in Revit, then connect here.
             </div>
-          </div>`}
+          </div>`;}()}
 
           ${tab==='ai' && html`<div style=${{display:'flex',flexDirection:'column',gap:'.75rem'}}>
             <div>
