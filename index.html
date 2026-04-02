@@ -14684,9 +14684,6 @@ function startApp() {
         },
         html`<span style=${{fontWeight:700,fontSize:'0.8rem',letterSpacing:'.03em'}}>2D</span>`,
         'Load DXF/PDF/DWG')}
-      ${iconBtn(function(){d({t:'REVIT_BRIDGE',v:true});},
-        html`<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke=${s.revitDirect&&s.revitDirect.connected?'#4ade80':'currentColor'} stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 14a1 1 0 0 1-.78-1.63l9.9-10.2a.5.5 0 0 1 .86.46l-1.92 6.02A1 1 0 0 0 13 10h7a1 1 0 0 1 .78 1.63l-9.9 10.2a.5.5 0 0 1-.86-.46l1.92-6.02A1 1 0 0 0 11 14z"/></svg>`,
-        'Revit Bridge')}
       <div class="cc-bcf-actions">
         ${iconBtn(function(){saveProject(s);},
           html`<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" dangerouslySetInnerHTML=${{__html:SVG_SAVE}}></svg>`,
@@ -15331,7 +15328,7 @@ function startApp() {
                 if (isPwaInstalled && active) {
                   return html`<div style=${{fontSize:'0.69rem',color:'var(--text-faint)'}}>Always on in installed app</div>`;
                 }
-                return html`<div>
+                return html`<div style=${{display:'flex',gap:'.3rem',alignItems:'center'}}>
                   <button onClick=${function(){
                     if (active) window._ccDeactivateAddon(id);
                     else window._ccActivateAddon(id);
@@ -15339,6 +15336,9 @@ function startApp() {
                     background:active?'var(--bg-secondary)':'var(--accent)',
                     color:active?'var(--text-secondary)':'#fff',
                     fontFamily:'inherit'}}>${active?'Disable':'Enable'}</button>
+                  ${active && id==='revit-bridge' && html`<button onClick=${function(){d({t:'REVIT_BRIDGE',v:true});}}
+                    style=${{padding:'.25rem .6rem',borderRadius:6,fontSize:'0.75rem',fontWeight:600,cursor:'pointer',border:'1px solid var(--border)',
+                      background:'#1e3a5f',color:'#93c5fd',fontFamily:'inherit'}}>Connect</button>`}
                 </div>`;
               }()}
               ${active && addon.panel && html`<div style=${{borderTop:'1px solid var(--border-subtle)',marginTop:'.4rem',paddingTop:'.2rem'}}>
