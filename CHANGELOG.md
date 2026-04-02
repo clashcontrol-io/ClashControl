@@ -1,5 +1,8 @@
 # Changelog
 
+## v4.6.17 (2026-04-02)
+- fix: remove stray bracket from addon badge, restore bridge panel template
+
 ## v4.6.16 (2026-04-02)
 - fix: IIFE syntax in bridge panel and addon badge rendering
 
