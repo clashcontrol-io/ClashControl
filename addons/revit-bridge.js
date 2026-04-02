@@ -289,9 +289,16 @@
         break;
 
       case 'model-sync':
-        // Revit project was synced — Connector sends a full re-export.
-        if (!_revitBuf) break;
-        _finalizeModel(msg, d);
+        // Revit project was synced to central.
+        if (_revitBuf) {
+          // If we have a buffer (sync arrived after model-start + batches), finalize it.
+          _finalizeModel(msg, d);
+        } else {
+          // No buffer — sync notification without preceding export.
+          // Auto-request a fresh export so the model updates.
+          d({t:'BRIDGE_LOG', logType:'pull', text:'Revit synced to central. Re-exporting model...'});
+          _revitDirectExport(['all']);
+        }
         break;
 
       case 'model-error':
