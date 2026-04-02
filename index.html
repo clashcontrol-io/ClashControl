@@ -4281,6 +4281,9 @@ function startApp() {
       S._unghostAll = unghostAll;
       _ghostOthers = ghostOthers;
       _unghostAll = unghostAll;
+      // Expose for addons (e.g. Revit Bridge selection sync)
+      window._ghostOthers = ghostOthers;
+      window._unghostAll = unghostAll;
 
       // Temporary hide: make meshes with given expressIds invisible
       var _tempHiddenMeshes = [];
@@ -4564,6 +4567,10 @@ function startApp() {
         var sz = box.getSize(new THREE.Vector3());
         _flyTo([ctr.x, ctr.y, ctr.z], _zoomDist(Math.max(sz.x,sz.y,sz.z)));
       };
+
+      // Expose for addons (e.g. Revit Bridge selection sync)
+      window._highlightById = _highlightById;
+      window._flyToElements = _flyToElements;
 
       // ── Section Box helper ──
       _getSectionBoxFromScene = function(){
@@ -5347,8 +5354,8 @@ function startApp() {
             // Add LOD box proxies to scene group
             (model.elements||[]).forEach(function(el){ if(el._lodProxy) grp.add(el._lodProxy); });
             S.mg.add(grp); S.map[model.id] = grp;
-            // Auto-fit view when first model loads
-            if(Object.keys(S.map).length===1 && _resetView) _resetView();
+            // Auto-fit view when first model loads (skip on model replacement to preserve camera)
+            if(!needsSwap && Object.keys(S.map).length===1 && _resetView) _resetView();
           }
         }
         if(S.map[model.id]) {
@@ -13966,6 +13973,7 @@ function startApp() {
       _nlModelListeners.push(listener);
       // Only probe Ollama when the user has explicitly enabled it in Settings
       var _ollamaOn = s.prefs && s.prefs.ollamaEnabled;
+      if (_ollamaOn) setLLMStatus('loading');
       (_ollamaOn ? checkOllama() : Promise.resolve(false)).then(function(hasOllama) {
         setBackend(_nlBackend);
         setLLMStatus(_nlModelStatus);
@@ -14263,11 +14271,19 @@ function startApp() {
     }}>
       ${llmStatus === 'loading' && html`<span style=${{fontSize:'0.69rem', color:'#60a5fa', display:'flex', alignItems:'center', gap:'.25rem'}}>
         <span class="spin" style=${{display:'inline-block', width:'.55rem', height:'.55rem', borderRadius:'50%', border:'1.5px solid rgba(96,165,250,.3)', borderTopColor:'#60a5fa'}}></span>
-        AI ${llmProgress}%
+        AI loading${llmProgress > 0 ? ' ' + llmProgress + '%' : '...'}
       </span>`}
       ${llmStatus === 'ready' && backendLabel && html`<span style=${{fontSize:'0.63rem', color:backendColor, display:'flex', alignItems:'center', gap:'.2rem'}}>
         <span style=${{width:'.4rem', height:'.4rem', borderRadius:'50%', background:backendColor, display:'inline-block'}}></span>
         ${backendLabel}
+      </span>`}
+      ${llmStatus === 'idle' && html`<span style=${{fontSize:'0.63rem', color:mutedCol, display:'flex', alignItems:'center', gap:'.25rem'}}>
+        <span style=${{width:'.4rem', height:'.4rem', borderRadius:'50%', background:mutedCol, display:'inline-block', opacity:.5}}></span>
+        AI not loaded
+      </span>`}
+      ${llmStatus === 'error' && html`<span style=${{fontSize:'0.63rem', color:'#f87171', display:'flex', alignItems:'center', gap:'.25rem'}}>
+        <span style=${{width:'.4rem', height:'.4rem', borderRadius:'50%', background:'#f87171', display:'inline-block'}}></span>
+        AI error
       </span>`}
       <div style=${{flex:1}}></div>
       <button onClick=${function(){if(window._ccToggleTraining)window._ccToggleTraining();else d({t:A.TRAINING_MODE});}} style=${{
@@ -14304,6 +14320,17 @@ function startApp() {
       }}>×</button>
     </div>` : null;
 
+    // ── Status banner when no messages ──
+    var statusBanner = msgs.length === 0 ? html`<div style=${{
+      padding:'.5rem .65rem', fontSize:'0.75rem', color:mutedCol, lineHeight:1.6,
+      background:'var(--bg-secondary)', borderRadius:8, margin:'0 0 .3rem'
+    }}>
+      ${llmStatus === 'ready' && backendLabel ? html`<span>Ready — using <strong style=${{color:backendColor}}>${backendLabel}</strong>. Describe what you want in plain English.</span>`
+        : llmStatus === 'loading' ? html`<span>Loading AI model${llmProgress > 0 ? ' (' + llmProgress + '%)' : ''}... You can still type commands below.</span>`
+        : llmStatus === 'error' ? html`<span style=${{color:'#f87171'}}>AI failed to load. Check Settings → AI to configure a provider, or install Ollama locally.</span>`
+        : html`<span>No AI backend loaded. Enable Ollama in Settings → AI, or configure an API key. You can still use suggestion chips below.</span>`}
+    </div>` : null;
+
     // ── Docked mode: render inline as side panel content ──
     if (isDocked) {
       return html`<div style=${{display:'flex',flexDirection:'column',flex:1,overflow:'hidden'}}>
@@ -14314,6 +14341,7 @@ function startApp() {
           display:'flex', flexDirection:'column', gap:'.55rem',
           flex:1, minHeight:0
         }}>
+        ${statusBanner}
         ${msgs.map(function(m, i) {
           var isUser = m.role === 'user';
           if (m.setup) return html`<${ClashSetupCard} key=${i} setup=${m.setup} s=${s} d=${d} onRun=${executeDetection} setMsgs=${setMsgs} idx=${i} />`;
@@ -14446,6 +14474,7 @@ function startApp() {
         display:'flex', flexDirection:'column', gap:'.55rem',
         maxHeight:panelH, minHeight:80
       }}>
+        ${statusBanner}
         ${msgs.map(function(m, i) {
           var isUser = m.role === 'user';
           if (m.setup) return html`<${ClashSetupCard} key=${i} setup=${m.setup} s=${s} d=${d} onRun=${executeDetection} setMsgs=${setMsgs} idx=${i} />`;
@@ -15347,7 +15376,7 @@ function startApp() {
                       disabled=${s.revitDirect.loading}
                       style=${{padding:'.25rem .5rem',borderRadius:5,fontSize:'0.69rem',fontWeight:600,cursor:'pointer',border:'none',flex:1,
                         background:s.revitDirect.loading?'var(--bg-tertiary)':'#1e3a5f',color:s.revitDirect.loading?'var(--text-faint)':'#93c5fd',fontFamily:'inherit'}}>
-                      ${s.revitDirect.loading ? 'Loading ' + Math.round((s.revitDirect.progress||0)*100) + '%' : 'Pull Model'}</button>
+                      ${s.revitDirect.loading ? (s.revitDirect.progress > 0 ? Math.round(s.revitDirect.progress*100) + '%' : s.revitDirect.elementCount > 0 ? s.revitDirect.elementCount + ' elements' : 'Loading...') : 'Pull Model'}</button>
                     <button onClick=${function(){if(window._revitDirectPushClashes) window._revitDirectPushClashes(s,d)}}
                       style=${{padding:'.25rem .5rem',borderRadius:5,fontSize:'0.69rem',fontWeight:600,cursor:'pointer',border:'none',flex:1,background:'#052e16',color:'#4ade80',fontFamily:'inherit'}}>Push Clashes</button>
                     <button onClick=${function(){if(window._revitDirectDisconnect) window._revitDirectDisconnect(d)}}
@@ -15882,7 +15911,7 @@ function startApp() {
 
             ${rd.loading && html`<div>
               <div style=${{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:'.2rem'}}>
-                <span style=${{fontSize:'0.72rem',color:'var(--text-muted)'}}>Loading... ${Math.round((rd.progress||0)*100)}%${rd.elementCount ? ' (' + rd.elementCount + ' elements)' : ''}</span>
+                <span style=${{fontSize:'0.72rem',color:'var(--text-muted)'}}>Loading... ${rd.progress > 0 ? Math.round(rd.progress*100) + '%' : ''}${rd.elementCount ? ' (' + rd.elementCount + ' elements)' : ''}</span>
                 <button onClick=${function(){if(window._revitDirectCancelExport) window._revitDirectCancelExport(); d({t:'UPD_REVIT_DIRECT', u:{loading:false, progress:0}});}}
                   style=${{background:'none',border:'none',color:'#f87171',fontSize:'0.7rem',fontWeight:600,cursor:'pointer',fontFamily:'inherit',padding:'0 .2rem'}}>Cancel</button>
               </div>

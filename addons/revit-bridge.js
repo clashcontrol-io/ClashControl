@@ -263,7 +263,7 @@
         // Use batchIndex/totalBatches from Connector if available, else fall back to element count
         var prog = msg.totalBatches > 0 ? (msg.batchIndex + 1) / msg.totalBatches
           : _revitBuf.count > 0 ? _revitBuf.received / _revitBuf.count : 0;
-        d({t:'UPD_REVIT_DIRECT', u:{progress: Math.min(prog, 0.99)}});
+        d({t:'UPD_REVIT_DIRECT', u:{progress: Math.min(prog, 0.99), elementCount: _revitBuf.received}});
         break;
 
       case 'model-end':
