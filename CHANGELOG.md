@@ -1,5 +1,8 @@
 # Changelog
 
+## v4.6.21 (2026-04-02)
+- fix: auto-pull model on Revit sync-to-central notification
+
 ## v4.6.20 (2026-04-02)
 - refactor: make ClashControl a passive receiver — connector dictates sync
 
