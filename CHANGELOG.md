@@ -1,5 +1,8 @@
 # Changelog
 
+## v4.6.18 (2026-04-02)
+- fix: restore bridge panel rendering, disable auto-detect probe
+
 ## v4.6.17 (2026-04-02)
 - fix: remove stray bracket from addon badge, restore bridge panel template
 
