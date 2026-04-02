@@ -15371,17 +15371,21 @@ function startApp() {
                     <span style=${{width:7,height:7,borderRadius:'50%',background:'#22c55e',flexShrink:0}}></span>
                     <span style=${{fontSize:'0.75rem',color:'#4ade80',flex:1}}>Connected${s.revitDirect.documentName ? ' \u2014 ' + s.revitDirect.documentName : ''}</span>
                   </div>
-                  <div style=${{display:'flex',gap:'.3rem'}}>
+                  ${s.revitDirect.loading ? html`<div style=${{display:'flex',gap:'.3rem',alignItems:'center'}}>
+                    <span style=${{fontSize:'0.69rem',color:'var(--text-muted)',flex:1}}>
+                      ${s.revitDirect.progress > 0 ? Math.round(s.revitDirect.progress*100) + '%' : s.revitDirect.elementCount > 0 ? s.revitDirect.elementCount + ' elements' : 'Pulling model...'}
+                    </span>
+                    <button onClick=${function(){if(window._revitDirectCancelExport) window._revitDirectCancelExport(); d({t:'UPD_REVIT_DIRECT', u:{loading:false, progress:0}});}}
+                      style=${{padding:'.25rem .6rem',borderRadius:5,fontSize:'0.69rem',fontWeight:600,cursor:'pointer',border:'none',background:'#7f1d1d',color:'#fca5a5',fontFamily:'inherit'}}>Cancel</button>
+                  </div>` : html`<div style=${{display:'flex',gap:'.3rem'}}>
                     <button onClick=${function(){if(window._revitDirectExport) window._revitDirectExport(['all'])}}
-                      disabled=${s.revitDirect.loading}
                       style=${{padding:'.25rem .5rem',borderRadius:5,fontSize:'0.69rem',fontWeight:600,cursor:'pointer',border:'none',flex:1,
-                        background:s.revitDirect.loading?'var(--bg-tertiary)':'#1e3a5f',color:s.revitDirect.loading?'var(--text-faint)':'#93c5fd',fontFamily:'inherit'}}>
-                      ${s.revitDirect.loading ? (s.revitDirect.progress > 0 ? Math.round(s.revitDirect.progress*100) + '%' : s.revitDirect.elementCount > 0 ? s.revitDirect.elementCount + ' elements' : 'Loading...') : 'Pull Model'}</button>
+                        background:'#1e3a5f',color:'#93c5fd',fontFamily:'inherit'}}>Pull Model</button>
                     <button onClick=${function(){if(window._revitDirectPushClashes) window._revitDirectPushClashes(s,d)}}
                       style=${{padding:'.25rem .5rem',borderRadius:5,fontSize:'0.69rem',fontWeight:600,cursor:'pointer',border:'none',flex:1,background:'#052e16',color:'#4ade80',fontFamily:'inherit'}}>Push Clashes</button>
                     <button onClick=${function(){if(window._revitDirectDisconnect) window._revitDirectDisconnect(d)}}
                       style=${{padding:'.25rem .5rem',borderRadius:5,fontSize:'0.69rem',fontWeight:600,cursor:'pointer',border:'none',background:'#7f1d1d',color:'#fca5a5',fontFamily:'inherit'}}>Disconnect</button>
-                  </div>
+                  </div>`}
                   ${s.revitDirect.loading && html`<div style=${{width:'100%',height:3,background:'var(--bg-primary)',borderRadius:2,overflow:'hidden'}}>
                     <div style=${{width:Math.round((s.revitDirect.progress||0)*100)+'%',height:'100%',background:'var(--accent)',borderRadius:2,transition:'width .3s'}}></div>
                   </div>`}
