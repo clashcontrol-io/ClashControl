@@ -14674,21 +14674,19 @@ function startApp() {
         </div>`}
       </div>
       <div style=${{flex:1}}></div>
-      <div class="cc-ifc-load-btn">${(function(){
-        var proj=(s.projectList||[]).find(function(p){return p.id===s.activeProject;});
-        var isRevit=proj&&proj.sourceType==='revit';
-        return iconBtn(function(){
-          if(isRevit){alert('This project is connected to Revit. Import IFC into a different project.');return;}
+      <div class="cc-ifc-load-btn">${iconBtn(function(){
           if(window._ccOpenIFC) window._ccOpenIFC();
         },
-        html`<span style=${{fontWeight:700,fontSize:'0.8rem',letterSpacing:'.03em',opacity:isRevit?0.4:1}}>IFC</span>`,
-        isRevit?'IFC import disabled — Revit project':'Load IFC model');
-      }())}</div>
+        html`<span style=${{fontWeight:700,fontSize:'0.8rem',letterSpacing:'.03em'}}>IFC</span>`,
+        'Load IFC model')}</div>
       ${iconBtn(function(){
           if(window._ccOpen2D) window._ccOpen2D();
         },
         html`<span style=${{fontWeight:700,fontSize:'0.8rem',letterSpacing:'.03em'}}>2D</span>`,
         'Load DXF/PDF/DWG')}
+      ${iconBtn(function(){d({t:'REVIT_BRIDGE',v:true});},
+        html`<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke=${s.revitDirect&&s.revitDirect.connected?'#4ade80':'currentColor'} stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 14a1 1 0 0 1-.78-1.63l9.9-10.2a.5.5 0 0 1 .86.46l-1.92 6.02A1 1 0 0 0 13 10h7a1 1 0 0 1 .78 1.63l-9.9 10.2a.5.5 0 0 1-.86-.46l1.92-6.02A1 1 0 0 0 11 14z"/></svg>`,
+        'Revit Bridge')}
       <div class="cc-bcf-actions">
         ${iconBtn(function(){saveProject(s);},
           html`<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" dangerouslySetInnerHTML=${{__html:SVG_SAVE}}></svg>`,
