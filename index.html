@@ -10413,16 +10413,248 @@ function startApp() {
     };
   }
 
+  // ── NL/SfB Table 1 — Building element codes ──────────────────────
+  var NLSFB_TABLE1 = {
+    '11':'Grondwerk','13':'Vloeren op grond','16':'Funderingen',
+    '21':'Buitenwanden','22':'Binnenwanden','23':'Vloeren','24':'Trappen en hellingen',
+    '27':'Daken','28':'Hoofddraagconstructie',
+    '31':'Buitenramen','32':'Buitendeuren','33':'Binnenramen','34':'Binnendeuren',
+    '37':'Dakramen/lichtkoepels',
+    '41':'Wandafwerkingen buiten','42':'Wandafwerkingen binnen',
+    '43':'Vloerafwerkingen','44':'Trapafwerkingen','45':'Plafondafwerkingen','47':'Dakafwerkingen',
+    '52':'Afvoer/riolering','53':'Watervoorziening','54':'Gasvoorziening',
+    '55':'Koeling','56':'Verwarming','57':'Ventilatie',
+    '61':'Elektrische voorziening','62':'Krachtstroom','63':'Verlichting',
+    '64':'Communicatie','66':'Transport (liften)','68':'Beveiliging',
+    '73':'Terreinverharding','74':'Terreinafscheiding','90':'Vaste inrichting'
+  };
+
+  // IFC type → valid NL/SfB codes
+  var IFC_TO_NLSFB = {
+    IfcWall:['21','22'], IfcWallStandardCase:['21','22'],
+    IfcSlab:['13','23','43'], IfcRoof:['27'],
+    IfcColumn:['28'], IfcBeam:['28'], IfcMember:['28'],
+    IfcWindow:['31','33','37'], IfcDoor:['32','34'],
+    IfcStair:['24'], IfcStairFlight:['24'], IfcRamp:['24'], IfcRampFlight:['24'],
+    IfcCurtainWall:['21'], IfcPlate:['28'],
+    IfcCovering:['41','42','43','44','45','47'],
+    IfcRailing:['34','28'],
+    IfcSpace:['--'], IfcBuildingElementProxy:['--'],
+    IfcPipeSegment:['52','53','54'], IfcPipeFitting:['52','53','54'],
+    IfcDuctSegment:['57'], IfcDuctFitting:['57'],
+    IfcFlowTerminal:['53','55','56','57','63'],
+    IfcSanitaryTerminal:['53'], IfcLightFixture:['63'],
+    IfcSwitchingDevice:['61','62'], IfcOutlet:['62'],
+    IfcDistributionElement:['52','53','54','55','56','57','61','62','63','64']
+  };
+
+  // ILS — required properties per IFC type (Dutch BIM standard)
+  var ILS_REQUIRED = {
+    IfcWall:          ['IsExternal','LoadBearing','FireRating','AcousticRating','ThermalTransmittance'],
+    IfcWallStandardCase:['IsExternal','LoadBearing','FireRating','AcousticRating','ThermalTransmittance'],
+    IfcSlab:          ['IsExternal','LoadBearing','FireRating','AcousticRating'],
+    IfcRoof:          ['IsExternal','ThermalTransmittance'],
+    IfcDoor:          ['IsExternal','FireRating','AcousticRating'],
+    IfcWindow:        ['IsExternal','ThermalTransmittance'],
+    IfcColumn:        ['LoadBearing','FireRating'],
+    IfcBeam:          ['LoadBearing','FireRating'],
+    IfcMember:        ['LoadBearing'],
+    IfcCurtainWall:   ['IsExternal','ThermalTransmittance'],
+    IfcStair:         ['FireRating'],
+    IfcRamp:          ['FireRating'],
+    IfcCovering:      ['FireRating']
+  };
+
+  // NL/SfB code extraction from element properties
+  function _extractNLSfB(psets, objectType) {
+    var code = null;
+    // Check all property sets for NL/SfB, SfB, classification keys
+    Object.keys(psets).forEach(function(ps) {
+      var grp = psets[ps]||{};
+      var psLower = ps.toLowerCase();
+      // Common Pset names: "NL-SfB", "NL/SfB", "ClassificationCode"
+      Object.keys(grp).forEach(function(k) {
+        var kl = k.toLowerCase();
+        if (kl==='nl-sfb'||kl==='nl/sfb'||kl==='nlsfb'||kl==='nl_sfb'||kl==='sfbcode'||kl==='sfb-code'||kl==='sfb code'||
+            kl==='classificationcode'||kl==='classification code'||kl==='classification'||
+            (psLower.indexOf('sfb')>=0 && (kl==='code'||kl==='value'||kl==='elementcode'))) {
+          var v = grp[k];
+          if (v && String(v).trim()) code = String(v).trim();
+        }
+      });
+    });
+    // Fallback: check ObjectType for NL/SfB pattern like "(21)" or "21.xx"
+    if (!code && objectType) {
+      var m = /\((\d{2})\)/.exec(objectType) || /^(\d{2})[\.\-\s]/.exec(objectType);
+      if (m) code = m[1];
+    }
+    return code;
+  }
+
+  // Validate NL/SfB code format — expect 2-digit, optional dot-separated sub
+  function _isValidNLSfBFormat(code) {
+    if (!code) return false;
+    // Strip parentheses
+    var c = code.replace(/[()]/g,'').trim();
+    // Valid: "21", "21.1", "21.12", "(21)", "21.1.2"
+    return /^\d{2}(\.\d{1,2})*$/.test(c);
+  }
+
+  // Extract the 2-digit main group from an NL/SfB code
+  function _nlsfbMainGroup(code) {
+    if (!code) return null;
+    var c = code.replace(/[()]/g,'').trim();
+    var m = /^(\d{2})/.exec(c);
+    return m ? m[1] : null;
+  }
+
+  // Find a property value across all psets (case-insensitive key match)
+  function _findPropValue(psets, propName) {
+    var val = null;
+    var pl = propName.toLowerCase();
+    Object.keys(psets).forEach(function(ps) {
+      var grp = psets[ps]||{};
+      Object.keys(grp).forEach(function(k) {
+        if (k.toLowerCase() === pl && grp[k] != null && String(grp[k]).trim()) val = String(grp[k]).trim();
+      });
+    });
+    return val;
+  }
+
+  // ── ILS / NL-SfB Check Engine ──────────────────────────────────────
+  function runILSChecks(elements) {
+    var acc = {
+      noNLSfB: [],          // No NL/SfB code at all
+      invalidNLSfB: [],     // Code present but invalid format
+      mismatchNLSfB: [],    // Code doesn't match IFC type
+      noDescription: [],    // Missing Description (ILS requires it)
+      noMaterial: [],       // Missing material assignment
+      noStorey: [],         // No building storey
+      missingILSProp: [],   // Missing required ILS property
+      noObjectType: [],     // No ObjectType (ILS requires typed elements)
+      noName: []            // Missing or empty Name
+    };
+    // NL/SfB distribution
+    var nlsfbDist = {};
+    function addNLSfBDist(code, el) {
+      var mainGroup = _nlsfbMainGroup(code);
+      var label = mainGroup ? (mainGroup + ' ' + (NLSFB_TABLE1[mainGroup]||'Onbekend')) : '(geen code)';
+      if (!nlsfbDist[label]) nlsfbDist[label] = [];
+      nlsfbDist[label].push({expressId:el.expressId, modelId:el._modelId, name:(el.props||{}).name||'#'+el.expressId, ifcType:(el.props||{}).ifcType||'', code:code||''});
+    }
+    // ILS compliance distribution
+    var ilsCompDist = {'Compliant':[], 'Minor issues':[], 'Major issues':[]};
+
+    // Physical element types to check (skip spaces, zones, groups, etc.)
+    var PHYSICAL = {IfcWall:1,IfcWallStandardCase:1,IfcSlab:1,IfcRoof:1,IfcColumn:1,IfcBeam:1,
+      IfcMember:1,IfcWindow:1,IfcDoor:1,IfcStair:1,IfcStairFlight:1,IfcRamp:1,IfcRampFlight:1,
+      IfcCurtainWall:1,IfcPlate:1,IfcCovering:1,IfcRailing:1,IfcBuildingElementProxy:1,
+      IfcPipeSegment:1,IfcPipeFitting:1,IfcDuctSegment:1,IfcDuctFitting:1,
+      IfcFlowTerminal:1,IfcSanitaryTerminal:1,IfcLightFixture:1,
+      IfcSwitchingDevice:1,IfcOutlet:1,IfcDistributionElement:1,IfcFurnishingElement:1,
+      IfcFooting:1,IfcPile:1};
+
+    (elements||[]).forEach(function(el) {
+      var p = el.props||{};
+      if (!PHYSICAL[p.ifcType]) return; // skip non-physical elements
+      var psets = p.psets||{};
+      var it = {name:p.name||('#'+el.expressId), gid:p.globalId, ifcType:p.ifcType, el:el};
+      var issues = 0;
+
+      // 1. NL/SfB classification
+      var nlsfb = _extractNLSfB(psets, p.objectType);
+      if (!nlsfb) {
+        acc.noNLSfB.push(it);
+        issues += 2;
+      } else if (!_isValidNLSfBFormat(nlsfb)) {
+        acc.invalidNLSfB.push(Object.assign({}, it, {detail: 'Code: "' + nlsfb + '"'}));
+        issues += 1;
+      } else {
+        // Check if code matches IFC type
+        var mainGroup = _nlsfbMainGroup(nlsfb);
+        var allowed = IFC_TO_NLSFB[p.ifcType];
+        if (allowed && allowed[0] !== '--' && mainGroup && allowed.indexOf(mainGroup) < 0) {
+          acc.mismatchNLSfB.push(Object.assign({}, it, {detail: nlsfb + ' ↔ ' + p.ifcType + ' (verwacht: ' + allowed.join('/') + ')'}));
+          issues += 1;
+        }
+      }
+      addNLSfBDist(nlsfb, el);
+
+      // 2. Required ILS properties
+      var reqProps = ILS_REQUIRED[p.ifcType] || [];
+      var missingProps = [];
+      reqProps.forEach(function(prop) {
+        if (!_findPropValue(psets, prop)) missingProps.push(prop);
+      });
+      if (missingProps.length > 0) {
+        acc.missingILSProp.push(Object.assign({}, it, {detail: missingProps.join(', ')}));
+        issues += missingProps.length;
+      }
+
+      // 3. Description (ILS requires meaningful descriptions)
+      if (!p.description || !p.description.trim() || p.description.trim() === p.name) {
+        acc.noDescription.push(it);
+        issues += 1;
+      }
+
+      // 4. Material assignment
+      if (!p.material || !p.material.trim()) {
+        acc.noMaterial.push(it);
+        issues += 1;
+      }
+
+      // 5. Storey assignment
+      if (!p.storey || !p.storey.trim()) {
+        acc.noStorey.push(it);
+        issues += 1;
+      }
+
+      // 6. ObjectType (typed element)
+      if (!p.objectType || !p.objectType.trim()) {
+        acc.noObjectType.push(it);
+        issues += 1;
+      }
+
+      // 7. Name
+      if (!p.name || !p.name.trim()) {
+        acc.noName.push(it);
+        issues += 1;
+      }
+
+      // Compliance bucket
+      var elInfo = {expressId:el.expressId, modelId:el._modelId, name:p.name||'#'+el.expressId, ifcType:p.ifcType||''};
+      if (issues === 0) ilsCompDist['Compliant'].push(elInfo);
+      else if (issues <= 2) ilsCompDist['Minor issues'].push(elInfo);
+      else ilsCompDist['Major issues'].push(elInfo);
+    });
+
+    return {
+      noNLSfB:        {label:'Geen NL/SfB classificatie',           sev:'error',cat:'nlsfb', count:acc.noNLSfB.length,        ex:acc.noNLSfB.slice(0,8)},
+      invalidNLSfB:   {label:'Ongeldig NL/SfB formaat',             sev:'error',cat:'nlsfb', count:acc.invalidNLSfB.length,    ex:acc.invalidNLSfB.slice(0,8)},
+      mismatchNLSfB:  {label:'NL/SfB komt niet overeen met IFC type',sev:'warn', cat:'nlsfb', count:acc.mismatchNLSfB.length,  ex:acc.mismatchNLSfB.slice(0,8)},
+      missingILSProp: {label:'Ontbrekende ILS-verplichte eigenschappen',sev:'warn',cat:'properties',count:acc.missingILSProp.length,ex:acc.missingILSProp.slice(0,8)},
+      noDescription:  {label:'Geen of lege omschrijving',            sev:'info', cat:'naming', count:acc.noDescription.length,   ex:acc.noDescription.slice(0,8)},
+      noMaterial:     {label:'Geen materiaal toegewezen',            sev:'warn', cat:'properties',count:acc.noMaterial.length,   ex:acc.noMaterial.slice(0,8)},
+      noStorey:       {label:'Geen bouwlaag toegewezen',             sev:'warn', cat:'location', count:acc.noStorey.length,      ex:acc.noStorey.slice(0,8)},
+      noObjectType:   {label:'Geen ObjectType gedefinieerd',         sev:'info', cat:'classification',count:acc.noObjectType.length,ex:acc.noObjectType.slice(0,8)},
+      noName:         {label:'Geen elementnaam',                     sev:'warn', cat:'naming', count:acc.noName.length,          ex:acc.noName.slice(0,8)},
+      _total: (elements||[]).length,
+      _nlsfbDist: nlsfbDist,
+      _compDist: ilsCompDist
+    };
+  }
+
   // ── Data Quality Panel (dedicated tab) ─────────────────────────────
 
   function DataQualityPanel(props) {
     var s = props.s, d = props.d;
     var qcSt = useState(null), qc = qcSt[0], setQc = qcSt[1];
     var bimSt = useState(null), bim = bimSt[0], setBim = bimSt[1];
+    var ilsSt = useState(null), ils = ilsSt[0], setIls = ilsSt[1];
     var expSt = useState({}), expanded = expSt[0], setExpanded = expSt[1];
     var selModel = useState('all'), selectedModel = selModel[0], setSelectedModel = selModel[1];
     var running = useState(false), isRunning = running[0], setRunning = running[1];
-    var secSt = useState({general:true,bim:true,dist:true,ids:true}), sections = secSt[0], setSections = secSt[1];
+    var secSt = useState({general:true,bim:true,ils:true,dist:true,ids:true}), sections = secSt[0], setSections = secSt[1];
 
     function toggleSection(key) { setSections(function(p){var n=Object.assign({},p);n[key]=!n[key];return n;}); }
 
@@ -10436,6 +10668,7 @@ function startApp() {
         });
         setQc(runDataQualityChecks(elements));
         setBim(runBIMModelChecks(elements));
+        setIls(runILSChecks(elements));
         setExpanded({});
         setRunning(false);
       }, 50);
@@ -10527,16 +10760,87 @@ function startApp() {
       invalidate();
     }
 
+    // Highlight elements from ILS NL/SfB distribution
+    function highlightILSDistGroup(distKey, value) {
+      var src = distKey === 'nlsfb' ? (ils ? ils._nlsfbDist : null) : (ils ? ils._compDist : null);
+      if (!src) return;
+      var items = src[value] || [];
+      var eidSet = {};
+      items.forEach(function(it){eidSet[it.expressId] = true;});
+      var eids = Object.keys(eidSet).map(Number);
+      if (eids.length && _ghostOthers) _ghostOthers(eids);
+      invalidate();
+    }
+
+    // Color by NL/SfB or compliance distribution
+    function colorByILSDist(distKey) {
+      var S = window._ccState3d;
+      var src = distKey === 'nlsfb' ? (ils ? ils._nlsfbDist : null) : (ils ? ils._compDist : null);
+      if (!S || !S.mg || !src) {
+        if (_unghostAll) _unghostAll();
+        setActiveDistKey(null);
+        return;
+      }
+      if (activeDistKey === distKey) {
+        if (_unghostAll) _unghostAll();
+        if (S._dqOrigColors) {
+          S._dqOrigColors.forEach(function(e){if(e.mesh&&e.mesh.material)e.mesh.material.color.copy(e.color);});
+          S._dqOrigColors = null;
+        }
+        setActiveDistKey(null);
+        invalidate();
+        return;
+      }
+      setActiveDistKey(distKey);
+      var gKeys = Object.keys(src).sort(function(a,b){return (src[b]||[]).length - (src[a]||[]).length;});
+      var colorMap = {};
+      // For compliance distribution, use fixed colors
+      var compColors = {'Compliant':'#4ade80','Minor issues':'#fbbf24','Major issues':'#ef4444'};
+      gKeys.forEach(function(k, idx) {
+        (src[k]||[]).forEach(function(item) {
+          colorMap[(item.modelId||'')+'_'+item.expressId] = distKey==='compliance' ? (compColors[k]||DQ_COLORS[idx%DQ_COLORS.length]) : DQ_COLORS[idx%DQ_COLORS.length];
+        });
+      });
+      if (_unghostAll) _unghostAll();
+      if (S._dqOrigColors) {
+        S._dqOrigColors.forEach(function(e){if(e.mesh&&e.mesh.material)e.mesh.material.color.copy(e.color);});
+      }
+      var saved = [];
+      S.mg.traverse(function(obj) {
+        if (!obj.isMesh || !obj.material) return;
+        var eid = obj.userData.expressId;
+        var parent = obj.parent;
+        var modelId = parent ? parent.userData.modelId : null;
+        if (eid == null || !modelId) return;
+        saved.push({mesh:obj, color:obj.material.color.clone()});
+        var c = colorMap[modelId+'_'+eid];
+        if (c) {
+          obj.material.color.set(c);
+        } else {
+          obj.material.color.set(0x334155);
+          obj.material.opacity = 0.08;
+          obj.material.transparent = true;
+        }
+      });
+      S._dqOrigColors = saved;
+      invalidate();
+    }
+
     var hasModels = s.models && s.models.length > 0;
     var totalIssues = 0;
     var totalBim = 0;
+    var totalIls = 0;
     if (qc) {
       var qcKeys = Object.keys(qc).filter(function(k){return k!=='_total';});
       qcKeys.forEach(function(k){totalIssues += qc[k].count||0;});
     }
     if (bim) {
-      var bimKeys = Object.keys(bim).filter(function(k){return k!=='_total';});
+      var bimKeys = Object.keys(bim).filter(function(k){return k!=='_total'&&k!=='_dist';});
       bimKeys.forEach(function(k){totalBim += bim[k].count||0;});
+    }
+    if (ils) {
+      var ilsKeys = Object.keys(ils).filter(function(k){return k[0]!=='_';});
+      ilsKeys.forEach(function(k){totalIls += ils[k].count||0;});
     }
 
     var SEV = {error:'#ef4444', warn:'#f59e0b', info:'#60a5fa'};
@@ -10582,9 +10886,9 @@ function startApp() {
         <div style=${{display:'flex',alignItems:'center',gap:'.4rem'}}>
           <span style=${{fontSize:'0.83rem',fontWeight:600,color:'var(--text-primary)',flex:1}}>Data Quality</span>
           ${qc && html`<span style=${{fontSize:'0.63rem',padding:'2px 6px',borderRadius:99,
-            background:totalIssues+totalBim===0?'#052e16':'#78350f',
-            color:totalIssues+totalBim===0?'#4ade80':'#fcd34d',fontWeight:600}}>
-            ${totalIssues+totalBim===0?'All passed':totalIssues+totalBim+' issues'}
+            background:totalIssues+totalBim+totalIls===0?'#052e16':'#78350f',
+            color:totalIssues+totalBim+totalIls===0?'#4ade80':'#fcd34d',fontWeight:600}}>
+            ${totalIssues+totalBim+totalIls===0?'All passed':totalIssues+totalBim+totalIls+' issues'}
           </span>`}
         </div>
         <div style=${{display:'flex',gap:'.3rem',alignItems:'center'}}>
@@ -10618,6 +10922,85 @@ function startApp() {
             <span style=${{fontSize:'0.57rem',color:'var(--text-faint)'}}>${sections.bim?'▲':'▼'}</span>
           </div>
           ${sections.bim && renderCheckGroup(bim, ['thicknessMismatch','noFireRating','noIsExternal','noLoadBearing','missingCommonPset','noClassification','noObjectType','invalidName','missingArea','missingVolume'], 'BIM')}
+        </div>`}
+
+        ${ils && html`<div>
+          <div onClick=${function(){toggleSection('ils');}} style=${SEC}>
+            <span>ILS / NL-SfB</span>
+            <span style=${{display:'flex',alignItems:'center',gap:'.3rem'}}>
+              ${totalIls > 0 ? html`<span style=${{fontSize:'0.57rem',padding:'1px 5px',borderRadius:99,background:'#78350f',color:'#fcd34d',fontWeight:600}}>${totalIls}</span>` : null}
+              <span style=${{fontSize:'0.57rem',color:'var(--text-faint)'}}>${sections.ils?'▲':'▼'}</span>
+            </span>
+          </div>
+          ${sections.ils && html`<div>
+            ${renderCheckGroup(ils, ['noNLSfB','invalidNLSfB','mismatchNLSfB','missingILSProp','noDescription','noMaterial','noStorey','noObjectType','noName'], 'ILS')}
+
+            ${ils._nlsfbDist && html`<div style=${{borderTop:'1px solid var(--border-subtle)'}}>
+              <div style=${{display:'flex',alignItems:'center',gap:'.35rem',padding:'.4rem .6rem'}}>
+                <span style=${{fontSize:'0.69rem',fontWeight:600,color:'var(--text-muted)',flex:1}}>NL/SfB Verdeling</span>
+                <button onClick=${function(){colorByILSDist('nlsfb');}}
+                  title=${activeDistKey==='nlsfb'?'Clear coloring':'Color by NL/SfB'}
+                  style=${{fontSize:'0.57rem',padding:'1px 5px',background:activeDistKey==='nlsfb'?'var(--accent)':'none',border:'1px solid '+(activeDistKey==='nlsfb'?'var(--accent)':'var(--border)'),borderRadius:3,
+                    color:activeDistKey==='nlsfb'?'#fff':'var(--text-faint)',cursor:'pointer',lineHeight:1.2,fontFamily:'inherit'}}>
+                  ${activeDistKey==='nlsfb'?'Clear':'Color'}
+                </button>
+                <span onClick=${function(){toggleExp('dist_nlsfb');}} style=${{fontSize:'0.57rem',color:'var(--text-faint)',cursor:'pointer'}}>${expanded['dist_nlsfb']?'▲':'▼'}</span>
+              </div>
+              ${expanded['dist_nlsfb'] && html`<div style=${{padding:'0 .6rem .3rem',background:'var(--bg-primary)'}}>
+                ${Object.keys(ils._nlsfbDist).sort(function(a,b){return (ils._nlsfbDist[b]||[]).length-(ils._nlsfbDist[a]||[]).length;}).slice(0,40).map(function(val, idx) {
+                  var items = ils._nlsfbDist[val]||[];
+                  var totalN = 0; Object.keys(ils._nlsfbDist).forEach(function(k){totalN+=(ils._nlsfbDist[k]||[]).length;});
+                  var pct = totalN > 0 ? Math.round(items.length / totalN * 100) : 0;
+                  var isActive = activeDistKey === 'nlsfb';
+                  var barColor = isActive ? DQ_COLORS[idx%DQ_COLORS.length] : 'var(--accent)';
+                  var isNone = val === '(geen code)';
+                  return html`<div key=${val}
+                    onClick=${function(){highlightILSDistGroup('nlsfb', val);}}
+                    style=${{display:'flex',alignItems:'center',gap:'.35rem',padding:'.2rem 0',cursor:'pointer',borderBottom:'1px solid var(--border-subtle)'}}>
+                    ${isActive && html`<span style=${{width:8,height:8,borderRadius:'50%',background:barColor,flexShrink:0}}></span>`}
+                    <span style=${{fontSize:'0.63rem',color:isNone?'var(--text-faint)':'var(--text-secondary)',flex:1,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',fontStyle:isNone?'italic':'normal'}} title=${val}>${val}</span>
+                    <span style=${{fontSize:'0.57rem',color:'var(--text-faint)',flexShrink:0}}>${items.length}</span>
+                    <div style=${{width:40,height:4,background:'var(--bg-secondary)',borderRadius:2,overflow:'hidden',flexShrink:0}}>
+                      <div style=${{width:pct+'%',height:'100%',background:barColor,borderRadius:2}}></div>
+                    </div>
+                    <span style=${{fontSize:'0.57rem',color:'var(--text-faint)',flexShrink:0,minWidth:20,textAlign:'right'}}>${pct}%</span>
+                  </div>`;
+                })}
+              </div>`}
+            </div>`}
+
+            ${ils._compDist && html`<div style=${{borderTop:'1px solid var(--border-subtle)'}}>
+              <div style=${{display:'flex',alignItems:'center',gap:'.35rem',padding:'.4rem .6rem'}}>
+                <span style=${{fontSize:'0.69rem',fontWeight:600,color:'var(--text-muted)',flex:1}}>ILS Compliance</span>
+                <button onClick=${function(){colorByILSDist('compliance');}}
+                  title=${activeDistKey==='compliance'?'Clear coloring':'Color by compliance'}
+                  style=${{fontSize:'0.57rem',padding:'1px 5px',background:activeDistKey==='compliance'?'var(--accent)':'none',border:'1px solid '+(activeDistKey==='compliance'?'var(--accent)':'var(--border)'),borderRadius:3,
+                    color:activeDistKey==='compliance'?'#fff':'var(--text-faint)',cursor:'pointer',lineHeight:1.2,fontFamily:'inherit'}}>
+                  ${activeDistKey==='compliance'?'Clear':'Color'}
+                </button>
+              </div>
+              <div style=${{padding:'0 .6rem .3rem'}}>
+                ${['Compliant','Minor issues','Major issues'].map(function(val) {
+                  var items = ils._compDist[val]||[];
+                  if (items.length === 0) return null;
+                  var totalN = 0; ['Compliant','Minor issues','Major issues'].forEach(function(k){totalN+=(ils._compDist[k]||[]).length;});
+                  var pct = totalN > 0 ? Math.round(items.length / totalN * 100) : 0;
+                  var compColor = val==='Compliant'?'#4ade80':val==='Minor issues'?'#fbbf24':'#ef4444';
+                  return html`<div key=${val}
+                    onClick=${function(){highlightILSDistGroup('compliance', val);}}
+                    style=${{display:'flex',alignItems:'center',gap:'.35rem',padding:'.25rem 0',cursor:'pointer',borderBottom:'1px solid var(--border-subtle)'}}>
+                    <span style=${{width:8,height:8,borderRadius:'50%',background:compColor,flexShrink:0}}></span>
+                    <span style=${{fontSize:'0.66rem',color:'var(--text-secondary)',flex:1}}>${val}</span>
+                    <span style=${{fontSize:'0.63rem',fontWeight:600,color:compColor}}>${items.length}</span>
+                    <div style=${{width:50,height:5,background:'var(--bg-secondary)',borderRadius:2,overflow:'hidden',flexShrink:0}}>
+                      <div style=${{width:pct+'%',height:'100%',background:compColor,borderRadius:2}}></div>
+                    </div>
+                    <span style=${{fontSize:'0.57rem',color:'var(--text-faint)',flexShrink:0,minWidth:24,textAlign:'right'}}>${pct}%</span>
+                  </div>`;
+                })}
+              </div>
+            </div>`}
+          </div>`}
         </div>`}
 
         ${bim && bim._dist && html`<div>
@@ -10681,7 +11064,7 @@ function startApp() {
         ${qc && html`<div style=${{padding:'.5rem .6rem',borderTop:'1px solid var(--border-subtle)'}}>
           <div style=${{display:'flex',alignItems:'center',gap:'.3rem',flexWrap:'wrap'}}>
             <span style=${{fontSize:'0.63rem',color:'var(--text-faint)',flex:1}}>
-              ${qc._total} elements · ${totalIssues+totalBim} issue${totalIssues+totalBim!==1?'s':''}
+              ${qc._total} elements · ${totalIssues+totalBim+totalIls} issue${totalIssues+totalBim+totalIls!==1?'s':''}
             </span>
             ${activeDistKey && html`<button onClick=${function(){colorByDistribution(activeDistKey);}}
               style=${{fontSize:'0.63rem',padding:'.15rem .4rem',background:'var(--bg-secondary)',color:'var(--text-muted)',border:'1px solid var(--border)',borderRadius:4,cursor:'pointer',fontFamily:'inherit'}}>Clear Coloring</button>`}
