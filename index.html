@@ -206,6 +206,9 @@
     /* Header hidden on desktop, shown on mobile via media query */
     .cc-header{display:none!important}
     @media(max-width:768px){.cc-header{display:flex!important}}
+    /* Hide-on-desktop utility (shown only on mobile) */
+    .cc-hide-desktop{display:none!important}
+    @media(max-width:768px){.cc-hide-desktop{display:inline-block!important}}
     /* Mobile nav hidden by default, shown via media query */
     .cc-mobile-nav{display:none;position:fixed;bottom:0;left:0;right:0;z-index:1050;
       background:var(--bg-primary);border-top:1px solid var(--border-subtle);
@@ -13082,7 +13085,7 @@ function startApp() {
 
     switch (intent) {
       case 'run_detection': {
-        if (!s.models.length) return 'No models loaded yet — drop IFC files onto the viewer first.';
+        if (!s.models.length) return 'No models loaded yet. Drop an IFC file to get started.';
         var mA = resolveModel(action.modelA), mB = resolveModel(action.modelB);
         var upd = { modelA: mA?mA.id:'all', modelB: mB?mB.id:'all', hard: action.hard!==false, duplicates: action.duplicates===true };
         if (action.excludeSelf) upd.excludeSelf = true;
@@ -13212,7 +13215,7 @@ function startApp() {
       if (/^(?:no|nah|nope|n|wrong|cancel)\b/i.test(text)) {
         // Store the original input for feedback collection
         window._ccFuzzyFeedbackInput = pending.input;
-        return 'I didn\'t understand that. Could you describe what you wanted to happen? This helps me learn and serve you better next time.';
+        return 'Didn\'t catch that. Try something like "check walls vs pipes" or type "help" for examples.';
       }
     }
     // Handle fuzzy feedback response
@@ -13237,16 +13240,14 @@ function startApp() {
 
     // ── Help ───────────────────────────────────────────────────────
     if (/^help$|what can you do|how (?:do i|to) use|what.*commands?/.test(text)) {
-      return 'Sure! Just type what you need in plain English. Here are some things I can help with:\n\n' +
-        '**Clash detection** — "check structural vs MEP", "find near misses with 75mm gap", "run detection"\n\n' +
-        '**Filter & group** — "show open clashes", "group by storey", "show only critical"\n\n' +
-        '**Batch actions** — "mark all open as resolved", "assign everything to John"\n\n' +
-        '**Questions** — "how many clashes?", "summary", "any problems?", "which types are clashing?"\n\n' +
-        '**View controls** — "top view", "front", "isometric", "section x", "wireframe", "dark mode"\n\n' +
-        '**Visibility** — "hide walls", "isolate pipes", "show only MEP", "show all"\n\n' +
-        '**Files** — "load ifc", "export bcf", "import bcf"\n\n' +
-        '**Panels** — "settings", "clashes tab", "model tree", "training mode"\n\n' +
-        'Just describe what you want — I understand short commands too!';
+      return 'Just type what you need. Some examples:\n\n' +
+        'Clash detection — "check structural vs MEP", "near misses 75mm"\n' +
+        'Filter — "show open", "group by storey", "only critical"\n' +
+        'Batch — "resolve all", "assign to John"\n' +
+        'View — "top view", "wireframe", "section x"\n' +
+        'Visibility — "hide walls", "isolate pipes"\n' +
+        'Files — "load ifc", "export bcf"\n\n' +
+        'Short commands work too — try "summary" or "clashes".';
     }
 
     // ── Short-form / single-word commands ──────────────────────────
@@ -13258,8 +13259,8 @@ function startApp() {
     if (/^settings?$/i.test(text)) { d({t:A.SETTINGS,v:true}); return 'Opened settings.'; }
     if (/^bcf$/i.test(text)) { if(!s.issues.length&&!s.clashes.length)return 'Nothing to export.'; exportBCF(s.issues.length?s.issues:s.clashes,'2.1',s.viewpoints); return 'BCF exported.'; }
     if (/^ifc$/i.test(text)) { if(window._ccOpenIFC) window._ccOpenIFC(); return 'Opening IFC file picker...'; }
-    if (/^(?:undo|cancel\s+that|never\s*mind|oops)$/i.test(text)) return 'I can\'t undo actions, but you can: reset filters ("clear filters"), restore hidden elements ("show all"), or reset the view ("reset view").';
-    if (/^(?:thanks?|thank\s+you|ty|thx|cheers)$/i.test(text)) return 'You\'re welcome! Let me know if you need anything else.';
+    if (/^(?:undo|cancel\s+that|never\s*mind|oops)$/i.test(text)) return 'Can\'t undo, but try "clear filters", "show all", or "reset view" to get back.';
+    if (/^(?:thanks?|thank\s+you|ty|thx|cheers)$/i.test(text)) return 'No problem!';
     if (/^(?:hi|hello|hey|yo|sup)$/i.test(text)) return 'Hey! I\'m ready to help. Try "help" to see what I can do, or just describe what you need.';
 
     // ── Q&A ────────────────────────────────────────────────────────
@@ -13272,13 +13273,13 @@ function startApp() {
       return total + ' clash' + (total===1?'':'es') + ' — ' + parts.join(', ') + '.';
     }
     if (/how many issues?|issue count|number of issues?/.test(text)) {
-      if (!s.issues.length) return 'No issues yet. Open a clash and use "Create Issue" to log one.';
+      if (!s.issues.length) return 'No issues yet. Create one from a clash result.';
       var ti = s.issues.length;
       var oi = s.issues.filter(function(i){return (i.status||'open')==='open';}).length;
       return ti + ' issue' + (ti===1?'':'s') + ' — ' + oi + ' open, ' + (ti-oi) + ' closed.';
     }
     if (/what models?|models? loaded|which models?|list models?|what.*(?:files?|ifc).*loaded|what.*loaded/.test(text)) {
-      if (!s.models.length) return 'No models loaded yet. Drag and drop IFC files onto the viewer.';
+      if (!s.models.length) return 'No models loaded yet. Drop an IFC file to get started.';
       return 'Loaded: ' + s.models.map(function(m){ return m.name + (m.hidden?' (hidden)':''); }).join(', ') + '.';
     }
     if (/what.*rules?|current.*(?:settings?|setup|config)|clash.*settings?|what(?:'s| is) set up/.test(text)) {
@@ -13330,7 +13331,7 @@ function startApp() {
     }
     // Q&A: natural conversational ("any problems?", "what's wrong?", "status?")
     if (/(?:any|are\s+there)\s+(?:problems?|issues?|conflicts?|clashes?|collisions?)|what'?s\s+(?:wrong|happening|the\s+status|going\s+on)|status\s*\??$/.test(text)) {
-      if (!s.models.length) return 'No models loaded yet. Drag and drop IFC files to get started.';
+      if (!s.models.length) return 'No models loaded yet. Drop an IFC file to get started.';
       if (!s.clashes.length) return s.models.length + ' model' + (s.models.length>1?'s':'') + ' loaded, no clashes detected yet. Say "run detection" to check.';
       var op2 = s.clashes.filter(function(c){return c.status==='open';}).length;
       return s.clashes.length + ' clashes found (' + op2 + ' open). Say "summary" for a full breakdown.';
@@ -13490,7 +13491,7 @@ function startApp() {
       return resolveModelSingle(hint.trim());
     }
     function runSetup(rawA, rawB) {
-      if (!s.models.length) return 'No models loaded yet — drop IFC files onto the viewer first.';
+      if (!s.models.length) return 'No models loaded yet. Drop an IFC file to get started.';
       var mA = resolveModel(rawA), mB = resolveModel(rawB);
       var idA = mA ? mA.id : 'all';
       var idB = mB ? mB.id : 'all';
@@ -14250,7 +14251,7 @@ function startApp() {
     window._ccNLOpen = function(){ if(window._ccDispatch) window._ccDispatch({t:'TAB',v:'ai'}); else setOpen(true); if(inputRef.current) setTimeout(function(){inputRef.current&&inputRef.current.focus();},50); };
     window._ccNLSetInput = function(text){ setInput(text); };
     window._ccNLSetStatus = function(status, back){ setLLMStatus(status); setBackend(back); };
-    var stMsgs = useState([{role:'assistant', text:'Welcome to ClashControl! I\'m your AI assistant — I can help you load models, run clash detection, adjust the view, and more. Pick one of the options below to get started, or type any command in plain English.'}]);
+    var stMsgs = useState([{role:'assistant', text:'Hey! Type what you need, or pick a suggestion below. I work best with short commands like "check walls vs pipes" or "group by storey".'}]);
     var msgs = stMsgs[0], setMsgs = stMsgs[1];
     var stInput = useState(''), input = stInput[0], setInput = stInput[1];
     var stLoading = useState(false), loading = stLoading[0], setLoading = stLoading[1];
@@ -14277,7 +14278,7 @@ function startApp() {
     useEffect(function() { if (!s.detecting) { setDetectPct(0); window._ccDetectProgress = null; } }, [s.detecting]);
     // Clear messages on project switch
     useEffect(function() {
-      function onSwitch() { setMsgs([{role:'assistant', text:'New project loaded. How can I help?'}]); }
+      function onSwitch() { setMsgs([{role:'assistant', text:'New project loaded. What do you need?'}]); }
       window.addEventListener('cc-project-switch', onSwitch);
       return function(){ window.removeEventListener('cc-project-switch', onSwitch); };
     }, []);
@@ -14698,6 +14699,10 @@ function startApp() {
         background:'none', border:'none', cursor:'pointer',
         color:mutedCol, fontSize:'1.26rem', lineHeight:1, padding:'0 .1rem'
       }}>×</button>`}
+      ${isDocked && html`<button onClick=${function(){ if(window._ccDispatch) window._ccDispatch({t:'TAB',v:null}); }} class="cc-hide-desktop" style=${{
+        background:'none', border:'none', cursor:'pointer',
+        color:mutedCol, fontSize:'1.26rem', lineHeight:1, padding:'0 .1rem'
+      }}>×</button>`}
     </div>`;
 
     var ollamaTipBar = showOllamaTip && backend !== 'ollama' ? html`<div style=${{
@@ -14767,16 +14772,16 @@ function startApp() {
           var hasClashes = s.clashes && s.clashes.length > 0;
           var hasClassified = hasClashes && s.clashes.some(function(c){return c.aiSeverity;});
           if (!hasModels) {
-            suggestions = ['What can you do?', 'Start tour', 'Help'];
+            suggestions = ['Load an IFC file', 'Start tour', 'What can you do?'];
           } else if (!hasClashes) {
             var names = s.models.map(function(m){return m.name||'model';});
             if (names.length >= 2) suggestions.push('Check '+names[0]+' vs '+names[1]);
             else suggestions.push('Run clash detection');
-            suggestions = suggestions.concat(['Find near misses', 'Show duplicates', 'Help']);
+            suggestions = suggestions.concat(['Find near misses', 'Show duplicates']);
           } else if (hasClassified) {
-            suggestions = ['Group by severity', 'Show only critical', 'Show worst floor', 'Export to BCF', 'Help'];
+            suggestions = ['Group by severity', 'Show only critical', 'Worst floor', 'Export BCF'];
           } else {
-            suggestions = ['Group by type', 'Show hard clashes', 'Export to BCF', 'Help'];
+            suggestions = ['Group by type', 'Show hard clashes', 'Export BCF', 'Summary'];
           }
           return html`<div style=${{display:'flex',flexDirection:'column',gap:'.2rem',marginTop:'.25rem'}}>
             ${suggestions.map(function(sug){return html`<div key=${sug} onClick=${function(){
