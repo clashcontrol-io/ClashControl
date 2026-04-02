@@ -4281,6 +4281,9 @@ function startApp() {
       S._unghostAll = unghostAll;
       _ghostOthers = ghostOthers;
       _unghostAll = unghostAll;
+      // Expose for addons (e.g. Revit Bridge selection sync)
+      window._ghostOthers = ghostOthers;
+      window._unghostAll = unghostAll;
 
       // Temporary hide: make meshes with given expressIds invisible
       var _tempHiddenMeshes = [];
@@ -4564,6 +4567,10 @@ function startApp() {
         var sz = box.getSize(new THREE.Vector3());
         _flyTo([ctr.x, ctr.y, ctr.z], _zoomDist(Math.max(sz.x,sz.y,sz.z)));
       };
+
+      // Expose for addons (e.g. Revit Bridge selection sync)
+      window._highlightById = _highlightById;
+      window._flyToElements = _flyToElements;
 
       // ── Section Box helper ──
       _getSectionBoxFromScene = function(){
@@ -5347,8 +5354,8 @@ function startApp() {
             // Add LOD box proxies to scene group
             (model.elements||[]).forEach(function(el){ if(el._lodProxy) grp.add(el._lodProxy); });
             S.mg.add(grp); S.map[model.id] = grp;
-            // Auto-fit view when first model loads
-            if(Object.keys(S.map).length===1 && _resetView) _resetView();
+            // Auto-fit view when first model loads (skip on model replacement to preserve camera)
+            if(!needsSwap && Object.keys(S.map).length===1 && _resetView) _resetView();
           }
         }
         if(S.map[model.id]) {
