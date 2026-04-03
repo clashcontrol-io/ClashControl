@@ -29,17 +29,20 @@
     return 'linux';
   }
 
-  function _stopPolling() { if (_pollTimer) { clearInterval(_pollTimer); _pollTimer = null; } }
+  function _stopPolling() { if (_pollTimer) { clearInterval(_pollTimer); _pollTimer = null; console.log('[LocalEngine] Polling stopped'); } }
 
   function _startPolling(d) {
     _stopPolling();
     var attempts = 0;
+    console.log('[LocalEngine] Start polling for server at ' + _localEngineUrl);
     _pollTimer = setInterval(function() {
       attempts++;
-      if (attempts > 60) { _stopPolling(); d({t:'UPD_LOCAL_ENGINE', u:{installing:false}}); return; }
+      console.log('[LocalEngine] Poll attempt ' + attempts + '/60');
+      if (attempts > 60) { _stopPolling(); d({t:'UPD_LOCAL_ENGINE', u:{installing:false}}); console.log('[LocalEngine] Gave up after 60 attempts'); return; }
       _checkLocalEngine(null).then(function(ready) {
         if (ready) {
           _stopPolling();
+          console.log('[LocalEngine] Server found! Auto-activating.');
           d({t:'UPD_LOCAL_ENGINE', u:{available:true, installing:false, active:true}});
           try { localStorage.setItem('cc_local_engine','1'); } catch(e){}
         }
@@ -65,7 +68,8 @@
     },
 
     init: function(dispatch) {
-      try { if (localStorage.getItem('cc_local_engine') === '1') dispatch({t:'UPD_LOCAL_ENGINE', u:{active:true}}); } catch(e){}
+      console.log('[LocalEngine] Addon init');
+      try { if (localStorage.getItem('cc_local_engine') === '1') { console.log('[LocalEngine] Previously active, restoring'); dispatch({t:'UPD_LOCAL_ENGINE', u:{active:true}}); } } catch(e){}
       _checkLocalEngine(dispatch);
     },
 
@@ -148,11 +152,14 @@
 
   function _checkLocalEngine(d) {
     if (d) d({t:'UPD_LOCAL_ENGINE', u:{checking:true}});
+    var url = _localEngineUrl + '/status';
+    console.log('[LocalEngine] Checking ' + url);
     var fetchOpts = {method:'GET'};
     try { if (AbortSignal.timeout) fetchOpts.signal = AbortSignal.timeout(2000); } catch(e){}
-    return fetch(_localEngineUrl + '/status', fetchOpts)
-      .then(function(r){ return r.json(); })
+    return fetch(url, fetchOpts)
+      .then(function(r){ console.log('[LocalEngine] /status response:', r.status); return r.json(); })
       .then(function(j){
+        console.log('[LocalEngine] /status JSON:', JSON.stringify(j));
         var ready = j && j.status === 'ready';
         _engineVersion = j && j.version || null;
         _engineCores = j && j.cores || null;
@@ -163,7 +170,8 @@
         }
         return ready;
       })
-      .catch(function(){
+      .catch(function(err){
+        console.log('[LocalEngine] /status failed:', err.message || err);
         if (d) d({t:'UPD_LOCAL_ENGINE', u:{available:false, checking:false}});
         return false;
       });
