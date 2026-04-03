@@ -208,7 +208,11 @@
     @media(max-width:768px){.cc-header{display:flex!important}}
     /* Hide-on-desktop utility (shown only on mobile) */
     .cc-hide-desktop{display:none!important}
-    @media(max-width:768px){.cc-hide-desktop{display:inline-block!important}}
+    @media(max-width:768px){
+      .cc-hide-desktop{display:inline-block!important}
+      /* On mobile, AI chat panel container is invisible — NLCommandPanel uses floating mode */
+      .cc-ai-panel{width:0!important;overflow:visible!important;border:none!important;flex:0 0 0!important;padding:0!important;background:transparent!important}
+    }
     /* Mobile nav hidden by default, shown via media query */
     .cc-mobile-nav{display:none;position:fixed;bottom:0;left:0;right:0;z-index:1050;
       background:var(--bg-primary);border-top:1px solid var(--border-subtle);
@@ -14247,8 +14251,11 @@ function startApp() {
 
   function NLCommandPanel(props) {
     var s = props.s, d = props.d;
-    var stOpen = useState(false), open = stOpen[0], setOpen = stOpen[1];
-    window._ccNLOpen = function(){ if(window._ccDispatch) window._ccDispatch({t:'TAB',v:'ai'}); else setOpen(true); if(inputRef.current) setTimeout(function(){inputRef.current&&inputRef.current.focus();},50); };
+    var stOpen = useState(false), open = stOpen[0], _setOpenRaw = stOpen[1];
+    function setOpen(v) { _setOpenRaw(v); window._ccNLOpenState = !!v; }
+    window._ccNLOpen = function(){ setOpen(true); if(inputRef.current) setTimeout(function(){inputRef.current&&inputRef.current.focus();},50); };
+    window._ccNLClose = function(){ setOpen(false); };
+    window._ccNLIsOpen = function(){ return open; };
     window._ccNLSetInput = function(text){ setInput(text); };
     window._ccNLSetStatus = function(status, back){ setLLMStatus(status); setBackend(back); };
     var stMsgs = useState([{role:'assistant', text:'Hey! Type what you need, or pick a suggestion below. I work best with short commands like "check walls vs pipes" or "group by storey".'}]);
@@ -14628,7 +14635,8 @@ function startApp() {
     var aiBubbleBg = 'var(--card-bg)';
 
     var isDetecting = s.detecting;
-    var isDocked = !!props.docked;
+    var _isMobile = window.innerWidth <= 768;
+    var isDocked = !!props.docked && !_isMobile;
     var _cloudConfigured = s.prefs && s.prefs.nlApiKey && s.prefs.nlProvider !== 'ollama_only' && s.prefs.nlProvider !== 'browser_only';
     var _cloudName = _cloudConfigured ? ({anthropic:'Claude',openai:'GPT',google:'Gemini'}[s.prefs.nlProvider]||'Cloud API') : null;
     var backendLabel = window._ccTourActive ? 'AI loaded' : _cloudConfigured ? _cloudName : backend === 'ollama' ? 'Ollama (' + _ollamaModel + ')' : backend === 'browser' ? 'In-browser (0.5B)' : null;
@@ -14696,10 +14704,6 @@ function startApp() {
         ${s.trainingMode?'Training On':'Training'}
       </button>
       ${!isDocked && html`<button onClick=${function(){ setOpen(false); }} style=${{
-        background:'none', border:'none', cursor:'pointer',
-        color:mutedCol, fontSize:'1.26rem', lineHeight:1, padding:'0 .1rem'
-      }}>×</button>`}
-      ${isDocked && html`<button onClick=${function(){ if(window._ccDispatch) window._ccDispatch({t:'TAB',v:null}); }} class="cc-hide-desktop" style=${{
         background:'none', border:'none', cursor:'pointer',
         color:mutedCol, fontSize:'1.26rem', lineHeight:1, padding:'0 .1rem'
       }}>×</button>`}
@@ -15895,7 +15899,7 @@ function startApp() {
     var widthSt=useState(320), panelW=widthSt[0], setPanelW=widthSt[1];
     var dragRef=useRef(null);
     var onResizeDown = _makeResizeHandler(dragRef, setPanelW, 250, 600, true);
-    return html`<div class="cc-side-panel" style=${{
+    return html`<div class="cc-side-panel cc-ai-panel" style=${{
       width:panelW,flexShrink:0,display:'flex',flexDirection:'column',overflow:'hidden',
       background:'var(--bg-primary)',borderLeft:'1px solid var(--border-subtle)',position:'relative'
     }}>
@@ -16187,7 +16191,17 @@ function startApp() {
     var issueN=s.issues.filter(function(i){var st=i.status||'open';return st!=='resolved'&&st!=='closed';}).length;
     function navBtn(id, svgPath, label, badge) {
       var active=s.tab===id;
-      return html`<button class=${active?'active':''} onClick=${function(){d({t:A.TAB,v:s.tab===id?null:id});}}>
+      return html`<button class=${active?'active':''} onClick=${function(){
+        if (id==='ai') {
+          // AI Chat: toggle the floating overlay instead of opening a side panel
+          if (window._ccNLOpenState) { window._ccNLClose(); }
+          else { if (s.tab) d({t:A.TAB,v:null}); window._ccNLOpen(); }
+          return;
+        }
+        // Close floating chat when switching to a regular tab
+        if (window._ccNLOpenState && window._ccNLClose) window._ccNLClose();
+        d({t:A.TAB,v:s.tab===id?null:id});
+      }}>
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" dangerouslySetInnerHTML=${{__html:svgPath}}></svg>
         ${badge>0 && html`<span style=${{position:'absolute',top:2,right:2,background:'#ef4444',color:'#fff',
           fontSize:'0.66rem',fontWeight:600,padding:'0 3px',borderRadius:99,lineHeight:1.4,minWidth:12,textAlign:'center'}}>${badge>99?'99+':badge}</span>`}
@@ -16199,7 +16213,13 @@ function startApp() {
       ${navBtn('clashes','<path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/>','Clashes',clashN)}
       ${navBtn('issues','<path d="M4 15s1-1 4-1 5 2 8 2 4-1 4-1V3s-1 1-4 1-5-2-8-2-4 1-4 1z"/><line x1="4" y1="22" x2="4" y2="15"/>','Issues',issueN)}
       ${navBtn('navigator','<rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/>','Navigator',0)}
-      ${navBtn('ai','<path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>','AI Chat',0)}
+      ${html`<button class=${window._ccNLOpenState?'active':''} onClick=${function(){
+        if (window._ccNLOpenState) { window._ccNLClose(); }
+        else { if (s.tab) d({t:A.TAB,v:null}); window._ccNLOpen(); }
+      }}>
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+        <span>AI Chat</span>
+      </button>`}
     </nav>`;
   }
 
