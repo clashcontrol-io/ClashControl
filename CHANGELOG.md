@@ -1,5 +1,8 @@
 # Changelog
 
+## v4.9.0 (2026-04-03)
+- fix: persist local engine state across page refresh
+
 ## v4.8.1 (2026-04-03)
 - revert: restore download buttons for local engine install
 
