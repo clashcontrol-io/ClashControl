@@ -107,32 +107,34 @@
             <span style=${{color:'#eab308'}}>Waiting for engine to start\u2026</span>
           </div>
           <div style=${{fontSize:'0.65rem',color:'var(--text-faint)',lineHeight:1.6}}>
-            Run <code style=${{background:'var(--tag-bg)',padding:'1px 4px',borderRadius:3}}>clashcontrol-engine</code> in your terminal. ClashControl will connect automatically.
+            Run the downloaded file to start the engine. ClashControl will connect automatically.
           </div>
           <button onClick=${function(){_stopPolling();d({t:'UPD_LOCAL_ENGINE',u:{installing:false}});}}
             style=${{marginTop:'.3rem',padding:'.2rem .5rem',borderRadius:5,fontSize:'0.69rem',cursor:'pointer',border:'1px solid var(--border)',background:'none',color:'var(--text-faint)',fontFamily:'inherit'}}>Cancel</button>
         </div>`
 
         : html`<div style=${{fontSize:'0.72rem',lineHeight:1.7}}>
-          <div style=${{marginBottom:'.4rem'}}>
-            <div style=${{fontSize:'0.69rem',color:'var(--text-muted)',marginBottom:'.25rem'}}>Install with pip (Python 3.8+):</div>
-            <code onClick=${function(e){if(navigator.clipboard)navigator.clipboard.writeText('pip install clashcontrol-engine');e.currentTarget.style.borderColor='var(--accent)';setTimeout(function(){e.currentTarget.style.borderColor='var(--border)';},800);}}
-              style=${{display:'block',fontSize:'0.72rem',background:'var(--tag-bg)',padding:'.35rem .5rem',borderRadius:5,userSelect:'all',cursor:'copy',border:'1px solid var(--border)',transition:'border-color .2s'}}>pip install clashcontrol-engine</code>
+          <a href=${dl.url} download onClick=${function(){d({t:'UPD_LOCAL_ENGINE',u:{installing:true}});_startPolling(d);}}
+            style=${{display:'flex',alignItems:'center',justifyContent:'center',gap:'.4rem',padding:'.45rem .7rem',borderRadius:6,fontSize:'0.78rem',fontWeight:600,cursor:'pointer',border:'none',
+              background:'var(--accent)',color:'#fff',fontFamily:'inherit',textDecoration:'none',marginBottom:'.4rem'}}>
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/>
+            </svg> Download for ${dl.label}</a>
+          <div style=${{fontSize:'0.63rem',color:'var(--text-faint)',textAlign:'center',marginBottom:'.4rem'}}>
+            Download, run the file, done. No install wizard needed.
           </div>
-          <div style=${{marginBottom:'.35rem'}}>
-            <div style=${{fontSize:'0.69rem',color:'var(--text-muted)',marginBottom:'.25rem'}}>Then run:</div>
-            <code onClick=${function(e){if(navigator.clipboard)navigator.clipboard.writeText('clashcontrol-engine');e.currentTarget.style.borderColor='var(--accent)';setTimeout(function(){e.currentTarget.style.borderColor='var(--border)';},800);}}
-              style=${{display:'block',fontSize:'0.72rem',background:'var(--tag-bg)',padding:'.35rem .5rem',borderRadius:5,userSelect:'all',cursor:'copy',border:'1px solid var(--border)',transition:'border-color .2s'}}>clashcontrol-engine</code>
+          <div style=${{display:'flex',gap:'.3rem',alignItems:'center',flexWrap:'wrap',fontSize:'0.63rem',color:'var(--text-faint)'}}>
+            ${os!=='win'&&html`<a href=${_downloads.win.url} download style=${{color:'var(--text-faint)',textDecoration:'underline'}}>Windows</a>`}
+            ${os!=='mac'&&html`<a href=${_downloads.mac.url} download style=${{color:'var(--text-faint)',textDecoration:'underline'}}>macOS</a>`}
+            ${os!=='linux'&&html`<a href=${_downloads.linux.url} download style=${{color:'var(--text-faint)',textDecoration:'underline'}}>Linux</a>`}
+            <span style=${{margin:'0 .2rem'}}>\u00b7</span>
+            Or: <code style=${{fontSize:'0.63rem',background:'var(--tag-bg)',padding:'1px 4px',borderRadius:3}}>pip install clashcontrol-engine</code>
           </div>
-          <button onClick=${function(){d({t:'UPD_LOCAL_ENGINE',u:{installing:true}});_startPolling(d);}}
-            style=${{display:'flex',alignItems:'center',justifyContent:'center',gap:'.4rem',width:'100%',padding:'.4rem .7rem',borderRadius:6,fontSize:'0.75rem',fontWeight:600,cursor:'pointer',border:'none',
-              background:'var(--accent)',color:'#fff',fontFamily:'inherit',marginBottom:'.35rem'}}>
-            Waiting for connection\u2026</button>
-          <div style=${{display:'flex',gap:'.3rem',alignItems:'center',justifyContent:'space-between',fontSize:'0.63rem',color:'var(--text-faint)'}}>
+          <div style=${{display:'flex',gap:'.3rem',alignItems:'center',justifyContent:'space-between',marginTop:'.4rem'}}>
             <a href="https://github.com/clashcontrol-io/ClashControlEngine" target="_blank" rel="noopener"
-              style=${{color:'var(--accent)',textDecoration:'none'}}>GitHub repo</a>
+              style=${{fontSize:'0.63rem',color:'var(--accent)',textDecoration:'none'}}>GitHub repo</a>
             <button onClick=${function(){_checkLocalEngine(d);}} disabled=${le.checking}
-              style=${{padding:'.2rem .45rem',borderRadius:5,fontSize:'0.63rem',cursor:'pointer',
+              style=${{padding:'.25rem .5rem',borderRadius:5,fontSize:'0.69rem',fontWeight:600,cursor:'pointer',
                 border:'1px solid var(--border)',background:'none',color:'var(--text-faint)',fontFamily:'inherit',
                 opacity:le.checking?0.5:1}}>
               ${le.checking?'Checking\u2026':'Already running? Check'}</button>
