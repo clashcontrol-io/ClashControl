@@ -268,9 +268,6 @@ function startApp() {
     try { if(window.goatcounter && window.goatcounter.count) window.goatcounter.count({path:'event/'+name, title:title||name, event:true}); } catch(e){}
   }
 
-  // ── AI Data Collection (Phase 0.5) ──
-  var CLASH_DATA_ENDPOINT = 'https://your-server.com/api/clash-data';
-  var NL_DATA_ENDPOINT = 'https://your-server.com/api/nl-data';
   window._ccBeaconNLSentIdx = 0; // NL records sent up to this index (reset each session)
 
   // Check CDN deps loaded
@@ -12004,7 +12001,7 @@ function startApp() {
         <div style=${TROW}>
           <div><div style=${TLBL}>Default max gap</div><div style=${TSUB}>Initial max gap distance for near misses (mm)</div></div>
           <input type="number" min="0" max="2000" step="5" value=${p.defaultMaxGap||50}
-            onChange=${function(e){d({t:A.UPD_PREFS,u:{defaultMaxGap:+e.target.value}});d({t:A.UPD_RULES,u:{maxGap:+e.target.value}});}}
+            onChange=${function(e){d({t:A.UPD_PREFS,u:{defaultMaxGap:+e.target.value}});}}
             style=${{...S_INPUT,width:70,textAlign:'center'}} />
         </div>
         <div style=${TROW}>
@@ -12016,69 +12013,63 @@ function startApp() {
         <div style=${TROW}>
           <div style=${{flex:1}}>
             <div style=${TLBL}>Your name</div>
-            <div style=${TSUB}>Shown in clash history to identify who made changes</div>
+            <div style=${TSUB}>Shown in shared issues to identify who made changes</div>
           </div>
           <input type="text" value=${_ccChangelogUser} placeholder="Your name"
             onInput=${function(e){_ccChangelogUser=e.target.value;try{localStorage.setItem('cc_username',e.target.value);}catch(ex){}}}
             style=${{...S_INPUT,width:140,fontSize:'0.8rem',textAlign:'right'}} />
         </div>
         ${function(){
-          var sp = props.s ? props.s.sharedProject : {};
-          var enabled = sp && sp.enabled;
+          var spId = null;
+          try { spId = localStorage.getItem('cc_sharedProjectId'); } catch(e) {}
           return html`<div>
-            <div style=${TROW}>
+            ${spId && html`<div style=${TROW}>
               <div>
-                <div style=${TLBL}>Shared working folder</div>
-                <div style=${TSUB}>${enabled
-                  ? 'Connected to: '+sp.folderName+'/'+sp.fileName
-                  : 'Link a shared folder (OneDrive, Dropbox, NAS) to sync clashes and issues with your team. No server needed.'}</div>
-                ${enabled && sp.lastSync && html`<div style=${{fontSize:'0.69rem',color:'var(--text-faint)',marginTop:'.1rem'}}>
-                  Last sync: ${new Date(sp.lastSync).toLocaleTimeString()}
-                  ${sp.syncing ? ' (syncing...)' : ''}
-                </div>`}
+                <div style=${TLBL}>Project Key</div>
+                <div style=${TSUB}>Share this key with your team so they can sync issues.</div>
               </div>
-              ${!enabled && html`<button onClick=${function(){_pickSharedFolder(d);}}
-                style=${{...S_BTN,padding:'.35rem .7rem',background:'var(--accent)',color:'#fff',fontSize:'0.8rem',fontWeight:600,borderRadius:6,whiteSpace:'nowrap',flexShrink:0}}>
-                Link Folder</button>`}
-              ${enabled && html`<div style=${{display:'flex',gap:'.3rem',flexShrink:0}}>
-                <button onClick=${function(){_syncSharedProject(d);}}
-                  disabled=${sp.syncing}
-                  style=${{...S_BTN,padding:'.35rem .5rem',background:'var(--bg-secondary)',color:'var(--text-secondary)',fontSize:'0.75rem',border:'1px solid var(--border)',borderRadius:6}}>
-                  ${sp.syncing ? 'Syncing...' : 'Sync now'}</button>
-                <button onClick=${function(){_disconnectShared(d);}}
-                  style=${{...S_BTN,padding:'.35rem .5rem',background:'var(--bg-secondary)',color:'#f87171',fontSize:'0.75rem',border:'1px solid #ef444444',borderRadius:6}}>
-                  Unlink</button>
-              </div>`}
-            </div>
-            ${!window.showDirectoryPicker && html`<div style=${{fontSize:'0.69rem',color:'#eab308',padding:'.3rem 0'}}>
-              File System Access API not available. Use Chrome or Edge for shared working.
+              <div style=${{display:'flex',gap:'.3rem',alignItems:'center',flexShrink:0}}>
+                <code style=${{fontSize:'0.78rem',background:'var(--bg-secondary)',padding:'.2rem .5rem',borderRadius:4,fontFamily:'monospace',color:'var(--accent)'}}>${spId}</code>
+                <button onClick=${function(){navigator.clipboard.writeText(spId);}}
+                  style=${{...S_BTN,padding:'.3rem .5rem',background:'var(--bg-secondary)',color:'var(--text-secondary)',fontSize:'0.72rem',border:'1px solid var(--border)',borderRadius:6}}>Copy</button>
+                <button onClick=${function(){try{localStorage.removeItem('cc_sharedProjectId');localStorage.removeItem('cc_sharedProjectName');}catch(e){}d({t:A.UPD_PREFS,u:{_sharedRefresh:Date.now()}});}}
+                  style=${{...S_BTN,padding:'.3rem .5rem',background:'var(--bg-secondary)',color:'#f87171',fontSize:'0.72rem',border:'1px solid #ef444444',borderRadius:6}}>Leave</button>
+              </div>
+            </div>`}
+            ${!spId && html`<div style=${TROW}>
+              <div>
+                <div style=${TLBL}>Join a shared project</div>
+                <div style=${TSUB}>Enter a project key to sync clashes and issues with your team. No account needed.</div>
+              </div>
+              <div style=${{display:'flex',gap:'.3rem',flexShrink:0}}>
+                <input type="text" placeholder="e.g. MEP-abc123" id="cc-join-key"
+                  style=${{...S_INPUT,width:120,fontSize:'0.78rem',fontFamily:'monospace'}} />
+                <button onClick=${function(){
+                  var key = document.getElementById('cc-join-key').value.trim();
+                  if (!key) return;
+                  fetch('/api/project?id='+encodeURIComponent(key))
+                    .then(function(r){if(!r.ok)throw new Error();return r.json();})
+                    .then(function(data){
+                      try{localStorage.setItem('cc_sharedProjectId',key);localStorage.setItem('cc_sharedProjectName',data.project.name);}catch(e){}
+                      d({t:A.UPD_PREFS,u:{_sharedRefresh:Date.now()}});
+                    })
+                    .catch(function(){alert('Project not found. Check the key and try again.');});
+                }}
+                  style=${{...S_BTN,padding:'.3rem .6rem',background:'var(--accent)',color:'#fff',fontSize:'0.78rem',fontWeight:600,borderRadius:6,whiteSpace:'nowrap'}}>Join</button>
+              </div>
             </div>`}
           </div>`;
         }()}
 
         <div style=${SEC}>AI / Natural Language</div>
         <div style=${TROW}>
-          <div><div style=${TLBL}>Use Ollama (local AI)</div><div style=${TSUB}>Connect to a locally running Ollama instance for faster, offline NL commands. Requires Ollama installed and a model pulled (e.g. qwen2.5:7b).</div></div>
-          <${Toggle} on=${!!p.ollamaEnabled} onToggle=${tog('ollamaEnabled')} />
-        </div>
-        <div style=${{display:'flex',gap:'.5rem',padding:'.4rem 0'}}>
-          <div style=${{flex:1}}><label style=${LBL}>NL Provider</label>
-            <select value=${p.nlProvider||'auto'} onChange=${sel('nlProvider')} style=${S_INPUT}>
-              <option value="auto">Auto</option>
-              <option value="anthropic">Anthropic (Claude)</option>
-              <option value="openai">OpenAI</option>
-              <option value="google">Google (Gemini)</option>
-              <option value="ollama_only">Ollama only</option>
-              <option value="browser_only">Browser only</option>
-            </select></div>
-          <div style=${{flex:2}}><label style=${LBL}>API Key</label>
-            <input type="password" value=${p.nlApiKey||''} placeholder="sk-... or AIza..."
-              onInput=${function(e){var v=e.target.value;d({t:A.UPD_PREFS,u:{nlApiKey:v}});try{localStorage.setItem('cc_nlApiKey',v);}catch(x){}}}
-              style=${Object.assign({},S_INPUT,{fontFamily:'monospace',fontSize:'0.72rem'})} /></div>
-        </div>
-        <div style=${{fontSize:'0.69rem',color:'var(--text-faint)',padding:'0 0 .3rem',lineHeight:1.4}}>
-          Cloud API enables more capable NL commands. Your key is stored locally and never sent to ClashControl servers.
-          ${p.nlProvider !== 'ollama_only' && p.nlProvider !== 'browser_only' && p.nlApiKey && html`<span style=${{color:'#4ade80',marginLeft:'.3rem'}}>✓ Key set</span>`}
+          <div>
+            <div style=${TLBL}>AI Status</div>
+            <div style=${TSUB}>${_serverAIAvailable
+              ? 'Connected — powered by Gemma 4 on ClashControl servers. No setup needed.'
+              : 'Offline — basic regex commands still work. Server may be starting up.'}</div>
+          </div>
+          <span style=${{fontSize:'0.8rem',color:_serverAIAvailable?'#4ade80':'#f87171',flexShrink:0}}>${_serverAIAvailable ? '● Connected' : '○ Offline'}</span>
         </div>
         <div style=${{padding:'.3rem 0 .4rem',display:'flex',alignItems:'center',gap:'.4rem'}}>
           <span style=${{fontSize:'0.72rem',color:'var(--text-faint)'}}>♥</span>
@@ -15178,94 +15169,63 @@ function startApp() {
 
   // ── Training Mode Info Popup ──────────────────────────────────
 
-  // ── sendBeacon auto-send ──────────────────────────────────────
+  // ── Training data sender (via /api/training) ────────────────────
+  function _sendTrainingData(payload) {
+    try {
+      if (localStorage.getItem('cc_data_consent') !== 'granted') return;
+    } catch(e) { return; }
+    fetch('/api/training', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-CC-Consent': 'true' },
+      body: JSON.stringify(payload)
+    }).then(function(resp) {
+      if (resp.ok) window.dispatchEvent(new Event('cc-training-sent'));
+    }).catch(function() { /* silent — training data is best-effort */ });
+  }
+
   function _beaconSendTrainingData() {
     try {
-      if(localStorage.getItem('cc_data_consent')!=='granted') return;
-    } catch(e){ return; }
+      if (localStorage.getItem('cc_data_consent') !== 'granted') return;
+    } catch(e) { return; }
     var store = _getClashTrainStore();
     var keys = Object.keys(store);
-    if(!keys.length) return;
-    var records = keys.map(function(k) { return Object.assign({id:k}, store[k]); });
-    var payload = {type:'clash_training', version:'1.0', app_version:CC_VERSION.v, count:records.length, records:records};
-    var json = JSON.stringify(payload);
+    if (!keys.length) return;
+    var records = keys.map(function(k) { return Object.assign({id: k}, store[k]); });
     _clearClashTrainStore();
-    var fd = new URLSearchParams();
-    fd.append('entry.1252313993', json);
-    var _gf = ['https://docs','google','com/forms/d/e/','1FAIpQLSc51xdQw_8JY2lN1aw8OZOT2Jzdx42m','vilJzqMGVw4tXo7wtA'];
-    var baseUrl = _gf[0]+'.'+_gf[1]+'.'+_gf[2]+_gf[3]+_gf[4];
-    fetch(baseUrl+'/formResponse',{method:'POST',body:fd}).then(function(resp){
-      if(resp.ok||resp.status===0) window.dispatchEvent(new Event('cc-training-sent'));
-    }).catch(function(){
-      fetch(baseUrl+'/formResponse',{method:'POST',mode:'no-cors',body:fd}).then(function(){
-        window.dispatchEvent(new Event('cc-training-sent'));
-      }).catch(function(){});
+    records.forEach(function(r) {
+      _sendTrainingData({ type: 'clash_feedback', clashId: r.id, featureVector: r.fv, label: r.label,
+        labelSource: r.source || 'user', appVersion: CC_VERSION.v });
     });
   }
 
   function _beaconSendNLTrainingData(models) {
     try {
-      if(localStorage.getItem('cc_data_consent')!=='granted') return;
-    } catch(e){ return; }
+      if (localStorage.getItem('cc_data_consent') !== 'granted') return;
+    } catch(e) { return; }
     var store = _getNLTrainStore();
-    if(!store.length) return;
-    var records = store.map(function(r){
-      return {
-        input: _sanitizeNLInput(r.input||'', models),
-        matched: !!(r.output!=null),
-        action: r.meta&&r.meta.action||null,
-        path: r.meta&&r.meta.path||'unknown',
-        user_intent: r.meta&&r.meta.user_intent||null,
-        v: r.meta&&r.meta.v||'',
-        ts: r.meta&&r.meta.ts||0
-      };
-    });
-    var payload = {type:'nl_training', version:'1.0', app_version:CC_VERSION.v, count:records.length, records:records};
-    var json = JSON.stringify(payload);
-    // Clear BEFORE sending — ensures no re-sends even if fetch fails silently
+    if (!store.length) return;
     _clearNLTrainStore();
-    var fd = new URLSearchParams();
-    fd.append('entry.65932609', json);
-    var _gf = ['https://docs','google','com/forms/d/e/','1FAIpQLSc51xdQw_8JY2lN1aw8OZOT2Jzdx42m','vilJzqMGVw4tXo7wtA'];
-    var baseUrl = _gf[0]+'.'+_gf[1]+'.'+_gf[2]+_gf[3]+_gf[4];
-    fetch(baseUrl+'/formResponse',{method:'POST',body:fd}).then(function(resp){
-      if(resp.ok||resp.status===0) window.dispatchEvent(new Event('cc-training-sent'));
-    }).catch(function(){
-      fetch(baseUrl+'/formResponse',{method:'POST',mode:'no-cors',body:fd}).then(function(){
-        window.dispatchEvent(new Event('cc-training-sent'));
-      }).catch(function(){});
+    store.forEach(function(r) {
+      _sendTrainingData({ type: 'nl_command', input: _sanitizeNLInput(r.input || '', models),
+        matched: !!(r.output != null), action: r.meta && r.meta.action || null,
+        path: r.meta && r.meta.path || 'unknown', appVersion: CC_VERSION.v });
     });
   }
 
   function _beaconSendDetectionRuns() {
     try {
-      if(localStorage.getItem('cc_data_consent')!=='granted') return;
-    } catch(e){ return; }
+      if (localStorage.getItem('cc_data_consent') !== 'granted') return;
+    } catch(e) { return; }
     var runs = [];
-    try { runs = JSON.parse(localStorage.getItem('cc_detection_runs')||'[]'); } catch(e){ return; }
+    try { runs = JSON.parse(localStorage.getItem('cc_detection_runs') || '[]'); } catch(e) { return; }
     if (!runs.length) return;
-    // Slim payload: strip bulky clashFeatures/suppressedPairs to stay within form field limits
-    var slimRuns = runs.map(function(r){
-      var s = Object.assign({}, r);
-      delete s.clashFeatures;
-      delete s.suppressedPairs;
-      s.suppressedCount = r.suppressedCount || (r.suppressedPairs||[]).length;
-      return s;
-    });
-    var payload = {type:'detection_runs', version:'1.0', app_version:CC_VERSION.v, count:slimRuns.length, runs:slimRuns};
-    var json = JSON.stringify(payload);
-    try { localStorage.removeItem('cc_detection_runs'); } catch(e){}
+    try { localStorage.removeItem('cc_detection_runs'); } catch(e) {}
     window.dispatchEvent(new Event('cc-training-data-change'));
-    var fd = new URLSearchParams();
-    fd.append('entry.61454827', json);
-    var _gf = ['https://docs','google','com/forms/d/e/','1FAIpQLSc51xdQw_8JY2lN1aw8OZOT2Jzdx42m','vilJzqMGVw4tXo7wtA'];
-    var baseUrl = _gf[0]+'.'+_gf[1]+'.'+_gf[2]+_gf[3]+_gf[4];
-    fetch(baseUrl+'/formResponse',{method:'POST',body:fd}).then(function(resp){
-      if(resp.ok||resp.status===0) window.dispatchEvent(new Event('cc-training-sent'));
-    }).catch(function(){
-      fetch(baseUrl+'/formResponse',{method:'POST',mode:'no-cors',body:fd}).then(function(){
-        window.dispatchEvent(new Event('cc-training-sent'));
-      }).catch(function(){});
+    runs.forEach(function(r) {
+      _sendTrainingData({ type: 'detection_run', runId: r.id || '', modelCount: r.modelCount || 0,
+        clashCount: r.clashCount || 0, hardCount: r.hardCount || 0, softCount: r.softCount || 0,
+        duplicateCount: r.duplicateCount || 0, durationMs: r.durationMs || 0,
+        rules: r.rules || {}, appVersion: CC_VERSION.v });
     });
   }
 
