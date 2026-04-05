@@ -4091,15 +4091,10 @@ function startApp() {
   var _clearFoundElements = null;
   var _ghostOthers = null;
 
-  // ── NL Panel LLM state (Ollama preferred → in-browser fallback) ──
-  var _nlBackend = 'none'; // 'ollama' | 'browser' | 'none'
-  var _nlPipeline = null;
-  var _nlModelStatus = 'idle'; // 'idle'|'loading'|'ready'|'error'
-  var _nlModelProgress = 0;
-  var _nlModelError = '';
+  // ── NL Panel state ──
+  var _nlBackend = 'none'; // 'server' | 'none'
+  var _nlModelStatus = 'idle'; // 'idle'|'ready'|'error'
   var _nlModelListeners = [];
-  var _nlIdleTimer = null;
-  var _nlIdleTimeout = 5 * 60 * 1000; // 5 minutes
   var _unghostAll = null;
   var _sboxAroundElements = null;
   function Viewer(props) {
@@ -12922,180 +12917,44 @@ function startApp() {
   // Scope: clash setup, Q&A, result navigation, issue management, export.
   // Spatial interactions (measuring, section planes, camera) stay as traditional UI.
 
-  // ── Ollama detection ─────────────────────────────────────────────
-  var _ollamaAvailable = false;
-  var _ollamaModel = 'qwen2.5:7b';
-  var _ollamaChecked = false;
+  // ── Server AI health check ───────────────────────────────────────
+  var _serverAIAvailable = false;
 
-  function checkOllama() {
-    if (_ollamaChecked) return Promise.resolve(_ollamaAvailable);
-    return fetch('http://localhost:11434/api/tags', {method:'GET'})
+  function checkServerAI() {
+    return fetch('/api/health')
       .then(function(r){ return r.json(); })
       .then(function(data){
-        _ollamaChecked = true;
-        _ollamaAvailable = true;
-        // Check if our preferred model is available
-        var models = (data.models||[]).map(function(m){ return m.name||m.model||''; });
-        if (models.some(function(n){ return n.indexOf('qwen2.5') !== -1; })) _ollamaModel = models.find(function(n){ return n.indexOf('qwen2.5') !== -1; });
-        else if (models.some(function(n){ return n.indexOf('mistral') !== -1; })) _ollamaModel = models.find(function(n){ return n.indexOf('mistral') !== -1; });
-        else if (models.some(function(n){ return n.indexOf('llama') !== -1; })) _ollamaModel = models.find(function(n){ return n.indexOf('llama') !== -1; });
-        else if (models.length > 0) _ollamaModel = models[0];
-        _nlBackend = 'ollama';
-        _nlModelStatus = 'ready';
-        _nlModelListeners.forEach(function(cb){ cb('ready', 100); });
-        return true;
+        _serverAIAvailable = !!data.ai;
+        if (data.ai) {
+          _nlBackend = 'server';
+          _nlModelStatus = 'ready';
+          _nlModelListeners.forEach(function(cb){ cb('ready', 100); });
+        }
+        return data;
       })
       .catch(function(){
-        _ollamaChecked = true;
-        _ollamaAvailable = false;
-        return false;
+        _serverAIAvailable = false;
+        return { ai: false, db: false };
       });
   }
 
-  function callOllama(systemPrompt, userMsg) {
-    return fetch('http://localhost:11434/api/chat', {
+  // ── Server NL call ──────────────────────────────────────────────
+  function callServerNL(command, context, replyContext) {
+    var body = { command: command, context: context };
+    if (replyContext) body.replyContext = replyContext;
+    return fetch('/api/nl', {
       method: 'POST',
-      headers: {'Content-Type':'application/json'},
-      body: JSON.stringify({
-        model: _ollamaModel,
-        messages: [
-          {role:'system', content:systemPrompt},
-          {role:'user', content:userMsg}
-        ],
-        stream: false,
-        options: {temperature:0, num_predict:150}
-      })
-    }).then(function(r){ return r.json(); })
-      .then(function(data){ return (data.message && data.message.content) || null; });
-  }
-
-  // ── Cloud API for NL (Anthropic / OpenAI / Google) ────────────
-  function callCloudNL(systemPrompt, userMsg, provider, apiKey) {
-    if (!apiKey) return Promise.reject(new Error('No API key'));
-    var p = (provider || 'anthropic').toLowerCase();
-    var url, headers, body, extract;
-    if (p === 'anthropic') {
-      url = 'https://api.anthropic.com/v1/messages';
-      headers = {'Content-Type':'application/json', 'x-api-key':apiKey, 'anthropic-version':'2023-06-01', 'anthropic-dangerous-direct-browser-access':'true'};
-      body = JSON.stringify({model:'claude-haiku-4-5-20251001', max_tokens:200, system:systemPrompt, messages:[{role:'user',content:userMsg}]});
-      extract = function(d){ return d.content && d.content[0] && d.content[0].text || null; };
-    } else if (p === 'openai') {
-      url = 'https://api.openai.com/v1/chat/completions';
-      headers = {'Content-Type':'application/json', 'Authorization':'Bearer '+apiKey};
-      body = JSON.stringify({model:'gpt-4o-mini', max_tokens:200, messages:[{role:'system',content:systemPrompt},{role:'user',content:userMsg}]});
-      extract = function(d){ return d.choices && d.choices[0] && d.choices[0].message && d.choices[0].message.content || null; };
-    } else if (p === 'google') {
-      url = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key='+apiKey;
-      headers = {'Content-Type':'application/json'};
-      body = JSON.stringify({contents:[{parts:[{text:systemPrompt+'\n\nUser: '+userMsg}]}], generationConfig:{maxOutputTokens:200}});
-      extract = function(d){ return d.candidates && d.candidates[0] && d.candidates[0].content && d.candidates[0].content.parts && d.candidates[0].content.parts[0] && d.candidates[0].content.parts[0].text || null; };
-    } else {
-      return Promise.reject(new Error('Unknown provider: '+p));
-    }
-    return fetch(url, {method:'POST', headers:headers, body:body})
-      .then(function(r){ if (!r.ok) throw new Error('Cloud API '+r.status); return r.json(); })
-      .then(extract);
-  }
-
-  // ── In-browser LLM (fallback when Ollama not available) ────────
-  function getNLPipeline() {
-    if (_nlPipeline) return Promise.resolve(_nlPipeline);
-    if (_nlModelStatus === 'loading') return new Promise(function(res, rej) {
-      _nlModelListeners.push(function(st) {
-        if (st === 'ready') res(_nlPipeline);
-        else if (st === 'error') rej(new Error('LLM load failed'));
-      });
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify(body)
+    }).then(function(r) {
+      if (!r.ok) throw new Error('Server NL ' + r.status);
+      return r.json();
     });
-    if (_nlModelStatus === 'error') return Promise.reject(new Error('LLM failed to load'));
-    _nlModelStatus = 'loading';
-    _nlModelListeners.forEach(function(cb){ cb('loading', 0); });
-    return import('https://cdn.jsdelivr.net/npm/@huggingface/transformers@3/dist/transformers.min.js')
-      .then(function(mod) {
-        try { if (mod.env) mod.env.useBrowserCache = true; } catch(e) {}
-        return mod.pipeline('text-generation', 'onnx-community/Qwen2.5-0.5B-Instruct', {
-          dtype: 'q4',
-          progress_callback: function(p) {
-            if (typeof p.progress === 'number') {
-              _nlModelProgress = Math.round(p.progress);
-              _nlModelListeners.forEach(function(cb) { cb('loading', _nlModelProgress); });
-            }
-          }
-        });
-      })
-      .then(function(pipe) {
-        _nlPipeline = pipe;
-        _nlBackend = 'browser';
-        _nlModelStatus = 'ready';
-        _nlModelListeners.forEach(function(cb) { cb('ready', 100); });
-        _resetIdleTimer();
-        return pipe;
-      })
-      .catch(function(err) {
-        _nlModelStatus = 'error';
-        _nlModelError = (err && (err.message || String(err))) || 'Unknown error';
-        _nlModelListeners.forEach(function(cb) { cb('error', 0); });
-        throw err;
-      });
   }
 
-  // ── Idle auto-unload for in-browser LLM (frees ~2GB after 5min) ──
-  function _resetIdleTimer() {
-    if (_nlIdleTimer) clearTimeout(_nlIdleTimer);
-    if (_nlBackend !== 'browser' || !_nlPipeline) return;
-    _nlIdleTimer = setTimeout(function() {
-      if (_nlPipeline && _nlBackend === 'browser') {
-        try { if (_nlPipeline.dispose) _nlPipeline.dispose(); } catch(e){}
-        _nlPipeline = null;
-        _nlBackend = 'none';
-        _nlModelStatus = 'idle';
-        _nlModelListeners.forEach(function(cb){ cb('idle', 0); });
-        console.log('[ClashControl] In-browser LLM unloaded after idle timeout (memory freed)');
-      }
-    }, _nlIdleTimeout);
-  }
-
-  // ── LLM system prompt ──────────────────────────────────────────
-  var NL_SYSTEM_PROMPT = [
-    'You are a command parser for a BIM clash detection app called ClashControl.',
-    'Output ONLY a single JSON object. No explanation, no markdown fences, no extra text.',
-    '',
-    'Loaded models: {{MODEL_LIST}}',
-    'Current rules: maxGap={{MAX_GAP}}mm, hard={{HARD}}, modelA={{MODEL_A}}, modelB={{MODEL_B}}',
-    '',
-    'Convert all lengths to mm (5cm→50, 2in→51). Use model name substrings from the loaded list, or "all".',
-    '',
-    'Intent values and their fields:',
-    'run_detection: {intent, modelA, modelB, maxGap, hard, duplicates, excludeSelf}',
-    'set_max_gap: {intent, value}',
-    'set_duplicates: {intent, enabled}',
-    'filter_status: {intent, status: "open"|"resolved"|"all"}',
-    'reset_filters: {intent}',
-    'group_by: {intent, groupBy: "storey"|"discipline"|"status"|"type"|"none"}',
-    'export_bcf: {intent}',
-    'query: {intent, query: "clash_count"|"issue_count"|"model_list"|"current_rules"|"worst_storey"}',
-    'help: {intent}',
-    'unknown: {intent}',
-    '',
-    'Examples:',
-    'User: look for pipe beam conflicts with 5cm gap',
-    '{"intent":"run_detection","modelA":"pipe","modelB":"beam","maxGap":50,"hard":true,"duplicates":false}',
-    'User: structural vs all others',
-    '{"intent":"run_detection","modelA":"structural","modelB":"all","excludeSelf":true,"hard":true}',
-    'User: show resolved clashes',
-    '{"intent":"filter_status","status":"resolved"}'
-  ].join('\n');
-
-  // ── LLM JSON→action dispatcher ─────────────────────────────────
-  function dispatchLLMAction(jsonText, s, d) {
-    var action;
-    try {
-      var clean = jsonText.replace(/```[a-z]*\n?/g, '').trim();
-      var b0 = clean.indexOf('{'), b1 = clean.lastIndexOf('}');
-      if (b0 === -1 || b1 === -1) throw new Error('no JSON');
-      action = JSON.parse(clean.slice(b0, b1 + 1));
-    } catch(e) { return null; }
-    var intent = action.intent;
-    if (!intent) return null;
+  // ── Server action dispatcher (structured intent from Gemma 4) ──
+  function dispatchServerAction(action, s, d) {
+    if (!action || !action.intent) return null;
 
     function resolveModel(hint) {
       if (!hint || hint === 'all') return null;
@@ -13103,7 +12962,7 @@ function startApp() {
       return s.models.find(function(m) { return m.name.toLowerCase().indexOf(h) !== -1; }) || null;
     }
 
-    switch (intent) {
+    switch (action.intent) {
       case 'run_detection': {
         if (!s.models.length) return 'No models loaded yet. Drop an IFC file to get started.';
         var mA = resolveModel(action.modelA), mB = resolveModel(action.modelB);
@@ -13118,17 +12977,22 @@ function startApp() {
       case 'reset_filters': d({t:A.RESET_FILTERS}); return 'Filters cleared — showing everything.';
       case 'group_by': var gv = {storey:'storey',floor:'storey',level:'storey',discipline:'discipline',status:'status',type:'type',none:'none'}[action.groupBy]||'none'; d({t:A.CLASH_GROUP_BY,v:gv}); d({t:A.TAB,v:'clashes'}); return 'Grouped by '+gv+'.';
       case 'export_bcf': if (!s.issues.length&&!s.clashes.length) return 'Nothing to export yet.'; var items=s.issues.length?s.issues:s.clashes; exportBCF(items,'2.1',s.viewpoints); return 'Done — '+items.length+' items exported as BCF.';
-      case 'query': return processNLCommand(action.query||'', s, d);
+      case 'query': return processNLCommand(action.metric||action.query||'', s, d);
       case 'help': return processNLCommand('help', s, d);
+      case 'analyze_clashes': return 'Analysis: ' + (action.text || 'Analyzing clashes...');
+      case 'generate_report': return 'Report: ' + (action.text || 'Generating report...');
+      case 'batch_update': return 'Batch update: ' + (action.action || 'updating') + ' ' + (action.filter || 'selected') + ' clashes.';
+      case 'unknown': return action.text || null;
       default: return null;
     }
   }
 
-  // ── Async NL handler: regex fast-path → Ollama/browser LLM fallback ──
+  // ── Async NL handler: Gemma 4 (primary) → regex (offline fallback) ──
   // Context memory for NL follow-ups ("now export those", "how many?")
   var _nlLastContext = null;
+  var _nlLastFailed = null; // for rephrase detection (implicit feedback)
 
-  function processNLCommandWithLLM(raw, s, d) {
+  function processNLCommandWithLLM(raw, s, d, replyContext) {
     // Capture hook: write all inputs to NL training store (including unmatched)
     function _captureNL(result, path) {
       try {
@@ -13136,7 +13000,6 @@ function startApp() {
         if (result != null) {
           if (typeof result === 'object' && result._clashSetup) action = 'clash_setup';
           else if (typeof result === 'string') {
-            // Derive action from response text (first few words)
             var first = result.replace(/\*\*/g,'').substring(0, 60);
             action = first;
           }
@@ -13144,6 +13007,20 @@ function startApp() {
         _saveNLTrainRecord(raw, result != null ? (typeof result === 'object' ? result : String(result)) : null,
           {ts:Date.now(), path:path, matched:result!=null, action:action, v:CC_VERSION.v});
       } catch(e) {}
+
+      // Implicit feedback: rephrase detection
+      if (result === null) {
+        _nlLastFailed = { input: raw, ts: Date.now() };
+      } else if (_nlLastFailed && Date.now() - _nlLastFailed.ts < 30000) {
+        // User successfully rephrased within 30s — log correction pair
+        try {
+          _sendTrainingData({ type: 'nl_command', input: _nlLastFailed.input, matched: false,
+            feedbackType: 'auto_rephrase', correctionInput: raw, action: action, path: path,
+            appVersion: CC_VERSION.v });
+        } catch(e) {}
+        _nlLastFailed = null;
+      }
+
       // Update context memory for follow-ups
       if (result != null) {
         _nlLastContext = {input: raw, result: typeof result === 'string' ? result : null, ts: Date.now(),
@@ -13156,7 +13033,6 @@ function startApp() {
     var followUp = raw.match(/^(?:(?:now\s+)?(?:export|save|download)\s+(?:those|these|them)|how\s+many\s*\??|count\s+(?:those|these|them))$/i);
     if (followUp && _nlLastContext) {
       if (/export|save|download/i.test(raw)) {
-        // Re-run export command
         var expResult = processNLCommand('export to bcf', s, d);
         if (expResult) return Promise.resolve(_captureNL(expResult, 'followup'));
       }
@@ -13166,61 +13042,18 @@ function startApp() {
       }
     }
 
-    // 1. Try regex (instant, no LLM needed)
-    var regexResult = processNLCommand(raw, s, d);
-    if (regexResult !== null) return Promise.resolve(_captureNL(regexResult, 'matched'));
-
-    // 2. Build prompt context
+    // 1. Server-side AI (primary — handles everything including multilingual/complex)
     var modelList = s.models.length ? s.models.map(function(m){ return m.name; }).join(', ') : 'none';
     var r = s.rules || {};
-    var prompt = NL_SYSTEM_PROMPT
-      .replace('{{MODEL_LIST}}', modelList)
-      .replace('{{MAX_GAP}}', r.maxGap || 0)
-      .replace('{{HARD}}', !!r.hard)
-      .replace('{{MODEL_A}}', r.modelA || 'all').replace('{{MODEL_B}}', r.modelB || 'all');
-
-    // 3. Try Cloud API (if user configured API key and provider allows it)
-    var pr = s.prefs || {};
-    var nlProv = pr.nlProvider || 'auto';
-    if (pr.nlApiKey && nlProv !== 'ollama_only' && nlProv !== 'browser_only') {
-      var cloudProvider = nlProv === 'auto' ? 'anthropic' : nlProv;
-      return callCloudNL(prompt, raw, cloudProvider, pr.nlApiKey)
-        .then(function(text) { return _captureNL(text ? dispatchLLMAction(text, s, d) : null, 'cloud'); })
-        .catch(function() {
-          // Cloud failed — fall through to Ollama/browser
-          if (_ollamaAvailable && pr.ollamaEnabled) {
-            return callOllama(prompt, raw)
-              .then(function(text) { return _captureNL(text ? dispatchLLMAction(text, s, d) : null, 'ollama'); })
-              .catch(function() { return _captureNL(null, 'ollama'); });
-          }
-          if (_nlModelStatus === 'ready' && _nlPipeline) {
-            return _nlPipeline([{role:'system', content:prompt}, {role:'user', content:raw}], {max_new_tokens:150, temperature:0.0, do_sample:false})
-              .then(function(out) { var text = out[0].generated_text; if (Array.isArray(text)) text = text[text.length-1].content; return _captureNL(dispatchLLMAction(text, s, d), 'browser-llm'); })
-              .catch(function() { return _captureNL(null, 'browser-llm'); });
-          }
-          return _captureNL(null, 'cloud-fallthrough');
-        });
-    }
-
-    // 4. Try Ollama (local, fast, bigger model) — only if user enabled it in Settings
-    if (_ollamaAvailable && s.prefs && s.prefs.ollamaEnabled) {
-      _resetIdleTimer();
-      return callOllama(prompt, raw)
-        .then(function(text) { return _captureNL(text ? dispatchLLMAction(text, s, d) : null, 'ollama'); })
-        .catch(function() { return _captureNL(null, 'ollama'); });
-    }
-
-    // 4. Fall back to in-browser LLM
-    if (_nlModelStatus !== 'ready' || !_nlPipeline) return Promise.resolve(_captureNL(null, 'unmatched'));
-    _resetIdleTimer();
-    return _nlPipeline(
-      [{role:'system', content:prompt}, {role:'user', content:raw}],
-      {max_new_tokens: 150, temperature: 0.0, do_sample: false}
-    ).then(function(out) {
-      var text = out[0].generated_text;
-      if (Array.isArray(text)) text = text[text.length - 1].content;
-      return _captureNL(dispatchLLMAction(text, s, d), 'browser-llm');
-    }).catch(function() { return _captureNL(null, 'browser-llm'); });
+    var context = { models: modelList, maxGap: r.maxGap, hard: !!r.hard, modelA: r.modelA, modelB: r.modelB };
+    return callServerNL(raw, context, replyContext)
+      .then(function(action) { return _captureNL(dispatchServerAction(action, s, d), 'server'); })
+      .catch(function() {
+        // 2. Offline fallback: regex for basic English commands
+        var regexResult = processNLCommand(raw, s, d);
+        if (regexResult !== null) return _captureNL(regexResult, 'regex-fallback');
+        return _captureNL(null, 'offline');
+      });
   }
 
   function processNLCommand(raw, s, d) {
