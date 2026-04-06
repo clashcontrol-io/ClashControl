@@ -1,5 +1,8 @@
 # Changelog
 
+## v4.9.7 (2026-04-06)
+- Bump SW cache to v4.9.7 to force client refresh
+
 ## v4.9.6 (2026-04-06)
 - Fix Send button on mobile chat panel
 
