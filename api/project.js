@@ -1,35 +1,7 @@
 // ClashControl — Shared project & issues sync endpoint
 // No login required — uses shareable project keys
 
-const ALLOWED_ORIGINS = [
-  'https://www.clashcontrol.io',
-  'http://localhost:3000',
-  'http://localhost:5500',
-];
-
-function cors(req, res) {
-  var origin = req.headers.origin || '';
-  if (ALLOWED_ORIGINS.some(o => origin.startsWith(o))) {
-    res.setHeader('Access-Control-Allow-Origin', origin);
-  }
-  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
-  if (req.method === 'OPTIONS') { res.status(204).end(); return true; }
-  return false;
-}
-
-// Rate limit: 30 requests/min per IP
-var rateMap = {};
-function rateLimit(ip) {
-  var now = Date.now();
-  var bucket = rateMap[ip];
-  if (!bucket || now - bucket.start > 60000) {
-    rateMap[ip] = { start: now, count: 1 };
-    return false;
-  }
-  bucket.count++;
-  return bucket.count > 30;
-}
+var { cors, rateLimit, clientIp } = require('./_lib');
 
 // Generate a short project key: PREFIX-XXXXXX
 function generateKey(name) {
@@ -74,10 +46,9 @@ function stripToShared(issue) {
 }
 
 module.exports = async function handler(req, res) {
-  if (cors(req, res)) return;
+  if (cors(req, res, 'GET, POST, PUT, DELETE')) return;
 
-  var ip = req.headers['x-forwarded-for'] || req.socket.remoteAddress || 'unknown';
-  if (rateLimit(ip)) return res.status(429).json({ error: 'Too many requests' });
+  if (rateLimit(clientIp(req), 30)) return res.status(429).json({ error: 'Too many requests' });
 
   var dbUrl = process.env.DATABASE_URL;
   if (!dbUrl) return res.status(503).json({ error: 'Database not configured' });

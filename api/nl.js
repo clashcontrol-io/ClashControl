@@ -1,22 +1,7 @@
 // ClashControl — Gemma 4 NL proxy with native function calling
 // Receives { command, context } from client, returns { intent, ...params }
 
-const ALLOWED_ORIGINS = [
-  'https://www.clashcontrol.io',
-  'http://localhost:3000',
-  'http://localhost:5500',
-];
-
-function cors(req, res) {
-  var origin = req.headers.origin || '';
-  if (ALLOWED_ORIGINS.some(o => origin.startsWith(o))) {
-    res.setHeader('Access-Control-Allow-Origin', origin);
-  }
-  res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
-  if (req.method === 'OPTIONS') { res.status(204).end(); return true; }
-  return false;
-}
+var { cors } = require('./_lib');
 
 // Gemma 4 tool declarations — one per NL intent
 const TOOLS = [

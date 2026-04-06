@@ -1,35 +1,7 @@
 // ClashControl — Training data ingestion endpoint
 // Replaces Google Forms beacons with proper Postgres storage
 
-const ALLOWED_ORIGINS = [
-  'https://www.clashcontrol.io',
-  'http://localhost:3000',
-  'http://localhost:5500',
-];
-
-function cors(req, res) {
-  var origin = req.headers.origin || '';
-  if (ALLOWED_ORIGINS.some(o => origin.startsWith(o))) {
-    res.setHeader('Access-Control-Allow-Origin', origin);
-  }
-  res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, X-CC-Consent');
-  if (req.method === 'OPTIONS') { res.status(204).end(); return true; }
-  return false;
-}
-
-// Simple in-memory rate limiter (resets per cold start, good enough)
-var rateMap = {};
-function rateLimit(ip, limit) {
-  var now = Date.now();
-  var bucket = rateMap[ip];
-  if (!bucket || now - bucket.start > 60000) {
-    rateMap[ip] = { start: now, count: 1 };
-    return false;
-  }
-  bucket.count++;
-  return bucket.count > limit;
-}
+var { cors, rateLimit, clientIp } = require('./_lib');
 
 module.exports = async function handler(req, res) {
   if (cors(req, res)) return;
@@ -40,11 +12,7 @@ module.exports = async function handler(req, res) {
     return res.status(403).json({ error: 'Consent required' });
   }
 
-  // Rate limit: 10 requests/min per IP
-  var ip = req.headers['x-forwarded-for'] || req.socket.remoteAddress || 'unknown';
-  if (rateLimit(ip, 10)) {
-    return res.status(429).json({ error: 'Too many requests' });
-  }
+  if (rateLimit(clientIp(req), 10)) return res.status(429).json({ error: 'Too many requests' });
 
   var dbUrl = process.env.DATABASE_URL;
   if (!dbUrl) return res.status(503).json({ error: 'Database not configured' });
