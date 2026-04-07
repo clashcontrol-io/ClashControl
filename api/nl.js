@@ -96,6 +96,11 @@ const TOOLS = [
     description: 'Show help information about available commands.',
     parameters: { type: 'object', properties: {} },
   },
+  {
+    name: 'load_model',
+    description: 'Open the file picker so the user can load an IFC building model. Use when the user says "load ifc", "open a model", "add a file", "upload building", etc.',
+    parameters: { type: 'object', properties: {} },
+  },
   // --- New capabilities beyond regex ---
   {
     name: 'analyze_clashes',
