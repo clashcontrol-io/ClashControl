@@ -1,5 +1,8 @@
 # Changelog
 
+## v4.9.10 (2026-04-07)
+- Try thinkingBudget: 128 on Gemma 4 (low cap instead of disabled)
+
 ## v4.9.9 (2026-04-07)
 - Add 'self' to connect-src CSP so /api/* calls aren't blocked
 
