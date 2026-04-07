@@ -396,6 +396,16 @@ function startApp() {
   }
   window._ccReadFileWithProgress = _readFileWithProgress;
 
+  // Anonymous-data sharing consent (opt-out semantics).
+  // Default: granted unless the user has explicitly denied. Returns false
+  // only when cc_data_consent === 'denied'. Used to gate _sendTrainingData
+  // and any UI toggle that reflects "data sharing on/off".
+  function _ccConsentOK() {
+    try { return localStorage.getItem('cc_data_consent') !== 'denied'; }
+    catch(e) { return false; }
+  }
+  window._ccConsentOK = _ccConsentOK;
+
   // ── Pending offer system ──────────────────────────────────────
   // When the assistant can't fulfill a command because of a missing
   // prerequisite (no models, no clashes, etc.) it phrases the reply as
@@ -520,7 +530,7 @@ function startApp() {
     models:[], clashes:[], issues:[], activeId:null, showModal:false, showSettings:false, modalElement:null, tab:null,
     rules:{ modelA:'all', modelB:'all', hard:true, maxGap:50, minGap:0, duplicates:false, changeAware:false, excludeSelf:true, excludeTypes:[], excludeTypePairs:[], minOverlapVolM3:1e-5, toleranceByTypePair:{}, useSemanticFilter:true },
     detectionSettings:null, // Captured at detection run time: {clearance_mm, discipline_filters}
-    trainingMode:(function(){try{return localStorage.getItem('cc_trainingMode')==='1';}catch(e){return false;}}()),
+    trainingMode:(function(){try{var v=localStorage.getItem('cc_trainingMode');return v===null?true:v==='1';}catch(e){return true;}}()),
     clashGroupBy:_ccLoadPref('clashGroupBy','none'), clashSortBy:_ccLoadPref('clashSortBy','none'),
     issueGroupBy:_ccLoadPref('issueGroupBy','none'), issueSortBy:_ccLoadPref('issueSortBy','none'),
     chatOpen:false, detecting:false, switchingProject:false, sectionAxis:null, sectionPos:0.5, sectionCustom:null,
@@ -12104,12 +12114,25 @@ function startApp() {
 
   function SettingsModal(props) {
     var d=props.d, p=props.prefs, models=props.models||[], rules=props.rules||{};
+    var stConsent = useState(function(){ return _ccConsentOK(); });
+    var dataConsent = stConsent[0], setDataConsent = stConsent[1];
 
     useEffect(function(){
       function onKey(e){if(e.key==='Escape')d({t:A.SETTINGS,v:false});}
       window.addEventListener('keydown',onKey);
-      return function(){window.removeEventListener('keydown',onKey);};
+      function syncConsent(){setDataConsent(_ccConsentOK());}
+      window.addEventListener('cc-consent-change', syncConsent);
+      return function(){
+        window.removeEventListener('keydown',onKey);
+        window.removeEventListener('cc-consent-change', syncConsent);
+      };
     },[]);
+    function toggleConsent() {
+      var nv = !dataConsent;
+      setDataConsent(nv);
+      try { localStorage.setItem('cc_data_consent', nv ? 'granted' : 'denied'); } catch(e) {}
+      window.dispatchEvent(new Event('cc-consent-change'));
+    }
     function tog(k){return function(){var u={};u[k]=!p[k];d({t:A.UPD_PREFS,u:u});}}
     function sel(k){return function(e){var u={};u[k]=e.target.value;d({t:A.UPD_PREFS,u:u});}}
     var MS={position:'fixed',inset:0,background:'var(--modal-bg)',display:'flex',alignItems:'center',justifyContent:'center',zIndex:50,overflow:'hidden',padding:'2rem 0'};
@@ -12168,6 +12191,15 @@ function startApp() {
         <div style=${TROW}>
           <div><div style=${TLBL}>Outline selected</div><div style=${TSUB}>Add glowing outline effect to selected elements</div></div>
           <${Toggle} on=${p.outlineSelected!==false} onToggle=${tog('outlineSelected')} />
+        </div>
+
+        <div style=${SEC}>Privacy</div>
+        <div style=${TROW}>
+          <div>
+            <div style=${TLBL}>Anonymous data sharing</div>
+            <div style=${TSUB}>Send anonymous IFC type and geometry metrics to help improve the AI clash classifier. No project names, element names, or coordinates are sent.</div>
+          </div>
+          <${Toggle} on=${dataConsent} onToggle=${toggleConsent} />
         </div>
 
         <div style=${SEC}>Clash Detection</div>
@@ -15709,7 +15741,7 @@ function startApp() {
     var stWarn = useState(false), showWarn=stWarn[0], setShowWarn=stWarn[1];
     var stDelConfirm = useState(false), showDelConfirm=stDelConfirm[0], setShowDelConfirm=stDelConfirm[1];
     var prevTraining = useRef(false);
-    var stConsent = useState(function(){try{return localStorage.getItem('cc_data_consent')==='granted';}catch(e){return false;}}), dataConsent=stConsent[0], setDataConsent=stConsent[1];
+    var stConsent = useState(function(){return _ccConsentOK();}), dataConsent=stConsent[0], setDataConsent=stConsent[1];
     useEffect(function(){
       if(s.trainingMode && !prevTraining.current) setExpanded(true);
       if(!s.trainingMode) setExpanded(false);
@@ -15717,7 +15749,7 @@ function startApp() {
     },[s.trainingMode]);
     // Sync toggle when consent popup or other tab changes cc_data_consent
     useEffect(function(){
-      function sync(){try{setDataConsent(localStorage.getItem('cc_data_consent')==='granted');}catch(e){}}
+      function sync(){setDataConsent(_ccConsentOK());}
       window.addEventListener('cc-consent-change', sync);
       window.addEventListener('storage', function(e){if(e.key==='cc_data_consent') sync();});
       return function(){window.removeEventListener('cc-consent-change', sync);};
@@ -15858,7 +15890,7 @@ function startApp() {
   // ── Training data sender (via /api/training) ────────────────────
   function _sendTrainingData(payload) {
     try {
-      if (localStorage.getItem('cc_data_consent') !== 'granted') return;
+      if (!_ccConsentOK()) return;
     } catch(e) { return; }
     fetch('/api/training', {
       method: 'POST',
@@ -15871,7 +15903,7 @@ function startApp() {
 
   function _beaconSendTrainingData() {
     try {
-      if (localStorage.getItem('cc_data_consent') !== 'granted') return;
+      if (!_ccConsentOK()) return;
     } catch(e) { return; }
     var store = _getClashTrainStore();
     var keys = Object.keys(store);
@@ -15886,7 +15918,7 @@ function startApp() {
 
   function _beaconSendNLTrainingData(models) {
     try {
-      if (localStorage.getItem('cc_data_consent') !== 'granted') return;
+      if (!_ccConsentOK()) return;
     } catch(e) { return; }
     var store = _getNLTrainStore();
     if (!store.length) return;
@@ -15900,7 +15932,7 @@ function startApp() {
 
   function _beaconSendDetectionRuns() {
     try {
-      if (localStorage.getItem('cc_data_consent') !== 'granted') return;
+      if (!_ccConsentOK()) return;
     } catch(e) { return; }
     var runs = [];
     try { runs = JSON.parse(localStorage.getItem('cc_detection_runs') || '[]'); } catch(e) { return; }
@@ -15915,57 +15947,43 @@ function startApp() {
     });
   }
 
-  function TrainingModePopup(props) {
-    var d = props.d;
-    // Single combined info+consent dialog. Shows once when training mode is
-    // first activated, sets both cc_training_informed and cc_data_consent in
-    // one dismiss, then never shows again. Previously this component had two
-    // separate display modes that could fire back-to-back; the second one
-    // got stuck because needsConsent was captured at mount time and never
-    // updated after the first dismiss.
+  // First-run privacy banner. Slim, non-modal, dismissable. Mounts on every
+  // page load until cc_consent_banner_seen is set, regardless of training
+  // mode. Anonymous data sharing is on by default (opt-out semantics) — the
+  // [Opt out] button explicitly sets cc_data_consent='denied', the [Got it]
+  // button records that the user has acknowledged the notice. Users can
+  // change consent any time from the Settings menu.
+  function PrivacyBanner(props) {
     var stShow = useState(function(){
-      try { return !localStorage.getItem('cc_training_informed'); } catch(e){ return true; }
+      try { return !localStorage.getItem('cc_consent_banner_seen'); } catch(e){ return false; }
     });
     var show = stShow[0], setShow = stShow[1];
-    if (!show || !props.active) return null;
+    if (!show) return null;
     function dismiss(consentVal) {
-      try { localStorage.setItem('cc_training_informed','1'); } catch(e){}
-      try { localStorage.setItem('cc_data_consent', consentVal); } catch(e){}
-      window.dispatchEvent(new Event('cc-consent-change'));
+      try { localStorage.setItem('cc_consent_banner_seen','1'); } catch(e){}
+      if (consentVal != null) {
+        try { localStorage.setItem('cc_data_consent', consentVal); } catch(e){}
+        window.dispatchEvent(new Event('cc-consent-change'));
+      }
       setShow(false);
     }
-    return html`<div style=${{position:'fixed',top:0,left:0,right:0,bottom:0,zIndex:2000,
-      background:'rgba(0,0,0,.6)',display:'flex',alignItems:'center',justifyContent:'center',
-      overflow:'hidden',padding:'2rem 0'}}
-      onClick=${function(){dismiss('denied');}}>
-      <div onClick=${function(e){e.stopPropagation();}}
-        style=${{background:'var(--bg-primary)',border:'1px solid var(--border)',borderRadius:12,
-          padding:'1.5rem',maxWidth:440,width:'90%',maxHeight:'85vh',overflowY:'auto',WebkitOverflowScrolling:'touch',boxShadow:'0 8px 32px rgba(0,0,0,.4)',
-          flexShrink:0}}>
-        <div style=${{display:'flex',alignItems:'center',gap:'.5rem',marginBottom:'.8rem'}}>
-          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#a78bfa" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
-            <path d="M12 2a4 4 0 0 1 4 4c0 1.95-1.4 3.58-3.25 3.93V12h3.5a2.25 2.25 0 0 1 0 4.5h-3.5v1.25A3.25 3.25 0 0 1 9.5 21 3.25 3.25 0 0 1 6.25 17.75V14.5h-1A2.25 2.25 0 0 1 3 12.25 2.25 2.25 0 0 1 5.25 10h3.5V9.93A4 4 0 0 1 12 2z"/>
-          </svg>
-          <span style=${{fontSize:'1.09rem',fontWeight:700,color:'var(--text-primary)'}}>AI Training Mode</span>
-        </div>
-        <p style=${{fontSize:'0.86rem',color:'var(--text-secondary)',lineHeight:1.6,marginBottom:'.6rem'}}>
-          You are helping improve ClashControl's AI clash classifier. Thumbs up/down buttons (\u25b2\u25bc) now appear on each clash row in the Clashes panel. Expand a clash to annotate its type, reasons, and notes. Your normal workflow \u2014 changing status, creating issues \u2014 also generates training signals automatically.
-        </p>
-        <p style=${{fontSize:'0.86rem',color:'var(--text-secondary)',lineHeight:1.6,marginBottom:'.6rem'}}>
-          Training data contains${' '}<strong style=${{color:'var(--text-primary)'}}>only IFC type metadata and geometric metrics</strong>${' '}\u2014 no element names, coordinates, project names, or personal information.
-        </p>
-        <p style=${{fontSize:'0.8rem',color:'var(--text-muted)',lineHeight:1.5,marginBottom:'1rem'}}>
-          Would you like to share anonymous training data to help improve the AI? You can change this any time in Settings.
-        </p>
-        <div style=${{display:'flex',gap:'.5rem'}}>
-          <button onClick=${function(){dismiss('denied');}}
-            style=${{...S_BTN,flex:1,padding:'.5rem',fontSize:'0.86rem',fontWeight:600,
-              background:'var(--bg-secondary)',color:'var(--text-secondary)',border:'1px solid var(--border)',borderRadius:6}}>No thanks</button>
-          <button onClick=${function(){dismiss('granted');}}
-            style=${{...S_BTN,flex:1,padding:'.5rem',fontSize:'0.92rem',fontWeight:600,
-              background:'#7c3aed',color:'#fff',border:'none',borderRadius:6}}>Yes, share data</button>
-        </div>
-      </div>
+    return html`<div style=${{
+      position:'fixed', bottom:'1rem', left:'50%', transform:'translateX(-50%)',
+      zIndex:1500, maxWidth:520, width:'92%',
+      background:'var(--bg-secondary)', border:'1px solid var(--border)',
+      borderRadius:10, padding:'.75rem .9rem',
+      boxShadow:'0 12px 32px rgba(0,0,0,.4)',
+      display:'flex', alignItems:'center', gap:'.65rem',
+      fontSize:'0.82rem', color:'var(--text-secondary)', lineHeight:1.5
+    }}>
+      <span style=${{fontSize:'1.1rem',color:'#a78bfa',flexShrink:0}}>\u2139</span>
+      <span style=${{flex:1}}>
+        ClashControl shares <strong style=${{color:'var(--text-primary)'}}>anonymous IFC type and geometry data</strong> to improve clash detection. No project names, element names, or coordinates are sent. Change anytime in Settings.
+      </span>
+      <button onClick=${function(){dismiss('denied');}}
+        style=${{...S_BTN,padding:'.35rem .55rem',background:'transparent',border:'1px solid var(--border)',borderRadius:6,color:'var(--text-secondary)',fontSize:'0.74rem',whiteSpace:'nowrap',flexShrink:0}}>Opt out</button>
+      <button onClick=${function(){dismiss(null);}}
+        style=${{...S_BTN,padding:'.35rem .65rem',background:'#7c3aed',border:'none',borderRadius:6,color:'#fff',fontSize:'0.74rem',fontWeight:600,whiteSpace:'nowrap',flexShrink:0}}>Got it</button>
     </div>`;
   }
 
@@ -17540,7 +17558,7 @@ function startApp() {
       ${s.showRevitBridge && html`<${RevitBridgePanel} s=${s} d=${d} />`}
       <${MobileNav} s=${s} d=${d} />
       <${WelcomePopup} s=${s} d=${d} />
-      <${TrainingModePopup} d=${d} active=${s.trainingMode} />
+      <${PrivacyBanner} />
       <${TutorialPortal} d=${d} />
       ${showMemWarn && html`<${MemoryWarningModal} s=${s} onDismiss=${function(){setShowMemWarn(false);}} />`}
       ${!pwaDismissed && pwaUpdateAvail && html`<div style=${{position:'fixed',bottom:'1rem',left:'50%',transform:'translateX(-50%)',zIndex:9999,
