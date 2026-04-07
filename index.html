@@ -13226,10 +13226,46 @@ function startApp() {
     }
   }
 
-  // ── Async NL handler: Gemma 4 (primary) → regex (offline fallback) ──
+  // ── Async NL handler: fast-regex → Gemma 4 (primary) → regex (offline fallback) ──
   // Context memory for NL follow-ups ("now export those", "how many?")
   var _nlLastContext = null;
   var _nlLastFailed = null; // for rephrase detection (implicit feedback)
+
+  // ── Fast-path regex: bypass server for trivially unambiguous commands ──
+  // Session hit/miss counters — inspect via window._ccNLStats() in devtools
+  var _nlFastStats = { hits: 0, misses: 0 };
+  function _fastPathEnabled() {
+    try { return localStorage.getItem('cc_fastpath') !== '0'; } catch(e) { return true; }
+  }
+  // Returns true only for commands that are short, English, single-intent,
+  // and guaranteed to match processNLCommand() — so we can skip the server.
+  function _isFastPathCommand(t) {
+    // Single-word / minimal commands
+    if (/^(?:help|\?|summary|stats|report|clashes?|results?|issues?|models?|settings?|bcf|ifc|status)$/.test(t)) return true;
+    // Social / canned replies
+    if (/^(?:hi|hello|hey|yo|sup|thanks?|thank\s+you|ty|thx|cheers|undo|cancel\s+that|never\s*mind|oops)$/.test(t)) return true;
+    // Explicit file ops with no ambiguous modifier
+    if (/^(?:load|open|import)\s+(?:an?\s+)?ifc$/.test(t)) return true;
+    if (/^(?:export|save|download)\s+(?:to\s+)?bcf$/.test(t)) return true;
+    // Render style / named camera views
+    if (/^(?:wireframe|shaded|rendered?|standard)(?:\s+mode)?$/.test(t)) return true;
+    if (/^(?:top|front|back|left|right|side|bottom|iso(?:metric)?)\s+view$/.test(t)) return true;
+    if (/^reset\s+(?:view|camera)$/.test(t)) return true;
+    // Filter / group commands (no model names involved)
+    if (/^(?:show|filter)\s+(?:all|open|resolved|closed)$/.test(t)) return true;
+    if (/^(?:clear|reset)\s+filters?$/.test(t)) return true;
+    if (/^group\s+by\s+(?:storey|floor|level|discipline|status|type|none)$/.test(t)) return true;
+    // Simple counts
+    if (/^how\s+many\s+(?:clashes?|issues?|models?)\s*\??$/.test(t)) return true;
+    if (/^(?:clash|issue|model)\s+count\s*\??$/.test(t)) return true;
+    return false;
+  }
+  window._ccNLStats = function() {
+    var total = _nlFastStats.hits + _nlFastStats.misses;
+    var hitRate = total ? Math.round(_nlFastStats.hits / total * 100) : 0;
+    console.log('%c[CC NL stats] fast-path hits: ' + _nlFastStats.hits + '/' + total + ' (' + hitRate + '%)','color:#f59e0b;font-weight:bold');
+    return _nlFastStats;
+  };
 
   function processNLCommandWithLLM(raw, s, d, replyContext) {
     // Capture hook: write all inputs to NL training store (including unmatched)
@@ -13279,6 +13315,22 @@ function startApp() {
         var countMsg = _nlLastContext.clashCount + ' clashes. (Last: ' + (_nlLastContext.input || '?') + ')';
         return Promise.resolve(_captureNL(countMsg, 'followup'));
       }
+    }
+
+    // 0.5. Fast-path: trivially simple commands skip the server entirely.
+    // Skipped when replyContext is set (conversational follow-up needs LLM).
+    if (!replyContext && _fastPathEnabled()) {
+      var _fpt = raw.trim().toLowerCase();
+      if (_isFastPathCommand(_fpt)) {
+        var _fpResult = processNLCommand(raw, s, d);
+        if (_fpResult !== null) {
+          _nlFastStats.hits++;
+          if (_ccDbg()) console.log('%c[CC NL ⚡ fast-path]','color:#f59e0b;font-weight:bold', { input: raw, result: _fpResult, hits: _nlFastStats.hits, misses: _nlFastStats.misses });
+          return Promise.resolve(_captureNL(_fpResult, 'fast-regex'));
+        }
+      }
+      _nlFastStats.misses++;
+      if (_ccDbg()) console.log('%c[CC NL → server]','color:#60a5fa', { input: raw, hits: _nlFastStats.hits, misses: _nlFastStats.misses });
     }
 
     // 1. Server-side AI (primary — handles everything including multilingual/complex)
