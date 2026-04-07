@@ -203,13 +203,17 @@ module.exports = async function handler(req, res) {
     var candidate = data.candidates && data.candidates[0];
     if (!candidate) return res.status(502).json({ error: 'No response from AI' });
 
-    // Extract function call from response
+    // Extract function call from response (skip thinking parts)
     var parts = candidate.content && candidate.content.parts;
     if (!parts) return res.status(502).json({ error: 'Empty AI response' });
 
-    for (var i = 0; i < parts.length; i++) {
-      if (parts[i].functionCall) {
-        var fc = parts[i].functionCall;
+    // Gemma 4 emits internal "thought" parts before the real answer.
+    // Filter them out so they don't leak into the chat UI.
+    var answerParts = parts.filter(function(p) { return !p.thought; });
+
+    for (var i = 0; i < answerParts.length; i++) {
+      if (answerParts[i].functionCall) {
+        var fc = answerParts[i].functionCall;
         return res.status(200).json({
           intent: fc.name,
           ...fc.args,
@@ -218,7 +222,7 @@ module.exports = async function handler(req, res) {
     }
 
     // No function call — model responded with text (e.g., unknown intent)
-    var text = parts.map(p => p.text || '').join('');
+    var text = answerParts.map(function(p) { return p.text || ''; }).join('').trim();
     return res.status(200).json({ intent: 'unknown', text: text });
 
   } catch (e) {
