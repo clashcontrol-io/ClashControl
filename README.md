@@ -54,6 +54,33 @@ Of course donations to keep the project running and expand more are welcome.
 
 ClashControl is not complete nor perfect and you should always verify results yourselves. That said, it will save you lots of money and frustration.
 
+## Privacy
+
+ClashControl shares **anonymous usage data by default** to help improve the AI clash classifier. This is opt-out — you can disable it any time from the Settings menu.
+
+**What is sent**
+
+- IFC type counts (e.g. "150 IfcWall, 32 IfcBeam")
+- Geometric metrics for clashes (size ratios, gap distances, intersection volumes — numbers only)
+- Whether a clash was marked true positive or false positive
+- Natural-language commands you type into the chat (with model and project names stripped)
+
+**What is NOT sent**
+
+- Your IFC files
+- Element names, GlobalIds, or coordinates
+- Project names, file names, or paths
+- Personal information of any kind
+- Your IP address (beyond what every web request sends; we don't log it)
+
+**How to opt out**
+
+- Settings → Privacy → toggle off "Anonymous data sharing"
+- Or set `localStorage.cc_data_consent = 'denied'` in the browser console
+- The first-run banner also has an "Opt out" button
+
+The collection endpoint is [`api/training.js`](api/training.js) — it's a thin Vercel function that writes to a Postgres table. Source is in this repo, audit anything you want.
+
 ## Tech
 
 Single-file app built with Preact, Three.js, and web-ifc. No build tools, no bundler — just open and go. See [CLAUDE.md](CLAUDE.md) for architecture details and [OPEN_SOURCE_COMPONENTS.md](OPEN_SOURCE_COMPONENTS.md) for all third-party libraries used.
