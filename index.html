@@ -15708,50 +15708,117 @@ function startApp() {
     }).catch(function() { /* silent — training data is best-effort */ });
   }
 
+  // Batched POST to /api/training. Resolves true on HTTP 2xx, false otherwise.
+  function _sendTrainingBatch(batch) {
+    try { if (!_ccConsentOK()) return Promise.resolve(false); } catch(e) { return Promise.resolve(false); }
+    if (!batch || !batch.length) return Promise.resolve(false);
+    return fetch('/api/training', {
+      method:'POST',
+      headers:{'Content-Type':'application/json','X-CC-Consent':'true'},
+      body: JSON.stringify({ batch: batch })
+    }).then(function(resp){
+      if (resp.ok) { window.dispatchEvent(new Event('cc-training-sent')); return true; }
+      return false;
+    }).catch(function(){ return false; });
+  }
+
   function _beaconSendTrainingData() {
-    try {
-      if (!_ccConsentOK()) return;
-    } catch(e) { return; }
+    try { if (!_ccConsentOK()) return; } catch(e) { return; }
     var store = _getClashTrainStore();
     var keys = Object.keys(store);
     if (!keys.length) return;
-    var records = keys.map(function(k) { return Object.assign({id: k}, store[k]); });
-    _clearClashTrainStore();
-    records.forEach(function(r) {
-      _sendTrainingData({ type: 'clash_feedback', clashId: r.id, featureVector: r.fv, label: r.label,
-        labelSource: r.source || 'user', appVersion: CC_VERSION.v });
+    var snapshot = keys.map(function(k){ return Object.assign({id:k}, store[k]); });
+    var batch = snapshot.map(function(r){
+      return { type:'clash_feedback', clashId:r.id, featureVector:r.fv, label:r.label,
+        labelSource:r.source||'user', appVersion:CC_VERSION.v };
+    });
+    _sendTrainingBatch(batch).then(function(ok){
+      // Only clear on confirmed delivery so failures don't silently lose data
+      if (ok) { try { _clearClashTrainStore(); } catch(e) {} window.dispatchEvent(new Event('cc-training-data-change')); }
     });
   }
 
   function _beaconSendNLTrainingData(models) {
-    try {
-      if (!_ccConsentOK()) return;
-    } catch(e) { return; }
+    try { if (!_ccConsentOK()) return; } catch(e) { return; }
     var store = _getNLTrainStore();
     if (!store.length) return;
-    _clearNLTrainStore();
-    store.forEach(function(r) {
-      _sendTrainingData({ type: 'nl_command', input: _sanitizeNLInput(r.input || '', models),
-        matched: !!(r.output != null), action: r.meta && r.meta.action || null,
-        path: r.meta && r.meta.path || 'unknown', appVersion: CC_VERSION.v });
+    var snapshot = store.slice();
+    var batch = snapshot.map(function(r){
+      return { type:'nl_command', input:_sanitizeNLInput(r.input||'', models||[]),
+        matched:!!(r.output!=null), action:r.meta&&r.meta.action||null,
+        path:r.meta&&r.meta.path||'unknown', appVersion:CC_VERSION.v };
+    });
+    _sendTrainingBatch(batch).then(function(ok){
+      if (ok) { try { _clearNLTrainStore(); } catch(e) {} window.dispatchEvent(new Event('cc-training-data-change')); }
     });
   }
 
   function _beaconSendDetectionRuns() {
-    try {
-      if (!_ccConsentOK()) return;
-    } catch(e) { return; }
+    try { if (!_ccConsentOK()) return; } catch(e) { return; }
     var runs = [];
     try { runs = JSON.parse(localStorage.getItem('cc_detection_runs') || '[]'); } catch(e) { return; }
     if (!runs.length) return;
-    try { localStorage.removeItem('cc_detection_runs'); } catch(e) {}
-    window.dispatchEvent(new Event('cc-training-data-change'));
-    runs.forEach(function(r) {
-      _sendTrainingData({ type: 'detection_run', runId: r.id || '', modelCount: r.modelCount || 0,
-        clashCount: r.clashCount || 0, hardCount: r.hardCount || 0, softCount: r.softCount || 0,
-        duplicateCount: r.duplicateCount || 0, durationMs: r.durationMs || 0,
-        rules: r.rules || {}, appVersion: CC_VERSION.v });
+    var batch = runs.map(function(r){
+      return { type:'detection_run', runId:r.id||'', modelCount:r.modelCount||0,
+        clashCount:r.clashCount||0, hardCount:r.hardCount||0, softCount:r.softCount||0,
+        duplicateCount:r.duplicateCount||0, durationMs:r.durationMs||0,
+        rules:r.rules||{}, appVersion:CC_VERSION.v };
     });
+    _sendTrainingBatch(batch).then(function(ok){
+      if (ok) { try { localStorage.removeItem('cc_detection_runs'); } catch(e) {} window.dispatchEvent(new Event('cc-training-data-change')); }
+    });
+  }
+
+  // Unload-time flush: batches all three stores into a single
+  // navigator.sendBeacon() call. The page is unloading, so fetch() would be
+  // killed mid-flight; sendBeacon is the only reliable mechanism. Cleared from
+  // localStorage only after the browser confirms it has queued the request.
+  function _flushAllViaBeacon(models) {
+    try { if (!_ccConsentOK()) return; } catch(e) { return; }
+    if (!navigator.sendBeacon) return;
+    var batch = [];
+    // Clash feedback
+    var clashStore = {};
+    try { clashStore = _getClashTrainStore() || {}; } catch(e) {}
+    var clashKeys = Object.keys(clashStore);
+    clashKeys.forEach(function(k){
+      var r = clashStore[k];
+      batch.push({ type:'clash_feedback', clashId:k, featureVector:r.fv,
+        label:r.label, labelSource:r.source||'user', appVersion:CC_VERSION.v });
+    });
+    // NL commands
+    var nlStore = [];
+    try { nlStore = _getNLTrainStore() || []; } catch(e) {}
+    nlStore.forEach(function(r){
+      batch.push({ type:'nl_command',
+        input:_sanitizeNLInput(r.input||'', models||[]),
+        matched:!!(r.output!=null),
+        action:r.meta&&r.meta.action||null,
+        path:r.meta&&r.meta.path||'unknown',
+        appVersion:CC_VERSION.v });
+    });
+    // Detection runs
+    var runs = [];
+    try { runs = JSON.parse(localStorage.getItem('cc_detection_runs')||'[]'); } catch(e) {}
+    runs.forEach(function(r){
+      batch.push({ type:'detection_run', runId:r.id||'', modelCount:r.modelCount||0,
+        clashCount:r.clashCount||0, hardCount:r.hardCount||0, softCount:r.softCount||0,
+        duplicateCount:r.duplicateCount||0, durationMs:r.durationMs||0,
+        rules:r.rules||{}, appVersion:CC_VERSION.v });
+    });
+    if (!batch.length) return;
+    var payload = { consent:true, batch:batch };
+    try {
+      var blob = new Blob([JSON.stringify(payload)], {type:'application/json'});
+      var queued = navigator.sendBeacon('/api/training', blob);
+      if (queued) {
+        // Browser accepted the beacon — safe to clear local stores
+        if (clashKeys.length) { try { _clearClashTrainStore(); } catch(e) {} }
+        if (nlStore.length)   { try { _clearNLTrainStore();    } catch(e) {} }
+        if (runs.length)      { try { localStorage.removeItem('cc_detection_runs'); } catch(e) {} }
+        window.dispatchEvent(new Event('cc-training-data-change'));
+      }
+    } catch(e) { /* unload — best effort */ }
   }
 
   // First-run privacy banner. Slim, non-modal, dismissable. Mounts on every
@@ -17051,23 +17118,31 @@ function startApp() {
       }, 2000);
       return function(){ clearTimeout(timer); };
     }, [s.clashes, s.issues, s.viewpoints, s.measurements, s.rules, s.models]);
-    // Start an IDB save on tab close. IDB is async but modern browsers typically
-    // complete in-progress transactions before unloading; covers the debounce gap.
+    // Flush state + training data when the page is being torn down. We listen
+    // on pagehide and on visibilitychange→hidden because beforeunload is
+    // unreliable on mobile and modern browsers may not fire it on hard refresh.
+    // Training data is sent via navigator.sendBeacon() (single batched POST)
+    // so it actually reaches the server during unload — fetch() would be killed.
     useEffect(function(){
-      function onUnload() {
+      function flush() {
         var cur = _latestSRef.current;
         if(_hasProjectData(cur)) _saveCurrentProjectData(cur);
-        // Phase 0.5: beacon training data on tab close
-        _beaconSendTrainingData();
-        _beaconSendNLTrainingData(cur.models);
-        _beaconSendDetectionRuns();
+        _flushAllViaBeacon(cur && cur.models || []);
       }
-      window.addEventListener('beforeunload', onUnload);
-      // Also send any unsent detection runs from previous session on startup
+      function onVisibility() { if (document.visibilityState === 'hidden') flush(); }
+      window.addEventListener('pagehide', flush);
+      document.addEventListener('visibilitychange', onVisibility);
+      // Also send any unsent records from previous session on startup
       var startupTimer = setTimeout(function(){
         _beaconSendDetectionRuns();
+        _beaconSendNLTrainingData(_latestSRef.current && _latestSRef.current.models || []);
+        _beaconSendTrainingData();
       }, 5000);
-      return function(){ window.removeEventListener('beforeunload', onUnload); clearTimeout(startupTimer); };
+      return function(){
+        window.removeEventListener('pagehide', flush);
+        document.removeEventListener('visibilitychange', onVisibility);
+        clearTimeout(startupTimer);
+      };
     }, []);
     // Phase 0.5: periodic auto-send every 25 labeled clashes in store
     var _beaconReviewRef = useRef(0);
