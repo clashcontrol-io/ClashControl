@@ -135,6 +135,40 @@ const TOOLS = [
       required: ['action', 'filter'],
     },
   },
+  // --- Project management ---
+  {
+    name: 'create_project',
+    description: 'Create a new project and switch to it. Use for "new project Foo", "create project Tower A", "start a project called Bar".',
+    parameters: {
+      type: 'object',
+      properties: {
+        name: { type: 'string', description: 'The project name the user wants to create' },
+      },
+      required: ['name'],
+    },
+  },
+  {
+    name: 'rename_project',
+    description: 'Rename the currently active project. Use for "rename project to Foo", "rename this project Bar".',
+    parameters: {
+      type: 'object',
+      properties: {
+        name: { type: 'string', description: 'The new project name' },
+      },
+      required: ['name'],
+    },
+  },
+  {
+    name: 'switch_project',
+    description: 'Switch to an existing project by name. Use for "switch to project Foo", "open project Bar", "go to Tower A".',
+    parameters: {
+      type: 'object',
+      properties: {
+        name: { type: 'string', description: 'The project name (or substring) to switch to' },
+      },
+      required: ['name'],
+    },
+  },
 ];
 
 function buildSystemPrompt(context) {

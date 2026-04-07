@@ -13218,9 +13218,42 @@ function startApp() {
       case 'query': return processNLCommand(action.metric||action.query||'', s, d);
       case 'help': return processNLCommand('help', s, d);
       case 'load_model': if (window._ccOpenIFC) { window._ccOpenIFC(); return 'Opening file picker — pick one or more .ifc files.'; } return 'File picker unavailable. Drag an .ifc file onto the window instead.';
-      case 'analyze_clashes': return 'Analysis: ' + (action.text || 'Analyzing clashes...');
+      case 'analyze_clashes': case 'analyze': case 'analyse': case 'summary': case 'summarize': case 'summarise': case 'report':
+        return processNLCommand('analyze clashes', s, d) || 'No data yet. Load models and run detection first.';
       case 'generate_report': return 'Report: ' + (action.text || 'Generating report...');
       case 'batch_update': return 'Batch update: ' + (action.action || 'updating') + ' ' + (action.filter || 'selected') + ' clashes.';
+      case 'create_project': {
+        var cpName = (action.name||'').trim();
+        if (!cpName) return 'What should the project be called?';
+        try {
+          var cpId = uid();
+          var cpList = getProjects().concat([{id:cpId, name:cpName, createdAt:Date.now(), sourceType:'ifc'}]);
+          saveProjects(cpList);
+          d({t:A.SET_PROJECT_LIST, v:cpList});
+          _switchProject(cpId, s, d);
+          return 'Created project **' + cpName + '** and switched to it.';
+        } catch(e) { return 'Couldn\'t create project: '+(e.message||e); }
+      }
+      case 'rename_project': {
+        var rpName = (action.name||'').trim();
+        if (!rpName) return 'What should I rename it to?';
+        try {
+          var rpId = s.activeProject || 'default';
+          var rpList = getProjects().map(function(p){return p.id===rpId?Object.assign({},p,{name:rpName}):p;});
+          saveProjects(rpList);
+          d({t:A.SET_PROJECT_LIST, v:rpList});
+          return 'Renamed to **' + rpName + '**.';
+        } catch(e) { return 'Couldn\'t rename: '+(e.message||e); }
+      }
+      case 'switch_project': {
+        var spHint = (action.name||'').toLowerCase().trim();
+        if (!spHint) return 'Which project? Try "switch to project Foo".';
+        var spList = getProjects();
+        var spMatch = spList.find(function(p){return p.name.toLowerCase()===spHint;}) ||
+                      spList.find(function(p){return p.name.toLowerCase().indexOf(spHint)!==-1;});
+        if (spMatch) { _switchProject(spMatch.id, s, d); return 'Switched to **'+spMatch.name+'**.'; }
+        return 'No project named "'+(action.name||'')+'".';
+      }
       case 'unknown': return action.text || null;
       default: return null;
     }
@@ -13258,6 +13291,8 @@ function startApp() {
     // Simple counts
     if (/^how\s+many\s+(?:clashes?|issues?|models?)\s*\??$/.test(t)) return true;
     if (/^(?:clash|issue|model)\s+count\s*\??$/.test(t)) return true;
+    // List projects (read-only, no model-name resolution)
+    if (/^(?:list|show|what)\s+(?:the\s+)?projects?\s*\??$/.test(t)) return true;
     return false;
   }
   window._ccNLStats = function() {
@@ -13380,6 +13415,53 @@ function startApp() {
         window.dispatchEvent(new Event('cc-training-data-change'));
       } catch(e) {}
       return 'Thanks! I\'ll learn from this. Your feedback has been saved.';
+    }
+
+    // ── Project create / rename / switch / list ───────────────────
+    // "new project Foo" / "create project Foo" / "start a project called Bar"
+    var newProjMatch = raw.match(/^\s*(?:new|create|add|start|make)\s+(?:a\s+)?(?:new\s+)?project(?:\s+(?:called|named|name))?\s+["']?(.+?)["']?\s*$/i);
+    if (newProjMatch) {
+      var newName = newProjMatch[1].trim();
+      if (!newName) return 'Give the project a name — try "new project My Tower".';
+      try {
+        var newId = uid();
+        var pList = getProjects().concat([{id:newId, name:newName, createdAt:Date.now(), sourceType:'ifc'}]);
+        saveProjects(pList);
+        d({t:A.SET_PROJECT_LIST, v:pList});
+        _switchProject(newId, s, d);
+        return 'Created project **' + newName + '** and switched to it. Drop an IFC file to get started.';
+      } catch(e) { return 'Couldn\'t create the project: ' + (e.message||e); }
+    }
+    // "rename project to Foo" / "rename the current project Foo" — requires the word "project"
+    if (/project/i.test(raw)) {
+      var renProjMatch = raw.match(/^\s*rename\s+(?:(?:the\s+)?(?:current\s+)?project\s+)?(?:to\s+)?["']?(.+?)["']?\s*$/i);
+      if (renProjMatch) {
+        var rnName = renProjMatch[1].replace(/^project\s+/i,'').trim();
+        if (!rnName) return 'What should I rename it to?';
+        try {
+          var pid = s.activeProject || 'default';
+          var rList = getProjects().map(function(p){return p.id===pid?Object.assign({},p,{name:rnName}):p;});
+          saveProjects(rList);
+          d({t:A.SET_PROJECT_LIST, v:rList});
+          return 'Renamed to **' + rnName + '**.';
+        } catch(e) { return 'Couldn\'t rename: ' + (e.message||e); }
+      }
+    }
+    // "switch to project Foo" / "open project Foo" / "go to project Foo"
+    var swProjMatch = raw.match(/^\s*(?:switch|change|go|open|load)\s+(?:to\s+)?(?:the\s+)?project\s+["']?(.+?)["']?\s*$/i);
+    if (swProjMatch) {
+      var swName = swProjMatch[1].trim().toLowerCase();
+      var swList = getProjects();
+      var swMatch = swList.find(function(p){return p.name.toLowerCase()===swName;}) ||
+                    swList.find(function(p){return p.name.toLowerCase().indexOf(swName)!==-1;});
+      if (swMatch) { _switchProject(swMatch.id, s, d); return 'Switched to **' + swMatch.name + '**.'; }
+      return 'No project named "' + swProjMatch[1] + '". Try "new project ' + swProjMatch[1] + '" to create it.';
+    }
+    // "list projects" / "show projects" / "what projects"
+    if (/^(?:list|show|what)\s+(?:the\s+)?projects?\s*\??$/i.test(text)) {
+      var lpList = getProjects();
+      if (!lpList.length) return 'No projects yet. Try "new project My Tower".';
+      return 'Projects:\n' + lpList.map(function(p){return (p.id===s.activeProject?'• ':'  ')+p.name;}).join('\n');
     }
 
     // ── Help ───────────────────────────────────────────────────────
@@ -14947,9 +15029,18 @@ function startApp() {
         })}
         ${loading && html`<div style=${{display:'flex'}}>
           <div style=${{
-            padding:'.4rem .65rem', borderRadius:'12px 12px 12px 3px',
-            background:aiBubbleBg, color:mutedCol, fontSize:'0.84rem'
-          }}>…</div>
+            padding:'.45rem .75rem', borderRadius:'12px 12px 12px 3px',
+            background:aiBubbleBg, color:mutedCol, fontSize:'0.85rem',
+            display:'flex', alignItems:'center', gap:'.5rem'
+          }}>
+            <span class="spin" style=${{display:'inline-block',width:'.7rem',height:'.7rem',borderRadius:'50%',border:'1.5px solid rgba(96,165,250,.3)',borderTopColor:'#60a5fa',flexShrink:0}}></span>
+            <span style=${{color:'#93c5fd',fontStyle:'italic'}}>Thinking</span>
+            <span style=${{display:'inline-flex',gap:'.15rem'}}>
+              <span style=${{animation:'nlDots 1.4s ease-in-out infinite',color:'#93c5fd'}}>.</span>
+              <span style=${{animation:'nlDots 1.4s ease-in-out .2s infinite',color:'#93c5fd'}}>.</span>
+              <span style=${{animation:'nlDots 1.4s ease-in-out .4s infinite',color:'#93c5fd'}}>.</span>
+            </span>
+          </div>
         </div>`}
         ${!loading && msgs.length <= 2 && function(){
           var suggestions = [];
@@ -15094,9 +15185,18 @@ function startApp() {
         })}
         ${loading && html`<div style=${{display:'flex'}}>
           <div style=${{
-            padding:'.4rem .65rem', borderRadius:'12px 12px 12px 3px',
-            background:aiBubbleBg, color:mutedCol, fontSize:'0.84rem'
-          }}>…</div>
+            padding:'.45rem .75rem', borderRadius:'12px 12px 12px 3px',
+            background:aiBubbleBg, color:mutedCol, fontSize:'0.85rem',
+            display:'flex', alignItems:'center', gap:'.5rem'
+          }}>
+            <span class="spin" style=${{display:'inline-block',width:'.7rem',height:'.7rem',borderRadius:'50%',border:'1.5px solid rgba(96,165,250,.3)',borderTopColor:'#60a5fa',flexShrink:0}}></span>
+            <span style=${{color:'#93c5fd',fontStyle:'italic'}}>Thinking</span>
+            <span style=${{display:'inline-flex',gap:'.15rem'}}>
+              <span style=${{animation:'nlDots 1.4s ease-in-out infinite',color:'#93c5fd'}}>.</span>
+              <span style=${{animation:'nlDots 1.4s ease-in-out .2s infinite',color:'#93c5fd'}}>.</span>
+              <span style=${{animation:'nlDots 1.4s ease-in-out .4s infinite',color:'#93c5fd'}}>.</span>
+            </span>
+          </div>
         </div>`}
         <div ref=${bottomRef}></div>
       </div>
