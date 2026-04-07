@@ -14472,7 +14472,10 @@ function startApp() {
 
     // On first open: check server AI health
     useEffect(function() {
-      if (!open) return;
+      // Run when panel becomes visible — either floating-open OR docked.
+      // Previously this only ran on `open`, so docked desktop users never
+      // got their health check fired and the status pill stayed at idle.
+      if (!open && !isDocked) return;
       setLLMStatus(_nlModelStatus);
       setBackend(_nlBackend);
       if (_nlBackend === 'server' || _nlModelStatus === 'ready') return;
@@ -14484,7 +14487,7 @@ function startApp() {
         setBackend(_nlBackend);
         setLLMStatus(_nlModelStatus);
       });
-    }, [open]);
+    }, [open, isDocked]);
 
     useEffect(function() {
       if ((open || isDocked) && inputRef.current) setTimeout(function(){ inputRef.current && inputRef.current.focus(); }, 80);
