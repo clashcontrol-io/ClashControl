@@ -1,5 +1,8 @@
 # Changelog
 
+## v4.10.0 (2026-04-07)
+- feat: move training controls to Settings > Privacy, remove top-center pill
+
 ## v4.9.18 (2026-04-07)
 - ui: actually float the AI chat panel (margin + rounded + full shadow)
 
