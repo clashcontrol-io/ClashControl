@@ -14,7 +14,7 @@ module.exports = async function handler(req, res) {
   // Check AI (Google AI Studio / Gemma)
   if (key) {
     status.ai = true;
-    status.model = 'gemma-4-26b-a4b-it';
+    status.model = 'gemma-4-31b-it';
   }
 
   // Optional: list available models so we can discover the latest Gemma ID
