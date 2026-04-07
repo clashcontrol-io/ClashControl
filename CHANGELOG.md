@@ -1,5 +1,8 @@
 # Changelog
 
+## v4.10.5 (2026-04-07)
+- Logo: shrink "CC" letter size to match the original visual weight
+
 ## v4.10.4 (2026-04-07)
 - BCF: brand attribution + fix author override + schema element order
 
