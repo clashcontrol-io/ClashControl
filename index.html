@@ -16,14 +16,18 @@
       }
     })();
   </script>
-  <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 48 48'%3E%3Crect width='48' height='48' rx='10' fill='%232563eb'/%3E%3Ctext x='24' y='30' text-anchor='middle' font-family='system-ui,sans-serif' font-weight='900' font-size='18' fill='white'%3ECC%3C/text%3E%3C/svg%3E">
+  <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 48 48'%3E%3Cdefs%3E%3ClinearGradient id='g' x1='0%25' y1='0%25' x2='100%25' y2='100%25'%3E%3Cstop offset='0%25' stop-color='%2300e5ff'/%3E%3Cstop offset='100%25' stop-color='%237c3aed'/%3E%3C/linearGradient%3E%3C/defs%3E%3Crect width='48' height='48' rx='10' fill='url(%23g)'/%3E%3Ctext x='24' y='30' text-anchor='middle' font-family='system-ui,sans-serif' font-weight='900' font-size='18' fill='white'%3ECC%3C/text%3E%3C/svg%3E">
   <link rel="manifest" href="manifest.json">
   <meta name="theme-color" content="#0f172a">
 
   <!-- CSP: restrict resource loading to known CDN origins -->
   <!-- 'unsafe-eval' required by pdf.js v3 for custom font rendering (CFF/Type1 font programs) -->
-  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval' 'wasm-unsafe-eval' https://cdnjs.cloudflare.com https://cdn.jsdelivr.net https://gc.zgo.at; style-src 'self' 'unsafe-inline'; connect-src 'self' https://cdn.jsdelivr.net https://cdnjs.cloudflare.com https://*.goatcounter.com https://huggingface.co https://cdn-lfs.huggingface.co https://cdn-lfs-us-1.huggingface.co https://*.hf.co http://localhost:11434 https://api.anthropic.com https://api.openai.com https://generativelanguage.googleapis.com http://localhost:* ws://localhost:* blob:; worker-src 'self' blob:; img-src 'self' blob: data:;">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval' 'wasm-unsafe-eval' https://cdnjs.cloudflare.com https://cdn.jsdelivr.net https://gc.zgo.at; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com data:; connect-src 'self' https://cdn.jsdelivr.net https://cdnjs.cloudflare.com https://*.goatcounter.com https://huggingface.co https://cdn-lfs.huggingface.co https://cdn-lfs-us-1.huggingface.co https://*.hf.co http://localhost:11434 https://api.anthropic.com https://api.openai.com https://generativelanguage.googleapis.com http://localhost:* ws://localhost:* blob:; worker-src 'self' blob:; img-src 'self' blob: data:;">
 
+  <!-- Brand fonts: Syne (display), DM Sans (body), DM Mono (mono/metadata) -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=DM+Sans:wght@400;500;600;700&family=Syne:wght@600;700;800&display=swap" rel="stylesheet">
   <!-- CDN deps: React, Three.js, JSZip — all UMD, all cdnjs -->
   <!-- SRI hashes: regenerate with `node scripts/generate-sri.js` if you change versions -->
   <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js" integrity="sha384-tMH8h3BGESGckSAVGZ82T9n90ztNXxvdwvdM6UoR56cYcf+0iGXBliJ29D+wZ/x8" crossorigin="anonymous"></script>
@@ -145,6 +149,13 @@
       --color-warning:#f59e0b;--color-warning-fg:#fbbf24;--color-warning-bg:#422006;--color-warning-border:rgba(245,158,11,.35);
       --color-danger:#ef4444;--color-danger-fg:#fca5a5;--color-danger-bg:#450a0a;--color-danger-border:rgba(239,68,68,.4);
       --color-info:#3b82f6;--color-info-fg:#93c5fd;--color-info-bg:#172554;--color-info-border:rgba(59,130,246,.35);
+      /* Brand fonts */
+      --font-display:'Syne','Inter','Space Grotesk',system-ui,-apple-system,sans-serif;
+      --font-body:'DM Sans','Inter',system-ui,-apple-system,sans-serif;
+      --font-mono:'DM Mono','SF Mono','JetBrains Mono','Menlo','Consolas',monospace;
+      /* Brand logo gradient */
+      --logo-gradient:linear-gradient(135deg,#00e5ff 0%,#7c3aed 100%);
+      --logo-gradient-soft:linear-gradient(135deg,rgba(0,229,255,.18) 0%,rgba(124,58,237,.18) 100%);
     }
     [data-theme=light]{
       --bg-primary:#f8fafc;--bg-secondary:#ffffff;--bg-tertiary:#f1f5f9;
@@ -168,7 +179,10 @@
       --color-info:#2563eb;--color-info-fg:#1d4ed8;--color-info-bg:#dbeafe;--color-info-border:rgba(37,99,235,.35);
     }
     *{box-sizing:border-box;margin:0;padding:0}
-    body{background:var(--bg-primary);color:var(--text-primary);font-family:system-ui,-apple-system,sans-serif;overflow:hidden}
+    body{background:var(--bg-primary);color:var(--text-primary);font-family:var(--font-body);overflow:hidden;-webkit-font-smoothing:antialiased;-moz-osx-font-smoothing:grayscale}
+    .cc-display{font-family:var(--font-display);letter-spacing:-.01em}
+    .cc-mono{font-family:var(--font-mono)}
+    code,kbd,pre,samp{font-family:var(--font-mono)}
     input[type=range]{accent-color:var(--accent)}input[type=checkbox]{accent-color:var(--accent)}
     ::-webkit-scrollbar{width:7px}::-webkit-scrollbar-track{background:transparent}::-webkit-scrollbar-thumb{background:var(--text-faint);border-radius:4px}::-webkit-scrollbar-thumb:hover{background:var(--text-muted)}
     select,select option{background:var(--bg-tertiary);color:var(--text-primary);border:1px solid var(--border)}
@@ -208,7 +222,7 @@
     .cc-tv__icon svg{width:100%;height:100%;fill:currentColor}
     .cc-tv__text{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
     .cc-tv__text-secondary{color:var(--text-muted);font-size:var(--text-xs);margin-left:var(--space-1)}
-    .cc-tv__count{flex-shrink:0;font-size:var(--text-2xs);color:var(--text-muted);background:var(--bg-secondary);padding:.05rem var(--space-2);border-radius:var(--radius-pill);font-weight:var(--weight-medium);min-width:1.5rem;text-align:center}
+    .cc-tv__count{flex-shrink:0;font-family:var(--font-mono);font-size:var(--text-2xs);color:var(--text-muted);background:var(--bg-secondary);padding:.05rem var(--space-2);border-radius:var(--radius-pill);font-weight:var(--weight-medium);min-width:1.5rem;text-align:center}
     .cc-tv__content:hover .cc-tv__count,.cc-tv__content.cc-tv-current .cc-tv__count{background:var(--bg-tertiary)}
     .cc-tv__list--guides{position:relative}
     .cc-tv__list--guides::before{content:'';position:absolute;top:0;bottom:.5rem;left:calc(var(--cc-tv-toggle-size)/2);width:1px;background:var(--border-subtle)}
@@ -297,9 +311,9 @@
 <body>
 
 <div id="boot" style="display:flex;flex-direction:column;align-items:center;justify-content:center;height:100vh;text-align:center">
-  <div style="width:48px;height:48px;background:#2563eb;border-radius:12px;display:flex;align-items:center;justify-content:center;margin-bottom:1rem"><span style="color:#fff;font-weight:900;font-size:18px">CC</span></div>
-  <div style="font-size:1.25rem;font-weight:700;margin-bottom:.5rem">ClashControl</div>
-  <div id="boot-msg" style="color:#64748b;font-size:0.98rem">Loading…</div>
+  <div style="width:56px;height:56px;background:linear-gradient(135deg,#00e5ff 0%,#7c3aed 100%);border-radius:14px;display:flex;align-items:center;justify-content:center;margin-bottom:1rem;box-shadow:0 8px 24px rgba(124,58,237,.35)"><span style="color:#fff;font-weight:800;font-size:20px;font-family:'Syne',system-ui,sans-serif;letter-spacing:-.02em">CC</span></div>
+  <div style="font-size:1.4rem;font-weight:800;margin-bottom:.4rem;font-family:'Syne',system-ui,sans-serif;letter-spacing:-.01em">ClashControl</div>
+  <div id="boot-msg" style="color:#64748b;font-size:0.92rem;font-family:'DM Sans',system-ui,sans-serif">Loading…</div>
 </div>
 <div id="root"></div>
 
@@ -6849,7 +6863,7 @@ function startApp() {
   var S_BACKDROP = {position:'fixed',inset:0,background:'var(--modal-bg)',display:'flex',alignItems:'center',justifyContent:'center',zIndex:50,overflow:'hidden',padding:'var(--space-6) 0',backdropFilter:'blur(2px)',WebkitBackdropFilter:'blur(2px)'};
   var S_MODAL_CARD = {background:'var(--bg-secondary)',border:'1px solid var(--border)',borderRadius:'var(--radius-lg)',maxWidth:'95vw',maxHeight:'85vh',overflowY:'auto',WebkitOverflowScrolling:'touch',boxShadow:'var(--shadow-lg)',flexShrink:0};
   var S_MODAL_HEADER = {display:'flex',alignItems:'center',justifyContent:'space-between',padding:'var(--space-4) var(--space-5)',borderBottom:'1px solid var(--border-subtle)',gap:'var(--space-3)'};
-  var S_MODAL_TITLE = {fontWeight:'var(--weight-semibold)',fontSize:'var(--text-lg)',color:'var(--text-primary)',lineHeight:'var(--leading-tight)'};
+  var S_MODAL_TITLE = {fontFamily:'var(--font-display)',fontWeight:'var(--weight-bold)',fontSize:'var(--text-lg)',color:'var(--text-primary)',lineHeight:'var(--leading-tight)',letterSpacing:'-.01em'};
   var S_MODAL_BODY = {padding:'var(--space-5)',display:'flex',flexDirection:'column',gap:'var(--space-3)'};
   var S_MODAL_CLOSE = {border:'none',background:'none',cursor:'pointer',color:'var(--text-muted)',fontSize:'var(--text-xl)',lineHeight:1,padding:'var(--space-1) var(--space-2)',borderRadius:'var(--radius-sm)',transition:'background var(--duration-fast) var(--ease-standard),color var(--duration-fast) var(--ease-standard)'};
   // Card list row (clash/issue row) — paired with .cc-list-row class for hover state
@@ -7124,7 +7138,7 @@ function startApp() {
     return html`<header class="cc-header" style=${{display:'flex',alignItems:'center',justifyContent:'space-between',padding:'var(--space-2) var(--space-4)',background:'var(--bg-primary)',flexShrink:0,gap:'var(--space-3)'}}>
       <div style=${{display:'flex',alignItems:'center',gap:'var(--space-3)'}}>
         <div style=${{position:'relative'}}>
-          <div style=${{width:32,height:32,background:'var(--accent)',borderRadius:'var(--radius-md)',display:'flex',alignItems:'center',justifyContent:'center',cursor:'pointer',boxShadow:'var(--shadow-sm)'}} title="ClashControl — tap for version info" onClick=${function(){setShowVer(!showVer);}}><span style=${{color:'#fff',fontWeight:900,fontSize:14}}>CC</span></div>
+          <div style=${{width:32,height:32,background:'var(--logo-gradient)',borderRadius:'var(--radius-md)',display:'flex',alignItems:'center',justifyContent:'center',cursor:'pointer',boxShadow:'0 4px 12px rgba(124,58,237,.3)'}} title="ClashControl — tap for version info" onClick=${function(){setShowVer(!showVer);}}><span style=${{color:'#fff',fontWeight:800,fontSize:14,fontFamily:'var(--font-display)',letterSpacing:'-.02em'}}>CC</span></div>
           ${showVer && html`<div onClick=${function(){setShowVer(false);}} style=${{position:'fixed',inset:0,zIndex:8999,background:'transparent'}}></div>
           <div style=${{position:'fixed',top:50,left:12,background:'var(--bg-secondary)',border:'1px solid var(--border)',borderRadius:8,padding:'.6rem .8rem',zIndex:9000,minWidth:220,boxShadow:'0 8px 24px rgba(0,0,0,.4)',fontSize:'0.83rem',color:'var(--text-primary)',whiteSpace:'nowrap'}} onClick=${function(e){e.stopPropagation();}}>
             <div style=${{fontWeight:700,marginBottom:'.3rem'}}>ClashControl</div>
@@ -7141,7 +7155,7 @@ function startApp() {
           </div>`}
         </div>
         <div>
-          <span class="cc-header-brand-text" style=${{fontWeight:600,cursor:'default'}} title="ClashControl — Free, open-source IFC clash detection for the browser. Load BIM models, detect geometric clashes, manage issues, and export to BCF.">ClashControl</span>
+          <span class="cc-header-brand-text cc-display" style=${{fontWeight:'var(--weight-bold)',cursor:'default',fontSize:'var(--text-md)'}} title="ClashControl — Free, open-source IFC clash detection for the browser. Load BIM models, detect geometric clashes, manage issues, and export to BCF.">ClashControl</span>
           <span class="cc-header-version" style=${{color:'var(--text-muted)',fontSize:'0.8rem',marginLeft:'.4rem',cursor:'default'}} title=${'v'+CC_VERSION.v+' — Latest features:\n• Natural language app control (theme, files, viewer, tools)\n• Revit Bridge: AI-powered sync with Autodesk Revit\n• Soft clash / proximity detection\n• Light & dark theme with full UI polish\n• BCF 2.1 & 3.0 import/export\n• Floor plans, section planes & measurements\n\nBuild: '+CC_VERSION.hash+' ('+new Date(CC_VERSION.date).toLocaleDateString('en-GB',{day:'numeric',month:'long',year:'numeric'})+')'}>v${CC_VERSION.v}</span>
         </div>
         <div class="cc-header-project" style=${{position:'relative'}}>
@@ -12232,7 +12246,7 @@ function startApp() {
     function tog(k){return function(){var u={};u[k]=!p[k];d({t:A.UPD_PREFS,u:u});}}
     function sel(k){return function(e){var u={};u[k]=e.target.value;d({t:A.UPD_PREFS,u:u});}}
     var LBL={fontSize:'var(--text-sm)',color:'var(--text-muted)',display:'block',marginBottom:'var(--space-1)'};
-    var SEC={fontSize:'var(--text-xs)',fontWeight:'var(--weight-bold)',color:'var(--color-info-fg)',textTransform:'uppercase',letterSpacing:'.08em',marginBottom:'var(--space-2)',marginTop:'var(--space-4)'};
+    var SEC={fontFamily:'var(--font-mono)',fontSize:'var(--text-xs)',fontWeight:'var(--weight-medium)',color:'var(--color-info-fg)',textTransform:'uppercase',letterSpacing:'.1em',marginBottom:'var(--space-2)',marginTop:'var(--space-4)'};
     var TROW={display:'flex',justifyContent:'space-between',alignItems:'center',padding:'var(--space-2) 0',gap:'var(--space-4)',borderBottom:'1px solid var(--border-subtle)'};
     var TLBL={fontSize:'var(--text-md)',color:'var(--text-primary)',fontWeight:'var(--weight-medium)'};
     var TSUB={fontSize:'var(--text-xs)',color:'var(--text-muted)',marginTop:'.1rem',lineHeight:'var(--leading-base)'};
@@ -12360,7 +12374,7 @@ function startApp() {
                 <div style=${TSUB}>Share this key with your team. Issue status, priority, assignee, title and description sync automatically.</div>
               </div>
               <div style=${{display:'flex',gap:'.3rem',alignItems:'center',flexShrink:0}}>
-                <code style=${{fontSize:'0.78rem',background:'var(--bg-secondary)',padding:'.2rem .5rem',borderRadius:4,fontFamily:'monospace',color:'var(--accent)'}}>${spId}</code>
+                <code style=${{fontSize:'0.78rem',background:'var(--bg-secondary)',padding:'.2rem .5rem',borderRadius:4,fontFamily:'var(--font-mono)',color:'var(--accent)'}}>${spId}</code>
                 <button onClick=${function(){navigator.clipboard.writeText(spId);}}
                   style=${{...S_BTN,padding:'.3rem .5rem',background:'var(--bg-secondary)',color:'var(--text-secondary)',fontSize:'0.72rem',border:'1px solid var(--border)',borderRadius:6}}>Copy</button>
                 <button onClick=${function(){if(window._ccSharedPull)window._ccSharedPull();}}
@@ -12376,7 +12390,7 @@ function startApp() {
               </div>
               <div style=${{display:'flex',gap:'.3rem',flexShrink:0}}>
                 <input type="text" placeholder="e.g. MEP-abc123" id="cc-join-key"
-                  style=${{...S_INPUT,width:120,fontSize:'0.78rem',fontFamily:'monospace'}} />
+                  style=${{...S_INPUT,width:120,fontSize:'0.78rem',fontFamily:'var(--font-mono)'}} />
                 <button onClick=${function(){
                   var key = document.getElementById('cc-join-key').value.trim();
                   if (!key) return;
@@ -12718,8 +12732,8 @@ function startApp() {
       if(this.state.hasError){
         var self=this;
         return h('div',{style:{padding:'2rem',textAlign:'center',color:'var(--text-primary)',background:'var(--bg-primary)',height:'100vh',display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center'}},
-          h('div',{style:{width:48,height:48,background:'#2563eb',borderRadius:12,display:'flex',alignItems:'center',justifyContent:'center',marginBottom:'1rem'}},
-            h('span',{style:{color:'#fff',fontWeight:900,fontSize:18}},'CC')),
+          h('div',{style:{width:48,height:48,background:'linear-gradient(135deg,#00e5ff 0%,#7c3aed 100%)',borderRadius:12,display:'flex',alignItems:'center',justifyContent:'center',marginBottom:'1rem',boxShadow:'0 8px 24px rgba(124,58,237,.35)'}},
+            h('span',{style:{color:'#fff',fontWeight:800,fontSize:18,fontFamily:'Syne,system-ui,sans-serif',letterSpacing:'-.02em'}},'CC')),
           h('h2',{style:{marginBottom:'.5rem'}},'Something went wrong'),
           h('p',{style:{color:'var(--text-secondary)',marginBottom:'1rem',maxWidth:400}},String(this.state.error&&this.state.error.message||this.state.error||'Unknown error')),
           h('div',{style:{display:'flex',gap:'.5rem'}},
@@ -15727,12 +15741,12 @@ function startApp() {
     }}>
       <div style=${{height:48,display:'flex',alignItems:'center',justifyContent:'center',flexShrink:0}}>
         <div class="cc-logo-mark cc-tip" data-tip=${'ClashControl v'+CC_VERSION.v}
-          style=${{width:28,height:28,background:'var(--accent)',borderRadius:6,
+          style=${{width:28,height:28,background:'var(--logo-gradient)',borderRadius:'var(--radius-md)',boxShadow:'0 4px 12px rgba(124,58,237,.3)',
             display:'flex',alignItems:'center',justifyContent:'center',cursor:'default'}}>
-          <span style=${{color:'#fff',fontWeight:900,fontSize:11}}>CC</span>
+          <span style=${{color:'#fff',fontWeight:800,fontSize:11,fontFamily:'var(--font-display)',letterSpacing:'-.02em'}}>CC</span>
         </div>
       </div>
-      <div class="cc-rail-tabs" style=${{display:'flex',flexDirection:'column',borderBottom:'1px solid var(--border-subtle)'}}>
+      <div class="cc-rail-tabs" style=${{display:'flex',flexDirection:'column'}}>
         ${tabBtn('models',  SVG_MODELS,  'Models',   s.models.length)}
         ${tabBtn('clashes', SVG_CLASHES, 'Clashes',  clashN)}
         ${tabBtn('issues',  SVG_ISSUES,  'Issues',   issueN)}
@@ -16490,7 +16504,7 @@ function startApp() {
       <div style=${{background:'var(--bg-secondary)',border:'1px solid var(--border)',borderRadius:'var(--radius-xl)',width:460,maxWidth:'92vw',maxHeight:'85vh',overflowY:'auto',WebkitOverflowScrolling:'touch',boxShadow:'var(--shadow-lg)',transform:vis?'translateY(0) scale(1)':'translateY(12px) scale(.97)',opacity:vis?1:0,transition:'transform var(--duration-slow) var(--ease-decelerate), opacity var(--duration-base) var(--ease-standard)',flexShrink:0}}>
 
         <!-- Header -->
-        <div style=${{background:'linear-gradient(135deg,#0f172a 0%,#1e3a5f 40%,#2563eb 100%)',padding:'1.4rem 1.4rem 1.2rem',position:'relative',overflow:'hidden'}}>
+        <div style=${{background:'linear-gradient(135deg,#0f172a 0%,#1a1147 40%,#7c3aed 100%)',padding:'1.4rem 1.4rem 1.2rem',position:'relative',overflow:'hidden'}}>
           <div style=${{position:'absolute',top:'-30%',right:'-10%',width:180,height:180,borderRadius:'50%',background:'rgba(37,99,235,.25)',filter:'blur(40px)'}}></div>
           <div style=${{display:'flex',alignItems:'center',gap:'.75rem',position:'relative'}}>
             <div style=${{width:42,height:42,background:'rgba(255,255,255,.12)',borderRadius:12,display:'flex',alignItems:'center',justifyContent:'center',flexShrink:0,backdropFilter:'blur(8px)',border:'1px solid rgba(255,255,255,.1)'}}>
@@ -16499,7 +16513,7 @@ function startApp() {
               </svg>
             </div>
             <div>
-              <div id="cc-welcome-title" style=${{color:'#fff',fontWeight:'var(--weight-bold)',fontSize:'var(--text-lg)',letterSpacing:'-.01em'}}>Welcome to ClashControl</div>
+              <div id="cc-welcome-title" style=${{color:'#fff',fontWeight:'var(--weight-bold)',fontSize:'var(--text-lg)',letterSpacing:'-.01em',fontFamily:'var(--font-display)'}}>Welcome to ClashControl</div>
               <div style=${{color:'rgba(255,255,255,.6)',fontSize:'.65rem',marginTop:'.15rem'}}>Get the best experience</div>
             </div>
           </div>

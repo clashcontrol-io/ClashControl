@@ -90,11 +90,34 @@ from a token.
 | `--shadow-md` | `0 4px 12px rgba(0,0,0,.3)`| Floating overlays, popovers    |
 | `--shadow-lg` | `0 8px 24px rgba(0,0,0,.4)`| Modals, top-level dialogs      |
 
+### Brand mark / logo
+
+- **Gradient:** `--logo-gradient` =
+  `linear-gradient(135deg, #00e5ff 0%, #7c3aed 100%)` (cyan → purple).
+- **Soft variant:** `--logo-gradient-soft` for tinted backgrounds at ~18%
+  alpha.
+- The "CC" wordmark sits on the gradient in white, set in `Syne` (`var
+  (--font-display)`) at weight 800 with `letter-spacing: -.02em`.
+- Drop shadow: `0 4px 12px rgba(124,58,237,.3)` for small marks; bump to
+  `0 8px 24px rgba(124,58,237,.35)` for hero/boot/error-screen marks.
+- Used in: favicon, boot screen, header, left rail, error boundary, welcome
+  popup gradient header.
+
 ---
 
 ## 3. Typography Rules
 
-- **Font family:** `system-ui, -apple-system, sans-serif`. No web fonts.
+- **Font families** (loaded via Google Fonts in `<head>`, fallback chain in
+  the CSS variables for offline / blocked-CDN scenarios):
+  - **Display** — `Syne` (700, 800). Used for the brand wordmark, modal
+    titles, hero headings. Token: `--font-display`. Apply via the
+    `cc-display` utility class or `fontFamily: 'var(--font-display)'`.
+  - **Body** — `DM Sans` (400, 500, 600, 700). Default for everything in the
+    app. Token: `--font-body`, applied at the `body` level.
+  - **Mono** — `DM Mono` (400, 500). Used for metadata, code-style labels,
+    counts, IDs, project keys, settings section headers. Token:
+    `--font-mono`. Apply via the `cc-mono` utility or `code`/`kbd`/`pre`/
+    `samp` (already wired globally).
 - **Type scale** (use these tokens, not raw `rem`/`px` values):
 
 | Token           | Size       | Use                                            |
