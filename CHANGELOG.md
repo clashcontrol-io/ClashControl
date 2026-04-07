@@ -1,5 +1,8 @@
 # Changelog
 
+## v4.9.15 (2026-04-07)
+- fix: yes/no confirmation loop was stuck when Gemma replied via intent:unknown
+
 ## v4.9.14 (2026-04-07)
 - feat: conversational "want me to X?" offers with one-click yes/no
 
