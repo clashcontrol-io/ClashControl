@@ -4043,15 +4043,27 @@ function startApp() {
     var v3 = version === '3.0';
     var zip = new JSZip();
     var versionId = v3 ? '3.0' : '2.1';
+    var ccVer = (window.CC_VERSION && window.CC_VERSION.v) || '';
+    var ccTool = 'ClashControl' + (ccVer ? ' ' + ccVer : '');
+    var ccUrl = 'https://www.clashcontrol.io';
+    var attrComment = '<!-- Created with ' + ccTool + ' \u2014 ' + ccUrl + ' -->\n';
+    var realAuthor = (typeof _ccChangelogUser === 'string' && _ccChangelogUser.trim()) ? _ccChangelogUser.trim() : 'ClashControl User';
+    var authorEsc = esc(realAuthor);
+    // README.txt at zip root — visible attribution for anyone who unzips the .bcf
+    zip.file('README.txt',
+      'This BCF file was created with ClashControl' + (ccVer ? ' v' + ccVer : '') + '.\n' +
+      'ClashControl is a free, open-source IFC clash detection tool that runs entirely in your browser.\n' +
+      '\n' +
+      'Learn more or open this file at: ' + ccUrl + '\n');
     // bcf.version with proper xmlns for Solibri/BIMcollab compatibility
     var versionXmlns = v3 ? 'http://www.buildingsmart-tech.org/bcf/version/3.0' : 'http://www.buildingsmart-tech.org/bcf/version/2.1';
-    zip.file('bcf.version','<?xml version="1.0" encoding="UTF-8"?>\n<Version VersionId="'+versionId+'" xmlns="'+versionXmlns+'"><DetailedVersion>'+versionId+'</DetailedVersion></Version>');
+    zip.file('bcf.version','<?xml version="1.0" encoding="UTF-8"?>\n'+attrComment+'<Version VersionId="'+versionId+'" xmlns="'+versionXmlns+'"><DetailedVersion>'+versionId+'</DetailedVersion></Version>');
 
     if (v3) {
-      zip.file('extensions.xml', '<?xml version="1.0" encoding="UTF-8"?>\n<Extensions xmlns="http://www.buildingsmart-tech.org/bcf/extensions/3.0"><TopicTypes><TopicType>Issue</TopicType><TopicType>Warning</TopicType><TopicType>Request</TopicType></TopicTypes><TopicStatuses><TopicStatus>Open</TopicStatus><TopicStatus>In Progress</TopicStatus><TopicStatus>Closed</TopicStatus></TopicStatuses><Priorities><Priority>Critical</Priority><Priority>High</Priority><Priority>Normal</Priority><Priority>Low</Priority></Priorities></Extensions>');
-      zip.file('project.bcfp','<?xml version="1.0" encoding="UTF-8"?>\n<ProjectInfo xmlns="http://www.buildingsmart-tech.org/bcf/project/3.0"><Project ProjectId="'+guid()+'"><Name>ClashControl</Name></Project></ProjectInfo>');
+      zip.file('extensions.xml', '<?xml version="1.0" encoding="UTF-8"?>\n'+attrComment+'<Extensions xmlns="http://www.buildingsmart-tech.org/bcf/extensions/3.0"><TopicTypes><TopicType>Issue</TopicType><TopicType>Warning</TopicType><TopicType>Request</TopicType></TopicTypes><TopicStatuses><TopicStatus>Open</TopicStatus><TopicStatus>In Progress</TopicStatus><TopicStatus>Closed</TopicStatus></TopicStatuses><Priorities><Priority>Critical</Priority><Priority>High</Priority><Priority>Normal</Priority><Priority>Low</Priority></Priorities></Extensions>');
+      zip.file('project.bcfp','<?xml version="1.0" encoding="UTF-8"?>\n'+attrComment+'<ProjectInfo xmlns="http://www.buildingsmart-tech.org/bcf/project/3.0"><Project ProjectId="'+guid()+'"><Name>ClashControl</Name></Project></ProjectInfo>');
     } else {
-      zip.file('project.bcfp','<?xml version="1.0" encoding="UTF-8"?>\n<ProjectExtension xmlns="http://www.buildingsmart-tech.org/bcf/project/2.1"><Project ProjectId="'+guid()+'"><Name>ClashControl</Name></Project><ExtensionSchema/></ProjectExtension>');
+      zip.file('project.bcfp','<?xml version="1.0" encoding="UTF-8"?>\n'+attrComment+'<ProjectExtension xmlns="http://www.buildingsmart-tech.org/bcf/project/2.1"><Project ProjectId="'+guid()+'"><Name>ClashControl</Name></Project><ExtensionSchema/></ProjectExtension>');
     }
 
     items.forEach(function(it) {
@@ -4069,19 +4081,22 @@ function startApp() {
       var vpGuid = vp ? guid() : null;
 
       var markupXmlns = v3 ? 'http://www.buildingsmart-tech.org/bcf/markup/3.0' : 'http://www.buildingsmart-tech.org/bcf/markup/2.1';
-      var markup = '<?xml version="1.0" encoding="UTF-8"?>\n<Markup xmlns="'+markupXmlns+'">\n';
-      // Header section (required by Solibri)
-      markup += '  <Header>\n    <File IfcProject="" IfcSpatialStructureElement="" isExternal="true">\n      <Filename>ClashControl</Filename>\n      <Date>'+(it.createdAt||new Date().toISOString())+'</Date>\n    </File>\n  </Header>\n';
+      var markup = '<?xml version="1.0" encoding="UTF-8"?>\n'+attrComment+'<Markup xmlns="'+markupXmlns+'">\n';
+      // Header section (required by Solibri). Filename carries the tool brand
+      // since BCF has no dedicated authoring-tool field on Topic.
+      markup += '  <Header>\n    <File IfcProject="" IfcSpatialStructureElement="" isExternal="true">\n      <Filename>'+esc(ccTool)+'</Filename>\n      <Date>'+(it.createdAt||new Date().toISOString())+'</Date>\n    </File>\n  </Header>\n';
+      // Topic child elements must follow BCF schema order:
+      // Title, Priority, CreationDate, CreationAuthor, ModifiedDate, ModifiedAuthor, DueDate, AssignedTo, Description.
       markup += '  <Topic Guid="'+g+'" TopicType="'+type+'" TopicStatus="'+st+'">\n';
       markup += '    <Title>'+esc(it.title)+'</Title>\n';
-      markup += '    <CreationDate>'+(it.createdAt||new Date().toISOString())+'</CreationDate>\n';
-      markup += '    <CreationAuthor>ClashControl</CreationAuthor>\n';
-      markup += '    <ModifiedDate>'+new Date().toISOString()+'</ModifiedDate>\n';
-      markup += '    <ModifiedAuthor>ClashControl</ModifiedAuthor>\n';
-      markup += '    <Description>'+esc(it.description||'')+'</Description>\n';
       markup += '    <Priority>'+priority+'</Priority>\n';
-      if (it.assignee) markup += '    <AssignedTo>'+esc(it.assignee)+'</AssignedTo>\n';
+      markup += '    <CreationDate>'+(it.createdAt||new Date().toISOString())+'</CreationDate>\n';
+      markup += '    <CreationAuthor>'+authorEsc+'</CreationAuthor>\n';
+      markup += '    <ModifiedDate>'+new Date().toISOString()+'</ModifiedDate>\n';
+      markup += '    <ModifiedAuthor>'+authorEsc+'</ModifiedAuthor>\n';
       if (it.dueDate) markup += '    <DueDate>'+esc(it.dueDate)+'</DueDate>\n';
+      if (it.assignee) markup += '    <AssignedTo>'+esc(it.assignee)+'</AssignedTo>\n';
+      markup += '    <Description>'+esc(it.description||'')+'</Description>\n';
       markup += '  </Topic>\n';
 
       // Add viewpoint reference if available
@@ -10282,14 +10297,26 @@ function startApp() {
     var v3 = version === '3.0';
     var zip = new JSZip();
     var versionId = v3 ? '3.0' : '2.1';
+    var ccVer = (window.CC_VERSION && window.CC_VERSION.v) || '';
+    var ccTool = 'ClashControl' + (ccVer ? ' ' + ccVer : '');
+    var ccUrl = 'https://www.clashcontrol.io';
+    var attrComment = '<!-- Created with ' + ccTool + ' \u2014 ' + ccUrl + ' -->\n';
+    var realAuthor = (typeof _ccChangelogUser === 'string' && _ccChangelogUser.trim()) ? _ccChangelogUser.trim() : 'ClashControl User';
+    var authorEsc = esc(realAuthor);
+    // README.txt at zip root — visible attribution for anyone who unzips the .bcf
+    zip.file('README.txt',
+      'This BCF file was created with ClashControl' + (ccVer ? ' v' + ccVer : '') + '.\n' +
+      'ClashControl is a free, open-source IFC clash detection and IDS validation tool that runs entirely in your browser.\n' +
+      '\n' +
+      'Learn more or open this file at: ' + ccUrl + '\n');
     var versionXmlns = v3 ? 'http://www.buildingsmart-tech.org/bcf/version/3.0' : 'http://www.buildingsmart-tech.org/bcf/version/2.1';
-    zip.file('bcf.version', '<?xml version="1.0" encoding="UTF-8"?>\n<Version VersionId="' + versionId + '" xmlns="' + versionXmlns + '"><DetailedVersion>' + versionId + '</DetailedVersion></Version>');
+    zip.file('bcf.version', '<?xml version="1.0" encoding="UTF-8"?>\n'+attrComment+'<Version VersionId="' + versionId + '" xmlns="' + versionXmlns + '"><DetailedVersion>' + versionId + '</DetailedVersion></Version>');
 
     if (v3) {
-      zip.file('extensions.xml', '<?xml version="1.0" encoding="UTF-8"?>\n<Extensions xmlns="http://www.buildingsmart-tech.org/bcf/extensions/3.0"><TopicTypes><TopicType>IDS Validation</TopicType><TopicType>Error</TopicType><TopicType>Warning</TopicType><TopicType>Info</TopicType></TopicTypes><TopicStatuses><TopicStatus>Open</TopicStatus></TopicStatuses><Priorities><Priority>Critical</Priority><Priority>Normal</Priority><Priority>Minor</Priority></Priorities></Extensions>');
-      zip.file('project.bcfp', '<?xml version="1.0" encoding="UTF-8"?>\n<ProjectInfo xmlns="http://www.buildingsmart-tech.org/bcf/project/3.0"><Project ProjectId="' + guid() + '"><Name>ClashControl IDS Validation</Name></Project></ProjectInfo>');
+      zip.file('extensions.xml', '<?xml version="1.0" encoding="UTF-8"?>\n'+attrComment+'<Extensions xmlns="http://www.buildingsmart-tech.org/bcf/extensions/3.0"><TopicTypes><TopicType>IDS Validation</TopicType><TopicType>Error</TopicType><TopicType>Warning</TopicType><TopicType>Info</TopicType></TopicTypes><TopicStatuses><TopicStatus>Open</TopicStatus></TopicStatuses><Priorities><Priority>Critical</Priority><Priority>Normal</Priority><Priority>Minor</Priority></Priorities></Extensions>');
+      zip.file('project.bcfp', '<?xml version="1.0" encoding="UTF-8"?>\n'+attrComment+'<ProjectInfo xmlns="http://www.buildingsmart-tech.org/bcf/project/3.0"><Project ProjectId="' + guid() + '"><Name>ClashControl IDS Validation</Name></Project></ProjectInfo>');
     } else {
-      zip.file('project.bcfp', '<?xml version="1.0" encoding="UTF-8"?>\n<ProjectExtension xmlns="http://www.buildingsmart-tech.org/bcf/project/2.1"><Project ProjectId="' + guid() + '"><Name>ClashControl IDS Validation</Name></Project><ExtensionSchema/></ProjectExtension>');
+      zip.file('project.bcfp', '<?xml version="1.0" encoding="UTF-8"?>\n'+attrComment+'<ProjectExtension xmlns="http://www.buildingsmart-tech.org/bcf/project/2.1"><Project ProjectId="' + guid() + '"><Name>ClashControl IDS Validation</Name></Project><ExtensionSchema/></ProjectExtension>');
     }
 
     var severityToPriority = {error: 'Critical', warning: 'Normal', info: 'Minor'};
@@ -10297,15 +10324,17 @@ function startApp() {
       var g = guid();
       var f = zip.folder(g);
       var markupXmlns = v3 ? 'http://www.buildingsmart-tech.org/bcf/markup/3.0' : 'http://www.buildingsmart-tech.org/bcf/markup/2.1';
-      var markup = '<?xml version="1.0" encoding="UTF-8"?>\n<Markup xmlns="' + markupXmlns + '">\n';
-      markup += '  <Header>\n    <File IfcProject="" IfcSpatialStructureElement="" isExternal="true">\n      <Filename>ClashControl</Filename>\n      <Date>' + new Date().toISOString() + '</Date>\n    </File>\n  </Header>\n';
+      var markup = '<?xml version="1.0" encoding="UTF-8"?>\n'+attrComment+'<Markup xmlns="' + markupXmlns + '">\n';
+      markup += '  <Header>\n    <File IfcProject="" IfcSpatialStructureElement="" isExternal="true">\n      <Filename>'+esc(ccTool)+'</Filename>\n      <Date>' + new Date().toISOString() + '</Date>\n    </File>\n  </Header>\n';
+      // Topic child elements must follow BCF schema order:
+      // Title, Priority, Labels, CreationDate, CreationAuthor, Description.
       markup += '  <Topic Guid="' + g + '" TopicType="IDS Validation" TopicStatus="Open">\n';
       markup += '    <Title>' + esc(r.ruleDesc) + '</Title>\n';
-      markup += '    <CreationDate>' + new Date().toISOString() + '</CreationDate>\n';
-      markup += '    <CreationAuthor>ClashControl</CreationAuthor>\n';
-      markup += '    <Description>' + esc('Element: ' + r.elementName + ' (' + r.ifcType + ') GlobalId: ' + r.globalId + ' Storey: ' + r.storey) + '</Description>\n';
       markup += '    <Priority>' + (severityToPriority[r.severity] || 'Normal') + '</Priority>\n';
       markup += '    <Labels><Label>' + esc(r.specName) + '</Label></Labels>\n';
+      markup += '    <CreationDate>' + new Date().toISOString() + '</CreationDate>\n';
+      markup += '    <CreationAuthor>' + authorEsc + '</CreationAuthor>\n';
+      markup += '    <Description>' + esc('Element: ' + r.elementName + ' (' + r.ifcType + ') GlobalId: ' + r.globalId + ' Storey: ' + r.storey) + '</Description>\n';
       markup += '  </Topic>\n';
       markup += '</Markup>';
       f.file('markup.bcf', markup);
