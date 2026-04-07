@@ -1,5 +1,8 @@
 # Changelog
 
+## v4.10.1 (2026-04-07)
+- fix: reliable training data flush via sendBeacon + batched payloads
+
 ## v4.10.0 (2026-04-07)
 - feat: move training controls to Settings > Privacy, remove top-center pill
 
