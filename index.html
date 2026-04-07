@@ -12937,18 +12937,28 @@ function startApp() {
   var _serverAIAvailable = false;
 
   function checkServerAI() {
+    var dbg = (function(){ try { return localStorage.getItem('cc_debug')==='1'; } catch(e){ return false; } })();
+    if (dbg) console.log('%c[CC health → /api/health]','color:#60a5fa;font-weight:bold');
     return fetch('/api/health')
-      .then(function(r){ return r.json(); })
+      .then(function(r){
+        if (dbg) console.log('%c[CC health ← '+r.status+']','color:'+(r.ok?'#22c55e':'#f87171')+';font-weight:bold', r);
+        return r.json();
+      })
       .then(function(data){
+        if (dbg) console.log('[CC health data]', data);
         _serverAIAvailable = !!data.ai;
         if (data.ai) {
           _nlBackend = 'server';
           _nlModelStatus = 'ready';
           _nlModelListeners.forEach(function(cb){ cb('ready', 100); });
+          if (dbg) console.log('%c[CC AI ready] backend=server model='+(data.model||'?'),'color:#22c55e;font-weight:bold');
+        } else if (dbg) {
+          console.warn('[CC AI NOT ready] /api/health returned ai:false', data);
         }
         return data;
       })
-      .catch(function(){
+      .catch(function(err){
+        if (dbg) console.error('%c[CC health ✗]','color:#f87171;font-weight:bold', err);
         _serverAIAvailable = false;
         return { ai: false, db: false };
       });
@@ -13140,16 +13150,43 @@ function startApp() {
   window._ccGenerateAITitles = _aiGenerateTitles;
 
   // ── Server NL call ──────────────────────────────────────────────
+  // F12 debug: set localStorage.cc_debug='1' (or add ?debug=1 to URL once,
+  // it auto-persists) to log every NL round-trip to the console.
+  try {
+    if (location.search.indexOf('debug=1') !== -1) localStorage.setItem('cc_debug','1');
+    if (location.search.indexOf('debug=0') !== -1) localStorage.removeItem('cc_debug');
+  } catch(e) {}
+  function _ccDbg() {
+    try { return localStorage.getItem('cc_debug') === '1'; } catch(e) { return false; }
+  }
+  window._ccDebugOn = function() { try { localStorage.setItem('cc_debug','1'); console.log('%c[CC] debug ON','color:#22c55e;font-weight:bold'); } catch(e){} };
+  window._ccDebugOff = function() { try { localStorage.removeItem('cc_debug'); console.log('%c[CC] debug OFF','color:#f87171;font-weight:bold'); } catch(e){} };
+
   function callServerNL(command, context, replyContext) {
     var body = { command: command, context: context };
     if (replyContext) body.replyContext = replyContext;
+    var t0 = Date.now();
+    if (_ccDbg()) console.log('%c[CC NL → /api/nl]','color:#60a5fa;font-weight:bold', { command: command, hasContext: !!context, hasReply: !!replyContext, body: body });
     return fetch('/api/nl', {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
       body: JSON.stringify(body)
     }).then(function(r) {
-      if (!r.ok) throw new Error('Server NL ' + r.status);
-      return r.json();
+      var dt = Date.now() - t0;
+      if (_ccDbg()) console.log('%c[CC NL ← '+r.status+' '+dt+'ms]','color:'+(r.ok?'#22c55e':'#f87171')+';font-weight:bold', r);
+      if (!r.ok) {
+        return r.text().then(function(txt) {
+          if (_ccDbg()) console.error('[CC NL body]', txt);
+          throw new Error('Server NL ' + r.status + ': ' + txt.slice(0,200));
+        });
+      }
+      return r.json().then(function(j) {
+        if (_ccDbg()) console.log('[CC NL parsed]', j);
+        return j;
+      });
+    }).catch(function(err) {
+      if (_ccDbg()) console.error('%c[CC NL ✗]','color:#f87171;font-weight:bold', err);
+      throw err;
     });
   }
 
