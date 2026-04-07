@@ -13342,7 +13342,20 @@ function startApp() {
         if (spMatch) { _switchProject(spMatch.id, s, d); return 'Switched to **'+spMatch.name+'**.'; }
         return 'No project named "'+(action.name||'')+'".';
       }
-      case 'unknown': return action.text || null;
+      case 'unknown': {
+        // Safety net: Gemma sometimes returns blocked-state text via intent:unknown
+        // instead of calling the appropriate tool. Detect those replies and route
+        // through the offer helpers so window._ccPendingOffer gets set and "yes"
+        // actually does something. Without this, the user sees the offer message
+        // but confirmation is a no-op.
+        var uText = action.text || '';
+        var uLower = uText.toLowerCase();
+        if (/no\s+models?\s+loaded/.test(uLower)) return _offerLoadIFC();
+        if (/no\s+clashes?\b/.test(uLower) && !s.clashes.length) return _offerRunDetection(s);
+        if (/nothing\s+to\s+export/.test(uLower)) return _offerExport(s);
+        if (/no\s+issues?\b/.test(uLower) && !s.issues.length) return _offerIssuesFromClashes(s);
+        return uText || null;
+      }
       default: return null;
     }
   }
@@ -13477,6 +13490,34 @@ function startApp() {
       }
       _nlFastStats.misses++;
       if (_ccDbg()) console.log('%c[CC NL → server]','color:#60a5fa', { input: raw, hits: _nlFastStats.hits, misses: _nlFastStats.misses });
+    }
+
+    // 0.75. Prerequisite short-circuit — if the user is asking for something
+    // that requires state we don't have (no models / no clashes / no issues),
+    // answer locally with a "want me to X?" offer INSTEAD of paying the ~3s
+    // round-trip to Gemma. This also guarantees window._ccPendingOffer is set
+    // correctly — Gemma sometimes replies with plain text under intent:unknown
+    // and never sets up the offer, so the "yes" loop gets stuck.
+    if (!replyContext) {
+      var _pbRaw = raw.trim().toLowerCase();
+      // Commands that clearly need a loaded model to make sense
+      var _needsModels = /\b(?:run|check|detect|find|clash(?:es)?|analy[sz]e?|analyse|summar(?:y|ize|ise)|report|overview|worst|most|how\s+many\s+clash|export|bcf|save|download|hide|isolate|show\s+\w|section|ghost|wireframe|render|walk|fly|measure)\b/;
+      // Commands that need clashes but not necessarily models checked separately
+      var _needsClashes = /\b(?:analy[sz]e?|analyse|summar(?:y|ize|ise)|report|overview|worst|most)\b/;
+      // Commands that need something exportable
+      var _needsExport = /\b(?:export|bcf|save|download)\b/;
+      if (!s.models.length && _needsModels.test(_pbRaw)) {
+        if (_ccDbg()) console.log('%c[CC NL ⛔ pre-block: no models]','color:#f87171;font-weight:bold', _pbRaw);
+        return Promise.resolve(_captureNL(_offerLoadIFC(), 'pre-block-models'));
+      }
+      if (s.models.length && !s.clashes.length && _needsClashes.test(_pbRaw)) {
+        if (_ccDbg()) console.log('%c[CC NL ⛔ pre-block: no clashes]','color:#f87171;font-weight:bold', _pbRaw);
+        return Promise.resolve(_captureNL(_offerRunDetection(s), 'pre-block-clashes'));
+      }
+      if (!s.clashes.length && !s.issues.length && _needsExport.test(_pbRaw)) {
+        if (_ccDbg()) console.log('%c[CC NL ⛔ pre-block: nothing to export]','color:#f87171;font-weight:bold', _pbRaw);
+        return Promise.resolve(_captureNL(_offerExport(s), 'pre-block-export'));
+      }
     }
 
     // 1. Server-side AI (primary — handles everything including multilingual/complex)
