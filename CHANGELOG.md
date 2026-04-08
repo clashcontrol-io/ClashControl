@@ -1,5 +1,8 @@
 # Changelog
 
+## v4.10.27 (2026-04-08)
+- chore: bump version to 4.10.26
+
 ## v4.10.26 (2026-04-08)
 - perf(viewer): adaptive culling — bump cullEvery 4→8 + camera-fingerprint skip
 
