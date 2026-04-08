@@ -1,5 +1,8 @@
 # Changelog
 
+## v4.10.21 (2026-04-08)
+- fix(nl): handle upstream quota 429 cleanly
+
 ## v4.10.20 (2026-04-08)
 - chore(loader): upgrade web-ifc 0.0.76 → 0.0.77
 
