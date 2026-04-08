@@ -12607,7 +12607,7 @@ function startApp() {
             ${tolState.promptAction==='updated' && html`<div style=${{fontSize:'0.57rem',color:'#4ade80',marginBottom:'.2rem'}}>Standard updated.</div>`}
           </div>`;
         }()}
-        ${isClash && trainingMode && function(){
+        ${(isClash || it.clashId) && trainingMode && function(){
           var CTYPES=[{k:'hard',l:'Hard'},{k:'soft',l:'Soft'},{k:'duplicate',l:'Duplicate'},{k:'no_clash',l:'None'}];
           var REASONS=['Design error','Within tolerance','Functional clearance','Needs more tolerance','Already resolved','Modelling error','Missing opening','Shared space allowed','Duplicate geometry','Not relevant','Expected clash'];
           var curCT=it.clashTypeConfirmed!=null?it.clashTypeConfirmed:it.type;
@@ -12617,12 +12617,15 @@ function startApp() {
           var VERDICTS=[{k:'real_clash',l:'Real clash',bg:'#166534',col:'#4ade80',brd:'#22c55e44'},
             {k:'acceptable',l:'Acceptable',bg:'#1e3a5f',col:'#93c5fd',brd:'#3b82f644'},
             {k:'false_positive',l:'False positive',bg:'#7f1d1d',col:'#fca5a5',brd:'#ef444444'}];
+          // Route updates to the right action — clashes use A.UPD_CLASH/AI_FEEDBACK, issues use A.UPD_ISSUE
+          function updItem(u){ d(isClash ? {t:A.UPD_CLASH,id:it.id,u:u} : {t:A.UPD_ISSUE,id:it.id,u:u}); }
+          function setVerdict(v){ isClash ? d({t:A.AI_FEEDBACK,id:it.id,v:v}) : d({t:A.UPD_ISSUE,id:it.id,u:{aiFeedback:v}}); }
           return html`<div style=${{marginTop:'.4rem',paddingTop:'.4rem',borderTop:'1px solid var(--border-subtle)',background:'rgba(124,58,237,.04)',borderRadius:6,padding:'.4rem'}}>
             <div style=${{fontSize:'0.63rem',fontWeight:600,color:'#a78bfa',marginBottom:'.3rem',textTransform:'uppercase',letterSpacing:'.04em'}}>AI Training Feedback</div>
             <div style=${{fontSize:'0.63rem',fontWeight:600,color:'var(--text-muted)',marginBottom:'.15rem'}}>Verdict</div>
             <div style=${{display:'flex',gap:'.25rem',marginBottom:'.3rem',flexWrap:'wrap'}}>
               ${VERDICTS.map(function(v){var sel=fb===v.k;return html`<button key=${v.k}
-                onClick=${function(e){e.stopPropagation();d({t:A.AI_FEEDBACK,id:it.id,v:sel?null:v.k});}}
+                onClick=${function(e){e.stopPropagation();setVerdict(sel?null:v.k);}}
                 style=${{...S_BTN,fontSize:'0.63rem',padding:'.1rem .4rem',
                   background:sel?v.bg:'var(--bg-secondary)',color:sel?v.col:'var(--text-faint)',
                   border:'1px solid '+(sel?v.brd:'var(--border)')}}>${v.l}</button>`})}
@@ -12630,7 +12633,7 @@ function startApp() {
             <div style=${{fontSize:'0.63rem',fontWeight:600,color:'var(--text-muted)',marginBottom:'.15rem'}}>Clash type</div>
             <div style=${{display:'flex',gap:'.25rem',marginBottom:'.3rem',flexWrap:'wrap'}}>
               ${CTYPES.map(function(ct){var confirmed=it.clashTypeConfirmed!=null;var sel=curCT===ct.k;var isDefault=!confirmed&&it.type===ct.k;return html`<button key=${ct.k}
-                onClick=${function(e){e.stopPropagation();d({t:A.UPD_CLASH,id:it.id,u:{clashTypeConfirmed:ct.k}});}}
+                onClick=${function(e){e.stopPropagation();updItem({clashTypeConfirmed:ct.k});}}
                 style=${{...S_BTN,fontSize:'0.63rem',padding:'.1rem .35rem',
                   background:sel||isDefault?'#1e3a5f':'var(--bg-secondary)',
                   color:sel||isDefault?'#93c5fd':'var(--text-faint)',
@@ -12639,7 +12642,7 @@ function startApp() {
             <div style=${{fontSize:'0.63rem',fontWeight:600,color:'var(--text-muted)',marginBottom:'.15rem'}}>Reason</div>
             <div style=${{display:'flex',gap:'.2rem',marginBottom:'.3rem',flexWrap:'wrap'}}>
               ${REASONS.map(function(r){var sel=curReasons.indexOf(r)>=0;return html`<span key=${r}
-                onClick=${function(e){e.stopPropagation();var nr=sel?curReasons.filter(function(x){return x!==r}):curReasons.concat([r]);d({t:A.UPD_CLASH,id:it.id,u:{aiReasons:nr}});}}
+                onClick=${function(e){e.stopPropagation();var nr=sel?curReasons.filter(function(x){return x!==r}):curReasons.concat([r]);updItem({aiReasons:nr});}}
                 style=${{fontSize:'0.63rem',padding:'.1rem .35rem',borderRadius:10,cursor:'pointer',whiteSpace:'nowrap',
                   border:'1px solid '+(sel?'#3b82f6':'var(--border)'),
                   background:sel?'#1e3a5f':'var(--bg-secondary)',
@@ -12651,7 +12654,7 @@ function startApp() {
                 var curRes=it.aiResolution||[];if(typeof curRes==='string')curRes=curRes?[curRes]:[];
                 var sel=curRes.indexOf(r.k)>=0;
                 return html`<span key=${r.k}
-                  onClick=${function(e){e.stopPropagation();var nr=sel?curRes.filter(function(x){return x!==r.k}):curRes.concat([r.k]);d({t:A.UPD_CLASH,id:it.id,u:{aiResolution:nr}});}}
+                  onClick=${function(e){e.stopPropagation();var nr=sel?curRes.filter(function(x){return x!==r.k}):curRes.concat([r.k]);updItem({aiResolution:nr});}}
                   style=${{fontSize:'0.63rem',padding:'.1rem .35rem',borderRadius:10,cursor:'pointer',whiteSpace:'nowrap',
                     border:'1px solid '+(sel?'#3b82f6':'var(--border)'),
                     background:sel?'#1e3a5f':'var(--bg-secondary)',
@@ -12660,7 +12663,7 @@ function startApp() {
             </div>
             <input type="text" value=${curNote} maxLength="140" placeholder="Optional note \u2014 no project names or locations"
               onClick=${function(e){e.stopPropagation();}}
-              onInput=${function(e){d({t:A.UPD_CLASH,id:it.id,u:{aiNote:e.target.value}});}}
+              onInput=${function(e){updItem({aiNote:e.target.value});}}
               style=${{width:'100%',fontSize:'0.63rem',padding:'.2rem .3rem',background:'var(--bg-secondary)',
                 border:'1px solid var(--border)',borderRadius:3,color:'var(--text-primary)',boxSizing:'border-box'}} />
           </div>`;
@@ -15682,15 +15685,22 @@ function startApp() {
 
     // ── Conversational clash setup context ──────────────────────
     var clashCtxRef = useRef(null);
+    var cancelCountRef = useRef(0); // open standards tab after 2 cancels
     function _clashConverse(text, result) {
       var ctx = clashCtxRef.current;
       var tl = text.trim().toLowerCase();
 
       if (ctx && ctx.asked) {
-        // Cancel always works
+        // Cancel — count successive cancels; open setup tab on second one
         if (/\b(?:cancel|stop|abort|nevermind|quit)\b/i.test(tl)) {
           clashCtxRef.current = null;
-          return 'Clash setup cancelled.';
+          cancelCountRef.current += 1;
+          if (cancelCountRef.current >= 2) {
+            cancelCountRef.current = 0;
+            d({t:A.TAB, v:'standards'});
+            return 'Opening the setup tab — you can configure everything there.';
+          }
+          return 'Setup cancelled. Say "cancel" once more to open the setup tab instead.';
         }
 
         if (ctx.asked === 'type') {
@@ -15743,6 +15753,7 @@ function startApp() {
           // Run
           if (/\b(?:yes|yeah|yep|sure|ok|go|run|start|do it|proceed|execute|looks?\s+good|perfect|great)\b/i.test(tl)) {
             clashCtxRef.current = null;
+            cancelCountRef.current = 0;
             return {_clashSetup:true, _runNow:true, rules:ctx.rules, nameA:ctx.nameA, nameB:ctx.nameB, _multiSelf:ctx._multiSelf};
           }
           // Inline adjustments at confirm stage
