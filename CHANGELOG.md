@@ -1,5 +1,8 @@
 # Changelog
 
+## v4.10.11 (2026-04-08)
+- fix(loader): eliminate 15% stall during IFC worker spawn + WASM boot
+
 ## v4.10.10 (2026-04-08)
 - chore(sw): bump cache name to evict stale precached web-ifc
 
