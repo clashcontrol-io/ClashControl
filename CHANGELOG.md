@@ -1,5 +1,8 @@
 # Changelog
 
+## v4.10.14 (2026-04-08)
+- fix(loader): pre-fetch wasm + locateFile blob URL to bypass Init hang
+
 ## v4.10.13 (2026-04-08)
 - fix(loader): proactively purge bad web-ifc.wasm from SW + HTTP caches
 
