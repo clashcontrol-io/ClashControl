@@ -5935,8 +5935,41 @@ function startApp() {
       var projScreenMatrix = new THREE.Matrix4();
       var tmpBox = new THREE.Box3();
       var tmpSphere = new THREE.Sphere();
-      var cullEvery = 4; // re-evaluate culling every N frames
+      // Cull period: every N frames re-evaluate per-mesh visibility +
+      // LOD state. Bumped from 4 → 8 because updateCulling() walks
+      // the entire S.mg subtree (33k+ nodes on a large model), and
+      // on 60 FPS that's 7.5 full traversals per second → 15. For
+      // smooth orbit the old value was ~40-80 ms of CPU per call
+      // amortised to ~10-20 ms/frame. At cullEvery=8 the amortised
+      // cost halves and the stale-visibility window is still only
+      // 133 ms which is imperceptible during a drag.
+      var cullEvery = 8;
       var cullFrame = 0;
+      // Camera-fingerprint cull skip: when the camera is completely
+      // stationary (e.g. user just stopped orbiting, or the scene is
+      // idle), the per-mesh visibility is already correct and
+      // walking the entire scene to re-test it would be pure waste.
+      // We compute a short string fingerprint of the camera's world
+      // position + orientation on every would-be cull and skip the
+      // whole updateCulling() call if the fingerprint matches the
+      // previous one. String concatenation + tiny toFixed is ~1 µs
+      // per check vs the ~40 ms cull pass, so the break-even is
+      // ~40 000× in favour of the skip.
+      //
+      // The fingerprint lives on S so the model-sync useEffect can
+      // reset it (via S._lastCullCamKey = '') whenever a model is
+      // added/removed/replaced — that forces the next cull pass to
+      // run so newly-loaded meshes outside the current frustum get
+      // culled instead of being rendered until the next orbit.
+      S._lastCullCamKey = '';
+      function _camFingerprint() {
+        var p = S.camera.position, q = S.camera.quaternion;
+        // 4-decimal position (0.1 mm precision) + 5-decimal quaternion
+        // is enough to catch any visible camera motion but coarse
+        // enough to ignore floating-point jitter across frames.
+        return p.x.toFixed(4)+','+p.y.toFixed(4)+','+p.z.toFixed(4)+','+
+               q.x.toFixed(5)+','+q.y.toFixed(5)+','+q.z.toFixed(5)+','+q.w.toFixed(5);
+      }
       // Screen-ratio LOD: uses (radius/distance)² as unified metric for all object sizes.
       // Objects whose apparent screen area falls below threshold get culled.
       // screenRatio = r²/d² ≈ proportional to fraction of screen height the object covers.
@@ -6011,11 +6044,21 @@ function startApp() {
         // Render on demand: skip if nothing changed
         if(_needsRender <= 0) return;
         _needsRender--;
-        // Frustum culling (every N frames for performance)
+        // Frustum culling (every N frames for performance).
+        // Additionally, short-circuit the cull pass entirely if the
+        // camera hasn't moved since the last pass — the visibility
+        // state is already correct and walking the whole scene is
+        // pure waste. Big win during idle frames (e.g. after the
+        // user stops orbiting) and when invalidate() fires for a
+        // non-camera reason (material swap, highlight update, etc).
         cullFrame++;
         if(cullFrame >= cullEvery && S.mg && S.mg.children.length > 0){
           cullFrame = 0;
-          updateCulling();
+          var _camKey = _camFingerprint();
+          if (_camKey !== S._lastCullCamKey) {
+            S._lastCullCamKey = _camKey;
+            updateCulling();
+          }
         }
         // Main render
         try {
@@ -6049,6 +6092,13 @@ function startApp() {
     useEffect(function() {
       var S = state3d.current; if(!S.mg) return;
       var ids = s.models.map(function(m){return m.id});
+      // Scene composition is about to change (remove stale / add new /
+      // swap existing). Reset the cull-skip fingerprint so the next
+      // tick() runs a fresh updateCulling() pass — otherwise newly
+      // loaded meshes keep their default frustumCulled=false + visible=
+      // true state and would render outside the camera frustum until
+      // the user moves the camera.
+      S._lastCullCamKey = '';
       // Remove stale
       Object.keys(S.map).forEach(function(id){
         if(ids.indexOf(id)===-1){
