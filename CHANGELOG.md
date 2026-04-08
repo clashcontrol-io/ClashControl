@@ -1,5 +1,8 @@
 # Changelog
 
+## v4.10.15 (2026-04-08)
+- fix(loader): drop COEP so web-ifc skips the missing mt variant
+
 ## v4.10.14 (2026-04-08)
 - fix(loader): pre-fetch wasm + locateFile blob URL to bypass Init hang
 
