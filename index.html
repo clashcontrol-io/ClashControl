@@ -2013,6 +2013,25 @@ function startApp() {
 
       if(onProgress) onProgress('Streaming geometry 45%');
 
+      // Pre-collect expressIDs whose geometry we throw away anyway, so we can
+      // short-circuit the StreamAllMeshes callback before doing the expensive
+      // per-element JS-side decode (GetGeometry / GetVertexArray /
+      // BufferGeometry build / Mesh build / box expand). IfcOpeningElement is
+      // filtered entirely; the others have their meshes cleared post-stream
+      // and the IfcSpace re-add pass below restores spaces with empty
+      // geometry for storey navigation.
+      var _skipGeoEids = {};
+      var _skipTypes = [IFC.IFCOPENINGELEMENT, IFC.IFCSPACE, IFC.IFCVIRTUALELEMENT, IFC.IFCANNOTATION, IFC.IFCGRID];
+      for (var _sti = 0; _sti < _skipTypes.length; _sti++) {
+        var _stid = _skipTypes[_sti];
+        if (!_stid) continue;
+        try {
+          var _stids = api.GetLineIDsWithType(modelID, _stid);
+          for (var _stj = 0; _stj < _stids.size(); _stj++) _skipGeoEids[_stids.get(_stj)] = true;
+        } catch(e) {}
+      }
+      var _skippedPredecode = 0;
+
       // Collect raw mesh data first (StreamAllMeshes is synchronous, can't chunk it)
       var rawElements = [];
       var meshes = [];
@@ -2026,6 +2045,9 @@ function startApp() {
       api.StreamAllMeshes(modelID, function(ifcMesh) {
         var expressID = ifcMesh.expressID;
         _streamCount++;
+        // Short-circuit non-renderable types BEFORE any per-element work.
+        // Saves GetGeometry + vertex decode + Three.js build + bbox expand.
+        if (_skipGeoEids[expressID]) { _skippedPredecode++; return; }
         if (onProgress && (_streamCount & 255) === 0) {
           var _spct = 45 + Math.min(33, Math.round(_streamCount / _estTotal * 33));
           onProgress('Streaming geometry ' + _spct + '%');
@@ -2091,51 +2113,34 @@ function startApp() {
         }
       });
 
-      // Filter IfcOpeningElement (void cutter shapes — render as plugs in wall openings, not useful standalone)
-      // Consistent with GLB paths which call filterOpeningElements()
-      var _openingEids = {};
-      rawElements = rawElements.filter(function(el) {
-        if (el.props.ifcType === 'IfcOpeningElement') { _openingEids[el.expressId] = true; return false; }
-        return true;
-      });
-      var _openingCount = Object.keys(_openingEids).length;
-      if (_openingCount > 0) {
-        meshes = meshes.filter(function(m) { return !_openingEids[m.userData.expressId]; });
-        console.log('%c[IFC] Filtered ' + _openingCount + ' IfcOpeningElement (void cutters)', 'color:#94a3b8');
+      if (_skippedPredecode > 0) {
+        console.log('%c[IFC] Skipped ' + _skippedPredecode + ' non-renderable elements before geometry decode (IfcOpeningElement / IfcSpace / IfcVirtualElement / IfcAnnotation / IfcGrid)', 'color:#94a3b8');
       }
 
-      // Strip non-physical element geometry — shown in element list but not rendered
-      var _noRenderTypes = {IfcSpace:true, IfcVirtualElement:true, IfcAnnotation:true, IfcGrid:true};
-      var _noRenderEids = {};
-      rawElements.forEach(function(el) {
-        if (_noRenderTypes[el.props.ifcType]) {
-          _noRenderEids[el.expressId] = true;
-          el.meshes = [];
-          el.box = new THREE.Box3();
-          el._lodProxy = null;
-        }
-      });
-      if (Object.keys(_noRenderEids).length > 0) {
-        meshes = meshes.filter(function(m) { return !_noRenderEids[m.userData.expressId]; });
-        console.log('%c[IFC] Stripped geometry for ' + Object.keys(_noRenderEids).length + ' non-physical elements (IfcSpace / IfcVirtualElement / IfcAnnotation / IfcGrid)', 'color:#94a3b8');
+      // Re-add non-physical types as empty-geometry stubs so they still
+      // appear in element lists + navigator tree even though we skipped
+      // their geometry decode above. IfcOpeningElement is intentionally
+      // NOT re-added (void cutters — never meant to be listed). The rest
+      // match the old post-decode strip behaviour but without paying the
+      // decode cost in the first place.
+      var _reAddTypes = [IFC.IFCSPACE, IFC.IFCVIRTUALELEMENT, IFC.IFCANNOTATION, IFC.IFCGRID];
+      var _reAddNames = ['IFCSPACE','IFCVIRTUALELEMENT','IFCANNOTATION','IFCGRID'];
+      for (var _rti = 0; _rti < _reAddTypes.length; _rti++) {
+        var _rtid = _reAddTypes[_rti];
+        if (!_rtid) continue;
+        try {
+          var _rids = api.GetLineIDsWithType(modelID, _rtid);
+          for (var _rj = 0; _rj < _rids.size(); _rj++) {
+            var _reid = _rids.get(_rj);
+            var _rprops = extractProperties(api, modelID, _reid);
+            _rprops.storey = storeyMap[_reid] || '';
+            _rprops.material = matMap[_reid] || '';
+            var _rpm = propMap[_reid];
+            if (_rpm) { _rprops.quantities = _rpm.quantities; _rprops.psets = _rpm.psets; }
+            rawElements.push({expressId:_reid, meshes:[], box:new THREE.Box3(), props:_rprops, _lodProxy:null});
+          }
+        } catch(e) { console.warn('[IFC] Re-add pass failed for ' + _reAddNames[_rti] + ':', e); }
       }
-
-      // IfcSpace: include even when no geometry (Revit often exports rooms as spatial containers only)
-      var _rawEids = {};
-      rawElements.forEach(function(e) { _rawEids[e.expressId] = true; });
-      try {
-        var spaceIds = api.GetLineIDsWithType(modelID, IFC.IFCSPACE);
-        for (var si = 0; si < spaceIds.size(); si++) {
-          var sid = spaceIds.get(si);
-          if (_rawEids[sid]) continue; // already picked up by StreamAllMeshes
-          var spProps = extractProperties(api, modelID, sid);
-          spProps.storey = storeyMap[sid] || '';
-          spProps.material = matMap[sid] || '';
-          var spPm = propMap[sid];
-          if (spPm) { spProps.quantities = spPm.quantities; spProps.psets = spPm.psets; }
-          rawElements.push({expressId:sid, meshes:[], box:new THREE.Box3(), props:spProps, _lodProxy:null});
-        }
-      } catch(e) { console.warn('[IFC] IfcSpace extraction failed:', e); }
 
       // Close WASM model immediately — all data is now in JavaScript memory
       api.CloseModel(modelID);
@@ -2283,10 +2288,42 @@ function startApp() {
         mark('Property maps');
 
         progress('Streaming geometry 45%');
+
+        // Pre-collect expressIDs of IfcOpeningElement so we can short-circuit
+        // the StreamAllMeshes callback before paying the per-element decode
+        // cost (GetGeometry + vertex deinterleave + Float32Array allocs +
+        // transfer-list bookkeeping). Openings are void cutters that are
+        // always dropped from the final element list — same rationale as
+        // main-thread loadIFC. Other no-render types (IfcSpace etc.) are NOT
+        // skipped in the worker because the worker has no equivalent of the
+        // main-thread re-add pass and skipping them would drop spaces from
+        // files that export rooms as spatial containers.
+        var _skipGeoEids = {};
+        if (IFC.IFCOPENINGELEMENT) {
+          try {
+            var _opIds = api.GetLineIDsWithType(modelID, IFC.IFCOPENINGELEMENT);
+            for (var _opj = 0; _opj < _opIds.size(); _opj++) _skipGeoEids[_opIds.get(_opj)] = true;
+          } catch(e) {}
+        }
+        var _skippedPredecode = 0;
+
         var rawEls = [];
         var xfer = [];
         var _geoTable = {}; // geometryExpressID → {pos, nrm, idx} (dedup)
         var _geoReused = 0;
+
+        // Sub-phase accumulators. The top-level 'Geometry stream' phase used
+        // to be a 15-second black box on large files — these buckets split it
+        // into the things we can individually optimise:
+        //   _tGetGeo      time inside api.GetGeometry + GetVertexArray + GetIndexArray
+        //                 (pure C++/WASM work — mesh tessellation, boolean cuts)
+        //   _tDeinterleave time in the JS loop that splits the interleaved
+        //                 position/normal buffer into two Float32Arrays
+        //   _tProps       time spent in extractProperties() per element
+        //                 (IFC line walk + property resolution)
+        // Remaining time in the streaming phase is the C++ side of
+        // StreamAllMeshes itself (walking the entity table).
+        var _tGetGeo = 0, _tDeinterleave = 0, _tProps = 0;
 
         // Rough element-count estimate from file size (~500 B/element for typical IFC).
         // Only used to drive the progress bar; clamped so a bad estimate never falls
@@ -2298,6 +2335,8 @@ function startApp() {
         api.StreamAllMeshes(modelID, function(ifcMesh) {
           var eid = ifcMesh.expressID;
           _streamCount++;
+          // Short-circuit IfcOpeningElement BEFORE any per-element work.
+          if (_skipGeoEids[eid]) { _skippedPredecode++; return; }
           if ((_streamCount & 255) === 0) {
             var _spct = 45 + Math.min(33, Math.round(_streamCount / _estTotal * 33));
             progress('Streaming geometry ' + _spct + '%');
@@ -2309,15 +2348,19 @@ function startApp() {
             try {
               var geoExpId = placed.geometryExpressID;
               if (!_geoTable[geoExpId]) {
+                var _tGG = performance.now();
                 gd = api.GetGeometry(modelID, geoExpId);
                 var verts = api.GetVertexArray(gd.GetVertexData(), gd.GetVertexDataSize());
                 var indices = api.GetIndexArray(gd.GetIndexData(), gd.GetIndexDataSize());
+                _tGetGeo += performance.now() - _tGG;
                 var nV = verts.length / 6;
                 var pos = new Float32Array(nV * 3), nrm = new Float32Array(nV * 3);
+                var _tDI = performance.now();
                 for (var v = 0, s = 0, d = 0; v < nV; v++, s += 6, d += 3) {
                   pos[d]=verts[s]; pos[d+1]=verts[s+1]; pos[d+2]=verts[s+2];
                   nrm[d]=verts[s+3]; nrm[d+1]=verts[s+4]; nrm[d+2]=verts[s+5];
                 }
+                _tDeinterleave += performance.now() - _tDI;
                 _geoTable[geoExpId] = {pos:pos, nrm:nrm, idx:new Uint32Array(indices)};
                 xfer.push(pos.buffer, nrm.buffer, _geoTable[geoExpId].idx.buffer);
               } else { _geoReused++; }
@@ -2331,24 +2374,35 @@ function startApp() {
             finally { if (gd) try { gd.delete(); } catch(e2) {} }
           }
           if (geos.length > 0) {
+            var _tP = performance.now();
             var elProps = extractProperties(api, modelID, eid);
             elProps.storey = storeyMap[eid] || '';
             elProps.material = matMap[eid] || '';
             var pm = propMap[eid];
             if (pm) { elProps.quantities = pm.quantities; elProps.psets = pm.psets; }
+            _tProps += performance.now() - _tP;
             rawEls.push({expressId:eid, geos:geos, props:elProps});
           }
         });
 
         api.CloseModel(modelID);
         mark('Geometry stream');
+        // Sub-phase DURATIONS (not cumulatives) so the profile printer can
+        // show them as indented rows under 'Geometry stream' without
+        // disturbing the main phase ordering.
+        var streamSub = {
+          getGeometry:   Math.round(_tGetGeo),
+          deinterleave:  Math.round(_tDeinterleave),
+          extractProps:  Math.round(_tProps)
+        };
 
         var _geoUnique = Object.keys(_geoTable).length;
         self.postMessage({type:'result', rawEls:rawEls, geoTable:_geoTable,
           geoUnique:_geoUnique, geoReused:_geoReused,
           storeys:Object.keys(allStoreys).sort(), storeyData:storeyData,
           spatialHierarchy:spatialHierarchy,
-          relatedPairs:relatedPairs, fileSize:buf.byteLength, phases:phases}, xfer);
+          relatedPairs:relatedPairs, fileSize:buf.byteLength, phases:phases,
+          streamSub:streamSub}, xfer);
       }).catch(function(err) {
         self.postMessage({type:'error', msg: err.message || String(err)});
       });
@@ -2417,6 +2471,17 @@ function startApp() {
           var matCache = {};
           var geoCache = {}; // geoId → BufferGeometry (shared across identical elements)
 
+          // Scene-build sub-phase accumulators: split the main-thread Three.js
+          // reconstruction into its measurable parts so we can target the
+          // biggest cost on large files. On the 253 MB test file Scene build
+          // was 14% of total load — these buckets tell us which part to fix.
+          //   _tGeoBuild  new BufferGeometry + setAttribute position/normal/index
+          //   _tMesh      new Material + new Mesh + applyMatrix4
+          //   _tBBox      elBox.expandByObject (iterates all vertices — suspect)
+          //   _tLod       LOD proxy box construction per element
+          var _tGeoBuild = 0, _tMesh = 0, _tBBox = 0, _tLod = 0;
+          var _sbStart = performance.now();
+
           for (var i = 0; i < rawEls.length; i++) {
             var raw = rawEls[i];
             var elMeshes = [];
@@ -2428,13 +2493,16 @@ function startApp() {
               if (!geo) {
                 var gEntry = gt[geoId];
                 if (gEntry) {
+                  var _tGB = performance.now();
                   geo = new THREE.BufferGeometry();
                   geo.setAttribute('position', new THREE.BufferAttribute(gEntry.pos, 3));
                   geo.setAttribute('normal', new THREE.BufferAttribute(gEntry.nrm, 3));
                   geo.setIndex(new THREE.BufferAttribute(gEntry.idx, 1));
+                  _tGeoBuild += performance.now() - _tGB;
                   geoCache[geoId] = geo;
                 } else { continue; }
               }
+              var _tM = performance.now();
               var c = gData.color;
               var col = c ? new THREE.Color(c.r, c.g, c.b) : new THREE.Color(fallbackColor);
               var matKey = col.r.toFixed(3)+','+col.g.toFixed(3)+','+col.b.toFixed(3)+','+(c?c.a:1).toFixed(3);
@@ -2443,11 +2511,15 @@ function startApp() {
               var mesh = new THREE.Mesh(geo, mat);
               mesh.applyMatrix4(new THREE.Matrix4().fromArray(gData.tf));
               mesh.userData.expressId = raw.expressId;
+              _tMesh += performance.now() - _tM;
+              var _tB = performance.now();
               elBox.expandByObject(mesh);
+              _tBBox += performance.now() - _tB;
               elMeshes.push(mesh); meshes.push(mesh);
             }
             if (elMeshes.length > 0) {
               // Create LOD box proxy
+              var _tL = performance.now();
               var _proxy = null;
               if (_lodBoxGeo) {
                 var _bc = new THREE.Vector3(), _bsz = new THREE.Vector3();
@@ -2460,6 +2532,7 @@ function startApp() {
                 _proxy.userData.expressId = raw.expressId;
                 elMeshes.forEach(function(m) { m.userData._lodProxy = _proxy; });
               }
+              _tLod += performance.now() - _tL;
               elements.push({expressId:raw.expressId, meshes:elMeshes, box:elBox, props:raw.props, _lodProxy:_proxy});
             }
           }
@@ -2467,8 +2540,15 @@ function startApp() {
           var loadTime = Math.round(performance.now() - loadStart);
           var phases = msg.phases || {};
           phases['Scene build'] = performance.now() - loadStart;
+          var sceneSub = {
+            bufferGeo:    Math.round(_tGeoBuild),
+            mesh:         Math.round(_tMesh),
+            expandBBox:   Math.round(_tBBox),
+            lodProxy:     Math.round(_tLod)
+          };
+          var streamSub = msg.streamSub || null;
           var _gu = msg.geoUnique || Object.keys(geoCache).length, _gr = msg.geoReused || 0;
-          var stats = {loadTime:loadTime, fileSize:msg.fileSize, elementCount:elements.length, meshCount:meshes.length, geoUnique:_gu, geoReused:_gr, phases:phases, loadType:'IFC'};
+          var stats = {loadTime:loadTime, fileSize:msg.fileSize, elementCount:elements.length, meshCount:meshes.length, geoUnique:_gu, geoReused:_gr, phases:phases, streamSub:streamSub, sceneSub:sceneSub, loadType:'IFC'};
 
           // Print profile
           (function() {
@@ -2482,6 +2562,20 @@ function startApp() {
               var pct = Math.round(dt / loadTime * 100);
               rows.push({Phase: name, Time: dt+'ms', Pct: pct+'%', Cumulative: t+'ms'});
               prev = ph[name];
+              // Interleave sub-phase rows immediately under their parent
+              if (name === 'Geometry stream' && streamSub) {
+                var streamTotal = dt || 1;
+                rows.push({Phase: '  ↳ GetGeometry (WASM)',  Time: streamSub.getGeometry  + 'ms', Pct: Math.round(streamSub.getGeometry  / streamTotal * 100) + '% of phase', Cumulative: ''});
+                rows.push({Phase: '  ↳ Vertex deinterleave', Time: streamSub.deinterleave + 'ms', Pct: Math.round(streamSub.deinterleave / streamTotal * 100) + '% of phase', Cumulative: ''});
+                rows.push({Phase: '  ↳ extractProperties',   Time: streamSub.extractProps + 'ms', Pct: Math.round(streamSub.extractProps / streamTotal * 100) + '% of phase', Cumulative: ''});
+              }
+              if (name === 'Scene build') {
+                var sbTotal = dt || 1;
+                rows.push({Phase: '  ↳ BufferGeometry',      Time: sceneSub.bufferGeo  + 'ms', Pct: Math.round(sceneSub.bufferGeo  / sbTotal * 100) + '% of phase', Cumulative: ''});
+                rows.push({Phase: '  ↳ Mesh + material',     Time: sceneSub.mesh       + 'ms', Pct: Math.round(sceneSub.mesh       / sbTotal * 100) + '% of phase', Cumulative: ''});
+                rows.push({Phase: '  ↳ expandByObject bbox', Time: sceneSub.expandBBox + 'ms', Pct: Math.round(sceneSub.expandBBox / sbTotal * 100) + '% of phase', Cumulative: ''});
+                rows.push({Phase: '  ↳ LOD proxy',           Time: sceneSub.lodProxy   + 'ms', Pct: Math.round(sceneSub.lodProxy   / sbTotal * 100) + '% of phase', Cumulative: ''});
+              }
             });
             rows.push({Phase: 'TOTAL', Time: loadTime+'ms', Pct: '100%', Cumulative: loadTime+'ms'});
             console.groupCollapsed('%c[IFC Load Profile · Worker] ' + elements.length + ' elements · ' + (msg.fileSize/1024/1024).toFixed(1) + ' MB · ' + loadTime + 'ms total · geo dedup: ' + _gu + ' unique / ' + (_gu+_gr) + ' total (' + _gr + ' reused)', 'color:#38bdf8;font-weight:bold');
