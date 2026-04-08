@@ -28,13 +28,6 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=DM+Sans:wght@400;500;600;700&family=Syne:wght@600;700;800&display=swap" rel="stylesheet">
-
-  <!-- web-ifc: lazy-loaded by getIfcAPI() at first IFC pick. Preconnect + modulepreload
-       so the network round-trip and module fetch start in parallel with the rest of the
-       app shell instead of being serialized after the user clicks the file picker. -->
-  <link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin>
-  <link rel="modulepreload" href="https://cdn.jsdelivr.net/npm/web-ifc@0.0.76/web-ifc-api.js" crossorigin>
-  <link rel="preload" as="fetch" href="https://cdn.jsdelivr.net/npm/web-ifc@0.0.76/web-ifc.wasm" crossorigin type="application/wasm">
   <!-- CDN deps: React, Three.js, JSZip — all UMD, all cdnjs -->
   <!-- SRI hashes: regenerate with `node scripts/generate-sri.js` if you change versions -->
   <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js" integrity="sha384-tMH8h3BGESGckSAVGZ82T9n90ztNXxvdwvdM6UoR56cYcf+0iGXBliJ29D+wZ/x8" crossorigin="anonymous"></script>
@@ -17659,25 +17652,6 @@ function startApp() {
       try { _ccAddons[aid].init(window._ccDispatch, function(){ return window._ccLatestState; }); } catch(e) { console.warn('[Addon] late init error:', aid, e); }
     }
   });
-
-  // Pre-warm web-ifc WASM in the background so the first IFC load doesn't pay
-  // the ~0.5–1.5 s ESM fetch + WASM compile cost serialised after the file pick.
-  // Skipped on Save-Data and 2g connections to avoid hurting metered users.
-  (function _prewarmIfcAPI() {
-    try {
-      var conn = navigator.connection || {};
-      if (conn.saveData) return;
-      if (conn.effectiveType === '2g' || conn.effectiveType === 'slow-2g') return;
-      var run = function() {
-        try { getIfcAPI().catch(function(){}); } catch(e) {}
-      };
-      if (typeof requestIdleCallback === 'function') {
-        requestIdleCallback(run, {timeout: 4000});
-      } else {
-        setTimeout(run, 2000);
-      }
-    } catch(e) {}
-  })();
 
 } // end startApp
 </script>
