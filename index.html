@@ -2038,6 +2038,10 @@ function startApp() {
       var matCache = {}; // material dedup: "r,g,b,a" → MeshPhongMaterial
       var geoCache = {}; // geometryExpressID → BufferGeometry (shared across identical elements)
       var _geoReused = 0;
+      // Pre-allocated scratch Box3 for the fast 8-corner bbox transform
+      // (see Scene build comment below). Reused across every mesh instance
+      // to avoid allocating millions of Box3/Vector3 temporaries.
+      var _tmpBox = new THREE.Box3();
       // Rough element-count estimate from file size (~500 B/element for typical IFC)
       // drives the streaming phase progress bar 45→78%.
       var _estTotal = Math.max(500, Math.round(buffer.byteLength / 500));
@@ -2074,6 +2078,10 @@ function startApp() {
               geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
               geo.setAttribute('normal',   new THREE.BufferAttribute(nrm, 3));
               geo.setIndex(new THREE.BufferAttribute(indices, 1));
+              // Compute local bbox once per unique geometry so all
+              // subsequent instances can reuse it via the 8-corner
+              // matrix transform below instead of iterating verts.
+              geo.computeBoundingBox();
               geoCache[geoExpId] = geo;
             } else { _geoReused++; }
             var c = placed.color;
@@ -2084,7 +2092,18 @@ function startApp() {
             var mesh = new THREE.Mesh(geo, mat);
             mesh.applyMatrix4(new THREE.Matrix4().fromArray(placed.flatTransformation));
             mesh.userData.expressId = expressID;
-            elBox.expandByObject(mesh);
+            // Fast element-bbox expansion: copy the geometry's cached local
+            // bbox, transform by the mesh matrix (Three.js Box3.applyMatrix4
+            // does the 8-corner transform internally), and union into elBox.
+            // O(8) per instance instead of O(verts) per instance via the
+            // old elBox.expandByObject(mesh) which iterated all vertices
+            // every time.
+            if (geo.boundingBox) {
+              _tmpBox.copy(geo.boundingBox).applyMatrix4(mesh.matrix);
+              elBox.union(_tmpBox);
+            } else {
+              elBox.expandByObject(mesh); // defensive fallback
+            }
             elMeshes.push(mesh); meshes.push(mesh);
           } catch(e) { console.warn('Skipped element geometry #'+expressID+': '+(e.message||e)); }
           finally { if (gd) try { gd.delete(); } catch(e2) {} }
@@ -2471,16 +2490,13 @@ function startApp() {
           var matCache = {};
           var geoCache = {}; // geoId → BufferGeometry (shared across identical elements)
 
-          // Scene-build sub-phase accumulators: split the main-thread Three.js
-          // reconstruction into its measurable parts so we can target the
-          // biggest cost on large files. On the 253 MB test file Scene build
-          // was 14% of total load — these buckets tell us which part to fix.
-          //   _tGeoBuild  new BufferGeometry + setAttribute position/normal/index
-          //   _tMesh      new Material + new Mesh + applyMatrix4
-          //   _tBBox      elBox.expandByObject (iterates all vertices — suspect)
-          //   _tLod       LOD proxy box construction per element
+          // Scene-build sub-phase accumulators.
           var _tGeoBuild = 0, _tMesh = 0, _tBBox = 0, _tLod = 0;
           var _sbStart = performance.now();
+          // Pre-allocated scratch objects reused across every mesh instance
+          // to avoid GC pressure on large files (16k elements × several
+          // allocations per instance = 100k+ allocs without this).
+          var _tmpBox = new THREE.Box3();
 
           for (var i = 0; i < rawEls.length; i++) {
             var raw = rawEls[i];
@@ -2498,6 +2514,10 @@ function startApp() {
                   geo.setAttribute('position', new THREE.BufferAttribute(gEntry.pos, 3));
                   geo.setAttribute('normal', new THREE.BufferAttribute(gEntry.nrm, 3));
                   geo.setIndex(new THREE.BufferAttribute(gEntry.idx, 1));
+                  // Compute local bbox ONCE per unique geometry. All
+                  // subsequent instances reuse it via the 8-corner
+                  // matrix transform below instead of iterating verts.
+                  geo.computeBoundingBox();
                   _tGeoBuild += performance.now() - _tGB;
                   geoCache[geoId] = geo;
                 } else { continue; }
@@ -2513,7 +2533,16 @@ function startApp() {
               mesh.userData.expressId = raw.expressId;
               _tMesh += performance.now() - _tM;
               var _tB = performance.now();
-              elBox.expandByObject(mesh);
+              // Fast element-bbox expansion: take the cached local bbox,
+              // copy it, transform by the mesh matrix (8-corner transform
+              // inside Three.Box3.applyMatrix4), and union into elBox.
+              // O(8) per instance instead of O(verts) per instance.
+              if (geo.boundingBox) {
+                _tmpBox.copy(geo.boundingBox).applyMatrix4(mesh.matrix);
+                elBox.union(_tmpBox);
+              } else {
+                elBox.expandByObject(mesh); // defensive fallback
+              }
               _tBBox += performance.now() - _tB;
               elMeshes.push(mesh); meshes.push(mesh);
             }
