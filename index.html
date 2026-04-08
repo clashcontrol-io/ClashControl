@@ -10629,10 +10629,10 @@ function startApp() {
         var curGrp = isClashTab ? s.clashGroupBy : s.issueGroupBy;
         var curSort = isClashTab ? s.clashSortBy : s.issueSortBy;
         var grpOpts = isClashTab
-          ? ['none','severity','storey','discipline','status','type']
+          ? ['none','severity','storey','discipline','model','status','type','priority','assignee']
           : ['none','status','priority','category','assignee'];
         var sortOpts = isClashTab
-          ? [['none','None'],['severity_asc','Severity ↑'],['severity_desc','Severity ↓'],['spatial','Spatial'],['distance_asc','Gap ↑'],['distance_desc','Gap ↓'],['date_asc','Date ↑'],['date_desc','Date ↓']]
+          ? [['none','None'],['severity_asc','Severity ↑'],['severity_desc','Severity ↓'],['spatial','Spatial'],['distance_asc','Gap ↑'],['distance_desc','Gap ↓'],['priority_asc','Priority ↑'],['priority_desc','Priority ↓'],['type_asc','Type ↑'],['type_desc','Type ↓'],['storey_asc','Storey ↑'],['storey_desc','Storey ↓'],['name_asc','Name ↑'],['name_desc','Name ↓'],['date_asc','Date ↑'],['date_desc','Date ↓']]
           : [['none','None'],['priority_asc','Priority ↑'],['priority_desc','Priority ↓'],['date_asc','Date ↑'],['date_desc','Date ↓']];
         function pill(active){return {...S_BTN,fontSize:'0.63rem',padding:'.1rem .3rem',background:active?'var(--accent)':'var(--bg-secondary)',color:active?'#fff':'var(--text-faint)'};}
         return html`<div style=${{padding:'.25rem .5rem',borderBottom:'1px solid var(--border-subtle)',display:'flex',flexDirection:'column',gap:'.25rem',flexShrink:0}}>
@@ -12195,6 +12195,12 @@ function startApp() {
     priority_desc: function(a,b){ var o={critical:0,high:1,normal:2,low:3}; return (o[b.priority]||2)-(o[a.priority]||2); },
     severity_asc: function(a,b){ var o={critical:0,major:1,minor:2,info:3}; return (o[a.aiSeverity]||2)-(o[b.aiSeverity]||2); },
     severity_desc: function(a,b){ var o={critical:0,major:1,minor:2,info:3}; return (o[b.aiSeverity]||2)-(o[a.aiSeverity]||2); },
+    type_asc: function(a,b){ var o={hard:0,'near-miss':1,soft:2,duplicate:3}; return (o[a.type]||0)-(o[b.type]||0); },
+    type_desc: function(a,b){ var o={hard:0,'near-miss':1,soft:2,duplicate:3}; return (o[b.type]||0)-(o[a.type]||0); },
+    storey_asc: function(a,b){ return (a.elemAStorey||a.elemBStorey||'').localeCompare(b.elemAStorey||b.elemBStorey||''); },
+    storey_desc: function(a,b){ return (b.elemAStorey||b.elemBStorey||'').localeCompare(a.elemAStorey||a.elemBStorey||''); },
+    name_asc: function(a,b){ return (a.elemAName||'').localeCompare(b.elemAName||''); },
+    name_desc: function(a,b){ return (b.elemAName||'').localeCompare(a.elemAName||''); },
     // Spatial: sort by elevation → element A → distance so you walk floor-by-floor, element-by-element
     spatial: function(a,b){
       var ea = a.elevation||0, eb = b.elevation||0;
@@ -12206,12 +12212,15 @@ function startApp() {
     }
   };
 
-  function groupAndSort(items, groupBy, sortBy) {
+  function groupAndSort(items, groupBy, sortBy, opts) {
+    opts = opts || {};
     var sortFn = SORT_FNS[sortBy] || null;
     if (!groupBy || groupBy === 'none') {
       if (sortFn) return [{ label: 'All', items: items.slice().sort(sortFn) }];
       return null;
     }
+    var modelsById = {};
+    (opts.models||[]).forEach(function(m){ modelsById[m.id] = m; });
     var groups = {};
     items.forEach(function(it) {
       var key;
@@ -12224,12 +12233,24 @@ function startApp() {
         case 'category': key = it.category || 'other'; break;
         case 'assignee': key = it.assignee || 'Unassigned'; break;
         case 'severity': key = it.aiSeverity || 'minor'; break;
+        case 'model': {
+          var mA = modelsById[it.modelAId]; var mB = modelsById[it.modelBId];
+          var nA = mA ? mA.name : (it.modelAId || '?'); var nB = mB ? mB.name : (it.modelBId || '?');
+          key = nA === nB ? nA : [nA, nB].sort().join(' \u2194 ');
+          break;
+        }
         default: key = 'All';
       }
       if (!groups[key]) groups[key] = [];
       groups[key].push(it);
     });
-    return Object.keys(groups).sort().map(function(k) {
+    // Sort group keys: apply natural sort where keys look like storey labels, else alpha
+    var keys = Object.keys(groups).sort(function(a,b){
+      var na = parseFloat(a), nb = parseFloat(b);
+      if (!isNaN(na) && !isNaN(nb)) return na - nb;
+      return a.localeCompare(b);
+    });
+    return keys.map(function(k) {
       return { label: k, items: sortFn ? groups[k].sort(sortFn) : groups[k] };
     });
   }
@@ -12248,7 +12269,7 @@ function startApp() {
     var coll = useState({}), collapsed=coll[0], setCollapsed=coll[1];
     var grpLimits = useState({}), groupLimits=grpLimits[0], setGroupLimits=grpLimits[1];
     // ── Keyboard navigation: Arrow Down/Up = next/prev item, Tab/Shift+Tab = next/prev group ──
-    var groups = groupAndSort(items, groupBy, sortBy);
+    var groups = groupAndSort(items, groupBy, sortBy, {models: models});
     // Build flat visible item list (respecting collapsed groups)
     var flatItems = useMemo(function(){
       if(!groups) return items;
