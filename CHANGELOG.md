@@ -1,5 +1,8 @@
 # Changelog
 
+## v4.11.3 (2026-04-08)
+- feat(nl): expand Gemma tools + richer system prompt
+
 ## v4.11.2 (2026-04-08)
 - Add more sort and group options for clash detection results
 
