@@ -1,5 +1,8 @@
 # Changelog
 
+## v4.10.18 (2026-04-08)
+- perf(loader): fast bbox via cached geometry.boundingBox + 8-corner transform
+
 ## v4.10.17 (2026-04-08)
 - chore: bump version to 4.10.16
 
