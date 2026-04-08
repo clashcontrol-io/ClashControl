@@ -14472,7 +14472,18 @@ function startApp() {
     // 1. Server-side AI (primary — handles everything including multilingual/complex)
     var modelList = s.models.length ? s.models.map(function(m){ return m.name; }).join(', ') : 'none';
     var r = s.rules || {};
-    var context = { models: modelList, maxGap: r.maxGap, hard: !!r.hard, modelA: r.modelA, modelB: r.modelB, clashCount: s.clashes ? s.clashes.length : 0 };
+    var openClashes = s.clashes ? s.clashes.filter(function(c){return c.status!=='resolved';}).length : 0;
+    var context = {
+      models: modelList,
+      maxGap: r.maxGap, hard: !!r.hard, modelA: r.modelA, modelB: r.modelB,
+      clashCount: s.clashes ? s.clashes.length : 0,
+      openClashCount: openClashes,
+      issueCount: s.issues ? s.issues.length : 0,
+      activeTab: s.tab || 'clashes',
+      activeFilters: s.filters ? JSON.stringify(s.filters) : 'none',
+      projectName: (s.projectList && s.activeProject) ? (s.projectList.find(function(p){return p.id===s.activeProject;})||{}).name||'default' : 'default',
+      isShared: !!(s.sharedProjectId),
+    };
     return callServerNL(raw, context, replyContext)
       .then(function(action) { return _captureNL(dispatchServerAction(action, s, d), 'server'); })
       .catch(function(err) {
