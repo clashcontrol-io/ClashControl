@@ -1,5 +1,8 @@
 # Changelog
 
+## v4.10.26 (2026-04-08)
+- perf(viewer): adaptive culling — bump cullEvery 4→8 + camera-fingerprint skip
+
 ## v4.10.25 (2026-04-08)
 - feat(viewer): ghosted view now preserves surface shading
 
