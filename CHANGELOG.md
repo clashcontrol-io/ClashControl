@@ -1,5 +1,8 @@
 # Changelog
 
+## v4.11.1 (2026-04-08)
+- feat: cancel-twice opens setup tab; training feedback on issues
+
 ## v4.11.0 (2026-04-08)
 - chore: bump version to 4.10.27
 
