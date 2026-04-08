@@ -2196,6 +2196,44 @@ function startApp() {
     });
   }
 
+  // ── Lazy-props merge helper ────────────────────────────────────
+  // Called by processFiles' onProps callback when the worker finishes the
+  // deferred buildPropertyMap pass and posts the 'props' message ~4 s after
+  // the scene is already loaded. We mutate the model's element props in
+  // place (quantities + psets) so the inspector picks them up on next open.
+  // Direct mutation is safe here because nothing in the state tree uses
+  // quantities/psets for reducer comparisons — they're pure metadata
+  // attached to leaf element objects. A tiny PROPS_LOADED dispatch at the
+  // end nudges any currently-open inspector panel to re-render.
+  function _mergeLazyProps(modelId, propMap) {
+    var s = window._ccLatestState;
+    if (!s || !s.models) return;
+    var model = null;
+    for (var mi = 0; mi < s.models.length; mi++) {
+      if (s.models[mi].id === modelId) { model = s.models[mi]; break; }
+    }
+    if (!model || !model.elements) return;
+    var merged = 0;
+    for (var i = 0; i < model.elements.length; i++) {
+      var el = model.elements[i];
+      var pm = propMap[el.expressId];
+      if (pm) {
+        if (pm.quantities) el.props.quantities = pm.quantities;
+        if (pm.psets)      el.props.psets      = pm.psets;
+        merged++;
+      }
+    }
+    console.log('%c[IFC] Lazy-merged psets/quantities into ' + merged + ' / ' + model.elements.length + ' elements of "' + model.name + '"', 'color:#94a3b8');
+    // Nudge any open inspector to re-render. We reuse UPD_MODEL to bump a
+    // _propsVersion counter on the model, which creates a new model
+    // reference so React components memoising on models[i] re-render with
+    // the freshly-mutated element props. The reducer doesn't need to know
+    // about quantities/psets — they were already mutated in place above.
+    if (window._ccDispatch) {
+      try { window._ccDispatch({t:'UPD_MODEL', id:modelId, u:{_propsVersion:Date.now()}}); } catch(e) {}
+    }
+  }
+
   // ── IFC Web Worker (off-main-thread parsing) ──────────────────
   // Moves WASM parsing + property extraction to a Worker so the UI stays responsive.
   // Three.js objects are built on the main thread after the Worker returns raw arrays.
@@ -2281,7 +2319,13 @@ function startApp() {
         var storeyData = storeyResult.data;
         var spatialHierarchy = extractSpatialHierarchy(api, modelID);
         var matMap = buildMaterialMap(api, modelID);
-        var propMap = buildPropertyMap(api, modelID, progress);
+        // Lazy property extraction: buildPropertyMap is DEFERRED until after
+        // the geometry result is posted, so the user sees the scene 4+
+        // seconds earlier on large files. propMap starts empty; the
+        // StreamAllMeshes callback below will leave each element's
+        // quantities/psets as empty {} and they get merged in later via
+        // the second postMessage with type:'props'.
+        var propMap = {};
         var relatedPairs = buildRelationsMap(api, modelID);
         var allStoreys = {};
         Object.keys(storeyMap).forEach(function(k) { allStoreys[storeyMap[k]] = true; });
@@ -2385,7 +2429,9 @@ function startApp() {
           }
         });
 
-        api.CloseModel(modelID);
+        // NOTE: api.CloseModel(modelID) is deferred until after buildPropertyMap
+        // below, because that function also calls api.GetLine and needs the
+        // WASM model open. See the two-phase flow after postMessage('result').
         mark('Geometry stream');
         // Sub-phase DURATIONS (not cumulatives) so the profile printer can
         // show them as indented rows under 'Geometry stream' without
@@ -2403,6 +2449,37 @@ function startApp() {
           spatialHierarchy:spatialHierarchy,
           relatedPairs:relatedPairs, fileSize:buf.byteLength, phases:phases,
           streamSub:streamSub}, xfer);
+
+        // ── Phase 2: lazy property extraction ──────────────────────
+        // The main thread now has the geometry result and is building the
+        // scene. Meanwhile we run the expensive buildPropertyMap with the
+        // WASM model still open. Users see the model ~4s earlier on large
+        // files; psets/quantities fill in afterward via the 'props' message.
+        //
+        // Errors here are non-fatal: the main thread keeps the loaded
+        // model, just with empty psets/quantities. We log to the worker
+        // console (which the main thread forwards) and still terminate
+        // cleanly to free the WASM heap.
+        try {
+          progress('Loading properties 98%');
+          var lazyPropMap = buildPropertyMap(api, modelID, function(msg) {
+            // Remap the "Reading properties N%" sub-progress from 25-40%
+            // (load-time budget) to 98-99% (background budget) so the
+            // progress bar doesn't rewind.
+            var m = msg && msg.match(/(\d+)\s*%/);
+            if (m) {
+              var local = parseInt(m[1], 10) - 25; // 0..15
+              var pct = 98 + Math.min(1, Math.round(local / 15));
+              progress('Loading properties ' + pct + '%');
+            }
+          });
+          api.CloseModel(modelID);
+          self.postMessage({type:'props', propMap:lazyPropMap});
+          progress('Done 100%');
+        } catch(propErr) {
+          try { api.CloseModel(modelID); } catch(e) {}
+          self.postMessage({type:'props-error', msg: propErr.message || String(propErr)});
+        }
       }).catch(function(err) {
         self.postMessage({type:'error', msg: err.message || String(err)});
       });
@@ -2429,7 +2506,7 @@ function startApp() {
     return _ifcWorkerUrl;
   }
 
-  function loadIFCWorker(buffer, fallbackColor, onProgress) {
+  function loadIFCWorker(buffer, fallbackColor, onProgress, onProps) {
     var loadStart = performance.now();
     var _myGen = ++_ccLoadGeneration;
     return new Promise(function(resolve, reject) {
@@ -2460,8 +2537,23 @@ function startApp() {
           reject(new Error(msg.msg));
           return;
         }
+        // Phase 2: lazy property map arrived AFTER the geometry result.
+        // Forward to the caller's onProps callback so it can merge the
+        // psets/quantities into the already-loaded model in place. Then
+        // terminate the worker — its job is done.
+        if (msg.type === 'props') {
+          try { if (onProps) onProps(msg.propMap || {}); }
+          catch(propMergeErr) { console.warn('[IFC] onProps callback failed:', propMergeErr); }
+          worker.terminate();
+          return;
+        }
+        if (msg.type === 'props-error') {
+          console.warn('[IFC] Lazy property extraction failed (model loaded without psets):', msg.msg);
+          worker.terminate();
+          return;
+        }
         if (msg.type === 'result') {
-          if (_myGen !== _ccLoadGeneration) { worker.terminate(); resolve(null); return; } // cancelled
+          if (_myGen !== _ccLoadGeneration) { worker.terminate(); resolve(null); return; } // cancelled — also kills the in-flight buildPropertyMap
           if (onProgress) onProgress('Building 3D scene 85%');
           // Build Three.js objects from raw geometry arrays (with geometry dedup)
           var rawEls = msg.rawEls;
@@ -2584,8 +2676,11 @@ function startApp() {
             window._ccLoadProfile = rows;
           })();
 
+          // DO NOT terminate the worker here — it's still running
+          // buildPropertyMap in its own background goroutine and will post
+          // a 'props' message shortly. The 'props' handler above is the
+          // one that terminates the worker.
           resolve({meshes:meshes, elements:elements, storeys:msg.storeys, storeyData:msg.storeyData, spatialHierarchy:msg.spatialHierarchy||{}, relatedPairs:msg.relatedPairs, stats:stats});
-          worker.terminate();
         }
       };
       worker.onerror = function(err) {
@@ -8623,7 +8718,17 @@ function startApp() {
             // its own first message — that gap used to look like a stall.
             _onProg('Starting IFC parser 16%');
             var disc='structural', col=DISC[0].c;
-            var _loadP = loadIFCWorker(buf, col, _onProg);
+            // Closure ref for the onProps callback below. Set inside the
+            // .then(result) handler once the model is dispatched. The worker
+            // builds the property map AFTER emitting the result message, so
+            // by the time onProps fires (4+ s later on large files) this ref
+            // is guaranteed to be populated.
+            var _lazyPropsTarget = {modelId: null};
+            var _loadP = loadIFCWorker(buf, col, _onProg, function(propMap) {
+              if (_lazyPropsTarget.modelId) {
+                _mergeLazyProps(_lazyPropsTarget.modelId, propMap);
+              }
+            });
             var _workerGen = _ccLoadGeneration; // capture generation assigned by loadIFCWorker
             _loadP = _loadP.catch(function(workerErr) {
               console.warn('[IFC Worker fallback]', workerErr.message || workerErr);
@@ -8661,6 +8766,11 @@ function startApp() {
                 modelId = uid();
                 d({t:A.ADD_MODEL, v:{id:modelId, name:baseName, discipline:disc, color:col, visible:true, _version:1, meshes:result.meshes, elements:result.elements, storeys:result.storeys||[], storeyData:result.storeyData||[], spatialHierarchy:result.spatialHierarchy||{}, relatedPairs:result.relatedPairs||{}, stats:result.stats||{fileSize:fSize}}});
               }
+              // Arm the lazy-props merge: when the worker finishes its
+              // background buildPropertyMap pass and posts 'props', the
+              // onProps callback above will see this modelId set and
+              // merge into the dispatched model in place.
+              _lazyPropsTarget.modelId = modelId;
               consoleElementProfile(baseName, (result.stats&&result.stats.loadType)||'IFC', result.elements);
               idbSaveFile(modelId, f.name, buf, s.activeProject||'default');
               idbSaveGeoCache(modelId, _geoSerialize(result)); // cache geometry for fast project-switch restore
