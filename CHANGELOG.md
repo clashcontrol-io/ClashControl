@@ -1,5 +1,8 @@
 # Changelog
 
+## v4.10.17 (2026-04-08)
+- chore: bump version to 4.10.16
+
 ## v4.10.16 (2026-04-08)
 - fix(tree): restore per-level indentation in tree view
 
