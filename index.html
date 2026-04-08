@@ -1459,8 +1459,15 @@ function startApp() {
       // web-ifc.wasm. The engine's internal instantiateStreaming hits the
       // blob URL instead of jsdelivr — no cross-origin, no COEP gate, no
       // SW interception, no chance of a half-streamed response.
+      //
+      // CRITICAL: any path that isn't web-ifc.wasm MUST be returned as an
+      // absolute jsdelivr URL, not as a bare relative path. Otherwise the
+      // browser resolves it against the page origin and we get a Vercel
+      // 404 (which is exactly what happened with web-ifc-mt.wasm before
+      // COEP was removed — see vercel.json).
       var initP = api.Init(function(path) {
-        return path === 'web-ifc.wasm' ? blobUrl : path;
+        if (path === 'web-ifc.wasm') return blobUrl;
+        return 'https://cdn.jsdelivr.net/npm/web-ifc@0.0.76/' + path;
       }).then(function() { _ifcAPI = api; return api; });
       // Defence-in-depth: 15s timeout on Init even with the blob URL.
       // Should never fire now, but if it does the user sees an error
@@ -2238,8 +2245,14 @@ function startApp() {
           progress('Initializing WASM 18%');
           var blobUrl = URL.createObjectURL(new Blob([wasmBuf], {type:'application/wasm'}));
           _api = new mod.IfcAPI();
+          // CRITICAL: any path that isn't web-ifc.wasm MUST be returned as
+          // an absolute jsdelivr URL. Returning a bare relative path makes
+          // the browser resolve it against the page origin and we get a
+          // Vercel 404 (which is exactly what happened with web-ifc-mt.wasm
+          // before COEP was removed — see vercel.json).
           var initP = _api.Init(function(path) {
-            return path === 'web-ifc.wasm' ? blobUrl : path;
+            if (path === 'web-ifc.wasm') return blobUrl;
+            return 'https://cdn.jsdelivr.net/npm/web-ifc@0.0.76/' + path;
           }).then(function() { return _api; });
           // Defence-in-depth: 15s Init timeout. With the blob URL approach
           // this should never fire — kept as a safety net in case web-ifc
