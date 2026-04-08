@@ -4850,7 +4850,12 @@ function startApp() {
       var renderer = new THREE.WebGLRenderer({antialias:true});
       renderer.setPixelRatio(Math.min(devicePixelRatio,2));
       renderer.setSize(el.clientWidth, el.clientHeight);
-      renderer.localClippingEnabled = true;
+      // Start with localClippingEnabled off (no-op cost in fragment
+      // shaders); the tick() render loop flips it on the first frame
+      // after a section plane is activated and flips it back off
+      // when the last one is cleared. See the _sectionActive check
+      // near renderer.render() below.
+      renderer.localClippingEnabled = false;
       el.appendChild(renderer.domElement);
       S.renderer = renderer;
       window._ccState3d = S;
@@ -6064,6 +6069,21 @@ function startApp() {
         try {
           renderer.setViewport(0,0,el.clientWidth,el.clientHeight);
           renderer.setScissorTest(false);
+          // Conditional per-material clipping. The app uses SCENE-LEVEL
+          // clipping planes (renderer.clippingPlanes = [...]) for
+          // section views, and only relies on material.clippingPlanes
+          // on a handful of overlay materials that opt OUT of the
+          // scene-level clipping (by setting their own clippingPlanes
+          // = []). When there are no scene-level planes active,
+          // localClippingEnabled=true costs per-fragment branches in
+          // every material's shader for zero benefit — nothing to opt
+          // out of. Toggle it to mirror whether section clipping is
+          // active so the fragment shader stays fast in the common
+          // no-section case.
+          var _sectionActive = renderer.clippingPlanes && renderer.clippingPlanes.length > 0;
+          if (renderer.localClippingEnabled !== _sectionActive) {
+            renderer.localClippingEnabled = _sectionActive;
+          }
           renderer.render(scene,S.camera);
         } catch(renderErr) { console.warn('Render error:', renderErr); }
         S.perf.frameCount++;
