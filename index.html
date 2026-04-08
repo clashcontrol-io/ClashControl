@@ -2456,22 +2456,35 @@ function startApp() {
         // WASM model still open. Users see the model ~4s earlier on large
         // files; psets/quantities fill in afterward via the 'props' message.
         //
-        // IMPORTANT: phase 2 runs SILENTLY — we pass null as the onProgress
-        // callback to buildPropertyMap and emit no 'progress' messages of
-        // our own. Any progress emit here would re-activate the main
-        // loading strip (which processFiles' chain.then already cleared
-        // via setLoading(false) once the 'result' message landed) and
-        // leave the user with a "stuck at 98–99%" strip even after the
-        // scene is fully visible and interactive. Phase 2 is background
-        // work — visible completion signal is the '[IFC] Lazy-merged'
-        // console log written by _mergeLazyProps on the main thread.
+        // Phase 2 keeps the loading strip moving via gradual progress
+        // emits (98% → 99% → 100%) so the user sees smooth motion all
+        // the way to the end, not a sudden jump then a freeze. The
+        // 'Done 100%' is posted BEFORE the 'props' message so that the
+        // main thread processes the final 100% update before the
+        // 'props' handler's delayed loading:false dispatch fires. The
+        // processFiles counter (`_lazyWorkersActive`) ensures
+        // chain.then() doesn't clear the strip prematurely and cause a
+        // flash between the main-load 85% and phase-2 98%.
         //
         // Errors here are non-fatal: the main thread keeps the loaded
         // model, just with empty psets/quantities. We log to the worker
         // console (which the main thread forwards) and still terminate
         // cleanly to free the WASM heap.
         try {
-          var lazyPropMap = buildPropertyMap(api, modelID, null);
+          progress('Loading properties 98%');
+          var lazyPropMap = buildPropertyMap(api, modelID, function(msg) {
+            // buildPropertyMap emits "Reading properties N%" with N in
+            // the 25-40% range (its original load-time budget). Remap
+            // to 98-99% so the strip advances smoothly from the main
+            // load's endpoint to the final 100%.
+            var m = msg && msg.match(/(\d+)\s*%/);
+            if (m) {
+              var local = parseInt(m[1], 10) - 25; // 0..15
+              var pct = 98 + Math.min(1, Math.round(local / 15));
+              progress('Loading properties ' + pct + '%');
+            }
+          });
+          progress('Done 100%');
           api.CloseModel(modelID);
           self.postMessage({type:'props', propMap:lazyPropMap});
         } catch(propErr) {
@@ -2537,32 +2550,24 @@ function startApp() {
         }
         // Phase 2: lazy property map arrived AFTER the geometry result.
         // Forward to the caller's onProps callback so it can merge the
-        // psets/quantities into the already-loaded model in place. Then
-        // terminate the worker — its job is done.
+        // psets/quantities into the already-loaded model in place. The
+        // onProps callback in processFiles is responsible for decrementing
+        // the _lazyWorkersActive counter and scheduling the delayed
+        // loading:false dispatch that lets the user see the final 100%.
+        // Terminate the worker — its job is done.
         if (msg.type === 'props') {
-          try { if (onProps) onProps(msg.propMap || {}); }
+          try { if (onProps) onProps(msg.propMap || {}, null); }
           catch(propMergeErr) { console.warn('[IFC] onProps callback failed:', propMergeErr); }
-          // Defence in depth: the worker's phase 2 is silent (no progress
-          // emits) but if a future change re-adds them, this ensures the
-          // main loading strip is cleared when phase 2 completes, not
-          // stuck on whatever 'Loading properties N%' message last fired.
-          try {
-            window.dispatchEvent(new CustomEvent('cc-model-loading', {detail:{loading:false}}));
-            window._ccModelLoading = false;
-            window._ccModelLoadMsg = '';
-          } catch(e) {}
           worker.terminate();
           return;
         }
         if (msg.type === 'props-error') {
           console.warn('[IFC] Lazy property extraction failed (model loaded without psets):', msg.msg);
-          // Also clear the loading strip on error so the user isn't
-          // stuck watching a frozen 99% after phase 2 fails.
-          try {
-            window.dispatchEvent(new CustomEvent('cc-model-loading', {detail:{loading:false}}));
-            window._ccModelLoading = false;
-            window._ccModelLoadMsg = '';
-          } catch(e) {}
+          // Call onProps with an empty propMap + error flag so the
+          // caller still runs its counter-decrement path and clears
+          // the loading strip — otherwise the strip would stay stuck.
+          try { if (onProps) onProps({}, msg.msg || 'props-error'); }
+          catch(e) { console.warn('[IFC] onProps(err) callback failed:', e); }
           worker.terminate();
           return;
         }
@@ -8465,6 +8470,27 @@ function startApp() {
       var errors = [];
       var chain = Promise.resolve();
       var totalIfc = 0, doneIfc = 0;
+      // Lazy-props phase 2 bookkeeping. Each IFC worker that starts phase 2
+      // increments this counter; the onProps callback decrements it. The
+      // chain.then at the end of processFiles ONLY clears the loading strip
+      // if this counter is 0 — otherwise the worker's onProps callback is
+      // responsible for the final clear (with a 500 ms delay so the user
+      // sees the "Done 100%" state before the strip disappears). This
+      // prevents the flash between main-load 85% and phase-2 98% that
+      // would happen if chain.then cleared the strip while phase 2 was
+      // still emitting progress messages.
+      var _lazyWorkersActive = 0;
+      var _chainEndFired = false;
+      function _finishLoadingStrip(delayMs) {
+        // Single place that clears the loading strip. Called either
+        // from the last lazy-worker's onProps (with a 500 ms delay so
+        // the user sees "Done 100%") or from chain.then if there are
+        // no lazy workers to wait for (non-IFC files only).
+        setTimeout(function() {
+          setLoading(false);
+          setLoadMsg('');
+        }, delayMs || 0);
+      }
 
       // ── Group files by base name to detect GLB+IFC pairs ──
       var byBase = {}; // baseName → {glb, ifc, ifcmeta, ifcprops}
@@ -8785,9 +8811,21 @@ function startApp() {
             // by the time onProps fires (4+ s later on large files) this ref
             // is guaranteed to be populated.
             var _lazyPropsTarget = {modelId: null};
-            var _loadP = loadIFCWorker(buf, col, _onProg, function(propMap) {
-              if (_lazyPropsTarget.modelId) {
+            _lazyWorkersActive++;
+            var _loadP = loadIFCWorker(buf, col, _onProg, function(propMap, propErr) {
+              // onProps fires on either a 'props' message (phase 2 complete)
+              // or a 'props-error' message (phase 2 crashed). Either way
+              // we decrement the counter and — if this was the last
+              // outstanding worker and chain.then has already fired — we
+              // schedule the final loading-strip clear with a 500 ms delay
+              // so the user sees the "Done 100%" message that the worker
+              // posted just before 'props'.
+              if (!propErr && _lazyPropsTarget.modelId) {
                 _mergeLazyProps(_lazyPropsTarget.modelId, propMap);
+              }
+              _lazyWorkersActive--;
+              if (_lazyWorkersActive === 0 && _chainEndFired) {
+                _finishLoadingStrip(500);
               }
             });
             var _workerGen = _ccLoadGeneration; // capture generation assigned by loadIFCWorker
@@ -8842,12 +8880,19 @@ function startApp() {
           }).then(function(){ doneIfc++; });
         });
       });
-      // After all files processed, update loading state once and show accumulated errors
+      // After all files processed, update loading state once and show accumulated errors.
+      // If any IFC workers are still running their phase 2 (buildPropertyMap), DEFER
+      // the loading-strip clear — the onProps callback for the last outstanding worker
+      // will handle it with a 500 ms delay so the user sees the final "Done 100%".
+      // Otherwise (non-IFC files only) clear immediately. Errors and the gcEvent
+      // always run here — only the strip clear is conditional.
       chain.then(function() {
-        setLoading(false);
-        setLoadMsg('');
+        _chainEndFired = true;
         if (errors.length) setErr(errors.join('\n'));
         if (totalIfc > 0) _gcEvent('ifc-loaded', totalIfc+' file'+(totalIfc>1?'s':''));
+        if (_lazyWorkersActive === 0) {
+          _finishLoadingStrip(0);
+        }
       });
     }
     function onFiles(e) {
