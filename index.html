@@ -2456,26 +2456,24 @@ function startApp() {
         // WASM model still open. Users see the model ~4s earlier on large
         // files; psets/quantities fill in afterward via the 'props' message.
         //
+        // IMPORTANT: phase 2 runs SILENTLY — we pass null as the onProgress
+        // callback to buildPropertyMap and emit no 'progress' messages of
+        // our own. Any progress emit here would re-activate the main
+        // loading strip (which processFiles' chain.then already cleared
+        // via setLoading(false) once the 'result' message landed) and
+        // leave the user with a "stuck at 98–99%" strip even after the
+        // scene is fully visible and interactive. Phase 2 is background
+        // work — visible completion signal is the '[IFC] Lazy-merged'
+        // console log written by _mergeLazyProps on the main thread.
+        //
         // Errors here are non-fatal: the main thread keeps the loaded
         // model, just with empty psets/quantities. We log to the worker
         // console (which the main thread forwards) and still terminate
         // cleanly to free the WASM heap.
         try {
-          progress('Loading properties 98%');
-          var lazyPropMap = buildPropertyMap(api, modelID, function(msg) {
-            // Remap the "Reading properties N%" sub-progress from 25-40%
-            // (load-time budget) to 98-99% (background budget) so the
-            // progress bar doesn't rewind.
-            var m = msg && msg.match(/(\d+)\s*%/);
-            if (m) {
-              var local = parseInt(m[1], 10) - 25; // 0..15
-              var pct = 98 + Math.min(1, Math.round(local / 15));
-              progress('Loading properties ' + pct + '%');
-            }
-          });
+          var lazyPropMap = buildPropertyMap(api, modelID, null);
           api.CloseModel(modelID);
           self.postMessage({type:'props', propMap:lazyPropMap});
-          progress('Done 100%');
         } catch(propErr) {
           try { api.CloseModel(modelID); } catch(e) {}
           self.postMessage({type:'props-error', msg: propErr.message || String(propErr)});
@@ -2544,11 +2542,27 @@ function startApp() {
         if (msg.type === 'props') {
           try { if (onProps) onProps(msg.propMap || {}); }
           catch(propMergeErr) { console.warn('[IFC] onProps callback failed:', propMergeErr); }
+          // Defence in depth: the worker's phase 2 is silent (no progress
+          // emits) but if a future change re-adds them, this ensures the
+          // main loading strip is cleared when phase 2 completes, not
+          // stuck on whatever 'Loading properties N%' message last fired.
+          try {
+            window.dispatchEvent(new CustomEvent('cc-model-loading', {detail:{loading:false}}));
+            window._ccModelLoading = false;
+            window._ccModelLoadMsg = '';
+          } catch(e) {}
           worker.terminate();
           return;
         }
         if (msg.type === 'props-error') {
           console.warn('[IFC] Lazy property extraction failed (model loaded without psets):', msg.msg);
+          // Also clear the loading strip on error so the user isn't
+          // stuck watching a frozen 99% after phase 2 fails.
+          try {
+            window.dispatchEvent(new CustomEvent('cc-model-loading', {detail:{loading:false}}));
+            window._ccModelLoading = false;
+            window._ccModelLoadMsg = '';
+          } catch(e) {}
           worker.terminate();
           return;
         }
