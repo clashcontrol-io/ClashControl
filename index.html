@@ -2083,11 +2083,18 @@ function startApp() {
       function mark(n) { phases[n] = performance.now() - t0; }
       function progress(msg) { self.postMessage({type:'progress', msg:msg}); }
 
+      // Emit progress IMMEDIATELY so the main thread's 15% → 20% gap (which spans
+      // the entire worker spawn + dynamic-import + WASM init on a fresh load) is
+      // no longer a silent stall. Also tells the watchdog the worker is alive.
+      progress('Loading IFC engine 16%');
+
       var ready;
       if (_api) {
         ready = Promise.resolve(_api);
       } else {
+        progress('Fetching IFC library 17%');
         ready = import('https://cdn.jsdelivr.net/npm/web-ifc@0.0.76/web-ifc-api.js').then(function(mod) {
+          progress('Initializing WASM 18%');
           _api = new mod.IfcAPI();
           _api.SetWasmPath('https://cdn.jsdelivr.net/npm/web-ifc@0.0.76/');
           return _api.Init().then(function() { return _api; });
@@ -2213,7 +2220,19 @@ function startApp() {
       try { worker = new Worker(_getIFCWorkerUrl()); }
       catch(e) { reject(e); return; }
 
+      // Watchdog: if the worker doesn't emit ANY message within 20s of spawn,
+      // treat it as hung (known to happen under COEP:require-corp + blob worker
+      // + dynamic import in some browser/SW states) and reject so the caller
+      // can fall back to the main-thread loader. Cleared on the first message.
+      var _watchdog = setTimeout(function() {
+        _watchdog = null;
+        try { worker.terminate(); } catch(e) {}
+        reject(new Error('IFC Worker timed out (no progress in 20s)'));
+      }, 20000);
+      function _clearWatchdog() { if (_watchdog) { clearTimeout(_watchdog); _watchdog = null; } }
+
       worker.onmessage = function(e) {
+        _clearWatchdog();
         var msg = e.data;
         if (msg.type === 'progress') {
           if (onProgress) onProgress(msg.msg);
@@ -2313,11 +2332,20 @@ function startApp() {
         }
       };
       worker.onerror = function(err) {
+        _clearWatchdog();
         worker.terminate();
         reject(new Error('IFC Worker failed: ' + (err.message || err)));
       };
-      // Copy buffer to Worker (don't transfer — keep original for IndexedDB save + fallback)
-      worker.postMessage({buffer:buffer});
+      // Copy buffer to Worker (don't transfer — keep original for IndexedDB save + fallback).
+      // Wrap in try/catch: a synchronous DataCloneError here (e.g. on very large buffers)
+      // would otherwise leave the watchdog running until timeout.
+      try {
+        worker.postMessage({buffer:buffer});
+      } catch(postErr) {
+        _clearWatchdog();
+        try { worker.terminate(); } catch(e) {}
+        reject(postErr);
+      }
     });
   }
 
@@ -8333,6 +8361,10 @@ function startApp() {
             var _rpct = total > 0 ? Math.round(loaded / total * 15) : 0;
             _onProg('Reading file ' + _rpct + '%');
           }).then(function(buf) {
+            // Move the bar off 15% immediately. The worker still has to spawn,
+            // dynamic-import web-ifc from the CDN, and boot WASM before it emits
+            // its own first message — that gap used to look like a stall.
+            _onProg('Starting IFC parser 16%');
             var disc='structural', col=DISC[0].c;
             var _loadP = loadIFCWorker(buf, col, _onProg);
             var _workerGen = _ccLoadGeneration; // capture generation assigned by loadIFCWorker
