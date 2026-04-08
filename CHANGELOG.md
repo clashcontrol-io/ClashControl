@@ -1,5 +1,8 @@
 # Changelog
 
+## v4.10.24 (2026-04-08)
+- fix(loader): smooth 98→99→100% transition before loading strip clears
+
 ## v4.10.23 (2026-04-08)
 - ui(inspector): diagnostic strip + empty-state labels + live props lookup
 
