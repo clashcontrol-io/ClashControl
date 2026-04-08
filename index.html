@@ -1402,18 +1402,71 @@ function startApp() {
   })();
 
   var _ifcAPI = null;
+  // Cache the prefetched wasm bytes across worker spawns / fallback paths so
+  // we never re-download for the same session. Filled by _prefetchWebIfcWasm.
+  var _webIfcWasmBuf = null;
+
+  // Pre-fetch web-ifc.wasm ourselves and return a same-origin blob: URL.
+  // Why: web-ifc's internal Init() calls WebAssembly.instantiateStreaming on
+  // the cross-origin .wasm URL. That fetch has been observed to hang silently
+  // (no error, no rejection) under several conditions — stale SW cache,
+  // missing CORP header on a CDN edge node, COEP:require-corp blocking, or a
+  // half-completed body. By doing the fetch ourselves we (a) get a real
+  // network error instead of a hang, (b) validate the WASM magic bytes
+  // before handing them to the engine, and (c) hand the engine a same-origin
+  // blob: URL that COEP can't block and the SW can't cache.
+  function _prefetchWebIfcWasm() {
+    if (_webIfcWasmBuf) return Promise.resolve(_webIfcWasmBuf);
+    var wasmUrl = 'https://cdn.jsdelivr.net/npm/web-ifc@0.0.76/web-ifc.wasm';
+    // 12s timeout on the fetch itself — far less than the 15s Init timeout
+    // so the user gets a useful error instead of a generic "Init timed out".
+    var fetchP = fetch(wasmUrl, {cache:'reload', mode:'cors', credentials:'omit'})
+      .then(function(resp) {
+        if (!resp.ok) throw new Error('web-ifc.wasm HTTP ' + resp.status + ' ' + resp.statusText);
+        return resp.arrayBuffer();
+      })
+      .then(function(buf) {
+        // WASM magic bytes: 0x00 0x61 0x73 0x6D ("\0asm")
+        var b = new Uint8Array(buf);
+        if (b.length < 8 || b[0] !== 0x00 || b[1] !== 0x61 || b[2] !== 0x73 || b[3] !== 0x6D) {
+          throw new Error('web-ifc.wasm is corrupt (' + b.length + ' bytes, magic=' +
+            [b[0]||0,b[1]||0,b[2]||0,b[3]||0].map(function(x){return x.toString(16);}).join(' ') + ')');
+        }
+        _webIfcWasmBuf = buf;
+        return buf;
+      });
+    var timeoutP = new Promise(function(_, rej) {
+      setTimeout(function() { rej(new Error('web-ifc.wasm fetch timed out (12s)')); }, 12000);
+    });
+    return Promise.race([fetchP, timeoutP]);
+  }
+
   function getIfcAPI() {
     if (_ifcAPI) return Promise.resolve(_ifcAPI);
-    return import('https://cdn.jsdelivr.net/npm/web-ifc@0.0.76/web-ifc-api.js').then(function(mod) {
+    // Run the wasm pre-fetch and the api-module dynamic import in parallel.
+    // The import is a small JS file (parseable, can't hang silently); the
+    // wasm is the binary that has been the source of every Init() hang.
+    return Promise.all([
+      _prefetchWebIfcWasm(),
+      import('https://cdn.jsdelivr.net/npm/web-ifc@0.0.76/web-ifc-api.js')
+    ]).then(function(parts) {
+      var wasmBuf = parts[0];
+      var mod = parts[1];
+      var blob = new Blob([wasmBuf], {type: 'application/wasm'});
+      var blobUrl = URL.createObjectURL(blob);
       var api = new mod.IfcAPI();
-      api.SetWasmPath('https://cdn.jsdelivr.net/npm/web-ifc@0.0.76/');
-      // Race Init() against a 15s timeout. Init has been observed to hang
-      // silently when a stale/broken web-ifc.wasm is served from the SW cache;
-      // without this race the caller (main-thread loadIFC fallback path) stalls
-      // forever instead of surfacing a visible error.
-      var initP = api.Init().then(function() { _ifcAPI = api; return api; });
+      // Init's locateFile hook lets us return a same-origin blob: URL for
+      // web-ifc.wasm. The engine's internal instantiateStreaming hits the
+      // blob URL instead of jsdelivr — no cross-origin, no COEP gate, no
+      // SW interception, no chance of a half-streamed response.
+      var initP = api.Init(function(path) {
+        return path === 'web-ifc.wasm' ? blobUrl : path;
+      }).then(function() { _ifcAPI = api; return api; });
+      // Defence-in-depth: 15s timeout on Init even with the blob URL.
+      // Should never fire now, but if it does the user sees an error
+      // instead of an infinite spinner.
       var timeoutP = new Promise(function(_, rej) {
-        setTimeout(function() { rej(new Error('WASM Init timed out (15s)')); }, 15000);
+        setTimeout(function() { rej(new Error('WASM Init timed out (15s) — locateFile hook may not be supported by web-ifc 0.0.76')); }, 15000);
       });
       return Promise.race([initP, timeoutP]);
     });
@@ -2156,19 +2209,43 @@ function startApp() {
         ready = Promise.resolve(_api);
       } else {
         progress('Fetching IFC library 17%');
-        ready = import('https://cdn.jsdelivr.net/npm/web-ifc@0.0.76/web-ifc-api.js').then(function(mod) {
+        // Pre-fetch the wasm bytes ourselves and hand them to web-ifc as a
+        // same-origin blob: URL via the Init() locateFile hook. The engine's
+        // own internal WebAssembly.instantiateStreaming has been observed to
+        // hang silently on the cross-origin .wasm URL (stale cache, missing
+        // CORP, COEP gate, half-streamed body — none of which throw an
+        // error). Doing the fetch ourselves gives us a real network error
+        // and a wasm-magic-byte sanity check before Init even runs.
+        var _wasmUrl = 'https://cdn.jsdelivr.net/npm/web-ifc@0.0.76/web-ifc.wasm';
+        var _wasmFetchP = fetch(_wasmUrl, {cache:'reload', mode:'cors', credentials:'omit'})
+          .then(function(resp) {
+            if (!resp.ok) throw new Error('web-ifc.wasm HTTP ' + resp.status);
+            return resp.arrayBuffer();
+          })
+          .then(function(buf) {
+            var b = new Uint8Array(buf);
+            if (b.length < 8 || b[0] !== 0x00 || b[1] !== 0x61 || b[2] !== 0x73 || b[3] !== 0x6D) {
+              throw new Error('web-ifc.wasm corrupt (' + b.length + ' bytes)');
+            }
+            return buf;
+          });
+        var _wasmTimeoutP = new Promise(function(_, rej) {
+          setTimeout(function() { rej(new Error('web-ifc.wasm fetch timed out (12s)')); }, 12000);
+        });
+        var _modImportP = import('https://cdn.jsdelivr.net/npm/web-ifc@0.0.76/web-ifc-api.js');
+        ready = Promise.all([Promise.race([_wasmFetchP, _wasmTimeoutP]), _modImportP]).then(function(parts) {
+          var wasmBuf = parts[0], mod = parts[1];
           progress('Initializing WASM 18%');
+          var blobUrl = URL.createObjectURL(new Blob([wasmBuf], {type:'application/wasm'}));
           _api = new mod.IfcAPI();
-          _api.SetWasmPath('https://cdn.jsdelivr.net/npm/web-ifc@0.0.76/');
-          // Race Init() against a 15s timeout. WebAssembly.instantiate has been
-          // observed to hang silently when a stale/broken web-ifc.wasm is served
-          // from the SW cache (see sw.js web-ifc bypass) — without this race the
-          // .catch below never fires and the loader stalls forever at 18%. On
-          // timeout the worker posts an error and the main thread falls back to
-          // its own loadIFC, which uses the cached _ifcAPI on subsequent loads.
-          var initP = _api.Init().then(function() { return _api; });
+          var initP = _api.Init(function(path) {
+            return path === 'web-ifc.wasm' ? blobUrl : path;
+          }).then(function() { return _api; });
+          // Defence-in-depth: 15s Init timeout. With the blob URL approach
+          // this should never fire — kept as a safety net in case web-ifc
+          // 0.0.76 ignores the locateFile hook on some code path.
           var timeoutP = new Promise(function(_, rej) {
-            setTimeout(function() { rej(new Error('WASM Init timed out (15s)')); }, 15000);
+            setTimeout(function() { rej(new Error('WASM Init timed out (15s) — locateFile hook may not be supported')); }, 15000);
           });
           return Promise.race([initP, timeoutP]);
         });
