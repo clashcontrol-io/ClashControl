@@ -1,5 +1,8 @@
 # Changelog
 
+## v4.11.21 (2026-04-09)
+- Single element panel + Box button toggle
+
 ## v4.11.20 (2026-04-09)
 - Chrome overlap + Gemma model-count context + property panel polish
 
