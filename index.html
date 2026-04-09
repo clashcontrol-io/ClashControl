@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8"/>
-  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover"/>
   <title>ClashControl — Open BIM Clash Detection</title>
   <!-- GitHub Pages → canonical site redirect.
        Runs before any other resource loads so users never download CDN
@@ -5148,20 +5148,21 @@ function startApp() {
         if (cached) return cached;
         var g = origMat.clone();
         g.transparent = true;
-        g.opacity = 0.10;
+        g.opacity = 0.12;
         g.depthWrite = false;
         // Quiet down any emissive glow the source material might have had —
         // a ghost should never out-shine the focused clash element.
         if (g.emissive && g.emissive.setScalar) g.emissive.setScalar(0);
-        // Desaturate toward a cool neutral tint so saturated reds, blues,
-        // and yellows stop competing with the discipline-coloured
-        // highlight outline. The previous "keep the material colour at
-        // low opacity" approach still left red columns visibly red
-        // against any focused element. 80% blend toward _GHOST_TINT
-        // preserves just enough hue to differentiate walls from pipes
-        // while killing the saturation that used to drown the highlight.
+        // Keep most of the source material colour so walls stay wall-
+        // coloured, pipes stay pipe-coloured, etc. Only a gentle 25%
+        // blend toward the neutral tint — enough to calm saturated
+        // reds/oranges without flattening everything to uniform grey.
+        // An earlier revision used 0.8 which made every ghost read as
+        // the same "cool grey" and lost the shaded look; this restores
+        // per-material hue while still keeping the focused clash the
+        // clear hero of the scene.
         if (g.color && g.color.lerp) {
-          g.color.lerp(_GHOST_TINT, 0.8);
+          g.color.lerp(_GHOST_TINT, 0.25);
         }
         // Strip specular highlights — they're the brightest pixels on a
         // Phong surface and would still pop above a low-opacity ghost.
@@ -7294,39 +7295,141 @@ function startApp() {
         areaKeys.forEach(function(k){if(q2[k]!=null) areas.push({l:k.replace(/^(Gross|Net)/,'$1 ').replace('Footprint','Footprint '),v:q2[k]});});
         volKeys.forEach(function(k){if(q2[k]!=null) vols.push({l:k.replace(/^(Gross|Net)/,'$1 '),v:q2[k]});});
         Object.keys(q2).forEach(function(k){if(dimKeys.indexOf(k)===-1&&areaKeys.indexOf(k)===-1&&volKeys.indexOf(k)===-1) otherQ.push({l:k,v:q2[k]});});
-        function fmtDim(v){return typeof v==='number'?(v>=1?v.toFixed(3)+' m':(v*1000).toFixed(0)+' mm'):String(v);}
-        function fmtArea(v){return typeof v==='number'?(v>=1?v.toFixed(2)+' m²':(v*10000).toFixed(0)+' cm²'):String(v);}
-        function fmtVol(v){return typeof v==='number'?(v>=0.01?v.toFixed(3)+' m³':(v*1000000).toFixed(0)+' cm³'):String(v);}
+        // Trim trailing zeros from a fixed-decimal string so "620.000"
+        // shows as "620" and "2.9500" as "2.95". Also drops the
+        // decimal point if everything after it was zero.
+        function _trimZ(s){ return s.indexOf('.')>=0 ? s.replace(/0+$/,'').replace(/\.$/,'') : s; }
+        function fmtDim(v){
+          if (typeof v !== 'number') return String(v);
+          return v>=1 ? _trimZ(v.toFixed(3))+' m' : _trimZ((v*1000).toFixed(1))+' mm';
+        }
+        function fmtArea(v){
+          if (typeof v !== 'number') return String(v);
+          return v>=1 ? _trimZ(v.toFixed(2))+' m²' : _trimZ((v*10000).toFixed(1))+' cm²';
+        }
+        function fmtVol(v){
+          if (typeof v !== 'number') return String(v);
+          return v>=0.01 ? _trimZ(v.toFixed(3))+' m³' : _trimZ((v*1000000).toFixed(1))+' cm³';
+        }
         // Collect all pset properties, clean up names, group logically
         // Deduplicate: track seen key+value pairs so the same property (e.g. Length=650)
         // isn't shown multiple times across different psets
+        //
+        // Revit ships several type-info fields that all carry the same
+        // "Family: Type Name" string — Family / Family and Type / Type /
+        // Type Id / Type Name. Collapse them all into a single canonical
+        // "Type" row so the panel doesn't show four copies of the same
+        // value stacked on top of each other.
+        var _typeAliasNorms = {'family':1,'familyandtype':1,'type':1,'typeid':1,'typename':1};
+        function _normKey(k){ return String(k).toLowerCase().replace(/[\s_\-]/g,''); }
+        // Turn floating-point residue like 99.9999999999855 into 100,
+        // and -545.00000000001 into -545, without lying about values
+        // that really do carry fractional millimetres. Also strips the
+        // trailing 0s from 2375.00000000001 → 2375.
+        function _cleanNum(v) {
+          var asNum = null;
+          if (typeof v === 'number' && isFinite(v)) {
+            asNum = v;
+          } else if (typeof v === 'string' && /^-?\d+(\.\d+)?(e[+-]?\d+)?$/i.test(v.trim())) {
+            var n = parseFloat(v);
+            if (!isNaN(n) && isFinite(n)) asNum = n;
+          }
+          if (asNum == null) return String(v);
+          if (Math.abs(asNum - Math.round(asNum)) < 1e-6) return String(Math.round(asNum));
+          // Keep up to 4 decimal places, drop trailing zeros via parseFloat.
+          return String(parseFloat(asNum.toFixed(4)));
+        }
+        // Pset key ordering: when a pset is recognised, show the
+        // listed keys in this explicit order so related fields sit
+        // next to each other (Base Constraint next to Base Offset,
+        // Top Constraint next to Top Offset). Unknown keys land
+        // at the bottom in original order.
+        var PSET_ORDERS = {
+          'Constraints': [
+            'Base Constraint','Base Offset','Top Constraint','Top Offset',
+            'Unconnected Height','Related to Mass','Room Bounding',
+            'Location Line','Cross-Section',
+            'Base Extension Distance','Base is Attached',
+            'Top Extension Distance','Top is Attached'
+          ]
+        };
         var propSections = [];
         var _seenPropKV = {};
+        // Drop individual pset properties that exactly reproduce a
+        // quantity value we're already showing in the Dimensions /
+        // Area & Volume panels above. Match by key (case-insensitive,
+        // stripped) AND by numeric closeness — custom Revit params
+        // like NLRS_C_hoogte_01 don't collide with "Height" so they
+        // stay visible; a pset called "Dimensions" with its own
+        // Length/Area/Volume that duplicates the quantities gets its
+        // redundant rows hidden while any extra fields it carries
+        // (custom codes, NLRS-prefixed shared params) stay.
+        function _qtyMatches(k, v) {
+          var nk = _normKey(k);
+          var qKeys = Object.keys(q2);
+          for (var i = 0; i < qKeys.length; i++) {
+            if (_normKey(qKeys[i]) !== nk) continue;
+            var qv = q2[qKeys[i]];
+            if (typeof qv === 'number' && typeof v === 'number') {
+              return Math.abs(qv - v) < Math.max(1e-3, Math.abs(qv) * 1e-4);
+            }
+            return String(qv) === String(v);
+          }
+          return false;
+        }
         epP.forEach(function(setName){
           var ps = ep.psets[setName]; var keys = Object.keys(ps);
-          // Skip dimension psets that fully duplicate quantities
-          if(setName.match(/Dimensions$/i)){
-            var allDup = keys.every(function(k){return q2[k]!=null;});
-            if(allDup) return;
-          }
-          // Filter out properties already seen with the same value in a previous pset
-          var uniqueKeys = keys.filter(function(k){
-            var sig = k + '=' + String(ps[k]);
-            if (_seenPropKV[sig]) return false;
+          // Filter out properties already seen with the same value in a
+          // previous pset AND collapse Revit type-alias keys (Family /
+          // Family and Type / Type / Type Id / Type Name) into one
+          // canonical "Type" row per value. Also drop any property
+          // that precisely mirrors a quantity we already render above.
+          var _typeValueClaimed = false;
+          var uniqueKeys = [];
+          keys.forEach(function(k){
+            var v = ps[k];
+            // Hide rows that duplicate a quantity value (Length, Area,
+            // Volume, ...). Custom fields with unique names pass
+            // through untouched.
+            if (_qtyMatches(k, v)) return;
+            var sig = k + '=' + String(v);
+            if (_seenPropKV[sig]) return;
+            if (_typeAliasNorms[_normKey(k)]) {
+              if (_typeValueClaimed) return;
+              _typeValueClaimed = true;
+              // Mark every alias with this value as seen so a later
+              // pset (or later key in this one) can't re-print it.
+              Object.keys(_typeAliasNorms).forEach(function(a){ _seenPropKV[a + '=' + String(v)] = true; });
+            }
             _seenPropKV[sig] = true;
-            return true;
+            uniqueKeys.push(k);
           });
           if (!uniqueKeys.length) return; // Skip entirely empty sections after dedup
+          // Apply pset-specific ordering if defined
+          var order = PSET_ORDERS[setName];
+          if (order) {
+            var known = [], unknown = [];
+            uniqueKeys.forEach(function(k){
+              if (order.indexOf(k) !== -1) known.push(k);
+              else unknown.push(k);
+            });
+            known.sort(function(a,b){ return order.indexOf(a) - order.indexOf(b); });
+            uniqueKeys = known.concat(unknown);
+          }
           // Clean up section name: remove Pset_ prefix, split CamelCase
           var cleanName = setName.replace(/^Pset_/,'').replace(/^Qto_/,'').replace(/([a-z])([A-Z])/g,'$1 $2');
-          propSections.push({name:cleanName,props:uniqueKeys.map(function(k){return {k:k,v:String(ps[k])};})});
+          propSections.push({name:cleanName, props:uniqueKeys.map(function(k){
+            // Rename the type-alias row to plain "Type" for clarity.
+            var displayKey = _typeAliasNorms[_normKey(k)] ? 'Type' : k;
+            return {k: displayKey, v: _cleanNum(ps[k])};
+          })});
         });
         // Friendly type name: "IfcWallStandardCase" → "Wall"
         var typeName = String(ep&&ep.ifcType||'Element').replace(/^Ifc/,'').replace(/StandardCase$/,'').replace(/([a-z])([A-Z])/g,'$1 $2');
         var SEC={marginTop:'.35rem',borderTop:'1px solid var(--border-subtle)',paddingTop:'.35rem'};
         var SECHDR={fontSize:'0.69rem',fontWeight:600,color:'var(--text-muted)',textTransform:'uppercase',letterSpacing:'.03em',marginBottom:'.15rem'};
 
-        return html`<div style=${{position:'absolute',bottom:'3.5rem',left:'.75rem',width:290,maxHeight:'calc(100% - 5rem)',overflowY:'auto',background:'var(--overlay-bg-strong)',border:'1px solid var(--border)',borderRadius:8,padding:'.6rem',pointerEvents:'auto',boxShadow:'0 4px 20px rgba(0,0,0,.5)'}}>
+        return html`<div style=${{position:'absolute',bottom:'3.5rem',left:'.75rem',width:290,maxHeight:'calc(100% - 5rem)',overflowY:'auto',overflowX:'hidden',background:'var(--overlay-bg-strong)',border:'1px solid var(--border)',borderRadius:8,padding:'.6rem',pointerEvents:'auto',boxShadow:'0 4px 20px rgba(0,0,0,.5)',boxSizing:'border-box',wordBreak:'break-word'}}>
           <div style=${{display:'flex',justifyContent:'space-between',alignItems:'flex-start',marginBottom:'.2rem'}}>
             <div style=${{flex:1,minWidth:0}}>
               <div style=${{fontSize:'0.69rem',color:'var(--text-muted)',marginBottom:'.1rem'}}>${typeName}</div>
@@ -7385,10 +7488,13 @@ function startApp() {
           </div>
           <div style=${SEC}>
             <div style=${SECHDR}>Property Sets</div>
-            ${propSections.length>0 ? html`<div>
-              ${propSections.map(function(sec){return html`<div key=${sec.name} style=${{marginTop:'.25rem'}}>
+            ${propSections.length>0 ? html`<div style=${{minWidth:0}}>
+              ${propSections.map(function(sec){return html`<div key=${sec.name} style=${{marginTop:'.25rem',minWidth:0}}>
                 <div style=${{fontSize:'0.66rem',color:'var(--text-secondary)',fontWeight:600,marginBottom:'.1rem'}}>${sec.name}</div>
-                ${sec.props.map(function(p){return html`<div key=${p.k} style=${{...ROW,fontSize:'0.75rem'}}><span style=${{color:'var(--text-muted)'}}>${p.k}</span><span style=${{color:'var(--text-primary)',maxWidth:'55%',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',textAlign:'right'}} title=${p.v}>${p.v}</span></div>`})}
+                ${sec.props.map(function(p){return html`<div key=${p.k} style=${{...ROW,fontSize:'0.75rem',gap:'var(--space-2)',minWidth:0}}>
+                  <span style=${{color:'var(--text-muted)',flex:'1 1 auto',minWidth:0,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}} title=${p.k}>${p.k}</span>
+                  <span style=${{color:'var(--text-primary)',flex:'0 1 auto',minWidth:0,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',textAlign:'right',maxWidth:'55%'}} title=${p.v}>${p.v}</span>
+                </div>`})}
               </div>`})}
             </div>` : html`<div style=${{fontSize:'0.69rem',color:'var(--text-faint)',fontStyle:'italic'}}>None — this element has no IfcRelDefinesByProperties entries, or the lazy merge is still running (check console for "[IFC] Lazy-merged" log)</div>`}
           </div>
@@ -15259,11 +15365,30 @@ function startApp() {
     }
 
     // 1. Server-side AI (primary — handles everything including multilingual/complex)
-    var modelList = s.models.length ? s.models.map(function(m){ return m.name; }).join(', ') : 'none';
+    // Structured model summary — "name (discipline)" so Gemma can see
+    // both the identity of each model AND the discipline split. The
+    // flat `models` string stays for backward compat with the prompt
+    // template, but the new `modelCount` / `disciplineCount` /
+    // `modelDetails` fields let the server skip redundant follow-up
+    // questions (e.g. "same model or different?" when only ONE model
+    // is loaded — there's nothing else to choose from).
+    var modelList = s.models.length ? s.models.map(function(m){
+      var disc = m.discipline ? ' ('+m.discipline+')' : '';
+      return m.name + disc;
+    }).join(', ') : 'none';
+    var uniqueDisciplines = {};
+    (s.models || []).forEach(function(m){ if (m.discipline) uniqueDisciplines[m.discipline] = true; });
+    var discList = Object.keys(uniqueDisciplines);
     var r = s.rules || {};
     var openClashes = s.clashes ? s.clashes.filter(function(c){return c.status!=='resolved';}).length : 0;
     var context = {
       models: modelList,
+      modelCount: (s.models || []).length,
+      modelDetails: (s.models || []).map(function(m){
+        return { name: m.name, discipline: m.discipline || '', visible: m.visible !== false, elementCount: (m.elements && m.elements.length) || 0 };
+      }),
+      disciplineCount: discList.length,
+      disciplines: discList.join(', ') || 'none',
       maxGap: r.maxGap, hard: !!r.hard, modelA: r.modelA, modelB: r.modelB,
       clashCount: s.clashes ? s.clashes.length : 0,
       openClashCount: openClashes,
@@ -19441,7 +19566,18 @@ function startApp() {
     }
 
     var is2D = s.underlayMode === 'view2d' || s.underlayMode === 'compare';
-    return html`<div style=${{height:'100vh',display:'flex',flexDirection:'row',overflow:'hidden',position:'relative'}}>
+    return html`<div style=${{
+      // 100dvh tracks mobile browser chrome better than 100vh; the
+      // top padding picks up both the window-controls-overlay titlebar
+      // area (when the PWA is installed in WCO mode) and any iOS /
+      // mobile safe-area. Without it, the CC logo + "N models loaded"
+      // status chip sat flush with y=0 and got clipped behind the
+      // browser's minimal title bar in standalone mode.
+      height:'100dvh',
+      minHeight:'100vh',
+      paddingTop:'max(env(titlebar-area-height, 0px), env(safe-area-inset-top, 0px))',
+      display:'flex',flexDirection:'row',overflow:'hidden',position:'relative'
+    }}>
       <input ref=${_gFileRef} type="file" accept=".ifc,.glb,.ifcmeta,.ifcprops" multiple style=${{display:'none'}} onChange=${_gOnFiles} />
       <input ref=${_gFile2dRef} type="file" accept=".dxf,.pdf,.dwg" multiple style=${{display:'none'}} onChange=${_gOnFiles} />
       <${LeftRail} s=${s} d=${d} />
