@@ -48,6 +48,12 @@
       .then(function(r){ if (!r.ok) throw new Error('HTTP '+r.status); return r.json(); });
   }
 
+  // Generation counter for canceling in-flight connect polls. Every new
+  // _connectLocalEngine call bumps this; tick() aborts if its captured
+  // generation no longer matches. destroy() also bumps it to cancel.
+  var _connectGen = 0;
+  function _cancelPendingConnect() { _connectGen++; }
+
   // Extract engine metadata from a /status JSON payload and detect
   // version changes, which the UI treats as "force reconnect" because
   // the new engine may have a different port or backend set.
@@ -64,7 +70,7 @@
     _engineBackends = backends;
     _lastKnownVersion = version;
     if (d) d({t:'UPD_LOCAL_ENGINE', u:{
-      available:true, checking:false, connecting:false, failed:false,
+      available:true, checking:false, connecting:false, installing:false, failed:false,
       active:true, wasInstalled:true,
       version:version, cores:cores, backends:backends
     }});
@@ -89,20 +95,50 @@
       });
   }
 
+  // Trigger a browser download of the OS-appropriate engine binary.
+  // MUST be called from within a user-gesture handler. Uses a programmatic
+  // <a download> click — the standard cross-browser pattern that forces
+  // a file download rather than opening in a new tab.
+  function _triggerEngineDownload() {
+    try {
+      var os = _detectOS();
+      var dl = _downloads[os];
+      var a = document.createElement('a');
+      a.href = dl.url;
+      a.download = '';
+      a.rel = 'noopener';
+      a.style.display = 'none';
+      document.body.appendChild(a);
+      a.click();
+      setTimeout(function(){ try { document.body.removeChild(a); } catch(e){} }, 100);
+      return true;
+    } catch(e) {
+      console.warn('[LocalEngine] download trigger failed:', e && e.message || e);
+      return false;
+    }
+  }
+
   // ── Optimistic connect: URL scheme → poll → fall through ─────
   //
   // 1. Fire clashcontrol://start via an <a>.click() inside the user
   //    gesture. The browser has no API to check handler availability;
   //    we just try. A user-gesture anchor click is the only form most
   //    browsers route to a custom scheme without a security prompt.
-  // 2. Poll /status every 300ms for up to ~6s while the daemon boots.
-  //    6s is deliberately generous: a cold Python interpreter can take
-  //    2-4s to import numpy/scipy/numba on first launch.
-  // 3. If nothing responds, reject with ENGINE_NOT_INSTALLED and let
-  //    the UI show first-run install instructions.
+  // 2. Poll /status while the daemon boots. For a normal connect that's
+  //    6s with 300ms intervals; for an install-and-wait flow (opts.installing)
+  //    it's up to 10 minutes with a ramped interval (300ms → 2s) so we
+  //    can wait for the user to actually run the installer.
+  // 3. If nothing responds within the deadline, reject with
+  //    ENGINE_NOT_INSTALLED and let the UI show install instructions.
   //
-  // MUST be called from within a user-gesture handler (e.g. onClick).
-  function _connectLocalEngine(d) {
+  // MUST be called from within a user-gesture handler (e.g. onClick) to
+  // ensure the URL-scheme launch and optional download-trigger are honored.
+  function _connectLocalEngine(d, opts) {
+    opts = opts || {};
+    var installing = !!opts.installing;
+    var timeoutMs = opts.timeoutMs || (installing ? 600000 : 6000); // 10 min vs 6s
+    var gen = ++_connectGen;
+
     // 1. Trigger the custom-scheme handler via a user-gesture click.
     //    Using <a>.click() rather than window.location.href because
     //    anchor-click is the only form browsers consistently honor
@@ -117,26 +153,39 @@
     }
 
     // Clear any prior failed state so retries start clean.
-    if (d) d({t:'UPD_LOCAL_ENGINE', u:{connecting:true, checking:false, failed:false}});
+    if (d) d({t:'UPD_LOCAL_ENGINE', u:{
+      connecting: !installing,
+      installing: installing,
+      checking: false,
+      failed: false
+    }});
 
-    var deadline = Date.now() + 6000;
+    var start = Date.now();
+    var deadline = start + timeoutMs;
     function tick() {
+      if (gen !== _connectGen) return Promise.resolve(null); // superseded/canceled
       if (Date.now() >= deadline) {
         // Connect timed out — we are confident the engine is not installed
         // (or at least not reachable). Flip `failed` so the UI shows the
         // download card instead of just a bare "Not connected" label.
-        if (d) d({t:'UPD_LOCAL_ENGINE', u:{connecting:false, available:false, failed:true}});
+        if (d) d({t:'UPD_LOCAL_ENGINE', u:{connecting:false, installing:false, available:false, failed:true}});
         var err = new Error('ENGINE_NOT_INSTALLED');
         err.code = 'ENGINE_NOT_INSTALLED';
         return Promise.reject(err);
       }
+      // Ramp the poll interval over time: fast polling for the first 6s
+      // catches quick URL-scheme launches; slower (2s) after that keeps
+      // the network quiet while the user runs the installer.
+      var elapsed = Date.now() - start;
+      var pollInterval = elapsed < 6000 ? 300 : 2000;
       return _probeStatus(500)
         .then(function(j){
+          if (gen !== _connectGen) return null; // canceled during probe
           _applyStatus(j, d);
           return j;
         })
         .catch(function() {
-          return new Promise(function(r){ setTimeout(r, 300); }).then(tick);
+          return new Promise(function(r){ setTimeout(r, pollInterval); }).then(tick);
         });
     }
     return tick();
@@ -150,10 +199,11 @@
     icon: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#60a5fa" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="4" width="16" height="16" rx="2"/><path d="M9 9h6v6H9z"/><path d="M9 1v3M15 1v3M9 20v3M15 20v3M20 9h3M20 14h3M1 9h3M1 14h3"/></svg>',
 
     initState: {
-      // `failed` is session-only: set when a connect attempt times out so
-      // the UI knows to show the download card. Cleared on every new
-      // Connect click so retries start from a clean state.
-      localEngine: { available: false, active: false, checking: false, connecting: false, failed: false, wasInstalled: false, version: null, cores: null, backends: null }
+      // `failed` and `installing` are session-only: `failed` is set when
+      // a connect attempt times out; `installing` is set when we've just
+      // triggered a download and are waiting for the user to run the
+      // installer. Both are cleared on every new Connect attempt.
+      localEngine: { available: false, active: false, checking: false, connecting: false, installing: false, failed: false, wasInstalled: false, version: null, cores: null, backends: null }
     },
 
     reducerCases: {
@@ -174,15 +224,37 @@
       _checkLocalEngine(dispatch);
     },
 
-    // Called from within the Enable button's click handler (user gesture),
-    // so firing the URL scheme here is safe. Skips the "Connect" button step.
+    // Called from within the Enable button's click handler (user gesture).
+    // First-time users (no `wasInstalled` evidence) get the whole flow
+    // in one click: download the installer, fire the URL scheme in case
+    // the engine is already running, and long-poll /status until the
+    // engine comes online. Returning users with a prior install just
+    // get the normal 6s URL-scheme connect.
     onEnable: function(dispatch) {
-      _connectLocalEngine(dispatch).catch(function(err) {
-        console.log('[LocalEngine] onEnable connect failed:', err && err.message || err);
-      });
+      var state = window._ccLatestState;
+      var le = (state && state.localEngine) || {};
+      var knownInstalled = !!(le.wasInstalled || le.available);
+
+      if (knownInstalled) {
+        _connectLocalEngine(dispatch).catch(function(err) {
+          console.log('[LocalEngine] onEnable connect failed:', err && err.message || err);
+        });
+      } else {
+        // First-time: trigger the download synchronously inside the user
+        // gesture so the browser allows it, then long-poll /status so we
+        // auto-connect the moment the user's installer brings the engine up.
+        _triggerEngineDownload();
+        _connectLocalEngine(dispatch, {installing: true}).catch(function(err) {
+          console.log('[LocalEngine] onEnable install+connect failed:', err && err.message || err);
+        });
+      }
     },
 
-    destroy: function() {},
+    destroy: function() {
+      // Abort any in-flight connect/install poll so it doesn't keep firing
+      // /status requests after the user disables the addon.
+      _cancelPendingConnect();
+    },
 
     panel: function(html, s, d) {
       var le = s.localEngine || {};
@@ -230,6 +302,35 @@
         </div>`;
       }
 
+      // ── Installing (download triggered, waiting for user to run it) ──
+      if (le.installing) {
+        var fileName = os==='win' ? 'clashcontrol-engine-win.exe'
+                     : os==='mac' ? 'clashcontrol-engine-mac.tar.gz'
+                     : 'clashcontrol-engine-linux.tar.gz';
+        return html`<div style=${{padding:'.5rem 0',fontSize:'0.78rem',color:'var(--text-secondary)',lineHeight:1.7}}>
+          <div style=${{display:'flex',alignItems:'center',gap:'.4rem',marginBottom:'.4rem'}}>
+            <div style=${{width:12,height:12,border:'2px solid #3b82f6',borderTopColor:'transparent',borderRadius:'50%',animation:'cc-spin .6s linear infinite'}}></div>
+            <span style=${{color:'#3b82f6',fontWeight:600}}>Waiting for installation\u2026</span>
+          </div>
+          <div style=${{fontSize:'0.66rem',color:'var(--text-secondary)',lineHeight:1.65,marginBottom:'.45rem'}}>
+            The ${dl.label} installer is downloading. Open <code style=${{fontSize:'0.64rem'}}>${fileName}</code> from your downloads and run it — ClashControl will connect the moment the engine is online.
+          </div>
+          ${os!=='win' && html`<pre style=${{fontSize:'0.63rem',background:'var(--tag-bg)',padding:'.35rem .5rem',borderRadius:5,color:'var(--text-primary)',
+            fontFamily:'var(--font-mono,monospace)',margin:'0 0 .45rem',whiteSpace:'pre-wrap',lineHeight:1.55,overflowX:'auto'}}>${dl.cmd}</pre>`}
+          <div style=${{display:'flex',gap:'.3rem'}}>
+            <a href=${dl.url} download
+              style=${{padding:'.3rem .55rem',borderRadius:5,fontSize:'0.7rem',fontWeight:600,
+                border:'1px solid var(--border)',background:'var(--bg-secondary)',color:'var(--text-secondary)',
+                fontFamily:'inherit',textDecoration:'none'}}>Re-download</a>
+            <button onClick=${function(){
+              _cancelPendingConnect();
+              d({t:'UPD_LOCAL_ENGINE', u:{installing:false, connecting:false, failed:false}});
+            }} style=${{padding:'.3rem .55rem',borderRadius:5,fontSize:'0.7rem',fontWeight:600,cursor:'pointer',border:'1px solid var(--border)',
+              background:'var(--bg-secondary)',color:'var(--text-secondary)',fontFamily:'inherit'}}>Cancel</button>
+          </div>
+        </div>`;
+      }
+
       // ── Three resting states (not counting transient "connecting") ──
       // 1. Not installed        — le.failed === true: confirmed timeout,
       //                           show Connect button + download card.
@@ -245,7 +346,7 @@
       if (le.failed) {
         statusLabel = 'Engine not installed';
         statusDot = '#ef4444';
-        statusBlurb = 'Couldn\'t reach the engine after 6 seconds. Install it below and click Connect again.';
+        statusBlurb = 'Click Install & Connect to download the installer. ClashControl will connect automatically once it\u2019s running.';
       } else if (le.wasInstalled) {
         statusLabel = 'Engine not running';
         statusDot = '#f97316';
@@ -253,7 +354,7 @@
       } else {
         statusLabel = 'Not connected';
         statusDot = '#64748b';
-        statusBlurb = 'Click Connect to launch the engine. If it\u2019s not installed yet, you\u2019ll see install options.';
+        statusBlurb = 'Click Install & Connect to download, install, and start the engine in one step.';
       }
 
       return html`<div style=${{padding:'.5rem 0',fontSize:'0.78rem',color:'var(--text-secondary)',lineHeight:1.7}}>
@@ -263,15 +364,25 @@
         </div>
 
         <button onClick=${function(){
-          _connectLocalEngine(d).catch(function(err){
-            console.log('[LocalEngine] Connect failed:', err && err.message || err);
-          });
+          // If we have no evidence the engine is installed (first-time,
+          // or a prior attempt confirmed failure), run the install flow:
+          // download the binary + long-poll. Otherwise just connect.
+          if (!le.wasInstalled || le.failed) {
+            _triggerEngineDownload();
+            _connectLocalEngine(d, {installing:true}).catch(function(err){
+              console.log('[LocalEngine] Connect (install) failed:', err && err.message || err);
+            });
+          } else {
+            _connectLocalEngine(d).catch(function(err){
+              console.log('[LocalEngine] Connect failed:', err && err.message || err);
+            });
+          }
         }} style=${{display:'flex',alignItems:'center',justifyContent:'center',gap:'.4rem',width:'100%',
             padding:'.5rem .7rem',borderRadius:6,fontSize:'0.8rem',fontWeight:600,cursor:'pointer',border:'none',
             background:'var(--accent)',color:'#fff',fontFamily:'inherit',marginBottom:'.5rem'}}>
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
             <path d="M5 12h14M13 6l6 6-6 6"/>
-          </svg> Connect to Engine
+          </svg> ${(!le.wasInstalled || le.failed) ? 'Install & Connect' : 'Connect to Engine'}
         </button>
         <div style=${{fontSize:'0.64rem',color:'var(--text-faint)',lineHeight:1.6,marginBottom:'.55rem'}}>
           ${statusBlurb}

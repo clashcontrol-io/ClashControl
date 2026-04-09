@@ -1005,8 +1005,20 @@
     },
 
     init: function(dispatch, getState) {
-      // Auto-detect disabled — HTTP probe to a WebSocket port causes 400 errors.
-      // User connects manually via the Revit Bridge panel.
+      // Auto-reconnect on page load / re-enable. Being active at this
+      // moment means the user previously enabled the bridge and expects
+      // the link to be restored — the WebSocket connect doesn't need a
+      // user gesture, so we can rebuild the session automatically and
+      // re-pull the model that was lost when the page refreshed.
+      if (typeof _revitDirectConnect !== 'function') return;
+      var port = _loadDirectPort();
+      window._ccPullOnConnect = true;
+      // Defer slightly so React state has fully mounted before we start
+      // dispatching connection state and logs into it.
+      setTimeout(function() {
+        try { _revitDirectConnect(port, dispatch); }
+        catch(e) { console.warn('[RevitBridge] auto-reconnect failed:', e && e.message || e); }
+      }, 150);
     },
 
     destroy: function() {
