@@ -1,5 +1,8 @@
 # Changelog
 
+## v4.11.9 (2026-04-09)
+- fix(nl): type-step accepts "hard clashes only" and similar phrasings
+
 ## v4.11.8 (2026-04-09)
 - feat(clash,nl): multi-model groups + fix no-loop in confirm step
 
