@@ -1,5 +1,8 @@
 # Changelog
 
+## v4.11.10 (2026-04-09)
+- feat(clash,viewer,nl): multi-model scoping, shaded ghost, #N, Revit IDs
+
 ## v4.11.9 (2026-04-09)
 - fix(nl): type-step accepts "hard clashes only" and similar phrasings
 
