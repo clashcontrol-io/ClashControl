@@ -763,7 +763,7 @@ function startApp() {
 
   // Load addon scripts — called after app mounts
   function _loadAddonScripts() {
-    var addonFiles = ['training-data', 'pwa', 'shared-project', 'revit-bridge', 'data-quality'];
+    var addonFiles = ['training-data', 'pwa', 'local-engine', 'shared-project', 'revit-bridge', 'data-quality'];
     addonFiles.forEach(function(name) {
       var script = document.createElement('script');
       script.src = 'addons/' + name + '.js';
@@ -771,11 +771,6 @@ function startApp() {
       script.onerror = function() { /* addon file not present — that's fine */ };
       document.head.appendChild(script);
     });
-    // local-engine.js self-initializes (no addon registration) — load separately
-    var _es = document.createElement('script');
-    _es.src = 'addons/local-engine.js';
-    _es.async = true;
-    document.head.appendChild(_es);
   }
 
   // Collect all element IDs from a clash/issue item
