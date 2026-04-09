@@ -5758,7 +5758,8 @@ function startApp() {
         if(hits.length>0 && hits[0].object.isMesh) hitMesh = hits[0].object;
         // Skip ghosted meshes — don't mutate the cached ghost clone
         if(hitMesh && _isGhostMat(hitMesh.material)) hitMesh = null;
-        // Skip meshes from hidden (unchecked) model groups
+        // Skip storey/type-hidden meshes and hidden model groups
+        if(hitMesh && !hitMesh.visible) hitMesh = null;
         if(hitMesh && hitMesh.parent && hitMesh.parent.userData.modelId && !hitMesh.parent.visible) hitMesh = null;
         if(hitMesh===lastHoveredMesh) return;
         // Restore previous
