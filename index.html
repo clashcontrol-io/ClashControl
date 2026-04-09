@@ -16098,20 +16098,34 @@ function startApp() {
         }
 
         if (ctx.asked === 'type') {
-          // Hard only
-          if (/\bhard\s*only\b|^hard$|\bno\s+(?:gap|near|miss)\b|just\s+hard|\bphysical\b|\bintersect/i.test(tl)) {
+          // Detect the two key keyword families, then combine with modifiers.
+          // This survives phrasings like "hard clashes only", "just hard",
+          // "yes, near misses too", "hard with 50mm gap" (= mixed).
+          var kwHard  = /\b(?:hard|physical|intersect\w*)\b/i.test(tl);
+          var kwSoft  = /\b(?:near[\s-]*miss|proximity|soft|clearance|mixed|within)\b|\bwith\s+(?:a\s+)?(?:gap|distance)\b/i.test(tl);
+          var kwAffirm = /\b(?:too|also|include|yes|yeah|yep|both|include\s+soft|and\s+soft)\b/i.test(tl);
+          var kwOnly  = /\b(?:only|alone|just|exclusively)\b/i.test(tl);
+          var kwNoSoft = /\bno\s+(?:gap|near|miss|soft|clearance)\b/i.test(tl);
+          var hasNum  = tl.match(/(\d+(?:\.\d+)?)\s*(mm|cm|m(?!m))/);
+
+          // Explicit "no near misses / no soft / no clearance" overrides any
+          // soft keyword that also appears in the same phrase.
+          if (kwNoSoft) {
             ctx.rules.hard = true; ctx.rules.maxGap = 0; ctx._typeExplicit = true; ctx.asked = null;
           }
-          // Near miss / soft with optional distance
-          else if (/\bnear[\s-]*miss|\bproximity|\bsoft\b|\bclearance\b|\bmixed\b|\btoo\b|\balso\b|\byes\b|\bwith\s+(gap|distance)\b|\binclude\b|\bwithin\b/i.test(tl)) {
-            var mmT = tl.match(/(\d+(?:\.\d+)?)\s*(mm|cm|m(?!m))/);
-            if (mmT) { var uT = mmT[2]; ctx.rules.maxGap = uT==='cm'?Math.round(parseFloat(mmT[1])*10):uT==='m'?Math.round(parseFloat(mmT[1])*1000):Math.round(parseFloat(mmT[1])); ctx._gapExplicit = true; }
-            else { ctx.rules.maxGap = ctx.rules.maxGap > 0 ? ctx.rules.maxGap : 50; }
-            ctx.rules.hard = true; ctx._typeExplicit = true; ctx.asked = null;
+          // Hard-only: "hard" keyword with a restrictive modifier OR no soft/affirm/number hints at all.
+          else if (kwHard && (kwOnly || (!kwSoft && !kwAffirm && !hasNum))) {
+            ctx.rules.hard = true; ctx.rules.maxGap = 0; ctx._typeExplicit = true; ctx.asked = null;
           }
-          // Soft only (clearance range, no intersections)
+          // Soft-only (clearance range, no intersections)
           else if (/\bsoft\s+only\b|\bclearance\s+only\b/i.test(tl)) {
             ctx.rules.hard = false; ctx.rules.maxGap = ctx.rules.maxGap || 100; ctx._typeExplicit = true; ctx.asked = null;
+          }
+          // Mixed / near-miss: any soft keyword, or "yes/too/also/include", or a distance number
+          else if (kwSoft || kwAffirm || hasNum) {
+            if (hasNum) { var uT = hasNum[2]; ctx.rules.maxGap = uT==='cm'?Math.round(parseFloat(hasNum[1])*10):uT==='m'?Math.round(parseFloat(hasNum[1])*1000):Math.round(parseFloat(hasNum[1])); ctx._gapExplicit = true; }
+            else { ctx.rules.maxGap = ctx.rules.maxGap > 0 ? ctx.rules.maxGap : 50; }
+            ctx.rules.hard = true; ctx._typeExplicit = true; ctx.asked = null;
           }
           else {
             return 'Just to clarify — **hard clashes only** (physical intersections), or should I also flag **near misses** within some distance?';
