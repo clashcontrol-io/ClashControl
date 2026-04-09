@@ -9715,9 +9715,9 @@ function startApp() {
             <div style=${{display:'flex',gap:'.2rem'}}>
               ${activePlan && html`<button onClick=${function(){d({t:A.FLOOR_PLAN,v:null})}}
                 style=${{...S_BTN,fontSize:'0.69rem',padding:'.1rem .3rem',background:'#7c3aed',color:'#fff'}}>Exit Plan</button>`}
-              <button onClick=${function(){s.models.forEach(function(m){d({t:A.TOGGLE_ALL_STOREYS,id:m.id,storeys:m.storeys||[],hide:false})})}}
+              <button onClick=${function(){s.models.forEach(function(m){d({t:A.TOGGLE_ALL_STOREYS,id:m.id,storeys:(m.storeys||[]).concat(['']),hide:false})})}}
                 style=${{...S_BTN,fontSize:'0.69rem',padding:'.1rem .3rem',background:'var(--bg-primary)',color:'var(--text-secondary)'}}>All on</button>
-              <button onClick=${function(){s.models.forEach(function(m){d({t:A.TOGGLE_ALL_STOREYS,id:m.id,storeys:m.storeys||[],hide:true})})}}
+              <button onClick=${function(){s.models.forEach(function(m){d({t:A.TOGGLE_ALL_STOREYS,id:m.id,storeys:(m.storeys||[]).concat(['']),hide:true})})}}
                 style=${{...S_BTN,fontSize:'0.69rem',padding:'.1rem .3rem',background:'var(--bg-primary)',color:'var(--text-secondary)'}}>All off</button>
             </div>
           </div>
@@ -9763,6 +9763,32 @@ function startApp() {
               ${hasElev && html`<span style=${{fontSize:'0.63rem',color:isPlanActive?'#a78bfa':'var(--text-faint)',flexShrink:0}}>${elev.toFixed(1)}m</span>`}
             </div>`;
           })}
+          ${function(){
+            var noLevelIds=[];
+            s.models.forEach(function(m){
+              (m.elements||[]).forEach(function(el){
+                if(!el.props||!el.props.storey) noLevelIds.push(el.expressId);
+              });
+            });
+            if(!noLevelIds.length) return null;
+            var isHighlighted = s._highlightedStorey==='';
+            var isHidden = s.models.some(function(m){return !!(m.hiddenStoreys&&m.hiddenStoreys['']);});
+            return html`<div
+              onClick=${function(e){
+                e.preventDefault();
+                if(isHighlighted){
+                  if(_unghostAll) _unghostAll();
+                  d({t:A.SET_HIGHLIGHTED_STOREY,v:null});
+                } else {
+                  if(_ghostOthers) _ghostOthers(noLevelIds);
+                  d({t:A.SET_HIGHLIGHTED_STOREY,v:''});
+                }
+              }}
+              style=${{display:'flex',alignItems:'center',gap:'.25rem',padding:'.2rem .3rem',cursor:'pointer',borderRadius:4,background:isHighlighted?'var(--bg-secondary)':'transparent',transition:'background .15s',marginTop:'.15rem',borderTop:'1px solid var(--border-subtle)'}}>
+              <span style=${{fontSize:'0.69rem',color:isHighlighted?'#38bdf8':isHidden?'var(--text-faint)':'var(--text-muted)',flex:1,fontStyle:'italic',fontWeight:isHighlighted?600:400}}>No level assigned</span>
+              <span style=${{fontSize:'0.63rem',color:'var(--text-faint)',flexShrink:0}}>${noLevelIds.length}</span>
+            </div>`;
+          }()}
           ${activePlan && html`<div style=${{marginTop:'.3rem',padding:'.3rem',background:'#1e1338',border:'1px solid #3b0764',borderRadius:6}}>
             <div style=${{fontSize:'0.63rem',color:'#c084fc',fontWeight:600,marginBottom:'.2rem'}}>3D Section: ${activePlan.storeyName}</div>
             <div style=${{fontSize:'0.57rem',color:'var(--text-muted)',marginBottom:'.2rem'}}>Cut at ${(activePlan.elevation+(activePlan.cutHeight||1.2)).toFixed(2)}m</div>
@@ -9994,8 +10020,19 @@ function startApp() {
     function expandAll(){
       var all={};
       s.models.forEach(function(m){
+        // Tree view keys
         all['m_'+m.id]=true;
         (m.storeys||[]).forEach(function(st){all['s_'+m.id+'_'+st]=true;});
+        all['s_'+m.id+'_none']=true;
+        // Spatial view keys
+        var sh = m.spatialHierarchy||{};
+        all['sp_'+m.id]=true;
+        var sites = sh.sites&&sh.sites.length ? sh.sites : [{}];
+        var buildings = sh.buildings&&sh.buildings.length ? sh.buildings : [{}];
+        sites.forEach(function(_,si){ all['ss_'+m.id+'_'+si]=true; });
+        buildings.forEach(function(_,bi){ all['sb_'+m.id+'_'+bi]=true; });
+        (m.storeyData||[]).forEach(function(sd){ all['st_'+m.id+'_'+sd.name]=true; });
+        all['st_'+m.id+'_none']=true;
       });
       setExpanded(all);
     }
