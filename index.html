@@ -6068,7 +6068,14 @@ function startApp() {
           if (hits.length > 0) {
             e.preventDefault(); e.stopPropagation();
             S2.orbit.enabled = false;
-            if (e.shiftKey) {
+            // Walk up the ancestor chain from the hit to find a flag — the
+            // hit object might be a sub-mesh (torus/stem/fill) of the group.
+            var hit = hits[0].object, wantsRotate = false;
+            for (var h = hit; h; h = h.parent) {
+              if (h.userData && h.userData._sectionRotate) { wantsRotate = true; break; }
+            }
+            // Shift-click forces rotate even if clicking the fill plane.
+            if (wantsRotate || e.shiftKey) {
               var np = _getSecNormalAndPoint(cs);
               if (np) _secDrag = {startX: e.clientX, startPos: cs.pos, didDrag: false, button: 0, mode:'rotate', startNormal: np.normal, startPoint: np.point};
             } else {
@@ -6093,7 +6100,10 @@ function startApp() {
           var dy = e.clientY - _secDrag.startY;
           if (Math.abs(dy) < 3 && !_secDrag.didDrag) return;
           _secDrag.didDrag = true;
-          var newPos = Math.max(0, Math.min(1, _secDrag.startPos + dy * 0.003));
+          // Flip dy so mouse-up moves the plane in the + direction of its
+          // normal (for Y-axis plane that means "up", which matches user
+          // expectation). Browser clientY grows downward so we subtract.
+          var newPos = Math.max(0, Math.min(1, _secDrag.startPos - dy * 0.003));
           var cs = window._ccCurrentSection;
           if (cs && cs.axis && window._ccDispatch) window._ccDispatch({t:A.SECTION, axis:cs.axis, pos:newPos});
           else if (cs && cs.custom && window._ccDispatch) window._ccDispatch({t:A.SECTION_CUSTOM, v:cs.custom, pos:newPos});
@@ -6463,57 +6473,74 @@ function startApp() {
         S._sectionPlaneVis.traverse(function(o){if(o.geometry)o.geometry.dispose();if(o.material)o.material.dispose();});
         S.scene.remove(S._sectionPlaneVis); S._sectionPlaneVis = null;
       }
-      // Helper: create wireframe rectangle + invisible drag surface
+      // Helper: create wireframe rectangle + visible handle + always-on-top
+      // The handle is drawn with depthTest:false so it's visible through the
+      // building geometry (otherwise the plane is invisible from many angles).
+      // Tube/cylinder geometries replace thin lines so they're big enough to
+      // pick without hair-trigger accuracy.
       function _makeSectionVis(halfW, halfH, position, quaternion) {
         var grp = new THREE.Group();
-        // Semi-transparent fill (very subtle)
+        // Semi-transparent fill — primary click target covering the whole plane
         var fillGeo = new THREE.PlaneGeometry(halfW*2, halfH*2);
-        var fillMat = new THREE.MeshBasicMaterial({color:0x3b82f6, transparent:true, opacity:0.04, side:THREE.DoubleSide, depthWrite:false});
+        var fillMat = new THREE.MeshBasicMaterial({color:0x3b82f6, transparent:true, opacity:0.08, side:THREE.DoubleSide, depthWrite:false, depthTest:false});
         fillMat.clippingPlanes = [];
         var fill = new THREE.Mesh(fillGeo, fillMat);
         fill.userData._sectionPlane = true;
+        fill.renderOrder = 999;
         grp.add(fill);
-        // Wireframe border (visible blue outline)
+        // Wireframe border — drawn with LineBasicMaterial, depthTest off so
+        // it's visible through geometry. Width stays 1px (WebGL limit).
         var pts = [new THREE.Vector3(-halfW,-halfH,0), new THREE.Vector3(halfW,-halfH,0),
           new THREE.Vector3(halfW,halfH,0), new THREE.Vector3(-halfW,halfH,0)];
         var lineGeo = new THREE.BufferGeometry().setFromPoints(pts);
-        var lineMat = new THREE.LineBasicMaterial({color:0x3b82f6, linewidth:1, transparent:true, opacity:0.7});
+        var lineMat = new THREE.LineBasicMaterial({color:0x3b82f6, linewidth:1, transparent:true, opacity:0.9, depthTest:false});
         lineMat.clippingPlanes = [];
         var border = new THREE.LineLoop(lineGeo, lineMat);
+        border.renderOrder = 1000;
         grp.add(border);
-        // Small arrow-on-line handle pointing along normal (both directions)
+        // Arrow handle: thick cylinder stem + cone tips (proper 3D geometry,
+        // always pickable). Normal direction is the group's local +Z axis.
         var stemLen = Math.min(halfW, halfH) * 0.18;
-        var tipLen = stemLen * 0.3;
-        var tipW = tipLen * 0.5;
-        var arrowMat = new THREE.LineBasicMaterial({color:0x60a5fa, transparent:true, opacity:0.8});
+        var tipLen = stemLen * 0.35;
+        var tipW = tipLen * 0.7;
+        var arrowMat = new THREE.MeshBasicMaterial({color:0x60a5fa, transparent:true, opacity:0.95, depthTest:false});
         arrowMat.clippingPlanes = [];
-        // Stem line
-        var sPts = [new THREE.Vector3(0,0,-stemLen), new THREE.Vector3(0,0,stemLen)];
-        grp.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints(sPts), arrowMat));
-        // Arrowhead + (forward)
-        var a1 = [new THREE.Vector3(-tipW,0,stemLen-tipLen), new THREE.Vector3(0,0,stemLen), new THREE.Vector3(tipW,0,stemLen-tipLen)];
-        grp.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints(a1), arrowMat));
-        // Arrowhead - (backward)
-        var a2 = [new THREE.Vector3(-tipW,0,-stemLen+tipLen), new THREE.Vector3(0,0,-stemLen), new THREE.Vector3(tipW,0,-stemLen+tipLen)];
-        grp.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints(a2), arrowMat));
-        // Half-circle rotation indicator around the arrow
-        var arcR = stemLen * 0.6;
-        var arcPts = [];
-        for (var ai = 0; ai <= 16; ai++) {
-          var ang = (ai / 16) * Math.PI; // 0 to PI = half circle
-          arcPts.push(new THREE.Vector3(Math.cos(ang) * arcR, 0, Math.sin(ang) * arcR));
-        }
-        var arcMat = new THREE.LineBasicMaterial({color:0xfbbf24, transparent:true, opacity:0.5});
+        // Stem — CylinderGeometry defaults to +Y axis; rotate to +Z
+        var stemGeo = new THREE.CylinderGeometry(tipW*0.18, tipW*0.18, stemLen*2, 10);
+        var stem = new THREE.Mesh(stemGeo, arrowMat);
+        stem.rotation.x = Math.PI/2;
+        stem.userData._sectionPlane = true;
+        stem.renderOrder = 1001;
+        grp.add(stem);
+        // Forward cone (+Z)
+        var coneGeo = new THREE.ConeGeometry(tipW, tipLen, 12);
+        var coneFwd = new THREE.Mesh(coneGeo, arrowMat);
+        coneFwd.position.set(0, 0, stemLen);
+        coneFwd.rotation.x = Math.PI/2;
+        coneFwd.userData._sectionPlane = true;
+        coneFwd.renderOrder = 1001;
+        grp.add(coneFwd);
+        // Backward cone (−Z)
+        var coneBwd = new THREE.Mesh(coneGeo, arrowMat);
+        coneBwd.position.set(0, 0, -stemLen);
+        coneBwd.rotation.x = -Math.PI/2;
+        coneBwd.userData._sectionPlane = true;
+        coneBwd.renderOrder = 1001;
+        grp.add(coneBwd);
+        // Rotation indicator: torus segment (half circle) around the arrow
+        // Oriented in the plane (XZ) of the handle, pickable by the mesh hit.
+        var arcR = stemLen * 0.7;
+        var torusGeo = new THREE.TorusGeometry(arcR, tipW*0.15, 6, 24, Math.PI);
+        var arcMat = new THREE.MeshBasicMaterial({color:0xfbbf24, transparent:true, opacity:0.75, depthTest:false});
         arcMat.clippingPlanes = [];
-        grp.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints(arcPts), arcMat));
-        // Small arrowhead at arc end to indicate rotation direction
-        var arcEnd = arcPts[arcPts.length-1];
-        var arcPrev = arcPts[arcPts.length-2];
-        var arcDir = arcEnd.clone().sub(arcPrev).normalize();
-        var arcPerp = new THREE.Vector3(-arcDir.z, 0, arcDir.x);
-        var at1 = arcEnd.clone().sub(arcDir.clone().multiplyScalar(tipLen)).add(arcPerp.clone().multiplyScalar(tipW*0.5));
-        var at2 = arcEnd.clone().sub(arcDir.clone().multiplyScalar(tipLen)).sub(arcPerp.clone().multiplyScalar(tipW*0.5));
-        grp.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints([at1, arcEnd, at2]), arcMat));
+        var torus = new THREE.Mesh(torusGeo, arcMat);
+        // TorusGeometry is in XY plane by default; rotate to XZ so it sits
+        // flat around the normal axis.
+        torus.rotation.x = Math.PI/2;
+        torus.userData._sectionPlane = true;
+        torus.userData._sectionRotate = true;
+        torus.renderOrder = 1001;
+        grp.add(torus);
         grp.position.copy(position);
         if (quaternion) grp.quaternion.copy(quaternion);
         grp.renderOrder = 999;
