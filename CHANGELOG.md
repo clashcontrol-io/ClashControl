@@ -1,5 +1,8 @@
 # Changelog
 
+## v4.11.17 (2026-04-09)
+- Auto-connect engine on first Enable click
+
 ## v4.11.16 (2026-04-09)
 - Bump pinned engine release to v0.2.1
 
