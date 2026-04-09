@@ -641,7 +641,28 @@ module.exports = async function handler(req, res) {
   var SMART_RX = /\b(analy[sz]e|summar[iy]|explain|why|describe|breakdown|report|insight|interpret|compare|review|critique|recommend|suggest|root[\s-]?cause|impact)\b/i;
   var FAST_MODEL = 'gemma-4-26b-a4b-it';
   var SMART_MODEL = 'gemma-4-31b-it';
-  var pickedModel = SMART_RX.test(body.command) ? SMART_MODEL : FAST_MODEL;
+  // Quota-aware fallback chain. Each model variant below has its OWN
+  // free-tier quota bucket on Google AI Studio, so when the primary
+  // gets 429'd we retry on the next one. The chain goes Gemma 4 first
+  // (cheapest / fastest for tool routing) and then cascades across the
+  // Gemini Flash family — each of those also supports native function
+  // calling and each has an independent RPD bucket, so the effective
+  // quota is the sum of all buckets rather than any single one.
+  //
+  // Order within Gemma 4 depends on what the router picked; the
+  // Gemini tail is the same regardless. Smart-intent commands still
+  // start on the 31B dense model; simple commands start on the 26B MoE.
+  var GEMINI_TAIL = [
+    'gemini-2.5-flash',
+    'gemini-2.5-flash-lite',
+    'gemini-2.0-flash',
+    'gemini-2.0-flash-lite',
+  ];
+  var primaryModel = SMART_RX.test(body.command) ? SMART_MODEL : FAST_MODEL;
+  var gemmaHead = primaryModel === SMART_MODEL
+    ? [SMART_MODEL, FAST_MODEL]
+    : [FAST_MODEL, SMART_MODEL];
+  var fallbackChain = gemmaHead.concat(GEMINI_TAIL);
 
   var systemPrompt = isKnowledgeQuery(body.command)
     ? buildSystemPrompt(body.context || {})
@@ -673,57 +694,84 @@ module.exports = async function handler(req, res) {
   }
 
   try {
-    var url = 'https://generativelanguage.googleapis.com/v1beta/models/' + pickedModel + ':generateContent?key=' + encodeURIComponent(key);
-    var resp = await fetch(url, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload),
-    });
-
-    if (!resp.ok) {
-      var errText = await resp.text();
-      console.error('Gemma API error:', resp.status, errText);
-      // Upstream quota exhausted (spending cap or per-minute limit) —
-      // propagate as 429 with a clean payload so the client can fall
-      // back quietly instead of logging a red "Bad Gateway".
-      if (resp.status === 429) {
-        return res.status(429).json({
-          error: 'AI quota exceeded',
-          reason: 'quota_exceeded',
-        });
-      }
-      return res.status(502).json({
-        error: 'AI request failed',
-        upstreamStatus: resp.status,
-        upstreamBody: errText.slice(0, 1000)
+    // Walk the fallback chain. Quota exhaustion (HTTP 429), model not
+    // found, unavailable, and other soft failures all fall through to
+    // the next model; only hard auth failures (401/403) abort the loop.
+    var lastErr = null;
+    var hadQuota = false;
+    for (var mi = 0; mi < fallbackChain.length; mi++) {
+      var pickedModel = fallbackChain[mi];
+      var url = 'https://generativelanguage.googleapis.com/v1beta/models/' + pickedModel + ':generateContent?key=' + encodeURIComponent(key);
+      var resp = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
       });
-    }
 
-    var data = await resp.json();
-    var candidate = data.candidates && data.candidates[0];
-    if (!candidate) return res.status(502).json({ error: 'No response from AI' });
-
-    // Extract function call from response (skip thinking parts)
-    var parts = candidate.content && candidate.content.parts;
-    if (!parts) return res.status(502).json({ error: 'Empty AI response' });
-
-    // Gemma 4 emits internal "thought" parts before the real answer.
-    // Filter them out so they don't leak into the chat UI.
-    var answerParts = parts.filter(function(p) { return !p.thought; });
-
-    for (var i = 0; i < answerParts.length; i++) {
-      if (answerParts[i].functionCall) {
-        var fc = answerParts[i].functionCall;
-        return res.status(200).json(Object.assign({
-          intent: fc.name,
-          _model: pickedModel,
-        }, fc.args));
+      if (!resp.ok) {
+        var errText = await resp.text();
+        console.error('AI API error (' + pickedModel + '):', resp.status, errText);
+        // Fall through on recoverable errors: quota (429), model not
+        // found (404, e.g. Gemma 4 not rolled out to this project yet),
+        // unavailable (503), or bad-request for features the model
+        // doesn't support (400 — e.g. a model that can't do function
+        // calling). Hard 5xx (500/502) also falls through — the next
+        // model might be healthy. Only 401/403 abort since the whole
+        // API key is unusable and retrying won't help.
+        lastErr = { status: resp.status, body: errText, model: pickedModel };
+        if (resp.status === 429) hadQuota = true;
+        if (resp.status === 401 || resp.status === 403) {
+          return res.status(502).json({
+            error: 'AI request failed',
+            upstreamStatus: resp.status,
+            upstreamBody: errText.slice(0, 1000),
+            model: pickedModel,
+          });
+        }
+        continue;
       }
+
+      var data = await resp.json();
+      var candidate = data.candidates && data.candidates[0];
+      if (!candidate) return res.status(502).json({ error: 'No response from AI', model: pickedModel });
+
+      // Extract function call from response (skip thinking parts)
+      var parts = candidate.content && candidate.content.parts;
+      if (!parts) return res.status(502).json({ error: 'Empty AI response', model: pickedModel });
+
+      // Gemma 4 emits internal "thought" parts before the real answer.
+      // Filter them out so they don't leak into the chat UI.
+      var answerParts = parts.filter(function(p) { return !p.thought; });
+
+      for (var i = 0; i < answerParts.length; i++) {
+        if (answerParts[i].functionCall) {
+          var fc = answerParts[i].functionCall;
+          return res.status(200).json(Object.assign({
+            intent: fc.name,
+            _model: pickedModel,
+            _fallback: mi > 0,
+          }, fc.args));
+        }
+      }
+
+      // No function call — model responded with text (e.g., unknown intent)
+      var text = answerParts.map(function(p) { return p.text || ''; }).join('').trim();
+      return res.status(200).json({ intent: 'unknown', text: text, _model: pickedModel, _fallback: mi > 0 });
     }
 
-    // No function call — model responded with text (e.g., unknown intent)
-    var text = answerParts.map(function(p) { return p.text || ''; }).join('').trim();
-    return res.status(200).json({ intent: 'unknown', text: text, _model: pickedModel });
+    // Every model in the chain failed. If ANY of them returned 429,
+    // treat the whole thing as quota exhaustion so the client shows
+    // the friendly "over quota" message and falls back to regex; if
+    // nothing hit 429, surface the last upstream status so the logs
+    // show what really went wrong (bad model IDs, missing key, etc.).
+    var finalStatus = hadQuota ? 429 : 502;
+    return res.status(finalStatus).json({
+      error: hadQuota ? 'AI quota exceeded' : 'AI request failed',
+      reason: hadQuota ? 'quota_exceeded' : 'upstream_error',
+      triedModels: fallbackChain,
+      lastUpstreamStatus: lastErr && lastErr.status,
+      lastUpstreamBody: lastErr && lastErr.body && lastErr.body.slice(0, 500),
+    });
 
   } catch (e) {
     console.error('NL proxy error:', e);

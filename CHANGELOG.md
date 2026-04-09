@@ -1,5 +1,11 @@
 # Changelog
 
+## v4.11.29 (2026-04-09)
+- api/nl: cascade fallback through Gemini Flash family
+
+## v4.11.28 (2026-04-09)
+- docs: expand CLAUDE.md with addons section + current state
+
 ## v4.11.27 (2026-04-09)
 - Fix AI chat crash on mobile + restyle empty-state icons
 
