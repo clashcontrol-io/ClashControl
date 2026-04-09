@@ -17847,8 +17847,14 @@ function startApp() {
                 ? html`<div style=${{fontSize:'0.69rem',color:'var(--text-faint)'}}>Always on in installed app</div>`
                 : html`<div style=${{display:'flex',gap:'.3rem',alignItems:'center'}}>
                   <button onClick=${function(){
-                    if (active) window._ccDeactivateAddon(id);
-                    else window._ccActivateAddon(id);
+                    if (active) {
+                      window._ccDeactivateAddon(id);
+                    } else {
+                      window._ccActivateAddon(id);
+                      // Fire onEnable from within the user gesture so URL schemes work.
+                      var _def = window._ccGetAddons && window._ccGetAddons()[id];
+                      if (_def && _def.onEnable) try { _def.onEnable(d); } catch(_e) { console.warn('[Addon] onEnable error:', id, _e); }
+                    }
                   }} style=${{padding:'.25rem .6rem',borderRadius:6,fontSize:'0.75rem',fontWeight:600,cursor:'pointer',border:'1px solid var(--border)',
                     background:active?'var(--bg-secondary)':'var(--accent)',
                     color:active?'var(--text-secondary)':'#fff',
