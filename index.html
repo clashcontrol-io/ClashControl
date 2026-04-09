@@ -10952,8 +10952,43 @@ function startApp() {
 
         <div style=${{fontSize:'0.69rem',color:'var(--text-faint)',textAlign:'right'}}>${items.length} / ${rawItems.length} shown</div>
       </div>`}
-      ${s.tab==='issues' && html`<div style=${{padding:'.4rem',borderBottom:'1px solid var(--border-subtle)',flexShrink:0,display:'flex',gap:'.3rem'}}>
+      ${s.tab==='issues' && html`<div style=${{padding:'.4rem',borderBottom:'1px solid var(--border-subtle)',flexShrink:0,display:'flex',flexDirection:'column',gap:'.3rem'}}>
         <button onClick=${function(){d({t:A.MODAL,v:true,el:window._ccSelectedEl||undefined})}} style=${{...S_BTN,flex:1,background:'#2563eb',color:'#fff'}}>+ New Issue</button>
+        ${function(){
+          // Obvious BCF export row — the existing BCF path was only
+          // discoverable via the top-bar icon or the NL panel. For BIM
+          // coordinators the Issues tab is where they spend their time,
+          // so surface the export right here with an item count so
+          // it's clear WHAT will be exported.
+          var bcfItems = s.issues && s.issues.length ? s.issues : (s.clashes||[]);
+          var hasItems = bcfItems.length > 0;
+          var source = s.issues && s.issues.length ? 'issues' : 'clashes';
+          var btnBase = {...S_BTN, padding:'.3rem .5rem', fontSize:'0.72rem', fontWeight:600, cursor:hasItems?'pointer':'not-allowed', opacity:hasItems?1:0.45, border:'1px solid var(--border)'};
+          return html`<div style=${{display:'flex',flexDirection:'column',gap:'.25rem'}}>
+            <div style=${{display:'flex',alignItems:'center',gap:'.3rem',fontSize:'0.65rem',color:'var(--text-faint)',textTransform:'uppercase',letterSpacing:'.04em',fontWeight:600}}>
+              <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style=${{flexShrink:0}}>
+                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/>
+              </svg>
+              <span>Export to BCF</span>
+              <span style=${{marginLeft:'auto',color:'var(--text-muted)',textTransform:'none',letterSpacing:0,fontWeight:500}}>
+                ${hasItems ? bcfItems.length + ' ' + source : 'nothing to export'}
+              </span>
+            </div>
+            <div style=${{display:'flex',gap:'.3rem'}}>
+              <button title=${hasItems ? 'Export '+bcfItems.length+' '+source+' as BCF 2.1 — the most widely supported version (Revit, Navisworks, Solibri, BIMcollab)' : 'Create at least one issue first, or run a clash detection'}
+                disabled=${!hasItems}
+                onClick=${function(){ if(!hasItems) return; exportBCF(bcfItems, '2.1', s.viewpoints); }}
+                style=${{...btnBase,flex:1,background:hasItems?'#052e16':'var(--bg-secondary)',color:hasItems?'#4ade80':'var(--text-faint)'}}>BCF 2.1</button>
+              <button title=${hasItems ? 'Export '+bcfItems.length+' '+source+' as BCF 3.0 — newer spec, supports extensions but fewer tools read it yet' : 'Create at least one issue first, or run a clash detection'}
+                disabled=${!hasItems}
+                onClick=${function(){ if(!hasItems) return; exportBCF(bcfItems, '3.0', s.viewpoints); }}
+                style=${{...btnBase,flex:1,background:hasItems?'#1e3a5f':'var(--bg-secondary)',color:hasItems?'#93c5fd':'var(--text-faint)'}}>BCF 3.0</button>
+            </div>
+            ${hasItems && html`<div style=${{fontSize:'0.6rem',color:'var(--text-faint)',lineHeight:1.5}}>
+              Exports open in Revit (BCF Manager), Navisworks (Clash Detective), Solibri, BIMcollab, and most other BIM tools.
+            </div>`}
+          </div>`;
+        }()}
       </div>`}
       ${!isExplorerTab && !isStandardsTab && items.length>0 && function(){
         var grpAction = isClashTab ? 'CLASH_GROUP_BY' : 'ISSUE_GROUP_BY';
