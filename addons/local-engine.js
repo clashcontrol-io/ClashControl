@@ -20,11 +20,13 @@
   var _lastKnownVersion = null;
 
   // ── Download URLs for standalone executables ──────────────────
+  // mac/linux ship as tar.gz (preserves executable bit); Windows is a
+  // self-contained .exe. Matches clashcontrol-engine release assets.
   var _releaseBase = 'https://github.com/clashcontrol-io/ClashControlEngine/releases/latest/download/';
   var _downloads = {
-    win:   {url: _releaseBase + 'clashcontrol-engine-win.exe',   label: 'Windows (.exe)', cmd: 'clashcontrol-engine.exe --install'},
-    mac:   {url: _releaseBase + 'clashcontrol-engine-mac',       label: 'macOS',          cmd: './clashcontrol-engine --install'},
-    linux: {url: _releaseBase + 'clashcontrol-engine-linux',     label: 'Linux',          cmd: './clashcontrol-engine --install'}
+    win:   {url: _releaseBase + 'clashcontrol-engine-win.exe',       label: 'Windows (.exe)',    cmd: 'clashcontrol-engine.exe --install'},
+    mac:   {url: _releaseBase + 'clashcontrol-engine-mac.tar.gz',    label: 'macOS (.tar.gz)',   cmd: 'tar -xzf clashcontrol-engine-mac.tar.gz\n./clashcontrol-engine --install'},
+    linux: {url: _releaseBase + 'clashcontrol-engine-linux.tar.gz',  label: 'Linux (.tar.gz)',   cmd: 'tar -xzf clashcontrol-engine-linux.tar.gz\n./clashcontrol-engine --install'}
   };
 
   function _detectOS() {
@@ -58,7 +60,7 @@
     _engineBackends = backends;
     _lastKnownVersion = version;
     if (d) d({t:'UPD_LOCAL_ENGINE', u:{
-      available:true, checking:false, connecting:false,
+      available:true, checking:false, connecting:false, failed:false,
       active:true, wasInstalled:true,
       version:version, cores:cores, backends:backends
     }});
@@ -110,12 +112,16 @@
       console.log('[LocalEngine] URL-scheme launch failed:', e && e.message || e);
     }
 
-    if (d) d({t:'UPD_LOCAL_ENGINE', u:{connecting:true, checking:false}});
+    // Clear any prior failed state so retries start clean.
+    if (d) d({t:'UPD_LOCAL_ENGINE', u:{connecting:true, checking:false, failed:false}});
 
     var deadline = Date.now() + 6000;
     function tick() {
       if (Date.now() >= deadline) {
-        if (d) d({t:'UPD_LOCAL_ENGINE', u:{connecting:false, available:false}});
+        // Connect timed out — we are confident the engine is not installed
+        // (or at least not reachable). Flip `failed` so the UI shows the
+        // download card instead of just a bare "Not connected" label.
+        if (d) d({t:'UPD_LOCAL_ENGINE', u:{connecting:false, available:false, failed:true}});
         var err = new Error('ENGINE_NOT_INSTALLED');
         err.code = 'ENGINE_NOT_INSTALLED';
         return Promise.reject(err);
@@ -140,7 +146,10 @@
     icon: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#60a5fa" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="4" width="16" height="16" rx="2"/><path d="M9 9h6v6H9z"/><path d="M9 1v3M15 1v3M9 20v3M15 20v3M20 9h3M20 14h3M1 9h3M1 14h3"/></svg>',
 
     initState: {
-      localEngine: { available: false, active: false, checking: false, connecting: false, wasInstalled: false, version: null, cores: null, backends: null }
+      // `failed` is session-only: set when a connect attempt times out so
+      // the UI knows to show the download card. Cleared on every new
+      // Connect click so retries start from a clean state.
+      localEngine: { available: false, active: false, checking: false, connecting: false, failed: false, wasInstalled: false, version: null, cores: null, backends: null }
     },
 
     reducerCases: {
@@ -209,9 +218,31 @@
         </div>`;
       }
 
-      // ── Not connected: Connect button + first-run install ───
-      var statusLabel = le.wasInstalled ? 'Not running' : 'Not connected';
-      var statusDot = le.wasInstalled ? '#f97316' : '#64748b';
+      // ── Three resting states (not counting transient "connecting") ──
+      // 1. Not installed        — le.failed === true: confirmed timeout,
+      //                           show Connect button + download card.
+      // 2. Installed, not running — le.wasInstalled && !le.failed: show
+      //                           Connect button with a "Not running" hint,
+      //                           no download card (user just needs to launch).
+      // 3. Unknown (initial load) — !le.wasInstalled && !le.failed: show
+      //                           Connect button prominently. No download
+      //                           card — if they click Connect and it
+      //                           times out we flip to state 1.
+
+      var statusLabel, statusDot, statusBlurb;
+      if (le.failed) {
+        statusLabel = 'Engine not installed';
+        statusDot = '#ef4444';
+        statusBlurb = 'Couldn\'t reach the engine after 6 seconds. Install it below and click Connect again.';
+      } else if (le.wasInstalled) {
+        statusLabel = 'Engine not running';
+        statusDot = '#f97316';
+        statusBlurb = 'Click Connect to launch the installed engine.';
+      } else {
+        statusLabel = 'Not connected';
+        statusDot = '#64748b';
+        statusBlurb = 'Click Connect to launch the engine. If it\u2019s not installed yet, you\u2019ll see install options.';
+      }
 
       return html`<div style=${{padding:'.5rem 0',fontSize:'0.78rem',color:'var(--text-secondary)',lineHeight:1.7}}>
         <div style=${{display:'flex',alignItems:'center',gap:'.4rem',marginBottom:'.45rem'}}>
@@ -231,16 +262,16 @@
           </svg> Connect to Engine
         </button>
         <div style=${{fontSize:'0.64rem',color:'var(--text-faint)',lineHeight:1.6,marginBottom:'.55rem'}}>
-          Clicking Connect opens the local engine if it's already installed. If nothing happens after ~6 seconds, follow the install steps below.
+          ${statusBlurb}
         </div>
 
-        <div style=${{borderTop:'1px solid var(--border-subtle)',paddingTop:'.5rem'}}>
-          <div style=${{fontSize:'0.68rem',fontWeight:600,color:'var(--text-secondary)',marginBottom:'.3rem',textTransform:'uppercase',letterSpacing:'.04em'}}>First-run install</div>
+        ${le.failed ? html`<div style=${{borderTop:'1px solid var(--border-subtle)',paddingTop:'.5rem'}}>
+          <div style=${{fontSize:'0.68rem',fontWeight:600,color:'var(--text-secondary)',marginBottom:'.3rem',textTransform:'uppercase',letterSpacing:'.04em'}}>Install</div>
           <div style=${{fontSize:'0.65rem',color:'var(--text-faint)',marginBottom:'.3rem',lineHeight:1.6}}>
             With Python (recommended):
           </div>
           <pre style=${{fontSize:'0.66rem',background:'var(--tag-bg)',padding:'.4rem .55rem',borderRadius:5,color:'var(--text-primary)',
-            fontFamily:'var(--font-mono,monospace)',margin:'0 0 .4rem',whiteSpace:'pre-wrap',lineHeight:1.55}}>pip install clashcontrol-engine
+            fontFamily:'var(--font-mono,monospace)',margin:'0 0 .4rem',whiteSpace:'pre-wrap',lineHeight:1.55,overflowX:'auto'}}>pip install clashcontrol-engine
 clashcontrol-engine --install</pre>
           <div style=${{fontSize:'0.62rem',color:'var(--text-faint)',marginBottom:'.5rem',lineHeight:1.6}}>
             <code style=${{fontSize:'0.62rem'}}>--install</code> registers the <code style=${{fontSize:'0.62rem'}}>clashcontrol://</code> handler and starts the engine, so the Connect button works right away.
@@ -260,7 +291,7 @@ clashcontrol-engine --install</pre>
             Download for ${dl.label}
           </a>
           <pre style=${{fontSize:'0.64rem',background:'var(--tag-bg)',padding:'.35rem .55rem',borderRadius:5,color:'var(--text-primary)',
-            fontFamily:'var(--font-mono,monospace)',margin:'0 0 .4rem',whiteSpace:'pre-wrap',lineHeight:1.55}}>${dl.cmd}</pre>
+            fontFamily:'var(--font-mono,monospace)',margin:'0 0 .4rem',whiteSpace:'pre-wrap',lineHeight:1.55,overflowX:'auto'}}>${dl.cmd}</pre>
 
           <div style=${{display:'flex',gap:'.3rem',alignItems:'center',flexWrap:'wrap',fontSize:'0.62rem',color:'var(--text-faint)'}}>
             Also:
@@ -271,7 +302,9 @@ clashcontrol-engine --install</pre>
             <a href="https://github.com/clashcontrol-io/ClashControlEngine" target="_blank" rel="noopener"
               style=${{color:'var(--accent)',textDecoration:'none'}}>GitHub repo</a>
           </div>
-        </div>
+        </div>` : html`<div style=${{fontSize:'0.62rem',color:'var(--text-faint)',lineHeight:1.6}}>
+          Not installed? <a href="https://github.com/clashcontrol-io/ClashControlEngine#install" target="_blank" rel="noopener" style=${{color:'var(--accent)'}}>Install instructions</a>
+        </div>`}
       </div>`;
     }
   });
