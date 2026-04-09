@@ -40,7 +40,7 @@ module.exports = async function handler(req, res) {
       : status.model;
     try {
       var tr = await fetch(
-        'https://generativelanguage.googleapis.com/v1beta/models/' + testModel + ':generateContent?key=' + encodeURIComponent(key),
+        'https://generativelanguage.googleapis.com/v1beta/models/' + encodeURIComponent(testModel) + ':generateContent?key=' + encodeURIComponent(key),
         {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },

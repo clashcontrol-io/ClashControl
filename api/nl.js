@@ -81,17 +81,6 @@ const TOOLS = [
     },
   },
   {
-    name: 'query',
-    description: 'Query information about the current state — clash count, issue count, loaded models, current rules, or worst storey.',
-    parameters: {
-      type: 'object',
-      properties: {
-        metric: { type: 'string', enum: ['clash_count', 'issue_count', 'model_list', 'current_rules', 'worst_storey'] },
-      },
-      required: ['metric'],
-    },
-  },
-  {
     name: 'help',
     description: 'Show help information about available commands.',
     parameters: { type: 'object', properties: {} },
@@ -684,7 +673,7 @@ module.exports = async function handler(req, res) {
   }
 
   try {
-    var url = 'https://generativelanguage.googleapis.com/v1beta/models/' + pickedModel + ':generateContent?key=' + key;
+    var url = 'https://generativelanguage.googleapis.com/v1beta/models/' + pickedModel + ':generateContent?key=' + encodeURIComponent(key);
     var resp = await fetch(url, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
