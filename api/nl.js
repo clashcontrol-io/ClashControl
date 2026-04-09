@@ -652,7 +652,16 @@ module.exports = async function handler(req, res) {
   var SMART_RX = /\b(analy[sz]e|summar[iy]|explain|why|describe|breakdown|report|insight|interpret|compare|review|critique|recommend|suggest|root[\s-]?cause|impact)\b/i;
   var FAST_MODEL = 'gemma-4-26b-a4b-it';
   var SMART_MODEL = 'gemma-4-31b-it';
-  var pickedModel = SMART_RX.test(body.command) ? SMART_MODEL : FAST_MODEL;
+  // Quota-aware fallback chain: the primary model is whichever the
+  // router picked, but each model variant has its OWN free-tier quota
+  // bucket on Google AI Studio. When the primary hits 429 we walk the
+  // chain and retry on the next model so the client keeps working
+  // instead of falling back to regex. Effective quota ≈ sum of all
+  // buckets rather than the single picked one.
+  var primaryModel = SMART_RX.test(body.command) ? SMART_MODEL : FAST_MODEL;
+  var fallbackChain = primaryModel === SMART_MODEL
+    ? [SMART_MODEL, FAST_MODEL]
+    : [FAST_MODEL, SMART_MODEL];
 
   var systemPrompt = isKnowledgeQuery(body.command)
     ? buildSystemPrompt(body.context || {})
@@ -684,57 +693,70 @@ module.exports = async function handler(req, res) {
   }
 
   try {
-    var url = 'https://generativelanguage.googleapis.com/v1beta/models/' + pickedModel + ':generateContent?key=' + key;
-    var resp = await fetch(url, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload),
-    });
+    // Walk the fallback chain. Quota exhaustion (HTTP 429) on one
+    // model falls through to the next one; any other upstream error
+    // aborts immediately (no point retrying a malformed payload).
+    var lastErr = null;
+    for (var mi = 0; mi < fallbackChain.length; mi++) {
+      var pickedModel = fallbackChain[mi];
+      var url = 'https://generativelanguage.googleapis.com/v1beta/models/' + pickedModel + ':generateContent?key=' + key;
+      var resp = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
 
-    if (!resp.ok) {
-      var errText = await resp.text();
-      console.error('Gemma API error:', resp.status, errText);
-      // Upstream quota exhausted (spending cap or per-minute limit) —
-      // propagate as 429 with a clean payload so the client can fall
-      // back quietly instead of logging a red "Bad Gateway".
-      if (resp.status === 429) {
-        return res.status(429).json({
-          error: 'AI quota exceeded',
-          reason: 'quota_exceeded',
+      if (!resp.ok) {
+        var errText = await resp.text();
+        console.error('Gemma API error (' + pickedModel + '):', resp.status, errText);
+        if (resp.status === 429) {
+          // This bucket is drained — try the next model in the chain.
+          lastErr = { status: 429, body: errText };
+          continue;
+        }
+        return res.status(502).json({
+          error: 'AI request failed',
+          upstreamStatus: resp.status,
+          upstreamBody: errText.slice(0, 1000),
+          model: pickedModel,
         });
       }
-      return res.status(502).json({
-        error: 'AI request failed',
-        upstreamStatus: resp.status,
-        upstreamBody: errText.slice(0, 1000)
-      });
-    }
 
-    var data = await resp.json();
-    var candidate = data.candidates && data.candidates[0];
-    if (!candidate) return res.status(502).json({ error: 'No response from AI' });
+      var data = await resp.json();
+      var candidate = data.candidates && data.candidates[0];
+      if (!candidate) return res.status(502).json({ error: 'No response from AI', model: pickedModel });
 
-    // Extract function call from response (skip thinking parts)
-    var parts = candidate.content && candidate.content.parts;
-    if (!parts) return res.status(502).json({ error: 'Empty AI response' });
+      // Extract function call from response (skip thinking parts)
+      var parts = candidate.content && candidate.content.parts;
+      if (!parts) return res.status(502).json({ error: 'Empty AI response', model: pickedModel });
 
-    // Gemma 4 emits internal "thought" parts before the real answer.
-    // Filter them out so they don't leak into the chat UI.
-    var answerParts = parts.filter(function(p) { return !p.thought; });
+      // Gemma 4 emits internal "thought" parts before the real answer.
+      // Filter them out so they don't leak into the chat UI.
+      var answerParts = parts.filter(function(p) { return !p.thought; });
 
-    for (var i = 0; i < answerParts.length; i++) {
-      if (answerParts[i].functionCall) {
-        var fc = answerParts[i].functionCall;
-        return res.status(200).json(Object.assign({
-          intent: fc.name,
-          _model: pickedModel,
-        }, fc.args));
+      for (var i = 0; i < answerParts.length; i++) {
+        if (answerParts[i].functionCall) {
+          var fc = answerParts[i].functionCall;
+          return res.status(200).json(Object.assign({
+            intent: fc.name,
+            _model: pickedModel,
+            _fallback: mi > 0,
+          }, fc.args));
+        }
       }
+
+      // No function call — model responded with text (e.g., unknown intent)
+      var text = answerParts.map(function(p) { return p.text || ''; }).join('').trim();
+      return res.status(200).json({ intent: 'unknown', text: text, _model: pickedModel, _fallback: mi > 0 });
     }
 
-    // No function call — model responded with text (e.g., unknown intent)
-    var text = answerParts.map(function(p) { return p.text || ''; }).join('').trim();
-    return res.status(200).json({ intent: 'unknown', text: text, _model: pickedModel });
+    // Every model in the chain returned 429 — genuine full exhaustion.
+    // Client falls back to offline regex matching.
+    return res.status(429).json({
+      error: 'AI quota exceeded',
+      reason: 'quota_exceeded',
+      triedModels: fallbackChain,
+    });
 
   } catch (e) {
     console.error('NL proxy error:', e);

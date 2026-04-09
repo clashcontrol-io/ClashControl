@@ -8307,13 +8307,12 @@ function startApp() {
     var tourSt = useState(null), tourStep=tourSt[0], setTourStep=tourSt[1]; // kept for hook order
     var cr = useState(false), creating=cr[0], setCreating=cr[1];
     var cnv = useState(''), createName=cnv[0], setCreateName=cnv[1];
-    var cst = useState('ifc'), createSource=cst[0], setCreateSource=cst[1];
 
-    function startCreate() { setCreating(true); setCreateName(''); setCreateSource('ifc'); }
+    function startCreate() { setCreating(true); setCreateName(''); }
     function finishCreate() {
       if(!createName.trim()) { setCreating(false); return; }
       var id = uid();
-      var list = getProjects().concat([{id:id, name:createName.trim(), createdAt:Date.now(), sourceType:createSource}]);
+      var list = getProjects().concat([{id:id, name:createName.trim(), createdAt:Date.now()}]);
       saveProjects(list);
       d({t:A.SET_PROJECT_LIST, v:list});
       _switchProject(id, s, d);
@@ -8374,7 +8373,7 @@ function startApp() {
         <div class="cc-header-project" style=${{position:'relative'}}>
           <button onClick=${function(){setProjOpen(!projOpen)}}
             style=${{...S_BTN,background:'var(--bg-secondary)',color:'var(--text-primary)',border:'1px solid var(--border)',display:'flex',alignItems:'center',gap:'.3rem',fontSize:'0.8rem',padding:'.3rem .6rem',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>
-            <span style=${{fontSize:'0.69rem'}}>📁</span> ${activeProj.name}${activeProj.sourceType==='revit'?' ':''}${activeProj.sourceType==='revit'&&html`<span style=${{fontSize:'0.57rem',background:'#1e3a5f',color:'#93c5fd',padding:'.05rem .3rem',borderRadius:3,fontWeight:600}}>Revit</span>`} <span style=${{fontSize:'0.57rem',color:'var(--text-faint)'}}>${projOpen?'▲':'▼'}</span>
+            <span style=${{fontSize:'0.69rem'}}>📁</span> ${activeProj.name} <span style=${{fontSize:'0.57rem',color:'var(--text-faint)'}}>${projOpen?'▲':'▼'}</span>
           </button>
           ${projOpen && html`<div style=${{position:'absolute',top:'100%',left:0,marginTop:4,background:'var(--bg-secondary)',border:'1px solid var(--border)',borderRadius:8,boxShadow:'0 8px 24px rgba(0,0,0,.4)',minWidth:220,zIndex:100,overflowY:'auto',maxHeight:'60vh'}}>
             ${projects.map(function(p){
@@ -8390,7 +8389,7 @@ function startApp() {
                     onKeyDown=${function(e){if(e.key==='Enter')finishRename(p.id);if(e.key==='Escape')setRenaming(false);}}
                     onBlur=${function(){finishRename(p.id)}}
                     style=${{...S_INPUT,fontSize:'0.75rem',padding:'.15rem .3rem',flex:1}} />` :
-                  html`<span onClick=${function(){switchTo(p.id)}} style=${{flex:1,fontSize:'0.8rem',color:txtCol,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',cursor:'pointer',display:'flex',alignItems:'center',gap:'.3rem'}}>${p.name}${p.sourceType==='revit'&&html`<span style=${{fontSize:'0.55rem',background:isActive?'rgba(255,255,255,.2)':'#1e3a5f',color:isActive?'#fff':'#93c5fd',padding:'.02rem .2rem',borderRadius:2,fontWeight:600,flexShrink:0}}>Revit</span>`}</span>`}
+                  html`<span onClick=${function(){switchTo(p.id)}} style=${{flex:1,fontSize:'0.8rem',color:txtCol,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',cursor:'pointer',display:'flex',alignItems:'center',gap:'.3rem'}}>${p.name}</span>`}
                   <button onClick=${function(e){e.stopPropagation();startRename(p)}} style=${{...S_BTN,padding:'2px 4px',background:'none',color:mutedCol,fontSize:'0.69rem',lineHeight:1}} title="Rename">✎</button>
                   <button onClick=${function(e){e.stopPropagation();setConfirmDelete(isConfirming?null:p.id);setRenaming(false);}}
                     style=${{...S_BTN,padding:'2px 5px',background:isConfirming?(isActive?'rgba(255,255,255,.2)':'rgba(239,68,68,.15)'):'none',color:isConfirming?'#ef4444':mutedCol,fontSize:'0.75rem',lineHeight:1,borderRadius:4,border:isConfirming?'1px solid rgba(239,68,68,.4)':'1px solid transparent'}}
@@ -8415,14 +8414,6 @@ function startApp() {
                   style=${{...S_BTN,fontSize:'0.69rem',padding:'.2rem .45rem',background:'var(--accent)',color:'#fff',opacity:createName.trim()?1:0.4}}>Create</button>
                 <button onClick=${function(){setCreating(false)}}
                   style=${{...S_BTN,fontSize:'0.8rem',padding:'.1rem .3rem',background:'none',color:'var(--text-faint)',lineHeight:1}}>✕</button>
-              </div>
-              <div style=${{display:'flex',gap:'.3rem',fontSize:'0.69rem'}}>
-                <label style=${{display:'flex',alignItems:'center',gap:'.2rem',cursor:'pointer',color:createSource==='ifc'?'var(--accent)':'var(--text-faint)'}}>
-                  <input type="radio" name="cc-proj-src" checked=${createSource==='ifc'} onChange=${function(){setCreateSource('ifc')}} style=${{margin:0}} /> IFC Import
-                </label>
-                <label style=${{display:'flex',alignItems:'center',gap:'.2rem',cursor:'pointer',color:createSource==='revit'?'#60a5fa':'var(--text-faint)'}}>
-                  <input type="radio" name="cc-proj-src" checked=${createSource==='revit'} onChange=${function(){setCreateSource('revit')}} style=${{margin:0}} /> Revit Live Link
-                </label>
               </div>
             </div>` : html`<button onClick=${startCreate} style=${{...S_BTN,width:'100%',textAlign:'left',padding:'.4rem .6rem',background:'none',color:'var(--accent)',fontSize:'0.8rem',borderRadius:0}}>+ New Project</button>`}
           </div>`}
@@ -9663,7 +9654,7 @@ function startApp() {
           ${loading?html`<span class="spin">⟳</span>`:html`<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/><line x1="12" y1="11" x2="12" y2="17"/><line x1="9" y1="14" x2="15" y2="14"/></svg>`}
         </button>
         <div style=${{marginTop:'.35rem',fontSize:'0.72rem',color:'var(--text-faint)',lineHeight:1.4,textAlign:'center'}}>
-          For faster loading &amp; clash detection, use <a href="https://github.com/thomhoffer-arch/Ifc2Ifc" target="_blank" rel="noopener" style=${{color:'var(--accent)',textDecoration:'none'}}>Ifc2Ifc</a> to convert your IFC to GLB + sidecar files.
+          For faster loading &amp; clash detection, use${' '}<a href="https://github.com/thomhoffer-arch/Ifc2Ifc" target="_blank" rel="noopener" style=${{color:'var(--accent)',textDecoration:'none'}}>Ifc2Ifc</a>${' '}to convert your IFC to GLB + sidecar files.
         </div>
         ${err && html`<div style=${{marginTop:'.4rem',padding:'.4rem',background:'#450a0a',border:'1px solid #7f1d1d',borderRadius:6,fontSize:'0.8rem',color:'#fca5a5',whiteSpace:'pre-line'}}>${err}</div>`}
       </div>
@@ -12893,6 +12884,24 @@ function startApp() {
         <span style=${{fontSize:'0.63rem',color:'var(--text-faint)',marginTop:'.15rem',display:'block'}}>Used for any pair not listed below</span>
       </div>
 
+      ${s && d && html`<div style=${{marginBottom:'.8rem'}}>
+        <span style=${LS}>Default max gap (mm)</span>
+        <input type="number" min="0" max="2000" step="5" placeholder="50"
+          value=${(s.prefs&&s.prefs.defaultMaxGap)||50}
+          onInput=${function(e){d({t:A.UPD_PREFS,u:{defaultMaxGap:+e.target.value||0}});}}
+          style=${{fontSize:'0.8rem',padding:'.3rem .4rem',background:'var(--bg-secondary)',border:'1px solid var(--border)',borderRadius:4,color:'var(--text-primary)',width:'100%',boxSizing:'border-box'}} />
+        <span style=${{fontSize:'0.63rem',color:'var(--text-faint)',marginTop:'.15rem',display:'block'}}>Initial max gap distance for near misses when running a new detection</span>
+      </div>
+      <label style=${{display:'flex',alignItems:'center',justifyContent:'space-between',gap:'.5rem',marginBottom:'.8rem',cursor:'pointer'}}>
+        <div style=${{flex:1,minWidth:0}}>
+          <span style=${LS}>Reset filters after detection</span>
+          <span style=${{fontSize:'0.63rem',color:'var(--text-faint)',display:'block'}}>Clear all filters when running a new clash detection</span>
+        </div>
+        <input type="checkbox" checked=${(s.prefs&&s.prefs.resetFiltersOnRun)!==false}
+          onChange=${function(e){d({t:A.UPD_PREFS,u:{resetFiltersOnRun:e.target.checked}});}}
+          style=${{accentColor:'var(--accent)',width:16,height:16,flexShrink:0}} />
+      </label>`}
+
       <div style=${{fontSize:'0.75rem',fontWeight:600,color:'var(--text-muted)',textTransform:'uppercase',letterSpacing:'.05em',marginBottom:'.2rem'}}>IFC type-pair rules</div>
       <span style=${{fontSize:'0.63rem',color:'var(--text-faint)',display:'block',marginBottom:'.35rem'}}>Highest priority — matched by IFC element type (e.g. IfcPipe vs IfcWall)</span>
 
@@ -13987,7 +13996,7 @@ function startApp() {
           <span style=${{fontSize:'0.92rem',color:'var(--text-primary)',lineHeight:1.45}}>
             ClashControl is free and open-source.
             ${' '}<a href="https://github.com/sponsors/clashcontrol-io" target="_blank" rel="noopener"
-              style=${{color:'#c4b5fd',textDecoration:'underline',fontWeight:600}}>Support the project</a> to help keep it running.
+              style=${{color:'#c4b5fd',textDecoration:'underline',fontWeight:600}}>Support the project</a>${' '}to help keep it running.
           </span>
         </div>
         <div style=${SEC}>Viewer</div>
@@ -14060,18 +14069,6 @@ function startApp() {
             </div>
           </div>`;
         }()}
-
-        <div style=${SEC}>Clash Detection</div>
-        <div style=${TROW}>
-          <div><div style=${TLBL}>Default max gap</div><div style=${TSUB}>Initial max gap distance for near misses (mm)</div></div>
-          <input type="number" min="0" max="2000" step="5" value=${p.defaultMaxGap||50}
-            onChange=${function(e){d({t:A.UPD_PREFS,u:{defaultMaxGap:+e.target.value}});}}
-            style=${{...S_INPUT,width:70,textAlign:'center'}} />
-        </div>
-        <div style=${TROW}>
-          <div><div style=${TLBL}>Reset filters after detection</div><div style=${TSUB}>Clear all filters when running a new clash detection</div></div>
-          <${Toggle} on=${p.resetFiltersOnRun!==false} onToggle=${tog('resetFiltersOnRun')} />
-        </div>
 
         <div style=${SEC}>Shared Project</div>
         <div style=${TROW}>
@@ -15254,7 +15251,7 @@ function startApp() {
         if (!cpName) return 'What should the project be called? Try "new project My Tower".';
         try {
           var cpId = uid();
-          var cpList = getProjects().concat([{id:cpId, name:cpName, createdAt:Date.now(), sourceType:'ifc'}]);
+          var cpList = getProjects().concat([{id:cpId, name:cpName, createdAt:Date.now()}]);
           saveProjects(cpList);
           d({t:A.SET_PROJECT_LIST, v:cpList});
           _switchProject(cpId, s, d);
@@ -15645,7 +15642,7 @@ function startApp() {
       if (!newName) return 'Give the project a name — try "new project My Tower".';
       try {
         var newId = uid();
-        var pList = getProjects().concat([{id:newId, name:newName, createdAt:Date.now(), sourceType:'ifc'}]);
+        var pList = getProjects().concat([{id:newId, name:newName, createdAt:Date.now()}]);
         saveProjects(pList);
         d({t:A.SET_PROJECT_LIST, v:pList});
         _switchProject(newId, s, d);
@@ -18617,7 +18614,7 @@ function startApp() {
     if (!tab) return null;
     var projects=s.projectList||[];
     var activeProj=projects.find(function(p){return p.id===s.activeProject;})||projects[0]||{name:'Default'};
-    var TITLES={models:'Models',clashes:'Clashes',issues:'Issues',navigator:'Navigator',tools:'Tools',addons:'Addons',standards:'Standards'};
+    var TITLES={models:'Models',clashes:'Clashes',issues:'Issues',navigator:'Navigator',dataquality:'Data Quality',tools:'Tools',addons:'Addons',standards:'Standards'};
     var onResizeDown = _makeResizeHandler(dragRef, setPanelW, 200, 600, false);
     return html`<div class="cc-left-panel" style=${{
       width:panelW,flexShrink:0,display:'flex',flexDirection:'column',overflow:'hidden',
@@ -18988,6 +18985,7 @@ function startApp() {
       ${navBtn('clashes','<path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/>','Clashes',clashN)}
       ${navBtn('issues','<path d="M4 15s1-1 4-1 5 2 8 2 4-1 4-1V3s-1 1-4 1-5-2-8-2-4 1-4 1z"/><line x1="4" y1="22" x2="4" y2="15"/>','Issues',issueN)}
       ${navBtn('navigator','<rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/>','Navigator',0)}
+      ${navBtn('dataquality','<path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/>','Data Quality',0)}
       ${html`<button class=${s.chatOpen?'active':''} onClick=${function(){
         if (s.chatOpen) { window._ccNLClose(); }
         else { if (s.tab) d({t:A.TAB,v:null}); window._ccNLOpen(); }
@@ -19154,8 +19152,8 @@ function startApp() {
 
             <div style=${{fontSize:'0.69rem',color:'var(--text-faint)',lineHeight:1.6,padding:'.5rem .6rem',background:'var(--bg-primary)',borderRadius:6,display:'flex',flexDirection:'column',gap:'.35rem'}}>
               <div>
-                Requires the <a href="https://github.com/clashcontrol-io/ClashControlConnector" target="_blank" rel="noopener"
-                  style=${{color:'var(--accent)',textDecoration:'none',fontWeight:600}}>ClashControl Connector</a> Revit plugin.
+                Requires the${' '}<a href="https://github.com/clashcontrol-io/ClashControlConnector" target="_blank" rel="noopener"
+                  style=${{color:'var(--accent)',textDecoration:'none',fontWeight:600}}>ClashControl Connector</a>${' '}Revit plugin.
                 Supports Revit 2024 / 2025 / 2026 / 2027.
               </div>
               <div style=${{display:'flex',gap:'.4rem',alignItems:'center',flexWrap:'wrap'}}>
