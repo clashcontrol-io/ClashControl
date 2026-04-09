@@ -1,5 +1,8 @@
 # Changelog
 
+## v4.11.8 (2026-04-09)
+- feat(clash,nl): multi-model groups + fix no-loop in confirm step
+
 ## v4.11.7 (2026-04-09)
 - feat(engine,revit): optimistic connect flow + Revit 2024-2027 installer
 
