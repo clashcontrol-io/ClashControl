@@ -19,21 +19,6 @@
   var _engineBackends = null;
   var _lastKnownVersion = null;
 
-  // ── Download URLs for standalone executables ──────────────────
-  var _releaseBase = 'https://github.com/clashcontrol-io/ClashControlEngine/releases/latest/download/';
-  var _downloads = {
-    win:   {url: _releaseBase + 'clashcontrol-engine-win.exe',   label: 'Windows (.exe)', cmd: 'clashcontrol-engine.exe --install'},
-    mac:   {url: _releaseBase + 'clashcontrol-engine-mac',       label: 'macOS',          cmd: './clashcontrol-engine --install'},
-    linux: {url: _releaseBase + 'clashcontrol-engine-linux',     label: 'Linux',          cmd: './clashcontrol-engine --install'}
-  };
-
-  function _detectOS() {
-    var ua = navigator.userAgent || '';
-    if (/Win/.test(navigator.platform || ua)) return 'win';
-    if (/Mac/.test(navigator.platform || ua)) return 'mac';
-    return 'linux';
-  }
-
   // ── Single /status probe with configurable timeout ───────────
   function _probeStatus(timeoutMs) {
     var fetchOpts = {method:'GET', cache:'no-store'};
@@ -57,9 +42,12 @@
     _engineCores = cores;
     _engineBackends = backends;
     _lastKnownVersion = version;
+    // Preserve the user's active preference — don't force-enable if they disabled it
+    var prevActive = true;
+    try { var _s = localStorage.getItem('cc_local_engine'); prevActive = _s === null ? true : _s === '1'; } catch(e){}
     if (d) d({t:'UPD_LOCAL_ENGINE', u:{
       available:true, checking:false, connecting:false,
-      active:true, wasInstalled:true,
+      active:prevActive, wasInstalled:true,
       version:version, cores:cores, backends:backends
     }});
     try { localStorage.setItem('cc_local_engine','1'); } catch(e){}
@@ -132,149 +120,15 @@
     return tick();
   }
 
-  window._ccRegisterAddon({
-    id: 'local-engine',
-    name: 'ClashControlEngine',
-    description: 'Multi-threaded local server for exact mesh intersection. 5-10x faster on large models.',
-    autoActivate: false,
-    icon: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#60a5fa" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="4" width="16" height="16" rx="2"/><path d="M9 9h6v6H9z"/><path d="M9 1v3M15 1v3M9 20v3M15 20v3M20 9h3M20 14h3M1 9h3M1 14h3"/></svg>',
-
-    initState: {
-      localEngine: { available: false, active: false, checking: false, connecting: false, wasInstalled: false, version: null, cores: null, backends: null }
-    },
-
-    reducerCases: {
-      'UPD_LOCAL_ENGINE': function(s, a) {
-        return Object.assign({}, s, {localEngine: Object.assign({}, s.localEngine, a.u)});
-      }
-    },
-
-    init: function(dispatch) {
-      console.log('[LocalEngine] Addon init');
-      var wasActive = false;
-      try { wasActive = localStorage.getItem('cc_local_engine') === '1'; } catch(e){}
-      if (wasActive) {
-        dispatch({t:'UPD_LOCAL_ENGINE', u:{active:true, wasInstalled:true}});
-      }
-      // Passive probe only — we can't fire the URL scheme without a
-      // user gesture, so the actual connect happens on button click.
-      _checkLocalEngine(dispatch);
-    },
-
-    destroy: function() {},
-
-    panel: function(html, s, d) {
-      var le = s.localEngine || {};
-      var os = _detectOS();
-      var dl = _downloads[os];
-
-      // ── Connected ─────────────────────────────────────────────
-      if (le.available) {
-        return html`<div style=${{padding:'.5rem 0',fontSize:'0.78rem',color:'var(--text-secondary)',lineHeight:1.7}}>
-          <div style=${{display:'flex',alignItems:'center',gap:'.4rem',marginBottom:'.3rem',flexWrap:'wrap'}}>
-            <span style=${{width:7,height:7,borderRadius:'50%',background:'#22c55e',display:'inline-block'}}></span>
-            <span style=${{fontWeight:600,color:'var(--text-primary)'}}>Connected</span>
-            ${le.version && html`<span style=${{fontSize:'0.63rem',color:'var(--text-faint)'}}>v${le.version}</span>`}
-            ${le.cores && html`<span style=${{fontSize:'0.63rem',color:'var(--text-faint)'}}>\u00b7 ${le.cores} cores</span>`}
-          </div>
-          ${le.backends && le.backends.length ? html`<div style=${{fontSize:'0.63rem',color:'var(--text-faint)',marginBottom:'.4rem'}}>
-            Backends: ${le.backends.join(', ')}
-          </div>` : null}
-          <div style=${{display:'flex',gap:'.3rem'}}>
-            <button onClick=${function(){_checkLocalEngine(d);}} disabled=${le.checking}
-              style=${{padding:'.3rem .6rem',borderRadius:6,fontSize:'0.75rem',fontWeight:600,cursor:'pointer',
-                border:'1px solid var(--border)',background:'var(--bg-secondary)',color:'var(--text-secondary)',fontFamily:'inherit',
-                opacity:le.checking?0.5:1}}>
-              ${le.checking?'Checking\u2026':'Refresh'}</button>
-            <button onClick=${function(){
-              var newActive=!le.active;try{localStorage.setItem('cc_local_engine',newActive?'1':'0');}catch(e){}
-              d({t:'UPD_LOCAL_ENGINE',u:{active:newActive}});
-            }} style=${{padding:'.3rem .6rem',borderRadius:6,fontSize:'0.75rem',fontWeight:600,cursor:'pointer',border:'none',fontFamily:'inherit',
-              background:le.active?'var(--bg-secondary)':'#2563eb',color:le.active?'var(--text-secondary)':'#fff'}}>
-              ${le.active?'Disable':'Enable for Detection'}</button>
-          </div>
-        </div>`;
-      }
-
-      // ── Connecting (URL scheme fired, polling /status) ───────
-      if (le.connecting) {
-        return html`<div style=${{padding:'.5rem 0',fontSize:'0.78rem',color:'var(--text-secondary)',lineHeight:1.7}}>
-          <div style=${{display:'flex',alignItems:'center',gap:'.4rem',marginBottom:'.4rem'}}>
-            <div style=${{width:12,height:12,border:'2px solid #eab308',borderTopColor:'transparent',borderRadius:'50%',animation:'cc-spin .6s linear infinite'}}></div>
-            <span style=${{color:'#eab308',fontWeight:600}}>Starting engine\u2026</span>
-          </div>
-          <div style=${{fontSize:'0.65rem',color:'var(--text-faint)',lineHeight:1.6}}>
-            Waiting for the local engine to boot (up to 6 seconds). First launch can be slower while Python imports load.
-          </div>
-        </div>`;
-      }
-
-      // ── Not connected: Connect button + first-run install ───
-      var statusLabel = le.wasInstalled ? 'Not running' : 'Not connected';
-      var statusDot = le.wasInstalled ? '#f97316' : '#64748b';
-
-      return html`<div style=${{padding:'.5rem 0',fontSize:'0.78rem',color:'var(--text-secondary)',lineHeight:1.7}}>
-        <div style=${{display:'flex',alignItems:'center',gap:'.4rem',marginBottom:'.45rem'}}>
-          <span style=${{width:7,height:7,borderRadius:'50%',background:statusDot,display:'inline-block'}}></span>
-          <span>${statusLabel}</span>
-        </div>
-
-        <button onClick=${function(){
-          _connectLocalEngine(d).catch(function(err){
-            console.log('[LocalEngine] Connect failed:', err && err.message || err);
-          });
-        }} style=${{display:'flex',alignItems:'center',justifyContent:'center',gap:'.4rem',width:'100%',
-            padding:'.5rem .7rem',borderRadius:6,fontSize:'0.8rem',fontWeight:600,cursor:'pointer',border:'none',
-            background:'var(--accent)',color:'#fff',fontFamily:'inherit',marginBottom:'.5rem'}}>
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
-            <path d="M5 12h14M13 6l6 6-6 6"/>
-          </svg> Connect to Engine
-        </button>
-        <div style=${{fontSize:'0.64rem',color:'var(--text-faint)',lineHeight:1.6,marginBottom:'.55rem'}}>
-          Clicking Connect opens the local engine if it's already installed. If nothing happens after ~6 seconds, follow the install steps below.
-        </div>
-
-        <div style=${{borderTop:'1px solid var(--border-subtle)',paddingTop:'.5rem'}}>
-          <div style=${{fontSize:'0.68rem',fontWeight:600,color:'var(--text-secondary)',marginBottom:'.3rem',textTransform:'uppercase',letterSpacing:'.04em'}}>First-run install</div>
-          <div style=${{fontSize:'0.65rem',color:'var(--text-faint)',marginBottom:'.3rem',lineHeight:1.6}}>
-            With Python (recommended):
-          </div>
-          <pre style=${{fontSize:'0.66rem',background:'var(--tag-bg)',padding:'.4rem .55rem',borderRadius:5,color:'var(--text-primary)',
-            fontFamily:'var(--font-mono,monospace)',margin:'0 0 .4rem',whiteSpace:'pre-wrap',lineHeight:1.55}}>pip install clashcontrol-engine
-clashcontrol-engine --install</pre>
-          <div style=${{fontSize:'0.62rem',color:'var(--text-faint)',marginBottom:'.5rem',lineHeight:1.6}}>
-            <code style=${{fontSize:'0.62rem'}}>--install</code> registers the <code style=${{fontSize:'0.62rem'}}>clashcontrol://</code> handler and starts the engine, so the Connect button works right away.
-          </div>
-
-          <div style=${{fontSize:'0.65rem',color:'var(--text-faint)',marginBottom:'.3rem',lineHeight:1.6}}>
-            Or download a standalone binary:
-          </div>
-          <a href=${dl.url} download
-            style=${{display:'flex',alignItems:'center',justifyContent:'center',gap:'.3rem',
-              padding:'.35rem .55rem',borderRadius:5,fontSize:'0.72rem',fontWeight:600,
-              border:'1px solid var(--border)',background:'var(--bg-secondary)',color:'var(--text-secondary)',
-              fontFamily:'inherit',textDecoration:'none',marginBottom:'.3rem'}}>
-            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
-              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/>
-            </svg>
-            Download for ${dl.label}
-          </a>
-          <pre style=${{fontSize:'0.64rem',background:'var(--tag-bg)',padding:'.35rem .55rem',borderRadius:5,color:'var(--text-primary)',
-            fontFamily:'var(--font-mono,monospace)',margin:'0 0 .4rem',whiteSpace:'pre-wrap',lineHeight:1.55}}>${dl.cmd}</pre>
-
-          <div style=${{display:'flex',gap:'.3rem',alignItems:'center',flexWrap:'wrap',fontSize:'0.62rem',color:'var(--text-faint)'}}>
-            Also:
-            ${os!=='win'&&html`<a href=${_downloads.win.url} download style=${{color:'var(--text-faint)',textDecoration:'underline'}}>Windows</a>`}
-            ${os!=='mac'&&html`<a href=${_downloads.mac.url} download style=${{color:'var(--text-faint)',textDecoration:'underline'}}>macOS</a>`}
-            ${os!=='linux'&&html`<a href=${_downloads.linux.url} download style=${{color:'var(--text-faint)',textDecoration:'underline'}}>Linux</a>`}
-            <span style=${{margin:'0 .2rem'}}>\u00b7</span>
-            <a href="https://github.com/clashcontrol-io/ClashControlEngine" target="_blank" rel="noopener"
-              style=${{color:'var(--accent)',textDecoration:'none'}}>GitHub repo</a>
-          </div>
-        </div>
-      </div>`;
-    }
-  });
+  // ── Self-initialize: probe engine on load ────────────────────
+  // The file is loaded after the app mounts so window._ccDispatch should
+  // be available shortly. Poll for it then run a passive status probe.
+  function _selfInit() {
+    if (!window._ccDispatch) { setTimeout(_selfInit, 100); return; }
+    console.log('[LocalEngine] Self-init');
+    _checkLocalEngine(window._ccDispatch);
+  }
+  setTimeout(_selfInit, 50);
 
   // ── Engine communication ──────────────────────────────────────
 

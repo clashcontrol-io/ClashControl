@@ -179,6 +179,9 @@
       --color-info:#2563eb;--color-info-fg:#1d4ed8;--color-info-bg:#dbeafe;--color-info-border:rgba(37,99,235,.35);
     }
     *{box-sizing:border-box;margin:0;padding:0}
+    /* Prevent horizontal overflow inside the left and right panels */
+    .cc-left-panel,.cc-side-panel{overflow-x:hidden!important}
+    .cc-left-panel>*,.cc-side-panel>*{min-width:0;overflow-x:hidden}
     body{background:var(--bg-primary);color:var(--text-primary);font-family:var(--font-body);overflow:hidden;-webkit-font-smoothing:antialiased;-moz-osx-font-smoothing:grayscale}
     .cc-display{font-family:var(--font-display);letter-spacing:-.01em}
     .cc-mono{font-family:var(--font-mono)}
@@ -645,7 +648,9 @@ function startApp() {
     // Bulk selection
     selected:{}, // {id:true} — selected clash/issue IDs
     selectMode:false,
-    // Addon state (revitBridge, revitDirect, localEngine, sharedProject) injected by addon initState
+    // localEngine: available when the engine process is reachable on localhost:19800
+    localEngine: {available:false, active:(function(){try{return localStorage.getItem('cc_local_engine')==='1';}catch(e){return false;}}()), checking:false, connecting:false, wasInstalled:(function(){try{return !!localStorage.getItem('cc_local_engine');}catch(e){return false;}}()), version:null, cores:null, backends:null},
+    // Addon state (revitBridge, revitDirect, sharedProject) injected by addon initState
     lastDeltaSummary: null, // {new, persisting, autoResolved, ts} — set after each merge run
     // IDS Validation
     idsValidation: {
@@ -667,6 +672,7 @@ function startApp() {
     AI_FEEDBACK:'AI_FEEDBACK', CLEAR_TRAINING_DATA:'CLEAR_TRAINING_DATA',
     UPD_CLASH:'UPD_CLASH', BATCH_UPD_CLASH:'BATCH_UPD_CLASH',
     ACTIVE:'ACTIVE', MODAL:'MODAL',
+    UPD_LOCAL_ENGINE:'UPD_LOCAL_ENGINE',
     UPD_RULES:'UPD_RULES', UPD_FILTERS:'UPD_FILTERS', RESET_FILTERS:'RESET_FILTERS',
     SECTION:'SECTION', SECTION_CUSTOM:'SECTION_CUSTOM', SECTION_BOX:'SECTION_BOX',
     TAB:'TAB', SETTINGS:'SETTINGS', TRAINING_MODE:'TRAINING_MODE',
@@ -757,7 +763,7 @@ function startApp() {
 
   // Load addon scripts — called after app mounts
   function _loadAddonScripts() {
-    var addonFiles = ['training-data', 'pwa', 'local-engine', 'shared-project', 'revit-bridge', 'data-quality'];
+    var addonFiles = ['training-data', 'pwa', 'shared-project', 'revit-bridge', 'data-quality'];
     addonFiles.forEach(function(name) {
       var script = document.createElement('script');
       script.src = 'addons/' + name + '.js';
@@ -765,6 +771,11 @@ function startApp() {
       script.onerror = function() { /* addon file not present — that's fine */ };
       document.head.appendChild(script);
     });
+    // local-engine.js self-initializes (no addon registration) — load separately
+    var _es = document.createElement('script');
+    _es.src = 'addons/local-engine.js';
+    _es.async = true;
+    document.head.appendChild(_es);
   }
 
   // Collect all element IDs from a clash/issue item
@@ -1015,6 +1026,7 @@ function startApp() {
       case A.IDS_SET_SPECS:   return Object.assign({},s,{idsValidation:Object.assign({},s.idsValidation,{specs:a.specs})});
       case A.IDS_RUNNING:     return Object.assign({},s,{idsValidation:Object.assign({},s.idsValidation,{running:a.v})});
       // Addon dynamic state init
+      case A.UPD_LOCAL_ENGINE: return Object.assign({},s,{localEngine:Object.assign({},s.localEngine,a.u)});
       case '_ADDON_INIT_STATE': var asi={}; asi[a.k]=a.v; return Object.assign({},s,asi);
       default:
         // Let active addons handle unknown action types
@@ -11843,8 +11855,8 @@ function startApp() {
       </div>`;
     }
 
-    return html`<div style=${{display:'flex',flexDirection:'column',flex:1,overflow:'hidden'}}>
-      <div style=${{padding:'.5rem .6rem',borderBottom:'1px solid var(--border-subtle)',display:'flex',flexDirection:'column',gap:'.4rem',flexShrink:0}}>
+    return html`<div style=${{display:'flex',flexDirection:'column',flex:1,overflow:'hidden',minWidth:0}}>
+      <div style=${{padding:'.5rem .6rem',borderBottom:'1px solid var(--border-subtle)',display:'flex',flexDirection:'column',gap:'.4rem',flexShrink:0,minWidth:0}}>
         <div style=${{display:'flex',alignItems:'center',gap:'.4rem'}}>
           <span style=${{fontSize:'0.83rem',fontWeight:600,color:'var(--text-primary)',flex:1}}>Data Quality</span>
           ${qc && html`<span style=${{fontSize:'0.63rem',padding:'2px 6px',borderRadius:99,
@@ -11855,12 +11867,12 @@ function startApp() {
         </div>
         <div style=${{display:'flex',gap:'.3rem',alignItems:'center'}}>
           <select value=${selectedModel} onChange=${function(e){setSelectedModel(e.target.value);}}
-            style=${{flex:1,fontSize:'0.72rem',padding:'.25rem .4rem',background:'var(--bg-primary)',color:'var(--text-primary)',border:'1px solid var(--border)',borderRadius:5,fontFamily:'inherit'}}>
+            style=${{flex:'1 1 0',minWidth:0,fontSize:'0.72rem',padding:'.25rem .4rem',background:'var(--bg-primary)',color:'var(--text-primary)',border:'1px solid var(--border)',borderRadius:5,fontFamily:'inherit'}}>
             <option value="all">All models</option>
             ${(s.models||[]).map(function(m){return html`<option key=${m.id} value=${m.id}>${m.name}</option>`})}
           </select>
           <button onClick=${runChecks} disabled=${isRunning || !hasModels}
-            style=${{padding:'.25rem .6rem',borderRadius:5,fontSize:'0.72rem',fontWeight:600,cursor:hasModels?'pointer':'not-allowed',border:'none',
+            style=${{padding:'.25rem .6rem',borderRadius:5,fontSize:'0.72rem',fontWeight:600,cursor:hasModels?'pointer':'not-allowed',border:'none',flexShrink:0,whiteSpace:'nowrap',
               background:isRunning?'var(--bg-tertiary)':'var(--accent)',color:isRunning?'var(--text-faint)':'#fff',fontFamily:'inherit',
               opacity:hasModels?1:0.5}}>
             ${isRunning ? 'Checking...' : qc ? 'Re-check' : 'Run Checks'}
@@ -12100,7 +12112,7 @@ function startApp() {
 
     var SEC = {fontSize: '0.75rem', fontWeight: 600, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '.05em', display: 'block', marginBottom: '.35rem'};
 
-    return html`<div style=${{padding: '.6rem', display: 'flex', flexDirection: 'column', gap: '.6rem'}}>
+    return html`<div style=${{padding: '.6rem', display: 'flex', flexDirection: 'column', gap: '.6rem', overflowX: 'hidden'}}>
       <div>
         <span style=${SEC}>IDS Validation</span>
         <span style=${{fontSize: '0.63rem', color: 'var(--text-faint)', display: 'block', marginBottom: '.4rem'}}>Validate IFC models against Information Delivery Specifications</span>
@@ -13510,6 +13522,54 @@ function startApp() {
           <div><div style=${TLBL}>Reset filters after detection</div><div style=${TSUB}>Clear all filters when running a new clash detection</div></div>
           <${Toggle} on=${p.resetFiltersOnRun!==false} onToggle=${tog('resetFiltersOnRun')} />
         </div>
+
+        <div style=${SEC}>Clash Engine</div>
+        ${function(){
+          var le = s.localEngine || {};
+          if (le.available) {
+            return html`<div style=${TROW}>
+              <div>
+                <div style=${TLBL}><span style=${{display:'inline-flex',alignItems:'center',gap:'.3rem'}}>
+                  <span style=${{width:6,height:6,borderRadius:'50%',background:'#22c55e',display:'inline-block',flexShrink:0}}></span>
+                  Engine connected${le.version?' \u00b7 v'+le.version:''}
+                </span></div>
+                <div style=${TSUB}>Exact mesh intersection${le.cores?' \u00b7 '+le.cores+' cores':''}. Use for detection runs.</div>
+              </div>
+              <${Toggle} on=${le.active!==false} onToggle=${function(){
+                var n=!le.active; try{localStorage.setItem('cc_local_engine',n?'1':'0');}catch(e){}
+                d({t:A.UPD_LOCAL_ENGINE,u:{active:n}});
+              }} />
+            </div>`;
+          }
+          if (le.connecting) {
+            return html`<div style=${TROW}>
+              <div><div style=${TLBL}>Clash Engine</div><div style=${TSUB}>Starting engine\u2026</div></div>
+              <div style=${{width:16,height:16,border:'2px solid #eab308',borderTopColor:'transparent',borderRadius:'50%',animation:'cc-spin .6s linear infinite',flexShrink:0}}></div>
+            </div>`;
+          }
+          return html`<div>
+            <div style=${TROW}>
+              <div>
+                <div style=${TLBL}>Clash Engine</div>
+                <div style=${TSUB}>Local server for exact mesh intersection. 5-10\u00d7 faster on large models.</div>
+              </div>
+              <button onClick=${function(){
+                if(!window._connectLocalEngine) return;
+                window._connectLocalEngine(d).catch(function(){});
+              }} style=${{padding:'.3rem .65rem',borderRadius:6,fontSize:'0.8rem',fontWeight:600,cursor:'pointer',border:'none',background:'var(--accent)',color:'#fff',fontFamily:'inherit',flexShrink:0}}>
+                Connect</button>
+            </div>
+            ${le.checking && html`<div style=${{fontSize:'0.69rem',color:'var(--text-faint)',paddingBottom:'.3rem'}}>Checking\u2026</div>`}
+            ${!le.checking && !le.available && html`<div style=${{background:'var(--bg-secondary)',borderRadius:7,padding:'.45rem .55rem',marginBottom:'.4rem'}}>
+              <div style=${{fontSize:'0.65rem',fontWeight:600,color:'var(--text-muted)',marginBottom:'.2rem',textTransform:'uppercase',letterSpacing:'.04em'}}>Install</div>
+              <pre style=${{fontSize:'0.65rem',background:'var(--tag-bg)',padding:'.3rem .45rem',borderRadius:4,color:'var(--text-primary)',fontFamily:'var(--font-mono,monospace)',margin:'0 0 .25rem',whiteSpace:'pre-wrap',lineHeight:1.5}}>pip install clashcontrol-engine
+clashcontrol-engine --install</pre>
+              <div style=${{fontSize:'0.61rem',color:'var(--text-faint)',lineHeight:1.5}}>
+                Then click Connect. Or <a href="https://github.com/clashcontrol-io/ClashControlEngine/releases/latest" target="_blank" rel="noopener" style=${{color:'var(--accent)'}}>download a binary</a>.
+              </div>
+            </div>`}
+          </div>`;
+        }()}
 
         <div style=${SEC}>Shared Project</div>
         <div style=${TROW}>
@@ -17747,9 +17807,7 @@ function startApp() {
     var ids = Object.keys(addons);
     var SEC={fontSize:'0.72rem',fontWeight:700,color:'var(--accent-subtle)',textTransform:'uppercase',letterSpacing:'.06em',padding:'.6rem .85rem .3rem'};
     var CARD={background:'var(--card-bg)',border:'1px solid var(--card-border)',borderRadius:10,padding:'.65rem .75rem',display:'flex',gap:'.6rem',alignItems:'flex-start'};
-    // Local engine install flow is handled entirely by the addon's panel()
-
-    return html`<div style=${{display:'flex',flexDirection:'column',gap:0,overflowY:'auto',flex:1}}>
+    return html`<div style=${{display:'flex',flexDirection:'column',gap:0,overflowY:'auto',overflowX:'hidden',flex:1}}>
       <div style=${SEC}>Installed Addons</div>
       <div style=${{padding:'0 .85rem .5rem',display:'flex',flexDirection:'column',gap:'.4rem'}}>
         ${ids.length === 0 && html`<div style=${{fontSize:'0.78rem',color:'var(--text-muted)',padding:'.5rem 0',lineHeight:1.7}}>
@@ -17828,7 +17886,7 @@ function startApp() {
                         <option value="all">All linked models (${linkedRevitModels.length})</option>
                         ${linkedRevitModels.map(function(m){return html`<option key=${m.id} value=${m.name}>${m.name}</option>`})}
                       </select>`}
-                      <div style=${{display:'flex',gap:'.3rem'}}>
+                      <div style=${{display:'flex',gap:'.3rem',flexWrap:'wrap'}}>
                         <button onClick=${function(){
                             if(!window._revitDirectExport) return;
                             var target = window._ccRevitUpdateTarget || 'all';
@@ -17836,12 +17894,12 @@ function startApp() {
                             else window._revitDirectExport(['all'], {name: target});
                           }}
                           title=${linkedRevitModels.length > 1 ? 'Re-pull the selected Revit model from the connector' : linkedRevitModels.length === 1 ? 'Re-pull the linked Revit model' : 'Pull the current Revit document for the first time'}
-                          style=${{padding:'.25rem .5rem',borderRadius:5,fontSize:'0.69rem',fontWeight:600,cursor:'pointer',border:'none',flex:1,
+                          style=${{padding:'.25rem .5rem',borderRadius:5,fontSize:'0.69rem',fontWeight:600,cursor:'pointer',border:'none',flex:'1 1 auto',minWidth:0,
                             background:'#1e3a5f',color:'#93c5fd',fontFamily:'inherit'}}>${linkedRevitModels.length === 0 ? 'Pull Model' : 'Update Model'}</button>
                         <button onClick=${function(){if(window._revitDirectPushClashes) window._revitDirectPushClashes(s,d)}}
-                          style=${{padding:'.25rem .5rem',borderRadius:5,fontSize:'0.69rem',fontWeight:600,cursor:'pointer',border:'none',flex:1,background:'#052e16',color:'#4ade80',fontFamily:'inherit'}}>Push Clashes</button>
+                          style=${{padding:'.25rem .5rem',borderRadius:5,fontSize:'0.69rem',fontWeight:600,cursor:'pointer',border:'none',flex:'1 1 auto',minWidth:0,background:'#052e16',color:'#4ade80',fontFamily:'inherit'}}>Push Clashes</button>
                         <button onClick=${function(){if(window._revitDirectDisconnect) window._revitDirectDisconnect(d)}}
-                          style=${{padding:'.25rem .5rem',borderRadius:5,fontSize:'0.69rem',fontWeight:600,cursor:'pointer',border:'none',background:'#7f1d1d',color:'#fca5a5',fontFamily:'inherit'}}>Disconnect</button>
+                          style=${{padding:'.25rem .5rem',borderRadius:5,fontSize:'0.69rem',fontWeight:600,cursor:'pointer',border:'none',flex:'0 0 auto',background:'#7f1d1d',color:'#fca5a5',fontFamily:'inherit'}}>Disconnect</button>
                       </div>
                     </div>`;
                   }()}
