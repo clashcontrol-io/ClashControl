@@ -1,5 +1,8 @@
 # Changelog
 
+## v4.11.27 (2026-04-09)
+- Fix AI chat crash on mobile + restyle empty-state icons
+
 ## v4.11.26 (2026-04-09)
 - Fix Expand all in Spatial view; add No level assigned row in Levels panel
 
