@@ -170,8 +170,16 @@
         dispatch({t:'UPD_LOCAL_ENGINE', u:{active:true, wasInstalled:true}});
       }
       // Passive probe only — we can't fire the URL scheme without a
-      // user gesture, so the actual connect happens on button click.
+      // user gesture, so the actual connect happens on button click or onEnable.
       _checkLocalEngine(dispatch);
+    },
+
+    // Called from within the Enable button's click handler (user gesture),
+    // so firing the URL scheme here is safe. Skips the "Connect" button step.
+    onEnable: function(dispatch) {
+      _connectLocalEngine(dispatch).catch(function(err) {
+        console.log('[LocalEngine] onEnable connect failed:', err && err.message || err);
+      });
     },
 
     destroy: function() {},
