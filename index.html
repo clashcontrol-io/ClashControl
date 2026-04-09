@@ -776,6 +776,20 @@ function startApp() {
     if(item._groupedElems) item._groupedElems.forEach(function(eid){ids.push(eid);});
     return ids;
   }
+  // Same as _itemEids but returns {modelId, expressId, role} tuples so
+  // downstream viz functions (highlight / ghost / fit / fly) can scope
+  // lookups to a single model. This matters for multi-model clashes where
+  // two IFC files share numeric expressIds — picking by expressId alone
+  // lands on the wrong mesh. role is 'A'|'B'|'single'|'grouped' for
+  // colour differentiation in multi-element highlights.
+  function _itemRefs(item) {
+    var refs = [];
+    if (item.elemA) refs.push({modelId: item.modelAId || null, expressId: item.elemA, role: 'A'});
+    if (item.elemB) refs.push({modelId: item.modelBId || null, expressId: item.elemB, role: 'B'});
+    if (item.elementId) refs.push({modelId: item.modelId || item.modelAId || null, expressId: item.elementId, role: 'single'});
+    if (item._groupedElems) item._groupedElems.forEach(function(eid){ refs.push({modelId: null, expressId: eid, role: 'grouped'}); });
+    return refs;
+  }
   function reducer(s,a) {
     switch(a.t) {
       case A.ADD_MODEL:   var _am=a.v; if(s.modelMeta){var _mm=s.modelMeta.find(function(m){return m.id===_am.id});if(_mm){if(_mm.visible===false)_am=Object.assign({},_am,{visible:false});if(_mm.discipline)_am=Object.assign({},_am,{discipline:_mm.discipline});if(_mm.color)_am=Object.assign({},_am,{color:_mm.color});if(_mm.tag)_am=Object.assign({},_am,{tag:_mm.tag});}} return Object.assign({},s,{models:s.models.concat([_am])});
@@ -841,11 +855,11 @@ function startApp() {
             var dNext=dVisible[Math.min(dIdx,dVisible.length-1)]||null;
             var dNextId=dNext?dNext.id:null;
             if(dNext) setTimeout(function(){
-              var ids=_itemEids(dNext);
-              if(ids.length&&_ghostOthers) _ghostOthers(ids);
-              if(dNext.elemA&&_highlightById) _highlightById(dNext.elemA,false);
+              var dRefs=_itemRefs(dNext);
+              if(dRefs.length&&_ghostOthers) _ghostOthers(dRefs);
+              if(dRefs.length&&_highlightRefs) _highlightRefs(dRefs,false);
               if(dNext.point&&window._ccShowActiveClashMarker) window._ccShowActiveClashMarker(dNext.point);
-              if(_flyToElements&&ids.length) _flyToElements(ids, dNext.point);
+              if(_flyToElements&&dRefs.length) _flyToElements(dRefs, dNext.point);
             },100);
             return Object.assign({},s,{clashes:s.clashes.map(function(c){return c.id===a.id?Object.assign({},c,{status:'denied'}):c;}),activeId:dNextId});
           }
@@ -906,11 +920,11 @@ function startApp() {
             var nextId = nextClash ? nextClash.id : null;
             // Schedule camera fly-to for the next clash
             if(nextClash) setTimeout(function(){
-              var ids=_itemEids(nextClash);
-              if(ids.length&&_ghostOthers) _ghostOthers(ids);
-              if(nextClash.elemA&&_highlightById) _highlightById(nextClash.elemA,false);
+              var nRefs=_itemRefs(nextClash);
+              if(nRefs.length&&_ghostOthers) _ghostOthers(nRefs);
+              if(nRefs.length&&_highlightRefs) _highlightRefs(nRefs,false);
               if(nextClash.point&&window._ccShowActiveClashMarker) window._ccShowActiveClashMarker(nextClash.point);
-              if(_flyToElements&&ids.length) _flyToElements(ids, nextClash.point);
+              if(_flyToElements&&nRefs.length) _flyToElements(nRefs, nextClash.point);
             },100);
             return Object.assign({},s,{clashes:remainClashes,issues:s.issues.concat([newIssue]),activeId:nextId});
           }
@@ -3591,6 +3605,11 @@ function startApp() {
           disciplines:[mA.discipline,mB.discipline], selfClash:sameModel,
           elemAType:tA, elemBType:tB, elemAName:nA, elemBName:nB,
           globalIdA:pA.globalId||'', globalIdB:pB.globalId||'',
+          // Revit element IDs (populated by the Revit exporter / sidecar
+          // writer). Users need these to locate the element in Revit via
+          // the "select by ID" command — far faster than pasting a long
+          // element name.
+          revitIdA:pA.revitId||null, revitIdB:pB.revitId||null,
           elemAStorey:pA.storey||'', elemBStorey:pB.storey||'',
           elemAMaterial:pA.material||'', elemBMaterial:pB.material||'',
           objectTypeA:pA.objectType||'', objectTypeB:pB.objectType||'',
@@ -3753,7 +3772,14 @@ function startApp() {
       if (hardPt && rules.minOverlapVolM3 > 0) {
         if (_aabbOverlap(bA, bB).vol < rules.minOverlapVolM3) hardPt = false;
       }
-      if (!hardPt && pairGapM>0) {
+      // Gate the soft/near-miss check strictly on user intent. A "hard
+      // only" run (rules.hard=true, rules.maxGap=0) MUST NOT emit any
+      // soft clashes — even if a stale rules.toleranceByTypePair entry
+      // inflates pairGapM to a non-zero value, or if the global maxGap
+      // is 0 but a per-pair fallback kicks in. Require either soft-only
+      // mode (!rules.hard) or an explicit positive maxGap.
+      var _wantsSoft = (!rules.hard) || (rules.maxGap || 0) > 0;
+      if (!hardPt && pairGapM>0 && _wantsSoft) {
         var _t2 = performance.now();
         geoDist = _meshMinDist(eA, eB, pairGapM, _softPairBuf);
         _tSoft += performance.now() - _t2;
@@ -4142,10 +4168,10 @@ function startApp() {
     // Filter out previously denied clashes (unless elements moved)
     newClashes = newClashes.filter(function(c){ return !_isDeniedClash(c); });
     if (!prevClashes || prevClashes.length === 0) {
-      // First ever run — tag everything as new
+      // First ever run — tag everything as new, assign 1-based numbers
       var now0 = Date.now();
-      var firstRun = newClashes.map(function(c) {
-        return Object.assign({}, c, {_identityKey:computeClashIdentityKey(c), _delta:'new', _firstSeen:now0, _lastSeen:now0, _runCount:1});
+      var firstRun = newClashes.map(function(c, i) {
+        return Object.assign({}, c, {_identityKey:computeClashIdentityKey(c), _delta:'new', _firstSeen:now0, _lastSeen:now0, _runCount:1, number:i+1});
       });
       return {clashes:firstRun, deltaSummary:{newCount:firstRun.length,persisting:0,autoResolved:0,ts:now0}};
     }
@@ -4217,6 +4243,27 @@ function startApp() {
         merged.push(Object.assign({}, c, {_delta:'auto_resolved', _lastSeen:now, status:'auto_resolved'}));
         arCount++;
       }
+    });
+
+    // Assign stable sequence numbers. Persisting clashes keep their old
+    // number so users can share "#42" and have it mean the same clash
+    // across runs; new clashes get the next unused number in deterministic
+    // order (after the highest existing number).
+    var usedNums = {};
+    merged.forEach(function(c){
+      var prev = prevByKey[c._identityKey];
+      if (prev && prev.number != null) {
+        c.number = prev.number;
+        usedNums[prev.number] = true;
+      }
+    });
+    var nextNum = 1;
+    merged.forEach(function(c){
+      if (c.number != null) return;
+      while (usedNums[nextNum]) nextNum++;
+      c.number = nextNum;
+      usedNums[nextNum] = true;
+      nextNum++;
     });
 
     // Compute delta summary inline to avoid extra iteration in reducer
@@ -4787,6 +4834,7 @@ function startApp() {
   var _flyTo = null;
   var _resetView = null;
   var _highlightById = null;
+  var _highlightRefs = null;
   var _fitToClashes = null;
   var _fitToElement = null;
   var _flyToElements = null;
@@ -4965,27 +5013,87 @@ function startApp() {
         _animateFly(endTarget, endPos);
       };
 
-      // Ghost: swap non-highlighted meshes to a ghostly grey material.
-      // Keep shading visible by using a brighter base colour and higher
-      // opacity than the old "barely-there" look — the previous
-      // 0x445566 @ 0.12 made the Phong lighting contribution invisible,
-      // so ghosted surfaces looked like uniform flat silhouettes.
-      // 0x8994a3 @ 0.30 with shininess 30 preserves surface normals
-      // under lighting while still reading as "not the current focus".
+      // Ghost: swap non-highlighted meshes to a SHADED transparent clone of
+      // their original material so the ghost still reads with its real
+      // material colour. The previous approach replaced every mesh's
+      // material with a single shared grey Phong, which washed everything
+      // out and lost all colour information — users saw a uniform white fog.
+      //
+      // To keep allocation cheap, ghost clones are cached per original
+      // material uuid so N meshes sharing a source material still produce
+      // exactly one clone. Clones are tagged with _isCCGhost so downstream
+      // code (hover, pick, style swap) can detect ghosted meshes without
+      // holding a reference to any particular clone.
       var _ghostedMeshes = [];
-      var _ghostMat = new THREE.MeshPhongMaterial({color:0x8994a3, transparent:true, opacity:0.30, depthWrite:false, shininess:30, flatShading:false});
-      S._ghostMat = _ghostMat;
-      function ghostOthers(targetExpressIds) {
+      var _ghostMatCache = new Map(); // origMat.uuid → ghost clone
+      function _makeGhostClone(origMat) {
+        if (!origMat) return origMat;
+        if (Array.isArray(origMat)) return origMat.map(_makeGhostClone);
+        if (origMat._isCCGhost) return origMat;
+        var cached = _ghostMatCache.get(origMat.uuid);
+        if (cached) return cached;
+        var g = origMat.clone();
+        g.transparent = true;
+        g.opacity = 0.18;
+        g.depthWrite = false;
+        // Quiet down any emissive glow the source material might have had —
+        // a ghost should never out-shine the focused clash element.
+        if (g.emissive && g.emissive.setScalar) g.emissive.setScalar(0);
+        // Keep surface normals readable under the scene lighting. For basic
+        // materials (no lighting) we fall back to a darker tint so they
+        // still read as "pushed back".
+        if (g.isMeshBasicMaterial && g.color && g.color.multiplyScalar) {
+          g.color.multiplyScalar(0.85);
+        }
+        g._isCCGhost = true;
+        _ghostMatCache.set(origMat.uuid, g);
+        return g;
+      }
+      function _isGhostMat(mat) {
+        if (!mat) return false;
+        if (Array.isArray(mat)) return mat.length > 0 && !!(mat[0] && mat[0]._isCCGhost);
+        return !!mat._isCCGhost;
+      }
+      // Legacy placeholder: some callers used to compare to S._ghostMat.
+      // We keep the property for backward compat but route equality
+      // checks through _isGhostMat(). Anything that must test for ghosted
+      // state should use _isGhostMat or S._isGhostMat.
+      S._ghostMat = null;
+      S._isGhostMat = _isGhostMat;
+      // Accepts either:
+      //   - Array of bare expressIds         (legacy — not model-scoped)
+      //   - Array of {modelId, expressId}    (preferred — scoped per model)
+      //   - Mixed
+      // When a ref has a modelId, the mesh's parent modelId must match for
+      // it to stay visible. Legacy bare IDs keep any mesh with that
+      // expressId visible across every model (same behaviour as before).
+      function ghostOthers(targets) {
         unghostAll();
-        if(!targetExpressIds||!targetExpressIds.length) return;
-        var idSet = {};
-        targetExpressIds.forEach(function(id){idSet[id]=true;});
+        if(!targets||!targets.length) return;
+        var keepAny = Object.create(null);       // eid → true (match any model)
+        var keepScoped = Object.create(null);    // eid → { modelId: true }
+        targets.forEach(function(t){
+          if (t == null) return;
+          if (typeof t === 'object') {
+            var eid = t.expressId;
+            if (eid == null) return;
+            if (!t.modelId) { keepAny[eid] = true; return; }
+            if (!keepScoped[eid]) keepScoped[eid] = Object.create(null);
+            keepScoped[eid][t.modelId] = true;
+          } else {
+            keepAny[t] = true;
+          }
+        });
         S.mg.traverse(function(obj){
           if(!obj.isMesh||!obj.material||obj.userData._isLodProxy) return;
+          if(_isGhostMat(obj.material)) return; // already ghosted
           var eid = obj.userData.expressId;
-          if(eid!=null && !idSet[eid]){
+          if(eid==null) return;
+          var meshModelId = obj.parent && obj.parent.userData && obj.parent.userData.modelId;
+          var keep = keepAny[eid] || (keepScoped[eid] && meshModelId && keepScoped[eid][meshModelId]);
+          if (!keep) {
             _ghostedMeshes.push({mesh:obj, origMaterial:obj.material});
-            obj.material = _ghostMat;
+            obj.material = _makeGhostClone(obj.material);
           }
         });
         invalidate();
@@ -4998,7 +5106,7 @@ function startApp() {
         // Reset hover tracking to prevent stale material references
         if(lastHoveredMesh && lastHoverOriginals){
           try {
-            if(lastHoveredMesh.material && lastHoveredMesh.material !== _ghostMat){
+            if(lastHoveredMesh.material && !_isGhostMat(lastHoveredMesh.material)){
               if(lastHoveredMesh.material.emissive) lastHoveredMesh.material.emissive.copy(lastHoverOriginals.emissive);
               lastHoveredMesh.material.opacity = lastHoverOriginals.opacity;
               lastHoveredMesh.material.needsUpdate = true;
@@ -5050,60 +5158,109 @@ function startApp() {
         unghostAll();
       };
 
-      _highlightById = function(expressId, alsoGhost) {
-        if(!expressId||!S.mg) return;
+      // Clear the current highlight group(s).
+      function _clearHighlightGroups() {
         if(hlRef.current){
           if(hlRef.current.isGroup) hlRef.current.traverse(function(c){if(c.isMesh||c.isLine||c.isLineSegments){if(c.geometry)c.geometry.dispose();if(c.material)c.material.dispose();}});
           scene.remove(hlRef.current);hlRef.current=null;
         }
         if(outlineRef.current){scene.remove(outlineRef.current);outlineRef.current=null;}
+      }
+      // Locate a mesh by expressId, optionally scoped to a specific model.
+      // For multi-model clashes expressIds are NOT globally unique — without
+      // scoping we'd pick the first mesh anywhere in the scene, which
+      // landed on the wrong beam/pipe on the wrong floor.
+      function _findMeshByRef(expressId, modelId) {
+        if (expressId == null || !S.mg) return null;
         var found = null;
         S.mg.traverse(function(obj){
-          if(obj.isMesh && obj.userData.expressId===expressId && !found) found=obj;
-        });
-        if(found){
-          // Look up discipline color from model
-          var discColor = 0x60a5fa;
-          var curModels = modelsRef.current;
-          for(var mi=0;mi<curModels.length;mi++){
-            var els=curModels[mi].elements||[];
-            for(var ei=0;ei<els.length;ei++){
-              if(els[ei].expressId===expressId){
-                var dObj=DISC.find(function(x){return x.id===curModels[mi].discipline;});
-                if(dObj) discColor=new THREE.Color(dObj.c).getHex();
-                mi=curModels.length; break;
-              }
-            }
+          if (found) return;
+          if (!obj.isMesh || obj.userData.expressId !== expressId) return;
+          if (modelId) {
+            var mm = obj.parent && obj.parent.userData && obj.parent.userData.modelId;
+            if (mm !== modelId) return;
           }
-
-          // Ensure visible for outline computation (may be frustum-culled)
-          var wasHidden = !found.visible;
-          if(wasHidden) found.visible = true;
-
-          var grp = new THREE.Group();
-
-          // Hard edges only (skip for large geometries >50K faces to avoid freeze)
-          try {
-            var faceCount = found.geometry.index ? found.geometry.index.count/3 : (found.geometry.attributes.position?found.geometry.attributes.position.count/3:0);
-            if(faceCount < 50000) {
-              var edgeGeo = new THREE.EdgesGeometry(found.geometry, 50);
-              var edgeMat = new THREE.LineBasicMaterial({color:discColor, transparent:true, opacity:0.4, depthTest:false});
-              var edgeLines = new THREE.LineSegments(edgeGeo, edgeMat);
-              edgeLines.applyMatrix4(found.matrixWorld);
-              edgeLines.renderOrder = 999;
-              grp.add(edgeLines);
-            }
-          } catch(e){}
-
-          scene.add(grp);
-          hlRef.current = grp;
-
-          if(wasHidden && found.userData._frustumCulled) found.visible = false;
+          found = obj;
+        });
+        return found;
+      }
+      // Build an edge-outline THREE.Group for a single mesh with the given
+      // discipline colour. Returns null if the mesh has no usable geometry.
+      function _buildHighlightGroupForMesh(mesh, colorHex) {
+        if (!mesh) return null;
+        var grp = new THREE.Group();
+        var wasHidden = !mesh.visible;
+        if (wasHidden) mesh.visible = true;
+        try {
+          var faceCount = mesh.geometry.index ? mesh.geometry.index.count/3 : (mesh.geometry.attributes.position ? mesh.geometry.attributes.position.count/3 : 0);
+          if (faceCount < 50000) {
+            var edgeGeo = new THREE.EdgesGeometry(mesh.geometry, 50);
+            var edgeMat = new THREE.LineBasicMaterial({color: colorHex, transparent:true, opacity:0.55, depthTest:false});
+            var edgeLines = new THREE.LineSegments(edgeGeo, edgeMat);
+            edgeLines.applyMatrix4(mesh.matrixWorld);
+            edgeLines.renderOrder = 999;
+            grp.add(edgeLines);
+          }
+        } catch(e){}
+        if (wasHidden && mesh.userData._frustumCulled) mesh.visible = false;
+        return grp;
+      }
+      function _discColorForModelId(modelId) {
+        var curModels = modelsRef.current;
+        for (var mi = 0; mi < curModels.length; mi++) {
+          if (curModels[mi].id === modelId) {
+            var dObj = DISC.find(function(x){return x.id===curModels[mi].discipline;});
+            if (dObj) return new THREE.Color(dObj.c).getHex();
+            break;
+          }
         }
-        // Ghost non-selected elements
-        if(alsoGhost!==false) ghostOthers([expressId]);
+        return 0x60a5fa;
+      }
+      // Legacy single-element highlight. modelId is optional but strongly
+      // recommended for multi-model scenes so expressId collisions don't
+      // pick the wrong mesh.
+      _highlightById = function(expressId, alsoGhost, modelId) {
+        if(!expressId||!S.mg) return;
+        _clearHighlightGroups();
+        var found = _findMeshByRef(expressId, modelId);
+        if(found){
+          // Look up discipline color from the model we actually landed on
+          var meshModelId = modelId || (found.parent && found.parent.userData && found.parent.userData.modelId);
+          var discColor = _discColorForModelId(meshModelId);
+          var grp = _buildHighlightGroupForMesh(found, discColor);
+          if (grp) {
+            scene.add(grp);
+            hlRef.current = grp;
+          }
+        }
+        if(alsoGhost!==false) ghostOthers([{modelId: modelId || null, expressId: expressId}]);
         invalidate();
       };
+      // Multi-ref highlight — draws an outline on every ref in its own
+      // discipline colour. Used for clash items where both elements should
+      // be outlined. refs = [{modelId, expressId, role}]
+      // Assigned to the module-level var so callers outside the Viewer
+      // closure (clash list, AI panel, etc.) can reach it.
+      _highlightRefs = function(refs, alsoGhost) {
+        if (!refs || !refs.length || !S.mg) return;
+        _clearHighlightGroups();
+        var combinedGrp = new THREE.Group();
+        refs.forEach(function(ref){
+          if (!ref || ref.expressId == null) return;
+          var mesh = _findMeshByRef(ref.expressId, ref.modelId);
+          if (!mesh) return;
+          var color = _discColorForModelId(ref.modelId || (mesh.parent && mesh.parent.userData && mesh.parent.userData.modelId));
+          var sub = _buildHighlightGroupForMesh(mesh, color);
+          if (sub) combinedGrp.add(sub);
+        });
+        if (combinedGrp.children.length) {
+          scene.add(combinedGrp);
+          hlRef.current = combinedGrp;
+        }
+        if (alsoGhost !== false) ghostOthers(refs);
+        invalidate();
+      };
+      window._highlightRefs = _highlightRefs;
 
       // ── Active Clash Point Marker (bright blue) ──
       var _activeClashMarker = null;
@@ -5254,12 +5411,9 @@ function startApp() {
         return d * Math.max(1.2, Math.min(2.5, scale));
       }
 
-      _fitToElement = function(expressId, hint) {
+      _fitToElement = function(expressId, hint, modelId) {
         if(!expressId||!S.mg||!S.orbit) return;
-        var found = null;
-        S.mg.traverse(function(obj){
-          if(obj.isMesh && obj.userData.expressId===expressId && !found) found=obj;
-        });
+        var found = _findMeshByRef(expressId, modelId);
         if(!found) return;
         // Ensure mesh is visible for bounding box computation (may be frustum-culled)
         var wasHidden = !found.visible;
@@ -5272,23 +5426,33 @@ function startApp() {
         _flyTo([ctr.x,ctr.y,ctr.z], _zoomDist(Math.max(sz.x,sz.y,sz.z)), hint||null);
       };
 
-      // Fly to element(s) — auto-detects vertical shift vs full reframe
-      _flyToElements = function(expressIds, fallbackPt) {
+      // Fly to element(s) — auto-detects vertical shift vs full reframe.
+      // Accepts either bare expressIds (legacy) or {modelId, expressId}
+      // refs — the latter are correctly scoped per model so cross-model
+      // expressId collisions don't expand the bbox to random meshes.
+      _flyToElements = function(targets, fallbackPt) {
         if(!S.mg||!S.orbit) return;
-        if(!expressIds||!expressIds.length){
+        if(!targets||!targets.length){
           if(fallbackPt) _flyTo(fallbackPt);
           return;
         }
         var box = new THREE.Box3();
         var foundAny = false;
         var hiddenMeshes = [];
-        expressIds.forEach(function(eid){
+        targets.forEach(function(t){
+          var expressId, modelId;
+          if (t && typeof t === 'object') { expressId = t.expressId; modelId = t.modelId || null; }
+          else { expressId = t; modelId = null; }
+          if (expressId == null) return;
           S.mg.traverse(function(obj){
-            if(obj.isMesh && obj.userData.expressId===eid){
-              if(!obj.visible && obj.userData._frustumCulled){obj.visible=true;hiddenMeshes.push(obj);}
-              box.expandByObject(obj);
-              foundAny = true;
+            if(!obj.isMesh || obj.userData.expressId !== expressId) return;
+            if (modelId) {
+              var mm = obj.parent && obj.parent.userData && obj.parent.userData.modelId;
+              if (mm !== modelId) return;
             }
+            if(!obj.visible && obj.userData._frustumCulled){obj.visible=true;hiddenMeshes.push(obj);}
+            box.expandByObject(obj);
+            foundAny = true;
           });
         });
         hiddenMeshes.forEach(function(m){m.visible=false;});
@@ -5304,6 +5468,7 @@ function startApp() {
       // Expose for addons (e.g. Revit Bridge selection sync)
       window._highlightById = _highlightById;
       window._flyToElements = _flyToElements;
+      window._fitToElement  = _fitToElement;
 
       // ── Section Box helper ──
       _getSectionBoxFromScene = function(){
@@ -5315,14 +5480,24 @@ function startApp() {
       };
 
       // Section box around specific elements (for clash isolation)
-      _sboxAroundElements = function(expressIds) {
-        if(!expressIds||!expressIds.length||!S.mg) return;
+      // Accepts either bare expressIds or {modelId, expressId} refs. When
+      // a ref has a modelId we scope the traversal to that model so cross-
+      // model expressId collisions don't expand the box to random meshes.
+      _sboxAroundElements = function(targets) {
+        if(!targets||!targets.length||!S.mg) return;
         var box = new THREE.Box3();
-        expressIds.forEach(function(eid){
+        targets.forEach(function(t){
+          var expressId, modelId;
+          if (t && typeof t === 'object') { expressId = t.expressId; modelId = t.modelId || null; }
+          else { expressId = t; modelId = null; }
+          if (expressId == null) return;
           S.mg.traverse(function(obj){
-            if(obj.isMesh && obj.userData.expressId===eid){
-              box.expandByObject(obj);
+            if(!obj.isMesh || obj.userData.expressId !== expressId) return;
+            if (modelId) {
+              var mm = obj.parent && obj.parent.userData && obj.parent.userData.modelId;
+              if (mm !== modelId) return;
             }
+            box.expandByObject(obj);
           });
         });
         if(box.isEmpty()) return;
@@ -5394,13 +5569,13 @@ function startApp() {
         var hits = hoverRaycaster.intersectObjects(S.mg.children, true);
         var hitMesh = null;
         if(hits.length>0 && hits[0].object.isMesh) hitMesh = hits[0].object;
-        // Skip ghosted meshes — don't mutate the shared ghost material
-        if(hitMesh && hitMesh.material === _ghostMat) hitMesh = null;
+        // Skip ghosted meshes — don't mutate the cached ghost clone
+        if(hitMesh && _isGhostMat(hitMesh.material)) hitMesh = null;
         // Skip meshes from hidden (unchecked) model groups
         if(hitMesh && hitMesh.parent && hitMesh.parent.userData.modelId && !hitMesh.parent.visible) hitMesh = null;
         if(hitMesh===lastHoveredMesh) return;
         // Restore previous
-        if(lastHoveredMesh && lastHoverOriginals && lastHoveredMesh.material && lastHoveredMesh.material !== _ghostMat){
+        if(lastHoveredMesh && lastHoverOriginals && lastHoveredMesh.material && !_isGhostMat(lastHoveredMesh.material)){
           if(lastHoveredMesh.material.emissive) lastHoveredMesh.material.emissive.copy(lastHoverOriginals.emissive);
           lastHoveredMesh.material.opacity = lastHoverOriginals.opacity;
           lastHoveredMesh.material.needsUpdate = true;
@@ -5552,7 +5727,7 @@ function startApp() {
         // Filter out ghosted meshes and meshes from hidden (unchecked) model groups
         var hits = raycaster.intersectObjects(S.mg.children, true).filter(function(h){
           if(h.object.userData._isLodProxy) return false;
-          if(h.object.material === _ghostMat) return false;
+          if(_isGhostMat(h.object.material)) return false;
           if(h.object.parent && h.object.parent.userData.modelId && !h.object.parent.visible) return false;
           return true;
         });
@@ -5644,11 +5819,11 @@ function startApp() {
               var hitClash = null;
               for(var ci=0;ci<allClashes.length;ci++){if(allClashes[ci].id===mh.userData.clashId){hitClash=allClashes[ci];break;}}
               if(hitClash){
-                var cids=_itemEids(hitClash);
-                if(cids.length&&_ghostOthers) _ghostOthers(cids);
-                if(hitClash.elemA&&_highlightById) _highlightById(hitClash.elemA,false);
+                var cRefs=_itemRefs(hitClash);
+                if(cRefs.length&&_ghostOthers) _ghostOthers(cRefs);
+                if(cRefs.length&&_highlightRefs) _highlightRefs(cRefs,false);
                 if(hitClash.point && window._ccShowActiveClashMarker) window._ccShowActiveClashMarker(hitClash.point);
-                if(_flyToElements && cids.length) _flyToElements(cids, hitClash.point);
+                if(_flyToElements && cRefs.length) _flyToElements(cRefs, hitClash.point);
                 else if(hitClash.point && _flyTo) _flyTo(hitClash.point);
               }
               return;
@@ -5666,11 +5841,11 @@ function startApp() {
               var hitIssue = null;
               for(var ii=0;ii<allIssues.length;ii++){if(allIssues[ii].id===imh.userData.issueId){hitIssue=allIssues[ii];break;}}
               if(hitIssue){
-                var iids=_itemEids(hitIssue);
-                if(iids.length&&_ghostOthers) _ghostOthers(iids);
-                if(hitIssue.elementId&&_highlightById) _highlightById(hitIssue.elementId,false);
+                var iRefs=_itemRefs(hitIssue);
+                if(iRefs.length&&_ghostOthers) _ghostOthers(iRefs);
+                if(iRefs.length&&_highlightRefs) _highlightRefs(iRefs,false);
                 if(hitIssue.point && window._ccShowActiveClashMarker) window._ccShowActiveClashMarker(hitIssue.point);
-                if(_flyToElements && iids.length) _flyToElements(iids, hitIssue.point);
+                if(_flyToElements && iRefs.length) _flyToElements(iRefs, hitIssue.point);
                 else if(hitIssue.point && _flyTo) _flyTo(hitIssue.point);
               }
               return;
@@ -5759,7 +5934,7 @@ function startApp() {
         raycaster.setFromCamera(mouse, S.camera);
         var hits = raycaster.intersectObjects(S.mg.children, true).filter(function(h){
           if(h.object.userData._isLodProxy) return false;
-          if(h.object.material === _ghostMat) return false;
+          if(_isGhostMat(h.object.material)) return false;
           if(h.object.parent && h.object.parent.userData.modelId && !h.object.parent.visible) return false;
           return true;
         });
@@ -6692,8 +6867,8 @@ function startApp() {
         // Save original material on first encounter
         if(!obj.userData._origMaterial) obj.userData._origMaterial = obj.material;
         var orig = obj.userData._origMaterial;
-        // Skip if currently ghosted
-        if(obj.material === S._ghostMat) continue;
+        // Skip if currently ghosted (don't mutate the cached ghost clone)
+        if(S._isGhostMat && S._isGhostMat(obj.material)) continue;
         // Use pre-warmed cached materials if available
         var cache = obj.userData._styleMats;
         if(cache && cache[style]) {
@@ -12240,14 +12415,20 @@ function startApp() {
       if (zoomedTo === label) {
         // Second click — smoothly restore camera to clash overview
         setZoomedTo(null);
-        var reIds = _itemEids(it);
-        if (reIds.length && _ghostOthers) _ghostOthers(reIds);
-        if (it.elemA && _highlightById) _highlightById(it.elemA, false);
+        var reRefs = _itemRefs(it);
+        if (reRefs.length && _ghostOthers) _ghostOthers(reRefs);
+        if (reRefs.length && _highlightRefs) _highlightRefs(reRefs, false);
         if (window._ccRestoreClashCam) window._ccRestoreClashCam();
       } else {
         setZoomedTo(label);
-        if (_fitToElement && elemId) _fitToElement(elemId);
-        if (_highlightById && elemId) _highlightById(elemId);
+        // Zoom A / Zoom B / Zoom (single) — pick the correct model for
+        // the chosen element so cross-model expressId collisions don't
+        // land on the wrong mesh.
+        var targetModelId = label === 'A' ? it.modelAId
+                          : label === 'B' ? it.modelBId
+                          : (it.modelId || it.modelAId);
+        if (_fitToElement && elemId) _fitToElement(elemId, null, targetModelId);
+        if (_highlightById && elemId) _highlightById(elemId, true, targetModelId);
       }
     }
     // For issues: single element via elementId; for clashes: elemA + elemB
@@ -12257,19 +12438,47 @@ function startApp() {
     var pA = detailOpen ? (it.propsA || _lookupElProps(models, it.modelAId, it.elemA)) : null;
     var pB = detailOpen ? (it.propsB || _lookupElProps(models, it.modelBId, it.elemB)) : null;
     var pEl = detailOpen && isSingle ? (it.elementProps || _lookupElProps(models, it.modelId, it.elementId)) : null;
+    // Build a compact Revit-ID chip for either side of the clash.
+    // Falls back to expressId when the element has no Revit sidecar data.
+    function _idChip(label, revitId, expressId, color) {
+      var text = revitId != null ? ('Revit ID ' + revitId) : ('#' + expressId);
+      function copyToClip(ev) {
+        ev.stopPropagation();
+        try { navigator.clipboard && navigator.clipboard.writeText(String(revitId != null ? revitId : expressId)); } catch(e){}
+      }
+      return html`<span title=${'Click to copy — '+(revitId!=null?'Revit element ID for the \"Select by ID\" command':'IFC expressId (no Revit sidecar present)')}
+        onClick=${copyToClip}
+        style=${{display:'inline-flex',alignItems:'center',gap:'.2rem',cursor:'copy',
+          fontSize:'var(--text-2xs)',fontVariantNumeric:'tabular-nums',
+          background:'var(--bg-primary)',color:color||'var(--text-secondary)',
+          border:'1px solid var(--border-subtle)',padding:'.1rem .35rem',borderRadius:'var(--radius-pill)',lineHeight:1.3}}>
+        <span style=${{fontSize:'.58rem',color:'var(--text-faint)',fontWeight:600,letterSpacing:'.04em'}}>${label}</span>
+        ${text}
+      </span>`;
+    }
     return html`<div onClick=${function(e){e.stopPropagation();}}>
+      ${(it.number != null || it.revitIdA != null || it.revitIdB != null || (isSingle && (it.elementId != null))) && html`<div style=${{display:'flex',flexWrap:'wrap',gap:'.25rem',alignItems:'center',marginBottom:'.3rem'}}>
+        ${it.number != null && html`<span title="Clash number — stable across detection runs. Click to copy."
+          onClick=${function(ev){ev.stopPropagation();try{navigator.clipboard&&navigator.clipboard.writeText('#'+it.number);}catch(e){}}}
+          style=${{display:'inline-flex',alignItems:'center',gap:'.2rem',cursor:'copy',
+            background:'var(--color-info-bg)',color:'var(--color-info-fg)',
+            padding:'.1rem .4rem',borderRadius:'var(--radius-pill)',
+            fontSize:'var(--text-2xs)',fontWeight:'var(--weight-bold)',fontVariantNumeric:'tabular-nums'}}>#${it.number}</span>`}
+        ${!isSingle && html`${_idChip('A', it.revitIdA != null ? it.revitIdA : (pA && pA.revitId), it.elemA, '#93c5fd')}${_idChip('B', it.revitIdB != null ? it.revitIdB : (pB && pB.revitId), it.elemB, '#fca5a5')}`}
+        ${isSingle && _idChip('EL', pEl && pEl.revitId, it.elementId, '#93c5fd')}
+      </div>`}
       <div style=${{display:'flex',gap:'.2rem',marginBottom:'.2rem'}}>
         ${isSingle ? html`
-          <button onClick=${function(){if(_fitToElement&&it.elementId)_fitToElement(it.elementId);if(_highlightById&&it.elementId)_highlightById(it.elementId);}}
+          <button onClick=${function(){var mid=it.modelId||it.modelAId; if(_fitToElement&&it.elementId)_fitToElement(it.elementId,null,mid); if(_highlightById&&it.elementId)_highlightById(it.elementId,true,mid);}}
             style=${{...S_BTN,fontSize:'0.57rem',padding:'.1rem .3rem',background:'#0f3a5f',color:'#93c5fd',flex:1}}>Zoom</button>
-          <button onClick=${function(){if(_fitToElement&&it.elementId)_fitToElement(it.elementId);if(_highlightById)_highlightById(it.elementId,false);_sboxAroundElements&&_sboxAroundElements([it.elementId]);}}
+          <button onClick=${function(){var mid=it.modelId||it.modelAId; if(_fitToElement&&it.elementId)_fitToElement(it.elementId,null,mid); if(_highlightById&&it.elementId)_highlightById(it.elementId,false,mid); _sboxAroundElements&&_sboxAroundElements([{modelId:mid,expressId:it.elementId}]);}}
             style=${{...S_BTN,fontSize:'0.57rem',padding:'.1rem .3rem',background:'#3b0764',color:'#c084fc',flex:1}} title="Section box around element">Box</button>
         ` : html`
           <button onClick=${function(){_zoomToggle(it.elemA,'A');}}
             style=${{...S_BTN,fontSize:'0.57rem',padding:'.1rem .3rem',background:zoomedTo==='A'?'#1e40af':'#0f3a5f',color:'#93c5fd',flex:1}}>${zoomedTo==='A'?'Zoom Both':'Zoom A'}</button>
           <button onClick=${function(){_zoomToggle(it.elemB,'B');}}
             style=${{...S_BTN,fontSize:'0.57rem',padding:'.1rem .3rem',background:zoomedTo==='B'?'#1e40af':'#0f3a5f',color:'#93c5fd',flex:1}}>${zoomedTo==='B'?'Zoom Both':'Zoom B'}</button>
-          <button onClick=${function(){if(_fitToElement&&it.elemA)_fitToElement(it.elemA);if(_highlightById)_highlightById(it.elemA,false);_sboxAroundElements&&_sboxAroundElements([it.elemA,it.elemB]);}}
+          <button onClick=${function(){var refs=_itemRefs(it); if(_fitToElement&&it.elemA)_fitToElement(it.elemA,null,it.modelAId); if(refs.length&&_highlightRefs)_highlightRefs(refs,false); _sboxAroundElements&&_sboxAroundElements(refs);}}
             style=${{...S_BTN,fontSize:'0.57rem',padding:'.1rem .3rem',background:'#3b0764',color:'#c084fc',flex:1}} title="Section box around both elements">Box</button>
         `}
       </div>
@@ -12455,12 +12664,11 @@ function startApp() {
           var nxt = flatItems[nextIdx];
           d({t:A.ACTIVE,id:nxt.id});
           // Trigger highlight + fly-to for the newly selected item
-          var hIds=_itemEids(nxt);
-          if(hIds.length&&_ghostOthers) _ghostOthers(hIds);
-          if(nxt.elemA&&_highlightById) _highlightById(nxt.elemA,false);
-          if(nxt.elementId&&_highlightById) _highlightById(nxt.elementId,false);
+          var hRefs=_itemRefs(nxt);
+          if(hRefs.length&&_ghostOthers) _ghostOthers(hRefs);
+          if(hRefs.length&&_highlightRefs) _highlightRefs(hRefs,false);
           if(nxt.point && window._ccShowActiveClashMarker) window._ccShowActiveClashMarker(nxt.point);
-          if(_flyToElements && hIds.length) _flyToElements(hIds, nxt.point);
+          if(_flyToElements && hRefs.length) _flyToElements(hRefs, nxt.point);
           else if(nxt.point && _flyTo) _flyTo(nxt.point);
           // Scroll into view
           if(scrollRef.current){
@@ -12488,12 +12696,11 @@ function startApp() {
       if (idx < 0 || idx >= flatItems.length || (flatItems[idx] && flatItems[idx].id === currentId)) return;
       var nxt = flatItems[idx];
       d({t:A.ACTIVE, id:nxt.id});
-      var hIds = _itemEids(nxt);
-      if (hIds.length && _ghostOthers) _ghostOthers(hIds);
-      if (nxt.elemA && _highlightById) _highlightById(nxt.elemA, false);
-      if (nxt.elementId && _highlightById) _highlightById(nxt.elementId, false);
+      var hRefs2 = _itemRefs(nxt);
+      if (hRefs2.length && _ghostOthers) _ghostOthers(hRefs2);
+      if (hRefs2.length && _highlightRefs) _highlightRefs(hRefs2, false);
       if (nxt.point && window._ccShowActiveClashMarker) window._ccShowActiveClashMarker(nxt.point);
-      if (_flyToElements && hIds.length) _flyToElements(hIds, nxt.point);
+      if (_flyToElements && hRefs2.length) _flyToElements(hRefs2, nxt.point);
       else if (nxt.point && _flyTo) _flyTo(nxt.point);
       if (scrollRef.current) {
         var rows = scrollRef.current.querySelectorAll('[data-item-id]');
@@ -12699,14 +12906,15 @@ function startApp() {
     })();
     return html`<div onClick=${function(){
         var wasActive=active;
-        var eids=_itemEids(it);
+        // Use model-scoped refs so cross-model expressId collisions don't
+        // pick the wrong mesh for the highlight / ghost / fly-to.
+        var refs=_itemRefs(it);
         if(wasActive){
-          // Already active — re-zoom to both elements (restore ghost + fly to both)
-          if(eids.length&&_ghostOthers) _ghostOthers(eids);
-          if(it.elemA&&_highlightById) _highlightById(it.elemA,false);
-          if(it.elementId&&_highlightById) _highlightById(it.elementId,false);
+          // Already active — re-zoom to both elements (restore ghost + highlight + fly)
+          if(refs.length&&_ghostOthers) _ghostOthers(refs);
+          if(refs.length&&_highlightRefs) _highlightRefs(refs,false);
           if(it.point && window._ccShowActiveClashMarker) window._ccShowActiveClashMarker(it.point);
-          if(_flyToElements && eids.length) _flyToElements(eids, it.point);
+          if(_flyToElements && refs.length) _flyToElements(refs, it.point);
           else if(it.point && _flyTo) _flyTo(it.point);
           return;
         }
@@ -12716,13 +12924,12 @@ function startApp() {
           window._ccDispatch({t:A.SECTION_BOX,v:null});
         }
         if(pr.autoHighlight!==false){
-          if(eids.length&&_ghostOthers) _ghostOthers(eids);
-          if(it.elemA&&_highlightById) _highlightById(it.elemA,false);
-          if(it.elementId&&_highlightById) _highlightById(it.elementId,false);
+          if(refs.length&&_ghostOthers) _ghostOthers(refs);
+          if(refs.length&&_highlightRefs) _highlightRefs(refs,false);
           if(it.point && window._ccShowActiveClashMarker) window._ccShowActiveClashMarker(it.point);
         }
         if(pr.autoFlyTo!==false){
-          if(_flyToElements && eids.length) _flyToElements(eids, it.point);
+          if(_flyToElements && refs.length) _flyToElements(refs, it.point);
           else if(it.point && _flyTo) _flyTo(it.point);
         }
       }}
@@ -12735,6 +12942,9 @@ function startApp() {
         ${!isClash && html`<span style=${{fontSize:'var(--text-md)',flexShrink:0}}>${icon}</span>`}
         <div style=${{flex:1,minWidth:0}}>
           <div style=${{display:'flex',alignItems:'center',gap:'var(--space-1)'}}>
+            ${isClash && it.number != null && html`<span class="cc-status-pill"
+              title="Clash number (stable across runs) — copy or share this to identify the clash"
+              style=${{background:'var(--bg-secondary)',color:'var(--text-muted)',fontVariantNumeric:'tabular-nums',padding:'.1rem var(--space-2)'}}>#${it.number}</span>`}
             ${isClash && typeLabel && html`<span class="cc-status-pill" style=${{background:typeBg,color:typeCol,padding:'.1rem var(--space-2)'}}>${typeLabel}</span>`}
             ${isClash && sevLabel && html`<span class="cc-status-pill" style=${{background:sevBg,color:sevCol,padding:'.1rem var(--space-2)'}}>${sevLabel}</span>`}
             ${isClash && it._delta==='new' && html`<span class="cc-status-pill" title="New this run" style=${{background:'var(--color-info-bg)',color:'var(--color-info-fg)'}}>NEW</span>`}
@@ -14343,12 +14553,21 @@ function startApp() {
       case 'run_detection': {
         if (!s.models.length) return _offerLoadIFC();
         var mA = resolveModel(action.modelA), mB = resolveModel(action.modelB);
-        var upd = { modelA: mA?mA.id:'all', modelB: mB?mB.id:'all', hard: action.hard!==false, duplicates: action.duplicates===true };
-        if (action.excludeSelf) upd.excludeSelf = true;
+        // Respect explicit params from Gemma. Only default hard→true if
+        // the field is truly missing; duplicates default to false. If a
+        // numeric maxGap is supplied we treat the clash-type question as
+        // already answered (Gemma's few-shot prompt maps common phrasings
+        // directly to {hard, maxGap, duplicates}).
+        var hardVal = (typeof action.hard === 'boolean') ? action.hard : true;
+        var dupVal  = (typeof action.duplicates === 'boolean') ? action.duplicates : false;
+        var upd = { modelA: mA?mA.id:'all', modelB: mB?mB.id:'all', hard: hardVal, duplicates: dupVal };
+        if (action.excludeSelf != null) upd.excludeSelf = !!action.excludeSelf;
         if (typeof action.maxGap === 'number') upd.maxGap = action.maxGap;
-        // Server fills in explicit values — mark as specified so conversation doesn't re-ask
+        else if (hardVal && !dupVal) upd.maxGap = 0; // hard only → zero gap
+        var typeExplicit = (typeof action.hard === 'boolean') || (typeof action.maxGap === 'number') || dupVal;
+        var gapExplicit  = (typeof action.maxGap === 'number');
         return {_clashSetup:true, rules:upd, nameA:mA?mA.name:'All models', nameB:mB?mB.name:'All models',
-          _typeExplicit:true, _selfExplicit:typeof action.excludeSelf==='boolean'};
+          _typeExplicit:typeExplicit, _gapExplicit:gapExplicit, _selfExplicit:typeof action.excludeSelf==='boolean'};
       }
       case 'set_max_gap': if (typeof action.value !== 'number') return null; d({t:A.UPD_RULES, u:{maxGap:action.value}}); return 'Gap set to '+action.value+'mm.';
       case 'set_duplicates': d({t:A.UPD_RULES, u:{duplicates:!!action.enabled}}); return action.enabled ? 'Got it — duplicates included.' : 'Got it — duplicates excluded.';
@@ -18339,11 +18558,11 @@ function startApp() {
       if(s.tab==='issues' && s.issues.length>0 && !s.activeId){
         var first=s.issues[0];
         d({t:A.ACTIVE,id:first.id});
-        var eids=[first.elemA,first.elemB,first.elementId].filter(Boolean);
-        if(eids.length&&_ghostOthers) _ghostOthers(eids);
-        if(first.elemA&&_highlightById) _highlightById(first.elemA,false);
+        var firstRefs=_itemRefs(first);
+        if(firstRefs.length&&_ghostOthers) _ghostOthers(firstRefs);
+        if(firstRefs.length&&_highlightRefs) _highlightRefs(firstRefs,false);
         if(first.point&&window._ccShowActiveClashMarker) window._ccShowActiveClashMarker(first.point);
-        if(_flyToElements&&eids.length) _flyToElements(eids,first.point);
+        if(_flyToElements&&firstRefs.length) _flyToElements(firstRefs,first.point);
         else if(first.point&&_flyTo) _flyTo(first.point);
       }
     }, [s.tab]);
