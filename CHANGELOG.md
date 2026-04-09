@@ -1,5 +1,8 @@
 # Changelog
 
+## v4.11.29 (2026-04-09)
+- api/nl: cascade fallback through Gemini Flash family
+
 ## v4.11.28 (2026-04-09)
 - docs: expand CLAUDE.md with addons section + current state
 
