@@ -13089,49 +13089,37 @@ function startApp() {
           function setVerdict(v){ isClash ? d({t:A.AI_FEEDBACK,id:it.id,v:v}) : d({t:A.UPD_ISSUE,id:it.id,u:{aiFeedback:v}}); }
 
           // ── Issue summary view ──────────────────────────────────
-          // Once a clash has been promoted to an issue, users don't
-          // need the full labelling form again — they need a compact
-          // readout of what was decided during the clash phase. Show
-          // the summary and let them click "Edit" to reopen the form
-          // if they actually need to change something.
-          var hasAnyFeedback = !!fb || !!it.clashTypeConfirmed || (curReasons && curReasons.length) || (curRes && curRes.length) || !!curNote;
-          if (!isClash && hasAnyFeedback && !it._editFeedback) {
-            var verdictLbl = fb ? VERDICT_LABELS[fb] : null;
-            var verdictColor = fb==='real_clash'?'#4ade80':fb==='acceptable'?'#93c5fd':fb==='false_positive'?'#fca5a5':'var(--text-muted)';
-            var ctLbl = it.clashTypeConfirmed ? (CTYPES.find(function(x){return x.k===it.clashTypeConfirmed})||{}).l
-                       : it.type ? (CTYPES.find(function(x){return x.k===it.type})||{}).l + ' (detected)'
-                       : null;
-            var resLabels = curRes.map(function(k){return RES_LABELS[k]||k;});
-            function row(label, value, color) {
+          // Once a clash has been promoted to an issue, the labelling
+          // decisions are locked in — the user can't edit them from
+          // the issue panel. Render a read-only summary with only the
+          // fields that add new information: Reason and Resolution.
+          // Verdict is redundant (it drives the clash status which is
+          // already shown), and the clash type is already displayed as
+          // a pill at the top of the issue row, so neither is shown
+          // here.
+          if (!isClash) {
+            var rLabels = curRes.map(function(k){return RES_LABELS[k]||k;});
+            var hasReason = curReasons && curReasons.length;
+            var hasRes = rLabels.length;
+            var hasNote = !!curNote;
+            if (!hasReason && !hasRes && !hasNote) return null;
+            function row(label, value) {
               if (!value) return null;
               return html`<div style=${{display:'flex',gap:'.4rem',fontSize:'0.68rem',lineHeight:1.5,marginBottom:'.15rem'}}>
-                <span style=${{color:'var(--text-faint)',minWidth:64,flexShrink:0}}>${label}</span>
-                <span style=${{color:color||'var(--text-primary)',fontWeight:500}}>${value}</span>
+                <span style=${{color:'var(--text-faint)',minWidth:70,flexShrink:0}}>${label}</span>
+                <span style=${{color:'var(--text-primary)',fontWeight:500}}>${value}</span>
               </div>`;
             }
             return html`<div style=${{marginTop:'.4rem',paddingTop:'.4rem',borderTop:'1px solid var(--border-subtle)',background:'rgba(124,58,237,.04)',borderRadius:6,padding:'.45rem .5rem'}}>
-              <div style=${{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:'.3rem'}}>
-                <div style=${{fontSize:'0.63rem',fontWeight:600,color:'#a78bfa',textTransform:'uppercase',letterSpacing:'.04em'}}>Feedback</div>
-                <button onClick=${function(e){e.stopPropagation();updItem({_editFeedback:true});}}
-                  style=${{background:'transparent',border:'1px solid var(--border)',color:'var(--text-muted)',
-                    cursor:'pointer',fontSize:'0.6rem',padding:'.05rem .35rem',borderRadius:4,fontFamily:'inherit'}}>Edit</button>
-              </div>
-              ${row('Verdict', verdictLbl, verdictColor)}
-              ${row('Type', ctLbl, '#93c5fd')}
-              ${row('Reason', curReasons && curReasons.length ? curReasons.join(', ') : null, '#93c5fd')}
-              ${row('Resolution', resLabels.length ? resLabels.join(', ') : null, '#93c5fd')}
-              ${row('Note', curNote, 'var(--text-secondary)')}
-              ${!hasAnyFeedback && html`<div style=${{fontSize:'0.65rem',color:'var(--text-faint)'}}>No feedback recorded during clash review.</div>`}
+              <div style=${{fontSize:'0.63rem',fontWeight:600,color:'#a78bfa',textTransform:'uppercase',letterSpacing:'.04em',marginBottom:'.3rem'}}>Feedback</div>
+              ${row('Reason', hasReason ? curReasons.join(', ') : null)}
+              ${row('Resolution', hasRes ? rLabels.join(', ') : null)}
+              ${row('Note', hasNote ? curNote : null)}
             </div>`;
           }
 
           return html`<div style=${{marginTop:'.4rem',paddingTop:'.4rem',borderTop:'1px solid var(--border-subtle)',background:'rgba(124,58,237,.04)',borderRadius:6,padding:'.4rem'}}>
-            <div style=${{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:'.3rem'}}>
-              <div style=${{fontSize:'0.63rem',fontWeight:600,color:'#a78bfa',textTransform:'uppercase',letterSpacing:'.04em'}}>${isClash ? 'AI Training Feedback' : 'Feedback'}</div>
-              ${!isClash && html`<button onClick=${function(e){e.stopPropagation();updItem({_editFeedback:false});}}
-                style=${{background:'transparent',border:'1px solid var(--border)',color:'var(--text-muted)',
-                  cursor:'pointer',fontSize:'0.6rem',padding:'.05rem .35rem',borderRadius:4,fontFamily:'inherit'}}>Done</button>`}
-            </div>
+            <div style=${{fontSize:'0.63rem',fontWeight:600,color:'#a78bfa',marginBottom:'.3rem',textTransform:'uppercase',letterSpacing:'.04em'}}>AI Training Feedback</div>
             <div style=${{fontSize:'0.63rem',fontWeight:600,color:'var(--text-muted)',marginBottom:'.15rem'}}>Verdict</div>
             <div style=${{display:'flex',gap:'.25rem',marginBottom:'.3rem',flexWrap:'wrap'}}>
               ${VERDICTS.map(function(v){var sel=fb===v.k;return html`<button key=${v.k}
