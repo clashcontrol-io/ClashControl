@@ -614,8 +614,8 @@ function startApp() {
     rules:{ modelA:'all', modelB:'all', hard:true, maxGap:50, minGap:0, duplicates:false, changeAware:false, excludeSelf:true, excludeTypes:[], excludeTypePairs:[], minOverlapVolM3:1e-5, toleranceByTypePair:{}, useSemanticFilter:true },
     detectionSettings:null, // Captured at detection run time: {clearance_mm, discipline_filters}
     trainingMode:(function(){try{var v=localStorage.getItem('cc_trainingMode');return v===null?true:v==='1';}catch(e){return true;}}()),
-    clashGroupBy:_ccLoadPref('clashGroupBy','none'), clashSortBy:_ccLoadPref('clashSortBy','none'),
-    issueGroupBy:_ccLoadPref('issueGroupBy','none'), issueSortBy:_ccLoadPref('issueSortBy','none'),
+    clashGroupBy:(function(){var v=_ccLoadPref('clashGroupBy',[]);return Array.isArray(v)?v:(v&&v!=='none'?[v]:[]);}()), clashSortBy:(function(){var v=_ccLoadPref('clashSortBy',[]);return Array.isArray(v)?v:(v&&v!=='none'?[v]:[]);}()),
+    issueGroupBy:(function(){var v=_ccLoadPref('issueGroupBy',[]);return Array.isArray(v)?v:(v&&v!=='none'?[v]:[]);}()), issueSortBy:(function(){var v=_ccLoadPref('issueSortBy',[]);return Array.isArray(v)?v:(v&&v!=='none'?[v]:[]);}()),
     chatOpen:false, detecting:false, switchingProject:false, sectionAxis:null, sectionPos:0.5, sectionCustom:null,
     sectionBox:null, // {enabled, min:[x,y,z], max:[x,y,z]} – 6-plane box clipping
     filters:Object.assign({},INIT_FILTERS), floors:[],
@@ -833,7 +833,8 @@ function startApp() {
           if(dClash) _saveDeniedClash(dClash);
           var dVisible=s.clashes.filter(function(c){return c.id!==a.id&&c.status!=='denied';});
           // Apply current sort order so next clash matches what user sees in the list
-          var dSortFn=SORT_FNS&&SORT_FNS[s.clashSortBy]||null;
+          var _dSortArr=Array.isArray(s.clashSortBy)?s.clashSortBy:(s.clashSortBy&&s.clashSortBy!=='none'?[s.clashSortBy]:[]);
+          var dSortFn=_dSortArr.length?function(a,b){for(var _i=0;_i<_dSortArr.length;_i++){var _f=SORT_FNS[_dSortArr[_i]];if(!_f)continue;var _r=_f(a,b);if(_r!==0)return _r;}return 0;}:null;
           if(dSortFn) dVisible=dVisible.slice().sort(dSortFn);
           if(dClash){
             var dIdx=dVisible.indexOf(dClash);if(dIdx<0)dIdx=0;
@@ -893,7 +894,8 @@ function startApp() {
               created:Date.now()
             };
             // Find next clash in remaining list, respecting current sort order
-            var cSortFn=SORT_FNS&&SORT_FNS[s.clashSortBy]||null;
+            var _cSortArr=Array.isArray(s.clashSortBy)?s.clashSortBy:(s.clashSortBy&&s.clashSortBy!=='none'?[s.clashSortBy]:[]);
+            var cSortFn=_cSortArr.length?function(a,b){for(var _i=0;_i<_cSortArr.length;_i++){var _f=SORT_FNS[_cSortArr[_i]];if(!_f)continue;var _r=_f(a,b);if(_r!==0)return _r;}return 0;}:null;
             var sortedRemain = cSortFn ? remainClashes.slice().sort(cSortFn) : remainClashes;
             var clashIdx = cSortFn ? sortedRemain.findIndex(function(c2){
               // Find position where the confirmed clash would have been in sorted order
@@ -10628,23 +10630,43 @@ function startApp() {
         var sortAction = isClashTab ? 'CLASH_SORT_BY' : 'ISSUE_SORT_BY';
         var curGrp = isClashTab ? s.clashGroupBy : s.issueGroupBy;
         var curSort = isClashTab ? s.clashSortBy : s.issueSortBy;
+        // Normalise to arrays
+        var grpArr  = Array.isArray(curGrp)  ? curGrp  : (curGrp  && curGrp !=='none' ? [curGrp]  : []);
+        var sortArr = Array.isArray(curSort) ? curSort : (curSort && curSort!=='none' ? [curSort] : []);
+        function toggleGrp(g) {
+          if (g==='none'){d({t:grpAction,v:[]});return;}
+          var idx=grpArr.indexOf(g);
+          d({t:grpAction,v:idx>=0?grpArr.filter(function(x){return x!==g;}):grpArr.concat([g])});
+        }
+        function toggleSort(sv) {
+          if (sv==='none'){d({t:sortAction,v:[]});return;}
+          var idx=sortArr.indexOf(sv);
+          d({t:sortAction,v:idx>=0?sortArr.filter(function(x){return x!==sv;}):sortArr.concat([sv])});
+        }
         var grpOpts = isClashTab
           ? ['none','severity','storey','discipline','model','status','type','priority','assignee']
           : ['none','status','priority','category','assignee'];
         var sortOpts = isClashTab
           ? [['none','None'],['severity_asc','Severity ↑'],['severity_desc','Severity ↓'],['spatial','Spatial'],['distance_asc','Gap ↑'],['distance_desc','Gap ↓'],['priority_asc','Priority ↑'],['priority_desc','Priority ↓'],['type_asc','Type ↑'],['type_desc','Type ↓'],['storey_asc','Storey ↑'],['storey_desc','Storey ↓'],['name_asc','Name ↑'],['name_desc','Name ↓'],['date_asc','Date ↑'],['date_desc','Date ↓']]
           : [['none','None'],['priority_asc','Priority ↑'],['priority_desc','Priority ↓'],['date_asc','Date ↑'],['date_desc','Date ↓']];
+        var BADGES = ['\u2460','\u2461','\u2462','\u2463','\u2464']; // ①②③④⑤
         function pill(active){return {...S_BTN,fontSize:'0.63rem',padding:'.1rem .3rem',background:active?'var(--accent)':'var(--bg-secondary)',color:active?'#fff':'var(--text-faint)'};}
         return html`<div style=${{padding:'.25rem .5rem',borderBottom:'1px solid var(--border-subtle)',display:'flex',flexDirection:'column',gap:'.25rem',flexShrink:0}}>
           <div style=${{display:'flex',alignItems:'center',gap:'.3rem',flexWrap:'wrap'}}>
             <span style=${{fontSize:'0.69rem',color:'var(--text-faint)'}}>Group:</span>
-            ${grpOpts.map(function(g){return html`<button key=${g} onClick=${function(){d({t:grpAction,v:g})}}
-              style=${pill(curGrp===g)}>${g==='none'?'None':g.charAt(0).toUpperCase()+g.slice(1)}</button>`})}
+            ${grpOpts.map(function(g){
+              var isNone=g==='none', active=isNone?!grpArr.length:grpArr.indexOf(g)>=0;
+              var ord=grpArr.indexOf(g); var badge=(!isNone&&grpArr.length>1&&ord>=0)?(' '+BADGES[ord]):'';
+              return html`<button key=${g} onClick=${function(){toggleGrp(g);}} style=${pill(active)}>${(isNone?'None':g.charAt(0).toUpperCase()+g.slice(1))+badge}</button>`;
+            })}
           </div>
           <div style=${{display:'flex',alignItems:'center',gap:'.3rem',flexWrap:'wrap'}}>
             <span style=${{fontSize:'0.69rem',color:'var(--text-faint)'}}>Sort:</span>
-            ${sortOpts.map(function(sv){return html`<button key=${sv[0]} onClick=${function(){d({t:sortAction,v:sv[0]})}}
-              style=${pill(curSort===sv[0])}>${sv[1]}</button>`})}
+            ${sortOpts.map(function(sv){
+              var isNone=sv[0]==='none', active=isNone?!sortArr.length:sortArr.indexOf(sv[0])>=0;
+              var ord=sortArr.indexOf(sv[0]); var badge=(!isNone&&sortArr.length>1&&ord>=0)?(' '+BADGES[ord]):'';
+              return html`<button key=${sv[0]} onClick=${function(){toggleSort(sv[0]);}} style=${pill(active)}>${sv[1]+badge}</button>`;
+            })}
           </div>
         </div>`;
       }()}
@@ -12212,46 +12234,64 @@ function startApp() {
     }
   };
 
+  function _groupKeyFor(it, groupKey, modelsById) {
+    switch(groupKey) {
+      case 'storey': return it.elemAStorey || it.elemBStorey || it.storey || 'Unknown';
+      case 'discipline': return (it.disciplines||[]).sort().join(' \u2194 ') || 'Unknown';
+      case 'status': return it.status || 'open';
+      case 'type': return it.type || 'hard';
+      case 'priority': return it.priority || 'normal';
+      case 'category': return it.category || 'other';
+      case 'assignee': return it.assignee || 'Unassigned';
+      case 'severity': return it.aiSeverity || 'minor';
+      case 'model': {
+        var mA = modelsById[it.modelAId]; var mB = modelsById[it.modelBId];
+        var nA = mA ? mA.name : (it.modelAId || '?'); var nB = mB ? mB.name : (it.modelBId || '?');
+        return nA === nB ? nA : [nA, nB].sort().join(' \u2194 ');
+      }
+      default: return 'All';
+    }
+  }
+
   function groupAndSort(items, groupBy, sortBy, opts) {
     opts = opts || {};
-    var sortFn = SORT_FNS[sortBy] || null;
-    if (!groupBy || groupBy === 'none') {
+    // Normalise to arrays
+    var groupByArr = Array.isArray(groupBy) ? groupBy.filter(function(g){return g&&g!=='none';})
+                     : (groupBy&&groupBy!=='none'?[groupBy]:[]);
+    var sortByArr  = Array.isArray(sortBy)  ? sortBy.filter(function(s){return s&&s!=='none';})
+                     : (sortBy &&sortBy !=='none'?[sortBy ]:[]);
+    // Chained sort function
+    var sortFn = sortByArr.length ? function(a,b){
+      for (var i=0;i<sortByArr.length;i++){var fn=SORT_FNS[sortByArr[i]];if(!fn)continue;var r=fn(a,b);if(r!==0)return r;}
+      return 0;
+    } : null;
+
+    if (!groupByArr.length) {
       if (sortFn) return [{ label: 'All', items: items.slice().sort(sortFn) }];
       return null;
     }
     var modelsById = {};
     (opts.models||[]).forEach(function(m){ modelsById[m.id] = m; });
-    var groups = {};
+    // Compound key: join all group levels with ' | '
+    var groupMap = {};
     items.forEach(function(it) {
-      var key;
-      switch(groupBy) {
-        case 'storey': key = it.elemAStorey || it.elemBStorey || it.storey || 'Unknown'; break;
-        case 'discipline': key = (it.disciplines||[]).sort().join(' \u2194 ') || 'Unknown'; break;
-        case 'status': key = it.status || 'open'; break;
-        case 'type': key = it.type || 'hard'; break;
-        case 'priority': key = it.priority || 'normal'; break;
-        case 'category': key = it.category || 'other'; break;
-        case 'assignee': key = it.assignee || 'Unassigned'; break;
-        case 'severity': key = it.aiSeverity || 'minor'; break;
-        case 'model': {
-          var mA = modelsById[it.modelAId]; var mB = modelsById[it.modelBId];
-          var nA = mA ? mA.name : (it.modelAId || '?'); var nB = mB ? mB.name : (it.modelBId || '?');
-          key = nA === nB ? nA : [nA, nB].sort().join(' \u2194 ');
-          break;
-        }
-        default: key = 'All';
-      }
-      if (!groups[key]) groups[key] = [];
-      groups[key].push(it);
+      var parts = groupByArr.map(function(g){ return _groupKeyFor(it, g, modelsById); });
+      var k = parts.join(' \u2502 '); // use │ as separator (visually distinct, rare in names)
+      if (!groupMap[k]) groupMap[k] = [];
+      groupMap[k].push(it);
     });
-    // Sort group keys: apply natural sort where keys look like storey labels, else alpha
-    var keys = Object.keys(groups).sort(function(a,b){
-      var na = parseFloat(a), nb = parseFloat(b);
-      if (!isNaN(na) && !isNaN(nb)) return na - nb;
-      return a.localeCompare(b);
+    // Natural sort across compound parts
+    var keys = Object.keys(groupMap).sort(function(a,b){
+      var pa=a.split(' \u2502 '), pb=b.split(' \u2502 ');
+      for (var i=0;i<Math.max(pa.length,pb.length);i++){
+        var na=parseFloat(pa[i]||''), nb=parseFloat(pb[i]||'');
+        if(!isNaN(na)&&!isNaN(nb)){var r=na-nb;if(r!==0)return r;}
+        else{var r=(pa[i]||'').localeCompare(pb[i]||'');if(r!==0)return r;}
+      }
+      return 0;
     });
     return keys.map(function(k) {
-      return { label: k, items: sortFn ? groups[k].sort(sortFn) : groups[k] };
+      return { label: k, items: sortFn ? groupMap[k].slice().sort(sortFn) : groupMap[k] };
     });
   }
 
@@ -14206,7 +14246,7 @@ function startApp() {
       case 'set_duplicates': d({t:A.UPD_RULES, u:{duplicates:!!action.enabled}}); return action.enabled ? 'Got it — duplicates included.' : 'Got it — duplicates excluded.';
       case 'filter_status': var sv = {open:'open',resolved:'resolved',all:'all'}[action.status]||'all'; d({t:A.UPD_FILTERS, u:{status:sv}}); d({t:A.TAB,v:'clashes'}); return sv==='all'?'Showing everything.':'Showing '+sv+' only.';
       case 'reset_filters': d({t:A.RESET_FILTERS}); return 'Filters cleared — showing everything.';
-      case 'group_by': var gv = {storey:'storey',floor:'storey',level:'storey',discipline:'discipline',status:'status',type:'type',none:'none'}[action.groupBy]||'none'; d({t:A.CLASH_GROUP_BY,v:gv}); d({t:A.TAB,v:'clashes'}); return 'Grouped by '+gv+'.';
+      case 'group_by': var gv = {storey:'storey',floor:'storey',level:'storey',discipline:'discipline',status:'status',type:'type',none:'none'}[action.groupBy]||'none'; d({t:A.CLASH_GROUP_BY,v:gv==='none'?[]:[gv]}); d({t:A.TAB,v:'clashes'}); return 'Grouped by '+gv+'.';
       case 'export_bcf': if (!s.issues.length&&!s.clashes.length) return _offerExport(s); var items=s.issues.length?s.issues:s.clashes; exportBCF(items,'2.1',s.viewpoints); return 'Done — '+items.length+' items exported as BCF.';
       case 'query': return processNLCommand(action.metric||action.query||'', s, d);
       case 'help': return processNLCommand('help', s, d);
@@ -15127,7 +15167,7 @@ function startApp() {
     if (!groupMatch) groupMatch = text.match(/by\s+(storey|floor|level|discipline|status|type)\b/);
     if (groupMatch) {
       var gv = {storey:'storey',floor:'storey',level:'storey',discipline:'discipline',status:'status',type:'type',none:'none'}[groupMatch[1]];
-      d({t:A.CLASH_GROUP_BY,v:gv}); d({t:A.TAB,v:'clashes'});
+      d({t:A.CLASH_GROUP_BY,v:gv==='none'?[]:[gv]}); d({t:A.TAB,v:'clashes'});
       return 'Grouped by ' + groupMatch[1] + ' — check the clashes tab.';
     }
 
