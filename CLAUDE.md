@@ -84,6 +84,7 @@ LICENSE                     — License file
 OPEN_SOURCE_COMPONENTS.md   — Third-party library credits
 manifest.json               — PWA manifest for installable app
 sw.js                       — Service worker for offline caching (excludes /api/*)
+icons/                      — PWA icons (192/512 px, normal + maskable)
 scripts/bump-version.sh     — Pre-commit version bump script
 scripts/generate-sri.js     — Generate SRI hashes for CDN scripts
 vercel.json                 — Vercel config: COOP/COEP headers, function durations
