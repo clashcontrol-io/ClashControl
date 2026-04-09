@@ -1,5 +1,8 @@
 # Changelog
 
+## v4.11.24 (2026-04-09)
+- Fix section box toggle, section plane drag, FPS position, IDS UX
+
 ## v4.11.23 (2026-04-09)
 - Also fix hover raycaster to skip hidden meshes
 
