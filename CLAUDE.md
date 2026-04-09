@@ -3,15 +3,20 @@
 ## What is this?
 ClashControl is a free, open-source IFC clash detection web app. It lets users load IFC building models, detect geometric clashes between elements, create/manage issues, and export to BCF format.
 
-## Architecture — Single File App
-The **entire application** lives in `index.html` (~4000 lines). There is no build step, no bundler, no node_modules. Just open the file in a browser.
+## Architecture — Single File App + Lazy Addons
+The **core application** lives in `index.html` (~19.8k lines). There is no build step, no bundler, no node_modules. Just open the file in a browser.
+
+Optional, non-critical features are split into lazy-loaded files under `addons/` (see the Addons section below). These are loaded at runtime via a simple `<script src="addons/<name>.js">` injection and the core app works without them.
 
 ### Tech stack
 - **Preact/React 18** via CDN (UMD) — UI framework
 - **htm** — hand-written tagged template literal parser (inlined in the file, replaces JSX)
 - **Three.js r128** via CDN — 3D rendering
 - **JSZip** via CDN — BCF zip export/import
-- **No other dependencies**
+- **pdf.js** via CDN — PDF preview/overlay in the Issues panel
+- **web-ifc** WASM — IFC parsing, lazy-loaded via ESM on first model load
+- CDN scripts are pinned with SRI integrity hashes (regenerate with `node scripts/generate-sri.js` when bumping versions)
+- **No other runtime dependencies** (`package.json` only pulls `@neondatabase/serverless` for the Vercel functions)
 
 ### Code structure inside index.html
 The file follows this layout top to bottom:
@@ -70,10 +75,11 @@ The file follows this layout top to bottom:
 
 ## File overview
 ```
-index.html                  — The entire application
+index.html                  — The core application (UI, state, 3D viewer, clash engine)
 version.json                — Current version numbers
 CHANGELOG.md                — Version history (auto-updated on commit)
 README.md                   — Project readme with version badge
+DESIGN.md                   — UI/UX design principles
 LICENSE                     — License file
 OPEN_SOURCE_COMPONENTS.md   — Third-party library credits
 manifest.json               — PWA manifest for installable app
@@ -82,12 +88,39 @@ scripts/bump-version.sh     — Pre-commit version bump script
 scripts/generate-sri.js     — Generate SRI hashes for CDN scripts
 vercel.json                 — Vercel config: COOP/COEP headers, function durations
 package.json                — Neon Postgres driver for serverless functions
+addons/data-quality.js      — Data quality / BIM / ILS-NL/SfB check engines
+addons/local-engine.js      — Bridge to localhost Python exact-mesh clash engine
+addons/pwa.js               — Service worker registration, install prompt, update check
+addons/revit-bridge.js      — Revit Connector WebSocket live link + clash push-back
+addons/shared-project.js    — File System Access folder-sync collaboration
+addons/training-data.js     — Training data storage, JSONL export, sharing
 api/health.js               — Health check: AI + DB status
-api/nl.js                   — Gemma 4 NL proxy with native function calling
+api/nl.js                   — Gemma 4 NL proxy with native function calling + quota fallback
 api/training.js             — Training data ingestion (replaces Google Forms)
 api/project.js              — Shared issues sync (project key, no login)
 api/title.js                — AI clash title generation (batch, Gemma 4)
 ```
+
+## Addons — how they plug in
+
+Each addon is a plain IIFE loaded at runtime by the core via `addons/<name>.js` (see the `_ccLoadAddon` helper near the top of `index.html`'s main script). They share state with the core by:
+
+- Reading globals the core exposes (e.g. `window._ccDispatch`, `window._ccBakeMesh`, `window._ccUid`)
+- Registering callbacks the core calls into (e.g. `window._ccRunDataQualityChecks`)
+
+### Rules for addons
+- **The core app must still work if an addon fails to load.** Guard any core code that calls an addon with a `typeof window._ccFoo === 'function'` check.
+- **Addons never mount their own React components.** The panel UI (e.g. Data Quality, Training Pill) lives in `index.html`; addons only expose data/utility functions.
+- **No cross-addon imports.** If two addons need to share code, it either lives in the core or each addon has its own copy.
+- **Put new heavy features here first.** If a feature is optional, rarely used, or loads large data, make it an addon instead of bloating `index.html`.
+
+### What each addon does
+- `data-quality.js` — All check engines used by the Data Quality panel (BIM basics, ILS, NL-SfB classification checks). Exposed via `window._ccRunDataQualityChecks` et al.
+- `local-engine.js` — Talks to the localhost `clashcontrol-engine` Python server (port 19800) for exact mesh intersection. Transparently falls back to the core OBB engine when the server isn't running. Targets `clashcontrol-engine` v0.2.2.
+- `pwa.js` — Service-worker registration, update polling, and the "install as app" prompt. Everything else in the app works without it.
+- `revit-bridge.js` — WebSocket live link to the ClashControl Connector Revit plugin. Ingests geometry + properties, converts to Three.js meshes, supports `REPLACE_MODEL` on re-sync and linked models. Also handles one-way push of clashes back to Revit.
+- `shared-project.js` — File System Access API collaboration. Users pick a shared folder (OneDrive/Dropbox/NAS), and a `.ccproject` file is synced every 60s. No backend.
+- `training-data.js` — Pure data layer for clash + NL training data: ring-buffer storage (cap 5000 clash / 2000 NL), JSONL export, share helpers.
 
 ## Backend (Vercel Serverless + Neon Postgres)
 
@@ -108,9 +141,11 @@ The app is deployed at `www.clashcontrol.io` on Vercel. The backend consists of 
 
 ### NL Command Flow
 1. Client sends command to `/api/nl` (Gemma 4, server-side)
-2. Gemma 4 uses native function calling with 13 tool declarations
-3. Server returns structured `{ intent, ...params }` — no fragile JSON parsing
-4. On server failure, client falls back to regex matching (offline mode)
+2. Server picks a primary model — `SMART_MODEL` for analytical commands (analyze, explain, compare, …), `FAST_MODEL` for everything else
+3. Gemma 4 uses native function calling with 13 tool declarations
+4. On HTTP 429 the server walks a fallback chain across the other Gemma variant (each variant has its own free-tier quota bucket, so the effective quota is roughly doubled)
+5. Server returns structured `{ intent, _model, _fallback, ...params }` — no fragile JSON parsing
+6. Only when *every* model in the chain is drained does the client fall back to regex matching (offline mode)
 
 ### Shared Issues
 - No login required. Uses shareable project keys (e.g., `MEP-abc123`)
