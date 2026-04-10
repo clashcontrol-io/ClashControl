@@ -9737,7 +9737,11 @@ function startApp() {
           return;
         }
         if (ext === 'dwg') {
-          errors.push(f.name + ': DWG cannot be parsed in-browser. Convert to DXF first.');
+          errors.push(f.name + ': DWG files cannot be parsed in the browser (proprietary Autodesk format).\n\nTo use AutoCAD models in ClashControl, export from AutoCAD as:\n  \u2022 IFC \u2014 best for clash detection (requires IFC exporter plugin)\n  \u2022 GLB \u2014 via glTF exporter (geometry only)\n  \u2022 DXF \u2014 File \u203A Save As \u203A DXF (2D underlays only)');
+          return;
+        }
+        if (ext === 'nwd' || ext === 'nwc' || ext === 'nwf') {
+          errors.push(f.name + ': Navisworks files (.nwd/.nwc/.nwf) cannot be parsed in the browser (proprietary Autodesk format).\n\nTo use Navisworks models in ClashControl:\n  \u2022 IFC \u2014 export directly from Revit or ArchiCAD (recommended)\n  \u2022 FBX \u2014 File \u203A Export \u203A FBX from Navisworks, then convert to IFC\n\nTip: If your NWD contains Revit models, export IFC directly from Revit for best results.');
           return;
         }
         if (ext === 'dxf') {
@@ -9940,7 +9944,7 @@ function startApp() {
           <span style=${{fontSize:'0.8rem',color:'var(--text-faint)'}}>${s.models.length} loaded</span>
         </div>
         <input ref=${fileRef} type="file" accept=".ifc,.glb,.ifcmeta,.ifcprops" multiple style=${{display:'none'}} onChange=${onFiles} />
-        <input ref=${file2dRef} type="file" accept=".dxf,.pdf,.dwg" multiple style=${{display:'none'}} onChange=${onFiles} />
+        <input ref=${file2dRef} type="file" accept=".dxf,.pdf,.dwg,.nwd,.nwc,.nwf" multiple style=${{display:'none'}} onChange=${onFiles} />
         <button class="cc-tip cc-tip-left" data-tip=${dragging?'Drop to load':'Add IFC / GLB / DXF / PDF'} title=${'Load IFC, GLB, DXF, or PDF.\n\nFor fast Revit import: drop IFC + GLB + .ifcmeta together.\n• GLB = pre-tessellated geometry (fast)\n• IFC = properties, storeys, spatial hierarchy\n• .ifcmeta = Revit data (phase, workset, design option, layers, constraints)\n\nCreate bundles with Ifc2Ifc:\ngithub.com/thomhoffer-arch/Ifc2Ifc'} onClick=${function(){setErr('');fileRef.current&&fileRef.current.click()}} disabled=${loading}
           style=${{...S_BTN,width:'100%',background:dragging?'#1e3a5f':'var(--bg-secondary)',color:dragging?'#93c5fd':'var(--text-secondary)',border:dragging?'2px dashed #3b82f6':'1px dashed var(--border)',display:'flex',alignItems:'center',justifyContent:'center',gap:'.3rem',transition:'all .15s'}}>
           ${loading?html`<span class="spin">⟳</span>`:html`<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/><line x1="12" y1="11" x2="12" y2="17"/><line x1="9" y1="14" x2="15" y2="14"/></svg>`}
