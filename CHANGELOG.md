@@ -1,5 +1,8 @@
 # Changelog
 
+## v4.14.5 (2026-04-10)
+- Remove vertical stretch from CC logo, keep original proportions
+
 ## v4.14.4 (2026-04-10)
 - Make CC logo letters taller
 
