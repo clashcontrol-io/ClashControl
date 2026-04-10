@@ -1,5 +1,8 @@
 # Changelog
 
+## v4.14.0 (2026-04-10)
+- fix: storey picker modal + auto-detect model unit scale for 2D outlines
+
 ## v4.13.4 (2026-04-10)
 - refactor: split 2D into two rail tabs — import/export vs views/sheets
 
