@@ -1,8 +1,8 @@
 #!/usr/bin/env node
-// ── ClashControl REST Bridge ──────────────────────────────────────
+// ── ClashControl Smart Bridge — REST Transport ───────────────────
 // Universal HTTP API that forwards requests to ClashControl in the
-// browser via WebSocket. Works with any LLM that supports function
-// calling (ChatGPT, Gemini, Llama, etc.) or plain HTTP clients.
+// browser via WebSocket. Part of the Smart Bridge — works with any
+// LLM (ChatGPT, Gemini, Llama, etc.) or plain HTTP clients.
 //
 // Usage:
 //   node rest-bridge.js                  # default port 19803
@@ -32,7 +32,7 @@ function startWsBridge() {
   wss = new WebSocket.Server({ port: WS_PORT, host: '127.0.0.1' });
   wss.on('connection', (ws) => {
     browserSocket = ws;
-    console.log('[REST Bridge] Browser connected via WebSocket');
+    console.log('[Smart Bridge REST] Browser connected via WebSocket');
     ws.on('message', (data) => {
       try {
         const msg = JSON.parse(data.toString());
@@ -43,20 +43,20 @@ function startWsBridge() {
           req.resolve(msg.result);
         }
       } catch (e) {
-        console.error('[REST Bridge] Bad WS message:', e.message);
+        console.error('[Smart Bridge REST] Bad WS message:', e.message);
       }
     });
     ws.on('close', () => {
       browserSocket = null;
-      console.log('[REST Bridge] Browser disconnected');
+      console.log('[Smart Bridge REST] Browser disconnected');
     });
   });
   wss.on('error', (err) => {
     if (err.code === 'EADDRINUSE') {
-      console.log('[REST Bridge] WebSocket port ' + WS_PORT + ' in use (MCP server running?) — connecting as client instead');
+      console.log('[Smart Bridge REST] WebSocket port ' + WS_PORT + ' in use (MCP server running?) — connecting as client instead');
       connectAsClient();
     } else {
-      console.error('[REST Bridge] WebSocket error:', err.message);
+      console.error('[Smart Bridge REST] WebSocket error:', err.message);
     }
   });
 }
@@ -66,7 +66,7 @@ function connectAsClient() {
   const ws = new WebSocket('ws://127.0.0.1:' + WS_PORT);
   ws.on('open', () => {
     browserSocket = ws;
-    console.log('[REST Bridge] Connected to existing WebSocket bridge');
+    console.log('[Smart Bridge REST] Connected to existing WebSocket bridge');
   });
   ws.on('message', (data) => {
     try {
@@ -81,7 +81,7 @@ function connectAsClient() {
   });
   ws.on('close', () => {
     browserSocket = null;
-    console.log('[REST Bridge] WebSocket disconnected, retrying in 5s...');
+    console.log('[Smart Bridge REST] WebSocket disconnected, retrying in 5s...');
     setTimeout(connectAsClient, 5000);
   });
   ws.on('error', () => {});
@@ -90,7 +90,7 @@ function connectAsClient() {
 function sendToBrowser(action, params) {
   return new Promise((resolve, reject) => {
     if (!browserSocket || browserSocket.readyState !== WebSocket.OPEN) {
-      reject(new Error('ClashControl is not connected. Open clashcontrol.io in your browser and enable the Claude Bridge addon.'));
+      reject(new Error('ClashControl is not connected. Open clashcontrol.io in your browser and enable the Smart Bridge addon.'));
       return;
     }
     const id = ++requestId;
@@ -302,7 +302,7 @@ function generateOpenAPISpec() {
     openapi: '3.1.0',
     info: {
       title: 'ClashControl API',
-      description: 'Control ClashControl BIM clash detection from any LLM or HTTP client. Requires ClashControl open in a browser with the Claude Bridge addon enabled.',
+      description: 'Control ClashControl BIM clash detection from any LLM or HTTP client. Requires ClashControl open in a browser with the Smart Bridge addon enabled.',
       version: '0.1.0'
     },
     servers: [
@@ -393,10 +393,10 @@ const server = http.createServer(async (req, res) => {
   if (path === '/' && req.method === 'GET') {
     res.writeHead(200, { 'Content-Type': 'text/html' });
     res.end(`<!DOCTYPE html>
-<html><head><title>ClashControl REST Bridge</title></head>
+<html><head><title>ClashControl Smart Bridge</title></head>
 <body style="font-family:system-ui;max-width:700px;margin:2rem auto;padding:0 1rem;color:#e2e8f0;background:#0f172a">
-<h1 style="color:#f59e0b">ClashControl REST Bridge</h1>
-<p>Universal HTTP API for controlling ClashControl from any LLM or HTTP client.</p>
+<h1 style="color:#f59e0b">ClashControl Smart Bridge</h1>
+<p>LLM bridge — connect Claude, ChatGPT, or any AI assistant to control ClashControl with natural language.</p>
 <h3>Endpoints</h3>
 <ul>
 <li><code>GET /status</code> — connection status</li>
@@ -428,7 +428,7 @@ curl -X POST http://localhost:${REST_PORT}/call/set_view -H "Content-Type: appli
 
 startWsBridge();
 server.listen(REST_PORT, '127.0.0.1', () => {
-  console.log('[ClashControl REST Bridge]');
+  console.log('[ClashControl Smart Bridge] LLM bridge for Claude, ChatGPT, and more');
   console.log('  HTTP API:    http://127.0.0.1:' + REST_PORT);
   console.log('  OpenAPI:     http://127.0.0.1:' + REST_PORT + '/openapi.json');
   console.log('  WebSocket:   ws://127.0.0.1:' + WS_PORT);

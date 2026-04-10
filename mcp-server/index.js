@@ -1,8 +1,9 @@
 #!/usr/bin/env node
-// ── ClashControl MCP Server ────────────────────────────────────────
+// ── ClashControl Smart Bridge — MCP Transport ─────────────────────
 // Exposes ClashControl actions as MCP tools so Claude Desktop/Code
-// can control the app directly. Communicates with the browser via
-// a WebSocket bridge on localhost:19802.
+// can control the app directly. Part of the Smart Bridge — the LLM
+// bridge that connects different AI assistants to ClashControl.
+// Communicates with the browser via WebSocket on localhost:19802.
 //
 // Usage:
 //   npx @clashcontrol/mcp-server          # or: node index.js
@@ -29,7 +30,7 @@ function startWsBridge() {
   wss = new WebSocket.Server({ port: WS_PORT, host: '127.0.0.1' });
   wss.on('connection', (ws) => {
     browserSocket = ws;
-    process.stderr.write('[ClashControl MCP] Browser connected\n');
+    process.stderr.write('[Smart Bridge MCP] Browser connected\n');
     ws.on('message', (data) => {
       try {
         const msg = JSON.parse(data.toString());
@@ -40,23 +41,23 @@ function startWsBridge() {
           req.resolve(msg.result);
         }
       } catch (e) {
-        process.stderr.write('[ClashControl MCP] Bad message: ' + e.message + '\n');
+        process.stderr.write('[Smart Bridge MCP] Bad message: ' + e.message + '\n');
       }
     });
     ws.on('close', () => {
       browserSocket = null;
-      process.stderr.write('[ClashControl MCP] Browser disconnected\n');
+      process.stderr.write('[Smart Bridge MCP] Browser disconnected\n');
     });
   });
   wss.on('error', (err) => {
-    process.stderr.write('[ClashControl MCP] WebSocket error: ' + err.message + '\n');
+    process.stderr.write('[Smart Bridge MCP] WebSocket error: ' + err.message + '\n');
   });
 }
 
 function sendToBrowser(action, params) {
   return new Promise((resolve, reject) => {
     if (!browserSocket || browserSocket.readyState !== WebSocket.OPEN) {
-      reject(new Error('ClashControl is not connected. Open clashcontrol.io in your browser and ensure the Claude Bridge is enabled in Navigator → Addons.'));
+      reject(new Error('ClashControl is not connected. Open clashcontrol.io and enable the Smart Bridge addon in Navigator → Addons.'));
       return;
     }
     const id = ++requestId;
@@ -306,14 +307,14 @@ browserTool(
 
 async function main() {
   startWsBridge();
-  process.stderr.write('[ClashControl MCP] WebSocket bridge on ws://127.0.0.1:' + WS_PORT + '\n');
-  process.stderr.write('[ClashControl MCP] Waiting for Claude to connect via stdio...\n');
+  process.stderr.write('[Smart Bridge MCP] WebSocket bridge on ws://127.0.0.1:' + WS_PORT + '\n');
+  process.stderr.write('[Smart Bridge MCP] Waiting for Claude to connect via stdio...\n');
   const transport = new StdioServerTransport();
   await server.connect(transport);
-  process.stderr.write('[ClashControl MCP] Connected to Claude\n');
+  process.stderr.write('[Smart Bridge MCP] Connected to Claude\n');
 }
 
 main().catch((e) => {
-  process.stderr.write('[ClashControl MCP] Fatal: ' + e.message + '\n');
+  process.stderr.write('[Smart Bridge MCP] Fatal: ' + e.message + '\n');
   process.exit(1);
 });

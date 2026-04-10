@@ -785,7 +785,7 @@ function startApp() {
 
   // Load addon scripts — called after app mounts
   function _loadAddonScripts() {
-    var addonFiles = ['training-data', 'pwa', 'local-engine', 'shared-project', 'revit-bridge', 'data-quality', 'claude-bridge'];
+    var addonFiles = ['training-data', 'pwa', 'local-engine', 'shared-project', 'revit-bridge', 'data-quality', 'smart-bridge'];
     addonFiles.forEach(function(name) {
       var script = document.createElement('script');
       script.src = 'addons/' + name + '.js';
@@ -20121,21 +20121,20 @@ function startApp() {
                   </div>
                 </div>`}
               </div>`}
-              ${active && id==='claude-bridge' && html`<div style=${{borderTop:'1px solid var(--border-subtle)',marginTop:'.5rem',paddingTop:'.5rem',display:'flex',flexDirection:'column',gap:'.4rem'}}>
+              ${active && id==='smart-bridge' && html`<div style=${{borderTop:'1px solid var(--border-subtle)',marginTop:'.5rem',paddingTop:'.5rem',display:'flex',flexDirection:'column',gap:'.4rem'}}>
                 <div style=${{display:'flex',alignItems:'center',gap:'.4rem'}}>
-                  <span style=${{width:7,height:7,borderRadius:'50%',background:s.claudeBridge&&s.claudeBridge.connected?'#22c55e':'#64748b',flexShrink:0}}></span>
-                  <span style=${{fontSize:'0.75rem',color:s.claudeBridge&&s.claudeBridge.connected?'#4ade80':'var(--text-muted)',flex:1}}>
-                    ${s.claudeBridge&&s.claudeBridge.connected ? 'Connected to MCP server' : 'Not connected'}
+                  <span style=${{width:7,height:7,borderRadius:'50%',background:s.smartBridge&&s.smartBridge.connected?'#22c55e':'#64748b',flexShrink:0}}></span>
+                  <span style=${{fontSize:'0.75rem',color:s.smartBridge&&s.smartBridge.connected?'#4ade80':'var(--text-muted)',flex:1}}>
+                    ${s.smartBridge&&s.smartBridge.connected ? 'Connected to Smart Bridge' : 'Not connected'}
                   </span>
                 </div>
-                ${!(s.claudeBridge&&s.claudeBridge.connected) && html`<div style=${{fontSize:'0.63rem',color:'var(--text-faint)',lineHeight:1.5}}>
-                  <b>Setup:</b> Install the MCP server, then add it to Claude Desktop config:<br/>
-                  <code style=${{fontSize:'0.57rem',background:'var(--bg-tertiary)',padding:'2px 4px',borderRadius:3}}>cd mcp-server && npm install</code><br/>
-                  <span style=${{fontSize:'0.57rem',opacity:.7}}>Then in Claude Desktop settings → MCP Servers → Add:</span><br/>
-                  <code style=${{fontSize:'0.57rem',background:'var(--bg-tertiary)',padding:'2px 4px',borderRadius:3}}>node /path/to/mcp-server/index.js</code>
+                ${!(s.smartBridge&&s.smartBridge.connected) && html`<div style=${{fontSize:'0.63rem',color:'var(--text-faint)',lineHeight:1.5}}>
+                  <b>Setup:</b> Download and run the Smart Bridge:<br/>
+                  <code style=${{fontSize:'0.57rem',background:'var(--bg-tertiary)',padding:'2px 4px',borderRadius:3}}>cd mcp-server && npm install && npm run rest</code><br/>
+                  <span style=${{fontSize:'0.57rem',opacity:.7}}>Connects Claude (MCP), ChatGPT (OpenAPI), or any LLM (REST).</span>
                 </div>`}
-                ${s.claudeBridge&&s.claudeBridge.connected && html`<div style=${{fontSize:'0.63rem',color:'var(--text-faint)',lineHeight:1.5}}>
-                  Claude can now control ClashControl. Try asking Claude to run clashes, change views, or analyze results.
+                ${s.smartBridge&&s.smartBridge.connected && html`<div style=${{fontSize:'0.63rem',color:'var(--text-faint)',lineHeight:1.5}}>
+                  Smart Bridge connected. Your AI assistant can now control ClashControl.
                 </div>`}
               </div>`}
               ${active && addon.panel && html`<div style=${{borderTop:'1px solid var(--border-subtle)',marginTop:'.4rem',paddingTop:'.2rem'}}>

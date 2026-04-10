@@ -1,10 +1,12 @@
-// ── ClashControl Addon: Claude Bridge ───────────────────────────────
-// WebSocket client that connects to the ClashControl MCP server
-// (localhost:19802). Receives tool calls from Claude Desktop/Code,
-// executes them via window._ccDispatch and friends, sends results back.
+// ── ClashControl Addon: Smart Bridge ────────────────────────────────
+// LLM bridge that connects ClashControl to AI assistants via WebSocket.
+// Supports multiple connection options:
+//   - Claude Desktop/Code (via MCP server)
+//   - ChatGPT (via REST bridge + OpenAPI Actions)
+//   - Any LLM with function calling (via REST API)
 //
-// This lets users who have Claude control ClashControl with natural
-// language — no Gemma, no API keys, no regex fallbacks.
+// Receives tool calls from the bridge server (localhost:19802),
+// executes them via window._ccDispatch and friends, sends results back.
 
 (function() {
   'use strict';
@@ -308,7 +310,7 @@
       _connected = true;
       _reconnectDelay = 0;
       _updateUI();
-      console.log('%c[Claude Bridge] Connected to MCP server', 'color:#22c55e;font-weight:bold');
+      console.log('%c[Smart Bridge] Connected to MCP server', 'color:#22c55e;font-weight:bold');
     };
 
     _ws.onmessage = function(evt) {
@@ -329,7 +331,7 @@
           _ws.send(JSON.stringify({ id: msg.id, result: result }));
         }
       } catch (e) {
-        console.error('[Claude Bridge] Message error:', e);
+        console.error('[Smart Bridge] Message error:', e);
       }
     };
 
@@ -361,41 +363,41 @@
 
   function _updateUI() {
     if (window._ccDispatch) {
-      window._ccDispatch({ t: 'UPD_CLAUDE_BRIDGE', u: { connected: _connected } });
+      window._ccDispatch({ t: 'UPD_SMART_BRIDGE', u: { connected: _connected } });
     }
   }
 
   // ── Expose globals for the core UI ────────────────────────────────
 
-  window._ccClaudeBridgeConnect = function() { _userDisabled = false; _reconnectDelay = 0; _connect(); };
-  window._ccClaudeBridgeDisconnect = _disconnect;
-  window._ccClaudeBridgeStatus = function() { return { connected: _connected, url: WS_URL }; };
+  window._ccSmartBridgeConnect = function() { _userDisabled = false; _reconnectDelay = 0; _connect(); };
+  window._ccSmartBridgeDisconnect = _disconnect;
+  window._ccSmartBridgeStatus = function() { return { connected: _connected, url: WS_URL }; };
 
   // Auto-connect is handled by the addon init() callback above
 
   // Register as addon
   if (window._ccRegisterAddon) {
     window._ccRegisterAddon({
-      id: 'claude-bridge',
-      name: 'Claude Bridge',
-      description: 'Connect Claude Desktop/Code to ClashControl via MCP server. Lets Claude control clash detection, view, and analysis with natural language.',
+      id: 'smart-bridge',
+      name: 'Smart Bridge',
+      description: 'LLM bridge — connect Claude, ChatGPT, or any AI assistant to control ClashControl with natural language.',
       autoActivate: false,
       icon: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#f59e0b" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg>',
 
       initState: {
-        claudeBridge: { connected: false }
+        smartBridge: { connected: false }
       },
 
       reducerCases: {
-        'UPD_CLAUDE_BRIDGE': function(s, a) {
-          return Object.assign({}, s, { claudeBridge: Object.assign({}, s.claudeBridge, a.u) });
+        'UPD_SMART_BRIDGE': function(s, a) {
+          return Object.assign({}, s, { smartBridge: Object.assign({}, s.smartBridge, a.u) });
         }
       },
 
       init: function(dispatch) {
-        console.log('[Claude Bridge] Addon activated');
+        console.log('[Smart Bridge] Addon activated');
         var wasActive = false;
-        try { wasActive = localStorage.getItem('cc_claude_bridge') === '1'; } catch (e) {}
+        try { wasActive = localStorage.getItem('cc_smart_bridge') === '1'; } catch (e) {}
         if (wasActive) {
           _userDisabled = false;
           _reconnectDelay = 0;
@@ -405,19 +407,19 @@
 
       destroy: function() {
         _disconnect();
-        try { localStorage.removeItem('cc_claude_bridge'); } catch (e) {}
+        try { localStorage.removeItem('cc_smart_bridge'); } catch (e) {}
       },
 
       onEnable: function() {
         _userDisabled = false;
         _reconnectDelay = 0;
         _connect();
-        try { localStorage.setItem('cc_claude_bridge', '1'); } catch (e) {}
+        try { localStorage.setItem('cc_smart_bridge', '1'); } catch (e) {}
       },
 
       onDisable: function() {
         _disconnect();
-        try { localStorage.removeItem('cc_claude_bridge'); } catch (e) {}
+        try { localStorage.removeItem('cc_smart_bridge'); } catch (e) {}
       }
     });
   }
