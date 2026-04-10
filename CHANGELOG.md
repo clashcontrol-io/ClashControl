@@ -1,5 +1,8 @@
 # Changelog
 
+## v4.14.14 (2026-04-10)
+- Walk mode: derive geometry unit scale from storey + geoFactor
+
 ## v4.14.13 (2026-04-10)
 - Fix walk mode: use metres for speed, eye height, and clipping
 
