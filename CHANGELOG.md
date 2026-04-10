@@ -1,5 +1,8 @@
 # Changelog
 
+## v4.13.1 (2026-04-10)
+- chore: bump version to 4.13.0
+
 ## v4.13.0 (2026-04-10)
 - fix: require Ctrl+click for section plane interaction
 
