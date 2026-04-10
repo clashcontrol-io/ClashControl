@@ -348,7 +348,7 @@ function startApp() {
   var useCallback = React.useCallback;
   var html       = htm.bind(h);
 
-  // ── Constants ──────────────────────────────────────────────────
+  // ── Constants ────────────────────────────────────────────────── INTERNALS.md §2
 
   var DISC = [
     { id:'structural',    label:'Structural',    c:'#3b82f6', accent:'#1d4ed8' },
@@ -373,7 +373,7 @@ function startApp() {
   function guid() { return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g,function(c){var r=Math.random()*16|0;return(c==='x'?r:(r&0x3|0x8)).toString(16)}); }
   function esc(s) { return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
 
-  // ── Chat text renderer ────────────────────────────────────────
+  // ── Chat text renderer ──────────────────────────────────────── INTERNALS.md §2
   function renderChatText(text) {
     if (text == null) return '';
     var raw = String(text);
@@ -439,7 +439,7 @@ function startApp() {
   }
   window._ccConsentOK = _ccConsentOK;
 
-  // ── Pending offer system ──────────────────────────────────────
+  // ── Pending offer system ────────────────────────────────────── INTERNALS.md §3
   // When the assistant can't fulfill a command because of a missing
   function _setOfferLoadIFC() {
     window._ccPendingOffer = { label:'load ifc', kind:'load_ifc', action: function() {
@@ -494,7 +494,7 @@ function startApp() {
     });
   };
 
-  // ── Reducer ────────────────────────────────────────────────────
+  // ── Reducer ──────────────────────────────────────────────────── INTERNALS.md §4
 
   var INIT_FILTERS = {
     search:'', status:'all', type:'all', discipline:'all',
@@ -632,7 +632,7 @@ function startApp() {
     IDS_SET_RESULTS:'IDS_SET_RESULTS', IDS_SET_SPECS:'IDS_SET_SPECS', IDS_RUNNING:'IDS_RUNNING'
   };
 
-  // ── Addon Registry ─────────────────────────────────────────────
+  // ── Addon Registry ───────────────────────────────────────────── INTERNALS.md §5
 
   var _ccAddons = {};       // {id: addonDef}
   var _ccAddonActive = {};  // {id: true/false} — persisted in localStorage
@@ -955,7 +955,7 @@ function startApp() {
     }
   }
 
-  // ── IndexedDB persistence for IFC files ────────────────────────
+  // ── IndexedDB persistence for IFC files ──────────────────────── INTERNALS.md §6
   var IDB_NAME = 'ClashControlFiles';
   var IDB_STORE = 'ifcFiles';
   var IDB_PROJSTORE = 'projects';
@@ -1112,7 +1112,7 @@ function startApp() {
     }).catch(function(e) { /* silent — cleanup is best-effort */ });
   }
 
-  // ── Geometry quantization helpers (16-bit positions, 8-bit normals) ──
+  // ── Geometry quantization helpers (16-bit positions, 8-bit normals) ── INTERNALS.md §6
   function _quantizePositions(posF32, bbox) {
     var minX=bbox[0],minY=bbox[1],minZ=bbox[2],rangeX=bbox[3]-bbox[0],rangeY=bbox[4]-bbox[1],rangeZ=bbox[5]-bbox[2];
     if(rangeX<1e-10) rangeX=1; if(rangeY<1e-10) rangeY=1; if(rangeZ<1e-10) rangeZ=1;
@@ -1269,13 +1269,13 @@ function startApp() {
     return list;
   }
 
-  // ── IFC Loader (web-ifc, lazy) ─────────────────────────────────
+  // ── IFC Loader (web-ifc, lazy) ───────────────────────────────── INTERNALS.md §7
 
   // Shared LOD box proxy resources (must be at startApp scope so both loader paths can access them)
   var _lodBoxGeo = typeof THREE !== 'undefined' ? new THREE.BoxBufferGeometry(1, 1, 1) : null;
   var _lodProxyMat = typeof THREE !== 'undefined' ? new THREE.MeshBasicMaterial({color:0x667788, transparent:true, opacity:0.25, depthWrite:false}) : null;
 
-  // ── Bake static mesh transforms for rendering perf ────────────
+  // ── Bake static mesh transforms for rendering perf ──────────── INTERNALS.md §7
   function _ccBakeMesh(mesh) {
     mesh.updateMatrix();            // one-time compose from pos/quat/scale
     mesh.updateMatrixWorld(true);   // bake matrixWorld from current parent chain
@@ -1284,7 +1284,7 @@ function startApp() {
   }
   window._ccBakeMesh = _ccBakeMesh;
 
-  // ── WASM-init hang recovery ─────────────────────────────────────
+  // ── WASM-init hang recovery ───────────────────────────────────── INTERNALS.md §7
   // occasions because a bad web-ifc.wasm was pinned in either the service-
   // users' installed SWs) or the browser HTTP cache (from a transient
   //      SW cache on every page load, and forces the browser HTTP cache
@@ -2003,7 +2003,7 @@ function startApp() {
     });
   }
 
-  // ── Lazy-props merge helper ────────────────────────────────────
+  // ── Lazy-props merge helper ──────────────────────────────────── INTERNALS.md §8
   // Direct mutation is safe here because nothing in the state tree uses
   function _mergeLazyProps(modelId, propMap) {
     var s = window._ccLatestState;
@@ -2047,7 +2047,7 @@ function startApp() {
     }
   }
 
-  // ── IFC Web Worker (off-main-thread parsing) ──────────────────
+  // ── IFC Web Worker (off-main-thread parsing) ────────────────── INTERNALS.md §8
 
   var _ifcWorkerUrl = null;
 
@@ -2426,7 +2426,7 @@ function startApp() {
     });
   }
 
-  // ── Clash Detection ────────────────────────────────────────────
+  // ── Clash Detection ──────────────────────────────────────────── INTERNALS.md §9
 
   var _prevElementHashes = {};
   var _underlayImgCache = {};
@@ -3023,7 +3023,7 @@ function startApp() {
     });
   }
 
-  // ── Async clash detection with chunked processing ───────────────
+  // ── Async clash detection with chunked processing ─────────────── INTERNALS.md §9
   var _DETECT_CHUNK_SIZE = 80; // candidates per chunk before yielding
   var _ccDetectGeneration = 0; // incremented each detection run to cancel stale async chunks
   window._ccDetectProgress = null; // {done, total, pct} — updated during async detection
@@ -3625,7 +3625,7 @@ function startApp() {
     });
   }
 
-  // ── Clash Identity & Delta Merge ──────────────────────────────
+  // ── Clash Identity & Delta Merge ────────────────────────────── INTERNALS.md §9
 
   function computeClashPair(clash) {
     var idA = (clash.globalIdA && clash.globalIdA !== '') ? clash.globalIdA : ('eid:'+clash.elemA);
@@ -3761,7 +3761,7 @@ function startApp() {
     return {clashes:merged, deltaSummary:{newCount:_nw,persisting:_pe,autoResolved:_ar,ts:now}};
   }
 
-  // ── AI Auto-Classifier ───────────────────────────────────────────
+  // ── AI Auto-Classifier ─────────────────────────────────────────── INTERNALS.md §10
 
   function classifyClashes(clashes) {
     var FP_TYPES = ['IfcOpeningElement','IfcOpeningStandardCase','IfcSpace','IfcVirtualElement'];
@@ -3956,7 +3956,7 @@ function startApp() {
   var _captureViewpoint = null; // set in Viewer
   var _restoreViewpoint = null;
 
-  // ── BCF Import ──────────────────────────────────────────────
+  // ── BCF Import ────────────────────────────────────────────── INTERNALS.md §11
 
   function importBCF(d) {
     _gcEvent('bcf-import');
@@ -4037,7 +4037,7 @@ function startApp() {
   var shareAITrainingData = function(c, ds, m, cb, dt, i) { if (window._ccShareAITrainingData) window._ccShareAITrainingData(c, ds, m, cb, dt, i); };
   var _AI_VERDICT_MAP = window._ccAIVerdictMap || {open:'unreviewed', confirmed:'true_clash', denied:'false_positive', in_progress:'true_clash', resolved:'acceptable', closed:'false_positive'};
 
-  // ── BCF Export (supports v2.1 and v3.0) ──────────────────────
+  // ── BCF Export (supports v2.1 and v3.0) ────────────────────── INTERNALS.md §11
 
   function exportBCF(items, version, viewpoints, state) {
     if (!items.length) return;
@@ -4161,7 +4161,7 @@ function startApp() {
     });
   }
 
-  // ── First-Person Walk Mode ────────────────────────────────────
+  // ── First-Person Walk Mode ──────────────────────────────────── INTERNALS.md §12
   var _walkActive = false;
   var _walkKeys = {};        // currently pressed keys
   var _walkYaw = 0;          // horizontal angle (radians)
@@ -4293,7 +4293,7 @@ function startApp() {
     }
   }
 
-  // ── Orbit Controls (inline) ────────────────────────────────────
+  // ── Orbit Controls (inline) ──────────────────────────────────── INTERNALS.md §13
 
   var _sboxDragging = false;
   var _needsRender = 2; // start with a couple frames to initialize
@@ -4445,7 +4445,7 @@ function startApp() {
     return orbit;
   }
 
-  // ── Three.js Viewer Component ──────────────────────────────────
+  // ── Three.js Viewer Component ────────────────────────────────── INTERNALS.md §14
 
   var _flyTo = null;
   var _resetView = null;
@@ -4563,7 +4563,7 @@ function startApp() {
       window._ccWalkEnter = function(elevation) { _walkEnter(S, elevation); };
       window._ccWalkExit = function() { _walkExit(S); };
 
-      // ── Animated fly-to system ─────────────────────────────────────
+      // ── Animated fly-to system ───────────────────────────────────── INTERNALS.md §15
       var _flyAnim = null;
       function easeInOut(t){return t<0.5?4*t*t*t:(1-Math.pow(-2*t+2,3)/2);}
       function flyDuration(startTarget, endTarget, startPos, endPos) {
@@ -14733,7 +14733,7 @@ function startApp() {
 
   // ── ifc-lite Migration Notice ──────────────────────────────────
 
-  // ── Natural Language Command Engine ────────────────────────────
+  // ── Natural Language Command Engine ──────────────────────────── INTERNALS.md §17
 
   // ── Server AI health check ───────────────────────────────────────
   var _serverAIAvailable = false;
@@ -16446,7 +16446,7 @@ function startApp() {
     </div>`;
   }
 
-  // ── Natural Language Command Panel ─────────────────────────────
+  // ── Natural Language Command Panel ───────────────────────────── INTERNALS.md §17
 
   function NLCommandPanel(props) {
     var s = props.s, d = props.d;
@@ -18245,7 +18245,7 @@ function startApp() {
     };
   }
 
-  // ── Left Panel (Models, Clashes, Issues, etc.) ─────────────────
+  // ── Left Panel (Models, Clashes, Issues, etc.) ───────────────── INTERNALS.md §18
 
   function LeftPanel(props) {
     var s=props.s, d=props.d;
@@ -19207,7 +19207,7 @@ function startApp() {
       window._cc2DSnapIndex = _cc2DOutlines ? _ccBuildSnapIndex(_cc2DOutlines) : null;
     }, [s.underlayMode, s.floorPlan, s.models, s.activeSheetId, s.sheets]);
 
-    // ── Global Keyboard Shortcuts (single keys + Revit-style two-key chords) ──
+    // ── Global Keyboard Shortcuts (single keys + Revit-style two-key chords) ── INTERNALS.md §19
     var _chordRef = useRef({key:null,timer:null});
     useEffect(function(){
       function gk(e){
