@@ -4684,7 +4684,7 @@ function startApp() {
 
   // ── BCF Export (supports v2.1 and v3.0) ──────────────────────
 
-  function exportBCF(items, version, viewpoints) {
+  function exportBCF(items, version, viewpoints, state) {
     if (!items.length) return;
     _gcEvent('bcf-export', 'BCF '+version+' ('+items.length+' items)');
     var v3 = version === '3.0';
@@ -4696,6 +4696,30 @@ function startApp() {
     var attrComment = '<!-- Created with ' + ccTool + ' \u2014 ' + ccUrl + ' -->\n';
     var realAuthor = (typeof _ccChangelogUser === 'string' && _ccChangelogUser.trim()) ? _ccChangelogUser.trim() : 'ClashControl User';
     var authorEsc = esc(realAuthor);
+
+    // ── Optional sheet plan attachment ────────────────────────────
+    // When state has sheets with pins, offer to include rendered floor plans.
+    // Pre-render each relevant sheet once and cache by sheet id.
+    var sheetPngs = {}; // sheetId → base64 PNG (no header)
+    var pinsByItem = {}; // itemId → sheetId
+    if (state && state.sheets && state.sheets.length && state.sheetPins && state.sheetPins.length) {
+      var includeSheets = confirm('Include floor plan sheets in the BCF export?\n\nSheets with clash/issue pins will be attached as plan images to their matching topics.');
+      if (includeSheets) {
+        // Build item→sheet lookup from pins
+        state.sheetPins.forEach(function(p) {
+          if (p.targetId && p.sheetId) pinsByItem[p.targetId] = p.sheetId;
+        });
+        // Collect unique sheet ids that have pins on exported items
+        var neededSheets = {};
+        items.forEach(function(it) { if (pinsByItem[it.id]) neededSheets[pinsByItem[it.id]] = true; });
+        // Render each needed sheet once
+        Object.keys(neededSheets).forEach(function(sheetId) {
+          var tmpState = Object.assign({}, state, { activeSheetId: sheetId });
+          var dataUrl = _ccRenderSheetToCanvas(tmpState, 150);
+          if (dataUrl) sheetPngs[sheetId] = dataUrl.replace(/^data:image\/png;base64,/, '');
+        });
+      }
+    }
     // README.txt at zip root — visible attribution for anyone who unzips the .bcf
     zip.file('README.txt',
       'This BCF file was created with ClashControl' + (ccVer ? ' v' + ccVer : '') + '.\n' +
@@ -4770,6 +4794,18 @@ function startApp() {
           var snapData = vp.snapshot.replace(/^data:image\/png;base64,/, '');
           f.file(vpGuid+'.png', snapData, {base64:true});
         }
+      }
+
+      // Attach rendered sheet plan if this item has a pin on a sheet
+      var itemSheetId = pinsByItem[it.id];
+      if (itemSheetId && sheetPngs[itemSheetId]) {
+        f.file('plan.png', sheetPngs[itemSheetId], {base64: true});
+        markup += '  <DocumentReferences>\n';
+        markup += '    <DocumentReference>\n';
+        markup += '      <ReferencedDocument>plan.png</ReferencedDocument>\n';
+        markup += '      <Description>Floor plan sheet</Description>\n';
+        markup += '    </DocumentReference>\n';
+        markup += '  </DocumentReferences>\n';
       }
 
       markup += '</Markup>';
@@ -8459,11 +8495,11 @@ function startApp() {
           style=${{...S_BTN,background:'var(--bg-secondary)',color:'var(--text-secondary)',border:'1px solid var(--border)',fontSize:'var(--text-xs)'}}>
           ↑ Import BCF
         </button>
-        <button class="cc-hide-mobile cc-btn-press" onClick=${function(){exportBCF(all, '2.1', s.viewpoints)}} disabled=${!all.length}
+        <button class="cc-hide-mobile cc-btn-press" onClick=${function(){exportBCF(all, '2.1', s.viewpoints, s)}} disabled=${!all.length}
           style=${{...S_BTN,background:all.length?'var(--accent)':'var(--bg-secondary)',color:all.length?'#fff':'var(--text-faint)',cursor:all.length?'pointer':'not-allowed',fontSize:'var(--text-xs)'}}>
           ↓ BCF 2.1
         </button>
-        <button class="cc-hide-mobile cc-btn-press" onClick=${function(){exportBCF(all, '3.0', s.viewpoints)}} disabled=${!all.length}
+        <button class="cc-hide-mobile cc-btn-press" onClick=${function(){exportBCF(all, '3.0', s.viewpoints, s)}} disabled=${!all.length}
           style=${{...S_BTN,background:all.length?'#1d4ed8':'var(--bg-secondary)',color:all.length?'#fff':'var(--text-faint)',cursor:all.length?'pointer':'not-allowed',fontSize:'var(--text-xs)'}}>
           ↓ BCF 3.0
         </button>
@@ -11492,11 +11528,11 @@ function startApp() {
             <div style=${{display:'flex',gap:'.3rem'}}>
               <button title=${hasItems ? 'Export '+bcfItems.length+' '+source+' as BCF 2.1 — the most widely supported version (Revit, Navisworks, Solibri, BIMcollab)' : 'Create at least one issue first, or run a clash detection'}
                 disabled=${!hasItems}
-                onClick=${function(){ if(!hasItems) return; exportBCF(bcfItems, '2.1', s.viewpoints); }}
+                onClick=${function(){ if(!hasItems) return; exportBCF(bcfItems, '2.1', s.viewpoints, s); }}
                 style=${{...btnBase,flex:1,background:hasItems?'#052e16':'var(--bg-secondary)',color:hasItems?'#4ade80':'var(--text-faint)'}}>BCF 2.1</button>
               <button title=${hasItems ? 'Export '+bcfItems.length+' '+source+' as BCF 3.0 — newer spec, supports extensions but fewer tools read it yet' : 'Create at least one issue first, or run a clash detection'}
                 disabled=${!hasItems}
-                onClick=${function(){ if(!hasItems) return; exportBCF(bcfItems, '3.0', s.viewpoints); }}
+                onClick=${function(){ if(!hasItems) return; exportBCF(bcfItems, '3.0', s.viewpoints, s); }}
                 style=${{...btnBase,flex:1,background:hasItems?'#1e3a5f':'var(--bg-secondary)',color:hasItems?'#93c5fd':'var(--text-faint)'}}>BCF 3.0</button>
             </div>
             ${hasItems && html`<div style=${{fontSize:'0.6rem',color:'var(--text-faint)',lineHeight:1.5}}>
@@ -15223,12 +15259,53 @@ function startApp() {
     return 'wall';
   }
 
+  // ── True mesh-cut: slice element triangles at a horizontal plane ──
+  // Returns array of [x1, z1, x2, z2] segments in model meters (XZ plane).
+  // Read-only — does NOT modify mesh geometry or invalidate clash caches.
+  // Uses the same BufferGeometry access pattern as _getWorldTris.
+  function _cutElementAtPlane(el, cutY) {
+    var segs = [];
+    var va = new THREE.Vector3(), vb = new THREE.Vector3(), vc = new THREE.Vector3();
+    var eps = 1e-6;
+    (el.meshes || []).forEach(function(mesh) {
+      var geo = mesh.geometry;
+      var pos = geo && geo.attributes && geo.attributes.position;
+      if (!pos) return;
+      mesh.updateWorldMatrix(true, false);
+      var mat = mesh.matrixWorld;
+      var idx = geo.index;
+      var count = idx ? idx.count : pos.count;
+      for (var i = 0; i < count; i += 3) {
+        var ia = idx ? idx.getX(i) : i;
+        var ib = idx ? idx.getX(i + 1) : i + 1;
+        var ic = idx ? idx.getX(i + 2) : i + 2;
+        va.set(pos.getX(ia), pos.getY(ia), pos.getZ(ia)).applyMatrix4(mat);
+        vb.set(pos.getX(ib), pos.getY(ib), pos.getZ(ib)).applyMatrix4(mat);
+        vc.set(pos.getX(ic), pos.getY(ic), pos.getZ(ic)).applyMatrix4(mat);
+        // Signed distance from cut plane (positive = above)
+        var da = va.y - cutY, db = vb.y - cutY, dc = vc.y - cutY;
+        // Nudge vertices exactly on the plane to avoid degenerate 1/3-point cases
+        if (Math.abs(da) < eps) da = eps;
+        if (Math.abs(db) < eps) db = eps;
+        if (Math.abs(dc) < eps) dc = eps;
+        // Collect intersection points where edges cross the plane
+        var pts = [];
+        if (da * db < 0) { var t = da / (da - db); pts.push(va.x + t * (vb.x - va.x), va.z + t * (vb.z - va.z)); }
+        if (db * dc < 0) { var t = db / (db - dc); pts.push(vb.x + t * (vc.x - vb.x), vb.z + t * (vc.z - vb.z)); }
+        if (dc * da < 0) { var t = dc / (dc - da); pts.push(vc.x + t * (va.x - vc.x), vc.z + t * (va.z - vc.z)); }
+        // A plane cuts a triangle in exactly 0 or 2 edges
+        if (pts.length >= 4) segs.push([pts[0], pts[1], pts[2], pts[3]]);
+      }
+    });
+    return segs;
+  }
+
   // Generate floor plan outlines from 3D geometry at a given elevation.
   // Returns an array of [x1, z1, x2, z2, layerCode] segments in model meters.
-  // Uses AABB projection (coarse but fast). Filters non-physical IFC types
-  // (IfcSpace / IfcVirtualElement / IfcAnnotation / IfcGrid) — their geometry
-  // is already stripped by stripNonPhysicalGeometry at load time, but we
-  // double-check here for robustness against non-standard loaders.
+  // Tries true mesh-cut (triangle-plane intersection) first for accurate outlines;
+  // falls back to AABB projection when an element has no mesh geometry loaded.
+  // Filters non-physical IFC types (IfcSpace / IfcVirtualElement / IfcAnnotation /
+  // IfcGrid) — their geometry is already stripped at load time, but we double-check.
   function generate2DOutlines(models, elevation, cutHeight) {
     var outlines = [];
     var cutAt = elevation + (cutHeight || 1.2);
@@ -15237,20 +15314,25 @@ function startApp() {
       (m.elements || []).forEach(function(el) {
         if (!el.box) return;
         var b = el.box;
-        // Skip empty bounding boxes (non-physical elements get box=empty Box3)
         if (b.isEmpty && b.isEmpty()) return;
-        // Explicit filter: skip known non-physical types
         var ifcType = el.props && el.props.ifcType;
         if (ifcType && _NON_PHYSICAL_TYPES && _NON_PHYSICAL_TYPES[ifcType]) return;
-        // Skip elements entirely above or below cut
         if (b.min.y > cutAt || b.max.y < elevation) return;
         var layer = _ccFloorPlanLayerCode(ifcType);
-        // Project bounding box edges at cut level (XZ plane)
-        var x1 = b.min.x, z1 = b.min.z, x2 = b.max.x, z2 = b.max.z;
-        outlines.push([x1, z1, x2, z1, layer]); // bottom
-        outlines.push([x2, z1, x2, z2, layer]); // right
-        outlines.push([x2, z2, x1, z2, layer]); // top
-        outlines.push([x1, z2, x1, z1, layer]); // left
+        // True mesh cut: walk triangles and intersect with cut plane
+        var meshSegs = (el.meshes && el.meshes.length) ? _cutElementAtPlane(el, cutAt) : null;
+        if (meshSegs && meshSegs.length) {
+          for (var si = 0; si < meshSegs.length; si++) {
+            outlines.push([meshSegs[si][0], meshSegs[si][1], meshSegs[si][2], meshSegs[si][3], layer]);
+          }
+        } else {
+          // AABB fallback — projects bounding box edges at cut level
+          var x1 = b.min.x, z1 = b.min.z, x2 = b.max.x, z2 = b.max.z;
+          outlines.push([x1, z1, x2, z1, layer]); // bottom
+          outlines.push([x2, z1, x2, z2, layer]); // right
+          outlines.push([x2, z2, x1, z2, layer]); // top
+          outlines.push([x1, z2, x1, z1, layer]); // left
+        }
       });
     });
     return outlines;
@@ -16063,7 +16145,7 @@ function startApp() {
       case 'filter_status': var sv = {open:'open',resolved:'resolved',all:'all'}[action.status]||'all'; d({t:A.UPD_FILTERS, u:{status:sv}}); d({t:A.TAB,v:'clashes'}); return sv==='all'?'Showing everything.':'Showing '+sv+' only.';
       case 'reset_filters': d({t:A.RESET_FILTERS}); return 'Filters cleared — showing everything.';
       case 'group_by': var gv = {storey:'storey',floor:'storey',level:'storey',discipline:'discipline',status:'status',type:'type',none:'none'}[action.groupBy]||'none'; d({t:A.CLASH_GROUP_BY,v:gv==='none'?[]:[gv]}); d({t:A.TAB,v:'clashes'}); return 'Grouped by '+gv+'.';
-      case 'export_bcf': if (!s.issues.length&&!s.clashes.length) return _offerExport(s); var items=s.issues.length?s.issues:s.clashes; exportBCF(items,'2.1',s.viewpoints); return 'Done — '+items.length+' items exported as BCF.';
+      case 'export_bcf': if (!s.issues.length&&!s.clashes.length) return _offerExport(s); var items=s.issues.length?s.issues:s.clashes; exportBCF(items,'2.1',s.viewpoints,s); return 'Done — '+items.length+' items exported as BCF.';
       case 'query': return processNLCommand(action.metric||action.query||'', s, d);
       case 'help': return processNLCommand('help', s, d);
       case 'load_model': if (window._ccOpenIFC) { window._ccOpenIFC(); return 'Opening file picker — pick one or more .ifc files.'; } return 'File picker unavailable. Drag an .ifc file onto the window instead.';
@@ -16526,7 +16608,7 @@ function startApp() {
     if (/^issues?\s*\??$/i.test(text)) { d({t:A.TAB,v:'issues'}); return s.issues.length ? s.issues.length + ' issues — here\'s the list.' : _offerIssuesFromClashes(s); }
     if (/^models?\s*\??$/i.test(text)) { d({t:A.TAB,v:'models'}); return s.models.length ? s.models.length + ' model'+(s.models.length>1?'s':'')+' loaded — here they are.' : _offerLoadIFC(); }
     if (/^settings?$/i.test(text)) { d({t:A.SETTINGS,v:true}); return 'Here are your settings.'; }
-    if (/^bcf$/i.test(text)) { if(!s.issues.length&&!s.clashes.length)return _offerExport(s); exportBCF(s.issues.length?s.issues:s.clashes,'2.1',s.viewpoints); return 'Done — BCF exported.'; }
+    if (/^bcf$/i.test(text)) { if(!s.issues.length&&!s.clashes.length)return _offerExport(s); exportBCF(s.issues.length?s.issues:s.clashes,'2.1',s.viewpoints,s); return 'Done — BCF exported.'; }
     if (/^ifc$/i.test(text)) { if(window._ccOpenIFC) window._ccOpenIFC(); return 'Opening IFC file picker...'; }
     if (/^(?:undo|cancel\s+that|never\s*mind|oops)$/i.test(text)) return 'Can\'t undo, but try "clear filters", "show all", or "reset view" to get back.';
     if (/^(?:thanks?|thank\s+you|ty|thx|cheers)$/i.test(text)) return 'No problem!';
@@ -17112,7 +17194,7 @@ function startApp() {
     if (/(?:export|download|save|get)\s+(?:as\s+)?bcf|bcf\s+(?:export|download|file)|save\s+as\s+bcf/.test(text)) {
       if (!s.issues.length && !s.clashes.length) return _offerExport(s);
       var items = s.issues.length ? s.issues : s.clashes;
-      exportBCF(items, '2.1', s.viewpoints);
+      exportBCF(items, '2.1', s.viewpoints, s);
       return 'Done — ' + items.length + ' item' + (items.length===1?'':'s') + ' exported as BCF 2.1.';
     }
 
@@ -17320,7 +17402,7 @@ function startApp() {
       [['training','enable','on','start'],function(){if(!s.trainingMode)d({t:A.TRAINING_MODE,v:true});return 'Training on.';}, 2],
       [['training','disable','off','stop'],function(){if(s.trainingMode)d({t:A.TRAINING_MODE});return 'Training off.';}, 2],
       [['filter','reset','clear'],function(){d({t:A.RESET_FILTERS});return 'Filters cleared.';}, 2],
-      [['export','bcf','download'],function(){if(!s.issues.length&&!s.clashes.length)return 'Nothing to export.';exportBCF(s.issues.length?s.issues:s.clashes,'2.1',s.viewpoints);return 'BCF exported.';}, 2],
+      [['export','bcf','download'],function(){if(!s.issues.length&&!s.clashes.length)return 'Nothing to export.';exportBCF(s.issues.length?s.issues:s.clashes,'2.1',s.viewpoints,s);return 'BCF exported.';}, 2],
       [['import','bcf'],          function(){importBCF(d);return 'BCF picker opened.';}, 2],
       [['load','open','ifc'],     function(){if(window._ccOpenIFC)window._ccOpenIFC();return 'IFC picker opened.';}, 1],
       [['bridge','revit'],        function(){d({t:A.REVIT_BRIDGE,v:true});return 'Bridge opened.';}, 1],
@@ -18792,7 +18874,7 @@ function startApp() {
         ${iconBtn(function(){importBCF(d);},
           html`<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" dangerouslySetInnerHTML=${{__html:SVG_IMPORT}}></svg>`,
           'Import BCF')}
-        ${iconBtn(function(){exportBCF(all,'2.1',s.viewpoints);},
+        ${iconBtn(function(){exportBCF(all,'2.1',s.viewpoints,s);},
           html`<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" dangerouslySetInnerHTML=${{__html:SVG_EXPORT}}></svg>`,
           'Export BCF')}
       </div>
@@ -19753,8 +19835,8 @@ function startApp() {
           items=${[
             {label:'Project (.ccproject)', hint:'Clashes, issues, viewpoints, settings', disabled:!s.models.length&&!s.clashes.length&&!s.issues.length, action:function(){saveProject(s);}},
             {type:'divider'},
-            {label:'BCF 2.1', hint:'Clashes & issues', disabled:!s.clashes.length&&!s.issues.length, action:function(){var all=s.clashes.concat(s.issues);exportBCF(all,'2.1',s.viewpoints);}},
-            {label:'BCF 3.0', hint:'With extensions', disabled:!s.clashes.length&&!s.issues.length, action:function(){var all=s.clashes.concat(s.issues);exportBCF(all,'3.0',s.viewpoints);}},
+            {label:'BCF 2.1', hint:'Clashes & issues', disabled:!s.clashes.length&&!s.issues.length, action:function(){var all=s.clashes.concat(s.issues);exportBCF(all,'2.1',s.viewpoints,s);}},
+            {label:'BCF 3.0', hint:'With extensions', disabled:!s.clashes.length&&!s.issues.length, action:function(){var all=s.clashes.concat(s.issues);exportBCF(all,'3.0',s.viewpoints,s);}},
             {type:'divider'},
             {label:'IFCSidecar (all models)', hint:'GLB + .ifcprops + .ifcmeta', disabled:!s.models.length, action:function(){s.models.forEach(function(m){exportSidecar(m);});}},
           ].concat(s.models.length>1 ? s.models.map(function(m){return {label:'Sidecar: '+(m.name||m.id), hint:(m.elements||[]).length+' elements', action:function(){exportSidecar(m);}};}) : [])} />
