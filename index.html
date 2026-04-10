@@ -4845,9 +4845,13 @@ function startApp() {
     _walkPointerLocked = false;
     // Detect model units from storey data
     var models = (window._ccLatestState || {}).models || [];
-    // web-ifc normalises geometry to metres regardless of the IFC file's
-    // native length unit, so walk-mode parameters are always in metres.
-    _walkUnitScale = 1;
+    // Detect actual geometry unit scale: storey unit scale × storey-to-geo
+    // factor gives the true geometry coordinate unit.
+    // e.g. storey in mm (1000) × geoFactor 0.001 = 1 (geometry in metres)
+    // e.g. storey in mm (1000) × geoFactor 1 = 1000 (geometry in mm)
+    var _storeyUs = (typeof _ccDetectUnitScale === 'function') ? _ccDetectUnitScale(models) : 1;
+    var _geoF = (typeof _ccStoreyToGeoFactor === 'function') ? _ccStoreyToGeoFactor(models) : 1;
+    _walkUnitScale = _storeyUs * _geoF;
     // Scale speed and eye height to model units
     _walkSpeed = 3.0 * _walkUnitScale;
     _walkEyeHeight = 1.7 * _walkUnitScale;
