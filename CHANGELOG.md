@@ -1,5 +1,8 @@
 # Changelog
 
+## v4.13.3 (2026-04-10)
+- refactor: move Walk Mode + Create 2D to Models sidebar panel
+
 ## v4.13.2 (2026-04-10)
 - feat: 2D/BCF dropdown menus, Walk button visibility, FPS overlay, icon refresh
 
