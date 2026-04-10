@@ -1,5 +1,8 @@
 # Changelog
 
+## v4.14.17 (2026-04-10)
+- Smart Bridge: add LLM setup instructions + Copy Claude Config button
+
 ## v4.14.16 (2026-04-10)
 - Make NL pre-block smarter: let conversational messages reach Gemma
 
