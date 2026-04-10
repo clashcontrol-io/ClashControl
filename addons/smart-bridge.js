@@ -20,12 +20,21 @@
   var _connected = false;
 
   // ── Download URLs for standalone binaries ─────────────────────────
-  var _releaseTag = 'v0.1.0';
+  var _releaseTag = 'v0.1.1';
   var _releaseBase = 'https://github.com/clashcontrol-io/ClashControlSmartBridge/releases/download/' + _releaseTag + '/';
   var _downloads = {
-    win:   {url: _releaseBase + 'clashcontrol-smart-bridge-win.exe',       label: 'Windows (.exe)',    cmd: 'clashcontrol-smart-bridge.exe'},
-    mac:   {url: _releaseBase + 'clashcontrol-smart-bridge-mac.tar.gz',    label: 'macOS (.tar.gz)',   cmd: 'tar -xzf clashcontrol-smart-bridge-mac.tar.gz\n./clashcontrol-smart-bridge'},
-    linux: {url: _releaseBase + 'clashcontrol-smart-bridge-linux.tar.gz',  label: 'Linux (.tar.gz)',   cmd: 'tar -xzf clashcontrol-smart-bridge-linux.tar.gz\n./clashcontrol-smart-bridge'}
+    win:   {url: _releaseBase + 'clashcontrol-smart-bridge-win.exe',
+            label: 'Windows (.exe)',
+            cmd: 'clashcontrol-smart-bridge-win.exe',
+            installPath: '%APPDATA%\\ClashControl\\clashcontrol-smart-bridge.exe'},
+    mac:   {url: _releaseBase + 'clashcontrol-smart-bridge-mac.tar.gz',
+            label: 'macOS (.tar.gz)',
+            cmd: 'tar -xzf clashcontrol-smart-bridge-mac.tar.gz && ./clashcontrol-smart-bridge',
+            installPath: '~/Library/Application Support/ClashControl/clashcontrol-smart-bridge'},
+    linux: {url: _releaseBase + 'clashcontrol-smart-bridge-linux.tar.gz',
+            label: 'Linux (.tar.gz)',
+            cmd: 'tar -xzf clashcontrol-smart-bridge-linux.tar.gz && ./clashcontrol-smart-bridge',
+            installPath: '~/.local/share/clashcontrol/clashcontrol-smart-bridge'}
   };
 
   function _detectOS() {
@@ -114,6 +123,7 @@
             wasInstalled: true, version: j.version || null
           }});
           try { localStorage.setItem('cc_smart_bridge','1'); } catch(e){}
+          try { localStorage.setItem('cc_sb_downloaded','1'); } catch(e){}
           _connectWs(d);
           return j;
         })
@@ -282,13 +292,36 @@
 
     _ws.onopen = function() {
       _connected = true;
-      if (d) d({t:'UPD_SMART_BRIDGE', u:{connected:true}});
+      if (d) d({t:'UPD_SMART_BRIDGE', u:{connected:true, bridgeUpdating:false, bridgeReconnecting:false}});
       console.log('%c[Smart Bridge] Connected', 'color:#22c55e;font-weight:bold');
     };
 
     _ws.onmessage = function(evt) {
       try {
         var msg = JSON.parse(evt.data);
+        // Server-push notifications from the bridge process
+        if (msg.type === 'update_available') {
+          console.log('%c[Smart Bridge] Update available:', 'color:#fbbf24;font-weight:bold', msg.version || '');
+          if (d) d({t:'UPD_SMART_BRIDGE', u:{
+            updateAvailable: true,
+            updateVersion: msg.version || null,
+            updateUrl: msg.url || null
+          }});
+          return;
+        }
+        // Bridge is downloading its own update binary
+        if (msg.type === 'update_downloading') {
+          console.log('%c[Smart Bridge] Downloading update\u2026', 'color:#fbbf24;font-weight:bold');
+          if (d) d({t:'UPD_SMART_BRIDGE', u:{bridgeUpdating: true, updateAvailable: false}});
+          return;
+        }
+        // Bridge has installed the update and is about to restart
+        if (msg.type === 'update_installed') {
+          console.log('%c[Smart Bridge] Update installed \u2014 reconnecting\u2026', 'color:#fbbf24;font-weight:bold');
+          if (d) d({t:'UPD_SMART_BRIDGE', u:{bridgeUpdating: false, bridgeReconnecting: true}});
+          return;
+        }
+        // Tool call request
         if (msg.id != null && msg.action) {
           var handler = handlers[msg.action];
           var result;
@@ -330,7 +363,7 @@
 
   function _doInit(dispatch) {
     var wasInstalled = false;
-    try { wasInstalled = localStorage.getItem('cc_smart_bridge') === '1'; } catch (e) {}
+    try { wasInstalled = localStorage.getItem('cc_sb_downloaded') === '1' || localStorage.getItem('cc_smart_bridge') === '1'; } catch (e) {}
     if (wasInstalled) {
       dispatch({t:'UPD_SMART_BRIDGE', u:{wasInstalled:true}});
       // Passive check — if bridge is already running, connect automatically
@@ -351,7 +384,9 @@
       initState: {
         smartBridge: { connected: false, available: false, checking: false,
           connecting: false, installing: false, failed: false,
-          wasInstalled: false, version: null }
+          wasInstalled: false, version: null,
+          updateAvailable: false, updateVersion: null, updateUrl: null,
+          bridgeUpdating: false, bridgeReconnecting: false }
       },
 
       reducerCases: {
@@ -366,24 +401,23 @@
       },
 
       onEnable: function(dispatch) {
-        var wasInstalled = false;
-        try { wasInstalled = localStorage.getItem('cc_smart_bridge') === '1'; } catch (e) {}
-        if (wasInstalled) {
-          // Returning user: try URL scheme launch + fast poll
+        var wasDownloaded = false;
+        try { wasDownloaded = localStorage.getItem('cc_sb_downloaded') === '1'; } catch (e) {}
+        if (wasDownloaded) {
+          // Binary already in Downloads: skip re-download, try URL scheme + fast poll
           _connectBridge(dispatch);
         } else {
           // First time: download binary + long poll
           _triggerDownload();
+          try { localStorage.setItem('cc_sb_downloaded', '1'); } catch (e) {}
           _connectBridge(dispatch, {installing: true});
         }
-        // NOTE: localStorage flag is set inside _connectBridge on successful connection,
-        // not here — setting it early would cause page reloads before the binary runs
-        // to skip the long install poll and immediately fail after 6s.
       },
 
       destroy: function() {
         _disconnectWs();
         try { localStorage.removeItem('cc_smart_bridge'); } catch (e) {}
+        // cc_sb_downloaded is intentionally kept so re-enabling never re-downloads the binary.
       },
 
       // ── Addon panel (rendered inside the addon card) ──────────────
@@ -394,12 +428,30 @@
 
         var _codeStyle = {fontSize:'0.57rem',background:'var(--bg-tertiary)',padding:'2px 5px',borderRadius:3,wordBreak:'break-all'};
         var _btnSmall = {padding:'.25rem .6rem',borderRadius:5,fontSize:'0.63rem',fontWeight:600,cursor:'pointer',border:'none',fontFamily:'inherit'};
+        var _installerFile = dl.url.split('/').pop();
+
+        function _copyInstallerName() {
+          navigator.clipboard.writeText(_installerFile).catch(function() {
+            var ta = document.createElement('textarea');
+            ta.value = _installerFile; ta.style.position='fixed'; ta.style.opacity='0';
+            document.body.appendChild(ta); ta.select(); document.execCommand('copy');
+            document.body.removeChild(ta);
+          });
+        }
+
+        var _cleanupRow = html`<div style=${{display:'flex',alignItems:'center',gap:'.4rem',padding:'.3rem .45rem',background:'var(--bg-secondary)',borderRadius:5,marginTop:'.1rem'}}>
+          <span style=${{fontSize:'0.57rem',color:'var(--text-faint)',flex:1,lineHeight:1.4}}>
+            Installer <code style=${{background:'var(--bg-tertiary)',padding:'1px 4px',borderRadius:2,fontSize:'0.57rem'}}>${_installerFile}</code>${' '}can be deleted from your Downloads folder
+          </span>
+          <button onClick=${_copyInstallerName}
+            style=${{padding:'2px 7px',borderRadius:4,fontSize:'0.57rem',fontWeight:600,cursor:'pointer',border:'none',background:'var(--bg-tertiary)',color:'var(--text-muted)',fontFamily:'inherit',flexShrink:0}}>Copy name</button>
+        </div>`;
 
         // Claude Desktop MCP config snippet
         var _claudeConfig = JSON.stringify({
           mcpServers: {
             clashcontrol: {
-              command: os === 'win' ? 'clashcontrol-smart-bridge.exe' : './clashcontrol-smart-bridge',
+              command: dl.installPath,
               args: ['--mcp']
             }
           }
@@ -421,13 +473,40 @@
           });
         }
 
+        // Reconnecting after self-update (WebSocket dropped, bridge is restarting)
+        if (!sb.connected && sb.bridgeReconnecting) {
+          return html`<div style=${{display:'flex',flexDirection:'column',gap:'.4rem'}}>
+            <div style=${{display:'flex',alignItems:'center',gap:'.4rem'}}>
+              <div style=${{width:7,height:7,border:'1.5px solid #fbbf24',borderTopColor:'transparent',borderRadius:'50%',animation:'cc-spin .6s linear infinite',flexShrink:0}}></div>
+              <span style=${{fontSize:'0.75rem',color:'#fbbf24',flex:1}}>Reconnecting\u2026</span>
+            </div>
+            <div style=${{fontSize:'0.6rem',color:'var(--text-faint)',lineHeight:1.5}}>
+              Bridge updated and restarted. Reconnecting automatically\u2026
+            </div>
+          </div>`;
+        }
+
         // Connected state
         if (sb.connected) {
+          var _updateHref = sb.updateUrl ||
+            (sb.updateVersion ? 'https://github.com/clashcontrol-io/ClashControlSmartBridge/releases/tag/v' + sb.updateVersion : null);
           return html`<div style=${{display:'flex',flexDirection:'column',gap:'.5rem'}}>
             <div style=${{display:'flex',alignItems:'center',gap:'.4rem'}}>
-              <span style=${{width:7,height:7,borderRadius:'50%',background:'#22c55e',flexShrink:0}}></span>
-              <span style=${{fontSize:'0.75rem',color:'#4ade80',flex:1}}>Connected${sb.version ? ' \u2014 v' + sb.version : ''}</span>
+              ${sb.bridgeUpdating
+                ? html`<div style=${{width:7,height:7,border:'1.5px solid #fbbf24',borderTopColor:'transparent',borderRadius:'50%',animation:'cc-spin .6s linear infinite',flexShrink:0}}></div>`
+                : html`<span style=${{width:7,height:7,borderRadius:'50%',background:'#22c55e',flexShrink:0}}></span>`}
+              <span style=${{fontSize:'0.75rem',color:sb.bridgeUpdating?'#fbbf24':'#4ade80',flex:1}}>
+                ${sb.bridgeUpdating ? 'Downloading update\u2026' : ('Connected' + (sb.version ? ' \u2014 v' + sb.version : ''))}
+              </span>
             </div>
+            ${sb.updateAvailable && html`<div style=${{display:'flex',alignItems:'center',gap:'.5rem',padding:'.3rem .45rem',background:'rgba(234,179,8,.1)',border:'1px solid rgba(234,179,8,.25)',borderRadius:6}}>
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#fbbf24" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style=${{flexShrink:0}}><path d="M12 2v16M5 9l7-7 7 7"/></svg>
+              <span style=${{fontSize:'0.66rem',color:'#fbbf24',flex:1}}>
+                Update available${sb.updateVersion ? ': v' + sb.updateVersion : ''}
+              </span>
+              ${_updateHref && html`<a href=${_updateHref} target="_blank" rel="noopener"
+                style=${{fontSize:'0.63rem',fontWeight:600,color:'#fbbf24',textDecoration:'none',background:'rgba(234,179,8,.15)',padding:'2px 7px',borderRadius:4,flexShrink:0}}>Download</a>`}
+            </div>`}
             <div style=${{fontSize:'0.63rem',color:'var(--text-faint)',lineHeight:1.6}}>
               Smart Bridge is running. Connect your AI assistant:
             </div>
@@ -463,6 +542,7 @@
                 <a href="http://localhost:19803/openapi.json" target="_blank" rel="noopener" style=${{color:'var(--accent)',textDecoration:'underline'}}>OpenAPI spec</a>
               </div>
             </div>
+            ${_cleanupRow}
           </div>`;
         }
 
@@ -475,9 +555,10 @@
             </div>
             ${sb.installing && html`<div style=${{fontSize:'0.63rem',color:'var(--text-faint)',lineHeight:1.5}}>
               <b>1.</b> Run the downloaded file<br/>
-              ${os === 'win' ? html`<code style=${{fontSize:'0.57rem',background:'var(--bg-tertiary)',padding:'2px 4px',borderRadius:3}}>${dl.cmd}</code>` :
-                html`<code style=${{fontSize:'0.57rem',background:'var(--bg-tertiary)',padding:'2px 4px',borderRadius:3,whiteSpace:'pre'}}>${dl.cmd}</code>`}
-              <br/><b>2.</b> The bridge will connect automatically
+              <code style=${{fontSize:'0.57rem',background:'var(--bg-tertiary)',padding:'2px 4px',borderRadius:3,wordBreak:'break-all'}}>${dl.cmd}</code>
+              <br/><b>2.</b> The bridge installs to:<br/>
+              <code style=${{fontSize:'0.57rem',background:'var(--bg-tertiary)',padding:'2px 4px',borderRadius:3,wordBreak:'break-all'}}>${dl.installPath}</code>
+              <br/><b>3.</b> It will connect automatically — you can then delete the downloaded file
             </div>`}
           </div>`;
         }
@@ -487,8 +568,8 @@
           return html`<div style=${{display:'flex',flexDirection:'column',gap:'.4rem'}}>
             <div style=${{fontSize:'0.69rem',color:'#fca5a5'}}>Could not connect to Smart Bridge.</div>
             <div style=${{fontSize:'0.6rem',color:'var(--text-faint)',lineHeight:1.5}}>
-              Make sure the bridge is running:<br/>
-              <code style=${{fontSize:'0.57rem',background:'var(--bg-tertiary)',padding:'2px 4px',borderRadius:3,wordBreak:'break-all'}}>${dl.cmd}</code>
+              Start the bridge manually:<br/>
+              <code style=${{fontSize:'0.57rem',background:'var(--bg-tertiary)',padding:'2px 4px',borderRadius:3,wordBreak:'break-all'}}>${dl.installPath}</code>
             </div>
             <div style=${{display:'flex',gap:'.3rem'}}>
               <button onClick=${function(){ _connectBridge(d); }}
@@ -506,7 +587,8 @@
           </div>
           ${sb.wasInstalled ?
             html`<button onClick=${function(){ _connectBridge(d); }}
-              style=${{padding:'.3rem .7rem',borderRadius:6,fontSize:'0.75rem',fontWeight:600,cursor:'pointer',border:'none',background:'var(--accent)',color:'#fff',fontFamily:'inherit',width:'100%'}}>Connect to Smart Bridge</button>` :
+              style=${{padding:'.3rem .7rem',borderRadius:6,fontSize:'0.75rem',fontWeight:600,cursor:'pointer',border:'none',background:'var(--accent)',color:'#fff',fontFamily:'inherit',width:'100%'}}>Connect to Smart Bridge</button>
+            ${_cleanupRow}` :
             html`<button onClick=${function(){ _triggerDownload(); _connectBridge(d, {installing:true}); }}
               style=${{padding:'.3rem .7rem',borderRadius:6,fontSize:'0.75rem',fontWeight:600,cursor:'pointer',border:'none',background:'var(--accent)',color:'#fff',fontFamily:'inherit',width:'100%'}}>Install & Connect</button>`}
           <div style=${{display:'flex',gap:'.3rem',flexWrap:'wrap'}}>

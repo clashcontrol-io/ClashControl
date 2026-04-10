@@ -21,6 +21,8 @@
   var _engineCores = null;
   var _engineBackends = null;
   var _lastKnownVersion = null;
+  var _updateChecked = false;   // true after the first /update check per connection
+  var _updateInterval = null;   // periodic /update check handle
 
   // ── Download URLs for standalone executables ──────────────────
   // Pinned to clashcontrol-engine v0.2.2. mac/linux ship as tar.gz
@@ -69,12 +71,20 @@
     _engineCores = cores;
     _engineBackends = backends;
     _lastKnownVersion = version;
+    if (versionChanged) { _updateChecked = false; }
+    var updateAvailable = !!(j && j.update_available);
+    var updateVersion = (j && j.update_version) || null;
+    var updateUrl = (j && j.update_url) || null;
     if (d) d({t:'UPD_LOCAL_ENGINE', u:{
       available:true, checking:false, connecting:false, installing:false, failed:false,
       active:true, wasInstalled:true,
-      version:version, cores:cores, backends:backends
+      version:version, cores:cores, backends:backends,
+      updateAvailable:updateAvailable, updateVersion:updateVersion, updateUrl:updateUrl
     }});
     try { localStorage.setItem('cc_local_engine','1'); } catch(e){}
+    // Poll GET /update once per connection (or after a version change).
+    // Done after the status dispatch so the UI is already in "connected" state.
+    if (!_updateChecked) { _updateChecked = true; _checkForUpdate(d); }
     return {versionChanged: versionChanged, version: version};
   }
 
@@ -92,6 +102,67 @@
         console.log('[LocalEngine] /status probe failed:', err && err.message || err);
         if (d) d({t:'UPD_LOCAL_ENGINE', u:{available:false, checking:false}});
         return false;
+      });
+  }
+
+  // ── Update check: GET /update ────────────────────────────────
+  // Called once after each successful connection and periodically.
+  // If the engine reports update_available, automatically triggers the
+  // self-update flow (POST /update + poll until restart).
+  // Silently ignored if the engine is down or doesn't support the endpoint.
+  function _checkForUpdate(d) {
+    var fetchOpts = {method:'GET', cache:'no-store'};
+    try { if (AbortSignal.timeout) fetchOpts.signal = AbortSignal.timeout(3000); } catch(e){}
+    return fetch(_localEngineUrl + '/update', fetchOpts)
+      .then(function(r){ if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
+      .then(function(j) {
+        if (j && j.update_available) {
+          console.log('%c[LocalEngine] Update available — auto-updating to', 'color:#fbbf24;font-weight:bold', j.version || 'latest');
+          // Auto-trigger the self-update: POST /update, then poll /status
+          // until the engine restarts. No user interaction required.
+          _applyEngineUpdate(d);
+        }
+      })
+      .catch(function() { /* /update not present or engine unreachable — ignore */ });
+  }
+
+  // ── Poll /status until engine restarts (post-update) ─────────
+  // Does NOT fire the URL scheme — the engine restarts itself.
+  function _pollForRestart(d, timeoutMs) {
+    var gen = ++_connectGen;
+    var deadline = Date.now() + (timeoutMs || 30000);
+    function tick() {
+      if (gen !== _connectGen) return;
+      if (Date.now() >= deadline) {
+        if (d) d({t:'UPD_LOCAL_ENGINE', u:{updating:false, available:false, failed:true}});
+        return;
+      }
+      _probeStatus(2000)
+        .then(function(j) {
+          if (gen !== _connectGen) return;
+          _applyStatus(j, d);
+          if (d) d({t:'UPD_LOCAL_ENGINE', u:{updating:false}});
+        })
+        .catch(function() { setTimeout(tick, 2000); });
+    }
+    setTimeout(tick, 1500); // wait for engine to start shutting down
+  }
+
+  // ── Trigger self-update: POST /update ─────────────────────────
+  // Tells the engine to download the latest release, replace its own
+  // binary, and restart. We then poll until it comes back online.
+  function _applyEngineUpdate(d) {
+    if (d) d({t:'UPD_LOCAL_ENGINE', u:{updating:true, updateAvailable:false}});
+    var fetchOpts = {method:'POST', cache:'no-store'};
+    try { if (AbortSignal.timeout) fetchOpts.signal = AbortSignal.timeout(5000); } catch(e){}
+    return fetch(_localEngineUrl + '/update', fetchOpts)
+      .then(function() {
+        console.log('%c[LocalEngine] Self-update triggered, waiting for restart\u2026', 'color:#fbbf24');
+        _pollForRestart(d, 60000); // up to 60s for the update + restart
+      })
+      .catch(function(e) {
+        console.warn('[LocalEngine] POST /update failed:', e && e.message || e);
+        if (d) d({t:'UPD_LOCAL_ENGINE', u:{updating:false, updateAvailable:true}});
       });
   }
 
@@ -203,7 +274,7 @@
       // a connect attempt times out; `installing` is set when we've just
       // triggered a download and are waiting for the user to run the
       // installer. Both are cleared on every new Connect attempt.
-      localEngine: { available: false, active: false, checking: false, connecting: false, installing: false, failed: false, wasInstalled: false, version: null, cores: null, backends: null }
+      localEngine: { available: false, active: false, checking: false, connecting: false, installing: false, failed: false, wasInstalled: false, version: null, cores: null, backends: null, updateAvailable: false, updateVersion: null, updateUrl: null, updating: false }
     },
 
     reducerCases: {
@@ -222,6 +293,11 @@
       // Passive probe only — we can't fire the URL scheme without a
       // user gesture, so the actual connect happens on button click or onEnable.
       _checkLocalEngine(dispatch);
+      // Periodic update check every 30 minutes while the addon is active.
+      _updateInterval = setInterval(function() {
+        var le = (window._ccLatestState || {}).localEngine;
+        if (le && le.available && !le.updating) _checkForUpdate(dispatch);
+      }, 30 * 60 * 1000);
     },
 
     // Called from within the Enable button's click handler (user gesture).
@@ -254,12 +330,26 @@
       // Abort any in-flight connect/install poll so it doesn't keep firing
       // /status requests after the user disables the addon.
       _cancelPendingConnect();
+      clearInterval(_updateInterval); _updateInterval = null;
     },
 
     panel: function(html, s, d) {
       var le = s.localEngine || {};
       var os = _detectOS();
       var dl = _downloads[os];
+
+      // ── Updating (self-update in progress) ───────────────────
+      if (le.updating) {
+        return html`<div style=${{padding:'.5rem 0',fontSize:'0.78rem',color:'var(--text-secondary)',lineHeight:1.7}}>
+          <div style=${{display:'flex',alignItems:'center',gap:'.4rem',marginBottom:'.3rem'}}>
+            <div style=${{width:12,height:12,border:'2px solid #fbbf24',borderTopColor:'transparent',borderRadius:'50%',animation:'cc-spin .6s linear infinite'}}></div>
+            <span style=${{color:'#fbbf24',fontWeight:600}}>Updating engine\u2026</span>
+          </div>
+          <div style=${{fontSize:'0.65rem',color:'var(--text-faint)',lineHeight:1.6}}>
+            Downloading update and restarting. Reconnecting automatically\u2026
+          </div>
+        </div>`;
+      }
 
       // ── Connected ─────────────────────────────────────────────
       if (le.available) {
@@ -270,6 +360,14 @@
             ${le.version && html`<span style=${{fontSize:'0.63rem',color:'var(--text-faint)'}}>v${le.version}</span>`}
             ${le.cores && html`<span style=${{fontSize:'0.63rem',color:'var(--text-faint)'}}>\u00b7 ${le.cores} cores</span>`}
           </div>
+          ${le.updateAvailable && html`<div style=${{display:'flex',alignItems:'center',gap:'.5rem',padding:'.3rem .45rem',background:'rgba(234,179,8,.1)',border:'1px solid rgba(234,179,8,.25)',borderRadius:6,marginBottom:'.3rem'}}>
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#fbbf24" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style=${{flexShrink:0}}><path d="M12 2v16M5 9l7-7 7 7"/></svg>
+            <span style=${{fontSize:'0.66rem',color:'#fbbf24',flex:1}}>
+              Update available${le.updateVersion ? ': v' + le.updateVersion : ''}
+            </span>
+            <button onClick=${function(){ _applyEngineUpdate(d); }}
+              style=${{fontSize:'0.63rem',fontWeight:600,color:'#fbbf24',background:'rgba(234,179,8,.2)',border:'1px solid rgba(234,179,8,.4)',padding:'2px 7px',borderRadius:4,cursor:'pointer',fontFamily:'inherit',flexShrink:0}}>Update now</button>
+          </div>`}
           ${le.backends && le.backends.length ? html`<div style=${{fontSize:'0.63rem',color:'var(--text-faint)',marginBottom:'.4rem'}}>
             Backends: ${le.backends.join(', ')}
           </div>` : null}
