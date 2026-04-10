@@ -15732,13 +15732,11 @@ function startApp() {
     var outlines = [];
     var cutAt = elevation + (cutHeight || 1.2);
     var _dbg = {total:0, noBox:0, empty:0, nonPhys:0, outOfRange:0, hasMesh:0, noMesh:0, meshSegs:0, aabb:0};
-    // If every model is marked invisible, include them all anyway — an empty
-    // sheet is never useful and the flag may be stale from a project restore.
-    var _anyVisible = models.some(function(m) { return m.visible !== false; });
-    console.log('[2D Outlines] elevation=' + elevation + ', cutHeight=' + cutHeight + ', cutAt=' + cutAt + ', models=' + models.length + ', anyVisible=' + _anyVisible);
+    console.log('[2D Outlines] elevation=' + elevation + ', cutHeight=' + cutHeight + ', cutAt=' + cutAt + ', models=' + models.length);
     models.forEach(function(m) {
-      if (!_anyVisible) { /* include all when none visible */ }
-      else if (!m.visible) { console.log('[2D Outlines] model ' + m.name + ' not visible, skipping'); return; }
+      // Use strict check: only skip models the user explicitly hid.
+      // m.visible can be undefined (not set during restore) which is truthy-ish.
+      if (m.visible === false) { console.log('[2D Outlines] model ' + m.name + ' hidden, skipping'); return; }
       console.log('[2D Outlines] model ' + m.name + ': ' + (m.elements||[]).length + ' elements');
       // Sample a few element bbox Y ranges
       var sampleCount = 0;
