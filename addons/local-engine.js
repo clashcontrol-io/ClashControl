@@ -106,7 +106,7 @@
   }
 
   // ── Update check: GET /update ────────────────────────────────
-  // Called once after each successful connection and periodically.
+  // Called once after each successful connection and periodically (every 30 minutes).
   // If the engine reports update_available, automatically triggers the
   // self-update flow (POST /update + poll until restart).
   // Silently ignored if the engine is down or doesn't support the endpoint.
