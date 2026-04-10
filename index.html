@@ -16,7 +16,7 @@
       }
     })();
   </script>
-  <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 48 48'%3E%3Cdefs%3E%3ClinearGradient id='g' x1='0%25' y1='0%25' x2='100%25' y2='100%25'%3E%3Cstop offset='0%25' stop-color='%2300e5ff'/%3E%3Cstop offset='100%25' stop-color='%237c3aed'/%3E%3C/linearGradient%3E%3C/defs%3E%3Crect width='48' height='48' rx='10' fill='url(%23g)'/%3E%3Ctext x='18' y='30' text-anchor='middle' font-family='system-ui,sans-serif' font-weight='800' font-size='18' fill='white'%3EC%3C/text%3E%3Ctext x='-30' y='30' text-anchor='middle' font-family='system-ui,sans-serif' font-weight='800' font-size='18' fill='white' transform='scale(-1 1)'%3EC%3C/text%3E%3C/svg%3E">
+  <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 48 48'%3E%3Cdefs%3E%3ClinearGradient id='g' x1='0%25' y1='0%25' x2='100%25' y2='100%25'%3E%3Cstop offset='0%25' stop-color='%2300e5ff'/%3E%3Cstop offset='100%25' stop-color='%237c3aed'/%3E%3C/linearGradient%3E%3C/defs%3E%3Crect width='48' height='48' rx='10' fill='url(%23g)'/%3E%3Cpath d='M31 17h3a7 7 0 0 1 0 14h-3m-14 0h-3a7 7 0 0 1 0-14h3' stroke='white' stroke-width='3.5' stroke-linecap='round' fill='none'/%3E%3Cline x1='15' y1='24' x2='33' y2='24' stroke='white' stroke-width='3.5' stroke-linecap='round'/%3E%3C/svg%3E">
   <link rel="manifest" href="manifest.json">
   <meta name="theme-color" content="#0f172a">
 
@@ -638,6 +638,7 @@ function startApp() {
     treeOpen:false,
     // Floor plan cut
     floorPlan:null, // {storeyName, elevation, cutHeight} or null
+    walkMode:false, // first-person walk mode active
     _highlightedStorey:null,
     // Annotated Sheets (persistent plans generated from 3D at a storey cut)
     // [{id, name, storeyName, elevation, cutHeight,
@@ -690,7 +691,7 @@ function startApp() {
     SET_CLASSIFICATIONS:'SET_CLASSIFICATIONS',
     TOGGLE_CLASS_VIS:'TOGGLE_CLASS_VIS', SHOW_ALL_CLASSES:'SHOW_ALL_CLASSES',
     HIDE_ALL_CLASSES:'HIDE_ALL_CLASSES', COLOR_BY_CLASS:'COLOR_BY_CLASS',
-    TREE:'TREE', FLOOR_PLAN:'FLOOR_PLAN', SET_HIGHLIGHTED_STOREY:'SET_HIGHLIGHTED_STOREY',
+    TREE:'TREE', FLOOR_PLAN:'FLOOR_PLAN', WALK_MODE:'WALK_MODE', SET_HIGHLIGHTED_STOREY:'SET_HIGHLIGHTED_STOREY',
     SET_PROJECT:'SET_PROJECT', SET_PROJECT_LIST:'SET_PROJECT_LIST',
     LOAD_PROJECT_STATE:'LOAD_PROJECT_STATE',
     CLASH_GROUP_BY:'CLASH_GROUP_BY', CLASH_SORT_BY:'CLASH_SORT_BY',
@@ -987,6 +988,7 @@ function startApp() {
 
       case A.TREE:         return Object.assign({},s,{treeOpen:a.v});
       case A.FLOOR_PLAN:   return Object.assign({},s,{floorPlan:a.v, sectionAxis:null, sectionCustom:null, sectionBox:null});
+      case A.WALK_MODE:    return Object.assign({},s,{walkMode:!!a.v});
       case A.SET_HIGHLIGHTED_STOREY: return Object.assign({},s,{_highlightedStorey:a.v});
       case A.SET_PROJECT:  return Object.assign({},s,{activeProject:a.id});
       case A.SET_PROJECT_LIST: return Object.assign({},s,{projectList:a.v});
@@ -4821,6 +4823,131 @@ function startApp() {
     });
   }
 
+  // ── First-Person Walk Mode ────────────────────────────────────
+  // WASD movement with pointer-lock mouse look. Coexists with orbit
+  // controls — entering walk mode saves orbit state and disables it;
+  // exiting restores. Camera never leaves perspective mode.
+  var _walkActive = false;
+  var _walkKeys = {};        // currently pressed keys
+  var _walkYaw = 0;          // horizontal angle (radians)
+  var _walkPitch = 0;        // vertical angle (radians, clamped)
+  var _walkSpeed = 3.0;      // m/s base speed
+  var _walkEyeHeight = 1.7;  // meters above floor
+  var _walkSavedCam = null;  // {pos, target, sph} to restore on exit
+  var _walkLastTime = 0;     // for delta-time in tick
+  var _walkCollision = true; // raycast collision with walls
+
+  function _walkEnter(S, elevation) {
+    if (_walkActive) return;
+    _walkActive = true;
+    // Save orbit state
+    _walkSavedCam = {
+      pos: S.camera.position.clone(),
+      target: S.orbit.target.clone(),
+      sph: { r: S.orbit.sph.r, phi: S.orbit.sph.phi, theta: S.orbit.sph.theta }
+    };
+    // Position camera at eye height above the given elevation
+    var eyeY = elevation + _walkEyeHeight;
+    // Aim where the user was looking (project orbit direction onto XZ)
+    var dir = new THREE.Vector3();
+    S.camera.getWorldDirection(dir);
+    _walkYaw = Math.atan2(dir.x, dir.z);
+    _walkPitch = Math.asin(Math.max(-1, Math.min(1, dir.y)));
+    _walkPitch = Math.max(-Math.PI / 2.5, Math.min(Math.PI / 2.5, _walkPitch));
+    // Move camera to orbit target at eye height (center of what user was looking at)
+    S.camera.position.set(S.orbit.target.x, eyeY, S.orbit.target.z);
+    _walkApplyLook(S);
+    _walkKeys = {};
+    _walkLastTime = performance.now();
+    // Request pointer lock on the canvas
+    try { S.renderer.domElement.requestPointerLock(); } catch (e) {}
+    invalidate(999);
+  }
+
+  function _walkExit(S) {
+    if (!_walkActive) return;
+    _walkActive = false;
+    _walkKeys = {};
+    // Exit pointer lock
+    try { if (document.pointerLockElement) document.exitPointerLock(); } catch (e) {}
+    // Restore orbit state
+    if (_walkSavedCam && S.orbit) {
+      S.camera.position.copy(_walkSavedCam.pos);
+      S.orbit.target.copy(_walkSavedCam.target);
+      S.orbit.sph.r = _walkSavedCam.sph.r;
+      S.orbit.sph.phi = _walkSavedCam.sph.phi;
+      S.orbit.sph.theta = _walkSavedCam.sph.theta;
+      S.orbit.apply();
+      _walkSavedCam = null;
+    }
+    invalidate(5);
+  }
+
+  function _walkApplyLook(S) {
+    var dir = new THREE.Vector3(
+      Math.sin(_walkYaw) * Math.cos(_walkPitch),
+      Math.sin(_walkPitch),
+      Math.cos(_walkYaw) * Math.cos(_walkPitch)
+    );
+    var lookAt = S.camera.position.clone().add(dir);
+    S.camera.lookAt(lookAt);
+  }
+
+  // Called each frame from tick() when walk mode is active
+  function _walkTick(S) {
+    if (!_walkActive) return;
+    var now = performance.now();
+    var dt = Math.min((now - _walkLastTime) / 1000, 0.1); // cap at 100ms
+    _walkLastTime = now;
+    if (dt <= 0) return;
+
+    var speed = _walkSpeed * (_walkKeys['ShiftLeft'] || _walkKeys['ShiftRight'] ? 3 : 1);
+    // Forward/back direction on XZ plane
+    var fx = Math.sin(_walkYaw), fz = Math.cos(_walkYaw);
+    // Strafe direction (perpendicular)
+    var rx = Math.cos(_walkYaw), rz = -Math.sin(_walkYaw);
+
+    var mx = 0, mz = 0, my = 0;
+    if (_walkKeys['KeyW'] || _walkKeys['ArrowUp'])    { mx += fx; mz += fz; }
+    if (_walkKeys['KeyS'] || _walkKeys['ArrowDown'])  { mx -= fx; mz -= fz; }
+    if (_walkKeys['KeyA'] || _walkKeys['ArrowLeft'])   { mx -= rx; mz -= rz; }
+    if (_walkKeys['KeyD'] || _walkKeys['ArrowRight'])  { mx += rx; mz += rz; }
+    if (_walkKeys['Space'])   my += 1;
+    if (_walkKeys['KeyC'])    my -= 1;
+
+    // Normalize horizontal movement
+    var len = Math.sqrt(mx * mx + mz * mz);
+    if (len > 0) { mx /= len; mz /= len; }
+
+    var step = speed * dt;
+    var newX = S.camera.position.x + mx * step;
+    var newY = S.camera.position.y + my * step;
+    var newZ = S.camera.position.z + mz * step;
+
+    // Simple raycast collision: check if moving forward would hit geometry
+    if (_walkCollision && len > 0 && S.scene) {
+      var rayOrigin = S.camera.position.clone();
+      var rayDir = new THREE.Vector3(mx, 0, mz).normalize();
+      var ray = new THREE.Raycaster(rayOrigin, rayDir, 0, step + 0.3);
+      var hits = ray.intersectObjects(S.mg ? S.mg.children : [], true);
+      if (hits.length > 0 && hits[0].distance < step + 0.3) {
+        // Blocked — slide along the wall
+        var n = hits[0].face ? hits[0].face.normal.clone() : new THREE.Vector3();
+        n.y = 0; n.normalize();
+        var slide = new THREE.Vector3(mx * step, 0, mz * step);
+        slide.sub(n.multiplyScalar(slide.dot(n)));
+        newX = S.camera.position.x + slide.x;
+        newZ = S.camera.position.z + slide.z;
+      }
+    }
+
+    if (mx !== 0 || mz !== 0 || my !== 0) {
+      S.camera.position.set(newX, newY, newZ);
+      _walkApplyLook(S);
+      invalidate(3);
+    }
+  }
+
   // ── Orbit Controls (inline) ────────────────────────────────────
 
   // Global flag: set true when dragging section box handles to suppress orbit
@@ -4857,7 +4984,7 @@ function startApp() {
     sync();
 
     el.addEventListener('mousedown', function(e) {
-      if(_sboxDragging) return; // don't orbit while dragging section box handles
+      if(_sboxDragging || _walkActive) return; // don't orbit while dragging section box handles or in walk mode
       if (e.button===0) dragging=true;
       if (e.button===1) { panning=true; e.preventDefault(); el.style.cursor='move'; }
       if (e.button===2) return; // reserved for context menu
@@ -4918,7 +5045,7 @@ function startApp() {
     var touchState = {type:null, lx:0, ly:0, dist:0};
     el.style.touchAction = 'none'; // prevent browser scroll/zoom on canvas
     el.addEventListener('touchstart', function(e) {
-      if(_sboxDragging) return;
+      if(_sboxDragging || _walkActive) return;
       e.preventDefault();
       var t = e.touches;
       if(t.length===1) {
@@ -5064,6 +5191,48 @@ function startApp() {
 
       S.orbit = makeOrbit(camera, renderer.domElement, _wlAdd);
       S.orbit.apply(); // ensure camera looks at orbit target on init
+
+      // ── Walk mode event listeners ───────────────────────────────────
+      _wlAdd('keydown', function(e) {
+        if (!_walkActive) return;
+        _walkKeys[e.code] = true;
+        if (e.code === 'Escape') {
+          _walkExit(S);
+          if (window._ccDispatch) window._ccDispatch({ t: 'WALK_MODE', v: false });
+        }
+        // Prevent default for movement keys to stop page scroll
+        if (/^(Key[WASDC]|Arrow|Space)/.test(e.code)) e.preventDefault();
+        invalidate(3);
+      });
+      _wlAdd('keyup', function(e) {
+        if (!_walkActive) return;
+        delete _walkKeys[e.code];
+      });
+      // Mouse look via pointer lock
+      renderer.domElement.addEventListener('mousemove', function(e) {
+        if (!_walkActive || document.pointerLockElement !== renderer.domElement) return;
+        _walkYaw -= e.movementX * 0.002;
+        _walkPitch += e.movementY * -0.002;
+        _walkPitch = Math.max(-Math.PI / 2.2, Math.min(Math.PI / 2.2, _walkPitch));
+        _walkApplyLook(S);
+        invalidate(3);
+      });
+      // Scroll wheel adjusts walk speed
+      renderer.domElement.addEventListener('wheel', function(e) {
+        if (!_walkActive) return;
+        e.preventDefault();
+        _walkSpeed = Math.max(0.5, Math.min(20, _walkSpeed * (1 - e.deltaY * 0.001)));
+      }, { passive: false });
+      // Exit walk mode on pointer lock loss
+      _wlAdd('pointerlockchange', function() {
+        if (_walkActive && document.pointerLockElement !== renderer.domElement) {
+          _walkExit(S);
+          if (window._ccDispatch) window._ccDispatch({ t: 'WALK_MODE', v: false });
+        }
+      });
+      // Expose walk enter/exit for UI buttons
+      window._ccWalkEnter = function(elevation) { _walkEnter(S, elevation); };
+      window._ccWalkExit = function() { _walkExit(S); };
 
       // ── Animated fly-to system ─────────────────────────────────────
       var _flyAnim = null;
@@ -5936,7 +6105,7 @@ function startApp() {
 
       // ── Hover cursor for section box handles ──
       renderer.domElement.addEventListener('mousemove', function(e){
-        if(_sboxDragging) return;
+        if(_sboxDragging || _walkActive) return;
         var S2=state3d.current;
         if(!S2._sboxHandles&&!S2._sboxRotRing) return;
         var rect=renderer.domElement.getBoundingClientRect();
@@ -5966,7 +6135,7 @@ function startApp() {
       renderer.domElement.addEventListener('mouseup', function(e){
         if(e.button !== 0) return; // only left-click picks elements
         // Don't pick if we were dragging section box handles
-        if(_sboxDragging) return;
+        if(_sboxDragging || _walkActive) return;
         // Only pick if the mouse didn't move (not a drag)
         if(Math.abs(e.clientX-downPos.x)>3 || Math.abs(e.clientY-downPos.y)>3) return;
         var rect = renderer.domElement.getBoundingClientRect();
@@ -6230,9 +6399,12 @@ function startApp() {
       renderer.domElement.addEventListener('mousedown', function(e) {
         var cs = window._ccCurrentSection;
         if (!cs) return;
-        if (e.button === 2) {
+        // Section plane interaction requires Ctrl (or Cmd on Mac) to avoid
+        // blocking orbit rotation on accidental clicks near the plane.
+        var ctrlHeld = e.ctrlKey || e.metaKey;
+        if (e.button === 2 && ctrlHeld) {
           _secDrag = {startX: e.clientX, startY: e.clientY, startPos: cs.pos, didDrag: false, button: 2, mode:'move'};
-        } else if (e.button === 0) {
+        } else if (e.button === 0 && ctrlHeld) {
           var S2 = state3d.current;
           if (!S2._sectionPlaneVis) return;
           var rect = renderer.domElement.getBoundingClientRect();
@@ -6314,10 +6486,11 @@ function startApp() {
       renderer.domElement.addEventListener('contextmenu', function(e) {
         if (_secDrag && _secDrag.didDrag) { e.preventDefault(); e.stopPropagation(); }
       }, true);
-      // Show grab cursor when hovering over section plane
+      // Show grab cursor when hovering over section plane (only while Ctrl/Cmd held)
       var _prevSecHover = false;
       renderer.domElement.addEventListener('mousemove', function(e) {
         if (_secDrag) return;
+        if (!(e.ctrlKey || e.metaKey)) { if(_prevSecHover){renderer.domElement.style.cursor='';_prevSecHover=false;} return; }
         var S2 = state3d.current;
         if (!S2._sectionPlaneVis) { if(_prevSecHover){renderer.domElement.style.cursor='';_prevSecHover=false;} return; }
         var rect = renderer.domElement.getBoundingClientRect();
@@ -6502,6 +6675,12 @@ function startApp() {
           var modelGeoCount = 0;
           S.mg.traverse(function(c){ if(c.geometry) modelGeoCount++; });
           S.perf.meshCount = modelGeoCount;
+        }
+        // Walk mode: step camera and keep rendering
+        if (_walkActive) {
+          _walkTick(S);
+          // Keep render loop alive while keys are held
+          if (Object.keys(_walkKeys).length > 0) invalidate(3);
         }
         // Render on demand: skip if nothing changed
         if(_needsRender <= 0) return;
@@ -7363,6 +7542,54 @@ function startApp() {
         <span>3D Section: ${s.floorPlan.storeyName} · ${(s.floorPlan.elevation+(s.floorPlan.cutHeight||1.2)).toFixed(1)}m</span>
         <span style=${{fontSize:'0.69rem',opacity:.7}} title="Exit 3D section" aria-label="Exit floor plan view">✕</span>
       </div>`}
+
+      ${s.models.length>0 && !s.walkMode && html`<div style=${{position:'absolute',bottom:'var(--space-3)',left:'var(--space-3)',pointerEvents:'auto'}}>
+        <button class="cc-btn-press" onClick=${function(){
+          // Pick elevation: use floor plan if active, else first storey, else 0
+          var elev = 0;
+          if (s.floorPlan) elev = s.floorPlan.elevation;
+          else {
+            var storeys = _ccCollectStoreys(s.models);
+            if (storeys && storeys.length) elev = storeys[0].elevation;
+          }
+          d({t:A.WALK_MODE, v:true});
+          if (window._ccWalkEnter) window._ccWalkEnter(elev);
+        }} style=${{...S_BTN,background:'rgba(15,23,42,.85)',color:'#e2e8f0',border:'1px solid rgba(148,163,184,.3)',
+          fontSize:'var(--text-xs)',padding:'var(--space-1) var(--space-3)',backdropFilter:'blur(8px)',gap:'.3rem'}}>
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="5" r="2"/><path d="M12 7v6m-3 4l3-4 3 4"/><path d="M9 13l-2 4m8-4l2 4"/></svg>
+          Walk
+        </button>
+      </div>`}
+
+      ${s.walkMode && html`<div style=${{position:'absolute',inset:0,pointerEvents:'none',display:'flex',alignItems:'center',justifyContent:'center',zIndex:5}}>
+        <div style=${{width:20,height:20,border:'2px solid rgba(255,255,255,.5)',borderRadius:'50%',position:'relative'}}>
+          <div style=${{position:'absolute',top:'50%',left:'50%',transform:'translate(-50%,-50%)',width:3,height:3,background:'rgba(255,255,255,.8)',borderRadius:'50%'}}></div>
+        </div>
+      </div>`}
+      ${s.walkMode && html`<div style=${{position:'absolute',bottom:'var(--space-4)',left:'50%',transform:'translateX(-50%)',
+        pointerEvents:'auto',display:'flex',flexDirection:'column',alignItems:'center',gap:'.4rem',zIndex:5}}>
+        <div style=${{background:'rgba(15,23,42,.9)',borderRadius:8,padding:'.4rem .7rem',
+          color:'rgba(255,255,255,.7)',fontSize:'0.69rem',display:'flex',alignItems:'center',gap:'.6rem',
+          border:'1px solid rgba(148,163,184,.2)',backdropFilter:'blur(8px)'}}>
+          <span><b>WASD</b> move</span>
+          <span style=${{opacity:.4}}>|</span>
+          <span><b>Mouse</b> look</span>
+          <span style=${{opacity:.4}}>|</span>
+          <span><b>Space/C</b> up/down</span>
+          <span style=${{opacity:.4}}>|</span>
+          <span><b>Shift</b> sprint</span>
+          <span style=${{opacity:.4}}>|</span>
+          <span><b>Scroll</b> speed</span>
+          <span style=${{opacity:.4}}>|</span>
+          <button onClick=${function(){
+            if (window._ccWalkExit) window._ccWalkExit();
+            d({t:A.WALK_MODE, v:false});
+          }} style=${{...S_BTN,background:'rgba(239,68,68,.8)',color:'#fff',padding:'1px 8px',fontSize:'0.65rem',borderRadius:4}}>
+            ESC Exit
+          </button>
+        </div>
+      </div>`}
+
       ${selectedEl && function(){ try {
         // ── Clean element property panel ──
         // Organize properties into logical sections instead of raw IFC structure
@@ -12592,13 +12819,7 @@ function startApp() {
           </div>`}
         </div>`}
 
-        <div>
-          <div onClick=${function(){toggleSection('ids');}} style=${SEC}>
-            <span>IDS Validation</span>
-            <span style=${{fontSize:'0.57rem',color:'var(--text-faint)'}}>${sections.ids?'▲':'▼'}</span>
-          </div>
-          ${sections.ids && html`<${IDSValidationPanel} s=${s} d=${d} />`}
-        </div>
+        <${IDSValidationPanel} s=${s} d=${d} />
 
         ${qc && html`<div style=${{padding:'.5rem .6rem',borderTop:'1px solid var(--border-subtle)'}}>
           <div style=${{display:'flex',alignItems:'center',gap:'.3rem',flexWrap:'wrap'}}>
@@ -18773,7 +18994,7 @@ function startApp() {
         <div class="cc-logo-mark cc-tip" data-tip=${'ClashControl v'+CC_VERSION.v}
           style=${{width:28,height:28,background:'var(--logo-gradient)',borderRadius:'var(--radius-md)',boxShadow:'0 4px 12px rgba(124,58,237,.3)',
             display:'flex',alignItems:'center',justifyContent:'center',cursor:'default'}}>
-          <span style=${{display:'inline-flex',alignItems:'center',color:'#fff',fontWeight:800,fontSize:9,fontFamily:'var(--font-display)',lineHeight:1}}><span>C</span><span style=${{display:'inline-block',transform:'scaleX(-1)',marginLeft:'-1px'}}>C</span></span>
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M15 7h2a5 5 0 0 1 0 10h-2m-6 0H7A5 5 0 0 1 7 7h2"/><line x1="8" y1="12" x2="16" y2="12"/></svg>
         </div>
       </div>
       <div class="cc-rail-tabs" style=${{display:'flex',flexDirection:'column'}}>
@@ -19656,7 +19877,7 @@ function startApp() {
             </div>
             <div>
               <div id="cc-welcome-title" style=${{color:'#fff',fontWeight:'var(--weight-bold)',fontSize:'var(--text-lg)',letterSpacing:'-.01em',fontFamily:'var(--font-display)'}}>Welcome to ClashControl</div>
-              <div style=${{color:'rgba(255,255,255,.6)',fontSize:'.65rem',marginTop:'.15rem'}}>Get the best experience</div>
+              <div style=${{color:'rgba(255,255,255,.6)',fontSize:'.65rem',marginTop:'.15rem'}}>v${CC_VERSION.v} — Get the best experience</div>
             </div>
           </div>
         </div>
