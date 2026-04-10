@@ -613,7 +613,7 @@ function startApp() {
     defaultTolerances:(function(){try{return JSON.parse(localStorage.getItem('cc_defaultTolerances'))||{};}catch(e){return {};}}()),
     theme:(function(){ try { return localStorage.getItem('cc_theme')||'dark'; } catch(e){ return 'dark'; } })(),
     renderStyle:_ccLoadPref('renderStyle','standard'), // 'standard','shaded','rendered','wireframe'
-    // Old AI prefs removed: ollamaEnabled, nlProvider, nlApiKey (now server-side)
+    unitScaleOverride:_ccLoadPref('unitScaleOverride','auto'), // 'auto','1','100','1000'
   };
   var INIT = {
     models:[], clashes:[], issues:[], activeId:null, showModal:false, showSettings:false, modalElement:null, tab:null,
@@ -971,7 +971,7 @@ function startApp() {
       case A.TRAINING_MODE: var tm=a.v!=null?!!a.v:!s.trainingMode;try{localStorage.setItem('cc_trainingMode',tm?'1':'0');}catch(e){}return Object.assign({},s,{trainingMode:tm});
       case A.UPD_PREFS:
         if(a.u&&a.u.defaultTolerances!==undefined){try{localStorage.setItem('cc_defaultTolerances',JSON.stringify(a.u.defaultTolerances));}catch(e){}}
-        if(a.u){var _pk=['autoFlyTo','autoHighlight','showGrid','showAxes','showMarkers','hoverHighlight','outlineSelected','defaultPriority','defaultCategory','defaultStatus','defaultMaxGap','resetFiltersOnRun','renderStyle'];_pk.forEach(function(k){if(a.u[k]!==undefined){try{localStorage.setItem('cc_'+k,JSON.stringify(a.u[k]));}catch(e){}}});}
+        if(a.u){var _pk=['autoFlyTo','autoHighlight','showGrid','showAxes','showMarkers','hoverHighlight','outlineSelected','defaultPriority','defaultCategory','defaultStatus','defaultMaxGap','resetFiltersOnRun','renderStyle','unitScaleOverride'];_pk.forEach(function(k){if(a.u[k]!==undefined){try{localStorage.setItem('cc_'+k,JSON.stringify(a.u[k]));}catch(e){}}});}
         return Object.assign({},s,{prefs:Object.assign({},s.prefs,a.u)});
       case A.MEASURE_MODE: return Object.assign({},s,{measureMode:a.v});
       case A.ADD_MEASUREMENT: _gcEvent('measurement', a.v&&a.v.type||'length'); return Object.assign({},s,{measurements:s.measurements.concat([a.v])});
@@ -7560,7 +7560,7 @@ function startApp() {
       </div>`}
       ${s.floorPlan && html`<div style=${{...P,top:'7.5rem',right:'.75rem',background:'rgba(91,33,182,.9)',color:'#c084fc',pointerEvents:'auto',cursor:'pointer',display:'flex',alignItems:'center',gap:'.4rem'}}
         onClick=${function(){d({t:A.FLOOR_PLAN,v:null})}}>
-        <span>3D Section: ${s.floorPlan.storeyName} · ${(s.floorPlan.elevation+(s.floorPlan.cutHeight||1.2)).toFixed(1)}m</span>
+        <span>3D Section: ${s.floorPlan.storeyName} · ${_ccFormatElev(s.floorPlan.elevation+(s.floorPlan.cutHeight||1.2))}</span>
         <span style=${{fontSize:'0.69rem',opacity:.7}} title="Exit 3D section" aria-label="Exit floor plan view">✕</span>
       </div>`}
 
@@ -10046,8 +10046,8 @@ function startApp() {
                 d({t:A.SET_HIGHLIGHTED_STOREY,v:st});
               }}
               style=${{display:'flex',alignItems:'center',gap:'.25rem',padding:'.2rem .3rem',cursor:'pointer',borderRadius:4,background:isPlanActive?'#2d1a4e':isHighlighted?'var(--bg-secondary)':'transparent',transition:'background .15s'}}>
-              <span style=${{fontSize:'0.69rem',color:isPlanActive?'#c084fc':isHighlighted?'#38bdf8':'var(--text-primary)',flex:1,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',fontWeight:isHighlighted||isPlanActive?600:400}} title=${st+(hasElev?' ('+elev.toFixed(1)+'m)':'')}>${st}</span>
-              ${hasElev && html`<span style=${{fontSize:'0.63rem',color:isPlanActive?'#a78bfa':'var(--text-faint)',flexShrink:0}}>${elev.toFixed(1)}m</span>`}
+              <span style=${{fontSize:'0.69rem',color:isPlanActive?'#c084fc':isHighlighted?'#38bdf8':'var(--text-primary)',flex:1,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',fontWeight:isHighlighted||isPlanActive?600:400}} title=${st+(hasElev?' ('+_ccFormatElev(elev)+')':'')}>${st}</span>
+              ${hasElev && html`<span style=${{fontSize:'0.63rem',color:isPlanActive?'#a78bfa':'var(--text-faint)',flexShrink:0}}>${_ccFormatElev(elev)}</span>`}
             </div>`;
           })}
           ${function(){
@@ -10078,7 +10078,7 @@ function startApp() {
           }()}
           ${activePlan && html`<div style=${{marginTop:'.3rem',padding:'.3rem',background:'#1e1338',border:'1px solid #3b0764',borderRadius:6}}>
             <div style=${{fontSize:'0.63rem',color:'#c084fc',fontWeight:600,marginBottom:'.2rem'}}>3D Section: ${activePlan.storeyName}</div>
-            <div style=${{fontSize:'0.57rem',color:'var(--text-muted)',marginBottom:'.2rem'}}>Cut at ${(activePlan.elevation+(activePlan.cutHeight||1.2)).toFixed(2)}m</div>
+            <div style=${{fontSize:'0.57rem',color:'var(--text-muted)',marginBottom:'.2rem'}}>Cut at ${_ccFormatElev(activePlan.elevation+(activePlan.cutHeight||1.2))}</div>
             <div style=${{display:'flex',alignItems:'center',gap:'.2rem',marginBottom:'.15rem'}}>
               <span style=${{fontSize:'0.57rem',color:'var(--text-muted)'}}>Cut height:</span>
               <input type="range" min="0.3" max="4" step="0.1" value=${activePlan.cutHeight||1.2}
@@ -10542,7 +10542,7 @@ function startApp() {
                         return tvNode({
                           key:stKey, level:4,
                           icon:'▬', iconColor:'var(--color-success-fg)',
-                          label:sd.name, secondary:sd.elevation.toFixed(1)+'m',
+                          label:sd.name, secondary:_ccFormatElev(sd.elevation),
                           count:stEls.length,
                           hasChildren:stEls.length>0, expanded:stIsOpen,
                           selected:explorerFocus===stKey,
@@ -14311,6 +14311,22 @@ function startApp() {
           <${Toggle} on=${p.outlineSelected!==false} onToggle=${tog('outlineSelected')} />
         </div>
 
+        <div style=${SEC}>Import</div>
+        <div style=${TROW}>
+          <div>
+            <div style=${TLBL}>Model unit scale</div>
+            <div style=${TSUB}>Override auto-detected units. Use Auto unless elevations or 2D sheets look wrong.</div>
+          </div>
+          <select value=${p.unitScaleOverride||'auto'}
+            onChange=${function(e){d({t:A.UPD_PREFS,u:{unitScaleOverride:e.target.value}})}}
+            style=${{background:'var(--bg-tertiary)',color:'var(--text-primary)',border:'1px solid var(--border)',borderRadius:6,padding:'.25rem .5rem',fontSize:'0.8rem'}}>
+            <option value="auto">Auto${' ('+(_ccDetectUnitScale(s.models)>=1000?'mm':(_ccDetectUnitScale(s.models)>=100?'cm':'m'))+')'}</option>
+            <option value="1">Meters</option>
+            <option value="100">Centimeters</option>
+            <option value="1000">Millimeters</option>
+          </select>
+        </div>
+
         <div style=${SEC}>Privacy</div>
         <div style=${TROW}>
           <div>
@@ -14842,7 +14858,13 @@ function startApp() {
 
   // Detect model unit scale from storey elevations.
   // If inter-storey spacing is > 100, the model is likely in mm; if > 10 maybe cm; else meters.
+  // Respects manual override from Settings → unitScaleOverride pref.
   function _ccDetectUnitScale(models) {
+    // Manual override from Settings takes precedence
+    var st = window._ccLatestState;
+    if (st && st.prefs && st.prefs.unitScaleOverride && st.prefs.unitScaleOverride !== 'auto') {
+      return Number(st.prefs.unitScaleOverride) || 1;
+    }
     var storeys = _ccCollectStoreys(models || []);
     if (storeys.length < 2) {
       // Fallback: check bounding box of first model
@@ -14863,6 +14885,29 @@ function startApp() {
     if (avgSpacing > 500) return 1000;   // mm (typical floor spacing ~3000mm)
     if (avgSpacing > 50) return 100;     // cm
     return 1;                             // meters
+  }
+
+  // Format an elevation value with the correct unit label.
+  // When the model is in mm the raw value IS in mm — show "3720 mm" not "3720 m".
+  // When in meters just show meters as before.
+  function _ccFormatElev(val, unitScale, decimals) {
+    if (val == null) return '—';
+    var us = unitScale || _ccDetectUnitScale(window._ccLatestState && window._ccLatestState.models);
+    var d = decimals != null ? decimals : (us >= 1000 ? 0 : (us >= 100 ? 1 : 2));
+    if (us >= 1000) return val.toFixed(d) + ' mm';
+    if (us >= 100)  return val.toFixed(d) + ' cm';
+    return val.toFixed(d) + ' m';
+  }
+
+  // Format a length value converting model units → real-world display.
+  // For mm models: val is already mm so show as mm.
+  // For m models: val is meters so show as m.
+  function _ccFormatLen(val, unitScale) {
+    if (val == null) return '—';
+    var us = unitScale || _ccDetectUnitScale(window._ccLatestState && window._ccLatestState.models);
+    if (us >= 1000) return val.toFixed(0) + ' mm';
+    if (us >= 100)  return val.toFixed(1) + ' cm';
+    return val.toFixed(2) + ' m';
   }
 
   // Create a default Sheet object for a given storey
@@ -14917,7 +14962,7 @@ function startApp() {
           <span style=${{fontWeight:700,fontSize:'0.95rem',color:'var(--text-primary)'}}>Select Level</span>
           <button onClick=${onClose} style=${{...S_BTN,background:'none',color:'var(--text-faint)',fontSize:'1rem',padding:'0 var(--space-1)'}}>✕</button>
         </div>
-        ${unitScale > 1 && html`<div style=${{padding:'var(--space-1) var(--space-4)',fontSize:'0.67rem',color:'var(--text-faint)',background:'var(--bg-tertiary)'}}>Model units: ${unitScale===1000?'mm':'cm'} — elevations shown in meters</div>`}
+        ${unitScale > 1 && html`<div style=${{padding:'var(--space-1) var(--space-4)',fontSize:'0.67rem',color:'var(--text-faint)',background:'var(--bg-tertiary)'}}>Model units: ${unitScale===1000?'mm':'cm'}</div>`}
         <div style=${{maxHeight:'50vh',overflowY:'auto',padding:'var(--space-2) 0'}}>
           ${storeys.map(function(st, i) {
             return html`<button key=${i} onClick=${function(){pick(st);}}
@@ -14926,7 +14971,7 @@ function startApp() {
                 gap:'var(--space-2)',borderBottom:'1px solid var(--border-subtle)'}}>
               <span style=${{color:'var(--text-faint)',fontSize:'0.72rem',minWidth:20,textAlign:'right'}}>${i+1}.</span>
               <span style=${{flex:1,textAlign:'left'}}>${st.name}</span>
-              <span style=${{color:'var(--text-muted)',fontSize:'0.72rem'}}>${(st.elevation / unitScale).toFixed(2)} m</span>
+              <span style=${{color:'var(--text-muted)',fontSize:'0.72rem'}}>${_ccFormatElev(st.elevation, unitScale)}</span>
             </button>`;
           })}
         </div>
@@ -15060,10 +15105,14 @@ function startApp() {
       var cx = (minX + maxX) / 2, cy = (minY + maxY) / 2;
       var w = canvasRef.current.width, h = canvasRef.current.height;
       var extW = maxX - minX, extH = maxY - minY;
-      var zoom = Math.min(w / (extW * 1.2), h / (extH * 1.2), 2);
+      // pxm converts model units to pixels at zoom=1; factor it
+      // into the fit so the building fills the viewport regardless
+      // of whether the model is in meters, mm or cm.
+      var pxm = getSheetPxm(getActiveSheet());
+      var zoom = Math.min(w / (extW * pxm * 1.2), h / (extH * pxm * 1.2), 2);
       if (zoom <= 0 || !isFinite(zoom)) zoom = 1;
-      panRef.current.x = -cx * zoom;
-      panRef.current.y = -cy * zoom;
+      panRef.current.x = -cx * pxm * zoom;
+      panRef.current.y = -cy * pxm * zoom;
       panRef.current.zoom = zoom;
     };
     var markupPtsRef = useRef([]);
@@ -15108,9 +15157,10 @@ function startApp() {
       ctx.translate(w / 2 + pan.x, h / 2 + pan.y);
       ctx.scale(viewScale, viewScale);
 
-      // Draw grid — 1m when a sheet is active, 50 units otherwise (legacy)
+      // Draw grid — 1m in model units when a sheet is active, 50 units otherwise
+      var _sheetUs = (sheet && sheet._unitScale) || 1;
       ctx.strokeStyle = '#1e293b'; ctx.lineWidth = 0.5 / viewScale;
-      var gridStep = sheet ? 1 : 50;
+      var gridStep = sheet ? (1 * _sheetUs) : 50; // 1m = 1000mm, 100cm, or 1m
       var range = Math.max(w, h) / viewScale;
       // Snap range to gridStep multiples to avoid flicker
       var gMin = -Math.ceil(range / gridStep) * gridStep;
@@ -15123,11 +15173,12 @@ function startApp() {
       }
       // Major grid every 10 m when sheet is active
       if (sheet) {
+        var majorStep = 10 * _sheetUs; // 10m in model units
         ctx.strokeStyle = '#334155'; ctx.lineWidth = 0.8 / viewScale;
-        for (var gx2 = gMin; gx2 <= gMax; gx2 += 10) {
+        for (var gx2 = gMin; gx2 <= gMax; gx2 += majorStep) {
           ctx.beginPath(); ctx.moveTo(gx2, gMin); ctx.lineTo(gx2, gMax); ctx.stroke();
         }
-        for (var gy2 = gMin; gy2 <= gMax; gy2 += 10) {
+        for (var gy2 = gMin; gy2 <= gMax; gy2 += majorStep) {
           ctx.beginPath(); ctx.moveTo(gMin, gy2); ctx.lineTo(gMax, gy2); ctx.stroke();
         }
       }
@@ -15318,9 +15369,16 @@ function startApp() {
       ctx.fillStyle = '#94a3b8';
       ctx.fillText('Storey: ' + (sheet.storeyName || '—'), x + 8, y + 38);
       var _us = sheet._unitScale || 1;
-      ctx.fillText('Elev: ' + (sheet.elevation != null ? (sheet.elevation / _us).toFixed(2) + ' m' : '—'), x + 8, y + 52);
-      ctx.fillText('Cut: ' + (((sheet.cutHeight || 1.2) / _us).toFixed(2)) + ' m', x + 8, y + 66);
-      ctx.fillText('Scale 1:' + Math.round(1000 / ((sheet.scale && sheet.scale.pxPerMeter) || 100) * 10), x + 8, y + 80);
+      ctx.fillText('Elev: ' + _ccFormatElev(sheet.elevation, _us), x + 8, y + 52);
+      ctx.fillText('Cut: ' + _ccFormatLen(sheet.cutHeight || 1.2, _us), x + 8, y + 66);
+      // Scale ratio: pxPerMeter already accounts for unit scale, so
+      // 1:N = 1 real-world meter occupies pxPerMeter pixels, giving
+      // N = (1000mm / 25.4mm_per_inch * 96dpi) / pxPerMeter ≈ 3780/pxm.
+      // Simpler: pxPerMeter = 100/unitScale, so 1m = 100/us * us = 100px
+      // at zoom=1 → that's 1:100 at ~96dpi when us=1. For mm models
+      // pxm=0.1, 1m (1000 model units) = 0.1*1000=100px → still 1:100.
+      var scaleRatio = Math.round(_us / ((sheet.scale && sheet.scale.pxPerMeter) || 100) * 10);
+      ctx.fillText('Scale 1:' + scaleRatio, x + 8, y + 80);
       ctx.fillText(tb.author ? 'By ' + tb.author : '', x + 8, y + 94);
       ctx.fillText(tb.date || new Date(sheet.createdAt || Date.now()).toLocaleDateString(), x + bw * 0.6 + 8, y + 38);
       ctx.fillText(tb.revision ? 'Rev ' + tb.revision : 'Rev —', x + bw * 0.6 + 8, y + 52);
@@ -15333,13 +15391,29 @@ function startApp() {
 
     function _ccDrawScaleBar(ctx, w, h, sheet, zoom) {
       var pxm = (sheet.scale && sheet.scale.pxPerMeter) || 100;
-      // Pick a "nice" length in meters to fit ~150px
+      var _us = sheet._unitScale || 1;
+      // unitsPerBar = how many model units fit in ~150px at current zoom
       var targetPx = 150;
-      var mPerBar = targetPx / (pxm * zoom);
-      var niceSteps = [0.1, 0.2, 0.5, 1, 2, 5, 10, 20, 50, 100];
+      var unitsPerBar = targetPx / (pxm * zoom);
+      // Nice steps in model units. For mm: 100,200,500,1000,2000,5000,10000,…
+      // For m: 0.1,0.2,0.5,1,2,5,10,20,50,100
+      var niceSteps = _us >= 1000
+        ? [100, 200, 500, 1000, 2000, 5000, 10000, 20000, 50000]
+        : (_us >= 100
+          ? [10, 20, 50, 100, 200, 500, 1000, 2000, 5000]
+          : [0.1, 0.2, 0.5, 1, 2, 5, 10, 20, 50, 100]);
       var chosen = niceSteps[0];
-      for (var i = 0; i < niceSteps.length; i++) if (niceSteps[i] <= mPerBar) chosen = niceSteps[i];
+      for (var i = 0; i < niceSteps.length; i++) if (niceSteps[i] <= unitsPerBar) chosen = niceSteps[i];
       var barPx = chosen * pxm * zoom;
+      // Label: show in metres when possible (e.g. 1000 mm → "1 m")
+      var barLabel;
+      if (_us >= 1000) {
+        barLabel = chosen >= 1000 ? (chosen / 1000) + ' m' : chosen + ' mm';
+      } else if (_us >= 100) {
+        barLabel = chosen >= 100 ? (chosen / 100) + ' m' : chosen + ' cm';
+      } else {
+        barLabel = chosen + ' m';
+      }
       var x = 16, y = h - 28;
       ctx.save();
       ctx.fillStyle = 'rgba(15,23,42,0.85)';
@@ -15350,7 +15424,7 @@ function startApp() {
       ctx.beginPath(); ctx.moveTo(x + barPx, y - 6); ctx.lineTo(x + barPx, y + 6); ctx.stroke();
       ctx.beginPath(); ctx.moveTo(x + barPx / 2, y - 4); ctx.lineTo(x + barPx / 2, y + 4); ctx.stroke();
       ctx.fillStyle = '#e2e8f0'; ctx.font = '11px sans-serif';
-      ctx.fillText(chosen + ' m', x, y - 8);
+      ctx.fillText(barLabel, x, y - 8);
       ctx.restore();
     }
 
@@ -15851,8 +15925,9 @@ function startApp() {
       writeText('TitleBlock', tbX + 0.2, tbY + tbH - lineH,     (tb.project || sheet.name || 'ClashControl Plan'), lineH * 0.4);
       writeText('TitleBlock', tbX + 0.2, tbY + tbH - 2 * lineH, 'Storey: ' + (sheet.storeyName || '—'),             lineH * 0.35);
       var _usDxf = sheet._unitScale || 1;
-      writeText('TitleBlock', tbX + 0.2, tbY + tbH - 3 * lineH, 'Elev: ' + (sheet.elevation != null ? (sheet.elevation/_usDxf).toFixed(2) : '—') + ' m   Cut: ' + (((sheet.cutHeight || 1.2)/_usDxf).toFixed(2)) + ' m', lineH * 0.3);
-      writeText('TitleBlock', tbX + 0.2, tbY + tbH - 4 * lineH, 'Scale: 1:' + Math.round(1000 / ((sheet.scale && sheet.scale.pxPerMeter) || 100) * 10), lineH * 0.3);
+      writeText('TitleBlock', tbX + 0.2, tbY + tbH - 3 * lineH, 'Elev: ' + _ccFormatElev(sheet.elevation, _usDxf) + '   Cut: ' + _ccFormatLen(sheet.cutHeight || 1.2, _usDxf), lineH * 0.3);
+      var _dxfScaleRatio = Math.round(_usDxf / ((sheet.scale && sheet.scale.pxPerMeter) || 100) * 10);
+      writeText('TitleBlock', tbX + 0.2, tbY + tbH - 4 * lineH, 'Scale: 1:' + _dxfScaleRatio, lineH * 0.3);
       writeText('TitleBlock', tbX + 0.2, tbY + tbH - 5 * lineH, (tb.author ? 'By ' + tb.author + '   ' : '') + (tb.date || ''), lineH * 0.3);
       if (tb.revision) writeText('TitleBlock', tbX + tbW * 0.55, tbY + tbH - 5 * lineH, 'Rev ' + tb.revision, lineH * 0.3);
     }
@@ -16009,9 +16084,10 @@ function startApp() {
     ctx.font = '12px sans-serif';
     ctx.fillText('Storey: ' + (sheet.storeyName || '—'), bx + 10, by + 48);
     var _us2 = sheet._unitScale || 1;
-    ctx.fillText('Elev: ' + (sheet.elevation != null ? (sheet.elevation / _us2).toFixed(2) : '—') + ' m', bx + 10, by + 66);
-    ctx.fillText('Cut: ' + (((sheet.cutHeight || 1.2) / _us2).toFixed(2)) + ' m', bx + 10, by + 84);
-    ctx.fillText('Scale 1:' + Math.round(1000 / ((sheet.scale && sheet.scale.pxPerMeter) || 100) * 10), bx + 10, by + 102);
+    ctx.fillText('Elev: ' + _ccFormatElev(sheet.elevation, _us2), bx + 10, by + 66);
+    ctx.fillText('Cut: ' + _ccFormatLen(sheet.cutHeight || 1.2, _us2), bx + 10, by + 84);
+    var _pngScaleRatio = Math.round(_us2 / ((sheet.scale && sheet.scale.pxPerMeter) || 100) * 10);
+    ctx.fillText('Scale 1:' + _pngScaleRatio, bx + 10, by + 102);
     ctx.fillText((tb.author ? 'By ' + tb.author : ''), bx + 10, by + 120);
     ctx.fillText(tb.date || new Date().toLocaleDateString(), bx + bw * 0.6 + 10, by + 48);
     ctx.fillText(tb.revision ? 'Rev ' + tb.revision : 'Rev —', bx + bw * 0.6 + 10, by + 66);
