@@ -1,5 +1,8 @@
 # Changelog
 
+## v4.13.4 (2026-04-10)
+- refactor: split 2D into two rail tabs — import/export vs views/sheets
+
 ## v4.13.3 (2026-04-10)
 - refactor: move Walk Mode + Create 2D to Models sidebar panel
 
