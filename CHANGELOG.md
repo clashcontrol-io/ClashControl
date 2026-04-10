@@ -1,5 +1,8 @@
 # Changelog
 
+## v4.14.6 (2026-04-10)
+- Fix 2D sheets for mm/cm models + unit-aware elevation display
+
 ## v4.14.5 (2026-04-10)
 - Remove vertical stretch from CC logo, keep original proportions
 
