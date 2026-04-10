@@ -7443,15 +7443,11 @@ function startApp() {
         }}></div>
         <span style=${{fontSize:'0.98rem',color:'#93c5fd',fontWeight:500,letterSpacing:'.03em'}}>Switching project…</span>
       </div>`}
-      <div class="cc-overlay-info cc-overlay-chrome" style=${{position:'absolute',top:'var(--space-3)',left:'var(--space-3)',padding:'var(--space-1) var(--space-3)',color:'var(--text-muted)',display:'flex',alignItems:'center',gap:'var(--space-2)',fontSize:'var(--text-xs)',pointerEvents:'auto'}}>
-        <span>${s.models.length===0?'Load an IFC file to begin':s.models.length+' model'+(s.models.length>1?'s':'')+' loaded'}</span>
-        ${s.clashes.length>0 && html`<span style=${{color:'var(--color-danger)'}}>· ${s.clashes.length} clashes</span>`}
-      </div>
-      <div class="cc-overlay-chrome" style=${{position:'absolute',bottom:'var(--space-3)',right:'var(--space-3)',padding:'var(--space-1) var(--space-2)',pointerEvents:'auto',fontSize:'var(--text-xs)'}}>
+      <div class="cc-overlay-chrome" style=${{position:'absolute',top:'var(--space-3)',left:'var(--space-3)',padding:'var(--space-1) var(--space-2)',pointerEvents:'auto',fontSize:'var(--text-xs)'}}>
         <span style=${{color:perfData.fps>=50?'var(--color-success)':perfData.fps>=25?'var(--color-warning)':'var(--color-danger)',cursor:'pointer',fontWeight:'var(--weight-medium)'}}
           onClick=${function(){setPerfOpen(!perfOpen)}}>${perfData.fps} fps</span>
       </div>
-      ${perfOpen && html`<div class="cc-overlay-chrome" style=${{position:'absolute',bottom:'2.4rem',right:'var(--space-3)',padding:'var(--space-2) var(--space-3)',pointerEvents:'auto',fontSize:'var(--text-2xs)',color:'var(--text-secondary)',minWidth:180}}>
+      ${perfOpen && html`<div class="cc-overlay-chrome" style=${{position:'absolute',top:'2.4rem',left:'var(--space-3)',padding:'var(--space-2) var(--space-3)',pointerEvents:'auto',fontSize:'var(--text-2xs)',color:'var(--text-secondary)',minWidth:180}}>
         <div style=${{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:'var(--space-1)'}}>
           <span style=${{fontWeight:'var(--weight-semibold)',color:'var(--text-primary)',fontSize:'var(--text-xs)',textTransform:'uppercase',letterSpacing:'.06em'}}>Performance</span>
           <button onClick=${function(){setPerfOpen(false)}} style=${{...S_BTN,padding:'0 var(--space-1)',background:'none',color:'var(--text-faint)',fontSize:'var(--text-xs)'}} aria-label="Close performance stats">✕</button>
@@ -7554,8 +7550,9 @@ function startApp() {
           }
           d({t:A.WALK_MODE, v:true});
           if (window._ccWalkEnter) window._ccWalkEnter(elev);
-        }} style=${{...S_BTN,background:'rgba(15,23,42,.85)',color:'#e2e8f0',border:'1px solid rgba(148,163,184,.3)',
-          fontSize:'var(--text-xs)',padding:'var(--space-1) var(--space-3)',backdropFilter:'blur(8px)',gap:'.3rem'}}>
+        }} style=${{...S_BTN,background:'rgba(59,130,246,.85)',color:'#fff',border:'1px solid rgba(96,165,250,.5)',
+          fontSize:'var(--text-xs)',padding:'var(--space-1) var(--space-3)',backdropFilter:'blur(8px)',gap:'.3rem',
+          boxShadow:'0 2px 8px rgba(59,130,246,.35)'}}>
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="5" r="2"/><path d="M12 7v6m-3 4l3-4 3 4"/><path d="M9 13l-2 4m8-4l2 4"/></svg>
           Walk
         </button>
@@ -15974,6 +15971,8 @@ function startApp() {
   function ExportBar(props) {
     var s = props.s, d = props.d;
 
+    // Expose export functions globally so the rail dropdown can call them
+    // even when the 2D view is active (ExportBar is mounted alongside View2D).
     function doExportDXF() {
       // Prefer the active sheet; fall back to the transient 3D floor-plan cut.
       var sheet = s.activeSheetId && (s.sheets || []).find(function(sh) { return sh.id === s.activeSheetId; });
@@ -16015,6 +16014,11 @@ function startApp() {
       if (cvs || s.activeSheetId) export2DPDF(cvs, s);
       else alert('No 2D view canvas found.');
     }
+
+    // Expose for rail dropdown
+    window._ccDoExportDXF = doExportDXF;
+    window._ccDoExportPNG = doExportPNG;
+    window._ccDoExportPDF = doExportPDF;
 
     var EBTN = Object.assign({}, S_BTN, { fontSize: '.65rem', padding: '.25rem .6rem', border: '1px solid var(--border)' });
     return html`<div style=${{ background: 'var(--bg-primary)', borderTop: '1px solid var(--border-subtle)', padding: '.45rem 1rem', display: 'flex', alignItems: 'center', gap: '.6rem', flexShrink: 0, flexWrap: 'wrap' }}>
@@ -18930,6 +18934,8 @@ function startApp() {
     var s=props.s, d=props.d;
     var isDark=(s.prefs.theme||'dark')==='dark';
     var all=s.clashes.concat(s.issues);
+    var _2dMenu=useState(false), show2d=_2dMenu[0], setShow2d=_2dMenu[1];
+    var _bcfMenu=useState(false), showBcf=_bcfMenu[0], setShowBcf=_bcfMenu[1];
     var po=useState(false), projOpen=po[0], setProjOpen=po[1];
     var cd=useState(null), confirmDel=cd[0], setConfirmDel=cd[1];
     var _lrc=useState(false), _lrCreating=_lrc[0], _setLrCreating=_lrc[1];
@@ -19083,23 +19089,44 @@ function startApp() {
         },
         html`<span style=${{fontWeight:700,fontSize:'0.8rem',letterSpacing:'.03em'}}>IFC</span>`,
         'Load IFC model')}</div>
-      ${iconBtn(function(){
-          // Toggle 2D view mode — enter to create sheets / add underlays
-          var is2D = s.underlayMode === 'view2d' || s.underlayMode === 'compare';
-          d({ t: 'UNDERLAY_MODE', v: is2D ? null : 'view2d' });
-        },
-        html`<span style=${{fontWeight:700,fontSize:'0.8rem',letterSpacing:'.03em'}}>2D</span>`,
-        s.underlayMode ? 'Exit 2D view' : '2D Floor Plans & Underlays')}
-      <div class="cc-bcf-actions">
-        ${iconBtn(function(){saveProject(s);},
-          html`<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" dangerouslySetInnerHTML=${{__html:SVG_SAVE}}></svg>`,
-          'Save Project')}
-        ${iconBtn(function(){importBCF(d);},
-          html`<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" dangerouslySetInnerHTML=${{__html:SVG_IMPORT}}></svg>`,
-          'Import BCF')}
-        ${iconBtn(function(){exportBCF(all,'2.1',s.viewpoints,s);},
-          html`<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" dangerouslySetInnerHTML=${{__html:SVG_EXPORT}}></svg>`,
-          'Export BCF')}
+      <div style=${{position:'relative'}}>
+        ${iconBtn(function(){setShow2d(!show2d);setShowBcf(false);},
+          html`<span style=${{fontWeight:700,fontSize:'0.8rem',letterSpacing:'.03em'}}>2D</span>`,
+          '2D Floor Plans & Underlays')}
+        ${show2d && html`<div style=${{position:'absolute',left:'100%',bottom:0,marginLeft:4,zIndex:999,
+          background:'var(--bg-primary)',border:'1px solid var(--border)',borderRadius:8,
+          boxShadow:'0 4px 16px rgba(0,0,0,.25)',padding:'.25rem 0',minWidth:160}}
+          onMouseLeave=${function(){setShow2d(false);}}>
+          <button onClick=${function(){var is2D=s.underlayMode==='view2d'||s.underlayMode==='compare';d({t:'UNDERLAY_MODE',v:is2D?null:'view2d'});setShow2d(false);}}
+            style=${{...S_BTN,width:'100%',padding:'.3rem .65rem',background:'none',color:'var(--text-primary)',fontSize:'.72rem',justifyContent:'flex-start',borderRadius:0}}>${s.underlayMode?'Exit 2D View':'Enter 2D View'}</button>
+          <button onClick=${function(){if(window._ccOpen2D)window._ccOpen2D();setShow2d(false);}}
+            style=${{...S_BTN,width:'100%',padding:'.3rem .65rem',background:'none',color:'var(--text-primary)',fontSize:'.72rem',justifyContent:'flex-start',borderRadius:0}}>Import DXF / PDF / DWG</button>
+          <button onClick=${function(){if(window._ccDoExportDXF)window._ccDoExportDXF();setShow2d(false);}}
+            style=${{...S_BTN,width:'100%',padding:'.3rem .65rem',background:'none',color:'var(--text-primary)',fontSize:'.72rem',justifyContent:'flex-start',borderRadius:0}}>Export DXF</button>
+          <button onClick=${function(){if(window._ccDoExportPNG)window._ccDoExportPNG();setShow2d(false);}}
+            style=${{...S_BTN,width:'100%',padding:'.3rem .65rem',background:'none',color:'var(--text-primary)',fontSize:'.72rem',justifyContent:'flex-start',borderRadius:0}}>Export PNG</button>
+          <button onClick=${function(){if(window._ccDoExportPDF)window._ccDoExportPDF();setShow2d(false);}}
+            style=${{...S_BTN,width:'100%',padding:'.3rem .65rem',background:'none',color:'var(--text-primary)',fontSize:'.72rem',justifyContent:'flex-start',borderRadius:0}}>Export PDF</button>
+        </div>`}
+      </div>
+      ${iconBtn(function(){saveProject(s);},
+        html`<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" dangerouslySetInnerHTML=${{__html:SVG_SAVE}}></svg>`,
+        'Save Project')}
+      <div style=${{position:'relative'}}>
+        ${iconBtn(function(){setShowBcf(!showBcf);setShow2d(false);},
+          html`<span style=${{fontWeight:600,fontSize:'0.62rem',letterSpacing:'.02em'}}>BCF</span>`,
+          'BCF Import / Export')}
+        ${showBcf && html`<div style=${{position:'absolute',left:'100%',bottom:0,marginLeft:4,zIndex:999,
+          background:'var(--bg-primary)',border:'1px solid var(--border)',borderRadius:8,
+          boxShadow:'0 4px 16px rgba(0,0,0,.25)',padding:'.25rem 0',minWidth:150}}
+          onMouseLeave=${function(){setShowBcf(false);}}>
+          <button onClick=${function(){importBCF(d);setShowBcf(false);}}
+            style=${{...S_BTN,width:'100%',padding:'.3rem .65rem',background:'none',color:'var(--text-primary)',fontSize:'.72rem',justifyContent:'flex-start',borderRadius:0}}>Import BCF</button>
+          <button onClick=${function(){exportBCF(all,'2.1',s.viewpoints,s);setShowBcf(false);}} disabled=${!all.length}
+            style=${{...S_BTN,width:'100%',padding:'.3rem .65rem',background:'none',color:all.length?'var(--text-primary)':'var(--text-faint)',fontSize:'.72rem',justifyContent:'flex-start',borderRadius:0}}>Export BCF 2.1</button>
+          <button onClick=${function(){exportBCF(all,'3.0',s.viewpoints,s);setShowBcf(false);}} disabled=${!all.length}
+            style=${{...S_BTN,width:'100%',padding:'.3rem .65rem',background:'none',color:all.length?'var(--text-primary)':'var(--text-faint)',fontSize:'.72rem',justifyContent:'flex-start',borderRadius:0}}>Export BCF 3.0</button>
+        </div>`}
       </div>
       ${iconBtn(function(){d({t:A.UPD_PREFS,u:{theme:isDark?'light':'dark'}});},
         isDark?'☀':'☾', isDark?'Light mode':'Dark mode')}
@@ -20897,8 +20924,8 @@ function startApp() {
       // 100dvh tracks mobile browser chrome better than 100vh; the
       // top padding picks up both the window-controls-overlay titlebar
       // area (when the PWA is installed in WCO mode) and any iOS /
-      // mobile safe-area. Without it, the CC logo + "N models loaded"
-      // status chip sat flush with y=0 and got clipped behind the
+      // mobile safe-area. Without it, the CC logo + FPS counter
+      // sat flush with y=0 and got clipped behind the
       // browser's minimal title bar in standalone mode.
       height:'100dvh',
       minHeight:'100vh',
