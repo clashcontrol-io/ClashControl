@@ -78,6 +78,7 @@
 
   var _connectGen = 0;
   function _cancelPendingConnect() { _connectGen++; }
+  var _wsGen = 0;
 
   function _connectBridge(d, opts) {
     opts = opts || {};
@@ -276,6 +277,7 @@
 
   function _connectWs(d) {
     if (_ws && _ws.readyState <= 1) return;
+    var capturedGen = _wsGen;
     try { _ws = new WebSocket(WS_URL); } catch (e) { return; }
 
     _ws.onopen = function() {
@@ -300,14 +302,15 @@
     _ws.onclose = function() {
       _connected = false;
       if (d) d({t:'UPD_SMART_BRIDGE', u:{connected:false}});
-      // Auto-reconnect after 3s
-      setTimeout(function() { _connectWs(d); }, 3000);
+      // Auto-reconnect after 3s, but only if still in the same session (not destroyed)
+      setTimeout(function() { if (_wsGen === capturedGen) _connectWs(d); }, 3000);
     };
 
     _ws.onerror = function() {};
   }
 
   function _disconnectWs() {
+    _wsGen++; // Invalidate any pending auto-reconnect timers
     _cancelPendingConnect();
     if (_ws) { try { _ws.close(); } catch (e) {} }
     _ws = null;
@@ -367,7 +370,9 @@
           _triggerDownload();
           _connectBridge(dispatch, {installing: true});
         }
-        try { localStorage.setItem('cc_smart_bridge','1'); } catch (e) {}
+        // NOTE: localStorage flag is set inside _connectBridge on successful connection,
+        // not here — setting it early would cause page reloads before the binary runs
+        // to skip the long install poll and immediately fail after 6s.
       },
 
       destroy: function() {
@@ -475,6 +480,10 @@
         if (sb.failed) {
           return html`<div style=${{display:'flex',flexDirection:'column',gap:'.4rem'}}>
             <div style=${{fontSize:'0.69rem',color:'#fca5a5'}}>Could not connect to Smart Bridge.</div>
+            <div style=${{fontSize:'0.6rem',color:'var(--text-faint)',lineHeight:1.5}}>
+              Make sure the bridge is running:<br/>
+              <code style=${{fontSize:'0.57rem',background:'var(--bg-tertiary)',padding:'2px 4px',borderRadius:3,wordBreak:'break-all'}}>${dl.cmd}</code>
+            </div>
             <div style=${{display:'flex',gap:'.3rem'}}>
               <button onClick=${function(){ _connectBridge(d); }}
                 style=${{padding:'.25rem .6rem',borderRadius:5,fontSize:'0.69rem',fontWeight:600,cursor:'pointer',border:'none',background:'var(--accent)',color:'#fff',fontFamily:'inherit'}}>Retry</button>
