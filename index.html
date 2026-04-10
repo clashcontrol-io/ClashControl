@@ -14849,6 +14849,24 @@ function startApp() {
   }
 
   // Toolbar controls: sheet picker, new sheet, plot clashes, title block editor
+  // Expose global create-sheet so the sidebar rail can call it without SheetToolbarControls being mounted
+  window._ccCreateSheet = function() {
+    var d = window._ccDispatch;
+    if (!d) return;
+    var s = window._ccLatestState || {};
+    var storeys = _ccCollectStoreys(s.models || []);
+    if (!storeys.length) { alert('Load a model with storey data first.'); return; }
+    var names = storeys.map(function(st, i) { return (i + 1) + '. ' + st.name + ' (' + st.elevation.toFixed(2) + ' m)'; }).join('\n');
+    var pick = prompt('Pick a storey:\n' + names + '\n\nEnter number:');
+    var idx = parseInt(pick, 10) - 1;
+    if (isNaN(idx) || idx < 0 || idx >= storeys.length) return;
+    var st = storeys[idx];
+    var sh = _ccMakeSheet(st.name, st.elevation);
+    d({ t: A.SHEET_ADD, v: sh });
+    // Auto-enter 2D view so the user sees the sheet
+    d({ t: 'UNDERLAY_MODE', v: 'view2d' });
+  };
+
   function SheetToolbarControls(props) {
     var s = props.s, d = props.d;
     var storeys = _ccCollectStoreys(s.models);
@@ -19097,8 +19115,11 @@ function startApp() {
           background:'var(--bg-primary)',border:'1px solid var(--border)',borderRadius:8,
           boxShadow:'0 4px 16px rgba(0,0,0,.25)',padding:'.25rem 0',minWidth:160}}
           onMouseLeave=${function(){setShow2d(false);}}>
+          <button onClick=${function(){if(window._ccCreateSheet)window._ccCreateSheet();setShow2d(false);}}
+            style=${{...S_BTN,width:'100%',padding:'.3rem .65rem',background:'none',color:s.models.length?'var(--text-primary)':'var(--text-faint)',fontSize:'.72rem',justifyContent:'flex-start',borderRadius:0}}>Create 2D View</button>
           <button onClick=${function(){var is2D=s.underlayMode==='view2d'||s.underlayMode==='compare';d({t:'UNDERLAY_MODE',v:is2D?null:'view2d'});setShow2d(false);}}
             style=${{...S_BTN,width:'100%',padding:'.3rem .65rem',background:'none',color:'var(--text-primary)',fontSize:'.72rem',justifyContent:'flex-start',borderRadius:0}}>${s.underlayMode?'Exit 2D View':'Enter 2D View'}</button>
+          <div style=${{borderTop:'1px solid var(--border-subtle)',margin:'.15rem 0'}}></div>
           <button onClick=${function(){if(window._ccOpen2D)window._ccOpen2D();setShow2d(false);}}
             style=${{...S_BTN,width:'100%',padding:'.3rem .65rem',background:'none',color:'var(--text-primary)',fontSize:'.72rem',justifyContent:'flex-start',borderRadius:0}}>Import DXF / PDF / DWG</button>
           <button onClick=${function(){if(window._ccDoExportDXF)window._ccDoExportDXF();setShow2d(false);}}
