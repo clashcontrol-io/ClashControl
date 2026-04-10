@@ -1,5 +1,8 @@
 # Changelog
 
+## v4.14.11 (2026-04-10)
+- Remove AABB fallback boxes + fix plan view orientation
+
 ## v4.14.10 (2026-04-10)
 - chore: bump version to 4.14.9
 
