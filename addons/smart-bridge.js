@@ -326,6 +326,20 @@
 
   // ── Register addon ────────────────────────────────────────────────
 
+  // ── Passive auto-connect (called on page load via init, and as deferred fallback) ──
+
+  function _doInit(dispatch) {
+    var wasInstalled = false;
+    try { wasInstalled = localStorage.getItem('cc_smart_bridge') === '1'; } catch (e) {}
+    if (wasInstalled) {
+      dispatch({t:'UPD_SMART_BRIDGE', u:{wasInstalled:true}});
+      // Passive check — if bridge is already running, connect automatically
+      _checkBridge(dispatch).then(function(j) {
+        if (j) _connectWs(dispatch);
+      });
+    }
+  }
+
   if (window._ccRegisterAddon) {
     window._ccRegisterAddon({
       id: 'smart-bridge',
@@ -348,15 +362,7 @@
 
       init: function(dispatch) {
         console.log('[Smart Bridge] Addon activated');
-        var wasInstalled = false;
-        try { wasInstalled = localStorage.getItem('cc_smart_bridge') === '1'; } catch (e) {}
-        if (wasInstalled) {
-          dispatch({t:'UPD_SMART_BRIDGE', u:{wasInstalled:true}});
-          // Passive check — if bridge is already running, connect automatically
-          _checkBridge(dispatch).then(function(j) {
-            if (j) _connectWs(dispatch);
-          });
-        }
+        _doInit(dispatch);
       },
 
       onEnable: function(dispatch) {
@@ -513,5 +519,27 @@
       }
     });
   }
+
+  // ── Deferred init fallback ────────────────────────────────────────
+  // React 18 (createRoot) schedules its first render asynchronously.
+  // If this script loads from HTTP cache before React renders,
+  // window._ccDispatch is undefined when _ccRegisterAddon runs, so
+  // init() is silently skipped and the bridge never auto-reconnects.
+  // Poll here until dispatch is ready and call _doInit ourselves.
+  // _doInit is idempotent (_connectWs guards against double-connect),
+  // so it's safe even if _ccRegisterAddon did call init() after all.
+  (function() {
+    if (window._ccDispatch) return; // dispatch was ready, _ccRegisterAddon already called init
+    if (!window._ccIsAddonActive || !window._ccIsAddonActive('smart-bridge')) return; // not active
+    var _t = setInterval(function() {
+      if (window._ccDispatch) {
+        clearInterval(_t);
+        if (window._ccIsAddonActive('smart-bridge')) {
+          console.log('[Smart Bridge] Deferred init (dispatch was not ready at register time)');
+          _doInit(window._ccDispatch);
+        }
+      }
+    }, 20);
+  })();
 
 })();
