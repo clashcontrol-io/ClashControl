@@ -1,5 +1,8 @@
 # Changelog
 
+## v4.14.2 (2026-04-10)
+- improve error messages for DWG and Navisworks file imports
+
 ## v4.14.1 (2026-04-10)
 - fix: walk mode unit scale + pointer lock + near/far planes
 
