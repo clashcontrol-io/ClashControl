@@ -4845,7 +4845,9 @@ function startApp() {
     _walkPointerLocked = false;
     // Detect model units from storey data
     var models = (window._ccLatestState || {}).models || [];
-    _walkUnitScale = (typeof _ccDetectUnitScale === 'function') ? _ccDetectUnitScale(models) : 1;
+    // web-ifc normalises geometry to metres regardless of the IFC file's
+    // native length unit, so walk-mode parameters are always in metres.
+    _walkUnitScale = 1;
     // Scale speed and eye height to model units
     _walkSpeed = 3.0 * _walkUnitScale;
     _walkEyeHeight = 1.7 * _walkUnitScale;
