@@ -4853,7 +4853,7 @@ function startApp() {
     var _geoF = (typeof _ccStoreyToGeoFactor === 'function') ? _ccStoreyToGeoFactor(models) : 1;
     _walkUnitScale = _storeyUs * _geoF;
     // Scale speed and eye height to model units
-    _walkSpeed = 3.0 * _walkUnitScale;
+    _walkSpeed = 2.0 * _walkUnitScale;
     _walkEyeHeight = 1.7 * _walkUnitScale;
     // Save orbit state
     _walkSavedCam = {
@@ -4915,6 +4915,17 @@ function startApp() {
     );
     var lookAt = S.camera.position.clone().add(dir);
     S.camera.lookAt(lookAt);
+    // Keep orbit sph in sync so the nav cube reflects the walk view direction.
+    // The nav cube uses orbit.sph.theta/phi; walk yaw→theta needs +π offset
+    // because orbit phi/theta describe camera position (looking inward), while
+    // walk yaw/pitch describe the forward direction (looking outward).
+    // Derivation: orbit camera direction = (-sin(phi)*sin(theta), -cos(phi), -sin(phi)*cos(theta))
+    // must equal walk forward  = (sin(yaw)*cos(pitch), sin(pitch), cos(yaw)*cos(pitch))
+    // → theta = yaw + π, phi = π/2 + pitch
+    if (S.orbit) {
+      S.orbit.sph.theta = _walkYaw + Math.PI;
+      S.orbit.sph.phi   = Math.PI / 2 + _walkPitch;
+    }
   }
 
   // Called each frame from tick() when walk mode is active
@@ -4936,8 +4947,8 @@ function startApp() {
     if (_walkKeys['KeyS'] || _walkKeys['ArrowDown'])  { mx -= fx; mz -= fz; }
     if (_walkKeys['KeyA'] || _walkKeys['ArrowLeft'])   { mx -= rx; mz -= rz; }
     if (_walkKeys['KeyD'] || _walkKeys['ArrowRight'])  { mx += rx; mz += rz; }
-    if (_walkKeys['Space'])   my += 1;
-    if (_walkKeys['KeyC'])    my -= 1;
+    if (_walkKeys['Space'] || _walkKeys['KeyE'])   my += 1;
+    if (_walkKeys['KeyC'] || _walkKeys['KeyQ'])    my -= 1;
 
     // Normalize horizontal movement
     var len = Math.sqrt(mx * mx + mz * mz);
@@ -5028,6 +5039,7 @@ function startApp() {
     });
     _wlAdd('mouseup', function(){dragging=false;if(panning){panning=false;el.style.cursor='';}});
     el.addEventListener('wheel', function(e){
+      if (_walkActive) return; // Don't orbit-zoom in walk mode — wheel handled by walk speed adjuster
       // Ctrl+scroll adjusts floor plan cut height
       if(e.ctrlKey && window._ccFloorPlanActive && window._ccDispatch){
         e.preventDefault();
@@ -5226,7 +5238,7 @@ function startApp() {
           if (window._ccDispatch) window._ccDispatch({ t: 'WALK_MODE', v: false });
         }
         // Prevent default for movement keys to stop page scroll
-        if (/^(Key[WASDC]|Arrow|Space)/.test(e.code)) e.preventDefault();
+        if (/^(Key[WASDCEQ]|Arrow|Space)/.test(e.code)) e.preventDefault();
         invalidate(3);
       });
       _wlAdd('keyup', function(e) {
@@ -7584,7 +7596,7 @@ function startApp() {
           <span style=${{opacity:.4}}>|</span>
           <span><b>Click</b> to look</span>
           <span style=${{opacity:.4}}>|</span>
-          <span><b>Space/C</b> up/down</span>
+          <span><b>E/Q</b> up/down</span>
           <span style=${{opacity:.4}}>|</span>
           <span><b>Shift</b> sprint</span>
           <span style=${{opacity:.4}}>|</span>
@@ -19429,8 +19441,17 @@ function startApp() {
       ${iconBtn(function(){
           var elev = 0;
           var st = window._ccLatestState || {};
-          if (st.floorPlan) elev = st.floorPlan.elevation;
-          else { var storeys = _ccCollectStoreys(st.models||[]); if (storeys && storeys.length) elev = storeys[0].elevation; }
+          if (st.floorPlan) {
+            // floorPlan.elevation is already in geometry coords (metres)
+            elev = st.floorPlan.elevation;
+          } else {
+            var storeys = _ccCollectStoreys(st.models||[]);
+            if (storeys && storeys.length) {
+              // storeys[0].elevation is raw IFC value (may be mm); convert to geometry coords
+              var _gf = (typeof _ccStoreyToGeoFactor === 'function') ? _ccStoreyToGeoFactor(st.models||[]) : 1;
+              elev = storeys[0].elevation * _gf;
+            }
+          }
           d({t:A.WALK_MODE, v:true});
           if (window._ccWalkEnter) window._ccWalkEnter(elev);
         },
