@@ -19084,10 +19084,12 @@ function startApp() {
         html`<span style=${{fontWeight:700,fontSize:'0.8rem',letterSpacing:'.03em'}}>IFC</span>`,
         'Load IFC model')}</div>
       ${iconBtn(function(){
-          if(window._ccOpen2D) window._ccOpen2D();
+          // Toggle 2D view mode — enter to create sheets / add underlays
+          var is2D = s.underlayMode === 'view2d' || s.underlayMode === 'compare';
+          d({ t: 'UNDERLAY_MODE', v: is2D ? null : 'view2d' });
         },
         html`<span style=${{fontWeight:700,fontSize:'0.8rem',letterSpacing:'.03em'}}>2D</span>`,
-        'Load DXF/PDF/DWG')}
+        s.underlayMode ? 'Exit 2D view' : '2D Floor Plans & Underlays')}
       <div class="cc-bcf-actions">
         ${iconBtn(function(){saveProject(s);},
           html`<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" dangerouslySetInnerHTML=${{__html:SVG_SAVE}}></svg>`,
