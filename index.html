@@ -15140,7 +15140,7 @@ function startApp() {
         var x1 = -seg[0], x2 = -seg[2]; // mirror X as in rendering
         if (x1 < minX) minX = x1; if (x2 < minX) minX = x2;
         if (x1 > maxX) maxX = x1; if (x2 > maxX) maxX = x2;
-        var y1 = -seg[1], y2 = -seg[3]; // flip Z→Y as in rendering
+        var y1 = seg[1], y2 = seg[3]; // Z directly to screen Y
         if (y1 < minY) minY = y1; if (y2 < minY) minY = y2;
         if (y1 > maxY) maxY = y1; if (y2 > maxY) maxY = y2;
       });
@@ -15270,8 +15270,8 @@ function startApp() {
           ctx.lineWidth = st.width / viewScale;
           if (st.dash) ctx.setLineDash(st.dash.map(function(v){return v/viewScale;})); else ctx.setLineDash([]);
           ctx.beginPath();
-          ctx.moveTo(-seg[0], -seg[1]); // mirror X + flip Z for plan view
-          ctx.lineTo(-seg[2], -seg[3]);
+          ctx.moveTo(-seg[0], seg[1]); // mirror X for plan view
+          ctx.lineTo(-seg[2], seg[3]);
           ctx.stroke();
         });
         ctx.setLineDash([]);
@@ -15359,7 +15359,7 @@ function startApp() {
       if (sheet) {
         var pinsOnSheet = (s.sheetPins || []).filter(function(p) { return p.sheetId === activeSheetId; });
         pinsOnSheet.forEach(function(p, idx) {
-          var px = -p.x, py = -p.z; // mirror X + flip Z for plan view
+          var px = -p.x, py = p.z; // mirror X for plan view
           var r = 0.35; // 35 cm radius
           ctx.beginPath();
           ctx.arc(px, py, r, 0, Math.PI * 2);
@@ -15532,11 +15532,11 @@ function startApp() {
       var wx = -px / viewScale, wy = py / viewScale; // negate X to match mirrored rendering
       // Snap to outline endpoints when a sheet is active and an index exists
       if (applySnap && sheet && window._cc2DSnapIndex) {
-        // outline endpoints are stored as (x, z) but we draw with y = -z,
-        // so convert our world (wx, wy) → (wx, -wy) to match the index space
+        // outline endpoints stored as (x, z); we render (-x, z) so convert
+        // our screen world (wx, wy) → source space (-wx, wy)
         var threshold = 12 / viewScale; // screen 12px
-        var hit = window._cc2DSnapIndex.query(wx, -wy, threshold);
-        if (hit) return [hit[0], -hit[1], true];
+        var hit = window._cc2DSnapIndex.query(-wx, wy, threshold);
+        if (hit) return [-hit[0], hit[1], true];
       }
       return [wx, wy, false];
     }
@@ -15602,7 +15602,7 @@ function startApp() {
       var pins = (sc.sheetPins || []).filter(function(p) { return p.sheetId === sheet.id; });
       var hit = null, hitD = thr2 + 0.35 * 0.35;
       pins.forEach(function(p) {
-        var px2 = -p.x, py2 = -p.z;
+        var px2 = -p.x, py2 = p.z;
         var d2 = (px2 - wx) * (px2 - wx) + (py2 - wy) * (py2 - wy);
         if (d2 < hitD) { hitD = d2; hit = p; }
       });
@@ -15914,8 +15914,8 @@ function startApp() {
     (outlines || []).forEach(function(seg) {
       var layer = _layerNameForCode(seg[4]);
       dxf += '0\nLINE\n8\n' + layer + '\n';
-      dxf += '10\n' + (-seg[0]).toFixed(4) + '\n20\n' + (-seg[1]).toFixed(4) + '\n30\n0.0\n';
-      dxf += '11\n' + (-seg[2]).toFixed(4) + '\n21\n' + (-seg[3]).toFixed(4) + '\n31\n0.0\n';
+      dxf += '10\n' + (-seg[0]).toFixed(4) + '\n20\n' + (seg[1]).toFixed(4) + '\n30\n0.0\n';
+      dxf += '11\n' + (-seg[2]).toFixed(4) + '\n21\n' + (seg[3]).toFixed(4) + '\n31\n0.0\n';
     });
 
     // Markups → LINE / LWPOLYLINE / TEXT / DIMENSION fallback
@@ -15983,7 +15983,7 @@ function startApp() {
 
     // Pins → CIRCLE + TEXT (pin id stored as label; clash/issue id in comment)
     pins.forEach(function(p, idx) {
-      var px = -p.x, py = -p.z;
+      var px = -p.x, py = p.z;
       writeCircle('Pins', px, py, 0.35);
       writeText('Pins', px - 0.1, py - 0.12, String(idx + 1), 0.3);
       if (p.label) writeText('Pins', px + 0.45, py, String(p.label).slice(0, 40), 0.18);
@@ -16062,7 +16062,7 @@ function startApp() {
     var outlines = generate2DOutlines(state.models || [], sheet.elevation, sheet.cutHeight || 1.2);
     var minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
     outlines.forEach(function(seg) {
-      var ys = [-seg[1], -seg[3]], xs = [-seg[0], -seg[2]]; // mirror X
+      var ys = [seg[1], seg[3]], xs = [-seg[0], -seg[2]]; // mirror X, Z direct
       xs.forEach(function(x) { if (x < minX) minX = x; if (x > maxX) maxX = x; });
       ys.forEach(function(y) { if (y < minY) minY = y; if (y > maxY) maxY = y; });
     });
@@ -16087,8 +16087,8 @@ function startApp() {
       ctx.lineWidth = st.width / pxm * 1.5;
       if (st.dash) ctx.setLineDash(st.dash); else ctx.setLineDash([]);
       ctx.beginPath();
-      ctx.moveTo(-seg[0], -seg[1]); // mirror X
-      ctx.lineTo(-seg[2], -seg[3]);
+      ctx.moveTo(-seg[0], seg[1]); // mirror X
+      ctx.lineTo(-seg[2], seg[3]);
       ctx.stroke();
     });
     ctx.setLineDash([]);
@@ -16138,7 +16138,7 @@ function startApp() {
     // Draw pins
     var pins = (state.sheetPins || []).filter(function(p) { return p.sheetId === sheet.id; });
     pins.forEach(function(p, idx) {
-      var px = -p.x, py = -p.z;
+      var px = -p.x, py = p.z;
       ctx.beginPath(); ctx.arc(px, py, 0.35, 0, Math.PI * 2);
       ctx.fillStyle = p.color || (p.kind === 'issue' ? '#059669' : '#b91c1c'); ctx.fill();
       ctx.strokeStyle = '#0f172a'; ctx.lineWidth = 0.08; ctx.stroke();
