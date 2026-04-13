@@ -18,10 +18,10 @@
   var REST_URL = 'http://127.0.0.1:19803';
   var _ws = null;
   var _connected = false;
-  var _releaseTag = 'v0.1.3'; // fallback; will be updated from GitHub API
+  var _releaseTag = 'bridge-v0.2.0'; // fallback; will be updated from GitHub API
 
   function _buildDownloads() {
-    var _releaseBase = 'https://github.com/clashcontrol-io/ClashControlSmartBridge/releases/download/' + _releaseTag + '/';
+    var _releaseBase = 'https://github.com/clashcontrol-io/ClashControl/releases/download/' + _releaseTag + '/';
     return {
     win:   {url: _releaseBase + 'clashcontrol-smart-bridge-win.exe',
             label: 'Windows (.exe)',
@@ -46,8 +46,8 @@
   // Compare two semver strings (with or without leading 'v').
   // Returns true if a > b.
   function _semverGt(a, b) {
-    var pa = (a || '').replace(/^v/, '').split('.').map(Number);
-    var pb = (b || '').replace(/^v/, '').split('.').map(Number);
+    var pa = (a || '').replace(/^bridge-v|^v/, '').split('.').map(Number);
+    var pb = (b || '').replace(/^bridge-v|^v/, '').split('.').map(Number);
     for (var i = 0; i < 3; i++) {
       var na = pa[i] || 0, nb = pb[i] || 0;
       if (na > nb) return true;
@@ -68,9 +68,11 @@
   }
 
   function _fetchLatestReleaseTag(d) {
-    fetch('https://api.github.com/repos/clashcontrol-io/ClashControlSmartBridge/releases/latest', {cache:'no-store'})
+    fetch('https://api.github.com/repos/clashcontrol-io/ClashControl/releases?per_page=10', {cache:'no-store'})
       .then(function(r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
-      .then(function(j) {
+      .then(function(arr) {
+        var rel = (arr || []).find(function(r) { return r.tag_name && r.tag_name.indexOf('bridge-v') === 0; });
+        var j = rel || null;
         var newTag = (j && j.tag_name) || _releaseTag;
         console.log('[Smart Bridge] GitHub API returned:', newTag);
         if (newTag !== _releaseTag) {
@@ -1202,7 +1204,7 @@
         // Connected state
         if (sb.connected) {
           var _updateHref = sb.updateUrl ||
-            (sb.updateVersion ? 'https://github.com/clashcontrol-io/ClashControlSmartBridge/releases/tag/v' + sb.updateVersion : null);
+            (sb.updateVersion ? 'https://github.com/clashcontrol-io/ClashControl/releases/tag/bridge-v' + sb.updateVersion : null);
           return html`<div style=${{display:'flex',flexDirection:'column',gap:'.5rem'}}>
             <div style=${{display:'flex',alignItems:'center',gap:'.4rem'}}>
               ${sb.bridgeUpdating

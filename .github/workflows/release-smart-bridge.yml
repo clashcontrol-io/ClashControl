@@ -1,0 +1,136 @@
+name: Build and Release Smart Bridge
+
+# ── Triggers ──────────────────────────────────────────────────────────────────
+# Auto-release: bump bridge-version.json on main → builds + publishes.
+# CI build only: change mcp-server.js or smart-bridge-server.js without bumping
+#   the version → workflow builds the binaries to verify but does NOT publish.
+# Manual: workflow_dispatch with optional version override.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - mcp-server.js
+      - smart-bridge-server.js
+      - bridge-version.json
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version to release (e.g. 0.3.0). Overrides bridge-version.json.'
+        required: false
+
+jobs:
+  build-and-release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      # ── Checkout ─────────────────────────────────────────────────────────────
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2   # need parent commit to diff bridge-version.json
+
+      # ── Resolve version ───────────────────────────────────────────────────────
+      - name: Resolve version and release flag
+        id: ver
+        run: |
+          # Manual override wins
+          if [ -n "${{ github.event.inputs.version }}" ]; then
+            VERSION="${{ github.event.inputs.version }}"
+            SHOULD_RELEASE=true
+          else
+            VERSION=$(node -p "require('./bridge-version.json').version")
+            # Only publish a release if bridge-version.json itself changed
+            if git diff HEAD~1 -- bridge-version.json | grep -q '^+'; then
+              SHOULD_RELEASE=true
+            else
+              SHOULD_RELEASE=false
+            fi
+          fi
+          echo "version=$VERSION"           >> $GITHUB_OUTPUT
+          echo "tag=bridge-v$VERSION"       >> $GITHUB_OUTPUT
+          echo "release=$SHOULD_RELEASE"    >> $GITHUB_OUTPUT
+          echo "Version: $VERSION  |  Release: $SHOULD_RELEASE"
+
+      # ── Node setup ───────────────────────────────────────────────────────────
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+
+      # ── Install build deps ────────────────────────────────────────────────────
+      # @yao-pkg/pkg is the maintained fork of the original 'pkg' bundler.
+      # ws is the WebSocket library used by smart-bridge-server.js.
+      - name: Install build dependencies
+        run: npm install --save-dev @yao-pkg/pkg ws
+
+      # ── Build binaries ────────────────────────────────────────────────────────
+      - name: Build standalone binaries
+        run: |
+          mkdir -p dist
+          npx pkg smart-bridge-server.js \
+            --targets node18-win-x64,node18-macos-x64,node18-linux-x64 \
+            --output dist/clashcontrol-smart-bridge
+
+      # ── Package archives ──────────────────────────────────────────────────────
+      - name: Package macOS and Linux archives
+        run: |
+          cd dist
+          chmod +x clashcontrol-smart-bridge-macos clashcontrol-smart-bridge-linux
+          tar -czf clashcontrol-smart-bridge-mac.tar.gz   clashcontrol-smart-bridge-macos
+          tar -czf clashcontrol-smart-bridge-linux.tar.gz clashcontrol-smart-bridge-linux
+          ls -lh
+
+      # ── Publish GitHub Release (only on version bump or manual trigger) ───────
+      - name: Create GitHub Release
+        if: steps.ver.outputs.release == 'true'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name:   ${{ steps.ver.outputs.tag }}
+          name:       "Smart Bridge ${{ steps.ver.outputs.tag }}"
+          make_latest: true
+          body: |
+            ## ClashControl Smart Bridge ${{ steps.ver.outputs.tag }}
+
+            LLM bridge — connect Claude, ChatGPT, or any AI to control ClashControl
+            with natural language. 51 MCP tools available.
+
+            ### Zero-click setup
+            1. Open ClashControl → Addons → **Enable Smart Bridge**
+            2. The binary downloads and starts automatically
+            3. Claude Desktop is configured on first run — just restart Claude
+
+            ### Manual download
+            Download the binary for your platform, run it once, restart Claude Desktop.
+
+            | Platform | File |
+            |----------|------|
+            | Windows  | `clashcontrol-smart-bridge-win.exe` |
+            | macOS    | `clashcontrol-smart-bridge-mac.tar.gz` |
+            | Linux    | `clashcontrol-smart-bridge-linux.tar.gz` |
+
+            ### Connect other AI assistants
+            - **ChatGPT:** Custom GPT → Actions → Import from `http://localhost:19803/openapi.json`
+            - **Any LLM:** `POST http://localhost:19803/call/{tool_name}` · [view tools](http://localhost:19803/tools)
+          files: |
+            dist/clashcontrol-smart-bridge-win.exe
+            dist/clashcontrol-smart-bridge-mac.tar.gz
+            dist/clashcontrol-smart-bridge-linux.tar.gz
+
+      # ── Update _releaseTag in the addon ───────────────────────────────────────
+      # Keeps the addon's fallback version in sync with the latest release.
+      - name: Bump _releaseTag in addon
+        if: steps.ver.outputs.release == 'true'
+        run: |
+          TAG="${{ steps.ver.outputs.tag }}"
+          sed -i "s|var _releaseTag = '[^']*'|var _releaseTag = '${TAG}'|" addons/smart-bridge.js
+          echo "Updated _releaseTag to $TAG"
+
+      - name: Commit updated _releaseTag
+        if: steps.ver.outputs.release == 'true'
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add addons/smart-bridge.js
+          git diff --staged --quiet || git commit -m "chore: bump Smart Bridge _releaseTag to ${{ steps.ver.outputs.tag }}"
+          git push
