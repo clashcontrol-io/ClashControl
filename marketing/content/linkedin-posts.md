@@ -329,3 +329,101 @@ If you've used ClashControl and it was useful, we'd genuinely like to hear about
 #BIM #OpenSource #AECTech #OpenBIM
 
 ---
+
+---
+
+## PHASE 2 — WEEKS 5–8: EDUCATION
+
+---
+
+### LI-17 — Medium — W5 Monday
+*Visual: Screenshot of Detect panel with clash rules configured*
+
+Setting up your first clash rule in ClashControl takes about 30 seconds.
+
+Here's how:
+
+1. Load your IFC models (drag and drop — architecture, structure, MEP as separate files)
+2. Open the Detect panel on the right
+3. Set Model A and Model B — pick which disciplines to compare
+4. Choose Hard clashes (intersections), Soft clashes (clearance), or both
+5. If soft: set your clearance distance in mm — 50mm is a common starting point for MEP-to-structure
+6. Hit Run
+
+Results populate as they come in. Typical model: 5–30 seconds.
+
+That's it. No configuration files. No clash test setup wizards. No licence-gated features to unlock before you can start.
+
+→ clashcontrol.io
+
+#BIM #BIMCoordination #IFC #HowTo
+
+---
+
+### LI-18 — Simple — W5 Tuesday
+
+Hard clash vs soft clash — do you set clearance distances, and if so, what?
+
+A hard clash = elements physically intersect.
+A soft clash = elements come within a defined distance of each other.
+
+50mm MEP-to-structure is common. Some specs go tighter. Some MEP engineers argue for 100mm minimum for maintenance access.
+
+What do you use?
+
+#BIM #BIMCoordination #ClashDetection
+
+---
+
+### LI-19 — Long / Big Topic — W5 Thursday
+*Visual: none*
+
+**The true cost of a clash found on site vs found in the model**
+
+The industry statistic that gets quoted most often is the Dodge Data & Analytics figure: fixing a clash on site costs 10–20× more than resolving it during design coordination.
+
+The honest version is more nuanced — and more damning.
+
+The 10–20× figure covers direct remediation costs: rework labour, material waste, delay to the programme. What it doesn't capture:
+
+**Disruption to adjacent trades.** A duct that needs rerouting on site doesn't just affect the MEP contractor. It delays the ceiling contractor who was scheduled to follow. It affects the plastering programme. It ripples.
+
+**Variations and disputes.** Who owns the clash? The structural engineer whose beam was there first? The MEP consultant who didn't coordinate? The main contractor who should have caught it? These disputes are expensive regardless of who wins them.
+
+**Damage to professional relationships.** Repeated site clashes erode trust between the design team and the contractor. This affects the next project negotiation, even if it's never explicitly discussed.
+
+**Reputational cost to the design team.** A project with significant site clashes becomes a reference case internally and sometimes externally. It affects how the firm is perceived for future work.
+
+The hard number — 10-20× — understates the real cost because it only counts what can be invoiced.
+
+The coordination tools exist to prevent this. The question is whether the cost of those tools is proportionate to the cost of the clashes they prevent. For most projects, even one avoided site clash pays for the coordination effort many times over.
+
+ClashControl is free. The coordination effort is time. The return on that time is almost always positive.
+
+→ clashcontrol.io
+
+#BIM #BIMCoordination #ConstructionCost #AECTech
+
+---
+
+### LI-20 — Medium — W5 Friday
+*Visual: Screenshot of clash list with AI-generated titles*
+
+One thing that slows down clash review more than anything else: clash lists that look like this.
+
+CLASH_0001
+CLASH_0002
+CLASH_0003
+
+ClashControl generates plain-English titles for every clash automatically.
+
+"Supply duct intersects primary structural beam — Level 3, Grid B4"
+"Sprinkler pipe within 30mm of concrete slab soffit — Level 2, Zone C"
+"HV cable tray conflicts with steel purlin — Roof plant room"
+
+This matters for handoffs. When you send a BCF to the MEP engineer, they shouldn't need to open a 3D model to understand what they're looking at. The title should tell them enough to know whether it's theirs to resolve.
+
+AI-generated titles ship with every clash run. Free at clashcontrol.io
+
+#BIM #BIMCoordination #AI #AECTech
+
