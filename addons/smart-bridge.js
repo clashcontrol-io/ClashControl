@@ -612,39 +612,32 @@
   // ── Camera control handlers ─────────────────────────────────────
 
   handlers.get_model_bounds = function() {
-    if (window._ccGetModelBounds) {
-      var b = window._ccGetModelBounds();
-      if (b) return b;
-    }
+    var vp = window._ccViewport;
+    if (vp) { var b = vp.getBounds(); if (b) return b; }
     return 'No models loaded or bounds unavailable.';
   };
 
   handlers.get_camera = function() {
-    if (window._ccGetCamera) {
-      var c = window._ccGetCamera();
-      if (c) return c;
-    }
+    var vp = window._ccViewport;
+    if (vp) { var c = vp.getCamera(); if (c) return c; }
     return 'Camera state unavailable.';
   };
 
   handlers.pan_camera = function(p) {
-    if (window._ccPanCamera) {
-      window._ccPanCamera(p.x || 0, p.y || 0, p.z || 0);
-      return 'Camera panned by [' + (p.x||0) + ', ' + (p.y||0) + ', ' + (p.z||0) + '].';
-    }
+    var vp = window._ccViewport;
+    if (vp) { vp.pan(p.x || 0, p.y || 0, p.z || 0); return 'Camera panned by [' + (p.x||0) + ', ' + (p.y||0) + ', ' + (p.z||0) + '].'; }
     return 'Pan not available.';
   };
 
   handlers.set_camera = function(p) {
-    if (window._ccSetCamera) {
-      window._ccSetCamera(p.px, p.py, p.pz, p.tx, p.ty, p.tz);
-      return 'Camera moved to position [' + p.px + ',' + p.py + ',' + p.pz + '] looking at [' + p.tx + ',' + p.ty + ',' + p.tz + '].';
-    }
+    var vp = window._ccViewport;
+    if (vp) { vp.flyTo(p.px, p.py, p.pz, p.tx, p.ty, p.tz); return 'Camera moved.'; }
     return 'Camera control not available.';
   };
 
   handlers.zoom_to_bounds = function(p) {
-    if (window._ccZoomToBounds) return window._ccZoomToBounds(p.padding || 1.0);
+    var vp = window._ccViewport;
+    if (vp) { vp.fitAll(p.padding || 1.0); return 'Zoomed to fit model bounds.'; }
     return 'Zoom not available.';
   };
 

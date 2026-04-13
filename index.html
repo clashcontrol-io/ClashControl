@@ -5115,47 +5115,34 @@ function startApp() {
       window._flyToElements = _flyToElements;
       window._fitToElement  = _fitToElement;
 
-      // ── Camera control globals (used by addons, NL commands, MCP) ──
-      window._ccGetModelBounds = function() {
-        if (!S.mg || !S.mg.children.length) return null;
-        var box = new THREE.Box3().setFromObject(S.mg);
-        if (box.isEmpty()) return null;
-        var sz = box.getSize(new THREE.Vector3());
-        var ctr = box.getCenter(new THREE.Vector3());
-        return { min:[box.min.x,box.min.y,box.min.z], max:[box.max.x,box.max.y,box.max.z],
-          center:[ctr.x,ctr.y,ctr.z], size:[sz.x,sz.y,sz.z] };
-      };
-      window._ccPanCamera = function(dx, dy, dz) {
-        if (!S.camera || !S.orbit) return;
-        var v = new THREE.Vector3(dx||0, dy||0, dz||0);
-        S.camera.position.add(v);
-        S.orbit.target.add(v);
-        S.orbit.sync(); S.orbit.apply();
-        invalidate(3);
-      };
-      window._ccSetCamera = function(px, py, pz, tx, ty, tz) {
-        if (!S.camera || !S.orbit) return;
-        var endPos = new THREE.Vector3(px, py, pz);
-        var endTarget = new THREE.Vector3(tx, ty, tz);
-        _animateFly(endTarget, endPos);
-      };
-      window._ccGetCamera = function() {
-        if (!S.camera || !S.orbit) return null;
-        var p = S.camera.position;
-        var t = S.orbit.target;
-        return { position:[p.x,p.y,p.z], target:[t.x,t.y,t.z], distance:S.orbit.sph.r };
-      };
-      window._ccZoomToBounds = function(padding) {
-        if (!S.mg || !S.mg.children.length) return 'No models loaded.';
-        var box = new THREE.Box3().setFromObject(S.mg);
-        if (box.isEmpty()) return 'Empty scene.';
-        var sz = box.getSize(new THREE.Vector3());
-        var ctr = box.getCenter(new THREE.Vector3());
-        var d = Math.max(sz.x, sz.y, sz.z) * (padding || 1.0);
-        var endTarget = ctr;
-        var endPos = new THREE.Vector3(ctr.x + d, ctr.y + d * 0.6, ctr.z + d);
-        _animateFly(endTarget, endPos);
-        return 'Zoomed to fit model bounds.';
+      // ── Viewport bridge: thin accessor for addons that need 3D state ──
+      window._ccViewport = {
+        getBounds: function() {
+          if (!S.mg || !S.mg.children.length) return null;
+          var box = new THREE.Box3().setFromObject(S.mg);
+          if (box.isEmpty()) return null;
+          var sz = box.getSize(new THREE.Vector3()), ctr = box.getCenter(new THREE.Vector3());
+          return { min:[box.min.x,box.min.y,box.min.z], max:[box.max.x,box.max.y,box.max.z], center:[ctr.x,ctr.y,ctr.z], size:[sz.x,sz.y,sz.z] };
+        },
+        getCamera: function() {
+          if (!S.camera || !S.orbit) return null;
+          return { position:[S.camera.position.x,S.camera.position.y,S.camera.position.z], target:[S.orbit.target.x,S.orbit.target.y,S.orbit.target.z], distance:S.orbit.sph.r };
+        },
+        pan: function(dx,dy,dz) {
+          if (!S.camera || !S.orbit) return;
+          var v = new THREE.Vector3(dx||0,dy||0,dz||0); S.camera.position.add(v); S.orbit.target.add(v); S.orbit.sync(); S.orbit.apply(); invalidate(3);
+        },
+        flyTo: function(px,py,pz,tx,ty,tz) {
+          if (!S.camera || !S.orbit) return;
+          _animateFly(new THREE.Vector3(tx,ty,tz), new THREE.Vector3(px,py,pz));
+        },
+        fitAll: function(padding) {
+          if (!S.mg || !S.mg.children.length) return;
+          var box = new THREE.Box3().setFromObject(S.mg); if (box.isEmpty()) return;
+          var sz = box.getSize(new THREE.Vector3()), ctr = box.getCenter(new THREE.Vector3());
+          var d = Math.max(sz.x,sz.y,sz.z) * (padding||1.0);
+          _animateFly(ctr, new THREE.Vector3(ctr.x+d, ctr.y+d*0.6, ctr.z+d));
+        }
       };
 
       // ── Section Box helper ──
