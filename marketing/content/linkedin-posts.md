@@ -630,3 +630,90 @@ Free at clashcontrol.io
 
 #BIM #BIMCoordination #UX #AECTech
 
+
+---
+
+### LI-29 — Simple — W8 Monday
+*Reshare LI-03 with new framing*
+
+Three months ago I wrote about the real cost of Navisworks to a small firm.
+
+It's still the post that gets the most DMs.
+
+The numbers haven't changed: $6,600/seat, $15,000 for three coordinators, renewed annually, sitting idle most of the time.
+
+The alternative still runs in a browser tab.
+
+→ clashcontrol.io
+
+#BIM #OpenBIM #AECTech
+
+---
+
+### LI-30 — Medium — W8 Tuesday
+
+Poll: What tool do you currently use for IFC clash detection?
+
+○ Navisworks Manage
+○ Solibri
+○ BIMcollab Zoom
+○ Other (comment below)
+
+Genuinely curious about the mix — especially in smaller firms and freelance practices. The enterprise tools dominate the conversation but I suspect the actual market is more fragmented than the vendors let on.
+
+(And yes, ClashControl is a free alternative to all of the above — but this isn't a trick question, I want to know what people are actually using.)
+
+#BIM #BIMCoordination #AECTech
+
+---
+
+### LI-31 — Long / Big Topic — W8 Thursday
+*Visual: none*
+
+**The BIM coordination skills gap — what firms actually need vs what they hire for**
+
+BIM coordination is one of the most in-demand skills in AEC right now. It is also one of the most inconsistently defined job descriptions in the industry.
+
+I've seen BIM Coordinator roles that are essentially drafter roles with "Navisworks" added to the requirements. I've seen others that are genuinely complex technical positions requiring deep understanding of IFC, coordination protocols, clash resolution workflows, and multi-disciplinary communication.
+
+The tool proficiency question — Navisworks, Revit, Solibri — dominates job descriptions. The underlying competency question is rarely asked.
+
+Here's what good BIM coordination actually requires:
+
+**Technical foundation**
+Understanding of how different authoring platforms export IFC. Knowing what gets lost in translation and what to check. Understanding coordinate systems and why they fail. Ability to assess model quality before running a clash check.
+
+**Coordination judgement**
+Not all clashes are equal. A clash in the ceiling plenum of a plant room is different from a clash in an occupied office floor. Knowing which clashes to escalate and which to waive requires project context and construction knowledge, not just software skill.
+
+**Communication**
+Clash detection produces data. Coordination is a human process. Getting the MEP engineer and the structural engineer to agree on a resolution requires clear, precise communication — in writing, in BCF, and in coordination meetings.
+
+**Process design**
+Setting up a coordination protocol, defining federated model responsibilities, agreeing clash tolerance thresholds, establishing a BCF handoff workflow — this is where the real coordination value is created, before a single clash is detected.
+
+The tool is the easy part. ClashControl is free and you can learn the interface in an afternoon.
+
+The judgment, the communication, the process design — those take years and can't be replicated by software.
+
+The firms that understand this distinction hire well. The firms that don't hire someone who can operate Navisworks and then wonder why their coordination is still poor.
+
+#BIM #BIMCoordination #Careers #AECTech #Architecture
+
+---
+
+### LI-32 — Medium — W8 Friday
+*Visual: Sheets screenshot — floor plan cut with element labels*
+
+Sheets in ClashControl v4.14: 2D floor plans from your 3D IFC model.
+
+You set the cut height. ClashControl generates a floor plan cut, annotates the elements, and lets you export as DXF.
+
+Why this matters: not every stakeholder who needs to understand a clash is going to load a 3D model. Site managers, contractors, and clients often work from 2D drawings. A clash that's obvious in 3D needs to be communicable in 2D for the people who will actually resolve it on site.
+
+Settings: cut height, view depth, paper size (A0–A4), plot scale.
+
+Free at clashcontrol.io
+
+#BIM #BIMCoordination #DXF #AECTech
+
