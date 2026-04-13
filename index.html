@@ -2634,6 +2634,14 @@ function startApp() {
   }
 
   function _meshesIntersect(elA, elB) {
+    // Try WASM engine first (4-8x faster)
+    if (typeof window._ccWasmIntersect === 'function') {
+      var tA = _getWorldTris(elA), tB = _getWorldTris(elB);
+      if (!tA.length || !tB.length) return false;
+      var r = window._ccWasmIntersect(tA, tB);
+      return r || false;
+    }
+    // JS fallback
     var bA = _getBVH(elA), bB = _getBVH(elB);
     if (!bA || !bB) return false;
     var probe = [], probeDepth = [0];
@@ -2694,6 +2702,13 @@ function startApp() {
   };
 
   function _meshMinDist(elA, elB, thresholdM, outPair) {
+    // Try WASM engine first (4-8x faster)
+    if (typeof window._ccWasmMinDist === 'function') {
+      var vA = _getWorldVerts(elA), vB = _getWorldVerts(elB);
+      if (!vA.length || !vB.length) return Infinity;
+      return window._ccWasmMinDist(vA, vB, thresholdM, outPair);
+    }
+    // JS fallback
     var vA = _getWorldVerts(elA), vB = _getWorldVerts(elB);
     if (!vA.length || !vB.length) return Infinity;
     var cs = Math.max(thresholdM || 0.05, 0.02);
@@ -3543,7 +3558,8 @@ function startApp() {
       _pcts[k.replace('_ms','')] = _totalMs>0 ? Math.round(profile[k]/_totalMs*100)+'%' : '0%';
     });
     try {
-      console.log('%c ClashControl Detection Profile ', 'background:#2563eb;color:#fff;font-weight:bold;padding:2px 8px;border-radius:4px');
+      var _engineLabel = (typeof window._ccWasmIntersect === 'function') ? 'WASM' : 'JS';
+      console.log('%c ClashControl Detection Profile (' + _engineLabel + ' engine) ', 'background:#2563eb;color:#fff;font-weight:bold;padding:2px 8px;border-radius:4px');
       console.table([
         {Phase:'Sweep & Prune',    Time:profile.sweep_and_prune_ms+'ms', Pct:_pcts.sweep_and_prune, Detail:profile.elements+' elements → '+profile.candidates+' candidates'},
         {Phase:'BVH Build',        Time:profile.bvh_build_ms+'ms',       Pct:_pcts.bvh_build,       Detail:profile.elements+' element BVHs'},
