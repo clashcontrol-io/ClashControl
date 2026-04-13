@@ -376,6 +376,45 @@
     } else { if (window._ccWalkExit) window._ccWalkExit(); _dispatch({ t: 'WALK_MODE', v: false }); return 'Walk mode deactivated.'; }
   };
 
+  // ── Camera control handlers ─────────────────────────────────────
+
+  handlers.get_model_bounds = function() {
+    if (window._ccGetModelBounds) {
+      var b = window._ccGetModelBounds();
+      if (b) return b;
+    }
+    return 'No models loaded or bounds unavailable.';
+  };
+
+  handlers.get_camera = function() {
+    if (window._ccGetCamera) {
+      var c = window._ccGetCamera();
+      if (c) return c;
+    }
+    return 'Camera state unavailable.';
+  };
+
+  handlers.pan_camera = function(p) {
+    if (window._ccPanCamera) {
+      window._ccPanCamera(p.x || 0, p.y || 0, p.z || 0);
+      return 'Camera panned by [' + (p.x||0) + ', ' + (p.y||0) + ', ' + (p.z||0) + '].';
+    }
+    return 'Pan not available.';
+  };
+
+  handlers.set_camera = function(p) {
+    if (window._ccSetCamera) {
+      window._ccSetCamera(p.px, p.py, p.pz, p.tx, p.ty, p.tz);
+      return 'Camera moved to position [' + p.px + ',' + p.py + ',' + p.pz + '] looking at [' + p.tx + ',' + p.ty + ',' + p.tz + '].';
+    }
+    return 'Camera control not available.';
+  };
+
+  handlers.zoom_to_bounds = function(p) {
+    if (window._ccZoomToBounds) return window._ccZoomToBounds(p.padding || 1.0);
+    return 'Zoom not available.';
+  };
+
   // ── WebSocket connection ──────────────────────────────────────────
 
   function _connectWs(d) {
