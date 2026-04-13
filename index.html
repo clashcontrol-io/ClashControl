@@ -177,14 +177,16 @@
       --color-danger:#dc2626;--color-danger-fg:#b91c1c;--color-danger-bg:#fee2e2;--color-danger-border:rgba(220,38,38,.4);
       --color-info:#2563eb;--color-info-fg:#1d4ed8;--color-info-bg:#dbeafe;--color-info-border:rgba(37,99,235,.35);
     }
-    .cc-left-panel,.cc-side-panel{overflow-x:hidden!important}
-    .cc-left-panel>*,.cc-side-panel>*{min-width:0;overflow-x:hidden}
+    .cc-left-panel{overflow-x:hidden!important}
+    .cc-left-panel>*{min-width:0;overflow-x:hidden}
+    .cc-side-panel{overflow-x:hidden}
+    .cc-side-panel>*{min-width:0}
     body{background:var(--bg-primary);color:var(--text-primary);font-family:var(--font-body);overflow:hidden;-webkit-font-smoothing:antialiased;-moz-osx-font-smoothing:grayscale}
     .cc-display{font-family:var(--font-display);letter-spacing:-.01em}
     .cc-mono{font-family:var(--font-mono)}
     code,kbd,pre,samp{font-family:var(--font-mono)}
     input[type=range]{accent-color:var(--accent)}input[type=checkbox]{accent-color:var(--accent)}
-    ::-webkit-scrollbar{width:7px}::-webkit-scrollbar-track{background:transparent}::-webkit-scrollbar-thumb{background:var(--text-faint);border-radius:4px}::-webkit-scrollbar-thumb:hover{background:var(--text-muted)}
+    ::-webkit-scrollbar{width:7px;height:7px}::-webkit-scrollbar-track{background:transparent}::-webkit-scrollbar-thumb{background:var(--text-faint);border-radius:4px}::-webkit-scrollbar-thumb:hover{background:var(--text-muted)}
     select,select option{background:var(--bg-tertiary);color:var(--text-primary);border:1px solid var(--border)}
     .spin{animation:sp 1s linear infinite;display:inline-block}@keyframes sp{to{transform:rotate(360deg)}}
     @keyframes nlDots{0%,20%{opacity:.2}50%{opacity:1}80%,100%{opacity:.2}}
@@ -5743,7 +5745,7 @@ function startApp() {
           if(!obj.isMesh) return;
           if(obj.userData._isLodProxy) return;
           if(obj.userData.expressId==null) return;
-          if(obj.userData._storeyHidden) { if(obj.userData._lodProxy) obj.userData._lodProxy.visible = false; return; }
+          if(obj.userData._storeyHidden || obj.userData._classHidden) { if(obj.userData._lodProxy) obj.userData._lodProxy.visible = false; return; }
           if(!obj.geometry.boundingSphere) obj.geometry.computeBoundingSphere();
           var bs = obj.geometry.boundingSphere;
           tmpSphere.copy(bs).applyMatrix4(obj.matrixWorld);
@@ -6221,10 +6223,12 @@ function startApp() {
       if(!cls||!hiddenKeys.length){
         S.mg.traverse(function(obj){
           if(obj.isMesh){
+            obj.userData._classHidden = false;
             var modelHidden = obj.parent && obj.parent.userData.modelId && !obj.parent.visible;
             if(!modelHidden && !obj.userData._storeyHidden) obj.visible=true;
           }
         });
+        invalidate();
         return;
       }
       var hiddenIds = new Set();
@@ -6239,7 +6243,9 @@ function startApp() {
         var modelId=obj.parent?obj.parent.userData.modelId:null;
         var modelHidden = obj.parent && obj.parent.userData.modelId && !obj.parent.visible;
         if(modelHidden){ obj.visible=false; return; }
-        obj.visible = !(modelId&&hiddenIds.has(modelId+'_'+eid));
+        var isClassHidden = !!(modelId&&hiddenIds.has(modelId+'_'+eid));
+        obj.userData._classHidden = isClassHidden;
+        obj.visible = !isClassHidden;
       });
       invalidate();
     }, [s.hiddenClasses, s.classifications]);
@@ -9193,7 +9199,7 @@ function startApp() {
         </div>`}
         ${classView && hiddenCount>0 && html`<div style=${{fontSize:'var(--text-2xs)',color:'var(--color-warning-fg)'}}>${hiddenCount} group${hiddenCount>1?'s':''} hidden</div>`}
       </div>
-      <div ref=${explorerScrollRef} role=${(viewMode==='spatial'||viewMode==='tree')?'tree':null} aria-label=${viewMode==='spatial'?'Spatial structure':viewMode==='tree'?'Model tree':null} class="cc-tv" style=${{flex:1,overflowY:'auto',padding:'var(--space-1) 0'}}>
+      <div ref=${explorerScrollRef} role=${(viewMode==='spatial'||viewMode==='tree')?'tree':null} aria-label=${viewMode==='spatial'?'Spatial structure':viewMode==='tree'?'Model tree':null} class="cc-tv" style=${{flex:1,overflowY:'auto',overflowX:'auto',padding:'var(--space-1) 0'}}>
         ${s.models.length===0 && html`<div class="cc-tv__empty">Load models to explore</div>`}
         ${viewMode==='spatial' && html`<ul role="group" class="cc-tv__list">${s.models.filter(function(m){return m.visible!==false}).map(function(model){
           var sh = model.spatialHierarchy||{};
