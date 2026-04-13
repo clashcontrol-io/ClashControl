@@ -1,5 +1,8 @@
 # Changelog
 
+## v4.14.26 (2026-04-13)
+- feat: IDS format export/import for Data Quality checks
+
 ## v4.14.25 (2026-04-13)
 - feat: shift+click multi-select in navigator tree
 
