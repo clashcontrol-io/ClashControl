@@ -1027,3 +1027,115 @@ Source: github.com/clashcontrol-io/clashcontrol
 
 #BIM #OpenSource #WebDev #AECTech
 
+
+---
+
+### LI-45 — Long / Big Topic — W12 Monday
+*Visual: none*
+
+**Why I'm building ClashControl in the open — and what I've learned**
+
+When we made the decision to open-source ClashControl, the argument was simple: BIM coordination tooling should be accessible to everyone, and open source is the most durable way to make that true.
+
+What I didn't fully anticipate was how building in the open would change the product itself.
+
+**Accountability creates clarity**
+
+When your code is public, you can't hide complexity behind an API. Every architectural decision, every workaround, every "we'll fix this later" is visible. This is uncomfortable in the short term and clarifying in the long term. The single-file architecture we use isn't just a philosophical choice — it's a commitment to keeping the tool auditable and understandable.
+
+**Users who care enough to look at the source are a different kind of user**
+
+The people who find ClashControl through GitHub are not the same as the people who find it through an advertisement. They read the code. They open issues that are specific and well-reasoned. They submit pull requests. The feedback quality from this group is substantially higher than any user research I've ever done in a commercial context.
+
+**Free doesn't mean low-trust**
+
+I expected that making the tool free would mean users treated it as disposable. The opposite is true. When a tool is free and open-source, the implicit contract is different — you're trusting us with your model data and your coordination workflow without a vendor relationship to fall back on. Users who make that choice are invested in the outcome.
+
+**The sustainability question is real**
+
+Open source doesn't pay salaries. GitHub Sponsors helps. The people who support ClashControl financially are, for the most part, people who have used it on real projects and decided the value was worth contributing to. That's a genuine vote of confidence and I take it seriously.
+
+What I've learned building in the open: the work is harder, the feedback is better, and the relationship with users is more honest than anything I've experienced in commercial software development.
+
+→ github.com/sponsors/clashcontrol-io if you want to support it
+→ clashcontrol.io if you want to use it
+
+#OpenSource #BIM #AECTech #BuildingInPublic
+
+---
+
+### LI-46 — Simple — W12 Tuesday
+*Update with real numbers*
+
+90 days of posting about ClashControl on LinkedIn.
+
+[X] new users
+[X] GitHub stars gained
+[X] countries where people opened the app
+
+The tool: still free. Still open source. Still runs in a browser tab.
+
+→ clashcontrol.io
+
+#BIM #OpenBIM #Milestone
+
+---
+
+### LI-47 — Medium — W12 Thursday
+*Visual: none*
+
+What we learned from 90 days of posting about a free BIM tool on LinkedIn.
+
+The posts that performed best weren't the feature announcements.
+
+The ones that got shared and saved were the ones that articulated a frustration the audience already had — licensing costs, false positive triage, coordination process failures — and connected it to something they could actually do differently.
+
+The lesson: people don't share product posts. They share posts that make them feel understood and give them something useful to bring to their next coordination meeting.
+
+The feature announcements still matter — they keep the audience updated and drive direct traffic. But they're not the posts that build an audience.
+
+If you're building something for a niche technical audience, the most effective content you can create is the content that treats your audience as serious professionals dealing with real problems. Not "here's our product." More "here's the problem you're dealing with, here's why it exists, and here's what you can do about it."
+
+→ clashcontrol.io
+
+#ContentMarketing #BIM #AECTech #BuildingInPublic
+
+---
+
+### LI-48 — Long / Big Topic — W12 Friday
+*Visual: none*
+
+**Where BIM coordination is heading in 2027 — and what teams should prepare for**
+
+Three trends that will reshape BIM coordination over the next two years.
+
+**1. AI moves from triage to resolution**
+
+Today AI in BIM coordination is mostly pattern recognition — flagging likely false positives, generating clash titles, suggesting which clashes are related. This is useful but shallow.
+
+The next step is AI that can propose resolutions. "This duct conflicts with this beam. Based on similar clashes in this model, rerouting the duct 150mm to the north clears the conflict without creating new clashes." This requires understanding spatial relationships, routing constraints, and project context in ways that current models can't reliably do.
+
+This is 18-24 months away from being genuinely useful in production workflows. The groundwork is being laid now.
+
+**2. Coordination moves earlier in the design process**
+
+The traditional coordination stage — during technical design, after the structure is fixed — is increasingly recognised as too late. By the time you're doing formal clash detection, the structural grid is set, the MEP routes are 70% designed, and resolving conflicts is expensive.
+
+The industry is moving toward continuous coordination — smaller, more frequent checks during early design, using simplified geometry and IFC 2x3 exports from early-stage models. This requires tools that are low-friction enough to run daily, not just at formal coordination milestones.
+
+Browser-native, zero-install tools are better positioned for this than desktop applications with a 45-minute setup time.
+
+**3. Open standards win**
+
+The IFC/BCF/IDS stack has reached a level of maturity where it can carry a full coordination workflow without proprietary formats. The platforms that built lock-in through proprietary file formats — NWF, NWD, and others — will face increasing pressure as open alternatives improve.
+
+This doesn't mean Autodesk loses. It means the parts of their value proposition that depended on format lock-in become weaker. The parts that depended on genuine quality and integration will remain competitive.
+
+For coordination teams: invest in understanding and using open standards now. The teams that are IFC-fluent and BCF-native will have more tool flexibility and lower switching costs as the market evolves.
+
+ClashControl is built on all of this: IFC input, BCF output, IDS validation, browser-native. Not because it's ideologically convenient — because it's technically correct.
+
+→ clashcontrol.io
+
+#BIM #AECTech #FutureOfWork #OpenBIM #BuildingSMART
+
