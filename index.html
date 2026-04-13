@@ -6258,7 +6258,10 @@ function startApp() {
       if(!s.colorByClass){
         if(origColorsRef.current){
           origColorsRef.current.forEach(function(entry){
-            if(entry.mesh&&entry.mesh.material)entry.mesh.material.color.copy(entry.color);
+            if(!entry.mesh) return;
+            if(entry.origMat) entry.mesh.material = entry.origMat;
+            else if(entry.mesh.material) entry.mesh.material.color.copy(entry.color);
+            entry.mesh.visible = entry.wasVisible;
           });
           origColorsRef.current=null;
           invalidate();
@@ -6284,10 +6287,18 @@ function startApp() {
         var parent=obj.parent;
         var modelId=parent?parent.userData.modelId:null;
         if(eid==null||!modelId) return;
-        saved.push({mesh:obj, color:obj.material.color.clone()});
         var ci=colorMap[modelId+'_'+eid];
         if(ci!=null){
+          saved.push({mesh:obj, color:obj.material.color.clone(), wasVisible:obj.visible});
           obj.material.color.set(CLASS_COLORS[ci%CLASS_COLORS.length]);
+          obj.visible = true;
+        } else {
+          var origMat = obj.material;
+          if(!_isGhostMat(origMat)){
+            saved.push({mesh:obj, origMat:origMat, wasVisible:obj.visible});
+            obj.material = _makeGhostClone(origMat);
+            obj.visible = true;
+          }
         }
       });
       origColorsRef.current=saved;
