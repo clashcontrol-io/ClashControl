@@ -5382,6 +5382,12 @@ function startApp() {
           if(!h.object.visible) return false; // skip storey/type-hidden elements
           if(_isGhostMat(h.object.material)) return false;
           if(h.object.parent && h.object.parent.userData.modelId && !h.object.parent.visible) return false;
+          // skip elements behind active section/floor-plan clipping planes
+          if(S.renderer.clippingPlanes && S.renderer.clippingPlanes.length) {
+            for(var _ci=0;_ci<S.renderer.clippingPlanes.length;_ci++){
+              if(S.renderer.clippingPlanes[_ci].distanceToPoint(h.point)<0) return false;
+            }
+          }
           return true;
         });
 
@@ -13617,6 +13623,7 @@ function startApp() {
       updatedAt: Date.now()
     };
   }
+  window._ccMakeSheet = _ccMakeSheet;
 
   // Opens a storey picker modal instead of a browser prompt()
   window._ccShowStoreyPicker = null; // set by App component
@@ -13835,6 +13842,16 @@ function startApp() {
       panRef.current.x = -cx * pxm * zoom;
       panRef.current.y = -cy * pxm * zoom;
       panRef.current.zoom = zoom;
+      redraw();
+    };
+    window._cc2DSetPan = function(dx, dy) {
+      panRef.current.x += (dx || 0);
+      panRef.current.y += (dy || 0);
+      redraw();
+    };
+    window._cc2DSetZoom = function(level) {
+      panRef.current.zoom = Math.max(0.05, Math.min(50, Number(level) || 1));
+      redraw();
     };
     var markupPtsRef = useRef([]);
     var sRef = useRef(s);

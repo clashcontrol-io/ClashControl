@@ -191,7 +191,7 @@ Rules:
 
 ---
 
-## All 27 tools — complete definitions
+## All 35 tools — complete definitions
 
 These map 1:1 to the handler functions in the browser addon (`addons/smart-bridge.js`). The SmartBridge binary relays calls to the browser via WebSocket; the MCP server calls the binary via REST.
 
@@ -388,10 +388,13 @@ server.registerTool("set_section", {
   title: "Set Section Cut",
   description:
     "Creates a section cutting plane along an axis to reveal interior geometry, or removes it. " +
+    "Optionally place the cut at an absolute world-space position along the chosen axis. " +
     "Useful for inspecting clashes hidden inside walls, floors, or ceilings.",
   inputSchema: {
     axis: z.enum(["x", "y", "z", "none"])
       .describe("Cutting axis. 'none' removes the section plane."),
+    position: z.number().optional()
+      .describe("Absolute world-space coordinate (metres) along the axis where the cut is placed. Omit to cut at the model centre."),
   },
   annotations: { destructiveHint: false, idempotentHint: true },
 }, async (params) => callBridge("set_section", params));
@@ -506,21 +509,124 @@ server.registerTool("list_storeys", {
 server.registerTool("create_2d_sheet", {
   title: "Create 2D Floor Plan Sheet",
   description:
-    "Generates a 2D floor plan view at a specified storey or elevation. Switches the 3D viewer " +
-    "into top-down floor plan mode with a horizontal cut plane. Optionally exports the sheet as " +
-    "PNG, PDF, or DXF. Use list_storeys first to find valid storey names.",
+    "Creates a persistent 2D floor plan sheet at a specified storey or elevation and switches " +
+    "the viewer to 2D sheet mode. The sheet is added to the project's sheet list and can be " +
+    "exported, annotated, or retrieved later via list_2d_sheets. Use list_storeys first to " +
+    "discover valid storey names. Returns the new sheet's ID.",
   inputSchema: {
     floorName: z.string().optional()
-      .describe("Storey name to view, e.g. 'Ground Floor' or 'Level 2'. Fuzzy matched. Takes priority over height."),
+      .describe("Storey name, e.g. 'Ground Floor' or 'Level 2'. Fuzzy matched. Takes priority over height."),
     height: z.number().optional()
       .describe("Cut elevation in metres above project origin. Used when floorName is not provided."),
-    cutHeight: z.number().min(0).max(5).optional()
-      .describe("Height above the storey elevation where the cut plane is placed, in metres. Default 1.2m."),
-    exportFormat: z.enum(["png", "pdf", "dxf"]).optional()
-      .describe("If provided, automatically exports the sheet in this format after generating it."),
+    scale: z.string().optional()
+      .describe("Drawing scale as a ratio string, e.g. '1:100', '1:50', '1:200'. Default '1:100'."),
+    format: z.enum(["png", "pdf", "dxf"]).optional()
+      .describe("If provided, automatically exports the sheet in this format after creating it."),
+  },
+  annotations: { destructiveHint: false, idempotentHint: false },
+}, async (params) => callBridge("create_2d_sheet", params));
+
+server.registerTool("list_2d_sheets", {
+  title: "List 2D Sheets",
+  description:
+    "Returns all 2D floor plan sheets in the current project with their IDs, names, storey " +
+    "names, elevations, and annotation counts. Also returns the active sheet ID. Use before " +
+    "export_sheet, delete_sheet, or add_annotation to get valid sheet IDs.",
+  inputSchema: {},
+  annotations: { destructiveHint: false, idempotentHint: true },
+}, async () => callBridge("list_2d_sheets"));
+
+server.registerTool("export_sheet", {
+  title: "Export 2D Sheet",
+  description:
+    "Exports a floor plan sheet as PNG, PDF, or DXF. If sheetId is omitted, exports the " +
+    "currently active sheet. DXF includes vector outlines and annotations; PNG/PDF capture " +
+    "the canvas at screen resolution.",
+  inputSchema: {
+    sheetId: z.string().optional()
+      .describe("ID of the sheet to export (from list_2d_sheets). Omit to use the active sheet."),
+    format: z.enum(["png", "pdf", "dxf"]).optional()
+      .describe("Export format. Default 'png'."),
   },
   annotations: { destructiveHint: false, idempotentHint: true },
-}, async (params) => callBridge("create_2d_sheet", params));
+}, async (params) => callBridge("export_sheet", params));
+
+server.registerTool("delete_sheet", {
+  title: "Delete 2D Sheet",
+  description:
+    "Permanently deletes a floor plan sheet and all its annotations and pins. " +
+    "Use list_2d_sheets to get valid sheet IDs before calling this.",
+  inputSchema: {
+    sheetId: z.string().min(1)
+      .describe("ID of the sheet to delete (from list_2d_sheets)."),
+  },
+  annotations: { destructiveHint: true, idempotentHint: false },
+}, async (params) => callBridge("delete_sheet", params));
+
+server.registerTool("pan_2d_sheet", {
+  title: "Pan 2D Sheet View",
+  description:
+    "Moves the 2D floor plan canvas by a pixel offset. Positive x pans right, positive y pans down. " +
+    "Use fit_2d_bounds to auto-frame the plan after navigating.",
+  inputSchema: {
+    x: z.number().optional().describe("Horizontal pan in pixels. Positive = right."),
+    y: z.number().optional().describe("Vertical pan in pixels. Positive = down."),
+  },
+  annotations: { destructiveHint: false, idempotentHint: false },
+}, async (params) => callBridge("pan_2d_sheet", params));
+
+server.registerTool("zoom_2d_sheet", {
+  title: "Zoom 2D Sheet View",
+  description:
+    "Sets the zoom level of the 2D floor plan canvas. 1.0 = 100%, 2.0 = 200%, 0.5 = 50%. " +
+    "Valid range 0.05–50. Use fit_2d_bounds to auto-fit instead of guessing a zoom level.",
+  inputSchema: {
+    level: z.number().min(0.05).max(50)
+      .describe("Zoom multiplier. 1.0 = natural size, 2.0 = double, 0.5 = half."),
+  },
+  annotations: { destructiveHint: false, idempotentHint: true },
+}, async (params) => callBridge("zoom_2d_sheet", params));
+
+server.registerTool("fit_2d_bounds", {
+  title: "Fit 2D View to Floor Bounds",
+  description:
+    "Auto-fits the 2D floor plan view to show all geometry. Resets pan and zoom so the full " +
+    "floor plan is centred and visible. Call this after create_2d_sheet to frame the plan.",
+  inputSchema: {},
+  annotations: { destructiveHint: false, idempotentHint: true },
+}, async () => callBridge("fit_2d_bounds"));
+
+server.registerTool("add_annotation", {
+  title: "Add Annotation to Sheet",
+  description:
+    "Adds a markup annotation to the active 2D floor plan sheet. Supported types: text, pin, " +
+    "line, rect, arrow. Coordinates are in world-space metres (same as IFC). Requires an active " +
+    "sheet — call create_2d_sheet first.",
+  inputSchema: {
+    type: z.enum(["text", "pin", "line", "rect", "arrow"]).optional()
+      .describe("Annotation type. Default 'text'."),
+    x: z.number().describe("World X coordinate of the annotation start point (metres)."),
+    y: z.number().describe("World Z coordinate of the annotation start point (metres)."),
+    x2: z.number().optional().describe("World X of the end point (for line, rect, arrow)."),
+    y2: z.number().optional().describe("World Z of the end point (for line, rect, arrow)."),
+    text: z.string().optional().describe("Label text for text and pin annotations."),
+    color: z.string().optional().describe("Hex color, e.g. '#f59e0b'. Default amber."),
+  },
+  annotations: { destructiveHint: false, idempotentHint: false },
+}, async (params) => callBridge("add_annotation", params));
+
+server.registerTool("measure_on_sheet", {
+  title: "Measure Distance on Sheet",
+  description:
+    "Adds a dimension annotation between two world-space points on the active 2D sheet. " +
+    "Calculates and labels the distance in mm or m. Requires an active sheet.",
+  inputSchema: {
+    points: z.array(z.number()).min(4).max(4)
+      .describe("Four world-space coordinates [x1, z1, x2, z2] in metres defining the two endpoints."),
+    color: z.string().optional().describe("Hex color for the dimension line. Default light blue."),
+  },
+  annotations: { destructiveHint: false, idempotentHint: false },
+}, async (params) => callBridge("measure_on_sheet", params));
 
 server.registerTool("exit_floor_plan", {
   title: "Exit Floor Plan View",

@@ -393,7 +393,25 @@
   };
 
   handlers.set_render_style = function(p) { _dispatch({ t: 'RENDER_STYLE', v: p.style || 'shaded' }); return 'Render style: ' + p.style; };
-  handlers.set_section = function(p) { _dispatch({ t: 'SECTION', axis: p.axis === 'none' ? null : p.axis }); return p.axis === 'none' ? 'Section cleared.' : 'Section cut: ' + p.axis.toUpperCase(); };
+  handlers.set_section = function(p) {
+    if (p.axis === 'none' || !p.axis) { _dispatch({ t: 'SECTION', axis: null }); return 'Section cleared.'; }
+    var pos = null;
+    if (p.position != null) {
+      // Convert absolute world position to relative 0-1 using current model bounds
+      var bounds = window._ccViewport && window._ccViewport.getBounds();
+      if (bounds) {
+        var axIdx = {x:0, y:1, z:2}[p.axis];
+        if (axIdx != null) {
+          var span = bounds.max[axIdx] - bounds.min[axIdx];
+          if (span > 0) pos = Math.max(0.01, Math.min(0.99, (p.position - bounds.min[axIdx]) / span));
+        }
+      }
+    }
+    var act = { t: 'SECTION', axis: p.axis };
+    if (pos != null) act.pos = pos;
+    _dispatch(act);
+    return 'Section cut: ' + p.axis.toUpperCase() + (pos != null ? ' at ' + Number(p.position).toFixed(2) : '') + '.';
+  };
   handlers.color_by = function(p) { var v = p.by === 'none' ? null : 'by' + p.by.charAt(0).toUpperCase() + p.by.slice(1); _dispatch({ t: 'COLOR_BY_CLASS', v: v }); return p.by === 'none' ? 'Colors reset.' : 'Colored by ' + p.by + '.'; };
   handlers.set_theme = function(p) { document.documentElement.setAttribute('data-theme', p.theme); try { localStorage.setItem('cc_theme', p.theme); } catch (e) {} return p.theme.charAt(0).toUpperCase() + p.theme.slice(1) + ' theme.'; };
   handlers.set_visibility = function(p) { if (p.option === 'grid') _dispatch({ t: 'TOGGLE_GRID', v: p.visible }); else if (p.option === 'axes') _dispatch({ t: 'TOGGLE_AXES', v: p.visible }); else if (p.option === 'markers') _dispatch({ t: 'TOGGLE_MARKERS', v: p.visible }); return (p.visible ? 'Showing' : 'Hiding') + ' ' + p.option + '.'; };
@@ -484,7 +502,6 @@
     var elevation = null, storeyName = null;
 
     if (p.floorName) {
-      // Match by storey name (fuzzy)
       var match = storeys.find(function(st) { return st.name.toLowerCase().indexOf(p.floorName.toLowerCase()) >= 0; });
       if (match) { elevation = match.elevation; storeyName = match.name; }
       else return 'Storey "' + p.floorName + '" not found. Available: ' + storeys.map(function(st) { return st.name; }).join(', ');
@@ -498,21 +515,41 @@
       return 'No storey data and no height specified.';
     }
 
-    var gf = (typeof _ccStoreyToGeoFactor === 'function') ? _ccStoreyToGeoFactor(s.models) : 1;
-    var geoElev = elevation * gf;
-    _dispatch({ t: 'FLOOR_PLAN', v: { storeyName: storeyName, elevation: geoElev, cutHeight: (p.cutHeight || 1.2) * gf } });
-
-    // Trigger export if format specified
-    if (p.exportFormat) {
-      var fmt = (p.exportFormat || '').toLowerCase();
-      setTimeout(function() {
-        if (fmt === 'dxf' && window._ccDoExportDXF) window._ccDoExportDXF();
-        else if (fmt === 'png' && window._ccDoExportPNG) window._ccDoExportPNG();
-        else if (fmt === 'pdf' && window._ccDoExportPDF) window._ccDoExportPDF();
-      }, 500); // slight delay to let floor plan render
+    // Build sheet using same logic as _ccMakeSheet (exposed as window._ccMakeSheet)
+    var sheet;
+    if (window._ccMakeSheet) {
+      sheet = window._ccMakeSheet(storeyName, elevation);
+    } else {
+      var gf = (typeof _ccStoreyToGeoFactor === 'function') ? _ccStoreyToGeoFactor(s.models) : 1;
+      var id = 'SH' + Date.now().toString(36).toUpperCase();
+      sheet = {
+        id: id, name: storeyName + ' Plan', storeyName: storeyName,
+        elevation: elevation * gf, _storeyElevation: elevation, cutHeight: 1.2,
+        scale: { pxPerMeter: 100 }, paper: { size: 'A3', orient: 'landscape' },
+        titleBlock: { project: '', author: '', date: new Date().toLocaleDateString(), revision: '', notes: '' },
+        northDeg: 0, createdAt: Date.now(), updatedAt: Date.now()
+      };
+    }
+    // Apply optional scale override (e.g. '1:50', '1:200')
+    if (p.scale) {
+      var scaleNum = parseFloat(('' + p.scale).replace(/[^0-9.]/g, ''));
+      if (scaleNum > 0) sheet.scale = { pxPerMeter: Math.round(10000 / scaleNum) };
     }
 
-    return 'Floor plan "' + storeyName + '" at elevation ' + elevation + '.' + (p.exportFormat ? ' Exporting as ' + p.exportFormat.toUpperCase() + '.' : '');
+    _dispatch({ t: 'SHEET_ADD', v: sheet });
+    _dispatch({ t: 'UNDERLAY_MODE', v: 'view2d' });
+
+    // Trigger export after sheet renders if format specified
+    if (p.format) {
+      var fmt = (p.format || '').toLowerCase();
+      setTimeout(function() {
+        if (fmt === 'dxf' && window._ccDoExportDXF) window._ccDoExportDXF();
+        else if (fmt === 'pdf' && window._ccDoExportPDF) window._ccDoExportPDF();
+        else if (window._ccDoExportPNG) window._ccDoExportPNG();
+      }, 800);
+    }
+
+    return { sheetId: sheet.id, name: sheet.name, storeyName: storeyName, elevation: elevation };
   };
 
   handlers.list_storeys = function() {
@@ -525,6 +562,91 @@
   handlers.exit_floor_plan = function() {
     _dispatch({ t: 'FLOOR_PLAN', v: null });
     return 'Floor plan view exited.';
+  };
+
+  handlers.list_2d_sheets = function() {
+    var s = _getState();
+    var sheets = s.sheets || [];
+    if (!sheets.length) return { sheets: [], note: 'No sheets yet. Use create_2d_sheet to create one.' };
+    var markups = s.markups || [];
+    return {
+      sheets: sheets.map(function(sh) {
+        return { id: sh.id, name: sh.name, storeyName: sh.storeyName, elevation: sh._storeyElevation || sh.elevation, annotationCount: markups.filter(function(m) { return m.sheetId === sh.id; }).length };
+      }),
+      activeSheetId: s.activeSheetId || null
+    };
+  };
+
+  handlers.export_sheet = function(p) {
+    var s = _getState();
+    var sheets = s.sheets || [];
+    if (p.sheetId) {
+      var found = sheets.find(function(sh) { return sh.id === p.sheetId || sh.name === p.sheetId; });
+      if (!found) return 'Sheet "' + p.sheetId + '" not found. Available: ' + sheets.map(function(sh) { return sh.id + ' (' + sh.name + ')'; }).join(', ');
+      _dispatch({ t: 'SHEET_SET_ACTIVE', id: found.id });
+    } else if (!s.activeSheetId) {
+      if (!sheets.length) return 'No sheets exist. Use create_2d_sheet first.';
+      _dispatch({ t: 'SHEET_SET_ACTIVE', id: sheets[0].id });
+    }
+    var fmt = ((p.format || 'png') + '').toLowerCase();
+    setTimeout(function() {
+      if (fmt === 'dxf' && window._ccDoExportDXF) window._ccDoExportDXF();
+      else if (fmt === 'pdf' && window._ccDoExportPDF) window._ccDoExportPDF();
+      else if (window._ccDoExportPNG) window._ccDoExportPNG();
+    }, 300);
+    return 'Exporting sheet as ' + fmt.toUpperCase() + '.';
+  };
+
+  handlers.delete_sheet = function(p) {
+    var s = _getState();
+    var sheets = s.sheets || [];
+    var found = sheets.find(function(sh) { return sh.id === p.sheetId || sh.name === p.sheetId; });
+    if (!found) return 'Sheet "' + p.sheetId + '" not found. Available IDs: ' + sheets.map(function(sh) { return sh.id; }).join(', ');
+    _dispatch({ t: 'SHEET_DEL', id: found.id });
+    return 'Deleted sheet "' + found.name + '".';
+  };
+
+  // ── 2D viewport control handlers ─────────────────────────────
+
+  handlers.pan_2d_sheet = function(p) {
+    if (window._cc2DSetPan) { window._cc2DSetPan(p.x || 0, p.y || 0); return 'Panned 2D view by (' + (p.x || 0) + ', ' + (p.y || 0) + ') px.'; }
+    return '2D view not active.';
+  };
+
+  handlers.zoom_2d_sheet = function(p) {
+    if (window._cc2DSetZoom) { window._cc2DSetZoom(p.level || 1); return 'Zoom set to ' + (p.level || 1) + 'x.'; }
+    return '2D view not active.';
+  };
+
+  handlers.fit_2d_bounds = function() {
+    if (window._ccFit2DOutlines) { window._ccFit2DOutlines(); return 'View fitted to floor plan bounds.'; }
+    return '2D view not active.';
+  };
+
+  // ── 2D annotation handlers ────────────────────────────────────
+
+  handlers.add_annotation = function(p) {
+    var s = _getState();
+    if (!s.activeSheetId) return 'No active sheet. Use create_2d_sheet first.';
+    var id = window._ccUid ? window._ccUid() : 'mk_' + Date.now();
+    var type = p.type || 'text';
+    var pts = (type === 'pin' || type === 'text')
+      ? [p.x || 0, p.y || 0, p.x || 0, p.y || 0]
+      : [p.x || 0, p.y || 0, (p.x2 != null ? p.x2 : p.x || 0), (p.y2 != null ? p.y2 : p.y || 0)];
+    _dispatch({ t: 'ADD_MARKUP', v: { id: id, type: type, color: p.color || '#f59e0b', text: p.text || '', points: pts } });
+    return 'Added ' + type + ' annotation to active sheet.';
+  };
+
+  handlers.measure_on_sheet = function(p) {
+    var s = _getState();
+    if (!s.activeSheetId) return 'No active sheet. Use create_2d_sheet first.';
+    if (!p.points || p.points.length < 4) return 'Provide at least two world-space points: [x1, z1, x2, z2] in metres.';
+    var id = window._ccUid ? window._ccUid() : 'mk_' + Date.now();
+    var dx = p.points[2] - p.points[0], dz = p.points[3] - p.points[1];
+    var dist = Math.sqrt(dx * dx + dz * dz);
+    var label = dist < 1 ? (dist * 1000).toFixed(0) + ' mm' : dist.toFixed(2) + ' m';
+    _dispatch({ t: 'ADD_MARKUP', v: { id: id, type: 'dimension', color: p.color || '#60a5fa', points: p.points.slice(0, 4), text: label } });
+    return 'Dimension added: ' + label + '.';
   };
 
   // ── Issue management handlers ─────────────────────────────────
@@ -584,8 +706,17 @@
       _dispatch({ t: 'FLOOR_PLAN', v: { storeyName: 'Section at ' + position, elevation: position, cutHeight: p.cutHeight || 1.2 } });
       return 'Horizontal section at Y=' + position + '.';
     }
-    // For X/Z, use standard section with custom plane
-    _dispatch({ t: 'SECTION', axis: axis, position: position });
+    // For X/Z, convert absolute world position to relative 0-1 using model bounds
+    var relPos = 0.5;
+    var bounds = window._ccViewport && window._ccViewport.getBounds();
+    if (bounds) {
+      var axIdx = {x:0, y:1, z:2}[axis];
+      if (axIdx != null) {
+        var span = bounds.max[axIdx] - bounds.min[axIdx];
+        if (span > 0) relPos = Math.max(0.01, Math.min(0.99, (position - bounds.min[axIdx]) / span));
+      }
+    }
+    _dispatch({ t: 'SECTION', axis: axis, pos: relPos });
     return 'Section plane on ' + axis.toUpperCase() + ' at ' + position + '.';
   };
 
