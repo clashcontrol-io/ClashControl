@@ -4171,7 +4171,7 @@ function startApp() {
   var _walkEyeHeight = 1.7;  // meters (scaled to model units at enter)
   var _walkSavedCam = null;  // {pos, target, sph} to restore on exit
   var _walkLastTime = 0;     // for delta-time in tick
-  var _walkCollision = true; // raycast collision with walls
+  var _walkCollision = false; // no-clip: allow walking through objects
   var _walkUnitScale = 1;    // model unit scale (1=m, 1000=mm)
   var _walkPointerLocked = false; // track whether we got pointer lock
 
@@ -4183,7 +4183,7 @@ function startApp() {
     var _storeyUs = (typeof _ccDetectUnitScale === 'function') ? _ccDetectUnitScale(models) : 1;
     var _geoF = (typeof _ccStoreyToGeoFactor === 'function') ? _ccStoreyToGeoFactor(models) : 1;
     _walkUnitScale = _storeyUs * _geoF;
-    _walkSpeed = 2.0 * _walkUnitScale;
+    _walkSpeed = 5.0 * _walkUnitScale;
     _walkEyeHeight = 1.7 * _walkUnitScale;
     _walkSavedCam = {
       pos: S.camera.position.clone(),
@@ -4251,17 +4251,17 @@ function startApp() {
     _walkLastTime = now;
     if (dt <= 0) return;
 
-    var speed = _walkSpeed * (_walkKeys['ShiftLeft'] || _walkKeys['ShiftRight'] ? 3 : 1);
+    var speed = _walkSpeed * (_walkKeys['ShiftLeft'] || _walkKeys['ShiftRight'] ? 4 : 1);
     var fx = Math.sin(_walkYaw), fz = Math.cos(_walkYaw);
-    var rx = Math.cos(_walkYaw), rz = -Math.sin(_walkYaw);
+    var rx = -Math.cos(_walkYaw), rz = Math.sin(_walkYaw);
 
     var mx = 0, mz = 0, my = 0;
     if (_walkKeys['KeyW'] || _walkKeys['ArrowUp'])    { mx += fx; mz += fz; }
     if (_walkKeys['KeyS'] || _walkKeys['ArrowDown'])  { mx -= fx; mz -= fz; }
     if (_walkKeys['KeyA'] || _walkKeys['ArrowLeft'])   { mx -= rx; mz -= rz; }
     if (_walkKeys['KeyD'] || _walkKeys['ArrowRight'])  { mx += rx; mz += rz; }
-    if (_walkKeys['Space'] || _walkKeys['KeyE'])   my += 1;
-    if (_walkKeys['KeyC'] || _walkKeys['KeyQ'])    my -= 1;
+    if (_walkKeys['Space'] || _walkKeys['KeyQ'])   my += 1;
+    if (_walkKeys['KeyC'] || _walkKeys['KeyE'])    my -= 1;
 
     var len = Math.sqrt(mx * mx + mz * mz);
     if (len > 0) { mx /= len; mz /= len; }
@@ -4531,7 +4531,7 @@ function startApp() {
           _walkExit(S);
           if (window._ccDispatch) window._ccDispatch({ t: 'WALK_MODE', v: false });
         }
-        if (/^(Key[WASDCEQ]|Arrow|Space)/.test(e.code)) e.preventDefault();
+        if (/^(Key[WASDCEQ]|Arrow|Space|Shift)/.test(e.code)) e.preventDefault();
         invalidate(3);
       });
       _wlAdd('keyup', function(e) {
@@ -4555,7 +4555,7 @@ function startApp() {
         if (!_walkActive) return;
         e.preventDefault();
         var minSpeed = 0.5 * _walkUnitScale;
-        var maxSpeed = 20 * _walkUnitScale;
+        var maxSpeed = 40 * _walkUnitScale;
         _walkSpeed = Math.max(minSpeed, Math.min(maxSpeed, _walkSpeed * (1 - e.deltaY * 0.001)));
       }, { passive: false });
       _wlAdd('pointerlockchange', function() {
@@ -5788,7 +5788,7 @@ function startApp() {
         }
         if (_walkActive) {
           _walkTick(S);
-          if (Object.keys(_walkKeys).length > 0) invalidate(3);
+          if (Object.keys(_walkKeys).length > 0 || _walkPointerLocked) invalidate(3);
         }
         if(_needsRender <= 0) return;
         _needsRender--;
@@ -6553,7 +6553,7 @@ function startApp() {
           <span style=${{opacity:.4}}>|</span>
           <span><b>Click</b> to look</span>
           <span style=${{opacity:.4}}>|</span>
-          <span><b>E/Q</b> up/down</span>
+          <span><b>Q/E</b> up/down</span>
           <span style=${{opacity:.4}}>|</span>
           <span><b>Shift</b> sprint</span>
           <span style=${{opacity:.4}}>|</span>
