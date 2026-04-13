@@ -15433,10 +15433,6 @@ function startApp() {
   function processNLCommand(raw, s, d) {
     _gcEvent('nl-command');
     var text = raw.trim().toLowerCase();
-    if (!window._ccProcessNLCommand) window._ccProcessNLCommand = function(cmd) {
-      var _s = window._ccLatestState, _d = window._ccDispatch;
-      if (_s && _d) return processNLCommand(cmd, _s, _d);
-    };
 
     // ── Handle yes/no response to fuzzy confirmation ──────────────
     if (window._ccFuzzyPending) {
@@ -16316,6 +16312,13 @@ function startApp() {
 
     return null;
   }
+
+  // Expose processNLCommand for addons (Smart Bridge, etc.) immediately
+  // after definition so callers don't need the chat to have been used first.
+  window._ccProcessNLCommand = function(cmd) {
+    var _s = window._ccLatestState, _d = window._ccDispatch;
+    if (_s && _d) return processNLCommand(cmd, _s, _d);
+  };
 
   // ── Clash Setup Card (inline chat confirmation) ────────────────
 
