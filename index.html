@@ -19,6 +19,23 @@
   <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 48 48'%3E%3Cdefs%3E%3ClinearGradient id='g' x1='0%25' y1='0%25' x2='100%25' y2='100%25'%3E%3Cstop offset='0%25' stop-color='%2300e5ff'/%3E%3Cstop offset='100%25' stop-color='%237c3aed'/%3E%3C/linearGradient%3E%3C/defs%3E%3Crect width='48' height='48' rx='10' fill='url(%23g)'/%3E%3Ctext x='18' y='30' text-anchor='middle' font-family='system-ui,sans-serif' font-weight='800' font-size='18' fill='white'%3EC%3C/text%3E%3Ctext x='-30' y='30' text-anchor='middle' font-family='system-ui,sans-serif' font-weight='800' font-size='18' fill='white' transform='scale(-1 1)'%3EC%3C/text%3E%3C/svg%3E">
   <link rel="manifest" href="manifest.json">
   <meta name="theme-color" content="#0f172a">
+  <meta name="description" content="Free, open-source IFC clash detection that runs in your browser. Load models, detect hard and soft clashes, review in 3D, and export to BCF 2.1 — no install, no license, no subscription.">
+
+  <!-- Open Graph -->
+  <meta property="og:type" content="website">
+  <meta property="og:url" content="https://www.clashcontrol.io">
+  <meta property="og:title" content="ClashControl — Free IFC Clash Detection">
+  <meta property="og:description" content="Free, open-source BIM clash detection in your browser. Load IFC models, detect clashes, export BCF 2.1. No install. No license. No subscription.">
+  <meta property="og:image" content="https://www.clashcontrol.io/og-image.png">
+  <meta property="og:image:width" content="1200">
+  <meta property="og:image:height" content="630">
+  <meta property="og:site_name" content="ClashControl">
+
+  <!-- Twitter / X -->
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="ClashControl — Free IFC Clash Detection">
+  <meta name="twitter:description" content="Free, open-source BIM clash detection in your browser. Load IFC models, detect clashes, export BCF 2.1. No install. No license.">
+  <meta name="twitter:image" content="https://www.clashcontrol.io/og-image.png">
 
   <!-- CSP: restrict resource loading to known CDN origins -->
   <!-- 'unsafe-eval' required by pdf.js v3 for custom font rendering (CFF/Type1 font programs) -->
@@ -19277,6 +19294,10 @@ function startApp() {
     var _pwaUpdate = useState(!!window._ccUpdateAvailable), pwaUpdateAvail=_pwaUpdate[0], setPwaUpdateAvail=_pwaUpdate[1];
     var _pwaInstall = useState(!!(window._ccPwaInstallPrompt && window._ccPwaInstallPrompt())), pwaInstallAvail=_pwaInstall[0], setPwaInstallAvail=_pwaInstall[1];
     var _pwaDismissed = useState(false), pwaDismissed=_pwaDismissed[0], setPwaDismissed=_pwaDismissed[1];
+    var _whatsNew = useState(false), showWhatsNew=_whatsNew[0], setShowWhatsNew=_whatsNew[1];
+    useEffect(function() {
+      try { if (localStorage.getItem('cc_seen_version') !== CC_VERSION.v) setShowWhatsNew(true); } catch(e) {}
+    }, []);
     var _storeyPicker = useState(false), storeyPickerOpen=_storeyPicker[0], setStoreyPickerOpen=_storeyPicker[1];
     window._ccShowStoreyPicker = setStoreyPickerOpen;
     useEffect(function(){
@@ -19532,6 +19553,19 @@ function startApp() {
       <${PrivacyBanner} />
       <${TutorialPortal} d=${d} />
       ${showMemWarn && html`<${MemoryWarningModal} s=${s} onDismiss=${function(){setShowMemWarn(false);}} />`}
+      ${showWhatsNew && html`<div style=${{position:'fixed',bottom:'1.2rem',right:'1rem',zIndex:9998,background:'var(--bg-secondary)',border:'1px solid var(--border)',borderRadius:10,padding:'.7rem .9rem',display:'flex',flexDirection:'column',gap:'.35rem',boxShadow:'0 4px 28px rgba(0,0,0,.45)',maxWidth:'270px',width:'calc(100vw - 2rem)'}}>
+        <div style=${{display:'flex',alignItems:'center',justifyContent:'space-between',gap:'.5rem'}}>
+          <span style=${{fontWeight:700,fontSize:'0.8rem',color:'var(--text-primary)'}}>What's new in v${CC_VERSION.v}</span>
+          <button onClick=${function(){ try{localStorage.setItem('cc_seen_version',CC_VERSION.v);}catch(e){} setShowWhatsNew(false); }} style=${{background:'none',border:'none',color:'var(--text-muted)',cursor:'pointer',fontSize:'1.1rem',lineHeight:1,padding:'0 .15rem',flexShrink:0}}>×</button>
+        </div>
+        <ul style=${{margin:0,paddingLeft:'1.1rem',color:'var(--text-secondary)',fontSize:'0.72rem',lineHeight:1.6}}>
+          <li>Walk mode — navigate at eye height</li>
+          <li>Sheets — floor plan cuts with DXF export</li>
+          <li>IDS import/export for data quality</li>
+          <li>Discipline-colored element outlines</li>
+        </ul>
+        <a href="https://github.com/clashcontrol-io/clashcontrol/blob/main/CHANGELOG.md" target="_blank" rel="noopener" style=${{fontSize:'0.69rem',color:'var(--accent)',textDecoration:'none'}}>Full changelog →</a>
+      </div>`}
       ${!pwaDismissed && pwaUpdateAvail && html`<div style=${{position:'fixed',bottom:'1rem',left:'50%',transform:'translateX(-50%)',zIndex:9999,
         background:'var(--bg-secondary)',border:'1px solid var(--border)',borderRadius:10,padding:'.6rem 1rem',display:'flex',alignItems:'center',gap:'.75rem',
         boxShadow:'0 4px 24px rgba(0,0,0,.4)',fontSize:'0.85rem',color:'var(--text-primary)',maxWidth:'90vw'}}>
