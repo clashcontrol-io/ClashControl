@@ -216,6 +216,7 @@
     .cc-tv__content{display:flex;align-items:center;gap:var(--space-2);padding:var(--cc-tv-row-pad-y) var(--cc-tv-row-pad-x);cursor:pointer;color:var(--text-primary);border:none;background:none;width:100%;text-align:left;font:inherit;line-height:var(--leading-base);transition:background var(--duration-fast) var(--ease-standard),color var(--duration-fast) var(--ease-standard);border-radius:var(--radius-xs);min-height:28px}
     .cc-tv__content:hover{background:var(--bg-secondary)}
     .cc-tv__content.cc-tv-current{background:var(--accent-bg);color:var(--text-primary);font-weight:var(--weight-medium)}
+    .cc-tv__content.cc-tv-multi-sel{background:rgba(96,165,250,.12);color:var(--text-primary)}
     .cc-tv__content.cc-tv-current::before{content:'';position:absolute;left:0;top:4px;bottom:4px;width:3px;background:var(--accent);border-radius:0 var(--radius-xs) var(--radius-xs) 0}
     .cc-tv__content:focus-visible{outline:2px solid var(--accent);outline-offset:-2px}
     .cc-tv__toggle{flex-shrink:0;width:var(--cc-tv-toggle-size);height:var(--cc-tv-toggle-size);display:inline-flex;align-items:center;justify-content:center;color:var(--text-muted);background:none;border:none;padding:0;cursor:pointer;border-radius:var(--radius-xs);transition:transform var(--duration-base) var(--ease-standard),color var(--duration-fast) var(--ease-standard);font-size:9px;line-height:1}
@@ -9076,7 +9077,30 @@ function startApp() {
     var VIEWS=[{id:'spatial',label:'Spatial'},{id:'tree',label:'Tree'},{id:'byType',label:'IFC Type'},{id:'byStorey',label:'Storey'},{id:'byDiscipline',label:'Discipline'},{id:'byMaterial',label:'Material'}];
     var _selProp = useState(null), selectedElProps=_selProp[0], setSelectedElProps=_selProp[1];
     var _ef = useState(null), explorerFocus=_ef[0], setExplorerFocus=_ef[1];
+    var _ms = useState([]), multiSel=_ms[0], setMultiSel=_ms[1];
     var explorerScrollRef = useRef(null);
+    function _elClick(e, el, p, eKey) {
+      if (e && e.shiftKey) {
+        var ref = {expressId: el.expressId, modelId: el.modelId || null};
+        var exists = multiSel.findIndex(function(r){return r.expressId===ref.expressId;});
+        var next;
+        if (exists >= 0) {
+          next = multiSel.filter(function(_,i){return i!==exists;});
+        } else {
+          next = multiSel.concat([ref]);
+        }
+        setMultiSel(next);
+        setExplorerFocus(eKey);
+        setSelectedElProps(p);
+        if (next.length > 0 && _highlightRefs) _highlightRefs(next, true);
+        else if (_unghostAll) _unghostAll();
+      } else {
+        setMultiSel([]);
+        if (_highlightById) _highlightById(el.expressId, false);
+        setExplorerFocus(eKey);
+        setSelectedElProps(p);
+      }
+    }
     useEffect(function(){
       function onKey(e){
         if(s.tab!=='navigator') return;
@@ -9164,7 +9188,7 @@ function startApp() {
       var selected = !!opts.selected;
       return html`<li role="treeitem" aria-level=${opts.level||1} aria-expanded=${hasChildren?String(expanded):undefined} class="cc-tv__item">
         <div tabindex="0" data-tree-key=${opts.key}
-          class=${'cc-tv__content'+(selected?' cc-tv-current':'')}
+          class=${'cc-tv__content'+(selected?' cc-tv-current':'')+(opts.multiSelected?' cc-tv-multi-sel':'')}
           style=${opts.italic?{fontStyle:'italic'}:null}
           onClick=${opts.onClick}
           onDblClick=${opts.onDblClick}
@@ -9230,7 +9254,8 @@ function startApp() {
               secondary:p.ifcType||'Element',
               hasChildren:false,
               selected:explorerFocus===eKey,
-              onClick:function(){if(_highlightById)_highlightById(el.expressId,false);setExplorerFocus(eKey);setSelectedElProps(p);},
+              multiSelected:multiSel.some(function(r){return r.expressId===el.expressId;}),
+              onClick:function(e){_elClick(e,el,p,eKey);},
               onDblClick:function(e){e.stopPropagation();if(_fitToElement){var isFloor=(p.ifcType||'').match(/slab|floor/i);_fitToElement(el.expressId,isFloor?{normal:[0,1,0]}:null);}if(_highlightById)_highlightById(el.expressId);}
             });
           }
@@ -9329,7 +9354,8 @@ function startApp() {
               count:hasChildren?elChildren.length:undefined,
               hasChildren:hasChildren, expanded:!!expanded[cKey],
               selected:explorerFocus===eKey,
-              onClick:function(){if(_highlightById)_highlightById(el.expressId,false);setExplorerFocus(eKey);setSelectedElProps(p);},
+              multiSelected:multiSel.some(function(r){return r.expressId===el.expressId;}),
+              onClick:function(e){_elClick(e,el,p,eKey);},
               onDblClick:function(e){e.stopPropagation();if(_fitToElement){var isFloor=(p.ifcType||'').match(/slab|floor/i);_fitToElement(el.expressId,isFloor?{normal:[0,1,0]}:null);}if(_highlightById)_highlightById(el.expressId);},
               onToggle:function(){toggle(cKey);setExplorerFocus(eKey);},
               children:elChildren.map(function(child){
@@ -9342,7 +9368,8 @@ function startApp() {
                   secondary:cp.ifcType||'El',
                   hasChildren:false,
                   selected:explorerFocus===ceKey,
-                  onClick:function(){if(_highlightById)_highlightById(child.expressId,false);setExplorerFocus(ceKey);setSelectedElProps(cp);},
+                  multiSelected:multiSel.some(function(r){return r.expressId===child.expressId;}),
+                  onClick:function(e){_elClick(e,child,cp,ceKey);},
                   onDblClick:function(e){e.stopPropagation();if(_fitToElement){var isFloor=(cp.ifcType||'').match(/slab|floor/i);_fitToElement(child.expressId,isFloor?{normal:[0,1,0]}:null);}if(_highlightById)_highlightById(child.expressId);}
                 });
               })
