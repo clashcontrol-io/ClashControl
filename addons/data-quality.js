@@ -553,6 +553,144 @@
     };
   }
 
+  // ── IDS (Information Delivery Specification) Export ─────────────
+  // Generates a buildingSMART IDS 1.0 XML file from ClashControl's
+  // data quality and BIM model checks. IDS-compatible checks are
+  // exported as <specification> elements; cross-element checks
+  // (duplicates, collisions) are ClashControl-specific and skipped.
+
+  var IDS_NS = 'http://standards.buildingsmart.org/IDS';
+  var XS_NS = 'http://www.w3.org/2001/XMLSchema';
+
+  function _idsEsc(s) { return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+
+  function exportIDS(options) {
+    var title = (options && options.title) || 'ClashControl Data Quality Rules';
+    var specs = [];
+
+    // GlobalId required
+    specs.push({name:'GlobalId required',desc:'Every element must have a valid GlobalId',
+      applicability:{entity:'IFCBUILDINGELEMENT'},
+      requirement:{facet:'attribute',name:'GlobalId',cardinality:'required'}});
+
+    // Material required
+    specs.push({name:'Material assigned',desc:'Every element should have a material assignment',
+      applicability:{entity:'IFCBUILDINGELEMENT'},
+      requirement:{facet:'material',cardinality:'required'}});
+
+    // Storey containment
+    specs.push({name:'Storey assignment',desc:'Elements must be contained in an IfcBuildingStorey',
+      applicability:{entity:'IFCBUILDINGELEMENT'},
+      requirement:{facet:'partOf',entity:'IFCBUILDINGSTOREY',cardinality:'required'}});
+
+    // Description required
+    specs.push({name:'Description',desc:'Elements should have a Description attribute',
+      applicability:{entity:'IFCBUILDINGELEMENT'},
+      requirement:{facet:'attribute',name:'Description',cardinality:'required'}});
+
+    // No IfcBuildingElementProxy
+    specs.push({name:'No unclassified proxies',desc:'IfcBuildingElementProxy should not be used',
+      applicability:{entity:'IFCBUILDINGELEMENTPROXY'},
+      requirement:{facet:'entity',prohibited:true,desc:'Reclassify proxy elements to their correct IFC type'}});
+
+    // Common Pset checks per type
+    Object.keys(BIM_PSET_MAP).forEach(function(ifcType) {
+      var psets = BIM_PSET_MAP[ifcType];
+      psets.forEach(function(psetName) {
+        specs.push({name:psetName+' on '+ifcType, desc:ifcType+' elements must have '+psetName,
+          applicability:{entity:ifcType.toUpperCase()},
+          requirement:{facet:'property',pset:psetName,cardinality:'required'}});
+      });
+    });
+
+    // FireRating on structural elements
+    specs.push({name:'FireRating on walls',desc:'Walls should have a FireRating property',
+      applicability:{entity:'IFCWALL'},
+      requirement:{facet:'property',pset:'Pset_WallCommon',prop:'FireRating',cardinality:'required'}});
+
+    // IsExternal on envelope elements
+    specs.push({name:'IsExternal on walls',desc:'Walls should declare IsExternal',
+      applicability:{entity:'IFCWALL'},
+      requirement:{facet:'property',pset:'Pset_WallCommon',prop:'IsExternal',cardinality:'required'}});
+
+    // Build XML
+    var xml = '<?xml version="1.0" encoding="UTF-8"?>\n';
+    xml += '<ids xmlns="'+IDS_NS+'" xmlns:xs="'+XS_NS+'">\n';
+    xml += '  <info>\n';
+    xml += '    <title>'+_idsEsc(title)+'</title>\n';
+    xml += '    <description>Exported from ClashControl data quality checks</description>\n';
+    xml += '    <date>'+new Date().toISOString().slice(0,10)+'</date>\n';
+    xml += '  </info>\n';
+    xml += '  <specifications>\n';
+
+    specs.forEach(function(sp) {
+      xml += '    <specification name="'+_idsEsc(sp.name)+'" ifcVersion="IFC2X3 IFC4">\n';
+      xml += '      <applicability minOccurs="0" maxOccurs="unbounded">\n';
+      xml += '        <entity><name><simpleValue>'+_idsEsc(sp.applicability.entity)+'</simpleValue></name></entity>\n';
+      xml += '      </applicability>\n';
+      xml += '      <requirements>\n';
+      var r = sp.requirement;
+      if (r.facet === 'attribute') {
+        xml += '        <attribute cardinality="'+r.cardinality+'"><name><simpleValue>'+_idsEsc(r.name)+'</simpleValue></name></attribute>\n';
+      } else if (r.facet === 'material') {
+        xml += '        <material cardinality="'+r.cardinality+'"/>\n';
+      } else if (r.facet === 'partOf') {
+        xml += '        <partOf relation="IFCRELCONTAINEDINSPATIALSTRUCTURE" cardinality="'+r.cardinality+'"><entity><name><simpleValue>'+_idsEsc(r.entity)+'</simpleValue></name></entity></partOf>\n';
+      } else if (r.facet === 'property') {
+        xml += '        <property cardinality="'+r.cardinality+'">';
+        xml += '<propertySet><simpleValue>'+_idsEsc(r.pset)+'</simpleValue></propertySet>';
+        if (r.prop) xml += '<baseName><simpleValue>'+_idsEsc(r.prop)+'</simpleValue></baseName>';
+        xml += '</property>\n';
+      } else if (r.facet === 'entity' && r.prohibited) {
+        xml += '        <!-- ClashControl: '+_idsEsc(r.desc)+' -->\n';
+      }
+      xml += '      </requirements>\n';
+      xml += '    </specification>\n';
+    });
+
+    xml += '  </specifications>\n';
+    xml += '</ids>\n';
+    return xml;
+  }
+
+  // ── IDS Import ──────────────────────────────────────────────────
+  // Parses an IDS XML file and returns a summary of specifications.
+  // Does NOT run the checks — just reports what rules the IDS contains
+  // so users can see what validations will be applied.
+
+  function importIDS(xmlString) {
+    var parser = new DOMParser();
+    var doc = parser.parseFromString(xmlString, 'application/xml');
+    if (doc.querySelector('parsererror')) return {error: 'Invalid IDS XML'};
+    var info = doc.querySelector('info');
+    var title = info && info.querySelector('title') ? info.querySelector('title').textContent : 'Imported IDS';
+    var specs = doc.querySelectorAll('specification');
+    var rules = [];
+    specs.forEach(function(spec) {
+      var name = spec.getAttribute('name') || 'Unnamed';
+      var applicability = spec.querySelector('applicability');
+      var requirements = spec.querySelector('requirements');
+      var entityEl = applicability ? applicability.querySelector('entity name simpleValue') : null;
+      var entity = entityEl ? entityEl.textContent : '*';
+      var reqTypes = [];
+      if (requirements) {
+        requirements.querySelectorAll('attribute').forEach(function(a){ reqTypes.push('attribute: '+(a.querySelector('name simpleValue')||{}).textContent); });
+        requirements.querySelectorAll('property').forEach(function(p){
+          var ps = (p.querySelector('propertySet simpleValue')||{}).textContent||'?';
+          var bn = (p.querySelector('baseName simpleValue')||{}).textContent||'*';
+          reqTypes.push('property: '+ps+'.'+bn);
+        });
+        requirements.querySelectorAll('material').forEach(function(){ reqTypes.push('material'); });
+        requirements.querySelectorAll('partOf').forEach(function(po){
+          var pe = (po.querySelector('entity name simpleValue')||{}).textContent||'?';
+          reqTypes.push('partOf: '+pe);
+        });
+      }
+      rules.push({name:name, entity:entity, requirements:reqTypes});
+    });
+    return {title:title, ruleCount:rules.length, rules:rules};
+  }
+
   // ── Expose on window for DataQualityPanel in index.html ───────────
   // Not registered as an addon — the check engines are always available
   // and the UI lives in the Data Quality tab (see DataQualityPanel in index.html).
@@ -561,5 +699,7 @@
   window._ccRunBIMModelChecks = runBIMModelChecks;
   window._ccRunILSChecks = runILSChecks;
   window._ccNLSFB_TABLE1 = NLSFB_TABLE1;
+  window._ccExportIDS = exportIDS;
+  window._ccImportIDS = importIDS;
 
 })();

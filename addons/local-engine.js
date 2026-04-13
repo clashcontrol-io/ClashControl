@@ -3,7 +3,7 @@
 // intersection. Falls back to the built-in browser OBB engine when
 // the server isn't running.
 //
-// Targets clashcontrol-engine v0.2.2 (see _engineReleaseTag below).
+// Targets clashcontrol-engine v0.2.3 (see _engineReleaseTag below).
 //
 // Install (recommended):
 //   pip install clashcontrol-engine
@@ -26,8 +26,8 @@
 
   // ── Download URLs for standalone executables ──────────────────
   // mac/linux ship as tar.gz (preserves executable bit); Windows is a self-contained .exe.
-  // Release tag is fetched from GitHub API; falls back to v0.2.2 if unavailable.
-  var _engineReleaseTag = 'v0.2.2'; // fallback; will be updated from GitHub API
+  // Release tag is fetched from GitHub API; falls back to v0.2.3 if unavailable.
+  var _engineReleaseTag = 'v0.2.3'; // fallback; will be updated from GitHub API
 
   function _buildDownloads() {
     var _releaseBase = 'https://github.com/clashcontrol-io/ClashControlEngine/releases/download/' + _engineReleaseTag + '/';

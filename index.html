@@ -980,11 +980,13 @@ function startApp() {
     });
   }
 
-  function idbSaveFile(id, name, buffer, projectId) {
+  function idbSaveFile(id, name, buffer, projectId, sidecarData) {
     return _openIDB().then(function(db) {
       return new Promise(function(resolve, reject) {
         var tx = db.transaction(IDB_STORE, 'readwrite');
-        tx.objectStore(IDB_STORE).put({id:id, name:name, buffer:buffer, projectId:projectId||'default', savedAt:Date.now()});
+        var record = {id:id, name:name, buffer:buffer, projectId:projectId||'default', savedAt:Date.now()};
+        if (sidecarData) record.sidecar = sidecarData;
+        tx.objectStore(IDB_STORE).put(record);
         tx.oncomplete = function() { resolve(); };
         tx.onerror = function(e) { reject(e.target.error); };
       });
@@ -7325,6 +7327,26 @@ function startApp() {
             var dObj = DISC.find(function(x){return x.id===disc;});
             var col = dObj ? dObj.c : DISC[0].c;
             var fSize = result.stats ? result.stats.fileSize : entry.buffer.byteLength;
+            // Re-apply persisted sidecar data to element properties
+            if (entry.sidecar) {
+              var sc = (entry.sidecar.ifcmeta && entry.sidecar.ifcmeta.elements) || null;
+              if (sc) {
+                result.elements.forEach(function(el) {
+                  var gid = el.props && el.props.globalId;
+                  if (gid && sc[gid]) {
+                    var rd = sc[gid];
+                    if (rd.phase) el.props.phase = rd.phase;
+                    if (rd.workset) el.props.workset = rd.workset;
+                    if (rd.designOption) el.props.designOption = rd.designOption;
+                    if (rd.hostId) el.props.hostId = rd.hostId;
+                    if (rd.layers) el.props.layers = rd.layers;
+                    if (rd.flipState) el.props.flipState = rd.flipState;
+                    if (rd.constraints) el.props.constraints = rd.constraints;
+                    if (rd.hostRelationships) el.props.hostRelationships = rd.hostRelationships;
+                  }
+                });
+              }
+            }
             d({t:A.ADD_MODEL, v:{id:entry.id, name:entry.name.replace(/\.ifc$/i,''), discipline:disc, color:col, meshes:result.meshes, elements:result.elements, storeys:result.storeys||[], storeyData:result.storeyData||[], spatialHierarchy:result.spatialHierarchy||{}, relatedPairs:result.relatedPairs||{}, stats:result.stats||{fileSize:fSize}}});
           }).catch(function(e){ console.warn('Failed to restore '+entry.name+':', e); })
             .then(function(){ _setGlobalLoading(false); });
@@ -8511,6 +8533,24 @@ function startApp() {
                 stats:Object.assign({}, _existingModel.stats||{}, result.stats, {loadType:(_existingModel.stats&&_existingModel.stats.loadType?_existingModel.stats.loadType:'GLB')+'+'+ext})
               }});
               console.log('%c[Sidecar Attach] ' + f.name + ' attached to model "' + base + '"', 'color:#22c55e;font-weight:bold');
+              // Persist sidecar in IndexedDB alongside the model's file record
+              _openIDB().then(function(db) {
+                return new Promise(function(res, rej) {
+                  var tx = db.transaction(IDB_STORE, 'readwrite');
+                  var store = tx.objectStore(IDB_STORE);
+                  var getReq = store.get(_existingModel.id);
+                  getReq.onsuccess = function() {
+                    var rec = getReq.result;
+                    if (rec) {
+                      if (!rec.sidecar) rec.sidecar = {};
+                      rec.sidecar[ext] = parsed;
+                      store.put(rec);
+                    }
+                  };
+                  tx.oncomplete = function() { res(); };
+                  tx.onerror = function(e) { rej(e.target.error); };
+                });
+              }).catch(function(e) { console.warn('[Sidecar] IndexedDB save failed:', e); });
             }).catch(function(er) {
               console.error(er);
               errors.push(f.name + ': ' + (er.message || 'Failed to attach metadata'));
@@ -17670,7 +17710,7 @@ function startApp() {
       </div>
       <div style=${{position:'relative'}}>
         ${iconBtn(function(){setShowBcf(!showBcf);setShow2d(false);setShow2dV(false);},
-          html`<span style=${{fontWeight:600,fontSize:'0.62rem',letterSpacing:'.02em'}}>BCF</span>`,
+          html`<span style=${{fontWeight:700,fontSize:'0.8rem',letterSpacing:'.03em'}}>BCF</span>`,
           'BCF Import / Export')}
         ${showBcf && html`<div style=${{position:'absolute',left:'100%',bottom:0,marginLeft:4,zIndex:999,
           background:'var(--bg-primary)',border:'1px solid var(--border)',borderRadius:8,
