@@ -1,5 +1,8 @@
 # Changelog
 
+## v4.14.30 (2026-04-13)
+- fix: set_view camera not moving + add 2D sheet MCP tools
+
 ## v4.14.29 (2026-04-13)
 - refactor: consolidate camera globals into single _ccViewport object
 
