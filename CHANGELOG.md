@@ -1,5 +1,8 @@
 # Changelog
 
+## v4.14.33 (2026-04-14)
+- Auto-dismiss What's New toast after 5 s, pause on hover
+
 ## v4.14.32 (2026-04-13)
 - Add 90-day LinkedIn calendar and Phase 1 posts (LI-01 to LI-16)
 
