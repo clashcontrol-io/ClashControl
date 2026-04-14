@@ -947,6 +947,11 @@
       _connected = true;
       if (d) d({t:'UPD_SMART_BRIDGE', u:{connected:true, bridgeUpdating:false, bridgeReconnecting:false}});
       console.log('%c[Smart Bridge] Connected', 'color:#22c55e;font-weight:bold');
+      // Fetch stored LLM config so the chat panel pre-fills correctly
+      fetch(REST_URL + '/llm-config', {cache:'no-store'})
+        .then(function(r){ return r.ok ? r.json() : null; })
+        .then(function(j){ if (j && d) d({t:'UPD_SMART_BRIDGE', u:{llmConfig:j}}); })
+        .catch(function(){}); // bridge may not support /llm-config yet — ignore
       // Announce full tool manifest so the bridge can update /tools and /openapi.json
       // without requiring a binary rebuild when new handlers are added.
       try {
@@ -1054,7 +1059,8 @@
           wasInstalled: false, version: null,
           updateAvailable: false, updateVersion: null, updateUrl: null,
           bridgeUpdating: false, bridgeReconnecting: false, updating: false,
-          llmConnected: false }
+          llmConnected: false,
+          llmConfig: null, chatBusy: false, chatMessages: [], chatError: null }
       },
 
       reducerCases: {
@@ -1268,6 +1274,135 @@
                 <a href="http://localhost:19803/openapi.json" target="_blank" rel="noopener" style=${{color:'var(--accent)',textDecoration:'underline'}}>OpenAPI spec</a>
               </div>
             </div>`}
+
+            ${(function() {
+              // ── Ollama / OpenAI built-in chat ─────────────────────────────
+              var cfg = sb.llmConfig || {provider:'ollama', model:'llama3.2', baseUrl:'http://localhost:11434', hasKey:false};
+              var msgs = sb.chatMessages || [];
+
+              var _inputStyle = {width:'100%',boxSizing:'border-box',padding:'.25rem .4rem',borderRadius:4,border:'1px solid var(--border)',background:'var(--bg-tertiary)',color:'var(--text-main)',fontSize:'0.63rem',fontFamily:'inherit'};
+              var _labelStyle = {fontSize:'0.6rem',color:'var(--text-faint)',display:'block',marginBottom:2};
+
+              function _onProviderChange() {
+                var sel = document.getElementById('cc-sb-llm-provider');
+                var urlField = document.getElementById('cc-sb-llm-url');
+                var keyRow = document.getElementById('cc-sb-llm-key-row');
+                if (!sel) return;
+                var urls = {ollama:'http://localhost:11434', openai:'https://api.openai.com', custom:''};
+                var models = {ollama:'llama3.2', openai:'gpt-4o-mini', custom:''};
+                if (urlField && urls[sel.value] !== undefined) urlField.value = urls[sel.value];
+                var mf = document.getElementById('cc-sb-llm-model');
+                if (mf && models[sel.value]) mf.value = models[sel.value];
+                if (keyRow) keyRow.style.display = sel.value === 'ollama' ? 'none' : 'flex';
+              }
+
+              function _saveLlmCfg() {
+                var sel = document.getElementById('cc-sb-llm-provider');
+                var mf  = document.getElementById('cc-sb-llm-model');
+                var uf  = document.getElementById('cc-sb-llm-url');
+                var kf  = document.getElementById('cc-sb-llm-key');
+                if (!sel || !mf || !uf) return;
+                var newCfg = {
+                  provider: sel.value,
+                  model:    mf.value.trim() || 'llama3.2',
+                  baseUrl:  uf.value.trim() || 'http://localhost:11434',
+                  apiKey:   kf ? kf.value : ''
+                };
+                var btn = document.getElementById('cc-sb-llm-save-btn');
+                if (btn) btn.textContent = 'Saving\u2026';
+                fetch(REST_URL + '/llm-config', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(newCfg)})
+                  .then(function(){ if (d) d({t:'UPD_SMART_BRIDGE', u:{llmConfig:{provider:newCfg.provider, model:newCfg.model, baseUrl:newCfg.baseUrl, hasKey:!!newCfg.apiKey}}}); if (btn) { btn.textContent = 'Saved \u2713'; setTimeout(function(){ if (btn) btn.textContent='Save'; }, 1800); } })
+                  .catch(function(e){ if (btn) btn.textContent = 'Failed'; console.warn('[Smart Bridge] save llm config:', e); });
+              }
+
+              function _sendChat() {
+                var inp = document.getElementById('cc-sb-chat-input');
+                var msg = inp && inp.value && inp.value.trim();
+                if (!msg || sb.chatBusy) return;
+                if (inp) inp.value = '';
+                var updMsgs = msgs.concat([{role:'user', content:msg}]);
+                if (d) d({t:'UPD_SMART_BRIDGE', u:{chatBusy:true, chatError:null, chatMessages:updMsgs}});
+                // Build history from current messages (skip the last user msg we just added)
+                var history = msgs.map(function(m){ return {role:m.role, content:m.content}; });
+                fetch(REST_URL + '/chat', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({message:msg, history:history})})
+                  .then(function(r){ if (!r.ok) return r.json().then(function(j){ throw new Error(j.error || ('HTTP '+r.status)); }); return r.json(); })
+                  .then(function(j){ if (d) d({t:'UPD_SMART_BRIDGE', u:{chatBusy:false, chatMessages:updMsgs.concat([{role:'assistant', content:j.response}])}}); })
+                  .catch(function(e){ if (d) d({t:'UPD_SMART_BRIDGE', u:{chatBusy:false, chatError:e.message}}); });
+              }
+
+              var _providerLabels = {ollama:'Ollama (local)', openai:'OpenAI', custom:'Custom OpenAI-compatible'};
+
+              return html`<div style=${{background:'var(--bg-secondary)',borderRadius:6,padding:'.5rem',display:'flex',flexDirection:'column',gap:'.4rem'}}>
+                <div style=${{display:'flex',alignItems:'center',gap:'.4rem'}}>
+                  <span style=${{fontSize:'0.69rem',fontWeight:600,color:'#fb923c',flex:1}}>Ollama / OpenAI Chat</span>
+                  <span style=${{fontSize:'0.57rem',color:'var(--text-faint)',background:'var(--bg-tertiary)',padding:'1px 5px',borderRadius:3}}>2.0</span>
+                </div>
+                <div style=${{fontSize:'0.6rem',color:'var(--text-faint)',lineHeight:1.4}}>
+                  Chat directly — no Claude Desktop needed. The bridge runs the agent loop.
+                </div>
+
+                <details style=${{borderRadius:4,overflow:'hidden'}}>
+                  <summary style=${{fontSize:'0.6rem',color:'var(--text-faint)',cursor:'pointer',userSelect:'none',padding:'.15rem 0'}}>
+                    LLM: ${_providerLabels[cfg.provider] || cfg.provider} · ${cfg.model}${cfg.hasKey ? ' · key set' : ''}
+                  </summary>
+                  <div key=${cfg.provider + cfg.model + cfg.baseUrl} style=${{display:'flex',flexDirection:'column',gap:'.3rem',paddingTop:'.35rem'}}>
+                    <div>
+                      <label style=${_labelStyle}>Provider</label>
+                      <select id="cc-sb-llm-provider" onChange=${_onProviderChange}
+                        style=${{..._inputStyle,padding:'.2rem .35rem'}}>
+                        <option value="ollama" selected=${cfg.provider==='ollama'}>Ollama (local, free)</option>
+                        <option value="openai" selected=${cfg.provider==='openai'}>OpenAI</option>
+                        <option value="custom" selected=${cfg.provider==='custom'}>Custom OpenAI-compatible</option>
+                      </select>
+                    </div>
+                    <div>
+                      <label style=${_labelStyle}>Model</label>
+                      <input id="cc-sb-llm-model" type="text" placeholder="llama3.2" defaultValue=${cfg.model} style=${_inputStyle} />
+                    </div>
+                    <div>
+                      <label style=${_labelStyle}>Base URL</label>
+                      <input id="cc-sb-llm-url" type="text" placeholder="http://localhost:11434" defaultValue=${cfg.baseUrl} style=${_inputStyle} />
+                    </div>
+                    <div id="cc-sb-llm-key-row" style=${{display: cfg.provider === 'ollama' ? 'none' : 'flex', flexDirection:'column', gap:2}}>
+                      <label style=${_labelStyle}>API Key</label>
+                      <input id="cc-sb-llm-key" type="password" placeholder=${cfg.hasKey ? 'Key saved — paste new key to update' : 'sk-…'} style=${_inputStyle} />
+                    </div>
+                    <button id="cc-sb-llm-save-btn" onClick=${_saveLlmCfg}
+                      style=${{..._btnSmall,background:'var(--bg-tertiary)',color:'var(--text-muted)',alignSelf:'flex-start'}}>Save</button>
+                  </div>
+                </details>
+
+                ${msgs.length > 0 && html`<div style=${{display:'flex',flexDirection:'column',gap:'.25rem',maxHeight:'160px',overflowY:'auto',paddingRight:2}}>
+                  ${msgs.map(function(m, i) {
+                    var isUser = m.role === 'user';
+                    return html`<div key=${i} style=${{fontSize:'0.63rem',lineHeight:1.5,padding:'.25rem .4rem',borderRadius:5,
+                      background: isUser ? 'rgba(251,146,60,.12)' : 'var(--bg-tertiary)',
+                      color: isUser ? '#fed7aa' : 'var(--text-main)',
+                      alignSelf: isUser ? 'flex-end' : 'flex-start',
+                      maxWidth:'92%',whiteSpace:'pre-wrap',wordBreak:'break-word'}}>
+                      ${m.content}
+                    </div>`;
+                  })}
+                  ${sb.chatBusy && html`<div style=${{fontSize:'0.6rem',color:'var(--text-faint)',fontStyle:'italic',alignSelf:'flex-start',padding:'0 .2rem'}}>Thinking\u2026</div>`}
+                </div>`}
+
+                ${sb.chatError && html`<div style=${{fontSize:'0.6rem',color:'#f87171',padding:'.2rem .3rem',background:'rgba(248,113,113,.08)',borderRadius:4}}>${sb.chatError}</div>`}
+
+                <div style=${{display:'flex',gap:'.3rem',alignItems:'center'}}>
+                  <input id="cc-sb-chat-input" type="text" placeholder="Ask about your models\u2026"
+                    disabled=${sb.chatBusy}
+                    onKeyDown=${function(e){ if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); _sendChat(); } }}
+                    style=${{..._inputStyle,flex:1}} />
+                  <button onClick=${_sendChat} disabled=${sb.chatBusy}
+                    style=${{..._btnSmall,background:sb.chatBusy?'var(--bg-tertiary)':'#fb923c',color:sb.chatBusy?'var(--text-faint)':'#fff',flexShrink:0}}>
+                    ${sb.chatBusy ? '\u29d7' : 'Send'}
+                  </button>
+                </div>
+                ${msgs.length > 0 && html`<button onClick=${function(){ if(d) d({t:'UPD_SMART_BRIDGE',u:{chatMessages:[],chatError:null}}); }}
+                  style=${{..._btnSmall,background:'transparent',color:'var(--text-faint)',border:'1px solid var(--border)',alignSelf:'flex-start'}}>Clear chat</button>`}
+              </div>`;
+            })()}
+
             ${_cleanupRow}
           </div>`;
         }
