@@ -1,5 +1,8 @@
 # Changelog
 
+## v4.15.0 (2026-04-15)
+- Refine section plane UX and improve renderer performance
+
 ## v4.14.35 (2026-04-15)
 - fix: move /smart command into processNLCommandWithLLM for correct async handling
 
