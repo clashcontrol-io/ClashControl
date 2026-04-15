@@ -14393,49 +14393,91 @@ function startApp() {
     </div>`;
   }
 
-  // ── Section Cut Line Highlight ───────────────────────────────────
+  // ── Section Cut Line Highlight (Web Worker) ─────────────────────
+  var _sectionCutWorker = null;
+  function _getSectionCutWorker() {
+    if (_sectionCutWorker) return _sectionCutWorker;
+    var code = [
+      'self.onmessage=function(e){',
+      '  var d=e.data,ai=d.ai,cp=d.cp,eps=1e-6,out=[];',
+      '  function axV(x,y,z){return ai===0?x:ai===1?y:z;}',
+      '  d.meshes.forEach(function(m){',
+      '    var p=m.pos,ix=m.idx,mt=m.mat;',
+      '    function ap(i){',
+      '      var x=p[i*3],y=p[i*3+1],z=p[i*3+2];',
+      '      return [mt[0]*x+mt[4]*y+mt[8]*z+mt[12],',
+      '              mt[1]*x+mt[5]*y+mt[9]*z+mt[13],',
+      '              mt[2]*x+mt[6]*y+mt[10]*z+mt[14]];',
+      '    }',
+      '    var n=ix?ix.length:p.length/3;',
+      '    for(var i=0;i<n;i+=3){',
+      '      var va=ap(ix?ix[i]:i),vb=ap(ix?ix[i+1]:i+1),vc=ap(ix?ix[i+2]:i+2);',
+      '      var da=axV(va[0],va[1],va[2])-cp,db=axV(vb[0],vb[1],vb[2])-cp,dc=axV(vc[0],vc[1],vc[2])-cp;',
+      '      if(Math.abs(da)<eps)da=eps;if(Math.abs(db)<eps)db=eps;if(Math.abs(dc)<eps)dc=eps;',
+      '      var s=[];',
+      '      if(da*db<0){var t=da/(da-db);s.push(va[0]+t*(vb[0]-va[0]),va[1]+t*(vb[1]-va[1]),va[2]+t*(vb[2]-va[2]));}',
+      '      if(db*dc<0){var t=db/(db-dc);s.push(vb[0]+t*(vc[0]-vb[0]),vb[1]+t*(vc[1]-vb[1]),vb[2]+t*(vc[2]-vb[2]));}',
+      '      if(dc*da<0){var t=dc/(dc-da);s.push(vc[0]+t*(va[0]-vc[0]),vc[1]+t*(va[1]-vc[1]),vc[2]+t*(va[2]-vc[2]));}',
+      '      if(s.length===6){out.push(s[0],s[1],s[2],s[3],s[4],s[5]);}',
+      '    }',
+      '  });',
+      '  var r=new Float32Array(out);',
+      '  self.postMessage({id:d.id,buf:r.buffer},[r.buffer]);',
+      '};'
+    ].join('\n');
+    var blob = new Blob([code], {type:'application/javascript'});
+    _sectionCutWorker = new Worker(URL.createObjectURL(blob));
+    return _sectionCutWorker;
+  }
+
   function _buildSectionCutLines(S, models, axisIdx, cutPos) {
     if(S._sectionCutLines){ S.scene.remove(S._sectionCutLines); S._sectionCutLines=null; }
     if(!models||!models.length) return;
-    var positions=[];
-    var va=new THREE.Vector3(),vb=new THREE.Vector3(),vc=new THREE.Vector3();
-    var eps=1e-6;
-    function axV(v){ return axisIdx===0?v.x:axisIdx===1?v.y:v.z; }
+
+    // Collect geometry data into plain typed arrays (copies, not transfers — originals stay in Three.js)
+    var meshData=[], transferList=[];
     models.forEach(function(m){
       if(m.visible===false) return;
       (m.elements||[]).forEach(function(el){
         (el.meshes||[]).forEach(function(mesh){
-          var geo=mesh.geometry; if(!geo||!geo.attributes||!geo.attributes.position) return;
+          var geo=mesh.geometry;
+          if(!geo||!geo.attributes||!geo.attributes.position) return;
           mesh.updateWorldMatrix(true,false);
-          var wm=mesh.matrixWorld;
-          var pos=geo.attributes.position;
-          var idx=geo.index;
-          var count=idx?idx.count:pos.count;
-          for(var i=0;i<count;i+=3){
-            var ia=idx?idx.getX(i):i, ib=idx?idx.getX(i+1):i+1, ic=idx?idx.getX(i+2):i+2;
-            va.set(pos.getX(ia),pos.getY(ia),pos.getZ(ia)).applyMatrix4(wm);
-            vb.set(pos.getX(ib),pos.getY(ib),pos.getZ(ib)).applyMatrix4(wm);
-            vc.set(pos.getX(ic),pos.getY(ic),pos.getZ(ic)).applyMatrix4(wm);
-            var da=axV(va)-cutPos, db=axV(vb)-cutPos, dc=axV(vc)-cutPos;
-            if(Math.abs(da)<eps) da=eps; if(Math.abs(db)<eps) db=eps; if(Math.abs(dc)<eps) dc=eps;
-            var segPts=[];
-            if(da*db<0){var t=da/(da-db);segPts.push(va.x+t*(vb.x-va.x),va.y+t*(vb.y-va.y),va.z+t*(vb.z-va.z));}
-            if(db*dc<0){var t=db/(db-dc);segPts.push(vb.x+t*(vc.x-vb.x),vb.y+t*(vc.y-vb.y),vb.z+t*(vc.z-vb.z));}
-            if(dc*da<0){var t=dc/(dc-da);segPts.push(vc.x+t*(va.x-vc.x),vc.y+t*(va.y-vc.y),vc.z+t*(va.z-vc.z));}
-            if(segPts.length===6){positions.push(segPts[0],segPts[1],segPts[2],segPts[3],segPts[4],segPts[5]);}
+          var srcPos=geo.attributes.position.array;
+          var posCopy=new Float32Array(srcPos.length); posCopy.set(srcPos);
+          var idxCopy=null;
+          if(geo.index){
+            var srcIdx=geo.index.array;
+            idxCopy=srcIdx instanceof Uint16Array ? new Uint16Array(srcIdx.length) : new Uint32Array(srcIdx.length);
+            idxCopy.set(srcIdx);
           }
+          var matCopy=new Float32Array(mesh.matrixWorld.elements);
+          meshData.push({pos:posCopy, idx:idxCopy, mat:matCopy});
+          transferList.push(posCopy.buffer, matCopy.buffer);
+          if(idxCopy) transferList.push(idxCopy.buffer);
         });
       });
     });
-    if(!positions.length) return;
-    var geo=new THREE.BufferGeometry();
-    geo.setAttribute('position',new THREE.Float32BufferAttribute(positions,3));
-    var mat=new THREE.LineBasicMaterial({color:0xf97316,depthTest:false,transparent:true,opacity:0.9});
-    mat.clippingPlanes=[];
-    var lines=new THREE.LineSegments(geo,mat);
-    lines.renderOrder=998;
-    S.scene.add(lines);
-    S._sectionCutLines=lines;
+    if(!meshData.length) return;
+
+    var jobId=(S._sectionCutJobId=(S._sectionCutJobId||0)+1);
+    var worker=_getSectionCutWorker();
+    worker.onmessage=function(e){
+      if(e.data.id!==jobId) return; // stale result from a superseded job
+      if(S._sectionCutLines){ S.scene.remove(S._sectionCutLines); S._sectionCutLines=null; }
+      var positions=new Float32Array(e.data.buf);
+      if(!positions.length) return;
+      var geo=new THREE.BufferGeometry();
+      geo.setAttribute('position',new THREE.Float32BufferAttribute(positions,3));
+      var mat=new THREE.LineBasicMaterial({color:0xf97316,depthTest:false,transparent:true,opacity:0.9});
+      mat.clippingPlanes=[];
+      var lines=new THREE.LineSegments(geo,mat);
+      lines.renderOrder=998;
+      S.scene.add(lines);
+      S._sectionCutLines=lines;
+      invalidate();
+    };
+    worker.postMessage({id:jobId, meshes:meshData, ai:axisIdx, cp:cutPos}, transferList);
   }
 
   // ── 2D Generation & Export ──────────────────────────────────────
