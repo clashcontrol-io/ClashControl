@@ -4345,6 +4345,7 @@ function startApp() {
     var _tmpVec = new THREE.Vector3();
     var _tmpDir = new THREE.Vector3();
     var _tmpRight = new THREE.Vector3();
+    var _tmpUp = new THREE.Vector3();
     var _up = new THREE.Vector3(0,1,0);
 
     function sync() {
@@ -4378,13 +4379,19 @@ function startApp() {
       if(panning){
         var sp=sph.r*0.0008;
         orbit.camera.getWorldDirection(_tmpDir);
-        _tmpRight.crossVectors(_tmpDir, _up).normalize();
-        target.addScaledVector(_tmpRight,-dx*sp); target.y+=dy*sp; orbit.apply(); invalidate();
+        _tmpRight.crossVectors(_tmpDir, _up);
+        if(_tmpRight.lengthSq()<0.0001){ _tmpRight.set(Math.cos(sph.theta),0,-Math.sin(sph.theta)); }
+        else { _tmpRight.normalize(); }
+        _tmpUp.crossVectors(_tmpRight,_tmpDir).normalize();
+        target.addScaledVector(_tmpRight,-dx*sp);
+        target.addScaledVector(_tmpUp,dy*sp);
+        orbit.apply(); invalidate();
       }
     });
     _wlAdd('mouseup', function(){dragging=false;if(panning){panning=false;el.style.cursor='';}});
     el.addEventListener('wheel', function(e){
       if (_walkActive) return; // Don't orbit-zoom in walk mode — wheel handled by walk speed adjuster
+      if (panning) return; // don't zoom while middle-button panning
       if(e.ctrlKey && window._ccFloorPlanActive && window._ccDispatch){
         e.preventDefault();
         var fp = window._ccCurrentFloorPlan;
@@ -5306,13 +5313,10 @@ function startApp() {
           if(hitH.userData._sboxRotation){
             _sboxDragState={type:'rotate',startX:e.clientX,startRot:curSb.rotation||0,startSb:Object.assign({},curSb,{min:curSb.min.slice(),max:curSb.max.slice()})};
           } else if(hitH.userData._sboxHandle){
-            var ax=hitH.userData._handleAxis;
-            var sd=hitH.userData._handleSide;
-            var dir=hitH.userData._handleDir;
             var camDir2=new THREE.Vector3();
             camera.getWorldDirection(camDir2);
             var dp2=new THREE.Plane().setFromNormalAndCoplanarPoint(camDir2,hitH.position.clone());
-            _sboxDragState={type:'face',axis:ax,side:sd,dir:dir.clone(),startSb:Object.assign({},curSb,{min:curSb.min.slice(),max:curSb.max.slice()}),dragPlane:dp2,startPos:hitH.position.clone()};
+            _sboxDragState={type:'corner',signs:hitH.userData._handleSigns,axX:hitH.userData._handleAxX,axY:hitH.userData._handleAxY,axZ:hitH.userData._handleAxZ,startSb:Object.assign({},curSb,{min:curSb.min.slice(),max:curSb.max.slice()}),dragPlane:dp2,startPos:hitH.position.clone()};
           }
           renderer.domElement.style.cursor='grabbing';
         }
@@ -5331,18 +5335,18 @@ function startApp() {
           var newRot=ds.startRot+dx*0.01;
           var newSb=Object.assign({},ds.startSb,{min:ds.startSb.min.slice(),max:ds.startSb.max.slice(),rotation:newRot});
           if(window._ccDispatch) window._ccDispatch({t:A.SECTION_BOX,v:newSb});
-        } else if(ds.type==='face'){
+        } else if(ds.type==='corner'){
           var intPt=new THREE.Vector3();
           if(raycaster.ray.intersectPlane(ds.dragPlane,intPt)){
             var delta=intPt.clone().sub(ds.startPos);
-            var axisDelta=delta.dot(ds.dir);
+            var d0=delta.dot(ds.axX), d1=delta.dot(ds.axY), d2=delta.dot(ds.axZ);
             var newSb=Object.assign({},ds.startSb,{min:ds.startSb.min.slice(),max:ds.startSb.max.slice()});
-            if(ds.side==='max') newSb.max[ds.axis]=ds.startSb.max[ds.axis]+axisDelta;
-            else newSb.min[ds.axis]=ds.startSb.min[ds.axis]+axisDelta;
-            if(newSb.min[ds.axis]>=newSb.max[ds.axis]-0.01){
-              if(ds.side==='max') newSb.max[ds.axis]=newSb.min[ds.axis]+0.01;
-              else newSb.min[ds.axis]=newSb.max[ds.axis]-0.01;
-            }
+            if(ds.signs[0]>0){newSb.max[0]=ds.startSb.max[0]+d0;}else{newSb.min[0]=ds.startSb.min[0]+d0;}
+            if(ds.signs[1]>0){newSb.max[1]=ds.startSb.max[1]+d1;}else{newSb.min[1]=ds.startSb.min[1]+d1;}
+            if(ds.signs[2]>0){newSb.max[2]=ds.startSb.max[2]+d2;}else{newSb.min[2]=ds.startSb.min[2]+d2;}
+            if(newSb.min[0]>=newSb.max[0]-0.01){if(ds.signs[0]>0)newSb.max[0]=newSb.min[0]+0.01;else newSb.min[0]=newSb.max[0]-0.01;}
+            if(newSb.min[1]>=newSb.max[1]-0.01){if(ds.signs[1]>0)newSb.max[1]=newSb.min[1]+0.01;else newSb.min[1]=newSb.max[1]-0.01;}
+            if(newSb.min[2]>=newSb.max[2]-0.01){if(ds.signs[2]>0)newSb.max[2]=newSb.min[2]+0.01;else newSb.min[2]=newSb.max[2]-0.01;}
             if(ds.startSb.rotation) newSb.rotation=ds.startSb.rotation;
             if(window._ccDispatch) window._ccDispatch({t:A.SECTION_BOX,v:newSb});
           }
@@ -5696,9 +5700,9 @@ function startApp() {
             var mdx =  dx / el.clientWidth  * 2;
             var mdy = -dy / el.clientHeight * 2;
             var dot = mdx * sx + mdy * sy;
-            newPos = Math.max(0, Math.min(1, _secDrag.startPos + dot));
+            newPos = Math.max(0, Math.min(1, _secDrag.startPos + dot * 0.5));
           } else {
-            newPos = Math.max(0, Math.min(1, _secDrag.startPos - dy * 0.003));
+            newPos = Math.max(0, Math.min(1, _secDrag.startPos - dy * 0.0015));
           }
           if (cs && cs.axis && window._ccDispatch) window._ccDispatch({t:A.SECTION, axis:cs.axis, pos:newPos});
           else if (cs && cs.custom && window._ccDispatch) window._ccDispatch({t:A.SECTION_CUSTOM, v:cs.custom, pos:newPos});
@@ -6002,7 +6006,7 @@ function startApp() {
         var border = new THREE.LineLoop(lineGeo, lineMat);
         border.renderOrder = 1000;
         grp.add(border);
-        var stemLen = Math.min(halfW, halfH) * 0.18;
+        var stemLen = Math.min(halfW, halfH) * 0.09;
         var tipLen = stemLen * 0.35;
         var tipW = tipLen * 0.7;
         var arrowMat = new THREE.MeshBasicMaterial({color:0x60a5fa, transparent:true, opacity:0.95, depthTest:false});
@@ -6050,9 +6054,9 @@ function startApp() {
         var size = box.getSize(new THREE.Vector3());
         var center = box.getCenter(new THREE.Vector3());
         var hw, hh, pos = new THREE.Vector3(), q = new THREE.Quaternion();
-        if(s.sectionAxis==='x'){ hw=size.z*0.55; hh=size.y*0.55; pos.set(cut,center.y,center.z); q.setFromAxisAngle(new THREE.Vector3(0,1,0),Math.PI/2); }
-        else if(s.sectionAxis==='y'){ hw=size.x*0.55; hh=size.z*0.55; pos.set(center.x,cut,center.z); q.setFromAxisAngle(new THREE.Vector3(1,0,0),-Math.PI/2); }
-        else { hw=size.x*0.55; hh=size.y*0.55; pos.set(center.x,center.y,cut); }
+        if(s.sectionAxis==='x'){ hw=size.z*0.75; hh=size.y*0.75; pos.set(cut,center.y,center.z); q.setFromAxisAngle(new THREE.Vector3(0,1,0),Math.PI/2); }
+        else if(s.sectionAxis==='y'){ hw=size.x*0.75; hh=size.z*0.75; pos.set(center.x,cut,center.z); q.setFromAxisAngle(new THREE.Vector3(1,0,0),-Math.PI/2); }
+        else { hw=size.x*0.75; hh=size.y*0.75; pos.set(center.x,center.y,cut); }
         var vis = _makeSectionVis(hw, hh, pos, q);
         S.scene.add(vis);
         S._sectionPlaneVis = vis;
@@ -6161,25 +6165,21 @@ function startApp() {
 
       var handleSize=Math.max(hx,hy,hz)*0.06;
       handleSize=Math.max(0.05,Math.min(handleSize,0.5));
-      var handleOffset=handleSize*2.5; // push handles outside the box face
       var handleGeo=new THREE.SphereGeometry(handleSize,8,8);
       var handles=[];
-      var handleDefs=[
-        {axis:0,side:'max',pos:ctr.clone().addScaledVector(axX,hx+handleOffset),color:0xef4444,dir:axX},   // +X red
-        {axis:0,side:'min',pos:ctr.clone().addScaledVector(axX,-(hx+handleOffset)),color:0xef4444,dir:axX},   // -X red
-        {axis:1,side:'max',pos:ctr.clone().addScaledVector(axY,hy+handleOffset),color:0x22c55e,dir:axY},    // +Y green
-        {axis:1,side:'min',pos:ctr.clone().addScaledVector(axY,-(hy+handleOffset)),color:0x22c55e,dir:axY},   // -Y green
-        {axis:2,side:'max',pos:ctr.clone().addScaledVector(axZ,hz+handleOffset),color:0x3b82f6,dir:axZ},    // +Z blue
-        {axis:2,side:'min',pos:ctr.clone().addScaledVector(axZ,-(hz+handleOffset)),color:0x3b82f6,dir:axZ}    // -Z blue
-      ];
-      handleDefs.forEach(function(hd){
-        var mat=new THREE.MeshBasicMaterial({color:hd.color,transparent:true,opacity:0.8,depthTest:false});
+      // 8 corner handles — placed exactly at box corners, so they sit on the boundary of all 6
+      // clipping planes and are never clipped by the renderer
+      var cornerSigns=[[-1,-1,-1],[-1,-1,1],[-1,1,-1],[-1,1,1],[1,-1,-1],[1,-1,1],[1,1,-1],[1,1,1]];
+      cornerSigns.forEach(function(sg){
+        var pos=ctr.clone().addScaledVector(axX,sg[0]*hx).addScaledVector(axY,sg[1]*hy).addScaledVector(axZ,sg[2]*hz);
+        var mat=new THREE.MeshBasicMaterial({color:0xffffff,transparent:true,opacity:0.9,depthTest:false});
         var mesh=new THREE.Mesh(handleGeo,mat);
-        mesh.position.copy(hd.pos);
+        mesh.position.copy(pos);
         mesh.userData._sboxHandle=true;
-        mesh.userData._handleAxis=hd.axis;
-        mesh.userData._handleSide=hd.side;
-        mesh.userData._handleDir=hd.dir;
+        mesh.userData._handleSigns=sg;
+        mesh.userData._handleAxX=axX.clone();
+        mesh.userData._handleAxY=axY.clone();
+        mesh.userData._handleAxZ=axZ.clone();
         mesh.renderOrder=999;
         S.scene.add(mesh);
         handles.push(mesh);
@@ -6248,7 +6248,7 @@ function startApp() {
       var box = new THREE.Box3().setFromObject(S.mg);
       var ctr = box.getCenter(new THREE.Vector3());
       var sz = box.getSize(new THREE.Vector3());
-      var planeSize = Math.max(sz.x,sz.z)*1.5;
+      var planeSize = Math.max(sz.x,sz.z)*2.0;
       var cutGeo = new THREE.PlaneGeometry(planeSize, planeSize);
       var cutMat = new THREE.MeshBasicMaterial({color:0x3b82f6, transparent:true, opacity:0.04, side:THREE.DoubleSide, depthWrite:false});
       var cutMesh = new THREE.Mesh(cutGeo, cutMat);
@@ -7272,11 +7272,9 @@ function startApp() {
         ${active?'Section Box OFF':'Section Box'}
       </button>
       ${active && html`<div style=${{fontSize:'0.63rem',color:'var(--text-muted)',padding:'.2rem 0'}}>
-        <div style=${{marginBottom:'.2rem'}}>Drag handles to resize · Ring to rotate</div>
+        <div style=${{marginBottom:'.2rem'}}>Drag corners to resize · Ring to rotate</div>
         <div style=${{display:'flex',gap:'.3rem',alignItems:'center',flexWrap:'wrap'}}>
-          <span style=${{display:'inline-flex',alignItems:'center',gap:'.15rem'}}><span style=${{width:6,height:6,borderRadius:'50%',background:'#ef4444',display:'inline-block'}}></span>X</span>
-          <span style=${{display:'inline-flex',alignItems:'center',gap:'.15rem'}}><span style=${{width:6,height:6,borderRadius:'50%',background:'#22c55e',display:'inline-block'}}></span>Y</span>
-          <span style=${{display:'inline-flex',alignItems:'center',gap:'.15rem'}}><span style=${{width:6,height:6,borderRadius:'50%',background:'#3b82f6',display:'inline-block'}}></span>Z</span>
+          <span style=${{display:'inline-flex',alignItems:'center',gap:'.15rem'}}><span style=${{width:6,height:6,borderRadius:'50%',background:'#ffffff',display:'inline-block',border:'1px solid #666'}}></span>Corner</span>
           <span style=${{display:'inline-flex',alignItems:'center',gap:'.15rem'}}><span style=${{width:6,height:6,borderRadius:'50%',background:'#f59e0b',display:'inline-block'}}></span>Rotate</span>
         </div>
         ${sb.rotation ? html`<button onClick=${resetRotation} style=${{...S_BTN,marginTop:'.2rem',padding:'.1rem .3rem',background:'var(--bg-secondary)',color:'#f59e0b',fontSize:'0.63rem',border:'1px solid var(--border)'}}>Reset Rotation (${Math.round((sb.rotation||0)*180/Math.PI)}°)</button>` : null}
@@ -8903,6 +8901,11 @@ function startApp() {
               style=${{display:'flex',alignItems:'center',gap:'.25rem',padding:'.2rem .3rem',cursor:'pointer',borderRadius:4,background:isPlanActive?'#2d1a4e':isHighlighted?'var(--bg-secondary)':'transparent',transition:'background .15s'}}>
               <span style=${{fontSize:'0.69rem',color:isPlanActive?'#c084fc':isHighlighted?'#38bdf8':'var(--text-primary)',flex:1,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',fontWeight:isHighlighted||isPlanActive?600:400}} title=${st+(hasElev?' ('+_ccFormatElev(elev)+')':'')}>${st}</span>
               ${hasElev && html`<span style=${{fontSize:'0.63rem',color:isPlanActive?'#a78bfa':'var(--text-faint)',flexShrink:0}}>${_ccFormatElev(elev)}</span>`}
+              ${hasElev && html`<button
+                onClick=${function(e){e.preventDefault();e.stopPropagation();d({t:A.FLOOR_PLAN,v:isPlanActive?null:{storeyName:st,elevation:elev,cutHeight:1.2}});}}
+                style=${{...S_BTN,fontSize:'0.57rem',padding:'.05rem .22rem',background:isPlanActive?'#7c3aed':'var(--bg-secondary)',color:isPlanActive?'#e9d5ff':'var(--text-muted)',flexShrink:0,lineHeight:1.4}}>
+                ${isPlanActive?'✕':'Show'}
+              </button>`}
             </div>`;
           })}
           ${function(){
