@@ -1,5 +1,8 @@
 # Changelog
 
+## v4.15.4 (2026-04-16)
+- Fix 2D annotation coordinate bug + render style hotkeys 1-4
+
 ## v4.15.3 (2026-04-16)
 - Color-grade FPS counter from grey (0 fps) to red (full speed)
 
