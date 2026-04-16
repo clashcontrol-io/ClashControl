@@ -1,5 +1,8 @@
 # Changelog
 
+## v4.15.3 (2026-04-16)
+- Color-grade FPS counter from grey (0 fps) to red (full speed)
+
 ## v4.15.2 (2026-04-15)
 - feat: polygon-face section cut for 2D floor plans
 
