@@ -6532,6 +6532,10 @@ function startApp() {
     var P = {position:'absolute',pointerEvents:'none',fontSize:'var(--text-xs)',padding:'var(--space-1) var(--space-3)',borderRadius:'var(--radius-pill)'};
     var ROW={display:'flex',justifyContent:'space-between',padding:'.1rem 0'};
     var LS={fontSize:'0.69rem',color:'var(--text-muted)'}; var VS={fontSize:'0.69rem',color:'var(--text-primary)'};
+    function fpsColor(fps) {
+      var t = Math.pow(Math.min(fps / 90, 1), 1.5);
+      return 'rgb('+Math.round(100+(239-100)*t)+','+Math.round(116+(68-116)*t)+','+Math.round(139+(68-139)*t)+')';
+    }
     return html`<div style=${{flex:1,position:'relative',overflow:'hidden'}}>
       <div ref=${ref} style=${{width:'100%',height:'100%'}}></div>
       ${s.switchingProject && html`<div style=${{
@@ -6549,7 +6553,7 @@ function startApp() {
         <span style=${{fontSize:'0.98rem',color:'#93c5fd',fontWeight:500,letterSpacing:'.03em'}}>Switching project…</span>
       </div>`}
       <div class="cc-overlay-chrome" style=${{position:'absolute',top:'var(--space-3)',left:'var(--space-3)',padding:'var(--space-1) var(--space-2)',pointerEvents:'auto',fontSize:'var(--text-xs)'}}>
-        <span style=${{color:perfData.fps>=50?'var(--color-success)':perfData.fps>=25?'var(--color-warning)':'var(--color-danger)',cursor:'pointer',fontWeight:'var(--weight-medium)'}}
+        <span style=${{color:fpsColor(perfData.fps),cursor:'pointer',fontWeight:'var(--weight-medium)'}}
           onClick=${function(){setPerfOpen(!perfOpen)}}>${perfData.fps} fps</span>
       </div>
       ${perfOpen && html`<div class="cc-overlay-chrome" style=${{position:'absolute',top:'2.4rem',left:'var(--space-3)',padding:'var(--space-2) var(--space-3)',pointerEvents:'auto',fontSize:'var(--text-2xs)',color:'var(--text-secondary)',minWidth:180}}>
@@ -6559,7 +6563,7 @@ function startApp() {
         </div>
         <div style=${{display:'flex',justifyContent:'space-between',padding:'.1rem 0'}}>
           <span>FPS</span>
-          <span style=${{color:perfData.fps>=50?'var(--color-success)':perfData.fps>=25?'var(--color-warning)':'var(--color-danger)',fontWeight:'var(--weight-semibold)'}}>${perfData.fps}</span>
+          <span style=${{color:fpsColor(perfData.fps),fontWeight:'var(--weight-semibold)'}}>${perfData.fps}</span>
         </div>
         <div style=${{display:'flex',justifyContent:'space-between',padding:'.1rem 0'}}>
           <span>Triangles</span>
