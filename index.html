@@ -4261,6 +4261,7 @@ function startApp() {
       S.orbit.apply();
       _walkSavedCam = null;
     }
+    S.camera.fov = 55; // restore default FOV
     S.camera.near = 0.1;
     S.camera.far = 10000;
     S.camera.updateProjectionMatrix();
@@ -4605,9 +4606,11 @@ function startApp() {
       renderer.domElement.addEventListener('wheel', function(e) {
         if (!_walkActive) return;
         e.preventDefault();
-        var minSpeed = 0.5 * _walkUnitScale;
-        var maxSpeed = 40 * _walkUnitScale;
-        _walkSpeed = Math.max(minSpeed, Math.min(maxSpeed, _walkSpeed * (1 - e.deltaY * 0.001)));
+        // Scroll changes FOV (field of vision)
+        var fovDelta = e.deltaY * 0.05;
+        S.camera.fov = Math.max(30, Math.min(110, S.camera.fov + fovDelta));
+        S.camera.updateProjectionMatrix();
+        invalidate(3);
       }, { passive: false });
       _wlAdd('pointerlockchange', function() {
         _walkPointerLocked = (document.pointerLockElement === renderer.domElement);
@@ -5840,6 +5843,8 @@ function startApp() {
           if(!obj.geometry.boundingSphere) obj.geometry.computeBoundingSphere();
           var bs = obj.geometry.boundingSphere;
           tmpSphere.copy(bs).applyMatrix4(obj.matrixWorld);
+          // In walk mode, inflate sphere so objects just outside the viewport stay loaded
+          if(_walkActive) tmpSphere.radius *= 2.5;
           if(!frustum.intersectsSphere(tmpSphere)){
             obj.visible = false;
             obj.userData._frustumCulled = true;
