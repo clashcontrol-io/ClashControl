@@ -92,6 +92,20 @@ _No active work tracked yet. Update this when starting a session._
 <!-- END:active-work -->
 
 <!-- BEGIN:session-log -->
+### 2026-04-20
+**Summary:** 4 commit(s) landed (no AI summary — set ANTHROPIC_API_KEY secret for richer entries).
+**Changed:** see commits
+**Notable:** —
+
+<details><summary>Commits</summary>
+
+- 5e3e9be chore: bump version to 4.16.0
+- 23a1dcd perf: replace persistent BVH cache with LRU-bounded cross-run cache
+- 548aca6 perf: GPU instancing, GLB dedup, persistent BVH cache
+- f61d944 chore: daily memory sync 2026-04-19
+
+</details>
+
 ### 2026-04-19
 **Summary:** 1 commit(s) landed (no AI summary — set ANTHROPIC_API_KEY secret for richer entries).
 **Changed:** see commits
