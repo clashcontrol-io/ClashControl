@@ -2644,27 +2644,26 @@ function startApp() {
 
   // ── BVH LRU cache — bounded cross-run reuse ──────────────────────
   // Keeps the last _BVH_CACHE_MAX element BVHs alive between detection runs so
-  // re-runs on the same model don't rebuild. Evicts the oldest entry when full,
-  // bounding total memory to roughly _BVH_CACHE_MAX × avg-element-mesh-size.
+  // re-runs on the same model don't rebuild. A Map preserves insertion order,
+  // so delete+set gives O(1) move-to-end (LRU touch) and keys().next() gives
+  // O(1) eviction of the oldest entry.
   var _BVH_CACHE_MAX = 300;
-  var _bvhLRUList = []; // [oldest … newest] element references
+  var _bvhLRU = new Map(); // element → true, insertion-ordered
 
   function _bvhLRUTouch(el) {
-    var idx = _bvhLRUList.indexOf(el);
-    if (idx !== -1) _bvhLRUList.splice(idx, 1);
-    _bvhLRUList.push(el);
+    if (_bvhLRU.delete(el)) _bvhLRU.set(el, true);
   }
   function _bvhLRUEvict() {
-    while (_bvhLRUList.length >= _BVH_CACHE_MAX) {
-      var old = _bvhLRUList.shift();
+    while (_bvhLRU.size >= _BVH_CACHE_MAX) {
+      var old = _bvhLRU.keys().next().value;
+      _bvhLRU.delete(old);
       delete old._wvCache; delete old._triCache; delete old._bvhCache;
     }
   }
   function _bvhLRURemoveModel(model) {
     if (!model || !model.elements) return;
     model.elements.forEach(function(el) {
-      var idx = _bvhLRUList.indexOf(el);
-      if (idx !== -1) _bvhLRUList.splice(idx, 1);
+      _bvhLRU.delete(el);
       delete el._wvCache; delete el._triCache; delete el._bvhCache;
     });
   }
@@ -2709,7 +2708,7 @@ function startApp() {
     var indices = new Int32Array(n);
     for (var i=0; i<n; i++) indices[i]=i;
     el._bvhCache = { tris:tris, root:_buildBVHNode(tris, indices, 0, n) };
-    _bvhLRUList.push(el);
+    _bvhLRU.set(el, true);
     return el._bvhCache;
   }
 
@@ -4129,12 +4128,23 @@ function startApp() {
             var mappedType = 'manual';
             if (topicType === 'issue' || topicType === 'error') mappedType = 'hard';
             else if (topicType === 'warning') mappedType = 'soft';
-            d({t:A.ADD_ISSUE, v:{
+            // Recover Revit element IDs from cc:revitA / cc:revitB labels (see exportBCF).
+            var revitIdA = null, revitIdB = null;
+            var labelNodes = topic.querySelectorAll('Labels');
+            for (var li = 0; li < labelNodes.length; li++) {
+              var txt = (labelNodes[li].textContent || '').trim();
+              if (txt.indexOf('cc:revitA=') === 0) revitIdA = txt.slice(10);
+              else if (txt.indexOf('cc:revitB=') === 0) revitIdB = txt.slice(10);
+            }
+            var issuePayload = {
               id:uid(), source:'bcf_import', type:mappedType, status:mappedStatus,
               title:title, description:desc, priority:priority.toLowerCase(),
               category:'coordination', assignee:'', dueDate:'',
               createdAt:creationDate, bcfGuid:topic.getAttribute('Guid')||''
-            }});
+            };
+            if (revitIdA != null) issuePayload.revitIdA = revitIdA;
+            if (revitIdB != null) issuePayload.revitIdB = revitIdB;
+            d({t:A.ADD_ISSUE, v:issuePayload});
             imported++;
           } catch(e) { console.warn('BCF parse error:', e); }
         });
@@ -4238,6 +4248,10 @@ function startApp() {
       markup += '  <Topic Guid="'+g+'" TopicType="'+type+'" TopicStatus="'+st+'">\n';
       markup += '    <Title>'+esc(it.title)+'</Title>\n';
       markup += '    <Priority>'+priority+'</Priority>\n';
+      // Round-trip Revit element IDs via Labels (standard BCF field, arbitrary
+      // string content). Matching labels are parsed back on import.
+      if (it.revitIdA != null) markup += '    <Labels>cc:revitA='+esc(it.revitIdA)+'</Labels>\n';
+      if (it.revitIdB != null) markup += '    <Labels>cc:revitB='+esc(it.revitIdB)+'</Labels>\n';
       markup += '    <CreationDate>'+(it.createdAt||new Date().toISOString())+'</CreationDate>\n';
       markup += '    <CreationAuthor>'+authorEsc+'</CreationAuthor>\n';
       markup += '    <ModifiedDate>'+new Date().toISOString()+'</ModifiedDate>\n';
@@ -4948,6 +4962,30 @@ function startApp() {
       }
       S._ghostOthers = ghostOthers;
       S._unghostAll = unghostAll;
+      // Called before disposing a model's meshes: drop ghost clones whose
+      // source material is about to die, so the Map doesn't accumulate
+      // orphan entries across session-long use.
+      S._pruneGhostCache = function(grp) {
+        if (!grp || !_ghostMatCache.size) return;
+        // If any of grp's meshes are mid-ghost, their current .material is
+        // the ghost clone (new uuid) — fall back to the stashed origMaterial.
+        var ghostOrig = null;
+        if (_ghostedMeshes.length) {
+          ghostOrig = new Map();
+          _ghostedMeshes.forEach(function(g){
+            if (g.mesh) ghostOrig.set(g.mesh, g.origMaterial);
+            if (g.iMesh) ghostOrig.set(g.iMesh, g.origMaterial);
+          });
+        }
+        function dropMat(m){ if (m && m.uuid) _ghostMatCache.delete(m.uuid); }
+        grp.traverse(function(obj){
+          if (!obj.isMesh) return;
+          var mat = (ghostOrig && ghostOrig.get(obj)) || obj.material;
+          if (!mat) return;
+          if (Array.isArray(mat)) mat.forEach(dropMat);
+          else dropMat(mat);
+        });
+      };
       _ghostOthers = ghostOthers;
       _unghostAll = unghostAll;
       window._ghostOthers = ghostOthers;
@@ -6107,6 +6145,7 @@ function startApp() {
       S._lastCullCamKey = '';
       Object.keys(S.map).forEach(function(id){
         if(ids.indexOf(id)===-1){
+          if(S._pruneGhostCache) S._pruneGhostCache(S.map[id]);
           S.map[id].traverse(function(obj){if(obj.isMesh){obj.geometry&&obj.geometry.dispose();obj.material&&obj.material.dispose();}});
           S.mg.remove(S.map[id]);delete S.map[id];
           if(S._elMapCache) delete S._elMapCache[id];
@@ -6118,6 +6157,7 @@ function startApp() {
           var existingGrp = S.map[model.id];
           var needsSwap = existingGrp && model.meshes[0] && existingGrp.children[0] !== model.meshes[0];
           if (needsSwap) {
+            if(S._pruneGhostCache) S._pruneGhostCache(existingGrp);
             existingGrp.traverse(function(obj){if(obj.isMesh && !obj.userData._isLodProxy){obj.geometry&&obj.geometry.dispose();obj.material&&obj.material.dispose();}});
             S.mg.remove(existingGrp); delete S.map[model.id];
             if(S._elMapCache) delete S._elMapCache[model.id];
@@ -11533,6 +11573,28 @@ function startApp() {
       invalidate();
     }
 
+    function createIssueFromCheck(checkKey, checkObj) {
+      if (!checkObj || checkObj.count === 0) return;
+      var sevToPriority = {error:'high', warn:'medium', info:'low'};
+      var priority = sevToPriority[checkObj.sev] || 'medium';
+      var sample = (checkObj.ex||[]).slice(0, 10).map(function(it){
+        return (it.ifcType? it.ifcType+' – ':'') + (it.name||('#'+(it.gid||'?'))) + (it.detail?' ('+it.detail+')':'');
+      });
+      var extra = checkObj.count > sample.length ? '\n… +'+(checkObj.count - sample.length)+' more' : '';
+      var desc = 'Data quality check: '+(checkObj.label||checkKey)+'\n'
+                 +'Affected elements: '+checkObj.count+'\n\n'
+                 +sample.join('\n')+extra;
+      var gids = (checkObj.ex||[]).map(function(it){return it.gid;}).filter(Boolean);
+      d({t:A.ADD_ISSUE, v:{
+        id:uid(), source:'data_quality', type:'soft', status:'open',
+        title:(checkObj.label||checkKey)+' ('+checkObj.count+')',
+        description:desc, priority:priority,
+        category:'quality', assignee:'', dueDate:'',
+        createdAt:new Date().toISOString(),
+        dqCheck:checkKey, qualityGids:gids
+      }});
+    }
+
     function highlightDistGroup(distKey, value) {
       if (!bim || !bim._dist || !bim._dist[distKey]) return;
       var items = bim._dist[distKey][value] || [];
@@ -11642,6 +11704,9 @@ function startApp() {
               ${ch.count>0 && html`<button onClick=${function(){highlightCheckElements(ch);}}
                 title="Highlight in 3D"
                 style=${{fontSize:'0.57rem',padding:'1px 4px',background:'none',border:'1px solid '+col,borderRadius:3,color:col,cursor:'pointer',lineHeight:1.2,fontFamily:'inherit'}}>3D</button>`}
+              ${ch.count>0 && html`<button onClick=${function(){createIssueFromCheck(key, ch);}}
+                title="Create issue from this check"
+                style=${{fontSize:'0.57rem',padding:'1px 4px',background:'none',border:'1px solid var(--border)',borderRadius:3,color:'var(--text-muted)',cursor:'pointer',lineHeight:1.2,fontFamily:'inherit'}}>+issue</button>`}
               ${ch.count>0 && html`<span onClick=${function(){toggleExp(key);}} style=${{fontSize:'0.57rem',color:'var(--text-faint)',cursor:'pointer'}}>${isExp?'▲':'▼'}</span>`}
             </div>
             ${isExp && ch.count>0 && html`<div style=${{padding:'.2rem .6rem .3rem 2.5rem',background:'var(--bg-primary)'}}>
@@ -12844,6 +12909,20 @@ function startApp() {
             ${sevLabel && html`<span class="cc-status-pill" style=${{background:sevBg,color:sevCol,padding:'.1rem var(--space-2)'}}>${sevLabel}</span>`}
             ${it._delta==='new' && html`<span class="cc-status-pill" title="New this run" style=${{background:'var(--color-info-bg)',color:'var(--color-info-fg)'}}>NEW</span>`}
             ${it._delta==='auto_resolved' && html`<span class="cc-status-pill" title="No longer detected" style=${{background:'var(--bg-secondary)',color:'var(--text-faint)'}}>AUTO</span>`}
+            ${function(){
+              var reasons=it.aiReasons||[];
+              var res=it.aiResolution||[]; if(typeof res==='string') res=res?[res]:[];
+              var hasFeedback=reasons.length||res.length||it.aiNote;
+              if(!hasFeedback) return null;
+              var RES_LABELS={move_a:'Move A',move_b:'Move B',redesign:'Redesign',accept:'Accept'};
+              var resLabels=res.map(function(k){return RES_LABELS[k]||k;});
+              var tip=[];
+              if(reasons.length) tip.push('Reasons: '+reasons.join(', '));
+              if(resLabels.length) tip.push('Resolution: '+resLabels.join(', '));
+              if(it.aiNote) tip.push('Note: '+it.aiNote);
+              return html`<span class="cc-status-pill" title=${tip.join(' — ')}
+                style=${{background:'rgba(124,58,237,.15)',color:'#c4b5fd',padding:'.1rem var(--space-2)',cursor:'help'}}>💬${(reasons.length||resLabels.length)>0?' '+(reasons.length+resLabels.length):''}</span>`;
+            }()}
           </div>`}
           <p style=${{color:'var(--text-faint)',fontSize:'var(--text-xs)',marginTop:'var(--space-1)',lineHeight:'var(--leading-base)'}} class="lc2">${it.description}</p>
           ${isClash && html`<div style=${{display:'flex',gap:'var(--space-1)',marginTop:'var(--space-1)',flexWrap:'wrap',alignItems:'center'}}>
@@ -12952,7 +13031,7 @@ function startApp() {
             ${tolState.promptAction==='updated' && html`<div style=${{fontSize:'0.57rem',color:'#4ade80',marginBottom:'.2rem'}}>Standard updated.</div>`}
           </div>`;
         }()}
-        ${(isClash || it.clashId) && trainingMode && function(){
+        ${(isClash ? trainingMode : !!it.clashId) && function(){
           var CTYPES=[{k:'hard',l:'Hard'},{k:'soft',l:'Soft'},{k:'duplicate',l:'Duplicate'},{k:'no_clash',l:'None'}];
           var REASONS=['Design error','Within tolerance','Functional clearance','Needs more tolerance','Already resolved','Modelling error','Missing opening','Shared space allowed','Duplicate geometry','Not relevant','Expected clash'];
           var curCT=it.clashTypeConfirmed!=null?it.clashTypeConfirmed:it.type;

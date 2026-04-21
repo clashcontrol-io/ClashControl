@@ -87,7 +87,13 @@ Things to be careful about. Do not remove without a good reason — add a note i
 Update this section at the start and end of each session.
 Mark completed items with ~~strikethrough~~ and date, then let the daily sync archive them.
 
-_No active work tracked yet. Update this when starting a session._
+On branch `claude/review-clashcontrol-optimization-QhAYx` (review pass): wiring up data paths that were previously dangling.
+
+- ~~BCF export/import round-trips Revit element IDs via `<Labels>` (cc:revitA/B)~~ (2026-04-21)
+- ~~Shared project replay merges remote viewpoints by id~~ (2026-04-21)
+- ~~Data Quality panel: per-check `+issue` button creates aggregated issue (source:'data_quality')~~ (2026-04-21)
+- ~~Clash row: feedback badge shows aiReasons/aiResolution/aiNote outside training mode; issue summary no longer gated by trainingMode~~ (2026-04-21)
+- ~~O(1) BVH LRU via insertion-ordered Map + ghost material cache prune on model unload~~ (2026-04-20)
 
 <!-- END:active-work -->
 

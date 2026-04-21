@@ -113,7 +113,11 @@
 
     _revitWs.onmessage = function(ev) {
       var msg;
-      try { msg = JSON.parse(ev.data); } catch(e) { return; }
+      try { msg = JSON.parse(ev.data); }
+      catch(e) {
+        console.warn('[Revit] Dropped malformed WS frame:', e && e.message || e);
+        return;
+      }
       _handleRevitMessage(msg, d);
     };
   }

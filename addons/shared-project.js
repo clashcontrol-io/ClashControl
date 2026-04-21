@@ -265,6 +265,18 @@
   function _replayRemoteChanges(remote, d) {
     var state = window._ccLatestState;
     if (!state) return;
+
+    // Merge in any remote viewpoints we don't already have. Snapshots are
+    // stripped on write to keep the .ccproject file small, so recipients
+    // see the camera/target but not the preview image.
+    if (remote.viewpoints && remote.viewpoints.length) {
+      var localVpIds = {};
+      (state.viewpoints || []).forEach(function(v){ if (v && v.id) localVpIds[v.id] = true; });
+      remote.viewpoints.forEach(function(v) {
+        if (v && v.id && !localVpIds[v.id]) d({t:'ADD_VIEWPOINT', v:v});
+      });
+    }
+
     var localIds = {};
     state.changelog.forEach(function(e){ localIds[e.id] = true; });
     var newEntries = (remote.changelog || []).filter(function(e){ return !localIds[e.id]; });
