@@ -1,5 +1,8 @@
 # Changelog
 
+## v4.16.3 (2026-04-26)
+- perf+sec: kill periodic rotation hitch; rate-limit /api/nl + /api/title
+
 ## v4.16.2 (2026-04-26)
 - fix: CORS exact-match, face panel material leak, dedupe cleanup blocks
 
