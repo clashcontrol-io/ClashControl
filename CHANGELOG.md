@@ -1,5 +1,8 @@
 # Changelog
 
+## v4.16.2 (2026-04-26)
+- fix: CORS exact-match, face panel material leak, dedupe cleanup blocks
+
 ## v4.16.1 (2026-04-21)
 - chore: update MEMORY.md active work log
 
