@@ -314,6 +314,21 @@
       border-radius:8px;transition:color .15s,background .15s}
     .cc-mobile-nav button.active{color:#60a5fa;background:rgba(37,99,235,.1)}
     .cc-mobile-nav button svg{width:20px;height:20px}
+    /* ── Presentation / kiosk mode ─────────────────────────────────── */
+    body[data-presenting="1"] .cc-left-rail,
+    body[data-presenting="1"] .cc-header,
+    body[data-presenting="1"] .cc-mobile-nav,
+    body[data-presenting="1"] .cc-tip[data-tip],
+    body[data-presenting="1"] [class*="cc-toast"],
+    body[data-presenting="1"] [class*="cc-banner"]{display:none!important}
+    .cc-present-overlay{position:fixed;inset:0;pointer-events:none;z-index:60;
+      background:radial-gradient(ellipse at center,transparent 50%,rgba(0,0,0,.45) 100%)}
+    .cc-present-controls{position:fixed;bottom:1.4rem;left:50%;transform:translateX(-50%);
+      pointer-events:auto;z-index:62;display:flex;align-items:center;gap:.55rem;
+      background:rgba(15,23,42,.85);color:#fff;padding:.5rem .85rem;border-radius:10px;
+      border:1px solid rgba(148,163,184,.25);backdrop-filter:blur(8px);font-size:0.78rem;
+      opacity:.4;transition:opacity .25s ease}
+    .cc-present-controls:hover,body[data-presenting="1"]:hover .cc-present-controls{opacity:1}
   </style>
 </head>
 <body>
@@ -619,7 +634,8 @@ function startApp() {
     shareTab: 'overview', // 'overview' | 'comments'
     comments: [],         // [{id, anchor:{point:[x,y,z], globalId, modelId}, author, text, ts, resolved, replies:[{id,author,text,ts}]}]
     commentMode: false,   // when true, next canvas click drops a pin
-    activeCommentId: null
+    activeCommentId: null,
+    presenting: false     // presentation/kiosk mode (fullscreen, chrome hidden, auto-rotate when idle)
   };
   var A = {
     ADD_MODEL:'ADD_MODEL', DEL_MODEL:'DEL_MODEL', REPLACE_MODEL:'REPLACE_MODEL', UPD_MODEL:'UPD_MODEL',
@@ -656,7 +672,7 @@ function startApp() {
     // Addon action types dispatched via string literals (not A.xxx) — handled by addon reducerCases
     APPEND_CHANGELOG:'APPEND_CHANGELOG', MERGE_CHANGELOG:'MERGE_CHANGELOG',
     IDS_SET_RESULTS:'IDS_SET_RESULTS', IDS_SET_SPECS:'IDS_SET_SPECS', IDS_RUNNING:'IDS_RUNNING',
-    SHARE:'SHARE', SHARE_TAB:'SHARE_TAB',
+    SHARE:'SHARE', SHARE_TAB:'SHARE_TAB', PRESENT:'PRESENT',
     COMMENT_MODE:'COMMENT_MODE', ADD_COMMENT:'ADD_COMMENT', UPD_COMMENT:'UPD_COMMENT',
     DEL_COMMENT:'DEL_COMMENT', SET_ACTIVE_COMMENT:'SET_ACTIVE_COMMENT', MERGE_COMMENTS:'MERGE_COMMENTS'
   };
@@ -896,6 +912,7 @@ function startApp() {
       case A.SETTINGS:    return Object.assign({},s,{showSettings:a.v});
       case A.SHARE:       return Object.assign({},s,{showShare:!!a.v});
       case A.SHARE_TAB:   return Object.assign({},s,{shareTab:a.v||'overview'});
+      case A.PRESENT:     return Object.assign({},s,{presenting:!!a.v});
       case A.COMMENT_MODE: return Object.assign({},s,{commentMode:!!a.v});
       case A.SET_ACTIVE_COMMENT: return Object.assign({},s,{activeCommentId:a.v||null});
       case A.ADD_COMMENT: return Object.assign({},s,{comments:s.comments.concat([a.v])});
@@ -4357,6 +4374,21 @@ function startApp() {
   var _walkCollision = false; // no-clip: allow walking through objects
   var _walkUnitScale = 1;    // model unit scale (1=m, 1000=mm)
   var _walkPointerLocked = false; // track whether we got pointer lock
+  var _walkFovDefault = 75;
+  var _walkFov = (function(){ try { var v=parseFloat(localStorage.getItem('cc_walkFov')); return (v>=30&&v<=110)?v:_walkFovDefault; } catch(e){ return _walkFovDefault; } })();
+  function _walkSetFov(fov, opts) {
+    _walkFov = Math.max(30, Math.min(110, fov));
+    try { localStorage.setItem('cc_walkFov', String(_walkFov)); } catch(e){}
+    var S = window._ccState3d;
+    if (S && S.camera) {
+      S.camera.fov = _walkFov;
+      S.camera.updateProjectionMatrix();
+    }
+    try { window.dispatchEvent(new CustomEvent('cc-walk-fov',{detail:{fov:_walkFov, src:(opts&&opts.src)||'set'}})); } catch(e){}
+    invalidate(3);
+  }
+  window._ccWalkSetFov = _walkSetFov;
+  window._ccWalkGetFov = function(){ return _walkFov; };
 
   function _walkEnter(S, elevation) {
     if (_walkActive) return;
@@ -4383,7 +4415,10 @@ function startApp() {
     _walkApplyLook(S);
     S.camera.near = 0.05 * _walkUnitScale;
     S.camera.far = 2000 * _walkUnitScale;
+    _walkSavedCam.fov = S.camera.fov;
+    S.camera.fov = _walkFov;
     S.camera.updateProjectionMatrix();
+    try { window.dispatchEvent(new CustomEvent('cc-walk-fov',{detail:{fov:_walkFov, src:'enter'}})); } catch(e){}
     _walkKeys = {};
     _walkLastTime = performance.now();
     // Don't request pointer lock yet — browser requires a user gesture on the canvas.
@@ -4405,7 +4440,7 @@ function startApp() {
       S.orbit.apply();
       _walkSavedCam = null;
     }
-    S.camera.fov = 55; // restore default FOV
+    S.camera.fov = (_walkSavedCam && _walkSavedCam.fov) || 55;
     S.camera.near = 0.1;
     S.camera.far = 10000;
     S.camera.updateProjectionMatrix();
@@ -4720,6 +4755,24 @@ function startApp() {
 
       var scene = new THREE.Scene();
       scene.background = new THREE.Color(0x0f172a);
+      // ── Procedural sky gradient (cheap, deterministic, no HDRI dep) ───
+      var _skyTex = (function(){
+        var c = document.createElement('canvas');
+        c.width = 2; c.height = 256;
+        var ctx = c.getContext('2d');
+        var g = ctx.createLinearGradient(0,0,0,256);
+        // top → horizon: cool blue → warm pale; flips on theme later via _ccApplyTheme3D
+        g.addColorStop(0,'#1e3a5f');
+        g.addColorStop(0.55,'#475569');
+        g.addColorStop(1.0,'#0f172a');
+        ctx.fillStyle = g; ctx.fillRect(0,0,2,256);
+        var t = new THREE.CanvasTexture(c);
+        t.encoding = THREE.sRGBEncoding;
+        t.needsUpdate = true;
+        return t;
+      })();
+      S._skyTex = _skyTex;
+      scene.background = _skyTex;
       S.scene = scene;
 
       var camera = new THREE.PerspectiveCamera(55, el.clientWidth/el.clientHeight, 0.01, 10000);
@@ -4731,6 +4784,12 @@ function startApp() {
       renderer.setPixelRatio(Math.min(devicePixelRatio,1.5));
       renderer.setSize(el.clientWidth, el.clientHeight);
       renderer.localClippingEnabled = false;
+      // ── Architectural-quality output (r128) ────────────────────────────
+      renderer.outputEncoding = THREE.sRGBEncoding;
+      renderer.toneMapping = THREE.ACESFilmicToneMapping;
+      renderer.toneMappingExposure = 1.0;
+      renderer.shadowMap.enabled = true;
+      renderer.shadowMap.type = THREE.PCFSoftShadowMap;
       el.appendChild(renderer.domElement);
       S.renderer = renderer;
       window._ccState3d = S;
@@ -4769,11 +4828,26 @@ function startApp() {
       renderer.domElement.addEventListener('wheel', function(e) {
         if (!_walkActive) return;
         e.preventDefault();
-        // Scroll changes FOV (field of vision)
-        var fovDelta = e.deltaY * 0.05;
-        S.camera.fov = Math.max(30, Math.min(110, S.camera.fov + fovDelta));
-        S.camera.updateProjectionMatrix();
-        invalidate(3);
+        var fovDelta = (e.deltaMode === 1 ? e.deltaY * 30 : e.deltaY) * 0.05;
+        var oldFov = S.camera.fov;
+        var newFov = Math.max(30, Math.min(110, oldFov + fovDelta));
+        if (e.shiftKey) {
+          // Dolly-zoom: change FOV but move camera so subject keeps same screen size.
+          // distance scales by tan(oldFov/2)/tan(newFov/2)
+          var oldT = Math.tan(oldFov*Math.PI/360);
+          var newT = Math.tan(newFov*Math.PI/360);
+          if (newT > 1e-6) {
+            var scale = oldT/newT;
+            var fwd = new THREE.Vector3();
+            S.camera.getWorldDirection(fwd);
+            // Move along forward axis by (scale-1) * referenceDist (use 5m as anchor)
+            var anchor = 5 * _walkUnitScale;
+            var move = anchor * (1 - scale);
+            S.camera.position.addScaledVector(fwd, move);
+            _walkApplyLook(S);
+          }
+        }
+        _walkSetFov(newFov, {src:'wheel'});
       }, { passive: false });
       _wlAdd('pointerlockchange', function() {
         _walkPointerLocked = (document.pointerLockElement === renderer.domElement);
@@ -4888,6 +4962,7 @@ function startApp() {
         var endTarget = ctr;
         var endPos = new THREE.Vector3(ctr.x+d, ctr.y+d*0.6, ctr.z+d);
         _animateFly(endTarget, endPos);
+        if (window._ccUpdateShadowFrustum) window._ccUpdateShadowFrustum();
       };
 
       var _ghostedMeshes = [];
@@ -6145,11 +6220,51 @@ function startApp() {
         S.orbit.sync(); S.orbit.apply();
       };
 
-      S._ambLight = new THREE.AmbientLight(0xffffff,0.5); scene.add(S._ambLight);
-      S._sunLight = new THREE.DirectionalLight(0xfff8f0,1.0);
-      S._sunLight.position.set(80,120,60); scene.add(S._sunLight);
-      S._fillLight = new THREE.DirectionalLight(0xd0e8ff,0.3);
+      // Sky-bounce hemi (cool sky from above, warm ground from below)
+      S._ambLight = new THREE.HemisphereLight(0xb1c7e0, 0x4a3a32, 0.7);
+      scene.add(S._ambLight);
+      // Warm directional sun
+      S._sunLight = new THREE.DirectionalLight(0xfff2d6, 1.1);
+      S._sunLight.position.set(80,120,60);
+      S._sunLight.castShadow = true;
+      S._sunLight.shadow.mapSize.set(2048,2048);
+      S._sunLight.shadow.bias = -0.0008;
+      S._sunLight.shadow.normalBias = 0.02;
+      S._sunLight.shadow.camera.near = 0.5;
+      S._sunLight.shadow.camera.far = 1500;
+      var _sd = 80; // initial half-extent; resized after first model load via _ccUpdateShadowFrustum
+      S._sunLight.shadow.camera.left  = -_sd;
+      S._sunLight.shadow.camera.right =  _sd;
+      S._sunLight.shadow.camera.top   =  _sd;
+      S._sunLight.shadow.camera.bottom= -_sd;
+      scene.add(S._sunLight);
+      // Cool fill from opposite side (no shadow, low cost)
+      S._fillLight = new THREE.DirectionalLight(0xd0e8ff,0.35);
       S._fillLight.position.set(-50,-20,-50); scene.add(S._fillLight);
+
+      // Resize shadow frustum to fit the loaded model bbox
+      window._ccUpdateShadowFrustum = function() {
+        try {
+          var box = (typeof _elemsBBox === 'function') ? _elemsBBox() : null;
+          if (!box || box.isEmpty()) return;
+          var size = new THREE.Vector3(); box.getSize(size);
+          var center = new THREE.Vector3(); box.getCenter(center);
+          var r = Math.max(size.x, size.y, size.z) * 0.7;
+          var sl = S._sunLight; if (!sl) return;
+          sl.shadow.camera.left   = -r;
+          sl.shadow.camera.right  =  r;
+          sl.shadow.camera.top    =  r;
+          sl.shadow.camera.bottom = -r;
+          sl.shadow.camera.far    = r * 6 + 100;
+          sl.shadow.camera.updateProjectionMatrix();
+          // Position sun proportional to model size for stable shadows
+          sl.position.copy(center).add(new THREE.Vector3(r*0.8, r*1.4, r*0.6));
+          sl.target.position.copy(center);
+          sl.target.updateMatrixWorld();
+          if (!sl.target.parent) scene.add(sl.target);
+          invalidate(2);
+        } catch(e){}
+      };
       S.grid = new THREE.GridHelper(200,80,0x1e3a5f,0x172554);
       scene.add(S.grid);
       S.axes = new THREE.AxesHelper(3);
@@ -6807,7 +6922,31 @@ function startApp() {
       var S = state3d.current;
       if(!S.scene) return;
       var light = (s.prefs.theme||'dark')==='light';
-      S.scene.background = new THREE.Color(light ? 0xe8ecf1 : 0x0f172a);
+      // Build a procedural sky gradient suited to the theme
+      try {
+        if (S._skyTex) S._skyTex.dispose();
+        var c = document.createElement('canvas');
+        c.width = 2; c.height = 256;
+        var ctx = c.getContext('2d');
+        var g = ctx.createLinearGradient(0,0,0,256);
+        if (light) {
+          g.addColorStop(0,'#cfd8e3');
+          g.addColorStop(0.6,'#e8ecf1');
+          g.addColorStop(1.0,'#f6f7f8');
+        } else {
+          g.addColorStop(0,'#1a2a4d');
+          g.addColorStop(0.6,'#2c3e5e');
+          g.addColorStop(1.0,'#0f172a');
+        }
+        ctx.fillStyle = g; ctx.fillRect(0,0,2,256);
+        var t = new THREE.CanvasTexture(c);
+        t.encoding = THREE.sRGBEncoding;
+        t.needsUpdate = true;
+        S._skyTex = t;
+        S.scene.background = t;
+      } catch(e) {
+        S.scene.background = new THREE.Color(light ? 0xe8ecf1 : 0x0f172a);
+      }
       if(S.grid){
         S.scene.remove(S.grid);
         S.grid.geometry.dispose();
@@ -6827,7 +6966,19 @@ function startApp() {
       if(S._sunLight) {
         S._sunLight.intensity = style==='rendered' ? 1.4 : 1.0;
         S._fillLight.intensity = style==='rendered' ? 0.5 : 0.3;
-        S._ambLight.intensity = style==='shaded' ? 0.85 : style==='rendered' ? 0.35 : 0.5;
+        S._ambLight.intensity = style==='shaded' ? 0.9 : style==='rendered' ? 0.55 : 0.7;
+        // Shadows are perceptibly expensive; only enable in 'rendered' mode
+        S._sunLight.castShadow = style==='rendered';
+      }
+      // Per-mesh shadow flags
+      if (S.mg) {
+        var castOn = style==='rendered';
+        S.mg.traverse(function(obj){
+          if (obj.isMesh) {
+            obj.castShadow = castOn;
+            obj.receiveShadow = castOn;
+          }
+        });
       }
       var meshList = S._meshList;
       if (!meshList || S._meshListModels !== s.models.length) {
@@ -7034,29 +7185,7 @@ function startApp() {
           <div style=${{position:'absolute',top:'50%',left:'50%',transform:'translate(-50%,-50%)',width:3,height:3,background:'rgba(255,255,255,.8)',borderRadius:'50%'}}></div>
         </div>
       </div>`}
-      ${s.walkMode && html`<div style=${{position:'absolute',bottom:'var(--space-4)',left:'50%',transform:'translateX(-50%)',
-        pointerEvents:'auto',display:'flex',flexDirection:'column',alignItems:'center',gap:'.4rem',zIndex:5}}>
-        <div style=${{background:'rgba(15,23,42,.9)',borderRadius:8,padding:'.4rem .7rem',
-          color:'rgba(255,255,255,.7)',fontSize:'0.69rem',display:'flex',alignItems:'center',gap:'.6rem',
-          border:'1px solid rgba(148,163,184,.2)',backdropFilter:'blur(8px)'}}>
-          <span><b>WASD</b> move</span>
-          <span style=${{opacity:.4}}>|</span>
-          <span><b>Click</b> to look</span>
-          <span style=${{opacity:.4}}>|</span>
-          <span><b>Q/E</b> up/down</span>
-          <span style=${{opacity:.4}}>|</span>
-          <span><b>Shift</b> sprint</span>
-          <span style=${{opacity:.4}}>|</span>
-          <span><b>Scroll</b> speed</span>
-          <span style=${{opacity:.4}}>|</span>
-          <button onClick=${function(){
-            if (window._ccWalkExit) window._ccWalkExit();
-            d({t:A.WALK_MODE, v:false});
-          }} style=${{...S_BTN,background:'rgba(239,68,68,.8)',color:'#fff',padding:'1px 8px',fontSize:'0.65rem',borderRadius:4}}>
-            ESC Exit
-          </button>
-        </div>
-      </div>`}
+      ${s.walkMode && html`<${WalkModeHUD} d=${d} />`}
 
       ${selectedEl && function(){ try {
         // ── Clean element property panel ──
@@ -8140,6 +8269,30 @@ function startApp() {
       </div>
       <div class="cc-header-actions" style=${{display:'flex',alignItems:'center',gap:'var(--space-2)',flexWrap:'wrap',overflow:'hidden'}}>
         ${openN>0 && html`<span class="cc-status-pill" style=${{background:'var(--color-danger)',color:'#fff',padding:'.15rem var(--space-2)'}}>${openN} open</span>`}
+        ${(function(){
+          var sp = s.sharedProject||{};
+          var unread = (s.comments||[]).filter(function(c){return !c.resolved && c.author && sp.userName && c.author!==sp.userName && (c.ts||0) > ((sp.lastSync||0) - 60000);}).length;
+          var connected = !!sp.enabled;
+          var dotColor = connected ? (sp.syncing?'#f59e0b':'#22c55e') : 'rgba(255,255,255,.45)';
+          var bg = connected ? 'linear-gradient(135deg,#7c3aed 0%,#3b82f6 100%)' : 'var(--accent)';
+          return html`<button class="cc-btn-press" onClick=${function(){
+              try { if (window._ccActivateAddon) window._ccActivateAddon('shared-project'); } catch(e){}
+              d({t:A.SHARE,v:true});
+            }}
+            title=${connected?'Shared via '+(sp.folderName||'folder'):'Share this project'}
+            style=${{...S_BTN,position:'relative',background:bg,color:'#fff',fontWeight:600,padding:'.35rem .8rem',fontSize:'var(--text-xs)',display:'flex',alignItems:'center',gap:'.4rem',boxShadow:connected?'0 2px 8px rgba(124,58,237,.35)':'0 1px 4px rgba(37,99,235,.25)'}}>
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/></svg>
+            <span>Share</span>
+            <span style=${{width:7,height:7,borderRadius:'50%',background:dotColor,boxShadow:connected?'0 0 0 2px rgba(255,255,255,.25)':'none'}}></span>
+            ${unread>0 && html`<span style=${{position:'absolute',top:-4,right:-4,background:'#ef4444',color:'#fff',fontSize:'0.6rem',fontWeight:700,padding:'1px 5px',borderRadius:99,lineHeight:1.3,minWidth:14,textAlign:'center',boxShadow:'0 1px 3px rgba(0,0,0,.4)'}}>${unread>9?'9+':unread}</span>`}
+          </button>`;
+        })()}
+        <button class="cc-hide-mobile cc-btn-press" onClick=${function(){d({t:A.PRESENT,v:!s.presenting});}}
+          title="Presentation mode (P) — fullscreen, hide chrome, auto-rotate when idle"
+          style=${{...S_BTN,background:s.presenting?'#7c3aed':'var(--bg-secondary)',color:s.presenting?'#fff':'var(--text-secondary)',border:'1px solid '+(s.presenting?'#a78bfa':'var(--border)'),fontSize:'var(--text-xs)',display:'flex',alignItems:'center',gap:'.35rem'}}>
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+          Present
+        </button>
         <button class="cc-hide-mobile cc-btn-press" onClick=${function(){loadProject(d)}}
           style=${{...S_BTN,background:'var(--bg-secondary)',color:'var(--text-secondary)',border:'1px solid var(--border)',fontSize:'var(--text-xs)'}}>
           Open Project
@@ -13470,6 +13623,200 @@ function startApp() {
         </div>
       </form>
     </div></div>`;
+  }
+
+  // ── Walk Mode HUD ────────────────────────────────────────────
+
+  function WalkModeHUD(props) {
+    var d = props.d;
+    var initialFov = (typeof window._ccWalkGetFov === 'function' ? window._ccWalkGetFov() : 75);
+    var fovSt = useState(initialFov), fov=fovSt[0], setFov=fovSt[1];
+    var pulseSt = useState(0), pulse=pulseSt[0], setPulse=pulseSt[1];
+    var hideTimer = useRef(null);
+
+    useEffect(function(){
+      function onFov(e){
+        var v = e && e.detail && e.detail.fov;
+        if (typeof v === 'number') {
+          setFov(v);
+          setPulse(function(p){ return p+1; });
+          if (hideTimer.current) clearTimeout(hideTimer.current);
+          hideTimer.current = setTimeout(function(){ setPulse(function(p){ return p; }); }, 1100);
+        }
+      }
+      window.addEventListener('cc-walk-fov', onFov);
+      return function(){ window.removeEventListener('cc-walk-fov', onFov); if (hideTimer.current) clearTimeout(hideTimer.current); };
+    }, []);
+
+    function applyFov(v){ if (window._ccWalkSetFov) window._ccWalkSetFov(v); }
+
+    var label = fov<=55 ? 'Telephoto' : fov<=85 ? 'Natural' : 'Wide-angle';
+    var presets = [
+      {fov:50, name:'Narrow', sub:'Telephoto'},
+      {fov:75, name:'Normal', sub:'Natural'},
+      {fov:95, name:'Wide',   sub:'Wide-angle'}
+    ];
+    var presetBtn = function(p){
+      var active = Math.abs(fov - p.fov) < 1.5;
+      return html`<button key=${p.fov} onClick=${function(){applyFov(p.fov);}}
+        title=${p.sub+' ('+p.fov+'°)'}
+        style=${{padding:'.25rem .55rem',background:active?'rgba(124,58,237,.85)':'rgba(255,255,255,.08)',color:'#fff',border:'1px solid '+(active?'rgba(167,139,250,.6)':'rgba(255,255,255,.12)'),borderRadius:5,fontSize:'0.68rem',fontWeight:600,cursor:'pointer',fontFamily:'inherit',lineHeight:1.1,display:'flex',flexDirection:'column',alignItems:'center',gap:1}}>
+        <span>${p.name}</span>
+        <span style=${{fontSize:'0.55rem',opacity:.7,fontWeight:500}}>${p.fov}°</span>
+      </button>`;
+    };
+
+    return html`<${React.Fragment}>
+      <div key="fov-toast" style=${{position:'absolute',top:'18%',left:'50%',transform:'translateX(-50%)',
+          background:'rgba(15,23,42,.85)',color:'#fff',padding:'.4rem .9rem',borderRadius:8,
+          fontSize:'0.85rem',fontWeight:600,letterSpacing:'.02em',
+          border:'1px solid rgba(167,139,250,.35)',backdropFilter:'blur(8px)',
+          opacity:pulse>0?1:0, transition:'opacity .25s ease', pointerEvents:'none', zIndex:6}}>
+        FOV: ${Math.round(fov)}° · ${label}
+      </div>
+      <div style=${{position:'absolute',bottom:'var(--space-4)',left:'50%',transform:'translateX(-50%)',
+        pointerEvents:'auto',display:'flex',flexDirection:'column',alignItems:'center',gap:'.4rem',zIndex:5}}>
+        <div style=${{background:'rgba(15,23,42,.92)',borderRadius:10,padding:'.45rem .8rem',
+          color:'rgba(255,255,255,.85)',fontSize:'0.7rem',display:'flex',alignItems:'center',gap:'.55rem',
+          border:'1px solid rgba(148,163,184,.2)',backdropFilter:'blur(8px)',flexWrap:'wrap',justifyContent:'center'}}>
+          <span><b>WASD</b> move</span>
+          <span style=${{opacity:.35}}>·</span>
+          <span><b>Q/E</b> up/down</span>
+          <span style=${{opacity:.35}}>·</span>
+          <span><b>Shift</b> sprint</span>
+          <span style=${{opacity:.35}}>·</span>
+          <span><b>Scroll</b> FOV</span>
+          <span style=${{opacity:.35}}>·</span>
+          <span><b>Shift+Scroll</b> dolly-zoom</span>
+        </div>
+        <div style=${{background:'rgba(15,23,42,.92)',borderRadius:10,padding:'.4rem .55rem',
+          display:'flex',alignItems:'center',gap:'.4rem',border:'1px solid rgba(148,163,184,.2)',backdropFilter:'blur(8px)'}}>
+          <span style=${{fontSize:'0.62rem',color:'rgba(255,255,255,.55)',fontWeight:600,textTransform:'uppercase',letterSpacing:'.05em',marginLeft:'.2rem'}}>FOV</span>
+          ${presets.map(presetBtn)}
+          <input type="range" min="30" max="110" step="1" value=${Math.round(fov)}
+            onInput=${function(e){applyFov(parseFloat(e.target.value));}}
+            style=${{width:90,accentColor:'#7c3aed'}} />
+          <span style=${{fontSize:'0.66rem',color:'rgba(255,255,255,.65)',fontVariantNumeric:'tabular-nums',width:32,textAlign:'right'}}>${Math.round(fov)}°</span>
+          <button onClick=${function(){
+              if (window._ccWalkExit) window._ccWalkExit();
+              d({t:A.WALK_MODE, v:false});
+            }} style=${{...S_BTN,background:'rgba(239,68,68,.8)',color:'#fff',padding:'2px 10px',fontSize:'0.66rem',borderRadius:5,marginLeft:'.4rem'}}>ESC Exit</button>
+        </div>
+      </div>
+    </${React.Fragment}>`;
+  }
+
+  // ── Presentation / Kiosk overlay ─────────────────────────────
+
+  function PresentationOverlay(props) {
+    var s = props.s, d = props.d;
+    var idleSt = useState(0), idleTick=idleSt[0], setIdleTick=idleSt[1];
+    var rotatingRef = useRef(false);
+    var rotRafRef = useRef(null);
+    var lastActRef = useRef(Date.now());
+
+    // Mark <body data-presenting="1"> + request fullscreen
+    useEffect(function(){
+      try { document.body.setAttribute('data-presenting','1'); } catch(e){}
+      try {
+        var docEl = document.documentElement;
+        if (docEl.requestFullscreen && !document.fullscreenElement) {
+          docEl.requestFullscreen().catch(function(){});
+        }
+      } catch(e){}
+      return function(){
+        try { document.body.removeAttribute('data-presenting'); } catch(e){}
+        try { if (document.fullscreenElement && document.exitFullscreen) document.exitFullscreen(); } catch(e){}
+        if (rotRafRef.current) cancelAnimationFrame(rotRafRef.current);
+        rotatingRef.current = false;
+      };
+    }, []);
+
+    // Auto-exit if user manually leaves fullscreen
+    useEffect(function(){
+      function onFs(){
+        if (!document.fullscreenElement && s.presenting) {
+          d({t:A.PRESENT,v:false});
+        }
+      }
+      document.addEventListener('fullscreenchange', onFs);
+      return function(){ document.removeEventListener('fullscreenchange', onFs); };
+    }, [s.presenting]);
+
+    // Idle detection → auto-rotate
+    useEffect(function(){
+      function onAct(){
+        lastActRef.current = Date.now();
+        if (rotatingRef.current) {
+          rotatingRef.current = false;
+          if (rotRafRef.current) cancelAnimationFrame(rotRafRef.current);
+        }
+      }
+      window.addEventListener('mousemove', onAct);
+      window.addEventListener('keydown', onAct);
+      window.addEventListener('wheel', onAct);
+      window.addEventListener('touchstart', onAct);
+      var poll = setInterval(function(){
+        var idleMs = Date.now() - lastActRef.current;
+        if (idleMs > 30000 && !rotatingRef.current) {
+          rotatingRef.current = true;
+          var S = window._ccState3d;
+          if (!S || !S.orbit) return;
+          var lastT = performance.now();
+          function tick(now){
+            if (!rotatingRef.current) return;
+            var dt = (now - lastT) / 1000; lastT = now;
+            S.orbit.sph.theta += dt * 0.08; // ~4.6°/s
+            S.orbit.apply();
+            if (window.invalidate) window.invalidate(2);
+            else if (typeof invalidate === 'function') invalidate(2);
+            rotRafRef.current = requestAnimationFrame(tick);
+          }
+          rotRafRef.current = requestAnimationFrame(tick);
+        }
+      }, 1000);
+      return function(){
+        window.removeEventListener('mousemove', onAct);
+        window.removeEventListener('keydown', onAct);
+        window.removeEventListener('wheel', onAct);
+        window.removeEventListener('touchstart', onAct);
+        clearInterval(poll);
+        rotatingRef.current = false;
+        if (rotRafRef.current) cancelAnimationFrame(rotRafRef.current);
+      };
+    }, []);
+
+    var viewpoints = s.viewpoints || [];
+    function jumpVp(vp){
+      if (!vp) return;
+      try {
+        if (window._ccApplyViewpoint) { window._ccApplyViewpoint(vp); return; }
+        if (vp.cameraPos && window._ccFlyToPoint) window._ccFlyToPoint(vp.target||vp.cameraPos);
+      } catch(e){}
+    }
+
+    return html`<div class="cc-present-overlay"></div>
+      <div class="cc-present-controls cc-present-show">
+        <span style=${{fontSize:'0.7rem',opacity:.7,letterSpacing:'.04em',textTransform:'uppercase',marginRight:'.4rem'}}>Presenting</span>
+        ${viewpoints.length>0 && html`<${React.Fragment}>
+          <button onClick=${function(){
+              var idx = (s._presentVpIdx||0);
+              idx = (idx-1+viewpoints.length)%viewpoints.length;
+              jumpVp(viewpoints[idx]);
+            }}
+            style=${{background:'rgba(255,255,255,.1)',border:'1px solid rgba(255,255,255,.15)',color:'#fff',cursor:'pointer',padding:'.25rem .55rem',borderRadius:6,fontSize:'0.78rem'}}>‹</button>
+          <span style=${{fontSize:'0.74rem',opacity:.85}}>${viewpoints.length} viewpoints</span>
+          <button onClick=${function(){
+              var idx = (s._presentVpIdx||0);
+              idx = (idx+1)%viewpoints.length;
+              jumpVp(viewpoints[idx]);
+            }}
+            style=${{background:'rgba(255,255,255,.1)',border:'1px solid rgba(255,255,255,.15)',color:'#fff',cursor:'pointer',padding:'.25rem .55rem',borderRadius:6,fontSize:'0.78rem'}}>›</button>
+        </${React.Fragment}>`}
+        <button onClick=${function(){d({t:A.PRESENT,v:false});}}
+          style=${{background:'rgba(239,68,68,.85)',border:'none',color:'#fff',cursor:'pointer',padding:'.3rem .7rem',borderRadius:6,fontSize:'0.78rem',fontWeight:600,marginLeft:'.4rem'}}>Exit</button>
+        <span style=${{fontSize:'0.66rem',opacity:.55,marginLeft:'.4rem'}}>Press P or Esc</span>
+      </div>`;
   }
 
   // ── Share Modal ──────────────────────────────────────────────
@@ -20807,6 +21154,7 @@ function startApp() {
         if(ctrl && e.key==='o'){ e.preventDefault(); if(window._ccOpenIFC)window._ccOpenIFC(); return; }
         if(ctrl && e.key===','){ e.preventDefault(); d({t:A.SETTINGS,v:!s.showSettings}); return; }
         if(e.key==='Escape'){
+          if(s.presenting){ d({t:A.PRESENT,v:false}); return; }
           if(s.commentMode){ d({t:A.COMMENT_MODE,v:false}); return; }
           if(s.showShare){ d({t:A.SHARE,v:false}); return; }
           if(s.showSettings){ d({t:A.SETTINGS,v:false}); return; }
@@ -20814,6 +21162,11 @@ function startApp() {
           if(s.showRevitBridge){ d({t:A.REVIT_BRIDGE,v:false}); return; }
           if(s.sectionBox){ d({t:A.SECTION_BOX,v:null}); return; }
           if(s.sectionAxis||s.sectionCustom){ d({t:A.SECTION,axis:null}); return; }
+        }
+        if (!inInput && (e.key==='p' || e.key==='P') && !ctrl && !e.shiftKey && !e.altKey) {
+          e.preventDefault();
+          d({t:A.PRESENT, v:!s.presenting});
+          return;
         }
 
         if(inInput) return;
@@ -20977,6 +21330,7 @@ function startApp() {
           style=${{background:'rgba(255,255,255,.2)',color:'#fff',border:'none',borderRadius:5,padding:'.2rem .5rem',fontSize:'0.74rem',fontWeight:600,cursor:'pointer',fontFamily:'inherit'}}>Cancel (Esc)</button>
       </div>`}
       ${s.showRevitBridge && html`<${RevitBridgePanel} s=${s} d=${d} />`}
+      ${s.presenting && html`<${PresentationOverlay} s=${s} d=${d} />`}
       <${MobileNav} s=${s} d=${d} />
       <${WelcomePopup} s=${s} d=${d} />
       <${PrivacyBanner} />
