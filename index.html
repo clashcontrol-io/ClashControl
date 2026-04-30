@@ -302,6 +302,12 @@
     }
     .cc-header{display:none!important}
     @media(max-width:768px){.cc-header{display:flex!important}}
+    /* ── Desktop top bar ── */
+    .cc-desktop-topbar{display:flex;align-items:center;justify-content:space-between;padding:0 var(--space-3);height:44px;flex-shrink:0;
+      background:var(--glass-bg);-webkit-backdrop-filter:var(--glass-blur);backdrop-filter:var(--glass-blur);
+      border-bottom:1px solid var(--glass-border);gap:var(--space-3);z-index:10;position:relative;}
+    @media(max-width:768px){.cc-desktop-topbar{display:none!important}}
+    body[data-presenting="1"] .cc-desktop-topbar{display:none!important}
     .cc-hide-desktop{display:none!important}
     @media(max-width:768px){
       .cc-hide-desktop{display:inline-block!important}
@@ -21209,6 +21215,55 @@ function startApp() {
     </div>`;
   }
 
+  // ── Desktop Top Bar ───────────────────────────────────────────
+  function DesktopTopBar(props) {
+    var s=props.s, d=props.d;
+    var isDark = (s.prefs.theme||'dark')==='dark';
+    var sp = s.sharedProject||{};
+    var connected = !!sp.enabled;
+    var dotColor = connected ? (sp.syncing?'#f59e0b':'#22c55e') : 'rgba(255,255,255,.35)';
+    var unread = (s.comments||[]).filter(function(c){return !c.resolved && c.author && sp.userName && c.author!==sp.userName;}).length;
+
+    function openShare(){
+      try { if (window._ccActivateAddon) window._ccActivateAddon('shared-project'); } catch(e){}
+      d({t:A.SHARE,v:true});
+    }
+
+    return html`<div class="cc-desktop-topbar">
+      <!-- Brand -->
+      <div style=${{display:'flex',alignItems:'center',gap:'var(--space-2)',flexShrink:0}}>
+        <div style=${{width:28,height:28,background:'var(--logo-gradient)',borderRadius:'var(--radius-sm)',display:'flex',alignItems:'center',justifyContent:'center',boxShadow:'0 2px 8px rgba(124,58,237,.3)',flexShrink:0}}>
+          <span style=${{display:'inline-flex',alignItems:'center',color:'#fff',fontWeight:800,fontSize:9,fontFamily:'var(--font-display)',lineHeight:1}}>
+            <span>C</span><span style=${{display:'inline-block',transform:'scaleX(-1)',marginLeft:'-1px'}}>C</span>
+          </span>
+        </div>
+        <span class="cc-display" style=${{fontWeight:700,fontSize:'var(--text-sm)',color:'var(--text-primary)',letterSpacing:'-.01em',userSelect:'none'}}>ClashControl</span>
+      </div>
+      <!-- Spacer -->
+      <div style=${{flex:1}}></div>
+      <!-- Share button -->
+      <button class="cc-btn-press" onClick=${openShare}
+        title=${connected?'Shared via '+(sp.folderName||'folder'):'Share this model'}
+        style=${{...S_BTN,position:'relative',background:'var(--accent)',color:'#fff',fontWeight:600,
+          padding:'.3rem .75rem',fontSize:'var(--text-xs)',display:'flex',alignItems:'center',gap:'.35rem',
+          borderRadius:'var(--radius-pill)',boxShadow:'0 2px 8px rgba(124,58,237,.3)'}}>
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/></svg>
+        <span>Share</span>
+        <span style=${{width:6,height:6,borderRadius:'50%',background:dotColor,flexShrink:0}}></span>
+        ${unread>0 && html`<span style=${{position:'absolute',top:-4,right:-4,background:'#ef4444',color:'#fff',fontSize:'0.6rem',fontWeight:700,padding:'1px 4px',borderRadius:99,lineHeight:1.3,minWidth:12,textAlign:'center',boxShadow:'0 1px 3px rgba(0,0,0,.4)'}}>${unread>9?'9+':unread}</span>`}
+      </button>
+      <!-- Utility icons -->
+      <div style=${{display:'flex',alignItems:'center',gap:'var(--space-1)'}}>
+        <button onClick=${function(){d({t:A.UPD_PREFS,u:{theme:isDark?'light':'dark'}})}}
+          style=${{...S_BTN,background:'none',border:'none',color:'var(--text-muted)',fontSize:'1rem',padding:'.3rem',lineHeight:1,borderRadius:'var(--radius-sm)'}}
+          title=${isDark?'Switch to light mode':'Switch to dark mode'} aria-label=${isDark?'Switch to light mode':'Switch to dark mode'}>${isDark?'☀':'☾'}</button>
+        <button onClick=${function(){d({t:A.SETTINGS,v:true})}}
+          style=${{...S_BTN,background:'none',border:'none',color:'var(--text-muted)',fontSize:'1rem',padding:'.3rem',lineHeight:1,borderRadius:'var(--radius-sm)'}}
+          title="Settings" aria-label="Open settings">⚙</button>
+      </div>
+    </div>`;
+  }
+
   // ── Mode Toolbar ──────────────────────────────────────────────
   function ModeToolbar(props) {
     var s=props.s, d=props.d;
@@ -22116,6 +22171,7 @@ function startApp() {
       <${LeftRail} s=${s} d=${d} />
       <${LeftPanel} s=${s} d=${d} />
       <div style=${{flex:1,display:'flex',flexDirection:'column',overflow:'hidden',position:'relative',minWidth:0}}>
+        <${DesktopTopBar} s=${s} d=${d} />
         <${Header} s=${s} d=${d} />
         ${is2D ? html`<${View2D} s=${s} d=${d} />` : html`<${Viewer} s=${s} d=${d} />`}
         ${is2D && html`<${ExportBar} s=${s} d=${d} />`}
