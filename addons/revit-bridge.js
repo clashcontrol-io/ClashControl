@@ -92,8 +92,30 @@
         window._ccPullOnConnect = false;
         d({t:'BRIDGE_LOG', logType:'pull', text:'Auto-pulling model...'});
         setTimeout(function(){ _revitDirectExport(['all']); }, 300);
+      } else if (wasReconnect) {
+        // On reconnect: try session resumption first if we have cached hashes and
+        // an existing Revit model. Connector replies with only the delta, or
+        // session-expired if its cache is gone (Revit restarted) — in which case
+        // the session-expired handler triggers a full re-export automatically.
+        var state = window._ccLatestState;
+        var hasRevitModel = !!(state && state.models && state.models.some(function(m){
+          return m.stats && m.stats.source === 'revit-direct';
+        }));
+        var hashes = Object.keys(_elementHashCache);
+        if (hasRevitModel && hashes.length > 0) {
+          d({t:'BRIDGE_LOG', logType:'info', text:'Resuming session (' + hashes.length + ' known elements)...'});
+          var payload = hashes.length > 20000
+            ? (function(){ var t={}; for(var i=0;i<20000;i++) t[hashes[i]]=_elementHashCache[hashes[i]]; return t; })()
+            : _elementHashCache;
+          setTimeout(function(){
+            if (_revitWs && _revitWs.readyState === 1)
+              _revitWs.send(JSON.stringify({type:'resume-session', knownElements:payload}));
+          }, 300);
+        } else {
+          // No cached state — prompt user rather than auto-exporting
+          d({t:'UPD_REVIT_DIRECT', u:{reconnectPrompt:true}});
+        }
       }
-      // On reconnect, let the connector decide what to sync.
     };
 
     _revitWs.onclose = function() {
@@ -411,8 +433,11 @@
         break;
 
       case 'session-expired':
-        // Connector reports session expired — it will re-push a full model when ready
-        d({t:'BRIDGE_LOG', logType:'info', text:'Session expired on Revit side. Connector will re-export when ready.'});
+        // Connector cache is empty (Revit restarted) — clear local hashes and do full export
+        d({t:'BRIDGE_LOG', logType:'info', text:'Session expired on Revit side — requesting full re-export...'});
+        _elementHashCache = {};
+        try { localStorage.removeItem('cc_element_hashes'); } catch(e) {}
+        setTimeout(function(){ _revitDirectExport(['all']); }, 300);
         break;
 
       case 'error':
