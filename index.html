@@ -4391,6 +4391,15 @@ function startApp() {
   var _walkPointerLocked = false; // track whether we got pointer lock
   var _walkFovDefault = 75;
   var _walkFov = (function(){ try { var v=parseFloat(localStorage.getItem('cc_walkFov')); return (v>=30&&v<=110)?v:_walkFovDefault; } catch(e){ return _walkFovDefault; } })();
+  var _walkBobEnabled = (function(){ try { return localStorage.getItem('cc_walkBob')==='1'; } catch(e){ return false; } })();
+  var _walkBobPhase = 0;
+  var _walkBobBaseY = null;
+  var _walkGamepadIdx = null;
+  function _walkSetBob(on){ _walkBobEnabled=!!on; try{localStorage.setItem('cc_walkBob',on?'1':'0');}catch(e){} try{window.dispatchEvent(new CustomEvent('cc-walk-flag',{detail:{bob:_walkBobEnabled,collision:_walkCollision}}));}catch(e){} }
+  function _walkSetCollision(on){ _walkCollision=!!on; try{window.dispatchEvent(new CustomEvent('cc-walk-flag',{detail:{bob:_walkBobEnabled,collision:_walkCollision}}));}catch(e){} }
+  window._ccWalkSetBob = _walkSetBob;
+  window._ccWalkSetCollision = _walkSetCollision;
+  window._ccWalkGetFlags = function(){ return {bob:_walkBobEnabled, collision:_walkCollision}; };
   function _walkSetFov(fov, opts) {
     _walkFov = Math.max(30, Math.min(110, fov));
     try { localStorage.setItem('cc_walkFov', String(_walkFov)); } catch(e){}
@@ -4485,7 +4494,34 @@ function startApp() {
     _walkLastTime = now;
     if (dt <= 0) return;
 
-    var speed = _walkSpeed * (_walkKeys['ShiftLeft'] || _walkKeys['ShiftRight'] ? 4 : 1);
+    // ── Gamepad polling ────────────────────────────────────────
+    var gpAxes = null, gpSprint = false;
+    try {
+      var pads = (navigator.getGamepads && navigator.getGamepads()) || [];
+      for (var gi = 0; gi < pads.length; gi++) {
+        if (pads[gi] && pads[gi].connected) {
+          if (_walkGamepadIdx == null) _walkGamepadIdx = gi;
+          if (gi === _walkGamepadIdx) {
+            var pa = pads[gi].axes;
+            // Deadzone 0.15
+            var dz = function(v){ return Math.abs(v)<0.15 ? 0 : v; };
+            gpAxes = { lx: dz(pa[0]||0), ly: dz(pa[1]||0), rx: dz(pa[2]||0), ry: dz(pa[3]||0) };
+            // Right-stick → look
+            if (gpAxes.rx || gpAxes.ry) {
+              _walkYaw   -= gpAxes.rx * dt * 2.5;
+              _walkPitch -= gpAxes.ry * dt * 2.0;
+              _walkPitch = Math.max(-Math.PI / 2.2, Math.min(Math.PI / 2.2, _walkPitch));
+              _walkApplyLook(S);
+            }
+            var btns = pads[gi].buttons || [];
+            gpSprint = btns[6] && btns[6].pressed;
+            break;
+          }
+        }
+      }
+    } catch(e) {}
+
+    var speed = _walkSpeed * ((_walkKeys['ShiftLeft'] || _walkKeys['ShiftRight'] || gpSprint) ? 4 : 1);
     var fx = Math.sin(_walkYaw), fz = Math.cos(_walkYaw);
     var rx = -Math.cos(_walkYaw), rz = Math.sin(_walkYaw);
 
@@ -4496,6 +4532,11 @@ function startApp() {
     if (_walkKeys['KeyD'] || _walkKeys['ArrowRight'])  { mx += rx; mz += rz; }
     if (_walkKeys['Space'] || _walkKeys['KeyQ'])   my += 1;
     if (_walkKeys['KeyC'] || _walkKeys['KeyE'])    my -= 1;
+    // Gamepad left stick → forward/strafe
+    if (gpAxes) {
+      mx += fx * (-gpAxes.ly) + rx * (gpAxes.lx);
+      mz += fz * (-gpAxes.ly) + rz * (gpAxes.lx);
+    }
 
     var len = Math.sqrt(mx * mx + mz * mz);
     if (len > 0) { mx /= len; mz /= len; }
@@ -4521,10 +4562,30 @@ function startApp() {
       }
     }
 
-    if (mx !== 0 || mz !== 0 || my !== 0) {
+    var moving = (mx !== 0 || mz !== 0 || my !== 0);
+    if (moving) {
       S.camera.position.set(newX, newY, newZ);
+      _walkBobBaseY = newY;
       _walkApplyLook(S);
       invalidate(3);
+    }
+    // Head-bob: subtle vertical sin while ground-moving (W/A/S/D, not Q/E flying)
+    if (_walkBobEnabled && _walkActive) {
+      var grounded = (mx !== 0 || mz !== 0);
+      if (grounded) {
+        _walkBobPhase += dt * speed * 1.4;
+        var amp = 0.04 * _walkUnitScale; // 4 cm at unit-scale 1
+        var bob = Math.sin(_walkBobPhase * Math.PI * 2) * amp;
+        if (_walkBobBaseY != null) S.camera.position.y = _walkBobBaseY + bob;
+        invalidate(2);
+      } else {
+        // settle back to base height
+        if (_walkBobBaseY != null && Math.abs(S.camera.position.y - _walkBobBaseY) > 1e-4) {
+          S.camera.position.y += (_walkBobBaseY - S.camera.position.y) * Math.min(1, dt*8);
+          invalidate(2);
+        }
+        _walkBobPhase = 0;
+      }
     }
   }
 
@@ -13659,7 +13720,9 @@ function startApp() {
   function WalkModeHUD(props) {
     var d = props.d;
     var initialFov = (typeof window._ccWalkGetFov === 'function' ? window._ccWalkGetFov() : 75);
+    var initialFlags = (typeof window._ccWalkGetFlags === 'function' ? window._ccWalkGetFlags() : {bob:false,collision:false});
     var fovSt = useState(initialFov), fov=fovSt[0], setFov=fovSt[1];
+    var flagSt = useState(initialFlags), flags=flagSt[0], setFlags=flagSt[1];
     var pulseSt = useState(0), pulse=pulseSt[0], setPulse=pulseSt[1];
     var hideTimer = useRef(null);
 
@@ -13673,8 +13736,14 @@ function startApp() {
           hideTimer.current = setTimeout(function(){ setPulse(function(p){ return p; }); }, 1100);
         }
       }
+      function onFlag(e){ if (e && e.detail) setFlags(Object.assign({}, e.detail)); }
       window.addEventListener('cc-walk-fov', onFov);
-      return function(){ window.removeEventListener('cc-walk-fov', onFov); if (hideTimer.current) clearTimeout(hideTimer.current); };
+      window.addEventListener('cc-walk-flag', onFlag);
+      return function(){
+        window.removeEventListener('cc-walk-fov', onFov);
+        window.removeEventListener('cc-walk-flag', onFlag);
+        if (hideTimer.current) clearTimeout(hideTimer.current);
+      };
     }, []);
 
     function applyFov(v){ if (window._ccWalkSetFov) window._ccWalkSetFov(v); }
@@ -13719,13 +13788,24 @@ function startApp() {
           <span><b>Shift+Scroll</b> dolly-zoom</span>
         </div>
         <div style=${{background:'rgba(15,23,42,.92)',borderRadius:10,padding:'.4rem .55rem',
-          display:'flex',alignItems:'center',gap:'.4rem',border:'1px solid rgba(148,163,184,.2)',backdropFilter:'blur(8px)'}}>
+          display:'flex',alignItems:'center',gap:'.4rem',border:'1px solid rgba(148,163,184,.2)',backdropFilter:'blur(8px)',flexWrap:'wrap',justifyContent:'center'}}>
           <span style=${{fontSize:'0.62rem',color:'rgba(255,255,255,.55)',fontWeight:600,textTransform:'uppercase',letterSpacing:'.05em',marginLeft:'.2rem'}}>FOV</span>
           ${presets.map(presetBtn)}
           <input type="range" min="30" max="110" step="1" value=${Math.round(fov)}
             onInput=${function(e){applyFov(parseFloat(e.target.value));}}
             style=${{width:90,accentColor:'#7c3aed'}} />
           <span style=${{fontSize:'0.66rem',color:'rgba(255,255,255,.65)',fontVariantNumeric:'tabular-nums',width:32,textAlign:'right'}}>${Math.round(fov)}°</span>
+          <span style=${{width:1,height:18,background:'rgba(255,255,255,.15)',margin:'0 .3rem'}}></span>
+          <button onClick=${function(){if(window._ccWalkSetCollision)window._ccWalkSetCollision(!flags.collision);}}
+            title="Toggle no-clip — when off you walk through walls"
+            style=${{padding:'.25rem .55rem',background:!flags.collision?'rgba(168,85,247,.85)':'rgba(255,255,255,.08)',color:'#fff',border:'1px solid '+(!flags.collision?'rgba(167,139,250,.6)':'rgba(255,255,255,.12)'),borderRadius:5,fontSize:'0.66rem',fontWeight:600,cursor:'pointer',fontFamily:'inherit',lineHeight:1.1}}>
+            ${!flags.collision ? 'No-clip' : 'Solid walls'}
+          </button>
+          <button onClick=${function(){if(window._ccWalkSetBob)window._ccWalkSetBob(!flags.bob);}}
+            title="Toggle head-bob — subtle vertical motion while walking"
+            style=${{padding:'.25rem .55rem',background:flags.bob?'rgba(168,85,247,.85)':'rgba(255,255,255,.08)',color:'#fff',border:'1px solid '+(flags.bob?'rgba(167,139,250,.6)':'rgba(255,255,255,.12)'),borderRadius:5,fontSize:'0.66rem',fontWeight:600,cursor:'pointer',fontFamily:'inherit',lineHeight:1.1}}>
+            Head-bob ${flags.bob?'on':'off'}
+          </button>
           <button onClick=${function(){
               if (window._ccWalkExit) window._ccWalkExit();
               d({t:A.WALK_MODE, v:false});
