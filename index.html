@@ -199,6 +199,11 @@
     }
     .cc-left-panel{overflow-x:hidden!important}
     .cc-left-panel>*{min-width:0;overflow-x:hidden}
+    /* ── Overlay panels (float above canvas) ── */
+    @media(min-width:769px){
+      .cc-left-rail{position:absolute!important;left:0!important;top:0!important;bottom:0!important;z-index:20!important;border-right:1px solid var(--glass-border);box-shadow:4px 0 16px rgba(0,0,0,.18)}
+      .cc-left-panel{position:absolute!important;left:48px!important;top:0!important;bottom:0!important;z-index:15!important;box-shadow:4px 0 24px rgba(0,0,0,.28);border-right:1px solid var(--border)}
+    }
     .cc-side-panel{overflow-x:hidden}
     .cc-side-panel>*{min-width:0}
     body{background:var(--bg-primary);color:var(--text-primary);font-family:var(--font-body);overflow:hidden;-webkit-font-smoothing:antialiased;-moz-osx-font-smoothing:grayscale}
@@ -303,7 +308,7 @@
     .cc-header{display:none!important}
     @media(max-width:768px){.cc-header{display:flex!important}}
     /* ── Desktop top bar ── */
-    .cc-desktop-topbar{display:flex;align-items:center;justify-content:space-between;padding:0 var(--space-3);height:44px;flex-shrink:0;
+    .cc-desktop-topbar{display:flex;align-items:center;justify-content:space-between;padding:0 var(--space-3);padding-left:calc(48px + var(--space-3));height:44px;flex-shrink:0;
       background:var(--glass-bg);-webkit-backdrop-filter:var(--glass-blur);backdrop-filter:var(--glass-blur);
       border-bottom:1px solid var(--glass-border);gap:var(--space-3);z-index:10;position:relative;}
     @media(max-width:768px){.cc-desktop-topbar{display:none!important}}
@@ -918,7 +923,7 @@ function startApp() {
       case 'CHAT_OPEN':   return Object.assign({},s,{chatOpen:!!a.v});
       case A.UPD_FILTERS: return Object.assign({},s,{filters:Object.assign({},s.filters,a.u)});
       case A.RESET_FILTERS: return Object.assign({},s,{filters:Object.assign({},INIT_FILTERS)});
-      case A.SECTION:     if(a.axis&&!s.sectionAxis) _gcEvent('section-plane', a.axis); return Object.assign({},s,{sectionAxis:a.axis, sectionPos:a.pos!=null?a.pos:s.sectionPos, sectionCustom:null, sectionStorey:a.storeyName||null});
+      case A.SECTION:     if(a.axis&&!s.sectionAxis) _gcEvent('section-plane', a.axis); return Object.assign({},s,{sectionAxis:a.axis, sectionPos:a.pos!=null?a.pos:s.sectionPos, sectionCustom:null, sectionStorey:a.storeyName||null, walkMode:false, measureMode:a.axis?null:s.measureMode, commentMode:false});
       case A.SECTION_CUSTOM: return Object.assign({},s,{sectionAxis:null, sectionCustom:a.v, sectionPos:a.pos!=null?a.pos:0.5});
       case A.TAB:         var tabUpd={tab:a.v,sectionAxis:null,sectionCustom:null}; if(a.v!==s.tab&&(a.v==='clashes'||a.v==='issues'||s.tab==='clashes'||s.tab==='issues'))tabUpd.activeId=null; return Object.assign({},s,tabUpd);
       case A.SETTINGS:    return Object.assign({},s,{showSettings:a.v});
@@ -936,7 +941,7 @@ function startApp() {
         try { localStorage.setItem('cc_smartViews', JSON.stringify(sv2)); } catch(e){}
         return Object.assign({},s,{smartViews:sv2});
       }
-      case A.COMMENT_MODE: return Object.assign({},s,{commentMode:!!a.v});
+      case A.COMMENT_MODE: return Object.assign({},s,{commentMode:!!a.v, walkMode:a.v?false:s.walkMode, measureMode:a.v?null:s.measureMode});
       case A.SET_ACTIVE_COMMENT: return Object.assign({},s,{activeCommentId:a.v||null});
       case A.ADD_COMMENT: return Object.assign({},s,{comments:s.comments.concat([a.v])});
       case A.UPD_COMMENT: return Object.assign({},s,{comments:s.comments.map(function(c){return c.id===a.id?Object.assign({},c,a.u):c;})});
@@ -955,14 +960,14 @@ function startApp() {
         if(a.u&&a.u.defaultTolerances!==undefined){try{localStorage.setItem('cc_defaultTolerances',JSON.stringify(a.u.defaultTolerances));}catch(e){}}
         if(a.u){var _pk=['autoFlyTo','autoHighlight','showGrid','showAxes','showMarkers','hoverHighlight','outlineSelected','defaultPriority','defaultCategory','defaultStatus','defaultMaxGap','resetFiltersOnRun','renderStyle','unitScaleOverride'];_pk.forEach(function(k){if(a.u[k]!==undefined){try{localStorage.setItem('cc_'+k,JSON.stringify(a.u[k]));}catch(e){}}});}
         return Object.assign({},s,{prefs:Object.assign({},s.prefs,a.u)});
-      case A.MEASURE_MODE: return Object.assign({},s,{measureMode:a.v});
+      case A.MEASURE_MODE: return Object.assign({},s,{measureMode:a.v, walkMode:a.v?false:s.walkMode, sectionAxis:a.v?null:s.sectionAxis, sectionCustom:a.v?null:s.sectionCustom, commentMode:a.v?false:s.commentMode});
       case A.ADD_MEASUREMENT: _gcEvent('measurement', a.v&&a.v.type||'length'); return Object.assign({},s,{measurements:s.measurements.concat([a.v])});
       case A.DEL_MEASUREMENT: return Object.assign({},s,{measurements:s.measurements.filter(function(m){return m.id!==a.id})});
       case A.CLEAR_MEASUREMENTS: return Object.assign({},s,{measurements:[]});
       case A.ADD_VIEWPOINT: return Object.assign({},s,{viewpoints:s.viewpoints.concat([a.v])});
       case A.DEL_VIEWPOINT: return Object.assign({},s,{viewpoints:s.viewpoints.filter(function(v){return v.id!==a.id})});
       case A.SET_CLASSIFICATIONS: return Object.assign({},s,{classifications:a.v});
-      case A.SECTION_BOX:  return Object.assign({},s,{sectionBox:a.v, sectionAxis:null, sectionCustom:null});
+      case A.SECTION_BOX:  return Object.assign({},s,{sectionBox:a.v, sectionAxis:null, sectionCustom:null, walkMode:a.v?false:s.walkMode});
       case A.TOGGLE_CLASS_VIS: var hc2=Object.assign({},s.hiddenClasses); if(hc2[a.key])delete hc2[a.key];else hc2[a.key]=true; return Object.assign({},s,{hiddenClasses:hc2});
       case A.SHOW_ALL_CLASSES: return Object.assign({},s,{hiddenClasses:{}});
       case '_REPLACE_HIDDEN_CLASSES': return Object.assign({},s,{hiddenClasses:Object.assign({},a.v||{})});
@@ -970,8 +975,8 @@ function startApp() {
       case A.COLOR_BY_CLASS: return Object.assign({},s,{colorByClass:s.colorByClass===a.v?null:a.v});
 
       case A.TREE:         return Object.assign({},s,{treeOpen:a.v});
-      case A.FLOOR_PLAN:   return Object.assign({},s,{floorPlan:a.v, sectionAxis:null, sectionCustom:null, sectionBox:null});
-      case A.WALK_MODE:    return Object.assign({},s,{walkMode:!!a.v});
+      case A.FLOOR_PLAN:   return Object.assign({},s,{floorPlan:a.v, sectionAxis:null, sectionCustom:null, sectionBox:null, walkMode:a.v?false:s.walkMode, measureMode:a.v?null:s.measureMode, commentMode:a.v?false:s.commentMode});
+      case A.WALK_MODE:    return Object.assign({},s,{walkMode:!!a.v, sectionAxis:a.v?null:s.sectionAxis, sectionCustom:a.v?null:s.sectionCustom, sectionBox:a.v?null:s.sectionBox, measureMode:a.v?null:s.measureMode, floorPlan:a.v?null:s.floorPlan, commentMode:a.v?false:s.commentMode});
       case A.SET_HIGHLIGHTED_STOREY: return Object.assign({},s,{_highlightedStorey:a.v});
       case A.SET_PROJECT:  return Object.assign({},s,{activeProject:a.id});
       case A.SET_PROJECT_LIST: return Object.assign({},s,{projectList:a.v});
@@ -11364,7 +11369,7 @@ function startApp() {
 
     return html`<div style=${{display:'flex',flexDirection:'column',flex:1,overflow:'hidden',minHeight:0}}>
       ${!hideTabBar && html`<div style=${{display:'flex',borderBottom:'1px solid var(--border-subtle)',flexShrink:0}} role="tablist">
-        ${[{id:'clashes',label:'Clashes',n:oC,bg:'#ef4444'},{id:'issues',label:'Issues',n:oI,bg:'#f59e0b'},{id:'navigator',label:'Navigator',n:0,bg:'#34d399'},{id:'standards',label:'Standards',n:0,bg:'#0ea5e9'}].map(function(t){return html`
+        ${[{id:'clashes',label:'Conflicts',n:oC,bg:'#ef4444'},{id:'issues',label:'Issues',n:oI,bg:'#f59e0b'},{id:'navigator',label:'Navigator',n:0,bg:'#34d399'},{id:'standards',label:'Standards',n:0,bg:'#0ea5e9'}].map(function(t){return html`
           <button key=${t.id} onClick=${function(){d({t:A.TAB,v:t.id})}} role="tab" aria-selected=${s.tab===t.id}
             style=${{...S_BTN,flex:1,background:'none',borderRadius:0,padding:'.6rem',color:s.tab===t.id?'var(--text-primary)':'var(--text-faint)',borderBottom:s.tab===t.id?'2px solid #3b82f6':'2px solid transparent'}}>
             ${t.label}${t.n>0?html`<span style=${{marginLeft:'.3rem',background:t.bg,color:'#fff',fontSize:'0.69rem',padding:'.05rem .35rem',borderRadius:99}}>${t.n}</span>`:''}
@@ -14353,7 +14358,7 @@ function startApp() {
       }
     });
     presets.push({
-      id:'sv_by_storey', name:'By Storey', isPreset:true,
+      id:'sv_by_storey', name:'By Floor', isPreset:true,
       icon:'🏢',
       apply:function(){
         if (window._ccDispatch) {
@@ -20059,8 +20064,8 @@ function startApp() {
     var _aiDotCol = _nlBackend==='ollama' ? '#22c55e' : _nlBackend==='browser' ? '#f59e0b' : null;
 
     return html`<div class="cc-left-rail" style=${{
-      width:48,flexShrink:0,background:'var(--bg-primary)',
-      display:'flex',flexDirection:'column',overflow:'visible',userSelect:'none',position:'relative',zIndex:10
+      width:48,background:'var(--bg-primary)',
+      display:'flex',flexDirection:'column',overflow:'visible',userSelect:'none'
     }}>
       <div style=${{height:48,display:'flex',alignItems:'center',justifyContent:'center',flexShrink:0}}>
         <div class="cc-logo-mark cc-tip" data-tip=${'ClashControl v'+CC_VERSION.v}
@@ -20071,7 +20076,7 @@ function startApp() {
       </div>
       <div class="cc-rail-tabs" style=${{display:'flex',flexDirection:'column'}}>
         ${tabBtn('models',  SVG_MODELS,  'Models',   s.models.length)}
-        ${tabBtn('clashes', SVG_CLASHES, 'Clashes',  clashN)}
+        ${tabBtn('clashes', SVG_CLASHES, 'Conflicts',  clashN)}
         ${tabBtn('issues',  SVG_ISSUES,  'Issues',   issueN)}
         ${tabBtn('dataquality',SVG_DATAQUALITY,'Data Quality',0)}
         ${tabBtn('navigator',SVG_EXPLORE, 'Navigator', 0)}
@@ -20266,7 +20271,7 @@ function startApp() {
         html`<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
           <path d="M12 2v4m0 12v4M2 12h4m12 0h4"/><circle cx="12" cy="12" r="3"/><path d="M6.34 6.34l2.83 2.83m5.66 5.66l2.83 2.83M17.66 6.34l-2.83 2.83m-5.66 5.66l-2.83 2.83"/>
         </svg>`,
-        'Addons')}
+        'Integrations')}
       ${iconBtn(function(){d({t:A.SETTINGS,v:true});},
         html`<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" dangerouslySetInnerHTML=${{__html:SVG_GEAR}}></svg>`,
         'Settings')}
@@ -20877,11 +20882,11 @@ function startApp() {
     if (!tab) return null;
     var projects=s.projectList||[];
     var activeProj=projects.find(function(p){return p.id===s.activeProject;})||projects[0]||{name:'Default'};
-    var TITLES={models:'Models',clashes:'Clashes',issues:'Issues',navigator:'Navigator',dataquality:'Data Quality',tools:'Tools',addons:'Addons',standards:'Standards'};
+    var TITLES={models:'Models',clashes:'Conflicts',issues:'Issues',navigator:'Navigator',dataquality:'Data Quality',tools:'Tools',addons:'Integrations',standards:'Standards'};
     var onResizeDown = _makeResizeHandler(dragRef, setPanelW, 200, 600, false);
     return html`<div class="cc-left-panel" style=${{
-      width:panelW,flexShrink:0,display:'flex',flexDirection:'column',overflow:'hidden',
-      background:'var(--bg-primary)',position:'relative'
+      width:panelW,display:'flex',flexDirection:'column',overflow:'hidden',
+      background:'var(--bg-primary)'
     }}>
       <div onMouseDown=${onResizeDown} style=${{position:'absolute',right:0,top:0,bottom:0,width:8,cursor:'col-resize',zIndex:10,
         background:'transparent',transition:'background .15s'}} onMouseEnter=${function(e){e.currentTarget.style.background='rgba(59,130,246,0.3)';}} onMouseLeave=${function(e){e.currentTarget.style.background='transparent';}}></div>
@@ -20915,20 +20920,117 @@ function startApp() {
     var collSt=useState(function(){
       try { return localStorage.getItem('cc_ai_panel_collapsed')==='1'; } catch(e) { return false; }
     }), collapsed=collSt[0], setCollapsed=collSt[1];
+    var tabSt=useState('ai'), drawerTab=tabSt[0], setDrawerTab=tabSt[1];
+    var elSt=useState(null), drawerEl=elSt[0], setDrawerEl=elSt[1];
     var dragRef=useRef(null);
     var onResizeDown = _makeResizeHandler(dragRef, function(w){ setPanelW(w); try{localStorage.setItem('cc_ai_panel_w',String(w));}catch(e){} }, 250, 600, true);
+
+    // Poll window._ccSelectedEl to drive the Details tab
+    useEffect(function(){
+      var prev = null;
+      var t = setInterval(function(){
+        var cur = window._ccSelectedEl || null;
+        if (cur !== prev) {
+          prev = cur;
+          setDrawerEl(cur);
+          if (cur) { setDrawerTab('details'); if(collapsed) setCollapsed(false); }
+        }
+      }, 250);
+      return function(){ clearInterval(t); };
+    }, [collapsed]);
 
     // Collapsed: thin tab on the right edge
     if (collapsed) {
       return html`<button onClick=${function(){ setCollapsed(false); try{localStorage.setItem('cc_ai_panel_collapsed','0');}catch(e){} }}
-        title="Open AI chat"
+        title="Open panel"
         style=${{
           position:'absolute', right:0, top:'50%', transform:'translateY(-50%)',
           zIndex:1100, background:'var(--bg-secondary)', border:'1px solid var(--border)',
           borderRight:'none', borderRadius:'8px 0 0 8px', padding:'.6rem .35rem',
           cursor:'pointer', color:'var(--text-secondary)', fontSize:'0.78rem',
           writingMode:'vertical-rl', boxShadow:'var(--shadow-md)'
-        }}>AI Chat ›</button>`;
+        }}>${drawerEl ? 'Details ›' : 'Ask AI ›'}</button>`;
+    }
+
+    // ── Details tab content ──
+    function renderDetails() {
+      var el = drawerEl;
+      if (!el) {
+        return html`<div style=${{flex:1,display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',
+          padding:'2rem 1.2rem',color:'var(--text-muted)',textAlign:'center',gap:'1rem'}}>
+          <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" style=${{opacity:.35}}><rect x="3" y="3" width="18" height="18" rx="4"/><line x1="9" y1="9" x2="15" y2="9"/><line x1="9" y1="13" x2="13" y2="13"/></svg>
+          <div style=${{fontSize:'.78rem',lineHeight:1.6}}>Click any element in the model to see its details here.</div>
+        </div>`;
+      }
+      // Find full element data
+      var _latestEl = null;
+      var latestState = window._ccLatestState || s;
+      if (el.expressId != null && latestState.models) {
+        for (var _mi=0; _mi<latestState.models.length && !_latestEl; _mi++) {
+          var _mdl=latestState.models[_mi];
+          if (!_mdl || !_mdl.elements) continue;
+          for (var _ei=0; _ei<_mdl.elements.length; _ei++) {
+            if (_mdl.elements[_ei].expressId===el.expressId){_latestEl=_mdl.elements[_ei];break;}
+          }
+        }
+      }
+      var ep=(_latestEl&&_latestEl.props)||(el&&el.props)||null;
+      var typeName=String(ep&&ep.ifcType||'Element').replace(/^Ifc/,'').replace(/StandardCase$/,'').replace(/([a-z])([A-Z])/g,'$1 $2');
+      var elName=ep&&ep.name||'Unnamed element';
+      var storey=ep&&(ep.storey||ep.psets&&ep.psets['Constraints']&&ep.psets['Constraints']['Base Constraint'])||null;
+      var discipline=el.modelName||'';
+      // Linked issues
+      var linkedIssues=(latestState.issues||[]).filter(function(i){return i.elementId===el.expressId||i.globalId===(ep&&ep.globalId);});
+      var linkedClashes=(latestState.clashes||[]).filter(function(c){return (c.a&&c.a.expressId===el.expressId)||(c.b&&c.b.expressId===el.expressId);});
+      var CHIP={fontSize:'.68rem',padding:'.15rem .4rem',borderRadius:'var(--radius-pill)',background:'var(--accent-dim)',color:'var(--accent-light)',display:'inline-block'};
+      var ROW={display:'flex',gap:'.4rem',alignItems:'baseline',padding:'.25rem 0',borderBottom:'1px solid var(--border-subtle)',fontSize:'.75rem'};
+      var LBL={color:'var(--text-muted)',minWidth:80,flexShrink:0};
+      var VAL={color:'var(--text-primary)',flex:1,wordBreak:'break-word'};
+      return html`<div style=${{flex:1,overflowY:'auto',padding:'.75rem .9rem',display:'flex',flexDirection:'column',gap:'.6rem'}}>
+        <!-- Header card -->
+        <div style=${{background:'var(--accent-dim)',borderRadius:'var(--radius-md)',padding:'.7rem .85rem',border:'1px solid rgba(124,58,237,.2)'}}>
+          <div style=${{fontSize:'.68rem',color:'var(--accent-subtle)',marginBottom:'.2rem',textTransform:'uppercase',letterSpacing:'.04em'}}>${typeName}</div>
+          <div style=${{fontSize:'1rem',fontWeight:700,color:'var(--text-primary)',lineHeight:1.3}}>${elName}</div>
+          ${discipline && html`<div style=${{fontSize:'.7rem',color:'var(--text-secondary)',marginTop:'.3rem'}}>${discipline}</div>`}
+        </div>
+        <!-- Key facts -->
+        <div style=${{background:'var(--bg-secondary)',borderRadius:'var(--radius-sm)',padding:'.5rem .75rem',border:'1px solid var(--border-subtle)'}}>
+          ${storey && html`<div style=${ROW}><span style=${LBL}>Floor</span><span style=${VAL}>${storey}</span></div>`}
+          ${ep&&ep.globalId && html`<div style=${ROW}><span style=${LBL}>ID</span><span style=${{...VAL,fontFamily:'var(--font-mono)',fontSize:'.68rem',opacity:.7}}>${ep.globalId.slice(0,12)}…</span></div>`}
+        </div>
+        <!-- Pset quick-view (first 5 props) -->
+        ${ep&&ep.psets && function(){
+          var allP=[];
+          Object.keys(ep.psets).forEach(function(setName){
+            var ps=ep.psets[setName];
+            Object.keys(ps).forEach(function(k){ if(allP.length<8) allP.push({k:k.replace(/([a-z])([A-Z])/g,'$1 $2'),v:String(ps[k])}); });
+          });
+          if(!allP.length) return null;
+          return html`<div style=${{background:'var(--bg-secondary)',borderRadius:'var(--radius-sm)',padding:'.5rem .75rem',border:'1px solid var(--border-subtle)'}}>
+            <div style=${{fontSize:'.68rem',fontWeight:600,color:'var(--text-muted)',textTransform:'uppercase',letterSpacing:'.04em',marginBottom:'.3rem'}}>Properties</div>
+            ${allP.map(function(p){return html`<div style=${ROW}><span style=${LBL}>${p.k}</span><span style=${VAL}>${p.v}</span></div>`;})}
+          </div>`;
+        }()}
+        <!-- Linked issues -->
+        ${(linkedIssues.length>0||linkedClashes.length>0) && html`<div style=${{background:'var(--bg-secondary)',borderRadius:'var(--radius-sm)',padding:'.5rem .75rem',border:'1px solid var(--border-subtle)'}}>
+          <div style=${{fontSize:'.68rem',fontWeight:600,color:'var(--text-muted)',textTransform:'uppercase',letterSpacing:'.04em',marginBottom:'.35rem'}}>Linked</div>
+          ${linkedIssues.map(function(i){return html`<div key=${i.id} style=${{fontSize:'.75rem',padding:'.2rem 0',color:'var(--text-secondary)',display:'flex',gap:'.4rem',alignItems:'center'}}>
+            <svg width="10" height="10" viewBox="0 0 24 24" fill="${i.status==='open'?'#f59e0b':'#22c55e'}" stroke="none"><circle cx="12" cy="12" r="10"/></svg>
+            <span>${i.title||'Issue'}</span>
+          </div>`;})}
+          ${linkedClashes.map(function(c){return html`<div key=${c.id} style=${{fontSize:'.75rem',padding:'.2rem 0',color:'var(--text-secondary)',display:'flex',gap:'.4rem',alignItems:'center'}}>
+            <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="#ef4444" stroke-width="2.5"><path d="M12 9v4m0 4h.01M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/></svg>
+            <span style=${{color:'var(--text-muted)',fontFamily:'var(--font-mono)',fontSize:'.68rem'}}>${c.title||'Conflict'}</span>
+          </div>`;})}
+        </div>`}
+        <!-- Actions -->
+        <div style=${{display:'flex',gap:'.4rem',flexWrap:'wrap'}}>
+          <button onClick=${function(){d({t:A.MODAL,v:true,el:el});d({t:A.TAB,v:'issues'});}}
+            style=${{flex:1,padding:'.4rem .6rem',borderRadius:'var(--radius-sm)',background:'var(--accent)',color:'#fff',border:'none',fontSize:'.74rem',fontWeight:600,cursor:'pointer',fontFamily:'inherit'}}>+ New issue</button>
+          <button onClick=${function(){setDrawerTab('ai');}}
+            style=${{flex:1,padding:'.4rem .6rem',borderRadius:'var(--radius-sm)',background:'var(--bg-tertiary)',color:'var(--text-secondary)',border:'1px solid var(--border)',fontSize:'.74rem',fontWeight:500,cursor:'pointer',fontFamily:'inherit'}}>Ask AI</button>
+        </div>
+      </div>`;
     }
 
     return html`<div class="cc-side-panel cc-ai-panel" style=${{
@@ -20940,155 +21042,140 @@ function startApp() {
       zIndex:1100
     }}>
       <div onMouseDown=${onResizeDown} style=${{position:'absolute',left:0,top:0,bottom:0,width:8,cursor:'col-resize',zIndex:10,
-        background:'transparent',transition:'background .15s',borderRadius:'14px 0 0 14px'}} onMouseEnter=${function(e){e.currentTarget.style.background='rgba(59,130,246,0.3)';}} onMouseLeave=${function(e){e.currentTarget.style.background='transparent';}}></div>
-      <button onClick=${function(){ setCollapsed(true); try{localStorage.setItem('cc_ai_panel_collapsed','1');}catch(e){} }}
-        title="Collapse AI chat" style=${{
-          position:'absolute', right:8, top:'50%', transform:'translateY(-50%)', zIndex:11,
-          background:'var(--bg-secondary)', border:'1px solid var(--border)',
-          borderRadius:6, cursor:'pointer', color:'var(--text-secondary)',
-          fontSize:'1.3rem', padding:'.3rem .45rem', lineHeight:1,
-          boxShadow:'var(--shadow-sm)'
-        }}>›</button>
-      <${NLCommandPanel} s=${s} d=${d} docked=${true} />
+        background:'transparent',transition:'background .15s',borderRadius:'14px 0 0 14px'}} onMouseEnter=${function(e){e.currentTarget.style.background='rgba(124,58,237,0.3)';}} onMouseLeave=${function(e){e.currentTarget.style.background='transparent';}}></div>
+      <!-- Tab bar + collapse -->
+      <div style=${{display:'flex',alignItems:'center',borderBottom:'1px solid var(--border-subtle)',flexShrink:0,height:40,gap:0,paddingLeft:12}}>
+        ${['details','ai'].map(function(tab){
+          var labels={details:'Details',ai:'Ask AI'};
+          var isActive=drawerTab===tab;
+          var hasDot=tab==='details'&&drawerEl;
+          return html`<button key=${tab}
+            onClick=${function(){setDrawerTab(tab);}}
+            style=${{
+              background:'none',border:'none',borderBottom:isActive?'2px solid var(--accent)':'2px solid transparent',
+              color:isActive?'var(--accent-light)':'var(--text-muted)',
+              padding:'.2rem .6rem',fontSize:'.75rem',fontWeight:isActive?600:400,
+              cursor:'pointer',fontFamily:'inherit',height:'100%',display:'flex',alignItems:'center',gap:'.3rem',
+              marginBottom:'-1px',transition:'color .12s,border-color .12s'
+            }}>
+            ${hasDot&&html`<span style=${{width:6,height:6,borderRadius:'50%',background:'var(--accent)',display:'inline-block'}}></span>`}
+            ${labels[tab]}
+          </button>`;
+        })}
+        <div style=${{flex:1}}></div>
+        <button onClick=${function(){ setCollapsed(true); try{localStorage.setItem('cc_ai_panel_collapsed','1');}catch(e){} }}
+          title="Close panel" style=${{
+            background:'none', border:'none', cursor:'pointer', color:'var(--text-muted)',
+            fontSize:'1.1rem', lineHeight:1, padding:'.3rem .5rem', marginRight:4,
+            borderRadius:6, transition:'color .12s'
+          }}>×</button>
+      </div>
+      ${drawerTab==='details' ? renderDetails() : html`<${NLCommandPanel} s=${s} d=${d} docked=${true} />`}
     </div>`;
   }
 
-  // ── First-Visit Setup Popup (PWA + Local Engine) ───────────────
+  // ── Model Load Card — shown when no model is loaded ──────────────
 
   function WelcomePopup(props) {
     var d = props.d, s = props.s;
-    var stShow = useState(function(){
-      try { return !localStorage.getItem('cc_setup_seen'); } catch(e){ return true; }
-    });
-    var show = stShow[0], setShow = stShow[1];
-    var stVisible = useState(false), vis = stVisible[0], setVis = stVisible[1];
-    useEffect(function(){ if(show) requestAnimationFrame(function(){ setVis(true); }); },[show]);
-    var stEngineAvail = useState(false), engineAvail = stEngineAvail[0], setEngineAvail = stEngineAvail[1];
-    var stEngineChecking = useState(true), engineChecking = stEngineChecking[0], setEngineChecking = stEngineChecking[1];
-    useEffect(function(){
-      if(!show) return;
-      if (window._checkLocalEngine) window._checkLocalEngine(null).then(function(ready){setEngineAvail(ready);setEngineChecking(false);}); else setEngineChecking(false);
-    },[show]);
-    function dismiss() {
-      setVis(false);
-      setTimeout(function(){
-        try { localStorage.setItem('cc_setup_seen','1'); } catch(e){}
-        try { localStorage.setItem('cc_consent_banner_seen','1'); } catch(e){}
-        try { localStorage.setItem('cc_seen_version', CC_VERSION.v); } catch(e){}
-        setShow(false);
-      }, 200);
-    }
-    function acceptSetup() {
-      if (window._ccPwaPromptInstall) {
-        window._ccPwaPromptInstall();
-      }
-      if (engineAvail) {
-        try { localStorage.setItem('cc_local_engine','1'); } catch(e){}
-        d({t:A.UPD_LOCAL_ENGINE, u:{active:true, available:true}});
-      }
-      dismiss();
-    }
-    useEffect(function(){
-      if(!show) return;
-      function onKey(e){if(e.key==='Escape') dismiss();}
-      window.addEventListener('keydown', onKey);
-      return function(){window.removeEventListener('keydown', onKey);};
-    },[show]);
-    if (!show) return null;
-    var pwaAvail = !!(window._ccPwaInstallPrompt && window._ccPwaInstallPrompt());
-    var CARD = {background:'var(--card-bg)',border:'1px solid var(--card-border)',borderRadius:10,padding:'.65rem .75rem',display:'flex',gap:'.6rem',alignItems:'flex-start',cursor:'default'};
+    if (s.models && s.models.length > 0) return null;
+    if (s.presenting) return null;
 
-    return html`<div role="dialog" aria-modal="true" aria-labelledby="cc-welcome-title" style=${{position:'fixed',inset:0,background:vis?'var(--modal-bg)':'transparent',display:'flex',alignItems:'center',justifyContent:'center',zIndex:60,transition:'background var(--duration-base) var(--ease-standard)',overflow:'hidden',padding:'var(--space-6) 0',backdropFilter:'blur(2px)',WebkitBackdropFilter:'blur(2px)'}}
-      onClick=${function(e){if(e.target===e.currentTarget)dismiss();}}>
-      <div style=${{background:'var(--bg-secondary)',border:'1px solid var(--border)',borderRadius:'var(--radius-xl)',width:460,maxWidth:'92vw',maxHeight:'85vh',overflowY:'auto',WebkitOverflowScrolling:'touch',boxShadow:'var(--shadow-lg)',transform:vis?'translateY(0) scale(1)':'translateY(12px) scale(.97)',opacity:vis?1:0,transition:'transform var(--duration-slow) var(--ease-decelerate), opacity var(--duration-base) var(--ease-standard)',flexShrink:0}}>
+    var stVis = useState(false), vis = stVis[0], setVis = stVis[1];
+    var stDrag = useState(false), dragging = stDrag[0], setDragging = stDrag[1];
+    var stUrlOpen = useState(false), urlOpen = stUrlOpen[0], setUrlOpen = stUrlOpen[1];
+    var stUrl = useState(''), urlVal = stUrl[0], setUrlVal = stUrl[1];
 
-        <!-- Header -->
-        <div style=${{background:'linear-gradient(135deg,#0f172a 0%,#1a1147 40%,#7c3aed 100%)',padding:'1.4rem 1.4rem 1.2rem',position:'relative',overflow:'hidden'}}>
-          <div style=${{position:'absolute',top:'-30%',right:'-10%',width:180,height:180,borderRadius:'50%',background:'rgba(124,58,237,.25)',filter:'blur(40px)'}}></div>
-          <div style=${{display:'flex',alignItems:'center',gap:'.75rem',position:'relative'}}>
-            <div style=${{width:42,height:42,background:'rgba(255,255,255,.12)',borderRadius:12,display:'flex',alignItems:'center',justifyContent:'center',flexShrink:0,backdropFilter:'blur(8px)',border:'1px solid rgba(255,255,255,.1)'}}>
-              <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#93c5fd" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
-                <path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/>
-              </svg>
+    useEffect(function(){ requestAnimationFrame(function(){ setVis(true); }); }, []);
+
+    function openFile() { if (window._ccOpenIFC) window._ccOpenIFC(); }
+
+    function loadUrl() {
+      var u = urlVal.trim();
+      if (!u) return;
+      if (!/^https?:\/\//.test(u)) u = 'https://' + u;
+      fetch(u).then(function(r){ return r.arrayBuffer(); }).then(function(buf){
+        var name = u.split('/').pop().split('?')[0] || 'model.ifc';
+        var file = new File([buf], name, {type:'application/octet-stream'});
+        if (window._ccLoadFiles) window._ccLoadFiles([file]);
+      }).catch(function(){ alert('Could not load that URL — check the server allows cross-origin requests.'); });
+      setUrlOpen(false);
+    }
+
+    function openShare() { if (window._pickSharedFolder) window._pickSharedFolder(d); }
+
+    return html`<div style=${{
+      position:'fixed',inset:0,display:'flex',alignItems:'center',justifyContent:'center',
+      zIndex:50,pointerEvents:'none',
+      opacity:vis?1:0,transition:'opacity .2s ease'
+    }}>
+      <div style=${{
+        pointerEvents:'auto',
+        background:'var(--glass-bg)',
+        backdropFilter:'var(--glass-blur)',WebkitBackdropFilter:'var(--glass-blur)',
+        border:'1px solid var(--glass-border)',
+        borderRadius:'var(--radius-xl)',
+        width:440,maxWidth:'92vw',
+        boxShadow:'0 24px 64px rgba(0,0,0,.45)',
+        overflow:'hidden',
+        transform:vis?'translateY(0)':' translateY(16px)',
+        transition:'transform .25s var(--ease-decelerate)'
+      }}>
+        <div
+          onDragOver=${function(e){e.preventDefault();setDragging(true);}}
+          onDragLeave=${function(){setDragging(false);}}
+          onDrop=${function(e){
+            e.preventDefault(); setDragging(false);
+            var files=Array.from(e.dataTransfer.files).filter(function(f){return /\.(ifc|glb)$/i.test(f.name);});
+            if(files.length && window._ccLoadFiles) window._ccLoadFiles(files);
+          }}
+          onClick=${openFile}
+          style=${{
+            padding:'2.5rem 2rem',
+            display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',
+            cursor:'pointer',userSelect:'none',textAlign:'center',gap:'1rem',
+            background:dragging?'var(--accent-dim)':\'transparent\',
+            border:dragging?'2px dashed var(--accent)':\'2px dashed rgba(255,255,255,.12)\',
+            borderRadius:'var(--radius-lg)',margin:'1.2rem',
+            transition:'background .15s,border-color .15s'
+          }}>
+          <div style=${{width:56,height:56,borderRadius:'var(--radius-lg)',background:'var(--accent-bg)',border:'1px solid rgba(124,58,237,.25)',display:'flex',alignItems:'center',justifyContent:'center'}}>
+            <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="var(--accent-light)" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="12" y1="18" x2="12" y2="12"/><line x1="9" y1="15" x2="15" y2="15"/></svg>
+          </div>
+          <div>
+            <div style=${{fontSize:'1.05rem',fontWeight:700,color:'var(--text-primary)',marginBottom:'.35rem',fontFamily:'var(--font-display)'}}>
+              ${dragging ? 'Drop it' : 'Open a model'}
             </div>
-            <div>
-              <div id="cc-welcome-title" style=${{color:'#fff',fontWeight:'var(--weight-bold)',fontSize:'var(--text-lg)',letterSpacing:'-.01em',fontFamily:'var(--font-display)'}}>Welcome to ClashControl</div>
-              <div style=${{color:'rgba(255,255,255,.6)',fontSize:'.65rem',marginTop:'.15rem'}}>v${CC_VERSION.v} — Get the best experience</div>
+            <div style=${{fontSize:'.78rem',color:'var(--text-secondary)',lineHeight:1.6}}>
+              Drag an IFC or GLB file here, or click to browse.
             </div>
           </div>
         </div>
-
-        <!-- Body -->
-        <div style=${{padding:'1rem 1.3rem 1.2rem'}}>
-          <div style=${{fontSize:'.76rem',color:'var(--text-secondary)',lineHeight:1.7,marginBottom:'.85rem'}}>
-            ClashControl works best as an installed app with a local clash engine for faster, more accurate detection on large models.
-          </div>
-
-          <div style=${{display:'flex',flexDirection:'column',gap:'.5rem',marginBottom:'1rem'}}>
-
-            <!-- Install as App -->
-            <div style=${CARD}>
-              <div style=${{width:32,height:32,borderRadius:8,display:'flex',alignItems:'center',justifyContent:'center',flexShrink:0,background:pwaAvail?'rgba(124,58,237,.15)':'rgba(100,100,100,.1)'}}>
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke=${pwaAvail?'#60a5fa':'var(--text-faint)'} stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                  <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/>
-                </svg>
-              </div>
-              <div style=${{flex:1,minWidth:0}}>
-                <div style=${{display:'flex',alignItems:'center',gap:'.4rem',marginBottom:'.15rem'}}>
-                  <span style=${{fontSize:'0.83rem',fontWeight:600,color:'var(--text-primary)'}}>Install as Desktop App</span>
-                  ${pwaAvail && html`<span style=${{fontSize:'0.58rem',fontWeight:600,padding:'1px 5px',borderRadius:4,background:'rgba(124,58,237,.15)',color:'#60a5fa'}}>READY</span>`}
-                  ${!pwaAvail && html`<span style=${{fontSize:'0.58rem',fontWeight:600,padding:'1px 5px',borderRadius:4,background:'var(--tag-bg)',color:'var(--text-faint)'}}>BROWSER ONLY</span>`}
-                </div>
-                <div style=${{fontSize:'0.72rem',color:'var(--text-secondary)',lineHeight:1.6}}>
-                  ${pwaAvail ? 'Runs in its own window with offline support, faster loading, and native file handling.'
-                             : 'Already installed or not available in this browser. You can install later from the browser menu.'}
-                </div>
-              </div>
-            </div>
-
-            <!-- Local Clash Engine -->
-            <div style=${CARD}>
-              <div style=${{width:32,height:32,borderRadius:8,display:'flex',alignItems:'center',justifyContent:'center',flexShrink:0,background:engineAvail?'rgba(34,197,94,.12)':'rgba(234,179,8,.1)'}}>
-                ${engineChecking ? html`<div style=${{width:14,height:14,border:'2px solid var(--text-faint)',borderTopColor:'transparent',borderRadius:'50%',animation:'cc-spin .6s linear infinite'}}></div>`
-                  : html`<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke=${engineAvail?'var(--pill-green)':'#eab308'} stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                  <rect x="4" y="4" width="16" height="16" rx="2"/><path d="M9 9h6v6H9z"/><path d="M9 1v3M15 1v3M9 20v3M15 20v3M20 9h3M20 14h3M1 9h3M1 14h3"/>
-                </svg>`}
-              </div>
-              <div style=${{flex:1,minWidth:0}}>
-                <div style=${{display:'flex',alignItems:'center',gap:'.4rem',marginBottom:'.15rem'}}>
-                  <span style=${{fontSize:'0.83rem',fontWeight:600,color:'var(--text-primary)'}}>Local Clash Engine</span>
-                  ${!engineChecking && engineAvail && html`<span style=${{fontSize:'0.58rem',fontWeight:600,padding:'1px 5px',borderRadius:4,background:'rgba(34,197,94,.12)',color:'var(--pill-green)'}}>DETECTED</span>`}
-                  ${!engineChecking && !engineAvail && html`<span style=${{fontSize:'0.58rem',fontWeight:600,padding:'1px 5px',borderRadius:4,background:'rgba(234,179,8,.1)',color:'#eab308'}}>NOT FOUND</span>`}
-                </div>
-                <div style=${{fontSize:'0.72rem',color:'var(--text-secondary)',lineHeight:1.6}}>
-                  ${engineAvail ? 'Multi-threaded Python engine detected on localhost:19800. Enables exact mesh intersection and 5-10x faster detection on large models.'
-                               : 'Optional Python server for faster, exact clash detection. Not required \u2014 the built-in browser engine works fine for most projects.'}
-                </div>
-                ${!engineAvail && html`<div style=${{fontSize:'0.65rem',color:'var(--text-faint)',marginTop:'.25rem',lineHeight:1.5}}>
-                  Install with <code style=${{fontSize:'0.62rem',background:'var(--tag-bg)',padding:'1px 4px',borderRadius:3}}>pip install clashcontrol-engine</code> then <code style=${{fontSize:'0.62rem',background:'var(--tag-bg)',padding:'1px 4px',borderRadius:3}}>clashcontrol-engine --install</code>. Click Connect in the Addons tab when ready.
-                </div>`}
-              </div>
-            </div>
-          </div>
-
-          <!-- Footer actions -->
-          <div style=${{display:'flex',gap:'.5rem'}}>
-            <button onClick=${function(){dismiss();}}
-              style=${{flex:1,border:'1px solid var(--border)',cursor:'pointer',fontFamily:'inherit',fontSize:'0.86rem',borderRadius:8,padding:'.5rem 1rem',background:'none',color:'var(--text-secondary)',transition:'background .15s'}}>
-              Not now
+        <div style=${{padding:'0 1.2rem 1.4rem',display:'flex',flexDirection:'column',gap:'.5rem'}}>
+          ${!urlOpen && html`<button onClick=${function(){setUrlOpen(true);}}
+            style=${{width:'100%',padding:'.5rem .75rem',borderRadius:'var(--radius-sm)',
+              background:'var(--bg-secondary)',border:'1px solid var(--border)',
+              color:'var(--text-secondary)',fontSize:'.78rem',fontWeight:500,
+              cursor:'pointer',fontFamily:'inherit',display:'flex',alignItems:'center',gap:'.5rem'}}>
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>
+            Open from URL
+          </button>`}
+          ${urlOpen && html`<div style=${{display:'flex',gap:'.4rem'}}>
+            <input autofocus type="url" placeholder="https://example.com/model.ifc"
+              value=${urlVal}
+              onInput=${function(e){setUrlVal(e.target.value);}}
+              onKeyDown=${function(e){if(e.key==='Enter')loadUrl();if(e.key==='Escape')setUrlOpen(false);}}
+              style=${{flex:1,padding:'.4rem .6rem',borderRadius:'var(--radius-sm)',background:'var(--bg-secondary)',
+                color:'var(--text-primary)',border:'1px solid var(--accent)',outline:'none',
+                fontSize:'.78rem',fontFamily:'inherit'}} />
+            <button onClick=${loadUrl}
+              style=${{padding:'.4rem .7rem',borderRadius:'var(--radius-sm)',background:'var(--accent)',color:'#fff',border:'none',fontSize:'.75rem',fontWeight:600,cursor:'pointer',fontFamily:'inherit'}}>Load</button>
+          </div>`}
+          <div style=${{textAlign:'center',paddingTop:'.2rem'}}>
+            <button onClick=${openShare}
+              style=${{background:'none',border:'none',color:'var(--text-faint)',fontSize:'.72rem',cursor:'pointer',fontFamily:'inherit',textDecoration:'underline',textDecorationStyle:'dotted',textUnderlineOffset:'2px'}}>
+              or link a shared folder →
             </button>
-            <button onClick=${function(){acceptSetup();}}
-              style=${{flex:1,border:'none',cursor:'pointer',fontFamily:'inherit',fontSize:'0.92rem',borderRadius:8,padding:'.5rem 1.4rem',
-                background:pwaAvail||engineAvail?'#2563eb':'var(--bg-tertiary)',
-                color:pwaAvail||engineAvail?'#fff':'var(--text-muted)',
-                fontWeight:600,boxShadow:pwaAvail||engineAvail?'0 2px 8px rgba(124,58,237,.3)':'none',transition:'background .15s'}}>
-              ${pwaAvail && engineAvail ? 'Install App & Enable Engine' : pwaAvail ? 'Install App' : engineAvail ? 'Enable Engine' : 'Continue'}
-            </button>
-          </div>
-
-          <div style=${{fontSize:'0.65rem',color:'var(--text-faint)',marginTop:'.6rem',textAlign:'center',lineHeight:1.7}}>
-            ClashControl v${CC_VERSION.v} \u2014 Free & open source
-            <span style=${{display:'block'}}>Anonymous IFC type data is shared to improve detection. <button onClick=${function(){ try{localStorage.setItem('cc_data_consent','denied');}catch(e){} window.dispatchEvent(new Event('cc-consent-change')); }} style=${{background:'none',border:'none',color:'var(--accent)',cursor:'pointer',fontSize:'inherit',padding:0,textDecoration:'underline'}}>Opt out</button></span>
           </div>
         </div>
       </div>
@@ -21270,8 +21357,6 @@ function startApp() {
     // Only show when a model is loaded and not in presenting mode
     if (!s.models || s.models.length === 0) return null;
     if (s.presenting) return null;
-    if (typeof localStorage !== 'undefined' && localStorage.getItem('cc_new_toolbar') !== '1') return null;
-
     var activeMode = s.walkMode ? 'walk'
       : (s.sectionAxis || s.sectionCustom || (s.sectionBox && s.sectionBox.enabled)) ? 'slice'
       : s.measureMode ? 'measure'
@@ -21330,17 +21415,27 @@ function startApp() {
       </div>`;
     } else if (activeMode === 'slice') {
       var sliceAxes = [{axis:'y',label:'Horizontal'},{axis:'z',label:'Front'},{axis:'x',label:'Side'},{box:true,label:'Box'}];
-      subTools = html`<div style=${{display:'flex',alignItems:'center',gap:'.3rem',padding:'.25rem .5rem',background:'var(--glass-bg)',backdropFilter:'var(--glass-blur)',WebkitBackdropFilter:'var(--glass-blur)',border:'1px solid var(--glass-border)',borderRadius:'var(--radius-md)'}}>
-        ${sliceAxes.map(function(sa){
-          var on = sa.box ? (s.sectionBox&&s.sectionBox.enabled) : s.sectionAxis===sa.axis;
-          return html`<button key=${sa.label} onClick=${function(){
-            if(sa.box){ d({t:A.SECTION,axis:null}); if(window._ccActivateSectionBox)window._ccActivateSectionBox(); else d({t:A.SECTION_BOX,v:{enabled:true,min:null,max:null}}); }
-            else d({t:A.SECTION,axis:sa.axis,pos:0.5});
-          }} style=${{padding:'.2rem .5rem',borderRadius:6,border:'none',background:on?'var(--accent)':'rgba(255,255,255,.08)',color:'#fff',fontSize:'var(--text-xs)',fontWeight:600,cursor:'pointer',fontFamily:'inherit'}}>${sa.label}</button>`;
-        })}
-        <span style=${{width:1,height:16,background:'rgba(255,255,255,.15)',margin:'0 .2rem'}}></span>
-        <button onClick=${function(){d({t:A.SECTION,axis:null});d({t:A.SECTION_BOX,v:null});}}
-          style=${{padding:'.2rem .5rem',borderRadius:6,border:'none',background:'rgba(255,255,255,.08)',color:'#f87171',fontSize:'var(--text-xs)',fontWeight:600,cursor:'pointer',fontFamily:'inherit'}}>Remove cut</button>
+      var hasActivePlane = s.sectionAxis || s.sectionCustom;
+      subTools = html`<div style=${{display:'flex',flexDirection:'column',alignItems:'center',gap:'.3rem'}}>
+        ${hasActivePlane && html`<div style=${{display:'flex',alignItems:'center',gap:'.4rem',padding:'.2rem .6rem',background:'var(--glass-bg)',backdropFilter:'var(--glass-blur)',WebkitBackdropFilter:'var(--glass-blur)',border:'1px solid var(--glass-border)',borderRadius:'var(--radius-md)',minWidth:220}}>
+          <span style=${{fontSize:'var(--text-xs)',color:'rgba(255,255,255,.5)',flexShrink:0}}>Cut</span>
+          <input type="range" min="0" max="1" step="0.005" value=${s.sectionPos||0.5}
+            onInput=${function(e){var pos=parseFloat(e.target.value);if(s.sectionAxis)d({t:A.SECTION,axis:s.sectionAxis,pos:pos});else if(s.sectionCustom)d({t:A.SECTION_CUSTOM,v:s.sectionCustom,pos:pos});}}
+            style=${{flex:1,accentColor:'var(--accent)'}} />
+          <span style=${{fontSize:'var(--text-xs)',color:'rgba(255,255,255,.5)',minWidth:28,textAlign:'right'}}>${Math.round((s.sectionPos||0.5)*100)}%</span>
+        </div>`}
+        <div style=${{display:'flex',alignItems:'center',gap:'.3rem',padding:'.25rem .5rem',background:'var(--glass-bg)',backdropFilter:'var(--glass-blur)',WebkitBackdropFilter:'var(--glass-blur)',border:'1px solid var(--glass-border)',borderRadius:'var(--radius-md)'}}>
+          ${sliceAxes.map(function(sa){
+            var on = sa.box ? (s.sectionBox&&s.sectionBox.enabled) : s.sectionAxis===sa.axis;
+            return html`<button key=${sa.label} onClick=${function(){
+              if(sa.box){ d({t:A.SECTION,axis:null}); if(window._ccActivateSectionBox)window._ccActivateSectionBox(); else d({t:A.SECTION_BOX,v:{enabled:true,min:null,max:null}}); }
+              else d({t:A.SECTION,axis:sa.axis,pos:s.sectionPos||0.5});
+            }} style=${{padding:'.2rem .5rem',borderRadius:6,border:'none',background:on?'var(--accent)':'rgba(255,255,255,.08)',color:'#fff',fontSize:'var(--text-xs)',fontWeight:600,cursor:'pointer',fontFamily:'inherit'}}>${sa.label}</button>`;
+          })}
+          <span style=${{width:1,height:16,background:'rgba(255,255,255,.15)',margin:'0 .2rem'}}></span>
+          <button onClick=${function(){d({t:A.SECTION,axis:null});d({t:A.SECTION_BOX,v:null});}}
+            style=${{padding:'.2rem .5rem',borderRadius:6,border:'none',background:'rgba(255,255,255,.08)',color:'#f87171',fontSize:'var(--text-xs)',fontWeight:600,cursor:'pointer',fontFamily:'inherit'}}>Remove cut</button>
+        </div>
       </div>`;
     } else if (activeMode === 'measure' && s.measurements && s.measurements.length>0) {
       subTools = html`<div style=${{display:'flex',alignItems:'center',gap:'.3rem',padding:'.25rem .5rem',background:'var(--glass-bg)',backdropFilter:'var(--glass-blur)',WebkitBackdropFilter:'var(--glass-blur)',border:'1px solid var(--glass-border)',borderRadius:'var(--radius-md)'}}>
@@ -21400,7 +21495,7 @@ function startApp() {
     }
     return html`<nav class="cc-mobile-nav">
       ${navBtn('models','<path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/><path d="M12 2L2 7l10 5 10-5-10-5z"/>','Models',0)}
-      ${navBtn('clashes','<path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/>','Clashes',clashN)}
+      ${navBtn('clashes','<path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/>','Conflicts',clashN)}
       ${navBtn('issues','<path d="M4 15s1-1 4-1 5 2 8 2 4-1 4-1V3s-1 1-4 1-5-2-8-2-4 1-4 1z"/><line x1="4" y1="22" x2="4" y2="15"/>','Issues',issueN)}
       ${navBtn('navigator','<rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/>','Navigator',0)}
       ${navBtn('dataquality','<path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/>','Data Quality',0)}
@@ -22159,6 +22254,12 @@ function startApp() {
       d({t:A.TAB,v:'models'});
       window.dispatchEvent(new CustomEvent('cc-pending-files'));
     }
+    window._ccLoadFiles = function(files) {
+      if (!files || !files.length) return;
+      window._ccPendingFiles = Array.prototype.slice.call(files);
+      d({t:A.TAB,v:'models'});
+      window.dispatchEvent(new CustomEvent('cc-pending-files'));
+    };
 
     var is2D = s.underlayMode === 'view2d' || s.underlayMode === 'compare';
     return html`<div style=${{
