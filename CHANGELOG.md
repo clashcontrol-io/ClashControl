@@ -1,5 +1,8 @@
 # Changelog
 
+## v4.17.1 (2026-04-30)
+- feat(revit-bridge): implement session resumption + keep/discard partial model UI
+
 ## v4.17.0 (2026-04-30)
 - feat: top-level Share entry + pin-on-model comments via folder-sync
 
