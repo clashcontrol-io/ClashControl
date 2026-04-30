@@ -314,6 +314,21 @@
       border-radius:8px;transition:color .15s,background .15s}
     .cc-mobile-nav button.active{color:#60a5fa;background:rgba(37,99,235,.1)}
     .cc-mobile-nav button svg{width:20px;height:20px}
+    /* ── Presentation / kiosk mode ─────────────────────────────────── */
+    body[data-presenting="1"] .cc-left-rail,
+    body[data-presenting="1"] .cc-header,
+    body[data-presenting="1"] .cc-mobile-nav,
+    body[data-presenting="1"] .cc-tip[data-tip],
+    body[data-presenting="1"] [class*="cc-toast"],
+    body[data-presenting="1"] [class*="cc-banner"]{display:none!important}
+    .cc-present-overlay{position:fixed;inset:0;pointer-events:none;z-index:60;
+      background:radial-gradient(ellipse at center,transparent 50%,rgba(0,0,0,.45) 100%)}
+    .cc-present-controls{position:fixed;bottom:1.4rem;left:50%;transform:translateX(-50%);
+      pointer-events:auto;z-index:62;display:flex;align-items:center;gap:.55rem;
+      background:rgba(15,23,42,.85);color:#fff;padding:.5rem .85rem;border-radius:10px;
+      border:1px solid rgba(148,163,184,.25);backdrop-filter:blur(8px);font-size:0.78rem;
+      opacity:.4;transition:opacity .25s ease}
+    .cc-present-controls:hover,body[data-presenting="1"]:hover .cc-present-controls{opacity:1}
   </style>
 </head>
 <body>
@@ -619,7 +634,8 @@ function startApp() {
     shareTab: 'overview', // 'overview' | 'comments'
     comments: [],         // [{id, anchor:{point:[x,y,z], globalId, modelId}, author, text, ts, resolved, replies:[{id,author,text,ts}]}]
     commentMode: false,   // when true, next canvas click drops a pin
-    activeCommentId: null
+    activeCommentId: null,
+    presenting: false     // presentation/kiosk mode (fullscreen, chrome hidden, auto-rotate when idle)
   };
   var A = {
     ADD_MODEL:'ADD_MODEL', DEL_MODEL:'DEL_MODEL', REPLACE_MODEL:'REPLACE_MODEL', UPD_MODEL:'UPD_MODEL',
@@ -656,7 +672,7 @@ function startApp() {
     // Addon action types dispatched via string literals (not A.xxx) — handled by addon reducerCases
     APPEND_CHANGELOG:'APPEND_CHANGELOG', MERGE_CHANGELOG:'MERGE_CHANGELOG',
     IDS_SET_RESULTS:'IDS_SET_RESULTS', IDS_SET_SPECS:'IDS_SET_SPECS', IDS_RUNNING:'IDS_RUNNING',
-    SHARE:'SHARE', SHARE_TAB:'SHARE_TAB',
+    SHARE:'SHARE', SHARE_TAB:'SHARE_TAB', PRESENT:'PRESENT',
     COMMENT_MODE:'COMMENT_MODE', ADD_COMMENT:'ADD_COMMENT', UPD_COMMENT:'UPD_COMMENT',
     DEL_COMMENT:'DEL_COMMENT', SET_ACTIVE_COMMENT:'SET_ACTIVE_COMMENT', MERGE_COMMENTS:'MERGE_COMMENTS'
   };
@@ -896,6 +912,7 @@ function startApp() {
       case A.SETTINGS:    return Object.assign({},s,{showSettings:a.v});
       case A.SHARE:       return Object.assign({},s,{showShare:!!a.v});
       case A.SHARE_TAB:   return Object.assign({},s,{shareTab:a.v||'overview'});
+      case A.PRESENT:     return Object.assign({},s,{presenting:!!a.v});
       case A.COMMENT_MODE: return Object.assign({},s,{commentMode:!!a.v});
       case A.SET_ACTIVE_COMMENT: return Object.assign({},s,{activeCommentId:a.v||null});
       case A.ADD_COMMENT: return Object.assign({},s,{comments:s.comments.concat([a.v])});
@@ -8274,6 +8291,12 @@ function startApp() {
             ${unread>0 && html`<span style=${{position:'absolute',top:-4,right:-4,background:'#ef4444',color:'#fff',fontSize:'0.6rem',fontWeight:700,padding:'1px 5px',borderRadius:99,lineHeight:1.3,minWidth:14,textAlign:'center',boxShadow:'0 1px 3px rgba(0,0,0,.4)'}}>${unread>9?'9+':unread}</span>`}
           </button>`;
         })()}
+        <button class="cc-hide-mobile cc-btn-press" onClick=${function(){d({t:A.PRESENT,v:!s.presenting});}}
+          title="Presentation mode (P) — fullscreen, hide chrome, auto-rotate when idle"
+          style=${{...S_BTN,background:s.presenting?'#7c3aed':'var(--bg-secondary)',color:s.presenting?'#fff':'var(--text-secondary)',border:'1px solid '+(s.presenting?'#a78bfa':'var(--border)'),fontSize:'var(--text-xs)',display:'flex',alignItems:'center',gap:'.35rem'}}>
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+          Present
+        </button>
         <button class="cc-hide-mobile cc-btn-press" onClick=${function(){loadProject(d)}}
           style=${{...S_BTN,background:'var(--bg-secondary)',color:'var(--text-secondary)',border:'1px solid var(--border)',fontSize:'var(--text-xs)'}}>
           Open Project
@@ -13685,6 +13708,119 @@ function startApp() {
         </div>
       </div>
     </${React.Fragment}>`;
+  }
+
+  // ── Presentation / Kiosk overlay ─────────────────────────────
+
+  function PresentationOverlay(props) {
+    var s = props.s, d = props.d;
+    var idleSt = useState(0), idleTick=idleSt[0], setIdleTick=idleSt[1];
+    var rotatingRef = useRef(false);
+    var rotRafRef = useRef(null);
+    var lastActRef = useRef(Date.now());
+
+    // Mark <body data-presenting="1"> + request fullscreen
+    useEffect(function(){
+      try { document.body.setAttribute('data-presenting','1'); } catch(e){}
+      try {
+        var docEl = document.documentElement;
+        if (docEl.requestFullscreen && !document.fullscreenElement) {
+          docEl.requestFullscreen().catch(function(){});
+        }
+      } catch(e){}
+      return function(){
+        try { document.body.removeAttribute('data-presenting'); } catch(e){}
+        try { if (document.fullscreenElement && document.exitFullscreen) document.exitFullscreen(); } catch(e){}
+        if (rotRafRef.current) cancelAnimationFrame(rotRafRef.current);
+        rotatingRef.current = false;
+      };
+    }, []);
+
+    // Auto-exit if user manually leaves fullscreen
+    useEffect(function(){
+      function onFs(){
+        if (!document.fullscreenElement && s.presenting) {
+          d({t:A.PRESENT,v:false});
+        }
+      }
+      document.addEventListener('fullscreenchange', onFs);
+      return function(){ document.removeEventListener('fullscreenchange', onFs); };
+    }, [s.presenting]);
+
+    // Idle detection → auto-rotate
+    useEffect(function(){
+      function onAct(){
+        lastActRef.current = Date.now();
+        if (rotatingRef.current) {
+          rotatingRef.current = false;
+          if (rotRafRef.current) cancelAnimationFrame(rotRafRef.current);
+        }
+      }
+      window.addEventListener('mousemove', onAct);
+      window.addEventListener('keydown', onAct);
+      window.addEventListener('wheel', onAct);
+      window.addEventListener('touchstart', onAct);
+      var poll = setInterval(function(){
+        var idleMs = Date.now() - lastActRef.current;
+        if (idleMs > 30000 && !rotatingRef.current) {
+          rotatingRef.current = true;
+          var S = window._ccState3d;
+          if (!S || !S.orbit) return;
+          var lastT = performance.now();
+          function tick(now){
+            if (!rotatingRef.current) return;
+            var dt = (now - lastT) / 1000; lastT = now;
+            S.orbit.sph.theta += dt * 0.08; // ~4.6°/s
+            S.orbit.apply();
+            if (window.invalidate) window.invalidate(2);
+            else if (typeof invalidate === 'function') invalidate(2);
+            rotRafRef.current = requestAnimationFrame(tick);
+          }
+          rotRafRef.current = requestAnimationFrame(tick);
+        }
+      }, 1000);
+      return function(){
+        window.removeEventListener('mousemove', onAct);
+        window.removeEventListener('keydown', onAct);
+        window.removeEventListener('wheel', onAct);
+        window.removeEventListener('touchstart', onAct);
+        clearInterval(poll);
+        rotatingRef.current = false;
+        if (rotRafRef.current) cancelAnimationFrame(rotRafRef.current);
+      };
+    }, []);
+
+    var viewpoints = s.viewpoints || [];
+    function jumpVp(vp){
+      if (!vp) return;
+      try {
+        if (window._ccApplyViewpoint) { window._ccApplyViewpoint(vp); return; }
+        if (vp.cameraPos && window._ccFlyToPoint) window._ccFlyToPoint(vp.target||vp.cameraPos);
+      } catch(e){}
+    }
+
+    return html`<div class="cc-present-overlay"></div>
+      <div class="cc-present-controls cc-present-show">
+        <span style=${{fontSize:'0.7rem',opacity:.7,letterSpacing:'.04em',textTransform:'uppercase',marginRight:'.4rem'}}>Presenting</span>
+        ${viewpoints.length>0 && html`<${React.Fragment}>
+          <button onClick=${function(){
+              var idx = (s._presentVpIdx||0);
+              idx = (idx-1+viewpoints.length)%viewpoints.length;
+              jumpVp(viewpoints[idx]);
+            }}
+            style=${{background:'rgba(255,255,255,.1)',border:'1px solid rgba(255,255,255,.15)',color:'#fff',cursor:'pointer',padding:'.25rem .55rem',borderRadius:6,fontSize:'0.78rem'}}>‹</button>
+          <span style=${{fontSize:'0.74rem',opacity:.85}}>${viewpoints.length} viewpoints</span>
+          <button onClick=${function(){
+              var idx = (s._presentVpIdx||0);
+              idx = (idx+1)%viewpoints.length;
+              jumpVp(viewpoints[idx]);
+            }}
+            style=${{background:'rgba(255,255,255,.1)',border:'1px solid rgba(255,255,255,.15)',color:'#fff',cursor:'pointer',padding:'.25rem .55rem',borderRadius:6,fontSize:'0.78rem'}}>›</button>
+        </${React.Fragment}>`}
+        <button onClick=${function(){d({t:A.PRESENT,v:false});}}
+          style=${{background:'rgba(239,68,68,.85)',border:'none',color:'#fff',cursor:'pointer',padding:'.3rem .7rem',borderRadius:6,fontSize:'0.78rem',fontWeight:600,marginLeft:'.4rem'}}>Exit</button>
+        <span style=${{fontSize:'0.66rem',opacity:.55,marginLeft:'.4rem'}}>Press P or Esc</span>
+      </div>`;
   }
 
   // ── Share Modal ──────────────────────────────────────────────
@@ -21018,6 +21154,7 @@ function startApp() {
         if(ctrl && e.key==='o'){ e.preventDefault(); if(window._ccOpenIFC)window._ccOpenIFC(); return; }
         if(ctrl && e.key===','){ e.preventDefault(); d({t:A.SETTINGS,v:!s.showSettings}); return; }
         if(e.key==='Escape'){
+          if(s.presenting){ d({t:A.PRESENT,v:false}); return; }
           if(s.commentMode){ d({t:A.COMMENT_MODE,v:false}); return; }
           if(s.showShare){ d({t:A.SHARE,v:false}); return; }
           if(s.showSettings){ d({t:A.SETTINGS,v:false}); return; }
@@ -21025,6 +21162,11 @@ function startApp() {
           if(s.showRevitBridge){ d({t:A.REVIT_BRIDGE,v:false}); return; }
           if(s.sectionBox){ d({t:A.SECTION_BOX,v:null}); return; }
           if(s.sectionAxis||s.sectionCustom){ d({t:A.SECTION,axis:null}); return; }
+        }
+        if (!inInput && (e.key==='p' || e.key==='P') && !ctrl && !e.shiftKey && !e.altKey) {
+          e.preventDefault();
+          d({t:A.PRESENT, v:!s.presenting});
+          return;
         }
 
         if(inInput) return;
@@ -21188,6 +21330,7 @@ function startApp() {
           style=${{background:'rgba(255,255,255,.2)',color:'#fff',border:'none',borderRadius:5,padding:'.2rem .5rem',fontSize:'0.74rem',fontWeight:600,cursor:'pointer',fontFamily:'inherit'}}>Cancel (Esc)</button>
       </div>`}
       ${s.showRevitBridge && html`<${RevitBridgePanel} s=${s} d=${d} />`}
+      ${s.presenting && html`<${PresentationOverlay} s=${s} d=${d} />`}
       <${MobileNav} s=${s} d=${d} />
       <${WelcomePopup} s=${s} d=${d} />
       <${PrivacyBanner} />
