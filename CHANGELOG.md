@@ -1,5 +1,8 @@
 # Changelog
 
+## v4.18.0 (2026-04-30)
+- chore: bump version to 4.17.1
+
 ## v4.17.1 (2026-04-30)
 - feat(revit-bridge): implement session resumption + keep/discard partial model UI
 
