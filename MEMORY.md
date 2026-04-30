@@ -87,6 +87,18 @@ Things to be careful about. Do not remove without a good reason — add a note i
 Update this section at the start and end of each session.
 Mark completed items with ~~strikethrough~~ and date, then let the daily sync archive them.
 
+On branch `claude/improve-ifc-viewer-ux-WhTsB`: collaboration UX redesign.
+Promoted the previously-buried `addons/shared-project.js` addon to a top-level
+**Share** entry in the left rail and built a dedicated `ShareModal` with an
+Overview tab (clear onboarding copy + folder linking) and a Comments tab.
+Added pin-on-model **comments** synced through the same `.ccproject` file
+(no backend, fully local-first). New action types: `SHARE`, `SHARE_TAB`,
+`COMMENT_MODE`, `ADD_COMMENT`, `UPD_COMMENT`, `DEL_COMMENT`,
+`SET_ACTIVE_COMMENT`, `MERGE_COMMENTS`. Pin geometry rendered via a
+purple-sphere group anchored to `{point, globalId, modelId, expressId}`;
+the addon write/replay paths now include `comments` and merge by id+ts
+(last-write-wins). Sync cadence drops to 15 s when there are open comments.
+
 On branch `claude/code-review-refactor-hcMTI` (review/refactor pass): critical
 review of full codebase via parallel subagent audits (index.html first/second
 half + addons/api). Verified findings against source to filter false positives,

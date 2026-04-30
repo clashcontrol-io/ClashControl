@@ -614,7 +614,12 @@ function startApp() {
       running: false,
       summary: null      // {total, pass, fail, bySpec:{specName:{pass,fail}}}
     },
-    changelog: []        // [{id, ts, user, type, targetId, field, value, prev}]
+    changelog: [],       // [{id, ts, user, type, targetId, field, value, prev}]
+    showShare: false,
+    shareTab: 'overview', // 'overview' | 'comments'
+    comments: [],         // [{id, anchor:{point:[x,y,z], globalId, modelId}, author, text, ts, resolved, replies:[{id,author,text,ts}]}]
+    commentMode: false,   // when true, next canvas click drops a pin
+    activeCommentId: null
   };
   var A = {
     ADD_MODEL:'ADD_MODEL', DEL_MODEL:'DEL_MODEL', REPLACE_MODEL:'REPLACE_MODEL', UPD_MODEL:'UPD_MODEL',
@@ -650,7 +655,10 @@ function startApp() {
     SELECT_NONE:'SELECT_NONE', SELECT_MODE:'SELECT_MODE',
     // Addon action types dispatched via string literals (not A.xxx) — handled by addon reducerCases
     APPEND_CHANGELOG:'APPEND_CHANGELOG', MERGE_CHANGELOG:'MERGE_CHANGELOG',
-    IDS_SET_RESULTS:'IDS_SET_RESULTS', IDS_SET_SPECS:'IDS_SET_SPECS', IDS_RUNNING:'IDS_RUNNING'
+    IDS_SET_RESULTS:'IDS_SET_RESULTS', IDS_SET_SPECS:'IDS_SET_SPECS', IDS_RUNNING:'IDS_RUNNING',
+    SHARE:'SHARE', SHARE_TAB:'SHARE_TAB',
+    COMMENT_MODE:'COMMENT_MODE', ADD_COMMENT:'ADD_COMMENT', UPD_COMMENT:'UPD_COMMENT',
+    DEL_COMMENT:'DEL_COMMENT', SET_ACTIVE_COMMENT:'SET_ACTIVE_COMMENT', MERGE_COMMENTS:'MERGE_COMMENTS'
   };
 
   // ── Addon Registry ───────────────────────────────────────────── INTERNALS.md §5
@@ -886,6 +894,22 @@ function startApp() {
       case A.SECTION_CUSTOM: return Object.assign({},s,{sectionAxis:null, sectionCustom:a.v, sectionPos:a.pos!=null?a.pos:0.5});
       case A.TAB:         var tabUpd={tab:a.v,sectionAxis:null,sectionCustom:null}; if(a.v!==s.tab&&(a.v==='clashes'||a.v==='issues'||s.tab==='clashes'||s.tab==='issues'))tabUpd.activeId=null; return Object.assign({},s,tabUpd);
       case A.SETTINGS:    return Object.assign({},s,{showSettings:a.v});
+      case A.SHARE:       return Object.assign({},s,{showShare:!!a.v});
+      case A.SHARE_TAB:   return Object.assign({},s,{shareTab:a.v||'overview'});
+      case A.COMMENT_MODE: return Object.assign({},s,{commentMode:!!a.v});
+      case A.SET_ACTIVE_COMMENT: return Object.assign({},s,{activeCommentId:a.v||null});
+      case A.ADD_COMMENT: return Object.assign({},s,{comments:s.comments.concat([a.v])});
+      case A.UPD_COMMENT: return Object.assign({},s,{comments:s.comments.map(function(c){return c.id===a.id?Object.assign({},c,a.u):c;})});
+      case A.DEL_COMMENT: return Object.assign({},s,{comments:s.comments.filter(function(c){return c.id!==a.id;})});
+      case A.MERGE_COMMENTS: {
+        var byId={}; (s.comments||[]).forEach(function(c){byId[c.id]=c;});
+        (a.v||[]).forEach(function(rc){
+          if(!rc||!rc.id)return;
+          var lc=byId[rc.id];
+          if(!lc||((rc.ts||0)>(lc.ts||0))) byId[rc.id]=rc;
+        });
+        return Object.assign({},s,{comments:Object.keys(byId).map(function(k){return byId[k];})});
+      }
       case A.TRAINING_MODE: var tm=a.v!=null?!!a.v:!s.trainingMode;try{localStorage.setItem('cc_trainingMode',tm?'1':'0');}catch(e){}return Object.assign({},s,{trainingMode:tm});
       case A.UPD_PREFS:
         if(a.u&&a.u.defaultTolerances!==undefined){try{localStorage.setItem('cc_defaultTolerances',JSON.stringify(a.u.defaultTolerances));}catch(e){}}
@@ -4682,6 +4706,10 @@ function startApp() {
     clashesRef.current = s.clashes;
     var issuesRef = useRef(s.issues);
     issuesRef.current = s.issues;
+    var commentModeRef = useRef(s.commentMode);
+    commentModeRef.current = s.commentMode;
+    var commentsRef = useRef(s.comments);
+    commentsRef.current = s.comments;
 
     useEffect(function() {
       var el = ref.current; if(!el) return;
@@ -4838,6 +4866,12 @@ function startApp() {
 
       window._ccFlyToView = function(target, pos) {
         _animateFly(target.clone(), pos.clone(), 800);
+      };
+
+      window._ccFlyToPoint = function(pt) {
+        if (!pt || !_flyTo) return;
+        var p = Array.isArray(pt) ? new THREE.Vector3(pt[0], pt[1], pt[2]) : new THREE.Vector3(pt.x, pt.y, pt.z);
+        _flyTo(p, 4);
       };
 
       _resetView = function() {
@@ -5265,6 +5299,48 @@ function startApp() {
         }
       };
 
+      // ── Comment Markers (purple pins, click to open comment) ──
+      var _commentMarkersGroup = null;
+      window._ccClearCommentMarkers = function() {
+        if (_commentMarkersGroup) {
+          _disposeGroup(_commentMarkersGroup);
+          _commentMarkersGroup = null;
+          invalidate();
+        }
+      };
+      window._ccShowCommentMarkers = function(comments, activeId) {
+        window._ccClearCommentMarkers();
+        if (!comments || !comments.length) return;
+        var visible = comments.filter(function(c){ return c && c.anchor && c.anchor.point && c.anchor.point.length>=3 && !c.resolved; });
+        if (!visible.length) return;
+        var grp = new THREE.Group();
+        grp.name = 'commentMarkers';
+        var pinGeo = new THREE.SphereGeometry(0.18, 14, 14);
+        var ringGeo = new THREE.RingGeometry(0.32, 0.5, 28);
+        var baseMat = new THREE.MeshBasicMaterial({color:0xa855f7, transparent:true, opacity:0.9, depthTest:false});
+        var activeMat = new THREE.MeshBasicMaterial({color:0xfacc15, transparent:true, opacity:1.0, depthTest:false});
+        var ringMat = new THREE.MeshBasicMaterial({color:0xc084fc, transparent:true, opacity:0.45, side:THREE.DoubleSide, depthTest:false});
+        visible.forEach(function(c){
+          var p = c.anchor.point;
+          var isAct = c.id===activeId;
+          var pin = new THREE.Mesh(pinGeo, isAct ? activeMat : baseMat);
+          pin.position.set(p[0], p[1], p[2]);
+          pin.userData.commentId = c.id;
+          pin.renderOrder = 1000;
+          if (isAct) pin.scale.setScalar(1.4);
+          grp.add(pin);
+          var ring = new THREE.Mesh(ringGeo, ringMat);
+          ring.position.set(p[0], p[1], p[2]);
+          ring.rotation.x = -Math.PI/2;
+          ring.renderOrder = 999;
+          grp.add(ring);
+        });
+        scene.add(grp);
+        _commentMarkersGroup = grp;
+        window._ccCommentMarkersGroup = grp;
+        invalidate();
+      };
+
       // ── BoundingBoxer: Fit camera to all clashes or a specific element ──
       _fitToClashes = function(clashes) {
         if(!clashes||!clashes.length||!S.orbit) return;
@@ -5658,6 +5734,40 @@ function startApp() {
           return true;
         });
 
+        // ── Comment mode: drop a pin and open the share/comments tab ──
+        if(commentModeRef.current && hits.length>0) {
+          var cmHit = hits[0];
+          var cmPt = cmHit.point;
+          var cmEid = cmHit.object.userData.expressId;
+          var cmModelId = (cmHit.object.parent && cmHit.object.parent.userData && cmHit.object.parent.userData.modelId) || null;
+          var cmGlobalId = null;
+          if (cmEid != null) {
+            var _cms = modelsRef.current||[];
+            for (var _mci=0;_mci<_cms.length && !cmGlobalId;_mci++) {
+              var _cmEls = _cms[_mci].elements||[];
+              for (var _cei=0;_cei<_cmEls.length;_cei++) {
+                if (_cmEls[_cei].expressId===cmEid) { cmGlobalId = _cmEls[_cei].globalId || null; break; }
+              }
+            }
+          }
+          var sp = (window._ccLatestState && window._ccLatestState.sharedProject) || {};
+          var newComment = {
+            id: 'c'+Date.now().toString(36)+Math.random().toString(36).slice(2,6),
+            anchor: { point:[cmPt.x, cmPt.y, cmPt.z], globalId: cmGlobalId, modelId: cmModelId, expressId: cmEid==null?null:cmEid },
+            author: sp.userName || 'Anonymous',
+            text: '',
+            ts: Date.now(),
+            resolved: false,
+            replies: []
+          };
+          d({t:A.ADD_COMMENT, v:newComment});
+          d({t:A.COMMENT_MODE, v:false});
+          d({t:A.SET_ACTIVE_COMMENT, v:newComment.id});
+          d({t:A.SHARE, v:true});
+          d({t:A.SHARE_TAB, v:'comments'});
+          return;
+        }
+
         // ── Measurement mode: intercept clicks ──
         if(measureModeRef.current && hits.length>0) {
           var hitPt = hits[0].point.clone();
@@ -5743,6 +5853,18 @@ function startApp() {
                 if(_flyToElements && cRefs.length) _flyToElements(cRefs, hitClash.point);
                 else if(hitClash.point && _flyTo) _flyTo(hitClash.point);
               }
+              return;
+            }
+          }
+        }
+        if(window._ccCommentMarkersGroup) {
+          var cmHits = raycaster.intersectObjects(window._ccCommentMarkersGroup.children, false);
+          for(var _ch=0; _ch<cmHits.length; _ch++){
+            var _co = cmHits[_ch].object;
+            if (_co.userData && _co.userData.commentId) {
+              d({t:A.SHARE, v:true});
+              d({t:A.SHARE_TAB, v:'comments'});
+              d({t:A.SET_ACTIVE_COMMENT, v:_co.userData.commentId});
               return;
             }
           }
@@ -6657,7 +6779,8 @@ function startApp() {
       } else if(_clearIssueMarkers){
         _clearIssueMarkers();
       }
-    }, [s.clashes, s.issues, s.prefs.showMarkers]);
+      if (window._ccShowCommentMarkers) window._ccShowCommentMarkers(s.comments||[], s.activeCommentId);
+    }, [s.clashes, s.issues, s.prefs.showMarkers, s.comments, s.activeCommentId]);
 
     useEffect(function(){
       if(s.measurements.length===0 && measureObjsRef.current.length>0) {
@@ -13349,6 +13472,261 @@ function startApp() {
     </div></div>`;
   }
 
+  // ── Share Modal ──────────────────────────────────────────────
+
+  function ShareModal(props) {
+    var d = props.d, s = props.s;
+    var sp = s.sharedProject || {};
+    var canUse = !!window.showDirectoryPicker;
+    var tab = s.shareTab || 'overview';
+
+    useEffect(function() {
+      function onKey(e){ if(e.key==='Escape') d({t:A.SHARE,v:false}); }
+      window.addEventListener('keydown', onKey);
+      return function(){ window.removeEventListener('keydown', onKey); };
+    }, []);
+
+    var collaborators = (function(){
+      var seen = {};
+      (s.changelog||[]).concat((s.comments||[])).forEach(function(e){
+        if(e && e.user) seen[e.user]=Math.max(seen[e.user]||0, e.ts||0);
+        if(e && e.author) seen[e.author]=Math.max(seen[e.author]||0, e.ts||0);
+      });
+      if (sp.userName) seen[sp.userName] = Math.max(seen[sp.userName]||0, Date.now());
+      return Object.keys(seen).sort(function(a,b){return seen[b]-seen[a];});
+    })();
+
+    var unresolved = (s.comments||[]).filter(function(c){return !c.resolved;}).length;
+    var totalC = (s.comments||[]).length;
+
+    var btnPrimary = {padding:'.5rem .9rem',borderRadius:8,fontSize:'0.82rem',fontWeight:600,cursor:'pointer',border:'none',background:'var(--accent)',color:'#fff',fontFamily:'inherit'};
+    var btnSecondary = {padding:'.5rem .9rem',borderRadius:8,fontSize:'0.82rem',fontWeight:500,cursor:'pointer',border:'1px solid var(--border)',background:'var(--bg-secondary)',color:'var(--text-secondary)',fontFamily:'inherit'};
+    var btnGhost = {padding:'.4rem .7rem',borderRadius:6,fontSize:'0.78rem',fontWeight:500,cursor:'pointer',border:'1px solid var(--border)',background:'transparent',color:'var(--text-secondary)',fontFamily:'inherit'};
+    var btnDanger = {padding:'.4rem .7rem',borderRadius:6,fontSize:'0.78rem',fontWeight:500,cursor:'pointer',border:'1px solid #ef444466',background:'transparent',color:'#f87171',fontFamily:'inherit'};
+    var inputStyle = {width:'100%',padding:'.5rem .65rem',background:'var(--input-bg)',color:'var(--text-primary)',border:'1px solid var(--border)',borderRadius:6,fontSize:'0.85rem',fontFamily:'inherit',outline:'none',boxSizing:'border-box'};
+
+    function setUserName(v){ if(window._ccDispatch) d({t:'UPD_SHARED_PROJECT', u:{userName:v}}); }
+    function pick(){ if(window._pickSharedFolder) window._pickSharedFolder(d); }
+    function syncNow(){ if(window._syncSharedProject) window._syncSharedProject(d); }
+    function unlink(){ if(window._disconnectShared) window._disconnectShared(d); }
+
+    var TabBtn = function(id, label, badge){
+      var active = tab===id;
+      return html`<button onClick=${function(){d({t:A.SHARE_TAB,v:id});}}
+        style=${{padding:'.55rem .9rem',background:'none',border:'none',cursor:'pointer',
+          fontSize:'0.82rem',fontWeight:600,fontFamily:'inherit',
+          color:active?'var(--text-primary)':'var(--text-muted)',
+          borderBottom:active?'2px solid var(--accent)':'2px solid transparent',
+          marginBottom:-1,display:'flex',alignItems:'center',gap:'.4rem'}}>
+        ${label}${badge!=null && badge>0 ? html`<span style=${{background:'var(--bg-tertiary)',color:'var(--text-secondary)',fontSize:'0.66rem',fontWeight:600,padding:'1px 6px',borderRadius:99}}>${badge}</span>` : null}
+      </button>`;
+    };
+
+    return html`<div class="cc-modal-backdrop" style=${S_BACKDROP} role="dialog" aria-modal="true" aria-labelledby="cc-share-title"
+      onClick=${function(){d({t:A.SHARE,v:false});}}>
+      <div class="cc-modal-card" style=${{...S_MODAL_CARD,width:560,padding:0,display:'flex',flexDirection:'column'}} onClick=${function(e){e.stopPropagation();}}>
+        <div style=${{padding:'1rem 1.2rem .6rem',display:'flex',alignItems:'center',gap:'.6rem'}}>
+          <div style=${{width:32,height:32,borderRadius:8,background:'rgba(37,99,235,.12)',display:'flex',alignItems:'center',justifyContent:'center',color:'#60a5fa'}}>
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/></svg>
+          </div>
+          <div style=${{flex:1}}>
+            <div id="cc-share-title" style=${{fontSize:'1.05rem',fontWeight:700,color:'var(--text-primary)'}}>Share project</div>
+            <div style=${{fontSize:'0.74rem',color:'var(--text-muted)'}}>Local-first collaboration via a shared folder</div>
+          </div>
+          <button onClick=${function(){d({t:A.SHARE,v:false});}} style=${S_MODAL_CLOSE} aria-label="Close">✕</button>
+        </div>
+
+        <div style=${{display:'flex',gap:'.2rem',padding:'0 1.2rem',borderBottom:'1px solid var(--border-subtle)'}}>
+          ${TabBtn('overview','Overview')}
+          ${TabBtn('comments','Comments', unresolved)}
+        </div>
+
+        <div style=${{padding:'1rem 1.2rem',overflowY:'auto'}}>
+          ${tab==='overview' ? html`<div style=${{display:'flex',flexDirection:'column',gap:'.9rem'}}>
+
+            <div>
+              <label style=${{fontSize:'0.72rem',color:'var(--text-muted)',fontWeight:600,textTransform:'uppercase',letterSpacing:'.04em',display:'block',marginBottom:'.3rem'}}>Your name</label>
+              <input type="text" value=${sp.userName||''} placeholder="Used to attribute your changes"
+                onInput=${function(e){setUserName(e.target.value);}}
+                style=${inputStyle} />
+            </div>
+
+            ${!sp.enabled && html`<div style=${{padding:'.9rem 1rem',background:'rgba(37,99,235,.06)',border:'1px solid rgba(37,99,235,.2)',borderRadius:8,fontSize:'0.82rem',color:'var(--text-secondary)',lineHeight:1.55}}>
+              <div style=${{fontWeight:600,color:'var(--text-primary)',marginBottom:'.35rem'}}>How it works</div>
+              <ol style=${{margin:0,paddingLeft:'1.1rem'}}>
+                <li>Pick a folder you and your teammates already share — OneDrive, Dropbox, Google Drive Desktop, or a network drive.</li>
+                <li>ClashControl writes a small <code>project.ccproject</code> file there and re-syncs every minute.</li>
+                <li>Teammates open ClashControl, link the same folder, and changes flow both ways.</li>
+              </ol>
+              <div style=${{marginTop:'.5rem',fontSize:'0.74rem',color:'var(--text-muted)'}}>Your IFC model never leaves your machine. Only decisions, comments and viewpoints sync.</div>
+            </div>`}
+
+            ${sp.enabled && html`<div style=${{padding:'.8rem 1rem',background:'var(--bg-tertiary)',border:'1px solid var(--border)',borderRadius:8}}>
+              <div style=${{display:'flex',alignItems:'center',gap:'.5rem',marginBottom:'.4rem'}}>
+                <span style=${{width:8,height:8,borderRadius:'50%',background:sp.syncing?'#f59e0b':'#22c55e'}}></span>
+                <span style=${{fontSize:'0.8rem',fontWeight:600,color:'var(--text-primary)'}}>${sp.syncing?'Syncing…':'Connected'}</span>
+              </div>
+              <div style=${{fontSize:'0.78rem',color:'var(--text-secondary)',marginBottom:'.2rem',wordBreak:'break-all'}}>${sp.folderName}/${sp.fileName||'project.ccproject'}</div>
+              ${sp.lastSync && html`<div style=${{fontSize:'0.72rem',color:'var(--text-faint)'}}>Last sync: ${new Date(sp.lastSync).toLocaleTimeString()}</div>`}
+            </div>`}
+
+            <div style=${{display:'flex',gap:'.5rem',flexWrap:'wrap'}}>
+              ${!sp.enabled && html`<button onClick=${pick} disabled=${!canUse}
+                style=${{...btnPrimary, opacity:canUse?1:0.5, cursor:canUse?'pointer':'not-allowed'}}>Link a shared folder</button>`}
+              ${sp.enabled && html`<button onClick=${syncNow} disabled=${sp.syncing} style=${{...btnSecondary, opacity:sp.syncing?0.5:1}}>Sync now</button>`}
+              ${sp.enabled && html`<button onClick=${unlink} style=${btnDanger}>Unlink folder</button>`}
+            </div>
+
+            ${!canUse && html`<div style=${{fontSize:'0.74rem',color:'#eab308',padding:'.5rem .7rem',background:'rgba(234,179,8,.08)',borderRadius:6}}>
+              File System Access API not available in this browser. Use Chrome or Edge to link a folder.
+            </div>`}
+
+            ${sp.enabled && collaborators.length>0 && html`<div>
+              <div style=${{fontSize:'0.72rem',color:'var(--text-muted)',fontWeight:600,textTransform:'uppercase',letterSpacing:'.04em',marginBottom:'.4rem'}}>Recent collaborators</div>
+              <div style=${{display:'flex',flexWrap:'wrap',gap:'.3rem'}}>
+                ${collaborators.slice(0,8).map(function(name){
+                  var initials = name.split(/\s+/).map(function(p){return p[0]||'';}).slice(0,2).join('').toUpperCase();
+                  return html`<div key=${name} style=${{display:'flex',alignItems:'center',gap:'.4rem',padding:'.25rem .55rem .25rem .3rem',background:'var(--bg-tertiary)',borderRadius:99,fontSize:'0.74rem',color:'var(--text-secondary)'}}>
+                    <span style=${{width:20,height:20,borderRadius:'50%',background:'var(--accent)',color:'#fff',fontSize:'0.6rem',fontWeight:700,display:'flex',alignItems:'center',justifyContent:'center'}}>${initials||'?'}</span>
+                    ${name}
+                  </div>`;
+                })}
+              </div>
+            </div>`}
+
+          </div>` : html`<${ShareCommentsTab} s=${s} d=${d} />`}
+        </div>
+      </div>
+    </div>`;
+  }
+
+  function ShareCommentsTab(props) {
+    var s = props.s, d = props.d;
+    var sp = s.sharedProject || {};
+    var stFilter = useState('open'); var filter=stFilter[0], setFilter=stFilter[1];
+    var stDraft = useState(''); var draft=stDraft[0], setDraft=stDraft[1];
+
+    var comments = (s.comments||[]).slice().sort(function(a,b){return (b.ts||0)-(a.ts||0);});
+    if (filter==='open') comments = comments.filter(function(c){return !c.resolved;});
+    if (filter==='resolved') comments = comments.filter(function(c){return c.resolved;});
+
+    function startDropPin(){
+      d({t:A.COMMENT_MODE,v:true});
+      d({t:A.SHARE,v:false});
+    }
+
+    function flyToComment(c){
+      if(c && c.anchor && c.anchor.point && window._ccFlyToPoint){
+        window._ccFlyToPoint(c.anchor.point);
+      }
+      d({t:A.SET_ACTIVE_COMMENT,v:c.id});
+    }
+
+    function toggleResolve(c){
+      d({t:A.UPD_COMMENT,id:c.id,u:{resolved:!c.resolved, ts:Date.now()}});
+    }
+
+    function delComment(c){
+      d({t:A.DEL_COMMENT,id:c.id});
+    }
+
+    function addReply(c){
+      var txt = (draft||'').trim();
+      if (!txt) return;
+      var reply = {id:'r'+Math.random().toString(36).slice(2,9), author: sp.userName||'Anonymous', text: txt, ts: Date.now()};
+      d({t:A.UPD_COMMENT,id:c.id,u:{replies:(c.replies||[]).concat([reply]), ts:Date.now()}});
+      setDraft('');
+    }
+
+    var btnPrimary = {padding:'.45rem .8rem',borderRadius:7,fontSize:'0.78rem',fontWeight:600,cursor:'pointer',border:'none',background:'var(--accent)',color:'#fff',fontFamily:'inherit'};
+    var btnGhost = {padding:'.3rem .55rem',borderRadius:5,fontSize:'0.72rem',fontWeight:500,cursor:'pointer',border:'1px solid var(--border)',background:'transparent',color:'var(--text-secondary)',fontFamily:'inherit'};
+    var pillBtn = function(id,label){
+      var active=filter===id;
+      return html`<button onClick=${function(){setFilter(id);}}
+        style=${{padding:'.25rem .6rem',borderRadius:99,fontSize:'0.72rem',fontWeight:600,cursor:'pointer',fontFamily:'inherit',
+          border:'1px solid '+(active?'var(--accent)':'var(--border)'),
+          background:active?'rgba(37,99,235,.12)':'transparent',
+          color:active?'#60a5fa':'var(--text-muted)'}}>${label}</button>`;
+    };
+
+    return html`<div style=${{display:'flex',flexDirection:'column',gap:'.8rem'}}>
+      <div style=${{display:'flex',alignItems:'center',gap:'.4rem',flexWrap:'wrap'}}>
+        <button onClick=${startDropPin} style=${btnPrimary}>+ Drop a pin on the model</button>
+        <div style=${{flex:1}}></div>
+        ${pillBtn('open','Open')} ${pillBtn('resolved','Resolved')} ${pillBtn('all','All')}
+      </div>
+
+      ${!sp.enabled && html`<div style=${{fontSize:'0.74rem',color:'var(--text-muted)',padding:'.5rem .7rem',background:'rgba(37,99,235,.06)',borderRadius:6}}>
+        Comments stay on your machine until you link a shared folder under <b>Overview</b>.
+      </div>`}
+
+      ${comments.length===0 && html`<div style=${{padding:'1.5rem 1rem',textAlign:'center',color:'var(--text-muted)',fontSize:'0.82rem'}}>
+        No ${filter==='open'?'open':filter==='resolved'?'resolved':''} comments yet.
+        ${filter==='open' && html`<div style=${{marginTop:'.4rem',fontSize:'0.74rem'}}>Use <b>Drop a pin</b> and click any element to start a thread.</div>`}
+      </div>`}
+
+      ${comments.map(function(c){
+        var isActive = s.activeCommentId===c.id;
+        return html`<div key=${c.id} style=${{padding:'.7rem .8rem',background:isActive?'rgba(37,99,235,.08)':'var(--bg-tertiary)',border:'1px solid '+(isActive?'rgba(37,99,235,.3)':'var(--border)'),borderRadius:8}}>
+          <div style=${{display:'flex',alignItems:'center',gap:'.4rem',marginBottom:'.3rem'}}>
+            <span style=${{fontSize:'0.78rem',fontWeight:600,color:'var(--text-primary)'}}>${c.author||'Anonymous'}</span>
+            <span style=${{fontSize:'0.68rem',color:'var(--text-faint)'}}>${c.ts?new Date(c.ts).toLocaleString():''}</span>
+            ${c.resolved && html`<span style=${{fontSize:'0.66rem',color:'#22c55e',padding:'1px 6px',borderRadius:99,background:'rgba(34,197,94,.1)',border:'1px solid rgba(34,197,94,.3)'}}>Resolved</span>`}
+            <div style=${{flex:1}}></div>
+            ${c.anchor && c.anchor.point && html`<button onClick=${function(){flyToComment(c);}} style=${btnGhost} title="Fly to pin">📍</button>`}
+            <button onClick=${function(){toggleResolve(c);}} style=${btnGhost}>${c.resolved?'Reopen':'Resolve'}</button>
+            <button onClick=${function(){delComment(c);}} style=${{...btnGhost,color:'#f87171',borderColor:'#ef444466'}} title="Delete">✕</button>
+          </div>
+          ${(!c.text && isActive) ? html`<${ShareCommentDraft} c=${c} sp=${sp} d=${d} />` : html`<div style=${{fontSize:'0.85rem',color:'var(--text-secondary)',whiteSpace:'pre-wrap',lineHeight:1.5}}>${c.text||html`<span style=${{color:'var(--text-faint)',fontStyle:'italic'}}>(no text)</span>`}</div>`}
+          ${(c.replies||[]).length>0 && html`<div style=${{marginTop:'.5rem',paddingLeft:'.6rem',borderLeft:'2px solid var(--border)',display:'flex',flexDirection:'column',gap:'.4rem'}}>
+            ${c.replies.map(function(r){return html`<div key=${r.id} style=${{fontSize:'0.78rem'}}>
+              <span style=${{fontWeight:600,color:'var(--text-primary)'}}>${r.author||'Anonymous'}</span>
+              <span style=${{color:'var(--text-faint)',marginLeft:'.4rem',fontSize:'0.68rem'}}>${r.ts?new Date(r.ts).toLocaleString():''}</span>
+              <div style=${{color:'var(--text-secondary)',whiteSpace:'pre-wrap',lineHeight:1.5}}>${r.text||''}</div>
+            </div>`})}
+          </div>`}
+          ${isActive && !c.resolved && html`<div style=${{marginTop:'.5rem',display:'flex',gap:'.4rem'}}>
+            <input type="text" value=${draft} placeholder="Reply…"
+              onInput=${function(e){setDraft(e.target.value);}}
+              onKeyDown=${function(e){if(e.key==='Enter'){addReply(c);}}}
+              style=${{flex:1,padding:'.35rem .55rem',background:'var(--input-bg)',color:'var(--text-primary)',border:'1px solid var(--border)',borderRadius:5,fontSize:'0.78rem',fontFamily:'inherit',outline:'none'}} />
+            <button onClick=${function(){addReply(c);}} style=${btnPrimary}>Send</button>
+          </div>`}
+          ${!isActive && html`<button onClick=${function(){d({t:A.SET_ACTIVE_COMMENT,v:c.id});}}
+            style=${{marginTop:'.4rem',background:'none',border:'none',cursor:'pointer',color:'var(--text-muted)',fontSize:'0.74rem',padding:0,fontFamily:'inherit'}}>
+            ${(c.replies||[]).length>0 ? 'Reply ('+c.replies.length+' so far)' : 'Reply'}
+          </button>`}
+        </div>`;
+      })}
+    </div>`;
+  }
+
+  function ShareCommentDraft(props) {
+    var c = props.c, sp = props.sp || {}, d = props.d;
+    var stT = useState(c.text||''); var txt=stT[0], setTxt=stT[1];
+    var taRef = useRef(null);
+    useEffect(function(){ if(taRef.current) taRef.current.focus(); }, []);
+    function save(){
+      var t = (txt||'').trim();
+      if (!t) { d({t:A.DEL_COMMENT, id:c.id}); return; }
+      d({t:A.UPD_COMMENT, id:c.id, u:{text:t, ts:Date.now(), author:(c.author||sp.userName||'Anonymous')}});
+    }
+    return html`<div style=${{display:'flex',flexDirection:'column',gap:'.4rem'}}>
+      <textarea ref=${taRef} value=${txt} placeholder="Type your comment…"
+        onInput=${function(e){setTxt(e.target.value);}}
+        onKeyDown=${function(e){ if(e.key==='Enter' && (e.ctrlKey||e.metaKey)) { e.preventDefault(); save(); } }}
+        style=${{width:'100%',minHeight:60,padding:'.5rem .6rem',background:'var(--input-bg)',color:'var(--text-primary)',
+          border:'1px solid var(--accent)',borderRadius:6,fontSize:'0.85rem',fontFamily:'inherit',outline:'none',resize:'vertical',boxSizing:'border-box'}} />
+      <div style=${{display:'flex',gap:'.4rem',justifyContent:'flex-end'}}>
+        <button onClick=${function(){d({t:A.DEL_COMMENT, id:c.id});}}
+          style=${{padding:'.3rem .6rem',borderRadius:5,fontSize:'0.74rem',cursor:'pointer',border:'1px solid var(--border)',background:'transparent',color:'var(--text-muted)',fontFamily:'inherit'}}>Cancel</button>
+        <button onClick=${save} disabled=${!txt.trim()}
+          style=${{padding:'.3rem .7rem',borderRadius:5,fontSize:'0.74rem',fontWeight:600,cursor:txt.trim()?'pointer':'not-allowed',
+            border:'none',background:'var(--accent)',color:'#fff',opacity:txt.trim()?1:0.4,fontFamily:'inherit'}}>Save (Ctrl+Enter)</button>
+      </div>
+    </div>`;
+  }
+
   // ── Settings Modal ───────────────────────────────────────────
 
   function SettingsModal(props) {
@@ -18814,6 +19192,23 @@ function startApp() {
             style=${{...S_BTN,width:'100%',padding:'.3rem .65rem',background:'none',color:all.length?'var(--text-primary)':'var(--text-faint)',fontSize:'.72rem',justifyContent:'flex-start',borderRadius:0}}>Export BCF 3.0</button>
         </div>`}
       </div>
+      <div style=${{position:'relative'}}>
+        ${iconBtn(function(){
+            try { if (window._ccActivateAddon) window._ccActivateAddon('shared-project'); } catch(e){}
+            d({t:A.SHARE,v:true});
+          },
+          html`<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/></svg>`,
+          'Share project')}
+        ${(function(){
+          var sp = (s.sharedProject||{});
+          var unread = (s.comments||[]).filter(function(c){return !c.resolved && c.author && sp.userName && c.author!==sp.userName && (c.ts||0) > ((sp.lastSync||0) - 60000);}).length;
+          var dot = sp.enabled ? (sp.syncing ? '#f59e0b' : '#22c55e') : null;
+          return html`<${React.Fragment}>
+            ${dot && html`<span style=${{position:'absolute',top:8,right:10,width:7,height:7,borderRadius:'50%',background:dot,boxShadow:'0 0 0 2px var(--bg-primary)',pointerEvents:'none'}}></span>`}
+            ${unread>0 && html`<span style=${{position:'absolute',top:4,right:6,background:'#ef4444',color:'#fff',fontSize:'0.6rem',fontWeight:600,padding:'0 3px',borderRadius:99,lineHeight:1.3,minWidth:13,textAlign:'center',pointerEvents:'none',boxShadow:'0 1px 3px rgba(0,0,0,.3)'}}>${unread>9?'9+':unread}</span>`}
+          </${React.Fragment}>`;
+        })()}
+      </div>
       ${iconBtn(function(){d({t:A.UPD_PREFS,u:{theme:isDark?'light':'dark'}});},
         isDark?'☀':'☾', isDark?'Light mode':'Dark mode')}
       ${iconBtn(function(){d({t:A.TAB,v:s.tab==='addons'?null:'addons'});},
@@ -20408,6 +20803,8 @@ function startApp() {
         if(ctrl && e.key==='o'){ e.preventDefault(); if(window._ccOpenIFC)window._ccOpenIFC(); return; }
         if(ctrl && e.key===','){ e.preventDefault(); d({t:A.SETTINGS,v:!s.showSettings}); return; }
         if(e.key==='Escape'){
+          if(s.commentMode){ d({t:A.COMMENT_MODE,v:false}); return; }
+          if(s.showShare){ d({t:A.SHARE,v:false}); return; }
           if(s.showSettings){ d({t:A.SETTINGS,v:false}); return; }
           if(s.showModal){ d({t:A.MODAL,v:false}); return; }
           if(s.showRevitBridge){ d({t:A.REVIT_BRIDGE,v:false}); return; }
@@ -20565,6 +20962,16 @@ function startApp() {
       ${s.showModal && html`<${NewIssueModal} d=${d} el=${s.modalElement} prefs=${s.prefs} clashes=${s.clashes} activeId=${s.activeId} />`}
       ${storeyPickerOpen && html`<${StoreyPickerModal} s=${s} d=${d} onClose=${function(){setStoreyPickerOpen(false);}} />`}
       ${s.showSettings && html`<${SettingsModal} d=${d} s=${s} prefs=${s.prefs} models=${s.models} rules=${s.rules} />`}
+      ${s.showShare && html`<${ShareModal} d=${d} s=${s} />`}
+      ${s.commentMode && html`<div style=${{position:'fixed',top:'1rem',left:'50%',transform:'translateX(-50%)',zIndex:9990,
+        background:'rgba(168,85,247,.95)',color:'#fff',padding:'.5rem .9rem',borderRadius:8,
+        boxShadow:'0 4px 20px rgba(168,85,247,.4)',display:'flex',alignItems:'center',gap:'.6rem',
+        fontSize:'0.82rem',fontWeight:500,fontFamily:'inherit'}}>
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s-8-4.5-8-12a8 8 0 1 1 16 0c0 7.5-8 12-8 12z"/><circle cx="12" cy="10" r="3"/></svg>
+        <span>Click on the model to drop a comment pin</span>
+        <button onClick=${function(){d({t:A.COMMENT_MODE,v:false});}}
+          style=${{background:'rgba(255,255,255,.2)',color:'#fff',border:'none',borderRadius:5,padding:'.2rem .5rem',fontSize:'0.74rem',fontWeight:600,cursor:'pointer',fontFamily:'inherit'}}>Cancel (Esc)</button>
+      </div>`}
       ${s.showRevitBridge && html`<${RevitBridgePanel} s=${s} d=${d} />`}
       <${MobileNav} s=${s} d=${d} />
       <${WelcomePopup} s=${s} d=${d} />

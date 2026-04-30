@@ -54,7 +54,7 @@
     },
 
     destroy: function() {
-      if (_sharedSyncTimer) { clearInterval(_sharedSyncTimer); _sharedSyncTimer = null; }
+      if (_sharedSyncTimer) { clearTimeout(_sharedSyncTimer); _sharedSyncTimer = null; }
       _sharedDirHandle = null;
       _sharedFileHandle = null;
     },
@@ -178,7 +178,7 @@
   }
 
   function _disconnectShared(d) {
-    if (_sharedSyncTimer) { clearInterval(_sharedSyncTimer); _sharedSyncTimer = null; }
+    if (_sharedSyncTimer) { clearTimeout(_sharedSyncTimer); _sharedSyncTimer = null; }
     _sharedDirHandle = null;
     _sharedFileHandle = null;
     _clearSharedHandle();
@@ -221,7 +221,8 @@
       lastDeltaSummary: state.lastDeltaSummary || null,
       viewpoints: (state.viewpoints||[]).map(function(v){return Object.assign({},v,{snapshot:undefined})}),
       measurements: state.measurements||[],
-      changelog: state.changelog || []
+      changelog: state.changelog || [],
+      comments: state.comments || []
     };
     var json = JSON.stringify(data, null, 2);
     return _sharedDirHandle.getFileHandle(fn, {create:true}).then(function(fh) {
@@ -277,6 +278,11 @@
       });
     }
 
+    // Comments — last-write-wins by id+ts. Reducer handles dedupe.
+    if (remote.comments && remote.comments.length) {
+      d({t:'MERGE_COMMENTS', v:remote.comments});
+    }
+
     var localIds = {};
     state.changelog.forEach(function(e){ localIds[e.id] = true; });
     var newEntries = (remote.changelog || []).filter(function(e){ return !localIds[e.id]; });
@@ -302,10 +308,15 @@
   }
 
   function _startSharedSync(d) {
-    if (_sharedSyncTimer) clearInterval(_sharedSyncTimer);
-    _sharedSyncTimer = setInterval(function() {
+    if (_sharedSyncTimer) clearTimeout(_sharedSyncTimer);
+    function tick() {
       _syncSharedProject(d);
-    }, 60000);
+      var st = window._ccLatestState;
+      var hasOpenComments = st && (st.comments||[]).some(function(c){return !c.resolved;});
+      var ms = hasOpenComments ? 15000 : 60000;
+      _sharedSyncTimer = setTimeout(tick, ms);
+    }
+    _sharedSyncTimer = setTimeout(tick, 15000);
     _syncSharedProject(d);
   }
 
