@@ -1,5 +1,8 @@
 # Changelog
 
+## v5.0.1 (2026-04-30)
+- fix: remove escaped quotes in WelcomePopup template literal (SyntaxError at line 21137)
+
 ## v5.0.0 (2026-04-30)
 - ci: remove custom CodeQL workflow — conflicts with Default Setup already enabled on repo
 
