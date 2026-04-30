@@ -635,7 +635,9 @@ function startApp() {
     comments: [],         // [{id, anchor:{point:[x,y,z], globalId, modelId}, author, text, ts, resolved, replies:[{id,author,text,ts}]}]
     commentMode: false,   // when true, next canvas click drops a pin
     activeCommentId: null,
-    presenting: false     // presentation/kiosk mode (fullscreen, chrome hidden, auto-rotate when idle)
+    presenting: false,    // presentation/kiosk mode (fullscreen, chrome hidden, auto-rotate when idle)
+    smartViews: (function(){ try { var v = JSON.parse(localStorage.getItem('cc_smartViews')||'[]'); return Array.isArray(v)?v:[]; } catch(e){ return []; } })(),
+    showSmartViews: false
   };
   var A = {
     ADD_MODEL:'ADD_MODEL', DEL_MODEL:'DEL_MODEL', REPLACE_MODEL:'REPLACE_MODEL', UPD_MODEL:'UPD_MODEL',
@@ -673,6 +675,7 @@ function startApp() {
     APPEND_CHANGELOG:'APPEND_CHANGELOG', MERGE_CHANGELOG:'MERGE_CHANGELOG',
     IDS_SET_RESULTS:'IDS_SET_RESULTS', IDS_SET_SPECS:'IDS_SET_SPECS', IDS_RUNNING:'IDS_RUNNING',
     SHARE:'SHARE', SHARE_TAB:'SHARE_TAB', PRESENT:'PRESENT',
+    SMART_VIEWS:'SMART_VIEWS', ADD_SMART_VIEW:'ADD_SMART_VIEW', DEL_SMART_VIEW:'DEL_SMART_VIEW',
     COMMENT_MODE:'COMMENT_MODE', ADD_COMMENT:'ADD_COMMENT', UPD_COMMENT:'UPD_COMMENT',
     DEL_COMMENT:'DEL_COMMENT', SET_ACTIVE_COMMENT:'SET_ACTIVE_COMMENT', MERGE_COMMENTS:'MERGE_COMMENTS'
   };
@@ -913,6 +916,17 @@ function startApp() {
       case A.SHARE:       return Object.assign({},s,{showShare:!!a.v});
       case A.SHARE_TAB:   return Object.assign({},s,{shareTab:a.v||'overview'});
       case A.PRESENT:     return Object.assign({},s,{presenting:!!a.v});
+      case A.SMART_VIEWS: return Object.assign({},s,{showSmartViews:!!a.v});
+      case A.ADD_SMART_VIEW: {
+        var sv = (s.smartViews||[]).concat([a.v]);
+        try { localStorage.setItem('cc_smartViews', JSON.stringify(sv.slice(-50))); } catch(e){}
+        return Object.assign({},s,{smartViews:sv});
+      }
+      case A.DEL_SMART_VIEW: {
+        var sv2 = (s.smartViews||[]).filter(function(v){return v.id!==a.id;});
+        try { localStorage.setItem('cc_smartViews', JSON.stringify(sv2)); } catch(e){}
+        return Object.assign({},s,{smartViews:sv2});
+      }
       case A.COMMENT_MODE: return Object.assign({},s,{commentMode:!!a.v});
       case A.SET_ACTIVE_COMMENT: return Object.assign({},s,{activeCommentId:a.v||null});
       case A.ADD_COMMENT: return Object.assign({},s,{comments:s.comments.concat([a.v])});
@@ -942,6 +956,7 @@ function startApp() {
       case A.SECTION_BOX:  return Object.assign({},s,{sectionBox:a.v, sectionAxis:null, sectionCustom:null});
       case A.TOGGLE_CLASS_VIS: var hc2=Object.assign({},s.hiddenClasses); if(hc2[a.key])delete hc2[a.key];else hc2[a.key]=true; return Object.assign({},s,{hiddenClasses:hc2});
       case A.SHOW_ALL_CLASSES: return Object.assign({},s,{hiddenClasses:{}});
+      case '_REPLACE_HIDDEN_CLASSES': return Object.assign({},s,{hiddenClasses:Object.assign({},a.v||{})});
       case A.HIDE_ALL_CLASSES: var hca={}; if(s.classifications[a.view]){Object.keys(s.classifications[a.view]).forEach(function(k){hca[a.view+':'+k]=true;});} return Object.assign({},s,{hiddenClasses:hca});
       case A.COLOR_BY_CLASS: return Object.assign({},s,{colorByClass:s.colorByClass===a.v?null:a.v});
 
@@ -4376,6 +4391,15 @@ function startApp() {
   var _walkPointerLocked = false; // track whether we got pointer lock
   var _walkFovDefault = 75;
   var _walkFov = (function(){ try { var v=parseFloat(localStorage.getItem('cc_walkFov')); return (v>=30&&v<=110)?v:_walkFovDefault; } catch(e){ return _walkFovDefault; } })();
+  var _walkBobEnabled = (function(){ try { return localStorage.getItem('cc_walkBob')==='1'; } catch(e){ return false; } })();
+  var _walkBobPhase = 0;
+  var _walkBobBaseY = null;
+  var _walkGamepadIdx = null;
+  function _walkSetBob(on){ _walkBobEnabled=!!on; try{localStorage.setItem('cc_walkBob',on?'1':'0');}catch(e){} try{window.dispatchEvent(new CustomEvent('cc-walk-flag',{detail:{bob:_walkBobEnabled,collision:_walkCollision}}));}catch(e){} }
+  function _walkSetCollision(on){ _walkCollision=!!on; try{window.dispatchEvent(new CustomEvent('cc-walk-flag',{detail:{bob:_walkBobEnabled,collision:_walkCollision}}));}catch(e){} }
+  window._ccWalkSetBob = _walkSetBob;
+  window._ccWalkSetCollision = _walkSetCollision;
+  window._ccWalkGetFlags = function(){ return {bob:_walkBobEnabled, collision:_walkCollision}; };
   function _walkSetFov(fov, opts) {
     _walkFov = Math.max(30, Math.min(110, fov));
     try { localStorage.setItem('cc_walkFov', String(_walkFov)); } catch(e){}
@@ -4470,7 +4494,34 @@ function startApp() {
     _walkLastTime = now;
     if (dt <= 0) return;
 
-    var speed = _walkSpeed * (_walkKeys['ShiftLeft'] || _walkKeys['ShiftRight'] ? 4 : 1);
+    // ── Gamepad polling ────────────────────────────────────────
+    var gpAxes = null, gpSprint = false;
+    try {
+      var pads = (navigator.getGamepads && navigator.getGamepads()) || [];
+      for (var gi = 0; gi < pads.length; gi++) {
+        if (pads[gi] && pads[gi].connected) {
+          if (_walkGamepadIdx == null) _walkGamepadIdx = gi;
+          if (gi === _walkGamepadIdx) {
+            var pa = pads[gi].axes;
+            // Deadzone 0.15
+            var dz = function(v){ return Math.abs(v)<0.15 ? 0 : v; };
+            gpAxes = { lx: dz(pa[0]||0), ly: dz(pa[1]||0), rx: dz(pa[2]||0), ry: dz(pa[3]||0) };
+            // Right-stick → look
+            if (gpAxes.rx || gpAxes.ry) {
+              _walkYaw   -= gpAxes.rx * dt * 2.5;
+              _walkPitch -= gpAxes.ry * dt * 2.0;
+              _walkPitch = Math.max(-Math.PI / 2.2, Math.min(Math.PI / 2.2, _walkPitch));
+              _walkApplyLook(S);
+            }
+            var btns = pads[gi].buttons || [];
+            gpSprint = btns[6] && btns[6].pressed;
+            break;
+          }
+        }
+      }
+    } catch(e) {}
+
+    var speed = _walkSpeed * ((_walkKeys['ShiftLeft'] || _walkKeys['ShiftRight'] || gpSprint) ? 4 : 1);
     var fx = Math.sin(_walkYaw), fz = Math.cos(_walkYaw);
     var rx = -Math.cos(_walkYaw), rz = Math.sin(_walkYaw);
 
@@ -4481,6 +4532,11 @@ function startApp() {
     if (_walkKeys['KeyD'] || _walkKeys['ArrowRight'])  { mx += rx; mz += rz; }
     if (_walkKeys['Space'] || _walkKeys['KeyQ'])   my += 1;
     if (_walkKeys['KeyC'] || _walkKeys['KeyE'])    my -= 1;
+    // Gamepad left stick → forward/strafe
+    if (gpAxes) {
+      mx += fx * (-gpAxes.ly) + rx * (gpAxes.lx);
+      mz += fz * (-gpAxes.ly) + rz * (gpAxes.lx);
+    }
 
     var len = Math.sqrt(mx * mx + mz * mz);
     if (len > 0) { mx /= len; mz /= len; }
@@ -4506,10 +4562,30 @@ function startApp() {
       }
     }
 
-    if (mx !== 0 || mz !== 0 || my !== 0) {
+    var moving = (mx !== 0 || mz !== 0 || my !== 0);
+    if (moving) {
       S.camera.position.set(newX, newY, newZ);
+      _walkBobBaseY = newY;
       _walkApplyLook(S);
       invalidate(3);
+    }
+    // Head-bob: subtle vertical sin while ground-moving (W/A/S/D, not Q/E flying)
+    if (_walkBobEnabled && _walkActive) {
+      var grounded = (mx !== 0 || mz !== 0);
+      if (grounded) {
+        _walkBobPhase += dt * speed * 1.4;
+        var amp = 0.04 * _walkUnitScale; // 4 cm at unit-scale 1
+        var bob = Math.sin(_walkBobPhase * Math.PI * 2) * amp;
+        if (_walkBobBaseY != null) S.camera.position.y = _walkBobBaseY + bob;
+        invalidate(2);
+      } else {
+        // settle back to base height
+        if (_walkBobBaseY != null && Math.abs(S.camera.position.y - _walkBobBaseY) > 1e-4) {
+          S.camera.position.y += (_walkBobBaseY - S.camera.position.y) * Math.min(1, dt*8);
+          invalidate(2);
+        }
+        _walkBobPhase = 0;
+      }
     }
   }
 
@@ -4794,6 +4870,104 @@ function startApp() {
       S.renderer = renderer;
       window._ccState3d = S;
 
+      // ── Post-processing (lazy, gated to renderStyle === 'rendered') ──
+      S._composer = null;
+      S._postPassesActive = false;
+      S._postOutlinePass = null;
+      S._postLoading = null;
+      function _ccLoadScript(url) {
+        return new Promise(function(resolve, reject){
+          if (document.querySelector('script[src="'+url+'"]')) { resolve(); return; }
+          var s = document.createElement('script');
+          s.src = url; s.async = true;
+          s.onload = function(){ resolve(); };
+          s.onerror = function(){ reject(new Error('Failed: '+url)); };
+          document.head.appendChild(s);
+        });
+      }
+      function _ccLoadPostProcessing() {
+        if (S._postLoading) return S._postLoading;
+        if (typeof THREE.EffectComposer === 'function' && typeof THREE.SAOPass === 'function') {
+          S._postLoading = Promise.resolve();
+          return S._postLoading;
+        }
+        var base = 'https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/';
+        S._postLoading = _ccLoadScript(base+'shaders/CopyShader.js')
+          .then(function(){ return _ccLoadScript(base+'shaders/LuminosityHighPassShader.js').catch(function(){}); })
+          .then(function(){ return _ccLoadScript(base+'shaders/SAOShader.js'); })
+          .then(function(){ return _ccLoadScript(base+'shaders/DepthLimitedBlurShader.js'); })
+          .then(function(){ return _ccLoadScript(base+'shaders/UnpackDepthRGBAShader.js'); })
+          .then(function(){ return _ccLoadScript(base+'shaders/FXAAShader.js').catch(function(){}); })
+          .then(function(){ return _ccLoadScript(base+'postprocessing/Pass.js').catch(function(){}); })
+          .then(function(){ return _ccLoadScript(base+'postprocessing/EffectComposer.js'); })
+          .then(function(){ return _ccLoadScript(base+'postprocessing/RenderPass.js'); })
+          .then(function(){ return _ccLoadScript(base+'postprocessing/ShaderPass.js'); })
+          .then(function(){ return _ccLoadScript(base+'postprocessing/SAOPass.js'); })
+          .then(function(){ return _ccLoadScript(base+'postprocessing/OutlinePass.js'); })
+          .then(function(){ return _ccLoadScript(base+'postprocessing/SMAAPass.js').catch(function(){}); });
+        return S._postLoading;
+      }
+      function _ccBuildComposer() {
+        if (S._composer) return;
+        if (typeof THREE.EffectComposer !== 'function' || typeof THREE.SAOPass !== 'function') return;
+        try {
+          var w = el.clientWidth, h = el.clientHeight;
+          var pr = renderer.getPixelRatio();
+          var composer = new THREE.EffectComposer(renderer);
+          composer.setSize(w, h);
+          composer.addPass(new THREE.RenderPass(scene, S.camera));
+          var sao = new THREE.SAOPass(scene, S.camera, false, true);
+          sao.params.output = THREE.SAOPass.OUTPUT.Default;
+          sao.params.saoBias = 0.5;
+          sao.params.saoIntensity = 0.012;
+          sao.params.saoScale = 16;
+          sao.params.saoKernelRadius = 30;
+          sao.params.saoMinResolution = 0;
+          sao.params.saoBlur = true;
+          sao.params.saoBlurRadius = 6;
+          sao.params.saoBlurStdDev = 4;
+          sao.params.saoBlurDepthCutoff = 0.01;
+          composer.addPass(sao);
+          if (typeof THREE.OutlinePass === 'function') {
+            var outline = new THREE.OutlinePass(new THREE.Vector2(w,h), scene, S.camera);
+            outline.edgeStrength = 3.0;
+            outline.edgeGlow = 0.0;
+            outline.edgeThickness = 1.0;
+            outline.visibleEdgeColor.set('#a78bfa');
+            outline.hiddenEdgeColor.set('#0f172a');
+            composer.addPass(outline);
+            S._postOutlinePass = outline;
+          }
+          if (typeof THREE.SMAAPass === 'function') {
+            composer.addPass(new THREE.SMAAPass(w*pr, h*pr));
+          }
+          S._composer = composer;
+          window._ccComposer = composer;
+        } catch(e) { console.warn('[postfx] build failed:', e); }
+      }
+      window._ccActivatePostFX = function(active) {
+        if (!active) {
+          S._postPassesActive = false;
+          invalidate(2);
+          return Promise.resolve(false);
+        }
+        return _ccLoadPostProcessing().then(function(){
+          _ccBuildComposer();
+          S._postPassesActive = !!S._composer;
+          invalidate(3);
+          return S._postPassesActive;
+        }).catch(function(e){
+          console.warn('[postfx] load failed:', e);
+          S._postPassesActive = false;
+          return false;
+        });
+      };
+      window._ccPostOutlineFor = function(meshes) {
+        if (!S._postOutlinePass) return;
+        S._postOutlinePass.selectedObjects = (meshes && meshes.length) ? meshes : [];
+        invalidate(2);
+      };
+
       S.orbit = makeOrbit(camera, renderer.domElement, _wlAdd);
       S.orbit.apply(); // ensure camera looks at orbit target on init
 
@@ -4964,6 +5138,7 @@ function startApp() {
         _animateFly(endTarget, endPos);
         if (window._ccUpdateShadowFrustum) window._ccUpdateShadowFrustum();
       };
+      window._ccResetView = _resetView;
 
       var _ghostedMeshes = [];
       var _ghostMatCache = new Map(); // origMat.uuid → ghost clone
@@ -5164,6 +5339,7 @@ function startApp() {
       function _clearHighlightGroups() {
         _clearHlRef();
         if(outlineRef.current){scene.remove(outlineRef.current);outlineRef.current=null;}
+        if (window._ccPostOutlineFor) window._ccPostOutlineFor([]);
       }
       function _clearHoverRef() {
         if(!hoverRef.current) return;
@@ -5229,6 +5405,9 @@ function startApp() {
             scene.add(grp);
             hlRef.current = grp;
           }
+          if (window._ccPostOutlineFor) window._ccPostOutlineFor([found]);
+        } else if (window._ccPostOutlineFor) {
+          window._ccPostOutlineFor([]);
         }
         if(alsoGhost!==false) ghostOthers([{modelId: modelId || null, expressId: expressId}]);
         invalidate();
@@ -5237,10 +5416,12 @@ function startApp() {
         if (!refs || !refs.length || !S.mg) return;
         _clearHighlightGroups();
         var combinedGrp = new THREE.Group();
+        var outlineMeshes = [];
         refs.forEach(function(ref){
           if (!ref || ref.expressId == null) return;
           var mesh = _findMeshByRef(ref.expressId, ref.modelId);
           if (!mesh) return;
+          outlineMeshes.push(mesh);
           var color = _discColorForModelId(ref.modelId || (mesh.parent && mesh.parent.userData && mesh.parent.userData.modelId));
           var sub = _buildHighlightGroupForMesh(mesh, color);
           if (sub) combinedGrp.add(sub);
@@ -5249,6 +5430,7 @@ function startApp() {
           scene.add(combinedGrp);
           hlRef.current = combinedGrp;
         }
+        if (window._ccPostOutlineFor) window._ccPostOutlineFor(outlineMeshes);
         if (alsoGhost !== false) ghostOthers(refs);
         invalidate();
       };
@@ -6218,7 +6400,10 @@ function startApp() {
         if(c.tx!=null) S.orbit.target.set(c.tx, c.ty, c.tz);
         else S.orbit.target.set(c.px+c.dx*10, c.py+c.dy*10, c.pz+c.dz*10);
         S.orbit.sync(); S.orbit.apply();
+        invalidate(3);
       };
+      window._ccApplyViewpoint = _restoreViewpoint;
+      window._ccCaptureViewpoint = _captureViewpoint;
 
       // Sky-bounce hemi (cool sky from above, warm ground from below)
       S._ambLight = new THREE.HemisphereLight(0xb1c7e0, 0x4a3a32, 0.7);
@@ -6381,7 +6566,12 @@ function startApp() {
           if (renderer.localClippingEnabled !== _sectionActive) {
             renderer.localClippingEnabled = _sectionActive;
           }
-          renderer.render(scene,S.camera);
+          // Use the post-processing composer when 'rendered' style + composer ready.
+          if (S._composer && S._postPassesActive) {
+            S._composer.render();
+          } else {
+            renderer.render(scene,S.camera);
+          }
         } catch(renderErr) { console.warn('Render error:', renderErr); }
         S.perf.frameCount++;
       }
@@ -6398,6 +6588,12 @@ function startApp() {
         }
         cam.updateProjectionMatrix();
         renderer.setSize(el.clientWidth, el.clientHeight);
+        if (S._composer) {
+          S._composer.setSize(el.clientWidth, el.clientHeight);
+          if (S._postOutlinePass && S._postOutlinePass.setSize) {
+            S._postOutlinePass.setSize(el.clientWidth, el.clientHeight);
+          }
+        }
         invalidate();
       });
       obs.observe(el);
@@ -6582,6 +6778,123 @@ function startApp() {
       }
       invalidate();
     }, [s.sectionAxis, s.sectionPos, s.sectionCustom]);
+
+    // ── TransformControls section gizmo (PR-A) ─────────────────
+    // Adds a draggable 3-axis-aware translate gizmo on the active section
+    // plane so users can grab the arrow and slide. Falls back gracefully
+    // if examples/js/controls/TransformControls.js fails to load — the
+    // existing raycast drag on the visible arrow still works.
+    var tcLoadedRef = useRef(false);
+    useEffect(function(){
+      var S = state3d.current;
+      if (!S || !S.scene || !S.camera || !S.renderer) return;
+      var _disp = window._ccDispatch;
+
+      function detachAndHide() {
+        if (S._sectionTC) {
+          try { S._sectionTC.detach(); } catch(e){}
+          if (S._sectionTC.parent) S._sectionTC.parent.remove(S._sectionTC);
+        }
+      }
+
+      function ensureGizmo(cb) {
+        if (S._sectionTC) { cb(); return; }
+        if (typeof THREE.TransformControls !== 'function') {
+          if (tcLoadedRef.current) { cb(); return; }
+          tcLoadedRef.current = true;
+          var url = 'https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/TransformControls.js';
+          var sc = document.createElement('script');
+          sc.src = url; sc.async = true;
+          sc.onload = function(){ if (typeof THREE.TransformControls === 'function') buildAndCb(); else cb(); };
+          sc.onerror = function(){ console.warn('[gizmo] TransformControls load failed'); cb(); };
+          document.head.appendChild(sc);
+        } else {
+          buildAndCb();
+        }
+        function buildAndCb() {
+          if (S._sectionTC) { cb(); return; }
+          var anchor = new THREE.Object3D();
+          anchor.userData._sectionAnchor = true;
+          S._sectionAnchor = anchor;
+          var tc = new THREE.TransformControls(S.camera, S.renderer.domElement);
+          tc.setMode('translate');
+          tc.setSize(0.85);
+          tc.userData._isSectionTC = true;
+          tc.addEventListener('dragging-changed', function(ev){
+            if (S.orbit) S.orbit.enabled = !ev.value;
+            window._ccSectionDragging = !!ev.value;
+            invalidate(3);
+          });
+          tc.addEventListener('objectChange', function(){
+            if (!_disp) return;
+            var st = window._ccLatestState || {};
+            var box = _elemsBBox(); if (box.isEmpty()) return;
+            var ax = st.sectionAxis;
+            if (ax) {
+              var minV = box.min[ax], maxV = box.max[ax];
+              if (Math.abs(maxV - minV) < 1e-6) return;
+              var posVal = anchor.position[ax];
+              var t = (posVal - minV) / (maxV - minV);
+              t = Math.max(0.005, Math.min(0.995, t));
+              _disp({t:A.SECTION, axis:ax, pos:t});
+            } else if (st.sectionCustom) {
+              var sc = st.sectionCustom;
+              var n = new THREE.Vector3(sc.normal[0],sc.normal[1],sc.normal[2]);
+              var p0 = new THREE.Vector3(sc.point[0],sc.point[1],sc.point[2]);
+              var diag = box.getSize(new THREE.Vector3()).length();
+              if (diag < 1e-6) return;
+              var rel = anchor.position.clone().sub(p0).dot(n) / diag + 0.5;
+              rel = Math.max(0.005, Math.min(0.995, rel));
+              _disp({t:A.SECTION_CUSTOM, v:sc, pos:rel});
+            }
+          });
+          S._sectionTC = tc;
+          cb();
+        }
+      }
+
+      // Detach when there's no active section, or while walking/presenting.
+      if (!s.sectionAxis && !s.sectionCustom) { detachAndHide(); invalidate(2); return; }
+      if (s.walkMode || s.presenting) { detachAndHide(); invalidate(2); return; }
+
+      ensureGizmo(function(){
+        if (!S._sectionTC || !S._sectionAnchor) return;
+        var box = _elemsBBox();
+        if (box.isEmpty()) return;
+        var center = box.getCenter(new THREE.Vector3());
+        if (s.sectionAxis) {
+          var ax = s.sectionAxis;
+          var minV = box.min[ax], maxV = box.max[ax];
+          var cut = minV + (maxV - minV) * s.sectionPos;
+          S._sectionAnchor.position.copy(center);
+          S._sectionAnchor.position[ax] = cut;
+          S._sectionAnchor.rotation.set(0,0,0);
+          S._sectionTC.showX = (ax==='x');
+          S._sectionTC.showY = (ax==='y');
+          S._sectionTC.showZ = (ax==='z');
+        } else if (s.sectionCustom) {
+          var sc = s.sectionCustom;
+          var n = new THREE.Vector3(sc.normal[0],sc.normal[1],sc.normal[2]).normalize();
+          var p0 = new THREE.Vector3(sc.point[0],sc.point[1],sc.point[2]);
+          var diag = box.getSize(new THREE.Vector3()).length();
+          var offset = (s.sectionPos - 0.5) * diag;
+          var pos = p0.clone().addScaledVector(n, offset);
+          S._sectionAnchor.position.copy(pos);
+          var q = new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0,0,1), n);
+          S._sectionAnchor.quaternion.copy(q);
+          S._sectionAnchor.rotation.copy(S._sectionAnchor.rotation); // sync
+          S._sectionTC.showX = false;
+          S._sectionTC.showY = false;
+          S._sectionTC.showZ = true;
+          S._sectionTC.space = 'local';
+        }
+        if (!S._sectionTC.parent) S.scene.add(S._sectionTC);
+        S._sectionTC.attach(S._sectionAnchor);
+        invalidate(3);
+      });
+
+      return function(){};
+    }, [s.sectionAxis, s.sectionCustom, s.sectionPos, s.walkMode, s.presenting]);
 
     var sboxDragRef = useRef(null); // {handle, axis, side, startMouse, startVal, plane}
     useEffect(function(){
@@ -6969,6 +7282,10 @@ function startApp() {
         S._ambLight.intensity = style==='shaded' ? 0.9 : style==='rendered' ? 0.55 : 0.7;
         // Shadows are perceptibly expensive; only enable in 'rendered' mode
         S._sunLight.castShadow = style==='rendered';
+      }
+      // Lazy-activate SAO + Outline post-processing for the 'rendered' style.
+      if (window._ccActivatePostFX) {
+        window._ccActivatePostFX(style==='rendered');
       }
       // Per-mesh shadow flags
       if (S.mg) {
@@ -8287,6 +8604,12 @@ function startApp() {
             ${unread>0 && html`<span style=${{position:'absolute',top:-4,right:-4,background:'#ef4444',color:'#fff',fontSize:'0.6rem',fontWeight:700,padding:'1px 5px',borderRadius:99,lineHeight:1.3,minWidth:14,textAlign:'center',boxShadow:'0 1px 3px rgba(0,0,0,.4)'}}>${unread>9?'9+':unread}</span>`}
           </button>`;
         })()}
+        <button class="cc-hide-mobile cc-btn-press" onClick=${function(){d({t:A.SMART_VIEWS,v:!s.showSmartViews});}}
+          title="Smart Views — one-click presets, saved views, shareable link"
+          style=${{...S_BTN,background:'var(--bg-secondary)',color:'var(--text-secondary)',border:'1px solid var(--border)',fontSize:'var(--text-xs)',display:'flex',alignItems:'center',gap:'.35rem'}}>
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M12 1v6m0 10v6M5.64 5.64l4.24 4.24m4.24 4.24l4.24 4.24M1 12h6m10 0h6M5.64 18.36l4.24-4.24m4.24-4.24l4.24-4.24"/></svg>
+          Views
+        </button>
         <button class="cc-hide-mobile cc-btn-press" onClick=${function(){d({t:A.PRESENT,v:!s.presenting});}}
           title="Presentation mode (P) — fullscreen, hide chrome, auto-rotate when idle"
           style=${{...S_BTN,background:s.presenting?'#7c3aed':'var(--bg-secondary)',color:s.presenting?'#fff':'var(--text-secondary)',border:'1px solid '+(s.presenting?'#a78bfa':'var(--border)'),fontSize:'var(--text-xs)',display:'flex',alignItems:'center',gap:'.35rem'}}>
@@ -13630,7 +13953,9 @@ function startApp() {
   function WalkModeHUD(props) {
     var d = props.d;
     var initialFov = (typeof window._ccWalkGetFov === 'function' ? window._ccWalkGetFov() : 75);
+    var initialFlags = (typeof window._ccWalkGetFlags === 'function' ? window._ccWalkGetFlags() : {bob:false,collision:false});
     var fovSt = useState(initialFov), fov=fovSt[0], setFov=fovSt[1];
+    var flagSt = useState(initialFlags), flags=flagSt[0], setFlags=flagSt[1];
     var pulseSt = useState(0), pulse=pulseSt[0], setPulse=pulseSt[1];
     var hideTimer = useRef(null);
 
@@ -13644,8 +13969,14 @@ function startApp() {
           hideTimer.current = setTimeout(function(){ setPulse(function(p){ return p; }); }, 1100);
         }
       }
+      function onFlag(e){ if (e && e.detail) setFlags(Object.assign({}, e.detail)); }
       window.addEventListener('cc-walk-fov', onFov);
-      return function(){ window.removeEventListener('cc-walk-fov', onFov); if (hideTimer.current) clearTimeout(hideTimer.current); };
+      window.addEventListener('cc-walk-flag', onFlag);
+      return function(){
+        window.removeEventListener('cc-walk-fov', onFov);
+        window.removeEventListener('cc-walk-flag', onFlag);
+        if (hideTimer.current) clearTimeout(hideTimer.current);
+      };
     }, []);
 
     function applyFov(v){ if (window._ccWalkSetFov) window._ccWalkSetFov(v); }
@@ -13690,13 +14021,24 @@ function startApp() {
           <span><b>Shift+Scroll</b> dolly-zoom</span>
         </div>
         <div style=${{background:'rgba(15,23,42,.92)',borderRadius:10,padding:'.4rem .55rem',
-          display:'flex',alignItems:'center',gap:'.4rem',border:'1px solid rgba(148,163,184,.2)',backdropFilter:'blur(8px)'}}>
+          display:'flex',alignItems:'center',gap:'.4rem',border:'1px solid rgba(148,163,184,.2)',backdropFilter:'blur(8px)',flexWrap:'wrap',justifyContent:'center'}}>
           <span style=${{fontSize:'0.62rem',color:'rgba(255,255,255,.55)',fontWeight:600,textTransform:'uppercase',letterSpacing:'.05em',marginLeft:'.2rem'}}>FOV</span>
           ${presets.map(presetBtn)}
           <input type="range" min="30" max="110" step="1" value=${Math.round(fov)}
             onInput=${function(e){applyFov(parseFloat(e.target.value));}}
             style=${{width:90,accentColor:'#7c3aed'}} />
           <span style=${{fontSize:'0.66rem',color:'rgba(255,255,255,.65)',fontVariantNumeric:'tabular-nums',width:32,textAlign:'right'}}>${Math.round(fov)}°</span>
+          <span style=${{width:1,height:18,background:'rgba(255,255,255,.15)',margin:'0 .3rem'}}></span>
+          <button onClick=${function(){if(window._ccWalkSetCollision)window._ccWalkSetCollision(!flags.collision);}}
+            title="Toggle no-clip — when off you walk through walls"
+            style=${{padding:'.25rem .55rem',background:!flags.collision?'rgba(168,85,247,.85)':'rgba(255,255,255,.08)',color:'#fff',border:'1px solid '+(!flags.collision?'rgba(167,139,250,.6)':'rgba(255,255,255,.12)'),borderRadius:5,fontSize:'0.66rem',fontWeight:600,cursor:'pointer',fontFamily:'inherit',lineHeight:1.1}}>
+            ${!flags.collision ? 'No-clip' : 'Solid walls'}
+          </button>
+          <button onClick=${function(){if(window._ccWalkSetBob)window._ccWalkSetBob(!flags.bob);}}
+            title="Toggle head-bob — subtle vertical motion while walking"
+            style=${{padding:'.25rem .55rem',background:flags.bob?'rgba(168,85,247,.85)':'rgba(255,255,255,.08)',color:'#fff',border:'1px solid '+(flags.bob?'rgba(167,139,250,.6)':'rgba(255,255,255,.12)'),borderRadius:5,fontSize:'0.66rem',fontWeight:600,cursor:'pointer',fontFamily:'inherit',lineHeight:1.1}}>
+            Head-bob ${flags.bob?'on':'off'}
+          </button>
           <button onClick=${function(){
               if (window._ccWalkExit) window._ccWalkExit();
               d({t:A.WALK_MODE, v:false});
@@ -13711,9 +14053,14 @@ function startApp() {
   function PresentationOverlay(props) {
     var s = props.s, d = props.d;
     var idleSt = useState(0), idleTick=idleSt[0], setIdleTick=idleSt[1];
+    var vpIdxSt = useState(0), vpIdx=vpIdxSt[0], setVpIdx=vpIdxSt[1];
+    var autoSt = useState(false), autoplay=autoSt[0], setAutoplay=autoSt[1];
+    var brandSt = useState(function(){ try { return localStorage.getItem('cc_brand_logo')||''; } catch(e){ return ''; } }),
+        brand=brandSt[0], setBrand=brandSt[1];
     var rotatingRef = useRef(false);
     var rotRafRef = useRef(null);
     var lastActRef = useRef(Date.now());
+    var autoplayTimerRef = useRef(null);
 
     // Mark <body data-presenting="1"> + request fullscreen
     useEffect(function(){
@@ -13794,29 +14141,373 @@ function startApp() {
         if (vp.cameraPos && window._ccFlyToPoint) window._ccFlyToPoint(vp.target||vp.cameraPos);
       } catch(e){}
     }
+    function step(delta){
+      if (!viewpoints.length) return;
+      var next = ((vpIdx + delta) % viewpoints.length + viewpoints.length) % viewpoints.length;
+      setVpIdx(next);
+      jumpVp(viewpoints[next]);
+    }
+
+    // Arrow + Space key bindings (active only while presenting)
+    useEffect(function(){
+      function onK(e){
+        if (e.key === 'ArrowRight' || e.key === 'PageDown') { e.preventDefault(); step(1); }
+        else if (e.key === 'ArrowLeft' || e.key === 'PageUp') { e.preventDefault(); step(-1); }
+        else if (e.key === ' ' || e.code === 'Space') { e.preventDefault(); setAutoplay(function(p){ return !p; }); }
+      }
+      window.addEventListener('keydown', onK);
+      return function(){ window.removeEventListener('keydown', onK); };
+    }, [viewpoints.length, vpIdx]);
+
+    // Auto-advance loop
+    useEffect(function(){
+      if (autoplayTimerRef.current) { clearInterval(autoplayTimerRef.current); autoplayTimerRef.current=null; }
+      if (autoplay && viewpoints.length > 1) {
+        autoplayTimerRef.current = setInterval(function(){ step(1); }, 5500);
+      }
+      return function(){ if (autoplayTimerRef.current) clearInterval(autoplayTimerRef.current); };
+    }, [autoplay, viewpoints.length, vpIdx]);
+
+    function uploadLogo(file){
+      if (!file) return;
+      var rd = new FileReader();
+      rd.onload = function(e){
+        var url = e.target.result;
+        try { localStorage.setItem('cc_brand_logo', url); } catch(_){}
+        setBrand(url);
+      };
+      rd.readAsDataURL(file);
+    }
+    function clearLogo(){
+      try { localStorage.removeItem('cc_brand_logo'); } catch(_){}
+      setBrand('');
+    }
+
+    var btnFaint = {background:'rgba(255,255,255,.08)',border:'1px solid rgba(255,255,255,.15)',color:'#fff',cursor:'pointer',padding:'.28rem .55rem',borderRadius:6,fontSize:'0.78rem',fontFamily:'inherit'};
+    var fileRef = useRef(null);
 
     return html`<div class="cc-present-overlay"></div>
+      ${brand && html`<img src=${brand} alt="Brand" style=${{position:'fixed',right:'1.1rem',bottom:'1.1rem',maxWidth:'160px',maxHeight:'80px',opacity:.65,zIndex:61,pointerEvents:'none',filter:'drop-shadow(0 2px 6px rgba(0,0,0,.5))'}} />`}
       <div class="cc-present-controls cc-present-show">
         <span style=${{fontSize:'0.7rem',opacity:.7,letterSpacing:'.04em',textTransform:'uppercase',marginRight:'.4rem'}}>Presenting</span>
-        ${viewpoints.length>0 && html`<${React.Fragment}>
-          <button onClick=${function(){
-              var idx = (s._presentVpIdx||0);
-              idx = (idx-1+viewpoints.length)%viewpoints.length;
-              jumpVp(viewpoints[idx]);
-            }}
-            style=${{background:'rgba(255,255,255,.1)',border:'1px solid rgba(255,255,255,.15)',color:'#fff',cursor:'pointer',padding:'.25rem .55rem',borderRadius:6,fontSize:'0.78rem'}}>‹</button>
-          <span style=${{fontSize:'0.74rem',opacity:.85}}>${viewpoints.length} viewpoints</span>
-          <button onClick=${function(){
-              var idx = (s._presentVpIdx||0);
-              idx = (idx+1)%viewpoints.length;
-              jumpVp(viewpoints[idx]);
-            }}
-            style=${{background:'rgba(255,255,255,.1)',border:'1px solid rgba(255,255,255,.15)',color:'#fff',cursor:'pointer',padding:'.25rem .55rem',borderRadius:6,fontSize:'0.78rem'}}>›</button>
-        </${React.Fragment}>`}
+        ${viewpoints.length>0 ? html`<${React.Fragment}>
+          <button onClick=${function(){step(-1);}} title="Previous slide (←)" style=${btnFaint}>‹</button>
+          <span style=${{fontSize:'0.74rem',opacity:.9,fontVariantNumeric:'tabular-nums'}}>${vpIdx+1} / ${viewpoints.length}</span>
+          <button onClick=${function(){step(1);}} title="Next slide (→)" style=${btnFaint}>›</button>
+          <button onClick=${function(){setAutoplay(!autoplay);}}
+            title=${autoplay?'Pause auto-advance (Space)':'Auto-advance every 5.5s (Space)'}
+            style=${{...btnFaint,background:autoplay?'rgba(168,85,247,.85)':btnFaint.background,fontWeight:600}}>
+            ${autoplay?'❚❚':'▶'}
+          </button>
+        </${React.Fragment}>` : html`<span style=${{fontSize:'0.74rem',opacity:.6}}>No viewpoints saved — use Save Viewpoint, then ← → to navigate</span>`}
+        <span style=${{width:1,height:18,background:'rgba(255,255,255,.15)',margin:'0 .2rem'}}></span>
+        ${brand ? html`<button onClick=${clearLogo} style=${{...btnFaint,fontSize:'0.7rem'}} title="Remove brand logo">Logo ✕</button>`
+                : html`<button onClick=${function(){if(fileRef.current)fileRef.current.click();}} style=${{...btnFaint,fontSize:'0.7rem'}} title="Add brand logo (PNG)">+ Logo</button>`}
+        <input ref=${fileRef} type="file" accept="image/*" style=${{display:'none'}}
+          onChange=${function(e){ if(e.target.files && e.target.files[0]) uploadLogo(e.target.files[0]); }} />
         <button onClick=${function(){d({t:A.PRESENT,v:false});}}
-          style=${{background:'rgba(239,68,68,.85)',border:'none',color:'#fff',cursor:'pointer',padding:'.3rem .7rem',borderRadius:6,fontSize:'0.78rem',fontWeight:600,marginLeft:'.4rem'}}>Exit</button>
-        <span style=${{fontSize:'0.66rem',opacity:.55,marginLeft:'.4rem'}}>Press P or Esc</span>
+          style=${{background:'rgba(239,68,68,.85)',border:'none',color:'#fff',cursor:'pointer',padding:'.3rem .7rem',borderRadius:6,fontSize:'0.78rem',fontWeight:600,marginLeft:'.4rem',fontFamily:'inherit'}}>Exit</button>
+        <span style=${{fontSize:'0.66rem',opacity:.55,marginLeft:'.4rem'}}>Esc / P · ← → · Space</span>
       </div>`;
+  }
+
+  // ── Smart Views: capture / apply / URL-hash ──────────────────
+
+  function _ccCaptureSmartView(name, opts) {
+    opts = opts || {};
+    var s = window._ccLatestState || {};
+    var vp = (typeof window._ccCaptureViewpoint === 'function') ? window._ccCaptureViewpoint(name||'View') : null;
+    var snapshot = vp && opts.includeSnapshot !== false ? vp.snapshot : null;
+    var camera = vp ? vp.camera : null;
+    return {
+      id: (typeof uid === 'function' ? uid() : 'sv_'+Math.random().toString(36).slice(2,9)),
+      name: name || 'Smart View',
+      createdAt: new Date().toISOString(),
+      snapshot: snapshot,
+      camera: camera,
+      section: {
+        axis: s.sectionAxis || null,
+        pos: s.sectionPos != null ? s.sectionPos : 0.5,
+        custom: s.sectionCustom || null,
+        box: s.sectionBox || null,
+        storey: s.sectionStorey || null
+      },
+      hiddenClasses: Object.assign({}, s.hiddenClasses||{}),
+      colorByClass: s.colorByClass || null,
+      renderStyle: (s.prefs && s.prefs.renderStyle) || 'standard',
+      hiddenModelIds: (s.models||[]).filter(function(m){return m.visible===false;}).map(function(m){return m.id;})
+    };
+  }
+
+  function _ccApplySmartView(sv) {
+    if (!sv) return;
+    var d = window._ccDispatch;
+    if (!d) return;
+    if (sv.camera && window._ccApplyViewpoint) {
+      window._ccApplyViewpoint({camera: sv.camera});
+    }
+    if (sv.section) {
+      if (sv.section.axis) d({t:A.SECTION, axis:sv.section.axis, pos:sv.section.pos, storeyName:sv.section.storey});
+      else if (sv.section.custom) d({t:A.SECTION_CUSTOM, v:sv.section.custom, pos:sv.section.pos});
+      else if (sv.section.box) d({t:A.SECTION_BOX, v:sv.section.box});
+      else { d({t:A.SECTION, axis:null}); d({t:A.SECTION_BOX, v:null}); }
+    }
+    if (sv.renderStyle) d({t:A.UPD_PREFS, u:{renderStyle: sv.renderStyle}});
+    if (sv.colorByClass !== undefined) {
+      var s = window._ccLatestState || {};
+      if (s.colorByClass !== sv.colorByClass) d({t:A.COLOR_BY_CLASS, v: sv.colorByClass || ''});
+    }
+  }
+  window._ccApplySmartView = _ccApplySmartView;
+  window._ccCaptureSmartView = _ccCaptureSmartView;
+
+  // ── URL hash (#v=...) — share a deep-link to current view ────
+  // Encodes: camera, target, section state, renderStyle, theme.
+  function _ccEncodeViewHash() {
+    var s = window._ccLatestState; var S = window._ccState3d;
+    if (!s || !S || !S.camera || !S.orbit) return '';
+    var c = S.camera, t = S.orbit.target;
+    var pack = {
+      cp:[+c.position.x.toFixed(3),+c.position.y.toFixed(3),+c.position.z.toFixed(3)],
+      tg:[+t.x.toFixed(3),+t.y.toFixed(3),+t.z.toFixed(3)],
+      fov:+(c.fov||55).toFixed(1),
+      sec: s.sectionAxis ? {a:s.sectionAxis, p:s.sectionPos} : (s.sectionBox ? {box:s.sectionBox} : null),
+      rs: (s.prefs && s.prefs.renderStyle) || 'standard',
+      th: (s.prefs && s.prefs.theme) || 'dark'
+    };
+    try { return btoa(JSON.stringify(pack)).replace(/=+$/,''); } catch(e) { return ''; }
+  }
+  function _ccDecodeViewHash(str) {
+    if (!str) return null;
+    try {
+      var pad = '='.repeat((4 - str.length % 4) % 4);
+      return JSON.parse(atob(str + pad));
+    } catch(e) { return null; }
+  }
+  function _ccApplyViewHash(p) {
+    if (!p || !window._ccDispatch) return;
+    var S = window._ccState3d;
+    if (S && S.camera && p.cp) {
+      S.camera.position.set(p.cp[0],p.cp[1],p.cp[2]);
+      if (p.tg) S.orbit.target.set(p.tg[0],p.tg[1],p.tg[2]);
+      if (p.fov) { S.camera.fov = p.fov; S.camera.updateProjectionMatrix(); }
+      S.orbit.sync(); S.orbit.apply();
+      if (typeof invalidate === 'function') invalidate(3);
+    }
+    var d = window._ccDispatch;
+    if (p.sec) {
+      if (p.sec.a) d({t:A.SECTION, axis:p.sec.a, pos:p.sec.p});
+      else if (p.sec.box) d({t:A.SECTION_BOX, v:p.sec.box});
+    }
+    if (p.rs) d({t:A.UPD_PREFS, u:{renderStyle:p.rs}});
+    if (p.th) d({t:A.UPD_PREFS, u:{theme:p.th}});
+  }
+  window._ccCopyShareLink = function() {
+    var hash = _ccEncodeViewHash();
+    if (!hash) return Promise.resolve(false);
+    var url = location.origin + location.pathname + '#v=' + hash;
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      return navigator.clipboard.writeText(url).then(function(){return url;});
+    }
+    return Promise.resolve(url);
+  };
+
+  // ── Default Smart View presets ───────────────────────────────
+  function _ccBuildDefaultSmartViews() {
+    var s = window._ccLatestState || {};
+    var models = s.models || [];
+    var disciplines = {};
+    models.forEach(function(m){ if(m.discipline) disciplines[m.discipline]=(disciplines[m.discipline]||0)+1; });
+    var presets = [];
+    presets.push({
+      id:'sv_overview', name:'Overview', isPreset:true,
+      icon:'🏛',
+      apply:function(d){
+        if (window._ccDispatch) window._ccDispatch({t:A.SECTION, axis:null});
+        if (window._ccDispatch) window._ccDispatch({t:A.SECTION_BOX, v:null});
+        if (window._ccDispatch) window._ccDispatch({t:A.UPD_PREFS, u:{renderStyle:'rendered'}});
+        if (window._ccDispatch) window._ccDispatch({t:A.COLOR_BY_CLASS, v:''});
+        var resetView = window._ccResetView; if (resetView) resetView();
+      }
+    });
+    presets.push({
+      id:'sv_by_discipline', name:'By Discipline', isPreset:true,
+      icon:'🎨',
+      apply:function(){
+        if (window._ccDispatch) {
+          window._ccDispatch({t:A.SECTION, axis:null});
+          window._ccDispatch({t:A.UPD_PREFS, u:{renderStyle:'shaded'}});
+          window._ccDispatch({t:A.COLOR_BY_CLASS, v:'byDiscipline'});
+        }
+      }
+    });
+    presets.push({
+      id:'sv_by_storey', name:'By Storey', isPreset:true,
+      icon:'🏢',
+      apply:function(){
+        if (window._ccDispatch) {
+          window._ccDispatch({t:A.SECTION, axis:null});
+          window._ccDispatch({t:A.UPD_PREFS, u:{renderStyle:'shaded'}});
+          window._ccDispatch({t:A.COLOR_BY_CLASS, v:'byStorey'});
+        }
+      }
+    });
+    presets.push({
+      id:'sv_structure', name:'Structure only', isPreset:true,
+      icon:'🏗',
+      apply:function(){
+        if (window._ccDispatch) {
+          window._ccDispatch({t:A.UPD_PREFS, u:{renderStyle:'standard'}});
+          window._ccDispatch({t:A.COLOR_BY_CLASS, v:'byType'});
+          // Hide non-structural classes
+          var st = window._ccLatestState || {};
+          var hc = {}; Object.keys((st.classifications||{}).byType||{}).forEach(function(k){
+            var keep = /Wall|Slab|Beam|Column|Footing|Foundation|Roof/i.test(k);
+            if (!keep) hc['byType:'+k] = true;
+          });
+          window._ccDispatch({t:'_REPLACE_HIDDEN_CLASSES', v: hc});
+        }
+      }
+    });
+    presets.push({
+      id:'sv_mep', name:'MEP only', isPreset:true,
+      icon:'🔧',
+      apply:function(){
+        if (window._ccDispatch) {
+          window._ccDispatch({t:A.UPD_PREFS, u:{renderStyle:'standard'}});
+          window._ccDispatch({t:A.COLOR_BY_CLASS, v:'byType'});
+          var st = window._ccLatestState || {};
+          var hc = {}; Object.keys((st.classifications||{}).byType||{}).forEach(function(k){
+            var keep = /Pipe|Duct|Cable|Flow|Air|Distribution|Sanitary|Plumbing/i.test(k);
+            if (!keep) hc['byType:'+k] = true;
+          });
+          window._ccDispatch({t:'_REPLACE_HIDDEN_CLASSES', v: hc});
+        }
+      }
+    });
+    return presets;
+  }
+  window._ccDefaultSmartViews = _ccBuildDefaultSmartViews;
+
+  // ── Smart Views Modal ────────────────────────────────────────
+
+  function SmartViewsModal(props) {
+    var s = props.s, d = props.d;
+    var stCopy = useState(false), copied=stCopy[0], setCopied=stCopy[1];
+    var stName = useState(''), name=stName[0], setName=stName[1];
+
+    useEffect(function(){
+      function onKey(e){ if (e.key==='Escape') d({t:A.SMART_VIEWS, v:false}); }
+      window.addEventListener('keydown', onKey);
+      return function(){ window.removeEventListener('keydown', onKey); };
+    }, []);
+
+    function captureCurrent() {
+      var n = (name||'').trim() || 'View ' + ((s.smartViews||[]).filter(function(v){return !v.isPreset;}).length+1);
+      var sv = _ccCaptureSmartView(n);
+      d({t:A.ADD_SMART_VIEW, v:sv});
+      setName('');
+    }
+
+    function copyLink() {
+      if (window._ccCopyShareLink) {
+        window._ccCopyShareLink().then(function(){
+          setCopied(true);
+          setTimeout(function(){setCopied(false);}, 1800);
+        });
+      }
+    }
+
+    var presets = (typeof window._ccDefaultSmartViews === 'function') ? window._ccDefaultSmartViews() : [];
+    var saved = (s.smartViews||[]).filter(function(v){return !v.isPreset;});
+
+    var ipt = {width:'100%',padding:'.5rem .65rem',background:'var(--input-bg)',color:'var(--text-primary)',border:'1px solid var(--border)',borderRadius:6,fontSize:'0.85rem',fontFamily:'inherit',outline:'none',boxSizing:'border-box'};
+    var btnPrim = {padding:'.45rem .8rem',borderRadius:7,fontSize:'0.8rem',fontWeight:600,cursor:'pointer',border:'none',background:'var(--accent)',color:'#fff',fontFamily:'inherit'};
+    var btnGhost = {padding:'.4rem .65rem',borderRadius:6,fontSize:'0.78rem',fontWeight:500,cursor:'pointer',border:'1px solid var(--border)',background:'var(--bg-secondary)',color:'var(--text-secondary)',fontFamily:'inherit'};
+
+    var Card = function(opts){
+      return html`<button key=${opts.id} onClick=${opts.onClick}
+          style=${{position:'relative',padding:0,background:'var(--bg-tertiary)',border:'1px solid var(--border)',
+            borderRadius:8,cursor:'pointer',overflow:'hidden',display:'flex',flexDirection:'column',alignItems:'stretch',
+            fontFamily:'inherit',transition:'transform .15s, border-color .15s'}}
+          onMouseEnter=${function(e){e.currentTarget.style.borderColor='var(--accent)';e.currentTarget.style.transform='translateY(-2px)';}}
+          onMouseLeave=${function(e){e.currentTarget.style.borderColor='var(--border)';e.currentTarget.style.transform='translateY(0)';}}>
+        <div style=${{height:90,background:opts.snapshot?'#000':'linear-gradient(135deg,#1e293b,#334155)',
+            display:'flex',alignItems:'center',justifyContent:'center',
+            backgroundImage:opts.snapshot?'url('+opts.snapshot+')':'',backgroundSize:'cover',backgroundPosition:'center',
+            color:'rgba(255,255,255,.9)',fontSize:'1.6rem'}}>${opts.icon||(opts.snapshot?'':'📷')}</div>
+        <div style=${{padding:'.45rem .55rem',textAlign:'left'}}>
+          <div style=${{fontSize:'0.78rem',fontWeight:600,color:'var(--text-primary)',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>${opts.name}</div>
+          ${opts.sub && html`<div style=${{fontSize:'0.66rem',color:'var(--text-faint)',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>${opts.sub}</div>`}
+        </div>
+        ${opts.onDelete && html`<button onClick=${function(e){e.stopPropagation(); opts.onDelete();}}
+          style=${{position:'absolute',top:5,right:5,background:'rgba(0,0,0,.55)',color:'#fff',border:'none',borderRadius:4,cursor:'pointer',padding:'2px 6px',fontSize:'0.66rem',lineHeight:1}}>✕</button>`}
+      </button>`;
+    };
+
+    return html`<div class="cc-modal-backdrop" style=${S_BACKDROP} role="dialog" aria-modal="true"
+      onClick=${function(){d({t:A.SMART_VIEWS,v:false});}}>
+      <div class="cc-modal-card" style=${{...S_MODAL_CARD,width:680,padding:0,display:'flex',flexDirection:'column'}} onClick=${function(e){e.stopPropagation();}}>
+        <div style=${{padding:'1rem 1.2rem .6rem',display:'flex',alignItems:'center',gap:'.6rem'}}>
+          <div style=${{width:32,height:32,borderRadius:8,background:'rgba(168,85,247,.14)',display:'flex',alignItems:'center',justifyContent:'center',color:'#a78bfa'}}>
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M12 1v6m0 10v6M5.64 5.64l4.24 4.24m4.24 4.24l4.24 4.24M1 12h6m10 0h6M5.64 18.36l4.24-4.24m4.24-4.24l4.24-4.24"/></svg>
+          </div>
+          <div style=${{flex:1}}>
+            <div style=${{fontSize:'1.05rem',fontWeight:700,color:'var(--text-primary)'}}>Smart Views</div>
+            <div style=${{fontSize:'0.74rem',color:'var(--text-muted)'}}>One-click presets · saved viewpoints · shareable link</div>
+          </div>
+          <button onClick=${function(){d({t:A.SMART_VIEWS,v:false});}} style=${S_MODAL_CLOSE} aria-label="Close">✕</button>
+        </div>
+
+        <div style=${{padding:'.4rem 1.2rem 1rem',display:'flex',flexDirection:'column',gap:'1rem',overflowY:'auto'}}>
+          <div>
+            <div style=${{fontSize:'0.72rem',color:'var(--text-muted)',fontWeight:600,textTransform:'uppercase',letterSpacing:'.05em',marginBottom:'.45rem'}}>Presets</div>
+            <div style=${{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(140px,1fr))',gap:'.55rem'}}>
+              ${presets.map(function(p){
+                return Card({id:p.id, name:p.name, icon:p.icon, sub:'Preset', onClick:function(){
+                  if (typeof p.apply === 'function') p.apply(d);
+                  d({t:A.SMART_VIEWS,v:false});
+                }});
+              })}
+            </div>
+          </div>
+
+          <div>
+            <div style=${{fontSize:'0.72rem',color:'var(--text-muted)',fontWeight:600,textTransform:'uppercase',letterSpacing:'.05em',marginBottom:'.45rem',display:'flex',alignItems:'center',gap:'.4rem'}}>
+              <span>Saved views (${saved.length})</span>
+              <span style=${{flex:1}}></span>
+            </div>
+            <div style=${{display:'flex',gap:'.4rem',marginBottom:'.55rem'}}>
+              <input type="text" value=${name} placeholder="Name this view (e.g. Lobby cut)"
+                onInput=${function(e){setName(e.target.value);}}
+                onKeyDown=${function(e){if(e.key==='Enter')captureCurrent();}}
+                style=${ipt} />
+              <button onClick=${captureCurrent} style=${btnPrim}>Capture current</button>
+            </div>
+            ${saved.length===0 ? html`<div style=${{fontSize:'0.78rem',color:'var(--text-muted)',padding:'.5rem 0'}}>
+              No saved views yet. Frame the model how you want it, then click <b>Capture current</b>.
+            </div>` : html`<div style=${{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(140px,1fr))',gap:'.55rem'}}>
+              ${saved.map(function(sv){
+                return Card({
+                  id:sv.id, name:sv.name, snapshot:sv.snapshot,
+                  sub:sv.createdAt?new Date(sv.createdAt).toLocaleDateString():'',
+                  onClick:function(){ _ccApplySmartView(sv); d({t:A.SMART_VIEWS,v:false}); },
+                  onDelete:function(){ d({t:A.DEL_SMART_VIEW, id:sv.id}); }
+                });
+              })}
+            </div>`}
+          </div>
+
+          <div style=${{padding:'.7rem .85rem',background:'rgba(37,99,235,.07)',border:'1px solid rgba(37,99,235,.18)',borderRadius:8}}>
+            <div style=${{fontSize:'0.78rem',fontWeight:600,color:'var(--text-primary)',marginBottom:'.3rem'}}>Send the current view to a client</div>
+            <div style=${{fontSize:'0.74rem',color:'var(--text-muted)',marginBottom:'.5rem'}}>Copies a URL with the camera, section and render style baked in. The link <b>does not include the IFC</b> — the recipient must already have the model loaded.</div>
+            <div style=${{display:'flex',gap:'.4rem'}}>
+              <button onClick=${copyLink} style=${btnPrim}>${copied?'✓ Copied':'Copy share link'}</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>`;
   }
 
   // ── Share Modal ──────────────────────────────────────────────
@@ -21320,6 +22011,7 @@ function startApp() {
       ${storeyPickerOpen && html`<${StoreyPickerModal} s=${s} d=${d} onClose=${function(){setStoreyPickerOpen(false);}} />`}
       ${s.showSettings && html`<${SettingsModal} d=${d} s=${s} prefs=${s.prefs} models=${s.models} rules=${s.rules} />`}
       ${s.showShare && html`<${ShareModal} d=${d} s=${s} />`}
+      ${s.showSmartViews && html`<${SmartViewsModal} d=${d} s=${s} />`}
       ${s.commentMode && html`<div style=${{position:'fixed',top:'1rem',left:'50%',transform:'translateX(-50%)',zIndex:9990,
         background:'rgba(168,85,247,.95)',color:'#fff',padding:'.5rem .9rem',borderRadius:8,
         boxShadow:'0 4px 20px rgba(168,85,247,.4)',display:'flex',alignItems:'center',gap:'.6rem',
@@ -21369,6 +22061,33 @@ function startApp() {
   else { ReactDOM.render(h(ErrorBoundary, null, h(App, null)), rootEl); }
 
   _loadAddonScripts();
+
+  // Apply shareable URL hash (#v=…) once the viewer is ready.
+  (function _applyHashOnBoot(){
+    var m = (location.hash||'').match(/[#&]v=([^&]+)/);
+    if (!m) return;
+    var pkg = _ccDecodeViewHash(m[1]);
+    if (!pkg) return;
+    var tries = 0;
+    var iv = setInterval(function(){
+      tries++;
+      if (window._ccState3d && window._ccState3d.camera && window._ccDispatch) {
+        clearInterval(iv);
+        try { _ccApplyViewHash(pkg); } catch(e) { console.warn('[ShareLink] apply failed:', e); }
+      } else if (tries > 100) {
+        clearInterval(iv);
+      }
+    }, 80);
+  })();
+  // Kiosk URL (?present=1) — auto-enter presentation mode after boot.
+  if (/[?&]present=1/.test(location.search)) {
+    var _kioskTries = 0;
+    var _kioskIv = setInterval(function(){
+      _kioskTries++;
+      if (window._ccDispatch) { clearInterval(_kioskIv); window._ccDispatch({t:'PRESENT', v:true}); }
+      else if (_kioskTries > 60) clearInterval(_kioskIv);
+    }, 100);
+  }
 
   Object.keys(_ccAddons).forEach(function(aid) {
     if (_ccAddonActive[aid] && _ccAddons[aid].init && window._ccDispatch) {
