@@ -1093,21 +1093,28 @@
   // Uses BYOK (Bring Your Own Key) to call Anthropic/OpenAI/Google APIs
   // with tool definitions. Orchestrates push/pull between CC and Revit MCP.
 
-  // Persist bridge config to localStorage
+  // Persist bridge config — non-sensitive fields in localStorage, apiKey in sessionStorage only
   function _saveBridgeConfig(bridge) {
     try {
       localStorage.setItem('cc_revit_bridge', JSON.stringify({
         provider: bridge.provider,
-        apiKey: bridge.apiKey,
         mcpHost: bridge.mcpHost,
         mcpPort: bridge.mcpPort
       }));
+    } catch(e) {}
+    try {
+      if (bridge.apiKey) sessionStorage.setItem('cc_revit_bridge_key', bridge.apiKey);
+      else sessionStorage.removeItem('cc_revit_bridge_key');
     } catch(e) {}
   }
   function _loadBridgeConfig() {
     try {
       var raw = localStorage.getItem('cc_revit_bridge');
-      return raw ? JSON.parse(raw) : null;
+      var cfg = raw ? JSON.parse(raw) : null;
+      if (cfg) {
+        try { cfg.apiKey = sessionStorage.getItem('cc_revit_bridge_key') || ''; } catch(e) {}
+      }
+      return cfg;
     } catch(e) { return null; }
   }
 
