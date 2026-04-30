@@ -49,11 +49,20 @@ self.addEventListener('message', function(e) {
   if (e.data && e.data.type === 'SKIP_WAITING') self.skipWaiting();
 });
 
+var ALLOWED_CDN_HOSTS = {
+  'cdnjs.cloudflare.com': true,
+  'esm.sh': true,
+  'cdn.jsdelivr.net': true
+};
+
 self.addEventListener('fetch', function(e) {
   var url = e.request.url;
+  var parsedUrl;
+  try { parsedUrl = new URL(url); } catch(_) { return; }
+  var host = parsedUrl.hostname;
 
   // Never cache API calls — these must always go to the server
-  if (url.indexOf('/api/') !== -1) return;
+  if (parsedUrl.pathname.indexOf('/api/') === 0) return;
 
   // Never intercept web-ifc — the SW's cache-first fetch handler has repeatedly
   // pinned broken/short/opaque responses for web-ifc.wasm, causing WebAssembly
@@ -90,9 +99,7 @@ self.addEventListener('fetch', function(e) {
       if (cached) return cached;
       return fetch(e.request).then(function(response) {
         if (e.request.method === 'GET' && response.status === 200) {
-          if (url.indexOf('cdnjs.cloudflare.com') !== -1 ||
-              url.indexOf('esm.sh') !== -1 ||
-              url.indexOf('cdn.jsdelivr.net') !== -1) {
+          if (ALLOWED_CDN_HOSTS[host]) {
             var clone = response.clone();
             caches.open(CACHE).then(function(cache) { cache.put(e.request, clone); });
           }
