@@ -1001,3 +1001,163 @@ This card is for anyone writing UI copy in `index.html`. Pin it.
   entirely in labels aimed at the architectural office personas.
 
 *End of Chapter 5.*
+
+---
+
+## Chapter 6: First-Run Experience & Onboarding
+
+### The Problem with the Current Welcome Screen
+
+The current welcome popup opens with a header reading "Welcome to
+ClashControl" and immediately presents clash detection settings: rule
+configuration, discipline filters, clearance distances. This is the right
+workflow for Lukas (the BIM coordinator). It is a wall of jargon for Sarah
+(the presenting architect), Marcus (the client), and Yara (the SketchUp
+architect).
+
+The welcome popup also has a visual structure borrowed from a dialog box —
+a card with a close button, sections with labels, and buttons at the bottom.
+It looks like a settings screen, not an invitation.
+
+The redesign replaces this with an approach borrowed from Notion's first-run
+experience and the iOS Photos app: the canvas is the first thing you see,
+and the only prompt is to add something to it.
+
+---
+
+### The First-Run Card
+
+When no model is loaded, a centered card floats over the canvas. The canvas
+itself is visible behind it — the procedural sky gradient is running,
+the grid is visible, and the ViewCube is in its corner. The card is not a
+modal; it has no backdrop scrim. It says: "the canvas is already here, just
+add something to it."
+
+**Card layout (top to bottom):**
+
+The CC wordmark in violet gradient at the top, 48px tall. Below it, in
+Syne 800 at 1.75rem: "Open a building model." The line under it, in DM Sans
+regular at 0.9rem, text-muted: "IFC files stay on your computer. Nothing
+is uploaded." This single sentence addresses the first concern that an
+architect who cares about client data will have.
+
+Below the copy, a large drop zone: a dashed rounded rectangle, 100% card
+width, 120px tall. Inside it: a building outline icon (simple, architectural)
+and the text "Drop an IFC file here". Below the drop zone: a smaller
+secondary button "Choose a file" for users who prefer a file picker.
+
+Below the drop zone, two small cards side by side:
+
+- **Try a sample model** — loads a small bundled IFC (a simple one-storey
+  building). Label: "Try a sample". Description: "A small building model to
+  explore the tool." This is for Marcus and Yara who do not have an IFC
+  handy but want to see how it works.
+
+- **Open from URL** — an input field that accepts a URL to an IFC file.
+  This is for teams who store IFC files on a shared server. Label: "Open
+  from URL". Placeholder: "Paste a link to an IFC file".
+
+At the bottom of the card, a faint link text: "Working with a team? Link
+a shared folder →". Clicking this opens the Share modal directly to the
+folder-linking flow.
+
+**What is not on the card:** clash detection settings, BCF import, project
+keys, training data, addons. These exist — they are just one level deeper,
+in the panels that appear after a model is loaded.
+
+---
+
+### Card Animation
+
+The card enters with a 200ms fade + scale from 0.95 to 1.0. The sky
+gradient behind it is already animating subtly. The overall effect is:
+you open the app and see a living, lit canvas with a simple prompt floating
+in the center of it. It feels like standing in front of an empty drafting
+table.
+
+When the user drops a file or selects one, the card exits with a 150ms
+fade-out. The IFC loads with the existing loading spinner (centered on the
+canvas) and progress text. When loading completes, the camera fits to the
+model and the mode toolbar fades in from below.
+
+When returning users open the app with a previously loaded model in memory
+(or with a linked shared folder that auto-reconnects), the card does not
+appear at all. The model is already there. The toolbar fades in and the user
+is immediately in the 3D view.
+
+---
+
+### The Loading State
+
+The existing loading flow shows a percentage counter and a spinner. The
+redesign keeps this but adds two improvements:
+
+**Progress labels.** Instead of "Loading... 34%", show what is actually
+happening: "Reading file structure...", "Building geometry...", "Extracting
+properties...", "Finishing up...". These four phases correspond to the
+actual WASM parsing pipeline. Showing them reduces perceived wait time and
+signals that the app is doing something specific, not just stuck.
+
+**Abort option.** A small "Cancel" text link appears after 3 seconds of
+loading. Clicking it aborts the load and returns to the first-run card. This
+addresses the case where a user accidentally drops a very large IFC file or
+the wrong file. Currently there is no way to cancel — the only option is to
+reload the page.
+
+---
+
+### After Loading — The First Model Moment
+
+The first time a model loads successfully, a subtle guidance bar appears
+at the bottom of the canvas above the mode toolbar. It reads:
+
+"Orbit: drag to rotate · Scroll to zoom · Click any element for details"
+
+This bar fades out after 8 seconds or when the user interacts with the
+canvas. It does not appear on subsequent loads. It is stored as a seen-flag
+in localStorage. This is the entire onboarding. No tour overlay, no tooltip
+sequence, no video.
+
+The guidance bar uses the same glass surface as the mode toolbar. Text is
+`--text-muted` at `--text-xs`. It is present but not demanding.
+
+---
+
+### The Share Entry Point During First Run
+
+For Marcus (the client) who receives a URL with a model pre-loaded via
+URL hash (PR-C from the PLAN.md roadmap), the first-run card never appears.
+The URL hash contains the camera position, the model reference, and any
+active section or visibility settings. The app opens directly to the model
+with the camera at the shared position.
+
+The only thing that appears on first open via a shared URL is a small
+toast at the top of the canvas: "Viewing [model name] · Shared by Sarah →".
+Clicking the arrow opens the Share modal where Marcus can see the full
+sharing context, link comments, and add his own notes.
+
+This path requires PR-C (shareable URL hash) to be implemented. Until it is,
+the first-run card appears for all users.
+
+---
+
+### Empty States After Loading
+
+Once a model is loaded, the first-run card is gone. The panels that open
+from the left strip have their own empty states, specified in Chapter 4.
+Two additional states deserve attention:
+
+**No geometry loaded** — if the IFC file parsed successfully but produced
+no renderable geometry (this can happen with IFC files that contain only
+data, no geometry), the canvas shows: "This model has no visible geometry.
+It may contain only properties or metadata." This is a specific, honest
+message. Not "Rendering failed."
+
+**Model too large** — if the IFC file contains geometry that exceeds the
+threshold where the viewport would run at under 10 FPS on an average laptop,
+a banner appears: "This model is large. Some views may be slow. Try
+'Skeleton' style for faster performance." The banner has a one-click button
+to switch to Skeleton style. The performance threshold is checked against
+triangle count after loading, not before.
+
+*End of Chapter 6.*
