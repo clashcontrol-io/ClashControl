@@ -1185,7 +1185,19 @@ function startApp() {
   }
 
   function _geoSerialize(result) {
-    var meshData = result.meshes.map(function(m) {
+    // Collect individual meshes from elements rather than result.meshes, because
+    // result.meshes may contain InstancedMesh objects after GPU instancing runs —
+    // those have identity matrices and no expressId, which would corrupt the cache.
+    var seenUuids = {};
+    var individualMeshes = [];
+    result.elements.forEach(function(el) {
+      (el.meshes || []).forEach(function(m) {
+        if (!seenUuids[m.uuid]) { seenUuids[m.uuid] = true; individualMeshes.push(m); }
+      });
+    });
+    // Fall back to result.meshes if elements carry no meshes (e.g. deserialized result).
+    var meshList = individualMeshes.length ? individualMeshes : result.meshes;
+    var meshData = meshList.map(function(m) {
       var g = m.geometry, mat = m.material;
       var posArr = g.attributes.position.array;
       var nrmArr = g.attributes.normal.array;
@@ -4649,6 +4661,18 @@ function startApp() {
     var measurePtsRef = useRef([]); // current measurement click points
     var modelsRef = useRef(s.models);
     modelsRef.current = s.models;
+    // Compute the correct world-space bounding box from pre-computed element boxes.
+    // This is reliable regardless of GPU instancing (InstancedMesh objects report
+    // local-geometry bounds at origin when queried via setFromObject, which is wrong).
+    function _elemsBBox() {
+      var box = new THREE.Box3();
+      modelsRef.current.forEach(function(m) {
+        (m.elements || []).forEach(function(el) {
+          if (el.box && !el.box.isEmpty()) box.union(el.box);
+        });
+      });
+      return box;
+    }
     var prefsRef = useRef(s.prefs);
     prefsRef.current = s.prefs;
     var measureModeRef = useRef(s.measureMode);
@@ -4823,7 +4847,7 @@ function startApp() {
           S.orbit.sync(); S.orbit.apply();
           return;
         }
-        var box=new THREE.Box3().setFromObject(S.mg);
+        var box=_elemsBBox();
         var sz=box.getSize(new THREE.Vector3()), ctr=box.getCenter(new THREE.Vector3());
         var d=Math.max(sz.x,sz.y,sz.z)*1.0;
         var endTarget = ctr;
@@ -5343,7 +5367,7 @@ function startApp() {
       window._ccViewport = {
         getBounds: function() {
           if (!S.mg || !S.mg.children.length) return null;
-          var box = new THREE.Box3().setFromObject(S.mg);
+          var box = _elemsBBox();
           if (box.isEmpty()) return null;
           var sz = box.getSize(new THREE.Vector3()), ctr = box.getCenter(new THREE.Vector3());
           return { min:[box.min.x,box.min.y,box.min.z], max:[box.max.x,box.max.y,box.max.z], center:[ctr.x,ctr.y,ctr.z], size:[sz.x,sz.y,sz.z] };
@@ -5362,7 +5386,7 @@ function startApp() {
         },
         fitAll: function(padding) {
           if (!S.mg || !S.mg.children.length) return;
-          var box = new THREE.Box3().setFromObject(S.mg); if (box.isEmpty()) return;
+          var box = _elemsBBox(); if (box.isEmpty()) return;
           var sz = box.getSize(new THREE.Vector3()), ctr = box.getCenter(new THREE.Vector3());
           var d = Math.max(sz.x,sz.y,sz.z) * (padding||1.0);
           _animateFly(ctr, new THREE.Vector3(ctr.x+d, ctr.y+d*0.6, ctr.z+d));
@@ -5372,14 +5396,14 @@ function startApp() {
       // ── Section Box helper ──
       _getSectionBoxFromScene = function(){
         if(!S.mg||!S.mg.children.length) return null;
-        var box=new THREE.Box3().setFromObject(S.mg);
+        var box=_elemsBBox();
         if(box.isEmpty()) return null;
         box.expandByScalar(0.5);
         return box;
       };
       window._ccElevToSectionPos = function(elev){
         if(!S.mg||!S.mg.children.length) return 0.5;
-        var box=new THREE.Box3().setFromObject(S.mg);
+        var box=_elemsBBox();
         if(box.isEmpty()||box.max.y===box.min.y) return 0.5;
         return Math.max(0.01, Math.min(0.99, (elev-box.min.y)/(box.max.y-box.min.y)));
       };
@@ -5858,7 +5882,7 @@ function startApp() {
         if (cs.custom) return {normal:cs.custom.normal.slice(), point:cs.custom.point.slice()};
         if (cs.axis && S2.mg) {
           var nm = {x:[1,0,0], y:[0,1,0], z:[0,0,1]};
-          var box = new THREE.Box3().setFromObject(S2.mg);
+          var box = _elemsBBox();
           var cut = box.min[cs.axis]+(box.max[cs.axis]-box.min[cs.axis])*cs.pos;
           var ctr = box.getCenter(new THREE.Vector3());
           var pt = [ctr.x, ctr.y, ctr.z];
@@ -6273,7 +6297,7 @@ function startApp() {
         return grp;
       }
       if(s.sectionAxis && S.mg.children.length>0){
-        var box=new THREE.Box3().setFromObject(S.mg);
+        var box=_elemsBBox();
         var cut=box.min[s.sectionAxis]+(box.max[s.sectionAxis]-box.min[s.sectionAxis])*s.sectionPos;
         var nm={x:new THREE.Vector3(1,0,0),y:new THREE.Vector3(0,1,0),z:new THREE.Vector3(0,0,1)};
         planes.push(new THREE.Plane(nm[s.sectionAxis].clone().negate(),cut));
@@ -6290,7 +6314,7 @@ function startApp() {
         var sc=s.sectionCustom;
         var normal=new THREE.Vector3(sc.normal[0],sc.normal[1],sc.normal[2]);
         var pt=new THREE.Vector3(sc.point[0],sc.point[1],sc.point[2]);
-        var box2=new THREE.Box3().setFromObject(S.mg);
+        var box2=_elemsBBox();
         var diag=box2.getSize(new THREE.Vector3()).length();
         var offset=(s.sectionPos-0.5)*diag;
         var shiftedPt=pt.clone().addScaledVector(normal,offset);
@@ -6310,7 +6334,7 @@ function startApp() {
           if(window._ccSectionDragging) return;
           var _S=state3d.current; if(!_S||!_S.mg) return;
           var _st=window._ccLatestState||{};
-          var _box=new THREE.Box3().setFromObject(_S.mg);
+          var _box=_elemsBBox();
           var _axIdx={x:0,y:1,z:2}[s.sectionAxis];
           var _min=_axIdx===0?_box.min.x:_axIdx===1?_box.min.y:_box.min.z;
           var _max=_axIdx===0?_box.max.x:_axIdx===1?_box.max.y:_box.max.z;
@@ -6493,7 +6517,7 @@ function startApp() {
       S.renderer.clippingPlanes = planes;
       // Visual cut plane indicator (subtle translucent plane at cut level)
       if(S._cutPlaneHelper){S.scene.remove(S._cutPlaneHelper);S._cutPlaneHelper=null;}
-      var box = new THREE.Box3().setFromObject(S.mg);
+      var box = _elemsBBox();
       var ctr = box.getCenter(new THREE.Vector3());
       var sz = box.getSize(new THREE.Vector3());
       var planeSize = Math.max(sz.x,sz.z)*2.0;
@@ -7275,7 +7299,7 @@ function startApp() {
     function flyToDir(dir) {
       var S=state3d.current; if(!S||!S.orbit) return;
       var ctr=new THREE.Vector3();
-      if(S.mg&&S.mg.children.length>0) new THREE.Box3().setFromObject(S.mg).getCenter(ctr);
+      if(S.mg&&S.mg.children.length>0) _elemsBBox().getCenter(ctr);
       var d=new THREE.Vector3(dir[0],dir[1],dir[2]).normalize();
       var targetTheta=Math.atan2(d.x,d.z);
       var targetPhi=Math.max(0.05,Math.min(Math.PI-0.05,Math.acos(d.y)));
@@ -8596,6 +8620,8 @@ function startApp() {
     var newSize = newBox.getSize(new THREE.Vector3());
     var newVol = newSize.x * newSize.y * newSize.z;
     if (newVol < 0.001) return null;
+    var newDisc = detectDiscipline(newElements);
+    var newCount = newElements.length;
     for (var mi = 0; mi < existingModels.length; mi++) {
       var em = existingModels[mi];
       var exBox = new THREE.Box3();
@@ -8606,7 +8632,15 @@ function startApp() {
       var intSize = intersection.getSize(new THREE.Vector3());
       var intVol = intSize.x * intSize.y * intSize.z;
       if (intVol / newVol > 0.85) {
-        return 'Warning: this model covers the same area as "' + em.name + '". If these are the same building loaded twice, remove one — clash detection between them will produce an extremely large number of results and may use excessive memory.';
+        // Only warn if the models are also from the same discipline and have similar
+        // element counts — different-discipline models from the same building share
+        // the same spatial extent by design and are not duplicates.
+        var exCount = (em.elements||[]).length;
+        var countRatio = exCount > 0 ? Math.min(newCount, exCount) / Math.max(newCount, exCount) : 0;
+        var exDisc = detectDiscipline(em.elements||[]);
+        if (newDisc === exDisc && countRatio > 0.6) {
+          return 'Warning: this model covers the same area as "' + em.name + '". If these are the same building loaded twice, remove one — clash detection between them will produce an extremely large number of results and may use excessive memory.';
+        }
       }
     }
     return null;
