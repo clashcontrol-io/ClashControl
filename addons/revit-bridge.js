@@ -303,7 +303,7 @@
   function _handleRevitMessage(msg, d) {
     // Debug: log all incoming messages (except high-frequency element-batch)
     if (msg.type !== 'element-batch' && msg.type !== 'pong') {
-      console.log('%c[Revit→CC] ' + msg.type, 'color:#60a5fa', msg);
+      console.log('%c[Revit→CC] %s', 'color:#60a5fa', msg.type, msg);
     }
     switch (msg.type) {
       case 'pong':
@@ -1093,21 +1093,24 @@
   // Uses BYOK (Bring Your Own Key) to call Anthropic/OpenAI/Google APIs
   // with tool definitions. Orchestrates push/pull between CC and Revit MCP.
 
-  // Persist bridge config to localStorage
+  // Persist bridge config — non-sensitive fields in localStorage; apiKey kept in memory only
+  var _bridgeApiKeyMem = '';
   function _saveBridgeConfig(bridge) {
     try {
       localStorage.setItem('cc_revit_bridge', JSON.stringify({
         provider: bridge.provider,
-        apiKey: bridge.apiKey,
         mcpHost: bridge.mcpHost,
         mcpPort: bridge.mcpPort
       }));
     } catch(e) {}
+    _bridgeApiKeyMem = (bridge && bridge.apiKey) ? bridge.apiKey : '';
   }
   function _loadBridgeConfig() {
     try {
       var raw = localStorage.getItem('cc_revit_bridge');
-      return raw ? JSON.parse(raw) : null;
+      var cfg = raw ? JSON.parse(raw) : null;
+      if (cfg) cfg.apiKey = _bridgeApiKeyMem || '';
+      return cfg;
     } catch(e) { return null; }
   }
 

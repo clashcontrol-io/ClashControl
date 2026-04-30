@@ -87,32 +87,21 @@ Things to be careful about. Do not remove without a good reason — add a note i
 Update this section at the start and end of each session.
 Mark completed items with ~~strikethrough~~ and date, then let the daily sync archive them.
 
-On branch `claude/improve-ifc-viewer-ux-WhTsB`: collaboration UX redesign.
-Promoted the previously-buried `addons/shared-project.js` addon to a top-level
-**Share** entry in the left rail and built a dedicated `ShareModal` with an
-Overview tab (clear onboarding copy + folder linking) and a Comments tab.
-Added pin-on-model **comments** synced through the same `.ccproject` file
-(no backend, fully local-first). New action types: `SHARE`, `SHARE_TAB`,
-`COMMENT_MODE`, `ADD_COMMENT`, `UPD_COMMENT`, `DEL_COMMENT`,
-`SET_ACTIVE_COMMENT`, `MERGE_COMMENTS`. Pin geometry rendered via a
-purple-sphere group anchored to `{point, globalId, modelId, expressId}`;
-the addon write/replay paths now include `comments` and merge by id+ts
-(last-write-wins). Sync cadence drops to 15 s when there are open comments.
+On branch `claude/improve-ifc-viewer-ux-WhTsB`: full UI overhaul for architectural audience.
+Full 8-PR migration completed (2026-04-30):
 
-On branch `claude/code-review-refactor-hcMTI` (review/refactor pass): critical
-review of full codebase via parallel subagent audits (index.html first/second
-half + addons/api). Verified findings against source to filter false positives,
-then applied minimal high-confidence fixes only.
+- ~~PR-1: violet accent (#7c3aed), rounder radii, glass surface tokens~~ (2026-04-30)
+- ~~PR-2: bottom ModeToolbar — Orbit/Walk/Slice/Measure/Plan/Note chips~~ (2026-04-30)
+- ~~PR-3: DesktopTopBar (slim, glass, Share accent pill)~~ (2026-04-30)
+- ~~PR-4: violet left rail tabs, grid opacity 0.3, blue→violet color sweep~~ (2026-04-30)
+- ~~PR-5: Right drawer — AIChatPanel gains Details + Ask AI tabs; polls window._ccSelectedEl; shows element type/name/floor/psets/linked issues~~ (2026-04-30)
+- ~~PR-6: Naming pass — Clashes→Conflicts, Addons→Integrations, Viewpoints→Saved views, Storey→Floor in all UI labels~~ (2026-04-30)
+- ~~PR-7: ModelLoadCard replaces WelcomePopup — drag/drop or click to browse, open from URL, link shared folder; shown only when models.length===0~~ (2026-04-30)
+- ~~PR-8: Overlay panels (LeftRail/LeftPanel float over canvas); mode mutex in reducer; Slice sub-tool position slider; ModeToolbar feature flag removed~~ (2026-04-30)
 
-- ~~CORS bypass: `api/_lib.js` swapped `startsWith` → exact match (subdomain attack `http://localhost:3000.evil.com` no longer passes)~~ (2026-04-25)
-- ~~Section box face panel material leak: removed unused `facePanelMat` base (only its `.clone()`s were used) — material is now created inline per panel~~ (2026-04-25)
-- ~~Extracted `_clearHlRef` / `_clearHoverRef` helpers; removed 4 copies of identical disposal blocks (hover ref ×2, highlight ref ×2)~~ (2026-04-25)
+Also resolved conflict with origin/main: kept revit keep-partial/discard buttons from `9772053`, used violet CSS tokens.
 
-- ~~BCF export/import round-trips Revit element IDs via `<Labels>` (cc:revitA/B)~~ (2026-04-21)
-- ~~Shared project replay merges remote viewpoints by id~~ (2026-04-21)
-- ~~Data Quality panel: per-check `+issue` button creates aggregated issue (source:'data_quality')~~ (2026-04-21)
-- ~~Clash row: feedback badge shows aiReasons/aiResolution/aiNote outside training mode; issue summary no longer gated by trainingMode~~ (2026-04-21)
-- ~~O(1) BVH LRU via insertion-ordered Map + ghost material cache prune on model unload~~ (2026-04-20)
+UI_OVERHAUL.md written (7 chapters, 1469 lines). PLAN.md updated.
 
 <!-- END:active-work -->
 

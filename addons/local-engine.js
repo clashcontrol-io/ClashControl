@@ -693,7 +693,7 @@ clashcontrol-engine --install</pre>
             window._ccDetectProgress.phase = msg.label;
             window.dispatchEvent(new Event('cc-detect-progress'));
           }
-          if (msg.type === 'complete') console.log('%c[Engine] Done: ' + msg.clashCount + ' clashes in ' + msg.duration_ms + 'ms', 'color:#4ade80');
+          if (msg.type === 'complete') console.log('%c[Engine] Done: %s clashes in %sms', 'color:#4ade80', msg.clashCount, msg.duration_ms);
         } catch(ex){}
       };
     } catch(ex){}
