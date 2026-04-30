@@ -1,5 +1,8 @@
 # Changelog
 
+## v4.17.0 (2026-04-30)
+- feat: top-level Share entry + pin-on-model comments via folder-sync
+
 ## v4.16.6 (2026-04-30)
 - fix(revit-bridge): handle isLinked→isLink field rename + add export-start/end logging
 
