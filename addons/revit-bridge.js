@@ -302,7 +302,7 @@
         break;
 
       case 'model-start':
-        var isLink = !!msg.isLink;
+        var isLink = !!(msg.isLink || msg.isLinked); // connector sends isLinked, bridge expects isLink
         var modelLabel = (isLink ? '[Link] ' : '') + (msg.name || 'Revit Model');
         // Diagnostic: log the full model-start payload so we can see
         // whether the plugin is sending separate model-start events
@@ -417,6 +417,14 @@
 
       case 'error':
         d({t:'BRIDGE_LOG', logType:'error', text:'Revit: ' + (msg.message || 'Unknown error')});
+        break;
+
+      case 'export-start':
+        d({t:'BRIDGE_LOG', logType:'pull', text:'Export started — ' + (msg.totalModels||1) + ' model(s), ' + (msg.totalElements||'?') + ' elements total'});
+        break;
+
+      case 'export-end':
+        d({t:'BRIDGE_LOG', logType:'pull', text:'Export complete.'});
         break;
     }
   }
