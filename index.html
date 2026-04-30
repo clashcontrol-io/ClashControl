@@ -151,7 +151,7 @@
       --pill-blue-bg:#172554;--pill-green-bg:#052e16;--pill-amber-bg:#422006;
       --pill-blue:#60a5fa;--pill-green:#34d399;--pill-amber:#fbbf24;
       --section-hdr:#64748b;--tag-bg:#1e293b;
-      --vc-bg:rgba(30,41,59,.85);--vc-border:rgba(71,85,105,.6);--vc-btn:rgba(51,65,85,.7);--vc-text:#cbd5e1;--vc-center:rgba(37,99,235,.5);
+      --vc-bg:rgba(30,41,59,.85);--vc-border:rgba(71,85,105,.6);--vc-btn:rgba(51,65,85,.7);--vc-text:#cbd5e1;--vc-center:rgba(124,58,237,.5);
       --card-bg:#162032;--card-border:#1e3a5f;
       --input-bg:#0f172a;
       --shadow-sm:0 1px 3px rgba(0,0,0,.3);--shadow-md:0 4px 12px rgba(0,0,0,.3);--shadow-lg:0 8px 24px rgba(0,0,0,.4);
@@ -188,7 +188,7 @@
       --pill-blue-bg:#dbeafe;--pill-green-bg:#dcfce7;--pill-amber-bg:#fef3c7;
       --pill-blue:#2563eb;--pill-green:#16a34a;--pill-amber:#d97706;
       --section-hdr:#475569;--tag-bg:#e5e7eb;
-      --vc-bg:rgba(255,255,255,.92);--vc-border:rgba(148,163,184,.4);--vc-btn:rgba(226,232,240,.9);--vc-text:#334155;--vc-center:rgba(37,99,235,.35);
+      --vc-bg:rgba(255,255,255,.92);--vc-border:rgba(148,163,184,.4);--vc-btn:rgba(226,232,240,.9);--vc-text:#334155;--vc-center:rgba(124,58,237,.35);
       --card-bg:#f8fafc;--card-border:#d1d5db;
       --input-bg:#f9fafb;
       --shadow-sm:0 1px 2px rgba(0,0,0,.06);--shadow-md:0 4px 8px rgba(0,0,0,.08);--shadow-lg:0 8px 24px rgba(0,0,0,.12);
@@ -4847,7 +4847,7 @@ function startApp() {
         var ctx = c.getContext('2d');
         var g = ctx.createLinearGradient(0,0,0,256);
         // top → horizon: cool blue → warm pale; flips on theme later via _ccApplyTheme3D
-        g.addColorStop(0,'#1e3a5f');
+        g.addColorStop(0,'var(--accent-bg)');
         g.addColorStop(0.55,'#475569');
         g.addColorStop(1.0,'#0f172a');
         ctx.fillStyle = g; ctx.fillRect(0,0,2,256);
@@ -6460,6 +6460,7 @@ function startApp() {
         } catch(e){}
       };
       S.grid = new THREE.GridHelper(200,80,0x1e3a5f,0x172554);
+      S.grid.material.opacity = 0.3; S.grid.material.transparent = true;
       scene.add(S.grid);
       S.axes = new THREE.AxesHelper(3);
       scene.add(S.axes);
@@ -7278,6 +7279,7 @@ function startApp() {
         S.grid.geometry.dispose();
         S.grid.material.dispose();
         S.grid = new THREE.GridHelper(200,80, light?0x94a3b8:0x1e3a5f, light?0xcbd5e1:0x172554);
+        S.grid.material.opacity = light ? 0.35 : 0.3; S.grid.material.transparent = true;
         S.grid.visible = s.prefs.showGrid!==false;
         S.scene.add(S.grid);
       }
@@ -7409,10 +7411,10 @@ function startApp() {
         <div style=${{
           width:48,height:48,borderRadius:'50%',
           border:'3px solid rgba(96,165,250,.25)',
-          borderTopColor:'#3b82f6',
+          borderTopColor:'var(--accent)',
           animation:'sp 0.8s linear infinite'
         }}></div>
-        <span style=${{fontSize:'0.98rem',color:'#93c5fd',fontWeight:500,letterSpacing:'.03em'}}>Switching project…</span>
+        <span style=${{fontSize:'0.98rem',color:'var(--accent-subtle)',fontWeight:500,letterSpacing:'.03em'}}>Switching project…</span>
       </div>`}
       <div class="cc-overlay-chrome" style=${{position:'absolute',top:'var(--space-3)',left:'var(--space-3)',padding:'var(--space-1) var(--space-2)',pointerEvents:'auto',fontSize:'var(--text-xs)'}}>
         <span style=${{color:fpsColor(perfData.fps),cursor:'pointer',fontWeight:'var(--weight-medium)'}}
@@ -7487,7 +7489,7 @@ function startApp() {
                 }}
                 style=${{padding:'.2rem .3rem',cursor:'pointer',borderBottom:'1px solid var(--border-subtle)',fontSize:'0.69rem',color:'var(--text-primary)'}}>
                 <div style=${{display:'flex',justifyContent:'space-between'}}>
-                  <span style=${{color:'#93c5fd'}}>${p.ifcType||'Element'}</span>
+                  <span style=${{color:'var(--accent-subtle)'}}>${p.ifcType||'Element'}</span>
                   <span style=${{color:'var(--text-faint)'}}>#${r.el.expressId}</span>
                 </div>
                 <div style=${{color:'var(--text-secondary)',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>${p.name||'(unnamed)'}</div>
@@ -7499,7 +7501,7 @@ function startApp() {
         </div>`}
       </div>`}
       ${html`<${ViewCube} state3d=${state3d} theme=${s.prefs.theme||'dark'} />`}
-      ${(s.sectionAxis||s.sectionCustom) && html`<div style=${{...P,top:'9.75rem',right:'.5rem',background:'rgba(30,58,138,.9)',color:'#93c5fd',pointerEvents:'auto',cursor:'pointer',display:'flex',alignItems:'center',gap:'.4rem'}}
+      ${(s.sectionAxis||s.sectionCustom) && html`<div style=${{...P,top:'9.75rem',right:'.5rem',background:'rgba(30,58,138,.9)',color:'var(--accent-subtle)',pointerEvents:'auto',cursor:'pointer',display:'flex',alignItems:'center',gap:'.4rem'}}
         onClick=${function(){d({t:A.SECTION,axis:null})}}>
         <span>Section ${s.sectionAxis?(s.sectionAxis==='y'?'Z':s.sectionAxis==='z'?'Y':s.sectionAxis.toUpperCase()):'Surface'}</span>
         <span style=${{fontSize:'0.69rem',opacity:.7}} title="Clear section" aria-label="Clear section view">✕</span>
@@ -7777,15 +7779,15 @@ function startApp() {
       <div style=${{position:'absolute',bottom:'.75rem',right:'.75rem',pointerEvents:'auto',display:'flex',flexDirection:'column',gap:'.3rem',alignItems:'flex-end',maxHeight:'calc(100% - 5rem)',overflowY:'auto'}}>
         <div style=${{display:'flex',gap:'.2rem',background:'var(--overlay-bg)',border:'1px solid var(--border)',borderRadius:8,padding:'.3rem'}}>
           <button onClick=${function(){d({t:A.MEASURE_MODE,v:s.measureMode?null:'length'});measurePtsRef.current=[];}}
-            style=${{...S_BTN,fontSize:'0.69rem',padding:'.2rem .5rem',background:s.measureMode?'#2563eb':'var(--bg-secondary)',color:s.measureMode?'#fff':'var(--text-secondary)',border:'1px solid '+(s.measureMode?'#3b82f6':'var(--border)')}}>
+            style=${{...S_BTN,fontSize:'0.69rem',padding:'.2rem .5rem',background:s.measureMode?'var(--accent)':'var(--bg-secondary)',color:s.measureMode?'#fff':'var(--text-secondary)',border:'1px solid '+(s.measureMode?'var(--accent-light)':'var(--border)')}}>
             ${s.measureMode?'Measuring':'Measure'}
           </button>
           ${s.measureMode && ['length','angle','area'].map(function(m){return html`<button key=${m} onClick=${function(){d({t:A.MEASURE_MODE,v:m});measurePtsRef.current=[];}}
-            style=${{...S_BTN,fontSize:'0.63rem',padding:'.15rem .35rem',background:s.measureMode===m?'#1e3a5f':'transparent',color:s.measureMode===m?'#93c5fd':'var(--text-muted)',border:'1px solid '+(s.measureMode===m?'#1e3a5f':'transparent')}}>${m.charAt(0).toUpperCase()+m.slice(1)}</button>`})}
+            style=${{...S_BTN,fontSize:'0.63rem',padding:'.15rem .35rem',background:s.measureMode===m?'var(--accent-bg)':'transparent',color:s.measureMode===m?'var(--accent-subtle)':'var(--text-muted)',border:'1px solid '+(s.measureMode===m?'var(--accent-bg)':'transparent')}}>${m.charAt(0).toUpperCase()+m.slice(1)}</button>`})}
           ${s.measurements.length>0 && html`<button onClick=${function(){d({t:A.CLEAR_MEASUREMENTS});}}
             style=${{...S_BTN,fontSize:'0.63rem',padding:'.2rem .3rem',background:'#450a0a',color:'#fca5a5'}}>Clear (${s.measurements.length})</button>`}
         </div>
-        ${s.measureMode && html`<div style=${{fontSize:'0.63rem',color:'#93c5fd',background:'rgba(30,58,138,.85)',padding:'.2rem .5rem',borderRadius:6}}>
+        ${s.measureMode && html`<div style=${{fontSize:'0.63rem',color:'var(--accent-subtle)',background:'rgba(30,58,138,.85)',padding:'.2rem .5rem',borderRadius:6}}>
           ${s.measureMode==='length'?'Click 2 points to measure 3D distance':s.measureMode==='angle'?'Click 3 points: start, vertex, end':'Click points to define area, double-click to close'}
         </div>`}
         ${s.measurements.length>0 && html`<div style=${{background:'var(--overlay-bg-strong)',border:'1px solid var(--border)',borderRadius:8,padding:'.3rem',maxHeight:120,overflowY:'auto',width:200}}>
@@ -8143,7 +8145,7 @@ function startApp() {
     var adjBtnBase = {
       position:'absolute', display:'flex', alignItems:'center', justifyContent:'center',
       background: light ? 'rgba(226,232,240,0.88)' : 'rgba(15,30,60,0.82)',
-      color: light ? '#334155' : '#93c5fd',
+      color: light ? '#334155' : 'var(--accent-subtle)',
       border: '1px solid ' + (light ? 'rgba(100,116,139,0.45)' : 'rgba(96,165,250,0.35)'),
       borderRadius:'3px', cursor:'pointer', fontSize:'11px', lineHeight:1,
       padding:0, userSelect:'none', fontFamily:'inherit',
@@ -8445,7 +8447,7 @@ function startApp() {
       ${spotPos && html`<div style=${{position:'fixed',left:spotPos.x-6,top:spotPos.y-6,
         width:spotPos.w+12,height:spotPos.h+12,zIndex:10001,
         border:'2px solid var(--accent)',borderRadius:8,pointerEvents:'none',
-        boxShadow:'0 0 0 4px rgba(37,99,235,.25)',animation:'nlBorderPulse 2s ease-in-out infinite'}}></div>`}
+        boxShadow:'0 0 0 4px rgba(124,58,237,.25)',animation:'nlBorderPulse 2s ease-in-out infinite'}}></div>`}
       <div style=${tipStyle}>
         <div style=${{fontSize:'0.75rem',color:'var(--accent)',marginBottom:'.25rem',fontWeight:600}}>Step ${step+1} of ${total}</div>
         <div style=${{fontSize:'1.01rem',fontWeight:700,color:'var(--text-primary)',marginBottom:'.3rem'}}>${cur.title}</div>
@@ -8610,7 +8612,7 @@ function startApp() {
               d({t:A.SHARE,v:true});
             }}
             title=${connected?'Shared via '+(sp.folderName||'folder'):'Share this project'}
-            style=${{...S_BTN,position:'relative',background:bg,color:'#fff',fontWeight:600,padding:'.35rem .8rem',fontSize:'var(--text-xs)',display:'flex',alignItems:'center',gap:'.4rem',boxShadow:connected?'0 2px 8px rgba(124,58,237,.35)':'0 1px 4px rgba(37,99,235,.25)'}}>
+            style=${{...S_BTN,position:'relative',background:bg,color:'#fff',fontWeight:600,padding:'.35rem .8rem',fontSize:'var(--text-xs)',display:'flex',alignItems:'center',gap:'.4rem',boxShadow:connected?'0 2px 8px rgba(124,58,237,.35)':'0 1px 4px rgba(124,58,237,.25)'}}>
             <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/></svg>
             <span>Share</span>
             <span style=${{width:7,height:7,borderRadius:'50%',background:dotColor,boxShadow:connected?'0 0 0 2px rgba(255,255,255,.25)':'none'}}></span>
@@ -9778,7 +9780,7 @@ function startApp() {
         <input ref=${fileRef} type="file" accept=".ifc,.glb,.ifcmeta,.ifcprops" multiple style=${{display:'none'}} onChange=${onFiles} />
         <input ref=${file2dRef} type="file" accept=".dxf,.pdf,.dwg,.nwd,.nwc,.nwf" multiple style=${{display:'none'}} onChange=${onFiles} />
         <button class="cc-tip cc-tip-left" data-tip=${dragging?'Drop to load':'Add IFC / GLB / DXF / PDF'} title=${'Load IFC, GLB, DXF, or PDF.\n\nFor fast Revit import: drop IFC + GLB + .ifcmeta together.\n• GLB = pre-tessellated geometry (fast)\n• IFC = properties, storeys, spatial hierarchy\n• .ifcmeta = Revit data (phase, workset, design option, layers, constraints)\n\nCreate bundles with Ifc2Ifc:\ngithub.com/thomhoffer-arch/Ifc2Ifc'} onClick=${function(){setErr('');fileRef.current&&fileRef.current.click()}} disabled=${loading}
-          style=${{...S_BTN,width:'100%',background:dragging?'#1e3a5f':'var(--bg-secondary)',color:dragging?'#93c5fd':'var(--text-secondary)',border:dragging?'2px dashed #3b82f6':'1px dashed var(--border)',display:'flex',alignItems:'center',justifyContent:'center',gap:'.3rem',transition:'all .15s'}}>
+          style=${{...S_BTN,width:'100%',background:dragging?'var(--accent-bg)':'var(--bg-secondary)',color:dragging?'var(--accent-subtle)':'var(--text-secondary)',border:dragging?'2px dashed #3b82f6':'1px dashed var(--border)',display:'flex',alignItems:'center',justifyContent:'center',gap:'.3rem',transition:'all .15s'}}>
           ${loading?html`<span class="spin">⟳</span>`:html`<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/><line x1="12" y1="11" x2="12" y2="17"/><line x1="9" y1="14" x2="15" y2="14"/></svg>`}
         </button>
         <div style=${{marginTop:'.35rem',fontSize:'0.72rem',color:'var(--text-faint)',lineHeight:1.4,textAlign:'center'}}>
@@ -9942,7 +9944,7 @@ function startApp() {
           <button onClick=${function(){d({t:A.SECTION,axis:null});d({t:A.SECTION_BOX,v:null});}}
             style=${{...S_BTN,flex:1,padding:'.25rem',background:!s.sectionAxis&&!s.sectionCustom&&(!s.sectionBox||!s.sectionBox.enabled)?'#2563eb':'var(--bg-secondary)',color:!s.sectionAxis&&!s.sectionCustom&&(!s.sectionBox||!s.sectionBox.enabled)?'#fff':'var(--text-muted)'}}>Off</button>
         </div>
-        ${s.sectionCustom && html`<div style=${{marginTop:'.3rem',fontSize:'0.69rem',color:'#93c5fd',background:'#1e3a5f',padding:'.2rem .4rem',borderRadius:4,display:'flex',alignItems:'center',justifyContent:'space-between'}}>
+        ${s.sectionCustom && html`<div style=${{marginTop:'.3rem',fontSize:'0.69rem',color:'var(--accent-subtle)',background:'var(--accent-bg)',padding:'.2rem .4rem',borderRadius:4,display:'flex',alignItems:'center',justifyContent:'space-between'}}>
           <span>Surface section active</span>
           <span style=${{fontSize:'0.63rem',color:'var(--text-muted)'}}>Right-click to set</span>
         </div>`}
@@ -10034,14 +10036,14 @@ function startApp() {
     return html`<div style=${{background:'var(--bg-secondary)',border:'1px solid var(--border)',borderRadius:8,overflow:'hidden'}}>
       <div style=${{display:'flex',alignItems:'center',gap:'.35rem',padding:'.35rem .5rem'}}>
         <span onClick=${function(){d({t:A.UPD_MODEL,id:m.id,u:{visible:!m.visible}})}}
-          style=${{width:14,height:14,borderRadius:3,border:'2px solid '+(m.visible!==false?'#3b82f6':'#475569'),background:m.visible!==false?'#3b82f6':'transparent',cursor:'pointer',flexShrink:0,display:'flex',alignItems:'center',justifyContent:'center'}}>
+          style=${{width:14,height:14,borderRadius:3,border:'2px solid '+(m.visible!==false?'var(--accent)':'#475569'),background:m.visible!==false?'var(--accent)':'transparent',cursor:'pointer',flexShrink:0,display:'flex',alignItems:'center',justifyContent:'center'}}>
           ${m.visible!==false && html`<span style=${{color:'#fff',fontSize:9}}>✓</span>`}
         </span>
         <span style=${{width:10,height:10,borderRadius:'50%',background:m.color,flexShrink:0}}></span>
         <span style=${{color:'var(--text-primary)',fontSize:'0.86rem',flex:1,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}} title=${m.name}>${m.name}</span>
-        ${m._version>1 && html`<span style=${{fontSize:'0.57rem',color:'#60a5fa',background:'#1e3a5f',padding:'.05rem .25rem',borderRadius:3,flexShrink:0,fontWeight:600}}>v${m._version}</span>`}
+        ${m._version>1 && html`<span style=${{fontSize:'0.57rem',color:'#60a5fa',background:'var(--accent-bg)',padding:'.05rem .25rem',borderRadius:3,flexShrink:0,fontWeight:600}}>v${m._version}</span>`}
         ${m._stub && html`<span style=${{fontSize:'0.63rem',color:'#f59e0b',background:'var(--pill-amber-bg)',padding:'.05rem .3rem',borderRadius:4,flexShrink:0}}>stub</span>`}
-        ${m.stats && m.stats.loadType && html`<span style=${{fontSize:'0.57rem',padding:'1px 4px',borderRadius:3,background:'rgba(37,99,235,.12)',color:'var(--accent)',fontWeight:600,flexShrink:0}}>${m.stats.loadType}</span>`}
+        ${m.stats && m.stats.loadType && html`<span style=${{fontSize:'0.57rem',padding:'1px 4px',borderRadius:3,background:'rgba(124,58,237,.12)',color:'var(--accent)',fontWeight:600,flexShrink:0}}>${m.stats.loadType}</span>`}
         ${m.stats && m.stats.loadTime && html`<span style=${{fontSize:'0.63rem',color:'var(--text-faint)',flexShrink:0}}>${(m.stats.loadTime/1000).toFixed(1)}s</span>`}
         <button onClick=${function(){setOpen(!open)}} style=${{...S_BTN,padding:'0 2px',background:'none',color:'var(--text-faint)',fontSize:'0.69rem'}}>${open?'▲':'▼'}</button>
         <button onClick=${function(){if(!confirm('Remove "'+m.name+'" from this project?'))return;d({t:A.DEL_MODEL,id:m.id});idbDeleteFile(m.id);idbDeleteGeoCache(m.id);}} style=${{...S_BTN,padding:'0 2px',background:'none',color:'var(--text-faint)',fontSize:'0.69rem'}}>✕</button>
@@ -10076,7 +10078,7 @@ function startApp() {
           </div>
           <div style=${{display:'flex',gap:'.2rem'}}>
             <button onClick=${function(){showModelDiff(m);}}
-              style=${{...S_BTN,flex:1,fontSize:'0.63rem',padding:'.15rem .3rem',background:'#1e3a5f',color:'#93c5fd'}}>Show Diff</button>
+              style=${{...S_BTN,flex:1,fontSize:'0.63rem',padding:'.15rem .3rem',background:'var(--accent-bg)',color:'var(--accent-subtle)'}}>Show Diff</button>
             <button onClick=${function(){clearModelDiff(m);}}
               style=${{...S_BTN,flex:1,fontSize:'0.63rem',padding:'.15rem .3rem',background:'var(--bg-primary)',color:'var(--text-muted)'}}>Clear Diff</button>
           </div>
@@ -10536,7 +10538,7 @@ function startApp() {
           return html`<div key=${k} style=${{padding:'.3rem .6rem',borderBottom:'1px solid var(--border-subtle)',opacity:isHidden?.4:1,transition:'opacity .2s'}}>
             <div style=${{display:'flex',alignItems:'center',gap:'.3rem',marginBottom:'.15rem'}}>
               <span onClick=${function(){d({t:A.TOGGLE_CLASS_VIS,key:visKey})}}
-                style=${{width:12,height:12,borderRadius:2,border:'2px solid '+(isHidden?'#475569':'#3b82f6'),background:isHidden?'transparent':'#3b82f6',cursor:'pointer',flexShrink:0,display:'flex',alignItems:'center',justifyContent:'center'}}>
+                style=${{width:12,height:12,borderRadius:2,border:'2px solid '+(isHidden?'#475569':'var(--accent)'),background:isHidden?'transparent':'var(--accent)',cursor:'pointer',flexShrink:0,display:'flex',alignItems:'center',justifyContent:'center'}}>
                 ${!isHidden && html`<span style=${{color:'#fff',fontSize:8}}>✓</span>`}
               </span>
               ${s.colorByClass===classView && html`<span style=${{width:8,height:8,borderRadius:'50%',background:barColor,flexShrink:0}}></span>`}
@@ -10652,7 +10654,7 @@ function startApp() {
         <div style=${{display:'flex',gap:'.25rem',flexWrap:'wrap',alignItems:'center',marginBottom:'.25rem'}}>
           ${SEV_CHIP('critical', counts.critical, '#7f1d1d', '#fca5a5')}
           ${SEV_CHIP('major', counts.major, '#78350f', '#fcd34d')}
-          ${SEV_CHIP('minor', counts.minor, '#1e3a5f', '#93c5fd')}
+          ${SEV_CHIP('minor', counts.minor, 'var(--accent-bg)', 'var(--accent-subtle)')}
           ${SEV_CHIP('likely false positive', counts.info, '#1e293b', '#94a3b8')}
         </div>
         ${bigClusterSize >= 3 && html`<p style=${{fontSize:'0.69rem',color:'#fbbf24',margin:'.15rem 0',lineHeight:1.3}}>⚠ ${bigClusterSize} clustered clashes${bigCluster.storey ? ' on '+bigCluster.storey : ''} (${bigCluster.typePair})</p>`}
@@ -10713,7 +10715,7 @@ function startApp() {
       </div>
       ${isClash && delta && html`<div style=${{display:'flex',gap:'.3rem',marginTop:'.25rem',alignItems:'center',flexWrap:'wrap'}}>
         <span style=${{fontSize:'0.63rem',color:'var(--text-faint)',flexShrink:0}}>This run:</span>
-        ${delta.newCount > 0 && CHIP('New', delta.newCount, '#1e3a5f', '#60a5fa')}
+        ${delta.newCount > 0 && CHIP('New', delta.newCount, 'var(--accent-bg)', '#60a5fa')}
         ${delta.persisting > 0 && CHIP('Unchanged', delta.persisting, 'var(--tag-bg)', 'var(--text-secondary)')}
         ${delta.autoResolved > 0 && CHIP('Auto-res', delta.autoResolved, '#0f172a', '#64748b')}
       </div>`}
@@ -11391,8 +11393,8 @@ function startApp() {
           </div>
           <span style=${{fontSize:'0.67rem',color:items.length<rawItems.length?'#60a5fa':'var(--text-faint)',fontWeight:items.length<rawItems.length?600:400,whiteSpace:'nowrap',flexShrink:0}}>${items.length}${items.length<rawItems.length?' / '+rawItems.length:''}</span>
           <button onClick=${function(){setFiltersOpen(!filtersOpen)}}
-            style=${{...S_BTN,padding:'.3rem .5rem',background:filtersOpen||activeCount>0?'#1e3a5f':'var(--bg-secondary)',color:filtersOpen||activeCount>0?'#93c5fd':'var(--text-faint)',border:'1px solid var(--border)',fontSize:'0.75rem',whiteSpace:'nowrap',flexShrink:0}} aria-label="Toggle filters">
-            ⚙${activeCount>0?html`<span style=${{background:'#3b82f6',color:'#fff',borderRadius:99,padding:'.05rem .3rem',fontSize:'0.63rem',marginLeft:'.2rem'}}>${activeCount}</span>`:''}
+            style=${{...S_BTN,padding:'.3rem .5rem',background:filtersOpen||activeCount>0?'var(--accent-bg)':'var(--bg-secondary)',color:filtersOpen||activeCount>0?'var(--accent-subtle)':'var(--text-faint)',border:'1px solid var(--border)',fontSize:'0.75rem',whiteSpace:'nowrap',flexShrink:0}} aria-label="Toggle filters">
+            ⚙${activeCount>0?html`<span style=${{background:'var(--accent)',color:'#fff',borderRadius:99,padding:'.05rem .3rem',fontSize:'0.63rem',marginLeft:'.2rem'}}>${activeCount}</span>`:''}
           </button>
         </div>
       </div>`}
@@ -11567,7 +11569,7 @@ function startApp() {
               <button title=${hasItems ? 'Export '+bcfItems.length+' '+source+' as BCF 3.0 — newer spec, supports extensions but fewer tools read it yet' : 'Create at least one issue first, or run a clash detection'}
                 disabled=${!hasItems}
                 onClick=${function(){ if(!hasItems) return; exportBCF(bcfItems, '3.0', s.viewpoints, s); }}
-                style=${{...btnBase,flex:1,background:hasItems?'#1e3a5f':'var(--bg-secondary)',color:hasItems?'#93c5fd':'var(--text-faint)'}}>BCF 3.0</button>
+                style=${{...btnBase,flex:1,background:hasItems?'var(--accent-bg)':'var(--bg-secondary)',color:hasItems?'var(--accent-subtle)':'var(--text-faint)'}}>BCF 3.0</button>
             </div>
             ${hasItems && html`<div style=${{fontSize:'0.6rem',color:'var(--text-faint)',lineHeight:1.5}}>
               Exports open in Revit (BCF Manager), Navisworks (Clash Detective), Solibri, BIMcollab, and most other BIM tools.
@@ -12719,7 +12721,7 @@ function startApp() {
 
       <div style=${{display: 'flex', gap: '.3rem'}}>
         <button onClick=${runValidation} disabled=${ids.running || s.models.length === 0 || (selectedBundled.length === 0 && !customSpecs)}
-          style=${{...S_BTN, flex: 1, padding: '.35rem', background: ids.running ? '#1e3a5f' : '#2563eb', color: '#fff', fontSize: '0.75rem', fontWeight: 600,
+          style=${{...S_BTN, flex: 1, padding: '.35rem', background: ids.running ? 'var(--accent-bg)' : '#2563eb', color: '#fff', fontSize: '0.75rem', fontWeight: 600,
             opacity: (ids.running || s.models.length === 0 || (selectedBundled.length === 0 && !customSpecs)) ? 0.5 : 1}}>
           ${ids.running ? 'Validating…' : 'Run Validation'}
         </button>
@@ -12748,7 +12750,7 @@ function startApp() {
 
         <div style=${{display: 'flex', gap: '.2rem', marginTop: '.4rem', flexWrap: 'wrap'}}>
           <button onClick=${function() { setShowResults(!showResults); }}
-            style=${{...S_BTN, fontSize: '0.63rem', padding: '.15rem .3rem', background: showResults ? '#1e3a5f' : 'var(--bg-primary)', color: showResults ? '#93c5fd' : 'var(--text-muted)'}}>
+            style=${{...S_BTN, fontSize: '0.63rem', padding: '.15rem .3rem', background: showResults ? 'var(--accent-bg)' : 'var(--bg-primary)', color: showResults ? 'var(--accent-subtle)' : 'var(--text-muted)'}}>
             ${showResults ? 'Hide' : 'Show'} Failures</button>
           <button onClick=${function() { highlightValidationFailures(s.models, ids.results); }}
             style=${{...S_BTN, fontSize: '0.63rem', padding: '.15rem .3rem', background: 'var(--bg-primary)', color: '#f87171'}} title="Ghost passing elements, highlight failures">
@@ -12774,7 +12776,7 @@ function startApp() {
             var count = f === 'all' ? ids.results.length : ids.results.filter(function(r) { return r.severity === f; }).length;
             return html`<button key=${f} onClick=${function() { setViewFilter(f); }}
               style=${{...S_BTN, fontSize: '0.63rem', padding: '.1rem .3rem',
-                background: viewFilter === f ? (f === 'error' ? '#7f1d1d' : f === 'warning' ? '#78350f' : '#1e3a5f') : 'var(--bg-primary)',
+                background: viewFilter === f ? (f === 'error' ? '#7f1d1d' : f === 'warning' ? '#78350f' : 'var(--accent-bg)') : 'var(--bg-primary)',
                 color: viewFilter === f ? '#fff' : 'var(--text-faint)'}}>${f === 'all' ? 'All' : f.charAt(0).toUpperCase() + f.slice(1)} (${count})</button>`;
           })}
         </div>
@@ -13009,7 +13011,7 @@ function startApp() {
 
       <div style=${{display:'flex',gap:'.3rem',marginBottom:'1rem'}}>
         <button onClick=${addTypeRow}
-          style=${{fontSize:'0.69rem',padding:'.3rem .6rem',background:'var(--bg-secondary)',color:'#60a5fa',border:'1px solid #3b82f644',borderRadius:4,cursor:'pointer',fontWeight:600,flex:1}}>+ Add IFC type rule</button>
+          style=${{fontSize:'0.69rem',padding:'.3rem .6rem',background:'var(--bg-secondary)',color:'var(--accent-light)',border:'1px solid rgba(124,58,237,.27)',borderRadius:4,cursor:'pointer',fontWeight:600,flex:1}}>+ Add IFC type rule</button>
         <button onClick=${exportTypeRules} title="Export IFC type-pair rules"
           style=${{fontSize:'0.69rem',padding:'.3rem .5rem',background:'var(--bg-secondary)',color:'var(--text-faint)',border:'1px solid var(--border)',borderRadius:4,cursor:'pointer'}}>↓</button>
         <button onClick=${function(){importTypeRef.current&&importTypeRef.current.click();}} title="Import IFC type-pair rules"
@@ -13060,7 +13062,7 @@ function startApp() {
 
       <div style=${{display:'flex',gap:'.3rem',marginBottom:'1.5rem'}}>
         <button onClick=${addRow}
-          style=${{fontSize:'0.69rem',padding:'.3rem .6rem',background:'var(--bg-secondary)',color:'#60a5fa',border:'1px solid #3b82f644',borderRadius:4,cursor:'pointer',fontWeight:600,flex:1}}>+ Add discipline rule</button>
+          style=${{fontSize:'0.69rem',padding:'.3rem .6rem',background:'var(--bg-secondary)',color:'var(--accent-light)',border:'1px solid rgba(124,58,237,.27)',borderRadius:4,cursor:'pointer',fontWeight:600,flex:1}}>+ Add discipline rule</button>
         <button onClick=${exportDiscRules} title="Export discipline-pair rules"
           style=${{fontSize:'0.69rem',padding:'.3rem .5rem',background:'var(--bg-secondary)',color:'var(--text-faint)',border:'1px solid var(--border)',borderRadius:4,cursor:'pointer'}}>↓</button>
         <button onClick=${function(){importDiscRef.current&&importDiscRef.current.click();}} title="Import discipline-pair rules"
@@ -13079,7 +13081,7 @@ function startApp() {
     var VS={fontSize:'0.63rem',color:'var(--text-primary)'};
     var ROW={display:'flex',justifyContent:'space-between',padding:'.1rem 0'};
     return html`<div style=${{background:'var(--bg-primary)',borderRadius:4,padding:'.35rem',marginBottom:'.2rem'}}>
-      <div style=${{fontSize:'0.69rem',fontWeight:600,color:'#93c5fd',marginBottom:'.2rem'}}>${label}</div>
+      <div style=${{fontSize:'0.69rem',fontWeight:600,color:'var(--accent-subtle)',marginBottom:'.2rem'}}>${label}</div>
       ${p.ifcType && html`<div style=${ROW}><span style=${LS}>Type</span><span style=${VS}>${p.ifcType}</span></div>`}
       ${p.name && html`<div style=${ROW}><span style=${LS}>Name</span><span style=${VS}>${p.name}</span></div>`}
       ${p.objectType && html`<div style=${ROW}><span style=${LS}>Object Type</span><span style=${VS}>${p.objectType}</span></div>`}
@@ -13158,20 +13160,20 @@ function startApp() {
             background:'var(--color-info-bg)',color:'var(--color-info-fg)',
             padding:'.1rem .4rem',borderRadius:'var(--radius-pill)',
             fontSize:'var(--text-2xs)',fontWeight:'var(--weight-bold)',fontVariantNumeric:'tabular-nums'}}>#${it.number}</span>`}
-        ${!isSingle && html`${_idChip('A', it.revitIdA != null ? it.revitIdA : (pA && pA.revitId), it.elemA, '#93c5fd')}${_idChip('B', it.revitIdB != null ? it.revitIdB : (pB && pB.revitId), it.elemB, '#fca5a5')}`}
-        ${isSingle && _idChip('EL', pEl && pEl.revitId, it.elementId, '#93c5fd')}
+        ${!isSingle && html`${_idChip('A', it.revitIdA != null ? it.revitIdA : (pA && pA.revitId), it.elemA, 'var(--accent-subtle)')}${_idChip('B', it.revitIdB != null ? it.revitIdB : (pB && pB.revitId), it.elemB, '#fca5a5')}`}
+        ${isSingle && _idChip('EL', pEl && pEl.revitId, it.elementId, 'var(--accent-subtle)')}
       </div>`}
       <div style=${{display:'flex',gap:'.2rem',marginBottom:'.2rem'}}>
         ${isSingle ? html`
           <button onClick=${function(){var mid=it.modelId||it.modelAId; if(_fitToElement&&it.elementId)_fitToElement(it.elementId,null,mid); if(_highlightById&&it.elementId)_highlightById(it.elementId,true,mid);}}
-            style=${{...S_BTN,fontSize:'0.57rem',padding:'.1rem .3rem',background:'#0f3a5f',color:'#93c5fd',flex:1}}>Zoom</button>
+            style=${{...S_BTN,fontSize:'0.57rem',padding:'.1rem .3rem',background:'#0f3a5f',color:'var(--accent-subtle)',flex:1}}>Zoom</button>
           <button onClick=${function(){var mid=it.modelId||it.modelAId; if(_fitToElement&&it.elementId)_fitToElement(it.elementId,null,mid); if(_highlightById&&it.elementId)_highlightById(it.elementId,false,mid); _sboxAroundElements&&_sboxAroundElements([{modelId:mid,expressId:it.elementId}]);}}
             style=${{...S_BTN,fontSize:'0.57rem',padding:'.1rem .3rem',background:'#3b0764',color:'#c084fc',flex:1}} title="Section box around element">Box</button>
         ` : html`
           <button onClick=${function(){_zoomToggle(it.elemA,'A');}}
-            style=${{...S_BTN,fontSize:'0.57rem',padding:'.1rem .3rem',background:zoomedTo==='A'?'#1e40af':'#0f3a5f',color:'#93c5fd',flex:1}}>${zoomedTo==='A'?'Zoom Both':'Zoom A'}</button>
+            style=${{...S_BTN,fontSize:'0.57rem',padding:'.1rem .3rem',background:zoomedTo==='A'?'#1e40af':'#0f3a5f',color:'var(--accent-subtle)',flex:1}}>${zoomedTo==='A'?'Zoom Both':'Zoom A'}</button>
           <button onClick=${function(){_zoomToggle(it.elemB,'B');}}
-            style=${{...S_BTN,fontSize:'0.57rem',padding:'.1rem .3rem',background:zoomedTo==='B'?'#1e40af':'#0f3a5f',color:'#93c5fd',flex:1}}>${zoomedTo==='B'?'Zoom Both':'Zoom B'}</button>
+            style=${{...S_BTN,fontSize:'0.57rem',padding:'.1rem .3rem',background:zoomedTo==='B'?'#1e40af':'#0f3a5f',color:'var(--accent-subtle)',flex:1}}>${zoomedTo==='B'?'Zoom Both':'Zoom B'}</button>
           <button onClick=${function(){var refs=_itemRefs(it); if(_fitToElement&&it.elemA)_fitToElement(it.elemA,null,it.modelAId); if(refs.length&&_highlightRefs)_highlightRefs(refs,false); _sboxAroundElements&&_sboxAroundElements(refs);}}
             style=${{...S_BTN,fontSize:'0.57rem',padding:'.1rem .3rem',background:'#3b0764',color:'#c084fc',flex:1}} title="Section box around both elements">Box</button>
         `}
@@ -13458,7 +13460,7 @@ function startApp() {
         ${groups.map(function(g) {
           var isOpen = !collapsed[g.label];
           var statusColors = {open:'#ef4444',in_progress:'#f59e0b',resolved:'#22c55e',closed:'#64748b',hard:'#ef4444',soft:'#f59e0b',duplicate:'#8b5cf6'};
-          var dotColor = statusColors[g.label] || '#3b82f6';
+          var dotColor = statusColors[g.label] || 'var(--accent-light)';
           var limit = groupLimits[g.label] || GROUP_PAGE_SIZE;
           var visibleItems = g.items.slice(0, limit);
           var hasMore = g.items.length > limit;
@@ -13560,11 +13562,11 @@ function startApp() {
     var trainingMode=props.trainingMode;
     var icon = it.type==='hard'?'🔴':it.type==='soft'?'🟡':it.source==='element'?'🏗':'📌';
     var stBg = (STAT[it.status]||STAT.open).bg;
-    var typeBg = it.type==='hard'?'#7f1d1d':it.type==='soft'?'#78350f':it.type==='duplicate'?'#4c1d95':'#1e3a5f';
-    var typeCol = it.type==='hard'?'#fca5a5':it.type==='soft'?'#fcd34d':it.type==='duplicate'?'#c4b5fd':'#93c5fd';
+    var typeBg = it.type==='hard'?'#7f1d1d':it.type==='soft'?'#78350f':it.type==='duplicate'?'#4c1d95':'var(--accent-bg)';
+    var typeCol = it.type==='hard'?'#fca5a5':it.type==='soft'?'#fcd34d':it.type==='duplicate'?'#c4b5fd':'var(--accent-subtle)';
     var typeLabel = it.type ? it.type.charAt(0).toUpperCase()+it.type.slice(1) : null;
-    var sevBg = it.aiSeverity==='critical'?'#7f1d1d':it.aiSeverity==='major'?'#78350f':it.aiSeverity==='minor'?'#1e3a5f':'#334155';
-    var sevCol = it.aiSeverity==='critical'?'#fca5a5':it.aiSeverity==='major'?'#fcd34d':it.aiSeverity==='minor'?'#93c5fd':'#94a3b8';
+    var sevBg = it.aiSeverity==='critical'?'#7f1d1d':it.aiSeverity==='major'?'#78350f':it.aiSeverity==='minor'?'var(--accent-bg)':'#334155';
+    var sevCol = it.aiSeverity==='critical'?'#fca5a5':it.aiSeverity==='major'?'#fcd34d':it.aiSeverity==='minor'?'var(--accent-subtle)':'#94a3b8';
     var sevLabel = it.aiSeverity ? it.aiSeverity.charAt(0).toUpperCase()+it.aiSeverity.slice(1) : null;
     var storeyLabel = (function(){
       var a=it.elemAStorey||'', b=it.elemBStorey||'';
@@ -13612,8 +13614,8 @@ function startApp() {
               var fb=it.aiFeedback;
               return html`<span style=${{display:'inline-flex',alignItems:'center',gap:'2px',flexShrink:0}}>
                 ${fb && html`<span style=${{fontSize:'0.63rem',padding:'.02rem .2rem',borderRadius:3,lineHeight:1,fontWeight:700,
-                  background:fb==='real_clash'?'#166534':fb==='acceptable'?'#1e3a5f':'#7f1d1d',
-                  color:fb==='real_clash'?'#4ade80':fb==='acceptable'?'#93c5fd':'#fca5a5'}}>${fb==='real_clash'?'+':fb==='acceptable'?'-':'×'}</span>`}
+                  background:fb==='real_clash'?'#166534':fb==='acceptable'?'var(--accent-bg)':'#7f1d1d',
+                  color:fb==='real_clash'?'#4ade80':fb==='acceptable'?'var(--accent-subtle)':'#fca5a5'}}>${fb==='real_clash'?'+':fb==='acceptable'?'-':'×'}</span>`}
                 ${!active && html`<button onClick=${function(e){e.stopPropagation();d({t:A.ACTIVE,id:it.id});}}
                   title="Expand training feedback" style=${{background:'transparent',color:'#a78bfa',border:'none',cursor:'pointer',fontSize:'0.69rem',padding:'1px 4px',borderRadius:3,lineHeight:1}}>▼</button>`}
               </span>`;
@@ -13726,7 +13728,7 @@ function startApp() {
                 Expected clash
               </label>
             </div>
-            ${changed && tolState.promptAction!=='dismissed' && html`<div style=${{fontSize:'0.57rem',color:'#93c5fd',background:'#0f172a',padding:'.25rem .4rem',borderRadius:4,marginBottom:'.2rem',display:'flex',alignItems:'center',gap:'.3rem',flexWrap:'wrap'}}>
+            ${changed && tolState.promptAction!=='dismissed' && html`<div style=${{fontSize:'0.57rem',color:'var(--accent-subtle)',background:'#0f172a',padding:'.25rem .4rem',borderRadius:4,marginBottom:'.2rem',display:'flex',alignItems:'center',gap:'.3rem',flexWrap:'wrap'}}>
               <span>${standardVal!=null?'Update':'Add'} standard for ${typeA&&typeB?typeA+' vs '+typeB:discA+' vs '+discB} to ${curVal}mm?</span>
               <button onClick=${function(e){e.stopPropagation();
                 if(typeA&&typeB){
@@ -13742,7 +13744,7 @@ function startApp() {
                 }
                 setTolState(function(p){return Object.assign({},p,{promptAction:'updated'});});
               }}
-                style=${{fontSize:'0.57rem',padding:'.1rem .3rem',background:'#1e3a5f',color:'#60a5fa',border:'1px solid #3b82f644',borderRadius:3,cursor:'pointer',fontWeight:600}}>Update</button>
+                style=${{fontSize:'0.57rem',padding:'.1rem .3rem',background:'var(--accent-bg)',color:'#60a5fa',border:'1px solid #3b82f644',borderRadius:3,cursor:'pointer',fontWeight:600}}>Update</button>
               <button onClick=${function(e){e.stopPropagation();setTolState(function(p){return Object.assign({},p,{promptAction:'dismissed'});});}}
                 style=${{fontSize:'0.57rem',padding:'.1rem .3rem',background:'var(--bg-secondary)',color:'var(--text-faint)',border:'1px solid var(--border)',borderRadius:3,cursor:'pointer'}}>Keep local</button>
             </div>`}
@@ -13760,7 +13762,7 @@ function startApp() {
           var RES_LABELS={move_a:'Move A',move_b:'Move B',redesign:'Redesign',accept:'Accept'};
           var VERDICT_LABELS={real_clash:'Real clash',acceptable:'Acceptable',false_positive:'False positive'};
           var VERDICTS=[{k:'real_clash',l:'Real clash',bg:'#166534',col:'#4ade80',brd:'#22c55e44'},
-            {k:'acceptable',l:'Acceptable',bg:'#1e3a5f',col:'#93c5fd',brd:'#3b82f644'},
+            {k:'acceptable',l:'Acceptable',bg:'var(--accent-bg)',col:'var(--accent-subtle)',brd:'#3b82f644'},
             {k:'false_positive',l:'False positive',bg:'#7f1d1d',col:'#fca5a5',brd:'#ef444444'}];
           function updItem(u){ d(isClash ? {t:A.UPD_CLASH,id:it.id,u:u} : {t:A.UPD_ISSUE,id:it.id,u:u}); }
           function setVerdict(v){ isClash ? d({t:A.AI_FEEDBACK,id:it.id,v:v}) : d({t:A.UPD_ISSUE,id:it.id,u:{aiFeedback:v}}); }
@@ -13802,18 +13804,18 @@ function startApp() {
               ${CTYPES.map(function(ct){var confirmed=it.clashTypeConfirmed!=null;var sel=curCT===ct.k;var isDefault=!confirmed&&it.type===ct.k;return html`<button key=${ct.k}
                 onClick=${function(e){e.stopPropagation();updItem({clashTypeConfirmed:ct.k});}}
                 style=${{...S_BTN,fontSize:'0.63rem',padding:'.1rem .35rem',
-                  background:sel||isDefault?'#1e3a5f':'var(--bg-secondary)',
-                  color:sel||isDefault?'#93c5fd':'var(--text-faint)',
-                  border:'1px solid '+(sel||isDefault?'#3b82f6':'var(--border)')}}>${ct.l}${isDefault?' (detected)':''}</button>`})}
+                  background:sel||isDefault?'var(--accent-bg)':'var(--bg-secondary)',
+                  color:sel||isDefault?'var(--accent-subtle)':'var(--text-faint)',
+                  border:'1px solid '+(sel||isDefault?'var(--accent)':'var(--border)')}}>${ct.l}${isDefault?' (detected)':''}</button>`})}
             </div>
             <div style=${{fontSize:'0.63rem',fontWeight:600,color:'var(--text-muted)',marginBottom:'.15rem'}}>Reason</div>
             <div style=${{display:'flex',gap:'.2rem',marginBottom:'.3rem',flexWrap:'wrap'}}>
               ${REASONS.map(function(r){var sel=curReasons.indexOf(r)>=0;return html`<span key=${r}
                 onClick=${function(e){e.stopPropagation();var nr=sel?curReasons.filter(function(x){return x!==r}):curReasons.concat([r]);updItem({aiReasons:nr});}}
                 style=${{fontSize:'0.63rem',padding:'.1rem .35rem',borderRadius:10,cursor:'pointer',whiteSpace:'nowrap',
-                  border:'1px solid '+(sel?'#3b82f6':'var(--border)'),
-                  background:sel?'#1e3a5f':'var(--bg-secondary)',
-                  color:sel?'#93c5fd':'var(--text-muted)'}}>${r}</span>`})}
+                  border:'1px solid '+(sel?'var(--accent)':'var(--border)'),
+                  background:sel?'var(--accent-bg)':'var(--bg-secondary)',
+                  color:sel?'var(--accent-subtle)':'var(--text-muted)'}}>${r}</span>`})}
             </div>
             <div style=${{fontSize:'0.63rem',fontWeight:600,color:'var(--text-muted)',marginBottom:'.15rem'}}>Resolution</div>
             <div style=${{display:'flex',gap:'.2rem',marginBottom:'.3rem',flexWrap:'wrap'}}>
@@ -13823,9 +13825,9 @@ function startApp() {
                 return html`<span key=${r.k}
                   onClick=${function(e){e.stopPropagation();var nr=sel?curRes.filter(function(x){return x!==r.k}):curRes.concat([r.k]);updItem({aiResolution:nr});}}
                   style=${{fontSize:'0.63rem',padding:'.1rem .35rem',borderRadius:10,cursor:'pointer',whiteSpace:'nowrap',
-                    border:'1px solid '+(sel?'#3b82f6':'var(--border)'),
-                    background:sel?'#1e3a5f':'var(--bg-secondary)',
-                    color:sel?'#93c5fd':'var(--text-muted)'}}>${r.l}</span>`;
+                    border:'1px solid '+(sel?'var(--accent)':'var(--border)'),
+                    background:sel?'var(--accent-bg)':'var(--bg-secondary)',
+                    color:sel?'var(--accent-subtle)':'var(--text-muted)'}}>${r.l}</span>`;
               })}
             </div>
             <input type="text" value=${curNote} maxLength="140" placeholder="Optional note \u2014 no project names or locations"
@@ -14511,7 +14513,7 @@ function startApp() {
             </div>`}
           </div>
 
-          <div style=${{padding:'.7rem .85rem',background:'rgba(37,99,235,.07)',border:'1px solid rgba(37,99,235,.18)',borderRadius:8}}>
+          <div style=${{padding:'.7rem .85rem',background:'rgba(124,58,237,.07)',border:'1px solid rgba(124,58,237,.18)',borderRadius:8}}>
             <div style=${{fontSize:'0.78rem',fontWeight:600,color:'var(--text-primary)',marginBottom:'.3rem'}}>Send the current view to a client</div>
             <div style=${{fontSize:'0.74rem',color:'var(--text-muted)',marginBottom:'.5rem'}}>Copies a URL with the camera, section and render style baked in. The link <b>does not include the IFC</b> — the recipient must already have the model loaded.</div>
             <div style=${{display:'flex',gap:'.4rem'}}>
@@ -14577,7 +14579,7 @@ function startApp() {
       onClick=${function(){d({t:A.SHARE,v:false});}}>
       <div class="cc-modal-card" style=${{...S_MODAL_CARD,width:560,padding:0,display:'flex',flexDirection:'column'}} onClick=${function(e){e.stopPropagation();}}>
         <div style=${{padding:'1rem 1.2rem .6rem',display:'flex',alignItems:'center',gap:'.6rem'}}>
-          <div style=${{width:32,height:32,borderRadius:8,background:'rgba(37,99,235,.12)',display:'flex',alignItems:'center',justifyContent:'center',color:'#60a5fa'}}>
+          <div style=${{width:32,height:32,borderRadius:8,background:'rgba(124,58,237,.12)',display:'flex',alignItems:'center',justifyContent:'center',color:'#60a5fa'}}>
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/></svg>
           </div>
           <div style=${{flex:1}}>
@@ -14602,7 +14604,7 @@ function startApp() {
                 style=${inputStyle} />
             </div>
 
-            ${!sp.enabled && html`<div style=${{padding:'.9rem 1rem',background:'rgba(37,99,235,.06)',border:'1px solid rgba(37,99,235,.2)',borderRadius:8,fontSize:'0.82rem',color:'var(--text-secondary)',lineHeight:1.55}}>
+            ${!sp.enabled && html`<div style=${{padding:'.9rem 1rem',background:'rgba(124,58,237,.06)',border:'1px solid rgba(124,58,237,.2)',borderRadius:8,fontSize:'0.82rem',color:'var(--text-secondary)',lineHeight:1.55}}>
               <div style=${{fontWeight:600,color:'var(--text-primary)',marginBottom:'.35rem'}}>How it works</div>
               <ol style=${{margin:0,paddingLeft:'1.1rem'}}>
                 <li>Pick a folder you and your teammates already share — OneDrive, Dropbox, Google Drive Desktop, or a network drive.</li>
@@ -14696,7 +14698,7 @@ function startApp() {
       return html`<button onClick=${function(){setFilter(id);}}
         style=${{padding:'.25rem .6rem',borderRadius:99,fontSize:'0.72rem',fontWeight:600,cursor:'pointer',fontFamily:'inherit',
           border:'1px solid '+(active?'var(--accent)':'var(--border)'),
-          background:active?'rgba(37,99,235,.12)':'transparent',
+          background:active?'rgba(124,58,237,.12)':'transparent',
           color:active?'#60a5fa':'var(--text-muted)'}}>${label}</button>`;
     };
 
@@ -14707,7 +14709,7 @@ function startApp() {
         ${pillBtn('open','Open')} ${pillBtn('resolved','Resolved')} ${pillBtn('all','All')}
       </div>
 
-      ${!sp.enabled && html`<div style=${{fontSize:'0.74rem',color:'var(--text-muted)',padding:'.5rem .7rem',background:'rgba(37,99,235,.06)',borderRadius:6}}>
+      ${!sp.enabled && html`<div style=${{fontSize:'0.74rem',color:'var(--text-muted)',padding:'.5rem .7rem',background:'rgba(124,58,237,.06)',borderRadius:6}}>
         Comments stay on your machine until you link a shared folder under <b>Overview</b>.
       </div>`}
 
@@ -14718,7 +14720,7 @@ function startApp() {
 
       ${comments.map(function(c){
         var isActive = s.activeCommentId===c.id;
-        return html`<div key=${c.id} style=${{padding:'.7rem .8rem',background:isActive?'rgba(37,99,235,.08)':'var(--bg-tertiary)',border:'1px solid '+(isActive?'rgba(37,99,235,.3)':'var(--border)'),borderRadius:8}}>
+        return html`<div key=${c.id} style=${{padding:'.7rem .8rem',background:isActive?'rgba(124,58,237,.08)':'var(--bg-tertiary)',border:'1px solid '+(isActive?'rgba(124,58,237,.3)':'var(--border)'),borderRadius:8}}>
           <div style=${{display:'flex',alignItems:'center',gap:'.4rem',marginBottom:'.3rem'}}>
             <span style=${{fontSize:'0.78rem',fontWeight:600,color:'var(--text-primary)'}}>${c.author||'Anonymous'}</span>
             <span style=${{fontSize:'0.68rem',color:'var(--text-faint)'}}>${c.ts?new Date(c.ts).toLocaleString():''}</span>
@@ -15124,8 +15126,8 @@ function startApp() {
                       }}
                       onClick=${function(e){e.stopPropagation();}}
                       style=${{...S_INPUT,width:48,textAlign:'center',fontSize:'0.67rem',padding:'2px 3px',
-                        background:hasVal?'rgba(37,99,235,.1)':'var(--bg-secondary)',
-                        borderColor:hasVal?'rgba(37,99,235,.3)':'var(--border)',
+                        background:hasVal?'rgba(124,58,237,.1)':'var(--bg-secondary)',
+                        borderColor:hasVal?'rgba(124,58,237,.3)':'var(--border)',
                         color:hasVal?'var(--text-primary)':'var(--text-faint)'}} />
                     <span style=${{color:'var(--text-faint)',fontSize:'0.57rem',marginLeft:2}}>mm</span>
                   </td>
@@ -15234,7 +15236,7 @@ function startApp() {
           h('h2',{style:{marginBottom:'.5rem'}},'Something went wrong'),
           h('p',{style:{color:'var(--text-secondary)',marginBottom:'1rem',maxWidth:400}},String(this.state.error&&this.state.error.message||this.state.error||'Unknown error')),
           h('div',{style:{display:'flex',gap:'.5rem'}},
-            h('button',{onClick:function(){self.setState({hasError:false,error:null});},style:{padding:'.5rem 1rem',background:'var(--bg-secondary)',color:'#93c5fd',border:'1px solid var(--border)',borderRadius:6,cursor:'pointer',fontFamily:'inherit'}},'Try Again'),
+            h('button',{onClick:function(){self.setState({hasError:false,error:null});},style:{padding:'.5rem 1rem',background:'var(--bg-secondary)',color:'var(--accent-subtle)',border:'1px solid var(--border)',borderRadius:6,cursor:'pointer',fontFamily:'inherit'}},'Try Again'),
             h('button',{onClick:function(){window.location.reload();},style:{padding:'.5rem 1rem',background:'#2563eb',color:'#fff',border:'none',borderRadius:6,cursor:'pointer',fontFamily:'inherit'}},'Reload App')
           )
         );
@@ -16368,7 +16370,7 @@ function startApp() {
           return html`<div key=${ul.id} style=${{ display: 'flex', alignItems: 'center', gap: '.2rem' }}>
             <input type="checkbox" checked=${ul.visible} onChange=${function() { d({ t: 'UPD_UNDERLAY', id: ul.id, u: { visible: !ul.visible } }); }} />
             <span onClick=${function() { d({ t: 'SET_UNDERLAY', id: ul.id }); }}
-              style=${{ fontSize: '.55rem', color: s.activeUnderlay === ul.id ? '#3b82f6' : 'var(--text-muted)', cursor: 'pointer' }}>${ul.name}</span>
+              style=${{ fontSize: '.55rem', color: s.activeUnderlay === ul.id ? 'var(--accent)' : 'var(--text-muted)', cursor: 'pointer' }}>${ul.name}</span>
           </div>`;
         })}
       </div>`}
@@ -17284,10 +17286,10 @@ function startApp() {
     var EBTN = Object.assign({}, S_BTN, { fontSize: '.65rem', padding: '.25rem .6rem', border: '1px solid var(--border)' });
     return html`<div style=${{ background: 'var(--bg-primary)', borderTop: '1px solid var(--border-subtle)', padding: '.45rem 1rem', display: 'flex', alignItems: 'center', gap: '.6rem', flexShrink: 0, flexWrap: 'wrap' }}>
       <span style=${{ fontSize: '.7rem', fontWeight: 600, color: 'var(--text-faint)', textTransform: 'uppercase', letterSpacing: '.05em' }}>2D Export</span>
-      <button onClick=${doExportDXF} style=${{ ...EBTN, background: '#1e3a5f', color: '#93c5fd' }}>DXF (AutoCAD)</button>
-      <button onClick=${doExportPNG} style=${{ ...EBTN, background: '#1e3a5f', color: '#93c5fd' }}>PNG (Image)</button>
-      <button onClick=${doExportPDF} style=${{ ...EBTN, background: '#1e3a5f', color: '#93c5fd' }}>PDF (Print)</button>
-      <button onClick=${doExportSVG} style=${{ ...EBTN, background: '#1e3a5f', color: '#6ee7b7' }}>SVG (Vector)</button>
+      <button onClick=${doExportDXF} style=${{ ...EBTN, background: 'var(--accent-bg)', color: 'var(--accent-subtle)' }}>DXF (AutoCAD)</button>
+      <button onClick=${doExportPNG} style=${{ ...EBTN, background: 'var(--accent-bg)', color: 'var(--accent-subtle)' }}>PNG (Image)</button>
+      <button onClick=${doExportPDF} style=${{ ...EBTN, background: 'var(--accent-bg)', color: 'var(--accent-subtle)' }}>PDF (Print)</button>
+      <button onClick=${doExportSVG} style=${{ ...EBTN, background: 'var(--accent-bg)', color: '#6ee7b7' }}>SVG (Vector)</button>
       <span style=${{ fontSize: '.55rem', color: 'var(--text-faint)', marginLeft: 'auto' }}>${s.activeSheetId ? 'Exporting active Sheet (layers + markups + pins + title block)' : 'DXF/SVG generate outlines from 3D at the active cut · PNG/PDF exports the live 2D view'}</span>
     </div>`;
   }
@@ -19566,7 +19568,7 @@ function startApp() {
           padding:'.55rem 2rem', borderRadius:999, minWidth:280,justifyContent:'center',
           background:panelBg, border:closedBorder,
           color:closedGlow ? 'var(--accent-subtle)' : mutedCol, fontSize:'0.95rem', cursor:'pointer',
-          boxShadow: closedGlow ? 'var(--shadow-md), 0 0 20px rgba(37,99,235,.3)' : 'var(--shadow-md)',
+          boxShadow: closedGlow ? 'var(--shadow-md), 0 0 20px rgba(124,58,237,.3)' : 'var(--shadow-md)',
           whiteSpace:'nowrap', animation:closedAnim
         }}>
         ${closedGlow ? html`<span class="spin" style=${{display:'inline-block',width:12,height:12,borderRadius:'50%',border:'1.5px solid rgba(96,165,250,.3)',borderTopColor:'#60a5fa'}}></span>` : html`<svg width="12" height="12" viewBox="0 0 16 16" fill="none" style=${{flexShrink:0}}>
@@ -19739,11 +19741,11 @@ function startApp() {
             display:'flex', alignItems:'center', gap:'.5rem'
           }}>
             <span class="spin" style=${{display:'inline-block',width:'.7rem',height:'.7rem',borderRadius:'50%',border:'1.5px solid rgba(96,165,250,.3)',borderTopColor:'#60a5fa',flexShrink:0}}></span>
-            <span style=${{color:'#93c5fd',fontStyle:'italic'}}>Thinking</span>
+            <span style=${{color:'var(--accent-subtle)',fontStyle:'italic'}}>Thinking</span>
             <span style=${{display:'inline-flex',gap:'.15rem'}}>
-              <span style=${{animation:'nlDots 1.4s ease-in-out infinite',color:'#93c5fd'}}>.</span>
-              <span style=${{animation:'nlDots 1.4s ease-in-out .2s infinite',color:'#93c5fd'}}>.</span>
-              <span style=${{animation:'nlDots 1.4s ease-in-out .4s infinite',color:'#93c5fd'}}>.</span>
+              <span style=${{animation:'nlDots 1.4s ease-in-out infinite',color:'var(--accent-subtle)'}}>.</span>
+              <span style=${{animation:'nlDots 1.4s ease-in-out .2s infinite',color:'var(--accent-subtle)'}}>.</span>
+              <span style=${{animation:'nlDots 1.4s ease-in-out .4s infinite',color:'var(--accent-subtle)'}}>.</span>
             </span>
           </div>
         </div>`}
@@ -19809,7 +19811,7 @@ function startApp() {
       }}>
         <div style=${{
           flex:1, display:'flex', alignItems:'center', gap:'.45rem',
-          background:detectPct>0 ? 'linear-gradient(90deg, rgba(37,99,235,.25) '+detectPct+'%, '+inputBg+' '+detectPct+'%)' : inputBg,
+          background:detectPct>0 ? 'linear-gradient(90deg, rgba(124,58,237,.25) '+detectPct+'%, '+inputBg+' '+detectPct+'%)' : inputBg,
           border:'1px solid rgba(96,165,250,.35)',
           borderRadius:8, padding:'.5rem .65rem',
           transition:'background .3s',
@@ -19828,7 +19830,7 @@ function startApp() {
               else msg=p===0?'Running clash detection':p<15?'Running clash detection':p<30?'Crunching triangles':p<45?'Working hard':p<60?'Running as fast as I can':p<75?'Almost halfway… just kidding, past it':p<85?'So many clashes to check':p<93?'Wrapping things up':'Final stretch';
               return msg+(p>0?' — '+p+'%':'')+'…';
             }())}</span>
-            ${detectPhase && html`<span style=${{fontSize:'0.66rem',color:'#93c5fd',opacity:0.85,fontWeight:400,fontStyle:'italic'}}>${detectPhase}</span>`}
+            ${detectPhase && html`<span style=${{fontSize:'0.66rem',color:'var(--accent-subtle)',opacity:0.85,fontWeight:400,fontStyle:'italic'}}>${detectPhase}</span>`}
           </span>
         </div>
         <button onClick=${function(){cancelDetection()}}
@@ -19902,11 +19904,11 @@ function startApp() {
             display:'flex', alignItems:'center', gap:'.5rem'
           }}>
             <span class="spin" style=${{display:'inline-block',width:'.7rem',height:'.7rem',borderRadius:'50%',border:'1.5px solid rgba(96,165,250,.3)',borderTopColor:'#60a5fa',flexShrink:0}}></span>
-            <span style=${{color:'#93c5fd',fontStyle:'italic'}}>Thinking</span>
+            <span style=${{color:'var(--accent-subtle)',fontStyle:'italic'}}>Thinking</span>
             <span style=${{display:'inline-flex',gap:'.15rem'}}>
-              <span style=${{animation:'nlDots 1.4s ease-in-out infinite',color:'#93c5fd'}}>.</span>
-              <span style=${{animation:'nlDots 1.4s ease-in-out .2s infinite',color:'#93c5fd'}}>.</span>
-              <span style=${{animation:'nlDots 1.4s ease-in-out .4s infinite',color:'#93c5fd'}}>.</span>
+              <span style=${{animation:'nlDots 1.4s ease-in-out infinite',color:'var(--accent-subtle)'}}>.</span>
+              <span style=${{animation:'nlDots 1.4s ease-in-out .2s infinite',color:'var(--accent-subtle)'}}>.</span>
+              <span style=${{animation:'nlDots 1.4s ease-in-out .4s infinite',color:'var(--accent-subtle)'}}>.</span>
             </span>
           </div>
         </div>`}
@@ -19940,7 +19942,7 @@ function startApp() {
       }}>
         <div style=${{
           flex:1, display:'flex', alignItems:'center', gap:'.45rem',
-          background:detectPct>0 ? 'linear-gradient(90deg, rgba(37,99,235,.25) '+detectPct+'%, '+inputBg+' '+detectPct+'%)' : inputBg,
+          background:detectPct>0 ? 'linear-gradient(90deg, rgba(124,58,237,.25) '+detectPct+'%, '+inputBg+' '+detectPct+'%)' : inputBg,
           border:'1px solid rgba(96,165,250,.35)',
           borderRadius:8, padding:'.5rem .65rem',
           transition:'background .3s',
@@ -19959,7 +19961,7 @@ function startApp() {
               else msg=p===0?'Running clash detection':p<15?'Running clash detection':p<30?'Crunching triangles':p<45?'Working hard':p<60?'Running as fast as I can':p<75?'Almost halfway… just kidding, past it':p<85?'So many clashes to check':p<93?'Wrapping things up':'Final stretch';
               return msg+(p>0?' — '+p+'%':'')+'…';
             }())}</span>
-            ${detectPhase && html`<span style=${{fontSize:'0.66rem',color:'#93c5fd',opacity:0.85,fontWeight:400,fontStyle:'italic'}}>${detectPhase}</span>`}
+            ${detectPhase && html`<span style=${{fontSize:'0.66rem',color:'var(--accent-subtle)',opacity:0.85,fontWeight:400,fontStyle:'italic'}}>${detectPhase}</span>`}
           </span>
         </div>
         <button onClick=${function(){cancelDetection()}}
@@ -20023,7 +20025,7 @@ function startApp() {
         style=${{width:'100%',height:38,background:'none',border:'none',cursor:'pointer',
           display:'flex',alignItems:'center',justifyContent:'center',borderRadius:6,margin:'1px 4px',width:'calc(100% - 8px)',
           color:'var(--text-muted)',fontSize:'0.94rem',transition:'color .15s, background .15s'}}
-        onMouseEnter=${function(e){e.currentTarget.style.background='rgba(37,99,235,.08)';e.currentTarget.style.color='var(--text-secondary)';}}
+        onMouseEnter=${function(e){e.currentTarget.style.background='var(--accent-dim)';e.currentTarget.style.color='var(--text-secondary)';}}
         onMouseLeave=${function(e){e.currentTarget.style.background='none';e.currentTarget.style.color='var(--text-muted)';}}>${content}</button>`;
     }
     var SVG_CHAT   = '<path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>';
@@ -20039,10 +20041,12 @@ function startApp() {
     function tabBtn(id, svgPath, title, badge) {
       var active=s.tab===id;
       return html`<button class="cc-tip" data-tip=${title} onClick=${function(){d({t:A.TAB,v:s.tab===id?null:id});}}
-        style=${{width:'100%',height:40,background:active?'rgba(37,99,235,.12)':'none',border:'none',
+        style=${{width:'100%',height:40,background:active?'var(--accent-dim)':'none',border:'none',
           cursor:'pointer',display:'flex',alignItems:'center',justifyContent:'center',position:'relative',
-          borderRight:active?'3px solid #3b82f6':'3px solid transparent',
-          color:active?'#60a5fa':'var(--text-muted)',transition:'background .15s,color .15s'}}>
+          borderRight:active?'2px solid var(--accent)':'2px solid transparent',
+          color:active?'var(--accent-light)':'var(--text-muted)',transition:'background .15s,color .15s'}}
+        onMouseEnter=${function(e){if(!active){e.currentTarget.style.background='var(--accent-dim)';e.currentTarget.style.color='var(--text-secondary)';}}}
+        onMouseLeave=${function(e){if(!active){e.currentTarget.style.background='none';e.currentTarget.style.color='var(--text-muted)';}}}>
         <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" dangerouslySetInnerHTML=${{__html:svgPath}}></svg>
         ${badge>0 && html`<span style=${{position:'absolute',top:4,right:6,background:'#ef4444',color:'#fff',
           fontSize:'0.6rem',fontWeight:600,padding:'0 3px',borderRadius:99,lineHeight:1.3,minWidth:13,textAlign:'center',
@@ -20081,9 +20085,9 @@ function startApp() {
       <div style=${{position:'relative'}}>
         <button onClick=${function(){setProjOpen(!projOpen)}}
           title=${activeProj.name}
-          style=${{width:'100%',height:36,background:projOpen?'rgba(37,99,235,.12)':'none',border:'none',cursor:'pointer',
+          style=${{width:'100%',height:36,background:projOpen?'var(--accent-dim)':'none',border:'none',cursor:'pointer',
             display:'flex',alignItems:'center',justifyContent:'center',
-            color:projOpen?'#60a5fa':'var(--text-muted)',transition:'background .12s,color .12s'}}>
+            color:projOpen?'var(--accent-light)':'var(--text-muted)',transition:'background .12s,color .12s'}}>
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
             <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/>
           </svg>
@@ -20126,10 +20130,10 @@ function startApp() {
             var isConfirming=confirmDel===p.id;
             return html`<div key=${p.id} style=${{borderBottom:'1px solid var(--border-subtle)'}}>
               <div style=${{display:'flex',alignItems:'center',gap:'.4rem',padding:'.4rem .6rem',cursor:'pointer',
-                  background:isActive?'rgba(37,99,235,.1)':'transparent',
-                  borderLeft:isActive?'2px solid #3b82f6':'2px solid transparent'}}>
+                  background:isActive?'var(--accent-dim)':'transparent',
+                  borderLeft:isActive?'2px solid var(--accent)':'2px solid transparent'}}>
                 <span onClick=${function(){if(!isActive){_switchProject(p.id,s,d);}setProjOpen(false);setConfirmDel(null);}}
-                  style=${{fontSize:'0.69rem',flex:1,color:isActive?'#93c5fd':'var(--text-primary)',
+                  style=${{fontSize:'0.69rem',flex:1,color:isActive?'var(--accent-subtle)':'var(--text-primary)',
                   whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>${p.name}</span>
                 ${isActive && html`<span style=${{fontSize:'0.57rem',color:'#22c55e'}}>✓</span>`}
                 <button onClick=${function(e){e.stopPropagation();setConfirmDel(isConfirming?null:p.id);}}
@@ -20178,7 +20182,7 @@ function startApp() {
                 setTimeout(function(){ if(window._ccFit2DOutlines) window._ccFit2DOutlines(); }, 100);
               }}
               style=${{...S_BTN,width:'100%',padding:'.3rem .65rem',
-                background:isActive?'rgba(37,99,235,.12)':'none',
+                background:isActive?'rgba(124,58,237,.12)':'none',
                 color:isActive?'#60a5fa':'var(--text-primary)',fontSize:'.72rem',justifyContent:'flex-start',borderRadius:0}}>
               ${sh.name}
             </button>`;
@@ -20569,7 +20573,7 @@ function startApp() {
             <span style=${{fontSize:'1.26rem',fontWeight:700}}>Quick Start Guide</span>
             <button onClick=${function(){setShowTutorial(false)}} style=${{...S_BTN,background:'none',color:'var(--text-muted)',fontSize:'1.38rem',padding:'0 .3rem',lineHeight:1}}>✕</button>
           </div>
-          <div style=${{background:'rgba(37,99,235,.08)',border:'1px solid rgba(37,99,235,.25)',borderRadius:8,padding:'.75rem',marginBottom:'1rem'}}>
+          <div style=${{background:'rgba(124,58,237,.08)',border:'1px solid rgba(124,58,237,.25)',borderRadius:8,padding:'.75rem',marginBottom:'1rem'}}>
             <div style=${{fontSize:'0.94rem',fontWeight:600,color:'var(--text-primary)',marginBottom:'.3rem'}}>What is ClashControl?</div>
             <div style=${{fontSize:'0.86rem',color:'var(--text-secondary)',lineHeight:1.6}}>
               A free, open-source tool for detecting geometric clashes in IFC building models \u2014 right in your browser. Load BIM files, find collisions between building systems, manage issues, and export results to BCF.
@@ -20725,7 +20729,7 @@ function startApp() {
           var active = window._ccIsAddonActive(id);
           return html`<div key=${id} style=${CARD}>
             <div style=${{width:32,height:32,borderRadius:8,display:'flex',alignItems:'center',justifyContent:'center',flexShrink:0,
-              background:active?'rgba(37,99,235,.15)':'rgba(100,100,100,.1)'}}>
+              background:active?'rgba(124,58,237,.15)':'rgba(100,100,100,.1)'}}>
               ${addon.icon ? html`<span dangerouslySetInnerHTML=${{__html:addon.icon}}></span>`
                 : html`<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke=${active?'#60a5fa':'var(--text-faint)'} stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                   <path d="M12 2v4m0 12v4M2 12h4m12 0h4"/><circle cx="12" cy="12" r="3"/>
@@ -20800,7 +20804,7 @@ function startApp() {
                           }}
                           title=${linkedRevitModels.length > 1 ? 'Re-pull the selected Revit model from the connector' : linkedRevitModels.length === 1 ? 'Re-pull the linked Revit model' : 'Pull the current Revit document for the first time'}
                           style=${{padding:'.25rem .5rem',borderRadius:5,fontSize:'0.69rem',fontWeight:600,cursor:'pointer',border:'none',flex:'1 1 auto',minWidth:0,
-                            background:'#1e3a5f',color:'#93c5fd',fontFamily:'inherit'}}>${linkedRevitModels.length === 0 ? 'Pull Model' : 'Update Model'}</button>
+                            background:'var(--accent-bg)',color:'var(--accent-subtle)',fontFamily:'inherit'}}>${linkedRevitModels.length === 0 ? 'Pull Model' : 'Update Model'}</button>
                         <button onClick=${function(){if(window._revitDirectPushClashes) window._revitDirectPushClashes(s,d)}}
                           style=${{padding:'.25rem .5rem',borderRadius:5,fontSize:'0.69rem',fontWeight:600,cursor:'pointer',border:'none',flex:'1 1 auto',minWidth:0,background:'#052e16',color:'#4ade80',fontFamily:'inherit'}}>Push Clashes</button>
                         <button onClick=${function(){if(window._revitDirectDisconnect) window._revitDirectDisconnect(d)}}
@@ -21004,7 +21008,7 @@ function startApp() {
 
         <!-- Header -->
         <div style=${{background:'linear-gradient(135deg,#0f172a 0%,#1a1147 40%,#7c3aed 100%)',padding:'1.4rem 1.4rem 1.2rem',position:'relative',overflow:'hidden'}}>
-          <div style=${{position:'absolute',top:'-30%',right:'-10%',width:180,height:180,borderRadius:'50%',background:'rgba(37,99,235,.25)',filter:'blur(40px)'}}></div>
+          <div style=${{position:'absolute',top:'-30%',right:'-10%',width:180,height:180,borderRadius:'50%',background:'rgba(124,58,237,.25)',filter:'blur(40px)'}}></div>
           <div style=${{display:'flex',alignItems:'center',gap:'.75rem',position:'relative'}}>
             <div style=${{width:42,height:42,background:'rgba(255,255,255,.12)',borderRadius:12,display:'flex',alignItems:'center',justifyContent:'center',flexShrink:0,backdropFilter:'blur(8px)',border:'1px solid rgba(255,255,255,.1)'}}>
               <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#93c5fd" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
@@ -21028,7 +21032,7 @@ function startApp() {
 
             <!-- Install as App -->
             <div style=${CARD}>
-              <div style=${{width:32,height:32,borderRadius:8,display:'flex',alignItems:'center',justifyContent:'center',flexShrink:0,background:pwaAvail?'rgba(37,99,235,.15)':'rgba(100,100,100,.1)'}}>
+              <div style=${{width:32,height:32,borderRadius:8,display:'flex',alignItems:'center',justifyContent:'center',flexShrink:0,background:pwaAvail?'rgba(124,58,237,.15)':'rgba(100,100,100,.1)'}}>
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke=${pwaAvail?'#60a5fa':'var(--text-faint)'} stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                   <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/>
                 </svg>
@@ -21036,7 +21040,7 @@ function startApp() {
               <div style=${{flex:1,minWidth:0}}>
                 <div style=${{display:'flex',alignItems:'center',gap:'.4rem',marginBottom:'.15rem'}}>
                   <span style=${{fontSize:'0.83rem',fontWeight:600,color:'var(--text-primary)'}}>Install as Desktop App</span>
-                  ${pwaAvail && html`<span style=${{fontSize:'0.58rem',fontWeight:600,padding:'1px 5px',borderRadius:4,background:'rgba(37,99,235,.15)',color:'#60a5fa'}}>READY</span>`}
+                  ${pwaAvail && html`<span style=${{fontSize:'0.58rem',fontWeight:600,padding:'1px 5px',borderRadius:4,background:'rgba(124,58,237,.15)',color:'#60a5fa'}}>READY</span>`}
                   ${!pwaAvail && html`<span style=${{fontSize:'0.58rem',fontWeight:600,padding:'1px 5px',borderRadius:4,background:'var(--tag-bg)',color:'var(--text-faint)'}}>BROWSER ONLY</span>`}
                 </div>
                 <div style=${{fontSize:'0.72rem',color:'var(--text-secondary)',lineHeight:1.6}}>
@@ -21081,7 +21085,7 @@ function startApp() {
               style=${{flex:1,border:'none',cursor:'pointer',fontFamily:'inherit',fontSize:'0.92rem',borderRadius:8,padding:'.5rem 1.4rem',
                 background:pwaAvail||engineAvail?'#2563eb':'var(--bg-tertiary)',
                 color:pwaAvail||engineAvail?'#fff':'var(--text-muted)',
-                fontWeight:600,boxShadow:pwaAvail||engineAvail?'0 2px 8px rgba(37,99,235,.3)':'none',transition:'background .15s'}}>
+                fontWeight:600,boxShadow:pwaAvail||engineAvail?'0 2px 8px rgba(124,58,237,.3)':'none',transition:'background .15s'}}>
               ${pwaAvail && engineAvail ? 'Install App & Enable Engine' : pwaAvail ? 'Install App' : engineAvail ? 'Enable Engine' : 'Continue'}
             </button>
           </div>
@@ -21478,7 +21482,7 @@ function startApp() {
 
             <div style=${{display:'flex',alignItems:'center',gap:'.4rem'}}>
               <span style=${{width:8,height:8,borderRadius:'50%',background:rd.connected?'#22c55e':rd.reconnecting?'#eab308':rd.autoDetected?'#60a5fa':'#ef4444'}}></span>
-              <span style=${{fontSize:'0.78rem',color:rd.connected?'#4ade80':rd.reconnecting?'#facc15':rd.autoDetected?'#93c5fd':'var(--text-muted)'}}>
+              <span style=${{fontSize:'0.78rem',color:rd.connected?'#4ade80':rd.reconnecting?'#facc15':rd.autoDetected?'var(--accent-subtle)':'var(--text-muted)'}}>
                 ${rd.connected ? 'Connected' + (rd.documentName ? ' \u2014 ' + rd.documentName : '')
                   : rd.reconnecting ? 'Reconnecting in ' + Math.round((rd.reconnectIn||1000)/1000) + 's\u2026'
                   : rd.autoDetected ? 'Revit detected \u2014 click Connect'
@@ -21491,8 +21495,8 @@ function startApp() {
               Protocol mismatch: ${rd.versionWarning}. Some features may not work.
             </div>`}
 
-            ${rd.reconnectPrompt && html`<div style=${{display:'flex',alignItems:'center',gap:'.4rem',padding:'.4rem .5rem',background:'#1e3a5f',borderRadius:6}}>
-              <span style=${{fontSize:'0.72rem',color:'#93c5fd',flex:1}}>Reconnected to Revit. Pull model again?</span>
+            ${rd.reconnectPrompt && html`<div style=${{display:'flex',alignItems:'center',gap:'.4rem',padding:'.4rem .5rem',background:'var(--accent-bg)',borderRadius:6}}>
+              <span style=${{fontSize:'0.72rem',color:'var(--accent-subtle)',flex:1}}>Reconnected to Revit. Pull model again?</span>
               <button onClick=${function(){d({t:'UPD_REVIT_DIRECT',u:{reconnectPrompt:false}}); if(window._revitDirectExport) window._revitDirectExport(['all']);}}
                 style=${{...S_BTN2,background:'var(--accent)',color:'#fff',fontSize:'0.7rem',padding:'.25rem .6rem'}}>Pull</button>
               <button onClick=${function(){d({t:'UPD_REVIT_DIRECT',u:{reconnectPrompt:false}});}}
@@ -21510,7 +21514,7 @@ function startApp() {
             ${rd.connected && html`<div style=${{display:'flex',gap:'.4rem'}}>
               <button onClick=${function(){if(window._revitDirectExport) window._revitDirectExport(['all'])}}
                 disabled=${rd.loading}
-                style=${{...S_BTN2,flex:1,background:rd.loading?'var(--bg-tertiary)':'#1e3a5f',color:rd.loading?'var(--text-faint)':'#93c5fd'}}>Export All from Revit</button>
+                style=${{...S_BTN2,flex:1,background:rd.loading?'var(--bg-tertiary)':'var(--accent-bg)',color:rd.loading?'var(--text-faint)':'var(--accent-subtle)'}}>Export All from Revit</button>
               <button onClick=${function(){if(window._revitDirectPushClashes) window._revitDirectPushClashes(s,d)}}
                 style=${{...S_BTN2,flex:1,background:'#052e16',color:'#4ade80'}}>Push Clashes to Revit</button>
             </div>`}
@@ -21535,7 +21539,7 @@ function startApp() {
               <div style=${{fontSize:'0.75rem',color:'#fca5a5',marginBottom:'.3rem'}}>Export failed: ${rd.exportError}</div>
               <div style=${{display:'flex',gap:'.3rem'}}>
                 <button onClick=${function(){d({t:'UPD_REVIT_DIRECT',u:{exportError:null,exportErrorElementsSent:0}}); if(window._revitDirectExport) window._revitDirectExport(['all']);}}
-                  style=${{...S_BTN2,background:'#1e3a5f',color:'#93c5fd',fontSize:'0.7rem',padding:'.25rem .5rem'}}>Retry</button>
+                  style=${{...S_BTN2,background:'var(--accent-bg)',color:'var(--accent-subtle)',fontSize:'0.7rem',padding:'.25rem .5rem'}}>Retry</button>
               </div>
             </div>`}
 
@@ -21617,7 +21621,7 @@ function startApp() {
                 style=${{...S_BTN2,background:'#052e16',color:'#4ade80',opacity:br.syncing||!prov||!apiKey?0.5:1}}>Push</button>
               <button onClick=${function(){if(window._revitBridgePull) window._revitBridgePull(s,d)}}
                 disabled=${br.syncing || !prov || !apiKey}
-                style=${{...S_BTN2,background:'#1e3a5f',color:'#93c5fd',opacity:br.syncing||!prov||!apiKey?0.5:1}}>Pull</button>
+                style=${{...S_BTN2,background:'var(--accent-bg)',color:'var(--accent-subtle)',opacity:br.syncing||!prov||!apiKey?0.5:1}}>Pull</button>
             </div>
             ${br.connected && html`<div style=${{display:'flex',alignItems:'center',gap:'.3rem'}}>
               <span style=${{width:7,height:7,borderRadius:'50%',background:'#22c55e'}}></span>
@@ -21632,7 +21636,7 @@ function startApp() {
             <button onClick=${function(){d({t:'CLEAR_BRIDGE_LOG'})}} style=${{fontSize:'0.63rem',background:'none',border:'none',color:'var(--text-faint)',cursor:'pointer'}}>Clear</button>
           </div>
           ${br.log.slice().reverse().map(function(entry, i) {
-            var col = entry.type==='error' ? '#f87171' : entry.type==='push' ? '#4ade80' : entry.type==='pull' ? '#93c5fd' : 'var(--text-faint)';
+            var col = entry.type==='error' ? '#f87171' : entry.type==='push' ? '#4ade80' : entry.type==='pull' ? 'var(--accent-subtle)' : 'var(--text-faint)';
             return html`<div key=${i} style=${{fontSize:'0.69rem',color:col,lineHeight:1.5,borderBottom:'1px solid var(--border-subtle)',padding:'.15rem 0'}}>
               <span style=${{color:'var(--text-faint)',marginRight:'.3rem'}}>${new Date(entry.ts).toLocaleTimeString()}</span>
               ${entry.text}
