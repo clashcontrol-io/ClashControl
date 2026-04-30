@@ -13940,9 +13940,14 @@ function startApp() {
   function PresentationOverlay(props) {
     var s = props.s, d = props.d;
     var idleSt = useState(0), idleTick=idleSt[0], setIdleTick=idleSt[1];
+    var vpIdxSt = useState(0), vpIdx=vpIdxSt[0], setVpIdx=vpIdxSt[1];
+    var autoSt = useState(false), autoplay=autoSt[0], setAutoplay=autoSt[1];
+    var brandSt = useState(function(){ try { return localStorage.getItem('cc_brand_logo')||''; } catch(e){ return ''; } }),
+        brand=brandSt[0], setBrand=brandSt[1];
     var rotatingRef = useRef(false);
     var rotRafRef = useRef(null);
     var lastActRef = useRef(Date.now());
+    var autoplayTimerRef = useRef(null);
 
     // Mark <body data-presenting="1"> + request fullscreen
     useEffect(function(){
@@ -14023,28 +14028,73 @@ function startApp() {
         if (vp.cameraPos && window._ccFlyToPoint) window._ccFlyToPoint(vp.target||vp.cameraPos);
       } catch(e){}
     }
+    function step(delta){
+      if (!viewpoints.length) return;
+      var next = ((vpIdx + delta) % viewpoints.length + viewpoints.length) % viewpoints.length;
+      setVpIdx(next);
+      jumpVp(viewpoints[next]);
+    }
+
+    // Arrow + Space key bindings (active only while presenting)
+    useEffect(function(){
+      function onK(e){
+        if (e.key === 'ArrowRight' || e.key === 'PageDown') { e.preventDefault(); step(1); }
+        else if (e.key === 'ArrowLeft' || e.key === 'PageUp') { e.preventDefault(); step(-1); }
+        else if (e.key === ' ' || e.code === 'Space') { e.preventDefault(); setAutoplay(function(p){ return !p; }); }
+      }
+      window.addEventListener('keydown', onK);
+      return function(){ window.removeEventListener('keydown', onK); };
+    }, [viewpoints.length, vpIdx]);
+
+    // Auto-advance loop
+    useEffect(function(){
+      if (autoplayTimerRef.current) { clearInterval(autoplayTimerRef.current); autoplayTimerRef.current=null; }
+      if (autoplay && viewpoints.length > 1) {
+        autoplayTimerRef.current = setInterval(function(){ step(1); }, 5500);
+      }
+      return function(){ if (autoplayTimerRef.current) clearInterval(autoplayTimerRef.current); };
+    }, [autoplay, viewpoints.length, vpIdx]);
+
+    function uploadLogo(file){
+      if (!file) return;
+      var rd = new FileReader();
+      rd.onload = function(e){
+        var url = e.target.result;
+        try { localStorage.setItem('cc_brand_logo', url); } catch(_){}
+        setBrand(url);
+      };
+      rd.readAsDataURL(file);
+    }
+    function clearLogo(){
+      try { localStorage.removeItem('cc_brand_logo'); } catch(_){}
+      setBrand('');
+    }
+
+    var btnFaint = {background:'rgba(255,255,255,.08)',border:'1px solid rgba(255,255,255,.15)',color:'#fff',cursor:'pointer',padding:'.28rem .55rem',borderRadius:6,fontSize:'0.78rem',fontFamily:'inherit'};
+    var fileRef = useRef(null);
 
     return html`<div class="cc-present-overlay"></div>
+      ${brand && html`<img src=${brand} alt="Brand" style=${{position:'fixed',right:'1.1rem',bottom:'1.1rem',maxWidth:'160px',maxHeight:'80px',opacity:.65,zIndex:61,pointerEvents:'none',filter:'drop-shadow(0 2px 6px rgba(0,0,0,.5))'}} />`}
       <div class="cc-present-controls cc-present-show">
         <span style=${{fontSize:'0.7rem',opacity:.7,letterSpacing:'.04em',textTransform:'uppercase',marginRight:'.4rem'}}>Presenting</span>
-        ${viewpoints.length>0 && html`<${React.Fragment}>
-          <button onClick=${function(){
-              var idx = (s._presentVpIdx||0);
-              idx = (idx-1+viewpoints.length)%viewpoints.length;
-              jumpVp(viewpoints[idx]);
-            }}
-            style=${{background:'rgba(255,255,255,.1)',border:'1px solid rgba(255,255,255,.15)',color:'#fff',cursor:'pointer',padding:'.25rem .55rem',borderRadius:6,fontSize:'0.78rem'}}>‹</button>
-          <span style=${{fontSize:'0.74rem',opacity:.85}}>${viewpoints.length} viewpoints</span>
-          <button onClick=${function(){
-              var idx = (s._presentVpIdx||0);
-              idx = (idx+1)%viewpoints.length;
-              jumpVp(viewpoints[idx]);
-            }}
-            style=${{background:'rgba(255,255,255,.1)',border:'1px solid rgba(255,255,255,.15)',color:'#fff',cursor:'pointer',padding:'.25rem .55rem',borderRadius:6,fontSize:'0.78rem'}}>›</button>
-        </${React.Fragment}>`}
+        ${viewpoints.length>0 ? html`<${React.Fragment}>
+          <button onClick=${function(){step(-1);}} title="Previous slide (←)" style=${btnFaint}>‹</button>
+          <span style=${{fontSize:'0.74rem',opacity:.9,fontVariantNumeric:'tabular-nums'}}>${vpIdx+1} / ${viewpoints.length}</span>
+          <button onClick=${function(){step(1);}} title="Next slide (→)" style=${btnFaint}>›</button>
+          <button onClick=${function(){setAutoplay(!autoplay);}}
+            title=${autoplay?'Pause auto-advance (Space)':'Auto-advance every 5.5s (Space)'}
+            style=${{...btnFaint,background:autoplay?'rgba(168,85,247,.85)':btnFaint.background,fontWeight:600}}>
+            ${autoplay?'❚❚':'▶'}
+          </button>
+        </${React.Fragment}>` : html`<span style=${{fontSize:'0.74rem',opacity:.6}}>No viewpoints saved — use Save Viewpoint, then ← → to navigate</span>`}
+        <span style=${{width:1,height:18,background:'rgba(255,255,255,.15)',margin:'0 .2rem'}}></span>
+        ${brand ? html`<button onClick=${clearLogo} style=${{...btnFaint,fontSize:'0.7rem'}} title="Remove brand logo">Logo ✕</button>`
+                : html`<button onClick=${function(){if(fileRef.current)fileRef.current.click();}} style=${{...btnFaint,fontSize:'0.7rem'}} title="Add brand logo (PNG)">+ Logo</button>`}
+        <input ref=${fileRef} type="file" accept="image/*" style=${{display:'none'}}
+          onChange=${function(e){ if(e.target.files && e.target.files[0]) uploadLogo(e.target.files[0]); }} />
         <button onClick=${function(){d({t:A.PRESENT,v:false});}}
-          style=${{background:'rgba(239,68,68,.85)',border:'none',color:'#fff',cursor:'pointer',padding:'.3rem .7rem',borderRadius:6,fontSize:'0.78rem',fontWeight:600,marginLeft:'.4rem'}}>Exit</button>
-        <span style=${{fontSize:'0.66rem',opacity:.55,marginLeft:'.4rem'}}>Press P or Esc</span>
+          style=${{background:'rgba(239,68,68,.85)',border:'none',color:'#fff',cursor:'pointer',padding:'.3rem .7rem',borderRadius:6,fontSize:'0.78rem',fontWeight:600,marginLeft:'.4rem',fontFamily:'inherit'}}>Exit</button>
+        <span style=${{fontSize:'0.66rem',opacity:.55,marginLeft:'.4rem'}}>Esc / P · ← → · Space</span>
       </div>`;
   }
 
