@@ -1494,10 +1494,6 @@ function startApp() {
 
   // ── IFC Loader (web-ifc, lazy) ───────────────────────────────── INTERNALS.md §7
 
-  // Shared LOD box proxy resources (must be at startApp scope so both loader paths can access them)
-  var _lodBoxGeo = typeof THREE !== 'undefined' ? new THREE.BoxBufferGeometry(1, 1, 1) : null;
-  var _lodProxyMat = typeof THREE !== 'undefined' ? new THREE.MeshBasicMaterial({color:0x667788, transparent:true, opacity:0.25, depthWrite:false}) : null;
-
   // GPU instancing constants
   var INST_THRESHOLD = 4; // min identical placements before collapsing to InstancedMesh
   var _INST_HIDE_MX = typeof THREE !== 'undefined' ? new THREE.Matrix4().makeScale(0,0,0) : null; // hides one instance from its InstancedMesh
@@ -2189,19 +2185,7 @@ function startApp() {
           elProps.material = matMap[expressID] || '';
           var pm = propMap[expressID];
           if (pm) { elProps.quantities = pm.quantities; elProps.psets = pm.psets; }
-          var _proxy = null;
-          if (_lodBoxGeo) {
-            var _bc = new THREE.Vector3(), _bsz = new THREE.Vector3();
-            elBox.getCenter(_bc); elBox.getSize(_bsz);
-            _proxy = new THREE.Mesh(_lodBoxGeo, _lodProxyMat);
-            _proxy.position.copy(_bc); _proxy.scale.copy(_bsz);
-            _proxy.visible = false;
-            _proxy.userData._isLodProxy = true;
-            _proxy.userData.expressId = expressID;
-            _ccBakeMesh(_proxy); // also sets frustumCulled=false + matrixAutoUpdate=false
-            elMeshes.forEach(function(m) { m.userData._lodProxy = _proxy; });
-          }
-          rawElements.push({expressId:expressID, meshes:elMeshes, box:elBox.clone(), props:elProps, _lodProxy:_proxy});
+          rawElements.push({expressId:expressID, meshes:elMeshes, box:elBox.clone(), props:elProps});
         }
       });
 
@@ -2223,7 +2207,7 @@ function startApp() {
             _rprops.material = matMap[_reid] || '';
             var _rpm = propMap[_reid];
             if (_rpm) { _rprops.quantities = _rpm.quantities; _rprops.psets = _rpm.psets; }
-            rawElements.push({expressId:_reid, meshes:[], box:new THREE.Box3(), props:_rprops, _lodProxy:null});
+            rawElements.push({expressId:_reid, meshes:[], box:new THREE.Box3(), props:_rprops});
           }
         } catch(e) { console.warn('[IFC] Re-add pass failed for ' + _reAddNames[_rti] + ':', e); }
       }
@@ -2241,7 +2225,7 @@ function startApp() {
           var end = Math.min(startIdx + CHUNK, rawElements.length);
           for (var idx = startIdx; idx < end; idx++) {
             var raw = rawElements[idx];
-            elements.push({expressId:raw.expressId, meshes:raw.meshes, box:raw.box, props:raw.props, _lodProxy:raw._lodProxy});
+            elements.push({expressId:raw.expressId, meshes:raw.meshes, box:raw.box, props:raw.props});
           }
           if (end < rawElements.length) {
             var _epct = 85 + Math.round(end / rawElements.length * 13);
@@ -2272,6 +2256,7 @@ function startApp() {
               console.groupEnd();
               window._ccLoadProfile = rows;
             })();
+            geoCache = null; // allow GC after load
             resolve({ meshes:meshes, elements:elements, storeys:Object.keys(allStoreys).sort(), storeyData:storeyData, spatialHierarchy:spatialHierarchy, relatedPairs:relatedPairs, stats:stats });
           }
         }
@@ -2624,21 +2609,7 @@ function startApp() {
               elMeshes.push(mesh); meshes.push(mesh);
             }
             if (elMeshes.length > 0) {
-              var _tL = performance.now();
-              var _proxy = null;
-              if (_lodBoxGeo) {
-                var _bc = new THREE.Vector3(), _bsz = new THREE.Vector3();
-                elBox.getCenter(_bc); elBox.getSize(_bsz);
-                _proxy = new THREE.Mesh(_lodBoxGeo, _lodProxyMat);
-                _proxy.position.copy(_bc); _proxy.scale.copy(_bsz);
-                _proxy.visible = false;
-                _proxy.userData._isLodProxy = true;
-                _proxy.userData.expressId = raw.expressId;
-                _ccBakeMesh(_proxy); // also sets frustumCulled=false + matrixAutoUpdate=false
-                elMeshes.forEach(function(m) { m.userData._lodProxy = _proxy; });
-              }
-              _tLod += performance.now() - _tL;
-              elements.push({expressId:raw.expressId, meshes:elMeshes, box:elBox, props:raw.props, _lodProxy:_proxy});
+              elements.push({expressId:raw.expressId, meshes:elMeshes, box:elBox, props:raw.props});
             }
           }
 
@@ -6801,9 +6772,8 @@ function startApp() {
         S.mg.traverse(function(obj){
           if(obj.isMesh && obj.parent && obj.parent.userData.modelId && !obj.parent.visible) { obj.visible = false; return; }
           if(!obj.isMesh) return;
-          if(obj.userData._isLodProxy) return;
           if(obj.userData.expressId==null) return;
-          if(obj.userData._storeyHidden || obj.userData._classHidden) { if(obj.userData._lodProxy) obj.userData._lodProxy.visible = false; return; }
+          if(obj.userData._storeyHidden || obj.userData._classHidden) { return; }
           if(!obj.geometry.boundingSphere) obj.geometry.computeBoundingSphere();
           var bs = obj.geometry.boundingSphere;
           tmpSphere.copy(bs).applyMatrix4(obj.matrixWorld);
@@ -6812,7 +6782,6 @@ function startApp() {
           if(!frustum.intersectsSphere(tmpSphere)){
             obj.visible = false;
             obj.userData._frustumCulled = true;
-            if(obj.userData._lodProxy) obj.userData._lodProxy.visible = false;
             return;
           }
           var distSq = camPos.distanceToSquared(tmpSphere.center);
@@ -6822,11 +6791,9 @@ function startApp() {
           if(screenRatio < LOD_HIDE_RATIO){
             obj.visible = false;
             obj.userData._frustumCulled = true;
-            if(obj.userData._lodProxy) obj.userData._lodProxy.visible = false;
           } else {
             obj.userData._frustumCulled = false;
             obj.visible = true;
-            if(obj.userData._lodProxy) obj.userData._lodProxy.visible = false;
           }
         });
       }
@@ -6961,7 +6928,6 @@ function startApp() {
             var grp = new THREE.Group();
             grp.userData.modelId = model.id;
             model.meshes.forEach(function(m){grp.add(m)});
-            (model.elements||[]).forEach(function(el){ if(el._lodProxy) grp.add(el._lodProxy); });
             S.mg.add(grp); S.map[model.id] = grp;
             if(!needsSwap && Object.keys(S.map).length===1 && _resetView) _resetView();
           }
@@ -9738,7 +9704,7 @@ function startApp() {
                   d({t:A.ADD_MODEL, v:{id:modelId, name:base, discipline:disc, color:col, visible:true, _version:1,
                     meshes:result.meshes, elements:result.elements, storeys:result.storeys||[],
                     storeyData:result.storeyData||[], spatialHierarchy:result.spatialHierarchy||{},
-                    relatedPairs:result.relatedPairs||{}, stats:result.stats, _glbBuffer:glbBuf}});
+                    relatedPairs:result.relatedPairs||{}, stats:result.stats}});
                   _gcEvent('glb-ifc-paired', base);
                   _onProg('Model ready (' + result.stats.loadTime + 'ms)');
                 });
@@ -9785,7 +9751,7 @@ function startApp() {
                 var modelId = uid();
                 d({t:A.ADD_MODEL, v:{id:modelId, name:base, discipline:'architectural', color:DISC[2].c, visible:true, _version:1,
                   meshes:glbResult.meshes, elements:elements, storeys:[], storeyData:[], spatialHierarchy:{}, relatedPairs:{},
-                  stats:{loadTime:Math.round(performance.now()-t0), fileSize:grp.glb.size, elementCount:elements.length, meshCount:glbResult.meshes.length}, _glbBuffer:glbBuf}});
+                  stats:{loadTime:Math.round(performance.now()-t0), fileSize:grp.glb.size, elementCount:elements.length, meshCount:glbResult.meshes.length}}});
                 consoleElementProfile(base, 'GLB', elements);
                 errors.push(base + '.glb loaded without metadata — clash detection type rules, storey grouping, and element properties are unavailable. For full support, drop the matching .ifcmeta or .ifcprops file alongside the GLB.');
                 _gcEvent('glb-standalone', base);
