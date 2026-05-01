@@ -20592,7 +20592,15 @@ function startApp() {
         if (cur !== prev) {
           prev = cur;
           setDrawerEl(cur);
-          if (cur) { setDrawerTab('details'); if(collapsed) setCollapsed(false); }
+          if (cur) {
+            setDrawerTab('details');
+            if (collapsed) setCollapsed(false);
+          } else {
+            // Element deselected — collapse and reset to AI tab
+            setCollapsed(true);
+            setDrawerTab('ai');
+            try { localStorage.setItem('cc_ai_panel_collapsed','1'); } catch(e) {}
+          }
         }
       }, 250);
       return function(){ clearInterval(t); };
