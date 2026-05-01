@@ -167,10 +167,11 @@
       --accent-bg-deep:#d3ede2;
       --accent-light:#4d9e75;
       --accent-dim:#ecf7f2;
-      --scene-bg:#f8f8f8;
-      --scene-floor:#e4e4e4;
-      --grid-line:#d4d4d4;
-      --grid-center:#a3a3a3;
+      /* Tonal canvas: sky → floor → grid as a single light-grey ramp */
+      --scene-bg:#fafafa;
+      --scene-floor:#f0f0f0;
+      --grid-line:#e2e2e2;
+      --grid-center:#c8c8c8;
       --overlay-bg:rgba(255,255,255,.96);
       --overlay-bg-strong:#ffffff;
       --modal-bg:rgba(0,0,0,.35);
@@ -233,9 +234,10 @@
       --accent-bg-deep:#0a2218;
       --accent-light:#6dba8e;
       --accent-dim:#0d2b1e;
+      /* Tonal canvas: matching ramp inverted for dark mode */
       --scene-bg:#141414;
-      --scene-floor:#1f1f1f;
-      --grid-line:#262626;
+      --scene-floor:#1c1c1c;
+      --grid-line:#272727;
       --grid-center:#404040;
       --overlay-bg:rgba(20,20,20,.96);
       --overlay-bg-strong:#1f1f1f;
@@ -280,6 +282,10 @@
     select,select option{background:var(--bg-tertiary);color:var(--text-primary);border:1px solid var(--border)}
     .spin{animation:sp 1s linear infinite;display:inline-block}@keyframes sp{to{transform:rotate(360deg)}}
     @keyframes nlDots{0%,20%{opacity:.2}50%{opacity:1}80%,100%{opacity:.2}}
+    @keyframes ccLoadIndet{0%{transform:translateX(-100%)}100%{transform:translateX(250%)}}
+    /* Welcome card: the brand diagonal draws itself in on first view */
+    @keyframes ccWelcomeDraw{from{stroke-dashoffset:80}to{stroke-dashoffset:0}}
+    .cc-welcome-accent{stroke-dasharray:80;stroke-dashoffset:80;animation:ccWelcomeDraw .9s var(--ease-decelerate) .35s forwards}
     .cc-chat-msg:hover .cc-chat-copy{opacity:1 !important}
     .cc-chat-copy:hover{color:var(--text-primary) !important;background:var(--bg-primary) !important}
     .lc2{display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
@@ -4956,7 +4962,7 @@ function startApp() {
       function _wlRemoveAll() { _wl.forEach(function(l){ window.removeEventListener(l.ev, l.fn, l.opts); }); _wl.length = 0; }
 
       var scene = new THREE.Scene();
-      scene.background = new THREE.Color(0xf8f8f8);
+      scene.background = new THREE.Color(0xfafafa);
       // ── Procedural sky gradient (cheap, deterministic, no HDRI dep) ───
       // Default to the light-mode architectural near-white sky.
       // _ccApplyTheme3D rebuilds this whenever the theme changes.
@@ -5608,7 +5614,8 @@ function startApp() {
         if(!point||point.length<3) return;
         var grp = new THREE.Group();
         var ringGeo2 = new THREE.RingGeometry(0.35, 0.55, 32);
-        var ringMat2 = new THREE.MeshBasicMaterial({color:0x00ccff, transparent:true, opacity:0.6, side:THREE.DoubleSide});
+        // Forest accent ring marks the active clash — lines up with chrome
+        var ringMat2 = new THREE.MeshBasicMaterial({color:0x1a6b4a, transparent:true, opacity:0.7, side:THREE.DoubleSide});
         var ring2 = new THREE.Mesh(ringGeo2, ringMat2);
         ring2.position.set(point[0], point[1], point[2]);
         ring2.rotation.x = -Math.PI/2;
@@ -7677,13 +7684,13 @@ function startApp() {
         S._skyTex = t;
         S.scene.background = t;
       } catch(e) {
-        S.scene.background = new THREE.Color(light ? 0xf8f8f8 : 0x141414);
+        S.scene.background = new THREE.Color(light ? 0xfafafa : 0x141414);
       }
       if(S.grid){
         S.scene.remove(S.grid);
         S.grid.geometry.dispose();
         S.grid.material.dispose();
-        S.grid = new THREE.GridHelper(200,80, light?0xa3a3a3:0x404040, light?0xd4d4d4:0x2a2a2a);
+        S.grid = new THREE.GridHelper(200,80, light?0xc8c8c8:0x404040, light?0xe2e2e2:0x272727);
         S.grid.material.opacity = light ? 0.16 : 0.22; S.grid.material.transparent = true;
         S.grid.visible = s.prefs.showGrid!==false;
         S.scene.add(S.grid);
@@ -8110,17 +8117,17 @@ function startApp() {
           onClick=${function(e){e.stopPropagation();}}>
           <button onClick=${function(){d({t:A.SECTION_CUSTOM,v:{normal:ctxMenu.normal,point:ctxMenu.point}});setCtxMenu(null);}}
             style=${{...S_BTN,width:'100%',textAlign:'left',padding:'.5rem .7rem',background:'transparent',color:'var(--text-primary)',fontSize:'0.86rem',borderRadius:0,display:'flex',alignItems:'center',gap:'.5rem'}}>
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><circle cx="6" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><line x1="20" y1="4" x2="8.12" y2="15.88"/><line x1="14.47" y1="14.48" x2="20" y2="20"/><line x1="8.12" y1="8.12" x2="12" y2="12"/></svg>
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="6" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><line x1="20" y1="4" x2="8.12" y2="15.88"/><line x1="14.47" y1="14.48" x2="20" y2="20"/><line x1="8.12" y1="8.12" x2="12" y2="12"/></svg>
             Make Section
           </button>
           ${ctxMenu.expressId!=null && html`<button onClick=${function(){if(_sboxAroundElements)_sboxAroundElements([ctxMenu.expressId]);setCtxMenu(null);}}
             style=${{...S_BTN,width:'100%',textAlign:'left',padding:'.5rem .7rem',background:'transparent',color:'var(--text-primary)',fontSize:'0.86rem',borderRadius:0,borderTop:'1px solid var(--border)',display:'flex',alignItems:'center',gap:'.5rem'}}>
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="4" width="16" height="16" stroke-dasharray="3 2"/></svg>
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="4" width="16" height="16" stroke-dasharray="3 2"/></svg>
             Section Box
           </button>`}
           <button onClick=${function(){d({t:A.SECTION_BOX,v:null});d({t:A.SECTION,axis:null});setCtxMenu(null);}}
             style=${{...S_BTN,width:'100%',textAlign:'left',padding:'.5rem .7rem',background:'transparent',color:'var(--text-secondary)',fontSize:'0.86rem',borderRadius:0,borderTop:'1px solid var(--border)',display:'flex',alignItems:'center',gap:'.5rem'}}>
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><line x1="6" y1="6" x2="18" y2="18"/><line x1="18" y1="6" x2="6" y2="18"/></svg>
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><line x1="6" y1="6" x2="18" y2="18"/><line x1="18" y1="6" x2="6" y2="18"/></svg>
             Clear Section
           </button>
         </div>
@@ -8918,7 +8925,7 @@ function startApp() {
             }}
             title=${connected?'Shared via '+(sp.folderName||'folder'):'Share this project'}
             style=${{...S_BTN,position:'relative',background:bg,color:'#fff',fontWeight:600,padding:'.35rem .8rem',fontSize:'var(--text-xs)',display:'flex',alignItems:'center',gap:'.4rem',boxShadow:connected?'0 2px 8px rgba(26,107,74,.35)':'0 1px 4px rgba(26,107,74,.25)'}}>
-            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/></svg>
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/></svg>
             <span>Share</span>
             <span style=${{width:7,height:7,borderRadius:'50%',background:dotColor,boxShadow:connected?'0 0 0 2px rgba(255,255,255,.25)':'none'}}></span>
             ${unread>0 && html`<span style=${{position:'absolute',top:-4,right:-4,background:'#ef4444',color:'#fff',fontSize:'0.6rem',fontWeight:700,padding:'1px 5px',borderRadius:99,lineHeight:1.3,minWidth:14,textAlign:'center',boxShadow:'0 1px 3px rgba(0,0,0,.4)'}}>${unread>9?'9+':unread}</span>`}
@@ -8927,13 +8934,13 @@ function startApp() {
         <button class="cc-hide-mobile cc-btn-press" onClick=${function(){d({t:A.SMART_VIEWS,v:!s.showSmartViews});}}
           title="Smart Views — one-click presets, saved views, shareable link"
           style=${{...S_BTN,background:'var(--bg-secondary)',color:'var(--text-secondary)',border:'1px solid var(--border)',fontSize:'var(--text-xs)',display:'flex',alignItems:'center',gap:'.35rem'}}>
-          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M12 1v6m0 10v6M5.64 5.64l4.24 4.24m4.24 4.24l4.24 4.24M1 12h6m10 0h6M5.64 18.36l4.24-4.24m4.24-4.24l4.24-4.24"/></svg>
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M12 1v6m0 10v6M5.64 5.64l4.24 4.24m4.24 4.24l4.24 4.24M1 12h6m10 0h6M5.64 18.36l4.24-4.24m4.24-4.24l4.24-4.24"/></svg>
           Views
         </button>
         <button class="cc-hide-mobile cc-btn-press" onClick=${function(){d({t:A.PRESENT,v:!s.presenting});}}
           title="Presentation mode (P) — fullscreen, hide chrome, auto-rotate when idle"
           style=${{...S_BTN,background:s.presenting?'var(--accent)':'var(--bg-secondary)',color:s.presenting?'#fff':'var(--text-secondary)',border:'1px solid '+(s.presenting?'var(--accent-hover)':'var(--border)'),fontSize:'var(--text-xs)',display:'flex',alignItems:'center',gap:'.35rem'}}>
-          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="5 3 19 12 5 21 5 3"/></svg>
           Present
         </button>
         <button class="cc-hide-mobile cc-btn-press" onClick=${function(){loadProject(d)}}
@@ -10096,7 +10103,7 @@ function startApp() {
       ${err && html`<div style=${{padding:'.35rem .75rem',background:'var(--color-danger-bg)',borderBottom:'1px solid var(--color-danger-border)',fontSize:'.7rem',color:'var(--color-danger-fg)',whiteSpace:'pre-line',lineHeight:1.4}}>${err}</div>`}
       <div style=${{flex:1,overflowY:'auto',minHeight:0,padding:'.4rem .45rem',display:'flex',flexDirection:'column',gap:'.18rem'}}>
         ${s.models.length===0 && html`<div style=${{textAlign:'center',padding:'2.5rem 1rem',color:'var(--text-faint)'}}>
-          <svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round" style=${{margin:'0 auto .65rem',display:'block',opacity:.5}}><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/><path d="M12 2L2 7l10 5 10-5-10-5z"/></svg>
+          <svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" style=${{margin:'0 auto .65rem',display:'block',opacity:.5}}><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/><path d="M12 2L2 7l10 5 10-5-10-5z"/></svg>
           <div style=${{fontSize:'.78rem',marginBottom:'.3rem'}}>No models loaded</div>
           <div style=${{fontSize:'.69rem',lineHeight:1.5,color:'var(--text-faint)'}}>Drop an IFC, GLB, PDF or DXF file here,<br/>or click Add above.</div>
         </div>`}
@@ -10851,7 +10858,7 @@ function startApp() {
 
     return html`<div style=${{padding:'.4rem .55rem',borderBottom:'1px solid var(--border-subtle)',flexShrink:0,background:'var(--accent-bg)'}}>
       <div style=${{display:'flex',alignItems:'center',gap:'.3rem',cursor:'pointer'}} onClick=${toggle}>
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
           <path d="M12 2a4 4 0 0 1 4 4c0 1.95-1.4 3.11-2 4-.6.89-1 1.5-1 3m0 0a4 4 0 0 0-4-4c-1.95 0-3.11 1.4-4 2M12 13v4m-2 3h4"/>
           <circle cx="12" cy="22" r="1"/>
         </svg>
@@ -11626,20 +11633,20 @@ function startApp() {
       ${!isExplorerTab && !isStandardsTab && html`<div style=${{padding:'.4rem .4rem .35rem',borderBottom:'1px solid var(--border-subtle)',flexShrink:0}}>
         <div style=${{display:'flex',gap:'.3rem',alignItems:'center'}}>
           <div style=${{flex:1,position:'relative',display:'flex',alignItems:'center'}}>
-            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" style=${{position:'absolute',left:'.5rem',pointerEvents:'none',flexShrink:0,color:'var(--text-muted)'}}>
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" style=${{position:'absolute',left:'.5rem',pointerEvents:'none',flexShrink:0,color:'var(--text-muted)'}}>
               <circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/>
             </svg>
             <input type="text" placeholder=${isClashTab ? 'Filter… e.g. "hard on floor 2" or "open pipes"' : 'Search…'} value=${f.search}
               onInput=${function(e){d({t:A.UPD_FILTERS,u:{search:e.target.value}})}}
               style=${{...S_INPUT,fontSize:'0.8rem',padding:'.32rem .4rem .32rem 1.85rem',width:'100%',background:f.search?'var(--accent-bg)':'var(--bg-secondary)',border:f.search?'1px solid var(--accent)':'1px solid var(--border)',transition:'all .15s'}} />
             ${f.search && html`<button onClick=${function(){d({t:A.UPD_FILTERS,u:{search:''}})}} style=${{position:'absolute',right:'.4rem',background:'none',border:'none',cursor:'pointer',color:'var(--text-muted)',padding:0,lineHeight:0,display:'inline-flex',alignItems:'center',justifyContent:'center'}}>
-              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg>
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg>
             </button>`}
           </div>
           <span style=${{fontFamily:'var(--font-mono)',fontSize:'.68rem',color:items.length<rawItems.length?'var(--accent)':'var(--text-muted)',whiteSpace:'nowrap',flexShrink:0}}>${items.length}${items.length<rawItems.length?' / '+rawItems.length:''}</span>
           <button onClick=${function(){setFiltersOpen(!filtersOpen)}}
             style=${{...S_BTN,padding:'.3rem .45rem',background:filtersOpen||activeCount>0?'var(--accent-bg)':'var(--bg-secondary)',color:filtersOpen||activeCount>0?'var(--accent)':'var(--text-muted)',border:'1px solid var(--border)',fontSize:'0.75rem',whiteSpace:'nowrap',flexShrink:0,display:'inline-flex',alignItems:'center',gap:'.25rem'}} aria-label="Toggle filters">
-            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><path d="M3 6h18M6 12h12M10 18h4"/></svg>
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M3 6h18M6 12h12M10 18h4"/></svg>
             ${activeCount>0?html`<span style=${{fontFamily:'var(--font-mono)',fontSize:'.65rem',color:'var(--accent)'}}>${activeCount}</span>`:''}
           </button>
         </div>
@@ -11799,7 +11806,7 @@ function startApp() {
           var btnBase = {...S_BTN, padding:'.3rem .5rem', fontSize:'0.72rem', fontWeight:600, cursor:hasItems?'pointer':'not-allowed', opacity:hasItems?1:0.45, border:'1px solid var(--border)'};
           return html`<div style=${{display:'flex',flexDirection:'column',gap:'.25rem'}}>
             <div style=${{display:'flex',alignItems:'center',gap:'.3rem',fontSize:'0.65rem',color:'var(--text-faint)',textTransform:'uppercase',letterSpacing:'.04em',fontWeight:600}}>
-              <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style=${{flexShrink:0}}>
+              <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style=${{flexShrink:0}}>
                 <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/>
               </svg>
               <span>Export to BCF</span>
@@ -13779,7 +13786,7 @@ function startApp() {
         </svg>
         <span style=${{fontSize:'0.63rem',fontWeight:600}}>History</span>
         <span style=${{fontSize:'0.57rem',color:'var(--text-faint)'}}>(${history.length})</span>
-        <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"
+        <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
           style=${{marginLeft:'auto',transform:isOpen?'rotate(180deg)':'rotate(0)',transition:'transform .15s'}}>
           <polyline points="6 9 12 15 18 9"/>
         </svg>
@@ -14702,13 +14709,14 @@ function startApp() {
             fontFamily:'inherit',transition:'transform .15s, border-color .15s'}}
           onMouseEnter=${function(e){e.currentTarget.style.borderColor='var(--accent)';e.currentTarget.style.transform='translateY(-2px)';}}
           onMouseLeave=${function(e){e.currentTarget.style.borderColor='var(--border)';e.currentTarget.style.transform='translateY(0)';}}>
-        <div style=${{height:90,background:opts.snapshot?'#000':'linear-gradient(135deg,#1e293b,#334155)',
+        <div style=${{height:96,background:opts.snapshot?'var(--scene-bg)':'var(--accent-bg)',
             display:'flex',alignItems:'center',justifyContent:'center',
             backgroundImage:opts.snapshot?'url('+opts.snapshot+')':'',backgroundSize:'cover',backgroundPosition:'center',
-            color:'rgba(255,255,255,.9)',fontSize:'1.6rem'}}>${opts.icon||''}</div>
-        <div style=${{padding:'.45rem .55rem',textAlign:'left'}}>
-          <div style=${{fontSize:'0.78rem',fontWeight:600,color:'var(--text-primary)',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>${opts.name}</div>
-          ${opts.sub && html`<div style=${{fontSize:'0.66rem',color:'var(--text-faint)',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>${opts.sub}</div>`}
+            color:opts.snapshot?'rgba(255,255,255,.9)':'var(--accent)',fontSize:'1.6rem',
+            borderBottom:'1px solid var(--border-subtle)'}}>${opts.icon||''}</div>
+        <div style=${{padding:'var(--space-2) var(--space-3)',textAlign:'left'}}>
+          <div style=${{fontSize:'var(--text-sm)',fontWeight:'var(--weight-semibold)',color:'var(--text-primary)',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>${opts.name}</div>
+          ${opts.sub && html`<div style=${{fontSize:'var(--text-2xs)',color:'var(--text-faint)',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>${opts.sub}</div>`}
         </div>
         ${opts.onDelete && html`<button onClick=${function(e){e.stopPropagation(); opts.onDelete();}}
           style=${{position:'absolute',top:5,right:5,background:'rgba(0,0,0,.55)',color:'#fff',border:'none',borderRadius:4,cursor:'pointer',padding:'2px 6px',fontSize:'0.66rem',lineHeight:1}}>✕</button>`}
@@ -15182,6 +15190,117 @@ function startApp() {
     </div>`;
   }
 
+  // ── Load Progress Card ───────────────────────────────────────
+  // Centre-canvas card that replaces the cramped 0.74rem progress
+  // line in the chat panel. Fires off cc-model-loading events; shows
+  // file name, current phase, percentage, and a "slow network?"
+  // hint after 8s of no progress.
+
+  function LoadProgressCard(props) {
+    var stLoading = useState(!!window._ccModelLoading);
+    var loading = stLoading[0], setLoading = stLoading[1];
+    var stMsg = useState(window._ccModelLoadMsg || '');
+    var msg = stMsg[0], setMsg = stMsg[1];
+    var stStartedAt = useState(0);
+    var startedAt = stStartedAt[0], setStartedAt = stStartedAt[1];
+    var stSlow = useState(false), slow = stSlow[0], setSlow = stSlow[1];
+    var stTick = useState(0), _tick = stTick[0], setTick = stTick[1];
+
+    useEffect(function(){
+      function onLoad(e){
+        var dd = e.detail || {};
+        var nowLoading = !!dd.loading;
+        setLoading(nowLoading);
+        if (nowLoading) {
+          if (dd.msg) setMsg(dd.msg);
+          if (!startedAt) setStartedAt(Date.now());
+        } else {
+          setMsg('');
+          setStartedAt(0);
+          setSlow(false);
+        }
+      }
+      window.addEventListener('cc-model-loading', onLoad);
+      return function(){ window.removeEventListener('cc-model-loading', onLoad); };
+    }, [startedAt]);
+
+    // Tick every second while loading to refresh elapsed + slow hint
+    useEffect(function(){
+      if (!loading) return;
+      var t = setInterval(function(){
+        setTick(function(x){ return x + 1; });
+        if (startedAt && Date.now() - startedAt > 8000) setSlow(true);
+      }, 1000);
+      return function(){ clearInterval(t); };
+    }, [loading, startedAt]);
+
+    if (!loading) return null;
+    var pct = window._ccParseLoadPct ? window._ccParseLoadPct(msg) : null;
+    // Split filename : phase  (msg is typically "filename.ifc: Building property maps")
+    var fname = '';
+    var phase = msg || 'Opening model…';
+    var sep = msg.indexOf(': ');
+    if (sep > 0) { fname = msg.slice(0, sep); phase = msg.slice(sep + 2); }
+    if (fname.length > 60) fname = '…' + fname.slice(-57);
+    var elapsed = startedAt ? Math.floor((Date.now() - startedAt) / 1000) : 0;
+
+    return html`<div aria-live="polite" role="status"
+      style=${{
+        position:'fixed', top:'50%', left:'50%', transform:'translate(-50%,-50%)',
+        zIndex:1100, width:340, maxWidth:'90vw',
+        background:'var(--surface)', border:'1px solid var(--border)',
+        borderRadius:'var(--radius-lg)', boxShadow:'var(--shadow-lg)',
+        padding:'var(--space-5)',
+        display:'flex', flexDirection:'column', gap:'var(--space-3)',
+        fontFamily:'var(--font-body)', color:'var(--text-primary)'
+      }}>
+      <div style=${{display:'flex',alignItems:'center',gap:'var(--space-3)'}}>
+        <span class="spin" style=${{
+          display:'inline-block', width:18, height:18, borderRadius:'50%',
+          border:'2px solid var(--accent-bg-deep)', borderTopColor:'var(--accent)',
+          flexShrink:0
+        }}></span>
+        <div style=${{minWidth:0,flex:1}}>
+          ${fname ? html`<div style=${{
+            fontFamily:'var(--font-mono)', fontSize:'var(--text-xs)',
+            color:'var(--text-muted)', overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap',
+            marginBottom:2
+          }} title=${fname}>${fname}</div>` : null}
+          <div style=${{
+            fontFamily:'var(--font-display)', fontWeight:'var(--weight-semibold)',
+            fontSize:'var(--text-md)', letterSpacing:'-.01em',
+            color:'var(--text-primary)', lineHeight:'var(--leading-tight)',
+            overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap'
+          }} title=${phase}>${phase}</div>
+        </div>
+        ${pct != null ? html`<div style=${{
+          fontFamily:'var(--font-mono)', fontSize:'var(--text-sm)',
+          color:'var(--accent)', fontWeight:'var(--weight-semibold)', flexShrink:0,
+          fontVariantNumeric:'tabular-nums'
+        }}>${pct}%</div>` : null}
+      </div>
+      <div style=${{
+        height:4, background:'var(--bg-tertiary)', borderRadius:'var(--radius-pill)', overflow:'hidden'
+      }}>
+        <div style=${{
+          height:'100%',
+          width: pct != null ? pct+'%' : '40%',
+          background:'var(--accent)',
+          borderRadius:'var(--radius-pill)',
+          transition:'width .25s var(--ease-standard)',
+          ...(pct == null ? {animation:'ccLoadIndet 1.4s ease-in-out infinite'} : {})
+        }}></div>
+      </div>
+      ${slow ? html`<div style=${{
+        fontSize:'var(--text-xs)', color:'var(--text-muted)', lineHeight:'var(--leading-base)'
+      }}>This is taking longer than usual — slow network or a very large model? It'll keep going.</div>` : null}
+      <div style=${{
+        fontFamily:'var(--font-mono)', fontSize:'var(--text-2xs)',
+        color:'var(--text-faint)', textAlign:'right', letterSpacing:'.04em'
+      }}>${elapsed}s elapsed</div>
+    </div>`;
+  }
+
   // ── Command Palette (Cmd / Ctrl + K) ─────────────────────────
   // Universal escape hatch — fold of every menu, every tool, every
   // modal, plus a one-shot "Ask the assistant" verb. AI is just a
@@ -15359,7 +15478,7 @@ function startApp() {
                 color:'var(--text-primary)',fontSize:'var(--text-sm)',lineHeight:'var(--leading-tight)'
               }}>
               ${c.isAsk
-                ? html`<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a8 8 0 0 1-11.5 7.2L4 21l1.8-5.5A8 8 0 1 1 21 12z"/></svg>`
+                ? html`<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a8 8 0 0 1-11.5 7.2L4 21l1.8-5.5A8 8 0 1 1 21 12z"/></svg>`
                 : html`<span style=${{width:14,display:'inline-block'}}></span>`}
               <span style=${{flex:1,minWidth:0,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>
                 ${c.label}${c.desc ? html`<span style=${{color:'var(--text-muted)',marginLeft:'var(--space-2)'}}>${c.desc}</span>` : ''}
@@ -21123,7 +21242,7 @@ function startApp() {
         </div>
       </div>
       ${ids.length === 0 && html`<div style=${{padding:'1.5rem 1rem',display:'flex',flexDirection:'column',gap:'.5rem',alignItems:'center',textAlign:'center'}}>
-        <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="var(--text-faint)" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2v4m0 12v4M2 12h4m12 0h4"/><circle cx="12" cy="12" r="3"/></svg>
+        <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="var(--text-faint)" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2v4m0 12v4M2 12h4m12 0h4"/><circle cx="12" cy="12" r="3"/></svg>
         <div style=${{fontSize:'var(--text-sm)',color:'var(--text-muted)',lineHeight:1.6}}>No modules loaded</div>
         <div style=${{fontSize:'var(--text-xs)',color:'var(--text-faint)',lineHeight:1.6}}>
           Place addon files in the <code style=${{background:'var(--bg-secondary)',padding:'1px 4px',borderRadius:3}}>addons/</code> folder and reload.
@@ -21273,7 +21392,7 @@ function startApp() {
           onMouseEnter=${function(e){e.currentTarget.style.background='var(--bg-secondary)';e.currentTarget.style.color='var(--text-primary)';}}
           onMouseLeave=${function(e){e.currentTarget.style.background='none';e.currentTarget.style.color='var(--text-muted)';}}
           title="Close panel">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg>
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg>
         </button>
       </div>
       ${tab==='clashes'  && html`<${IssuePanel} key="clashes" s=${s} d=${d} hideTabBar=${true} />`}
@@ -21396,7 +21515,7 @@ function startApp() {
       if (!el) {
         return html`<div style=${{flex:1,display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',
           padding:'2rem 1.2rem',color:'var(--text-muted)',textAlign:'center',gap:'1rem'}}>
-          <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" style=${{opacity:.35}}><rect x="3" y="3" width="18" height="18" rx="4"/><line x1="9" y1="9" x2="15" y2="9"/><line x1="9" y1="13" x2="13" y2="13"/></svg>
+          <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" style=${{opacity:.35}}><rect x="3" y="3" width="18" height="18" rx="4"/><line x1="9" y1="9" x2="15" y2="9"/><line x1="9" y1="13" x2="13" y2="13"/></svg>
           <div style=${{fontSize:'var(--text-sm)',lineHeight:'var(--leading-base)'}}>Click any element in the model to see its details here.</div>
         </div>`;
       }
@@ -21576,7 +21695,7 @@ function startApp() {
               <span style=${{...LBL,display:'flex',alignItems:'center',gap:'.3rem'}}>
                 <svg width="10" height="10" viewBox="0 0 12 12">
                   ${c.ok
-                    ? html`<path d="M2 6l3 3 5-5" stroke="var(--color-success-fg)" stroke-width="1.8" fill="none" stroke-linecap="round" stroke-linejoin="round"/>`
+                    ? html`<path d="M2 6l3 3 5-5" stroke="var(--color-success-fg)" stroke-width="1.5" fill="none" stroke-linecap="round" stroke-linejoin="round"/>`
                     : html`<circle cx="6" cy="6" r="5" stroke="var(--color-danger-fg)" stroke-width="1.5" fill="none"/><path d="M6 4v3" stroke="var(--color-danger-fg)" stroke-width="1.5" stroke-linecap="round"/><circle cx="6" cy="9" r=".6" fill="var(--color-danger-fg)"/>`
                   }
                 </svg>
@@ -21630,7 +21749,7 @@ function startApp() {
             ? html`<div style=${{fontSize:'.72rem',color:'var(--text-muted)',padding:'.2rem 0'}}>No active clashes on this element.</div>`
             : linkedClashes.slice(0,8).map(function(c){return html`<div key=${c.id} style=${{...ROW,alignItems:'center',cursor:'pointer'}}
                 onClick=${function(){if(window._ccDispatch)window._ccDispatch({t:A.SELECT_CLASH,id:c.id});}}>
-                <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="var(--color-danger)" stroke-width="2.5"><path d="M12 9v4m0 4h.01M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/></svg>
+                <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="var(--color-danger)" stroke-width="2"><path d="M12 9v4m0 4h.01M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/></svg>
                 <span style=${{flex:1,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',color:'var(--text-secondary)'}}>${c.title||'Clash '+c.id}</span>
                 <span style=${{fontSize:'.65rem',color:'var(--text-faint)'}}>${c.status||'open'}</span>
               </div>`;})
@@ -21892,8 +22011,8 @@ function startApp() {
             <path d="M60 74 L60 92 M88 50 L88 76 L60 92" />
             <!-- mass B: stepped -->
             <path d="M88 76 L102 68 L102 86 L88 92 Z" />
-            <!-- accent diagonal — a single terracotta cut, the only colour -->
-            <line x1="22" y1="92" x2="56" y2="36" stroke="var(--ink-accent)" />
+            <!-- accent diagonal — draws itself in on first view -->
+            <line class="cc-welcome-accent" x1="22" y1="92" x2="56" y2="36" stroke="var(--ink-accent)" />
           </g>
         </svg>
       </div>
@@ -22070,7 +22189,7 @@ function startApp() {
                 fontFamily:'var(--font-body)',color:'var(--ink-primary)'}}
               onMouseEnter=${function(e){e.currentTarget.style.background='var(--surface-warm)';}}
               onMouseLeave=${function(e){e.currentTarget.style.background='none';}}>
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" style=${{marginTop:2,flexShrink:0,color:'var(--ink-secondary)'}}><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 12l10 5 10-5"/><path d="M2 17l10 5 10-5"/></svg>
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" style=${{marginTop:2,flexShrink:0,color:'var(--ink-secondary)'}}><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 12l10 5 10-5"/><path d="M2 17l10 5 10-5"/></svg>
               <span style=${{display:'flex',flexDirection:'column',gap:1}}>
                 <span style=${{fontSize:'var(--text-sm)',fontWeight:500}}>3D model</span>
                 <span style=${{fontSize:'var(--text-2xs)',color:'var(--ink-faint)',fontFamily:'var(--font-mono)'}}>IFC · GLB</span>
@@ -22082,7 +22201,7 @@ function startApp() {
                 fontFamily:'var(--font-body)',color:'var(--ink-primary)'}}
               onMouseEnter=${function(e){e.currentTarget.style.background='var(--surface-warm)';}}
               onMouseLeave=${function(e){e.currentTarget.style.background='none';}}>
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" style=${{marginTop:2,flexShrink:0,color:'var(--ink-secondary)'}}><rect x="4" y="4" width="16" height="16" rx="1"/><path d="M4 10h16"/><path d="M10 4v16"/></svg>
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" style=${{marginTop:2,flexShrink:0,color:'var(--ink-secondary)'}}><rect x="4" y="4" width="16" height="16" rx="1"/><path d="M4 10h16"/><path d="M10 4v16"/></svg>
               <span style=${{display:'flex',flexDirection:'column',gap:1}}>
                 <span style=${{fontSize:'var(--text-sm)',fontWeight:500}}>2D drawing</span>
                 <span style=${{fontSize:'var(--text-2xs)',color:'var(--ink-faint)',fontFamily:'var(--font-mono)'}}>PDF · DXF — auto-placed on its level</span>
@@ -22099,7 +22218,7 @@ function startApp() {
                 fontFamily:'var(--font-body)',color:'var(--ink-primary)'}}
               onMouseEnter=${function(e){e.currentTarget.style.background='var(--surface-warm)';}}
               onMouseLeave=${function(e){e.currentTarget.style.background='none';}}>
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" style=${{marginTop:2,flexShrink:0,color:'var(--accent)'}}><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/></svg>
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" style=${{marginTop:2,flexShrink:0,color:'var(--accent)'}}><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/></svg>
               <span style=${{display:'flex',flexDirection:'column',gap:1}}>
                 <span style=${{fontSize:'var(--text-sm)',fontWeight:500}}>Live from Revit</span>
                 <span style=${{fontSize:'var(--text-2xs)',color:'var(--ink-faint)',fontFamily:'var(--font-mono)'}}>WebSocket bridge — sync geometry & properties</span>
@@ -22115,7 +22234,7 @@ function startApp() {
                 fontFamily:'var(--font-body)',color:'var(--ink-primary)'}}
               onMouseEnter=${function(e){e.currentTarget.style.background='var(--surface-warm)';}}
               onMouseLeave=${function(e){e.currentTarget.style.background='none';}}>
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" style=${{marginTop:2,flexShrink:0,color:'var(--ink-secondary)'}}><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" style=${{marginTop:2,flexShrink:0,color:'var(--ink-secondary)'}}><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
               <span style=${{display:'flex',flexDirection:'column',gap:1}}>
                 <span style=${{fontSize:'var(--text-sm)',fontWeight:500}}>Shared folder</span>
                 <span style=${{fontSize:'var(--text-2xs)',color:'var(--ink-faint)',fontFamily:'var(--font-mono)'}}>OneDrive · Dropbox · NAS — team sync</span>
@@ -22250,7 +22369,7 @@ function startApp() {
                   color:'var(--ink-faint)',display:'flex',alignItems:'center'}}
                 onMouseEnter=${function(e){e.currentTarget.style.color='var(--ink-secondary)';}}
                 onMouseLeave=${function(e){e.currentTarget.style.color='var(--ink-faint)';}}>
-                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4 12.5-12.5z"/></svg>
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4 12.5-12.5z"/></svg>
               </button>`}
               ${!isRenaming && canDelete && html`<button aria-label=${'Delete project '+p.name}
                 onClick=${function(e){ e.stopPropagation(); if(deleteConfirm===p.id){ deleteProject(p.id); setDeleteConfirm(null); } else { setDeleteConfirm(p.id); } }}
@@ -22259,7 +22378,7 @@ function startApp() {
                   display:'flex',alignItems:'center',fontFamily:'var(--font-body)',fontSize:'var(--text-2xs)'}}>
                 ${deleteConfirm===p.id
                   ? html`<span style=${{fontWeight:600}}>Delete?</span>`
-                  : html`<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/></svg>`}
+                  : html`<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/></svg>`}
               </button>`}
             </div>`;
           })}
@@ -22342,7 +22461,7 @@ function startApp() {
             letterSpacing:0,lineHeight:1.2}}
           onMouseEnter=${function(e){e.currentTarget.style.background='var(--surface-warm)';e.currentTarget.style.color='var(--ink-primary)';}}
           onMouseLeave=${function(e){e.currentTarget.style.background='none';e.currentTarget.style.color='var(--ink-secondary)';}}>
-          <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="18" cy="5" r="2.5"/><circle cx="6" cy="12" r="2.5"/><circle cx="18" cy="19" r="2.5"/><line x1="8.5" y1="13.5" x2="15.5" y2="17.5"/><line x1="15.5" y1="6.5" x2="8.5" y2="10.5"/></svg>
+          <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="18" cy="5" r="2.5"/><circle cx="6" cy="12" r="2.5"/><circle cx="18" cy="19" r="2.5"/><line x1="8.5" y1="13.5" x2="15.5" y2="17.5"/><line x1="15.5" y1="6.5" x2="8.5" y2="10.5"/></svg>
           <span>Share</span>
           ${connected && html`<span style=${{width:5,height:5,borderRadius:'50%',background:dotColor,flexShrink:0}}></span>`}
           ${unread>0 && html`<span style=${{position:'absolute',top:-4,right:-4,background:'var(--ink-primary)',color:'var(--paper-bg)',fontSize:'0.58rem',fontWeight:600,padding:'1px 4px',borderRadius:99,lineHeight:1.3,minWidth:12,textAlign:'center'}}>${unread>9?'9+':unread}</span>`}
@@ -22468,7 +22587,7 @@ function startApp() {
     if (pickOn) {
       // Popover: centered below the section cluster
       subRow = html`<div style=${{...POP_BASE,left:'50%',transform:'translateX(-50%)',color:'var(--accent)'}}>
-        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12h6"/><circle cx="12" cy="12" r="3"/><path d="M15 12h6"/></svg>
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12h6"/><circle cx="12" cy="12" r="3"/><path d="M15 12h6"/></svg>
         <span style=${{fontWeight:500,color:'var(--text-primary)'}}>Click a surface to set the section plane</span>
         ${SEP_V}
         <button onClick=${function(){ window._ccSectionPickPending=false; setPickOn(false); }}
@@ -22604,7 +22723,7 @@ function startApp() {
           }}
           onMouseEnter=${function(e){e.currentTarget.style.background='var(--surface-warm)';e.currentTarget.style.color='var(--ink-primary)';}}
           onMouseLeave=${function(e){e.currentTarget.style.background='none';e.currentTarget.style.color='var(--ink-secondary)';}}>
-          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
           <span style=${{color:'var(--ink-primary)',fontWeight:500}}>Search</span>
           <span style=${{fontFamily:'var(--font-mono)',fontSize:'var(--text-2xs)',color:'var(--ink-muted)',padding:'1px 5px',border:'1px solid var(--hairline)',borderRadius:'var(--radius-xs)',marginLeft:'.15rem'}}>⌘K</span>
         </button>
@@ -22621,7 +22740,7 @@ function startApp() {
             }}>
             <span style=${{fontFamily:'var(--font-mono)',fontSize:'var(--text-2xs)',color:'var(--ink-muted)',letterSpacing:'.04em',textTransform:'uppercase'}}>Style</span>
             <span style=${{color:'var(--ink-primary)',fontWeight:500}}>${curStyleLabel}</span>
-            <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M6 9l6 6 6-6"/></svg>
+            <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M6 9l6 6 6-6"/></svg>
           </button>
           ${styleOpen && html`<div>
             <div onClick=${function(){setStyleOpen(false);}} style=${{position:'fixed',inset:0,zIndex:399}}></div>
@@ -22722,7 +22841,7 @@ function startApp() {
         if (s.chatOpen && window._ccNLClose) window._ccNLClose();
         d({t:A.TAB,v:s.tab===id?null:id});
       }}>
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" dangerouslySetInnerHTML=${{__html:svgPath}}></svg>
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" dangerouslySetInnerHTML=${{__html:svgPath}}></svg>
         ${badge>0 && html`<span style=${{position:'absolute',top:2,right:2,background:'#ef4444',color:'#fff',
           fontSize:'0.66rem',fontWeight:600,padding:'0 3px',borderRadius:99,lineHeight:1.4,minWidth:12,textAlign:'center'}}>${badge>99?'99+':badge}</span>`}
         <span>${label}</span>
@@ -22730,7 +22849,7 @@ function startApp() {
     }
     function searchBtn(){
       return html`<button aria-label="Search · ask the assistant" onClick=${function(){ if(window._ccOpenCmdK) window._ccOpenCmdK(); }}>
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
         <span>Search</span>
       </button>`;
     }
@@ -22910,7 +23029,7 @@ function startApp() {
                   target="_blank" rel="noopener" download
                   style=${{display:'inline-flex',alignItems:'center',gap:'.3rem',padding:'.3rem .55rem',borderRadius:5,
                     background:'var(--accent)',color:'#fff',fontWeight:600,fontSize:'0.68rem',textDecoration:'none'}}>
-                  <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                  <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                     <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/>
                   </svg>
                   Download installer (.exe)
@@ -23569,6 +23688,7 @@ function startApp() {
       ${storeyPickerOpen && html`<${StoreyPickerModal} s=${s} d=${d} onClose=${function(){setStoreyPickerOpen(false);}} />`}
       ${shortcutsOpen && html`<${ShortcutsModal} onClose=${function(){setShortcutsOpen(false);}} />`}
       ${cmdkOpen && html`<${CmdKPalette} s=${s} d=${d} onClose=${function(){setCmdkOpen(false);}} />`}
+      <${LoadProgressCard} />
       ${s.showSettings && html`<${SettingsModal} d=${d} s=${s} prefs=${s.prefs} models=${s.models} rules=${s.rules} />`}
       ${s.showShare && html`<${ShareModal} d=${d} s=${s} />`}
       ${s.showSmartViews && html`<${SmartViewsModal} d=${d} s=${s} />`}
@@ -23576,7 +23696,7 @@ function startApp() {
         background:'var(--accent)',color:'#fff',padding:'.5rem .9rem',borderRadius:'var(--radius-md)',
         boxShadow:'var(--shadow-md)',display:'flex',alignItems:'center',gap:'.6rem',
         fontSize:'0.82rem',fontWeight:500,fontFamily:'inherit'}}>
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s-8-4.5-8-12a8 8 0 1 1 16 0c0 7.5-8 12-8 12z"/><circle cx="12" cy="10" r="3"/></svg>
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s-8-4.5-8-12a8 8 0 1 1 16 0c0 7.5-8 12-8 12z"/><circle cx="12" cy="10" r="3"/></svg>
         <span>Click on the model to drop a comment pin</span>
         <button onClick=${function(){d({t:A.COMMENT_MODE,v:false});}}
           style=${{background:'rgba(255,255,255,.2)',color:'#fff',border:'none',borderRadius:5,padding:'.2rem .5rem',fontSize:'0.74rem',fontWeight:600,cursor:'pointer',fontFamily:'inherit'}}>Cancel (Esc)</button>
