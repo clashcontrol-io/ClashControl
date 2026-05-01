@@ -688,7 +688,7 @@ function startApp() {
     renderStyle:_ccLoadPref('renderStyle','standard'), // 'standard','shaded','rendered','wireframe' — default 'standard' for fast/clean first paint
     unitScaleOverride:_ccLoadPref('unitScaleOverride','auto'), // 'auto','1','100','1000'
     // Rendered-mode lighting controls (sliders surfaced in the toolbar Style popover)
-    lightSettings:_ccLoadPref('lightSettings',{sun:1.0, ambient:1.0, exposure:1.0, shadow:1.0}),
+    lightSettings:_ccLoadPref('lightSettings',{sun:1.0, ambient:1.0, exposure:1.0, shadow:1.0, time:13}),
   };
   var INIT = {
     models:[], clashes:[], issues:[], activeId:null, showModal:false, showSettings:false, modalElement:null, tab:null,
@@ -4552,6 +4552,7 @@ function startApp() {
     if (_walkActive) return;
     _walkActive = true;
     _walkPointerLocked = false;
+    _walkLMB = true; // Enscape-style: walk is always "engaged" while in walk mode
     var models = (window._ccLatestState || {}).models || [];
     var _storeyUs = (typeof _ccDetectUnitScale === 'function') ? _ccDetectUnitScale(models) : 1;
     var _geoF = (typeof _ccStoreyToGeoFactor === 'function') ? _ccStoreyToGeoFactor(models) : 1;
@@ -4587,6 +4588,7 @@ function startApp() {
     if (!_walkActive) return;
     _walkActive = false;
     _walkPointerLocked = false;
+    _walkLMB = false;
     _walkKeys = {};
     try { if (document.pointerLockElement) document.exitPointerLock(); } catch (e) {}
     if (_walkSavedCam && S.orbit) {
@@ -5034,7 +5036,8 @@ function startApp() {
       renderer.toneMapping = THREE.ACESFilmicToneMapping;
       renderer.toneMappingExposure = 1.0;
       renderer.shadowMap.enabled = true;
-      renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+      renderer.shadowMap.type = THREE.PCFShadowMap; // faster than PCFSoft; rebuild only on demand
+      renderer.shadowMap.autoUpdate = false; // static shadows — only rebuild when scene changes
       renderer.physicallyCorrectLights = true;
       el.appendChild(renderer.domElement);
       S.renderer = renderer;
@@ -5170,7 +5173,7 @@ function startApp() {
       S.orbit = makeOrbit(camera, renderer.domElement, _wlAdd);
       S.orbit.apply(); // ensure camera looks at orbit target on init
 
-      // ── Walk mode event listeners (Enscape-style: hold LMB for WASD+look) ──
+      // ── Walk mode event listeners (Enscape-style: free WASD + mouse look) ──
       _wlAdd('keydown', function(e) {
         if (!_walkActive) return;
         _walkKeys[e.code] = true;
@@ -5185,27 +5188,27 @@ function startApp() {
         if (!_walkActive) return;
         delete _walkKeys[e.code];
       });
-      // Enscape-style: hold LMB on canvas to walk+look. Pointer lock acquired
-      // on press; released on up. WASD only moves while LMB is held.
-      renderer.domElement.addEventListener('mousedown', function(e) {
-        if (!_walkActive || e.button !== 0) return;
-        _walkLMB = true;
-        try { renderer.domElement.requestPointerLock(); } catch (err) {}
-        e.preventDefault();
-      });
-      _wlAdd('mouseup', function(e) {
-        if (e.button !== 0) return;
-        if (_walkLMB) {
-          _walkLMB = false;
-          try { if (document.pointerLockElement) document.exitPointerLock(); } catch (err) {}
+      // Single click on canvas while in walk mode acquires pointer lock so
+      // mouse controls look continuously. Esc releases and exits walk mode.
+      renderer.domElement.addEventListener('click', function(e) {
+        if (!_walkActive) return;
+        if (document.pointerLockElement !== renderer.domElement) {
+          try { renderer.domElement.requestPointerLock(); } catch (err) {}
         }
       });
+      _wlAdd('pointerlockchange', function() {
+        _walkPointerLocked = (document.pointerLockElement === renderer.domElement);
+        try { window.dispatchEvent(new CustomEvent('cc-walk-locked',{detail:{locked:_walkPointerLocked}})); } catch(e){}
+      });
       renderer.domElement.addEventListener('mousemove', function(e) {
-        if (!_walkActive || !_walkLMB) return;
-        // Pointer lock provides movementX/Y; without lock we still respect the
-        // delta but capped to avoid jitter when the cursor leaves the canvas.
+        if (!_walkActive) return;
+        // Mouse look works always in walk mode; pointer-locked feels best
+        // but unlocked still drives look (with a clamp against jitter when
+        // cursor leaves canvas).
         var mx = e.movementX || 0, my = e.movementY || 0;
-        if (Math.abs(mx) > 200 || Math.abs(my) > 200) return;
+        if (!_walkPointerLocked) {
+          if (Math.abs(mx) > 200 || Math.abs(my) > 200) return;
+        }
         _walkYaw -= mx * 0.002;
         _walkPitch += my * -0.002;
         _walkPitch = Math.max(-Math.PI / 2.2, Math.min(Math.PI / 2.2, _walkPitch));
@@ -6664,7 +6667,7 @@ function startApp() {
       S._sunLight = new THREE.DirectionalLight(0xfff2d6, 1.4);
       S._sunLight.position.set(80,120,60);
       S._sunLight.castShadow = true;
-      S._sunLight.shadow.mapSize.set(2048,2048);
+      S._sunLight.shadow.mapSize.set(1024,1024); // 1024 is adequate for arch viz; 2048 was costly
       S._sunLight.shadow.bias = -0.0008;
       S._sunLight.shadow.normalBias = 0.02;
       S._sunLight.shadow.camera.near = 0.5;
@@ -6699,6 +6702,8 @@ function startApp() {
           sl.target.position.copy(center);
           sl.target.updateMatrixWorld();
           if (!sl.target.parent) scene.add(sl.target);
+          // Shadow map must be rebuilt after frustum changes
+          if (S.renderer) S.renderer.shadowMap.needsUpdate = true;
           invalidate(2);
         } catch(e){}
       };
@@ -7567,28 +7572,75 @@ function startApp() {
       var ambMul = (typeof ls.ambient === 'number') ? ls.ambient : 1.0;
       var expoMul = (typeof ls.exposure === 'number') ? ls.exposure : 1.0;
       var shadowOp = (typeof ls.shadow === 'number') ? ls.shadow : 1.0;
+      var todHour = (typeof ls.time === 'number') ? ls.time : 13;
+
+      // ── Time-of-day → sun position, color, intensity (rendered mode) ──
+      // Maps 6 (sunrise) → 20 (sunset) onto a realistic east→south→west arc
+      // and a warm-cool-warm color curve. Used only in 'rendered' style.
+      function _ccTimeToSun(hour) {
+        var t = Math.max(0, Math.min(1, (hour - 6) / 14)); // 0..1 over 6→20h
+        var altitude = Math.sin(t * Math.PI) * 70;          // peaks at 70° midday
+        var azimuth  = 90 + t * 180;                        // 90°(E) → 270°(W)
+        var altRad = altitude * Math.PI / 180;
+        var azRad  = azimuth  * Math.PI / 180;
+        // Direction TO the sun (so light points FROM sun, sun.position is opposite)
+        var dirX = Math.cos(altRad) * Math.sin(azRad);
+        var dirY = Math.sin(altRad);
+        var dirZ = Math.cos(altRad) * Math.cos(azRad);
+        // Color: warm at edges (sunrise/sunset), neutral at noon
+        var warmth = Math.pow(1 - Math.abs(t - 0.5) * 2, 0.6); // 1 at noon, 0 at edges
+        var r = 1.00, g = 0.85 + 0.10 * warmth, b = 0.55 + 0.32 * warmth;
+        // Intensity drops at low sun (atmospheric extinction proxy)
+        var intensityMul = Math.max(0.15, Math.sin(altRad)) * 1.4;
+        return {dx:dirX, dy:dirY, dz:dirZ, r:r, g:g, b:b, intensity:intensityMul, alt:altitude};
+      }
 
       // ── Lighting model per style (Revit-inspired): ──
       //   standard  → flat white surfaces, thin black edges   (technical drawing)
       //   shaded    → original colors, ambient-only, no shadows (architectural massing)
       //   rendered  → PBR-like, sun + shadows + contact plane  (presentation)
       //   wireframe → edges only, transparent fills           (CAD wireframe)
-      if (S.renderer) S.renderer.toneMappingExposure = expoMul * (style==='rendered' ? 1.0 : 1.15);
+      if (S.renderer) S.renderer.toneMappingExposure = expoMul * (style==='rendered' ? 1.0 : style==='shaded' ? 0.88 : 1.0);
       if (S._sunLight) {
         if (style==='rendered') {
-          S._sunLight.intensity = 1.4 * sunMul;
-          S._sunLight.castShadow = shadowOp > 0;
+          var sun = _ccTimeToSun(todHour);
+          // Position sun based on time arc, scaled by current shadow frustum
+          var sunRadius = 200;
+          try {
+            var box = (typeof _elemsBBox === 'function') ? _elemsBBox() : null;
+            if (box && !box.isEmpty()) {
+              var sz = new THREE.Vector3(); box.getSize(sz);
+              sunRadius = Math.max(sz.x, sz.y, sz.z) * 1.5 + 50;
+              var ctr = new THREE.Vector3(); box.getCenter(ctr);
+              S._sunLight.position.set(
+                ctr.x + sun.dx * sunRadius,
+                ctr.y + sun.dy * sunRadius,
+                ctr.z + sun.dz * sunRadius
+              );
+              if (S._sunLight.target) {
+                S._sunLight.target.position.copy(ctr);
+                S._sunLight.target.updateMatrixWorld();
+              }
+            } else {
+              S._sunLight.position.set(sun.dx * sunRadius, sun.dy * sunRadius, sun.dz * sunRadius);
+            }
+          } catch(e) { S._sunLight.position.set(sun.dx * sunRadius, sun.dy * sunRadius, sun.dz * sunRadius); }
+          S._sunLight.color.setRGB(sun.r, sun.g, sun.b);
+          S._sunLight.intensity = sun.intensity * sunMul;
+          S._sunLight.castShadow = shadowOp > 0 && sun.alt > 5; // no shadows when sun below horizon
         } else {
-          // Non-rendered: lower sun, no shadows (avoid the dark/blurry look)
-          S._sunLight.intensity = (style==='shaded' ? 0.4 : style==='wireframe' ? 0 : 0.7) * sunMul;
+          // Non-rendered: lower sun, no shadows
+          S._sunLight.color.setRGB(1, 0.96, 0.88);
+          S._sunLight.intensity = (style==='shaded' ? 0.65 : style==='wireframe' ? 0 : style==='standard' ? 0 : 0.7) * sunMul;
           S._sunLight.castShadow = false;
         }
       }
       if (S._fillLight) {
-        S._fillLight.intensity = (style==='rendered' ? 0.35 : style==='shaded' ? 0.55 : 0.45) * ambMul;
+        S._fillLight.intensity = (style==='rendered' ? 0.35 : style==='shaded' ? 0.25 : style==='standard' ? 0 : 0.35) * ambMul;
       }
       if (S._ambLight) {
-        S._ambLight.intensity = (style==='rendered' ? 0.55 : style==='shaded' ? 1.0 : style==='wireframe' ? 0.8 : 0.9) * ambMul;
+        // standard (hidden line): MeshBasicMaterial ignores lights so ambient is irrelevant
+        S._ambLight.intensity = (style==='rendered' ? 0.55 : style==='shaded' ? 0.6 : style==='wireframe' ? 0.8 : 0.9) * ambMul;
       }
 
       // Disable post-processing entirely — SAO + SMAA caused blur. Plain
@@ -7650,11 +7702,15 @@ function startApp() {
       }
 
       // ── Materials per style ────────────────────────────────────
-      // No EdgesGeometry overlays — they cause heavy z-fighting on IFC
-      // models that already have coplanar duplicate faces. Style
-      // differentiation comes from the material model + lighting alone.
-      // FrontSide everywhere (matches Revit/Enscape) — DoubleSide doubles
-      // every shadow contribution and z-fights.
+      // standard  = "Hidden Line": flat white/gray surfaces + architectural edge lines
+      //             (EdgesGeometry at 15° crease — shows wall/slab outlines, not triangles)
+      //             polygonOffset pushes surfaces back so edges are always in front.
+      // shaded    = IFC colors + Lambert — same as Revit "Consistent Colors".
+      //             Clean, well-lit, no shadows. Matches professional massing renders.
+      // rendered  = PBR + IBL + directional sun + static shadow map.
+      // wireframe = MeshBasicMaterial wireframe.
+      // FrontSide everywhere — DoubleSide doubles shadow contributions and z-fights.
+
       function _disposeEdges(obj) {
         if (obj.userData._edges) {
           try { obj.remove(obj.userData._edges); obj.userData._edges.geometry.dispose(); obj.userData._edges.material.dispose(); } catch(e){}
@@ -7662,38 +7718,59 @@ function startApp() {
         }
       }
 
+      // Rebuild shadow map when we switch into rendered mode or lighting changes
+      if (style === 'rendered' && S.renderer) S.renderer.shadowMap.needsUpdate = true;
+
       for (var _mi = 0; _mi < meshList.length; _mi++) {
         var obj = meshList[_mi];
         if (obj.userData._isGround) continue;
         if (!obj.userData._origMaterial) obj.userData._origMaterial = obj.material;
         var orig = obj.userData._origMaterial;
         if (S._isGhostMat && S._isGhostMat(obj.material)) continue;
-        _disposeEdges(obj); // clean up any stale edges from earlier code paths
         var cache = obj.userData._styleMats || (obj.userData._styleMats = {});
         var origColor = orig.color ? orig.color.clone() : new THREE.Color(0xcccccc);
         var mat;
         if (style === 'wireframe') {
-          // Pure wireframe — original color, lines only.
+          _disposeEdges(obj);
           mat = cache.wireframe || (cache.wireframe = new THREE.MeshBasicMaterial({
             color: origColor, wireframe: true,
             transparent: true, opacity: 0.85, side: THREE.FrontSide
           }));
         } else if (style === 'standard') {
-          // Revit "Hidden Line" feel: lit but flat — Lambert, no env, no shadows.
-          mat = cache.standard || (cache.standard = new THREE.MeshLambertMaterial({
-            color: origColor,
-            transparent: orig.transparent, opacity: orig.opacity,
-            side: THREE.FrontSide
-          }));
+          // Hidden Line: flat white surfaces pushed back + architectural edge overlay.
+          // polygonOffset prevents z-fighting between surface and edge lines.
+          if (!cache.standard) {
+            cache.standard = new THREE.MeshBasicMaterial({
+              color: light ? 0xf2f2f2 : 0x282828,
+              side: THREE.FrontSide,
+              polygonOffset: true, polygonOffsetFactor: 2, polygonOffsetUnits: 2
+            });
+          } else {
+            cache.standard.color.set(light ? 0xf2f2f2 : 0x282828);
+          }
+          mat = cache.standard;
+          // Edge lines — created once per mesh, updated if theme changes
+          if (!obj.userData._edges) {
+            try {
+              var edgeGeo = new THREE.EdgesGeometry(obj.geometry, 15); // 15° crease threshold
+              var edgeMat = new THREE.LineBasicMaterial({ color: light ? 0x1a1a1a : 0x999999 });
+              var edgeMesh = new THREE.LineSegments(edgeGeo, edgeMat);
+              edgeMesh.userData._isEdge = true;
+              obj.add(edgeMesh);
+              obj.userData._edges = edgeMesh;
+            } catch(e) {}
+          } else if (obj.userData._edges.material) {
+            obj.userData._edges.material.color.set(light ? 0x1a1a1a : 0x999999);
+          }
         } else if (style === 'shaded') {
-          // Revit "Consistent Colors": pure flat color, no lighting variation.
-          mat = cache.shaded || (cache.shaded = new THREE.MeshBasicMaterial({
+          _disposeEdges(obj);
+          mat = cache.shaded || (cache.shaded = new THREE.MeshLambertMaterial({
             color: origColor,
             transparent: orig.transparent, opacity: orig.opacity,
             side: THREE.FrontSide
           }));
         } else if (style === 'rendered') {
-          // Revit "Realistic" / Enscape: PBR + IBL + sun + shadows.
+          _disposeEdges(obj);
           mat = cache.rendered || (cache.rendered = new THREE.MeshStandardMaterial({
             color: origColor,
             roughness: 0.85, metalness: 0.0,
@@ -7701,9 +7778,9 @@ function startApp() {
             transparent: orig.transparent, opacity: orig.opacity,
             side: THREE.FrontSide
           }));
-          // Live-update env intensity from the Ambient slider
           mat.envMapIntensity = 0.85 * ambMul;
         } else {
+          _disposeEdges(obj);
           mat = orig;
         }
         if (obj.material !== mat) obj.material = mat;
@@ -20862,7 +20939,10 @@ function startApp() {
     var dragRef=useRef(null);
     var onResizeDown = _makeResizeHandler(dragRef, function(w){ setPanelW(w); try{localStorage.setItem('cc_ai_panel_w',String(w));}catch(e){} }, 250, 600, true);
 
-    // Poll window._ccSelectedEl to drive the Details tab
+    // Poll window._ccSelectedEl to drive the Details tab. Behaviour:
+    //   • new element selected → store it, set tab to Details (but do NOT
+    //     auto-uncollapse the panel — user may have closed it manually)
+    //   • element deselected → reset tab to AI; keep collapse state as-is
     useEffect(function(){
       var prev = null;
       var t = setInterval(function(){
@@ -20872,17 +20952,13 @@ function startApp() {
           setDrawerEl(cur);
           if (cur) {
             setDrawerTab('details');
-            if (collapsed) setCollapsed(false);
           } else {
-            // Element deselected — collapse and reset to AI tab
-            setCollapsed(true);
             setDrawerTab('ai');
-            try { localStorage.setItem('cc_ai_panel_collapsed','1'); } catch(e) {}
           }
         }
       }, 250);
       return function(){ clearInterval(t); };
-    }, [collapsed]);
+    }, []);
 
     // Collapsed: thin tab on the right edge
     if (collapsed) {
@@ -21700,8 +21776,8 @@ function startApp() {
     };
 
     var styles = [
-      {id:'standard',  label:'Standard'},
       {id:'shaded',    label:'Shaded'},
+      {id:'standard',  label:'Hidden Line'},
       {id:'rendered',  label:'Rendered'},
       {id:'wireframe', label:'Wireframe'}
     ];
@@ -21869,26 +21945,45 @@ function startApp() {
                   <span style=${{fontFamily:'var(--font-mono)',fontSize:'var(--text-2xs)',color:'var(--ink-faint)'}}>${i+1}</span>
                 </button>`;
               })}
-              ${curStyle==='rendered' && html`<div style=${{borderTop:'1px solid var(--hairline)',marginTop:'.3rem',padding:'.5rem .8rem',display:'flex',flexDirection:'column',gap:'.4rem'}}>
-                <div style=${{fontFamily:'var(--font-mono)',fontSize:'var(--text-2xs)',color:'var(--ink-muted)',textTransform:'uppercase',letterSpacing:'.06em'}}>Lighting</div>
-                ${[{k:'sun',label:'Sun',min:0.2,max:2.5},{k:'ambient',label:'Ambient',min:0.2,max:2.0},{k:'exposure',label:'Exposure',min:0.5,max:1.8},{k:'shadow',label:'Shadow',min:0,max:1.5}].map(function(row){
-                  var ls=(s.prefs.lightSettings)||{}; var v = (typeof ls[row.k]==='number') ? ls[row.k] : 1.0;
-                  return html`<label key=${row.k} style=${{display:'flex',alignItems:'center',gap:'.5rem',fontSize:'var(--text-xs)',color:'var(--ink-secondary)'}}>
-                    <span style=${{width:60}}>${row.label}</span>
-                    <input type="range" min=${row.min} max=${row.max} step="0.05" value=${v}
+              ${curStyle==='rendered' && function(){
+                var ls=(s.prefs.lightSettings)||{};
+                var tv = (typeof ls.time==='number') ? ls.time : 13;
+                var hh = Math.floor(tv); var mm = Math.round((tv-hh)*60);
+                var clock = (hh<10?'0':'')+hh+':'+(mm<10?'0':'')+mm;
+                return html`<div style=${{borderTop:'1px solid var(--hairline)',marginTop:'.3rem',padding:'.55rem .8rem',display:'flex',flexDirection:'column',gap:'.5rem'}}>
+                  <div style=${{fontFamily:'var(--font-mono)',fontSize:'var(--text-2xs)',color:'var(--ink-muted)',textTransform:'uppercase',letterSpacing:'.06em'}}>Sun position</div>
+                  <label style=${{display:'flex',alignItems:'center',gap:'.5rem',fontSize:'var(--text-xs)',color:'var(--ink-secondary)'}}>
+                    <span style=${{width:60}}>Time</span>
+                    <input type="range" min="6" max="20" step="0.25" value=${tv}
                       onInput=${function(e){
                         var nv=parseFloat(e.target.value);
-                        var ls2=Object.assign({sun:1,ambient:1,exposure:1,shadow:1},(s.prefs.lightSettings)||{});
-                        ls2[row.k]=nv;
+                        var ls2=Object.assign({sun:1,ambient:1,exposure:1,shadow:1,time:13},(s.prefs.lightSettings)||{});
+                        ls2.time=nv;
                         d({t:A.UPD_PREFS,u:{lightSettings:ls2}});
                       }}
                       style=${{flex:1,accentColor:'var(--accent)'}} />
-                    <span style=${{fontFamily:'var(--font-mono)',fontSize:'var(--text-2xs)',color:'var(--ink-muted)',width:30,textAlign:'right'}}>${v.toFixed(2)}</span>
-                  </label>`;
-                })}
-                <button onClick=${function(){ d({t:A.UPD_PREFS,u:{lightSettings:{sun:1,ambient:1,exposure:1,shadow:1}}}); }}
-                  style=${{alignSelf:'flex-end',background:'none',border:'1px solid var(--hairline-strong)',padding:'.18rem .55rem',borderRadius:'var(--radius-xs)',cursor:'pointer',fontSize:'var(--text-2xs)',color:'var(--ink-muted)',fontFamily:'var(--font-body)'}}>Reset</button>
-              </div>`}
+                    <span style=${{fontFamily:'var(--font-mono)',fontSize:'var(--text-2xs)',color:'var(--ink-primary)',width:42,textAlign:'right'}}>${clock}</span>
+                  </label>
+                  <div style=${{fontFamily:'var(--font-mono)',fontSize:'var(--text-2xs)',color:'var(--ink-muted)',textTransform:'uppercase',letterSpacing:'.06em',marginTop:'.2rem'}}>Lighting</div>
+                  ${[{k:'sun',label:'Sun',min:0.2,max:2.5},{k:'ambient',label:'Ambient',min:0.2,max:2.0},{k:'exposure',label:'Exposure',min:0.5,max:1.8},{k:'shadow',label:'Shadow',min:0,max:1.5}].map(function(row){
+                    var v = (typeof ls[row.k]==='number') ? ls[row.k] : 1.0;
+                    return html`<label key=${row.k} style=${{display:'flex',alignItems:'center',gap:'.5rem',fontSize:'var(--text-xs)',color:'var(--ink-secondary)'}}>
+                      <span style=${{width:60}}>${row.label}</span>
+                      <input type="range" min=${row.min} max=${row.max} step="0.05" value=${v}
+                        onInput=${function(e){
+                          var nv=parseFloat(e.target.value);
+                          var ls2=Object.assign({sun:1,ambient:1,exposure:1,shadow:1,time:13},(s.prefs.lightSettings)||{});
+                          ls2[row.k]=nv;
+                          d({t:A.UPD_PREFS,u:{lightSettings:ls2}});
+                        }}
+                        style=${{flex:1,accentColor:'var(--accent)'}} />
+                      <span style=${{fontFamily:'var(--font-mono)',fontSize:'var(--text-2xs)',color:'var(--ink-muted)',width:30,textAlign:'right'}}>${v.toFixed(2)}</span>
+                    </label>`;
+                  })}
+                  <button onClick=${function(){ d({t:A.UPD_PREFS,u:{lightSettings:{sun:1,ambient:1,exposure:1,shadow:1,time:13}}}); }}
+                    style=${{alignSelf:'flex-end',background:'none',border:'1px solid var(--hairline-strong)',padding:'.18rem .55rem',borderRadius:'var(--radius-xs)',cursor:'pointer',fontSize:'var(--text-2xs)',color:'var(--ink-muted)',fontFamily:'var(--font-body)'}}>Reset</button>
+                </div>`;
+              }()}
             </div>
           </div>`}
         </div>
