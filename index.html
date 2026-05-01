@@ -18832,7 +18832,7 @@ function startApp() {
 
     return html`<div style=${{maxWidth:'100%',background:'var(--card-bg)',border:'1px solid var(--border)',borderRadius:10,padding:'.65rem .75rem',fontSize:'0.85rem'}}>
       <div style=${{fontWeight:600,marginBottom:'.5rem',color:'var(--text-primary)',display:'flex',alignItems:'center',gap:'.3rem'}}>
-        <span style=${{fontSize:'0.98rem'}}>⚡</span> Clash Detection Setup
+        Clash Detection Setup
       </div>
       ${setup._multiSelf && html`<div style=${{background:'rgba(124,58,237,.1)',border:'1px solid rgba(124,58,237,.3)',borderRadius:6,padding:'.35rem .5rem',marginBottom:'.5rem',fontSize:'0.71rem',color:'#a78bfa'}}>
         Self-clash mode: ${setup._multiSelf.map(function(p){return p.name;}).join(', ')} — each group checked against itself
@@ -20211,7 +20211,7 @@ function startApp() {
     return html`<div onClick=${function(e){if(e.target===e.currentTarget)onDismiss()}} style=${{position:'fixed',inset:0,background:'rgba(0,0,0,.65)',zIndex:10000,display:'flex',alignItems:'center',justifyContent:'center',padding:'2rem',backdropFilter:'blur(4px)'}}>
       <div style=${{background:'var(--bg-primary)',border:'1px solid #f87171',borderRadius:12,padding:'1.5rem',maxWidth:500,width:'100%',boxShadow:'0 16px 48px rgba(0,0,0,.5)'}}>
         <div style=${{display:'flex',alignItems:'flex-start',gap:'.75rem',marginBottom:'1rem'}}>
-          <span style=${{fontSize:'1.6rem',lineHeight:1}}>${hasMem && usedMB > 0 ? '⚠️' : '📊'}</span>
+          ${hasMem && usedMB > 0 ? html`<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#f87171" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>` : html`<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>`}
           <div>
             <div style=${{fontSize:'1.1rem',fontWeight:700,color:hasMem && usedMB > 0 ? '#f87171' : 'var(--text-primary)',marginBottom:'.2rem'}}>
               ${hasMem && usedMB > 0 ? 'High Memory Usage Detected' : 'Send Memory Report'}
@@ -20664,9 +20664,17 @@ function startApp() {
         }}>${drawerEl ? 'Details ›' : 'Ask AI ›'}</button>`;
     }
 
-    // ── Details tab content ──
+    // ── Details tab content — data depth scales with workspace ──
     function renderDetails() {
       var el = drawerEl;
+      var workspace = s.workspace || 'present';
+      var WRAP = {flex:1,overflowY:'auto',padding:'.75rem .9rem',display:'flex',flexDirection:'column',gap:'.6rem'};
+      var ROW  = {display:'flex',gap:'.4rem',alignItems:'baseline',padding:'.22rem 0',borderBottom:'1px solid var(--border-subtle)',fontSize:'.75rem'};
+      var LBL  = {color:'var(--text-muted)',minWidth:80,flexShrink:0};
+      var VAL  = {color:'var(--text-primary)',flex:1,wordBreak:'break-word'};
+      var CARD = {background:'var(--bg-secondary)',borderRadius:'var(--radius-sm)',padding:'.5rem .75rem',border:'1px solid var(--border-subtle)'};
+      var HDR  = {fontSize:'.65rem',fontWeight:700,color:'var(--text-muted)',textTransform:'uppercase',letterSpacing:'.04em',marginBottom:'.25rem'};
+
       if (!el) {
         return html`<div style=${{flex:1,display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',
           padding:'2rem 1.2rem',color:'var(--text-muted)',textAlign:'center',gap:'1rem'}}>
@@ -20674,73 +20682,143 @@ function startApp() {
           <div style=${{fontSize:'.78rem',lineHeight:1.6}}>Click any element in the model to see its details here.</div>
         </div>`;
       }
-      // Find full element data
+
+      // Resolve latest element data
       var _latestEl = null;
       var latestState = window._ccLatestState || s;
       if (el.expressId != null && latestState.models) {
         for (var _mi=0; _mi<latestState.models.length && !_latestEl; _mi++) {
           var _mdl=latestState.models[_mi];
-          if (!_mdl || !_mdl.elements) continue;
+          if (!_mdl||!_mdl.elements) continue;
           for (var _ei=0; _ei<_mdl.elements.length; _ei++) {
             if (_mdl.elements[_ei].expressId===el.expressId){_latestEl=_mdl.elements[_ei];break;}
           }
         }
       }
-      var ep=(_latestEl&&_latestEl.props)||(el&&el.props)||null;
-      var typeName=String(ep&&ep.ifcType||'Element').replace(/^Ifc/,'').replace(/StandardCase$/,'').replace(/([a-z])([A-Z])/g,'$1 $2');
-      var elName=ep&&ep.name||'Unnamed element';
-      var storey=ep&&(ep.storey||ep.psets&&ep.psets['Constraints']&&ep.psets['Constraints']['Base Constraint'])||null;
-      var discipline=el.modelName||'';
-      // Linked issues
-      var linkedIssues=(latestState.issues||[]).filter(function(i){return i.elementId===el.expressId||i.globalId===(ep&&ep.globalId);});
-      var linkedClashes=(latestState.clashes||[]).filter(function(c){return (c.a&&c.a.expressId===el.expressId)||(c.b&&c.b.expressId===el.expressId);});
-      var CHIP={fontSize:'.68rem',padding:'.15rem .4rem',borderRadius:'var(--radius-pill)',background:'var(--accent-dim)',color:'var(--accent-light)',display:'inline-block'};
-      var ROW={display:'flex',gap:'.4rem',alignItems:'baseline',padding:'.25rem 0',borderBottom:'1px solid var(--border-subtle)',fontSize:'.75rem'};
-      var LBL={color:'var(--text-muted)',minWidth:80,flexShrink:0};
-      var VAL={color:'var(--text-primary)',flex:1,wordBreak:'break-word'};
-      return html`<div style=${{flex:1,overflowY:'auto',padding:'.75rem .9rem',display:'flex',flexDirection:'column',gap:'.6rem'}}>
-        <!-- Header card -->
-        <div style=${{background:'var(--accent-dim)',borderRadius:'var(--radius-md)',padding:'.7rem .85rem',border:'1px solid rgba(124,58,237,.2)'}}>
-          <div style=${{fontSize:'.68rem',color:'var(--accent-subtle)',marginBottom:'.2rem',textTransform:'uppercase',letterSpacing:'.04em'}}>${typeName}</div>
-          <div style=${{fontSize:'1rem',fontWeight:700,color:'var(--text-primary)',lineHeight:1.3}}>${elName}</div>
-          ${discipline && html`<div style=${{fontSize:'.7rem',color:'var(--text-secondary)',marginTop:'.3rem'}}>${discipline}</div>`}
+      var ep = (_latestEl&&_latestEl.props)||(el&&el.props)||null;
+      var typeName = String(ep&&ep.ifcType||'Element').replace(/^Ifc/,'').replace(/StandardCase$/,'').replace(/([a-z])([A-Z])/g,'$1 $2');
+      var elName   = ep&&ep.name||'Unnamed element';
+      var storey   = ep&&(ep.storey||ep.psets&&ep.psets['Constraints']&&ep.psets['Constraints']['Base Constraint'])||null;
+      var discipline = el.modelName||'';
+
+      // Shared header block used by all levels
+      var headerCard = html`<div style=${{background:'var(--accent-bg)',borderRadius:'var(--radius-md)',padding:'.7rem .85rem',border:'1px solid var(--accent-bg-deep)'}}>
+        <div style=${{fontSize:'.68rem',color:'var(--accent)',marginBottom:'.2rem',textTransform:'uppercase',letterSpacing:'.04em',fontWeight:600}}>${typeName}</div>
+        <div style=${{fontSize:'1rem',fontWeight:700,color:'var(--text-primary)',lineHeight:1.3}}>${elName}</div>
+        ${discipline && html`<div style=${{fontSize:'.7rem',color:'var(--text-secondary)',marginTop:'.25rem'}}>${discipline}</div>`}
+      </div>`;
+
+      // ── PRESENT: identity only ────────────────────────────────────
+      if (workspace === 'present') {
+        return html`<div style=${WRAP}>
+          ${headerCard}
+          ${(storey||ep&&ep.material) && html`<div style=${CARD}>
+            ${storey   && html`<div style=${ROW}><span style=${LBL}>Floor</span><span style=${VAL}>${storey}</span></div>`}
+            ${ep&&ep.material && html`<div style=${ROW}><span style=${LBL}>Material</span><span style=${VAL}>${ep.material}</span></div>`}
+          </div>`}
+        </div>`;
+      }
+
+      // ── COORDINATE: identity + dimensions + data quality ─────────
+      if (workspace === 'coordinate') {
+        var q2 = ep&&ep.quantities||{};
+        function fmtDim(v){ return typeof v==='number'?(v>=1?v.toFixed(3)+' m':(v*1000).toFixed(1)+' mm'):String(v); }
+        function fmtArea(v){ return typeof v==='number'?(v>=1?v.toFixed(2)+' m²':(v*10000).toFixed(1)+' cm²'):String(v); }
+        var dimKeys  = ['Length','Width','Height','Thickness','Depth','Perimeter'];
+        var areaKeys = ['Area','GrossArea','NetArea'];
+        var dims  = dimKeys.filter(function(k){return q2[k]!=null;}).map(function(k){return {l:k,v:q2[k]};});
+        var areas = areaKeys.filter(function(k){return q2[k]!=null;}).map(function(k){return {l:k.replace(/^(Gross|Net)/,'$1 '),v:q2[k]};});
+        // Data quality checks
+        var psetCount = ep&&ep.psets ? Object.keys(ep.psets).length : 0;
+        var qtyCount  = ep&&ep.quantities ? Object.keys(ep.quantities).length : 0;
+        var dqChecks  = [
+          {ok:!!(ep&&ep.globalId),          label:'GlobalId'},
+          {ok:!!(ep&&ep.name&&ep.name!=='Unnamed element'), label:'Name'},
+          {ok:psetCount>0,                  label:psetCount>0?psetCount+' pset'+(psetCount===1?'':'s'):'No psets'},
+          {ok:qtyCount>0,                   label:qtyCount>0?qtyCount+' quantities':'No quantities'},
+          {ok:!!(ep&&ep.material),          label:'Material'},
+        ];
+        // First pset only
+        var firstPset = null;
+        if (ep&&ep.psets) {
+          var psetNames = Object.keys(ep.psets);
+          if (psetNames.length) {
+            var ps = ep.psets[psetNames[0]];
+            var cleanName = psetNames[0].replace(/^Pset_/,'').replace(/^Qto_/,'').replace(/([a-z])([A-Z])/g,'$1 $2');
+            firstPset = {name:cleanName, props:Object.keys(ps).map(function(k){return {k:k.replace(/([a-z])([A-Z])/g,'$1 $2'),v:String(ps[k])};})};
+          }
+        }
+        return html`<div style=${WRAP}>
+          ${headerCard}
+          <div style=${CARD}>
+            ${storey       && html`<div style=${ROW}><span style=${LBL}>Floor</span><span style=${VAL}>${storey}</span></div>`}
+            ${ep&&ep.material && html`<div style=${ROW}><span style=${LBL}>Material</span><span style=${VAL}>${ep.material}</span></div>`}
+            ${ep&&ep.globalId && html`<div style=${ROW}><span style=${LBL}>GlobalId</span><span style=${{...VAL,fontFamily:'var(--font-mono)',fontSize:'.68rem',opacity:.7}}>${ep.globalId.slice(0,14)}…</span></div>`}
+          </div>
+          ${(dims.length||areas.length) && html`<div style=${CARD}>
+            <div style=${HDR}>Dimensions</div>
+            ${dims.map(function(d){return html`<div style=${ROW}><span style=${LBL}>${d.l}</span><span style=${{...VAL,fontFamily:'var(--font-mono)'}}>${fmtDim(d.v)}</span></div>`;})}
+            ${areas.map(function(a){return html`<div style=${ROW}><span style=${LBL}>${a.l}</span><span style=${{...VAL,fontFamily:'var(--font-mono)'}}>${fmtArea(a.v)}</span></div>`;})}
+          </div>`}
+          <div style=${CARD}>
+            <div style=${HDR}>Data Quality</div>
+            <div style=${{display:'flex',flexWrap:'wrap',gap:'.3rem',marginTop:'.15rem'}}>
+              ${dqChecks.map(function(c){return html`<span key=${c.label} style=${{
+                fontSize:'.68rem',padding:'.15rem .45rem',borderRadius:'var(--radius-pill)',
+                background:c.ok?'var(--color-success-bg)':'var(--color-danger-bg)',
+                color:c.ok?'var(--color-success-fg)':'var(--color-danger-fg)',
+                border:'1px solid '+(c.ok?'var(--color-success-border)':'var(--color-danger-border)'),
+                display:'flex',alignItems:'center',gap:'.25rem'
+              }}>
+                <svg width="8" height="8" viewBox="0 0 10 10"><circle cx="5" cy="5" r="4" fill="currentColor"/></svg>
+                ${c.label}
+              </span>`;
+              })}
+            </div>
+          </div>
+          ${firstPset && html`<div style=${CARD}>
+            <div style=${HDR}>${firstPset.name}</div>
+            ${firstPset.props.map(function(p){return html`<div style=${ROW}><span style=${LBL}>${p.k}</span><span style=${VAL}>${p.v}</span></div>`;})}
+          </div>`}
+        </div>`;
+      }
+
+      // ── REVIEW: full data — psets, clashes, issues, actions ──────
+      var linkedIssues  = (latestState.issues||[]).filter(function(i){return i.elementId===el.expressId||i.globalId===(ep&&ep.globalId);});
+      var linkedClashes = (latestState.clashes||[]).filter(function(c){return (c.a&&c.a.expressId===el.expressId)||(c.b&&c.b.expressId===el.expressId);});
+      var allPsets = [];
+      if (ep&&ep.psets) {
+        Object.keys(ep.psets).forEach(function(setName){
+          var ps=ep.psets[setName]; var keys=Object.keys(ps); if(!keys.length) return;
+          allPsets.push({name:setName.replace(/^Pset_/,'').replace(/^Qto_/,'').replace(/([a-z])([A-Z])/g,'$1 $2'),
+            props:keys.map(function(k){return {k:k.replace(/([a-z])([A-Z])/g,'$1 $2'),v:String(ps[k])};})});
+        });
+      }
+      return html`<div style=${WRAP}>
+        ${headerCard}
+        <div style=${CARD}>
+          ${storey       && html`<div style=${ROW}><span style=${LBL}>Floor</span><span style=${VAL}>${storey}</span></div>`}
+          ${ep&&ep.material && html`<div style=${ROW}><span style=${LBL}>Material</span><span style=${VAL}>${ep.material}</span></div>`}
+          ${ep&&ep.globalId && html`<div style=${ROW}><span style=${LBL}>GlobalId</span><span style=${{...VAL,fontFamily:'var(--font-mono)',fontSize:'.68rem',opacity:.7}}>${ep.globalId.slice(0,14)}…</span></div>`}
         </div>
-        <!-- Key facts -->
-        <div style=${{background:'var(--bg-secondary)',borderRadius:'var(--radius-sm)',padding:'.5rem .75rem',border:'1px solid var(--border-subtle)'}}>
-          ${storey && html`<div style=${ROW}><span style=${LBL}>Floor</span><span style=${VAL}>${storey}</span></div>`}
-          ${ep&&ep.globalId && html`<div style=${ROW}><span style=${LBL}>ID</span><span style=${{...VAL,fontFamily:'var(--font-mono)',fontSize:'.68rem',opacity:.7}}>${ep.globalId.slice(0,12)}…</span></div>`}
-        </div>
-        <!-- All property sets -->
-        ${ep&&ep.psets && function(){
-          var sections=[];
-          Object.keys(ep.psets).forEach(function(setName){
-            var ps=ep.psets[setName];
-            var keys=Object.keys(ps);
-            if(!keys.length) return;
-            var cleanName=setName.replace(/^Pset_/,'').replace(/^Qto_/,'').replace(/([a-z])([A-Z])/g,'$1 $2');
-            sections.push({name:cleanName,props:keys.map(function(k){return {k:k.replace(/([a-z])([A-Z])/g,'$1 $2'),v:String(ps[k])};})});
-          });
-          if(!sections.length) return null;
-          return html`<div style=${{background:'var(--bg-secondary)',borderRadius:'var(--radius-sm)',padding:'.5rem .75rem',border:'1px solid var(--border-subtle)'}}>
-            ${sections.map(function(sec){return html`<div key=${sec.name} style=${{marginBottom:'.4rem'}}>
-              <div style=${{fontSize:'.65rem',fontWeight:700,color:'var(--text-muted)',textTransform:'uppercase',letterSpacing:'.04em',marginBottom:'.2rem'}}>${sec.name}</div>
-              ${sec.props.map(function(p){return html`<div style=${ROW}><span style=${LBL}>${p.k}</span><span style=${VAL}>${p.v}</span></div>`;})}
-            </div>`;})}
-          </div>`;
-        }()}
-        <!-- Linked issues -->
-        ${(linkedIssues.length>0||linkedClashes.length>0) && html`<div style=${{background:'var(--bg-secondary)',borderRadius:'var(--radius-sm)',padding:'.5rem .75rem',border:'1px solid var(--border-subtle)'}}>
-          <div style=${{fontSize:'.68rem',fontWeight:600,color:'var(--text-muted)',textTransform:'uppercase',letterSpacing:'.04em',marginBottom:'.35rem'}}>Linked</div>
-          ${linkedIssues.map(function(i){return html`<div key=${i.id} style=${{fontSize:'.75rem',padding:'.2rem 0',color:'var(--text-secondary)',display:'flex',gap:'.4rem',alignItems:'center'}}>
-            <svg width="10" height="10" viewBox="0 0 24 24" fill="${i.status==='open'?'#f59e0b':'#22c55e'}" stroke="none"><circle cx="12" cy="12" r="10"/></svg>
-            <span>${i.title||'Issue'}</span>
-          </div>`;})}
-          ${linkedClashes.map(function(c){return html`<div key=${c.id} style=${{fontSize:'.75rem',padding:'.2rem 0',color:'var(--text-secondary)',display:'flex',gap:'.4rem',alignItems:'center'}}>
-            <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="#ef4444" stroke-width="2.5"><path d="M12 9v4m0 4h.01M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/></svg>
-            <span style=${{color:'var(--text-muted)',fontFamily:'var(--font-mono)',fontSize:'.68rem'}}>${c.title||'Conflict'}</span>
+        ${allPsets.length>0 && html`<div style=${CARD}>
+          <div style=${HDR}>Properties</div>
+          ${allPsets.map(function(sec){return html`<div key=${sec.name} style=${{marginBottom:'.4rem'}}>
+            <div style=${{fontSize:'.65rem',fontWeight:600,color:'var(--text-secondary)',marginBottom:'.15rem'}}>${sec.name}</div>
+            ${sec.props.map(function(p){return html`<div style=${ROW}><span style=${LBL}>${p.k}</span><span style=${VAL}>${p.v}</span></div>`;})}
           </div>`;})}
         </div>`}
-        <!-- Actions -->
+        ${(linkedClashes.length>0||linkedIssues.length>0) && html`<div style=${CARD}>
+          <div style=${HDR}>Clashes &amp; Issues</div>
+          ${linkedClashes.map(function(c){return html`<div key=${c.id} style=${{fontSize:'.75rem',padding:'.2rem 0',display:'flex',gap:'.4rem',alignItems:'center',borderBottom:'1px solid var(--border-subtle)'}}>
+            <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="var(--color-danger)" stroke-width="2.5"><path d="M12 9v4m0 4h.01M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/></svg>
+            <span style=${{color:'var(--text-secondary)',flex:1,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>${c.title||'Clash'}</span>
+          </div>`;})}
+          ${linkedIssues.map(function(i){return html`<div key=${i.id} style=${{fontSize:'.75rem',padding:'.2rem 0',display:'flex',gap:'.4rem',alignItems:'center',borderBottom:'1px solid var(--border-subtle)'}}>
+            <svg width="10" height="10" viewBox="0 0 24 24" fill="${i.status==='open'?'var(--color-warning)':'var(--color-success)'}" stroke="none"><circle cx="12" cy="12" r="10"/></svg>
+            <span style=${{color:'var(--text-secondary)',flex:1,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>${i.title||'Issue'}</span>
+          </div>`;})}
+        </div>`}
         <div style=${{display:'flex',gap:'.4rem',flexWrap:'wrap'}}>
           <button onClick=${function(){d({t:A.MODAL,v:true,el:el});d({t:A.TAB,v:'issues'});}}
             style=${{flex:1,padding:'.4rem .6rem',borderRadius:'var(--radius-sm)',background:'var(--accent)',color:'#fff',border:'none',fontSize:'.74rem',fontWeight:600,cursor:'pointer',fontFamily:'inherit'}}>+ New issue</button>
