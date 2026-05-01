@@ -4937,6 +4937,9 @@ function startApp() {
     var measurePtsRef = useRef([]); // current measurement click points
     var modelsRef = useRef(s.models);
     modelsRef.current = s.models;
+    // Multi-select: array of {modelId, expressId}. selectedEl is the most-recent.
+    var selectedRefsRef = useRef([]);
+    window._ccSelectedRefs = selectedRefsRef.current;
     // Compute the correct world-space bounding box from pre-computed element boxes.
     // This is reliable regardless of GPU instancing (InstancedMesh objects report
     // local-geometry bounds at origin when queried via setFromObject, which is wrong).
@@ -6428,6 +6431,45 @@ function startApp() {
                 if(els[ei].expressId===eid){ found={el:els[ei],model:curModels[mi]}; break; }
               }
             }
+            // ── Ctrl/Cmd+Click: toggle multi-select ──
+            var _multi = !!(e.ctrlKey || e.metaKey);
+            var _hitModelId = found && found.model ? found.model.id : ((hit.parent && hit.parent.userData && hit.parent.userData.modelId) || null);
+            if (_multi) {
+              var refs = selectedRefsRef.current.slice();
+              var idx = -1;
+              for (var _ri=0;_ri<refs.length;_ri++) {
+                if (refs[_ri].expressId === eid && refs[_ri].modelId === _hitModelId) { idx = _ri; break; }
+              }
+              if (idx >= 0) {
+                refs.splice(idx, 1);
+              } else {
+                refs.push({modelId: _hitModelId, expressId: eid});
+              }
+              selectedRefsRef.current = refs;
+              window._ccSelectedRefs = refs;
+              if (_highlightRefs) _highlightRefs(refs, false);
+              if (refs.length === 0) {
+                setSelectedEl(null);
+              } else {
+                // Show last-added (or last-remaining) in Details panel
+                var lastRef = refs[refs.length-1];
+                var lastFound = null;
+                for(var _mi2=0;_mi2<curModels.length&&!lastFound;_mi2++){
+                  var _els2 = curModels[_mi2].elements||[];
+                  for(var _ei2=0;_ei2<_els2.length;_ei2++){
+                    if(_els2[_ei2].expressId===lastRef.expressId){ lastFound={el:_els2[_ei2],model:curModels[_mi2]}; break; }
+                  }
+                }
+                if (lastFound) {
+                  setSelectedEl({props:lastFound.el.props||{}, modelName:lastFound.model.name, expressId:lastRef.expressId, point:null, box:null, normal:null});
+                }
+              }
+              invalidate();
+              return;
+            }
+            // ── Single-click: reset multi-selection to just this one ──
+            selectedRefsRef.current = [{modelId: _hitModelId, expressId: eid}];
+            window._ccSelectedRefs = selectedRefsRef.current;
             _clearHlRef();
             var clickDiscColor = 0x60a5fa;
             if(found && found.model) {
@@ -6479,9 +6521,14 @@ function startApp() {
             } catch(pickErr) { console.warn('Element pick failed:', pickErr.message||pickErr); }
           }
         } else {
-          _clearHighlightGroups();
-          unghostAll();
-          setSelectedEl(null);
+          // Empty click — but Ctrl/Cmd+empty should preserve multi-selection
+          if (!(e.ctrlKey || e.metaKey)) {
+            selectedRefsRef.current = [];
+            window._ccSelectedRefs = selectedRefsRef.current;
+            _clearHighlightGroups();
+            unghostAll();
+            setSelectedEl(null);
+          }
         }
       });
 
