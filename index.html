@@ -10046,127 +10046,82 @@ function startApp() {
     return html`<div style=${{display:'flex',flexDirection:'column',flex:1,overflow:'hidden',minHeight:0}}
       onDrop=${onDrop} onDragOver=${onDragOver} onDragEnter=${onDragEnter} onDragLeave=${onDragLeave}>
 
-      <!-- Header: count + add button -->
-      <div style=${{padding:'.7rem .85rem .55rem',borderBottom:'1px solid var(--hairline)',flexShrink:0,display:'flex',alignItems:'center',justifyContent:'space-between',gap:'.5rem'}}>
-        <span style=${{fontSize:'.75rem',fontWeight:600,color:'var(--text-muted)',textTransform:'uppercase',letterSpacing:'.05em'}}>
+      <!-- Header -->
+      <div style=${{padding:'.65rem .85rem .5rem',borderBottom:'1px solid var(--hairline)',flexShrink:0,display:'flex',alignItems:'center',justifyContent:'space-between',gap:'.5rem'}}>
+        <span style=${{fontSize:'.72rem',fontWeight:600,color:'var(--text-muted)',textTransform:'uppercase',letterSpacing:'.05em'}}>
           Models${s.models.length>0?html` <span style=${{fontWeight:400,color:'var(--text-faint)',fontFamily:'var(--font-mono)'}}>${s.models.length}</span>`:''}
         </span>
-        <button onClick=${function(){fileRef.current&&fileRef.current.click()}} disabled=${loading}
-          style=${{display:'inline-flex',alignItems:'center',gap:'.3rem',padding:'.25rem .55rem',
+        <button onClick=${function(){setErr('');fileRef.current&&fileRef.current.click();}} disabled=${loading}
+          style=${{display:'inline-flex',alignItems:'center',gap:'.3rem',padding:'.22rem .5rem',
             background:'var(--accent)',color:'#fff',border:'none',borderRadius:'var(--radius-xs)',
-            cursor:loading?'wait':'pointer',fontSize:'.72rem',fontFamily:'var(--font-body)',fontWeight:500}}>
+            cursor:loading?'wait':'pointer',fontSize:'.72rem',fontFamily:'var(--font-body)',fontWeight:500,flexShrink:0}}>
           ${loading
             ? html`<svg class="spin" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12a9 9 0 1 1-6.22-8.56"/></svg>`
             : html`<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>`}
           ${loading?loadMsg||'Loading…':'Add'}
         </button>
       </div>
-
       <input ref=${fileRef} type="file" accept=".ifc,.glb,.ifcmeta,.ifcprops" multiple style=${{display:'none'}} onChange=${onFiles} />
       <input ref=${file2dRef} type="file" accept=".dxf,.pdf,.dwg,.nwd,.nwc,.nwf" multiple style=${{display:'none'}} onChange=${onFiles} />
-
-      <!-- Error banner -->
-      ${err && html`<div style=${{padding:'.4rem .75rem',background:'var(--color-danger-bg)',borderBottom:'1px solid var(--color-danger-border)',fontSize:'.7rem',color:'var(--color-danger-fg)',whiteSpace:'pre-line',lineHeight:1.4}}>${err}</div>`}
-
-      <!-- Model list + levels in one scrollable column -->
-      <div style=${{flex:1,overflowY:'auto',minHeight:0,padding:'.45rem .5rem',display:'flex',flexDirection:'column',gap:'.2rem'}}>
-
-        <!-- Empty state -->
+      ${err && html`<div style=${{padding:'.35rem .75rem',background:'var(--color-danger-bg)',borderBottom:'1px solid var(--color-danger-border)',fontSize:'.7rem',color:'var(--color-danger-fg)',whiteSpace:'pre-line',lineHeight:1.4}}>${err}</div>`}
+      <div style=${{flex:1,overflowY:'auto',minHeight:0,padding:'.4rem .45rem',display:'flex',flexDirection:'column',gap:'.18rem'}}>
         ${s.models.length===0 && html`<div style=${{textAlign:'center',padding:'2.5rem 1rem',color:'var(--text-faint)'}}>
-          <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round" style=${{margin:'0 auto .75rem',display:'block',opacity:.5}}>
-            <path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/><path d="M12 2L2 7l10 5 10-5-10-5z"/>
-          </svg>
-          <div style=${{fontSize:'.8rem',marginBottom:'.35rem'}}>No models loaded</div>
-          <div style=${{fontSize:'.7rem',lineHeight:1.5}}>Drop an IFC, GLB, PDF or DXF file here, or click Add above.</div>
+          <svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round" style=${{margin:'0 auto .65rem',display:'block',opacity:.5}}><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/><path d="M12 2L2 7l10 5 10-5-10-5z"/></svg>
+          <div style=${{fontSize:'.78rem',marginBottom:'.3rem'}}>No models loaded</div>
+          <div style=${{fontSize:'.69rem',lineHeight:1.5,color:'var(--text-faint)'}}>Drop an IFC, GLB, PDF or DXF file here,<br/>or click Add above.</div>
         </div>`}
-
-        <!-- Model cards -->
         ${s.models.map(function(m){return html`<${ModelCard} key=${m.id} m=${m} d=${d} s=${s} />`})}
-
-        <!-- 2D underlays -->
-        ${s.underlays.length > 0 && html`<div style=${{marginTop:'.35rem',borderTop:'1px solid var(--hairline)',paddingTop:'.35rem'}}>
-          <div style=${{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:'.3rem',padding:'0 .2rem'}}>
-            <span style=${{fontSize:'.68rem',fontWeight:600,color:'var(--text-muted)',textTransform:'uppercase',letterSpacing:'.05em'}}>2D Underlays</span>
-            <button onClick=${function(){d({t:A.UNDERLAY_MODE,v:'view2d'})}}
-              style=${{fontSize:'.68rem',padding:'.15rem .4rem',background:'none',border:'1px solid var(--border)',borderRadius:'var(--radius-xs)',cursor:'pointer',color:'var(--text-secondary)',fontFamily:'var(--font-body)'}}>View 2D</button>
+        ${s.underlays.length > 0 && html`<div style=${{marginTop:'.3rem',borderTop:'1px solid var(--hairline)',paddingTop:'.3rem'}}>
+          <div style=${{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:'.25rem',padding:'0 .2rem'}}>
+            <span style=${{fontSize:'.65rem',fontWeight:600,color:'var(--text-muted)',textTransform:'uppercase',letterSpacing:'.05em'}}>2D Underlays</span>
+            <button onClick=${function(){d({t:A.UNDERLAY_MODE,v:'view2d'})}} style=${{fontSize:'.65rem',padding:'.12rem .35rem',background:'none',border:'1px solid var(--border)',borderRadius:'var(--radius-xs)',cursor:'pointer',color:'var(--text-secondary)',fontFamily:'var(--font-body)'}}>View 2D</button>
           </div>
           ${s.underlays.map(function(ul){
-            return html`<div key=${ul.id}
-              style=${{display:'flex',alignItems:'center',gap:'.3rem',padding:'.22rem .35rem',borderRadius:'var(--radius-xs)',cursor:'pointer',background:s.activeUnderlay===ul.id?'var(--accent-bg)':'transparent'}}
-              onClick=${function(){d({t:A.SET_UNDERLAY,id:ul.id})}}>
+            return html`<div key=${ul.id} style=${{display:'flex',alignItems:'center',gap:'.3rem',padding:'.2rem .35rem',borderRadius:'var(--radius-xs)',cursor:'pointer',background:s.activeUnderlay===ul.id?'var(--accent-bg)':'transparent'}} onClick=${function(){d({t:A.SET_UNDERLAY,id:ul.id})}}>
               <span style=${{width:6,height:6,borderRadius:1,background:ul.type==='dxf'?'var(--color-success)':'var(--color-danger)',flexShrink:0}}></span>
-              <span style=${{fontSize:'.72rem',color:'var(--text-primary)',flex:1,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>${ul.name}</span>
-              <span style=${{fontSize:'.63rem',color:'var(--text-faint)',textTransform:'uppercase',fontFamily:'var(--font-mono)'}}>${ul.type}</span>
-              <button onClick=${function(e){e.stopPropagation();d({t:A.DEL_UNDERLAY,id:ul.id})}}
-                style=${{background:'none',border:'none',cursor:'pointer',color:'var(--text-faint)',lineHeight:1,padding:'0 2px',fontSize:'.72rem'}}>✕</button>
+              <span style=${{fontSize:'.7rem',color:'var(--text-primary)',flex:1,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>${ul.name}</span>
+              <span style=${{fontSize:'.6rem',color:'var(--text-faint)',textTransform:'uppercase',fontFamily:'var(--font-mono)'}}>${ul.type}</span>
+              <button onClick=${function(e){e.stopPropagation();d({t:A.DEL_UNDERLAY,id:ul.id})}} style=${{background:'none',border:'none',cursor:'pointer',color:'var(--text-faint)',padding:'0 2px',fontSize:'.7rem'}}>✕</button>
             </div>`;
           })}
         </div>`}
-
-        <!-- Levels -->
         ${function(){
-          var allStoreys = {}, elevMap = {};
+          var allStoreys={}, elevMap={};
           s.models.filter(function(m){return m.visible!==false}).forEach(function(m){
-            (m.storeys||[]).forEach(function(st){
-              if(!allStoreys[st]) allStoreys[st]={models:[]};
-              allStoreys[st].models.push(m.id);
-            });
-            (m.storeyData||[]).forEach(function(sd){
-              if(sd.name && sd.elevation!=null) elevMap[sd.name] = sd.elevation;
-            });
+            (m.storeys||[]).forEach(function(st){if(!allStoreys[st])allStoreys[st]={};});
+            (m.storeyData||[]).forEach(function(sd){if(sd.name&&sd.elevation!=null)elevMap[sd.name]=sd.elevation;});
           });
-          var stKeys = Object.keys(allStoreys).sort(function(a,b){return (elevMap[a]||0)-(elevMap[b]||0)});
+          var stKeys=Object.keys(allStoreys).sort(function(a,b){return (elevMap[a]||0)-(elevMap[b]||0);});
           if(!stKeys.length) return null;
-          return html`<div style=${{marginTop:'.35rem',borderTop:'1px solid var(--hairline)',paddingTop:'.35rem'}}>
-            <div style=${{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:'.3rem',padding:'0 .2rem'}}>
-              <span style=${{fontSize:'.68rem',fontWeight:600,color:'var(--text-muted)',textTransform:'uppercase',letterSpacing:'.05em'}}>Levels</span>
+          return html`<div style=${{marginTop:'.3rem',borderTop:'1px solid var(--hairline)',paddingTop:'.3rem'}}>
+            <div style=${{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:'.25rem',padding:'0 .2rem'}}>
+              <span style=${{fontSize:'.65rem',fontWeight:600,color:'var(--text-muted)',textTransform:'uppercase',letterSpacing:'.05em'}}>Levels</span>
               <div style=${{display:'flex',gap:'.2rem'}}>
-                <button onClick=${function(){s.models.forEach(function(m){d({t:A.TOGGLE_ALL_STOREYS,id:m.id,storeys:(m.storeys||[]).concat(['']),hide:false})})}}
-                  style=${{fontSize:'.63rem',padding:'.1rem .3rem',background:'none',border:'1px solid var(--border)',borderRadius:'var(--radius-xs)',cursor:'pointer',color:'var(--text-muted)',fontFamily:'var(--font-body)'}}>All on</button>
-                <button onClick=${function(){s.models.forEach(function(m){d({t:A.TOGGLE_ALL_STOREYS,id:m.id,storeys:(m.storeys||[]).concat(['']),hide:true})})}}
-                  style=${{fontSize:'.63rem',padding:'.1rem .3rem',background:'none',border:'1px solid var(--border)',borderRadius:'var(--radius-xs)',cursor:'pointer',color:'var(--text-muted)',fontFamily:'var(--font-body)'}}>All off</button>
+                <button onClick=${function(){s.models.forEach(function(m){d({t:A.TOGGLE_ALL_STOREYS,id:m.id,storeys:(m.storeys||[]).concat(['']),hide:false});});}} style=${{fontSize:'.6rem',padding:'.08rem .28rem',background:'none',border:'1px solid var(--border)',borderRadius:'var(--radius-xs)',cursor:'pointer',color:'var(--text-muted)',fontFamily:'var(--font-body)'}}>All on</button>
+                <button onClick=${function(){s.models.forEach(function(m){d({t:A.TOGGLE_ALL_STOREYS,id:m.id,storeys:(m.storeys||[]).concat(['']),hide:true});});}} style=${{fontSize:'.6rem',padding:'.08rem .28rem',background:'none',border:'1px solid var(--border)',borderRadius:'var(--radius-xs)',cursor:'pointer',color:'var(--text-muted)',fontFamily:'var(--font-body)'}}>All off</button>
               </div>
             </div>
             ${stKeys.map(function(st){
-              var elev = elevMap[st];
-              var hasElev = elev != null;
-              var isHidden = s.models.some(function(m){return !!(m.hiddenStoreys&&m.hiddenStoreys[st]);});
-              var isPlanActive = s.floorPlan && s.floorPlan.storeyName===st;
-              return html`<div key=${st}
-                style=${{display:'flex',alignItems:'center',gap:'.3rem',padding:'.18rem .35rem',borderRadius:'var(--radius-xs)',
-                  background:isPlanActive?'var(--accent-bg)':'transparent',
-                  borderLeft:isPlanActive?'2px solid var(--accent)':'2px solid transparent',
-                  opacity:isHidden?0.45:1,transition:'opacity .1s,background .1s'}}>
-                <button onClick=${function(){
-                  var hiding=!isHidden;
-                  s.models.forEach(function(m){if((m.storeys||[]).indexOf(st)!==-1){d({t:A.TOGGLE_ALL_STOREYS,id:m.id,storeys:[st],hide:hiding});}});
-                }}
+              var elev=elevMap[st], hasElev=elev!=null;
+              var isHidden=s.models.some(function(m){return !!(m.hiddenStoreys&&m.hiddenStoreys[st]);});
+              var isPlanActive=s.floorPlan&&s.floorPlan.storeyName===st;
+              return html`<div key=${st} style=${{display:'flex',alignItems:'center',gap:'.25rem',padding:'.16rem .3rem',borderRadius:'var(--radius-xs)',background:isPlanActive?'var(--accent-bg)':'transparent',borderLeft:isPlanActive?'2px solid var(--accent)':'2px solid transparent',opacity:isHidden?0.45:1,transition:'opacity .1s'}}>
+                <button onClick=${function(){var h=!isHidden;s.models.forEach(function(m){if((m.storeys||[]).indexOf(st)!==-1)d({t:A.TOGGLE_ALL_STOREYS,id:m.id,storeys:[st],hide:h});});}}
                   title=${isHidden?'Show level':'Hide level'}
                   style=${{background:'none',border:'none',cursor:'pointer',color:isHidden?'var(--text-faint)':'var(--text-secondary)',padding:0,lineHeight:0,flexShrink:0}}>
-                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round">
-                    ${isHidden
-                      ? html`<path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94"/><path d="M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19"/><line x1="1" y1="1" x2="23" y2="23"/>`
-                      : html`<path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/>`}
-                  </svg>
-                </button>
-                <span style=${{fontSize:'.72rem',color:isPlanActive?'var(--accent)':'var(--text-primary)',flex:1,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',fontWeight:isPlanActive?500:400}} title=${st}>${st}</span>
-                ${hasElev && html`<span style=${{fontSize:'.62rem',color:'var(--text-faint)',flexShrink:0,fontFamily:'var(--font-mono)'}}>${_ccFormatElev(elev)}</span>`}
-                <button onClick=${function(e){
-                  e.stopPropagation();
-                  if(s.floorPlan&&s.floorPlan.storeyName===st){d({t:A.FLOOR_PLAN,v:null});}
-                  else if(hasElev){d({t:A.FLOOR_PLAN,v:{storeyId:st,storeyName:st,elevation:elev||0,cutHeight:1.2}});}
-                }}
-                  title=${isPlanActive?'Exit plan view':'Open plan view'}
-                  style=${{background:'none',border:'none',cursor:'pointer',color:isPlanActive?'var(--accent)':'var(--text-faint)',padding:0,lineHeight:0,flexShrink:0}}>
                   <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round">
-                    <rect x="4" y="4" width="16" height="16" rx="1"/><path d="M4 10h16"/><path d="M10 4v16"/>
+                    ${isHidden?html`<path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94"/><path d="M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19"/><line x1="1" y1="1" x2="23" y2="23"/>`:html`<path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/>`}
                   </svg>
                 </button>
+                <span style=${{fontSize:'.7rem',color:isPlanActive?'var(--accent)':'var(--text-primary)',flex:1,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',fontWeight:isPlanActive?500:400}} title=${st}>${st}</span>
+                ${hasElev&&html`<span style=${{fontSize:'.6rem',color:'var(--text-faint)',flexShrink:0,fontFamily:'var(--font-mono)'}}>${_ccFormatElev(elev)}</span>`}
+                ${hasElev&&html`<button onClick=${function(e){e.stopPropagation();if(isPlanActive)d({t:A.FLOOR_PLAN,v:null});else d({t:A.FLOOR_PLAN,v:{storeyId:st,storeyName:st,elevation:elev||0,cutHeight:1.2}});}} title=${isPlanActive?'Exit plan':'Open plan'} style=${{background:'none',border:'none',cursor:'pointer',color:isPlanActive?'var(--accent)':'var(--text-faint)',padding:0,lineHeight:0,flexShrink:0}}>
+                  <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><rect x="4" y="4" width="16" height="16" rx="1"/><path d="M4 10h16"/><path d="M10 4v16"/></svg>
+                </button>`}
               </div>`;
             })}
           </div>`;
         }()}
-
       </div>
     </div>`;
   }
