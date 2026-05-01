@@ -15,10 +15,19 @@
         location.replace('https://www.clashcontrol.io' + path + location.search + location.hash);
       }
     })();
+    /* Apply persisted theme before first paint so dark-theme users don't flash
+       the default paper aesthetic on reload. Light is the default; only set
+       data-theme when explicitly stored as 'dark'. */
+    (function(){
+      try {
+        var t = localStorage.getItem('cc_theme');
+        if (t === 'dark') document.documentElement.setAttribute('data-theme','dark');
+      } catch(e) {}
+    })();
   </script>
-  <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 48 48'%3E%3Cdefs%3E%3ClinearGradient id='g' x1='0%25' y1='0%25' x2='100%25' y2='100%25'%3E%3Cstop offset='0%25' stop-color='%2300e5ff'/%3E%3Cstop offset='100%25' stop-color='%237c3aed'/%3E%3C/linearGradient%3E%3C/defs%3E%3Crect width='48' height='48' rx='10' fill='url(%23g)'/%3E%3Ctext x='18' y='30' text-anchor='middle' font-family='system-ui,sans-serif' font-weight='800' font-size='18' fill='white'%3EC%3C/text%3E%3Ctext x='-30' y='30' text-anchor='middle' font-family='system-ui,sans-serif' font-weight='800' font-size='18' fill='white' transform='scale(-1 1)'%3EC%3C/text%3E%3C/svg%3E">
+  <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 48 48'%3E%3Crect width='48' height='48' rx='6' fill='%231a1714'/%3E%3Crect x='10' y='10' width='28' height='28' fill='none' stroke='%23f5f2ec' stroke-width='2'/%3E%3Cline x1='10' y1='38' x2='38' y2='10' stroke='%23b8533a' stroke-width='2'/%3E%3C/svg%3E">
   <link rel="manifest" href="manifest.json">
-  <meta name="theme-color" content="#0f172a">
+  <meta name="theme-color" content="#f5f2ec">
   <meta name="description" content="Free, open-source IFC clash detection that runs in your browser. Load models, detect hard and soft clashes, review in 3D, and export to BCF 2.1 — no install, no license, no subscription.">
 
   <!-- Open Graph -->
@@ -42,10 +51,13 @@
   <!-- Includes localhost:* and 127.0.0.1:* for addon servers (Smart Bridge v0.1.3, ClashControlEngine) -->
   <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval' 'wasm-unsafe-eval' https://cdnjs.cloudflare.com https://cdn.jsdelivr.net https://gc.zgo.at; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com data:; connect-src 'self' https://cdn.jsdelivr.net https://cdnjs.cloudflare.com https://*.goatcounter.com https://huggingface.co https://cdn-lfs.huggingface.co https://cdn-lfs-us-1.huggingface.co https://*.hf.co http://localhost:11434 https://api.anthropic.com https://api.openai.com https://generativelanguage.googleapis.com https://api.github.com http://localhost:* ws://localhost:* http://127.0.0.1:* ws://127.0.0.1:* blob:; worker-src 'self' blob:; img-src 'self' blob: data:;">
 
-  <!-- Brand fonts: Syne (display), DM Sans (body), DM Mono (mono/metadata) -->
+  <!-- Editorial pairing: Fraunces (display, optical-sized high-contrast serif),
+       Instrument Sans (body, distinctive grotesque), DM Mono (IDs/dimensions).
+       Picked over the AI-default Inter/Roboto/system stack so the UI reads as
+       hand-designed editorial chrome — see anthropics/skills frontend-design. -->
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=DM+Sans:wght@400;500;600;700&family=Syne:wght@600;700;800&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=Fraunces:opsz,wght@9..144,400;9..144,500;9..144,600;9..144,700&family=Instrument+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
   <!-- CDN deps: React, Three.js, JSZip — all UMD, all cdnjs -->
   <!-- SRI hashes: regenerate with `node scripts/generate-sri.js` if you change versions -->
   <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js" integrity="sha384-tMH8h3BGESGckSAVGZ82T9n90ztNXxvdwvdM6UoR56cYcf+0iGXBliJ29D+wZ/x8" crossorigin="anonymous"></script>
@@ -139,64 +151,138 @@
   </script>
 
   <style>
+    /* ── Paper + Ink + Terracotta — the only palette in this app ──
+       Source of truth lives in --paper-* / --ink-* / --sev-*.
+       Legacy tokens (--bg-primary, --accent, etc.) alias to these so 19k lines
+       of existing styles automatically pick up the new aesthetic. */
     :root{
-      --bg-primary:#0f172a;--bg-secondary:#1e293b;--bg-tertiary:#0f172a;
-      --border:#334155;--border-subtle:#1e293b;
-      --text-primary:#e2e8f0;--text-secondary:#b0bec5;--text-muted:#8b9db5;--text-faint:#6b7f99;
-      --accent:#7c3aed;--accent-hover:#6d28d9;--accent-light:#8b5cf6;
-      --accent-subtle:#c4b5fd;--accent-bg:rgba(124,58,237,.1);--accent-bg-deep:rgba(124,58,237,.2);--accent-dim:rgba(124,58,237,.12);
-      --scene-bg:#0f172a;--grid-line:#1e3a5f;--grid-center:#172554;
-      --overlay-bg:rgba(15,23,42,.85);--overlay-bg-strong:rgba(15,23,42,.95);
-      --modal-bg:rgba(0,0,0,.7);
-      --pill-blue-bg:#172554;--pill-green-bg:#052e16;--pill-amber-bg:#422006;
-      --pill-blue:#60a5fa;--pill-green:#34d399;--pill-amber:#fbbf24;
-      --section-hdr:#64748b;--tag-bg:#1e293b;
-      --vc-bg:rgba(30,41,59,.85);--vc-border:rgba(71,85,105,.6);--vc-btn:rgba(51,65,85,.7);--vc-text:#cbd5e1;--vc-center:rgba(124,58,237,.5);
-      --card-bg:#162032;--card-border:#1e3a5f;
-      --input-bg:#0f172a;
-      --shadow-sm:0 1px 3px rgba(0,0,0,.3);--shadow-md:0 4px 12px rgba(0,0,0,.3);--shadow-lg:0 8px 24px rgba(0,0,0,.4);
-      /* ── Design tokens (Stitch design.md / Material 3 inspired) ── */
+      /* Paper (light is the default theme) */
+      --paper-bg:#f5f2ec;       /* warm off-white, app + canvas background */
+      --paper-edge:#ebe6dd;      /* 1-step recessed (rails, inputs at rest) */
+      --surface:#ffffff;         /* cards, modals, drawers */
+      --surface-warm:#faf7f1;    /* hover wells, secondary surface */
+
+      --ink-primary:#1a1714;     /* near-black with a warm tint, body text */
+      --ink-secondary:#4a443d;
+      --ink-muted:#807870;
+      --ink-faint:#b3aca2;
+
+      --hairline:rgba(26,23,20,.08);          /* the only divider colour */
+      --hairline-strong:rgba(26,23,20,.14);
+
+      --ink-accent:#b8533a;                   /* terracotta, the single accent */
+      --ink-accent-soft:rgba(184,83,58,.10);
+      --ink-accent-deep:#8f3e2a;
+
+      /* Severity (used as a 6-px DOT only — never as a background fill) */
+      --sev-critical:#b8533a;
+      --sev-major:#c89548;
+      --sev-minor:#6b8267;
+      --sev-info:#7d7d7d;
+
+      /* Legacy aliases — kept so existing components inherit the palette.
+         Do not introduce new code that uses these names; reach for the
+         paper/ink/sev tokens above instead. */
+      --bg-primary:var(--paper-bg);
+      --bg-secondary:var(--surface);
+      --bg-tertiary:var(--paper-edge);
+      --border:var(--hairline-strong);
+      --border-subtle:var(--hairline);
+      --text-primary:var(--ink-primary);
+      --text-secondary:var(--ink-secondary);
+      --text-muted:var(--ink-muted);
+      --text-faint:var(--ink-faint);
+      --accent:var(--ink-accent);
+      --accent-hover:var(--ink-accent-deep);
+      --accent-light:#cf6c52;
+      --accent-subtle:var(--ink-accent);
+      --accent-bg:var(--ink-accent-soft);
+      --accent-bg-deep:rgba(184,83,58,.18);
+      --accent-dim:var(--ink-accent-soft);
+      --scene-bg:#ece7dd;        /* viewport sky/floor base */
+      --scene-floor:#d9d2c4;
+      --grid-line:#c8c0b3;
+      --grid-center:#a89f8f;
+      --overlay-bg:rgba(255,255,255,.96);
+      --overlay-bg-strong:#ffffff;
+      --modal-bg:rgba(26,23,20,.32);
+      /* Status pill backgrounds desaturated — only the dot keeps colour */
+      --pill-blue-bg:#eef0f3;--pill-green-bg:#eef1ec;--pill-amber-bg:#f3ede1;
+      --pill-blue:#4a443d;--pill-green:#6b8267;--pill-amber:#a87a3a;
+      --section-hdr:var(--ink-muted);--tag-bg:var(--paper-edge);
+      --vc-bg:#ffffff;--vc-border:var(--hairline-strong);--vc-btn:var(--surface-warm);--vc-text:var(--ink-primary);--vc-center:var(--ink-accent);
+      --card-bg:var(--surface);--card-border:var(--hairline-strong);
+      --input-bg:var(--surface);
+      --shadow-soft:0 2px 8px rgba(20,18,14,.06);
+      --shadow-lifted:0 8px 24px rgba(20,18,14,.10);
+      --shadow-sm:0 1px 2px rgba(20,18,14,.05);
+      --shadow-md:var(--shadow-soft);
+      --shadow-lg:var(--shadow-lifted);
+      /* ── Design tokens (sizing, motion) ── */
       --space-0:0;--space-1:.25rem;--space-2:.5rem;--space-3:.75rem;--space-4:1rem;--space-5:1.25rem;--space-6:1.5rem;--space-8:2rem;
       --text-2xs:.6875rem;--text-xs:.75rem;--text-sm:.8125rem;--text-base:.875rem;--text-md:.9375rem;--text-lg:1.0625rem;--text-xl:1.25rem;--text-2xl:1.5rem;
       --leading-tight:1.25;--leading-base:1.45;--leading-relaxed:1.6;
       --weight-regular:400;--weight-medium:500;--weight-semibold:600;--weight-bold:700;
-      --radius-xs:4px;--radius-sm:8px;--radius-md:14px;--radius-lg:20px;--radius-xl:24px;--radius-pill:999px;
+      --radius-xs:3px;--radius-sm:5px;--radius-md:8px;--radius-lg:12px;--radius-xl:16px;--radius-pill:999px;
       --ease-standard:cubic-bezier(.2,0,0,1);--ease-decelerate:cubic-bezier(0,0,0,1);--ease-accelerate:cubic-bezier(.3,0,1,1);
       --duration-fast:120ms;--duration-base:200ms;--duration-slow:320ms;
-      --color-success:#22c55e;--color-success-fg:#34d399;--color-success-bg:#052e16;--color-success-border:rgba(34,197,94,.35);
-      --color-warning:#f59e0b;--color-warning-fg:#fbbf24;--color-warning-bg:#422006;--color-warning-border:rgba(245,158,11,.35);
-      --color-danger:#ef4444;--color-danger-fg:#fca5a5;--color-danger-bg:#450a0a;--color-danger-border:rgba(239,68,68,.4);
-      --color-info:#3b82f6;--color-info-fg:#93c5fd;--color-info-bg:#172554;--color-info-border:rgba(59,130,246,.35);
-      --font-display:'Syne','Inter','Space Grotesk',system-ui,-apple-system,sans-serif;
-      --font-body:'DM Sans','Inter',system-ui,-apple-system,sans-serif;
+      /* Semantic status — desaturated, used only for dot or thin border */
+      --color-success:#6b8267;--color-success-fg:#4d6049;--color-success-bg:#eef1ec;--color-success-border:rgba(107,130,103,.30);
+      --color-warning:#a87a3a;--color-warning-fg:#7a572a;--color-warning-bg:#f3ede1;--color-warning-border:rgba(168,122,58,.30);
+      --color-danger:#b8533a;--color-danger-fg:#8f3e2a;--color-danger-bg:#f3e6df;--color-danger-border:rgba(184,83,58,.30);
+      --color-info:#4a443d;--color-info-fg:#1a1714;--color-info-bg:#ebe6dd;--color-info-border:rgba(74,68,61,.25);
+      /* Editorial pairing — Fraunces (display, optical-sized serif with strong
+         architectural-portfolio personality) + Instrument Sans (body, distinctive
+         grotesque). Mono for IDs and dimensions only. The fallback to system-ui
+         exists only for the brief moment before Google Fonts arrives — and is
+         covered by font-display:swap so users never see Inter mid-paint. */
+      --font-display:'Fraunces','Tiempos Headline','Times New Roman',serif;
+      --font-body:'Instrument Sans','Söhne','Helvetica Neue',Helvetica,sans-serif;
       --font-mono:'DM Mono','SF Mono','JetBrains Mono','Menlo','Consolas',monospace;
-      --logo-gradient:linear-gradient(135deg,#00e5ff 0%,#7c3aed 100%);
-      --logo-gradient-soft:linear-gradient(135deg,rgba(0,229,255,.18) 0%,rgba(124,58,237,.18) 100%);
-      --glass-bg:rgba(15,15,20,.72);--glass-border:rgba(255,255,255,.08);--glass-blur:blur(16px);
-      --glass-bg-light:rgba(250,248,245,.88);--glass-border-light:rgba(0,0,0,.08);
+      /* Gradients neutralised to flat ink — kept only because legacy code
+         references --logo-gradient inline. New code should not. */
+      --logo-gradient:var(--ink-primary);
+      --logo-gradient-soft:var(--ink-accent-soft);
+      /* Glass tokens neutralised: solid surface + hairline + soft shadow.
+         No element should set backdrop-filter from these. */
+      --glass-bg:var(--surface);--glass-border:var(--hairline);--glass-blur:none;
+      --glass-bg-light:var(--surface);--glass-border-light:var(--hairline);
     }
-    [data-theme=light]{
-      --bg-primary:#faf8f5;--bg-secondary:#ffffff;--bg-tertiary:#f3f1ee;
-      --border:#d1d5db;--border-subtle:#e2e0db;
-      --text-primary:#0f172a;--text-secondary:#374151;--text-muted:#6b7280;--text-faint:#9ca3af;
-      --accent:#7c3aed;--accent-hover:#6d28d9;--accent-light:#8b5cf6;
-      --accent-subtle:#7c3aed;--accent-bg:rgba(124,58,237,.08);--accent-bg-deep:rgba(124,58,237,.16);--accent-dim:rgba(124,58,237,.1);
-      --glass-bg:var(--glass-bg-light);--glass-border:var(--glass-border-light);
-      --scene-bg:#e8e4de;--grid-line:#94a3b8;--grid-center:#64748b;
-      --overlay-bg:rgba(255,255,255,.9);--overlay-bg-strong:rgba(255,255,255,.95);
-      --modal-bg:rgba(15,23,42,.25);
-      --pill-blue-bg:#dbeafe;--pill-green-bg:#dcfce7;--pill-amber-bg:#fef3c7;
-      --pill-blue:#2563eb;--pill-green:#16a34a;--pill-amber:#d97706;
-      --section-hdr:#475569;--tag-bg:#e5e7eb;
-      --vc-bg:rgba(255,255,255,.92);--vc-border:rgba(148,163,184,.4);--vc-btn:rgba(226,232,240,.9);--vc-text:#334155;--vc-center:rgba(124,58,237,.35);
-      --card-bg:#f8fafc;--card-border:#d1d5db;
-      --input-bg:#f9fafb;
-      --shadow-sm:0 1px 2px rgba(0,0,0,.06);--shadow-md:0 4px 8px rgba(0,0,0,.08);--shadow-lg:0 8px 24px rgba(0,0,0,.12);
-      --color-success:#16a34a;--color-success-fg:#15803d;--color-success-bg:#dcfce7;--color-success-border:rgba(22,163,74,.35);
-      --color-warning:#d97706;--color-warning-fg:#b45309;--color-warning-bg:#fef3c7;--color-warning-border:rgba(217,119,6,.35);
-      --color-danger:#dc2626;--color-danger-fg:#b91c1c;--color-danger-bg:#fee2e2;--color-danger-border:rgba(220,38,38,.4);
-      --color-info:#2563eb;--color-info-fg:#1d4ed8;--color-info-bg:#dbeafe;--color-info-border:rgba(37,99,235,.35);
+    [data-theme=dark]{
+      --paper-bg:#1a1714;
+      --paper-edge:#2a241e;
+      --surface:#221d18;
+      --surface-warm:#2c2620;
+      --ink-primary:#f0ebe3;
+      --ink-secondary:#c4bdb2;
+      --ink-muted:#8a8278;
+      --ink-faint:#5e574f;
+      --hairline:rgba(255,250,240,.08);
+      --hairline-strong:rgba(255,250,240,.14);
+      --ink-accent:#d96b4d;
+      --ink-accent-soft:rgba(217,107,77,.12);
+      --ink-accent-deep:#b8533a;
+      --sev-critical:#d96b4d;--sev-major:#daa55a;--sev-minor:#85a081;--sev-info:#a0a0a0;
+      --scene-bg:#1d1915;--scene-floor:#15110e;
+      --grid-line:#3a342d;--grid-center:#4a443d;
+      --overlay-bg:rgba(34,29,24,.96);--overlay-bg-strong:#221d18;
+      --modal-bg:rgba(0,0,0,.55);
+      --pill-blue-bg:#2a241e;--pill-green-bg:#26302a;--pill-amber-bg:#332b1f;
+      --pill-blue:#c4bdb2;--pill-green:#85a081;--pill-amber:#daa55a;
+      --vc-bg:#221d18;--vc-border:var(--hairline-strong);--vc-btn:#2a241e;--vc-text:#f0ebe3;--vc-center:var(--ink-accent);
+      --card-bg:var(--surface);--card-border:var(--hairline-strong);
+      --input-bg:var(--paper-edge);
+      --shadow-soft:0 2px 8px rgba(0,0,0,.40);
+      --shadow-lifted:0 8px 24px rgba(0,0,0,.55);
+      --shadow-sm:0 1px 2px rgba(0,0,0,.30);
+      --color-success:#85a081;--color-success-fg:#a8c0a4;--color-success-bg:#26302a;
+      --color-warning:#daa55a;--color-warning-fg:#e6bd80;--color-warning-bg:#332b1f;
+      --color-danger:#d96b4d;--color-danger-fg:#e58a72;--color-danger-bg:#3a241d;
+      --color-info:#c4bdb2;--color-info-fg:#f0ebe3;--color-info-bg:#2a241e;
     }
+    /* Light is the default and ships without an attribute, but explicit
+       [data-theme=light] also matches so toggles can flip both ways cleanly. */
+    [data-theme=light]{}
     .cc-left-panel{overflow-x:hidden!important}
     .cc-left-panel>*{min-width:0;overflow-x:hidden}
     /* ── Overlay panels (float above canvas) ── */
@@ -217,9 +303,12 @@
     @keyframes nlDots{0%,20%{opacity:.2}50%{opacity:1}80%,100%{opacity:.2}}
     .cc-chat-msg:hover .cc-chat-copy{opacity:1 !important}
     .cc-chat-copy:hover{color:var(--text-primary) !important;background:var(--bg-primary) !important}
-    @keyframes roadmapGlow{0%,100%{text-shadow:0 0 4px rgba(167,139,250,.3);opacity:.7}50%{text-shadow:0 0 10px rgba(167,139,250,.7);opacity:1}}
-    @keyframes nlBorderPulse{0%,100%{box-shadow:0 8px 32px rgba(0,0,0,.35),0 0 0 0 rgba(124,58,237,0),0 0 12px rgba(124,58,237,.15);border-color:rgba(124,58,237,.5)}50%{box-shadow:0 8px 32px rgba(0,0,0,.35),0 0 0 3px rgba(124,58,237,.35),0 0 22px rgba(124,58,237,.35);border-color:rgba(124,58,237,.9)}}
-    @keyframes nlBorderReady{0%{box-shadow:0 8px 32px rgba(0,0,0,.35),0 0 0 4px rgba(34,197,94,.5),0 0 20px rgba(34,197,94,.4)}100%{box-shadow:0 8px 32px rgba(0,0,0,.35),0 0 0 0 rgba(34,197,94,0),0 0 0 rgba(34,197,94,0)}}
+    /* roadmapGlow + nlBorderPulse + nlBorderReady removed — no glow / pulse
+       in the new design. Defined as no-ops so any lingering animation rule
+       that names them silently does nothing instead of breaking. */
+    @keyframes roadmapGlow{from{opacity:1}to{opacity:1}}
+    @keyframes nlBorderPulse{from{box-shadow:var(--shadow-soft)}to{box-shadow:var(--shadow-soft)}}
+    @keyframes nlBorderReady{from{box-shadow:var(--shadow-soft)}to{box-shadow:var(--shadow-soft)}}
     .lc2{display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
     button{font-family:inherit}
     /* ── Design-system utilities ── */
@@ -230,7 +319,7 @@
     .cc-list-row{transition:background var(--duration-fast) var(--ease-standard),border-color var(--duration-fast) var(--ease-standard)}
     .cc-list-row:hover{background:var(--bg-secondary)}
     .cc-list-row-active{transition:background var(--duration-fast) var(--ease-standard)}
-    .cc-overlay-chrome{background:var(--overlay-bg-strong);border:1px solid var(--border-subtle);border-radius:var(--radius-md);box-shadow:var(--shadow-md);-webkit-backdrop-filter:blur(8px);backdrop-filter:blur(8px)}
+    .cc-overlay-chrome{background:var(--surface);border:1px solid var(--hairline);border-radius:var(--radius-md);box-shadow:var(--shadow-soft)}
     .cc-btn-press{transition:background var(--duration-fast) var(--ease-standard),transform var(--duration-fast) var(--ease-standard),color var(--duration-fast) var(--ease-standard),border-color var(--duration-fast) var(--ease-standard)}
     .cc-btn-press:active:not(:disabled){transform:translateY(1px)}
     .cc-status-pill{display:inline-flex;align-items:center;gap:.2rem;padding:.1rem .45rem;border-radius:var(--radius-pill);font-size:var(--text-2xs);font-weight:var(--weight-semibold);letter-spacing:.04em;text-transform:uppercase;line-height:1.4;white-space:nowrap}
@@ -308,9 +397,9 @@
     .cc-header{display:none!important}
     @media(max-width:768px){.cc-header{display:flex!important}}
     /* ── Desktop top bar ── */
-    .cc-desktop-topbar{display:flex;align-items:center;justify-content:space-between;padding:0 var(--space-3);padding-left:calc(48px + var(--space-3));height:44px;flex-shrink:0;
-      background:var(--glass-bg);-webkit-backdrop-filter:var(--glass-blur);backdrop-filter:var(--glass-blur);
-      border-bottom:1px solid var(--glass-border);gap:var(--space-3);z-index:10;position:relative;}
+    .cc-desktop-topbar{display:flex;align-items:center;justify-content:space-between;padding:0 var(--space-3);padding-left:var(--space-4);height:44px;flex-shrink:0;
+      background:var(--surface);
+      border-bottom:1px solid var(--hairline);gap:var(--space-3);z-index:10;position:relative;}
     @media(max-width:768px){.cc-desktop-topbar{display:none!important}}
     body[data-presenting="1"] .cc-desktop-topbar{display:none!important}
     .cc-hide-desktop{display:none!important}
@@ -319,9 +408,8 @@
       .cc-ai-panel{width:0!important;overflow:visible!important;border:none!important;flex:0 0 0!important;padding:0!important;background:transparent!important}
     }
     .cc-mobile-nav{display:none;position:fixed;bottom:0;left:0;right:0;z-index:1050;
-      background:var(--bg-primary);border-top:1px solid var(--border-subtle);
-      justify-content:space-around;align-items:center;padding:.25rem 0;padding-bottom:env(safe-area-inset-bottom,.25rem);
-      -webkit-backdrop-filter:blur(12px);backdrop-filter:blur(12px)}
+      background:var(--surface);border-top:1px solid var(--hairline);
+      justify-content:space-around;align-items:center;padding:.25rem 0;padding-bottom:env(safe-area-inset-bottom,.25rem)}
     .cc-mobile-nav button{background:none;border:none;cursor:pointer;color:var(--text-muted);
       display:flex;flex-direction:column;align-items:center;gap:.1rem;padding:.35rem .5rem;
       font-size:0.63rem;font-family:inherit;min-width:44px;min-height:44px;justify-content:center;
@@ -347,10 +435,13 @@
 </head>
 <body>
 
-<div id="boot" style="display:flex;flex-direction:column;align-items:center;justify-content:center;height:100vh;text-align:center">
-  <div style="width:48px;height:48px;background:var(--logo-gradient);border-radius:12px;display:flex;align-items:center;justify-content:center;margin-bottom:1rem;box-shadow:0 8px 24px rgba(124,58,237,.35)"><span style="display:inline-flex;align-items:center;color:#fff;font-weight:800;font-size:14px;font-family:'Syne',system-ui,sans-serif;line-height:1"><span>C</span><span style="display:inline-block;transform:scaleX(-1);margin-left:-1px">C</span></span></div>
-  <div style="font-size:1.4rem;font-weight:800;margin-bottom:.4rem;font-family:'Syne',system-ui,sans-serif;letter-spacing:-.01em">ClashControl</div>
-  <div id="boot-msg" style="color:#64748b;font-size:0.92rem;font-family:'DM Sans',system-ui,sans-serif">Loading…</div>
+<div id="boot" style="display:flex;flex-direction:column;align-items:center;justify-content:center;height:100vh;text-align:center;background:var(--paper-bg);color:var(--ink-primary)">
+  <svg width="42" height="42" viewBox="0 0 48 48" style="margin-bottom:.9rem;display:block" aria-hidden="true">
+    <rect x="9.5" y="9.5" width="29" height="29" fill="none" stroke="var(--ink-primary,#1a1714)" stroke-width="1.5"/>
+    <line x1="9.5" y1="38.5" x2="38.5" y2="9.5" stroke="var(--ink-accent,#b8533a)" stroke-width="1.5"/>
+  </svg>
+  <div style="font-size:1.6rem;font-weight:600;margin-bottom:.35rem;font-family:'Fraunces','Tiempos Headline','Times New Roman',serif;letter-spacing:-.02em;font-variation-settings:'opsz' 96">ClashControl</div>
+  <div id="boot-msg" style="color:var(--ink-muted,#807870);font-size:0.86rem;font-family:'Instrument Sans','Helvetica Neue',sans-serif;letter-spacing:.005em">Loading…</div>
 </div>
 <div id="root"></div>
 
@@ -600,8 +691,8 @@ function startApp() {
     defaultPriority:_ccLoadPref('defaultPriority','normal'), defaultCategory:_ccLoadPref('defaultCategory','design'), defaultStatus:_ccLoadPref('defaultStatus','open'),
     defaultMaxGap:_ccLoadPref('defaultMaxGap',50), resetFiltersOnRun:_ccLoadPref('resetFiltersOnRun',true),
     defaultTolerances:(function(){try{return JSON.parse(localStorage.getItem('cc_defaultTolerances'))||{};}catch(e){return {};}}()),
-    theme:(function(){ try { return localStorage.getItem('cc_theme')||'dark'; } catch(e){ return 'dark'; } })(),
-    renderStyle:_ccLoadPref('renderStyle','standard'), // 'standard','shaded','rendered','wireframe'
+    theme:(function(){ try { return localStorage.getItem('cc_theme')||'light'; } catch(e){ return 'light'; } })(),
+    renderStyle:_ccLoadPref('renderStyle','rendered'), // 'standard','shaded','rendered','wireframe' — default 'rendered' so first paint is cinematic, not flat
     unitScaleOverride:_ccLoadPref('unitScaleOverride','auto'), // 'auto','1','100','1000'
   };
   var INIT = {
@@ -651,8 +742,20 @@ function startApp() {
     activeCommentId: null,
     presenting: false,    // presentation/kiosk mode (fullscreen, chrome hidden, auto-rotate when idle)
     smartViews: (function(){ try { var v = JSON.parse(localStorage.getItem('cc_smartViews')||'[]'); return Array.isArray(v)?v:[]; } catch(e){ return []; } })(),
-    showSmartViews: false
+    showSmartViews: false,
+    /* ── UI shell state (workspace switcher, panels, diagnostics) ──
+       Each value rehydrates from localStorage on boot so a reload returns
+       the user to the exact same chrome they left. _ccPersistUI() below
+       writes them back; the reducer cases for SET_WORKSPACE / DIAGNOSTICS /
+       PANEL_OPEN / INSPECTOR_OPEN / ASK_OPEN funnel through it. */
+    workspace:(function(){ try { var v=localStorage.getItem('cc_workspace'); return (v==='present'||v==='coordinate'||v==='review')?v:'present'; } catch(e){ return 'present'; } })(),
+    diagnostics:_ccLoadPref('diagnostics',false),
+    panelOpen:_ccLoadPref('panelOpen',null),       // null = follow workspace default; true/false = user override
+    inspectorOpen:_ccLoadPref('inspectorOpen',false),
+    askOpen:_ccLoadPref('askOpen',false),
+    avatarMenuOpen:false  // ephemeral, never persisted
   };
+  function _ccPersistUI(key,val){ try{ localStorage.setItem('cc_'+key, typeof val==='string'?val:JSON.stringify(val)); }catch(e){} }
   var A = {
     ADD_MODEL:'ADD_MODEL', DEL_MODEL:'DEL_MODEL', REPLACE_MODEL:'REPLACE_MODEL', UPD_MODEL:'UPD_MODEL',
     TOGGLE_STOREY:'TOGGLE_STOREY', TOGGLE_ALL_STOREYS:'TOGGLE_ALL_STOREYS',
@@ -691,7 +794,11 @@ function startApp() {
     SHARE:'SHARE', SHARE_TAB:'SHARE_TAB', PRESENT:'PRESENT',
     SMART_VIEWS:'SMART_VIEWS', ADD_SMART_VIEW:'ADD_SMART_VIEW', DEL_SMART_VIEW:'DEL_SMART_VIEW',
     COMMENT_MODE:'COMMENT_MODE', ADD_COMMENT:'ADD_COMMENT', UPD_COMMENT:'UPD_COMMENT',
-    DEL_COMMENT:'DEL_COMMENT', SET_ACTIVE_COMMENT:'SET_ACTIVE_COMMENT', MERGE_COMMENTS:'MERGE_COMMENTS'
+    DEL_COMMENT:'DEL_COMMENT', SET_ACTIVE_COMMENT:'SET_ACTIVE_COMMENT', MERGE_COMMENTS:'MERGE_COMMENTS',
+    /* UI shell — workspace switcher and persisted panel/inspector/ask state */
+    SET_WORKSPACE:'SET_WORKSPACE', DIAGNOSTICS:'DIAGNOSTICS',
+    PANEL_OPEN:'PANEL_OPEN', INSPECTOR_OPEN:'INSPECTOR_OPEN', ASK_OPEN:'ASK_OPEN',
+    AVATAR_MENU:'AVATAR_MENU'
   };
 
   // ── Addon Registry ───────────────────────────────────────────── INTERNALS.md §5
@@ -930,6 +1037,19 @@ function startApp() {
       case A.SHARE:       return Object.assign({},s,{showShare:!!a.v});
       case A.SHARE_TAB:   return Object.assign({},s,{shareTab:a.v||'overview'});
       case A.PRESENT:     return Object.assign({},s,{presenting:!!a.v});
+      case A.SET_WORKSPACE: {
+        var w=(a.v==='coordinate'||a.v==='review')?a.v:'present';
+        _ccPersistUI('workspace',w);
+        /* Switching workspace closes any selection-driven inspector and resets
+           the panel-open override so each workspace lands on its default. */
+        _gcEvent('workspace','switch:'+w);
+        return Object.assign({},s,{workspace:w,panelOpen:null,avatarMenuOpen:false});
+      }
+      case A.DIAGNOSTICS: { var d=!!a.v; _ccPersistUI('diagnostics',d); return Object.assign({},s,{diagnostics:d}); }
+      case A.PANEL_OPEN:    { var p=!!a.v; _ccPersistUI('panelOpen',p); return Object.assign({},s,{panelOpen:p}); }
+      case A.INSPECTOR_OPEN:{ var io=!!a.v; _ccPersistUI('inspectorOpen',io); return Object.assign({},s,{inspectorOpen:io}); }
+      case A.ASK_OPEN:      { var ao=!!a.v; _ccPersistUI('askOpen',ao); return Object.assign({},s,{askOpen:ao}); }
+      case A.AVATAR_MENU:   return Object.assign({},s,{avatarMenuOpen:!!a.v});
       case A.SMART_VIEWS: return Object.assign({},s,{showSmartViews:!!a.v});
       case A.ADD_SMART_VIEW: {
         var sv = (s.smartViews||[]).concat([a.v]);
@@ -7249,8 +7369,10 @@ function startApp() {
     useEffect(function(){
       var S = state3d.current;
       if(!S.scene) return;
-      var light = (s.prefs.theme||'dark')==='light';
-      // Build a procedural sky gradient suited to the theme
+      var light = (s.prefs.theme||'light')==='light';
+      // Warm horizon gradient — paper at the bottom fading up to the slightly
+      // dimmer scene-floor tone. Matches the chrome palette so the canvas
+      // reads as one continuous architectural sheet, not a separate "viewer".
       try {
         if (S._skyTex) S._skyTex.dispose();
         var c = document.createElement('canvas');
@@ -7258,13 +7380,13 @@ function startApp() {
         var ctx = c.getContext('2d');
         var g = ctx.createLinearGradient(0,0,0,256);
         if (light) {
-          g.addColorStop(0,'#cfd8e3');
-          g.addColorStop(0.6,'#e8ecf1');
-          g.addColorStop(1.0,'#f6f7f8');
+          g.addColorStop(0,'#d9d2c4');   // --scene-floor (top of frame, distant haze)
+          g.addColorStop(0.6,'#ece7dd'); // --scene-bg
+          g.addColorStop(1.0,'#f5f2ec'); // --paper-bg (horizon line meets the page)
         } else {
-          g.addColorStop(0,'#1a2a4d');
-          g.addColorStop(0.6,'#2c3e5e');
-          g.addColorStop(1.0,'#0f172a');
+          g.addColorStop(0,'#15110e');   // dark scene-floor
+          g.addColorStop(0.6,'#1d1915'); // dark scene-bg
+          g.addColorStop(1.0,'#1a1714'); // dark paper-bg
         }
         ctx.fillStyle = g; ctx.fillRect(0,0,2,256);
         var t = new THREE.CanvasTexture(c);
@@ -7273,14 +7395,14 @@ function startApp() {
         S._skyTex = t;
         S.scene.background = t;
       } catch(e) {
-        S.scene.background = new THREE.Color(light ? 0xe8ecf1 : 0x0f172a);
+        S.scene.background = new THREE.Color(light ? 0xece7dd : 0x1d1915);
       }
       if(S.grid){
         S.scene.remove(S.grid);
         S.grid.geometry.dispose();
         S.grid.material.dispose();
-        S.grid = new THREE.GridHelper(200,80, light?0x94a3b8:0x1e3a5f, light?0xcbd5e1:0x172554);
-        S.grid.material.opacity = light ? 0.35 : 0.3; S.grid.material.transparent = true;
+        S.grid = new THREE.GridHelper(200,80, light?0xa89f8f:0x4a443d, light?0xc8c0b3:0x3a342d);
+        S.grid.material.opacity = light ? 0.12 : 0.18; S.grid.material.transparent = true;
         S.grid.visible = s.prefs.showGrid!==false;
         S.scene.add(S.grid);
       }
@@ -7291,7 +7413,7 @@ function startApp() {
       var S = state3d.current;
       if(!S.mg) return;
       var style = s.prefs.renderStyle || 'standard';
-      var light = (s.prefs.theme||'dark')==='light';
+      var light = (s.prefs.theme||'light')==='light';
       if(S._sunLight) {
         S._sunLight.intensity = style==='rendered' ? 1.4 : 1.0;
         S._fillLight.intensity = style==='rendered' ? 0.5 : 0.3;
@@ -7417,11 +7539,11 @@ function startApp() {
         }}></div>
         <span style=${{fontSize:'0.98rem',color:'var(--accent-subtle)',fontWeight:500,letterSpacing:'.03em'}}>Switching project…</span>
       </div>`}
-      <div class="cc-overlay-chrome" style=${{position:'absolute',top:'var(--space-3)',left:'var(--space-3)',padding:'var(--space-1) var(--space-2)',pointerEvents:'auto',fontSize:'var(--text-xs)'}}>
-        <span style=${{color:fpsColor(perfData.fps),cursor:'pointer',fontWeight:'var(--weight-medium)'}}
+      ${s.workspace==='review' && s.diagnostics && html`<div class="cc-overlay-chrome" style=${{position:'absolute',top:'var(--space-3)',left:'var(--space-3)',padding:'var(--space-1) var(--space-2)',pointerEvents:'auto',fontSize:'var(--text-xs)'}}>
+        <span style=${{color:fpsColor(perfData.fps),cursor:'pointer',fontWeight:'var(--weight-medium)',fontFamily:'var(--font-mono)'}}
           onClick=${function(){setPerfOpen(!perfOpen)}}>${perfData.fps} fps</span>
-      </div>
-      ${perfOpen && html`<div class="cc-overlay-chrome" style=${{position:'absolute',top:'2.4rem',left:'var(--space-3)',padding:'var(--space-2) var(--space-3)',pointerEvents:'auto',fontSize:'var(--text-2xs)',color:'var(--text-secondary)',minWidth:180}}>
+      </div>`}
+      ${s.workspace==='review' && s.diagnostics && perfOpen && html`<div class="cc-overlay-chrome" style=${{position:'absolute',top:'2.4rem',left:'var(--space-3)',padding:'var(--space-2) var(--space-3)',pointerEvents:'auto',fontSize:'var(--text-2xs)',color:'var(--text-secondary)',minWidth:180}}>
         <div style=${{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:'var(--space-1)'}}>
           <span style=${{fontWeight:'var(--weight-semibold)',color:'var(--text-primary)',fontSize:'var(--text-xs)',textTransform:'uppercase',letterSpacing:'.06em'}}>Performance</span>
           <button onClick=${function(){setPerfOpen(false)}} style=${{...S_BTN,padding:'0 var(--space-1)',background:'none',color:'var(--text-faint)',fontSize:'var(--text-xs)'}} aria-label="Close performance stats">✕</button>
@@ -7501,7 +7623,7 @@ function startApp() {
           ${findQuery&&findResults.length===0 && html`<div style=${{fontSize:'0.69rem',color:'var(--text-faint)',textAlign:'center',padding:'.5rem'}}>No matches</div>`}
         </div>`}
       </div>`}
-      ${html`<${ViewCube} state3d=${state3d} theme=${s.prefs.theme||'dark'} />`}
+      ${html`<${ViewCube} state3d=${state3d} theme=${s.prefs.theme||'light'} />`}
       ${(s.sectionAxis||s.sectionCustom) && html`<div style=${{...P,top:'9.75rem',right:'.5rem',background:'rgba(30,58,138,.9)',color:'var(--accent-subtle)',pointerEvents:'auto',cursor:'pointer',display:'flex',alignItems:'center',gap:'.4rem'}}
         onClick=${function(){d({t:A.SECTION,axis:null})}}>
         <span>Section ${s.sectionAxis?(s.sectionAxis==='y'?'Z':s.sectionAxis==='z'?'Y':s.sectionAxis.toUpperCase()):'Surface'}</span>
@@ -8470,7 +8592,7 @@ function startApp() {
     var s=props.s, d=props.d;
     var all = s.clashes.concat(s.issues);
     var openN = all.filter(function(x){return x.status==='open'}).length;
-    var isDark = (s.prefs.theme||'dark')==='dark';
+    var isDark = (s.prefs.theme||'light')==='dark';
     var projects = s.projectList||[];
     var activeProj = projects.find(function(p){return p.id===s.activeProject;})||projects[0]||{name:'Default Project'};
     var po = useState(false), projOpen=po[0], setProjOpen=po[1];
@@ -13561,14 +13683,27 @@ function startApp() {
     var it=props.item, active=props.active, d=props.d, isClash=props.isClash, pr=props.prefs||{}; pr._models=props.models||[];
     var selectMode=props.selectMode, isSelected=props.isSelected;
     var trainingMode=props.trainingMode;
-    var icon = it.type==='hard'?'🔴':it.type==='soft'?'🟡':it.source==='element'?'🏗':'📌';
+    /* Severity dot — the row's only colour. Maps the existing aiSeverity /
+       type signal to the desaturated --sev-* tokens. The previous emoji
+       icon (🔴 / 🟡 / 🏗 / 📌) is replaced by a 7-px dot rendered inline so
+       the row reads as a calm document line, not a status dashboard.
+
+       The legacy typeLabel / sevLabel / typeBg / typeCol / sevBg / sevCol
+       are kept as no-op fallbacks so any sub-render that still references
+       them downstream renders nothing visible. */
+    var dotColor = (function(){
+      if (it.aiSeverity==='critical') return 'var(--sev-critical)';
+      if (it.aiSeverity==='major')    return 'var(--sev-major)';
+      if (it.aiSeverity==='minor')    return 'var(--sev-minor)';
+      if (it.type==='hard')           return 'var(--sev-critical)';
+      if (it.type==='soft')           return 'var(--sev-major)';
+      if (it.type==='duplicate')      return 'var(--sev-info)';
+      return 'var(--sev-info)';
+    })();
+    var icon = html`<span aria-hidden="true" style=${{display:'inline-block',width:7,height:7,borderRadius:'50%',background:dotColor,flexShrink:0,marginTop:6}}></span>`;
     var stBg = (STAT[it.status]||STAT.open).bg;
-    var typeBg = it.type==='hard'?'#7f1d1d':it.type==='soft'?'#78350f':it.type==='duplicate'?'#4c1d95':'var(--accent-bg)';
-    var typeCol = it.type==='hard'?'#fca5a5':it.type==='soft'?'#fcd34d':it.type==='duplicate'?'#c4b5fd':'var(--accent-subtle)';
-    var typeLabel = it.type ? it.type.charAt(0).toUpperCase()+it.type.slice(1) : null;
-    var sevBg = it.aiSeverity==='critical'?'#7f1d1d':it.aiSeverity==='major'?'#78350f':it.aiSeverity==='minor'?'var(--accent-bg)':'#334155';
-    var sevCol = it.aiSeverity==='critical'?'#fca5a5':it.aiSeverity==='major'?'#fcd34d':it.aiSeverity==='minor'?'var(--accent-subtle)':'#94a3b8';
-    var sevLabel = it.aiSeverity ? it.aiSeverity.charAt(0).toUpperCase()+it.aiSeverity.slice(1) : null;
+    var typeBg = 'transparent', typeCol = 'transparent', typeLabel = null;
+    var sevBg = 'transparent', sevCol = 'transparent', sevLabel = null;
     var storeyLabel = (function(){
       var a=it.elemAStorey||'', b=it.elemBStorey||'';
       if(!a&&!b) return null;
@@ -13642,15 +13777,15 @@ function startApp() {
               if(resLabels.length) tip.push('Resolution: '+resLabels.join(', '));
               if(it.aiNote) tip.push('Note: '+it.aiNote);
               return html`<span class="cc-status-pill" title=${tip.join(' — ')}
-                style=${{background:'rgba(124,58,237,.15)',color:'#c4b5fd',padding:'.1rem var(--space-2)',cursor:'help'}}>💬${(reasons.length||resLabels.length)>0?' '+(reasons.length+resLabels.length):''}</span>`;
+                style=${{background:'var(--surface-warm)',color:'var(--ink-secondary)',padding:'.1rem var(--space-2)',cursor:'help',border:'1px solid var(--hairline-strong)'}}>note${(reasons.length||resLabels.length)>0?' '+(reasons.length+resLabels.length):''}</span>`;
             }()}
           </div>`}
           <p style=${{color:'var(--text-faint)',fontSize:'var(--text-xs)',marginTop:'var(--space-1)',lineHeight:'var(--leading-base)'}} class="lc2">${it.description}</p>
           ${isClash && html`<div style=${{display:'flex',gap:'var(--space-1)',marginTop:'var(--space-1)',flexWrap:'wrap',alignItems:'center'}}>
-            ${it.distance!=null && it.distance>=0 && html`<span style=${{fontSize:'var(--text-2xs)',color:'var(--text-muted)',background:'var(--bg-secondary)',padding:'.1rem var(--space-2)',borderRadius:'var(--radius-pill)',fontWeight:'var(--weight-medium)'}}>
-              ${it.distance===0?'⬤ touching':'⬤ '+it.distance+'mm gap'}
+            ${it.distance!=null && it.distance>=0 && html`<span style=${{fontSize:'var(--text-2xs)',color:'var(--ink-secondary)',fontFamily:'var(--font-mono)',padding:'.1rem 0',fontWeight:'var(--weight-regular)',letterSpacing:'.01em'}}>
+              ${it.distance===0?'touching':it.distance+' mm'}
             </span>`}
-            ${storeyLabel && html`<span style=${{fontSize:'var(--text-2xs)',color:'var(--text-secondary)',background:'var(--bg-secondary)',padding:'.1rem var(--space-2)',borderRadius:'var(--radius-pill)'}}>🏢 ${storeyLabel}</span>`}
+            ${storeyLabel && html`<span style=${{fontSize:'var(--text-2xs)',color:'var(--ink-muted)',padding:'.1rem var(--space-2)',borderLeft:'1px solid var(--hairline-strong)'}}>${storeyLabel}</span>`}
             ${it.selfClash && html`<span class="cc-status-pill" style=${{color:'#a78bfa',background:'#2e1065'}}>self</span>`}
             ${it.expectedClash && html`<span class="cc-status-pill" style=${{color:'var(--color-warning-fg)',background:'var(--color-warning-bg)'}}>expected</span>`}
             ${it.status==='accepted_needs_check' && html`<span class="cc-status-pill" style=${{color:'var(--color-info-fg)',background:'var(--color-info-bg)'}}>needs check</span>`}
@@ -19554,29 +19689,34 @@ function startApp() {
     var backendLabel = window._ccTourActive ? 'AI loaded' : _serverReady ? 'Gemma 4' : backend === 'server' ? 'Gemma 4' : null;
     var backendColor = window._ccTourActive ? '#a78bfa' : _serverReady ? '#22c55e' : mutedCol;
 
-    // ── Closed-state pill (only when NOT docked and not open) ──
+    /* ── Closed-state Ask button (only when NOT docked and not open) ──
+       Demoted from the prior wide centred pill to a quiet 36-px round button
+       anchored bottom-right of the canvas. No pulse, no glow, no violet. A
+       subtle terracotta dot appears only when a relevant background process
+       is running (model loading, clash detection) so the user knows AI has
+       context to chat about — never to advertise the feature. */
     if (!isDocked && !open) {
-      var closedGlow = modelLoading || isDetecting;
-      var closedAnim = closedGlow ? 'nlBorderPulse 2s ease-in-out infinite' : 'none';
-      var closedBorder = closedGlow ? '1px solid rgba(96,165,250,.5)' : '1px solid ' + borderCol;
-      var closedLabel = isDetecting ? 'Detecting clashes…' : modelLoading ? 'Model loading…' : 'ClashControl';
-      return html`<button class="cc-nlpanel-closed"
+      var busy = modelLoading || isDetecting;
+      var busyTip = isDetecting ? 'Clash detection running' : modelLoading ? 'Model loading' : null;
+      return html`<button
         onClick=${function(){ setOpen(true); }}
-        title=${isDetecting ? 'Clash detection running…' : modelLoading ? 'Model is loading… click to set up clashes' : 'ClashControl — describe tasks in plain English ( / )'}
+        aria-label="Ask the assistant"
+        title=${busyTip ? busyTip+' — click to ask anything' : 'Ask the assistant ( / )'}
         style=${{
-          position:'fixed', bottom:'1.5rem', left:'50%', transform:'translateX(-50%)',
-          zIndex:1200, display:'flex', alignItems:'center', gap:'.5rem',
-          padding:'.55rem 2rem', borderRadius:999, minWidth:280,justifyContent:'center',
-          background:panelBg, border:closedBorder,
-          color:closedGlow ? 'var(--accent-subtle)' : mutedCol, fontSize:'0.95rem', cursor:'pointer',
-          boxShadow: closedGlow ? 'var(--shadow-md), 0 0 20px rgba(124,58,237,.3)' : 'var(--shadow-md)',
-          whiteSpace:'nowrap', animation:closedAnim
-        }}>
-        ${closedGlow ? html`<span class="spin" style=${{display:'inline-block',width:12,height:12,borderRadius:'50%',border:'1.5px solid rgba(96,165,250,.3)',borderTopColor:'#60a5fa'}}></span>` : html`<svg width="12" height="12" viewBox="0 0 16 16" fill="none" style=${{flexShrink:0}}>
-          <path d="M2 4h12M2 8h8M2 12h10" stroke="var(--accent)" stroke-width="1.6" stroke-linecap="round"/>
-        </svg>`}
-        ${closedLabel}
-        <span style=${{fontSize:'0.69rem', opacity:.5, marginLeft:'.15rem'}}>/</span>
+          position:'fixed', bottom:'1rem', right:'1rem', zIndex:1200,
+          width:36, height:36, borderRadius:'50%',
+          background:'var(--surface)', border:'1px solid var(--hairline-strong)',
+          color:'var(--ink-muted)', cursor:'pointer',
+          display:'flex', alignItems:'center', justifyContent:'center',
+          boxShadow:'var(--shadow-soft)',
+          transition:'color var(--duration-fast) var(--ease-standard), background var(--duration-fast) var(--ease-standard)'
+        }}
+        onMouseEnter=${function(e){ e.currentTarget.style.color='var(--ink-primary)'; e.currentTarget.style.background='var(--surface-warm)'; }}
+        onMouseLeave=${function(e){ e.currentTarget.style.color='var(--ink-muted)'; e.currentTarget.style.background='var(--surface)'; }}>
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M21 12a8 8 0 0 1-11.5 7.2L4 21l1.8-5.5A8 8 0 1 1 21 12z"/>
+        </svg>
+        ${busy && html`<span aria-hidden="true" style=${{position:'absolute',top:6,right:6,width:6,height:6,borderRadius:'50%',background:'var(--ink-accent)'}}></span>`}
       </button>`;
     }
 
@@ -20001,283 +20141,90 @@ function startApp() {
 
   function LeftRail(props) {
     var s=props.s, d=props.d;
-    var isDark=(s.prefs.theme||'dark')==='dark';
-    var all=s.clashes.concat(s.issues);
-    var _2dMenu=useState(false), show2d=_2dMenu[0], setShow2d=_2dMenu[1];
-    var _2dVMenu=useState(false), show2dV=_2dVMenu[0], setShow2dV=_2dVMenu[1];
-    var _bcfMenu=useState(false), showBcf=_bcfMenu[0], setShowBcf=_bcfMenu[1];
-    var po=useState(false), projOpen=po[0], setProjOpen=po[1];
-    var cd=useState(null), confirmDel=cd[0], setConfirmDel=cd[1];
-    var _lrc=useState(false), _lrCreating=_lrc[0], _setLrCreating=_lrc[1];
-    var _lrn=useState(''), _lrName=_lrn[0], _setLrName=_lrn[1];
-    var projects=s.projectList||[];
-    var activeProj=projects.find(function(p){return p.id===s.activeProject;})||projects[0]||{name:'Default'};
-    function delProject(id){
-      idbDeleteProjectFiles(id); idbDeleteProjectData(id);
-      var list=getProjects().filter(function(p){return p.id!==id;});
-      if(!list.length) list=[{id:'default',name:'Default Project',createdAt:Date.now()}];
-      saveProjects(list); d({t:A.SET_PROJECT_LIST,v:list});
-      _switchProject(list[0].id,s,d);
-      setConfirmDel(null);
-    }
+    /* Hidden in the Present workspace — designers see only the model.
+       Coordinate / Review users get a slim 48-px ink rail with workspace-
+       scoped tabs. The legacy project switcher / IFC / walk / 2D / theme /
+       share / settings buttons all moved out: project + theme + settings +
+       presentation now live in the AvatarMenu, IFC in the wordmark menu,
+       walk + 2D + measure + section in the new TopToolbar, share in the
+       DesktopTopBar. The rail is now exactly what its name suggests: a
+       workspace's panel-tab list. Nothing else. */
+    if ((s.workspace||'present') === 'present') return null;
 
-    function iconBtn(onClick, content, title) {
-      return html`<button class="cc-tip" data-tip=${title} onClick=${onClick}
-        style=${{width:'100%',height:38,background:'none',border:'none',cursor:'pointer',
-          display:'flex',alignItems:'center',justifyContent:'center',borderRadius:6,margin:'1px 4px',width:'calc(100% - 8px)',
-          color:'var(--text-muted)',fontSize:'0.94rem',transition:'color .15s, background .15s'}}
-        onMouseEnter=${function(e){e.currentTarget.style.background='var(--accent-dim)';e.currentTarget.style.color='var(--text-secondary)';}}
-        onMouseLeave=${function(e){e.currentTarget.style.background='none';e.currentTarget.style.color='var(--text-muted)';}}>${content}</button>`;
-    }
-    var SVG_CHAT   = '<path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>';
-    var SVG_OPEN   = '<path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/>';
-    var SVG_SAVE   = '<path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/>';
-    var SVG_IMPORT = '<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/>';
-    var SVG_EXPORT = '<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/>';
-    var SVG_GEAR   = '<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>';
+    var all = s.clashes.concat(s.issues);
+    var clashN = s.clashes.filter(function(c){var st=c.status||'new';return st!=='resolved'&&st!=='denied';}).length;
+    var issueN = s.issues.filter(function(i){var st=i.status||'open';return st!=='resolved'&&st!=='closed';}).length;
 
-    // ── Tab buttons (merged from RightRail) ──
-    var clashN=s.clashes.filter(function(c){var st=c.status||'new';return st!=='resolved'&&st!=='denied';}).length;
-    var issueN=s.issues.filter(function(i){var st=i.status||'open';return st!=='resolved'&&st!=='closed';}).length;
     function tabBtn(id, svgPath, title, badge) {
-      var active=s.tab===id;
-      return html`<button class="cc-tip" data-tip=${title} onClick=${function(){d({t:A.TAB,v:s.tab===id?null:id});}}
-        style=${{width:'100%',height:40,background:active?'var(--accent-dim)':'none',border:'none',
-          cursor:'pointer',display:'flex',alignItems:'center',justifyContent:'center',position:'relative',
-          borderRight:active?'2px solid var(--accent)':'2px solid transparent',
-          color:active?'var(--accent-light)':'var(--text-muted)',transition:'background .15s,color .15s'}}
-        onMouseEnter=${function(e){if(!active){e.currentTarget.style.background='var(--accent-dim)';e.currentTarget.style.color='var(--text-secondary)';}}}
-        onMouseLeave=${function(e){if(!active){e.currentTarget.style.background='none';e.currentTarget.style.color='var(--text-muted)';}}}>
-        <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" dangerouslySetInnerHTML=${{__html:svgPath}}></svg>
-        ${badge>0 && html`<span style=${{position:'absolute',top:4,right:6,background:'#ef4444',color:'#fff',
-          fontSize:'0.6rem',fontWeight:600,padding:'0 3px',borderRadius:99,lineHeight:1.3,minWidth:13,textAlign:'center',
-          pointerEvents:'none',boxShadow:'0 1px 3px rgba(0,0,0,.3)'}}>${badge>99?'99+':badge}</span>`}
+      var active = s.tab === id;
+      return html`<button class="cc-tip" data-tip=${title}
+        onClick=${function(){ d({t:A.TAB, v: s.tab===id ? null : id}); }}
+        style=${{
+          width:'100%',height:42,background:'none',border:'none',cursor:'pointer',
+          display:'flex',alignItems:'center',justifyContent:'center',position:'relative',
+          color: active?'var(--ink-primary)':'var(--ink-muted)',
+          transition:'color var(--duration-fast) var(--ease-standard)'
+        }}
+        onMouseEnter=${function(e){ if(!active) e.currentTarget.style.color='var(--ink-secondary)'; }}
+        onMouseLeave=${function(e){ if(!active) e.currentTarget.style.color='var(--ink-muted)'; }}>
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+          stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"
+          dangerouslySetInnerHTML=${{__html:svgPath}}></svg>
+        ${active && html`<span aria-hidden="true" style=${{position:'absolute',left:0,top:8,bottom:8,width:2,background:'var(--ink-accent)'}}></span>`}
+        ${badge>0 && html`<span style=${{
+          position:'absolute',top:6,right:6,
+          background:'var(--ink-primary)',color:'var(--paper-bg)',
+          fontSize:'0.58rem',fontWeight:600,padding:'0 4px',borderRadius:99,
+          lineHeight:1.3,minWidth:14,textAlign:'center',pointerEvents:'none',fontFamily:'var(--font-mono)'
+        }}>${badge>99?'99+':badge}</span>`}
       </button>`;
     }
+
     var SVG_MODELS  = '<path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/><path d="M12 2L2 7l10 5 10-5-10-5z"/>';
     var SVG_CLASHES = '<path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/>';
     var SVG_ISSUES  = '<path d="M4 15s1-1 4-1 5 2 8 2 4-1 4-1V3s-1 1-4 1-5-2-8-2-4 1-4 1z"/><line x1="4" y1="22" x2="4" y2="15"/>';
     var SVG_EXPLORE = '<rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/>';
     var SVG_STANDARDS = '<path d="M4 7h16M4 12h10M4 17h13"/><path d="M20 12l-3-3v6z"/>';
     var SVG_DATAQUALITY = '<path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/>';
-    var SVG_AI_CHAT = '<path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>';
-    var _aiDotCol = _nlBackend==='ollama' ? '#22c55e' : _nlBackend==='browser' ? '#f59e0b' : null;
+    var SVG_DIAG    = '<path d="M3 12h3l3-9 4 18 3-9h5"/>';
+    var SVG_INTEG   = '<path d="M12 2v4m0 12v4M2 12h4m12 0h4"/><circle cx="12" cy="12" r="3"/><path d="M6.34 6.34l2.83 2.83m5.66 5.66l2.83 2.83M17.66 6.34l-2.83 2.83m-5.66 5.66l-2.83 2.83"/>';
+
+    var w = s.workspace || 'coordinate';
+    /* Workspace-scoped tab list — no Models tab here (the model is the
+       canvas); no Conflicts in Review (that's Coordinate's job). */
+    var tabs = w === 'review'
+      ? [
+          {id:'dataquality', svg:SVG_DATAQUALITY, label:'Data Quality'},
+          {id:'standards',   svg:SVG_STANDARDS,   label:'Standards / IDS'},
+          {id:'navigator',   svg:SVG_EXPLORE,     label:'Navigator'},
+          {id:'addons',      svg:SVG_INTEG,       label:'Integrations'}
+        ]
+      : [
+          {id:'clashes',  svg:SVG_CLASHES, label:'Conflicts', badge:clashN},
+          {id:'issues',   svg:SVG_ISSUES,  label:'Issues',    badge:issueN},
+          {id:'standards',svg:SVG_STANDARDS,label:'Rules'},
+          {id:'navigator',svg:SVG_EXPLORE, label:'Navigator'}
+        ];
 
     return html`<div class="cc-left-rail" style=${{
-      width:48,background:'var(--bg-primary)',
-      display:'flex',flexDirection:'column',overflow:'visible',userSelect:'none'
+      width:48,background:'var(--surface)',borderRight:'1px solid var(--hairline)',
+      display:'flex',flexDirection:'column',overflow:'visible',userSelect:'none',paddingTop:8
     }}>
-      <div style=${{height:48,display:'flex',alignItems:'center',justifyContent:'center',flexShrink:0}}>
-        <div class="cc-logo-mark cc-tip" data-tip=${'ClashControl v'+CC_VERSION.v}
-          style=${{width:28,height:28,background:'var(--logo-gradient)',borderRadius:'var(--radius-md)',boxShadow:'0 4px 12px rgba(124,58,237,.3)',
-            display:'flex',alignItems:'center',justifyContent:'center',cursor:'default'}}>
-          <span style=${{display:'inline-flex',alignItems:'center',color:'#fff',fontWeight:800,fontSize:9,fontFamily:'var(--font-display)',lineHeight:1}}><span>C</span><span style=${{display:'inline-block',transform:'scaleX(-1)',marginLeft:'-1px'}}>C</span></span>
-        </div>
-      </div>
       <div class="cc-rail-tabs" style=${{display:'flex',flexDirection:'column'}}>
-        ${tabBtn('models',  SVG_MODELS,  'Models',   s.models.length)}
-        ${tabBtn('clashes', SVG_CLASHES, 'Conflicts',  clashN)}
-        ${tabBtn('issues',  SVG_ISSUES,  'Issues',   issueN)}
-        ${tabBtn('dataquality',SVG_DATAQUALITY,'Data Quality',0)}
-        ${tabBtn('navigator',SVG_EXPLORE, 'Navigator', 0)}
-        ${tabBtn('standards',SVG_STANDARDS,'Standards',0)}
+        ${tabs.map(function(t){ return tabBtn(t.id, t.svg, t.label, t.badge||0); })}
       </div>
-      <!-- Project switcher -->
-      <div style=${{position:'relative'}}>
-        <button onClick=${function(){setProjOpen(!projOpen)}}
-          title=${activeProj.name}
-          style=${{width:'100%',height:36,background:projOpen?'var(--accent-dim)':'none',border:'none',cursor:'pointer',
-            display:'flex',alignItems:'center',justifyContent:'center',
-            color:projOpen?'var(--accent-light)':'var(--text-muted)',transition:'background .12s,color .12s'}}>
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
-            <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/>
-          </svg>
-        </button>
-        ${projOpen && html`<div>
-          <div onClick=${function(){setProjOpen(false);_setLrCreating(false);}}
-            style=${{position:'fixed',inset:0,zIndex:199}}></div>
-          <div style=${{position:'absolute',top:0,left:'100%',marginLeft:4,
-            background:'var(--bg-secondary)',border:'1px solid var(--border)',borderRadius:8,
-            boxShadow:'0 8px 24px rgba(0,0,0,.4)',minWidth:200,zIndex:200,overflow:'hidden'}}>
-          <div style=${{padding:'.4rem .6rem',borderBottom:'1px solid var(--border-subtle)',display:'flex',alignItems:'center',justifyContent:'space-between'}}>
-            <span style=${{fontSize:'0.75rem',fontWeight:600,color:'var(--text-muted)',textTransform:'uppercase',letterSpacing:'.05em'}}>Projects</span>
-            ${!_lrCreating && html`<button onClick=${function(){_setLrCreating(true);_setLrName('');setTimeout(function(){var el=document.getElementById('cc-proj-name-inp');if(el)el.focus();},30);}}
-              style=${{...S_BTN,fontSize:'0.72rem',padding:'.2rem .5rem',background:'var(--accent)',color:'#fff',fontWeight:600}}>+ New</button>`}
-          </div>
-          ${_lrCreating && html`<div style=${{padding:'.35rem .5rem',borderBottom:'1px solid var(--border-subtle)',display:'flex',gap:'.3rem',alignItems:'center'}}>
-            <input id="cc-proj-name-inp" type="text" value=${_lrName} autoFocus placeholder="Project name…"
-              onInput=${function(e){_setLrName(e.target.value)}}
-              onKeyDown=${function(e){
-                if(e.key==='Enter'&&_lrName.trim()){
-                  var id=uid();var list=getProjects().concat([{id:id,name:_lrName.trim(),createdAt:Date.now()}]);
-                  saveProjects(list);d({t:A.SET_PROJECT_LIST,v:list});_switchProject(id,s,d);
-                  _setLrCreating(false);setProjOpen(false);
-                }
-                if(e.key==='Escape')_setLrCreating(false);
-              }}
-              style=${{flex:1,fontSize:'0.71rem',padding:'.2rem .35rem',background:'var(--input-bg)',color:'var(--text-primary)',border:'1px solid var(--border)',borderRadius:4,outline:'none'}} />
-            <button onClick=${function(){
-              if(!_lrName.trim()){_setLrCreating(false);return;}
-              var id=uid();var list=getProjects().concat([{id:id,name:_lrName.trim(),createdAt:Date.now()}]);
-              saveProjects(list);d({t:A.SET_PROJECT_LIST,v:list});_switchProject(id,s,d);
-              _setLrCreating(false);setProjOpen(false);
-            }} disabled=${!_lrName.trim()}
-              style=${{...S_BTN,fontSize:'0.63rem',padding:'.15rem .35rem',background:'var(--accent)',color:'#fff',opacity:_lrName.trim()?1:0.4}}>Create</button>
-            <button onClick=${function(){_setLrCreating(false)}}
-              style=${{background:'none',border:'none',cursor:'pointer',color:'var(--text-faint)',fontSize:'0.8rem',padding:0,lineHeight:1}}>✕</button>
-          </div>`}
-          ${projects.map(function(p){
-            var isActive=p.id===s.activeProject;
-            var isConfirming=confirmDel===p.id;
-            return html`<div key=${p.id} style=${{borderBottom:'1px solid var(--border-subtle)'}}>
-              <div style=${{display:'flex',alignItems:'center',gap:'.4rem',padding:'.4rem .6rem',cursor:'pointer',
-                  background:isActive?'var(--accent-dim)':'transparent',
-                  borderLeft:isActive?'2px solid var(--accent)':'2px solid transparent'}}>
-                <span onClick=${function(){if(!isActive){_switchProject(p.id,s,d);}setProjOpen(false);setConfirmDel(null);}}
-                  style=${{fontSize:'0.69rem',flex:1,color:isActive?'var(--accent-subtle)':'var(--text-primary)',
-                  whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>${p.name}</span>
-                ${isActive && html`<span style=${{fontSize:'0.57rem',color:'#22c55e'}}>✓</span>`}
-                <button onClick=${function(e){e.stopPropagation();setConfirmDel(isConfirming?null:p.id);}}
-                  style=${{background:'none',border:'none',cursor:'pointer',padding:'1px 3px',fontSize:'0.63rem',lineHeight:1,
-                    color:isConfirming?'#ef4444':'var(--text-faint)',opacity:isConfirming?1:.5,flexShrink:0}}
-                  title="Delete project">🗑</button>
-              </div>
-              ${isConfirming && html`<div style=${{padding:'.3rem .6rem',borderTop:'1px solid var(--border-subtle)',display:'flex',alignItems:'center',gap:'.3rem',background:'rgba(239,68,68,.06)'}}>
-                <span style=${{flex:1,fontSize:'0.67rem',color:'var(--text-secondary)'}}>Delete "${p.name}"?</span>
-                <button onClick=${function(e){e.stopPropagation();delProject(p.id);}}
-                  style=${{...S_BTN,padding:'2px 8px',background:'#ef4444',color:'#fff',fontSize:'0.67rem',fontWeight:600}}>Delete</button>
-                <button onClick=${function(e){e.stopPropagation();setConfirmDel(null);}}
-                  style=${{...S_BTN,padding:'2px 8px',background:'none',color:'var(--text-muted)',fontSize:'0.67rem',border:'1px solid var(--border)'}}>Cancel</button>
-              </div>`}
-            </div>`;
-          })}
-        <div style=${{borderTop:'1px solid var(--border-subtle)',padding:'.3rem .4rem',display:'flex',gap:'.3rem'}}>
-          <button onClick=${function(){saveProject(s);setProjOpen(false);}}
-            style=${{...S_BTN,flex:1,fontSize:'0.69rem',padding:'.3rem .4rem',background:'var(--accent)',color:'#fff',fontWeight:600}}>Save</button>
-          <button onClick=${function(){loadProject(d);setProjOpen(false);}}
-            style=${{...S_BTN,flex:1,fontSize:'0.69rem',padding:'.3rem .4rem',background:'var(--bg-secondary)',color:'var(--text-secondary)',border:'1px solid var(--border)'}}>Open</button>
-        </div>
-        </div>
-        </div>`}
-      </div>
-      <div style=${{position:'relative'}}>
-        ${iconBtn(function(){setShow2dV(!show2dV);setShow2d(false);setShowBcf(false);},
-          html`<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="3" y1="9" x2="21" y2="9"/><line x1="9" y1="3" x2="9" y2="21"/></svg>`,
-          '2D Views & Sheets')}
-        ${show2dV && html`<div style=${{position:'absolute',left:'100%',top:0,marginLeft:4,zIndex:999,
-          background:'var(--bg-primary)',border:'1px solid var(--border)',borderRadius:8,
-          boxShadow:'0 4px 16px rgba(0,0,0,.25)',padding:'.25rem 0',minWidth:180}}
-          onMouseLeave=${function(){setShow2dV(false);}}>
-          <button onClick=${function(){if(window._ccCreateSheet)window._ccCreateSheet();setShow2dV(false);}}
-            style=${{...S_BTN,width:'100%',padding:'.3rem .65rem',background:'none',color:'var(--text-primary)',fontSize:'.72rem',justifyContent:'flex-start',borderRadius:0}}>+ New Sheet</button>
-          <button onClick=${function(){var is2D=s.underlayMode==='view2d'||s.underlayMode==='compare';d({t:'UNDERLAY_MODE',v:is2D?null:'view2d'});setShow2dV(false);}}
-            style=${{...S_BTN,width:'100%',padding:'.3rem .65rem',background:'none',color:'var(--text-primary)',fontSize:'.72rem',justifyContent:'flex-start',borderRadius:0}}>${s.underlayMode?'Exit 2D View':'Enter 2D View'}</button>
-          ${(s.sheets||[]).length>0 && html`<div style=${{borderTop:'1px solid var(--border-subtle)',margin:'.15rem 0'}}></div>
-            <div style=${{padding:'.15rem .65rem',fontSize:'0.63rem',color:'var(--text-faint)',textTransform:'uppercase',letterSpacing:'.05em',fontWeight:600}}>Sheets</div>`}
-          ${(s.sheets||[]).map(function(sh){
-            var isActive = sh.id === s.activeSheetId;
-            return html`<button key=${sh.id} onClick=${function(){
-                d({t:A.SHEET_SET_ACTIVE,v:sh.id});
-                d({t:'UNDERLAY_MODE',v:'view2d'});
-                setShow2dV(false);
-                setTimeout(function(){ if(window._ccFit2DOutlines) window._ccFit2DOutlines(); }, 100);
-              }}
-              style=${{...S_BTN,width:'100%',padding:'.3rem .65rem',
-                background:isActive?'rgba(124,58,237,.12)':'none',
-                color:isActive?'#60a5fa':'var(--text-primary)',fontSize:'.72rem',justifyContent:'flex-start',borderRadius:0}}>
-              ${sh.name}
-            </button>`;
-          })}
-        </div>`}
-      </div>
-      ${iconBtn(function(){
-          var elev = 0;
-          var st = window._ccLatestState || {};
-          if (st.floorPlan) {
-            elev = st.floorPlan.elevation;
-          } else {
-            var storeys = _ccCollectStoreys(st.models||[]);
-            if (storeys && storeys.length) {
-              var _gf = (typeof _ccStoreyToGeoFactor === 'function') ? _ccStoreyToGeoFactor(st.models||[]) : 1;
-              elev = storeys[0].elevation * _gf;
-            }
-          }
-          d({t:A.WALK_MODE, v:true});
-          if (window._ccWalkEnter) window._ccWalkEnter(elev);
-        },
-        html`<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="5" r="2"/><path d="M12 7v6m-3 4l3-4 3 4"/><path d="M9 13l-2 4m8-4l2 4"/></svg>`,
-        'Walk Mode')}
       <div style=${{flex:1}}></div>
-      <div class="cc-ifc-load-btn">${iconBtn(function(){
-          if(window._ccOpenIFC) window._ccOpenIFC();
-        },
-        html`<span style=${{fontWeight:700,fontSize:'0.8rem',letterSpacing:'.03em'}}>IFC</span>`,
-        'Load IFC model')}</div>
-      <div style=${{position:'relative'}}>
-        ${iconBtn(function(){setShow2d(!show2d);setShow2dV(false);setShowBcf(false);},
-          html`<span style=${{fontWeight:700,fontSize:'0.8rem',letterSpacing:'.03em'}}>2D</span>`,
-          '2D Import / Export')}
-        ${show2d && html`<div style=${{position:'absolute',left:'100%',bottom:0,marginLeft:4,zIndex:999,
-          background:'var(--bg-primary)',border:'1px solid var(--border)',borderRadius:8,
-          boxShadow:'0 4px 16px rgba(0,0,0,.25)',padding:'.25rem 0',minWidth:160}}
-          onMouseLeave=${function(){setShow2d(false);}}>
-          <button onClick=${function(){if(window._ccOpen2D)window._ccOpen2D();setShow2d(false);}}
-            style=${{...S_BTN,width:'100%',padding:'.3rem .65rem',background:'none',color:'var(--text-primary)',fontSize:'.72rem',justifyContent:'flex-start',borderRadius:0}}>Import DXF / PDF / DWG</button>
-          <div style=${{borderTop:'1px solid var(--border-subtle)',margin:'.15rem 0'}}></div>
-          <button onClick=${function(){if(window._ccDoExportDXF)window._ccDoExportDXF();setShow2d(false);}}
-            style=${{...S_BTN,width:'100%',padding:'.3rem .65rem',background:'none',color:'var(--text-primary)',fontSize:'.72rem',justifyContent:'flex-start',borderRadius:0}}>Export DXF</button>
-          <button onClick=${function(){if(window._ccDoExportPNG)window._ccDoExportPNG();setShow2d(false);}}
-            style=${{...S_BTN,width:'100%',padding:'.3rem .65rem',background:'none',color:'var(--text-primary)',fontSize:'.72rem',justifyContent:'flex-start',borderRadius:0}}>Export PNG</button>
-          <button onClick=${function(){if(window._ccDoExportPDF)window._ccDoExportPDF();setShow2d(false);}}
-            style=${{...S_BTN,width:'100%',padding:'.3rem .65rem',background:'none',color:'var(--text-primary)',fontSize:'.72rem',justifyContent:'flex-start',borderRadius:0}}>Export PDF</button>
-        </div>`}
-      </div>
-      <div style=${{position:'relative'}}>
-        ${iconBtn(function(){setShowBcf(!showBcf);setShow2d(false);setShow2dV(false);},
-          html`<span style=${{fontWeight:700,fontSize:'0.8rem',letterSpacing:'.03em'}}>BCF</span>`,
-          'BCF Import / Export')}
-        ${showBcf && html`<div style=${{position:'absolute',left:'100%',bottom:0,marginLeft:4,zIndex:999,
-          background:'var(--bg-primary)',border:'1px solid var(--border)',borderRadius:8,
-          boxShadow:'0 4px 16px rgba(0,0,0,.25)',padding:'.25rem 0',minWidth:150}}
-          onMouseLeave=${function(){setShowBcf(false);}}>
-          <button onClick=${function(){importBCF(d);setShowBcf(false);}}
-            style=${{...S_BTN,width:'100%',padding:'.3rem .65rem',background:'none',color:'var(--text-primary)',fontSize:'.72rem',justifyContent:'flex-start',borderRadius:0}}>Import BCF</button>
-          <button onClick=${function(){exportBCF(all,'2.1',s.viewpoints,s);setShowBcf(false);}} disabled=${!all.length}
-            style=${{...S_BTN,width:'100%',padding:'.3rem .65rem',background:'none',color:all.length?'var(--text-primary)':'var(--text-faint)',fontSize:'.72rem',justifyContent:'flex-start',borderRadius:0}}>Export BCF 2.1</button>
-          <button onClick=${function(){exportBCF(all,'3.0',s.viewpoints,s);setShowBcf(false);}} disabled=${!all.length}
-            style=${{...S_BTN,width:'100%',padding:'.3rem .65rem',background:'none',color:all.length?'var(--text-primary)':'var(--text-faint)',fontSize:'.72rem',justifyContent:'flex-start',borderRadius:0}}>Export BCF 3.0</button>
-        </div>`}
-      </div>
-      <div style=${{position:'relative'}}>
-        ${iconBtn(function(){
-            try { if (window._ccActivateAddon) window._ccActivateAddon('shared-project'); } catch(e){}
-            d({t:A.SHARE,v:true});
-          },
-          html`<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/></svg>`,
-          'Share project')}
-        ${(function(){
-          var sp = (s.sharedProject||{});
-          var unread = (s.comments||[]).filter(function(c){return !c.resolved && c.author && sp.userName && c.author!==sp.userName && (c.ts||0) > ((sp.lastSync||0) - 60000);}).length;
-          var dot = sp.enabled ? (sp.syncing ? '#f59e0b' : '#22c55e') : null;
-          return html`<${React.Fragment}>
-            ${dot && html`<span style=${{position:'absolute',top:8,right:10,width:7,height:7,borderRadius:'50%',background:dot,boxShadow:'0 0 0 2px var(--bg-primary)',pointerEvents:'none'}}></span>`}
-            ${unread>0 && html`<span style=${{position:'absolute',top:4,right:6,background:'#ef4444',color:'#fff',fontSize:'0.6rem',fontWeight:600,padding:'0 3px',borderRadius:99,lineHeight:1.3,minWidth:13,textAlign:'center',pointerEvents:'none',boxShadow:'0 1px 3px rgba(0,0,0,.3)'}}>${unread>9?'9+':unread}</span>`}
-          </${React.Fragment}>`;
-        })()}
-      </div>
-      ${iconBtn(function(){d({t:A.UPD_PREFS,u:{theme:isDark?'light':'dark'}});},
-        isDark?'☀':'☾', isDark?'Light mode':'Dark mode')}
-      ${iconBtn(function(){d({t:A.TAB,v:s.tab==='addons'?null:'addons'});},
-        html`<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
-          <path d="M12 2v4m0 12v4M2 12h4m12 0h4"/><circle cx="12" cy="12" r="3"/><path d="M6.34 6.34l2.83 2.83m5.66 5.66l2.83 2.83M17.66 6.34l-2.83 2.83m-5.66 5.66l-2.83 2.83"/>
-        </svg>`,
-        'Integrations')}
-      ${iconBtn(function(){d({t:A.SETTINGS,v:true});},
-        html`<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" dangerouslySetInnerHTML=${{__html:SVG_GEAR}}></svg>`,
-        'Settings')}
-      ${iconBtn(function(){if(window._ccToggleTutorial)window._ccToggleTutorial();},
-        html`<span style=${{fontSize:'0.92rem',fontWeight:700}}>ⓘ</span>`,
-        'Quick start guide')}
+      ${w === 'review' && html`<button class="cc-tip" data-tip=${(s.diagnostics?'Hide':'Show')+' diagnostics'}
+        onClick=${function(){ d({t:A.DIAGNOSTICS, v: !s.diagnostics}); }}
+        style=${{
+          width:'100%',height:42,background:'none',border:'none',cursor:'pointer',
+          display:'flex',alignItems:'center',justifyContent:'center',
+          color: s.diagnostics?'var(--ink-accent)':'var(--ink-muted)'
+        }}>
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+          stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"
+          dangerouslySetInnerHTML=${{__html:SVG_DIAG}}></svg>
+      </button>`}
     </div>`;
   }
 
@@ -21076,22 +21023,29 @@ function startApp() {
 
   // ── Model Load Card — shown when no model is loaded ──────────────
 
+  /* ── Empty state — paper, asymmetric, editorial ─────────────────
+     Replaces the previous centred glass card. The whole canvas is the
+     drop target; a left-weighted card at ~40% from left holds the headline
+     "Open a model." (Fraunces, optical-size 96, runs long) and three flat
+     row links: Choose a file… · From URL… · Try a sample model →. A drawn
+     isometric outline sits to the right as ballast. No emoji, no glass,
+     no dashed scrim. */
   function WelcomePopup(props) {
     var d = props.d, s = props.s;
     if (s.models && s.models.length > 0) return null;
     if (s.presenting) return null;
 
-    var stVis = useState(false), vis = stVis[0], setVis = stVis[1];
+    var stVis  = useState(false), vis   = stVis[0],  setVis  = stVis[1];
     var stDrag = useState(false), dragging = stDrag[0], setDragging = stDrag[1];
-    var stUrlOpen = useState(false), urlOpen = stUrlOpen[0], setUrlOpen = stUrlOpen[1];
-    var stUrl = useState(''), urlVal = stUrl[0], setUrlVal = stUrl[1];
+    var stUrl  = useState(false), urlOpen = stUrl[0], setUrlOpen = stUrl[1];
+    var stU    = useState(''),    urlVal = stU[0],   setUrlVal = stU[1];
 
     useEffect(function(){ requestAnimationFrame(function(){ setVis(true); }); }, []);
 
     function openFile() { if (window._ccOpenIFC) window._ccOpenIFC(); }
 
     function loadUrl() {
-      var u = urlVal.trim();
+      var u = (urlVal||'').trim();
       if (!u) return;
       if (!/^https?:\/\//.test(u)) u = 'https://' + u;
       fetch(u).then(function(r){ return r.arrayBuffer(); }).then(function(buf){
@@ -21101,83 +21055,158 @@ function startApp() {
       }).catch(function(){ alert('Could not load that URL — check the server allows cross-origin requests.'); });
       setUrlOpen(false);
     }
+    function tryDemo(){
+      try{
+        var sampleUrl = 'https://raw.githubusercontent.com/IFCjs/test-ifc-files/main/Others/Project1.ifc';
+        setUrlVal(sampleUrl); setTimeout(loadUrl, 0);
+      }catch(e){}
+    }
 
-    function openShare() { if (window._pickSharedFolder) window._pickSharedFolder(d); }
-
-    return html`<div style=${{
-      position:'fixed',inset:0,display:'flex',alignItems:'center',justifyContent:'center',
-      zIndex:50,pointerEvents:'none',
-      opacity:vis?1:0,transition:'opacity .2s ease'
-    }}>
-      <div style=${{
-        pointerEvents:'auto',
-        background:'var(--glass-bg)',
-        backdropFilter:'var(--glass-blur)',WebkitBackdropFilter:'var(--glass-blur)',
-        border:'1px solid var(--glass-border)',
-        borderRadius:'var(--radius-xl)',
-        width:440,maxWidth:'92vw',
-        boxShadow:'0 24px 64px rgba(0,0,0,.45)',
-        overflow:'hidden',
-        transform:vis?'translateY(0)':'translateY(16px)',
-        transition:'transform .25s var(--ease-decelerate)'
+    /* Whole-canvas drop handler — the dashed scrim that used to surround
+       the card is gone; on dragover a faint terracotta hairline overlay
+       traces the canvas edge instead, the only visual feedback. */
+    return html`<div
+      onDragOver=${function(e){ e.preventDefault(); setDragging(true); }}
+      onDragLeave=${function(e){ if(e.target===e.currentTarget) setDragging(false); }}
+      onDrop=${function(e){
+        e.preventDefault(); setDragging(false);
+        var files = Array.from(e.dataTransfer.files).filter(function(f){return /\.(ifc|glb)$/i.test(f.name);});
+        if (files.length && window._ccLoadFiles) window._ccLoadFiles(files);
+      }}
+      style=${{
+        position:'fixed',inset:0,zIndex:50,
+        display:'flex',alignItems:'center',
+        opacity:vis?1:0,transition:'opacity .25s var(--ease-decelerate)',
+        background:'transparent',pointerEvents:'auto'
       }}>
-        <div
-          onDragOver=${function(e){e.preventDefault();setDragging(true);}}
-          onDragLeave=${function(){setDragging(false);}}
-          onDrop=${function(e){
-            e.preventDefault(); setDragging(false);
-            var files=Array.from(e.dataTransfer.files).filter(function(f){return /\.(ifc|glb)$/i.test(f.name);});
-            if(files.length && window._ccLoadFiles) window._ccLoadFiles(files);
-          }}
-          onClick=${openFile}
-          style=${{
-            padding:'2.5rem 2rem',
-            display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',
-            cursor:'pointer',userSelect:'none',textAlign:'center',gap:'1rem',
-            background:dragging?'var(--accent-dim)':'transparent',
-            border:dragging?'2px dashed var(--accent)':'2px dashed rgba(255,255,255,.12)',
-            borderRadius:'var(--radius-lg)',margin:'1.2rem',
-            transition:'background .15s,border-color .15s'
-          }}>
-          <div style=${{width:56,height:56,borderRadius:'var(--radius-lg)',background:'var(--accent-bg)',border:'1px solid rgba(124,58,237,.25)',display:'flex',alignItems:'center',justifyContent:'center'}}>
-            <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="var(--accent-light)" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="12" y1="18" x2="12" y2="12"/><line x1="9" y1="15" x2="15" y2="15"/></svg>
-          </div>
-          <div>
-            <div style=${{fontSize:'1.05rem',fontWeight:700,color:'var(--text-primary)',marginBottom:'.35rem',fontFamily:'var(--font-display)'}}>
-              ${dragging ? 'Drop it' : 'Open a model'}
-            </div>
-            <div style=${{fontSize:'.78rem',color:'var(--text-secondary)',lineHeight:1.6}}>
-              Drag an IFC or GLB file here, or click to browse.
-            </div>
-          </div>
-        </div>
-        <div style=${{padding:'0 1.2rem 1.4rem',display:'flex',flexDirection:'column',gap:'.5rem'}}>
-          ${!urlOpen && html`<button onClick=${function(){setUrlOpen(true);}}
-            style=${{width:'100%',padding:'.5rem .75rem',borderRadius:'var(--radius-sm)',
-              background:'var(--bg-secondary)',border:'1px solid var(--border)',
-              color:'var(--text-secondary)',fontSize:'.78rem',fontWeight:500,
-              cursor:'pointer',fontFamily:'inherit',display:'flex',alignItems:'center',gap:'.5rem'}}>
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>
-            Open from URL
-          </button>`}
-          ${urlOpen && html`<div style=${{display:'flex',gap:'.4rem'}}>
-            <input autofocus type="url" placeholder="https://example.com/model.ifc"
-              value=${urlVal}
-              onInput=${function(e){setUrlVal(e.target.value);}}
-              onKeyDown=${function(e){if(e.key==='Enter')loadUrl();if(e.key==='Escape')setUrlOpen(false);}}
-              style=${{flex:1,padding:'.4rem .6rem',borderRadius:'var(--radius-sm)',background:'var(--bg-secondary)',
-                color:'var(--text-primary)',border:'1px solid var(--accent)',outline:'none',
-                fontSize:'.78rem',fontFamily:'inherit'}} />
-            <button onClick=${loadUrl}
-              style=${{padding:'.4rem .7rem',borderRadius:'var(--radius-sm)',background:'var(--accent)',color:'#fff',border:'none',fontSize:'.75rem',fontWeight:600,cursor:'pointer',fontFamily:'inherit'}}>Load</button>
-          </div>`}
-          <div style=${{textAlign:'center',paddingTop:'.2rem'}}>
-            <button onClick=${openShare}
-              style=${{background:'none',border:'none',color:'var(--text-faint)',fontSize:'.72rem',cursor:'pointer',fontFamily:'inherit',textDecoration:'underline',textDecorationStyle:'dotted',textUnderlineOffset:'2px'}}>
-              or link a shared folder →
+      <!-- terracotta hairline overlay shown on dragover -->
+      ${dragging && html`<div aria-hidden="true" style=${{
+        position:'absolute',inset:'.5rem',pointerEvents:'none',
+        border:'1px solid var(--ink-accent)',borderRadius:'var(--radius-sm)',
+        boxShadow:'inset 0 0 0 1px var(--ink-accent-soft)'
+      }}></div>`}
+
+      <!-- Left-weighted card at ~38% from left, asymmetric, no glass -->
+      <div style=${{
+        marginLeft:'min(8vw, 6rem)',marginRight:'auto',
+        width:600,maxWidth:'92vw',
+        background:'var(--surface)',border:'1px solid var(--hairline-strong)',
+        borderRadius:'var(--radius-md)',boxShadow:'var(--shadow-soft)',
+        padding:'2.6rem 2.4rem 2.2rem',
+        transform:vis?'translateY(0)':'translateY(8px)',
+        transition:'transform .35s var(--ease-decelerate)',
+        display:'grid',gridTemplateColumns:'1fr auto',gap:'1.4rem',alignItems:'flex-start'
+      }}>
+        <div style=${{minWidth:0}}>
+          <!-- Editorial label, mono small caps -->
+          <div style=${{
+            fontFamily:'var(--font-mono)',fontSize:'var(--text-2xs)',
+            color:'var(--ink-muted)',letterSpacing:'.12em',textTransform:'uppercase',
+            marginBottom:'.6rem'
+          }}>ClashControl · v${CC_VERSION.v}</div>
+          <!-- Asymmetric headline, Fraunces opsz 96, runs long -->
+          <h1 style=${{
+            margin:0,padding:0,
+            fontFamily:'var(--font-display)',fontWeight:600,
+            fontSize:'2.6rem',lineHeight:1.05,letterSpacing:'-.02em',
+            color:'var(--ink-primary)',
+            fontVariationSettings:"'opsz' 96"
+          }}>${dragging ? 'Drop the file.' : 'Open a model.'}</h1>
+          <p style=${{
+            marginTop:'.85rem',marginBottom:0,
+            fontFamily:'var(--font-body)',fontSize:'var(--text-base)',
+            color:'var(--ink-secondary)',lineHeight:1.55,maxWidth:'34em'
+          }}>Drag an IFC or GLB onto the canvas. Or pick from below.</p>
+
+          <!-- Flat row links — no chips, no buttons. The accent line on
+               the active row is the only colour. -->
+          <div style=${{marginTop:'1.6rem',display:'flex',flexDirection:'column'}}>
+            <button onClick=${openFile}
+              style=${{
+                display:'flex',alignItems:'center',justifyContent:'space-between',gap:'1rem',
+                padding:'.7rem 0',background:'none',border:'none',borderTop:'1px solid var(--hairline)',
+                cursor:'pointer',textAlign:'left',width:'100%',
+                fontFamily:'var(--font-body)',color:'var(--ink-primary)',fontSize:'var(--text-md)',
+                transition:'color var(--duration-fast) var(--ease-standard)'
+              }}
+              onMouseEnter=${function(e){ e.currentTarget.style.color='var(--ink-accent)'; }}
+              onMouseLeave=${function(e){ e.currentTarget.style.color='var(--ink-primary)'; }}>
+              <span>Choose a file…</span>
+              <span style=${{color:'var(--ink-faint)',fontSize:'var(--text-xs)',fontFamily:'var(--font-mono)'}}>IFC · GLB</span>
+            </button>
+
+            ${!urlOpen && html`<button onClick=${function(){setUrlOpen(true);}}
+              style=${{
+                display:'flex',alignItems:'center',justifyContent:'space-between',gap:'1rem',
+                padding:'.7rem 0',background:'none',border:'none',borderTop:'1px solid var(--hairline)',
+                cursor:'pointer',textAlign:'left',width:'100%',
+                fontFamily:'var(--font-body)',color:'var(--ink-primary)',fontSize:'var(--text-md)'
+              }}
+              onMouseEnter=${function(e){ e.currentTarget.style.color='var(--ink-accent)'; }}
+              onMouseLeave=${function(e){ e.currentTarget.style.color='var(--ink-primary)'; }}>
+              <span>Open from URL…</span>
+              <span style=${{color:'var(--ink-faint)',fontSize:'var(--text-xs)'}}>Paste an .ifc link</span>
+            </button>`}
+            ${urlOpen && html`<div style=${{display:'flex',gap:'.4rem',padding:'.6rem 0',borderTop:'1px solid var(--hairline)'}}>
+              <input autofocus type="url" placeholder="https://example.com/model.ifc"
+                value=${urlVal}
+                onInput=${function(e){setUrlVal(e.target.value);}}
+                onKeyDown=${function(e){ if(e.key==='Enter') loadUrl(); if(e.key==='Escape') setUrlOpen(false); }}
+                style=${{
+                  flex:1,padding:'.45rem .6rem',
+                  background:'var(--surface-warm)',border:'1px solid var(--hairline-strong)',
+                  borderRadius:'var(--radius-sm)',outline:'none',
+                  fontFamily:'var(--font-body)',fontSize:'var(--text-sm)',color:'var(--ink-primary)'
+                }} />
+              <button onClick=${loadUrl}
+                style=${{
+                  padding:'.45rem .85rem',background:'var(--ink-primary)',color:'var(--paper-bg)',
+                  border:'none',borderRadius:'var(--radius-sm)',cursor:'pointer',
+                  fontFamily:'var(--font-body)',fontSize:'var(--text-sm)',fontWeight:500
+                }}>Load</button>
+            </div>`}
+
+            <button onClick=${tryDemo}
+              style=${{
+                display:'flex',alignItems:'center',justifyContent:'space-between',gap:'1rem',
+                padding:'.7rem 0',background:'none',
+                border:'none',borderTop:'1px solid var(--hairline)',borderBottom:'1px solid var(--hairline)',
+                cursor:'pointer',textAlign:'left',width:'100%',
+                fontFamily:'var(--font-body)',color:'var(--ink-primary)',fontSize:'var(--text-md)'
+              }}
+              onMouseEnter=${function(e){ e.currentTarget.style.color='var(--ink-accent)'; }}
+              onMouseLeave=${function(e){ e.currentTarget.style.color='var(--ink-primary)'; }}>
+              <span>Try a sample model</span>
+              <span style=${{color:'var(--ink-faint)',fontSize:'var(--text-xs)'}}>fetched once · ~2 MB →</span>
             </button>
           </div>
+
+          <div style=${{marginTop:'1.4rem',display:'flex',gap:'1rem',alignItems:'center'}}>
+            <button onClick=${function(){ if(window._pickSharedFolder) window._pickSharedFolder(d); }}
+              style=${{
+                background:'none',border:'none',cursor:'pointer',padding:0,
+                fontFamily:'var(--font-body)',fontSize:'var(--text-xs)',
+                color:'var(--ink-faint)',textDecoration:'underline',textUnderlineOffset:'3px',textDecorationThickness:'1px'
+              }}>Already shared? Link a folder.</button>
+          </div>
         </div>
+
+        <!-- Hand-drawn isometric ballast — single 1.5px stroke, no fill -->
+        <svg width="120" height="120" viewBox="0 0 120 120" aria-hidden="true"
+          style=${{display:'block',color:'var(--ink-primary)',opacity:.85,flexShrink:0}}>
+          <g fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round" stroke-linecap="round">
+            <!-- ground -->
+            <line x1="10" y1="92" x2="110" y2="92" />
+            <!-- mass A: tall block -->
+            <path d="M28 92 L28 50 L60 32 L60 74 Z" />
+            <path d="M28 50 L60 32 L88 50 L60 74 Z" />
+            <path d="M60 74 L60 92 M88 50 L88 76 L60 92" />
+            <!-- mass B: stepped -->
+            <path d="M88 76 L102 68 L102 86 L88 92 Z" />
+            <!-- accent diagonal — a single terracotta cut, the only colour -->
+            <line x1="22" y1="92" x2="56" y2="36" stroke="var(--ink-accent)" />
+          </g>
+        </svg>
       </div>
     </div>`;
   }
@@ -21303,60 +21332,201 @@ function startApp() {
   }
 
   // ── Desktop Top Bar ───────────────────────────────────────────
+  /* ── Workspace tabs (visible segmented control) ───────────────────
+     The single-most-important bit of new IA. Three workspaces:
+     Present (default — model only) · Coordinate (clash work) · Review
+     (data quality, IDS, diagnostics, training). Persists to cc_workspace. */
+  function WorkspaceTabs(props){
+    var s=props.s, d=props.d;
+    var w = s.workspace || 'present';
+    var tabs = [
+      {id:'present',    label:'Present'},
+      {id:'coordinate', label:'Coordinate'},
+      {id:'review',     label:'Review'}
+    ];
+    function pick(id){ if(id!==w) d({t:A.SET_WORKSPACE,v:id}); }
+    return html`<div role="tablist" aria-label="Workspace"
+      style=${{display:'flex',alignItems:'stretch',height:'100%',gap:0}}>
+      ${tabs.map(function(t){
+        var on = w===t.id;
+        return html`<button key=${t.id} role="tab" aria-selected=${on}
+          onClick=${function(){pick(t.id);}}
+          style=${{
+            padding:'0 .9rem',height:'100%',background:'none',border:'none',cursor:'pointer',
+            fontFamily:'var(--font-body)',fontSize:'var(--text-sm)',
+            fontWeight:on?600:500,letterSpacing:'-.005em',
+            color:on?'var(--ink-primary)':'var(--ink-muted)',
+            position:'relative',transition:'color var(--duration-fast) var(--ease-standard)'
+          }}>
+          ${t.label}
+          ${on && html`<span style=${{position:'absolute',left:'.6rem',right:'.6rem',bottom:0,height:2,background:'var(--ink-accent)'}}></span>`}
+        </button>`;
+      })}
+    </div>`;
+  }
+
+  /* ── Avatar menu (single canonical home for project switcher, theme,
+     settings, presentation, keyboard shortcuts). Closed-button is a 28-px
+     circle showing the user's initial; opens a calm 240-px solid panel. */
+  function AvatarMenu(props){
+    var s=props.s, d=props.d;
+    var sp = s.sharedProject||{};
+    var initial = ((sp.userName||'You').trim().charAt(0)||'U').toUpperCase();
+    var open = !!s.avatarMenuOpen;
+    var isDark = (s.prefs.theme||'light')==='dark';
+    var projects = s.projectList || [];
+    var activeProj = projects.find(function(p){return p.id===s.activeProject;}) || projects[0] || {id:'default',name:'Default'};
+    function close(){ d({t:A.AVATAR_MENU,v:false}); }
+    function row(label, onClick, hint){
+      return html`<button onClick=${function(){onClick();close();}}
+        style=${{display:'flex',alignItems:'center',justifyContent:'space-between',gap:'.6rem',width:'100%',
+          padding:'.5rem .8rem',background:'none',border:'none',cursor:'pointer',textAlign:'left',
+          fontFamily:'var(--font-body)',fontSize:'var(--text-sm)',color:'var(--ink-primary)',
+          transition:'background var(--duration-fast) var(--ease-standard)'}}
+        onMouseEnter=${function(e){e.currentTarget.style.background='var(--surface-warm)';}}
+        onMouseLeave=${function(e){e.currentTarget.style.background='none';}}>
+        <span>${label}</span>
+        ${hint && html`<span style=${{color:'var(--ink-faint)',fontSize:'var(--text-xs)',fontFamily:'var(--font-mono)'}}>${hint}</span>`}
+      </button>`;
+    }
+    function newProject(){
+      try{
+        var nm = (window.prompt('New project name','New project')||'').trim();
+        if(!nm) return;
+        var id = nm.replace(/[^a-z0-9]+/gi,'-').replace(/^-|-$/g,'').toLowerCase()+'-'+Math.random().toString(36).slice(2,7);
+        var nl = projects.concat([{id:id,name:nm}]);
+        d({t:A.SET_PROJECT_LIST,v:nl});
+        try{ localStorage.setItem('cc_projects',JSON.stringify(nl)); }catch(e){}
+        d({t:A.SET_PROJECT,id:id});
+      }catch(e){}
+    }
+    return html`<div style=${{position:'relative',flexShrink:0}}>
+      <button aria-label="Account and settings" aria-expanded=${open}
+        onClick=${function(){d({t:A.AVATAR_MENU,v:!open});}}
+        style=${{
+          width:28,height:28,borderRadius:'50%',border:'1px solid var(--hairline-strong)',
+          background:open?'var(--paper-edge)':'var(--surface)',
+          color:'var(--ink-primary)',fontFamily:'var(--font-body)',fontWeight:600,
+          fontSize:'var(--text-xs)',cursor:'pointer',display:'flex',alignItems:'center',justifyContent:'center',
+          letterSpacing:0,transition:'background var(--duration-fast) var(--ease-standard)'
+        }}>${initial}</button>
+      ${open && html`<div>
+        <div onClick=${close} style=${{position:'fixed',inset:0,zIndex:399}}></div>
+        <div role="menu" style=${{
+          position:'absolute',top:'calc(100% + 8px)',right:0,zIndex:400,minWidth:240,
+          background:'var(--surface)',border:'1px solid var(--hairline-strong)',
+          borderRadius:'var(--radius-md)',boxShadow:'var(--shadow-lifted)',padding:'.4rem 0',
+          fontFamily:'var(--font-body)'
+        }}>
+          <div style=${{padding:'.35rem .8rem .55rem',borderBottom:'1px solid var(--hairline)',marginBottom:'.3rem'}}>
+            <div style=${{fontSize:'var(--text-sm)',fontWeight:500,color:'var(--ink-primary)',letterSpacing:'-.005em'}}>${sp.userName||'Local user'}</div>
+            <div style=${{fontSize:'var(--text-xs)',color:'var(--ink-muted)',marginTop:1}}>${activeProj.name}</div>
+          </div>
+          ${row('Open model…', function(){ if(window._ccOpenIFC) window._ccOpenIFC(); }, 'O')}
+          <div style=${{height:1,background:'var(--hairline)',margin:'.3rem 0'}}></div>
+          <div style=${{padding:'.25rem .8rem',fontSize:'var(--text-2xs)',textTransform:'uppercase',letterSpacing:'.08em',color:'var(--ink-muted)',fontWeight:500}}>Project</div>
+          ${projects.map(function(p){
+            var on = p.id===s.activeProject;
+            return html`<button key=${p.id} onClick=${function(){if(!on){d({t:A.SET_PROJECT,id:p.id});}close();}}
+              style=${{display:'flex',alignItems:'center',justifyContent:'space-between',gap:'.6rem',width:'100%',
+                padding:'.4rem .8rem',background:'none',border:'none',cursor:'pointer',textAlign:'left',
+                fontFamily:'var(--font-body)',fontSize:'var(--text-sm)',
+                color:on?'var(--ink-primary)':'var(--ink-secondary)',fontWeight:on?500:400}}
+              onMouseEnter=${function(e){e.currentTarget.style.background='var(--surface-warm)';}}
+              onMouseLeave=${function(e){e.currentTarget.style.background='none';}}>
+              <span>${p.name}</span>
+              ${on && html`<span style=${{width:6,height:6,borderRadius:'50%',background:'var(--ink-accent)'}}></span>`}
+            </button>`;
+          })}
+          ${row('+ New project…', newProject)}
+          <div style=${{height:1,background:'var(--hairline)',margin:'.3rem 0'}}></div>
+          ${row('Theme: '+(isDark?'Dark':'Light'), function(){ d({t:A.UPD_PREFS,u:{theme:isDark?'light':'dark'}}); })}
+          ${row('Settings…', function(){ d({t:A.SETTINGS,v:true}); }, ',')}
+          ${row('Enter presentation', function(){ d({t:A.PRESENT,v:true}); })}
+          ${row('Keyboard shortcuts', function(){ try{ window.dispatchEvent(new CustomEvent('cc-show-shortcuts')); }catch(e){} }, '?')}
+        </div>
+      </div>`}
+    </div>`;
+  }
+
+  /* ── Desktop top bar — solid paper, no glassmorphism, terracotta Share.
+     Layout (left → right):
+       wordmark (ink mark + text)  |  workspace tabs  |  spacer  |  Share  |  avatar */
   function DesktopTopBar(props) {
     var s=props.s, d=props.d;
-    var isDark = (s.prefs.theme||'dark')==='dark';
     var sp = s.sharedProject||{};
     var connected = !!sp.enabled;
-    var dotColor = connected ? (sp.syncing?'#f59e0b':'#22c55e') : 'rgba(255,255,255,.35)';
+    var dotColor = connected ? (sp.syncing?'var(--color-warning)':'var(--color-success)') : 'transparent';
     var unread = (s.comments||[]).filter(function(c){return !c.resolved && c.author && sp.userName && c.author!==sp.userName;}).length;
 
     function openShare(){
       try { if (window._ccActivateAddon) window._ccActivateAddon('shared-project'); } catch(e){}
       d({t:A.SHARE,v:true});
     }
+    function activeModelName(){
+      if(!s.models||!s.models.length) return null;
+      var m = s.models.find(function(mm){return !mm.hidden;}) || s.models[0];
+      var n = m.name||'Untitled';
+      return n.replace(/\.(ifc|glb|ifczip)$/i,'');
+    }
+    var modelName = activeModelName();
 
     return html`<div class="cc-desktop-topbar">
-      <!-- Brand -->
-      <div style=${{display:'flex',alignItems:'center',gap:'var(--space-2)',flexShrink:0}}>
-        <div style=${{width:28,height:28,background:'var(--logo-gradient)',borderRadius:'var(--radius-sm)',display:'flex',alignItems:'center',justifyContent:'center',boxShadow:'0 2px 8px rgba(124,58,237,.3)',flexShrink:0}}>
-          <span style=${{display:'inline-flex',alignItems:'center',color:'#fff',fontWeight:800,fontSize:9,fontFamily:'var(--font-display)',lineHeight:1}}>
-            <span>C</span><span style=${{display:'inline-block',transform:'scaleX(-1)',marginLeft:'-1px'}}>C</span>
-          </span>
-        </div>
-        <span class="cc-display" style=${{fontWeight:700,fontSize:'var(--text-sm)',color:'var(--text-primary)',letterSpacing:'-.01em',userSelect:'none'}}>ClashControl</span>
+      <!-- Brand: flat ink mark + Fraunces wordmark, no gradient, no glow. -->
+      <div style=${{display:'flex',alignItems:'center',gap:'var(--space-2)',flexShrink:0,height:'100%'}}>
+        <svg width="20" height="20" viewBox="0 0 48 48" aria-hidden="true" style=${{display:'block'}}>
+          <rect x="9.5" y="9.5" width="29" height="29" fill="none" stroke="currentColor" stroke-width="1.5"/>
+          <line x1="9.5" y1="38.5" x2="38.5" y2="9.5" stroke="var(--ink-accent)" stroke-width="1.5"/>
+        </svg>
+        <span style=${{
+          fontFamily:'var(--font-display)',fontWeight:600,
+          fontSize:'1.05rem',letterSpacing:'-.02em',color:'var(--ink-primary)',
+          fontVariationSettings:"'opsz' 96",userSelect:'none'
+        }}>ClashControl</span>
       </div>
-      <!-- Spacer -->
-      <div style=${{flex:1}}></div>
-      <!-- Share button -->
-      <button class="cc-btn-press" onClick=${openShare}
-        title=${connected?'Shared via '+(sp.folderName||'folder'):'Share this model'}
-        style=${{...S_BTN,position:'relative',background:'var(--accent)',color:'#fff',fontWeight:600,
-          padding:'.3rem .75rem',fontSize:'var(--text-xs)',display:'flex',alignItems:'center',gap:'.35rem',
-          borderRadius:'var(--radius-pill)',boxShadow:'0 2px 8px rgba(124,58,237,.3)'}}>
-        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/></svg>
-        <span>Share</span>
-        <span style=${{width:6,height:6,borderRadius:'50%',background:dotColor,flexShrink:0}}></span>
-        ${unread>0 && html`<span style=${{position:'absolute',top:-4,right:-4,background:'#ef4444',color:'#fff',fontSize:'0.6rem',fontWeight:700,padding:'1px 4px',borderRadius:99,lineHeight:1.3,minWidth:12,textAlign:'center',boxShadow:'0 1px 3px rgba(0,0,0,.4)'}}>${unread>9?'9+':unread}</span>`}
-      </button>
-      <!-- Utility icons -->
-      <div style=${{display:'flex',alignItems:'center',gap:'var(--space-1)'}}>
-        <button onClick=${function(){d({t:A.UPD_PREFS,u:{theme:isDark?'light':'dark'}})}}
-          style=${{...S_BTN,background:'none',border:'none',color:'var(--text-muted)',fontSize:'1rem',padding:'.3rem',lineHeight:1,borderRadius:'var(--radius-sm)'}}
-          title=${isDark?'Switch to light mode':'Switch to dark mode'} aria-label=${isDark?'Switch to light mode':'Switch to dark mode'}>${isDark?'☀':'☾'}</button>
-        <button onClick=${function(){d({t:A.SETTINGS,v:true})}}
-          style=${{...S_BTN,background:'none',border:'none',color:'var(--text-muted)',fontSize:'1rem',padding:'.3rem',lineHeight:1,borderRadius:'var(--radius-sm)'}}
-          title="Settings" aria-label="Open settings">⚙</button>
+      <!-- Workspace switcher -->
+      <div style=${{flexShrink:0,height:'100%',marginLeft:'var(--space-4)'}}>
+        <${WorkspaceTabs} s=${s} d=${d} />
+      </div>
+      <!-- Centre: typographic model name (no chrome) -->
+      <div style=${{flex:1,display:'flex',justifyContent:'center',alignItems:'center',minWidth:0,padding:'0 var(--space-3)'}}>
+        ${modelName && html`<span style=${{
+          fontFamily:'var(--font-display)',fontWeight:500,fontSize:'var(--text-base)',
+          letterSpacing:'-.01em',color:'var(--ink-secondary)',
+          whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis',maxWidth:480
+        }} title=${modelName}>${modelName}</span>`}
+      </div>
+      <!-- Right: Share + avatar -->
+      <div style=${{display:'flex',alignItems:'center',gap:'var(--space-2)',flexShrink:0,height:'100%'}}>
+        <button class="cc-btn-press" onClick=${openShare}
+          title=${connected?'Shared via '+(sp.folderName||'folder'):'Share this model'}
+          style=${{position:'relative',background:'var(--ink-accent)',color:'#fff',fontWeight:500,
+            padding:'.32rem .7rem',fontSize:'var(--text-xs)',display:'flex',alignItems:'center',gap:'.35rem',
+            border:'none',borderRadius:'var(--radius-sm)',cursor:'pointer',fontFamily:'var(--font-body)',
+            letterSpacing:0,lineHeight:1.2}}>
+          <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="18" cy="5" r="2.5"/><circle cx="6" cy="12" r="2.5"/><circle cx="18" cy="19" r="2.5"/><line x1="8.5" y1="13.5" x2="15.5" y2="17.5"/><line x1="15.5" y1="6.5" x2="8.5" y2="10.5"/></svg>
+          <span>Share</span>
+          ${connected && html`<span style=${{width:5,height:5,borderRadius:'50%',background:dotColor,flexShrink:0}}></span>`}
+          ${unread>0 && html`<span style=${{position:'absolute',top:-4,right:-4,background:'var(--ink-primary)',color:'var(--paper-bg)',fontSize:'0.58rem',fontWeight:600,padding:'1px 4px',borderRadius:99,lineHeight:1.3,minWidth:12,textAlign:'center'}}>${unread>9?'9+':unread}</span>`}
+        </button>
+        <${AvatarMenu} s=${s} d=${d} />
       </div>
     </div>`;
   }
 
-  // ── Mode Toolbar ──────────────────────────────────────────────
-  function ModeToolbar(props) {
+  /* ── Top toolbar (xeokit-bim-viewer style horizontal ribbon) ──────
+     Sits directly under the DesktopTopBar, persistent across workspaces,
+     full canvas width minus the right Inspector. Solid surface, hairline
+     bottom, no glass. Tools group into clusters separated by 16-px gaps and
+     vertical hairlines: View · Section · Measure · Camera · Notes · Style.
+     Visible buttons everywhere — every shortcut also has a button. */
+  function TopToolbar(props) {
     var s=props.s, d=props.d;
-    // Only show when a model is loaded and not in presenting mode
     if (!s.models || s.models.length === 0) return null;
     if (s.presenting) return null;
+
+    var styleSt = useState(false), styleOpen=styleSt[0], setStyleOpen=styleSt[1];
+
     var activeMode = s.walkMode ? 'walk'
       : (s.sectionAxis || s.sectionCustom || (s.sectionBox && s.sectionBox.enabled)) ? 'slice'
       : s.measureMode ? 'measure'
@@ -21364,8 +21534,7 @@ function startApp() {
       : s.commentMode ? 'note'
       : 'orbit';
 
-    function setMode(mode) {
-      // mutex: exit all active modes first
+    function clearAllModes(){
       if (s.walkMode) d({t:A.WALK_MODE,v:false});
       if (s.sectionAxis) d({t:A.SECTION,axis:null});
       if (s.sectionCustom) d({t:A.SECTION_CUSTOM,v:null});
@@ -21373,6 +21542,9 @@ function startApp() {
       if (s.measureMode) d({t:A.MEASURE_MODE,v:false});
       if (s.floorPlan) d({t:A.FLOOR_PLAN,v:null});
       if (s.commentMode) d({t:A.COMMENT_MODE,v:false});
+    }
+    function setMode(mode){
+      clearAllModes();
       if (mode === 'walk') d({t:A.WALK_MODE,v:true});
       else if (mode === 'slice') d({t:A.SECTION,axis:'y',pos:0.5});
       else if (mode === 'measure') d({t:A.MEASURE_MODE,v:true});
@@ -21380,95 +21552,182 @@ function startApp() {
       else if (mode === 'note') d({t:A.COMMENT_MODE,v:true});
     }
 
-    var chips = [
-      {id:'orbit', label:'Orbit', title:'Rotate, pan and zoom (Esc)', icon:'<circle cx="12" cy="12" r="10"/><path d="M12 8v4l3 3"/>'},
-      {id:'walk', label:'Walk', title:'Walk through the building (W)', icon:'<path d="M13 4a1 1 0 1 1-2 0 1 1 0 0 1 2 0"/><path d="M7 20l2-8 3 3 2-4 3 7"/><path d="M5 12l2-2 4 2"/>'},
-      {id:'slice', label:'Slice', title:'Cut a section through the model (S)', icon:'<line x1="18" y1="6" x2="6" y2="18"/><path d="M8 6h10v10"/>'},
-      {id:'measure', label:'Measure', title:'Measure distances (M)', icon:'<path d="M2 12h20M2 12l3-3m-3 3l3 3M22 12l-3-3m3 3l-3 3"/>'},
-      {id:'plan', label:'Plan', title:'Top-down floor plan (F)', icon:'<rect x="3" y="3" width="18" height="18" rx="2"/><line x1="3" y1="9" x2="21" y2="9"/><line x1="9" y1="9" x2="9" y2="21"/>'},
-      {id:'note', label:'Note', title:'Drop a comment pin on the model (N)', icon:'<path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/>'}
-    ];
+    /* Compact button — every tool is a 36×36 square with a 1.5-px stroked
+       glyph. Active gets a 2-px ink-accent bottom border + ink-primary glyph;
+       idle is ink-muted. The visible label appears as a tooltip on hover. */
+    function btn(opts){
+      var on = !!opts.active;
+      return html`<button key=${opts.k} onClick=${opts.onClick} title=${opts.title}
+        aria-label=${opts.label} aria-pressed=${on}
+        style=${{
+          width:36,height:36,display:'inline-flex',alignItems:'center',justifyContent:'center',
+          background:'none',border:'none',cursor:'pointer',position:'relative',
+          color:on?'var(--ink-primary)':'var(--ink-muted)',
+          transition:'color var(--duration-fast) var(--ease-standard)'
+        }}
+        onMouseEnter=${function(e){ if(!on) e.currentTarget.style.color='var(--ink-secondary)'; }}
+        onMouseLeave=${function(e){ if(!on) e.currentTarget.style.color='var(--ink-muted)'; }}>
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+          stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"
+          dangerouslySetInnerHTML=${{__html:opts.icon}}></svg>
+        ${on && html`<span style=${{position:'absolute',left:6,right:6,bottom:0,height:2,background:'var(--ink-accent)'}}></span>`}
+      </button>`;
+    }
+    /* Vertical 1-px hairline divider between clusters */
+    function div(){
+      return html`<span aria-hidden="true" style=${{display:'inline-block',width:1,height:18,background:'var(--hairline-strong)',margin:'0 .25rem'}}></span>`;
+    }
 
-    var chipStyle = function(id) {
-      var isActive = activeMode === id;
-      return {display:'flex',flexDirection:'column',alignItems:'center',gap:2,padding:'.35rem .7rem',borderRadius:'var(--radius-md)',border:'none',
-        background: isActive ? 'var(--accent)' : 'transparent',
-        color: isActive ? '#fff' : 'var(--text-muted)',
-        cursor:'pointer',fontFamily:'inherit',fontSize:'var(--text-xs)',fontWeight:600,
-        transition:'background .12s,color .12s',lineHeight:1.2,minWidth:52};
+    var I = {
+      fit:    '<path d="M3 8V3h5"/><path d="M21 8V3h-5"/><path d="M3 16v5h5"/><path d="M21 16v5h-5"/>',
+      reset:  '<path d="M3 12a9 9 0 0 1 15-6.7L21 8"/><path d="M21 3v5h-5"/>',
+      slice:  '<path d="M5 5l14 14"/><path d="M14 5h5v5"/>',
+      slicebox:'<rect x="4" y="4" width="16" height="16" rx="1"/><path d="M9 4v16"/><path d="M4 9h16"/>',
+      clear:  '<path d="M5 5l14 14"/><path d="M19 5L5 19"/>',
+      ruler:  '<path d="M3 12h18"/><path d="M5 12V9"/><path d="M9 12v-4"/><path d="M13 12V8"/><path d="M17 12v-4"/><path d="M21 12V9"/>',
+      angle:  '<path d="M5 19L19 19"/><path d="M5 19L5 5"/><path d="M5 8a8 8 0 0 1 11 11"/>',
+      orbit:  '<circle cx="12" cy="12" r="9"/><path d="M3 12a9 4.5 0 0 0 18 0"/>',
+      walk:   '<circle cx="12" cy="4.5" r="1.5"/><path d="M9 11l3-2 3 2"/><path d="M10 21l2-7 2 4"/><path d="M14 18l3 3"/>',
+      plan:   '<rect x="4" y="4" width="16" height="16" rx="1"/><path d="M4 10h16"/><path d="M10 4v16"/>',
+      pin:    '<path d="M12 21s-7-7-7-12a7 7 0 0 1 14 0c0 5-7 12-7 12z"/><circle cx="12" cy="9" r="2.5"/>',
+      style:  '<circle cx="12" cy="12" r="9"/><path d="M12 3v9l6 4"/>'
     };
 
-    // Sub-tool rows
-    var subTools = null;
-    if (activeMode === 'walk') {
+    var styles = [
+      {id:'standard',  label:'Standard'},
+      {id:'shaded',    label:'Shaded'},
+      {id:'rendered',  label:'Rendered'},
+      {id:'wireframe', label:'Wireframe'}
+    ];
+    var curStyle = s.prefs.renderStyle || 'rendered';
+    var curStyleLabel = (styles.find(function(x){return x.id===curStyle;})||styles[2]).label;
+
+    /* Section sub-row only appears when a slice plane exists, anchored under
+       the toolbar (not floating). Same ink palette, no glass. */
+    var subRow = null;
+    if (activeMode === 'slice' && (s.sectionAxis || s.sectionCustom)) {
+      subRow = html`<div style=${{display:'flex',alignItems:'center',gap:'.5rem',padding:'.25rem .9rem',
+        background:'var(--surface)',borderTop:'1px solid var(--hairline)',
+        fontSize:'var(--text-xs)',color:'var(--ink-muted)'}}>
+        <span style=${{fontFamily:'var(--font-mono)',fontSize:'var(--text-2xs)',letterSpacing:'.04em',textTransform:'uppercase'}}>Cut</span>
+        <input type="range" min="0" max="1" step="0.005" value=${s.sectionPos||0.5}
+          onInput=${function(e){ var pos=parseFloat(e.target.value); if(s.sectionAxis)d({t:A.SECTION,axis:s.sectionAxis,pos:pos}); else if(s.sectionCustom)d({t:A.SECTION_CUSTOM,v:s.sectionCustom,pos:pos}); }}
+          style=${{flex:1,maxWidth:380,accentColor:'var(--ink-accent)'}} />
+        <span style=${{fontFamily:'var(--font-mono)',fontSize:'var(--text-2xs)',color:'var(--ink-secondary)',minWidth:34,textAlign:'right'}}>${Math.round((s.sectionPos||0.5)*100)}%</span>
+      </div>`;
+    } else if (activeMode === 'plan' && s.floors && s.floors.length>0) {
+      subRow = html`<div style=${{display:'flex',alignItems:'center',gap:'.4rem',padding:'.25rem .9rem',overflowX:'auto',
+        background:'var(--surface)',borderTop:'1px solid var(--hairline)'}}>
+        <span style=${{fontFamily:'var(--font-mono)',fontSize:'var(--text-2xs)',color:'var(--ink-muted)',letterSpacing:'.04em',textTransform:'uppercase',marginRight:'.3rem'}}>Floor</span>
+        ${s.floors.slice(0,12).map(function(fl){
+          var on = s.floorPlan && s.floorPlan.storeyId===fl.id;
+          return html`<button key=${fl.id} onClick=${function(){d({t:A.FLOOR_PLAN,v:{storeyId:fl.id,storeyName:fl.name||'Floor',elevation:fl.elevation||0,cutHeight:1.2}});}}
+            style=${{padding:'.15rem .55rem',borderRadius:'var(--radius-xs)',border:'1px solid '+(on?'var(--ink-accent)':'var(--hairline-strong)'),
+              background:on?'var(--ink-accent-soft)':'var(--surface)',
+              color:on?'var(--ink-primary)':'var(--ink-secondary)',
+              fontSize:'var(--text-xs)',fontWeight:on?500:400,cursor:'pointer',fontFamily:'var(--font-body)',whiteSpace:'nowrap'}}>${fl.name||'Floor'}</button>`;
+        })}
+      </div>`;
+    } else if (activeMode === 'walk') {
       var curFov = typeof window._ccWalkGetFov==='function' ? window._ccWalkGetFov() : 75;
       var fovPresets = [{v:50,l:'Narrow'},{v:75,l:'Natural'},{v:95,l:'Wide'}];
-      subTools = html`<div style=${{display:'flex',alignItems:'center',gap:'.3rem',padding:'.25rem .5rem',background:'var(--glass-bg)',backdropFilter:'var(--glass-blur)',WebkitBackdropFilter:'var(--glass-blur)',border:'1px solid var(--glass-border)',borderRadius:'var(--radius-md)'}}>
+      subRow = html`<div style=${{display:'flex',alignItems:'center',gap:'.4rem',padding:'.25rem .9rem',
+        background:'var(--surface)',borderTop:'1px solid var(--hairline)'}}>
+        <span style=${{fontFamily:'var(--font-mono)',fontSize:'var(--text-2xs)',color:'var(--ink-muted)',letterSpacing:'.04em',textTransform:'uppercase',marginRight:'.3rem'}}>FOV</span>
         ${fovPresets.map(function(fp){
           var on = Math.abs(curFov-fp.v)<1.5;
           return html`<button key=${fp.v} onClick=${function(){if(window._ccWalkSetFov)window._ccWalkSetFov(fp.v);}}
-            style=${{padding:'.2rem .5rem',borderRadius:6,border:'none',background:on?'var(--accent)':'rgba(255,255,255,.08)',color:'#fff',fontSize:'var(--text-xs)',fontWeight:600,cursor:'pointer',fontFamily:'inherit'}}>${fp.l}</button>`;
-        })}
-        <span style=${{width:1,height:16,background:'rgba(255,255,255,.15)',margin:'0 .2rem'}}></span>
-        <button onClick=${function(){if(window._ccWalkSetCollision)window._ccWalkSetCollision(!(typeof window._ccWalkGetFlags==='function'&&window._ccWalkGetFlags().collision));}}
-          style=${{padding:'.2rem .5rem',borderRadius:6,border:'none',background:'rgba(255,255,255,.08)',color:'#fff',fontSize:'var(--text-xs)',fontWeight:600,cursor:'pointer',fontFamily:'inherit'}}>No-clip</button>
-      </div>`;
-    } else if (activeMode === 'slice') {
-      var sliceAxes = [{axis:'y',label:'Horizontal'},{axis:'z',label:'Front'},{axis:'x',label:'Side'},{box:true,label:'Box'}];
-      var hasActivePlane = s.sectionAxis || s.sectionCustom;
-      subTools = html`<div style=${{display:'flex',flexDirection:'column',alignItems:'center',gap:'.3rem'}}>
-        ${hasActivePlane && html`<div style=${{display:'flex',alignItems:'center',gap:'.4rem',padding:'.2rem .6rem',background:'var(--glass-bg)',backdropFilter:'var(--glass-blur)',WebkitBackdropFilter:'var(--glass-blur)',border:'1px solid var(--glass-border)',borderRadius:'var(--radius-md)',minWidth:220}}>
-          <span style=${{fontSize:'var(--text-xs)',color:'rgba(255,255,255,.5)',flexShrink:0}}>Cut</span>
-          <input type="range" min="0" max="1" step="0.005" value=${s.sectionPos||0.5}
-            onInput=${function(e){var pos=parseFloat(e.target.value);if(s.sectionAxis)d({t:A.SECTION,axis:s.sectionAxis,pos:pos});else if(s.sectionCustom)d({t:A.SECTION_CUSTOM,v:s.sectionCustom,pos:pos});}}
-            style=${{flex:1,accentColor:'var(--accent)'}} />
-          <span style=${{fontSize:'var(--text-xs)',color:'rgba(255,255,255,.5)',minWidth:28,textAlign:'right'}}>${Math.round((s.sectionPos||0.5)*100)}%</span>
-        </div>`}
-        <div style=${{display:'flex',alignItems:'center',gap:'.3rem',padding:'.25rem .5rem',background:'var(--glass-bg)',backdropFilter:'var(--glass-blur)',WebkitBackdropFilter:'var(--glass-blur)',border:'1px solid var(--glass-border)',borderRadius:'var(--radius-md)'}}>
-          ${sliceAxes.map(function(sa){
-            var on = sa.box ? (s.sectionBox&&s.sectionBox.enabled) : s.sectionAxis===sa.axis;
-            return html`<button key=${sa.label} onClick=${function(){
-              if(sa.box){ d({t:A.SECTION,axis:null}); if(window._ccActivateSectionBox)window._ccActivateSectionBox(); else d({t:A.SECTION_BOX,v:{enabled:true,min:null,max:null}}); }
-              else d({t:A.SECTION,axis:sa.axis,pos:s.sectionPos||0.5});
-            }} style=${{padding:'.2rem .5rem',borderRadius:6,border:'none',background:on?'var(--accent)':'rgba(255,255,255,.08)',color:'#fff',fontSize:'var(--text-xs)',fontWeight:600,cursor:'pointer',fontFamily:'inherit'}}>${sa.label}</button>`;
-          })}
-          <span style=${{width:1,height:16,background:'rgba(255,255,255,.15)',margin:'0 .2rem'}}></span>
-          <button onClick=${function(){d({t:A.SECTION,axis:null});d({t:A.SECTION_BOX,v:null});}}
-            style=${{padding:'.2rem .5rem',borderRadius:6,border:'none',background:'rgba(255,255,255,.08)',color:'#f87171',fontSize:'var(--text-xs)',fontWeight:600,cursor:'pointer',fontFamily:'inherit'}}>Remove cut</button>
-        </div>
-      </div>`;
-    } else if (activeMode === 'measure' && s.measurements && s.measurements.length>0) {
-      subTools = html`<div style=${{display:'flex',alignItems:'center',gap:'.3rem',padding:'.25rem .5rem',background:'var(--glass-bg)',backdropFilter:'var(--glass-blur)',WebkitBackdropFilter:'var(--glass-blur)',border:'1px solid var(--glass-border)',borderRadius:'var(--radius-md)'}}>
-        <button onClick=${function(){d({t:A.CLEAR_MEASUREMENTS});}}
-          style=${{padding:'.2rem .5rem',borderRadius:6,border:'none',background:'rgba(255,255,255,.08)',color:'#f87171',fontSize:'var(--text-xs)',fontWeight:600,cursor:'pointer',fontFamily:'inherit'}}>Clear all</button>
-      </div>`;
-    } else if (activeMode === 'plan' && s.floors && s.floors.length>0) {
-      subTools = html`<div style=${{display:'flex',alignItems:'center',gap:'.3rem',padding:'.25rem .5rem',background:'var(--glass-bg)',backdropFilter:'var(--glass-blur)',WebkitBackdropFilter:'var(--glass-blur)',border:'1px solid var(--glass-border)',borderRadius:'var(--radius-md)'}}>
-        ${s.floors.slice(0,6).map(function(fl){
-          var on = s.floorPlan && s.floorPlan.storeyId===fl.id;
-          return html`<button key=${fl.id} onClick=${function(){d({t:A.FLOOR_PLAN,v:{storeyId:fl.id,storeyName:fl.name||'Floor',elevation:fl.elevation||0,cutHeight:1.2}});}}
-            style=${{padding:'.2rem .5rem',borderRadius:6,border:'none',background:on?'var(--accent)':'rgba(255,255,255,.08)',color:'#fff',fontSize:'var(--text-xs)',fontWeight:600,cursor:'pointer',fontFamily:'inherit'}}>${fl.name||'Floor'}</button>`;
+            style=${{padding:'.15rem .55rem',borderRadius:'var(--radius-xs)',border:'1px solid '+(on?'var(--ink-accent)':'var(--hairline-strong)'),
+              background:on?'var(--ink-accent-soft)':'var(--surface)',color:on?'var(--ink-primary)':'var(--ink-secondary)',
+              fontSize:'var(--text-xs)',fontWeight:on?500:400,cursor:'pointer',fontFamily:'var(--font-body)'}}>${fp.l}</button>`;
         })}
       </div>`;
     }
 
-    return html`<div style=${{position:'fixed',bottom:16,left:'50%',transform:'translateX(-50%)',zIndex:200,display:'flex',flexDirection:'column',alignItems:'center',gap:'.4rem',pointerEvents:'auto'}}>
-      ${subTools}
-      <div style=${{display:'flex',alignItems:'center',gap:'.15rem',padding:'.3rem .35rem',
-        background:'var(--glass-bg)',backdropFilter:'var(--glass-blur)',WebkitBackdropFilter:'var(--glass-blur)',
-        border:'1px solid var(--glass-border)',borderRadius:'var(--radius-lg)',
-        boxShadow:'0 8px 32px rgba(0,0,0,.35)'}}>
-        ${chips.map(function(chip){
-          return html`<button key=${chip.id} onClick=${function(){setMode(chip.id);}}
-            title=${chip.title}
-            style=${chipStyle(chip.id)}>
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" dangerouslySetInnerHTML=${{__html:chip.icon}}></svg>
-            <span>${chip.label}</span>
-          </button>`;
-        })}
+    return html`<div style=${{flexShrink:0,background:'var(--surface)',borderBottom:'1px solid var(--hairline)',position:'relative',zIndex:9}}>
+      <div role="toolbar" aria-label="Viewer tools" style=${{
+        display:'flex',alignItems:'center',height:44,padding:'0 var(--space-3)',gap:'var(--space-1)'
+      }}>
+        <!-- VIEW -->
+        ${btn({k:'fit',  title:'Fit all (F)',          label:'Fit all', icon:I.fit,
+                onClick:function(){ if(window._ccFitAll) window._ccFitAll(); else if(window._resetView) window._resetView(); }})}
+        ${btn({k:'reset',title:'Reset view (R)',       label:'Reset view', icon:I.reset,
+                onClick:function(){ if(window._ccResetView) window._ccResetView(); else if(window._resetView) window._resetView(); }})}
+        ${div()}
+        <!-- SECTION -->
+        ${btn({k:'slice',    active:activeMode==='slice'&&!(s.sectionBox&&s.sectionBox.enabled), title:'Slice (X)', label:'Slice', icon:I.slice,
+                onClick:function(){ if(activeMode==='slice'&&!(s.sectionBox&&s.sectionBox.enabled)) clearAllModes(); else setMode('slice'); }})}
+        ${btn({k:'slicebox', active:!!(s.sectionBox&&s.sectionBox.enabled), title:'Section box', label:'Section box', icon:I.slicebox,
+                onClick:function(){ clearAllModes(); if(window._ccActivateSectionBox) window._ccActivateSectionBox(); else d({t:A.SECTION_BOX,v:{enabled:true,min:null,max:null}}); }})}
+        ${btn({k:'sclear', title:'Clear cuts (Esc)',  label:'Clear cuts', icon:I.clear,
+                onClick:function(){ d({t:A.SECTION,axis:null}); d({t:A.SECTION_CUSTOM,v:null}); d({t:A.SECTION_BOX,v:null}); }})}
+        ${div()}
+        <!-- MEASURE -->
+        ${btn({k:'measure', active:activeMode==='measure'&&s.measureMode!=='angle', title:'Distance (M)', label:'Distance', icon:I.ruler,
+                onClick:function(){ if(activeMode==='measure'&&s.measureMode!=='angle') clearAllModes(); else { clearAllModes(); d({t:A.MEASURE_MODE,v:'length'}); } }})}
+        ${btn({k:'angle',   active:s.measureMode==='angle', title:'Angle', label:'Angle', icon:I.angle,
+                onClick:function(){ if(s.measureMode==='angle') clearAllModes(); else { clearAllModes(); d({t:A.MEASURE_MODE,v:'angle'}); } }})}
+        ${btn({k:'mclear', title:'Clear measurements', label:'Clear measurements', icon:I.clear,
+                onClick:function(){ d({t:A.CLEAR_MEASUREMENTS}); }})}
+        ${div()}
+        <!-- CAMERA -->
+        ${btn({k:'orbit', active:activeMode==='orbit', title:'Orbit (O)', label:'Orbit', icon:I.orbit,
+                onClick:function(){ setMode('orbit'); }})}
+        ${btn({k:'walk',  active:activeMode==='walk',  title:'Walk (W)',  label:'Walk', icon:I.walk,
+                onClick:function(){ if(activeMode==='walk') clearAllModes(); else setMode('walk'); }})}
+        ${btn({k:'plan',  active:activeMode==='plan',  title:'2D plan (P)', label:'Plan', icon:I.plan,
+                onClick:function(){ if(activeMode==='plan') clearAllModes(); else setMode('plan'); }})}
+        ${div()}
+        <!-- NOTES -->
+        ${btn({k:'note',  active:activeMode==='note',  title:'Drop a pin (N)', label:'Pin', icon:I.pin,
+                onClick:function(){ if(activeMode==='note') clearAllModes(); else setMode('note'); }})}
+
+        <!-- spacer -->
+        <span style=${{flex:1}}></span>
+
+        <!-- STYLE popover (visible button — never hotkey-only) -->
+        <div style=${{position:'relative'}}>
+          <button onClick=${function(){setStyleOpen(!styleOpen);}}
+            aria-haspopup="menu" aria-expanded=${styleOpen}
+            style=${{
+              display:'inline-flex',alignItems:'center',gap:'.4rem',height:36,padding:'0 .65rem',
+              background:styleOpen?'var(--paper-edge)':'none',border:'1px solid var(--hairline-strong)',
+              borderRadius:'var(--radius-sm)',cursor:'pointer',fontFamily:'var(--font-body)',
+              fontSize:'var(--text-xs)',color:'var(--ink-secondary)',letterSpacing:'-.005em'
+            }}>
+            <span style=${{fontFamily:'var(--font-mono)',fontSize:'var(--text-2xs)',color:'var(--ink-muted)',letterSpacing:'.04em',textTransform:'uppercase'}}>Style</span>
+            <span style=${{color:'var(--ink-primary)',fontWeight:500}}>${curStyleLabel}</span>
+            <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M6 9l6 6 6-6"/></svg>
+          </button>
+          ${styleOpen && html`<div>
+            <div onClick=${function(){setStyleOpen(false);}} style=${{position:'fixed',inset:0,zIndex:399}}></div>
+            <div role="menu" style=${{position:'absolute',top:'calc(100% + 6px)',right:0,zIndex:400,minWidth:160,
+              background:'var(--surface)',border:'1px solid var(--hairline-strong)',borderRadius:'var(--radius-sm)',
+              boxShadow:'var(--shadow-lifted)',padding:'.3rem 0',fontFamily:'var(--font-body)'}}>
+              ${styles.map(function(st,i){
+                var on = curStyle===st.id;
+                return html`<button key=${st.id} onClick=${function(){ d({t:A.UPD_PREFS,u:{renderStyle:st.id}}); setStyleOpen(false); }}
+                  style=${{display:'flex',alignItems:'center',justifyContent:'space-between',gap:'.6rem',width:'100%',
+                    padding:'.4rem .8rem',background:'none',border:'none',cursor:'pointer',textAlign:'left',
+                    fontFamily:'var(--font-body)',fontSize:'var(--text-sm)',
+                    color:on?'var(--ink-primary)':'var(--ink-secondary)',fontWeight:on?500:400}}
+                  onMouseEnter=${function(e){e.currentTarget.style.background='var(--surface-warm)';}}
+                  onMouseLeave=${function(e){e.currentTarget.style.background='none';}}>
+                  <span>${st.label}</span>
+                  <span style=${{fontFamily:'var(--font-mono)',fontSize:'var(--text-2xs)',color:'var(--ink-faint)'}}>${i+1}</span>
+                </button>`;
+              })}
+            </div>
+          </div>`}
+        </div>
       </div>
+      ${subRow}
     </div>`;
   }
+
+  /* Compatibility: code elsewhere still mounts <ModeToolbar/>. The new top
+     toolbar replaces it; alias so any lingering reference renders nothing. */
+  function ModeToolbar(){ return null; }
 
   // ── Mobile Bottom Nav ─────────────────────────────────────────
 
@@ -21867,7 +22126,7 @@ function startApp() {
       console.groupEnd();
     };
     useEffect(function(){
-      var t = s.prefs.theme||'dark';
+      var t = s.prefs.theme||'light';
       document.documentElement.setAttribute('data-theme', t);
       try { localStorage.setItem('cc_theme', t); } catch(e) {}
     }, [s.prefs.theme]);
@@ -22277,6 +22536,7 @@ function startApp() {
       <${LeftPanel} s=${s} d=${d} />
       <div style=${{flex:1,display:'flex',flexDirection:'column',overflow:'hidden',position:'relative',minWidth:0}}>
         <${DesktopTopBar} s=${s} d=${d} />
+        <${TopToolbar} s=${s} d=${d} />
         <${Header} s=${s} d=${d} />
         ${is2D ? html`<${View2D} s=${s} d=${d} />` : html`<${Viewer} s=${s} d=${d} />`}
         ${is2D && html`<${ExportBar} s=${s} d=${d} />`}
@@ -22298,7 +22558,8 @@ function startApp() {
       </div>`}
       ${s.showRevitBridge && html`<${RevitBridgePanel} s=${s} d=${d} />`}
       ${s.presenting && html`<${PresentationOverlay} s=${s} d=${d} />`}
-      <${ModeToolbar} s=${s} d=${d} />
+      <!-- ModeToolbar is now a no-op alias; the new TopToolbar lives inside
+           the canvas column directly under DesktopTopBar (see above). -->
       <${MobileNav} s=${s} d=${d} />
       <${WelcomePopup} s=${s} d=${d} />
       <${PrivacyBanner} />

@@ -87,7 +87,60 @@ Things to be careful about. Do not remove without a good reason — add a note i
 Update this section at the start and end of each session.
 Mark completed items with ~~strikethrough~~ and date, then let the daily sync archive them.
 
-On branch `claude/improve-ifc-viewer-ux-WhTsB`: full UI overhaul for architectural audience.
+On branch `claude/redesign-modern-ui-JLbhU` (2026-05-01) — landed:
+
+- ~~Tokens: paper / ink / terracotta palette; legacy `--bg-primary` / `--accent` tokens aliased so 19k lines auto-pick up the new aesthetic~~ (2026-05-01)
+- ~~Typography: Fraunces (display, opsz) + Instrument Sans (body) + DM Mono — Inter / Roboto / Syne all dropped per anthropics/skills frontend-design guidance~~ (2026-05-01)
+- ~~Light theme by default; pre-paint script reads `cc_theme` to avoid flash~~ (2026-05-01)
+- ~~Workspace switcher (Present / Coordinate / Review) in DesktopTopBar with `cc_workspace` persistence + `A.SET_WORKSPACE` action; ephemeral `avatarMenuOpen` separate from persisted `cc_panelOpen` / `cc_inspectorOpen` / `cc_askOpen` / `cc_diagnostics`~~ (2026-05-01)
+- ~~AvatarMenu component (avatar circle bottom-right of top bar): consolidates project switcher, theme toggle, settings, presentation, keyboard-shortcuts trigger, "Open model"~~ (2026-05-01)
+- ~~Horizontal xeokit-style TopToolbar (View · Section · Measure · Camera · Notes · Style) replaces the prior PR-2 bottom mode pill; ModeToolbar aliased to `() => null`~~ (2026-05-01)
+- ~~LeftRail rewritten: returns null in Present, slim 48-px workspace-scoped tab list in Coordinate / Review (project switcher / IFC / walk / 2D / share / theme / settings buttons all removed — they have new homes)~~ (2026-05-01)
+- ~~Ask AI demoted: 36-px round bottom-right canvas button with chat-bubble glyph; pulsing violet pill removed; `nlBorderPulse` keyframe neutralised~~ (2026-05-01)
+- ~~WelcomePopup redesigned: asymmetric paper card, Fraunces "Open a model." headline, drawn isometric ballast, three flat row links (Choose · URL · Sample), no glass/dashed/scrim~~ (2026-05-01)
+- ~~Conflict row: emoji icon (🔴/🟡/🏗/📌) replaced by 7-px severity dot using --sev-* tokens; storey 🏢 → hairline-bordered label; 💬 → text "note"; distance "⬤ 42mm gap" → mono "42 mm"~~ (2026-05-01)
+- ~~FPS overlay gated behind `s.workspace==='review' && s.diagnostics` (off by default; toggle lives in LeftRail in Review)~~ (2026-05-01)
+- ~~Sky gradient + grid: warm paper tones (--scene-floor → --scene-bg → --paper-bg); grid opacity 0.30 → 0.12; ACES Filmic tone mapping confirmed already on~~ (2026-05-01)
+- ~~Glass tokens neutralised (`--glass-bg`/`--glass-border`/`--glass-blur` → solid surface + hairline + none); cc-overlay-chrome / DesktopTopBar / cc-mobile-nav backdrop-filter dropped~~ (2026-05-01)
+- ~~Favicon flat ink mark (square outline + terracotta diagonal); boot screen flat ink + Fraunces wordmark; theme-color metatag #f5f2ec~~ (2026-05-01)
+
+**Deferred** (next pass):
+- Right Inspector drawer two-tab restructure (Details · Notes); the existing AIChatPanel is now reachable only via the small Ask button but its body wasn't restructured.
+- Inline AI training feedback row on conflicts (`index.html:13860+`) — still inline; should move to Review › Improve.
+- Cleanup of remaining `nlBorderPulse` animation calls (now no-ops on visible chrome but still wasted CPU).
+- Sample-model URL in WelcomePopup uses an external GitHub raw — should ship a tiny bundled IFC instead.
+- Soft contact shadow plane and 35° dollhouse fly-to on first model load — planned but not implemented this pass.
+- Help / keyboard shortcuts modal (the AvatarMenu dispatches `cc-show-shortcuts` event but no listener mounts the overlay yet).
+
+Earlier branch `claude/improve-ifc-viewer-ux-WhTsB`: full UI overhaul for architectural audience.
+The PR-1..PR-8 overhaul shipped but felt AI-assembled (glass everywhere, violet
+gradient, FPS overlay, status-pill explosions, raw IFC jargon on rows). This
+pass resets type & chrome:
+
+- Paper + ink + ONE terracotta accent (`#b8533a`); no glassmorphism, no
+  gradients, no emoji in chrome. Light theme by default.
+- Inter + DM Mono only (Syne dropped).
+- Workspace switcher in the top bar — `Present` / `Coordinate` / `Review`.
+  Present is the default and hides clash/IDS/training/diagnostics entirely.
+- xeokit-bim-viewer style **horizontal top toolbar** (View · Section · Measure ·
+  Camera · Notes · Style). Replaces the prior PR-2 bottom mode pill and the
+  LeftRail tools.
+- Single-path-per-function pass: each function has exactly one canonical
+  surface + optional shortcut. Visible buttons everywhere — no hotkey-only
+  affordances. Avatar menu consolidates project switcher / theme / settings /
+  presentation / shortcuts.
+- Ask AI demoted: small bottom-right round button only (no pulse, no glow,
+  removed from right Inspector tabs).
+- Persistence: workspace, theme, render style, tool, panel/inspector/Ask state,
+  diagnostics, grid, floor shadow all write to `localStorage` and rehydrate.
+- Cinematic defaults: ACES tone-mapping, soft contact shadow, faint horizon,
+  grid opacity 0.12, 35° dollhouse fly-to on first model load.
+- Conflict row simplified to severity dot + title + assignee. IFC type code
+  and IDs hide under Inspector "Technical" disclosure.
+
+Plan file: `/root/.claude/plans/there-has-been-a-gentle-ember.md`.
+
+Earlier branch `claude/improve-ifc-viewer-ux-WhTsB`: full UI overhaul for architectural audience.
 Full 8-PR migration completed (2026-04-30):
 
 - ~~PR-1: violet accent (#7c3aed), rounder radii, glass surface tokens~~ (2026-04-30)
