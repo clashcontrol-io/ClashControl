@@ -1,5 +1,8 @@
 # Changelog
 
+## v5.1.9 (2026-05-01)
+- ModelSidebar: tighten spacing and sizing in redesign
+
 ## v5.1.8 (2026-05-01)
 - Present prose, toolbar Ask AI, +Add dropdown, panel cleanup
 
