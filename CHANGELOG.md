@@ -1,5 +1,8 @@
 # Changelog
 
+## v5.1.8 (2026-05-01)
+- Present prose, toolbar Ask AI, +Add dropdown, panel cleanup
+
 ## v5.1.7 (2026-05-01)
 - Section box face arrows + Revit-style ViewCube
 
