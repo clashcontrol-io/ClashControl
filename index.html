@@ -20920,6 +20920,16 @@ function startApp() {
     var widthSt=useState(function(){
       try { var w=parseInt(localStorage.getItem('cc_ai_panel_w')||'',10); return (w>=250&&w<=600)?w:320; } catch(e) { return 320; }
     }), panelW=widthSt[0], setPanelW=widthSt[1];
+    // Track viewport width so panel never overflows on narrow screens
+    var vwSt=useState(typeof window!=='undefined'?window.innerWidth:1280);
+    var vw=vwSt[0], setVw=vwSt[1];
+    useEffect(function(){
+      function onResize(){ setVw(window.innerWidth); }
+      window.addEventListener('resize', onResize);
+      return function(){ window.removeEventListener('resize', onResize); };
+    }, []);
+    // Clamp panel to leave at least 200px of canvas visible
+    var effectivePanelW = Math.min(panelW, Math.max(240, vw - 200));
     var collSt=useState(function(){
       try { return localStorage.getItem('cc_ai_panel_collapsed')==='1'; } catch(e) { return false; }
     }), collapsed=collSt[0], setCollapsed=collSt[1];
@@ -21299,7 +21309,8 @@ function startApp() {
     }
 
     return html`<div class="cc-side-panel cc-ai-panel" style=${{
-      width:panelW, position:'absolute', right:'.5rem', top:'.5rem', bottom:'.5rem',
+      width:effectivePanelW, maxWidth:'calc(100vw - 1rem)',
+      position:'absolute', right:'.5rem', top:'.5rem', bottom:'.5rem',
       display:'flex', flexDirection:'column', overflow:'hidden',
       background:'var(--bg-primary)', border:'1px solid var(--border)',
       borderRadius:14,
@@ -21711,7 +21722,16 @@ function startApp() {
     var projects = s.projectList || [];
     var activeProj = projects.find(function(p){return p.id===s.activeProject;}) || projects[0] || {id:'default',name:'Default'};
     var dc = useState(null), deleteConfirm=dc[0], setDeleteConfirm=dc[1];
-    function close(){ d({t:A.AVATAR_MENU,v:false}); setDeleteConfirm(null); }
+    var rn = useState({id:null,val:''}), renaming=rn[0], setRenaming=rn[1];
+    function close(){ d({t:A.AVATAR_MENU,v:false}); setDeleteConfirm(null); setRenaming({id:null,val:''}); }
+    function commitRename(id){
+      var name = (renaming.val||'').trim();
+      setRenaming({id:null,val:''});
+      if (!name) return;
+      var nl = projects.map(function(p){ return p.id===id ? Object.assign({},p,{name:name}) : p; });
+      try{ localStorage.setItem('cc_projects', JSON.stringify(nl)); }catch(e){}
+      d({t:A.SET_PROJECT_LIST, v:nl});
+    }
     function row(label, onClick, hint){
       return html`<button onClick=${function(){onClick();close();}}
         style=${{display:'flex',alignItems:'center',justifyContent:'space-between',gap:'.6rem',width:'100%',
@@ -21781,21 +21801,41 @@ function startApp() {
           ${projects.map(function(p){
             var on = p.id===s.activeProject;
             var canDelete = projects.length > 1;
-            var rowKey = p.id+':'+(deleteConfirm===p.id?'1':'0');
+            var isRenaming = renaming.id === p.id;
             return html`<div key=${p.id}
                 style=${{display:'flex',alignItems:'stretch',gap:0,width:'100%',
                   background:on?'var(--accent-bg)':'transparent'}}>
-              <button onClick=${function(){ if(!on){ switchToProject(p.id); } close(); }}
-                style=${{flex:1,minWidth:0,display:'flex',alignItems:'center',justifyContent:'space-between',gap:'.6rem',
-                  padding:'.4rem .8rem',background:'none',border:'none',cursor:'pointer',textAlign:'left',
-                  fontFamily:'var(--font-body)',fontSize:'var(--text-sm)',
-                  color:on?'var(--ink-primary)':'var(--ink-secondary)',fontWeight:on?500:400}}
-                onMouseEnter=${function(e){if(!on)e.currentTarget.parentElement.style.background='var(--surface-warm)';}}
-                onMouseLeave=${function(e){if(!on)e.currentTarget.parentElement.style.background='transparent';}}>
-                <span style=${{overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>${p.name}</span>
-                ${on && html`<span style=${{width:6,height:6,borderRadius:'50%',background:'var(--ink-accent)',flexShrink:0}}></span>`}
-              </button>
-              ${canDelete && html`<button title="Delete project" aria-label=${'Delete project '+p.name}
+              ${isRenaming
+                ? html`<input autoFocus type="text" value=${renaming.val}
+                    onInput=${function(e){setRenaming({id:p.id,val:e.target.value});}}
+                    onKeyDown=${function(e){
+                      if(e.key==='Enter'){ commitRename(p.id); }
+                      else if(e.key==='Escape'){ setRenaming({id:null,val:''}); }
+                    }}
+                    onBlur=${function(){ commitRename(p.id); }}
+                    style=${{flex:1,minWidth:0,padding:'.4rem .8rem',background:'var(--bg-tertiary)',
+                      border:'1px solid var(--accent)',borderRadius:'var(--radius-sm)',outline:'none',
+                      fontFamily:'var(--font-body)',fontSize:'var(--text-sm)',color:'var(--ink-primary)',
+                      margin:'0 .25rem'}} />`
+                : html`<button onClick=${function(){ if(!on){ switchToProject(p.id); } close(); }}
+                    style=${{flex:1,minWidth:0,display:'flex',alignItems:'center',justifyContent:'space-between',gap:'.6rem',
+                      padding:'.4rem .8rem',background:'none',border:'none',cursor:'pointer',textAlign:'left',
+                      fontFamily:'var(--font-body)',fontSize:'var(--text-sm)',
+                      color:on?'var(--ink-primary)':'var(--ink-secondary)',fontWeight:on?500:400}}
+                    onMouseEnter=${function(e){if(!on)e.currentTarget.parentElement.style.background='var(--surface-warm)';}}
+                    onMouseLeave=${function(e){if(!on)e.currentTarget.parentElement.style.background='transparent';}}>
+                    <span style=${{overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>${p.name}</span>
+                    ${on && html`<span style=${{width:6,height:6,borderRadius:'50%',background:'var(--ink-accent)',flexShrink:0}}></span>`}
+                  </button>`}
+              ${!isRenaming && html`<button aria-label=${'Rename project '+p.name}
+                onClick=${function(e){ e.stopPropagation(); setRenaming({id:p.id,val:p.name||''}); setDeleteConfirm(null); }}
+                style=${{padding:'0 .45rem',background:'none',border:'none',cursor:'pointer',
+                  color:'var(--ink-faint)',display:'flex',alignItems:'center'}}
+                onMouseEnter=${function(e){e.currentTarget.style.color='var(--ink-secondary)';}}
+                onMouseLeave=${function(e){e.currentTarget.style.color='var(--ink-faint)';}}>
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4 12.5-12.5z"/></svg>
+              </button>`}
+              ${!isRenaming && canDelete && html`<button aria-label=${'Delete project '+p.name}
                 onClick=${function(e){ e.stopPropagation(); if(deleteConfirm===p.id){ deleteProject(p.id); setDeleteConfirm(null); } else { setDeleteConfirm(p.id); } }}
                 style=${{padding:'0 .55rem',background:'none',border:'none',cursor:'pointer',
                   color: deleteConfirm===p.id ? '#b91c1c' : 'var(--ink-faint)',
@@ -22038,7 +22078,8 @@ function startApp() {
 
     return html`<div class="cc-top-toolbar" style=${{flexShrink:0,background:'var(--surface)',borderBottom:'1px solid var(--hairline)',position:'relative',zIndex:9}}>
       <div role="toolbar" aria-label="Viewer tools" style=${{
-        display:'flex',alignItems:'center',height:44,padding:'0 var(--space-3)',gap:'var(--space-1)'
+        display:'flex',alignItems:'center',height:44,padding:'0 var(--space-3)',gap:'var(--space-1)',
+        overflowX:'auto',overflowY:'hidden',flexWrap:'nowrap',scrollbarWidth:'thin'
       }}>
         <!-- VIEW -->
         ${btn({k:'fit',  title:'Fit all (F)',          label:'Fit all', icon:I.fit,
@@ -22218,14 +22259,16 @@ function startApp() {
       ${subRow}
       ${ttTip && html`<div style=${{
         position:'fixed',
-        left:ttPos.current.x,top:ttPos.current.y-8,
+        left:Math.max(8, Math.min(ttPos.current.x, (typeof window!=='undefined'?window.innerWidth:1280)-8)),
+        top:ttPos.current.y-8,
         transform:'translate(-50%,-100%)',
         background:'var(--bg-primary)',border:'1px solid var(--border)',
         borderRadius:6,padding:'.2rem .55rem',
         fontSize:'var(--text-xs)',color:'var(--text-primary)',
         fontFamily:'var(--font-body)',
         boxShadow:'var(--shadow-sm)',
-        pointerEvents:'none',zIndex:9999,whiteSpace:'nowrap'
+        pointerEvents:'none',zIndex:9999,whiteSpace:'nowrap',
+        maxWidth:'min(280px, calc(100vw - 16px))'
       }}>${ttTip.label}</div>`}
     </div>`;
   }
