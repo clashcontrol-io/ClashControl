@@ -6118,13 +6118,14 @@ function startApp() {
       renderer.domElement.addEventListener('mousedown', function(e){
         if(e.button!==0) return;
         var S2=state3d.current;
-        if(!S2._sboxHandles&&!S2._sboxRotRing) return;
+        if(!S2._sboxHandles&&!S2._sboxRotRing&&!S2._sboxFaceHandles) return;
         var rect=renderer.domElement.getBoundingClientRect();
         var mx=((e.clientX-rect.left)/rect.width)*2-1;
         var my=-((e.clientY-rect.top)/rect.height)*2+1;
         raycaster.setFromCamera(new THREE.Vector2(mx,my), S2.camera);
         var allHandles=[];
         if(S2._sboxRotRing) allHandles.push(S2._sboxRotRing);
+        if(S2._sboxFaceHandles) allHandles=allHandles.concat(S2._sboxFaceHandles);
         if(S2._sboxHandles) allHandles=allHandles.concat(S2._sboxHandles);
         var hh=raycaster.intersectObjects(allHandles,false);
         if(hh.length>0){
@@ -6135,6 +6136,18 @@ function startApp() {
           if(!curSb) return;
           if(hitH.userData._sboxRotation){
             _sboxDragState={type:'rotate',startX:e.clientX,startRot:curSb.rotation||0,startSb:Object.assign({},curSb,{min:curSb.min.slice(),max:curSb.max.slice()})};
+          } else if(hitH.userData._sboxFaceHandle){
+            // Drag plane: contains face axis line through handle, perpendicular to camera
+            var camDirF=new THREE.Vector3();
+            camera.getWorldDirection(camDirF);
+            var faxis=hitH.userData._faceAxis.clone().normalize();
+            var crossN=new THREE.Vector3().crossVectors(faxis, camDirF);
+            if(crossN.lengthSq() < 0.01) crossN.set(0,1,0);
+            var dragNormal=new THREE.Vector3().crossVectors(crossN, faxis).normalize();
+            var dpF=new THREE.Plane().setFromNormalAndCoplanarPoint(dragNormal, hitH.position.clone());
+            _sboxDragState={type:'face',axis:faxis,sign:hitH.userData._faceSign,idx:hitH.userData._faceIdx,side:hitH.userData._faceSide,
+              startSb:Object.assign({},curSb,{min:curSb.min.slice(),max:curSb.max.slice()}),
+              dragPlane:dpF,startPos:hitH.position.clone()};
           } else if(hitH.userData._sboxHandle){
             var camDir2=new THREE.Vector3();
             camera.getWorldDirection(camDir2);
@@ -6158,6 +6171,21 @@ function startApp() {
           var newRot=ds.startRot+dx*0.01;
           var newSb=Object.assign({},ds.startSb,{min:ds.startSb.min.slice(),max:ds.startSb.max.slice(),rotation:newRot});
           if(window._ccDispatch) window._ccDispatch({t:A.SECTION_BOX,v:newSb});
+        } else if(ds.type==='face'){
+          var intF=new THREE.Vector3();
+          if(raycaster.ray.intersectPlane(ds.dragPlane,intF)){
+            var dF=intF.clone().sub(ds.startPos).dot(ds.axis); // signed dist along face normal
+            var nsb=Object.assign({},ds.startSb,{min:ds.startSb.min.slice(),max:ds.startSb.max.slice()});
+            if(ds.side==='max'){
+              nsb.max[ds.idx]=ds.startSb.max[ds.idx] + dF * ds.sign;
+              if(nsb.max[ds.idx] <= nsb.min[ds.idx] + 0.01) nsb.max[ds.idx] = nsb.min[ds.idx] + 0.01;
+            } else {
+              nsb.min[ds.idx]=ds.startSb.min[ds.idx] + dF * ds.sign;
+              if(nsb.min[ds.idx] >= nsb.max[ds.idx] - 0.01) nsb.min[ds.idx] = nsb.max[ds.idx] - 0.01;
+            }
+            if(ds.startSb.rotation) nsb.rotation=ds.startSb.rotation;
+            if(window._ccDispatch) window._ccDispatch({t:A.SECTION_BOX,v:nsb});
+          }
         } else if(ds.type==='corner'){
           var intPt=new THREE.Vector3();
           if(raycaster.ray.intersectPlane(ds.dragPlane,intPt)){
@@ -6188,13 +6216,14 @@ function startApp() {
       renderer.domElement.addEventListener('mousemove', function(e){
         if(_sboxDragging || _walkActive) return;
         var S2=state3d.current;
-        if(!S2._sboxHandles&&!S2._sboxRotRing) return;
+        if(!S2._sboxHandles&&!S2._sboxRotRing&&!S2._sboxFaceHandles) return;
         var rect=renderer.domElement.getBoundingClientRect();
         var mx=((e.clientX-rect.left)/rect.width)*2-1;
         var my=-((e.clientY-rect.top)/rect.height)*2+1;
         raycaster.setFromCamera(new THREE.Vector2(mx,my), S2.camera);
         var allH=[];
         if(S2._sboxRotRing) allH.push(S2._sboxRotRing);
+        if(S2._sboxFaceHandles) allH=allH.concat(S2._sboxFaceHandles);
         if(S2._sboxHandles) allH=allH.concat(S2._sboxHandles);
         var hh=raycaster.intersectObjects(allH,false);
         if(hh.length>0){
@@ -7225,6 +7254,7 @@ function startApp() {
       function cleanupSbox(){
         if(S._sboxHelper){_disposeMesh(S._sboxHelper);S._sboxHelper=null;}
         if(S._sboxHandles){S._sboxHandles.forEach(_disposeMesh);S._sboxHandles=null;}
+        if(S._sboxFaceHandles){S._sboxFaceHandles.forEach(_disposeMesh);S._sboxFaceHandles=null;}
         if(S._sboxRotRing){_disposeMesh(S._sboxRotRing);S._sboxRotRing=null;}
         if(S._sboxFacePanels){S._sboxFacePanels.forEach(_disposeMesh);S._sboxFacePanels=null;}
       }
@@ -7321,6 +7351,38 @@ function startApp() {
       });
 
       S._sboxHandles=handles;
+
+      // ── Revit-style face arrow handles — drag one face at a time ─────────
+      // 6 arrows (one per face center), each constrained to slide along its face normal.
+      var faceArrowSize = Math.max(0.08, Math.min(handleSize * 1.6, 0.7));
+      var faceArrowGeo = new THREE.ConeGeometry(faceArrowSize * 0.55, faceArrowSize * 1.3, 16);
+      var faceHandles = [];
+      var faceDirs = [
+        {axis: axX.clone(), sign: +1, idx: 0, side: 'max', halfExt: hx},
+        {axis: axX.clone(), sign: -1, idx: 0, side: 'min', halfExt: hx},
+        {axis: axY.clone(), sign: +1, idx: 1, side: 'max', halfExt: hy},
+        {axis: axY.clone(), sign: -1, idx: 1, side: 'min', halfExt: hy},
+        {axis: axZ.clone(), sign: +1, idx: 2, side: 'max', halfExt: hz},
+        {axis: axZ.clone(), sign: -1, idx: 2, side: 'min', halfExt: hz}
+      ];
+      faceDirs.forEach(function(fd){
+        var faceCenter = ctr.clone().addScaledVector(fd.axis, fd.sign * fd.halfExt);
+        var arrowPos   = faceCenter.clone().addScaledVector(fd.axis, fd.sign * faceArrowSize * 1.0);
+        var fmat = new THREE.MeshBasicMaterial({color:0x1a6b4a, transparent:true, opacity:0.92, depthTest:false});
+        fmat.clippingPlanes = [];
+        var arrow = new THREE.Mesh(faceArrowGeo, fmat);
+        arrow.position.copy(arrowPos);
+        arrow.quaternion.setFromUnitVectors(new THREE.Vector3(0,1,0), fd.axis.clone().multiplyScalar(fd.sign).normalize());
+        arrow.userData._sboxFaceHandle = true;
+        arrow.userData._faceAxis = fd.axis.clone();
+        arrow.userData._faceSign = fd.sign;
+        arrow.userData._faceIdx  = fd.idx;
+        arrow.userData._faceSide = fd.side;
+        arrow.renderOrder = 999;
+        S.scene.add(arrow);
+        faceHandles.push(arrow);
+      });
+      S._sboxFaceHandles = faceHandles;
 
       var ringRadius=1.2; // constant size, independent of box dimensions
       var ringTubeRadius=0.04;
@@ -8347,28 +8409,52 @@ function startApp() {
     }, [theme]);
 
     var light = theme==='light';
-    var adjBtnBase = {
-      position:'absolute', display:'flex', alignItems:'center', justifyContent:'center',
-      background: light ? 'rgba(226,232,240,0.88)' : 'rgba(15,30,60,0.82)',
-      color: light ? '#334155' : 'var(--accent-subtle)',
-      border: '1px solid ' + (light ? 'rgba(100,116,139,0.45)' : 'rgba(96,165,250,0.35)'),
-      borderRadius:'3px', cursor:'pointer', fontSize:'11px', lineHeight:1,
-      padding:0, userSelect:'none', fontFamily:'inherit',
-      transition:'background .12s,color .12s'
+    // Revit-style: small triangle arrows that hug the cube edge, only on hover-of-a-face.
+    // No buttons, no border boxes — just minimal triangles in muted ink.
+    var triBase = {
+      position:'absolute', cursor:'pointer', userSelect:'none',
+      width:0, height:0, padding:0, border:'none', background:'none',
+      opacity:.55, transition:'opacity .12s, transform .12s'
     };
+    var triColor = light ? '#404040' : '#a0a0a0';
     var adj = activeFace >= 0 ? FACE_ADJACENTS[activeFace] : null;
 
     return html`<div class="cc-viewcube-wrap" style=${{position:'absolute',top:'3rem',right:'1rem',pointerEvents:'auto',width:98,height:98,overflow:'visible'}}>
+      <!-- Revit-style ground ring (subtle compass under the cube) -->
+      <div aria-hidden="true" style=${{position:'absolute',left:4,top:60,width:90,height:18,
+        borderRadius:'50%',border:'1px solid '+(light?'rgba(0,0,0,.18)':'rgba(255,255,255,.18)'),
+        boxShadow:'inset 0 1px 0 '+(light?'rgba(255,255,255,.5)':'rgba(255,255,255,.06)'),
+        pointerEvents:'none'}}></div>
       <canvas ref=${canvasRef} width="84" height="84" style=${{cursor:'pointer',position:'absolute',top:7,left:7,width:84,height:84}} />
       ${adj && html`
-        <button aria-label="Left view" style=${{...adjBtnBase,width:13,height:22,left:-15,top:38}}
-          onClick=${function(){flyToDir(adj.left);}}>‹</button>
-        <button aria-label="Right view" style=${{...adjBtnBase,width:13,height:22,right:-15,top:38}}
-          onClick=${function(){flyToDir(adj.right);}}>›</button>
-        <button aria-label="Top view" style=${{...adjBtnBase,width:22,height:13,left:38,top:-15}}
-          onClick=${function(){flyToDir(adj.up);}}>⌃</button>
-        <button aria-label="Bottom view" style=${{...adjBtnBase,width:22,height:13,left:38,bottom:-15}}
-          onClick=${function(){flyToDir(adj.down);}}>⌄</button>
+        <!-- Left arrow: triangle pointing left, hugs the cube's left edge -->
+        <button aria-label="Left view" onClick=${function(){flyToDir(adj.left);}}
+          onMouseEnter=${function(e){e.currentTarget.style.opacity=1;}}
+          onMouseLeave=${function(e){e.currentTarget.style.opacity=.55;}}
+          style=${{...triBase,left:-2,top:42,
+            borderTop:'5px solid transparent',borderBottom:'5px solid transparent',
+            borderRight:'7px solid '+triColor}}></button>
+        <!-- Right arrow -->
+        <button aria-label="Right view" onClick=${function(){flyToDir(adj.right);}}
+          onMouseEnter=${function(e){e.currentTarget.style.opacity=1;}}
+          onMouseLeave=${function(e){e.currentTarget.style.opacity=.55;}}
+          style=${{...triBase,right:-2,top:42,
+            borderTop:'5px solid transparent',borderBottom:'5px solid transparent',
+            borderLeft:'7px solid '+triColor}}></button>
+        <!-- Top arrow -->
+        <button aria-label="Top view" onClick=${function(){flyToDir(adj.up);}}
+          onMouseEnter=${function(e){e.currentTarget.style.opacity=1;}}
+          onMouseLeave=${function(e){e.currentTarget.style.opacity=.55;}}
+          style=${{...triBase,left:42,top:-2,
+            borderLeft:'5px solid transparent',borderRight:'5px solid transparent',
+            borderBottom:'7px solid '+triColor}}></button>
+        <!-- Bottom arrow -->
+        <button aria-label="Bottom view" onClick=${function(){flyToDir(adj.down);}}
+          onMouseEnter=${function(e){e.currentTarget.style.opacity=1;}}
+          onMouseLeave=${function(e){e.currentTarget.style.opacity=.55;}}
+          style=${{...triBase,left:42,bottom:-2,
+            borderLeft:'5px solid transparent',borderRight:'5px solid transparent',
+            borderTop:'7px solid '+triColor}}></button>
       `}
     </div>`;
   }
