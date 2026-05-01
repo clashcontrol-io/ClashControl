@@ -1,5 +1,8 @@
 # Changelog
 
+## v5.0.3 (2026-05-01)
+- fix(mobile): hide right drawer entirely + add floating theme toggle (top-left)
+
 ## v5.0.2 (2026-05-01)
 - fix: sky gradient addColorStop needs hex, not CSS variable (Canvas 2D doesn't resolve var(--))
 
