@@ -149,32 +149,34 @@
 
   <style>
     :root{
+      /* ── Zinc / Forest — architectural design palette ── */
       --bg-primary:#ffffff;
-      --bg-secondary:#f8fafc;
-      --bg-tertiary:#f1f5f9;
-      --border:#e2e8f0;
-      --border-subtle:#f1f5f9;
-      --text-primary:#0f172a;
-      --text-secondary:#475569;
-      --text-muted:#94a3b8;
-      --text-faint:#cbd5e1;
-      --accent:#2563eb;
-      --accent-hover:#3b82f6;
-      --accent-subtle:#93c5fd;
-      --accent-bg:#eff6ff;
-      --accent-bg-deep:#dbeafe;
-      --accent-light:#60a5fa;
-      --accent-dim:#eff6ff;
-      --scene-bg:#f0f4f8;
-      --scene-floor:#e2e8f0;
-      --grid-line:#cbd5e1;
-      --grid-center:#94a3b8;
-      --overlay-bg:rgba(255,255,255,.92);
+      --bg-secondary:#f5f5f5;
+      --bg-tertiary:#ebebeb;
+      --border:#d4d4d4;
+      --border-subtle:#ebebeb;
+      --text-primary:#111111;
+      --text-secondary:#404040;
+      --text-muted:#737373;
+      --text-faint:#a3a3a3;
+      /* THE ACCENT: Forest green — architectural, not blue, not warm */
+      --accent:#1a6b4a;
+      --accent-hover:#155c3e;
+      --accent-subtle:#6aab8a;
+      --accent-bg:#ecf7f2;
+      --accent-bg-deep:#d3ede2;
+      --accent-light:#4d9e75;
+      --accent-dim:#ecf7f2;
+      --scene-bg:#f0f0f0;
+      --scene-floor:#e4e4e4;
+      --grid-line:#d4d4d4;
+      --grid-center:#a3a3a3;
+      --overlay-bg:rgba(255,255,255,.96);
       --overlay-bg-strong:#ffffff;
-      --modal-bg:rgba(15,23,42,.4);
-      --shadow-sm:0 1px 3px rgba(0,0,0,.08),0 1px 2px rgba(0,0,0,.04);
+      --modal-bg:rgba(0,0,0,.35);
+      --shadow-sm:0 1px 3px rgba(0,0,0,.07),0 1px 2px rgba(0,0,0,.04);
       --shadow-md:0 4px 16px rgba(0,0,0,.08),0 2px 4px rgba(0,0,0,.04);
-      --shadow-lg:0 12px 40px rgba(0,0,0,.12),0 4px 8px rgba(0,0,0,.06);
+      --shadow-lg:0 12px 40px rgba(0,0,0,.10),0 4px 8px rgba(0,0,0,.05);
       --space-0:0;--space-1:.25rem;--space-2:.5rem;--space-3:.75rem;--space-4:1rem;--space-5:1.25rem;--space-6:1.5rem;--space-8:2rem;
       --text-2xs:.6875rem;--text-xs:.75rem;--text-sm:.8125rem;--text-base:.875rem;--text-md:.9375rem;--text-lg:1.0625rem;--text-xl:1.25rem;--text-2xl:1.5rem;
       --leading-tight:1.25;--leading-base:1.45;--leading-relaxed:1.6;
@@ -185,16 +187,16 @@
       --color-success:#16a34a;--color-success-fg:#15803d;--color-success-bg:#f0fdf4;--color-success-border:rgba(22,163,74,.2);
       --color-warning:#d97706;--color-warning-fg:#b45309;--color-warning-bg:#fffbeb;--color-warning-border:rgba(217,119,6,.2);
       --color-danger:#dc2626;--color-danger-fg:#b91c1c;--color-danger-bg:#fef2f2;--color-danger-border:rgba(220,38,38,.2);
-      --color-info:#2563eb;--color-info-fg:#1d4ed8;--color-info-bg:#eff6ff;--color-info-border:rgba(37,99,235,.2);
+      --color-info:#1a6b4a;--color-info-fg:#155c3e;--color-info-bg:#ecf7f2;--color-info-border:rgba(26,107,74,.2);
       --font-display:'Syne','DM Sans',sans-serif;
       --font-body:'DM Sans','Helvetica Neue',Helvetica,sans-serif;
       --font-mono:'DM Mono','SF Mono','Menlo','Consolas',monospace;
-      --logo-gradient:linear-gradient(135deg,#00e5ff 0%,#7c3aed 100%);
-      --logo-gradient-soft:rgba(124,58,237,.10);
-      --glass-bg:rgba(255,255,255,.92);--glass-border:var(--border);--glass-blur:blur(8px);
-      --glass-bg-light:rgba(255,255,255,.92);--glass-border-light:var(--border);
-      --pill-blue-bg:#eff6ff;--pill-green-bg:#f0fdf4;--pill-amber-bg:#fffbeb;
-      --pill-blue:#2563eb;--pill-green:#16a34a;--pill-amber:#d97706;
+      --logo-gradient:none;
+      --logo-gradient-soft:rgba(26,107,74,.08);
+      --glass-bg:var(--bg-primary);--glass-border:var(--border);--glass-blur:none;
+      --glass-bg-light:var(--bg-primary);--glass-border-light:var(--border);
+      --pill-blue-bg:var(--accent-bg);--pill-green-bg:#f0fdf4;--pill-amber-bg:#fffbeb;
+      --pill-blue:var(--accent);--pill-green:#16a34a;--pill-amber:#d97706;
       --section-hdr:var(--text-muted);--tag-bg:var(--bg-tertiary);
       --vc-bg:#ffffff;--vc-border:var(--border);--vc-btn:var(--bg-secondary);--vc-text:var(--text-primary);--vc-center:var(--accent);
       --card-bg:var(--bg-secondary);--card-border:var(--border);
@@ -202,7 +204,7 @@
       /* Backward-compat aliases so legacy paper/ink/surface references still work */
       --paper-bg:var(--bg-primary);
       --paper-edge:var(--bg-tertiary);
-      --surface:var(--bg-secondary);
+      --surface:var(--bg-primary);
       --surface-warm:var(--bg-secondary);
       --ink-primary:var(--text-primary);
       --ink-secondary:var(--text-secondary);
@@ -213,57 +215,61 @@
       --ink-accent-deep:var(--accent-hover);
       --hairline:var(--border-subtle);
       --hairline-strong:var(--border);
-      --sev-critical:#dc2626;--sev-major:#d97706;--sev-minor:#16a34a;--sev-info:#94a3b8;
+      --shadow-soft:var(--shadow-sm);--shadow-lifted:var(--shadow-md);
+      --sev-critical:#b91c1c;--sev-major:#b45309;--sev-minor:#15803d;--sev-info:#737373;
     }
     [data-theme=dark]{
-      --bg-primary:#0f172a;
-      --bg-secondary:#1e293b;
-      --bg-tertiary:#0f172a;
-      --border:#334155;
-      --border-subtle:#1e293b;
-      --text-primary:#e2e8f0;
-      --text-secondary:#b0bec5;
-      --text-muted:#8b9db5;
-      --text-faint:#6b7f99;
-      --accent:#2563eb;
-      --accent-hover:#3b82f6;
-      --accent-subtle:#93c5fd;
-      --accent-bg:#1e3a5f;
-      --accent-bg-deep:#172554;
-      --accent-light:#60a5fa;
-      --accent-dim:#1e3a5f;
-      --scene-bg:#0c1626;
-      --scene-floor:#111827;
-      --grid-line:#1e293b;
-      --grid-center:#334155;
-      --overlay-bg:rgba(15,23,42,.92);
-      --overlay-bg-strong:#1e293b;
-      --modal-bg:rgba(0,0,0,.55);
-      --shadow-sm:0 1px 3px rgba(0,0,0,.3);
-      --shadow-md:0 4px 12px rgba(0,0,0,.3);
-      --shadow-lg:0 8px 24px rgba(0,0,0,.4);
+      --bg-primary:#141414;
+      --bg-secondary:#1f1f1f;
+      --bg-tertiary:#2a2a2a;
+      --border:#333333;
+      --border-subtle:#262626;
+      --text-primary:#f0f0f0;
+      --text-secondary:#b0b0b0;
+      --text-muted:#737373;
+      --text-faint:#525252;
+      --accent:#4d9e75;
+      --accent-hover:#5db086;
+      --accent-subtle:#2a6b4a;
+      --accent-bg:#0d2b1e;
+      --accent-bg-deep:#0a2218;
+      --accent-light:#6dba8e;
+      --accent-dim:#0d2b1e;
+      --scene-bg:#141414;
+      --scene-floor:#1f1f1f;
+      --grid-line:#262626;
+      --grid-center:#404040;
+      --overlay-bg:rgba(20,20,20,.96);
+      --overlay-bg-strong:#1f1f1f;
+      --modal-bg:rgba(0,0,0,.6);
+      --shadow-sm:0 1px 3px rgba(0,0,0,.4);
+      --shadow-md:0 4px 12px rgba(0,0,0,.4);
+      --shadow-lg:0 8px 24px rgba(0,0,0,.5);
       --color-success:#22c55e;--color-success-fg:#34d399;--color-success-bg:#052e16;--color-success-border:rgba(34,197,94,.35);
       --color-warning:#f59e0b;--color-warning-fg:#fbbf24;--color-warning-bg:#422006;--color-warning-border:rgba(245,158,11,.35);
       --color-danger:#ef4444;--color-danger-fg:#fca5a5;--color-danger-bg:#450a0a;--color-danger-border:rgba(239,68,68,.4);
-      --color-info:#3b82f6;--color-info-fg:#93c5fd;--color-info-bg:#172554;--color-info-border:rgba(59,130,246,.35);
-      --pill-blue-bg:#1e3a5f;--pill-green-bg:#052e16;--pill-amber-bg:#422006;
-      --pill-blue:#93c5fd;--pill-green:#34d399;--pill-amber:#fbbf24;
-      --vc-bg:#1e293b;--vc-border:var(--border);--vc-btn:#0f172a;--vc-text:var(--text-primary);--vc-center:var(--accent);
+      --color-info:#4d9e75;--color-info-fg:#6dba8e;--color-info-bg:#0d2b1e;--color-info-border:rgba(77,158,117,.35);
+      --pill-blue-bg:var(--accent-bg);--pill-green-bg:#052e16;--pill-amber-bg:#422006;
+      --pill-blue:var(--accent-light);--pill-green:#34d399;--pill-amber:#fbbf24;
+      --vc-bg:#1f1f1f;--vc-border:var(--border);--vc-btn:#141414;--vc-text:var(--text-primary);--vc-center:var(--accent);
       --card-bg:var(--bg-secondary);--card-border:var(--border);
       --input-bg:var(--bg-tertiary);
-      --paper-bg:var(--bg-primary);--paper-edge:var(--bg-tertiary);--surface:var(--bg-secondary);--surface-warm:var(--bg-secondary);
+      --paper-bg:var(--bg-primary);--paper-edge:var(--bg-tertiary);--surface:var(--bg-primary);--surface-warm:var(--bg-secondary);
       --ink-primary:var(--text-primary);--ink-secondary:var(--text-secondary);--ink-muted:var(--text-muted);--ink-faint:var(--text-faint);
       --ink-accent:var(--accent);--ink-accent-soft:var(--accent-bg);--ink-accent-deep:var(--accent-hover);
       --hairline:var(--border-subtle);--hairline-strong:var(--border);
-      --sev-critical:#ef4444;--sev-major:#f59e0b;--sev-minor:#22c55e;--sev-info:#94a3b8;
+      --shadow-soft:var(--shadow-sm);--shadow-lifted:var(--shadow-md);
+      --sev-critical:#ef4444;--sev-major:#f59e0b;--sev-minor:#34d399;--sev-info:#94a3b8;
     }
     [data-theme=light]{}
     .cc-left-panel{overflow-x:hidden!important}
     .cc-left-panel>*{min-width:0;overflow-x:hidden}
-    /* ── Overlay panels (float above canvas) ── */
+    /* Content row sits below the two topbars; rail + panel position absolute within it */
+    .cc-content-row{position:relative}
+    /* ── Overlay panels (float above canvas, within content-row) ── */
     @media(min-width:769px){
-      .cc-left-rail{position:absolute!important;left:0!important;top:0!important;bottom:0!important;z-index:20!important;border-right:1px solid var(--glass-border);box-shadow:4px 0 16px rgba(0,0,0,.18)}
-      .cc-left-panel{position:absolute!important;left:48px!important;top:0!important;bottom:0!important;z-index:15!important;box-shadow:4px 0 24px rgba(0,0,0,.28);border-right:1px solid var(--border)}
+      .cc-left-rail{position:absolute!important;left:0!important;top:0!important;bottom:0!important;z-index:20!important;border-right:1px solid var(--border);box-shadow:2px 0 6px rgba(0,0,0,.04)}
+      .cc-left-panel{position:absolute!important;left:48px!important;top:0!important;bottom:0!important;z-index:15!important;box-shadow:4px 0 16px rgba(0,0,0,.06);border-right:1px solid var(--border)}
     }
     .cc-side-panel{overflow-x:hidden}
     .cc-side-panel>*{min-width:0}
@@ -376,7 +382,9 @@
       background:var(--surface);
       border-bottom:1px solid var(--hairline);gap:var(--space-3);z-index:10;position:relative;}
     @media(max-width:768px){.cc-desktop-topbar{display:none!important}}
+    @media(max-width:768px){.cc-top-toolbar{display:none!important}}
     body[data-presenting="1"] .cc-desktop-topbar{display:none!important}
+    body[data-presenting="1"] .cc-top-toolbar{display:none!important}
     .cc-hide-desktop{display:none!important}
     @media(max-width:768px){
       .cc-hide-desktop{display:inline-block!important}
@@ -679,6 +687,8 @@ function startApp() {
     theme:(function(){ try { return localStorage.getItem('cc_theme')||'light'; } catch(e){ return 'light'; } })(),
     renderStyle:_ccLoadPref('renderStyle','rendered'), // 'standard','shaded','rendered','wireframe' — default 'rendered' so first paint is cinematic, not flat
     unitScaleOverride:_ccLoadPref('unitScaleOverride','auto'), // 'auto','1','100','1000'
+    // Rendered-mode lighting controls (sliders surfaced in the toolbar Style popover)
+    lightSettings:_ccLoadPref('lightSettings',{sun:1.0, ambient:1.0, exposure:1.0, shadow:1.0}),
   };
   var INIT = {
     models:[], clashes:[], issues:[], activeId:null, showModal:false, showSettings:false, modalElement:null, tab:null,
@@ -1063,7 +1073,7 @@ function startApp() {
       case A.TRAINING_MODE: var tm=a.v!=null?!!a.v:!s.trainingMode;try{localStorage.setItem('cc_trainingMode',tm?'1':'0');}catch(e){}return Object.assign({},s,{trainingMode:tm});
       case A.UPD_PREFS:
         if(a.u&&a.u.defaultTolerances!==undefined){try{localStorage.setItem('cc_defaultTolerances',JSON.stringify(a.u.defaultTolerances));}catch(e){}}
-        if(a.u){var _pk=['autoFlyTo','autoHighlight','showGrid','showAxes','showMarkers','hoverHighlight','outlineSelected','defaultPriority','defaultCategory','defaultStatus','defaultMaxGap','resetFiltersOnRun','renderStyle','unitScaleOverride'];_pk.forEach(function(k){if(a.u[k]!==undefined){try{localStorage.setItem('cc_'+k,JSON.stringify(a.u[k]));}catch(e){}}});}
+        if(a.u){var _pk=['autoFlyTo','autoHighlight','showGrid','showAxes','showMarkers','hoverHighlight','outlineSelected','defaultPriority','defaultCategory','defaultStatus','defaultMaxGap','resetFiltersOnRun','renderStyle','unitScaleOverride','lightSettings'];_pk.forEach(function(k){if(a.u[k]!==undefined){try{localStorage.setItem('cc_'+k,JSON.stringify(a.u[k]));}catch(e){}}});}
         return Object.assign({},s,{prefs:Object.assign({},s.prefs,a.u)});
       case A.MEASURE_MODE: return Object.assign({},s,{measureMode:a.v, walkMode:a.v?false:s.walkMode, sectionAxis:a.v?null:s.sectionAxis, sectionCustom:a.v?null:s.sectionCustom, commentMode:a.v?false:s.commentMode});
       case A.ADD_MEASUREMENT: _gcEvent('measurement', a.v&&a.v.type||'length'); return Object.assign({},s,{measurements:s.measurements.concat([a.v])});
@@ -4496,7 +4506,10 @@ function startApp() {
     });
   }
 
-  // ── First-Person Walk Mode ──────────────────────────────────── INTERNALS.md §12
+  // ── First-Person Walk Mode (Enscape-style) ──────────────────── INTERNALS.md §12
+  // Hold LMB on canvas to enable WASD movement + mouse look. Vertical collision
+  // (gravity + stair step-up) is on by default; horizontal wall collision is OFF
+  // so doors and openings don't block. Press Esc to exit.
   var _walkActive = false;
   var _walkKeys = {};        // currently pressed keys
   var _walkYaw = 0;          // horizontal angle (radians)
@@ -4505,7 +4518,9 @@ function startApp() {
   var _walkEyeHeight = 1.7;  // meters (scaled to model units at enter)
   var _walkSavedCam = null;  // {pos, target, sph} to restore on exit
   var _walkLastTime = 0;     // for delta-time in tick
-  var _walkCollision = false; // no-clip: allow walking through objects
+  var _walkCollision = false; // horizontal wall collision (off by default; user toggle)
+  var _walkGravity = true;   // vertical ground-snap & stair step-up (on by default)
+  var _walkLMB = false;      // true while LEFT mouse button is held over canvas
   var _walkUnitScale = 1;    // model unit scale (1=m, 1000=mm)
   var _walkPointerLocked = false; // track whether we got pointer lock
   var _walkFovDefault = 75;
@@ -4645,13 +4660,16 @@ function startApp() {
     var rx = -Math.cos(_walkYaw), rz = Math.sin(_walkYaw);
 
     var mx = 0, mz = 0, my = 0;
-    if (_walkKeys['KeyW'] || _walkKeys['ArrowUp'])    { mx += fx; mz += fz; }
-    if (_walkKeys['KeyS'] || _walkKeys['ArrowDown'])  { mx -= fx; mz -= fz; }
-    if (_walkKeys['KeyA'] || _walkKeys['ArrowLeft'])   { mx -= rx; mz -= rz; }
-    if (_walkKeys['KeyD'] || _walkKeys['ArrowRight'])  { mx += rx; mz += rz; }
-    if (_walkKeys['Space'] || _walkKeys['KeyQ'])   my += 1;
-    if (_walkKeys['KeyC'] || _walkKeys['KeyE'])    my -= 1;
-    // Gamepad left stick → forward/strafe
+    // Enscape-style: WASD only moves while LMB is held (or via gamepad).
+    if (_walkLMB) {
+      if (_walkKeys['KeyW'] || _walkKeys['ArrowUp'])    { mx += fx; mz += fz; }
+      if (_walkKeys['KeyS'] || _walkKeys['ArrowDown'])  { mx -= fx; mz -= fz; }
+      if (_walkKeys['KeyA'] || _walkKeys['ArrowLeft'])   { mx -= rx; mz -= rz; }
+      if (_walkKeys['KeyD'] || _walkKeys['ArrowRight'])  { mx += rx; mz += rz; }
+      if (_walkKeys['Space'] || _walkKeys['KeyQ'])   my += 1;
+      if (_walkKeys['KeyC'] || _walkKeys['KeyE'])    my -= 1;
+    }
+    // Gamepad left stick → forward/strafe (always active)
     if (gpAxes) {
       mx += fx * (-gpAxes.ly) + rx * (gpAxes.lx);
       mz += fz * (-gpAxes.ly) + rz * (gpAxes.lx);
@@ -4687,6 +4705,37 @@ function startApp() {
       _walkBobBaseY = newY;
       _walkApplyLook(S);
       invalidate(3);
+    }
+    // ── Vertical ground-snap (gravity + stair step-up) ────────────
+    // Cast a ray downward from a bit above eye height, find the closest
+    // floor/stair surface within step-up reach, and snap camera Y so we
+    // stand on it at eye-height. This keeps stairs walkable while leaving
+    // walls free to pass through.
+    if (_walkGravity && my === 0 && S.mg && S.mg.children.length > 0) {
+      var stepUp = 0.5 * _walkUnitScale;     // max step we'll climb (50 cm)
+      var castFrom = stepUp;                   // start above the eye-relative ground line
+      var maxFall = 4.0 * _walkUnitScale;       // how far we'll snap down
+      var origin = new THREE.Vector3(S.camera.position.x, S.camera.position.y - _walkEyeHeight + castFrom, S.camera.position.z);
+      var dnRay = new THREE.Raycaster(origin, new THREE.Vector3(0,-1,0), 0, castFrom + maxFall);
+      var dnHits = dnRay.intersectObjects(S.mg.children, true);
+      var floorHit = null;
+      for (var h = 0; h < dnHits.length; h++) {
+        var ho = dnHits[h].object;
+        if (ho.userData && ho.userData._isLodProxy) continue;
+        if (!ho.visible) continue;
+        if (_isGhostMat && _isGhostMat(ho.material)) continue;
+        floorHit = dnHits[h]; break;
+      }
+      if (floorHit) {
+        var floorY = floorHit.point.y;
+        var targetEyeY = floorY + _walkEyeHeight;
+        // Smooth follow so stair steps don't snap-pop
+        var dy = targetEyeY - S.camera.position.y;
+        var maxDy = Math.abs(dy) > 0.01 * _walkUnitScale ? Math.min(Math.abs(dy), 8 * _walkUnitScale * dt) : Math.abs(dy);
+        S.camera.position.y += Math.sign(dy) * maxDy;
+        if (_walkBobBaseY != null) _walkBobBaseY = S.camera.position.y;
+        invalidate(3);
+      }
     }
     // Head-bob: subtle vertical sin while ground-moving (W/A/S/D, not Q/E flying)
     if (_walkBobEnabled && _walkActive) {
@@ -4949,17 +4998,18 @@ function startApp() {
       function _wlRemoveAll() { _wl.forEach(function(l){ window.removeEventListener(l.ev, l.fn, l.opts); }); _wl.length = 0; }
 
       var scene = new THREE.Scene();
-      scene.background = new THREE.Color(0x0f172a);
+      scene.background = new THREE.Color(0xf0f0f0);
       // ── Procedural sky gradient (cheap, deterministic, no HDRI dep) ───
+      // Default to the light-mode architectural near-white sky.
+      // _ccApplyTheme3D rebuilds this whenever the theme changes.
       var _skyTex = (function(){
         var c = document.createElement('canvas');
         c.width = 2; c.height = 256;
         var ctx = c.getContext('2d');
         var g = ctx.createLinearGradient(0,0,0,256);
-        // top → horizon: cool blue → warm pale; flips on theme later via _ccApplyTheme3D
-        g.addColorStop(0,'#1e1b4b');
-        g.addColorStop(0.55,'#475569');
-        g.addColorStop(1.0,'#0f172a');
+        g.addColorStop(0,   '#ffffff');
+        g.addColorStop(0.55,'#f5f5f5');
+        g.addColorStop(1.0, '#e8e8e8');
         ctx.fillStyle = g; ctx.fillRect(0,0,2,256);
         var t = new THREE.CanvasTexture(c);
         t.encoding = THREE.sRGBEncoding;
@@ -5090,7 +5140,7 @@ function startApp() {
       S.orbit = makeOrbit(camera, renderer.domElement, _wlAdd);
       S.orbit.apply(); // ensure camera looks at orbit target on init
 
-      // ── Walk mode event listeners ───────────────────────────────────
+      // ── Walk mode event listeners (Enscape-style: hold LMB for WASD+look) ──
       _wlAdd('keydown', function(e) {
         if (!_walkActive) return;
         _walkKeys[e.code] = true;
@@ -5105,15 +5155,29 @@ function startApp() {
         if (!_walkActive) return;
         delete _walkKeys[e.code];
       });
-      renderer.domElement.addEventListener('click', function() {
-        if (_walkActive && document.pointerLockElement !== renderer.domElement) {
-          try { renderer.domElement.requestPointerLock(); } catch (e) {}
+      // Enscape-style: hold LMB on canvas to walk+look. Pointer lock acquired
+      // on press; released on up. WASD only moves while LMB is held.
+      renderer.domElement.addEventListener('mousedown', function(e) {
+        if (!_walkActive || e.button !== 0) return;
+        _walkLMB = true;
+        try { renderer.domElement.requestPointerLock(); } catch (err) {}
+        e.preventDefault();
+      });
+      _wlAdd('mouseup', function(e) {
+        if (e.button !== 0) return;
+        if (_walkLMB) {
+          _walkLMB = false;
+          try { if (document.pointerLockElement) document.exitPointerLock(); } catch (err) {}
         }
       });
       renderer.domElement.addEventListener('mousemove', function(e) {
-        if (!_walkActive || document.pointerLockElement !== renderer.domElement) return;
-        _walkYaw -= e.movementX * 0.002;
-        _walkPitch += e.movementY * -0.002;
+        if (!_walkActive || !_walkLMB) return;
+        // Pointer lock provides movementX/Y; without lock we still respect the
+        // delta but capped to avoid jitter when the cursor leaves the canvas.
+        var mx = e.movementX || 0, my = e.movementY || 0;
+        if (Math.abs(mx) > 200 || Math.abs(my) > 200) return;
+        _walkYaw -= mx * 0.002;
+        _walkPitch += my * -0.002;
         _walkPitch = Math.max(-Math.PI / 2.2, Math.min(Math.PI / 2.2, _walkPitch));
         _walkApplyLook(S);
         invalidate(3);
@@ -6443,6 +6507,10 @@ function startApp() {
           var S2 = state3d.current;
           var newPos;
           if (cs && cs.axis && S2 && S2.camera) {
+            // Section plane lives along the axis but its visible "kept" side
+            // is the opposite of the axis normal (negated in line 6861). Mouse
+            // should move the cut WITH the drag direction in screen space — so
+            // we invert the dot product.
             var axMap = {x:[1,0,0], y:[0,1,0], z:[0,0,1]};
             var axArr = axMap[cs.axis] || [0,1,0];
             var origin = new THREE.Vector3(0,0,0).project(S2.camera);
@@ -6454,9 +6522,9 @@ function startApp() {
             var mdx =  dx / el.clientWidth  * 2;
             var mdy = -dy / el.clientHeight * 2;
             var dot = mdx * sx + mdy * sy;
-            newPos = Math.max(0, Math.min(1, _secDrag.startPos + dot * 1.0));
+            newPos = Math.max(0, Math.min(1, _secDrag.startPos - dot * 1.0));
           } else {
-            newPos = Math.max(0, Math.min(1, _secDrag.startPos - dy * 0.003));
+            newPos = Math.max(0, Math.min(1, _secDrag.startPos + dy * 0.003));
           }
           if (cs && cs.axis && window._ccDispatch) window._ccDispatch({t:A.SECTION, axis:cs.axis, pos:newPos});
           else if (cs && cs.custom && window._ccDispatch) window._ccDispatch({t:A.SECTION_CUSTOM, v:cs.custom, pos:newPos});
@@ -6524,11 +6592,11 @@ function startApp() {
       window._ccApplyViewpoint = _restoreViewpoint;
       window._ccCaptureViewpoint = _captureViewpoint;
 
-      // Sky-bounce hemi (cool sky from above, warm ground from below)
-      S._ambLight = new THREE.HemisphereLight(0xb1c7e0, 0x4a3a32, 0.7);
+      // Sky-bounce hemi: clean white sky from above, light gray ground from below.
+      S._ambLight = new THREE.HemisphereLight(0xffffff, 0xc0c0c0, 0.55);
       scene.add(S._ambLight);
-      // Warm directional sun
-      S._sunLight = new THREE.DirectionalLight(0xfff2d6, 1.1);
+      // Warm directional sun (slight warm tint, like late-afternoon site visit)
+      S._sunLight = new THREE.DirectionalLight(0xfff2d6, 1.4);
       S._sunLight.position.set(80,120,60);
       S._sunLight.castShadow = true;
       S._sunLight.shadow.mapSize.set(2048,2048);
@@ -6691,6 +6759,34 @@ function startApp() {
             S._composer.render();
           } else {
             renderer.render(scene,S.camera);
+          }
+          // ── Project measurement labels onto screen ──────────────
+          if (window._ccMeasurementsRef && window._ccMeasurementsRef.length > 0) {
+            // The label overlay is a sibling of `el` (canvas wrapper) inside the Viewer root.
+            var labelLayer = (el.parentElement && el.parentElement.querySelector('#cc-measure-labels')) || el.querySelector('#cc-measure-labels');
+            if (labelLayer) {
+              var w = el.clientWidth, h = el.clientHeight;
+              for (var li = 0; li < window._ccMeasurementsRef.length; li++) {
+                var meas = window._ccMeasurementsRef[li];
+                if (!meas || !meas.points || meas.points.length < 2) continue;
+                var p0 = meas.points[0], p1 = meas.points[meas.points.length-1];
+                var midV = new THREE.Vector3((p0[0]+p1[0])/2, (p0[1]+p1[1])/2, (p0[2]+p1[2])/2);
+                if (meas.type === 'angle' && meas.points.length >= 3) {
+                  // For angle, anchor at the vertex (point[1])
+                  midV.set(meas.points[1][0], meas.points[1][1], meas.points[1][2]);
+                }
+                var sp = midV.project(S.camera);
+                var node = labelLayer.querySelector('[data-mid="'+meas.id+'"]');
+                if (!node) continue;
+                if (sp.z < -1 || sp.z > 1) {
+                  node.style.transform = 'translate3d(-9999px,-9999px,0)';
+                  continue;
+                }
+                var sx = (sp.x * 0.5 + 0.5) * w;
+                var sy = (-sp.y * 0.5 + 0.5) * h - 22; // 22 px above the line midpoint
+                node.style.transform = 'translate3d(' + Math.round(sx) + 'px,' + Math.round(sy) + 'px,0) translate(-50%,0)';
+              }
+            }
           }
         } catch(renderErr) { console.warn('Render error:', renderErr); }
         S.perf.frameCount++;
@@ -7365,13 +7461,15 @@ function startApp() {
         var ctx = c.getContext('2d');
         var g = ctx.createLinearGradient(0,0,0,256);
         if (light) {
-          g.addColorStop(0,'#e2e8f0');
-          g.addColorStop(0.6,'#f0f4f8');
-          g.addColorStop(1.0,'#f8fafc');
+          // Clean architectural near-white sky → light zinc floor.
+          g.addColorStop(0,   '#ffffff');
+          g.addColorStop(0.55,'#f5f5f5');
+          g.addColorStop(1.0, '#e8e8e8');
         } else {
-          g.addColorStop(0,'#111827');
-          g.addColorStop(0.6,'#0c1626');
-          g.addColorStop(1.0,'#0f172a');
+          // Warm-charcoal interior, gently lifting toward the horizon.
+          g.addColorStop(0,   '#0e0e0e');
+          g.addColorStop(0.6, '#181818');
+          g.addColorStop(1.0, '#222222');
         }
         ctx.fillStyle = g; ctx.fillRect(0,0,2,256);
         var t = new THREE.CanvasTexture(c);
@@ -7380,14 +7478,14 @@ function startApp() {
         S._skyTex = t;
         S.scene.background = t;
       } catch(e) {
-        S.scene.background = new THREE.Color(light ? 0xece7dd : 0x1d1915);
+        S.scene.background = new THREE.Color(light ? 0xf0f0f0 : 0x141414);
       }
       if(S.grid){
         S.scene.remove(S.grid);
         S.grid.geometry.dispose();
         S.grid.material.dispose();
-        S.grid = new THREE.GridHelper(200,80, light?0xa89f8f:0x4a443d, light?0xc8c0b3:0x3a342d);
-        S.grid.material.opacity = light ? 0.12 : 0.18; S.grid.material.transparent = true;
+        S.grid = new THREE.GridHelper(200,80, light?0xa3a3a3:0x404040, light?0xd4d4d4:0x2a2a2a);
+        S.grid.material.opacity = light ? 0.16 : 0.22; S.grid.material.transparent = true;
         S.grid.visible = s.prefs.showGrid!==false;
         S.scene.add(S.grid);
       }
@@ -7399,12 +7497,24 @@ function startApp() {
       if(!S.mg) return;
       var style = s.prefs.renderStyle || 'standard';
       var light = (s.prefs.theme||'light')==='light';
+      // User-tweakable rendered-mode settings (persisted in cc_light_settings)
+      var ls = (s.prefs.lightSettings) || {};
+      var sunMul = (typeof ls.sun === 'number') ? ls.sun : 1.0;
+      var ambMul = (typeof ls.ambient === 'number') ? ls.ambient : 1.0;
+      var expoMul = (typeof ls.exposure === 'number') ? ls.exposure : 1.0;
+      var shadowOp = (typeof ls.shadow === 'number') ? ls.shadow : 1.0;
+      if (S.renderer) S.renderer.toneMappingExposure = expoMul;
       if(S._sunLight) {
-        S._sunLight.intensity = style==='rendered' ? 1.4 : 1.0;
-        S._fillLight.intensity = style==='rendered' ? 0.5 : 0.3;
-        S._ambLight.intensity = style==='shaded' ? 0.9 : style==='rendered' ? 0.55 : 0.7;
+        var sunBase = style==='rendered' ? 1.7 : 1.0;
+        S._sunLight.intensity = sunBase * sunMul;
+        S._fillLight.intensity = (style==='rendered' ? 0.4 : 0.3) * ambMul;
+        S._ambLight.intensity = (style==='shaded' ? 0.9 : style==='rendered' ? 0.45 : 0.6) * ambMul;
         // Shadows are perceptibly expensive; only enable in 'rendered' mode
-        S._sunLight.castShadow = style==='rendered';
+        S._sunLight.castShadow = style==='rendered' && shadowOp > 0;
+        if (S._sunLight.shadow) {
+          // shadow opacity proxy: dimmer/brighter shadow via shadow.intensity isn't a thing in r128,
+          // but bias/normalBias keep the visual quality. The slider is wired through anyway.
+        }
       }
       // Lazy-activate SAO + Outline post-processing for the 'rendered' style.
       if (window._ccActivatePostFX) {
@@ -7625,6 +7735,17 @@ function startApp() {
           <div style=${{position:'absolute',top:'50%',left:'50%',transform:'translate(-50%,-50%)',width:3,height:3,background:'rgba(255,255,255,.8)',borderRadius:'50%'}}></div>
         </div>
       </div>`}
+      ${/* Floating measurement labels — positions tracked in the render loop via window._ccMeasureLabelsTick */ ''}
+      <div id="cc-measure-labels" style=${{position:'absolute',inset:0,pointerEvents:'none',zIndex:6,overflow:'hidden'}}>
+        ${s.measurements.map(function(m){
+          var color = m.type==='length' ? 'var(--text-primary)' : m.type==='angle' ? 'var(--color-warning-fg)' : 'var(--accent-hover)';
+          return html`<div key=${m.id} class="cc-measure-label" data-mid=${m.id}
+            style=${{position:'absolute',left:0,top:0,transform:'translate3d(-9999px,-9999px,0)',
+              background:'var(--bg-primary)',border:'1px solid var(--border)',borderRadius:4,
+              padding:'1px 6px',fontSize:11,fontFamily:'var(--font-mono)',color:color,
+              boxShadow:'var(--shadow-sm)',whiteSpace:'nowrap',userSelect:'none',lineHeight:1.4}}>${m.label}</div>`;
+        })}
+      </div>
       ${s.walkMode && html`<${WalkModeHUD} d=${d} />`}
       <div style=${{position:'absolute',bottom:'.75rem',right:'.75rem',pointerEvents:'auto',display:'flex',flexDirection:'column',gap:'.3rem',alignItems:'flex-end',maxHeight:'calc(100% - 5rem)',overflowY:'auto'}}>
         ${s.measureMode && html`<div style=${{fontSize:'0.69rem',color:'var(--text-primary)',background:'var(--overlay-bg)',border:'1px solid var(--border)',padding:'.25rem .55rem',borderRadius:6,boxShadow:'var(--shadow-sm)'}}>
@@ -7661,16 +7782,19 @@ function startApp() {
         <div style=${{position:'absolute',left:ctxMenu.x,top:ctxMenu.y,background:'var(--bg-secondary)',border:'1px solid var(--border)',borderRadius:8,boxShadow:'0 8px 24px rgba(0,0,0,.6)',overflow:'hidden',minWidth:160,zIndex:11}}
           onClick=${function(e){e.stopPropagation();}}>
           <button onClick=${function(){d({t:A.SECTION_CUSTOM,v:{normal:ctxMenu.normal,point:ctxMenu.point}});setCtxMenu(null);}}
-            style=${{...S_BTN,width:'100%',textAlign:'left',padding:'.5rem .7rem',background:'transparent',color:'var(--text-primary)',fontSize:'0.86rem',borderRadius:0,display:'flex',alignItems:'center',gap:'.4rem'}}>
-            <span style=${{fontSize:'0.98rem'}}>✂</span> Make Section
+            style=${{...S_BTN,width:'100%',textAlign:'left',padding:'.5rem .7rem',background:'transparent',color:'var(--text-primary)',fontSize:'0.86rem',borderRadius:0,display:'flex',alignItems:'center',gap:'.5rem'}}>
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><circle cx="6" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><line x1="20" y1="4" x2="8.12" y2="15.88"/><line x1="14.47" y1="14.48" x2="20" y2="20"/><line x1="8.12" y1="8.12" x2="12" y2="12"/></svg>
+            Make Section
           </button>
           ${ctxMenu.expressId!=null && html`<button onClick=${function(){if(_sboxAroundElements)_sboxAroundElements([ctxMenu.expressId]);setCtxMenu(null);}}
-            style=${{...S_BTN,width:'100%',textAlign:'left',padding:'.5rem .7rem',background:'transparent',color:'var(--text-primary)',fontSize:'0.86rem',borderRadius:0,borderTop:'1px solid var(--border)',display:'flex',alignItems:'center',gap:'.4rem'}}>
-            <span style=${{fontSize:'0.98rem'}}>◻</span> Section Box
+            style=${{...S_BTN,width:'100%',textAlign:'left',padding:'.5rem .7rem',background:'transparent',color:'var(--text-primary)',fontSize:'0.86rem',borderRadius:0,borderTop:'1px solid var(--border)',display:'flex',alignItems:'center',gap:'.5rem'}}>
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="4" width="16" height="16" stroke-dasharray="3 2"/></svg>
+            Section Box
           </button>`}
           <button onClick=${function(){d({t:A.SECTION_BOX,v:null});d({t:A.SECTION,axis:null});setCtxMenu(null);}}
-            style=${{...S_BTN,width:'100%',textAlign:'left',padding:'.5rem .7rem',background:'transparent',color:'var(--text-secondary)',fontSize:'0.86rem',borderRadius:0,borderTop:'1px solid var(--border)',display:'flex',alignItems:'center',gap:'.4rem'}}>
-            <span style=${{fontSize:'0.98rem'}}>○</span> Clear Section
+            style=${{...S_BTN,width:'100%',textAlign:'left',padding:'.5rem .7rem',background:'transparent',color:'var(--text-secondary)',fontSize:'0.86rem',borderRadius:0,borderTop:'1px solid var(--border)',display:'flex',alignItems:'center',gap:'.5rem'}}>
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><line x1="6" y1="6" x2="18" y2="18"/><line x1="18" y1="6" x2="6" y2="18"/></svg>
+            Clear Section
           </button>
         </div>
       </div>`}
@@ -13872,7 +13996,9 @@ function startApp() {
         pointerEvents:'auto',display:'flex',flexDirection:'column',alignItems:'center',gap:'.4rem',zIndex:5}}>
         <div style=${{background:'rgba(15,23,42,.92)',borderRadius:10,padding:'.45rem .8rem',
           color:'rgba(255,255,255,.85)',fontSize:'0.7rem',display:'flex',alignItems:'center',gap:'.55rem',
-          border:'1px solid rgba(148,163,184,.2)',backdropFilter:'blur(8px)',flexWrap:'wrap',justifyContent:'center'}}>
+          border:'1px solid rgba(148,163,184,.2)',flexWrap:'wrap',justifyContent:'center'}}>
+          <span><b>Hold LMB</b> walk + look</span>
+          <span style=${{opacity:.35}}>·</span>
           <span><b>WASD</b> move</span>
           <span style=${{opacity:.35}}>·</span>
           <span><b>Q/E</b> up/down</span>
@@ -13880,8 +14006,6 @@ function startApp() {
           <span><b>Shift</b> sprint</span>
           <span style=${{opacity:.35}}>·</span>
           <span><b>Scroll</b> FOV</span>
-          <span style=${{opacity:.35}}>·</span>
-          <span><b>Shift+Scroll</b> dolly-zoom</span>
         </div>
         <div style=${{background:'rgba(15,23,42,.92)',borderRadius:10,padding:'.4rem .55rem',
           display:'flex',alignItems:'center',gap:'.4rem',border:'1px solid rgba(148,163,184,.2)',backdropFilter:'blur(8px)',flexWrap:'wrap',justifyContent:'center'}}>
@@ -21164,7 +21288,8 @@ function startApp() {
     var isDark = (s.prefs.theme||'light')==='dark';
     var projects = s.projectList || [];
     var activeProj = projects.find(function(p){return p.id===s.activeProject;}) || projects[0] || {id:'default',name:'Default'};
-    function close(){ d({t:A.AVATAR_MENU,v:false}); }
+    var dc = useState(null), deleteConfirm=dc[0], setDeleteConfirm=dc[1];
+    function close(){ d({t:A.AVATAR_MENU,v:false}); setDeleteConfirm(null); }
     function row(label, onClick, hint){
       return html`<button onClick=${function(){onClick();close();}}
         style=${{display:'flex',alignItems:'center',justifyContent:'space-between',gap:'.6rem',width:'100%',
@@ -21182,11 +21307,29 @@ function startApp() {
         var nm = (window.prompt('New project name','New project')||'').trim();
         if(!nm) return;
         var id = nm.replace(/[^a-z0-9]+/gi,'-').replace(/^-|-$/g,'').toLowerCase()+'-'+Math.random().toString(36).slice(2,7);
-        var nl = projects.concat([{id:id,name:nm}]);
-        d({t:A.SET_PROJECT_LIST,v:nl});
+        var nl = projects.concat([{id:id,name:nm,createdAt:Date.now()}]);
         try{ localStorage.setItem('cc_projects',JSON.stringify(nl)); }catch(e){}
-        d({t:A.SET_PROJECT,id:id});
+        d({t:A.SET_PROJECT_LIST,v:nl});
+        if (typeof _switchProject === 'function') _switchProject(id, s, d);
+        else d({t:A.SET_PROJECT,id:id});
       }catch(e){}
+    }
+    function switchToProject(id){
+      if (id === s.activeProject) return;
+      if (typeof _switchProject === 'function') _switchProject(id, s, d);
+      else d({t:A.SET_PROJECT,id:id});
+    }
+    function deleteProject(id){
+      if (typeof idbDeleteProjectFiles === 'function') try { idbDeleteProjectFiles(id); } catch(e){}
+      if (typeof idbDeleteProjectData === 'function') try { idbDeleteProjectData(id); } catch(e){}
+      var list = projects.filter(function(p){ return p.id !== id; });
+      if (!list.length) list = [{id:'default', name:'Default Project', createdAt:Date.now()}];
+      try { localStorage.setItem('cc_projects', JSON.stringify(list)); } catch(e){}
+      d({t:A.SET_PROJECT_LIST, v:list});
+      if (id === s.activeProject) {
+        if (typeof _switchProject === 'function') _switchProject(list[0].id, s, d);
+        else d({t:A.SET_PROJECT,id:list[0].id});
+      }
     }
     return html`<div style=${{position:'relative',flexShrink:0}}>
       <button aria-label="Account and settings" aria-expanded=${open}
@@ -21215,16 +21358,31 @@ function startApp() {
           <div style=${{padding:'.25rem .8rem',fontSize:'var(--text-2xs)',textTransform:'uppercase',letterSpacing:'.08em',color:'var(--ink-muted)',fontWeight:500}}>Project</div>
           ${projects.map(function(p){
             var on = p.id===s.activeProject;
-            return html`<button key=${p.id} onClick=${function(){if(!on){d({t:A.SET_PROJECT,id:p.id});}close();}}
-              style=${{display:'flex',alignItems:'center',justifyContent:'space-between',gap:'.6rem',width:'100%',
-                padding:'.4rem .8rem',background:'none',border:'none',cursor:'pointer',textAlign:'left',
-                fontFamily:'var(--font-body)',fontSize:'var(--text-sm)',
-                color:on?'var(--ink-primary)':'var(--ink-secondary)',fontWeight:on?500:400}}
-              onMouseEnter=${function(e){e.currentTarget.style.background='var(--surface-warm)';}}
-              onMouseLeave=${function(e){e.currentTarget.style.background='none';}}>
-              <span>${p.name}</span>
-              ${on && html`<span style=${{width:6,height:6,borderRadius:'50%',background:'var(--ink-accent)'}}></span>`}
-            </button>`;
+            var canDelete = projects.length > 1;
+            var rowKey = p.id+':'+(deleteConfirm===p.id?'1':'0');
+            return html`<div key=${p.id}
+                style=${{display:'flex',alignItems:'stretch',gap:0,width:'100%',
+                  background:on?'var(--accent-bg)':'transparent'}}>
+              <button onClick=${function(){ if(!on){ switchToProject(p.id); } close(); }}
+                style=${{flex:1,minWidth:0,display:'flex',alignItems:'center',justifyContent:'space-between',gap:'.6rem',
+                  padding:'.4rem .8rem',background:'none',border:'none',cursor:'pointer',textAlign:'left',
+                  fontFamily:'var(--font-body)',fontSize:'var(--text-sm)',
+                  color:on?'var(--ink-primary)':'var(--ink-secondary)',fontWeight:on?500:400}}
+                onMouseEnter=${function(e){if(!on)e.currentTarget.parentElement.style.background='var(--surface-warm)';}}
+                onMouseLeave=${function(e){if(!on)e.currentTarget.parentElement.style.background='transparent';}}>
+                <span style=${{overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>${p.name}</span>
+                ${on && html`<span style=${{width:6,height:6,borderRadius:'50%',background:'var(--ink-accent)',flexShrink:0}}></span>`}
+              </button>
+              ${canDelete && html`<button title="Delete project" aria-label=${'Delete project '+p.name}
+                onClick=${function(e){ e.stopPropagation(); if(deleteConfirm===p.id){ deleteProject(p.id); setDeleteConfirm(null); } else { setDeleteConfirm(p.id); } }}
+                style=${{padding:'0 .55rem',background:'none',border:'none',cursor:'pointer',
+                  color: deleteConfirm===p.id ? '#b91c1c' : 'var(--ink-faint)',
+                  display:'flex',alignItems:'center',fontFamily:'var(--font-body)',fontSize:'var(--text-2xs)'}}>
+                ${deleteConfirm===p.id
+                  ? html`<span style=${{fontWeight:600}}>Delete?</span>`
+                  : html`<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/></svg>`}
+              </button>`}
+            </div>`;
           })}
           ${row('+ New project…', newProject)}
           <div style=${{height:1,background:'var(--hairline)',margin:'.3rem 0'}}></div>
@@ -21432,7 +21590,7 @@ function startApp() {
       </div>`;
     }
 
-    return html`<div style=${{flexShrink:0,background:'var(--surface)',borderBottom:'1px solid var(--hairline)',position:'relative',zIndex:9}}>
+    return html`<div class="cc-top-toolbar" style=${{flexShrink:0,background:'var(--surface)',borderBottom:'1px solid var(--hairline)',position:'relative',zIndex:9}}>
       <div role="toolbar" aria-label="Viewer tools" style=${{
         display:'flex',alignItems:'center',height:44,padding:'0 var(--space-3)',gap:'var(--space-1)'
       }}>
@@ -21443,11 +21601,11 @@ function startApp() {
                 onClick:function(){ if(window._ccResetView) window._ccResetView(); else if(window._resetView) window._resetView(); }})}
         ${div()}
         <!-- SECTION -->
-        ${btn({k:'slice',    active:activeMode==='slice'&&!(s.sectionBox&&s.sectionBox.enabled), title:'Slice (X)', label:'Slice', icon:I.slice,
+        ${btn({k:'slice',    active:activeMode==='slice'&&!(s.sectionBox&&s.sectionBox.enabled), title:'Make Section (X)', label:'Make Section', icon:I.slice,
                 onClick:function(){ if(activeMode==='slice'&&!(s.sectionBox&&s.sectionBox.enabled)) clearAllModes(); else setMode('slice'); }})}
-        ${btn({k:'slicebox', active:!!(s.sectionBox&&s.sectionBox.enabled), title:'Section box', label:'Section box', icon:I.slicebox,
+        ${btn({k:'slicebox', active:!!(s.sectionBox&&s.sectionBox.enabled), title:'Section Box', label:'Section Box', icon:I.slicebox,
                 onClick:function(){ clearAllModes(); if(window._ccActivateSectionBox) window._ccActivateSectionBox(); else d({t:A.SECTION_BOX,v:{enabled:true,min:null,max:null}}); }})}
-        ${btn({k:'sclear', title:'Clear cuts (Esc)',  label:'Clear cuts', icon:I.clear,
+        ${btn({k:'sclear', title:'Clear Section (Esc)',  label:'Clear Section', icon:I.clear,
                 onClick:function(){ d({t:A.SECTION,axis:null}); d({t:A.SECTION_CUSTOM,v:null}); d({t:A.SECTION_BOX,v:null}); }})}
         ${div()}
         <!-- MEASURE -->
@@ -21511,12 +21669,12 @@ function startApp() {
           </button>
           ${styleOpen && html`<div>
             <div onClick=${function(){setStyleOpen(false);}} style=${{position:'fixed',inset:0,zIndex:399}}></div>
-            <div role="menu" style=${{position:'absolute',top:'calc(100% + 6px)',right:0,zIndex:400,minWidth:160,
+            <div role="menu" style=${{position:'absolute',top:'calc(100% + 6px)',right:0,zIndex:400,minWidth:240,
               background:'var(--surface)',border:'1px solid var(--hairline-strong)',borderRadius:'var(--radius-sm)',
               boxShadow:'var(--shadow-lifted)',padding:'.3rem 0',fontFamily:'var(--font-body)'}}>
               ${styles.map(function(st,i){
                 var on = curStyle===st.id;
-                return html`<button key=${st.id} onClick=${function(){ d({t:A.UPD_PREFS,u:{renderStyle:st.id}}); setStyleOpen(false); }}
+                return html`<button key=${st.id} onClick=${function(){ d({t:A.UPD_PREFS,u:{renderStyle:st.id}}); }}
                   style=${{display:'flex',alignItems:'center',justifyContent:'space-between',gap:'.6rem',width:'100%',
                     padding:'.4rem .8rem',background:'none',border:'none',cursor:'pointer',textAlign:'left',
                     fontFamily:'var(--font-body)',fontSize:'var(--text-sm)',
@@ -21527,6 +21685,26 @@ function startApp() {
                   <span style=${{fontFamily:'var(--font-mono)',fontSize:'var(--text-2xs)',color:'var(--ink-faint)'}}>${i+1}</span>
                 </button>`;
               })}
+              ${curStyle==='rendered' && html`<div style=${{borderTop:'1px solid var(--hairline)',marginTop:'.3rem',padding:'.5rem .8rem',display:'flex',flexDirection:'column',gap:'.4rem'}}>
+                <div style=${{fontFamily:'var(--font-mono)',fontSize:'var(--text-2xs)',color:'var(--ink-muted)',textTransform:'uppercase',letterSpacing:'.06em'}}>Lighting</div>
+                ${[{k:'sun',label:'Sun',min:0.2,max:2.5},{k:'ambient',label:'Ambient',min:0.2,max:2.0},{k:'exposure',label:'Exposure',min:0.5,max:1.8},{k:'shadow',label:'Shadow',min:0,max:1.5}].map(function(row){
+                  var ls=(s.prefs.lightSettings)||{}; var v = (typeof ls[row.k]==='number') ? ls[row.k] : 1.0;
+                  return html`<label key=${row.k} style=${{display:'flex',alignItems:'center',gap:'.5rem',fontSize:'var(--text-xs)',color:'var(--ink-secondary)'}}>
+                    <span style=${{width:60}}>${row.label}</span>
+                    <input type="range" min=${row.min} max=${row.max} step="0.05" value=${v}
+                      onInput=${function(e){
+                        var nv=parseFloat(e.target.value);
+                        var ls2=Object.assign({sun:1,ambient:1,exposure:1,shadow:1},(s.prefs.lightSettings)||{});
+                        ls2[row.k]=nv;
+                        d({t:A.UPD_PREFS,u:{lightSettings:ls2}});
+                      }}
+                      style=${{flex:1,accentColor:'var(--accent)'}} />
+                    <span style=${{fontFamily:'var(--font-mono)',fontSize:'var(--text-2xs)',color:'var(--ink-muted)',width:30,textAlign:'right'}}>${v.toFixed(2)}</span>
+                  </label>`;
+                })}
+                <button onClick=${function(){ d({t:A.UPD_PREFS,u:{lightSettings:{sun:1,ambient:1,exposure:1,shadow:1}}}); }}
+                  style=${{alignSelf:'flex-end',background:'none',border:'1px solid var(--hairline-strong)',padding:'.18rem .55rem',borderRadius:'var(--radius-xs)',cursor:'pointer',fontSize:'var(--text-2xs)',color:'var(--ink-muted)',fontFamily:'var(--font-body)'}}>Reset</button>
+              </div>`}
             </div>
           </div>`}
         </div>
@@ -21884,6 +22062,9 @@ function startApp() {
     }, []);
     window._ccDispatch = d;
     window._ccLatestState = s;
+    var _prevMeasN = (window._ccMeasurementsRef||[]).length;
+    window._ccMeasurementsRef = s.measurements;  // exposed for render loop label projection
+    if ((s.measurements||[]).length !== _prevMeasN && typeof invalidate === 'function') invalidate(2);
     try { if (typeof _sharedStartPolling === 'function') _sharedStartPolling(); } catch(e){}
     window._ccCompareModels = function(refA, refB) {
       var models = (window._ccLatestState||{}).models||[];
@@ -22338,20 +22519,22 @@ function startApp() {
       height:'100dvh',
       minHeight:'100vh',
       paddingTop:'max(env(titlebar-area-height, 0px), env(safe-area-inset-top, 0px))',
-      display:'flex',flexDirection:'row',overflow:'hidden',position:'relative'
+      display:'flex',flexDirection:'column',overflow:'hidden',position:'relative'
     }}>
       <input ref=${_gFileRef} type="file" accept=".ifc,.glb,.ifcmeta,.ifcprops" multiple style=${{display:'none'}} onChange=${_gOnFiles} />
       <input ref=${_gFile2dRef} type="file" accept=".dxf,.pdf,.dwg" multiple style=${{display:'none'}} onChange=${_gOnFiles} />
-      <${LeftRail} s=${s} d=${d} />
-      <${LeftPanel} s=${s} d=${d} />
-      <div style=${{flex:1,display:'flex',flexDirection:'column',overflow:'hidden',position:'relative',minWidth:0}}>
-        <${DesktopTopBar} s=${s} d=${d} />
-        <${TopToolbar} s=${s} d=${d} />
-        <${Header} s=${s} d=${d} />
-        ${is2D ? html`<${View2D} s=${s} d=${d} />` : html`<${Viewer} s=${s} d=${d} />`}
-        ${is2D && html`<${ExportBar} s=${s} d=${d} />`}
+      <${DesktopTopBar} s=${s} d=${d} />
+      <${TopToolbar} s=${s} d=${d} />
+      <div class="cc-content-row" style=${{flex:1,display:'flex',flexDirection:'row',overflow:'hidden',position:'relative',minHeight:0}}>
+        <${LeftRail} s=${s} d=${d} />
+        <${LeftPanel} s=${s} d=${d} />
+        <div style=${{flex:1,display:'flex',flexDirection:'column',overflow:'hidden',position:'relative',minWidth:0}}>
+          <${Header} s=${s} d=${d} />
+          ${is2D ? html`<${View2D} s=${s} d=${d} />` : html`<${Viewer} s=${s} d=${d} />`}
+          ${is2D && html`<${ExportBar} s=${s} d=${d} />`}
+        </div>
+        <${AIChatPanel} s=${s} d=${d} />
       </div>
-      <${AIChatPanel} s=${s} d=${d} />
       ${s.showModal && html`<${NewIssueModal} d=${d} el=${s.modalElement} prefs=${s.prefs} clashes=${s.clashes} activeId=${s.activeId} />`}
       ${storeyPickerOpen && html`<${StoreyPickerModal} s=${s} d=${d} onClose=${function(){setStoreyPickerOpen(false);}} />`}
       ${s.showSettings && html`<${SettingsModal} d=${d} s=${s} prefs=${s.prefs} models=${s.models} rules=${s.rules} />`}
