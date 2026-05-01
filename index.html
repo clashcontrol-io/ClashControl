@@ -1035,10 +1035,10 @@ function startApp() {
       case A.SET_WORKSPACE: {
         var w=(a.v==='coordinate'||a.v==='review')?a.v:'present';
         _ccPersistUI('workspace',w);
-        /* Switching workspace closes any selection-driven inspector and resets
-           the panel-open override so each workspace lands on its default. */
+        /* Switching workspace closes any open left panel, the selection-driven
+           inspector, and the avatar menu so each workspace lands clean. */
         _gcEvent('workspace','switch:'+w);
-        return Object.assign({},s,{workspace:w,panelOpen:null,avatarMenuOpen:false});
+        return Object.assign({},s,{workspace:w,tab:null,panelOpen:null,avatarMenuOpen:false});
       }
       case A.DIAGNOSTICS: { var d=!!a.v; _ccPersistUI('diagnostics',d); return Object.assign({},s,{diagnostics:d}); }
       case A.PANEL_OPEN:    { var p=!!a.v; _ccPersistUI('panelOpen',p); return Object.assign({},s,{panelOpen:p}); }
@@ -3052,12 +3052,26 @@ function startApp() {
     grpB.forEach(function(m){ inB[m.id]=true; });
 
     var exTypes = rules.excludeTypes&&rules.excludeTypes.length ? rules.excludeTypes : null;
+    // Glass elements (windows, glazed plates, curtain wall panels) are always
+    // excluded from collision: they are decorative/visual elements that intersect
+    // their host frame by design and produce noise clashes by the thousand.
+    // Detected by IFC type or by material name containing glass/glazing.
+    var GLASS_TYPES = {IfcWindow:1, IfcCurtainWall:1};
+    var GLASS_MAT_RE = /\b(glass|glas|glazing|glaz)\b/i;
+    function _isGlassEl(el){
+      if (!el || !el.props) return false;
+      if (GLASS_TYPES[el.props.ifcType]) return true;
+      var m = el.props.material||'';
+      if (m && GLASS_MAT_RE.test(String(m))) return true;
+      return false;
+    }
     var seenModels = {}, items = [];
     grpA.concat(grpB).forEach(function(m) {
       if (seenModels[m.id]) return; seenModels[m.id]=true;
       (m.elements||[]).forEach(function(el) {
         if (!el.box) return;
         if (exTypes && el.props && exTypes.indexOf(el.props.ifcType)!==-1) return;
+        if (rules.excludeGlass !== false && _isGlassEl(el)) return;
         items.push({el:el, m:m});
       });
     });
@@ -7326,8 +7340,8 @@ function startApp() {
       });
       S._sboxFacePanels=facePanels;
 
-      var handleSize=Math.max(hx,hy,hz)*0.06;
-      handleSize=Math.max(0.05,Math.min(handleSize,0.5));
+      var maxDim = Math.max(hx,hy,hz);
+      var handleSize = Math.max(0.15, Math.min(maxDim*0.04, 4.0));
       var handleGeo=new THREE.SphereGeometry(handleSize,8,8);
       var handles=[];
       // 8 corner handles — placed exactly at box corners, so they sit on the boundary of all 6
@@ -7354,8 +7368,10 @@ function startApp() {
 
       // ── Revit-style face arrow handles — drag one face at a time ─────────
       // 6 arrows (one per face center), each constrained to slide along its face normal.
-      var faceArrowSize = Math.max(0.08, Math.min(handleSize * 1.6, 0.7));
-      var faceArrowGeo = new THREE.ConeGeometry(faceArrowSize * 0.55, faceArrowSize * 1.3, 16);
+      // Sized generously relative to the box so they are clearly visible and clickable
+      // even on big building-scale models (no hard upper cap).
+      var faceArrowSize = Math.max(0.3, Math.min(maxDim * 0.07, 6.0));
+      var faceArrowGeo = new THREE.ConeGeometry(faceArrowSize * 0.55, faceArrowSize * 1.6, 16);
       var faceHandles = [];
       var faceDirs = [
         {axis: axX.clone(), sign: +1, idx: 0, side: 'max', halfExt: hx},
@@ -7725,16 +7741,16 @@ function startApp() {
         } else {
           // Non-rendered: lower sun, no shadows
           S._sunLight.color.setRGB(1, 0.96, 0.88);
-          S._sunLight.intensity = (style==='shaded' ? 0.65 : style==='wireframe' ? 0 : style==='standard' ? 0 : 0.7) * sunMul;
+          S._sunLight.intensity = (style==='shaded' ? 0.65 : style==='wireframe' ? 0 : style==='standard' ? 0.5 : 0.7) * sunMul;
           S._sunLight.castShadow = false;
         }
       }
       if (S._fillLight) {
-        S._fillLight.intensity = (style==='rendered' ? 0.35 : style==='shaded' ? 0.25 : style==='standard' ? 0 : 0.35) * ambMul;
+        S._fillLight.intensity = (style==='rendered' ? 0.35 : style==='shaded' ? 0.25 : style==='standard' ? 0.2 : 0.35) * ambMul;
       }
       if (S._ambLight) {
-        // standard (hidden line): MeshBasicMaterial ignores lights so ambient is irrelevant
-        S._ambLight.intensity = (style==='rendered' ? 0.55 : style==='shaded' ? 0.6 : style==='wireframe' ? 0.8 : 0.9) * ambMul;
+        // standard (hidden line): now Lambert-shaded gray — needs ambient too
+        S._ambLight.intensity = (style==='rendered' ? 0.55 : style==='shaded' ? 0.6 : style==='wireframe' ? 0.8 : 0.7) * ambMul;
       }
 
       // Disable post-processing entirely — SAO + SMAA caused blur. Plain
@@ -7766,13 +7782,11 @@ function startApp() {
         } else {
           S._groundPlane.material.color.set(light ? 0xeeeeee : 0x1a1a1a);
         }
-        // Position at model's minY (so foundation/piles stay above the floor visually)
-        try {
-          var box = (typeof _elemsBBox === 'function') ? _elemsBBox() : null;
-          if (box && !box.isEmpty()) {
-            S._groundPlane.position.y = box.min.y - 0.01;
-          }
-        } catch(e){}
+        // Place the ground plane at the model's IFC origin (Y=0). That's the
+        // reference "0-point" the building was modelled against — typically
+        // ground level. Foundations/piles below 0 sit underneath the plane,
+        // which is the correct architectural reading.
+        S._groundPlane.position.y = -0.005;
         S._groundPlane.visible = true;
       }
       _ccUpdateGround();
@@ -7831,31 +7845,17 @@ function startApp() {
             transparent: true, opacity: 0.85, side: THREE.FrontSide
           }));
         } else if (style === 'standard') {
-          // Hidden Line: flat white surfaces pushed back + architectural edge overlay.
-          // polygonOffset prevents z-fighting between surface and edge lines.
-          if (!cache.standard) {
-            cache.standard = new THREE.MeshBasicMaterial({
-              color: light ? 0xf2f2f2 : 0x282828,
-              side: THREE.FrontSide,
-              polygonOffset: true, polygonOffsetFactor: 2, polygonOffsetUnits: 2
-            });
-          } else {
-            cache.standard.color.set(light ? 0xf2f2f2 : 0x282828);
-          }
-          mat = cache.standard;
-          // Edge lines — created once per mesh, updated if theme changes
-          if (!obj.userData._edges) {
-            try {
-              var edgeGeo = new THREE.EdgesGeometry(obj.geometry, 15); // 15° crease threshold
-              var edgeMat = new THREE.LineBasicMaterial({ color: light ? 0x1a1a1a : 0x999999 });
-              var edgeMesh = new THREE.LineSegments(edgeGeo, edgeMat);
-              edgeMesh.userData._isEdge = true;
-              obj.add(edgeMesh);
-              obj.userData._edges = edgeMesh;
-            } catch(e) {}
-          } else if (obj.userData._edges.material) {
-            obj.userData._edges.material.color.set(light ? 0x1a1a1a : 0x999999);
-          }
+          // Hidden Line: shaded surfaces but stripped of colour — a uniform
+          // light/dark gray Lambert. No EdgesGeometry overlay (which is
+          // prohibitively expensive on large IFC models). Lighting still
+          // gives shape definition.
+          _disposeEdges(obj);
+          mat = cache.standard || (cache.standard = new THREE.MeshLambertMaterial({
+            color: light ? 0xe8e8e8 : 0x3a3a3a,
+            transparent: orig.transparent, opacity: orig.opacity,
+            side: THREE.FrontSide
+          }));
+          if (cache.standard) cache.standard.color.set(light ? 0xe8e8e8 : 0x3a3a3a);
         } else if (style === 'shaded') {
           _disposeEdges(obj);
           mat = cache.shaded || (cache.shaded = new THREE.MeshLambertMaterial({
@@ -14892,8 +14892,8 @@ function startApp() {
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/></svg>
           </div>
           <div style=${{flex:1}}>
-            <div id="cc-share-title" style=${{fontSize:'1.05rem',fontWeight:700,color:'var(--text-primary)'}}>Share project</div>
-            <div style=${{fontSize:'0.74rem',color:'var(--text-muted)'}}>Local-first collaboration via a shared folder</div>
+            <div id="cc-share-title" style=${{fontSize:'1.05rem',fontWeight:700,color:'var(--text-primary)'}}>Share with your team</div>
+            <div style=${{fontSize:'0.74rem',color:'var(--text-muted)'}}>Work together on the same project — no accounts, no uploads</div>
           </div>
           <button onClick=${function(){d({t:A.SHARE,v:false});}} style=${S_MODAL_CLOSE} aria-label="Close">✕</button>
         </div>
@@ -14913,14 +14913,16 @@ function startApp() {
                 style=${inputStyle} />
             </div>
 
-            ${!sp.enabled && html`<div style=${{padding:'.9rem 1rem',background:'rgba(124,58,237,.06)',border:'1px solid rgba(124,58,237,.2)',borderRadius:8,fontSize:'0.82rem',color:'var(--text-secondary)',lineHeight:1.55}}>
-              <div style=${{fontWeight:600,color:'var(--text-primary)',marginBottom:'.35rem'}}>How it works</div>
-              <ol style=${{margin:0,paddingLeft:'1.1rem'}}>
-                <li>Pick a folder you and your teammates already share — OneDrive, Dropbox, Google Drive Desktop, or a network drive.</li>
-                <li>ClashControl writes a small <code>project.ccproject</code> file there and re-syncs every minute.</li>
-                <li>Teammates open ClashControl, link the same folder, and changes flow both ways.</li>
+            ${!sp.enabled && html`<div style=${{padding:'.9rem 1rem',background:'var(--accent-bg)',border:'1px solid var(--accent-bg-deep)',borderRadius:8,fontSize:'0.85rem',color:'var(--text-secondary)',lineHeight:1.6}}>
+              <div style=${{fontWeight:600,color:'var(--text-primary)',marginBottom:'.4rem'}}>How sharing works</div>
+              <ol style=${{margin:0,paddingLeft:'1.2rem'}}>
+                <li style=${{marginBottom:'.3rem'}}>Choose a folder that you and your teammates can both reach — for example a shared OneDrive, Dropbox, Google Drive, or company network drive.</li>
+                <li style=${{marginBottom:'.3rem'}}>ClashControl saves a small project file in that folder and keeps it up to date automatically (about once a minute).</li>
+                <li>Anyone on your team can open ClashControl, point it at the same folder, and they'll see the same comments, issues, and viewpoints. Changes from everyone show up for everyone.</li>
               </ol>
-              <div style=${{marginTop:'.5rem',fontSize:'0.74rem',color:'var(--text-muted)'}}>Your IFC model never leaves your machine. Only decisions, comments and viewpoints sync.</div>
+              <div style=${{marginTop:'.6rem',padding:'.5rem .65rem',background:'var(--bg-primary)',border:'1px solid var(--border-subtle)',borderRadius:6,fontSize:'0.78rem',color:'var(--text-secondary)'}}>
+                <strong style=${{color:'var(--text-primary)'}}>Your model stays on your computer.</strong> Only the things your team needs to discuss — comments, viewpoints, and clash decisions — are written into the shared folder. Your IFC file is never uploaded anywhere.
+              </div>
             </div>`}
 
             ${sp.enabled && html`<div style=${{padding:'.8rem 1rem',background:'var(--bg-tertiary)',border:'1px solid var(--border)',borderRadius:8}}>
@@ -15047,7 +15049,7 @@ function startApp() {
               <div style=${{color:'var(--text-secondary)',whiteSpace:'pre-wrap',lineHeight:1.5}}>${r.text||''}</div>
             </div>`})}
           </div>`}
-          ${isActive && !c.resolved && html`<div style=${{marginTop:'.5rem',display:'flex',gap:'.4rem'}}>
+          ${isActive && !c.resolved && c.text && html`<div style=${{marginTop:'.5rem',display:'flex',gap:'.4rem'}}>
             <input type="text" value=${draft} placeholder="Reply…"
               onInput=${function(e){setDraft(e.target.value);}}
               onKeyDown=${function(e){if(e.key==='Enter'){addReply(c);}}}
@@ -20369,14 +20371,13 @@ function startApp() {
       ? [
           {id:'dataquality', svg:SVG_DATAQUALITY, label:'Data Quality'},
           {id:'standards',   svg:SVG_STANDARDS,   label:'Standards / IDS'},
-          {id:'navigator',   svg:SVG_EXPLORE,     label:'Navigator'},
           {id:'addons',      svg:SVG_INTEG,       label:'Integrations'}
         ]
       : [
           {id:'clashes',  svg:SVG_CLASHES, label:'Conflicts', badge:clashN},
           {id:'issues',   svg:SVG_ISSUES,  label:'Issues',    badge:issueN},
-          {id:'standards',svg:SVG_STANDARDS,label:'Rules'},
-          {id:'navigator',svg:SVG_EXPLORE, label:'Navigator'}
+          {id:'navigator',svg:SVG_EXPLORE, label:'Navigator'},
+          {id:'standards',svg:SVG_STANDARDS,label:'Rules'}
         ];
 
     return html`<div class="cc-left-rail" style=${{
@@ -21074,6 +21075,17 @@ function startApp() {
       return function(){ clearInterval(t); };
     }, []);
 
+    // Expose a global opener so the toolbar Ask AI button can uncollapse
+    // the panel and switch to the AI tab in one click.
+    useEffect(function(){
+      window._ccOpenAIPanel = function(){
+        setCollapsed(false);
+        try{localStorage.setItem('cc_ai_panel_collapsed','0');}catch(e){}
+        setDrawerTab('ai');
+      };
+      return function(){ if (window._ccOpenAIPanel) window._ccOpenAIPanel = null; };
+    }, []);
+
     // Collapsed: thin tab on the right edge
     if (collapsed) {
       return html`<button class="cc-ai-collapsed-tab" onClick=${function(){ setCollapsed(false); try{localStorage.setItem('cc_ai_panel_collapsed','0');}catch(e){} }}
@@ -21183,20 +21195,87 @@ function startApp() {
         </div>
       </div>`;
 
-      // ── PRESENT: clean identity ──────────────────────────────────
+      // ── PRESENT: natural-language description ───────────────────
       if (workspace === 'present') {
+        function findDim(labels){ for(var i=0;i<labels.length;i++){ var d=allDims.find(function(x){return x.l===labels[i];}); if(d) return d;} return null; }
+        var dL = findDim(['Length']);
+        var dW = findDim(['Width','Thickness']);
+        var dH = findDim(['Height','Depth']);
+        var dA = findDim(['NetArea','Area','GrossArea','NetFloorArea','GrossFloorArea','NetSideArea','GrossSideArea']);
+        var dV = findDim(['NetVolume','Volume','GrossVolume']);
+
+        var typeWord = (typeName||'element').toLowerCase();
+        var article  = /^[aeiou]/i.test(typeWord) ? 'An' : 'A';
+        var hasNiceName = !!(ep&&ep.name) && !nameGenerated && elName !== 'Unnamed element';
+
+        var PROSE = {fontSize:'.84rem',lineHeight:1.7,color:'var(--text-secondary)',margin:'0 0 .55rem 0',fontFamily:'var(--font-body)'};
+        var STRONG = {color:'var(--text-primary)',fontWeight:600};
+
+        // Sentence 1 — identity + location
+        var locTail = null;
+        if (storey && discipline) locTail = html` It sits on <span style=${STRONG}>${storey}</span> within the <span style=${STRONG}>${discipline}</span> model.`;
+        else if (storey)          locTail = html` It sits on <span style=${STRONG}>${storey}</span>.`;
+        else if (discipline)      locTail = html` It belongs to the <span style=${STRONG}>${discipline}</span> model.`;
+        var sentenceIdentity = html`<p style=${PROSE}>
+          ${article} <span style=${STRONG}>${typeWord}</span>${hasNiceName ? html` named <span style=${STRONG}>“${elName}”</span>` : ''}.${locTail}
+        </p>`;
+
+        // Sentence 2 — material / classification
+        var sentenceMake = null;
+        if (ep && (ep.material || ep.objectType)) {
+          var bits = [];
+          if (ep.material)   bits.push(html`made of <span style=${STRONG}>${ep.material}</span>`);
+          if (ep.objectType) bits.push(html`classified as <span style=${STRONG}>${ep.objectType}</span>`);
+          var joined = bits.length===2 ? html`${bits[0]} and ${bits[1]}` : bits[0];
+          sentenceMake = html`<p style=${PROSE}>It is ${joined}.</p>`;
+        }
+
+        // Sentence 3 — dimensions
+        var sentenceDim = null;
+        if (dL || dW || dH) {
+          var dimParts = [];
+          if (dL) dimParts.push(html`<span style=${STRONG}>${dL.f(dL.v)}</span> long`);
+          if (dW) dimParts.push(html`<span style=${STRONG}>${dW.f(dW.v)}</span> ${dW.l==='Thickness'?'thick':'wide'}`);
+          if (dH) dimParts.push(html`<span style=${STRONG}>${dH.f(dH.v)}</span> ${dH.l==='Depth'?'deep':'tall'}`);
+          var dimText;
+          if (dimParts.length===1) dimText = dimParts[0];
+          else if (dimParts.length===2) dimText = html`${dimParts[0]} and ${dimParts[1]}`;
+          else dimText = html`${dimParts[0]}, ${dimParts[1]} and ${dimParts[2]}`;
+          sentenceDim = html`<p style=${PROSE}>It measures ${dimText}.</p>`;
+        }
+
+        // Sentence 4 — area / volume
+        var sentenceAV = null;
+        if (dA || dV) {
+          var avBits = [];
+          if (dA) avBits.push(html`a surface area of <span style=${STRONG}>${dA.f(dA.v)}</span>`);
+          if (dV) avBits.push(html`a volume of <span style=${STRONG}>${dV.f(dV.v)}</span>`);
+          var avJoined = avBits.length===2 ? html`${avBits[0]} and ${avBits[1]}` : avBits[0];
+          sentenceAV = html`<p style=${PROSE}>It has ${avJoined}.</p>`;
+        }
+
+        // Sentence 5 — clash / issue context (subtle)
+        var sentenceCtx = null;
+        if (linkedClashes.length || linkedIssues.length) {
+          var ctxBits = [];
+          if (linkedClashes.length) ctxBits.push(html`<span style=${STRONG}>${linkedClashes.length}</span> open conflict${linkedClashes.length===1?'':'s'}`);
+          if (linkedIssues.length)  ctxBits.push(html`<span style=${STRONG}>${linkedIssues.length}</span> linked issue${linkedIssues.length===1?'':'s'}`);
+          sentenceCtx = html`<p style=${{...PROSE,color:'var(--text-muted)',fontSize:'.78rem'}}>This element has ${ctxBits.length===2 ? html`${ctxBits[0]} and ${ctxBits[1]}` : ctxBits[0]} on it.</p>`;
+        }
+
+        // Description quote (separate, italic, hairline-bordered)
+        var descQuote = (ep && ep.description) ? html`<p style=${{...PROSE,fontStyle:'italic',borderLeft:'2px solid var(--accent-subtle)',paddingLeft:'.7rem',color:'var(--text-muted)',marginTop:'.2rem'}}>${ep.description}</p>` : null;
+
         return html`<div style=${WRAP}>
           ${headerCard}
-          <div style=${CARD}>
-            ${storey      && html`<div style=${ROW}><span style=${LBL}>Floor</span><span style=${VAL}>${storey}</span></div>`}
-            ${ep&&ep.material     && html`<div style=${ROW}><span style=${LBL}>Material</span><span style=${VAL}>${ep.material}</span></div>`}
-            ${ep&&ep.objectType   && html`<div style=${ROW}><span style=${LBL}>Object type</span><span style=${VAL}>${ep.objectType}</span></div>`}
-            ${ep&&ep.description  && html`<div style=${ROW}><span style=${LBL}>Description</span><span style=${VAL}>${ep.description}</span></div>`}
+          <div style=${{padding:'.4rem .15rem .2rem'}}>
+            ${sentenceIdentity}
+            ${sentenceMake}
+            ${sentenceDim}
+            ${sentenceAV}
+            ${sentenceCtx}
+            ${descQuote}
           </div>
-          ${allDims.length>0 && html`<div style=${CARD}>
-            <div style=${HDR}>Dimensions</div>
-            ${allDims.slice(0,5).map(function(d){return html`<div style=${ROW}><span style=${LBL}>${d.l}</span><span style=${{...VAL,...MONO}}>${d.f(d.v)}</span></div>`;})}
-          </div>`}
         </div>`;
       }
 
@@ -21658,10 +21737,11 @@ function startApp() {
     var w = s.workspace || 'present';
     var tabs = [
       {id:'present',    label:'Present'},
-      {id:'review',     label:'Data Quality'},
+      {id:'review',     label:'Review'},
       {id:'coordinate', label:'Clash & Issues'}
     ];
     var hasModel = s.models && s.models.length > 0;
+    var addOpenSt = useState(false), addOpen = addOpenSt[0], setAddOpen = addOpenSt[1];
     function pick(id){ if(id!==w) d({t:A.SET_WORKSPACE,v:id}); }
     return html`<div style=${{display:'flex',alignItems:'stretch',height:'100%',gap:0}}>
       <div role="tablist" aria-label="Workspace" style=${{display:'flex',alignItems:'stretch',height:'100%',gap:0}}>
@@ -21681,19 +21761,52 @@ function startApp() {
           </button>`;
         })}
       </div>
-      ${hasModel && html`<div style=${{display:'flex',alignItems:'center',marginLeft:'var(--space-3)',paddingLeft:'var(--space-3)',borderLeft:'1px solid var(--hairline-strong)',height:'60%',alignSelf:'center'}}>
-        <button class="cc-btn-press" title="Add another model (O)" aria-label="Add another model"
-          onClick=${function(){ if(window._ccOpenIFC) window._ccOpenIFC(); }}
+      ${hasModel && html`<div style=${{display:'flex',alignItems:'center',marginLeft:'var(--space-3)',paddingLeft:'var(--space-3)',borderLeft:'1px solid var(--hairline-strong)',height:'60%',alignSelf:'center',position:'relative'}}>
+        <button class="cc-btn-press" title="Add a model or 2D drawing" aria-label="Add"
+          aria-haspopup="menu" aria-expanded=${addOpen}
+          onClick=${function(){ setAddOpen(!addOpen); }}
           style=${{display:'inline-flex',alignItems:'center',gap:'.3rem',
-            background:'none',border:'1px solid var(--hairline-strong)',
+            background:addOpen?'var(--surface-warm)':'none',border:'1px solid var(--hairline-strong)',
             borderRadius:'var(--radius-sm)',cursor:'pointer',padding:'.2rem .55rem',
             fontFamily:'var(--font-body)',fontSize:'var(--text-xs)',
             color:'var(--ink-muted)',lineHeight:1.2,whiteSpace:'nowrap'}}
-          onMouseEnter=${function(e){e.currentTarget.style.color='var(--ink-primary)';e.currentTarget.style.borderColor='var(--hairline-strong)';e.currentTarget.style.background='var(--surface-warm)';}}
-          onMouseLeave=${function(e){e.currentTarget.style.color='var(--ink-muted)';e.currentTarget.style.background='none';}}>
+          onMouseEnter=${function(e){e.currentTarget.style.color='var(--ink-primary)';e.currentTarget.style.background='var(--surface-warm)';}}
+          onMouseLeave=${function(e){if(!addOpen){e.currentTarget.style.color='var(--ink-muted)';e.currentTarget.style.background='none';}}}>
           <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
-          <span>Add model</span>
+          <span>Add</span>
+          <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M6 9l6 6 6-6"/></svg>
         </button>
+        ${addOpen && html`<div>
+          <div onClick=${function(){setAddOpen(false);}} style=${{position:'fixed',inset:0,zIndex:399}}></div>
+          <div role="menu" style=${{position:'absolute',top:'calc(100% + 6px)',left:0,zIndex:400,minWidth:260,
+            background:'var(--surface)',border:'1px solid var(--hairline-strong)',borderRadius:'var(--radius-sm)',
+            boxShadow:'var(--shadow-lifted)',padding:'.3rem 0',fontFamily:'var(--font-body)'}}>
+            <button onClick=${function(){setAddOpen(false); if(window._ccOpenIFC) window._ccOpenIFC();}}
+              style=${{display:'flex',alignItems:'flex-start',gap:'.6rem',width:'100%',
+                padding:'.55rem .8rem',background:'none',border:'none',cursor:'pointer',textAlign:'left',
+                fontFamily:'var(--font-body)',color:'var(--ink-primary)'}}
+              onMouseEnter=${function(e){e.currentTarget.style.background='var(--surface-warm)';}}
+              onMouseLeave=${function(e){e.currentTarget.style.background='none';}}>
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" style=${{marginTop:2,flexShrink:0,color:'var(--ink-secondary)'}}><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 12l10 5 10-5"/><path d="M2 17l10 5 10-5"/></svg>
+              <span style=${{display:'flex',flexDirection:'column',gap:1}}>
+                <span style=${{fontSize:'var(--text-sm)',fontWeight:500}}>3D model</span>
+                <span style=${{fontSize:'var(--text-2xs)',color:'var(--ink-faint)',fontFamily:'var(--font-mono)'}}>IFC · GLB</span>
+              </span>
+            </button>
+            <button onClick=${function(){setAddOpen(false); if(window._ccOpen2D) window._ccOpen2D();}}
+              style=${{display:'flex',alignItems:'flex-start',gap:'.6rem',width:'100%',
+                padding:'.55rem .8rem',background:'none',border:'none',cursor:'pointer',textAlign:'left',
+                fontFamily:'var(--font-body)',color:'var(--ink-primary)'}}
+              onMouseEnter=${function(e){e.currentTarget.style.background='var(--surface-warm)';}}
+              onMouseLeave=${function(e){e.currentTarget.style.background='none';}}>
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" style=${{marginTop:2,flexShrink:0,color:'var(--ink-secondary)'}}><rect x="4" y="4" width="16" height="16" rx="1"/><path d="M4 10h16"/><path d="M10 4v16"/></svg>
+              <span style=${{display:'flex',flexDirection:'column',gap:1}}>
+                <span style=${{fontSize:'var(--text-sm)',fontWeight:500}}>2D drawing</span>
+                <span style=${{fontSize:'var(--text-2xs)',color:'var(--ink-faint)',fontFamily:'var(--font-mono)'}}>PDF · DXF — auto-placed on its level</span>
+              </span>
+            </button>
+          </div>
+        </div>`}
       </div>`}
     </div>`;
   }
@@ -22102,6 +22215,21 @@ function startApp() {
 
         <!-- spacer -->
         <span style=${{flex:1}}></span>
+
+        <!-- ASK AI button — opens the right panel in chat mode -->
+        <button onClick=${function(){ if(window._ccOpenAIPanel) window._ccOpenAIPanel(); }}
+          title="Ask AI about this model"
+          style=${{
+            display:'inline-flex',alignItems:'center',gap:'.4rem',height:36,padding:'0 .65rem',
+            background:'none',border:'1px solid var(--hairline-strong)',
+            borderRadius:'var(--radius-sm)',cursor:'pointer',fontFamily:'var(--font-body)',
+            fontSize:'var(--text-xs)',color:'var(--ink-secondary)',letterSpacing:'-.005em',marginRight:'.4rem'
+          }}
+          onMouseEnter=${function(e){e.currentTarget.style.background='var(--surface-warm)';e.currentTarget.style.color='var(--ink-primary)';}}
+          onMouseLeave=${function(e){e.currentTarget.style.background='none';e.currentTarget.style.color='var(--ink-secondary)';}}>
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2a7 7 0 0 1 7 7c0 3-2 5-3 6.5-.5.8-1 1.5-1 2.5v1H9v-1c0-1-.5-1.7-1-2.5C7 14 5 12 5 9a7 7 0 0 1 7-7z"/><path d="M9 21h6"/></svg>
+          <span style=${{color:'var(--ink-primary)',fontWeight:500}}>Ask AI</span>
+        </button>
 
         <!-- STYLE popover (visible button — never hotkey-only) -->
         <div style=${{position:'relative'}}>
@@ -22960,7 +23088,7 @@ function startApp() {
       }
       window.addEventListener('keydown', gk);
       return function(){window.removeEventListener('keydown', gk);};
-    },[s.showSettings, s.showModal, s.showRevitBridge, s.measureMode, s.sectionAxis, s.prefs.showGrid, s.prefs.renderStyle, s.viewpoints, s.measurements, s.activeId, s.floorPlan, s.clashes, s.issues]);
+    },[s.showSettings, s.showModal, s.showRevitBridge, s.measureMode, s.sectionAxis, s.sectionCustom, s.sectionBox, s.walkMode, s.commentMode, s.showShare, s.presenting, s.prefs.showGrid, s.prefs.renderStyle, s.viewpoints, s.measurements, s.activeId, s.floorPlan, s.clashes, s.issues]);
 
     // ── Persistent file picker (always mounted so _ccOpenIFC works from any tab) ──
     var _gFileRef = useRef(null);
