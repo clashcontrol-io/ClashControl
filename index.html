@@ -167,7 +167,7 @@
       --accent-bg-deep:#d3ede2;
       --accent-light:#4d9e75;
       --accent-dim:#ecf7f2;
-      --scene-bg:#f0f0f0;
+      --scene-bg:#f8f8f8;
       --scene-floor:#e4e4e4;
       --grid-line:#d4d4d4;
       --grid-center:#a3a3a3;
@@ -685,7 +685,7 @@ function startApp() {
     defaultMaxGap:_ccLoadPref('defaultMaxGap',50), resetFiltersOnRun:_ccLoadPref('resetFiltersOnRun',true),
     defaultTolerances:(function(){try{return JSON.parse(localStorage.getItem('cc_defaultTolerances'))||{};}catch(e){return {};}}()),
     theme:(function(){ try { return localStorage.getItem('cc_theme')||'light'; } catch(e){ return 'light'; } })(),
-    renderStyle:_ccLoadPref('renderStyle','standard'), // 'standard','shaded','rendered','wireframe' — default 'standard' for fast/clean first paint
+    renderStyle:_ccLoadPref('renderStyle','shaded'), // 'shaded','standard','rendered','wireframe' — default 'shaded' (IFC colors, clean first paint)
     unitScaleOverride:_ccLoadPref('unitScaleOverride','auto'), // 'auto','1','100','1000'
     // Rendered-mode lighting controls (sliders surfaced in the toolbar Style popover)
     lightSettings:_ccLoadPref('lightSettings',{sun:1.0, ambient:1.0, exposure:1.0, shadow:1.0, time:13}),
@@ -5000,7 +5000,7 @@ function startApp() {
       function _wlRemoveAll() { _wl.forEach(function(l){ window.removeEventListener(l.ev, l.fn, l.opts); }); _wl.length = 0; }
 
       var scene = new THREE.Scene();
-      scene.background = new THREE.Color(0xf0f0f0);
+      scene.background = new THREE.Color(0xf8f8f8);
       // ── Procedural sky gradient (cheap, deterministic, no HDRI dep) ───
       // Default to the light-mode architectural near-white sky.
       // _ccApplyTheme3D rebuilds this whenever the theme changes.
@@ -5218,26 +5218,19 @@ function startApp() {
       renderer.domElement.addEventListener('wheel', function(e) {
         if (!_walkActive) return;
         e.preventDefault();
-        var fovDelta = (e.deltaMode === 1 ? e.deltaY * 30 : e.deltaY) * 0.05;
-        var oldFov = S.camera.fov;
-        var newFov = Math.max(30, Math.min(110, oldFov + fovDelta));
+        // Enscape-style: scroll = walk speed. Shift+scroll = FOV.
         if (e.shiftKey) {
-          // Dolly-zoom: change FOV but move camera so subject keeps same screen size.
-          // distance scales by tan(oldFov/2)/tan(newFov/2)
-          var oldT = Math.tan(oldFov*Math.PI/360);
-          var newT = Math.tan(newFov*Math.PI/360);
-          if (newT > 1e-6) {
-            var scale = oldT/newT;
-            var fwd = new THREE.Vector3();
-            S.camera.getWorldDirection(fwd);
-            // Move along forward axis by (scale-1) * referenceDist (use 5m as anchor)
-            var anchor = 5 * _walkUnitScale;
-            var move = anchor * (1 - scale);
-            S.camera.position.addScaledVector(fwd, move);
-            _walkApplyLook(S);
-          }
+          var fovDelta = (e.deltaMode === 1 ? e.deltaY * 30 : e.deltaY) * 0.05;
+          var newFov = Math.max(30, Math.min(110, S.camera.fov + fovDelta));
+          _walkSetFov(newFov, {src:'wheel'});
+        } else {
+          // Scroll up = faster, scroll down = slower. Multiplicative feel.
+          var delta = (e.deltaMode === 1 ? e.deltaY * 30 : e.deltaY);
+          var factor = Math.pow(0.95, delta * 0.04); // smooth expo
+          _walkSpeed = Math.max(0.5 * _walkUnitScale, Math.min(50 * _walkUnitScale, _walkSpeed * factor));
+          try { window.dispatchEvent(new CustomEvent('cc-walk-speed', {detail:{speed:_walkSpeed, unit:_walkUnitScale}})); } catch(ex){}
+          invalidate(2);
         }
-        _walkSetFov(newFov, {src:'wheel'});
       }, { passive: false });
       _wlAdd('pointerlockchange', function() {
         _walkPointerLocked = (document.pointerLockElement === renderer.domElement);
@@ -5952,8 +5945,26 @@ function startApp() {
         return box;
       };
 
-      // ── Activate Section Box around whole model bounds ──
+      // ── Activate Section Box — Revit-style: around selected element if one is active,
+      //    otherwise around the full model (useful for global orientation/cropping). ──
       window._ccActivateSectionBox = function() {
+        // Priority 1: selected element has a pre-computed bounding box
+        var sel = window._ccSelectedEl;
+        if (sel && sel.box && !sel.box.isEmpty()) {
+          var ebox = sel.box.clone();
+          // 10% breathing room so the element isn't flush against the crop planes
+          var sz = ebox.getSize(new THREE.Vector3());
+          ebox.expandByScalar(Math.max(0.3, Math.min(2.0, Math.max(sz.x, sz.y, sz.z) * 0.1)));
+          if (window._ccDispatch) {
+            window._ccDispatch({t:A.SECTION_BOX, v:{enabled:true,
+              min:[ebox.min.x, ebox.min.y, ebox.min.z],
+              max:[ebox.max.x, ebox.max.y, ebox.max.z]
+            }});
+          }
+          return true;
+        }
+        // Priority 2: highlighted clash/issue targets (if _sboxAroundElements is wired)
+        // Priority 3: full model bounding box
         var box = _getSectionBoxFromScene();
         if (!box) return false;
         if (window._ccDispatch) {
@@ -6077,14 +6088,17 @@ function startApp() {
             var _hOrigColor = new THREE.Color();
             hitMesh.getColorAt(hitInstanceId, _hOrigColor);
             lastHoverOriginals = {_instanceId:hitInstanceId, _origColor:_hOrigColor};
-            hitMesh.setColorAt(hitInstanceId, new THREE.Color(0x1e3a5f));
+            // Blend toward white for visible hover on any surface color
+            var _hBlend = new THREE.Color(); _hBlend.copy(_hOrigColor).lerp(new THREE.Color(0xffffff), 0.35);
+            hitMesh.setColorAt(hitInstanceId, _hBlend);
             hitMesh.instanceColor.needsUpdate = true;
           } else {
             lastHoverOriginals = {
               emissive: hitMesh.material.emissive ? hitMesh.material.emissive.clone() : new THREE.Color(0),
               opacity: hitMesh.material.opacity
             };
-            if(hitMesh.material.emissive) hitMesh.material.emissive.set(0x1e3a5f);
+            // Neutral lightening emissive — visible on any IFC surface color
+            if(hitMesh.material.emissive) hitMesh.material.emissive.set(0x2a2a2a);
             hitMesh.material.needsUpdate = true;
           }
           renderer.domElement.style.cursor = 'pointer';
@@ -6958,6 +6972,24 @@ function startApp() {
       invalidate();
     }, [s.models]);
 
+    // Connect s.walkMode state to the actual 3D walk enter/exit functions
+    useEffect(function(){
+      var S = state3d.current; if(!S.renderer) return;
+      if (s.walkMode) {
+        if (window._ccWalkEnter) {
+          // Place camera at model ground level + eye height
+          var elevation = 0;
+          try {
+            var box = _elemsBBox();
+            if (!box.isEmpty()) elevation = box.min.y;
+          } catch(e){}
+          window._ccWalkEnter(elevation);
+        }
+      } else {
+        if (window._ccWalkExit) window._ccWalkExit();
+      }
+    }, [s.walkMode]);
+
     useEffect(function(){
       var S = state3d.current; if(!S.renderer||!S.mg) return;
       if(s.sectionAxis) window._ccCurrentSection = {axis:s.sectionAxis, pos:s.sectionPos, custom:null};
@@ -7548,7 +7580,7 @@ function startApp() {
         S._skyTex = t;
         S.scene.background = t;
       } catch(e) {
-        S.scene.background = new THREE.Color(light ? 0xf0f0f0 : 0x141414);
+        S.scene.background = new THREE.Color(light ? 0xf8f8f8 : 0x141414);
       }
       if(S.grid){
         S.scene.remove(S.grid);
@@ -14166,94 +14198,90 @@ function startApp() {
     var initialFlags = (typeof window._ccWalkGetFlags === 'function' ? window._ccWalkGetFlags() : {bob:false,collision:false});
     var fovSt = useState(initialFov), fov=fovSt[0], setFov=fovSt[1];
     var flagSt = useState(initialFlags), flags=flagSt[0], setFlags=flagSt[1];
-    var pulseSt = useState(0), pulse=pulseSt[0], setPulse=pulseSt[1];
-    var hideTimer = useRef(null);
+    var hintSt = useState(true), showHint=hintSt[0], setShowHint=hintSt[1]; // fades after 3s
+    var speedSt = useState(null), speedLabel=speedSt[0], setSpeedLabel=speedSt[1];
 
     useEffect(function(){
-      function onFov(e){
-        var v = e && e.detail && e.detail.fov;
-        if (typeof v === 'number') {
-          setFov(v);
-          setPulse(function(p){ return p+1; });
-          if (hideTimer.current) clearTimeout(hideTimer.current);
-          hideTimer.current = setTimeout(function(){ setPulse(function(p){ return p; }); }, 1100);
-        }
-      }
+      var t = setTimeout(function(){ setShowHint(false); }, 3000);
+      function onFov(e){ var v = e && e.detail && e.detail.fov; if (typeof v === 'number') setFov(v); }
       function onFlag(e){ if (e && e.detail) setFlags(Object.assign({}, e.detail)); }
+      function onSpeed(e){
+        if (!e || !e.detail) return;
+        var ratio = e.detail.speed / (5.0 * (e.detail.unit || 1));
+        var lbl = ratio < 0.4 ? 'Slow' : ratio < 1.4 ? 'Normal' : ratio < 3 ? 'Fast' : 'Very fast';
+        setSpeedLabel(lbl);
+        if (speedSt._hideTimer) clearTimeout(speedSt._hideTimer);
+        speedSt._hideTimer = setTimeout(function(){ setSpeedLabel(null); }, 1500);
+      }
       window.addEventListener('cc-walk-fov', onFov);
       window.addEventListener('cc-walk-flag', onFlag);
+      window.addEventListener('cc-walk-speed', onSpeed);
       return function(){
+        clearTimeout(t);
         window.removeEventListener('cc-walk-fov', onFov);
         window.removeEventListener('cc-walk-flag', onFlag);
-        if (hideTimer.current) clearTimeout(hideTimer.current);
+        window.removeEventListener('cc-walk-speed', onSpeed);
       };
     }, []);
 
     function applyFov(v){ if (window._ccWalkSetFov) window._ccWalkSetFov(v); }
+    function exit(){ if (window._ccWalkExit) window._ccWalkExit(); d({t:A.WALK_MODE, v:false}); }
 
-    var label = fov<=55 ? 'Telephoto' : fov<=85 ? 'Natural' : 'Wide-angle';
-    var presets = [
-      {fov:50, name:'Narrow', sub:'Telephoto'},
-      {fov:75, name:'Normal', sub:'Natural'},
-      {fov:95, name:'Wide',   sub:'Wide-angle'}
-    ];
-    var presetBtn = function(p){
-      var active = Math.abs(fov - p.fov) < 1.5;
-      return html`<button key=${p.fov} onClick=${function(){applyFov(p.fov);}}
-        title=${p.sub+' ('+p.fov+'°)'}
-        style=${{padding:'.25rem .55rem',background:active?'rgba(124,58,237,.85)':'rgba(255,255,255,.08)',color:'#fff',border:'1px solid '+(active?'rgba(167,139,250,.6)':'rgba(255,255,255,.12)'),borderRadius:5,fontSize:'0.68rem',fontWeight:600,cursor:'pointer',fontFamily:'inherit',lineHeight:1.1,display:'flex',flexDirection:'column',alignItems:'center',gap:1}}>
-        <span>${p.name}</span>
-        <span style=${{fontSize:'0.55rem',opacity:.7,fontWeight:500}}>${p.fov}°</span>
-      </button>`;
+    var SEP = html`<span style=${{width:1,height:14,background:'var(--border)',margin:'0 .2rem'}}></span>`;
+    var tog = function(label, active, onClick){
+      return html`<button onClick=${onClick} style=${{
+        padding:'.2rem .5rem', borderRadius:'var(--radius-xs)', cursor:'pointer', fontFamily:'inherit',
+        fontSize:'var(--text-xs)', fontWeight: active ? 600 : 400, lineHeight:1.2,
+        background: active ? 'var(--accent-bg)' : 'transparent',
+        color: active ? 'var(--accent)' : 'var(--text-muted)',
+        border: '1px solid ' + (active ? 'var(--accent)' : 'var(--border)')
+      }}>${label}</button>`;
     };
 
     return html`<${React.Fragment}>
-      <div key="fov-toast" style=${{position:'absolute',top:'18%',left:'50%',transform:'translateX(-50%)',
-          background:'rgba(15,23,42,.85)',color:'#fff',padding:'.4rem .9rem',borderRadius:8,
-          fontSize:'0.85rem',fontWeight:600,letterSpacing:'.02em',
-          border:'1px solid rgba(167,139,250,.35)',backdropFilter:'blur(8px)',
-          opacity:pulse>0?1:0, transition:'opacity .25s ease', pointerEvents:'none', zIndex:6}}>
-        FOV: ${Math.round(fov)}° · ${label}
-      </div>
-      <div style=${{position:'absolute',bottom:'var(--space-4)',left:'50%',transform:'translateX(-50%)',
-        pointerEvents:'auto',display:'flex',flexDirection:'column',alignItems:'center',gap:'.4rem',zIndex:5}}>
-        <div style=${{background:'rgba(15,23,42,.92)',borderRadius:10,padding:'.45rem .8rem',
-          color:'rgba(255,255,255,.85)',fontSize:'0.7rem',display:'flex',alignItems:'center',gap:'.55rem',
-          border:'1px solid rgba(148,163,184,.2)',flexWrap:'wrap',justifyContent:'center'}}>
-          <span><b>Hold LMB</b> walk + look</span>
-          <span style=${{opacity:.35}}>·</span>
-          <span><b>WASD</b> move</span>
-          <span style=${{opacity:.35}}>·</span>
-          <span><b>Q/E</b> up/down</span>
-          <span style=${{opacity:.35}}>·</span>
-          <span><b>Shift</b> sprint</span>
-          <span style=${{opacity:.35}}>·</span>
-          <span><b>Scroll</b> FOV</span>
-        </div>
-        <div style=${{background:'rgba(15,23,42,.92)',borderRadius:10,padding:'.4rem .55rem',
-          display:'flex',alignItems:'center',gap:'.4rem',border:'1px solid rgba(148,163,184,.2)',backdropFilter:'blur(8px)',flexWrap:'wrap',justifyContent:'center'}}>
-          <span style=${{fontSize:'0.62rem',color:'rgba(255,255,255,.55)',fontWeight:600,textTransform:'uppercase',letterSpacing:'.05em',marginLeft:'.2rem'}}>FOV</span>
-          ${presets.map(presetBtn)}
-          <input type="range" min="30" max="110" step="1" value=${Math.round(fov)}
-            onInput=${function(e){applyFov(parseFloat(e.target.value));}}
-            style=${{width:90,accentColor:'var(--accent)'}} />
-          <span style=${{fontSize:'0.66rem',color:'rgba(255,255,255,.65)',fontVariantNumeric:'tabular-nums',width:32,textAlign:'right'}}>${Math.round(fov)}°</span>
-          <span style=${{width:1,height:18,background:'rgba(255,255,255,.15)',margin:'0 .3rem'}}></span>
-          <button onClick=${function(){if(window._ccWalkSetCollision)window._ccWalkSetCollision(!flags.collision);}}
-            title="Toggle no-clip — when off you walk through walls"
-            style=${{padding:'.25rem .55rem',background:!flags.collision?'rgba(168,85,247,.85)':'rgba(255,255,255,.08)',color:'#fff',border:'1px solid '+(!flags.collision?'rgba(167,139,250,.6)':'rgba(255,255,255,.12)'),borderRadius:5,fontSize:'0.66rem',fontWeight:600,cursor:'pointer',fontFamily:'inherit',lineHeight:1.1}}>
-            ${!flags.collision ? 'No-clip' : 'Solid walls'}
-          </button>
-          <button onClick=${function(){if(window._ccWalkSetBob)window._ccWalkSetBob(!flags.bob);}}
-            title="Toggle head-bob — subtle vertical motion while walking"
-            style=${{padding:'.25rem .55rem',background:flags.bob?'rgba(168,85,247,.85)':'rgba(255,255,255,.08)',color:'#fff',border:'1px solid '+(flags.bob?'rgba(167,139,250,.6)':'rgba(255,255,255,.12)'),borderRadius:5,fontSize:'0.66rem',fontWeight:600,cursor:'pointer',fontFamily:'inherit',lineHeight:1.1}}>
-            Head-bob ${flags.bob?'on':'off'}
-          </button>
-          <button onClick=${function(){
-              if (window._ccWalkExit) window._ccWalkExit();
-              d({t:A.WALK_MODE, v:false});
-            }} style=${{...S_BTN,background:'rgba(239,68,68,.8)',color:'#fff',padding:'2px 10px',fontSize:'0.66rem',borderRadius:5,marginLeft:'.4rem'}}>ESC Exit</button>
-        </div>
+      ${speedLabel && html`<div style=${{position:'absolute',top:'12%',left:'50%',transform:'translateX(-50%)',
+          background:'var(--bg-primary)',color:'var(--text-primary)',padding:'.3rem .75rem',borderRadius:'var(--radius-sm)',
+          fontSize:'var(--text-sm)',fontWeight:500,border:'1px solid var(--border)',boxShadow:'var(--shadow-md)',
+          pointerEvents:'none',zIndex:6,whiteSpace:'nowrap'}}>
+        ${speedLabel} speed
+      </div>`}
+      ${showHint && html`<div style=${{position:'absolute',bottom:'5rem',left:'50%',transform:'translateX(-50%)',
+          background:'var(--bg-primary)',border:'1px solid var(--border)',borderRadius:'var(--radius-sm)',
+          padding:'.3rem .8rem',fontSize:'var(--text-xs)',color:'var(--text-secondary)',
+          boxShadow:'var(--shadow-md)',pointerEvents:'none',zIndex:5,whiteSpace:'nowrap',
+          display:'flex',alignItems:'center',gap:'.45rem'}}>
+        <span><b style=${{color:'var(--text-primary)'}}>WASD</b> move</span>
+        <span style=${{color:'var(--border)'}}>·</span>
+        <span><b style=${{color:'var(--text-primary)'}}>Mouse</b> look</span>
+        <span style=${{color:'var(--border)'}}>·</span>
+        <span><b style=${{color:'var(--text-primary)'}}>Shift</b> sprint</span>
+        <span style=${{color:'var(--border)'}}>·</span>
+        <span><b style=${{color:'var(--text-primary)'}}>Scroll</b> speed</span>
+        <span style=${{color:'var(--border)'}}>·</span>
+        <span><b style=${{color:'var(--text-primary)'}}>Esc</b> exit</span>
+      </div>`}
+      <div style=${{position:'absolute',bottom:'var(--space-3)',left:'50%',transform:'translateX(-50%)',
+        pointerEvents:'auto',zIndex:5,display:'flex',alignItems:'center',gap:'.3rem',
+        background:'var(--bg-primary)',border:'1px solid var(--border)',borderRadius:'var(--radius-sm)',
+        padding:'.3rem .6rem',boxShadow:'var(--shadow-md)',whiteSpace:'nowrap'}}>
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--text-muted)" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+          <circle cx="12" cy="4.5" r="1.5"/><path d="M9 11l3-2 3 2"/><path d="M10 21l2-7 2 4"/><path d="M14 18l3 3"/>
+        </svg>
+        <span style=${{fontSize:'var(--text-xs)',color:'var(--text-muted)',marginRight:'.15rem'}}>Walk</span>
+        ${SEP}
+        <span style=${{fontSize:'var(--text-xs)',color:'var(--text-secondary)'}}>FOV</span>
+        <input type="range" min="30" max="110" step="1" value=${Math.round(fov)}
+          onInput=${function(e){applyFov(parseFloat(e.target.value));}}
+          style=${{width:72,accentColor:'var(--accent)',margin:'0 .15rem'}} />
+        <span style=${{fontSize:'var(--text-xs)',color:'var(--text-secondary)',fontFamily:'var(--font-mono)',minWidth:28,textAlign:'right'}}>${Math.round(fov)}°</span>
+        ${SEP}
+        ${tog('No-clip', !flags.collision, function(){ if(window._ccWalkSetCollision) window._ccWalkSetCollision(!flags.collision); })}
+        ${tog('Head-bob', flags.bob, function(){ if(window._ccWalkSetBob) window._ccWalkSetBob(!flags.bob); })}
+        ${SEP}
+        <button onClick=${exit} style=${{padding:'.2rem .5rem',borderRadius:'var(--radius-xs)',cursor:'pointer',
+          fontFamily:'inherit',fontSize:'var(--text-xs)',fontWeight:500,
+          background:'var(--color-danger-bg)',color:'var(--color-danger-fg)',
+          border:'1px solid var(--color-danger-border)'}}>Esc · Exit</button>
       </div>
     </${React.Fragment}>`;
   }
@@ -20979,10 +21007,11 @@ function startApp() {
       var workspace = s.workspace || 'present';
       var WRAP = {flex:1,overflowY:'auto',padding:'.75rem .9rem',display:'flex',flexDirection:'column',gap:'.6rem'};
       var ROW  = {display:'flex',gap:'.4rem',alignItems:'baseline',padding:'.22rem 0',borderBottom:'1px solid var(--border-subtle)',fontSize:'.75rem'};
-      var LBL  = {color:'var(--text-muted)',minWidth:80,flexShrink:0};
+      var LBL  = {color:'var(--text-muted)',minWidth:88,flexShrink:0};
       var VAL  = {color:'var(--text-primary)',flex:1,wordBreak:'break-word'};
       var CARD = {background:'var(--bg-secondary)',borderRadius:'var(--radius-sm)',padding:'.5rem .75rem',border:'1px solid var(--border-subtle)'};
-      var HDR  = {fontSize:'.65rem',fontWeight:700,color:'var(--text-muted)',textTransform:'uppercase',letterSpacing:'.04em',marginBottom:'.25rem'};
+      var HDR  = {fontSize:'.65rem',fontWeight:700,color:'var(--text-muted)',textTransform:'uppercase',letterSpacing:'.04em',marginBottom:'.3rem'};
+      var MONO = {fontFamily:'var(--font-mono)',fontSize:'.68rem'};
 
       if (!el) {
         return html`<div style=${{flex:1,display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',
@@ -21005,129 +21034,208 @@ function startApp() {
         }
       }
       var ep = (_latestEl&&_latestEl.props)||(el&&el.props)||null;
-      var typeName = String(ep&&ep.ifcType||'Element').replace(/^Ifc/,'').replace(/StandardCase$/,'').replace(/([a-z])([A-Z])/g,'$1 $2');
-      var elName   = ep&&ep.name||'Unnamed element';
-      var storey   = ep&&(ep.storey||ep.psets&&ep.psets['Constraints']&&ep.psets['Constraints']['Base Constraint'])||null;
+      var typeName   = String(ep&&ep.ifcType||'Element').replace(/^Ifc/,'').replace(/StandardCase$/,'').replace(/([a-z])([A-Z])/g,'$1 $2');
+      var elName     = ep&&ep.name||'Unnamed element';
+      var storey     = ep&&(ep.storey||ep.psets&&ep.psets['Constraints']&&ep.psets['Constraints']['Base Constraint'])||null;
       var discipline = el.modelName||'';
+      var psetCount  = ep&&ep.psets ? Object.keys(ep.psets).length : 0;
+      var qtyCount   = ep&&ep.quantities ? Object.keys(ep.quantities).length : 0;
 
-      // Shared header block used by all levels
-      var headerCard = html`<div style=${{background:'var(--accent-bg)',borderRadius:'var(--radius-md)',padding:'.7rem .85rem',border:'1px solid var(--accent-bg-deep)'}}>
-        <div style=${{fontSize:'.68rem',color:'var(--accent)',marginBottom:'.2rem',textTransform:'uppercase',letterSpacing:'.04em',fontWeight:600}}>${typeName}</div>
-        <div style=${{fontSize:'1rem',fontWeight:700,color:'var(--text-primary)',lineHeight:1.3}}>${elName}</div>
-        ${discipline && html`<div style=${{fontSize:'.7rem',color:'var(--text-secondary)',marginTop:'.25rem'}}>${discipline}</div>`}
-      </div>`;
+      // Helper: format dimension values
+      function fmtDim(v){ return typeof v==='number'?(v>=1?v.toFixed(3)+' m':(v*1000).toFixed(1)+' mm'):String(v); }
+      function fmtArea(v){ return typeof v==='number'?(v>=1?v.toFixed(3)+' m²':(v*10000).toFixed(1)+' cm²'):String(v); }
+      function fmtVol(v){ return typeof v==='number'?(v>=0.01?v.toFixed(3)+' m³':(v*1e6).toFixed(1)+' cm³'):String(v); }
 
-      // ── PRESENT: identity only ────────────────────────────────────
-      if (workspace === 'present') {
-        return html`<div style=${WRAP}>
-          ${headerCard}
-          ${(storey||ep&&ep.material) && html`<div style=${CARD}>
-            ${storey   && html`<div style=${ROW}><span style=${LBL}>Floor</span><span style=${VAL}>${storey}</span></div>`}
-            ${ep&&ep.material && html`<div style=${ROW}><span style=${LBL}>Material</span><span style=${VAL}>${ep.material}</span></div>`}
-          </div>`}
-        </div>`;
-      }
+      // Collect all quantities for display
+      var allQty = ep&&ep.quantities||{};
+      var dimKeys  = ['Length','Width','Height','Thickness','Depth','Perimeter'];
+      var areaKeys = ['Area','GrossArea','NetArea','GrossFloorArea','NetFloorArea'];
+      var volKeys  = ['Volume','GrossVolume','NetVolume'];
+      var dims  = dimKeys.filter(function(k){return allQty[k]!=null;}).map(function(k){return {l:k,v:allQty[k],f:fmtDim};});
+      var areas = areaKeys.filter(function(k){return allQty[k]!=null;}).map(function(k){return {l:k.replace(/^(Gross|Net)/,'$1 '),v:allQty[k],f:fmtArea};});
+      var vols  = volKeys.filter(function(k){return allQty[k]!=null;}).map(function(k){return {l:k.replace(/^(Gross|Net)/,'$1 '),v:allQty[k],f:fmtVol};});
+      var otherQty = Object.keys(allQty).filter(function(k){return dimKeys.indexOf(k)===-1&&areaKeys.indexOf(k)===-1&&volKeys.indexOf(k)===-1;}).map(function(k){return {l:k,v:allQty[k],f:function(v){return String(v);}};});
+      var allDims = dims.concat(areas).concat(vols).concat(otherQty);
 
-      // ── COORDINATE: identity + dimensions + data quality ─────────
-      if (workspace === 'coordinate') {
-        var q2 = ep&&ep.quantities||{};
-        function fmtDim(v){ return typeof v==='number'?(v>=1?v.toFixed(3)+' m':(v*1000).toFixed(1)+' mm'):String(v); }
-        function fmtArea(v){ return typeof v==='number'?(v>=1?v.toFixed(2)+' m²':(v*10000).toFixed(1)+' cm²'):String(v); }
-        var dimKeys  = ['Length','Width','Height','Thickness','Depth','Perimeter'];
-        var areaKeys = ['Area','GrossArea','NetArea'];
-        var dims  = dimKeys.filter(function(k){return q2[k]!=null;}).map(function(k){return {l:k,v:q2[k]};});
-        var areas = areaKeys.filter(function(k){return q2[k]!=null;}).map(function(k){return {l:k.replace(/^(Gross|Net)/,'$1 '),v:q2[k]};});
-        // Data quality checks
-        var psetCount = ep&&ep.psets ? Object.keys(ep.psets).length : 0;
-        var qtyCount  = ep&&ep.quantities ? Object.keys(ep.quantities).length : 0;
-        var dqChecks  = [
-          {ok:!!(ep&&ep.globalId),          label:'GlobalId'},
-          {ok:!!(ep&&ep.name&&ep.name!=='Unnamed element'), label:'Name'},
-          {ok:psetCount>0,                  label:psetCount>0?psetCount+' pset'+(psetCount===1?'':'s'):'No psets'},
-          {ok:qtyCount>0,                   label:qtyCount>0?qtyCount+' quantities':'No quantities'},
-          {ok:!!(ep&&ep.material),          label:'Material'},
-        ];
-        // First pset only
-        var firstPset = null;
-        if (ep&&ep.psets) {
-          var psetNames = Object.keys(ep.psets);
-          if (psetNames.length) {
-            var ps = ep.psets[psetNames[0]];
-            var cleanName = psetNames[0].replace(/^Pset_/,'').replace(/^Qto_/,'').replace(/([a-z])([A-Z])/g,'$1 $2');
-            firstPset = {name:cleanName, props:Object.keys(ps).map(function(k){return {k:k.replace(/([a-z])([A-Z])/g,'$1 $2'),v:String(ps[k])};})};
-          }
-        }
-        return html`<div style=${WRAP}>
-          ${headerCard}
-          <div style=${CARD}>
-            ${storey       && html`<div style=${ROW}><span style=${LBL}>Floor</span><span style=${VAL}>${storey}</span></div>`}
-            ${ep&&ep.material && html`<div style=${ROW}><span style=${LBL}>Material</span><span style=${VAL}>${ep.material}</span></div>`}
-            ${ep&&ep.globalId && html`<div style=${ROW}><span style=${LBL}>GlobalId</span><span style=${{...VAL,fontFamily:'var(--font-mono)',fontSize:'.68rem',opacity:.7}}>${ep.globalId.slice(0,14)}…</span></div>`}
-          </div>
-          ${(dims.length||areas.length) && html`<div style=${CARD}>
-            <div style=${HDR}>Dimensions</div>
-            ${dims.map(function(d){return html`<div style=${ROW}><span style=${LBL}>${d.l}</span><span style=${{...VAL,fontFamily:'var(--font-mono)'}}>${fmtDim(d.v)}</span></div>`;})}
-            ${areas.map(function(a){return html`<div style=${ROW}><span style=${LBL}>${a.l}</span><span style=${{...VAL,fontFamily:'var(--font-mono)'}}>${fmtArea(a.v)}</span></div>`;})}
-          </div>`}
-          <div style=${CARD}>
-            <div style=${HDR}>Data Quality</div>
-            <div style=${{display:'flex',flexWrap:'wrap',gap:'.3rem',marginTop:'.15rem'}}>
-              ${dqChecks.map(function(c){return html`<span key=${c.label} style=${{
-                fontSize:'.68rem',padding:'.15rem .45rem',borderRadius:'var(--radius-pill)',
-                background:c.ok?'var(--color-success-bg)':'var(--color-danger-bg)',
-                color:c.ok?'var(--color-success-fg)':'var(--color-danger-fg)',
-                border:'1px solid '+(c.ok?'var(--color-success-border)':'var(--color-danger-border)'),
-                display:'flex',alignItems:'center',gap:'.25rem'
-              }}>
-                <svg width="8" height="8" viewBox="0 0 10 10"><circle cx="5" cy="5" r="4" fill="currentColor"/></svg>
-                ${c.label}
-              </span>`;
-              })}
-            </div>
-          </div>
-          ${firstPset && html`<div style=${CARD}>
-            <div style=${HDR}>${firstPset.name}</div>
-            ${firstPset.props.map(function(p){return html`<div style=${ROW}><span style=${LBL}>${p.k}</span><span style=${VAL}>${p.v}</span></div>`;})}
-          </div>`}
-        </div>`;
-      }
-
-      // ── REVIEW: full data — psets, clashes, issues, actions ──────
-      var linkedIssues  = (latestState.issues||[]).filter(function(i){return i.elementId===el.expressId||i.globalId===(ep&&ep.globalId);});
-      var linkedClashes = (latestState.clashes||[]).filter(function(c){return (c.a&&c.a.expressId===el.expressId)||(c.b&&c.b.expressId===el.expressId);});
+      // Collect all psets
       var allPsets = [];
       if (ep&&ep.psets) {
         Object.keys(ep.psets).forEach(function(setName){
           var ps=ep.psets[setName]; var keys=Object.keys(ps); if(!keys.length) return;
-          allPsets.push({name:setName.replace(/^Pset_/,'').replace(/^Qto_/,'').replace(/([a-z])([A-Z])/g,'$1 $2'),
-            props:keys.map(function(k){return {k:k.replace(/([a-z])([A-Z])/g,'$1 $2'),v:String(ps[k])};})});
+          var cleanName = setName.replace(/^Pset_/,'').replace(/^Qto_/,'').replace(/([a-z])([A-Z])/g,'$1 $2');
+          allPsets.push({name:cleanName, raw:setName, props:keys.map(function(k){return {k:k.replace(/([a-z])([A-Z])/g,'$1 $2'),v:String(ps[k])};})});
         });
       }
+
+      // Linked clashes and issues
+      var linkedClashes = (latestState.clashes||[]).filter(function(c){return (c.elemA===el.expressId)||(c.elemB===el.expressId)||(c.a&&c.a.expressId===el.expressId)||(c.b&&c.b.expressId===el.expressId);});
+      var linkedIssues  = (latestState.issues||[]).filter(function(i){return i.elementId===el.expressId||i.globalId===(ep&&ep.globalId);});
+
+      // Data quality checks (used in both Clash & DQ workspaces)
+      var nameGenerated = ep&&ep.name&&/^Basic |^\d+$|^[\w]+:\d+$/.test(ep.name);
+      var dqChecks = [
+        {ok:!!(ep&&ep.globalId),    label:'GlobalId',            detail: ep&&ep.globalId ? ep.globalId.slice(0,8)+'…' : 'missing'},
+        {ok:!!(ep&&ep.name) && !nameGenerated, label:'Name',     detail: nameGenerated ? 'auto-generated' : (ep&&ep.name||'missing')},
+        {ok:psetCount>0,            label:'Psets',               detail: psetCount>0 ? psetCount+' pset'+(psetCount===1?'':'s') : 'none'},
+        {ok:qtyCount>0,             label:'Quantities',          detail: qtyCount>0 ? qtyCount+' values' : 'none'},
+        {ok:!!(ep&&ep.material),    label:'Material',            detail: ep&&ep.material||'not assigned'},
+        {ok:!!(ep&&ep.storey),      label:'Floor/Storey',        detail: ep&&ep.storey||'unassigned'},
+        {ok:!!(ep&&ep.objectType),  label:'Object type',         detail: ep&&ep.objectType||'not set'},
+      ];
+      var dqScore = dqChecks.filter(function(c){return c.ok;}).length;
+      var dqTotal = dqChecks.length;
+      var dqColor = dqScore===dqTotal?'var(--color-success-fg)':dqScore>=dqTotal*0.7?'var(--color-warning-fg)':'var(--color-danger-fg)';
+
+      // Shared header block
+      var headerCard = html`<div style=${{background:'var(--accent-bg)',borderRadius:'var(--radius-md)',padding:'.7rem .85rem',border:'1px solid var(--accent-bg-deep)'}}>
+        <div style=${{fontSize:'.68rem',color:'var(--accent)',marginBottom:'.2rem',textTransform:'uppercase',letterSpacing:'.04em',fontWeight:600}}>${typeName}</div>
+        <div style=${{fontSize:'.95rem',fontWeight:700,color:'var(--text-primary)',lineHeight:1.3}}>${elName}</div>
+        <div style=${{display:'flex',gap:'.6rem',marginTop:'.3rem',flexWrap:'wrap'}}>
+          ${discipline && html`<span style=${{fontSize:'.68rem',color:'var(--text-secondary)'}}>${discipline}</span>`}
+          ${storey && html`<span style=${{fontSize:'.68rem',color:'var(--text-muted)'}}>· ${storey}</span>`}
+          ${ep&&ep.material && html`<span style=${{fontSize:'.68rem',color:'var(--text-muted)'}}>· ${ep.material}</span>`}
+        </div>
+      </div>`;
+
+      // ── PRESENT: clean identity ──────────────────────────────────
+      if (workspace === 'present') {
+        return html`<div style=${WRAP}>
+          ${headerCard}
+          <div style=${CARD}>
+            ${storey      && html`<div style=${ROW}><span style=${LBL}>Floor</span><span style=${VAL}>${storey}</span></div>`}
+            ${ep&&ep.material     && html`<div style=${ROW}><span style=${LBL}>Material</span><span style=${VAL}>${ep.material}</span></div>`}
+            ${ep&&ep.objectType   && html`<div style=${ROW}><span style=${LBL}>Object type</span><span style=${VAL}>${ep.objectType}</span></div>`}
+            ${ep&&ep.description  && html`<div style=${ROW}><span style=${LBL}>Description</span><span style=${VAL}>${ep.description}</span></div>`}
+          </div>
+          ${allDims.length>0 && html`<div style=${CARD}>
+            <div style=${HDR}>Dimensions</div>
+            ${allDims.slice(0,5).map(function(d){return html`<div style=${ROW}><span style=${LBL}>${d.l}</span><span style=${{...VAL,...MONO}}>${d.f(d.v)}</span></div>`;})}
+          </div>`}
+        </div>`;
+      }
+
+      // ── DATA QUALITY: comprehensive data check ───────────────────
+      if (workspace === 'review') {
+        return html`<div style=${WRAP}>
+          ${headerCard}
+          <!-- DQ Score -->
+          <div style=${{...CARD,display:'flex',alignItems:'center',gap:'.6rem'}}>
+            <div style=${{textAlign:'center',minWidth:48}}>
+              <div style=${{fontSize:'1.4rem',fontWeight:800,color:dqColor,lineHeight:1}}>${dqScore}</div>
+              <div style=${{fontSize:'.6rem',color:'var(--text-muted)',marginTop:2}}>/ ${dqTotal}</div>
+            </div>
+            <div style=${{flex:1}}>
+              <div style=${{fontSize:'.72rem',fontWeight:600,color:'var(--text-primary)',marginBottom:'.3rem'}}>Data Quality Score</div>
+              <div style=${{display:'flex',gap:2}}>
+                ${dqChecks.map(function(c){return html`<div key=${c.label} title=${c.label+': '+c.detail} style=${{flex:1,height:4,borderRadius:2,background:c.ok?'var(--color-success-fg)':'var(--color-danger-fg)'}}></div>`;})}
+              </div>
+            </div>
+          </div>
+          <!-- DQ checks detail -->
+          <div style=${CARD}>
+            <div style=${HDR}>Checks</div>
+            ${dqChecks.map(function(c){return html`<div key=${c.label} style=${{...ROW,alignItems:'center'}}>
+              <span style=${{...LBL,display:'flex',alignItems:'center',gap:'.3rem'}}>
+                <svg width="10" height="10" viewBox="0 0 12 12">
+                  ${c.ok
+                    ? html`<path d="M2 6l3 3 5-5" stroke="var(--color-success-fg)" stroke-width="1.8" fill="none" stroke-linecap="round" stroke-linejoin="round"/>`
+                    : html`<circle cx="6" cy="6" r="5" stroke="var(--color-danger-fg)" stroke-width="1.5" fill="none"/><path d="M6 4v3" stroke="var(--color-danger-fg)" stroke-width="1.5" stroke-linecap="round"/><circle cx="6" cy="9" r=".6" fill="var(--color-danger-fg)"/>`
+                  }
+                </svg>
+                ${c.label}
+              </span>
+              <span style=${{...VAL,color:c.ok?'var(--text-secondary)':'var(--color-danger-fg)',fontSize:'.7rem'}}>${c.detail}</span>
+            </div>`;})}
+          </div>
+          <!-- Identity -->
+          <div style=${CARD}>
+            <div style=${HDR}>Identity</div>
+            ${ep&&ep.globalId    && html`<div style=${ROW}><span style=${LBL}>GlobalId</span><span style=${{...VAL,...MONO}}>${ep.globalId}</span></div>`}
+            ${ep&&ep.expressId   && html`<div style=${ROW}><span style=${LBL}>Express ID</span><span style=${{...VAL,...MONO}}>#${ep.expressId}</span></div>`}
+            ${ep&&ep.objectType  && html`<div style=${ROW}><span style=${LBL}>Object type</span><span style=${VAL}>${ep.objectType}</span></div>`}
+            ${ep&&ep.description && html`<div style=${ROW}><span style=${LBL}>Description</span><span style=${VAL}>${ep.description}</span></div>`}
+            ${storey             && html`<div style=${ROW}><span style=${LBL}>Floor</span><span style=${VAL}>${storey}</span></div>`}
+            ${ep&&ep.material    && html`<div style=${ROW}><span style=${LBL}>Material</span><span style=${VAL}>${ep.material}</span></div>`}
+          </div>
+          <!-- Quantities -->
+          ${allDims.length>0 && html`<div style=${CARD}>
+            <div style=${HDR}>Quantities (${allDims.length})</div>
+            ${allDims.map(function(d){return html`<div style=${ROW}><span style=${LBL}>${d.l}</span><span style=${{...VAL,...MONO}}>${d.f(d.v)}</span></div>`;})}
+          </div>`}
+          <!-- All psets -->
+          ${allPsets.length>0 && html`<div style=${CARD}>
+            <div style=${HDR}>Property Sets (${psetCount})</div>
+            ${allPsets.map(function(sec){return html`<div key=${sec.raw} style=${{marginBottom:'.5rem'}}>
+              <div style=${{fontSize:'.65rem',fontWeight:700,color:'var(--accent)',marginBottom:'.15rem',textTransform:'uppercase',letterSpacing:'.03em'}}>${sec.name}</div>
+              ${sec.props.map(function(p){return html`<div style=${ROW}><span style=${LBL}>${p.k}</span><span style=${VAL}>${p.v}</span></div>`;})}
+            </div>`;})}
+          </div>`}
+          ${psetCount===0&&qtyCount===0 && html`<div style=${{textAlign:'center',padding:'1rem',color:'var(--text-muted)',fontSize:'.75rem'}}>
+            No property sets or quantities found in this IFC element.
+          </div>`}
+        </div>`;
+      }
+
+      // ── CLASH & ISSUES: clash context + quick DQ + dimensions ────
       return html`<div style=${WRAP}>
         ${headerCard}
+        <!-- Linked clashes — most important in this workspace -->
         <div style=${CARD}>
-          ${storey       && html`<div style=${ROW}><span style=${LBL}>Floor</span><span style=${VAL}>${storey}</span></div>`}
-          ${ep&&ep.material && html`<div style=${ROW}><span style=${LBL}>Material</span><span style=${VAL}>${ep.material}</span></div>`}
-          ${ep&&ep.globalId && html`<div style=${ROW}><span style=${LBL}>GlobalId</span><span style=${{...VAL,fontFamily:'var(--font-mono)',fontSize:'.68rem',opacity:.7}}>${ep.globalId.slice(0,14)}…</span></div>`}
+          <div style=${{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:'.3rem'}}>
+            <div style=${HDR}>Clashes</div>
+            ${linkedClashes.length>0 && html`<span style=${{fontSize:'.65rem',padding:'.1rem .4rem',borderRadius:'var(--radius-pill)',
+              background:'var(--color-danger-bg)',color:'var(--color-danger-fg)',border:'1px solid var(--color-danger-border)',fontWeight:600}}>
+              ${linkedClashes.length}
+            </span>`}
+          </div>
+          ${linkedClashes.length===0
+            ? html`<div style=${{fontSize:'.72rem',color:'var(--text-muted)',padding:'.2rem 0'}}>No active clashes on this element.</div>`
+            : linkedClashes.slice(0,8).map(function(c){return html`<div key=${c.id} style=${{...ROW,alignItems:'center',cursor:'pointer'}}
+                onClick=${function(){if(window._ccDispatch)window._ccDispatch({t:A.SELECT_CLASH,id:c.id});}}>
+                <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="var(--color-danger)" stroke-width="2.5"><path d="M12 9v4m0 4h.01M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/></svg>
+                <span style=${{flex:1,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',color:'var(--text-secondary)'}}>${c.title||'Clash '+c.id}</span>
+                <span style=${{fontSize:'.65rem',color:'var(--text-faint)'}}>${c.status||'open'}</span>
+              </div>`;})
+          }
         </div>
-        ${allPsets.length>0 && html`<div style=${CARD}>
-          <div style=${HDR}>Properties</div>
-          ${allPsets.map(function(sec){return html`<div key=${sec.name} style=${{marginBottom:'.4rem'}}>
-            <div style=${{fontSize:'.65rem',fontWeight:600,color:'var(--text-secondary)',marginBottom:'.15rem'}}>${sec.name}</div>
-            ${sec.props.map(function(p){return html`<div style=${ROW}><span style=${LBL}>${p.k}</span><span style=${VAL}>${p.v}</span></div>`;})}
+        <!-- Linked issues -->
+        ${linkedIssues.length>0 && html`<div style=${CARD}>
+          <div style=${{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:'.3rem'}}>
+            <div style=${HDR}>Issues</div>
+            <span style=${{fontSize:'.65rem',padding:'.1rem .4rem',borderRadius:'var(--radius-pill)',
+              background:'var(--color-warning-bg)',color:'var(--color-warning-fg)',border:'1px solid var(--color-warning-border)',fontWeight:600}}>
+              ${linkedIssues.length}
+            </span>
+          </div>
+          ${linkedIssues.slice(0,5).map(function(i){return html`<div key=${i.id} style=${{...ROW,alignItems:'center'}}>
+            <svg width="8" height="8" viewBox="0 0 10 10"><circle cx="5" cy="5" r="4" fill="${i.status==='resolved'?'var(--color-success-fg)':'var(--color-warning-fg)'}"/></svg>
+            <span style=${{flex:1,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',color:'var(--text-secondary)'}}>${i.title||'Issue'}</span>
+            <span style=${{fontSize:'.65rem',color:'var(--text-faint)'}}>${i.status||'open'}</span>
           </div>`;})}
         </div>`}
-        ${(linkedClashes.length>0||linkedIssues.length>0) && html`<div style=${CARD}>
-          <div style=${HDR}>Clashes &amp; Issues</div>
-          ${linkedClashes.map(function(c){return html`<div key=${c.id} style=${{fontSize:'.75rem',padding:'.2rem 0',display:'flex',gap:'.4rem',alignItems:'center',borderBottom:'1px solid var(--border-subtle)'}}>
-            <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="var(--color-danger)" stroke-width="2.5"><path d="M12 9v4m0 4h.01M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/></svg>
-            <span style=${{color:'var(--text-secondary)',flex:1,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>${c.title||'Clash'}</span>
-          </div>`;})}
-          ${linkedIssues.map(function(i){return html`<div key=${i.id} style=${{fontSize:'.75rem',padding:'.2rem 0',display:'flex',gap:'.4rem',alignItems:'center',borderBottom:'1px solid var(--border-subtle)'}}>
-            <svg width="10" height="10" viewBox="0 0 24 24" fill="${i.status==='open'?'var(--color-warning)':'var(--color-success)'}" stroke="none"><circle cx="12" cy="12" r="10"/></svg>
-            <span style=${{color:'var(--text-secondary)',flex:1,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>${i.title||'Issue'}</span>
-          </div>`;})}
+        <!-- Quick identity -->
+        <div style=${CARD}>
+          <div style=${HDR}>Identity</div>
+          ${storey             && html`<div style=${ROW}><span style=${LBL}>Floor</span><span style=${VAL}>${storey}</span></div>`}
+          ${ep&&ep.material    && html`<div style=${ROW}><span style=${LBL}>Material</span><span style=${VAL}>${ep.material}</span></div>`}
+          ${ep&&ep.objectType  && html`<div style=${ROW}><span style=${LBL}>Object type</span><span style=${VAL}>${ep.objectType}</span></div>`}
+          ${ep&&ep.description && html`<div style=${ROW}><span style=${LBL}>Description</span><span style=${VAL}>${ep.description}</span></div>`}
+          ${ep&&ep.globalId    && html`<div style=${ROW}><span style=${LBL}>GlobalId</span><span style=${{...VAL,...MONO,opacity:.65}}>${ep.globalId.slice(0,16)}…</span></div>`}
+        </div>
+        <!-- Dimensions if available -->
+        ${allDims.length>0 && html`<div style=${CARD}>
+          <div style=${HDR}>Dimensions</div>
+          ${allDims.map(function(d){return html`<div style=${ROW}><span style=${LBL}>${d.l}</span><span style=${{...VAL,...MONO}}>${d.f(d.v)}</span></div>`;})}
         </div>`}
+        <!-- Switch to Data Quality for full checks -->
+        <div style=${{textAlign:'center',padding:'.4rem 0'}}>
+          <button onClick=${function(){d({t:A.SET_WORKSPACE,v:'review'});}}
+            style=${{background:'none',border:'none',cursor:'pointer',fontFamily:'inherit',
+              fontSize:'.72rem',color:'var(--text-muted)',textDecoration:'underline',textDecorationColor:'var(--border)'}}>
+            Switch to Data Quality for element checks →
+          </button>
+        </div>
+        <!-- Actions -->
         <div style=${{display:'flex',gap:'.4rem',flexWrap:'wrap'}}>
           <button onClick=${function(){d({t:A.MODAL,v:true,el:el});d({t:A.TAB,v:'issues'});}}
             style=${{flex:1,padding:'.4rem .6rem',borderRadius:'var(--radius-sm)',background:'var(--accent)',color:'#fff',border:'none',fontSize:'.74rem',fontWeight:600,cursor:'pointer',fontFamily:'inherit'}}>+ New issue</button>
@@ -21464,27 +21572,43 @@ function startApp() {
     var w = s.workspace || 'present';
     var tabs = [
       {id:'present',    label:'Present'},
-      {id:'coordinate', label:'Coordinate'},
-      {id:'review',     label:'Review'}
+      {id:'review',     label:'Data Quality'},
+      {id:'coordinate', label:'Clash & Issues'}
     ];
+    var hasModel = s.models && s.models.length > 0;
     function pick(id){ if(id!==w) d({t:A.SET_WORKSPACE,v:id}); }
-    return html`<div role="tablist" aria-label="Workspace"
-      style=${{display:'flex',alignItems:'stretch',height:'100%',gap:0}}>
-      ${tabs.map(function(t){
-        var on = w===t.id;
-        return html`<button key=${t.id} role="tab" aria-selected=${on}
-          onClick=${function(){pick(t.id);}}
-          style=${{
-            padding:'0 .9rem',height:'100%',background:'none',border:'none',cursor:'pointer',
-            fontFamily:'var(--font-body)',fontSize:'var(--text-sm)',
-            fontWeight:on?600:500,letterSpacing:'-.005em',
-            color:on?'var(--ink-primary)':'var(--ink-muted)',
-            position:'relative',transition:'color var(--duration-fast) var(--ease-standard)'
-          }}>
-          ${t.label}
-          ${on && html`<span style=${{position:'absolute',left:'.6rem',right:'.6rem',bottom:0,height:2,background:'var(--ink-accent)'}}></span>`}
-        </button>`;
-      })}
+    return html`<div style=${{display:'flex',alignItems:'stretch',height:'100%',gap:0}}>
+      <div role="tablist" aria-label="Workspace" style=${{display:'flex',alignItems:'stretch',height:'100%',gap:0}}>
+        ${tabs.map(function(t){
+          var on = w===t.id;
+          return html`<button key=${t.id} role="tab" aria-selected=${on}
+            onClick=${function(){pick(t.id);}}
+            style=${{
+              padding:'0 .9rem',height:'100%',background:'none',border:'none',cursor:'pointer',
+              fontFamily:'var(--font-body)',fontSize:'var(--text-sm)',
+              fontWeight:on?600:500,letterSpacing:'-.005em',
+              color:on?'var(--ink-primary)':'var(--ink-muted)',
+              position:'relative',transition:'color var(--duration-fast) var(--ease-standard)'
+            }}>
+            ${t.label}
+            ${on && html`<span style=${{position:'absolute',left:'.6rem',right:'.6rem',bottom:0,height:2,background:'var(--ink-accent)'}}></span>`}
+          </button>`;
+        })}
+      </div>
+      ${hasModel && html`<div style=${{display:'flex',alignItems:'center',marginLeft:'var(--space-3)',paddingLeft:'var(--space-3)',borderLeft:'1px solid var(--hairline-strong)',height:'60%',alignSelf:'center'}}>
+        <button class="cc-btn-press" title="Add another model (O)" aria-label="Add another model"
+          onClick=${function(){ if(window._ccOpenIFC) window._ccOpenIFC(); }}
+          style=${{display:'inline-flex',alignItems:'center',gap:'.3rem',
+            background:'none',border:'1px solid var(--hairline-strong)',
+            borderRadius:'var(--radius-sm)',cursor:'pointer',padding:'.2rem .55rem',
+            fontFamily:'var(--font-body)',fontSize:'var(--text-xs)',
+            color:'var(--ink-muted)',lineHeight:1.2,whiteSpace:'nowrap'}}
+          onMouseEnter=${function(e){e.currentTarget.style.color='var(--ink-primary)';e.currentTarget.style.borderColor='var(--hairline-strong)';e.currentTarget.style.background='var(--surface-warm)';}}
+          onMouseLeave=${function(e){e.currentTarget.style.color='var(--ink-muted)';e.currentTarget.style.background='none';}}>
+          <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
+          <span>Add model</span>
+        </button>
+      </div>`}
     </div>`;
   }
 
@@ -21645,26 +21769,13 @@ function startApp() {
       <div style=${{flexShrink:0,height:'100%',marginLeft:'var(--space-4)'}}>
         <${WorkspaceTabs} s=${s} d=${d} />
       </div>
-      <!-- Centre: typographic model name + Add-model affordance -->
-      <div style=${{flex:1,display:'flex',justifyContent:'center',alignItems:'center',minWidth:0,padding:'0 var(--space-3)',gap:'.6rem'}}>
+      <!-- Centre: model name only -->
+      <div style=${{flex:1,display:'flex',justifyContent:'center',alignItems:'center',minWidth:0,padding:'0 var(--space-3)'}}>
         ${modelName && html`<span style=${{
           fontFamily:'var(--font-display)',fontWeight:500,fontSize:'var(--text-base)',
           letterSpacing:'-.01em',color:'var(--ink-secondary)',
           whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis',maxWidth:480
         }} title=${modelName}>${modelName}</span>`}
-        ${modelName && html`<button class="cc-btn-press" title="Add another model (O)"
-          aria-label="Add another model"
-          onClick=${function(){ if(window._ccOpenIFC) window._ccOpenIFC(); }}
-          style=${{display:'inline-flex',alignItems:'center',gap:'.3rem',
-            background:'none',border:'1px solid var(--hairline-strong)',
-            borderRadius:'var(--radius-sm)',cursor:'pointer',padding:'.22rem .55rem',
-            fontFamily:'var(--font-body)',fontSize:'var(--text-xs)',
-            color:'var(--ink-muted)',lineHeight:1.2}}
-          onMouseEnter=${function(e){e.currentTarget.style.color='var(--ink-primary)';e.currentTarget.style.background='var(--surface-warm)';}}
-          onMouseLeave=${function(e){e.currentTarget.style.color='var(--ink-muted)';e.currentTarget.style.background='none';}}>
-          <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
-          <span>Add model</span>
-        </button>`}
       </div>
       <!-- Right: Share + avatar -->
       <div style=${{display:'flex',alignItems:'center',gap:'var(--space-2)',flexShrink:0,height:'100%'}}>
@@ -21787,56 +21898,49 @@ function startApp() {
     /* Section sub-row only appears when a slice plane exists, anchored under
        the toolbar (not floating). Same ink palette, no glass. */
     var subRow = null;
+    // ── Toolbar popovers — float below their trigger button, never a sticky bar ──
+    var POP_BASE = {position:'absolute',top:'calc(100% + 6px)',zIndex:40,
+      background:'var(--bg-primary)',border:'1px solid var(--border)',
+      borderRadius:'var(--radius-sm)',boxShadow:'var(--shadow-md)',
+      display:'flex',alignItems:'center',gap:'.4rem',padding:'.35rem .65rem',
+      fontSize:'var(--text-xs)',whiteSpace:'nowrap'};
+    var SEP_V = html`<span style=${{width:1,height:14,background:'var(--border)',margin:'0 .1rem'}}></span>`;
+
     if (pickOn) {
-      subRow = html`<div style=${{display:'flex',alignItems:'center',gap:'.6rem',padding:'.32rem .9rem',
-        background:'var(--accent-bg)',borderTop:'1px solid var(--accent)',
-        fontSize:'var(--text-xs)',color:'var(--accent)'}}>
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12h6"/><circle cx="12" cy="12" r="3"/><path d="M15 12h6"/></svg>
-        <span style=${{fontWeight:500}}>Click any surface to make a section through it.</span>
-        <span style=${{flex:1}}></span>
+      // Popover: centered below the section cluster
+      subRow = html`<div style=${{...POP_BASE,left:'50%',transform:'translateX(-50%)',color:'var(--accent)'}}>
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12h6"/><circle cx="12" cy="12" r="3"/><path d="M15 12h6"/></svg>
+        <span style=${{fontWeight:500,color:'var(--text-primary)'}}>Click a surface to set the section plane</span>
+        ${SEP_V}
         <button onClick=${function(){ window._ccSectionPickPending=false; setPickOn(false); }}
-          style=${{background:'none',border:'1px solid var(--accent)',color:'var(--accent)',
-            padding:'.18rem .55rem',borderRadius:'var(--radius-xs)',cursor:'pointer',
-            fontFamily:'var(--font-body)',fontSize:'var(--text-2xs)'}}>Cancel · Esc</button>
+          style=${{background:'none',border:'none',color:'var(--text-muted)',cursor:'pointer',
+            fontFamily:'var(--font-body)',fontSize:'var(--text-xs)',padding:'0 .15rem'}}>Esc · Cancel</button>
       </div>`;
     } else if (activeMode === 'slice' && (s.sectionAxis || s.sectionCustom)) {
-      subRow = html`<div style=${{display:'flex',alignItems:'center',gap:'.5rem',padding:'.25rem .9rem',
-        background:'var(--surface)',borderTop:'1px solid var(--hairline)',
-        fontSize:'var(--text-xs)',color:'var(--ink-muted)'}}>
-        <span style=${{fontFamily:'var(--font-mono)',fontSize:'var(--text-2xs)',letterSpacing:'.04em',textTransform:'uppercase'}}>Cut</span>
+      // Section cut slider — popover below section button cluster
+      subRow = html`<div style=${{...POP_BASE,left:'50%',transform:'translateX(-50%)',color:'var(--text-secondary)'}}>
+        <span style=${{fontFamily:'var(--font-mono)',fontSize:'var(--text-2xs)',color:'var(--text-muted)',letterSpacing:'.04em',textTransform:'uppercase'}}>Cut</span>
         <input type="range" min="0" max="1" step="0.005" value=${s.sectionPos||0.5}
           onInput=${function(e){ var pos=parseFloat(e.target.value); if(s.sectionAxis)d({t:A.SECTION,axis:s.sectionAxis,pos:pos}); else if(s.sectionCustom)d({t:A.SECTION_CUSTOM,v:s.sectionCustom,pos:pos}); }}
-          style=${{flex:1,maxWidth:380,accentColor:'var(--ink-accent)'}} />
-        <span style=${{fontFamily:'var(--font-mono)',fontSize:'var(--text-2xs)',color:'var(--ink-secondary)',minWidth:34,textAlign:'right'}}>${Math.round((s.sectionPos||0.5)*100)}%</span>
+          style=${{width:180,accentColor:'var(--accent)'}} />
+        <span style=${{fontFamily:'var(--font-mono)',fontSize:'var(--text-2xs)',color:'var(--text-secondary)',minWidth:30,textAlign:'right'}}>${Math.round((s.sectionPos||0.5)*100)}%</span>
       </div>`;
     } else if (activeMode === 'plan' && s.floors && s.floors.length>0) {
-      subRow = html`<div style=${{display:'flex',alignItems:'center',gap:'.4rem',padding:'.25rem .9rem',overflowX:'auto',
-        background:'var(--surface)',borderTop:'1px solid var(--hairline)'}}>
-        <span style=${{fontFamily:'var(--font-mono)',fontSize:'var(--text-2xs)',color:'var(--ink-muted)',letterSpacing:'.04em',textTransform:'uppercase',marginRight:'.3rem'}}>Floor</span>
+      // Floor picker — popover below the Plan button
+      subRow = html`<div style=${{...POP_BASE,left:'50%',transform:'translateX(-50%)',flexWrap:'wrap',maxWidth:420}}>
+        <span style=${{fontFamily:'var(--font-mono)',fontSize:'var(--text-2xs)',color:'var(--text-muted)',letterSpacing:'.04em',textTransform:'uppercase',marginRight:'.1rem'}}>Floor</span>
         ${s.floors.slice(0,12).map(function(fl){
           var on = s.floorPlan && s.floorPlan.storeyId===fl.id;
           return html`<button key=${fl.id} onClick=${function(){d({t:A.FLOOR_PLAN,v:{storeyId:fl.id,storeyName:fl.name||'Floor',elevation:fl.elevation||0,cutHeight:1.2}});}}
-            style=${{padding:'.15rem .55rem',borderRadius:'var(--radius-xs)',border:'1px solid '+(on?'var(--ink-accent)':'var(--hairline-strong)'),
-              background:on?'var(--ink-accent-soft)':'var(--surface)',
-              color:on?'var(--ink-primary)':'var(--ink-secondary)',
-              fontSize:'var(--text-xs)',fontWeight:on?500:400,cursor:'pointer',fontFamily:'var(--font-body)',whiteSpace:'nowrap'}}>${fl.name||'Floor'}</button>`;
-        })}
-      </div>`;
-    } else if (activeMode === 'walk') {
-      var curFov = typeof window._ccWalkGetFov==='function' ? window._ccWalkGetFov() : 75;
-      var fovPresets = [{v:50,l:'Narrow'},{v:75,l:'Natural'},{v:95,l:'Wide'}];
-      subRow = html`<div style=${{display:'flex',alignItems:'center',gap:'.4rem',padding:'.25rem .9rem',
-        background:'var(--surface)',borderTop:'1px solid var(--hairline)'}}>
-        <span style=${{fontFamily:'var(--font-mono)',fontSize:'var(--text-2xs)',color:'var(--ink-muted)',letterSpacing:'.04em',textTransform:'uppercase',marginRight:'.3rem'}}>FOV</span>
-        ${fovPresets.map(function(fp){
-          var on = Math.abs(curFov-fp.v)<1.5;
-          return html`<button key=${fp.v} onClick=${function(){if(window._ccWalkSetFov)window._ccWalkSetFov(fp.v);}}
-            style=${{padding:'.15rem .55rem',borderRadius:'var(--radius-xs)',border:'1px solid '+(on?'var(--ink-accent)':'var(--hairline-strong)'),
-              background:on?'var(--ink-accent-soft)':'var(--surface)',color:on?'var(--ink-primary)':'var(--ink-secondary)',
-              fontSize:'var(--text-xs)',fontWeight:on?500:400,cursor:'pointer',fontFamily:'var(--font-body)'}}>${fp.l}</button>`;
+            style=${{padding:'.18rem .5rem',borderRadius:'var(--radius-xs)',
+              border:'1px solid '+(on?'var(--accent)':'var(--border)'),
+              background:on?'var(--accent-bg)':'transparent',
+              color:on?'var(--accent)':'var(--text-secondary)',
+              fontSize:'var(--text-xs)',fontWeight:on?600:400,cursor:'pointer',fontFamily:'var(--font-body)',whiteSpace:'nowrap'}}>${fl.name||'Floor'}</button>`;
         })}
       </div>`;
     }
+    // Walk mode: HUD is rendered inside the Viewer, not in the toolbar subRow
 
     return html`<div class="cc-top-toolbar" style=${{flexShrink:0,background:'var(--surface)',borderBottom:'1px solid var(--hairline)',position:'relative',zIndex:9}}>
       <div role="toolbar" aria-label="Viewer tools" style=${{
@@ -22642,13 +22746,18 @@ function startApp() {
         if(ctrl && e.key==='o'){ e.preventDefault(); if(window._ccOpenIFC)window._ccOpenIFC(); return; }
         if(ctrl && e.key===','){ e.preventDefault(); d({t:A.SETTINGS,v:!s.showSettings}); return; }
         if(e.key==='Escape'){
+          // Esc always cancels the most recently activated mode, priority order:
           if(s.presenting){ d({t:A.PRESENT,v:false}); return; }
+          if(window._ccSectionPickPending){ window._ccSectionPickPending=false; window.dispatchEvent(new CustomEvent('cc-section-pick-end')); return; }
+          if(s.walkMode){ if(window._ccWalkExit)window._ccWalkExit(); d({t:A.WALK_MODE,v:false}); return; }
+          if(s.measureMode){ d({t:A.MEASURE_MODE,v:false}); return; }
           if(s.commentMode){ d({t:A.COMMENT_MODE,v:false}); return; }
+          if(s.floorPlan){ d({t:A.FLOOR_PLAN,v:null}); return; }
           if(s.showShare){ d({t:A.SHARE,v:false}); return; }
           if(s.showSettings){ d({t:A.SETTINGS,v:false}); return; }
           if(s.showModal){ d({t:A.MODAL,v:false}); return; }
           if(s.showRevitBridge){ d({t:A.REVIT_BRIDGE,v:false}); return; }
-          if(s.sectionBox){ d({t:A.SECTION_BOX,v:null}); return; }
+          if(s.sectionBox&&s.sectionBox.enabled){ d({t:A.SECTION_BOX,v:null}); return; }
           if(s.sectionAxis||s.sectionCustom){ d({t:A.SECTION,axis:null}); return; }
         }
         if (!inInput && (e.key==='p' || e.key==='P') && !ctrl && !e.shiftKey && !e.altKey) {
