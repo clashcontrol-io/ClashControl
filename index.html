@@ -7002,7 +7002,20 @@ function startApp() {
           }
         }
         if(S.map[model.id]) {
-          S.map[model.id].visible = model.visible!==false;
+          var _prevVis = S.map[model.id].visible;
+          var _newVis = model.visible!==false;
+          S.map[model.id].visible = _newVis;
+          // When visibility changes, mark the shadow map dirty so previously-
+          // baked shadows from now-hidden meshes don't persist on the ground.
+          if (_prevVis !== _newVis && S.renderer && S.renderer.shadowMap) {
+            S.renderer.shadowMap.needsUpdate = true;
+            // Hide the ground plane (and its shadow) when no models are visible.
+            if (S._groundPlane) {
+              var anyVis = false;
+              s.models.forEach(function(_mm){ if(_mm.visible !== false) anyVis = true; });
+              S._groundPlane.visible = anyVis && (s.renderStyle === 'rendered');
+            }
+          }
           var hs = model.hiddenStoreys||{};
           var hsKey = Object.keys(hs).filter(function(k){return hs[k]}).sort().join(',');
           if(!S._elMapCache) S._elMapCache = {};
@@ -7786,7 +7799,8 @@ function startApp() {
       // Build / position / show a proper solid ground plane (rendered only)
       function _ccUpdateGround() {
         if (!S.scene) return;
-        if (style !== 'rendered') {
+        var _anyVis = (s.models||[]).some(function(m){ return m.visible !== false; });
+        if (style !== 'rendered' || !_anyVis) {
           if (S._groundPlane) S._groundPlane.visible = false;
           return;
         }
