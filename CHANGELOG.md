@@ -1,5 +1,8 @@
 # Changelog
 
+## v5.1.12 (2026-05-01)
+- Fix toolbar tooltip (remove native title attr) and redesign Present details as property table
+
 ## v5.1.11 (2026-05-01)
 - Models toolbar button toggles right panel (Models tab), not left panel
 
