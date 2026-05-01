@@ -7717,24 +7717,23 @@ function startApp() {
         }
         if (!S._groundPlane) {
           var groundGeo = new THREE.PlaneGeometry(2000, 2000);
-          var groundMat = new THREE.MeshStandardMaterial({
-            color: light ? 0xeeeeee : 0x1a1a1a, roughness: 0.95, metalness: 0,
-            depthWrite: true
-          });
+          var groundMat = new THREE.ShadowMaterial({ opacity: 0.13, depthWrite: false });
           var ground = new THREE.Mesh(groundGeo, groundMat);
           ground.rotation.x = -Math.PI / 2;
           ground.receiveShadow = true;
           ground.userData._isGround = true;
           S._groundPlane = ground;
           S.scene.add(ground);
-        } else {
-          S._groundPlane.material.color.set(light ? 0xeeeeee : 0x1a1a1a);
         }
-        // Place the ground plane at the model's IFC origin (Y=0). That's the
-        // reference "0-point" the building was modelled against — typically
-        // ground level. Foundations/piles below 0 sit underneath the plane,
-        // which is the correct architectural reading.
-        S._groundPlane.position.y = -0.005;
+        // Place the plane at the actual minimum Y of all loaded model meshes so
+        // it sits just under the lowest geometry rather than at a fixed IFC origin.
+        var minY = 0;
+        if (S.mg) {
+          var _bb = new THREE.Box3();
+          S.mg.traverse(function(o){ if(o.isMesh && !o.userData._isGround && o.visible) _bb.expandByObject(o); });
+          if (!_bb.isEmpty()) minY = _bb.min.y;
+        }
+        S._groundPlane.position.y = minY - 0.002;
         S._groundPlane.visible = true;
       }
       _ccUpdateGround();
@@ -20669,141 +20668,127 @@ function startApp() {
     },[]);
     var addons = window._ccGetAddons ? window._ccGetAddons() : {};
     var ids = Object.keys(addons);
-    var SEC={fontSize:'0.72rem',fontWeight:700,color:'var(--accent-subtle)',textTransform:'uppercase',letterSpacing:'.06em',padding:'.6rem .85rem .3rem'};
-    var CARD={background:'var(--card-bg)',border:'1px solid var(--card-border)',borderRadius:10,padding:'.65rem .75rem',display:'flex',gap:'.6rem',alignItems:'flex-start'};
-    return html`<div style=${{display:'flex',flexDirection:'column',gap:0,overflowY:'auto',overflowX:'hidden',flex:1}}>
-      <div style=${SEC}>Installed Addons</div>
-      <div style=${{padding:'0 .85rem .5rem',display:'flex',flexDirection:'column',gap:'.4rem'}}>
-        ${ids.length === 0 && html`<div style=${{fontSize:'0.78rem',color:'var(--text-muted)',padding:'.5rem 0',lineHeight:1.7}}>
-          No addons loaded. Addons extend ClashControl with optional features like PWA support, local clash engine, shared projects, and Revit integration.<br/><br/>
-          Place addon files in the <code style=${{fontSize:'0.73rem',background:'var(--tag-bg)',padding:'1px 4px',borderRadius:3}}>addons/</code> folder and reload.
-        </div>`}
-        ${ids.map(function(id) {
-          var addon = addons[id];
-          var active = window._ccIsAddonActive(id);
-          return html`<div key=${id} style=${CARD}>
-            <div style=${{width:32,height:32,borderRadius:8,display:'flex',alignItems:'center',justifyContent:'center',flexShrink:0,
-              background:active?'rgba(124,58,237,.15)':'rgba(100,100,100,.1)'}}>
-              ${addon.icon ? html`<span dangerouslySetInnerHTML=${{__html:addon.icon}}></span>`
-                : html`<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke=${active?'#60a5fa':'var(--text-faint)'} stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                  <path d="M12 2v4m0 12v4M2 12h4m12 0h4"/><circle cx="12" cy="12" r="3"/>
-                </svg>`}
-            </div>
-            <div style=${{flex:1,minWidth:0}}>
-              <div style=${{display:'flex',alignItems:'center',gap:'.4rem',marginBottom:'.15rem'}}>
-                <span style=${{fontSize:'0.83rem',fontWeight:600,color:'var(--text-primary)'}}>${addon.name}</span>
-                ${html`<span style=${{fontSize:'0.58rem',fontWeight:600,padding:'1px 5px',borderRadius:4,
-                    background:active?'rgba(34,197,94,.12)':'var(--tag-bg)',
-                    color:active?'var(--pill-green)':'var(--text-faint)'}}>${active?'ACTIVE':'OFF'}</span>`}
-              </div>
-              <div style=${{fontSize:'0.72rem',color:'var(--text-secondary)',lineHeight:1.6,marginBottom:'.3rem'}}>${addon.description||''}</div>
-              ${id==='pwa' && active && window.matchMedia && window.matchMedia('(display-mode: standalone)').matches
-                ? html`<div style=${{fontSize:'0.69rem',color:'var(--text-faint)'}}>Always on in installed app</div>`
-                : html`<div style=${{display:'flex',gap:'.3rem',alignItems:'center'}}>
-                  <button onClick=${function(){
-                    if (active) {
-                      window._ccDeactivateAddon(id);
-                    } else {
-                      window._ccActivateAddon(id);
-                      var _def = window._ccGetAddons && window._ccGetAddons()[id];
-                      if (_def && _def.onEnable) try { _def.onEnable(d); } catch(_e) { console.warn('[Addon] onEnable error:', id, _e); }
-                    }
-                  }} style=${{padding:'.25rem .6rem',borderRadius:6,fontSize:'0.75rem',fontWeight:600,cursor:'pointer',border:'1px solid var(--border)',
-                    background:active?'var(--bg-secondary)':'var(--accent)',
-                    color:active?'var(--text-secondary)':'#fff',
-                    fontFamily:'inherit'}}>${active?'Disable':'Enable'}</button>
-                  ${active && id==='revit-bridge' && html`<button onClick=${function(){d({t:'REVIT_BRIDGE',v:true});}}
-                    style=${{padding:'.25rem .6rem',borderRadius:6,fontSize:'0.75rem',fontWeight:600,cursor:'pointer',border:'1px solid var(--border)',
-                      background:'var(--bg-tertiary)',color:'var(--text-muted)',fontFamily:'inherit'}}>Settings</button>`}
-                </div>`}
-              ${active && id==='revit-bridge' && html`<div style=${{borderTop:'1px solid var(--border-subtle)',marginTop:'.5rem',paddingTop:'.5rem',display:'flex',flexDirection:'column',gap:'.4rem'}}>
-                ${s.revitDirect && s.revitDirect.connected ? html`<div style=${{display:'flex',flexDirection:'column',gap:'.4rem'}}>
-                  <div style=${{display:'flex',alignItems:'center',gap:'.4rem'}}>
-                    <span style=${{width:7,height:7,borderRadius:'50%',background:'#22c55e',flexShrink:0}}></span>
-                    <span style=${{fontSize:'0.75rem',color:'#4ade80',flex:1}}>Connected${s.revitDirect.documentName ? ' \u2014 ' + s.revitDirect.documentName : ''}</span>
-                  </div>
-                  ${s.revitDirect.loading ? html`<div style=${{display:'flex',gap:'.3rem',alignItems:'center'}}>
-                    <span style=${{fontSize:'0.69rem',color:'var(--text-muted)',flex:1}}>
-                      ${s.revitDirect.progress > 0 ? Math.round(s.revitDirect.progress*100) + '%' : s.revitDirect.elementCount > 0 ? s.revitDirect.elementCount + ' elements' : 'Updating model...'}
-                    </span>
-                    <button onClick=${function(){if(window._revitDirectCancelExport) window._revitDirectCancelExport(); d({t:'UPD_REVIT_DIRECT', u:{loading:false, progress:0}});}}
-                      style=${{padding:'.25rem .6rem',borderRadius:5,fontSize:'0.69rem',fontWeight:600,cursor:'pointer',border:'none',background:'#7f1d1d',color:'#fca5a5',fontFamily:'inherit'}}>Cancel</button>
-                  </div>` : function(){
-                    var linkedRevitModels = (s.models||[]).filter(function(m){
-                      return m.stats && m.stats.source === 'revit-direct';
-                    });
-                    var selected = window._ccRevitUpdateTarget || 'all';
-                    if (linkedRevitModels.length > 1 && selected !== 'all' &&
-                        !linkedRevitModels.some(function(m){return m.name===selected;})) {
-                      selected = 'all';
-                    }
-                    return html`<div style=${{display:'flex',flexDirection:'column',gap:'.3rem'}}>
-                      ${linkedRevitModels.length > 1 && html`<select
-                        value=${selected}
-                        onChange=${function(e){window._ccRevitUpdateTarget = e.target.value;
-                          d({t:'UPD_REVIT_DIRECT', u:{}});
-                        }}
-                        style=${{padding:'.2rem .35rem',borderRadius:5,fontSize:'0.69rem',
-                          background:'var(--bg-primary)',color:'var(--text-primary)',
-                          border:'1px solid var(--border)',fontFamily:'inherit'}}>
-                        <option value="all">All linked models (${linkedRevitModels.length})</option>
-                        ${linkedRevitModels.map(function(m){return html`<option key=${m.id} value=${m.name}>${m.name}</option>`})}
-                      </select>`}
-                      <div style=${{display:'flex',gap:'.3rem',flexWrap:'wrap'}}>
-                        <button onClick=${function(){
-                            if(!window._revitDirectExport) return;
-                            var target = window._ccRevitUpdateTarget || 'all';
-                            if (target === 'all') window._revitDirectExport(['all']);
-                            else window._revitDirectExport(['all'], {name: target});
-                          }}
-                          title=${linkedRevitModels.length > 1 ? 'Re-pull the selected Revit model from the connector' : linkedRevitModels.length === 1 ? 'Re-pull the linked Revit model' : 'Pull the current Revit document for the first time'}
-                          style=${{padding:'.25rem .5rem',borderRadius:5,fontSize:'0.69rem',fontWeight:600,cursor:'pointer',border:'none',flex:'1 1 auto',minWidth:0,
-                            background:'var(--accent-bg)',color:'var(--accent-subtle)',fontFamily:'inherit'}}>${linkedRevitModels.length === 0 ? 'Pull Model' : 'Update Model'}</button>
-                        <button onClick=${function(){if(window._revitDirectPushClashes) window._revitDirectPushClashes(s,d)}}
-                          style=${{padding:'.25rem .5rem',borderRadius:5,fontSize:'0.69rem',fontWeight:600,cursor:'pointer',border:'none',flex:'1 1 auto',minWidth:0,background:'#052e16',color:'#4ade80',fontFamily:'inherit'}}>Push Clashes</button>
-                        <button onClick=${function(){if(window._revitDirectDisconnect) window._revitDirectDisconnect(d)}}
-                          style=${{padding:'.25rem .5rem',borderRadius:5,fontSize:'0.69rem',fontWeight:600,cursor:'pointer',border:'none',flex:'0 0 auto',background:'#7f1d1d',color:'#fca5a5',fontFamily:'inherit'}}>Disconnect</button>
-                      </div>
-                    </div>`;
-                  }()}
-                  ${s.revitDirect.loading && html`<div style=${{width:'100%',height:3,background:'var(--bg-primary)',borderRadius:2,overflow:'hidden'}}>
-                    <div style=${{width:Math.round((s.revitDirect.progress||0)*100)+'%',height:'100%',background:'var(--accent)',borderRadius:2,transition:'width .3s'}}></div>
-                  </div>`}
-                </div>`
-                : html`<div style=${{display:'flex',flexDirection:'column',gap:'.4rem'}}>
-                  <div style=${{display:'flex',alignItems:'center',gap:'.4rem'}}>
-                    <span style=${{width:7,height:7,borderRadius:'50%',background:s.revitDirect&&s.revitDirect.reconnecting?'#eab308':'#ef4444',flexShrink:0}}></span>
-                    <span style=${{fontSize:'0.75rem',color:'var(--text-muted)',flex:1}}>
-                      ${s.revitDirect&&s.revitDirect.reconnecting ? 'Reconnecting...' : 'Not connected'}
-                    </span>
-                  </div>
-                  <div style=${{display:'flex',gap:'.3rem'}}>
-                    <select value=${window._ccRevitTargetProject||s.activeProject||'default'}
-                      onChange=${function(e){window._ccRevitTargetProject=e.target.value;}}
-                      style=${{flex:1,padding:'.25rem .4rem',background:'var(--bg-primary)',color:'var(--text-primary)',border:'1px solid var(--border)',borderRadius:5,fontSize:'0.72rem',fontFamily:'inherit'}}>
-                      ${(s.projectList||[]).map(function(p){return html`<option key=${p.id} value=${p.id}>${p.name}</option>`})}
-                    </select>
-                    <button onClick=${function(){
-                        var port = window._loadDirectPort ? window._loadDirectPort() : 19780;
-                        window._ccPullOnConnect = true;
-                        if(window._revitDirectConnect) window._revitDirectConnect(port, d);
-                      }}
-                      style=${{padding:'.25rem .6rem',borderRadius:5,fontSize:'0.72rem',fontWeight:600,cursor:'pointer',border:'none',background:'var(--accent)',color:'#fff',fontFamily:'inherit'}}>Connect</button>
-                  </div>
-                </div>`}
-              </div>`}
-              ${active && addon.panel && html`<div style=${{borderTop:'1px solid var(--border-subtle)',marginTop:'.4rem',paddingTop:'.2rem'}}>
-                ${addon.panel(html, s, d)}
-              </div>`}
-            </div>
-          </div>`;
-        })}
+
+    function addonBtn(label, onClick, variant) {
+      var styles = {
+        primary: {background:'var(--accent)',color:'#fff',border:'none'},
+        outline: {background:'none',color:'var(--text-secondary)',border:'1px solid var(--border)'},
+        ghost:   {background:'none',color:'var(--text-muted)',border:'none'},
+        danger:  {background:'var(--color-danger-bg)',color:'var(--color-danger-fg)',border:'1px solid var(--color-danger-border)'},
+        success: {background:'var(--color-success-bg)',color:'var(--color-success-fg)',border:'1px solid var(--color-success-border)'}
+      };
+      var vs = styles[variant||'outline'];
+      return html`<button onClick=${onClick}
+        style=${{padding:'.22rem .55rem',borderRadius:5,fontSize:'0.72rem',fontWeight:500,cursor:'pointer',
+          fontFamily:'inherit',lineHeight:1.4,transition:'opacity .12s',...vs}}
+        onMouseEnter=${function(e){e.currentTarget.style.opacity='.8';}}
+        onMouseLeave=${function(e){e.currentTarget.style.opacity='1';}}>${label}</button>`;
+    }
+
+    return html`<div style=${{display:'flex',flexDirection:'column',overflowY:'auto',overflowX:'hidden',flex:1}}>
+      <div style=${{padding:'1rem 1rem .5rem',borderBottom:'1px solid var(--border-subtle)'}}>
+        <div style=${{fontSize:'var(--text-xs)',color:'var(--text-faint)',lineHeight:1.6}}>
+          Optional modules that extend ClashControl. Each runs independently and can be toggled at any time.
+        </div>
       </div>
-      ${ids.length > 0 && html`<div style=${{padding:'.5rem .85rem',borderTop:'1px solid var(--border-subtle)'}}>
-        <div style=${{fontSize:'0.69rem',color:'var(--text-faint)',lineHeight:1.6}}>
-          Addons extend ClashControl with optional features. Each addon runs independently and can be enabled/disabled at any time. Settings are preserved across sessions.
+      ${ids.length === 0 && html`<div style=${{padding:'1.5rem 1rem',display:'flex',flexDirection:'column',gap:'.5rem',alignItems:'center',textAlign:'center'}}>
+        <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="var(--text-faint)" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2v4m0 12v4M2 12h4m12 0h4"/><circle cx="12" cy="12" r="3"/></svg>
+        <div style=${{fontSize:'var(--text-sm)',color:'var(--text-muted)',lineHeight:1.6}}>No modules loaded</div>
+        <div style=${{fontSize:'var(--text-xs)',color:'var(--text-faint)',lineHeight:1.6}}>
+          Place addon files in the <code style=${{background:'var(--bg-secondary)',padding:'1px 4px',borderRadius:3}}>addons/</code> folder and reload.
         </div>
       </div>`}
+      ${ids.map(function(id) {
+        var addon = addons[id];
+        var active = window._ccIsAddonActive(id);
+        var revit = id === 'revit-bridge';
+        var connected = revit && s.revitDirect && s.revitDirect.connected;
+        var reconnecting = revit && s.revitDirect && s.revitDirect.reconnecting;
+        return html`<div key=${id} style=${{
+          borderBottom:'1px solid var(--border-subtle)',
+          padding:'.75rem 1rem'
+        }}>
+          <!-- Addon header row -->
+          <div style=${{display:'flex',alignItems:'center',gap:'.5rem',marginBottom: active && revit ? '.6rem' : 0}}>
+            <div style=${{flex:1,minWidth:0}}>
+              <div style=${{display:'flex',alignItems:'center',gap:'.5rem',marginBottom:'.1rem'}}>
+                <span style=${{fontSize:'var(--text-sm)',fontWeight:600,color:'var(--text-primary)'}}>${addon.name}</span>
+                <span style=${{width:5,height:5,borderRadius:'50%',flexShrink:0,
+                  background:active?'var(--color-success)':'var(--text-faint)'}}></span>
+              </div>
+              <div style=${{fontSize:'var(--text-xs)',color:'var(--text-muted)',lineHeight:1.5}}>${addon.description||''}</div>
+            </div>
+            ${id==='pwa' && active && window.matchMedia && window.matchMedia('(display-mode: standalone)').matches
+              ? html`<span style=${{fontSize:'var(--text-2xs)',color:'var(--text-faint)'}}>Always on</span>`
+              : addonBtn(active?'Disable':'Enable', function(){
+                  if (active) { window._ccDeactivateAddon(id); }
+                  else {
+                    window._ccActivateAddon(id);
+                    var _def = window._ccGetAddons && window._ccGetAddons()[id];
+                    if (_def && _def.onEnable) try { _def.onEnable(d); } catch(_e) { console.warn('[Addon] onEnable error:', id, _e); }
+                  }
+                }, active ? 'outline' : 'primary')}
+          </div>
+
+          <!-- Revit Bridge expanded state -->
+          ${active && revit && html`<div style=${{background:'var(--bg-secondary)',borderRadius:6,border:'1px solid var(--border-subtle)',padding:'.6rem .7rem',display:'flex',flexDirection:'column',gap:'.5rem'}}>
+            <!-- Connection status -->
+            <div style=${{display:'flex',alignItems:'center',gap:'.5rem'}}>
+              <span style=${{width:6,height:6,borderRadius:'50%',flexShrink:0,
+                background:connected?'var(--color-success)':reconnecting?'var(--color-warning)':'var(--color-danger)'}}></span>
+              <span style=${{fontSize:'var(--text-xs)',color:'var(--text-secondary)',flex:1}}>
+                ${connected ? ('Connected' + (s.revitDirect.documentName ? ' \u2014 ' + s.revitDirect.documentName : '')) : reconnecting ? 'Reconnecting\u2026' : 'Not connected'}
+              </span>
+            </div>
+
+            ${connected ? function(){
+              var linkedRevitModels = (s.models||[]).filter(function(m){ return m.stats && m.stats.source === 'revit-direct'; });
+              var selected = window._ccRevitUpdateTarget || 'all';
+              if (linkedRevitModels.length > 1 && selected !== 'all' && !linkedRevitModels.some(function(m){return m.name===selected;})) selected = 'all';
+              return html`<div style=${{display:'flex',flexDirection:'column',gap:'.4rem'}}>
+                ${s.revitDirect.loading && html`<div style=${{display:'flex',alignItems:'center',gap:'.5rem'}}>
+                  <div style=${{flex:1,height:2,background:'var(--border)',borderRadius:1,overflow:'hidden'}}>
+                    <div style=${{width:Math.round((s.revitDirect.progress||0)*100)+'%',height:'100%',background:'var(--accent)',borderRadius:1,transition:'width .3s'}}></div>
+                  </div>
+                  <span style=${{fontSize:'var(--text-2xs)',color:'var(--text-muted)',fontFamily:'var(--font-mono)',flexShrink:0}}>
+                    ${s.revitDirect.progress > 0 ? Math.round(s.revitDirect.progress*100)+'%' : s.revitDirect.elementCount > 0 ? s.revitDirect.elementCount+' el' : '\u2026'}
+                  </span>
+                  ${addonBtn('Cancel', function(){if(window._revitDirectCancelExport) window._revitDirectCancelExport(); d({t:'UPD_REVIT_DIRECT',u:{loading:false,progress:0}});}, 'danger')}
+                </div>`}
+                ${linkedRevitModels.length > 1 && html`<select value=${selected}
+                  onChange=${function(e){window._ccRevitUpdateTarget=e.target.value; d({t:'UPD_REVIT_DIRECT',u:{}});}}
+                  style=${{padding:'.2rem .35rem',borderRadius:4,fontSize:'var(--text-xs)',background:'var(--bg-primary)',color:'var(--text-primary)',border:'1px solid var(--border)',fontFamily:'inherit'}}>
+                  <option value="all">All linked models (${linkedRevitModels.length})</option>
+                  ${linkedRevitModels.map(function(m){return html`<option key=${m.id} value=${m.name}>${m.name}</option>`})}
+                </select>`}
+                <div style=${{display:'flex',gap:'.35rem',flexWrap:'wrap'}}>
+                  ${addonBtn(linkedRevitModels.length===0?'Pull Model':'Update Model', function(){
+                    if(!window._revitDirectExport) return;
+                    var target = window._ccRevitUpdateTarget||'all';
+                    if(target==='all') window._revitDirectExport(['all']); else window._revitDirectExport(['all'],{name:target});
+                  }, 'outline')}
+                  ${addonBtn('Push Clashes', function(){if(window._revitDirectPushClashes) window._revitDirectPushClashes(s,d);}, 'success')}
+                  ${addonBtn('Disconnect', function(){if(window._revitDirectDisconnect) window._revitDirectDisconnect(d);}, 'danger')}
+                </div>
+              </div>`;
+            }() : html`<div style=${{display:'flex',gap:'.35rem',alignItems:'center'}}>
+              <select value=${window._ccRevitTargetProject||s.activeProject||'default'}
+                onChange=${function(e){window._ccRevitTargetProject=e.target.value;}}
+                style=${{flex:1,padding:'.22rem .35rem',background:'var(--bg-primary)',color:'var(--text-primary)',border:'1px solid var(--border)',borderRadius:4,fontSize:'var(--text-xs)',fontFamily:'inherit'}}>
+                ${(s.projectList||[]).map(function(p){return html`<option key=${p.id} value=${p.id}>${p.name}</option>`})}
+              </select>
+              ${addonBtn('Connect', function(){
+                var port = window._loadDirectPort ? window._loadDirectPort() : 19780;
+                window._ccPullOnConnect = true;
+                if(window._revitDirectConnect) window._revitDirectConnect(port, d);
+              }, 'primary')}
+            </div>`}
+          </div>`}
+          ${active && addon.panel && html`<div style=${{marginTop:'.5rem',paddingTop:'.5rem',borderTop:'1px solid var(--border-subtle)'}}>
+            ${addon.panel(html, s, d)}
+          </div>`}
+        </div>`;
+      })}
     </div>`;
   }
 
@@ -20886,10 +20871,11 @@ function startApp() {
     var dragRef=useRef(null);
     var onResizeDown = _makeResizeHandler(dragRef, function(w){ setPanelW(w); try{localStorage.setItem('cc_ai_panel_w',String(w));}catch(e){} }, 250, 600, true);
 
-    // Poll window._ccSelectedEl to drive the Details tab. Behaviour:
-    //   • new element selected → store it, set tab to Details (but do NOT
-    //     auto-uncollapse the panel — user may have closed it manually)
-    //   • element deselected → reset tab to AI; keep collapse state as-is
+    // Poll window._ccSelectedEl to drive the Details tab.
+    //   • element selected → switch to Details tab + uncollapse panel
+    //   • element deselected → reset tab to AI; keep collapse state
+    var wsRef = useRef(s.workspace);
+    wsRef.current = s.workspace;
     useEffect(function(){
       var prev = null;
       var t = setInterval(function(){
@@ -20899,6 +20885,11 @@ function startApp() {
           setDrawerEl(cur);
           if (cur) {
             setDrawerTab('details');
+            // Auto-open panel when element clicked in Clash or Review workspace
+            if (wsRef.current !== 'present') {
+              setCollapsed(false);
+              try{localStorage.setItem('cc_ai_panel_collapsed','0');}catch(e){}
+            }
           } else {
             setDrawerTab('ai');
           }
