@@ -21057,75 +21057,64 @@ function startApp() {
         var dV = findDim(['NetVolume','Volume','GrossVolume']);
 
         var typeWord = (typeName||'element').toLowerCase();
-        var article  = /^[aeiou]/i.test(typeWord) ? 'An' : 'A';
-        var hasNiceName = !!(ep&&ep.name) && !nameGenerated && elName !== 'Unnamed element';
 
-        var PROSE = {fontSize:'.84rem',lineHeight:1.7,color:'var(--text-secondary)',margin:'0 0 .55rem 0',fontFamily:'var(--font-body)'};
-        var STRONG = {color:'var(--text-primary)',fontWeight:600};
+        // Build property rows for table
+        var propRows = [];
+        function addRow(label, value){ if(value) propRows.push({label:label, value:value}); }
 
-        // Sentence 1 — identity + location
-        var locTail = null;
-        if (storey && discipline) locTail = html` It sits on <span style=${STRONG}>${storey}</span> within the <span style=${STRONG}>${discipline}</span> model.`;
-        else if (storey)          locTail = html` It sits on <span style=${STRONG}>${storey}</span>.`;
-        else if (discipline)      locTail = html` It belongs to the <span style=${STRONG}>${discipline}</span> model.`;
-        var sentenceIdentity = html`<p style=${PROSE}>
-          ${article} <span style=${STRONG}>${typeWord}</span>${hasNiceName ? html` named <span style=${STRONG}>“${elName}”</span>` : ''}.${locTail}
-        </p>`;
+        addRow('Type', typeName || typeWord);
+        addRow('Level', storey);
+        addRow('Model', discipline);
+        addRow('Material', ep && ep.material);
+        addRow('Classification', ep && ep.objectType);
 
-        // Sentence 2 — material / classification
-        var sentenceMake = null;
-        if (ep && (ep.material || ep.objectType)) {
-          var bits = [];
-          if (ep.material)   bits.push(html`made of <span style=${STRONG}>${ep.material}</span>`);
-          if (ep.objectType) bits.push(html`classified as <span style=${STRONG}>${ep.objectType}</span>`);
-          var joined = bits.length===2 ? html`${bits[0]} and ${bits[1]}` : bits[0];
-          sentenceMake = html`<p style=${PROSE}>It is ${joined}.</p>`;
-        }
-
-        // Sentence 3 — dimensions
-        var sentenceDim = null;
+        // Dimensions row
         if (dL || dW || dH) {
-          var dimParts = [];
-          if (dL) dimParts.push(html`<span style=${STRONG}>${dL.f(dL.v)}</span> long`);
-          if (dW) dimParts.push(html`<span style=${STRONG}>${dW.f(dW.v)}</span> ${dW.l==='Thickness'?'thick':'wide'}`);
-          if (dH) dimParts.push(html`<span style=${STRONG}>${dH.f(dH.v)}</span> ${dH.l==='Depth'?'deep':'tall'}`);
-          var dimText;
-          if (dimParts.length===1) dimText = dimParts[0];
-          else if (dimParts.length===2) dimText = html`${dimParts[0]} and ${dimParts[1]}`;
-          else dimText = html`${dimParts[0]}, ${dimParts[1]} and ${dimParts[2]}`;
-          sentenceDim = html`<p style=${PROSE}>It measures ${dimText}.</p>`;
+          var dimStr = [
+            dL ? dL.f(dL.v) + ' L' : null,
+            dW ? dW.f(dW.v) + (dW.l==='Thickness'?' T':' W') : null,
+            dH ? dH.f(dH.v) + (dH.l==='Depth'?' D':' H') : null
+          ].filter(Boolean).join('  ·  ');
+          addRow('Dimensions', dimStr);
         }
+        if (dA) addRow('Area', dA.f(dA.v));
+        if (dV) addRow('Volume', dV.f(dV.v));
 
-        // Sentence 4 — area / volume
-        var sentenceAV = null;
-        if (dA || dV) {
-          var avBits = [];
-          if (dA) avBits.push(html`a surface area of <span style=${STRONG}>${dA.f(dA.v)}</span>`);
-          if (dV) avBits.push(html`a volume of <span style=${STRONG}>${dV.f(dV.v)}</span>`);
-          var avJoined = avBits.length===2 ? html`${avBits[0]} and ${avBits[1]}` : avBits[0];
-          sentenceAV = html`<p style=${PROSE}>It has ${avJoined}.</p>`;
-        }
+        var LABEL_STYLE = {
+          fontSize:'.72rem', fontWeight:600, color:'var(--text-muted)',
+          textTransform:'uppercase', letterSpacing:'.04em',
+          width:90, flexShrink:0, paddingTop:2
+        };
+        var VALUE_STYLE = {
+          fontSize:'.82rem', color:'var(--text-primary)', fontWeight:500,
+          lineHeight:1.4, wordBreak:'break-word'
+        };
+        var ROW_STYLE = {
+          display:'flex', gap:'0.75rem', padding:'.35rem 0',
+          borderBottom:'1px solid var(--border-subtle)', alignItems:'flex-start'
+        };
 
-        // Sentence 5 — clash / issue context (subtle)
-        var sentenceCtx = null;
+        // Clash/issue context badge row
+        var ctxBadges = null;
         if (linkedClashes.length || linkedIssues.length) {
-          var ctxBits = [];
-          if (linkedClashes.length) ctxBits.push(html`<span style=${STRONG}>${linkedClashes.length}</span> open conflict${linkedClashes.length===1?'':'s'}`);
-          if (linkedIssues.length)  ctxBits.push(html`<span style=${STRONG}>${linkedIssues.length}</span> linked issue${linkedIssues.length===1?'':'s'}`);
-          sentenceCtx = html`<p style=${{...PROSE,color:'var(--text-muted)',fontSize:'.78rem'}}>This element has ${ctxBits.length===2 ? html`${ctxBits[0]} and ${ctxBits[1]}` : ctxBits[0]} on it.</p>`;
+          ctxBadges = html`<div style=${{display:'flex',gap:'.4rem',marginTop:'.6rem',flexWrap:'wrap'}}>
+            ${linkedClashes.length ? html`<span style=${{fontSize:'.72rem',background:'var(--color-danger-bg)',color:'var(--color-danger-fg)',border:'1px solid var(--color-danger-border)',borderRadius:4,padding:'2px 8px',fontWeight:600}}>${linkedClashes.length} conflict${linkedClashes.length===1?'':'s'}</span>` : null}
+            ${linkedIssues.length  ? html`<span style=${{fontSize:'.72rem',background:'var(--accent-bg)',color:'var(--accent)',border:'1px solid var(--border)',borderRadius:4,padding:'2px 8px',fontWeight:600}}>${linkedIssues.length} issue${linkedIssues.length===1?'':'s'}</span>` : null}
+          </div>`;
         }
 
-        // Description quote (separate, italic, hairline-bordered)
-        var descQuote = (ep && ep.description) ? html`<p style=${{...PROSE,fontStyle:'italic',borderLeft:'2px solid var(--accent-subtle)',paddingLeft:'.7rem',color:'var(--text-muted)',marginTop:'.2rem'}}>${ep.description}</p>` : null;
+        var descQuote = (ep && ep.description) ? html`<p style=${{fontSize:'.78rem',fontStyle:'italic',borderLeft:'2px solid var(--accent-subtle)',paddingLeft:'.7rem',color:'var(--text-muted)',margin:'.6rem 0 0',lineHeight:1.6}}>${ep.description}</p>` : null;
 
         return html`<div style=${WRAP}>
           ${headerCard}
-          <div style=${{padding:'.4rem .15rem .2rem'}}>
-            ${sentenceIdentity}
-            ${sentenceMake}
-            ${sentenceDim}
-            ${sentenceAV}
-            ${sentenceCtx}
+          <div style=${{padding:'.5rem .1rem .2rem'}}>
+            ${propRows.map(function(row){
+              return html`<div style=${ROW_STYLE}>
+                <span style=${LABEL_STYLE}>${row.label}</span>
+                <span style=${VALUE_STYLE}>${row.value}</span>
+              </div>`;
+            })}
+            ${ctxBadges}
             ${descQuote}
           </div>
         </div>`;
@@ -21906,7 +21895,7 @@ function startApp() {
        idle is ink-muted. The visible label appears as a tooltip on hover. */
     function btn(opts){
       var on = !!opts.active;
-      return html`<button key=${opts.k} onClick=${opts.onClick} title=${opts.title}
+      return html`<button key=${opts.k} onClick=${opts.onClick}
         aria-label=${opts.label} aria-pressed=${on}
         style=${{
           width:36,height:36,display:'inline-flex',alignItems:'center',justifyContent:'center',
