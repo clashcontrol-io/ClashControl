@@ -685,7 +685,7 @@ function startApp() {
     defaultMaxGap:_ccLoadPref('defaultMaxGap',50), resetFiltersOnRun:_ccLoadPref('resetFiltersOnRun',true),
     defaultTolerances:(function(){try{return JSON.parse(localStorage.getItem('cc_defaultTolerances'))||{};}catch(e){return {};}}()),
     theme:(function(){ try { return localStorage.getItem('cc_theme')||'light'; } catch(e){ return 'light'; } })(),
-    renderStyle:_ccLoadPref('renderStyle','standard'), // 'standard','shaded','rendered','wireframe' — default 'standard' for fast/clean first paint
+    renderStyle:_ccLoadPref('renderStyle','shaded'), // 'shaded','standard','rendered','wireframe' — default 'shaded' (IFC colors, clean first paint)
     unitScaleOverride:_ccLoadPref('unitScaleOverride','auto'), // 'auto','1','100','1000'
     // Rendered-mode lighting controls (sliders surfaced in the toolbar Style popover)
     lightSettings:_ccLoadPref('lightSettings',{sun:1.0, ambient:1.0, exposure:1.0, shadow:1.0, time:13}),
@@ -6957,6 +6957,24 @@ function startApp() {
       }
       invalidate();
     }, [s.models]);
+
+    // Connect s.walkMode state to the actual 3D walk enter/exit functions
+    useEffect(function(){
+      var S = state3d.current; if(!S.renderer) return;
+      if (s.walkMode) {
+        if (window._ccWalkEnter) {
+          // Place camera at model ground level + eye height
+          var elevation = 0;
+          try {
+            var box = _elemsBBox();
+            if (!box.isEmpty()) elevation = box.min.y;
+          } catch(e){}
+          window._ccWalkEnter(elevation);
+        }
+      } else {
+        if (window._ccWalkExit) window._ccWalkExit();
+      }
+    }, [s.walkMode]);
 
     useEffect(function(){
       var S = state3d.current; if(!S.renderer||!S.mg) return;
