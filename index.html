@@ -28,7 +28,7 @@
   </script>
   <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 48 48'%3E%3Crect width='48' height='48' rx='6' fill='%231a1714'/%3E%3Crect x='10' y='10' width='28' height='28' fill='none' stroke='%23f5f2ec' stroke-width='2'/%3E%3Cline x1='10' y1='38' x2='38' y2='10' stroke='%23b8533a' stroke-width='2'/%3E%3C/svg%3E">
   <link rel="manifest" href="manifest.json">
-  <meta name="theme-color" content="#f5f2ec">
+  <meta name="theme-color" content="#ffffff">
   <meta name="description" content="Free, open-source IFC clash detection that runs in your browser. Load models, detect hard and soft clashes, review in 3D, and export to BCF 2.1 — no install, no license, no subscription.">
 
   <!-- Open Graph -->
@@ -52,13 +52,9 @@
   <!-- Includes localhost:* and 127.0.0.1:* for addon servers (Smart Bridge v0.1.3, ClashControlEngine) -->
   <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval' 'wasm-unsafe-eval' https://cdnjs.cloudflare.com https://cdn.jsdelivr.net https://gc.zgo.at; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com data:; connect-src 'self' https://cdn.jsdelivr.net https://cdnjs.cloudflare.com https://*.goatcounter.com https://huggingface.co https://cdn-lfs.huggingface.co https://cdn-lfs-us-1.huggingface.co https://*.hf.co http://localhost:11434 https://api.anthropic.com https://api.openai.com https://generativelanguage.googleapis.com https://api.github.com http://localhost:* ws://localhost:* http://127.0.0.1:* ws://127.0.0.1:* blob:; worker-src 'self' blob:; img-src 'self' blob: data:;">
 
-  <!-- Editorial pairing: Fraunces (display, optical-sized high-contrast serif),
-       Instrument Sans (body, distinctive grotesque), DM Mono (IDs/dimensions).
-       Picked over the AI-default Inter/Roboto/system stack so the UI reads as
-       hand-designed editorial chrome — see anthropics/skills frontend-design. -->
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=Fraunces:opsz,wght@9..144,400;9..144,500;9..144,600;9..144,700&family=Instrument+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Syne:wght@700;800&family=DM+Sans:wght@400;500;600;700&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
   <!-- CDN deps: React, Three.js, JSZip — all UMD, all cdnjs -->
   <!-- SRI hashes: regenerate with `node scripts/generate-sri.js` if you change versions -->
   <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js" integrity="sha384-tMH8h3BGESGckSAVGZ82T9n90ztNXxvdwvdM6UoR56cYcf+0iGXBliJ29D+wZ/x8" crossorigin="anonymous"></script>
@@ -152,137 +148,115 @@
   </script>
 
   <style>
-    /* ── Paper + Ink + Terracotta — the only palette in this app ──
-       Source of truth lives in --paper-* / --ink-* / --sev-*.
-       Legacy tokens (--bg-primary, --accent, etc.) alias to these so 19k lines
-       of existing styles automatically pick up the new aesthetic. */
     :root{
-      /* Paper (light is the default theme) */
-      --paper-bg:#f5f2ec;       /* warm off-white, app + canvas background */
-      --paper-edge:#ebe6dd;      /* 1-step recessed (rails, inputs at rest) */
-      --surface:#ffffff;         /* cards, modals, drawers */
-      --surface-warm:#faf7f1;    /* hover wells, secondary surface */
-
-      --ink-primary:#1a1714;     /* near-black with a warm tint, body text */
-      --ink-secondary:#4a443d;
-      --ink-muted:#807870;
-      --ink-faint:#b3aca2;
-
-      --hairline:rgba(26,23,20,.08);          /* the only divider colour */
-      --hairline-strong:rgba(26,23,20,.14);
-
-      --ink-accent:#b8533a;                   /* terracotta, the single accent */
-      --ink-accent-soft:rgba(184,83,58,.10);
-      --ink-accent-deep:#8f3e2a;
-
-      /* Severity (used as a 6-px DOT only — never as a background fill) */
-      --sev-critical:#b8533a;
-      --sev-major:#c89548;
-      --sev-minor:#6b8267;
-      --sev-info:#7d7d7d;
-
-      /* Legacy aliases — kept so existing components inherit the palette.
-         Do not introduce new code that uses these names; reach for the
-         paper/ink/sev tokens above instead. */
-      --bg-primary:var(--paper-bg);
-      --bg-secondary:var(--surface);
-      --bg-tertiary:var(--paper-edge);
-      --border:var(--hairline-strong);
-      --border-subtle:var(--hairline);
-      --text-primary:var(--ink-primary);
-      --text-secondary:var(--ink-secondary);
-      --text-muted:var(--ink-muted);
-      --text-faint:var(--ink-faint);
-      --accent:var(--ink-accent);
-      --accent-hover:var(--ink-accent-deep);
-      --accent-light:#cf6c52;
-      --accent-subtle:var(--ink-accent);
-      --accent-bg:var(--ink-accent-soft);
-      --accent-bg-deep:rgba(184,83,58,.18);
-      --accent-dim:var(--ink-accent-soft);
-      --scene-bg:#ece7dd;        /* viewport sky/floor base */
-      --scene-floor:#d9d2c4;
-      --grid-line:#c8c0b3;
-      --grid-center:#a89f8f;
-      --overlay-bg:rgba(255,255,255,.96);
+      --bg-primary:#ffffff;
+      --bg-secondary:#f8fafc;
+      --bg-tertiary:#f1f5f9;
+      --border:#e2e8f0;
+      --border-subtle:#f1f5f9;
+      --text-primary:#0f172a;
+      --text-secondary:#475569;
+      --text-muted:#94a3b8;
+      --text-faint:#cbd5e1;
+      --accent:#2563eb;
+      --accent-hover:#3b82f6;
+      --accent-subtle:#93c5fd;
+      --accent-bg:#eff6ff;
+      --accent-bg-deep:#dbeafe;
+      --accent-light:#60a5fa;
+      --accent-dim:#eff6ff;
+      --scene-bg:#f0f4f8;
+      --scene-floor:#e2e8f0;
+      --grid-line:#cbd5e1;
+      --grid-center:#94a3b8;
+      --overlay-bg:rgba(255,255,255,.92);
       --overlay-bg-strong:#ffffff;
-      --modal-bg:rgba(26,23,20,.32);
-      /* Status pill backgrounds desaturated — only the dot keeps colour */
-      --pill-blue-bg:#eef0f3;--pill-green-bg:#eef1ec;--pill-amber-bg:#f3ede1;
-      --pill-blue:#4a443d;--pill-green:#6b8267;--pill-amber:#a87a3a;
-      --section-hdr:var(--ink-muted);--tag-bg:var(--paper-edge);
-      --vc-bg:#ffffff;--vc-border:var(--hairline-strong);--vc-btn:var(--surface-warm);--vc-text:var(--ink-primary);--vc-center:var(--ink-accent);
-      --card-bg:var(--surface);--card-border:var(--hairline-strong);
-      --input-bg:var(--surface);
-      --shadow-soft:0 2px 8px rgba(20,18,14,.06);
-      --shadow-lifted:0 8px 24px rgba(20,18,14,.10);
-      --shadow-sm:0 1px 2px rgba(20,18,14,.05);
-      --shadow-md:var(--shadow-soft);
-      --shadow-lg:var(--shadow-lifted);
-      /* ── Design tokens (sizing, motion) ── */
+      --modal-bg:rgba(15,23,42,.4);
+      --shadow-sm:0 1px 3px rgba(0,0,0,.08),0 1px 2px rgba(0,0,0,.04);
+      --shadow-md:0 4px 16px rgba(0,0,0,.08),0 2px 4px rgba(0,0,0,.04);
+      --shadow-lg:0 12px 40px rgba(0,0,0,.12),0 4px 8px rgba(0,0,0,.06);
       --space-0:0;--space-1:.25rem;--space-2:.5rem;--space-3:.75rem;--space-4:1rem;--space-5:1.25rem;--space-6:1.5rem;--space-8:2rem;
       --text-2xs:.6875rem;--text-xs:.75rem;--text-sm:.8125rem;--text-base:.875rem;--text-md:.9375rem;--text-lg:1.0625rem;--text-xl:1.25rem;--text-2xl:1.5rem;
       --leading-tight:1.25;--leading-base:1.45;--leading-relaxed:1.6;
       --weight-regular:400;--weight-medium:500;--weight-semibold:600;--weight-bold:700;
-      --radius-xs:3px;--radius-sm:5px;--radius-md:8px;--radius-lg:12px;--radius-xl:16px;--radius-pill:999px;
+      --radius-xs:4px;--radius-sm:6px;--radius-md:8px;--radius-lg:12px;--radius-xl:16px;--radius-pill:999px;
       --ease-standard:cubic-bezier(.2,0,0,1);--ease-decelerate:cubic-bezier(0,0,0,1);--ease-accelerate:cubic-bezier(.3,0,1,1);
       --duration-fast:120ms;--duration-base:200ms;--duration-slow:320ms;
-      /* Semantic status — desaturated, used only for dot or thin border */
-      --color-success:#6b8267;--color-success-fg:#4d6049;--color-success-bg:#eef1ec;--color-success-border:rgba(107,130,103,.30);
-      --color-warning:#a87a3a;--color-warning-fg:#7a572a;--color-warning-bg:#f3ede1;--color-warning-border:rgba(168,122,58,.30);
-      --color-danger:#b8533a;--color-danger-fg:#8f3e2a;--color-danger-bg:#f3e6df;--color-danger-border:rgba(184,83,58,.30);
-      --color-info:#4a443d;--color-info-fg:#1a1714;--color-info-bg:#ebe6dd;--color-info-border:rgba(74,68,61,.25);
-      /* Editorial pairing — Fraunces (display, optical-sized serif with strong
-         architectural-portfolio personality) + Instrument Sans (body, distinctive
-         grotesque). Mono for IDs and dimensions only. The fallback to system-ui
-         exists only for the brief moment before Google Fonts arrives — and is
-         covered by font-display:swap so users never see Inter mid-paint. */
-      --font-display:'Fraunces','Tiempos Headline','Times New Roman',serif;
-      --font-body:'Instrument Sans','Söhne','Helvetica Neue',Helvetica,sans-serif;
-      --font-mono:'DM Mono','SF Mono','JetBrains Mono','Menlo','Consolas',monospace;
-      /* Gradients neutralised to flat ink — kept only because legacy code
-         references --logo-gradient inline. New code should not. */
-      --logo-gradient:var(--ink-primary);
-      --logo-gradient-soft:var(--ink-accent-soft);
-      /* Glass tokens neutralised: solid surface + hairline + soft shadow.
-         No element should set backdrop-filter from these. */
-      --glass-bg:var(--surface);--glass-border:var(--hairline);--glass-blur:none;
-      --glass-bg-light:var(--surface);--glass-border-light:var(--hairline);
+      --color-success:#16a34a;--color-success-fg:#15803d;--color-success-bg:#f0fdf4;--color-success-border:rgba(22,163,74,.2);
+      --color-warning:#d97706;--color-warning-fg:#b45309;--color-warning-bg:#fffbeb;--color-warning-border:rgba(217,119,6,.2);
+      --color-danger:#dc2626;--color-danger-fg:#b91c1c;--color-danger-bg:#fef2f2;--color-danger-border:rgba(220,38,38,.2);
+      --color-info:#2563eb;--color-info-fg:#1d4ed8;--color-info-bg:#eff6ff;--color-info-border:rgba(37,99,235,.2);
+      --font-display:'Syne','DM Sans',sans-serif;
+      --font-body:'DM Sans','Helvetica Neue',Helvetica,sans-serif;
+      --font-mono:'DM Mono','SF Mono','Menlo','Consolas',monospace;
+      --logo-gradient:linear-gradient(135deg,#00e5ff 0%,#7c3aed 100%);
+      --logo-gradient-soft:rgba(124,58,237,.10);
+      --glass-bg:rgba(255,255,255,.92);--glass-border:var(--border);--glass-blur:blur(8px);
+      --glass-bg-light:rgba(255,255,255,.92);--glass-border-light:var(--border);
+      --pill-blue-bg:#eff6ff;--pill-green-bg:#f0fdf4;--pill-amber-bg:#fffbeb;
+      --pill-blue:#2563eb;--pill-green:#16a34a;--pill-amber:#d97706;
+      --section-hdr:var(--text-muted);--tag-bg:var(--bg-tertiary);
+      --vc-bg:#ffffff;--vc-border:var(--border);--vc-btn:var(--bg-secondary);--vc-text:var(--text-primary);--vc-center:var(--accent);
+      --card-bg:var(--bg-secondary);--card-border:var(--border);
+      --input-bg:var(--bg-tertiary);
+      /* Backward-compat aliases so legacy paper/ink/surface references still work */
+      --paper-bg:var(--bg-primary);
+      --paper-edge:var(--bg-tertiary);
+      --surface:var(--bg-secondary);
+      --surface-warm:var(--bg-secondary);
+      --ink-primary:var(--text-primary);
+      --ink-secondary:var(--text-secondary);
+      --ink-muted:var(--text-muted);
+      --ink-faint:var(--text-faint);
+      --ink-accent:var(--accent);
+      --ink-accent-soft:var(--accent-bg);
+      --ink-accent-deep:var(--accent-hover);
+      --hairline:var(--border-subtle);
+      --hairline-strong:var(--border);
+      --sev-critical:#dc2626;--sev-major:#d97706;--sev-minor:#16a34a;--sev-info:#94a3b8;
     }
     [data-theme=dark]{
-      --paper-bg:#1a1714;
-      --paper-edge:#2a241e;
-      --surface:#221d18;
-      --surface-warm:#2c2620;
-      --ink-primary:#f0ebe3;
-      --ink-secondary:#c4bdb2;
-      --ink-muted:#8a8278;
-      --ink-faint:#5e574f;
-      --hairline:rgba(255,250,240,.08);
-      --hairline-strong:rgba(255,250,240,.14);
-      --ink-accent:#d96b4d;
-      --ink-accent-soft:rgba(217,107,77,.12);
-      --ink-accent-deep:#b8533a;
-      --sev-critical:#d96b4d;--sev-major:#daa55a;--sev-minor:#85a081;--sev-info:#a0a0a0;
-      --scene-bg:#1d1915;--scene-floor:#15110e;
-      --grid-line:#3a342d;--grid-center:#4a443d;
-      --overlay-bg:rgba(34,29,24,.96);--overlay-bg-strong:#221d18;
+      --bg-primary:#0f172a;
+      --bg-secondary:#1e293b;
+      --bg-tertiary:#0f172a;
+      --border:#334155;
+      --border-subtle:#1e293b;
+      --text-primary:#e2e8f0;
+      --text-secondary:#b0bec5;
+      --text-muted:#8b9db5;
+      --text-faint:#6b7f99;
+      --accent:#2563eb;
+      --accent-hover:#3b82f6;
+      --accent-subtle:#93c5fd;
+      --accent-bg:#1e3a5f;
+      --accent-bg-deep:#172554;
+      --accent-light:#60a5fa;
+      --accent-dim:#1e3a5f;
+      --scene-bg:#0c1626;
+      --scene-floor:#111827;
+      --grid-line:#1e293b;
+      --grid-center:#334155;
+      --overlay-bg:rgba(15,23,42,.92);
+      --overlay-bg-strong:#1e293b;
       --modal-bg:rgba(0,0,0,.55);
-      --pill-blue-bg:#2a241e;--pill-green-bg:#26302a;--pill-amber-bg:#332b1f;
-      --pill-blue:#c4bdb2;--pill-green:#85a081;--pill-amber:#daa55a;
-      --vc-bg:#221d18;--vc-border:var(--hairline-strong);--vc-btn:#2a241e;--vc-text:#f0ebe3;--vc-center:var(--ink-accent);
-      --card-bg:var(--surface);--card-border:var(--hairline-strong);
-      --input-bg:var(--paper-edge);
-      --shadow-soft:0 2px 8px rgba(0,0,0,.40);
-      --shadow-lifted:0 8px 24px rgba(0,0,0,.55);
-      --shadow-sm:0 1px 2px rgba(0,0,0,.30);
-      --color-success:#85a081;--color-success-fg:#a8c0a4;--color-success-bg:#26302a;
-      --color-warning:#daa55a;--color-warning-fg:#e6bd80;--color-warning-bg:#332b1f;
-      --color-danger:#d96b4d;--color-danger-fg:#e58a72;--color-danger-bg:#3a241d;
-      --color-info:#c4bdb2;--color-info-fg:#f0ebe3;--color-info-bg:#2a241e;
+      --shadow-sm:0 1px 3px rgba(0,0,0,.3);
+      --shadow-md:0 4px 12px rgba(0,0,0,.3);
+      --shadow-lg:0 8px 24px rgba(0,0,0,.4);
+      --color-success:#22c55e;--color-success-fg:#34d399;--color-success-bg:#052e16;--color-success-border:rgba(34,197,94,.35);
+      --color-warning:#f59e0b;--color-warning-fg:#fbbf24;--color-warning-bg:#422006;--color-warning-border:rgba(245,158,11,.35);
+      --color-danger:#ef4444;--color-danger-fg:#fca5a5;--color-danger-bg:#450a0a;--color-danger-border:rgba(239,68,68,.4);
+      --color-info:#3b82f6;--color-info-fg:#93c5fd;--color-info-bg:#172554;--color-info-border:rgba(59,130,246,.35);
+      --pill-blue-bg:#1e3a5f;--pill-green-bg:#052e16;--pill-amber-bg:#422006;
+      --pill-blue:#93c5fd;--pill-green:#34d399;--pill-amber:#fbbf24;
+      --vc-bg:#1e293b;--vc-border:var(--border);--vc-btn:#0f172a;--vc-text:var(--text-primary);--vc-center:var(--accent);
+      --card-bg:var(--bg-secondary);--card-border:var(--border);
+      --input-bg:var(--bg-tertiary);
+      --paper-bg:var(--bg-primary);--paper-edge:var(--bg-tertiary);--surface:var(--bg-secondary);--surface-warm:var(--bg-secondary);
+      --ink-primary:var(--text-primary);--ink-secondary:var(--text-secondary);--ink-muted:var(--text-muted);--ink-faint:var(--text-faint);
+      --ink-accent:var(--accent);--ink-accent-soft:var(--accent-bg);--ink-accent-deep:var(--accent-hover);
+      --hairline:var(--border-subtle);--hairline-strong:var(--border);
+      --sev-critical:#ef4444;--sev-major:#f59e0b;--sev-minor:#22c55e;--sev-info:#94a3b8;
     }
-    /* Light is the default and ships without an attribute, but explicit
-       [data-theme=light] also matches so toggles can flip both ways cleanly. */
     [data-theme=light]{}
     .cc-left-panel{overflow-x:hidden!important}
     .cc-left-panel>*{min-width:0;overflow-x:hidden}
@@ -446,13 +420,13 @@
 </head>
 <body>
 
-<div id="boot" style="display:flex;flex-direction:column;align-items:center;justify-content:center;height:100vh;text-align:center;background:var(--paper-bg);color:var(--ink-primary)">
+<div id="boot" style="display:flex;flex-direction:column;align-items:center;justify-content:center;height:100vh;text-align:center;background:var(--bg-primary,#fff);color:var(--text-primary,#0f172a)">
   <svg width="42" height="42" viewBox="0 0 48 48" style="margin-bottom:.9rem;display:block" aria-hidden="true">
-    <rect x="9.5" y="9.5" width="29" height="29" fill="none" stroke="var(--ink-primary,#1a1714)" stroke-width="1.5"/>
-    <line x1="9.5" y1="38.5" x2="38.5" y2="9.5" stroke="var(--ink-accent,#b8533a)" stroke-width="1.5"/>
+    <rect x="9.5" y="9.5" width="29" height="29" fill="none" stroke="var(--text-primary,#0f172a)" stroke-width="1.5"/>
+    <line x1="9.5" y1="38.5" x2="38.5" y2="9.5" stroke="var(--accent,#2563eb)" stroke-width="1.5"/>
   </svg>
-  <div style="font-size:1.6rem;font-weight:600;margin-bottom:.35rem;font-family:'Fraunces','Tiempos Headline','Times New Roman',serif;letter-spacing:-.02em;font-variation-settings:'opsz' 96">ClashControl</div>
-  <div id="boot-msg" style="color:var(--ink-muted,#807870);font-size:0.86rem;font-family:'Instrument Sans','Helvetica Neue',sans-serif;letter-spacing:.005em">Loading…</div>
+  <div style="font-size:1.5rem;font-weight:700;margin-bottom:.35rem;font-family:'Syne','DM Sans',sans-serif;letter-spacing:-.02em">ClashControl</div>
+  <div id="boot-msg" style="color:var(--text-muted,#94a3b8);font-size:0.86rem;font-family:'DM Sans','Helvetica Neue',sans-serif">Loading…</div>
 </div>
 <div id="root"></div>
 
@@ -7391,13 +7365,13 @@ function startApp() {
         var ctx = c.getContext('2d');
         var g = ctx.createLinearGradient(0,0,0,256);
         if (light) {
-          g.addColorStop(0,'#d9d2c4');   // --scene-floor (top of frame, distant haze)
-          g.addColorStop(0.6,'#ece7dd'); // --scene-bg
-          g.addColorStop(1.0,'#f5f2ec'); // --paper-bg (horizon line meets the page)
+          g.addColorStop(0,'#e2e8f0');
+          g.addColorStop(0.6,'#f0f4f8');
+          g.addColorStop(1.0,'#f8fafc');
         } else {
-          g.addColorStop(0,'#15110e');   // dark scene-floor
-          g.addColorStop(0.6,'#1d1915'); // dark scene-bg
-          g.addColorStop(1.0,'#1a1714'); // dark paper-bg
+          g.addColorStop(0,'#111827');
+          g.addColorStop(0.6,'#0c1626');
+          g.addColorStop(1.0,'#0f172a');
         }
         ctx.fillStyle = g; ctx.fillRect(0,0,2,256);
         var t = new THREE.CanvasTexture(c);
@@ -7652,226 +7626,6 @@ function startApp() {
         </div>
       </div>`}
       ${s.walkMode && html`<${WalkModeHUD} d=${d} />`}
-
-      ${selectedEl && function(){ try {
-        // ── Clean element property panel ──
-        var _latestEl = null;
-        if (selectedEl.expressId != null) {
-          for (var _mi = 0; _mi < s.models.length && !_latestEl; _mi++) {
-            var _mdl = s.models[_mi];
-            if (!_mdl || !_mdl.elements) continue;
-            for (var _ei = 0; _ei < _mdl.elements.length; _ei++) {
-              if (_mdl.elements[_ei].expressId === selectedEl.expressId) {
-                _latestEl = _mdl.elements[_ei];
-                break;
-              }
-            }
-          }
-        }
-        var ep = (_latestEl && _latestEl.props) || (selectedEl && selectedEl.props) || null;
-        var epQ = ep && ep.quantities ? Object.keys(ep.quantities) : [];
-        var epP = ep && ep.psets ? Object.keys(ep.psets) : [];
-        var q2 = ep&&ep.quantities||{};
-        var dimKeys = ['Length','Width','Height','Depth','Perimeter','Thickness'];
-        var areaKeys = ['Area','GrossArea','NetArea','GrossSideArea','NetSideArea','GrossFootprintArea'];
-        var volKeys = ['Volume','GrossVolume','NetVolume'];
-        var dims = [], areas = [], vols = [], otherQ = [];
-        dimKeys.forEach(function(k){if(q2[k]!=null) dims.push({l:k,v:q2[k]});});
-        areaKeys.forEach(function(k){if(q2[k]!=null) areas.push({l:k.replace(/^(Gross|Net)/,'$1 ').replace('Footprint','Footprint '),v:q2[k]});});
-        volKeys.forEach(function(k){if(q2[k]!=null) vols.push({l:k.replace(/^(Gross|Net)/,'$1 '),v:q2[k]});});
-        Object.keys(q2).forEach(function(k){if(dimKeys.indexOf(k)===-1&&areaKeys.indexOf(k)===-1&&volKeys.indexOf(k)===-1) otherQ.push({l:k,v:q2[k]});});
-        function _trimZ(s){ return s.indexOf('.')>=0 ? s.replace(/0+$/,'').replace(/\.$/,'') : s; }
-        function fmtDim(v){
-          if (typeof v !== 'number') return String(v);
-          return v>=1 ? _trimZ(v.toFixed(3))+' m' : _trimZ((v*1000).toFixed(1))+' mm';
-        }
-        function fmtArea(v){
-          if (typeof v !== 'number') return String(v);
-          return v>=1 ? _trimZ(v.toFixed(2))+' m²' : _trimZ((v*10000).toFixed(1))+' cm²';
-        }
-        function fmtVol(v){
-          if (typeof v !== 'number') return String(v);
-          return v>=0.01 ? _trimZ(v.toFixed(3))+' m³' : _trimZ((v*1000000).toFixed(1))+' cm³';
-        }
-        var _typeAliasNorms = {'family':1,'familyandtype':1,'type':1,'typeid':1,'typename':1};
-        function _normKey(k){ return String(k).toLowerCase().replace(/[\s_\-]/g,''); }
-        function _cleanNum(v) {
-          if (typeof v === 'string' && /^level:\s*/i.test(v)) v = v.replace(/^level:\s*/i, '');
-          var asNum = null;
-          if (typeof v === 'number' && isFinite(v)) {
-            asNum = v;
-          } else if (typeof v === 'string' && /^-?\d+(\.\d+)?(e[+-]?\d+)?$/i.test(v.trim())) {
-            var n = parseFloat(v);
-            if (!isNaN(n) && isFinite(n)) asNum = n;
-          }
-          if (asNum == null) return String(v);
-          if (Math.abs(asNum - Math.round(asNum)) < 1e-6) return String(Math.round(asNum));
-          return String(parseFloat(asNum.toFixed(4)));
-        }
-        var PSET_ORDERS = {
-          'Constraints': [
-            'Base Constraint','Base Offset','Top Constraint','Top Offset',
-            'Unconnected Height','Related to Mass','Room Bounding',
-            'Location Line','Cross-Section',
-            'Base Extension Distance','Base is Attached',
-            'Top Extension Distance','Top is Attached'
-          ]
-        };
-        var propSections = [];
-        var _seenPropKV = {};
-        function _qtyMatches(k, v) {
-          var nk = _normKey(k);
-          var qKeys = Object.keys(q2);
-          for (var i = 0; i < qKeys.length; i++) {
-            if (_normKey(qKeys[i]) !== nk) continue;
-            var qv = q2[qKeys[i]];
-            if (typeof qv === 'number' && typeof v === 'number') {
-              return Math.abs(qv - v) < Math.max(1e-3, Math.abs(qv) * 1e-4);
-            }
-            return String(qv) === String(v);
-          }
-          return false;
-        }
-        epP.forEach(function(setName){
-          var ps = ep.psets[setName]; var keys = Object.keys(ps);
-          var _typeValueClaimed = false;
-          var uniqueKeys = [];
-          keys.forEach(function(k){
-            var v = ps[k];
-            if (_qtyMatches(k, v)) return;
-            var sig = k + '=' + String(v);
-            if (_seenPropKV[sig]) return;
-            if (_typeAliasNorms[_normKey(k)]) {
-              if (_typeValueClaimed) return;
-              _typeValueClaimed = true;
-              Object.keys(_typeAliasNorms).forEach(function(a){ _seenPropKV[a + '=' + String(v)] = true; });
-            }
-            _seenPropKV[sig] = true;
-            uniqueKeys.push(k);
-          });
-          if (!uniqueKeys.length) return; // Skip entirely empty sections after dedup
-          var order = PSET_ORDERS[setName];
-          if (order) {
-            var known = [], unknown = [];
-            uniqueKeys.forEach(function(k){
-              if (order.indexOf(k) !== -1) known.push(k);
-              else unknown.push(k);
-            });
-            known.sort(function(a,b){ return order.indexOf(a) - order.indexOf(b); });
-            uniqueKeys = known.concat(unknown);
-          }
-          var cleanName = setName.replace(/^Pset_/,'').replace(/^Qto_/,'').replace(/([a-z])([A-Z])/g,'$1 $2');
-          propSections.push({name:cleanName, props:uniqueKeys.map(function(k){
-            var displayKey = _typeAliasNorms[_normKey(k)] ? 'Type' : k;
-            return {k: displayKey, v: _cleanNum(ps[k])};
-          })});
-        });
-        var typeName = String(ep&&ep.ifcType||'Element').replace(/^Ifc/,'').replace(/StandardCase$/,'').replace(/([a-z])([A-Z])/g,'$1 $2');
-        var SEC={marginTop:'.35rem',borderTop:'1px solid var(--border-subtle)',paddingTop:'.35rem'};
-        var SECHDR={fontSize:'0.69rem',fontWeight:600,color:'var(--text-muted)',textTransform:'uppercase',letterSpacing:'.03em',marginBottom:'.15rem'};
-
-        return html`<div style=${{position:'absolute',bottom:'3.5rem',left:'.75rem',width:290,maxHeight:'calc(100% - 5rem)',overflowY:'auto',overflowX:'hidden',background:'var(--overlay-bg-strong)',border:'1px solid var(--border)',borderRadius:8,padding:'.6rem',pointerEvents:'auto',boxShadow:'0 4px 20px rgba(0,0,0,.5)',boxSizing:'border-box',wordBreak:'break-word'}}>
-          <div style=${{display:'flex',justifyContent:'space-between',alignItems:'flex-start',marginBottom:'.2rem'}}>
-            <div style=${{flex:1,minWidth:0}}>
-              <div style=${{fontSize:'0.69rem',color:'var(--text-muted)',marginBottom:'.1rem'}}>${typeName}</div>
-              <div style=${{fontSize:'0.92rem',fontWeight:700,color:'var(--text-primary)',lineHeight:1.2}}>${ep&&ep.name||'Unnamed element'}</div>
-            </div>
-            <div style=${{display:'flex',gap:'.2rem',flexShrink:0,marginLeft:'.3rem'}}>
-              <button onClick=${function(){
-                if (s.sectionBox && s.sectionBox.enabled) {
-                  d({t:A.SECTION_BOX, v:null});
-                } else if (_sboxAroundElements) {
-                  _sboxAroundElements([selectedEl.expressId]);
-                }
-              }}
-                style=${{...S_BTN,padding:'.15rem .25rem',background:(s.sectionBox&&s.sectionBox.enabled)?'#7c3aed':'#3b0764',color:'#c084fc',fontSize:'0.69rem',borderRadius:4}} title=${(s.sectionBox&&s.sectionBox.enabled)?'Clear section box':'Section box around element'} aria-label=${(s.sectionBox&&s.sectionBox.enabled)?'Clear section box':'Section box around element'}>Box</button>
-              <button onClick=${function(){setSelectedEl(null);if(_unghostAll)_unghostAll();if(hlRef.current&&state3d.current.scene){if(hlRef.current.isGroup)hlRef.current.traverse(function(c){if(c.isMesh||c.isLine||c.isLineSegments){if(c.geometry)c.geometry.dispose();if(c.material)c.material.dispose();}});state3d.current.scene.remove(hlRef.current);hlRef.current=null;}if(outlineRef.current&&state3d.current.scene){state3d.current.scene.remove(outlineRef.current);outlineRef.current=null;}}}
-                style=${{...S_BTN,padding:'0 4px',background:'none',color:'var(--text-faint)',fontSize:'0.8rem'}} aria-label="Deselect element">✕</button>
-            </div>
-          </div>
-          <div style=${{display:'flex',flexWrap:'wrap',gap:'.15rem',marginBottom:'.15rem'}}>
-            <span style=${{fontSize:'0.69rem',background:'var(--pill-blue-bg)',color:'var(--pill-blue)',padding:'.1rem .3rem',borderRadius:4}}>${selectedEl.modelName}</span>
-          </div>
-          ${ep && ep.description && html`<div style=${{fontSize:'0.69rem',color:'var(--text-secondary)',marginBottom:'.15rem',lineHeight:1.3}}>${ep.description}</div>`}
-          ${/* ── Always-visible diagnostic strip ───────────────────
-             Shows raw counts of quantities + property sets so the user
-             can tell at a glance whether this element has attached
-             pset data (eager OR lazy-merged). If counts are 0 after
-             the load profile prints, check the "[IFC] Lazy-merged"
-             console log — either the merge hasn't run yet or this
-             element genuinely has no IfcRelDefinesByProperties
-             entries in the source IFC (common for proxy types). */''}
-          <div style=${{marginTop:'.3rem',paddingTop:'.25rem',borderTop:'1px solid var(--border-subtle)',display:'flex',justifyContent:'space-between',fontSize:'0.69rem',color:'var(--text-muted)',alignItems:'center'}}>
-            <span>#${selectedEl.expressId}</span>
-            <span style=${{display:'flex',gap:'.4rem'}}>
-              <span title="Raw quantity count" style=${{color:epQ.length>0?'var(--pill-green)':'var(--text-faint)'}}>${epQ.length} qty</span>
-              <span title="Raw property-set count" style=${{color:epP.length>0?'var(--pill-green)':'var(--text-faint)'}}>${epP.length} pset${epP.length===1?'':'s'}</span>
-            </span>
-          </div>
-          ${ep && ep.material && html`<div style=${{...ROW,fontSize:'0.75rem',paddingTop:'.25rem',borderTop:'1px solid var(--border-subtle)',marginTop:'.3rem'}}>
-            <span style=${{color:'var(--text-muted)'}}>Material</span>
-            <span style=${{color:'var(--text-primary)',textAlign:'right',maxWidth:'60%',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>${ep.material}</span>
-          </div>`}
-          <div style=${SEC}>
-            <div style=${SECHDR}>Dimensions</div>
-            ${dims.length>0 ? html`<div style=${{display:'flex',flexWrap:'wrap',gap:'.25rem'}}>
-              ${dims.map(function(dd){return html`<div key=${dd.l} style=${{flex:'1 0 45%',display:'flex',justifyContent:'space-between',fontSize:'0.75rem',padding:'.05rem 0'}}>
-                <span style=${{color:'var(--text-muted)'}}>${dd.l}</span>
-                <span style=${{color:'var(--text-primary)',fontWeight:500}}>${fmtDim(dd.v)}</span>
-              </div>`})}
-            </div>` : html`<div style=${{fontSize:'0.69rem',color:'var(--text-faint)',fontStyle:'italic'}}>None</div>`}
-          </div>
-          <div style=${SEC}>
-            <div style=${SECHDR}>Area &amp; Volume</div>
-            ${(areas.length>0||vols.length>0) ? html`<div>
-              ${areas.map(function(dd){return html`<div key=${dd.l} style=${{...ROW,fontSize:'0.75rem'}}><span style=${{color:'var(--text-muted)'}}>${dd.l}</span><span style=${{color:'var(--text-primary)',fontWeight:500}}>${fmtArea(dd.v)}</span></div>`})}
-              ${vols.map(function(dd){return html`<div key=${dd.l} style=${{...ROW,fontSize:'0.75rem'}}><span style=${{color:'var(--text-muted)'}}>${dd.l}</span><span style=${{color:'var(--text-primary)',fontWeight:500}}>${fmtVol(dd.v)}</span></div>`})}
-            </div>` : html`<div style=${{fontSize:'0.69rem',color:'var(--text-faint)',fontStyle:'italic'}}>None</div>`}
-          </div>
-          <div style=${SEC}>
-            <div style=${SECHDR}>Other Quantities</div>
-            ${otherQ.length>0 ? html`<div>
-              ${otherQ.map(function(dd){return html`<div key=${dd.l} style=${{...ROW,fontSize:'0.75rem'}}><span style=${{color:'var(--text-muted)'}}>${dd.l}</span><span style=${{color:'var(--text-primary)'}}>${typeof dd.v==='number'?dd.v.toFixed(3):String(dd.v)}</span></div>`})}
-            </div>` : html`<div style=${{fontSize:'0.69rem',color:'var(--text-faint)',fontStyle:'italic'}}>None</div>`}
-          </div>
-          <div style=${SEC}>
-            <div style=${SECHDR}>Property Sets</div>
-            ${propSections.length>0 ? html`<div style=${{minWidth:0}}>
-              ${propSections.map(function(sec){return html`<div key=${sec.name} style=${{marginTop:'.25rem',minWidth:0}}>
-                <div style=${{fontSize:'0.66rem',color:'var(--text-secondary)',fontWeight:600,marginBottom:'.1rem'}}>${sec.name}</div>
-                ${sec.props.map(function(p){return html`<div key=${p.k} style=${{...ROW,fontSize:'0.75rem',gap:'var(--space-2)',minWidth:0}}>
-                  <span style=${{color:'var(--text-muted)',flex:'1 1 auto',minWidth:0,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}} title=${p.k}>${p.k}</span>
-                  <span style=${{color:'var(--text-primary)',flex:'0 1 auto',minWidth:0,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',textAlign:'right',maxWidth:'55%'}} title=${p.v}>${p.v}</span>
-                </div>`})}
-              </div>`})}
-            </div>` : html`<div style=${{fontSize:'0.69rem',color:'var(--text-faint)',fontStyle:'italic'}}>None — this element has no IfcRelDefinesByProperties entries, or the lazy merge is still running (check console for "[IFC] Lazy-merged" log)</div>`}
-          </div>
-          ${ep && (ep.revitId||ep.phase||ep.workset||ep.designOption||ep.hostId||ep.layers) && html`<div style=${SEC}>
-            <div style=${SECHDR}>Revit Data</div>
-            ${ep.revitId!=null && html`<div style=${{...ROW,fontSize:'0.75rem'}}><span style=${{color:'var(--text-muted)'}}>Revit ID</span><span style=${{color:'var(--text-primary)',display:'flex',alignItems:'center',gap:'.2rem'}}>${ep.revitId}<button onClick=${function(){try{navigator.clipboard.writeText(String(ep.revitId));}catch(e){}}} style=${{background:'none',border:'none',cursor:'pointer',color:'var(--text-faint)',fontSize:'0.63rem',padding:'0 .1rem',lineHeight:1}} title="Copy Revit Element ID">⎘</button></span></div>`}
-            ${ep.phase && html`<div style=${{...ROW,fontSize:'0.75rem'}}><span style=${{color:'var(--text-muted)'}}>Phase</span><span style=${{color:'var(--text-primary)'}}>${ep.phase}</span></div>`}
-            ${ep.workset && html`<div style=${{...ROW,fontSize:'0.75rem'}}><span style=${{color:'var(--text-muted)'}}>Workset</span><span style=${{color:'var(--text-primary)'}}>${ep.workset}</span></div>`}
-            ${ep.designOption && html`<div style=${{...ROW,fontSize:'0.75rem'}}><span style=${{color:'var(--text-muted)'}}>Design Option</span><span style=${{color:'var(--text-primary)'}}>${ep.designOption}</span></div>`}
-            ${ep.hostId && html`<div style=${{...ROW,fontSize:'0.75rem'}}><span style=${{color:'var(--text-muted)'}}>Host</span><span style=${{color:'var(--text-primary)'}}>${ep.hostId}</span></div>`}
-            ${ep.layers && html`<div style=${{...ROW,fontSize:'0.75rem'}}><span style=${{color:'var(--text-muted)'}}>Layers</span><span style=${{color:'var(--text-primary)',maxWidth:'55%',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}} title=${Array.isArray(ep.layers)?ep.layers.map(function(l){return typeof l==='object'&&l!==null?([l.function,l.material,l.width!=null?l.width+'mm':null].filter(Boolean).join(' ')||JSON.stringify(l)):String(l);}).join(' | '):String(ep.layers)}>${Array.isArray(ep.layers)?ep.layers.map(function(l){return typeof l==='object'&&l!==null?([l.function,l.material,l.width!=null?l.width+'mm':null].filter(Boolean).join(' ')||JSON.stringify(l)):String(l);}).join(' | '):String(ep.layers)}</span></div>`}
-          </div>`}
-          <div style=${{marginTop:'.3rem',paddingTop:'.2rem',borderTop:'1px solid var(--border-subtle)',display:'flex',justifyContent:'space-between',fontSize:'0.63rem',color:'var(--text-faint)',marginBottom:'.35rem'}}>
-            <span>${ep&&ep.ifcType||''}</span>
-            <span>${ep&&ep.globalId?ep.globalId:'#'+selectedEl.expressId}</span>
-          </div>
-          <button onClick=${function(){d({t:A.MODAL,v:true,el:selectedEl});d({t:A.TAB,v:'issues'});}}
-            style=${{...S_BTN,width:'100%',padding:'.4rem',background:'#2563eb',color:'#fff',fontSize:'0.8rem',fontWeight:600,borderRadius:6,textAlign:'center',justifyContent:'center'}}>
-            + Create Issue from Element
-          </button>
-        </div>`;
-      } catch(renderErr) {
-        console.warn('Property panel render error:', renderErr);
-        return html`<div style=${{position:'absolute',bottom:'.75rem',left:'.75rem',width:290,background:'var(--overlay-bg-strong)',border:'1px solid var(--border)',borderRadius:8,padding:'.6rem',pointerEvents:'auto'}}>
-          <div style=${{fontSize:'0.8rem',color:'#f87171',marginBottom:'.2rem'}}>Error displaying properties</div>
-          <div style=${{fontSize:'0.69rem',color:'var(--text-muted)'}}>${String(renderErr.message||renderErr)}</div>
-          <button onClick=${function(){setSelectedEl(null)}} style=${{...S_BTN,marginTop:'.3rem',padding:'.2rem .5rem',background:'var(--bg-secondary)',color:'var(--text-secondary)',fontSize:'0.69rem'}}>Dismiss</button>
-        </div>`;
-      }}()}
       <div style=${{position:'absolute',bottom:'.75rem',left:'.75rem',pointerEvents:'auto',maxWidth:'calc(100vw - 1.5rem)'}}>
         <div style=${{display:'flex',flexWrap:'wrap',gap:'.2rem',background:'var(--overlay-bg)',border:'1px solid var(--border)',borderRadius:8,padding:'.3rem'}}>
           ${['standard','shaded','rendered','wireframe'].map(function(rs){
@@ -8687,7 +8441,7 @@ function startApp() {
         <div class="cc-header-project" style=${{position:'relative'}}>
           <button onClick=${function(){setProjOpen(!projOpen)}}
             style=${{...S_BTN,background:'var(--bg-secondary)',color:'var(--text-primary)',border:'1px solid var(--border)',display:'flex',alignItems:'center',gap:'.3rem',fontSize:'0.8rem',padding:'.3rem .6rem',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>
-            <span style=${{fontSize:'0.69rem'}}>📁</span> ${activeProj.name} <span style=${{fontSize:'0.57rem',color:'var(--text-faint)'}}>${projOpen?'▲':'▼'}</span>
+            ${activeProj.name} <span style=${{fontSize:'0.57rem',color:'var(--text-faint)'}}>${projOpen?'▲':'▼'}</span>
           </button>
           ${projOpen && html`<div style=${{position:'absolute',top:'100%',left:0,marginTop:4,background:'var(--bg-secondary)',border:'1px solid var(--border)',borderRadius:8,boxShadow:'0 8px 24px rgba(0,0,0,.4)',minWidth:220,zIndex:100,overflowY:'auto',maxHeight:'60vh'}}>
             ${projects.map(function(p){
@@ -14483,7 +14237,7 @@ function startApp() {
     var presets = [];
     presets.push({
       id:'sv_overview', name:'Overview', isPreset:true,
-      icon:'🏛',
+      icon:'',
       apply:function(d){
         if (window._ccDispatch) window._ccDispatch({t:A.SECTION, axis:null});
         if (window._ccDispatch) window._ccDispatch({t:A.SECTION_BOX, v:null});
@@ -14494,7 +14248,7 @@ function startApp() {
     });
     presets.push({
       id:'sv_by_discipline', name:'By Discipline', isPreset:true,
-      icon:'🎨',
+      icon:'',
       apply:function(){
         if (window._ccDispatch) {
           window._ccDispatch({t:A.SECTION, axis:null});
@@ -14505,7 +14259,7 @@ function startApp() {
     });
     presets.push({
       id:'sv_by_storey', name:'By Floor', isPreset:true,
-      icon:'🏢',
+      icon:'',
       apply:function(){
         if (window._ccDispatch) {
           window._ccDispatch({t:A.SECTION, axis:null});
@@ -14516,7 +14270,7 @@ function startApp() {
     });
     presets.push({
       id:'sv_structure', name:'Structure only', isPreset:true,
-      icon:'🏗',
+      icon:'',
       apply:function(){
         if (window._ccDispatch) {
           window._ccDispatch({t:A.UPD_PREFS, u:{renderStyle:'standard'}});
@@ -14533,7 +14287,7 @@ function startApp() {
     });
     presets.push({
       id:'sv_mep', name:'MEP only', isPreset:true,
-      icon:'🔧',
+      icon:'',
       apply:function(){
         if (window._ccDispatch) {
           window._ccDispatch({t:A.UPD_PREFS, u:{renderStyle:'standard'}});
@@ -14597,7 +14351,7 @@ function startApp() {
         <div style=${{height:90,background:opts.snapshot?'#000':'linear-gradient(135deg,#1e293b,#334155)',
             display:'flex',alignItems:'center',justifyContent:'center',
             backgroundImage:opts.snapshot?'url('+opts.snapshot+')':'',backgroundSize:'cover',backgroundPosition:'center',
-            color:'rgba(255,255,255,.9)',fontSize:'1.6rem'}}>${opts.icon||(opts.snapshot?'':'📷')}</div>
+            color:'rgba(255,255,255,.9)',fontSize:'1.6rem'}}>${opts.icon||''}</div>
         <div style=${{padding:'.45rem .55rem',textAlign:'left'}}>
           <div style=${{fontSize:'0.78rem',fontWeight:600,color:'var(--text-primary)',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>${opts.name}</div>
           ${opts.sub && html`<div style=${{fontSize:'0.66rem',color:'var(--text-faint)',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>${opts.sub}</div>`}
@@ -14981,7 +14735,7 @@ function startApp() {
       </div>
       <div style=${{padding:'var(--space-2) var(--space-5) var(--space-5) var(--space-5)'}}>
         <div style=${{display:'flex',alignItems:'center',gap:'.6rem',padding:'.85rem 1rem',margin:'.6rem 0 .2rem',background:'linear-gradient(135deg, rgba(196,181,253,.08), rgba(96,165,250,.06))',border:'1px solid rgba(196,181,253,.25)',borderRadius:10}}>
-          <span style=${{fontSize:'1.15rem',color:'#f472b6',flexShrink:0}}>♥</span>
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="#f472b6" stroke="none" style=${{flexShrink:0}}><path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/></svg>
           <span style=${{fontSize:'0.92rem',color:'var(--text-primary)',lineHeight:1.45}}>
             ClashControl is free and open-source.
             ${' '}<a href="https://github.com/sponsors/clashcontrol-io" target="_blank" rel="noopener"
@@ -19078,7 +18832,7 @@ function startApp() {
 
     return html`<div style=${{maxWidth:'100%',background:'var(--card-bg)',border:'1px solid var(--border)',borderRadius:10,padding:'.65rem .75rem',fontSize:'0.85rem'}}>
       <div style=${{fontWeight:600,marginBottom:'.5rem',color:'var(--text-primary)',display:'flex',alignItems:'center',gap:'.3rem'}}>
-        <span style=${{fontSize:'0.98rem'}}>⚡</span> Clash Detection Setup
+        Clash Detection Setup
       </div>
       ${setup._multiSelf && html`<div style=${{background:'rgba(124,58,237,.1)',border:'1px solid rgba(124,58,237,.3)',borderRadius:6,padding:'.35rem .5rem',marginBottom:'.5rem',fontSize:'0.71rem',color:'#a78bfa'}}>
         Self-clash mode: ${setup._multiSelf.map(function(p){return p.name;}).join(', ')} — each group checked against itself
@@ -20457,7 +20211,7 @@ function startApp() {
     return html`<div onClick=${function(e){if(e.target===e.currentTarget)onDismiss()}} style=${{position:'fixed',inset:0,background:'rgba(0,0,0,.65)',zIndex:10000,display:'flex',alignItems:'center',justifyContent:'center',padding:'2rem',backdropFilter:'blur(4px)'}}>
       <div style=${{background:'var(--bg-primary)',border:'1px solid #f87171',borderRadius:12,padding:'1.5rem',maxWidth:500,width:'100%',boxShadow:'0 16px 48px rgba(0,0,0,.5)'}}>
         <div style=${{display:'flex',alignItems:'flex-start',gap:'.75rem',marginBottom:'1rem'}}>
-          <span style=${{fontSize:'1.6rem',lineHeight:1}}>${hasMem && usedMB > 0 ? '⚠️' : '📊'}</span>
+          ${hasMem && usedMB > 0 ? html`<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#f87171" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>` : html`<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>`}
           <div>
             <div style=${{fontSize:'1.1rem',fontWeight:700,color:hasMem && usedMB > 0 ? '#f87171' : 'var(--text-primary)',marginBottom:'.2rem'}}>
               ${hasMem && usedMB > 0 ? 'High Memory Usage Detected' : 'Send Memory Report'}
@@ -20852,7 +20606,7 @@ function startApp() {
         borderBottom:'1px solid var(--border-subtle)',flexShrink:0,gap:'.5rem'}}>
         <span style=${{fontWeight:600,fontSize:'.82rem',flex:1,color:'var(--text-primary)'}}>${TITLES[tab]||''}</span>
         ${tab==='models' && html`<span style=${{fontSize:'.68rem',color:'var(--text-muted)',overflow:'hidden',
-          textOverflow:'ellipsis',whiteSpace:'nowrap',maxWidth:140}} title=${activeProj.name}>📁 ${activeProj.name}</span>`}
+          textOverflow:'ellipsis',whiteSpace:'nowrap',maxWidth:140}} title=${activeProj.name}>${activeProj.name}</span>`}
         <button onClick=${function(){d({t:A.TAB,v:null});}}
           style=${{background:'none',border:'none',cursor:'pointer',color:'var(--text-muted)',
             fontSize:'1.1rem',lineHeight:1,padding:'2px 4px',borderRadius:4}} title="Close panel">×</button>
@@ -20910,9 +20664,17 @@ function startApp() {
         }}>${drawerEl ? 'Details ›' : 'Ask AI ›'}</button>`;
     }
 
-    // ── Details tab content ──
+    // ── Details tab content — data depth scales with workspace ──
     function renderDetails() {
       var el = drawerEl;
+      var workspace = s.workspace || 'present';
+      var WRAP = {flex:1,overflowY:'auto',padding:'.75rem .9rem',display:'flex',flexDirection:'column',gap:'.6rem'};
+      var ROW  = {display:'flex',gap:'.4rem',alignItems:'baseline',padding:'.22rem 0',borderBottom:'1px solid var(--border-subtle)',fontSize:'.75rem'};
+      var LBL  = {color:'var(--text-muted)',minWidth:80,flexShrink:0};
+      var VAL  = {color:'var(--text-primary)',flex:1,wordBreak:'break-word'};
+      var CARD = {background:'var(--bg-secondary)',borderRadius:'var(--radius-sm)',padding:'.5rem .75rem',border:'1px solid var(--border-subtle)'};
+      var HDR  = {fontSize:'.65rem',fontWeight:700,color:'var(--text-muted)',textTransform:'uppercase',letterSpacing:'.04em',marginBottom:'.25rem'};
+
       if (!el) {
         return html`<div style=${{flex:1,display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',
           padding:'2rem 1.2rem',color:'var(--text-muted)',textAlign:'center',gap:'1rem'}}>
@@ -20920,68 +20682,143 @@ function startApp() {
           <div style=${{fontSize:'.78rem',lineHeight:1.6}}>Click any element in the model to see its details here.</div>
         </div>`;
       }
-      // Find full element data
+
+      // Resolve latest element data
       var _latestEl = null;
       var latestState = window._ccLatestState || s;
       if (el.expressId != null && latestState.models) {
         for (var _mi=0; _mi<latestState.models.length && !_latestEl; _mi++) {
           var _mdl=latestState.models[_mi];
-          if (!_mdl || !_mdl.elements) continue;
+          if (!_mdl||!_mdl.elements) continue;
           for (var _ei=0; _ei<_mdl.elements.length; _ei++) {
             if (_mdl.elements[_ei].expressId===el.expressId){_latestEl=_mdl.elements[_ei];break;}
           }
         }
       }
-      var ep=(_latestEl&&_latestEl.props)||(el&&el.props)||null;
-      var typeName=String(ep&&ep.ifcType||'Element').replace(/^Ifc/,'').replace(/StandardCase$/,'').replace(/([a-z])([A-Z])/g,'$1 $2');
-      var elName=ep&&ep.name||'Unnamed element';
-      var storey=ep&&(ep.storey||ep.psets&&ep.psets['Constraints']&&ep.psets['Constraints']['Base Constraint'])||null;
-      var discipline=el.modelName||'';
-      // Linked issues
-      var linkedIssues=(latestState.issues||[]).filter(function(i){return i.elementId===el.expressId||i.globalId===(ep&&ep.globalId);});
-      var linkedClashes=(latestState.clashes||[]).filter(function(c){return (c.a&&c.a.expressId===el.expressId)||(c.b&&c.b.expressId===el.expressId);});
-      var CHIP={fontSize:'.68rem',padding:'.15rem .4rem',borderRadius:'var(--radius-pill)',background:'var(--accent-dim)',color:'var(--accent-light)',display:'inline-block'};
-      var ROW={display:'flex',gap:'.4rem',alignItems:'baseline',padding:'.25rem 0',borderBottom:'1px solid var(--border-subtle)',fontSize:'.75rem'};
-      var LBL={color:'var(--text-muted)',minWidth:80,flexShrink:0};
-      var VAL={color:'var(--text-primary)',flex:1,wordBreak:'break-word'};
-      return html`<div style=${{flex:1,overflowY:'auto',padding:'.75rem .9rem',display:'flex',flexDirection:'column',gap:'.6rem'}}>
-        <!-- Header card -->
-        <div style=${{background:'var(--accent-dim)',borderRadius:'var(--radius-md)',padding:'.7rem .85rem',border:'1px solid rgba(124,58,237,.2)'}}>
-          <div style=${{fontSize:'.68rem',color:'var(--accent-subtle)',marginBottom:'.2rem',textTransform:'uppercase',letterSpacing:'.04em'}}>${typeName}</div>
-          <div style=${{fontSize:'1rem',fontWeight:700,color:'var(--text-primary)',lineHeight:1.3}}>${elName}</div>
-          ${discipline && html`<div style=${{fontSize:'.7rem',color:'var(--text-secondary)',marginTop:'.3rem'}}>${discipline}</div>`}
+      var ep = (_latestEl&&_latestEl.props)||(el&&el.props)||null;
+      var typeName = String(ep&&ep.ifcType||'Element').replace(/^Ifc/,'').replace(/StandardCase$/,'').replace(/([a-z])([A-Z])/g,'$1 $2');
+      var elName   = ep&&ep.name||'Unnamed element';
+      var storey   = ep&&(ep.storey||ep.psets&&ep.psets['Constraints']&&ep.psets['Constraints']['Base Constraint'])||null;
+      var discipline = el.modelName||'';
+
+      // Shared header block used by all levels
+      var headerCard = html`<div style=${{background:'var(--accent-bg)',borderRadius:'var(--radius-md)',padding:'.7rem .85rem',border:'1px solid var(--accent-bg-deep)'}}>
+        <div style=${{fontSize:'.68rem',color:'var(--accent)',marginBottom:'.2rem',textTransform:'uppercase',letterSpacing:'.04em',fontWeight:600}}>${typeName}</div>
+        <div style=${{fontSize:'1rem',fontWeight:700,color:'var(--text-primary)',lineHeight:1.3}}>${elName}</div>
+        ${discipline && html`<div style=${{fontSize:'.7rem',color:'var(--text-secondary)',marginTop:'.25rem'}}>${discipline}</div>`}
+      </div>`;
+
+      // ── PRESENT: identity only ────────────────────────────────────
+      if (workspace === 'present') {
+        return html`<div style=${WRAP}>
+          ${headerCard}
+          ${(storey||ep&&ep.material) && html`<div style=${CARD}>
+            ${storey   && html`<div style=${ROW}><span style=${LBL}>Floor</span><span style=${VAL}>${storey}</span></div>`}
+            ${ep&&ep.material && html`<div style=${ROW}><span style=${LBL}>Material</span><span style=${VAL}>${ep.material}</span></div>`}
+          </div>`}
+        </div>`;
+      }
+
+      // ── COORDINATE: identity + dimensions + data quality ─────────
+      if (workspace === 'coordinate') {
+        var q2 = ep&&ep.quantities||{};
+        function fmtDim(v){ return typeof v==='number'?(v>=1?v.toFixed(3)+' m':(v*1000).toFixed(1)+' mm'):String(v); }
+        function fmtArea(v){ return typeof v==='number'?(v>=1?v.toFixed(2)+' m²':(v*10000).toFixed(1)+' cm²'):String(v); }
+        var dimKeys  = ['Length','Width','Height','Thickness','Depth','Perimeter'];
+        var areaKeys = ['Area','GrossArea','NetArea'];
+        var dims  = dimKeys.filter(function(k){return q2[k]!=null;}).map(function(k){return {l:k,v:q2[k]};});
+        var areas = areaKeys.filter(function(k){return q2[k]!=null;}).map(function(k){return {l:k.replace(/^(Gross|Net)/,'$1 '),v:q2[k]};});
+        // Data quality checks
+        var psetCount = ep&&ep.psets ? Object.keys(ep.psets).length : 0;
+        var qtyCount  = ep&&ep.quantities ? Object.keys(ep.quantities).length : 0;
+        var dqChecks  = [
+          {ok:!!(ep&&ep.globalId),          label:'GlobalId'},
+          {ok:!!(ep&&ep.name&&ep.name!=='Unnamed element'), label:'Name'},
+          {ok:psetCount>0,                  label:psetCount>0?psetCount+' pset'+(psetCount===1?'':'s'):'No psets'},
+          {ok:qtyCount>0,                   label:qtyCount>0?qtyCount+' quantities':'No quantities'},
+          {ok:!!(ep&&ep.material),          label:'Material'},
+        ];
+        // First pset only
+        var firstPset = null;
+        if (ep&&ep.psets) {
+          var psetNames = Object.keys(ep.psets);
+          if (psetNames.length) {
+            var ps = ep.psets[psetNames[0]];
+            var cleanName = psetNames[0].replace(/^Pset_/,'').replace(/^Qto_/,'').replace(/([a-z])([A-Z])/g,'$1 $2');
+            firstPset = {name:cleanName, props:Object.keys(ps).map(function(k){return {k:k.replace(/([a-z])([A-Z])/g,'$1 $2'),v:String(ps[k])};})};
+          }
+        }
+        return html`<div style=${WRAP}>
+          ${headerCard}
+          <div style=${CARD}>
+            ${storey       && html`<div style=${ROW}><span style=${LBL}>Floor</span><span style=${VAL}>${storey}</span></div>`}
+            ${ep&&ep.material && html`<div style=${ROW}><span style=${LBL}>Material</span><span style=${VAL}>${ep.material}</span></div>`}
+            ${ep&&ep.globalId && html`<div style=${ROW}><span style=${LBL}>GlobalId</span><span style=${{...VAL,fontFamily:'var(--font-mono)',fontSize:'.68rem',opacity:.7}}>${ep.globalId.slice(0,14)}…</span></div>`}
+          </div>
+          ${(dims.length||areas.length) && html`<div style=${CARD}>
+            <div style=${HDR}>Dimensions</div>
+            ${dims.map(function(d){return html`<div style=${ROW}><span style=${LBL}>${d.l}</span><span style=${{...VAL,fontFamily:'var(--font-mono)'}}>${fmtDim(d.v)}</span></div>`;})}
+            ${areas.map(function(a){return html`<div style=${ROW}><span style=${LBL}>${a.l}</span><span style=${{...VAL,fontFamily:'var(--font-mono)'}}>${fmtArea(a.v)}</span></div>`;})}
+          </div>`}
+          <div style=${CARD}>
+            <div style=${HDR}>Data Quality</div>
+            <div style=${{display:'flex',flexWrap:'wrap',gap:'.3rem',marginTop:'.15rem'}}>
+              ${dqChecks.map(function(c){return html`<span key=${c.label} style=${{
+                fontSize:'.68rem',padding:'.15rem .45rem',borderRadius:'var(--radius-pill)',
+                background:c.ok?'var(--color-success-bg)':'var(--color-danger-bg)',
+                color:c.ok?'var(--color-success-fg)':'var(--color-danger-fg)',
+                border:'1px solid '+(c.ok?'var(--color-success-border)':'var(--color-danger-border)'),
+                display:'flex',alignItems:'center',gap:'.25rem'
+              }}>
+                <svg width="8" height="8" viewBox="0 0 10 10"><circle cx="5" cy="5" r="4" fill="currentColor"/></svg>
+                ${c.label}
+              </span>`;
+              })}
+            </div>
+          </div>
+          ${firstPset && html`<div style=${CARD}>
+            <div style=${HDR}>${firstPset.name}</div>
+            ${firstPset.props.map(function(p){return html`<div style=${ROW}><span style=${LBL}>${p.k}</span><span style=${VAL}>${p.v}</span></div>`;})}
+          </div>`}
+        </div>`;
+      }
+
+      // ── REVIEW: full data — psets, clashes, issues, actions ──────
+      var linkedIssues  = (latestState.issues||[]).filter(function(i){return i.elementId===el.expressId||i.globalId===(ep&&ep.globalId);});
+      var linkedClashes = (latestState.clashes||[]).filter(function(c){return (c.a&&c.a.expressId===el.expressId)||(c.b&&c.b.expressId===el.expressId);});
+      var allPsets = [];
+      if (ep&&ep.psets) {
+        Object.keys(ep.psets).forEach(function(setName){
+          var ps=ep.psets[setName]; var keys=Object.keys(ps); if(!keys.length) return;
+          allPsets.push({name:setName.replace(/^Pset_/,'').replace(/^Qto_/,'').replace(/([a-z])([A-Z])/g,'$1 $2'),
+            props:keys.map(function(k){return {k:k.replace(/([a-z])([A-Z])/g,'$1 $2'),v:String(ps[k])};})});
+        });
+      }
+      return html`<div style=${WRAP}>
+        ${headerCard}
+        <div style=${CARD}>
+          ${storey       && html`<div style=${ROW}><span style=${LBL}>Floor</span><span style=${VAL}>${storey}</span></div>`}
+          ${ep&&ep.material && html`<div style=${ROW}><span style=${LBL}>Material</span><span style=${VAL}>${ep.material}</span></div>`}
+          ${ep&&ep.globalId && html`<div style=${ROW}><span style=${LBL}>GlobalId</span><span style=${{...VAL,fontFamily:'var(--font-mono)',fontSize:'.68rem',opacity:.7}}>${ep.globalId.slice(0,14)}…</span></div>`}
         </div>
-        <!-- Key facts -->
-        <div style=${{background:'var(--bg-secondary)',borderRadius:'var(--radius-sm)',padding:'.5rem .75rem',border:'1px solid var(--border-subtle)'}}>
-          ${storey && html`<div style=${ROW}><span style=${LBL}>Floor</span><span style=${VAL}>${storey}</span></div>`}
-          ${ep&&ep.globalId && html`<div style=${ROW}><span style=${LBL}>ID</span><span style=${{...VAL,fontFamily:'var(--font-mono)',fontSize:'.68rem',opacity:.7}}>${ep.globalId.slice(0,12)}…</span></div>`}
-        </div>
-        <!-- Pset quick-view (first 5 props) -->
-        ${ep&&ep.psets && function(){
-          var allP=[];
-          Object.keys(ep.psets).forEach(function(setName){
-            var ps=ep.psets[setName];
-            Object.keys(ps).forEach(function(k){ if(allP.length<8) allP.push({k:k.replace(/([a-z])([A-Z])/g,'$1 $2'),v:String(ps[k])}); });
-          });
-          if(!allP.length) return null;
-          return html`<div style=${{background:'var(--bg-secondary)',borderRadius:'var(--radius-sm)',padding:'.5rem .75rem',border:'1px solid var(--border-subtle)'}}>
-            <div style=${{fontSize:'.68rem',fontWeight:600,color:'var(--text-muted)',textTransform:'uppercase',letterSpacing:'.04em',marginBottom:'.3rem'}}>Properties</div>
-            ${allP.map(function(p){return html`<div style=${ROW}><span style=${LBL}>${p.k}</span><span style=${VAL}>${p.v}</span></div>`;})}
-          </div>`;
-        }()}
-        <!-- Linked issues -->
-        ${(linkedIssues.length>0||linkedClashes.length>0) && html`<div style=${{background:'var(--bg-secondary)',borderRadius:'var(--radius-sm)',padding:'.5rem .75rem',border:'1px solid var(--border-subtle)'}}>
-          <div style=${{fontSize:'.68rem',fontWeight:600,color:'var(--text-muted)',textTransform:'uppercase',letterSpacing:'.04em',marginBottom:'.35rem'}}>Linked</div>
-          ${linkedIssues.map(function(i){return html`<div key=${i.id} style=${{fontSize:'.75rem',padding:'.2rem 0',color:'var(--text-secondary)',display:'flex',gap:'.4rem',alignItems:'center'}}>
-            <svg width="10" height="10" viewBox="0 0 24 24" fill="${i.status==='open'?'#f59e0b':'#22c55e'}" stroke="none"><circle cx="12" cy="12" r="10"/></svg>
-            <span>${i.title||'Issue'}</span>
-          </div>`;})}
-          ${linkedClashes.map(function(c){return html`<div key=${c.id} style=${{fontSize:'.75rem',padding:'.2rem 0',color:'var(--text-secondary)',display:'flex',gap:'.4rem',alignItems:'center'}}>
-            <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="#ef4444" stroke-width="2.5"><path d="M12 9v4m0 4h.01M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/></svg>
-            <span style=${{color:'var(--text-muted)',fontFamily:'var(--font-mono)',fontSize:'.68rem'}}>${c.title||'Conflict'}</span>
+        ${allPsets.length>0 && html`<div style=${CARD}>
+          <div style=${HDR}>Properties</div>
+          ${allPsets.map(function(sec){return html`<div key=${sec.name} style=${{marginBottom:'.4rem'}}>
+            <div style=${{fontSize:'.65rem',fontWeight:600,color:'var(--text-secondary)',marginBottom:'.15rem'}}>${sec.name}</div>
+            ${sec.props.map(function(p){return html`<div style=${ROW}><span style=${LBL}>${p.k}</span><span style=${VAL}>${p.v}</span></div>`;})}
           </div>`;})}
         </div>`}
-        <!-- Actions -->
+        ${(linkedClashes.length>0||linkedIssues.length>0) && html`<div style=${CARD}>
+          <div style=${HDR}>Clashes &amp; Issues</div>
+          ${linkedClashes.map(function(c){return html`<div key=${c.id} style=${{fontSize:'.75rem',padding:'.2rem 0',display:'flex',gap:'.4rem',alignItems:'center',borderBottom:'1px solid var(--border-subtle)'}}>
+            <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="var(--color-danger)" stroke-width="2.5"><path d="M12 9v4m0 4h.01M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/></svg>
+            <span style=${{color:'var(--text-secondary)',flex:1,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>${c.title||'Clash'}</span>
+          </div>`;})}
+          ${linkedIssues.map(function(i){return html`<div key=${i.id} style=${{fontSize:'.75rem',padding:'.2rem 0',display:'flex',gap:'.4rem',alignItems:'center',borderBottom:'1px solid var(--border-subtle)'}}>
+            <svg width="10" height="10" viewBox="0 0 24 24" fill="${i.status==='open'?'var(--color-warning)':'var(--color-success)'}" stroke="none"><circle cx="12" cy="12" r="10"/></svg>
+            <span style=${{color:'var(--text-secondary)',flex:1,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>${i.title||'Issue'}</span>
+          </div>`;})}
+        </div>`}
         <div style=${{display:'flex',gap:'.4rem',flexWrap:'wrap'}}>
           <button onClick=${function(){d({t:A.MODAL,v:true,el:el});d({t:A.TAB,v:'issues'});}}
             style=${{flex:1,padding:'.4rem .6rem',borderRadius:'var(--radius-sm)',background:'var(--accent)',color:'#fff',border:'none',fontSize:'.74rem',fontWeight:600,cursor:'pointer',fontFamily:'inherit'}}>+ New issue</button>
@@ -21034,13 +20871,7 @@ function startApp() {
 
   // ── Model Load Card — shown when no model is loaded ──────────────
 
-  /* ── Empty state — paper, asymmetric, editorial ─────────────────
-     Replaces the previous centred glass card. The whole canvas is the
-     drop target; a left-weighted card at ~40% from left holds the headline
-     "Open a model." (Fraunces, optical-size 96, runs long) and three flat
-     row links: Choose a file… · From URL… · Try a sample model →. A drawn
-     isometric outline sits to the right as ballast. No emoji, no glass,
-     no dashed scrim. */
+  /* ── Empty state ── */
   function WelcomePopup(props) {
     var d = props.d, s = props.s;
     if (s.models && s.models.length > 0) return null;
@@ -21115,7 +20946,7 @@ function startApp() {
             color:'var(--ink-muted)',letterSpacing:'.12em',textTransform:'uppercase',
             marginBottom:'.6rem'
           }}>ClashControl · v${CC_VERSION.v}</div>
-          <!-- Asymmetric headline, Fraunces opsz 96, runs long -->
+          <!-- Welcome headline -->
           <h1 style=${{
             margin:0,padding:0,
             fontFamily:'var(--font-display)',fontWeight:600,
@@ -21483,7 +21314,7 @@ function startApp() {
     var modelName = activeModelName();
 
     return html`<div class="cc-desktop-topbar">
-      <!-- Brand: flat ink mark + Fraunces wordmark, no gradient, no glow. -->
+      <!-- Brand wordmark -->
       <div style=${{display:'flex',alignItems:'center',gap:'var(--space-2)',flexShrink:0,height:'100%'}}>
         <svg width="20" height="20" viewBox="0 0 48 48" aria-hidden="true" style=${{display:'block'}}>
           <rect x="9.5" y="9.5" width="29" height="29" fill="none" stroke="currentColor" stroke-width="1.5"/>
