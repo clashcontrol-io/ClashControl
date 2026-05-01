@@ -1,5 +1,8 @@
 # Changelog
 
+## v5.1.2 (2026-05-01)
+- feat(ui): zinc + forest palette, layout fix, Enscape walk, render quality
+
 ## v5.1.1 (2026-05-01)
 - feat(inspector): workspace-aware element details depth
 
