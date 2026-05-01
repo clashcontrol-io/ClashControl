@@ -1,5 +1,8 @@
 # Changelog
 
+## v5.1.14 (2026-05-01)
+- Distribute remaining integrations into their natural places
+
 ## v5.1.13 (2026-05-01)
 - Fix element picker selecting wrong element (wall click picking beam)
 
