@@ -20861,7 +20861,6 @@ function startApp() {
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg>
         </button>
       </div>
-      ${tab==='models'   && html`<${ModelSidebar}  s=${s} d=${d} />`}
       ${tab==='clashes'  && html`<${IssuePanel} key="clashes" s=${s} d=${d} hideTabBar=${true} />`}
       ${tab==='issues'   && html`<${IssuePanel} key="issues" s=${s} d=${d} hideTabBar=${true} />`}
       ${tab==='dataquality' && html`<${DataQualityPanel} s=${s} d=${d} />`}
@@ -20914,16 +20913,29 @@ function startApp() {
       return function(){ clearInterval(t); };
     }, []);
 
-    // Expose a global opener so the toolbar Ask AI button can uncollapse
-    // the panel and switch to the AI tab in one click.
+    // Expose global openers so toolbar buttons can switch tabs / uncollapse.
     useEffect(function(){
       window._ccOpenAIPanel = function(){
         setCollapsed(false);
         try{localStorage.setItem('cc_ai_panel_collapsed','0');}catch(e){}
         setDrawerTab('ai');
       };
-      return function(){ if (window._ccOpenAIPanel) window._ccOpenAIPanel = null; };
-    }, []);
+      window._ccToggleModelsPanel = function(){
+        // Toggle: if already open on Models tab, collapse; otherwise open & switch
+        if (!collapsed && drawerTab === 'models') {
+          setCollapsed(true);
+          try{localStorage.setItem('cc_ai_panel_collapsed','1');}catch(e){}
+        } else {
+          setCollapsed(false);
+          try{localStorage.setItem('cc_ai_panel_collapsed','0');}catch(e){}
+          setDrawerTab('models');
+        }
+      };
+      return function(){
+        if (window._ccOpenAIPanel) window._ccOpenAIPanel = null;
+        if (window._ccToggleModelsPanel) window._ccToggleModelsPanel = null;
+      };
+    }, [collapsed, drawerTab]);
 
     // Collapsed: thin tab on the right edge
     if (collapsed) {
@@ -21261,8 +21273,8 @@ function startApp() {
         background:'transparent',transition:'background .15s',borderRadius:'14px 0 0 14px'}} onMouseEnter=${function(e){e.currentTarget.style.background='rgba(124,58,237,0.3)';}} onMouseLeave=${function(e){e.currentTarget.style.background='transparent';}}></div>
       <!-- Tab bar + collapse -->
       <div style=${{display:'flex',alignItems:'center',borderBottom:'1px solid var(--border-subtle)',flexShrink:0,height:40,gap:0,paddingLeft:12}}>
-        ${['details','ai'].map(function(tab){
-          var labels={details:'Details',ai:'Ask AI'};
+        ${['details','ai','models'].map(function(tab){
+          var labels={details:'Details',ai:'Ask AI',models:'Models'};
           var isActive=drawerTab===tab;
           var hasDot=tab==='details'&&drawerEl;
           return html`<button key=${tab}
@@ -21286,7 +21298,7 @@ function startApp() {
             borderRadius:6, transition:'color .12s'
           }}>×</button>
       </div>
-      ${drawerTab==='details' ? renderDetails() : html`<${NLCommandPanel} s=${s} d=${d} docked=${true} />`}
+      ${drawerTab==='details' ? renderDetails() : drawerTab==='models' ? html`<${ModelSidebar} s=${s} d=${d} />` : html`<${NLCommandPanel} s=${s} d=${d} docked=${true} />`}
     </div>`;
   }
 
@@ -22070,10 +22082,10 @@ function startApp() {
 
         <!-- spacer -->
         <span style=${{flex:1}}></span>
-        <!-- MODELS button — always visible, opens model list in left panel -->
-        ${btn({k:'models', active: s.tab==='models', title:'Loaded models', label:'Models',
+        <!-- MODELS button — toggles the Models tab in the right panel -->
+        ${btn({k:'models', title:'Loaded models', label:'Models',
           icon:'<path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/><path d="M12 2L2 7l10 5 10-5-10-5z"/>',
-          onClick:function(){ d({t:A.TAB,v: s.tab==='models' ? null : 'models'}); }})}
+          onClick:function(){ if(window._ccToggleModelsPanel) window._ccToggleModelsPanel(); }})}
         ${div()}
 
         <!-- ASK AI button — opens the right panel in chat mode -->
