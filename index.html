@@ -685,7 +685,7 @@ function startApp() {
     defaultMaxGap:_ccLoadPref('defaultMaxGap',50), resetFiltersOnRun:_ccLoadPref('resetFiltersOnRun',true),
     defaultTolerances:(function(){try{return JSON.parse(localStorage.getItem('cc_defaultTolerances'))||{};}catch(e){return {};}}()),
     theme:(function(){ try { return localStorage.getItem('cc_theme')||'light'; } catch(e){ return 'light'; } })(),
-    renderStyle:_ccLoadPref('renderStyle','rendered'), // 'standard','shaded','rendered','wireframe' — default 'rendered' so first paint is cinematic, not flat
+    renderStyle:_ccLoadPref('renderStyle','standard'), // 'standard','shaded','rendered','wireframe' — default 'standard' for fast/clean first paint
     unitScaleOverride:_ccLoadPref('unitScaleOverride','auto'), // 'auto','1','100','1000'
     // Rendered-mode lighting controls (sliders surfaced in the toolbar Style popover)
     lightSettings:_ccLoadPref('lightSettings',{sun:1.0, ambient:1.0, exposure:1.0, shadow:1.0}),
@@ -5035,9 +5035,38 @@ function startApp() {
       renderer.toneMappingExposure = 1.0;
       renderer.shadowMap.enabled = true;
       renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+      renderer.physicallyCorrectLights = true;
       el.appendChild(renderer.domElement);
       S.renderer = renderer;
       window._ccState3d = S;
+
+      // ── Image-based lighting (Enscape/V-Ray style) ────────────────────
+      // Generate a PMREM environment map from a procedural sky gradient.
+      // Every MeshStandardMaterial automatically samples this for ambient
+      // light and glass-like reflections. Result: correctly-grounded
+      // colours, soft sky-tinted ambient, real reflections on glass.
+      try {
+        var pmrem = new THREE.PMREMGenerator(renderer);
+        pmrem.compileEquirectangularShader();
+        // Procedural sky: warm horizon → cool zenith
+        var skyCanvas = document.createElement('canvas');
+        skyCanvas.width = 512; skyCanvas.height = 256;
+        var skyCtx = skyCanvas.getContext('2d');
+        var grad = skyCtx.createLinearGradient(0,0,0,256);
+        grad.addColorStop(0.00, '#cfd8e3'); // zenith (cool sky)
+        grad.addColorStop(0.45, '#e8e6df'); // mid (warm haze)
+        grad.addColorStop(0.55, '#f0ece2'); // horizon (warm)
+        grad.addColorStop(1.00, '#a89e8a'); // ground bounce (warm tan)
+        skyCtx.fillStyle = grad;
+        skyCtx.fillRect(0,0,512,256);
+        var skyTex = new THREE.CanvasTexture(skyCanvas);
+        skyTex.mapping = THREE.EquirectangularReflectionMapping;
+        var envRT = pmrem.fromEquirectangular(skyTex);
+        scene.environment = envRT.texture;
+        S._pmremRT = envRT;
+        S._pmrem = pmrem;
+        skyTex.dispose();
+      } catch(e) { console.warn('[ibl] PMREM env init failed:', e); }
 
       // ── Post-processing (lazy, gated to renderStyle === 'rendered') ──
       S._composer = null;
@@ -5919,6 +5948,20 @@ function startApp() {
         box.expandByScalar(0.5);
         return box;
       };
+
+      // ── Activate Section Box around whole model bounds ──
+      window._ccActivateSectionBox = function() {
+        var box = _getSectionBoxFromScene();
+        if (!box) return false;
+        if (window._ccDispatch) {
+          window._ccDispatch({t:A.SECTION_BOX, v:{
+            enabled:true,
+            min:[box.min.x, box.min.y, box.min.z],
+            max:[box.max.x, box.max.y, box.max.z]
+          }});
+        }
+        return true;
+      };
       window._ccElevToSectionPos = function(elev){
         if(!S.mg||!S.mg.children.length) return 0.5;
         var box=_elemsBBox();
@@ -6174,6 +6217,27 @@ function startApp() {
           }
           return true;
         });
+
+        // ── Section Pick: click any surface to use it as a section plane ──
+        if (window._ccSectionPickPending && hits.length > 0) {
+          var spHit = hits[0];
+          var nWorld = new THREE.Vector3();
+          if (spHit.face && spHit.face.normal) {
+            nWorld.copy(spHit.face.normal).transformDirection(spHit.object.matrixWorld).normalize();
+          } else {
+            nWorld.set(0,1,0);
+          }
+          // Use the hit point on the picked face as the section anchor
+          var nObj = {x:nWorld.x, y:nWorld.y, z:nWorld.z};
+          var pObj = {x:spHit.point.x, y:spHit.point.y, z:spHit.point.z};
+          if (window._ccDispatch) {
+            window._ccDispatch({t:A.SECTION_CUSTOM, v:{normal:nObj, point:pObj}, pos:0.5});
+          }
+          window._ccSectionPickPending = false;
+          // Notify any listening UI to clear the "click a surface" hint
+          window.dispatchEvent(new CustomEvent('cc-section-pick-end'));
+          return;
+        }
 
         // ── Comment mode: drop a pin and open the share/comments tab ──
         if(commentModeRef.current && hits.length>0) {
@@ -7496,36 +7560,82 @@ function startApp() {
     useEffect(function(){
       var S = state3d.current;
       if(!S.mg) return;
-      var style = s.prefs.renderStyle || 'standard';
+      var style = s.prefs.renderStyle || 'rendered';
       var light = (s.prefs.theme||'light')==='light';
-      // User-tweakable rendered-mode settings (persisted in cc_light_settings)
       var ls = (s.prefs.lightSettings) || {};
       var sunMul = (typeof ls.sun === 'number') ? ls.sun : 1.0;
       var ambMul = (typeof ls.ambient === 'number') ? ls.ambient : 1.0;
       var expoMul = (typeof ls.exposure === 'number') ? ls.exposure : 1.0;
       var shadowOp = (typeof ls.shadow === 'number') ? ls.shadow : 1.0;
-      if (S.renderer) S.renderer.toneMappingExposure = expoMul;
-      if(S._sunLight) {
-        var sunBase = style==='rendered' ? 1.7 : 1.0;
-        S._sunLight.intensity = sunBase * sunMul;
-        S._fillLight.intensity = (style==='rendered' ? 0.4 : 0.3) * ambMul;
-        S._ambLight.intensity = (style==='shaded' ? 0.9 : style==='rendered' ? 0.45 : 0.6) * ambMul;
-        // Shadows are perceptibly expensive; only enable in 'rendered' mode
-        S._sunLight.castShadow = style==='rendered' && shadowOp > 0;
-        if (S._sunLight.shadow) {
-          // shadow opacity proxy: dimmer/brighter shadow via shadow.intensity isn't a thing in r128,
-          // but bias/normalBias keep the visual quality. The slider is wired through anyway.
+
+      // ── Lighting model per style (Revit-inspired): ──
+      //   standard  → flat white surfaces, thin black edges   (technical drawing)
+      //   shaded    → original colors, ambient-only, no shadows (architectural massing)
+      //   rendered  → PBR-like, sun + shadows + contact plane  (presentation)
+      //   wireframe → edges only, transparent fills           (CAD wireframe)
+      if (S.renderer) S.renderer.toneMappingExposure = expoMul * (style==='rendered' ? 1.0 : 1.15);
+      if (S._sunLight) {
+        if (style==='rendered') {
+          S._sunLight.intensity = 1.4 * sunMul;
+          S._sunLight.castShadow = shadowOp > 0;
+        } else {
+          // Non-rendered: lower sun, no shadows (avoid the dark/blurry look)
+          S._sunLight.intensity = (style==='shaded' ? 0.4 : style==='wireframe' ? 0 : 0.7) * sunMul;
+          S._sunLight.castShadow = false;
         }
       }
-      // Lazy-activate SAO + Outline post-processing for the 'rendered' style.
-      if (window._ccActivatePostFX) {
-        window._ccActivatePostFX(style==='rendered');
+      if (S._fillLight) {
+        S._fillLight.intensity = (style==='rendered' ? 0.35 : style==='shaded' ? 0.55 : 0.45) * ambMul;
       }
-      // Per-mesh shadow flags
+      if (S._ambLight) {
+        S._ambLight.intensity = (style==='rendered' ? 0.55 : style==='shaded' ? 1.0 : style==='wireframe' ? 0.8 : 0.9) * ambMul;
+      }
+
+      // Disable post-processing entirely — SAO + SMAA caused blur. Plain
+      // ACES + native shadow mapping looks much sharper at far less cost.
+      if (window._ccActivatePostFX) window._ccActivatePostFX(false);
+
+      // Hide the GridHelper in rendered mode — replaced by the ground plane
+      if (S.grid) S.grid.visible = (style !== 'rendered') && (s.prefs.showGrid !== false);
+
+      // Build / position / show a proper solid ground plane (rendered only)
+      function _ccUpdateGround() {
+        if (!S.scene) return;
+        if (style !== 'rendered') {
+          if (S._groundPlane) S._groundPlane.visible = false;
+          return;
+        }
+        if (!S._groundPlane) {
+          var groundGeo = new THREE.PlaneGeometry(2000, 2000);
+          var groundMat = new THREE.MeshStandardMaterial({
+            color: light ? 0xeeeeee : 0x1a1a1a, roughness: 0.95, metalness: 0,
+            depthWrite: true
+          });
+          var ground = new THREE.Mesh(groundGeo, groundMat);
+          ground.rotation.x = -Math.PI / 2;
+          ground.receiveShadow = true;
+          ground.userData._isGround = true;
+          S._groundPlane = ground;
+          S.scene.add(ground);
+        } else {
+          S._groundPlane.material.color.set(light ? 0xeeeeee : 0x1a1a1a);
+        }
+        // Position at model's minY (so foundation/piles stay above the floor visually)
+        try {
+          var box = (typeof _elemsBBox === 'function') ? _elemsBBox() : null;
+          if (box && !box.isEmpty()) {
+            S._groundPlane.position.y = box.min.y - 0.01;
+          }
+        } catch(e){}
+        S._groundPlane.visible = true;
+      }
+      _ccUpdateGround();
+
+      // Per-mesh shadow flags (cast/receive only in rendered)
       if (S.mg) {
         var castOn = style==='rendered';
         S.mg.traverse(function(obj){
-          if (obj.isMesh) {
+          if (obj.isMesh && !obj.userData._isGround) {
             obj.castShadow = castOn;
             obj.receiveShadow = castOn;
           }
@@ -7538,42 +7648,68 @@ function startApp() {
         S._meshList = meshList;
         S._meshListModels = s.models.length;
       }
-      for (var _mi = 0; _mi < meshList.length; _mi++) {
-        var obj = meshList[_mi];
-        if(!obj.userData._origMaterial) obj.userData._origMaterial = obj.material;
-        var orig = obj.userData._origMaterial;
-        if(S._isGhostMat && S._isGhostMat(obj.material)) continue;
-        var cache = obj.userData._styleMats;
-        if(cache && cache[style]) {
-          if(obj.material !== cache[style] && obj.material !== orig) { if(obj.material.map) obj.material.map.dispose(); obj.material.dispose(); }
-          obj.material = style==='standard' ? orig : cache[style];
-        } else {
-          if(obj.material !== orig) { if(obj.material.map) obj.material.map.dispose(); obj.material.dispose(); }
-          if(style==='wireframe'){
-            obj.material = new THREE.MeshBasicMaterial({
-              color: orig.color ? orig.color.clone() : new THREE.Color(0x64748b),
-              wireframe:true, transparent:true, opacity:0.6
-            });
-          } else if(style==='shaded'){
-            obj.material = new THREE.MeshLambertMaterial({
-              color: orig.color ? orig.color.clone() : new THREE.Color(0xcccccc),
-              transparent: orig.transparent, opacity: orig.opacity,
-              side: THREE.DoubleSide
-            });
-          } else if(style==='rendered'){
-            obj.material = new THREE.MeshStandardMaterial({
-              color: orig.color ? orig.color.clone() : new THREE.Color(0xcccccc),
-              roughness:0.45, metalness:0.05,
-              transparent: orig.transparent, opacity: orig.opacity,
-              side: THREE.DoubleSide, envMapIntensity:0.5
-            });
-          } else {
-            obj.material = orig;
-          }
+
+      // ── Materials per style ────────────────────────────────────
+      // No EdgesGeometry overlays — they cause heavy z-fighting on IFC
+      // models that already have coplanar duplicate faces. Style
+      // differentiation comes from the material model + lighting alone.
+      // FrontSide everywhere (matches Revit/Enscape) — DoubleSide doubles
+      // every shadow contribution and z-fights.
+      function _disposeEdges(obj) {
+        if (obj.userData._edges) {
+          try { obj.remove(obj.userData._edges); obj.userData._edges.geometry.dispose(); obj.userData._edges.material.dispose(); } catch(e){}
+          obj.userData._edges = null;
         }
       }
+
+      for (var _mi = 0; _mi < meshList.length; _mi++) {
+        var obj = meshList[_mi];
+        if (obj.userData._isGround) continue;
+        if (!obj.userData._origMaterial) obj.userData._origMaterial = obj.material;
+        var orig = obj.userData._origMaterial;
+        if (S._isGhostMat && S._isGhostMat(obj.material)) continue;
+        _disposeEdges(obj); // clean up any stale edges from earlier code paths
+        var cache = obj.userData._styleMats || (obj.userData._styleMats = {});
+        var origColor = orig.color ? orig.color.clone() : new THREE.Color(0xcccccc);
+        var mat;
+        if (style === 'wireframe') {
+          // Pure wireframe — original color, lines only.
+          mat = cache.wireframe || (cache.wireframe = new THREE.MeshBasicMaterial({
+            color: origColor, wireframe: true,
+            transparent: true, opacity: 0.85, side: THREE.FrontSide
+          }));
+        } else if (style === 'standard') {
+          // Revit "Hidden Line" feel: lit but flat — Lambert, no env, no shadows.
+          mat = cache.standard || (cache.standard = new THREE.MeshLambertMaterial({
+            color: origColor,
+            transparent: orig.transparent, opacity: orig.opacity,
+            side: THREE.FrontSide
+          }));
+        } else if (style === 'shaded') {
+          // Revit "Consistent Colors": pure flat color, no lighting variation.
+          mat = cache.shaded || (cache.shaded = new THREE.MeshBasicMaterial({
+            color: origColor,
+            transparent: orig.transparent, opacity: orig.opacity,
+            side: THREE.FrontSide
+          }));
+        } else if (style === 'rendered') {
+          // Revit "Realistic" / Enscape: PBR + IBL + sun + shadows.
+          mat = cache.rendered || (cache.rendered = new THREE.MeshStandardMaterial({
+            color: origColor,
+            roughness: 0.85, metalness: 0.0,
+            envMapIntensity: 0.85,
+            transparent: orig.transparent, opacity: orig.opacity,
+            side: THREE.FrontSide
+          }));
+          // Live-update env intensity from the Ambient slider
+          mat.envMapIntensity = 0.85 * ambMul;
+        } else {
+          mat = orig;
+        }
+        if (obj.material !== mat) obj.material = mat;
+      }
       invalidate();
-    }, [s.prefs.renderStyle, s.prefs.theme, s.models.length]);
+    }, [s.prefs.renderStyle, s.prefs.theme, s.models.length, s.prefs.lightSettings]);
 
     var ps = useState(false), perfOpen=ps[0], setPerfOpen=ps[1];
     var pd = useState({fps:0,tris:0,meshCount:0,drawCalls:0}), perfData=pd[0], setPerfData=pd[1];
@@ -8153,7 +8289,7 @@ function startApp() {
     }
     return html`<div style=${{marginTop:'.4rem'}}>
       <button onClick=${toggleSectionBox}
-        style=${{...S_BTN,width:'100%',padding:'.25rem',background:active?'#7c3aed':'var(--bg-secondary)',color:active?'#fff':'var(--text-muted)',border:'1px solid '+(active?'#7c3aed':'var(--border)'),marginBottom:active?'.4rem':0}}>
+        style=${{...S_BTN,width:'100%',padding:'.25rem',background:active?'var(--accent)':'var(--bg-secondary)',color:active?'#fff':'var(--text-muted)',border:'1px solid '+(active?'var(--accent)':'var(--border)'),marginBottom:active?'.4rem':0}}>
         ${active?'Section Box OFF':'Section Box'}
       </button>
       ${active && html`<div style=${{fontSize:'0.63rem',color:'var(--text-muted)',padding:'.2rem 0'}}>
@@ -8501,7 +8637,7 @@ function startApp() {
               <button onClick=${function(){setShowVer(false);if(window._ccToggleTutorial)window._ccToggleTutorial();}}
                 style=${{...S_BTN,width:'100%',padding:'.35rem .5rem',background:'var(--accent)',color:'#fff',fontSize:'0.8rem',fontWeight:600,borderRadius:6,textAlign:'center',justifyContent:'center'}}}>Quick Start Guide</button>
               <button onClick=${function(){setShowVer(false);if(window._ccStartTour)window._ccStartTour();}}
-                style=${{...S_BTN,width:'100%',padding:'.35rem .5rem',background:'#7c3aed',color:'#fff',fontSize:'0.8rem',fontWeight:600,borderRadius:6,textAlign:'center',justifyContent:'center'}}}>Interactive Tour</button>
+                style=${{...S_BTN,width:'100%',padding:'.35rem .5rem',background:'var(--accent)',color:'#fff',fontSize:'0.8rem',fontWeight:600,borderRadius:6,textAlign:'center',justifyContent:'center'}}}>Interactive Tour</button>
             </div>
             <div style=${{marginTop:'.3rem',fontSize:'0.69rem',color:'var(--text-faint)'}}>Free, open-source IFC clash detection</div>
           </div>`}
@@ -8566,7 +8702,7 @@ function startApp() {
           var unread = (s.comments||[]).filter(function(c){return !c.resolved && c.author && sp.userName && c.author!==sp.userName && (c.ts||0) > ((sp.lastSync||0) - 60000);}).length;
           var connected = !!sp.enabled;
           var dotColor = connected ? (sp.syncing?'#f59e0b':'#22c55e') : 'rgba(255,255,255,.45)';
-          var bg = connected ? 'linear-gradient(135deg,#7c3aed 0%,#3b82f6 100%)' : 'var(--accent)';
+          var bg = 'var(--accent)';
           return html`<button class="cc-btn-press" onClick=${function(){
               try { if (window._ccActivateAddon) window._ccActivateAddon('shared-project'); } catch(e){}
               d({t:A.SHARE,v:true});
@@ -8587,7 +8723,7 @@ function startApp() {
         </button>
         <button class="cc-hide-mobile cc-btn-press" onClick=${function(){d({t:A.PRESENT,v:!s.presenting});}}
           title="Presentation mode (P) — fullscreen, hide chrome, auto-rotate when idle"
-          style=${{...S_BTN,background:s.presenting?'#7c3aed':'var(--bg-secondary)',color:s.presenting?'#fff':'var(--text-secondary)',border:'1px solid '+(s.presenting?'#a78bfa':'var(--border)'),fontSize:'var(--text-xs)',display:'flex',alignItems:'center',gap:'.35rem'}}>
+          style=${{...S_BTN,background:s.presenting?'var(--accent)':'var(--bg-secondary)',color:s.presenting?'#fff':'var(--text-secondary)',border:'1px solid '+(s.presenting?'var(--accent-hover)':'var(--border)'),fontSize:'var(--text-xs)',display:'flex',alignItems:'center',gap:'.35rem'}}>
           <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polygon points="5 3 19 12 5 21 5 3"/></svg>
           Present
         </button>
@@ -9756,7 +9892,7 @@ function startApp() {
           <div style=${{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:'.3rem'}}>
             <span style=${{fontSize:'0.69rem',fontWeight:600,color:'var(--text-muted)',textTransform:'uppercase',letterSpacing:'.05em'}}>2D Underlays</span>
             <button onClick=${function(){d({t:A.UNDERLAY_MODE,v:'view2d'})}}
-              style=${{...S_BTN,fontSize:'0.63rem',padding:'.1rem .3rem',background:'#7c3aed',color:'#fff'}}>View 2D</button>
+              style=${{...S_BTN,fontSize:'0.63rem',padding:'.1rem .3rem',background:'var(--accent)',color:'#fff'}}>View 2D</button>
           </div>
           ${s.underlays.map(function(ul){
             return html`<div key=${ul.id} style=${{display:'flex',alignItems:'center',gap:'.3rem',padding:'.25rem .3rem',background:s.activeUnderlay===ul.id?'var(--bg-tertiary)':'transparent',borderRadius:4,cursor:'pointer'}}
@@ -9794,7 +9930,7 @@ function startApp() {
             <span style=${{fontSize:'0.75rem',fontWeight:600,color:'var(--text-muted)',textTransform:'uppercase',letterSpacing:'.05em'}}>Levels</span>
             <div style=${{display:'flex',gap:'.2rem'}}>
               ${activePlan && html`<button onClick=${function(){d({t:A.FLOOR_PLAN,v:null})}}
-                style=${{...S_BTN,fontSize:'0.69rem',padding:'.1rem .3rem',background:'#7c3aed',color:'#fff'}}>Exit Plan</button>`}
+                style=${{...S_BTN,fontSize:'0.69rem',padding:'.1rem .3rem',background:'var(--accent)',color:'#fff'}}>Exit Plan</button>`}
               <button onClick=${function(){s.models.forEach(function(m){d({t:A.TOGGLE_ALL_STOREYS,id:m.id,storeys:(m.storeys||[]).concat(['']),hide:false})})}}
                 style=${{...S_BTN,fontSize:'0.69rem',padding:'.1rem .3rem',background:'var(--bg-primary)',color:'var(--text-secondary)'}}>All on</button>
               <button onClick=${function(){s.models.forEach(function(m){d({t:A.TOGGLE_ALL_STOREYS,id:m.id,storeys:(m.storeys||[]).concat(['']),hide:true})})}}
@@ -9852,7 +9988,7 @@ function startApp() {
                     d({t:A.SECTION,axis:'y',pos:pos,storeyName:st});
                   }
                 }}
-                style=${{...S_BTN,fontSize:'0.57rem',padding:'.05rem .22rem',background:isSectionActive?'#7c3aed':'var(--bg-secondary)',color:isSectionActive?'#e9d5ff':'var(--text-muted)',flexShrink:0,lineHeight:1.4}}>
+                style=${{...S_BTN,fontSize:'0.57rem',padding:'.05rem .22rem',background:isSectionActive?'var(--accent)':'var(--bg-secondary)',color:isSectionActive?'#fff':'var(--text-muted)',flexShrink:0,lineHeight:1.4}}>
                 ${isSectionActive?'✕':'Show'}
               </button>`}
             </div>`;
@@ -10002,7 +10138,7 @@ function startApp() {
         </span>
         <span style=${{width:10,height:10,borderRadius:'50%',background:m.color,flexShrink:0}}></span>
         <span style=${{color:'var(--text-primary)',fontSize:'0.86rem',flex:1,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}} title=${m.name}>${m.name}</span>
-        ${m._version>1 && html`<span style=${{fontSize:'0.57rem',color:'#60a5fa',background:'var(--accent-bg)',padding:'.05rem .25rem',borderRadius:3,flexShrink:0,fontWeight:600}}>v${m._version}</span>`}
+        ${m._version>1 && html`<span style=${{fontSize:'0.57rem',color:'var(--accent)',background:'var(--accent-bg)',padding:'.05rem .25rem',borderRadius:3,flexShrink:0,fontWeight:600}}>v${m._version}</span>`}
         ${m._stub && html`<span style=${{fontSize:'0.63rem',color:'#f59e0b',background:'var(--pill-amber-bg)',padding:'.05rem .3rem',borderRadius:4,flexShrink:0}}>stub</span>`}
         ${m.stats && m.stats.loadType && html`<span style=${{fontSize:'0.57rem',padding:'1px 4px',borderRadius:3,background:'rgba(124,58,237,.12)',color:'var(--accent)',fontWeight:600,flexShrink:0}}>${m.stats.loadType}</span>`}
         ${m.stats && m.stats.loadTime && html`<span style=${{fontSize:'0.63rem',color:'var(--text-faint)',flexShrink:0}}>${(m.stats.loadTime/1000).toFixed(1)}s</span>`}
@@ -10291,7 +10427,7 @@ function startApp() {
             <span style=${{fontSize:'var(--text-2xs)',color:'var(--text-muted)'}}>${keys.length} groups · ${total} elements</span>
           </div>
           <button class="cc-btn-press" onClick=${function(){d({t:A.COLOR_BY_CLASS,v:classView})}}
-            style=${{...S_BTN,fontSize:'var(--text-2xs)',padding:'var(--space-1) var(--space-2)',background:s.colorByClass===classView?'#7c3aed':'var(--bg-secondary)',color:s.colorByClass===classView?'#fff':'var(--text-faint)',fontWeight:'var(--weight-medium)'}}
+            style=${{...S_BTN,fontSize:'var(--text-2xs)',padding:'var(--space-1) var(--space-2)',background:s.colorByClass===classView?'var(--accent)':'var(--bg-secondary)',color:s.colorByClass===classView?'#fff':'var(--text-faint)',fontWeight:'var(--weight-medium)'}}
             title="Color elements by this classification">Color</button>
         </div>`}
         ${classView && hiddenCount>0 && html`<div style=${{fontSize:'var(--text-2xs)',color:'var(--color-warning-fg)'}}>${hiddenCount} group${hiddenCount>1?'s':''} hidden</div>`}
@@ -11324,15 +11460,20 @@ function startApp() {
     }, [s.clashes, s.issues]);
     var oC=counts.oC, oI=counts.oI;
     var FL={fontSize:'0.69rem',color:'var(--text-muted)',marginBottom:'.15rem',display:'block'};
-    var PILL=function(active){return Object.assign({},S_BTN,{fontSize:'0.69rem',padding:'.15rem .35rem',background:active?'#2563eb':'var(--bg-secondary)',color:active?'#fff':'var(--text-faint)'});};
+    var PILL=function(active){return Object.assign({},S_BTN,{fontSize:'0.69rem',padding:'.15rem .35rem',background:active?'var(--accent)':'var(--bg-secondary)',color:active?'#fff':'var(--text-faint)'});};
     var SELSTYLE={fontSize:'0.75rem',padding:'.2rem .3rem',borderRadius:4,background:'var(--bg-secondary)',color:'var(--text-secondary)',border:'1px solid var(--border)',width:'100%'};
 
     return html`<div style=${{display:'flex',flexDirection:'column',flex:1,overflow:'hidden',minHeight:0}}>
-      ${!hideTabBar && html`<div style=${{display:'flex',borderBottom:'1px solid var(--border-subtle)',flexShrink:0}} role="tablist">
-        ${[{id:'clashes',label:'Conflicts',n:oC,bg:'#ef4444'},{id:'issues',label:'Issues',n:oI,bg:'#f59e0b'},{id:'navigator',label:'Navigator',n:0,bg:'#34d399'},{id:'standards',label:'Standards',n:0,bg:'#0ea5e9'}].map(function(t){return html`
+      ${!hideTabBar && html`<div style=${{display:'flex',borderBottom:'1px solid var(--border-subtle)',flexShrink:0,background:'var(--bg-primary)'}} role="tablist">
+        ${[{id:'clashes',label:'Conflicts',n:oC},{id:'issues',label:'Issues',n:oI},{id:'navigator',label:'Navigator',n:0},{id:'standards',label:'Standards',n:0}].map(function(t){return html`
           <button key=${t.id} onClick=${function(){d({t:A.TAB,v:t.id})}} role="tab" aria-selected=${s.tab===t.id}
-            style=${{...S_BTN,flex:1,background:'none',borderRadius:0,padding:'.6rem',color:s.tab===t.id?'var(--text-primary)':'var(--text-faint)',borderBottom:s.tab===t.id?'2px solid #3b82f6':'2px solid transparent'}}>
-            ${t.label}${t.n>0?html`<span style=${{marginLeft:'.3rem',background:t.bg,color:'#fff',fontSize:'0.69rem',padding:'.05rem .35rem',borderRadius:99}}>${t.n}</span>`:''}
+            style=${{...S_BTN,flex:1,background:'none',borderRadius:0,padding:'.7rem .4rem',
+              fontFamily:'var(--font-body)',fontSize:'.78rem',fontWeight:s.tab===t.id?500:400,
+              color:s.tab===t.id?'var(--text-primary)':'var(--text-muted)',
+              borderBottom:s.tab===t.id?'2px solid var(--accent)':'2px solid transparent',
+              display:'inline-flex',alignItems:'center',justifyContent:'center',gap:'.3rem'}}>
+            <span>${t.label}</span>
+            ${t.n>0?html`<span style=${{fontFamily:'var(--font-mono)',fontSize:'.65rem',color:s.tab===t.id?'var(--accent)':'var(--text-muted)'}}>${t.n}</span>`:''}
           </button>`})}
       </div>`}
 
@@ -11344,25 +11485,28 @@ function startApp() {
       ${!isExplorerTab && !isStandardsTab && html`<div style=${{padding:'.4rem .4rem .35rem',borderBottom:'1px solid var(--border-subtle)',flexShrink:0}}>
         <div style=${{display:'flex',gap:'.3rem',alignItems:'center'}}>
           <div style=${{flex:1,position:'relative',display:'flex',alignItems:'center'}}>
-            <svg width="13" height="13" viewBox="0 0 16 16" fill="none" style=${{position:'absolute',left:'.45rem',pointerEvents:'none',flexShrink:0}}>
-              <path d="M2 4h12M2 8h8M2 12h10" stroke="#60a5fa" stroke-width="1.6" stroke-linecap="round"/>
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" style=${{position:'absolute',left:'.5rem',pointerEvents:'none',flexShrink:0,color:'var(--text-muted)'}}>
+              <circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/>
             </svg>
             <input type="text" placeholder=${isClashTab ? 'Filter… e.g. "hard on floor 2" or "open pipes"' : 'Search…'} value=${f.search}
               onInput=${function(e){d({t:A.UPD_FILTERS,u:{search:e.target.value}})}}
-              style=${{...S_INPUT,fontSize:'0.8rem',padding:'.3rem .4rem .3rem 1.85rem',width:'100%',background:f.search?'#0f1e33':'var(--bg-secondary)',border:f.search?'1px solid #3b82f6':'1px solid var(--border)',transition:'all .15s'}} />
-            ${f.search && html`<button onClick=${function(){d({t:A.UPD_FILTERS,u:{search:''}})}} style=${{position:'absolute',right:'.35rem',background:'none',border:'none',cursor:'pointer',color:'var(--text-faint)',fontSize:'0.86rem',padding:0,lineHeight:1}}>✕</button>`}
+              style=${{...S_INPUT,fontSize:'0.8rem',padding:'.32rem .4rem .32rem 1.85rem',width:'100%',background:f.search?'var(--accent-bg)':'var(--bg-secondary)',border:f.search?'1px solid var(--accent)':'1px solid var(--border)',transition:'all .15s'}} />
+            ${f.search && html`<button onClick=${function(){d({t:A.UPD_FILTERS,u:{search:''}})}} style=${{position:'absolute',right:'.4rem',background:'none',border:'none',cursor:'pointer',color:'var(--text-muted)',padding:0,lineHeight:0,display:'inline-flex',alignItems:'center',justifyContent:'center'}}>
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg>
+            </button>`}
           </div>
-          <span style=${{fontSize:'0.67rem',color:items.length<rawItems.length?'#60a5fa':'var(--text-faint)',fontWeight:items.length<rawItems.length?600:400,whiteSpace:'nowrap',flexShrink:0}}>${items.length}${items.length<rawItems.length?' / '+rawItems.length:''}</span>
+          <span style=${{fontFamily:'var(--font-mono)',fontSize:'.68rem',color:items.length<rawItems.length?'var(--accent)':'var(--text-muted)',whiteSpace:'nowrap',flexShrink:0}}>${items.length}${items.length<rawItems.length?' / '+rawItems.length:''}</span>
           <button onClick=${function(){setFiltersOpen(!filtersOpen)}}
-            style=${{...S_BTN,padding:'.3rem .5rem',background:filtersOpen||activeCount>0?'var(--accent-bg)':'var(--bg-secondary)',color:filtersOpen||activeCount>0?'var(--accent-subtle)':'var(--text-faint)',border:'1px solid var(--border)',fontSize:'0.75rem',whiteSpace:'nowrap',flexShrink:0}} aria-label="Toggle filters">
-            ⚙${activeCount>0?html`<span style=${{background:'var(--accent)',color:'#fff',borderRadius:99,padding:'.05rem .3rem',fontSize:'0.63rem',marginLeft:'.2rem'}}>${activeCount}</span>`:''}
+            style=${{...S_BTN,padding:'.3rem .45rem',background:filtersOpen||activeCount>0?'var(--accent-bg)':'var(--bg-secondary)',color:filtersOpen||activeCount>0?'var(--accent)':'var(--text-muted)',border:'1px solid var(--border)',fontSize:'0.75rem',whiteSpace:'nowrap',flexShrink:0,display:'inline-flex',alignItems:'center',gap:'.25rem'}} aria-label="Toggle filters">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><path d="M3 6h18M6 12h12M10 18h4"/></svg>
+            ${activeCount>0?html`<span style=${{fontFamily:'var(--font-mono)',fontSize:'.65rem',color:'var(--accent)'}}>${activeCount}</span>`:''}
           </button>
         </div>
       </div>`}
       ${!isExplorerTab && !isStandardsTab && filtersOpen && html`<div style=${{padding:'.5rem',borderBottom:'1px solid var(--border-subtle)',flexShrink:0,display:'flex',flexDirection:'column',gap:'.4rem',background:'var(--bg-tertiary)'}}>
         <div style=${{display:'flex',justifyContent:'space-between',alignItems:'center'}}>
-          <span style=${{fontSize:'0.75rem',fontWeight:600,color:'var(--text-muted)',textTransform:'uppercase',letterSpacing:'.05em'}}>Filters</span>
-          <button onClick=${function(){d({t:A.RESET_FILTERS})}} style=${{...S_BTN,fontSize:'0.63rem',padding:'.1rem .3rem',background:'none',color:'var(--text-faint)',textDecoration:'underline'}}>Clear all</button>
+          <span style=${{fontSize:'.78rem',fontWeight:500,color:'var(--text-secondary)'}}>Filters</span>
+          <button onClick=${function(){d({t:A.RESET_FILTERS})}} style=${{...S_BTN,fontSize:'.7rem',padding:'.1rem .3rem',background:'none',color:'var(--text-muted)',textDecoration:'underline',textUnderlineOffset:2}}>Clear all</button>
         </div>
 
         <div>
@@ -11412,7 +11556,7 @@ function startApp() {
           maxDist = Math.ceil(maxDist/50)*50 || 500;
           var val = Math.min(f.distMax===9999?maxDist:f.distMax, maxDist);
           var pct = (val/maxDist)*100;
-          var trackBg = 'linear-gradient(to right, #3b82f6 '+pct+'%, var(--bg-primary) '+pct+'%)';
+          var trackBg = 'linear-gradient(to right, var(--accent) '+pct+'%, var(--bg-primary) '+pct+'%)';
           function onChange(e){var v=+e.target.value;d({t:A.UPD_FILTERS,u:{distMax:v,distMin:0,type:'all'}});}
           var label = val===0?'Hard only':val>=maxDist?'All (hard+soft)':'0 (hard)–'+val+'mm';
           return html`<div>
@@ -12754,7 +12898,7 @@ function startApp() {
               style=${{padding: '.25rem .4rem', borderBottom: '1px solid var(--border-subtle)', cursor: 'pointer', fontSize: '0.63rem',
                 display: 'flex', gap: '.3rem', alignItems: 'center',
                 background: isSel ? 'rgba(124,58,237,.18)' : 'transparent',
-                borderLeft: isSel ? '2px solid #7c3aed' : '2px solid transparent'}}>
+                borderLeft: isSel ? '2px solid var(--accent)' : '2px solid transparent'}}>
               <span style=${{flexShrink: 0, width: 6, height: 6, borderRadius: '50%',
                 background: r.severity === 'error' ? '#ef4444' : r.severity === 'warning' ? '#f59e0b' : '#60a5fa'}}></span>
               <span style=${{color: '#c084fc', flexShrink: 0}}>${r.ifcType}</span>
@@ -13718,7 +13862,7 @@ function startApp() {
                 }
                 setTolState(function(p){return Object.assign({},p,{promptAction:'updated'});});
               }}
-                style=${{fontSize:'0.57rem',padding:'.1rem .3rem',background:'var(--accent-bg)',color:'#60a5fa',border:'1px solid #3b82f644',borderRadius:3,cursor:'pointer',fontWeight:600}}>Update</button>
+                style=${{fontSize:'0.57rem',padding:'.1rem .3rem',background:'var(--accent-bg)',color:'var(--accent)',border:'1px solid var(--accent-subtle)',borderRadius:3,cursor:'pointer',fontWeight:600}}>Update</button>
               <button onClick=${function(e){e.stopPropagation();setTolState(function(p){return Object.assign({},p,{promptAction:'dismissed'});});}}
                 style=${{fontSize:'0.57rem',padding:'.1rem .3rem',background:'var(--bg-secondary)',color:'var(--text-faint)',border:'1px solid var(--border)',borderRadius:3,cursor:'pointer'}}>Keep local</button>
             </div>`}
@@ -14015,7 +14159,7 @@ function startApp() {
           ${presets.map(presetBtn)}
           <input type="range" min="30" max="110" step="1" value=${Math.round(fov)}
             onInput=${function(e){applyFov(parseFloat(e.target.value));}}
-            style=${{width:90,accentColor:'#7c3aed'}} />
+            style=${{width:90,accentColor:'var(--accent)'}} />
           <span style=${{fontSize:'0.66rem',color:'rgba(255,255,255,.65)',fontVariantNumeric:'tabular-nums',width:32,textAlign:'right'}}>${Math.round(fov)}°</span>
           <span style=${{width:1,height:18,background:'rgba(255,255,255,.15)',margin:'0 .3rem'}}></span>
           <button onClick=${function(){if(window._ccWalkSetCollision)window._ccWalkSetCollision(!flags.collision);}}
@@ -14553,7 +14697,7 @@ function startApp() {
       onClick=${function(){d({t:A.SHARE,v:false});}}>
       <div class="cc-modal-card" style=${{...S_MODAL_CARD,width:560,padding:0,display:'flex',flexDirection:'column'}} onClick=${function(e){e.stopPropagation();}}>
         <div style=${{padding:'1rem 1.2rem .6rem',display:'flex',alignItems:'center',gap:'.6rem'}}>
-          <div style=${{width:32,height:32,borderRadius:8,background:'rgba(124,58,237,.12)',display:'flex',alignItems:'center',justifyContent:'center',color:'#60a5fa'}}>
+          <div style=${{width:32,height:32,borderRadius:8,background:'var(--accent-bg)',display:'flex',alignItems:'center',justifyContent:'center',color:'var(--accent)'}}>
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/></svg>
           </div>
           <div style=${{flex:1}}>
@@ -14673,7 +14817,7 @@ function startApp() {
         style=${{padding:'.25rem .6rem',borderRadius:99,fontSize:'0.72rem',fontWeight:600,cursor:'pointer',fontFamily:'inherit',
           border:'1px solid '+(active?'var(--accent)':'var(--border)'),
           background:active?'rgba(124,58,237,.12)':'transparent',
-          color:active?'#60a5fa':'var(--text-muted)'}}>${label}</button>`;
+          color:active?'var(--accent)':'var(--text-muted)'}}>${label}</button>`;
     };
 
     return html`<div style=${{display:'flex',flexDirection:'column',gap:'.8rem'}}>
@@ -16308,10 +16452,10 @@ function startApp() {
       </div>
       <div style=${{ position: 'absolute', top: '.5rem', right: '.5rem', display: 'flex', gap: '.3rem', pointerEvents: 'auto', flexWrap: 'wrap', justifyContent: 'flex-end' }}>
         <button onClick=${function() { d({ t: 'UNDERLAY_MODE', v: null }); }}
-          style=${{ ...S_BTN, fontSize: '.6rem', padding: '.2rem .5rem', background: '#2563eb', color: '#fff', border: '1px solid #3b82f6' }}>Back to 3D</button>
+          style=${{ ...S_BTN, fontSize: '.6rem', padding: '.2rem .5rem', background: 'var(--accent)', color: '#fff', border: '1px solid var(--accent-hover)' }}>Back to 3D</button>
         ${s.floorPlan && html`<button onClick=${function() { d({ t: 'UNDERLAY_MODE', v: s.underlayMode === 'compare' ? 'view2d' : 'compare' }); }}
           style=${{ ...S_BTN, fontSize: '.6rem', padding: '.2rem .5rem',
-            background: s.underlayMode === 'compare' ? '#7c3aed' : 'var(--overlay-bg)',
+            background: s.underlayMode === 'compare' ? 'var(--accent)' : 'var(--overlay-bg)',
             color: s.underlayMode === 'compare' ? '#fff' : 'var(--text-muted)',
             border: '1px solid var(--border)' }}>${s.underlayMode === 'compare' ? 'Compare ON' : 'Compare'}</button>`}
         <${SheetToolbarControls} s=${s} d=${d} />
@@ -20216,7 +20360,7 @@ function startApp() {
       <button onClick=${function(){dismiss('denied');}}
         style=${{...S_BTN,padding:'.35rem .55rem',background:'transparent',border:'1px solid var(--border)',borderRadius:6,color:'var(--text-secondary)',fontSize:'0.74rem',whiteSpace:'nowrap',flexShrink:0}}>Opt out</button>
       <button onClick=${function(){dismiss(null);}}
-        style=${{...S_BTN,padding:'.35rem .65rem',background:'#7c3aed',border:'none',borderRadius:6,color:'#fff',fontSize:'0.74rem',fontWeight:600,whiteSpace:'nowrap',flexShrink:0}}>Got it</button>
+        style=${{...S_BTN,padding:'.35rem .65rem',background:'var(--accent)',border:'none',borderRadius:6,color:'#fff',fontSize:'0.74rem',fontWeight:600,whiteSpace:'nowrap',flexShrink:0}}>Got it</button>
     </div>`;
   }
 
@@ -21425,13 +21569,26 @@ function startApp() {
       <div style=${{flexShrink:0,height:'100%',marginLeft:'var(--space-4)'}}>
         <${WorkspaceTabs} s=${s} d=${d} />
       </div>
-      <!-- Centre: typographic model name (no chrome) -->
-      <div style=${{flex:1,display:'flex',justifyContent:'center',alignItems:'center',minWidth:0,padding:'0 var(--space-3)'}}>
+      <!-- Centre: typographic model name + Add-model affordance -->
+      <div style=${{flex:1,display:'flex',justifyContent:'center',alignItems:'center',minWidth:0,padding:'0 var(--space-3)',gap:'.6rem'}}>
         ${modelName && html`<span style=${{
           fontFamily:'var(--font-display)',fontWeight:500,fontSize:'var(--text-base)',
           letterSpacing:'-.01em',color:'var(--ink-secondary)',
           whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis',maxWidth:480
         }} title=${modelName}>${modelName}</span>`}
+        ${modelName && html`<button class="cc-btn-press" title="Add another model (O)"
+          aria-label="Add another model"
+          onClick=${function(){ if(window._ccOpenIFC) window._ccOpenIFC(); }}
+          style=${{display:'inline-flex',alignItems:'center',gap:'.3rem',
+            background:'none',border:'1px solid var(--hairline-strong)',
+            borderRadius:'var(--radius-sm)',cursor:'pointer',padding:'.22rem .55rem',
+            fontFamily:'var(--font-body)',fontSize:'var(--text-xs)',
+            color:'var(--ink-muted)',lineHeight:1.2}}
+          onMouseEnter=${function(e){e.currentTarget.style.color='var(--ink-primary)';e.currentTarget.style.background='var(--surface-warm)';}}
+          onMouseLeave=${function(e){e.currentTarget.style.color='var(--ink-muted)';e.currentTarget.style.background='none';}}>
+          <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
+          <span>Add model</span>
+        </button>`}
       </div>
       <!-- Right: Share + avatar -->
       <div style=${{display:'flex',alignItems:'center',gap:'var(--space-2)',flexShrink:0,height:'100%'}}>
@@ -21463,8 +21620,18 @@ function startApp() {
     if (s.presenting) return null;
 
     var styleSt = useState(false), styleOpen=styleSt[0], setStyleOpen=styleSt[1];
+    var pickSt  = useState(false), pickOn = pickSt[0], setPickOn = pickSt[1];
+
+    useEffect(function(){
+      function onEnd(){ setPickOn(false); }
+      window.addEventListener('cc-section-pick-end', onEnd);
+      function onKey(e){ if (e.key === 'Escape' && window._ccSectionPickPending) { window._ccSectionPickPending = false; setPickOn(false); } }
+      window.addEventListener('keydown', onKey);
+      return function(){ window.removeEventListener('cc-section-pick-end', onEnd); window.removeEventListener('keydown', onKey); };
+    }, []);
 
     var activeMode = s.walkMode ? 'walk'
+      : pickOn ? 'slice'
       : (s.sectionAxis || s.sectionCustom || (s.sectionBox && s.sectionBox.enabled)) ? 'slice'
       : s.measureMode ? 'measure'
       : s.floorPlan ? 'plan'
@@ -21518,8 +21685,10 @@ function startApp() {
     var I = {
       fit:    '<path d="M3 8V3h5"/><path d="M21 8V3h-5"/><path d="M3 16v5h5"/><path d="M21 16v5h-5"/>',
       reset:  '<path d="M3 12a9 9 0 0 1 15-6.7L21 8"/><path d="M21 3v5h-5"/>',
-      slice:  '<path d="M5 5l14 14"/><path d="M14 5h5v5"/>',
-      slicebox:'<rect x="4" y="4" width="16" height="16" rx="1"/><path d="M9 4v16"/><path d="M4 9h16"/>',
+      // Make Section: a knife/scalpel cutting through a plane (clearly "cut")
+      slice:  '<path d="M3 16l12-12"/><path d="M11 8l5 5"/><path d="M5 16h6"/><path d="M5 16v3"/>',
+      // Section Box: outer cube + inner dashed cube (crop region)
+      slicebox:'<rect x="3" y="3" width="18" height="18" rx="1"/><path stroke-dasharray="2 2" d="M7 7h10v10h-10z"/>',
       clear:  '<path d="M5 5l14 14"/><path d="M19 5L5 19"/>',
       ruler:  '<path d="M3 12h18"/><path d="M5 12V9"/><path d="M9 12v-4"/><path d="M13 12V8"/><path d="M17 12v-4"/><path d="M21 12V9"/>',
       angle:  '<path d="M5 19L19 19"/><path d="M5 19L5 5"/><path d="M5 8a8 8 0 0 1 11 11"/>',
@@ -21542,7 +21711,19 @@ function startApp() {
     /* Section sub-row only appears when a slice plane exists, anchored under
        the toolbar (not floating). Same ink palette, no glass. */
     var subRow = null;
-    if (activeMode === 'slice' && (s.sectionAxis || s.sectionCustom)) {
+    if (pickOn) {
+      subRow = html`<div style=${{display:'flex',alignItems:'center',gap:'.6rem',padding:'.32rem .9rem',
+        background:'var(--accent-bg)',borderTop:'1px solid var(--accent)',
+        fontSize:'var(--text-xs)',color:'var(--accent)'}}>
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12h6"/><circle cx="12" cy="12" r="3"/><path d="M15 12h6"/></svg>
+        <span style=${{fontWeight:500}}>Click any surface to make a section through it.</span>
+        <span style=${{flex:1}}></span>
+        <button onClick=${function(){ window._ccSectionPickPending=false; setPickOn(false); }}
+          style=${{background:'none',border:'1px solid var(--accent)',color:'var(--accent)',
+            padding:'.18rem .55rem',borderRadius:'var(--radius-xs)',cursor:'pointer',
+            fontFamily:'var(--font-body)',fontSize:'var(--text-2xs)'}}>Cancel · Esc</button>
+      </div>`;
+    } else if (activeMode === 'slice' && (s.sectionAxis || s.sectionCustom)) {
       subRow = html`<div style=${{display:'flex',alignItems:'center',gap:'.5rem',padding:'.25rem .9rem',
         background:'var(--surface)',borderTop:'1px solid var(--hairline)',
         fontSize:'var(--text-xs)',color:'var(--ink-muted)'}}>
@@ -21592,12 +21773,24 @@ function startApp() {
                 onClick:function(){ if(window._ccResetView) window._ccResetView(); else if(window._resetView) window._resetView(); }})}
         ${div()}
         <!-- SECTION -->
-        ${btn({k:'slice',    active:activeMode==='slice'&&!(s.sectionBox&&s.sectionBox.enabled), title:'Make Section (X)', label:'Make Section', icon:I.slice,
-                onClick:function(){ if(activeMode==='slice'&&!(s.sectionBox&&s.sectionBox.enabled)) clearAllModes(); else setMode('slice'); }})}
-        ${btn({k:'slicebox', active:!!(s.sectionBox&&s.sectionBox.enabled), title:'Section Box', label:'Section Box', icon:I.slicebox,
-                onClick:function(){ clearAllModes(); if(window._ccActivateSectionBox) window._ccActivateSectionBox(); else d({t:A.SECTION_BOX,v:{enabled:true,min:null,max:null}}); }})}
+        ${btn({k:'slice',    active:activeMode==='slice'&&!(s.sectionBox&&s.sectionBox.enabled), title:'Make Section — click a surface (X)', label:'Make Section', icon:I.slice,
+                onClick:function(){
+                  // Toggle the click-a-surface pick mode
+                  if (pickOn) { window._ccSectionPickPending = false; setPickOn(false); return; }
+                  clearAllModes();
+                  window._ccSectionPickPending = true;
+                  setPickOn(true);
+                }})}
+        ${btn({k:'slicebox', active:!!(s.sectionBox&&s.sectionBox.enabled), title:'Section Box — crop to a region', label:'Section Box', icon:I.slicebox,
+                onClick:function(){
+                  if (s.sectionBox && s.sectionBox.enabled) { d({t:A.SECTION_BOX,v:null}); return; }
+                  clearAllModes();
+                  if (window._ccActivateSectionBox) {
+                    window._ccActivateSectionBox();
+                  }
+                }})}
         ${btn({k:'sclear', title:'Clear Section (Esc)',  label:'Clear Section', icon:I.clear,
-                onClick:function(){ d({t:A.SECTION,axis:null}); d({t:A.SECTION_CUSTOM,v:null}); d({t:A.SECTION_BOX,v:null}); }})}
+                onClick:function(){ window._ccSectionPickPending=false; setPickOn(false); d({t:A.SECTION,axis:null}); d({t:A.SECTION_CUSTOM,v:null}); d({t:A.SECTION_BOX,v:null}); }})}
         ${div()}
         <!-- MEASURE -->
         ${btn({k:'measure', active:activeMode==='measure'&&s.measureMode!=='angle', title:'Distance (M)', label:'Distance', icon:I.ruler,
