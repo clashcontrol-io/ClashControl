@@ -259,7 +259,7 @@
       --ink-accent:var(--accent);--ink-accent-soft:var(--accent-bg);--ink-accent-deep:var(--accent-hover);
       --hairline:var(--border-subtle);--hairline-strong:var(--border);
       --shadow-soft:var(--shadow-sm);--shadow-lifted:var(--shadow-md);
-      --sev-critical:#ef4444;--sev-major:#f59e0b;--sev-minor:#34d399;--sev-info:#94a3b8;
+      --sev-critical:#ef4444;--sev-major:#f59e0b;--sev-minor:#34d399;--sev-info:#a3a3a3;
     }
     [data-theme=light]{}
     .cc-left-panel{overflow-x:hidden!important}
@@ -356,8 +356,7 @@
       .cc-header{padding:.35rem .5rem!important}
       .cc-header-actions{gap:.25rem!important}
       .cc-header-actions .cc-hide-mobile{display:none!important}
-      .cc-viewcube-wrap{width:70px!important;height:70px!important}
-      .cc-viewcube-wrap canvas{width:56px!important;height:56px!important;top:7px!important;left:7px!important}
+      .cc-viewcube-wrap{display:none!important}
       .cc-nlpanel{width:calc(100vw - 1rem)!important;bottom:calc(4.5rem + env(safe-area-inset-bottom, 0px))!important}
       .cc-nlpanel-closed{bottom:calc(4rem + env(safe-area-inset-bottom, 0px))!important;left:50%!important;transform:translateX(-50%)!important}
       .cc-overlay-top{flex-wrap:wrap!important;max-width:calc(100vw - 6rem)!important}
@@ -372,8 +371,7 @@
       .cc-header-project{max-width:120px!important}
       .cc-header-project span{font-size:0.69rem!important}
       .cc-overlay-info{font-size:0.69rem!important;gap:.3rem!important}
-      .cc-viewcube-wrap{width:56px!important;height:56px!important;top:.25rem!important;right:.5rem!important}
-      .cc-viewcube-wrap canvas{width:45px!important;height:45px!important;top:6px!important;left:6px!important}
+      .cc-viewcube-wrap{display:none!important}
     }
     .cc-header{display:none!important}
     @media(max-width:768px){.cc-header{display:flex!important}}
@@ -391,14 +389,7 @@
       .cc-ai-panel,.cc-ai-collapsed-tab{display:none!important}
     }
     /* ── Mobile floating theme toggle ── */
-    .cc-mobile-theme{display:none}
-    @media(max-width:768px){
-      .cc-mobile-theme{display:flex;position:fixed;top:max(env(safe-area-inset-top,8px),8px);left:8px;z-index:1060;
-        width:36px;height:36px;align-items:center;justify-content:center;border-radius:50%;
-        background:var(--bg-secondary);
-        border:1px solid var(--glass-border);color:var(--text-secondary);cursor:pointer;
-        box-shadow:0 4px 16px rgba(0,0,0,.2)}
-    }
+    .cc-mobile-theme{display:none!important}
     body[data-presenting="1"] .cc-mobile-theme{display:none!important}
     .cc-mobile-nav{display:none;position:fixed;bottom:0;left:0;right:0;z-index:1050;
       background:var(--surface);border-top:1px solid var(--hairline);
@@ -493,13 +484,13 @@ function startApp() {
   ];
   var STAT = {
     open:          { label:'Open',          bg:'#ef4444' },
-    confirmed:     { label:'Confirmed',     bg:'#3b82f6' },
+    confirmed:     { label:'Confirmed',     bg:'#0f766e' },
     denied:        { label:'Denied',        bg:'#6b7280' },
     in_progress:   { label:'In progress',   bg:'#f59e0b' },
     resolved:      { label:'Resolved',      bg:'#22c55e' },
     auto_resolved: { label:'Auto-resolved', bg:'#475569' },
     closed:      { label:'Closed',      bg:'#64748b' },
-    accepted_needs_check: { label:'Accepted · Check', bg:'#0ea5e9' },
+    accepted_needs_check: { label:'Accepted · Check', bg:'#a16207' },
   };
   var EDITABLE_STATUSES = Object.keys(STAT).filter(function(k){return k!=='auto_resolved'&&k!=='denied'&&k!=='confirmed';});
 
@@ -5108,7 +5099,7 @@ function startApp() {
             outline.edgeStrength = 3.0;
             outline.edgeGlow = 0.0;
             outline.edgeThickness = 1.0;
-            outline.visibleEdgeColor.set('#a78bfa');
+            outline.visibleEdgeColor.set('#1a6b4a');
             outline.hiddenEdgeColor.set('#0f172a');
             composer.addPass(outline);
             S._postOutlinePass = outline;
@@ -5573,7 +5564,7 @@ function startApp() {
             break;
           }
         }
-        return 0x60a5fa;
+        return 0x1a6b4a;
       }
       _highlightById = function(expressId, alsoGhost, modelId) {
         if(!expressId||!S.mg) return;
@@ -6499,7 +6490,7 @@ function startApp() {
             selectedRefsRef.current = [{modelId: _hitModelId, expressId: eid}];
             window._ccSelectedRefs = selectedRefsRef.current;
             _clearHlRef();
-            var clickDiscColor = 0x60a5fa;
+            var clickDiscColor = 0x1a6b4a;
             if(found && found.model) {
               var dObj2 = DISC.find(function(x){return x.id===found.model.discipline;});
               if(dObj2) clickDiscColor = new THREE.Color(dObj2.c).getHex();
@@ -7002,7 +6993,20 @@ function startApp() {
           }
         }
         if(S.map[model.id]) {
-          S.map[model.id].visible = model.visible!==false;
+          var _prevVis = S.map[model.id].visible;
+          var _newVis = model.visible!==false;
+          S.map[model.id].visible = _newVis;
+          // When visibility changes, mark the shadow map dirty so previously-
+          // baked shadows from now-hidden meshes don't persist on the ground.
+          if (_prevVis !== _newVis && S.renderer && S.renderer.shadowMap) {
+            S.renderer.shadowMap.needsUpdate = true;
+            // Hide the ground plane (and its shadow) when no models are visible.
+            if (S._groundPlane) {
+              var anyVis = false;
+              s.models.forEach(function(_mm){ if(_mm.visible !== false) anyVis = true; });
+              S._groundPlane.visible = anyVis && (s.renderStyle === 'rendered');
+            }
+          }
           var hs = model.hiddenStoreys||{};
           var hsKey = Object.keys(hs).filter(function(k){return hs[k]}).sort().join(',');
           if(!S._elMapCache) S._elMapCache = {};
@@ -7786,7 +7790,8 @@ function startApp() {
       // Build / position / show a proper solid ground plane (rendered only)
       function _ccUpdateGround() {
         if (!S.scene) return;
-        if (style !== 'rendered') {
+        var _anyVis = (s.models||[]).some(function(m){ return m.visible !== false; });
+        if (style !== 'rendered' || !_anyVis) {
           if (S._groundPlane) S._groundPlane.visible = false;
           return;
         }
@@ -8944,7 +8949,7 @@ function startApp() {
           Open Project
         </button>
         <button class="cc-hide-mobile cc-btn-press" onClick=${function(){saveProject(s)}} disabled=${!all.length&&!s.models.length}
-          style=${{...S_BTN,background:s.models.length||all.length?'#0f4c81':'var(--bg-secondary)',color:s.models.length||all.length?'var(--color-info-fg)':'var(--text-faint)',cursor:s.models.length||all.length?'pointer':'not-allowed',fontSize:'var(--text-xs)'}}>
+          style=${{...S_BTN,background:s.models.length||all.length?'var(--accent)':'var(--bg-secondary)',color:s.models.length||all.length?'#fff':'var(--text-faint)',cursor:s.models.length||all.length?'pointer':'not-allowed',fontSize:'var(--text-xs)'}}>
           Save Project
         </button>
         <button class="cc-hide-mobile cc-btn-press" onClick=${function(){importBCF(d)}}
@@ -8956,7 +8961,7 @@ function startApp() {
           ↓ BCF 2.1
         </button>
         <button class="cc-hide-mobile cc-btn-press" onClick=${function(){exportBCF(all, '3.0', s.viewpoints, s)}} disabled=${!all.length}
-          style=${{...S_BTN,background:all.length?'#1d4ed8':'var(--bg-secondary)',color:all.length?'#fff':'var(--text-faint)',cursor:all.length?'pointer':'not-allowed',fontSize:'var(--text-xs)'}}>
+          style=${{...S_BTN,background:all.length?'var(--accent)':'var(--bg-secondary)',color:all.length?'#fff':'var(--text-faint)',cursor:all.length?'pointer':'not-allowed',fontSize:'var(--text-xs)'}}>
           ↓ BCF 3.0
         </button>
         <button onClick=${function(){d({t:A.UPD_PREFS,u:{theme:isDark?'light':'dark'}})}}
@@ -10926,7 +10931,7 @@ function startApp() {
       </div>
       ${isClash && delta && html`<div style=${{display:'flex',gap:'.3rem',marginTop:'.25rem',alignItems:'center',flexWrap:'wrap'}}>
         <span style=${{fontSize:'0.63rem',color:'var(--text-faint)',flexShrink:0}}>This run:</span>
-        ${delta.newCount > 0 && CHIP('New', delta.newCount, 'var(--accent-bg)', '#60a5fa')}
+        ${delta.newCount > 0 && CHIP('New', delta.newCount, 'var(--accent-bg)', 'var(--accent)')}
         ${delta.persisting > 0 && CHIP('Unchanged', delta.persisting, 'var(--tag-bg)', 'var(--text-secondary)')}
         ${delta.autoResolved > 0 && CHIP('Auto-res', delta.autoResolved, '#0f172a', '#64748b')}
       </div>`}
@@ -11426,6 +11431,35 @@ function startApp() {
           <!-- Type-pair tolerances -->
           ${_renderTypePairTolerances(rules, models, tpState, setTPState, d)}
 
+          <!-- Engine selector (browser ↔ local Python, ↔ WASM) -->
+          ${(function(){
+            var le = s.localEngine || {};
+            var we = s.wasmEngine || {};
+            var engineLabel, engineDot, engineHint, onClickEngine;
+            if (le.active && le.available) {
+              engineLabel = 'ClashControlEngine'; engineDot = 'var(--color-success)';
+              engineHint = 'Local server · exact mesh intersection';
+              onClickEngine = function(){ try{ if(window._ccDeactivateAddon) window._ccDeactivateAddon('local-engine'); }catch(e){} };
+            } else if (we.active) {
+              engineLabel = 'WASM engine'; engineDot = 'var(--color-success)';
+              engineHint = 'Hardware-accelerated · in-browser';
+              onClickEngine = function(){ try{ if(window._ccActivateAddon) window._ccActivateAddon('local-engine'); }catch(e){} };
+            } else {
+              engineLabel = 'Browser engine'; engineDot = 'var(--text-faint)';
+              engineHint = 'Built-in JavaScript OBB engine';
+              onClickEngine = function(){ try{ if(window._ccActivateAddon) window._ccActivateAddon('local-engine'); }catch(e){} };
+            }
+            return html`<button onClick=${onClickEngine}
+              title="Click to switch detection engine"
+              style=${{...S_BTN,width:'100%',padding:'.3rem .55rem',marginBottom:'.35rem',
+                background:'var(--bg-secondary)',color:'var(--text-secondary)',border:'1px solid var(--border)',
+                display:'flex',alignItems:'center',gap:'.4rem',fontSize:'.7rem',justifyContent:'flex-start',textAlign:'left'}}>
+              <span style=${{width:6,height:6,borderRadius:'50%',background:engineDot,flexShrink:0}}></span>
+              <span style=${{fontWeight:600,color:'var(--text-primary)'}}>${engineLabel}</span>
+              <span style=${{color:'var(--text-faint)',fontSize:'.65rem',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>${engineHint}</span>
+            </button>`;
+          })()}
+
           <!-- Run / Stop button -->
           ${s.detecting ? html`<button onClick=${function(){cancelDetection()}}
             style=${{...S_BTN,width:'100%',padding:'.4rem',background:'#dc2626',color:'#fff',fontWeight:600,fontSize:'0.78rem',borderRadius:6}}>
@@ -11764,7 +11798,7 @@ function startApp() {
         <div style=${{fontSize:'0.69rem',color:'var(--text-faint)',textAlign:'right'}}>${items.length} / ${rawItems.length} shown</div>
       </div>`}
       ${s.tab==='issues' && html`<div style=${{padding:'.4rem',borderBottom:'1px solid var(--border-subtle)',flexShrink:0,display:'flex',flexDirection:'column',gap:'.3rem'}}>
-        <button onClick=${function(){d({t:A.MODAL,v:true,el:window._ccSelectedEl||undefined})}} style=${{...S_BTN,flex:1,background:'#2563eb',color:'#fff'}}>+ New Issue</button>
+        <button onClick=${function(){d({t:A.MODAL,v:true,el:window._ccSelectedEl||undefined})}} style=${{...S_BTN,flex:1,background:'var(--accent)',color:'#fff'}}>+ New Issue</button>
         ${function(){
           var bcfItems = s.issues && s.issues.length ? s.issues : (s.clashes||[]);
           var hasItems = bcfItems.length > 0;
@@ -12940,7 +12974,7 @@ function startApp() {
 
       <div style=${{display: 'flex', gap: '.3rem'}}>
         <button onClick=${runValidation} disabled=${ids.running || s.models.length === 0 || (selectedBundled.length === 0 && !customSpecs)}
-          style=${{...S_BTN, flex: 1, padding: '.35rem', background: ids.running ? 'var(--accent-bg)' : '#2563eb', color: '#fff', fontSize: '0.75rem', fontWeight: 600,
+          style=${{...S_BTN, flex: 1, padding: '.35rem', background: ids.running ? 'var(--accent-bg)' : 'var(--accent)', color: '#fff', fontSize: '0.75rem', fontWeight: 600,
             opacity: (ids.running || s.models.length === 0 || (selectedBundled.length === 0 && !customSpecs)) ? 0.5 : 1}}>
           ${ids.running ? 'Validating…' : 'Run Validation'}
         </button>
@@ -13994,7 +14028,7 @@ function startApp() {
           var RES_LABELS={move_a:'Move A',move_b:'Move B',redesign:'Redesign',accept:'Accept'};
           var VERDICT_LABELS={real_clash:'Real clash',acceptable:'Acceptable',false_positive:'False positive'};
           var VERDICTS=[{k:'real_clash',l:'Real clash',bg:'#166534',col:'#4ade80',brd:'#22c55e44'},
-            {k:'acceptable',l:'Acceptable',bg:'var(--accent-bg)',col:'var(--accent-subtle)',brd:'#3b82f644'},
+            {k:'acceptable',l:'Acceptable',bg:'var(--accent-bg)',col:'var(--accent-subtle)',brd:'rgba(26,107,74,.27)'},
             {k:'false_positive',l:'False positive',bg:'#7f1d1d',col:'#fca5a5',brd:'#ef444444'}];
           function updItem(u){ d(isClash ? {t:A.UPD_CLASH,id:it.id,u:u} : {t:A.UPD_ISSUE,id:it.id,u:u}); }
           function setVerdict(v){ isClash ? d({t:A.AI_FEEDBACK,id:it.id,v:v}) : d({t:A.UPD_ISSUE,id:it.id,u:{aiFeedback:v}}); }
@@ -15467,7 +15501,7 @@ function startApp() {
           h('p',{style:{color:'var(--text-secondary)',marginBottom:'1rem',maxWidth:400}},String(this.state.error&&this.state.error.message||this.state.error||'Unknown error')),
           h('div',{style:{display:'flex',gap:'.5rem'}},
             h('button',{onClick:function(){self.setState({hasError:false,error:null});},style:{padding:'.5rem 1rem',background:'var(--bg-secondary)',color:'var(--accent-subtle)',border:'1px solid var(--border)',borderRadius:6,cursor:'pointer',fontFamily:'inherit'}},'Try Again'),
-            h('button',{onClick:function(){window.location.reload();},style:{padding:'.5rem 1rem',background:'#2563eb',color:'#fff',border:'none',borderRadius:6,cursor:'pointer',fontFamily:'inherit'}},'Reload App')
+            h('button',{onClick:function(){window.location.reload();},style:{padding:'.5rem 1rem',background:'#1a6b4a',color:'#fff',border:'none',borderRadius:6,cursor:'pointer',fontFamily:'inherit'}},'Reload App')
           )
         );
       }
@@ -15902,7 +15936,7 @@ function startApp() {
               style=${{ ...S_INPUT, fontSize: '.6rem', padding: '.15rem .3rem' }} />
           </label>`;
         })}
-        <button onClick=${function() { setShowTB(false); }} style=${{ ...btn, marginTop: '.3rem', background: '#2563eb', color: '#fff' }}>Close</button>
+        <button onClick=${function() { setShowTB(false); }} style=${{ ...btn, marginTop: '.3rem', background: 'var(--accent)', color: '#fff' }}>Close</button>
       </div>`}
     </div>`;
   }
@@ -16553,7 +16587,7 @@ function startApp() {
           var disabled = isSheetOnly && !s.activeSheetId;
           return html`<button key=${t} disabled=${disabled} onClick=${function() { d({ t: 'MARKUP_TOOL', v: s.markupTool === t ? null : t }); }}
             style=${{ ...S_BTN, fontSize: '.65rem', padding: '.25rem .4rem',
-              background: s.markupTool === t ? '#2563eb' : 'var(--overlay-bg)',
+              background: s.markupTool === t ? 'var(--accent)' : 'var(--overlay-bg)',
               color: disabled ? 'var(--text-faint)' : (s.markupTool === t ? '#fff' : 'var(--text-muted)'),
               border: '1px solid var(--border)',
               opacity: disabled ? 0.5 : 1,
@@ -19923,8 +19957,8 @@ function startApp() {
       display:'flex', alignItems:'center', padding:'.45rem .65rem',
       borderBottom:'1px solid '+borderCol, gap:'.4rem', flexShrink:0
     }}>
-      ${llmStatus === 'loading' && html`<span style=${{fontSize:'0.69rem', color:'#60a5fa', display:'flex', alignItems:'center', gap:'.25rem'}}>
-        <span class="spin" style=${{display:'inline-block', width:'.55rem', height:'.55rem', borderRadius:'50%', border:'1.5px solid rgba(96,165,250,.3)', borderTopColor:'#60a5fa'}}></span>
+      ${llmStatus === 'loading' && html`<span style=${{fontSize:'0.69rem', color:'var(--accent)', display:'flex', alignItems:'center', gap:'.25rem'}}>
+        <span class="spin" style=${{display:'inline-block', width:'.55rem', height:'.55rem', borderRadius:'50%', border:'1.5px solid var(--accent-bg)', borderTopColor:'var(--accent)'}}></span>
         AI loading${llmProgress > 0 ? ' ' + llmProgress + '%' : '...'}
       </span>`}
       ${llmStatus === 'ready' && backendLabel && html`<span style=${{fontSize:'0.63rem', color:backendColor, display:'flex', alignItems:'center', gap:'.2rem'}}>
@@ -19975,7 +20009,7 @@ function startApp() {
             background:aiBubbleBg, color:mutedCol, fontSize:'0.85rem',
             display:'flex', alignItems:'center', gap:'.5rem'
           }}>
-            <span class="spin" style=${{display:'inline-block',width:'.7rem',height:'.7rem',borderRadius:'50%',border:'1.5px solid rgba(96,165,250,.3)',borderTopColor:'#60a5fa',flexShrink:0}}></span>
+            <span class="spin" style=${{display:'inline-block',width:'.7rem',height:'.7rem',borderRadius:'50%',border:'1.5px solid rgba(26,107,74,.25)',borderTopColor:'#1a6b4a',flexShrink:0}}></span>
             <span style=${{color:'var(--accent-subtle)',fontStyle:'italic'}}>Thinking</span>
             <span style=${{display:'inline-flex',gap:'.15rem'}}>
               <span style=${{animation:'nlDots 1.4s ease-in-out infinite',color:'var(--accent-subtle)'}}>.</span>
@@ -20035,9 +20069,9 @@ function startApp() {
           transition:'background .3s',
           animation:_lp==null?'nlBorderPulse 2s ease-in-out infinite':'none'
         }}>
-          <span class="spin" style=${{display:'inline-block',width:'.6rem',height:'.6rem',borderRadius:'50%',border:'1.4px solid rgba(96,165,250,.3)',borderTopColor:'#60a5fa',flexShrink:0}}></span>
-          <span style=${{fontSize:'0.74rem',color:'#60a5fa',fontWeight:500,flex:1,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>${modelLoadMsg || 'Model loading'}</span>
-          ${_lp!=null && html`<span style=${{fontSize:'0.72rem',color:'#60a5fa',fontWeight:600,fontVariantNumeric:'tabular-nums',flexShrink:0}}>${_lp}%</span>`}
+          <span class="spin" style=${{display:'inline-block',width:'.6rem',height:'.6rem',borderRadius:'50%',border:'1.4px solid rgba(26,107,74,.25)',borderTopColor:'#1a6b4a',flexShrink:0}}></span>
+          <span style=${{fontSize:'0.74rem',color:'var(--accent)',fontWeight:500,flex:1,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>${modelLoadMsg || 'Model loading'}</span>
+          ${_lp!=null && html`<span style=${{fontSize:'0.72rem',color:'var(--accent)',fontWeight:600,fontVariantNumeric:'tabular-nums',flexShrink:0}}>${_lp}%</span>`}
         </div>`;
       }()}
       ${isDetecting ? html`<div style=${{
@@ -20052,8 +20086,8 @@ function startApp() {
           transition:'background .3s',
           animation:detectPct===0?'nlBorderPulse 2s ease-in-out infinite':'none'
         }}>
-          <span class="spin" style=${{display:'inline-block',width:'.7rem',height:'.7rem',borderRadius:'50%',border:'1.5px solid rgba(96,165,250,.3)',borderTopColor:'#60a5fa',flexShrink:0}}></span>
-          <span style=${{fontSize:'0.85rem',color:'#60a5fa',fontWeight:500,display:'flex',flexDirection:'column',gap:'.1rem'}}>
+          <span class="spin" style=${{display:'inline-block',width:'.7rem',height:'.7rem',borderRadius:'50%',border:'1.5px solid rgba(26,107,74,.25)',borderTopColor:'#1a6b4a',flexShrink:0}}></span>
+          <span style=${{fontSize:'0.85rem',color:'var(--accent)',fontWeight:500,display:'flex',flexDirection:'column',gap:'.1rem'}}>
             <span>${(function(){
               var p=detectPct, t=detectElapsed;
               if(t>=240) return 'So… what movie are you watching?'+(p>0?' — '+p+'%':'')+'…';
@@ -20138,7 +20172,7 @@ function startApp() {
             background:aiBubbleBg, color:mutedCol, fontSize:'0.85rem',
             display:'flex', alignItems:'center', gap:'.5rem'
           }}>
-            <span class="spin" style=${{display:'inline-block',width:'.7rem',height:'.7rem',borderRadius:'50%',border:'1.5px solid rgba(96,165,250,.3)',borderTopColor:'#60a5fa',flexShrink:0}}></span>
+            <span class="spin" style=${{display:'inline-block',width:'.7rem',height:'.7rem',borderRadius:'50%',border:'1.5px solid rgba(26,107,74,.25)',borderTopColor:'#1a6b4a',flexShrink:0}}></span>
             <span style=${{color:'var(--accent-subtle)',fontStyle:'italic'}}>Thinking</span>
             <span style=${{display:'inline-flex',gap:'.15rem'}}>
               <span style=${{animation:'nlDots 1.4s ease-in-out infinite',color:'var(--accent-subtle)'}}>.</span>
@@ -20166,9 +20200,9 @@ function startApp() {
           transition:'background .3s',
           animation:_lp==null?'nlBorderPulse 2s ease-in-out infinite':'none'
         }}>
-          <span class="spin" style=${{display:'inline-block',width:'.6rem',height:'.6rem',borderRadius:'50%',border:'1.4px solid rgba(96,165,250,.3)',borderTopColor:'#60a5fa',flexShrink:0}}></span>
-          <span style=${{fontSize:'0.74rem',color:'#60a5fa',fontWeight:500,flex:1,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>${modelLoadMsg || 'Model loading'}</span>
-          ${_lp!=null && html`<span style=${{fontSize:'0.72rem',color:'#60a5fa',fontWeight:600,fontVariantNumeric:'tabular-nums',flexShrink:0}}>${_lp}%</span>`}
+          <span class="spin" style=${{display:'inline-block',width:'.6rem',height:'.6rem',borderRadius:'50%',border:'1.4px solid rgba(26,107,74,.25)',borderTopColor:'#1a6b4a',flexShrink:0}}></span>
+          <span style=${{fontSize:'0.74rem',color:'var(--accent)',fontWeight:500,flex:1,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>${modelLoadMsg || 'Model loading'}</span>
+          ${_lp!=null && html`<span style=${{fontSize:'0.72rem',color:'var(--accent)',fontWeight:600,fontVariantNumeric:'tabular-nums',flexShrink:0}}>${_lp}%</span>`}
         </div>`;
       }()}
       ${isDetecting ? html`<div style=${{
@@ -20183,8 +20217,8 @@ function startApp() {
           transition:'background .3s',
           animation:detectPct===0?'nlBorderPulse 2s ease-in-out infinite':'none'
         }}>
-          <span class="spin" style=${{display:'inline-block',width:'.7rem',height:'.7rem',borderRadius:'50%',border:'1.5px solid rgba(96,165,250,.3)',borderTopColor:'#60a5fa',flexShrink:0}}></span>
-          <span style=${{fontSize:'0.85rem',color:'#60a5fa',fontWeight:500,display:'flex',flexDirection:'column',gap:'.1rem'}}>
+          <span class="spin" style=${{display:'inline-block',width:'.7rem',height:'.7rem',borderRadius:'50%',border:'1.5px solid rgba(26,107,74,.25)',borderTopColor:'#1a6b4a',flexShrink:0}}></span>
+          <span style=${{fontSize:'0.85rem',color:'var(--accent)',fontWeight:500,display:'flex',flexDirection:'column',gap:'.1rem'}}>
             <span>${(function(){
               var p=detectPct, t=detectElapsed;
               if(t>=240) return 'So… what movie are you watching?'+(p>0?' — '+p+'%':'')+'…';
@@ -21595,9 +21629,9 @@ function startApp() {
         <div style=${{display:'flex',gap:'.2rem',marginBottom:'.3rem'}}>
           ${[{axis:'x',label:'X'},{axis:'z',label:'Y'},{axis:'y',label:'Z'}].map(function(item){return html`<button key=${item.axis}
             onClick=${function(){d({t:A.SECTION_BOX,v:null});d({t:A.SECTION,axis:s.sectionAxis===item.axis?null:item.axis});}}
-            style=${{...S_BTN,flex:1,padding:'.3rem',background:s.sectionAxis===item.axis?'#2563eb':'var(--bg-secondary)',color:s.sectionAxis===item.axis?'#fff':'var(--text-muted)'}}>${item.label}</button>`})}
+            style=${{...S_BTN,flex:1,padding:'.3rem',background:s.sectionAxis===item.axis?'var(--accent)':'var(--bg-secondary)',color:s.sectionAxis===item.axis?'#fff':'var(--text-muted)'}}>${item.label}</button>`})}
           <button onClick=${function(){d({t:A.SECTION,axis:null});d({t:A.SECTION_BOX,v:null});}}
-            style=${{...S_BTN,flex:1,padding:'.3rem',background:!sectionActive?'#2563eb':'var(--bg-secondary)',color:!sectionActive?'#fff':'var(--text-muted)'}}>Off</button>
+            style=${{...S_BTN,flex:1,padding:'.3rem',background:!sectionActive?'var(--accent)':'var(--bg-secondary)',color:!sectionActive?'#fff':'var(--text-muted)'}}>Off</button>
         </div>
         ${(s.sectionAxis||s.sectionCustom) && html`<div>
           <input type="range" min="0" max="1" step="0.005" value=${s.sectionPos}
@@ -21730,6 +21764,39 @@ function startApp() {
               <span style=${{display:'flex',flexDirection:'column',gap:1}}>
                 <span style=${{fontSize:'var(--text-sm)',fontWeight:500}}>2D drawing</span>
                 <span style=${{fontSize:'var(--text-2xs)',color:'var(--ink-faint)',fontFamily:'var(--font-mono)'}}>PDF · DXF — auto-placed on its level</span>
+              </span>
+            </button>
+            <div style=${{height:1,background:'var(--hairline)',margin:'.25rem 0'}}></div>
+            <button onClick=${function(){
+                setAddOpen(false);
+                try { if(window._ccActivateAddon) window._ccActivateAddon('revit-bridge'); } catch(_e){}
+                d({t:A.REVIT_BRIDGE,v:true});
+              }}
+              style=${{display:'flex',alignItems:'flex-start',gap:'.6rem',width:'100%',
+                padding:'.55rem .8rem',background:'none',border:'none',cursor:'pointer',textAlign:'left',
+                fontFamily:'var(--font-body)',color:'var(--ink-primary)'}}
+              onMouseEnter=${function(e){e.currentTarget.style.background='var(--surface-warm)';}}
+              onMouseLeave=${function(e){e.currentTarget.style.background='none';}}>
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" style=${{marginTop:2,flexShrink:0,color:'var(--accent)'}}><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/></svg>
+              <span style=${{display:'flex',flexDirection:'column',gap:1}}>
+                <span style=${{fontSize:'var(--text-sm)',fontWeight:500}}>Live from Revit</span>
+                <span style=${{fontSize:'var(--text-2xs)',color:'var(--ink-faint)',fontFamily:'var(--font-mono)'}}>WebSocket bridge — sync geometry & properties</span>
+              </span>
+            </button>
+            <button onClick=${function(){
+                setAddOpen(false);
+                try { if(window._ccActivateAddon) window._ccActivateAddon('shared-project'); } catch(_e){}
+                d({t:A.SHARE,v:true});
+              }}
+              style=${{display:'flex',alignItems:'flex-start',gap:'.6rem',width:'100%',
+                padding:'.55rem .8rem',background:'none',border:'none',cursor:'pointer',textAlign:'left',
+                fontFamily:'var(--font-body)',color:'var(--ink-primary)'}}
+              onMouseEnter=${function(e){e.currentTarget.style.background='var(--surface-warm)';}}
+              onMouseLeave=${function(e){e.currentTarget.style.background='none';}}>
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" style=${{marginTop:2,flexShrink:0,color:'var(--ink-secondary)'}}><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
+              <span style=${{display:'flex',flexDirection:'column',gap:1}}>
+                <span style=${{fontSize:'var(--text-sm)',fontWeight:500}}>Shared folder</span>
+                <span style=${{fontSize:'var(--text-2xs)',color:'var(--ink-faint)',fontFamily:'var(--font-mono)'}}>OneDrive · Dropbox · NAS — team sync</span>
               </span>
             </button>
           </div>
@@ -21878,7 +21945,14 @@ function startApp() {
           <div style=${{height:1,background:'var(--hairline)',margin:'.3rem 0'}}></div>
           ${row('Theme: '+(isDark?'Dark':'Light'), function(){ d({t:A.UPD_PREFS,u:{theme:isDark?'light':'dark'}}); })}
           ${row('Settings…', function(){ d({t:A.SETTINGS,v:true}); }, ',')}
-          ${row('Integrations…', function(){ d({t:A.TAB,v:'addons'}); })}
+          ${(function(){
+            // PWA: show "Install app" when the browser has surfaced a deferred
+            // install prompt. Hidden once the app is installed (standalone mode).
+            var canInstall = !!(window._ccPwaInstallPrompt && window._ccPwaInstallPrompt());
+            var standalone = window.matchMedia && window.matchMedia('(display-mode: standalone)').matches;
+            if (!canInstall || standalone) return null;
+            return row('Install ClashControl', function(){ if(window._ccPwaPromptInstall) window._ccPwaPromptInstall(); });
+          })()}
           ${row('Enter presentation', function(){ d({t:A.PRESENT,v:true}); })}
           ${row('Keyboard shortcuts', function(){ try{ window.dispatchEvent(new CustomEvent('cc-show-shortcuts')); }catch(e){} }, '?')}
         </div>
@@ -22378,7 +22452,7 @@ function startApp() {
       <div style=${{background:'var(--bg-secondary)',border:'1px solid var(--border)',borderRadius:12,width:560,maxWidth:'95vw',maxHeight:'90vh',display:'flex',flexDirection:'column',overflow:'hidden',boxShadow:'0 8px 32px rgba(0,0,0,.5)'}}>
         <div style=${{display:'flex',alignItems:'center',justifyContent:'space-between',padding:'.75rem 1rem',borderBottom:'1px solid var(--border)'}}>
           <div style=${{display:'flex',alignItems:'center',gap:'.5rem'}}>
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#60a5fa" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 14a1 1 0 0 1-.78-1.63l9.9-10.2a.5.5 0 0 1 .86.46l-1.92 6.02A1 1 0 0 0 13 10h7a1 1 0 0 1 .78 1.63l-9.9 10.2a.5.5 0 0 1-.86-.46l1.92-6.02A1 1 0 0 0 11 14z"/></svg>
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style=${{color:'var(--accent)'}}><path d="M4 14a1 1 0 0 1-.78-1.63l9.9-10.2a.5.5 0 0 1 .86.46l-1.92 6.02A1 1 0 0 0 13 10h7a1 1 0 0 1 .78 1.63l-9.9 10.2a.5.5 0 0 1-.86-.46l1.92-6.02A1 1 0 0 0 11 14z"/></svg>
             <span style=${{fontSize:'1rem',fontWeight:700,color:'var(--text-primary)'}}>Revit Bridge</span>
           </div>
           <button onClick=${function(){d({t:'REVIT_BRIDGE',v:false})}} style=${{background:'none',border:'none',color:'var(--text-muted)',cursor:'pointer',fontSize:'1.2rem',padding:'0 .2rem'}}>×</button>
@@ -22407,7 +22481,7 @@ function startApp() {
             </div>
 
             <div style=${{display:'flex',alignItems:'center',gap:'.4rem'}}>
-              <span style=${{width:8,height:8,borderRadius:'50%',background:rd.connected?'#22c55e':rd.reconnecting?'#eab308':rd.autoDetected?'#60a5fa':'#ef4444'}}></span>
+              <span style=${{width:8,height:8,borderRadius:'50%',background:rd.connected?'#22c55e':rd.reconnecting?'#eab308':rd.autoDetected?'var(--accent)':'#ef4444'}}></span>
               <span style=${{fontSize:'0.78rem',color:rd.connected?'#4ade80':rd.reconnecting?'#facc15':rd.autoDetected?'var(--accent-subtle)':'var(--text-muted)'}}>
                 ${rd.connected ? 'Connected' + (rd.documentName ? ' \u2014 ' + rd.documentName : '')
                   : rd.reconnecting ? 'Reconnecting in ' + Math.round((rd.reconnectIn||1000)/1000) + 's\u2026'
