@@ -1,5 +1,8 @@
 # Changelog
 
+## v5.1.1 (2026-05-01)
+- feat(inspector): workspace-aware element details depth
+
 ## v5.0.3 (2026-05-01)
 - fix(mobile): hide right drawer entirely + add floating theme toggle (top-left)
 
