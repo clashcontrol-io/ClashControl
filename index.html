@@ -7876,6 +7876,20 @@ function startApp() {
       // Rebuild shadow map when we switch into rendered mode or lighting changes
       if (style === 'rendered' && S.renderer) S.renderer.shadowMap.needsUpdate = true;
 
+      // Hidden Line is monochrome — share one Lambert material for the whole
+      // model instead of allocating N per-mesh materials. This collapses the
+      // switch from 10K material allocations + 10K shader-program inits to one.
+      var _standardMat = null;
+      if (style === 'standard') {
+        if (!S._sharedStandardMat) {
+          S._sharedStandardMat = new THREE.MeshLambertMaterial({
+            color: 0xe8e8e8, side: THREE.FrontSide
+          });
+        }
+        _standardMat = S._sharedStandardMat;
+        _standardMat.color.set(light ? 0xe8e8e8 : 0x3a3a3a);
+      }
+
       for (var _mi = 0; _mi < meshList.length; _mi++) {
         var obj = meshList[_mi];
         if (obj.userData._isGround) continue;
@@ -7892,17 +7906,10 @@ function startApp() {
             transparent: true, opacity: 0.85, side: THREE.FrontSide
           }));
         } else if (style === 'standard') {
-          // Hidden Line: shaded surfaces but stripped of colour — a uniform
-          // light/dark gray Lambert. No EdgesGeometry overlay (which is
-          // prohibitively expensive on large IFC models). Lighting still
-          // gives shape definition.
+          // Hidden Line: a single shared Lambert (set up above) painted onto
+          // every mesh. Monochrome makes per-mesh colour unnecessary.
           _disposeEdges(obj);
-          mat = cache.standard || (cache.standard = new THREE.MeshLambertMaterial({
-            color: light ? 0xe8e8e8 : 0x3a3a3a,
-            transparent: orig.transparent, opacity: orig.opacity,
-            side: THREE.FrontSide
-          }));
-          if (cache.standard) cache.standard.color.set(light ? 0xe8e8e8 : 0x3a3a3a);
+          mat = _standardMat;
         } else if (style === 'shaded') {
           _disposeEdges(obj);
           mat = cache.shaded || (cache.shaded = new THREE.MeshLambertMaterial({
