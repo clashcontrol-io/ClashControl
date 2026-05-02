@@ -269,7 +269,7 @@
     /* ── Overlay panels (float above canvas, within content-row) ── */
     @media(min-width:769px){
       .cc-left-rail{position:absolute!important;left:0!important;top:0!important;bottom:0!important;z-index:20!important;border-right:1px solid var(--border);box-shadow:2px 0 6px rgba(0,0,0,.04)}
-      .cc-left-panel{position:absolute!important;left:48px!important;top:0!important;bottom:0!important;z-index:15!important;box-shadow:4px 0 16px rgba(0,0,0,.06);border-right:1px solid var(--border)}
+      .cc-left-panel{position:absolute!important;left:0!important;top:0!important;bottom:0!important;z-index:15!important;box-shadow:4px 0 16px rgba(0,0,0,.06);border-right:1px solid var(--border)}
     }
     .cc-side-panel{overflow-x:hidden}
     .cc-side-panel>*{min-width:0}
@@ -6551,6 +6551,7 @@ function startApp() {
               hitNormal = [fn.x, fn.y, fn.z];
             }
             setSelectedEl(found ? {props:found.el.props||{}, modelName:found.model.name, expressId:eid, point:hitPt, box:hitBox, normal:hitNormal} : {props:{expressId:eid}, modelName:'Unknown', expressId:eid, point:hitPt, box:hitBox, normal:hitNormal});
+            window.dispatchEvent(new CustomEvent('cc-element-selected'));
             if(outlineRef.current){scene.remove(outlineRef.current);outlineRef.current=null;}
             if(prefsRef.current.autoFlyTo!==false && _flyTo) {
               var elSz = hitBox.getSize(new THREE.Vector3());
@@ -8047,38 +8048,6 @@ function startApp() {
           ${s.prefs.showMarkers?'Markers On':'Markers Off'}
         </button>
       </div>`}
-      ${s.models.length>0 && html`<div style=${{position:'absolute',top:'var(--space-3)',right:'50%',transform:'translateX(50%)',marginRight:'-45%',pointerEvents:'auto'}}>
-        <div style=${{display:'flex',alignItems:'center',gap:'var(--space-1)'}}>
-          <button class="cc-btn-press" onClick=${function(){setFinderOpen(!finderOpen);if(finderOpen){doFind('');setFindQuery('');}}}
-            style=${{...S_BTN,background:finderOpen?'var(--accent)':'var(--overlay-bg-strong)',color:finderOpen?'#fff':'var(--text-secondary)',border:'1px solid var(--border-subtle)',fontSize:'var(--text-xs)',padding:'var(--space-1) var(--space-3)',border:'1px solid var(--border)'}}>
-            Find Elements
-          </button>
-        </div>
-        ${finderOpen && html`<div class="cc-overlay-chrome" style=${{marginTop:'var(--space-1)',padding:'var(--space-2)',width:240}}>
-          <input type="text" placeholder="Search by name, type, storey…" value=${findQuery}
-            onInput=${function(e){doFind(e.target.value);}}
-            style=${{...S_INPUT,fontSize:'var(--text-xs)',padding:'var(--space-1) var(--space-2)',marginBottom:'var(--space-1)'}} />
-          ${findResults.length>0 && html`<div style=${{fontSize:'0.69rem',color:'var(--text-muted)',marginBottom:'.2rem'}}>${findResults.length} element${findResults.length>1?'s':''} found</div>`}
-          <div style=${{maxHeight:180,overflowY:'auto'}}>
-            ${findResults.slice(0,50).map(function(r,idx){
-              var p=r.el.props||{};
-              return html`<div key=${idx} onClick=${function(){
-                  if(_fitToElement)_fitToElement(r.el.expressId);
-                  if(_highlightById)_highlightById(r.el.expressId);
-                }}
-                style=${{padding:'.2rem .3rem',cursor:'pointer',borderBottom:'1px solid var(--border-subtle)',fontSize:'0.69rem',color:'var(--text-primary)'}}>
-                <div style=${{display:'flex',justifyContent:'space-between'}}>
-                  <span style=${{color:'var(--accent-subtle)'}}>${p.ifcType||'Element'}</span>
-                  <span style=${{color:'var(--text-faint)'}}>#${r.el.expressId}</span>
-                </div>
-                <div style=${{color:'var(--text-secondary)',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>${p.name||'(unnamed)'}</div>
-              </div>`;
-            })}
-            ${findResults.length>50 && html`<div style=${{fontSize:'0.63rem',color:'var(--text-faint)',textAlign:'center',padding:'.3rem'}}>+${findResults.length-50} more…</div>`}
-          </div>
-          ${findQuery&&findResults.length===0 && html`<div style=${{fontSize:'0.69rem',color:'var(--text-faint)',textAlign:'center',padding:'.5rem'}}>No matches</div>`}
-        </div>`}
-      </div>`}
       ${html`<${ViewCube} state3d=${state3d} theme=${s.prefs.theme||'light'} />`}
       ${(s.sectionAxis||s.sectionCustom) && html`<div style=${{...P,top:'9.75rem',right:'.5rem',background:'rgba(30,58,138,.9)',color:'var(--accent-subtle)',pointerEvents:'auto',cursor:'pointer',display:'flex',alignItems:'center',gap:'.4rem'}}
         onClick=${function(){d({t:A.SECTION,axis:null})}}>
@@ -8472,37 +8441,37 @@ function startApp() {
     var triColor = light ? '#404040' : '#a0a0a0';
     var adj = activeFace >= 0 ? FACE_ADJACENTS[activeFace] : null;
 
-    return html`<div class="cc-viewcube-wrap" style=${{position:'absolute',top:'3rem',right:'1rem',pointerEvents:'auto',width:98,height:98,overflow:'visible'}}>
-      <canvas ref=${canvasRef} width="84" height="84" style=${{cursor:'pointer',position:'absolute',top:7,left:7,width:84,height:84}} />
+    return html`<div class="cc-viewcube-wrap" style=${{position:'absolute',top:'1rem',right:'1rem',pointerEvents:'auto',width:74,height:74,overflow:'visible'}}>
+      <canvas ref=${canvasRef} width="63" height="63" style=${{cursor:'pointer',position:'absolute',top:6,left:6,width:63,height:63}} />
       ${adj && html`
-        <!-- Left arrow — inside left edge of cube face -->
+        <!-- Left arrow -->
         <button aria-label="Left view" onClick=${function(){flyToDir(adj.left);}}
           onMouseEnter=${function(e){e.currentTarget.style.opacity=1;}}
           onMouseLeave=${function(e){e.currentTarget.style.opacity=.7;}}
-          style=${{...triBase,left:11,top:46,
-            borderTop:'4px solid transparent',borderBottom:'4px solid transparent',
-            borderRight:'6px solid '+triColor}}></button>
+          style=${{...triBase,left:8,top:33,
+            borderTop:'3px solid transparent',borderBottom:'3px solid transparent',
+            borderRight:'5px solid '+triColor}}></button>
         <!-- Right arrow -->
         <button aria-label="Right view" onClick=${function(){flyToDir(adj.right);}}
           onMouseEnter=${function(e){e.currentTarget.style.opacity=1;}}
           onMouseLeave=${function(e){e.currentTarget.style.opacity=.7;}}
-          style=${{...triBase,right:11,top:46,
-            borderTop:'4px solid transparent',borderBottom:'4px solid transparent',
-            borderLeft:'6px solid '+triColor}}></button>
+          style=${{...triBase,right:8,top:33,
+            borderTop:'3px solid transparent',borderBottom:'3px solid transparent',
+            borderLeft:'5px solid '+triColor}}></button>
         <!-- Top arrow -->
         <button aria-label="Top view" onClick=${function(){flyToDir(adj.up);}}
           onMouseEnter=${function(e){e.currentTarget.style.opacity=1;}}
           onMouseLeave=${function(e){e.currentTarget.style.opacity=.7;}}
-          style=${{...triBase,left:46,top:11,
-            borderLeft:'4px solid transparent',borderRight:'4px solid transparent',
-            borderBottom:'6px solid '+triColor}}></button>
+          style=${{...triBase,left:33,top:8,
+            borderLeft:'3px solid transparent',borderRight:'3px solid transparent',
+            borderBottom:'5px solid '+triColor}}></button>
         <!-- Bottom arrow -->
         <button aria-label="Bottom view" onClick=${function(){flyToDir(adj.down);}}
           onMouseEnter=${function(e){e.currentTarget.style.opacity=1;}}
           onMouseLeave=${function(e){e.currentTarget.style.opacity=.7;}}
-          style=${{...triBase,left:46,bottom:11,
-            borderLeft:'4px solid transparent',borderRight:'4px solid transparent',
-            borderTop:'6px solid '+triColor}}></button>
+          style=${{...triBase,left:33,bottom:8,
+            borderLeft:'3px solid transparent',borderRight:'3px solid transparent',
+            borderTop:'5px solid '+triColor}}></button>
       `}
     </div>`;
   }
@@ -20734,15 +20703,10 @@ function startApp() {
   // ── Left Rail (utility actions) ────────────────────────────────
 
   function LeftRail(props) {
+    /* All tab navigation has moved to the TopToolbar workspace clusters.
+       Rail is removed; return null so it takes no space. */
+    return null;
     var s=props.s, d=props.d;
-    /* Hidden in the Present workspace — designers see only the model.
-       Coordinate / Review users get a slim 48-px ink rail with workspace-
-       scoped tabs. The legacy project switcher / IFC / walk / 2D / theme /
-       share / settings buttons all moved out: project + theme + settings +
-       presentation now live in the AvatarMenu, IFC in the wordmark menu,
-       walk + 2D + measure + section in the new TopToolbar, share in the
-       DesktopTopBar. The rail is now exactly what its name suggests: a
-       workspace's panel-tab list. Nothing else. */
     if ((s.workspace||'present') === 'present') return null;
 
     var all = s.clashes.concat(s.issues);
@@ -21466,31 +21430,38 @@ function startApp() {
     var dragRef=useRef(null);
     var onResizeDown = _makeResizeHandler(dragRef, function(w){ setPanelW(w); try{localStorage.setItem('cc_ai_panel_w',String(w));}catch(e){} }, 250, 600, true);
 
-    // Poll window._ccSelectedEl to drive the Details tab.
+    // Drive the Details tab from element selection.
     //   • element selected → switch to Details tab + uncollapse panel
-    //   • element deselected → reset tab to AI; keep collapse state
+    //   • element deselected (poll) → reset tab to AI; keep collapse state
     var wsRef = useRef(s.workspace);
     wsRef.current = s.workspace;
     useEffect(function(){
-      var prev = null;
+      // Instant response: cc-element-selected event fired by the 3D click handler
+      function onElSelected() {
+        var cur = window._ccSelectedEl || null;
+        if (!cur) return;
+        setDrawerEl(cur);
+        setDrawerTab('details');
+        if (wsRef.current !== 'present') {
+          setCollapsed(false);
+          try{localStorage.setItem('cc_ai_panel_collapsed','0');}catch(e){}
+        }
+      }
+      window.addEventListener('cc-element-selected', onElSelected);
+      // Polling fallback: catches deselection and edge cases
+      var prev = window._ccSelectedEl || null;
       var t = setInterval(function(){
         var cur = window._ccSelectedEl || null;
         if (cur !== prev) {
           prev = cur;
           setDrawerEl(cur);
-          if (cur) {
-            setDrawerTab('details');
-            // Auto-open panel when element clicked in Clash or Review workspace
-            if (wsRef.current !== 'present') {
-              setCollapsed(false);
-              try{localStorage.setItem('cc_ai_panel_collapsed','0');}catch(e){}
-            }
-          } else {
-            setDrawerTab('ai');
-          }
+          if (!cur) setDrawerTab('ai');
         }
-      }, 250);
-      return function(){ clearInterval(t); };
+      }, 300);
+      return function(){
+        window.removeEventListener('cc-element-selected', onElSelected);
+        clearInterval(t);
+      };
     }, []);
 
     // Expose global openers so toolbar buttons can switch tabs / uncollapse.
@@ -22615,6 +22586,7 @@ function startApp() {
     if (s.presenting) return null;
 
     var styleSt = useState(false), styleOpen=styleSt[0], setStyleOpen=styleSt[1];
+    var styleRef = useRef(null);
     var pickSt  = useState(false), pickOn = pickSt[0], setPickOn = pickSt[1];
     var ttState = useState(null), ttTip = ttState[0], setTtTip = ttState[1];
     var ttPos = useRef({x:0,y:0});
@@ -22848,7 +22820,13 @@ function startApp() {
             onClick:function(){ d({t:A.TAB,v:s.tab==='clashes'?null:'clashes'}); }})}
           ${btn({k:'issues', active:s.tab==='issues', title:'Issues', label:'Issues',
             icon:'<path d="M4 15s1-1 4-1 5 2 8 2 4-1 4-1V3s-1 1-4 1-5-2-8-2-4 1-4 1z"/><line x1="4" y1="22" x2="4" y2="15"/>',
-            onClick:function(){ d({t:A.TAB,v:s.tab==='issues'?null:'issues'}); }})}`}
+            onClick:function(){ d({t:A.TAB,v:s.tab==='issues'?null:'issues'}); }})}
+          ${btn({k:'standards', active:s.tab==='standards', title:'Clash Rules', label:'Clash Rules',
+            icon:'<path d="M4 7h16M4 12h10M4 17h13"/><path d="M20 12l-3-3v6z"/>',
+            onClick:function(){ d({t:A.TAB,v:s.tab==='standards'?null:'standards'}); }})}
+          ${btn({k:'nav-coord', active:s.tab==='navigator', title:'Navigator', label:'Navigator',
+            icon:'<rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/>',
+            onClick:function(){ d({t:A.TAB,v:s.tab==='navigator'?null:'navigator'}); }})}`}
 
         <!-- REVIEW workspace tools: run data quality + IDS + diagnostics -->
         ${s.workspace === 'review' && html`${div()}
@@ -22858,6 +22836,9 @@ function startApp() {
           ${btn({k:'dq', active:s.tab==='dataquality', title:'Data Quality panel', label:'Data Quality',
             icon:'<rect x="3" y="3" width="18" height="18" rx="2"/><path d="M9 9h6"/><path d="M9 13h6"/><path d="M9 17h4"/>',
             onClick:function(){ d({t:A.TAB,v:s.tab==='dataquality'?null:'dataquality'}); }})}
+          ${btn({k:'nav-review', active:s.tab==='navigator', title:'Navigator', label:'Navigator',
+            icon:'<rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/>',
+            onClick:function(){ d({t:A.TAB,v:s.tab==='navigator'?null:'navigator'}); }})}
           ${btn({k:'diag', active:s.diagnostics, title:(s.diagnostics?'Hide':'Show')+' diagnostics', label:'Diagnostics',
             icon:'<path d="M3 12h3l3-9 4 18 3-9h5"/>',
             onClick:function(){ d({t:A.DIAGNOSTICS,v:!s.diagnostics}); }})}`}
@@ -22890,7 +22871,7 @@ function startApp() {
 
         <!-- STYLE popover (visible button — never hotkey-only) -->
         <div style=${{position:'relative'}}>
-          <button onClick=${function(){setStyleOpen(!styleOpen);}}
+          <button ref=${styleRef} onClick=${function(){setStyleOpen(!styleOpen);}}
             aria-haspopup="menu" aria-expanded=${styleOpen}
             style=${{
               display:'inline-flex',alignItems:'center',gap:'.4rem',height:36,padding:'0 .65rem',
@@ -22902,9 +22883,13 @@ function startApp() {
             <span style=${{color:'var(--ink-primary)',fontWeight:500}}>${curStyleLabel}</span>
             <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M6 9l6 6 6-6"/></svg>
           </button>
-          ${styleOpen && html`<div>
+          ${styleOpen && function(){
+            var _r = styleRef.current ? styleRef.current.getBoundingClientRect() : null;
+            var _top = _r ? (_r.bottom + 6) : 50;
+            var _right = _r ? (window.innerWidth - _r.right) : 16;
+            return html`<div>
             <div onClick=${function(){setStyleOpen(false);}} style=${{position:'fixed',inset:0,zIndex:399}}></div>
-            <div role="menu" style=${{position:'absolute',top:'calc(100% + 6px)',right:0,zIndex:400,minWidth:240,
+            <div role="menu" style=${{position:'fixed',top:_top+'px',right:_right+'px',zIndex:400,minWidth:240,
               background:'var(--surface)',border:'1px solid var(--hairline-strong)',borderRadius:'var(--radius-sm)',
               boxShadow:'var(--shadow-lifted)',padding:'.3rem 0',fontFamily:'var(--font-body)'}}>
               ${styles.map(function(st,i){
@@ -22960,7 +22945,8 @@ function startApp() {
                 </div>`;
               }()}
             </div>
-          </div>`}
+          </div>`;
+          }()}
         </div>
       </div>
       ${subRow}
