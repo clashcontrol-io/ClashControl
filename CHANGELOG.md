@@ -1,5 +1,8 @@
 # Changelog
 
+## v5.2.3 (2026-05-02)
+- Cmd-K: reorder items within each group by current workspace
+
 ## v5.2.2 (2026-05-02)
 - UI polish: remove LeftRail, fix Style dropdown, resize ViewCube, clean up viewer
 
