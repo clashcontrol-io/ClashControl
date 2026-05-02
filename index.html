@@ -15304,80 +15304,32 @@ function startApp() {
   // peer command, not a special button.
 
   function _ccBuildCommands(s, d) {
-    var ws = s.workspace || 'present';
     var cmds = [];
     function push(c){ cmds.push(c); }
     var renderStyles = ['standard','shaded','rendered','wireframe'];
-    var renderLabels = {standard:'Hidden Line',shaded:'Shaded',rendered:'Rendered (lit)',wireframe:'Wireframe'};
-    var WS_LABEL = {present:'In Present', coordinate:'In Coordinate', review:'In Review'};
-    var quickGroup = WS_LABEL[ws];
-
-    // ── Workspace-scoped quick actions (top of the palette) ──
-    if (ws === 'coordinate') {
-      push({group:quickGroup, label:'Run clash detection',
-        keywords:'detect run clashes coordination check find',
-        onSelect:function(){ try{ if(window._ccRunDetection) window._ccRunDetection(); }catch(e){} d({t:A.TAB,v:'clashes'}); }});
-      push({group:quickGroup, label:'Open Conflicts',
-        keywords:'conflicts clashes list',
-        onSelect:function(){ d({t:A.TAB,v:'clashes'}); }});
-      push({group:quickGroup, label:'Open Issues',
-        keywords:'issues bcf reports tickets',
-        onSelect:function(){ d({t:A.TAB,v:'issues'}); }});
-      push({group:quickGroup, label:'Open Clash Rules',
-        keywords:'standards rules clash compliance',
-        onSelect:function(){ d({t:A.TAB,v:'standards'}); }});
-      push({group:quickGroup, label:'Open Navigator',
-        keywords:'navigator tree elements explorer browse',
-        onSelect:function(){ d({t:A.TAB,v:'navigator'}); }});
-    } else if (ws === 'review') {
-      push({group:quickGroup, label:'Run data quality checks',
-        keywords:'data quality dq run audit validate',
-        onSelect:function(){ try{ if(window._ccRunDataQualityChecks) window._ccRunDataQualityChecks(); }catch(e){} d({t:A.TAB,v:'dataquality'}); }});
-      push({group:quickGroup, label:'Open Data Quality',
-        keywords:'data quality dq panel audit',
-        onSelect:function(){ d({t:A.TAB,v:'dataquality'}); }});
-      push({group:quickGroup, label:'Open Navigator',
-        keywords:'navigator tree elements explorer browse',
-        onSelect:function(){ d({t:A.TAB,v:'navigator'}); }});
-      push({group:quickGroup, label:(s.diagnostics?'Hide':'Show')+' diagnostics',
-        keywords:'diagnostics fps perf',
-        onSelect:function(){ d({t:A.DIAGNOSTICS,v:!s.diagnostics}); }});
-    } else { // present
-      push({group:quickGroup, label:'Smart Views',
-        keywords:'smart views saved viewpoints presets',
-        onSelect:function(){ d({t:A.SMART_VIEWS,v:true}); }});
-      push({group:quickGroup, label:'Open Navigator',
-        keywords:'navigator tree elements explorer browse',
-        onSelect:function(){ d({t:A.TAB,v:'navigator'}); }});
-    }
-
-    // ── Switch workspace (only the OTHER workspaces) ──
-    if (ws !== 'present')    push({group:'Workspace', label:'Switch to Present',
-      keywords:'present view show showcase clean architect',
+    var renderLabels = {standard:'Standard',shaded:'Shaded',rendered:'Rendered (lit)',wireframe:'Wireframe'};
+    // Workspaces
+    push({group:'Workspace', label:'Switch to Present',    keywords:'present view show showcase clean architect',
       onSelect:function(){ d({t:A.SET_WORKSPACE,v:'present'}); }});
-    if (ws !== 'coordinate') push({group:'Workspace', label:'Switch to Coordinate',
-      keywords:'coordinate clash detection issues bim',
+    push({group:'Workspace', label:'Switch to Coordinate', keywords:'coordinate clash detection issues bim',
       onSelect:function(){ d({t:A.SET_WORKSPACE,v:'coordinate'}); }});
-    if (ws !== 'review')     push({group:'Workspace', label:'Switch to Review',
-      keywords:'review data quality audit diagnostics',
+    push({group:'Workspace', label:'Switch to Review',     keywords:'review data quality audit diagnostics',
       onSelect:function(){ d({t:A.SET_WORKSPACE,v:'review'}); }});
-
-    // ── View (universal) ──
+    push({group:'Workspace', label:'Toggle diagnostics',   keywords:'diagnostics fps perf',
+      onSelect:function(){ d({t:A.DIAGNOSTICS,v:!s.diagnostics}); }});
+    // View
     push({group:'View', label:'Fit to view', hint:'F', keywords:'fit zoom extents reset framing',
       onSelect:function(){ try{ if(window._ccFit) window._ccFit(); }catch(e){} }});
-    push({group:'View', label:'Walk mode', keywords:'walk wasd fps first person navigate',
-      onSelect:function(){ d({t:A.WALK_MODE,v:!s.walkMode}); }});
     push({group:'View', label:'Toggle floor plan view', keywords:'plan 2d sheet floor underlay',
       onSelect:function(){ d({t:A.FLOOR_PLAN,v:!s.floorPlan}); }});
-
-    // ── Rendering (universal) ──
+    push({group:'View', label:'Walk mode', keywords:'walk wasd fps first person navigate',
+      onSelect:function(){ d({t:A.WALK_MODE,v:!s.walkMode}); }});
     renderStyles.forEach(function(style, i){
       push({group:'Rendering', label:'Render: '+renderLabels[style], hint:String(i+1),
         keywords:'render style material '+style,
         onSelect:function(){ d({t:A.UPD_PREFS,u:{renderStyle:style}}); }});
     });
-
-    // ── Tools (universal) ──
+    // Tools
     push({group:'Tools', label:'Section by surface',
       keywords:'section cut slice plane clip',
       onSelect:function(){ d({t:A.SECTION_CUSTOM,v:!s.sectionCustomActive}); }});
@@ -15393,20 +15345,39 @@ function startApp() {
     push({group:'Tools', label:'Add comment pin',
       keywords:'note comment pin annotation pin',
       onSelect:function(){ d({t:A.COMMENT_MODE,v:!s.commentMode}); }});
-
-    // ── Project / global (universal) ──
-    push({group:'Project', label:'Open IFC or GLB file…',
+    // Panels & tabs
+    push({group:'Panels', label:'Open Conflicts',
+      keywords:'conflicts clashes issues list',
+      onSelect:function(){ d({t:A.TAB,v:'clashes'}); }});
+    push({group:'Panels', label:'Open Issues',
+      keywords:'issues bcf reports tickets',
+      onSelect:function(){ d({t:A.TAB,v:'issues'}); }});
+    push({group:'Panels', label:'Open Navigator',
+      keywords:'navigator tree elements explorer browse',
+      onSelect:function(){ d({t:A.TAB,v:'navigator'}); }});
+    push({group:'Panels', label:'Open Standards',
+      keywords:'standards rules ids data quality compliance',
+      onSelect:function(){ d({t:A.TAB,v:'standards'}); }});
+    push({group:'Panels', label:'Toggle Models panel',
+      keywords:'models files ifc list panel',
+      onSelect:function(){ try{ if(window._ccToggleModelsPanel) window._ccToggleModelsPanel(); }catch(e){} }});
+    push({group:'Panels', label:'Toggle Inspector',
+      keywords:'inspector details properties drawer',
+      onSelect:function(){ d({t:A.INSPECTOR_OPEN,v:!s.inspectorOpen}); }});
+    // Files
+    push({group:'Files', label:'Open IFC or GLB file…',
       keywords:'open file load import ifc glb',
       onSelect:function(){ try{ if(window._ccOpenIFC) window._ccOpenIFC(); }catch(e){} }});
+    // Modals & global
+    push({group:'Project', label:'Run clash detection',
+      keywords:'detect run clashes coordination check find',
+      onSelect:function(){ try{ if(window._ccRunDetection) window._ccRunDetection(); }catch(e){} }});
     push({group:'Project', label:'Share project',
       keywords:'share collaboration team url link invite send',
       onSelect:function(){ d({t:A.SHARE,v:true}); }});
-    if (ws !== 'present') push({group:'Project', label:'Smart Views',
+    push({group:'Project', label:'Smart Views',
       keywords:'smart views saved viewpoints presets',
       onSelect:function(){ d({t:A.SMART_VIEWS,v:true}); }});
-    push({group:'Project', label:'Toggle Models panel',
-      keywords:'models files ifc list panel',
-      onSelect:function(){ try{ if(window._ccToggleModelsPanel) window._ccToggleModelsPanel(); }catch(e){} }});
     push({group:'Project', label:'Settings',
       keywords:'settings preferences config options',
       onSelect:function(){ d({t:A.SETTINGS,v:true}); }});
