@@ -732,7 +732,7 @@ function startApp() {
        the user to the exact same chrome they left. _ccPersistUI() below
        writes them back; the reducer cases for SET_WORKSPACE / DIAGNOSTICS /
        PANEL_OPEN / INSPECTOR_OPEN / ASK_OPEN funnel through it. */
-    workspace:(function(){ try { var v=localStorage.getItem('cc_workspace'); if(v==='review') v='coordinate'; return (v==='present'||v==='coordinate')?v:'present'; } catch(e){ return 'present'; } })(),
+    workspace:(function(){ try { var v=localStorage.getItem('cc_workspace'); return (v==='present'||v==='coordinate'||v==='review')?v:'present'; } catch(e){ return 'present'; } })(),
     diagnostics:_ccLoadPref('diagnostics',false),
     panelOpen:_ccLoadPref('panelOpen',null),       // null = follow workspace default; true/false = user override
     inspectorOpen:_ccLoadPref('inspectorOpen',false),
@@ -1022,7 +1022,7 @@ function startApp() {
       case A.SHARE_TAB:   return Object.assign({},s,{shareTab:a.v||'overview'});
       case A.PRESENT:     return Object.assign({},s,{presenting:!!a.v});
       case A.SET_WORKSPACE: {
-        var w=(a.v==='coordinate'||a.v==='review')?'coordinate':'present';
+        var w=(a.v==='coordinate'||a.v==='review')?a.v:'present';
         _ccPersistUI('workspace',w);
         /* Switching workspace closes any open left panel, the selection-driven
            inspector, and the avatar menu so each workspace lands clean. */
@@ -7721,7 +7721,7 @@ function startApp() {
     useEffect(function(){
       var S = state3d.current;
       if(!S.mg) return;
-      var style = s.prefs.renderStyle || 'rendered';
+      var style = s.prefs.renderStyle || 'shaded';
       var light = (s.prefs.theme||'light')==='light';
       var ls = (s.prefs.lightSettings) || {};
       var sunMul = (typeof ls.sun === 'number') ? ls.sun : 1.0;
@@ -7988,11 +7988,11 @@ function startApp() {
         }}></div>
         <span style=${{fontSize:'0.98rem',color:'var(--accent-subtle)',fontWeight:500,letterSpacing:'.03em'}}>Switching project…</span>
       </div>`}
-      ${s.workspace !== 'present' && s.diagnostics && html`<div class="cc-overlay-chrome" style=${{position:'absolute',top:'var(--space-3)',left:'var(--space-3)',padding:'var(--space-1) var(--space-2)',pointerEvents:'auto',fontSize:'var(--text-xs)'}}>
+      ${s.workspace==='review' && s.diagnostics && html`<div class="cc-overlay-chrome" style=${{position:'absolute',top:'var(--space-3)',left:'var(--space-3)',padding:'var(--space-1) var(--space-2)',pointerEvents:'auto',fontSize:'var(--text-xs)'}}>
         <span style=${{color:fpsColor(perfData.fps),cursor:'pointer',fontWeight:'var(--weight-medium)',fontFamily:'var(--font-mono)'}}
           onClick=${function(){setPerfOpen(!perfOpen)}}>${perfData.fps} fps</span>
       </div>`}
-      ${s.workspace !== 'present' && s.diagnostics && perfOpen && html`<div class="cc-overlay-chrome" style=${{position:'absolute',top:'2.4rem',left:'var(--space-3)',padding:'var(--space-2) var(--space-3)',pointerEvents:'auto',fontSize:'var(--text-2xs)',color:'var(--text-secondary)',minWidth:180}}>
+      ${s.workspace==='review' && s.diagnostics && perfOpen && html`<div class="cc-overlay-chrome" style=${{position:'absolute',top:'2.4rem',left:'var(--space-3)',padding:'var(--space-2) var(--space-3)',pointerEvents:'auto',fontSize:'var(--text-2xs)',color:'var(--text-secondary)',minWidth:180}}>
         <div style=${{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:'var(--space-1)'}}>
           <span style=${{fontWeight:'var(--weight-semibold)',color:'var(--text-primary)',fontSize:'var(--text-xs)',textTransform:'uppercase',letterSpacing:'.06em'}}>Performance</span>
           <button onClick=${function(){setPerfOpen(false)}} style=${{...S_BTN,padding:'0 var(--space-1)',background:'none',color:'var(--text-faint)',fontSize:'var(--text-xs)'}} aria-label="Close performance stats">✕</button>
@@ -15336,7 +15336,9 @@ function startApp() {
       onSelect:function(){ d({t:A.SET_WORKSPACE,v:'present'}); }});
     push({group:'Workspace', label:'Switch to Coordinate', keywords:'coordinate clash detection issues bim',
       onSelect:function(){ d({t:A.SET_WORKSPACE,v:'coordinate'}); }});
-    push({group:'Workspace', label:'Toggle diagnostics',   keywords:'diagnostics review data quality audit fps perf',
+    push({group:'Workspace', label:'Switch to Review',     keywords:'review data quality audit diagnostics',
+      onSelect:function(){ d({t:A.SET_WORKSPACE,v:'review'}); }});
+    push({group:'Workspace', label:'Toggle diagnostics',   keywords:'diagnostics fps perf',
       onSelect:function(){ d({t:A.DIAGNOSTICS,v:!s.diagnostics}); }});
     // View
     push({group:'View', label:'Fit to view', hint:'F', keywords:'fit zoom extents reset framing',
@@ -15494,8 +15496,13 @@ function startApp() {
               onClick=${function(){ try{c.onSelect();}catch(_e){} onClose(); }}
               style=${{
                 padding:'var(--space-2) var(--space-4)',display:'flex',alignItems:'center',gap:'var(--space-3)',
-                background:r.active?'var(--accent-bg)':'transparent',cursor:'pointer',
-                color:'var(--text-primary)',fontSize:'var(--text-sm)',lineHeight:'var(--leading-tight)'
+                background:r.active?'var(--accent-bg-deep)':'transparent',
+                borderLeft:r.active?'2px solid var(--accent)':'2px solid transparent',
+                paddingLeft:r.active?'calc(var(--space-4) - 2px)':'var(--space-4)',
+                cursor:'pointer',
+                color:r.active?'var(--accent-hover)':'var(--text-primary)',
+                fontSize:'var(--text-sm)',lineHeight:'var(--leading-tight)',
+                fontWeight:r.active?'var(--weight-semibold)':'var(--weight-regular)'
               }}>
               ${c.isAsk
                 ? html`<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a8 8 0 0 1-11.5 7.2L4 21l1.8-5.5A8 8 0 1 1 21 12z"/></svg>`
@@ -20770,16 +20777,18 @@ function startApp() {
     var SVG_INTEG   = '<path d="M12 2v4m0 12v4M2 12h4m12 0h4"/><circle cx="12" cy="12" r="3"/><path d="M6.34 6.34l2.83 2.83m5.66 5.66l2.83 2.83M17.66 6.34l-2.83 2.83m-5.66 5.66l-2.83 2.83"/>';
 
     var w = s.workspace || 'coordinate';
-    /* Workspace-scoped tab list — Coordinate now folds in the former
-       Review tabs (Data Quality, Navigator). One coordination workspace,
-       not two; Present stays clean. */
-    var tabs = [
-      {id:'clashes',     svg:SVG_CLASHES,    label:'Conflicts',    badge:clashN},
-      {id:'issues',      svg:SVG_ISSUES,     label:'Issues',       badge:issueN},
-      {id:'navigator',   svg:SVG_EXPLORE,    label:'Navigator'},
-      {id:'dataquality', svg:SVG_DATAQUALITY,label:'Data Quality'},
-      {id:'standards',   svg:SVG_STANDARDS,  label:'Clash Rules'}
-    ];
+    /* Workspace-scoped tab list — Review = data quality + navigator,
+       Coordinate = conflicts + issues + clash rules. */
+    var tabs = w === 'review'
+      ? [
+          {id:'dataquality', svg:SVG_DATAQUALITY, label:'Data Quality'},
+          {id:'navigator',   svg:SVG_EXPLORE,     label:'Navigator'}
+        ]
+      : [
+          {id:'clashes',  svg:SVG_CLASHES,   label:'Conflicts', badge:clashN},
+          {id:'issues',   svg:SVG_ISSUES,    label:'Issues',    badge:issueN},
+          {id:'standards',svg:SVG_STANDARDS, label:'Clash Rules'}
+        ];
 
     return html`<div class="cc-left-rail" style=${{
       width:48,background:'var(--surface)',borderRight:'1px solid var(--hairline)',
@@ -20789,7 +20798,7 @@ function startApp() {
         ${tabs.map(function(t){ return tabBtn(t.id, t.svg, t.label, t.badge||0); })}
       </div>
       <div style=${{flex:1}}></div>
-      ${w !== 'present' && html`<button class="cc-tip" data-tip=${(s.diagnostics?'Hide':'Show')+' diagnostics'}
+      ${w === 'review' && html`<button class="cc-tip" data-tip=${(s.diagnostics?'Hide':'Show')+' diagnostics'}
         onClick=${function(){ d({t:A.DIAGNOSTICS, v: !s.diagnostics}); }}
         style=${{
           width:'100%',height:42,background:'none',border:'none',cursor:'pointer',
@@ -21056,7 +21065,7 @@ function startApp() {
           </label>
           <label style=${{display:'flex',alignItems:'center',gap:'.5rem',cursor:'pointer'}}>
             <input type="checkbox" checked disabled style=${{accentColor:'var(--accent)'}} />
-            <span>Clash count &amp; status breakdown, issue count</span>
+            <span>Clash count & status breakdown, issue count</span>
           </label>
           <label style=${{display:'flex',alignItems:'center',gap:'.5rem',cursor:'pointer'}} onClick=${function(){setIncludeNames(!includeNames)}}>
             <input type="checkbox" checked=${includeNames} onChange=${function(){}} style=${{accentColor:'var(--accent)'}} />
@@ -21690,9 +21699,9 @@ function startApp() {
       }
 
       // ── DATA QUALITY: comprehensive data check ───────────────────
-      // (Review workspace folded into Coordinate; DQ-deep view kicks in
-      // when user picks the Data Quality rail tab.)
-      if (s.tab === 'dataquality') {
+      // Triggered by Review workspace OR by clicking the Data Quality tab
+      // in any workspace (the rail tab promotes the deep DQ inspector).
+      if (workspace === 'review' || s.tab === 'dataquality') {
         return html`<div style=${WRAP}>
           ${headerCard}
           <!-- DQ Score -->
@@ -21806,10 +21815,10 @@ function startApp() {
         </div>`}
         <!-- Switch to Data Quality for full checks -->
         <div style=${{textAlign:'center',padding:'.4rem 0'}}>
-          <button onClick=${function(){d({t:A.TAB,v:'dataquality'});}}
+          <button onClick=${function(){d({t:A.SET_WORKSPACE,v:'review'});}}
             style=${{background:'none',border:'none',cursor:'pointer',fontFamily:'inherit',
               fontSize:'var(--text-xs)',color:'var(--text-muted)',textDecoration:'underline',textDecorationColor:'var(--border)'}}>
-            Open Data Quality for element checks →
+            Switch to Data Quality for element checks →
           </button>
         </div>
         <!-- Actions -->
@@ -21952,15 +21961,27 @@ function startApp() {
 
   function WelcomePopup(props) {
     var d = props.d, s = props.s;
-    if (s.models && s.models.length > 0) return null;
-    if (s.presenting) return null;
-
+    // Hooks first (rules-of-hooks): so we can early-return for loading too.
     var stVis  = useState(false), vis   = stVis[0],  setVis  = stVis[1];
     var stDrag = useState(false), dragging = stDrag[0], setDragging = stDrag[1];
     var stUrl  = useState(false), urlOpen = stUrl[0], setUrlOpen = stUrl[1];
     var stU    = useState(''),    urlVal = stU[0],   setUrlVal = stU[1];
+    var stLoading = useState(!!window._ccModelLoading);
+    var loading = stLoading[0], setLoading = stLoading[1];
 
     useEffect(function(){ requestAnimationFrame(function(){ setVis(true); }); }, []);
+    useEffect(function(){
+      function onLoad(e){ setLoading(!!(e.detail && e.detail.loading)); }
+      window.addEventListener('cc-model-loading', onLoad);
+      return function(){ window.removeEventListener('cc-model-loading', onLoad); };
+    }, []);
+
+    // Early-return AFTER all hooks are registered.
+    if (s.models && s.models.length > 0) return null;
+    if (s.presenting) return null;
+    // Hand off to the centred LoadProgressCard once a load is in flight —
+    // no point showing Welcome behind it.
+    if (loading) return null;
 
     function openFile() { if (window._ccOpenIFC) window._ccOpenIFC(); }
 
@@ -22016,7 +22037,7 @@ function startApp() {
             fontFamily:'var(--font-mono)',fontSize:'var(--text-2xs)',
             color:'var(--ink-muted)',letterSpacing:'.12em',textTransform:'uppercase',
             marginBottom:'.6rem'
-          }}>ClashControl · Free &amp; open · v${CC_VERSION.v}</div>
+          }}>ClashControl · Free & open · v${CC_VERSION.v}</div>
           <!-- Welcome headline -->
           <h1 style=${{
             margin:0,padding:0,
@@ -22029,7 +22050,7 @@ function startApp() {
             marginTop:'.85rem',marginBottom:0,
             fontFamily:'var(--font-body)',fontSize:'var(--text-md)',
             color:'var(--ink-primary)',lineHeight:1.5,maxWidth:'34em',fontWeight:500
-          }}>Clash detection, coordination &amp; presentation for architects and BIM teams.</p>
+          }}>Clash detection, coordination & presentation for architects and BIM teams.</p>
           <p style=${{
             marginTop:'.4rem',marginBottom:0,
             fontFamily:'var(--font-body)',fontSize:'var(--text-base)',
@@ -22243,6 +22264,7 @@ function startApp() {
     var w = s.workspace || 'present';
     var tabs = [
       {id:'present',    label:'Present'},
+      {id:'review',     label:'Review'},
       {id:'coordinate', label:'Coordinate'}
     ];
     var hasModel = s.models && s.models.length > 0;
@@ -22629,15 +22651,16 @@ function startApp() {
        idle is ink-muted. The visible label appears as a tooltip on hover. */
     function btn(opts){
       var on = !!opts.active;
+      var tipText = opts.label || opts.title || opts.k;
       return html`<button key=${opts.k} onClick=${opts.onClick}
-        aria-label=${opts.label} aria-pressed=${on}
+        aria-label=${tipText} aria-pressed=${on} title=${tipText}
         style=${{
           width:36,height:36,display:'inline-flex',alignItems:'center',justifyContent:'center',
           background:'none',border:'none',cursor:'pointer',position:'relative',
           color:on?'var(--ink-primary)':'var(--ink-muted)',
           transition:'color var(--duration-fast) var(--ease-standard)'
         }}
-        onMouseEnter=${function(e){ if(!on) e.currentTarget.style.color='var(--ink-secondary)'; var r=e.currentTarget.getBoundingClientRect(); setTtTip({label:opts.label||opts.k, desc:opts.desc||''}); ttPos.current={x:r.left+r.width/2,y:r.top}; }}
+        onMouseEnter=${function(e){ if(!on) e.currentTarget.style.color='var(--ink-secondary)'; var r=e.currentTarget.getBoundingClientRect(); setTtTip({label:tipText, desc:opts.desc||''}); ttPos.current={x:r.left+r.width/2,y:r.top}; }}
         onMouseLeave=${function(e){ if(!on) e.currentTarget.style.color='var(--ink-muted)'; setTtTip(null); }}>
         <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor"
           stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"
@@ -22673,7 +22696,7 @@ function startApp() {
       {id:'rendered',  label:'Rendered'},
       {id:'wireframe', label:'Wireframe'}
     ];
-    var curStyle = s.prefs.renderStyle || 'rendered';
+    var curStyle = s.prefs.renderStyle || 'shaded';
     var curStyleLabel = (styles.find(function(x){return x.id===curStyle;})||styles[2]).label;
 
     /* Section sub-row only appears when a slice plane exists, anchored under
@@ -22801,9 +22824,36 @@ function startApp() {
           ${btn({k:'vp', title:'Save viewpoint (V)', label:'Save viewpoint',
             icon:'<path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/>',
             onClick:function(){ if(_captureViewpoint){var vp=_captureViewpoint('Viewpoint '+(s.viewpoints.length+1));d({t:A.ADD_VIEWPOINT,v:vp});} }})}
+          ${btn({k:'smartViews', title:'Smart Views', label:'Smart Views',
+            icon:'<circle cx="12" cy="12" r="3"/><path d="M12 1v6m0 10v6M5.64 5.64l4.24 4.24m4.24 4.24l4.24 4.24M1 12h6m10 0h6M5.64 18.36l4.24-4.24m4.24-4.24l4.24-4.24"/>',
+            onClick:function(){ d({t:A.SMART_VIEWS,v:true}); }})}
           ${btn({k:'present', active:s.presenting, title:s.presenting?'Exit presentation (Esc)':'Start presentation', label:'Presentation',
             icon:'<polygon points="5 3 19 12 5 21 5 3"/>',
             onClick:function(){ d({t:A.PRESENT,v:!s.presenting}); }})}`}
+
+        <!-- COORDINATE workspace tools: run detection + filter clashes -->
+        ${s.workspace === 'coordinate' && html`${div()}
+          ${btn({k:'runDetect', title:s.detecting?'Running detection…':'Run clash detection', label:'Run clash detection',
+            icon:'<polygon points="6 3 20 12 6 21 6 3"/><path d="M6 12h14"/>',
+            onClick:function(){ if(s.detecting) return; if(window._ccRunDetection){ window._ccRunDetection(); d({t:A.TAB,v:'clashes'}); } }})}
+          ${btn({k:'conflicts', active:s.tab==='clashes', title:'Conflicts list', label:'Conflicts',
+            icon:'<path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/>',
+            onClick:function(){ d({t:A.TAB,v:s.tab==='clashes'?null:'clashes'}); }})}
+          ${btn({k:'issues', active:s.tab==='issues', title:'Issues', label:'Issues',
+            icon:'<path d="M4 15s1-1 4-1 5 2 8 2 4-1 4-1V3s-1 1-4 1-5-2-8-2-4 1-4 1z"/><line x1="4" y1="22" x2="4" y2="15"/>',
+            onClick:function(){ d({t:A.TAB,v:s.tab==='issues'?null:'issues'}); }})}`}
+
+        <!-- REVIEW workspace tools: run data quality + IDS + diagnostics -->
+        ${s.workspace === 'review' && html`${div()}
+          ${btn({k:'runDQ', title:'Run data quality checks', label:'Run data quality',
+            icon:'<path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/>',
+            onClick:function(){ if(window._ccRunDataQualityChecks){ window._ccRunDataQualityChecks(); d({t:A.TAB,v:'dataquality'}); } else { d({t:A.TAB,v:'dataquality'}); } }})}
+          ${btn({k:'dq', active:s.tab==='dataquality', title:'Data Quality panel', label:'Data Quality',
+            icon:'<rect x="3" y="3" width="18" height="18" rx="2"/><path d="M9 9h6"/><path d="M9 13h6"/><path d="M9 17h4"/>',
+            onClick:function(){ d({t:A.TAB,v:s.tab==='dataquality'?null:'dataquality'}); }})}
+          ${btn({k:'diag', active:s.diagnostics, title:(s.diagnostics?'Hide':'Show')+' diagnostics', label:'Diagnostics',
+            icon:'<path d="M3 12h3l3-9 4 18 3-9h5"/>',
+            onClick:function(){ d({t:A.DIAGNOSTICS,v:!s.diagnostics}); }})}`}
 
         <!-- spacer -->
         <span style=${{flex:1}}></span>
