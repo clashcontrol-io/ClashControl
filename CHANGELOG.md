@@ -1,5 +1,8 @@
 # Changelog
 
+## v5.2.1 (2026-05-02)
+- perf(render): Hidden Line uses one shared Lambert, not N per-mesh
+
 ## v5.2.0 (2026-05-02)
 - feat(ui): DOM-anchored 3D clash chips — selection title floats above the model
 
