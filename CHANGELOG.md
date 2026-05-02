@@ -1,5 +1,8 @@
 # Changelog
 
+## v5.2.0 (2026-05-02)
+- feat(ui): DOM-anchored 3D clash chips — selection title floats above the model
+
 ## v5.1.14 (2026-05-01)
 - Distribute remaining integrations into their natural places
 
