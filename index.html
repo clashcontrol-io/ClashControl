@@ -681,7 +681,7 @@ function startApp() {
     lightSettings:_ccLoadPref('lightSettings',{sun:1.0, ambient:1.0, exposure:1.0, shadow:1.0, time:13}),
   };
   var INIT = {
-    models:[], clashes:[], issues:[], activeId:null, showModal:false, showSettings:false, modalElement:null, tab:null,
+    models:[], clashes:[], issues:[], activeId:null, showModal:false, showSettings:false, modalElement:null, tab:null, isRecording:false,
     rules:{ modelA:'all', modelB:'all', hard:true, maxGap:50, minGap:0, duplicates:false, changeAware:false, excludeSelf:true, excludeTypes:[], excludeTypePairs:[], minOverlapVolM3:1e-5, toleranceByTypePair:{}, useSemanticFilter:true },
     detectionSettings:null, // Captured at detection run time: {clearance_mm, discipline_filters}
     trainingMode:(function(){try{var v=localStorage.getItem('cc_trainingMode');return v===null?true:v==='1';}catch(e){return true;}}()),
@@ -1031,6 +1031,7 @@ function startApp() {
         return Object.assign({},s,{workspace:w,tab:null,panelOpen:null,avatarMenuOpen:false});
       }
       case A.DIAGNOSTICS: { var d=!!a.v; _ccPersistUI('diagnostics',d); return Object.assign({},s,{diagnostics:d}); }
+      case 'RECORDING_STATE': return Object.assign({},s,{isRecording:!!a.v});
       case A.PANEL_OPEN:    { var p=!!a.v; _ccPersistUI('panelOpen',p); return Object.assign({},s,{panelOpen:p}); }
       case A.INSPECTOR_OPEN:{ var io=!!a.v; _ccPersistUI('inspectorOpen',io); return Object.assign({},s,{inspectorOpen:io}); }
       case A.ASK_OPEN:      { var ao=!!a.v; _ccPersistUI('askOpen',ao); return Object.assign({},s,{askOpen:ao}); }
@@ -5332,6 +5333,74 @@ function startApp() {
       };
       window._ccResetView = _resetView;
 
+      // ── Walkthrough recording ─────────────────────────────────────
+      var _recordingState = null;
+      window._ccStartRecording = function() {
+        if (_recordingState) return; // already recording
+        if (!renderer.domElement.captureStream) {
+          alert('Recording requires Chrome, Firefox, or Edge.');
+          return;
+        }
+        invalidate(999);
+        var stream = renderer.domElement.captureStream(30);
+        var opts2 = ['video/webm;codecs=vp9','video/webm;codecs=vp8','video/webm'];
+        var mimeType = opts2.find(function(t){return MediaRecorder.isTypeSupported&&MediaRecorder.isTypeSupported(t);}) || 'video/webm';
+        var mr = new MediaRecorder(stream, {mimeType:mimeType, videoBitsPerSecond:4000000});
+        var chunks = [];
+        mr.ondataavailable = function(e){ if(e.data && e.data.size > 0) chunks.push(e.data); };
+        mr.onstop = function(){
+          var blob = new Blob(chunks, {type:mimeType});
+          var a = document.createElement('a');
+          a.href = URL.createObjectURL(blob);
+          a.download = 'clashcontrol-walkthrough-'+new Date().toISOString().slice(0,19).replace(/[T:]/g,'-')+'.webm';
+          a.click();
+          URL.revokeObjectURL(a.href);
+          _recordingState = null;
+          if(window._ccDispatch) window._ccDispatch({t:'RECORDING_STATE',v:false});
+        };
+        mr.start(1000); // collect every 1s
+        _recordingState = mr;
+        if(window._ccDispatch) window._ccDispatch({t:'RECORDING_STATE',v:true});
+      };
+      window._ccStopRecording = function() {
+        if (!_recordingState) return;
+        _recordingState.stop();
+        _needsRender = 0;
+      };
+      window._ccIsRecording = function(){ return !!_recordingState; };
+
+      window._ccExportViewPDF = function(opts) {
+        opts = opts || {};
+        invalidate(2);
+        // Capture after the next render frame
+        window._ccPendingScreenshot = function(dataUrl) {
+          var title = opts.title || document.title || 'ClashControl';
+          var w = renderer.domElement.width, h = renderer.domElement.height;
+          var pw = window.open('','_blank','width='+w+',height='+(h+80));
+          if (!pw) return;
+          pw.document.write('<!DOCTYPE html><html><head><title>'+title+'</title><style>'
+            +'body{margin:0;background:#fff;display:flex;flex-direction:column;align-items:center;}'
+            +'img{max-width:100%;display:block;}'
+            +'.meta{font-family:sans-serif;font-size:11px;color:#555;padding:6px 12px;width:100%;box-sizing:border-box;}'
+            +'@media print{'
+            +'  body{display:block;}'
+            +'  img{width:100%;page-break-inside:avoid;}'
+            +'  .meta{font-size:9px;}'
+            +'  .noprint{display:none}'
+            +'}'
+            +'</style></head><body>'
+            +'<img src="'+dataUrl+'" width="'+w+'" height="'+h+'" />'
+            +'<div class="meta">'+title+' &nbsp;·&nbsp; '+new Date().toLocaleString()+'</div>'
+            +'<div class="meta noprint" style="margin-top:4px">'
+            +'<button onclick="window.print()" style="padding:4px 12px;cursor:pointer;margin-right:8px">Print / Save PDF</button>'
+            +'<button onclick="window.close()" style="padding:4px 12px;cursor:pointer">Close</button>'
+            +'</div>'
+            +'</body></html>');
+          pw.document.close();
+          setTimeout(function(){ pw.focus(); }, 200);
+        };
+      };
+
       var _ghostedMeshes = [];
       var _ghostMatCache = new Map(); // origMat.uuid → ghost clone
       var _GHOST_TINT = new THREE.Color(0x5a6472);
@@ -6922,6 +6991,12 @@ function startApp() {
             S._composer.render();
           } else {
             renderer.render(scene,S.camera);
+          }
+          // ── Screenshot capture (must happen immediately after render, before buffer swap) ──
+          if (window._ccPendingScreenshot) {
+            var _cb = window._ccPendingScreenshot;
+            window._ccPendingScreenshot = null;
+            try { _cb(renderer.domElement.toDataURL('image/png')); } catch(e){}
           }
           // ── Project measurement labels onto screen ──────────────
           if (window._ccMeasurementsRef && window._ccMeasurementsRef.length > 0) {
@@ -22839,6 +22914,24 @@ function startApp() {
         <!-- NOTES -->
         ${btn({k:'note',  active:activeMode==='note',  title:'Drop a pin (N)', label:'Pin', icon:I.pin,
                 onClick:function(){ if(activeMode==='note') clearAllModes(); else setMode('note'); }})}
+        ${div()}
+        <!-- EXPORT PDF -->
+        ${btn({k:'exportpdf', title:'Export view as PDF', label:'Export PDF',
+                icon:'<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><path d="M12 12v6"/><path d="M9 15l3 3 3-3"/>',
+                onClick:function(){
+                  if(window._ccExportViewPDF) window._ccExportViewPDF({title:document.title});
+                }})}
+        <!-- RECORD WALKTHROUGH -->
+        ${btn({k:'record', active:s.isRecording,
+                title:s.isRecording?'Stop recording (saves .webm)':'Record walkthrough as WebM video',
+                label:s.isRecording?'Stop recording':'Record',
+                icon:s.isRecording
+                  ?'<rect x="3" y="3" width="18" height="18" rx="2"/>'
+                  :'<circle cx="12" cy="12" r="8" fill="currentColor" opacity=".2"/><circle cx="12" cy="12" r="4" fill="currentColor"/>',
+                onClick:function(){
+                  if(s.isRecording){ if(window._ccStopRecording) window._ccStopRecording(); }
+                  else { if(window._ccStartRecording) window._ccStartRecording(); }
+                }})}
 
         <!-- PRESENT workspace tools: viewpoints + presentation mode -->
         ${s.workspace === 'present' && html`${div()}
