@@ -87,6 +87,28 @@ Things to be careful about. Do not remove without a good reason — add a note i
 Update this section at the start and end of each session.
 Mark completed items with ~~strikethrough~~ and date, then let the daily sync archive them.
 
+On branch `claude/research-design-tools-TzNQG` (2026-05-03) — in progress:
+
+- ~~ViewCube fix: renderer size 120→74, arrows removed, face-click navigation correct~~ (2026-05-03)
+- ~~A1: All toolbar tooltip shortcut hints fixed/added; keyboard handlers added for O, R, F, N, I, B, W, Shift+M~~ (2026-05-03)
+- ~~A2: Clashes panel — "Conflicts"→"Clashes", Group/Sort pills→compact `<select>` dropdowns~~ (2026-05-03)
+- ~~A3: Issues panel — compact BCF Export `▼` dropdown, + From clash button, active clash pre-fills modal~~ (2026-05-03)
+- ~~A4: Detection Rules panel — "Clash Rules"→"Detection Rules", "Hard always flagged"→"Always treat as hard clash" + tooltip, IFC type datalist autocomplete~~ (2026-05-03)
+- ~~A5: Navigator panel — Spatial/Tree modes renamed ("Hierarchy"/"Flat list" + title hints), search shown in all modes (filters groups in classification views)~~ (2026-05-03)
+- ~~A6: Data Quality panel — severity legend dots, last-checked timestamp, Export CSV button, Create all issues bulk button, IDS section in labeled card~~ (2026-05-03)
+- ~~B2: PDF export via `window.print()` — toolbar button captures 3D canvas screenshot into print-ready page~~ (2026-05-03)
+- ~~B3: Walkthrough recording — `canvas.captureStream()` + MediaRecorder → .webm download; Record toolbar button with active state~~ (2026-05-03)
+- ~~B4: Material preview in Rendered mode — keyword PBR presets (glass/metal/concrete/wood/brick/gypsum/insulation)~~ (2026-05-03)
+- ~~B5: X-Ray render style (key 5) — all geometry semi-transparent (opacity 0.22, DoubleSide)~~ (2026-05-03)
+- ~~B6 (partial): Area measurement toolbar button exposed (was Cmd+K only)~~ (2026-05-03)
+
+**Pending (next session):**
+- B1: Unified comment system with threads
+- B6 (remaining): Hover coordinate display (X/Y/Z tooltip on any surface)
+- B7: Design option compare (sliding curtain between two model versions)
+- B8: Saved selection sets
+- Navigator: per-storey hide/show toggle
+
 On branch `claude/redesign-modern-ui-JLbhU` (2026-05-01) — landed:
 
 - ~~Tokens: paper / ink / terracotta palette; legacy `--bg-primary` / `--accent` tokens aliased so 19k lines auto-pick up the new aesthetic~~ (2026-05-01)
