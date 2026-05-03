@@ -8151,6 +8151,47 @@ function startApp() {
       return function(){ window._ccToggleMarkup3D = null; };
     }, []);
 
+    // ── Design option compare ──
+    var cmpSt = useState({open:false, modelA:null, modelB:null, blend:50}), compare = cmpSt[0], setCompare = cmpSt[1];
+    useEffect(function(){
+      window._ccToggleCompare = function(){
+        setCompare(function(c){return Object.assign({},c,{open:!c.open});});
+      };
+      return function(){ window._ccToggleCompare = null; };
+    }, []);
+    useEffect(function(){
+      // Apply compare visibility/opacity
+      if (!compare.open || !compare.modelA || !compare.modelB) return;
+      var S = window._ccState3d; if (!S || !S.mg) return;
+      var aOpacity = compare.blend < 50 ? 1 : (1 - (compare.blend-50)/50);
+      var bOpacity = compare.blend > 50 ? 1 : (compare.blend/50);
+      S.mg.children.forEach(function(modelGroup){
+        var mid = modelGroup.userData && modelGroup.userData.modelId;
+        if (mid === compare.modelA) {
+          modelGroup.visible = aOpacity > 0.01;
+          modelGroup.traverse(function(o){if(o.isMesh && o.material){o.material.transparent = aOpacity < 0.99; o.material.opacity = aOpacity;}});
+        } else if (mid === compare.modelB) {
+          modelGroup.visible = bOpacity > 0.01;
+          modelGroup.traverse(function(o){if(o.isMesh && o.material){o.material.transparent = bOpacity < 0.99; o.material.opacity = bOpacity;}});
+        } else {
+          modelGroup.visible = false;
+        }
+      });
+      invalidate();
+    }, [compare.open, compare.modelA, compare.modelB, compare.blend]);
+    useEffect(function(){
+      // When compare closes, restore visibility of all models
+      if (compare.open) return;
+      var S = window._ccState3d; if (!S || !S.mg) return;
+      S.mg.children.forEach(function(modelGroup){
+        var mid = modelGroup.userData && modelGroup.userData.modelId;
+        var m = (s.models||[]).find(function(x){return x.id===mid;});
+        modelGroup.visible = !m || m.visible !== false;
+        modelGroup.traverse(function(o){if(o.isMesh && o.material){o.material.opacity = 1; o.material.transparent = !!o.material._wasTransparent;}});
+      });
+      invalidate();
+    }, [compare.open]);
+
     function doFind(q) {
       setFindQuery(q);
       if(!q||q.length<2){setFindResults([]);if(_clearFoundElements)_clearFoundElements();return;}
@@ -8199,6 +8240,37 @@ function startApp() {
           return null;
         })}
       </svg>
+      ${compare.open && html`<div style=${{position:'absolute',bottom:'.75rem',left:'50%',transform:'translateX(-50%)',background:'var(--bg-primary)',border:'1px solid var(--border)',borderRadius:'var(--radius-sm)',boxShadow:'var(--shadow-md)',zIndex:9,pointerEvents:'auto',padding:'.5rem .65rem',display:'flex',flexDirection:'column',gap:'.4rem',minWidth:380}}>
+        <div style=${{display:'flex',alignItems:'center',gap:'.4rem'}}>
+          <span style=${{fontSize:'0.65rem',fontWeight:700,color:'var(--text-muted)',textTransform:'uppercase',letterSpacing:'.04em',flex:1}}>Compare versions</span>
+          <button onClick=${function(){setCompare(Object.assign({},compare,{open:false}));}}
+            style=${{background:'none',border:'none',color:'var(--text-muted)',cursor:'pointer',fontSize:'1rem',padding:'0 .2rem',lineHeight:1}}>×</button>
+        </div>
+        <div style=${{display:'flex',gap:'.3rem',alignItems:'center'}}>
+          <span style=${{fontSize:'.69rem',color:'var(--text-faint)',width:14}}>A</span>
+          <select value=${compare.modelA||''} onChange=${function(e){setCompare(Object.assign({},compare,{modelA:e.target.value||null}));}}
+            style=${{flex:1,fontSize:'0.72rem',padding:'.2rem .3rem',background:'var(--bg-secondary)',color:'var(--text-primary)',border:'1px solid var(--border)',borderRadius:4}}>
+            <option value="">Select model A…</option>
+            ${(s.models||[]).map(function(m){return html`<option key=${m.id} value=${m.id}>${m.name}</option>`})}
+          </select>
+        </div>
+        <div style=${{display:'flex',gap:'.3rem',alignItems:'center'}}>
+          <span style=${{fontSize:'.69rem',color:'var(--text-faint)',width:14}}>B</span>
+          <select value=${compare.modelB||''} onChange=${function(e){setCompare(Object.assign({},compare,{modelB:e.target.value||null}));}}
+            style=${{flex:1,fontSize:'0.72rem',padding:'.2rem .3rem',background:'var(--bg-secondary)',color:'var(--text-primary)',border:'1px solid var(--border)',borderRadius:4}}>
+            <option value="">Select model B…</option>
+            ${(s.models||[]).filter(function(m){return m.id!==compare.modelA;}).map(function(m){return html`<option key=${m.id} value=${m.id}>${m.name}</option>`})}
+          </select>
+        </div>
+        ${compare.modelA && compare.modelB && html`<div style=${{display:'flex',gap:'.4rem',alignItems:'center'}}>
+          <span style=${{fontSize:'.65rem',color:'var(--text-muted)',width:32}}>A</span>
+          <input type="range" min="0" max="100" step="1" value=${compare.blend}
+            onInput=${function(e){setCompare(Object.assign({},compare,{blend:+e.target.value}));}}
+            style=${{flex:1}} />
+          <span style=${{fontSize:'.65rem',color:'var(--text-muted)',width:32,textAlign:'right'}}>B</span>
+          <span style=${{fontSize:'.65rem',color:'var(--text-faint)',fontFamily:'var(--font-mono)',minWidth:30,textAlign:'right'}}>${compare.blend}%</span>
+        </div>`}
+      </div>`}
       ${(markupTool3D || (markups3D && markups3D.length>0)) && html`<div style=${{position:'absolute',top:'.5rem',left:'50%',transform:'translateX(-50%)',display:'flex',gap:'.25rem',padding:'.3rem',background:'var(--bg-primary)',border:'1px solid var(--border)',borderRadius:'var(--radius-sm)',boxShadow:'var(--shadow-md)',zIndex:9,pointerEvents:'auto',alignItems:'center'}}>
         ${[
           ['line','╱','Line'],
@@ -23126,6 +23198,12 @@ function startApp() {
                 icon:'<path d="M12 19l7-7 3 3-7 7-3-3z"/><path d="M18 13l-1.5-7.5L2 2l3.5 14.5L13 18l5-5z"/><path d="M2 2l7.586 7.586"/><circle cx="11" cy="11" r="2"/>',
                 onClick:function(){
                   if(window._ccToggleMarkup3D) window._ccToggleMarkup3D();
+                }})}
+        <!-- COMPARE — pick two models, blend between them -->
+        ${s.models.length >= 2 && btn({k:'compare', title:'Compare two model versions', label:'Compare',
+                icon:'<rect x="3" y="3" width="8" height="18" rx="1"/><rect x="13" y="3" width="8" height="18" rx="1" stroke-dasharray="2 2"/>',
+                onClick:function(){
+                  if(window._ccToggleCompare) window._ccToggleCompare();
                 }})}
         ${div()}
         <!-- EXPORT PDF -->
