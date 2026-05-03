@@ -5852,6 +5852,25 @@ function startApp() {
           invalidate();
         }
       };
+      function _makeNumberedPinTexture(n, isActive){
+        var c = document.createElement('canvas'); c.width = 96; c.height = 96;
+        var g = c.getContext('2d');
+        // Drop shadow
+        g.beginPath(); g.arc(48, 50, 36, 0, Math.PI*2); g.fillStyle = 'rgba(0,0,0,0.35)'; g.fill();
+        // Main circle
+        g.beginPath(); g.arc(48, 48, 34, 0, Math.PI*2);
+        g.fillStyle = isActive ? '#facc15' : '#a855f7'; g.fill();
+        // White ring
+        g.lineWidth = 4; g.strokeStyle = '#fff'; g.stroke();
+        // Number
+        g.fillStyle = isActive ? '#1f1300' : '#fff';
+        g.font = 'bold 38px -apple-system, sans-serif';
+        g.textAlign = 'center'; g.textBaseline = 'middle';
+        g.fillText(String(n), 48, 50);
+        var t = new THREE.CanvasTexture(c);
+        t.minFilter = THREE.LinearFilter; t.needsUpdate = true;
+        return t;
+      }
       window._ccShowCommentMarkers = function(comments, activeId) {
         window._ccClearCommentMarkers();
         if (!comments || !comments.length) return;
@@ -5859,25 +5878,17 @@ function startApp() {
         if (!visible.length) return;
         var grp = new THREE.Group();
         grp.name = 'commentMarkers';
-        var pinGeo = new THREE.SphereGeometry(0.18, 14, 14);
-        var ringGeo = new THREE.RingGeometry(0.32, 0.5, 28);
-        var baseMat = new THREE.MeshBasicMaterial({color:0xa855f7, transparent:true, opacity:0.9, depthTest:false});
-        var activeMat = new THREE.MeshBasicMaterial({color:0xfacc15, transparent:true, opacity:1.0, depthTest:false});
-        var ringMat = new THREE.MeshBasicMaterial({color:0xc084fc, transparent:true, opacity:0.45, side:THREE.DoubleSide, depthTest:false});
-        visible.forEach(function(c){
+        visible.forEach(function(c, i){
           var p = c.anchor.point;
           var isAct = c.id===activeId;
-          var pin = new THREE.Mesh(pinGeo, isAct ? activeMat : baseMat);
-          pin.position.set(p[0], p[1], p[2]);
-          pin.userData.commentId = c.id;
-          pin.renderOrder = 1000;
-          if (isAct) pin.scale.setScalar(1.4);
-          grp.add(pin);
-          var ring = new THREE.Mesh(ringGeo, ringMat);
-          ring.position.set(p[0], p[1], p[2]);
-          ring.rotation.x = -Math.PI/2;
-          ring.renderOrder = 999;
-          grp.add(ring);
+          var tex = _makeNumberedPinTexture(i+1, isAct);
+          var spriteMat = new THREE.SpriteMaterial({map:tex, depthTest:false, transparent:true});
+          var sprite = new THREE.Sprite(spriteMat);
+          sprite.position.set(p[0], p[1], p[2]);
+          sprite.scale.set(isAct?0.85:0.7, isAct?0.85:0.7, 1);
+          sprite.userData.commentId = c.id;
+          sprite.renderOrder = 1000;
+          grp.add(sprite);
         });
         scene.add(grp);
         _commentMarkersGroup = grp;
@@ -15426,12 +15437,20 @@ function startApp() {
             <button onClick=${function(){toggleResolve(c);}} style=${btnGhost}>${c.resolved?'Reopen':'Resolve'}</button>
             <button onClick=${function(){delComment(c);}} style=${{...btnGhost,color:'#f87171',borderColor:'#ef444466'}} title="Delete">✕</button>
           </div>
-          ${(!c.text && isActive) ? html`<${ShareCommentDraft} c=${c} sp=${sp} d=${d} />` : html`<div style=${{fontSize:'0.85rem',color:'var(--text-secondary)',whiteSpace:'pre-wrap',lineHeight:1.5}}>${c.text||html`<span style=${{color:'var(--text-faint)',fontStyle:'italic'}}>(no text)</span>`}</div>`}
+          ${(!c.text && isActive) ? html`<${ShareCommentDraft} c=${c} sp=${sp} d=${d} />` : html`<div style=${{fontSize:'0.85rem',color:'var(--text-secondary)',whiteSpace:'pre-wrap',lineHeight:1.5}}>${c.text
+            ? c.text.split(/(@[A-Za-z0-9_-]+)/).map(function(part,i){
+                if(part.charAt(0)==='@') return html`<span key=${i} style=${{color:'var(--accent)',fontWeight:600,background:'var(--accent-bg)',padding:'0 .15rem',borderRadius:3}}>${part}</span>`;
+                return part;
+              })
+            : html`<span style=${{color:'var(--text-faint)',fontStyle:'italic'}}>(no text)</span>`}</div>`}
           ${(c.replies||[]).length>0 && html`<div style=${{marginTop:'.5rem',paddingLeft:'.6rem',borderLeft:'2px solid var(--border)',display:'flex',flexDirection:'column',gap:'.4rem'}}>
             ${c.replies.map(function(r){return html`<div key=${r.id} style=${{fontSize:'0.78rem'}}>
               <span style=${{fontWeight:600,color:'var(--text-primary)'}}>${r.author||'Anonymous'}</span>
               <span style=${{color:'var(--text-faint)',marginLeft:'.4rem',fontSize:'0.68rem'}}>${r.ts?new Date(r.ts).toLocaleString():''}</span>
-              <div style=${{color:'var(--text-secondary)',whiteSpace:'pre-wrap',lineHeight:1.5}}>${r.text||''}</div>
+              <div style=${{color:'var(--text-secondary)',whiteSpace:'pre-wrap',lineHeight:1.5}}>${(r.text||'').split(/(@[A-Za-z0-9_-]+)/).map(function(part,i){
+                if(part.charAt(0)==='@') return html`<span key=${i} style=${{color:'var(--accent)',fontWeight:600,background:'var(--accent-bg)',padding:'0 .15rem',borderRadius:3}}>${part}</span>`;
+                return part;
+              })}</div>
             </div>`})}
           </div>`}
           ${isActive && !c.resolved && c.text && html`<div style=${{marginTop:'.5rem',display:'flex',gap:'.4rem'}}>
