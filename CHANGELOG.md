@@ -1,5 +1,8 @@
 # Changelog
 
+## v5.2.4 (2026-05-03)
+- ViewCube: fix off-screen clipping, remove arrows, fill wrapper
+
 ## v5.2.3 (2026-05-02)
 - Cmd-K: reorder items within each group by current workspace
 
