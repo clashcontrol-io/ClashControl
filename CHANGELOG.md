@@ -1,5 +1,8 @@
 # Changelog
 
+## v5.3.0 (2026-05-03)
+- Update MEMORY.md with completed session work
+
 ## v5.2.4 (2026-05-03)
 - ViewCube: fix off-screen clipping, remove arrows, fill wrapper
 
