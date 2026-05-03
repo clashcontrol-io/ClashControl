@@ -2163,6 +2163,7 @@ function startApp() {
             var mesh = new THREE.Mesh(geo, mat);
             mesh.applyMatrix4(new THREE.Matrix4().fromArray(placed.flatTransformation));
             mesh.userData.expressId = expressID;
+            mesh.userData._ifcMaterial = matMap[expressID] || '';
             elBox.expandByObject(mesh);
             _ccBakeMesh(mesh);
             mesh.userData._instKey = geoExpId + ':' + matKey;
@@ -2591,6 +2592,7 @@ function startApp() {
               var mesh = new THREE.Mesh(geo, mat);
               mesh.applyMatrix4(new THREE.Matrix4().fromArray(gData.tf));
               mesh.userData.expressId = raw.expressId;
+              mesh.userData._ifcMaterial = (raw.props && raw.props.material) || '';
               _ccBakeMesh(mesh);
               mesh.userData._instKey = geoId + ':' + matKey;
               _tMesh += performance.now() - _tM;
@@ -8001,13 +8003,34 @@ function startApp() {
           }));
         } else if (style === 'rendered') {
           _disposeEdges(obj);
-          mat = cache.rendered || (cache.rendered = new THREE.MeshStandardMaterial({
-            color: origColor,
-            roughness: 0.85, metalness: 0.0,
-            envMapIntensity: 0.85,
-            transparent: orig.transparent, opacity: orig.opacity,
-            side: THREE.FrontSide
-          }));
+          if (!cache.rendered) {
+            // Keyword-based PBR preset from IFC material name
+            var _matName = (obj.userData._ifcMaterial || '').toLowerCase();
+            var _r = 0.85, _m = 0.0, _clr = origColor.clone();
+            if (/glass|glazing|curtain.*wall|fenst/.test(_matName)) {
+              _r = 0.05; _m = 0.0; _clr.set(0xbfe8ff);
+            } else if (/steel|metal|alum|copper|brass|iron|zinc/.test(_matName)) {
+              _r = 0.25; _m = 0.9;
+            } else if (/concrete|beton|cast/.test(_matName)) {
+              _r = 0.95; _m = 0.0; _clr.set(0xb0a898);
+            } else if (/wood|timber|oak|pine|parquet|ply/.test(_matName)) {
+              _r = 0.85; _m = 0.0; _clr.set(0xc49a6c);
+            } else if (/brick|masonry|tile|ceramic|stone/.test(_matName)) {
+              _r = 0.90; _m = 0.0; _clr.set(0xc97d5a);
+            } else if (/gypsum|plasterboard|plaster|drywall|gips/.test(_matName)) {
+              _r = 0.85; _m = 0.0; _clr.set(0xe8e5e0);
+            } else if (/insul|foam|mineral|rockwool|glass.*wool/.test(_matName)) {
+              _r = 1.0; _m = 0.0; _clr.set(0xf0c850);
+            }
+            cache.rendered = new THREE.MeshStandardMaterial({
+              color: _matName ? _clr : origColor,
+              roughness: _r, metalness: _m,
+              envMapIntensity: 0.85,
+              transparent: orig.transparent, opacity: orig.opacity,
+              side: THREE.FrontSide
+            });
+          }
+          mat = cache.rendered;
           mat.envMapIntensity = 0.85 * ambMul;
         } else {
           _disposeEdges(obj);
