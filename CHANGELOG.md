@@ -1,5 +1,8 @@
 # Changelog
 
+## v5.6.1 (2026-05-04)
+- Fix section hatch camera-angle flicker + section box handle visibility
+
 ## v5.6.0 (2026-05-04)
 - Section hatch: auto-rebuild on model change, skip thin shells
 
