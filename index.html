@@ -6404,12 +6404,26 @@ function startApp() {
           var h=hh[0].object;
           if(h.userData._sboxRotation) renderer.domElement.style.cursor='crosshair';
           else renderer.domElement.style.cursor='grab';
-          if(S2._lastHoveredHandle&&S2._lastHoveredHandle!==h){S2._lastHoveredHandle.material.opacity=0.8;}
-          h.material.opacity=1.0;
+          if(S2._lastHoveredHandle&&S2._lastHoveredHandle!==h){
+            var _lh=S2._lastHoveredHandle;
+            if(_lh.userData._sboxOrigColor!==undefined) _lh.material.color.setHex(_lh.userData._sboxOrigColor);
+            _lh.material.opacity=_lh.userData._sboxOrigOpacity||0.8;
+            _lh.material.needsUpdate=true;
+          }
+          if(!h.userData._sboxOrigColor){ h.userData._sboxOrigColor=h.material.color.getHex(); h.userData._sboxOrigOpacity=h.material.opacity; }
+          h.material.color.set(0xffffff); h.material.opacity=1.0; h.material.needsUpdate=true;
           S2._lastHoveredHandle=h;
+          invalidate();
         } else {
           if(!_sboxDragging) renderer.domElement.style.cursor='';
-          if(S2._lastHoveredHandle){S2._lastHoveredHandle.material.opacity=0.8;S2._lastHoveredHandle=null;}
+          if(S2._lastHoveredHandle){
+            var _lh2=S2._lastHoveredHandle;
+            if(_lh2.userData._sboxOrigColor!==undefined) _lh2.material.color.setHex(_lh2.userData._sboxOrigColor);
+            _lh2.material.opacity=_lh2.userData._sboxOrigOpacity||0.8;
+            _lh2.material.needsUpdate=true;
+            S2._lastHoveredHandle=null;
+            invalidate();
+          }
         }
       });
 
@@ -6825,22 +6839,21 @@ function startApp() {
         var ctrlHeld = e.ctrlKey || e.metaKey;
         if (e.button === 2 && ctrlHeld) {
           _secDrag = {startX: e.clientX, startY: e.clientY, startPos: cs.pos, didDrag: false, button: 2, mode:'move'};
-        } else if (e.button === 0 && ctrlHeld) {
+        } else if (e.button === 0) {
           var S2 = state3d.current;
           if (!S2._sectionPlaneVis) return;
           var rect = renderer.domElement.getBoundingClientRect();
           var mx = ((e.clientX-rect.left)/rect.width)*2-1;
           var my = -((e.clientY-rect.top)/rect.height)*2+1;
           raycaster.setFromCamera(new THREE.Vector2(mx,my), S2.camera);
-          var hits = raycaster.intersectObjects(S2._sectionPlaneVis.children, true);
+          // Hit-test only the tagged drag handles (stem, cones, torus) — no Ctrl needed
+          var dragHandles = S2._sectionPlaneVis._secDragHandles || [];
+          var hits = dragHandles.length ? raycaster.intersectObjects(dragHandles, false) : [];
           if (hits.length > 0) {
             e.preventDefault(); e.stopPropagation();
             S2.orbit.enabled = false;
-            var hit = hits[0].object, wantsRotate = false;
-            for (var h = hit; h; h = h.parent) {
-              if (h.userData && h.userData._sectionRotate) { wantsRotate = true; break; }
-            }
-            if (wantsRotate || e.shiftKey) {
+            var wantsRotate = hits[0].object.userData._secHandle === 'rotate' || e.shiftKey;
+            if (wantsRotate) {
               var np = _getSecNormalAndPoint(cs);
               if (np) _secDrag = {startX: e.clientX, startPos: cs.pos, didDrag: false, button: 0, mode:'rotate', startNormal: np.normal, startPoint: np.point};
             } else {
@@ -6907,23 +6920,43 @@ function startApp() {
       renderer.domElement.addEventListener('contextmenu', function(e) {
         if (_secDrag && _secDrag.didDrag) { e.preventDefault(); e.stopPropagation(); }
       }, true);
-      var _prevSecHover = false;
+      var _lastSecHoverHandle = null;
+      function _secHandleGlow(h, on) {
+        if (!h || !h.material) return;
+        if (on) {
+          if (!h.userData._secOrigColor) h.userData._secOrigColor = h.material.color.getHex();
+          if (!h.userData._secOrigOpacity) h.userData._secOrigOpacity = h.material.opacity;
+          h.material.color.set(h.userData._secHandle === 'rotate' ? 0xffe566 : 0x6fffca);
+          h.material.opacity = 1.0;
+        } else {
+          if (h.userData._secOrigColor !== undefined) h.material.color.set(h.userData._secOrigColor);
+          if (h.userData._secOrigOpacity !== undefined) h.material.opacity = h.userData._secOrigOpacity;
+        }
+        h.material.needsUpdate = true;
+      }
       renderer.domElement.addEventListener('mousemove', function(e) {
         if (_secDrag) return;
-        if (!(e.ctrlKey || e.metaKey)) { if(_prevSecHover){renderer.domElement.style.cursor='';_prevSecHover=false;} return; }
         var S2 = state3d.current;
-        if (!S2._sectionPlaneVis) { if(_prevSecHover){renderer.domElement.style.cursor='';_prevSecHover=false;} return; }
+        if (!S2._sectionPlaneVis || !S2._sectionPlaneVis._secDragHandles) {
+          if (_lastSecHoverHandle) { _secHandleGlow(_lastSecHoverHandle, false); _lastSecHoverHandle = null; renderer.domElement.style.cursor = ''; }
+          return;
+        }
         var rect = renderer.domElement.getBoundingClientRect();
         var mx = ((e.clientX-rect.left)/rect.width)*2-1;
         var my = -((e.clientY-rect.top)/rect.height)*2+1;
         raycaster.setFromCamera(new THREE.Vector2(mx,my), S2.camera);
-        var hits = raycaster.intersectObjects(S2._sectionPlaneVis.children, true);
+        var hits = raycaster.intersectObjects(S2._sectionPlaneVis._secDragHandles, false);
         if (hits.length > 0) {
-          renderer.domElement.style.cursor = 'grab';
-          _prevSecHover = true;
-        } else if (_prevSecHover) {
-          renderer.domElement.style.cursor = '';
-          _prevSecHover = false;
+          var h = hits[0].object;
+          if (h !== _lastSecHoverHandle) {
+            if (_lastSecHoverHandle) _secHandleGlow(_lastSecHoverHandle, false);
+            _secHandleGlow(h, true);
+            _lastSecHoverHandle = h;
+            invalidate();
+          }
+          renderer.domElement.style.cursor = h.userData._secHandle === 'rotate' ? 'crosshair' : 'grab';
+        } else {
+          if (_lastSecHoverHandle) { _secHandleGlow(_lastSecHoverHandle, false); _lastSecHoverHandle = null; renderer.domElement.style.cursor = ''; invalidate(); }
         }
       });
 
@@ -7372,25 +7405,25 @@ function startApp() {
         var stemLen = arrowSize * 1.5;
         var tipLen = arrowSize * 1.6;
         var tipW = arrowSize * 0.55;
-        var arrowMat = new THREE.MeshBasicMaterial({color:0x1a6b4a, transparent:true, opacity:0.95, depthTest:false});
+        var arrowMat = new THREE.MeshBasicMaterial({color:0x1a6b4a, transparent:true, opacity:0.92, depthTest:false});
         arrowMat.clippingPlanes = [];
         var stemGeo = new THREE.CylinderGeometry(tipW*0.18, tipW*0.18, stemLen*2, 10);
         var stem = new THREE.Mesh(stemGeo, arrowMat);
         stem.rotation.x = Math.PI/2;
-        stem.userData._sectionPlane = true;
+        stem.userData._sectionPlane = true; stem.userData._secHandle = 'move';
         stem.renderOrder = 1001;
         grp.add(stem);
         var coneGeo = new THREE.ConeGeometry(tipW, tipLen, 12);
         var coneFwd = new THREE.Mesh(coneGeo, arrowMat);
         coneFwd.position.set(0, 0, stemLen);
         coneFwd.rotation.x = Math.PI/2;
-        coneFwd.userData._sectionPlane = true;
+        coneFwd.userData._sectionPlane = true; coneFwd.userData._secHandle = 'move';
         coneFwd.renderOrder = 1001;
         grp.add(coneFwd);
         var coneBwd = new THREE.Mesh(coneGeo, arrowMat);
         coneBwd.position.set(0, 0, -stemLen);
         coneBwd.rotation.x = -Math.PI/2;
-        coneBwd.userData._sectionPlane = true;
+        coneBwd.userData._sectionPlane = true; coneBwd.userData._secHandle = 'move';
         coneBwd.renderOrder = 1001;
         grp.add(coneBwd);
         var arcR = stemLen * 0.7;
@@ -7399,10 +7432,12 @@ function startApp() {
         arcMat.clippingPlanes = [];
         var torus = new THREE.Mesh(torusGeo, arcMat);
         torus.rotation.x = Math.PI/2;
-        torus.userData._sectionPlane = true;
+        torus.userData._sectionPlane = true; torus.userData._secHandle = 'rotate';
         torus.userData._sectionRotate = true;
         torus.renderOrder = 1001;
         grp.add(torus);
+        // Collect draggable handles for hit-testing without Ctrl modifier
+        grp._secDragHandles = [stem, coneFwd, coneBwd, torus];
         grp.position.copy(position);
         if (quaternion) grp.quaternion.copy(quaternion);
         grp.renderOrder = 999;
@@ -8227,6 +8262,14 @@ function startApp() {
         S._meshList = meshList;
         S._meshListModels = s.models.length;
       }
+      // Build expressId → ifcType lookup so glass detection can fall back to
+      // IfcWindow / IfcCurtainWall / etc. when material name is empty.
+      var _eidToType = {};
+      (s.models||[]).forEach(function(m){
+        (m.elements||[]).forEach(function(el){
+          if (el.props && el.props.ifcType) _eidToType[el.expressId] = el.props.ifcType;
+        });
+      });
 
       // ── Materials per style ────────────────────────────────────
       // standard  = "Hidden Line": flat white/gray surfaces + architectural edge lines
@@ -8289,18 +8332,31 @@ function startApp() {
           mat = _standardMat;
         } else if (style === 'shaded') {
           _disposeEdges(obj);
-          mat = cache.shaded || (cache.shaded = new THREE.MeshLambertMaterial({
-            color: origColor,
-            transparent: orig.transparent, opacity: orig.opacity,
-            side: THREE.FrontSide
-          }));
+          if (!cache.shaded) {
+            var _shMatName = (obj.userData._ifcMaterial || '').toLowerCase();
+            var _shType = _eidToType[obj.userData.expressId] || '';
+            var _shGlass = /glass|glazing|fenst/.test(_shMatName)
+              || /^IfcWindow/i.test(_shType)
+              || (orig.transparent && orig.opacity < 0.6);
+            cache.shaded = new THREE.MeshLambertMaterial({
+              color: _shGlass ? new THREE.Color(0xbfe8ff) : origColor,
+              transparent: _shGlass ? true : orig.transparent,
+              opacity: _shGlass ? 0.25 : orig.opacity,
+              depthWrite: _shGlass ? false : true,
+              side: _shGlass ? THREE.DoubleSide : THREE.FrontSide
+            });
+          }
+          mat = cache.shaded;
         } else if (style === 'rendered') {
           _disposeEdges(obj);
           if (!cache.rendered) {
             // Keyword-based PBR preset from IFC material name
             var _matName = (obj.userData._ifcMaterial || '').toLowerCase();
             var _r = 0.85, _m = 0.0, _clr = origColor.clone();
-            var _isGlass = /glass|glazing|curtain.*wall|fenst/.test(_matName) || (orig.transparent && orig.opacity < 0.6);
+            var _rdType = _eidToType[obj.userData.expressId] || '';
+            var _isGlass = /glass|glazing|fenst/.test(_matName)
+              || /^IfcWindow/i.test(_rdType)
+              || (orig.transparent && orig.opacity < 0.6);
             if (_isGlass) {
               _r = 0.05; _m = 0.0; _clr.set(0xbfe8ff);
             } else if (/steel|metal|alum|copper|brass|iron|zinc/.test(_matName)) {
@@ -8317,11 +8373,11 @@ function startApp() {
               _r = 1.0; _m = 0.0; _clr.set(0xf0c850);
             }
             cache.rendered = new THREE.MeshStandardMaterial({
-              color: _matName ? _clr : origColor,
+              color: (_matName || _isGlass) ? _clr : origColor,
               roughness: _r, metalness: _m,
               envMapIntensity: 0.85,
               transparent: _isGlass ? true : orig.transparent,
-              opacity: _isGlass ? Math.min(orig.opacity, 0.25) : orig.opacity,
+              opacity: _isGlass ? 0.25 : orig.opacity,
               depthWrite: _isGlass ? false : true,
               side: _isGlass ? THREE.DoubleSide : THREE.FrontSide
             });
