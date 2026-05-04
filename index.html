@@ -6444,11 +6444,17 @@ function startApp() {
           } else {
             nWorld.set(0,1,0);
           }
-          // Use the hit point on the picked face as the section anchor
-          var nObj = {x:nWorld.x, y:nWorld.y, z:nWorld.z};
-          var pObj = {x:spHit.point.x, y:spHit.point.y, z:spHit.point.z};
+          // Use the hit point on the picked face as the section anchor.
+          // sectionCustom is read elsewhere as `sc.normal[0..2]` (see lines
+          // 7347+, 7451+, 7486+) so it has to be an array, not a {x,y,z}
+          // object — the right-click context menu and drag handlers were
+          // already arrays; the earlier object shape here meant the plane
+          // was built with Vector3(undefined, undefined, undefined) → (0,0,0)
+          // → degenerate plane → no clipping.
+          var nArr = [nWorld.x, nWorld.y, nWorld.z];
+          var pArr = [spHit.point.x, spHit.point.y, spHit.point.z];
           if (window._ccDispatch) {
-            window._ccDispatch({t:A.SECTION_CUSTOM, v:{normal:nObj, point:pObj}, pos:0.5});
+            window._ccDispatch({t:A.SECTION_CUSTOM, v:{normal:nArr, point:pArr}, pos:0.5});
           }
           window._ccSectionPickPending = false;
           // Notify any listening UI to clear the "click a surface" hint
@@ -7285,7 +7291,31 @@ function startApp() {
       if (S._sectionCutLines) { S.scene.remove(S._sectionCutLines); if(S._sectionCutLines.geometry)S._sectionCutLines.geometry.dispose(); if(S._sectionCutLines.material)S._sectionCutLines.material.dispose(); S._sectionCutLines=null; }
       function _makeSectionVis(halfW, halfH, position, quaternion) {
         var grp = new THREE.Group();
-        // No fill plane or border — only the drag-handle arrows are shown
+        // Translucent fill + visible border so the user sees a *plane*, not
+        // just an arrow. SketchUp + Navisworks + Solibri all show the cut
+        // plane as a translucent coloured rectangle bordered by a bright
+        // line — that's the convention architects already read. Earlier
+        // builds removed this and left only the arrow, which made it
+        // unclear whether sectioning was active.
+        var fillGeo = new THREE.PlaneGeometry(halfW * 2, halfH * 2);
+        var fillMat = new THREE.MeshBasicMaterial({
+          color: 0x1a6b4a, transparent: true, opacity: 0.08,
+          side: THREE.DoubleSide, depthWrite: false
+        });
+        fillMat.clippingPlanes = []; // gizmos must not clip themselves
+        var fill = new THREE.Mesh(fillGeo, fillMat);
+        fill.userData._sectionPlane = true;
+        fill.renderOrder = 998;
+        grp.add(fill);
+        var borderGeo = new THREE.EdgesGeometry(fillGeo);
+        var borderMat = new THREE.LineBasicMaterial({
+          color: 0x1a6b4a, transparent: true, opacity: 0.85
+        });
+        borderMat.clippingPlanes = [];
+        var border = new THREE.LineSegments(borderGeo, borderMat);
+        border.userData._sectionPlane = true;
+        border.renderOrder = 999;
+        grp.add(border);
         var stemLen = Math.min(halfW, halfH) * 0.09;
         var tipLen = stemLen * 0.35;
         var tipW = tipLen * 0.7;
@@ -23153,11 +23183,12 @@ function startApp() {
     var I = {
       fit:    '<path d="M3 8V3h5"/><path d="M21 8V3h-5"/><path d="M3 16v5h5"/><path d="M21 16v5h-5"/>',
       reset:  '<path d="M3 12a9 9 0 0 1 15-6.7L21 8"/><path d="M21 3v5h-5"/>',
-      // Make Section: solid object with a diagonal slice + hatched cut face —
-      // reads as "cut interior shown" in one glance, the convention used by
-      // Onshape / Fusion / SketchUp. The earlier knife glyph was four
-      // disjoint strokes that read as an X with an L next to it.
-      slice:  '<path d="M4 7l8-3 8 3v10l-8 3-8-3z"/><path d="M4 7l8 3 8-3"/><path d="M12 10v10"/><path d="M14 13l4-1.5"/><path d="M14 16l4-1.5"/>',
+      // Make Section: a thin parallelogram (flat plane viewed edge-on) with
+      // a vertical arrow piercing through it. Reads as "a cut going through
+      // a plane" — explicitly NOT a box, so it can't be confused with the
+      // Section Box glyph. Earlier "solid object with hatched cut face"
+      // versions read as a 3D cube and looked too similar to slicebox.
+      slice:  '<path d="M3 14l18-5v3l-18 5z"/><path d="M12 4v16"/><path d="M9 7l3-3 3 3"/>',
       // Section Box: 3D-perspective box with a smaller offset face — reads
       // as a region inside a model. The earlier nested-rect / dashed-rect
       // version looked like a generic "border" icon.
