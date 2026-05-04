@@ -1,5 +1,8 @@
 # Changelog
 
+## v5.5.1 (2026-05-04)
+- chore: daily memory sync 2026-05-04
+
 ## v5.5.0 (2026-05-04)
 - feat(section): unified S key, Alt+click, F-flip, drag HUD, viewpoint persistence
 
