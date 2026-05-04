@@ -687,7 +687,7 @@ function startApp() {
     trainingMode:(function(){try{var v=localStorage.getItem('cc_trainingMode');return v===null?true:v==='1';}catch(e){return true;}}()),
     clashGroupBy:(function(){var v=_ccLoadPref('clashGroupBy',[]);return Array.isArray(v)?v:(v&&v!=='none'?[v]:[]);}()), clashSortBy:(function(){var v=_ccLoadPref('clashSortBy',[]);return Array.isArray(v)?v:(v&&v!=='none'?[v]:[]);}()),
     issueGroupBy:(function(){var v=_ccLoadPref('issueGroupBy',[]);return Array.isArray(v)?v:(v&&v!=='none'?[v]:[]);}()), issueSortBy:(function(){var v=_ccLoadPref('issueSortBy',[]);return Array.isArray(v)?v:(v&&v!=='none'?[v]:[]);}()),
-    chatOpen:false, detecting:false, switchingProject:false, sectionAxis:null, sectionPos:0.5, sectionCustom:null, sectionStorey:null, sectionFlip:false,
+    chatOpen:false, detecting:false, switchingProject:false, sectionAxis:null, sectionPos:0.5, sectionCustom:null, sectionStorey:null, sectionFlip:false, sectionHatch:false,
     sectionBox:null, // {enabled, min:[x,y,z], max:[x,y,z]} – 6-plane box clipping
     filters:Object.assign({},INIT_FILTERS), floors:[],
     prefs:Object.assign({},INIT_PREFS),
@@ -751,7 +751,7 @@ function startApp() {
     UPD_CLASH:'UPD_CLASH', BATCH_UPD_CLASH:'BATCH_UPD_CLASH',
     ACTIVE:'ACTIVE', MODAL:'MODAL',
     UPD_RULES:'UPD_RULES', UPD_FILTERS:'UPD_FILTERS', RESET_FILTERS:'RESET_FILTERS',
-    SECTION:'SECTION', SECTION_CUSTOM:'SECTION_CUSTOM', SECTION_BOX:'SECTION_BOX', SECTION_FLIP:'SECTION_FLIP',
+    SECTION:'SECTION', SECTION_CUSTOM:'SECTION_CUSTOM', SECTION_BOX:'SECTION_BOX', SECTION_FLIP:'SECTION_FLIP', SECTION_HATCH:'SECTION_HATCH',
     TAB:'TAB', SETTINGS:'SETTINGS', TRAINING_MODE:'TRAINING_MODE',
     UPD_PREFS:'UPD_PREFS',
     MEASURE_MODE:'MEASURE_MODE', ADD_MEASUREMENT:'ADD_MEASUREMENT',
@@ -1017,7 +1017,8 @@ function startApp() {
       case A.RESET_FILTERS: return Object.assign({},s,{filters:Object.assign({},INIT_FILTERS)});
       case A.SECTION:     if(a.axis&&!s.sectionAxis) _gcEvent('section-plane', a.axis); return Object.assign({},s,{sectionAxis:a.axis, sectionPos:a.pos!=null?a.pos:s.sectionPos, sectionCustom:null, sectionStorey:a.storeyName||null, sectionFlip:false, walkMode:false, measureMode:a.axis?null:s.measureMode, commentMode:false});
       case A.SECTION_CUSTOM: return Object.assign({},s,{sectionAxis:null, sectionCustom:a.v, sectionPos:a.pos!=null?a.pos:0.5, sectionFlip:false});
-      case A.SECTION_FLIP: return Object.assign({},s,{sectionFlip:!s.sectionFlip});
+      case A.SECTION_FLIP:  return Object.assign({},s,{sectionFlip:!s.sectionFlip});
+      case A.SECTION_HATCH: return Object.assign({},s,{sectionHatch:!s.sectionHatch});
       case A.TAB:         var tabUpd={tab:a.v,sectionAxis:null,sectionCustom:null}; if(a.v!==s.tab&&(a.v==='clashes'||a.v==='issues'||s.tab==='clashes'||s.tab==='issues'))tabUpd.activeId=null; return Object.assign({},s,tabUpd);
       case A.SETTINGS:    return Object.assign({},s,{showSettings:a.v});
       case A.SHARE:       return Object.assign({},s,{showShare:!!a.v});
@@ -7396,6 +7397,54 @@ function startApp() {
       // guarantees the very next render picks up the new planes — no
       // dropped first frame, no stale "no clipping" program in cache.
       S.renderer.localClippingEnabled = planes.length > 0;
+      // ── Architectural section hatch (stencil-cap technique) ─────────────
+      // Two invisible passes write the cross-section interior to the stencil
+      // buffer; a cap plane then fills it solid black — reads as cut material
+      // per architectural convention (like Revit's cut pattern).
+      // Only active for single section planes; section box not supported.
+      if (S._sectionHatchGroup) {
+        if (!s.sectionHatch || planes.length !== 1) {
+          // Full teardown — dispose materials; geometries are shared with model
+          if (S._sectionHatchGroup._matBack)  S._sectionHatchGroup._matBack.dispose();
+          if (S._sectionHatchGroup._matFront) S._sectionHatchGroup._matFront.dispose();
+          if (S._sectionHatchGroup._cap) { S._sectionHatchGroup._cap.material.dispose(); S._sectionHatchGroup._cap.geometry.dispose(); }
+          S.scene.remove(S._sectionHatchGroup);
+          S._sectionHatchGroup = null;
+        } else {
+          // Plane moved — reposition cap only (stencil meshes auto-follow via renderer.clippingPlanes)
+          var _hcn = planes[0].normal.clone().normalize();
+          var _hcap = S._sectionHatchGroup._cap;
+          _hcap.position.copy(_hcn.clone().multiplyScalar(-planes[0].constant));
+          var _hz = new THREE.Vector3(0,0,1);
+          if (Math.abs(_hcn.dot(_hz) + 1) < 1e-6) _hcap.quaternion.setFromAxisAngle(new THREE.Vector3(1,0,0), Math.PI);
+          else _hcap.quaternion.setFromUnitVectors(_hz, _hcn);
+        }
+      }
+      if (s.sectionHatch && planes.length === 1 && !S._sectionHatchGroup) {
+        var hGrp = new THREE.Group(); hGrp.name = 'sectionHatch';
+        // Back-face pass: stencil++  (marks interior of solid at cut)
+        var hBack = new THREE.MeshBasicMaterial({depthWrite:false,depthTest:false,colorWrite:false,stencilWrite:true,stencilFunc:THREE.AlwaysStencilFunc,side:THREE.BackSide,stencilFail:THREE.IncrementWrapStencilOp,stencilZFail:THREE.IncrementWrapStencilOp,stencilZPass:THREE.IncrementWrapStencilOp});
+        // Front-face pass: stencil-- (cancels out for fully-visible solid faces)
+        var hFront = new THREE.MeshBasicMaterial({depthWrite:false,depthTest:false,colorWrite:false,stencilWrite:true,stencilFunc:THREE.AlwaysStencilFunc,side:THREE.FrontSide,stencilFail:THREE.DecrementWrapStencilOp,stencilZFail:THREE.DecrementWrapStencilOp,stencilZPass:THREE.DecrementWrapStencilOp});
+        S.scene.traverse(function(obj){
+          if (!obj.isMesh || !obj.visible || obj.userData.expressId == null || !obj.geometry) return;
+          var bm = new THREE.Mesh(obj.geometry, hBack);  bm.matrixAutoUpdate=false; bm.matrix.copy(obj.matrixWorld);  bm.renderOrder=5; hGrp.add(bm);
+          var fm = new THREE.Mesh(obj.geometry, hFront); fm.matrixAutoUpdate=false; fm.matrix.copy(obj.matrixWorld); fm.renderOrder=5; hGrp.add(fm);
+        });
+        // Cap plane: fills stencil!=0 pixels with solid black, respects depth
+        var _capN = planes[0].normal.clone().normalize();
+        var capGeo = new THREE.PlaneGeometry(2000, 2000);
+        var capMat = new THREE.MeshBasicMaterial({color:0x111111,side:THREE.DoubleSide,depthWrite:false,depthTest:true,polygonOffset:true,polygonOffsetFactor:-1,polygonOffsetUnits:-4,stencilWrite:true,stencilRef:0,stencilFunc:THREE.NotEqualStencilFunc,stencilFail:THREE.ZeroStencilOp,stencilZFail:THREE.ZeroStencilOp,stencilZPass:THREE.ZeroStencilOp});
+        var capMesh = new THREE.Mesh(capGeo, capMat); capMesh.renderOrder = 6;
+        capMesh.position.copy(_capN.clone().multiplyScalar(-planes[0].constant));
+        var _cz = new THREE.Vector3(0,0,1);
+        if (Math.abs(_capN.dot(_cz) + 1) < 1e-6) capMesh.quaternion.setFromAxisAngle(new THREE.Vector3(1,0,0), Math.PI);
+        else capMesh.quaternion.setFromUnitVectors(_cz, _capN);
+        hGrp._cap = capMesh; hGrp._matBack = hBack; hGrp._matFront = hFront;
+        hGrp.add(capMesh);
+        S.scene.add(hGrp);
+        S._sectionHatchGroup = hGrp;
+      }
       // Debounced section cut highlight lines
       clearTimeout(S._sectionCutLinesTimer);
       if(s.sectionAxis && S.mg.children.length>0){
@@ -7416,7 +7465,7 @@ function startApp() {
         if(_S2&&_S2._sectionCutLines){ _S2.scene.remove(_S2._sectionCutLines); _S2._sectionCutLines=null; }
       }
       invalidate();
-    }, [s.sectionAxis, s.sectionPos, s.sectionCustom, s.sectionFlip]);
+    }, [s.sectionAxis, s.sectionPos, s.sectionCustom, s.sectionFlip, s.sectionHatch]);
 
     // ── TransformControls section gizmo (PR-A) ─────────────────
     // Adds a draggable 3-axis-aware translate gizmo on the active section
@@ -23242,6 +23291,18 @@ function startApp() {
           onInput=${function(e){ var pos=parseFloat(e.target.value); if(s.sectionAxis)d({t:A.SECTION,axis:s.sectionAxis,pos:pos}); else if(s.sectionCustom)d({t:A.SECTION_CUSTOM,v:s.sectionCustom,pos:pos}); }}
           style=${{width:180,accentColor:'var(--accent)'}} />
         <span style=${{fontFamily:'var(--font-mono)',fontSize:'var(--text-2xs)',color:'var(--text-secondary)',minWidth:30,textAlign:'right'}}>${Math.round((s.sectionPos||0.5)*100)}%</span>
+        ${SEP_V}
+        <button title="Section hatch — solid fill on cut faces (architectural convention)" onClick=${function(){d({t:A.SECTION_HATCH});}}
+          style=${{background:s.sectionHatch?'var(--accent-bg)':'none',border:s.sectionHatch?'1px solid var(--accent)':'1px solid transparent',borderRadius:'var(--radius-xs)',cursor:'pointer',display:'inline-flex',alignItems:'center',gap:'.2rem',fontFamily:'var(--font-body)',fontSize:'var(--text-xs)',padding:'.1rem .35rem',color:s.sectionHatch?'var(--accent)':'var(--text-muted)'}}>
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="square">
+            <rect x="2" y="8" width="20" height="8"/>
+            <line x1="6" y1="16" x2="2" y2="8"/>
+            <line x1="12" y1="16" x2="6" y2="8"/>
+            <line x1="18" y1="16" x2="12" y2="8"/>
+            <line x1="22" y1="14" x2="18" y2="8"/>
+          </svg>
+          Hatch
+        </button>
       </div>`;
     } else if (activeMode === 'plan' && s.floors && s.floors.length>0) {
       // Floor picker — popover below the Plan button
