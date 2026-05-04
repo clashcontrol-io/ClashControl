@@ -1,5 +1,8 @@
 # Changelog
 
+## v5.6.3 (2026-05-04)
+- Fix section box not clipping + shrink handles
+
 ## v5.6.2 (2026-05-04)
 - Version Compare: rename A/B to Old/New, auto-detect version pairs, update diff badges to design system
 
