@@ -7425,10 +7425,13 @@ function startApp() {
       }
       if (s.sectionHatch && planes.length === 1 && !S._sectionHatchGroup) {
         var hGrp = new THREE.Group(); hGrp.name = 'sectionHatch';
-        // Back-face pass: stencil++  (marks interior of solid at cut)
-        var hBack = new THREE.MeshBasicMaterial({depthWrite:false,depthTest:false,colorWrite:false,stencilWrite:true,stencilFunc:THREE.AlwaysStencilFunc,side:THREE.BackSide,stencilFail:THREE.IncrementWrapStencilOp,stencilZFail:THREE.IncrementWrapStencilOp,stencilZPass:THREE.IncrementWrapStencilOp});
-        // Front-face pass: stencil-- (cancels out for fully-visible solid faces)
-        var hFront = new THREE.MeshBasicMaterial({depthWrite:false,depthTest:false,colorWrite:false,stencilWrite:true,stencilFunc:THREE.AlwaysStencilFunc,side:THREE.FrontSide,stencilFail:THREE.DecrementWrapStencilOp,stencilZFail:THREE.DecrementWrapStencilOp,stencilZPass:THREE.DecrementWrapStencilOp});
+        // Carmack's reverse-stencil: write ONLY when depth test FAILS (geometry
+        // is hidden behind other geometry). This is camera-angle independent —
+        // it counts hidden back/front face crossings using the depth buffer
+        // rather than face-winding direction, so non-convex/non-manifold BIM
+        // geometry (L-walls, T-junctions) produces consistent results.
+        var hBack = new THREE.MeshBasicMaterial({depthWrite:false,depthTest:true,colorWrite:false,stencilWrite:true,stencilFunc:THREE.AlwaysStencilFunc,side:THREE.BackSide,stencilFail:THREE.KeepStencilOp,stencilZFail:THREE.IncrementWrapStencilOp,stencilZPass:THREE.KeepStencilOp});
+        var hFront = new THREE.MeshBasicMaterial({depthWrite:false,depthTest:true,colorWrite:false,stencilWrite:true,stencilFunc:THREE.AlwaysStencilFunc,side:THREE.FrontSide,stencilFail:THREE.KeepStencilOp,stencilZFail:THREE.DecrementWrapStencilOp,stencilZPass:THREE.KeepStencilOp});
         // Open-shell geometry (glass, curtain panels, sheet metal, foils) has
         // no closed back face, so the front/back stencil counts don't cancel
         // and the cap would smear across the entire panel rather than just the
@@ -7692,14 +7695,20 @@ function startApp() {
       var handleSize = Math.max(0.15, Math.min(maxDim*0.04, 4.0));
       var handleGeo=new THREE.SphereGeometry(handleSize,8,8);
       var handles=[];
-      // 8 corner handles — placed exactly at box corners, so they sit on the boundary of all 6
-      // clipping planes and are never clipped by the renderer
+      // renderer.clippingPlanes clips everything outside the section box, including
+      // handles that are positioned at/outside the box boundary. material.clippingPlanes=[]
+      // only controls local clipping, not the global renderer planes. Use
+      // onBeforeRender/onAfterRender to temporarily suspend global clipping for each
+      // handle so it always renders regardless of where the box face is.
+      function _sboxUnclip(obj){
+        obj.onBeforeRender = function(r){ obj._scp=r.clippingPlanes; r.clippingPlanes=[]; };
+        obj.onAfterRender  = function(r){ r.clippingPlanes=obj._scp; };
+      }
       var cornerSigns=[[-1,-1,-1],[-1,-1,1],[-1,1,-1],[-1,1,1],[1,-1,-1],[1,-1,1],[1,1,-1],[1,1,1]];
       cornerSigns.forEach(function(sg){
         var pos=ctr.clone().addScaledVector(axX,sg[0]*hx).addScaledVector(axY,sg[1]*hy).addScaledVector(axZ,sg[2]*hz);
         var outDir=new THREE.Vector3(sg[0],sg[1],sg[2]).normalize();
         var mat=new THREE.MeshBasicMaterial({color:0xffffff,transparent:true,opacity:0.9,depthTest:false});
-        mat.clippingPlanes=[];
         var mesh=new THREE.Mesh(handleGeo,mat);
         mesh.position.copy(pos).addScaledVector(outDir,handleSize);
         mesh.userData._sboxHandle=true;
@@ -7708,6 +7717,7 @@ function startApp() {
         mesh.userData._handleAxY=axY.clone();
         mesh.userData._handleAxZ=axZ.clone();
         mesh.renderOrder=999;
+        _sboxUnclip(mesh);
         S.scene.add(mesh);
         handles.push(mesh);
       });
@@ -7733,7 +7743,6 @@ function startApp() {
         var faceCenter = ctr.clone().addScaledVector(fd.axis, fd.sign * fd.halfExt);
         var arrowPos   = faceCenter.clone().addScaledVector(fd.axis, fd.sign * faceArrowSize * 1.0);
         var fmat = new THREE.MeshBasicMaterial({color:0x1a6b4a, transparent:true, opacity:0.92, depthTest:false});
-        fmat.clippingPlanes = [];
         var arrow = new THREE.Mesh(faceArrowGeo, fmat);
         arrow.position.copy(arrowPos);
         arrow.quaternion.setFromUnitVectors(new THREE.Vector3(0,1,0), fd.axis.clone().multiplyScalar(fd.sign).normalize());
@@ -7743,23 +7752,24 @@ function startApp() {
         arrow.userData._faceIdx  = fd.idx;
         arrow.userData._faceSide = fd.side;
         arrow.renderOrder = 999;
+        _sboxUnclip(arrow);
         S.scene.add(arrow);
         faceHandles.push(arrow);
       });
       S._sboxFaceHandles = faceHandles;
 
-      var ringRadius=1.2; // constant size, independent of box dimensions
+      var ringRadius=Math.max(maxDim*0.15, 1.5); // scale with box so it's visible at any model scale
       var ringTubeRadius=0.04;
       var ringFloatHeight=Math.max(hy*0.3,0.5); // float above box
       var ringGeo=new THREE.TorusGeometry(ringRadius,ringTubeRadius,8,48);
       var ringMat=new THREE.MeshBasicMaterial({color:0xf59e0b,transparent:true,opacity:0.7,depthTest:false});
-      ringMat.clippingPlanes=[];
       var ring=new THREE.Mesh(ringGeo,ringMat);
       var ringY=hy+ringFloatHeight;
       ring.position.copy(ctr).addScaledVector(axY,ringY);
       ring.rotation.x=Math.PI/2; // lay flat
       ring.userData._sboxRotation=true;
       ring.renderOrder=999;
+      _sboxUnclip(ring);
       S.scene.add(ring);
       S._sboxRotRing=ring;
 
@@ -7768,10 +7778,10 @@ function startApp() {
         ctr.clone().addScaledVector(axY,ringY)
       ]);
       var lineMat2=new THREE.LineBasicMaterial({color:0xf59e0b,transparent:true,opacity:0.35});
-      lineMat2.clippingPlanes=[];
       var connLine=new THREE.Line(lineGeo,lineMat2);
       connLine.userData._sboxPart=true;
       connLine.renderOrder=999;
+      _sboxUnclip(connLine);
       S.scene.add(connLine);
       if(!S._sboxFacePanels) S._sboxFacePanels=[];
       S._sboxFacePanels.push(connLine); // cleaned up with face panels
