@@ -7403,7 +7403,10 @@ function startApp() {
       // per architectural convention (like Revit's cut pattern).
       // Only active for single section planes; section box not supported.
       if (S._sectionHatchGroup) {
-        if (!s.sectionHatch || planes.length !== 1) {
+        // Force rebuild when the model set changes (new file loaded, model removed)
+        // so newly-added meshes get their stencil twins.
+        var _hatchStale = (S._sectionHatchGroup._modelsRef !== s.models);
+        if (!s.sectionHatch || planes.length !== 1 || _hatchStale) {
           // Full teardown — dispose materials; geometries are shared with model
           if (S._sectionHatchGroup._matBack)  S._sectionHatchGroup._matBack.dispose();
           if (S._sectionHatchGroup._matFront) S._sectionHatchGroup._matFront.dispose();
@@ -7426,8 +7429,21 @@ function startApp() {
         var hBack = new THREE.MeshBasicMaterial({depthWrite:false,depthTest:false,colorWrite:false,stencilWrite:true,stencilFunc:THREE.AlwaysStencilFunc,side:THREE.BackSide,stencilFail:THREE.IncrementWrapStencilOp,stencilZFail:THREE.IncrementWrapStencilOp,stencilZPass:THREE.IncrementWrapStencilOp});
         // Front-face pass: stencil-- (cancels out for fully-visible solid faces)
         var hFront = new THREE.MeshBasicMaterial({depthWrite:false,depthTest:false,colorWrite:false,stencilWrite:true,stencilFunc:THREE.AlwaysStencilFunc,side:THREE.FrontSide,stencilFail:THREE.DecrementWrapStencilOp,stencilZFail:THREE.DecrementWrapStencilOp,stencilZPass:THREE.DecrementWrapStencilOp});
+        // Open-shell geometry (glass, curtain panels, sheet metal, foils) has
+        // no closed back face, so the front/back stencil counts don't cancel
+        // and the cap would smear across the entire panel rather than just the
+        // cross-section. Skip anything thinner than 5 mm in any axis — covers
+        // glass (6-12 mm) and sub-mm laminates while still capping walls,
+        // slabs, columns, beams, and other proper solids.
+        var HATCH_MIN_THICKNESS = 0.005;
         S.scene.traverse(function(obj){
           if (!obj.isMesh || !obj.visible || obj.userData.expressId == null || !obj.geometry) return;
+          if (!obj.geometry.boundingBox) obj.geometry.computeBoundingBox();
+          var _bb = obj.geometry.boundingBox;
+          if (_bb) {
+            var _sz = _bb.getSize(new THREE.Vector3());
+            if (Math.min(_sz.x, _sz.y, _sz.z) < HATCH_MIN_THICKNESS) return;
+          }
           var bm = new THREE.Mesh(obj.geometry, hBack);  bm.matrixAutoUpdate=false; bm.matrix.copy(obj.matrixWorld);  bm.renderOrder=5; hGrp.add(bm);
           var fm = new THREE.Mesh(obj.geometry, hFront); fm.matrixAutoUpdate=false; fm.matrix.copy(obj.matrixWorld); fm.renderOrder=5; hGrp.add(fm);
         });
@@ -7441,6 +7457,7 @@ function startApp() {
         if (Math.abs(_capN.dot(_cz) + 1) < 1e-6) capMesh.quaternion.setFromAxisAngle(new THREE.Vector3(1,0,0), Math.PI);
         else capMesh.quaternion.setFromUnitVectors(_cz, _capN);
         hGrp._cap = capMesh; hGrp._matBack = hBack; hGrp._matFront = hFront;
+        hGrp._modelsRef = s.models;
         hGrp.add(capMesh);
         S.scene.add(hGrp);
         S._sectionHatchGroup = hGrp;
@@ -7465,7 +7482,7 @@ function startApp() {
         if(_S2&&_S2._sectionCutLines){ _S2.scene.remove(_S2._sectionCutLines); _S2._sectionCutLines=null; }
       }
       invalidate();
-    }, [s.sectionAxis, s.sectionPos, s.sectionCustom, s.sectionFlip, s.sectionHatch]);
+    }, [s.sectionAxis, s.sectionPos, s.sectionCustom, s.sectionFlip, s.sectionHatch, s.models]);
 
     // ── TransformControls section gizmo (PR-A) ─────────────────
     // Adds a draggable 3-axis-aware translate gizmo on the active section
