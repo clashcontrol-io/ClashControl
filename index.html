@@ -8227,6 +8227,14 @@ function startApp() {
         S._meshList = meshList;
         S._meshListModels = s.models.length;
       }
+      // Build expressId → ifcType lookup so glass detection can fall back to
+      // IfcWindow / IfcCurtainWall / etc. when material name is empty.
+      var _eidToType = {};
+      (s.models||[]).forEach(function(m){
+        (m.elements||[]).forEach(function(el){
+          if (el.props && el.props.ifcType) _eidToType[el.expressId] = el.props.ifcType;
+        });
+      });
 
       // ── Materials per style ────────────────────────────────────
       // standard  = "Hidden Line": flat white/gray surfaces + architectural edge lines
@@ -8291,11 +8299,14 @@ function startApp() {
           _disposeEdges(obj);
           if (!cache.shaded) {
             var _shMatName = (obj.userData._ifcMaterial || '').toLowerCase();
-            var _shGlass = /glass|glazing|curtain.*wall|fenst/.test(_shMatName) || (orig.transparent && orig.opacity < 0.6);
+            var _shType = _eidToType[obj.userData.expressId] || '';
+            var _shGlass = /glass|glazing|curtain.*wall|fenst/.test(_shMatName)
+              || /^Ifc(Window|CurtainWall|Plate)/i.test(_shType)
+              || (orig.transparent && orig.opacity < 0.6);
             cache.shaded = new THREE.MeshLambertMaterial({
               color: _shGlass ? new THREE.Color(0xbfe8ff) : origColor,
               transparent: _shGlass ? true : orig.transparent,
-              opacity: _shGlass ? Math.min(orig.opacity, 0.25) : orig.opacity,
+              opacity: _shGlass ? 0.25 : orig.opacity,
               depthWrite: _shGlass ? false : true,
               side: _shGlass ? THREE.DoubleSide : THREE.FrontSide
             });
@@ -8307,7 +8318,10 @@ function startApp() {
             // Keyword-based PBR preset from IFC material name
             var _matName = (obj.userData._ifcMaterial || '').toLowerCase();
             var _r = 0.85, _m = 0.0, _clr = origColor.clone();
-            var _isGlass = /glass|glazing|curtain.*wall|fenst/.test(_matName) || (orig.transparent && orig.opacity < 0.6);
+            var _rdType = _eidToType[obj.userData.expressId] || '';
+            var _isGlass = /glass|glazing|curtain.*wall|fenst/.test(_matName)
+              || /^Ifc(Window|CurtainWall|Plate)/i.test(_rdType)
+              || (orig.transparent && orig.opacity < 0.6);
             if (_isGlass) {
               _r = 0.05; _m = 0.0; _clr.set(0xbfe8ff);
             } else if (/steel|metal|alum|copper|brass|iron|zinc/.test(_matName)) {
@@ -8324,11 +8338,11 @@ function startApp() {
               _r = 1.0; _m = 0.0; _clr.set(0xf0c850);
             }
             cache.rendered = new THREE.MeshStandardMaterial({
-              color: _matName ? _clr : origColor,
+              color: (_matName || _isGlass) ? _clr : origColor,
               roughness: _r, metalness: _m,
               envMapIntensity: 0.85,
               transparent: _isGlass ? true : orig.transparent,
-              opacity: _isGlass ? Math.min(orig.opacity, 0.25) : orig.opacity,
+              opacity: _isGlass ? 0.25 : orig.opacity,
               depthWrite: _isGlass ? false : true,
               side: _isGlass ? THREE.DoubleSide : THREE.FrontSide
             });
