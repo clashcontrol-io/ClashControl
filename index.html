@@ -8289,11 +8289,18 @@ function startApp() {
           mat = _standardMat;
         } else if (style === 'shaded') {
           _disposeEdges(obj);
-          mat = cache.shaded || (cache.shaded = new THREE.MeshLambertMaterial({
-            color: origColor,
-            transparent: orig.transparent, opacity: orig.opacity,
-            side: THREE.FrontSide
-          }));
+          if (!cache.shaded) {
+            var _shMatName = (obj.userData._ifcMaterial || '').toLowerCase();
+            var _shGlass = /glass|glazing|curtain.*wall|fenst/.test(_shMatName) || (orig.transparent && orig.opacity < 0.6);
+            cache.shaded = new THREE.MeshLambertMaterial({
+              color: _shGlass ? new THREE.Color(0xbfe8ff) : origColor,
+              transparent: _shGlass ? true : orig.transparent,
+              opacity: _shGlass ? Math.min(orig.opacity, 0.25) : orig.opacity,
+              depthWrite: _shGlass ? false : true,
+              side: _shGlass ? THREE.DoubleSide : THREE.FrontSide
+            });
+          }
+          mat = cache.shaded;
         } else if (style === 'rendered') {
           _disposeEdges(obj);
           if (!cache.rendered) {
