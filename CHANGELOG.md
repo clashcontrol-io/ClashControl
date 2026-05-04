@@ -1,5 +1,8 @@
 # Changelog
 
+## v5.5.0 (2026-05-04)
+- feat(section): unified S key, Alt+click, F-flip, drag HUD, viewpoint persistence
+
 ## v5.4.0 (2026-05-03)
 - Update MEMORY.md — full plan complete
 
