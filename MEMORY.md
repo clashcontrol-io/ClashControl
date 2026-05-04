@@ -182,6 +182,33 @@ UI_OVERHAUL.md written (7 chapters, 1469 lines). PLAN.md updated.
 <!-- END:active-work -->
 
 <!-- BEGIN:session-log -->
+### 2026-05-04
+**Summary:** 17 commit(s) landed (no AI summary — set ANTHROPIC_API_KEY secret for richer entries).
+**Changed:** see commits
+**Notable:** —
+
+<details><summary>Commits</summary>
+
+- 991713a chore: bump version to 5.5.0
+- 950e404 feat(section): unified S key, Alt+click, F-flip, drag HUD, viewpoint persistence
+- a811bad fix(section): apply clipping reliably + clearer icons + axis-key alignment
+- 521aec6 chore: bump version to 5.4.0
+- 45cecbf Update MEMORY.md — full plan complete
+- 014844a B1: Numbered pins (Speckle pattern) + @mention highlighting
+- c97db89 B7: Design option compare — blend two model versions
+- 8cbfabf B2 (rest): Rich markup tools on the 3D canvas
+- ee864f2 Engine in toolbar + B6 hover coords + A5 per-storey hide + B8 selection sets
+- be020c6 chore: bump version to 5.3.0
+- b54a889 Update MEMORY.md with completed session work
+- 47700ab B4: Material preview in Rendered mode
+- 963c7e6 B2 + B3: PDF export and walkthrough recording
+- ae3522f A2-A6 + B5 + B6: Panel improvements, X-Ray render style, area measurement
+- 861bae8 chore: bump version to 5.2.4
+- 788f1a2 ViewCube: fix off-screen clipping, remove arrows, fill wrapper
+- f41edc1 chore: daily memory sync 2026-05-03
+
+</details>
+
 ### 2026-05-03
 **Summary:** 12 commit(s) landed (no AI summary — set ANTHROPIC_API_KEY secret for richer entries).
 **Changed:** see commits
