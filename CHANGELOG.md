@@ -1,5 +1,8 @@
 # Changelog
 
+## v5.6.5 (2026-05-04)
+- Fix section box clip/wireframe rotating in opposite directions, +15% handles
+
 ## v5.6.4 (2026-05-04)
 - Fix section box clipping, handle size -50%, rotation gizmo live update
 
