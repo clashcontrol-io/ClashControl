@@ -1,5 +1,8 @@
 # Changelog
 
+## v5.6.0 (2026-05-04)
+- Section hatch: auto-rebuild on model change, skip thin shells
+
 ## v5.5.1 (2026-05-04)
 - chore: daily memory sync 2026-05-04
 
