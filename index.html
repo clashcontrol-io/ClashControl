@@ -7449,7 +7449,9 @@ function startApp() {
         });
         // Cap plane: fills stencil!=0 pixels with solid black, respects depth
         var _capN = planes[0].normal.clone().normalize();
-        var capGeo = new THREE.PlaneGeometry(2000, 2000);
+        var _capBox = _elemsBBox();
+        var _capSize = _capBox.isEmpty() ? 100 : _capBox.getSize(new THREE.Vector3()).length() * 1.2;
+        var capGeo = new THREE.PlaneGeometry(_capSize, _capSize);
         var capMat = new THREE.MeshBasicMaterial({color:0x111111,side:THREE.DoubleSide,depthWrite:false,depthTest:true,polygonOffset:true,polygonOffsetFactor:-1,polygonOffsetUnits:-4,stencilWrite:true,stencilRef:0,stencilFunc:THREE.NotEqualStencilFunc,stencilFail:THREE.ZeroStencilOp,stencilZFail:THREE.ZeroStencilOp,stencilZPass:THREE.ZeroStencilOp});
         var capMesh = new THREE.Mesh(capGeo, capMat); capMesh.renderOrder = 6;
         capMesh.position.copy(_capN.clone().multiplyScalar(-planes[0].constant));
