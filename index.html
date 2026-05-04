@@ -6318,7 +6318,7 @@ function startApp() {
 
         if(ds.type==='rotate'){
           var dx=e.clientX-ds.startX;
-          var newRot=ds.startRot+dx*0.01;
+          var newRot=ds.startRot - dx*0.01;
           var newSb=Object.assign({},ds.startSb,{min:ds.startSb.min.slice(),max:ds.startSb.max.slice(),rotation:newRot});
           if(window._ccDispatch) window._ccDispatch({t:A.SECTION_BOX,v:newSb});
           // Immediately update wireframe + handles in Three.js for smooth visual feedback
@@ -7749,7 +7749,7 @@ function startApp() {
           pm.rotation.y=rot+(fd.lookDir==='x'?Math.PI/2:-Math.PI/2);
         } else if(fd.lookDir==='y'||fd.lookDir==='-y'){
           pm.rotation.x=(fd.lookDir==='y'?-Math.PI/2:Math.PI/2);
-          pm.rotation.z=-rot;
+          pm.rotation.z=rot;
         } else {
           pm.rotation.y=rot+(fd.lookDir==='z'?Math.PI:0);
         }
@@ -8345,10 +8345,11 @@ function startApp() {
               || /glass|glazing|fenst/.test(_shElemName)
               || /^IfcWindow/i.test(_shType)
               || (!_shOpaque && !_shFrameType && orig.transparent && orig.opacity < 0.6);
+            var _shForceOpaque = !_shGlass && (_shFrameType || _shOpaque);
             cache.shaded = new THREE.MeshLambertMaterial({
               color: _shGlass ? new THREE.Color(0xbfe8ff) : origColor,
-              transparent: _shGlass ? true : orig.transparent,
-              opacity: _shGlass ? 0.25 : orig.opacity,
+              transparent: _shGlass ? true : (_shForceOpaque ? false : orig.transparent),
+              opacity: _shGlass ? 0.25 : (_shForceOpaque ? 1.0 : orig.opacity),
               depthWrite: _shGlass ? false : true,
               side: _shGlass ? THREE.DoubleSide : THREE.FrontSide
             });
@@ -8383,12 +8384,13 @@ function startApp() {
             } else if (/insul|foam|mineral|rockwool|glass.*wool/.test(_matName)) {
               _r = 1.0; _m = 0.0; _clr.set(0xf0c850);
             }
+            var _rdForceOpaque = !_isGlass && (_rdFrameType || _rdOpaque);
             cache.rendered = new THREE.MeshStandardMaterial({
               color: (_matName || _isGlass) ? _clr : origColor,
               roughness: _r, metalness: _m,
               envMapIntensity: 0.85,
-              transparent: _isGlass ? true : orig.transparent,
-              opacity: _isGlass ? 0.25 : orig.opacity,
+              transparent: _isGlass ? true : (_rdForceOpaque ? false : orig.transparent),
+              opacity: _isGlass ? 0.25 : (_rdForceOpaque ? 1.0 : orig.opacity),
               depthWrite: _isGlass ? false : true,
               side: _isGlass ? THREE.DoubleSide : THREE.FrontSide
             });
