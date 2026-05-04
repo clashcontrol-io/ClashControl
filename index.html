@@ -687,7 +687,7 @@ function startApp() {
     trainingMode:(function(){try{var v=localStorage.getItem('cc_trainingMode');return v===null?true:v==='1';}catch(e){return true;}}()),
     clashGroupBy:(function(){var v=_ccLoadPref('clashGroupBy',[]);return Array.isArray(v)?v:(v&&v!=='none'?[v]:[]);}()), clashSortBy:(function(){var v=_ccLoadPref('clashSortBy',[]);return Array.isArray(v)?v:(v&&v!=='none'?[v]:[]);}()),
     issueGroupBy:(function(){var v=_ccLoadPref('issueGroupBy',[]);return Array.isArray(v)?v:(v&&v!=='none'?[v]:[]);}()), issueSortBy:(function(){var v=_ccLoadPref('issueSortBy',[]);return Array.isArray(v)?v:(v&&v!=='none'?[v]:[]);}()),
-    chatOpen:false, detecting:false, switchingProject:false, sectionAxis:null, sectionPos:0.5, sectionCustom:null, sectionStorey:null,
+    chatOpen:false, detecting:false, switchingProject:false, sectionAxis:null, sectionPos:0.5, sectionCustom:null, sectionStorey:null, sectionFlip:false,
     sectionBox:null, // {enabled, min:[x,y,z], max:[x,y,z]} – 6-plane box clipping
     filters:Object.assign({},INIT_FILTERS), floors:[],
     prefs:Object.assign({},INIT_PREFS),
@@ -751,7 +751,7 @@ function startApp() {
     UPD_CLASH:'UPD_CLASH', BATCH_UPD_CLASH:'BATCH_UPD_CLASH',
     ACTIVE:'ACTIVE', MODAL:'MODAL',
     UPD_RULES:'UPD_RULES', UPD_FILTERS:'UPD_FILTERS', RESET_FILTERS:'RESET_FILTERS',
-    SECTION:'SECTION', SECTION_CUSTOM:'SECTION_CUSTOM', SECTION_BOX:'SECTION_BOX',
+    SECTION:'SECTION', SECTION_CUSTOM:'SECTION_CUSTOM', SECTION_BOX:'SECTION_BOX', SECTION_FLIP:'SECTION_FLIP',
     TAB:'TAB', SETTINGS:'SETTINGS', TRAINING_MODE:'TRAINING_MODE',
     UPD_PREFS:'UPD_PREFS',
     MEASURE_MODE:'MEASURE_MODE', ADD_MEASUREMENT:'ADD_MEASUREMENT',
@@ -1015,8 +1015,9 @@ function startApp() {
       case 'CHAT_OPEN':   return Object.assign({},s,{chatOpen:!!a.v});
       case A.UPD_FILTERS: return Object.assign({},s,{filters:Object.assign({},s.filters,a.u)});
       case A.RESET_FILTERS: return Object.assign({},s,{filters:Object.assign({},INIT_FILTERS)});
-      case A.SECTION:     if(a.axis&&!s.sectionAxis) _gcEvent('section-plane', a.axis); return Object.assign({},s,{sectionAxis:a.axis, sectionPos:a.pos!=null?a.pos:s.sectionPos, sectionCustom:null, sectionStorey:a.storeyName||null, walkMode:false, measureMode:a.axis?null:s.measureMode, commentMode:false});
-      case A.SECTION_CUSTOM: return Object.assign({},s,{sectionAxis:null, sectionCustom:a.v, sectionPos:a.pos!=null?a.pos:0.5});
+      case A.SECTION:     if(a.axis&&!s.sectionAxis) _gcEvent('section-plane', a.axis); return Object.assign({},s,{sectionAxis:a.axis, sectionPos:a.pos!=null?a.pos:s.sectionPos, sectionCustom:null, sectionStorey:a.storeyName||null, sectionFlip:false, walkMode:false, measureMode:a.axis?null:s.measureMode, commentMode:false});
+      case A.SECTION_CUSTOM: return Object.assign({},s,{sectionAxis:null, sectionCustom:a.v, sectionPos:a.pos!=null?a.pos:0.5, sectionFlip:false});
+      case A.SECTION_FLIP: return Object.assign({},s,{sectionFlip:!s.sectionFlip});
       case A.TAB:         var tabUpd={tab:a.v,sectionAxis:null,sectionCustom:null}; if(a.v!==s.tab&&(a.v==='clashes'||a.v==='issues'||s.tab==='clashes'||s.tab==='issues'))tabUpd.activeId=null; return Object.assign({},s,tabUpd);
       case A.SETTINGS:    return Object.assign({},s,{showSettings:a.v});
       case A.SHARE:       return Object.assign({},s,{showShare:!!a.v});
@@ -6215,6 +6216,38 @@ function startApp() {
 
       // ── Section Box handle drag system ──
       var _sboxDragState = null; // {type:'face'|'rotate', axis, side, startMouse, startSb, dragPlane}
+
+      // Lazy HUD chip that follows the cursor during section-box drag and
+      // shows the dimension being changed. Borrowed from Trimble Connect /
+      // Navisworks where numeric feedback while dragging is the difference
+      // between guesswork and "drop the cut at exactly 2.50 m".
+      function _sboxFmt(n){ return Math.abs(n).toFixed(2)+' m'; }
+      function _sboxHudGet(){
+        var hud = document.getElementById('cc-sbox-hud');
+        if(hud) return hud;
+        hud = document.createElement('div');
+        hud.id = 'cc-sbox-hud';
+        hud.style.cssText = 'position:fixed;pointer-events:none;z-index:9999;'
+          + 'font:12px/1.2 var(--font-mono, ui-monospace, "DM Mono", "SF Mono", monospace);'
+          + 'background:var(--ink, #1a1a1a);color:var(--paper, #fff);'
+          + 'padding:4px 8px;border-radius:4px;'
+          + 'box-shadow:0 2px 8px rgba(0,0,0,0.25);'
+          + 'transform:translate(12px,12px);display:none;white-space:nowrap;';
+        document.body.appendChild(hud);
+        return hud;
+      }
+      function _sboxHudShow(text, x, y){
+        var hud = _sboxHudGet();
+        hud.textContent = text;
+        hud.style.left = x+'px';
+        hud.style.top = y+'px';
+        hud.style.display = 'block';
+      }
+      function _sboxHudHide(){
+        var hud = document.getElementById('cc-sbox-hud');
+        if(hud) hud.style.display = 'none';
+      }
+
       renderer.domElement.addEventListener('mousedown', function(e){
         if(e.button!==0) return;
         var S2=state3d.current;
@@ -6271,6 +6304,7 @@ function startApp() {
           var newRot=ds.startRot+dx*0.01;
           var newSb=Object.assign({},ds.startSb,{min:ds.startSb.min.slice(),max:ds.startSb.max.slice(),rotation:newRot});
           if(window._ccDispatch) window._ccDispatch({t:A.SECTION_BOX,v:newSb});
+          _sboxHudShow((newRot*180/Math.PI).toFixed(1)+'°', e.clientX, e.clientY);
         } else if(ds.type==='face'){
           var intF=new THREE.Vector3();
           if(raycaster.ray.intersectPlane(ds.dragPlane,intF)){
@@ -6285,6 +6319,7 @@ function startApp() {
             }
             if(ds.startSb.rotation) nsb.rotation=ds.startSb.rotation;
             if(window._ccDispatch) window._ccDispatch({t:A.SECTION_BOX,v:nsb});
+            _sboxHudShow(_sboxFmt(nsb.max[ds.idx]-nsb.min[ds.idx]), e.clientX, e.clientY);
           }
         } else if(ds.type==='corner'){
           var intPt=new THREE.Vector3();
@@ -6300,6 +6335,9 @@ function startApp() {
             if(newSb.min[2]>=newSb.max[2]-0.01){if(ds.signs[2]>0)newSb.max[2]=newSb.min[2]+0.01;else newSb.min[2]=newSb.max[2]-0.01;}
             if(ds.startSb.rotation) newSb.rotation=ds.startSb.rotation;
             if(window._ccDispatch) window._ccDispatch({t:A.SECTION_BOX,v:newSb});
+            _sboxHudShow(_sboxFmt(newSb.max[0]-newSb.min[0])+' × '
+              + _sboxFmt(newSb.max[1]-newSb.min[1])+' × '
+              + _sboxFmt(newSb.max[2]-newSb.min[2]), e.clientX, e.clientY);
           }
         }
       });
@@ -6309,6 +6347,7 @@ function startApp() {
           _sboxDragging=false;
           _sboxDragState=null;
           renderer.domElement.style.cursor='';
+          _sboxHudHide();
         }
       });
 
@@ -6394,7 +6433,10 @@ function startApp() {
         }
 
         // ── Section Pick: click any surface to use it as a section plane ──
-        if (window._ccSectionPickPending && hits.length > 0) {
+        // Triggered either by the toolbar "Make Section" mode (pick-pending
+        // flag) or — as a one-step shortcut — by holding Alt while clicking
+        // a face. Borrowed from Onshape / Trimble Connect / Shapr3D.
+        if ((window._ccSectionPickPending || e.altKey) && hits.length > 0) {
           var spHit = hits[0];
           var nWorld = new THREE.Vector3();
           if (spHit.face && spHit.face.normal) {
@@ -6851,6 +6893,14 @@ function startApp() {
         var up = S.camera.up.clone();
         renderer.render(scene, S.camera);
         var snapshot = renderer.domElement.toDataURL('image/png');
+        // Snapshot the current section/clip state so reviewers see exactly
+        // what the author was looking at. Match BIMcollab / Solibri / xeokit
+        // behaviour where viewpoints carry the active clipping planes.
+        var _st = window._ccLatestState || {};
+        var _section = null;
+        if(_st.sectionAxis){ _section = {kind:'axis', axis:_st.sectionAxis, pos:_st.sectionPos, flip:!!_st.sectionFlip}; }
+        else if(_st.sectionCustom){ _section = {kind:'custom', custom:_st.sectionCustom, pos:_st.sectionPos, flip:!!_st.sectionFlip}; }
+        else if(_st.sectionBox && _st.sectionBox.enabled){ _section = {kind:'box', box:_st.sectionBox}; }
         return {
           id:uid(), name:name||'Viewpoint', linkedId:linkedId||null,
           createdAt:new Date().toISOString(), snapshot:snapshot,
@@ -6859,7 +6909,8 @@ function startApp() {
             dx:+dir.x.toFixed(4), dy:+dir.y.toFixed(4), dz:+dir.z.toFixed(4),
             ux:+up.x.toFixed(4), uy:+up.y.toFixed(4), uz:+up.z.toFixed(4),
             tx:+S.orbit.target.x.toFixed(4), ty:+S.orbit.target.y.toFixed(4), tz:+S.orbit.target.z.toFixed(4)
-          }
+          },
+          section:_section
         };
       };
       _restoreViewpoint = function(vp) {
@@ -6869,6 +6920,24 @@ function startApp() {
         if(c.tx!=null) S.orbit.target.set(c.tx, c.ty, c.tz);
         else S.orbit.target.set(c.px+c.dx*10, c.py+c.dy*10, c.pz+c.dz*10);
         S.orbit.sync(); S.orbit.apply();
+        // Restore the section state. Older viewpoints predating this field
+        // simply have section:undefined — we clear in that case so the
+        // restored view doesn't inherit whatever was active beforehand.
+        if(window._ccDispatch){
+          var sec = vp.section || null;
+          window._ccDispatch({t:A.SECTION,axis:null});
+          window._ccDispatch({t:A.SECTION_CUSTOM,v:null});
+          window._ccDispatch({t:A.SECTION_BOX,v:null});
+          if(sec && sec.kind==='axis'){
+            window._ccDispatch({t:A.SECTION,axis:sec.axis,pos:sec.pos});
+            if(sec.flip) window._ccDispatch({t:A.SECTION_FLIP});
+          } else if(sec && sec.kind==='custom'){
+            window._ccDispatch({t:A.SECTION_CUSTOM,v:sec.custom,pos:sec.pos});
+            if(sec.flip) window._ccDispatch({t:A.SECTION_FLIP});
+          } else if(sec && sec.kind==='box'){
+            window._ccDispatch({t:A.SECTION_BOX,v:sec.box});
+          }
+        }
         invalidate(3);
       };
       window._ccApplyViewpoint = _restoreViewpoint;
@@ -7261,7 +7330,9 @@ function startApp() {
         var box=_elemsBBox();
         var cut=box.min[s.sectionAxis]+(box.max[s.sectionAxis]-box.min[s.sectionAxis])*s.sectionPos;
         var nm={x:new THREE.Vector3(1,0,0),y:new THREE.Vector3(0,1,0),z:new THREE.Vector3(0,0,1)};
-        planes.push(new THREE.Plane(nm[s.sectionAxis].clone().negate(),cut));
+        var axPlane = new THREE.Plane(nm[s.sectionAxis].clone().negate(),cut);
+        if(s.sectionFlip) axPlane.negate();
+        planes.push(axPlane);
         var size = box.getSize(new THREE.Vector3());
         var center = box.getCenter(new THREE.Vector3());
         var hw, hh, pos = new THREE.Vector3(), q = new THREE.Quaternion();
@@ -7279,7 +7350,8 @@ function startApp() {
         var diag=box2.getSize(new THREE.Vector3()).length();
         var offset=(s.sectionPos-0.5)*diag;
         var shiftedPt=pt.clone().addScaledVector(normal,offset);
-        var plane=new THREE.Plane().setFromNormalAndCoplanarPoint(normal.negate(),shiftedPt);
+        var plane=new THREE.Plane().setFromNormalAndCoplanarPoint(normal.clone().negate(),shiftedPt);
+        if(s.sectionFlip) plane.negate();
         planes.push(plane);
         var halfDim = diag * 0.22;
         var vis2 = _makeSectionVis(halfDim, halfDim, shiftedPt, null);
@@ -7288,6 +7360,12 @@ function startApp() {
         S._sectionPlaneVis = vis2;
       }
       S.renderer.clippingPlanes=planes;
+      // Three.js only switches material shaders to clipping-aware ones when
+      // localClippingEnabled is true at the moment a frame renders. The
+      // render loop also toggles this, but doing it synchronously here
+      // guarantees the very next render picks up the new planes — no
+      // dropped first frame, no stale "no clipping" program in cache.
+      S.renderer.localClippingEnabled = planes.length > 0;
       // Debounced section cut highlight lines
       clearTimeout(S._sectionCutLinesTimer);
       if(s.sectionAxis && S.mg.children.length>0){
@@ -7308,7 +7386,7 @@ function startApp() {
         if(_S2&&_S2._sectionCutLines){ _S2.scene.remove(_S2._sectionCutLines); _S2._sectionCutLines=null; }
       }
       invalidate();
-    }, [s.sectionAxis, s.sectionPos, s.sectionCustom]);
+    }, [s.sectionAxis, s.sectionPos, s.sectionCustom, s.sectionFlip]);
 
     // ── TransformControls section gizmo (PR-A) ─────────────────
     // Adds a draggable 3-axis-aware translate gizmo on the active section
@@ -7445,6 +7523,7 @@ function startApp() {
       if(!s.sectionBox||!s.sectionBox.enabled) {
         if(S._sectionBoxActive) {
           S.renderer.clippingPlanes=[];
+          S.renderer.localClippingEnabled=false;
           S._sectionBoxActive=false;
         }
         cleanupSbox();
@@ -7469,6 +7548,7 @@ function startApp() {
         new THREE.Plane().setFromNormalAndCoplanarPoint(axZ.clone().negate(), ctr.clone().addScaledVector(axZ,hz))
       ];
       S.renderer.clippingPlanes=planes;
+      S.renderer.localClippingEnabled=planes.length>0;
       S._sectionBoxActive=true;
       window._ccCurrentSbox=sb; // expose for drag handlers
       cleanupSbox();
@@ -7628,6 +7708,7 @@ function startApp() {
         new THREE.Plane(new THREE.Vector3(0,-1,0), cutAt)
       ];
       S.renderer.clippingPlanes = planes;
+      S.renderer.localClippingEnabled = true;
       // Visual cut plane indicator (subtle translucent plane at cut level)
       if(S._cutPlaneHelper){S.scene.remove(S._cutPlaneHelper);S._cutPlaneHelper=null;}
       var box = _elemsBBox();
@@ -7660,6 +7741,7 @@ function startApp() {
       if(!s.sectionAxis && !s.sectionCustom && (!s.sectionBox||!s.sectionBox.enabled) && !s.floorPlan){
         if(S.renderer.clippingPlanes.length>0){
           S.renderer.clippingPlanes=[];
+          S.renderer.localClippingEnabled=false;
           invalidate();
         }
       }
@@ -15516,12 +15598,17 @@ function startApp() {
         ['3',           'Rendered (lit) view'],
         ['4',           'Wireframe'],
         ['5',           'X-Ray (semi-transparent)'],
-        ['F',           'Fit model to view'],
+        ['Home',        'Fit model to view'],
         ['R',           'Reset camera'],
         ['O',           'Orbit mode'],
         ['W  W',        'Walk mode (press twice)'],
-        ['B  B',        'Section box (press twice)'],
+        ['S',           'Section — smart toggle (selection → box; else floor cut)'],
+        ['B',           'Section box (around selection or full model)'],
         ['X',           'Section — X axis'],
+        ['Y',           'Section — Y axis'],
+        ['Z',           'Section — Z axis (horizontal floor cut)'],
+        ['F',           'Flip section (or Fit model when no section is active)'],
+        ['Alt + Click', 'Section through the clicked face'],
         ['M',           'Distance measurement'],
         ['Shift+M',     'Clear measurements'],
         ['A',           'Angle measurement (in measure mode)'],
@@ -23066,10 +23153,15 @@ function startApp() {
     var I = {
       fit:    '<path d="M3 8V3h5"/><path d="M21 8V3h-5"/><path d="M3 16v5h5"/><path d="M21 16v5h-5"/>',
       reset:  '<path d="M3 12a9 9 0 0 1 15-6.7L21 8"/><path d="M21 3v5h-5"/>',
-      // Make Section: a knife/scalpel cutting through a plane (clearly "cut")
-      slice:  '<path d="M3 16l12-12"/><path d="M11 8l5 5"/><path d="M5 16h6"/><path d="M5 16v3"/>',
-      // Section Box: outer cube + inner dashed cube (crop region)
-      slicebox:'<rect x="3" y="3" width="18" height="18" rx="1"/><path stroke-dasharray="2 2" d="M7 7h10v10h-10z"/>',
+      // Make Section: solid object with a diagonal slice + hatched cut face —
+      // reads as "cut interior shown" in one glance, the convention used by
+      // Onshape / Fusion / SketchUp. The earlier knife glyph was four
+      // disjoint strokes that read as an X with an L next to it.
+      slice:  '<path d="M4 7l8-3 8 3v10l-8 3-8-3z"/><path d="M4 7l8 3 8-3"/><path d="M12 10v10"/><path d="M14 13l4-1.5"/><path d="M14 16l4-1.5"/>',
+      // Section Box: 3D-perspective box with a smaller offset face — reads
+      // as a region inside a model. The earlier nested-rect / dashed-rect
+      // version looked like a generic "border" icon.
+      slicebox:'<path d="M4 8l8-4 8 4v9l-8 4-8-4z"/><path d="M4 8l8 4 8-4"/><path d="M12 12v9"/><path stroke-dasharray="2 2" d="M9 10l3 1.5 3-1.5"/><path stroke-dasharray="2 2" d="M9 10v6l3 1.5 3-1.5v-6"/>',
       clear:  '<path d="M5 5l14 14"/><path d="M19 5L5 19"/>',
       ruler:  '<path d="M3 12h18"/><path d="M5 12V9"/><path d="M9 12v-4"/><path d="M13 12V8"/><path d="M17 12v-4"/><path d="M21 12V9"/>',
       angle:  '<path d="M5 19L19 19"/><path d="M5 19L5 5"/><path d="M5 8a8 8 0 0 1 11 11"/>',
@@ -24175,7 +24267,10 @@ function startApp() {
             return;
           }
           if(chord==='sc'){
-            var next=s.sectionAxis===null?'x':s.sectionAxis==='x'?'y':s.sectionAxis==='y'?'z':null;
+            // Cycle in user-visible order: none → X → Y → Z → none.
+            // Internal Y/Z are swapped from the labels (see line 22584), so
+            // the cycle here is null → 'x' → 'z' → 'y' → null.
+            var next=s.sectionAxis===null?'x':s.sectionAxis==='x'?'z':s.sectionAxis==='z'?'y':null;
             d({t:A.SECTION,axis:next}); return;
           }
           if(chord==='zf'){ if(_resetView)_resetView(); if(s.floorPlan)d({t:A.FLOOR_PLAN,v:null}); return; }
@@ -24227,6 +24322,24 @@ function startApp() {
               else if(_getSectionBoxFromScene){var bx=_getSectionBoxFromScene();if(bx&&window._ccDispatch)window._ccDispatch({t:A.SECTION_BOX,v:{enabled:true,min:[bx.min.x,bx.min.y,bx.min.z],max:[bx.max.x,bx.max.y,bx.max.z]}});}
             }
             if(sk==='w'){ d({t:A.WALK_MODE,v:!s.walkMode}); }
+            // Z held without a follow-up key → toggle vertical floor cut
+            // (displayed as "Z axis"; internal three.js axis is Y).
+            if(sk==='z'){ d({t:A.SECTION,axis:s.sectionAxis==='y'?null:'y'}); }
+            // S held without a follow-up key → smart section toggle:
+            // already sectioned → clear; selection present → fit box around
+            // it (Revit BX); nothing selected → drop a horizontal floor cut
+            // (the most common BIM use case). Borrows the smart-default
+            // pattern from Revit + xeokit + SketchUp.
+            if(sk==='s'){
+              var hasSection = !!(s.sectionAxis||s.sectionCustom||(s.sectionBox&&s.sectionBox.enabled));
+              if(hasSection){
+                d({t:A.SECTION,axis:null}); d({t:A.SECTION_CUSTOM,v:null}); d({t:A.SECTION_BOX,v:null});
+              } else if(window._ccSelectedEl && window._ccSelectedEl.box && !window._ccSelectedEl.box.isEmpty()){
+                if(window._ccActivateSectionBox) window._ccActivateSectionBox();
+              } else {
+                d({t:A.SECTION,axis:'y'}); // floor cut
+              }
+            }
           }, 500);
           return;
         }
@@ -24248,7 +24361,15 @@ function startApp() {
           if(e.key==='r'){d({t:A.MEASURE_MODE,v:'area'});return;}
         }
         if(e.key==='/'&&!ctrl){ e.preventDefault(); if(window._ccNLOpen) window._ccNLOpen(); return; }
-        if(e.key==='f'&&!ctrl){ if(window._ccFitAll) window._ccFitAll(); else if(window._ccResetView) window._ccResetView(); return; }
+        // F flips the active section's kept side. With no active section it
+        // falls back to fit-to-model so the old habit still works. Home and
+        // the Z-F chord also fit, so this is just the friendlier default.
+        if(e.key==='f'&&!ctrl&&!e.shiftKey&&!e.altKey){
+          if(s.sectionAxis||s.sectionCustom){ d({t:A.SECTION_FLIP}); return; }
+          if(window._ccFitAll) window._ccFitAll(); else if(window._ccResetView) window._ccResetView();
+          return;
+        }
+        if(e.key==='Home'&&!ctrl){ if(window._ccFitAll) window._ccFitAll(); else if(window._ccResetView) window._ccResetView(); return; }
         if(e.key==='r'&&!ctrl&&!s.measureMode){ if(window._ccResetView) window._ccResetView(); return; }
         if(e.key==='o'&&!ctrl){ d({t:A.WALK_MODE,v:false}); d({t:A.MEASURE_MODE,v:false}); d({t:A.COMMENT_MODE,v:false}); d({t:A.FLOOR_PLAN,v:null}); return; }
         if(e.key==='n'&&!ctrl){ d({t:A.COMMENT_MODE,v:!s.commentMode}); return; }
@@ -24258,8 +24379,13 @@ function startApp() {
           else if(window._ccUnisolate) window._ccUnisolate();
           return;
         }
+        // X / Y / Z hotkeys follow the *displayed* axis labels (Z = vertical
+        // floor cut), not Three.js's internal Y-up axes. The UI re-labels
+        // internal Y as "Z" and internal Z as "Y" because architects expect
+        // Z-up — keep keys aligned with labels (see lines 8376 + 22584).
+        // Z is a chord-starter (zf, za) so it lives in the chord timeout.
         if(e.key==='x'&&!ctrl){ d({t:A.SECTION,axis:s.sectionAxis==='x'?null:'x'}); return; }
-        if(e.key==='y'&&!ctrl){ d({t:A.SECTION,axis:s.sectionAxis==='y'?null:'y'}); return; }
+        if(e.key==='y'&&!ctrl){ d({t:A.SECTION,axis:s.sectionAxis==='z'?null:'z'}); return; }
         if(e.key==='g'&&!ctrl){ d({t:A.UPD_PREFS,u:{showGrid:!(s.prefs.showGrid!==false)}}); return; }
         if(e.key==='Delete'&&!s.activeId){
           if(s.measurements.length>0){d({t:A.DEL_MEASUREMENT,id:s.measurements[s.measurements.length-1].id});return;}
