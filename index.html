@@ -1190,13 +1190,21 @@ function startApp() {
     });
   }
 
-  function idbSaveFile(id, name, buffer, projectId, sidecarData) {
+  function idbSaveFile(id, name, buffer, projectId, sidecarData, meta) {
     return _openIDB().then(function(db) {
       return new Promise(function(resolve, reject) {
         var tx = db.transaction(IDB_STORE, 'readwrite');
-        var record = {id:id, name:name, buffer:buffer, projectId:projectId||'default', savedAt:Date.now()};
-        if (sidecarData) record.sidecar = sidecarData;
-        tx.objectStore(IDB_STORE).put(record);
+        var store = tx.objectStore(IDB_STORE);
+        var getReq = store.get(id);
+        getReq.onsuccess = function() {
+          var prev = getReq.result || {};
+          var record = {id:id, name:name, buffer:buffer, projectId:projectId||'default', savedAt:Date.now()};
+          if (sidecarData) record.sidecar = sidecarData;
+          else if (prev.sidecar) record.sidecar = prev.sidecar;
+          if (meta) record.meta = meta;
+          else if (prev.meta) record.meta = prev.meta;
+          store.put(record);
+        };
         tx.oncomplete = function() { resolve(); };
         tx.onerror = function(e) { reject(e.target.error); };
       });
@@ -9172,7 +9180,12 @@ function startApp() {
                 });
               }
             }
-            d({t:A.ADD_MODEL, v:{id:entry.id, name:entry.name.replace(/\.ifc$/i,''), discipline:disc, color:col, meshes:result.meshes, elements:result.elements, storeys:result.storeys||[], storeyData:result.storeyData||[], spatialHierarchy:result.spatialHierarchy||{}, relatedPairs:result.relatedPairs||{}, stats:result.stats||{fileSize:fSize}}});
+            var _restoredModel = {id:entry.id, name:entry.name.replace(/\.ifc$/i,''), discipline:disc, color:col, meshes:result.meshes, elements:result.elements, storeys:result.storeys||[], storeyData:result.storeyData||[], spatialHierarchy:result.spatialHierarchy||{}, relatedPairs:result.relatedPairs||{}, stats:result.stats||{fileSize:fSize}};
+            if (entry.meta) {
+              if (entry.meta._version) _restoredModel._version = entry.meta._version;
+              if (entry.meta._versionDiff) _restoredModel._versionDiff = entry.meta._versionDiff;
+            }
+            d({t:A.ADD_MODEL, v:_restoredModel});
           }).catch(function(e){ console.warn('Failed to restore '+entry.name+':', e); })
             .then(function(){ _setGlobalLoading(false); });
         });
@@ -10541,7 +10554,8 @@ function startApp() {
               }
               _lazyPropsTarget.modelId = modelId;
               consoleElementProfile(baseName, (result.stats&&result.stats.loadType)||'IFC', result.elements);
-              idbSaveFile(modelId, f.name, buf, s.activeProject||'default');
+              var _verMeta = existing ? {_version:(existing._version||1)+1, _versionDiff:versionDiff} : {_version:1};
+              idbSaveFile(modelId, f.name, buf, s.activeProject||'default', null, _verMeta);
               idbSaveGeoCache(modelId, _geoSerialize(result)); // cache geometry for fast project-switch restore
             });
           }).catch(function(er) {
