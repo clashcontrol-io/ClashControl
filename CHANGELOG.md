@@ -1,5 +1,8 @@
 # Changelog
 
+## v5.6.11 (2026-05-04)
+- Three viewer performance improvements + glass name detection
+
 ## v5.6.10 (2026-05-04)
 - Fix section plane drag and rotation
 
