@@ -7336,6 +7336,7 @@ function startApp() {
         S.scene.remove(S._sectionPlaneVis); S._sectionPlaneVis = null;
       }
       if (S._sectionCutLines) { S.scene.remove(S._sectionCutLines); if(S._sectionCutLines.geometry)S._sectionCutLines.geometry.dispose(); if(S._sectionCutLines.material)S._sectionCutLines.material.dispose(); S._sectionCutLines=null; }
+      if (S._sectionHatchMesh) { S.scene.remove(S._sectionHatchMesh); S._sectionHatchMesh.geometry.dispose(); S._sectionHatchMesh.material.dispose(); S._sectionHatchMesh=null; }
       function _makeSectionVis(halfW, halfH, position, quaternion) {
         var grp = new THREE.Group();
         // Translucent fill + visible border so the user sees a *plane*, not
@@ -7458,68 +7459,6 @@ function startApp() {
         if (sm && planes.length) Object.keys(sm).forEach(function(k){ if(sm[k]&&sm[k].clippingPlanes!==planes){sm[k].clippingPlanes=planes;sm[k].needsUpdate=true;} });
       });
       if(!planes.length && !(s.sectionBox&&s.sectionBox.enabled)) S.renderer.localClippingEnabled=false;
-      // ── Architectural section hatch (stencil-cap, Three.js approach) ──────────
-      // Stencil meshes are restricted to the FAR side of the cut plane via a local
-      // inverted clipping plane. depthTest:false lets them count geometry crossings
-      // from the section plane toward the camera regardless of depth buffer state.
-      // Back-face count minus front-face count is non-zero only at the cut-face
-      // interior (solid material), so the cap draws exactly on the wall cross-section.
-      // This works correctly for any camera angle — no Carmack needed.
-      if (S._sectionHatchGroup) {
-        var _hatchStale = (S._sectionHatchGroup._modelsRef !== s.models);
-        if (!s.sectionHatch || planes.length !== 1 || _hatchStale) {
-          if (S._sectionHatchGroup._matBack)  S._sectionHatchGroup._matBack.dispose();
-          if (S._sectionHatchGroup._matFront) S._sectionHatchGroup._matFront.dispose();
-          if (S._sectionHatchGroup._cap) { S._sectionHatchGroup._cap.material.dispose(); S._sectionHatchGroup._cap.geometry.dispose(); }
-          S.scene.remove(S._sectionHatchGroup);
-          S._sectionHatchGroup = null;
-        } else {
-          // Plane moved — update cap position and inverted clipping plane
-          var _hcn = planes[0].normal.clone().normalize();
-          var _hcap = S._sectionHatchGroup._cap;
-          _hcap.position.copy(_hcn.clone().multiplyScalar(-planes[0].constant));
-          var _hz = new THREE.Vector3(0,0,1);
-          if (Math.abs(_hcn.dot(_hz) + 1) < 1e-6) _hcap.quaternion.setFromAxisAngle(new THREE.Vector3(1,0,0), Math.PI);
-          else _hcap.quaternion.setFromUnitVectors(_hz, _hcn);
-          // Mutate the shared inverted-plane so stencil materials auto-update
-          S._sectionHatchGroup._invertedPlane.copy(planes[0]).negate();
-        }
-      }
-      if (s.sectionHatch && planes.length === 1 && !S._sectionHatchGroup) {
-        var _invPlane = planes[0].clone().negate(); // far-side restriction for stencil
-        var hGrp = new THREE.Group(); hGrp.name = 'sectionHatch';
-        // depthTest:false + far-side clipping + ZPass increment/decrement:
-        // counts geometry crossings from section plane toward camera (Three.js example approach).
-        var hBack = new THREE.MeshBasicMaterial({depthWrite:false,depthTest:false,colorWrite:false,stencilWrite:true,stencilFunc:THREE.AlwaysStencilFunc,side:THREE.BackSide,stencilFail:THREE.KeepStencilOp,stencilZFail:THREE.KeepStencilOp,stencilZPass:THREE.IncrementWrapStencilOp,clippingPlanes:[_invPlane]});
-        var hFront = new THREE.MeshBasicMaterial({depthWrite:false,depthTest:false,colorWrite:false,stencilWrite:true,stencilFunc:THREE.AlwaysStencilFunc,side:THREE.FrontSide,stencilFail:THREE.KeepStencilOp,stencilZFail:THREE.KeepStencilOp,stencilZPass:THREE.DecrementWrapStencilOp,clippingPlanes:[_invPlane]});
-        // Skip open-shell geometry (glass, thin panels) — no closed back face means
-        // stencil counts won't cancel and the cap would bleed across open surfaces.
-        var HATCH_MIN_THICKNESS = 0.005;
-        S.scene.traverse(function(obj){
-          if (!obj.isMesh || !obj.visible || obj.userData.expressId == null || !obj.geometry) return;
-          if (!obj.geometry.boundingBox) obj.geometry.computeBoundingBox();
-          var _bb = obj.geometry.boundingBox;
-          if (_bb) { var _sz = _bb.getSize(new THREE.Vector3()); if (Math.min(_sz.x,_sz.y,_sz.z) < HATCH_MIN_THICKNESS) return; }
-          var bm = new THREE.Mesh(obj.geometry, hBack);  bm.matrixAutoUpdate=false; bm.matrix.copy(obj.matrixWorld); bm.renderOrder=5; hGrp.add(bm);
-          var fm = new THREE.Mesh(obj.geometry, hFront); fm.matrixAutoUpdate=false; fm.matrix.copy(obj.matrixWorld); fm.renderOrder=5; hGrp.add(fm);
-        });
-        var _capN = planes[0].normal.clone().normalize();
-        var _capBox = _elemsBBox();
-        var _capSize = _capBox.isEmpty() ? 100 : _capBox.getSize(new THREE.Vector3()).length() * 1.2;
-        var capGeo = new THREE.PlaneGeometry(_capSize, _capSize);
-        // stencilZPass:Zero clears the stencil after drawing so next frame starts clean
-        var capMat = new THREE.MeshBasicMaterial({color:0x111111,side:THREE.DoubleSide,depthWrite:false,depthTest:true,polygonOffset:true,polygonOffsetFactor:-1,polygonOffsetUnits:-4,stencilWrite:true,stencilRef:0,stencilFunc:THREE.NotEqualStencilFunc,stencilFail:THREE.KeepStencilOp,stencilZFail:THREE.KeepStencilOp,stencilZPass:THREE.ZeroStencilOp,clippingPlanes:[]});
-        var capMesh = new THREE.Mesh(capGeo, capMat); capMesh.renderOrder = 6;
-        capMesh.position.copy(_capN.clone().multiplyScalar(-planes[0].constant));
-        var _cz = new THREE.Vector3(0,0,1);
-        if (Math.abs(_capN.dot(_cz) + 1) < 1e-6) capMesh.quaternion.setFromAxisAngle(new THREE.Vector3(1,0,0), Math.PI);
-        else capMesh.quaternion.setFromUnitVectors(_cz, _capN);
-        hGrp._cap = capMesh; hGrp._matBack = hBack; hGrp._matFront = hFront;
-        hGrp._invertedPlane = _invPlane; hGrp._modelsRef = s.models;
-        hGrp.add(capMesh);
-        S.scene.add(hGrp);
-        S._sectionHatchGroup = hGrp;
-      }
       // Debounced section cut highlight lines
       clearTimeout(S._sectionCutLinesTimer);
       if(s.sectionAxis && S.mg.children.length>0){
@@ -7538,6 +7477,18 @@ function startApp() {
       } else {
         var _S2=state3d.current;
         if(_S2&&_S2._sectionCutLines){ _S2.scene.remove(_S2._sectionCutLines); _S2._sectionCutLines=null; }
+      }
+      // Debounced polygon hatch — rebuilt 500ms after movement stops, never during drag
+      clearTimeout(S._sectionHatchTimer);
+      if (s.sectionHatch && planes.length === 1 && S.mg.children.length > 0) {
+        var _hatchPlane = planes[0];
+        S._sectionHatchTimer = setTimeout(function() {
+          if (window._ccSectionDragging) return;
+          var _Sh = state3d.current; if (!_Sh || !_Sh.mg) return;
+          var _sth = window._ccLatestState || {};
+          _buildSectionHatchMesh(_Sh, _sth.models || [], _hatchPlane);
+          invalidate();
+        }, 500);
       }
       invalidate();
     }, [s.sectionAxis, s.sectionPos, s.sectionCustom, s.sectionFlip, s.sectionHatch, s.models, s.prefs&&s.prefs.renderStyle]);
@@ -8567,32 +8518,32 @@ function startApp() {
       </svg>
       ${compare.open && html`<div style=${{position:'absolute',bottom:'.75rem',left:'50%',transform:'translateX(-50%)',background:'var(--bg-primary)',border:'1px solid var(--border)',borderRadius:'var(--radius-sm)',boxShadow:'var(--shadow-md)',zIndex:9,pointerEvents:'auto',padding:'.5rem .65rem',display:'flex',flexDirection:'column',gap:'.4rem',minWidth:380}}>
         <div style=${{display:'flex',alignItems:'center',gap:'.4rem'}}>
-          <span style=${{fontSize:'0.65rem',fontWeight:700,color:'var(--text-muted)',textTransform:'uppercase',letterSpacing:'.04em',flex:1}}>Version Compare</span>
+          <span style=${{fontSize:'0.65rem',fontWeight:700,color:'var(--text-muted)',textTransform:'uppercase',letterSpacing:'.04em',flex:1}}>Compare Models</span>
           <button onClick=${function(){setCompare(Object.assign({},compare,{open:false}));}}
             style=${{background:'none',border:'none',color:'var(--text-muted)',cursor:'pointer',fontSize:'1rem',padding:'0 .2rem',lineHeight:1}}>×</button>
         </div>
         <div style=${{display:'flex',gap:'.3rem',alignItems:'center'}}>
-          <span style=${{fontSize:'.65rem',color:'var(--text-faint)',width:36,whiteSpace:'nowrap'}}>Old</span>
+          <span style=${{fontSize:'.65rem',color:'var(--text-faint)',width:36,whiteSpace:'nowrap'}}>A</span>
           <select value=${compare.modelA||''} onChange=${function(e){setCompare(Object.assign({},compare,{modelA:e.target.value||null}));}}
             style=${{flex:1,fontSize:'0.72rem',padding:'.2rem .3rem',background:'var(--bg-secondary)',color:'var(--text-primary)',border:'1px solid var(--border)',borderRadius:4}}>
-            <option value="">Old version…</option>
+            <option value="">Model A…</option>
             ${(s.models||[]).map(function(m){return html`<option key=${m.id} value=${m.id}>${m.name}${m._version>1?' (v'+m._version+')':''}</option>`})}
           </select>
         </div>
         <div style=${{display:'flex',gap:'.3rem',alignItems:'center'}}>
-          <span style=${{fontSize:'.65rem',color:'var(--text-faint)',width:36,whiteSpace:'nowrap'}}>New</span>
+          <span style=${{fontSize:'.65rem',color:'var(--text-faint)',width:36,whiteSpace:'nowrap'}}>B</span>
           <select value=${compare.modelB||''} onChange=${function(e){setCompare(Object.assign({},compare,{modelB:e.target.value||null}));}}
             style=${{flex:1,fontSize:'0.72rem',padding:'.2rem .3rem',background:'var(--bg-secondary)',color:'var(--text-primary)',border:'1px solid var(--border)',borderRadius:4}}>
-            <option value="">New version…</option>
+            <option value="">Model B…</option>
             ${(s.models||[]).filter(function(m){return m.id!==compare.modelA;}).map(function(m){return html`<option key=${m.id} value=${m.id}>${m.name}${m._version>1?' (v'+m._version+')':''}</option>`})}
           </select>
         </div>
         ${compare.modelA && compare.modelB && html`<div style=${{display:'flex',gap:'.4rem',alignItems:'center'}}>
-          <span style=${{fontSize:'.65rem',color:'var(--text-muted)',width:36,whiteSpace:'nowrap'}}>Old</span>
+          <span style=${{fontSize:'.65rem',color:'var(--text-muted)',width:36,whiteSpace:'nowrap'}}>A</span>
           <input type="range" min="0" max="100" step="1" value=${compare.blend}
             onInput=${function(e){setCompare(Object.assign({},compare,{blend:+e.target.value}));}}
             style=${{flex:1}} />
-          <span style=${{fontSize:'.65rem',color:'var(--text-muted)',width:36,whiteSpace:'nowrap',textAlign:'right'}}>New</span>
+          <span style=${{fontSize:'.65rem',color:'var(--text-muted)',width:36,whiteSpace:'nowrap',textAlign:'right'}}>B</span>
         </div>`}
       </div>`}
       ${(markupTool3D || (markups3D && markups3D.length>0)) && html`<div style=${{position:'absolute',top:'.5rem',left:'50%',transform:'translateX(-50%)',display:'flex',gap:'.25rem',padding:'.3rem',background:'var(--bg-primary)',border:'1px solid var(--border)',borderRadius:'var(--radius-sm)',boxShadow:'var(--shadow-md)',zIndex:9,pointerEvents:'auto',alignItems:'center'}}>
@@ -17826,6 +17777,7 @@ function startApp() {
 
   // ── Section Cut Line Highlight (Web Worker) ─────────────────────
   var _sectionCutWorker = null;
+  var _sectionHatchWorker = null;
   function _getSectionCutWorker() {
     if (_sectionCutWorker) return _sectionCutWorker;
     var code = [
@@ -17916,6 +17868,101 @@ function startApp() {
       invalidate();
     };
     worker.postMessage({id:jobId, meshes:meshData, ai:axisIdx, cp:cutPos}, transferList);
+  }
+
+  function _getSectionHatchWorker() {
+    if (_sectionHatchWorker) return _sectionHatchWorker;
+    var code = [
+      'self.onmessage=function(e){',
+      '  var d=e.data,nx=d.nx,ny=d.ny,nz=d.nz,pd=d.pd,eps=1e-6;',
+      '  var ux,uy,uz;',
+      '  if(Math.abs(nx)<=Math.abs(ny)&&Math.abs(nx)<=Math.abs(nz)){ux=0;uy=-nz;uz=ny;}',
+      '  else if(Math.abs(ny)<=Math.abs(nz)){ux=nz;uy=0;uz=-nx;}',
+      '  else{ux=-ny;uy=nx;uz=0;}',
+      '  var ul=Math.sqrt(ux*ux+uy*uy+uz*uz);ux/=ul;uy/=ul;uz/=ul;',
+      '  var vx=ny*uz-nz*uy,vy=nz*ux-nx*uz,vz=nx*uy-ny*ux;',
+      '  var all=[];',
+      '  d.meshes.forEach(function(m){',
+      '    var p=m.pos,ix=m.idx,mt=m.mat;',
+      '    function ap(i){var x=p[i*3],y=p[i*3+1],z=p[i*3+2];return[mt[0]*x+mt[4]*y+mt[8]*z+mt[12],mt[1]*x+mt[5]*y+mt[9]*z+mt[13],mt[2]*x+mt[6]*y+mt[10]*z+mt[14]];}',
+      '    function sd(v){return nx*v[0]+ny*v[1]+nz*v[2]+pd;}',
+      '    var uk=[];',
+      '    var n=ix?ix.length:p.length/3;',
+      '    for(var i=0;i<n;i+=3){',
+      '      var va=ap(ix?ix[i]:i),vb=ap(ix?ix[i+1]:i+1),vc=ap(ix?ix[i+2]:i+2);',
+      '      var da=sd(va),db=sd(vb),dc=sd(vc);',
+      '      if(Math.abs(da)<eps)da=eps;if(Math.abs(db)<eps)db=eps;if(Math.abs(dc)<eps)dc=eps;',
+      '      if(da*db<0){var t=da/(da-db);var q=[va[0]+t*(vb[0]-va[0]),va[1]+t*(vb[1]-va[1]),va[2]+t*(vb[2]-va[2])];uk.push(q[0]*ux+q[1]*uy+q[2]*uz,q[0]*vx+q[1]*vy+q[2]*vz);}',
+      '      if(db*dc<0){var t=db/(db-dc);var q=[vb[0]+t*(vc[0]-vb[0]),vb[1]+t*(vc[1]-vb[1]),vb[2]+t*(vc[2]-vb[2])];uk.push(q[0]*ux+q[1]*uy+q[2]*uz,q[0]*vx+q[1]*vy+q[2]*vz);}',
+      '      if(dc*da<0){var t=dc/(dc-da);var q=[vc[0]+t*(va[0]-vc[0]),vc[1]+t*(va[1]-vc[1]),vc[2]+t*(va[2]-vc[2])];uk.push(q[0]*ux+q[1]*uy+q[2]*uz,q[0]*vx+q[1]*vy+q[2]*vz);}',
+      '    }',
+      '    if(uk.length<6)return;',
+      '    var seen={},pts=[];',
+      '    for(var i=0;i<uk.length;i+=2){var k=Math.round(uk[i]*1e4)+"_"+Math.round(uk[i+1]*1e4);if(!seen[k]){seen[k]=1;pts.push([uk[i],uk[i+1]]);}}',
+      '    if(pts.length<3)return;',
+      '    var cu=0,cv=0;for(var j=0;j<pts.length;j++){cu+=pts[j][0];cv+=pts[j][1];}cu/=pts.length;cv/=pts.length;',
+      '    pts.sort(function(a,b){return Math.atan2(a[1]-cv,a[0]-cu)-Math.atan2(b[1]-cv,b[0]-cu);});',
+      '    for(var j=0;j<pts.length;j++){',
+      '      var p0=pts[j],p1=pts[(j+1)%pts.length];',
+      '      all.push(cu*ux+cv*vx-pd*nx,cu*uy+cv*vy-pd*ny,cu*uz+cv*vz-pd*nz);',
+      '      all.push(p0[0]*ux+p0[1]*vx-pd*nx,p0[0]*uy+p0[1]*vy-pd*ny,p0[0]*uz+p0[1]*vz-pd*nz);',
+      '      all.push(p1[0]*ux+p1[1]*vx-pd*nx,p1[0]*uy+p1[1]*vy-pd*ny,p1[0]*uz+p1[1]*vz-pd*nz);',
+      '    }',
+      '  });',
+      '  var r=new Float32Array(all);self.postMessage({id:d.id,buf:r.buffer},[r.buffer]);',
+      '};'
+    ].join('\n');
+    var blob = new Blob([code], {type:'application/javascript'});
+    _sectionHatchWorker = new Worker(URL.createObjectURL(blob));
+    return _sectionHatchWorker;
+  }
+
+  function _buildSectionHatchMesh(S, models, plane) {
+    if (S._sectionHatchMesh) { S.scene.remove(S._sectionHatchMesh); S._sectionHatchMesh.geometry.dispose(); S._sectionHatchMesh.material.dispose(); S._sectionHatchMesh=null; }
+    if (!models || !models.length) return;
+    var nx=plane.normal.x, ny=plane.normal.y, nz=plane.normal.z, pd=plane.constant;
+    var meshData=[], transferList=[], tmpBox=new THREE.Box3();
+    models.forEach(function(m){
+      if(m.visible===false) return;
+      (m.elements||[]).forEach(function(el){
+        (el.meshes||[]).forEach(function(mesh){
+          var geo=mesh.geometry;
+          if(!geo||!geo.attributes||!geo.attributes.position) return;
+          mesh.updateWorldMatrix(true,false);
+          if(!geo.boundingBox) geo.computeBoundingBox();
+          tmpBox.copy(geo.boundingBox).applyMatrix4(mesh.matrixWorld);
+          // Check if plane intersects bounding box (signed distance range straddles zero)
+          var dMin=nx*(nx>=0?tmpBox.min.x:tmpBox.max.x)+ny*(ny>=0?tmpBox.min.y:tmpBox.max.y)+nz*(nz>=0?tmpBox.min.z:tmpBox.max.z)+pd;
+          var dMax=nx*(nx>=0?tmpBox.max.x:tmpBox.min.x)+ny*(ny>=0?tmpBox.max.y:tmpBox.min.y)+nz*(nz>=0?tmpBox.max.z:tmpBox.min.z)+pd;
+          if(dMin>0||dMax<0) return;
+          var srcPos=geo.attributes.position.array;
+          var posCopy=new Float32Array(srcPos.length); posCopy.set(srcPos);
+          var idxCopy=null;
+          if(geo.index){ var srcIdx=geo.index.array; idxCopy=srcIdx instanceof Uint16Array?new Uint16Array(srcIdx.length):new Uint32Array(srcIdx.length); idxCopy.set(srcIdx); }
+          var matCopy=new Float32Array(mesh.matrixWorld.elements);
+          meshData.push({pos:posCopy,idx:idxCopy,mat:matCopy});
+          transferList.push(posCopy.buffer,matCopy.buffer);
+          if(idxCopy) transferList.push(idxCopy.buffer);
+        });
+      });
+    });
+    if(!meshData.length) return;
+    var jobId=(S._sectionHatchJobId=(S._sectionHatchJobId||0)+1);
+    var worker=_getSectionHatchWorker();
+    worker.onmessage=function(e){
+      if(e.data.id!==jobId) return;
+      if(S._sectionHatchMesh){S.scene.remove(S._sectionHatchMesh);S._sectionHatchMesh.geometry.dispose();S._sectionHatchMesh.material.dispose();S._sectionHatchMesh=null;}
+      var positions=new Float32Array(e.data.buf);
+      if(!positions.length) return;
+      var geo=new THREE.BufferGeometry();
+      geo.setAttribute('position',new THREE.Float32BufferAttribute(positions,3));
+      var mat=new THREE.MeshBasicMaterial({color:0x111111,side:THREE.DoubleSide,depthTest:true,depthWrite:false,polygonOffset:true,polygonOffsetFactor:-2,polygonOffsetUnits:-2,clippingPlanes:[]});
+      var mesh=new THREE.Mesh(geo,mat); mesh.renderOrder=2;
+      S.scene.add(mesh);
+      S._sectionHatchMesh=mesh;
+      invalidate();
+    };
+    worker.postMessage({id:jobId,meshes:meshData,nx:nx,ny:ny,nz:nz,pd:pd},transferList);
   }
 
   // ── 2D Generation & Export ──────────────────────────────────────
