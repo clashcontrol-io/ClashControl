@@ -1,5 +1,8 @@
 # Changelog
 
+## v5.6.13 (2026-05-04)
+- Section box rotation + force-opaque framing elements
+
 ## v5.6.12 (2026-05-04)
 - Fix section box face drag, clipped-element clicks, and glass detection
 
