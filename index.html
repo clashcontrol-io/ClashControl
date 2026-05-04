@@ -7397,47 +7397,9 @@ function startApp() {
         border.userData._sectionPlane = true;
         border.renderOrder = 999;
         grp.add(border);
-        var _arrBox = _elemsBBox();
-        var _arrSz = _arrBox.isEmpty() ? new THREE.Vector3(10,10,10) : _arrBox.getSize(new THREE.Vector3());
-        var _arrMax = Math.max(_arrSz.x, _arrSz.y, _arrSz.z) || 10;
-        // Match section box face-arrow sizing so plane and box handles read at the same scale
-        var arrowSize = Math.max(0.08, Math.min(_arrMax * 0.0173, 0.69));
-        var stemLen = arrowSize * 1.5;
-        var tipLen = arrowSize * 1.6;
-        var tipW = arrowSize * 0.55;
-        var arrowMat = new THREE.MeshBasicMaterial({color:0x1a6b4a, transparent:true, opacity:0.92, depthTest:false});
-        arrowMat.clippingPlanes = [];
-        var stemGeo = new THREE.CylinderGeometry(tipW*0.18, tipW*0.18, stemLen*2, 10);
-        var stem = new THREE.Mesh(stemGeo, arrowMat);
-        stem.rotation.x = Math.PI/2;
-        stem.userData._sectionPlane = true; stem.userData._secHandle = 'move';
-        stem.renderOrder = 1001;
-        grp.add(stem);
-        var coneGeo = new THREE.ConeGeometry(tipW, tipLen, 12);
-        var coneFwd = new THREE.Mesh(coneGeo, arrowMat);
-        coneFwd.position.set(0, 0, stemLen);
-        coneFwd.rotation.x = Math.PI/2;
-        coneFwd.userData._sectionPlane = true; coneFwd.userData._secHandle = 'move';
-        coneFwd.renderOrder = 1001;
-        grp.add(coneFwd);
-        var coneBwd = new THREE.Mesh(coneGeo, arrowMat);
-        coneBwd.position.set(0, 0, -stemLen);
-        coneBwd.rotation.x = -Math.PI/2;
-        coneBwd.userData._sectionPlane = true; coneBwd.userData._secHandle = 'move';
-        coneBwd.renderOrder = 1001;
-        grp.add(coneBwd);
-        var arcR = stemLen * 0.7;
-        var torusGeo = new THREE.TorusGeometry(arcR, tipW*0.15, 6, 24, Math.PI);
-        var arcMat = new THREE.MeshBasicMaterial({color:0xfbbf24, transparent:true, opacity:0.75, depthTest:false});
-        arcMat.clippingPlanes = [];
-        var torus = new THREE.Mesh(torusGeo, arcMat);
-        torus.rotation.x = Math.PI/2;
-        torus.userData._sectionPlane = true; torus.userData._secHandle = 'rotate';
-        torus.userData._sectionRotate = true;
-        torus.renderOrder = 1001;
-        grp.add(torus);
-        // Collect draggable handles for hit-testing without Ctrl modifier
-        grp._secDragHandles = [stem, coneFwd, coneBwd, torus];
+        // Drag + rotate handles intentionally removed — the TransformControls
+        // gizmo (S._sectionTC) owns translate interaction and styling.
+        grp._secDragHandles = [];
         grp.position.copy(position);
         if (quaternion) grp.quaternion.copy(quaternion);
         grp.renderOrder = 999;
@@ -7574,6 +7536,21 @@ function startApp() {
           tc.setMode('translate');
           tc.setSize(0.85);
           tc.userData._isSectionTC = true;
+          // Brand-recolour the gizmo (was R/G/B per-axis) to ClashControl green.
+          // Done on next tick so the internal gizmo is fully built first.
+          setTimeout(function(){
+            tc.traverse(function(o){
+              if (!o.material) return;
+              var mats = Array.isArray(o.material) ? o.material : [o.material];
+              mats.forEach(function(m){
+                if (!m || !m.color) return;
+                if (m.opacity === 0 || m.visible === false) return; // skip pickers
+                m.color.setHex(0x1a6b4a);
+                if (m._color) m._color.setHex(0x1a6b4a); // override TC's cached restore color
+              });
+            });
+            invalidate();
+          }, 0);
           tc.addEventListener('dragging-changed', function(ev){
             if (S.orbit) S.orbit.enabled = !ev.value;
             window._ccSectionDragging = !!ev.value;
