@@ -7437,6 +7437,9 @@ function startApp() {
         if(!obj.isMesh||obj.userData.expressId==null||!obj.material) return;
         var mats=Array.isArray(obj.material)?obj.material:[obj.material];
         mats.forEach(function(m){ if(m.clippingPlanes!==planes){m.clippingPlanes=planes;m.needsUpdate=true;} });
+        // Apply to all cached style materials so render-style swaps don't lose clipping
+        var sm = obj.userData._styleMats;
+        if (sm && planes.length) Object.keys(sm).forEach(function(k){ if(sm[k]&&sm[k].clippingPlanes!==planes){sm[k].clippingPlanes=planes;sm[k].needsUpdate=true;} });
       });
       if(!planes.length && !(s.sectionBox&&s.sectionBox.enabled)) S.renderer.localClippingEnabled=false;
       // ── Architectural section hatch (stencil-cap, Three.js approach) ──────────
@@ -7664,6 +7667,8 @@ function startApp() {
               if(!obj.isMesh||obj.userData.expressId==null||!obj.material) return;
               var mats=Array.isArray(obj.material)?obj.material:[obj.material];
               mats.forEach(function(m){ if(m.clippingPlanes&&m.clippingPlanes.length){m.clippingPlanes=[];m.needsUpdate=true;} });
+              var sm=obj.userData._styleMats;
+              if(sm) Object.keys(sm).forEach(function(k){ if(sm[k]&&sm[k].clippingPlanes&&sm[k].clippingPlanes.length){sm[k].clippingPlanes=[];sm[k].needsUpdate=true;} });
             });
             S.renderer.clippingPlanes=[];
             S.renderer.localClippingEnabled=false;
@@ -7697,8 +7702,12 @@ function startApp() {
       S.renderer.localClippingEnabled=true;
       S.scene.traverse(function(obj){
         if(!obj.isMesh||obj.userData.expressId==null||!obj.material) return;
+        // Apply to active material
         var mats=Array.isArray(obj.material)?obj.material:[obj.material];
         mats.forEach(function(m){ m.clippingPlanes=planes; m.needsUpdate=true; });
+        // Also apply to all cached style materials so a render-style swap doesn't lose clipping
+        var sm = obj.userData._styleMats;
+        if (sm) Object.keys(sm).forEach(function(k){ if(sm[k]){sm[k].clippingPlanes=planes;sm[k].needsUpdate=true;} });
       });
       S._sectionBoxActive=true;
       window._ccCurrentSbox=sb; // expose for drag handlers
@@ -7742,7 +7751,7 @@ function startApp() {
       S._sboxFacePanels=facePanels;
 
       var maxDim = Math.max(hx,hy,hz);
-      var handleSize = Math.max(0.15, Math.min(maxDim*0.04, 4.0));
+      var handleSize = Math.max(0.08, Math.min(maxDim*0.018, 0.65));
       var handleGeo=new THREE.SphereGeometry(handleSize,8,8);
       var handles=[];
       // renderer.clippingPlanes clips everything outside the section box, including
@@ -7778,7 +7787,7 @@ function startApp() {
       // 6 arrows (one per face center), each constrained to slide along its face normal.
       // Sized generously relative to the box so they are clearly visible and clickable
       // even on big building-scale models (no hard upper cap).
-      var faceArrowSize = Math.max(0.3, Math.min(maxDim * 0.07, 6.0));
+      var faceArrowSize = Math.max(0.15, Math.min(maxDim * 0.03, 1.2));
       var faceArrowGeo = new THREE.ConeGeometry(faceArrowSize * 0.55, faceArrowSize * 1.6, 16);
       var faceHandles = [];
       var faceDirs = [
@@ -8348,7 +8357,13 @@ function startApp() {
           _disposeEdges(obj);
           mat = orig;
         }
-        if (obj.material !== mat) obj.material = mat;
+        if (obj.material !== mat) {
+          // Preserve per-material clipping planes (section box / section plane)
+          var _prevPlanes = obj.material.clippingPlanes;
+          if (_prevPlanes && _prevPlanes.length) { mat.clippingPlanes = _prevPlanes; mat.needsUpdate = true; }
+          else if (mat.clippingPlanes && mat.clippingPlanes.length) { mat.clippingPlanes = []; mat.needsUpdate = true; }
+          obj.material = mat;
+        }
       }
       invalidate();
     }, [s.prefs.renderStyle, s.prefs.theme, s.models.length, s.prefs.lightSettings]);
