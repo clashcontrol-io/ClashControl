@@ -6320,6 +6320,25 @@ function startApp() {
           var newRot=ds.startRot+dx*0.01;
           var newSb=Object.assign({},ds.startSb,{min:ds.startSb.min.slice(),max:ds.startSb.max.slice(),rotation:newRot});
           if(window._ccDispatch) window._ccDispatch({t:A.SECTION_BOX,v:newSb});
+          // Immediately update wireframe + handles in Three.js for smooth visual feedback
+          // (React effect will reconcile, but may lag during fast drag)
+          var S3=state3d.current;
+          if(S3._sboxHelper) S3._sboxHelper.rotation.y=newRot;
+          var cosR3=Math.cos(newRot), sinR3=Math.sin(newRot);
+          var axX3=new THREE.Vector3(cosR3,0,sinR3), axZ3=new THREE.Vector3(-sinR3,0,cosR3), axY3=new THREE.Vector3(0,1,0);
+          var sb3=newSb;
+          var ctr3=new THREE.Vector3((sb3.min[0]+sb3.max[0])/2,(sb3.min[1]+sb3.max[1])/2,(sb3.min[2]+sb3.max[2])/2);
+          var hx3=(sb3.max[0]-sb3.min[0])/2, hy3=(sb3.max[1]-sb3.min[1])/2, hz3=(sb3.max[2]-sb3.min[2])/2;
+          var hSz3=Math.max(0.04,Math.min(Math.max(hx3,hy3,hz3)*0.009,0.32));
+          if(S3._sboxHandles){var cSigns=[[-1,-1,-1],[-1,-1,1],[-1,1,-1],[-1,1,1],[1,-1,-1],[1,-1,1],[1,1,-1],[1,1,1]];S3._sboxHandles.forEach(function(h,i){var sg=cSigns[i];var p=ctr3.clone().addScaledVector(axX3,sg[0]*hx3).addScaledVector(axY3,sg[1]*hy3).addScaledVector(axZ3,sg[2]*hz3);h.position.copy(p).addScaledVector(new THREE.Vector3(sg[0],sg[1],sg[2]).normalize(),hSz3);h.userData._handleAxX=axX3.clone();h.userData._handleAxZ=axZ3.clone();});}
+          var faS3=Math.max(0.07,Math.min(Math.max(hx3,hy3,hz3)*0.015,0.6));
+          if(S3._sboxFaceHandles){var fD3=[{ax:axX3,s:+1,he:hx3},{ax:axX3,s:-1,he:hx3},{ax:axY3,s:+1,he:hy3},{ax:axY3,s:-1,he:hy3},{ax:axZ3,s:+1,he:hz3},{ax:axZ3,s:-1,he:hz3}];S3._sboxFaceHandles.forEach(function(h,i){var fd3=fD3[i];if(!fd3)return;var fc=ctr3.clone().addScaledVector(fd3.ax,fd3.s*fd3.he);h.position.copy(fc).addScaledVector(fd3.ax,fd3.s*faS3*1.0);h.quaternion.setFromUnitVectors(new THREE.Vector3(0,1,0),fd3.ax.clone().multiplyScalar(fd3.s).normalize());h.userData._faceAxis=fd3.ax.clone();});}
+          if(S3._sboxRotRing) S3._sboxRotRing.position.copy(ctr3).addScaledVector(axY3,hy3+Math.max(hy3*0.3,0.5));
+          // Update clipping planes immediately
+          var np3=[new THREE.Plane().setFromNormalAndCoplanarPoint(axX3.clone(),ctr3.clone().addScaledVector(axX3,-hx3)),new THREE.Plane().setFromNormalAndCoplanarPoint(axX3.clone().negate(),ctr3.clone().addScaledVector(axX3,hx3)),new THREE.Plane().setFromNormalAndCoplanarPoint(axY3.clone(),ctr3.clone().addScaledVector(axY3,-hy3)),new THREE.Plane().setFromNormalAndCoplanarPoint(axY3.clone().negate(),ctr3.clone().addScaledVector(axY3,hy3)),new THREE.Plane().setFromNormalAndCoplanarPoint(axZ3.clone(),ctr3.clone().addScaledVector(axZ3,-hz3)),new THREE.Plane().setFromNormalAndCoplanarPoint(axZ3.clone().negate(),ctr3.clone().addScaledVector(axZ3,hz3))];
+          S3.scene.traverse(function(obj){if(!obj.isMesh||obj.userData.expressId==null||!obj.material)return;var ms=Array.isArray(obj.material)?obj.material:[obj.material];ms.forEach(function(m){m.clippingPlanes=np3;m.needsUpdate=true;});var sm=obj.userData._styleMats;if(sm)Object.keys(sm).forEach(function(k){if(sm[k]){sm[k].clippingPlanes=np3;sm[k].needsUpdate=true;}});});
+          window._ccCurrentSbox=newSb;
+          invalidate();
           _sboxHudShow((newRot*180/Math.PI).toFixed(1)+'°', e.clientX, e.clientY);
         } else if(ds.type==='face'){
           var intF=new THREE.Vector3();
@@ -7130,10 +7149,7 @@ function startApp() {
         try {
           renderer.setViewport(0,0,el.clientWidth,el.clientHeight);
           renderer.setScissorTest(false);
-          var _sectionActive = renderer.clippingPlanes && renderer.clippingPlanes.length > 0;
-          if (renderer.localClippingEnabled !== _sectionActive) {
-            renderer.localClippingEnabled = _sectionActive;
-          }
+          // localClippingEnabled is managed by section/floorplan effects; don't reset here.
           // Use the post-processing composer when 'rendered' style + composer ready.
           if (S._composer && S._postPassesActive) {
             S._composer.render();
@@ -7751,7 +7767,7 @@ function startApp() {
       S._sboxFacePanels=facePanels;
 
       var maxDim = Math.max(hx,hy,hz);
-      var handleSize = Math.max(0.08, Math.min(maxDim*0.018, 0.65));
+      var handleSize = Math.max(0.04, Math.min(maxDim*0.009, 0.32));
       var handleGeo=new THREE.SphereGeometry(handleSize,8,8);
       var handles=[];
       // renderer.clippingPlanes clips everything outside the section box, including
@@ -7787,7 +7803,7 @@ function startApp() {
       // 6 arrows (one per face center), each constrained to slide along its face normal.
       // Sized generously relative to the box so they are clearly visible and clickable
       // even on big building-scale models (no hard upper cap).
-      var faceArrowSize = Math.max(0.15, Math.min(maxDim * 0.03, 1.2));
+      var faceArrowSize = Math.max(0.07, Math.min(maxDim * 0.015, 0.6));
       var faceArrowGeo = new THREE.ConeGeometry(faceArrowSize * 0.55, faceArrowSize * 1.6, 16);
       var faceHandles = [];
       var faceDirs = [
