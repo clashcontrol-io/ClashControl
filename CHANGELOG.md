@@ -1,5 +1,8 @@
 # Changelog
 
+## v5.6.9 (2026-05-04)
+- Drop custom section plane arrow/torus, recolour TransformControls green
+
 ## v5.6.8 (2026-05-04)
 - Section handles glow on hover + no modifier needed to drag
 
