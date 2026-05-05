@@ -6796,7 +6796,8 @@ function startApp() {
         var hit = _hitMeasureEndpoint(e.clientX, e.clientY);
         if (hit && hit.mesh) {
           _setDotHover(hit.mesh);
-          renderer.domElement.style.cursor = 'grab';
+          // 'copy' cursor on length endpoints (only while a measure tool is active) hints at the Alt+click → trace area action
+          renderer.domElement.style.cursor = (measureModeRef.current && hit.type === 'length') ? 'copy' : 'grab';
         } else if (_hoveredDot) {
           _setDotHover(null);
           renderer.domElement.style.cursor = '';
@@ -6809,6 +6810,9 @@ function startApp() {
         if (measureModeRef.current && measurePtsRef.current && measurePtsRef.current.length > 0) return;
         var hit = _hitMeasureEndpoint(e.clientX, e.clientY);
         if (!hit) return;
+        // Alt+click on a length endpoint while a measure tool is active = "continue as area"
+        // (handled by mouseup, not drag). Outside measure mode, Alt+drag still resnaps.
+        if (window._ccAltHeld && measureModeRef.current && hit.type === 'length') return;
         e.preventDefault(); e.stopPropagation();
         if (S.orbit) S.orbit.enabled = false;
         _dragMeas = hit;
@@ -6939,6 +6943,7 @@ function startApp() {
         var hits = hoverRaycaster.intersectObjects(S.mg.children, true);
         // Update hover world coordinate + snap when in measure mode (or Alt held)
         if (_wantSnap && hits.length > 0 && hits[0].point) {
+          window._ccAltEndpointHit = null; // real snap takes priority over endpoint hint
           var snap = _ccComputeSnap(hits[0], e.clientX, e.clientY) || {point:hits[0].point.clone(), type:'face'};
           var hp = snap.point;
           window._ccHoverPoint = {x:hp.x, y:hp.y, z:hp.z, screenX:e.clientX, screenY:e.clientY};
@@ -6951,14 +6956,26 @@ function startApp() {
             // snap-marker DOM still needs the renderer tick to reposition it.
             invalidate();
           }
-        } else if (window._ccHoverPoint) {
-          window._ccHoverPoint = null;
-          window._ccHoverSnap = null;
-          if(window._ccHoverCoordTick) window._ccHoverCoordTick();
-          if((measureModeRef.current && measurePtsRef.current && measurePtsRef.current.length > 0) || window._ccAltHeld) {
-            _clearPreview();
+        } else {
+          // No model-geometry hit. Check for a placed length endpoint under the cursor —
+          // the "Alt+click → trace area" hint shows only when a measure tool is active and
+          // no measurement is in progress (so we don't compete with throwaway-dim alt-clicks).
+          var _epHov = (measureModeRef.current && (!measurePtsRef.current || measurePtsRef.current.length === 0) && Object.keys(_measureGeoMap).length > 0)
+            ? _hitMeasureEndpoint(e.clientX, e.clientY) : null;
+          if (_epHov && _epHov.mesh && _epHov.type === 'length') {
+            window._ccAltEndpointHit = _epHov;
+            window._ccHoverSnap = {point:_epHov.mesh.position.clone(), type:'alt-endpoint', screenX:e.clientX, screenY:e.clientY};
+            invalidate();
+          } else if (window._ccHoverPoint || window._ccAltEndpointHit) {
+            window._ccAltEndpointHit = null;
+            window._ccHoverPoint = null;
+            window._ccHoverSnap = null;
+            if(window._ccHoverCoordTick) window._ccHoverCoordTick();
+            if((measureModeRef.current && measurePtsRef.current && measurePtsRef.current.length > 0) || window._ccAltHeld) {
+              _clearPreview();
+            }
+            invalidate(); // hide the snap marker in the next tick
           }
-          invalidate(); // hide the snap marker in the next tick
         }
         var hitMesh = null, hitInstanceId = -1;
         if(hits.length>0 && hits[0].object.isMesh) { hitMesh = hits[0].object; hitInstanceId = hits[0].instanceId != null ? hits[0].instanceId : -1; }
@@ -7272,6 +7289,32 @@ function startApp() {
           var _ph = candidateHits[_phi];
           var _phR = _hitExpressId(_ph);
           if(_phR){ _pickedHit=_ph; _pickedEid=_phR.eid; _pickedInstId=_phR.instId; break; }
+        }
+
+        // ── Alt+click on a placed length endpoint: resume as area polygon ──
+        // The user re-activates the measure tool, hovers a previously placed endpoint
+        // (sees the "Alt+click → trace area" hint), then Alt+clicks to continue tracing
+        // an area polygon from that edge. Gated on measure mode being active and no
+        // in-progress measurement (so it doesn't conflict with throwaway-dim alt-clicks).
+        // Must come before the section-pick Alt handler so endpoints take priority.
+        if (e.altKey && measureModeRef.current && (!measurePtsRef.current || measurePtsRef.current.length === 0)) {
+          var _epClick = _hitMeasureEndpoint(e.clientX, e.clientY);
+          if (_epClick && _epClick.type === 'length') {
+            var _rsMeas = window._ccLatestState;
+            var _rmMeas = (_rsMeas && _rsMeas.measurements||[]).find(function(x){return x.id===_epClick.id;});
+            if (_rmMeas && _rmMeas.points && _rmMeas.points.length >= 2) {
+              var _rptsMeas = _rmMeas.points.map(function(p){return new THREE.Vector3(p[0],p[1],p[2]);});
+              // pts[0] = the clicked vertex (polygon closes back here); pts[1] = the other end
+              measurePtsRef.current = (_epClick.pointIndex === 0) ? _rptsMeas : _rptsMeas.slice().reverse();
+              window._ccChainedArea = true;
+              measureModeRef.current = 'area';
+              window._ccAltEndpointHit = null;
+              d({t:A.MEASURE_MODE, v:'area'});
+              if (window._ccToast) window._ccToast('Continuing as area · click to add points · click near start to close');
+              invalidate();
+              return;
+            }
+          }
         }
 
         // ── Section Pick: click any surface to use it as a section plane ──
@@ -8127,7 +8170,7 @@ function startApp() {
             if (!marker) return;
             var snap = window._ccHoverSnap;
             var st = window._ccLatestState;
-            var active = !!(st && (st.measureMode || window._ccAltHeld)) && !!snap;
+            var active = !!(st && (st.measureMode || window._ccAltHeld || window._ccAltEndpointHit)) && !!snap;
             if (!active) { marker.style.display = 'none'; return; }
             var rect = renderer.domElement.getBoundingClientRect();
             var v = new THREE.Vector3(snap.point.x, snap.point.y, snap.point.z).project(S.camera);
@@ -8141,37 +8184,41 @@ function startApp() {
             if (glyphEl) {
               var t = snap.type;
               var svg = '';
-              if (t === 'vertex')        svg = '<circle cx="9" cy="9" r="4" fill="#b8533a" stroke="#fff" stroke-width="1.5"/>';
-              else if (t === 'midpoint') svg = '<rect x="4.5" y="4.5" width="9" height="9" fill="#b8533a" stroke="#fff" stroke-width="1.5" transform="rotate(45 9 9)"/>';
-              else if (t === 'center')   svg = '<circle cx="9" cy="9" r="6" fill="none" stroke="#b8533a" stroke-width="1.5"/><circle cx="9" cy="9" r="2" fill="#b8533a"/>';
-              else if (t === 'edge')     svg = '<line x1="3" y1="9" x2="15" y2="9" stroke="#b8533a" stroke-width="2.5" stroke-linecap="round"/>';
-              else                       svg = '<circle cx="9" cy="9" r="5" fill="#fff" stroke="#b8533a" stroke-width="2"/>';
+              if (t === 'vertex')           svg = '<circle cx="9" cy="9" r="4" fill="#b8533a" stroke="#fff" stroke-width="1.5"/>';
+              else if (t === 'midpoint')    svg = '<rect x="4.5" y="4.5" width="9" height="9" fill="#b8533a" stroke="#fff" stroke-width="1.5" transform="rotate(45 9 9)"/>';
+              else if (t === 'center')      svg = '<circle cx="9" cy="9" r="6" fill="none" stroke="#b8533a" stroke-width="1.5"/><circle cx="9" cy="9" r="2" fill="#b8533a"/>';
+              else if (t === 'edge')        svg = '<line x1="3" y1="9" x2="15" y2="9" stroke="#b8533a" stroke-width="2.5" stroke-linecap="round"/>';
+              else if (t === 'alt-endpoint') svg = '<polygon points="9,3 15,14 3,14" fill="none" stroke="#b8533a" stroke-width="1.5" stroke-linejoin="round"/><circle cx="9" cy="9" r="2" fill="#b8533a"/>';
+              else                           svg = '<circle cx="9" cy="9" r="5" fill="#fff" stroke="#b8533a" stroke-width="2"/>';
               if (glyphEl._lastSvg !== svg) { glyphEl.innerHTML = svg; glyphEl._lastSvg = svg; }
             }
             // Type label (Endpoint / Midpoint / Centre / Edge / Surface)
             var lblEl = document.getElementById('cc-snap-typelabel');
             if (lblEl) {
               var lt = snap.type;
-              var ltxt = lt==='vertex'?'Endpoint':lt==='midpoint'?'Midpoint':lt==='center'?'Centre':lt==='edge'?'Edge':lt==='face'?'Surface':'';
+              var ltxt = lt==='vertex'?'Endpoint':lt==='midpoint'?'Midpoint':lt==='center'?'Centre':lt==='edge'?'Edge':lt==='face'?'Surface':lt==='alt-endpoint'?'Alt+click → trace area':'';
               if (ltxt) { if (lblEl._lastTxt !== ltxt) { lblEl.textContent = ltxt; lblEl._lastTxt = ltxt; } lblEl.style.display = 'block'; }
               else lblEl.style.display = 'none';
             }
             // Live distance chip — running distance from last placed point (or Alt-from)
+            // Suppressed for alt-endpoint hints (the type-label carries the action cue)
             var chipEl = document.getElementById('cc-snap-chip');
             if (chipEl) {
               var chipTxt = '';
-              var pts = window._ccMeasurePtsRef && window._ccMeasurePtsRef.current;
-              if (pts && pts.length > 0) {
-                var p0 = pts[pts.length-1];
-                var dx = snap.point.x - p0.x, dy = snap.point.y - p0.y, dz = snap.point.z - p0.z;
-                var dist = Math.sqrt(dx*dx + dy*dy + dz*dz);
-                chipTxt = (window._ccFmtLength ? window._ccFmtLength(dist, st) : dist.toFixed(2)+' m');
-                if (window._ccPreviewTarget && window._ccPreviewTarget.axis) chipTxt += ' · ' + window._ccPreviewTarget.axis.toUpperCase();
-              } else if (window._ccAltHeld && window._ccAltHoverFrom) {
-                var f = window._ccAltHoverFrom;
-                var ax = snap.point.x - f.x, ay = snap.point.y - f.y, az = snap.point.z - f.z;
-                var ad = Math.sqrt(ax*ax + ay*ay + az*az);
-                chipTxt = (window._ccFmtLength ? window._ccFmtLength(ad, st) : ad.toFixed(2)+' m');
+              if (snap && snap.type !== 'alt-endpoint') {
+                var pts = window._ccMeasurePtsRef && window._ccMeasurePtsRef.current;
+                if (pts && pts.length > 0) {
+                  var p0 = pts[pts.length-1];
+                  var dx = snap.point.x - p0.x, dy = snap.point.y - p0.y, dz = snap.point.z - p0.z;
+                  var dist = Math.sqrt(dx*dx + dy*dy + dz*dz);
+                  chipTxt = (window._ccFmtLength ? window._ccFmtLength(dist, st) : dist.toFixed(2)+' m');
+                  if (window._ccPreviewTarget && window._ccPreviewTarget.axis) chipTxt += ' · ' + window._ccPreviewTarget.axis.toUpperCase();
+                } else if (window._ccAltHeld && window._ccAltHoverFrom) {
+                  var f = window._ccAltHoverFrom;
+                  var ax = snap.point.x - f.x, ay = snap.point.y - f.y, az = snap.point.z - f.z;
+                  var ad = Math.sqrt(ax*ax + ay*ay + az*az);
+                  chipTxt = (window._ccFmtLength ? window._ccFmtLength(ad, st) : ad.toFixed(2)+' m');
+                }
               }
               if (chipTxt) { if (chipEl._lastTxt !== chipTxt) { chipEl.textContent = chipTxt; chipEl._lastTxt = chipTxt; } chipEl.style.display = 'block'; }
               else chipEl.style.display = 'none';
