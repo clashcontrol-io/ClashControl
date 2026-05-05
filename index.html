@@ -8403,11 +8403,13 @@ function startApp() {
           var existingGrp = S.map[model.id];
           var needsSwap = existingGrp && model.meshes[0] && existingGrp.children[0] !== model.meshes[0];
           if (needsSwap) {
+            if(S._unghostAll) S._unghostAll(); // clear stale ghost refs before dispose
             if(S._pruneGhostCache) S._pruneGhostCache(existingGrp);
             existingGrp.traverse(function(obj){if(obj.isMesh){obj.geometry&&obj.geometry.dispose();obj.material&&obj.material.dispose();}});
             S.mg.remove(existingGrp); delete S.map[model.id];
             if(S._elMapCache) delete S._elMapCache[model.id];
             if(S._hsCache) delete S._hsCache[model.id];
+            S._meshList = null; S._meshListKey = ''; // force renderStyle to rescan new meshes
             existingGrp = null;
           }
           if (!existingGrp) {
@@ -9389,11 +9391,12 @@ function startApp() {
         });
       }
       var meshList = S._meshList;
-      if (!meshList || S._meshListModels !== s.models.length) {
+      var _mlKey = s.models.map(function(m){return m.id+':'+(m.meshes?m.meshes.length:0);}).join('|');
+      if (!meshList || S._meshListKey !== _mlKey) {
         meshList = [];
         S.mg.traverse(function(obj){ if(obj.isMesh) meshList.push(obj); });
         S._meshList = meshList;
-        S._meshListModels = s.models.length;
+        S._meshListKey = _mlKey;
       }
       // Build expressId → ifcType lookup so glass detection can fall back to
       // IfcWindow / IfcCurtainWall / etc. when material name is empty.
@@ -9553,7 +9556,7 @@ function startApp() {
         }
       }
       invalidate();
-    }, [s.prefs.renderStyle, s.prefs.theme, s.models.length, s.prefs.lightSettings]);
+    }, [s.prefs.renderStyle, s.prefs.theme, s.models, s.prefs.lightSettings]);
 
     var hcSt = useState(0), hcTick = hcSt[0], setHcTick = hcSt[1];
     useEffect(function(){ window._ccHoverCoordTick = function(){ setHcTick(function(x){return (x+1)%1000;}); }; return function(){window._ccHoverCoordTick=null;}; }, []);
@@ -11773,7 +11776,8 @@ function startApp() {
               var baseName = f.name.replace(/\.ifc$/i,'');
               var _ifcOverlapWarn = _checkModelOverlap(result.elements, s.models.filter(function(m){return m.name!==baseName;}));
               if (_ifcOverlapWarn) setErr(_ifcOverlapWarn);
-              var existing = s.models.find(function(m){ return m.name === baseName; });
+              var _liveModels = (window._ccLatestState||{}).models || s.models;
+              var existing = _liveModels.find(function(m){ return m.name === baseName; });
               var modelId;
               if (existing) {
                 modelId = existing.id;
@@ -25369,7 +25373,7 @@ function startApp() {
                   } else {
                     var dist=S.camera.position.distanceTo(S.orbit.target);
                     var h=dist*Math.tan(THREE.MathUtils.degToRad(55/2));
-                    var nc=new THREE.OrthographicCamera(-h*aspect,h*aspect,h,-h,0.01,10000);
+                    var nc=new THREE.OrthographicCamera(-h*aspect,h*aspect,h,-h,-10000,10000);
                     nc.position.copy(S.camera.position); nc.quaternion.copy(S.camera.quaternion);
                     nc.zoom=1; nc.updateProjectionMatrix();
                     S.camera=nc; S.orbit.camera=nc; S.orbit.sync(); S.orbit.apply();
