@@ -10750,16 +10750,30 @@ function startApp() {
               // hiding the loading screen blocks for 1-3s while the GPU
               // catches up — which the user sees as a black viewer.
               return new Promise(function(resolve){
+                // Wait one frame so React commits ADD_MODEL and the
+                // useEffect that adds meshes to S.mg has run.
                 requestAnimationFrame(function(){
+                  // Update the loading message *before* the GPU work so the
+                  // user sees what's happening rather than a stale "Loading…".
+                  try {
+                    window._ccModelLoadMsg = entry.name + ': preparing viewer…';
+                    window.dispatchEvent(new CustomEvent('cc-model-loading', {detail:{loading:true, msg:window._ccModelLoadMsg}}));
+                  } catch(_e){}
+                  // Wait one more rAF (so the new message paints) then defer
+                  // the compile via setTimeout — setTimeout runs after the
+                  // browser's paint, ensuring the user actually sees the
+                  // "preparing viewer" message before compile() blocks.
                   requestAnimationFrame(function(){
-                    try {
-                      var Sw = window._ccState3d;
-                      if (Sw && Sw.renderer && Sw.scene && Sw.camera) {
-                        Sw.renderer.compile(Sw.scene, Sw.camera);
-                      }
-                    } catch(_e){}
-                    _setGlobalLoading(false);
-                    resolve();
+                    setTimeout(function(){
+                      try {
+                        var Sw = window._ccState3d;
+                        if (Sw && Sw.renderer && Sw.scene && Sw.camera) {
+                          Sw.renderer.compile(Sw.scene, Sw.camera);
+                        }
+                      } catch(_e){}
+                      _setGlobalLoading(false);
+                      resolve();
+                    }, 0);
                   });
                 });
               });
