@@ -6369,12 +6369,25 @@ function startApp() {
         for (var k = 0; k < drop; k++){
           var obj = arr[arr.length-1];
           if (!obj) break;
-          // Stop dropping when we hit a Line (committed segment of a prior measurement)
-          if (obj.type === 'Line' && n != null) break;
+          // Always stop at a Line — those are committed measurement segments and
+          // must never be removed by an in-progress cancel. (Previously gated on
+          // `n != null`, which meant the no-arg call could nuke committed geo.)
+          if (obj.type === 'Line') break;
           arr.pop();
           scene.remove(obj);
           if (obj.geometry && obj.geometry.dispose) obj.geometry.dispose();
         }
+        invalidate();
+      };
+      // Purge any throwaway (Alt-held) measurement geo. Stored in _ccTransientObjs
+      // outside measureObjsRef so the normal cleanup paths leave it alone.
+      window._ccPurgeTransientMeasure = function(){
+        if (!window._ccTransientObjs || !window._ccTransientObjs.length) return;
+        window._ccTransientObjs.forEach(function(o){
+          scene.remove(o);
+          if (o.geometry && o.geometry.dispose) o.geometry.dispose();
+        });
+        window._ccTransientObjs = [];
         invalidate();
       };
       // Force the area-close path: synthesize a click at pts[0]
@@ -7022,10 +7035,11 @@ function startApp() {
         hud = document.createElement('div');
         hud.id = 'cc-sbox-hud';
         hud.style.cssText = 'position:fixed;pointer-events:none;z-index:9999;'
-          + 'font:12px/1.2 var(--font-mono, ui-monospace, "DM Mono", "SF Mono", monospace);'
-          + 'background:var(--ink, #1a1a1a);color:var(--paper, #fff);'
-          + 'padding:4px 8px;border-radius:4px;'
-          + 'box-shadow:0 2px 8px rgba(0,0,0,0.25);'
+          + 'font-family:var(--font-mono);font-size:var(--text-xs);line-height:var(--leading-tight);'
+          + 'background:var(--bg-secondary);color:var(--text-primary);'
+          + 'border:1px solid var(--border);'
+          + 'padding:var(--space-1) var(--space-2);border-radius:var(--radius-xs);'
+          + 'box-shadow:var(--shadow-md);'
           + 'transform:translate(12px,12px);display:none;white-space:nowrap;';
         document.body.appendChild(hud);
         return hud;
@@ -7369,6 +7383,20 @@ function startApp() {
             hitPt = _axisLock(measurePtsRef.current[0], hitPt);
             delete hitPt._axis;
           }
+          // Throwaway dimensions: holding Alt at the FIRST click marks this measurement
+          // as transient — visible but not saved to s.measurements. Each new transient
+          // clears the previous one. Esc / mode-exit also cleans them up.
+          if (measurePtsRef.current.length === 0) {
+            // Always purge previous transient at the start of any new measurement
+            if (window._ccTransientObjs && window._ccTransientObjs.length) {
+              window._ccTransientObjs.forEach(function(o){
+                scene.remove(o);
+                if (o.geometry && o.geometry.dispose) o.geometry.dispose();
+              });
+              window._ccTransientObjs = [];
+            }
+            window._ccPendingTransient = !!window._ccAltHeld && (mode === 'length' || mode === 'angle' || mode === 'area');
+          }
           measurePtsRef.current.push(hitPt);
           // Persistent anchor sphere at the click point — the live snap marker
           // continues to track the cursor; this dot is the locked-in mate.
@@ -7382,13 +7410,32 @@ function startApp() {
           var pts = measurePtsRef.current;
 
           if(mode==='length' && pts.length===2) {
-            var lineMat = new THREE.LineBasicMaterial({color:0xb8533a, linewidth:2, depthTest:false, transparent:true, opacity:0.95});
+            var _isTransient = !!window._ccPendingTransient;
+            var lineMat = new THREE.LineBasicMaterial({color: _isTransient ? 0x8a8a8a : 0xb8533a, linewidth:2, depthTest:false, transparent:true, opacity: _isTransient ? 0.7 : 0.95});
             var lineGeo = new THREE.BufferGeometry().setFromPoints([pts[0], pts[1]]);
             var line = new THREE.Line(lineGeo, lineMat); line.renderOrder = 998;
             scene.add(line);
             measureObjsRef.current.push(line);
             var dist = pts[0].distanceTo(pts[1]);
             var label = _ccFmtLength(dist, _state);
+            // ── Throwaway path: visible but not saved, cleared on next click/Esc/exit ──
+            if (_isTransient) {
+              // Move the just-rendered geo (last 3 entries: pt1_dot, pt2_dot, line) out of
+              // measureObjsRef into a parallel _ccTransientObjs list so the normal cleanup
+              // path leaves it alone, and we can purge on the next click.
+              var arr = measureObjsRef.current;
+              var transientGeo = arr.splice(arr.length - 3, 3);
+              window._ccTransientObjs = (window._ccTransientObjs || []).concat(transientGeo);
+              // Render a transient label DOM node anchored at the segment midpoint —
+              // re-uses the existing label tick by stashing the metadata on a free-form
+              // global so the projection block picks it up. Keep simple: just toast.
+              if (window._ccToast) window._ccToast('Quick: ' + label + ' (not saved)');
+              measurePtsRef.current = [];
+              _clearPreview();
+              window._ccPendingTransient = false;
+              // No chain to area for transient measurements
+              return;
+            }
             var _id = uid();
             d({t:A.ADD_MEASUREMENT, v:{id:_id, type:'length', value:dist, label:label, points:pts.map(function(p){return [p.x,p.y,p.z]})}});
             if (window._ccCaptureMeasurementSnapshot) window._ccCaptureMeasurementSnapshot(_id);
@@ -9519,37 +9566,37 @@ function startApp() {
           return null;
         })}
       </svg>
-      ${compare.open && html`<div style=${{position:'absolute',bottom:'.75rem',left:'50%',transform:'translateX(-50%)',background:'var(--bg-primary)',border:'1px solid var(--border)',borderRadius:'var(--radius-sm)',boxShadow:'var(--shadow-md)',zIndex:9,pointerEvents:'auto',padding:'.5rem .65rem',display:'flex',flexDirection:'column',gap:'.4rem',minWidth:380}}>
-        <div style=${{display:'flex',alignItems:'center',gap:'.4rem'}}>
-          <span style=${{fontSize:'0.65rem',fontWeight:700,color:'var(--text-muted)',textTransform:'uppercase',letterSpacing:'.04em',flex:1}}>Compare Models</span>
+      ${compare.open && html`<div style=${{position:'absolute',bottom:'var(--space-3)',left:'50%',transform:'translateX(-50%)',background:'var(--bg-primary)',border:'1px solid var(--border)',borderRadius:'var(--radius-sm)',boxShadow:'var(--shadow-md)',zIndex:9,pointerEvents:'auto',padding:'var(--space-2) var(--space-3)',display:'flex',flexDirection:'column',gap:'var(--space-2)',minWidth:380}}>
+        <div style=${{display:'flex',alignItems:'center',gap:'var(--space-2)'}}>
+          <span style=${{fontSize:'var(--text-2xs)',fontWeight:'var(--weight-bold)',color:'var(--text-muted)',textTransform:'uppercase',letterSpacing:'.04em',flex:1}}>Compare Models</span>
           <button onClick=${function(){setCompare(Object.assign({},compare,{open:false}));}}
-            style=${{background:'none',border:'none',color:'var(--text-muted)',cursor:'pointer',fontSize:'1rem',padding:'0 .2rem',lineHeight:1}}>×</button>
+            style=${{background:'none',border:'none',color:'var(--text-muted)',cursor:'pointer',fontSize:'var(--text-md)',padding:'0 var(--space-1)',lineHeight:1}}>×</button>
         </div>
-        <div style=${{display:'flex',gap:'.3rem',alignItems:'center'}}>
-          <span style=${{fontSize:'.65rem',color:'var(--text-faint)',width:36,whiteSpace:'nowrap'}}>A</span>
+        <div style=${{display:'flex',gap:'var(--space-1)',alignItems:'center'}}>
+          <span style=${{fontSize:'var(--text-2xs)',color:'var(--text-faint)',width:36,whiteSpace:'nowrap'}}>A</span>
           <select value=${compare.modelA||''} onChange=${function(e){setCompare(Object.assign({},compare,{modelA:e.target.value||null}));}}
-            style=${{flex:1,fontSize:'0.72rem',padding:'.2rem .3rem',background:'var(--bg-secondary)',color:'var(--text-primary)',border:'1px solid var(--border)',borderRadius:4}}>
+            style=${{flex:1,fontSize:'var(--text-xs)',padding:'var(--space-1)',background:'var(--bg-secondary)',color:'var(--text-primary)',border:'1px solid var(--border)',borderRadius:'var(--radius-sm)'}}>
             <option value="">Model A…</option>
             ${(s.models||[]).map(function(m){return html`<option key=${m.id} value=${m.id}>${m.name}${m._version>1?' (v'+m._version+')':''}</option>`})}
           </select>
         </div>
-        <div style=${{display:'flex',gap:'.3rem',alignItems:'center'}}>
-          <span style=${{fontSize:'.65rem',color:'var(--text-faint)',width:36,whiteSpace:'nowrap'}}>B</span>
+        <div style=${{display:'flex',gap:'var(--space-1)',alignItems:'center'}}>
+          <span style=${{fontSize:'var(--text-2xs)',color:'var(--text-faint)',width:36,whiteSpace:'nowrap'}}>B</span>
           <select value=${compare.modelB||''} onChange=${function(e){setCompare(Object.assign({},compare,{modelB:e.target.value||null}));}}
-            style=${{flex:1,fontSize:'0.72rem',padding:'.2rem .3rem',background:'var(--bg-secondary)',color:'var(--text-primary)',border:'1px solid var(--border)',borderRadius:4}}>
+            style=${{flex:1,fontSize:'var(--text-xs)',padding:'var(--space-1)',background:'var(--bg-secondary)',color:'var(--text-primary)',border:'1px solid var(--border)',borderRadius:'var(--radius-sm)'}}>
             <option value="">Model B…</option>
             ${(s.models||[]).filter(function(m){return m.id!==compare.modelA;}).map(function(m){return html`<option key=${m.id} value=${m.id}>${m.name}${m._version>1?' (v'+m._version+')':''}</option>`})}
           </select>
         </div>
-        ${compare.modelA && compare.modelB && html`<div style=${{display:'flex',gap:'.4rem',alignItems:'center'}}>
-          <span style=${{fontSize:'.65rem',color:'var(--text-muted)',width:36,whiteSpace:'nowrap'}}>A</span>
+        ${compare.modelA && compare.modelB && html`<div style=${{display:'flex',gap:'var(--space-2)',alignItems:'center'}}>
+          <span style=${{fontSize:'var(--text-2xs)',color:'var(--text-muted)',width:36,whiteSpace:'nowrap'}}>A</span>
           <input type="range" min="0" max="100" step="1" value=${compare.blend}
             onInput=${function(e){setCompare(Object.assign({},compare,{blend:+e.target.value}));}}
             style=${{flex:1}} />
-          <span style=${{fontSize:'.65rem',color:'var(--text-muted)',width:36,whiteSpace:'nowrap',textAlign:'right'}}>B</span>
+          <span style=${{fontSize:'var(--text-2xs)',color:'var(--text-muted)',width:36,whiteSpace:'nowrap',textAlign:'right'}}>B</span>
         </div>`}
       </div>`}
-      ${(markupTool3D || (markups3D && markups3D.length>0)) && html`<div style=${{position:'absolute',top:'.5rem',left:'50%',transform:'translateX(-50%)',display:'flex',gap:'.25rem',padding:'.3rem',background:'var(--bg-primary)',border:'1px solid var(--border)',borderRadius:'var(--radius-sm)',boxShadow:'var(--shadow-md)',zIndex:9,pointerEvents:'auto',alignItems:'center'}}>
+      ${(markupTool3D || (markups3D && markups3D.length>0)) && html`<div style=${{position:'absolute',top:'var(--space-2)',left:'50%',transform:'translateX(-50%)',display:'flex',gap:'var(--space-1)',padding:'var(--space-1)',background:'var(--bg-primary)',border:'1px solid var(--border)',borderRadius:'var(--radius-sm)',boxShadow:'var(--shadow-md)',zIndex:9,pointerEvents:'auto',alignItems:'center'}}>
         ${[
           ['line','╱','Line'],
           ['arrow','→','Arrow'],
@@ -9560,17 +9607,17 @@ function startApp() {
           var active = markupTool3D===t[0];
           return html`<button key=${t[0]} onClick=${function(){setMarkupTool3D(active?null:t[0]);}}
             title=${t[2]}
-            style=${{fontSize:'.78rem',padding:'.2rem .45rem',background:active?'var(--accent)':'var(--bg-secondary)',color:active?'#fff':'var(--text-secondary)',border:'1px solid var(--border)',borderRadius:4,cursor:'pointer',fontFamily:'inherit',minWidth:24}}>${t[1]}</button>`;
+            style=${{fontSize:'var(--text-xs)',padding:'var(--space-1) var(--space-2)',background:active?'var(--accent)':'var(--bg-secondary)',color:active?'#fff':'var(--text-secondary)',border:'1px solid var(--border)',borderRadius:'var(--radius-sm)',cursor:'pointer',fontFamily:'inherit',minWidth:24}}>${t[1]}</button>`;
         })}
         <input type="color" value=${markupColor3D} onInput=${function(e){setMarkupColor3D(e.target.value);}}
-          title="Color" style=${{width:24,height:24,border:'1px solid var(--border)',borderRadius:3,cursor:'pointer',padding:0,background:'none'}} />
-        <span style=${{width:1,height:18,background:'var(--border)',margin:'0 .15rem'}}></span>
+          title="Color" style=${{width:24,height:24,border:'1px solid var(--border)',borderRadius:'var(--radius-xs)',cursor:'pointer',padding:0,background:'none'}} />
+        <span style=${{width:1,height:18,background:'var(--border)',margin:'0 var(--space-1)'}}></span>
         ${markups3D.length>0 && html`<button onClick=${function(){setMarkups3D([]);}}
           title="Clear all markup"
-          style=${{fontSize:'.65rem',padding:'.2rem .4rem',background:'var(--bg-secondary)',color:'var(--text-muted)',border:'1px solid var(--border)',borderRadius:4,cursor:'pointer',fontFamily:'inherit'}}>Clear</button>`}
+          style=${{fontSize:'var(--text-2xs)',padding:'var(--space-1) var(--space-2)',background:'var(--bg-secondary)',color:'var(--text-muted)',border:'1px solid var(--border)',borderRadius:'var(--radius-sm)',cursor:'pointer',fontFamily:'inherit'}}>Clear</button>`}
         <button onClick=${function(){setMarkupTool3D(null);setMarkups3D([]);}}
           title="Close markup toolbar"
-          style=${{fontSize:'.65rem',padding:'.2rem .4rem',background:'none',color:'var(--text-muted)',border:'none',cursor:'pointer',fontFamily:'inherit'}}>×</button>
+          style=${{fontSize:'var(--text-2xs)',padding:'var(--space-1) var(--space-2)',background:'none',color:'var(--text-muted)',border:'none',cursor:'pointer',fontFamily:'inherit'}}>×</button>
       </div>`}
       ${s.switchingProject && html`<div style=${{
         position:'absolute',inset:0,zIndex:50,
@@ -9638,10 +9685,10 @@ function startApp() {
         </button>
       </div>`}
       ${html`<${ViewCube} state3d=${state3d} theme=${s.prefs.theme||'light'} />`}
-      ${s.floorPlan && html`<div style=${{...P,top:'9.75rem',right:'.5rem',background:'var(--accent)',color:'#fff',pointerEvents:'auto',cursor:'pointer',display:'flex',alignItems:'center',gap:'.4rem'}}
+      ${s.floorPlan && html`<div style=${{...P,top:'9.75rem',right:'var(--space-2)',background:'var(--accent)',color:'#fff',pointerEvents:'auto',cursor:'pointer',display:'flex',alignItems:'center',gap:'var(--space-2)'}}
         onClick=${function(){d({t:A.FLOOR_PLAN,v:null})}}>
         <span>3D Section: ${s.floorPlan.storeyName} · ${_ccFormatElev(s.floorPlan.elevation+(s.floorPlan.cutHeight||1.2))}</span>
-        <span style=${{fontSize:'0.69rem',opacity:.7}} title="Exit 3D section" aria-label="Exit floor plan view">✕</span>
+        <span style=${{fontSize:'var(--text-xs)',opacity:.7}} title="Exit 3D section" aria-label="Exit floor plan view">✕</span>
       </div>`}
 
       ${s.walkMode && html`<div style=${{position:'absolute',inset:0,pointerEvents:'none',display:'flex',alignItems:'center',justifyContent:'center',zIndex:5}}>
@@ -9656,8 +9703,8 @@ function startApp() {
           var labelTxt = (m.name && m.name.trim()) ? m.name : (window._ccRelabelMeasurement ? window._ccRelabelMeasurement(m, s) : m.label);
           return html`<div key=${m.id} class="cc-measure-label" data-mid=${m.id}
             style=${{position:'absolute',left:0,top:0,transform:'translate3d(-9999px,-9999px,0)',
-              background:'var(--bg-primary)',border:'1px solid var(--border)',borderRadius:4,
-              padding:'1px 6px',fontSize:11,fontFamily:'var(--font-mono)',color:color,
+              background:'var(--bg-primary)',border:'1px solid var(--border)',borderRadius:'var(--radius-xs)',
+              padding:'var(--space-1) var(--space-2)',fontSize:'var(--text-2xs)',fontFamily:'var(--font-mono)',color:color,
               boxShadow:'var(--shadow-sm)',whiteSpace:'nowrap',userSelect:'none',lineHeight:1.4}}>${labelTxt}</div>`;
         })}
       </div>
@@ -9667,8 +9714,8 @@ function startApp() {
             is found, the cursor itself is the only indicator — no overlapping markers. */ ''}
       <div id="cc-snap-marker" style=${{position:'fixed',left:0,top:0,width:0,height:0,pointerEvents:'none',zIndex:9997,display:'none'}}>
         <svg id="cc-snap-glyph" width="18" height="18" viewBox="0 0 18 18" style=${{position:'absolute',left:-9,top:-9,overflow:'visible',filter:'drop-shadow(0 1px 2px rgba(0,0,0,.35))'}}></svg>
-        <span id="cc-snap-typelabel" style=${{position:'absolute',left:14,top:-10,fontSize:'0.65rem',color:'var(--accent)',background:'var(--bg-primary)',border:'1px solid var(--accent)',padding:'.1rem .35rem',borderRadius:3,boxShadow:'var(--shadow-sm)',whiteSpace:'nowrap',fontWeight:600,letterSpacing:'.02em',display:'none'}}></span>
-        <span id="cc-snap-chip" style=${{position:'absolute',left:14,top:8,fontFamily:'var(--font-mono)',fontSize:'0.7rem',color:'var(--text-primary)',background:'var(--bg-primary)',border:'1px solid var(--border)',padding:'.1rem .4rem',borderRadius:4,boxShadow:'var(--shadow-sm)',whiteSpace:'nowrap',display:'none'}}></span>
+        <span id="cc-snap-typelabel" style=${{position:'absolute',left:14,top:-10,fontSize:'var(--text-2xs)',color:'var(--accent)',background:'var(--bg-primary)',border:'1px solid var(--accent)',padding:'var(--space-1) var(--space-2)',borderRadius:'var(--radius-xs)',boxShadow:'var(--shadow-sm)',whiteSpace:'nowrap',fontWeight:'var(--weight-semibold)',letterSpacing:'.02em',display:'none'}}></span>
+        <span id="cc-snap-chip" style=${{position:'absolute',left:14,top:8,fontFamily:'var(--font-mono)',fontSize:'var(--text-xs)',color:'var(--text-primary)',background:'var(--bg-primary)',border:'1px solid var(--border)',padding:'var(--space-1) var(--space-2)',borderRadius:'var(--radius-xs)',boxShadow:'var(--shadow-sm)',whiteSpace:'nowrap',display:'none'}}></span>
       </div>
       ${/* Element-pick mini-menu shown after Measure → Element click (T2.1) */ ''}
       ${window._ccElementMeasureMenu && (function(){
@@ -9676,64 +9723,64 @@ function startApp() {
         return html`<div style=${{position:'fixed',left:em.x+'px',top:em.y+'px',zIndex:9999,
           background:'var(--bg-primary)',border:'1px solid var(--border)',borderRadius:'var(--radius-sm)',
           boxShadow:'var(--shadow-md)',padding:'.35rem .25rem',minWidth:190,fontSize:'var(--text-xs)',pointerEvents:'auto'}}>
-          <div style=${{padding:'.15rem .55rem',color:'var(--text-muted)',fontSize:'var(--text-2xs)',textTransform:'uppercase',letterSpacing:'.06em'}}>${em.elementLabel||'Element'}</div>
+          <div style=${{padding:'var(--space-1) var(--space-3)',color:'var(--text-muted)',fontSize:'var(--text-2xs)',textTransform:'uppercase',letterSpacing:'.06em'}}>${em.elementLabel||'Element'}</div>
           ${(em.options||[]).map(function(opt){return html`<button key=${opt.key} onClick=${function(){if(window._ccPickElementMeasure)window._ccPickElementMeasure(opt.key);}}
-            style=${{...S_BTN,display:'flex',justifyContent:'space-between',width:'100%',padding:'.3rem .55rem',background:'transparent',color:'var(--text-primary)',fontFamily:'var(--font-body)',fontSize:'var(--text-xs)',borderRadius:'var(--radius-xs)'}}>
+            style=${{...S_BTN,display:'flex',justifyContent:'space-between',width:'100%',padding:'var(--space-1) var(--space-3)',background:'transparent',color:'var(--text-primary)',fontFamily:'var(--font-body)',fontSize:'var(--text-xs)',borderRadius:'var(--radius-xs)'}}>
             <span>${opt.label}</span>
             <span style=${{fontFamily:'var(--font-mono)',color:'var(--text-secondary)'}}>${opt.formatted}</span>
           </button>`;})}
-          <div style=${{borderTop:'1px solid var(--border-subtle)',marginTop:'.2rem',paddingTop:'.2rem'}}>
+          <div style=${{borderTop:'1px solid var(--border-subtle)',marginTop:'var(--space-1)',paddingTop:'var(--space-1)'}}>
             <button onClick=${function(){window._ccElementMeasureMenu=null;if(window._ccHoverCoordTick)window._ccHoverCoordTick();}}
-              style=${{...S_BTN,width:'100%',padding:'.2rem',background:'transparent',color:'var(--text-muted)',fontSize:'var(--text-2xs)'}}>Cancel · Esc</button>
+              style=${{...S_BTN,width:'100%',padding:'var(--space-1)',background:'transparent',color:'var(--text-muted)',fontSize:'var(--text-2xs)'}}>Cancel · Esc</button>
           </div>
         </div>`;
       })()}
       ${s.walkMode && html`<${WalkModeHUD} d=${d} />`}
-      <div style=${{position:'absolute',bottom:'.75rem',right:'.75rem',pointerEvents:'auto',display:'flex',flexDirection:'column',gap:'.3rem',alignItems:'flex-end',maxHeight:'calc(100% - 5rem)',overflowY:'auto'}}>
-        ${s.measureMode && html`<div style=${{fontSize:'0.69rem',color:'var(--text-primary)',background:'var(--overlay-bg)',border:'1px solid var(--border)',padding:'.25rem .55rem',borderRadius:6,boxShadow:'var(--shadow-sm)',display:'flex',alignItems:'center',gap:'.4rem'}}>
-          <span>${s.measureMode==='length'?'Click 2 points · Shift to lock axis · Esc to cancel':s.measureMode==='angle'?'Click 3 points: start · vertex · end · Esc to cancel':s.measureMode==='area'?(window._ccChainedArea?'Length locked · keep clicking to trace an area · Enter or Esc':'Click points · click near first point or Enter to close · Esc to cancel'):s.measureMode==='element'?'Click an element to read its quantities':s.measureMode==='clearance'?'Pick element A, then element B':'Measuring…'}</span>
+      <div style=${{position:'absolute',bottom:'var(--space-3)',right:'var(--space-3)',pointerEvents:'auto',display:'flex',flexDirection:'column',gap:'var(--space-1)',alignItems:'flex-end',maxHeight:'calc(100% - 5rem)',overflowY:'auto'}}>
+        ${s.measureMode && html`<div class="cc-overlay-chrome" style=${{fontSize:'var(--text-xs)',color:'var(--text-primary)',padding:'var(--space-1) var(--space-3)',display:'flex',alignItems:'center',gap:'var(--space-2)'}}>
+          <span>${s.measureMode==='length'?'Click 2 points · Shift = axis lock · Alt = quick (not saved) · Esc':s.measureMode==='angle'?'Click 3 points: start · vertex · end · Esc to cancel':s.measureMode==='area'?(window._ccChainedArea?'Length locked · keep clicking to trace an area · Enter or Esc':'Click points · click near first point or Enter to close · Esc to cancel'):s.measureMode==='element'?'Click an element to read its quantities':s.measureMode==='clearance'?'Pick element A, then element B':'Measuring…'}</span>
         </div>`}
         ${s.measureMode && window._ccHoverPoint && (function(){
           var p=window._ccHoverPoint;
-          return html`<div style=${{fontFamily:'var(--font-mono)',fontSize:'0.65rem',color:'var(--text-secondary)',background:'var(--overlay-bg)',border:'1px solid var(--border-subtle)',padding:'.2rem .4rem',borderRadius:4}}>
+          return html`<div class="cc-overlay-chrome" style=${{fontFamily:'var(--font-mono)',fontSize:'var(--text-2xs)',color:'var(--text-secondary)',padding:'var(--space-1) var(--space-2)'}}>
             X ${p.x.toFixed(2)} &nbsp; Y ${p.y.toFixed(2)} &nbsp; Z ${p.z.toFixed(2)} m
           </div>`;
         })()}
-        ${s.measurements.length>0 && html`<div style=${{background:'var(--overlay-bg-strong)',border:'1px solid var(--border)',borderRadius:8,padding:'.3rem',maxHeight:160,overflowY:'auto',width:220,boxShadow:'var(--shadow-sm)'}}>
+        ${s.measurements.length>0 && html`<div class="cc-overlay-chrome" style=${{padding:'var(--space-1)',maxHeight:160,overflowY:'auto',width:220}}>
           ${s.measurements.map(function(m){
-            var glyphColor = m.type==='length'||m.type==='clearance' ? 'var(--accent)' : m.type==='angle' ? 'var(--color-warning)' : m.type==='element' ? 'var(--color-info)' : '#1a6b4a';
+            var glyphColor = m.type==='length'||m.type==='clearance' ? 'var(--accent)' : m.type==='angle' ? 'var(--color-warning-fg)' : m.type==='element' ? 'var(--color-info-fg)' : 'var(--color-success-fg)';
             var labelTxt = (m.name && m.name.trim()) ? m.name : (window._ccRelabelMeasurement ? window._ccRelabelMeasurement(m,s) : m.label);
-            return html`<div key=${m.id} style=${{display:'flex',alignItems:'center',gap:'.3rem',padding:'.15rem .2rem',fontSize:'0.69rem',borderBottom:'1px solid var(--border-subtle)'}}
+            return html`<div key=${m.id} style=${{display:'flex',alignItems:'center',gap:'var(--space-1)',padding:'var(--space-1)',fontSize:'var(--text-xs)',borderBottom:'1px solid var(--border-subtle)'}}
               onDblClick=${function(){var nv=prompt('Rename measurement', m.name||'');if(nv!=null)d({t:A.UPD_MEASUREMENT,id:m.id,u:{name:nv}});}}>
               <span style=${{width:6,height:6,borderRadius:'50%',background:glyphColor,flex:'0 0 auto'}}></span>
-              <span style=${{flex:1,minWidth:0,color:'var(--text-primary)',fontFamily:'var(--font-mono)',fontWeight:600,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',cursor:'pointer'}}
+              <span style=${{flex:1,minWidth:0,color:'var(--text-primary)',fontFamily:'var(--font-mono)',fontWeight:'var(--weight-semibold)',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',cursor:'pointer'}}
                 onClick=${function(){if(window._ccFlyToMeasurement)window._ccFlyToMeasurement(m.id);}}
                 title=${m.type+' · click to fly to · double-click to rename'}>${labelTxt}</span>
               <button onClick=${function(e){e.stopPropagation();d({t:A.UPD_MEASUREMENT,id:m.id,u:{hidden:!m.hidden}});}}
-                style=${{...S_BTN,padding:'0 3px',background:'none',color:m.hidden?'var(--text-faint)':'var(--text-secondary)',fontSize:'0.6rem'}}
+                style=${{...S_BTN,padding:'0 var(--space-1)',background:'none',color:m.hidden?'var(--text-faint)':'var(--text-secondary)',fontSize:'var(--text-2xs)'}}
                 title=${m.hidden?'Show':'Hide'}>${m.hidden?'⌐':'◉'}</button>
               <button onClick=${function(e){e.stopPropagation();d({t:A.DEL_MEASUREMENT,id:m.id});}}
-                style=${{...S_BTN,padding:'0 3px',background:'none',color:'var(--text-faint)',fontSize:'0.57rem'}} aria-label="Delete measurement">✕</button>
+                style=${{...S_BTN,padding:'0 var(--space-1)',background:'none',color:'var(--text-faint)',fontSize:'var(--text-2xs)'}} aria-label="Delete measurement">✕</button>
             </div>`;
           })}
         </div>`}
-        <div style=${{display:'flex',gap:'.2rem'}}>
+        <div style=${{display:'flex',gap:'var(--space-1)'}}>
           <button onClick=${function(){if(_captureViewpoint){var vp=_captureViewpoint('Viewpoint '+(s.viewpoints.length+1));d({t:A.ADD_VIEWPOINT,v:vp});}}}
-            style=${{...S_BTN,fontSize:'0.69rem',padding:'.2rem .5rem',background:'var(--overlay-bg)',color:'var(--text-secondary)',border:'1px solid var(--border)',boxShadow:'var(--shadow-sm)'}}>
+            style=${{...S_BTN,fontSize:'var(--text-xs)',padding:'var(--space-1) var(--space-2)',background:'var(--overlay-bg)',color:'var(--text-secondary)',border:'1px solid var(--border)',boxShadow:'var(--shadow-sm)'}}>
             Save Viewpoint
           </button>
-          ${s.viewpoints.length>0 && html`<span style=${{fontSize:'0.63rem',color:'var(--text-muted)',alignSelf:'center'}}>${s.viewpoints.length} saved</span>`}
+          ${s.viewpoints.length>0 && html`<span style=${{fontSize:'var(--text-2xs)',color:'var(--text-muted)',alignSelf:'center'}}>${s.viewpoints.length} saved</span>`}
         </div>
-        ${s.viewpoints.length>0 && html`<div style=${{background:'var(--overlay-bg-strong)',border:'1px solid var(--border)',borderRadius:8,padding:'.3rem',maxHeight:160,overflowY:'auto',width:220,boxShadow:'var(--shadow-sm)'}}>
-          ${s.viewpoints.map(function(vp){return html`<div key=${vp.id} style=${{display:'flex',alignItems:'center',gap:'.3rem',padding:'.2rem',borderBottom:'1px solid var(--border-subtle)',cursor:'pointer'}}
+        ${s.viewpoints.length>0 && html`<div class="cc-overlay-chrome" style=${{padding:'var(--space-1)',maxHeight:160,overflowY:'auto',width:220}}>
+          ${s.viewpoints.map(function(vp){return html`<div key=${vp.id} style=${{display:'flex',alignItems:'center',gap:'var(--space-1)',padding:'var(--space-1)',borderBottom:'1px solid var(--border-subtle)',cursor:'pointer'}}
             onClick=${function(){if(_restoreViewpoint)_restoreViewpoint(vp);}}>
-            ${vp.snapshot && html`<img src=${vp.snapshot} style=${{width:40,height:25,borderRadius:3,objectFit:'cover',border:'1px solid var(--border)'}} />`}
+            ${vp.snapshot && html`<img src=${vp.snapshot} style=${{width:40,height:25,borderRadius:'var(--radius-xs)',objectFit:'cover',border:'1px solid var(--border)'}} />`}
             <div style=${{flex:1,minWidth:0}}>
-              <div style=${{fontSize:'0.69rem',color:'var(--text-primary)',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>${vp.name}</div>
-              <div style=${{fontSize:'0.57rem',color:'var(--text-faint)'}}>${new Date(vp.createdAt).toLocaleTimeString()}</div>
+              <div style=${{fontSize:'var(--text-xs)',color:'var(--text-primary)',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>${vp.name}</div>
+              <div style=${{fontSize:'var(--text-2xs)',color:'var(--text-faint)'}}>${new Date(vp.createdAt).toLocaleTimeString()}</div>
             </div>
             <button onClick=${function(e){e.stopPropagation();d({t:A.DEL_VIEWPOINT,id:vp.id});}}
-              style=${{...S_BTN,padding:'0 3px',background:'none',color:'var(--text-faint)',fontSize:'0.57rem'}} aria-label="Delete viewpoint">✕</button>
+              style=${{...S_BTN,padding:'0 var(--space-1)',background:'none',color:'var(--text-faint)',fontSize:'var(--text-2xs)'}} aria-label="Delete viewpoint">✕</button>
           </div>`})}
         </div>`}
       </div>
@@ -23858,16 +23905,16 @@ function startApp() {
         if (dV) addRow('Volume', dV.f(dV.v));
 
         var LABEL_STYLE = {
-          fontSize:'.72rem', fontWeight:600, color:'var(--text-muted)',
+          fontSize:'var(--text-xs)', fontWeight:'var(--weight-semibold)', color:'var(--text-muted)',
           textTransform:'uppercase', letterSpacing:'.04em',
-          width:90, flexShrink:0, paddingTop:2
+          width:90, flexShrink:0, paddingTop:'var(--space-1)'
         };
         var VALUE_STYLE = {
-          fontSize:'.82rem', color:'var(--text-primary)', fontWeight:500,
-          lineHeight:1.4, wordBreak:'break-word'
+          fontSize:'var(--text-sm)', color:'var(--text-primary)', fontWeight:'var(--weight-medium)',
+          lineHeight:'var(--leading-base)', wordBreak:'break-word'
         };
         var ROW_STYLE = {
-          display:'flex', gap:'0.75rem', padding:'.35rem 0',
+          display:'flex', gap:'var(--space-3)', padding:'var(--space-1) 0',
           borderBottom:'1px solid var(--border-subtle)', alignItems:'flex-start'
         };
 
@@ -23875,8 +23922,8 @@ function startApp() {
         var ctxBadges = null;
         if (linkedClashes.length || linkedIssues.length) {
           ctxBadges = html`<div style=${{display:'flex',gap:'.4rem',marginTop:'.6rem',flexWrap:'wrap'}}>
-            ${linkedClashes.length ? html`<span style=${{fontSize:'var(--text-xs)',background:'var(--color-danger-bg)',color:'var(--color-danger-fg)',border:'1px solid var(--color-danger-border)',borderRadius:'var(--radius-xs)',padding:'2px 8px',fontWeight:'var(--weight-semibold)'}}>${linkedClashes.length} conflict${linkedClashes.length===1?'':'s'}</span>` : null}
-            ${linkedIssues.length  ? html`<span style=${{fontSize:'var(--text-xs)',background:'var(--accent-bg)',color:'var(--accent)',border:'1px solid var(--border)',borderRadius:'var(--radius-xs)',padding:'2px 8px',fontWeight:'var(--weight-semibold)'}}>${linkedIssues.length} issue${linkedIssues.length===1?'':'s'}</span>` : null}
+            ${linkedClashes.length ? html`<span class="cc-status-pill" style=${{background:'var(--color-danger-bg)',color:'var(--color-danger-fg)',border:'1px solid var(--color-danger-border)'}}>${linkedClashes.length} conflict${linkedClashes.length===1?'':'s'}</span>` : null}
+            ${linkedIssues.length  ? html`<span class="cc-status-pill" style=${{background:'var(--accent-bg)',color:'var(--accent)',border:'1px solid var(--border)'}}>${linkedIssues.length} issue${linkedIssues.length===1?'':'s'}</span>` : null}
           </div>`;
         }
 
@@ -24873,7 +24920,10 @@ function startApp() {
       if (s.sectionAxis) d({t:A.SECTION,axis:null});
       if (s.sectionCustom) d({t:A.SECTION_CUSTOM,v:null});
       if (s.sectionBox && s.sectionBox.enabled) d({t:A.SECTION_BOX,v:null});
-      if (s.measureMode) d({t:A.MEASURE_MODE,v:false});
+      if (s.measureMode) {
+        d({t:A.MEASURE_MODE,v:false});
+        if (window._ccCancelInProgressMeasurement) window._ccCancelInProgressMeasurement();
+      }
       if (s.floorPlan) d({t:A.FLOOR_PLAN,v:null});
       if (s.commentMode) d({t:A.COMMENT_MODE,v:false});
     }
@@ -25044,7 +25094,7 @@ function startApp() {
                     window._ccActivateSectionBox();
                   }
                 }})}
-        ${btn({k:'sclear', title:'Clear Section (Esc)',  label:'Clear Section', icon:I.clear,
+        ${(s.sectionAxis||s.sectionCustom||(s.sectionBox&&s.sectionBox.enabled)) && btn({k:'sclear', title:'Clear Section (Esc)',  label:'Clear Section', icon:I.clear,
                 onClick:function(){ window._ccSectionPickPending=false; setPickOn(false); d({t:A.SECTION,axis:null}); d({t:A.SECTION_CUSTOM,v:null}); d({t:A.SECTION_BOX,v:null}); }})}
         ${div()}
         <!-- MEASURE — one button + caret popover (Trimble / FreeCAD pattern) -->
@@ -26306,6 +26356,9 @@ function startApp() {
         // Also remove the placed endpoint dots that haven't yet committed.
         if (window._ccDropInProgressDots) window._ccDropInProgressDots();
         window._ccChainedArea = false;
+        window._ccPendingTransient = false;
+        // Purge any throwaway (Alt-held) measurement geo via the Viewer-scoped helper
+        if (window._ccPurgeTransientMeasure) window._ccPurgeTransientMeasure();
       };
       window._ccPopLastMeasureVertex = function(){
         if (!window._ccMeasurePtsRef || !window._ccMeasurePtsRef.current) return;
