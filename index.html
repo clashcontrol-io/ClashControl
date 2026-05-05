@@ -1624,6 +1624,7 @@ function startApp() {
     IFCPROPERTYSINGLEVALUE:3972844353, IFCELEMENTQUANTITY:1883228015,
     IFCQUANTITYLENGTH:931644368, IFCQUANTITYAREA:2235152071,
     IFCQUANTITYVOLUME:3252649465, IFCQUANTITYWEIGHT:825690147,
+    IFCRELDEFINESBYTYPE:781010003,
     IFCRELASSOCIATESMATERIAL:2655215786, IFCMATERIALLAYERSETUSAGE:1303795690,
     IFCMATERIALLAYERSET:3303938423, IFCMATERIALLAYER:248100487,
     IFCMATERIAL:1838606355,
@@ -1866,6 +1867,26 @@ function startApp() {
           for (var j = 0; j < objs.length; j++) {
             var oid = objs[j].value != null ? objs[j].value : objs[j];
             matMap[oid] = matName;
+          }
+        } catch(e) {}
+      }
+    } catch(e) {}
+    // Revit and ArchiCAD often associate materials to the TYPE (IfcWindowType,
+    // IfcDoorType, IfcWallType, etc.) rather than each instance. Walk
+    // IfcRelDefinesByType to propagate type-level materials to instances that
+    // have no material assigned yet.
+    try {
+      var typeRelIds = api.GetLineIDsWithType(modelID, IFC.IFCRELDEFINESBYTYPE);
+      for (var ti = 0; ti < typeRelIds.size(); ti++) {
+        try {
+          var tRel = api.GetLine(modelID, typeRelIds.get(ti));
+          var typeId = tRel.RelatingType ? (tRel.RelatingType.value||tRel.RelatingType) : null;
+          if (!typeId || !matMap[typeId]) continue;
+          var typeMat = matMap[typeId];
+          var tObjs = tRel.RelatedObjects || [];
+          for (var tj = 0; tj < tObjs.length; tj++) {
+            var toid = tObjs[tj].value != null ? tObjs[tj].value : tObjs[tj];
+            if (!matMap[toid]) matMap[toid] = typeMat; // don't overwrite instance-level assignment
           }
         } catch(e) {}
       }
@@ -9448,15 +9469,23 @@ function startApp() {
           if (!cache.shaded) {
             var _shMatName = (obj.userData._ifcMaterial || '').toLowerCase();
             var _shType = _eidToType[obj.userData.expressId] || '';
-            var _shElemName = _eidToName[obj.userData.expressId] || '';
             var _shOpaque = /steel|metal|alum|copper|brass|iron|zinc|concrete|beton|brick|masonry|wood|timber|stone|gypsum|plaster|insul/.test(_shMatName);
-            // Hard structural types are NEVER glass regardless of name or transparency.
-            // IfcPlate and IfcBuildingElementProxy are excluded — they can be glazing.
-            var _shFrameType = /^Ifc(CurtainWall|Member|Beam|Column|Pile|Footing|Wall|Slab|Roof|Stair|Ramp|Covering|Door|Railing|Rail)/i.test(_shType);
-            var _shGlass = /glass|glazing|fenst/.test(_shMatName)
-              || /^IfcWindow/i.test(_shType)
-              || (!_shOpaque && !_shFrameType && orig.transparent && orig.opacity < 0.3);
-            var _shForceOpaque = !_shGlass && (_shFrameType || _shOpaque);
+            // Hard frame types: ALWAYS opaque — type beats material name.
+            // Revit often assigns "Glass" material to mullions (IfcMember) because
+            // the curtain wall shares one material for all sub-components.
+            var _shHardFrame = /^Ifc(Member|CurtainWall|Beam|Column|Pile|Footing|Wall|Slab|Roof|Stair|Ramp|Covering|Railing|Rail)/i.test(_shType);
+            // Soft frame types: opaque by default but glass if material explicitly says so.
+            var _shSoftFrame = /^Ifc(Door|Plate|BuildingElementProxy)/i.test(_shType);
+            // Glass only when the type cannot possibly be structural.
+            // IfcWindow needs orig.transparent check: Revit exports curtain wall
+            // frames as IfcWindow with no material (opaque geometry), while real
+            // glass panels have transparent geometry (opacity < 0.5 from IFC).
+            var _shGlass = !_shHardFrame && (
+              /glass|glazing|fenst/.test(_shMatName)
+              || (/^IfcWindow/i.test(_shType) && orig.transparent && orig.opacity < 0.5)
+              || (!_shOpaque && !_shSoftFrame && orig.transparent && orig.opacity < 0.3)
+            );
+            var _shForceOpaque = !_shGlass && (_shHardFrame || _shSoftFrame || _shOpaque);
             cache.shaded = new THREE.MeshLambertMaterial({
               color: _shGlass ? new THREE.Color(0xbfe8ff) : origColor,
               transparent: _shGlass ? true : (_shForceOpaque ? false : orig.transparent),
@@ -9473,14 +9502,16 @@ function startApp() {
             var _matName = (obj.userData._ifcMaterial || '').toLowerCase();
             var _r = 0.85, _m = 0.0, _clr = origColor.clone();
             var _rdType = _eidToType[obj.userData.expressId] || '';
-            var _rdElemName = _eidToName[obj.userData.expressId] || '';
             var _rdOpaque = /steel|metal|alum|copper|brass|iron|zinc|concrete|beton|brick|masonry|wood|timber|stone|gypsum|plaster|insul/.test(_matName);
-            // Hard structural types are NEVER glass regardless of name or transparency.
-            // IfcPlate and IfcBuildingElementProxy excluded — they can be glazing panels.
-            var _rdFrameType = /^Ifc(CurtainWall|Member|Beam|Column|Pile|Footing|Wall|Slab|Roof|Stair|Ramp|Covering|Door|Railing|Rail)/i.test(_rdType);
-            var _isGlass = /glass|glazing|fenst/.test(_matName)
-              || /^IfcWindow/i.test(_rdType)
-              || (!_rdOpaque && !_rdFrameType && orig.transparent && orig.opacity < 0.3);
+            // Hard frame types: ALWAYS opaque regardless of material name.
+            var _rdHardFrame = /^Ifc(Member|CurtainWall|Beam|Column|Pile|Footing|Wall|Slab|Roof|Stair|Ramp|Covering|Railing|Rail)/i.test(_rdType);
+            // Soft frame: opaque by default, glass only if material explicitly says so.
+            var _rdSoftFrame = /^Ifc(Door|Plate|BuildingElementProxy)/i.test(_rdType);
+            var _isGlass = !_rdHardFrame && (
+              /glass|glazing|fenst/.test(_matName)
+              || (/^IfcWindow/i.test(_rdType) && orig.transparent && orig.opacity < 0.5)
+              || (!_rdOpaque && !_rdSoftFrame && orig.transparent && orig.opacity < 0.3)
+            );
             if (_isGlass) {
               _r = 0.05; _m = 0.0; _clr.set(0xbfe8ff);
             } else if (/steel|metal|alum|copper|brass|iron|zinc/.test(_matName)) {
@@ -9496,7 +9527,7 @@ function startApp() {
             } else if (/insul|foam|mineral|rockwool|glass.*wool/.test(_matName)) {
               _r = 1.0; _m = 0.0; _clr.set(0xf0c850);
             }
-            var _rdForceOpaque = !_isGlass && (_rdFrameType || _rdOpaque);
+            var _rdForceOpaque = !_isGlass && (_rdHardFrame || _rdSoftFrame || _rdOpaque);
             cache.rendered = new THREE.MeshStandardMaterial({
               color: (_matName || _isGlass) ? _clr : origColor,
               roughness: _r, metalness: _m,
