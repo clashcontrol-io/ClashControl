@@ -10743,7 +10743,27 @@ function startApp() {
             }
             d({t:A.ADD_MODEL, v:_restoredModel});
           }).catch(function(e){ console.warn('Failed to restore '+entry.name+':', e); })
-            .then(function(){ _setGlobalLoading(false); });
+            .then(function(){
+              // Warm-up: wait for React to commit the new model into the
+              // scene, then ask Three.js to upload geometries / compile
+              // shaders to the GPU. Without this, the first render after
+              // hiding the loading screen blocks for 1-3s while the GPU
+              // catches up — which the user sees as a black viewer.
+              return new Promise(function(resolve){
+                requestAnimationFrame(function(){
+                  requestAnimationFrame(function(){
+                    try {
+                      var Sw = window._ccState3d;
+                      if (Sw && Sw.renderer && Sw.scene && Sw.camera) {
+                        Sw.renderer.compile(Sw.scene, Sw.camera);
+                      }
+                    } catch(_e){}
+                    _setGlobalLoading(false);
+                    resolve();
+                  });
+                });
+              });
+            });
         });
       });
       chain.then(function(){ d({t:A.SWITCHING_PROJECT, v:false}); });
