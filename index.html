@@ -5207,6 +5207,7 @@ function startApp() {
       });
       return box;
     }
+    window._ccElemsBBox = _elemsBBox;
     var prefsRef = useRef(s.prefs);
     prefsRef.current = s.prefs;
     var measureModeRef = useRef(s.measureMode);
@@ -10301,7 +10302,7 @@ function startApp() {
     function flyToDir(dir) {
       var S=state3d.current; if(!S||!S.orbit) return;
       var ctr=new THREE.Vector3();
-      if(S.mg&&S.mg.children.length>0) _elemsBBox().getCenter(ctr);
+      if(S.mg&&S.mg.children.length>0 && typeof window._ccElemsBBox === 'function') window._ccElemsBBox().getCenter(ctr);
       var d=new THREE.Vector3(dir[0],dir[1],dir[2]).normalize();
       var targetTheta=Math.atan2(d.x,d.z);
       var targetPhi=Math.max(0.05,Math.min(Math.PI-0.05,Math.acos(d.y)));
@@ -27362,6 +27363,13 @@ function startApp() {
         }
 
         if(inInput) return;
+
+        // While in walk mode (or placing), the WASD / Q / E / Space / Shift /
+        // C / R / B / F / I / Alt keys are reserved for walk navigation. The
+        // chord system below would otherwise see a held 'w' as the single-key
+        // walk-toggle and exit walk mode mid-stride. Esc was already handled
+        // above; everything else should fall through to walk-mode listeners.
+        if (s.walkMode || s.walkPlacing) return;
 
         // ── Two-key chord system (Revit-style) ──
         var ch = _chordRef.current;
