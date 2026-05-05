@@ -7336,7 +7336,9 @@ function startApp() {
         // Triggered either by the toolbar "Make Section" mode (pick-pending
         // flag) or — as a one-step shortcut — by holding Alt while clicking
         // a face. Borrowed from Onshape / Trimble Connect / Shapr3D.
-        if ((window._ccSectionPickPending || e.altKey) && hits.length > 0) {
+        // Alt-shortcut for section pick is blocked while a measure tool is active —
+        // Alt is already used there for throwaway dims and the endpoint-to-area shortcut.
+        if ((window._ccSectionPickPending || (e.altKey && !measureModeRef.current)) && hits.length > 0) {
           var spHit = hits[0];
           var nWorld = new THREE.Vector3();
           if (spHit.face && spHit.face.normal) {
