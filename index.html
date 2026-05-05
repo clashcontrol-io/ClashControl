@@ -6325,6 +6325,17 @@ function startApp() {
           var axLine = new THREE.Line(axGeo, axColor); axLine.renderOrder = 1000;
           _previewGroup.add(axLine);
         }
+        // For area mode: draw the already-placed polygon edges (pts[0]→pts[1]→…→pts[last])
+        // so the user can see the full polygon boundary built so far. Without this, only dots
+        // are visible after each click and the rubber-band appears to restart from scratch
+        // every time, making it look like the area context was lost.
+        if (mode === 'area' && pts.length >= 2) {
+          var polyEdgeMat = new THREE.LineBasicMaterial({color:0xb8533a, linewidth:2, depthTest:false, transparent:true, opacity:0.9});
+          var polyEdgeGeo = new THREE.BufferGeometry().setFromPoints(pts.slice());
+          var polyEdgeLine = new THREE.Line(polyEdgeGeo, polyEdgeMat);
+          polyEdgeLine.renderOrder = 999;
+          _previewGroup.add(polyEdgeLine);
+        }
         // Rubberband from lastPt to target
         var pgeo = new THREE.BufferGeometry().setFromPoints([lastPt, target]);
         var pline = new THREE.Line(pgeo, _previewLineMat);
@@ -9411,11 +9422,12 @@ function startApp() {
             var _shType = _eidToType[obj.userData.expressId] || '';
             var _shElemName = _eidToName[obj.userData.expressId] || '';
             var _shOpaque = /steel|metal|alum|copper|brass|iron|zinc|concrete|beton|brick|masonry|wood|timber|stone|gypsum|plaster|insul/.test(_shMatName);
-            var _shFrameType = /^Ifc(CurtainWall|Member|Beam|Column|Pile|Footing|Wall|Slab|Roof|Stair|Ramp|Covering|Door|Railing|Rail|Plate|BuildingElementProxy)/i.test(_shType);
+            // Hard structural types are NEVER glass regardless of name or transparency.
+            // IfcPlate and IfcBuildingElementProxy are excluded — they can be glazing.
+            var _shFrameType = /^Ifc(CurtainWall|Member|Beam|Column|Pile|Footing|Wall|Slab|Roof|Stair|Ramp|Covering|Door|Railing|Rail)/i.test(_shType);
             var _shGlass = /glass|glazing|fenst/.test(_shMatName)
-              || /glass|glazing|fenst/.test(_shElemName)
               || /^IfcWindow/i.test(_shType)
-              || (!_shOpaque && !_shFrameType && orig.transparent && orig.opacity < 0.6);
+              || (!_shOpaque && !_shFrameType && orig.transparent && orig.opacity < 0.3);
             var _shForceOpaque = !_shGlass && (_shFrameType || _shOpaque);
             cache.shaded = new THREE.MeshLambertMaterial({
               color: _shGlass ? new THREE.Color(0xbfe8ff) : origColor,
@@ -9435,11 +9447,12 @@ function startApp() {
             var _rdType = _eidToType[obj.userData.expressId] || '';
             var _rdElemName = _eidToName[obj.userData.expressId] || '';
             var _rdOpaque = /steel|metal|alum|copper|brass|iron|zinc|concrete|beton|brick|masonry|wood|timber|stone|gypsum|plaster|insul/.test(_matName);
-            var _rdFrameType = /^Ifc(CurtainWall|Member|Beam|Column|Pile|Footing|Wall|Slab|Roof|Stair|Ramp|Covering|Door|Railing|Rail|Plate|BuildingElementProxy)/i.test(_rdType);
+            // Hard structural types are NEVER glass regardless of name or transparency.
+            // IfcPlate and IfcBuildingElementProxy excluded — they can be glazing panels.
+            var _rdFrameType = /^Ifc(CurtainWall|Member|Beam|Column|Pile|Footing|Wall|Slab|Roof|Stair|Ramp|Covering|Door|Railing|Rail)/i.test(_rdType);
             var _isGlass = /glass|glazing|fenst/.test(_matName)
-              || /glass|glazing|fenst/.test(_rdElemName)
               || /^IfcWindow/i.test(_rdType)
-              || (!_rdOpaque && !_rdFrameType && orig.transparent && orig.opacity < 0.6);
+              || (!_rdOpaque && !_rdFrameType && orig.transparent && orig.opacity < 0.3);
             if (_isGlass) {
               _r = 0.05; _m = 0.0; _clr.set(0xbfe8ff);
             } else if (/steel|metal|alum|copper|brass|iron|zinc/.test(_matName)) {
@@ -24080,6 +24093,7 @@ function startApp() {
           <!-- Identity -->
           <div style=${CARD}>
             <div style=${HDR}>Identity</div>
+            ${ep&&ep.ifcType     && html`<div style=${ROW}><span style=${LBL}>IFC type</span><span style=${{...VAL,...MONO}}>${ep.ifcType}</span></div>`}
             ${ep&&ep.globalId    && html`<div style=${ROW}><span style=${LBL}>GlobalId</span><span style=${{...VAL,...MONO}}>${ep.globalId}</span></div>`}
             ${ep&&ep.expressId   && html`<div style=${ROW}><span style=${LBL}>Express ID</span><span style=${{...VAL,...MONO}}>#${ep.expressId}</span></div>`}
             ${ep&&ep.objectType  && html`<div style=${ROW}><span style=${LBL}>Object type</span><span style=${VAL}>${ep.objectType}</span></div>`}
