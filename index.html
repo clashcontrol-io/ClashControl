@@ -4930,7 +4930,7 @@ function startApp() {
       for (var h = 0; h < dnHits.length; h++) {
         var ho = dnHits[h].object;
         if (!ho.visible) continue;
-        if (_isGhostMat && _isGhostMat(ho.material)) continue;
+        if (S._isGhostMat && S._isGhostMat(ho.material)) continue;
         floorHit = dnHits[h]; break;
       }
       if (floorHit) {
@@ -16645,28 +16645,33 @@ function startApp() {
       var rc = new THREE.Raycaster();
       rc.setFromCamera({x:nx, y:ny}, S.camera);
       var hits = rc.intersectObjects(S.mg.children, true);
+      var floorHit = null, anyHit = null;
       for (var i=0; i<hits.length; i++){
         var h = hits[i];
         if (!h.object || !h.object.visible) continue;
         if (typeof _isGhostMat === 'function' && _isGhostMat(h.object.material)) continue;
         if (!h.face) continue;
         var n = h.face.normal.clone();
-        // transform normal into world space
         var nm = new THREE.Matrix3().getNormalMatrix(h.object.matrixWorld);
         n.applyMatrix3(nm).normalize();
-        if (n.y < 0.5) continue; // skip walls/ceilings
-        // Footprint validation: 30 cm needs to fit on the surface
-        var thin = false;
+        if (!anyHit) anyHit = { point: h.point.clone(), normal: n.clone() };
+        if (n.y >= 0.5){ floorHit = { point: h.point.clone(), normal: n.clone() }; break; }
+      }
+      // Prefer upward-facing surface; otherwise accept any hit (walk-mode gravity
+      // will snap the camera down to the nearest floor below). Without this fallback,
+      // clicking on walls/roofs/terrain that don't satisfy n.y >= 0.5 silently fails.
+      var hh = floorHit || anyHit;
+      if (!hh) return { screen:{x:e.clientX-r.left, y:e.clientY-r.top}, valid:false };
+      var thin = false;
+      if (floorHit){
         try {
           if (typeof window._ccWalkValidateFootprint === 'function'){
             var unit = (typeof _walkResolveUnitScale==='function') ? _walkResolveUnitScale() : 1;
-            thin = !window._ccWalkValidateFootprint(S.mg, h.point, 0.15*unit, 0.05*unit);
+            thin = !window._ccWalkValidateFootprint(S.mg, hh.point, 0.15*unit, 0.05*unit);
           }
         } catch(_){ }
-        // thin = visual warning only; valid=true so user can still place there
-        return { point: h.point.clone(), normal: n, screen:{x:e.clientX-r.left, y:e.clientY-r.top}, valid: true, thin: thin };
       }
-      return { screen:{x:e.clientX-(r?r.left:0), y:e.clientY-(r?r.top:0)}, valid:false };
+      return { point: hh.point, normal: hh.normal, screen:{x:e.clientX-r.left, y:e.clientY-r.top}, valid: true, thin: thin, floor: !!floorHit };
     }
     function onMove(e){
       var h2 = raycastFloor(e);
@@ -20925,20 +20930,13 @@ function startApp() {
     var cutAt = elevation + (cutHeight || 1.2);
     var viewFloor = elevation - (viewDepth || 0); // how far below floor to include
     var _dbg = {total:0, noBox:0, empty:0, nonPhys:0, outOfRange:0, hasMesh:0, noMesh:0, meshSegs:0, aabb:0};
-    console.log('[2D Outlines] elevation=' + elevation + ', cutAt=' + cutAt + ', viewFloor=' + viewFloor + ', models=' + models.length);
     models.forEach(function(m) {
-      if (m.visible === false) { console.log('[2D Outlines] model ' + m.name + ' hidden, skipping'); return; }
-      console.log('[2D Outlines] model ' + m.name + ': ' + (m.elements||[]).length + ' elements');
-      var sampleCount = 0;
+      if (m.visible === false) { return; }
       (m.elements || []).forEach(function(el) {
         _dbg.total++;
         if (!el.box) { _dbg.noBox++; return; }
         var b = el.box;
         if (b.isEmpty && b.isEmpty()) { _dbg.empty++; return; }
-        if (sampleCount < 5) {
-          console.log('[2D Outlines] sample el #' + el.expressId + ' box Y: [' + b.min.y.toFixed(3) + ', ' + b.max.y.toFixed(3) + '] meshes: ' + (el.meshes ? el.meshes.length : 'null'));
-          sampleCount++;
-        }
         var ifcType = el.props && el.props.ifcType;
         if (ifcType && _NON_PHYSICAL_TYPES && _NON_PHYSICAL_TYPES[ifcType]) { _dbg.nonPhys++; return; }
         if (b.min.y > cutAt || b.max.y < viewFloor) { _dbg.outOfRange++; return; }
@@ -20974,7 +20972,6 @@ function startApp() {
       var dk = dx1+','+dz1+','+dx2+','+dz2;
       if (!seen[dk]) { seen[dk]=1; deduped.push(ds); }
     }
-    console.log('[2D Outlines] RESULT: ' + deduped.length + ' segments (deduped from ' + outlines.length + ') | ' + JSON.stringify(_dbg));
     return deduped;
   }
 
@@ -27607,7 +27604,6 @@ function startApp() {
           }
         }
         _cc2DOutlines = generate2DOutlines(s.models, sheet.elevation, sheet.cutHeight, sheet.viewDepth || 0);
-        console.log('[2D Sheet] outlines generated: ' + (_cc2DOutlines ? _cc2DOutlines.length : 0) + ' segments, elev=' + sheet.elevation + ', cutH=' + sheet.cutHeight + ', viewDepth=' + (sheet.viewDepth || 0));
         setTimeout(function(){ if (window._ccFit2DOutlines) window._ccFit2DOutlines(); }, 50);
       } else if (s.underlayMode === 'compare' && s.floorPlan && s.models.length) {
         _cc2DOutlines = generate2DOutlines(s.models, s.floorPlan.elevation, s.floorPlan.cutHeight);
