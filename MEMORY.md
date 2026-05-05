@@ -87,6 +87,33 @@ Things to be careful about. Do not remove without a good reason — add a note i
 Update this section at the start and end of each session.
 Mark completed items with ~~strikethrough~~ and date, then let the daily sync archive them.
 
+On branch `claude/improve-walk-mode-tool-gNoMu` (2026-05-05) — walk-mode deep redesign:
+
+- ~~Defaults: walking speed 5.0→1.4 m/s, sprint ×4→×3, collision ON by default, "No-clip"→"Fly" rename~~ (2026-05-05)
+- ~~Smart entry: lowest above-ground IfcBuildingStorey across loaded models, placed at storey centroid facing the longest interior axis (`window._ccWalkSmartEntry`)~~ (2026-05-05)
+- ~~Pegman drop-in (`WalkPegmanLayer`): hover floor surfaces, footprint reticle + arrow, Shift-drag pre-aims heading, click commits → enters walk mode at point. Esc cancels. New state `s.walkPlacing` + `A.WALK_PLACING`. Toolbar Walk button + WW chord + W single-key + Cmd-K all dispatch placing first.~~ (2026-05-05)
+- ~~Teleport-anywhere: double-click in walk mode raycasts any surface with `normal.y > 0.5` (floors, stairs, balconies, parapets) and glides camera over 250–700 ms~~ (2026-05-05)
+- ~~Alt held = temporary no-collision burst with visible "⎇ Alt — passing through walls" badge in HUD~~ (2026-05-05)
+- ~~Height presets (Eye 1.7 / Child 1.1 / Drone 5.0 m), persisted via `cc_walkHeight`~~ (2026-05-05)
+- ~~Floor selector dropdown in HUD (jump to storey across all models)~~ (2026-05-05)
+- ~~Crouch: hold-C drops eye height to 1.05 m~~ (2026-05-05)
+- ~~Clash proximity radar (Coordinate + Review only): top-right compass, 12 m radius, click dot → teleport-look-at~~ (2026-05-05)
+- ~~Minimap (Coordinate + Review only): top-right top-down ortho render of model, you-are-here arrow, click to teleport~~ (2026-05-05)
+- ~~Hover element label (Coordinate + Review only): name/type/storey under crosshair, F = open Inspector, I = create issue~~ (2026-05-05)
+- ~~Persistent ? cheatsheet (replaces 3-s auto-hide hint)~~ (2026-05-05)
+- ~~Mouse sensitivity slider (0.25–3×) + Invert-Y toggle in More panel; persisted~~ (2026-05-05)
+- ~~First-click pointer-lock affordance: pulsing dashed reticle becomes 6 px dot once locked~~ (2026-05-05)
+- ~~Touch virtual joystick (left bottom) for `pointer:coarse` devices feeds movement like gamepad left-stick~~ (2026-05-05)
+- ~~Footstep audio toggle (Present only, off by default; tiny 80 Hz click on each footfall)~~ (2026-05-05)
+- ~~Sprint vignette (eased 0..1) + ±3° FOV breathing during sprint movement~~ (2026-05-05)
+- ~~B-key bookmark current view (saved to `cc_walkBookmarks`)~~ (2026-05-05)
+- ~~Workspace gating: minimap/radar/hover-label/F·I/crouch/sensitivity hidden in Present; head-bob hidden in Review; footsteps Present-only~~ (2026-05-05)
+- ~~Bug: `_walkSavedCam.fov` was nulled before being read on exit — now snapshotted into local `saved` first~~ (2026-05-05)
+
+**Key new globals:** `_ccWalkSmartEntry`, `_ccWalkSetHeight`, `_ccWalkSetSensitivity`, `_ccWalkSetInvertY`, `_ccWalkSetFootsteps`, `_ccWalkSetTouch`, `_ccWalkGetYaw`, `_ccWalkSetYaw`, `_ccWalkHoverEl`. New components: `WalkPegmanLayer`, `WalkClashRadar`, `WalkMinimap`, `WalkTouchJoystick`. New state: `s.walkPlacing`, `s.walkEntry`. New action: `A.WALK_PLACING`. New prefs (localStorage): `cc_walkHeight`, `cc_walkCollision`, `cc_walkSens`, `cc_walkInvY`, `cc_walkFoot`, `cc_walkBookmarks`.
+
+**Deferred** (next pass): sun/time slider docked in HUD (Present + Coordinate); spline waypoint recorder for cinematic playback; saved bookmarks UI list; VR mode (WebXR — Phase 7 spike, gated by demand from a "View in VR" probe).
+
 On branch `claude/improve-measurement-tools-yBrCS` (2026-05-04) — measurement deep-redesign:
 
 - ~~Foundations: `_ccFmtLength/Area/Volume/Angle/Deltas`, IFC `IfcUnitAssignment` heuristic detection, `UPD_MEASUREMENT` action, `measureUnits/measurePrecision/measureMagnifier/measureCalibration` prefs~~ (2026-05-04)
