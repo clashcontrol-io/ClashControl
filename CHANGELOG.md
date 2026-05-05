@@ -1,5 +1,8 @@
 # Changelog
 
+## v5.7.11 (2026-05-05)
+- Fix model replacement: stale ghost, stale meshList, ortho near-clip, stale state closure
+
 ## v5.7.10 (2026-05-05)
 - Fix glass detection for IfcWindow curtain wall frames + type-level material inheritance
 
