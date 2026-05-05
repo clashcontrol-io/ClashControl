@@ -1,5 +1,8 @@
 # Changelog
 
+## v5.7.8 (2026-05-05)
+- Hide measurement 3D geometry when m.hidden toggled
+
 ## v5.7.7 (2026-05-05)
 - fix: raise click/drag threshold during active measurement to 8px
 
