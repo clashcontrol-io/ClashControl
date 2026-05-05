@@ -6694,6 +6694,17 @@ function startApp() {
       }
       window._ccRegisterMeasurementGeo = _registerMeasurementGeo;
       window._ccResetMeasureGeoMap = function(){ _measureGeoMap = {}; };
+      // Toggle visibility on a measurement's 3D dots + lines (and label DOM
+      // node) so the eye toggle in the bottom-right list and inspector panel
+      // actually hides the geometry. State change alone only filtered the
+      // floating label; the dots/lines stayed in the scene.
+      window._ccSetMeasureVisibility = function(id, visible){
+        var entry = _measureGeoMap[id];
+        if (!entry) return;
+        (entry.dots||[]).forEach(function(o){ if(o) o.visible = visible; });
+        (entry.lines||[]).forEach(function(o){ if(o) o.visible = visible; });
+        invalidate();
+      };
 
       var _dragMeas = null;
       var _dragRaycaster = new THREE.Raycaster();
@@ -9108,6 +9119,13 @@ function startApp() {
       }
       invalidate();
     }, [s.measurements.length]);
+
+    useEffect(function(){
+      if (!window._ccSetMeasureVisibility) return;
+      s.measurements.forEach(function(m){
+        window._ccSetMeasureVisibility(m.id, !m.hidden);
+      });
+    }, [s.measurements]);
 
     useEffect(function(){
       var S = state3d.current;
