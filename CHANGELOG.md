@@ -1,5 +1,8 @@
 # Changelog
 
+## v5.9.1 (2026-05-05)
+- Fix Pegman placement, reduce walk-mode render overhead
+
 ## v5.9.0 (2026-05-05)
 - Walk mode follow-up: spline recorder, bookmarks UI, sun slider, footprint check, Settings section
 
