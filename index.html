@@ -4929,7 +4929,7 @@ function startApp() {
       for (var h = 0; h < dnHits.length; h++) {
         var ho = dnHits[h].object;
         if (!ho.visible) continue;
-        if (_isGhostMat && _isGhostMat(ho.material)) continue;
+        if (S._isGhostMat && S._isGhostMat(ho.material)) continue;
         floorHit = dnHits[h]; break;
       }
       if (floorHit) {
@@ -16438,28 +16438,33 @@ function startApp() {
       var rc = new THREE.Raycaster();
       rc.setFromCamera({x:nx, y:ny}, S.camera);
       var hits = rc.intersectObjects(S.mg.children, true);
+      var floorHit = null, anyHit = null;
       for (var i=0; i<hits.length; i++){
         var h = hits[i];
         if (!h.object || !h.object.visible) continue;
         if (typeof _isGhostMat === 'function' && _isGhostMat(h.object.material)) continue;
         if (!h.face) continue;
         var n = h.face.normal.clone();
-        // transform normal into world space
         var nm = new THREE.Matrix3().getNormalMatrix(h.object.matrixWorld);
         n.applyMatrix3(nm).normalize();
-        if (n.y < 0.5) continue; // skip walls/ceilings
-        // Footprint validation: 30 cm needs to fit on the surface
-        var thin = false;
+        if (!anyHit) anyHit = { point: h.point.clone(), normal: n.clone() };
+        if (n.y >= 0.5){ floorHit = { point: h.point.clone(), normal: n.clone() }; break; }
+      }
+      // Prefer upward-facing surface; otherwise accept any hit (walk-mode gravity
+      // will snap the camera down to the nearest floor below). Without this fallback,
+      // clicking on walls/roofs/terrain that don't satisfy n.y >= 0.5 silently fails.
+      var hh = floorHit || anyHit;
+      if (!hh) return { screen:{x:e.clientX-r.left, y:e.clientY-r.top}, valid:false };
+      var thin = false;
+      if (floorHit){
         try {
           if (typeof window._ccWalkValidateFootprint === 'function'){
             var unit = (typeof _walkResolveUnitScale==='function') ? _walkResolveUnitScale() : 1;
-            thin = !window._ccWalkValidateFootprint(S.mg, h.point, 0.15*unit, 0.05*unit);
+            thin = !window._ccWalkValidateFootprint(S.mg, hh.point, 0.15*unit, 0.05*unit);
           }
         } catch(_){ }
-        // thin = visual warning only; valid=true so user can still place there
-        return { point: h.point.clone(), normal: n, screen:{x:e.clientX-r.left, y:e.clientY-r.top}, valid: true, thin: thin };
       }
-      return { screen:{x:e.clientX-(r?r.left:0), y:e.clientY-(r?r.top:0)}, valid:false };
+      return { point: hh.point, normal: hh.normal, screen:{x:e.clientX-r.left, y:e.clientY-r.top}, valid: true, thin: thin, floor: !!floorHit };
     }
     function onMove(e){
       var h2 = raycastFloor(e);
