@@ -6327,9 +6327,14 @@ function startApp() {
       scene.add(_previewGroup);
       var _previewLineMat = new THREE.LineDashedMaterial({color:0xb8533a, dashSize:0.15, gapSize:0.08, depthTest:false, transparent:true, opacity:0.95});
       var _previewSnapMat = new THREE.MeshBasicMaterial({color:0xb8533a, depthTest:false, transparent:true, opacity:0.9});
-      var _axisLineMatX = new THREE.LineBasicMaterial({color:0xff5555, depthTest:false, transparent:true, opacity:0.6});
-      var _axisLineMatY = new THREE.LineBasicMaterial({color:0x55cc55, depthTest:false, transparent:true, opacity:0.6});
-      var _axisLineMatZ = new THREE.LineBasicMaterial({color:0x5588ff, depthTest:false, transparent:true, opacity:0.6});
+      // Axis guide colours follow IFC/BIM convention: X=red, Y=green, Z=blue.
+      // Three.js internal Y is the vertical axis (= IFC Z), so the Y material is
+      // blue and the Z material is green. Labels in the chip are remapped the same way.
+      var _axisLineMatX = new THREE.LineBasicMaterial({color:0xff5555, depthTest:false, transparent:true, opacity:0.6}); // X → red
+      var _axisLineMatY = new THREE.LineBasicMaterial({color:0x5588ff, depthTest:false, transparent:true, opacity:0.6}); // Three.js Y = IFC Z → blue
+      var _axisLineMatZ = new THREE.LineBasicMaterial({color:0x55cc55, depthTest:false, transparent:true, opacity:0.6}); // Three.js Z = IFC Y → green
+      // Remap Three.js internal axis id to IFC user-visible label (Y↔Z swapped)
+      function _axisLabel(a){ return a==='y'?'Z':a==='z'?'Y':(a||'').toUpperCase(); }
       function _clearPreview(){
         for (var i=_previewGroup.children.length-1; i>=0; i--){
           var c=_previewGroup.children[i];
@@ -6798,6 +6803,36 @@ function startApp() {
       }
       window._ccRegisterMeasurementGeo = _registerMeasurementGeo;
       window._ccResetMeasureGeoMap = function(){ _measureGeoMap = {}; };
+      window._ccAxisLabel = _axisLabel;
+
+      // Properly remove a placed measurement's 3D geometry from the scene and
+      // dispose GPU resources. Must be called alongside DEL_MEASUREMENT dispatch
+      // — the reducer only updates state, it never touches the Three.js scene.
+      window._ccDeleteMeasurementGeo = function(id) {
+        var entry = _measureGeoMap[id]; if (!entry) return;
+        var toRemove = (entry.dots||[]).concat(entry.lines||[]);
+        toRemove.forEach(function(o){
+          if (!o) return;
+          scene.remove(o);
+          if (o.geometry) o.geometry.dispose();
+          if (o.material) o.material.dispose();
+        });
+        measureObjsRef.current = measureObjsRef.current.filter(function(o){ return toRemove.indexOf(o) < 0; });
+        delete _measureGeoMap[id];
+        invalidate();
+      };
+      window._ccClearAllMeasurementGeo = function() {
+        Object.keys(_measureGeoMap).forEach(function(id){ window._ccDeleteMeasurementGeo(id); });
+        // Sweep measureObjsRef for anything not captured by the map (e.g. objects
+        // placed before _registerMeasurementGeo was wired, or chained-area objects).
+        measureObjsRef.current.forEach(function(o){
+          scene.remove(o);
+          if (o && o.geometry) o.geometry.dispose();
+        });
+        measureObjsRef.current = [];
+        invalidate();
+      };
+
       // Toggle visibility on a measurement's 3D dots + lines (and label DOM
       // node) so the eye toggle in the bottom-right list and inspector panel
       // actually hides the geometry. State change alone only filtered the
@@ -6811,6 +6846,7 @@ function startApp() {
       };
 
       var _dragMeas = null;
+      var _edgeGhost = null; // {id, edgeIdx, point3, mesh} — transient ghost dot on an area polygon edge
       var _dragRaycaster = new THREE.Raycaster();
       var _dragMouse = new THREE.Vector2();
       function _hitMeasureEndpoint(clientX, clientY){
@@ -6874,6 +6910,93 @@ function startApp() {
         }
       }
 
+      // Find the closest point on any area polygon edge to the cursor in screen space.
+      // Returns {id, edgeIdx, point3} or null. Skips the 5% nearest each vertex so
+      // the endpoint-hover handler always wins near corners.
+      function _hitMeasureEdge(clientX, clientY) {
+        var rect = renderer.domElement.getBoundingClientRect();
+        var cx = clientX - rect.left, cy = clientY - rect.top;
+        var W = rect.width, H = rect.height;
+        var st = window._ccLatestState; if (!st) return null;
+        var cam = S.camera; if (!cam) return null;
+        var THRESH_SQ = 144; // 12 px
+        var best = null, bestDistSq = THRESH_SQ;
+        (st.measurements || []).forEach(function(m) {
+          if (m.type !== 'area' || m.hidden || !_measureGeoMap[m.id]) return;
+          var pts3d = (m.points || []).map(function(p) { return new THREE.Vector3(p[0],p[1],p[2]); });
+          var n = pts3d.length; if (n < 2) return;
+          var screenPts = pts3d.map(function(p) {
+            var v = p.clone().project(cam);
+            return { x:(v.x+1)/2*W, y:(1-v.y)/2*H, z:v.z };
+          });
+          for (var i = 0; i < n; i++) {
+            var j = (i + 1) % n;
+            var sA = screenPts[i], sB = screenPts[j];
+            if (sA.z > 1 && sB.z > 1) continue;
+            var dx = sB.x-sA.x, dy = sB.y-sA.y;
+            var lenSq = dx*dx+dy*dy; if (lenSq < 4) continue;
+            var t = Math.max(0, Math.min(1, ((cx-sA.x)*dx+(cy-sA.y)*dy)/lenSq));
+            if (t < 0.06 || t > 0.94) continue; // yield to endpoint hover near corners
+            var px = sA.x+t*dx-cx, py = sA.y+t*dy-cy;
+            var distSq = px*px+py*py;
+            if (distSq < bestDistSq) {
+              bestDistSq = distSq;
+              best = {id:m.id, edgeIdx:i, point3:pts3d[i].clone().lerp(pts3d[j], t)};
+            }
+          }
+        });
+        return best;
+      }
+
+      // Remove the transient edge-ghost dot from the scene.
+      function _clearEdgeGhost() {
+        if (!_edgeGhost) return;
+        if (_edgeGhost.mesh) {
+          scene.remove(_edgeGhost.mesh);
+          if (_edgeGhost.mesh.geometry) _edgeGhost.mesh.geometry.dispose();
+          if (_edgeGhost.mesh.material) _edgeGhost.mesh.material.dispose();
+        }
+        _edgeGhost = null;
+        invalidate();
+      }
+
+      // Insert a new vertex into a placed area measurement and immediately return a
+      // drag-handle object so the caller can start dragging the new point.
+      function _insertMeasureVertex(id, edgeIdx, point3) {
+        var st = window._ccLatestState; if (!st) return null;
+        var m = (st.measurements||[]).find(function(x){return x.id===id;}); if (!m) return null;
+        var insertAt = edgeIdx + 1;
+        var newPts = m.points.slice(0, insertAt).concat([[point3.x,point3.y,point3.z]]).concat(m.points.slice(insertAt));
+        var pts3 = newPts.map(function(p){return new THREE.Vector3(p[0],p[1],p[2]);});
+        var nrm = new THREE.Vector3();
+        for (var i=0;i<pts3.length;i++){
+          var a=pts3[i], b=pts3[(i+1)%pts3.length];
+          nrm.x+=(a.y-b.y)*(a.z+b.z); nrm.y+=(a.z-b.z)*(a.x+b.x); nrm.z+=(a.x-b.x)*(a.y+b.y);
+        }
+        var area = nrm.length()/2;
+        d({t:A.UPD_MEASUREMENT, id:id, u:{points:newPts, value:area, label:_ccFmtArea(area, st)}});
+        var entry = _measureGeoMap[id]; if (!entry) return null;
+        var refDot = entry.dots[0];
+        var dotColor = (refDot && refDot.material) ? refDot.material.color.getHex() : 0xb8533a;
+        var dotGeo = new THREE.SphereGeometry(0.05, 10, 10);
+        var dotMat = new THREE.MeshBasicMaterial({color:dotColor, depthTest:false});
+        var newDot = new THREE.Mesh(dotGeo, dotMat);
+        newDot.position.copy(point3); newDot.renderOrder = 1001;
+        newDot.userData.measurementId = id;
+        newDot.userData.pointIndex = insertAt;
+        newDot.userData.measurementType = 'area';
+        scene.add(newDot);
+        measureObjsRef.current.push(newDot);
+        // Insert into geo map and fix subsequent pointIndex values
+        entry.dots.splice(insertAt, 0, newDot);
+        for (var k = insertAt+1; k < entry.dots.length; k++) {
+          if (entry.dots[k]) entry.dots[k].userData.pointIndex = k;
+        }
+        _syncGeoFromPoints(entry, 'area', pts3);
+        invalidate();
+        return {id:id, pointIndex:insertAt, type:'area', mesh:newDot};
+      }
+
       // ── Endpoint hover highlight ──────────────────────────────────
       // Hovering over a placed endpoint dot scales it 1.5× and switches
       // the cursor to 'grab' so users see it's draggable. Mirrors the
@@ -6906,16 +7029,37 @@ function startApp() {
         if (_dragMeas) return;
         if (measureModeRef.current && measurePtsRef.current && measurePtsRef.current.length > 0) {
           if (_hoveredDot) _setDotHover(null);
+          _clearEdgeGhost();
           return;
         }
         var hit = _hitMeasureEndpoint(e.clientX, e.clientY);
         if (hit && hit.mesh) {
           _setDotHover(hit.mesh);
+          _clearEdgeGhost();
           // 'copy' cursor on length endpoints (only while a measure tool is active) hints at the Alt+click → trace area action
           renderer.domElement.style.cursor = (measureModeRef.current && hit.type === 'length') ? 'copy' : 'grab';
-        } else if (_hoveredDot) {
-          _setDotHover(null);
-          renderer.domElement.style.cursor = '';
+        } else {
+          if (_hoveredDot) { _setDotHover(null); }
+          // Check for edge-insert ghost on area polygon edges
+          var edgeHit = _hitMeasureEdge(e.clientX, e.clientY);
+          if (edgeHit) {
+            if (!_edgeGhost) {
+              var gGeo = new THREE.SphereGeometry(0.05, 8, 8);
+              var gMat = new THREE.MeshBasicMaterial({color:0xb8533a, opacity:0.45, transparent:true, depthTest:false});
+              var gMesh = new THREE.Mesh(gGeo, gMat); gMesh.renderOrder = 1002;
+              scene.add(gMesh);
+              _edgeGhost = {mesh:gMesh};
+            }
+            _edgeGhost.id = edgeHit.id;
+            _edgeGhost.edgeIdx = edgeHit.edgeIdx;
+            _edgeGhost.point3 = edgeHit.point3;
+            _edgeGhost.mesh.position.copy(edgeHit.point3);
+            renderer.domElement.style.cursor = 'cell';
+            invalidate();
+          } else {
+            if (_edgeGhost) { _clearEdgeGhost(); renderer.domElement.style.cursor = ''; }
+            else renderer.domElement.style.cursor = '';
+          }
         }
       });
 
@@ -6924,6 +7068,21 @@ function startApp() {
         // Skip when actively drawing (those clicks add vertices)
         if (measureModeRef.current && measurePtsRef.current && measurePtsRef.current.length > 0) return;
         var hit = _hitMeasureEndpoint(e.clientX, e.clientY);
+        // Click on an area edge ghost dot → insert vertex and immediately drag it
+        if (!hit && _edgeGhost && _edgeGhost.id) {
+          e.preventDefault(); e.stopPropagation();
+          if (S.orbit) S.orbit.enabled = false;
+          var _pt = _edgeGhost.point3.clone();
+          var _eid = _edgeGhost.id, _eidx = _edgeGhost.edgeIdx;
+          _clearEdgeGhost();
+          var inserted = _insertMeasureVertex(_eid, _eidx, _pt);
+          if (inserted) {
+            _dragMeas = inserted;
+            _setDotHover(inserted.mesh);
+            renderer.domElement.style.cursor = 'grabbing';
+          }
+          return;
+        }
         if (!hit) return;
         // Alt+click on a length endpoint while a measure tool is active = "continue as area"
         // (handled by mouseup, not drag). Outside measure mode, Alt+drag still resnaps.
@@ -8364,7 +8523,7 @@ function startApp() {
                   var dx = snap.point.x - p0.x, dy = snap.point.y - p0.y, dz = snap.point.z - p0.z;
                   var dist = Math.sqrt(dx*dx + dy*dy + dz*dz);
                   chipTxt = (window._ccFmtLength ? window._ccFmtLength(dist, st) : dist.toFixed(2)+' m');
-                  if (window._ccPreviewTarget && window._ccPreviewTarget.axis) chipTxt += ' · ' + window._ccPreviewTarget.axis.toUpperCase();
+                  if (window._ccPreviewTarget && window._ccPreviewTarget.axis) chipTxt += ' · ' + (window._ccAxisLabel ? window._ccAxisLabel(window._ccPreviewTarget.axis) : window._ccPreviewTarget.axis.toUpperCase());
                 } else if (window._ccAltHeld && window._ccAltHoverFrom) {
                   var f = window._ccAltHoverFrom;
                   var ax = snap.point.x - f.x, ay = snap.point.y - f.y, az = snap.point.z - f.z;
@@ -9980,7 +10139,7 @@ function startApp() {
               <button onClick=${function(e){e.stopPropagation();d({t:A.UPD_MEASUREMENT,id:m.id,u:{hidden:!m.hidden}});}}
                 style=${{...S_BTN,padding:'0 var(--space-1)',background:'none',color:m.hidden?'var(--text-faint)':'var(--text-secondary)',fontSize:'var(--text-2xs)'}}
                 title=${m.hidden?'Show':'Hide'}>${m.hidden?'⌐':'◉'}</button>
-              <button onClick=${function(e){e.stopPropagation();d({t:A.DEL_MEASUREMENT,id:m.id});}}
+              <button onClick=${function(e){e.stopPropagation();if(window._ccDeleteMeasurementGeo)window._ccDeleteMeasurementGeo(m.id);d({t:A.DEL_MEASUREMENT,id:m.id});}}
                 style=${{...S_BTN,padding:'0 var(--space-1)',background:'none',color:'var(--text-faint)',fontSize:'var(--text-2xs)'}} aria-label="Delete measurement">✕</button>
             </div>`;
           })}
@@ -20743,7 +20902,7 @@ function startApp() {
       }
       case 'measure': {
         if (action.mode==='stop') { d({t:A.MEASURE_MODE,v:null}); return 'Measurement off.'; }
-        if (action.mode==='clear') { d({t:A.CLEAR_MEASUREMENTS}); return 'Measurements cleared.'; }
+        if (action.mode==='clear') { if(window._ccClearAllMeasurementGeo)window._ccClearAllMeasurementGeo(); d({t:A.CLEAR_MEASUREMENTS}); return 'Measurements cleared.'; }
         d({t:A.MEASURE_MODE,v:action.mode});
         return 'Measuring '+action.mode+'. Click points in the 3D view.';
       }
@@ -23944,7 +24103,7 @@ function startApp() {
                   title="Promote to clash rule" style=${{...S_BTN,padding:'.1rem .3rem',fontSize:'var(--text-2xs)',background:'none',color:'var(--text-secondary)',border:'1px solid var(--border)',borderRadius:'var(--radius-xs)'}}>→ rule</button>`}
                 <button onClick=${function(){d({t:A.UPD_MEASUREMENT,id:m.id,u:{hidden:!m.hidden}});}}
                   title=${m.hidden?'Show':'Hide'} style=${{...S_BTN,padding:'.1rem .25rem',fontSize:'var(--text-xs)',background:'none',color:m.hidden?'var(--text-faint)':'var(--text-secondary)',border:'none'}}>${m.hidden?'⌐':'◉'}</button>
-                <button onClick=${function(){d({t:A.DEL_MEASUREMENT,id:m.id});}}
+                <button onClick=${function(){if(window._ccDeleteMeasurementGeo)window._ccDeleteMeasurementGeo(m.id);d({t:A.DEL_MEASUREMENT,id:m.id});}}
                   title="Delete" style=${{...S_BTN,padding:'.1rem .25rem',fontSize:'var(--text-xs)',background:'none',color:'var(--text-faint)',border:'none'}}>✕</button>
               </div>`;
             })}
@@ -23952,7 +24111,7 @@ function startApp() {
         })}
         ${ms.length>0 && html`<div style=${{display:'flex',gap:'.3rem',marginTop:'.4rem',justifyContent:'flex-end'}}>
           <button onClick=${exportCsv} style=${{...S_BTN,padding:'.25rem .6rem',fontSize:'var(--text-xs)',background:'var(--bg-tertiary)',color:'var(--text-secondary)',border:'1px solid var(--border)',borderRadius:'var(--radius-xs)'}}>Export CSV</button>
-          <button onClick=${function(){if(confirm('Clear all measurements?'))d({t:A.CLEAR_MEASUREMENTS});}}
+          <button onClick=${function(){if(confirm('Clear all measurements?')){if(window._ccClearAllMeasurementGeo)window._ccClearAllMeasurementGeo();d({t:A.CLEAR_MEASUREMENTS});}}}
             style=${{...S_BTN,padding:'.25rem .6rem',fontSize:'var(--text-xs)',background:'var(--bg-tertiary)',color:'var(--text-secondary)',border:'1px solid var(--border)',borderRadius:'var(--radius-xs)'}}>Clear all</button>
         </div>`}
       </div>`;
@@ -25476,7 +25635,7 @@ function startApp() {
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" dangerouslySetInnerHTML=${{__html:I.clear2}}></svg>
                 <span style=${{flex:1}}>Clearance <span style=${{color:'var(--text-faint)',fontSize:'var(--text-2xs)'}}>· min between two elements</span></span></div>`}
               <div style=${{height:1,background:'var(--border-subtle)',margin:'.25rem .15rem'}}></div>
-              <div onClick=${function(){d({t:A.CLEAR_MEASUREMENTS});setMeasurePopOpen(false);}}
+              <div onClick=${function(){if(window._ccClearAllMeasurementGeo)window._ccClearAllMeasurementGeo();d({t:A.CLEAR_MEASUREMENTS});setMeasurePopOpen(false);}}
                 style=${{display:'flex',alignItems:'center',gap:'.55rem',padding:'.35rem .55rem',borderRadius:'var(--radius-xs)',cursor:'pointer',color:'var(--text-secondary)'}}
                 onMouseEnter=${function(e){e.currentTarget.style.background='var(--surface-warm)';}}
                 onMouseLeave=${function(e){e.currentTarget.style.background='transparent';}}>
@@ -26581,7 +26740,7 @@ function startApp() {
         }
 
         if(e.key==='m'&&!ctrl&&!e.shiftKey){ d({t:A.MEASURE_MODE,v:s.measureMode?null:'length'}); return; }
-        if(e.shiftKey&&e.key==='M'&&!ctrl){ d({t:A.CLEAR_MEASUREMENTS}); return; }
+        if(e.shiftKey&&e.key==='M'&&!ctrl){ if(window._ccClearAllMeasurementGeo)window._ccClearAllMeasurementGeo(); d({t:A.CLEAR_MEASUREMENTS}); return; }
         if(s.measureMode){
           if(e.key==='l'){d({t:A.MEASURE_MODE,v:'length'});return;}
           if(e.key==='a'){d({t:A.MEASURE_MODE,v:'angle'});return;}
@@ -26623,7 +26782,7 @@ function startApp() {
         if(e.key==='y'&&!ctrl){ d({t:A.SECTION,axis:s.sectionAxis==='z'?null:'z'}); return; }
         if(e.key==='g'&&!ctrl){ d({t:A.UPD_PREFS,u:{showGrid:!(s.prefs.showGrid!==false)}}); return; }
         if(e.key==='Delete'&&!s.activeId){
-          if(s.measurements.length>0){d({t:A.DEL_MEASUREMENT,id:s.measurements[s.measurements.length-1].id});return;}
+          if(s.measurements.length>0){var _dlast=s.measurements[s.measurements.length-1];if(window._ccDeleteMeasurementGeo)window._ccDeleteMeasurementGeo(_dlast.id);d({t:A.DEL_MEASUREMENT,id:_dlast.id});return;}
         }
       }
       window.addEventListener('keydown', gk);
@@ -26696,6 +26855,7 @@ function startApp() {
           var last = s.measurements[s.measurements.length-1];
           undoStack.push(last);
           if (undoStack.length > 20) undoStack.shift();
+          if (window._ccDeleteMeasurementGeo) window._ccDeleteMeasurementGeo(last.id);
           d({t:A.DEL_MEASUREMENT, id:last.id});
           return true;
         }
