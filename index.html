@@ -6578,32 +6578,58 @@ function startApp() {
         if (window._ccHoverCoordTick) window._ccHoverCoordTick();
       };
       // Min-distance / clearance between two elements (T2.2)
+      // Resolve an element-info object → array of all its meshes in the scene.
+      // An IFC element can be split across many sub-meshes (e.g. an IfcRoof
+      // assembly), so picking just one would miss the actual closest geometry.
+      function _ccGetElementMeshes(info){
+        if (!info || info.expressId == null) return [];
+        var st = window._ccLatestState; if (!st || !st.models) return [];
+        var model = null;
+        for (var mi=0; mi<st.models.length; mi++){
+          if (st.models[mi].id === info.modelId) { model = st.models[mi]; break; }
+        }
+        if (!model) {
+          for (var mi2=0; mi2<st.models.length; mi2++){
+            var els = st.models[mi2].elements || [];
+            for (var ei2=0; ei2<els.length; ei2++){
+              if (els[ei2].expressId === info.expressId) return els[ei2].meshes || [];
+            }
+          }
+          return [];
+        }
+        var el = (model.elements||[]).find(function(e){return e.expressId === info.expressId;});
+        return (el && el.meshes) || [];
+      }
       window._ccComputeClearance = function(aInfo, bInfo){
         if (!aInfo || !bInfo || !aInfo.box || !bInfo.box) return;
-        var aMesh = (window._ccGetElementMesh && window._ccGetElementMesh(aInfo)) || null;
-        var bMesh = (window._ccGetElementMesh && window._ccGetElementMesh(bInfo)) || null;
+        var aMeshes = _ccGetElementMeshes(aInfo);
+        var bMeshes = _ccGetElementMeshes(bInfo);
         var bestPair = null, bestDist = Infinity;
-        // Sample mesh A vertices vs mesh B bbox surface, then refine with B vertices.
-        // Cheap O(nA + nB) approximation — accurate enough for clearance sanity-check.
-        function sampleVerts(mesh, max){
-          if (!mesh || !mesh.geometry || !mesh.geometry.attributes || !mesh.geometry.attributes.position) {
-            // Fall back to bbox corners
-            var b = mesh && mesh.userData && mesh.userData.box;
-            if (!b) return [];
-            var c = [b.min.clone(), b.max.clone(),
-                     new THREE.Vector3(b.min.x,b.min.y,b.max.z), new THREE.Vector3(b.min.x,b.max.y,b.min.z),
-                     new THREE.Vector3(b.max.x,b.min.y,b.min.z), new THREE.Vector3(b.min.x,b.max.y,b.max.z),
-                     new THREE.Vector3(b.max.x,b.min.y,b.max.z), new THREE.Vector3(b.max.x,b.max.y,b.min.z)];
-            return c;
-          }
-          var pos = mesh.geometry.attributes.position;
-          var step = Math.max(1, Math.floor(pos.count / max));
+        // Sample vertices from ALL meshes of an element (an IfcRoof can have
+        // many sub-meshes; using just one corner of its bbox gives a wildly
+        // wrong "closest point" floating in empty space).
+        function sampleAllVerts(meshes, maxTotal){
+          if (!meshes || !meshes.length) return [];
           var verts = [];
-          var wm = mesh.matrixWorld;
-          for (var i=0; i<pos.count; i += step){
-            var v = new THREE.Vector3().fromBufferAttribute(pos, i);
-            if (wm) v.applyMatrix4(wm);
-            verts.push(v);
+          // Distribute the budget across meshes proportional to their vertex count.
+          var totalCount = 0;
+          for (var i=0;i<meshes.length;i++){
+            var m=meshes[i]; var pos=m && m.geometry && m.geometry.attributes && m.geometry.attributes.position;
+            if (pos) totalCount += pos.count;
+          }
+          if (totalCount === 0) return [];
+          for (var i2=0;i2<meshes.length;i2++){
+            var mesh = meshes[i2];
+            var pos2 = mesh && mesh.geometry && mesh.geometry.attributes && mesh.geometry.attributes.position;
+            if (!pos2) continue;
+            var share = Math.max(8, Math.floor(maxTotal * pos2.count / totalCount));
+            var step = Math.max(1, Math.floor(pos2.count / share));
+            var wm = mesh.matrixWorld;
+            for (var k=0; k<pos2.count; k += step){
+              var v = new THREE.Vector3().fromBufferAttribute(pos2, k);
+              if (wm) v.applyMatrix4(wm);
+              verts.push(v);
+            }
           }
           return verts;
         }
@@ -6622,8 +6648,10 @@ function startApp() {
                   new THREE.Vector3(b.max.x,b.min.y,b.min.z), new THREE.Vector3(b.min.x,b.max.y,b.max.z),
                   new THREE.Vector3(b.max.x,b.min.y,b.max.z), new THREE.Vector3(b.max.x,b.max.y,b.min.z)];
         })(bInfo.box);
-        var aSet = aMesh ? sampleVerts(aMesh, 400) : aBoxCorners;
-        var bSet = bMesh ? sampleVerts(bMesh, 400) : bBoxCorners;
+        var aSet = aMeshes.length ? sampleAllVerts(aMeshes, 600) : aBoxCorners;
+        var bSet = bMeshes.length ? sampleAllVerts(bMeshes, 600) : bBoxCorners;
+        if (!aSet.length) aSet = aBoxCorners;
+        if (!bSet.length) bSet = bBoxCorners;
         if (!aSet.length || !bSet.length) {
           // Fallback: bbox-bbox shortest segment via clamp
           var ax = Math.max(aInfo.box.min.x, Math.min(bInfo.box.max.x, aInfo.box.max.x));
