@@ -1,5 +1,8 @@
 # Changelog
 
+## v5.9.3 (2026-05-05)
+- Remove [2D Outlines] / [2D Sheet] console.log spam
+
 ## v5.9.2 (2026-05-05)
 - Walk mode: call _ccWalkEnter directly from Pegman click
 
