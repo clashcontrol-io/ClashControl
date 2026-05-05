@@ -7313,22 +7313,29 @@ function startApp() {
             var _rsMeas = window._ccLatestState;
             var _rmMeas = (_rsMeas && _rsMeas.measurements||[]).find(function(x){return x.id===_epClick.id;});
             if (_rmMeas && _rmMeas.points && _rmMeas.points.length >= 2) {
-              // Seed only the clicked vertex. Seeding both endpoints created odd polygons
-              // when the measurement was diagonal — the existing line stays as a visual
-              // guide and the user explicitly clicks each corner they want included.
-              var _clickedArr = _rmMeas.points[_epClick.pointIndex];
-              var _clickedVec = new THREE.Vector3(_clickedArr[0], _clickedArr[1], _clickedArr[2]);
-              measurePtsRef.current = [_clickedVec];
-              // Add an in-progress dot at the seeded vertex so it's visible as "placed"
-              var _sDotG = new THREE.SphereGeometry(0.09, 12, 12);
-              var _sDotM = new THREE.MeshBasicMaterial({color:0xb8533a, depthTest:false, transparent:true, opacity:0.98});
-              var _sDot = new THREE.Mesh(_sDotG, _sDotM);
-              _sDot.position.copy(_clickedVec); _sDot.renderOrder = 999;
-              scene.add(_sDot); measureObjsRef.current.push(_sDot);
+              // Seed BOTH endpoints so the existing edge becomes the first side of the
+              // new area polygon. Clicked point = pts[0] (area closes back here);
+              // other end = pts[1] (rubber-band starts from there). User only needs
+              // 2 more corner clicks to complete a 4-sided area.
+              var _allSeedPts = _rmMeas.points.map(function(p){return new THREE.Vector3(p[0],p[1],p[2]);});
+              var _seedA = (_epClick.pointIndex === 0) ? _allSeedPts[0] : _allSeedPts[1];
+              var _seedB = (_epClick.pointIndex === 0) ? _allSeedPts[1] : _allSeedPts[0];
+              measurePtsRef.current = [_seedA.clone(), _seedB.clone()];
+              // Add overlay in-progress dots at both seeds so _ccDropInProgressDots
+              // removes them on Esc (it stops at the committed Line from the length meas).
+              [_seedA, _seedB].forEach(function(sv){
+                var _sd = new THREE.Mesh(
+                  new THREE.SphereGeometry(0.09, 12, 12),
+                  new THREE.MeshBasicMaterial({color:0xb8533a, depthTest:false, transparent:true, opacity:0.98})
+                );
+                _sd.position.copy(sv); _sd.renderOrder = 999;
+                scene.add(_sd); measureObjsRef.current.push(_sd);
+              });
+              window._ccChainedArea = true; // skip _registerMeasurementGeo slice-arithmetic
               measureModeRef.current = 'area';
               window._ccAltEndpointHit = null;
               d({t:A.MEASURE_MODE, v:'area'});
-              if (window._ccToast) window._ccToast('Area started from this corner · click to trace · click near start to close');
+              if (window._ccToast) window._ccToast('Existing edge locked · click 2 more corners to close · Enter or click near start');
               invalidate();
               return;
             }
@@ -9816,7 +9823,7 @@ function startApp() {
         ${s.measureMode && window._ccHoverPoint && (function(){
           var p=window._ccHoverPoint;
           return html`<div class="cc-overlay-chrome" style=${{fontFamily:'var(--font-mono)',fontSize:'var(--text-2xs)',color:'var(--text-secondary)',padding:'var(--space-1) var(--space-2)'}}>
-            X ${p.x.toFixed(2)} &nbsp; Y ${p.y.toFixed(2)} &nbsp; Z ${p.z.toFixed(2)} m
+            X ${p.x.toFixed(2)} Y ${p.y.toFixed(2)} Z ${p.z.toFixed(2)} m
           </div>`;
         })()}
         ${s.measurements.length>0 && html`<div class="cc-overlay-chrome" style=${{padding:'var(--space-1)',maxHeight:160,overflowY:'auto',width:220}}>
