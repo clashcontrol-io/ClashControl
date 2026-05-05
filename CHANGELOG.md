@@ -1,5 +1,8 @@
 # Changelog
 
+## v5.7.4 (2026-05-05)
+- Token compliance pass for yesterday's section + compare UI
+
 ## v5.7.3 (2026-05-05)
 - chore: daily memory sync 2026-05-05
 
