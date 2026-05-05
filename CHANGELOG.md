@@ -1,5 +1,8 @@
 # Changelog
 
+## v5.9.0 (2026-05-05)
+- Walk mode follow-up: spline recorder, bookmarks UI, sun slider, footprint check, Settings section
+
 ## v5.8.0 (2026-05-05)
 - chore: bump version to 5.7.13
 
