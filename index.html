@@ -6635,6 +6635,15 @@ function startApp() {
           refB:{modelId:bInfo.modelId, expressId:bInfo.expressId, globalId:bInfo.globalId, ifcType:bInfo.ifcType}
         }});
         if (window._ccCaptureMeasurementSnapshot) window._ccCaptureMeasurementSnapshot(id);
+        // _ccComputeClearance pushed in this order: line, dotA, dotB.
+        // We need [dotA, dotB, line]. Re-order via swap so registerGeo
+        // sees the canonical layout.
+        var arr = measureObjsRef.current, n = arr.length;
+        if (n >= 3) {
+          var line = arr[n-3], dA = arr[n-2], dB = arr[n-1];
+          arr[n-3] = dA; arr[n-2] = dB; arr[n-1] = line;
+        }
+        if (window._ccRegisterMeasurementGeo) window._ccRegisterMeasurementGeo(id, 'clearance', 2, 1);
       };
       // Toast: re-uses any existing toast facility, otherwise console.
       if (!window._ccToast) {
@@ -6642,6 +6651,206 @@ function startApp() {
           try { if (window._ccShowToast) window._ccShowToast(msg); else console.log('%c[CC]','color:#b8533a', msg); } catch(e){}
         };
       }
+
+      // ── Measurement geometry map + drag-to-edit (T1.4) ──────────────
+      // _measureGeoMap[id] = {type, dots:[mesh,...], lines:[mesh,...]}
+      // Each dot carries userData.measurementId + pointIndex so the drag
+      // hit-test can identify which endpoint it is.
+      var _measureGeoMap = {};
+      function _registerMeasurementGeo(id, type, dotCount, lineCount){
+        var arr = measureObjsRef.current;
+        var n = arr.length;
+        var lines = arr.slice(n - lineCount, n);
+        var dots  = arr.slice(n - lineCount - dotCount, n - lineCount);
+        dots.forEach(function(dot, i){
+          if (!dot || !dot.userData) return;
+          dot.userData.measurementId = id;
+          dot.userData.pointIndex = i;
+          dot.userData.measurementType = type;
+        });
+        lines.forEach(function(ln){
+          if (!ln || !ln.userData) return;
+          ln.userData.measurementId = id;
+          ln.userData.measurementType = type;
+        });
+        _measureGeoMap[id] = {type:type, dots:dots, lines:lines};
+      }
+      window._ccRegisterMeasurementGeo = _registerMeasurementGeo;
+      window._ccResetMeasureGeoMap = function(){ _measureGeoMap = {}; };
+
+      var _dragMeas = null;
+      var _dragRaycaster = new THREE.Raycaster();
+      var _dragMouse = new THREE.Vector2();
+      function _hitMeasureEndpoint(clientX, clientY){
+        var rect = renderer.domElement.getBoundingClientRect();
+        _dragMouse.x = ((clientX-rect.left)/rect.width)*2-1;
+        _dragMouse.y = -((clientY-rect.top)/rect.height)*2+1;
+        _dragRaycaster.setFromCamera(_dragMouse, S.camera);
+        var dots = [];
+        for (var k in _measureGeoMap) {
+          if (!_measureGeoMap.hasOwnProperty(k)) continue;
+          var entry = _measureGeoMap[k];
+          if (entry.type === 'element') continue; // single centroid, not draggable
+          (entry.dots||[]).forEach(function(d){ if (d) dots.push(d); });
+        }
+        if (!dots.length) return null;
+        var hits = _dragRaycaster.intersectObjects(dots, false);
+        if (!hits.length) return null;
+        var hit = hits[0].object;
+        return {id:hit.userData.measurementId, pointIndex:hit.userData.pointIndex, type:hit.userData.measurementType, mesh:hit};
+      }
+      function _recomputeMeasurementValue(m){
+        if (!m || !m.points) return null;
+        var pts = m.points.map(function(p){return new THREE.Vector3(p[0],p[1],p[2]);});
+        if (m.type === 'length' || m.type === 'clearance') {
+          if (pts.length < 2) return null;
+          var d2 = pts[0].distanceTo(pts[1]);
+          return {value:d2, label:_ccFmtLength(d2, window._ccLatestState)};
+        }
+        if (m.type === 'angle' && pts.length >= 3) {
+          var v1 = pts[0].clone().sub(pts[1]).normalize();
+          var v2 = pts[2].clone().sub(pts[1]).normalize();
+          var ang = Math.acos(Math.max(-1, Math.min(1, v1.dot(v2))));
+          return {value:ang, label:_ccFmtAngle(ang, window._ccLatestState)};
+        }
+        if (m.type === 'area' && pts.length >= 3) {
+          var nrm = new THREE.Vector3();
+          for (var i=0;i<pts.length;i++){
+            var a=pts[i], b=pts[(i+1)%pts.length];
+            nrm.x += (a.y-b.y)*(a.z+b.z);
+            nrm.y += (a.z-b.z)*(a.x+b.x);
+            nrm.z += (a.x-b.x)*(a.y+b.y);
+          }
+          var area = nrm.length()/2;
+          return {value:area, label:_ccFmtArea(area, window._ccLatestState)};
+        }
+        return null;
+      }
+      function _syncGeoFromPoints(entry, type, pts3){
+        (entry.dots||[]).forEach(function(d, i){ if (d && pts3[i]) d.position.copy(pts3[i]); });
+        if (type === 'length' || type === 'clearance') {
+          if (entry.lines[0] && pts3.length >= 2) {
+            entry.lines[0].geometry.dispose();
+            entry.lines[0].geometry = new THREE.BufferGeometry().setFromPoints([pts3[0], pts3[1]]);
+          }
+        } else if (type === 'angle') {
+          if (entry.lines[0] && pts3.length >= 2) { entry.lines[0].geometry.dispose(); entry.lines[0].geometry = new THREE.BufferGeometry().setFromPoints([pts3[0], pts3[1]]); }
+          if (entry.lines[1] && pts3.length >= 3) { entry.lines[1].geometry.dispose(); entry.lines[1].geometry = new THREE.BufferGeometry().setFromPoints([pts3[1], pts3[2]]); }
+        } else if (type === 'area' && entry.lines[0]) {
+          entry.lines[0].geometry.dispose();
+          entry.lines[0].geometry = new THREE.BufferGeometry().setFromPoints(pts3.concat([pts3[0]]));
+        }
+      }
+
+      renderer.domElement.addEventListener('mousedown', function(e){
+        if (e.button !== 0) return;
+        // Skip when actively drawing (those clicks add vertices)
+        if (measureModeRef.current && measurePtsRef.current && measurePtsRef.current.length > 0) return;
+        var hit = _hitMeasureEndpoint(e.clientX, e.clientY);
+        if (!hit) return;
+        e.preventDefault(); e.stopPropagation();
+        if (S.orbit) S.orbit.enabled = false;
+        _dragMeas = hit;
+        renderer.domElement.style.cursor = 'grabbing';
+      }, true);
+
+      renderer.domElement.addEventListener('mousemove', function(e){
+        if (!_dragMeas) return;
+        var rect = renderer.domElement.getBoundingClientRect();
+        _dragMouse.x = ((e.clientX-rect.left)/rect.width)*2-1;
+        _dragMouse.y = -((e.clientY-rect.top)/rect.height)*2+1;
+        _dragRaycaster.setFromCamera(_dragMouse, S.camera);
+        var allDots = [], allLines = [];
+        for (var k in _measureGeoMap) {
+          (_measureGeoMap[k].dots||[]).forEach(function(d){allDots.push(d);});
+          (_measureGeoMap[k].lines||[]).forEach(function(l){allLines.push(l);});
+        }
+        var hits = _dragRaycaster.intersectObjects(S.mg.children, true).filter(function(h){
+          return h.object && h.object.visible && allDots.indexOf(h.object) < 0 && allLines.indexOf(h.object) < 0;
+        });
+        if (!hits.length) return;
+        var snap = _ccComputeSnap(hits[0], e.clientX, e.clientY) || {point:hits[0].point.clone(), type:'face'};
+        window._ccHoverSnap = {point:snap.point, type:snap.type, screenX:e.clientX, screenY:e.clientY, srcObj:snap.srcObj||hits[0].object};
+        if (window._ccHoverCoordTick) window._ccHoverCoordTick();
+        var st = window._ccLatestState; if (!st) return;
+        var m = (st.measurements||[]).find(function(x){return x.id===_dragMeas.id;}); if (!m) return;
+        var newPts = m.points.map(function(p){return p.slice();});
+        newPts[_dragMeas.pointIndex] = [snap.point.x, snap.point.y, snap.point.z];
+        var rec = _recomputeMeasurementValue({type:m.type, points:newPts});
+        var update = {points:newPts};
+        if (rec) { update.value = rec.value; update.label = rec.label; }
+        d({t:A.UPD_MEASUREMENT, id:m.id, u:update});
+        // Immediate geometry sync for snappy feel — avoid waiting for state-driven re-render
+        var entry = _measureGeoMap[_dragMeas.id];
+        if (entry) {
+          var pts3 = newPts.map(function(p){return new THREE.Vector3(p[0],p[1],p[2]);});
+          _syncGeoFromPoints(entry, m.type, pts3);
+        }
+        invalidate();
+      }, true);
+
+      renderer.domElement.addEventListener('mouseup', function(e){
+        if (!_dragMeas) return;
+        e.preventDefault(); e.stopPropagation();
+        if (S.orbit) S.orbit.enabled = true;
+        renderer.domElement.style.cursor = '';
+        _dragMeas = null;
+      }, true);
+
+      // ── PointerLens magnifier (T3.2) ────────────────────────────────
+      // 96-px circular WebGLRenderer overlay near the cursor that re-renders
+      // the same scene with a 4× narrower FOV centred on the snap target.
+      // Lazy-initialised on first activation to avoid a second WebGL context
+      // for users who never enable it.
+      var _magCanvas = null, _magRenderer = null, _magCamera = null, _magInitFailed = false;
+      function _ensureMagnifier(){
+        if (_magCanvas || _magInitFailed) return;
+        _magCanvas = document.createElement('canvas');
+        _magCanvas.width  = 192; _magCanvas.height = 192;
+        _magCanvas.style.cssText = [
+          'position:fixed','width:96px','height:96px','border-radius:50%',
+          'border:2px solid #b8533a',
+          'box-shadow:0 4px 16px rgba(0,0,0,.35)',
+          'pointer-events:none','z-index:9999','display:none','overflow:hidden'
+        ].join(';');
+        document.body.appendChild(_magCanvas);
+        try {
+          _magRenderer = new THREE.WebGLRenderer({canvas:_magCanvas, alpha:true, antialias:true, powerPreference:'low-power'});
+          _magRenderer.setPixelRatio(1);
+          _magRenderer.setSize(192, 192, false);
+          _magRenderer.outputEncoding = THREE.sRGBEncoding;
+        } catch(err){
+          if (_magCanvas.parentNode) _magCanvas.parentNode.removeChild(_magCanvas);
+          _magCanvas = null; _magInitFailed = true;
+          console.warn('[Magnifier] WebGL context creation failed; magnifier disabled.', err);
+        }
+        _magCamera = (S.camera && S.camera.clone) ? S.camera.clone() : new THREE.PerspectiveCamera();
+      }
+      window._ccRenderMagnifier = function(){
+        var st = window._ccLatestState;
+        var enabled = !!(st && st.prefs && st.prefs.measureMagnifier);
+        var active = enabled && !!(st && (st.measureMode || window._ccAltHeld)) && !!window._ccHoverSnap && !!window._ccCursorXY;
+        if (!active) {
+          if (_magCanvas) _magCanvas.style.display = 'none';
+          return;
+        }
+        _ensureMagnifier();
+        if (!_magRenderer || !_magCanvas) return;
+        var cur = window._ccCursorXY;
+        _magCanvas.style.left = (cur.x + 22) + 'px';
+        _magCanvas.style.top  = (cur.y - 118) + 'px';
+        _magCanvas.style.display = 'block';
+        try {
+          _magCamera.copy(S.camera);
+          if (_magCamera.isPerspectiveCamera) {
+            _magCamera.fov = Math.max(2, S.camera.fov / 4);
+            _magCamera.aspect = 1;
+            _magCamera.updateProjectionMatrix();
+          }
+          _magCamera.lookAt(window._ccHoverSnap.point);
+          _magRenderer.render(scene, _magCamera);
+        } catch(_e){}
+      };
 
       // ── Hover highlighting ──
       var hoverRaycaster = new THREE.Raycaster();
@@ -7112,6 +7321,7 @@ function startApp() {
             var _id = uid();
             d({t:A.ADD_MEASUREMENT, v:{id:_id, type:'length', value:dist, label:label, points:pts.map(function(p){return [p.x,p.y,p.z]})}});
             if (window._ccCaptureMeasurementSnapshot) window._ccCaptureMeasurementSnapshot(_id);
+            if (window._ccRegisterMeasurementGeo) window._ccRegisterMeasurementGeo(_id, 'length', 2, 1);
             measurePtsRef.current = [];
             _clearPreview();
             // Calibration finalisation: if a calibration is pending, prompt for
@@ -7142,6 +7352,7 @@ function startApp() {
             var _idA = uid();
             d({t:A.ADD_MEASUREMENT, v:{id:_idA, type:'angle', value:angle, label:_ccFmtAngle(angle,_state), points:pts.map(function(p){return [p.x,p.y,p.z]})}});
             if (window._ccCaptureMeasurementSnapshot) window._ccCaptureMeasurementSnapshot(_idA);
+            if (window._ccRegisterMeasurementGeo) window._ccRegisterMeasurementGeo(_idA, 'angle', 3, 2);
             measurePtsRef.current = [];
             _clearPreview();
           }
@@ -7150,6 +7361,9 @@ function startApp() {
             var _closeNow = (pts.length>=3 && pts[pts.length-1].distanceTo(pts[0])<0.15);
             if(_closeNow) {
               pts.pop(); // drop the duplicate close-click
+              // The duplicate dot was already added to the scene before this branch — remove it
+              var _extraDot = measureObjsRef.current.pop();
+              if (_extraDot) { scene.remove(_extraDot); if (_extraDot.geometry) _extraDot.geometry.dispose(); }
               var polyMat = new THREE.LineBasicMaterial({color:0x1a6b4a, linewidth:2, depthTest:false, transparent:true, opacity:0.95});
               var polyPts = pts.concat([pts[0]]);
               var polyGeo = new THREE.BufferGeometry().setFromPoints(polyPts);
@@ -7167,6 +7381,7 @@ function startApp() {
               var _idR = uid();
               d({t:A.ADD_MEASUREMENT, v:{id:_idR, type:'area', value:area2, label:_ccFmtArea(area2,_state), points:pts.map(function(p){return [p.x,p.y,p.z]})}});
               if (window._ccCaptureMeasurementSnapshot) window._ccCaptureMeasurementSnapshot(_idR);
+              if (window._ccRegisterMeasurementGeo) window._ccRegisterMeasurementGeo(_idR, 'area', pts.length, 1);
               measurePtsRef.current = [];
               _clearPreview();
             }
@@ -7766,6 +7981,10 @@ function startApp() {
             window._ccPendingScreenshot = null;
             try { _cb(renderer.domElement.toDataURL('image/png')); } catch(e){}
           }
+          // ── PointerLens magnifier (T3.2) — re-renders the scene at 4× zoom
+          //    into a small circular canvas near the cursor. Costs one extra
+          //    render per frame while active; gated by prefs.measureMagnifier.
+          if (window._ccRenderMagnifier) try { window._ccRenderMagnifier(); } catch(_e){}
           // ── Project measurement labels onto screen ──────────────
           if (window._ccMeasurementsRef && window._ccMeasurementsRef.length > 0) {
             // The label overlay is a sibling of `el` (canvas wrapper) inside the Viewer root.
@@ -8613,6 +8832,7 @@ function startApp() {
         });
         measureObjsRef.current = [];
         measurePtsRef.current = [];
+        if (window._ccResetMeasureGeoMap) window._ccResetMeasureGeoMap();
       }
       invalidate();
     }, [s.measurements.length]);

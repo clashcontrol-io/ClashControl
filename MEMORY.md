@@ -106,9 +106,9 @@ On branch `claude/improve-measurement-tools-yBrCS` (2026-05-04) — measurement 
 - ~~T3.5 BCF round-trip: `clashcontrol/measurements.json` sibling file written on export, parsed on import. Other BCF tools ignore the folder~~ (2026-05-04)
 - ~~T3.6 NL + MCP: regex pre-block + fuzzy intents for `measure element|clearance`, `takeoff <type>`, `units imperial|metric`. smart-bridge.js handlers `measure` (extended) + new `takeoff` + `set_measure_units`~~ (2026-05-04)
 
-**Deferred to follow-up:**
-- T1.4 drag-to-edit endpoints (endpoint dots not yet tagged with measurementId; would need full geometry-rebuild-from-state effect to support drag-with-resnap cleanly)
-- T3.2 PointerLens magnifier (hold Z) — pref toggle exists, render path not yet wired
+**Follow-ups now landed:**
+- ~~T1.4 drag-to-edit endpoints: endpoint dots tagged via `_ccRegisterMeasurementGeo(id, type, dotCount, lineCount)`; `mousedown`-capture handler hit-tests the tagged dot list, disables orbit, drags with re-snap, recomputes value/label, dispatches `UPD_MEASUREMENT` per move and syncs Three.js geometry incrementally for snappy feel. Element measurements (single centroid) are excluded from drag.~~ (2026-05-04)
+- ~~T3.2 PointerLens magnifier render: lazy 96-px circular `WebGLRenderer` overlay attached to `document.body`, re-renders the scene with the main camera cloned at FOV/4 looking at the snap point, hooked into the main `tick()` after the primary render. Pref `measureMagnifier` gates activation; visible while measuring or holding Alt.~~ (2026-05-04)
 
 **Key new globals:** `_ccFmtLength/Area/Volume/Angle/Deltas`, `_ccRelabelMeasurement`, `_ccDetectIfcUnitSystem`, `_ccMeasureUnitMode`, `_ccCalibration`, `_ccComputeSnap`, `_ccUpdateMeasurePreview`, `_ccCancelInProgressMeasurement`, `_ccPopLastMeasureVertex`, `_ccCloseArea`, `_ccUndoMeasurement`, `_ccPromoteClearanceToRule`, `_ccComputeTakeoff`, `_ccExportTakeoffCsv`, `_ccStartCalibration`, `_ccResolveElementForObject`, `_ccOpenElementMeasureMenu`, `_ccPickElementMeasure`, `_ccComputeClearance`, `_ccCaptureMeasurementSnapshot`, `_ccFlyToMeasurement`, `_ccDropInProgressDots`, `_ccForceCloseArea`. Modifier flags: `_ccShiftHeld`, `_ccAltHeld`, `_ccAltHoverFrom`, `_ccCalibrationPending`, `_ccClearancePickA`, `_ccElementMeasureMenu`, `_ccPreviewTarget`, `_ccLastTakeoff`.
 
