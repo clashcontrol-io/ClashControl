@@ -294,6 +294,8 @@
     @keyframes ccModalIn{from{opacity:0;transform:scale(.97) translateY(4px)}to{opacity:1;transform:scale(1) translateY(0)}}
     @keyframes ccBackdropIn{from{opacity:0}to{opacity:1}}
     @keyframes ccTipIn{from{opacity:0;transform:translateX(-50%) translateY(-3px)}to{opacity:1;transform:translateX(-50%) translateY(0)}}
+    @keyframes cc-walk-pulse{0%,100%{opacity:.45;transform:scale(1)}50%{opacity:.8;transform:scale(1.18)}}
+    @keyframes cc-walk-tele{0%{opacity:1}100%{opacity:0}}
     .cc-modal-backdrop{animation:ccBackdropIn var(--duration-fast) var(--ease-standard)}
     .cc-modal-card{animation:ccModalIn var(--duration-base) var(--ease-decelerate)}
     .cc-list-row{transition:background var(--duration-fast) var(--ease-standard),border-color var(--duration-fast) var(--ease-standard)}
@@ -711,6 +713,7 @@ function startApp() {
     treeOpen:false,
     floorPlan:null, // {storeyName, elevation, cutHeight} or null
     walkMode:false, // first-person walk mode active
+    walkPlacing:false, // Pegman drop-in: hover floor surface, click to commit
     _highlightedStorey:null,
     sheets:[],
     activeSheetId:null,
@@ -772,7 +775,7 @@ function startApp() {
     SET_CLASSIFICATIONS:'SET_CLASSIFICATIONS',
     TOGGLE_CLASS_VIS:'TOGGLE_CLASS_VIS', SHOW_ALL_CLASSES:'SHOW_ALL_CLASSES',
     HIDE_ALL_CLASSES:'HIDE_ALL_CLASSES', COLOR_BY_CLASS:'COLOR_BY_CLASS',
-    TREE:'TREE', FLOOR_PLAN:'FLOOR_PLAN', WALK_MODE:'WALK_MODE', SET_HIGHLIGHTED_STOREY:'SET_HIGHLIGHTED_STOREY',
+    TREE:'TREE', FLOOR_PLAN:'FLOOR_PLAN', WALK_MODE:'WALK_MODE', WALK_PLACING:'WALK_PLACING', SET_HIGHLIGHTED_STOREY:'SET_HIGHLIGHTED_STOREY',
     SET_PROJECT:'SET_PROJECT', SET_PROJECT_LIST:'SET_PROJECT_LIST',
     LOAD_PROJECT_STATE:'LOAD_PROJECT_STATE',
     CLASH_GROUP_BY:'CLASH_GROUP_BY', CLASH_SORT_BY:'CLASH_SORT_BY',
@@ -1103,7 +1106,8 @@ function startApp() {
 
       case A.TREE:         return Object.assign({},s,{treeOpen:a.v});
       case A.FLOOR_PLAN:   return Object.assign({},s,{floorPlan:a.v, sectionAxis:null, sectionCustom:null, sectionBox:null, walkMode:a.v?false:s.walkMode, measureMode:a.v?null:s.measureMode, commentMode:a.v?false:s.commentMode});
-      case A.WALK_MODE:    return Object.assign({},s,{walkMode:!!a.v, sectionAxis:a.v?null:s.sectionAxis, sectionCustom:a.v?null:s.sectionCustom, sectionBox:a.v?null:s.sectionBox, measureMode:a.v?null:s.measureMode, floorPlan:a.v?null:s.floorPlan, commentMode:a.v?false:s.commentMode});
+      case A.WALK_MODE:    return Object.assign({},s,{walkMode:!!a.v, walkEntry:a.entry||null, walkPlacing:false, sectionAxis:a.v?null:s.sectionAxis, sectionCustom:a.v?null:s.sectionCustom, sectionBox:a.v?null:s.sectionBox, measureMode:a.v?null:s.measureMode, floorPlan:a.v?null:s.floorPlan, commentMode:a.v?false:s.commentMode});
+      case A.WALK_PLACING: return Object.assign({},s,{walkPlacing:!!a.v, walkMode:a.v?false:s.walkMode, sectionAxis:a.v?null:s.sectionAxis, sectionCustom:a.v?null:s.sectionCustom, sectionBox:a.v?null:s.sectionBox, measureMode:a.v?null:s.measureMode, floorPlan:a.v?null:s.floorPlan, commentMode:a.v?false:s.commentMode});
       case A.SET_HIGHLIGHTED_STOREY: return Object.assign({},s,{_highlightedStorey:a.v});
       case A.SET_PROJECT:  return Object.assign({},s,{activeProject:a.id});
       case A.SET_PROJECT_LIST: return Object.assign({},s,{projectList:a.v});
@@ -4555,33 +4559,52 @@ function startApp() {
   }
 
   // ── First-Person Walk Mode (Enscape-style) ──────────────────── INTERNALS.md §12
-  // Hold LMB on canvas to enable WASD movement + mouse look. Vertical collision
-  // (gravity + stair step-up) is on by default; horizontal wall collision is OFF
-  // so doors and openings don't block. Press Esc to exit.
+  // WASD + mouse-look. Collision ON by default; gravity + stair step-up on.
+  // Pegman drop-in chooses the entry; Esc exits.
   var _walkActive = false;
-  var _walkKeys = {};        // currently pressed keys
-  var _walkYaw = 0;          // horizontal angle (radians)
-  var _walkPitch = 0;        // vertical angle (radians, clamped)
-  var _walkSpeed = 3.0;      // m/s base speed (scaled to model units at enter)
-  var _walkEyeHeight = 1.7;  // meters (scaled to model units at enter)
-  var _walkSavedCam = null;  // {pos, target, sph} to restore on exit
-  var _walkLastTime = 0;     // for delta-time in tick
-  var _walkCollision = false; // horizontal wall collision (off by default; user toggle)
-  var _walkGravity = true;   // vertical ground-snap & stair step-up (on by default)
-  var _walkLMB = false;      // true while LEFT mouse button is held over canvas
-  var _walkUnitScale = 1;    // model unit scale (1=m, 1000=mm)
-  var _walkPointerLocked = false; // track whether we got pointer lock
+  var _walkKeys = {};
+  var _walkYaw = 0;
+  var _walkPitch = 0;
+  var _walkSpeed = 1.4;          // metres/s — real walking pace (scaled to model units at enter)
+  var _walkEyeHeight = 1.7;
+  var _walkCrouchHeight = 1.05;
+  var _walkCrouching = false;
+  var _walkSavedCam = null;
+  var _walkLastTime = 0;
+  var _walkCollision = (function(){ try { var v=localStorage.getItem('cc_walkCollision'); return v===null?true:v==='1'; } catch(e){ return true; } })();
+  var _walkGravity = true;
+  var _walkLMB = true;           // legacy flag — always-engaged in walk mode now
+  var _walkUnitScale = 1;
+  var _walkPointerLocked = false;
   var _walkFovDefault = 75;
   var _walkFov = (function(){ try { var v=parseFloat(localStorage.getItem('cc_walkFov')); return (v>=30&&v<=110)?v:_walkFovDefault; } catch(e){ return _walkFovDefault; } })();
   var _walkBobEnabled = (function(){ try { return localStorage.getItem('cc_walkBob')==='1'; } catch(e){ return false; } })();
   var _walkBobPhase = 0;
   var _walkBobBaseY = null;
   var _walkGamepadIdx = null;
-  function _walkSetBob(on){ _walkBobEnabled=!!on; try{localStorage.setItem('cc_walkBob',on?'1':'0');}catch(e){} try{window.dispatchEvent(new CustomEvent('cc-walk-flag',{detail:{bob:_walkBobEnabled,collision:_walkCollision}}));}catch(e){} }
-  function _walkSetCollision(on){ _walkCollision=!!on; try{window.dispatchEvent(new CustomEvent('cc-walk-flag',{detail:{bob:_walkBobEnabled,collision:_walkCollision}}));}catch(e){} }
+  var _walkSensitivity = (function(){ try { var v=parseFloat(localStorage.getItem('cc_walkSens')); return (v>=0.25&&v<=3)?v:1; } catch(e){ return 1; } })();
+  var _walkInvertY = (function(){ try { return localStorage.getItem('cc_walkInvY')==='1'; } catch(e){ return false; } })();
+  var _walkFootsteps = (function(){ try { return localStorage.getItem('cc_walkFoot')==='1'; } catch(e){ return false; } })();
+  var _walkFootCtx = null, _walkFootPhase = 0;
+  var _walkVignette = 0;          // 0..1 sprint vignette intensity
+  var _walkUserHeight = (function(){ try { var v=parseFloat(localStorage.getItem('cc_walkHeight')); return (v>=0.4&&v<=10)?v:1.7; } catch(e){ return 1.7; } })();
+  var _walkBookmarks = (function(){ try { var a=JSON.parse(localStorage.getItem('cc_walkBookmarks')||'[]'); return Array.isArray(a)?a:[]; } catch(e){ return []; } })();
+  var _walkTouch = null; // {fx, rx, mag} for mobile virtual stick
+  window._ccWalkSetTouch = function(v){ _walkTouch = v; };
+  function _walkEmitFlags(){ try{window.dispatchEvent(new CustomEvent('cc-walk-flag',{detail:{bob:_walkBobEnabled,collision:_walkCollision,crouch:_walkCrouching,foot:_walkFootsteps,height:_walkUserHeight,sensitivity:_walkSensitivity,invertY:_walkInvertY}}));}catch(e){} }
+  function _walkSetBob(on){ _walkBobEnabled=!!on; try{localStorage.setItem('cc_walkBob',on?'1':'0');}catch(e){} _walkEmitFlags(); }
+  function _walkSetCollision(on){ _walkCollision=!!on; try{localStorage.setItem('cc_walkCollision',on?'1':'0');}catch(e){} _walkEmitFlags(); }
+  function _walkSetFootsteps(on){ _walkFootsteps=!!on; try{localStorage.setItem('cc_walkFoot',on?'1':'0');}catch(e){} _walkEmitFlags(); }
+  function _walkSetSensitivity(v){ _walkSensitivity=Math.max(0.25,Math.min(3,v||1)); try{localStorage.setItem('cc_walkSens',String(_walkSensitivity));}catch(e){} _walkEmitFlags(); }
+  function _walkSetInvertY(on){ _walkInvertY=!!on; try{localStorage.setItem('cc_walkInvY',on?'1':'0');}catch(e){} _walkEmitFlags(); }
+  function _walkSetHeight(m){ _walkUserHeight=Math.max(0.4,Math.min(10, parseFloat(m)||1.7)); try{localStorage.setItem('cc_walkHeight',String(_walkUserHeight));}catch(e){} if(_walkActive){ _walkEyeHeight = _walkUserHeight * _walkUnitScale; } _walkEmitFlags(); invalidate(2); }
   window._ccWalkSetBob = _walkSetBob;
   window._ccWalkSetCollision = _walkSetCollision;
-  window._ccWalkGetFlags = function(){ return {bob:_walkBobEnabled, collision:_walkCollision}; };
+  window._ccWalkSetFootsteps = _walkSetFootsteps;
+  window._ccWalkSetSensitivity = _walkSetSensitivity;
+  window._ccWalkSetInvertY = _walkSetInvertY;
+  window._ccWalkSetHeight = _walkSetHeight;
+  window._ccWalkGetFlags = function(){ return {bob:_walkBobEnabled, collision:_walkCollision, crouch:_walkCrouching, foot:_walkFootsteps, height:_walkUserHeight, sensitivity:_walkSensitivity, invertY:_walkInvertY}; };
   function _walkSetFov(fov, opts) {
     _walkFov = Math.max(30, Math.min(110, fov));
     try { localStorage.setItem('cc_walkFov', String(_walkFov)); } catch(e){}
@@ -4596,39 +4619,106 @@ function startApp() {
   window._ccWalkSetFov = _walkSetFov;
   window._ccWalkGetFov = function(){ return _walkFov; };
 
-  function _walkEnter(S, elevation) {
-    if (_walkActive) return;
-    _walkActive = true;
-    _walkPointerLocked = false;
-    _walkLMB = true; // Enscape-style: walk is always "engaged" while in walk mode
+  // Resolve walk-mode unit scale (1 scene unit per metre × storey/geo factor).
+  function _walkResolveUnitScale(){
     var models = (window._ccLatestState || {}).models || [];
     var _storeyUs = (typeof _ccDetectUnitScale === 'function') ? _ccDetectUnitScale(models) : 1;
     var _geoF = (typeof _ccStoreyToGeoFactor === 'function') ? _ccStoreyToGeoFactor(models) : 1;
-    _walkUnitScale = _storeyUs * _geoF;
-    _walkSpeed = 5.0 * _walkUnitScale;
-    _walkEyeHeight = 1.7 * _walkUnitScale;
+    return _storeyUs * _geoF;
+  }
+
+  // Smart entry: lowest above-ground IfcBuildingStorey across loaded models, placed
+  // at storey centroid facing the longest interior axis. Falls back to bbox.min.y.
+  function _walkSmartEntry(S){
+    var unit = _walkResolveUnitScale();
+    var models = (window._ccLatestState || {}).models || [];
+    var bestStorey = null, bestElev = Infinity;
+    for (var mi=0; mi<models.length; mi++){
+      var m = models[mi];
+      var sd = m && m.storeyData;
+      if (!sd || !sd.length) continue;
+      // pick the lowest storey with elevation ≥ -0.5m (allow a small tolerance below grade)
+      for (var si=0; si<sd.length; si++){
+        var st = sd[si];
+        var ev = (Number(st.elevation)||0);
+        if (ev >= -0.5 && ev < bestElev){ bestElev = ev; bestStorey = {storey:st, modelId:m.id}; }
+      }
+    }
+    var box = null;
+    try { box = (typeof _elemsBBox === 'function') ? _elemsBBox() : null; } catch(e){}
+    var cx = 0, cz = 0, eyeY = 0;
+    if (box && !box.isEmpty()){
+      cx = (box.min.x + box.max.x)/2;
+      cz = (box.min.z + box.max.z)/2;
+    }
+    var elevScene = bestStorey ? bestStorey.storey.elevation * unit : (box ? box.min.y : 0);
+    eyeY = elevScene + (_walkUserHeight * unit);
+    // face longest axis
+    var yaw = 0;
+    if (box && !box.isEmpty()){
+      var dx = box.max.x - box.min.x, dz = box.max.z - box.min.z;
+      yaw = (dx >= dz) ? Math.PI/2 : 0;
+    }
+    return { position:{x:cx,y:eyeY,z:cz}, yaw:yaw, elevation:elevScene, source: bestStorey?'storey':'bbox' };
+  }
+  window._ccWalkSmartEntry = function(){
+    var S = window._ccState3d; if (!S) return null;
+    return _walkSmartEntry(S);
+  };
+
+  function _walkEnter(S, opts) {
+    if (_walkActive) return;
+    _walkActive = true;
+    _walkPointerLocked = false;
+    _walkLMB = true;
+    _walkUnitScale = _walkResolveUnitScale();
+    _walkSpeed = 1.4 * _walkUnitScale;
+    _walkEyeHeight = (_walkCrouching ? _walkCrouchHeight : _walkUserHeight) * _walkUnitScale;
     _walkSavedCam = {
       pos: S.camera.position.clone(),
       target: S.orbit.target.clone(),
-      sph: { r: S.orbit.sph.r, phi: S.orbit.sph.phi, theta: S.orbit.sph.theta }
+      sph: { r: S.orbit.sph.r, phi: S.orbit.sph.phi, theta: S.orbit.sph.theta },
+      fov: S.camera.fov,
+      near: S.camera.near,
+      far: S.camera.far
     };
-    var eyeY = elevation + _walkEyeHeight;
-    var dir = new THREE.Vector3();
-    S.camera.getWorldDirection(dir);
-    _walkYaw = Math.atan2(dir.x, dir.z);
-    _walkPitch = Math.asin(Math.max(-1, Math.min(1, dir.y)));
-    _walkPitch = Math.max(-Math.PI / 2.5, Math.min(Math.PI / 2.5, _walkPitch));
-    S.camera.position.set(S.orbit.target.x, eyeY, S.orbit.target.z);
+    // Backward compat: numeric arg = elevation; object = {position, yaw, elevation}
+    var entry = null;
+    if (typeof opts === 'number'){
+      entry = { elevation: opts };
+    } else if (opts && (opts.position || opts.elevation != null)) {
+      entry = opts;
+    } else {
+      entry = _walkSmartEntry(S);
+    }
+    var camX, camY, camZ;
+    if (entry.position){
+      camX = entry.position.x; camY = entry.position.y; camZ = entry.position.z;
+    } else {
+      camX = S.orbit.target.x;
+      camY = (entry.elevation || 0) + _walkEyeHeight;
+      camZ = S.orbit.target.z;
+    }
+    if (entry.yaw != null){
+      _walkYaw = entry.yaw;
+      _walkPitch = 0;
+    } else {
+      var dir = new THREE.Vector3();
+      S.camera.getWorldDirection(dir);
+      _walkYaw = Math.atan2(dir.x, dir.z);
+      _walkPitch = Math.asin(Math.max(-1, Math.min(1, dir.y)));
+      _walkPitch = Math.max(-Math.PI / 2.5, Math.min(Math.PI / 2.5, _walkPitch));
+    }
+    S.camera.position.set(camX, camY, camZ);
     _walkApplyLook(S);
     S.camera.near = 0.05 * _walkUnitScale;
     S.camera.far = 2000 * _walkUnitScale;
-    _walkSavedCam.fov = S.camera.fov;
     S.camera.fov = _walkFov;
     S.camera.updateProjectionMatrix();
     try { window.dispatchEvent(new CustomEvent('cc-walk-fov',{detail:{fov:_walkFov, src:'enter'}})); } catch(e){}
+    _walkEmitFlags();
     _walkKeys = {};
     _walkLastTime = performance.now();
-    // Don't request pointer lock yet — browser requires a user gesture on the canvas.
     invalidate(999);
   }
 
@@ -4638,20 +4728,23 @@ function startApp() {
     _walkPointerLocked = false;
     _walkLMB = false;
     _walkKeys = {};
+    _walkCrouching = false;
+    _walkVignette = 0;
     try { if (document.pointerLockElement) document.exitPointerLock(); } catch (e) {}
-    if (_walkSavedCam && S.orbit) {
-      S.camera.position.copy(_walkSavedCam.pos);
-      S.orbit.target.copy(_walkSavedCam.target);
-      S.orbit.sph.r = _walkSavedCam.sph.r;
-      S.orbit.sph.phi = _walkSavedCam.sph.phi;
-      S.orbit.sph.theta = _walkSavedCam.sph.theta;
+    var saved = _walkSavedCam;
+    if (saved && S.orbit) {
+      S.camera.position.copy(saved.pos);
+      S.orbit.target.copy(saved.target);
+      S.orbit.sph.r = saved.sph.r;
+      S.orbit.sph.phi = saved.sph.phi;
+      S.orbit.sph.theta = saved.sph.theta;
       S.orbit.apply();
-      _walkSavedCam = null;
     }
-    S.camera.fov = (_walkSavedCam && _walkSavedCam.fov) || 55;
-    S.camera.near = 0.1;
-    S.camera.far = 10000;
+    S.camera.fov = (saved && saved.fov) || 55;
+    S.camera.near = (saved && saved.near) || 0.1;
+    S.camera.far = (saved && saved.far) || 10000;
     S.camera.updateProjectionMatrix();
+    _walkSavedCam = null;
     invalidate(5);
   }
 
@@ -4705,24 +4798,35 @@ function startApp() {
       }
     } catch(e) {}
 
-    var speed = _walkSpeed * ((_walkKeys['ShiftLeft'] || _walkKeys['ShiftRight'] || gpSprint) ? 4 : 1);
+    var sprinting = (_walkKeys['ShiftLeft'] || _walkKeys['ShiftRight'] || gpSprint) ? true : false;
+    var speed = _walkSpeed * (sprinting ? 3 : 1);
     var fx = Math.sin(_walkYaw), fz = Math.cos(_walkYaw);
     var rx = -Math.cos(_walkYaw), rz = Math.sin(_walkYaw);
 
-    var mx = 0, mz = 0, my = 0;
-    // Enscape-style: WASD only moves while LMB is held (or via gamepad).
-    if (_walkLMB) {
-      if (_walkKeys['KeyW'] || _walkKeys['ArrowUp'])    { mx += fx; mz += fz; }
-      if (_walkKeys['KeyS'] || _walkKeys['ArrowDown'])  { mx -= fx; mz -= fz; }
-      if (_walkKeys['KeyA'] || _walkKeys['ArrowLeft'])   { mx -= rx; mz -= rz; }
-      if (_walkKeys['KeyD'] || _walkKeys['ArrowRight'])  { mx += rx; mz += rz; }
-      if (_walkKeys['Space'] || _walkKeys['KeyQ'])   my += 1;
-      if (_walkKeys['KeyC'] || _walkKeys['KeyE'])    my -= 1;
+    // Crouch (hold C): drop eye height while held
+    var wantCrouch = !!_walkKeys['KeyC'];
+    if (wantCrouch !== _walkCrouching){
+      _walkCrouching = wantCrouch;
+      _walkEyeHeight = (_walkCrouching ? _walkCrouchHeight : _walkUserHeight) * _walkUnitScale;
+      _walkEmitFlags();
     }
+
+    var mx = 0, mz = 0, my = 0;
+    if (_walkKeys['KeyW'] || _walkKeys['ArrowUp'])    { mx += fx; mz += fz; }
+    if (_walkKeys['KeyS'] || _walkKeys['ArrowDown'])  { mx -= fx; mz -= fz; }
+    if (_walkKeys['KeyA'] || _walkKeys['ArrowLeft'])   { mx -= rx; mz -= rz; }
+    if (_walkKeys['KeyD'] || _walkKeys['ArrowRight'])  { mx += rx; mz += rz; }
+    if (_walkKeys['Space'] || _walkKeys['KeyQ'])   my += 1;
+    if (_walkKeys['KeyE'])                         my -= 1;
     // Gamepad left stick → forward/strafe (always active)
     if (gpAxes) {
       mx += fx * (-gpAxes.ly) + rx * (gpAxes.lx);
       mz += fz * (-gpAxes.ly) + rz * (gpAxes.lx);
+    }
+    // Touch virtual joystick
+    if (_walkTouch && _walkTouch.mag > 0) {
+      mx += fx * _walkTouch.fx + rx * _walkTouch.rx;
+      mz += fz * _walkTouch.fx + rz * _walkTouch.rx;
     }
 
     var len = Math.sqrt(mx * mx + mz * mz);
@@ -4734,7 +4838,9 @@ function startApp() {
     var newZ = S.camera.position.z + mz * step;
 
     var collisionPad = 0.3 * _walkUnitScale;
-    if (_walkCollision && len > 0 && S.scene) {
+    var altHeld = !!(window._ccAltHeld || _walkKeys['AltLeft'] || _walkKeys['AltRight']);
+    var collisionActive = _walkCollision && !altHeld; // Alt = temporary no-clip burst
+    if (collisionActive && len > 0 && S.scene) {
       var rayOrigin = S.camera.position.clone();
       var rayDir = new THREE.Vector3(mx, 0, mz).normalize();
       var ray = new THREE.Raycaster(rayOrigin, rayDir, 0, step + collisionPad);
@@ -4761,7 +4867,28 @@ function startApp() {
     // floor/stair surface within step-up reach, and snap camera Y so we
     // stand on it at eye-height. This keeps stairs walkable while leaving
     // walls free to pass through.
-    if (_walkGravity && my === 0 && S.mg && S.mg.children.length > 0) {
+    // Vignette tween: 0..1 based on sprint state
+    var vTarget = sprinting && (mx!==0||mz!==0) ? 1 : 0;
+    if (_walkVignette !== vTarget){
+      _walkVignette += Math.sign(vTarget - _walkVignette) * Math.min(Math.abs(vTarget - _walkVignette), dt * 3);
+      try { window.dispatchEvent(new CustomEvent('cc-walk-vignette',{detail:{v:_walkVignette}})); } catch(e){}
+      invalidate(2);
+    }
+    // FOV breathing during sprint (subtle ±3°)
+    if (sprinting && (mx!==0||mz!==0)){
+      var targetFov = _walkFov + 3;
+      if (Math.abs(S.camera.fov - targetFov) > 0.05){
+        S.camera.fov += (targetFov - S.camera.fov) * Math.min(1, dt*4);
+        S.camera.updateProjectionMatrix();
+        invalidate(2);
+      }
+    } else if (Math.abs(S.camera.fov - _walkFov) > 0.05){
+      S.camera.fov += (_walkFov - S.camera.fov) * Math.min(1, dt*4);
+      S.camera.updateProjectionMatrix();
+      invalidate(2);
+    }
+
+    if (_walkGravity && my === 0 && S.mg && S.mg.children.length > 0 && !altHeld) {
       var stepUp = 0.5 * _walkUnitScale;     // max step we'll climb (50 cm)
       var castFrom = stepUp;                   // start above the eye-relative ground line
       var maxFall = 4.0 * _walkUnitScale;       // how far we'll snap down
@@ -4803,6 +4930,25 @@ function startApp() {
         }
         _walkBobPhase = 0;
       }
+    }
+    // Footstep ticks — short low-volume click on each footfall
+    if (_walkFootsteps && (mx!==0||mz!==0)){
+      _walkFootPhase += dt * speed * 1.4;
+      if (_walkFootPhase >= 0.5){
+        _walkFootPhase = 0;
+        try {
+          if (!_walkFootCtx) _walkFootCtx = new (window.AudioContext||window.webkitAudioContext)();
+          var ctx = _walkFootCtx;
+          var o = ctx.createOscillator(), g = ctx.createGain();
+          o.frequency.value = 80 + Math.random()*30;
+          g.gain.value = 0.025;
+          g.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.07);
+          o.connect(g); g.connect(ctx.destination);
+          o.start(); o.stop(ctx.currentTime + 0.08);
+        } catch(e){}
+      }
+    } else {
+      _walkFootPhase = 0;
     }
   }
 
@@ -5254,7 +5400,16 @@ function startApp() {
           _walkExit(S);
           if (window._ccDispatch) window._ccDispatch({ t: 'WALK_MODE', v: false });
         }
-        if (/^(Key[WASDCEQ]|Arrow|Space|Shift)/.test(e.code)) e.preventDefault();
+        if (e.code === 'KeyB' && !e.metaKey && !e.ctrlKey) {
+          try {
+            var p = S.camera.position;
+            var list = JSON.parse(localStorage.getItem('cc_walkBookmarks')||'[]');
+            list.push({ id: Date.now(), name: 'Bookmark '+(list.length+1), pos:[p.x,p.y,p.z], yaw:_walkYaw });
+            localStorage.setItem('cc_walkBookmarks', JSON.stringify(list));
+            try { window.dispatchEvent(new CustomEvent('cc-walk-bookmark',{detail:{count:list.length}})); } catch(_){}
+          } catch(_){}
+        }
+        if (/^(Key[WASDCEQB]|Arrow|Space|Shift)/.test(e.code)) e.preventDefault();
         invalidate(3);
       });
       _wlAdd('keyup', function(e) {
@@ -5269,6 +5424,57 @@ function startApp() {
           try { renderer.domElement.requestPointerLock(); } catch (err) {}
         }
       });
+      // Double-click in walk mode = teleport to surface under cursor (any
+      // surface with normal.y > 0.5 — floors, stairs, balconies, parapets).
+      renderer.domElement.addEventListener('dblclick', function(e){
+        if (!_walkActive) return;
+        try {
+          var canvas = renderer.domElement;
+          // when pointer-locked, cursor is centred — use viewport centre
+          var nx, ny;
+          if (document.pointerLockElement === canvas){
+            nx = 0; ny = 0;
+          } else {
+            var r = canvas.getBoundingClientRect();
+            nx = ((e.clientX - r.left) / r.width) * 2 - 1;
+            ny = -((e.clientY - r.top) / r.height) * 2 + 1;
+          }
+          var rc = new THREE.Raycaster();
+          rc.setFromCamera({x:nx, y:ny}, S.camera);
+          var hits = rc.intersectObjects(S.mg ? S.mg.children : [], true);
+          var picked = null;
+          for (var i=0; i<hits.length; i++){
+            var h = hits[i];
+            if (!h.object || !h.object.visible) continue;
+            if (typeof _isGhostMat === 'function' && _isGhostMat(h.object.material)) continue;
+            if (!h.face) continue;
+            var n = h.face.normal.clone();
+            var nm = new THREE.Matrix3().getNormalMatrix(h.object.matrixWorld);
+            n.applyMatrix3(nm).normalize();
+            if (n.y < 0.5) continue;
+            picked = h; break;
+          }
+          if (!picked) return;
+          // Animate camera position to (hit + eyeHeight) keeping yaw/pitch.
+          var startPos = S.camera.position.clone();
+          var endPos = picked.point.clone();
+          endPos.y += _walkEyeHeight;
+          var dist = startPos.distanceTo(endPos);
+          var duration = Math.max(250, Math.min(700, dist * 6));
+          var startTime = performance.now();
+          function ease(t){return t<0.5?4*t*t*t:(1-Math.pow(-2*t+2,3)/2);}
+          (function step(){
+            if (!_walkActive) return;
+            var t = Math.min(1,(performance.now()-startTime)/duration);
+            var k = ease(t);
+            S.camera.position.lerpVectors(startPos, endPos, k);
+            _walkApplyLook(S);
+            invalidate(3);
+            if (t < 1) requestAnimationFrame(step);
+          })();
+          try { window.dispatchEvent(new CustomEvent('cc-walk-teleport',{detail:{point:[picked.point.x,picked.point.y,picked.point.z]}})); } catch(_e){}
+        } catch(err){}
+      });
       _wlAdd('pointerlockchange', function() {
         _walkPointerLocked = (document.pointerLockElement === renderer.domElement);
         try { window.dispatchEvent(new CustomEvent('cc-walk-locked',{detail:{locked:_walkPointerLocked}})); } catch(e){}
@@ -5282,8 +5488,9 @@ function startApp() {
         if (!_walkPointerLocked) {
           if (Math.abs(mx) > 200 || Math.abs(my) > 200) return;
         }
-        _walkYaw -= mx * 0.002;
-        _walkPitch += my * -0.002;
+        var sens = 0.002 * (_walkSensitivity || 1);
+        _walkYaw -= mx * sens;
+        _walkPitch += my * (_walkInvertY ? sens : -sens);
         _walkPitch = Math.max(-Math.PI / 2.2, Math.min(Math.PI / 2.2, _walkPitch));
         _walkApplyLook(S);
         invalidate(3);
@@ -5308,8 +5515,48 @@ function startApp() {
       _wlAdd('pointerlockchange', function() {
         _walkPointerLocked = (document.pointerLockElement === renderer.domElement);
       });
-      window._ccWalkEnter = function(elevation) { _walkEnter(S, elevation); };
+      window._ccWalkEnter = function(opts) { _walkEnter(S, opts); };
       window._ccWalkExit = function() { _walkExit(S); };
+      window._ccWalkGetYaw = function(){ return _walkYaw; };
+      window._ccWalkSetYaw = function(y){ _walkYaw = y; if (_walkActive) _walkApplyLook(S); };
+      // Hover-element capture for inspect-while-walking — throttled raycast
+      var _walkHoverLast = 0;
+      function _walkUpdateHover(e){
+        if (!_walkActive) return;
+        var now = performance.now();
+        if (now - _walkHoverLast < 200) return;
+        _walkHoverLast = now;
+        try {
+          var canvas = renderer.domElement;
+          var nx, ny;
+          if (document.pointerLockElement === canvas){ nx = 0; ny = 0; }
+          else if (e){ var r = canvas.getBoundingClientRect(); nx = ((e.clientX-r.left)/r.width)*2-1; ny = -((e.clientY-r.top)/r.height)*2+1; }
+          else { nx = 0; ny = 0; }
+          var rc = new THREE.Raycaster();
+          rc.setFromCamera({x:nx, y:ny}, S.camera);
+          var hits = rc.intersectObjects(S.mg ? S.mg.children : [], true);
+          for (var i=0; i<hits.length; i++){
+            var h = hits[i];
+            if (!h.object || !h.object.visible) continue;
+            if (typeof _isGhostMat === 'function' && _isGhostMat(h.object.material)) continue;
+            // Walk up parents to find element
+            var o = h.object;
+            while (o && !o.userData) o = o.parent;
+            var ud = o && o.userData ? o.userData : {};
+            window._ccWalkHoverEl = {
+              id: ud.eid || ud.id || ud.globalId,
+              eid: ud.eid,
+              globalId: ud.globalId,
+              name: ud.name || (h.object.name || ''),
+              type: ud.ifcType || ud.type || '',
+              storey: ud.storey || ''
+            };
+            return;
+          }
+          window._ccWalkHoverEl = null;
+        } catch(err){ window._ccWalkHoverEl = null; }
+      }
+      _wlAdd('mousemove', _walkUpdateHover);
 
       // ── Animated fly-to system ───────────────────────────────────── INTERNALS.md §15
       var _flyAnim = null;
@@ -8480,13 +8727,7 @@ function startApp() {
       var S = state3d.current; if(!S.renderer) return;
       if (s.walkMode) {
         if (window._ccWalkEnter) {
-          // Place camera at model ground level + eye height
-          var elevation = 0;
-          try {
-            var box = _elemsBBox();
-            if (!box.isEmpty()) elevation = box.min.y;
-          } catch(e){}
-          window._ccWalkEnter(elevation);
+          window._ccWalkEnter(s.walkEntry || undefined);
         }
       } else {
         if (window._ccWalkExit) window._ccWalkExit();
@@ -9908,7 +10149,8 @@ function startApp() {
           </div>
         </div>`;
       })()}
-      ${s.walkMode && html`<${WalkModeHUD} d=${d} />`}
+      ${s.walkMode && html`<${WalkModeHUD} s=${s} d=${d} />`}
+      ${s.walkPlacing && html`<${WalkPegmanLayer} s=${s} d=${d} />`}
       <div style=${{position:'absolute',bottom:'var(--space-3)',right:'var(--space-3)',pointerEvents:'auto',display:'flex',flexDirection:'column',gap:'var(--space-1)',alignItems:'flex-end',maxHeight:'calc(100% - 5rem)',overflowY:'auto'}}>
         ${s.measureMode && html`<div class="cc-overlay-chrome" style=${{fontSize:'var(--text-xs)',color:'var(--text-primary)',padding:'var(--space-1) var(--space-3)',display:'flex',alignItems:'center',gap:'var(--space-2)'}}>
           <span>${s.measureMode==='length'?'Click 2 points · Shift = axis lock · Alt = quick (not saved) · Esc':s.measureMode==='angle'?'Click 3 points: start · vertex · end · Esc to cancel':s.measureMode==='area'?(window._ccChainedArea?'Length locked · keep clicking to trace an area · Enter or Esc':'Click points · click near first point or Enter to close · Esc to cancel'):s.measureMode==='element'?'Click an element to read its quantities':s.measureMode==='clearance'?'Pick element A, then element B':'Measuring…'}</span>
@@ -16120,42 +16362,267 @@ function startApp() {
     </div></div>`;
   }
 
+  // ── Walk Pegman drop-in layer ────────────────────────────────
+  // Hover floor surfaces, footprint reticle, Shift = pre-aim heading,
+  // click commits → enters walk mode at hovered point. Esc cancels.
+  function WalkPegmanLayer(props){
+    var s = props.s, d = props.d;
+    var hitSt = useState(null), hit=hitSt[0], setHit=hitSt[1];
+    var aimSt = useState(null), aim=aimSt[0], setAim=aimSt[1]; // {x,y,yaw} during shift-drag
+    var nudgeSt = useState(true), nudge=nudgeSt[0], setNudge=nudgeSt[1];
+    useEffect(function(){
+      var t = setTimeout(function(){ setNudge(false); }, 4500);
+      return function(){ clearTimeout(t); };
+    },[]);
+    function raycastFloor(e){
+      var S = window._ccState3d; if(!S || !S.renderer || !S.camera || !S.mg) return null;
+      var canvas = S.renderer.domElement;
+      var r = canvas.getBoundingClientRect();
+      var nx = ((e.clientX - r.left) / r.width) * 2 - 1;
+      var ny = -((e.clientY - r.top) / r.height) * 2 + 1;
+      var rc = new THREE.Raycaster();
+      rc.setFromCamera({x:nx, y:ny}, S.camera);
+      var hits = rc.intersectObjects(S.mg.children, true);
+      for (var i=0; i<hits.length; i++){
+        var h = hits[i];
+        if (!h.object || !h.object.visible) continue;
+        if (typeof _isGhostMat === 'function' && _isGhostMat(h.object.material)) continue;
+        if (!h.face) continue;
+        var n = h.face.normal.clone();
+        // transform normal into world space
+        var nm = new THREE.Matrix3().getNormalMatrix(h.object.matrixWorld);
+        n.applyMatrix3(nm).normalize();
+        if (n.y < 0.5) continue; // skip walls/ceilings
+        return { point: h.point.clone(), normal: n, screen:{x:e.clientX-r.left, y:e.clientY-r.top}, valid:true };
+      }
+      return { screen:{x:e.clientX-(r?r.left:0), y:e.clientY-(r?r.top:0)}, valid:false };
+    }
+    function onMove(e){
+      var h2 = raycastFloor(e);
+      if (aim && aim.startX != null && h2 && h2.valid){
+        var dx = e.clientX - aim.startX, dy = e.clientY - aim.startY;
+        if (Math.hypot(dx,dy) > 4){
+          h2.yaw = Math.atan2(dx, -dy);
+        }
+      }
+      setHit(h2);
+    }
+    function onDown(e){
+      if (e.button !== 0) return;
+      if (e.shiftKey){
+        var h2 = raycastFloor(e);
+        if (h2 && h2.valid){ setAim({startX:e.clientX, startY:e.clientY}); setHit(h2); }
+      }
+    }
+    function onUp(e){
+      if (e.button !== 0) return;
+      var h2 = hit;
+      if (!h2 || !h2.valid){ return; }
+      var unit = (typeof _walkResolveUnitScale === 'function') ? _walkResolveUnitScale() : 1;
+      var heightM = (typeof window._ccWalkGetFlags==='function'? (window._ccWalkGetFlags().height||1.7) : 1.7);
+      var entry = {
+        position: { x: h2.point.x, y: h2.point.y + heightM*unit, z: h2.point.z },
+        yaw: (h2.yaw != null ? h2.yaw : 0),
+        elevation: h2.point.y
+      };
+      setAim(null);
+      d({t:A.WALK_MODE, v:true, entry: entry});
+    }
+    function onKey(e){
+      if (e.key === 'Escape'){ d({t:A.WALK_PLACING, v:false}); }
+    }
+    useEffect(function(){
+      window.addEventListener('keydown', onKey);
+      return function(){ window.removeEventListener('keydown', onKey); };
+    },[hit, aim]);
+    var reticle = null;
+    if (hit && hit.screen){
+      var col = hit.valid ? 'var(--accent, #b8533a)' : '#9aa0a6';
+      var sx = hit.screen.x, sy = hit.screen.y;
+      var yaw = (hit.yaw != null) ? hit.yaw : null;
+      reticle = html`<svg width="120" height="120" viewBox="-60 -60 120 120"
+        style=${{position:'absolute', left:sx-60, top:sy-60, pointerEvents:'none', overflow:'visible'}}>
+        ${hit.valid ? html`
+          <ellipse cx="0" cy="0" rx="22" ry="9" fill="none" stroke=${col} stroke-width="2" />
+          <ellipse cx="0" cy="0" rx="22" ry="9" fill=${col} fill-opacity="0.18" />
+          <circle cx="0" cy="-22" r="4" fill=${col} />
+          <path d="M -3 -18 L 0 -8 L 3 -18 Z" fill=${col} />
+          ${yaw != null ? html`<g transform=${'rotate('+( -yaw*180/Math.PI)+')'}><path d="M 0 0 L 0 -38 L -5 -32 M 0 -38 L 5 -32" stroke=${col} stroke-width="2" fill="none"/></g>` : null}
+        ` : html`
+          <circle cx="0" cy="0" r="14" fill="none" stroke=${col} stroke-width="2" stroke-dasharray="4 3" />
+          <path d="M -8 -8 L 8 8 M -8 8 L 8 -8" stroke=${col} stroke-width="2" />
+        `}
+      </svg>`;
+    }
+    return html`<div onMouseMove=${onMove} onMouseDown=${onDown} onMouseUp=${onUp}
+      style=${{position:'absolute', inset:0, zIndex:8, cursor: (hit&&hit.valid)?'pointer':'not-allowed', pointerEvents:'auto', background:'rgba(0,0,0,0.04)'}}>
+      ${reticle}
+      ${nudge && html`<div style=${{position:'absolute', top:'1.5rem', left:'50%', transform:'translateX(-50%)',
+        background:'var(--bg-primary)', border:'1px solid var(--border)', borderRadius:'var(--radius-sm)',
+        padding:'.4rem .8rem', fontSize:'var(--text-xs)', color:'var(--text-secondary)',
+        boxShadow:'var(--shadow-md)', display:'flex', alignItems:'center', gap:'.5rem'}}>
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6">
+          <circle cx="12" cy="4.5" r="1.8"/><path d="M9 11l3-2 3 2"/><path d="M10 21l2-7 2 4"/>
+        </svg>
+        <span><b style=${{color:'var(--text-primary)'}}>Click</b> a floor to drop in</span>
+        <span style=${{color:'var(--border)'}}>·</span>
+        <span><b style=${{color:'var(--text-primary)'}}>Shift-drag</b> to set heading</span>
+        <span style=${{color:'var(--border)'}}>·</span>
+        <span><b style=${{color:'var(--text-primary)'}}>Esc</b> cancel</span>
+      </div>`}
+      <button onClick=${function(){
+          var S = window._ccState3d;
+          var entry = (typeof window._ccWalkSmartEntry==='function') ? window._ccWalkSmartEntry() : null;
+          d({t:A.WALK_MODE, v:true, entry: entry});
+        }}
+        style=${{position:'absolute', bottom:'1.25rem', left:'50%', transform:'translateX(-50%)',
+        background:'var(--bg-primary)', border:'1px solid var(--border)', borderRadius:'var(--radius-sm)',
+        padding:'.35rem .8rem', fontSize:'var(--text-xs)', color:'var(--text-secondary)',
+        boxShadow:'var(--shadow-md)', cursor:'pointer', fontFamily:'inherit'}}>
+        Drop me anywhere · auto-place
+      </button>
+    </div>`;
+  }
+
   // ── Walk Mode HUD ────────────────────────────────────────────
 
   function WalkModeHUD(props) {
-    var d = props.d;
+    var s = props.s || {}, d = props.d;
+    var ws = s.workspace || 'present';
+    var isPresent = ws === 'present';
+    var isReview = ws === 'review';
+    var isCoord = ws === 'coordinate';
     var initialFov = (typeof window._ccWalkGetFov === 'function' ? window._ccWalkGetFov() : 75);
-    var initialFlags = (typeof window._ccWalkGetFlags === 'function' ? window._ccWalkGetFlags() : {bob:false,collision:false});
+    var initialFlags = (typeof window._ccWalkGetFlags === 'function' ? window._ccWalkGetFlags() : {bob:false,collision:true,height:1.7,sensitivity:1,invertY:false,foot:false,crouch:false});
     var fovSt = useState(initialFov), fov=fovSt[0], setFov=fovSt[1];
     var flagSt = useState(initialFlags), flags=flagSt[0], setFlags=flagSt[1];
-    var hintSt = useState(true), showHint=hintSt[0], setShowHint=hintSt[1]; // fades after 3s
+    var helpSt = useState(false), helpOpen=helpSt[0], setHelpOpen=helpSt[1];
+    var moreSt = useState(false), moreOpen=moreSt[0], setMoreOpen=moreSt[1];
+    var altSt = useState(false), altOn=altSt[0], setAltOn=altSt[1];
+    var teleportSt = useState(null), teleport=teleportSt[0], setTeleport=teleportSt[1];
     var speedSt = useState(null), speedLabel=speedSt[0], setSpeedLabel=speedSt[1];
+    var vignetteSt = useState(0), vignette=vignetteSt[0], setVignette=vignetteSt[1];
+    var hoverElSt = useState(null), hoverEl=hoverElSt[0], setHoverEl=hoverElSt[1];
 
     useEffect(function(){
-      var t = setTimeout(function(){ setShowHint(false); }, 3000);
       function onFov(e){ var v = e && e.detail && e.detail.fov; if (typeof v === 'number') setFov(v); }
       function onFlag(e){ if (e && e.detail) setFlags(Object.assign({}, e.detail)); }
       function onSpeed(e){
         if (!e || !e.detail) return;
-        var ratio = e.detail.speed / (5.0 * (e.detail.unit || 1));
-        var lbl = ratio < 0.4 ? 'Slow' : ratio < 1.4 ? 'Normal' : ratio < 3 ? 'Fast' : 'Very fast';
+        var ratio = e.detail.speed / (1.4 * (e.detail.unit || 1));
+        var lbl = ratio < 0.5 ? 'Slow' : ratio < 1.5 ? 'Normal' : ratio < 4 ? 'Fast' : 'Very fast';
         setSpeedLabel(lbl);
         if (speedSt._hideTimer) clearTimeout(speedSt._hideTimer);
         speedSt._hideTimer = setTimeout(function(){ setSpeedLabel(null); }, 1500);
       }
+      function onTele(e){
+        var p = e && e.detail && e.detail.point;
+        if (p){ setTeleport({x:p[0],y:p[1],z:p[2],ts:Date.now()}); setTimeout(function(){ setTeleport(null); }, 600); }
+      }
+      function onVig(e){ if (e && e.detail) setVignette(+e.detail.v||0); }
+      function onAlt(e){ if (e.key === 'Alt') setAltOn(true); }
+      function onAltUp(e){ if (e.key === 'Alt') setAltOn(false); }
       window.addEventListener('cc-walk-fov', onFov);
       window.addEventListener('cc-walk-flag', onFlag);
       window.addEventListener('cc-walk-speed', onSpeed);
+      window.addEventListener('cc-walk-teleport', onTele);
+      window.addEventListener('cc-walk-vignette', onVig);
+      window.addEventListener('keydown', onAlt);
+      window.addEventListener('keyup', onAltUp);
       return function(){
-        clearTimeout(t);
         window.removeEventListener('cc-walk-fov', onFov);
         window.removeEventListener('cc-walk-flag', onFlag);
         window.removeEventListener('cc-walk-speed', onSpeed);
+        window.removeEventListener('cc-walk-teleport', onTele);
+        window.removeEventListener('cc-walk-vignette', onVig);
+        window.removeEventListener('keydown', onAlt);
+        window.removeEventListener('keyup', onAltUp);
       };
     }, []);
 
+    // Hover element label (Coordinate + Review only) — throttled 4 Hz
+    useEffect(function(){
+      if (isPresent) return;
+      var iv = setInterval(function(){
+        try {
+          var el = window._ccWalkHoverEl;
+          if (el) setHoverEl({name:el.name||'(unnamed)', type:el.type||'', storey:el.storey||''});
+          else setHoverEl(null);
+        } catch(e){}
+      }, 250);
+      return function(){ clearInterval(iv); };
+    }, [isPresent]);
+
+    // Workspace-gated F (inspector) and I (issue) hotkeys
+    useEffect(function(){
+      if (isPresent) return;
+      function onKey(e){
+        if (e.repeat) return;
+        if (e.key === 'f' || e.key === 'F'){
+          var el = window._ccWalkHoverEl;
+          if (el && window._ccDispatch){
+            try { window._ccDispatch({t:A.ACTIVE, id:el.id||el.eid||el.globalId, source:'walk-hover'}); } catch(_){}
+            try { window._ccDispatch({t:A.INSPECTOR_OPEN, v:true}); } catch(_){}
+          }
+        } else if ((e.key === 'i' || e.key === 'I') && !e.metaKey && !e.ctrlKey){
+          try { if (window._ccCreateIssueFromView) window._ccCreateIssueFromView(); else if (window._ccDispatch) window._ccDispatch({t:A.MODAL,v:'issue'}); } catch(_){}
+        }
+      }
+      window.addEventListener('keydown', onKey);
+      return function(){ window.removeEventListener('keydown', onKey); };
+    }, [isPresent]);
+
     function applyFov(v){ if (window._ccWalkSetFov) window._ccWalkSetFov(v); }
     function exit(){ if (window._ccWalkExit) window._ccWalkExit(); d({t:A.WALK_MODE, v:false}); }
+
+    // Floor selector — collect storeys across models
+    var storeyList = (function(){
+      var arr = [];
+      (s.models||[]).forEach(function(m){
+        (m.storeyData||[]).forEach(function(st){ arr.push({modelId:m.id, name:st.name, elevation:Number(st.elevation)||0}); });
+      });
+      arr.sort(function(a,b){ return a.elevation - b.elevation; });
+      return arr;
+    })();
+    function jumpStorey(st){
+      var unit = (typeof window._ccWalkSmartEntry==='function') ? 1 : 1;
+      try {
+        var box = (typeof _elemsBBox === 'function') ? _elemsBBox() : null;
+        var cx = 0, cz = 0;
+        if (box && !box.isEmpty()){ cx=(box.min.x+box.max.x)/2; cz=(box.min.z+box.max.z)/2; }
+        var Sref = window._ccState3d;
+        if (Sref && Sref.camera){
+          var heightM = flags.height || 1.7;
+          // approximate scene-unit elevation: storeyData elevation is in storey-units;
+          // walk's unit scale already factored into camera Y at enter — reuse same factor by
+          // keeping ratio: scene Y to elevation = current cam Y / current eyeHeight - elevation0
+          // simpler: place at world Y where storey elevation maps via existing offset ratio
+          var sceneY = st.elevation; // already in scene units for many models
+          // try to use storey-floor scene-Y if available via state.floors
+          (s.floors||[]).forEach(function(f){ if (f.name===st.name && typeof f.elevation==='number'){ sceneY = f.elevation; } });
+          Sref.camera.position.set(cx, sceneY + heightM, cz);
+          if (typeof invalidate==='function') invalidate(3);
+        }
+      } catch(e){}
+    }
+
+    var heightPresets = [
+      {label:'Eye', value:1.7},
+      {label:'Child', value:1.1},
+      {label:'Drone', value:5.0}
+    ];
+
+    function bookmarkAdd(){
+      try {
+        var Sref = window._ccState3d; if (!Sref || !Sref.camera) return;
+        var p = Sref.camera.position;
+        var bm = { id: Date.now(), name: 'Bookmark '+ ((JSON.parse(localStorage.getItem('cc_walkBookmarks')||'[]').length)+1),
+          pos:[p.x,p.y,p.z], yaw: (typeof window._ccWalkGetYaw==='function'?window._ccWalkGetYaw():0) };
+        var list = JSON.parse(localStorage.getItem('cc_walkBookmarks')||'[]');
+        list.push(bm);
+        localStorage.setItem('cc_walkBookmarks', JSON.stringify(list));
+      } catch(e){}
+    }
 
     var SEP = html`<span style=${{width:1,height:14,background:'var(--border)',margin:'0 .2rem'}}></span>`;
     var tog = function(label, active, onClick){
@@ -16168,27 +16635,92 @@ function startApp() {
       }}>${label}</button>`;
     };
 
+    // Sprint vignette overlay
+    var vignetteOverlay = vignette > 0.02 ? html`<div style=${{
+      position:'absolute', inset:0, pointerEvents:'none', zIndex:4,
+      boxShadow:'inset 0 0 '+(80+120*vignette)+'px '+(40+80*vignette)+'px rgba(0,0,0,'+(0.18*vignette)+')'
+    }}></div>` : null;
+
+    // First-click pointer-lock affordance — small reticle until locked
+    var locked = (typeof document !== 'undefined') && document.pointerLockElement === (window._ccState3d && window._ccState3d.renderer && window._ccState3d.renderer.domElement);
+    var crosshair = html`<div style=${{position:'absolute', top:'50%', left:'50%', transform:'translate(-50%,-50%)', pointerEvents:'none', zIndex:5}}>
+      ${locked ? html`<div style=${{width:6,height:6,borderRadius:'50%',background:'rgba(255,255,255,.6)',boxShadow:'0 0 0 1px rgba(0,0,0,.4)'}}></div>`
+              : html`<div style=${{width:32,height:32,borderRadius:'50%',border:'1.5px dashed rgba(255,255,255,.7)',boxShadow:'0 0 4px rgba(0,0,0,.5)',animation:'cc-walk-pulse 1.2s ease-in-out infinite'}}></div>`}
+    </div>`;
+
     return html`<${React.Fragment}>
+      ${vignetteOverlay}
+      ${crosshair}
       ${speedLabel && html`<div style=${{position:'absolute',top:'12%',left:'50%',transform:'translateX(-50%)',
           background:'var(--bg-primary)',color:'var(--text-primary)',padding:'.3rem .75rem',borderRadius:'var(--radius-sm)',
           fontSize:'var(--text-sm)',fontWeight:500,border:'1px solid var(--border)',boxShadow:'var(--shadow-md)',
           pointerEvents:'none',zIndex:6,whiteSpace:'nowrap'}}>
         ${speedLabel} speed
       </div>`}
-      ${showHint && html`<div style=${{position:'absolute',bottom:'5rem',left:'50%',transform:'translateX(-50%)',
+      ${altOn && html`<div style=${{position:'absolute',top:'12%',left:'50%',transform:'translateX(-50%)',
+          background:'rgba(184,83,58,.12)',color:'var(--accent)',padding:'.25rem .65rem',borderRadius:'var(--radius-xs)',
+          fontSize:'var(--text-2xs)',fontWeight:600,border:'1px solid var(--accent)',
+          pointerEvents:'none',zIndex:6,whiteSpace:'nowrap',letterSpacing:'.04em',textTransform:'uppercase'}}>
+        ⎇ Alt — passing through walls
+      </div>`}
+      ${teleport && html`<div style=${{position:'absolute',inset:0,pointerEvents:'none',zIndex:6,
+          boxShadow:'inset 0 0 60px 12px rgba(184,83,58,0.18)',
+          animation:'cc-walk-tele 0.6s ease-out forwards'}}></div>`}
+      ${hoverEl && !isPresent && html`<div style=${{position:'absolute',top:'52%',left:'50%',transform:'translate(-50%,8px)',
+          background:'var(--bg-primary)',border:'1px solid var(--border)',borderRadius:'var(--radius-xs)',
+          padding:'.25rem .55rem',fontSize:'var(--text-2xs)',color:'var(--text-secondary)',
+          pointerEvents:'none',zIndex:6,whiteSpace:'nowrap',boxShadow:'var(--shadow-sm)',display:'flex',gap:'.4rem'}}>
+        <span style=${{color:'var(--text-primary)',fontWeight:500}}>${hoverEl.name}</span>
+        ${hoverEl.type && html`<span>· ${hoverEl.type}</span>`}
+        ${hoverEl.storey && html`<span>· ${hoverEl.storey}</span>`}
+        <span style=${{color:'var(--text-faint)'}}>· F inspect · I issue</span>
+      </div>`}
+      ${helpOpen && html`<div style=${{position:'absolute',bottom:'5rem',left:'50%',transform:'translateX(-50%)',
           background:'var(--bg-primary)',border:'1px solid var(--border)',borderRadius:'var(--radius-sm)',
-          padding:'.3rem .8rem',fontSize:'var(--text-xs)',color:'var(--text-secondary)',
-          boxShadow:'var(--shadow-md)',pointerEvents:'none',zIndex:5,whiteSpace:'nowrap',
-          display:'flex',alignItems:'center',gap:'.45rem'}}>
-        <span><b style=${{color:'var(--text-primary)'}}>WASD</b> move</span>
-        <span style=${{color:'var(--border)'}}>·</span>
-        <span><b style=${{color:'var(--text-primary)'}}>Mouse</b> look</span>
-        <span style=${{color:'var(--border)'}}>·</span>
-        <span><b style=${{color:'var(--text-primary)'}}>Shift</b> sprint</span>
-        <span style=${{color:'var(--border)'}}>·</span>
-        <span><b style=${{color:'var(--text-primary)'}}>Scroll</b> speed</span>
-        <span style=${{color:'var(--border)'}}>·</span>
-        <span><b style=${{color:'var(--text-primary)'}}>Esc</b> exit</span>
+          padding:'.55rem .9rem',fontSize:'var(--text-xs)',color:'var(--text-secondary)',
+          boxShadow:'var(--shadow-md)',zIndex:6,maxWidth:520,
+          display:'grid',gridTemplateColumns:'auto auto',columnGap:'1.2rem',rowGap:'.25rem'}}>
+        <span><b style=${{color:'var(--text-primary)'}}>WASD / Arrows</b></span><span>Move</span>
+        <span><b style=${{color:'var(--text-primary)'}}>Mouse</b></span><span>Look</span>
+        <span><b style=${{color:'var(--text-primary)'}}>Shift</b></span><span>Sprint (×3)</span>
+        <span><b style=${{color:'var(--text-primary)'}}>Scroll</b></span><span>Adjust speed</span>
+        <span><b style=${{color:'var(--text-primary)'}}>Shift + Scroll</b></span><span>Adjust FOV</span>
+        <span><b style=${{color:'var(--text-primary)'}}>Double-click</b></span><span>Teleport to surface</span>
+        <span><b style=${{color:'var(--text-primary)'}}>Hold C</b></span><span>Crouch</span>
+        <span><b style=${{color:'var(--text-primary)'}}>Hold Alt</b></span><span>Pass through walls</span>
+        <span><b style=${{color:'var(--text-primary)'}}>Space / Q · E</b></span><span>Up · Down (fly)</span>
+        ${!isPresent && html`<${React.Fragment}><span><b style=${{color:'var(--text-primary)'}}>F</b></span><span>Inspect hovered element</span></${React.Fragment}>`}
+        ${!isPresent && html`<${React.Fragment}><span><b style=${{color:'var(--text-primary)'}}>I</b></span><span>Create issue at view</span></${React.Fragment}>`}
+        <span><b style=${{color:'var(--text-primary)'}}>B</b></span><span>Bookmark this view</span>
+        <span><b style=${{color:'var(--text-primary)'}}>Esc</b></span><span>Exit walk mode</span>
+      </div>`}
+      ${moreOpen && html`<div style=${{position:'absolute',bottom:'4rem',right:'1rem',
+          background:'var(--bg-primary)',border:'1px solid var(--border)',borderRadius:'var(--radius-sm)',
+          padding:'.6rem .75rem',boxShadow:'var(--shadow-md)',zIndex:7,minWidth:240,
+          display:'flex',flexDirection:'column',gap:'.4rem',pointerEvents:'auto'}}>
+        <div style=${{fontSize:'var(--text-2xs)',textTransform:'uppercase',letterSpacing:'.04em',color:'var(--text-muted)'}}>Movement</div>
+        <label style=${{display:'flex',alignItems:'center',gap:'.5rem',fontSize:'var(--text-xs)',color:'var(--text-secondary)'}}>
+          <span style=${{flex:1}}>Mouse sensitivity</span>
+          <input type="range" min="0.25" max="3" step="0.05" value=${flags.sensitivity||1}
+            onInput=${function(e){ if(window._ccWalkSetSensitivity) window._ccWalkSetSensitivity(parseFloat(e.target.value)); }}
+            style=${{width:90,accentColor:'var(--accent)'}} />
+          <span style=${{fontFamily:'var(--font-mono)',minWidth:32,textAlign:'right'}}>${(flags.sensitivity||1).toFixed(2)}</span>
+        </label>
+        <label style=${{display:'flex',alignItems:'center',gap:'.5rem',fontSize:'var(--text-xs)',color:'var(--text-secondary)'}}>
+          <input type="checkbox" checked=${!!flags.invertY} onChange=${function(e){ if(window._ccWalkSetInvertY) window._ccWalkSetInvertY(e.target.checked); }} />
+          Invert Y axis
+        </label>
+        ${!isReview && html`<label style=${{display:'flex',alignItems:'center',gap:'.5rem',fontSize:'var(--text-xs)',color:'var(--text-secondary)'}}>
+          <input type="checkbox" checked=${!!flags.bob} onChange=${function(e){ if(window._ccWalkSetBob) window._ccWalkSetBob(e.target.checked); }} />
+          Head-bob
+        </label>`}
+        ${isPresent && html`<label style=${{display:'flex',alignItems:'center',gap:'.5rem',fontSize:'var(--text-xs)',color:'var(--text-secondary)'}}>
+          <input type="checkbox" checked=${!!flags.foot} onChange=${function(e){ if(window._ccWalkSetFootsteps) window._ccWalkSetFootsteps(e.target.checked); }} />
+          Footstep audio
+        </label>`}
+        <div style=${{height:1,background:'var(--border)',margin:'.15rem 0'}}></div>
+        <div style=${{fontSize:'var(--text-2xs)',textTransform:'uppercase',letterSpacing:'.04em',color:'var(--text-muted)'}}>Bookmarks</div>
+        <button onClick=${bookmarkAdd} style=${{padding:'.25rem .5rem',fontSize:'var(--text-xs)',border:'1px solid var(--border)',background:'var(--bg-secondary)',color:'var(--text-primary)',borderRadius:'var(--radius-xs)',cursor:'pointer',fontFamily:'inherit'}}>+ Bookmark this view (B)</button>
       </div>`}
       <div style=${{position:'absolute',bottom:'var(--space-3)',left:'50%',transform:'translateX(-50%)',
         pointerEvents:'auto',zIndex:5,display:'flex',alignItems:'center',gap:'.3rem',
@@ -16199,21 +16731,231 @@ function startApp() {
         </svg>
         <span style=${{fontSize:'var(--text-xs)',color:'var(--text-muted)',marginRight:'.15rem'}}>Walk</span>
         ${SEP}
+        ${storeyList.length>0 && html`<select value="" onChange=${function(e){ var i=parseInt(e.target.value); if(!isNaN(i) && storeyList[i]) jumpStorey(storeyList[i]); e.target.value=''; }}
+          style=${{fontSize:'var(--text-xs)',padding:'.15rem .3rem',border:'1px solid var(--border)',background:'var(--bg-secondary)',color:'var(--text-secondary)',borderRadius:'var(--radius-xs)',fontFamily:'inherit',cursor:'pointer'}}>
+          <option value="">Floor…</option>
+          ${storeyList.map(function(st,i){ return html`<option key=${i} value=${i}>${st.name} · ${(st.elevation).toFixed(2)} m</option>`; })}
+        </select>`}
+        ${storeyList.length>0 && SEP}
+        <span style=${{fontSize:'var(--text-2xs)',color:'var(--text-muted)'}}>Height</span>
+        ${heightPresets.map(function(hp){
+          var active = Math.abs((flags.height||1.7) - hp.value) < 0.05;
+          return html`<button key=${hp.label} onClick=${function(){ if(window._ccWalkSetHeight) window._ccWalkSetHeight(hp.value); }}
+            style=${{padding:'.15rem .4rem',fontSize:'var(--text-2xs)',cursor:'pointer',fontFamily:'inherit',
+              background: active?'var(--accent-bg)':'transparent',
+              color: active?'var(--accent)':'var(--text-muted)',
+              border:'1px solid '+(active?'var(--accent)':'var(--border)'), borderRadius:'var(--radius-xs)'}}>${hp.label}</button>`;
+        })}
+        ${SEP}
         <span style=${{fontSize:'var(--text-xs)',color:'var(--text-secondary)'}}>FOV</span>
         <input type="range" min="30" max="110" step="1" value=${Math.round(fov)}
           onInput=${function(e){applyFov(parseFloat(e.target.value));}}
-          style=${{width:72,accentColor:'var(--accent)',margin:'0 .15rem'}} />
+          style=${{width:60,accentColor:'var(--accent)',margin:'0 .15rem'}} />
         <span style=${{fontSize:'var(--text-xs)',color:'var(--text-secondary)',fontFamily:'var(--font-mono)',minWidth:28,textAlign:'right'}}>${Math.round(fov)}°</span>
         ${SEP}
-        ${tog('No-clip', !flags.collision, function(){ if(window._ccWalkSetCollision) window._ccWalkSetCollision(!flags.collision); })}
-        ${tog('Head-bob', flags.bob, function(){ if(window._ccWalkSetBob) window._ccWalkSetBob(!flags.bob); })}
+        ${tog(flags.collision?'Walk':'Fly', !flags.collision, function(){ if(window._ccWalkSetCollision) window._ccWalkSetCollision(!flags.collision); })}
+        ${!isPresent && tog(flags.crouch?'Crouching':'Crouch', !!flags.crouch, function(){})}
+        ${SEP}
+        <button onClick=${function(){ setHelpOpen(!helpOpen); setMoreOpen(false); }} title="Keyboard shortcuts"
+          style=${{padding:'.2rem .4rem',borderRadius:'var(--radius-xs)',cursor:'pointer',fontFamily:'inherit',
+          fontSize:'var(--text-xs)',background:helpOpen?'var(--accent-bg)':'transparent',color:helpOpen?'var(--accent)':'var(--text-muted)',border:'1px solid '+(helpOpen?'var(--accent)':'var(--border)')}}>?</button>
+        <button onClick=${function(){ setMoreOpen(!moreOpen); setHelpOpen(false); }} title="More settings"
+          style=${{padding:'.2rem .4rem',borderRadius:'var(--radius-xs)',cursor:'pointer',fontFamily:'inherit',
+          fontSize:'var(--text-xs)',background:moreOpen?'var(--accent-bg)':'transparent',color:moreOpen?'var(--accent)':'var(--text-muted)',border:'1px solid '+(moreOpen?'var(--accent)':'var(--border)')}}>⋯</button>
         ${SEP}
         <button onClick=${exit} style=${{padding:'.2rem .5rem',borderRadius:'var(--radius-xs)',cursor:'pointer',
           fontFamily:'inherit',fontSize:'var(--text-xs)',fontWeight:500,
           background:'var(--color-danger-bg)',color:'var(--color-danger-fg)',
           border:'1px solid var(--color-danger-border)'}}>Esc · Exit</button>
       </div>
+      ${!isPresent && html`<${WalkClashRadar} s=${s} />`}
+      ${!isPresent && html`<${WalkMinimap} s=${s} />`}
+      <${WalkTouchJoystick} />
     </${React.Fragment}>`;
+  }
+
+  // ── Walk Touch Joystick (coarse pointers / mobile) ─────────────
+  function WalkTouchJoystick(){
+    var coarse = (typeof window !== 'undefined' && window.matchMedia && window.matchMedia('(pointer: coarse)').matches);
+    var stickSt = useState(null), stick=stickSt[0], setStick=stickSt[1];
+    useEffect(function(){
+      if (!coarse) return;
+      var iv = setInterval(function(){
+        try {
+          if (!stick || !stick.dx) return;
+          // Synthesize key states
+          var dx = stick.dx, dy = stick.dy;
+          var mag = Math.hypot(dx, dy);
+          if (mag < 0.1) return;
+          // Just stuff into _walkKeys via a global hook
+          if (typeof window._ccWalkSetTouch === 'function') window._ccWalkSetTouch({fx:-dy, rx:dx, mag:Math.min(1,mag)});
+        } catch(e){}
+      }, 33);
+      return function(){ clearInterval(iv); };
+    },[coarse, stick]);
+    if (!coarse) return null;
+    var size = 110, knob = 38;
+    function start(e){ var t = e.touches[0]; setStick({x0:t.clientX, y0:t.clientY, dx:0, dy:0}); }
+    function move(e){ if (!stick) return; var t = e.touches[0]; var dx=(t.clientX-stick.x0)/(size/2); var dy=(t.clientY-stick.y0)/(size/2); var m=Math.hypot(dx,dy); if(m>1){dx/=m;dy/=m;} setStick(Object.assign({},stick,{dx:dx,dy:dy})); }
+    function end(){ setStick(null); if (typeof window._ccWalkSetTouch === 'function') window._ccWalkSetTouch(null); }
+    var kx = stick ? stick.dx*(size/2 - knob/2) : 0;
+    var ky = stick ? stick.dy*(size/2 - knob/2) : 0;
+    return html`<div onTouchStart=${start} onTouchMove=${move} onTouchEnd=${end} onTouchCancel=${end}
+      style=${{position:'absolute', bottom:'1.2rem', left:'1.2rem', width:size, height:size, borderRadius:'50%',
+      background:'rgba(255,255,255,.18)', border:'1px solid rgba(255,255,255,.3)', zIndex:6, pointerEvents:'auto', touchAction:'none'}}>
+      <div style=${{position:'absolute', top:'50%', left:'50%', transform:'translate(calc(-50% + '+kx+'px), calc(-50% + '+ky+'px))',
+        width:knob, height:knob, borderRadius:'50%', background:'rgba(255,255,255,.7)', boxShadow:'0 1px 3px rgba(0,0,0,.3)'}}></div>
+    </div>`;
+  }
+
+  // ── Walk Clash Radar (Coordinate + Review) ─────────────────────
+  function WalkClashRadar(props){
+    var s = props.s;
+    var posSt = useState({x:0,y:0,z:0,yaw:0}), pos=posSt[0], setPos=posSt[1];
+    useEffect(function(){
+      var iv = setInterval(function(){
+        try {
+          var Sref = window._ccState3d; if (!Sref || !Sref.camera) return;
+          var p = Sref.camera.position;
+          var yaw = (typeof window._ccWalkGetYaw==='function')? window._ccWalkGetYaw() : 0;
+          setPos({x:p.x,y:p.y,z:p.z,yaw:yaw});
+        } catch(e){}
+      }, 400);
+      return function(){ clearInterval(iv); };
+    },[]);
+    var clashes = (s.clashes||[]).filter(function(c){ return c.status !== 'resolved' && c.point; });
+    var radius = 12; // metres
+    var nearby = [];
+    clashes.forEach(function(c){
+      var dx = c.point[0] - pos.x, dz = c.point[2] - pos.z;
+      var d = Math.hypot(dx, dz);
+      if (d <= radius){ nearby.push({c:c, dx:dx, dz:dz, d:d}); }
+    });
+    if (!nearby.length) return null;
+    nearby.sort(function(a,b){ return a.d - b.d; });
+    var size = 92;
+    return html`<div style=${{position:'absolute', top:'1rem', right:'1rem', zIndex:6, pointerEvents:'auto',
+      background:'var(--bg-primary)', border:'1px solid var(--border)', borderRadius:'var(--radius-sm)',
+      padding:'.4rem', boxShadow:'var(--shadow-md)', display:'flex', flexDirection:'column', alignItems:'center', gap:'.2rem'}}>
+      <div style=${{fontSize:'var(--text-2xs)',textTransform:'uppercase',letterSpacing:'.04em',color:'var(--text-muted)'}}>Clashes ${nearby.length}</div>
+      <svg width=${size} height=${size} viewBox=${'-'+size/2+' -'+size/2+' '+size+' '+size}>
+        <circle cx="0" cy="0" r=${size/2 - 4} fill="rgba(0,0,0,0.05)" stroke="var(--border)" />
+        <line x1="0" y1=${-size/2+4} x2="0" y2=${size/2-4} stroke="var(--border)" stroke-dasharray="2 2" />
+        <line x1=${-size/2+4} y1="0" x2=${size/2-4} y2="0" stroke="var(--border)" stroke-dasharray="2 2" />
+        <path d="M 0 -4 L -3 3 L 3 3 Z" fill="var(--accent)" transform=${'rotate('+(-pos.yaw*180/Math.PI)+')'} />
+        ${nearby.slice(0,8).map(function(n,i){
+          var sx = (n.dx / radius) * (size/2 - 6);
+          var sy = -(n.dz / radius) * (size/2 - 6);
+          var col = n.c.severity === 'hard' ? '#dc2626' : n.c.severity === 'medium' ? '#d97706' : '#2563eb';
+          return html`<g key=${i} style=${{cursor:'pointer'}} onClick=${function(){
+            try { if (window._ccDispatch) window._ccDispatch({t:A.ACTIVE, id:n.c.id}); } catch(_){}
+            try {
+              var Sref = window._ccState3d; if (Sref && Sref.camera){
+                var unit = 1;
+                var heightM = 1.7;
+                var dirX = n.dx / Math.max(0.01,n.d), dirZ = n.dz / Math.max(0.01,n.d);
+                Sref.camera.position.set(n.c.point[0] - dirX*2, n.c.point[1] + heightM, n.c.point[2] - dirZ*2);
+                if (typeof window._ccWalkSetYaw==='function') window._ccWalkSetYaw(Math.atan2(dirX, dirZ));
+                if (typeof invalidate==='function') invalidate(3);
+              }
+            } catch(_){}
+          }}><circle cx=${sx} cy=${sy} r="3.2" fill=${col} stroke="#fff" stroke-width="1" /></g>`;
+        })}
+      </svg>
+      <div style=${{fontSize:'var(--text-2xs)',color:'var(--text-faint)',fontFamily:'var(--font-mono)'}}>${radius} m radius</div>
+    </div>`;
+  }
+
+  // ── Walk Minimap (Coordinate + Review) ─────────────────────────
+  function WalkMinimap(props){
+    var s = props.s;
+    var posSt = useState({x:0,z:0,yaw:0}), pos=posSt[0], setPos=posSt[1];
+    var imgSt = useState(null), img=imgSt[0], setImg=imgSt[1];
+    var bboxSt = useState(null), bbox=bboxSt[0], setBbox=bboxSt[1];
+    useEffect(function(){
+      // Bake a cheap top-down render once per mount
+      try {
+        var Sref = window._ccState3d; if (!Sref || !Sref.renderer || !Sref.scene || !Sref.mg) return;
+        var box = (typeof _elemsBBox==='function') ? _elemsBBox() : null;
+        if (!box || box.isEmpty()) return;
+        setBbox({minX:box.min.x,minZ:box.min.z,maxX:box.max.x,maxZ:box.max.z});
+        var w = 220, h = 220;
+        var ortho = new THREE.OrthographicCamera(box.min.x, box.max.x, box.max.z, box.min.z, 0.1, Math.max(100, (box.max.y-box.min.y)*4));
+        // Look down: orient so +X right, +Z down on screen
+        ortho.position.set((box.min.x+box.max.x)/2, box.max.y + 10, (box.min.z+box.max.z)/2);
+        ortho.up.set(0,0,-1);
+        ortho.lookAt((box.min.x+box.max.x)/2, 0, (box.min.z+box.max.z)/2);
+        ortho.updateProjectionMatrix();
+        // Off-screen render via WebGLRenderTarget
+        var rt = new THREE.WebGLRenderTarget(w, h);
+        var prev = Sref.renderer.getRenderTarget();
+        Sref.renderer.setRenderTarget(rt);
+        Sref.renderer.render(Sref.scene, ortho);
+        Sref.renderer.setRenderTarget(prev);
+        var pixels = new Uint8Array(w*h*4);
+        Sref.renderer.readRenderTargetPixels(rt, 0, 0, w, h, pixels);
+        // Convert pixels (flipped Y) to ImageData on a 2D canvas → dataURL
+        var cv = document.createElement('canvas'); cv.width=w; cv.height=h;
+        var ctx = cv.getContext('2d');
+        var id = ctx.createImageData(w, h);
+        for (var y=0; y<h; y++){
+          for (var x=0; x<w; x++){
+            var si = ((h-1-y)*w + x)*4;
+            var di = (y*w + x)*4;
+            id.data[di]   = pixels[si];
+            id.data[di+1] = pixels[si+1];
+            id.data[di+2] = pixels[si+2];
+            id.data[di+3] = pixels[si+3];
+          }
+        }
+        ctx.putImageData(id, 0, 0);
+        setImg(cv.toDataURL('image/png'));
+        rt.dispose();
+      } catch(e){}
+    },[]);
+    useEffect(function(){
+      var iv = setInterval(function(){
+        try {
+          var Sref = window._ccState3d; if (!Sref || !Sref.camera) return;
+          var p = Sref.camera.position;
+          var yaw = (typeof window._ccWalkGetYaw==='function')? window._ccWalkGetYaw() : 0;
+          setPos({x:p.x,z:p.z,yaw:yaw});
+        } catch(e){}
+      }, 250);
+      return function(){ clearInterval(iv); };
+    },[]);
+    if (!img || !bbox) return null;
+    var w = 160;
+    var rangeX = bbox.maxX - bbox.minX, rangeZ = bbox.maxZ - bbox.minZ;
+    if (rangeX <= 0 || rangeZ <= 0) return null;
+    var px = ((pos.x - bbox.minX) / rangeX) * w;
+    var py = ((pos.z - bbox.minZ) / rangeZ) * w;
+    function onClick(e){
+      var r = e.currentTarget.getBoundingClientRect();
+      var fx = (e.clientX - r.left) / r.width;
+      var fy = (e.clientY - r.top) / r.height;
+      var wx = bbox.minX + fx * rangeX;
+      var wz = bbox.minZ + fy * rangeZ;
+      try {
+        var Sref = window._ccState3d; if (Sref && Sref.camera){
+          var heightM = 1.7;
+          Sref.camera.position.set(wx, Sref.camera.position.y, wz);
+          if (typeof invalidate==='function') invalidate(3);
+        }
+      } catch(_){}
+    }
+    return html`<div style=${{position:'absolute', top:'1rem', left:'1rem', zIndex:6, pointerEvents:'auto',
+      background:'var(--bg-primary)', border:'1px solid var(--border)', borderRadius:'var(--radius-sm)',
+      padding:'.3rem', boxShadow:'var(--shadow-md)'}}>
+      <div onClick=${onClick} style=${{position:'relative', width:w, height:w, cursor:'pointer'}}>
+        <img src=${img} style=${{width:w,height:w,display:'block',borderRadius:'var(--radius-xs)',opacity:.85}} alt="Minimap" />
+        <svg width=${w} height=${w} style=${{position:'absolute',top:0,left:0,pointerEvents:'none'}}>
+          <g transform=${'translate('+px+','+py+') rotate('+( -pos.yaw*180/Math.PI)+')'}>
+            <path d="M 0 -7 L -5 5 L 5 5 Z" fill="var(--accent)" stroke="#fff" stroke-width="1" />
+          </g>
+        </svg>
+      </div>
+    </div>`;
   }
 
   // ── Presentation / Kiosk overlay ─────────────────────────────
@@ -17250,8 +17992,8 @@ function startApp() {
       onSelect:function(){ try{ if(window._ccFit) window._ccFit(); }catch(e){} }});
     push({group:'View', label:'Toggle floor plan view', keywords:'plan 2d sheet floor underlay',
       onSelect:function(){ d({t:A.FLOOR_PLAN,v:!s.floorPlan}); }});
-    push({group:'View', label:'Walk mode', keywords:'walk wasd fps first person navigate', r:'present',
-      onSelect:function(){ d({t:A.WALK_MODE,v:!s.walkMode}); }});
+    push({group:'View', label:'Walk mode', keywords:'walk wasd fps first person navigate pegman', r:'present',
+      onSelect:function(){ if(s.walkMode){ d({t:A.WALK_MODE,v:false}); } else { d({t:A.WALK_PLACING,v:true}); } }});
     renderStyles.forEach(function(style, i){
       push({group:'Rendering', label:'Render: '+renderLabels[style], hint:String(i+1),
         keywords:'render style material '+style,
@@ -25088,7 +25830,7 @@ function startApp() {
       return function(){ window.removeEventListener('cc-section-pick-end', onEnd); window.removeEventListener('keydown', onKey); };
     }, []);
 
-    var activeMode = s.walkMode ? 'walk'
+    var activeMode = (s.walkMode || s.walkPlacing) ? 'walk'
       : pickOn ? 'slice'
       : (s.sectionAxis || s.sectionCustom || (s.sectionBox && s.sectionBox.enabled)) ? 'slice'
       : s.measureMode ? 'measure'
@@ -25098,6 +25840,7 @@ function startApp() {
 
     function clearAllModes(){
       if (s.walkMode) d({t:A.WALK_MODE,v:false});
+      if (s.walkPlacing) d({t:A.WALK_PLACING,v:false});
       if (s.sectionAxis) d({t:A.SECTION,axis:null});
       if (s.sectionCustom) d({t:A.SECTION_CUSTOM,v:null});
       if (s.sectionBox && s.sectionBox.enabled) d({t:A.SECTION_BOX,v:null});
@@ -25110,7 +25853,7 @@ function startApp() {
     }
     function setMode(mode){
       clearAllModes();
-      if (mode === 'walk') d({t:A.WALK_MODE,v:true});
+      if (mode === 'walk') d({t:A.WALK_PLACING,v:true});
       else if (mode === 'slice') d({t:A.SECTION,axis:'y',pos:0.5});
       else if (mode === 'measure') d({t:A.MEASURE_MODE,v:true});
       else if (mode === 'plan' && s.floors && s.floors.length>0) d({t:A.FLOOR_PLAN,v:{storeyId:s.floors[0].id,storeyName:s.floors[0].name||'Floor 1',elevation:s.floors[0].elevation||0,cutHeight:1.2}});
@@ -26300,6 +27043,7 @@ function startApp() {
           if(window._ccElementMeasureMenu){ window._ccElementMeasureMenu=null; if(window._ccHoverCoordTick)window._ccHoverCoordTick(); return; }
           if(window._ccSectionPickPending){ window._ccSectionPickPending=false; window.dispatchEvent(new CustomEvent('cc-section-pick-end')); return; }
           if(s.walkMode){ if(window._ccWalkExit)window._ccWalkExit(); d({t:A.WALK_MODE,v:false}); return; }
+          if(s.walkPlacing){ d({t:A.WALK_PLACING,v:false}); return; }
           if(s.measureMode){
             // First Esc inside measure mode: clear in-progress vertices.
             // Second Esc (no in-progress): exit measure mode entirely.
@@ -26378,7 +27122,7 @@ function startApp() {
           if(chord==='da'){ d({t:A.MEASURE_MODE,v:s.measureMode==='angle'?null:'angle'}); return; }
           if(chord==='cs'){ d({t:A.SECTION,axis:null}); d({t:A.SECTION_BOX,v:null}); return; }
           if(chord==='wt'){ d({t:A.UPD_PREFS,u:{renderStyle:s.prefs.renderStyle==='xray'?'standard':'xray'}}); return; }
-          if(chord==='ww'){ d({t:A.WALK_MODE,v:!s.walkMode}); return; }
+          if(chord==='ww'){ if(s.walkMode){ d({t:A.WALK_MODE,v:false}); } else { d({t:A.WALK_PLACING,v:!s.walkPlacing}); } return; }
           if(chord==='hh'){
             var hhIds=getActiveEids();
             if(!hhIds && window._ccSelectedExpressId) hhIds=[window._ccSelectedExpressId];
@@ -26412,7 +27156,7 @@ function startApp() {
               if(window._ccActivateSectionBox) window._ccActivateSectionBox();
               else if(_getSectionBoxFromScene){var bx=_getSectionBoxFromScene();if(bx&&window._ccDispatch)window._ccDispatch({t:A.SECTION_BOX,v:{enabled:true,min:[bx.min.x,bx.min.y,bx.min.z],max:[bx.max.x,bx.max.y,bx.max.z]}});}
             }
-            if(sk==='w'){ d({t:A.WALK_MODE,v:!s.walkMode}); }
+            if(sk==='w'){ if(s.walkMode){ d({t:A.WALK_MODE,v:false}); } else { d({t:A.WALK_PLACING,v:!s.walkPlacing}); } }
             // Z held without a follow-up key → toggle vertical floor cut
             // (displayed as "Z axis"; internal three.js axis is Y).
             if(sk==='z'){ d({t:A.SECTION,axis:s.sectionAxis==='y'?null:'y'}); }
