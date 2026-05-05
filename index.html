@@ -5545,11 +5545,13 @@ function startApp() {
         _walkPointerLocked = (document.pointerLockElement === renderer.domElement);
         try { window.dispatchEvent(new CustomEvent('cc-walk-locked',{detail:{locked:_walkPointerLocked}})); } catch(e){}
       });
-      renderer.domElement.addEventListener('mousemove', function(e) {
+      // Window-level mousemove so look works even when cursor drifts over
+      // HUD overlays while walking with WASD.
+      _wlAdd('mousemove', function(e) {
         if (!_walkActive) return;
         var mx = e.movementX || 0, my = e.movementY || 0;
-        // Without pointer lock the cursor stops at the viewport edge — clamp
-        // large jumps that happen when the cursor re-enters after hitting an edge.
+        // Clamp large jumps that occur when the cursor re-enters the viewport
+        // after hitting an edge (only an issue when pointer lock is inactive).
         if (!_walkPointerLocked && (Math.abs(mx) > 80 || Math.abs(my) > 80)) return;
         var sens = 0.002 * (_walkSensitivity || 1);
         _walkYaw -= mx * sens;
