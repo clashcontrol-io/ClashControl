@@ -16663,7 +16663,8 @@ function startApp() {
             thin = !window._ccWalkValidateFootprint(S.mg, h.point, 0.15*unit, 0.05*unit);
           }
         } catch(_){ }
-        return { point: h.point.clone(), normal: n, screen:{x:e.clientX-r.left, y:e.clientY-r.top}, valid: !thin, thin: thin };
+        // thin = visual warning only; valid=true so user can still place there
+        return { point: h.point.clone(), normal: n, screen:{x:e.clientX-r.left, y:e.clientY-r.top}, valid: true, thin: thin };
       }
       return { screen:{x:e.clientX-(r?r.left:0), y:e.clientY-(r?r.top:0)}, valid:false };
     }
@@ -16679,15 +16680,16 @@ function startApp() {
     }
     function onDown(e){
       if (e.button !== 0) return;
-      if (e.shiftKey){
-        var h2 = raycastFloor(e);
-        if (h2 && h2.valid){ setAim({startX:e.clientX, startY:e.clientY}); setHit(h2); }
-      }
+      // Always raycast on mousedown so hit is fresh when onUp fires
+      var h2 = raycastFloor(e);
+      if (h2) setHit(h2);
+      if (e.shiftKey && h2 && h2.valid){ setAim({startX:e.clientX, startY:e.clientY}); }
     }
     function onUp(e){
       if (e.button !== 0) return;
-      var h2 = hit;
-      if (!h2 || !h2.valid){ return; }
+      // Prefer fresh raycast at click position; fall back to last-move hit
+      var h2 = raycastFloor(e) || hit;
+      if (!h2 || !h2.point){ return; } // only block if no surface at all
       var unit = (typeof _walkResolveUnitScale === 'function') ? _walkResolveUnitScale() : 1;
       var heightM = (typeof window._ccWalkGetFlags==='function'? (window._ccWalkGetFlags().height||1.7) : 1.7);
       var entry = {
@@ -16707,7 +16709,7 @@ function startApp() {
     },[hit, aim]);
     var reticle = null;
     if (hit && hit.screen){
-      var col = hit.valid ? 'var(--accent, #b8533a)' : (hit.thin ? '#d97706' : '#9aa0a6');
+      var col = hit.thin ? 'var(--color-warning)' : (hit.valid ? 'var(--accent)' : 'var(--text-faint)');
       var sx = hit.screen.x, sy = hit.screen.y;
       var yaw = (hit.yaw != null) ? hit.yaw : null;
       reticle = html`<svg width="120" height="120" viewBox="-60 -60 120 120"
@@ -16811,11 +16813,15 @@ function startApp() {
     }, []);
 
     // Hover element label (Coordinate + Review only) — throttled 4 Hz
+    var lastHoverIdRef = useRef(null);
     useEffect(function(){
       if (isPresent) return;
       var iv = setInterval(function(){
         try {
           var el = window._ccWalkHoverEl;
+          var id = el ? (el.id||el.eid||el.expressId||el.name||null) : null;
+          if (id === lastHoverIdRef.current) return;
+          lastHoverIdRef.current = id;
           if (el) setHoverEl({name:el.name||'(unnamed)', type:el.type||'', storey:el.storey||''});
           else setHoverEl(null);
         } catch(e){}
@@ -17094,6 +17100,8 @@ function startApp() {
   // optional .webm export via canvas.captureStream during playback.
   function WalkSplineRecorder(props){
     var pathSt = useState([]), path=pathSt[0], setPath=pathSt[1];
+    var pathRef = useRef(path);
+    pathRef.current = path;
     var playSt = useState(false), playing=playSt[0], setPlaying=playSt[1];
     var recSt = useState(false), recording=recSt[0], setRecording=recSt[1];
     var msgSt = useState(null), msg=msgSt[0], setMsg=msgSt[1];
@@ -17103,18 +17111,20 @@ function startApp() {
         var Sref = window._ccState3d; if (!Sref || !Sref.camera) return;
         var p = Sref.camera.position;
         var yaw = (typeof window._ccWalkGetYaw==='function')? window._ccWalkGetYaw() : 0;
-        var next = path.concat([{pos:[p.x,p.y,p.z], yaw:yaw}]);
+        var next = pathRef.current.concat([{pos:[p.x,p.y,p.z], yaw:yaw}]);
         setPath(next);
         flash('Waypoint '+next.length);
       } catch(_){}
     }
+    var addWaypointRef = useRef(addWaypoint);
+    addWaypointRef.current = addWaypoint;
     useEffect(function(){
       function onKey(e){
-        if (e.key === 'r' || e.key === 'R'){ if (!e.ctrlKey && !e.metaKey) addWaypoint(); }
+        if ((e.key === 'r' || e.key === 'R') && !e.ctrlKey && !e.metaKey) addWaypointRef.current();
       }
       window.addEventListener('keydown', onKey);
       return function(){ window.removeEventListener('keydown', onKey); };
-    },[path]);
+    },[]);
     function play(record){
       if (path.length < 2){ flash('Need ≥ 2 waypoints'); return; }
       var Sref = window._ccState3d; if (!Sref || !Sref.camera || !Sref.renderer) return;
@@ -17237,13 +17247,16 @@ function startApp() {
   function WalkClashRadar(props){
     var s = props.s;
     var posSt = useState({x:0,y:0,z:0,yaw:0}), pos=posSt[0], setPos=posSt[1];
+    var lastPosRef = useRef({x:0,y:0,z:0,yaw:0});
     useEffect(function(){
       var iv = setInterval(function(){
         try {
           var Sref = window._ccState3d; if (!Sref || !Sref.camera) return;
           var p = Sref.camera.position;
           var yaw = (typeof window._ccWalkGetYaw==='function')? window._ccWalkGetYaw() : 0;
-          setPos({x:p.x,y:p.y,z:p.z,yaw:yaw});
+          var lp = lastPosRef.current;
+          if (Math.abs(p.x-lp.x)<0.05 && Math.abs(p.z-lp.z)<0.05 && Math.abs(yaw-lp.yaw)<0.05) return;
+          var next = {x:p.x,y:p.y,z:p.z,yaw:yaw}; lastPosRef.current = next; setPos(next);
         } catch(e){}
       }, 400);
       return function(){ clearInterval(iv); };
@@ -17297,6 +17310,7 @@ function startApp() {
     var posSt = useState({x:0,z:0,yaw:0}), pos=posSt[0], setPos=posSt[1];
     var imgSt = useState(null), img=imgSt[0], setImg=imgSt[1];
     var bboxSt = useState(null), bbox=bboxSt[0], setBbox=bboxSt[1];
+    var lastPosRef2 = useRef({x:0,z:0,yaw:0});
     useEffect(function(){
       // Bake a cheap top-down render once per mount
       try {
@@ -17344,7 +17358,9 @@ function startApp() {
           var Sref = window._ccState3d; if (!Sref || !Sref.camera) return;
           var p = Sref.camera.position;
           var yaw = (typeof window._ccWalkGetYaw==='function')? window._ccWalkGetYaw() : 0;
-          setPos({x:p.x,z:p.z,yaw:yaw});
+          var lp = lastPosRef2.current;
+          if (Math.abs(p.x-lp.x)<0.05 && Math.abs(p.z-lp.z)<0.05 && Math.abs(yaw-lp.yaw)<0.05) return;
+          var next = {x:p.x,z:p.z,yaw:yaw}; lastPosRef2.current = next; setPos(next);
         } catch(e){}
       }, 250);
       return function(){ clearInterval(iv); };
