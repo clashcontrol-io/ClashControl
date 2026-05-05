@@ -7248,7 +7248,10 @@ function startApp() {
       renderer.domElement.addEventListener('mouseup', function(e){
         if(e.button !== 0) return; // only left-click picks elements
         if(_sboxDragging || _walkActive) return;
-        if(Math.abs(e.clientX-downPos.x)>3 || Math.abs(e.clientY-downPos.y)>3) return;
+        // Use a larger threshold during active measurement so a short orbit between
+        // placing two points doesn't accidentally register as a second measurement click.
+        var _clickThresh = (measureModeRef.current && measurePtsRef.current && measurePtsRef.current.length > 0) ? 8 : 3;
+        if(Math.abs(e.clientX-downPos.x)>_clickThresh || Math.abs(e.clientY-downPos.y)>_clickThresh) return;
         var rect = renderer.domElement.getBoundingClientRect();
         mouse.x = ((e.clientX-rect.left)/rect.width)*2-1;
         mouse.y = -((e.clientY-rect.top)/rect.height)*2+1;
