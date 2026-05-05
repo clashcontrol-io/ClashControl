@@ -6941,9 +6941,24 @@ function startApp() {
         hoverMouse.y = -((e.clientY-rect.top)/rect.height)*2+1;
         hoverRaycaster.setFromCamera(hoverMouse, S.camera);
         var hits = hoverRaycaster.intersectObjects(S.mg.children, true);
-        // Update hover world coordinate + snap when in measure mode (or Alt held)
-        if (_wantSnap && hits.length > 0 && hits[0].point) {
-          window._ccAltEndpointHit = null; // real snap takes priority over endpoint hint
+        // Pre-check: when a measure tool is active and nothing is in progress, test
+        // endpoint dots BEFORE evaluating model hits. Dots live in scene directly (not
+        // S.mg), so the model raycaster misses them. Without this, model geometry under
+        // a dot would clear _ccAltEndpointHit and the hint would never appear.
+        var _preEpHit = (_wantSnap && measureModeRef.current &&
+          (!measurePtsRef.current || measurePtsRef.current.length === 0) &&
+          Object.keys(_measureGeoMap).length > 0)
+          ? _hitMeasureEndpoint(e.clientX, e.clientY) : null;
+        var _useEpHint = _preEpHit && _preEpHit.mesh && _preEpHit.type === 'length';
+
+        if (_useEpHint) {
+          // Endpoint dot takes priority — show the "Alt+click → trace area" hint
+          window._ccAltEndpointHit = _preEpHit;
+          window._ccHoverSnap = {point:_preEpHit.mesh.position.clone(), type:'alt-endpoint', screenX:e.clientX, screenY:e.clientY};
+          if(window._ccHoverCoordTick) window._ccHoverCoordTick();
+          invalidate();
+        } else if (_wantSnap && hits.length > 0 && hits[0].point) {
+          window._ccAltEndpointHit = null;
           var snap = _ccComputeSnap(hits[0], e.clientX, e.clientY) || {point:hits[0].point.clone(), type:'face'};
           var hp = snap.point;
           window._ccHoverPoint = {x:hp.x, y:hp.y, z:hp.z, screenX:e.clientX, screenY:e.clientY};
@@ -6957,17 +6972,9 @@ function startApp() {
             invalidate();
           }
         } else {
-          // No model-geometry hit. Check for a placed length endpoint under the cursor —
-          // the "Alt+click → trace area" hint shows only when a measure tool is active and
-          // no measurement is in progress (so we don't compete with throwaway-dim alt-clicks).
-          var _epHov = (measureModeRef.current && (!measurePtsRef.current || measurePtsRef.current.length === 0) && Object.keys(_measureGeoMap).length > 0)
-            ? _hitMeasureEndpoint(e.clientX, e.clientY) : null;
-          if (_epHov && _epHov.mesh && _epHov.type === 'length') {
-            window._ccAltEndpointHit = _epHov;
-            window._ccHoverSnap = {point:_epHov.mesh.position.clone(), type:'alt-endpoint', screenX:e.clientX, screenY:e.clientY};
-            invalidate();
-          } else if (window._ccHoverPoint || window._ccAltEndpointHit) {
-            window._ccAltEndpointHit = null;
+          // No model hit, no endpoint dot
+          window._ccAltEndpointHit = null;
+          if (window._ccHoverPoint) {
             window._ccHoverPoint = null;
             window._ccHoverSnap = null;
             if(window._ccHoverCoordTick) window._ccHoverCoordTick();
@@ -7303,14 +7310,22 @@ function startApp() {
             var _rsMeas = window._ccLatestState;
             var _rmMeas = (_rsMeas && _rsMeas.measurements||[]).find(function(x){return x.id===_epClick.id;});
             if (_rmMeas && _rmMeas.points && _rmMeas.points.length >= 2) {
-              var _rptsMeas = _rmMeas.points.map(function(p){return new THREE.Vector3(p[0],p[1],p[2]);});
-              // pts[0] = the clicked vertex (polygon closes back here); pts[1] = the other end
-              measurePtsRef.current = (_epClick.pointIndex === 0) ? _rptsMeas : _rptsMeas.slice().reverse();
-              window._ccChainedArea = true;
+              // Seed only the clicked vertex. Seeding both endpoints created odd polygons
+              // when the measurement was diagonal — the existing line stays as a visual
+              // guide and the user explicitly clicks each corner they want included.
+              var _clickedArr = _rmMeas.points[_epClick.pointIndex];
+              var _clickedVec = new THREE.Vector3(_clickedArr[0], _clickedArr[1], _clickedArr[2]);
+              measurePtsRef.current = [_clickedVec];
+              // Add an in-progress dot at the seeded vertex so it's visible as "placed"
+              var _sDotG = new THREE.SphereGeometry(0.09, 12, 12);
+              var _sDotM = new THREE.MeshBasicMaterial({color:0xb8533a, depthTest:false, transparent:true, opacity:0.98});
+              var _sDot = new THREE.Mesh(_sDotG, _sDotM);
+              _sDot.position.copy(_clickedVec); _sDot.renderOrder = 999;
+              scene.add(_sDot); measureObjsRef.current.push(_sDot);
               measureModeRef.current = 'area';
               window._ccAltEndpointHit = null;
               d({t:A.MEASURE_MODE, v:'area'});
-              if (window._ccToast) window._ccToast('Continuing as area · click to add points · click near start to close');
+              if (window._ccToast) window._ccToast('Area started from this corner · click to trace · click near start to close');
               invalidate();
               return;
             }
@@ -7385,9 +7400,15 @@ function startApp() {
         if(measureModeRef.current && hits.length>0) {
           var _state = window._ccLatestState;
           var mode = measureModeRef.current;
-          // Compute the precise snap point (vertex/edge/midpoint > face hit)
           var _evX = e.clientX, _evY = e.clientY;
-          var snap = _ccComputeSnap(hits[0], _evX, _evY) || {point:hits[0].point.clone(), type:'face'};
+          // Prefer the last hover-snap when it's close to the click position — this avoids
+          // a race condition where the camera orbited slightly between the mousemove that
+          // computed the snap glyph and the mouseup that fires the click. Using the stored
+          // snap means the point placed exactly matches what the glyph showed.
+          var _hs = window._ccHoverSnap;
+          var snap = (_hs && _hs.point && Math.abs((_hs.screenX||0) - _evX) < 30 && Math.abs((_hs.screenY||0) - _evY) < 30)
+            ? _hs
+            : (_ccComputeSnap(hits[0], _evX, _evY) || {point:hits[0].point.clone(), type:'face'});
           var hitPt = snap.point.clone();
           // Element pick sub-mode: read Qto_* from the picked element directly
           if (mode === 'element') {
@@ -25032,8 +25053,8 @@ function startApp() {
       ruler:  '<path d="M4 12h16"/><path d="M4 8v8"/><path d="M20 8v8"/><path d="M7 10l-3 2 3 2"/><path d="M17 10l3 2-3 2"/>',
       // Angle: vector triangle with arc — slightly thicker arc for clarity
       angle:  '<path d="M5 19L19 19"/><path d="M5 19L5 5"/><path d="M5 9a10 10 0 0 1 10 10"/>',
-      // Area: square outline with diagonal hatch corner — reads as a polygon
-      area:   '<path d="M4 4h16v16H4z"/><path d="M4 4l8 8"/><path d="M12 4l8 8"/>',
+      // Area: clean pentagon outline — reads as "click vertices to close a polygon"
+      area:   '<path d="M12 3L21 9L18 19L6 19L3 9Z"/>',
       // Element pick: cube with quantity tag (Q for Qto)
       cubeq:  '<path d="M4 8l8-4 8 4v9l-8 4-8-4z"/><path d="M4 8l8 4 8-4"/><path d="M12 12v9"/><circle cx="17" cy="6" r="2.6" fill="var(--accent)" stroke="none"/>',
       // Clearance: two boxes with arrow gap between
