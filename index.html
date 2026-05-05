@@ -7425,12 +7425,14 @@ function startApp() {
             var _rmMeas = (_rsMeas && _rsMeas.measurements||[]).find(function(x){return x.id===_epClick.id;});
             if (_rmMeas && _rmMeas.points && _rmMeas.points.length >= 2) {
               // Seed BOTH endpoints so the existing edge becomes the first side of the
-              // new area polygon. Clicked point = pts[0] (area closes back here);
-              // other end = pts[1] (rubber-band starts from there). User only needs
-              // 2 more corner clicks to complete a 4-sided area.
+              // new area polygon. Clicked endpoint = pts[LAST] so rubber-band extends
+              // naturally from the clicked side — prevents the rubber-band from crossing
+              // over the seeded edge when the cursor is on the same side as the clicked pt.
+              // Other endpoint = pts[0] (the polygon closes back there).
               var _allSeedPts = _rmMeas.points.map(function(p){return new THREE.Vector3(p[0],p[1],p[2]);});
-              var _seedA = (_epClick.pointIndex === 0) ? _allSeedPts[0] : _allSeedPts[1];
-              var _seedB = (_epClick.pointIndex === 0) ? _allSeedPts[1] : _allSeedPts[0];
+              var _seedClicked = _allSeedPts[_epClick.pointIndex];      // rubber-band starts here
+              var _seedOther   = _allSeedPts[1 - _epClick.pointIndex];  // polygon closes here
+              var _seedA = _seedOther, _seedB = _seedClicked;           // [other, clicked]
               measurePtsRef.current = [_seedA.clone(), _seedB.clone()];
               // Add overlay in-progress dots at both seeds so _ccDropInProgressDots
               // removes them on Esc (it stops at the committed Line from the length meas).
@@ -25119,7 +25121,8 @@ function startApp() {
     var caretRef = useRef(null);
     var ttState = useState(null), ttTip = ttState[0], setTtTip = ttState[1];
     var ttPos = useRef({x:0,y:0});
-    var homeMenuSt = useState(null), homeMenu=homeMenuSt[0], setHomeMenu=homeMenuSt[1];
+    var homeMenuSt = useState(false), homeMenuOpen=homeMenuSt[0], setHomeMenuOpen=homeMenuSt[1];
+    var homeCaretRef = useRef(null);
     var hasHome = !!(s.prefs && s.prefs.homeView);
     function _saveHomeView() {
       var S = window._ccState3d; if (!S || !S.camera || !S.orbit) return;
@@ -25305,25 +25308,43 @@ function startApp() {
         <!-- VIEW -->
         ${btn({k:'fit', title:'Fit all (F) — frames visible geometry; frames selected element when one is active', label:'Fit all', icon:I.fit,
                 onClick:function(){ if(window._ccFitAll) window._ccFitAll(); else if(window._resetView) window._resetView(); }})}
-        ${(function(){
-          var _resetTitle = hasHome ? 'Reset view (R) — fly to saved home · right-click to change home' : 'Reset view (R) — fly to fit-all · right-click to set home';
-          return html`<div style=${{position:'relative'}}>
-            ${btn({k:'reset', title:_resetTitle, label:'Reset view', icon:I.reset,
-              extraStyle: hasHome ? {boxShadow:'inset 0 -2px 0 var(--accent)'} : {},
-              onClick:function(){ if(window._ccResetView) window._ccResetView(); else if(window._resetView) window._resetView(); },
-              onContextMenu:function(e){ e.preventDefault(); setHomeMenu({x:e.clientX,y:e.clientY}); }})}
-            ${homeMenu && html`<div style=${{position:'fixed',left:homeMenu.x,top:homeMenu.y,zIndex:9999,background:'var(--surface)',border:'1px solid var(--border)',borderRadius:6,boxShadow:'0 4px 16px rgba(0,0,0,.18)',padding:'4px 0',minWidth:168,fontSize:'0.8rem'}}
-                onMouseLeave=${function(){setHomeMenu(null);}}>
-              <div style=${{padding:'6px 12px',cursor:'pointer',color:'var(--text-primary)'}}
-                onMouseDown=${function(e){e.stopPropagation();_saveHomeView();setHomeMenu(null);}}>
-                Set current view as home
-              </div>
-              ${hasHome && html`<div style=${{padding:'6px 12px',cursor:'pointer',color:'var(--text-muted)',borderTop:'1px solid var(--border)'}}
-                onMouseDown=${function(e){e.stopPropagation();_clearHomeView();setHomeMenu(null);}}>
-                Clear home view
-              </div>`}
+        ${btn({k:'reset', title:hasHome?'Reset view (R) — fly to saved home':'Reset view (R) — fit all geometry',
+                label:'Reset view', icon:I.reset,
+                extraStyle: hasHome ? {boxShadow:'inset 0 -2px 0 var(--accent)'} : {},
+                onClick:function(){ if(window._ccResetView) window._ccResetView(); else if(window._resetView) window._resetView(); }})}
+        <button ref=${homeCaretRef} title="Home view options" aria-label="Home view options"
+          onClick=${function(e){ e.stopPropagation(); setHomeMenuOpen(function(v){return !v;}); }}
+          style=${{
+            background:homeMenuOpen?'var(--accent-bg)':'transparent',
+            border:'none',padding:'0 .25rem',height:'1.6rem',color:homeMenuOpen?'var(--accent)':'var(--text-muted)',
+            cursor:'pointer',display:'inline-flex',alignItems:'center',marginLeft:'-.1rem',
+            borderRadius:'var(--radius-xs)'
+          }}>
+          <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M2 4l3 3 3-3"/></svg>
+        </button>
+        ${homeMenuOpen && (function(){
+          var rect = homeCaretRef.current ? homeCaretRef.current.getBoundingClientRect() : {bottom:50, left:120, width:14};
+          var anchorX = rect.left + rect.width/2;
+          var anchorY = rect.bottom + 6;
+          return html`<div onClick=${function(e){e.stopPropagation();}} style=${{position:'fixed',top:anchorY+'px',left:anchorX+'px',transform:'translateX(-50%)',zIndex:9999,
+            background:'var(--bg-primary)',border:'1px solid var(--border)',borderRadius:'var(--radius-sm)',
+            boxShadow:'var(--shadow-md)',padding:'.3rem',minWidth:200,fontSize:'var(--text-xs)'}}>
+            <div onClick=${function(){_saveHomeView();setHomeMenuOpen(false);}}
+              style=${{display:'flex',alignItems:'center',gap:'.55rem',padding:'.35rem .55rem',borderRadius:'var(--radius-xs)',cursor:'pointer',color:'var(--text-primary)'}}
+              onMouseEnter=${function(e){e.currentTarget.style.background='var(--surface-warm)';}}
+              onMouseLeave=${function(e){e.currentTarget.style.background='transparent';}}>
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg>
+              <span style=${{flex:1}}>Set current view as home</span>
+            </div>
+            ${hasHome && html`<div onClick=${function(){_clearHomeView();setHomeMenuOpen(false);}}
+              style=${{display:'flex',alignItems:'center',gap:'.55rem',padding:'.35rem .55rem',borderRadius:'var(--radius-xs)',cursor:'pointer',color:'var(--text-secondary)'}}
+              onMouseEnter=${function(e){e.currentTarget.style.background='var(--surface-warm)';}}
+              onMouseLeave=${function(e){e.currentTarget.style.background='transparent';}}>
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M19 6l-1 14H6L5 6"/><path d="M9 6V4h6v2"/></svg>
+              <span style=${{flex:1}}>Clear home view</span>
             </div>`}
-          </div>`;
+          </div>
+          <div onClick=${function(){setHomeMenuOpen(false);}} style=${{position:'fixed',inset:0,zIndex:9998,background:'transparent'}}></div>`;
         })()}
         ${div()}
         <!-- SECTION -->
