@@ -1,5 +1,8 @@
 # Changelog
 
+## v5.9.5 (2026-05-05)
+- walk mode: free mouse look + dynamic resolution for performance
+
 ## v5.9.4 (2026-05-05)
 - Fix walk-mode auto-exit on 'w' key + ViewCube ReferenceError
 
