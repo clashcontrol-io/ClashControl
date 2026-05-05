@@ -23662,6 +23662,76 @@ function startApp() {
         });
       }
 
+      // ── Extract dimensional constraints & structural flags from psets ──
+      // Keys that convey level/offset constraints (Revit pset "Constraints" and equivalents)
+      var _constrPrimaryKeys = [
+        'Base Constraint','Base Offset','Top Constraint','Top Offset',
+        'Unconnected Height','Top is Attached','Base is Attached',
+        'Host','Offset from Host','Reference Level','Room Bounding',
+        'Structural','Structural Usage','Slope','Cross-Section Rotation',
+        'Start Level Offset','End Level Offset','Span Direction',
+        'Floor','Floor Offset','Level','Level Offset','Elevation from Level',
+        'Moves With Grids','Rafter Cut','Plate Offset From Base','Rafter Pitch'
+      ];
+      // Keys from Pset_*Common that carry structural/physical info
+      var _structKeys = [
+        'IsExternal','LoadBearing','FireRating','AcousticRating',
+        'ThermalTransmittance','ExtendToStructure','Compartmentation',
+        'SurfaceSpreadOfFlame','SpanType','ConstructionType'
+      ];
+      // Helper: format a constraint value (offsets/heights → m or mm)
+      function fmtConstrVal(lbl, raw) {
+        var n = parseFloat(raw);
+        if (!isNaN(n) && isFinite(n)) {
+          var lo = lbl.toLowerCase();
+          if (lo.indexOf('offset')!==-1 || lo.indexOf('height')!==-1 || lo.indexOf('elevation')!==-1) {
+            return Math.abs(n)<0.0005 ? '0' : (Math.abs(n)>=1 ? n.toFixed(3)+' m' : (n*1000).toFixed(1)+' mm');
+          }
+          if (lo.indexOf('slope')!==-1 || lo.indexOf('pitch')!==-1) {
+            return n.toFixed(4)+' rad  ('+((n*180/Math.PI).toFixed(2))+'°)';
+          }
+        }
+        return raw;
+      }
+      var constraintProps = []; // {label, value}
+      var structProps = [];     // {label, value}
+      if (ep&&ep.psets) {
+        // Priority: a pset literally named "Constraints" (Revit)
+        var _cpset = ep.psets['Constraints']||ep.psets['Constraints_']||null;
+        if (_cpset) {
+          Object.keys(_cpset).forEach(function(k){
+            var v=String(_cpset[k]||''); if(!v||v==='null'||v==='undefined') return;
+            constraintProps.push({label:k, value:fmtConstrVal(k,v)});
+          });
+        }
+        // Also scan every pset for known constraint keys (catches ArchiCAD, Vectorworks, etc.)
+        var _seenCon={};
+        Object.keys(ep.psets).forEach(function(sn){
+          var ps=ep.psets[sn];
+          _constrPrimaryKeys.forEach(function(ck){
+            if(!_seenCon[ck] && ps[ck]!=null && ps[ck]!=='' && ps[ck]!==undefined) {
+              _seenCon[ck]=true;
+              var v=String(ps[ck]); if(v==='null'||v==='undefined') return;
+              // Don't re-add if already from dedicated Constraints pset
+              if(_cpset && _cpset[ck]!=null) return;
+              constraintProps.push({label:ck, value:fmtConstrVal(ck,v)});
+            }
+          });
+        });
+        // Collect structural/physical flags from Pset_*Common
+        var _seenStr={};
+        Object.keys(ep.psets).forEach(function(sn){
+          var ps=ep.psets[sn];
+          _structKeys.forEach(function(sk){
+            if(!_seenStr[sk] && ps[sk]!=null && String(ps[sk])!=='' && String(ps[sk])!=='undefined') {
+              _seenStr[sk]=true;
+              structProps.push({label:sk.replace(/([a-z])([A-Z])/g,'$1 $2'), value:String(ps[sk])});
+            }
+          });
+        });
+      }
+      var hasConstraints = constraintProps.length>0 || structProps.length>0;
+
       // Linked clashes and issues
       var linkedClashes = (latestState.clashes||[]).filter(function(c){return (c.elemA===el.expressId)||(c.elemB===el.expressId)||(c.a&&c.a.expressId===el.expressId)||(c.b&&c.b.expressId===el.expressId);});
       var linkedIssues  = (latestState.issues||[]).filter(function(i){return i.elementId===el.expressId||i.globalId===(ep&&ep.globalId);});
@@ -23708,10 +23778,26 @@ function startApp() {
         function addRow(label, value){ if(value) propRows.push({label:label, value:value}); }
 
         addRow('Type', typeName || typeWord);
-        addRow('Level', storey);
+        // Level: prefer storey name, fallback to Base Constraint from psets
+        var _levelDisplay = storey || (constraintProps.find(function(p){return p.label==='Base Constraint';}) || {}).value || null;
+        addRow('Level', _levelDisplay);
         addRow('Model', discipline);
         addRow('Material', ep && ep.material);
         addRow('Classification', ep && ep.objectType);
+        // Base/top offsets if meaningful (non-zero)
+        var _baseOff = constraintProps.find(function(p){return p.label==='Base Offset';});
+        if (_baseOff && _baseOff.value !== '0') addRow('Base Offset', _baseOff.value);
+        var _topConstr = constraintProps.find(function(p){return p.label==='Top Constraint';});
+        if (_topConstr) addRow('Top Constraint', _topConstr.value);
+        var _topOff = constraintProps.find(function(p){return p.label==='Top Offset';});
+        if (_topOff && _topOff.value !== '0') addRow('Top Offset', _topOff.value);
+        var _unconH = constraintProps.find(function(p){return p.label==='Unconnected Height';});
+        if (_unconH) addRow('Height', _unconH.value);
+        // Structural flags in present mode
+        var _loadBear = structProps.find(function(p){return p.label==='Load Bearing';});
+        if (_loadBear && (_loadBear.value==='true'||_loadBear.value==='1')) addRow('Structural', 'Load Bearing');
+        var _isExt = structProps.find(function(p){return p.label==='Is External';});
+        if (_isExt) addRow('External', _isExt.value==='true'||_isExt.value==='1'?'Yes':'No');
 
         // Dimensions row
         if (dL || dW || dH) {
@@ -23810,6 +23896,23 @@ function startApp() {
             ${storey             && html`<div style=${ROW}><span style=${LBL}>Floor</span><span style=${VAL}>${storey}</span></div>`}
             ${ep&&ep.material    && html`<div style=${ROW}><span style=${LBL}>Material</span><span style=${VAL}>${ep.material}</span></div>`}
           </div>
+          <!-- Dimensions & Constraints -->
+          ${hasConstraints && html`<div style=${CARD}>
+            <div style=${HDR}>Dimensions &amp; Constraints</div>
+            ${constraintProps.map(function(p){return html`<div style=${ROW}>
+              <span style=${LBL}>${p.label}</span>
+              <span style=${{...VAL,...(/\d/.test(p.value.charAt(0))||p.value.charAt(0)==='-'?MONO:{})}}>${p.value}</span>
+            </div>`;})}
+            ${constraintProps.length>0&&structProps.length>0 && html`<div style=${{borderTop:'1px dashed var(--border-subtle)',margin:'.4rem 0'}}></div>`}
+            ${structProps.map(function(p){
+              var isTrue=p.value==='true'||p.value==='1'||p.value.toLowerCase()==='yes';
+              var isFalse=p.value==='false'||p.value==='0'||p.value.toLowerCase()==='no';
+              return html`<div style=${ROW}>
+                <span style=${LBL}>${p.label}</span>
+                <span style=${{...VAL,color:isTrue?'var(--color-success-fg)':isFalse?'var(--text-faint)':'var(--text-primary)'}}>${p.value}</span>
+              </div>`;
+            })}
+          </div>`}
           <!-- Quantities -->
           ${allDims.length>0 && html`<div style=${CARD}>
             <div style=${HDR}>Quantities (${allDims.length})</div>
@@ -23875,6 +23978,23 @@ function startApp() {
           ${ep&&ep.description && html`<div style=${ROW}><span style=${LBL}>Description</span><span style=${VAL}>${ep.description}</span></div>`}
           ${ep&&ep.globalId    && html`<div style=${ROW}><span style=${LBL}>GlobalId</span><span style=${{...VAL,...MONO,opacity:.65}}>${ep.globalId.slice(0,16)}…</span></div>`}
         </div>
+        <!-- Dimensions & Constraints -->
+        ${hasConstraints && html`<div style=${CARD}>
+          <div style=${HDR}>Dimensions &amp; Constraints</div>
+          ${constraintProps.map(function(p){return html`<div style=${ROW}>
+            <span style=${LBL}>${p.label}</span>
+            <span style=${{...VAL,...(/^\s*-?[\d.]/.test(p.value)?MONO:{})}}>${p.value}</span>
+          </div>`;})}
+          ${constraintProps.length>0&&structProps.length>0 && html`<div style=${{borderTop:'1px dashed var(--border-subtle)',margin:'.4rem 0'}}></div>`}
+          ${structProps.map(function(p){
+            var isTrue=p.value==='true'||p.value==='1'||p.value.toLowerCase()==='yes';
+            var isFalse=p.value==='false'||p.value==='0'||p.value.toLowerCase()==='no';
+            return html`<div style=${ROW}>
+              <span style=${LBL}>${p.label}</span>
+              <span style=${{...VAL,color:isTrue?'var(--color-success-fg)':isFalse?'var(--text-faint)':'var(--text-primary)'}}>${p.value}</span>
+            </div>`;
+          })}
+        </div>`}
         <!-- Dimensions if available -->
         ${allDims.length>0 && html`<div style=${CARD}>
           <div style=${HDR}>Dimensions</div>
