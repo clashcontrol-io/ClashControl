@@ -176,7 +176,7 @@ On branch `claude/improve-measurement-tools-yBrCS` (2026-05-04) — measurement 
 - Review only: Takeoff sub-panel
 - Present: kept clean — no panel, no Element/Clearance buttons, no Qto_* UI
 
-On branch `claude/research-design-tools-TzNQG` (2026-05-03) — in progress:
+On branch `claude/research-design-tools-TzNQG` (2026-05-03) — in progress:  **[STALE?]**
 
 - ~~ViewCube fix: renderer size 120→74, arrows removed, face-click navigation correct~~ (2026-05-03)
 - ~~A1: All toolbar tooltip shortcut hints fixed/added; keyboard handlers added for O, R, F, N, I, B, W, Shift+M~~ (2026-05-03)
@@ -270,6 +270,17 @@ UI_OVERHAUL.md written (7 chapters, 1469 lines). PLAN.md updated.
 <!-- END:active-work -->
 
 <!-- BEGIN:session-log -->
+### 2026-05-18
+**Summary:** 1 commit(s) landed (no AI summary — set ANTHROPIC_API_KEY secret for richer entries).
+**Changed:** see commits
+**Notable:** —
+
+<details><summary>Commits</summary>
+
+- 765c2b2 chore: daily memory sync 2026-05-17
+
+</details>
+
 ### 2026-05-17
 **Summary:** 1 commit(s) landed (no AI summary — set ANTHROPIC_API_KEY secret for richer entries).
 **Changed:** see commits
