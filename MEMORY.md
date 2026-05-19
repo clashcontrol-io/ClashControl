@@ -145,7 +145,7 @@ On branch `claude/improve-walk-mode-tool-gNoMu` (2026-05-05) — walk-mode deep 
 
 **Deferred** (next pass): sun/time slider docked in HUD (Present + Coordinate); spline waypoint recorder for cinematic playback; saved bookmarks UI list; VR mode (WebXR — Phase 7 spike, gated by demand from a "View in VR" probe).
 
-On branch `claude/improve-measurement-tools-yBrCS` (2026-05-04) — measurement deep-redesign:
+On branch `claude/improve-measurement-tools-yBrCS` (2026-05-04) — measurement deep-redesign:  **[STALE?]**
 
 - ~~Foundations: `_ccFmtLength/Area/Volume/Angle/Deltas`, IFC `IfcUnitAssignment` heuristic detection, `UPD_MEASUREMENT` action, `measureUnits/measurePrecision/measureMagnifier/measureCalibration` prefs~~ (2026-05-04)
 - ~~T1.1+T1.2 Snap engine: vertex/midpoint/edge/face/centre detection inside hit triangle, projected to screen with 18-px radius. Shape-encoded cursor glyph (filled circle / rotated square / ring / bullseye / bar) anchored to cursor with live distance chip + ΔX/Y/Z~~ (2026-05-04)
@@ -270,6 +270,17 @@ UI_OVERHAUL.md written (7 chapters, 1469 lines). PLAN.md updated.
 <!-- END:active-work -->
 
 <!-- BEGIN:session-log -->
+### 2026-05-19
+**Summary:** 1 commit(s) landed (no AI summary — set ANTHROPIC_API_KEY secret for richer entries).
+**Changed:** see commits
+**Notable:** —
+
+<details><summary>Commits</summary>
+
+- 2847951 chore: daily memory sync 2026-05-18
+
+</details>
+
 ### 2026-05-18
 **Summary:** 1 commit(s) landed (no AI summary — set ANTHROPIC_API_KEY secret for richer entries).
 **Changed:** see commits
