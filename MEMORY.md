@@ -118,7 +118,7 @@ On branch `claude/research-global-dictionary-F5W0N` (2026-05-10) — global-dict
 
 Plan file: `/root/.claude/plans/i-just-read-about-transient-pnueli.md`.
 
-On branch `claude/improve-walk-mode-tool-gNoMu` (2026-05-05) — walk-mode deep redesign:
+On branch `claude/improve-walk-mode-tool-gNoMu` (2026-05-05) — walk-mode deep redesign:  **[STALE?]**
 
 - ~~Defaults: walking speed 5.0→1.4 m/s, sprint ×4→×3, collision ON by default, "No-clip"→"Fly" rename~~ (2026-05-05)
 - ~~Smart entry: lowest above-ground IfcBuildingStorey across loaded models, placed at storey centroid facing the longest interior axis (`window._ccWalkSmartEntry`)~~ (2026-05-05)
@@ -270,6 +270,17 @@ UI_OVERHAUL.md written (7 chapters, 1469 lines). PLAN.md updated.
 <!-- END:active-work -->
 
 <!-- BEGIN:session-log -->
+### 2026-05-20
+**Summary:** 1 commit(s) landed (no AI summary — set ANTHROPIC_API_KEY secret for richer entries).
+**Changed:** see commits
+**Notable:** —
+
+<details><summary>Commits</summary>
+
+- 7a99eb1 chore: daily memory sync 2026-05-19
+
+</details>
+
 ### 2026-05-19
 **Summary:** 1 commit(s) landed (no AI summary — set ANTHROPIC_API_KEY secret for richer entries).
 **Changed:** see commits
