@@ -716,7 +716,6 @@ function startApp() {
     floorPlan:null, // {storeyName, elevation, cutHeight} or null
     walkMode:false, // first-person walk mode active
     walkPlacing:false, // Pegman drop-in: hover floor surface, click to commit
-    _highlightedStorey:null,
     sheets:[],
     activeSheetId:null,
     sheetPins:[], // [{id, sheetId, kind:'clash'|'issue', targetId, x, z, color, label}]
@@ -749,18 +748,16 @@ function startApp() {
        Each value rehydrates from localStorage on boot so a reload returns
        the user to the exact same chrome they left. _ccPersistUI() below
        writes them back; the reducer cases for SET_WORKSPACE / DIAGNOSTICS /
-       PANEL_OPEN / INSPECTOR_OPEN / ASK_OPEN funnel through it. */
+       INSPECTOR_OPEN funnel through it. */
     workspace:(function(){ try { var v=localStorage.getItem('cc_workspace'); return (v==='present'||v==='coordinate'||v==='review')?v:'present'; } catch(e){ return 'present'; } })(),
     diagnostics:_ccLoadPref('diagnostics',false),
-    panelOpen:_ccLoadPref('panelOpen',null),       // null = follow workspace default; true/false = user override
     inspectorOpen:_ccLoadPref('inspectorOpen',false),
-    askOpen:_ccLoadPref('askOpen',false),
     avatarMenuOpen:false  // ephemeral, never persisted
   };
   function _ccPersistUI(key,val){ try{ localStorage.setItem('cc_'+key, typeof val==='string'?val:JSON.stringify(val)); }catch(e){} }
   var A = {
     ADD_MODEL:'ADD_MODEL', DEL_MODEL:'DEL_MODEL', REPLACE_MODEL:'REPLACE_MODEL', UPD_MODEL:'UPD_MODEL',
-    TOGGLE_STOREY:'TOGGLE_STOREY', TOGGLE_ALL_STOREYS:'TOGGLE_ALL_STOREYS',
+    TOGGLE_ALL_STOREYS:'TOGGLE_ALL_STOREYS',
     SET_CLASHES:'SET_CLASHES', MERGE_CLASHES:'MERGE_CLASHES', DETECTING:'DETECTING', STOP_DETECT:'STOP_DETECT',
     SWITCHING_PROJECT:'SWITCHING_PROJECT',
     ADD_ISSUE:'ADD_ISSUE', UPD_ISSUE:'UPD_ISSUE', BATCH_UPD_ISSUE:'BATCH_UPD_ISSUE',
@@ -777,17 +774,17 @@ function startApp() {
     SET_CLASSIFICATIONS:'SET_CLASSIFICATIONS',
     TOGGLE_CLASS_VIS:'TOGGLE_CLASS_VIS', SHOW_ALL_CLASSES:'SHOW_ALL_CLASSES',
     HIDE_ALL_CLASSES:'HIDE_ALL_CLASSES', COLOR_BY_CLASS:'COLOR_BY_CLASS',
-    TREE:'TREE', FLOOR_PLAN:'FLOOR_PLAN', WALK_MODE:'WALK_MODE', WALK_PLACING:'WALK_PLACING', SET_HIGHLIGHTED_STOREY:'SET_HIGHLIGHTED_STOREY',
+    TREE:'TREE', FLOOR_PLAN:'FLOOR_PLAN', WALK_MODE:'WALK_MODE', WALK_PLACING:'WALK_PLACING',
     SET_PROJECT:'SET_PROJECT', SET_PROJECT_LIST:'SET_PROJECT_LIST',
     LOAD_PROJECT_STATE:'LOAD_PROJECT_STATE',
     CLASH_GROUP_BY:'CLASH_GROUP_BY', CLASH_SORT_BY:'CLASH_SORT_BY',
     ISSUE_GROUP_BY:'ISSUE_GROUP_BY', ISSUE_SORT_BY:'ISSUE_SORT_BY',
     ADD_UNDERLAY:'ADD_UNDERLAY', DEL_UNDERLAY:'DEL_UNDERLAY',
     UPD_UNDERLAY:'UPD_UNDERLAY', SET_UNDERLAY:'SET_UNDERLAY', UNDERLAY_MODE:'UNDERLAY_MODE',
-    ADD_MARKUP:'ADD_MARKUP', DEL_MARKUP:'DEL_MARKUP', CLEAR_MARKUPS:'CLEAR_MARKUPS',
+    ADD_MARKUP:'ADD_MARKUP', CLEAR_MARKUPS:'CLEAR_MARKUPS',
     MARKUP_TOOL:'MARKUP_TOOL',
     SHEET_ADD:'SHEET_ADD', SHEET_DEL:'SHEET_DEL', SHEET_UPD:'SHEET_UPD', SHEET_SET_ACTIVE:'SHEET_SET_ACTIVE',
-    PIN_ADD:'PIN_ADD', PIN_DEL:'PIN_DEL', PIN_UPD:'PIN_UPD', PINS_SET:'PINS_SET',
+    PIN_ADD:'PIN_ADD', PINS_SET:'PINS_SET',
     SELECT_TOGGLE:'SELECT_TOGGLE', SELECT_ALL:'SELECT_ALL',
     SELECT_NONE:'SELECT_NONE', SELECT_MODE:'SELECT_MODE',
     // Addon action types dispatched via string literals (not A.xxx) — handled by addon reducerCases
@@ -799,7 +796,7 @@ function startApp() {
     DEL_COMMENT:'DEL_COMMENT', SET_ACTIVE_COMMENT:'SET_ACTIVE_COMMENT', MERGE_COMMENTS:'MERGE_COMMENTS',
     /* UI shell — workspace switcher and persisted panel/inspector/ask state */
     SET_WORKSPACE:'SET_WORKSPACE', DIAGNOSTICS:'DIAGNOSTICS',
-    PANEL_OPEN:'PANEL_OPEN', INSPECTOR_OPEN:'INSPECTOR_OPEN', ASK_OPEN:'ASK_OPEN',
+    INSPECTOR_OPEN:'INSPECTOR_OPEN',
     AVATAR_MENU:'AVATAR_MENU'
   };
 
@@ -896,7 +893,6 @@ function startApp() {
       case A.DEL_MODEL:   _clearElCaches(s.models.find(function(m){return m.id===a.id})); return Object.assign({},s,{models:s.models.filter(function(m){return m.id!==a.id})});
       case A.REPLACE_MODEL: _clearElCaches(s.models.find(function(m){return m.id===a.id})); return Object.assign({},s,{models:s.models.map(function(m){return m.id===a.id?a.v:m})});
       case A.UPD_MODEL:   return Object.assign({},s,{models:s.models.map(function(m){return m.id===a.id?Object.assign({},m,a.u):m})});
-      case A.TOGGLE_STOREY: return Object.assign({},s,{models:s.models.map(function(m){if(m.id!==a.id)return m;var hs=Object.assign({},m.hiddenStoreys||{});if(hs[a.storey])delete hs[a.storey];else hs[a.storey]=true;return Object.assign({},m,{hiddenStoreys:hs});})});
       case A.TOGGLE_ALL_STOREYS: return Object.assign({},s,{models:s.models.map(function(m){if(m.id!==a.id)return m;return Object.assign({},m,{hiddenStoreys:a.hide?a.storeys.reduce(function(o,st){o[st]=true;return o;},{}):{}}); })});
       case A.SET_CLASHES: /* falls through to MERGE_CLASHES with no prev clashes */
       case A.MERGE_CLASHES: var _mr=mergeDetectionResults(a.v, a.t===A.MERGE_CLASHES?s.clashes:[]); _gcEvent('clash-detection', _mr.clashes.length+' clashes'); var _st={clashes:_mr.clashes,detecting:false,activeId:null,floors:deriveFloors(_mr.clashes),lastDeltaSummary:_mr.deltaSummary}; if(a.detectionSettings)_st.detectionSettings=a.detectionSettings; if(s.prefs.resetFiltersOnRun!==false)_st.filters=Object.assign({},INIT_FILTERS); return Object.assign({},s,_st);
@@ -1052,7 +1048,7 @@ function startApp() {
         /* Switching workspace closes any open left panel, the selection-driven
            inspector, and the avatar menu so each workspace lands clean. */
         _gcEvent('workspace','switch:'+w);
-        return Object.assign({},s,{workspace:w,tab:null,panelOpen:null,avatarMenuOpen:false});
+        return Object.assign({},s,{workspace:w,tab:null,avatarMenuOpen:false});
       }
       case A.DIAGNOSTICS: { var d=!!a.v; _ccPersistUI('diagnostics',d); return Object.assign({},s,{diagnostics:d}); }
       case 'RECORDING_STATE': return Object.assign({},s,{isRecording:!!a.v});
@@ -1062,9 +1058,7 @@ function startApp() {
       }
       case 'DEL_SELSET': return Object.assign({},s,{selectionSets:(s.selectionSets||[]).filter(function(x){return x.id!==a.id;})});
       case 'REN_SELSET': return Object.assign({},s,{selectionSets:(s.selectionSets||[]).map(function(x){return x.id===a.id?Object.assign({},x,{name:a.name}):x;})});
-      case A.PANEL_OPEN:    { var p=!!a.v; _ccPersistUI('panelOpen',p); return Object.assign({},s,{panelOpen:p}); }
       case A.INSPECTOR_OPEN:{ var io=!!a.v; _ccPersistUI('inspectorOpen',io); return Object.assign({},s,{inspectorOpen:io}); }
-      case A.ASK_OPEN:      { var ao=!!a.v; _ccPersistUI('askOpen',ao); return Object.assign({},s,{askOpen:ao}); }
       case A.AVATAR_MENU:   return Object.assign({},s,{avatarMenuOpen:!!a.v});
       case A.SMART_VIEWS: return Object.assign({},s,{showSmartViews:!!a.v});
       case A.ADD_SMART_VIEW: {
@@ -1115,7 +1109,6 @@ function startApp() {
       case A.FLOOR_PLAN:   return Object.assign({},s,{floorPlan:a.v, sectionAxis:null, sectionCustom:null, sectionBox:null, walkMode:a.v?false:s.walkMode, measureMode:a.v?null:s.measureMode, commentMode:a.v?false:s.commentMode});
       case A.WALK_MODE:    return Object.assign({},s,{walkMode:!!a.v, walkEntry:a.entry||null, walkPlacing:false, commentMode:a.v?false:s.commentMode});
       case A.WALK_PLACING: return Object.assign({},s,{walkPlacing:!!a.v, walkMode:a.v?false:s.walkMode, sectionAxis:a.v?null:s.sectionAxis, sectionCustom:a.v?null:s.sectionCustom, sectionBox:a.v?null:s.sectionBox, measureMode:a.v?null:s.measureMode, floorPlan:a.v?null:s.floorPlan, commentMode:a.v?false:s.commentMode});
-      case A.SET_HIGHLIGHTED_STOREY: return Object.assign({},s,{_highlightedStorey:a.v});
       case A.SET_PROJECT:  return Object.assign({},s,{activeProject:a.id});
       case A.SET_PROJECT_LIST: return Object.assign({},s,{projectList:a.v});
       case A.LOAD_PROJECT_STATE: return Object.assign({},s,a.data);
@@ -1129,7 +1122,6 @@ function startApp() {
       case A.SET_UNDERLAY:    return Object.assign({},s,{activeUnderlay:a.id});
       case A.UNDERLAY_MODE:   return Object.assign({},s,{underlayMode:a.v});
       case A.ADD_MARKUP:      return Object.assign({},s,{markups:s.markups.concat([Object.assign({sheetId:s.activeSheetId||null}, a.v)])});
-      case A.DEL_MARKUP:      return Object.assign({},s,{markups:s.markups.filter(function(m){return m.id!==a.id})});
       case A.CLEAR_MARKUPS:   return Object.assign({},s,{markups:s.activeSheetId
                                 ? s.markups.filter(function(m){return m.sheetId!==s.activeSheetId})
                                 : s.markups.filter(function(m){return !!m.sheetId})});
@@ -1144,8 +1136,6 @@ function startApp() {
       case A.SHEET_UPD:       return Object.assign({},s,{sheets:s.sheets.map(function(sh){return sh.id===a.id?Object.assign({},sh,a.u,{updatedAt:Date.now()}):sh})});
       case A.SHEET_SET_ACTIVE:return Object.assign({},s,{activeSheetId:a.id});
       case A.PIN_ADD:         return Object.assign({},s,{sheetPins:s.sheetPins.concat([a.v])});
-      case A.PIN_DEL:         return Object.assign({},s,{sheetPins:s.sheetPins.filter(function(p){return p.id!==a.id})});
-      case A.PIN_UPD:         return Object.assign({},s,{sheetPins:s.sheetPins.map(function(p){return p.id===a.id?Object.assign({},p,a.u):p})});
       case A.PINS_SET:        return Object.assign({},s,{sheetPins:(s.sheetPins||[]).filter(function(p){return p.sheetId!==a.sheetId}).concat(a.v||[])});
       case A.SELECT_TOGGLE:  var sel2=Object.assign({},s.selected); if(sel2[a.id])delete sel2[a.id];else sel2[a.id]=true; return Object.assign({},s,{selected:sel2});
       case A.SELECT_ALL:     var sa={}; (a.ids||[]).forEach(function(id){sa[id]=true;}); return Object.assign({},s,{selected:sa});
@@ -11803,7 +11793,7 @@ function startApp() {
       filters:Object.assign({},INIT_FILTERS), floors:[],
       measurements:[], measureMode:null, viewpoints:[],
       classifications:{}, hiddenClasses:{}, colorByClass:null,
-      floorPlan:null, _highlightedStorey:null,
+      floorPlan:null,
       sheets:[], activeSheetId:null, sheetPins:[], markups:[]
     }});
     d({t:A.UPD_PREFS, u:{showMarkers:false}});
