@@ -88,6 +88,12 @@ Things to be careful about. Do not remove without a good reason — add a note i
 Update this section at the start and end of each session.
 Mark completed items with ~~strikethrough~~ and date, then let the daily sync archive them.
 
+On branch `claude/upbeat-gauss-lGSLb` (2026-05-22) — "caveman mode" trim pass:
+
+- Removed devtools-only globals from `index.html`: `_ccDebugOn`/`_ccDebugOff` (URL `?debug=1` is alternative), `_ccCompareModels` (~50 lines), and stale `_ccLoadProfile` write-only assignments at the two IFC profile sites.
+- Deleted stale docs: `PLAN.md` (66 lines, superseded by MEMORY.md Project State) and `UI_OVERHAUL.md` (1,469 lines, abandoned brainstorm). `INTERNALS.md` kept — it's the target of 26+ "// INTERNALS.md §N" section anchors in `index.html`.
+- Re-verified before trimming and chose NOT to remove: `mcp-server.js` (wired via `smart-bridge-server.js --mcp/--install` and referenced in MCP_BUILD_GUIDE.md), `addons/wasm-engine.js` (provides `_ccWasmIntersect`/`_ccWasmMinDist`/`_ccWasmBatchIntersect`), `ws` devDependency (used by `smart-bridge-server.js`), reducer cases with no current dispatch (state fields still read; risk > reward), helper consolidation across 77+ `.find()` sites (risk > reward in one pass), and `api/_models.js` extraction (title.js is single-model, no actual duplication).
+
 On branch `claude/research-global-dictionary-F5W0N` (2026-05-10) — global-dictionary-inspired changes after reading LangSplat v2:
 
 - ~~Target A: pset/quantities canonicalization via stable-JSON + `Object.freeze`. Caches on window (`_ccPsetCanonCache`, `_ccPsetInnerCache`, `_ccQtoCanonCache`); helpers `_ccCanonPsets`/`_ccCanonQuantities`/`_ccPsetCacheStats`. Applied at all six pset assignment sites in the IFC loader plus the worker→main merge and lazy-merge. Dedup ratio logged in IFC Load Profile.~~ (2026-05-10)
