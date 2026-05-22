@@ -1,5 +1,8 @@
 # Changelog
 
+## v5.12.4 (2026-05-22)
+- chore: trim devtools globals and stale docs
+
 ## v5.12.3 (2026-05-14)
 - Slow down section plane drag to better follow mouse speed
 
