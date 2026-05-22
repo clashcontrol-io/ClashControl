@@ -1,5 +1,8 @@
 # Changelog
 
+## v5.12.5 (2026-05-22)
+- chore: prune 7 unwired reducer cases
+
 ## v5.12.4 (2026-05-22)
 - chore: trim devtools globals and stale docs
 
