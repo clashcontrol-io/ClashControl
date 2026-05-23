@@ -276,6 +276,21 @@ UI_OVERHAUL.md written (7 chapters, 1469 lines). PLAN.md updated.
 <!-- END:active-work -->
 
 <!-- BEGIN:session-log -->
+### 2026-05-23
+**Summary:** 5 commit(s) landed (no AI summary — set ANTHROPIC_API_KEY secret for richer entries).
+**Changed:** see commits
+**Notable:** —
+
+<details><summary>Commits</summary>
+
+- 29c06d5 chore: bump version to 5.12.5
+- df2eb44 chore: prune 7 unwired reducer cases
+- 972ac3d chore: daily memory sync 2026-05-22
+- 07a1a84 chore: bump version to 5.12.4
+- cf60b7d chore: trim devtools globals and stale docs
+
+</details>
+
 ### 2026-05-22
 **Summary:** 3 commit(s) landed (no AI summary — set ANTHROPIC_API_KEY secret for richer entries).
 **Changed:** see commits
