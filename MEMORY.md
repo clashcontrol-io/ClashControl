@@ -94,7 +94,7 @@ On branch `claude/upbeat-gauss-lGSLb` (2026-05-22) — "caveman mode" trim pass:
 - Deleted stale docs: `PLAN.md` (66 lines, superseded by MEMORY.md Project State) and `UI_OVERHAUL.md` (1,469 lines, abandoned brainstorm). `INTERNALS.md` kept — it's the target of 26+ "// INTERNALS.md §N" section anchors in `index.html`.
 - Re-verified before trimming and chose NOT to remove: `mcp-server.js` (wired via `smart-bridge-server.js --mcp/--install` and referenced in MCP_BUILD_GUIDE.md), `addons/wasm-engine.js` (provides `_ccWasmIntersect`/`_ccWasmMinDist`/`_ccWasmBatchIntersect`), `ws` devDependency (used by `smart-bridge-server.js`), reducer cases with no current dispatch (state fields still read; risk > reward), helper consolidation across 77+ `.find()` sites (risk > reward in one pass), and `api/_models.js` extraction (title.js is single-model, no actual duplication).
 
-On branch `claude/research-global-dictionary-F5W0N` (2026-05-10) — global-dictionary-inspired changes after reading LangSplat v2:
+On branch `claude/research-global-dictionary-F5W0N` (2026-05-10) — global-dictionary-inspired changes after reading LangSplat v2:  **[STALE?]**
 
 - ~~Target A: pset/quantities canonicalization via stable-JSON + `Object.freeze`. Caches on window (`_ccPsetCanonCache`, `_ccPsetInnerCache`, `_ccQtoCanonCache`); helpers `_ccCanonPsets`/`_ccCanonQuantities`/`_ccPsetCacheStats`. Applied at all six pset assignment sites in the IFC loader plus the worker→main merge and lazy-merge. Dedup ratio logged in IFC Load Profile.~~ (2026-05-10)
 - ~~Target B: bounded LRU + TTL title cache in `api/title.js`. Hard cap 200 entries, 1 h TTL, lazy expiry sweep, oldest-first eviction. Cache key = `(elemAType|elemBType|type|sameStorey)`. Returns `X-CC-Title-Cache` and `X-CC-Title-Cache-Size` headers.~~ (2026-05-10)
@@ -276,6 +276,17 @@ UI_OVERHAUL.md written (7 chapters, 1469 lines). PLAN.md updated.
 <!-- END:active-work -->
 
 <!-- BEGIN:session-log -->
+### 2026-05-25
+**Summary:** 1 commit(s) landed (no AI summary — set ANTHROPIC_API_KEY secret for richer entries).
+**Changed:** see commits
+**Notable:** —
+
+<details><summary>Commits</summary>
+
+- 7be9827 chore: daily memory sync 2026-05-24
+
+</details>
+
 ### 2026-05-24
 **Summary:** 1 commit(s) landed (no AI summary — set ANTHROPIC_API_KEY secret for richer entries).
 **Changed:** see commits
