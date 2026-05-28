@@ -12,7 +12,10 @@
 
 var { cors, llmGuard } = require('./_lib');
 
-var MAX_CLASHES = 50;
+// Matches the client's per-call batch size (index.html sends clashes in
+// groups of 20) and the documented contract. Oversized payloads are rejected
+// rather than silently truncated.
+var MAX_CLASHES = 20;
 
 var TITLE_CACHE_MAX    = 200;
 var TITLE_CACHE_TTL_MS = 60 * 60 * 1000;
@@ -75,7 +78,7 @@ module.exports = async function handler(req, res) {
 
   _sweepExpired();
 
-  var clashes = body.clashes.slice(0, 20);
+  var clashes = body.clashes.slice(0, MAX_CLASHES);
 
   var cachedTitles = [];
   var toGenerate = [];

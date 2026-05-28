@@ -13330,6 +13330,10 @@ function startApp() {
     return {_total:(elements||[]).length};
   }
 
+  // Turn a non-ok AI-provider HTTP response into a rejection so the caller's
+  // error path runs, instead of silently parsing an error body into ''.
+  function _aiResJson(r){ if(!r.ok) throw new Error('AI provider error '+r.status); return r.json(); }
+
   function suggestOmniClass(bridge, el) {
     if (!bridge||!bridge.provider||!bridge.apiKey) return Promise.reject(new Error('No AI provider configured — set up Anthropic/OpenAI/Google in Revit Bridge settings.'));
     var p = el.props||{};
@@ -13348,15 +13352,15 @@ function startApp() {
     if (bridge.provider==='anthropic') {
       return fetch('https://api.anthropic.com/v1/messages',{method:'POST',headers:Object.assign({},h,{'x-api-key':bridge.apiKey,'anthropic-version':'2023-06-01','anthropic-dangerous-direct-browser-access':'true'}),
         body:JSON.stringify({model:'claude-haiku-4-5-20251001',max_tokens:64,messages:[{role:'user',content:prompt}]})
-      }).then(function(r){return r.json();}).then(function(res){return (res.content&&res.content[0]&&res.content[0].text||'').trim();});
+      }).then(_aiResJson).then(function(res){return (res.content&&res.content[0]&&res.content[0].text||'').trim();});
     } else if (bridge.provider==='openai') {
       return fetch('https://api.openai.com/v1/chat/completions',{method:'POST',headers:Object.assign({},h,{'Authorization':'Bearer '+bridge.apiKey}),
         body:JSON.stringify({model:'gpt-4o-mini',max_tokens:64,messages:[{role:'user',content:prompt}]})
-      }).then(function(r){return r.json();}).then(function(res){return (res.choices&&res.choices[0]&&res.choices[0].message&&res.choices[0].message.content||'').trim();});
+      }).then(_aiResJson).then(function(res){return (res.choices&&res.choices[0]&&res.choices[0].message&&res.choices[0].message.content||'').trim();});
     } else if (bridge.provider==='google') {
       return fetch('https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key='+bridge.apiKey,{method:'POST',headers:h,
         body:JSON.stringify({contents:[{role:'user',parts:[{text:prompt}]}]})
-      }).then(function(r){return r.json();}).then(function(res){return (res.candidates&&res.candidates[0]&&res.candidates[0].content&&res.candidates[0].content.parts&&res.candidates[0].content.parts[0]&&res.candidates[0].content.parts[0].text||'').trim();});
+      }).then(_aiResJson).then(function(res){return (res.candidates&&res.candidates[0]&&res.candidates[0].content&&res.candidates[0].content.parts&&res.candidates[0].content.parts[0]&&res.candidates[0].content.parts[0].text||'').trim();});
     }
     return Promise.reject(new Error('Unknown provider'));
   }
@@ -22500,6 +22504,7 @@ function startApp() {
     return fetch('/api/health')
       .then(function(r){
         if (dbg) console.log('%c[CC health ← '+r.status+']','color:'+(r.ok?'#22c55e':'#f87171')+';font-weight:bold', r);
+        if (!r.ok) return { ai: false, db: false };
         return r.json();
       })
       .then(function(data){

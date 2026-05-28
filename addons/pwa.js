@@ -8,7 +8,8 @@
   var _ccInstallPrompt = null;
   var _updateCheckTimer = null;
 
-  window._ccRegisterAddon({
+  // Guard per addon convention: the core must define this before the addon loads.
+  (typeof window._ccRegisterAddon === 'function' ? window._ccRegisterAddon : function(){})({
     id: 'pwa',
     name: 'Progressive Web App',
     description: window.matchMedia && window.matchMedia('(display-mode: standalone)').matches

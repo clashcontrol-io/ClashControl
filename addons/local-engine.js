@@ -284,7 +284,8 @@
     return tick();
   }
 
-  window._ccRegisterAddon({
+  // Guard per addon convention: the core must define this before the addon loads.
+  (typeof window._ccRegisterAddon === 'function' ? window._ccRegisterAddon : function(){})({
     id: 'local-engine',
     name: 'ClashControlEngine',
     description: 'Multi-threaded local server for exact mesh intersection. 5-10x faster on large models.',

@@ -14,7 +14,8 @@
   var A_UPD = 'UPD_SHARED_PROJECT';
   var A_MERGE = 'MERGE_CHANGELOG';
 
-  window._ccRegisterAddon({
+  // Guard per addon convention: the core must define this before the addon loads.
+  (typeof window._ccRegisterAddon === 'function' ? window._ccRegisterAddon : function(){})({
     id: 'shared-project',
     name: 'Shared Project',
     description: 'Sync clashes and issues with your team via a shared folder (OneDrive, Dropbox, NAS). No server needed.',
