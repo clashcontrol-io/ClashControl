@@ -1,5 +1,8 @@
 # Changelog
 
+## v5.12.6 (2026-05-28)
+- Don't block project switching when welcome card is shown
+
 ## v5.12.5 (2026-05-22)
 - chore: prune 7 unwired reducer cases
 
