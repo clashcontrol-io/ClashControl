@@ -26,6 +26,7 @@ from pathlib import Path
 # ── Config ──────────────────────────────────────────────────────────────────
 REPO_ROOT = Path(__file__).parent.parent
 MEMORY_FILE = REPO_ROOT / "MEMORY.md"
+VERSION_FILE = REPO_ROOT / "version.json"
 MAX_SESSION_LOG_DAYS = 60   # entries older than this are pruned
 MAX_ACTIVE_STALE_DAYS = 14  # flag active-work items untouched for this long
 ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY", "")
@@ -144,6 +145,42 @@ Be concise. 4–6 lines total. Do not add headings, preamble, or commentary outs
     )
 
 
+# ── Version header sync ───────────────────────────────────────────────────────
+def read_app_version() -> str | None:
+    """Return 'major.minor.patch[-label]' from version.json, or None."""
+    try:
+        v = json.loads(VERSION_FILE.read_text())
+        ver = f"{v['major']}.{v['minor']}.{v['patch']}"
+        if v.get("label"):
+            ver += f"-{v['label']}"
+        return ver
+    except Exception as e:
+        print(f"[update-memory] could not read version.json: {e}", file=sys.stderr)
+        return None
+
+
+def refresh_project_state_version(content: str, today: str) -> str:
+    """
+    Keep the Project State `**Version:**` line in sync with version.json.
+    The version-bump workflow advances version.json on every merge, so this
+    header drifts otherwise. Only the date is refreshed when the number
+    actually changes (so an unchanged version keeps its original date).
+    """
+    ver = read_app_version()
+    if not ver:
+        return content
+
+    def repl(m: re.Match) -> str:
+        if m.group(1) == ver:
+            return m.group(0)  # unchanged — keep existing date
+        return f"**Version:** {ver} ({today})"
+
+    new_content, _ = re.subn(
+        r"\*\*Version:\*\*\s*([0-9][^\s(]*)\s*\([^)]*\)", repl, content, count=1
+    )
+    return new_content
+
+
 # ── Active work freshness check ──────────────────────────────────────────────
 def flag_stale_active_work(active_work: str, today: str) -> str:
     """
@@ -213,12 +250,23 @@ def main() -> None:
         sys.exit(1)
 
     content = MEMORY_FILE.read_text()
+
+    # Keep the Project State version header in sync with version.json,
+    # independent of commit activity (the version-bump workflow may have
+    # advanced it since the last sync).
+    refreshed = refresh_project_state_version(content, today)
+    version_changed = refreshed != content
+    content = refreshed
+
     sections = parse_sections(content)
     session_log = sections.get("session-log", "")
 
     # Skip if already updated today (unless --force)
     last_date = last_session_date(session_log)
     if last_date == today and not FORCE:
+        if version_changed:
+            MEMORY_FILE.write_text(content)
+            print("[update-memory] Version header synced from version.json.")
         print(f"[update-memory] Already updated for {today}. Use --force to re-run.")
         return
 
@@ -229,6 +277,9 @@ def main() -> None:
 
     commits = commits_since(since_ts)
     if not commits:
+        if version_changed:
+            MEMORY_FILE.write_text(content)
+            print("[update-memory] Version header synced from version.json.")
         print(f"[update-memory] No new commits since {since_ts} — skipping.")
         return
 

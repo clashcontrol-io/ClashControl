@@ -997,7 +997,8 @@
 
   // ── Register addon ─────────────────────────────────────────────
 
-  window._ccRegisterAddon({
+  // Guard per addon convention: the core must define this before the addon loads.
+  (typeof window._ccRegisterAddon === 'function' ? window._ccRegisterAddon : function(){})({
     id: 'revit-bridge',
     name: 'Revit Bridge',
     description: 'Live link to Autodesk Revit 2024 / 2025 / 2026 / 2027 via WebSocket. Pull geometry, push clashes. Supports linked models and incremental sync.',

@@ -10,6 +10,41 @@
   var _NL_TRAIN_CAP = 2000;
   var _AI_VERDICT_MAP = {open:'unreviewed', confirmed:'true_clash', denied:'false_positive', in_progress:'true_clash', resolved:'acceptable', closed:'false_positive'};
 
+  // ── Google Form submission (shared by all three share* helpers) ───
+  // Posts a single field to the ClashControl training Google Form, walking
+  // three fallbacks: verifiable CORS POST → opaque no-cors POST → hidden
+  // iframe form submit. onStatus(state, msg) reports progress; onSuccess()
+  // (optional) runs once on any successful send — e.g. to clear the store.
+  function _postToGoogleForm(entryId, value, onStatus, onSuccess) {
+    var _gf = ['https://docs','google','com/forms/d/e/','1FAIpQLSc51xdQw_8JY2lN1aw8OZOT2Jzdx42m','vilJzqMGVw4tXo7wtA'];
+    var action = _gf[0]+'.'+_gf[1]+'.'+_gf[2]+_gf[3]+_gf[4]+'/formResponse';
+    var fd = new URLSearchParams();
+    fd.append(entryId, value);
+    function done(msg){ if(onSuccess) onSuccess(); onStatus('ok', msg||null); }
+    fetch(action, {method:'POST', body:fd}).then(function(resp){
+      if(resp.ok||resp.status===0){ done(null); }
+      else{ onStatus('error','Form returned '+resp.status+'. Check the form URL and entry field IDs.'); }
+    }).catch(function(){
+      fetch(action, {method:'POST', mode:'no-cors', body:fd}).then(function(){
+        done('Sent (unverified — no-cors)');
+      }).catch(function(){
+        try{
+          var frame = 'cc_gf_'+Date.now();
+          var iframe = document.createElement('iframe');
+          iframe.name = frame; iframe.style.cssText = 'display:none;width:0;height:0;border:0';
+          document.body.appendChild(iframe);
+          var form = document.createElement('form');
+          form.method = 'POST'; form.action = action; form.target = frame;
+          var input = document.createElement('input');
+          input.type = 'hidden'; input.name = entryId; input.value = value;
+          form.appendChild(input); document.body.appendChild(form); form.submit();
+          setTimeout(function(){ try{ document.body.removeChild(form); document.body.removeChild(iframe); }catch(e){} }, 5000);
+          done('Sent via iframe fallback');
+        }catch(e){ onStatus('error','Send failed — network or CORS blocked'); }
+      });
+    });
+  }
+
   // ── Clash Training Data (localStorage) ─────────────────────────
   function _getClashTrainStore() {
     try { return JSON.parse(localStorage.getItem('cc_clash_training_data')||'{}'); } catch(e) { return {}; }
@@ -57,30 +92,7 @@
     var payload = {type:'clash_training', version:'1.0', app_version:CC_VERSION.v, count:records.length, records:records};
     var json = JSON.stringify(payload);
     onStatus('sending', null);
-    var fd = new URLSearchParams();
-    fd.append('entry.1252313993', json);
-    var _gf = ['https://docs','google','com/forms/d/e/','1FAIpQLSc51xdQw_8JY2lN1aw8OZOT2Jzdx42m','vilJzqMGVw4tXo7wtA'];
-    var baseUrl = _gf[0]+'.'+_gf[1]+'.'+_gf[2]+_gf[3]+_gf[4];
-    fetch(baseUrl+'/formResponse',{method:'POST',body:fd}).then(function(resp){
-      if(resp.ok||resp.status===0){_clearClashTrainStore();onStatus('ok',null);}
-      else{onStatus('error','Form returned '+resp.status+'. Check the form URL and entry field IDs.');}
-    }).catch(function(){
-      fetch(baseUrl+'/formResponse',{method:'POST',mode:'no-cors',body:fd}).then(function(){
-        _clearClashTrainStore();
-        onStatus('ok','Sent (unverified — no-cors)');
-      }).catch(function(){
-        try{
-          var iframe=document.createElement('iframe');iframe.name='cc_clash_frame';iframe.style.cssText='display:none';
-          document.body.appendChild(iframe);
-          var form=document.createElement('form');form.method='POST';form.action=baseUrl+'/formResponse';form.target='cc_clash_frame';
-          var input=document.createElement('input');input.type='hidden';input.name='entry.1252313993';input.value=json;
-          form.appendChild(input);document.body.appendChild(form);form.submit();
-          setTimeout(function(){try{document.body.removeChild(form);document.body.removeChild(iframe);}catch(e){}},5000);
-          _clearClashTrainStore();
-          onStatus('ok','Sent via iframe fallback');
-        }catch(e){onStatus('error','Send failed — network or CORS blocked');}
-      });
-    });
+    _postToGoogleForm('entry.1252313993', json, onStatus, _clearClashTrainStore);
   }
 
   // ── NL Training Data (localStorage) ───────────────────────────
@@ -198,29 +210,7 @@
     var payload = {type:'nl_training', version:'1.0', app_version:CC_VERSION.v, count:records.length, records:records};
     var json = JSON.stringify(payload);
     onStatus('sending',null);
-    var fd = new URLSearchParams();
-    fd.append('entry.65932609', json);
-    var _gf = ['https://docs','google','com/forms/d/e/','1FAIpQLSc51xdQw_8JY2lN1aw8OZOT2Jzdx42m','vilJzqMGVw4tXo7wtA'];
-    var baseUrl = _gf[0]+'.'+_gf[1]+'.'+_gf[2]+_gf[3]+_gf[4];
-    fetch(baseUrl+'/formResponse',{method:'POST',body:fd}).then(function(resp){
-      if(resp.ok||resp.status===0){_clearNLTrainStore();onStatus('ok',null);}
-      else{onStatus('error','Form returned '+resp.status);}
-    }).catch(function(){
-      fetch(baseUrl+'/formResponse',{method:'POST',mode:'no-cors',body:fd}).then(function(){
-        _clearNLTrainStore();onStatus('ok','Sent (unverified)');
-      }).catch(function(){
-      try{
-        var iframe=document.createElement('iframe');iframe.name='cc_nl_frame';iframe.style.cssText='display:none';
-        document.body.appendChild(iframe);
-        var form=document.createElement('form');form.method='POST';form.action=baseUrl+'/formResponse';form.target='cc_nl_frame';
-        var input=document.createElement('input');input.type='hidden';input.name='entry.65932609';input.value=json;
-        form.appendChild(input);document.body.appendChild(form);form.submit();
-        setTimeout(function(){try{document.body.removeChild(form);document.body.removeChild(iframe);}catch(e){}},5000);
-        _clearNLTrainStore();
-        onStatus('ok','Sent via iframe fallback');
-      }catch(e){onStatus('error','Send failed — network or CORS blocked');}
-      });
-    });
+    _postToGoogleForm('entry.65932609', json, onStatus, _clearNLTrainStore);
   }
 
   // ── AI Training Data Export ─────────────────────────────────
@@ -323,38 +313,8 @@
     if (!payload) { onStatus('error','No reviewed clashes to share.'); return; }
     var json = JSON.stringify(payload);
     onStatus('sending', null);
-    var fd = new URLSearchParams();
-    fd.append('entry.1252313993', json);
-    var _gf = ['https://docs','google','com/forms/d/e/','1FAIpQLSc51xdQw_8JY2lN1aw8OZOT2Jzdx42m','vilJzqMGVw4tXo7wtA'];
-    var baseUrl = _gf[0]+'.'+_gf[1]+'.'+_gf[2]+_gf[3]+_gf[4];
-    fetch(baseUrl+'/formResponse', {method:'POST', body:fd}).then(function(resp){
-      if(resp.ok||resp.status===0){onStatus('ok',null);}
-      else{onStatus('error','Form returned '+resp.status+'. Check form URL.');}
-    }).catch(function(){
-      fetch(baseUrl+'/formResponse',{method:'POST',mode:'no-cors',body:fd}).then(function(){
-        onStatus('ok','Sent (unverified — no-cors)');
-      }).catch(function(e){
-      try {
-        var iframe = document.createElement('iframe');
-        iframe.name = 'cc_submit_frame';
-        iframe.style.cssText = 'display:none;width:0;height:0;border:0';
-        document.body.appendChild(iframe);
-        var form = document.createElement('form');
-        form.method = 'POST';
-        form.action = baseUrl+'/formResponse';
-        form.target = 'cc_submit_frame';
-        var input = document.createElement('input');
-        input.type = 'hidden'; input.name = 'entry.1252313993'; input.value = json;
-        form.appendChild(input);
-        document.body.appendChild(form);
-        form.submit();
-        setTimeout(function(){ try{document.body.removeChild(form); document.body.removeChild(iframe);}catch(e){} }, 5000);
-        onStatus('ok', 'Sent via iframe fallback');
-      } catch(e2) {
-        onStatus('error', 'Send failed — network or CORS blocked');
-      }
-      });
-    });
+    // AI training share intentionally does not clear the local store on send.
+    _postToGoogleForm('entry.1252313993', json, onStatus, null);
   }
 
   // ── Expose as globals ─────────────────────────────────────────

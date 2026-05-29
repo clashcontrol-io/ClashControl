@@ -10,7 +10,7 @@
 <!-- BEGIN:project-state -->
 ## Project State
 
-**Version:** 4.15.4 (2026-04-16)
+**Version:** 5.12.6 (2026-05-28)
 
 **Live features (all working):**
 - Mesh-based clash detection engine: AABB broad-phase + BVH tri-tri narrow-phase (Möller–Trumbore), optional `_ccWasmIntersect`/`_ccWasmMinDist` WASM accelerators; rules (discipline filters, clearance, group-by); soft/clearance via spatial-hash vertex distance; optional escalation to `local-engine.js` for true solid boolean ops
@@ -87,6 +87,17 @@ Things to be careful about. Do not remove without a good reason — add a note i
 
 Update this section at the start and end of each session.
 Mark completed items with ~~strikethrough~~ and date, then let the daily sync archive them.
+
+On branch `claude/code-review-quality-IjbhT` (2026-05-28) — code-review quality pass:
+
+- ~~`api/title.js`: `MAX_CLASHES` was 50 but the handler then sliced to 20, silently dropping clashes 21–50. Set the cap to 20 (matches the client's per-call batch in `index.html:~22662` and the documented contract) and slice with the constant, so oversized payloads get a clear 413.~~ (2026-05-28)
+- ~~Addon convention: `pwa.js`, `shared-project.js`, `local-engine.js`, `revit-bridge.js` called `window._ccRegisterAddon(...)` unguarded. Wrapped each in a `typeof === 'function'` guard (one-liner, no re-indent) matching `wasm-engine.js`.~~ (2026-05-28)
+- ~~`addons/training-data.js`: extracted the 3×-duplicated Google-Forms submit-with-fallback (CORS → no-cors → hidden iframe) into one `_postToGoogleForm(entryId, value, onStatus, onSuccess)` helper. AI share passes `null` for onSuccess (it intentionally does not clear the store).~~ (2026-05-28)
+- ~~Error handling: `suggestOmniClass` provider chains now reject on non-ok HTTP via `_aiResJson` (NOTE: `suggestOmniClass` is currently dead code — defined, never called); `/api/health` guards `r.ok` before `.json()`; `api/nl.js` upstream-error log truncated to 500 chars.~~ (2026-05-28)
+- ~~Docs: CLAUDE.md core line count 19.8k → ~29k, added `smart-bridge.js` + `wasm-engine.js` to the file overview and "what each addon does". MEMORY.md version header 4.15.4 → 5.12.6. Taught `scripts/update-memory.py` to keep the Project State `**Version:**` line synced from `version.json` on every daily run.~~ (2026-05-28)
+- ~~Testing/CI: added a no-dependency `node:test` suite under `tests/` (CORS allow-list + rate limiter in `_lib.js`; title/nl validation incl. the 413 regression lock), `"test": "node --test"` script, and `.github/workflows/ci.yml` running it on PRs/pushes to main. Added `.gitignore` (none existed).~~ (2026-05-28)
+
+**Deferred (tracked follow-ups, not done this pass):** core reducer/state refactor (287-line reducer / 80+ cases / impure `_saveDeniedClash` inside the reducer / ~50 `window._cc*` globals) — do it only once the test suite covers the pure clash/reducer/BCF logic, which needs those helpers extracted from `index.html` first. Also: a CI check that re-verifies `index.html` SRI hashes against the live CDN, and 3D-canvas keyboard accessibility (no keyboard orbit/pan, no modal focus trap).
 
 On branch `claude/upbeat-gauss-lGSLb` (2026-05-22) — "caveman mode" trim pass:
 

@@ -21,7 +21,7 @@ are about to do. When you finish, mark completed items with ~~strikethrough~~ + 
 ClashControl is a free, open-source IFC clash detection web app. It lets users load IFC building models, detect geometric clashes between elements, create/manage issues, and export to BCF format.
 
 ## Architecture — Single File App + Lazy Addons
-The **core application** lives in `index.html` (~19.8k lines). There is no build step, no bundler, no node_modules. Just open the file in a browser.
+The **core application** lives in `index.html` (~29k lines). There is no build step, no bundler, no node_modules. Just open the file in a browser.
 
 Optional, non-critical features are split into lazy-loaded files under `addons/` (see the Addons section below). These are loaded at runtime via a simple `<script src="addons/<name>.js">` injection and the core app works without them.
 
@@ -111,7 +111,9 @@ addons/local-engine.js      — Bridge to localhost Python exact-mesh clash engi
 addons/pwa.js               — Service worker registration, install prompt, update check
 addons/revit-bridge.js      — Revit Connector WebSocket live link + clash push-back
 addons/shared-project.js    — File System Access folder-sync collaboration
+addons/smart-bridge.js      — LLM bridge (MCP / ChatGPT / REST) — executes tool calls from AI assistants
 addons/training-data.js     — Training data storage, JSONL export, sharing
+addons/wasm-engine.js       — Rust WASM clash accelerator (mesh_intersect / mesh_min_distance), JS fallback
 api/health.js               — Health check: AI + DB status
 api/nl.js                   — Gemma 4 NL proxy with native function calling + quota fallback
 api/training.js             — Training data ingestion (replaces Google Forms)
@@ -138,7 +140,9 @@ Each addon is a plain IIFE loaded at runtime by the core via `addons/<name>.js` 
 - `pwa.js` — Service-worker registration, update polling, and the "install as app" prompt. Everything else in the app works without it.
 - `revit-bridge.js` — WebSocket live link to the ClashControl Connector Revit plugin. Ingests geometry + properties, converts to Three.js meshes, supports `REPLACE_MODEL` on re-sync and linked models. Also handles one-way push of clashes back to Revit.
 - `shared-project.js` — File System Access API collaboration. Users pick a shared folder (OneDrive/Dropbox/NAS), and a `.ccproject` file is synced every 60s. No backend.
+- `smart-bridge.js` — LLM bridge connecting ClashControl to AI assistants over WebSocket: Claude Desktop/Code via the bundled MCP server, ChatGPT via a REST bridge + OpenAPI Actions, or any function-calling LLM via REST. Receives tool calls from the bridge server (localhost:19802) and executes them through `window._ccDispatch` and friends.
 - `training-data.js` — Pure data layer for clash + NL training data: ring-buffer storage (cap 5000 clash / 2000 NL), JSONL export, share helpers.
+- `wasm-engine.js` — Loads the Rust WASM module for hardware-accelerated clash detection, exposing `window._ccWasmIntersect` / `window._ccWasmMinDist` as drop-in replacements for the JS BVH+Möller engine. Falls back to the built-in JS engine if WASM fails to load.
 
 ## Backend (Vercel Serverless + Neon Postgres)
 

@@ -720,7 +720,7 @@ module.exports = async function handler(req, res) {
 
       if (!resp.ok) {
         var errText = await resp.text();
-        console.error('AI API error (' + pickedModel + '):', resp.status, errText);
+        console.error('AI API error (' + pickedModel + '):', resp.status, errText.slice(0, 500));
         // Fall through on recoverable errors: quota (429), model not
         // found (404, e.g. Gemma 4 not rolled out to this project yet),
         // unavailable (503), or bad-request for features the model
