@@ -1,5 +1,8 @@
 # Changelog
 
+## v5.12.8 (2026-05-29)
+- Make section-plane drag track the cursor and easier to grab
+
 ## v5.12.7 (2026-05-29)
 - Code-review quality pass: bug fix, addon guards, dedup, tests, docs
 
