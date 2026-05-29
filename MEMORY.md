@@ -10,7 +10,7 @@
 <!-- BEGIN:project-state -->
 ## Project State
 
-**Version:** 5.12.6 (2026-05-28)
+**Version:** 5.12.9 (2026-05-29)
 
 **Live features (all working):**
 - Mesh-based clash detection engine: AABB broad-phase + BVH tri-tri narrow-phase (Möller–Trumbore), optional `_ccWasmIntersect`/`_ccWasmMinDist` WASM accelerators; rules (discipline filters, clearance, group-by); soft/clearance via spatial-hash vertex distance; optional escalation to `local-engine.js` for true solid boolean ops
@@ -287,6 +287,25 @@ UI_OVERHAUL.md written (7 chapters, 1469 lines). PLAN.md updated.
 <!-- END:active-work -->
 
 <!-- BEGIN:session-log -->
+### 2026-05-29
+**Summary:** 9 commit(s) landed (no AI summary — set ANTHROPIC_API_KEY secret for richer entries).
+**Changed:** see commits
+**Notable:** —
+
+<details><summary>Commits</summary>
+
+- ab6fb7c chore: bump version to 5.12.9
+- 243ddcf Section gizmo: constant-size handles, follow plane, fix stuck drag & ring offset
+- a30b9bd chore: bump version to 5.12.8
+- b356ac8 Make section-plane drag track the cursor and easier to grab
+- 7c82c74 chore: bump version to 5.12.7
+- 4348944 Code-review quality pass: bug fix, addon guards, dedup, tests, docs
+- f759f94 chore: bump version to 5.12.6
+- 25826bd Don't block project switching when welcome card is shown
+- 48187ef chore: daily memory sync 2026-05-28
+
+</details>
+
 ### 2026-05-28
 **Summary:** 1 commit(s) landed (no AI summary — set ANTHROPIC_API_KEY secret for richer entries).
 **Changed:** see commits
