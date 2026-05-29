@@ -1,5 +1,8 @@
 # Changelog
 
+## v5.12.7 (2026-05-29)
+- Code-review quality pass: bug fix, addon guards, dedup, tests, docs
+
 ## v5.12.6 (2026-05-28)
 - Don't block project switching when welcome card is shown
 
