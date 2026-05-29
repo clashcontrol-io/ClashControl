@@ -1,5 +1,8 @@
 # Changelog
 
+## v5.12.9 (2026-05-29)
+- Section gizmo: constant-size handles, follow plane, fix stuck drag & ring offset
+
 ## v5.12.8 (2026-05-29)
 - Make section-plane drag track the cursor and easier to grab
 
