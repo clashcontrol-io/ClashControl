@@ -8370,6 +8370,7 @@ function startApp() {
       }, true); // useCapture to fire before orbit
 
       _wlAdd('mousemove', function(e){
+        if(_sboxDragging && e.buttons===0){ _sboxDragging=false; _sboxDragState=null; renderer.domElement.style.cursor=''; _sboxHudHide(); return; } // released off-canvas
         if(!_sboxDragState||!_sboxDragging) return;
         var ds=_sboxDragState;
         var rect=renderer.domElement.getBoundingClientRect();
@@ -8395,7 +8396,7 @@ function startApp() {
           if(S3._sboxHandles){var cSigns=[[-1,-1,-1],[-1,-1,1],[-1,1,-1],[-1,1,1],[1,-1,-1],[1,-1,1],[1,1,-1],[1,1,1]];S3._sboxHandles.forEach(function(h,i){var sg=cSigns[i];var p=ctr3.clone().addScaledVector(axX3,sg[0]*hx3).addScaledVector(axY3,sg[1]*hy3).addScaledVector(axZ3,sg[2]*hz3);h.position.copy(p).addScaledVector(new THREE.Vector3(sg[0],sg[1],sg[2]).normalize(),hSz3);h.userData._handleAxX=axX3.clone();h.userData._handleAxZ=axZ3.clone();});}
           var faS3=Math.max(0.08,Math.min(Math.max(hx3,hy3,hz3)*0.0173,0.69));
           if(S3._sboxFaceHandles){var fD3=[{ax:axX3,s:+1,he:hx3},{ax:axX3,s:-1,he:hx3},{ax:axY3,s:+1,he:hy3},{ax:axY3,s:-1,he:hy3},{ax:axZ3,s:+1,he:hz3},{ax:axZ3,s:-1,he:hz3}];S3._sboxFaceHandles.forEach(function(h,i){var fd3=fD3[i];if(!fd3)return;var fc=ctr3.clone().addScaledVector(fd3.ax,fd3.s*fd3.he);h.position.copy(fc).addScaledVector(fd3.ax,fd3.s*faS3*1.0);h.quaternion.setFromUnitVectors(new THREE.Vector3(0,1,0),fd3.ax.clone().multiplyScalar(fd3.s).normalize());h.userData._faceAxis=fd3.ax.clone().multiplyScalar(fd3.s);});}
-          if(S3._sboxRotRing) S3._sboxRotRing.position.copy(ctr3).addScaledVector(axY3,hy3+Math.max(hy3*0.3,0.5));
+          if(S3._sboxRotRing) S3._sboxRotRing.position.copy(ctr3).addScaledVector(axY3,hy3+(S3._sboxRotRing.userData._floatH||0.5));
           // Update clipping planes immediately
           var np3=[new THREE.Plane().setFromNormalAndCoplanarPoint(axX3.clone(),ctr3.clone().addScaledVector(axX3,-hx3)),new THREE.Plane().setFromNormalAndCoplanarPoint(axX3.clone().negate(),ctr3.clone().addScaledVector(axX3,hx3)),new THREE.Plane().setFromNormalAndCoplanarPoint(axY3.clone(),ctr3.clone().addScaledVector(axY3,-hy3)),new THREE.Plane().setFromNormalAndCoplanarPoint(axY3.clone().negate(),ctr3.clone().addScaledVector(axY3,hy3)),new THREE.Plane().setFromNormalAndCoplanarPoint(axZ3.clone(),ctr3.clone().addScaledVector(axZ3,-hz3)),new THREE.Plane().setFromNormalAndCoplanarPoint(axZ3.clone().negate(),ctr3.clone().addScaledVector(axZ3,hz3))];
           S3.scene.traverse(function(obj){if(!obj.isMesh||obj.userData.expressId==null||!obj.material)return;var ms=Array.isArray(obj.material)?obj.material:[obj.material];ms.forEach(function(m){m.clippingPlanes=np3;m.needsUpdate=true;});var sm=obj.userData._styleMats;if(sm)Object.keys(sm).forEach(function(k){if(sm[k]){sm[k].clippingPlanes=np3;sm[k].needsUpdate=true;}});});
@@ -9110,6 +9111,21 @@ function startApp() {
         cs.pos = newPos; // keep click-filter / commit in sync
         invalidate();
       }
+      // End an in-progress section-plane drag, committing a move to state once.
+      // Called from mouseup, and from mousemove/blur when the button was released
+      // off-canvas (otherwise the drag stayed "stuck" on after the cursor left).
+      function _finishSecDrag() {
+        if (!_secDrag) return;
+        if (_secDrag.mode === 'move' && _secDrag.didDrag && _secDrag.lastPos != null && window._ccDispatch) {
+          var cs = window._ccCurrentSection;
+          if (cs && cs.axis) window._ccDispatch({t:A.SECTION, axis:cs.axis, pos:_secDrag.lastPos});
+          else if (cs && cs.custom) window._ccDispatch({t:A.SECTION_CUSTOM, v:cs.custom, pos:_secDrag.lastPos});
+        }
+        if (_secDrag.button === 0) { var S2 = state3d.current; if (S2 && S2.orbit) S2.orbit.enabled = true; }
+        _secDrag = null;
+        window._ccSectionDragging = false;
+        renderer.domElement.style.cursor = '';
+      }
       renderer.domElement.addEventListener('mousedown', function(e) {
         var cs = window._ccCurrentSection;
         if (!cs) return;
@@ -9140,6 +9156,7 @@ function startApp() {
         }
       }, true);
       _wlAdd('mousemove', function(e) {
+        if (_secDrag && e.buttons === 0) { _finishSecDrag(); return; } // released off-canvas
         if (!_secDrag) return;
         if (_secDrag.mode === 'rotate') {
           var dx = e.clientX - _secDrag.startX;
@@ -9196,18 +9213,9 @@ function startApp() {
       _wlAdd('mouseup', function(e) {
         if (!_secDrag) return;
         if (e.button !== _secDrag.button) return;
-        if (_secDrag.button === 0) { var S2 = state3d.current; if (S2.orbit) S2.orbit.enabled = true; }
-        // Commit the imperatively-dragged move once, so React state + the
-        // position slider stay in sync and the gizmo rebuilds cleanly.
-        if (_secDrag.mode === 'move' && _secDrag.didDrag && _secDrag.lastPos != null && window._ccDispatch) {
-          var _csU = window._ccCurrentSection;
-          if (_csU && _csU.axis) window._ccDispatch({t:A.SECTION, axis:_csU.axis, pos:_secDrag.lastPos});
-          else if (_csU && _csU.custom) window._ccDispatch({t:A.SECTION_CUSTOM, v:_csU.custom, pos:_secDrag.lastPos});
-        }
-        _secDrag = null;
-        window._ccSectionDragging = false;
-        renderer.domElement.style.cursor = '';
+        _finishSecDrag();
       });
+      _wlAdd('blur', function(){ _finishSecDrag(); });
       renderer.domElement.addEventListener('contextmenu', function(e) {
         if (_secDrag && _secDrag.didDrag) { e.preventDefault(); e.stopPropagation(); }
       }, true);
@@ -9476,6 +9484,28 @@ function startApp() {
               if (s > 0 && isFinite(s)) h.scale.setScalar(s);
             }
           });
+        }
+
+        // ── Section-plane gizmo: constant on-screen handle size ──────────
+        // The move arrow + rotation ring live in a sub-group anchored at the
+        // plane centre. Scaling it to a fixed pixel size each frame stops the
+        // handles from appearing to grow/shrink as the plane is dragged toward
+        // or away from the camera, and keeps the arrow compact so its tip no
+        // longer whips across the screen when orbiting. The plane rectangle
+        // itself stays world-sized (it represents the real cut extent).
+        if (S._sectionPlaneVis && S._sectionPlaneVis._secHandleGroup) {
+          var _giz = S._sectionPlaneVis;
+          var _cam = S.camera;
+          var _vpH = renderer.domElement.clientHeight || 1;
+          var _wpp; // world units per screen pixel at the gizmo
+          if (_cam.isOrthographicCamera) {
+            _wpp = ((_cam.top - _cam.bottom) / (_cam.zoom || 1)) / _vpH;
+          } else {
+            var _dist = _cam.position.distanceTo(_giz.position);
+            _wpp = (2 * Math.tan((_cam.fov * Math.PI / 180) / 2) * _dist) / _vpH;
+          }
+          var _scG = (_wpp * 110) / (_giz._secHandleSpan || 1); // ~110px arrow
+          if (_scG > 0 && isFinite(_scG)) _giz._secHandleGroup.scale.setScalar(_scG);
         }
 
         // Lower resolution while moving: orbit drag → 50%, walk movement → 65%
@@ -9776,9 +9806,19 @@ function startApp() {
         border.renderOrder = 999;
         grp.add(border);
 
+        // Arrow + ring live in a sub-group anchored at the plane centre. The
+        // tick loop scales this sub-group every frame to a constant on-screen
+        // size, so the handles no longer appear to "grow/shrink" as the plane is
+        // dragged toward/away from the camera, and the long tip stops whipping
+        // across the screen when orbiting. The fill/border stay world-sized so
+        // the rectangle still represents the real cut extent.
+        var handleGroup = new THREE.Group();
+        handleGroup.userData._sectionPlane = true;
+
         // ── Rotation ring — amber, matches section-box ring style ──────────
-        var _torusR = Math.min(Math.min(halfW, halfH) * 0.52, 2.0);
-        var _tubeR  = Math.max(0.04, _torusR * 0.055);
+        // Built at a fixed reference size; the sub-group scale handles sizing.
+        var _torusR = 1.0;
+        var _tubeR  = _torusR * 0.055;
         var arcGeo  = new THREE.TorusGeometry(_torusR, _tubeR, 8, 32, Math.PI * 1.5);
         var arcMat  = new THREE.MeshBasicMaterial({color: 0xf59e0b, transparent: true, opacity: 0.7, depthTest: false});
         arcMat.clippingPlanes = [];
@@ -9786,16 +9826,14 @@ function startApp() {
         rotRing.userData._sectionPlane = true;
         rotRing.userData._secHandle   = 'rotate';
         rotRing.renderOrder = 1000;
-        grp.add(rotRing);
+        handleGroup.add(rotRing);
 
-        // ── Move arrow — long stem + cone tip pointing along local +Z (plane normal) ──
-        // Sized directly relative to the plane geometry — no camera-distance scaling.
-        // Caps prevent handles from becoming enormous on large building-scale models.
-        var halfMin   = Math.min(halfW, halfH);
-        var shaftLen  = Math.max(0.3,  Math.min(halfMin * 0.45, 4.0));  // extra long, max 4 m
-        var shaftCylR = Math.max(0.008, Math.min(halfMin * 0.007, 0.05));
-        var tipR      = Math.max(0.025, Math.min(halfMin * 0.033, 0.18));
-        var tipLen    = Math.max(0.07,  Math.min(halfMin * 0.08,  0.35));
+        // ── Move arrow — stem + cone tip pointing along local +Z (plane normal) ──
+        // Reference sizes; constant on-screen size is applied via handleGroup.scale.
+        var shaftLen  = 1.8;
+        var shaftCylR = 0.03;
+        var tipR      = 0.12;
+        var tipLen    = 0.3;
         var arrowMat  = new THREE.MeshBasicMaterial({color: 0x1a6b4a, transparent: true, opacity: 0.65, depthTest: false});
         arrowMat.clippingPlanes = [];
         var shaftGeo  = new THREE.CylinderGeometry(shaftCylR, shaftCylR, shaftLen, 8, 1, true);
@@ -9805,7 +9843,7 @@ function startApp() {
         shaft.userData._sectionPlane = true;
         shaft.userData._secHandle    = 'move';
         shaft.renderOrder = 1000;
-        grp.add(shaft);
+        handleGroup.add(shaft);
         var tipGeo = new THREE.ConeGeometry(tipR, tipLen, 12);
         var tip    = new THREE.Mesh(tipGeo, arrowMat.clone());
         tip.rotation.x = -Math.PI / 2;
@@ -9813,13 +9851,13 @@ function startApp() {
         tip.userData._sectionPlane = true;
         tip.userData._secHandle    = 'move';
         tip.renderOrder = 1000;
-        grp.add(tip);
+        handleGroup.add(tip);
 
         // Invisible fat hit-proxy spanning the whole arrow. The visible shaft is
-        // only a few cm thick, so the pick ray usually misses it and the click
-        // falls through to the orbit handler ("it just rotates"). A wide invisible
-        // cylinder along the arrow makes the move handle reliably grabbable.
-        var hitR = Math.max(tipR * 1.8, halfMin * 0.05);
+        // thin, so the pick ray usually missed it and the click fell through to
+        // the orbit handler ("it just rotates"). A wide invisible cylinder along
+        // the arrow makes the move handle reliably grabbable.
+        var hitR = tipR * 2.2;
         var hitProxy = new THREE.Mesh(
           new THREE.CylinderGeometry(hitR, hitR, shaftLen + tipLen, 8, 1, false),
           new THREE.MeshBasicMaterial({ visible: false })
@@ -9829,8 +9867,11 @@ function startApp() {
         hitProxy.userData._sectionPlane = true;
         hitProxy.userData._secHandle    = 'move';
         hitProxy.renderOrder = 1000;
-        grp.add(hitProxy);
+        handleGroup.add(hitProxy);
 
+        grp.add(handleGroup);
+        grp._secHandleGroup = handleGroup;
+        grp._secHandleSpan  = shaftLen + tipLen; // reference world span at scale 1
         grp._secDragHandles = [rotRing, shaft, tip, hitProxy];
         grp.position.copy(position);
         if (quaternion) grp.quaternion.copy(quaternion);
@@ -10248,12 +10289,13 @@ function startApp() {
       // makes the tube sub-pixel thin on large models, so we skip that mechanism here.
       var ringRadius=Math.min(Math.max(maxDim*0.15, 0.6), 2.5);
       var ringTubeRadius=Math.max(ringRadius*0.055, 0.04);
-      var ringFloatHeight=Math.max(hy*0.3,0.5); // float above box
+      var ringFloatHeight=ringRadius*1.5; // constant gap (ring-relative) so it doesn't drift when the box is resized
       var ringGeo=new THREE.TorusGeometry(ringRadius,ringTubeRadius,8,48);
       var ringMat=new THREE.MeshBasicMaterial({color:0xf59e0b,transparent:true,opacity:0.7,depthTest:false});
       var ring=new THREE.Mesh(ringGeo,ringMat);
       var ringY=hy+ringFloatHeight;
       ring.position.copy(ctr).addScaledVector(axY,ringY);
+      ring.userData._floatH=ringFloatHeight; // reused by the live rotate-drag repositioning
       ring.rotation.x=Math.PI/2; // lay flat
       ring.userData._sboxRotation=true;
       ring.renderOrder=999;
