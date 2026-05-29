@@ -9126,12 +9126,41 @@ function startApp() {
         window._ccSectionDragging = false;
         renderer.domElement.style.cursor = '';
       }
+      // Build a move-drag state that mirrors the section-box face handle exactly:
+      // a drag plane that contains the move axis and faces the camera, so the
+      // handle tracks the cursor in world space (no inversion, follows the mouse).
+      function _secAxisVec(cs) {
+        if (cs.axis) { var m = ({x:[1,0,0],y:[0,1,0],z:[0,0,1]})[cs.axis] || [0,1,0]; return new THREE.Vector3(m[0],m[1],m[2]); }
+        if (cs.custom && cs.custom.normal) { var n = cs.custom.normal; return new THREE.Vector3(n[0],n[1],n[2]).normalize(); }
+        return new THREE.Vector3(0,1,0);
+      }
+      function _secMakeMoveDrag(cs, S2, startX, startY, button) {
+        var n = _secAxisVec(cs);
+        var box = _elemsBBox();
+        var gizmo = S2._sectionPlaneVis;
+        var startWorld = gizmo ? gizmo.position.clone() : box.getCenter(new THREE.Vector3());
+        var camDir = new THREE.Vector3(); S2.camera.getWorldDirection(camDir);
+        var crossN = new THREE.Vector3().crossVectors(n, camDir);
+        if (crossN.lengthSq() < 0.01) crossN.set(1,0,0);
+        var dragNormal = new THREE.Vector3().crossVectors(crossN, n).normalize();
+        var dragPlane = new THREE.Plane().setFromNormalAndCoplanarPoint(dragNormal, startWorld);
+        var d = {startX:startX, startY:startY, startPos:cs.pos, didDrag:false, button:button,
+                 mode:'move', box:box, lastPos:cs.pos, axisVec:n, dragPlane:dragPlane, startWorld:startWorld};
+        if (cs.axis) {
+          d.min = box.min[cs.axis]; d.range = (box.max[cs.axis] - box.min[cs.axis]) || 1;
+        } else {
+          // Custom plane: map world travel along the normal to a 0..1 pos via the box diagonal.
+          var sz = box.getSize(new THREE.Vector3()); d.min = 0; d.range = sz.length() || 1;
+        }
+        d.startCut = d.min + d.range * cs.pos;
+        return d;
+      }
       renderer.domElement.addEventListener('mousedown', function(e) {
         var cs = window._ccCurrentSection;
         if (!cs) return;
         var ctrlHeld = e.ctrlKey || e.metaKey;
         if (e.button === 2 && ctrlHeld) {
-          _secDrag = {startX: e.clientX, startY: e.clientY, startPos: cs.pos, didDrag: false, button: 2, mode:'move', box: _elemsBBox(), lastPos: cs.pos};
+          _secDrag = _secMakeMoveDrag(cs, state3d.current, e.clientX, e.clientY, 2);
         } else if (e.button === 0) {
           var S2 = state3d.current;
           if (!S2._sectionPlaneVis) return;
@@ -9150,7 +9179,7 @@ function startApp() {
               var np = _getSecNormalAndPoint(cs);
               if (np) _secDrag = {startX: e.clientX, startPos: cs.pos, didDrag: false, button: 0, mode:'rotate', startNormal: np.normal, startPoint: np.point};
             } else {
-              _secDrag = {startX: e.clientX, startY: e.clientY, startPos: cs.pos, didDrag: false, button: 0, mode:'move', box: _elemsBBox(), lastPos: cs.pos};
+              _secDrag = _secMakeMoveDrag(cs, S2, e.clientX, e.clientY, 0);
             }
           }
         }
@@ -9177,37 +9206,28 @@ function startApp() {
           if (window._ccDispatch) window._ccDispatch({t:A.SECTION_CUSTOM, v:{normal:rn, point:_secDrag.startPoint}, pos:_secDrag.startPos});
           renderer.domElement.style.cursor = 'ew-resize';
         } else {
-          var dx = e.clientX - (_secDrag.startX !== undefined ? _secDrag.startX : e.clientX);
-          var dy = e.clientY - _secDrag.startY;
-          if (Math.abs(dx) < 3 && Math.abs(dy) < 3 && !_secDrag.didDrag) return;
-          _secDrag.didDrag = true;
-          window._ccSectionDragging = true;
-          var cs = window._ccCurrentSection;
           var S2 = state3d.current;
-          var newPos;
-          if (cs && cs.axis && S2 && S2.camera) {
-            // Section plane lives along the axis but its visible "kept" side
-            // is the opposite of the axis normal (negated in line 6861). Mouse
-            // should move the cut WITH the drag direction in screen space — so
-            // we invert the dot product.
-            var axMap = {x:[1,0,0], y:[0,1,0], z:[0,0,1]};
-            var axArr = axMap[cs.axis] || [0,1,0];
-            var origin = new THREE.Vector3(0,0,0).project(S2.camera);
-            var tip    = new THREE.Vector3(axArr[0],axArr[1],axArr[2]).project(S2.camera);
-            var sx = tip.x - origin.x, sy = tip.y - origin.y;
-            var sLen = Math.sqrt(sx*sx + sy*sy) || 1;
-            sx /= sLen; sy /= sLen;
-            var el = renderer.domElement;
-            var mdx =  dx / el.clientWidth  * 2;
-            var mdy = -dy / el.clientHeight * 2;
-            var dot = mdx * sx + mdy * sy;
-            newPos = Math.max(0, Math.min(1, _secDrag.startPos - dot * 0.5));
-          } else {
-            newPos = Math.max(0, Math.min(1, _secDrag.startPos + dy * 0.003));
+          if (!S2 || !S2.camera) return;
+          var dx0 = e.clientX - _secDrag.startX, dy0 = e.clientY - _secDrag.startY;
+          if (Math.abs(dx0) < 3 && Math.abs(dy0) < 3 && !_secDrag.didDrag) return;
+          // Mirror the section-box face handle: intersect the cursor ray with a
+          // camera-facing plane that contains the move axis, then project onto
+          // the axis. Tracks the cursor in world space — no inversion, no drift.
+          var rect = renderer.domElement.getBoundingClientRect();
+          var mxM = ((e.clientX-rect.left)/rect.width)*2-1;
+          var myM = -((e.clientY-rect.top)/rect.height)*2+1;
+          raycaster.setFromCamera(new THREE.Vector2(mxM,myM), S2.camera);
+          var intM = new THREE.Vector3();
+          if (_secDrag.dragPlane && raycaster.ray.intersectPlane(_secDrag.dragPlane, intM)) {
+            _secDrag.didDrag = true;
+            window._ccSectionDragging = true;
+            var dF = intM.clone().sub(_secDrag.startWorld).dot(_secDrag.axisVec);
+            var newCut = _secDrag.startCut + dF;
+            var newPos = Math.max(0, Math.min(1, (newCut - _secDrag.min) / _secDrag.range));
+            _secDrag.lastPos = newPos;
+            _secPlaneLiveMove(newPos); // imperative — commit to state on mouseup
+            renderer.domElement.style.cursor = 'move';
           }
-          _secDrag.lastPos = newPos;
-          _secPlaneLiveMove(newPos); // imperative — commit to state on mouseup
-          renderer.domElement.style.cursor = 'move';
         }
       });
       _wlAdd('mouseup', function(e) {
