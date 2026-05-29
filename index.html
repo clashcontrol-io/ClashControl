@@ -9077,12 +9077,45 @@ function startApp() {
         }
         return null;
       }
+      // Move the section plane imperatively during a drag — update the live clip
+      // plane (shared by reference with every model material) and the gizmo in
+      // place, then invalidate(). This is the orbit-drag pattern: dispatching to
+      // the reducer on every mousemove round-trips through a full gizmo rebuild +
+      // per-material clip reassignment, which is what made the drag lag behind the
+      // cursor. State is committed once on mouseup.
+      function _secPlaneLiveMove(newPos) {
+        var S2 = state3d.current; if (!S2) return;
+        var cs = window._ccCurrentSection; if (!cs) return;
+        var plane = window._ccActivePlanes && window._ccActivePlanes[0];
+        var gizmo = S2._sectionPlaneVis;
+        var box = (_secDrag && _secDrag.box) ? _secDrag.box : _elemsBBox();
+        if (cs.axis) {
+          var cut = box.min[cs.axis] + (box.max[cs.axis] - box.min[cs.axis]) * newPos;
+          if (plane) {
+            // Keep the existing normal (preserves flip orientation); only slide the offset.
+            var cp = gizmo ? gizmo.position.clone() : box.getCenter(new THREE.Vector3());
+            cp[cs.axis] = cut;
+            plane.setFromNormalAndCoplanarPoint(plane.normal.clone(), cp);
+          }
+          if (gizmo) gizmo.position[cs.axis] = cut;
+        } else if (cs.custom) {
+          var sc = cs.custom;
+          var nrm = new THREE.Vector3(sc.normal[0], sc.normal[1], sc.normal[2]);
+          var pt  = new THREE.Vector3(sc.point[0], sc.point[1], sc.point[2]);
+          var diag = box.getSize(new THREE.Vector3()).length();
+          var shifted = pt.clone().addScaledVector(nrm, (newPos - 0.5) * diag);
+          if (plane) plane.setFromNormalAndCoplanarPoint(plane.normal.clone(), shifted);
+          if (gizmo) gizmo.position.copy(shifted);
+        }
+        cs.pos = newPos; // keep click-filter / commit in sync
+        invalidate();
+      }
       renderer.domElement.addEventListener('mousedown', function(e) {
         var cs = window._ccCurrentSection;
         if (!cs) return;
         var ctrlHeld = e.ctrlKey || e.metaKey;
         if (e.button === 2 && ctrlHeld) {
-          _secDrag = {startX: e.clientX, startY: e.clientY, startPos: cs.pos, didDrag: false, button: 2, mode:'move'};
+          _secDrag = {startX: e.clientX, startY: e.clientY, startPos: cs.pos, didDrag: false, button: 2, mode:'move', box: _elemsBBox(), lastPos: cs.pos};
         } else if (e.button === 0) {
           var S2 = state3d.current;
           if (!S2._sectionPlaneVis) return;
@@ -9101,7 +9134,7 @@ function startApp() {
               var np = _getSecNormalAndPoint(cs);
               if (np) _secDrag = {startX: e.clientX, startPos: cs.pos, didDrag: false, button: 0, mode:'rotate', startNormal: np.normal, startPoint: np.point};
             } else {
-              _secDrag = {startX: e.clientX, startY: e.clientY, startPos: cs.pos, didDrag: false, button: 0, mode:'move'};
+              _secDrag = {startX: e.clientX, startY: e.clientY, startPos: cs.pos, didDrag: false, button: 0, mode:'move', box: _elemsBBox(), lastPos: cs.pos};
             }
           }
         }
@@ -9155,8 +9188,8 @@ function startApp() {
           } else {
             newPos = Math.max(0, Math.min(1, _secDrag.startPos + dy * 0.003));
           }
-          if (cs && cs.axis && window._ccDispatch) window._ccDispatch({t:A.SECTION, axis:cs.axis, pos:newPos});
-          else if (cs && cs.custom && window._ccDispatch) window._ccDispatch({t:A.SECTION_CUSTOM, v:cs.custom, pos:newPos});
+          _secDrag.lastPos = newPos;
+          _secPlaneLiveMove(newPos); // imperative — commit to state on mouseup
           renderer.domElement.style.cursor = 'move';
         }
       });
@@ -9164,6 +9197,13 @@ function startApp() {
         if (!_secDrag) return;
         if (e.button !== _secDrag.button) return;
         if (_secDrag.button === 0) { var S2 = state3d.current; if (S2.orbit) S2.orbit.enabled = true; }
+        // Commit the imperatively-dragged move once, so React state + the
+        // position slider stay in sync and the gizmo rebuilds cleanly.
+        if (_secDrag.mode === 'move' && _secDrag.didDrag && _secDrag.lastPos != null && window._ccDispatch) {
+          var _csU = window._ccCurrentSection;
+          if (_csU && _csU.axis) window._ccDispatch({t:A.SECTION, axis:_csU.axis, pos:_secDrag.lastPos});
+          else if (_csU && _csU.custom) window._ccDispatch({t:A.SECTION_CUSTOM, v:_csU.custom, pos:_secDrag.lastPos});
+        }
         _secDrag = null;
         window._ccSectionDragging = false;
         renderer.domElement.style.cursor = '';
@@ -9775,7 +9815,23 @@ function startApp() {
         tip.renderOrder = 1000;
         grp.add(tip);
 
-        grp._secDragHandles = [rotRing, shaft, tip];
+        // Invisible fat hit-proxy spanning the whole arrow. The visible shaft is
+        // only a few cm thick, so the pick ray usually misses it and the click
+        // falls through to the orbit handler ("it just rotates"). A wide invisible
+        // cylinder along the arrow makes the move handle reliably grabbable.
+        var hitR = Math.max(tipR * 1.8, halfMin * 0.05);
+        var hitProxy = new THREE.Mesh(
+          new THREE.CylinderGeometry(hitR, hitR, shaftLen + tipLen, 8, 1, false),
+          new THREE.MeshBasicMaterial({ visible: false })
+        );
+        hitProxy.rotation.x = -Math.PI / 2;
+        hitProxy.position.set(0, 0, (shaftLen + tipLen) / 2);
+        hitProxy.userData._sectionPlane = true;
+        hitProxy.userData._secHandle    = 'move';
+        hitProxy.renderOrder = 1000;
+        grp.add(hitProxy);
+
+        grp._secDragHandles = [rotRing, shaft, tip, hitProxy];
         grp.position.copy(position);
         if (quaternion) grp.quaternion.copy(quaternion);
         grp.renderOrder = 999;
