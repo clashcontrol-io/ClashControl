@@ -287,6 +287,22 @@ UI_OVERHAUL.md written (7 chapters, 1469 lines). PLAN.md updated.
 <!-- END:active-work -->
 
 <!-- BEGIN:session-log -->
+### 2026-05-30
+**Summary:** 6 commit(s) landed (no AI summary — set ANTHROPIC_API_KEY secret for richer entries).
+**Changed:** see commits
+**Notable:** —
+
+<details><summary>Commits</summary>
+
+- e50d72a chore: daily memory sync 2026-05-29
+- ab6fb7c chore: bump version to 5.12.9
+- 243ddcf Section gizmo: constant-size handles, follow plane, fix stuck drag & ring offset
+- a30b9bd chore: bump version to 5.12.8
+- b356ac8 Make section-plane drag track the cursor and easier to grab
+- 7c82c74 chore: bump version to 5.12.7
+
+</details>
+
 ### 2026-05-29
 **Summary:** 9 commit(s) landed (no AI summary — set ANTHROPIC_API_KEY secret for richer entries).
 **Changed:** see commits
