@@ -88,12 +88,20 @@ Things to be careful about. Do not remove without a good reason — add a note i
 Update this section at the start and end of each session.
 Mark completed items with ~~strikethrough~~ and date, then let the daily sync archive them.
 
-On branch `claude/adoring-hopper-IEpvn` (2026-06-03) — SEO Phase 0+1 (canonical, crawlability):
+On branch `claude/adoring-hopper-IEpvn` (2026-06-03) — SEO Phase 0+1+2 (canonical, crawlability, landing pages):
 
 - Add `<link rel="canonical">`, `<noscript>` body content, visually-hidden `<h1>`, `SoftwareApplication` JSON-LD, `og:locale` to `index.html` head.
 - Add `vercel.json` 301 redirects for `/clash-control`, `/ClashControl`, `/index.html` → `/`.
 - Add `robots.txt`, `sitemap.xml`, `llms.txt` at repo root.
-- Follow-ups (separate PR): Phase 2 — 5 use-case static pages (`/free-navisworks-alternative`, `/ifc-clash-detection-online`, `/free-bcf-viewer`, `/free-ifc-viewer-online`, `/ids-validation-online`) with FAQ JSON-LD; Phase 3 — GSC sitemap submit + Goatcounter CTA event tagging.
+- Phase 2: shipped 5 use-case static pages (`/free-navisworks-alternative`, `/ifc-clash-detection-online`, `/free-bcf-viewer`, `/free-ifc-viewer-online`, `/ids-validation-online`) with `FAQPage` JSON-LD, cross-links, and Goatcounter CTA tagging. Sitemap + `llms.txt` updated.
+- Phase 3 remaining: submit sitemap in Google Search Console (needs owner access).
+
+On branch `claude/meshlets-research-OSMAL` (2026-05-30) — "can we use meshlets?" research + Stage-1 PoC:
+
+- Researched meshlets/mesh shaders. Verdict: hardware mesh shaders don't exist in WebGL/WebGPU; Needle/Nanite-style GPU meshlet rasterizers need WebGPU + three.js r160+ (too big a lift for this r128/no-build app). Meshlets do **not** help clash detection (the BVH already uses 4-tri leaves, finer than meshlets). The real, in-stack win is the *spirit* of meshlets: merge the 5k–200k per-material meshes into spatially-clustered chunks to slash draw calls + the per-mesh cull loop.
+- Implemented a **flag-gated Stage-1 PoC** (`window._ccChunkMerge`, default OFF → exact revert). New `_ccBuildMergedChunks`/`_ccMergeChunkGeometries` near `_buildInstancedMeshes` (`index.html:~2200`), hooked after both IFC instancing call sites. Buckets non-instanced static meshes by spatial grid cell × material, ≤65 535-vert budget, hand-written typed-array merge (BufferGeometryUtils isn't loaded). Mutates only the render list; `element.meshes[]` untouched (protects clash/serialize/bounds — the instancing precedent).
+- Picking preserved via per-chunk faceIndex→expressId range table (`window._ccChunkExprIdForFace`, used in `_hitExpressId`). Culling extended for `_isMergedChunk` (`updateCulling`). Section-clip traversals (×3) broadened so chunk/instanced materials still receive clipping planes. Hover highlight suppressed on chunks. Identity features (highlight outline / ghost / color-by-class / hide) naturally no-op on chunks under the flag (deferred to Stage 2 shader-LUT).
+- **Not done / caveats:** runtime browser verification (no GPU/sample IFC in this env — syntax-checked only via vm.Script); GLB + geo-cache-restore paths not hooked (fresh IFC loads only); transparent meshes merged into a chunk may sort imprecisely; merge trades away geoCache VRAM dedup (measure `renderer.info.memory.geometries`). Stage-2 shader-LUT (highlight/ghost/color/hide on merged geo) gated on Stage-1 metrics. Plan: `/root/.claude/plans/can-we-use-the-sprightly-waffle.md`.
 
 On branch `claude/code-review-quality-IjbhT` (2026-05-28) — code-review quality pass:
 

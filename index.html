@@ -1583,6 +1583,25 @@ function startApp() {
 
   // GPU instancing constants
   var INST_THRESHOLD = 4; // min identical placements before collapsing to InstancedMesh
+
+  // [PoC] Meshlet-inspired spatial chunk merge — Stage 1 (off by default).
+  // Toggle from console with `window._ccChunkMerge = true` BEFORE loading a model,
+  // then load a large IFC and compare `window._ccPerfSnapshot()` with the flag off.
+  // It merges the non-instanced static mesh remainder into a small number of large
+  // geometries (spatial grid × material) to slash draw calls and shrink the cull loop.
+  // Only the render list is touched — element.meshes[] is untouched, so clash
+  // detection / geo-cache serialization / bounds are unaffected and flag-off is an
+  // exact revert. Identity features (highlight/ghost/color/hide) naturally no-op on
+  // chunks (they carry no single expressId); picking is preserved via a per-chunk
+  // faceIndex→expressId range table.
+  if (typeof window._ccChunkMerge === 'undefined') window._ccChunkMerge = false;
+  window._ccPerfSnapshot = function(){
+    var s = (typeof S!=='undefined'&&S&&S.perf)?S.perf:null;
+    if(!s){ console.warn('[ChunkMerge] perf not ready'); return null; }
+    var snap = {fps:s.fps, drawCalls:s.drawCalls, triangles:s.tris, geometries:s.meshCount, chunkMerge:!!window._ccChunkMerge};
+    console.log('%c[ChunkMerge perf] fps='+snap.fps+' · drawCalls='+snap.drawCalls+' · tris='+snap.triangles+' · geometries='+snap.geometries+' · chunkMerge='+snap.chunkMerge, 'color:#34d399;font-weight:bold');
+    return snap;
+  };
   var _INST_HIDE_MX = typeof THREE !== 'undefined' ? new THREE.Matrix4().makeScale(0,0,0) : null; // hides one instance from its InstancedMesh
 
   // ── Bake static mesh transforms for rendering perf ──────────── INTERNALS.md §7
@@ -2251,6 +2270,130 @@ function startApp() {
   // ── GPU Instancing: collapse repeated placements into THREE.InstancedMesh ──
   // elements[] and meshes[] are mutated in-place. Returns {meshes, groups, instanced}.
   // Individual proxy meshes remain in element.meshes for clash detection (geometry + baked matrixWorld).
+  // [PoC] Concatenate several same-material meshes into one BufferGeometry.
+  // BufferGeometryUtils is NOT loaded in this build, so this is a hand-written
+  // typed-array merge with index rebasing. Source geometry is local-space; the
+  // world transform lives in mesh.matrix (baked, parents are identity — same
+  // assumption GPU instancing relies on at setMatrixAt). Returns the merged
+  // geometry plus a triangle-range→expressId table for pick resolution.
+  function _ccMergeChunkGeometries(srcMeshes) {
+    var totalVerts = 0, totalIdx = 0, i, g, pa;
+    for (i=0;i<srcMeshes.length;i++){
+      g = srcMeshes[i].geometry; pa = g.getAttribute('position');
+      totalVerts += pa.count;
+      totalIdx += g.index ? g.index.count : pa.count;
+    }
+    var pos = new Float32Array(totalVerts*3);
+    var nrm = new Float32Array(totalVerts*3);
+    var idx = totalVerts > 65535 ? new Uint32Array(totalIdx) : new Uint16Array(totalIdx);
+    var ranges = []; // {start, count, expressId} over the index buffer, ascending by start
+    var vOff = 0, iOff = 0;
+    var nm = new THREE.Matrix3(), vTmp = new THREE.Vector3(), nTmp = new THREE.Vector3();
+    for (var s=0;s<srcMeshes.length;s++){
+      var m = srcMeshes[s], geo = m.geometry, mtx = m.matrix;
+      nm.getNormalMatrix(mtx);
+      var pAttr = geo.getAttribute('position'), nAttr = geo.getAttribute('normal');
+      var vCount = pAttr.count, v, d;
+      for (v=0; v<vCount; v++){
+        vTmp.set(pAttr.getX(v), pAttr.getY(v), pAttr.getZ(v)).applyMatrix4(mtx);
+        d = (vOff+v)*3; pos[d]=vTmp.x; pos[d+1]=vTmp.y; pos[d+2]=vTmp.z;
+        if (nAttr){
+          nTmp.set(nAttr.getX(v), nAttr.getY(v), nAttr.getZ(v)).applyMatrix3(nm).normalize();
+          nrm[d]=nTmp.x; nrm[d+1]=nTmp.y; nrm[d+2]=nTmp.z;
+        }
+      }
+      var srcIdx = geo.index, iStart = iOff, k;
+      if (srcIdx){ for (k=0;k<srcIdx.count;k++) idx[iOff++] = vOff + srcIdx.getX(k); }
+      else { for (k=0;k<vCount;k++) idx[iOff++] = vOff + k; }
+      ranges.push({start: iStart, count: iOff - iStart, expressId: m.userData.expressId});
+      vOff += vCount;
+    }
+    var merged = new THREE.BufferGeometry();
+    merged.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+    merged.setAttribute('normal', new THREE.BufferAttribute(nrm, 3));
+    merged.setIndex(new THREE.BufferAttribute(idx, 1));
+    merged.computeBoundingSphere();
+    return {geometry: merged, ranges: ranges};
+  }
+
+  // [PoC] Meshlet-inspired chunk merge. Buckets the non-instanced static mesh
+  // remainder by spatial grid cell × material, splits each bucket by a vertex
+  // budget, and merges each sub-bucket into one chunk Mesh with a per-chunk
+  // bounding sphere (for updateCulling) and a faceIndex→expressId range table
+  // (for picking). Mutates only the render list; element.meshes[] is untouched.
+  function _ccBuildMergedChunks(elements, meshes) {
+    if (!window._ccChunkMerge || !THREE.BufferGeometry) return {meshes:meshes, chunks:0, merged:0};
+    var mergeable = [], keep = [], i, m;
+    for (i=0;i<meshes.length;i++){
+      m = meshes[i];
+      if (m.isMesh && !m.isInstancedMesh && m.geometry && m.geometry.getAttribute &&
+          m.geometry.getAttribute('position') && m.userData.expressId != null) mergeable.push(m);
+      else keep.push(m);
+    }
+    if (mergeable.length < 64) return {meshes:meshes, chunks:0, merged:0};
+    var t0 = performance.now();
+    var bbox = new THREE.Box3();
+    var centroids = new Array(mergeable.length);
+    for (var j=0;j<mergeable.length;j++){
+      var mm = mergeable[j];
+      if (!mm.geometry.boundingSphere) mm.geometry.computeBoundingSphere();
+      centroids[j] = mm.geometry.boundingSphere.center.clone().applyMatrix4(mm.matrix);
+      bbox.expandByPoint(centroids[j]);
+    }
+    var size = bbox.getSize(new THREE.Vector3());
+    var cell = Math.max(size.x, size.y, size.z, 1e-6) / Math.cbrt(125); // ~5×5×5 grid
+    var groups = {};
+    for (var t=0;t<mergeable.length;t++){
+      var ct = centroids[t], msh = mergeable[t];
+      var gx = Math.floor((ct.x - bbox.min.x)/cell);
+      var gy = Math.floor((ct.y - bbox.min.y)/cell);
+      var gz = Math.floor((ct.z - bbox.min.z)/cell);
+      var key = gx+'|'+gy+'|'+gz+'|'+msh.material.uuid;
+      (groups[key] || (groups[key]=[])).push(msh);
+    }
+    var VERT_BUDGET = 65535;
+    var chunkMeshes = [], nChunks = 0, nMerged = 0;
+    Object.keys(groups).forEach(function(key){
+      var list = groups[key], i0 = 0;
+      while (i0 < list.length){
+        var sub = [], verts = 0;
+        while (i0 < list.length){
+          var vc = list[i0].geometry.getAttribute('position').count;
+          if (sub.length > 0 && verts + vc > VERT_BUDGET) break;
+          sub.push(list[i0]); verts += vc; i0++;
+        }
+        var res = _ccMergeChunkGeometries(sub);
+        var cmesh = new THREE.Mesh(res.geometry, sub[0].material);
+        cmesh.matrixAutoUpdate = false; // positions baked to world; matrix stays identity
+        cmesh.frustumCulled = false;    // manual updateCulling() handles frustum
+        cmesh.userData._isMergedChunk = true;
+        cmesh.userData._elementRanges = res.ranges;
+        chunkMeshes.push(cmesh);
+        nChunks++; nMerged += sub.length;
+      }
+    });
+    var result = keep.concat(chunkMeshes);
+    console.log('%c[IFC ChunkMerge] '+nMerged+' meshes → '+nChunks+' chunks · '+result.length+
+      ' total draw objects · '+Math.round(performance.now()-t0)+'ms', 'color:#34d399;font-weight:bold');
+    return {meshes:result, chunks:nChunks, merged:nMerged};
+  }
+
+  // [PoC] Resolve a raycast hit on a merged chunk to its element expressId by
+  // binary-searching the chunk's ascending triangle-range table (faceIndex*3
+  // is the hit triangle's first index slot).
+  window._ccChunkExprIdForFace = function(obj, faceIndex){
+    var ranges = obj && obj.userData && obj.userData._elementRanges;
+    if (!ranges || faceIndex == null) return null;
+    var pos = faceIndex * 3, lo = 0, hi = ranges.length - 1;
+    while (lo <= hi){
+      var mid = (lo+hi)>>1, r = ranges[mid];
+      if (pos < r.start) hi = mid-1;
+      else if (pos >= r.start + r.count) lo = mid+1;
+      else return r.expressId;
+    }
+    return null;
+  };
+
   function _buildInstancedMeshes(elements, meshes) {
     if (!THREE.InstancedMesh) return {meshes:meshes, groups:0, instanced:0};
     var candidates = {}; // instKey → {geo, mat, entries:[{mesh, expressId}]}
@@ -2445,6 +2588,7 @@ function startApp() {
             _lmark('Element processing');
             var _instResult = _buildInstancedMeshes(elements, meshes);
             meshes = _instResult.meshes;
+            meshes = _ccBuildMergedChunks(elements, meshes).meshes;
             var loadTime = Math.round(performance.now() - loadStart);
             var _geoUnique = Object.keys(geoCache).length;
             var stats = {loadTime:loadTime, fileSize:buffer.byteLength, elementCount:elements.length, meshCount:meshes.length, geoUnique:_geoUnique, geoReused:_geoReused, instancedGroups:_instResult.groups, instancedElements:_instResult.instanced, phases:_lp.phases, loadType:'IFC'};
@@ -2831,6 +2975,7 @@ function startApp() {
 
           var _instResult = _buildInstancedMeshes(elements, meshes);
           meshes = _instResult.meshes;
+          meshes = _ccBuildMergedChunks(elements, meshes).meshes;
 
           var loadTime = Math.round(performance.now() - loadStart);
           var phases = msg.phases || {};
@@ -8298,6 +8443,7 @@ function startApp() {
         var hitMesh = null, hitInstanceId = -1;
         if(hits.length>0 && hits[0].object.isMesh) { hitMesh = hits[0].object; hitInstanceId = hits[0].instanceId != null ? hits[0].instanceId : -1; }
         if(hitMesh && _isGhostMat(hitMesh.material)) hitMesh = null;
+        if(hitMesh && hitMesh.userData._isMergedChunk) hitMesh = null; // [PoC] no whole-chunk hover highlight
         if(hitMesh && !hitMesh.isInstancedMesh && !hitMesh.visible) hitMesh = null;
         if(hitMesh && hitMesh.parent && hitMesh.parent.userData.modelId && !hitMesh.parent.visible) hitMesh = null;
         var sameHit = hitMesh === lastHoveredMesh && hitInstanceId === (lastHoverOriginals && lastHoverOriginals._instanceId != null ? lastHoverOriginals._instanceId : -1);
@@ -8464,7 +8610,7 @@ function startApp() {
           if(S3._sboxRotRing) S3._sboxRotRing.position.copy(ctr3).addScaledVector(axY3,hy3+(S3._sboxRotRing.userData._floatH||0.5));
           // Update clipping planes immediately
           var np3=[new THREE.Plane().setFromNormalAndCoplanarPoint(axX3.clone(),ctr3.clone().addScaledVector(axX3,-hx3)),new THREE.Plane().setFromNormalAndCoplanarPoint(axX3.clone().negate(),ctr3.clone().addScaledVector(axX3,hx3)),new THREE.Plane().setFromNormalAndCoplanarPoint(axY3.clone(),ctr3.clone().addScaledVector(axY3,-hy3)),new THREE.Plane().setFromNormalAndCoplanarPoint(axY3.clone().negate(),ctr3.clone().addScaledVector(axY3,hy3)),new THREE.Plane().setFromNormalAndCoplanarPoint(axZ3.clone(),ctr3.clone().addScaledVector(axZ3,-hz3)),new THREE.Plane().setFromNormalAndCoplanarPoint(axZ3.clone().negate(),ctr3.clone().addScaledVector(axZ3,hz3))];
-          S3.scene.traverse(function(obj){if(!obj.isMesh||obj.userData.expressId==null||!obj.material)return;var ms=Array.isArray(obj.material)?obj.material:[obj.material];ms.forEach(function(m){m.clippingPlanes=np3;m.needsUpdate=true;});var sm=obj.userData._styleMats;if(sm)Object.keys(sm).forEach(function(k){if(sm[k]){sm[k].clippingPlanes=np3;sm[k].needsUpdate=true;}});});
+          S3.scene.traverse(function(obj){if(!obj.isMesh||!obj.material||(obj.userData.expressId==null&&!obj.userData._isMergedChunk&&!obj.isInstancedMesh))return;var ms=Array.isArray(obj.material)?obj.material:[obj.material];ms.forEach(function(m){m.clippingPlanes=np3;m.needsUpdate=true;});var sm=obj.userData._styleMats;if(sm)Object.keys(sm).forEach(function(k){if(sm[k]){sm[k].clippingPlanes=np3;sm[k].needsUpdate=true;}});});
           window._ccCurrentSbox=newSb;
           invalidate();
           _sboxHudShow((newRot*180/Math.PI).toFixed(1)+'°', e.clientX, e.clientY);
@@ -8589,6 +8735,8 @@ function startApp() {
           var hInst = h.instanceId != null ? h.instanceId : -1;
           if(hEid==null && h.object.isInstancedMesh && hInst >= 0)
             hEid = (h.object.userData.instanceExprIds || [])[hInst];
+          if(hEid==null && h.object.userData._isMergedChunk)
+            hEid = window._ccChunkExprIdForFace(h.object, h.faceIndex);
           return hEid != null ? {eid:hEid, instId:hInst} : null;
         }
         // Helper: true when the hit face is visible from the camera
@@ -9486,7 +9634,7 @@ function startApp() {
         S.mg.traverse(function(obj){
           if(obj.isMesh && obj.parent && obj.parent.userData.modelId && !obj.parent.visible) { obj.visible = false; return; }
           if(!obj.isMesh) return;
-          if(obj.userData.expressId==null) return;
+          if(obj.userData.expressId==null && !obj.userData._isMergedChunk) return;
           if(obj.userData._storeyHidden || obj.userData._classHidden) { return; }
           if(!obj.geometry.boundingSphere) obj.geometry.computeBoundingSphere();
           var bs = obj.geometry.boundingSphere;
@@ -9991,7 +10139,7 @@ function startApp() {
       S.renderer.clippingPlanes = [];
       S.renderer.localClippingEnabled = true;
       S.scene.traverse(function(obj){
-        if(!obj.isMesh||obj.userData.expressId==null||!obj.material) return;
+        if(!obj.isMesh||!obj.material||(obj.userData.expressId==null&&!obj.userData._isMergedChunk&&!obj.isInstancedMesh)) return;
         var mats=Array.isArray(obj.material)?obj.material:[obj.material];
         mats.forEach(function(m){ if(m.clippingPlanes!==planes){m.clippingPlanes=planes;m.needsUpdate=true;} });
         // Apply to all cached style materials so render-style swaps don't lose clipping
@@ -10226,7 +10374,7 @@ function startApp() {
       S.renderer.clippingPlanes=[];
       S.renderer.localClippingEnabled=true;
       S.scene.traverse(function(obj){
-        if(!obj.isMesh||obj.userData.expressId==null||!obj.material) return;
+        if(!obj.isMesh||!obj.material||(obj.userData.expressId==null&&!obj.userData._isMergedChunk&&!obj.isInstancedMesh)) return;
         // Apply to active material
         var mats=Array.isArray(obj.material)?obj.material:[obj.material];
         mats.forEach(function(m){ m.clippingPlanes=planes; m.needsUpdate=true; });
