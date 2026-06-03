@@ -9571,6 +9571,24 @@ function startApp() {
           }
           var _scG = (_wpp * 110) / (_giz._secHandleSpan || 1); // ~110px arrow
           if (_scG > 0 && isFinite(_scG)) _giz._secHandleGroup.scale.setScalar(_scG);
+
+          // For vertical section planes the plane normal is horizontal, so the
+          // ring (axis = local +Z = plane normal) ends up standing upright. The
+          // drag-rotate logic spins the plane around world up, so the ring
+          // visually mismatches the motion. Re-orient the ring each frame so
+          // its central axis is world up whenever the plane is vertical — gives
+          // the user a horizontal "spinning record" handle to match the rotation.
+          var _ring = _giz._secRotRing;
+          if (_ring) {
+            var _wq = _giz.getWorldQuaternion(new THREE.Quaternion());
+            var _wn = new THREE.Vector3(0, 0, 1).applyQuaternion(_wq);
+            if (Math.abs(_wn.y) < 0.7) {
+              var _localUp = new THREE.Vector3(0, 1, 0).applyQuaternion(_wq.invert());
+              _ring.quaternion.setFromUnitVectors(new THREE.Vector3(0, 0, 1), _localUp);
+            } else {
+              _ring.quaternion.identity();
+            }
+          }
         }
 
         // Lower resolution while moving: orbit drag → 50%, walk movement → 65%
@@ -9937,6 +9955,7 @@ function startApp() {
         grp.add(handleGroup);
         grp._secHandleGroup = handleGroup;
         grp._secHandleSpan  = shaftLen + tipLen; // reference world span at scale 1
+        grp._secRotRing     = rotRing; // re-oriented per frame for vertical planes
         grp._secDragHandles = [rotRing, shaft, tip, hitProxy];
         grp.position.copy(position);
         if (quaternion) grp.quaternion.copy(quaternion);
