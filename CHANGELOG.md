@@ -1,5 +1,8 @@
 # Changelog
 
+## v5.12.10 (2026-06-03)
+- SEO Phase 2: five high-intent landing pages
+
 ## v5.12.9 (2026-05-29)
 - Section gizmo: constant-size handles, follow plane, fix stuck drag & ring offset
 

@@ -88,6 +88,14 @@ Things to be careful about. Do not remove without a good reason — add a note i
 Update this section at the start and end of each session.
 Mark completed items with ~~strikethrough~~ and date, then let the daily sync archive them.
 
+On branch `claude/adoring-hopper-IEpvn` (2026-06-03) — SEO Phase 0+1+2 (canonical, crawlability, landing pages):
+
+- Add `<link rel="canonical">`, `<noscript>` body content, visually-hidden `<h1>`, `SoftwareApplication` JSON-LD, `og:locale` to `index.html` head.
+- Add `vercel.json` 301 redirects for `/clash-control`, `/ClashControl`, `/index.html` → `/`.
+- Add `robots.txt`, `sitemap.xml`, `llms.txt` at repo root.
+- Phase 2: shipped 5 use-case static pages (`/free-navisworks-alternative`, `/ifc-clash-detection-online`, `/free-bcf-viewer`, `/free-ifc-viewer-online`, `/ids-validation-online`) with `FAQPage` JSON-LD, cross-links, and Goatcounter CTA tagging. Sitemap + `llms.txt` updated.
+- Phase 3 remaining: submit sitemap in Google Search Console (needs owner access).
+
 On branch `claude/meshlets-research-OSMAL` (2026-05-30) — "can we use meshlets?" research + Stage-1 PoC:
 
 - Researched meshlets/mesh shaders. Verdict: hardware mesh shaders don't exist in WebGL/WebGPU; Needle/Nanite-style GPU meshlet rasterizers need WebGPU + three.js r160+ (too big a lift for this r128/no-build app). Meshlets do **not** help clash detection (the BVH already uses 4-tri leaves, finer than meshlets). The real, in-stack win is the *spirit* of meshlets: merge the 5k–200k per-material meshes into spatially-clustered chunks to slash draw calls + the per-mesh cull loop.
@@ -294,6 +302,50 @@ UI_OVERHAUL.md written (7 chapters, 1469 lines). PLAN.md updated.
 <!-- END:active-work -->
 
 <!-- BEGIN:session-log -->
+### 2026-06-03
+**Summary:** 1 commit(s) landed (no AI summary — set ANTHROPIC_API_KEY secret for richer entries).
+**Changed:** see commits
+**Notable:** —
+
+<details><summary>Commits</summary>
+
+- 6b398d2 chore: daily memory sync 2026-06-02
+
+</details>
+
+### 2026-06-02
+**Summary:** 1 commit(s) landed (no AI summary — set ANTHROPIC_API_KEY secret for richer entries).
+**Changed:** see commits
+**Notable:** —
+
+<details><summary>Commits</summary>
+
+- c989a56 chore: daily memory sync 2026-06-01
+
+</details>
+
+### 2026-06-01
+**Summary:** 1 commit(s) landed (no AI summary — set ANTHROPIC_API_KEY secret for richer entries).
+**Changed:** see commits
+**Notable:** —
+
+<details><summary>Commits</summary>
+
+- e552c23 chore: daily memory sync 2026-05-31
+
+</details>
+
+### 2026-05-31
+**Summary:** 1 commit(s) landed (no AI summary — set ANTHROPIC_API_KEY secret for richer entries).
+**Changed:** see commits
+**Notable:** —
+
+<details><summary>Commits</summary>
+
+- 1e61d1f chore: daily memory sync 2026-05-30
+
+</details>
+
 ### 2026-05-30
 **Summary:** 6 commit(s) landed (no AI summary — set ANTHROPIC_API_KEY secret for richer entries).
 **Changed:** see commits
