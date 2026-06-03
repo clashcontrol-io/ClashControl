@@ -88,6 +88,13 @@ Things to be careful about. Do not remove without a good reason — add a note i
 Update this section at the start and end of each session.
 Mark completed items with ~~strikethrough~~ and date, then let the daily sync archive them.
 
+On branch `claude/adoring-hopper-IEpvn` (2026-06-03) — SEO Phase 0+1 (canonical, crawlability):
+
+- Add `<link rel="canonical">`, `<noscript>` body content, visually-hidden `<h1>`, `SoftwareApplication` JSON-LD, `og:locale` to `index.html` head.
+- Add `vercel.json` 301 redirects for `/clash-control`, `/ClashControl`, `/index.html` → `/`.
+- Add `robots.txt`, `sitemap.xml`, `llms.txt` at repo root.
+- Follow-ups (separate PR): Phase 2 — 5 use-case static pages (`/free-navisworks-alternative`, `/ifc-clash-detection-online`, `/free-bcf-viewer`, `/free-ifc-viewer-online`, `/ids-validation-online`) with FAQ JSON-LD; Phase 3 — GSC sitemap submit + Goatcounter CTA event tagging.
+
 On branch `claude/code-review-quality-IjbhT` (2026-05-28) — code-review quality pass:
 
 - ~~`api/title.js`: `MAX_CLASHES` was 50 but the handler then sliced to 20, silently dropping clashes 21–50. Set the cap to 20 (matches the client's per-call batch in `index.html:~22662` and the documented contract) and slice with the constant, so oversized payloads get a clear 413.~~ (2026-05-28)
