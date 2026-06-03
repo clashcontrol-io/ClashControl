@@ -1,0 +1,115 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Online IFC Clash Detection — Free, No Install | ClashControl</title>
+  <meta name="description" content="Run IFC clash detection online. Load models in your browser, detect hard and soft clashes, review in 3D, export BCF 2.1. Free, open, zero setup.">
+  <link rel="canonical" href="https://www.clashcontrol.io/ifc-clash-detection-online/">
+  <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 48 48'%3E%3Crect width='48' height='48' rx='8' fill='%231a6b4a'/%3E%3Crect x='10' y='10' width='28' height='28' fill='none' stroke='%23ffffff' stroke-width='2'/%3E%3Cline x1='10' y1='38' x2='38' y2='10' stroke='%23ffffff' stroke-width='2'/%3E%3C/svg%3E">
+
+  <meta property="og:type" content="article">
+  <meta property="og:url" content="https://www.clashcontrol.io/ifc-clash-detection-online/">
+  <meta property="og:title" content="Online IFC Clash Detection — Free, No Install">
+  <meta property="og:description" content="Run IFC clash detection online. Browser-based, hard + soft clashes, BCF 2.1 export. Free.">
+  <meta property="og:image" content="https://www.clashcontrol.io/og-image.png">
+  <meta property="og:site_name" content="ClashControl">
+  <meta property="og:locale" content="en_US">
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="Online IFC Clash Detection — Free, No Install">
+  <meta name="twitter:description" content="Run IFC clash detection in your browser. Hard + soft clashes, BCF 2.1 export. Free.">
+  <meta name="twitter:image" content="https://www.clashcontrol.io/og-image.png">
+
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Syne:wght@700;800&family=DM+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@type": "FAQPage",
+    "mainEntity": [
+      { "@type": "Question", "name": "What's the difference between hard and soft clashes?",
+        "acceptedAnswer": { "@type": "Answer", "text": "A hard clash is geometry physically overlapping. A soft clash is a clearance or tolerance violation — elements that are too close to each other even if they do not touch. ClashControl checks both." } },
+      { "@type": "Question", "name": "Do my models get uploaded anywhere?",
+        "acceptedAnswer": { "@type": "Answer", "text": "By default, IFC parsing and clash detection run fully client-side in your browser — nothing leaves your machine. An optional localhost engine can be used for exact-mesh boolean operations, also without uploading models off your network." } },
+      { "@type": "Question", "name": "Which IFC versions are supported?",
+        "acceptedAnswer": { "@type": "Answer", "text": "IFC 2x3 and IFC4, via the web-ifc WASM library." } }
+    ]
+  }
+  </script>
+  <script data-goatcounter="https://clashcontrol.goatcounter.com/count" async src="//gc.zgo.at/count.js"></script>
+
+  <style>
+    :root { --bg:#fff; --fg:#0f172a; --muted:#475569; --faint:#94a3b8; --accent:#1a6b4a; --border:#e2e8f0; }
+    * { box-sizing: border-box; }
+    html, body { margin:0; padding:0; background:var(--bg); color:var(--fg); font-family:'DM Sans',system-ui,-apple-system,sans-serif; line-height:1.65; -webkit-font-smoothing:antialiased; }
+    a { color: var(--accent); text-decoration: none; }
+    a:hover { text-decoration: underline; }
+    header { border-bottom:1px solid var(--border); padding:1rem 1.5rem; display:flex; align-items:center; justify-content:space-between; }
+    header .brand { font-family:'Syne',sans-serif; font-weight:800; font-size:1.15rem; letter-spacing:-0.02em; color:var(--fg); display:flex; align-items:center; gap:.55rem; }
+    header nav a { color:var(--muted); margin-left:1.25rem; font-size:.95rem; font-weight:500; }
+    main { max-width:720px; margin:0 auto; padding:3rem 1.5rem 4rem; }
+    h1 { font-family:'Syne',sans-serif; font-size:2.4rem; font-weight:800; letter-spacing:-0.025em; line-height:1.15; margin:0 0 1.5rem; }
+    h2 { font-family:'Syne',sans-serif; font-size:1.4rem; font-weight:700; letter-spacing:-0.015em; margin:2.5rem 0 .75rem; }
+    p { margin:0 0 1rem; }
+    ul { margin:0 0 1.25rem; padding-left:1.25rem; } li { margin-bottom:.35rem; }
+    strong { font-weight:600; }
+    .cta { display:inline-block; margin:1.5rem 0 2rem; padding:.85rem 1.5rem; background:var(--accent); color:#fff; border-radius:6px; font-weight:600; font-size:1rem; }
+    .cta:hover { background:#155a3d; text-decoration:none; }
+    .faq dt { font-weight:600; margin-top:1.25rem; } .faq dd { margin:.3rem 0 0; color:var(--muted); }
+    footer { border-top:1px solid var(--border); padding:2rem 1.5rem; text-align:center; color:var(--faint); font-size:.9rem; }
+    footer .siblings { margin-bottom:1rem; } footer .siblings a { margin:0 .6rem; color:var(--muted); }
+  </style>
+</head>
+<body>
+
+<header>
+  <a href="/" class="brand">
+    <svg width="22" height="22" viewBox="0 0 48 48" aria-hidden="true">
+      <rect width="48" height="48" rx="8" fill="#1a6b4a"/>
+      <rect x="10" y="10" width="28" height="28" fill="none" stroke="#fff" stroke-width="2"/>
+      <line x1="10" y1="38" x2="38" y2="10" stroke="#fff" stroke-width="2"/>
+    </svg>
+    ClashControl
+  </a>
+  <nav>
+    <a href="/">Open the app</a>
+    <a href="https://github.com/clashcontrol-io/ClashControl">GitHub</a>
+  </nav>
+</header>
+
+<main>
+  <h1>IFC clash detection, online and free</h1>
+
+  <p>Clash detection shouldn't require a workstation, an install, and a license dance. ClashControl runs the whole thing in your browser.</p>
+
+  <p>Load one or more <strong>IFC</strong> models, define which disciplines should never touch (and which need clearance), run the check, and review every collision in <strong>3D</strong>. Hard clashes, soft clashes, section planes to slice into dense areas, and <strong>BCF 2.1 export</strong> so issues flow into your normal process.</p>
+
+  <p>Because it's a PWA, it runs on any machine — and on <strong>localhost</strong>, so sensitive models never have to leave your network.</p>
+
+  <a href="/" class="cta" data-goatcounter-click="cta-app-from-clash-online">Run clash detection now →</a>
+
+  <h2>FAQ</h2>
+  <dl class="faq">
+    <dt>What's the difference between hard and soft clashes?</dt>
+    <dd>A hard clash is geometry physically overlapping. A soft clash is a clearance/tolerance violation — things too close even if they don't touch. ClashControl checks both.</dd>
+    <dt>Do my models get uploaded anywhere?</dt>
+    <dd>No — IFC parsing and clash detection run fully client-side in your browser. An optional localhost engine can be enabled for exact-mesh boolean ops, also without leaving your network.</dd>
+    <dt>Which IFC versions are supported?</dt>
+    <dd>IFC 2x3 and IFC4, via the web-ifc WASM library.</dd>
+  </dl>
+</main>
+
+<footer>
+  <div class="siblings">
+    <a href="/free-navisworks-alternative/">Free Navisworks alternative</a> ·
+    <a href="/free-bcf-viewer/">Free BCF viewer &amp; export</a> ·
+    <a href="/free-ifc-viewer-online/">Free online IFC viewer</a> ·
+    <a href="/ids-validation-online/">IDS validation online</a>
+  </div>
+  <div>© ClashControl · <a href="/">Open the app</a> · <a href="https://github.com/clashcontrol-io/ClashControl">Source on GitHub</a></div>
+</footer>
+
+</body>
+</html>
