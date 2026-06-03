@@ -37,7 +37,7 @@
   <meta property="og:url" content="https://www.clashcontrol.io/">
   <meta property="og:title" content="ClashControl — Free IFC Clash Detection">
   <meta property="og:description" content="Free, open-source BIM clash detection in your browser. Load IFC models, detect clashes, export BCF 2.1. No install. No license. No subscription.">
-  <meta property="og:image" content="https://www.clashcontrol.io/og-image.png">
+  <meta property="og:image" content="https://www.clashcontrol.io/og-image.png?v=2">
   <meta property="og:image:width" content="1200">
   <meta property="og:image:height" content="630">
   <meta property="og:site_name" content="ClashControl">
@@ -51,7 +51,7 @@
     "name": "ClashControl",
     "description": "Free, open-source IFC clash detection that runs in your browser. Load models, detect hard and soft clashes, review in 3D, and export to BCF 2.1.",
     "url": "https://www.clashcontrol.io/",
-    "image": "https://www.clashcontrol.io/og-image.png",
+    "image": "https://www.clashcontrol.io/og-image.png?v=2",
     "applicationCategory": "DesignApplication",
     "applicationSubCategory": "BIM Clash Detection",
     "operatingSystem": "Any (web browser)",
@@ -77,7 +77,7 @@
   <meta name="twitter:card" content="summary_large_image">
   <meta name="twitter:title" content="ClashControl — Free IFC Clash Detection">
   <meta name="twitter:description" content="Free, open-source BIM clash detection in your browser. Load IFC models, detect clashes, export BCF 2.1. No install. No license.">
-  <meta name="twitter:image" content="https://www.clashcontrol.io/og-image.png">
+  <meta name="twitter:image" content="https://www.clashcontrol.io/og-image.png?v=2">
 
   <!-- CSP: restrict resource loading to known CDN origins -->
   <!-- 'unsafe-eval' required by pdf.js v3 for custom font rendering (CFF/Type1 font programs) -->
@@ -9719,6 +9719,24 @@ function startApp() {
           }
           var _scG = (_wpp * 110) / (_giz._secHandleSpan || 1); // ~110px arrow
           if (_scG > 0 && isFinite(_scG)) _giz._secHandleGroup.scale.setScalar(_scG);
+
+          // For vertical section planes the plane normal is horizontal, so the
+          // ring (axis = local +Z = plane normal) ends up standing upright. The
+          // drag-rotate logic spins the plane around world up, so the ring
+          // visually mismatches the motion. Re-orient the ring each frame so
+          // its central axis is world up whenever the plane is vertical — gives
+          // the user a horizontal "spinning record" handle to match the rotation.
+          var _ring = _giz._secRotRing;
+          if (_ring) {
+            var _wq = _giz.getWorldQuaternion(new THREE.Quaternion());
+            var _wn = new THREE.Vector3(0, 0, 1).applyQuaternion(_wq);
+            if (Math.abs(_wn.y) < 0.7) {
+              var _localUp = new THREE.Vector3(0, 1, 0).applyQuaternion(_wq.invert());
+              _ring.quaternion.setFromUnitVectors(new THREE.Vector3(0, 0, 1), _localUp);
+            } else {
+              _ring.quaternion.identity();
+            }
+          }
         }
 
         // Lower resolution while moving: orbit drag → 50%, walk movement → 65%
@@ -10085,6 +10103,7 @@ function startApp() {
         grp.add(handleGroup);
         grp._secHandleGroup = handleGroup;
         grp._secHandleSpan  = shaftLen + tipLen; // reference world span at scale 1
+        grp._secRotRing     = rotRing; // re-oriented per frame for vertical planes
         grp._secDragHandles = [rotRing, shaft, tip, hitProxy];
         grp.position.copy(position);
         if (quaternion) grp.quaternion.copy(quaternion);
