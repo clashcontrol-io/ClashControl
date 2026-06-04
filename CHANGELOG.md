@@ -1,5 +1,8 @@
 # Changelog
 
+## v5.12.14 (2026-06-04)
+- feat(viewer): Stage 2B — bulk hide + color on merged chunks; enable chunk-merge by default
+
 ## v5.12.13 (2026-06-04)
 - feat(viewer): Stage 2A — selection highlight + ghost/isolate on merged chunks
 

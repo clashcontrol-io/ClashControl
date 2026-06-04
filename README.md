@@ -1,5 +1,5 @@
 # [ClashControl](https://www.clashcontrol.io)
-> Version: **v5.12.13** (2026-06-04)
+> Version: **v5.12.14** (2026-06-04)
 
 [![Sponsor](https://img.shields.io/badge/Sponsor-%E2%9D%A4-ec4899?logo=githubsponsors&logoColor=white)](https://github.com/sponsors/clashcontrol-io)
 
