@@ -1584,17 +1584,18 @@ function startApp() {
   // GPU instancing constants
   var INST_THRESHOLD = 4; // min identical placements before collapsing to InstancedMesh
 
-  // [PoC] Meshlet-inspired spatial chunk merge — Stage 1 (off by default).
-  // Toggle from console with `window._ccChunkMerge = true` BEFORE loading a model,
-  // then load a large IFC and compare `window._ccPerfSnapshot()` with the flag off.
+  // [Meshlet] Spatial chunk merge — ON by default (Stages 1+2 complete).
+  // Disable from console with `window._ccChunkMerge = false` BEFORE loading a model
+  // for an exact revert, then compare `window._ccPerfSnapshot()`.
   // It merges the non-instanced static mesh remainder into a small number of large
   // geometries (spatial grid × material) to slash draw calls and shrink the cull loop.
   // Only the render list is touched — element.meshes[] is untouched, so clash
   // detection / geo-cache serialization / bounds are unaffected and flag-off is an
-  // exact revert. Identity features (highlight/ghost/color/hide) naturally no-op on
-  // chunks (they carry no single expressId); picking is preserved via a per-chunk
-  // faceIndex→expressId range table.
-  if (typeof window._ccChunkMerge === 'undefined') window._ccChunkMerge = false;
+  // exact revert. Identity features are restored on chunks: picking via a per-chunk
+  // faceIndex→expressId range table; highlight/ghost/isolate via the surviving
+  // element.meshes[] proxies (Stage 2A); hide via per-chunk index masking and
+  // color-by-class/DQ via per-vertex colors (Stage 2B).
+  if (typeof window._ccChunkMerge === 'undefined') window._ccChunkMerge = true;
   window._ccPerfSnapshot = function(){
     var s = (typeof S!=='undefined'&&S&&S.perf)?S.perf:null;
     if(!s){ console.warn('[ChunkMerge] perf not ready'); return null; }
@@ -2382,7 +2383,9 @@ function startApp() {
   // binary-searching the chunk's ascending triangle-range table (faceIndex*3
   // is the hit triangle's first index slot).
   window._ccChunkExprIdForFace = function(obj, faceIndex){
-    var ranges = obj && obj.userData && obj.userData._elementRanges;
+    // _activeRanges (set when the chunk index is masked by a hide filter) takes
+    // precedence — faceIndex is relative to the *current* index buffer.
+    var ranges = obj && obj.userData && (obj.userData._activeRanges || obj.userData._elementRanges);
     if (!ranges || faceIndex == null) return null;
     var pos = faceIndex * 3, lo = 0, hi = ranges.length - 1;
     while (lo <= hi){
@@ -2392,6 +2395,114 @@ function startApp() {
       else return r.expressId;
     }
     return null;
+  };
+
+  // ── [Stage 2B] Per-element HIDE on merged chunks ──────────────────────────
+  // A chunk has no per-element mesh to toggle, so visibility is applied by
+  // rebuilding its index to drop hidden elements' triangles. _ccHiddenReg
+  // unions the independent hide sources (class filter, storey filter,
+  // temp-hide); picking stays correct via a parallel _activeRanges table
+  // recomputed alongside the filtered index. _fullIndex preserves the original.
+  window._ccHiddenReg = { class:{}, storey:{}, temp:{} }; // each: "modelId_eid" -> true
+  window._ccChunkApplyHidden = function(){
+    if (!window._ccChunkMerge) return;
+    var S = window._ccState3d; if (!S || !S.mg || !window.THREE) return;
+    var reg = window._ccHiddenReg;
+    function hid(modelId, eid){ var k = modelId+'_'+eid; return !!(reg.class[k] || reg.storey[k] || reg.temp[eid]); }
+    S.mg.traverse(function(obj){
+      if (!obj.userData._isMergedChunk) return;
+      var ranges = obj.userData._elementRanges; if (!ranges) return;
+      var modelId = obj.parent && obj.parent.userData && obj.parent.userData.modelId;
+      if (!obj.userData._fullIndex) obj.userData._fullIndex = obj.geometry.index;
+      var full = obj.userData._fullIndex; if (!full) return;
+      var anyHidden = false, keepCount = 0, r;
+      for (r=0;r<ranges.length;r++){
+        if (hid(modelId, ranges[r].expressId)) anyHidden = true;
+        else keepCount += ranges[r].count;
+      }
+      if (!anyHidden){
+        if (obj.geometry.index !== full) obj.geometry.setIndex(full);
+        obj.userData._activeRanges = null;
+        return;
+      }
+      var fullArr = full.array, Arr = fullArr.constructor;
+      var out = new Arr(keepCount), o = 0, active = [];
+      for (r=0;r<ranges.length;r++){
+        var rr = ranges[r];
+        if (hid(modelId, rr.expressId)) continue;
+        out.set(fullArr.subarray(rr.start, rr.start + rr.count), o);
+        active.push({start:o, count:rr.count, expressId:rr.expressId});
+        o += rr.count;
+      }
+      obj.geometry.setIndex(new THREE.BufferAttribute(out, 1));
+      obj.userData._activeRanges = active;
+    });
+    invalidate();
+  };
+
+  // ── [Stage 2B] Color-by-class / DQ coloring on merged chunks ──────────────
+  // Per-element material.color can't address a chunk, so colors are written
+  // into a per-vertex RGBA `color` attribute (alpha ghosts unmatched elements)
+  // and the chunk renders through one shared vertexColors material. The chunk's
+  // pre-color material is stashed and restored on clear; the render-style loop
+  // skips chunks flagged _ccColored (like it skips ghost materials).
+  var _ccChunkColorMat = null;
+  function _ccGetChunkColorMat(){
+    // Opaque vertex-color material — matched elements get the class/DQ color,
+    // unmatched get a neutral context gray. All-opaque avoids the depth-sort
+    // artifacts of mixing solid + alpha fragments in one merged draw.
+    if (!_ccChunkColorMat) _ccChunkColorMat = new THREE.MeshLambertMaterial({
+      vertexColors: true, side: THREE.FrontSide
+    });
+    return _ccChunkColorMat;
+  }
+  // colorMap: "modelId_eid" -> THREE.Color (matched). Unmatched → context gray.
+  window._ccChunkApplyColors = function(colorMap){
+    if (!window._ccChunkMerge) return;
+    var S = window._ccState3d; if (!S || !S.mg || !window.THREE) return;
+    var GRAY = new THREE.Color(0x9aa3ad);
+    S.mg.traverse(function(obj){
+      if (!obj.userData._isMergedChunk) return;
+      var ranges = obj.userData._elementRanges; if (!ranges) return;
+      var modelId = obj.parent && obj.parent.userData && obj.parent.userData.modelId;
+      var pos = obj.geometry.getAttribute('position'); if (!pos) return;
+      var vCount = pos.count;
+      var colAttr = obj.geometry.getAttribute('color');
+      if (!colAttr || colAttr.itemSize !== 3 || colAttr.count !== vCount){
+        colAttr = new THREE.BufferAttribute(new Float32Array(vCount*3), 3);
+        obj.geometry.setAttribute('color', colAttr);
+      }
+      var carr = colAttr.array;
+      var idxArr = obj.userData._fullIndex ? obj.userData._fullIndex.array
+                 : (obj.geometry.index ? obj.geometry.index.array : null);
+      if (!idxArr) return;
+      for (var r=0;r<ranges.length;r++){
+        var rr = ranges[r];
+        var c = colorMap[modelId+'_'+rr.expressId] || GRAY;
+        for (var k=rr.start; k<rr.start+rr.count; k++){
+          var vi = idxArr[k]*3;
+          carr[vi]=c.r; carr[vi+1]=c.g; carr[vi+2]=c.b;
+        }
+      }
+      colAttr.needsUpdate = true;
+      if (!obj.userData._ccColored){
+        obj.userData._preColorMat = obj.material;
+        obj.userData._ccColored = true;
+      }
+      obj.material = _ccGetChunkColorMat();
+    });
+    invalidate();
+  };
+  window._ccChunkClearColors = function(){
+    var S = window._ccState3d; if (!S || !S.mg) return;
+    S.mg.traverse(function(obj){
+      if (!obj.userData._isMergedChunk || !obj.userData._ccColored) return;
+      if (obj.userData._preColorMat) obj.material = obj.userData._preColorMat;
+      obj.userData._preColorMat = null;
+      obj.userData._ccColored = false;
+      if (obj.geometry.getAttribute('color')) obj.geometry.deleteAttribute('color');
+    });
+    invalidate();
   };
 
   function _buildInstancedMeshes(elements, meshes) {
@@ -6937,11 +7048,16 @@ function startApp() {
             _tempHiddenMeshes.push(obj);
           }
         });
+        // [Stage 2B] temp-hide is model-agnostic → keyed by bare eid
+        expressIds.forEach(function(id){ window._ccHiddenReg.temp[id] = true; });
+        if (window._ccChunkApplyHidden) window._ccChunkApplyHidden();
         invalidate();
       };
       window._ccTempUnhide = function() {
         _tempHiddenMeshes.forEach(function(m){ m.visible = true; });
         _tempHiddenMeshes = [];
+        window._ccHiddenReg.temp = {};            // [Stage 2B]
+        if (window._ccChunkApplyHidden) window._ccChunkApplyHidden();
         invalidate();
       };
       window._ccIsolate = function(expressIds) {
@@ -10055,6 +10171,13 @@ function startApp() {
                 obj.userData._storeyHidden = hidden;
               }
             });
+            // [Stage 2B] mirror storey hide into the chunk registry for this model
+            var _pfx = model.id + '_';
+            Object.keys(window._ccHiddenReg.storey).forEach(function(k){
+              if (k.indexOf(_pfx) === 0) delete window._ccHiddenReg.storey[k];
+            });
+            Object.keys(em).forEach(function(eid){ if (hs[em[eid]||'']) window._ccHiddenReg.storey[_pfx+eid] = true; });
+            if (window._ccChunkApplyHidden) window._ccChunkApplyHidden();
           }
         }
       });
@@ -10719,6 +10842,8 @@ function startApp() {
             if(!modelHidden && !obj.userData._storeyHidden) obj.visible=true;
           }
         });
+        window._ccHiddenReg.class = {};            // [Stage 2B]
+        if (window._ccChunkApplyHidden) window._ccChunkApplyHidden();
         invalidate();
         return;
       }
@@ -10728,6 +10853,9 @@ function startApp() {
         var grp = cls[view]&&cls[view][grpKey];
         if(grp&&grp.items) grp.items.forEach(function(it){hiddenIds.add(it.modelId+'_'+it.expressId);});
       });
+      var _classReg = {};                          // [Stage 2B] mirror hide set for chunks
+      hiddenIds.forEach(function(k){ _classReg[k] = true; });
+      window._ccHiddenReg.class = _classReg;
       S.mg.traverse(function(obj){
         if(!obj.isMesh) return;
         var eid=obj.userData.expressId; if(eid==null) return;
@@ -10738,6 +10866,7 @@ function startApp() {
         obj.userData._classHidden = isClassHidden;
         obj.visible = !isClassHidden;
       });
+      if (window._ccChunkApplyHidden) window._ccChunkApplyHidden();
       invalidate();
     }, [s.hiddenClasses, s.classifications]);
 
@@ -10757,20 +10886,25 @@ function startApp() {
           origColorsRef.current=null;
           invalidate();
         }
+        if (window._ccChunkClearColors) window._ccChunkClearColors();   // [Stage 2B]
         return;
       }
       var view=s.colorByClass;
       var groups = cls&&cls[view]?cls[view]:{};
       var gKeys = Object.keys(groups).sort(function(a,b){return (groups[b].count||0)-(groups[a].count||0)});
       var colorMap={};
+      var _chunkColors={};                                              // [Stage 2B] modelId_eid → THREE.Color
+      var _classCol = CLASS_COLORS.map(function(h){ return new THREE.Color(h); });
       gKeys.forEach(function(k,idx){
         var grp=groups[k];
         if(grp&&grp.items){
           grp.items.forEach(function(it){
             colorMap[it.modelId+'_'+it.expressId]=idx;
+            _chunkColors[it.modelId+'_'+it.expressId]=_classCol[idx%_classCol.length];
           });
         }
       });
+      if (window._ccChunkApplyColors) window._ccChunkApplyColors(_chunkColors);
       var saved=[];
       S.mg.traverse(function(obj){
         if(!obj.isMesh||!obj.material) return;
@@ -11091,6 +11225,7 @@ function startApp() {
         if (!obj.userData._origMaterial) obj.userData._origMaterial = obj.material;
         var orig = obj.userData._origMaterial;
         if (S._isGhostMat && S._isGhostMat(obj.material)) continue;
+        if (obj.userData._ccColored) continue; // [Stage 2B] chunk in color-by-class mode owns its material
         var cache = obj.userData._styleMats || (obj.userData._styleMats = {});
         var origColor = orig.color ? orig.color.clone() : new THREE.Color(0xcccccc);
         var mat;
@@ -16065,6 +16200,7 @@ function startApp() {
       var S = window._ccState3d;
       if (!S || !S.mg || !bim || !bim._dist || !bim._dist[distKey]) {
         if (_unghostAll) _unghostAll();
+        if (window._ccChunkClearColors) window._ccChunkClearColors();   // [Stage 2B]
         setActiveDistKey(null);
         return;
       }
@@ -16074,6 +16210,7 @@ function startApp() {
           S._dqOrigColors.forEach(function(e){if(e.mesh&&e.mesh.material)e.mesh.material.color.copy(e.color);});
           S._dqOrigColors = null;
         }
+        if (window._ccChunkClearColors) window._ccChunkClearColors();   // [Stage 2B]
         setActiveDistKey(null);
         invalidate();
         return;
@@ -16082,11 +16219,14 @@ function startApp() {
       var groups = bim._dist[distKey];
       var gKeys = Object.keys(groups).sort(function(a,b){return (groups[b]||[]).length - (groups[a]||[]).length;});
       var colorMap = {};
+      var _chunkColors = {};                                            // [Stage 2B]
       gKeys.forEach(function(k, idx) {
         (groups[k]||[]).forEach(function(item) {
           colorMap[(item.modelId||'')+'_'+item.expressId] = idx;
+          _chunkColors[(item.modelId||'')+'_'+item.expressId] = new THREE.Color(DQ_COLORS[idx % DQ_COLORS.length]);
         });
       });
+      if (window._ccChunkApplyColors) window._ccChunkApplyColors(_chunkColors);
       if (_unghostAll) _unghostAll();
       if (S._dqOrigColors) {
         S._dqOrigColors.forEach(function(e){if(e.mesh&&e.mesh.material)e.mesh.material.color.copy(e.color);});
@@ -16173,6 +16313,7 @@ function startApp() {
       var src = distKey === 'nlsfb' ? (ils ? ils._nlsfbDist : null) : (ils ? ils._compDist : null);
       if (!S || !S.mg || !src) {
         if (_unghostAll) _unghostAll();
+        if (window._ccChunkClearColors) window._ccChunkClearColors();   // [Stage 2B]
         setActiveDistKey(null);
         return;
       }
@@ -16182,6 +16323,7 @@ function startApp() {
           S._dqOrigColors.forEach(function(e){if(e.mesh&&e.mesh.material)e.mesh.material.color.copy(e.color);});
           S._dqOrigColors = null;
         }
+        if (window._ccChunkClearColors) window._ccChunkClearColors();   // [Stage 2B]
         setActiveDistKey(null);
         invalidate();
         return;
@@ -16189,12 +16331,16 @@ function startApp() {
       setActiveDistKey(distKey);
       var gKeys = Object.keys(src).sort(function(a,b){return (src[b]||[]).length - (src[a]||[]).length;});
       var colorMap = {};
+      var _chunkColors = {};                                            // [Stage 2B]
       var compColors = {'Compliant':'#4ade80','Minor issues':'#fbbf24','Major issues':'#ef4444'};
       gKeys.forEach(function(k, idx) {
         (src[k]||[]).forEach(function(item) {
-          colorMap[(item.modelId||'')+'_'+item.expressId] = distKey==='compliance' ? (compColors[k]||DQ_COLORS[idx%DQ_COLORS.length]) : DQ_COLORS[idx%DQ_COLORS.length];
+          var _c = distKey==='compliance' ? (compColors[k]||DQ_COLORS[idx%DQ_COLORS.length]) : DQ_COLORS[idx%DQ_COLORS.length];
+          colorMap[(item.modelId||'')+'_'+item.expressId] = _c;
+          _chunkColors[(item.modelId||'')+'_'+item.expressId] = new THREE.Color(_c);
         });
       });
+      if (window._ccChunkApplyColors) window._ccChunkApplyColors(_chunkColors);
       if (_unghostAll) _unghostAll();
       if (S._dqOrigColors) {
         S._dqOrigColors.forEach(function(e){if(e.mesh&&e.mesh.material)e.mesh.material.color.copy(e.color);});
