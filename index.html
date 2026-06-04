@@ -25984,6 +25984,98 @@ function startApp() {
   // ── Right Rail (navigation tabs) ───────────────────────────────
 
   // ── Memory Warning Modal ────────────────────────────────────────
+
+  // Gather a diagnostic breakdown of where the JS heap is going, so a
+  // [Memory] report is actionable instead of just "5.9 GB total". Every probe
+  // is defensive — renderer / web-ifc / caches may be absent. Returns markdown
+  // lines. The big suspects for a heap >> file size are: the web-ifc WASM
+  // linear memory (grows to peak parse size, never shrinks — even after
+  // CloseModel), per-element retained CPU geometry + three-mesh-bvh boundsTrees
+  // (≈2× the raw geometry), and material/geometry clones from render styles.
+  function _ccMemDiag(s) {
+    var L = [];
+    var fmtMB = function(b){ return (b/1048576).toFixed(1) + ' MB'; };
+    // Device
+    try {
+      var dm = navigator.deviceMemory, hc = navigator.hardwareConcurrency;
+      if (dm || hc) L.push('- **Device**: ' + (dm?dm+' GB RAM':'? RAM') + ', ' + (hc?hc+' cores':'? cores'));
+    } catch(e){}
+    // web-ifc WASM linear memory (commonly the largest single block)
+    try {
+      var api = (typeof _ifcAPI !== 'undefined' && _ifcAPI) ? _ifcAPI : (window._ifcAPI || null);
+      if (api) {
+        var wm = api.wasmModule || api.wasmMemory || (api.web_ifc && api.web_ifc.wasmModule) || null;
+        var heap = wm && (wm.HEAPU8 ? wm.HEAPU8.length : (wm.buffer ? wm.buffer.byteLength : 0));
+        if (!heap && api.wasmMemory && api.wasmMemory.buffer) heap = api.wasmMemory.buffer.byteLength;
+        L.push('- **web-ifc WASM**: resident' + (heap ? ', linear memory ' + fmtMB(heap) + ' (peak — never shrinks)' : ' (heap size unavailable)'));
+      } else {
+        L.push('- **web-ifc WASM**: not resident');
+      }
+    } catch(e){}
+    // Three.js renderer GPU-side accounting
+    try {
+      var S = window._ccState3d;
+      if (S && S.renderer && S.renderer.info) {
+        var inf = S.renderer.info;
+        L.push('- **Three.js renderer.info**: ' + (inf.memory?inf.memory.geometries:'?') + ' geometries, ' +
+          (inf.memory?inf.memory.textures:'?') + ' textures, ' + (inf.programs?inf.programs.length:'?') + ' shader programs · ' +
+          (inf.render?inf.render.calls:'?') + ' draw calls / ' + (inf.render?inf.render.triangles:'?') + ' tris last frame');
+      }
+    } catch(e){}
+    // Scene-graph footprint: distinct geometries/materials + raw geometry bytes
+    try {
+      var S2 = window._ccState3d;
+      var root = S2 && (S2.mg || S2.scene);
+      if (root) {
+        var geos = {}, mats = {}, verts = 0, idxs = 0, bvhCount = 0, nMesh = 0, nInst = 0, nChunk = 0;
+        root.traverse(function(o){
+          if (!o.isMesh) return;
+          nMesh++;
+          if (o.isInstancedMesh) nInst++;
+          if (o.userData && o.userData._isMergedChunk) nChunk++;
+          var g = o.geometry;
+          if (g && !geos[g.uuid]) {
+            geos[g.uuid] = 1;
+            var p = g.getAttribute && g.getAttribute('position');
+            if (p) verts += p.count;
+            if (g.index) idxs += g.index.count;
+            if (g.boundsTree) bvhCount++;
+          }
+          var mm = Array.isArray(o.material) ? o.material : (o.material ? [o.material] : []);
+          mm.forEach(function(m){ if (m && !mats[m.uuid]) mats[m.uuid] = 1; });
+        });
+        // pos(3)+normal(3) float32 = 24 B/vert; index ~4 B/idx — rough lower bound
+        var geoBytes = verts * 24 + idxs * 4;
+        L.push('- **Scene meshes**: ' + nMesh + ' total (' + nInst + ' instanced, ' + nChunk + ' merged chunks)');
+        L.push('- **Distinct geometries**: ' + Object.keys(geos).length + ' · **materials**: ' + Object.keys(mats).length +
+          ' · ' + bvhCount + ' with BVH boundsTree');
+        L.push('- **Raw geometry (CPU)**: ~' + fmtMB(geoBytes) + ' (' + verts.toLocaleString() + ' verts, ' + idxs.toLocaleString() + ' indices; ×~2 if BVH-cloned)');
+      }
+    } catch(e){}
+    // Per-element retained CPU geometry (element.meshes[] survive merge/instancing)
+    try {
+      var elMeshes = 0, elGeoVerts = 0;
+      (s.models||[]).forEach(function(m){
+        (m.elements||[]).forEach(function(el){
+          (el.meshes||[]).forEach(function(pm){
+            elMeshes++;
+            var p = pm.geometry && pm.geometry.getAttribute && pm.geometry.getAttribute('position');
+            if (p) elGeoVerts += p.count;
+          });
+        });
+      });
+      if (elMeshes) L.push('- **Retained element.meshes[]**: ' + elMeshes + ' proxy meshes, ' + elGeoVerts.toLocaleString() + ' verts (kept for clash/highlight)');
+    } catch(e){}
+    // Clash BVH cache
+    try {
+      if (typeof _bvhLRU !== 'undefined' && _bvhLRU && _bvhLRU.size != null)
+        L.push('- **Clash BVH cache**: ' + _bvhLRU.size + ' elements cached (world-verts + tris + BVH)');
+    } catch(e){}
+    // Chunk-merge flag
+    try { L.push('- **Chunk-merge**: ' + (window._ccChunkMerge ? 'ON' : 'off')); } catch(e){}
+    return L;
+  }
+
   function MemoryWarningModal(props) {
     var onDismiss = props.onDismiss, s = props.s;
     var mem = performance.memory || {};
@@ -26021,6 +26113,11 @@ function startApp() {
         var name = includeNames ? m.name : 'Model ' + (i+1);
         lines.push('- ' + name + ' — ' + elCount + ' elements, ' + meshCount + ' meshes, ' + sizeMB + ', type: ' + loadType);
       });
+      lines.push('');
+      lines.push('### Diagnostics (where the heap is going)');
+      var diag = _ccMemDiag(s);
+      if (diag.length) diag.forEach(function(d){ lines.push(d); });
+      else lines.push('- (diagnostics unavailable)');
       lines.push('');
       lines.push('### Clashes (' + (s.clashes||[]).length + ' total)');
       var byStatus = {};
