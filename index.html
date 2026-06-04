@@ -6805,6 +6805,13 @@ function startApp() {
             return;
           }
 
+          if(obj.userData._isMergedChunk){
+            // [Stage 2] Ghost the whole chunk; kept elements are re-surfaced as
+            // full-material proxies after the traverse (mirrors split-out).
+            _ghostedMeshes.push({mesh:obj, origMaterial:obj.material});
+            obj.material = _makeGhostClone(obj.material);
+            return;
+          }
           var eid = obj.userData.expressId;
           if(eid==null) return;
           var keep = keepAny[eid] || (keepScoped[eid] && meshModelId && keepScoped[eid][meshModelId]);
@@ -6813,10 +6820,43 @@ function startApp() {
             obj.material = _makeGhostClone(obj.material);
           }
         });
+        // [Stage 2] Re-surface kept elements that live inside ghosted chunks by
+        // adding their per-element proxies (full material) on top of the ghost.
+        if (window._ccChunkMerge) {
+          var _keptProxies = [];
+          var _addKept = function(eid, mid){
+            var pr = _ccProxyElement(eid, mid);
+            if(!pr) return;
+            var grp = S.map && S.map[pr.modelId];
+            if(!grp) return;
+            (pr.el.meshes||[]).forEach(function(pm){
+              if(pm.userData._instanceRef) return;  // instanced: handled by split-out branch
+              if(pm.parent) return;                 // already a live scene mesh
+              var clone = new THREE.Mesh(pm.geometry, pm.material);
+              clone.matrix.copy(pm.matrix);
+              clone.matrixAutoUpdate = false;
+              clone.matrixWorldNeedsUpdate = true;
+              clone.frustumCulled = false;
+              clone.userData.expressId = eid;
+              clone.userData._keptProxy = true;
+              grp.add(clone);
+              _keptProxies.push(clone);
+            });
+          };
+          Object.keys(keepAny).forEach(function(eid){ _addKept(+eid, null); });
+          Object.keys(keepScoped).forEach(function(eid){
+            Object.keys(keepScoped[eid]).forEach(function(mid){ _addKept(+eid, mid); });
+          });
+          if(_keptProxies.length) _ghostedMeshes.push({_keptProxies:_keptProxies});
+        }
         invalidate();
       }
       function unghostAll(){
         _ghostedMeshes.forEach(function(g){
+          if(g._keptProxies){
+            g._keptProxies.forEach(function(m){ if(m.parent) m.parent.remove(m); });
+            return;
+          }
           if(g.iMesh){
             g.iMesh.material = g.origMaterial;
             if(g.splitOuts && g.splitOuts.length){
@@ -6929,6 +6969,34 @@ function startApp() {
         if(hoverRef.current.material) hoverRef.current.material.dispose();
         hoverRef.current = null;
       }
+      // [Stage 2] Per-model expressId → element index. When chunk-merge is on,
+      // an element's geometry lives inside a merged chunk (no standalone scene
+      // mesh), but its original per-element proxy mesh still exists in
+      // element.meshes[]. These let highlight/ghost resolve to that proxy.
+      var _ccProxyIdx = {}; // modelId → { _n, eid → element }
+      function _ccProxyElement(expressId, modelId){
+        var models = modelsRef.current || [];
+        for (var mi=0; mi<models.length; mi++){
+          var mdl = models[mi];
+          if (modelId && mdl.id !== modelId) continue;
+          var els = mdl.elements || [];
+          var idx = _ccProxyIdx[mdl.id];
+          if (!idx || idx._n !== els.length){
+            idx = {_n: els.length};
+            els.forEach(function(el){ idx[el.expressId] = el; });
+            _ccProxyIdx[mdl.id] = idx;
+          }
+          var el = idx[expressId];
+          if (el) return {el:el, modelId:mdl.id};
+          if (modelId) return null;
+        }
+        return null;
+      }
+      function _ccProxyMeshFor(expressId, modelId){
+        var pr = _ccProxyElement(expressId, modelId);
+        if (pr && pr.el.meshes && pr.el.meshes.length) return pr.el.meshes[0];
+        return null;
+      }
       function _findMeshByRef(expressId, modelId) {
         if (expressId == null || !S.mg) return null;
         var found = null;
@@ -6941,6 +7009,9 @@ function startApp() {
           }
           found = obj;
         });
+        // [Stage 2] Fall back to the off-scene per-element proxy when the
+        // element is rendered inside a merged chunk.
+        if (!found) found = _ccProxyMeshFor(expressId, modelId);
         return found;
       }
       // Build an edge-outline THREE.Group for a single mesh with the given
@@ -6986,7 +7057,10 @@ function startApp() {
             scene.add(grp);
             hlRef.current = grp;
           }
-          if (window._ccPostOutlineFor) window._ccPostOutlineFor([found]);
+          // Post-process outline needs the mesh in the render graph; an
+          // off-scene chunk proxy can't be drawn into the outline buffer, so
+          // pass [] for it (the EdgesGeometry overlay above still shows).
+          if (window._ccPostOutlineFor) window._ccPostOutlineFor(found.parent ? [found] : []);
         } else if (window._ccPostOutlineFor) {
           window._ccPostOutlineFor([]);
         }
@@ -7002,7 +7076,7 @@ function startApp() {
           if (!ref || ref.expressId == null) return;
           var mesh = _findMeshByRef(ref.expressId, ref.modelId);
           if (!mesh) return;
-          outlineMeshes.push(mesh);
+          if (mesh.parent) outlineMeshes.push(mesh); // skip off-scene chunk proxies for post-outline
           var color = _discColorForModelId(ref.modelId || (mesh.parent && mesh.parent.userData && mesh.parent.userData.modelId));
           var sub = _buildHighlightGroupForMesh(mesh, color);
           if (sub) combinedGrp.add(sub);
