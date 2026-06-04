@@ -1,5 +1,8 @@
 # Changelog
 
+## v5.12.13 (2026-06-04)
+- feat(viewer): Stage 2A — selection highlight + ghost/isolate on merged chunks
+
 ## v5.12.10 (2026-06-03)
 - SEO Phase 2: five high-intent landing pages
 
