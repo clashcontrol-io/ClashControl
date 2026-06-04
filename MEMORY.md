@@ -10,7 +10,7 @@
 <!-- BEGIN:project-state -->
 ## Project State
 
-**Version:** 5.12.9 (2026-05-29)
+**Version:** 5.12.13 (2026-06-04)
 
 **Live features (all working):**
 - Mesh-based clash detection engine: AABB broad-phase + BVH tri-tri narrow-phase (Möller–Trumbore), optional `_ccWasmIntersect`/`_ccWasmMinDist` WASM accelerators; rules (discipline filters, clearance, group-by); soft/clearance via spatial-hash vertex distance; optional escalation to `local-engine.js` for true solid boolean ops
@@ -305,6 +305,27 @@ UI_OVERHAUL.md written (7 chapters, 1469 lines). PLAN.md updated.
 <!-- END:active-work -->
 
 <!-- BEGIN:session-log -->
+### 2026-06-04
+**Summary:** 11 commit(s) landed (no AI summary — set ANTHROPIC_API_KEY secret for richer entries).
+**Changed:** see commits
+**Notable:** —
+
+<details><summary>Commits</summary>
+
+- 051f8f7 chore: bump version to 5.12.13
+- fd0e272 feat(viewer): Stage 2A — selection highlight + ghost/isolate on merged chunks
+- aee3ed3 Potential fix for code scanning alert no. 13: Workflow does not contain permissions
+- 757be37 chore: bump version to 5.12.12
+- a010500 chore(brand): replace stale PWA icons + OG image with current green-square brand
+- 2e716d5 fix(viewer): keep section-plane rotation ring horizontal on vertical planes
+- 9feceef chore: bump version to 5.12.11
+- 0824e5c chore: bump version to 5.12.10
+- c4c062f SEO Phase 2: five high-intent landing pages
+- 1a9fcbd SEO Phase 0+1: canonical, crawlability, structured data
+- f02dd29 chore: daily memory sync 2026-06-03
+
+</details>
+
 ### 2026-06-03
 **Summary:** 1 commit(s) landed (no AI summary — set ANTHROPIC_API_KEY secret for richer entries).
 **Changed:** see commits
