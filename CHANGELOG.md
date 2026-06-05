@@ -1,5 +1,8 @@
 # Changelog
 
+## v5.13.0 (2026-06-05)
+- fix(section-box): stable side-face arrow dragging (robust axis projection)
+
 ## v5.12.14 (2026-06-04)
 - feat(viewer): Stage 2B — bulk hide + color on merged chunks; enable chunk-merge by default
 
