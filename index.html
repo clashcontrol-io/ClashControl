@@ -775,7 +775,7 @@ function startApp() {
     measurements:[], measureMode:null, // 'length','angle','area' or null
     viewpoints:[],
     classifications:{}, // { byType:{}, byStorey:{}, byDiscipline:{}, byMaterial:{} }
-    hiddenClasses:{}, // { 'byType:IfcWall':true, ... } – toggle visibility per classification group
+    hiddenClasses:(function(){try{return JSON.parse(localStorage.getItem('cc_hiddenClasses')||'{}')||{};}catch(e){return {};}})(), // { 'byType:IfcWall':true, ... } – persisted so spatial-tree category filters survive refresh
     colorByClass:null, // null, 'byType', 'byStorey', 'byDiscipline', 'byMaterial'
     treeOpen:false,
     floorPlan:null, // {storeyName, elevation, cutHeight} or null
@@ -820,6 +820,9 @@ function startApp() {
     avatarMenuOpen:false  // ephemeral, never persisted
   };
   function _ccPersistUI(key,val){ try{ localStorage.setItem('cc_'+key, typeof val==='string'?val:JSON.stringify(val)); }catch(e){} }
+  // Persist spatial-tree category visibility so the filter survives a refresh
+  // (models rehydrate from IndexedDB; hiddenClasses keys are model-independent).
+  function _persistHiddenClasses(hc){ _ccPersistUI('hiddenClasses', hc||{}); }
   var A = {
     ADD_MODEL:'ADD_MODEL', DEL_MODEL:'DEL_MODEL', REPLACE_MODEL:'REPLACE_MODEL', UPD_MODEL:'UPD_MODEL',
     TOGGLE_ALL_STOREYS:'TOGGLE_ALL_STOREYS',
@@ -1164,10 +1167,10 @@ function startApp() {
       case A.DEL_VIEWPOINT: return Object.assign({},s,{viewpoints:s.viewpoints.filter(function(v){return v.id!==a.id})});
       case A.SET_CLASSIFICATIONS: return Object.assign({},s,{classifications:a.v});
       case A.SECTION_BOX:  return Object.assign({},s,{sectionBox:a.v, sectionAxis:null, sectionCustom:null, walkMode:a.v?false:s.walkMode});
-      case A.TOGGLE_CLASS_VIS: var hc2=Object.assign({},s.hiddenClasses); if(hc2[a.key])delete hc2[a.key];else hc2[a.key]=true; return Object.assign({},s,{hiddenClasses:hc2});
-      case A.SHOW_ALL_CLASSES: return Object.assign({},s,{hiddenClasses:{}});
-      case '_REPLACE_HIDDEN_CLASSES': return Object.assign({},s,{hiddenClasses:Object.assign({},a.v||{})});
-      case A.HIDE_ALL_CLASSES: var hca={}; if(s.classifications[a.view]){Object.keys(s.classifications[a.view]).forEach(function(k){hca[a.view+':'+k]=true;});} return Object.assign({},s,{hiddenClasses:hca});
+      case A.TOGGLE_CLASS_VIS: var hc2=Object.assign({},s.hiddenClasses); if(hc2[a.key])delete hc2[a.key];else hc2[a.key]=true; _persistHiddenClasses(hc2); return Object.assign({},s,{hiddenClasses:hc2});
+      case A.SHOW_ALL_CLASSES: _persistHiddenClasses({}); return Object.assign({},s,{hiddenClasses:{}});
+      case '_REPLACE_HIDDEN_CLASSES': var hc3=Object.assign({},a.v||{}); _persistHiddenClasses(hc3); return Object.assign({},s,{hiddenClasses:hc3});
+      case A.HIDE_ALL_CLASSES: var hca={}; if(s.classifications[a.view]){Object.keys(s.classifications[a.view]).forEach(function(k){hca[a.view+':'+k]=true;});} _persistHiddenClasses(hca); return Object.assign({},s,{hiddenClasses:hca});
       case A.COLOR_BY_CLASS: return Object.assign({},s,{colorByClass:s.colorByClass===a.v?null:a.v});
 
       case A.TREE:         return Object.assign({},s,{treeOpen:a.v});
