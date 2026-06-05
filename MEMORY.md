@@ -10,7 +10,7 @@
 <!-- BEGIN:project-state -->
 ## Project State
 
-**Version:** 5.12.13 (2026-06-04)
+**Version:** 5.13.0 (2026-06-05)
 
 **Live features (all working):**
 - Mesh-based clash detection engine: AABB broad-phase + BVH tri-tri narrow-phase (Möller–Trumbore), optional `_ccWasmIntersect`/`_ccWasmMinDist` WASM accelerators; rules (discipline filters, clearance, group-by); soft/clearance via spatial-hash vertex distance; optional escalation to `local-engine.js` for true solid boolean ops
@@ -306,6 +306,25 @@ UI_OVERHAUL.md written (7 chapters, 1469 lines). PLAN.md updated.
 <!-- END:active-work -->
 
 <!-- BEGIN:session-log -->
+### 2026-06-05
+**Summary:** 9 commit(s) landed (no AI summary — set ANTHROPIC_API_KEY secret for richer entries).
+**Changed:** see commits
+**Notable:** —
+
+<details><summary>Commits</summary>
+
+- b8b8d86 chore: bump version to 5.13.0
+- c3f901e fix(section-box): stable side-face arrow dragging (robust axis projection)
+- 3fb15de fix(spatial-tree): persist category visibility across refresh
+- a610701 feat(memory-report): add heap breakdown diagnostics
+- 5d52417 chore: bump version to 5.12.14
+- c7f274b feat(viewer): Stage 2B — bulk hide + color on merged chunks; enable chunk-merge by default
+- 1892c6e chore: daily memory sync 2026-06-04
+- 051f8f7 chore: bump version to 5.12.13
+- fd0e272 feat(viewer): Stage 2A — selection highlight + ghost/isolate on merged chunks
+
+</details>
+
 ### 2026-06-04
 **Summary:** 11 commit(s) landed (no AI summary — set ANTHROPIC_API_KEY secret for richer entries).
 **Changed:** see commits
