@@ -8808,9 +8808,23 @@ function startApp() {
           invalidate();
           _sboxHudShow((newRot*180/Math.PI).toFixed(1)+'°', e.clientX, e.clientY);
         } else if(ds.type==='face'){
-          var intF=new THREE.Vector3();
-          if(raycaster.ray.intersectPlane(ds.dragPlane,intF)){
-            var dF=intF.clone().sub(ds.startPos).dot(ds.axis); // signed dist along face normal
+          // Robust axis drag: closest point between the mouse ray and the
+          // face-normal line through the handle. The old ray∩plane approach
+          // became ill-conditioned when the camera looked nearly along the face
+          // normal (side arrows viewed edge-on) — the plane was near-parallel to
+          // the view ray, so the intersection shot off and the box scaled
+          // wildly. Closest-point degrades gracefully: it just stops moving when
+          // the drag is geometrically ill-posed (you can't drag along an axis
+          // that points straight at the camera).
+          var uF=ds.axis; // unit face normal
+          var roF=raycaster.ray.origin, rdF=raycaster.ray.direction; // rdF unit
+          var w0x=ds.startPos.x-roF.x, w0y=ds.startPos.y-roF.y, w0z=ds.startPos.z-roF.z;
+          var bF=uF.x*rdF.x+uF.y*rdF.y+uF.z*rdF.z;   // u·v
+          var denomF=1-bF*bF;                         // 1 - (u·v)^2
+          if(denomF>1e-4){
+            var uwF=uF.x*w0x+uF.y*w0y+uF.z*w0z;       // u·w0
+            var vwF=rdF.x*w0x+rdF.y*w0y+rdF.z*w0z;    // v·w0
+            var dF=(bF*vwF-uwF)/denomF;               // signed dist along face normal
             var nsb=Object.assign({},ds.startSb,{min:ds.startSb.min.slice(),max:ds.startSb.max.slice()});
             if(ds.side==='max'){
               nsb.max[ds.idx]=ds.startSb.max[ds.idx] + dF * ds.sign;
