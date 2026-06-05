@@ -88,6 +88,15 @@ Things to be careful about. Do not remove without a good reason — add a note i
 Update this section at the start and end of each session.
 Mark completed items with ~~strikethrough~~ and date, then let the daily sync archive them.
 
+On branch `claude/jolly-planck-mgEaf` (2026-06-05) — AI Triage Week 1: clash clustering / de-dupe (no AI yet):
+
+- New `Group → Smart group (de-dupe)` option in the Clashes panel. Collapses N raw clashes from the same element pair (e.g. same pipe through the same beam emitted at 30 sample points) into one expandable group. Pure code, no API call. First step toward the AI Triage tier (Steps 2–4 add LLM explanation, severity, resolution options, BCF write-back).
+- Implementation: `window._ccClusterKeyFor(c)` = sorted pair of `(globalIdA||eid, globalIdB||eid)` — model-prefixed when GUID missing — so same pair clusters across reversed A/B order. `window._ccClusterLabelFor(c)` = `typeA × typeB — nameA ↔ nameB` (truncated 22 chars). Key/label decoupled via `window._ccClusterDisplay` side-map so the group header shows the readable label, not the GUID hash.
+- New `'cluster'` case in `_groupKeyFor` (`index.html:~17288`) populates the display map and returns the hash key for grouping. Group header lookup at `index.html:~17545`.
+- Added option to the Group dropdown for the Clashes tab only (`index.html:~15583`). Issues dropdown unchanged.
+- Caveats: cluster cache (`_ccClusterDisplay`) accumulates labels across detection runs — harmless (deterministic from clash data) but not GC'd; rebuild on `LOAD_MODEL` if it ever shows stale text. No spatial bucketing — same long duct hitting the same beam at two physically distinct spots will collapse to one group (rare; acceptable for v1).
+- Not done: visual count badge ("400 → 14") in the toolbar (the per-group count badge is already shown by VirtualList); fly-to that frames all clashes in a cluster; "Triage this group" button (Week 3); BCF write-back of group structure.
+
 On branch `claude/adoring-hopper-IEpvn` (2026-06-03) — SEO Phase 0+1+2 (canonical, crawlability, landing pages):
 
 - Add `<link rel="canonical">`, `<noscript>` body content, visually-hidden `<h1>`, `SoftwareApplication` JSON-LD, `og:locale` to `index.html` head.

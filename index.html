@@ -15580,7 +15580,7 @@ function startApp() {
         var selGrp  = grpArr.length  ? grpArr[0]  : 'none';
         var selSort = sortArr.length ? sortArr[0] : 'none';
         var grpOptsList = isClashTab
-          ? [['none','None'],['severity','Severity'],['storey','Storey'],['discipline','Discipline'],['model','Model'],['status','Status'],['type','Type'],['priority','Priority'],['assignee','Assignee']]
+          ? [['none','None'],['cluster','Smart group (de-dupe)'],['severity','Severity'],['storey','Storey'],['discipline','Discipline'],['model','Model'],['status','Status'],['type','Type'],['priority','Priority'],['assignee','Assignee']]
           : [['none','None'],['status','Status'],['priority','Priority'],['category','Category'],['assignee','Assignee']];
         var sortOptsList = isClashTab
           ? [['none','None'],['severity_desc','Severity (high first)'],['severity_asc','Severity (low first)'],['spatial','Spatial'],['distance_asc','Gap (small first)'],['distance_desc','Gap (large first)'],['priority_desc','Priority (high first)'],['storey_asc','Storey A–Z'],['storey_desc','Storey Z–A'],['name_asc','Name A–Z'],['name_desc','Name Z–A'],['date_desc','Date (newest)'],['date_asc','Date (oldest)']]
@@ -17267,6 +17267,22 @@ function startApp() {
     }
   };
 
+  // Cluster key: identifies the physical pair-conflict regardless of how many
+  // sample points the engine emitted. Same pipe through same beam \u2192 one cluster.
+  // GUID preferred for stability across reloads; falls back to express-id.
+  window._ccClusterKeyFor = function(c) {
+    var idA = (c.globalIdA && c.globalIdA !== '') ? c.globalIdA : ('m'+(c.modelAId||'')+':'+c.elemA);
+    var idB = (c.globalIdB && c.globalIdB !== '') ? c.globalIdB : ('m'+(c.modelBId||'')+':'+c.elemB);
+    return idA < idB ? idA+'|'+idB : idB+'|'+idA;
+  };
+  window._ccClusterLabelFor = function(c) {
+    var tA = c.elemAType || 'Element', tB = c.elemBType || 'Element';
+    var nA = (c.elemAName||'').slice(0,22), nB = (c.elemBName||'').slice(0,22);
+    var pair = [tA, tB].sort().join(' \u00d7 '); // \u00d7
+    if (!nA && !nB) return pair;
+    return pair + ' \u2014 ' + (nA||'#'+c.elemA) + ' \u2194 ' + (nB||'#'+c.elemB);
+  };
+
   function _groupKeyFor(it, groupKey, modelsById) {
     switch(groupKey) {
       case 'storey': return it.elemAStorey || it.elemBStorey || it.storey || 'Unknown';
@@ -17277,6 +17293,12 @@ function startApp() {
       case 'category': return it.category || 'other';
       case 'assignee': return it.assignee || 'Unassigned';
       case 'severity': return it.aiSeverity || 'minor';
+      case 'cluster': {
+        var ck = window._ccClusterKeyFor(it);
+        if (!window._ccClusterDisplay) window._ccClusterDisplay = {};
+        if (!window._ccClusterDisplay[ck]) window._ccClusterDisplay[ck] = window._ccClusterLabelFor(it);
+        return ck;
+      }
       case 'model': {
         var mA = modelsById[it.modelAId]; var mB = modelsById[it.modelBId];
         var nA = mA ? mA.name : (it.modelAId || '?'); var nB = mB ? mB.name : (it.modelBId || '?');
@@ -17520,7 +17542,7 @@ function startApp() {
               style=${{display:'flex',alignItems:'center',gap:'.3rem',padding:'.35rem .5rem',cursor:'pointer',background:'var(--bg-tertiary)',borderBottom:'1px solid var(--border-subtle)',position:'sticky',top:0,zIndex:1}}>
               <span style=${{fontSize:'0.63rem',color:'var(--text-faint)'}}>${isOpen?'▼':'▶'}</span>
               <span style=${{width:8,height:8,borderRadius:'50%',background:dotColor,flexShrink:0}}></span>
-              <span style=${{fontSize:'0.75rem',fontWeight:600,color:'var(--text-primary)',flex:1}}>${g.label}</span>
+              <span style=${{fontSize:'0.75rem',fontWeight:600,color:'var(--text-primary)',flex:1}}>${(window._ccClusterDisplay&&window._ccClusterDisplay[g.label])||g.label}</span>
               <span style=${{fontSize:'0.69rem',color:'var(--text-faint)',background:'var(--bg-secondary)',padding:'.1rem .35rem',borderRadius:10}}>${g.items.length}</span>
             </div>
             ${isOpen && visibleItems.map(function(it){return html`<${IssueRow} key=${it.id} item=${it} active=${activeId===it.id} d=${d} isClash=${isClash} prefs=${prefs} models=${models} selectMode=${selectMode} isSelected=${!!selected[it.id]} trainingMode=${trainingMode} />`})}
