@@ -1490,6 +1490,27 @@ function startApp() {
     return out;
   }
 
+  // PR-A: shrink the resident normal attribute from Float32 (12 B/vert) to
+  // normalized Int8 (3 B/vert). Normals are a render-only attribute — the GPU
+  // normalizes them in the vertex shader, and nothing on the CPU side
+  // (clash _getWorldVerts/_getWorldTris, raycast picking, measurement snap)
+  // reads them, so this is precision-safe for everything but lighting, where
+  // 1/127 angular resolution is imperceptible. Positions stay Float32 here;
+  // quantizing those needs a dequant-aware CPU read path (separate change).
+  // Idempotent + shared-geometry safe (guarded on geo.userData).
+  function _ccQuantizeNormalAttr(geo) {
+    if (window._ccQuantizeNormals === false) return;
+    if (!geo || !geo.userData || geo.userData._nrmQuantized) return;
+    var na = geo.getAttribute && geo.getAttribute('normal');
+    if (!na || na.itemSize !== 3) return;
+    if (na.array instanceof Int8Array) { geo.userData._nrmQuantized = true; return; }
+    var src = na.array, n = src.length;
+    var i8 = new Int8Array(n);
+    for (var i = 0; i < n; i++) { var v = src[i]; i8[i] = Math.round((v > 1 ? 1 : v < -1 ? -1 : v) * 127); }
+    geo.setAttribute('normal', new THREE.Int8BufferAttribute(i8, 3, true));
+    geo.userData._nrmQuantized = true;
+  }
+
   function _geoSerialize(result) {
     // Collect individual meshes from elements rather than result.meshes, because
     // result.meshes may contain InstancedMesh objects after GPU instancing runs —
@@ -1557,6 +1578,10 @@ function startApp() {
         geo.setAttribute('normal',   new THREE.BufferAttribute(new Float32Array(md.nrm), 3));
         geo.setIndex(new THREE.BufferAttribute(new Uint32Array(md.idx), 1));
       }
+      // Same render-only Int8 normal shrink as the live load path. Restore
+      // dequantizes oct-normals to Float32 above; re-pack to Int8 so a
+      // reloaded session matches the memory profile of a fresh load.
+      _ccQuantizeNormalAttr(geo);
       var c = md.col;
       // Share materials across the whole session (same RGBA → one material),
       // same as the live load path. Before this, restore minted a fresh
@@ -2693,6 +2718,7 @@ function startApp() {
               geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
               geo.setAttribute('normal',   new THREE.BufferAttribute(nrm, 3));
               geo.setIndex(new THREE.BufferAttribute(indices, 1));
+              _ccQuantizeNormalAttr(geo);
               geoCache[geoExpId] = geo;
             } else { _geoReused++; }
             var c = placed.color;
@@ -3121,6 +3147,7 @@ function startApp() {
                   geo.setAttribute('position', new THREE.BufferAttribute(gEntry.pos, 3));
                   geo.setAttribute('normal', new THREE.BufferAttribute(gEntry.nrm, 3));
                   geo.setIndex(new THREE.BufferAttribute(gEntry.idx, 1));
+                  _ccQuantizeNormalAttr(geo);
                   _tGeoBuild += performance.now() - _tGB;
                   geoCache[geoId] = geo;
                 } else { continue; }
