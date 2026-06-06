@@ -88,6 +88,51 @@ Things to be careful about. Do not remove without a good reason — add a note i
 Update this section at the start and end of each session.
 Mark completed items with ~~strikethrough~~ and date, then let the daily sync archive them.
 
+On branch `claude/jolly-planck-mgEaf` (2026-06-06) — Phase C: cluster cards as rows + keyboard triage:
+
+- Cluster headers (Grouped mode, clash tab) upgraded to **Sentry/Linear-style cluster cards** with: severity dot on the left edge (colour from max `aiSeverity`/`type` across the cluster), 2-line layout (title + chips row), storey chip, **model-pair chip** (highlighted when cross-model so N-model federations make the owner obvious at a glance), open/resolved counts. Hover reveals two action buttons: **Triage** (calls `window._ccTriageCluster(items)`) and **Resolve all** (confirm dialog, then `_ccResolveCluster`).
+- New abstractions: `window._ccTriageCluster(clashes)` (today: copy AI prompt to clipboard with toast; Week 3 swaps for `fetch('/api/triage')` — UI doesn't change), `window._ccResolveCluster(clashes, dispatch)` (loops `UPD_CLASH` resolved), `window._ccClusterSeverity(items)` (rank table).
+- Keyboard shortcuts in `VirtualList` (clash tab only): **J/K** next/prev item (aliases for ArrowDown/Up), **T** triage current group, **R** resolve all open in current group (confirm prompt), **X** expand/collapse current group, **/** focus the search input. Existing Arrow/Tab/Esc unchanged.
+- Non-cluster grouping (storey/severity/discipline/etc.) keeps the original lean header — only cluster groups get the card treatment.
+
+On branch `claude/jolly-planck-mgEaf` (2026-06-06) — Phase A2: N-model scope picker (All / discipline / model)
+
+- New `_renderScopePicker(rules, models, d)` replaces the legacy "Check / against" rows in `ClashRulesPanel`. Segmented control: **All ↔ All / By discipline / By model**. Side A / Side B multi-pickers reuse `_modelMultiPicker`. Pair-count badge shows live "N model(s) loaded · ~K pairs" when narrowed.
+- New `rules.scopeMode` field is the UI hint; `rules.modelA` / `modelB` stay as engine truth. `_ccDerivedScopeMode(rules)` derives mode from existing modelA/modelB on first render so saved presets and shared `.ccproject` files keep working unchanged.
+- `_ccSummariseRules` rendered with array-aware label list (e.g. "structural + mep ↔ architectural").
+- Self-clash control unchanged in this commit — the existing `_selfClashPicker` already handles N models via multi-select. Deferred consolidation into a single Off/On-all/On-selected control.
+
+On branch `claude/jolly-planck-mgEaf` (2026-06-06) — Phase B: clashes panel header cleanup + grouped-by-default:
+
+- The 9-option Group dropdown is replaced (clash tab only) with a 2-button **Grouped | All** segmented control. Grouped = the Week-1 cluster de-dupe; All = flat list. A small secondary "by [storey/severity/discipline/…]" select appears only in All mode for the other axes.
+- After `A.MERGE_CLASHES`, `s.clashGroupBy` is seeded to `['cluster']` if the user has never explicitly picked a Group option (`localStorage` flag `cc_clashGroupBy`). First-time visceral demo: 400 raw clashes appear as ~15 cluster cards by default.
+- `ClashAISummary` defaults to collapsed (`useState(true)`). One-line header strip stays visible; details expand on click.
+- Issue tab keeps its original Group dropdown (Phase B is clash-only).
+- Copy AI prompt button (Week 2) is now visible on every cluster header by default — no extra clicks needed to reach the AI triage prompt copy.
+
+On branch `claude/jolly-planck-mgEaf` (2026-06-06) — Phase A: Run Detection modal (UI overhaul step 1):
+
+- New toolbar **Run detection** button (accent CTA in the TopToolbar's section/measure gap) opens a new `RunDetectionModal` (`index.html:~14894`) that wraps the existing `ClashRulesPanel` (Quick Run presets + Advanced) plus a collapsible **Project standards** section embedding `StandardsPanel`. One surface for all clash setup.
+- New `_ccSummariseRules(rules, models)` helper produces a one-line header (e.g. `Hard clashes · 6 models, all-vs-all`) shown under the modal title.
+- New state field `s.runModalOpen`, action `A.SHOW_RUN_MODAL`. `A.DETECTING` auto-closes the modal on run.
+- Removed **Detection Rules** tab from the IssuePanel tab bar (`~15336`). StandardsPanel is still rendered defensively if `s.tab==='standards'` ever fires, but no UI path sets it now. Cmd-K palette "Open Standards" and the NL "double-cancel" fallback both redirect to `A.SHOW_RUN_MODAL` instead.
+- Engine selector pill in toolbar stays (power-user shortcut); inside the modal the engine selector inside ClashRulesPanel also stays.
+- Not done in this commit: N-model scope picker (`rules.scope = { mode, sideA, sideB }`) and self-clash consolidation. The legacy `modelA`/`modelB` multi-picker still works for all N models, just less intuitive than the planned segmented control. Phase A2 next.
+- Caveats: untested in browser this session (no GPU/sample IFC); syntax-checked only via `new Function(body)`. The summary line shows `modelA ↔ modelB` for non-all rules but does not yet enumerate when `modelA`/`modelB` are arrays (`_modelSelectLabel` only handles scalar input). Cosmetic — not wrong.
+
+On branch `claude/jolly-planck-mgEaf` (2026-06-05) — AI Triage Weeks 1+2: clustering + prompt scaffolding (still no API call):
+
+**Week 2 — context-packet + prompt, manual copy-paste loop.** New `window._ccBuildClusterContext(clashes)` walks the cluster, looks up each element via `_ccElementFor(modelId, expressId)` (uses `window._ccLatestState`), and returns a JSON-ready context: ifcType / name / objectType / storey / material / curated quantities (Length, Diameter, Volume, etc.), cross-model + same-storey flags, hard/soft/duplicate counts, spatial extent + center in metres, min/max distance. `window._ccBuildTriagePrompt(ctx)` produces a senior-BIM-coordinator prompt asking for `{title, severity, explanation, discipline_conflict, false_positive_likelihood, resolution_options[]}` — advisory framing, no prescriptive structural changes. New "Copy AI prompt" button on each cluster group header (only when groupBy='cluster' and clash tab) copies the full prompt to clipboard so we can iterate against Claude/Gemma manually before wiring `/api/triage` in Week 3.
+
+
+
+- New `Group → Smart group (de-dupe)` option in the Clashes panel. Collapses N raw clashes from the same element pair (e.g. same pipe through the same beam emitted at 30 sample points) into one expandable group. Pure code, no API call. First step toward the AI Triage tier (Steps 2–4 add LLM explanation, severity, resolution options, BCF write-back).
+- Implementation: `window._ccClusterKeyFor(c)` = sorted pair of `(globalIdA||eid, globalIdB||eid)` — model-prefixed when GUID missing — so same pair clusters across reversed A/B order. `window._ccClusterLabelFor(c)` = `typeA × typeB — nameA ↔ nameB` (truncated 22 chars). Key/label decoupled via `window._ccClusterDisplay` side-map so the group header shows the readable label, not the GUID hash.
+- New `'cluster'` case in `_groupKeyFor` (`index.html:~17288`) populates the display map and returns the hash key for grouping. Group header lookup at `index.html:~17545`.
+- Added option to the Group dropdown for the Clashes tab only (`index.html:~15583`). Issues dropdown unchanged.
+- Caveats: cluster cache (`_ccClusterDisplay`) accumulates labels across detection runs — harmless (deterministic from clash data) but not GC'd; rebuild on `LOAD_MODEL` if it ever shows stale text. No spatial bucketing — same long duct hitting the same beam at two physically distinct spots will collapse to one group (rare; acceptable for v1).
+- Not done: visual count badge ("400 → 14") in the toolbar (the per-group count badge is already shown by VirtualList); fly-to that frames all clashes in a cluster; "Triage this group" button (Week 3); BCF write-back of group structure.
+
 On branch `claude/adoring-hopper-IEpvn` (2026-06-03) — SEO Phase 0+1+2 (canonical, crawlability, landing pages):
 
 - Add `<link rel="canonical">`, `<noscript>` body content, visually-hidden `<h1>`, `SoftwareApplication` JSON-LD, `og:locale` to `index.html` head.
