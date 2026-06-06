@@ -891,6 +891,14 @@ function startApp() {
     }
     if (_ccAddonActive[def.id] === undefined && def.autoActivate) _ccAddonActive[def.id] = true;
     if (_ccAddonActive[def.id] && window._ccDispatch) {
+      // If the addon registered after the React mount, INIT-side merging is
+      // too late — inject any missing initState keys via _ADDON_INIT_STATE.
+      if (def.initState) {
+        var _state = window._ccLatestState;
+        Object.keys(def.initState).forEach(function(k){
+          if (_state && !(k in _state)) window._ccDispatch({t:'_ADDON_INIT_STATE', k:k, v:def.initState[k]});
+        });
+      }
       try { if (def.init) def.init(window._ccDispatch, function(){ return window._ccLatestState; }); } catch(e) { console.warn('[Addon] init error:', def.id, e); }
     }
     window.dispatchEvent(new Event('cc-addons-changed'));
@@ -923,7 +931,7 @@ function startApp() {
   window._ccIsAddonActive = function(id) { return !!_ccAddonActive[id]; };
 
   function _loadAddonScripts() {
-    var addonFiles = ['training-data', 'pwa', 'local-engine', 'shared-project', 'revit-bridge', 'data-quality', 'smart-bridge'];
+    var addonFiles = ['training-data', 'pwa', 'local-engine', 'shared-project', 'revit-bridge', 'data-quality', 'smart-bridge', 'pointcloud'];
     addonFiles.forEach(function(name) {
       var script = document.createElement('script');
       script.src = 'addons/' + name + '.js';
@@ -5894,6 +5902,7 @@ function startApp() {
   var _orbitDragging = false; // true while left/middle mouse button or touch is held in orbit mode
   var _needsRender = 2; // start with a couple frames to initialize
   function invalidate(frames) { _needsRender = Math.max(_needsRender, frames||2); }
+  window._ccInvalidate = invalidate;
 
   function makeOrbit(camera, el, _wlAdd) {
     var target = new THREE.Vector3();
@@ -6113,6 +6122,10 @@ function startApp() {
           if (el.box && !el.box.isEmpty()) box.union(el.box);
         });
       });
+      if (typeof window._ccGetReferenceLayerBBox === 'function') {
+        var rb = window._ccGetReferenceLayerBBox();
+        if (rb && !rb.isEmpty()) box.union(rb);
+      }
       return box;
     }
     window._ccElemsBBox = _elemsBBox;
@@ -6750,6 +6763,10 @@ function startApp() {
           if (S._isGhostMat && S._isGhostMat(obj.material)) return;
           box.expandByObject(obj);
         });
+        if (typeof window._ccGetReferenceLayerBBox === 'function') {
+          var _rb = window._ccGetReferenceLayerBBox();
+          if (_rb && !_rb.isEmpty()) box.union(_rb);
+        }
         if (box.isEmpty()) box = _elemsBBox();
         if (box.isEmpty()) return;
         var ctr = box.getCenter(new THREE.Vector3());
@@ -13431,6 +13448,21 @@ function startApp() {
 
     function processFiles(files) {
       setErr('');
+      // Route point cloud files to the pointcloud addon, if loaded.
+      var pcFiles = files.filter(function(f){return /\.(ply|pcd|xyz|pts|las|laz)$/i.test(f.name);});
+      files = files.filter(function(f){return !/\.(ply|pcd|xyz|pts|las|laz)$/i.test(f.name);});
+      if (pcFiles.length) {
+        if (window._ccLoadPointCloud) {
+          pcFiles.forEach(function(f){
+            window._ccLoadPointCloud(f).catch(function(err){
+              setErr((function(prev){ return (prev?prev+'\n':'') + f.name + ': ' + (err && err.message || err); })(''));
+            });
+          });
+        } else {
+          setErr('Point cloud addon not loaded.');
+        }
+      }
+      if (!files.length) return;
       var errors = [];
       var chain = Promise.resolve();
       var totalIfc = 0, doneIfc = 0;
@@ -13884,7 +13916,7 @@ function startApp() {
           ${loading?loadMsg||'Loading…':'Add'}
         </button>
       </div>
-      <input ref=${fileRef} type="file" accept=".ifc,.glb,.ifcmeta,.ifcprops" multiple style=${{display:'none'}} onChange=${onFiles} />
+      <input ref=${fileRef} type="file" accept=".ifc,.glb,.ifcmeta,.ifcprops,.ply,.pcd,.xyz,.pts,.las" multiple style=${{display:'none'}} onChange=${onFiles} />
       <input ref=${file2dRef} type="file" accept=".dxf,.pdf,.dwg,.nwd,.nwc,.nwf" multiple style=${{display:'none'}} onChange=${onFiles} />
       ${err && html`<div style=${{padding:'.35rem .75rem',background:'var(--color-danger-bg)',borderBottom:'1px solid var(--color-danger-border)',fontSize:'.7rem',color:'var(--color-danger-fg)',whiteSpace:'pre-line',lineHeight:1.4}}>${err}</div>`}
       <div style=${{flex:1,overflowY:'auto',minHeight:0,padding:'.4rem .45rem',display:'flex',flexDirection:'column',gap:'.18rem'}}>
@@ -13916,6 +13948,36 @@ function startApp() {
               <span style=${{fontSize:'.7rem',color:isActive?'var(--accent)':'var(--text-primary)',flex:1,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',fontWeight:isActive?500:400}}>${ul.name}</span>
               <span style=${{fontSize:'.6rem',color:'var(--text-faint)',textTransform:'uppercase',fontFamily:'var(--font-mono)'}}>${ul.type}</span>
               <button onClick=${function(e){e.stopPropagation();d({t:A.DEL_UNDERLAY,id:ul.id})}} style=${{background:'none',border:'none',cursor:'pointer',color:'var(--text-faint)',padding:'0 2px',fontSize:'.7rem',lineHeight:1}}>✕</button>
+            </div>`;
+          })}
+        </div>`}
+        ${(s.referenceLayers && s.referenceLayers.length > 0) && html`<div style=${{marginTop:'.3rem',borderTop:'1px solid var(--hairline)',paddingTop:'.3rem'}}>
+          <div style=${{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:'.25rem',padding:'0 .2rem'}}>
+            <span style=${{fontSize:'.65rem',fontWeight:600,color:'var(--text-muted)',textTransform:'uppercase',letterSpacing:'.05em'}}>Reference Layers</span>
+          </div>
+          ${s.referenceLayers.map(function(rl){
+            return html`<div key=${rl.id} style=${{display:'flex',flexDirection:'column',padding:'.25rem .35rem',borderRadius:'var(--radius-xs)',borderLeft:'2px solid #9ec5fe',background:'rgba(158,197,254,0.06)',marginBottom:'.18rem'}}>
+              <div style=${{display:'flex',alignItems:'center',gap:'.3rem'}}>
+                <input type="checkbox" checked=${rl.visible!==false}
+                  onChange=${function(e){window._ccUpdateReferenceLayer && window._ccUpdateReferenceLayer(rl.id,{visible:e.target.checked});}}
+                  style=${{margin:0,cursor:'pointer'}} />
+                <span title=${rl.name} style=${{fontSize:'.7rem',color:'var(--text-primary)',flex:1,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>${rl.name}</span>
+                <span style=${{fontSize:'.6rem',color:'var(--text-faint)',fontFamily:'var(--font-mono)'}}>${rl.pointCount ? (rl.pointCount > 1e6 ? (rl.pointCount/1e6).toFixed(1)+'M' : rl.pointCount > 1e3 ? (rl.pointCount/1e3).toFixed(0)+'K' : rl.pointCount) + ' pts' : ''}</span>
+                <button onClick=${function(e){e.stopPropagation();window._ccRemovePointCloud && window._ccRemovePointCloud(rl.id);}}
+                  style=${{background:'none',border:'none',cursor:'pointer',color:'var(--text-faint)',padding:'0 2px',fontSize:'.7rem',lineHeight:1}} title="Remove">✕</button>
+              </div>
+              <div style=${{display:'flex',alignItems:'center',gap:'.4rem',marginTop:'.2rem',paddingLeft:'1.1rem'}}>
+                <label style=${{fontSize:'.6rem',color:'var(--text-faint)',minWidth:'2.4rem'}}>Size</label>
+                <input type="range" min="0.005" max="0.2" step="0.005" value=${rl.pointSize||0.02}
+                  onInput=${function(e){window._ccUpdateReferenceLayer && window._ccUpdateReferenceLayer(rl.id,{pointSize:+e.target.value});}}
+                  style=${{flex:1,height:'2px',cursor:'pointer'}} />
+              </div>
+              <div style=${{display:'flex',alignItems:'center',gap:'.4rem',marginTop:'.15rem',paddingLeft:'1.1rem'}}>
+                <label style=${{fontSize:'.6rem',color:'var(--text-faint)',minWidth:'2.4rem'}}>Opacity</label>
+                <input type="range" min="0.1" max="1" step="0.05" value=${rl.opacity!=null?rl.opacity:1}
+                  onInput=${function(e){window._ccUpdateReferenceLayer && window._ccUpdateReferenceLayer(rl.id,{opacity:+e.target.value});}}
+                  style=${{flex:1,height:'2px',cursor:'pointer'}} />
+              </div>
             </div>`;
           })}
         </div>`}
@@ -27986,8 +28048,19 @@ function startApp() {
       }
       function onDrop(e){
         enterCount = 0; setDragging(false);
-        var files = Array.from(e.dataTransfer.files||[]).filter(function(f){return /\.(ifc|glb)$/i.test(f.name);});
-        if (files.length && window._ccLoadFiles){ e.preventDefault(); window._ccLoadFiles(files); }
+        var allFiles = Array.from(e.dataTransfer.files||[]);
+        var modelFiles = allFiles.filter(function(f){return /\.(ifc|glb)$/i.test(f.name);});
+        var pcFiles = allFiles.filter(function(f){return /\.(ply|pcd|xyz|pts|las|laz)$/i.test(f.name);});
+        if ((modelFiles.length || pcFiles.length)) e.preventDefault();
+        if (modelFiles.length && window._ccLoadFiles) window._ccLoadFiles(modelFiles);
+        if (pcFiles.length && window._ccLoadPointCloud) {
+          pcFiles.forEach(function(f){
+            window._ccLoadPointCloud(f).catch(function(err){
+              console.warn('[PointCloud] Failed to load', f.name, err);
+              alert('Could not load ' + f.name + ': ' + (err && err.message || err));
+            });
+          });
+        }
       }
       document.addEventListener('dragenter', onDragEnter);
       document.addEventListener('dragover',  onDragOver);
