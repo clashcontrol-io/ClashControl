@@ -7259,33 +7259,113 @@ function startApp() {
       };
 
       // ── Clash Markers ──
+      // ── Points-based marker system (Phase D1) ──
+      // Replaces the previous "2 Meshes per clash" approach (20k Mesh objects
+      // for 10k clashes → 100-400 MB of JS heap) with a single THREE.Points
+      // object. One BufferGeometry, one draw call, ~1 MB heap. Hotspots are
+      // computed per Week-1 cluster: clusters with >1 member render as one
+      // sized centroid; singletons render as a leaf. Click → cluster key →
+      // first member id, which the existing handler then activates.
+      function _ccSevColorRGB(sev, type) {
+        // 0xRRGGBB-as-floats
+        switch (sev || type) {
+          case 'critical': return [0.86, 0.15, 0.15];     // --color-danger deeper
+          case 'major':    return [0.94, 0.55, 0.05];     // --color-warning
+          case 'hard':     return [0.94, 0.27, 0.27];     // ef4444
+          case 'soft':     return [0.96, 0.62, 0.04];     // f59e0b
+          case 'duplicate':return [0.55, 0.36, 0.93];     // 8b5cf6
+          case 'minor':    return [0.58, 0.64, 0.72];     // text-muted
+          default:         return [0.94, 0.27, 0.27];
+        }
+      }
+      function _ccMakePointsMaterial() {
+        return new THREE.ShaderMaterial({
+          uniforms: { uDevicePR: { value: (window.devicePixelRatio||1) } },
+          vertexShader: [
+            'attribute float size;',
+            'varying vec3 vColor;',
+            'uniform float uDevicePR;',
+            'void main() {',
+            '  vColor = color;',
+            '  vec4 mv = modelViewMatrix * vec4(position, 1.0);',
+            '  // Perspective-scaled point size, clamped so distant hotspots stay tappable.',
+            '  gl_PointSize = clamp(size * (300.0 / max(0.5, -mv.z)), 4.0, 64.0) * uDevicePR;',
+            '  gl_Position = projectionMatrix * mv;',
+            '}'
+          ].join('\n'),
+          fragmentShader: [
+            'varying vec3 vColor;',
+            'void main() {',
+            '  // SDF circle: outer fade for AA, inner solid fill.',
+            '  vec2 d = gl_PointCoord - vec2(0.5);',
+            '  float r = length(d);',
+            '  if (r > 0.5) discard;',
+            '  float ring = smoothstep(0.5, 0.42, r);',
+            '  float core = smoothstep(0.34, 0.30, r);',
+            '  // White ring around a coloured core for legibility on busy geometry.',
+            '  vec3 col = mix(vec3(1.0), vColor, core);',
+            '  float a = ring * 0.92;',
+            '  gl_FragColor = vec4(col, a);',
+            '}'
+          ].join('\n'),
+          vertexColors: true,
+          transparent: true,
+          depthWrite: false,
+          depthTest: true
+        });
+      }
       _showClashMarkers = function(clashes) {
         _clearClashMarkers();
-        if(!clashes||!clashes.length) return;
-        var grp = new THREE.Group();
-        grp.name = 'clashMarkers';
-        var hardMat = new THREE.MeshBasicMaterial({color:0xef4444, transparent:true, opacity:0.85});
-        var softMat = new THREE.MeshBasicMaterial({color:0xf59e0b, transparent:true, opacity:0.85});
-        var pinGeo = new THREE.SphereGeometry(0.15, 12, 12);
-        var ringGeo = new THREE.RingGeometry(0.25, 0.4, 24);
-        var ringMat = new THREE.MeshBasicMaterial({color:0xffffff, transparent:true, opacity:0.4, side:THREE.DoubleSide});
-        clashes.forEach(function(c){
-          if(!c.point||c.point.length<3) return;
-          var mat = c.type==='hard'?hardMat:softMat;
-          var pin = new THREE.Mesh(pinGeo, mat);
-          pin.position.set(c.point[0],c.point[1],c.point[2]);
-          pin.userData.clashId = c.id;
-          var mc = c.mergedCount||1;
-          if(mc>1){var sc=Math.min(1+mc*0.25,2.5);pin.scale.setScalar(sc);}
-          grp.add(pin);
-          var ring = new THREE.Mesh(ringGeo, ringMat);
-          ring.position.set(c.point[0],c.point[1],c.point[2]);
-          ring.rotation.x = -Math.PI/2;
-          if(mc>1){ring.scale.setScalar(Math.min(1+mc*0.25,2.5));}
-          grp.add(ring);
-        });
-        scene.add(grp);
-        clashMarkersRef.current = grp;
+        if (!clashes || !clashes.length) return;
+        // Bucket by Week-1 cluster key.
+        var clusters = Object.create(null);
+        var keyFor = window._ccClusterKeyFor;
+        for (var i=0; i<clashes.length; i++) {
+          var c = clashes[i];
+          if (!c.point || c.point.length<3) continue;
+          var key = keyFor ? keyFor(c) : ('k'+i);
+          var cl = clusters[key];
+          if (!cl) cl = clusters[key] = { ids:[], pts:[], sev:'soft', sx:0, sy:0, sz:0 };
+          cl.ids.push(c.id);
+          cl.pts.push(c.point);
+          cl.sx += c.point[0]; cl.sy += c.point[1]; cl.sz += c.point[2];
+          var s = c.aiSeverity || c.type;
+          // Pick the worst severity in the cluster.
+          var rank = {critical:4, major:3, hard:3, soft:2, minor:2, duplicate:1};
+          if ((rank[s]||1) > (rank[cl.sev]||1)) cl.sev = s;
+        }
+        var keys = Object.keys(clusters);
+        if (!keys.length) return;
+        // Allocate flat buffers — one point per cluster (hotspot mode).
+        var N = keys.length;
+        var positions = new Float32Array(N*3);
+        var colors    = new Float32Array(N*3);
+        var sizes     = new Float32Array(N);
+        var idxToCluster = new Array(N);
+        for (var k=0; k<N; k++) {
+          var key2 = keys[k]; var cl2 = clusters[key2];
+          var n = cl2.ids.length;
+          positions[k*3]   = cl2.sx/n;
+          positions[k*3+1] = cl2.sy/n;
+          positions[k*3+2] = cl2.sz/n;
+          var col = _ccSevColorRGB(cl2.sev);
+          colors[k*3] = col[0]; colors[k*3+1] = col[1]; colors[k*3+2] = col[2];
+          // Size: leaf clusters ~16 px, hotspots scale by sqrt(count) up to 56 px.
+          sizes[k] = n===1 ? 16 : Math.min(56, 16 + Math.sqrt(n)*8);
+          idxToCluster[k] = { key:key2, ids:cl2.ids.slice(), count:n };
+        }
+        var geo = new THREE.BufferGeometry();
+        geo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+        geo.setAttribute('color',    new THREE.BufferAttribute(colors, 3));
+        geo.setAttribute('size',     new THREE.BufferAttribute(sizes, 1));
+        var mat = _ccMakePointsMaterial();
+        var pts = new THREE.Points(geo, mat);
+        pts.name = 'clashMarkers';
+        pts.frustumCulled = false; // billboarded sprites, our own bbox is unreliable
+        pts.userData.idxToCluster = idxToCluster;
+        pts.userData.kind = 'clash';
+        scene.add(pts);
+        clashMarkersRef.current = pts;
         invalidate();
       };
       function _disposeGroup(grp) {
@@ -7298,41 +7378,55 @@ function startApp() {
       }
       _clearClashMarkers = function() {
         if(clashMarkersRef.current){
-          _disposeGroup(clashMarkersRef.current);
+          var obj = clashMarkersRef.current;
+          if (obj.geometry) obj.geometry.dispose();
+          if (obj.material) obj.material.dispose();
+          scene.remove(obj);
           clashMarkersRef.current = null;
           invalidate();
         }
       };
 
-      // ── Issue Markers (green) ──
+      // ── Issue Markers (green) ── Points-based, same shape as clash markers.
       _showIssueMarkers = function(issues) {
         _clearIssueMarkers();
-        if(!issues||!issues.length) return;
-        var withPt = issues.filter(function(i){return i.point&&i.point.length>=3;});
-        if(!withPt.length) return;
-        var grp = new THREE.Group();
-        grp.name = 'issueMarkers';
-        var issueMat = new THREE.MeshBasicMaterial({color:0x22c55e, transparent:true, opacity:0.85});
-        var pinGeo = new THREE.SphereGeometry(0.15, 12, 12);
-        var ringGeo = new THREE.RingGeometry(0.25, 0.4, 24);
-        var ringMat = new THREE.MeshBasicMaterial({color:0x86efac, transparent:true, opacity:0.4, side:THREE.DoubleSide});
-        withPt.forEach(function(iss){
-          var pin = new THREE.Mesh(pinGeo, issueMat);
-          pin.position.set(iss.point[0],iss.point[1],iss.point[2]);
-          pin.userData.issueId = iss.id;
-          grp.add(pin);
-          var ring = new THREE.Mesh(ringGeo, ringMat);
-          ring.position.set(iss.point[0],iss.point[1],iss.point[2]);
-          ring.rotation.x = -Math.PI/2;
-          grp.add(ring);
-        });
-        scene.add(grp);
-        issueMarkersRef.current = grp;
+        if (!issues || !issues.length) return;
+        var withPt = []; for (var i=0; i<issues.length; i++) { var it = issues[i]; if (it.point && it.point.length>=3) withPt.push(it); }
+        if (!withPt.length) return;
+        var N = withPt.length;
+        var positions = new Float32Array(N*3);
+        var colors    = new Float32Array(N*3);
+        var sizes     = new Float32Array(N);
+        var idxToIssue = new Array(N);
+        for (var k=0; k<N; k++) {
+          var iss = withPt[k];
+          positions[k*3]   = iss.point[0];
+          positions[k*3+1] = iss.point[1];
+          positions[k*3+2] = iss.point[2];
+          // --color-success green
+          colors[k*3] = 0.13; colors[k*3+1] = 0.77; colors[k*3+2] = 0.37;
+          sizes[k] = 16;
+          idxToIssue[k] = iss.id;
+        }
+        var geo = new THREE.BufferGeometry();
+        geo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+        geo.setAttribute('color',    new THREE.BufferAttribute(colors, 3));
+        geo.setAttribute('size',     new THREE.BufferAttribute(sizes, 1));
+        var pts = new THREE.Points(geo, _ccMakePointsMaterial());
+        pts.name = 'issueMarkers';
+        pts.frustumCulled = false;
+        pts.userData.idxToIssue = idxToIssue;
+        pts.userData.kind = 'issue';
+        scene.add(pts);
+        issueMarkersRef.current = pts;
         invalidate();
       };
       _clearIssueMarkers = function() {
         if(issueMarkersRef.current){
-          _disposeGroup(issueMarkersRef.current);
+          var obj = issueMarkersRef.current;
+          if (obj.geometry) obj.geometry.dispose();
+          if (obj.material) obj.material.dispose();
+          scene.remove(obj);
           issueMarkersRef.current = null;
           invalidate();
         }
@@ -9275,25 +9369,36 @@ function startApp() {
           return; // Don't do element picking when measuring
         }
 
-        // ── Check clash/issue markers first ──
+        // ── Check clash/issue markers first (Points-based) ──
+        // Loosen the per-point raycast threshold so a click within a couple
+        // of marker-radii still hits. Save/restore so we don't disturb other
+        // raycasts in the frame.
+        var _prevPtsT = raycaster.params && raycaster.params.Points && raycaster.params.Points.threshold;
+        if (raycaster.params && raycaster.params.Points) raycaster.params.Points.threshold = 0.5;
         if(clashMarkersRef.current) {
-          var markerHits = raycaster.intersectObjects(clashMarkersRef.current.children, false);
-          for(var mhi=0;mhi<markerHits.length;mhi++){
-            var mh = markerHits[mhi].object;
-            if(mh.userData.clashId){
+          var markerHits = raycaster.intersectObject(clashMarkersRef.current, false);
+          if (markerHits.length) {
+            var cmHit = markerHits[0];
+            var idxMap = clashMarkersRef.current.userData.idxToCluster;
+            var entry = idxMap && idxMap[cmHit.index];
+            if (entry && entry.ids && entry.ids.length) {
+              // Single clash → activate it directly. Hotspot (>1) → activate
+              // first member; cluster card lights up via the existing flow.
+              var pickedId = entry.ids[0];
               d({t:A.TAB,v:'clashes'});
-              d({t:A.ACTIVE,id:mh.userData.clashId});
+              d({t:A.ACTIVE,id:pickedId});
               var allClashes = clashesRef.current||[];
               var hitClash = null;
-              for(var ci=0;ci<allClashes.length;ci++){if(allClashes[ci].id===mh.userData.clashId){hitClash=allClashes[ci];break;}}
-              if(hitClash){
-                var cRefs=_itemRefs(hitClash);
-                if(cRefs.length&&_ghostOthers) _ghostOthers(cRefs);
-                if(cRefs.length&&_highlightRefs) _highlightRefs(cRefs,false);
-                if(hitClash.point && window._ccShowActiveClashMarker) window._ccShowActiveClashMarker(hitClash.point);
-                if(_flyToElements && cRefs.length) _flyToElements(cRefs, hitClash.point);
-                else if(hitClash.point && _flyTo) _flyTo(hitClash.point);
+              for (var ci=0; ci<allClashes.length; ci++) { if (allClashes[ci].id===pickedId) { hitClash = allClashes[ci]; break; } }
+              if (hitClash) {
+                var cRefs = _itemRefs(hitClash);
+                if (cRefs.length && _ghostOthers) _ghostOthers(cRefs);
+                if (cRefs.length && _highlightRefs) _highlightRefs(cRefs, false);
+                if (hitClash.point && window._ccShowActiveClashMarker) window._ccShowActiveClashMarker(hitClash.point);
+                if (_flyToElements && cRefs.length) _flyToElements(cRefs, hitClash.point);
+                else if (hitClash.point && _flyTo) _flyTo(hitClash.point);
               }
+              if (raycaster.params && raycaster.params.Points && _prevPtsT !== undefined) raycaster.params.Points.threshold = _prevPtsT;
               return;
             }
           }
@@ -9311,15 +9416,17 @@ function startApp() {
           }
         }
         if(issueMarkersRef.current) {
-          var iMarkerHits = raycaster.intersectObjects(issueMarkersRef.current.children, false);
-          for(var imhi=0;imhi<iMarkerHits.length;imhi++){
-            var imh = iMarkerHits[imhi].object;
-            if(imh.userData.issueId){
+          var iMarkerHits = raycaster.intersectObject(issueMarkersRef.current, false);
+          if (iMarkerHits.length) {
+            var iHit = iMarkerHits[0];
+            var iIdxMap = issueMarkersRef.current.userData.idxToIssue;
+            var issueId = iIdxMap && iIdxMap[iHit.index];
+            if (issueId) {
               d({t:A.TAB,v:'issues'});
-              d({t:A.ACTIVE,id:imh.userData.issueId});
+              d({t:A.ACTIVE,id:issueId});
               var allIssues = issuesRef.current||[];
               var hitIssue = null;
-              for(var ii=0;ii<allIssues.length;ii++){if(allIssues[ii].id===imh.userData.issueId){hitIssue=allIssues[ii];break;}}
+              for (var ii=0; ii<allIssues.length; ii++) { if (allIssues[ii].id===issueId) { hitIssue = allIssues[ii]; break; } }
               if(hitIssue){
                 var iRefs=_itemRefs(hitIssue);
                 if(iRefs.length&&_ghostOthers) _ghostOthers(iRefs);
