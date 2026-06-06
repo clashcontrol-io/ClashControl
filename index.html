@@ -17547,6 +17547,37 @@ function startApp() {
       storey: A.storey || B.storey || ''
     };
   };
+  // ── Phase C: per-cluster action seam. Today: copy prompt to clipboard.
+  // Week 3 will swap clipboard for fetch('/api/triage') without touching
+  // the UI. The cluster card calls this; keyboard shortcut T calls this.
+  window._ccTriageCluster = function(clashes) {
+    if (!clashes || !clashes.length) return false;
+    try {
+      var ctx = window._ccBuildClusterContext(clashes);
+      var prompt = window._ccBuildTriagePrompt(ctx);
+      if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(prompt);
+      else { var ta=document.createElement('textarea'); ta.value=prompt; document.body.appendChild(ta); ta.select(); document.execCommand('copy'); document.body.removeChild(ta); }
+      if (window._ccToast) window._ccToast('AI triage prompt copied — paste into Claude/Gemma');
+      return true;
+    } catch(err){ console.warn('[triage] failed', err); return false; }
+  };
+  window._ccResolveCluster = function(clashes, dispatch) {
+    if (!clashes || !clashes.length || !dispatch) return;
+    clashes.forEach(function(it){ dispatch({t:A.UPD_CLASH, id:it.id, u:{status:'resolved'}}); });
+    if (window._ccToast) window._ccToast('Resolved ' + clashes.length + ' clash' + (clashes.length===1?'':'es'));
+  };
+  // Severity rank used to colour the cluster card left-edge dot.
+  // Reads aiSeverity first; falls back to type.
+  window._ccClusterSeverity = function(items) {
+    var rank = {critical:4, major:3, hard:3, soft:2, minor:2, duplicate:1, info:0};
+    var best = -1, label = 'info';
+    (items||[]).forEach(function(it){
+      var sev = it.aiSeverity || it.type;
+      var r = rank[sev]; if (r==null) r = 1;
+      if (r > best) { best = r; label = sev || 'info'; }
+    });
+    return label;
+  };
   window._ccBuildTriagePrompt = function(ctx) {
     if (!ctx) return '';
     var lines = [];
@@ -17686,9 +17717,50 @@ function startApp() {
           if(window._ccRemoveActiveClashMarker) window._ccRemoveActiveClashMarker();
           return;
         }
-        if(e.key!=='ArrowDown'&&e.key!=='ArrowUp'&&e.key!=='Tab') return;
+        // ── Phase C keyboard triage: J/K nav, T triage, R resolve, X expand,
+        // ── / focus search. Only when grouped and clash tab. ──
+        function currentGroup(){
+          if (!groups || !groups.length) return null;
+          // First try via activeId → which group it sits in
+          if (activeId!=null) {
+            for (var gi=0; gi<groups.length; gi++) {
+              for (var ii=0; ii<groups[gi].items.length; ii++) if (groups[gi].items[ii].id===activeId) return groups[gi];
+            }
+          }
+          // Fallback to first group
+          return groups[0];
+        }
+        if (isClash && (e.key==='/' )) {
+          var inp = document.querySelector('input[type="text"][placeholder^="Filter"]');
+          if (inp) { e.preventDefault(); inp.focus(); inp.select(); return; }
+        }
+        if (isClash && (e.key==='t'||e.key==='T') && groups && groups.length) {
+          var g = currentGroup(); if (g && window._ccTriageCluster) { e.preventDefault(); window._ccTriageCluster(g.items); return; }
+        }
+        if (isClash && (e.key==='r'||e.key==='R') && groups && groups.length) {
+          var gR = currentGroup();
+          if (gR) {
+            var open = gR.items.filter(function(it){return it.status!=='resolved'&&it.status!=='closed';});
+            if (open.length && confirm('Resolve all '+open.length+' open clashes in this group?')) {
+              e.preventDefault();
+              window._ccResolveCluster(open, d);
+              return;
+            }
+          }
+        }
+        if (isClash && (e.key==='x'||e.key==='X') && groups && groups.length) {
+          var gX = currentGroup();
+          if (gX) {
+            e.preventDefault();
+            setCollapsed(function(prev){ var n=Object.assign({},prev); n[gX.label]=!n[gX.label]; return n; });
+            return;
+          }
+        }
+        if(e.key!=='ArrowDown'&&e.key!=='ArrowUp'&&e.key!=='Tab'&&e.key!=='j'&&e.key!=='J'&&e.key!=='k'&&e.key!=='K') return;
         if(flatItems.length===0) return;
         e.preventDefault();
+        if (e.key==='j'||e.key==='J') e = {key:'ArrowDown', shiftKey:e.shiftKey};
+        else if (e.key==='k'||e.key==='K') e = {key:'ArrowUp', shiftKey:e.shiftKey};
         var curIdx = -1;
         if(activeId!=null){
           for(var i=0;i<flatItems.length;i++){if(flatItems[i].id===activeId){curIdx=i;break;}}
@@ -17822,35 +17894,67 @@ function startApp() {
           return n;
         });
       }
+      var modelById = {}; (models||[]).forEach(function(m){modelById[m.id]=m;});
+      var SEV_COLOR = {critical:'#dc2626',major:'#f59e0b',hard:'#ef4444',soft:'#f59e0b',minor:'#94a3b8',duplicate:'#8b5cf6',info:'#94a3b8'};
       return html`<div ref=${scrollRef} style=${{flex:1,overflowY:'auto'}}>
         ${groups.map(function(g) {
           var isOpen = !collapsed[g.label];
           var statusColors = {open:'#ef4444',in_progress:'#f59e0b',resolved:'#22c55e',closed:'#64748b',hard:'#ef4444',soft:'#f59e0b',duplicate:'#8b5cf6'};
-          var dotColor = statusColors[g.label] || 'var(--accent-light)';
+          var isCluster = !!(isClash && window._ccClusterDisplay && window._ccClusterDisplay[g.label]);
           var limit = groupLimits[g.label] || GROUP_PAGE_SIZE;
           var visibleItems = g.items.slice(0, limit);
           var hasMore = g.items.length > limit;
+          if (isCluster) {
+            // ── Sentry/Linear-style cluster card ──
+            var sev = window._ccClusterSeverity(g.items);
+            var sevCol = SEV_COLOR[sev] || '#94a3b8';
+            var label = window._ccClusterDisplay[g.label];
+            var c0 = g.items[0]||{};
+            var storey = c0.elemAStorey || c0.elemBStorey || '';
+            var mA = modelById[c0.modelAId], mB = modelById[c0.modelBId];
+            var modelPair = (mA||mB) ? ((mA?mA.name:'?') + ' ↔ ' + (mB?mB.name:'?')) : '';
+            var crossModel = mA && mB && mA.id !== mB.id;
+            var openCount = g.items.filter(function(it){return it.status!=='resolved'&&it.status!=='closed';}).length;
+            var resolved = g.items.length - openCount;
+            return html`<div key=${g.label} data-cluster-key=${g.label}>
+              <div onClick=${function(){toggleGroup(g.label)}}
+                style=${{display:'flex',alignItems:'center',gap:'.4rem',padding:'.45rem .5rem .45rem .35rem',cursor:'pointer',background:'var(--bg-tertiary)',borderBottom:'1px solid var(--border-subtle)',borderLeft:'3px solid '+sevCol,position:'sticky',top:0,zIndex:1}}
+                onMouseEnter=${function(e){e.currentTarget.querySelector('.cc-cluster-actions') && (e.currentTarget.querySelector('.cc-cluster-actions').style.opacity='1');}}
+                onMouseLeave=${function(e){e.currentTarget.querySelector('.cc-cluster-actions') && (e.currentTarget.querySelector('.cc-cluster-actions').style.opacity='0');}}>
+                <span style=${{fontSize:'0.63rem',color:'var(--text-faint)',width:10}}>${isOpen?'▼':'▶'}</span>
+                <div style=${{flex:1,minWidth:0,display:'flex',flexDirection:'column',gap:'.15rem'}}>
+                  <span style=${{fontSize:'0.78rem',fontWeight:600,color:'var(--text-primary)',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>${label}</span>
+                  <div style=${{display:'flex',gap:'.25rem',flexWrap:'wrap',alignItems:'center'}}>
+                    ${storey && html`<span style=${{fontSize:'0.62rem',padding:'1px 5px',borderRadius:99,background:'var(--bg-secondary)',color:'var(--text-secondary)'}}>${storey}</span>`}
+                    ${modelPair && html`<span style=${{fontSize:'0.62rem',padding:'1px 5px',borderRadius:99,background:crossModel?'var(--accent-bg)':'var(--bg-secondary)',color:crossModel?'var(--accent)':'var(--text-secondary)',fontWeight:crossModel?600:400}}>${modelPair}</span>`}
+                    <span style=${{fontSize:'0.62rem',color:'var(--text-faint)'}}>${openCount} open${resolved?(' · '+resolved+' resolved'):''}</span>
+                  </div>
+                </div>
+                <div class="cc-cluster-actions" style=${{opacity:0,display:'flex',gap:'.2rem',transition:'opacity var(--duration-fast)'}}>
+                  <button title="Triage with AI (T) — copies prompt to clipboard"
+                    onClick=${function(e){e.stopPropagation(); window._ccTriageCluster(g.items);}}
+                    style=${{fontSize:'0.63rem',padding:'.12rem .4rem',borderRadius:4,border:'1px solid var(--accent-subtle)',background:'var(--accent-bg)',color:'var(--accent)',cursor:'pointer',fontWeight:600,fontFamily:'var(--font-body)'}}>Triage</button>
+                  <button title="Resolve all in this group (R)"
+                    onClick=${function(e){e.stopPropagation(); if (openCount===0 || confirm('Resolve all '+openCount+' open clashes in this group?')) window._ccResolveCluster(g.items.filter(function(it){return it.status!=='resolved'&&it.status!=='closed';}), d);}}
+                    style=${{fontSize:'0.63rem',padding:'.12rem .4rem',borderRadius:4,border:'1px solid var(--border)',background:'var(--bg-secondary)',color:'var(--text-secondary)',cursor:'pointer',fontFamily:'var(--font-body)'}}>Resolve all</button>
+                </div>
+                <span style=${{fontSize:'0.69rem',color:'var(--text-faint)',background:'var(--bg-secondary)',padding:'.1rem .35rem',borderRadius:10,fontFamily:'var(--font-mono)'}}>${g.items.length}</span>
+              </div>
+              ${isOpen && visibleItems.map(function(it){return html`<${IssueRow} key=${it.id} item=${it} active=${activeId===it.id} d=${d} isClash=${isClash} prefs=${prefs} models=${models} selectMode=${selectMode} isSelected=${!!selected[it.id]} trainingMode=${trainingMode} />`})}
+              ${isOpen && hasMore && html`<button onClick=${function(e){e.stopPropagation();showMore(g.label);}}
+                style=${{...S_BTN,width:'100%',padding:'.4rem',background:'var(--bg-tertiary)',color:'var(--accent)',fontSize:'0.75rem',borderTop:'1px solid var(--border-subtle)',borderRadius:0}}>
+                Show more (${limit} of ${g.items.length})…
+              </button>`}
+            </div>`;
+          }
+          // ── Non-cluster grouping (storey/severity/discipline/etc): keep the lean original header ──
+          var dotColor = statusColors[g.label] || 'var(--accent-light)';
           return html`<div key=${g.label}>
             <div onClick=${function(){toggleGroup(g.label)}}
               style=${{display:'flex',alignItems:'center',gap:'.3rem',padding:'.35rem .5rem',cursor:'pointer',background:'var(--bg-tertiary)',borderBottom:'1px solid var(--border-subtle)',position:'sticky',top:0,zIndex:1}}>
               <span style=${{fontSize:'0.63rem',color:'var(--text-faint)'}}>${isOpen?'▼':'▶'}</span>
               <span style=${{width:8,height:8,borderRadius:'50%',background:dotColor,flexShrink:0}}></span>
-              <span style=${{fontSize:'0.75rem',fontWeight:600,color:'var(--text-primary)',flex:1}}>${(window._ccClusterDisplay&&window._ccClusterDisplay[g.label])||g.label}</span>
-              ${isClash && window._ccClusterDisplay && window._ccClusterDisplay[g.label] && html`<button
-                title="Copy AI triage prompt for this group to clipboard"
-                onClick=${function(e){
-                  e.stopPropagation();
-                  try{
-                    var ctx = window._ccBuildClusterContext(g.items);
-                    var prompt = window._ccBuildTriagePrompt(ctx);
-                    if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(prompt);
-                    else { var ta=document.createElement('textarea'); ta.value=prompt; document.body.appendChild(ta); ta.select(); document.execCommand('copy'); document.body.removeChild(ta); }
-                    var btn=e.currentTarget; var orig=btn.textContent; btn.textContent='Copied'; setTimeout(function(){btn.textContent=orig;},1200);
-                  } catch(err){ console.warn('[triage] copy failed', err); }
-                }}
-                style=${{fontSize:'0.65rem',padding:'.12rem .4rem',marginRight:'.25rem',borderRadius:4,border:'1px solid var(--border)',background:'var(--bg-secondary)',color:'var(--text-secondary)',cursor:'pointer',fontFamily:'var(--font-body)'}}>
-                Copy AI prompt
-              </button>`}
+              <span style=${{fontSize:'0.75rem',fontWeight:600,color:'var(--text-primary)',flex:1}}>${g.label}</span>
               <span style=${{fontSize:'0.69rem',color:'var(--text-faint)',background:'var(--bg-secondary)',padding:'.1rem .35rem',borderRadius:10}}>${g.items.length}</span>
             </div>
             ${isOpen && visibleItems.map(function(it){return html`<${IssueRow} key=${it.id} item=${it} active=${activeId===it.id} d=${d} isClash=${isClash} prefs=${prefs} models=${models} selectMode=${selectMode} isSelected=${!!selected[it.id]} trainingMode=${trainingMode} />`})}

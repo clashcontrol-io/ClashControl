@@ -88,6 +88,20 @@ Things to be careful about. Do not remove without a good reason — add a note i
 Update this section at the start and end of each session.
 Mark completed items with ~~strikethrough~~ and date, then let the daily sync archive them.
 
+On branch `claude/jolly-planck-mgEaf` (2026-06-06) — Phase C: cluster cards as rows + keyboard triage:
+
+- Cluster headers (Grouped mode, clash tab) upgraded to **Sentry/Linear-style cluster cards** with: severity dot on the left edge (colour from max `aiSeverity`/`type` across the cluster), 2-line layout (title + chips row), storey chip, **model-pair chip** (highlighted when cross-model so N-model federations make the owner obvious at a glance), open/resolved counts. Hover reveals two action buttons: **Triage** (calls `window._ccTriageCluster(items)`) and **Resolve all** (confirm dialog, then `_ccResolveCluster`).
+- New abstractions: `window._ccTriageCluster(clashes)` (today: copy AI prompt to clipboard with toast; Week 3 swaps for `fetch('/api/triage')` — UI doesn't change), `window._ccResolveCluster(clashes, dispatch)` (loops `UPD_CLASH` resolved), `window._ccClusterSeverity(items)` (rank table).
+- Keyboard shortcuts in `VirtualList` (clash tab only): **J/K** next/prev item (aliases for ArrowDown/Up), **T** triage current group, **R** resolve all open in current group (confirm prompt), **X** expand/collapse current group, **/** focus the search input. Existing Arrow/Tab/Esc unchanged.
+- Non-cluster grouping (storey/severity/discipline/etc.) keeps the original lean header — only cluster groups get the card treatment.
+
+On branch `claude/jolly-planck-mgEaf` (2026-06-06) — Phase A2: N-model scope picker (All / discipline / model)
+
+- New `_renderScopePicker(rules, models, d)` replaces the legacy "Check / against" rows in `ClashRulesPanel`. Segmented control: **All ↔ All / By discipline / By model**. Side A / Side B multi-pickers reuse `_modelMultiPicker`. Pair-count badge shows live "N model(s) loaded · ~K pairs" when narrowed.
+- New `rules.scopeMode` field is the UI hint; `rules.modelA` / `modelB` stay as engine truth. `_ccDerivedScopeMode(rules)` derives mode from existing modelA/modelB on first render so saved presets and shared `.ccproject` files keep working unchanged.
+- `_ccSummariseRules` rendered with array-aware label list (e.g. "structural + mep ↔ architectural").
+- Self-clash control unchanged in this commit — the existing `_selfClashPicker` already handles N models via multi-select. Deferred consolidation into a single Off/On-all/On-selected control.
+
 On branch `claude/jolly-planck-mgEaf` (2026-06-06) — Phase B: clashes panel header cleanup + grouped-by-default:
 
 - The 9-option Group dropdown is replaced (clash tab only) with a 2-button **Grouped | All** segmented control. Grouped = the Week-1 cluster de-dupe; All = flat list. A small secondary "by [storey/severity/discipline/…]" select appears only in All mode for the other axes.
