@@ -1612,6 +1612,11 @@ function startApp() {
     // unaffected. Instancing is skipped here because the cache doesn't retain
     // the shared-geometry id needed to group instances; chunk-merge works
     // purely from geometry + material and delivers the bulk of the win.
+    // Strip survey base-point / nulpunt markers on restore too, so a
+    // reloaded session matches a fresh load (no giant floating letters).
+    if (typeof _ccStripSurveyMarkers === 'function') {
+      var _smR = _ccStripSurveyMarkers(elements, meshes); elements = _smR.elements; meshes = _smR.meshes;
+    }
     if (typeof _ccBuildMergedChunks === 'function') {
       try { meshes = _ccBuildMergedChunks(elements, meshes).meshes; } catch(e){ console.warn('[restore] chunk-merge skipped:', e); }
     }
@@ -2642,6 +2647,43 @@ function startApp() {
     return m;
   }
 
+  // ── Survey base-point / nulpunt marker stripping ──
+  // Some IFC files ship surveyor "project zero" / base-point reference
+  // markers as IfcBuildingElementProxy elements whose geometry is extruded
+  // 3-D text of the company / project name (e.g. "PIETERS", "KLI_Nulpunt").
+  // They sit at the project origin, often mirrored or at odd scale, and:
+  //   • render as giant floating letters in the viewer, and
+  //   • generate junk clashes against each other (the source of the
+  //     -197000 mm / -1.1e10 sentinel-distance pairs).
+  // They carry no coordination value, so we drop them from both the render
+  // list and the clash set at load time — same treatment the loader already
+  // gives openings / spaces / grids (just matched by name, since the IFC
+  // type is a generic proxy).
+  function _ccIsSurveyMarker(props) {
+    if (!props) return false;
+    var t = (props.ifcType || '').toLowerCase();
+    // Restrict to generic proxy / annotation entities so we never strip a
+    // real wall/beam that happens to be oddly named.
+    if (t.indexOf('proxy') === -1 && t.indexOf('annotation') === -1) return false;
+    var hay = ((props.name || '') + ' ' + (props.objectType || '') + ' ' + (props.material || '')).toLowerCase();
+    return /nulpunt|nul[\s_-]?punt|base[\s_-]?point|basepoint|survey[\s_-]?point|setting[\s_-]?out|project[\s_-]?base|coordinate[\s_-]?point/.test(hay);
+  }
+  function _ccStripSurveyMarkers(elements, meshes) {
+    if (!elements || !elements.length) return { elements: elements, meshes: meshes, removed: 0 };
+    var removeMesh = {}, kept = [], removed = 0;
+    for (var i = 0; i < elements.length; i++) {
+      var el = elements[i];
+      if (_ccIsSurveyMarker(el.props)) {
+        (el.meshes || []).forEach(function(m) { if (m) { removeMesh[m.uuid] = true; if (m.geometry) { try { m.geometry.dispose(); } catch(e) {} } } });
+        removed++;
+      } else { kept.push(el); }
+    }
+    if (!removed) return { elements: elements, meshes: meshes, removed: 0 };
+    var keptMeshes = Array.isArray(meshes) ? meshes.filter(function(m) { return !removeMesh[m.uuid]; }) : meshes;
+    try { console.log('%c[ClashControl] stripped ' + removed + ' survey base-point/nulpunt marker(s) from render + clash', 'color:#f59e0b'); } catch(e) {}
+    return { elements: kept, meshes: keptMeshes, removed: removed };
+  }
+
   function loadIFC(buffer, fallbackColor, onProgress, _parentGen) {
     var loadStart = performance.now();
     var _lp = { t0: loadStart, phases: {} };
@@ -2792,6 +2834,7 @@ function startApp() {
             setTimeout(function(){ processChunk(end); }, 0);
           } else {
             _lmark('Element processing');
+            var _sm = _ccStripSurveyMarkers(elements, meshes); elements = _sm.elements; meshes = _sm.meshes;
             var _instResult = _buildInstancedMeshes(elements, meshes);
             meshes = _instResult.meshes;
             meshes = _ccBuildMergedChunks(elements, meshes).meshes;
@@ -3181,6 +3224,7 @@ function startApp() {
             }
           }
 
+          var _sm = _ccStripSurveyMarkers(elements, meshes); elements = _sm.elements; meshes = _sm.meshes;
           var _instResult = _buildInstancedMeshes(elements, meshes);
           meshes = _instResult.meshes;
           meshes = _ccBuildMergedChunks(elements, meshes).meshes;
