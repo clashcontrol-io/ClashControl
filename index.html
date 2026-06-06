@@ -988,7 +988,21 @@ function startApp() {
       case A.UPD_MODEL:   return Object.assign({},s,{models:s.models.map(function(m){return m.id===a.id?Object.assign({},m,a.u):m})});
       case A.TOGGLE_ALL_STOREYS: return Object.assign({},s,{models:s.models.map(function(m){if(m.id!==a.id)return m;return Object.assign({},m,{hiddenStoreys:a.hide?a.storeys.reduce(function(o,st){o[st]=true;return o;},{}):{}}); })});
       case A.SET_CLASHES: /* falls through to MERGE_CLASHES with no prev clashes */
-      case A.MERGE_CLASHES: var _mr=mergeDetectionResults(a.v, a.t===A.MERGE_CLASHES?s.clashes:[]); _gcEvent('clash-detection', _mr.clashes.length+' clashes'); var _st={clashes:_mr.clashes,detecting:false,activeId:null,floors:deriveFloors(_mr.clashes),lastDeltaSummary:_mr.deltaSummary}; if(a.detectionSettings)_st.detectionSettings=a.detectionSettings; if(s.prefs.resetFiltersOnRun!==false)_st.filters=Object.assign({},INIT_FILTERS); /* Default to Grouped only when the user has nothing chosen AND the result is small enough that thousands of sticky-positioned cluster headers won't tax the browser. Never write localStorage here — that's the user-facing CLASH_GROUP_BY dispatch's job. */ if((!Array.isArray(s.clashGroupBy)||s.clashGroupBy.length===0) && _mr.clashes.length>0 && _mr.clashes.length<=2000) { _st.clashGroupBy=['cluster']; } return Object.assign({},s,_st);
+      case A.MERGE_CLASHES: var _mr=mergeDetectionResults(a.v, a.t===A.MERGE_CLASHES?s.clashes:[]); _gcEvent('clash-detection', _mr.clashes.length+' clashes'); var _st={clashes:_mr.clashes,detecting:false,activeId:null,floors:deriveFloors(_mr.clashes),lastDeltaSummary:_mr.deltaSummary}; if(a.detectionSettings)_st.detectionSettings=a.detectionSettings; if(s.prefs.resetFiltersOnRun!==false)_st.filters=Object.assign({},INIT_FILTERS); /* Default to Grouped only when the user has nothing chosen AND the result is small enough that thousands of sticky-positioned cluster headers won't tax the browser. Never write localStorage here — that's the user-facing CLASH_GROUP_BY dispatch's job. */ if((!Array.isArray(s.clashGroupBy)||s.clashGroupBy.length===0) && _mr.clashes.length>0 && _mr.clashes.length<=2000) { _st.clashGroupBy=['cluster']; }
+        // ── B3 hook: expose per-model hot-set (the elements that actually
+        // participated in the run that just finished). A follow-up PR will
+        // wire opt-in non-participant dehydration with a hydrate-on-select
+        // guard. For now the data is just exposed for the demo / debug.
+        try {
+          var _hot = {}; var _byModel = {};
+          (_mr.clashes||[]).forEach(function(c){
+            if (c.modelAId != null && c.elemA != null) { (_hot[c.modelAId] = _hot[c.modelAId] || {})[c.elemA] = 1; }
+            if (c.modelBId != null && c.elemB != null) { (_hot[c.modelBId] = _hot[c.modelBId] || {})[c.elemB] = 1; }
+          });
+          (s.models||[]).forEach(function(m){ _byModel[m.id] = { participating: !!_hot[m.id], count: _hot[m.id] ? Object.keys(_hot[m.id]).length : 0 }; });
+          window._ccLastHotSet = { byElement: _hot, byModel: _byModel, ts: Date.now() };
+        } catch(e) {}
+        return Object.assign({},s,_st);
       case A.DETECTING:   return Object.assign({},s,{detecting:true,runModalOpen:false});
       case A.STOP_DETECT: return Object.assign({},s,{detecting:false});
       case A.SWITCHING_PROJECT: return Object.assign({},s,{switchingProject:!!a.v});
@@ -1561,6 +1575,111 @@ function startApp() {
     });
     return {v:4, hasPsets:hasPsets, meshData:meshData, elData:elData, storeys:result.storeys, storeyData:result.storeyData, relatedPairs:result.relatedPairs||{}, stats:result.stats};
   }
+
+  function _ccBuildGeometryFromCacheEntry(md, v) {
+    var isV3 = v >= 3;
+    var geo = new THREE.BufferGeometry();
+    if (isV3 && md.qpos) {
+      geo.setAttribute('position', new THREE.BufferAttribute(_dequantizePositions(new Uint16Array(md.qpos), md.bbox), 3));
+      geo.setAttribute('normal',   new THREE.BufferAttribute(_decodeNormalsOct(new Int8Array(md.qnrm)), 3));
+      geo.setIndex(new THREE.BufferAttribute(md.idx16 ? new Uint16Array(md.idx) : new Uint32Array(md.idx), 1));
+    } else {
+      geo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(md.pos), 3));
+      geo.setAttribute('normal',   new THREE.BufferAttribute(new Float32Array(md.nrm), 3));
+      geo.setIndex(new THREE.BufferAttribute(new Uint32Array(md.idx), 1));
+    }
+    _ccQuantizeNormalAttr(geo);
+    return geo;
+  }
+
+  // ── Workspace-scoped geometry dehydration (#1 of B series) ──
+  // Dehydrate disposes the live BufferGeometry attributes on each
+  // el.meshes[i].geometry but leaves the Mesh objects + chunk-merged render
+  // mesh intact. Scene rendering is unaffected because chunk-merge already
+  // holds its own merged geometry. Hydrate rebuilds the per-element
+  // attributes from the IndexedDB geo-cache that the loader already
+  // populates. detectClashesAsync auto-hydrates before doing any
+  // narrow-phase work, so a Run after dehydration just looks like a
+  // 1-3 second "Preparing model geometry…" prefix on an already-multi-
+  // second detection — invisible.
+  //
+  // SAFETY: dehydration refuses if no IDB geo-cache exists for the model
+  // (e.g. a fresh load whose async save hasn't completed). That makes
+  // the operation non-destructive — worst case nothing happens.
+  window._ccDehydrateModel = function(modelId) {
+    return idbGetGeoCache(modelId).then(function(cached) {
+      if (!cached || !cached.meshData) return { freedBytes:0, skipped:'no-cache' };
+      var s = window._ccLatestState; if (!s) return { freedBytes:0, skipped:'no-state' };
+      var model = (s.models||[]).find(function(m){ return m.id === modelId; });
+      if (!model || model._dehydrated) return { freedBytes:0, skipped:'already' };
+      var freed = 0;
+      (model.elements||[]).forEach(function(el){
+        (el.meshes||[]).forEach(function(mesh){
+          var g = mesh.geometry; if (!g || !g.attributes) return;
+          var pa = g.getAttribute && g.getAttribute('position');
+          if (!pa || !pa.array || mesh._dehydrated) return;
+          freed += pa.array.byteLength;
+          var na = g.getAttribute('normal'); if (na && na.array) freed += na.array.byteLength;
+          var ia = g.index;                  if (ia && ia.array) freed += ia.array.byteLength;
+          g.deleteAttribute('position');
+          if (na) g.deleteAttribute('normal');
+          if (ia) g.setIndex(null);
+          // Free any internal buffer cache held by Three.js.
+          if (g.boundingSphere) g.boundingSphere = null;
+          if (g.boundingBox)    g.boundingBox = null;
+          mesh._dehydrated = true;
+        });
+        // Clash caches that were built off the now-disposed verts must go.
+        delete el._wvCache; delete el._triCache; delete el._bvhCache;
+      });
+      model._dehydrated = true;
+      return { freedBytes: freed, skipped: null };
+    }).catch(function(e){ console.warn('[dehydrate] failed', e); return { freedBytes:0, skipped:'err' }; });
+  };
+  window._ccHydrateModel = function(modelId) {
+    var s = window._ccLatestState; if (!s) return Promise.resolve({ skipped:'no-state' });
+    var model = (s.models||[]).find(function(m){ return m.id === modelId; });
+    if (!model || !model._dehydrated) return Promise.resolve({ skipped:'not-dehydrated' });
+    return idbGetGeoCache(modelId).then(function(cached) {
+      if (!cached || !cached.meshData) return { skipped:'no-cache' };
+      // Build a flat list of every el.meshes[i] in original order to match
+      // the cache's meshData order (which is produced by the same iteration
+      // in _geoSerialize).
+      var flat = [];
+      (model.elements||[]).forEach(function(el){ (el.meshes||[]).forEach(function(m){ flat.push(m); }); });
+      var n = Math.min(flat.length, cached.meshData.length);
+      for (var i=0; i<n; i++) {
+        var mesh = flat[i]; if (!mesh._dehydrated) continue;
+        var md = cached.meshData[i];
+        var newGeo = _ccBuildGeometryFromCacheEntry(md, cached.v || 0);
+        // Swap attribute references onto the existing geometry so refs to
+        // mesh.geometry elsewhere (instancing tables, scene wiring) stay
+        // valid. Bake bounding sphere for raycast / culling.
+        var g = mesh.geometry;
+        g.setAttribute('position', newGeo.getAttribute('position'));
+        g.setAttribute('normal',   newGeo.getAttribute('normal'));
+        g.setIndex(newGeo.getIndex());
+        g.computeBoundingSphere();
+        mesh._dehydrated = false;
+      }
+      model._dehydrated = false;
+      return { hydrated: n };
+    }).catch(function(e){ console.warn('[hydrate] failed', e); return { skipped:'err' }; });
+  };
+  // Convenience: hydrate every dehydrated model and return when all done.
+  window._ccHydrateAll = function() {
+    var s = window._ccLatestState; if (!s) return Promise.resolve();
+    var models = (s.models||[]).filter(function(m){ return m._dehydrated; });
+    if (!models.length) return Promise.resolve();
+    return Promise.all(models.map(function(m){ return window._ccHydrateModel(m.id); }));
+  };
+  window._ccDehydrateAll = function() {
+    var s = window._ccLatestState; if (!s) return Promise.resolve({ totalFreed:0 });
+    var ids = (s.models||[]).map(function(m){ return m.id; });
+    var total = 0;
+    return Promise.all(ids.map(function(id){ return window._ccDehydrateModel(id).then(function(r){ if (r && r.freedBytes) total += r.freedBytes; return r; }); }))
+      .then(function(){ return { totalFreed: total }; });
+  };
 
   function _geoDeserialize(cached) {
     var isV3 = cached.v >= 3; // v3+ uses quantized positions + oct-encoded normals
@@ -4055,6 +4174,22 @@ function startApp() {
   var _ccDetectGeneration = 0; // incremented each detection run to cancel stale async chunks
   window._ccDetectProgress = null; // {done, total, pct} — updated during async detection
   function detectClashesAsync(models, rules, onProgress) {
+    // ── B1: auto-hydrate any dehydrated models before doing any narrow-phase
+    // work. Run Detection is the moment the user has explicitly committed
+    // to detection, so a 1-3 second "Preparing model geometry…" prefix on a
+    // multi-second detection is invisible. If nothing is dehydrated this
+    // promise resolves on the same microtask. Awaited via a thin wrapper so
+    // the rest of the function body stays synchronous.
+    var _hyd = (window._ccHydrateAll && (models||[]).some(function(m){ return m && m._dehydrated; }))
+      ? window._ccHydrateAll()
+      : null;
+    if (_hyd) {
+      if (typeof onProgress === 'function') onProgress(0, 1, { phase:'hydrate' });
+      return _hyd.then(function(){ return _detectClashesAsyncCore(models, rules, onProgress); });
+    }
+    return _detectClashesAsyncCore(models, rules, onProgress);
+  }
+  function _detectClashesAsyncCore(models, rules, onProgress) {
     _detectCancelled = false;
     var gen = ++_ccDetectGeneration;
     var _userCb = onProgress;
@@ -15034,16 +15169,65 @@ function startApp() {
           style=${{...S_BTN,fontSize:'0.67rem',padding:'.15rem .4rem',background:'none',color:'var(--text-faint)',border:'1px solid var(--border)'}}>
           Select Multiple
         </button>
-        ${isClash && totalCount > 0 && html`<button onClick=${function(){
-            if (confirm('Clear all ' + totalCount + ' clash' + (totalCount===1?'':'es') + '? This frees their markers and memory but does not unload any models. You can re-run detection any time.')) {
-              d({t:A.SET_CLASHES, v:[]});
-              if (window._ccToast) window._ccToast('Cleared ' + totalCount + ' clashes');
-            }
-          }}
-          title="Remove all clash results (models stay loaded)"
-          style=${{...S_BTN,fontSize:'0.67rem',padding:'.15rem .4rem',background:'none',color:'var(--color-danger)',border:'1px solid var(--border)'}}>
-          Clear all
-        </button>`}
+        ${isClash && totalCount > 0 && html`<div style=${{display:'flex',gap:'.3rem'}}>
+          ${(function(){
+            // ── B2: Triage focus — ghost everything that isn't involved in
+            // an open clash. Pure visual; no memory change, no consumer
+            // audit risk. Toggle by tracking active state in window so a
+            // re-render keeps the highlight intact.
+            var focusOn = !!window._ccTriageFocusActive;
+            return html`<button onClick=${function(){
+                if (focusOn) {
+                  if (window._unghostAll) window._unghostAll();
+                  window._ccTriageFocusActive = false;
+                  if (window._ccToast) window._ccToast('Triage focus off');
+                } else {
+                  // Collect refs (Mesh objects + instance refs) for every
+                  // element involved in an open clash, across both sides.
+                  var s2 = window._ccLatestState;
+                  if (!s2 || !s2.clashes || !s2.clashes.length || !window._ghostOthers) return;
+                  var modelMap = {};
+                  (s2.models||[]).forEach(function(m){ modelMap[m.id] = m; });
+                  var refs = [];
+                  var seen = {};
+                  s2.clashes.forEach(function(c){
+                    if (c.status === 'resolved' || c.status === 'closed' || c.status === 'denied') return;
+                    [['modelAId','elemA'], ['modelBId','elemB']].forEach(function(pair){
+                      var mid = c[pair[0]], eid = c[pair[1]];
+                      var k = mid + ':' + eid; if (seen[k]) return; seen[k] = 1;
+                      var mm = modelMap[mid]; if (!mm) return;
+                      var els = mm.elements || [];
+                      for (var i=0; i<els.length; i++) {
+                        if (els[i].expressId === eid) {
+                          (els[i].meshes||[]).forEach(function(mesh){ refs.push(mesh); });
+                          break;
+                        }
+                      }
+                    });
+                  });
+                  if (!refs.length) { if (window._ccToast) window._ccToast('No open clashes to focus on'); return; }
+                  window._ghostOthers(refs);
+                  window._ccTriageFocusActive = true;
+                  if (window._ccToast) window._ccToast('Focusing on ' + Object.keys(seen).length + ' element' + (Object.keys(seen).length===1?'':'s') + ' in open clashes');
+                }
+              }}
+              title="Hide all geometry except elements involved in open clashes. Pure visual — toggle off to restore."
+              style=${{...S_BTN,fontSize:'0.67rem',padding:'.15rem .4rem',background:focusOn?'var(--accent)':'none',color:focusOn?'#fff':'var(--accent)',border:'1px solid '+(focusOn?'var(--accent)':'var(--accent-subtle)'),fontWeight:focusOn?'var(--weight-semibold)':'var(--weight-regular)'}}>
+              ${focusOn ? 'Focus on' : 'Triage focus'}
+            </button>`;
+          })()}
+          <button onClick=${function(){
+              if (confirm('Clear all ' + totalCount + ' clash' + (totalCount===1?'':'es') + '? This frees their markers and memory but does not unload any models. You can re-run detection any time.')) {
+                d({t:A.SET_CLASHES, v:[]});
+                if (window._unghostAll && window._ccTriageFocusActive) { window._unghostAll(); window._ccTriageFocusActive = false; }
+                if (window._ccToast) window._ccToast('Cleared ' + totalCount + ' clashes');
+              }
+            }}
+            title="Remove all clash results (models stay loaded)"
+            style=${{...S_BTN,fontSize:'0.67rem',padding:'.15rem .4rem',background:'none',color:'var(--color-danger)',border:'1px solid var(--border)'}}>
+            Clear all
+          </button>
+        </div>`}
       </div>`;
     }
     return html`<div style=${{padding:'.35rem .5rem',borderBottom:'1px solid var(--border-subtle)',flexShrink:0,background:'var(--accent-bg)'}}>
@@ -27294,6 +27478,20 @@ function startApp() {
               style=${{...S_BTN,flex:1,padding:'.4rem .6rem',borderRadius:6,fontSize:'0.8rem',fontWeight:600,
                 background:'var(--bg-secondary)',color:'var(--text-secondary)',border:'1px solid var(--border)',
                 cursor:'pointer',textAlign:'center',justifyContent:'center'}}>Send Memory Report</button>
+          </div>
+          <div style=${{display:'flex',gap:'.4rem',marginTop:'.5rem'}}>
+            <button onClick=${function(){
+                if (!window._ccDehydrateAll) return;
+                if (window._ccToast) window._ccToast('Freeing per-element geometry…');
+                window._ccDehydrateAll().then(function(r){
+                  var mb = r && r.totalFreed ? (r.totalFreed/1048576).toFixed(0) + ' MB' : 'no eligible models';
+                  if (window._ccToast) window._ccToast('Freed ' + mb + ' — next Run Detection will re-prepare');
+                });
+              }}
+              title="Drop per-element CPU geometry from RAM. Models still render via the merged chunks. Run Detection will re-hydrate automatically (1-3 s)."
+              style=${{...S_BTN,flex:1,padding:'.4rem .6rem',borderRadius:6,fontSize:'0.78rem',fontWeight:'var(--weight-semibold)',
+                background:'var(--accent-bg)',color:'var(--accent-subtle)',border:'1px solid var(--accent-subtle)',
+                cursor:'pointer',textAlign:'center',justifyContent:'center'}}>Free RAM for Present mode</button>
           </div>
           <div style=${{fontSize:'0.72rem',color:'var(--text-faint)',marginTop:'.6rem',textAlign:'center'}}>
             ClashControl v${CC_VERSION.v} \u2014 Free & open source
