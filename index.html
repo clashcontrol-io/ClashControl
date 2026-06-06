@@ -764,6 +764,7 @@ function startApp() {
     clashGroupBy:(function(){var v=_ccLoadPref('clashGroupBy',[]);return Array.isArray(v)?v:(v&&v!=='none'?[v]:[]);}()), clashSortBy:(function(){var v=_ccLoadPref('clashSortBy',[]);return Array.isArray(v)?v:(v&&v!=='none'?[v]:[]);}()),
     issueGroupBy:(function(){var v=_ccLoadPref('issueGroupBy',[]);return Array.isArray(v)?v:(v&&v!=='none'?[v]:[]);}()), issueSortBy:(function(){var v=_ccLoadPref('issueSortBy',[]);return Array.isArray(v)?v:(v&&v!=='none'?[v]:[]);}()),
     chatOpen:false, detecting:false, switchingProject:false, runModalOpen:false,
+    triageResults:{}, // { [clusterKey]: { loading, result, error, ts } } — Week 3 AI triage state, keyed by group label
     sectionAxis:(_savedSection&&_savedSection.axis)||null,
     sectionPos:(_savedSection&&_savedSection.pos!=null)?_savedSection.pos:0.5,
     sectionCustom:(_savedSection&&_savedSection.custom)||null,
@@ -832,7 +833,7 @@ function startApp() {
     AI_FEEDBACK:'AI_FEEDBACK', CLEAR_TRAINING_DATA:'CLEAR_TRAINING_DATA',
     UPD_CLASH:'UPD_CLASH', BATCH_UPD_CLASH:'BATCH_UPD_CLASH',
     ACTIVE:'ACTIVE', MODAL:'MODAL',
-    UPD_RULES:'UPD_RULES', UPD_FILTERS:'UPD_FILTERS', RESET_FILTERS:'RESET_FILTERS', SHOW_RUN_MODAL:'SHOW_RUN_MODAL',
+    UPD_RULES:'UPD_RULES', UPD_FILTERS:'UPD_FILTERS', RESET_FILTERS:'RESET_FILTERS', SHOW_RUN_MODAL:'SHOW_RUN_MODAL', TRIAGE_RESULT:'TRIAGE_RESULT',
     SECTION:'SECTION', SECTION_CUSTOM:'SECTION_CUSTOM', SECTION_BOX:'SECTION_BOX', SECTION_FLIP:'SECTION_FLIP', SECTION_HATCH:'SECTION_HATCH',
     TAB:'TAB', SETTINGS:'SETTINGS', TRAINING_MODE:'TRAINING_MODE',
     UPD_PREFS:'UPD_PREFS',
@@ -963,7 +964,7 @@ function startApp() {
       case A.UPD_MODEL:   return Object.assign({},s,{models:s.models.map(function(m){return m.id===a.id?Object.assign({},m,a.u):m})});
       case A.TOGGLE_ALL_STOREYS: return Object.assign({},s,{models:s.models.map(function(m){if(m.id!==a.id)return m;return Object.assign({},m,{hiddenStoreys:a.hide?a.storeys.reduce(function(o,st){o[st]=true;return o;},{}):{}}); })});
       case A.SET_CLASHES: /* falls through to MERGE_CLASHES with no prev clashes */
-      case A.MERGE_CLASHES: var _mr=mergeDetectionResults(a.v, a.t===A.MERGE_CLASHES?s.clashes:[]); _gcEvent('clash-detection', _mr.clashes.length+' clashes'); var _st={clashes:_mr.clashes,detecting:false,activeId:null,floors:deriveFloors(_mr.clashes),lastDeltaSummary:_mr.deltaSummary}; if(a.detectionSettings)_st.detectionSettings=a.detectionSettings; if(s.prefs.resetFiltersOnRun!==false)_st.filters=Object.assign({},INIT_FILTERS); /* default to cluster-grouped view after a run unless the user has previously picked something */ try{ var _hasExplicit=localStorage.getItem('cc_clashGroupBy')!=null; if(!_hasExplicit){ _st.clashGroupBy=['cluster']; localStorage.setItem('cc_clashGroupBy', JSON.stringify(['cluster'])); } }catch(e){} return Object.assign({},s,_st);
+      case A.MERGE_CLASHES: var _mr=mergeDetectionResults(a.v, a.t===A.MERGE_CLASHES?s.clashes:[]); _gcEvent('clash-detection', _mr.clashes.length+' clashes'); var _st={clashes:_mr.clashes,detecting:false,activeId:null,floors:deriveFloors(_mr.clashes),lastDeltaSummary:_mr.deltaSummary}; if(a.detectionSettings)_st.detectionSettings=a.detectionSettings; if(s.prefs.resetFiltersOnRun!==false)_st.filters=Object.assign({},INIT_FILTERS); /* Default to Grouped only when the user has nothing chosen AND the result is small enough that thousands of sticky-positioned cluster headers won't tax the browser. Never write localStorage here — that's the user-facing CLASH_GROUP_BY dispatch's job. */ if((!Array.isArray(s.clashGroupBy)||s.clashGroupBy.length===0) && _mr.clashes.length>0 && _mr.clashes.length<=2000) { _st.clashGroupBy=['cluster']; } return Object.assign({},s,_st);
       case A.DETECTING:   return Object.assign({},s,{detecting:true,runModalOpen:false});
       case A.STOP_DETECT: return Object.assign({},s,{detecting:false});
       case A.SWITCHING_PROJECT: return Object.assign({},s,{switchingProject:!!a.v});
@@ -1099,6 +1100,11 @@ function startApp() {
       case A.MODAL:       return Object.assign({},s,{showModal:a.v, modalElement:a.el||null});
       case A.UPD_RULES:   return Object.assign({},s,{rules:Object.assign({},s.rules,a.u)});
       case A.SHOW_RUN_MODAL: return Object.assign({},s,{runModalOpen:!!a.v});
+      case A.TRIAGE_RESULT: {
+        var _tr = Object.assign({}, s.triageResults);
+        _tr[a.clusterKey] = Object.assign({}, _tr[a.clusterKey]||{}, a.entry, {ts:Date.now()});
+        return Object.assign({}, s, {triageResults:_tr});
+      }
       case 'CHAT_OPEN':   return Object.assign({},s,{chatOpen:!!a.v});
       case A.UPD_FILTERS: return Object.assign({},s,{filters:Object.assign({},s.filters,a.u)});
       case A.RESET_FILTERS: return Object.assign({},s,{filters:Object.assign({},INIT_FILTERS)});
@@ -14603,14 +14609,24 @@ function startApp() {
     var items = props.items, isClash = props.isClash, delta = props.delta;
     var stTitlesBusy = useState(false), titlesBusy = stTitlesBusy[0], setTitlesBusy = stTitlesBusy[1];
     if (!items.length) return null;
-    var total = items.length;
-    var untitled = isClash ? items.filter(function(c){return !c.aiTitle;}).length : 0;
-    var open = items.filter(function(c){return c.status==='open';}).length;
-    var inProg = items.filter(function(c){return c.status==='in_progress';}).length;
-    var resolved = items.filter(function(c){return c.status==='resolved'||c.status==='closed';}).length;
-    var hard = isClash ? items.filter(function(c){return c.type==='hard';}).length : 0;
-    var soft = isClash ? items.filter(function(c){return c.type==='soft';}).length : 0;
-    var dup = isClash ? items.filter(function(c){return c.type==='duplicate';}).length : 0;
+    // Single O(N) pass instead of 7 filters — matters at 10k+ clashes.
+    var counts = React.useMemo(function(){
+      var c = {total:items.length, untitled:0, open:0, inProg:0, resolved:0, hard:0, soft:0, dup:0};
+      for (var i=0; i<items.length; i++) {
+        var it = items[i];
+        if (isClash && !it.aiTitle) c.untitled++;
+        if (it.status==='open') c.open++;
+        else if (it.status==='in_progress') c.inProg++;
+        else if (it.status==='resolved' || it.status==='closed') c.resolved++;
+        if (isClash) {
+          if (it.type==='hard') c.hard++;
+          else if (it.type==='soft') c.soft++;
+          else if (it.type==='duplicate') c.dup++;
+        }
+      }
+      return c;
+    }, [items, isClash]);
+    var total = counts.total, untitled = counts.untitled, open = counts.open, inProg = counts.inProg, resolved = counts.resolved, hard = counts.hard, soft = counts.soft, dup = counts.dup;
     var pct = total > 0 ? Math.round(resolved / total * 100) : 0;
     var barCol = pct >= 80 ? '#22c55e' : pct >= 40 ? '#f59e0b' : '#ef4444';
 
@@ -14976,30 +14992,31 @@ function startApp() {
       // Subtract n self-pairs (will be added back if self-clash on)
       return Math.max(0, n - both);
     }
-    var SEG = function(active){return {fontSize:'0.7rem',padding:'.2rem .5rem',border:'1px solid var(--border)',cursor:'pointer',
+    var SEG = function(active){return {fontSize:'var(--text-xs)',padding:'var(--space-1) var(--space-2)',border:'1px solid var(--border)',cursor:'pointer',
       background:active?'var(--accent)':'var(--bg-secondary)',color:active?'#fff':'var(--text-secondary)',
-      fontWeight:active?600:400,fontFamily:'var(--font-body)',whiteSpace:'nowrap'};};
+      fontWeight:active?'var(--weight-semibold)':'var(--weight-regular)',fontFamily:'var(--font-body)',whiteSpace:'nowrap',
+      transition:'background var(--duration-fast) var(--ease-standard), color var(--duration-fast) var(--ease-standard)'};};
     var nModels = (models||[]).length;
     var nPairs = pairCount();
     return html`<div>
-      <div style=${{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:'.3rem'}}>
-        <span style=${{fontSize:'0.72rem',fontWeight:600,color:'var(--text-primary)'}}>What do you want to check?</span>
-        <span style=${{fontSize:'0.63rem',color:'var(--text-faint)',fontFamily:'var(--font-mono)'}}>${nModels} model${nModels===1?'':'s'} loaded${mode!=='all'?(' · ~'+nPairs+' pair'+(nPairs===1?'':'s')):''}</span>
+      <div style=${{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:'var(--space-2)'}}>
+        <span style=${{fontSize:'var(--text-xs)',fontWeight:'var(--weight-semibold)',color:'var(--text-primary)'}}>What do you want to check?</span>
+        <span style=${{fontSize:'var(--text-2xs)',color:'var(--text-faint)',fontFamily:'var(--font-mono)'}}>${nModels} model${nModels===1?'':'s'} loaded${mode!=='all'?(' · ~'+nPairs+' pair'+(nPairs===1?'':'s')):''}</span>
       </div>
-      <div role="group" aria-label="Test scope" style=${{display:'inline-flex',gap:0,borderRadius:4,overflow:'hidden',marginBottom:'.3rem'}}>
-        <button onClick=${function(){setMode('all');}} style=${{...SEG(mode==='all'),borderRadius:'4px 0 0 4px'}}>All ↔ All</button>
-        <button onClick=${function(){setMode('discipline');}} style=${{...SEG(mode==='discipline'),borderLeft:'none'}}>By discipline</button>
-        <button onClick=${function(){setMode('model');}} style=${{...SEG(mode==='model'),borderRadius:'0 4px 4px 0',borderLeft:'none'}}>By model</button>
+      <div role="group" aria-label="Test scope" style=${{display:'inline-flex',gap:0,borderRadius:'var(--radius-xs)',overflow:'hidden',marginBottom:'var(--space-2)'}}>
+        <button onClick=${function(){setMode('all');}} aria-pressed=${mode==='all'} style=${{...SEG(mode==='all'),borderRadius:'var(--radius-xs) 0 0 var(--radius-xs)'}}>All ↔ All</button>
+        <button onClick=${function(){setMode('discipline');}} aria-pressed=${mode==='discipline'} style=${{...SEG(mode==='discipline'),borderLeft:'none'}}>By discipline</button>
+        <button onClick=${function(){setMode('model');}} aria-pressed=${mode==='model'} style=${{...SEG(mode==='model'),borderRadius:'0 var(--radius-xs) var(--radius-xs) 0',borderLeft:'none'}}>By model</button>
       </div>
       ${mode === 'all'
-        ? html`<div style=${{fontSize:'0.67rem',color:'var(--text-faint)',padding:'.2rem .1rem'}}>Every loaded model is clashed against every other. ${nModels<2?'Load at least 2 models, or enable self-clash below.':''}</div>`
-        : html`<div style=${{display:'flex',flexDirection:'column',gap:'.2rem'}}>
-          <div style=${{display:'flex',alignItems:'center',gap:'.35rem'}}>
-            <span style=${{fontSize:'0.7rem',color:'var(--text-secondary)',whiteSpace:'nowrap',minWidth:48}}>Side A</span>
+        ? html`<div style=${{fontSize:'var(--text-2xs)',color:'var(--text-faint)',padding:'var(--space-1)'}}>Every loaded model is clashed against every other. ${nModels<2?'Load at least 2 models, or enable self-clash below.':''}</div>`
+        : html`<div style=${{display:'flex',flexDirection:'column',gap:'var(--space-1)'}}>
+          <div style=${{display:'flex',alignItems:'center',gap:'var(--space-2)'}}>
+            <span style=${{fontSize:'var(--text-xs)',color:'var(--text-secondary)',whiteSpace:'nowrap',minWidth:48}}>Side A</span>
             ${_modelSelect(rules.modelA, 'modelA', models, d)}
           </div>
-          <div style=${{display:'flex',alignItems:'center',gap:'.35rem'}}>
-            <span style=${{fontSize:'0.7rem',color:'var(--text-secondary)',whiteSpace:'nowrap',minWidth:48}}>Side B</span>
+          <div style=${{display:'flex',alignItems:'center',gap:'var(--space-2)'}}>
+            <span style=${{fontSize:'var(--text-xs)',color:'var(--text-secondary)',whiteSpace:'nowrap',minWidth:48}}>Side B</span>
             ${_modelSelect(rules.modelB, 'modelB', models, d)}
           </div>
         </div>`}
@@ -15016,6 +15033,11 @@ function startApp() {
     var showStdSt = useState(false), showStandards = showStdSt[0], setShowStandards = showStdSt[1];
     var canRun = (s.models||[]).length > 0 && !s.detecting;
     function close(){ d({t:A.SHOW_RUN_MODAL, v:false}); }
+    useEffect(function(){
+      function onKey(e){ if (e.key === 'Escape') { e.stopPropagation(); close(); } }
+      window.addEventListener('keydown', onKey);
+      return function(){ window.removeEventListener('keydown', onKey); };
+    }, []);
     function runNow(){
       if (!canRun) return;
       var rules = s.rules;
@@ -15032,15 +15054,15 @@ function startApp() {
       onClick=${close}>
       <div class="cc-modal-card" style=${{...S_MODAL_CARD,width:720,padding:0,display:'flex',flexDirection:'column'}} onClick=${function(e){e.stopPropagation();}}>
         <!-- Header -->
-        <div style=${{padding:'1rem 1.2rem .6rem',display:'flex',alignItems:'center',gap:'.6rem',borderBottom:'1px solid var(--border-subtle)'}}>
-          <div style=${{width:32,height:32,borderRadius:'var(--radius-md)',background:'var(--accent-bg)',display:'flex',alignItems:'center',justifyContent:'center',color:'var(--accent)'}}>
+        <div style=${{padding:'var(--space-4) var(--space-5) var(--space-3)',display:'flex',alignItems:'center',gap:'var(--space-3)',borderBottom:'1px solid var(--border-subtle)'}}>
+          <div style=${{width:32,height:32,borderRadius:'var(--radius-md)',background:'var(--accent-bg)',display:'flex',alignItems:'center',justifyContent:'center',color:'var(--accent)',flexShrink:0}}>
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="6 4 20 12 6 20 6 4"/></svg>
           </div>
           <div style=${{flex:1,minWidth:0}}>
-            <div id="cc-run-detection-title" style=${{fontSize:'1.05rem',fontWeight:700,color:'var(--text-primary)'}}>Run clash detection</div>
-            <div style=${{fontSize:'0.74rem',color:'var(--text-muted)',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>${summary}</div>
+            <div id="cc-run-detection-title" style=${{fontFamily:'var(--font-display)',fontSize:'var(--text-lg)',fontWeight:'var(--weight-semibold)',color:'var(--text-primary)',lineHeight:'var(--leading-tight)'}}>Run clash detection</div>
+            <div style=${{fontSize:'var(--text-xs)',color:'var(--text-muted)',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis',marginTop:'2px'}}>${summary}</div>
           </div>
-          <button onClick=${close} style=${S_MODAL_CLOSE} aria-label="Close">✕</button>
+          <button onClick=${close} style=${S_MODAL_CLOSE} aria-label="Close Run detection">✕</button>
         </div>
         <!-- Body: presets + advanced (existing ClashRulesPanel body) -->
         <div style=${{overflowY:'auto',maxHeight:'calc(85vh - 140px)'}}>
@@ -15048,24 +15070,25 @@ function startApp() {
           <!-- Project standards (collapsed) -->
           <div style=${{borderTop:'1px solid var(--border-subtle)'}}>
             <button onClick=${function(){setShowStandards(!showStandards);}}
-              style=${{...S_BTN,width:'100%',padding:'.55rem .7rem',background:'none',color:'var(--text-secondary)',
-                display:'flex',alignItems:'center',justifyContent:'space-between',fontSize:'.78rem',fontFamily:'var(--font-body)'}}>
-              <span style=${{fontWeight:600}}>Project standards</span>
-              <span style=${{fontSize:'.65rem',color:'var(--text-faint)'}}>${showStandards?'▲':'▼'} default clearance, IFC type pairs, discipline pairs</span>
+              aria-expanded=${showStandards}
+              style=${{...S_BTN,width:'100%',padding:'var(--space-2) var(--space-3)',background:'none',color:'var(--text-secondary)',
+                display:'flex',alignItems:'center',justifyContent:'space-between',fontSize:'var(--text-sm)'}}>
+              <span style=${{fontWeight:'var(--weight-semibold)'}}>Project standards</span>
+              <span style=${{fontSize:'var(--text-2xs)',color:'var(--text-faint)'}}>${showStandards?'▲':'▼'} default clearance, IFC type pairs, discipline pairs</span>
             </button>
-            ${showStandards && html`<div style=${{padding:'0 .25rem .5rem',borderTop:'1px solid var(--border-subtle)'}}>
+            ${showStandards && html`<div style=${{padding:'0 var(--space-1) var(--space-2)',borderTop:'1px solid var(--border-subtle)'}}>
               <${StandardsPanel} s=${s} d=${d} />
             </div>`}
           </div>
         </div>
         <!-- Footer: prominent Run button (duplicated from ClashRulesPanel but always visible) -->
-        <div style=${{padding:'.6rem .9rem',borderTop:'1px solid var(--border-subtle)',display:'flex',gap:'.5rem',alignItems:'center'}}>
-          <div style=${{flex:1,fontSize:'.68rem',color:'var(--text-faint)'}}>${(s.models||[]).length===0?'Load a model first.':'Choose a preset above, or click Run Detection with the current rules.'}</div>
+        <div style=${{padding:'var(--space-3) var(--space-4)',borderTop:'1px solid var(--border-subtle)',display:'flex',gap:'var(--space-2)',alignItems:'center'}}>
+          <div style=${{flex:1,fontSize:'var(--text-2xs)',color:'var(--text-faint)'}}>${(s.models||[]).length===0?'Load a model first.':'Choose a preset above, or click Run detection with the current rules.'}</div>
           ${s.detecting
             ? html`<button onClick=${function(){if(typeof cancelDetection==='function')cancelDetection();}}
-                style=${{...S_BTN,padding:'.45rem 1rem',background:'#dc2626',color:'#fff',fontWeight:600,fontSize:'.82rem',borderRadius:6}}>Stop Detection</button>`
+                style=${{...S_BTN,padding:'var(--space-2) var(--space-4)',background:'var(--color-danger)',color:'#fff',fontWeight:'var(--weight-semibold)',fontSize:'var(--text-sm)',borderRadius:'var(--radius-sm)'}}>Stop detection</button>`
             : html`<button onClick=${runNow} disabled=${!canRun}
-                style=${{...S_BTN,padding:'.45rem 1rem',background:canRun?'var(--accent)':'var(--bg-secondary)',color:canRun?'#fff':'var(--text-faint)',fontWeight:600,fontSize:'.82rem',borderRadius:6,minWidth:140}}>Run Detection</button>`}
+                style=${{...S_BTN,padding:'var(--space-2) var(--space-4)',background:canRun?'var(--accent)':'var(--bg-secondary)',color:canRun?'#fff':'var(--text-faint)',fontWeight:'var(--weight-semibold)',fontSize:'var(--text-sm)',borderRadius:'var(--radius-sm)',minWidth:140}}>Run detection</button>`}
         </div>
       </div>
     </div>`;
@@ -15760,23 +15783,24 @@ function startApp() {
         // shows only in All mode, exposing the other axes (storey, etc).
         if (isClashTab) {
           var isGrouped = selGrp === 'cluster';
-          var SEG_BTN = function(active){return {fontSize:'0.72rem',padding:'.22rem .55rem',borderRadius:4,border:'1px solid var(--border)',cursor:'pointer',
+          var SEG_BTN = function(active){return {fontSize:'var(--text-xs)',padding:'var(--space-1) var(--space-3)',borderRadius:'var(--radius-xs)',border:'1px solid var(--border)',cursor:'pointer',
             background:active?'var(--accent)':'var(--bg-secondary)',color:active?'#fff':'var(--text-secondary)',
-            fontWeight:active?600:400,fontFamily:'var(--font-body)',whiteSpace:'nowrap'};};
-          return html`<div style=${{padding:'.3rem .5rem',borderBottom:'1px solid var(--border-subtle)',display:'flex',gap:'.5rem',alignItems:'center',flexShrink:0}}>
-            <div role="group" aria-label="View mode" style=${{display:'inline-flex',gap:0,borderRadius:4,overflow:'hidden'}}>
-              <button onClick=${function(){d({t:grpAction,v:['cluster']});}} style=${{...SEG_BTN(isGrouped),borderRadius:'4px 0 0 4px'}}>Grouped</button>
-              <button onClick=${function(){d({t:grpAction,v:[]});}} style=${{...SEG_BTN(!isGrouped),borderRadius:'0 4px 4px 0',borderLeft:'none'}}>All</button>
+            fontWeight:active?'var(--weight-semibold)':'var(--weight-regular)',fontFamily:'var(--font-body)',whiteSpace:'nowrap',
+            transition:'background var(--duration-fast) var(--ease-standard), color var(--duration-fast) var(--ease-standard)'};};
+          return html`<div style=${{padding:'var(--space-1) var(--space-2)',borderBottom:'1px solid var(--border-subtle)',display:'flex',gap:'var(--space-2)',alignItems:'center',flexShrink:0}}>
+            <div role="group" aria-label="View mode" style=${{display:'inline-flex',gap:0,borderRadius:'var(--radius-xs)',overflow:'hidden'}}>
+              <button onClick=${function(){d({t:grpAction,v:['cluster']});}} aria-pressed=${isGrouped} style=${{...SEG_BTN(isGrouped),borderRadius:'var(--radius-xs) 0 0 var(--radius-xs)'}}>Grouped</button>
+              <button onClick=${function(){d({t:grpAction,v:[]});}} aria-pressed=${!isGrouped} style=${{...SEG_BTN(!isGrouped),borderRadius:'0 var(--radius-xs) var(--radius-xs) 0',borderLeft:'none'}}>All</button>
             </div>
-            ${!isGrouped && html`<label style=${{display:'flex',alignItems:'center',gap:'.25rem',flex:1,minWidth:0}}>
-              <span style=${{fontSize:'0.65rem',color:'var(--text-faint)',whiteSpace:'nowrap'}}>by</span>
+            ${!isGrouped && html`<label style=${{display:'flex',alignItems:'center',gap:'var(--space-1)',flex:1,minWidth:0}}>
+              <span style=${{fontSize:'var(--text-2xs)',color:'var(--text-faint)',whiteSpace:'nowrap'}}>by</span>
               <select value=${selGrp==='cluster'?'none':selGrp} style=${{...DS,flex:1,minWidth:0,maxWidth:120}}
                 onChange=${function(e){var v=e.target.value;d({t:grpAction,v:v==='none'?[]:[v]});}}>
                 ${secondaryGrpOpts.map(function(g){return html`<option key=${g[0]} value=${g[0]}>${g[1]}</option>`})}
               </select>
             </label>`}
-            <label style=${{display:'flex',alignItems:'center',gap:'.25rem',flex:1,minWidth:0}}>
-              <span style=${{fontSize:'0.65rem',color:'var(--text-faint)',whiteSpace:'nowrap'}}>Sort</span>
+            <label style=${{display:'flex',alignItems:'center',gap:'var(--space-1)',flex:1,minWidth:0}}>
+              <span style=${{fontSize:'var(--text-2xs)',color:'var(--text-faint)',whiteSpace:'nowrap'}}>Sort</span>
               <select value=${selSort} style=${{...DS,flex:1,minWidth:0}}
                 onChange=${function(e){var v=e.target.value;d({t:sortAction,v:v==='none'?[]:[v]});}}>
                 ${sortOptsList.map(function(sv){return html`<option key=${sv[0]} value=${sv[0]}>${sv[1]}</option>`})}
@@ -15803,7 +15827,7 @@ function startApp() {
       }()}
       ${!isExplorerTab && !isStandardsTab && items.length>0 && html`<${BulkActionBar} s=${s} d=${d} items=${items} isClash=${isClashTab} />`}
 
-      ${!isExplorerTab && !isStandardsTab && html`<${VirtualList} items=${items} activeId=${s.activeId} d=${d} isClash=${isClashTab} prefs=${s.prefs} models=${s.models} groupBy=${isClashTab?s.clashGroupBy:s.issueGroupBy} sortBy=${isClashTab?s.clashSortBy:s.issueSortBy} selectMode=${s.selectMode} selected=${s.selected} trainingMode=${s.trainingMode} />`}
+      ${!isExplorerTab && !isStandardsTab && html`<${VirtualList} items=${items} activeId=${s.activeId} d=${d} isClash=${isClashTab} prefs=${s.prefs} models=${s.models} groupBy=${isClashTab?s.clashGroupBy:s.issueGroupBy} sortBy=${isClashTab?s.clashSortBy:s.issueSortBy} selectMode=${s.selectMode} selected=${s.selected} trainingMode=${s.trainingMode} triageResults=${s.triageResults} />`}
     </div>`;
   }
 
@@ -17524,7 +17548,10 @@ function startApp() {
     clashes.forEach(function(c){
       var p=c.point||[0,0,0];
       for (var k=0;k<3;k++){ if(p[k]<minP[k])minP[k]=p[k]; if(p[k]>maxP[k])maxP[k]=p[k]; }
-      if (typeof c.distance==='number') dists.push(c.distance);
+      // Some clashes carry an uninitialized sentinel distance (e.g. -1.1e10)
+      // when the engine couldn't compute one. Filter to physically plausible
+      // values in millimetres so the AI prompt isn't poisoned.
+      if (typeof c.distance==='number' && isFinite(c.distance) && Math.abs(c.distance) < 1e6) dists.push(c.distance);
       if (c.type==='soft') soft++; else if (c.type==='duplicate') dup++; else hard++;
     });
     var span = [maxP[0]-minP[0], maxP[1]-minP[1], maxP[2]-minP[2]];
@@ -17547,10 +17574,38 @@ function startApp() {
       storey: A.storey || B.storey || ''
     };
   };
-  // ── Phase C: per-cluster action seam. Today: copy prompt to clipboard.
-  // Week 3 will swap clipboard for fetch('/api/triage') without touching
-  // the UI. The cluster card calls this; keyboard shortcut T calls this.
-  window._ccTriageCluster = function(clashes) {
+  // ── AI Triage: fetch /api/triage for a cluster, stash result in state.
+  // The cluster card renders s.triageResults[clusterKey] inline when present.
+  // Clipboard fallback (window._ccTriageClusterCopy) is still available for
+  // power users / offline scenarios.
+  window._ccTriageCluster = function(clashes, dispatch, clusterKey) {
+    if (!clashes || !clashes.length) return false;
+    if (!dispatch || !clusterKey) {
+      // Legacy keyboard-shortcut path with no dispatch: fall back to copy.
+      return window._ccTriageClusterCopy(clashes);
+    }
+    var ctx;
+    try { ctx = window._ccBuildClusterContext(clashes); } catch(e){ console.warn('[triage] context build failed', e); return false; }
+    if (!ctx) return false;
+    dispatch({t:A.TRIAGE_RESULT, clusterKey:clusterKey, entry:{loading:true, error:null}});
+    fetch('/api/triage', {
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({context:ctx})
+    }).then(function(r){
+      if (!r.ok) return r.json().then(function(j){ throw new Error(j.error || ('HTTP '+r.status)); }).catch(function(){ throw new Error('HTTP '+r.status); });
+      return r.json();
+    }).then(function(j){
+      dispatch({t:A.TRIAGE_RESULT, clusterKey:clusterKey, entry:{loading:false, result:j.triage, error:null}});
+    }).catch(function(err){
+      console.warn('[triage] api failed', err);
+      dispatch({t:A.TRIAGE_RESULT, clusterKey:clusterKey, entry:{loading:false, error:String(err.message||err)}});
+      if (window._ccToast) window._ccToast('Triage failed: ' + (err.message||err) + ' — prompt copied to clipboard instead');
+      window._ccTriageClusterCopy(clashes);
+    });
+    return true;
+  };
+  window._ccTriageClusterCopy = function(clashes) {
     if (!clashes || !clashes.length) return false;
     try {
       var ctx = window._ccBuildClusterContext(clashes);
@@ -17559,7 +17614,7 @@ function startApp() {
       else { var ta=document.createElement('textarea'); ta.value=prompt; document.body.appendChild(ta); ta.select(); document.execCommand('copy'); document.body.removeChild(ta); }
       if (window._ccToast) window._ccToast('AI triage prompt copied — paste into Claude/Gemma');
       return true;
-    } catch(err){ console.warn('[triage] failed', err); return false; }
+    } catch(err){ console.warn('[triage] copy failed', err); return false; }
   };
   window._ccResolveCluster = function(clashes, dispatch) {
     if (!clashes || !clashes.length || !dispatch) return;
@@ -17674,6 +17729,7 @@ function startApp() {
   var GROUP_PAGE_SIZE = 50; // max items rendered per group before "show more"
   function VirtualList(props) {
     var items=props.items, activeId=props.activeId, d=props.d, isClash=props.isClash, prefs=props.prefs, models=props.models||[];
+    var triageResults = props.triageResults || {};
     var groupBy = props.groupBy || 'none';
     var sortBy = props.sortBy || 'none';
     var selectMode=props.selectMode, selected=props.selected||{};
@@ -17895,7 +17951,9 @@ function startApp() {
         });
       }
       var modelById = {}; (models||[]).forEach(function(m){modelById[m.id]=m;});
-      var SEV_COLOR = {critical:'#dc2626',major:'#f59e0b',hard:'#ef4444',soft:'#f59e0b',minor:'#94a3b8',duplicate:'#8b5cf6',info:'#94a3b8'};
+      // Severity → semantic color token. Maps to --color-danger/warning/info/text-muted.
+      // 'duplicate' is purple (no token exists) — matches the existing inline-statusColors palette below for visual continuity.
+      var SEV_COLOR = {critical:'var(--color-danger)',major:'var(--color-warning)',hard:'var(--color-danger)',soft:'var(--color-warning)',minor:'var(--text-muted)',duplicate:'#8b5cf6',info:'var(--text-faint)'};
       return html`<div ref=${scrollRef} style=${{flex:1,overflowY:'auto'}}>
         ${groups.map(function(g) {
           var isOpen = !collapsed[g.label];
@@ -17907,7 +17965,7 @@ function startApp() {
           if (isCluster) {
             // ── Sentry/Linear-style cluster card ──
             var sev = window._ccClusterSeverity(g.items);
-            var sevCol = SEV_COLOR[sev] || '#94a3b8';
+            var sevCol = SEV_COLOR[sev] || 'var(--text-muted)';
             var label = window._ccClusterDisplay[g.label];
             var c0 = g.items[0]||{};
             var storey = c0.elemAStorey || c0.elemBStorey || '';
@@ -17916,30 +17974,55 @@ function startApp() {
             var crossModel = mA && mB && mA.id !== mB.id;
             var openCount = g.items.filter(function(it){return it.status!=='resolved'&&it.status!=='closed';}).length;
             var resolved = g.items.length - openCount;
+            var triage = (triageResults && triageResults[g.label]) || null;
+            var triageLoading = !!(triage && triage.loading);
+            var triageResult = triage && triage.result;
+            var triageError = triage && triage.error;
             return html`<div key=${g.label} data-cluster-key=${g.label}>
               <div onClick=${function(){toggleGroup(g.label)}}
-                style=${{display:'flex',alignItems:'center',gap:'.4rem',padding:'.45rem .5rem .45rem .35rem',cursor:'pointer',background:'var(--bg-tertiary)',borderBottom:'1px solid var(--border-subtle)',borderLeft:'3px solid '+sevCol,position:'sticky',top:0,zIndex:1}}
-                onMouseEnter=${function(e){e.currentTarget.querySelector('.cc-cluster-actions') && (e.currentTarget.querySelector('.cc-cluster-actions').style.opacity='1');}}
-                onMouseLeave=${function(e){e.currentTarget.querySelector('.cc-cluster-actions') && (e.currentTarget.querySelector('.cc-cluster-actions').style.opacity='0');}}>
-                <span style=${{fontSize:'0.63rem',color:'var(--text-faint)',width:10}}>${isOpen?'▼':'▶'}</span>
-                <div style=${{flex:1,minWidth:0,display:'flex',flexDirection:'column',gap:'.15rem'}}>
-                  <span style=${{fontSize:'0.78rem',fontWeight:600,color:'var(--text-primary)',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>${label}</span>
-                  <div style=${{display:'flex',gap:'.25rem',flexWrap:'wrap',alignItems:'center'}}>
-                    ${storey && html`<span style=${{fontSize:'0.62rem',padding:'1px 5px',borderRadius:99,background:'var(--bg-secondary)',color:'var(--text-secondary)'}}>${storey}</span>`}
-                    ${modelPair && html`<span style=${{fontSize:'0.62rem',padding:'1px 5px',borderRadius:99,background:crossModel?'var(--accent-bg)':'var(--bg-secondary)',color:crossModel?'var(--accent)':'var(--text-secondary)',fontWeight:crossModel?600:400}}>${modelPair}</span>`}
-                    <span style=${{fontSize:'0.62rem',color:'var(--text-faint)'}}>${openCount} open${resolved?(' · '+resolved+' resolved'):''}</span>
+                style=${{display:'flex',alignItems:'center',gap:'var(--space-2)',padding:'var(--space-2) var(--space-2) var(--space-2) var(--space-1)',cursor:'pointer',background:'var(--bg-tertiary)',borderBottom:'1px solid var(--border-subtle)',borderLeft:'3px solid '+sevCol,position:'sticky',top:0,zIndex:1}}
+                onMouseEnter=${function(e){var el=e.currentTarget.querySelector('.cc-cluster-actions'); if(el)el.style.opacity='1';}}
+                onMouseLeave=${function(e){var el=e.currentTarget.querySelector('.cc-cluster-actions'); if(el)el.style.opacity='0';}}>
+                <span style=${{fontSize:'var(--text-2xs)',color:'var(--text-faint)',width:10}}>${isOpen?'▼':'▶'}</span>
+                <div style=${{flex:1,minWidth:0,display:'flex',flexDirection:'column',gap:'2px'}}>
+                  <span style=${{fontSize:'var(--text-sm)',fontWeight:'var(--weight-semibold)',color:'var(--text-primary)',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis',lineHeight:'var(--leading-tight)'}}>${label}</span>
+                  <div style=${{display:'flex',gap:'var(--space-1)',flexWrap:'wrap',alignItems:'center'}}>
+                    ${storey && html`<span class="cc-status-pill" style=${{padding:'1px var(--space-2)',background:'var(--bg-secondary)',color:'var(--text-secondary)',textTransform:'none',letterSpacing:0}}>${storey}</span>`}
+                    ${modelPair && html`<span class="cc-status-pill" style=${{padding:'1px var(--space-2)',background:crossModel?'var(--accent-bg)':'var(--bg-secondary)',color:crossModel?'var(--accent-subtle)':'var(--text-secondary)',textTransform:'none',letterSpacing:0}}>${modelPair}</span>`}
+                    <span style=${{fontSize:'var(--text-2xs)',color:'var(--text-faint)'}}>${openCount} open${resolved?(' · '+resolved+' resolved'):''}</span>
                   </div>
                 </div>
-                <div class="cc-cluster-actions" style=${{opacity:0,display:'flex',gap:'.2rem',transition:'opacity var(--duration-fast)'}}>
-                  <button title="Triage with AI (T) — copies prompt to clipboard"
-                    onClick=${function(e){e.stopPropagation(); window._ccTriageCluster(g.items);}}
-                    style=${{fontSize:'0.63rem',padding:'.12rem .4rem',borderRadius:4,border:'1px solid var(--accent-subtle)',background:'var(--accent-bg)',color:'var(--accent)',cursor:'pointer',fontWeight:600,fontFamily:'var(--font-body)'}}>Triage</button>
-                  <button title="Resolve all in this group (R)"
+                <div class="cc-cluster-actions" style=${{opacity:triageLoading?1:0,display:'flex',gap:'var(--space-1)',transition:'opacity var(--duration-fast) var(--ease-standard)'}}>
+                  <button aria-label="Triage cluster with AI" title="Triage with AI (T) — sends cluster to /api/triage"
+                    disabled=${triageLoading}
+                    onClick=${function(e){e.stopPropagation(); window._ccTriageCluster(g.items, d, g.label);}}
+                    style=${{...S_BTN,fontSize:'var(--text-2xs)',padding:'1px var(--space-2)',borderRadius:'var(--radius-xs)',border:'1px solid var(--accent-subtle)',background:'var(--accent-bg)',color:'var(--accent-subtle)',fontWeight:'var(--weight-semibold)',opacity:triageLoading?0.6:1}}>${triageLoading?'Triaging…':(triageResult?'Re-triage':'Triage')}</button>
+                  <button aria-label="Resolve all clashes in this group" title="Resolve all in this group (R)"
                     onClick=${function(e){e.stopPropagation(); if (openCount===0 || confirm('Resolve all '+openCount+' open clashes in this group?')) window._ccResolveCluster(g.items.filter(function(it){return it.status!=='resolved'&&it.status!=='closed';}), d);}}
-                    style=${{fontSize:'0.63rem',padding:'.12rem .4rem',borderRadius:4,border:'1px solid var(--border)',background:'var(--bg-secondary)',color:'var(--text-secondary)',cursor:'pointer',fontFamily:'var(--font-body)'}}>Resolve all</button>
+                    style=${{...S_BTN,fontSize:'var(--text-2xs)',padding:'1px var(--space-2)',borderRadius:'var(--radius-xs)',border:'1px solid var(--border)',background:'var(--bg-secondary)',color:'var(--text-secondary)'}}>Resolve all</button>
                 </div>
-                <span style=${{fontSize:'0.69rem',color:'var(--text-faint)',background:'var(--bg-secondary)',padding:'.1rem .35rem',borderRadius:10,fontFamily:'var(--font-mono)'}}>${g.items.length}</span>
+                <span style=${{fontSize:'var(--text-2xs)',color:'var(--text-faint)',background:'var(--bg-secondary)',padding:'1px var(--space-2)',borderRadius:'var(--radius-pill)',fontFamily:'var(--font-mono)'}}>${g.items.length}</span>
               </div>
+              ${(triageResult || triageError) && html`<div style=${{padding:'var(--space-2) var(--space-3)',background:'var(--bg-secondary)',borderBottom:'1px solid var(--border-subtle)',borderLeft:'3px solid '+sevCol}}>
+                ${triageError
+                  ? html`<div style=${{fontSize:'var(--text-xs)',color:'var(--color-danger)'}}>Triage failed: ${triageError}</div>`
+                  : html`<div style=${{display:'flex',flexDirection:'column',gap:'var(--space-2)'}}>
+                      <div style=${{display:'flex',alignItems:'center',gap:'var(--space-2)',flexWrap:'wrap'}}>
+                        ${triageResult.severity && html`<span class="cc-status-pill" style=${{background:SEV_COLOR[triageResult.severity]||'var(--text-muted)',color:'#fff'}}>${triageResult.severity}</span>`}
+                        ${triageResult.discipline_conflict && html`<span style=${{fontSize:'var(--text-2xs)',color:'var(--text-muted)'}}>${triageResult.discipline_conflict}</span>`}
+                        ${triageResult.false_positive_likelihood && html`<span style=${{fontSize:'var(--text-2xs)',color:'var(--text-faint)'}}>false-positive: ${triageResult.false_positive_likelihood}</span>`}
+                      </div>
+                      ${triageResult.title && html`<div style=${{fontSize:'var(--text-sm)',fontWeight:'var(--weight-semibold)',color:'var(--text-primary)',lineHeight:'var(--leading-tight)'}}>${triageResult.title}</div>`}
+                      ${triageResult.explanation && html`<div style=${{fontSize:'var(--text-xs)',color:'var(--text-secondary)',lineHeight:'var(--leading-base)'}}>${triageResult.explanation}</div>`}
+                      ${Array.isArray(triageResult.resolution_options) && triageResult.resolution_options.length>0 && html`<div style=${{display:'flex',flexDirection:'column',gap:'var(--space-1)'}}>
+                        <div style=${{fontSize:'var(--text-2xs)',fontWeight:'var(--weight-bold)',textTransform:'uppercase',letterSpacing:'.08em',color:'var(--text-muted)'}}>Resolution options</div>
+                        ${triageResult.resolution_options.map(function(opt, idx){return html`<div key=${idx} style=${{fontSize:'var(--text-xs)',color:'var(--text-secondary)',padding:'var(--space-1) var(--space-2)',background:'var(--bg-tertiary)',borderRadius:'var(--radius-xs)',borderLeft:'2px solid var(--accent-subtle)'}}>
+                          <div style=${{color:'var(--text-primary)',fontWeight:'var(--weight-medium)'}}>${idx+1}. ${opt.option}</div>
+                          ${opt.tradeoff && html`<div style=${{fontSize:'var(--text-2xs)',color:'var(--text-faint)',marginTop:'2px'}}>Tradeoff: ${opt.tradeoff}${opt.cost_impact?(' · cost: '+opt.cost_impact):''}</div>`}
+                        </div>`;})}
+                      </div>`}
+                    </div>`}
+              </div>`}
               ${isOpen && visibleItems.map(function(it){return html`<${IssueRow} key=${it.id} item=${it} active=${activeId===it.id} d=${d} isClash=${isClash} prefs=${prefs} models=${models} selectMode=${selectMode} isSelected=${!!selected[it.id]} trainingMode=${trainingMode} />`})}
               ${isOpen && hasMore && html`<button onClick=${function(e){e.stopPropagation();showMore(g.label);}}
                 style=${{...S_BTN,width:'100%',padding:'.4rem',background:'var(--bg-tertiary)',color:'var(--accent)',fontSize:'0.75rem',borderTop:'1px solid var(--border-subtle)',borderRadius:0}}>
@@ -21163,16 +21246,14 @@ function startApp() {
     EB.prototype.render = function(){
       if(this.state.hasError){
         var self=this;
-        return h('div',{style:{padding:'2rem',textAlign:'center',color:'var(--text-primary)',background:'var(--bg-primary)',height:'100vh',display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center'}},
-          h('div',{style:{width:48,height:48,background:'var(--text-primary)',borderRadius:'var(--radius-lg)',display:'flex',alignItems:'center',justifyContent:'center',marginBottom:'1rem'}},
-            h('span',{style:{display:'inline-flex',alignItems:'center',color:'var(--bg-primary)',fontWeight:800,fontSize:14,fontFamily:'Syne,system-ui,sans-serif',lineHeight:1}},
-            h('span',null,'C'),
-            h('span',{style:{display:'inline-block',transform:'scaleX(-1)',marginLeft:'-1px'}},'C'))),
-          h('h2',{style:{marginBottom:'.5rem'}},'Something went wrong'),
-          h('p',{style:{color:'var(--text-secondary)',marginBottom:'1rem',maxWidth:400}},String(this.state.error&&this.state.error.message||this.state.error||'Unknown error')),
-          h('div',{style:{display:'flex',gap:'.5rem'}},
-            h('button',{onClick:function(){self.setState({hasError:false,error:null});},style:{padding:'.5rem 1rem',background:'var(--bg-secondary)',color:'var(--accent-subtle)',border:'1px solid var(--border)',borderRadius:6,cursor:'pointer',fontFamily:'inherit'}},'Try Again'),
-            h('button',{onClick:function(){window.location.reload();},style:{padding:'.5rem 1rem',background:'#1a6b4a',color:'#fff',border:'none',borderRadius:6,cursor:'pointer',fontFamily:'inherit'}},'Reload App')
+        return h('div',{style:{padding:'var(--space-8)',textAlign:'center',color:'var(--text-primary)',background:'var(--bg-primary)',height:'100vh',display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center'}},
+          h('div',{style:{width:56,height:56,background:'var(--logo-gradient)',borderRadius:'var(--radius-lg)',display:'flex',alignItems:'center',justifyContent:'center',marginBottom:'var(--space-4)',boxShadow:'0 4px 12px rgba(124,58,237,.3)'}},
+            h('span',{style:{color:'#fff',fontFamily:'var(--font-display),Syne,system-ui,sans-serif',fontWeight:800,fontSize:20,letterSpacing:'-.02em',lineHeight:1}},'CC')),
+          h('h2',{style:{fontFamily:'var(--font-display),Syne,system-ui,sans-serif',fontSize:'var(--text-xl)',fontWeight:'var(--weight-bold)',marginBottom:'var(--space-2)',lineHeight:'var(--leading-tight)'}},'Something went wrong'),
+          h('p',{style:{color:'var(--text-secondary)',fontSize:'var(--text-md)',marginBottom:'var(--space-4)',maxWidth:400}},String(this.state.error&&this.state.error.message||this.state.error||'Unknown error')),
+          h('div',{style:{display:'flex',gap:'var(--space-2)'}},
+            h('button',{onClick:function(){self.setState({hasError:false,error:null});},style:{padding:'var(--space-2) var(--space-4)',background:'var(--bg-secondary)',color:'var(--text-secondary)',border:'1px solid var(--border)',borderRadius:'var(--radius-sm)',cursor:'pointer',fontFamily:'inherit',fontSize:'var(--text-base)',fontWeight:'var(--weight-medium)'}},'Try Again'),
+            h('button',{onClick:function(){window.location.reload();},style:{padding:'var(--space-2) var(--space-4)',background:'var(--accent)',color:'#fff',border:'none',borderRadius:'var(--radius-sm)',cursor:'pointer',fontFamily:'inherit',fontSize:'var(--text-base)',fontWeight:'var(--weight-semibold)'}},'Reload App')
           )
         );
       }
@@ -26938,9 +27019,14 @@ function startApp() {
   function _makeResizeHandler(dragRef, setPanelW, minW, maxW, invert) {
     return function(e) {
       e.preventDefault();
-      var startX = e.clientX, startW = dragRef.current && dragRef.current.startW || 0;
-      dragRef.current = {startX:startX, startW:startW};
-      setPanelW(function(cur) { dragRef.current.startW = cur; return cur; });
+      // Read the current panel width via the functional updater (we don't
+      // have direct access to the state value here). Side-effecting inside
+      // an updater is unsafe — Preact may invoke updaters more than once
+      // and onUp can null dragRef.current — so we guard the assignment.
+      setPanelW(function(cur) {
+        dragRef.current = {startX: e.clientX, startW: cur};
+        return cur;
+      });
       function onMove(ev) {
         if (!dragRef.current) return;
         var dx = invert ? (dragRef.current.startX - ev.clientX) : (ev.clientX - dragRef.current.startX);
@@ -28777,32 +28863,6 @@ function startApp() {
         ${(s.sectionAxis||s.sectionCustom||(s.sectionBox&&s.sectionBox.enabled)) && btn({k:'sclear', title:'Clear Section (Esc)',  label:'Clear Section', icon:I.clear,
                 onClick:function(){ window._ccSectionPickPending=false; setPickOn(false); d({t:A.SECTION,axis:null}); d({t:A.SECTION_CUSTOM,v:null}); d({t:A.SECTION_BOX,v:null}); }})}
         ${div()}
-        <!-- DETECT — single Run Detection entry point (opens RunDetectionModal) -->
-        ${(function(){
-          var dl = s.detecting;
-          var label = dl ? 'Detecting…' : 'Run detection';
-          return html`<button onClick=${function(){ if(!dl) d({t:A.SHOW_RUN_MODAL, v:true}); }}
-            aria-label=${label} title=${label + (dl?'':' — open setup')}
-            disabled=${dl}
-            onMouseEnter=${function(e){ var r=e.currentTarget.getBoundingClientRect(); setTtTip({label:label, desc:dl?'Detection running':'Configure rules and run a clash test'}); ttPos.current={x:r.left+r.width/2,y:r.bottom}; }}
-            onMouseLeave=${function(){ setTtTip(null); }}
-            style=${{
-              display:'inline-flex',alignItems:'center',gap:'.35rem',height:28,padding:'0 .65rem',marginLeft:'.15rem',
-              background: dl ? 'var(--bg-secondary)' : 'var(--accent)',
-              color: dl ? 'var(--text-faint)' : '#fff',
-              border: 'none', borderRadius:'var(--radius-sm)',
-              cursor: dl ? 'default' : 'pointer', fontWeight:600, fontSize:'var(--text-xs)',
-              fontFamily:'var(--font-body)',whiteSpace:'nowrap',transition:'background var(--duration-fast)'
-            }}>
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-              ${dl
-                ? html`<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>`
-                : html`<polygon points="6 4 20 12 6 20 6 4"/>`}
-            </svg>
-            <span>${label}</span>
-          </button>`;
-        })()}
-        ${div()}
         <!-- MEASURE — one button + caret popover (Trimble / FreeCAD pattern) -->
         ${(function(){
           var modeLabel = s.measureMode==='length'?'Distance':s.measureMode==='angle'?'Angle':s.measureMode==='area'?'Area':s.measureMode==='element'?'Element':s.measureMode==='clearance'?'Clearance':'Measure';
@@ -28955,9 +29015,9 @@ function startApp() {
 
         <!-- COORDINATE workspace tools: run detection + filter clashes -->
         ${s.workspace === 'coordinate' && html`${div()}
-          ${btn({k:'runDetect', title:s.detecting?'Running detection…':'Run clash detection', label:'Run clash detection',
+          ${btn({k:'runDetect', active:s.runModalOpen, title:s.detecting?'Running detection…':'Run clash detection — open setup', label:'Run clash detection',
             icon:'<polygon points="6 3 20 12 6 21 6 3"/><path d="M6 12h14"/>',
-            onClick:function(){ if(s.detecting) return; if(window._ccRunDetection){ window._ccRunDetection(); d({t:A.TAB,v:'clashes'}); } }})}
+            onClick:function(){ if(s.detecting) return; d({t:A.SHOW_RUN_MODAL, v:true}); }})}
           ${(function(){
             var le=s.localEngine||{}, we=s.wasmEngine||{};
             var lbl, dot, hint, click;
@@ -28977,9 +29037,9 @@ function startApp() {
           ${btn({k:'issues', active:s.tab==='issues', title:'Issues', label:'Issues',
             icon:'<path d="M4 15s1-1 4-1 5 2 8 2 4-1 4-1V3s-1 1-4 1-5-2-8-2-4 1-4 1z"/><line x1="4" y1="22" x2="4" y2="15"/>',
             onClick:function(){ d({t:A.TAB,v:s.tab==='issues'?null:'issues'}); }})}
-          ${btn({k:'standards', active:s.tab==='standards', title:'Detection Rules', label:'Detection Rules',
+          ${btn({k:'standards', active:s.runModalOpen, title:'Detection rules — open setup', label:'Detection rules',
             icon:'<path d="M4 7h16M4 12h10M4 17h13"/><path d="M20 12l-3-3v6z"/>',
-            onClick:function(){ d({t:A.TAB,v:s.tab==='standards'?null:'standards'}); }})}
+            onClick:function(){ d({t:A.SHOW_RUN_MODAL, v:true}); }})}
           ${btn({k:'nav-coord', active:s.tab==='navigator', title:'Navigator', label:'Navigator',
             icon:'<rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/>',
             onClick:function(){ d({t:A.TAB,v:s.tab==='navigator'?null:'navigator'}); }})}`}
