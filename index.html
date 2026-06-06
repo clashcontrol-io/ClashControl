@@ -963,7 +963,7 @@ function startApp() {
       case A.UPD_MODEL:   return Object.assign({},s,{models:s.models.map(function(m){return m.id===a.id?Object.assign({},m,a.u):m})});
       case A.TOGGLE_ALL_STOREYS: return Object.assign({},s,{models:s.models.map(function(m){if(m.id!==a.id)return m;return Object.assign({},m,{hiddenStoreys:a.hide?a.storeys.reduce(function(o,st){o[st]=true;return o;},{}):{}}); })});
       case A.SET_CLASHES: /* falls through to MERGE_CLASHES with no prev clashes */
-      case A.MERGE_CLASHES: var _mr=mergeDetectionResults(a.v, a.t===A.MERGE_CLASHES?s.clashes:[]); _gcEvent('clash-detection', _mr.clashes.length+' clashes'); var _st={clashes:_mr.clashes,detecting:false,activeId:null,floors:deriveFloors(_mr.clashes),lastDeltaSummary:_mr.deltaSummary}; if(a.detectionSettings)_st.detectionSettings=a.detectionSettings; if(s.prefs.resetFiltersOnRun!==false)_st.filters=Object.assign({},INIT_FILTERS); /* default to cluster-grouped view after a run unless the user has previously picked something */ try{ var _hasExplicit=localStorage.getItem('cc_clashGroupBy')!=null; if(!_hasExplicit){ _st.clashGroupBy=['cluster']; localStorage.setItem('cc_clashGroupBy', JSON.stringify(['cluster'])); } }catch(e){} return Object.assign({},s,_st);
+      case A.MERGE_CLASHES: var _mr=mergeDetectionResults(a.v, a.t===A.MERGE_CLASHES?s.clashes:[]); _gcEvent('clash-detection', _mr.clashes.length+' clashes'); var _st={clashes:_mr.clashes,detecting:false,activeId:null,floors:deriveFloors(_mr.clashes),lastDeltaSummary:_mr.deltaSummary}; if(a.detectionSettings)_st.detectionSettings=a.detectionSettings; if(s.prefs.resetFiltersOnRun!==false)_st.filters=Object.assign({},INIT_FILTERS); /* Default to Grouped only when the user has nothing chosen AND the result is small enough that thousands of sticky-positioned cluster headers won't tax the browser. Never write localStorage here — that's the user-facing CLASH_GROUP_BY dispatch's job. */ if((!Array.isArray(s.clashGroupBy)||s.clashGroupBy.length===0) && _mr.clashes.length>0 && _mr.clashes.length<=2000) { _st.clashGroupBy=['cluster']; } return Object.assign({},s,_st);
       case A.DETECTING:   return Object.assign({},s,{detecting:true,runModalOpen:false});
       case A.STOP_DETECT: return Object.assign({},s,{detecting:false});
       case A.SWITCHING_PROJECT: return Object.assign({},s,{switchingProject:!!a.v});
@@ -14603,14 +14603,24 @@ function startApp() {
     var items = props.items, isClash = props.isClash, delta = props.delta;
     var stTitlesBusy = useState(false), titlesBusy = stTitlesBusy[0], setTitlesBusy = stTitlesBusy[1];
     if (!items.length) return null;
-    var total = items.length;
-    var untitled = isClash ? items.filter(function(c){return !c.aiTitle;}).length : 0;
-    var open = items.filter(function(c){return c.status==='open';}).length;
-    var inProg = items.filter(function(c){return c.status==='in_progress';}).length;
-    var resolved = items.filter(function(c){return c.status==='resolved'||c.status==='closed';}).length;
-    var hard = isClash ? items.filter(function(c){return c.type==='hard';}).length : 0;
-    var soft = isClash ? items.filter(function(c){return c.type==='soft';}).length : 0;
-    var dup = isClash ? items.filter(function(c){return c.type==='duplicate';}).length : 0;
+    // Single O(N) pass instead of 7 filters — matters at 10k+ clashes.
+    var counts = React.useMemo(function(){
+      var c = {total:items.length, untitled:0, open:0, inProg:0, resolved:0, hard:0, soft:0, dup:0};
+      for (var i=0; i<items.length; i++) {
+        var it = items[i];
+        if (isClash && !it.aiTitle) c.untitled++;
+        if (it.status==='open') c.open++;
+        else if (it.status==='in_progress') c.inProg++;
+        else if (it.status==='resolved' || it.status==='closed') c.resolved++;
+        if (isClash) {
+          if (it.type==='hard') c.hard++;
+          else if (it.type==='soft') c.soft++;
+          else if (it.type==='duplicate') c.dup++;
+        }
+      }
+      return c;
+    }, [items, isClash]);
+    var total = counts.total, untitled = counts.untitled, open = counts.open, inProg = counts.inProg, resolved = counts.resolved, hard = counts.hard, soft = counts.soft, dup = counts.dup;
     var pct = total > 0 ? Math.round(resolved / total * 100) : 0;
     var barCol = pct >= 80 ? '#22c55e' : pct >= 40 ? '#f59e0b' : '#ef4444';
 
