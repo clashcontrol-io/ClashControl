@@ -1,5 +1,8 @@
 # Changelog
 
+## v5.17.0 (2026-06-06)
+- feat(triage+viewer): grounded prompt + 👍/👎 + marker fixes + survey-marker strip + memory helpers
+
 ## v5.16.2 (2026-06-06)
 - feat: point clouds + IFC geo-placement (v1) (#578)
 
