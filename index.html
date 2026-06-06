@@ -7237,7 +7237,12 @@ function startApp() {
           var faceCount = mesh.geometry.index ? mesh.geometry.index.count/3 : (mesh.geometry.attributes.position ? mesh.geometry.attributes.position.count/3 : 0);
           if (faceCount < 50000) {
             var edgeGeo = new THREE.EdgesGeometry(mesh.geometry, 50);
-            var edgeMat = new THREE.LineBasicMaterial({color: colorHex, transparent:true, opacity:0.55, depthTest:false});
+            // Selection outline: opacity dropped from 0.55 → 0.30 so the
+            // full-element EdgesGeometry reads as a hint of "this is the
+            // element" rather than the dominant visual feature on long /
+            // elongated IFC elements (a beam outline at full extent would
+            // otherwise drown out the actual clash zone).
+            var edgeMat = new THREE.LineBasicMaterial({color: colorHex, transparent:true, opacity:0.30, depthTest:false});
             var edgeLines = new THREE.LineSegments(edgeGeo, edgeMat);
             edgeLines.applyMatrix4(mesh.matrixWorld);
             edgeLines.renderOrder = 999;
