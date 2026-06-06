@@ -88,6 +88,16 @@ Things to be careful about. Do not remove without a good reason — add a note i
 Update this section at the start and end of each session.
 Mark completed items with ~~strikethrough~~ and date, then let the daily sync archive them.
 
+On branch `claude/jolly-planck-mgEaf` (2026-06-06) — Phase A: Run Detection modal (UI overhaul step 1):
+
+- New toolbar **Run detection** button (accent CTA in the TopToolbar's section/measure gap) opens a new `RunDetectionModal` (`index.html:~14894`) that wraps the existing `ClashRulesPanel` (Quick Run presets + Advanced) plus a collapsible **Project standards** section embedding `StandardsPanel`. One surface for all clash setup.
+- New `_ccSummariseRules(rules, models)` helper produces a one-line header (e.g. `Hard clashes · 6 models, all-vs-all`) shown under the modal title.
+- New state field `s.runModalOpen`, action `A.SHOW_RUN_MODAL`. `A.DETECTING` auto-closes the modal on run.
+- Removed **Detection Rules** tab from the IssuePanel tab bar (`~15336`). StandardsPanel is still rendered defensively if `s.tab==='standards'` ever fires, but no UI path sets it now. Cmd-K palette "Open Standards" and the NL "double-cancel" fallback both redirect to `A.SHOW_RUN_MODAL` instead.
+- Engine selector pill in toolbar stays (power-user shortcut); inside the modal the engine selector inside ClashRulesPanel also stays.
+- Not done in this commit: N-model scope picker (`rules.scope = { mode, sideA, sideB }`) and self-clash consolidation. The legacy `modelA`/`modelB` multi-picker still works for all N models, just less intuitive than the planned segmented control. Phase A2 next.
+- Caveats: untested in browser this session (no GPU/sample IFC); syntax-checked only via `new Function(body)`. The summary line shows `modelA ↔ modelB` for non-all rules but does not yet enumerate when `modelA`/`modelB` are arrays (`_modelSelectLabel` only handles scalar input). Cosmetic — not wrong.
+
 On branch `claude/jolly-planck-mgEaf` (2026-06-05) — AI Triage Weeks 1+2: clustering + prompt scaffolding (still no API call):
 
 **Week 2 — context-packet + prompt, manual copy-paste loop.** New `window._ccBuildClusterContext(clashes)` walks the cluster, looks up each element via `_ccElementFor(modelId, expressId)` (uses `window._ccLatestState`), and returns a JSON-ready context: ifcType / name / objectType / storey / material / curated quantities (Length, Diameter, Volume, etc.), cross-model + same-storey flags, hard/soft/duplicate counts, spatial extent + center in metres, min/max distance. `window._ccBuildTriagePrompt(ctx)` produces a senior-BIM-coordinator prompt asking for `{title, severity, explanation, discipline_conflict, false_positive_likelihood, resolution_options[]}` — advisory framing, no prescriptive structural changes. New "Copy AI prompt" button on each cluster group header (only when groupBy='cluster' and clash tab) copies the full prompt to clipboard so we can iterate against Claude/Gemma manually before wiring `/api/triage` in Week 3.

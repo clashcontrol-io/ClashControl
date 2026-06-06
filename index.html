@@ -763,7 +763,7 @@ function startApp() {
     trainingMode:(function(){try{var v=localStorage.getItem('cc_trainingMode');return v===null?true:v==='1';}catch(e){return true;}}()),
     clashGroupBy:(function(){var v=_ccLoadPref('clashGroupBy',[]);return Array.isArray(v)?v:(v&&v!=='none'?[v]:[]);}()), clashSortBy:(function(){var v=_ccLoadPref('clashSortBy',[]);return Array.isArray(v)?v:(v&&v!=='none'?[v]:[]);}()),
     issueGroupBy:(function(){var v=_ccLoadPref('issueGroupBy',[]);return Array.isArray(v)?v:(v&&v!=='none'?[v]:[]);}()), issueSortBy:(function(){var v=_ccLoadPref('issueSortBy',[]);return Array.isArray(v)?v:(v&&v!=='none'?[v]:[]);}()),
-    chatOpen:false, detecting:false, switchingProject:false,
+    chatOpen:false, detecting:false, switchingProject:false, runModalOpen:false,
     sectionAxis:(_savedSection&&_savedSection.axis)||null,
     sectionPos:(_savedSection&&_savedSection.pos!=null)?_savedSection.pos:0.5,
     sectionCustom:(_savedSection&&_savedSection.custom)||null,
@@ -832,7 +832,7 @@ function startApp() {
     AI_FEEDBACK:'AI_FEEDBACK', CLEAR_TRAINING_DATA:'CLEAR_TRAINING_DATA',
     UPD_CLASH:'UPD_CLASH', BATCH_UPD_CLASH:'BATCH_UPD_CLASH',
     ACTIVE:'ACTIVE', MODAL:'MODAL',
-    UPD_RULES:'UPD_RULES', UPD_FILTERS:'UPD_FILTERS', RESET_FILTERS:'RESET_FILTERS',
+    UPD_RULES:'UPD_RULES', UPD_FILTERS:'UPD_FILTERS', RESET_FILTERS:'RESET_FILTERS', SHOW_RUN_MODAL:'SHOW_RUN_MODAL',
     SECTION:'SECTION', SECTION_CUSTOM:'SECTION_CUSTOM', SECTION_BOX:'SECTION_BOX', SECTION_FLIP:'SECTION_FLIP', SECTION_HATCH:'SECTION_HATCH',
     TAB:'TAB', SETTINGS:'SETTINGS', TRAINING_MODE:'TRAINING_MODE',
     UPD_PREFS:'UPD_PREFS',
@@ -964,7 +964,7 @@ function startApp() {
       case A.TOGGLE_ALL_STOREYS: return Object.assign({},s,{models:s.models.map(function(m){if(m.id!==a.id)return m;return Object.assign({},m,{hiddenStoreys:a.hide?a.storeys.reduce(function(o,st){o[st]=true;return o;},{}):{}}); })});
       case A.SET_CLASHES: /* falls through to MERGE_CLASHES with no prev clashes */
       case A.MERGE_CLASHES: var _mr=mergeDetectionResults(a.v, a.t===A.MERGE_CLASHES?s.clashes:[]); _gcEvent('clash-detection', _mr.clashes.length+' clashes'); var _st={clashes:_mr.clashes,detecting:false,activeId:null,floors:deriveFloors(_mr.clashes),lastDeltaSummary:_mr.deltaSummary}; if(a.detectionSettings)_st.detectionSettings=a.detectionSettings; if(s.prefs.resetFiltersOnRun!==false)_st.filters=Object.assign({},INIT_FILTERS); return Object.assign({},s,_st);
-      case A.DETECTING:   return Object.assign({},s,{detecting:true});
+      case A.DETECTING:   return Object.assign({},s,{detecting:true,runModalOpen:false});
       case A.STOP_DETECT: return Object.assign({},s,{detecting:false});
       case A.SWITCHING_PROJECT: return Object.assign({},s,{switchingProject:!!a.v});
       case A.ADD_ISSUE:
@@ -1098,6 +1098,7 @@ function startApp() {
       case A.ACTIVE:      return Object.assign({},s,{activeId:a.id,sectionAxis:null,sectionCustom:null});
       case A.MODAL:       return Object.assign({},s,{showModal:a.v, modalElement:a.el||null});
       case A.UPD_RULES:   return Object.assign({},s,{rules:Object.assign({},s.rules,a.u)});
+      case A.SHOW_RUN_MODAL: return Object.assign({},s,{runModalOpen:!!a.v});
       case 'CHAT_OPEN':   return Object.assign({},s,{chatOpen:!!a.v});
       case A.UPD_FILTERS: return Object.assign({},s,{filters:Object.assign({},s.filters,a.u)});
       case A.RESET_FILTERS: return Object.assign({},s,{filters:Object.assign({},INIT_FILTERS)});
@@ -14891,6 +14892,92 @@ function startApp() {
     </div>`;
   }
 
+  // ── Phase A: one-line summary of effective rules, used in the Run Detection modal header ──
+  function _ccSummariseRules(rules, models) {
+    if (!rules) return '';
+    var nModels = (models||[]).length;
+    var mA = rules.modelA, mB = rules.modelB;
+    var bothAll = (mA==='all'||mA==null) && (mB==='all'||mB==null);
+    var scopePart;
+    if (nModels === 0) scopePart = 'no models loaded';
+    else if (bothAll) scopePart = nModels + ' model' + (nModels===1?'':'s') + ', all-vs-all';
+    else scopePart = _modelSelectLabel(mA, models||[]) + ' ↔ ' + _modelSelectLabel(mB, models||[]);
+    var typePart;
+    if (!rules.hard) typePart = 'Soft clashes ' + (rules.minGap||0) + '–' + (rules.maxGap||100) + ' mm';
+    else if ((rules.maxGap||0) > 0) typePart = 'Hard + near miss ' + (rules.maxGap||0) + ' mm';
+    else typePart = 'Hard clashes';
+    var selfPart = '';
+    if (rules.excludeSelf === false || rules.selfClashModels === 'all' || (Array.isArray(rules.selfClashModels) && rules.selfClashModels.length>0)) {
+      selfPart = ' · self-clash on';
+    }
+    return typePart + ' · ' + scopePart + selfPart;
+  }
+
+  // ── Run Detection Modal — single entry point for clash setup. ──
+  // Wraps the existing ClashRulesPanel (Quick Run + Advanced) and the
+  // StandardsPanel (default clearance, IFC type-pair rules, discipline
+  // -pair rules) so all detection setup lives behind one button.
+  function RunDetectionModal(props) {
+    var s = props.s, d = props.d;
+    var summary = _ccSummariseRules(s.rules, s.models);
+    var showStdSt = useState(false), showStandards = showStdSt[0], setShowStandards = showStdSt[1];
+    var canRun = (s.models||[]).length > 0 && !s.detecting;
+    function close(){ d({t:A.SHOW_RUN_MODAL, v:false}); }
+    function runNow(){
+      if (!canRun) return;
+      var rules = s.rules;
+      var discs = [];
+      var mA = rules.modelA, mB = rules.modelB;
+      if (mA && typeof mA==='string' && mA.indexOf('disc:')===0) discs.push(mA.slice(5));
+      if (mB && typeof mB==='string' && mB.indexOf('disc:')===0 && discs.indexOf(mB.slice(5))===-1) discs.push(mB.slice(5));
+      if (discs.length===0) discs = ['all'];
+      var ds = { clearance_mm: rules.maxGap > 0 ? rules.maxGap : null, discipline_filters: discs };
+      d({t:A.DETECTING}); d({t:A.TAB,v:'clashes'});
+      detectClashesAsync(s.models, rules).then(function(result){ classifyClashes(result); d({t:A.MERGE_CLASHES, v:result, detectionSettings:ds}); });
+    }
+    return html`<div class="cc-modal-backdrop" style=${S_BACKDROP} role="dialog" aria-modal="true" aria-labelledby="cc-run-detection-title"
+      onClick=${close}>
+      <div class="cc-modal-card" style=${{...S_MODAL_CARD,width:720,padding:0,display:'flex',flexDirection:'column'}} onClick=${function(e){e.stopPropagation();}}>
+        <!-- Header -->
+        <div style=${{padding:'1rem 1.2rem .6rem',display:'flex',alignItems:'center',gap:'.6rem',borderBottom:'1px solid var(--border-subtle)'}}>
+          <div style=${{width:32,height:32,borderRadius:'var(--radius-md)',background:'var(--accent-bg)',display:'flex',alignItems:'center',justifyContent:'center',color:'var(--accent)'}}>
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="6 4 20 12 6 20 6 4"/></svg>
+          </div>
+          <div style=${{flex:1,minWidth:0}}>
+            <div id="cc-run-detection-title" style=${{fontSize:'1.05rem',fontWeight:700,color:'var(--text-primary)'}}>Run clash detection</div>
+            <div style=${{fontSize:'0.74rem',color:'var(--text-muted)',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>${summary}</div>
+          </div>
+          <button onClick=${close} style=${S_MODAL_CLOSE} aria-label="Close">✕</button>
+        </div>
+        <!-- Body: presets + advanced (existing ClashRulesPanel body) -->
+        <div style=${{overflowY:'auto',maxHeight:'calc(85vh - 140px)'}}>
+          <${ClashRulesPanel} s=${s} d=${d} />
+          <!-- Project standards (collapsed) -->
+          <div style=${{borderTop:'1px solid var(--border-subtle)'}}>
+            <button onClick=${function(){setShowStandards(!showStandards);}}
+              style=${{...S_BTN,width:'100%',padding:'.55rem .7rem',background:'none',color:'var(--text-secondary)',
+                display:'flex',alignItems:'center',justifyContent:'space-between',fontSize:'.78rem',fontFamily:'var(--font-body)'}}>
+              <span style=${{fontWeight:600}}>Project standards</span>
+              <span style=${{fontSize:'.65rem',color:'var(--text-faint)'}}>${showStandards?'▲':'▼'} default clearance, IFC type pairs, discipline pairs</span>
+            </button>
+            ${showStandards && html`<div style=${{padding:'0 .25rem .5rem',borderTop:'1px solid var(--border-subtle)'}}>
+              <${StandardsPanel} s=${s} d=${d} />
+            </div>`}
+          </div>
+        </div>
+        <!-- Footer: prominent Run button (duplicated from ClashRulesPanel but always visible) -->
+        <div style=${{padding:'.6rem .9rem',borderTop:'1px solid var(--border-subtle)',display:'flex',gap:'.5rem',alignItems:'center'}}>
+          <div style=${{flex:1,fontSize:'.68rem',color:'var(--text-faint)'}}>${(s.models||[]).length===0?'Load a model first.':'Choose a preset above, or click Run Detection with the current rules.'}</div>
+          ${s.detecting
+            ? html`<button onClick=${function(){if(typeof cancelDetection==='function')cancelDetection();}}
+                style=${{...S_BTN,padding:'.45rem 1rem',background:'#dc2626',color:'#fff',fontWeight:600,fontSize:'.82rem',borderRadius:6}}>Stop Detection</button>`
+            : html`<button onClick=${runNow} disabled=${!canRun}
+                style=${{...S_BTN,padding:'.45rem 1rem',background:canRun?'var(--accent)':'var(--bg-secondary)',color:canRun?'#fff':'var(--text-faint)',fontWeight:600,fontSize:'.82rem',borderRadius:6,minWidth:140}}>Run Detection</button>`}
+        </div>
+      </div>
+    </div>`;
+  }
+
   // ── Clash Rules Panel (Classical UI) ────────────────────────────
   function ClashRulesPanel(props) {
     var s = props.s, d = props.d;
@@ -15333,7 +15420,7 @@ function startApp() {
 
     return html`<div style=${{display:'flex',flexDirection:'column',flex:1,overflow:'hidden',minHeight:0}}>
       ${!hideTabBar && html`<div style=${{display:'flex',borderBottom:'1px solid var(--border-subtle)',flexShrink:0,background:'var(--bg-primary)'}} role="tablist">
-        ${[{id:'clashes',label:'Clashes',n:oC},{id:'issues',label:'Issues',n:oI},{id:'navigator',label:'Navigator',n:0},{id:'standards',label:'Detection Rules',n:0}].map(function(t){return html`
+        ${[{id:'clashes',label:'Clashes',n:oC},{id:'issues',label:'Issues',n:oI},{id:'navigator',label:'Navigator',n:0}].map(function(t){return html`
           <button key=${t.id} onClick=${function(){d({t:A.TAB,v:t.id})}} role="tab" aria-selected=${s.tab===t.id}
             style=${{...S_BTN,flex:1,background:'none',borderRadius:0,padding:'.7rem .4rem',
               fontFamily:'var(--font-body)',fontSize:'.78rem',fontWeight:s.tab===t.id?500:400,
@@ -20145,9 +20232,9 @@ function startApp() {
     push({group:'Panels', label:'Open Navigator',
       keywords:'navigator tree elements explorer browse',
       onSelect:function(){ d({t:A.TAB,v:'navigator'}); }});
-    push({group:'Panels', label:'Open Standards',
-      keywords:'standards rules ids data quality compliance', r:'review',
-      onSelect:function(){ d({t:A.TAB,v:'standards'}); }});
+    push({group:'Panels', label:'Run detection / Open rules',
+      keywords:'detection clash rules standards ids run setup compliance',
+      onSelect:function(){ d({t:A.SHOW_RUN_MODAL,v:true}); }});
     push({group:'Panels', label:'Toggle Models panel',
       keywords:'models files ifc list panel',
       onSelect:function(){ try{ if(window._ccToggleModelsPanel) window._ccToggleModelsPanel(); }catch(e){} }});
@@ -25205,8 +25292,8 @@ function startApp() {
           cancelCountRef.current += 1;
           if (cancelCountRef.current >= 2) {
             cancelCountRef.current = 0;
-            d({t:A.TAB, v:'standards'});
-            return 'Opening the setup tab — you can configure everything there.';
+            d({t:A.SHOW_RUN_MODAL, v:true});
+            return 'Opening the Run detection setup — you can configure everything there.';
           }
           return 'Setup cancelled. Say "cancel" once more to open the setup tab instead.';
         }
@@ -28475,6 +28562,32 @@ function startApp() {
         ${(s.sectionAxis||s.sectionCustom||(s.sectionBox&&s.sectionBox.enabled)) && btn({k:'sclear', title:'Clear Section (Esc)',  label:'Clear Section', icon:I.clear,
                 onClick:function(){ window._ccSectionPickPending=false; setPickOn(false); d({t:A.SECTION,axis:null}); d({t:A.SECTION_CUSTOM,v:null}); d({t:A.SECTION_BOX,v:null}); }})}
         ${div()}
+        <!-- DETECT — single Run Detection entry point (opens RunDetectionModal) -->
+        ${(function(){
+          var dl = s.detecting;
+          var label = dl ? 'Detecting…' : 'Run detection';
+          return html`<button onClick=${function(){ if(!dl) d({t:A.SHOW_RUN_MODAL, v:true}); }}
+            aria-label=${label} title=${label + (dl?'':' — open setup')}
+            disabled=${dl}
+            onMouseEnter=${function(e){ var r=e.currentTarget.getBoundingClientRect(); setTtTip({label:label, desc:dl?'Detection running':'Configure rules and run a clash test'}); ttPos.current={x:r.left+r.width/2,y:r.bottom}; }}
+            onMouseLeave=${function(){ setTtTip(null); }}
+            style=${{
+              display:'inline-flex',alignItems:'center',gap:'.35rem',height:28,padding:'0 .65rem',marginLeft:'.15rem',
+              background: dl ? 'var(--bg-secondary)' : 'var(--accent)',
+              color: dl ? 'var(--text-faint)' : '#fff',
+              border: 'none', borderRadius:'var(--radius-sm)',
+              cursor: dl ? 'default' : 'pointer', fontWeight:600, fontSize:'var(--text-xs)',
+              fontFamily:'var(--font-body)',whiteSpace:'nowrap',transition:'background var(--duration-fast)'
+            }}>
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              ${dl
+                ? html`<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>`
+                : html`<polygon points="6 4 20 12 6 20 6 4"/>`}
+            </svg>
+            <span>${label}</span>
+          </button>`;
+        })()}
+        ${div()}
         <!-- MEASURE — one button + caret popover (Trimble / FreeCAD pattern) -->
         ${(function(){
           var modeLabel = s.measureMode==='length'?'Distance':s.measureMode==='angle'?'Angle':s.measureMode==='area'?'Area':s.measureMode==='element'?'Element':s.measureMode==='clearance'?'Clearance':'Measure';
@@ -29941,6 +30054,7 @@ function startApp() {
       ${s.showSettings && html`<${SettingsModal} d=${d} s=${s} prefs=${s.prefs} models=${s.models} rules=${s.rules} />`}
       ${s.showShare && html`<${ShareModal} d=${d} s=${s} />`}
       ${s.showSmartViews && html`<${SmartViewsModal} d=${d} s=${s} />`}
+      ${s.runModalOpen && html`<${RunDetectionModal} d=${d} s=${s} />`}
       ${s.commentMode && html`<div style=${{position:'fixed',top:'1rem',left:'50%',transform:'translateX(-50%)',zIndex:9990,
         background:'var(--accent)',color:'#fff',padding:'.5rem .9rem',borderRadius:'var(--radius-md)',
         boxShadow:'var(--shadow-md)',display:'flex',alignItems:'center',gap:'.6rem',
