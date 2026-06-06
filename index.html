@@ -1534,7 +1534,10 @@ function startApp() {
         geo.setIndex(new THREE.BufferAttribute(new Uint32Array(md.idx), 1));
       }
       var c = md.col;
-      var mat = new THREE.MeshPhongMaterial({color:new THREE.Color(c[0],c[1],c[2]), opacity:c[3], transparent:!!md.tr, side:THREE.DoubleSide});
+      // Share materials across the whole session (same RGBA → one material),
+      // same as the live load path. Before this, restore minted a fresh
+      // MeshPhongMaterial per mesh → 146k distinct materials on reload (#572).
+      var mat = _ccGetSharedPhongMat(c[0], c[1], c[2], c[3]);
       var mesh = new THREE.Mesh(geo, mat);
       mesh.applyMatrix4(_tmpMtx4.fromArray(md.mtx));
       mesh.userData.expressId = md.eid;
@@ -1552,6 +1555,17 @@ function startApp() {
         props:  ed.props
       };
     });
+    // Run the same draw-call optimisation the live load path uses. Before
+    // this, restore-from-cache (project switch / reload) bypassed chunk-merge
+    // entirely, so a reloaded session showed "0 merged chunks" and 146k draw
+    // objects even with the flag ON (#572). el.meshes[] stays per-element
+    // (chunk-merge mutates only the render list), so clash/highlight are
+    // unaffected. Instancing is skipped here because the cache doesn't retain
+    // the shared-geometry id needed to group instances; chunk-merge works
+    // purely from geometry + material and delivers the bulk of the win.
+    if (typeof _ccBuildMergedChunks === 'function') {
+      try { meshes = _ccBuildMergedChunks(elements, meshes).meshes; } catch(e){ console.warn('[restore] chunk-merge skipped:', e); }
+    }
     return {meshes:meshes, elements:elements, storeys:cached.storeys, storeyData:cached.storeyData, relatedPairs:cached.relatedPairs||{}, stats:cached.stats};
   }
 
@@ -2564,6 +2578,7 @@ function startApp() {
   // count; loading N different models multiplied it by N. See issue #572.
   if (!window._ccSharedMatCache) window._ccSharedMatCache = {};
   function _ccGetSharedPhongMat(r, g, b, a) {
+    if (!window._ccSharedMatCache) window._ccSharedMatCache = {};
     var key = r.toFixed(3)+','+g.toFixed(3)+','+b.toFixed(3)+','+a.toFixed(3);
     var m = window._ccSharedMatCache[key];
     if (!m) {
@@ -14918,11 +14933,22 @@ function startApp() {
     var sel = s.selected;
     var count = Object.keys(sel).length;
     if (!s.selectMode) {
+      var totalCount = (items||[]).length;
       return html`<div style=${{padding:'.25rem .5rem',borderBottom:'1px solid var(--border-subtle)',flexShrink:0,display:'flex',alignItems:'center',justifyContent:'space-between'}}>
         <button onClick=${function(){d({t:A.SELECT_MODE,v:true})}}
           style=${{...S_BTN,fontSize:'0.67rem',padding:'.15rem .4rem',background:'none',color:'var(--text-faint)',border:'1px solid var(--border)'}}>
           Select Multiple
         </button>
+        ${isClash && totalCount > 0 && html`<button onClick=${function(){
+            if (confirm('Clear all ' + totalCount + ' clash' + (totalCount===1?'':'es') + '? This frees their markers and memory but does not unload any models. You can re-run detection any time.')) {
+              d({t:A.SET_CLASHES, v:[]});
+              if (window._ccToast) window._ccToast('Cleared ' + totalCount + ' clashes');
+            }
+          }}
+          title="Remove all clash results (models stay loaded)"
+          style=${{...S_BTN,fontSize:'0.67rem',padding:'.15rem .4rem',background:'none',color:'var(--color-danger)',border:'1px solid var(--border)'}}>
+          Clear all
+        </button>`}
       </div>`;
     }
     return html`<div style=${{padding:'.35rem .5rem',borderBottom:'1px solid var(--border-subtle)',flexShrink:0,background:'var(--accent-bg)'}}>
