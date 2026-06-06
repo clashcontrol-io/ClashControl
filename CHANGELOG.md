@@ -1,5 +1,8 @@
 # Changelog
 
+## v5.15.2 (2026-06-06)
+- perf(viewer): D1b LOD + cross-load material sharing + dup-load guard
+
 ## v5.15.1 (2026-06-06)
 - perf(viewer): D1 — Points + per-cluster hotspot markers
 
