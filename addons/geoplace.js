@@ -21,16 +21,14 @@
   }
 
   // ── Tile provider config ───────────────────────────────────────
-  // MapTiler is the production choice (set window.MAPTILER_KEY to enable).
-  // Falls back to OpenStreetMap tiles for local dev — fine for a handful of
-  // requests, NOT for production traffic (ToS-restricted).
+  // All tiles go through our same-origin /api/tile proxy. The proxy
+  // handles provider selection server-side based on MAPTILER_KEY:
+  // - MAPTILER_KEY set  → MapTiler satellite (production)
+  // - MAPTILER_KEY unset → OpenStreetMap (dev / demo)
+  // Going through the proxy also gives us aggressive edge caching and
+  // CORS/CORP headers that some upstream tile servers omit.
   function tileURL(z, x, y) {
-    var key = window.MAPTILER_KEY;
-    if (key) {
-      return 'https://api.maptiler.com/maps/satellite/' + z + '/' + x + '/' + y + '.jpg?key=' + encodeURIComponent(key);
-    }
-    var sub = 'abc'[(x + y) % 3];
-    return 'https://' + sub + '.tile.openstreetmap.org/' + z + '/' + x + '/' + y + '.png';
+    return '/api/tile?z=' + z + '&x=' + x + '&y=' + y;
   }
 
   // ── lat/lon → web-mercator metres ─────────────────────────────
@@ -113,10 +111,10 @@
             img.onload = function(){
               var px = (dx + halfTiles) * tileSize;
               var py = (dy + halfTiles) * tileSize;
-              try { ctx.drawImage(img, px, py); } catch(e){}
-              resolve();
+              try { ctx.drawImage(img, px, py); resolve(true); }
+              catch(e){ console.warn('[Geoplace] drawImage failed (tainted canvas?)', e); resolve(false); }
             };
-            img.onerror = function(){ resolve(); }; // missing tile → leave the bg
+            img.onerror = function(){ resolve(false); }; // missing tile → leave the bg
           });
           img.src = tileURL(zoom, tx, ty);
           pending.push(p);
@@ -124,7 +122,11 @@
       }
     }
 
+    var loaded = 0, failed = 0;
+    var origPending = pending.length;
+    pending = pending.map(function(p){ return p.then(function(ok){ if (ok) loaded++; else failed++; }); });
     return Promise.all(pending).then(function(){
+      console.log('[Geoplace] tiles z=' + zoom + ' totalSide=' + totalSide + ' loaded=' + loaded + '/' + origPending + (failed?' (' + failed + ' failed)':''));
       // Plane size in metres equals total tiles × metresPerTile.
       var planeSize = totalSide * metresPerTile;
       // Plane is centred on the model bbox centre, sitting at Y = refElev (or 0).
@@ -135,21 +137,28 @@
 
       var geom = new THREE.PlaneGeometry(planeSize, planeSize, 1, 1);
       geom.rotateX(-Math.PI / 2); // lay flat (Three.js Y-up; default plane is XY)
-      var mat = new THREE.MeshBasicMaterial({map:tex, transparent:true, opacity:0.95, depthWrite:false});
+      // Opaque + depthWrite on — keeps fillrate cost low and lets the render-
+      // on-demand loop skip frames when nothing changes. Transparent planes
+      // forced constant overdraw on every redraw the model triggered.
+      var mat = new THREE.MeshBasicMaterial({map:tex, depthWrite:true});
       var mesh = new THREE.Mesh(geom, mat);
       mesh.userData.isReference = true;
       mesh.userData.isBasemap = true;
-      mesh.renderOrder = -1; // draw before the model so depth test wins
-      // Position at model bbox centre at Y = ground level
+      mesh.castShadow = false;
+      mesh.receiveShadow = false;
+      mesh.matrixAutoUpdate = false;
+      // Position at model bbox centre, just below ground so the model doesn't
+      // z-fight with the plane.
       var bbox = _getModelBBox(modelId);
       if (bbox && !bbox.isEmpty()) {
         var c = bbox.getCenter(new THREE.Vector3());
-        mesh.position.set(c.x, bbox.min.y - 0.01, c.z);
+        mesh.position.set(c.x, bbox.min.y - 0.05, c.z);
       }
       // Rotate by model's true-north override (degrees)
       if (opts.trueNorthDeg) {
         mesh.rotation.y = -opts.trueNorthDeg * Math.PI / 180;
       }
+      mesh.updateMatrix();
       clearBasemap();
       scene.add(mesh);
       _basemap = mesh;
