@@ -17283,6 +17283,101 @@ function startApp() {
     return pair + ' \u2014 ' + (nA||'#'+c.elemA) + ' \u2194 ' + (nB||'#'+c.elemB);
   };
 
+  // \u2500\u2500 Week-2 AI Triage: per-cluster context packet + prompt \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
+  // No API call yet. Surfaced via a "Copy AI prompt" button on cluster
+  // group headers so we can paste into Claude/Gemma and iterate on the
+  // response shape before wiring /api/triage.
+  function _ccElementFor(modelId, expressId) {
+    var s = window._ccLatestState; if (!s || !s.models) return null;
+    for (var i=0;i<s.models.length;i++) {
+      var m = s.models[i]; if (m.id !== modelId) continue;
+      var els = m.elements||[];
+      for (var j=0;j<els.length;j++) if (els[j].expressId === expressId) return { el:els[j], model:m };
+      return null;
+    }
+    return null;
+  }
+  function _ccElemSummary(modelId, expressId, fallbackName, fallbackType) {
+    var hit = _ccElementFor(modelId, expressId);
+    if (!hit) return { ifcType:fallbackType||'Element', name:fallbackName||('#'+expressId) };
+    var p = (hit.el.props)||{};
+    var qs = p.quantities||{}; var dims = {};
+    ['Length','Width','Height','NominalDiameter','OuterDiameter','OuterRadius','NetVolume','GrossVolume','NetArea','NetSideArea'].forEach(function(k){
+      if (qs[k]!=null) dims[k] = qs[k];
+    });
+    return {
+      ifcType: p.ifcType||fallbackType||'Element',
+      name: p.name||fallbackName||('#'+expressId),
+      objectType: p.objectType||'',
+      storey: p.storey||'',
+      material: p.material||'',
+      dimensions: dims,
+      model: hit.model.name||hit.model.id
+    };
+  }
+  window._ccBuildClusterContext = function(clashes) {
+    if (!clashes||!clashes.length) return null;
+    var c0 = clashes[0];
+    var A = _ccElemSummary(c0.modelAId, c0.elemA, c0.elemAName, c0.elemAType);
+    var B = _ccElemSummary(c0.modelBId, c0.elemB, c0.elemBName, c0.elemBType);
+    // Spatial extent across the cluster
+    var minP=[Infinity,Infinity,Infinity], maxP=[-Infinity,-Infinity,-Infinity];
+    var dists=[]; var hard=0, soft=0, dup=0;
+    clashes.forEach(function(c){
+      var p=c.point||[0,0,0];
+      for (var k=0;k<3;k++){ if(p[k]<minP[k])minP[k]=p[k]; if(p[k]>maxP[k])maxP[k]=p[k]; }
+      if (typeof c.distance==='number') dists.push(c.distance);
+      if (c.type==='soft') soft++; else if (c.type==='duplicate') dup++; else hard++;
+    });
+    var span = [maxP[0]-minP[0], maxP[1]-minP[1], maxP[2]-minP[2]];
+    if (!isFinite(span[0])) span = [0,0,0];
+    var ctr = clashes.length ? [(minP[0]+maxP[0])/2,(minP[1]+maxP[1])/2,(minP[2]+maxP[2])/2] : [0,0,0];
+    var fmt = function(n){ return Math.round(n*1000)/1000; };
+    return {
+      cluster_size: clashes.length,
+      counts: { hard:hard, soft:soft, duplicate:dup },
+      element_A: A,
+      element_B: B,
+      same_storey: !!(A.storey && B.storey && A.storey===B.storey),
+      cross_model: c0.modelAId !== c0.modelBId,
+      disciplines: (c0.disciplines||[]).slice(),
+      sample_point_count: clashes.length,
+      spatial_extent_m: span.map(fmt),
+      cluster_center_m: ctr.map(fmt),
+      min_distance: dists.length ? fmt(Math.min.apply(null,dists)) : null,
+      max_distance: dists.length ? fmt(Math.max.apply(null,dists)) : null,
+      storey: A.storey || B.storey || ''
+    };
+  };
+  window._ccBuildTriagePrompt = function(ctx) {
+    if (!ctx) return '';
+    var lines = [];
+    lines.push('You are a senior BIM coordinator reviewing clash-detection output.');
+    lines.push('Treat the input as ground truth. Do not invent dimensions, materials, or codes.');
+    lines.push('Reply ONLY with the JSON object specified \u2014 no prose, no markdown fences.');
+    lines.push('');
+    lines.push('CLASH GROUP:');
+    lines.push(JSON.stringify(ctx, null, 2));
+    lines.push('');
+    lines.push('Return JSON of the form:');
+    lines.push('{');
+    lines.push('  "title": "<\u2264 80 chars, names the conflict>",');
+    lines.push('  "severity": "critical | high | medium | low",');
+    lines.push('  "explanation": "<2\u20134 sentences, plain language, grounded only in the data above>",');
+    lines.push('  "discipline_conflict": "<e.g. MEP vs structural, MEP vs MEP>",');
+    lines.push('  "false_positive_likelihood": "low | medium | high",');
+    lines.push('  "resolution_options": [');
+    lines.push('    { "option": "<concrete change>", "tradeoff": "<what it costs>", "cost_impact": "low | medium | high" }');
+    lines.push('  ]');
+    lines.push('}');
+    lines.push('');
+    lines.push('Rules:');
+    lines.push('- 2\u20133 resolution options, ordered most-recommended first.');
+    lines.push('- Stay advisory. Never prescribe a structural change as definitive.');
+    lines.push('- If the data is insufficient to judge severity, choose "medium" and say so in explanation.');
+    return lines.join('\n');
+  };
+
   function _groupKeyFor(it, groupKey, modelsById) {
     switch(groupKey) {
       case 'storey': return it.elemAStorey || it.elemBStorey || it.storey || 'Unknown';
@@ -17543,6 +17638,21 @@ function startApp() {
               <span style=${{fontSize:'0.63rem',color:'var(--text-faint)'}}>${isOpen?'▼':'▶'}</span>
               <span style=${{width:8,height:8,borderRadius:'50%',background:dotColor,flexShrink:0}}></span>
               <span style=${{fontSize:'0.75rem',fontWeight:600,color:'var(--text-primary)',flex:1}}>${(window._ccClusterDisplay&&window._ccClusterDisplay[g.label])||g.label}</span>
+              ${isClash && window._ccClusterDisplay && window._ccClusterDisplay[g.label] && html`<button
+                title="Copy AI triage prompt for this group to clipboard"
+                onClick=${function(e){
+                  e.stopPropagation();
+                  try{
+                    var ctx = window._ccBuildClusterContext(g.items);
+                    var prompt = window._ccBuildTriagePrompt(ctx);
+                    if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(prompt);
+                    else { var ta=document.createElement('textarea'); ta.value=prompt; document.body.appendChild(ta); ta.select(); document.execCommand('copy'); document.body.removeChild(ta); }
+                    var btn=e.currentTarget; var orig=btn.textContent; btn.textContent='Copied'; setTimeout(function(){btn.textContent=orig;},1200);
+                  } catch(err){ console.warn('[triage] copy failed', err); }
+                }}
+                style=${{fontSize:'0.65rem',padding:'.12rem .4rem',marginRight:'.25rem',borderRadius:4,border:'1px solid var(--border)',background:'var(--bg-secondary)',color:'var(--text-secondary)',cursor:'pointer',fontFamily:'var(--font-body)'}}>
+                Copy AI prompt
+              </button>`}
               <span style=${{fontSize:'0.69rem',color:'var(--text-faint)',background:'var(--bg-secondary)',padding:'.1rem .35rem',borderRadius:10}}>${g.items.length}</span>
             </div>
             ${isOpen && visibleItems.map(function(it){return html`<${IssueRow} key=${it.id} item=${it} active=${activeId===it.id} d=${d} isClash=${isClash} prefs=${prefs} models=${models} selectMode=${selectMode} isSelected=${!!selected[it.id]} trainingMode=${trainingMode} />`})}
