@@ -13440,7 +13440,8 @@ function startApp() {
         var countRatio = exCount > 0 ? Math.min(newCount, exCount) / Math.max(newCount, exCount) : 0;
         var exDisc = detectDiscipline(em.elements||[]);
         if (newDisc === exDisc && countRatio > 0.6) {
-          return 'Warning: this model covers the same area as "' + em.name + '". If these are the same building loaded twice, remove one — clash detection between them will produce an extremely large number of results and may use excessive memory.';
+          var msg = 'This model covers the same area as "' + em.name + '". If these are the same building loaded twice, the second copy duplicates every IFC element — at scale this can OOM the browser (>4 GB heap is common). Clash detection between them will also produce an extreme number of false positives.\n\nLoad anyway?';
+          return { warn: 'Warning: this model covers the same area as "' + em.name + '" — clash detection between them will produce an extremely large number of results and may use excessive memory.', confirm: msg, dupOf: em.id };
         }
       }
     }
@@ -13648,7 +13649,16 @@ function startApp() {
                   }());
                   consoleElementProfile(base, _loadType, result.elements);
                   var _overlapWarn = _checkModelOverlap(result.elements, s.models);
-                  if (_overlapWarn) setErr(_overlapWarn);
+                  if (_overlapWarn && typeof _overlapWarn === 'object') {
+                    if (!confirm(_overlapWarn.confirm)) {
+                      // User declined the duplicate load — bail before adding to state.
+                      setErr('Duplicate model load cancelled.');
+                      return;
+                    }
+                    setErr(_overlapWarn.warn);
+                  } else if (_overlapWarn) {
+                    setErr(_overlapWarn);
+                  }
                   var disc = detectDiscipline(result.elements);
                   var dObj = DISC.find(function(x){return x.id===disc;});
                   var col = dObj ? dObj.c : DISC[0].c;
@@ -13876,7 +13886,12 @@ function startApp() {
               var fSize = result.stats ? result.stats.fileSize : buf.byteLength;
               var baseName = f.name.replace(/\.ifc$/i,'');
               var _ifcOverlapWarn = _checkModelOverlap(result.elements, s.models.filter(function(m){return m.name!==baseName;}));
-              if (_ifcOverlapWarn) setErr(_ifcOverlapWarn);
+              if (_ifcOverlapWarn && typeof _ifcOverlapWarn === 'object') {
+                if (!confirm(_ifcOverlapWarn.confirm)) { setErr('Duplicate model load cancelled.'); return; }
+                setErr(_ifcOverlapWarn.warn);
+              } else if (_ifcOverlapWarn) {
+                setErr(_ifcOverlapWarn);
+              }
               var _liveModels = (window._ccLatestState||{}).models || s.models;
               var existing = _liveModels.find(function(m){ return m.name === baseName; });
               var modelId;
