@@ -1,5 +1,8 @@
 # Changelog
 
+## v5.15.3 (2026-06-06)
+- perf(loader): fix chunk-merge bypass on cache-restore + Clear all clashes
+
 ## v5.15.2 (2026-06-06)
 - perf(viewer): D1b LOD + cross-load material sharing + dup-load guard
 
