@@ -1703,7 +1703,16 @@ function startApp() {
   // faceIndex→expressId range table; highlight/ghost/isolate via the surviving
   // element.meshes[] proxies (Stage 2A); hide via per-chunk index masking and
   // color-by-class/DQ via per-vertex colors (Stage 2B).
-  if (typeof window._ccChunkMerge === 'undefined') window._ccChunkMerge = true;
+  // Chunk-merge default OFF. The Stage 1/2A/2B trial baked all same-material
+  // elements in a grid cell into one merged BufferGeometry — collapsing
+  // visual distinctions between adjacent elements, breaking Style switching
+  // (chunks render with a locked material), and changing how selection
+  // outlines read on dense models. Reverting to per-element rendering, same
+  // behaviour as pre-30-May before chunk-merge landed. Memory wins kept:
+  // _ccGetSharedPhongMat cross-load materials, _ccQuantizeNormalAttr Int8
+  // normals, survey base-point/nulpunt strip. Set true via console if you
+  // want the merge path back for testing.
+  if (typeof window._ccChunkMerge === 'undefined') window._ccChunkMerge = false;
   window._ccPerfSnapshot = function(){
     var s = (typeof S!=='undefined'&&S&&S.perf)?S.perf:null;
     if(!s){ console.warn('[ChunkMerge] perf not ready'); return null; }
