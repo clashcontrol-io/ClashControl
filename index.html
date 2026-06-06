@@ -17873,6 +17873,50 @@ function startApp() {
     if (!isFinite(span[0])) span = [0,0,0];
     var ctr = clashes.length ? [(minP[0]+maxP[0])/2,(minP[1]+maxP[1])/2,(minP[2]+maxP[2])/2] : [0,0,0];
     var fmt = function(n){ return Math.round(n*1000)/1000; };
+
+    // ── Project-standards grounding ──
+    // Pull the user's configured standards (default clearance + IFC type-pair
+    // rules + discipline-pair rules) that are relevant to this cluster's
+    // element types and disciplines. Lets the AI answer using *this project's*
+    // tolerances instead of generic ones, without paying for a bigger model.
+    var stds = null;
+    try {
+      var defClear  = (typeof _getStandardDefaultClearance==='function') ? _getStandardDefaultClearance() : null;
+      var pairRules = (typeof _getStandardPairRules==='function') ? _getStandardPairRules() : [];
+      var typeRules = (typeof _getStandardTypePairRules==='function') ? _getStandardTypePairRules() : [];
+      var dA = (A.discipline||'').toLowerCase(), dB = (B.discipline||'').toLowerCase();
+      var relPair = null;
+      if (dA && dB) {
+        for (var pi=0; pi<pairRules.length; pi++) {
+          var pr = pairRules[pi];
+          if ((pr.discipline_a===dA && pr.discipline_b===dB) || (pr.discipline_a===dB && pr.discipline_b===dA)) { relPair = pr; break; }
+        }
+      }
+      var relType = null;
+      var tA = (A.ifcType||''), tB = (B.ifcType||'');
+      if (tA && tB) {
+        for (var ti=0; ti<typeRules.length; ti++) {
+          var tr = typeRules[ti];
+          if ((tr.ifc_type_a===tA && tr.ifc_type_b===tB) || (tr.ifc_type_a===tB && tr.ifc_type_b===tA)) { relType = tr; break; }
+        }
+      }
+      if (defClear != null || relPair || relType) {
+        stds = {};
+        if (defClear != null) stds.default_clearance_mm = defClear;
+        if (relPair) stds.discipline_pair = { a: relPair.discipline_a, b: relPair.discipline_b, clearance_mm: relPair.clearance_mm, hard_always_flagged: relPair.hard_always_flagged !== false };
+        if (relType) stds.ifc_type_pair    = { a: relType.ifc_type_a,   b: relType.ifc_type_b,   clearance_mm: relType.clearance_mm, hard_always_flagged: relType.hard_always_flagged !== false };
+      }
+    } catch(e) { /* standards are best-effort */ }
+
+    // Loaded-model disciplines — useful for the AI to know which trades are
+    // actually on the project before recommending a routing change.
+    var loadedDisciplines = [];
+    try {
+      var ms = (window._ccLatestState && window._ccLatestState.models) || [];
+      var seenD = {};
+      for (var mi=0; mi<ms.length; mi++) { var dd = ms[mi].discipline; if (dd && !seenD[dd]) { seenD[dd] = 1; loadedDisciplines.push(dd); } }
+    } catch(e) {}
+
     return {
       cluster_size: clashes.length,
       counts: { hard:hard, soft:soft, duplicate:dup },
@@ -17881,6 +17925,8 @@ function startApp() {
       same_storey: !!(A.storey && B.storey && A.storey===B.storey),
       cross_model: c0.modelAId !== c0.modelBId,
       disciplines: (c0.disciplines||[]).slice(),
+      project_disciplines_loaded: loadedDisciplines,
+      project_standards: stds, // null when the user hasn't configured any
       sample_point_count: clashes.length,
       spatial_extent_m: span.map(fmt),
       cluster_center_m: ctr.map(fmt),
@@ -18336,6 +18382,24 @@ function startApp() {
                           ${opt.tradeoff && html`<div style=${{fontSize:'var(--text-2xs)',color:'var(--text-faint)',marginTop:'2px'}}>Tradeoff: ${opt.tradeoff}${opt.cost_impact?(' · cost: '+opt.cost_impact):''}</div>`}
                         </div>`;})}
                       </div>`}
+                      ${(function(){
+                        // Feedback row: cluster-level 👍/👎 dispatched as A.AI_FEEDBACK
+                        // for every clash in the cluster. Lights up the active choice
+                        // so it doesn't look like clicking did nothing on re-renders.
+                        var fb0 = (g.items[0] && g.items[0].aiFeedback) || null;
+                        var btn = function(label, val, on){return html`<button onClick=${function(e){
+                            e.stopPropagation();
+                            g.items.forEach(function(it){ d({t:A.AI_FEEDBACK, id:it.id, v:val}); });
+                            if (window._ccToast) window._ccToast('Thanks — feedback recorded');
+                          }}
+                          title=${val==='real_clash'?'Mark cluster as a real clash':val==='false_positive'?'Mark cluster as a false positive':'Clear feedback'}
+                          style=${{...S_BTN,fontSize:'var(--text-2xs)',padding:'1px var(--space-2)',borderRadius:'var(--radius-xs)',border:'1px solid '+(on?'var(--accent-subtle)':'var(--border)'),background:on?'var(--accent-bg)':'var(--bg-secondary)',color:on?'var(--accent-subtle)':'var(--text-secondary)',fontWeight:on?'var(--weight-semibold)':'var(--weight-regular)'}}>${label}</button>`;};
+                        return html`<div style=${{display:'flex',alignItems:'center',gap:'var(--space-1)',paddingTop:'var(--space-1)',borderTop:'1px dashed var(--border-subtle)'}}>
+                          <span style=${{fontSize:'var(--text-2xs)',color:'var(--text-faint)',marginRight:'var(--space-1)'}}>Was this useful?</span>
+                          ${btn('👍 Real clash', 'real_clash', fb0==='real_clash')}
+                          ${btn('👎 False positive', 'false_positive', fb0==='false_positive')}
+                        </div>`;
+                      })()}
                     </div>`}
               </div>`}
               ${isOpen && visibleItems.map(function(it){return html`<${IssueRow} key=${it.id} item=${it} active=${activeId===it.id} d=${d} isClash=${isClash} prefs=${prefs} models=${models} selectMode=${selectMode} isSelected=${!!selected[it.id]} trainingMode=${trainingMode} />`})}
@@ -21330,7 +21394,7 @@ function startApp() {
           <div>
             <div style=${TLBL}>AI Status</div>
             <div style=${TSUB}>${_serverAIAvailable
-              ? 'Connected — powered by Gemma 4 on ClashControl servers. No setup needed.'
+              ? 'Connected — ClashControl Coordinator (Gemma 4 on ClashControl servers). No setup needed.'
               : 'Offline — basic regex commands still work. Server may be starting up.'}</div>
           </div>
           <span style=${{fontSize:'0.8rem',color:_serverAIAvailable?'#4ade80':'#f87171',flexShrink:0}}>${_serverAIAvailable ? '● Connected' : '○ Offline'}</span>
@@ -25675,7 +25739,7 @@ function startApp() {
     window._ccNLSetInput = function(text){ setInput(text); };
     window._ccNLSetStatus = function(status, back){ setLLMStatus(status); setBackend(back); };
     var _chatStorageKey = 'cc_chat_msgs_' + (s.activeProject || 'default');
-    var _greeting = {role:'assistant', text:'Hi! I\'m Gemma, your ClashControl assistant. Tell me what you need, or pick a suggestion below. I work best with short commands like "check walls vs pipes" or "group by storey".'};
+    var _greeting = {role:'assistant', text:'Hi — I\'m the ClashControl Coordinator. Tell me what you need, or pick a suggestion below. I work best with short, scoped commands like "check walls vs pipes" or "group by storey". For deeper triage, click Triage on any cluster card.'};
     var stMsgs = useState(function(){
       try {
         var raw = localStorage.getItem(_chatStorageKey);
@@ -26168,7 +26232,7 @@ function startApp() {
     var _isMobile = window.innerWidth <= 768;
     var isDocked = !!props.docked && !_isMobile;
     var _serverReady = _serverAIAvailable;
-    var backendLabel = window._ccTourActive ? 'AI loaded' : _serverReady ? 'Gemma 4' : backend === 'server' ? 'Gemma 4' : null;
+    var backendLabel = window._ccTourActive ? 'AI loaded' : _serverReady ? 'Coordinator' : backend === 'server' ? 'Coordinator' : null;
     var backendColor = window._ccTourActive ? 'var(--accent)' : _serverReady ? '#22c55e' : mutedCol;
 
     /* The round bottom-right Ask bubble was removed in v6: AI is a peer

@@ -15,13 +15,23 @@ var _triageCache = new Map();
 function _sigForContext(ctx) {
   var A = ctx.element_A || {}, B = ctx.element_B || {};
   var c = ctx.counts || {};
+  // Standards are part of the grounding, so different tolerances must not
+  // collide in the cache. Compact serialisation keeps the key short.
+  var s = ctx.project_standards;
+  var stdSig = '';
+  if (s) {
+    stdSig = (s.default_clearance_mm != null ? 'D' + s.default_clearance_mm : '')
+      + (s.discipline_pair ? '|DP' + s.discipline_pair.clearance_mm : '')
+      + (s.ifc_type_pair    ? '|TP' + s.ifc_type_pair.clearance_mm    : '');
+  }
   return [
     A.ifcType || '', B.ifcType || '',
     A.objectType || '', B.objectType || '',
     ctx.storey || '',
     ctx.cross_model ? '1' : '0',
     (ctx.disciplines || []).slice().sort().join('+'),
-    (c.hard||0) + '/' + (c.soft||0) + '/' + (c.duplicate||0)
+    (c.hard||0) + '/' + (c.soft||0) + '/' + (c.duplicate||0),
+    stdSig
   ].join('|');
 }
 
@@ -62,10 +72,20 @@ module.exports = async function handler(req, res) {
     return res.status(200).json({ triage: cached, cached: true });
   }
 
+  var stdsLine = ctx.project_standards
+    ? 'Project standards are provided below — your severity + false_positive_likelihood judgements MUST use these tolerances, not generic ones.'
+    : 'No project standards configured — note this explicitly when judging severity, do not invent a tolerance.';
+  var discLine = (ctx.project_disciplines_loaded && ctx.project_disciplines_loaded.length)
+    ? 'Disciplines actually loaded on this project: ' + ctx.project_disciplines_loaded.join(', ') + '. Do not recommend coordinating with a discipline that is not present.'
+    : '';
+
   var prompt = [
-    'You are a senior BIM coordinator reviewing clash-detection output.',
-    'Treat the input as ground truth. Do not invent dimensions, materials, or codes.',
+    'You are the ClashControl Coordinator — a senior BIM coordinator reviewing one cluster of clash-detection results.',
+    'Treat the CLASH GROUP block as ground truth. Do not invent dimensions, materials, codes, standards, or disciplines that are not stated.',
     'Reply ONLY with the JSON object specified — no prose, no markdown fences.',
+    '',
+    stdsLine,
+    discLine,
     '',
     'CLASH GROUP:',
     JSON.stringify(ctx, null, 2),
@@ -74,7 +94,7 @@ module.exports = async function handler(req, res) {
     '{',
     '  "title": "<= 80 chars, names the conflict",',
     '  "severity": "critical | high | medium | low",',
-    '  "explanation": "2-4 sentences, plain language, grounded only in the data above",',
+    '  "explanation": "2-4 sentences, plain language, grounded only in the data above. If project_standards is present, reference the relevant tolerance.",',
     '  "discipline_conflict": "e.g. MEP vs structural, MEP vs MEP",',
     '  "false_positive_likelihood": "low | medium | high",',
     '  "resolution_options": [',
@@ -84,9 +104,11 @@ module.exports = async function handler(req, res) {
     '',
     'Rules:',
     '- 2-3 resolution options, ordered most-recommended first.',
+    '- Each resolution_options.option must be actionable by one of the loaded disciplines.',
     '- Stay advisory. Never prescribe a structural change as definitive.',
+    '- If a project_standards.discipline_pair or ifc_type_pair clearance is present, judge severity against IT, not against a guessed value.',
     '- If the data is insufficient to judge severity, choose "medium" and say so in explanation.'
-  ].join('\n');
+  ].filter(Boolean).join('\n');
 
   try {
     var url = 'https://generativelanguage.googleapis.com/v1beta/models/gemma-4-31b-it:generateContent?key=' + encodeURIComponent(key);
