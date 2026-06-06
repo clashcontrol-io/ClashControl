@@ -1,5 +1,8 @@
 # Changelog
 
+## v5.16.0 (2026-06-06)
+- fix(loader): race-safe model dedup — 4 files no longer load as 8 (#572)
+
 ## v5.15.3 (2026-06-06)
 - perf(loader): fix chunk-merge bypass on cache-restore + Clear all clashes
 
