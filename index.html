@@ -958,7 +958,31 @@ function startApp() {
 
   function reducer(s,a) {
     switch(a.t) {
-      case A.ADD_MODEL:   var _am=a.v; if(s.modelMeta){var _mm=s.modelMeta.find(function(m){return m.id===_am.id});if(_mm){if(_mm.visible===false)_am=Object.assign({},_am,{visible:false});if(_mm.discipline)_am=Object.assign({},_am,{discipline:_mm.discipline});if(_mm.color)_am=Object.assign({},_am,{color:_mm.color});if(_mm.tag)_am=Object.assign({},_am,{tag:_mm.tag});}} return Object.assign({},s,{models:s.models.concat([_am])});
+      case A.ADD_MODEL:   var _am=a.v; if(s.modelMeta){var _mm=s.modelMeta.find(function(m){return m.id===_am.id});if(_mm){if(_mm.visible===false)_am=Object.assign({},_am,{visible:false});if(_mm.discipline)_am=Object.assign({},_am,{discipline:_mm.discipline});if(_mm.color)_am=Object.assign({},_am,{color:_mm.color});if(_mm.tag)_am=Object.assign({},_am,{tag:_mm.tag});}}
+        // Race-safe dedup: the reducer is the single serialization point, so a
+        // concurrent same-name (or same-id) load that slipped past the
+        // check-then-act guard in the loader is collapsed here into a replace
+        // rather than a second copy. This is what caused 4 files → 8 models
+        // (#572): two in-flight loads of the same file both saw no existing
+        // match in window._ccLatestState and both dispatched ADD_MODEL.
+        var _dupIdx = -1;
+        for (var _di=0; _di<s.models.length; _di++) {
+          var _em = s.models[_di];
+          if (_em.id === _am.id || (_em.name && _am.name && _em.name === _am.name)) { _dupIdx = _di; break; }
+        }
+        if (_dupIdx !== -1) {
+          var _prevM = s.models[_dupIdx];
+          _clearElCaches(_prevM);
+          var _merged = Object.assign({}, _am, {
+            id: _prevM.id, // keep the stable id so refs/markers/issues stay valid
+            discipline: _am.discipline || _prevM.discipline,
+            color: _prevM.color || _am.color,
+            visible: _prevM.visible !== false,
+            tag: _prevM.tag || _am.tag || ''
+          });
+          return Object.assign({}, s, {models: s.models.map(function(m,i){ return i===_dupIdx ? _merged : m; })});
+        }
+        return Object.assign({},s,{models:s.models.concat([_am])});
       case A.DEL_MODEL:   _clearElCaches(s.models.find(function(m){return m.id===a.id})); return Object.assign({},s,{models:s.models.filter(function(m){return m.id!==a.id})});
       case A.REPLACE_MODEL: _clearElCaches(s.models.find(function(m){return m.id===a.id})); return Object.assign({},s,{models:s.models.map(function(m){return m.id===a.id?a.v:m})});
       case A.UPD_MODEL:   return Object.assign({},s,{models:s.models.map(function(m){return m.id===a.id?Object.assign({},m,a.u):m})});
