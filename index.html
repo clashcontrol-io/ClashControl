@@ -1643,6 +1643,19 @@ function startApp() {
       var freed = 0;
       (model.elements||[]).forEach(function(el){
         (el.meshes||[]).forEach(function(mesh){
+          // ── Safety guards (added after the first attempt broke the live
+          // render). The geometry on el.meshes[i] is also live-rendered in
+          // two cases the bug hit:
+          //   1. mesh._instanceRef set → geometry is shared with an
+          //      InstancedMesh in the scene. Disposing wipes the instance.
+          //   2. mesh.parent !== null → the proxy itself IS in the scene
+          //      (no chunk-merge ran for this mesh's bucket). Disposing
+          //      wipes the visible mesh directly.
+          // Only off-scene, non-instanced proxies are safe to dehydrate —
+          // those are the ones chunk-merge replaced in the scene with a
+          // separate merged BufferGeometry.
+          if (mesh._instanceRef) return;
+          if (mesh.parent) return;
           var g = mesh.geometry; if (!g || !g.attributes) return;
           var pa = g.getAttribute && g.getAttribute('position');
           if (!pa || !pa.array || mesh._dehydrated) return;
