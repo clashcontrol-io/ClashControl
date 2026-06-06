@@ -71,6 +71,10 @@ self.addEventListener('fetch', function(e) {
   // fresh on every load and any corruption self-heals on a simple refresh.
   if (url.indexOf('web-ifc') !== -1) return;
 
+  // Never cache point cloud files — they can be hundreds of MB and would
+  // blow the cache quota almost immediately.
+  if (/\.(las|laz|pcd|ply|xyz|pts)(\?|$)/i.test(parsedUrl.pathname)) return;
+
   var isNav = e.request.mode === 'navigate';
   var isHTML = url.indexOf('index.html') !== -1 || url.endsWith('/');
 
