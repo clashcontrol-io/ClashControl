@@ -963,7 +963,7 @@ function startApp() {
       case A.UPD_MODEL:   return Object.assign({},s,{models:s.models.map(function(m){return m.id===a.id?Object.assign({},m,a.u):m})});
       case A.TOGGLE_ALL_STOREYS: return Object.assign({},s,{models:s.models.map(function(m){if(m.id!==a.id)return m;return Object.assign({},m,{hiddenStoreys:a.hide?a.storeys.reduce(function(o,st){o[st]=true;return o;},{}):{}}); })});
       case A.SET_CLASHES: /* falls through to MERGE_CLASHES with no prev clashes */
-      case A.MERGE_CLASHES: var _mr=mergeDetectionResults(a.v, a.t===A.MERGE_CLASHES?s.clashes:[]); _gcEvent('clash-detection', _mr.clashes.length+' clashes'); var _st={clashes:_mr.clashes,detecting:false,activeId:null,floors:deriveFloors(_mr.clashes),lastDeltaSummary:_mr.deltaSummary}; if(a.detectionSettings)_st.detectionSettings=a.detectionSettings; if(s.prefs.resetFiltersOnRun!==false)_st.filters=Object.assign({},INIT_FILTERS); return Object.assign({},s,_st);
+      case A.MERGE_CLASHES: var _mr=mergeDetectionResults(a.v, a.t===A.MERGE_CLASHES?s.clashes:[]); _gcEvent('clash-detection', _mr.clashes.length+' clashes'); var _st={clashes:_mr.clashes,detecting:false,activeId:null,floors:deriveFloors(_mr.clashes),lastDeltaSummary:_mr.deltaSummary}; if(a.detectionSettings)_st.detectionSettings=a.detectionSettings; if(s.prefs.resetFiltersOnRun!==false)_st.filters=Object.assign({},INIT_FILTERS); /* default to cluster-grouped view after a run unless the user has previously picked something */ try{ var _hasExplicit=localStorage.getItem('cc_clashGroupBy')!=null; if(!_hasExplicit){ _st.clashGroupBy=['cluster']; localStorage.setItem('cc_clashGroupBy', JSON.stringify(['cluster'])); } }catch(e){} return Object.assign({},s,_st);
       case A.DETECTING:   return Object.assign({},s,{detecting:true,runModalOpen:false});
       case A.STOP_DETECT: return Object.assign({},s,{detecting:false});
       case A.SWITCHING_PROJECT: return Object.assign({},s,{switchingProject:!!a.v});
@@ -14545,7 +14545,7 @@ function startApp() {
   // ── AI Summary Card ───────────────────────────────────────
   function ClashAISummary(props) {
     var items = props.items;
-    var _cs = React.useState(false), collapsed = _cs[0], setCollapsed = _cs[1];
+    var _cs = React.useState(true), collapsed = _cs[0], setCollapsed = _cs[1];
     var toggle = function(){ setCollapsed(!collapsed); };
     var counts = {critical:0, major:0, minor:0, info:0};
     var byStorey = {};
@@ -15666,19 +15666,49 @@ function startApp() {
         var sortArr = Array.isArray(curSort) ? curSort : (curSort && curSort!=='none' ? [curSort] : []);
         var selGrp  = grpArr.length  ? grpArr[0]  : 'none';
         var selSort = sortArr.length ? sortArr[0] : 'none';
-        var grpOptsList = isClashTab
-          ? [['none','None'],['cluster','Smart group (de-dupe)'],['severity','Severity'],['storey','Storey'],['discipline','Discipline'],['model','Model'],['status','Status'],['type','Type'],['priority','Priority'],['assignee','Assignee']]
-          : [['none','None'],['status','Status'],['priority','Priority'],['category','Category'],['assignee','Assignee']];
+        var secondaryGrpOpts = isClashTab
+          ? [['none','—'],['severity','Severity'],['storey','Storey'],['discipline','Discipline'],['model','Model'],['status','Status'],['type','Type'],['priority','Priority'],['assignee','Assignee']]
+          : [['none','—'],['status','Status'],['priority','Priority'],['category','Category'],['assignee','Assignee']];
         var sortOptsList = isClashTab
           ? [['none','None'],['severity_desc','Severity (high first)'],['severity_asc','Severity (low first)'],['spatial','Spatial'],['distance_asc','Gap (small first)'],['distance_desc','Gap (large first)'],['priority_desc','Priority (high first)'],['storey_asc','Storey A–Z'],['storey_desc','Storey Z–A'],['name_asc','Name A–Z'],['name_desc','Name Z–A'],['date_desc','Date (newest)'],['date_asc','Date (oldest)']]
           : [['none','None'],['priority_desc','Priority (high first)'],['priority_asc','Priority (low first)'],['date_desc','Date (newest)'],['date_asc','Date (oldest)'],['due_asc','Due date']];
         var DS={fontSize:'0.72rem',padding:'.22rem .3rem',borderRadius:4,background:'var(--bg-secondary)',color:'var(--text-secondary)',border:'1px solid var(--border)',cursor:'pointer'};
+        // For clashes: a 2-button segmented control (Grouped | All) replaces
+        // the 9-option Group dropdown. Grouped = cluster de-dupe (the Week-1
+        // smart group). All = flat. A secondary "Group rows by" dropdown
+        // shows only in All mode, exposing the other axes (storey, etc).
+        if (isClashTab) {
+          var isGrouped = selGrp === 'cluster';
+          var SEG_BTN = function(active){return {fontSize:'0.72rem',padding:'.22rem .55rem',borderRadius:4,border:'1px solid var(--border)',cursor:'pointer',
+            background:active?'var(--accent)':'var(--bg-secondary)',color:active?'#fff':'var(--text-secondary)',
+            fontWeight:active?600:400,fontFamily:'var(--font-body)',whiteSpace:'nowrap'};};
+          return html`<div style=${{padding:'.3rem .5rem',borderBottom:'1px solid var(--border-subtle)',display:'flex',gap:'.5rem',alignItems:'center',flexShrink:0}}>
+            <div role="group" aria-label="View mode" style=${{display:'inline-flex',gap:0,borderRadius:4,overflow:'hidden'}}>
+              <button onClick=${function(){d({t:grpAction,v:['cluster']});}} style=${{...SEG_BTN(isGrouped),borderRadius:'4px 0 0 4px'}}>Grouped</button>
+              <button onClick=${function(){d({t:grpAction,v:[]});}} style=${{...SEG_BTN(!isGrouped),borderRadius:'0 4px 4px 0',borderLeft:'none'}}>All</button>
+            </div>
+            ${!isGrouped && html`<label style=${{display:'flex',alignItems:'center',gap:'.25rem',flex:1,minWidth:0}}>
+              <span style=${{fontSize:'0.65rem',color:'var(--text-faint)',whiteSpace:'nowrap'}}>by</span>
+              <select value=${selGrp==='cluster'?'none':selGrp} style=${{...DS,flex:1,minWidth:0,maxWidth:120}}
+                onChange=${function(e){var v=e.target.value;d({t:grpAction,v:v==='none'?[]:[v]});}}>
+                ${secondaryGrpOpts.map(function(g){return html`<option key=${g[0]} value=${g[0]}>${g[1]}</option>`})}
+              </select>
+            </label>`}
+            <label style=${{display:'flex',alignItems:'center',gap:'.25rem',flex:1,minWidth:0}}>
+              <span style=${{fontSize:'0.65rem',color:'var(--text-faint)',whiteSpace:'nowrap'}}>Sort</span>
+              <select value=${selSort} style=${{...DS,flex:1,minWidth:0}}
+                onChange=${function(e){var v=e.target.value;d({t:sortAction,v:v==='none'?[]:[v]});}}>
+                ${sortOptsList.map(function(sv){return html`<option key=${sv[0]} value=${sv[0]}>${sv[1]}</option>`})}
+              </select>
+            </label>
+          </div>`;
+        }
         return html`<div style=${{padding:'.3rem .5rem',borderBottom:'1px solid var(--border-subtle)',display:'flex',gap:'.5rem',alignItems:'center',flexShrink:0}}>
           <label style=${{display:'flex',alignItems:'center',gap:'.25rem',flex:1,minWidth:0}}>
             <span style=${{fontSize:'0.69rem',color:'var(--text-faint)',whiteSpace:'nowrap'}}>Group</span>
             <select value=${selGrp} style=${{...DS,flex:1,minWidth:0}}
               onChange=${function(e){var v=e.target.value;d({t:grpAction,v:v==='none'?[]:[v]});}}>
-              ${grpOptsList.map(function(g){return html`<option key=${g[0]} value=${g[0]}>${g[1]}</option>`})}
+              ${secondaryGrpOpts.map(function(g){return html`<option key=${g[0]} value=${g[0]}>${g[1]}</option>`})}
             </select>
           </label>
           <label style=${{display:'flex',alignItems:'center',gap:'.25rem',flex:1,minWidth:0}}>

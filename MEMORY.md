@@ -88,6 +88,14 @@ Things to be careful about. Do not remove without a good reason — add a note i
 Update this section at the start and end of each session.
 Mark completed items with ~~strikethrough~~ and date, then let the daily sync archive them.
 
+On branch `claude/jolly-planck-mgEaf` (2026-06-06) — Phase B: clashes panel header cleanup + grouped-by-default:
+
+- The 9-option Group dropdown is replaced (clash tab only) with a 2-button **Grouped | All** segmented control. Grouped = the Week-1 cluster de-dupe; All = flat list. A small secondary "by [storey/severity/discipline/…]" select appears only in All mode for the other axes.
+- After `A.MERGE_CLASHES`, `s.clashGroupBy` is seeded to `['cluster']` if the user has never explicitly picked a Group option (`localStorage` flag `cc_clashGroupBy`). First-time visceral demo: 400 raw clashes appear as ~15 cluster cards by default.
+- `ClashAISummary` defaults to collapsed (`useState(true)`). One-line header strip stays visible; details expand on click.
+- Issue tab keeps its original Group dropdown (Phase B is clash-only).
+- Copy AI prompt button (Week 2) is now visible on every cluster header by default — no extra clicks needed to reach the AI triage prompt copy.
+
 On branch `claude/jolly-planck-mgEaf` (2026-06-06) — Phase A: Run Detection modal (UI overhaul step 1):
 
 - New toolbar **Run detection** button (accent CTA in the TopToolbar's section/measure gap) opens a new `RunDetectionModal` (`index.html:~14894`) that wraps the existing `ClashRulesPanel` (Quick Run presets + Advanced) plus a collapsible **Project standards** section embedding `StandardsPanel`. One surface for all clash setup.
