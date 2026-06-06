@@ -1,5 +1,8 @@
 # Changelog
 
+## v5.14.0 (2026-06-06)
+- feat(clash-ui): Phase C — cluster cards as rows + keyboard triage
+
 ## v5.13.0 (2026-06-05)
 - fix(section-box): stable side-face arrow dragging (robust axis projection)
 
