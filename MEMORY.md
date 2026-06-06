@@ -163,7 +163,7 @@ On branch `claude/code-review-quality-IjbhT` (2026-05-28) — code-review qualit
 
 **Deferred (tracked follow-ups, not done this pass):** core reducer/state refactor (287-line reducer / 80+ cases / impure `_saveDeniedClash` inside the reducer / ~50 `window._cc*` globals) — do it only once the test suite covers the pure clash/reducer/BCF logic, which needs those helpers extracted from `index.html` first. Also: a CI check that re-verifies `index.html` SRI hashes against the live CDN, and 3D-canvas keyboard accessibility (no keyboard orbit/pan, no modal focus trap).
 
-On branch `claude/upbeat-gauss-lGSLb` (2026-05-22) — "caveman mode" trim pass:
+On branch `claude/upbeat-gauss-lGSLb` (2026-05-22) — "caveman mode" trim pass:  **[STALE?]**
 
 - Removed devtools-only globals from `index.html`: `_ccDebugOn`/`_ccDebugOff` (URL `?debug=1` is alternative), `_ccCompareModels` (~50 lines), and stale `_ccLoadProfile` write-only assignments at the two IFC profile sites.
 - Deleted stale docs: `PLAN.md` (66 lines, superseded by MEMORY.md Project State) and `UI_OVERHAUL.md` (1,469 lines, abandoned brainstorm). `INTERNALS.md` kept — it's the target of 26+ "// INTERNALS.md §N" section anchors in `index.html`.
@@ -351,6 +351,20 @@ UI_OVERHAUL.md written (7 chapters, 1469 lines). PLAN.md updated.
 <!-- END:active-work -->
 
 <!-- BEGIN:session-log -->
+### 2026-06-06
+**Summary:** 4 commit(s) landed (no AI summary — set ANTHROPIC_API_KEY secret for richer entries).
+**Changed:** see commits
+**Notable:** —
+
+<details><summary>Commits</summary>
+
+- 7367304 chore: daily memory sync 2026-06-05
+- b8b8d86 chore: bump version to 5.13.0
+- c3f901e fix(section-box): stable side-face arrow dragging (robust axis projection)
+- 3fb15de fix(spatial-tree): persist category visibility across refresh
+
+</details>
+
 ### 2026-06-05
 **Summary:** 9 commit(s) landed (no AI summary — set ANTHROPIC_API_KEY secret for richer entries).
 **Changed:** see commits
