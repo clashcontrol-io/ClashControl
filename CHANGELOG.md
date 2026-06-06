@@ -1,5 +1,8 @@
 # Changelog
 
+## v5.15.1 (2026-06-06)
+- perf(viewer): D1 — Points + per-cluster hotspot markers
+
 ## v5.15.0 (2026-06-06)
 - fix(clash-ui): align overhaul with DESIGN.md + workspace gating, wire /api/triage, perf
 
