@@ -14898,10 +14898,18 @@ function startApp() {
     var nModels = (models||[]).length;
     var mA = rules.modelA, mB = rules.modelB;
     var bothAll = (mA==='all'||mA==null) && (mB==='all'||mB==null);
+    function labelList(v){
+      if (v==='all'||v==null) return 'all';
+      var arr = Array.isArray(v) ? v : [v];
+      if (arr.length === 0) return '∅';
+      if (arr.length === 1) return _modelSelectLabel(arr[0], models||[]);
+      if (arr.length === 2) return _modelSelectLabel(arr[0], models||[]) + ' + ' + _modelSelectLabel(arr[1], models||[]);
+      return arr.length + ' selections';
+    }
     var scopePart;
     if (nModels === 0) scopePart = 'no models loaded';
     else if (bothAll) scopePart = nModels + ' model' + (nModels===1?'':'s') + ', all-vs-all';
-    else scopePart = _modelSelectLabel(mA, models||[]) + ' ↔ ' + _modelSelectLabel(mB, models||[]);
+    else scopePart = labelList(mA) + ' ↔ ' + labelList(mB);
     var typePart;
     if (!rules.hard) typePart = 'Soft clashes ' + (rules.minGap||0) + '–' + (rules.maxGap||100) + ' mm';
     else if ((rules.maxGap||0) > 0) typePart = 'Hard + near miss ' + (rules.maxGap||0) + ' mm';
@@ -14911,6 +14919,91 @@ function startApp() {
       selfPart = ' · self-clash on';
     }
     return typePart + ' · ' + scopePart + selfPart;
+  }
+
+  // ── Scope picker: All ↔ All / By discipline / By model — N-model native ──
+  // Stored as rules.scopeMode (UI hint) + rules.modelA / modelB (engine truth).
+  // _modelMultiPicker already handles arrays of disc:* and model IDs.
+  function _ccDerivedScopeMode(rules) {
+    if (rules && rules.scopeMode) return rules.scopeMode;
+    var mA = rules && rules.modelA, mB = rules && rules.modelB;
+    function looksDisc(v){ if(Array.isArray(v)) return v.length>0 && v.every(function(x){return typeof x==='string' && x.indexOf('disc:')===0;}); return typeof v==='string' && v.indexOf('disc:')===0; }
+    function looksAll(v){ return v==='all' || v==null; }
+    if (looksAll(mA) && looksAll(mB)) return 'all';
+    if (looksDisc(mA) || looksDisc(mB)) return 'discipline';
+    return 'model';
+  }
+  function _renderScopePicker(rules, models, d) {
+    var mode = _ccDerivedScopeMode(rules);
+    function setMode(m) {
+      var u = { scopeMode: m };
+      if (m === 'all') { u.modelA = 'all'; u.modelB = 'all'; }
+      else if (m === 'discipline') {
+        if (!Array.isArray(rules.modelA) || !rules.modelA.length || !rules.modelA[0] || typeof rules.modelA[0]!=='string' || rules.modelA[0].indexOf('disc:')!==0) u.modelA = ['disc:structural'];
+        if (!Array.isArray(rules.modelB) || !rules.modelB.length || !rules.modelB[0] || typeof rules.modelB[0]!=='string' || rules.modelB[0].indexOf('disc:')!==0) u.modelB = ['disc:mep'];
+      } else { /* model */
+        // Default to all model IDs explicitly so the user sees and can narrow.
+        var allIds = (models||[]).map(function(m){return m.id;});
+        if (!Array.isArray(rules.modelA) || !rules.modelA.length) u.modelA = allIds.slice();
+        if (!Array.isArray(rules.modelB) || !rules.modelB.length) u.modelB = allIds.slice();
+      }
+      d({t:A.UPD_RULES, u:u});
+    }
+    function pairCount() {
+      // Estimate cross/self model pair count from current scope, ignoring self-clash setting.
+      var allModels = models||[];
+      var pick = function(v){
+        if (v==='all'||v==null) return allModels;
+        var arr = Array.isArray(v) ? v : [v];
+        var seen={}, out=[];
+        arr.forEach(function(x){
+          if (typeof x==='string' && x.indexOf('disc:')===0) {
+            var disc = x.slice(5);
+            allModels.forEach(function(m){ if(m.discipline===disc && !seen[m.id]){ seen[m.id]=true; out.push(m); } });
+          } else {
+            allModels.forEach(function(m){ if(m.id===x && !seen[m.id]){ seen[m.id]=true; out.push(m); } });
+          }
+        });
+        return out;
+      };
+      var a = pick(rules.modelA), b = pick(rules.modelB);
+      if (!a.length || !b.length) return 0;
+      // Cross-pair count = |A| * |B| minus self overlaps if same model on both sides
+      var idsA = {}; a.forEach(function(m){idsA[m.id]=true;});
+      var idsB = {}; b.forEach(function(m){idsB[m.id]=true;});
+      var n = a.length * b.length;
+      var both = 0; Object.keys(idsA).forEach(function(id){ if (idsB[id]) both++; });
+      // Subtract n self-pairs (will be added back if self-clash on)
+      return Math.max(0, n - both);
+    }
+    var SEG = function(active){return {fontSize:'0.7rem',padding:'.2rem .5rem',border:'1px solid var(--border)',cursor:'pointer',
+      background:active?'var(--accent)':'var(--bg-secondary)',color:active?'#fff':'var(--text-secondary)',
+      fontWeight:active?600:400,fontFamily:'var(--font-body)',whiteSpace:'nowrap'};};
+    var nModels = (models||[]).length;
+    var nPairs = pairCount();
+    return html`<div>
+      <div style=${{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:'.3rem'}}>
+        <span style=${{fontSize:'0.72rem',fontWeight:600,color:'var(--text-primary)'}}>What do you want to check?</span>
+        <span style=${{fontSize:'0.63rem',color:'var(--text-faint)',fontFamily:'var(--font-mono)'}}>${nModels} model${nModels===1?'':'s'} loaded${mode!=='all'?(' · ~'+nPairs+' pair'+(nPairs===1?'':'s')):''}</span>
+      </div>
+      <div role="group" aria-label="Test scope" style=${{display:'inline-flex',gap:0,borderRadius:4,overflow:'hidden',marginBottom:'.3rem'}}>
+        <button onClick=${function(){setMode('all');}} style=${{...SEG(mode==='all'),borderRadius:'4px 0 0 4px'}}>All ↔ All</button>
+        <button onClick=${function(){setMode('discipline');}} style=${{...SEG(mode==='discipline'),borderLeft:'none'}}>By discipline</button>
+        <button onClick=${function(){setMode('model');}} style=${{...SEG(mode==='model'),borderRadius:'0 4px 4px 0',borderLeft:'none'}}>By model</button>
+      </div>
+      ${mode === 'all'
+        ? html`<div style=${{fontSize:'0.67rem',color:'var(--text-faint)',padding:'.2rem .1rem'}}>Every loaded model is clashed against every other. ${nModels<2?'Load at least 2 models, or enable self-clash below.':''}</div>`
+        : html`<div style=${{display:'flex',flexDirection:'column',gap:'.2rem'}}>
+          <div style=${{display:'flex',alignItems:'center',gap:'.35rem'}}>
+            <span style=${{fontSize:'0.7rem',color:'var(--text-secondary)',whiteSpace:'nowrap',minWidth:48}}>Side A</span>
+            ${_modelSelect(rules.modelA, 'modelA', models, d)}
+          </div>
+          <div style=${{display:'flex',alignItems:'center',gap:'.35rem'}}>
+            <span style=${{fontSize:'0.7rem',color:'var(--text-secondary)',whiteSpace:'nowrap',minWidth:48}}>Side B</span>
+            ${_modelSelect(rules.modelB, 'modelB', models, d)}
+          </div>
+        </div>`}
+    </div>`;
   }
 
   // ── Run Detection Modal — single entry point for clash setup. ──
@@ -15113,20 +15206,8 @@ function startApp() {
       ${expanded && html`<div style=${{padding:'.35rem .5rem .4rem',borderTop:'1px solid var(--border-subtle)'}}>
         <div style=${{display:'flex',flexDirection:'column',gap:'.5rem'}}>
 
-          <!-- What to check -->
-          <div>
-            <div style=${{fontSize:'0.72rem',fontWeight:600,color:'var(--text-primary)',marginBottom:'.3rem'}}>What do you want to check?</div>
-            <div style=${{display:'flex',flexDirection:'column',gap:'.2rem'}}>
-              <div style=${{display:'flex',alignItems:'center',gap:'.35rem'}}>
-                <span style=${{fontSize:'0.72rem',color:'var(--text-secondary)',whiteSpace:'nowrap'}}>Check</span>
-                ${_modelSelect(rules.modelA, 'modelA', models, d)}
-              </div>
-              <div style=${{display:'flex',alignItems:'center',gap:'.35rem'}}>
-                <span style=${{fontSize:'0.72rem',color:'var(--text-secondary)',whiteSpace:'nowrap'}}>against</span>
-                ${_modelSelect(rules.modelB, 'modelB', models, d)}
-              </div>
-            </div>
-          </div>
+          <!-- What to check (N-model scope picker) -->
+          ${_renderScopePicker(rules, models, d)}
 
           <!-- Detection type -->
           <div>
