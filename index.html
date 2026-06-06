@@ -7325,35 +7325,52 @@ function startApp() {
           if (!c.point || c.point.length<3) continue;
           var key = keyFor ? keyFor(c) : ('k'+i);
           var cl = clusters[key];
-          if (!cl) cl = clusters[key] = { ids:[], pts:[], sev:'soft', sx:0, sy:0, sz:0 };
+          if (!cl) cl = clusters[key] = { ids:[], pts:[], sevs:[], sev:'soft', sx:0, sy:0, sz:0 };
           cl.ids.push(c.id);
           cl.pts.push(c.point);
+          cl.sevs.push(c.aiSeverity || c.type || 'soft');
           cl.sx += c.point[0]; cl.sy += c.point[1]; cl.sz += c.point[2];
           var s = c.aiSeverity || c.type;
-          // Pick the worst severity in the cluster.
           var rank = {critical:4, major:3, hard:3, soft:2, minor:2, duplicate:1};
           if ((rank[s]||1) > (rank[cl.sev]||1)) cl.sev = s;
         }
         var keys = Object.keys(clusters);
         if (!keys.length) return;
-        // Allocate flat buffers — one point per cluster (hotspot mode).
-        var N = keys.length;
-        var positions = new Float32Array(N*3);
-        var colors    = new Float32Array(N*3);
-        var sizes     = new Float32Array(N);
-        var idxToCluster = new Array(N);
-        for (var k=0; k<N; k++) {
+        // Build the cluster table. Each cluster carries leaf data so per-frame
+        // LOD can switch between centroid (hotspot) and leaves (zoomed in).
+        var clusterTable = new Array(keys.length);
+        var leafTotal = 0;
+        for (var k=0; k<keys.length; k++) {
           var key2 = keys[k]; var cl2 = clusters[key2];
           var n = cl2.ids.length;
-          positions[k*3]   = cl2.sx/n;
-          positions[k*3+1] = cl2.sy/n;
-          positions[k*3+2] = cl2.sz/n;
-          var col = _ccSevColorRGB(cl2.sev);
-          colors[k*3] = col[0]; colors[k*3+1] = col[1]; colors[k*3+2] = col[2];
-          // Size: leaf clusters ~16 px, hotspots scale by sqrt(count) up to 56 px.
-          sizes[k] = n===1 ? 16 : Math.min(56, 16 + Math.sqrt(n)*8);
-          idxToCluster[k] = { key:key2, ids:cl2.ids.slice(), count:n };
+          var cx = cl2.sx/n, cy = cl2.sy/n, cz = cl2.sz/n;
+          // Spatial radius — max distance from centroid to any leaf, used as
+          // the per-cluster "zoom-in trigger" so dense clusters expand sooner.
+          var rad = 0;
+          for (var p=0; p<cl2.pts.length; p++) {
+            var dx=cl2.pts[p][0]-cx, dy=cl2.pts[p][1]-cy, dz=cl2.pts[p][2]-cz;
+            var dd = dx*dx+dy*dy+dz*dz; if (dd>rad) rad=dd;
+          }
+          rad = Math.sqrt(rad);
+          clusterTable[k] = {
+            key: key2,
+            ids: cl2.ids,
+            pts: cl2.pts,
+            sevs: cl2.sevs,
+            cx: cx, cy: cy, cz: cz,
+            radius: rad,
+            hotspotColor: _ccSevColorRGB(cl2.sev),
+            hotspotSize: n===1 ? 16 : Math.min(56, 16 + Math.sqrt(n)*8),
+            count: n
+          };
+          leafTotal += n;
         }
+        // Buffer sized for the worst case (every cluster expanded). LOD swaps
+        // happen via setDrawRange + BufferAttribute.needsUpdate, no realloc.
+        var maxN = leafTotal + clusterTable.length;
+        var positions = new Float32Array(maxN*3);
+        var colors    = new Float32Array(maxN*3);
+        var sizes     = new Float32Array(maxN);
         var geo = new THREE.BufferGeometry();
         geo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
         geo.setAttribute('color',    new THREE.BufferAttribute(colors, 3));
@@ -7361,11 +7378,73 @@ function startApp() {
         var mat = _ccMakePointsMaterial();
         var pts = new THREE.Points(geo, mat);
         pts.name = 'clashMarkers';
-        pts.frustumCulled = false; // billboarded sprites, our own bbox is unreliable
-        pts.userData.idxToCluster = idxToCluster;
+        pts.frustumCulled = false;
         pts.userData.kind = 'clash';
+        pts.userData.clusters = clusterTable;
+        pts.userData.idxToCluster = []; // rebuilt per LOD update
+        pts.userData.lastLODCam = null;
+        // ── LOD update: collapsed (hotspot) by default; expand a cluster's
+        // leaves when the camera is close to its centroid. Threshold scales
+        // with cluster radius so a 10-cm cluster expands much later than a
+        // 5-m one — the goal is to keep on-screen point density bounded.
+        pts.userData.updateLOD = function(camera) {
+          if (!camera) return;
+          var camX = camera.position.x, camY = camera.position.y, camZ = camera.position.z;
+          var write = 0;
+          var idxMap = pts.userData.idxToCluster; idxMap.length = 0;
+          for (var ci=0; ci<clusterTable.length; ci++) {
+            var ct = clusterTable[ci];
+            var dxC = camX-ct.cx, dyC = camY-ct.cy, dzC = camZ-ct.cz;
+            var camDist = Math.sqrt(dxC*dxC + dyC*dyC + dzC*dzC);
+            // expand threshold: 6m or 8× cluster radius, whichever is larger.
+            // singletons never have leaves — always render as one point.
+            var expandT = Math.max(6, ct.radius * 8 + 2);
+            var expand = ct.count > 1 && camDist < expandT;
+            if (expand) {
+              for (var lp=0; lp<ct.pts.length; lp++) {
+                positions[write*3]   = ct.pts[lp][0];
+                positions[write*3+1] = ct.pts[lp][1];
+                positions[write*3+2] = ct.pts[lp][2];
+                var lc = _ccSevColorRGB(ct.sevs[lp]);
+                colors[write*3] = lc[0]; colors[write*3+1] = lc[1]; colors[write*3+2] = lc[2];
+                sizes[write] = 16;
+                idxMap[write] = { key:ct.key, ids:[ct.ids[lp]], count:1, leafIdx:lp };
+                write++;
+              }
+            } else {
+              positions[write*3]   = ct.cx;
+              positions[write*3+1] = ct.cy;
+              positions[write*3+2] = ct.cz;
+              colors[write*3] = ct.hotspotColor[0]; colors[write*3+1] = ct.hotspotColor[1]; colors[write*3+2] = ct.hotspotColor[2];
+              sizes[write] = ct.hotspotSize;
+              idxMap[write] = { key:ct.key, ids:ct.ids.slice(), count:ct.count };
+              write++;
+            }
+          }
+          geo.attributes.position.needsUpdate = true;
+          geo.attributes.color.needsUpdate = true;
+          geo.attributes.size.needsUpdate = true;
+          geo.setDrawRange(0, write);
+          pts.userData.lastLODCam = { x:camX, y:camY, z:camZ };
+          invalidate();
+        };
         scene.add(pts);
         clashMarkersRef.current = pts;
+        // Seed initial LOD from current camera.
+        var camNow = (window._ccState3d && window._ccState3d.camera) || (state3d.current && state3d.current.camera) || null;
+        if (camNow) pts.userData.updateLOD(camNow); else { geo.setDrawRange(0, clusterTable.length); /* fallback: hotspots only */
+          // Minimal fallback fill so the marker renders before the first LOD pass.
+          for (var fi=0; fi<clusterTable.length; fi++) {
+            var ftc = clusterTable[fi];
+            positions[fi*3] = ftc.cx; positions[fi*3+1] = ftc.cy; positions[fi*3+2] = ftc.cz;
+            colors[fi*3] = ftc.hotspotColor[0]; colors[fi*3+1] = ftc.hotspotColor[1]; colors[fi*3+2] = ftc.hotspotColor[2];
+            sizes[fi] = ftc.hotspotSize;
+            pts.userData.idxToCluster[fi] = { key:ftc.key, ids:ftc.ids.slice(), count:ftc.count };
+          }
+          geo.attributes.position.needsUpdate = true;
+          geo.attributes.color.needsUpdate = true;
+          geo.attributes.size.needsUpdate = true;
+        }
         invalidate();
       };
       function _disposeGroup(grp) {
@@ -10003,6 +10082,22 @@ function startApp() {
         if (_orbitDragging || window._ccSectionDragging) invalidate(2);
         if(_needsRender <= 0) return;
         _needsRender--;
+
+        // ── Per-cluster hotspot LOD (D1b): re-evaluate which clusters expand
+        // to leaves vs stay collapsed as a hotspot. Only when camera moved
+        // beyond ε since the last pass, so the rebuild is amortised.
+        if (clashMarkersRef.current && clashMarkersRef.current.userData && typeof clashMarkersRef.current.userData.updateLOD === 'function') {
+          var camLOD = S && S.camera;
+          var lastLOD = clashMarkersRef.current.userData.lastLODCam;
+          var movedLOD = !lastLOD;
+          if (!movedLOD && camLOD) {
+            var ddx = camLOD.position.x - lastLOD.x;
+            var ddy = camLOD.position.y - lastLOD.y;
+            var ddz = camLOD.position.z - lastLOD.z;
+            movedLOD = (ddx*ddx + ddy*ddy + ddz*ddz) > 0.0625; // 25 cm
+          }
+          if (movedLOD && camLOD) clashMarkersRef.current.userData.updateLOD(camLOD);
+        }
 
         // ── Normalize section-box handle sizes to a constant pixel size ──
         // Without this, handles built at world scale ~maxDim*0.01 look
