@@ -629,6 +629,19 @@ function startApp() {
     try { return localStorage.getItem('cc_data_consent') !== 'denied'; }
     catch(e) { return false; }
   }
+  // Make the default "on" explicit: on first load, write 'granted' into
+  // localStorage if no key exists yet. Before this, the state was implicit
+  // (absence treated as on) — which works today, but any future code path
+  // that checks === 'granted' would have silently treated new users as
+  // not-yet-consented. Now the toggle, the banner, and any future checks
+  // all agree on a stable, persisted value.
+  (function _ccSeedDefaultConsent() {
+    try {
+      if (localStorage.getItem('cc_data_consent') == null) {
+        localStorage.setItem('cc_data_consent', 'granted');
+      }
+    } catch(e) {}
+  }());
   window._ccConsentOK = _ccConsentOK;
 
   // ── Pending offer system ────────────────────────────────────── INTERNALS.md §3
@@ -15161,30 +15174,41 @@ function startApp() {
     var items = props.items;
     var _cs = React.useState(true), collapsed = _cs[0], setCollapsed = _cs[1];
     var toggle = function(){ setCollapsed(!collapsed); };
-    var counts = {critical:0, major:0, minor:0, info:0};
-    var byStorey = {};
-    var clusters = {};
-    items.forEach(function(c){
-      if (!c.aiSeverity) return;
-      counts[c.aiSeverity] = (counts[c.aiSeverity]||0) + 1;
-      // Track critical per storey
-      if (c.aiSeverity === 'critical' || c.aiSeverity === 'major') {
-        var st = c.elemAStorey || c.elemBStorey || 'Unknown';
-        byStorey[st] = (byStorey[st]||0) + 1;
+    // Aggregate the whole clash list in one O(N) pass and memoize it.
+    // Before this, opening the Conflicts tab at 10k clashes ran 4 walks
+    // (counts/byStorey/clusters + key sweeps) on every parent re-render,
+    // adding 1-2 seconds to tab-switch latency. items identity changes only
+    // when a clash is added/updated/resolved so the memo holds otherwise.
+    var agg = React.useMemo(function(){
+      var counts = {critical:0, major:0, minor:0, info:0};
+      var byStorey = {}, clusters = {};
+      for (var i=0; i<items.length; i++) {
+        var c = items[i];
+        var sev = c.aiSeverity; if (!sev) continue;
+        counts[sev] = (counts[sev]||0) + 1;
+        if (sev === 'critical' || sev === 'major') {
+          var st = c.elemAStorey || c.elemBStorey || 'Unknown';
+          byStorey[st] = (byStorey[st]||0) + 1;
+        }
+        if (c._clusterGroup != null) {
+          var cl = clusters[c._clusterGroup];
+          if (!cl) { cl = clusters[c._clusterGroup] = {count:0, storey:'', typePair:''}; }
+          cl.count++;
+          cl.storey = c.elemAStorey || c.elemBStorey || '';
+          cl.typePair = (c.elemAType||'')+ ' / ' +(c.elemBType||'');
+        }
       }
-      if (c._clusterGroup != null) {
-        if (!clusters[c._clusterGroup]) clusters[c._clusterGroup] = {count:0, storey:'', typePair:''};
-        clusters[c._clusterGroup].count++;
-        clusters[c._clusterGroup].storey = c.elemAStorey || c.elemBStorey || '';
-        clusters[c._clusterGroup].typePair = (c.elemAType||'')+ ' / ' +(c.elemBType||'');
-      }
-    });
+      var worstStorey = '', worstCount = 0;
+      for (var ks in byStorey) { if (byStorey[ks] > worstCount) { worstStorey = ks; worstCount = byStorey[ks]; } }
+      var bigCluster = null, bigClusterSize = 0;
+      for (var kc in clusters) { if (clusters[kc].count > bigClusterSize) { bigCluster = clusters[kc]; bigClusterSize = clusters[kc].count; } }
+      return { counts:counts, worstStorey:worstStorey, worstCount:worstCount, bigCluster:bigCluster, bigClusterSize:bigClusterSize };
+    }, [items]);
+    var counts = agg.counts;
     var hasAny = counts.critical + counts.major + counts.minor + counts.info > 0;
     if (!hasAny) return null;
-    var worstStorey = '', worstCount = 0;
-    Object.keys(byStorey).forEach(function(k){ if (byStorey[k] > worstCount) { worstStorey = k; worstCount = byStorey[k]; } });
-    var bigCluster = null, bigClusterSize = 0;
-    Object.keys(clusters).forEach(function(k){ if (clusters[k].count > bigClusterSize) { bigCluster = clusters[k]; bigClusterSize = clusters[k].count; } });
+    var worstStorey = agg.worstStorey, worstCount = agg.worstCount;
+    var bigCluster = agg.bigCluster, bigClusterSize = agg.bigClusterSize;
 
     var SEV_CHIP = function(label, n, bg, fg) {
       if (!n) return null;
@@ -16058,8 +16082,13 @@ function startApp() {
     var isClashTab = s.tab==='clashes';
     var isExplorerTab = s.tab==='navigator';
     var isStandardsTab = s.tab==='standards';
-    var rawItems = isClashTab ? s.clashes.filter(function(c){return c.status!=='denied';}) : s.issues;
-    if (isClashTab && s.idsValidation && s.idsValidation.results && s.idsValidation.results.length > 0) {
+    // Memoize the rawItems pipeline (not-denied filter + IDS validation
+    // overlay) — at 10k clashes this was running on every parent re-render,
+    // adding ~30-80 ms to tab-switch latency. Stable identity here also lets
+    // downstream useMemos (ClashStatsBar/ClashAISummary/groupAndSort) stay hot.
+    var rawItems = React.useMemo(function(){
+      var base = isClashTab ? s.clashes.filter(function(c){return c.status!=='denied';}) : s.issues;
+      if (!isClashTab || !s.idsValidation || !s.idsValidation.results || !s.idsValidation.results.length) return base;
       var idsItems = s.idsValidation.results.map(function(r, i) {
         return {
           id: 'ids_' + i,
@@ -16079,8 +16108,9 @@ function startApp() {
           _severity: r.severity
         };
       });
-      rawItems = rawItems.concat(idsItems);
-    }
+      return base.concat(idsItems);
+    }, [isClashTab, s.clashes, s.issues, s.idsValidation]);
+
 
     var visibleModelIds = useMemo(function(){
       var ids = {};
