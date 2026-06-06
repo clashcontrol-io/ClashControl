@@ -1,5 +1,8 @@
 # Changelog
 
+## v5.17.1 (2026-06-06)
+- perf+consent: memoize Conflicts-tab aggregations + default-on consent + suppress banner
+
 ## v5.17.0 (2026-06-06)
 - feat(triage+viewer): grounded prompt + 👍/👎 + marker fixes + survey-marker strip + memory helpers
 
