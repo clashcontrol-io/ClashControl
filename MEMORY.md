@@ -88,6 +88,13 @@ Things to be careful about. Do not remove without a good reason — add a note i
 Update this section at the start and end of each session.
 Mark completed items with ~~strikethrough~~ and date, then let the daily sync archive them.
 
+On branch `claude/jolly-planck-mgEaf` (2026-06-06) — Design doc only, no code: **scene-resident-set with frustum gating** (`docs/scene-resident-set.md`).
+
+- Captures the surviving lever after this session's four memory attempts (Free RAM dehydrate, chunk-merge default-ON, Uint16 positions → reverted; Int8 normals → kept). The doc proposes keeping raw geometry resident in a side-table pool and only materialising `THREE.Mesh` wrappers for frustum-visible elements. Target: ≥150 MB resident-heap cut on the reference 73 402-element federation, zero feature regression.
+- Sections: problem & target, constraints, why prior attempts failed and why this is structurally different, architecture (geometry pool + resident set + working-set policy), full consumer audit (23 sites in `index.html`, each classified as resident / materialise-on-call / batch-rehydrate / pool-direct), materialisation cost, a DevTools quick-measurement task with go/no-go threshold, failure-mode pre-mortem, out-of-scope, open questions, sketch of a 4-PR implementation roll-out behind a `_ccResidentGating` flag.
+- **Decision rule before any code follows: per-Mesh overhead measured on the reference federation must exceed 3 KB.** Below 1.5 KB the refactor is abandoned. The doc PR is draft-only; implementation does not start until the measurement is run and the consumer audit is signed off.
+- Branch was reset to `origin/main` (commit `a13893d`) so the PR diff is exactly the new doc, not the leftover chunk-merge experiments that were carried on the prior tip. Discarded commits are preserved on `claude/jolly-planck-mgEaf-dedup` and other branches.
+
 On branch `claude/jolly-planck-mgEaf` (2026-06-06) — Phase C: cluster cards as rows + keyboard triage:
 
 - Cluster headers (Grouped mode, clash tab) upgraded to **Sentry/Linear-style cluster cards** with: severity dot on the left edge (colour from max `aiSeverity`/`type` across the cluster), 2-line layout (title + chips row), storey chip, **model-pair chip** (highlighted when cross-model so N-model federations make the owner obvious at a glance), open/resolved counts. Hover reveals two action buttons: **Triage** (calls `window._ccTriageCluster(items)`) and **Resolve all** (confirm dialog, then `_ccResolveCluster`).
