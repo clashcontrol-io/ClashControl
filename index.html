@@ -629,16 +629,23 @@ function startApp() {
     try { return localStorage.getItem('cc_data_consent') !== 'denied'; }
     catch(e) { return false; }
   }
-  // Make the default "on" explicit: on first load, write 'granted' into
-  // localStorage if no key exists yet. Before this, the state was implicit
-  // (absence treated as on) — which works today, but any future code path
-  // that checks === 'granted' would have silently treated new users as
-  // not-yet-consented. Now the toggle, the banner, and any future checks
-  // all agree on a stable, persisted value.
+  // Make the default "on" explicit + suppress the privacy banner. On first
+  // load with no consent key, write 'granted' AND mark the banner as seen,
+  // so new users land with anonymous data sharing on and no modal
+  // interruption. The toggle in Settings → Privacy stays as the
+  // transparent, reversible source of truth.
   (function _ccSeedDefaultConsent() {
     try {
-      if (localStorage.getItem('cc_data_consent') == null) {
-        localStorage.setItem('cc_data_consent', 'granted');
+      var fresh = localStorage.getItem('cc_data_consent') == null;
+      if (fresh) localStorage.setItem('cc_data_consent', 'granted');
+      // Suppress the banner for fresh users (consent already pre-granted) and
+      // also for existing users who had it implicitly on (no key set yet) —
+      // we don't want to retroactively pop a banner at people whose
+      // behaviour we're not changing.
+      if (fresh || localStorage.getItem('cc_data_consent') === 'granted') {
+        if (!localStorage.getItem('cc_consent_banner_seen')) {
+          localStorage.setItem('cc_consent_banner_seen', '1');
+        }
       }
     } catch(e) {}
   }());
