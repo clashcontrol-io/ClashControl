@@ -1,0 +1,249 @@
+// ClashControl geoplace addon — places the IFC in a real-world context
+// v1 path: read IfcSite RefLatitude/Longitude from the loaded model (or take
+// a manual lat/lon from the user), then render a textured raster basemap
+// plane under the model. No proj4js, no IfcMapConversion yet — those are
+// v1.1 when a paying user needs them.
+//
+// IFC origin leads: the model never moves. The basemap is positioned in IFC
+// space at the model's bbox centre, oriented to the model's true north
+// (defaults to 0 — manual override in the UI).
+(function(){
+  if (typeof window === 'undefined') return;
+
+  var THREE = window.THREE;
+
+  function getScene() {
+    var S3 = window._ccState3d;
+    return S3 && S3.scene ? S3.scene : null;
+  }
+  function invalidate(n) {
+    if (typeof window._ccInvalidate === 'function') window._ccInvalidate(n||2);
+  }
+
+  // ── Tile provider config ───────────────────────────────────────
+  // MapTiler is the production choice (set window.MAPTILER_KEY to enable).
+  // Falls back to OpenStreetMap tiles for local dev — fine for a handful of
+  // requests, NOT for production traffic (ToS-restricted).
+  function tileURL(z, x, y) {
+    var key = window.MAPTILER_KEY;
+    if (key) {
+      return 'https://api.maptiler.com/maps/satellite/' + z + '/' + x + '/' + y + '.jpg?key=' + encodeURIComponent(key);
+    }
+    var sub = 'abc'[(x + y) % 3];
+    return 'https://' + sub + '.tile.openstreetmap.org/' + z + '/' + x + '/' + y + '.png';
+  }
+
+  // ── lat/lon → web-mercator metres ─────────────────────────────
+  var R = 6378137;
+  function lonToMercX(lon) { return R * lon * Math.PI / 180; }
+  function latToMercY(lat) {
+    var s = Math.sin(lat * Math.PI / 180);
+    return R * 0.5 * Math.log((1 + s) / (1 - s));
+  }
+  function lonToTileX(lon, z) { return Math.floor((lon + 180) / 360 * Math.pow(2, z)); }
+  function latToTileY(lat, z) {
+    var r = lat * Math.PI / 180;
+    return Math.floor((1 - Math.log(Math.tan(r) + 1/Math.cos(r)) / Math.PI) / 2 * Math.pow(2, z));
+  }
+  function tileXToLon(x, z) { return x / Math.pow(2, z) * 360 - 180; }
+  function tileYToLat(y, z) {
+    var n = Math.PI - 2 * Math.PI * y / Math.pow(2, z);
+    return 180 / Math.PI * Math.atan(0.5 * (Math.exp(n) - Math.exp(-n)));
+  }
+
+  // ── Basemap rendering ──────────────────────────────────────────
+  var _basemap = null; // current THREE.Mesh
+  var _basemapForId = null; // modelId the basemap was built for
+
+  function clearBasemap() {
+    if (_basemap && _basemap.parent) _basemap.parent.remove(_basemap);
+    if (_basemap) {
+      if (_basemap.geometry) _basemap.geometry.dispose();
+      if (_basemap.material) {
+        if (_basemap.material.map) _basemap.material.map.dispose();
+        _basemap.material.dispose();
+      }
+    }
+    _basemap = null;
+    _basemapForId = null;
+    invalidate(2);
+  }
+
+  // Build a basemap by stitching a 3×3 (or larger) grid of tiles onto a
+  // textured plane, centred at the given lat/lon and sized to span the
+  // model's bbox plus a margin.
+  function buildBasemap(modelId, lat, lon, radiusM, opts) {
+    opts = opts || {};
+    var scene = getScene(); if (!scene) return Promise.reject(new Error('Scene not ready'));
+    var zoom = opts.zoom || 18; // ~0.6 m/pixel at lat 0
+    // How many tiles do we need each way to cover radiusM at this zoom?
+    // Tile width in metres at this zoom and latitude:
+    var metresPerTile = 40075016.686 * Math.cos(lat * Math.PI / 180) / Math.pow(2, zoom);
+    var halfTiles = Math.max(1, Math.ceil(radiusM / metresPerTile));
+    var totalSide = halfTiles * 2 + 1;
+    if (totalSide > 11) {
+      // Cap at 11×11 = 121 tiles to keep network + memory bounded
+      // Bigger radius → drop a zoom level.
+      while (totalSide > 11 && zoom > 10) {
+        zoom -= 1;
+        metresPerTile = 40075016.686 * Math.cos(lat * Math.PI / 180) / Math.pow(2, zoom);
+        halfTiles = Math.max(1, Math.ceil(radiusM / metresPerTile));
+        totalSide = halfTiles * 2 + 1;
+      }
+    }
+    var cx = lonToTileX(lon, zoom);
+    var cy = latToTileY(lat, zoom);
+
+    var tileSize = 256;
+    var canvasSize = totalSide * tileSize;
+    var canvas = document.createElement('canvas');
+    canvas.width = canvasSize; canvas.height = canvasSize;
+    var ctx = canvas.getContext('2d');
+    ctx.fillStyle = '#1f2937';
+    ctx.fillRect(0, 0, canvasSize, canvasSize);
+
+    var pending = [];
+    for (var dy = -halfTiles; dy <= halfTiles; dy++) {
+      for (var dx = -halfTiles; dx <= halfTiles; dx++) {
+        (function(dx, dy){
+          var tx = cx + dx, ty = cy + dy;
+          var img = new Image();
+          img.crossOrigin = 'anonymous';
+          var p = new Promise(function(resolve){
+            img.onload = function(){
+              var px = (dx + halfTiles) * tileSize;
+              var py = (dy + halfTiles) * tileSize;
+              try { ctx.drawImage(img, px, py); } catch(e){}
+              resolve();
+            };
+            img.onerror = function(){ resolve(); }; // missing tile → leave the bg
+          });
+          img.src = tileURL(zoom, tx, ty);
+          pending.push(p);
+        })(dx, dy);
+      }
+    }
+
+    return Promise.all(pending).then(function(){
+      // Plane size in metres equals total tiles × metresPerTile.
+      var planeSize = totalSide * metresPerTile;
+      // Plane is centred on the model bbox centre, sitting at Y = refElev (or 0).
+      var tex = new THREE.CanvasTexture(canvas);
+      tex.encoding = THREE.sRGBEncoding;
+      tex.minFilter = THREE.LinearFilter;
+      tex.generateMipmaps = false;
+
+      var geom = new THREE.PlaneGeometry(planeSize, planeSize, 1, 1);
+      geom.rotateX(-Math.PI / 2); // lay flat (Three.js Y-up; default plane is XY)
+      var mat = new THREE.MeshBasicMaterial({map:tex, transparent:true, opacity:0.95, depthWrite:false});
+      var mesh = new THREE.Mesh(geom, mat);
+      mesh.userData.isReference = true;
+      mesh.userData.isBasemap = true;
+      mesh.renderOrder = -1; // draw before the model so depth test wins
+      // Position at model bbox centre at Y = ground level
+      var bbox = _getModelBBox(modelId);
+      if (bbox && !bbox.isEmpty()) {
+        var c = bbox.getCenter(new THREE.Vector3());
+        mesh.position.set(c.x, bbox.min.y - 0.01, c.z);
+      }
+      // Rotate by model's true-north override (degrees)
+      if (opts.trueNorthDeg) {
+        mesh.rotation.y = -opts.trueNorthDeg * Math.PI / 180;
+      }
+      clearBasemap();
+      scene.add(mesh);
+      _basemap = mesh;
+      _basemapForId = modelId;
+      invalidate(2);
+      return mesh;
+    });
+  }
+
+  function _getModelBBox(modelId) {
+    var S3 = window._ccState3d;
+    if (!S3 || !S3.map || !S3.map[modelId]) return null;
+    var box = new THREE.Box3();
+    box.setFromObject(S3.map[modelId]);
+    return box;
+  }
+
+  // ── Public API ────────────────────────────────────────────────
+  // Apply / refresh a basemap for the given model
+  window._ccGeoplaceModel = function(modelId, geo) {
+    // geo: {refLat, refLon, refElev?, trueNorthDeg?, radiusM?}
+    if (geo.refLat == null || geo.refLon == null) {
+      return Promise.reject(new Error('refLat / refLon required'));
+    }
+    var radiusM = geo.radiusM;
+    if (!radiusM) {
+      var bbox = _getModelBBox(modelId);
+      if (bbox && !bbox.isEmpty()) {
+        var sz = bbox.getSize(new THREE.Vector3());
+        radiusM = Math.max(sz.x, sz.z) * 1.5 + 50;
+      } else {
+        radiusM = 200;
+      }
+    }
+    if (window._ccDispatch) {
+      window._ccDispatch({t:'SET_MODEL_GEO', id:modelId, u:{
+        refLat:geo.refLat, refLon:geo.refLon, refElev:geo.refElev||0,
+        trueNorthDeg:geo.trueNorthDeg||0, radiusM:radiusM, source:geo.source||'manual'
+      }});
+    }
+    return buildBasemap(modelId, geo.refLat, geo.refLon, radiusM, {
+      trueNorthDeg: geo.trueNorthDeg||0
+    });
+  };
+
+  window._ccGeoplaceClear = function() {
+    clearBasemap();
+    if (window._ccDispatch) window._ccDispatch({t:'CLR_MODEL_GEO'});
+  };
+
+  // Read georef from a freshly-loaded IFC model (looks at
+  // model.spatialHierarchy.sites[0].georef)
+  window._ccGetModelGeoref = function(model) {
+    if (!model || !model.spatialHierarchy) return null;
+    var sites = model.spatialHierarchy.sites || [];
+    for (var i = 0; i < sites.length; i++) {
+      if (sites[i].georef && sites[i].georef.refLat != null && sites[i].georef.refLon != null) {
+        return sites[i].georef;
+      }
+    }
+    return null;
+  };
+
+  // ── Addon registration ────────────────────────────────────────
+  var register = window._ccRegisterAddon;
+  if (typeof register !== 'function') return;
+
+  register({
+    id: 'geoplace',
+    name: 'Geo Placement',
+    description: 'Place the model on a real-world basemap. Reads IfcSite lat/lon when present, or accepts manual coordinates.',
+    autoActivate: true,
+    icon: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#5b8def" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/></svg>',
+
+    initState: {
+      modelGeo: null // {modelId, refLat, refLon, refElev, trueNorthDeg, radiusM, source}
+    },
+
+    reducerCases: {
+      'SET_MODEL_GEO': function(s, a) {
+        var g = Object.assign({}, a.u, {modelId:a.id});
+        return Object.assign({}, s, {modelGeo: g});
+      },
+      'CLR_MODEL_GEO': function(s) {
+        return Object.assign({}, s, {modelGeo: null});
+      }
+    },
+
+    init: function() {
+      console.log('[Geoplace] Addon ready');
+    },
+
+    destroy: function() {
+      clearBasemap();
+    }
+  });
+})();

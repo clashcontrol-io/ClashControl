@@ -931,7 +931,7 @@ function startApp() {
   window._ccIsAddonActive = function(id) { return !!_ccAddonActive[id]; };
 
   function _loadAddonScripts() {
-    var addonFiles = ['training-data', 'pwa', 'local-engine', 'shared-project', 'revit-bridge', 'data-quality', 'smart-bridge', 'pointcloud'];
+    var addonFiles = ['training-data', 'pwa', 'local-engine', 'shared-project', 'revit-bridge', 'data-quality', 'smart-bridge', 'pointcloud', 'geoplace'];
     addonFiles.forEach(function(name) {
       var script = document.createElement('script');
       script.src = 'addons/' + name + '.js';
@@ -1925,7 +1925,26 @@ function startApp() {
       for (var i = 0; i < siteIds.size(); i++) {
         try {
           var sLine = api.GetLine(modelID, siteIds.get(i));
-          hierarchy.sites.push({id:siteIds.get(i), name:safeStr(sLine.Name)||'IfcSite', description:safeStr(sLine.Description)});
+          var site = {id:siteIds.get(i), name:safeStr(sLine.Name)||'IfcSite', description:safeStr(sLine.Description)};
+          // Georef — IfcSite RefLatitude/Longitude are compound plane angles:
+          // [degrees, minutes, seconds, millionth-seconds]. Convert to decimal.
+          function _compoundToDeg(arr) {
+            if (!arr || !arr.length) return null;
+            function _v(x){ return (x && x.value != null) ? +x.value : +x; }
+            var d = _v(arr[0]) || 0;
+            var m = arr.length > 1 ? (_v(arr[1]) || 0) : 0;
+            var s = arr.length > 2 ? (_v(arr[2]) || 0) : 0;
+            var u = arr.length > 3 ? (_v(arr[3]) || 0) : 0;
+            var sign = d < 0 ? -1 : 1;
+            return sign * (Math.abs(d) + m/60 + s/3600 + u/3600000000);
+          }
+          var lat = _compoundToDeg(sLine.RefLatitude);
+          var lon = _compoundToDeg(sLine.RefLongitude);
+          var elev = sLine.RefElevation && sLine.RefElevation.value != null ? +sLine.RefElevation.value : null;
+          if (lat != null || lon != null || elev != null) {
+            site.georef = {refLat:lat, refLon:lon, refElev:elev, source:'IfcSite'};
+          }
+          hierarchy.sites.push(site);
         } catch(e) {}
       }
       var bldIds = api.GetLineIDsWithType(modelID, IFC.IFCBUILDING);
@@ -13950,6 +13969,50 @@ function startApp() {
               <button onClick=${function(e){e.stopPropagation();d({t:A.DEL_UNDERLAY,id:ul.id})}} style=${{background:'none',border:'none',cursor:'pointer',color:'var(--text-faint)',padding:'0 2px',fontSize:'.7rem',lineHeight:1}}>✕</button>
             </div>`;
           })}
+        </div>`}
+        ${s.models.length > 0 && window._ccGeoplaceModel && html`<div style=${{marginTop:'.3rem',borderTop:'1px solid var(--hairline)',paddingTop:'.3rem'}}>
+          <div style=${{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:'.25rem',padding:'0 .2rem'}}>
+            <span style=${{fontSize:'.65rem',fontWeight:600,color:'var(--text-muted)',textTransform:'uppercase',letterSpacing:'.05em'}}>Geo Placement</span>
+            ${s.modelGeo && html`<button onClick=${function(){window._ccGeoplaceClear && window._ccGeoplaceClear();}}
+              style=${{fontSize:'.6rem',padding:'.08rem .28rem',background:'none',border:'1px solid var(--border)',borderRadius:'var(--radius-xs)',cursor:'pointer',color:'var(--text-muted)'}}>Clear</button>`}
+          </div>
+          ${s.modelGeo
+            ? html`<div style=${{padding:'.25rem .35rem',borderRadius:'var(--radius-xs)',background:'rgba(91,141,239,0.08)',borderLeft:'2px solid #5b8def',fontSize:'.66rem',color:'var(--text-primary)',fontFamily:'var(--font-mono)',lineHeight:1.5}}>
+                ${(+s.modelGeo.refLat).toFixed(6)}, ${(+s.modelGeo.refLon).toFixed(6)}<br/>
+                <span style=${{color:'var(--text-faint)'}}>${s.modelGeo.source||'manual'} · ${(s.modelGeo.radiusM||0).toFixed(0)}m radius</span>
+              </div>`
+            : html`<div style=${{display:'flex',gap:'.2rem',padding:'0 .2rem'}}>
+                ${(function(){
+                  var detected = null;
+                  for (var i = 0; i < s.models.length; i++) {
+                    var g = window._ccGetModelGeoref && window._ccGetModelGeoref(s.models[i]);
+                    if (g) { detected = {modelId:s.models[i].id, georef:g}; break; }
+                  }
+                  return detected
+                    ? html`<button onClick=${function(){
+                        window._ccGeoplaceModel(detected.modelId, Object.assign({}, detected.georef, {source:'IfcSite'}))
+                          .catch(function(err){ alert('Geoplace failed: ' + (err && err.message || err)); });
+                      }} style=${{flex:1,fontSize:'.66rem',padding:'.22rem .4rem',background:'var(--accent)',color:'#fff',border:'none',borderRadius:'var(--radius-xs)',cursor:'pointer'}}>
+                        Use IfcSite (${(+detected.georef.refLat).toFixed(3)}, ${(+detected.georef.refLon).toFixed(3)})
+                      </button>`
+                    : null;
+                })()}
+                <button onClick=${function(){
+                  var input = prompt('Enter latitude, longitude (decimal degrees)\nExample: 52.3676, 4.9041 (Amsterdam)');
+                  if (!input) return;
+                  var parts = input.split(/[,;\s]+/).filter(Boolean).map(parseFloat);
+                  if (parts.length < 2 || !isFinite(parts[0]) || !isFinite(parts[1])) {
+                    alert('Could not parse lat/lon — expected two numbers like "52.37, 4.90"');
+                    return;
+                  }
+                  var firstModelId = s.models[0] && s.models[0].id;
+                  if (!firstModelId) return;
+                  window._ccGeoplaceModel(firstModelId, {refLat:parts[0], refLon:parts[1], source:'manual'})
+                    .catch(function(err){ alert('Geoplace failed: ' + (err && err.message || err)); });
+                }} style=${{flex:1,fontSize:'.66rem',padding:'.22rem .4rem',background:'none',color:'var(--text-primary)',border:'1px solid var(--border)',borderRadius:'var(--radius-xs)',cursor:'pointer'}}>
+                  Enter lat/lon…
+                </button>
+              </div>`}
         </div>`}
         ${(s.referenceLayers && s.referenceLayers.length > 0) && html`<div style=${{marginTop:'.3rem',borderTop:'1px solid var(--hairline)',paddingTop:'.3rem'}}>
           <div style=${{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:'.25rem',padding:'0 .2rem'}}>
