@@ -2558,6 +2558,26 @@ function startApp() {
     return {meshes:filtered, groups:nGroups, instanced:nInstanced};
   }
 
+  // Module-level material cache shared across all IFC + GLB loads. Same RGBA
+  // → one MeshPhongMaterial across every model. Before this, each loadIFC call
+  // had its own matCache, so loading the same file twice doubled the material
+  // count; loading N different models multiplied it by N. See issue #572.
+  if (!window._ccSharedMatCache) window._ccSharedMatCache = {};
+  function _ccGetSharedPhongMat(r, g, b, a) {
+    var key = r.toFixed(3)+','+g.toFixed(3)+','+b.toFixed(3)+','+a.toFixed(3);
+    var m = window._ccSharedMatCache[key];
+    if (!m) {
+      m = new THREE.MeshPhongMaterial({
+        color: new THREE.Color(r, g, b),
+        opacity: a,
+        transparent: a < 0.99,
+        side: THREE.DoubleSide
+      });
+      window._ccSharedMatCache[key] = m;
+    }
+    return m;
+  }
+
   function loadIFC(buffer, fallbackColor, onProgress, _parentGen) {
     var loadStart = performance.now();
     var _lp = { t0: loadStart, phases: {} };
@@ -2638,10 +2658,10 @@ function startApp() {
             } else { _geoReused++; }
             var c = placed.color;
             if (c && c.w < 0.05) continue;
-            var col = c ? new THREE.Color(c.x, c.y, c.z) : new THREE.Color(fallbackColor);
-            var matKey = (col.r).toFixed(3)+','+(col.g).toFixed(3)+','+(col.b).toFixed(3)+','+(c?c.w:1).toFixed(3);
-            var mat = matCache[matKey];
-            if (!mat) { mat = new THREE.MeshPhongMaterial({ color:col, opacity:c?c.w:1, transparent:c?c.w<0.99:false, side:THREE.DoubleSide }); matCache[matKey] = mat; }
+            var col;
+            if (c) col = { r:c.x, g:c.y, b:c.z };
+            else { var _fb = new THREE.Color(fallbackColor); col = { r:_fb.r, g:_fb.g, b:_fb.b }; }
+            var mat = _ccGetSharedPhongMat(col.r, col.g, col.b, c ? c.w : 1);
             var mesh = new THREE.Mesh(geo, mat);
             mesh.applyMatrix4(_tmpMtx4.fromArray(placed.flatTransformation));
             mesh.userData.expressId = expressID;
@@ -3069,10 +3089,11 @@ function startApp() {
               var _tM = performance.now();
               var c = gData.color;
               if (c && c.a < 0.05) continue;
-              var col = c ? new THREE.Color(c.r, c.g, c.b) : new THREE.Color(fallbackColor);
-              var matKey = col.r.toFixed(3)+','+col.g.toFixed(3)+','+col.b.toFixed(3)+','+(c?c.a:1).toFixed(3);
-              var mat = matCache[matKey];
-              if (!mat) { mat = new THREE.MeshPhongMaterial({color:col, opacity:c?c.a:1, transparent:c?c.a<0.99:false, side:THREE.DoubleSide}); matCache[matKey] = mat; }
+              var col;
+              if (c) col = { r:c.r, g:c.g, b:c.b };
+              else { var _fb2 = new THREE.Color(fallbackColor); col = { r:_fb2.r, g:_fb2.g, b:_fb2.b }; }
+              var mat = _ccGetSharedPhongMat(col.r, col.g, col.b, c ? c.a : 1);
+              var matKey = mat ? mat.color.r.toFixed(3)+','+mat.color.g.toFixed(3)+','+mat.color.b.toFixed(3)+','+(c?c.a:1).toFixed(3) : 'na';
               var mesh = new THREE.Mesh(geo, mat);
               mesh.applyMatrix4(_tmpMtx4.fromArray(gData.tf));
               mesh.userData.expressId = raw.expressId;
@@ -26832,7 +26853,9 @@ function startApp() {
     var usedMB = mem.usedJSHeapSize ? Math.round(mem.usedJSHeapSize / 1048576) : 0;
     var totalMB = mem.totalJSHeapSize ? Math.round(mem.totalJSHeapSize / 1048576) : 0;
     var limitMB = mem.jsHeapSizeLimit ? Math.round(mem.jsHeapSizeLimit / 1048576) : 0;
-    var inclNames = useState(true), includeNames=inclNames[0], setIncludeNames=inclNames[1];
+    // Default OFF — model names often expose client/project identifiers
+    // ("669001A_..._BWK_..."). User must explicitly opt in to share them.
+    var inclNames = useState(false), includeNames=inclNames[0], setIncludeNames=inclNames[1];
     var inclBrowser = useState(true), includeBrowser=inclBrowser[0], setIncludeBrowser=inclBrowser[1];
     var msgSt = useState(''), userMsg=msgSt[0], setUserMsg=msgSt[1];
 
