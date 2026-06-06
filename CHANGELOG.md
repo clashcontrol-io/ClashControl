@@ -1,5 +1,8 @@
 # Changelog
 
+## v5.16.2 (2026-06-06)
+- feat: point clouds + IFC geo-placement (v1) (#578)
+
 ## v5.16.1 (2026-06-06)
 - perf(viewer): PR-A — Int8 normals (~630 MB cut), positions unchanged
 
