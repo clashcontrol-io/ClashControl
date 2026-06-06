@@ -14976,30 +14976,31 @@ function startApp() {
       // Subtract n self-pairs (will be added back if self-clash on)
       return Math.max(0, n - both);
     }
-    var SEG = function(active){return {fontSize:'0.7rem',padding:'.2rem .5rem',border:'1px solid var(--border)',cursor:'pointer',
+    var SEG = function(active){return {fontSize:'var(--text-xs)',padding:'var(--space-1) var(--space-2)',border:'1px solid var(--border)',cursor:'pointer',
       background:active?'var(--accent)':'var(--bg-secondary)',color:active?'#fff':'var(--text-secondary)',
-      fontWeight:active?600:400,fontFamily:'var(--font-body)',whiteSpace:'nowrap'};};
+      fontWeight:active?'var(--weight-semibold)':'var(--weight-regular)',fontFamily:'var(--font-body)',whiteSpace:'nowrap',
+      transition:'background var(--duration-fast) var(--ease-standard), color var(--duration-fast) var(--ease-standard)'};};
     var nModels = (models||[]).length;
     var nPairs = pairCount();
     return html`<div>
-      <div style=${{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:'.3rem'}}>
-        <span style=${{fontSize:'0.72rem',fontWeight:600,color:'var(--text-primary)'}}>What do you want to check?</span>
-        <span style=${{fontSize:'0.63rem',color:'var(--text-faint)',fontFamily:'var(--font-mono)'}}>${nModels} model${nModels===1?'':'s'} loaded${mode!=='all'?(' · ~'+nPairs+' pair'+(nPairs===1?'':'s')):''}</span>
+      <div style=${{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:'var(--space-2)'}}>
+        <span style=${{fontSize:'var(--text-xs)',fontWeight:'var(--weight-semibold)',color:'var(--text-primary)'}}>What do you want to check?</span>
+        <span style=${{fontSize:'var(--text-2xs)',color:'var(--text-faint)',fontFamily:'var(--font-mono)'}}>${nModels} model${nModels===1?'':'s'} loaded${mode!=='all'?(' · ~'+nPairs+' pair'+(nPairs===1?'':'s')):''}</span>
       </div>
-      <div role="group" aria-label="Test scope" style=${{display:'inline-flex',gap:0,borderRadius:4,overflow:'hidden',marginBottom:'.3rem'}}>
-        <button onClick=${function(){setMode('all');}} style=${{...SEG(mode==='all'),borderRadius:'4px 0 0 4px'}}>All ↔ All</button>
-        <button onClick=${function(){setMode('discipline');}} style=${{...SEG(mode==='discipline'),borderLeft:'none'}}>By discipline</button>
-        <button onClick=${function(){setMode('model');}} style=${{...SEG(mode==='model'),borderRadius:'0 4px 4px 0',borderLeft:'none'}}>By model</button>
+      <div role="group" aria-label="Test scope" style=${{display:'inline-flex',gap:0,borderRadius:'var(--radius-xs)',overflow:'hidden',marginBottom:'var(--space-2)'}}>
+        <button onClick=${function(){setMode('all');}} aria-pressed=${mode==='all'} style=${{...SEG(mode==='all'),borderRadius:'var(--radius-xs) 0 0 var(--radius-xs)'}}>All ↔ All</button>
+        <button onClick=${function(){setMode('discipline');}} aria-pressed=${mode==='discipline'} style=${{...SEG(mode==='discipline'),borderLeft:'none'}}>By discipline</button>
+        <button onClick=${function(){setMode('model');}} aria-pressed=${mode==='model'} style=${{...SEG(mode==='model'),borderRadius:'0 var(--radius-xs) var(--radius-xs) 0',borderLeft:'none'}}>By model</button>
       </div>
       ${mode === 'all'
-        ? html`<div style=${{fontSize:'0.67rem',color:'var(--text-faint)',padding:'.2rem .1rem'}}>Every loaded model is clashed against every other. ${nModels<2?'Load at least 2 models, or enable self-clash below.':''}</div>`
-        : html`<div style=${{display:'flex',flexDirection:'column',gap:'.2rem'}}>
-          <div style=${{display:'flex',alignItems:'center',gap:'.35rem'}}>
-            <span style=${{fontSize:'0.7rem',color:'var(--text-secondary)',whiteSpace:'nowrap',minWidth:48}}>Side A</span>
+        ? html`<div style=${{fontSize:'var(--text-2xs)',color:'var(--text-faint)',padding:'var(--space-1)'}}>Every loaded model is clashed against every other. ${nModels<2?'Load at least 2 models, or enable self-clash below.':''}</div>`
+        : html`<div style=${{display:'flex',flexDirection:'column',gap:'var(--space-1)'}}>
+          <div style=${{display:'flex',alignItems:'center',gap:'var(--space-2)'}}>
+            <span style=${{fontSize:'var(--text-xs)',color:'var(--text-secondary)',whiteSpace:'nowrap',minWidth:48}}>Side A</span>
             ${_modelSelect(rules.modelA, 'modelA', models, d)}
           </div>
-          <div style=${{display:'flex',alignItems:'center',gap:'.35rem'}}>
-            <span style=${{fontSize:'0.7rem',color:'var(--text-secondary)',whiteSpace:'nowrap',minWidth:48}}>Side B</span>
+          <div style=${{display:'flex',alignItems:'center',gap:'var(--space-2)'}}>
+            <span style=${{fontSize:'var(--text-xs)',color:'var(--text-secondary)',whiteSpace:'nowrap',minWidth:48}}>Side B</span>
             ${_modelSelect(rules.modelB, 'modelB', models, d)}
           </div>
         </div>`}
@@ -15016,6 +15017,11 @@ function startApp() {
     var showStdSt = useState(false), showStandards = showStdSt[0], setShowStandards = showStdSt[1];
     var canRun = (s.models||[]).length > 0 && !s.detecting;
     function close(){ d({t:A.SHOW_RUN_MODAL, v:false}); }
+    useEffect(function(){
+      function onKey(e){ if (e.key === 'Escape') { e.stopPropagation(); close(); } }
+      window.addEventListener('keydown', onKey);
+      return function(){ window.removeEventListener('keydown', onKey); };
+    }, []);
     function runNow(){
       if (!canRun) return;
       var rules = s.rules;
@@ -15032,15 +15038,15 @@ function startApp() {
       onClick=${close}>
       <div class="cc-modal-card" style=${{...S_MODAL_CARD,width:720,padding:0,display:'flex',flexDirection:'column'}} onClick=${function(e){e.stopPropagation();}}>
         <!-- Header -->
-        <div style=${{padding:'1rem 1.2rem .6rem',display:'flex',alignItems:'center',gap:'.6rem',borderBottom:'1px solid var(--border-subtle)'}}>
-          <div style=${{width:32,height:32,borderRadius:'var(--radius-md)',background:'var(--accent-bg)',display:'flex',alignItems:'center',justifyContent:'center',color:'var(--accent)'}}>
+        <div style=${{padding:'var(--space-4) var(--space-5) var(--space-3)',display:'flex',alignItems:'center',gap:'var(--space-3)',borderBottom:'1px solid var(--border-subtle)'}}>
+          <div style=${{width:32,height:32,borderRadius:'var(--radius-md)',background:'var(--accent-bg)',display:'flex',alignItems:'center',justifyContent:'center',color:'var(--accent)',flexShrink:0}}>
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="6 4 20 12 6 20 6 4"/></svg>
           </div>
           <div style=${{flex:1,minWidth:0}}>
-            <div id="cc-run-detection-title" style=${{fontSize:'1.05rem',fontWeight:700,color:'var(--text-primary)'}}>Run clash detection</div>
-            <div style=${{fontSize:'0.74rem',color:'var(--text-muted)',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>${summary}</div>
+            <div id="cc-run-detection-title" style=${{fontFamily:'var(--font-display)',fontSize:'var(--text-lg)',fontWeight:'var(--weight-semibold)',color:'var(--text-primary)',lineHeight:'var(--leading-tight)'}}>Run clash detection</div>
+            <div style=${{fontSize:'var(--text-xs)',color:'var(--text-muted)',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis',marginTop:'2px'}}>${summary}</div>
           </div>
-          <button onClick=${close} style=${S_MODAL_CLOSE} aria-label="Close">✕</button>
+          <button onClick=${close} style=${S_MODAL_CLOSE} aria-label="Close Run detection">✕</button>
         </div>
         <!-- Body: presets + advanced (existing ClashRulesPanel body) -->
         <div style=${{overflowY:'auto',maxHeight:'calc(85vh - 140px)'}}>
@@ -15048,24 +15054,25 @@ function startApp() {
           <!-- Project standards (collapsed) -->
           <div style=${{borderTop:'1px solid var(--border-subtle)'}}>
             <button onClick=${function(){setShowStandards(!showStandards);}}
-              style=${{...S_BTN,width:'100%',padding:'.55rem .7rem',background:'none',color:'var(--text-secondary)',
-                display:'flex',alignItems:'center',justifyContent:'space-between',fontSize:'.78rem',fontFamily:'var(--font-body)'}}>
-              <span style=${{fontWeight:600}}>Project standards</span>
-              <span style=${{fontSize:'.65rem',color:'var(--text-faint)'}}>${showStandards?'▲':'▼'} default clearance, IFC type pairs, discipline pairs</span>
+              aria-expanded=${showStandards}
+              style=${{...S_BTN,width:'100%',padding:'var(--space-2) var(--space-3)',background:'none',color:'var(--text-secondary)',
+                display:'flex',alignItems:'center',justifyContent:'space-between',fontSize:'var(--text-sm)'}}>
+              <span style=${{fontWeight:'var(--weight-semibold)'}}>Project standards</span>
+              <span style=${{fontSize:'var(--text-2xs)',color:'var(--text-faint)'}}>${showStandards?'▲':'▼'} default clearance, IFC type pairs, discipline pairs</span>
             </button>
-            ${showStandards && html`<div style=${{padding:'0 .25rem .5rem',borderTop:'1px solid var(--border-subtle)'}}>
+            ${showStandards && html`<div style=${{padding:'0 var(--space-1) var(--space-2)',borderTop:'1px solid var(--border-subtle)'}}>
               <${StandardsPanel} s=${s} d=${d} />
             </div>`}
           </div>
         </div>
         <!-- Footer: prominent Run button (duplicated from ClashRulesPanel but always visible) -->
-        <div style=${{padding:'.6rem .9rem',borderTop:'1px solid var(--border-subtle)',display:'flex',gap:'.5rem',alignItems:'center'}}>
-          <div style=${{flex:1,fontSize:'.68rem',color:'var(--text-faint)'}}>${(s.models||[]).length===0?'Load a model first.':'Choose a preset above, or click Run Detection with the current rules.'}</div>
+        <div style=${{padding:'var(--space-3) var(--space-4)',borderTop:'1px solid var(--border-subtle)',display:'flex',gap:'var(--space-2)',alignItems:'center'}}>
+          <div style=${{flex:1,fontSize:'var(--text-2xs)',color:'var(--text-faint)'}}>${(s.models||[]).length===0?'Load a model first.':'Choose a preset above, or click Run detection with the current rules.'}</div>
           ${s.detecting
             ? html`<button onClick=${function(){if(typeof cancelDetection==='function')cancelDetection();}}
-                style=${{...S_BTN,padding:'.45rem 1rem',background:'#dc2626',color:'#fff',fontWeight:600,fontSize:'.82rem',borderRadius:6}}>Stop Detection</button>`
+                style=${{...S_BTN,padding:'var(--space-2) var(--space-4)',background:'var(--color-danger)',color:'#fff',fontWeight:'var(--weight-semibold)',fontSize:'var(--text-sm)',borderRadius:'var(--radius-sm)'}}>Stop detection</button>`
             : html`<button onClick=${runNow} disabled=${!canRun}
-                style=${{...S_BTN,padding:'.45rem 1rem',background:canRun?'var(--accent)':'var(--bg-secondary)',color:canRun?'#fff':'var(--text-faint)',fontWeight:600,fontSize:'.82rem',borderRadius:6,minWidth:140}}>Run Detection</button>`}
+                style=${{...S_BTN,padding:'var(--space-2) var(--space-4)',background:canRun?'var(--accent)':'var(--bg-secondary)',color:canRun?'#fff':'var(--text-faint)',fontWeight:'var(--weight-semibold)',fontSize:'var(--text-sm)',borderRadius:'var(--radius-sm)',minWidth:140}}>Run detection</button>`}
         </div>
       </div>
     </div>`;
@@ -15760,23 +15767,24 @@ function startApp() {
         // shows only in All mode, exposing the other axes (storey, etc).
         if (isClashTab) {
           var isGrouped = selGrp === 'cluster';
-          var SEG_BTN = function(active){return {fontSize:'0.72rem',padding:'.22rem .55rem',borderRadius:4,border:'1px solid var(--border)',cursor:'pointer',
+          var SEG_BTN = function(active){return {fontSize:'var(--text-xs)',padding:'var(--space-1) var(--space-3)',borderRadius:'var(--radius-xs)',border:'1px solid var(--border)',cursor:'pointer',
             background:active?'var(--accent)':'var(--bg-secondary)',color:active?'#fff':'var(--text-secondary)',
-            fontWeight:active?600:400,fontFamily:'var(--font-body)',whiteSpace:'nowrap'};};
-          return html`<div style=${{padding:'.3rem .5rem',borderBottom:'1px solid var(--border-subtle)',display:'flex',gap:'.5rem',alignItems:'center',flexShrink:0}}>
-            <div role="group" aria-label="View mode" style=${{display:'inline-flex',gap:0,borderRadius:4,overflow:'hidden'}}>
-              <button onClick=${function(){d({t:grpAction,v:['cluster']});}} style=${{...SEG_BTN(isGrouped),borderRadius:'4px 0 0 4px'}}>Grouped</button>
-              <button onClick=${function(){d({t:grpAction,v:[]});}} style=${{...SEG_BTN(!isGrouped),borderRadius:'0 4px 4px 0',borderLeft:'none'}}>All</button>
+            fontWeight:active?'var(--weight-semibold)':'var(--weight-regular)',fontFamily:'var(--font-body)',whiteSpace:'nowrap',
+            transition:'background var(--duration-fast) var(--ease-standard), color var(--duration-fast) var(--ease-standard)'};};
+          return html`<div style=${{padding:'var(--space-1) var(--space-2)',borderBottom:'1px solid var(--border-subtle)',display:'flex',gap:'var(--space-2)',alignItems:'center',flexShrink:0}}>
+            <div role="group" aria-label="View mode" style=${{display:'inline-flex',gap:0,borderRadius:'var(--radius-xs)',overflow:'hidden'}}>
+              <button onClick=${function(){d({t:grpAction,v:['cluster']});}} aria-pressed=${isGrouped} style=${{...SEG_BTN(isGrouped),borderRadius:'var(--radius-xs) 0 0 var(--radius-xs)'}}>Grouped</button>
+              <button onClick=${function(){d({t:grpAction,v:[]});}} aria-pressed=${!isGrouped} style=${{...SEG_BTN(!isGrouped),borderRadius:'0 var(--radius-xs) var(--radius-xs) 0',borderLeft:'none'}}>All</button>
             </div>
-            ${!isGrouped && html`<label style=${{display:'flex',alignItems:'center',gap:'.25rem',flex:1,minWidth:0}}>
-              <span style=${{fontSize:'0.65rem',color:'var(--text-faint)',whiteSpace:'nowrap'}}>by</span>
+            ${!isGrouped && html`<label style=${{display:'flex',alignItems:'center',gap:'var(--space-1)',flex:1,minWidth:0}}>
+              <span style=${{fontSize:'var(--text-2xs)',color:'var(--text-faint)',whiteSpace:'nowrap'}}>by</span>
               <select value=${selGrp==='cluster'?'none':selGrp} style=${{...DS,flex:1,minWidth:0,maxWidth:120}}
                 onChange=${function(e){var v=e.target.value;d({t:grpAction,v:v==='none'?[]:[v]});}}>
                 ${secondaryGrpOpts.map(function(g){return html`<option key=${g[0]} value=${g[0]}>${g[1]}</option>`})}
               </select>
             </label>`}
-            <label style=${{display:'flex',alignItems:'center',gap:'.25rem',flex:1,minWidth:0}}>
-              <span style=${{fontSize:'0.65rem',color:'var(--text-faint)',whiteSpace:'nowrap'}}>Sort</span>
+            <label style=${{display:'flex',alignItems:'center',gap:'var(--space-1)',flex:1,minWidth:0}}>
+              <span style=${{fontSize:'var(--text-2xs)',color:'var(--text-faint)',whiteSpace:'nowrap'}}>Sort</span>
               <select value=${selSort} style=${{...DS,flex:1,minWidth:0}}
                 onChange=${function(e){var v=e.target.value;d({t:sortAction,v:v==='none'?[]:[v]});}}>
                 ${sortOptsList.map(function(sv){return html`<option key=${sv[0]} value=${sv[0]}>${sv[1]}</option>`})}
@@ -17895,7 +17903,9 @@ function startApp() {
         });
       }
       var modelById = {}; (models||[]).forEach(function(m){modelById[m.id]=m;});
-      var SEV_COLOR = {critical:'#dc2626',major:'#f59e0b',hard:'#ef4444',soft:'#f59e0b',minor:'#94a3b8',duplicate:'#8b5cf6',info:'#94a3b8'};
+      // Severity → semantic color token. Maps to --color-danger/warning/info/text-muted.
+      // 'duplicate' is purple (no token exists) — matches the existing inline-statusColors palette below for visual continuity.
+      var SEV_COLOR = {critical:'var(--color-danger)',major:'var(--color-warning)',hard:'var(--color-danger)',soft:'var(--color-warning)',minor:'var(--text-muted)',duplicate:'#8b5cf6',info:'var(--text-faint)'};
       return html`<div ref=${scrollRef} style=${{flex:1,overflowY:'auto'}}>
         ${groups.map(function(g) {
           var isOpen = !collapsed[g.label];
@@ -17907,7 +17917,7 @@ function startApp() {
           if (isCluster) {
             // ── Sentry/Linear-style cluster card ──
             var sev = window._ccClusterSeverity(g.items);
-            var sevCol = SEV_COLOR[sev] || '#94a3b8';
+            var sevCol = SEV_COLOR[sev] || 'var(--text-muted)';
             var label = window._ccClusterDisplay[g.label];
             var c0 = g.items[0]||{};
             var storey = c0.elemAStorey || c0.elemBStorey || '';
@@ -17918,27 +17928,27 @@ function startApp() {
             var resolved = g.items.length - openCount;
             return html`<div key=${g.label} data-cluster-key=${g.label}>
               <div onClick=${function(){toggleGroup(g.label)}}
-                style=${{display:'flex',alignItems:'center',gap:'.4rem',padding:'.45rem .5rem .45rem .35rem',cursor:'pointer',background:'var(--bg-tertiary)',borderBottom:'1px solid var(--border-subtle)',borderLeft:'3px solid '+sevCol,position:'sticky',top:0,zIndex:1}}
-                onMouseEnter=${function(e){e.currentTarget.querySelector('.cc-cluster-actions') && (e.currentTarget.querySelector('.cc-cluster-actions').style.opacity='1');}}
-                onMouseLeave=${function(e){e.currentTarget.querySelector('.cc-cluster-actions') && (e.currentTarget.querySelector('.cc-cluster-actions').style.opacity='0');}}>
-                <span style=${{fontSize:'0.63rem',color:'var(--text-faint)',width:10}}>${isOpen?'▼':'▶'}</span>
-                <div style=${{flex:1,minWidth:0,display:'flex',flexDirection:'column',gap:'.15rem'}}>
-                  <span style=${{fontSize:'0.78rem',fontWeight:600,color:'var(--text-primary)',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>${label}</span>
-                  <div style=${{display:'flex',gap:'.25rem',flexWrap:'wrap',alignItems:'center'}}>
-                    ${storey && html`<span style=${{fontSize:'0.62rem',padding:'1px 5px',borderRadius:99,background:'var(--bg-secondary)',color:'var(--text-secondary)'}}>${storey}</span>`}
-                    ${modelPair && html`<span style=${{fontSize:'0.62rem',padding:'1px 5px',borderRadius:99,background:crossModel?'var(--accent-bg)':'var(--bg-secondary)',color:crossModel?'var(--accent)':'var(--text-secondary)',fontWeight:crossModel?600:400}}>${modelPair}</span>`}
-                    <span style=${{fontSize:'0.62rem',color:'var(--text-faint)'}}>${openCount} open${resolved?(' · '+resolved+' resolved'):''}</span>
+                style=${{display:'flex',alignItems:'center',gap:'var(--space-2)',padding:'var(--space-2) var(--space-2) var(--space-2) var(--space-1)',cursor:'pointer',background:'var(--bg-tertiary)',borderBottom:'1px solid var(--border-subtle)',borderLeft:'3px solid '+sevCol,position:'sticky',top:0,zIndex:1}}
+                onMouseEnter=${function(e){var el=e.currentTarget.querySelector('.cc-cluster-actions'); if(el)el.style.opacity='1';}}
+                onMouseLeave=${function(e){var el=e.currentTarget.querySelector('.cc-cluster-actions'); if(el)el.style.opacity='0';}}>
+                <span style=${{fontSize:'var(--text-2xs)',color:'var(--text-faint)',width:10}}>${isOpen?'▼':'▶'}</span>
+                <div style=${{flex:1,minWidth:0,display:'flex',flexDirection:'column',gap:'2px'}}>
+                  <span style=${{fontSize:'var(--text-sm)',fontWeight:'var(--weight-semibold)',color:'var(--text-primary)',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis',lineHeight:'var(--leading-tight)'}}>${label}</span>
+                  <div style=${{display:'flex',gap:'var(--space-1)',flexWrap:'wrap',alignItems:'center'}}>
+                    ${storey && html`<span class="cc-status-pill" style=${{padding:'1px var(--space-2)',background:'var(--bg-secondary)',color:'var(--text-secondary)',textTransform:'none',letterSpacing:0}}>${storey}</span>`}
+                    ${modelPair && html`<span class="cc-status-pill" style=${{padding:'1px var(--space-2)',background:crossModel?'var(--accent-bg)':'var(--bg-secondary)',color:crossModel?'var(--accent-subtle)':'var(--text-secondary)',textTransform:'none',letterSpacing:0}}>${modelPair}</span>`}
+                    <span style=${{fontSize:'var(--text-2xs)',color:'var(--text-faint)'}}>${openCount} open${resolved?(' · '+resolved+' resolved'):''}</span>
                   </div>
                 </div>
-                <div class="cc-cluster-actions" style=${{opacity:0,display:'flex',gap:'.2rem',transition:'opacity var(--duration-fast)'}}>
-                  <button title="Triage with AI (T) — copies prompt to clipboard"
+                <div class="cc-cluster-actions" style=${{opacity:0,display:'flex',gap:'var(--space-1)',transition:'opacity var(--duration-fast) var(--ease-standard)'}}>
+                  <button aria-label="Triage cluster with AI" title="Triage with AI (T) — copies prompt to clipboard"
                     onClick=${function(e){e.stopPropagation(); window._ccTriageCluster(g.items);}}
-                    style=${{fontSize:'0.63rem',padding:'.12rem .4rem',borderRadius:4,border:'1px solid var(--accent-subtle)',background:'var(--accent-bg)',color:'var(--accent)',cursor:'pointer',fontWeight:600,fontFamily:'var(--font-body)'}}>Triage</button>
-                  <button title="Resolve all in this group (R)"
+                    style=${{...S_BTN,fontSize:'var(--text-2xs)',padding:'1px var(--space-2)',borderRadius:'var(--radius-xs)',border:'1px solid var(--accent-subtle)',background:'var(--accent-bg)',color:'var(--accent-subtle)',fontWeight:'var(--weight-semibold)'}}>Triage</button>
+                  <button aria-label="Resolve all clashes in this group" title="Resolve all in this group (R)"
                     onClick=${function(e){e.stopPropagation(); if (openCount===0 || confirm('Resolve all '+openCount+' open clashes in this group?')) window._ccResolveCluster(g.items.filter(function(it){return it.status!=='resolved'&&it.status!=='closed';}), d);}}
-                    style=${{fontSize:'0.63rem',padding:'.12rem .4rem',borderRadius:4,border:'1px solid var(--border)',background:'var(--bg-secondary)',color:'var(--text-secondary)',cursor:'pointer',fontFamily:'var(--font-body)'}}>Resolve all</button>
+                    style=${{...S_BTN,fontSize:'var(--text-2xs)',padding:'1px var(--space-2)',borderRadius:'var(--radius-xs)',border:'1px solid var(--border)',background:'var(--bg-secondary)',color:'var(--text-secondary)'}}>Resolve all</button>
                 </div>
-                <span style=${{fontSize:'0.69rem',color:'var(--text-faint)',background:'var(--bg-secondary)',padding:'.1rem .35rem',borderRadius:10,fontFamily:'var(--font-mono)'}}>${g.items.length}</span>
+                <span style=${{fontSize:'var(--text-2xs)',color:'var(--text-faint)',background:'var(--bg-secondary)',padding:'1px var(--space-2)',borderRadius:'var(--radius-pill)',fontFamily:'var(--font-mono)'}}>${g.items.length}</span>
               </div>
               ${isOpen && visibleItems.map(function(it){return html`<${IssueRow} key=${it.id} item=${it} active=${activeId===it.id} d=${d} isClash=${isClash} prefs=${prefs} models=${models} selectMode=${selectMode} isSelected=${!!selected[it.id]} trainingMode=${trainingMode} />`})}
               ${isOpen && hasMore && html`<button onClick=${function(e){e.stopPropagation();showMore(g.label);}}
@@ -28777,32 +28787,6 @@ function startApp() {
         ${(s.sectionAxis||s.sectionCustom||(s.sectionBox&&s.sectionBox.enabled)) && btn({k:'sclear', title:'Clear Section (Esc)',  label:'Clear Section', icon:I.clear,
                 onClick:function(){ window._ccSectionPickPending=false; setPickOn(false); d({t:A.SECTION,axis:null}); d({t:A.SECTION_CUSTOM,v:null}); d({t:A.SECTION_BOX,v:null}); }})}
         ${div()}
-        <!-- DETECT — single Run Detection entry point (opens RunDetectionModal) -->
-        ${(function(){
-          var dl = s.detecting;
-          var label = dl ? 'Detecting…' : 'Run detection';
-          return html`<button onClick=${function(){ if(!dl) d({t:A.SHOW_RUN_MODAL, v:true}); }}
-            aria-label=${label} title=${label + (dl?'':' — open setup')}
-            disabled=${dl}
-            onMouseEnter=${function(e){ var r=e.currentTarget.getBoundingClientRect(); setTtTip({label:label, desc:dl?'Detection running':'Configure rules and run a clash test'}); ttPos.current={x:r.left+r.width/2,y:r.bottom}; }}
-            onMouseLeave=${function(){ setTtTip(null); }}
-            style=${{
-              display:'inline-flex',alignItems:'center',gap:'.35rem',height:28,padding:'0 .65rem',marginLeft:'.15rem',
-              background: dl ? 'var(--bg-secondary)' : 'var(--accent)',
-              color: dl ? 'var(--text-faint)' : '#fff',
-              border: 'none', borderRadius:'var(--radius-sm)',
-              cursor: dl ? 'default' : 'pointer', fontWeight:600, fontSize:'var(--text-xs)',
-              fontFamily:'var(--font-body)',whiteSpace:'nowrap',transition:'background var(--duration-fast)'
-            }}>
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-              ${dl
-                ? html`<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>`
-                : html`<polygon points="6 4 20 12 6 20 6 4"/>`}
-            </svg>
-            <span>${label}</span>
-          </button>`;
-        })()}
-        ${div()}
         <!-- MEASURE — one button + caret popover (Trimble / FreeCAD pattern) -->
         ${(function(){
           var modeLabel = s.measureMode==='length'?'Distance':s.measureMode==='angle'?'Angle':s.measureMode==='area'?'Area':s.measureMode==='element'?'Element':s.measureMode==='clearance'?'Clearance':'Measure';
@@ -28955,9 +28939,9 @@ function startApp() {
 
         <!-- COORDINATE workspace tools: run detection + filter clashes -->
         ${s.workspace === 'coordinate' && html`${div()}
-          ${btn({k:'runDetect', title:s.detecting?'Running detection…':'Run clash detection', label:'Run clash detection',
+          ${btn({k:'runDetect', active:s.runModalOpen, title:s.detecting?'Running detection…':'Run clash detection — open setup', label:'Run clash detection',
             icon:'<polygon points="6 3 20 12 6 21 6 3"/><path d="M6 12h14"/>',
-            onClick:function(){ if(s.detecting) return; if(window._ccRunDetection){ window._ccRunDetection(); d({t:A.TAB,v:'clashes'}); } }})}
+            onClick:function(){ if(s.detecting) return; d({t:A.SHOW_RUN_MODAL, v:true}); }})}
           ${(function(){
             var le=s.localEngine||{}, we=s.wasmEngine||{};
             var lbl, dot, hint, click;
@@ -28977,9 +28961,9 @@ function startApp() {
           ${btn({k:'issues', active:s.tab==='issues', title:'Issues', label:'Issues',
             icon:'<path d="M4 15s1-1 4-1 5 2 8 2 4-1 4-1V3s-1 1-4 1-5-2-8-2-4 1-4 1z"/><line x1="4" y1="22" x2="4" y2="15"/>',
             onClick:function(){ d({t:A.TAB,v:s.tab==='issues'?null:'issues'}); }})}
-          ${btn({k:'standards', active:s.tab==='standards', title:'Detection Rules', label:'Detection Rules',
+          ${btn({k:'standards', active:s.runModalOpen, title:'Detection rules — open setup', label:'Detection rules',
             icon:'<path d="M4 7h16M4 12h10M4 17h13"/><path d="M20 12l-3-3v6z"/>',
-            onClick:function(){ d({t:A.TAB,v:s.tab==='standards'?null:'standards'}); }})}
+            onClick:function(){ d({t:A.SHOW_RUN_MODAL, v:true}); }})}
           ${btn({k:'nav-coord', active:s.tab==='navigator', title:'Navigator', label:'Navigator',
             icon:'<rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/>',
             onClick:function(){ d({t:A.TAB,v:s.tab==='navigator'?null:'navigator'}); }})}`}
