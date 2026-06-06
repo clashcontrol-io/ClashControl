@@ -1,5 +1,8 @@
 # Changelog
 
+## v5.17.2 (2026-06-06)
+- feat(settings): expose Free RAM button in main Settings
+
 ## v5.17.1 (2026-06-06)
 - perf+consent: memoize Conflicts-tab aggregations + default-on consent + suppress banner
 
