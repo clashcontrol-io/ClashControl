@@ -1,5 +1,8 @@
 # Changelog
 
+## v5.17.4 (2026-06-06)
+- revert: chunk-merge default OFF — back to per-element rendering
+
 ## v5.17.3 (2026-06-06)
 - revert: remove Free RAM / dehydrate experiment entirely
 
