@@ -1,5 +1,8 @@
 # Changelog
 
+## v5.16.1 (2026-06-06)
+- perf(viewer): PR-A — Int8 normals (~630 MB cut), positions unchanged
+
 ## v5.16.0 (2026-06-06)
 - fix(loader): race-safe model dedup — 4 files no longer load as 8 (#572)
 
