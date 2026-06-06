@@ -1,5 +1,8 @@
 # Changelog
 
+## v5.17.3 (2026-06-06)
+- revert: remove Free RAM / dehydrate experiment entirely
+
 ## v5.17.2 (2026-06-06)
 - feat(settings): expose Free RAM button in main Settings
 
