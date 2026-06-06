@@ -21173,16 +21173,14 @@ function startApp() {
     EB.prototype.render = function(){
       if(this.state.hasError){
         var self=this;
-        return h('div',{style:{padding:'2rem',textAlign:'center',color:'var(--text-primary)',background:'var(--bg-primary)',height:'100vh',display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center'}},
-          h('div',{style:{width:48,height:48,background:'var(--text-primary)',borderRadius:'var(--radius-lg)',display:'flex',alignItems:'center',justifyContent:'center',marginBottom:'1rem'}},
-            h('span',{style:{display:'inline-flex',alignItems:'center',color:'var(--bg-primary)',fontWeight:800,fontSize:14,fontFamily:'Syne,system-ui,sans-serif',lineHeight:1}},
-            h('span',null,'C'),
-            h('span',{style:{display:'inline-block',transform:'scaleX(-1)',marginLeft:'-1px'}},'C'))),
-          h('h2',{style:{marginBottom:'.5rem'}},'Something went wrong'),
-          h('p',{style:{color:'var(--text-secondary)',marginBottom:'1rem',maxWidth:400}},String(this.state.error&&this.state.error.message||this.state.error||'Unknown error')),
-          h('div',{style:{display:'flex',gap:'.5rem'}},
-            h('button',{onClick:function(){self.setState({hasError:false,error:null});},style:{padding:'.5rem 1rem',background:'var(--bg-secondary)',color:'var(--accent-subtle)',border:'1px solid var(--border)',borderRadius:6,cursor:'pointer',fontFamily:'inherit'}},'Try Again'),
-            h('button',{onClick:function(){window.location.reload();},style:{padding:'.5rem 1rem',background:'#1a6b4a',color:'#fff',border:'none',borderRadius:6,cursor:'pointer',fontFamily:'inherit'}},'Reload App')
+        return h('div',{style:{padding:'var(--space-8)',textAlign:'center',color:'var(--text-primary)',background:'var(--bg-primary)',height:'100vh',display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center'}},
+          h('div',{style:{width:56,height:56,background:'var(--logo-gradient)',borderRadius:'var(--radius-lg)',display:'flex',alignItems:'center',justifyContent:'center',marginBottom:'var(--space-4)',boxShadow:'0 4px 12px rgba(124,58,237,.3)'}},
+            h('span',{style:{color:'#fff',fontFamily:'var(--font-display),Syne,system-ui,sans-serif',fontWeight:800,fontSize:20,letterSpacing:'-.02em',lineHeight:1}},'CC')),
+          h('h2',{style:{fontFamily:'var(--font-display),Syne,system-ui,sans-serif',fontSize:'var(--text-xl)',fontWeight:'var(--weight-bold)',marginBottom:'var(--space-2)',lineHeight:'var(--leading-tight)'}},'Something went wrong'),
+          h('p',{style:{color:'var(--text-secondary)',fontSize:'var(--text-md)',marginBottom:'var(--space-4)',maxWidth:400}},String(this.state.error&&this.state.error.message||this.state.error||'Unknown error')),
+          h('div',{style:{display:'flex',gap:'var(--space-2)'}},
+            h('button',{onClick:function(){self.setState({hasError:false,error:null});},style:{padding:'var(--space-2) var(--space-4)',background:'var(--bg-secondary)',color:'var(--text-secondary)',border:'1px solid var(--border)',borderRadius:'var(--radius-sm)',cursor:'pointer',fontFamily:'inherit',fontSize:'var(--text-base)',fontWeight:'var(--weight-medium)'}},'Try Again'),
+            h('button',{onClick:function(){window.location.reload();},style:{padding:'var(--space-2) var(--space-4)',background:'var(--accent)',color:'#fff',border:'none',borderRadius:'var(--radius-sm)',cursor:'pointer',fontFamily:'inherit',fontSize:'var(--text-base)',fontWeight:'var(--weight-semibold)'}},'Reload App')
           )
         );
       }
@@ -26948,9 +26946,14 @@ function startApp() {
   function _makeResizeHandler(dragRef, setPanelW, minW, maxW, invert) {
     return function(e) {
       e.preventDefault();
-      var startX = e.clientX, startW = dragRef.current && dragRef.current.startW || 0;
-      dragRef.current = {startX:startX, startW:startW};
-      setPanelW(function(cur) { dragRef.current.startW = cur; return cur; });
+      // Read the current panel width via the functional updater (we don't
+      // have direct access to the state value here). Side-effecting inside
+      // an updater is unsafe — Preact may invoke updaters more than once
+      // and onUp can null dragRef.current — so we guard the assignment.
+      setPanelW(function(cur) {
+        dragRef.current = {startX: e.clientX, startW: cur};
+        return cur;
+      });
       function onMove(ev) {
         if (!dragRef.current) return;
         var dx = invert ? (dragRef.current.startX - ev.clientX) : (ev.clientX - dragRef.current.startX);
