@@ -21674,6 +21674,26 @@ function startApp() {
           </${React.Fragment}>`;
         })()}
 
+        <div style=${SEC}>Memory</div>
+        <div style=${TROW}>
+          <div>
+            <div style=${TLBL}>Free RAM for Present mode</div>
+            <div style=${TSUB}>Drops per-element CPU geometry from RAM. Models keep rendering via the merged chunks. The next Run Detection re-prepares geometry automatically (1–3 s prefix on the progress bar). Only effective for models already cached locally.</div>
+          </div>
+          <button onClick=${function(){
+              if (!window._ccDehydrateAll) return;
+              if (window._ccToast) window._ccToast('Freeing per-element geometry…');
+              window._ccDehydrateAll().then(function(r){
+                var mb = r && r.totalFreed ? (r.totalFreed/1048576).toFixed(0) + ' MB' : 'no eligible models yet';
+                if (window._ccToast) window._ccToast('Freed ' + mb + ' — next Run Detection will re-prepare');
+              });
+            }}
+            title="Drop per-element CPU geometry from RAM. Run Detection re-hydrates automatically."
+            style=${{...S_BTN,padding:'.35rem .75rem',background:'var(--accent-bg)',color:'var(--accent-subtle)',
+              border:'1px solid var(--accent-subtle)',borderRadius:'var(--radius-sm)',fontSize:'var(--text-sm)',
+              fontWeight:'var(--weight-semibold)',whiteSpace:'nowrap'}}>Free now</button>
+        </div>
+
         <div style=${SEC}>Privacy</div>
         <div style=${TROW}>
           <div>
