@@ -1,5 +1,8 @@
 # Changelog
 
+## v5.18.0 (2026-06-07)
+- chore: daily memory sync 2026-06-07
+
 ## v5.17.4 (2026-06-06)
 - revert: chunk-merge default OFF — back to per-element rendering
 
