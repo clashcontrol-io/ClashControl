@@ -193,11 +193,15 @@
         radiusM = 200;
       }
     }
+    var georef = {
+      refLat:geo.refLat, refLon:geo.refLon, refElev:geo.refElev||0,
+      trueNorthDeg:geo.trueNorthDeg||0, radiusM:radiusM, source:geo.source||'manual'
+    };
     if (window._ccDispatch) {
-      window._ccDispatch({t:'SET_MODEL_GEO', id:modelId, u:{
-        refLat:geo.refLat, refLon:geo.refLon, refElev:geo.refElev||0,
-        trueNorthDeg:geo.trueNorthDeg||0, radiusM:radiusM, source:geo.source||'manual'
-      }});
+      window._ccDispatch({t:'SET_MODEL_GEO', id:modelId, u:georef});
+      // Persist on the model so modelMeta saves it to IndexedDB and the
+      // basemap survives a page refresh.
+      window._ccDispatch({t:'UPD_MODEL', id:modelId, u:{georef:georef}});
     }
     return buildBasemap(modelId, geo.refLat, geo.refLon, radiusM, {
       trueNorthDeg: geo.trueNorthDeg||0
@@ -205,8 +209,12 @@
   };
 
   window._ccGeoplaceClear = function() {
+    var modelId = _basemapForId;
     clearBasemap();
-    if (window._ccDispatch) window._ccDispatch({t:'CLR_MODEL_GEO'});
+    if (window._ccDispatch) {
+      window._ccDispatch({t:'CLR_MODEL_GEO'});
+      if (modelId) window._ccDispatch({t:'UPD_MODEL', id:modelId, u:{georef:null}});
+    }
   };
 
   // Read georef from a freshly-loaded IFC model (looks at
@@ -249,6 +257,39 @@
 
     init: function() {
       console.log('[Geoplace] Addon ready');
+      // Auto-restore a basemap if a previously-loaded model has a saved
+      // georef (persisted via modelMeta → IndexedDB). Poll briefly because
+      // model rehydration runs asynchronously after addon init.
+      var attempts = 0;
+      var iv = setInterval(function(){
+        attempts++;
+        var s = window._ccLatestState;
+        var S3 = window._ccState3d;
+        if (!s || !s.models || !S3 || !S3.map) {
+          if (attempts > 60) clearInterval(iv); // give up after ~30s
+          return;
+        }
+        var target = null;
+        for (var i = 0; i < s.models.length; i++) {
+          var m = s.models[i];
+          if (m.georef && m.georef.refLat != null && S3.map[m.id]) { target = m; break; }
+        }
+        // Wait until we either find a target with a ready scene group, or
+        // we're sure none of the loaded models had a saved georef.
+        if (!target) {
+          var anyPending = s.models.some(function(m){
+            return m.georef && m.georef.refLat != null && !S3.map[m.id];
+          });
+          if (!anyPending) clearInterval(iv);
+          if (attempts > 60) clearInterval(iv);
+          return;
+        }
+        clearInterval(iv);
+        if (_basemapForId === target.id) return; // already up
+        window._ccGeoplaceModel(target.id, target.georef).catch(function(err){
+          console.warn('[Geoplace] auto-restore failed:', err);
+        });
+      }, 500);
     },
 
     destroy: function() {

@@ -986,7 +986,7 @@ function startApp() {
 
   function reducer(s,a) {
     switch(a.t) {
-      case A.ADD_MODEL:   var _am=a.v; if(s.modelMeta){var _mm=s.modelMeta.find(function(m){return m.id===_am.id});if(_mm){if(_mm.visible===false)_am=Object.assign({},_am,{visible:false});if(_mm.discipline)_am=Object.assign({},_am,{discipline:_mm.discipline});if(_mm.color)_am=Object.assign({},_am,{color:_mm.color});if(_mm.tag)_am=Object.assign({},_am,{tag:_mm.tag});}}
+      case A.ADD_MODEL:   var _am=a.v; if(s.modelMeta){var _mm=s.modelMeta.find(function(m){return m.id===_am.id});if(_mm){if(_mm.visible===false)_am=Object.assign({},_am,{visible:false});if(_mm.discipline)_am=Object.assign({},_am,{discipline:_mm.discipline});if(_mm.color)_am=Object.assign({},_am,{color:_mm.color});if(_mm.tag)_am=Object.assign({},_am,{tag:_mm.tag});if(_mm.georef)_am=Object.assign({},_am,{georef:_mm.georef});}}
         // Race-safe dedup: the reducer is the single serialization point, so a
         // concurrent same-name (or same-id) load that slipped past the
         // check-then-act guard in the loader is collapsed here into a replace
@@ -12631,7 +12631,7 @@ function startApp() {
       lastDeltaSummary:s.lastDeltaSummary||null,
       sheets:s.sheets||[], activeSheetId:s.activeSheetId||null,
       sheetPins:s.sheetPins||[], markups:s.markups||[],
-      modelMeta:s.models.map(function(m){return {id:m.id,name:m.name,discipline:m.discipline,color:m.color,visible:m.visible,tag:m.tag||''};})
+      modelMeta:s.models.map(function(m){return {id:m.id,name:m.name,discipline:m.discipline,color:m.color,visible:m.visible,tag:m.tag||'',georef:m.georef||null};})
     }, 0);
     return idbSaveProjectData(pid, data);
   }
