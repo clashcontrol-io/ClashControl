@@ -16,10 +16,13 @@ Built for architects, engineers, and BIM coordinators who are tired of paying th
 ## Features
 
 - **Load multiple IFC models** — drag & drop or browse, supports any IFC 2x3/4 file
-- **Geometric clash detection** — hard clashes (intersections) and soft clashes (clearance violations) using OBB-based collision detection
-- **3D viewer** — orbit, pan, zoom, section planes, section boxes, floor plan cuts, measurement tools
+- **Geometric clash detection** — hard clashes (intersections) and soft clashes (clearance violations) via AABB broad-phase + BVH triangle–triangle (Möller–Trumbore) narrow-phase, with optional WASM acceleration
+- **3D viewer** — orbit, pan, zoom, section planes, section boxes, floor plan cuts, walk mode, measurement tools
 - **Model explorer** — browse elements by storey, IFC type, discipline, or material with visibility toggles and color-by-classification
 - **Issue management** — create issues linked to elements, set priority/status/category, assign to team members
+- **Data quality & IDS** — BIM-basics, ILS and NL-SfB classification checks, plus IDS (Information Delivery Specification) import/validation
+- **AI assistant** — type plain-language commands ("show structural vs MEP clashes", "top view"), and get AI-generated clash titles and triage suggestions
+- **Real-world context** — drop the model onto a satellite/OSM basemap from its IFC georeferencing, and load LAS/PLY/PCD/XYZ point clouds as reference layers
 - **BCF import/export** — standard BCF 2.1 format for interoperability with Revit, Navisworks, Solibri, and BIMcollab
 - **Share projects** — save your entire session (clashes, issues, viewpoints, settings) as a `.ccproject` file and share it with teammates. They import it to see your exact results and continue the work.
 - **Viewpoints** — save and restore camera positions with snapshots
@@ -29,11 +32,10 @@ Built for architects, engineers, and BIM coordinators who are tired of paying th
 
 ## What's new
 
-- **Discipline-colored outlines** — element outlines now match the model category color (structural = blue, MEP = red, architectural = purple, civil = green) when selecting or inspecting clashes
-- **Smarter soft clash markers** — markers are placed at the actual closest point between elements, weighted toward the smaller element so they no longer appear in the middle of a long beam
-- **Detection status in chat** — when clash detection is running with the chat panel open, the input area shows a live status bar with a glowing animated border
-- **Clearance & Tolerance tooltips** — hover over the labels for 1 second to see what each setting does
-- **Cleaner clash cards** — removed penetration depth display from hard clash cards for a less cluttered list
+- **Run Detection modal + clustered triage** — one surface for clash setup (quick presets, scope picker, project standards); results collapse into Sentry/Linear-style cluster cards with keyboard triage (J/K/T/R/X) instead of a wall of duplicate hits
+- **Real-world placement** — drop the model onto a satellite/OSM basemap from its IFC georeferencing, and load point clouds (LAS/PLY/PCD/XYZ) as reference layers
+- **IFC4 georeferencing** — reads `IfcMapConversion` / `IfcProjectedCRS` (EPSG, offset, rotation) for context, with a pre-run placement check that warns when federated models don't share a coordinate base
+- **Lighter & faster** — Int8 normals (~630 MB saved on large federations) and instanced rendering for repetitive geometry
 
 ## How to use
 

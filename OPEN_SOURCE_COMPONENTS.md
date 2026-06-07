@@ -16,7 +16,7 @@ ClashControl uses the following open source libraries and components:
 
 | Component | Version | License | Purpose |
 |-----------|---------|---------|---------|
-| [web-ifc](https://github.com/ThatOpen/engine_web-ifc) | 0.0.57 | MPL-2.0 | IFC file parsing and geometry extraction |
+| [web-ifc](https://github.com/ThatOpen/engine_web-ifc) | 0.0.77 | MPL-2.0 | IFC file parsing and geometry extraction |
 
 ## Inline / Bundled
 

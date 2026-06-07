@@ -4,6 +4,8 @@
 
 Analysis of GPU instancing feasibility (prompted by comparison with Fragments .frag format), covering what the codebase already does well, confirmed efficiency gaps, and what to leave alone.
 
+> **Status (as of v5.17).** This started as a point-in-time analysis; most of the "gaps" below have since shipped. Already landed: **GPU instancing** on the IFC path (`InstancedMesh`), the **chunk-merge** draw-call reducer (built, then defaulted **OFF** after a regression review — see MEMORY.md), **Int8 normals** (~630 MB cut at 8-model scale), and an **adaptive BVH cache** + **pair-result cache** that persist across runs. Still open: the GLB-path dedup gaps (#1–#3). Treat the line numbers below as indicative only — `index.html` has grown past 31k lines since this was written; search by the named symbol/section instead.
+
 ---
 
 ## Corrections to Initial Assumptions
@@ -58,13 +60,13 @@ Analysis of GPU instancing feasibility (prompted by comparison with Fragments .f
 **Fix:** Cache extracted local-space vertices/triangles by `node.mesh` index. Apply each node's world transform to the cached data.
 **Risk:** Low, self-contained in the worker.
 
-### 4. BVH caches not persistent across detection runs — MEDIUM effort
-**Gap:** `_wvCache`, `_triCache`, `_bvhCache` are deleted after each 80-candidate chunk (`index.html:3603–3627`). Re-running detection rebuilds all BVHs from scratch.
-**Fix:** Keep caches on elements between runs; invalidate on `LOAD_MODEL`/`REMOVE_MODEL` via a generation counter.
-**Risk:** Medium — needs reliable invalidation to avoid stale cache after model changes.
+### 4. BVH caches not persistent across detection runs — MEDIUM effort — ✅ LANDED
+**Gap (resolved):** `_wvCache`, `_triCache`, `_bvhCache` used to be deleted after each chunk. There is now an **adaptive `_BVH_CACHE_MAX`** (sized to a heap budget) plus a bounded LRU **`_pairResultCache`** keyed by `(mA:eidA|mB:eidB|rulesHash)`, both cleared per-model on `DEL_MODEL`/`REPLACE_MODEL`. Repeat detection no longer rebuilds everything from scratch.
 
-### 5. GPU instancing via `THREE.InstancedMesh` — HIGH effort
-**Gap:** Each IFC placement produces its own `THREE.Mesh` = one draw call. Geometry and material are already shared — collapsing them into one draw call is the remaining step.
+### 5. GPU instancing via `THREE.InstancedMesh` — HIGH effort — ✅ LANDED (IFC path)
+**Done:** A post-streaming pass (`_buildInstancedMeshes`) groups by `(geoExpId, matKey)` and emits `InstancedMesh` for repeated geometry; raycast/hover/ghost/culling map `instanceId → expressId`. The optional **chunk-merge** pass (`_ccChunkMerge`, spatially-clustered draw-call reduction) was also built but currently defaults **OFF** after a regression review. The GLB path is still not instanced (needs gap #2 first).
+
+_Historical note — the original analysis:_ Each IFC placement produced its own `THREE.Mesh` = one draw call. Geometry and material were already shared — collapsing them into one draw call was the remaining step.
 
 **Subsystems requiring changes:**
 
@@ -100,10 +102,10 @@ Analysis of GPU instancing feasibility (prompted by comparison with Fragments .f
 
 ## Priority Summary
 
-| # | Improvement | Effort | Gain | Risk |
-|---|---|---|---|---|
-| 1 | GLB matCache | Low | Material memory reduction | None |
-| 2 | GLB geometry dedup + normals once | Low | Memory + CPU at load | Low |
-| 3 | GLB worker mesh dedup | Medium | CPU at clash-prep for large GLBs | Low |
-| 4 | Persistent BVH cache across runs | Medium | CPU at repeat detection | Medium |
-| 5 | GPU instancing (IFC path first) | High | Draw calls for large repetitive buildings | Medium |
+| # | Improvement | Effort | Gain | Risk | Status |
+|---|---|---|---|---|---|
+| 1 | GLB matCache | Low | Material memory reduction | None | ⬜ open |
+| 2 | GLB geometry dedup + normals once | Low | Memory + CPU at load | Low | ⬜ open |
+| 3 | GLB worker mesh dedup | Medium | CPU at clash-prep for large GLBs | Low | ⬜ open |
+| 4 | Persistent BVH cache across runs | Medium | CPU at repeat detection | Medium | ✅ landed |
+| 5 | GPU instancing (IFC path first) | High | Draw calls for large repetitive buildings | Medium | ✅ landed |
