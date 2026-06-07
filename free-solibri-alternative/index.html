@@ -1,0 +1,147 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Free Solibri Alternative — IFC Viewer & Clash Detection in Your Browser | ClashControl</title>
+  <meta name="description" content="A free Solibri alternative that runs in your browser. View IFC models in 3D, detect hard and soft clashes, run IDS and data-quality checks, and export BCF 2.1 — no license, no install.">
+  <link rel="canonical" href="https://www.clashcontrol.io/free-solibri-alternative/">
+  <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 48 48'%3E%3Crect width='48' height='48' rx='8' fill='%231a6b4a'/%3E%3Crect x='10' y='10' width='28' height='28' fill='none' stroke='%23ffffff' stroke-width='2'/%3E%3Cline x1='10' y1='38' x2='38' y2='10' stroke='%23ffffff' stroke-width='2'/%3E%3C/svg%3E">
+
+  <meta property="og:type" content="article">
+  <meta property="og:url" content="https://www.clashcontrol.io/free-solibri-alternative/">
+  <meta property="og:title" content="Free Solibri Alternative — IFC Viewer & Clash Detection in Your Browser">
+  <meta property="og:description" content="A free Solibri alternative. View IFC models, detect clashes, run IDS and data-quality checks, export BCF 2.1 — free, no install.">
+  <meta property="og:image" content="https://www.clashcontrol.io/og-image.png?v=2">
+  <meta property="og:site_name" content="ClashControl">
+  <meta property="og:locale" content="en_US">
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="Free Solibri Alternative — IFC Viewer & Clash Detection">
+  <meta name="twitter:description" content="A free Solibri alternative. View IFC, detect clashes, run IDS checks, export BCF 2.1 — in the browser.">
+  <meta name="twitter:image" content="https://www.clashcontrol.io/og-image.png?v=2">
+
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Syne:wght@700;800&family=DM+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@type": "FAQPage",
+    "mainEntity": [
+      { "@type": "Question", "name": "Is ClashControl a free Solibri alternative?",
+        "acceptedAnswer": { "@type": "Answer", "text": "Yes. ClashControl is free and open-source. It covers the everyday openBIM loop Solibri is used for — IFC viewing, clash detection, IDS validation, model checking and BCF — in the browser with no license and no install. Solibri still has deeper, scriptable rulesets; ClashControl focuses on the daily coordination loop." } },
+      { "@type": "Question", "name": "Can it view IFC models like Solibri?",
+        "acceptedAnswer": { "@type": "Answer", "text": "Yes — it is a full online IFC viewer for IFC 2x3 and IFC4, with 3D orbit, section planes, a section box, floor cuts, a model tree by storey/type/discipline, and measurement tools." } },
+      { "@type": "Question", "name": "Does it do clash detection and model checking?",
+        "acceptedAnswer": { "@type": "Answer", "text": "Yes. It detects hard clashes (geometric intersections) and soft clashes (clearance violations), and runs IDS validation plus data-quality checks (BIM basics, ILS, NL-SfB) and accessibility checks." } },
+      { "@type": "Question", "name": "Does it export BCF?",
+        "acceptedAnswer": { "@type": "Answer", "text": "Yes — BCF 2.1 import and export with viewpoints and snapshots, so issues round-trip with Solibri, Revit, Navisworks and BIMcollab." } },
+      { "@type": "Question", "name": "Do I need to install anything?",
+        "acceptedAnswer": { "@type": "Answer", "text": "No. ClashControl runs in the browser and is a Progressive Web App, so it works offline. Models are processed client-side and never have to leave your machine." } }
+    ]
+  }
+  </script>
+  <script data-goatcounter="https://clashcontrol.goatcounter.com/count" async src="//gc.zgo.at/count.js"></script>
+
+  <style>
+    :root {
+      --bg: #ffffff; --fg: #0f172a; --muted: #475569; --faint: #94a3b8;
+      --accent: #1a6b4a; --border: #e2e8f0; --panel: #f8fafc;
+    }
+    * { box-sizing: border-box; }
+    html, body { margin: 0; padding: 0; background: var(--bg); color: var(--fg);
+      font-family: 'DM Sans', system-ui, -apple-system, sans-serif; line-height: 1.65;
+      -webkit-font-smoothing: antialiased; }
+    a { color: var(--accent); text-decoration: none; }
+    a:hover { text-decoration: underline; }
+    header { border-bottom: 1px solid var(--border); padding: 1rem 1.5rem;
+      display: flex; align-items: center; justify-content: space-between; }
+    header .brand { font-family: 'Syne', sans-serif; font-weight: 800; font-size: 1.15rem;
+      letter-spacing: -0.02em; color: var(--fg); display: flex; align-items: center; gap: .55rem; }
+    header .brand svg { display: block; }
+    header nav a { color: var(--muted); margin-left: 1.25rem; font-size: .95rem; font-weight: 500; }
+    main { max-width: 720px; margin: 0 auto; padding: 3rem 1.5rem 4rem; }
+    h1 { font-family: 'Syne', sans-serif; font-size: 2.4rem; font-weight: 800;
+      letter-spacing: -0.025em; line-height: 1.15; margin: 0 0 1.5rem; }
+    h2 { font-family: 'Syne', sans-serif; font-size: 1.4rem; font-weight: 700;
+      letter-spacing: -0.015em; margin: 2.5rem 0 .75rem; }
+    p { margin: 0 0 1rem; color: var(--fg); }
+    ul { margin: 0 0 1.25rem; padding-left: 1.25rem; }
+    li { margin-bottom: .35rem; }
+    strong { font-weight: 600; }
+    .cta { display: inline-block; margin: 1.5rem 0 2rem; padding: .85rem 1.5rem;
+      background: var(--accent); color: #fff; border-radius: 6px;
+      font-weight: 600; font-size: 1rem; }
+    .cta:hover { background: #155a3d; text-decoration: none; }
+    .faq dt { font-weight: 600; margin-top: 1.25rem; }
+    .faq dd { margin: .3rem 0 0; color: var(--muted); }
+    footer { border-top: 1px solid var(--border); padding: 2rem 1.5rem;
+      text-align: center; color: var(--faint); font-size: .9rem; }
+    footer .siblings { margin-bottom: 1rem; }
+    footer .siblings a { margin: 0 .6rem; color: var(--muted); }
+  </style>
+</head>
+<body>
+
+<header>
+  <a href="/" class="brand">
+    <svg width="22" height="22" viewBox="0 0 48 48" aria-hidden="true">
+      <rect width="48" height="48" rx="8" fill="#1a6b4a"/>
+      <rect x="10" y="10" width="28" height="28" fill="none" stroke="#fff" stroke-width="2"/>
+      <line x1="10" y1="38" x2="38" y2="10" stroke="#fff" stroke-width="2"/>
+    </svg>
+    ClashControl
+  </a>
+  <nav>
+    <a href="/">Open the app</a>
+    <a href="https://github.com/clashcontrol-io/ClashControl">GitHub</a>
+  </nav>
+</header>
+
+<main>
+  <h1>A free Solibri alternative that runs in your browser</h1>
+
+  <p>Solibri is the reference tool for openBIM model checking — and it's powerful. But for most teams the daily job is narrower: open the IFC, view it in 3D, find where disciplines collide, check the model against a few rules, and hand the issues back as BCF. You shouldn't need a paid seat and a heavy desktop install for that.</p>
+
+  <p>ClashControl covers that everyday loop — free, in the browser:</p>
+
+  <ul>
+    <li><strong>Online IFC viewer</strong> — IFC 2x3 and IFC4 in 3D, with section planes, section box, floor cuts, a model tree by storey/type/discipline, and measurement</li>
+    <li><strong>Clash detection</strong> — hard clashes (intersections) and soft clashes (clearance), with a discipline clash matrix</li>
+    <li><strong>Model checking</strong> — IDS validation, data-quality checks (BIM basics, ILS, NL-SfB) and accessibility checks</li>
+    <li><strong>BCF 2.1 import and export</strong> — issues round-trip with Solibri, Revit, Navisworks and BIMcollab</li>
+  </ul>
+
+  <p>No license. No install. No subscription. Models are processed in your browser and never have to leave your machine. It won't replace Solibri's deep, scriptable rulesets — but it nails the IFC viewing and coordination loop you run every day, and gets out of your way.</p>
+
+  <a href="/" class="cta" data-goatcounter-click="cta-app-from-solibri">Open ClashControl and load a model →</a>
+
+  <h2>FAQ</h2>
+  <dl class="faq">
+    <dt>Is ClashControl a free Solibri alternative?</dt>
+    <dd>Yes — free and open-source, covering the everyday openBIM loop (IFC viewing, clash detection, IDS, BCF) in the browser. Solibri still has deeper, scriptable rulesets; ClashControl focuses on the daily coordination loop.</dd>
+    <dt>Can it view IFC models like Solibri?</dt>
+    <dd>Yes — a full <strong>online IFC viewer</strong> for <strong>IFC 2x3 and IFC4</strong>, with 3D orbit, section planes, a section box, floor cuts, a model tree and measurement.</dd>
+    <dt>Does it do clash detection and model checking?</dt>
+    <dd>Yes — hard and soft clashes, plus <strong>IDS validation</strong>, data-quality checks and accessibility checks.</dd>
+    <dt>Does it export BCF?</dt>
+    <dd>Yes — <strong>BCF 2.1</strong> import and export with viewpoints and snapshots.</dd>
+    <dt>Do I need to install anything?</dt>
+    <dd>No. It runs in the browser and is a PWA, so it works offline. Your models stay on your machine.</dd>
+  </dl>
+</main>
+
+<footer>
+  <div class="siblings">
+    <a href="/free-navisworks-alternative/">Free Navisworks alternative</a> ·
+    <a href="/ifc-clash-detection-online/">Online IFC clash detection</a> ·
+    <a href="/free-bcf-viewer/">Free BCF viewer &amp; export</a> ·
+    <a href="/free-ifc-viewer-online/">Free online IFC viewer</a> ·
+    <a href="/ids-validation-online/">IDS validation online</a>
+  </div>
+  <div>© ClashControl · <a href="/">Open the app</a> · <a href="https://github.com/clashcontrol-io/ClashControl">Source on GitHub</a></div>
+</footer>
+
+</body>
+</html>

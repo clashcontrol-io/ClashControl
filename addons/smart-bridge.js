@@ -1263,7 +1263,7 @@
                 style=${{fontSize:'0.63rem',fontWeight:600,color:'#fbbf24',textDecoration:'none',background:'rgba(234,179,8,.15)',padding:'2px 7px',borderRadius:4,flexShrink:0}}>Download</a>`}
             </div>`}
             ${!sb.llmConnected && html`<div style=${{fontSize:'0.63rem',color:'var(--text-faint)',lineHeight:1.6}}>
-              Smart Bridge is running. Connect your AI assistant:
+              Smart Bridge is running. Connect your AI — one click, no API key:
             </div>`}
 
             ${!sb.llmConnected && html`<div style=${{background:'var(--bg-secondary)',borderRadius:6,padding:'.45rem .5rem',display:'flex',flexDirection:'column',gap:'.35rem'}}>
@@ -1317,19 +1317,15 @@
               var _inputStyle = {width:'100%',boxSizing:'border-box',padding:'.25rem .4rem',borderRadius:4,border:'1px solid var(--border)',background:'var(--bg-tertiary)',color:'var(--text-main)',fontSize:'0.63rem',fontFamily:'inherit'};
               var _labelStyle = {fontSize:'0.6rem',color:'var(--text-faint)',display:'block',marginBottom:2};
 
-              function _sbIsLocal(p){ return p==='ollama'||p==='lmstudio'||p==='llamacpp'||p==='jan'; }
-
               function _onProviderChange() {
                 var sel = document.getElementById('cc-sb-llm-provider');
                 var urlField = document.getElementById('cc-sb-llm-url');
-                var keyRow = document.getElementById('cc-sb-llm-key-row');
                 if (!sel) return;
-                var urls = {ollama:'http://localhost:11434', lmstudio:'http://localhost:1234', llamacpp:'http://localhost:8080', jan:'http://localhost:1337', openai:'https://api.openai.com', claude:'https://api.anthropic.com', custom:''};
-                var models = {ollama:'llama3.2', lmstudio:'', llamacpp:'', jan:'', openai:'gpt-4o-mini', claude:'claude-sonnet-4-5', custom:''};
+                var urls = {ollama:'http://localhost:11434', lmstudio:'http://localhost:1234', llamacpp:'http://localhost:8080', jan:'http://localhost:1337', custom:''};
+                var models = {ollama:'llama3.2', lmstudio:'', llamacpp:'', jan:'', custom:''};
                 if (urlField && urls[sel.value] !== undefined) urlField.value = urls[sel.value];
                 var mf = document.getElementById('cc-sb-llm-model');
                 if (mf && models[sel.value] !== undefined) mf.value = models[sel.value];
-                if (keyRow) keyRow.style.display = _sbIsLocal(sel.value) ? 'none' : 'flex';
               }
 
               // One-click: ask the bridge which local desktop LLM server is running,
@@ -1386,7 +1382,7 @@
                   .catch(function(e){ if (d) d({t:'UPD_SMART_BRIDGE', u:{chatBusy:false, chatError:e.message}}); });
               }
 
-              var _providerLabels = {ollama:'Ollama (local)', lmstudio:'LM Studio (local)', llamacpp:'llama.cpp (local)', jan:'Jan (local)', openai:'OpenAI', claude:'Claude', custom:'Custom OpenAI-compatible'};
+              var _providerLabels = {ollama:'Ollama (local)', lmstudio:'LM Studio (local)', llamacpp:'llama.cpp (local)', jan:'Jan (local)', custom:'Custom OpenAI-compatible'};
 
               return html`<div style=${{background:'var(--bg-secondary)',borderRadius:6,padding:'.5rem',display:'flex',flexDirection:'column',gap:'.4rem'}}>
                 <div style=${{display:'flex',alignItems:'center',gap:'.4rem'}}>
@@ -1394,7 +1390,7 @@
                   <span style=${{fontSize:'0.57rem',color:'var(--text-faint)',background:'var(--bg-tertiary)',padding:'1px 5px',borderRadius:3}}>2.1</span>
                 </div>
                 <div style=${{fontSize:'0.6rem',color:'var(--text-faint)',lineHeight:1.4}}>
-                  One click connects the LLM running on your desktop (Ollama, LM Studio, llama.cpp, Jan) — or paste an OpenAI / Claude key below. The bridge runs the agent loop.
+                  One click connects the LLM running on your desktop (Ollama, LM Studio, llama.cpp, Jan) — no API key. The bridge runs the agent loop.
                 </div>
                 <button id="cc-sb-detect-btn" onClick=${_detectLocal}
                   style=${{..._btnSmall,background:'var(--accent)',color:'#fff',alignSelf:'stretch',textAlign:'center',fontWeight:600}}>Connect my desktop LLM</button>
@@ -1412,8 +1408,6 @@
                         <option value="lmstudio" selected=${cfg.provider==='lmstudio'}>LM Studio (local)</option>
                         <option value="llamacpp" selected=${cfg.provider==='llamacpp'}>llama.cpp (local)</option>
                         <option value="jan" selected=${cfg.provider==='jan'}>Jan (local)</option>
-                        <option value="openai" selected=${cfg.provider==='openai'}>OpenAI (key)</option>
-                        <option value="claude" selected=${cfg.provider==='claude'}>Claude (key)</option>
                         <option value="custom" selected=${cfg.provider==='custom'}>Custom OpenAI-compatible</option>
                       </select>
                     </div>
@@ -1424,13 +1418,6 @@
                     <div>
                       <label style=${_labelStyle}>Base URL</label>
                       <input id="cc-sb-llm-url" type="text" placeholder="http://localhost:11434" defaultValue=${cfg.baseUrl} style=${_inputStyle} />
-                    </div>
-                    <div id="cc-sb-llm-key-row" style=${{display: _sbIsLocal(cfg.provider) ? 'none' : 'flex', flexDirection:'column', gap:2}}>
-                      <label style=${_labelStyle}>API Key</label>
-                      <input id="cc-sb-llm-key" type="password" placeholder=${cfg.hasKey ? 'Key saved — paste new key to update' : 'sk-…'} style=${_inputStyle} />
-                      <div style=${{fontSize:'0.55rem',color:'var(--text-faint)',lineHeight:1.4}}>
-                        Get a key: <a href="https://platform.openai.com/api-keys" target="_blank" rel="noopener" style=${{color:'var(--accent)',textDecoration:'underline'}}>OpenAI ↗</a>${' · '}<a href="https://console.anthropic.com/settings/keys" target="_blank" rel="noopener" style=${{color:'var(--accent)',textDecoration:'underline'}}>Anthropic ↗</a>. Claude runs via Anthropic's OpenAI-compatible API (beta).
-                      </div>
                     </div>
                     <button id="cc-sb-llm-save-btn" onClick=${_saveLlmCfg}
                       style=${{..._btnSmall,background:'var(--bg-tertiary)',color:'var(--text-muted)',alignSelf:'flex-start'}}>Save</button>

@@ -3,9 +3,9 @@
 
 [![Sponsor](https://img.shields.io/badge/Sponsor-%E2%9D%A4-ec4899?logo=githubsponsors&logoColor=white)](https://github.com/sponsors/clashcontrol-io)
 
-**Free, open-source IFC clash detection — right in your browser.**
+**Free, open-source online IFC viewer & BIM clash detection — right in your browser.**
 
-No installs. No licenses. No subscriptions. Just open the file and start checking your models.
+A free alternative to Solibri and Navisworks for the everyday IFC coordination loop. No installs. No licenses. No subscriptions. Just open the file and start viewing and checking your models.
 
 ## What is it?
 
