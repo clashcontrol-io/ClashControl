@@ -172,8 +172,6 @@ On branch `claude/code-review-quality-IjbhT` (2026-05-28) — code-review qualit
 
 **Deferred (tracked follow-ups, not done this pass):** core reducer/state refactor (287-line reducer / 80+ cases / impure `_saveDeniedClash` inside the reducer / ~50 `window._cc*` globals) — do it only once the test suite covers the pure clash/reducer/BCF logic, which needs those helpers extracted from `index.html` first. Also: a CI check that re-verifies `index.html` SRI hashes against the live CDN, and 3D-canvas keyboard accessibility (no keyboard orbit/pan, no modal focus trap).
 
-_Archived: completed `[STALE?]` session blocks from 2026-04-30 → 2026-05-22 (caveman trim, global-dictionary perf, walk-mode, measurement, design-tools, modern-UI redesign, 8-PR viewer overhaul) were removed on 2026-06-07 — all shipped and captured in the session log + CHANGELOG below._
-
 <!-- END:active-work -->
 
 <!-- BEGIN:session-log -->

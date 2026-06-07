@@ -93,9 +93,7 @@ from a token.
 ### Brand mark / logo
 
 - **Mark:** a flat green square keyed to `--accent` (`#1a6b4a` dark /
-  `#4d9e75` light), matching the favicon and PWA icons. The former
-  `--logo-gradient` / `--logo-gradient-soft` cyan→purple tokens were removed
-  and are no longer defined — don't reference them.
+  `#4d9e75` light), matching the favicon and PWA icons.
 - The "CC" wordmark sits on the gradient in white, set in `Syne` (`var
   (--font-display)`) at weight 800 with `letter-spacing: -.02em`.
 - Drop shadow: `0 4px 12px rgba(124,58,237,.3)` for small marks; bump to
