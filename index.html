@@ -1856,6 +1856,7 @@ function startApp() {
     IFCRELAGGREGATES:160246688, IFCRELCONNECTSELEMENTS:1204542856,
     IFCBUILDING:4031249490, IFCSITE:4097777520,
     IFCPROJECT:103090709,
+    IFCMAPCONVERSION:1709695098, IFCPROJECTEDCRS:3843373140,
     IFCOPENINGELEMENT:3588315303,
     IFCVIRTUALELEMENT:2769231204, IFCANNOTATION:1674181508, IFCGRID:3009204131
   };
@@ -2046,6 +2047,29 @@ function startApp() {
           hierarchy.sites.push(site);
         } catch(e) {}
       }
+      // IFC4 georeferencing — IfcMapConversion (an IfcCoordinateOperation) ties
+      // the project's local engineering coords to an IfcProjectedCRS (EPSG etc.).
+      // It carries the projected offset (Eastings/Northings/OrthogonalHeight) and
+      // the grid rotation (XAxisAbscissa/XAxisOrdinate). Read for display + the
+      // pre-run placement-sanity check only — clash geometry stays in local coords.
+      try {
+        var mcIds = api.GetLineIDsWithType(modelID, IFC.IFCMAPCONVERSION);
+        if (mcIds && mcIds.size() > 0) {
+          var mc = api.GetLine(modelID, mcIds.get(0));
+          var _mcv = function(x){ return (x && x.value != null) ? +x.value : (typeof x === 'number' ? x : null); };
+          var xa = _mcv(mc.XAxisAbscissa), xo = _mcv(mc.XAxisOrdinate);
+          var rotDeg = (xa != null && xo != null && (xa !== 0 || xo !== 0)) ? Math.atan2(xo, xa) * 180 / Math.PI : null;
+          var epsg = null;
+          if (mc.TargetCRS && mc.TargetCRS.value != null) {
+            try { var crs = api.GetLine(modelID, mc.TargetCRS.value); if (crs) epsg = safeStr(crs.Name) || null; } catch(e3) {}
+          }
+          hierarchy.mapConversion = {
+            eastings: _mcv(mc.Eastings), northings: _mcv(mc.Northings),
+            orthogonalHeight: _mcv(mc.OrthogonalHeight),
+            rotationDeg: rotDeg, scale: _mcv(mc.Scale), epsg: epsg
+          };
+        }
+      } catch(e) {}
       var bldIds = api.GetLineIDsWithType(modelID, IFC.IFCBUILDING);
       for (var i = 0; i < bldIds.size(); i++) {
         try {
@@ -14248,6 +14272,15 @@ function startApp() {
             ${s.modelGeo && html`<button onClick=${function(){window._ccGeoplaceClear && window._ccGeoplaceClear();}}
               style=${{fontSize:'.6rem',padding:'.08rem .28rem',background:'none',border:'1px solid var(--border)',borderRadius:'var(--radius-xs)',cursor:'pointer',color:'var(--text-muted)'}}>Clear</button>`}
           </div>
+          ${(function(){
+            var mcModel = null;
+            for (var i=0;i<s.models.length;i++){ var h=s.models[i].spatialHierarchy; if (h && h.mapConversion){ mcModel=h.mapConversion; break; } }
+            if (!mcModel) return null;
+            return html`<div title="IFC4 IfcMapConversion / IfcProjectedCRS — read for context, not used by the clash engine" style=${{padding:'.2rem .35rem',marginBottom:'.25rem',borderRadius:'var(--radius-xs)',background:'rgba(91,141,239,0.06)',fontSize:'.62rem',color:'var(--text-muted)',fontFamily:'var(--font-mono)',lineHeight:1.5}}>
+              <span style=${{color:'var(--text-secondary)',fontWeight:600}}>${mcModel.epsg||'Projected CRS'}</span>${mcModel.rotationDeg!=null?' · rot '+mcModel.rotationDeg.toFixed(2)+'°':''}<br/>
+              <span style=${{color:'var(--text-faint)'}}>E ${mcModel.eastings!=null?mcModel.eastings.toFixed(1):'—'}, N ${mcModel.northings!=null?mcModel.northings.toFixed(1):'—'}</span>
+            </div>`;
+          })()}
           ${s.modelGeo
             ? html`<div style=${{padding:'.25rem .35rem',borderRadius:'var(--radius-xs)',background:'rgba(91,141,239,0.08)',borderLeft:'2px solid #5b8def',fontSize:'.66rem',color:'var(--text-primary)',fontFamily:'var(--font-mono)',lineHeight:1.5}}>
                 ${(+s.modelGeo.refLat).toFixed(6)}, ${(+s.modelGeo.refLon).toFixed(6)}<br/>
@@ -15602,10 +15635,48 @@ function startApp() {
   // Wraps the existing ClashRulesPanel (Quick Run + Advanced) and the
   // StandardsPanel (default clearance, IFC type-pair rules, discipline
   // -pair rules) so all detection setup lives behind one button.
+  // Pre-run placement sanity. Geolocation never enters the clash math — but if
+  // two federated models disagree on base point or CRS they won't overlap, and
+  // the run quietly finds nothing. Flag that before a detection run is wasted.
+  window._ccPlacementWarnings = function(models){
+    var out = [];
+    try {
+      var S3 = window._ccState3d, THREE = window.THREE;
+      if (!S3 || !S3.map || !THREE) return out;
+      function _fmtM(m){ return m >= 1000 ? (m/1000).toFixed(m>=10000?0:1)+' km' : Math.round(m)+' m'; }
+      var info = [];
+      (models||[]).forEach(function(m){
+        var grp = S3.map[m.id]; if (!grp) return;
+        var box = new THREE.Box3().setFromObject(grp);
+        if (box.isEmpty()) return;
+        var sz = box.getSize(new THREE.Vector3());
+        var mc = (m.spatialHierarchy && m.spatialHierarchy.mapConversion) || null;
+        info.push({name:m.name||'model', box:box, center:box.getCenter(new THREE.Vector3()), diag:sz.length(), epsg:mc&&mc.epsg});
+      });
+      for (var i=0;i<info.length;i++) for (var j=i+1;j<info.length;j++){
+        var a=info[i], b=info[j];
+        if (a.epsg && b.epsg && a.epsg !== b.epsg) {
+          out.push('“'+a.name+'” ('+a.epsg+') and “'+b.name+'” ('+b.epsg+') declare different coordinate systems (CRS).');
+        }
+        var gap = a.center.distanceTo(b.center);
+        if (!a.box.intersectsBox(b.box) && gap > Math.max(a.diag, b.diag, 1) * 8) {
+          out.push('“'+a.name+'” and “'+b.name+'” sit '+_fmtM(gap)+' apart and don’t overlap — likely a base-point mismatch. A clash run between them will find nothing.');
+        }
+      }
+    } catch(e) {}
+    return out.slice(0, 4);
+  };
+
   function RunDetectionModal(props) {
     var s = props.s, d = props.d;
     var summary = _ccSummariseRules(s.rules, s.models);
     var showStdSt = useState(false), showStandards = showStdSt[0], setShowStandards = showStdSt[1];
+    var stWarn = useState([]), placementWarnings = stWarn[0], setPlacementWarnings = stWarn[1];
+    useEffect(function(){
+      if (typeof window._ccPlacementWarnings === 'function') {
+        try { setPlacementWarnings(window._ccPlacementWarnings(s.models) || []); } catch(e){}
+      }
+    }, []);
     var canRun = (s.models||[]).length > 0 && !s.detecting;
     function close(){ d({t:A.SHOW_RUN_MODAL, v:false}); }
     useEffect(function(){
@@ -15639,6 +15710,15 @@ function startApp() {
           </div>
           <button onClick=${close} style=${S_MODAL_CLOSE} aria-label="Close Run detection">✕</button>
         </div>
+        ${placementWarnings.length > 0 && html`<div style=${{margin:'var(--space-3) var(--space-4) 0',padding:'var(--space-2) var(--space-3)',background:'var(--color-warning-bg)',border:'1px solid var(--color-warning-border)',borderRadius:'var(--radius-sm)'}}>
+          <div style=${{display:'flex',alignItems:'center',gap:'var(--space-2)',marginBottom:'2px'}}>
+            <span style=${{color:'var(--color-warning)',fontSize:'var(--text-sm)'}}>⚠</span>
+            <span style=${{fontSize:'var(--text-xs)',fontWeight:'var(--weight-semibold)',color:'var(--color-warning-fg)'}}>Placement check</span>
+          </div>
+          <ul style=${{margin:0,paddingLeft:'1.1rem',fontSize:'var(--text-2xs)',color:'var(--text-secondary)',lineHeight:'var(--leading-snug)'}}>
+            ${placementWarnings.map(function(w){ return html`<li key=${w} style=${{marginBottom:'2px'}}>${w}</li>`; })}
+          </ul>
+        </div>`}
         <!-- Body: presets + advanced (existing ClashRulesPanel body) -->
         <div style=${{overflowY:'auto',maxHeight:'calc(85vh - 140px)'}}>
           <${ClashRulesPanel} s=${s} d=${d} />
