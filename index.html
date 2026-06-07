@@ -17061,6 +17061,148 @@ function startApp() {
 
   // ── Data Quality Panel (dedicated tab) ─────────────────────────────
 
+  function AccessibilityPanel(props) {
+    var s = props.s, d = props.d;
+    var resSt = useState(null), result = resSt[0], setResult = resSt[1];
+    var runSt = useState(false), isRunning = runSt[0], setRunning = runSt[1];
+    var lcSt = useState(null), lastChecked = lcSt[0], setLastChecked = lcSt[1];
+    var selSt = useState('all'), selectedModel = selSt[0], setSelectedModel = selSt[1];
+    var expSt = useState({}), expanded = expSt[0], setExpanded = expSt[1];
+    var hasModels = (s.models||[]).length > 0;
+    var hasEngine = typeof window._ccRunAccessibilityChecks === 'function';
+    var ORDER = ['door_clear_width','threshold_height','ramp_slope','route_width','turning_circle'];
+    var SEVCOL = {error:'#ef4444', warn:'#f59e0b', info:'#60a5fa'};
+
+    function gatherElements() {
+      var elements = [];
+      (s.models||[]).forEach(function(m){
+        if (selectedModel!=='all' && m.id!==selectedModel) return;
+        (m.elements||[]).forEach(function(el){ el._modelId=m.id; elements.push(el); });
+      });
+      return elements;
+    }
+    function runChecks() {
+      if (!hasModels || !hasEngine) return;
+      setRunning(true);
+      setTimeout(function(){
+        try { setResult(window._ccRunAccessibilityChecks(gatherElements())); }
+        catch(e){ console.warn('[Accessibility] run failed', e); setResult(null); }
+        setExpanded({}); setLastChecked(Date.now()); setRunning(false);
+      }, 50);
+    }
+    function toggleExp(k){ setExpanded(function(p){var n=Object.assign({},p);n[k]=!n[k];return n;}); }
+
+    function fmt(r){
+      if (r.unit==='ratio'){
+        return { got:'1:'+(r.value>0?(1/r.value).toFixed(1):'∞')+' ('+(r.value*100).toFixed(1)+'%)',
+                 req:'≤ 1:'+(1/r.required).toFixed(0)+' ('+(r.required*100).toFixed(1)+'%)' };
+      }
+      var maxCheck = (r.check==='threshold_height');
+      return { got:(r.value).toFixed(r.value<0.1?3:2)+' m',
+               req:(maxCheck?'≤ ':'≥ ')+(r.required).toFixed(r.required<0.1?3:2)+' m' };
+    }
+    function highlight(items){
+      var gids = {}; (items||[]).forEach(function(it){ if(it.globalId) gids[it.globalId]=1; });
+      var eids = [];
+      (s.models||[]).forEach(function(m){ (m.elements||[]).forEach(function(el){
+        var g=el.props&&el.props.globalId; if(g&&gids[g]) eids.push(el.expressId); }); });
+      if (eids.length && typeof _ghostOthers==='function') _ghostOthers(eids);
+      invalidate();
+    }
+    function createIssueForGroup(key, grp){
+      if (!grp || !grp.fail) return;
+      var sev = grp.sev, prio = sev==='error'?'high':(sev==='warn'?'medium':'low');
+      var fails = (result.items||[]).filter(function(it){return it.check===key && !it.pass;});
+      var lines = fails.slice(0,20).map(function(it){ var f=fmt(it);
+        return (it.ifcType||'')+' – '+(it.name||'#'+(it.globalId||'?'))+': '+f.got+' (req '+f.req+')'; });
+      var extra = fails.length>lines.length ? '\n… +'+(fails.length-lines.length)+' more' : '';
+      var gids = fails.map(function(it){return it.globalId;}).filter(Boolean);
+      d({t:A.ADD_ISSUE, v:{
+        id:uid(), source:'accessibility', type:sev==='error'?'hard':'soft', status:'open',
+        title:grp.label+' — '+grp.fail+' fail'+(grp.fail===1?'':'s'),
+        description:'Accessibility check: '+grp.label+'\nFailing elements: '+grp.fail+' of '+grp.total+'\n\n'+lines.join('\n')+extra
+          +'\n\nAdvisory — verify against the applicable Bbl/NEN articles.',
+        priority:prio, category:'accessibility', assignee:'', dueDate:'',
+        createdAt:new Date().toISOString(), accessCheck:key, qualityGids:gids
+      }});
+    }
+    function createAllIssues(){
+      if (!result) return; var n=0;
+      ORDER.forEach(function(k){ var g=result.groups[k]; if(g&&g.fail>0){ createIssueForGroup(k,g); n++; } });
+      if (n>0) d({t:A.TAB, v:'issues'});
+    }
+
+    var totalFail = result ? ORDER.reduce(function(a,k){return a+((result.groups[k]||{}).fail||0);},0) : 0;
+    var totalEval = result ? result.evaluated : 0;
+
+    return html`<div style=${{display:'flex',flexDirection:'column',height:'100%',overflow:'hidden'}}>
+      <div style=${{padding:'var(--space-3) var(--space-4)',borderBottom:'1px solid var(--border-subtle)',flexShrink:0}}>
+        <div style=${{display:'flex',gap:'var(--space-2)',alignItems:'center',marginBottom:'var(--space-2)'}}>
+          <select value=${selectedModel} onChange=${function(e){setSelectedModel(e.target.value);}}
+            style=${{flex:1,minWidth:0,fontSize:'var(--text-xs)',padding:'var(--space-1) var(--space-2)',borderRadius:'var(--radius-sm)',border:'1px solid var(--border)',background:'var(--bg-secondary)',color:'var(--text-primary)'}}>
+            <option value="all">All models</option>
+            ${(s.models||[]).map(function(m){return html`<option key=${m.id} value=${m.id}>${m.name}</option>`;})}
+          </select>
+          <button onClick=${runChecks} disabled=${!hasModels||isRunning||!hasEngine}
+            style=${{padding:'var(--space-1) var(--space-3)',borderRadius:'var(--radius-sm)',fontSize:'var(--text-xs)',fontWeight:600,border:'none',cursor:(hasModels&&!isRunning)?'pointer':'not-allowed',background:(hasModels&&!isRunning&&hasEngine)?'var(--accent)':'var(--bg-tertiary)',color:(hasModels&&!isRunning&&hasEngine)?'#fff':'var(--text-faint)'}}>
+            ${isRunning?'Running…':'Run checks'}
+          </button>
+        </div>
+        <div style=${{display:'flex',gap:'var(--space-3)',alignItems:'center',fontSize:'var(--text-2xs)',color:'var(--text-faint)'}}>
+          <span><span style=${{display:'inline-block',width:7,height:7,borderRadius:'50%',background:'#ef4444',marginRight:4}}></span>Fail</span>
+          <span><span style=${{display:'inline-block',width:7,height:7,borderRadius:'50%',background:'#22c55e',marginRight:4}}></span>Pass</span>
+          ${lastChecked && html`<span style=${{marginLeft:'auto'}}>${new Date(lastChecked).toLocaleTimeString()}</span>`}
+        </div>
+      </div>
+
+      ${!hasEngine && html`<div style=${{padding:'var(--space-4)',fontSize:'var(--text-xs)',color:'var(--text-muted)'}}>Accessibility engine not loaded.</div>`}
+
+      ${result && html`<div style=${{flex:1,overflowY:'auto'}}>
+        <div style=${{padding:'var(--space-2) var(--space-4)',display:'flex',alignItems:'center',justifyContent:'space-between',background:totalFail===0?'var(--color-success-bg)':'var(--color-warning-bg)',borderBottom:'1px solid var(--border-subtle)'}}>
+          <span style=${{fontSize:'var(--text-xs)',fontWeight:600,color:totalFail===0?'var(--color-success-fg)':'var(--color-warning-fg)'}}>
+            ${totalEval===0?'No applicable elements':(totalFail===0?'All '+totalEval+' checks pass':totalFail+' of '+totalEval+' fail')}
+          </span>
+          ${totalFail>0 && html`<button onClick=${createAllIssues}
+            style=${{fontSize:'var(--text-2xs)',padding:'var(--space-1) var(--space-2)',borderRadius:'var(--radius-xs)',border:'1px solid var(--border)',background:'var(--bg-primary)',color:'var(--text-primary)',cursor:'pointer'}}>Create issues</button>`}
+        </div>
+
+        ${ORDER.map(function(k){
+          var g = result.groups[k]; if(!g||g.total===0) return null;
+          var open = !!expanded[k];
+          var fails = (result.items||[]).filter(function(it){return it.check===k && !it.pass;});
+          return html`<div key=${k} style=${{borderBottom:'1px solid var(--hairline)'}}>
+            <div onClick=${function(){toggleExp(k);}} style=${{display:'flex',alignItems:'center',gap:'var(--space-2)',padding:'var(--space-2) var(--space-4)',cursor:'pointer'}}>
+              <span style=${{width:7,height:7,borderRadius:'50%',flexShrink:0,background:g.fail>0?SEVCOL[g.sev]:'#22c55e'}}></span>
+              <span style=${{flex:1,fontSize:'var(--text-xs)',color:'var(--text-primary)',fontWeight:500}}>${g.label}</span>
+              <span style=${{fontSize:'var(--text-2xs)',color:'var(--text-muted)',fontFamily:'var(--font-mono)'}}>${g.fail}/${g.total}</span>
+            </div>
+            ${open && fails.length>0 && html`<div style=${{padding:'0 var(--space-4) var(--space-2)'}}>
+              <button onClick=${function(){highlight(fails);}} style=${{fontSize:'var(--text-2xs)',color:'var(--accent)',background:'none',border:'none',cursor:'pointer',padding:'0 0 var(--space-1)'}}>Isolate failing</button>
+              ${fails.slice(0,30).map(function(it,ix){ var f=fmt(it);
+                return html`<div key=${ix} style=${{fontSize:'var(--text-2xs)',color:'var(--text-secondary)',padding:'2px 0',borderTop:'1px solid var(--hairline)'}}>
+                  <div style=${{display:'flex',justifyContent:'space-between',gap:'var(--space-2)'}}>
+                    <span style=${{overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>${it.ifcType?it.ifcType.replace('Ifc','')+' · ':''}${it.name}</span>
+                    <span style=${{fontFamily:'var(--font-mono)',color:'#ef4444',flexShrink:0}}>${f.got}</span>
+                  </div>
+                  <div style=${{color:'var(--text-faint)',fontFamily:'var(--font-mono)'}}>req ${f.req}${it.note?' · '+it.note:''}</div>
+                </div>`;
+              })}
+              ${fails.length>30 && html`<div style=${{fontSize:'var(--text-2xs)',color:'var(--text-faint)',paddingTop:2}}>… +${fails.length-30} more</div>`}
+            </div>`}
+          </div>`;
+        })}
+
+        <div style=${{padding:'var(--space-3) var(--space-4)',fontSize:'var(--text-2xs)',color:'var(--text-faint)',lineHeight:1.5}}>
+          Advisory geometric check — deterministic measurement from IFC quantities and bounding geometry. Verify against the applicable Bbl / NEN articles. Corridor and turning use footprint bounds (approximate for non-rectangular spaces).
+        </div>
+      </div>`}
+
+      ${!result && hasEngine && html`<div style=${{padding:'var(--space-4)',fontSize:'var(--text-xs)',color:'var(--text-muted)',lineHeight:1.6}}>
+        Geometric accessibility checks: door clear width, threshold height, ramp slope, corridor / escape-route width, turning clearance — measured against NL Bbl/NEN thresholds. Failures become issues that export to BCF.
+      </div>`}
+    </div>`;
+  }
+
   function DataQualityPanel(props) {
     var s = props.s, d = props.d;
     var qcSt = useState(null), qc = qcSt[0], setQc = qcSt[1];
@@ -27776,7 +27918,7 @@ function startApp() {
     if (!tab) return null;
     var projects=s.projectList||[];
     var activeProj=projects.find(function(p){return p.id===s.activeProject;})||projects[0]||{name:'Default'};
-    var TITLES={models:'Models',clashes:'Conflicts',issues:'Issues',navigator:'Navigator',dataquality:'Data Quality',tools:'Tools',addons:'Integrations',standards:'Standards'};
+    var TITLES={models:'Models',clashes:'Conflicts',issues:'Issues',navigator:'Navigator',dataquality:'Data Quality',accessibility:'Accessibility',tools:'Tools',addons:'Integrations',standards:'Standards'};
     var onResizeDown = _makeResizeHandler(dragRef, setPanelW, 200, 600, false);
     return html`<div class="cc-left-panel" style=${{
       width:panelW,display:'flex',flexDirection:'column',overflow:'hidden',
@@ -27804,6 +27946,7 @@ function startApp() {
       ${tab==='clashes'  && html`<${IssuePanel} key="clashes" s=${s} d=${d} hideTabBar=${true} />`}
       ${tab==='issues'   && html`<${IssuePanel} key="issues" s=${s} d=${d} hideTabBar=${true} />`}
       ${tab==='dataquality' && html`<${DataQualityPanel} s=${s} d=${d} />`}
+      ${tab==='accessibility' && html`<${AccessibilityPanel} s=${s} d=${d} />`}
       ${tab==='navigator' && html`<${IssuePanel} key="navigator" s=${s} d=${d} hideTabBar=${true} />`}
       ${tab==='standards' && html`<${StandardsPanel} s=${s} d=${d} />`}
       ${tab==='tools'    && html`<${ToolsPanel} s=${s} d=${d} />`}
@@ -29793,6 +29936,9 @@ function startApp() {
           ${btn({k:'dq', active:s.tab==='dataquality', title:'Data Quality panel', label:'Data Quality',
             icon:'<rect x="3" y="3" width="18" height="18" rx="2"/><path d="M9 9h6"/><path d="M9 13h6"/><path d="M9 17h4"/>',
             onClick:function(){ d({t:A.TAB,v:s.tab==='dataquality'?null:'dataquality'}); }})}
+          ${btn({k:'a11y', active:s.tab==='accessibility', title:'Accessibility checks', label:'Accessibility',
+            icon:'<circle cx="12" cy="4" r="1.4"/><path d="M5 9h14"/><path d="M12 9v6l-2.5 5"/><path d="M12 15l2.5 5"/>',
+            onClick:function(){ d({t:A.TAB,v:s.tab==='accessibility'?null:'accessibility'}); }})}
           ${btn({k:'nav-review', active:s.tab==='navigator', title:'Navigator', label:'Navigator',
             icon:'<rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/>',
             onClick:function(){ d({t:A.TAB,v:s.tab==='navigator'?null:'navigator'}); }})}
