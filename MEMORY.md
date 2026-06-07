@@ -10,7 +10,7 @@
 <!-- BEGIN:project-state -->
 ## Project State
 
-**Version:** 5.13.0 (2026-06-05)
+**Version:** 5.17.4 (2026-06-07)
 
 **Live features (all working):**
 - Mesh-based clash detection engine: AABB broad-phase + BVH tri-tri narrow-phase (Möller–Trumbore), optional `_ccWasmIntersect`/`_ccWasmMinDist` WASM accelerators; rules (discipline filters, clearance, group-by); soft/clearance via spatial-hash vertex distance; optional escalation to `local-engine.js` for true solid boolean ops
@@ -351,6 +351,48 @@ UI_OVERHAUL.md written (7 chapters, 1469 lines). PLAN.md updated.
 <!-- END:active-work -->
 
 <!-- BEGIN:session-log -->
+### 2026-06-07
+**Summary:** 32 commit(s) landed (no AI summary — set ANTHROPIC_API_KEY secret for richer entries).
+**Changed:** see commits
+**Notable:** —
+
+<details><summary>Commits</summary>
+
+- 425924e chore: bump version to 5.17.4
+- 1a43021 revert: chunk-merge default OFF — back to per-element rendering
+- a13893d chore: bump version to 5.17.3
+- f573042 revert: remove Free RAM / dehydrate experiment entirely
+- 1cde307 chore: bump version to 5.17.2
+- 2477ada feat(settings): expose Free RAM button in main Settings
+- e0053fe fix(geoplace): same-origin tile proxy + opaque basemap (#579)
+- 2a6dc52 chore: bump version to 5.17.1
+- 6064b37 perf+consent: memoize Conflicts-tab aggregations + default-on consent + suppress banner
+- 3648646 chore: bump version to 5.17.0
+- 251bbc8 feat(triage+viewer): grounded prompt + 👍/👎 + marker fixes + survey-marker strip + memory helpers
+- 9d312b4 chore: bump version to 5.16.2
+- ca62e77 feat: point clouds + IFC geo-placement (v1) (#578)
+- c290f11 chore: bump version to 5.16.1
+- 09e5dfd perf(viewer): PR-A — Int8 normals (~630 MB cut), positions unchanged
+- d5d03bc chore: bump version to 5.16.0
+- 879eb67 fix(loader): race-safe model dedup — 4 files no longer load as 8 (#572)
+- 79a0582 chore: bump version to 5.15.3
+- 9b16e6e perf(loader): fix chunk-merge bypass on cache-restore + Clear all clashes
+- d3f9200 chore: bump version to 5.15.2
+- a941037 perf(viewer): D1b LOD + cross-load material sharing + dup-load guard
+- f61726e chore: bump version to 5.15.1
+- ae8f202 perf(viewer): D1 — Points + per-cluster hotspot markers
+- a1229b4 chore: bump version to 5.15.0
+- 53b4dcc fix(clash-ui): align overhaul with DESIGN.md + workspace gating, wire /api/triage, perf
+- 9b2e9cf chore: bump version to 5.14.0
+- 215d06a feat(clash-ui): Phase C — cluster cards as rows + keyboard triage
+- 76af12c feat(clash-ui): Phase A2 — N-model scope picker (All / discipline / model)
+- 51897d5 feat(clash-ui): Phase B — clashes header cleanup + grouped-by-default
+- 815ac50 feat(clash-ui): Phase A — Run Detection modal + remove Detection Rules tab
+- df7c5aa feat(triage): Week 2 — cluster context packet + prompt + copy button
+- 6effc2b chore: daily memory sync 2026-06-06
+
+</details>
+
 ### 2026-06-06
 **Summary:** 4 commit(s) landed (no AI summary — set ANTHROPIC_API_KEY secret for richer entries).
 **Changed:** see commits
