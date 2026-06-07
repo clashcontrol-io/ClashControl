@@ -847,7 +847,7 @@ function startApp() {
   var A = {
     ADD_MODEL:'ADD_MODEL', DEL_MODEL:'DEL_MODEL', REPLACE_MODEL:'REPLACE_MODEL', UPD_MODEL:'UPD_MODEL',
     TOGGLE_ALL_STOREYS:'TOGGLE_ALL_STOREYS',
-    SET_CLASHES:'SET_CLASHES', MERGE_CLASHES:'MERGE_CLASHES', DETECTING:'DETECTING', STOP_DETECT:'STOP_DETECT',
+    SET_CLASHES:'SET_CLASHES', MERGE_CLASHES:'MERGE_CLASHES', ADD_CLASHES:'ADD_CLASHES', DETECTING:'DETECTING', STOP_DETECT:'STOP_DETECT',
     SWITCHING_PROJECT:'SWITCHING_PROJECT',
     ADD_ISSUE:'ADD_ISSUE', UPD_ISSUE:'UPD_ISSUE', BATCH_UPD_ISSUE:'BATCH_UPD_ISSUE',
     AI_FEEDBACK:'AI_FEEDBACK', CLEAR_TRAINING_DATA:'CLEAR_TRAINING_DATA',
@@ -1018,6 +1018,13 @@ function startApp() {
       case A.SET_CLASHES: /* falls through to MERGE_CLASHES with no prev clashes */
       case A.MERGE_CLASHES: var _mr=mergeDetectionResults(a.v, a.t===A.MERGE_CLASHES?s.clashes:[]); _gcEvent('clash-detection', _mr.clashes.length+' clashes'); var _st={clashes:_mr.clashes,detecting:false,activeId:null,floors:deriveFloors(_mr.clashes),lastDeltaSummary:_mr.deltaSummary}; if(a.detectionSettings)_st.detectionSettings=a.detectionSettings; if(s.prefs.resetFiltersOnRun!==false)_st.filters=Object.assign({},INIT_FILTERS); /* Default to Grouped only when the user has nothing chosen AND the result is small enough that thousands of sticky-positioned cluster headers won't tax the browser. Never write localStorage here — that's the user-facing CLASH_GROUP_BY dispatch's job. */ if((!Array.isArray(s.clashGroupBy)||s.clashGroupBy.length===0) && _mr.clashes.length>0 && _mr.clashes.length<=2000) { _st.clashGroupBy=['cluster']; }
         return Object.assign({},s,_st);
+      case A.ADD_CLASHES: { /* additive, non-destructive append (does NOT auto-resolve existing clashes like MERGE_CLASHES). Used by the accessibility panel. */
+        var _addc=(a.v||[]).filter(Boolean); if(!_addc.length) return s;
+        var _seen={}; s.clashes.forEach(function(c){_seen[c.id]=1;});
+        _addc=_addc.filter(function(c){return c&&c.id&&!_seen[c.id];});
+        if(!_addc.length) return s;
+        var _allc=s.clashes.concat(_addc);
+        return Object.assign({},s,{clashes:_allc, floors:deriveFloors(_allc)}); }
       case A.DETECTING:   return Object.assign({},s,{detecting:true,runModalOpen:false});
       case A.STOP_DETECT: return Object.assign({},s,{detecting:false});
       case A.SWITCHING_PROJECT: return Object.assign({},s,{switchingProject:!!a.v});
@@ -17109,27 +17116,40 @@ function startApp() {
       if (eids.length && typeof _ghostOthers==='function') _ghostOthers(eids);
       invalidate();
     }
-    function createIssueForGroup(key, grp){
-      if (!grp || !grp.fail) return;
-      var sev = grp.sev, prio = sev==='error'?'high':(sev==='warn'?'medium':'low');
-      var fails = (result.items||[]).filter(function(it){return it.check===key && !it.pass;});
-      var lines = fails.slice(0,20).map(function(it){ var f=fmt(it);
-        return (it.ifcType||'')+' – '+(it.name||'#'+(it.globalId||'?'))+': '+f.got+' (req '+f.req+')'; });
-      var extra = fails.length>lines.length ? '\n… +'+(fails.length-lines.length)+' more' : '';
-      var gids = fails.map(function(it){return it.globalId;}).filter(Boolean);
-      d({t:A.ADD_ISSUE, v:{
-        id:uid(), source:'accessibility', type:sev==='error'?'hard':'soft', status:'open',
-        title:grp.label+' — '+grp.fail+' fail'+(grp.fail===1?'':'s'),
-        description:'Accessibility check: '+grp.label+'\nFailing elements: '+grp.fail+' of '+grp.total+'\n\n'+lines.join('\n')+extra
-          +'\n\nAdvisory — verify against the applicable Bbl/NEN articles.',
-        priority:prio, category:'accessibility', assignee:'', dueDate:'',
-        createdAt:new Date().toISOString(), accessCheck:key, qualityGids:gids
-      }});
+    // Element world-bbox centre → [x,y,z] for fly-to + BCF viewpoint.
+    function center(el){
+      var THREE=window.THREE; if(!THREE||!el||!el.meshes||!el.meshes.length) return null;
+      var box=new THREE.Box3(), tmp=new THREE.Box3(), any=false;
+      el.meshes.forEach(function(m){ if(!m||!m.geometry) return; m.updateWorldMatrix(true,false); tmp.setFromObject(m);
+        if(!tmp.isEmpty()){ if(!any){box.copy(tmp);any=true;} else box.union(tmp);} });
+      if(!any) return null; var c=box.getCenter(new THREE.Vector3()); return [c.x,c.y,c.z];
     }
-    function createAllIssues(){
-      if (!result) return; var n=0;
-      ORDER.forEach(function(k){ var g=result.groups[k]; if(g&&g.fail>0){ createIssueForGroup(k,g); n++; } });
-      if (n>0) d({t:A.TAB, v:'issues'});
+    var SEV_TYPE = {door_clear_width:'hard',threshold_height:'hard',ramp_slope:'hard',route_width:'soft',turning_circle:'soft'};
+    // Build a single-element clash-style item that renders in the Conflicts tab
+    // and exports through the existing clash → BCF path.
+    function makeClashItem(it){
+      var el=it.el, p=el.props||{}, f=fmt(it), pt=center(el);
+      var grpLabel=(result.groups[it.check]||{}).label||it.check;
+      return {
+        id:uid(), source:'accessibility', status:'open', createdAt:new Date().toISOString(),
+        type: SEV_TYPE[it.check]||'soft',
+        modelAId: el._modelId||null, modelBId:null, elemA: el.expressId, elemB:null,
+        elemAType: p.ifcType||'', elemBType:'', elemAName: it.name, elemBName:'',
+        globalIdA: it.globalId||'', globalIdB:'', elemAStorey: it.storey||'', elemBStorey:'',
+        selfClash:false, disciplines:[], point: pt, elevation: pt?Math.round(pt[1]*1000)/1000:null, distance:null,
+        title: grpLabel+': '+it.name,
+        description: grpLabel+' — measured '+f.got+', required '+f.req+(it.note?' ('+it.note+')':'')+'. Advisory; verify against Bbl/NEN.',
+        aiSeverity: (SEV_TYPE[it.check]==='hard')?'major':'minor', aiCategory:'accessibility',
+        aiReason:'Accessibility geometric check ('+f.got+' vs '+f.req+')',
+        accessCheck: it.check, accessMeasured: it.value, accessRequired: it.required, accessPass:false
+      };
+    }
+    function addToConflicts(){
+      if (!result) return;
+      var fails=(result.items||[]).filter(function(it){return !it.pass;});
+      if (!fails.length) return;
+      d({t:A.ADD_CLASHES, v: fails.map(makeClashItem)});
+      d({t:A.TAB, v:'clashes'});
     }
 
     var totalFail = result ? ORDER.reduce(function(a,k){return a+((result.groups[k]||{}).fail||0);},0) : 0;
@@ -17162,8 +17182,8 @@ function startApp() {
           <span style=${{fontSize:'var(--text-xs)',fontWeight:600,color:totalFail===0?'var(--color-success-fg)':'var(--color-warning-fg)'}}>
             ${totalEval===0?'No applicable elements':(totalFail===0?'All '+totalEval+' checks pass':totalFail+' of '+totalEval+' fail')}
           </span>
-          ${totalFail>0 && html`<button onClick=${createAllIssues}
-            style=${{fontSize:'var(--text-2xs)',padding:'var(--space-1) var(--space-2)',borderRadius:'var(--radius-xs)',border:'1px solid var(--border)',background:'var(--bg-primary)',color:'var(--text-primary)',cursor:'pointer'}}>Create issues</button>`}
+          ${totalFail>0 && html`<button onClick=${addToConflicts} title="Add each failing element to the Conflicts tab (exports to BCF)"
+            style=${{fontSize:'var(--text-2xs)',padding:'var(--space-1) var(--space-2)',borderRadius:'var(--radius-xs)',border:'1px solid var(--border)',background:'var(--bg-primary)',color:'var(--text-primary)',cursor:'pointer'}}>Add to Conflicts</button>`}
         </div>
 
         ${ORDER.map(function(k){
@@ -17198,7 +17218,7 @@ function startApp() {
       </div>`}
 
       ${!result && hasEngine && html`<div style=${{padding:'var(--space-4)',fontSize:'var(--text-xs)',color:'var(--text-muted)',lineHeight:1.6}}>
-        Geometric accessibility checks: door clear width, threshold height, ramp slope, corridor / escape-route width, turning clearance — measured against NL Bbl/NEN thresholds. Failures become issues that export to BCF.
+        Geometric accessibility checks: door clear width, threshold height, ramp slope, corridor / escape-route width, turning clearance — measured against NL Bbl/NEN thresholds. Failing elements add to the Conflicts tab and export to BCF.
       </div>`}
     </div>`;
   }
