@@ -1,5 +1,8 @@
 # Changelog
 
+## v5.19.33 (2026-06-08)
+- hotfix: defensive bbox shape detection in _geoDeserialize _instKey calc
+
 ## v5.19.32 (2026-06-08)
 - fix(perf): cache-restore branch also missing _instKey + instancing call
 
