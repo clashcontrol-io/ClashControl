@@ -1,5 +1,8 @@
 # Changelog
 
+## v5.19.2 (2026-06-08)
+- BCF provenance round-trip, autonomy envelope, splat Phase 1, bump-prep (#591)
+
 ## v5.19.1 (2026-06-08)
 - Security + agentic governance: MCP hardening, AI provenance, autonomy envelope (#589)
 
