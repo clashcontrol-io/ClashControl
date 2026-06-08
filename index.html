@@ -1746,6 +1746,11 @@ function startApp() {
       var useU16Idx = nVerts <= 65535;
       return {
         eid: m.userData.expressId,
+        // Source IFC geometryExpressID — the same key the live IFC loader
+        // groups by. On restore this becomes the InstancedMesh key,
+        // making hash collisions impossible. Falls back to the hash path
+        // for older caches where this field doesn't exist.
+        gid: m.userData._geoExpId != null ? m.userData._geoExpId : null,
         qpos: _quantizePositions(new Float32Array(posArr), bbox).buffer,
         qnrm: _encodeNormalsOct(new Float32Array(nrmArr)).buffer,
         idx: (useU16Idx ? new Uint16Array(idxArr) : new Uint32Array(idxArr)).buffer,
@@ -1765,7 +1770,7 @@ function startApp() {
         props: el.props
       };
     });
-    return {v:6, hasPsets:hasPsets, meshData:meshData, elData:elData, storeys:result.storeys, storeyData:result.storeyData, relatedPairs:result.relatedPairs||{}, stats:result.stats};
+    return {v:7, hasPsets:hasPsets, meshData:meshData, elData:elData, storeys:result.storeys, storeyData:result.storeyData, relatedPairs:result.relatedPairs||{}, stats:result.stats};
   }
 
 
@@ -1798,45 +1803,33 @@ function startApp() {
       mesh.applyMatrix4(_tmpMtx4.fromArray(md.mtx));
       mesh.userData.expressId = md.eid;
       _ccBakeMesh(mesh);
-      // INSTANCING REGRESSION (cache-restore branch): _instKey was never
-      // set on restored meshes, so 73k cached models loaded with 0
-      // instanced meshes. Cache dropped the original geometryExpressID,
-      // so we fingerprint the LOCAL position buffer instead. The first
-      // two attempts (sampled 256 bytes, then 32-bit full-buffer FNV-1a)
-      // both produced hash collisions at scale — birthday-paradox math
-      // on 73k items in 2^32 space gives ~2-3% chance of a popular
-      // MEP pipe geometry colliding with a beam, which on restore showed
-      // up as blue spikes sticking through the roof at random angles.
-      //
-      // Belt-and-braces fingerprint:
-      //   vert count
-      // + qpos byte length
-      // + idx byte length
-      // + 32-bit FNV-1a over qpos
-      // + 32-bit FNV-1a over idx
-      // + material uuid
-      // For two distinct geometries to collide they'd need to share
-      // every one of those — effectively a 64-bit hash plus size guards.
-      var _qbytes = md.qpos ? new Uint8Array(md.qpos) : (md.pos ? new Uint8Array(new Float32Array(md.pos).buffer) : null);
-      var _ibytes = md.idx ? new Uint8Array(md.idx) : null;
-      var _vc = _qbytes ? (_qbytes.byteLength / 2 / 3) : 0; // Uint16, 3 coords/vert
-      function _fnv1a(arr){
-        var h = 2166136261;
-        if (!arr) return 0;
-        var n = arr.length;
-        for (var i = 0; i < n; i++) {
-          h ^= arr[i];
-          h = (h + ((h<<1) + (h<<4) + (h<<7) + (h<<8) + (h<<24))) >>> 0;
+      // _instKey: the live IFC loader uses geometryExpressID (md.gid in
+      // v:7+ caches) which is per-source-geometry unique by construction —
+      // no possible collisions. Earlier caches don't have gid, so we fall
+      // back to a position+index byte-hash fingerprint with size guards.
+      if (md.gid != null) {
+        mesh.userData._instKey = 'gid:' + md.gid + ':' + (mat.uuid || 'na');
+      } else {
+        var _qbytes = md.qpos ? new Uint8Array(md.qpos) : (md.pos ? new Uint8Array(new Float32Array(md.pos).buffer) : null);
+        var _ibytes = md.idx ? new Uint8Array(md.idx) : null;
+        var _vc = _qbytes ? (_qbytes.byteLength / 2 / 3) : 0;
+        function _fnv1a(arr){
+          var h = 2166136261;
+          if (!arr) return 0;
+          var n = arr.length;
+          for (var i = 0; i < n; i++) {
+            h ^= arr[i];
+            h = (h + ((h<<1) + (h<<4) + (h<<7) + (h<<8) + (h<<24))) >>> 0;
+          }
+          return h;
         }
-        return h;
+        var _qLen = _qbytes ? _qbytes.byteLength : 0;
+        var _iLen = _ibytes ? _ibytes.byteLength : 0;
+        var _qHash = _fnv1a(_qbytes);
+        var _iHash = _fnv1a(_ibytes);
+        mesh.userData._instKey = 'h:' + _vc + ':' + _qLen + ':' + _iLen + ':' +
+          _qHash.toString(36) + ':' + _iHash.toString(36) + ':' + (mat.uuid || 'na');
       }
-      var _qLen = _qbytes ? _qbytes.byteLength : 0;
-      var _iLen = _ibytes ? _ibytes.byteLength : 0;
-      var _qHash = _fnv1a(_qbytes);
-      var _iHash = _fnv1a(_ibytes);
-      mesh.userData._instKey = _vc + ':' + _qLen + ':' + _iLen + ':' +
-        _qHash.toString(36) + ':' + _iHash.toString(36) + ':' +
-        (mat.uuid || 'na');
       if(!meshByEid[md.eid]) meshByEid[md.eid] = [];
       meshByEid[md.eid].push(mesh);
       return mesh;
@@ -3085,6 +3078,11 @@ function startApp() {
             mesh.applyMatrix4(_tmpMtx4.fromArray(placed.flatTransformation));
             mesh.userData.expressId = expressID;
             mesh.userData._ifcMaterial = matMap[expressID] || '';
+            // Stash the source geometryExpressID so the cache serializer
+            // can persist it. Restore uses it as the canonical instancing
+            // key — same uniqueness as the live load, no hash collisions
+            // possible by construction.
+            mesh.userData._geoExpId = geoExpId;
             elBox.expandByObject(mesh);
             _ccBakeMesh(mesh);
             // INSTANCING REGRESSION FIX: matKey was never declared in this
@@ -13285,7 +13283,7 @@ function startApp() {
         chain = chain.then(function(){
           _setGlobalLoading(true);
           return idbGetGeoCache(entry.id).then(function(cached) {
-            if(cached && cached.v >= 6 && cached.hasPsets) return _geoDeserialize(cached);
+            if(cached && cached.v >= 7 && cached.hasPsets) return _geoDeserialize(cached);
             return loadIFC(entry.buffer, DISC[0].c, function(){})
               .then(function(result) {
                 if (result) idbSaveGeoCache(entry.id, _geoSerialize(result));
