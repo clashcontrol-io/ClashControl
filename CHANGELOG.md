@@ -1,5 +1,8 @@
 # Changelog
 
+## v5.19.45 (2026-06-08)
+- fix(restore): hash entire position+index buffer + bump cache version
+
 ## v5.19.44 (2026-06-08)
 - fix(splat): dispatch frame event before render + flip gate flag
 
