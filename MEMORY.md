@@ -10,7 +10,7 @@
 <!-- BEGIN:project-state -->
 ## Project State
 
-**Version:** 5.19.0 (2026-06-08)
+**Version:** 5.19.14 (2026-06-08)
 
 **Live features (all working):**
 - Mesh-based clash detection engine: AABB broad-phase + BVH tri-tri narrow-phase (Möller–Trumbore), optional `_ccWasmIntersect`/`_ccWasmMinDist` WASM accelerators; rules (discipline filters, clearance, group-by); soft/clearance via spatial-hash vertex distance; optional escalation to `local-engine.js` for true solid boolean ops
@@ -213,6 +213,66 @@ On branch `claude/code-review-quality-IjbhT` (2026-05-28) — code-review qualit
 <!-- END:active-work -->
 
 <!-- BEGIN:session-log -->
+### 2026-06-08
+**Summary:** 50 commit(s) landed (no AI summary — set ANTHROPIC_API_KEY secret for richer entries).
+**Changed:** see commits
+**Notable:** —
+
+<details><summary>Commits</summary>
+
+- bb1b37e fix(splat): kick render-on-demand invalidate during async splat load
+- cb92ac4 chore: bump version to 5.19.14
+- 995f108 hotfix(lighting): revert × π light intensity overshoot
+- cab3365 chore: bump version to 5.19.13
+- cf2c8ff hotfix: spread Three.js module namespace into a mutable object before attach
+- 62af537 chore: bump version to 5.19.12
+- 1359abd Three.js r128 → r180 bump (phased) (#595)
+- 8365ab2 chore: bump version to 5.19.11
+- bfc8f82 fix(section-gizmo): add TC anchor to scene graph
+- 949daab chore: bump version to 5.19.10
+- e840a79 fix(ai-status): Settings shows actual model from /api/health, not hardcoded "Gemma 4"
+- 2dea5ea fix(splat): layer above IFC instead of forcing the IFC canvas transparent
+- dff83b9 chore: bump version to 5.19.9
+- 27a7a4b fix(section-box): BX shortcut falls back to single-element selection before full model
+- 466931b chore: bump version to 5.19.8
+- 77c588c feat(splat): scale/rotation opts, change events, Models-tab inventory panel
+- 83c1d63 chore: bump version to 5.19.7
+- b14d785 fix(section-box): snap to selected element's bbox, not the merged chunk's bbox
+- cbc9fff fix(splat): default-position the splat at the IFC's bbox center
+- b831dc1 chore: bump version to 5.19.6
+- 7dc30f1 fix(splat): test URL → Spark's hosted butterfly.spz (HuggingFace 404'd) + CSP allowlist
+- a86d712 chore: bump version to 5.19.5
+- a13639e fix(splat): dedupe Three.js — load Spark's unbundled ESM + document-head import map
+- ab3dbd1 chore: bump version to 5.19.4
+- e67544b fix(csp+splat): allow data: in connect-src so Spark.js can load its inline WASM
+- dd7d267 chore: bump version to 5.19.3
+- e3cea72 fix(critical): _ccSetSRGBOutput infinite recursion crashed production
+- 6883630 chore: bump version to 5.19.2
+- 35c69d9 BCF provenance round-trip, autonomy envelope, splat Phase 1, bump-prep (#591)
+- d8cbb1d Claude/jolly cannon yz uwi (#594)
+- 2c7c584 fix(health): report Groq as the NL backend, not Gemma (#593)
+- 40537b4 docs: refresh Project State (Groq-only NL, v5.19.0) (#592)
+- 766c02b chore: bump version to 5.19.1
+- e950a99 Security + agentic governance: MCP hardening, AI provenance, autonomy envelope (#589)
+- 2c5b01c fix(health): report Groq as the NL backend, not Gemma (#590)
+- 0396f6d docs: refresh Project State (Groq-only NL, v5.19.0) (#588)
+- c969f8a chore: bump version to 5.19.0
+- 3f45b8d feat(ai): make /api/nl Groq-only + nudge to own-LLM for clash-solving
+- b2f97c8 feat(ai): Groq as basic NL backend + own-LLM Connector in Ask AI panel
+- dc50d5d feat(bridge): zero-key one-click AI + SEO for IFC viewer / Solibri alternative
+- 592979e feat(smart-bridge): one-click connect your own desktop LLM
+- 85d4745 feat(accessibility): route failures into Conflicts tab via non-destructive ADD_CLASHES
+- 876cd12 docs(memory): record accessibility addon + docs refresh in Active Work
+- 49ec0ab feat(accessibility): AccessibilityPanel + issue/BCF wiring
+- b0a7de7 feat(accessibility): deterministic geometric accessibility check engine (addon)
+- 902a0d4 docs: state current facts directly, drop change-history phrasing
+- 8c8c742 docs: thorough refresh — correct engine description, green brand, current addons/APIs, mark shipped perf work
+- 7ea2d25 feat(ifc): read IFC4 IfcMapConversion/IfcProjectedCRS + pre-run placement-sanity check
+- 645e623 chore: bump version to 5.18.0
+- ee509cf chore: daily memory sync 2026-06-07
+
+</details>
+
 ### 2026-06-07
 **Summary:** 32 commit(s) landed (no AI summary — set ANTHROPIC_API_KEY secret for richer entries).
 **Changed:** see commits
