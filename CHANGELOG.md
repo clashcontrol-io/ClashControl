@@ -1,5 +1,8 @@
 # Changelog
 
+## v5.19.47 (2026-06-08)
+- diag(restore): detect real hash collisions + add opt-out switch
+
 ## v5.19.46 (2026-06-08)
 - fix(restore): belt-and-braces _instKey to kill 32-bit hash collisions
 
