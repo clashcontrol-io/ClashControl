@@ -183,7 +183,10 @@
       'WebGLRenderer','ShaderMaterial','MathUtils','GridHelper','AxesHelper',
       'BoxHelper','AmbientLight','DirectionalLight','HemisphereLight',
       'ACESFilmicToneMapping','EquirectangularReflectionMapping','LinearFilter',
-      'PCFShadowMap','FrontSide','DoubleSide','SRGBColorSpace','sRGBEncoding'
+      'PCFShadowMap','FrontSide','DoubleSide','SRGBColorSpace'
+      // sRGBEncoding was removed at r152 in favour of SRGBColorSpace —
+      // our _ccSetSRGB shim already handles both paths, so its absence
+      // here is expected and not worth warning about.
     ].forEach(function(k){
       if (THREE_NS[k] !== undefined) THREE[k] = THREE_NS[k];
       else console.warn('[three-bump] THREE.'+k+' missing from r180 ESM bundle');
@@ -2840,16 +2843,31 @@ function startApp() {
   };
 
   function _buildInstancedMeshes(elements, meshes) {
-    if (!THREE.InstancedMesh) return {meshes:meshes, groups:0, instanced:0};
+    if (!THREE.InstancedMesh) {
+      console.warn('[Instancing] skipped: THREE.InstancedMesh is undefined');
+      return {meshes:meshes, groups:0, instanced:0};
+    }
     var candidates = {}; // instKey → {geo, mat, entries:[{mesh, expressId}]}
+    var keyMissCount = 0, keyHitCount = 0, totalEl = 0;
     elements.forEach(function(el) {
+      totalEl++;
       (el.meshes || []).forEach(function(m) {
         var ik = m.userData._instKey;
-        if (!ik) return;
+        if (!ik) { keyMissCount++; return; }
+        keyHitCount++;
         if (!candidates[ik]) candidates[ik] = {geo:m.geometry, mat:m.material, entries:[]};
         candidates[ik].entries.push({mesh:m, expressId:el.expressId});
       });
     });
+    // Diagnostic: how many _instKey-bearing meshes did we even see, and
+    // how many groups would meet the threshold? User memory diagnostic
+    // showed 0 instanced even on a federation with 30k+ elements; this
+    // tells us whether _instKey is being set, or threshold isn't met, or
+    // something else upstream is short-circuiting.
+    var grpKeys = Object.keys(candidates);
+    var grpAboveThresh = grpKeys.filter(function(k){ return candidates[k].entries.length >= INST_THRESHOLD; });
+    console.log('[Instancing] '+totalEl+' els · keyHit='+keyHitCount+' keyMiss='+keyMissCount+
+      ' · '+grpKeys.length+' distinct keys, '+grpAboveThresh.length+' above threshold ('+INST_THRESHOLD+'+)');
     var removedSet = {};
     var newMeshes = [];
     var nGroups = 0, nInstanced = 0;
@@ -11988,10 +12006,32 @@ function startApp() {
             transparent: true, opacity: 0.85, side: THREE.FrontSide
           }));
         } else if (style === 'standard') {
-          // Hidden Line: a single shared Lambert (set up above) painted onto
-          // every mesh. Monochrome makes per-mesh colour unnecessary.
+          // Hidden Line: a single shared Lambert for opaque elements + a
+          // per-mesh translucent material for glass. Curtain walls and
+          // windows now read as see-through line drawings instead of solid
+          // gray boxes. Glass detection mirrors the Shaded branch; the
+          // monochrome shared mat is still used for everything else, so
+          // perf cost is bounded to the small glass subset.
           _disposeEdges(obj);
-          mat = _standardMat;
+          var _hlMatName  = (obj.userData._ifcMaterial || '').toLowerCase();
+          var _hlType     = _eidToType[obj.userData.expressId] || '';
+          var _hlOpaque   = /steel|metal|alum|copper|brass|iron|zinc|concrete|beton|brick|masonry|wood|timber|stone|gypsum|plaster|insul/.test(_hlMatName);
+          var _hlHardFrame = /^Ifc(Member|CurtainWall|Beam|Column|Pile|Footing|Wall|Slab|Roof|Stair|Ramp|Covering|Railing|Rail)/i.test(_hlType);
+          var _hlSoftFrame = /^Ifc(Door|Plate|BuildingElementProxy)/i.test(_hlType);
+          var _hlGlass = !_hlHardFrame && (
+            /glass|glazing|fenst/.test(_hlMatName)
+            || (/^IfcWindow/i.test(_hlType) && orig.transparent && orig.opacity < 0.5)
+            || (!_hlOpaque && !_hlSoftFrame && orig.transparent && orig.opacity < 0.3)
+          );
+          if (_hlGlass) {
+            mat = cache.standardGlass || (cache.standardGlass = new THREE.MeshBasicMaterial({
+              color: light ? 0xd0e8f5 : 0x405668,
+              transparent: true, opacity: 0.14,
+              depthWrite: false, side: THREE.DoubleSide
+            }));
+          } else {
+            mat = _standardMat;
+          }
         } else if (style === 'shaded') {
           _disposeEdges(obj);
           if (!cache.shaded) {
