@@ -28076,6 +28076,35 @@ function startApp() {
     return L;
   }
 
+  // Console-callable memory diagnostic. Same data the in-app modal collects,
+  // but printed to the dev console — no warning popup needed. Useful for
+  // verifying post-bump regressions (instanced count, distinct materials,
+  // chunk-merge state, etc.). Usage: _ccMemReport() in the console.
+  window._ccMemReport = function() {
+    var s = window._ccLatestState || {};
+    var lines = _ccMemDiag(s);
+    var perf = (function(){
+      try {
+        var mem = performance && performance.memory;
+        if (!mem) return [];
+        var fmtMB = function(b){ return (b/1048576).toFixed(0) + ' MB'; };
+        return [
+          '- **JS heap used / total / limit**: ' + fmtMB(mem.usedJSHeapSize) +
+            ' / ' + fmtMB(mem.totalJSHeapSize) + ' / ' + fmtMB(mem.jsHeapSizeLimit)
+        ];
+      } catch(e) { return []; }
+    })();
+    var head = [
+      '### Memory Report  (console)',
+      '- **Models**: ' + (s.models||[]).length + ' · **elements**: ' +
+        (s.models||[]).reduce(function(a,m){return a+(m.elements?m.elements.length:0);},0),
+      '- **Clashes**: ' + (s.clashes||[]).length + ' · **issues**: ' + (s.issues||[]).length
+    ];
+    var report = head.concat(perf).concat(lines).join('\n');
+    console.log('%c' + report, 'font-family:monospace;white-space:pre;');
+    return report;
+  };
+
   function MemoryWarningModal(props) {
     var onDismiss = props.onDismiss, s = props.s;
     var mem = performance.memory || {};
