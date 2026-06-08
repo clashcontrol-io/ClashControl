@@ -56,6 +56,12 @@ Of course donations to keep the project running and expand more are welcome.
 
 ClashControl is not complete nor perfect and you should always verify results yourselves. That said, it will save you lots of money and frustration.
 
+## Privacy & data security
+
+**Your IFC stays in your browser.** The viewer, the clash engine, the BCF export — all of it runs locally in your tab via WebAssembly (`web-ifc`). Your file is never uploaded to a server. There is no "upload your model" step because there is no server-side processing of models.
+
+Full security architecture, what data optionally goes where, self-host instructions, and the AI provenance audit-trail: **[Security & Privacy →](https://www.clashcontrol.io/security/)**
+
 ## Privacy
 
 ClashControl shares **anonymous usage data by default** to help improve the AI clash classifier. This is opt-out — you can disable it any time from the Settings menu.

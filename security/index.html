@@ -1,0 +1,178 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Security &amp; Privacy — Your IFC Stays in Your Browser | ClashControl</title>
+  <meta name="description" content="ClashControl is an open-source IFC viewer + clash detection tool that runs 100% in the browser. Your model never leaves your device. Public, auditable, MIT-licensed.">
+  <link rel="canonical" href="https://www.clashcontrol.io/security/">
+  <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 48 48'%3E%3Crect width='48' height='48' rx='8' fill='%231a6b4a'/%3E%3Crect x='10' y='10' width='28' height='28' fill='none' stroke='%23ffffff' stroke-width='2'/%3E%3Cline x1='10' y1='38' x2='38' y2='10' stroke='%23ffffff' stroke-width='2'/%3E%3C/svg%3E">
+
+  <meta property="og:type" content="article">
+  <meta property="og:url" content="https://www.clashcontrol.io/security/">
+  <meta property="og:title" content="Security &amp; Privacy — Your IFC Stays in Your Browser">
+  <meta property="og:description" content="100% browser-side IFC processing. Your model never leaves your device. Open-source and auditable.">
+  <meta property="og:image" content="https://www.clashcontrol.io/og-image.png?v=2">
+  <meta property="og:site_name" content="ClashControl">
+  <meta property="og:locale" content="en_US">
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="Security &amp; Privacy — Your IFC Stays in Your Browser">
+  <meta name="twitter:description" content="100% client-side IFC processing. Open-source, auditable, MIT-licensed.">
+  <meta name="twitter:image" content="https://www.clashcontrol.io/og-image.png?v=2">
+
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Syne:wght@700;800&family=DM+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@type": "FAQPage",
+    "mainEntity": [
+      { "@type": "Question", "name": "Where is my IFC file processed?",
+        "acceptedAnswer": { "@type": "Answer", "text": "Entirely in your browser. ClashControl uses web-ifc, a WebAssembly IFC parser, that runs locally on your device. Your IFC, GLB, or BCF file is never uploaded to any server." } },
+      { "@type": "Question", "name": "What data does ClashControl send to its servers?",
+        "acceptedAnswer": { "@type": "Answer", "text": "Only what you explicitly enable: optional anonymous usage metrics (counts only, no filenames or coordinates) and optional shared-project issue metadata (status, priority, assignee — never geometry). Both are opt-out. The default behaviour is: nothing leaves your browser." } },
+      { "@type": "Question", "name": "Is ClashControl open-source?",
+        "acceptedAnswer": { "@type": "Answer", "text": "Yes. The entire source — every line of code that touches your IFC — is published under the MIT license at github.com/clashcontrol-io/ClashControl. You can read it, audit it, fork it, or self-host it." } },
+      { "@type": "Question", "name": "Can my company self-host ClashControl?",
+        "acceptedAnswer": { "@type": "Answer", "text": "Yes. ClashControl is a single static HTML file. Drop it on any web server, an internal IIS, or a corporate intranet share. No build step, no backend required for the viewer + clash detection." } }
+    ]
+  }
+  </script>
+  <script data-goatcounter="https://clashcontrol.goatcounter.com/count" async src="//gc.zgo.at/count.js"></script>
+
+  <style>
+    :root { --bg:#fff; --fg:#0f172a; --muted:#475569; --faint:#94a3b8; --accent:#1a6b4a; --border:#e2e8f0; --good:#dcfce7; --good-fg:#166534; }
+    * { box-sizing: border-box; }
+    html, body { margin:0; padding:0; background:var(--bg); color:var(--fg); font-family:'DM Sans',system-ui,-apple-system,sans-serif; line-height:1.65; -webkit-font-smoothing:antialiased; }
+    a { color: var(--accent); text-decoration: none; } a:hover { text-decoration: underline; }
+    header { border-bottom:1px solid var(--border); padding:1rem 1.5rem; display:flex; align-items:center; justify-content:space-between; }
+    header .brand { font-family:'Syne',sans-serif; font-weight:800; font-size:1.15rem; letter-spacing:-0.02em; color:var(--fg); display:flex; align-items:center; gap:.55rem; }
+    header nav a { color:var(--muted); margin-left:1.25rem; font-size:.95rem; font-weight:500; }
+    main { max-width:760px; margin:0 auto; padding:3rem 1.5rem 4rem; }
+    h1 { font-family:'Syne',sans-serif; font-size:2.4rem; font-weight:800; letter-spacing:-0.025em; line-height:1.15; margin:0 0 1.25rem; }
+    h2 { font-family:'Syne',sans-serif; font-size:1.4rem; font-weight:700; letter-spacing:-0.015em; margin:2.5rem 0 .75rem; }
+    h3 { font-size:1.05rem; font-weight:600; margin:1.75rem 0 .5rem; }
+    p { margin:0 0 1rem; } strong { font-weight:600; } code { background:#f1f5f9; padding:.1rem .35rem; border-radius:3px; font-size:.92em; }
+    .lede { background: var(--good); color: var(--good-fg); border-left:3px solid var(--accent); padding:1rem 1.25rem; border-radius:6px; font-size:1.05rem; font-weight:500; margin-bottom:2rem; }
+    ul.checks { list-style:none; padding:0; margin:0; }
+    ul.checks li { padding:.45rem 0 .45rem 1.7rem; position:relative; }
+    ul.checks li::before { content:"✓"; position:absolute; left:0; top:.4rem; color:var(--accent); font-weight:700; }
+    ul.crosses li::before { content:"✗"; color:#ef4444; }
+    .cta { display:inline-block; margin:1.5rem 0 .5rem; padding:.85rem 1.5rem; background:var(--accent); color:#fff; border-radius:6px; font-weight:600; font-size:1rem; }
+    .cta:hover { background:#155a3d; text-decoration:none; }
+    .faq dt { font-weight:600; margin-top:1.25rem; } .faq dd { margin:.3rem 0 0; color:var(--muted); }
+    footer { border-top:1px solid var(--border); padding:2rem 1.5rem; text-align:center; color:var(--faint); font-size:.9rem; }
+    footer .siblings { margin-bottom:1rem; } footer .siblings a { margin:0 .6rem; color:var(--muted); }
+    .arch { display:grid; grid-template-columns: 1fr 1fr; gap:1rem; margin:1rem 0 1.5rem; }
+    .arch > div { border:1px solid var(--border); border-radius:6px; padding:1rem 1.15rem; background:#fafafa; }
+    .arch h3 { margin-top:0; }
+    @media (max-width:640px){ .arch { grid-template-columns: 1fr; } }
+  </style>
+</head>
+<body>
+
+<header>
+  <a href="/" class="brand">
+    <svg width="22" height="22" viewBox="0 0 48 48" aria-hidden="true">
+      <rect width="48" height="48" rx="8" fill="#1a6b4a"/>
+      <rect x="10" y="10" width="28" height="28" fill="none" stroke="#fff" stroke-width="2"/>
+      <line x1="10" y1="38" x2="38" y2="10" stroke="#fff" stroke-width="2"/>
+    </svg>
+    ClashControl
+  </a>
+  <nav>
+    <a href="/">Open the app</a>
+    <a href="https://github.com/clashcontrol-io/ClashControl">GitHub</a>
+  </nav>
+</header>
+
+<main>
+  <h1>Your IFC stays in your browser.</h1>
+
+  <div class="lede">
+    ClashControl processes your IFC, GLB, and BCF files <strong>entirely on your device</strong>. Nothing is uploaded. Nothing is stored on our servers. There is no &ldquo;upload your model&rdquo; step because there is no server-side viewer.
+  </div>
+
+  <h2>How the architecture actually works</h2>
+
+  <p>The single page you load at <code>clashcontrol.io</code> is a self-contained web app. When you drag an IFC file onto the viewer, the file goes into your browser&rsquo;s memory and is parsed there by <a href="https://github.com/ThatOpen/engine_web-ifc">web-ifc</a>, an open-source WebAssembly IFC parser. The same is true for clash detection: the broad-phase AABB + narrow-phase BVH triangle&ndash;triangle intersection runs in JavaScript inside your tab. Your file never enters a network request.</p>
+
+  <div class="arch">
+    <div>
+      <h3>What stays on your device</h3>
+      <ul class="checks">
+        <li>The IFC file itself</li>
+        <li>Every element name, GUID, coordinate, property</li>
+        <li>Clash results &amp; detected geometry</li>
+        <li>Issue annotations &amp; viewpoints (until you export)</li>
+        <li>Model thumbnails &amp; screenshots</li>
+        <li>BCF export bundles (saved to your downloads)</li>
+      </ul>
+    </div>
+    <div>
+      <h3>What never reaches our servers</h3>
+      <ul class="checks crosses">
+        <li>Your IFC, GLB, or BCF files</li>
+        <li>Model names, file names, or project paths</li>
+        <li>Element names, GlobalIds, or coordinates</li>
+        <li>The actual clash geometry</li>
+        <li>Personally identifying information</li>
+      </ul>
+    </div>
+  </div>
+
+  <h2>What we <em>do</em> send &mdash; and how to disable it</h2>
+
+  <p>Three optional features touch our servers. Each is described below; each can be turned off.</p>
+
+  <h3>1. Anonymous usage analytics (opt-out)</h3>
+  <p>We run a lightweight cookie-less counter (<a href="https://www.goatcounter.com/">GoatCounter</a>) for page-visit numbers. Optionally, with your consent, we collect aggregated counts of IFC types in your models, geometric metrics of clashes (size ratios, gap distances &mdash; numbers only), and the natural-language commands you type into the AI assistant. <strong>No filenames, no GUIDs, no coordinates, no IP addresses logged.</strong> You can disable this in <strong>Settings &rarr; Privacy</strong>, or by setting <code>localStorage.cc_data_consent = 'denied'</code> in your browser console.</p>
+
+  <h3>2. Shared projects (opt-in)</h3>
+  <p>If you create a shared project (for team coordination), only the <strong>issue metadata</strong> (status, priority, assignee, title) syncs through our backend &mdash; never the IFC geometry. Each teammate loads their own local copy of the IFC file. No accounts, no logins; a short project key is your only identifier.</p>
+
+  <h3>3. AI assistant (opt-out)</h3>
+  <p>The natural-language command bar sends your <em>typed command</em> (e.g.&nbsp;&ldquo;show structural vs MEP clashes&rdquo;) to our serverless function, which routes it to a Groq LLM for parsing. Model names and project names are stripped before transmission. You can disable AI entirely or bring your own LLM via the Smart Bridge connector (the chat then talks to <code>localhost</code> only).</p>
+
+  <h2>Audit trail for AI decisions</h2>
+
+  <p>Every clash title, severity score, and triage suggestion produced by AI carries a <strong>provenance record</strong> &mdash; which model, which endpoint, which timestamp. Hover the &ldquo;AI&rdquo; chip on any issue to see who decided what. The trail round-trips through BCF as custom labels (<code>cc:aiModel</code>, <code>cc:aiSource</code>, <code>cc:aiAt</code>) so it survives export to Revit, Navisworks, or any other BCF-aware tool. We built this in response to the AEC industry&rsquo;s 2026 conversation around agentic-BIM governance &mdash; auditability is the differentiator the incumbents don&rsquo;t ship.</p>
+
+  <h2>Open source, MIT-licensed, auditable</h2>
+
+  <p>Every line of code that touches your IFC is published at <a href="https://github.com/clashcontrol-io/ClashControl">github.com/clashcontrol-io/ClashControl</a> under the MIT license. The app is a <em>single HTML file</em> with no build step and no bundler &mdash; you can read it top to bottom. Network requests are auditable in browser DevTools; the absence of an upload request for your IFC is verifiable in seconds.</p>
+
+  <h2>Self-host on your corporate network</h2>
+
+  <p>Because the viewer is one static HTML file, your IT department can drop it on an internal IIS share, S3 bucket, or air-gapped intranet host. ClashControl works completely offline once loaded &mdash; PWA service-worker caching is enabled. The only optional server-side features (shared projects, AI assistant) can be turned off or pointed at your own infrastructure.</p>
+
+  <h2>Smart Bridge security</h2>
+
+  <p>The optional desktop Smart Bridge binary (for connecting your own LLM or live-syncing with Revit) listens on <code>127.0.0.1</code> only &mdash; not reachable from the network. Origin allow-list enforced. <code>Host</code> header allow-list blocks DNS-rebinding. Body size capped at 1&nbsp;MB. LLM API keys written with <code>0600</code> permissions. Hardened in response to the 2026 MCP CVE roundup.</p>
+
+  <h2>Transport &amp; encryption</h2>
+
+  <p>The app is served over HTTPS with HSTS. Connections to Vercel serverless functions (analytics, AI proxy, shared projects) use TLS 1.3 with modern cipher suites. The Smart Bridge runs on loopback (no transport encryption is needed; the data never leaves your machine).</p>
+
+  <h2>License &amp; contact</h2>
+
+  <p>ClashControl is released under the <a href="https://github.com/clashcontrol-io/ClashControl/blob/main/LICENSE">MIT license</a>. For specific compliance questions or to report a security issue privately, open a GitHub issue or contact <a href="mailto:info@clashcontrol.io">info@clashcontrol.io</a>.</p>
+
+  <a href="/" class="cta" data-goatcounter-click="cta-app-from-security">Open the app &rarr;</a>
+</main>
+
+<footer>
+  <div class="siblings">
+    <a href="/free-navisworks-alternative/">Free Navisworks alternative</a> &middot;
+    <a href="/free-solibri-alternative/">Free Solibri alternative</a> &middot;
+    <a href="/ifc-clash-detection-online/">Online IFC clash detection</a> &middot;
+    <a href="/free-bcf-viewer/">Free BCF viewer</a> &middot;
+    <a href="/free-ifc-viewer-online/">Free online IFC viewer</a>
+  </div>
+  <div>© ClashControl &middot; <a href="/">Open the app</a> &middot; <a href="https://github.com/clashcontrol-io/ClashControl">Source on GitHub</a></div>
+</footer>
+
+</body>
+</html>
