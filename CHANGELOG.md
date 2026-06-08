@@ -1,5 +1,8 @@
 # Changelog
 
+## v5.19.49 (2026-06-08)
+- docs: extract 7 longest rationale blocks from index.html to INTERNALS.md
+
 ## v5.19.48 (2026-06-08)
 - fix(restore): persist geometryExpressID, use as canonical _instKey
 
