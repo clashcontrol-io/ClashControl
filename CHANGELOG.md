@@ -1,5 +1,8 @@
 # Changelog
 
+## v5.19.16 (2026-06-08)
+- perf(viewer): disable r155+ ColorManagement default to restore pre-bump speed
+
 ## v5.19.15 (2026-06-08)
 - fix(viewer): section-box helpers don't cast shadows + lower rendered exposure
 
