@@ -1,5 +1,8 @@
 # Changelog
 
+## v5.19.24 (2026-06-08)
+- fix(viewer): drop rendered exposure 0.55 → 0.4 (still too bright at 0.55)
+
 ## v5.19.23 (2026-06-08)
 - feat(reach): PWA install banner + public Developer API landing page
 
