@@ -1798,6 +1798,17 @@ function startApp() {
       mesh.applyMatrix4(_tmpMtx4.fromArray(md.mtx));
       mesh.userData.expressId = md.eid;
       _ccBakeMesh(mesh);
+      // INSTANCING REGRESSION (cache-restore branch): _instKey was never
+      // set on restored meshes, so 73k cached models loaded with 0
+      // instanced meshes. The cached data dropped the original
+      // geometryExpressID; fingerprint the local-space geometry instead
+      // (vertex count + bbox extent), pair with the shared material's
+      // uuid. Two cached entries with identical geometry + material share
+      // a key — same condition as the live IFC loader path.
+      var _vc = md.qpos ? (md.qpos.length / 3) : (md.pos ? (md.pos.length / 3) : 0);
+      var _b  = md.bbox;
+      var _bk = _b ? ((_b.max[0]-_b.min[0]).toFixed(2)+','+(_b.max[1]-_b.min[1]).toFixed(2)+','+(_b.max[2]-_b.min[2]).toFixed(2)) : 'nb';
+      mesh.userData._instKey = _vc + ':' + _bk + ':' + (mat.uuid || 'na');
       if(!meshByEid[md.eid]) meshByEid[md.eid] = [];
       meshByEid[md.eid].push(mesh);
       return mesh;
@@ -1816,13 +1827,18 @@ function startApp() {
     // entirely, so a reloaded session showed "0 merged chunks" and 146k draw
     // objects even with the flag ON (#572). el.meshes[] stays per-element
     // (chunk-merge mutates only the render list), so clash/highlight are
-    // unaffected. Instancing is skipped here because the cache doesn't retain
-    // the shared-geometry id needed to group instances; chunk-merge works
-    // purely from geometry + material and delivers the bulk of the win.
+    // unaffected. _instKey is now set per mesh via the geometry-fingerprint
+    // path above so instancing runs cleanly on restored meshes — was the
+    // root cause of the post-r180 perf regression on cache-restored
+    // federations (73402 distinct geometries, 0 instanced, 5 GB heap).
     // Strip survey base-point / nulpunt markers on restore too, so a
     // reloaded session matches a fresh load (no giant floating letters).
     if (typeof _ccStripSurveyMarkers === 'function') {
       var _smR = _ccStripSurveyMarkers(elements, meshes); elements = _smR.elements; meshes = _smR.meshes;
+    }
+    if (typeof _buildInstancedMeshes === 'function') {
+      try { meshes = _buildInstancedMeshes(elements, meshes).meshes; }
+      catch(e){ console.warn('[restore] instancing skipped:', e); }
     }
     if (typeof _ccBuildMergedChunks === 'function') {
       try { meshes = _ccBuildMergedChunks(elements, meshes).meshes; } catch(e){ console.warn('[restore] chunk-merge skipped:', e); }
