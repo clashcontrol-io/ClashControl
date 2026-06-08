@@ -1,5 +1,8 @@
 # Changelog
 
+## v5.19.25 (2026-06-08)
+- feat(debug): _ccMemReport() console helper — same diagnostic, no popup
+
 ## v5.19.24 (2026-06-08)
 - fix(viewer): drop rendered exposure 0.55 → 0.4 (still too bright at 0.55)
 
