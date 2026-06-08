@@ -1765,7 +1765,7 @@ function startApp() {
         props: el.props
       };
     });
-    return {v:4, hasPsets:hasPsets, meshData:meshData, elData:elData, storeys:result.storeys, storeyData:result.storeyData, relatedPairs:result.relatedPairs||{}, stats:result.stats};
+    return {v:5, hasPsets:hasPsets, meshData:meshData, elData:elData, storeys:result.storeys, storeyData:result.storeyData, relatedPairs:result.relatedPairs||{}, stats:result.stats};
   }
 
 
@@ -1801,26 +1801,29 @@ function startApp() {
       // INSTANCING REGRESSION (cache-restore branch): _instKey was never
       // set on restored meshes, so 73k cached models loaded with 0
       // instanced meshes. Cache dropped the original geometryExpressID,
-      // so fingerprint the LOCAL position buffer instead — vert count +
-      // bbox alone is too loose (e.g. a curtain-wall panel and a mullion
-      // segment can share the same extents and material → grouped under
-      // one InstancedMesh with the wrong shape, manifesting as rotated /
-      // mis-shaped elements on restored federations).
+      // so fingerprint the LOCAL position buffer instead. The earlier
+      // attempt sampled every Nth byte (256 samples total) — too lossy
+      // at scale. Popular curtain-wall and MEP geometries collided,
+      // got bucketed under one InstancedMesh, and rendered at neighbours'
+      // transforms (showed up as blue spikes sticking through the roof
+      // at random angles). Hash every byte instead: FNV-1a clears 1 GB/s
+      // in plain JS so even a 90 MB federation is sub-100 ms total.
+      // Add the index buffer too — two geos can share positions but
+      // differ in topology.
       var _qbytes = md.qpos ? new Uint8Array(md.qpos) : (md.pos ? new Uint8Array(new Float32Array(md.pos).buffer) : null);
-      var _vc = md.qpos ? (md.qpos.length / 3) : (md.pos ? (md.pos.length / 3) : 0);
-      var _hash = 2166136261; // FNV-1a 32-bit over the raw position bytes
-      if (_qbytes) {
-        // Sample every Nth byte for large buffers — full pass would dominate
-        // restore time on big federations. 256 samples gives <1-in-2^32
-        // collision risk between genuinely different geometries while
-        // keeping the work bounded.
-        var _len = _qbytes.length;
-        var _step = Math.max(1, (_len / 256) | 0);
-        for (var _i = 0; _i < _len; _i += _step) {
-          _hash ^= _qbytes[_i];
+      var _ibytes = md.idx ? new Uint8Array(md.idx) : null;
+      var _vc = _qbytes ? (_qbytes.byteLength / 2 / 3) : 0; // Uint16, 3 coords/vert
+      var _hash = 2166136261;
+      function _fnv1a(arr){
+        if (!arr) return;
+        var n = arr.length;
+        for (var i = 0; i < n; i++) {
+          _hash ^= arr[i];
           _hash = (_hash + ((_hash<<1) + (_hash<<4) + (_hash<<7) + (_hash<<8) + (_hash<<24))) >>> 0;
         }
       }
+      _fnv1a(_qbytes);
+      _fnv1a(_ibytes);
       mesh.userData._instKey = _vc + ':' + _hash.toString(36) + ':' + (mat.uuid || 'na');
       if(!meshByEid[md.eid]) meshByEid[md.eid] = [];
       meshByEid[md.eid].push(mesh);
@@ -13259,7 +13262,7 @@ function startApp() {
         chain = chain.then(function(){
           _setGlobalLoading(true);
           return idbGetGeoCache(entry.id).then(function(cached) {
-            if(cached && cached.v >= 4 && cached.hasPsets) return _geoDeserialize(cached);
+            if(cached && cached.v >= 5 && cached.hasPsets) return _geoDeserialize(cached);
             return loadIFC(entry.buffer, DISC[0].c, function(){})
               .then(function(result) {
                 if (result) idbSaveGeoCache(entry.id, _geoSerialize(result));
