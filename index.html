@@ -546,6 +546,42 @@ function startApp() {
   var CC_VERSION = {v:'5.19.1',hash:'e950a99',date:'2026-06-08T08:45:47Z'};
   window.CC_VERSION = CC_VERSION;
 
+  // ── Three.js bump-prep harness ─────────────────────────────────────────────
+  // Centralizes the Three.js CDN version so the eventual r128 → r179+ bump
+  // touches one constant instead of 6 string literals. Examples-base also
+  // serves the same role for the on-demand loader scripts (GLTFLoader,
+  // TransformControls, PLYLoader, PCDLoader, EffectComposer chain, etc.).
+  //
+  // When we bump:
+  //   1. Update THREE_VERSION + THREE_EXAMPLES_PATH below.
+  //   2. Switch the <script> tag in the document head to the new build URL
+  //      (which becomes ESM at r161+ — the bump checklist covers it).
+  //   3. Regenerate SRI hashes via scripts/generate-sri.js.
+  //   4. Replace _ccSetSRGBOutput's r128 branch with the modern branch.
+  // Everything else in the codebase keeps working.
+  var THREE_VERSION = '0.128.0';
+  var THREE_EXAMPLES_BASE = 'https://cdn.jsdelivr.net/npm/three@' + THREE_VERSION + '/examples/js/';
+  window._ccThreeCDN = { version: THREE_VERSION, examplesBase: THREE_EXAMPLES_BASE };
+
+  // sRGB output shim. r128 uses `renderer.outputEncoding = THREE.sRGBEncoding`;
+  // r152+ replaced it with `renderer.outputColorSpace = THREE.SRGBColorSpace`.
+  // Detecting which branch to take per-renderer makes this code survive the
+  // bump unchanged — drop the legacy branch when r128 stops shipping.
+  window._ccSetSRGBOutput = function(renderer) {
+    if (!renderer) return;
+    if ('outputColorSpace' in renderer && window.THREE && THREE.SRGBColorSpace) {
+      renderer.outputColorSpace = THREE.SRGBColorSpace;          // r152+
+    } else if ('outputEncoding' in renderer && window.THREE && THREE.sRGBEncoding) {
+      _ccSetSRGBOutput(renderer);              // r128 (current)
+    }
+  };
+  // Texture-side variant. Textures use the same encoding/colorSpace dance.
+  window._ccSetSRGBTexture = function(tex) {
+    if (!tex || !window.THREE) return;
+    if ('colorSpace' in tex && THREE.SRGBColorSpace) tex.colorSpace = THREE.SRGBColorSpace;
+    else if ('encoding' in tex && THREE.sRGBEncoding) tex.encoding = THREE.sRGBEncoding;
+  };
+
   function _gcEvent(name, title) {
     try { if(window.goatcounter && window.goatcounter.count) window.goatcounter.count({path:'event/'+name, title:title||name, event:true}); } catch(e){}
   }
@@ -997,7 +1033,7 @@ function startApp() {
   window._ccIsAddonActive = function(id) { return !!_ccAddonActive[id]; };
 
   function _loadAddonScripts() {
-    var addonFiles = ['training-data', 'pwa', 'local-engine', 'shared-project', 'revit-bridge', 'data-quality', 'smart-bridge', 'pointcloud', 'geoplace', 'accessibility'];
+    var addonFiles = ['training-data', 'pwa', 'local-engine', 'shared-project', 'revit-bridge', 'data-quality', 'smart-bridge', 'pointcloud', 'geoplace', 'accessibility', 'splat'];
     addonFiles.forEach(function(name) {
       var script = document.createElement('script');
       script.src = 'addons/' + name + '.js';
@@ -5387,12 +5423,18 @@ function startApp() {
             if (topicType === 'issue' || topicType === 'error') mappedType = 'hard';
             else if (topicType === 'warning') mappedType = 'soft';
             // Recover Revit element IDs from cc:revitA / cc:revitB labels (see exportBCF).
+            // Same pattern recovers AI provenance written by exportBCF: cc:aiModel,
+            // cc:aiSource, cc:aiAt. Carries the audit-trail chip through BCF round-trips.
             var revitIdA = null, revitIdB = null;
+            var aiModel = null, aiSource = null, aiAt = null;
             var labelNodes = topic.querySelectorAll('Labels');
             for (var li = 0; li < labelNodes.length; li++) {
               var txt = (labelNodes[li].textContent || '').trim();
-              if (txt.indexOf('cc:revitA=') === 0) revitIdA = txt.slice(10);
-              else if (txt.indexOf('cc:revitB=') === 0) revitIdB = txt.slice(10);
+              if      (txt.indexOf('cc:revitA=')  === 0) revitIdA = txt.slice(10);
+              else if (txt.indexOf('cc:revitB=')  === 0) revitIdB = txt.slice(10);
+              else if (txt.indexOf('cc:aiModel=') === 0) aiModel  = txt.slice(11);
+              else if (txt.indexOf('cc:aiSource=')=== 0) aiSource = txt.slice(12);
+              else if (txt.indexOf('cc:aiAt=')    === 0) aiAt     = txt.slice(8);
             }
             var issuePayload = {
               id:uid(), source:'bcf_import', type:mappedType, status:mappedStatus,
@@ -5402,6 +5444,12 @@ function startApp() {
             };
             if (revitIdA != null) issuePayload.revitIdA = revitIdA;
             if (revitIdB != null) issuePayload.revitIdB = revitIdB;
+            if (aiModel || aiSource || aiAt) {
+              issuePayload.aiProvenance = { actor:'bcf_import',
+                model:  aiModel  || null,
+                source: aiSource || null,
+                at:     aiAt     || null };
+            }
             d({t:A.ADD_ISSUE, v:issuePayload});
             imported++;
           } catch(e) { console.warn('BCF parse error:', e); }
@@ -5510,6 +5558,13 @@ function startApp() {
       // string content). Matching labels are parsed back on import.
       if (it.revitIdA != null) markup += '    <Labels>cc:revitA='+esc(it.revitIdA)+'</Labels>\n';
       if (it.revitIdB != null) markup += '    <Labels>cc:revitB='+esc(it.revitIdB)+'</Labels>\n';
+      // AI provenance — model + source + timestamp for every AI-touched issue.
+      // Other BCF readers preserve unknown Labels; the importer reconstructs
+      // aiProvenance from them so the audit-trail chip survives the round-trip.
+      var _aip = it.aiProvenance;
+      if (_aip && _aip.model)  markup += '    <Labels>cc:aiModel='+esc(_aip.model)+'</Labels>\n';
+      if (_aip && _aip.source) markup += '    <Labels>cc:aiSource='+esc(_aip.source)+'</Labels>\n';
+      if (_aip && _aip.at)     markup += '    <Labels>cc:aiAt='+esc(_aip.at)+'</Labels>\n';
       markup += '    <CreationDate>'+(it.createdAt||new Date().toISOString())+'</CreationDate>\n';
       markup += '    <CreationAuthor>'+authorEsc+'</CreationAuthor>\n';
       markup += '    <ModifiedDate>'+new Date().toISOString()+'</ModifiedDate>\n';
@@ -6251,7 +6306,19 @@ function startApp() {
         }
       }
       var zoomFactor = 1+e.deltaY*0.0008;
+      var prevR = sph.r;
       sph.r *= zoomFactor;
+      // When zooming IN and the radius would clamp at the floor (0.5 in
+      // apply()), advance the target along the view direction instead.
+      // Without this, users get stuck the moment sph.r hits 0.5 — closer
+      // detail inspection is impossible until they pan or rotate the target.
+      // (Blender / Rhino "drive forward" pattern.)
+      if (zoomFactor < 1 && sph.r < 0.5 && !orbit.camera.isOrthographicCamera) {
+        var advance = Math.max(0, prevR - sph.r); // how much we wanted to close in by
+        orbit.camera.getWorldDirection(_tmpDir);
+        target.addScaledVector(_tmpDir, advance);
+        sph.r = prevR; // keep camera in place; we moved the target instead
+      }
       if(orbit.camera.isOrthographicCamera) {
         orbit.camera.zoom = Math.max(0.01, orbit.camera.zoom / zoomFactor);
         orbit.camera.updateProjectionMatrix();
@@ -6426,7 +6493,7 @@ function startApp() {
         g.addColorStop(1.0, '#e8e8e8');
         ctx.fillStyle = g; ctx.fillRect(0,0,2,256);
         var t = new THREE.CanvasTexture(c);
-        t.encoding = THREE.sRGBEncoding;
+        _ccSetSRGBTexture(t);
         t.needsUpdate = true;
         return t;
       })();
@@ -6445,7 +6512,7 @@ function startApp() {
       renderer.setSize(el.clientWidth, el.clientHeight);
       renderer.localClippingEnabled = false;
       // ── Architectural-quality output (r128) ────────────────────────────
-      renderer.outputEncoding = THREE.sRGBEncoding;
+      _ccSetSRGBOutput(renderer);
       renderer.toneMapping = THREE.ACESFilmicToneMapping;
       renderer.toneMappingExposure = 1.0;
       renderer.shadowMap.enabled = true;
@@ -6525,7 +6592,7 @@ function startApp() {
           S._postLoading = Promise.resolve();
           return S._postLoading;
         }
-        var base = 'https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/';
+        var base = THREE_EXAMPLES_BASE;
         S._postLoading = _ccLoadScript(base+'shaders/CopyShader.js')
           .then(function(){ return _ccLoadScript(base+'shaders/LuminosityHighPassShader.js').catch(function(){}); })
           .then(function(){ return _ccLoadScript(base+'shaders/SAOShader.js'); })
@@ -7949,7 +8016,25 @@ function startApp() {
         },
         getCamera: function() {
           if (!S.camera || !S.orbit) return null;
-          return { position:[S.camera.position.x,S.camera.position.y,S.camera.position.z], target:[S.orbit.target.x,S.orbit.target.y,S.orbit.target.z], distance:S.orbit.sph.r };
+          // Everything an addon with its own Three.js needs to reconstruct an
+          // equivalent camera each frame: world position, look-at target,
+          // perspective fov + near/far, aspect, and the canvas pixel size so
+          // the addon can size its sibling renderer to match.
+          var el = (S.renderer && S.renderer.domElement) || document.getElementById('cc-canvas');
+          var w = el ? el.clientWidth  : 0;
+          var h = el ? el.clientHeight : 0;
+          return {
+            position:[S.camera.position.x,S.camera.position.y,S.camera.position.z],
+            target:[S.orbit.target.x,S.orbit.target.y,S.orbit.target.z],
+            up:[S.camera.up.x,S.camera.up.y,S.camera.up.z],
+            fov: S.camera.fov || 55,
+            aspect: S.camera.aspect || (w && h ? w/h : 1),
+            near: S.camera.near || 0.01,
+            far:  S.camera.far  || 10000,
+            isOrtho: !!S.camera.isOrthographicCamera,
+            canvas: { width: w, height: h, dpr: (window.devicePixelRatio||1) },
+            distance: S.orbit.sph.r
+          };
         },
         pan: function(dx,dy,dz) {
           if (!S.camera || !S.orbit) return;
@@ -8991,7 +9076,7 @@ function startApp() {
           _magRenderer = new THREE.WebGLRenderer({canvas:_magCanvas, alpha:true, antialias:true, powerPreference:'low-power'});
           _magRenderer.setPixelRatio(1);
           _magRenderer.setSize(192, 192, false);
-          _magRenderer.outputEncoding = THREE.sRGBEncoding;
+          _ccSetSRGBOutput(_magRenderer);
         } catch(err){
           if (_magCanvas.parentNode) _magCanvas.parentNode.removeChild(_magCanvas);
           _magCanvas = null; _magInitFailed = true;
@@ -10463,6 +10548,12 @@ function startApp() {
           } else {
             renderer.render(scene,S.camera);
           }
+          // Fire a frame event so sibling-canvas addons (splat overlay etc.)
+          // know to re-render. Lightweight — no payload; the listener pulls
+          // current camera state from _ccViewport.getCamera() on demand.
+          if (window._ccHasSplats || window._ccHasFrameListener) {
+            try { window.dispatchEvent(new CustomEvent('cc-render-frame')); } catch(_){}
+          }
           // ── Screenshot capture (must happen immediately after render, before buffer swap) ──
           if (window._ccPendingScreenshot) {
             var _cb = window._ccPendingScreenshot;
@@ -10763,7 +10854,10 @@ function startApp() {
         var shaftCylR = 0.03;
         var tipR      = 0.12;
         var tipLen    = 0.3;
-        var arrowMat  = new THREE.MeshBasicMaterial({color: 0x1a6b4a, transparent: true, opacity: 0.65, depthTest: false});
+        // Match the section rotation ring (0xf59e0b amber) so the drag arrow,
+        // tip, and ring read as one gizmo. Was the brand green which made the
+        // axis arrow visually disjoint from the rotation ring.
+        var arrowMat  = new THREE.MeshBasicMaterial({color: 0xf59e0b, transparent: true, opacity: 0.85, depthTest: false});
         arrowMat.clippingPlanes = [];
         var shaftGeo  = new THREE.CylinderGeometry(shaftCylR, shaftCylR, shaftLen, 8, 1, true);
         var shaft     = new THREE.Mesh(shaftGeo, arrowMat);
@@ -10922,7 +11016,7 @@ function startApp() {
         if (typeof THREE.TransformControls !== 'function') {
           if (tcLoadedRef.current) { cb(); return; }
           tcLoadedRef.current = true;
-          var url = 'https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/TransformControls.js';
+          var url = THREE_EXAMPLES_BASE + 'controls/TransformControls.js';
           var sc = document.createElement('script');
           sc.src = url; sc.async = true;
           sc.onload = function(){ if (typeof THREE.TransformControls === 'function') buildAndCb(); else cb(); };
@@ -11197,7 +11291,8 @@ function startApp() {
       faceDirs.forEach(function(fd){
         var faceCenter = ctr.clone().addScaledVector(fd.axis, fd.sign * fd.halfExt);
         var arrowPos   = faceCenter.clone().addScaledVector(fd.axis, fd.sign * faceArrowSize * 1.0);
-        var fmat = new THREE.MeshBasicMaterial({color:0x1a6b4a, transparent:true, opacity:0.65, depthTest:false});
+        // Section box face arrows match the section-plane gizmo (amber).
+        var fmat = new THREE.MeshBasicMaterial({color:0xf59e0b, transparent:true, opacity:0.85, depthTest:false});
         var arrow = new THREE.Mesh(faceArrowGeo, fmat);
         arrow.position.copy(arrowPos);
         arrow.quaternion.setFromUnitVectors(new THREE.Vector3(0,1,0), fd.axis.clone().multiplyScalar(fd.sign).normalize());
@@ -11500,7 +11595,7 @@ function startApp() {
         }
         ctx.fillStyle = g; ctx.fillRect(0,0,2,256);
         var t = new THREE.CanvasTexture(c);
-        t.encoding = THREE.sRGBEncoding;
+        _ccSetSRGBTexture(t);
         t.needsUpdate = true;
         S._skyTex = t;
         S.scene.background = t;
@@ -13802,6 +13897,24 @@ function startApp() {
 
     function processFiles(files) {
       setErr('');
+      // Route Gaussian Splat files to the splat addon. Must run BEFORE the
+      // point-cloud filter because .ply is shared between the two — splat
+      // files happen to use the same extension. The splat addon detects
+      // splat-shaped PLYs via header sniff; we only force-route .splat /
+      // .ksplat / .spz, leaving .ply to fall through to point clouds.
+      var splatFiles = files.filter(function(f){return /\.(splat|ksplat|spz)$/i.test(f.name);});
+      files = files.filter(function(f){return !/\.(splat|ksplat|spz)$/i.test(f.name);});
+      if (splatFiles.length) {
+        if (window._ccLoadSplat) {
+          splatFiles.forEach(function(f){
+            window._ccLoadSplat(f, {name:f.name}).catch(function(err){
+              setErr((function(prev){ return (prev?prev+'\n':'') + f.name + ': ' + (err && err.message || err); })(''));
+            });
+          });
+        } else {
+          setErr('Splat addon not loaded.');
+        }
+      }
       // Route point cloud files to the pointcloud addon, if loaded.
       var pcFiles = files.filter(function(f){return /\.(ply|pcd|xyz|pts|las|laz)$/i.test(f.name);});
       files = files.filter(function(f){return !/\.(ply|pcd|xyz|pts|las|laz)$/i.test(f.name);});
@@ -14284,7 +14397,7 @@ function startApp() {
           ${loading?loadMsg||'Loading…':'Add'}
         </button>
       </div>
-      <input ref=${fileRef} type="file" accept=".ifc,.glb,.ifcmeta,.ifcprops,.ply,.pcd,.xyz,.pts,.las" multiple style=${{display:'none'}} onChange=${onFiles} />
+      <input ref=${fileRef} type="file" accept=".ifc,.glb,.ifcmeta,.ifcprops,.ply,.pcd,.xyz,.pts,.las,.splat,.ksplat,.spz" multiple style=${{display:'none'}} onChange=${onFiles} />
       <input ref=${file2dRef} type="file" accept=".dxf,.pdf,.dwg,.nwd,.nwc,.nwf" multiple style=${{display:'none'}} onChange=${onFiles} />
       ${err && html`<div style=${{padding:'.35rem .75rem',background:'var(--color-danger-bg)',borderBottom:'1px solid var(--color-danger-border)',fontSize:'.7rem',color:'var(--color-danger-fg)',whiteSpace:'pre-line',lineHeight:1.4}}>${err}</div>`}
       <div style=${{flex:1,overflowY:'auto',minHeight:0,padding:'.4rem .45rem',display:'flex',flexDirection:'column',gap:'.18rem'}}>
@@ -16972,7 +17085,7 @@ function startApp() {
   function exportGLTF(scene, models, format) {
     _gcEvent('gltf-export', format.toUpperCase()+' export');
     var script = document.createElement('script');
-    script.src = 'https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/exporters/GLTFExporter.js';
+    script.src = THREE_EXAMPLES_BASE + 'exporters/GLTFExporter.js';
     script.onload = function() {
       var exporter = new THREE.GLTFExporter();
       var exportScene = new THREE.Scene();
@@ -17061,7 +17174,7 @@ function startApp() {
     }
 
     var script = document.createElement('script');
-    script.src = 'https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/exporters/GLTFExporter.js';
+    script.src = THREE_EXAMPLES_BASE + 'exporters/GLTFExporter.js';
     script.onload = function() {
       var exportScene = new THREE.Scene();
       var meshCount = 0;
@@ -21978,6 +22091,33 @@ function startApp() {
           </div>
           <span style=${{fontSize:'0.8rem',color:_serverAIAvailable?'#4ade80':'#f87171',flexShrink:0}}>${_serverAIAvailable ? '● Connected' : '○ Offline'}</span>
         </div>
+        ${function(){
+          // Autonomy envelope (Day, AEC Magazine, Apr 2026). What the built-in
+          // assistant is allowed to do for clash resolution without escalation.
+          // State + persistence already wired (s.prefs.aiEnvelope). This is
+          // just the user-visible toggle; the NL pipeline reads from state.
+          var _env = (p.aiEnvelope && p.aiEnvelope.resolveClashes) || 'nudge';
+          var setEnv = function(v){ d({t:A.UPD_PREFS, u:{aiEnvelope: Object.assign({}, p.aiEnvelope||{}, {resolveClashes:v})}}); };
+          var BTN = function(v, label){
+            var on = _env === v;
+            return html`<button onClick=${function(){setEnv(v);}}
+              style=${{...S_BTN, padding:'.3rem .6rem', background: on ? 'var(--accent)' : 'var(--bg-secondary)',
+                color: on ? '#fff' : 'var(--text-secondary)', fontWeight: on ? 600 : 500,
+                fontSize:'0.78rem', borderRadius:6, border: on ? 'none' : '1px solid var(--border)'}}>${label}</button>`;
+          };
+          return html`<div style=${TROW}>
+            <div>
+              <div style=${TLBL}>Clash-resolution authority</div>
+              <div style=${TSUB}>${_env === 'nudge'
+                ? 'Nudge — built-in assistant stays basic; resolve/fix-clash queries route to your own LLM via the Smart Bridge Connector (or show a connect prompt).'
+                : 'Suggest — your own LLM may reason about resolutions and reply with options. ClashControl never auto-dispatches state changes; the architect remains the decision-maker.'}</div>
+            </div>
+            <div style=${{display:'flex',gap:'.3rem',flexShrink:0}}>
+              ${BTN('nudge','Nudge')}
+              ${BTN('suggest','Suggest')}
+            </div>
+          </div>`;
+        }()}
 
         <div style=${SEC}>Issue Defaults</div>
         <div style=${{display:'flex',gap:'.5rem',padding:'.5rem 0'}}>
@@ -29705,21 +29845,31 @@ function startApp() {
       : s.commentMode ? 'note'
       : 'orbit';
 
-    function clearAllModes(){
-      if (s.walkMode) d({t:A.WALK_MODE,v:false});
-      if (s.walkPlacing) d({t:A.WALK_PLACING,v:false});
-      if (s.sectionAxis) d({t:A.SECTION,axis:null});
-      if (s.sectionCustom) d({t:A.SECTION_CUSTOM,v:null});
-      if (s.sectionBox && s.sectionBox.enabled) d({t:A.SECTION_BOX,v:null});
-      if (s.measureMode) {
+    function clearAllModes(keep){
+      // `keep` is an optional object of mode names to preserve, e.g.
+      // {sectionBox:true} when entering measure — section box is a clipping
+      // VIEW, not an active tool, and should coexist with measure. Same
+      // logic the other direction (slicebox preserves measure).
+      keep = keep || {};
+      if (s.walkMode && !keep.walkMode) d({t:A.WALK_MODE,v:false});
+      if (s.walkPlacing && !keep.walkPlacing) d({t:A.WALK_PLACING,v:false});
+      if (s.sectionAxis && !keep.sectionAxis) d({t:A.SECTION,axis:null});
+      if (s.sectionCustom && !keep.sectionCustom) d({t:A.SECTION_CUSTOM,v:null});
+      if (s.sectionBox && s.sectionBox.enabled && !keep.sectionBox) d({t:A.SECTION_BOX,v:null});
+      if (s.measureMode && !keep.measureMode) {
         d({t:A.MEASURE_MODE,v:false});
         if (window._ccCancelInProgressMeasurement) window._ccCancelInProgressMeasurement();
       }
-      if (s.floorPlan) d({t:A.FLOOR_PLAN,v:null});
-      if (s.commentMode) d({t:A.COMMENT_MODE,v:false});
+      if (s.floorPlan && !keep.floorPlan) d({t:A.FLOOR_PLAN,v:null});
+      if (s.commentMode && !keep.commentMode) d({t:A.COMMENT_MODE,v:false});
     }
     function setMode(mode){
-      clearAllModes();
+      // measure ↔ sectionBox coexist: section box is a clipping view, not an
+      // active tool. Entering measure keeps section box; entering section box
+      // keeps measure. Walk / floor-plan / slice still cancel everything.
+      if (mode === 'measure') clearAllModes({sectionBox:true});
+      else if (mode === 'slicebox') clearAllModes({measureMode:true});
+      else clearAllModes();
       if (mode === 'walk') d({t:A.WALK_PLACING,v:true});
       else if (mode === 'slice') d({t:A.SECTION,axis:'y',pos:0.5});
       else if (mode === 'measure') d({t:A.MEASURE_MODE,v:true});
@@ -29917,7 +30067,8 @@ function startApp() {
         ${btn({k:'slicebox', active:!!(s.sectionBox&&s.sectionBox.enabled), title:'Section Box [B]', label:'Section Box [B]', icon:I.slicebox,
                 onClick:function(){
                   if (s.sectionBox && s.sectionBox.enabled) { d({t:A.SECTION_BOX,v:null}); return; }
-                  clearAllModes();
+                  // Section box coexists with measure — see clearAllModes.
+                  clearAllModes({measureMode:true});
                   if (window._ccActivateSectionBox) {
                     window._ccActivateSectionBox();
                   }
