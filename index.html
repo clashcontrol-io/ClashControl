@@ -28141,6 +28141,44 @@ function startApp() {
   // but printed to the dev console — no warning popup needed. Useful for
   // verifying post-bump regressions (instanced count, distinct materials,
   // chunk-merge state, etc.). Usage: _ccMemReport() in the console.
+
+  // Walks every mesh on every loaded element and reports whether _instKey
+  // is set, how many distinct keys exist, the largest group sizes, and a
+  // few sample keys. Tells us exactly what's broken in the instancing
+  // path without needing a fresh model load. Usage:
+  //   _ccDebugInstancing()
+  // in the console after models are loaded.
+  window._ccDebugInstancing = function() {
+    var s = window._ccLatestState || {};
+    var keys = Object.create(null);
+    var total = 0, withKey = 0, withoutKey = 0;
+    var sampleNoKey = [];
+    (s.models || []).forEach(function(m){
+      (m.elements || []).forEach(function(el){
+        (el.meshes || []).forEach(function(mesh){
+          total++;
+          var k = mesh.userData && mesh.userData._instKey;
+          if (k) { withKey++; keys[k] = (keys[k] || 0) + 1; }
+          else   { withoutKey++; if (sampleNoKey.length < 3) sampleNoKey.push(el.expressId); }
+        });
+      });
+    });
+    var sizes = Object.keys(keys).map(function(k){ return keys[k]; }).sort(function(a,b){ return b-a; });
+    var sampleKeys = Object.keys(keys).slice(0, 3);
+    var out = {
+      totalMeshes: total,
+      withKey: withKey,
+      withoutKey: withoutKey,
+      distinctKeys: Object.keys(keys).length,
+      groupsAboveThreshold: sizes.filter(function(x){ return x >= 4; }).length,
+      top10GroupSizes: sizes.slice(0, 10),
+      sampleKeys: sampleKeys,
+      sampleNoKeyExpressIds: sampleNoKey
+    };
+    console.log('%c[Instancing-Debug]', 'color:#a78bfa;font-weight:bold', out);
+    return out;
+  };
+
   window._ccMemReport = function() {
     var s = window._ccLatestState || {};
     var lines = _ccMemDiag(s);
