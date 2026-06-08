@@ -72,36 +72,28 @@
 
       var canvas = document.createElement('canvas');
       canvas.id = 'cc-splat-canvas';
-      // Sit BEHIND the IFC canvas so model elements always render on top.
-      // pointer-events:none lets clicks/orbit fall through to the IFC layer.
+      // Sit ABOVE the IFC canvas with a transparent renderer + pointer-
+      // events:none. Splat draws where it has pixels; the IFC canvas
+      // shows through everywhere else. Clicks/orbit pass through to the
+      // IFC layer normally. We deliberately do NOT touch the IFC scene's
+      // background or clear-colour — earlier attempts to make the IFC
+      // canvas transparent broke rendering because the core renderer
+      // was created without {alpha:true}, so transparent-clear was
+      // interpreted as opaque black and the model disappeared.
       var s = canvas.style;
       s.position = 'absolute';
       s.left = '0'; s.top = '0';
       s.width = '100%'; s.height = '100%';
-      s.zIndex = '0';
+      s.zIndex = '5';        // above IFC canvas (which sits at auto/0)
       s.pointerEvents = 'none';
-      mainCanvas.parentElement.insertBefore(canvas, mainCanvas);
+      mainCanvas.parentElement.appendChild(canvas);
 
-      // Make the IFC canvas transparent so splats show through behind it.
-      // We restore the original on unload.
-      _viewer = { _origMainBg: mainCanvas.style.background || '' };
-      mainCanvas.style.background = 'transparent';
-      // Also clear the THREE renderer's clear-color so the IFC scene draws
-      // with alpha; the splat layer is the actual background.
-      try {
-        if (window._ccState3d && window._ccState3d.renderer) {
-          var r = window._ccState3d.renderer;
-          r.setClearColor(0x000000, 0); // RGBA(0,0,0,0)
-          r.setClearAlpha(0);
-          if (window._ccState3d.scene) window._ccState3d.scene.background = null;
-          if (window._ccInvalidate) window._ccInvalidate(2);
-        }
-      } catch(_){}
+      _viewer = {};
 
-      var renderer = new THREE.WebGLRenderer({ canvas: canvas, antialias: true, alpha: true });
+      var renderer = new THREE.WebGLRenderer({ canvas: canvas, antialias: true, alpha: true, premultipliedAlpha: false });
       renderer.setPixelRatio(window.devicePixelRatio || 1);
       renderer.setSize(mainCanvas.clientWidth, mainCanvas.clientHeight, false);
-      renderer.setClearColor(0x141414, 1); // dark background for the splat layer
+      renderer.setClearColor(0x000000, 0); // fully transparent — splat-only layer
 
       var scene = new THREE.Scene();
       var cam = (window._ccViewport && window._ccViewport.getCamera()) || null;
