@@ -115,6 +115,21 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Syne:wght@700;800&family=DM+Sans:wght@400;500;600;700&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <!-- Import map for ESM addons (currently splat). Declared HERE in the head
+       so it's effective before any module-script runs. Lets the splat addon's
+       lazy-loaded modern Three.js + Spark share one THREE instance — without
+       this Spark's bundle pulls its own copy and emits "Multiple instances
+       of Three.js" warnings. Core IFC viewer is unaffected: it uses the UMD
+       three.min.js below as a global, not via 'three' bare specifier. -->
+  <script type="importmap">
+  {
+    "imports": {
+      "three": "https://cdn.jsdelivr.net/npm/three@0.180.0/build/three.module.js",
+      "three/": "https://cdn.jsdelivr.net/npm/three@0.180.0/"
+    }
+  }
+  </script>
+
   <!-- CDN deps: React, Three.js, JSZip — all UMD, all cdnjs -->
   <!-- SRI hashes: regenerate with `node scripts/generate-sri.js` if you change versions -->
   <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js" integrity="sha384-tMH8h3BGESGckSAVGZ82T9n90ztNXxvdwvdM6UoR56cYcf+0iGXBliJ29D+wZ/x8" crossorigin="anonymous"></script>

@@ -27,12 +27,20 @@
   if (typeof window === 'undefined') return;
 
   // ─── Module imports (lazy, one-time) ──────────────────────────────────────
-  // Modern Three.js comes from jsdelivr's npm mirror as a single ESM bundle.
-  // Spark.js +esm fetches its peer-dep three from the same import map; both
-  // use the same import-mapped 'three' specifier so they share one module.
-  // ~600KB Three + ~200KB Spark, cached aggressively at the CDN edge.
+  // Modern Three.js + Spark's unbundled ESM main. The import map declared in
+  // index.html head maps the bare specifier 'three' to THREE_URL, so when
+  // Spark's source does `import * as THREE from 'three'`, it resolves to the
+  // same module instance we await here — one THREE singleton, no duplicate
+  // bundle, no "Multiple instances of Three.js" warning.
+  //
+  // We deliberately AVOID jsdelivr's `/+esm` endpoint: that variant pre-
+  // bundles every dependency (including Three), which makes the import map
+  // moot and bloats the download. The package's `module` entry is the right
+  // build to use.
+  // ~600 KB Three + ~200 KB Spark, both edge-cached. Lazy: only fetched
+  // when the user actually loads a splat.
   var THREE_URL = 'https://cdn.jsdelivr.net/npm/three@0.180.0/build/three.module.js';
-  var SPARK_URL = 'https://cdn.jsdelivr.net/npm/@sparkjsdev/spark@2.0.0/+esm';
+  var SPARK_URL = 'https://cdn.jsdelivr.net/npm/@sparkjsdev/spark@2.0.0/dist/spark.module.js';
 
   var _modules = null; // { THREE, Spark } once loaded
   var _loadingP = null;
@@ -41,21 +49,8 @@
     if (_modules) return Promise.resolve(_modules);
     if (_loadingP) return _loadingP;
     _loadingP = (async function(){
-      // Inject a one-time import map so Spark's `import 'three'` resolves to
-      // the same THREE module instance we use here. Without this Spark would
-      // pull its own copy and complain about THREE not being singleton.
-      if (!document.querySelector('script[type="importmap"][data-cc-splat]')) {
-        var im = document.createElement('script');
-        im.type = 'importmap';
-        im.setAttribute('data-cc-splat', '1');
-        im.textContent = JSON.stringify({
-          imports: { 'three': THREE_URL, 'three/': 'https://cdn.jsdelivr.net/npm/three@0.180.0/' }
-        });
-        // Import maps must be in the document before any module script runs.
-        // We're past that — modern browsers (Chrome 89+, Firefox 108+, Safari
-        // 16.4+) allow late injection if no module has imported 'three' yet.
-        document.head.appendChild(im);
-      }
+      // Load THREE first so Spark's `import 'three'` resolves the already-
+      // cached module via the document-level import map.
       var THREE = await import(/* @vite-ignore */ THREE_URL);
       var Spark = await import(/* @vite-ignore */ SPARK_URL);
       _modules = { THREE: THREE, Spark: Spark };
