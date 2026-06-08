@@ -632,15 +632,19 @@ module.exports = async function handler(req, res) {
   if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
   if (llmGuard(req, res, { perMin: 20, maxBytes: 16384 })) return;
 
-  var groqKey = process.env.GROQ_API_KEY;
-  if (!groqKey) return res.status(503).json({ error: 'AI not configured' });
-
+  // Input validation runs BEFORE the env check on purpose: validation errors
+  // are caller bugs (deterministic, 4xx), the env check is operational (5xx).
+  // Returning 503 for a malformed body misleads the client into thinking the
+  // service is down when the request was bad. Tests assert this ordering.
   var body = req.body;
   if (!body || !body.command) return res.status(400).json({ error: 'Missing command' });
   if (typeof body.command !== 'string') return res.status(400).json({ error: 'command must be a string' });
   if (body.command.length > MAX_COMMAND_CHARS) {
     return res.status(413).json({ error: 'command too long', maxChars: MAX_COMMAND_CHARS });
   }
+
+  var groqKey = process.env.GROQ_API_KEY;
+  if (!groqKey) return res.status(503).json({ error: 'AI not configured' });
 
   var systemPrompt = isKnowledgeQuery(body.command)
     ? buildSystemPrompt(body.context || {})

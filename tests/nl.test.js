@@ -3,9 +3,13 @@ const { test } = require('node:test');
 const assert = require('node:assert');
 const { makeReq, makeRes } = require('./_helpers');
 
-// Key present so validation runs past the "AI not configured" guard.
-// All assertions short-circuit before any upstream model call.
-process.env.GEMINI_API_KEY = process.env.GEMINI_API_KEY || 'test-key';
+// Validation is asserted to run BEFORE the env check, so these tests pass
+// regardless of whether GROQ_API_KEY is set. The key is set here only to
+// keep the assertion meaningful if the ordering ever regresses (a fail at
+// the env guard would still surface as wrong status).
+// (api/nl.js was migrated Gemini→Groq; legacy GEMINI_API_KEY no longer reaches
+//  this handler — /api/triage + /api/title still consume Gemma separately.)
+process.env.GROQ_API_KEY = process.env.GROQ_API_KEY || 'test-key';
 const handler = require('../api/nl.js');
 
 test('rejects a missing command with 400', async () => {
