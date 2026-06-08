@@ -1,5 +1,8 @@
 # Changelog
 
+## v5.19.22 (2026-06-08)
+- fix(walk): pointer lock on FIRST mouse click — don't try from useEffect
+
 ## v5.19.21 (2026-06-08)
 - feat(quality-score): single 0-100 score across data-quality + accessibility checks
 
