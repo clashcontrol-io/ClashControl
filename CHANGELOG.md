@@ -1,5 +1,8 @@
 # Changelog
 
+## v5.19.11 (2026-06-08)
+- fix(section-gizmo): add TC anchor to scene graph
+
 ## v5.19.10 (2026-06-08)
 - fix(ai-status): Settings shows actual model from /api/health, not hardcoded "Gemma 4"
 
