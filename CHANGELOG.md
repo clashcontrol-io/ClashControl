@@ -1,5 +1,8 @@
 # Changelog
 
+## v5.19.7 (2026-06-08)
+- fix(section-box): snap to selected element's bbox, not the merged chunk's bbox
+
 ## v5.19.6 (2026-06-08)
 - fix(splat): test URL → Spark's hosted butterfly.spz (HuggingFace 404'd) + CSP allowlist
 
