@@ -997,7 +997,7 @@ function startApp() {
   window._ccIsAddonActive = function(id) { return !!_ccAddonActive[id]; };
 
   function _loadAddonScripts() {
-    var addonFiles = ['training-data', 'pwa', 'local-engine', 'shared-project', 'revit-bridge', 'data-quality', 'smart-bridge', 'pointcloud', 'geoplace', 'accessibility'];
+    var addonFiles = ['training-data', 'pwa', 'local-engine', 'shared-project', 'revit-bridge', 'data-quality', 'smart-bridge', 'pointcloud', 'geoplace', 'accessibility', 'splat'];
     addonFiles.forEach(function(name) {
       var script = document.createElement('script');
       script.src = 'addons/' + name + '.js';
@@ -7980,7 +7980,25 @@ function startApp() {
         },
         getCamera: function() {
           if (!S.camera || !S.orbit) return null;
-          return { position:[S.camera.position.x,S.camera.position.y,S.camera.position.z], target:[S.orbit.target.x,S.orbit.target.y,S.orbit.target.z], distance:S.orbit.sph.r };
+          // Everything an addon with its own Three.js needs to reconstruct an
+          // equivalent camera each frame: world position, look-at target,
+          // perspective fov + near/far, aspect, and the canvas pixel size so
+          // the addon can size its sibling renderer to match.
+          var el = (S.renderer && S.renderer.domElement) || document.getElementById('cc-canvas');
+          var w = el ? el.clientWidth  : 0;
+          var h = el ? el.clientHeight : 0;
+          return {
+            position:[S.camera.position.x,S.camera.position.y,S.camera.position.z],
+            target:[S.orbit.target.x,S.orbit.target.y,S.orbit.target.z],
+            up:[S.camera.up.x,S.camera.up.y,S.camera.up.z],
+            fov: S.camera.fov || 55,
+            aspect: S.camera.aspect || (w && h ? w/h : 1),
+            near: S.camera.near || 0.01,
+            far:  S.camera.far  || 10000,
+            isOrtho: !!S.camera.isOrthographicCamera,
+            canvas: { width: w, height: h, dpr: (window.devicePixelRatio||1) },
+            distance: S.orbit.sph.r
+          };
         },
         pan: function(dx,dy,dz) {
           if (!S.camera || !S.orbit) return;
@@ -10493,6 +10511,12 @@ function startApp() {
             S._composer.render();
           } else {
             renderer.render(scene,S.camera);
+          }
+          // Fire a frame event so sibling-canvas addons (splat overlay etc.)
+          // know to re-render. Lightweight — no payload; the listener pulls
+          // current camera state from _ccViewport.getCamera() on demand.
+          if (window._ccHasSplats || window._ccHasFrameListener) {
+            try { window.dispatchEvent(new CustomEvent('cc-render-frame')); } catch(_){}
           }
           // ── Screenshot capture (must happen immediately after render, before buffer swap) ──
           if (window._ccPendingScreenshot) {
@@ -13837,6 +13861,24 @@ function startApp() {
 
     function processFiles(files) {
       setErr('');
+      // Route Gaussian Splat files to the splat addon. Must run BEFORE the
+      // point-cloud filter because .ply is shared between the two — splat
+      // files happen to use the same extension. The splat addon detects
+      // splat-shaped PLYs via header sniff; we only force-route .splat /
+      // .ksplat / .spz, leaving .ply to fall through to point clouds.
+      var splatFiles = files.filter(function(f){return /\.(splat|ksplat|spz)$/i.test(f.name);});
+      files = files.filter(function(f){return !/\.(splat|ksplat|spz)$/i.test(f.name);});
+      if (splatFiles.length) {
+        if (window._ccLoadSplat) {
+          splatFiles.forEach(function(f){
+            window._ccLoadSplat(f, {name:f.name}).catch(function(err){
+              setErr((function(prev){ return (prev?prev+'\n':'') + f.name + ': ' + (err && err.message || err); })(''));
+            });
+          });
+        } else {
+          setErr('Splat addon not loaded.');
+        }
+      }
       // Route point cloud files to the pointcloud addon, if loaded.
       var pcFiles = files.filter(function(f){return /\.(ply|pcd|xyz|pts|las|laz)$/i.test(f.name);});
       files = files.filter(function(f){return !/\.(ply|pcd|xyz|pts|las|laz)$/i.test(f.name);});
@@ -14319,7 +14361,7 @@ function startApp() {
           ${loading?loadMsg||'Loading…':'Add'}
         </button>
       </div>
-      <input ref=${fileRef} type="file" accept=".ifc,.glb,.ifcmeta,.ifcprops,.ply,.pcd,.xyz,.pts,.las" multiple style=${{display:'none'}} onChange=${onFiles} />
+      <input ref=${fileRef} type="file" accept=".ifc,.glb,.ifcmeta,.ifcprops,.ply,.pcd,.xyz,.pts,.las,.splat,.ksplat,.spz" multiple style=${{display:'none'}} onChange=${onFiles} />
       <input ref=${file2dRef} type="file" accept=".dxf,.pdf,.dwg,.nwd,.nwc,.nwf" multiple style=${{display:'none'}} onChange=${onFiles} />
       ${err && html`<div style=${{padding:'.35rem .75rem',background:'var(--color-danger-bg)',borderBottom:'1px solid var(--color-danger-border)',fontSize:'.7rem',color:'var(--color-danger-fg)',whiteSpace:'pre-line',lineHeight:1.4}}>${err}</div>`}
       <div style=${{flex:1,overflowY:'auto',minHeight:0,padding:'.4rem .45rem',display:'flex',flexDirection:'column',gap:'.18rem'}}>
