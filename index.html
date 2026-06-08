@@ -146,17 +146,24 @@
        the legacy `new THREE.GLTFLoader()` / `new THREE.TransformControls()`
        call sites keep working without a per-call refactor. -->
   <script type="module">
-    import * as THREE from 'three';
-    import { GLTFLoader }       from 'three/addons/loaders/GLTFLoader.js';
-    import { GLTFExporter }     from 'three/addons/exporters/GLTFExporter.js';
-    import { TransformControls } from 'three/addons/controls/TransformControls.js';
-    import { PLYLoader }        from 'three/addons/loaders/PLYLoader.js';
-    import { PCDLoader }        from 'three/addons/loaders/PCDLoader.js';
-    import { EffectComposer }   from 'three/addons/postprocessing/EffectComposer.js';
-    import { RenderPass }       from 'three/addons/postprocessing/RenderPass.js';
-    import { SAOPass }          from 'three/addons/postprocessing/SAOPass.js';
-    import { OutlinePass }      from 'three/addons/postprocessing/OutlinePass.js';
-    // Reattach so the codebase's pre-bump THREE.X lookups keep working.
+    // CRITICAL: ESM Module namespace objects are FROZEN — you cannot assign
+    // properties directly to `import * as THREE from 'three'`. Doing so
+    // throws "Cannot assign to property 'GLTFLoader' of [object Module]".
+    // We spread the namespace into a plain mutable object, then attach our
+    // addon classes to that. window.THREE points to the plain object;
+    // existing `new THREE.GLTFLoader(...)` / `THREE.Vector3` / etc. call
+    // sites all keep working unchanged.
+    import * as THREE_NS              from 'three';
+    import { GLTFLoader }             from 'three/addons/loaders/GLTFLoader.js';
+    import { GLTFExporter }           from 'three/addons/exporters/GLTFExporter.js';
+    import { TransformControls }      from 'three/addons/controls/TransformControls.js';
+    import { PLYLoader }              from 'three/addons/loaders/PLYLoader.js';
+    import { PCDLoader }              from 'three/addons/loaders/PCDLoader.js';
+    import { EffectComposer }         from 'three/addons/postprocessing/EffectComposer.js';
+    import { RenderPass }             from 'three/addons/postprocessing/RenderPass.js';
+    import { SAOPass }                from 'three/addons/postprocessing/SAOPass.js';
+    import { OutlinePass }            from 'three/addons/postprocessing/OutlinePass.js';
+    const THREE = { ...THREE_NS };  // mutable copy of the namespace
     THREE.GLTFLoader        = GLTFLoader;
     THREE.GLTFExporter      = GLTFExporter;
     THREE.TransformControls = TransformControls;
