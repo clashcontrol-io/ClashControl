@@ -9636,6 +9636,29 @@ function startApp() {
         // the geometry has inverted winding or no front-face hit exists.
         var frontHits = hits.filter(_isFrontFaceHit);
         var candidateHits = frontHits.length > 0 ? frontHits : hits;
+        // Curtain-wall tiebreak: when several hits land within ~2 cm of the
+        // closest one (curtain-wall panels/mullions sitting flush with a host
+        // wall behind, or near-coplanar Revit hosted geometry), prefer the
+        // smaller element. Without this, the big host wall snaps first
+        // because its surface is at almost the same depth as the panel.
+        if (candidateHits.length > 1) {
+          var _t0 = candidateHits[0].distance;
+          var _near = candidateHits.filter(function(h){ return h.distance - _t0 < 0.02; });
+          if (_near.length > 1) {
+            _near.sort(function(a, b){
+              var ga = a.object.geometry, gb = b.object.geometry;
+              if (ga && !ga.boundingSphere) { try { ga.computeBoundingSphere(); } catch(_){} }
+              if (gb && !gb.boundingSphere) { try { gb.computeBoundingSphere(); } catch(_){} }
+              var ra = (ga && ga.boundingSphere) ? ga.boundingSphere.radius : Infinity;
+              var rb = (gb && gb.boundingSphere) ? gb.boundingSphere.radius : Infinity;
+              return ra - rb;
+            });
+            // Splice the winner to the front of candidateHits.
+            var _winner = _near[0];
+            var _wi = candidateHits.indexOf(_winner);
+            if (_wi > 0) { candidateHits.splice(_wi, 1); candidateHits.unshift(_winner); }
+          }
+        }
         // Pick the first candidate that has a valid expressId — not blindly
         // hits[0], which may be a helper/marker mesh with no expressId.
         var _pickedHit = null, _pickedEid = null, _pickedInstId = -1;
