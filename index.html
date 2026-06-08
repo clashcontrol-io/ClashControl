@@ -11066,6 +11066,12 @@ function startApp() {
           var anchor = new THREE.Object3D();
           anchor.userData._sectionAnchor = true;
           S._sectionAnchor = anchor;
+          // TransformControls requires its target to be in the scene graph or
+          // it spams `updateMatrixWorld` warnings every frame and eventually
+          // pointerDown throws on a null `object`. The anchor itself is
+          // invisible (empty Object3D) — adding it costs nothing but fixes
+          // the every-frame "must be a part of the scene graph" warning.
+          if (S.scene && !anchor.parent) S.scene.add(anchor);
           var tc = new THREE.TransformControls(S.camera, S.renderer.domElement);
           tc.setMode('translate');
           tc.setSize(0.85);
