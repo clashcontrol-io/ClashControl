@@ -2866,8 +2866,19 @@ function startApp() {
     // something else upstream is short-circuiting.
     var grpKeys = Object.keys(candidates);
     var grpAboveThresh = grpKeys.filter(function(k){ return candidates[k].entries.length >= INST_THRESHOLD; });
-    console.log('[Instancing] '+totalEl+' els · keyHit='+keyHitCount+' keyMiss='+keyMissCount+
-      ' · '+grpKeys.length+' distinct keys, '+grpAboveThresh.length+' above threshold ('+INST_THRESHOLD+'+)');
+    // Diagnostic block — expanded since the one-liner kept getting lost in
+    // the noise. Sample 3 candidate keys so we can see whether duplicates
+    // collapse or each placement gets a unique key (geometry dedup bug).
+    var keySizes = grpKeys.map(function(k){ return candidates[k].entries.length; }).sort(function(a,b){return b-a;});
+    var top10 = keySizes.slice(0, 10);
+    var sampleKeys = grpKeys.slice(0, 3);
+    console.groupCollapsed('%c[Instancing] '+totalEl+' els · keyHit='+keyHitCount+' keyMiss='+keyMissCount+
+      ' · '+grpKeys.length+' distinct keys, '+grpAboveThresh.length+' above threshold ('+INST_THRESHOLD+'+)', 'color:#a78bfa;font-weight:bold');
+    console.log('Top-10 group sizes:', top10);
+    console.log('Sample keys:', sampleKeys);
+    console.log('% meshes with key:', keyHitCount + '/' + (keyHitCount+keyMissCount), '=', ((keyHitCount/(keyHitCount+keyMissCount||1))*100).toFixed(1)+'%');
+    console.log('Avg group size:', grpKeys.length ? (keyHitCount/grpKeys.length).toFixed(2) : 0);
+    console.groupEnd();
     var removedSet = {};
     var newMeshes = [];
     var nGroups = 0, nInstanced = 0;
@@ -3109,16 +3120,9 @@ function startApp() {
           } else {
             _lmark('Element processing');
             var _sm = _ccStripSurveyMarkers(elements, meshes); elements = _sm.elements; meshes = _sm.meshes;
-            // Auto-enable chunk-merge for any non-tiny model. Default OFF
-            // because style-switching reads slightly different on merged
-            // chunks, but at >5k elements per model the per-mesh draw-call
-            // cost tips the balance — post-bump perf regression makes this
-            // even more important. User can flip back with
-            // `window._ccChunkMerge = false; location.reload()`.
-            if (typeof window._ccChunkMerge !== 'boolean' && elements.length > 5000) {
-              window._ccChunkMerge = true;
-              console.log('%c[ChunkMerge] auto-enabled (' + elements.length + ' elements > 5k threshold)', 'color:#22c55e;font-weight:bold');
-            }
+            // Chunk-merge auto-enable removed — it was hiding the real
+            // dedup/instancing regression. Diagnostic prints below give the
+            // clean signal on what's failing post-r180.
             var _instResult = _buildInstancedMeshes(elements, meshes);
             meshes = _instResult.meshes;
             meshes = _ccBuildMergedChunks(elements, meshes).meshes;
