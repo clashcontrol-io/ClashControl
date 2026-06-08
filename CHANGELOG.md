@@ -1,5 +1,8 @@
 # Changelog
 
+## v5.19.20 (2026-06-08)
+- docs(security): public Security & Privacy page — IFC stays in your browser
+
 ## v5.19.19 (2026-06-08)
 - perf(three-bump): explicitly attach all critical THREE classes after spread
 
