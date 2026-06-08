@@ -117,7 +117,7 @@ addons/smart-bridge.js      — LLM bridge (MCP / ChatGPT / REST) — executes t
 addons/training-data.js     — Training data storage, JSONL export, sharing
 addons/wasm-engine.js       — Rust WASM clash accelerator (mesh_intersect / mesh_min_distance), JS fallback
 api/health.js               — Health check: AI + DB status
-api/nl.js                   — NL proxy: Groq primary (OpenAI tool-calling), Gemma 4 / Gemini fallback chain
+api/nl.js                   — NL proxy: Groq-only (OpenAI tool-calling). Basic tier; clash-solving nudges to the Connector
 api/training.js             — Training data ingestion (replaces Google Forms)
 api/project.js              — Shared issues sync (project key, no login)
 api/title.js                — AI clash title generation (batch, Gemma 4)
@@ -156,8 +156,8 @@ Each addon is a plain IIFE loaded at runtime by the core via `addons/<name>.js` 
 The app is deployed at `www.clashcontrol.io` on Vercel. The backend consists of serverless functions in the `api/` directory.
 
 ### Environment Variables (set in Vercel dashboard)
-- `GROQ_API_KEY` — Groq API key. **Primary backend for `/api/nl`** (fast, generous free tier; OpenAI-compatible function calling). Default model `llama-3.3-70b-versatile`, overridable via `GROQ_MODEL`. When unset, `/api/nl` falls back to Gemma/Gemini.
-- `GEMINI_API_KEY` — Google AI Studio API key for Gemma 4 — now the **fallback** for `/api/nl` when Groq is unset or rate-limited (legacy `GOOGLE_AI_KEY` also accepted)
+- `GROQ_API_KEY` — Groq API key. **The backend for `/api/nl`** (fast, generous free tier; OpenAI-compatible function calling). Default model `llama-3.3-70b-versatile`, overridable via `GROQ_MODEL`. When unset, `/api/nl` returns 503 and the client uses its built-in offline regex commands. **Gemma was dropped from `/api/nl`** (unreliable free-tier quota).
+- `GEMINI_API_KEY` — Google AI Studio API key for Gemma 4 — used by `/api/title` and `/api/triage` (the NL endpoint no longer uses Gemma; legacy `GOOGLE_AI_KEY` also accepted)
 - `POSTGRES_URL` — Vercel Postgres / Neon connection string (auto-injected when you link a Vercel Postgres database; legacy `DATABASE_URL` also accepted)
 - `MAPTILER_KEY` — (optional) MapTiler key for satellite basemap tiles via `/api/tile`. When unset, the proxy serves OpenStreetMap tiles.
 
@@ -174,10 +174,9 @@ The app is deployed at `www.clashcontrol.io` on Vercel. The backend consists of 
 
 ### NL Command Flow (tiered AI)
 **Basic = Groq (server-side); more = your own LLM via the one-click Connector.**
-1. Client sends command to `/api/nl`. If `GROQ_API_KEY` is set, **Groq is the primary backend** (OpenAI-compatible `tool_calls` over the same tool declarations).
-2. On Groq failure/429, the server falls through to the legacy **Gemma 4 → Gemini Flash** chain (each variant has its own free-tier quota bucket).
-3. Server returns structured `{ intent, _model, _fallback, ...params }` — no fragile JSON parsing.
-4. If every server model is drained, the client first tries the user's **own LLM via the Smart Bridge Connector** (`http://127.0.0.1:19803/chat`) when connected, then falls back to regex matching (offline mode). The over-quota message points users to the one-click Connector.
+1. Client sends command to `/api/nl` → **Groq** (OpenAI-compatible `tool_calls` over the tool declarations). Default `llama-3.3-70b-versatile` (`GROQ_MODEL` overridable). Returns structured `{ intent, _model, _fallback, ...params }` — no fragile JSON parsing. Gemma was dropped (unreliable free-tier quota).
+2. The built-in assistant is intentionally **basic**. When a command asks to *resolve/fix a clash* (resolution verb + clash noun), the client routes to the user's **own LLM via the Smart Bridge Connector** (`http://127.0.0.1:19803/chat`) when connected, otherwise shows a one-click-connect **nudge** — the bring-your-own-LLM / future paid tier.
+3. If Groq is over quota/down, the client uses the connected own-LLM (if any), then falls back to built-in offline regex commands. The over-quota message points to the one-click Connector.
 
 ### Shared Issues
 - No login required. Uses shareable project keys (e.g., `MEP-abc123`)

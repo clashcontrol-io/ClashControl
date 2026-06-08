@@ -25103,6 +25103,39 @@ function startApp() {
       }
     }
 
+    // ── Tiered AI: basic assistant vs. your own LLM for clash-solving ──
+    // The built-in assistant (Groq) only does basic commands + light Q&A.
+    // Real clash-resolution / fix suggestions need a stronger model: route to
+    // the user's own LLM via the Connector when connected, otherwise nudge them
+    // to connect it in one click — a warm-up toward the bring-your-own-LLM tier.
+    if (!replyContext) {
+      var _solveRx = /\b(resolv\w*|solv\w*|fix(?:ing|es|ed)?|deconflict\w*|mitigat\w*|work[\s-]?around|recommend\w*|suggest\w*|propose\w*)\b/i;
+      var _aboutClash = /\b(clash\w*|conflict\w*|collision\w*|overlap\w*|intersect\w*)\b/i;
+      if (_solveRx.test(raw) && _aboutClash.test(raw)) {
+        var _sbSolve = (window._ccLatestState && window._ccLatestState.smartBridge) || {};
+        if (_sbSolve.connected && _sbSolve.llmConnected) {
+          var _shSolve = _sbSolve.chatMessages || [];
+          return fetch('http://127.0.0.1:19803/chat', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ message: raw, history: _shSolve.map(function(m){ return { role: m.role, content: m.content }; }) })
+          })
+          .then(function(r) { if (!r.ok) return r.json().then(function(j){ throw new Error(j.error || ('HTTP ' + r.status)); }); return r.json(); })
+          .then(function(j) {
+            if (d) d({ t: 'UPD_SMART_BRIDGE', u: {
+              chatMessages: _shSolve.concat([{ role: 'user', content: raw }, { role: 'assistant', content: j.response || '' }]),
+              chatBusy: false, chatError: null
+            }});
+            return _captureNL(j.response || '', 'smart-bridge-solve');
+          })
+          .catch(function() {
+            return _captureNL("Couldn't reach your connected LLM — check Smart Bridge ▸ Connector, then try again.", 'nudge-connect');
+          });
+        }
+        return Promise.resolve(_captureNL("Resolving clashes is beyond the basic built-in assistant — it needs a stronger model. Connect your own AI in one click via Smart Bridge ▸ Connector (Ollama, LM Studio, or your Claude Desktop app), and it'll reason over the actual geometry to suggest fixes. I'll keep handling the basics here.", 'nudge-connect'));
+      }
+    }
+
     var modelList = s.models.length ? s.models.map(function(m){
       var disc = m.discipline ? ' ('+m.discipline+')' : '';
       return m.name + disc;
