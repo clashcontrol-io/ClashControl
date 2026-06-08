@@ -1,5 +1,8 @@
 # Changelog
 
+## v5.19.5 (2026-06-08)
+- fix(splat): dedupe Three.js — load Spark's unbundled ESM + document-head import map
+
 ## v5.19.4 (2026-06-08)
 - fix(csp+splat): allow data: in connect-src so Spark.js can load its inline WASM
 
