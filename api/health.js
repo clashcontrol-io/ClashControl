@@ -8,14 +8,21 @@ module.exports = async function handler(req, res) {
   if (cors(req, res, 'GET')) return;
   if (req.method !== 'GET') return res.status(405).json({ error: 'Method not allowed' });
 
-  var key = process.env.GEMINI_API_KEY || process.env.GOOGLE_AI_KEY || null;
-  var status = { ai: false, db: false, model: null };
-
-  // Check AI (Google AI Studio / Gemma)
-  if (key) {
-    status.ai = true;
-    status.model = 'gemma-4-31b-it';
-  }
+  var geminiKey = process.env.GEMINI_API_KEY || process.env.GOOGLE_AI_KEY || null;
+  var groqKey   = process.env.GROQ_API_KEY || null;
+  var key = geminiKey; // kept for the optional ?models / ?test diagnostics below
+  // The NL command path (/api/nl) is Groq. Title generation and cluster triage
+  // (/api/title, /api/triage) are Gemma. Reporting them separately so the
+  // landing page / debug console can see which half is broken instead of a
+  // single ambiguous "ai: true".
+  var status = {
+    ai: !!(geminiKey || groqKey),  // legacy field — true if EITHER backend is up
+    db: false,
+    nl:     { ok: !!groqKey,   model: groqKey   ? (process.env.GROQ_MODEL || 'llama-3.3-70b-versatile') : null, provider: 'groq'   },
+    triage: { ok: !!geminiKey, model: geminiKey ? 'gemma-4-31b-it' : null,                                provider: 'gemma'  },
+    // legacy fields — old clients read .model expecting the triage model
+    model: geminiKey ? 'gemma-4-31b-it' : null
+  };
 
   // Optional: list available models so we can discover the latest Gemma ID
   // without exposing the API key. Hit /api/health?models=1 in a browser.

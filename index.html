@@ -801,6 +801,24 @@ function startApp() {
     homeView:_ccLoadPref('homeView',null), // {pos:[x,y,z],target:[x,y,z]} — saved home camera; null = fit-all
     // Rendered-mode lighting controls (sliders surfaced in the toolbar Style popover)
     lightSettings:_ccLoadPref('lightSettings',{sun:1.0, ambient:1.0, exposure:1.0, shadow:1.0, time:13}),
+    // Graduated autonomy envelope (Day, AEC Magazine, "Agentic BIM's missing
+    // infrastructure", Apr 2026). Per-project setting that defines what the
+    // built-in AI is permitted to do without escalation. Maps to:
+    //   nudge      — current behaviour. Resolve/fix-clash queries return a
+    //                "connect your own LLM" message; the built-in assistant
+    //                never proposes a fix. Most conservative.
+    //   suggest    — the connected own-LLM (Smart Bridge) may reason about
+    //                resolutions and reply with options, but never dispatches
+    //                state changes. The architect remains the decision-maker.
+    //                (Future: when own-LLM is not connected, fall through to a
+    //                neutral copy instead of the nudge ad.)
+    //   auto      — reserved. The agent may dispatch reversible state changes
+    //                (mark resolved, set severity) without confirmation. Off
+    //                by default, no UI to enable yet — reserved so the
+    //                envelope literal exists and we don't have to migrate.
+    // The envelope is global today; per-project scoping comes when a project
+    // record exists for solo (non-shared) use.
+    aiEnvelope:_ccLoadPref('aiEnvelope',{resolveClashes:'nudge'}),
   };
   // Restore section state persisted from previous session
   var _savedSection=(function(){try{return JSON.parse(localStorage.getItem('cc_section')||'null');}catch(e){return null;}})();
@@ -18493,7 +18511,18 @@ function startApp() {
       if (!r.ok) return r.json().then(function(j){ throw new Error(j.error || ('HTTP '+r.status)); }).catch(function(){ throw new Error('HTTP '+r.status); });
       return r.json();
     }).then(function(j){
-      dispatch({t:A.TRIAGE_RESULT, clusterKey:clusterKey, entry:{loading:false, result:j.triage, error:null}});
+      // Stash provenance alongside the triage result. The cluster card reads
+      // entry.provenance for the "AI-decided" chip + tooltip; export paths
+      // (BCF custom field, training share) write it out so the audit trail
+      // survives outside the app.
+      var provenance = {
+        actor: 'ai-triage',
+        model: j._model || 'gemma-4-31b-it',
+        source: '/api/triage',
+        at: j._at || new Date().toISOString(),
+        cached: !!j.cached
+      };
+      dispatch({t:A.TRIAGE_RESULT, clusterKey:clusterKey, entry:{loading:false, result:j.triage, provenance:provenance, error:null}});
     }).catch(function(err){
       console.warn('[triage] api failed', err);
       dispatch({t:A.TRIAGE_RESULT, clusterKey:clusterKey, entry:{loading:false, error:String(err.message||err)}});
@@ -19125,6 +19154,19 @@ function startApp() {
             ${sevLabel && html`<span class="cc-status-pill" style=${{background:sevBg,color:sevCol,padding:'.1rem var(--space-2)'}}>${sevLabel}</span>`}
             ${it._delta==='new' && html`<span class="cc-status-pill" title="New this run" style=${{background:'var(--color-info-bg)',color:'var(--color-info-fg)'}}>NEW</span>`}
             ${it._delta==='auto_resolved' && html`<span class="cc-status-pill" title="No longer detected" style=${{background:'var(--bg-secondary)',color:'var(--text-faint)'}}>AUTO</span>`}
+            ${it.aiProvenance && function(){
+              // AI-decided chip — surfaces that this row's title/severity came
+              // from an AI model, with the model name + timestamp on hover.
+              // The hidden invariant: every AI-touched dispatch sets
+              // .aiProvenance so the audit trail follows the row through BCF
+              // export, shared-project sync, and training data.
+              var p=it.aiProvenance;
+              var when='';
+              try { var d=new Date(p.at); if(!isNaN(d)) when=d.toISOString().slice(0,16).replace('T',' '); } catch(_){}
+              var tip='AI-decided · '+(p.model||'unknown')+(when?(' · '+when):'')+(p.source?(' · '+p.source):'');
+              return html`<span class="cc-status-pill" title=${tip}
+                style=${{background:'var(--accent-bg)',color:'var(--accent)',padding:'.1rem var(--space-2)',cursor:'help',fontSize:'var(--text-2xs)',letterSpacing:'.02em'}}>AI</span>`;
+            }()}
             ${function(){
               var reasons=it.aiReasons||[];
               var res=it.aiResolution||[]; if(typeof res==='string') res=res?[res]:[];
@@ -24682,9 +24724,19 @@ function startApp() {
       .then(function(r){ if (!r.ok) throw new Error('title api failed'); return r.json(); })
       .then(function(data){
         if (!data || !Array.isArray(data.titles)) return {done:0};
+        // Provenance per-decision: each title carries the model + timestamp
+        // that produced it. Surfaced as the "AI-decided" chip in the Issues
+        // panel and round-tripped through BCF as a custom topic field
+        // (cc:Provenance) when exporting. ISO 19650-style audit trail.
+        var prov = {
+          actor: 'ai-title',
+          model: data._model || 'gemma-4-31b-it',
+          source: '/api/title',
+          at: data._at || new Date().toISOString()
+        };
         data.titles.forEach(function(t) {
           if (!t || !t.id) return;
-          var u = { aiTitle: t.title, title: t.title };
+          var u = { aiTitle: t.title, title: t.title, aiProvenance: prov };
           if (t.severity) u.aiSeverity = t.severity;
           if (t.resolution) u.aiResolutionHint = t.resolution;
           d({ t: A.UPD_CLASH, id: t.id, u: u });
@@ -25108,10 +25160,18 @@ function startApp() {
     // Real clash-resolution / fix suggestions need a stronger model: route to
     // the user's own LLM via the Connector when connected, otherwise nudge them
     // to connect it in one click — a warm-up toward the bring-your-own-LLM tier.
+    //
+    // Graduated autonomy: the envelope (s.prefs.aiEnvelope) decides what's
+    // allowed without escalation. mode='nudge' (default) routes clash-resolve
+    // to the user's own LLM if connected, else returns the connect message.
+    // mode='suggest' is the same path for now (own-LLM produces advice, never
+    // dispatches state changes — same architect-as-decision-maker contract).
+    // mode='auto' is reserved; reaching it requires explicit user opt-in.
     if (!replyContext) {
       var _solveRx = /\b(resolv\w*|solv\w*|fix(?:ing|es|ed)?|deconflict\w*|mitigat\w*|work[\s-]?around|recommend\w*|suggest\w*|propose\w*)\b/i;
       var _aboutClash = /\b(clash\w*|conflict\w*|collision\w*|overlap\w*|intersect\w*)\b/i;
       if (_solveRx.test(raw) && _aboutClash.test(raw)) {
+        var _envMode = (s.prefs && s.prefs.aiEnvelope && s.prefs.aiEnvelope.resolveClashes) || 'nudge';
         var _sbSolve = (window._ccLatestState && window._ccLatestState.smartBridge) || {};
         if (_sbSolve.connected && _sbSolve.llmConnected) {
           var _shSolve = _sbSolve.chatMessages || [];
@@ -26083,13 +26143,26 @@ function startApp() {
       var kws = intent[0], minHits = intent[2] || 2;
       var hits = 0;
       kws.forEach(function(kw) {
-        if (inputWords.some(function(w) { return w === kw || (w.length > 3 && kw.length > 3 && (w.indexOf(kw) !== -1 || kw.indexOf(w) !== -1)); })) hits++;
+        if (inputWords.some(function(w) {
+          if (w === kw) return true;
+          // Prefix-only stem match: "running" → "run" (kw is prefix of w) or
+          // "run" → "running" (w is prefix of kw). Both sides require ≥4 chars
+          // to avoid noise. Substring match (the previous behaviour) caused
+          // "highlight" to spuriously match "light" — see issue.
+          if (w.length < 4 || kw.length < 4) return false;
+          return w.indexOf(kw) === 0 || kw.indexOf(w) === 0;
+        })) hits++;
       });
       if (hits >= minHits && hits > bestScore) { bestScore = hits; bestIntent = intent; bestKwCount = kws.length; }
     });
     if (bestIntent) {
       var confidence = bestScore / bestKwCount;
       if (confidence > 0.7) return bestIntent[1]();
+      // Require ≥2 keyword hits before offering "Did you mean…". Single-hit
+      // guesses on minHits=1 intents produced wild misfires (e.g. "highlight
+      // walls" → "Did you mean light bright?"). Below threshold we return
+      // null so the caller can fall through to a generic response.
+      if (bestScore < 2) return null;
       var _pendingAction = bestIntent[1];
       window._ccFuzzyPending = {action:_pendingAction, input:text};
       var guess = bestIntent[0].slice(0, 3).join(' ');
