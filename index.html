@@ -164,13 +164,30 @@
     import { SAOPass }                from 'three/addons/postprocessing/SAOPass.js';
     import { OutlinePass }            from 'three/addons/postprocessing/OutlinePass.js';
     const THREE = { ...THREE_NS };  // mutable copy of the namespace
-    // r155+ defaults THREE.ColorManagement.enabled to true, which inserts
-    // an sRGB → linear conversion on every material color update. On a
-    // big federation that adds up to a noticeable per-frame tax versus
-    // r128. Disabling matches pre-bump behaviour and keeps the IFC
-    // material palette looking the way it always has. If we later want
-    // physically-correct color, flip this back on AND retune material
-    // colors at construction time.
+    // Defensive: critical classes used by perf-sensitive paths (instancing,
+    // BVH, material dedup) MUST be on window.THREE or those paths silently
+    // no-op via `if (!THREE.InstancedMesh) return ...`. Spread copies own
+    // enumerable props, which works for r180 but doesn't hurt to belt-and-
+    // brace these explicitly + log if any are missing. User memory report
+    // showed 0 instanced + 73k distinct materials → exactly the symptom of
+    // a silent class-missing no-op.
+    [
+      'InstancedMesh','Mesh','Group','BufferGeometry','BufferAttribute',
+      'Float32BufferAttribute','MeshPhongMaterial','MeshStandardMaterial',
+      'MeshLambertMaterial','MeshBasicMaterial','LineBasicMaterial',
+      'LineSegments','Line','Points','PerspectiveCamera','OrthographicCamera',
+      'Scene','Color','Vector3','Vector2','Matrix4','Quaternion','Box3',
+      'Sphere','Frustum','Raycaster','EdgesGeometry','PlaneGeometry',
+      'BoxGeometry','SphereGeometry','TorusGeometry','ConeGeometry',
+      'CylinderGeometry','OctahedronGeometry','CanvasTexture','PMREMGenerator',
+      'WebGLRenderer','ShaderMaterial','MathUtils','GridHelper','AxesHelper',
+      'BoxHelper','AmbientLight','DirectionalLight','HemisphereLight',
+      'ACESFilmicToneMapping','EquirectangularReflectionMapping','LinearFilter',
+      'PCFShadowMap','FrontSide','DoubleSide','SRGBColorSpace','sRGBEncoding'
+    ].forEach(function(k){
+      if (THREE_NS[k] !== undefined) THREE[k] = THREE_NS[k];
+      else console.warn('[three-bump] THREE.'+k+' missing from r180 ESM bundle');
+    });
     if (THREE_NS.ColorManagement) THREE_NS.ColorManagement.enabled = false;
     THREE.GLTFLoader        = GLTFLoader;
     THREE.GLTFExporter      = GLTFExporter;
