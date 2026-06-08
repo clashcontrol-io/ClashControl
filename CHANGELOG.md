@@ -1,5 +1,8 @@
 # Changelog
 
+## v5.19.41 (2026-06-08)
+- feat(plan): draggable horizontal cut plane in floor-plan view
+
 ## v5.19.40 (2026-06-08)
 - perf(conflicts): progressive reveal + memo IssueRow
 
