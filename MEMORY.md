@@ -10,13 +10,13 @@
 <!-- BEGIN:project-state -->
 ## Project State
 
-**Version:** 5.17.4 (2026-06-07)
+**Version:** 5.19.0 (2026-06-08)
 
 **Live features (all working):**
 - Mesh-based clash detection engine: AABB broad-phase + BVH tri-tri narrow-phase (Möller–Trumbore), optional `_ccWasmIntersect`/`_ccWasmMinDist` WASM accelerators; rules (discipline filters, clearance, group-by); soft/clearance via spatial-hash vertex distance; optional escalation to `local-engine.js` for true solid boolean ops
 - BCF 2.1 import/export (viewpoints, markup, snapshots)
 - IFC loading via web-ifc WASM (lazy, with geometry + property extraction)
-- AI NL command interface (Gemma 4 via `/api/nl`, 13 tool declarations, native function calling)
+- AI NL command interface (Groq via `/api/nl`, 13 tool declarations, OpenAI function calling; intentionally basic — clash-solving nudges to your own LLM via the Connector)
 - Shared projects (no login, project keys, Neon Postgres backend)
 - Data quality checks addon (BIM basics, ILS, NL-SfB classification)
 - Smart Bridge: MCP server (`mcp-server.js`) for IDE/AI tool integration
@@ -33,7 +33,7 @@
 - Render style hotkeys 1–4 (standard/shaded/rendered/wireframe)
 
 **Backend (Vercel serverless + Neon Postgres):**
-- `/api/nl` — Gemma 4 NL proxy (SMART_MODEL for analytical, FAST_MODEL for everything else)
+- `/api/nl` — Groq NL proxy (Groq-only; Gemma dropped). Basic tier; clash-solving nudges to the own-LLM Connector
 - `/api/title` — batch AI clash title generation
 - `/api/project` — shared issue sync
 - `/api/training` — training data ingestion
