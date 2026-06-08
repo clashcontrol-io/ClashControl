@@ -1,5 +1,8 @@
 # Changelog
 
+## v5.19.12 (2026-06-08)
+- Three.js r128 → r180 bump (phased) (#595)
+
 ## v5.19.11 (2026-06-08)
 - fix(section-gizmo): add TC anchor to scene graph
 
