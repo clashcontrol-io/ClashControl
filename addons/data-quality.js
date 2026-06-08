@@ -702,4 +702,85 @@
   window._ccExportIDS = exportIDS;
   window._ccImportIDS = importIDS;
 
+  // ── ClashControl Quality Score (0–100) ───────────────────────────
+  // Single-number summary across the existing data-quality + accessibility
+  // checks. Same product framing as paid tools like Nokah — but computed
+  // from rules you can read in this file (open + auditable).
+  //
+  // Score = 100 * (1 - weighted_failure_ratio).
+  // Per-check severity weights: error=3, warn=2, info=1.
+  // Each check contributes (fail_count / total_relevant_elements) * weight
+  // to "damage"; damage is normalised against the sum of all weights.
+  //
+  // Cached by a signature of model ids+element counts so the score doesn't
+  // recompute on every panel render.
+  var _scoreCache = {};
+  function _sigForState(elements, models) {
+    return (models||[]).map(function(m){ return m.id+':'+((m.elements||[]).length); }).join('|') + '|n=' + (elements||[]).length;
+  }
+  function computeQualityScore(elements, models, opts) {
+    opts = opts || {};
+    var sig = _sigForState(elements, models);
+    if (!opts.force && _scoreCache[sig]) return _scoreCache[sig];
+
+    var W = { error: 3, warn: 2, info: 1 };
+    var totalWeight = 0, damage = 0;
+    var breakdown = { categories: [] };
+
+    // ── Data quality checks ──
+    try {
+      var dq = runDataQualityChecks(elements);
+      var dqTotal = dq._total || (elements||[]).length || 1;
+      var dqDamage = 0, dqWeight = 0;
+      Object.keys(dq).forEach(function(k){
+        if (k.charAt(0) === '_') return;
+        var c = dq[k]; if (!c || typeof c.count !== 'number') return;
+        var w = W[c.sev] || 1;
+        var fail = Math.min(1, c.count / dqTotal);
+        dqDamage += fail * w;
+        dqWeight += w;
+      });
+      damage += dqDamage; totalWeight += dqWeight;
+      breakdown.categories.push({
+        label: 'Data quality',
+        score: dqWeight ? Math.round(100 * (1 - dqDamage / dqWeight)) : 100,
+        checks: Object.keys(dq).filter(function(k){return k.charAt(0)!=='_';}).length
+      });
+    } catch(e) {}
+
+    // ── Accessibility checks (if engine loaded) ──
+    try {
+      if (typeof window._ccRunAccessibilityChecks === 'function') {
+        var acc = window._ccRunAccessibilityChecks(elements);
+        if (acc && acc.groups) {
+          var accDamage = 0, accWeight = 0, accChecks = 0;
+          Object.keys(acc.groups).forEach(function(k){
+            var g = acc.groups[k];
+            if (!g || !g.total) return;
+            accChecks++;
+            var w = (g.sev === 'hard' || g.sev === 'major') ? 3 : (g.sev === 'minor' ? 2 : 1);
+            var fail = Math.min(1, (g.fail || 0) / g.total);
+            accDamage += fail * w;
+            accWeight += w;
+          });
+          if (accWeight) {
+            damage += accDamage; totalWeight += accWeight;
+            breakdown.categories.push({
+              label: 'Accessibility',
+              score: Math.round(100 * (1 - accDamage / accWeight)),
+              checks: accChecks
+            });
+          }
+        }
+      }
+    } catch(e) {}
+
+    var score = totalWeight ? Math.round(100 * (1 - damage / totalWeight)) : null;
+    var grade = score == null ? null : (score >= 90 ? 'A' : score >= 75 ? 'B' : score >= 60 ? 'C' : score >= 40 ? 'D' : 'F');
+    var entry = { score: score, grade: grade, breakdown: breakdown, at: Date.now() };
+    _scoreCache[sig] = entry;
+    return entry;
+  }
+  window._ccComputeQualityScore = computeQualityScore;
+
 })();

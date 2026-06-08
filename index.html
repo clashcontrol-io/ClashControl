@@ -14546,6 +14546,7 @@ function startApp() {
           <div style=${{fontSize:'.78rem',marginBottom:'.3rem'}}>No models loaded</div>
           <div style=${{fontSize:'.69rem',lineHeight:1.5,color:'var(--text-faint)'}}>Drop an IFC, GLB, PDF or DXF file here,<br/>or click Add above.</div>
         </div>`}
+        ${s.models.length > 0 && html`<${_QualityScoreChip} s=${s} />`}
         ${s.models.map(function(m){return html`<${ModelCard} key=${m.id} m=${m} d=${d} s=${s} />`})}
         ${html`<${_SplatLayersSection} />`}
         ${s.underlays.length > 0 && html`<div style=${{marginTop:'.3rem',borderTop:'1px solid var(--hairline)',paddingTop:'.3rem'}}>
@@ -14776,6 +14777,51 @@ function startApp() {
   // (drag-drop SPZ/PLY/KSPLAT or _ccTestSplat()) with one-click unload.
   // The splat addon owns the renderer; this panel is purely an inventory
   // view that reacts to the addon's 'cc-splats-changed' event.
+  // ── ClashControl Quality Score chip ──────────────────────────────
+  // Single 0–100 number that summarises the data-quality + accessibility
+  // checks across all loaded models. Same product framing as paid tools
+  // like Nokah, but computed from the rules in addons/data-quality.js
+  // which anyone can read and audit. Click → opens the Data Quality tab.
+  function _QualityScoreChip(props) {
+    var s = props.s;
+    var stEntry = useState(null);
+    var entry = stEntry[0], setEntry = stEntry[1];
+    var sig = (s.models||[]).map(function(m){return m.id+':'+((m.elements||[]).length);}).join('|');
+    useEffect(function(){
+      if (!window._ccComputeQualityScore) { setEntry(null); return; }
+      // Gather all elements; debounce so this only runs once per model load.
+      var t = setTimeout(function(){
+        var all = [];
+        (s.models||[]).forEach(function(m){ (m.elements||[]).forEach(function(el){ all.push(el); }); });
+        if (!all.length) { setEntry(null); return; }
+        try { setEntry(window._ccComputeQualityScore(all, s.models)); }
+        catch(e){ console.warn('[quality-score]', e); setEntry(null); }
+      }, 100);
+      return function(){ clearTimeout(t); };
+    }, [sig]);
+    if (!entry || entry.score == null) return null;
+    var color = entry.score >= 80 ? 'var(--accent)' : entry.score >= 60 ? '#eab308' : '#f87171';
+    var bg    = entry.score >= 80 ? 'var(--accent-bg)' : entry.score >= 60 ? 'rgba(234,179,8,.12)' : 'rgba(248,113,113,.12)';
+    var tip = 'Quality Score ' + entry.score + '/100 (grade ' + entry.grade + ')\n' +
+      entry.breakdown.categories.map(function(c){ return '· ' + c.label + ': ' + c.score + '/100 (' + c.checks + ' checks)'; }).join('\n') +
+      '\nClick to open the Data Quality tab.';
+    return html`<div title=${tip}
+      onClick=${function(){ try { window._ccDispatch({t:'TAB', v:'dataquality'}); } catch(_){} }}
+      style=${{margin:'.3rem 0 .35rem', padding:'.5rem .7rem', borderRadius:'var(--radius-xs)',
+               background:bg, border:'1px solid '+color+'30', display:'flex', alignItems:'center',
+               gap:'.55rem', cursor:'pointer'}}>
+      <div style=${{fontFamily:'var(--font-mono)', fontWeight:700, fontSize:'1.1rem', color:color, lineHeight:1, minWidth:'2.5em'}}>
+        ${entry.score}
+        <span style=${{fontSize:'.65rem', color:'var(--text-faint)', fontWeight:500}}>/100</span>
+      </div>
+      <div style=${{flex:1, lineHeight:1.2}}>
+        <div style=${{fontSize:'.74rem', fontWeight:600, color:'var(--text-primary)'}}>Quality Score <span style=${{color:color}}>· ${entry.grade}</span></div>
+        <div style=${{fontSize:'.66rem', color:'var(--text-muted)'}}>${entry.breakdown.categories.map(function(c){return c.label;}).join(' + ')}</div>
+      </div>
+      <div style=${{fontSize:'.6rem', color:'var(--text-faint)'}}>›</div>
+    </div>`;
+  }
+
   function _SplatLayersSection() {
     var st = useState(function(){ return (window._ccListSplats && window._ccListSplats()) || []; });
     var items = st[0], setItems = st[1];

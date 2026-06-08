@@ -1,0 +1,159 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Free IFC Data Quality Checker — Open-source 0–100 Score | ClashControl</title>
+  <meta name="description" content="Check your IFC for missing data, broken classifications, and accessibility issues. Single 0–100 quality score. Open-source, auditable rules. Free.">
+  <link rel="canonical" href="https://www.clashcontrol.io/data-quality-checker-online/">
+  <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 48 48'%3E%3Crect width='48' height='48' rx='8' fill='%231a6b4a'/%3E%3Crect x='10' y='10' width='28' height='28' fill='none' stroke='%23ffffff' stroke-width='2'/%3E%3Cline x1='10' y1='38' x2='38' y2='10' stroke='%23ffffff' stroke-width='2'/%3E%3C/svg%3E">
+
+  <meta property="og:type" content="article">
+  <meta property="og:url" content="https://www.clashcontrol.io/data-quality-checker-online/">
+  <meta property="og:title" content="Free IFC Data Quality Checker — Open-source 0–100 Score">
+  <meta property="og:description" content="Free, browser-side IFC quality checker with a 0–100 score. Open-source rules. No upload.">
+  <meta property="og:image" content="https://www.clashcontrol.io/og-image.png?v=2">
+  <meta property="og:site_name" content="ClashControl">
+  <meta property="og:locale" content="en_US">
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="Free IFC Data Quality Checker — Open-source 0–100 Score">
+  <meta name="twitter:description" content="Free, browser-side. Open-source rules. No upload.">
+  <meta name="twitter:image" content="https://www.clashcontrol.io/og-image.png?v=2">
+
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Syne:wght@700;800&family=DM+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@type": "FAQPage",
+    "mainEntity": [
+      { "@type": "Question", "name": "What is a BIM Quality Score?",
+        "acceptedAnswer": { "@type": "Answer", "text": "A single 0–100 number summarising how clean your IFC model's data is. ClashControl computes it from data-quality checks (missing GlobalIds, generic names, unhosted openings, no material assigned, etc.) plus accessibility checks (door widths, ramp slopes, corridors, turning clearances). Each check is weighted by severity and contributes proportionally." } },
+      { "@type": "Question", "name": "How is this different from Solibri or Nokah?",
+        "acceptedAnswer": { "@type": "Answer", "text": "The math is similar — but ClashControl is free, runs in your browser, and the rules are open-source. You can read addons/data-quality.js and addons/accessibility.js to see exactly what each check does. Paid tools rarely publish their rule definitions." } },
+      { "@type": "Question", "name": "Where is my IFC processed?",
+        "acceptedAnswer": { "@type": "Answer", "text": "Entirely in your browser via WebAssembly. Your IFC never leaves your device. See our Security page for the full architecture." } },
+      { "@type": "Question", "name": "Can I extend the checks with my own rules?",
+        "acceptedAnswer": { "@type": "Answer", "text": "Yes — the engines are in JavaScript and MIT-licensed. Fork the repository, edit addons/data-quality.js, and your custom rules show up in the panel. For shareable specs, ClashControl also imports and exports IDS (Information Delivery Specification) files." } }
+    ]
+  }
+  </script>
+  <script data-goatcounter="https://clashcontrol.goatcounter.com/count" async src="//gc.zgo.at/count.js"></script>
+
+  <style>
+    :root { --bg:#fff; --fg:#0f172a; --muted:#475569; --faint:#94a3b8; --accent:#1a6b4a; --border:#e2e8f0; --good:#dcfce7; --good-fg:#166534; --bad:#fee2e2; --bad-fg:#991b1b; }
+    * { box-sizing: border-box; }
+    html, body { margin:0; padding:0; background:var(--bg); color:var(--fg); font-family:'DM Sans',system-ui,-apple-system,sans-serif; line-height:1.65; -webkit-font-smoothing:antialiased; }
+    a { color: var(--accent); text-decoration: none; } a:hover { text-decoration: underline; }
+    header { border-bottom:1px solid var(--border); padding:1rem 1.5rem; display:flex; align-items:center; justify-content:space-between; }
+    header .brand { font-family:'Syne',sans-serif; font-weight:800; font-size:1.15rem; letter-spacing:-0.02em; color:var(--fg); display:flex; align-items:center; gap:.55rem; }
+    header nav a { color:var(--muted); margin-left:1.25rem; font-size:.95rem; font-weight:500; }
+    main { max-width:720px; margin:0 auto; padding:3rem 1.5rem 4rem; }
+    h1 { font-family:'Syne',sans-serif; font-size:2.4rem; font-weight:800; letter-spacing:-0.025em; line-height:1.15; margin:0 0 1.25rem; }
+    h2 { font-family:'Syne',sans-serif; font-size:1.4rem; font-weight:700; letter-spacing:-0.015em; margin:2.5rem 0 .75rem; }
+    p { margin:0 0 1rem; } strong { font-weight:600; } code { background:#f1f5f9; padding:.1rem .35rem; border-radius:3px; font-size:.92em; }
+    .scoreDemo { display:inline-flex; align-items:center; gap:1rem; padding:1.25rem 1.5rem; background:var(--good); border:1px solid #bbf7d0; border-radius:10px; margin:1rem 0 1.5rem; }
+    .scoreDemo .n { font-family:'DM Sans',monospace; font-size:2.5rem; font-weight:800; color:var(--good-fg); line-height:1; }
+    .scoreDemo .n small { font-size:1rem; color:var(--faint); font-weight:500; margin-left:.1rem; }
+    .scoreDemo .meta { color:var(--good-fg); }
+    .scoreDemo .meta b { display:block; font-size:1.05rem; }
+    .scoreDemo .meta span { font-size:.85rem; opacity:.85; }
+    .cta { display:inline-block; margin:1.5rem 0 .5rem; padding:.85rem 1.5rem; background:var(--accent); color:#fff; border-radius:6px; font-weight:600; font-size:1rem; }
+    .cta:hover { background:#155a3d; text-decoration:none; }
+    table { width:100%; border-collapse:collapse; margin:1rem 0 1.5rem; font-size:.93rem; }
+    th, td { text-align:left; padding:.5rem .75rem; border-bottom:1px solid var(--border); }
+    th { font-weight:600; color:var(--muted); background:#fafafa; font-size:.82rem; text-transform:uppercase; letter-spacing:.04em; }
+    .faq dt { font-weight:600; margin-top:1.25rem; } .faq dd { margin:.3rem 0 0; color:var(--muted); }
+    footer { border-top:1px solid var(--border); padding:2rem 1.5rem; text-align:center; color:var(--faint); font-size:.9rem; }
+    footer .siblings { margin-bottom:1rem; } footer .siblings a { margin:0 .6rem; color:var(--muted); }
+  </style>
+</head>
+<body>
+
+<header>
+  <a href="/" class="brand">
+    <svg width="22" height="22" viewBox="0 0 48 48" aria-hidden="true">
+      <rect width="48" height="48" rx="8" fill="#1a6b4a"/>
+      <rect x="10" y="10" width="28" height="28" fill="none" stroke="#fff" stroke-width="2"/>
+      <line x1="10" y1="38" x2="38" y2="10" stroke="#fff" stroke-width="2"/>
+    </svg>
+    ClashControl
+  </a>
+  <nav>
+    <a href="/">Open the app</a>
+    <a href="https://github.com/clashcontrol-io/ClashControl">GitHub</a>
+  </nav>
+</header>
+
+<main>
+  <h1>Your IFC, scored 0&ndash;100. For free.</h1>
+
+  <p>Paid quality checkers sell you a number on the front of a PDF. ClashControl gives you the same number, in your browser, computed from rules you can read.</p>
+
+  <div class="scoreDemo">
+    <div class="n">82<small>/100</small></div>
+    <div class="meta">
+      <b>Quality Score · grade B</b>
+      <span>Data quality + Accessibility &nbsp;|&nbsp; 12 checks</span>
+    </div>
+  </div>
+
+  <a href="/" class="cta" data-goatcounter-click="cta-app-from-quality">Open ClashControl &amp; load a model &rarr;</a>
+
+  <h2>What goes into the score</h2>
+
+  <p>The Quality Score is a weighted aggregate of two families of checks. Each check has a severity (error / warn / info), and each failing element costs proportionally.</p>
+
+  <table>
+    <thead><tr><th>Category</th><th>Sample checks</th><th>Severity</th></tr></thead>
+    <tbody>
+      <tr><td><strong>Data quality</strong></td><td>GlobalId collisions, missing GlobalId</td><td>error</td></tr>
+      <tr><td></td><td>IfcBuildingElementProxy (unclassified), generic names, no material, no storey, zero-thickness layers, unhosted openings</td><td>warn</td></tr>
+      <tr><td></td><td>No property sets, no description</td><td>info</td></tr>
+      <tr><td><strong>Accessibility</strong></td><td>Door clear width (Bbl 0.85 m), threshold height (0.02 m), corridor minor dimension</td><td>major</td></tr>
+      <tr><td></td><td>Ramp slope (1:12), sanitary-space turning clearance (1.50 m)</td><td>major</td></tr>
+    </tbody>
+  </table>
+
+  <p>The math: <code>score = 100 &times; (1 &minus; &sum;(fail_pct &times; weight) &divide; &sum;(weight))</code>. Open-source: the engines live in <a href="https://github.com/clashcontrol-io/ClashControl/blob/main/addons/data-quality.js"><code>addons/data-quality.js</code></a> and <a href="https://github.com/clashcontrol-io/ClashControl/blob/main/addons/accessibility.js"><code>addons/accessibility.js</code></a>.</p>
+
+  <h2>Why this beats the paid tools</h2>
+
+  <ul>
+    <li><strong>Free</strong> &mdash; not a trial, not a freemium tier, not a quota.</li>
+    <li><strong>Auditable</strong> &mdash; you can read every rule. Paid checkers rarely publish theirs.</li>
+    <li><strong>Browser-side</strong> &mdash; your IFC never leaves your device. See <a href="/security/">Security &amp; Privacy</a>.</li>
+    <li><strong>Extensible</strong> &mdash; fork the rule files, add your own checks. Or use IDS for shareable specs.</li>
+    <li><strong>Bundled</strong> &mdash; clash detection, BCF export, viewer, accessibility checks, and quality score in one app.</li>
+  </ul>
+
+  <h2>FAQ</h2>
+  <dl class="faq">
+    <dt>How is this different from Solibri or Nokah?</dt>
+    <dd>The math is similar. ClashControl is free, runs in your browser, and the rules are open-source &mdash; you can read every check definition. Paid tools rarely publish their rule sets.</dd>
+    <dt>Where is my IFC processed?</dt>
+    <dd>Entirely in your browser via WebAssembly. Your file never leaves your device.</dd>
+    <dt>Can I add my own rules?</dt>
+    <dd>Yes &mdash; the engines are JavaScript and MIT-licensed. Fork and edit, or use the IDS (Information Delivery Specification) import for shareable specs.</dd>
+    <dt>Will the score change if a new check is added?</dt>
+    <dd>Yes &mdash; the score is computed from whatever checks are currently active. Adding a new severity-weighted check shifts the math proportionally. Old scores are saved per-project so you can see drift over time.</dd>
+  </dl>
+</main>
+
+<footer>
+  <div class="siblings">
+    <a href="/free-navisworks-alternative/">Free Navisworks alternative</a> &middot;
+    <a href="/free-solibri-alternative/">Free Solibri alternative</a> &middot;
+    <a href="/ifc-clash-detection-online/">Online IFC clash detection</a> &middot;
+    <a href="/free-bcf-viewer/">Free BCF viewer</a> &middot;
+    <a href="/free-ifc-viewer-online/">Free online IFC viewer</a> &middot;
+    <a href="/ids-validation-online/">IDS validation online</a> &middot;
+    <a href="/security/">Security &amp; Privacy</a>
+  </div>
+  <div>© ClashControl &middot; <a href="/">Open the app</a> &middot; <a href="https://github.com/clashcontrol-io/ClashControl">Source on GitHub</a></div>
+</footer>
+
+</body>
+</html>
