@@ -1,5 +1,8 @@
 # Changelog
 
+## v5.19.17 (2026-06-08)
+- fix(viewer): drop rendered exposure 0.7 → 0.55 (still too punchy at 0.7)
+
 ## v5.19.16 (2026-06-08)
 - perf(viewer): disable r155+ ColorManagement default to restore pre-bump speed
 
