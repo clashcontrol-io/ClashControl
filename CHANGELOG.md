@@ -1,5 +1,8 @@
 # Changelog
 
+## v5.19.27 (2026-06-08)
+- perf(emergency): auto-enable chunk-merge for >5k-element models
+
 ## v5.19.26 (2026-06-08)
 - fix(viewer): hidden-line glass + instancing diagnostics + sRGBEncoding warn cleanup
 
