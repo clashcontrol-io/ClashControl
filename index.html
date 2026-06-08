@@ -5946,8 +5946,13 @@ function startApp() {
       }
     })();
 
-    // Pointer lock so mouse look works immediately (best-effort, user gesture required)
-    try { if (S.renderer && S.renderer.domElement) S.renderer.domElement.requestPointerLock(); } catch(e) {}
+    // Pointer lock CANNOT be requested here. _walkEnter runs from a React
+    // useEffect that fires after the click event has completed, so the
+    // browser sees no active user gesture and silently rejects the lock.
+    // Pre-fix users had to press Escape and click again to "unstick" mouse
+    // look — really the click handler at the canvas was just finally
+    // grabbing the lock with a fresh gesture. Now we don't try here; the
+    // canvas's mousedown handler takes the first click and locks instantly.
     invalidate(999);
   }
 
@@ -6827,12 +6832,18 @@ function startApp() {
       _wlAdd('mouseup', function(e) {
         if (e.button === 0) _walkLmbDragging = false;
       });
-      renderer.domElement.addEventListener('click', function(e) {
-        if (!_walkActive) return;
-        if (!_walkPointerLocked) {
-          try { renderer.domElement.requestPointerLock(); } catch(_){}
-        }
-      });
+      // Two listeners so the FIRST click in walk mode locks instantly: a
+      // mousedown grabs the user-gesture as early as possible (some focus
+      // stealers eat the click event), and a backup click handles the rare
+      // case where mousedown was swallowed. Either way, the lock request
+      // rides on a live user gesture.
+      function _walkRequestLock(e) {
+        if (!_walkActive || _walkPointerLocked) return;
+        if (e && e.button !== undefined && e.button !== 0) return; // left only
+        try { renderer.domElement.requestPointerLock(); } catch(_){}
+      }
+      renderer.domElement.addEventListener('mousedown', _walkRequestLock);
+      renderer.domElement.addEventListener('click',     _walkRequestLock);
       // Double-click in walk mode = teleport to surface under cursor (any
       // surface with normal.y > 0.5 — floors, stairs, balconies, parapets).
       renderer.domElement.addEventListener('dblclick', function(e){
