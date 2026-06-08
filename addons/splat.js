@@ -174,20 +174,29 @@
       if (opts.opacity != null) mesh.opacity = opts.opacity;
       // Default-position at the IFC's bbox center. Splats are at world
       // origin in their own coord system; without this they're invisible
-      // for any georeferenced IFC (e.g. Dutch RD ~85km offset, US state
-      // plane, anything in EPSG-projected meters). User can override with
-      // opts.position to place arbitrarily.
+      // for any georeferenced IFC (Dutch RD ~85 km offset, US state plane,
+      // any EPSG-projected meters). User can override with opts.position.
       var pos = opts.position;
       if (!pos && window._ccViewport && window._ccViewport.getBounds) {
         var b = window._ccViewport.getBounds();
         if (b && b.center) pos = b.center;
       }
       if (pos && pos.length === 3) mesh.position.set(pos[0], pos[1], pos[2]);
+      // Scale: a single number scales uniformly, [x,y,z] scales per axis.
+      // Useful because drone captures are in real-world meters but at an
+      // unknown export scale (Polycam/Postshot/etc each pick their own).
+      if (opts.scale != null) {
+        if (typeof opts.scale === 'number') mesh.scale.setScalar(opts.scale);
+        else if (opts.scale.length === 3) mesh.scale.set(opts.scale[0], opts.scale[1], opts.scale[2]);
+      }
+      // Rotation: [x,y,z] in radians (Euler ZYX intrinsic — Three's default).
+      if (opts.rotation && opts.rotation.length === 3) mesh.rotation.set(opts.rotation[0], opts.rotation[1], opts.rotation[2]);
       v.scene.add(mesh);
       var id = 'splat-' + Date.now() + '-' + Math.floor(Math.random()*9999);
       v.splats.push({ id: id, mesh: mesh, name: opts.name || (typeof src === 'string' ? src.split('/').pop() : src.name) });
       requestAnimationFrame(_syncAndRender);
       if (window._ccToast) window._ccToast('Loading splat ' + (opts.name || ''));
+      try { window.dispatchEvent(new CustomEvent('cc-splats-changed')); } catch(_){}
       return { id: id, name: opts.name };
     }).catch(function(err){
       console.error('[splat] load failed', err);
@@ -207,6 +216,7 @@
     _viewer.splats = keep;
     if (!_viewer.splats.length) _destroyViewer();
     else requestAnimationFrame(_syncAndRender);
+    try { window.dispatchEvent(new CustomEvent('cc-splats-changed')); } catch(_){}
   };
 
   function _destroyViewer() {

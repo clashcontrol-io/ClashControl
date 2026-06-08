@@ -14443,6 +14443,7 @@ function startApp() {
           <div style=${{fontSize:'.69rem',lineHeight:1.5,color:'var(--text-faint)'}}>Drop an IFC, GLB, PDF or DXF file here,<br/>or click Add above.</div>
         </div>`}
         ${s.models.map(function(m){return html`<${ModelCard} key=${m.id} m=${m} d=${d} s=${s} />`})}
+        ${html`<${_SplatLayersSection} />`}
         ${s.underlays.length > 0 && html`<div style=${{marginTop:'.3rem',borderTop:'1px solid var(--hairline)',paddingTop:'.3rem'}}>
           <div style=${{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:'.25rem',padding:'0 .2rem'}}>
             <span style=${{fontSize:'.65rem',fontWeight:600,color:'var(--text-muted)',textTransform:'uppercase',letterSpacing:'.05em'}}>2D Underlays</span>
@@ -14665,6 +14666,36 @@ function startApp() {
       }).then(_aiResJson).then(function(res){return (res.candidates&&res.candidates[0]&&res.candidates[0].content&&res.candidates[0].content.parts&&res.candidates[0].content.parts[0]&&res.candidates[0].content.parts[0].text||'').trim();});
     }
     return Promise.reject(new Error('Unknown provider'));
+  }
+
+  // Splat reference-layers panel — surfaces what's loaded via _ccLoadSplat
+  // (drag-drop SPZ/PLY/KSPLAT or _ccTestSplat()) with one-click unload.
+  // The splat addon owns the renderer; this panel is purely an inventory
+  // view that reacts to the addon's 'cc-splats-changed' event.
+  function _SplatLayersSection() {
+    var st = useState(function(){ return (window._ccListSplats && window._ccListSplats()) || []; });
+    var items = st[0], setItems = st[1];
+    useEffect(function(){
+      function refresh(){ setItems((window._ccListSplats && window._ccListSplats()) || []); }
+      window.addEventListener('cc-splats-changed', refresh);
+      refresh();
+      return function(){ window.removeEventListener('cc-splats-changed', refresh); };
+    }, []);
+    if (!items.length) return null;
+    return html`<div style=${{marginTop:'.3rem',borderTop:'1px solid var(--hairline)',paddingTop:'.3rem'}}>
+      <div style=${{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:'.25rem',padding:'0 .2rem'}}>
+        <span style=${{fontSize:'.65rem',fontWeight:600,color:'var(--text-muted)',textTransform:'uppercase',letterSpacing:'.05em'}}>Reference Layers · Splats</span>
+        <button title="Unload all splats" onClick=${function(){ if(window._ccUnloadSplats) window._ccUnloadSplats(); }}
+          style=${{background:'transparent',border:'none',color:'var(--text-faint)',cursor:'pointer',fontSize:'.65rem',padding:'0 .2rem'}}>Clear all</button>
+      </div>
+      ${items.map(function(it){
+        return html`<div key=${it.id} style=${{display:'flex',alignItems:'center',gap:'.3rem',padding:'.2rem .35rem',borderRadius:'var(--radius-xs)'}}>
+          <span style=${{flex:1,fontSize:'.72rem',color:'var(--text-secondary)',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}} title=${it.name}>${it.name}</span>
+          <button title="Unload" onClick=${function(){ if(window._ccUnloadSplats) window._ccUnloadSplats(it.id); }}
+            style=${{background:'transparent',border:'1px solid var(--border)',color:'var(--text-faint)',cursor:'pointer',fontSize:'.65rem',padding:'.1rem .35rem',borderRadius:'var(--radius-xs)'}}>×</button>
+        </div>`;
+      })}
+    </div>`;
   }
 
   function ModelCard(props) {
