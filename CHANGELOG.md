@@ -1,5 +1,8 @@
 # Changelog
 
+## v5.19.42 (2026-06-08)
+- fix(plan): cut-plane arrow + plane unclipped, match section gizmo
+
 ## v5.19.41 (2026-06-08)
 - feat(plan): draggable horizontal cut plane in floor-plan view
 
