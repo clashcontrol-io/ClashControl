@@ -12559,33 +12559,11 @@ function startApp() {
         </button>
       </div>`}
       ${html`<${ViewCube} state3d=${state3d} theme=${s.prefs.theme||'light'} />`}
-      ${s.floorPlan && (function(){
-        var fp = s.floorPlan;
-        var ch = fp.cutHeight || 1.2;
-        // Step the horizontal cut up/down by 0.25 m. Lets the user trim the
-        // plan view to show roughly how much of the storey-volume is visible
-        // without leaving floor-plan mode.
-        function stepCut(delta){
-          var next = Math.max(0.1, Math.min(20, ch + delta));
-          d({t:A.FLOOR_PLAN, v:Object.assign({}, fp, {cutHeight: next})});
-        }
-        var btnSt = {background:'rgba(255,255,255,.18)',border:'none',color:'#fff',width:'1.05rem',height:'1.05rem',borderRadius:'var(--radius-xs)',cursor:'pointer',display:'inline-flex',alignItems:'center',justifyContent:'center',padding:0,lineHeight:0};
-        return html`<div style=${{...P,top:'9.75rem',right:'var(--space-2)',background:'var(--accent)',color:'#fff',pointerEvents:'auto',display:'flex',alignItems:'center',gap:'var(--space-2)'}}>
-          <span style=${{cursor:'pointer'}} onClick=${function(){d({t:A.FLOOR_PLAN,v:null})}}>3D Section: ${fp.storeyName} · ${_ccFormatElev(fp.elevation+ch)}</span>
-          <span style=${{display:'inline-flex',flexDirection:'column',gap:1}}>
-            <button style=${btnSt} title="Raise cut +0.25 m" aria-label="Raise cut height"
-              onClick=${function(e){e.stopPropagation(); stepCut(0.25);}}>
-              <svg width="9" height="9" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M2 6l3-3 3 3"/></svg>
-            </button>
-            <button style=${btnSt} title="Lower cut -0.25 m" aria-label="Lower cut height"
-              onClick=${function(e){e.stopPropagation(); stepCut(-0.25);}}>
-              <svg width="9" height="9" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M2 4l3 3 3-3"/></svg>
-            </button>
-          </span>
-          <span style=${{fontSize:'var(--text-xs)',opacity:.7,cursor:'pointer'}} title="Exit 3D section" aria-label="Exit floor plan view"
-            onClick=${function(){d({t:A.FLOOR_PLAN,v:null})}}>✕</span>
-        </div>`;
-      })()}
+      ${s.floorPlan && html`<div style=${{...P,top:'9.75rem',right:'var(--space-2)',background:'var(--accent)',color:'#fff',pointerEvents:'auto',cursor:'pointer',display:'flex',alignItems:'center',gap:'var(--space-2)'}}
+        onClick=${function(){d({t:A.FLOOR_PLAN,v:null})}}>
+        <span>3D Section: ${s.floorPlan.storeyName} · ${_ccFormatElev(s.floorPlan.elevation+(s.floorPlan.cutHeight||1.2))}</span>
+        <span style=${{fontSize:'var(--text-xs)',opacity:.7}} title="Exit 3D section" aria-label="Exit floor plan view">✕</span>
+      </div>`}
 
       ${s.walkMode && html`<div style=${{position:'absolute',inset:0,pointerEvents:'none',display:'flex',alignItems:'center',justifyContent:'center',zIndex:5}}>
         <div style=${{width:20,height:20,border:'2px solid rgba(255,255,255,.5)',borderRadius:'50%',position:'relative'}}>
@@ -19171,8 +19149,9 @@ function startApp() {
 
   var ROW_HEIGHT = 78; // approx height of IssueRow in px (clash rows are taller with extra metadata)
   var GROUP_PAGE_SIZE = 50; // max items rendered per group before "show more"
+  var INITIAL_REVEAL = 200; // rows considered on first paint; rest loaded in the next idle frame
   function VirtualList(props) {
-    var items=props.items, activeId=props.activeId, d=props.d, isClash=props.isClash, prefs=props.prefs, models=props.models||[];
+    var rawItemsProp=props.items, activeId=props.activeId, d=props.d, isClash=props.isClash, prefs=props.prefs, models=props.models||[];
     var triageResults = props.triageResults || {};
     var groupBy = props.groupBy || 'none';
     var sortBy = props.sortBy || 'none';
@@ -19182,6 +19161,29 @@ function startApp() {
     var _st = useState(0), scrollTop=_st[0], setScrollTop=_st[1];
     var coll = useState({}), collapsed=coll[0], setCollapsed=coll[1];
     var grpLimits = useState({}), groupLimits=grpLimits[0], setGroupLimits=grpLimits[1];
+
+    // ── Progressive reveal ─────────────────────────────────────
+    // Render the first INITIAL_REVEAL items immediately so the panel paints
+    // fast; expand to the full list after a paint frame. Critical at 10k+
+    // clashes — the upstream groupAndSort/sort/group-bucket pass becomes
+    // O(N) on every render, and pushing it past first paint makes tab
+    // switching feel instant instead of stalling for hundreds of ms.
+    var revealSt = useState(Math.min(INITIAL_REVEAL, rawItemsProp.length));
+    var reveal = revealSt[0], setReveal = revealSt[1];
+    useEffect(function(){
+      if (reveal >= rawItemsProp.length) return;
+      var ric = window.requestIdleCallback || function(cb){ return setTimeout(function(){ cb({ timeRemaining: function(){ return 0; } }); }, 32); };
+      var cic = window.cancelIdleCallback || clearTimeout;
+      var h = ric(function(){ setReveal(rawItemsProp.length); });
+      return function(){ cic(h); };
+    }, [rawItemsProp, reveal]);
+    // When items prop identity changes (new filter, new detection), reset
+    // the reveal cap so we don't paint a stale tail.
+    useEffect(function(){
+      setReveal(Math.min(INITIAL_REVEAL, rawItemsProp.length));
+    }, [rawItemsProp]);
+    var items = reveal >= rawItemsProp.length ? rawItemsProp : rawItemsProp.slice(0, reveal);
+
     // ── Keyboard navigation: Arrow Down/Up = next/prev item, Tab/Shift+Tab = next/prev group ──
     var groups = groupAndSort(items, groupBy, sortBy, {models: models});
     var flatItems = useMemo(function(){
@@ -19900,6 +19902,13 @@ function startApp() {
       </div>`}
     </div>`;
   }
+  // Memo by shallow prop equality so visible rows don't re-render on every
+  // VirtualList scroll / parent state change. The row is heavy (storey label,
+  // dot color, status pill, expandable detail block) and rendering 15 of
+  // them on every scroll tick is what makes the panel feel laggy at 10k+
+  // clashes. `item` identity stays stable in the reducer when nothing
+  // about that clash changes.
+  IssueRow = React.memo(IssueRow);
 
 
   // ── New Issue Modal ────────────────────────────────────────────
