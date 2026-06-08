@@ -11740,29 +11740,38 @@ function startApp() {
       var sz = box.getSize(new THREE.Vector3());
       var planeSize = Math.max(sz.x,sz.z)*2.0;
       var cutGroup = new THREE.Group();
-      // Translucent plane
+      // Translucent plane + border. clippingPlanes:[] so the cut plane isn't
+      // clipped by its own clipping plane (Three.js treats a mesh exactly on
+      // the plane as ambiguous and can drop it without this opt-out).
       var cutGeo = new THREE.PlaneGeometry(planeSize, planeSize);
       var cutMat = new THREE.MeshBasicMaterial({color:0x1a6b4a, transparent:true, opacity:0.04, side:THREE.DoubleSide, depthWrite:false});
+      cutMat.clippingPlanes = [];
       var cutMesh = new THREE.Mesh(cutGeo, cutMat);
       cutMesh.rotation.x = -Math.PI/2;
       cutGroup.add(cutMesh);
-      // Border for visibility
       var borderGeo = new THREE.EdgesGeometry(cutGeo);
       var borderMat = new THREE.LineBasicMaterial({color:0x1a6b4a, transparent:true, opacity:0.5});
+      borderMat.clippingPlanes = [];
       var border = new THREE.LineSegments(borderGeo, borderMat);
       border.rotation.x = -Math.PI/2;
       cutGroup.add(border);
       // Drag handle: amber arrow standing on top of the plane, pointing up.
-      // Sized at reference scale; tick-scaled for constant on-screen size.
+      // Same geometry/colours as the section-plane gizmo so the two read as one
+      // family. clippingPlanes:[] on the materials is critical here — the floor
+      // plan's clipping plane removes everything above the cut, and the arrow
+      // extends UP from the cut elevation, so it would otherwise be entirely
+      // clipped away.
       var fpHandleGroup = new THREE.Group();
       var shaftLen = 1.8, shaftCylR = 0.03, tipR = 0.12, tipLen = 0.3;
-      var arrowMat = new THREE.MeshBasicMaterial({color:0xf59e0b, transparent:true, opacity:0.9, depthTest:false});
+      var arrowMat = new THREE.MeshBasicMaterial({color:0xf59e0b, transparent:true, opacity:0.85, depthTest:false});
+      arrowMat.clippingPlanes = [];
       var shaft = new THREE.Mesh(new THREE.CylinderGeometry(shaftCylR, shaftCylR, shaftLen, 8, 1, true), arrowMat);
       shaft.position.set(0, shaftLen / 2, 0);
       shaft.userData._fpHandle = 'move';
       shaft.renderOrder = 1000;
       fpHandleGroup.add(shaft);
-      var tip = new THREE.Mesh(new THREE.ConeGeometry(tipR, tipLen, 12), arrowMat.clone());
+      var tipMat = arrowMat.clone(); tipMat.clippingPlanes = [];
+      var tip = new THREE.Mesh(new THREE.ConeGeometry(tipR, tipLen, 12), tipMat);
       tip.position.set(0, shaftLen + tipLen / 2, 0);
       tip.userData._fpHandle = 'move';
       tip.renderOrder = 1000;
