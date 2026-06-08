@@ -1,5 +1,8 @@
 # Changelog
 
+## v5.19.28 (2026-06-08)
+- diag: revert auto chunk-merge + expand instancing diagnostic
+
 ## v5.19.27 (2026-06-08)
 - perf(emergency): auto-enable chunk-merge for >5k-element models
 
