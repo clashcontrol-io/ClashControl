@@ -1,5 +1,8 @@
 # Changelog
 
+## v5.19.44 (2026-06-08)
+- fix(splat): dispatch frame event before render + flip gate flag
+
 ## v5.19.43 (2026-06-08)
 - fix(restore): fingerprint position buffer for _instKey
 
