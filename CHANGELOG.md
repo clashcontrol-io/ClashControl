@@ -1,5 +1,8 @@
 # Changelog
 
+## v5.19.13 (2026-06-08)
+- hotfix: spread Three.js module namespace into a mutable object before attach
+
 ## v5.19.12 (2026-06-08)
 - Three.js r128 → r180 bump (phased) (#595)
 
