@@ -1,5 +1,8 @@
 # Changelog
 
+## v5.19.34 (2026-06-08)
+- fix(ui): hide Fit All Clashes / Markers bar when no models loaded
+
 ## v5.19.33 (2026-06-08)
 - hotfix: defensive bbox shape detection in _geoDeserialize _instKey calc
 
