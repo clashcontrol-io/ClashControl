@@ -1,5 +1,8 @@
 # Changelog
 
+## v5.19.37 (2026-06-08)
+- feat(api): add window.ClashControl.* public namespace alias
+
 ## v5.19.36 (2026-06-08)
 - fix(pick): tiebreak coplanar hits by element size
 
