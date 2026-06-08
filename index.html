@@ -12559,11 +12559,33 @@ function startApp() {
         </button>
       </div>`}
       ${html`<${ViewCube} state3d=${state3d} theme=${s.prefs.theme||'light'} />`}
-      ${s.floorPlan && html`<div style=${{...P,top:'9.75rem',right:'var(--space-2)',background:'var(--accent)',color:'#fff',pointerEvents:'auto',cursor:'pointer',display:'flex',alignItems:'center',gap:'var(--space-2)'}}
-        onClick=${function(){d({t:A.FLOOR_PLAN,v:null})}}>
-        <span>3D Section: ${s.floorPlan.storeyName} · ${_ccFormatElev(s.floorPlan.elevation+(s.floorPlan.cutHeight||1.2))}</span>
-        <span style=${{fontSize:'var(--text-xs)',opacity:.7}} title="Exit 3D section" aria-label="Exit floor plan view">✕</span>
-      </div>`}
+      ${s.floorPlan && (function(){
+        var fp = s.floorPlan;
+        var ch = fp.cutHeight || 1.2;
+        // Step the horizontal cut up/down by 0.25 m. Lets the user trim the
+        // plan view to show roughly how much of the storey-volume is visible
+        // without leaving floor-plan mode.
+        function stepCut(delta){
+          var next = Math.max(0.1, Math.min(20, ch + delta));
+          d({t:A.FLOOR_PLAN, v:Object.assign({}, fp, {cutHeight: next})});
+        }
+        var btnSt = {background:'rgba(255,255,255,.18)',border:'none',color:'#fff',width:'1.05rem',height:'1.05rem',borderRadius:'var(--radius-xs)',cursor:'pointer',display:'inline-flex',alignItems:'center',justifyContent:'center',padding:0,lineHeight:0};
+        return html`<div style=${{...P,top:'9.75rem',right:'var(--space-2)',background:'var(--accent)',color:'#fff',pointerEvents:'auto',display:'flex',alignItems:'center',gap:'var(--space-2)'}}>
+          <span style=${{cursor:'pointer'}} onClick=${function(){d({t:A.FLOOR_PLAN,v:null})}}>3D Section: ${fp.storeyName} · ${_ccFormatElev(fp.elevation+ch)}</span>
+          <span style=${{display:'inline-flex',flexDirection:'column',gap:1}}>
+            <button style=${btnSt} title="Raise cut +0.25 m" aria-label="Raise cut height"
+              onClick=${function(e){e.stopPropagation(); stepCut(0.25);}}>
+              <svg width="9" height="9" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M2 6l3-3 3 3"/></svg>
+            </button>
+            <button style=${btnSt} title="Lower cut -0.25 m" aria-label="Lower cut height"
+              onClick=${function(e){e.stopPropagation(); stepCut(-0.25);}}>
+              <svg width="9" height="9" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M2 4l3 3 3-3"/></svg>
+            </button>
+          </span>
+          <span style=${{fontSize:'var(--text-xs)',opacity:.7,cursor:'pointer'}} title="Exit 3D section" aria-label="Exit floor plan view"
+            onClick=${function(){d({t:A.FLOOR_PLAN,v:null})}}>✕</span>
+        </div>`;
+      })()}
 
       ${s.walkMode && html`<div style=${{position:'absolute',inset:0,pointerEvents:'none',display:'flex',alignItems:'center',justifyContent:'center',zIndex:5}}>
         <div style=${{width:20,height:20,border:'2px solid rgba(255,255,255,.5)',borderRadius:'50%',position:'relative'}}>
@@ -30340,8 +30362,30 @@ function startApp() {
       if (mode === 'walk') d({t:A.WALK_PLACING,v:true});
       else if (mode === 'slice') d({t:A.SECTION,axis:'y',pos:0.5});
       else if (mode === 'measure') d({t:A.MEASURE_MODE,v:true});
-      else if (mode === 'plan' && s.floors && s.floors.length>0) d({t:A.FLOOR_PLAN,v:{storeyId:s.floors[0].id,storeyName:s.floors[0].name||'Floor 1',elevation:s.floors[0].elevation||0,cutHeight:1.2}});
+      else if (mode === 'plan') {
+        // Floor plan: prefer s.floors (clash-derived) when present, otherwise
+        // fall back to the per-model storey list so the button works before
+        // detection has been run.
+        var _fls = _planFloors();
+        if (_fls.length > 0) d({t:A.FLOOR_PLAN,v:{storeyId:_fls[0].id,storeyName:_fls[0].name||'Floor 1',elevation:_fls[0].elevation||0,cutHeight:1.2}});
+      }
       else if (mode === 'note') d({t:A.COMMENT_MODE,v:true});
+    }
+
+    // Unified floor list for the 2D-plan toolbar. Pulls from clash-derived
+    // s.floors first (richer metadata, label includes clash count), then
+    // falls back to the union of all visible model storeys + their elevations
+    // (m.storeyData) so the button works the moment models are loaded.
+    function _planFloors() {
+      if (s.floors && s.floors.length > 0) return s.floors;
+      var elevMap = {}, names = {};
+      (s.models || []).filter(function(m){ return m.visible !== false; }).forEach(function(m){
+        (m.storeys || []).forEach(function(st){ if (st) names[st] = true; });
+        (m.storeyData || []).forEach(function(sd){ if (sd && sd.name && sd.elevation != null) elevMap[sd.name] = sd.elevation; });
+      });
+      return Object.keys(names)
+        .sort(function(a,b){ return (elevMap[a]||0) - (elevMap[b]||0); })
+        .map(function(n){ return { id: n, name: n, label: n, elevation: elevMap[n] || 0 }; });
     }
 
     /* Compact button — every tool is a 36×36 square with a 1.5-px stroked
@@ -30458,20 +30502,24 @@ function startApp() {
           Hatch
         </button>
       </div>`;
-    } else if (activeMode === 'plan' && s.floors && s.floors.length>0) {
-      // Floor picker — popover below the Plan button
-      subRow = html`<div style=${{...POP_BASE,left:'50%',transform:'translateX(-50%)',flexWrap:'wrap',maxWidth:420}}>
-        <span style=${{fontFamily:'var(--font-mono)',fontSize:'var(--text-2xs)',color:'var(--text-muted)',letterSpacing:'.04em',textTransform:'uppercase',marginRight:'.1rem'}}>Floor</span>
-        ${s.floors.slice(0,12).map(function(fl){
-          var on = s.floorPlan && s.floorPlan.storeyId===fl.id;
-          return html`<button key=${fl.id} onClick=${function(){d({t:A.FLOOR_PLAN,v:{storeyId:fl.id,storeyName:fl.name||'Floor',elevation:fl.elevation||0,cutHeight:1.2}});}}
-            style=${{padding:'.18rem .5rem',borderRadius:'var(--radius-xs)',
-              border:'1px solid '+(on?'var(--accent)':'var(--border)'),
-              background:on?'var(--accent-bg)':'transparent',
-              color:on?'var(--accent)':'var(--text-secondary)',
-              fontSize:'var(--text-xs)',fontWeight:on?600:400,cursor:'pointer',fontFamily:'var(--font-body)',whiteSpace:'nowrap'}}>${fl.name||'Floor'}</button>`;
-        })}
-      </div>`;
+    } else if (activeMode === 'plan') {
+      var planFls = _planFloors();
+      if (planFls.length > 0) {
+        // Floor picker — popover below the Plan button
+        subRow = html`<div style=${{...POP_BASE,left:'50%',transform:'translateX(-50%)',flexWrap:'wrap',maxWidth:480}}>
+          <span style=${{fontFamily:'var(--font-mono)',fontSize:'var(--text-2xs)',color:'var(--text-muted)',letterSpacing:'.04em',textTransform:'uppercase',marginRight:'.1rem'}}>Floor</span>
+          ${planFls.slice(0,16).map(function(fl){
+            var on = s.floorPlan && s.floorPlan.storeyId===fl.id;
+            return html`<button key=${fl.id} onClick=${function(){d({t:A.FLOOR_PLAN,v:{storeyId:fl.id,storeyName:fl.name||'Floor',elevation:fl.elevation||0,cutHeight:1.2}});}}
+              title=${'Elevation: '+_ccFormatElev(fl.elevation||0)}
+              style=${{padding:'.18rem .5rem',borderRadius:'var(--radius-xs)',
+                border:'1px solid '+(on?'var(--accent)':'var(--border)'),
+                background:on?'var(--accent-bg)':'transparent',
+                color:on?'var(--accent)':'var(--text-secondary)',
+                fontSize:'var(--text-xs)',fontWeight:on?600:400,cursor:'pointer',fontFamily:'var(--font-body)',whiteSpace:'nowrap'}}>${fl.name||'Floor'}</button>`;
+          })}
+        </div>`;
+      }
     }
     // Walk mode: HUD is rendered inside the Viewer, not in the toolbar subRow
 
