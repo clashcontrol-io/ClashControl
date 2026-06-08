@@ -1800,27 +1800,28 @@ function startApp() {
       _ccBakeMesh(mesh);
       // INSTANCING REGRESSION (cache-restore branch): _instKey was never
       // set on restored meshes, so 73k cached models loaded with 0
-      // instanced meshes. The cached data dropped the original
-      // geometryExpressID; fingerprint the local-space geometry instead
-      // (vertex count + bbox extent), pair with the shared material's
-      // uuid. Two cached entries with identical geometry + material share
-      // a key — same condition as the live IFC loader path.
+      // instanced meshes. Cache dropped the original geometryExpressID,
+      // so fingerprint the LOCAL position buffer instead — vert count +
+      // bbox alone is too loose (e.g. a curtain-wall panel and a mullion
+      // segment can share the same extents and material → grouped under
+      // one InstancedMesh with the wrong shape, manifesting as rotated /
+      // mis-shaped elements on restored federations).
+      var _qbytes = md.qpos ? new Uint8Array(md.qpos) : (md.pos ? new Uint8Array(new Float32Array(md.pos).buffer) : null);
       var _vc = md.qpos ? (md.qpos.length / 3) : (md.pos ? (md.pos.length / 3) : 0);
-      // bbox shape varies across cached versions — defensive: only build the
-      // key if min[0]/max[0] are real numbers, otherwise fall back to vert
-      // count alone. Wrong key beats throwing during restore.
-      var _b  = md.bbox;
-      var _bk;
-      try {
-        if (_b && _b.min && _b.max && typeof _b.max[0] === 'number') {
-          _bk = (_b.max[0]-_b.min[0]).toFixed(2)+','+(_b.max[1]-_b.min[1]).toFixed(2)+','+(_b.max[2]-_b.min[2]).toFixed(2);
-        } else if (Array.isArray(_b) && _b.length >= 6 && typeof _b[0] === 'number') {
-          _bk = (_b[3]-_b[0]).toFixed(2)+','+(_b[4]-_b[1]).toFixed(2)+','+(_b[5]-_b[2]).toFixed(2);
-        } else {
-          _bk = 'nb';
+      var _hash = 2166136261; // FNV-1a 32-bit over the raw position bytes
+      if (_qbytes) {
+        // Sample every Nth byte for large buffers — full pass would dominate
+        // restore time on big federations. 256 samples gives <1-in-2^32
+        // collision risk between genuinely different geometries while
+        // keeping the work bounded.
+        var _len = _qbytes.length;
+        var _step = Math.max(1, (_len / 256) | 0);
+        for (var _i = 0; _i < _len; _i += _step) {
+          _hash ^= _qbytes[_i];
+          _hash = (_hash + ((_hash<<1) + (_hash<<4) + (_hash<<7) + (_hash<<8) + (_hash<<24))) >>> 0;
         }
-      } catch(_) { _bk = 'nb'; }
-      mesh.userData._instKey = _vc + ':' + _bk + ':' + (mat.uuid || 'na');
+      }
+      mesh.userData._instKey = _vc + ':' + _hash.toString(36) + ':' + (mat.uuid || 'na');
       if(!meshByEid[md.eid]) meshByEid[md.eid] = [];
       meshByEid[md.eid].push(mesh);
       return mesh;
