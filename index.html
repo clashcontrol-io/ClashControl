@@ -115,29 +115,61 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Syne:wght@700;800&family=DM+Sans:wght@400;500;600;700&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
-  <!-- Import map for ESM addons (currently splat). Declared HERE in the head
-       so it's effective before any module-script runs. Lets the splat addon's
-       lazy-loaded modern Three.js + Spark share one THREE instance — without
-       this Spark's bundle pulls its own copy and emits "Multiple instances
-       of Three.js" warnings. Core IFC viewer is unaffected: it uses the UMD
-       three.min.js below as a global, not via 'three' bare specifier. -->
+  <!-- Three.js bumped from UMD r128 → ESM r180 (Phase 1 of the bump). The
+       import map below remaps the bare 'three' specifier to the modern ESM
+       bundle, and the module script that follows imports it once + re-
+       exposes window.THREE so the rest of the codebase's `new THREE.X(...)`
+       patterns work unchanged. r161 removed UMD entirely, so this is
+       non-negotiable from now on. -->
   <script type="importmap">
   {
     "imports": {
-      "three": "https://cdn.jsdelivr.net/npm/three@0.180.0/build/three.module.js",
-      "three/": "https://cdn.jsdelivr.net/npm/three@0.180.0/"
+      "three":          "https://cdn.jsdelivr.net/npm/three@0.180.0/build/three.module.js",
+      "three/addons/":  "https://cdn.jsdelivr.net/npm/three@0.180.0/examples/jsm/",
+      "three/examples/jsm/": "https://cdn.jsdelivr.net/npm/three@0.180.0/examples/jsm/"
     }
   }
   </script>
 
-  <!-- CDN deps: React, Three.js, JSZip — all UMD, all cdnjs -->
-  <!-- SRI hashes: regenerate with `node scripts/generate-sri.js` if you change versions -->
+  <!-- CDN deps: React, JSZip, pdf.js (still UMD); Three.js is loaded via the
+       ESM module after the import map below. -->
   <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js" integrity="sha384-tMH8h3BGESGckSAVGZ82T9n90ztNXxvdwvdM6UoR56cYcf+0iGXBliJ29D+wZ/x8" crossorigin="anonymous"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js" integrity="sha384-bm7MnzvK++ykSwVJ2tynSE5TRdN+xL418osEVF2DE/L/gfWHj91J2Sphe582B1Bh" crossorigin="anonymous"></script>
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js" integrity="sha384-CI3ELBVUz9XQO+97x6nwMDPosPR5XvsxW2ua7N1Xeygeh1IxtgqtCkGfQY9WWdHu" crossorigin="anonymous"></script>
-  <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/GLTFLoader.js" integrity="sha384-fljlqkjWlmSFjkESkQvm77heIZpoWmXEOzlCA7kOpGUH+95Zk0yGfQieWM2q136E" crossorigin="anonymous"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js" integrity="sha384-+mbV2IY1Zk/X1p/nWllGySJSUN8uMs+gUAN10Or95UBH0fpj6GfKgPmgC5EXieXG" crossorigin="anonymous"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js" integrity="sha384-/1qUCSGwTur9vjf/z9lmu/eCUYbpOTgSjmpbMQZ1/CtX2v/WcAIKqRv+U1DUCG6e" crossorigin="anonymous"></script>
+
+  <!-- ESM Three.js bootstrap. Runs deferred (default for type=module), after
+       the inline <script> blocks parse but BEFORE window.onload fires —
+       which is where startApp() runs from, so THREE is guaranteed available
+       by the time any `THREE.X` lookup actually executes. We also eagerly
+       load GLTFLoader and TransformControls and reattach them to THREE.* so
+       the legacy `new THREE.GLTFLoader()` / `new THREE.TransformControls()`
+       call sites keep working without a per-call refactor. -->
+  <script type="module">
+    import * as THREE from 'three';
+    import { GLTFLoader }       from 'three/addons/loaders/GLTFLoader.js';
+    import { GLTFExporter }     from 'three/addons/exporters/GLTFExporter.js';
+    import { TransformControls } from 'three/addons/controls/TransformControls.js';
+    import { PLYLoader }        from 'three/addons/loaders/PLYLoader.js';
+    import { PCDLoader }        from 'three/addons/loaders/PCDLoader.js';
+    import { EffectComposer }   from 'three/addons/postprocessing/EffectComposer.js';
+    import { RenderPass }       from 'three/addons/postprocessing/RenderPass.js';
+    import { SAOPass }          from 'three/addons/postprocessing/SAOPass.js';
+    import { OutlinePass }      from 'three/addons/postprocessing/OutlinePass.js';
+    // Reattach so the codebase's pre-bump THREE.X lookups keep working.
+    THREE.GLTFLoader        = GLTFLoader;
+    THREE.GLTFExporter      = GLTFExporter;
+    THREE.TransformControls = TransformControls;
+    THREE.PLYLoader         = PLYLoader;
+    THREE.PCDLoader         = PCDLoader;
+    THREE.EffectComposer    = EffectComposer;
+    THREE.RenderPass        = RenderPass;
+    THREE.SAOPass           = SAOPass;
+    THREE.OutlinePass       = OutlinePass;
+    window.THREE            = THREE;
+    window._ccThreeReady    = true;
+    window.dispatchEvent(new CustomEvent('cc-three-ready'));
+  </script>
 
   <!-- GoatCounter — privacy-friendly analytics (no cookies, no personal data) -->
   <!-- Set data-goatcounter to your GoatCounter endpoint, e.g. https://YOURSITE.goatcounter.com/count -->
@@ -11040,10 +11072,17 @@ function startApp() {
       if (!S || !S.scene || !S.camera || !S.renderer) return;
       var _disp = window._ccDispatch;
 
+      // Helper accessor — works on both pre-r170 (TC is itself an Object3D)
+      // and modern Three (TC is a Controls; its visual lives on getHelper()).
+      function _tcVisual(tc) {
+        if (!tc) return null;
+        return (typeof tc.getHelper === 'function') ? tc.getHelper() : tc;
+      }
       function detachAndHide() {
         if (S._sectionTC) {
           try { S._sectionTC.detach(); } catch(e){}
-          if (S._sectionTC.parent) S._sectionTC.parent.remove(S._sectionTC);
+          var v = _tcVisual(S._sectionTC);
+          if (v && v.parent) v.parent.remove(v);
         }
       }
 
@@ -11159,7 +11198,8 @@ function startApp() {
           S._sectionTC.showZ = true;
           S._sectionTC.space = 'local';
         }
-        if (!S._sectionTC.parent) S.scene.add(S._sectionTC);
+        var _tcVis = _tcVisual(S._sectionTC);
+        if (_tcVis && !_tcVis.parent) S.scene.add(_tcVis);
         S._sectionTC.attach(S._sectionAnchor);
         invalidate(3);
       });
@@ -13293,7 +13333,7 @@ function startApp() {
           if (!mat) {
             mat = new THREE.MeshPhongMaterial({
               color: col,
-              vertexColors: hasVertexColors ? THREE.VertexColors : THREE.NoColors,
+              vertexColors: hasVertexColors,  // r129+ uses boolean; THREE.VertexColors/NoColors removed
               opacity: opacity,
               transparent: opacity < 0.99,
               side: THREE.DoubleSide // FrontSide once Ifc2Ifc winding fix is confirmed correct
