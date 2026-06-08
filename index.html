@@ -2871,49 +2871,16 @@ function startApp() {
   };
 
   function _buildInstancedMeshes(elements, meshes) {
-    // Top-of-function ping so we can confirm the function is even called.
-    // User memory diagnostics showed 0 instanced; if this log is missing
-    // entirely the call site itself is being skipped (different code path
-    // or upstream error eating the flow).
-    console.log('%c[Instancing] _buildInstancedMeshes called with '+
-      (elements ? elements.length : '?') + ' elements, '+
-      (meshes ? meshes.length : '?') + ' meshes', 'color:#a78bfa');
-    if (!THREE.InstancedMesh) {
-      console.warn('[Instancing] skipped: THREE.InstancedMesh is undefined');
-      return {meshes:meshes, groups:0, instanced:0};
-    }
+    if (!THREE.InstancedMesh) return {meshes:meshes, groups:0, instanced:0};
     var candidates = {}; // instKey → {geo, mat, entries:[{mesh, expressId}]}
-    var keyMissCount = 0, keyHitCount = 0, totalEl = 0;
     elements.forEach(function(el) {
-      totalEl++;
       (el.meshes || []).forEach(function(m) {
         var ik = m.userData._instKey;
-        if (!ik) { keyMissCount++; return; }
-        keyHitCount++;
+        if (!ik) return;
         if (!candidates[ik]) candidates[ik] = {geo:m.geometry, mat:m.material, entries:[]};
         candidates[ik].entries.push({mesh:m, expressId:el.expressId});
       });
     });
-    // Diagnostic: how many _instKey-bearing meshes did we even see, and
-    // how many groups would meet the threshold? User memory diagnostic
-    // showed 0 instanced even on a federation with 30k+ elements; this
-    // tells us whether _instKey is being set, or threshold isn't met, or
-    // something else upstream is short-circuiting.
-    var grpKeys = Object.keys(candidates);
-    var grpAboveThresh = grpKeys.filter(function(k){ return candidates[k].entries.length >= INST_THRESHOLD; });
-    // Diagnostic block — expanded since the one-liner kept getting lost in
-    // the noise. Sample 3 candidate keys so we can see whether duplicates
-    // collapse or each placement gets a unique key (geometry dedup bug).
-    var keySizes = grpKeys.map(function(k){ return candidates[k].entries.length; }).sort(function(a,b){return b-a;});
-    var top10 = keySizes.slice(0, 10);
-    var sampleKeys = grpKeys.slice(0, 3);
-    console.groupCollapsed('%c[Instancing] '+totalEl+' els · keyHit='+keyHitCount+' keyMiss='+keyMissCount+
-      ' · '+grpKeys.length+' distinct keys, '+grpAboveThresh.length+' above threshold ('+INST_THRESHOLD+'+)', 'color:#a78bfa;font-weight:bold');
-    console.log('Top-10 group sizes:', top10);
-    console.log('Sample keys:', sampleKeys);
-    console.log('% meshes with key:', keyHitCount + '/' + (keyHitCount+keyMissCount), '=', ((keyHitCount/(keyHitCount+keyMissCount||1))*100).toFixed(1)+'%');
-    console.log('Avg group size:', grpKeys.length ? (keyHitCount/grpKeys.length).toFixed(2) : 0);
-    console.groupEnd();
     var removedSet = {};
     var newMeshes = [];
     var nGroups = 0, nInstanced = 0;
@@ -2942,7 +2909,6 @@ function startApp() {
     // Keep non-instanced meshes; add InstancedMeshes
     var filtered = meshes.filter(function(m) { return !removedSet[m.uuid]; });
     newMeshes.forEach(function(im) { filtered.push(im); });
-    if (nGroups > 0) console.log('%c[IFC Instancing] ' + nGroups + ' InstancedMesh groups · ' + nInstanced + ' elements instanced · ' + filtered.length + ' total draw objects', 'color:#a78bfa;font-weight:bold');
     return {meshes:filtered, groups:nGroups, instanced:nInstanced};
   }
 
@@ -3000,7 +2966,6 @@ function startApp() {
     }
     if (!removed) return { elements: elements, meshes: meshes, removed: 0 };
     var keptMeshes = Array.isArray(meshes) ? meshes.filter(function(m) { return !removeMesh[m.uuid]; }) : meshes;
-    try { console.log('%c[ClashControl] stripped ' + removed + ' survey base-point/nulpunt marker(s) from render + clash', 'color:#f59e0b'); } catch(e) {}
     return { elements: kept, meshes: keptMeshes, removed: removed };
   }
 
