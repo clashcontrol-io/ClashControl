@@ -17,6 +17,7 @@
  *   GET  /llm-config           — read stored Ollama/OpenAI config
  *   POST /llm-config           — save Ollama/OpenAI config to disk
  *   GET  /llm/health           — pre-flight LLM liveness probe (3s timeout)
+ *   GET  /llm/autodetect       — probe common desktop LLM servers, report live ones
  *   POST /chat                 — agentic loop: LLM reasons over ClashControl tools
  *
  * Errors include a stable `code` field (browser_not_connected, tool_timeout,
@@ -77,6 +78,17 @@ const LLM_DEFAULTS = {
   baseUrl:  'http://localhost:11434',
   apiKey:   ''
 };
+
+// Common OpenAI-compatible LLM servers people run on their own desktop. Used by
+// GET /llm/autodetect to one-click connect to whatever is already running. The
+// browser can't probe these itself (https app -> http localhost is mixed-content /
+// CORS-blocked), so the bridge probes them on the user's behalf.
+const LOCAL_LLM_CANDIDATES = [
+  { provider: 'ollama',   label: 'Ollama',    baseUrl: 'http://localhost:11434' },
+  { provider: 'lmstudio', label: 'LM Studio', baseUrl: 'http://localhost:1234'  },
+  { provider: 'llamacpp', label: 'llama.cpp', baseUrl: 'http://localhost:8080'  },
+  { provider: 'jan',      label: 'Jan',       baseUrl: 'http://localhost:1337'  }
+];
 
 function loadLlmConfig() {
   try { return Object.assign({}, LLM_DEFAULTS, JSON.parse(fs.readFileSync(LLM_CONFIG_PATH, 'utf8'))); }
@@ -468,6 +480,17 @@ const httpServer = http.createServer(async (req, res) => {
     const cfg = loadLlmConfig();
     const r = await probeLlm(cfg);
     return json(r.ok ? 200 : 503, r);
+  }
+
+  // One-click local detect — probe the common desktop LLM servers in parallel and
+  // report which are live (plus the models they advertise). No key needed for local
+  // backends. The addon uses the first hit to auto-fill + save the LLM config.
+  if (req.method === 'GET' && pathname === '/llm/autodetect') {
+    const results = await Promise.all(LOCAL_LLM_CANDIDATES.map(async (c) => {
+      const r = await probeLlm({ baseUrl: c.baseUrl });
+      return r.ok ? { provider: c.provider, label: c.label, baseUrl: c.baseUrl, models: r.models || [] } : null;
+    }));
+    return json(200, { found: results.filter(Boolean) });
   }
 
   if (req.method === 'POST' && pathname === '/llm-config') {

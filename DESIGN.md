@@ -52,11 +52,11 @@ from a token.
 ### Accent
 | Token              | Dark      | Light     | Purpose                          |
 |--------------------|-----------|-----------|----------------------------------|
-| `--accent`         | `#2563eb` | `#2563eb` | Primary action, focus ring       |
-| `--accent-hover`   | `#3b82f6` | `#3b82f6` | Hover state                      |
-| `--accent-subtle`  | `#93c5fd` | `#2563eb` | Tinted text on dark surfaces     |
-| `--accent-bg`      | `#1e3a5f` | `#eff6ff` | Soft fill                        |
-| `--accent-bg-deep` | `#172554` | `#dbeafe` | Pressed / selected fill          |
+| `--accent`         | `#1a6b4a` | `#4d9e75` | Primary action, focus ring       |
+| `--accent-hover`   | `#155c3e` | `#5db086` | Hover state                      |
+| `--accent-subtle`  | `#2a6b4a` | `#6aab8a` | Tinted text on dark surfaces     |
+| `--accent-bg`      | `#0d2b1e` | `#ecf7f2` | Soft fill                        |
+| `--accent-bg-deep` | `#0a2218` | `#d3ede2` | Pressed / selected fill          |
 
 ### Borders
 | Token              | Dark      | Light     | Purpose                          |
@@ -92,10 +92,8 @@ from a token.
 
 ### Brand mark / logo
 
-- **Gradient:** `--logo-gradient` =
-  `linear-gradient(135deg, #00e5ff 0%, #7c3aed 100%)` (cyan → purple).
-- **Soft variant:** `--logo-gradient-soft` for tinted backgrounds at ~18%
-  alpha.
+- **Mark:** a flat green square keyed to `--accent` (`#1a6b4a` dark /
+  `#4d9e75` light), matching the favicon and PWA icons.
 - The "CC" wordmark sits on the gradient in white, set in `Syne` (`var
   (--font-display)`) at weight 800 with `letter-spacing: -.02em`.
 - Drop shadow: `0 4px 12px rgba(124,58,237,.3)` for small marks; bump to

@@ -21,7 +21,7 @@ are about to do. When you finish, mark completed items with ~~strikethrough~~ + 
 ClashControl is a free, open-source IFC clash detection web app. It lets users load IFC building models, detect geometric clashes between elements, create/manage issues, and export to BCF format.
 
 ## Architecture — Single File App + Lazy Addons
-The **core application** lives in `index.html` (~29k lines). There is no build step, no bundler, no node_modules. Just open the file in a browser.
+The **core application** lives in `index.html` (~31k lines). There is no build step, no bundler, no node_modules. Just open the file in a browser.
 
 Optional, non-critical features are split into lazy-loaded files under `addons/` (see the Addons section below). These are loaded at runtime via a simple `<script src="addons/<name>.js">` injection and the core app works without them.
 
@@ -47,7 +47,7 @@ The file follows this layout top to bottom:
    - IFC loader (uses web-ifc WASM library, lazy-loaded via ESM)
    - Three.js scene setup, orbit controls, render loop
    - Fly-to system, ghost/highlight system, section planes, section box
-   - Clash detection engine (OBB-based)
+   - Clash detection engine (AABB broad-phase + BVH tri-tri narrow-phase, Möller–Trumbore)
    - BCF import/export
    - All UI components as functions returning `html\`...\`` tagged templates
    - App component, mount
@@ -81,7 +81,7 @@ The file follows this layout top to bottom:
 ### Things NOT to touch without good reason
 - The htm parser at the top of the script — it's hand-written and tested
 - The IFC loader (web-ifc integration) — complex but working, handles property/material extraction
-- The OBB clash detection engine — geometrically sensitive code
+- The clash detection engine (AABB broad-phase + BVH tri-tri narrow-phase) — geometrically sensitive code
 - The render-on-demand system (`_needsRender` / `invalidate`) — breaking this causes either no rendering or constant GPU waste
 
 ### Known quirks
@@ -108,6 +108,8 @@ vercel.json                 — Vercel config: COOP/COEP headers, function durat
 package.json                — Neon Postgres driver for serverless functions
 addons/data-quality.js      — Data quality / BIM / ILS-NL/SfB check engines
 addons/local-engine.js      — Bridge to localhost Python exact-mesh clash engine
+addons/geoplace.js          — Real-world basemap placement (IfcSite lat/lon + IFC4 map conversion), tiles via /api/tile
+addons/pointcloud.js        — Load LAS/PLY/PCD/XYZ point clouds as reference layers
 addons/pwa.js               — Service worker registration, install prompt, update check
 addons/revit-bridge.js      — Revit Connector WebSocket live link + clash push-back
 addons/shared-project.js    — File System Access folder-sync collaboration
@@ -115,10 +117,13 @@ addons/smart-bridge.js      — LLM bridge (MCP / ChatGPT / REST) — executes t
 addons/training-data.js     — Training data storage, JSONL export, sharing
 addons/wasm-engine.js       — Rust WASM clash accelerator (mesh_intersect / mesh_min_distance), JS fallback
 api/health.js               — Health check: AI + DB status
-api/nl.js                   — Gemma 4 NL proxy with native function calling + quota fallback
+api/nl.js                   — NL proxy: Groq-only (OpenAI tool-calling). Basic tier; clash-solving nudges to the Connector
 api/training.js             — Training data ingestion (replaces Google Forms)
 api/project.js              — Shared issues sync (project key, no login)
 api/title.js                — AI clash title generation (batch, Gemma 4)
+api/triage.js               — AI clash triage (cluster context → severity / explanation / resolution)
+api/tile.js                 — Map-tile proxy for the geoplace basemap (MapTiler when keyed, else OSM)
+api/_lib.js                 — Shared serverless helpers (CORS allow-list, rate limiter)
 ```
 
 ## Addons — how they plug in
@@ -136,7 +141,9 @@ Each addon is a plain IIFE loaded at runtime by the core via `addons/<name>.js` 
 
 ### What each addon does
 - `data-quality.js` — All check engines used by the Data Quality panel (BIM basics, ILS, NL-SfB classification checks). Exposed via `window._ccRunDataQualityChecks` et al.
-- `local-engine.js` — Talks to the localhost `clashcontrol-engine` Python server (port 19800) for exact mesh intersection. Transparently falls back to the core OBB engine when the server isn't running. Targets `clashcontrol-engine` v0.2.2.
+- `local-engine.js` — Talks to the localhost `clashcontrol-engine` Python server (port 19800) for exact mesh intersection. Transparently falls back to the core AABB+BVH engine when the server isn't running. Targets `clashcontrol-engine` v0.2.2.
+- `geoplace.js` — Places the loaded model on a real-world raster basemap. Reads `IfcSite` RefLatitude/Longitude (and the IFC4 `IfcMapConversion`/`IfcProjectedCRS` georef the core extracts into `spatialHierarchy.mapConversion`), or accepts a manual lat/lon, then stitches map tiles (via the same-origin `/api/tile` proxy) onto a ground plane. The model never moves — the basemap is positioned in IFC space. No reprojection (proj4js) yet; projected CRS data is read for display + the pre-run placement-sanity check only.
+- `pointcloud.js` — Loads LAS/PLY/PCD/XYZ point clouds as reference layers (e.g. survey scans), recentred near origin for precision. Display-only; not fed to the clash engine.
 - `pwa.js` — Service-worker registration, update polling, and the "install as app" prompt. Everything else in the app works without it.
 - `revit-bridge.js` — WebSocket live link to the ClashControl Connector Revit plugin. Ingests geometry + properties, converts to Three.js meshes, supports `REPLACE_MODEL` on re-sync and linked models. Also handles one-way push of clashes back to Revit.
 - `shared-project.js` — File System Access API collaboration. Users pick a shared folder (OneDrive/Dropbox/NAS), and a `.ccproject` file is synced every 60s. No backend.
@@ -149,8 +156,10 @@ Each addon is a plain IIFE loaded at runtime by the core via `addons/<name>.js` 
 The app is deployed at `www.clashcontrol.io` on Vercel. The backend consists of serverless functions in the `api/` directory.
 
 ### Environment Variables (set in Vercel dashboard)
-- `GEMINI_API_KEY` — Google AI Studio API key for Gemma 4 (legacy `GOOGLE_AI_KEY` also accepted)
+- `GROQ_API_KEY` — Groq API key. **The backend for `/api/nl`** (fast, generous free tier; OpenAI-compatible function calling). Default model `llama-3.3-70b-versatile`, overridable via `GROQ_MODEL`. When unset, `/api/nl` returns 503 and the client uses its built-in offline regex commands. **Gemma was dropped from `/api/nl`** (unreliable free-tier quota).
+- `GEMINI_API_KEY` — Google AI Studio API key for Gemma 4 — used by `/api/title` and `/api/triage` (the NL endpoint no longer uses Gemma; legacy `GOOGLE_AI_KEY` also accepted)
 - `POSTGRES_URL` — Vercel Postgres / Neon connection string (auto-injected when you link a Vercel Postgres database; legacy `DATABASE_URL` also accepted)
+- `MAPTILER_KEY` — (optional) MapTiler key for satellite basemap tiles via `/api/tile`. When unset, the proxy serves OpenStreetMap tiles.
 
 ### API Endpoints
 - `GET /api/health` — Returns `{ ai: bool, db: bool, model: string }`
@@ -160,14 +169,14 @@ The app is deployed at `www.clashcontrol.io` on Vercel. The backend consists of 
 - `GET /api/project?id=KEY` — Pull all shared issues for a project
 - `PUT /api/project?id=KEY` — Push issue changes. Body: `{ issues, user }`
 - `POST /api/title` — Generate AI titles. Body: `{ clashes: [...] }` (max 20)
+- `POST /api/triage` — AI clash triage for a cluster. Body: cluster context packet. Returns `{ title, severity, explanation, resolution_options[] }`
+- `GET /api/tile?z=&x=&y=` — Map-tile proxy for the geoplace basemap (MapTiler satellite when `MAPTILER_KEY` is set, else OpenStreetMap)
 
-### NL Command Flow
-1. Client sends command to `/api/nl` (Gemma 4, server-side)
-2. Server picks a primary model — `SMART_MODEL` for analytical commands (analyze, explain, compare, …), `FAST_MODEL` for everything else
-3. Gemma 4 uses native function calling with 13 tool declarations
-4. On HTTP 429 the server walks a fallback chain across the other Gemma variant (each variant has its own free-tier quota bucket, so the effective quota is roughly doubled)
-5. Server returns structured `{ intent, _model, _fallback, ...params }` — no fragile JSON parsing
-6. Only when *every* model in the chain is drained does the client fall back to regex matching (offline mode)
+### NL Command Flow (tiered AI)
+**Basic = Groq (server-side); more = your own LLM via the one-click Connector.**
+1. Client sends command to `/api/nl` → **Groq** (OpenAI-compatible `tool_calls` over the tool declarations). Default `llama-3.3-70b-versatile` (`GROQ_MODEL` overridable). Returns structured `{ intent, _model, _fallback, ...params }` — no fragile JSON parsing. Gemma was dropped (unreliable free-tier quota).
+2. The built-in assistant is intentionally **basic**. When a command asks to *resolve/fix a clash* (resolution verb + clash noun), the client routes to the user's **own LLM via the Smart Bridge Connector** (`http://127.0.0.1:19803/chat`) when connected, otherwise shows a one-click-connect **nudge** — the bring-your-own-LLM / future paid tier.
+3. If Groq is over quota/down, the client uses the connected own-LLM (if any), then falls back to built-in offline regex commands. The over-quota message points to the one-click Connector.
 
 ### Shared Issues
 - No login required. Uses shareable project keys (e.g., `MEP-abc123`)

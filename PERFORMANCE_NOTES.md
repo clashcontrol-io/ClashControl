@@ -4,6 +4,8 @@
 
 Analysis of GPU instancing feasibility (prompted by comparison with Fragments .frag format), covering what the codebase already does well, confirmed efficiency gaps, and what to leave alone.
 
+> **Implementation status.** Implemented: GPU instancing on the IFC path (`InstancedMesh`), the chunk-merge draw-call reducer (defaults **OFF**), Int8 geometry normals, and an adaptive BVH cache + pair-result cache that persist across detection runs. Open: the GLB-path dedup items (#1–#3). Line numbers in this document are indicative — locate code by the named symbol or section header.
+
 ---
 
 ## Corrections to Initial Assumptions
@@ -58,13 +60,11 @@ Analysis of GPU instancing feasibility (prompted by comparison with Fragments .f
 **Fix:** Cache extracted local-space vertices/triangles by `node.mesh` index. Apply each node's world transform to the cached data.
 **Risk:** Low, self-contained in the worker.
 
-### 4. BVH caches not persistent across detection runs — MEDIUM effort
-**Gap:** `_wvCache`, `_triCache`, `_bvhCache` are deleted after each 80-candidate chunk (`index.html:3603–3627`). Re-running detection rebuilds all BVHs from scratch.
-**Fix:** Keep caches on elements between runs; invalidate on `LOAD_MODEL`/`REMOVE_MODEL` via a generation counter.
-**Risk:** Medium — needs reliable invalidation to avoid stale cache after model changes.
+### 4. Persistent BVH cache across detection runs — ✅ implemented
+**Status:** An adaptive `_BVH_CACHE_MAX` (sized to a heap budget) and a bounded LRU `_pairResultCache` keyed by `(mA:eidA|mB:eidB|rulesHash)` persist geometry/BVH work across detection runs; both are cleared per-model on `DEL_MODEL`/`REPLACE_MODEL`.
 
-### 5. GPU instancing via `THREE.InstancedMesh` — HIGH effort
-**Gap:** Each IFC placement produces its own `THREE.Mesh` = one draw call. Geometry and material are already shared — collapsing them into one draw call is the remaining step.
+### 5. GPU instancing via `THREE.InstancedMesh` — ✅ implemented (IFC path)
+**Status:** A post-streaming pass (`_buildInstancedMeshes`) groups by `(geoExpId, matKey)` and emits `InstancedMesh` for repeated geometry; raycast/hover/ghost/culling map `instanceId → expressId`. The optional chunk-merge pass (`_ccChunkMerge`, spatially-clustered draw-call reduction) defaults **OFF**. The GLB path is not instanced (it needs gap #2 first).
 
 **Subsystems requiring changes:**
 
@@ -100,10 +100,10 @@ Analysis of GPU instancing feasibility (prompted by comparison with Fragments .f
 
 ## Priority Summary
 
-| # | Improvement | Effort | Gain | Risk |
-|---|---|---|---|---|
-| 1 | GLB matCache | Low | Material memory reduction | None |
-| 2 | GLB geometry dedup + normals once | Low | Memory + CPU at load | Low |
-| 3 | GLB worker mesh dedup | Medium | CPU at clash-prep for large GLBs | Low |
-| 4 | Persistent BVH cache across runs | Medium | CPU at repeat detection | Medium |
-| 5 | GPU instancing (IFC path first) | High | Draw calls for large repetitive buildings | Medium |
+| # | Improvement | Effort | Gain | Risk | Status |
+|---|---|---|---|---|---|
+| 1 | GLB matCache | Low | Material memory reduction | None | ⬜ open |
+| 2 | GLB geometry dedup + normals once | Low | Memory + CPU at load | Low | ⬜ open |
+| 3 | GLB worker mesh dedup | Medium | CPU at clash-prep for large GLBs | Low | ⬜ open |
+| 4 | Persistent BVH cache across runs | Medium | CPU at repeat detection | Medium | ✅ implemented |
+| 5 | GPU instancing (IFC path first) | High | Draw calls for large repetitive buildings | Medium | ✅ implemented |
