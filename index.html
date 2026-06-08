@@ -22152,9 +22152,15 @@ function startApp() {
         <div style=${TROW}>
           <div>
             <div style=${TLBL}>AI Status</div>
-            <div style=${TSUB}>${_serverAIAvailable
-              ? 'Connected — ClashControl Coordinator (Gemma 4 on ClashControl servers). No setup needed.'
-              : 'Offline — basic regex commands still work. Server may be starting up.'}</div>
+            <div style=${TSUB}>${(function(){
+              if (!_serverAIAvailable) return 'NL not configured — basic regex commands still work. GROQ_API_KEY isn\'t set on the server, or the health probe is failing.';
+              // Render the actual configured model rather than a hardcoded
+              // name so the copy stays accurate as the backend changes.
+              // /api/nl is Groq; /api/title + /api/triage are Gemma.
+              var nl = _serverAIModel ? ' (' + _serverAIModel + ')' : '';
+              var tri = _serverTriageModel ? ' Triage + titles run on ' + _serverTriageModel + '.' : '';
+              return 'Connected — ClashControl Coordinator' + nl + '.' + tri + ' No setup needed.';
+            })()}</div>
           </div>
           <span style=${{fontSize:'0.8rem',color:_serverAIAvailable?'#4ade80':'#f87171',flexShrink:0}}>${_serverAIAvailable ? '● Connected' : '○ Offline'}</span>
         </div>
@@ -24744,6 +24750,11 @@ function startApp() {
 
   // ── Server AI health check ───────────────────────────────────────
   var _serverAIAvailable = false;
+  // Reflects /api/health response so user-facing copy (Settings ▸ AI status,
+  // toasts, etc.) can show what's actually configured instead of stale
+  // hardcoded model names. Populated by the health probe below.
+  var _serverAIModel = null;        // e.g. "groq:llama-3.3-70b-versatile"
+  var _serverTriageModel = null;    // e.g. "gemma-4-31b-it"
 
   function checkServerAI() {
     var dbg = (function(){ try { return localStorage.getItem('cc_debug')==='1'; } catch(e){ return false; } })();
@@ -24757,6 +24768,8 @@ function startApp() {
       .then(function(data){
         if (dbg) console.log('[CC health data]', data);
         _serverAIAvailable = !!data.ai;
+        _serverAIModel     = (typeof data.model === 'string') ? data.model : null;
+        _serverTriageModel = (data.titleTriage && data.titleTriage.model) || null;
         if (data.ai) {
           _nlBackend = 'server';
           _nlModelStatus = 'ready';
