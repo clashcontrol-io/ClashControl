@@ -164,6 +164,14 @@
     import { SAOPass }                from 'three/addons/postprocessing/SAOPass.js';
     import { OutlinePass }            from 'three/addons/postprocessing/OutlinePass.js';
     const THREE = { ...THREE_NS };  // mutable copy of the namespace
+    // r155+ defaults THREE.ColorManagement.enabled to true, which inserts
+    // an sRGB → linear conversion on every material color update. On a
+    // big federation that adds up to a noticeable per-frame tax versus
+    // r128. Disabling matches pre-bump behaviour and keeps the IFC
+    // material palette looking the way it always has. If we later want
+    // physically-correct color, flip this back on AND retune material
+    // colors at construction time.
+    if (THREE_NS.ColorManagement) THREE_NS.ColorManagement.enabled = false;
     THREE.GLTFLoader        = GLTFLoader;
     THREE.GLTFExporter      = GLTFExporter;
     THREE.TransformControls = TransformControls;
