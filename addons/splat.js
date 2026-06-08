@@ -1,195 +1,125 @@
-// ClashControl splat addon — Gaussian Splat as-built overlay (Phase 1 spike).
+// ClashControl splat addon — Gaussian Splat as first-class scene member.
 //
-// Architecture: this addon is **isolated** from the core's Three.js r128.
-// It lazy-loads modern Three.js + Spark.js as ESM **only when the user
-// actually loads a splat**, mounts its own WebGL canvas as a sibling DOM
-// element overlaid on the main canvas, and mirrors the core's camera each
-// frame. The core never sees a different Three version — addon failures
-// can't break the IFC viewer.
+// Post-bump architecture (Three.js r180): Spark's SplatMesh is now a
+// THREE.Object3D that joins the same scene as the IFC meshes, the point
+// clouds, and everything else. Depth-interleaves correctly, click-
+// selectable, panel-grouped — same first-class treatment as point clouds.
 //
-// Trigger: window._ccLoadSplat(url|file, {name, opacity}). On first call,
-// the modern-Three + Spark bundles are fetched; subsequent calls reuse the
-// loaded modules. Sibling canvas auto-attaches under the main 3D canvas;
-// removed when _ccUnloadSplats() is called or the last splat is dropped.
+// The sibling-canvas pattern from the pre-bump spike has been retired:
+// one renderer, one scene, one camera, depth-mixed at the GPU. No
+// camera-mirror loop, no transparent IFC hack, no z-index stacking.
 //
-// Composition: splat canvas sits BELOW the IFC canvas in the DOM stack
-// (z-index lower). The IFC canvas's background is set transparent when
-// splats are active. This gives "as-built ground + design model" overlay
-// without depth-interleaving (which two GL contexts can't do anyway).
+// Trigger: window._ccLoadSplat(url|file, opts). On first call, lazy-loads
+// Spark (Three is already loaded by the core); subsequent calls reuse.
 //
-// Phase 1 goal: confirm camera-sync feels right at IFC scales. If green,
-// Phase 2 adds 3D Tiles streaming + Esri Site Scan tileset URLs.
-//
-// Supported inputs: .splat, .ply, .ksplat, .spz (Spark handles all). No
-// 3D-Tiles tileset.json streaming yet — Phase 2.
+// Supported inputs: .splat, .ply, .ksplat, .spz (Spark detects by ext).
 
 (function(){
   if (typeof window === 'undefined') return;
 
-  // ─── Module imports (lazy, one-time) ──────────────────────────────────────
-  // Modern Three.js + Spark's unbundled ESM main. The import map declared in
-  // index.html head maps the bare specifier 'three' to THREE_URL, so when
-  // Spark's source does `import * as THREE from 'three'`, it resolves to the
-  // same module instance we await here — one THREE singleton, no duplicate
-  // bundle, no "Multiple instances of Three.js" warning.
-  //
-  // We deliberately AVOID jsdelivr's `/+esm` endpoint: that variant pre-
-  // bundles every dependency (including Three), which makes the import map
-  // moot and bloats the download. The package's `module` entry is the right
-  // build to use.
-  // ~600 KB Three + ~200 KB Spark, both edge-cached. Lazy: only fetched
-  // when the user actually loads a splat.
-  var THREE_URL = 'https://cdn.jsdelivr.net/npm/three@0.180.0/build/three.module.js';
   var SPARK_URL = 'https://cdn.jsdelivr.net/npm/@sparkjsdev/spark@2.0.0/dist/spark.module.js';
 
-  var _modules = null; // { THREE, Spark } once loaded
+  var _spark = null;       // Spark module, loaded once
   var _loadingP = null;
+  var _splats = [];        // [{id, mesh, name, source}]
+  var _splatGroup = null;  // THREE.Group parent for all splats, added to scene
+  var _renderHookInstalled = false;
 
-  function _loadModules() {
-    if (_modules) return Promise.resolve(_modules);
+  function _loadSpark() {
+    if (_spark) return Promise.resolve(_spark);
     if (_loadingP) return _loadingP;
-    _loadingP = (async function(){
-      // Load THREE first so Spark's `import 'three'` resolves the already-
-      // cached module via the document-level import map.
-      var THREE = await import(/* @vite-ignore */ THREE_URL);
-      var Spark = await import(/* @vite-ignore */ SPARK_URL);
-      _modules = { THREE: THREE, Spark: Spark };
-      return _modules;
-    })();
+    _loadingP = import(/* @vite-ignore */ SPARK_URL).then(function(mod){
+      _spark = mod;
+      return mod;
+    });
     return _loadingP;
   }
 
-  // ─── Sibling canvas + isolated renderer ───────────────────────────────────
-  var _viewer = null; // { canvas, renderer, scene, camera, splats: [] }
+  function _scene() {
+    return (window._ccState3d && window._ccState3d.scene) || null;
+  }
+  function _invalidate(n) {
+    if (typeof window._ccInvalidate === 'function') window._ccInvalidate(n||2);
+  }
 
-  function _ensureViewer() {
-    if (_viewer) return Promise.resolve(_viewer);
-    return _loadModules().then(function(mods){
-      var THREE = mods.THREE;
-      var mainCanvas = document.getElementById('cc-canvas')
-        || (window._ccState3d && window._ccState3d.renderer && window._ccState3d.renderer.domElement);
-      if (!mainCanvas) throw new Error('Main 3D canvas not found');
-
-      var canvas = document.createElement('canvas');
-      canvas.id = 'cc-splat-canvas';
-      // Sit ABOVE the IFC canvas with a transparent renderer + pointer-
-      // events:none. Splat draws where it has pixels; the IFC canvas
-      // shows through everywhere else. Clicks/orbit pass through to the
-      // IFC layer normally. We deliberately do NOT touch the IFC scene's
-      // background or clear-colour — earlier attempts to make the IFC
-      // canvas transparent broke rendering because the core renderer
-      // was created without {alpha:true}, so transparent-clear was
-      // interpreted as opaque black and the model disappeared.
-      var s = canvas.style;
-      s.position = 'absolute';
-      s.left = '0'; s.top = '0';
-      s.width = '100%'; s.height = '100%';
-      s.zIndex = '5';        // above IFC canvas (which sits at auto/0)
-      s.pointerEvents = 'none';
-      mainCanvas.parentElement.appendChild(canvas);
-
-      _viewer = {};
-
-      var renderer = new THREE.WebGLRenderer({ canvas: canvas, antialias: true, alpha: true, premultipliedAlpha: false });
-      renderer.setPixelRatio(window.devicePixelRatio || 1);
-      renderer.setSize(mainCanvas.clientWidth, mainCanvas.clientHeight, false);
-      renderer.setClearColor(0x000000, 0); // fully transparent — splat-only layer
-
-      var scene = new THREE.Scene();
-      var cam = (window._ccViewport && window._ccViewport.getCamera()) || null;
-      var fov = cam ? cam.fov : 55;
-      var aspect = cam ? cam.aspect : (mainCanvas.clientWidth / mainCanvas.clientHeight);
-      var camera = new THREE.PerspectiveCamera(fov, aspect, 0.01, 100000);
-
-      _viewer.canvas = canvas;
-      _viewer.renderer = renderer;
-      _viewer.scene = scene;
-      _viewer.camera = camera;
-      _viewer.splats = [];
-      _viewer.mainCanvas = mainCanvas;
-
-      // Resize tracker — match the main canvas size each frame (cheap; the
-      // setSize call short-circuits when dimensions haven't changed).
-      _viewer._lastW = mainCanvas.clientWidth;
-      _viewer._lastH = mainCanvas.clientHeight;
-
-      // Listen to the core's per-frame event. The IFC viewer renders on
-      // demand (_needsRender), so this fires only when there's actually
-      // something to update — no idle-frame waste.
-      window._ccHasSplats = true;
-      _viewer._onFrame = function(){ _syncAndRender(); };
-      window.addEventListener('cc-render-frame', _viewer._onFrame);
-      // Also drive an initial render so the user sees the splat immediately
-      // even before they touch the camera.
-      requestAnimationFrame(_syncAndRender);
-      return _viewer;
+  // Spark's SplatMesh expects its `update(camera, renderer)` to run each
+  // frame so it can stream LoDs and re-sort splats by camera distance. The
+  // core renderer is render-on-demand (cc-render-frame event); we hook
+  // into that to drive Spark updates only when there's actually a frame
+  // about to render. No idle-frame work.
+  function _ensureRenderHook() {
+    if (_renderHookInstalled) return;
+    window.addEventListener('cc-render-frame', function(){
+      if (!_splats.length) return;
+      var s3 = window._ccState3d;
+      if (!s3 || !s3.camera || !s3.renderer) return;
+      for (var i = 0; i < _splats.length; i++) {
+        var m = _splats[i].mesh;
+        if (m && typeof m.update === 'function') {
+          try { m.update(s3.camera, s3.renderer); } catch(_){}
+        }
+      }
     });
+    _renderHookInstalled = true;
   }
 
-  function _syncAndRender() {
-    if (!_viewer) return;
-    var cam = window._ccViewport && window._ccViewport.getCamera();
-    if (!cam) return;
-    var c = _viewer.camera, r = _viewer.renderer, mc = _viewer.mainCanvas;
-    // Mirror core camera state
-    c.position.set(cam.position[0], cam.position[1], cam.position[2]);
-    c.up.set(cam.up[0], cam.up[1], cam.up[2]);
-    c.lookAt(cam.target[0], cam.target[1], cam.target[2]);
-    if (cam.fov && c.fov !== cam.fov) { c.fov = cam.fov; c.updateProjectionMatrix(); }
-    if (cam.aspect && Math.abs(c.aspect - cam.aspect) > 1e-4) { c.aspect = cam.aspect; c.updateProjectionMatrix(); }
-    // Resize if the main canvas changed dimensions
-    var w = mc.clientWidth, h = mc.clientHeight;
-    if (w !== _viewer._lastW || h !== _viewer._lastH) {
-      r.setSize(w, h, false);
-      c.aspect = w / h; c.updateProjectionMatrix();
-      _viewer._lastW = w; _viewer._lastH = h;
-    }
-    r.render(_viewer.scene, c);
+  function _ensureGroup() {
+    if (_splatGroup) return _splatGroup;
+    var sc = _scene(); if (!sc) return null;
+    _splatGroup = new (window.THREE.Group)();
+    _splatGroup.name = 'cc-splat-layers';
+    _splatGroup.userData.isSplatLayer = true;
+    sc.add(_splatGroup);
+    return _splatGroup;
   }
 
-  // ─── Public API ───────────────────────────────────────────────────────────
-  // Load a splat from a URL or File. Resolves with {id, name} once visible.
+  // Public: load a splat (URL string or File) into the IFC scene.
   window._ccLoadSplat = function(src, opts) {
     opts = opts || {};
-    return _ensureViewer().then(function(v){
-      var Spark = _modules.Spark;
-      // Spark exposes a SplatMesh constructor that takes a URL or ArrayBuffer.
-      // We support both File (drag-drop) and string URL.
-      var SplatMesh = Spark.SplatMesh || Spark.default && Spark.default.SplatMesh;
+    return _loadSpark().then(function(mod){
+      var grp = _ensureGroup();
+      if (!grp) throw new Error('Scene not ready');
+      _ensureRenderHook();
+
+      var SplatMesh = mod.SplatMesh || (mod.default && mod.default.SplatMesh);
       if (!SplatMesh) throw new Error('Spark SplatMesh not available');
+
       var url;
       if (typeof src === 'string') url = src;
       else if (src && src.name) url = URL.createObjectURL(src);
       else throw new Error('Splat source must be a URL string or File');
 
       var mesh = new SplatMesh({ url: url });
+      mesh.name = opts.name || (typeof src === 'string' ? src.split('/').pop() : src.name);
       if (opts.opacity != null) mesh.opacity = opts.opacity;
-      // Default-position at the IFC's bbox center. Splats are at world
-      // origin in their own coord system; without this they're invisible
-      // for any georeferenced IFC (Dutch RD ~85 km offset, US state plane,
-      // any EPSG-projected meters). User can override with opts.position.
+
+      // Default-position at the IFC bbox center so georef'd models (Dutch
+      // RD ~85 km offset, US state plane, etc.) don't render the splat in
+      // a different world from the camera. Override with opts.position.
       var pos = opts.position;
       if (!pos && window._ccViewport && window._ccViewport.getBounds) {
         var b = window._ccViewport.getBounds();
         if (b && b.center) pos = b.center;
       }
       if (pos && pos.length === 3) mesh.position.set(pos[0], pos[1], pos[2]);
-      // Scale: a single number scales uniformly, [x,y,z] scales per axis.
-      // Useful because drone captures are in real-world meters but at an
-      // unknown export scale (Polycam/Postshot/etc each pick their own).
       if (opts.scale != null) {
         if (typeof opts.scale === 'number') mesh.scale.setScalar(opts.scale);
         else if (opts.scale.length === 3) mesh.scale.set(opts.scale[0], opts.scale[1], opts.scale[2]);
       }
-      // Rotation: [x,y,z] in radians (Euler ZYX intrinsic — Three's default).
       if (opts.rotation && opts.rotation.length === 3) mesh.rotation.set(opts.rotation[0], opts.rotation[1], opts.rotation[2]);
-      v.scene.add(mesh);
-      var id = 'splat-' + Date.now() + '-' + Math.floor(Math.random()*9999);
-      v.splats.push({ id: id, mesh: mesh, name: opts.name || (typeof src === 'string' ? src.split('/').pop() : src.name) });
-      requestAnimationFrame(_syncAndRender);
-      if (window._ccToast) window._ccToast('Loading splat ' + (opts.name || ''));
+
+      // Tag for selection/inspector/click pipelines downstream — keeps
+      // splats out of clash detection (no geometry the engine can use)
+      // while still being scene-graph members the viewer can manage.
+      mesh.userData.isSplat = true;
+      mesh.userData._ccSplatId = 'splat-' + Date.now() + '-' + Math.floor(Math.random()*9999);
+
+      grp.add(mesh);
+      _splats.push({ id: mesh.userData._ccSplatId, mesh: mesh, name: mesh.name, source: typeof src === 'string' ? src : (src.name || '(file)') });
+      _invalidate(4);
+      if (window._ccToast) window._ccToast('Loading splat ' + mesh.name);
       try { window.dispatchEvent(new CustomEvent('cc-splats-changed')); } catch(_){}
-      return { id: id, name: opts.name };
+      return { id: mesh.userData._ccSplatId, name: mesh.name };
     }).catch(function(err){
       console.error('[splat] load failed', err);
       if (window._ccToast) window._ccToast('Splat load failed: ' + (err.message || err));
@@ -197,53 +127,31 @@
     });
   };
 
-  // Remove a single splat by id, or all splats if no id given.
+  // Remove one (by id) or all splats.
   window._ccUnloadSplats = function(id) {
-    if (!_viewer) return;
     var keep = [];
-    _viewer.splats.forEach(function(s){
+    _splats.forEach(function(s){
       if (id && s.id !== id) { keep.push(s); return; }
-      try { _viewer.scene.remove(s.mesh); if (s.mesh.dispose) s.mesh.dispose(); } catch(_){}
+      try {
+        if (s.mesh.parent) s.mesh.parent.remove(s.mesh);
+        if (typeof s.mesh.dispose === 'function') s.mesh.dispose();
+      } catch(_){}
     });
-    _viewer.splats = keep;
-    if (!_viewer.splats.length) _destroyViewer();
-    else requestAnimationFrame(_syncAndRender);
+    _splats = keep;
+    if (!_splats.length && _splatGroup && _splatGroup.parent) {
+      _splatGroup.parent.remove(_splatGroup);
+      _splatGroup = null;
+    }
+    _invalidate(3);
     try { window.dispatchEvent(new CustomEvent('cc-splats-changed')); } catch(_){}
   };
 
-  function _destroyViewer() {
-    if (!_viewer) return;
-    window.removeEventListener('cc-render-frame', _viewer._onFrame);
-    window._ccHasSplats = false;
-    try { _viewer.renderer.dispose(); } catch(_){}
-    if (_viewer.canvas && _viewer.canvas.parentElement) _viewer.canvas.parentElement.removeChild(_viewer.canvas);
-    if (_viewer.mainCanvas) _viewer.mainCanvas.style.background = _viewer._origMainBg || '';
-    try {
-      if (window._ccState3d && window._ccState3d.renderer) {
-        // Restore the core's original clear so the IFC viewer looks normal
-        // again. The exact value comes from elsewhere; setting white-on-light
-        // is a reasonable default that matches our boot palette.
-        var theme = (window._ccLatestState && window._ccLatestState.prefs && window._ccLatestState.prefs.theme) || 'light';
-        var bg = theme === 'light' ? 0xfafafa : 0x141414;
-        window._ccState3d.renderer.setClearColor(bg, 1);
-        if (window._ccState3d.scene) window._ccState3d.scene.background = new (window.THREE.Color)(bg);
-        if (window._ccInvalidate) window._ccInvalidate(2);
-      }
-    } catch(_){}
-    _viewer = null;
-  }
-
-  // Quick query helper for the UI / NL layer
   window._ccListSplats = function() {
-    if (!_viewer) return [];
-    return _viewer.splats.map(function(s){ return { id:s.id, name:s.name }; });
+    return _splats.map(function(s){ return { id:s.id, name:s.name, source:s.source }; });
   };
 
-  // Self-test on demand: hit Spark's own public sample. Useful for the spike.
-  // Not wired into any UI — call from console: _ccTestSplat().
-  // (The previous HuggingFace bicycle URL returned 404 — using Spark's hosted
-  //  butterfly.spz which they publish as the documentation example. Stable as
-  //  long as their docs are up.)
+  // Self-test on demand: Spark's hosted butterfly. Stable while their
+  // docs are up. Useful for spike validation; not wired into any UI.
   window._ccTestSplat = function() {
     return window._ccLoadSplat(
       'https://sparkjs.dev/assets/splats/butterfly.spz',
@@ -252,6 +160,6 @@
   };
 
   if (typeof window._ccRegisterAddon === 'function') {
-    window._ccRegisterAddon({ id: 'splat', name: 'Gaussian Splat overlay', description: 'Load 3D Gaussian Splat as-built captures as a reference layer (.splat/.ply/.ksplat/.spz). Renders on a sibling canvas behind the IFC model. Phase 1: drag-drop or URL only; 3D Tiles streaming + Esri ingest in Phase 2.' });
+    window._ccRegisterAddon({ id: 'splat', name: 'Gaussian Splat overlay', description: 'Load 3D Gaussian Splat as-built captures as a first-class scene member alongside IFC and point clouds. Supports .splat/.ply/.ksplat/.spz. Phase 1: drag-drop or URL; 3D Tiles streaming + Esri ingest in Phase 2.' });
   }
 })();

@@ -10358,10 +10358,13 @@ function startApp() {
       window._ccCaptureViewpoint = _captureViewpoint;
 
       // Sky-bounce hemi: clean white sky from above, light gray ground from below.
-      S._ambLight = new THREE.HemisphereLight(0xffffff, 0xc0c0c0, 0.55);
+      // r155+ uses physically-based light intensity (legacy semantics
+      // removed at r165). Multiply legacy values by π to preserve the
+      // original visual look — applied to every light constructor below.
+      S._ambLight = new THREE.HemisphereLight(0xffffff, 0xc0c0c0, 0.55 * Math.PI);
       scene.add(S._ambLight);
       // Warm directional sun (slight warm tint, like late-afternoon site visit)
-      S._sunLight = new THREE.DirectionalLight(0xfff2d6, 1.4);
+      S._sunLight = new THREE.DirectionalLight(0xfff2d6, 1.4 * Math.PI);
       S._sunLight.position.set(80,120,60);
       S._sunLight.castShadow = true;
       S._sunLight.shadow.mapSize.set(1024,1024); // 1024 is adequate for arch viz; 2048 was costly
@@ -10376,7 +10379,7 @@ function startApp() {
       S._sunLight.shadow.camera.bottom= -_sd;
       scene.add(S._sunLight);
       // Cool fill from opposite side (no shadow, low cost)
-      S._fillLight = new THREE.DirectionalLight(0xd0e8ff,0.35);
+      S._fillLight = new THREE.DirectionalLight(0xd0e8ff, 0.35 * Math.PI);
       S._fillLight.position.set(-50,-20,-50); scene.add(S._fillLight);
 
       // Resize shadow frustum to fit only visible models — hidden models must not
@@ -12577,11 +12580,12 @@ function startApp() {
       camera.position.set(0, 0, 4);
       camera.lookAt(0, 0, 0);
 
-      scene.add(new THREE.AmbientLight(0xffffff, 0.5));
-      var dKey = new THREE.DirectionalLight(0xffffff, 0.95);
+      // r155+ physically-based lights: legacy intensities × π to match.
+      scene.add(new THREE.AmbientLight(0xffffff, 0.5 * Math.PI));
+      var dKey = new THREE.DirectionalLight(0xffffff, 0.95 * Math.PI);
       dKey.position.set(2, 4, 5);
       scene.add(dKey);
-      var dFill = new THREE.DirectionalLight(0x6688aa, 0.3);
+      var dFill = new THREE.DirectionalLight(0x6688aa, 0.3 * Math.PI);
       dFill.position.set(-3, -2, -3);
       scene.add(dFill);
 
