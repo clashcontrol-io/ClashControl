@@ -1,5 +1,8 @@
 # Changelog
 
+## v5.19.43 (2026-06-08)
+- fix(restore): fingerprint position buffer for _instKey
+
 ## v5.19.42 (2026-06-08)
 - fix(plan): cut-plane arrow + plane unclipped, match section gizmo
 
