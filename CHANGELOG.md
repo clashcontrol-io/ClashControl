@@ -1,5 +1,8 @@
 # Changelog
 
+## v5.19.6 (2026-06-08)
+- fix(splat): test URL → Spark's hosted butterfly.spz (HuggingFace 404'd) + CSP allowlist
+
 ## v5.19.5 (2026-06-08)
 - fix(splat): dedupe Three.js — load Spark's unbundled ESM + document-head import map
 
