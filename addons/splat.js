@@ -42,11 +42,13 @@
     if (typeof window._ccInvalidate === 'function') window._ccInvalidate(n||2);
   }
 
-  // Spark's SplatMesh expects its `update(camera, renderer)` to run each
-  // frame so it can stream LoDs and re-sort splats by camera distance. The
-  // core renderer is render-on-demand (cc-render-frame event); we hook
-  // into that to drive Spark updates only when there's actually a frame
-  // about to render. No idle-frame work.
+  // Spark's SplatMesh expects its per-frame hook to run each frame so it
+  // can stream LoDs and re-sort splats by camera distance. The Spark API
+  // method is `frameUpdate(camera, renderer)` — earlier code called
+  // `mesh.update(...)` which doesn't exist (SplatMesh extends Object3D so
+  // .update isn't there). Result: splats loaded with N gaussians but
+  // never produced visible output. Probe both names so we survive future
+  // Spark API renames without another silent invisibility regression.
   function _ensureRenderHook() {
     if (_renderHookInstalled) return;
     window.addEventListener('cc-render-frame', function(){
@@ -55,9 +57,11 @@
       if (!s3 || !s3.camera || !s3.renderer) return;
       for (var i = 0; i < _splats.length; i++) {
         var m = _splats[i].mesh;
-        if (m && typeof m.update === 'function') {
-          try { m.update(s3.camera, s3.renderer); } catch(_){}
-        }
+        if (!m) continue;
+        try {
+          if (typeof m.frameUpdate === 'function') m.frameUpdate(s3.camera, s3.renderer);
+          else if (typeof m.update === 'function')  m.update(s3.camera, s3.renderer);
+        } catch(_){}
       }
     });
     _renderHookInstalled = true;
