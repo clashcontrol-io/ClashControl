@@ -10302,7 +10302,58 @@ function startApp() {
         window._ccSectionDragging = false;
         renderer.domElement.style.cursor = '';
       }
+      // ── Floor-plan cut-plane drag ───────────────────────────────────
+      // Drags the horizontal cut up/down while keeping floor-plan mode active.
+      // Live-update mirrors the section-plane pattern: imperatively move the
+      // gizmo + clipping plane during mousemove, commit fp.cutHeight on
+      // mouseup. Avoids the gizmo-rebuild round-trip on every frame.
+      var _fpDrag = null;
+      function _fpLiveMove(newCutAt) {
+        var S2 = state3d.current; if (!S2) return;
+        var helper = S2._cutPlaneHelper;
+        if (helper) helper.position.y = newCutAt;
+        var pl = S2.renderer.clippingPlanes && S2.renderer.clippingPlanes[0];
+        if (pl) pl.setFromNormalAndCoplanarPoint(new THREE.Vector3(0,-1,0), new THREE.Vector3(0, newCutAt, 0));
+        invalidate();
+      }
+      function _finishFpDrag() {
+        if (!_fpDrag) return;
+        if (_fpDrag.didDrag && _fpDrag.lastCutAt != null && window._ccDispatch) {
+          var fp = (window._ccLatestState||{}).floorPlan;
+          if (fp) {
+            var nextCutHeight = Math.max(0.1, Math.min(50, _fpDrag.lastCutAt - fp.elevation));
+            window._ccDispatch({t:A.FLOOR_PLAN, v:Object.assign({}, fp, {cutHeight: nextCutHeight})});
+          }
+        }
+        var S2f = state3d.current; if (S2f && S2f.orbit) S2f.orbit.enabled = true;
+        _fpDrag = null;
+        window._ccSectionDragging = false;
+        renderer.domElement.style.cursor = '';
+      }
+
       renderer.domElement.addEventListener('mousedown', function(e) {
+        // ── Floor-plan cut handle: check first when active ──
+        if (e.button === 0) {
+          var S2 = state3d.current;
+          if (S2 && S2._cutPlaneHelper && S2._cutPlaneHelper._fpDragHandles) {
+            var rect = renderer.domElement.getBoundingClientRect();
+            var mx = ((e.clientX-rect.left)/rect.width)*2-1;
+            var my = -((e.clientY-rect.top)/rect.height)*2+1;
+            raycaster.setFromCamera(new THREE.Vector2(mx,my), S2.camera);
+            var fpHits = raycaster.intersectObjects(S2._cutPlaneHelper._fpDragHandles, false);
+            if (fpHits.length > 0) {
+              e.preventDefault(); e.stopImmediatePropagation();
+              S2.orbit.enabled = false;
+              _fpDrag = {
+                startY: e.clientY,
+                startCutAt: S2._cutPlaneHelper.position.y,
+                lastCutAt: S2._cutPlaneHelper.position.y,
+                didDrag: false
+              };
+              return;
+            }
+          }
+        }
         var cs = window._ccCurrentSection;
         if (!cs) return;
         var ctrlHeld = e.ctrlKey || e.metaKey;
@@ -10332,6 +10383,35 @@ function startApp() {
         }
       }, true);
       _wlAdd('mousemove', function(e) {
+        // ── Floor-plan cut handle drag: convert screen Y to world Y delta and slide ──
+        if (_fpDrag) {
+          if (e.buttons === 0) { _finishFpDrag(); return; }
+          var S2f = state3d.current;
+          if (!S2f || !S2f._cutPlaneHelper) return;
+          var dy = e.clientY - _fpDrag.startY;
+          if (Math.abs(dy) < 3 && !_fpDrag.didDrag) return;
+          _fpDrag.didDrag = true;
+          window._ccSectionDragging = true;
+          // World-Y units per screen pixel at the gizmo distance — matches the
+          // section-plane handle scale logic so 1 px of drag ≈ 1 px of motion.
+          var _camF = S2f.camera;
+          var _vpHF = renderer.domElement.clientHeight || 1;
+          var _wppF;
+          if (_camF.isOrthographicCamera) {
+            _wppF = ((_camF.top - _camF.bottom) / (_camF.zoom || 1)) / _vpHF;
+          } else {
+            var _distF = _camF.position.distanceTo(S2f._cutPlaneHelper.position);
+            _wppF = (2 * Math.tan((_camF.fov * Math.PI / 180) / 2) * _distF) / _vpHF;
+          }
+          var fp = (window._ccLatestState||{}).floorPlan;
+          var minCut = fp ? (fp.elevation + 0.1) : -Infinity;
+          var maxCut = fp ? (fp.elevation + 50) : Infinity;
+          var newCutAt = Math.max(minCut, Math.min(maxCut, _fpDrag.startCutAt - dy * _wppF));
+          _fpDrag.lastCutAt = newCutAt;
+          _fpLiveMove(newCutAt);
+          renderer.domElement.style.cursor = 'ns-resize';
+          return;
+        }
         if (_secDrag && e.buttons === 0) { _finishSecDrag(); return; } // released off-canvas
         if (!_secDrag) return;
         if (_secDrag.mode === 'rotate') {
@@ -10387,11 +10467,12 @@ function startApp() {
         }
       });
       _wlAdd('mouseup', function(e) {
+        if (_fpDrag && e.button === 0) { _finishFpDrag(); return; }
         if (!_secDrag) return;
         if (e.button !== _secDrag.button) return;
         _finishSecDrag();
       });
-      _wlAdd('blur', function(){ _finishSecDrag(); });
+      _wlAdd('blur', function(){ _finishFpDrag(); _finishSecDrag(); });
       renderer.domElement.addEventListener('contextmenu', function(e) {
         if (_secDrag && _secDrag.didDrag) { e.preventDefault(); e.stopPropagation(); }
       }, true);
@@ -10410,15 +10491,25 @@ function startApp() {
         h.material.needsUpdate = true;
       }
       renderer.domElement.addEventListener('mousemove', function(e) {
-        if (_secDrag) return;
+        if (_secDrag || _fpDrag) return;
         var S2 = state3d.current;
-        if (!S2._sectionPlaneVis || !S2._sectionPlaneVis._secDragHandles) {
-          if (_lastSecHoverHandle) { _secHandleGlow(_lastSecHoverHandle, false); _lastSecHoverHandle = null; renderer.domElement.style.cursor = ''; }
-          return;
-        }
         var rect = renderer.domElement.getBoundingClientRect();
         var mx = ((e.clientX-rect.left)/rect.width)*2-1;
         var my = -((e.clientY-rect.top)/rect.height)*2+1;
+        // Floor-plan cut handle hover takes priority while floor plan is active.
+        if (S2 && S2._cutPlaneHelper && S2._cutPlaneHelper._fpDragHandles) {
+          raycaster.setFromCamera(new THREE.Vector2(mx,my), S2.camera);
+          var fpH = raycaster.intersectObjects(S2._cutPlaneHelper._fpDragHandles, false);
+          if (fpH.length > 0) {
+            renderer.domElement.style.cursor = 'ns-resize';
+            if (_lastSecHoverHandle) { _secHandleGlow(_lastSecHoverHandle, false); _lastSecHoverHandle = null; invalidate(); }
+            return;
+          }
+        }
+        if (!S2 || !S2._sectionPlaneVis || !S2._sectionPlaneVis._secDragHandles) {
+          if (_lastSecHoverHandle) { _secHandleGlow(_lastSecHoverHandle, false); _lastSecHoverHandle = null; renderer.domElement.style.cursor = ''; }
+          return;
+        }
         raycaster.setFromCamera(new THREE.Vector2(mx,my), S2.camera);
         var hits = raycaster.intersectObjects(S2._sectionPlaneVis._secDragHandles, false);
         if (hits.length > 0) {
@@ -10722,6 +10813,22 @@ function startApp() {
               _ring.quaternion.identity();
             }
           }
+        }
+
+        // Same constant-size scaling for the floor-plan cut-plane arrow.
+        if (S._cutPlaneHelper && S._cutPlaneHelper._fpHandleGroup) {
+          var _fpg = S._cutPlaneHelper;
+          var _camF = S.camera;
+          var _vpHF = renderer.domElement.clientHeight || 1;
+          var _wppF;
+          if (_camF.isOrthographicCamera) {
+            _wppF = ((_camF.top - _camF.bottom) / (_camF.zoom || 1)) / _vpHF;
+          } else {
+            var _distF = _camF.position.distanceTo(_fpg.position);
+            _wppF = (2 * Math.tan((_camF.fov * Math.PI / 180) / 2) * _distF) / _vpHF;
+          }
+          var _scF = (_wppF * 110) / (_fpg._fpHandleSpan || 1);
+          if (_scF > 0 && isFinite(_scF)) _fpg._fpHandleGroup.scale.setScalar(_scF);
         }
 
         // Lower resolution while moving: orbit drag → 50%, walk movement → 65%
@@ -11620,18 +11727,64 @@ function startApp() {
       S.renderer.clippingPlanes = planes;
       S.renderer.localClippingEnabled = true;
       // Visual cut plane indicator (subtle translucent plane at cut level)
-      if(S._cutPlaneHelper){S.scene.remove(S._cutPlaneHelper);S._cutPlaneHelper=null;}
+      // with a vertical arrow drag handle. Drag the arrow to raise/lower the
+      // cut without leaving floor-plan mode. The arrow + hit proxy live in a
+      // sub-group that's tick-scaled to a constant on-screen size in the
+      // render loop, matching the section-plane gizmo pattern.
+      if(S._cutPlaneHelper){
+        S._cutPlaneHelper.traverse(function(o){ if(o.geometry)o.geometry.dispose(); if(o.material)o.material.dispose(); });
+        S.scene.remove(S._cutPlaneHelper); S._cutPlaneHelper=null;
+      }
       var box = _elemsBBox();
       var ctr = box.getCenter(new THREE.Vector3());
       var sz = box.getSize(new THREE.Vector3());
       var planeSize = Math.max(sz.x,sz.z)*2.0;
+      var cutGroup = new THREE.Group();
+      // Translucent plane
       var cutGeo = new THREE.PlaneGeometry(planeSize, planeSize);
       var cutMat = new THREE.MeshBasicMaterial({color:0x1a6b4a, transparent:true, opacity:0.04, side:THREE.DoubleSide, depthWrite:false});
       var cutMesh = new THREE.Mesh(cutGeo, cutMat);
       cutMesh.rotation.x = -Math.PI/2;
-      cutMesh.position.set(ctr.x, cutAt, ctr.z);
-      S.scene.add(cutMesh);
-      S._cutPlaneHelper = cutMesh;
+      cutGroup.add(cutMesh);
+      // Border for visibility
+      var borderGeo = new THREE.EdgesGeometry(cutGeo);
+      var borderMat = new THREE.LineBasicMaterial({color:0x1a6b4a, transparent:true, opacity:0.5});
+      var border = new THREE.LineSegments(borderGeo, borderMat);
+      border.rotation.x = -Math.PI/2;
+      cutGroup.add(border);
+      // Drag handle: amber arrow standing on top of the plane, pointing up.
+      // Sized at reference scale; tick-scaled for constant on-screen size.
+      var fpHandleGroup = new THREE.Group();
+      var shaftLen = 1.8, shaftCylR = 0.03, tipR = 0.12, tipLen = 0.3;
+      var arrowMat = new THREE.MeshBasicMaterial({color:0xf59e0b, transparent:true, opacity:0.9, depthTest:false});
+      var shaft = new THREE.Mesh(new THREE.CylinderGeometry(shaftCylR, shaftCylR, shaftLen, 8, 1, true), arrowMat);
+      shaft.position.set(0, shaftLen / 2, 0);
+      shaft.userData._fpHandle = 'move';
+      shaft.renderOrder = 1000;
+      fpHandleGroup.add(shaft);
+      var tip = new THREE.Mesh(new THREE.ConeGeometry(tipR, tipLen, 12), arrowMat.clone());
+      tip.position.set(0, shaftLen + tipLen / 2, 0);
+      tip.userData._fpHandle = 'move';
+      tip.renderOrder = 1000;
+      fpHandleGroup.add(tip);
+      // Invisible fat hit proxy for reliable picking
+      var hitR = tipR * 2.2;
+      var hitProxy = new THREE.Mesh(
+        new THREE.CylinderGeometry(hitR, hitR, shaftLen + tipLen, 8, 1, false),
+        new THREE.MeshBasicMaterial({ visible: false })
+      );
+      hitProxy.position.set(0, (shaftLen + tipLen) / 2, 0);
+      hitProxy.userData._fpHandle = 'move';
+      fpHandleGroup.add(hitProxy);
+      cutGroup.add(fpHandleGroup);
+      cutGroup.position.set(ctr.x, cutAt, ctr.z);
+      cutGroup._fpHandleGroup = fpHandleGroup;
+      cutGroup._fpHandleSpan = shaftLen + tipLen;
+      cutGroup._fpDragHandles = [shaft, tip, hitProxy];
+      cutGroup._fpCutMesh = cutMesh;
+      cutGroup._fpBorder  = border;
+      S.scene.add(cutGroup);
+      S._cutPlaneHelper = cutGroup;
       if(!floorPlanCamRef.current){
         floorPlanCamRef.current = {pos:S.camera.position.clone(), target:S.orbit.target.clone()};
         var viewDist = Math.max(sz.x,sz.z)*0.9;
