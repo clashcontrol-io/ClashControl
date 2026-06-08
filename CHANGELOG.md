@@ -1,5 +1,8 @@
 # Changelog
 
+## v5.19.26 (2026-06-08)
+- fix(viewer): hidden-line glass + instancing diagnostics + sRGBEncoding warn cleanup
+
 ## v5.19.25 (2026-06-08)
 - feat(debug): _ccMemReport() console helper — same diagnostic, no popup
 
