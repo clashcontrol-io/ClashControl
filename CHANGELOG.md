@@ -1,5 +1,8 @@
 # Changelog
 
+## v5.19.29 (2026-06-08)
+- diag: top-of-function ping in instancing + move QualityScore chip to Review workspace
+
 ## v5.19.28 (2026-06-08)
 - diag: revert auto chunk-merge + expand instancing diagnostic
 
