@@ -9984,6 +9984,21 @@ function startApp() {
             if(hit.isInstancedMesh && _hitInstId >= 0){
               hit.geometry.computeBoundingBox();
               hitBox = hit.geometry.boundingBox.clone().applyMatrix4(_hitWorldMx);
+            } else if (hit.userData && hit.userData._isMergedChunk) {
+              // Chunk-merged hit: hit.geometry is the chunk's combined buffer,
+              // so its bbox is the whole chunk (often a big chunk of the
+              // model). For section-box snap + fly-to to target the actual
+              // element, look up the per-element proxy mesh kept off-scene
+              // by _ccProxyMeshFor and compute its bbox instead.
+              var _hitModelId = (found && found.model) ? found.model.id : null;
+              var _proxy = (window._ccProxyMeshFor || _ccProxyMeshFor)(eid, _hitModelId);
+              if (_proxy && _proxy.geometry) {
+                if (!_proxy.geometry.boundingBox) _proxy.geometry.computeBoundingBox();
+                hitBox = _proxy.geometry.boundingBox.clone().applyMatrix4(_proxy.matrixWorld || new THREE.Matrix4());
+              } else {
+                // Fall back to chunk bbox if we somehow can't find the proxy.
+                hitBox = new THREE.Box3().setFromObject(hit);
+              }
             } else {
               hitBox = new THREE.Box3().setFromObject(hit);
             }
