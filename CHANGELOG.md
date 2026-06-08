@@ -1,5 +1,8 @@
 # Changelog
 
+## v5.19.32 (2026-06-08)
+- fix(perf): cache-restore branch also missing _instKey + instancing call
+
 ## v5.19.31 (2026-06-08)
 - fix(perf): instancing regression — matKey was never declared
 
