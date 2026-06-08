@@ -1,5 +1,8 @@
 # Changelog
 
+## v5.19.0 (2026-06-08)
+- feat(ai): make /api/nl Groq-only + nudge to own-LLM for clash-solving
+
 ## v5.18.0 (2026-06-07)
 - chore: daily memory sync 2026-06-07
 
