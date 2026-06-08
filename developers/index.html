@@ -1,0 +1,277 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ClashControl Developer API — Build BIM Apps on an Open Foundation</title>
+  <meta name="description" content="Public JavaScript + REST + MCP API for ClashControl, the open IFC viewer & clash detector. Build cost estimation, planning, custom checks on top. MIT-licensed, free.">
+  <link rel="canonical" href="https://www.clashcontrol.io/developers/">
+  <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 48 48'%3E%3Crect width='48' height='48' rx='8' fill='%231a6b4a'/%3E%3Crect x='10' y='10' width='28' height='28' fill='none' stroke='%23ffffff' stroke-width='2'/%3E%3Cline x1='10' y1='38' x2='38' y2='10' stroke='%23ffffff' stroke-width='2'/%3E%3C/svg%3E">
+
+  <meta property="og:type" content="article">
+  <meta property="og:url" content="https://www.clashcontrol.io/developers/">
+  <meta property="og:title" content="ClashControl Developer API — Build BIM Apps on an Open Foundation">
+  <meta property="og:description" content="JavaScript globals, REST endpoints, MCP server, addons. Build on top of ClashControl, free.">
+  <meta property="og:image" content="https://www.clashcontrol.io/og-image.png?v=2">
+  <meta property="og:site_name" content="ClashControl">
+  <meta property="og:locale" content="en_US">
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="ClashControl Developer API — Build BIM Apps on an Open Foundation">
+  <meta name="twitter:description" content="JS, REST, MCP. Build BIM apps on a free, MIT-licensed foundation.">
+  <meta name="twitter:image" content="https://www.clashcontrol.io/og-image.png?v=2">
+
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Syne:wght@700;800&family=DM+Sans:wght@400;500;600;700&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
+
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@type": "FAQPage",
+    "mainEntity": [
+      { "@type": "Question", "name": "Can I extend ClashControl with my own features?",
+        "acceptedAnswer": { "@type": "Answer", "text": "Yes. ClashControl exposes three public APIs: a JavaScript global object (window.ClashControl.*), a localhost REST API via the Smart Bridge binary, and a Model Context Protocol (MCP) server for AI agents. Plus an addon plugin system for shipping reusable extensions. All MIT-licensed." } },
+      { "@type": "Question", "name": "Is there a hosted API for third-party servers?",
+        "acceptedAnswer": { "@type": "Answer", "text": "No. ClashControl runs entirely in the user's browser by design — there's no hosted backend that holds IFC data. All extension points run client-side. If you need server-side IFC processing, fork the repo and host yourself." } },
+      { "@type": "Question", "name": "How do I write an addon?",
+        "acceptedAnswer": { "@type": "Answer", "text": "Create a JavaScript file under addons/ that's a plain IIFE. Call window._ccRegisterAddon() with an id, name, and description. Expose your functions on window._ccYourThing. The core loads all addons asynchronously and gates calls behind typeof checks so missing addons can't break the core." } },
+      { "@type": "Question", "name": "Can AI assistants control ClashControl?",
+        "acceptedAnswer": { "@type": "Answer", "text": "Yes — that's exactly what the MCP server is for. Claude Desktop, ChatGPT (via OpenAPI Actions), or any function-calling LLM can drive 51 tools that read model data, run clash detection, manage issues, and control the viewport." } }
+    ]
+  }
+  </script>
+  <script data-goatcounter="https://clashcontrol.goatcounter.com/count" async src="//gc.zgo.at/count.js"></script>
+
+  <style>
+    :root { --bg:#fff; --fg:#0f172a; --muted:#475569; --faint:#94a3b8; --accent:#1a6b4a; --border:#e2e8f0; --code-bg:#0f172a; --code-fg:#e2e8f0; }
+    * { box-sizing: border-box; }
+    html, body { margin:0; padding:0; background:var(--bg); color:var(--fg); font-family:'DM Sans',system-ui,-apple-system,sans-serif; line-height:1.65; -webkit-font-smoothing:antialiased; }
+    a { color: var(--accent); text-decoration: none; } a:hover { text-decoration: underline; }
+    header { border-bottom:1px solid var(--border); padding:1rem 1.5rem; display:flex; align-items:center; justify-content:space-between; }
+    header .brand { font-family:'Syne',sans-serif; font-weight:800; font-size:1.15rem; letter-spacing:-0.02em; color:var(--fg); display:flex; align-items:center; gap:.55rem; }
+    header nav a { color:var(--muted); margin-left:1.25rem; font-size:.95rem; font-weight:500; }
+    main { max-width:820px; margin:0 auto; padding:3rem 1.5rem 4rem; }
+    h1 { font-family:'Syne',sans-serif; font-size:2.4rem; font-weight:800; letter-spacing:-0.025em; line-height:1.15; margin:0 0 1.25rem; }
+    h2 { font-family:'Syne',sans-serif; font-size:1.4rem; font-weight:700; letter-spacing:-0.015em; margin:2.5rem 0 .75rem; }
+    h3 { font-size:1.05rem; font-weight:600; margin:1.75rem 0 .5rem; }
+    p { margin:0 0 1rem; } strong { font-weight:600; }
+    code { font-family:'DM Mono',ui-monospace,monospace; background:#f1f5f9; padding:.1rem .35rem; border-radius:3px; font-size:.92em; }
+    pre { background:var(--code-bg); color:var(--code-fg); padding:1rem 1.25rem; border-radius:8px; overflow-x:auto; font-family:'DM Mono',ui-monospace,monospace; font-size:.85rem; line-height:1.55; margin:1rem 0 1.5rem; }
+    pre code { background:transparent; color:inherit; padding:0; font-size:inherit; }
+    .lede { background: #f1f5f9; border-left:3px solid var(--accent); padding:1rem 1.25rem; border-radius:6px; font-size:1.05rem; margin-bottom:2rem; }
+    table { width:100%; border-collapse:collapse; margin:1rem 0 1.5rem; font-size:.93rem; }
+    th, td { text-align:left; padding:.5rem .75rem; border-bottom:1px solid var(--border); vertical-align:top; }
+    th { font-weight:600; color:var(--muted); background:#fafafa; font-size:.82rem; text-transform:uppercase; letter-spacing:.04em; }
+    .pill { display:inline-block; padding:.1rem .5rem; border-radius:99px; background:#f1f5f9; color:var(--muted); font-size:.7rem; font-weight:600; }
+    .pill.public { background:#dcfce7; color:#166534; }
+    .pill.beta { background:#fef3c7; color:#92400e; }
+    .faq dt { font-weight:600; margin-top:1.25rem; } .faq dd { margin:.3rem 0 0; color:var(--muted); }
+    .cta { display:inline-block; margin:1.5rem 0 .5rem; padding:.85rem 1.5rem; background:var(--accent); color:#fff; border-radius:6px; font-weight:600; font-size:1rem; }
+    .cta:hover { background:#155a3d; text-decoration:none; }
+    footer { border-top:1px solid var(--border); padding:2rem 1.5rem; text-align:center; color:var(--faint); font-size:.9rem; }
+    footer .siblings { margin-bottom:1rem; } footer .siblings a { margin:0 .6rem; color:var(--muted); }
+  </style>
+</head>
+<body>
+
+<header>
+  <a href="/" class="brand">
+    <svg width="22" height="22" viewBox="0 0 48 48" aria-hidden="true">
+      <rect width="48" height="48" rx="8" fill="#1a6b4a"/>
+      <rect x="10" y="10" width="28" height="28" fill="none" stroke="#fff" stroke-width="2"/>
+      <line x1="10" y1="38" x2="38" y2="10" stroke="#fff" stroke-width="2"/>
+    </svg>
+    ClashControl
+  </a>
+  <nav>
+    <a href="/">Open the app</a>
+    <a href="https://github.com/clashcontrol-io/ClashControl">GitHub</a>
+  </nav>
+</header>
+
+<main>
+  <h1>Build BIM apps on an open foundation.</h1>
+
+  <div class="lede">
+    ClashControl is a free, open-source IFC viewer + clash detector. It&rsquo;s also a <strong>plugin host</strong>. Cost estimation, planning, custom quality rules, AI-driven workflows — all of it can run inside the same browser tab, talking to the model that&rsquo;s already loaded. Three public APIs, one addon system, MIT license.
+  </div>
+
+  <h2>Four ways to extend</h2>
+
+  <table>
+    <thead><tr><th>Surface</th><th>Use when</th><th>Status</th></tr></thead>
+    <tbody>
+      <tr><td><strong>JavaScript globals</strong> <code>window.ClashControl.*</code></td><td>Other JS code on the same page wants to read state or trigger actions</td><td><span class="pill public">Public</span></td></tr>
+      <tr><td><strong>Addons</strong> <code>addons/*.js</code></td><td>You want to ship a reusable extension that loads alongside the app</td><td><span class="pill public">Public</span></td></tr>
+      <tr><td><strong>Smart Bridge REST</strong> <code>localhost:19803</code></td><td>An external desktop process needs to drive the viewer</td><td><span class="pill public">Public</span></td></tr>
+      <tr><td><strong>MCP server</strong></td><td>An AI agent (Claude Desktop, ChatGPT, any function-calling LLM) needs tool access</td><td><span class="pill public">Public</span></td></tr>
+    </tbody>
+  </table>
+
+  <h2>1. JavaScript globals</h2>
+
+  <p>Once ClashControl has booted (<code>window._ccThreeReady === true</code>), the following globals are available on every page:</p>
+
+  <h3>State + dispatch</h3>
+  <pre><code>// Read the live state (read-only snapshot)
+const state = window._ccLatestState;
+console.log(state.models.length, 'models loaded');
+console.log(state.clashes.length, 'clashes detected');
+
+// Dispatch a Redux-style action
+window._ccDispatch({ t: 'TAB', v: 'clashes' });
+window._ccDispatch({ t: 'ACTIVE', id: state.clashes[0].id });</code></pre>
+
+  <h3>Model + scene</h3>
+  <pre><code>// Bounding box, camera state, canvas dimensions
+const cam    = window._ccViewport.getCamera();   // {position, target, fov, ...}
+const bounds = window._ccViewport.getBounds();   // {min, max, center, size}
+
+// Programmatic camera moves
+window._ccViewport.flyTo(px, py, pz, tx, ty, tz);
+window._ccViewport.fitAll();
+
+// Invalidate a render (the viewer is render-on-demand)
+window._ccInvalidate(2);</code></pre>
+
+  <h3>Quality + accessibility checks</h3>
+  <pre><code>// Pull all elements from all loaded models
+const all = window._ccLatestState.models.flatMap(m =&gt; m.elements);
+
+// Run individual check engines
+const dq  = window._ccRunDataQualityChecks(all);
+const acc = window._ccRunAccessibilityChecks(all);
+
+// Or the aggregated 0&ndash;100 score
+const score = window._ccComputeQualityScore(all, window._ccLatestState.models);
+// =&gt; { score: 82, grade: 'B', breakdown: { categories: [...] }, at: ... }</code></pre>
+
+  <h3>Reference layers</h3>
+  <pre><code>// Load a Gaussian Splat
+await window._ccLoadSplat('https://example.com/scan.spz',
+  { name: 'site-scan', scale: 1, position: [x,y,z] });
+
+// Load a point cloud (.las / .ply / .pcd / .xyz)
+await window._ccLoadPointCloud(file);
+
+// Place model on a satellite basemap via IFC site lat/lon
+window._ccGeoplaceModel(modelId, { refLat: 52.0, refLon: 4.3 });</code></pre>
+
+  <p>The full list lives in <a href="https://github.com/clashcontrol-io/ClashControl/blob/main/index.html"><code>index.html</code></a> — search for <code>window._cc</code>. They&rsquo;re grouped by domain and commented. Stable underscore-prefixed names will continue to be supported; the cleaner <code>ClashControl.*</code> namespace is a thin alias.</p>
+
+  <h2>2. Addon system</h2>
+
+  <p>Addons are plain JavaScript IIFEs under <code>addons/</code>. The core loads them asynchronously and gates every call behind a <code>typeof</code> check — so a missing or broken addon can&rsquo;t break the viewer.</p>
+
+  <pre><code>// addons/my-feature.js
+(function(){
+  if (typeof window === 'undefined') return;
+
+  // Your addon's API on the global object
+  window._ccMyFeature = function(arg) {
+    const state = window._ccLatestState;
+    // ... do something with the model
+  };
+
+  // Register so the core knows you're alive
+  if (typeof window._ccRegisterAddon === 'function') {
+    window._ccRegisterAddon({
+      id: 'my-feature',
+      name: 'My Feature',
+      description: 'What it does'
+    });
+  }
+})();</code></pre>
+
+  <p>Add the filename to the loader list in <code>_loadAddonScripts</code> (or self-host as a static asset and load via a <code>&lt;script&gt;</code> tag). Existing addons in the repo are the best reference:</p>
+
+  <ul>
+    <li><a href="https://github.com/clashcontrol-io/ClashControl/blob/main/addons/data-quality.js"><code>data-quality.js</code></a> — rule-based checks, exposes the engines as globals</li>
+    <li><a href="https://github.com/clashcontrol-io/ClashControl/blob/main/addons/accessibility.js"><code>accessibility.js</code></a> — geometric checks against thresholds</li>
+    <li><a href="https://github.com/clashcontrol-io/ClashControl/blob/main/addons/geoplace.js"><code>geoplace.js</code></a> — basemap tile rendering, modifies the scene</li>
+    <li><a href="https://github.com/clashcontrol-io/ClashControl/blob/main/addons/pointcloud.js"><code>pointcloud.js</code></a> — file parsing + reference-layer mounting</li>
+    <li><a href="https://github.com/clashcontrol-io/ClashControl/blob/main/addons/splat.js"><code>splat.js</code></a> — lazy-loaded modern Three + Spark.js</li>
+  </ul>
+
+  <h2>3. Smart Bridge REST API</h2>
+
+  <p>The optional <a href="https://github.com/clashcontrol-io/ClashControl/blob/main/smart-bridge-server.js">Smart Bridge</a> binary runs on the user&rsquo;s machine and exposes ClashControl over HTTP on <code>127.0.0.1:19803</code>. Useful for desktop apps, command-line tools, or any external process that wants to drive the viewer.</p>
+
+  <pre><code># Get current viewer state
+curl http://127.0.0.1:19803/status
+
+# Get the live tool manifest (auto-generated from running addons)
+curl http://127.0.0.1:19803/tools
+
+# Get the OpenAPI 3.0 spec (for ChatGPT custom actions, etc.)
+curl http://127.0.0.1:19803/openapi.json
+
+# Execute a tool
+curl -X POST http://127.0.0.1:19803/call/get_clashes \
+  -H 'Content-Type: application/json' \
+  -d '{"limit": 10, "status": "open"}'</code></pre>
+
+  <p>Security: bound to loopback only (not network-reachable). CSRF-protected via Origin allow-list. <code>Host</code> header validated. Bodies capped at 1 MB. Details on the <a href="/security/">Security page</a>.</p>
+
+  <h2>4. MCP server (for AI agents)</h2>
+
+  <p><a href="https://github.com/clashcontrol-io/ClashControl/blob/main/mcp-server.js">mcp-server.js</a> implements <a href="https://modelcontextprotocol.io">Model Context Protocol</a> over stdio. Claude Desktop, ChatGPT&rsquo;s Connectors, or any function-calling LLM can hook in and drive 51 tools across model data, clash detection, issue management, and viewport control.</p>
+
+  <pre><code>// claude_desktop_config.json
+{
+  "mcpServers": {
+    "clashcontrol": {
+      "command": "node",
+      "args": ["/absolute/path/to/ClashControl/mcp-server.js"]
+    }
+  }
+}</code></pre>
+
+  <p>Or run <code>node mcp-server.js --install</code> to auto-configure Claude Desktop. The Smart Bridge binary bundles this for one-click install on Windows/macOS/Linux.</p>
+
+  <h2>What you can build</h2>
+
+  <ul>
+    <li><strong>Cost estimation</strong> &mdash; walk the IFC element graph via globals, calculate quantities, output a CSV.</li>
+    <li><strong>4D planning</strong> &mdash; tag elements with construction phase, drive timeline visualization through the viewer&rsquo;s visibility API.</li>
+    <li><strong>Custom quality rules</strong> &mdash; addon that checks your company&rsquo;s specific naming conventions and surfaces results in the Data Quality tab.</li>
+    <li><strong>Discipline-specific overlays</strong> &mdash; MEP route checker, structural code compliance, energy modeling preprocessor.</li>
+    <li><strong>Integration bridges</strong> &mdash; push to Procore, ACC, Trimble Connect via the REST API + an external bridge process.</li>
+    <li><strong>AI agents</strong> &mdash; let an LLM run autonomous coordination workflows via MCP.</li>
+  </ul>
+
+  <p>None of this requires a paid license, an account, or our permission. Fork, build, ship. We&rsquo;d love to see what you make &mdash; tag <a href="https://github.com/clashcontrol-io/ClashControl/discussions">Discussions</a>.</p>
+
+  <h2>Stability promise</h2>
+
+  <p>The <code>window.ClashControl.*</code> namespace and the underscore-prefixed globals listed above are <strong>public APIs</strong> &mdash; we won&rsquo;t break them in patch releases. The MCP tool manifest and REST OpenAPI spec are versioned independently and exposed at runtime so your client can discover them. Internal helpers (anything in <code>index.html</code> not documented here) can change at any time &mdash; treat them as private.</p>
+
+  <h2>FAQ</h2>
+  <dl class="faq">
+    <dt>Is there a hosted API on your servers?</dt>
+    <dd>No. ClashControl runs entirely in the user&rsquo;s browser by design. There&rsquo;s no hosted backend that holds IFC data. If you need server-side IFC processing, fork the repo and host yourself.</dd>
+    <dt>How do I distribute my addon?</dt>
+    <dd>Today: PR against the repo to land it in <code>addons/</code>, or self-host as a static JS file and load via your own <code>&lt;script&gt;</code> tag. A plugin gallery is in planning.</dd>
+    <dt>What&rsquo;s the license?</dt>
+    <dd>MIT. Use commercially, modify, distribute. Attribution appreciated.</dd>
+    <dt>Can AI agents really drive the viewer?</dt>
+    <dd>Yes. The MCP server is in production; Claude Desktop users can already say &ldquo;run clash detection between structural and MEP, then resolve duplicates&rdquo; and watch it happen.</dd>
+  </dl>
+
+  <a href="/" class="cta" data-goatcounter-click="cta-app-from-developers">Open the app and start integrating &rarr;</a>
+</main>
+
+<footer>
+  <div class="siblings">
+    <a href="/free-navisworks-alternative/">Free Navisworks alternative</a> &middot;
+    <a href="/free-solibri-alternative/">Free Solibri alternative</a> &middot;
+    <a href="/ifc-clash-detection-online/">Online IFC clash detection</a> &middot;
+    <a href="/free-bcf-viewer/">Free BCF viewer</a> &middot;
+    <a href="/data-quality-checker-online/">Free quality checker</a> &middot;
+    <a href="/security/">Security &amp; Privacy</a>
+  </div>
+  <div>© ClashControl &middot; <a href="/">Open the app</a> &middot; <a href="https://github.com/clashcontrol-io/ClashControl">Source on GitHub</a></div>
+</footer>
+
+</body>
+</html>

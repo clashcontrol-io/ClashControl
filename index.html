@@ -14557,6 +14557,7 @@ function startApp() {
           <div style=${{fontSize:'.78rem',marginBottom:'.3rem'}}>No models loaded</div>
           <div style=${{fontSize:'.69rem',lineHeight:1.5,color:'var(--text-faint)'}}>Drop an IFC, GLB, PDF or DXF file here,<br/>or click Add above.</div>
         </div>`}
+        ${html`<${_InstallAppBanner} />`}
         ${s.models.length > 0 && html`<${_QualityScoreChip} s=${s} />`}
         ${s.models.map(function(m){return html`<${ModelCard} key=${m.id} m=${m} d=${d} s=${s} />`})}
         ${html`<${_SplatLayersSection} />`}
@@ -14788,6 +14789,46 @@ function startApp() {
   // (drag-drop SPZ/PLY/KSPLAT or _ccTestSplat()) with one-click unload.
   // The splat addon owns the renderer; this panel is purely an inventory
   // view that reacts to the addon's 'cc-splats-changed' event.
+  // ── PWA install banner ─────────────────────────────────────────────
+  // Surfaces the browser's deferred install prompt in a small dismissible
+  // banner inside the Models tab. Most users never find the "Install" entry
+  // buried in the More menu; this gets it in front of them once, per
+  // session, with one-click acceptance.
+  function _InstallAppBanner() {
+    var stShow = useState(false);
+    var show = stShow[0], setShow = stShow[1];
+    useEffect(function(){
+      function refresh() {
+        var canInstall = !!(window._ccPwaInstallPrompt && window._ccPwaInstallPrompt());
+        var standalone = window.matchMedia && window.matchMedia('(display-mode: standalone)').matches;
+        var dismissed = false;
+        try { dismissed = sessionStorage.getItem('cc_install_dismissed') === '1'; } catch(_){}
+        setShow(canInstall && !standalone && !dismissed);
+      }
+      refresh();
+      window.addEventListener('beforeinstallprompt', refresh);
+      var t = setInterval(refresh, 2000); // pick up late prompts
+      return function(){ window.removeEventListener('beforeinstallprompt', refresh); clearInterval(t); };
+    }, []);
+    if (!show) return null;
+    return html`<div style=${{margin:'.4rem 0 .35rem', padding:'.55rem .7rem', borderRadius:'var(--radius-xs)',
+                   background:'var(--accent-bg)', border:'1px solid var(--accent)30',
+                   display:'flex', alignItems:'center', gap:'.55rem'}}>
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style=${{flexShrink:0}}><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+      <div style=${{flex:1, lineHeight:1.2}}>
+        <div style=${{fontSize:'.74rem', fontWeight:600, color:'var(--text-primary)'}}>Install as desktop app</div>
+        <div style=${{fontSize:'.66rem', color:'var(--text-muted)'}}>Offline, no browser tab, drag-drop IFC from Explorer.</div>
+      </div>
+      <button onClick=${function(){ if(window._ccPwaPromptInstall) window._ccPwaPromptInstall(); }}
+        style=${{padding:'.3rem .7rem', borderRadius:'var(--radius-xs)', background:'var(--accent)', color:'#fff',
+                 fontWeight:600, fontSize:'.7rem', border:'none', cursor:'pointer', flexShrink:0}}>Install</button>
+      <button title="Dismiss for this session"
+        onClick=${function(){ try { sessionStorage.setItem('cc_install_dismissed','1'); } catch(_){}; setShow(false); }}
+        style=${{background:'transparent', border:'none', color:'var(--text-faint)', cursor:'pointer',
+                 fontSize:'.8rem', padding:'0 .25rem', flexShrink:0}}>×</button>
+    </div>`;
+  }
+
   // ── ClashControl Quality Score chip ──────────────────────────────
   // Single 0–100 number that summarises the data-quality + accessibility
   // checks across all loaded models. Same product framing as paid tools
