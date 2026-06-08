@@ -11299,6 +11299,12 @@ function startApp() {
       wireframe.position.copy(ctr);
       wireframe.rotation.y=rot;
       wireframe.userData._sboxPart=true;
+      // Helpers shouldn't cast shadows — the box wireframe + face panels
+      // were projecting a phantom rotated trapezoid on the ground that
+      // looked like the section box was tilted differently than its
+      // visual. Explicit false on both ends keeps it clean.
+      wireframe.castShadow = false;
+      wireframe.receiveShadow = false;
       S.scene.add(wireframe);
       S._sboxHelper=wireframe;
 
@@ -11314,6 +11320,8 @@ function startApp() {
       faceDefs.forEach(function(fd){
         var pg=new THREE.PlaneGeometry(fd.w,fd.h);
         var pm=new THREE.Mesh(pg,new THREE.MeshBasicMaterial({color:0x1a6b4a,transparent:true,opacity:0.06,side:THREE.DoubleSide,depthWrite:false}));
+        pm.castShadow = false;     // see wireframe note above
+        pm.receiveShadow = false;
         pm.position.copy(ctr).add(fd.pos);
         if(fd.lookDir==='x'||fd.lookDir==='-x'){
           pm.rotation.y=rot+(fd.lookDir==='x'?Math.PI/2:-Math.PI/2);
@@ -11747,7 +11755,11 @@ function startApp() {
       //   shaded    → original colors, ambient-only, no shadows (architectural massing)
       //   rendered  → PBR-like, sun + shadows + contact plane  (presentation)
       //   wireframe → edges only, transparent fills           (CAD wireframe)
-      if (S.renderer) S.renderer.toneMappingExposure = expoMul * (style==='rendered' ? 1.0 : style==='shaded' ? 0.88 : 1.0);
+      // Rendered exposure dropped 1.0 → 0.7 after the r180 bump — post-r155
+      // tone-mapping reads brighter than r128 at the same exposure even
+      // without any light-intensity change. 0.7 lands close to the
+      // pre-bump look without requiring per-light retuning.
+      if (S.renderer) S.renderer.toneMappingExposure = expoMul * (style==='rendered' ? 0.7 : style==='shaded' ? 0.88 : 1.0);
       if (S._sunLight) {
         if (style==='rendered') {
           var sun = _ccTimeToSun(todHour);
