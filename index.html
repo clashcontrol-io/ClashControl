@@ -568,11 +568,17 @@ function startApp() {
   // Detecting which branch to take per-renderer makes this code survive the
   // bump unchanged — drop the legacy branch when r128 stops shipping.
   window._ccSetSRGBOutput = function(renderer) {
-    if (!renderer) return;
-    if ('outputColorSpace' in renderer && window.THREE && THREE.SRGBColorSpace) {
-      renderer.outputColorSpace = THREE.SRGBColorSpace;          // r152+
-    } else if ('outputEncoding' in renderer && window.THREE && THREE.sRGBEncoding) {
-      _ccSetSRGBOutput(renderer);              // r128 (current)
+    if (!renderer || !window.THREE) return;
+    // r152+ preferred path. The `in` guard keeps us safe on r128.
+    if ('outputColorSpace' in renderer && THREE.SRGBColorSpace) {
+      renderer.outputColorSpace = THREE.SRGBColorSpace;
+      return;
+    }
+    // r128 fallback — direct property write. DO NOT refactor into a
+    // recursive _ccSetSRGBOutput call (that caused a stack-overflow
+    // production crash; see commit history).
+    if ('outputEncoding' in renderer && THREE.sRGBEncoding) {
+      renderer.outputEncoding = THREE.sRGBEncoding;
     }
   };
   // Texture-side variant. Textures use the same encoding/colorSpace dance.
