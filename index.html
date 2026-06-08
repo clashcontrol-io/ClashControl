@@ -2843,6 +2843,13 @@ function startApp() {
   };
 
   function _buildInstancedMeshes(elements, meshes) {
+    // Top-of-function ping so we can confirm the function is even called.
+    // User memory diagnostics showed 0 instanced; if this log is missing
+    // entirely the call site itself is being skipped (different code path
+    // or upstream error eating the flow).
+    console.log('%c[Instancing] _buildInstancedMeshes called with '+
+      (elements ? elements.length : '?') + ' elements, '+
+      (meshes ? meshes.length : '?') + ' meshes', 'color:#a78bfa');
     if (!THREE.InstancedMesh) {
       console.warn('[Instancing] skipped: THREE.InstancedMesh is undefined');
       return {meshes:meshes, groups:0, instanced:0};
@@ -14612,7 +14619,7 @@ function startApp() {
           <div style=${{fontSize:'.69rem',lineHeight:1.5,color:'var(--text-faint)'}}>Drop an IFC, GLB, PDF or DXF file here,<br/>or click Add above.</div>
         </div>`}
         ${html`<${_InstallAppBanner} />`}
-        ${s.models.length > 0 && html`<${_QualityScoreChip} s=${s} />`}
+        ${s.models.length > 0 && s.workspace==='review' && html`<${_QualityScoreChip} s=${s} />`}
         ${s.models.map(function(m){return html`<${ModelCard} key=${m.id} m=${m} d=${d} s=${s} />`})}
         ${html`<${_SplatLayersSection} />`}
         ${s.underlays.length > 0 && html`<div style=${{marginTop:'.3rem',borderTop:'1px solid var(--hairline)',paddingTop:'.3rem'}}>
