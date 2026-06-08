@@ -1,5 +1,8 @@
 # Changelog
 
+## v5.19.48 (2026-06-08)
+- fix(restore): persist geometryExpressID, use as canonical _instKey
+
 ## v5.19.47 (2026-06-08)
 - diag(restore): detect real hash collisions + add opt-out switch
 
