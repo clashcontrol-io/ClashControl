@@ -6270,7 +6270,19 @@ function startApp() {
         }
       }
       var zoomFactor = 1+e.deltaY*0.0008;
+      var prevR = sph.r;
       sph.r *= zoomFactor;
+      // When zooming IN and the radius would clamp at the floor (0.5 in
+      // apply()), advance the target along the view direction instead.
+      // Without this, users get stuck the moment sph.r hits 0.5 — closer
+      // detail inspection is impossible until they pan or rotate the target.
+      // (Blender / Rhino "drive forward" pattern.)
+      if (zoomFactor < 1 && sph.r < 0.5 && !orbit.camera.isOrthographicCamera) {
+        var advance = Math.max(0, prevR - sph.r); // how much we wanted to close in by
+        orbit.camera.getWorldDirection(_tmpDir);
+        target.addScaledVector(_tmpDir, advance);
+        sph.r = prevR; // keep camera in place; we moved the target instead
+      }
       if(orbit.camera.isOrthographicCamera) {
         orbit.camera.zoom = Math.max(0.01, orbit.camera.zoom / zoomFactor);
         orbit.camera.updateProjectionMatrix();
@@ -10782,7 +10794,10 @@ function startApp() {
         var shaftCylR = 0.03;
         var tipR      = 0.12;
         var tipLen    = 0.3;
-        var arrowMat  = new THREE.MeshBasicMaterial({color: 0x1a6b4a, transparent: true, opacity: 0.65, depthTest: false});
+        // Match the section rotation ring (0xf59e0b amber) so the drag arrow,
+        // tip, and ring read as one gizmo. Was the brand green which made the
+        // axis arrow visually disjoint from the rotation ring.
+        var arrowMat  = new THREE.MeshBasicMaterial({color: 0xf59e0b, transparent: true, opacity: 0.85, depthTest: false});
         arrowMat.clippingPlanes = [];
         var shaftGeo  = new THREE.CylinderGeometry(shaftCylR, shaftCylR, shaftLen, 8, 1, true);
         var shaft     = new THREE.Mesh(shaftGeo, arrowMat);
@@ -11216,7 +11231,8 @@ function startApp() {
       faceDirs.forEach(function(fd){
         var faceCenter = ctr.clone().addScaledVector(fd.axis, fd.sign * fd.halfExt);
         var arrowPos   = faceCenter.clone().addScaledVector(fd.axis, fd.sign * faceArrowSize * 1.0);
-        var fmat = new THREE.MeshBasicMaterial({color:0x1a6b4a, transparent:true, opacity:0.65, depthTest:false});
+        // Section box face arrows match the section-plane gizmo (amber).
+        var fmat = new THREE.MeshBasicMaterial({color:0xf59e0b, transparent:true, opacity:0.85, depthTest:false});
         var arrow = new THREE.Mesh(faceArrowGeo, fmat);
         arrow.position.copy(arrowPos);
         arrow.quaternion.setFromUnitVectors(new THREE.Vector3(0,1,0), fd.axis.clone().multiplyScalar(fd.sign).normalize());
@@ -29751,21 +29767,31 @@ function startApp() {
       : s.commentMode ? 'note'
       : 'orbit';
 
-    function clearAllModes(){
-      if (s.walkMode) d({t:A.WALK_MODE,v:false});
-      if (s.walkPlacing) d({t:A.WALK_PLACING,v:false});
-      if (s.sectionAxis) d({t:A.SECTION,axis:null});
-      if (s.sectionCustom) d({t:A.SECTION_CUSTOM,v:null});
-      if (s.sectionBox && s.sectionBox.enabled) d({t:A.SECTION_BOX,v:null});
-      if (s.measureMode) {
+    function clearAllModes(keep){
+      // `keep` is an optional object of mode names to preserve, e.g.
+      // {sectionBox:true} when entering measure — section box is a clipping
+      // VIEW, not an active tool, and should coexist with measure. Same
+      // logic the other direction (slicebox preserves measure).
+      keep = keep || {};
+      if (s.walkMode && !keep.walkMode) d({t:A.WALK_MODE,v:false});
+      if (s.walkPlacing && !keep.walkPlacing) d({t:A.WALK_PLACING,v:false});
+      if (s.sectionAxis && !keep.sectionAxis) d({t:A.SECTION,axis:null});
+      if (s.sectionCustom && !keep.sectionCustom) d({t:A.SECTION_CUSTOM,v:null});
+      if (s.sectionBox && s.sectionBox.enabled && !keep.sectionBox) d({t:A.SECTION_BOX,v:null});
+      if (s.measureMode && !keep.measureMode) {
         d({t:A.MEASURE_MODE,v:false});
         if (window._ccCancelInProgressMeasurement) window._ccCancelInProgressMeasurement();
       }
-      if (s.floorPlan) d({t:A.FLOOR_PLAN,v:null});
-      if (s.commentMode) d({t:A.COMMENT_MODE,v:false});
+      if (s.floorPlan && !keep.floorPlan) d({t:A.FLOOR_PLAN,v:null});
+      if (s.commentMode && !keep.commentMode) d({t:A.COMMENT_MODE,v:false});
     }
     function setMode(mode){
-      clearAllModes();
+      // measure ↔ sectionBox coexist: section box is a clipping view, not an
+      // active tool. Entering measure keeps section box; entering section box
+      // keeps measure. Walk / floor-plan / slice still cancel everything.
+      if (mode === 'measure') clearAllModes({sectionBox:true});
+      else if (mode === 'slicebox') clearAllModes({measureMode:true});
+      else clearAllModes();
       if (mode === 'walk') d({t:A.WALK_PLACING,v:true});
       else if (mode === 'slice') d({t:A.SECTION,axis:'y',pos:0.5});
       else if (mode === 'measure') d({t:A.MEASURE_MODE,v:true});
@@ -29963,7 +29989,8 @@ function startApp() {
         ${btn({k:'slicebox', active:!!(s.sectionBox&&s.sectionBox.enabled), title:'Section Box [B]', label:'Section Box [B]', icon:I.slicebox,
                 onClick:function(){
                   if (s.sectionBox && s.sectionBox.enabled) { d({t:A.SECTION_BOX,v:null}); return; }
-                  clearAllModes();
+                  // Section box coexists with measure — see clearAllModes.
+                  clearAllModes({measureMode:true});
                   if (window._ccActivateSectionBox) {
                     window._ccActivateSectionBox();
                   }
