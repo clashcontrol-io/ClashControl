@@ -1,5 +1,8 @@
 # Changelog
 
+## v5.19.21 (2026-06-08)
+- feat(quality-score): single 0-100 score across data-quality + accessibility checks
+
 ## v5.19.20 (2026-06-08)
 - docs(security): public Security & Privacy page — IFC stays in your browser
 
