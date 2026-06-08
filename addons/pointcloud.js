@@ -49,8 +49,18 @@
   }
 
   // ── Parsers ───────────────────────────────────────────────────
+  // PLYLoader + PCDLoader are now preloaded by index.html's ESM bootstrap
+  // and attached to THREE.* there. We no longer need to inject the legacy
+  // examples/js script — that path 404s on three@0.180+ anyway. We DO keep
+  // a defensive lazy-load fallback in case the bootstrap ever drops them.
+  function _ensureLoader(name, esmPath) {
+    if (typeof THREE !== 'undefined' && typeof THREE[name] === 'function') return Promise.resolve();
+    return import(/* @vite-ignore */ esmPath).then(function(mod){
+      THREE[name] = mod[name];
+    });
+  }
   function parsePLY(buf) {
-    return loadScriptOnce('https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/PLYLoader.js')
+    return _ensureLoader('PLYLoader', 'https://cdn.jsdelivr.net/npm/three@0.180.0/examples/jsm/loaders/PLYLoader.js')
       .then(function(){
         var geom = new THREE.PLYLoader().parse(buf);
         geom.computeBoundingBox();
@@ -58,7 +68,7 @@
       });
   }
   function parsePCD(buf) {
-    return loadScriptOnce('https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/PCDLoader.js')
+    return _ensureLoader('PCDLoader', 'https://cdn.jsdelivr.net/npm/three@0.180.0/examples/jsm/loaders/PCDLoader.js')
       .then(function(){
         var pcd = new THREE.PCDLoader().parse(buf, '');
         var geom = pcd.geometry;

@@ -131,7 +131,11 @@
       var planeSize = totalSide * metresPerTile;
       // Plane is centred on the model bbox centre, sitting at Y = refElev (or 0).
       var tex = new THREE.CanvasTexture(canvas);
-      tex.encoding = THREE.sRGBEncoding;
+      // Use core's shim so this works on both r128 (tex.encoding) and r152+
+      // (tex.colorSpace). Falls back gracefully if the shim isn't loaded yet.
+      if (typeof window._ccSetSRGBTexture === 'function') window._ccSetSRGBTexture(tex);
+      else if ('colorSpace' in tex && THREE.SRGBColorSpace) tex.colorSpace = THREE.SRGBColorSpace;
+      else if ('encoding' in tex && THREE.sRGBEncoding) tex.encoding = THREE.sRGBEncoding;
       tex.minFilter = THREE.LinearFilter;
       tex.generateMipmaps = false;
 
