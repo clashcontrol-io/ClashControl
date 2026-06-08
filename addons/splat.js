@@ -226,12 +226,15 @@
     return _viewer.splats.map(function(s){ return { id:s.id, name:s.name }; });
   };
 
-  // Self-test on demand: hit a public sample splat. Useful for the spike.
+  // Self-test on demand: hit Spark's own public sample. Useful for the spike.
   // Not wired into any UI — call from console: _ccTestSplat().
+  // (The previous HuggingFace bicycle URL returned 404 — using Spark's hosted
+  //  butterfly.spz which they publish as the documentation example. Stable as
+  //  long as their docs are up.)
   window._ccTestSplat = function() {
     return window._ccLoadSplat(
-      'https://huggingface.co/datasets/dylanebert/3dgs/resolve/main/bicycle/bicycle.splat',
-      { name: 'bicycle (test)' }
+      'https://sparkjs.dev/assets/splats/butterfly.spz',
+      { name: 'butterfly (Spark sample)' }
     );
   };
 
