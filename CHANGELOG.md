@@ -1,5 +1,8 @@
 # Changelog
 
+## v5.19.1 (2026-06-08)
+- Security + agentic governance: MCP hardening, AI provenance, autonomy envelope (#589)
+
 ## v5.19.0 (2026-06-08)
 - feat(ai): make /api/nl Groq-only + nudge to own-LLM for clash-solving
 
