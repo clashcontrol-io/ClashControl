@@ -1,5 +1,8 @@
 # Changelog
 
+## v5.19.30 (2026-06-08)
+- feat(debug): _ccDebugInstancing() console helper — works on already-loaded models
+
 ## v5.19.29 (2026-06-08)
 - diag: top-of-function ping in instancing + move QualityScore chip to Review workspace
 
