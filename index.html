@@ -5387,12 +5387,18 @@ function startApp() {
             if (topicType === 'issue' || topicType === 'error') mappedType = 'hard';
             else if (topicType === 'warning') mappedType = 'soft';
             // Recover Revit element IDs from cc:revitA / cc:revitB labels (see exportBCF).
+            // Same pattern recovers AI provenance written by exportBCF: cc:aiModel,
+            // cc:aiSource, cc:aiAt. Carries the audit-trail chip through BCF round-trips.
             var revitIdA = null, revitIdB = null;
+            var aiModel = null, aiSource = null, aiAt = null;
             var labelNodes = topic.querySelectorAll('Labels');
             for (var li = 0; li < labelNodes.length; li++) {
               var txt = (labelNodes[li].textContent || '').trim();
-              if (txt.indexOf('cc:revitA=') === 0) revitIdA = txt.slice(10);
-              else if (txt.indexOf('cc:revitB=') === 0) revitIdB = txt.slice(10);
+              if      (txt.indexOf('cc:revitA=')  === 0) revitIdA = txt.slice(10);
+              else if (txt.indexOf('cc:revitB=')  === 0) revitIdB = txt.slice(10);
+              else if (txt.indexOf('cc:aiModel=') === 0) aiModel  = txt.slice(11);
+              else if (txt.indexOf('cc:aiSource=')=== 0) aiSource = txt.slice(12);
+              else if (txt.indexOf('cc:aiAt=')    === 0) aiAt     = txt.slice(8);
             }
             var issuePayload = {
               id:uid(), source:'bcf_import', type:mappedType, status:mappedStatus,
@@ -5402,6 +5408,12 @@ function startApp() {
             };
             if (revitIdA != null) issuePayload.revitIdA = revitIdA;
             if (revitIdB != null) issuePayload.revitIdB = revitIdB;
+            if (aiModel || aiSource || aiAt) {
+              issuePayload.aiProvenance = { actor:'bcf_import',
+                model:  aiModel  || null,
+                source: aiSource || null,
+                at:     aiAt     || null };
+            }
             d({t:A.ADD_ISSUE, v:issuePayload});
             imported++;
           } catch(e) { console.warn('BCF parse error:', e); }
@@ -5510,6 +5522,13 @@ function startApp() {
       // string content). Matching labels are parsed back on import.
       if (it.revitIdA != null) markup += '    <Labels>cc:revitA='+esc(it.revitIdA)+'</Labels>\n';
       if (it.revitIdB != null) markup += '    <Labels>cc:revitB='+esc(it.revitIdB)+'</Labels>\n';
+      // AI provenance — model + source + timestamp for every AI-touched issue.
+      // Other BCF readers preserve unknown Labels; the importer reconstructs
+      // aiProvenance from them so the audit-trail chip survives the round-trip.
+      var _aip = it.aiProvenance;
+      if (_aip && _aip.model)  markup += '    <Labels>cc:aiModel='+esc(_aip.model)+'</Labels>\n';
+      if (_aip && _aip.source) markup += '    <Labels>cc:aiSource='+esc(_aip.source)+'</Labels>\n';
+      if (_aip && _aip.at)     markup += '    <Labels>cc:aiAt='+esc(_aip.at)+'</Labels>\n';
       markup += '    <CreationDate>'+(it.createdAt||new Date().toISOString())+'</CreationDate>\n';
       markup += '    <CreationAuthor>'+authorEsc+'</CreationAuthor>\n';
       markup += '    <ModifiedDate>'+new Date().toISOString()+'</ModifiedDate>\n';
@@ -21978,6 +21997,33 @@ function startApp() {
           </div>
           <span style=${{fontSize:'0.8rem',color:_serverAIAvailable?'#4ade80':'#f87171',flexShrink:0}}>${_serverAIAvailable ? '● Connected' : '○ Offline'}</span>
         </div>
+        ${function(){
+          // Autonomy envelope (Day, AEC Magazine, Apr 2026). What the built-in
+          // assistant is allowed to do for clash resolution without escalation.
+          // State + persistence already wired (s.prefs.aiEnvelope). This is
+          // just the user-visible toggle; the NL pipeline reads from state.
+          var _env = (p.aiEnvelope && p.aiEnvelope.resolveClashes) || 'nudge';
+          var setEnv = function(v){ d({t:A.UPD_PREFS, u:{aiEnvelope: Object.assign({}, p.aiEnvelope||{}, {resolveClashes:v})}}); };
+          var BTN = function(v, label){
+            var on = _env === v;
+            return html`<button onClick=${function(){setEnv(v);}}
+              style=${{...S_BTN, padding:'.3rem .6rem', background: on ? 'var(--accent)' : 'var(--bg-secondary)',
+                color: on ? '#fff' : 'var(--text-secondary)', fontWeight: on ? 600 : 500,
+                fontSize:'0.78rem', borderRadius:6, border: on ? 'none' : '1px solid var(--border)'}}>${label}</button>`;
+          };
+          return html`<div style=${TROW}>
+            <div>
+              <div style=${TLBL}>Clash-resolution authority</div>
+              <div style=${TSUB}>${_env === 'nudge'
+                ? 'Nudge — built-in assistant stays basic; resolve/fix-clash queries route to your own LLM via the Smart Bridge Connector (or show a connect prompt).'
+                : 'Suggest — your own LLM may reason about resolutions and reply with options. ClashControl never auto-dispatches state changes; the architect remains the decision-maker.'}</div>
+            </div>
+            <div style=${{display:'flex',gap:'.3rem',flexShrink:0}}>
+              ${BTN('nudge','Nudge')}
+              ${BTN('suggest','Suggest')}
+            </div>
+          </div>`;
+        }()}
 
         <div style=${SEC}>Issue Defaults</div>
         <div style=${{display:'flex',gap:'.5rem',padding:'.5rem 0'}}>
