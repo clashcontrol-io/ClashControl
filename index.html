@@ -3109,6 +3109,16 @@ function startApp() {
           } else {
             _lmark('Element processing');
             var _sm = _ccStripSurveyMarkers(elements, meshes); elements = _sm.elements; meshes = _sm.meshes;
+            // Auto-enable chunk-merge for any non-tiny model. Default OFF
+            // because style-switching reads slightly different on merged
+            // chunks, but at >5k elements per model the per-mesh draw-call
+            // cost tips the balance — post-bump perf regression makes this
+            // even more important. User can flip back with
+            // `window._ccChunkMerge = false; location.reload()`.
+            if (typeof window._ccChunkMerge !== 'boolean' && elements.length > 5000) {
+              window._ccChunkMerge = true;
+              console.log('%c[ChunkMerge] auto-enabled (' + elements.length + ' elements > 5k threshold)', 'color:#22c55e;font-weight:bold');
+            }
             var _instResult = _buildInstancedMeshes(elements, meshes);
             meshes = _instResult.meshes;
             meshes = _ccBuildMergedChunks(elements, meshes).meshes;
