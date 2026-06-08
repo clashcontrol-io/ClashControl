@@ -31177,9 +31177,15 @@ function startApp() {
           }
 
           if(chord==='bx'){
+            // Priority: clash/issue multi-selection → single 3D-canvas
+            // selection (same as the B shortcut) → full-model fallback.
+            // The middle step was missing: BX previously went straight
+            // from "no clash selected" to "full model", surprising users
+            // who had clicked an IFC element expecting it to take focus.
             var eids=getActiveEids();
-            if(eids&&_sboxAroundElements) _sboxAroundElements(eids);
-            else if(_getSectionBoxFromScene){var box=_getSectionBoxFromScene();if(box&&window._ccDispatch)window._ccDispatch({t:A.SECTION_BOX,v:{enabled:true,min:[box.min.x,box.min.y,box.min.z],max:[box.max.x,box.max.y,box.max.z]}});}
+            if(eids&&_sboxAroundElements){ _sboxAroundElements(eids); return; }
+            if(window._ccActivateSectionBox && window._ccActivateSectionBox()) return;
+            if(_getSectionBoxFromScene){var box=_getSectionBoxFromScene();if(box&&window._ccDispatch)window._ccDispatch({t:A.SECTION_BOX,v:{enabled:true,min:[box.min.x,box.min.y,box.min.z],max:[box.max.x,box.max.y,box.max.z]}});}
             return;
           }
           if(chord==='sc'){
