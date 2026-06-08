@@ -1,5 +1,8 @@
 # Changelog
 
+## v5.19.15 (2026-06-08)
+- fix(viewer): section-box helpers don't cast shadows + lower rendered exposure
+
 ## v5.19.14 (2026-06-08)
 - hotfix(lighting): revert × π light intensity overshoot
 
