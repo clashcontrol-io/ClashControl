@@ -1,5 +1,8 @@
 # Changelog
 
+## v5.19.31 (2026-06-08)
+- fix(perf): instancing regression — matKey was never declared
+
 ## v5.19.30 (2026-06-08)
 - feat(debug): _ccDebugInstancing() console helper — works on already-loaded models
 
