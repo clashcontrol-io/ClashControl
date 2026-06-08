@@ -1865,8 +1865,19 @@ function startApp() {
       var _smR = _ccStripSurveyMarkers(elements, meshes); elements = _smR.elements; meshes = _smR.meshes;
     }
     if (typeof _buildInstancedMeshes === 'function') {
-      try { meshes = _buildInstancedMeshes(elements, meshes).meshes; }
-      catch(e){ console.warn('[restore] instancing skipped:', e); }
+      // Safety valve: `localStorage.cc_restoreInstancing = 'off'` (or set
+      // window._ccDisableRestoreInstancing=true) skips instancing on cache
+      // restore. Use it if you ever see geometry mis-grouping after a hard
+      // refresh — gives a known-correct render at the cost of more draw
+      // calls until the underlying restore key bug is fully understood.
+      var _instOff = false;
+      try { _instOff = !!window._ccDisableRestoreInstancing || (localStorage.getItem('cc_restoreInstancing') === 'off'); } catch(_){}
+      if (_instOff) {
+        console.warn('[restore] instancing disabled via opt-out — expect higher draw-call count');
+      } else {
+        try { meshes = _buildInstancedMeshes(elements, meshes).meshes; }
+        catch(e){ console.warn('[restore] instancing skipped:', e); }
+      }
     }
     if (typeof _ccBuildMergedChunks === 'function') {
       try { meshes = _ccBuildMergedChunks(elements, meshes).meshes; } catch(e){ console.warn('[restore] chunk-merge skipped:', e); }
@@ -28414,6 +28425,10 @@ function startApp() {
   // in the console after models are loaded.
   window._ccDebugInstancing = function() {
     var s = window._ccLatestState || {};
+    // Collect per-key mesh refs so we can detect *real* hash collisions:
+    // a group whose member meshes have measurably different bounding-box
+    // sizes is geometrically inconsistent — pure-restore signature of
+    // two different shapes ending up under one _instKey.
     var keys = Object.create(null);
     var total = 0, withKey = 0, withoutKey = 0;
     var sampleNoKey = [];
@@ -28422,12 +28437,49 @@ function startApp() {
         (el.meshes || []).forEach(function(mesh){
           total++;
           var k = mesh.userData && mesh.userData._instKey;
-          if (k) { withKey++; keys[k] = (keys[k] || 0) + 1; }
-          else   { withoutKey++; if (sampleNoKey.length < 3) sampleNoKey.push(el.expressId); }
+          if (k) {
+            withKey++;
+            if (!keys[k]) keys[k] = { count:0, meshes:[] };
+            keys[k].count++;
+            if (keys[k].meshes.length < 4) keys[k].meshes.push(mesh);
+          } else {
+            withoutKey++;
+            if (sampleNoKey.length < 3) sampleNoKey.push(el.expressId);
+          }
         });
       });
     });
-    var sizes = Object.keys(keys).map(function(k){ return keys[k]; }).sort(function(a,b){ return b-a; });
+    // Look for groups where member meshes have geometrically different
+    // bboxes — a real collision shows up as wildly different extents
+    // sharing the same key. Sample 4 meshes per group to keep cost bounded.
+    var suspectCollisions = [];
+    Object.keys(keys).forEach(function(k){
+      var grp = keys[k];
+      if (grp.count < 2 || grp.meshes.length < 2) return;
+      var first = grp.meshes[0];
+      if (!first.geometry || !first.geometry.boundingBox) {
+        try { first.geometry.computeBoundingBox(); } catch(_) { return; }
+      }
+      var fb = first.geometry.boundingBox; if (!fb) return;
+      var fsx = fb.max.x-fb.min.x, fsy = fb.max.y-fb.min.y, fsz = fb.max.z-fb.min.z;
+      for (var i = 1; i < grp.meshes.length; i++) {
+        var o = grp.meshes[i];
+        if (!o.geometry) continue;
+        if (!o.geometry.boundingBox) { try { o.geometry.computeBoundingBox(); } catch(_) { continue; } }
+        var ob = o.geometry.boundingBox; if (!ob) continue;
+        var osx = ob.max.x-ob.min.x, osy = ob.max.y-ob.min.y, osz = ob.max.z-ob.min.z;
+        if (Math.abs(osx-fsx) > 0.05 || Math.abs(osy-fsy) > 0.05 || Math.abs(osz-fsz) > 0.05) {
+          suspectCollisions.push({
+            key: k.slice(0, 32),
+            count: grp.count,
+            bboxA: [fsx.toFixed(2), fsy.toFixed(2), fsz.toFixed(2)],
+            bboxB: [osx.toFixed(2), osy.toFixed(2), osz.toFixed(2)]
+          });
+          break;
+        }
+      }
+    });
+    var sizes = Object.keys(keys).map(function(k){ return keys[k].count; }).sort(function(a,b){ return b-a; });
     var sampleKeys = Object.keys(keys).slice(0, 3);
     var out = {
       totalMeshes: total,
@@ -28437,9 +28489,14 @@ function startApp() {
       groupsAboveThreshold: sizes.filter(function(x){ return x >= 4; }).length,
       top10GroupSizes: sizes.slice(0, 10),
       sampleKeys: sampleKeys,
-      sampleNoKeyExpressIds: sampleNoKey
+      sampleNoKeyExpressIds: sampleNoKey,
+      suspectCollisions: suspectCollisions.slice(0, 10),
+      collisionCount: suspectCollisions.length
     };
     console.log('%c[Instancing-Debug]', 'color:#a78bfa;font-weight:bold', out);
+    if (suspectCollisions.length > 0) {
+      console.warn('%c[Instancing-Debug] '+suspectCollisions.length+' group(s) contain meshes with mismatched bboxes — real hash collision detected. Set localStorage.cc_restoreInstancing = "off" and hard-refresh as a workaround.', 'color:#f87171;font-weight:bold');
+    }
     return out;
   };
 
