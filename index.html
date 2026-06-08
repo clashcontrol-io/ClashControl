@@ -8190,6 +8190,34 @@ function startApp() {
         }
       };
 
+      // ── Public namespace alias (window.ClashControl.*) ──────────────
+      // Documented at /developers/. Thin lazy facade over the underscore-
+      // prefixed globals so third-party code can use a stable, readable
+      // API. Same behaviour, nicer names — both surfaces are public and
+      // we won't break them in patch releases.
+      window.ClashControl = window.ClashControl || {
+        get version() { try { return (document.querySelector('meta[name="cc-version"]')||{}).content || null; } catch(_) { return null; } },
+        get state()    { return window._ccLatestState || null; },
+        dispatch:      function(a){ if (window._ccDispatch) return window._ccDispatch(a); },
+        invalidate:    function(n){ if (window._ccInvalidate) return window._ccInvalidate(n); },
+        viewport:      window._ccViewport,
+        highlight:     function(eid, additive){ if (window._highlightById) return window._highlightById(eid, !!additive); },
+        flyToElement:  function(eid){ if (window._fitToElement) return window._fitToElement(eid); },
+        runDataQuality:   function(els){ if (window._ccRunDataQualityChecks) return window._ccRunDataQualityChecks(els); },
+        runAccessibility: function(els){ if (window._ccRunAccessibilityChecks) return window._ccRunAccessibilityChecks(els); },
+        computeQualityScore: function(els, models){ if (window._ccComputeQualityScore) return window._ccComputeQualityScore(els, models); },
+        loadSplat:        function(url, opts){ if (window._ccLoadSplat) return window._ccLoadSplat(url, opts); },
+        loadPointCloud:   function(file){ if (window._ccLoadPointCloud) return window._ccLoadPointCloud(file); },
+        geoplaceModel:    function(modelId, opts){ if (window._ccGeoplaceModel) return window._ccGeoplaceModel(modelId, opts); },
+        addons: {
+          register: function(def){ if (window._ccRegisterAddon) return window._ccRegisterAddon(def); },
+          activate: function(id){ if (window._ccActivateAddon) return window._ccActivateAddon(id); },
+          deactivate: function(id){ if (window._ccDeactivateAddon) return window._ccDeactivateAddon(id); },
+          list:     function(){ return window._ccGetAddons ? window._ccGetAddons() : []; },
+          isActive: function(id){ return window._ccIsAddonActive ? window._ccIsAddonActive(id) : false; }
+        }
+      };
+
       // ── Section Box helper ──
       _getSectionBoxFromScene = function(){
         if(!S.mg||!S.mg.children.length) return null;
