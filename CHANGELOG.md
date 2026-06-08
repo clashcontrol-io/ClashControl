@@ -1,5 +1,8 @@
 # Changelog
 
+## v5.19.10 (2026-06-08)
+- fix(ai-status): Settings shows actual model from /api/health, not hardcoded "Gemma 4"
+
 ## v5.19.9 (2026-06-08)
 - fix(section-box): BX shortcut falls back to single-element selection before full model
 
