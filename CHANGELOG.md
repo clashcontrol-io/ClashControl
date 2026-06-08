@@ -1,5 +1,8 @@
 # Changelog
 
+## v5.19.39 (2026-06-08)
+- feat(plan): floor picker in 2D toolbar + cut-height stepper
+
 ## v5.19.38 (2026-06-08)
 - fix(ui): measure toolbar no longer kills section box
 
