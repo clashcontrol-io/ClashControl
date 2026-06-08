@@ -10857,19 +10857,21 @@ function startApp() {
         }
         try {
           renderer.setViewport(0,0,el.clientWidth,el.clientHeight);
-          renderer.setScissorTest(false);
+          // Fire a frame event so sibling addons (splat overlay etc.) get
+          // their per-frame update call BEFORE the render. Spark's
+          // SplatMesh.update(camera, renderer) sorts splats by camera
+          // distance and uploads GPU state; if it runs after the render
+          // the next frame uses stale data and the splat appears invisible
+          // until the camera moves again.
+          if (window._ccHasSplats || window._ccHasFrameListener) {
+            try { window.dispatchEvent(new CustomEvent('cc-render-frame')); } catch(_){}
+          }
           // localClippingEnabled is managed by section/floorplan effects; don't reset here.
           // Use the post-processing composer when 'rendered' style + composer ready.
           if (S._composer && S._postPassesActive && !_isDragFrame && !_isWalkFrame) {
             S._composer.render();
           } else {
             renderer.render(scene,S.camera);
-          }
-          // Fire a frame event so sibling-canvas addons (splat overlay etc.)
-          // know to re-render. Lightweight — no payload; the listener pulls
-          // current camera state from _ccViewport.getCamera() on demand.
-          if (window._ccHasSplats || window._ccHasFrameListener) {
-            try { window.dispatchEvent(new CustomEvent('cc-render-frame')); } catch(_){}
           }
           // ── Screenshot capture (must happen immediately after render, before buffer swap) ──
           if (window._ccPendingScreenshot) {

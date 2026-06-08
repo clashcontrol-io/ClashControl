@@ -116,6 +116,11 @@
 
       grp.add(mesh);
       _splats.push({ id: mesh.userData._ccSplatId, mesh: mesh, name: mesh.name, source: typeof src === 'string' ? src : (src.name || '(file)') });
+      // Flip the gate the core render loop checks before dispatching
+      // cc-render-frame. Without this, Spark's mesh.update(camera, renderer)
+      // never gets called once the post-load invalidate-kick loop expires,
+      // and the splat freezes mid-stream / never re-sorts on camera move.
+      window._ccHasSplats = true;
       // Spark streams the splat asynchronously (fetch + WASM decode + LoD
       // pyramid). The core viewer is render-on-demand, so a one-shot
       // invalidate after add() doesn't catch the LoD frames that arrive
@@ -151,6 +156,7 @@
     if (!_splats.length && _splatGroup && _splatGroup.parent) {
       _splatGroup.parent.remove(_splatGroup);
       _splatGroup = null;
+      window._ccHasSplats = false;
     }
     _invalidate(3);
     try { window.dispatchEvent(new CustomEvent('cc-splats-changed')); } catch(_){}
