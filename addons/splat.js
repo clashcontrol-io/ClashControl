@@ -172,6 +172,17 @@
 
       var mesh = new SplatMesh({ url: url });
       if (opts.opacity != null) mesh.opacity = opts.opacity;
+      // Default-position at the IFC's bbox center. Splats are at world
+      // origin in their own coord system; without this they're invisible
+      // for any georeferenced IFC (e.g. Dutch RD ~85km offset, US state
+      // plane, anything in EPSG-projected meters). User can override with
+      // opts.position to place arbitrarily.
+      var pos = opts.position;
+      if (!pos && window._ccViewport && window._ccViewport.getBounds) {
+        var b = window._ccViewport.getBounds();
+        if (b && b.center) pos = b.center;
+      }
+      if (pos && pos.length === 3) mesh.position.set(pos[0], pos[1], pos[2]);
       v.scene.add(mesh);
       var id = 'splat-' + Date.now() + '-' + Math.floor(Math.random()*9999);
       v.splats.push({ id: id, mesh: mesh, name: opts.name || (typeof src === 'string' ? src.split('/').pop() : src.name) });
