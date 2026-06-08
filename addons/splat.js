@@ -116,7 +116,17 @@
 
       grp.add(mesh);
       _splats.push({ id: mesh.userData._ccSplatId, mesh: mesh, name: mesh.name, source: typeof src === 'string' ? src : (src.name || '(file)') });
-      _invalidate(4);
+      // Spark streams the splat asynchronously (fetch + WASM decode + LoD
+      // pyramid). The core viewer is render-on-demand, so a one-shot
+      // invalidate after add() doesn't catch the LoD frames that arrive
+      // 5–10 s later. Kick invalidation every animation frame for 15 s
+      // after load so each LoD reaches the screen as it becomes available.
+      var deadline = Date.now() + 15000;
+      (function _kick(){
+        if (!_splats.length || Date.now() > deadline) return;
+        _invalidate(2);
+        requestAnimationFrame(_kick);
+      })();
       if (window._ccToast) window._ccToast('Loading splat ' + mesh.name);
       try { window.dispatchEvent(new CustomEvent('cc-splats-changed')); } catch(_){}
       return { id: mesh.userData._ccSplatId, name: mesh.name };
