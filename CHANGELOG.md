@@ -1,5 +1,8 @@
 # Changelog
 
+## v5.19.36 (2026-06-08)
+- fix(pick): tiebreak coplanar hits by element size
+
 ## v5.19.35 (2026-06-08)
 - chore: remove instancing/survey-marker diagnostic console logs
 
