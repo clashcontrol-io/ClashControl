@@ -633,7 +633,8 @@ module.exports = async function handler(req, res) {
   if (llmGuard(req, res, { perMin: 20, maxBytes: 16384 })) return;
 
   var key = process.env.GEMINI_API_KEY || process.env.GOOGLE_AI_KEY;
-  if (!key) return res.status(503).json({ error: 'AI not configured' });
+  var groqKey = process.env.GROQ_API_KEY;
+  if (!key && !groqKey) return res.status(503).json({ error: 'AI not configured' });
 
   var body = req.body;
   if (!body || !body.command) return res.status(400).json({ error: 'Missing command' });
@@ -677,6 +678,67 @@ module.exports = async function handler(req, res) {
   var systemPrompt = isKnowledgeQuery(body.command)
     ? buildSystemPrompt(body.context || {})
     : buildRoutingPrompt(body.context || {});
+
+  // ── Primary backend: Groq (OpenAI-compatible, fast, generous free tier) ──
+  // Groq is the default for basic NL command routing — it replaces Gemma,
+  // which keeps hitting its free-tier quota. Same 13 tools, same
+  // { intent, ...params } response contract the client already expects.
+  // On any failure (429 quota, outage, unset key) we fall through to the
+  // Gemma/Gemini chain below, so nothing breaks if GROQ_API_KEY is absent.
+  // Users who want more than basic routing connect their own LLM via the
+  // one-click Connector (Smart Bridge) instead of this server path.
+  var groqHadQuota = false;
+  if (groqKey) {
+    var GROQ_MODEL = process.env.GROQ_MODEL || 'llama-3.3-70b-versatile';
+    var groqMessages = [{ role: 'system', content: systemPrompt }];
+    if (body.replyContext) groqMessages.push({ role: 'assistant', content: body.replyContext });
+    groqMessages.push({ role: 'user', content: body.command });
+    try {
+      var gResp = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + groqKey },
+        body: JSON.stringify({
+          model: GROQ_MODEL,
+          messages: groqMessages,
+          tools: TOOLS.map(function(t) {
+            return { type: 'function', function: { name: t.name, description: t.description, parameters: t.parameters } };
+          }),
+          tool_choice: 'auto',
+          temperature: 0.1,
+          max_tokens: 256,
+        }),
+      });
+      if (gResp.ok) {
+        var gData = await gResp.json();
+        var gMsg = gData.choices && gData.choices[0] && gData.choices[0].message;
+        var gCall = gMsg && gMsg.tool_calls && gMsg.tool_calls[0];
+        if (gCall && gCall.function) {
+          var gArgs = {};
+          try { gArgs = gCall.function.arguments ? JSON.parse(gCall.function.arguments) : {}; } catch (_) {}
+          return res.status(200).json(Object.assign({ intent: gCall.function.name, _model: 'groq:' + GROQ_MODEL, _fallback: false }, gArgs));
+        }
+        // No tool call — plain-text answer (knowledge query / unknown intent)
+        return res.status(200).json({ intent: 'unknown', text: ((gMsg && gMsg.content) || '').trim(), _model: 'groq:' + GROQ_MODEL, _fallback: false });
+      }
+      var gErrText = await gResp.text();
+      console.error('Groq API error:', gResp.status, gErrText.slice(0, 500));
+      if (gResp.status === 429) groqHadQuota = true;
+      // recoverable — fall through to the Gemma/Gemini chain
+    } catch (ge) {
+      console.error('Groq request failed:', ge && ge.message);
+      // network/parse error — fall through to the Gemma/Gemini chain
+    }
+  }
+
+  // If Groq was the only configured backend and it failed, surface that now
+  // (the Gemma/Gemini chain below requires a Gemini key).
+  if (!key) {
+    return res.status(groqHadQuota ? 429 : 502).json({
+      error: groqHadQuota ? 'AI quota exceeded' : 'AI request failed',
+      reason: groqHadQuota ? 'quota_exceeded' : 'upstream_error',
+      triedModels: ['groq'],
+    });
+  }
 
   // Build Gemma 4 request with function calling
   var payload = {
@@ -774,11 +836,12 @@ module.exports = async function handler(req, res) {
     // the friendly "over quota" message and falls back to regex; if
     // nothing hit 429, surface the last upstream status so the logs
     // show what really went wrong (bad model IDs, missing key, etc.).
-    var finalStatus = hadQuota ? 429 : 502;
+    var anyQuota = hadQuota || groqHadQuota;
+    var finalStatus = anyQuota ? 429 : 502;
     return res.status(finalStatus).json({
-      error: hadQuota ? 'AI quota exceeded' : 'AI request failed',
-      reason: hadQuota ? 'quota_exceeded' : 'upstream_error',
-      triedModels: fallbackChain,
+      error: anyQuota ? 'AI quota exceeded' : 'AI request failed',
+      reason: anyQuota ? 'quota_exceeded' : 'upstream_error',
+      triedModels: (groqKey ? ['groq'] : []).concat(fallbackChain),
       lastUpstreamStatus: lastErr && lastErr.status,
       lastUpstreamBody: lastErr && lastErr.body && lastErr.body.slice(0, 500),
     });

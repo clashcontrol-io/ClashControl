@@ -25134,8 +25134,32 @@ function startApp() {
       .catch(function(err) {
         var regexResult = processNLCommand(raw, s, d);
         if (regexResult !== null) return _captureNL(regexResult, 'regex-fallback');
+        var _quotaMsg = "AI is over quota right now. Connect your own AI in one click via the Smart Bridge (open the AI panel ▸ Connector) to skip server limits — or I can still handle simple commands like 'help', 'run detection', 'show open clashes', or 'export bcf'.";
+        // Server AI failed (usually quota). If the user has connected their
+        // own LLM through the Connector (Smart Bridge), use it instead of
+        // giving up — this is the "Gemma over limit -> your own AI" path.
+        var _sbState = (window._ccLatestState && window._ccLatestState.smartBridge) || {};
+        if (!replyContext && _sbState.connected && _sbState.llmConnected) {
+          var _sbHist = _sbState.chatMessages || [];
+          return fetch('http://127.0.0.1:19803/chat', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ message: raw, history: _sbHist.map(function(m){ return { role: m.role, content: m.content }; }) })
+          })
+          .then(function(r) { if (!r.ok) return r.json().then(function(j){ throw new Error(j.error || ('HTTP ' + r.status)); }); return r.json(); })
+          .then(function(j) {
+            if (d) d({ t: 'UPD_SMART_BRIDGE', u: {
+              chatMessages: _sbHist.concat([{ role: 'user', content: raw }, { role: 'assistant', content: j.response || '' }]),
+              chatBusy: false, chatError: null
+            }});
+            return _captureNL(j.response || '', 'smart-bridge-fallback');
+          })
+          .catch(function() {
+            return _captureNL(err && err.quotaExceeded ? _quotaMsg : null, err && err.quotaExceeded ? 'offline-quota' : 'offline');
+          });
+        }
         if (err && err.quotaExceeded) {
-          return _captureNL("AI is over quota right now — I can still handle simple commands like 'help', 'run detection', 'show open clashes', or 'export bcf'.", 'offline-quota');
+          return _captureNL(_quotaMsg, 'offline-quota');
         }
         return _captureNL(null, 'offline');
       });

@@ -88,6 +88,14 @@ Things to be careful about. Do not remove without a good reason — add a note i
 Update this section at the start and end of each session.
 Mark completed items with ~~strikethrough~~ and date, then let the daily sync archive them.
 
+On branch `claude/screenshot-clashcontrol-review-tiHAk` (2026-06-08) — Tiered AI (Groq basic + own-LLM Connector) + IFC-viewer/Solibri SEO:
+
+- **Bridge simplified to zero-key:** dropped the API-key cloud presets I'd briefly added. Built-in chat now offers only one-click local autodetect (Ollama/LM Studio/llama.cpp/Jan) + the existing "Configure Claude" (Claude Desktop app, no key). Rationale: user said API keys are "outdated and too difficult."
+- **Groq replaces Gemma as `/api/nl` primary** (`api/nl.js`): if `GROQ_API_KEY` set, POST Groq `/openai/v1/chat/completions` with the same `TOOLS` mapped to OpenAI `tools` format, parse `tool_calls` → identical `{intent,...params}` contract. On 429/failure falls through to the existing Gemma→Gemini chain (zero-break if key unset). Default model `llama-3.3-70b-versatile` (`GROQ_MODEL` overridable). Verified via mocked-fetch handler test (returns correct intent, Bearer auth, 29 tools, OpenAI format). **User must set `GROQ_API_KEY` in Vercel.**
+- **Connector in the Ask AI panel** (`index.html` NL `.catch`): when the server AI fails and the Smart Bridge LLM is connected, the Ask AI bar auto-routes the command to the user's own LLM (`127.0.0.1:19803/chat`), mirroring into the bridge chat. Over-quota message now points to the one-click Connector. Basic stays on Groq; own-LLM is the "more / over-limit" path.
+- **SEO** (`index.html` head, `manifest.json`, `README.md`, `llms.txt`, `sitemap.xml`, new `free-solibri-alternative/index.html`): lead with "online IFC viewer", position as free Solibri/Navisworks alternative; added homepage `FAQPage` schema (Google rich results + LLM answer engines), `alternateName`/`keywords`/fuller `featureList` on `SoftwareApplication`.
+- **Verify on Vercel preview** (not browser-tested here): main inline script parses; `api/nl.js` Groq path unit-tested with mocked fetch; JSON-LD blocks validated.
+
 On branch `claude/screenshot-clashcontrol-review-tiHAk` (2026-06-07) — Smart Bridge: one-click "use your own AI":
 
 - **Why:** the BYO-LLM agent loop already existed (`smart-bridge-server.js` `runAgentLoop` → any OpenAI-compatible `/v1/chat/completions` + `tool_calls` → `callBrowser` → `window._ccDispatch`), but was buried behind a 3-option dropdown with an empty `baseUrl` nobody knew how to fill. Goal: one click to connect the LLM the user already runs **on their desktop**. Local-desktop *requires* the bridge by design — the https app can't reach `http://localhost:11434` (mixed-content/CORS), so the native bridge proxies localhost. (Zero-install + local-desktop are mutually exclusive; user chose local-desktop.)

@@ -117,7 +117,7 @@ addons/smart-bridge.js      — LLM bridge (MCP / ChatGPT / REST) — executes t
 addons/training-data.js     — Training data storage, JSONL export, sharing
 addons/wasm-engine.js       — Rust WASM clash accelerator (mesh_intersect / mesh_min_distance), JS fallback
 api/health.js               — Health check: AI + DB status
-api/nl.js                   — Gemma 4 NL proxy with native function calling + quota fallback
+api/nl.js                   — NL proxy: Groq primary (OpenAI tool-calling), Gemma 4 / Gemini fallback chain
 api/training.js             — Training data ingestion (replaces Google Forms)
 api/project.js              — Shared issues sync (project key, no login)
 api/title.js                — AI clash title generation (batch, Gemma 4)
@@ -156,7 +156,8 @@ Each addon is a plain IIFE loaded at runtime by the core via `addons/<name>.js` 
 The app is deployed at `www.clashcontrol.io` on Vercel. The backend consists of serverless functions in the `api/` directory.
 
 ### Environment Variables (set in Vercel dashboard)
-- `GEMINI_API_KEY` — Google AI Studio API key for Gemma 4 (legacy `GOOGLE_AI_KEY` also accepted)
+- `GROQ_API_KEY` — Groq API key. **Primary backend for `/api/nl`** (fast, generous free tier; OpenAI-compatible function calling). Default model `llama-3.3-70b-versatile`, overridable via `GROQ_MODEL`. When unset, `/api/nl` falls back to Gemma/Gemini.
+- `GEMINI_API_KEY` — Google AI Studio API key for Gemma 4 — now the **fallback** for `/api/nl` when Groq is unset or rate-limited (legacy `GOOGLE_AI_KEY` also accepted)
 - `POSTGRES_URL` — Vercel Postgres / Neon connection string (auto-injected when you link a Vercel Postgres database; legacy `DATABASE_URL` also accepted)
 - `MAPTILER_KEY` — (optional) MapTiler key for satellite basemap tiles via `/api/tile`. When unset, the proxy serves OpenStreetMap tiles.
 
@@ -171,13 +172,12 @@ The app is deployed at `www.clashcontrol.io` on Vercel. The backend consists of 
 - `POST /api/triage` — AI clash triage for a cluster. Body: cluster context packet. Returns `{ title, severity, explanation, resolution_options[] }`
 - `GET /api/tile?z=&x=&y=` — Map-tile proxy for the geoplace basemap (MapTiler satellite when `MAPTILER_KEY` is set, else OpenStreetMap)
 
-### NL Command Flow
-1. Client sends command to `/api/nl` (Gemma 4, server-side)
-2. Server picks a primary model — `SMART_MODEL` for analytical commands (analyze, explain, compare, …), `FAST_MODEL` for everything else
-3. Gemma 4 uses native function calling with 13 tool declarations
-4. On HTTP 429 the server walks a fallback chain across the other Gemma variant (each variant has its own free-tier quota bucket, so the effective quota is roughly doubled)
-5. Server returns structured `{ intent, _model, _fallback, ...params }` — no fragile JSON parsing
-6. Only when *every* model in the chain is drained does the client fall back to regex matching (offline mode)
+### NL Command Flow (tiered AI)
+**Basic = Groq (server-side); more = your own LLM via the one-click Connector.**
+1. Client sends command to `/api/nl`. If `GROQ_API_KEY` is set, **Groq is the primary backend** (OpenAI-compatible `tool_calls` over the same tool declarations).
+2. On Groq failure/429, the server falls through to the legacy **Gemma 4 → Gemini Flash** chain (each variant has its own free-tier quota bucket).
+3. Server returns structured `{ intent, _model, _fallback, ...params }` — no fragile JSON parsing.
+4. If every server model is drained, the client first tries the user's **own LLM via the Smart Bridge Connector** (`http://127.0.0.1:19803/chat`) when connected, then falls back to regex matching (offline mode). The over-quota message points users to the one-click Connector.
 
 ### Shared Issues
 - No login required. Uses shareable project keys (e.g., `MEP-abc123`)
