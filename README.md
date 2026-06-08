@@ -85,7 +85,13 @@ The collection endpoint is [`api/training.js`](api/training.js) — it's a thin 
 
 ## Smart Bridge security
 
-The optional **Smart Bridge** binary opens a local server on `127.0.0.1:19802` (WebSocket) and `127.0.0.1:19803` (REST). Both sockets are bound to the loopback interface — they are **not** reachable from other machines on your network. The REST API responds with `Access-Control-Allow-Origin: *` so any locally-served page can call it; this is intentional and safe given the loopback bind. If you reverse-proxy the bridge to a public address, restrict CORS yourself.
+The optional **Smart Bridge** binary opens a local server on `127.0.0.1:19802` (WebSocket) and `127.0.0.1:19803` (REST). Both sockets are bound to the loopback interface — they are **not** reachable from other machines on your network.
+
+The REST and WebSocket layers enforce an **origin allow-list**: only `https://www.clashcontrol.io`, `https://clashcontrol.io`, and `localhost` / `127.0.0.1` (any port) may connect. CORS is echoed per-request, never wildcarded. A `Host` header check blocks DNS-rebinding attacks. Request bodies are capped at 1 MB. The LLM config file (`~/.clashcontrol/llm-config.json`) is written with `0600` permissions so the API key is not world-readable on multi-user systems. These checks address the 2026 MCP CVE roundup (path-traversal + unauthenticated UI injection + OAuth-token concentration in widely copied reference servers).
+
+## AI governance
+
+Every AI-touched decision carries provenance: model name, source endpoint, timestamp. Surfaced as an "AI" chip in the Issues panel (hover for the model + when it ran), persisted on each clash. The built-in NL assistant is intentionally basic — clash-resolution escalates to your own LLM via the Smart Bridge Connector. No shared foundation-model monoculture, no opaque agent decisions. This is the audit-trail layer Day called out as missing from current agentic-BIM platforms (AEC Magazine, April 2026).
 
 ## Tech
 

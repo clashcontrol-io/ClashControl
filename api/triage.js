@@ -69,7 +69,12 @@ module.exports = async function handler(req, res) {
   var cached = _cacheGet(sig);
   if (cached) {
     res.setHeader('X-CC-Triage-Cache', 'hit');
-    return res.status(200).json({ triage: cached, cached: true });
+    return res.status(200).json({
+      triage: cached,
+      cached: true,
+      _model: 'gemma-4-31b-it',
+      _at: new Date().toISOString()
+    });
   }
 
   var stdsLine = ctx.project_standards
@@ -147,7 +152,12 @@ module.exports = async function handler(req, res) {
 
     _cacheSet(sig, triage);
     res.setHeader('X-CC-Triage-Cache', 'miss');
-    return res.status(200).json({ triage: triage, cached: false });
+    return res.status(200).json({
+      triage: triage,
+      cached: false,
+      _model: 'gemma-4-31b-it',
+      _at: new Date().toISOString()
+    });
   } catch (e) {
     console.error('Triage error:', e);
     return res.status(500).json({ error: 'Internal error' });

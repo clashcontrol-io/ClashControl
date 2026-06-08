@@ -186,7 +186,15 @@ module.exports = async function handler(req, res) {
       (cachedTitles.length ? 'partial:' : 'miss:') +
       cachedTitles.length + '/' + clashes.length);
     res.setHeader('X-CC-Title-Cache-Size', String(_titleCache.size));
-    return res.status(200).json({ titles: cachedTitles.concat(generated) });
+    // Provenance: client persists this alongside aiTitle/aiSeverity so each AI
+    // decision carries a verifiable record of which model produced it. Cached
+    // entries inherit the same provenance shape — the model was the one that
+    // produced the title, even if we're serving from cache now.
+    return res.status(200).json({
+      titles: cachedTitles.concat(generated),
+      _model: 'gemma-4-31b-it',
+      _at: new Date().toISOString()
+    });
   } catch (e) {
     console.error('Title generation error:', e);
     return res.status(500).json({ error: 'Internal error' });

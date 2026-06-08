@@ -53,6 +53,43 @@ const WS_PORT  = parseInt(process.env.CLASHCONTROL_WS_PORT || '19802', 10);
 const REST_PORT = parseInt(process.env.CLASHCONTROL_PORT   || '19803', 10);
 const TOOL_TIMEOUT_MS = parseInt(process.env.CLASHCONTROL_TOOL_TIMEOUT || '30000', 10);
 const LLM_TIMEOUT_MS  = parseInt(process.env.CLASHCONTROL_LLM_TIMEOUT  || '120000', 10);
+const MAX_REQUEST_BYTES = 1024 * 1024; // 1 MB cap on REST bodies — DoS guard.
+
+// ── Origin / Host allow-list (security) ──────────────────────────────────────
+// Why this exists: the bridge runs on localhost but anything the user's
+// browser loads can hit 127.0.0.1. With CORS '*' (the old behaviour) any
+// malicious page could drive ClashControl tools, exfiltrate the LLM API key,
+// or run agent loops on the user's tab and bill their LLM. The MCP-server CVE
+// wave of Q1 2026 (path-traversal, unauthenticated UI injection, OAuth-token
+// concentration; ~30 CVEs across reference SDKs) is exactly this surface.
+//
+// allow-list strategy:
+//   - CORS: only the live app origin + localhost dev. Echo, don't wildcard.
+//   - WebSocket: same allow-list enforced in verifyClient.
+//   - Host header: must point at loopback. Blocks DNS-rebinding attacks where
+//     attacker.com resolves to 127.0.0.1 and tries to round-trip through the
+//     user's browser as a same-origin loopback request.
+const ORIGIN_ALLOW = [
+  'https://www.clashcontrol.io',
+  'https://clashcontrol.io',
+  /^https?:\/\/localhost(:\d+)?$/,
+  /^https?:\/\/127\.0\.0\.1(:\d+)?$/,
+  /^https?:\/\/\[::1\](:\d+)?$/
+];
+function isAllowedOrigin(origin) {
+  if (!origin) return false;
+  for (var i = 0; i < ORIGIN_ALLOW.length; i++) {
+    var a = ORIGIN_ALLOW[i];
+    if (typeof a === 'string' ? a === origin : a.test(origin)) return true;
+  }
+  return false;
+}
+function isAllowedHost(host) {
+  if (!host) return false;
+  // Strip port; allow only loopback hostnames.
+  var bareHost = host.replace(/:\d+$/, '').toLowerCase();
+  return bareHost === '127.0.0.1' || bareHost === 'localhost' || bareHost === '[::1]' || bareHost === '::1';
+}
 
 // Stable error codes — clients (UI, CI, integrations) can branch on `code`
 // instead of parsing free-form `error` text.
@@ -96,8 +133,12 @@ function loadLlmConfig() {
 }
 
 function saveLlmConfig(cfg) {
-  fs.mkdirSync(LLM_CONFIG_DIR, { recursive: true });
-  fs.writeFileSync(LLM_CONFIG_PATH, JSON.stringify(cfg, null, 2) + '\n');
+  // chmod 600 — the file holds the user's LLM API key. Default umask leaves it
+  // world-readable on multi-user systems; that's the OAuth-token concentration
+  // failure mode flagged in the Q1 2026 MCP CVE roundup.
+  fs.mkdirSync(LLM_CONFIG_DIR, { recursive: true, mode: 0o700 });
+  fs.writeFileSync(LLM_CONFIG_PATH, JSON.stringify(cfg, null, 2) + '\n', { mode: 0o600 });
+  try { fs.chmodSync(LLM_CONFIG_PATH, 0o600); } catch (_) { /* best-effort on Windows */ }
 }
 
 // ── LLM HTTP call (OpenAI-compatible: works with Ollama, OpenAI, LM Studio, etc.) ──
@@ -324,7 +365,18 @@ let _manifest    = [];     // tool manifest sent by browser on connect
 let _pending     = Object.create(null); // id → { resolve, reject, timer }
 let _seq         = 0;
 
-const wss = new WebSocketServer({ port: WS_PORT });
+const wss = new WebSocketServer({
+  host: '127.0.0.1',     // loopback only — never expose to the network
+  port: WS_PORT,
+  // Reject WS handshakes whose Origin is not in our allow-list. Without this,
+  // any page the user visits could connect and drive ClashControl tools.
+  verifyClient: function(info, cb) {
+    var origin = info.origin || (info.req && info.req.headers && info.req.headers.origin) || '';
+    if (isAllowedOrigin(origin)) return cb(true);
+    console.warn('[SmartBridge] WS handshake rejected — origin not allowed:', origin || '(empty)');
+    return cb(false, 403, 'Origin not allowed');
+  }
+});
 
 wss.on('listening', () => {
   console.log('[SmartBridge] v' + VERSION);
@@ -429,18 +481,55 @@ function buildOpenApi() {
   };
 }
 
+// Bounded body reader — refuse anything over MAX_REQUEST_BYTES so a malicious
+// origin (or a runaway client) can't OOM the bridge by streaming forever.
 function readBody(req) {
-  return new Promise((resolve) => {
-    let s = '';
-    req.on('data', (c) => { s += c; });
-    req.on('end', () => resolve(s));
+  return new Promise((resolve, reject) => {
+    let chunks = [], size = 0, aborted = false;
+    req.on('data', (c) => {
+      if (aborted) return;
+      size += c.length;
+      if (size > MAX_REQUEST_BYTES) {
+        aborted = true;
+        const err = new Error('Request body exceeds ' + MAX_REQUEST_BYTES + ' bytes');
+        err.code = 'BODY_TOO_LARGE';
+        req.destroy();
+        return reject(err);
+      }
+      chunks.push(c);
+    });
+    req.on('end', () => { if (!aborted) resolve(Buffer.concat(chunks).toString('utf8')); });
+    req.on('error', reject);
   });
 }
 
 const httpServer = http.createServer(async (req, res) => {
-  res.setHeader('Access-Control-Allow-Origin', '*');
-  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Accept');
+  // ── Origin + Host gate ─────────────────────────────────────────────────────
+  // Echo the request's Origin only if it's in the allow-list. Browsers refuse
+  // ACAO: '*' with credentials anyway; the stricter echo also blocks malicious
+  // sites that fly under the radar without sending credentials.
+  const origin = req.headers.origin || '';
+  const host   = req.headers.host   || '';
+  // DNS-rebinding guard: legit traffic always hits us as 127.0.0.1/localhost.
+  // Anything else means a hostile DNS record is pointing at our loopback.
+  if (!isAllowedHost(host)) {
+    res.writeHead(421, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ error: 'Misdirected request', code: 'host_not_allowed' }));
+    return;
+  }
+  if (origin) {
+    if (!isAllowedOrigin(origin)) {
+      // No CORS headers → browser blocks the response. Also return 403 so
+      // server-to-server callers get a clear signal.
+      res.writeHead(403, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'Origin not allowed', code: 'origin_not_allowed' }));
+      return;
+    }
+    res.setHeader('Access-Control-Allow-Origin', origin);
+    res.setHeader('Vary', 'Origin');
+    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Accept');
+  }
   if (req.method === 'OPTIONS') { res.writeHead(204); res.end(); return; }
 
   const { pathname } = new URL(req.url || '/', 'http://localhost');
@@ -448,6 +537,10 @@ const httpServer = http.createServer(async (req, res) => {
     res.writeHead(code, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify(obj, null, 2));
   };
+
+  try {
+  // ─── route table follows; any rejection (e.g. readBody → BODY_TOO_LARGE)
+  //     surfaces as a 413/500 via the catch below ───
 
   const statusBody = () => ({
     ok: true, version: VERSION,
@@ -539,8 +632,21 @@ const httpServer = http.createServer(async (req, res) => {
   }
 
   json(404, { error: 'Not found', path: pathname, code: ERR.NOT_FOUND });
+  } catch (e) {
+    if (e && e.code === 'BODY_TOO_LARGE') {
+      try { json(413, { error: e.message, code: 'body_too_large' }); } catch (_) {}
+      return;
+    }
+    console.error('[SmartBridge] Handler error:', e && e.message);
+    try { json(500, { error: 'Internal error' }); } catch (_) {}
+  }
 });
 
+// Catch body-too-large errors raised by readBody so they surface as 413 not
+// uncaught rejection. This wraps the existing routes which `await readBody(req)`.
+httpServer.on('clientError', (e, sock) => {
+  try { sock.end('HTTP/1.1 400 Bad Request\r\n\r\n'); } catch (_) {}
+});
 httpServer.listen(REST_PORT, '127.0.0.1');
 httpServer.on('error', (e) => console.error('[SmartBridge] HTTP error:', e.message));
 
