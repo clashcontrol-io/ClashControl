@@ -30550,8 +30550,8 @@ function startApp() {
           return html`<div style=${{position:'relative',display:'flex',alignItems:'center',gap:0}}>
             ${btn({k:'measure', active:activeMode==='measure', title:'Measure (M) · click for distance, caret for sub-modes', label:modeLabel, icon:modeIcon,
                     onClick:function(){
-                      if (activeMode==='measure') { clearAllModes(); setMeasurePopOpen(false); }
-                      else { clearAllModes(); d({t:A.MEASURE_MODE,v:'length'}); }
+                      if (activeMode==='measure') { clearAllModes({sectionBox:true}); setMeasurePopOpen(false); }
+                      else { clearAllModes({sectionBox:true}); d({t:A.MEASURE_MODE,v:'length'}); }
                     }})}
             <button ref=${caretRef} title="Measurement modes" aria-label="Measurement modes"
               onClick=${function(e){ e.stopPropagation(); setMeasurePopOpen(function(v){return !v;}); }}
@@ -30573,32 +30573,32 @@ function startApp() {
               return html`<div onClick=${function(e){e.stopPropagation();}} style=${{position:'fixed',top:anchorY+'px',left:anchorX+'px',transform:'translateX(-50%)',zIndex:9999,
               background:'var(--bg-primary)',border:'1px solid var(--border)',borderRadius:'var(--radius-sm)',
               boxShadow:'var(--shadow-md)',padding:'.3rem',minWidth:230,fontSize:'var(--text-xs)'}}>
-              <div onClick=${function(){d({t:A.MEASURE_MODE,v:'length'});clearAllModes();d({t:A.MEASURE_MODE,v:'length'});setMeasurePopOpen(false);}}
+              <div onClick=${function(){clearAllModes({sectionBox:true});d({t:A.MEASURE_MODE,v:'length'});setMeasurePopOpen(false);}}
                 style=${{display:'flex',alignItems:'center',gap:'.55rem',padding:'.35rem .55rem',borderRadius:'var(--radius-xs)',cursor:'pointer',color:s.measureMode==='length'?'var(--accent)':'var(--text-primary)',background:s.measureMode==='length'?'var(--accent-bg)':'transparent'}}
                 onMouseEnter=${function(e){e.currentTarget.style.background='var(--surface-warm)';}}
                 onMouseLeave=${function(e){e.currentTarget.style.background=s.measureMode==='length'?'var(--accent-bg)':'transparent';}}>
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" dangerouslySetInnerHTML=${{__html:I.ruler}}></svg>
                 <span style=${{flex:1}}>Distance</span><span style=${{fontFamily:'var(--font-mono)',color:'var(--text-faint)',fontSize:'var(--text-2xs)'}}>M / L</span></div>
-              <div onClick=${function(){clearAllModes();d({t:A.MEASURE_MODE,v:'angle'});setMeasurePopOpen(false);}}
+              <div onClick=${function(){clearAllModes({sectionBox:true});d({t:A.MEASURE_MODE,v:'angle'});setMeasurePopOpen(false);}}
                 style=${{display:'flex',alignItems:'center',gap:'.55rem',padding:'.35rem .55rem',borderRadius:'var(--radius-xs)',cursor:'pointer',color:s.measureMode==='angle'?'var(--accent)':'var(--text-primary)',background:s.measureMode==='angle'?'var(--accent-bg)':'transparent'}}
                 onMouseEnter=${function(e){e.currentTarget.style.background='var(--surface-warm)';}}
                 onMouseLeave=${function(e){e.currentTarget.style.background=s.measureMode==='angle'?'var(--accent-bg)':'transparent';}}>
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" dangerouslySetInnerHTML=${{__html:I.angle}}></svg>
                 <span style=${{flex:1}}>Angle</span><span style=${{fontFamily:'var(--font-mono)',color:'var(--text-faint)',fontSize:'var(--text-2xs)'}}>A</span></div>
-              <div onClick=${function(){clearAllModes();d({t:A.MEASURE_MODE,v:'area'});setMeasurePopOpen(false);}}
+              <div onClick=${function(){clearAllModes({sectionBox:true});d({t:A.MEASURE_MODE,v:'area'});setMeasurePopOpen(false);}}
                 style=${{display:'flex',alignItems:'center',gap:'.55rem',padding:'.35rem .55rem',borderRadius:'var(--radius-xs)',cursor:'pointer',color:s.measureMode==='area'?'var(--accent)':'var(--text-primary)',background:s.measureMode==='area'?'var(--accent-bg)':'transparent'}}
                 onMouseEnter=${function(e){e.currentTarget.style.background='var(--surface-warm)';}}
                 onMouseLeave=${function(e){e.currentTarget.style.background=s.measureMode==='area'?'var(--accent-bg)':'transparent';}}>
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" dangerouslySetInnerHTML=${{__html:I.area}}></svg>
                 <span style=${{flex:1}}>Area</span><span style=${{fontFamily:'var(--font-mono)',color:'var(--text-faint)',fontSize:'var(--text-2xs)'}}>R</span></div>
               ${(s.workspace==='coordinate'||s.workspace==='review') && html`<div style=${{height:1,background:'var(--border-subtle)',margin:'.25rem .15rem'}}></div>`}
-              ${(s.workspace==='coordinate'||s.workspace==='review') && html`<div onClick=${function(){clearAllModes();d({t:A.MEASURE_MODE,v:'element'});setMeasurePopOpen(false);}}
+              ${(s.workspace==='coordinate'||s.workspace==='review') && html`<div onClick=${function(){clearAllModes({sectionBox:true});d({t:A.MEASURE_MODE,v:'element'});setMeasurePopOpen(false);}}
                 style=${{display:'flex',alignItems:'center',gap:'.55rem',padding:'.35rem .55rem',borderRadius:'var(--radius-xs)',cursor:'pointer',color:s.measureMode==='element'?'var(--accent)':'var(--text-primary)',background:s.measureMode==='element'?'var(--accent-bg)':'transparent'}}
                 onMouseEnter=${function(e){e.currentTarget.style.background='var(--surface-warm)';}}
                 onMouseLeave=${function(e){e.currentTarget.style.background=s.measureMode==='element'?'var(--accent-bg)':'transparent';}}>
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" dangerouslySetInnerHTML=${{__html:I.cubeq}}></svg>
                 <span style=${{flex:1}}>Element <span style=${{color:'var(--text-faint)',fontSize:'var(--text-2xs)'}}>· read Qto_*</span></span></div>`}
-              ${(s.workspace==='coordinate'||s.workspace==='review') && html`<div onClick=${function(){clearAllModes();d({t:A.MEASURE_MODE,v:'clearance'});setMeasurePopOpen(false);window._ccClearancePickA=null;}}
+              ${(s.workspace==='coordinate'||s.workspace==='review') && html`<div onClick=${function(){clearAllModes({sectionBox:true});d({t:A.MEASURE_MODE,v:'clearance'});setMeasurePopOpen(false);window._ccClearancePickA=null;}}
                 style=${{display:'flex',alignItems:'center',gap:'.55rem',padding:'.35rem .55rem',borderRadius:'var(--radius-xs)',cursor:'pointer',color:s.measureMode==='clearance'?'var(--accent)':'var(--text-primary)',background:s.measureMode==='clearance'?'var(--accent-bg)':'transparent'}}
                 onMouseEnter=${function(e){e.currentTarget.style.background='var(--surface-warm)';}}
                 onMouseLeave=${function(e){e.currentTarget.style.background=s.measureMode==='clearance'?'var(--accent-bg)':'transparent';}}>
