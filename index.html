@@ -11368,6 +11368,7 @@ function startApp() {
         var outDir=new THREE.Vector3(sg[0],sg[1],sg[2]).normalize();
         var mat=new THREE.MeshBasicMaterial({color:0xffffff,transparent:true,opacity:0.9,depthTest:false});
         var mesh=new THREE.Mesh(handleGeo,mat);
+        mesh.castShadow = false; mesh.receiveShadow = false; // helper
         mesh.position.copy(pos).addScaledVector(outDir,handleSize);
         mesh.userData._sboxHandle=true;
         mesh.userData._handleSigns=sg;
@@ -11405,6 +11406,7 @@ function startApp() {
         // Section box face arrows match the section-plane gizmo (amber).
         var fmat = new THREE.MeshBasicMaterial({color:0xf59e0b, transparent:true, opacity:0.85, depthTest:false});
         var arrow = new THREE.Mesh(faceArrowGeo, fmat);
+        arrow.castShadow = false; arrow.receiveShadow = false; // helper
         arrow.position.copy(arrowPos);
         arrow.quaternion.setFromUnitVectors(new THREE.Vector3(0,1,0), fd.axis.clone().multiplyScalar(fd.sign).normalize());
         arrow.userData._sboxFaceHandle = true;
@@ -11429,6 +11431,7 @@ function startApp() {
       var ringGeo=new THREE.TorusGeometry(ringRadius,ringTubeRadius,8,48);
       var ringMat=new THREE.MeshBasicMaterial({color:0xf59e0b,transparent:true,opacity:0.7,depthTest:false});
       var ring=new THREE.Mesh(ringGeo,ringMat);
+      ring.castShadow = false; ring.receiveShadow = false; // helper, no shadow
       var ringY=hy+ringFloatHeight;
       ring.position.copy(ctr).addScaledVector(axY,ringY);
       ring.userData._floatH=ringFloatHeight; // reused by the live rotate-drag repositioning
@@ -11451,7 +11454,12 @@ function startApp() {
       S.scene.add(connLine);
       if(!S._sboxFacePanels) S._sboxFacePanels=[];
       S._sboxFacePanels.push(connLine); // cleaned up with face panels
-      invalidate();
+      // Force the static shadow map to refresh now that the helper
+      // meshes are in the scene. Without this the IFC's existing shadow
+      // map is stale and the model can appear unshadowed alongside the
+      // freshly-added section-box helpers.
+      if (S.renderer && S.renderer.shadowMap) S.renderer.shadowMap.needsUpdate = true;
+      invalidate(2);
     }, [s.sectionBox, s.models, s.prefs&&s.prefs.renderStyle]);
 
     // Persist section state so it survives page refresh
@@ -27962,7 +27970,11 @@ function startApp() {
     var limitMB = mem.jsHeapSizeLimit ? Math.round(mem.jsHeapSizeLimit / 1048576) : 0;
     // Default OFF — model names often expose client/project identifiers
     // ("669001A_..._BWK_..."). User must explicitly opt in to share them.
-    var inclNames = useState(false), includeNames=inclNames[0], setIncludeNames=inclNames[1];
+    // Model names are NEVER included in diagnostic reports — privacy by
+    // design. The opt-in checkbox has been removed; the toggle and its
+    // state survive here as constants so the report-generator branch
+    // remains unchanged.
+    var includeNames = false;
     var inclBrowser = useState(true), includeBrowser=inclBrowser[0], setIncludeBrowser=inclBrowser[1];
     var msgSt = useState(''), userMsg=msgSt[0], setUserMsg=msgSt[1];
 
@@ -28058,9 +28070,9 @@ function startApp() {
             <input type="checkbox" checked disabled style=${{accentColor:'var(--accent)'}} />
             <span>Clash count & status breakdown, issue count</span>
           </label>
-          <label style=${{display:'flex',alignItems:'center',gap:'.5rem',cursor:'pointer'}} onClick=${function(){setIncludeNames(!includeNames)}}>
-            <input type="checkbox" checked=${includeNames} onChange=${function(){}} style=${{accentColor:'var(--accent)'}} />
-            <span>Model names <span style=${{color:'var(--text-faint)'}}>(uncheck to send as "Model 1, Model 2…")</span></span>
+          <label style=${{display:'flex',alignItems:'center',gap:'.5rem'}}>
+            <input type="checkbox" checked disabled style=${{accentColor:'var(--accent)'}} />
+            <span>Model names anonymised <span style=${{color:'var(--text-faint)'}}>(sent as "Model 1, Model 2…" — always)</span></span>
           </label>
           <label style=${{display:'flex',alignItems:'center',gap:'.5rem',cursor:'pointer'}} onClick=${function(){setIncludeBrowser(!includeBrowser)}}>
             <input type="checkbox" checked=${includeBrowser} onChange=${function(){}} style=${{accentColor:'var(--accent)'}} />
