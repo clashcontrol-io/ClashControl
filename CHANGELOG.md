@@ -1,5 +1,8 @@
 # Changelog
 
+## v5.19.46 (2026-06-08)
+- fix(restore): belt-and-braces _instKey to kill 32-bit hash collisions
+
 ## v5.19.45 (2026-06-08)
 - fix(restore): hash entire position+index buffer + bump cache version
 
