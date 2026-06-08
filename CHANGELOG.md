@@ -1,5 +1,8 @@
 # Changelog
 
+## v5.19.18 (2026-06-08)
+- fix(viewer): disable shadows on remaining section-box helpers + force shadow refresh + diagnostic privacy
+
 ## v5.19.17 (2026-06-08)
 - fix(viewer): drop rendered exposure 0.7 → 0.55 (still too punchy at 0.7)
 
