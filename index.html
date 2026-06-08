@@ -546,6 +546,42 @@ function startApp() {
   var CC_VERSION = {v:'5.19.1',hash:'e950a99',date:'2026-06-08T08:45:47Z'};
   window.CC_VERSION = CC_VERSION;
 
+  // ── Three.js bump-prep harness ─────────────────────────────────────────────
+  // Centralizes the Three.js CDN version so the eventual r128 → r179+ bump
+  // touches one constant instead of 6 string literals. Examples-base also
+  // serves the same role for the on-demand loader scripts (GLTFLoader,
+  // TransformControls, PLYLoader, PCDLoader, EffectComposer chain, etc.).
+  //
+  // When we bump:
+  //   1. Update THREE_VERSION + THREE_EXAMPLES_PATH below.
+  //   2. Switch the <script> tag in the document head to the new build URL
+  //      (which becomes ESM at r161+ — the bump checklist covers it).
+  //   3. Regenerate SRI hashes via scripts/generate-sri.js.
+  //   4. Replace _ccSetSRGBOutput's r128 branch with the modern branch.
+  // Everything else in the codebase keeps working.
+  var THREE_VERSION = '0.128.0';
+  var THREE_EXAMPLES_BASE = 'https://cdn.jsdelivr.net/npm/three@' + THREE_VERSION + '/examples/js/';
+  window._ccThreeCDN = { version: THREE_VERSION, examplesBase: THREE_EXAMPLES_BASE };
+
+  // sRGB output shim. r128 uses `renderer.outputEncoding = THREE.sRGBEncoding`;
+  // r152+ replaced it with `renderer.outputColorSpace = THREE.SRGBColorSpace`.
+  // Detecting which branch to take per-renderer makes this code survive the
+  // bump unchanged — drop the legacy branch when r128 stops shipping.
+  window._ccSetSRGBOutput = function(renderer) {
+    if (!renderer) return;
+    if ('outputColorSpace' in renderer && window.THREE && THREE.SRGBColorSpace) {
+      renderer.outputColorSpace = THREE.SRGBColorSpace;          // r152+
+    } else if ('outputEncoding' in renderer && window.THREE && THREE.sRGBEncoding) {
+      _ccSetSRGBOutput(renderer);              // r128 (current)
+    }
+  };
+  // Texture-side variant. Textures use the same encoding/colorSpace dance.
+  window._ccSetSRGBTexture = function(tex) {
+    if (!tex || !window.THREE) return;
+    if ('colorSpace' in tex && THREE.SRGBColorSpace) tex.colorSpace = THREE.SRGBColorSpace;
+    else if ('encoding' in tex && THREE.sRGBEncoding) tex.encoding = THREE.sRGBEncoding;
+  };
+
   function _gcEvent(name, title) {
     try { if(window.goatcounter && window.goatcounter.count) window.goatcounter.count({path:'event/'+name, title:title||name, event:true}); } catch(e){}
   }
@@ -6457,7 +6493,7 @@ function startApp() {
         g.addColorStop(1.0, '#e8e8e8');
         ctx.fillStyle = g; ctx.fillRect(0,0,2,256);
         var t = new THREE.CanvasTexture(c);
-        t.encoding = THREE.sRGBEncoding;
+        _ccSetSRGBTexture(t);
         t.needsUpdate = true;
         return t;
       })();
@@ -6476,7 +6512,7 @@ function startApp() {
       renderer.setSize(el.clientWidth, el.clientHeight);
       renderer.localClippingEnabled = false;
       // ── Architectural-quality output (r128) ────────────────────────────
-      renderer.outputEncoding = THREE.sRGBEncoding;
+      _ccSetSRGBOutput(renderer);
       renderer.toneMapping = THREE.ACESFilmicToneMapping;
       renderer.toneMappingExposure = 1.0;
       renderer.shadowMap.enabled = true;
@@ -6556,7 +6592,7 @@ function startApp() {
           S._postLoading = Promise.resolve();
           return S._postLoading;
         }
-        var base = 'https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/';
+        var base = THREE_EXAMPLES_BASE;
         S._postLoading = _ccLoadScript(base+'shaders/CopyShader.js')
           .then(function(){ return _ccLoadScript(base+'shaders/LuminosityHighPassShader.js').catch(function(){}); })
           .then(function(){ return _ccLoadScript(base+'shaders/SAOShader.js'); })
@@ -9040,7 +9076,7 @@ function startApp() {
           _magRenderer = new THREE.WebGLRenderer({canvas:_magCanvas, alpha:true, antialias:true, powerPreference:'low-power'});
           _magRenderer.setPixelRatio(1);
           _magRenderer.setSize(192, 192, false);
-          _magRenderer.outputEncoding = THREE.sRGBEncoding;
+          _ccSetSRGBOutput(_magRenderer);
         } catch(err){
           if (_magCanvas.parentNode) _magCanvas.parentNode.removeChild(_magCanvas);
           _magCanvas = null; _magInitFailed = true;
@@ -10980,7 +11016,7 @@ function startApp() {
         if (typeof THREE.TransformControls !== 'function') {
           if (tcLoadedRef.current) { cb(); return; }
           tcLoadedRef.current = true;
-          var url = 'https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/TransformControls.js';
+          var url = THREE_EXAMPLES_BASE + 'controls/TransformControls.js';
           var sc = document.createElement('script');
           sc.src = url; sc.async = true;
           sc.onload = function(){ if (typeof THREE.TransformControls === 'function') buildAndCb(); else cb(); };
@@ -11559,7 +11595,7 @@ function startApp() {
         }
         ctx.fillStyle = g; ctx.fillRect(0,0,2,256);
         var t = new THREE.CanvasTexture(c);
-        t.encoding = THREE.sRGBEncoding;
+        _ccSetSRGBTexture(t);
         t.needsUpdate = true;
         S._skyTex = t;
         S.scene.background = t;
@@ -17049,7 +17085,7 @@ function startApp() {
   function exportGLTF(scene, models, format) {
     _gcEvent('gltf-export', format.toUpperCase()+' export');
     var script = document.createElement('script');
-    script.src = 'https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/exporters/GLTFExporter.js';
+    script.src = THREE_EXAMPLES_BASE + 'exporters/GLTFExporter.js';
     script.onload = function() {
       var exporter = new THREE.GLTFExporter();
       var exportScene = new THREE.Scene();
@@ -17138,7 +17174,7 @@ function startApp() {
     }
 
     var script = document.createElement('script');
-    script.src = 'https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/exporters/GLTFExporter.js';
+    script.src = THREE_EXAMPLES_BASE + 'exporters/GLTFExporter.js';
     script.onload = function() {
       var exportScene = new THREE.Scene();
       var meshCount = 0;
