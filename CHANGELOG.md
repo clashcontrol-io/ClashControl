@@ -1,5 +1,8 @@
 # Changelog
 
+## v5.19.35 (2026-06-08)
+- chore: remove instancing/survey-marker diagnostic console logs
+
 ## v5.19.34 (2026-06-08)
 - fix(ui): hide Fit All Clashes / Markers bar when no models loaded
 
