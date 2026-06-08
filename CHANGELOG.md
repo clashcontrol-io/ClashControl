@@ -1,5 +1,8 @@
 # Changelog
 
+## v5.19.19 (2026-06-08)
+- perf(three-bump): explicitly attach all critical THREE classes after spread
+
 ## v5.19.18 (2026-06-08)
 - fix(viewer): disable shadows on remaining section-box helpers + force shadow refresh + diagnostic privacy
 
