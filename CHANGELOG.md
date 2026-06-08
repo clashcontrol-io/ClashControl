@@ -1,5 +1,8 @@
 # Changelog
 
+## v5.19.8 (2026-06-08)
+- feat(splat): scale/rotation opts, change events, Models-tab inventory panel
+
 ## v5.19.7 (2026-06-08)
 - fix(section-box): snap to selected element's bbox, not the merged chunk's bbox
 
