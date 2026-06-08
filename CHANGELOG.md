@@ -1,5 +1,8 @@
 # Changelog
 
+## v5.19.4 (2026-06-08)
+- fix(csp+splat): allow data: in connect-src so Spark.js can load its inline WASM
+
 ## v5.19.3 (2026-06-08)
 - fix(critical): _ccSetSRGBOutput infinite recursion crashed production
 
