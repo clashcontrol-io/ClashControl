@@ -1,5 +1,8 @@
 # Changelog
 
+## v5.19.14 (2026-06-08)
+- hotfix(lighting): revert × π light intensity overshoot
+
 ## v5.19.13 (2026-06-08)
 - hotfix: spread Three.js module namespace into a mutable object before attach
 
