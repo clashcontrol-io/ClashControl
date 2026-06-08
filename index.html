@@ -3067,7 +3067,16 @@ function startApp() {
             mesh.userData._ifcMaterial = matMap[expressID] || '';
             elBox.expandByObject(mesh);
             _ccBakeMesh(mesh);
-            mesh.userData._instKey = geoExpId + ':' + matKey;
+            // INSTANCING REGRESSION FIX: matKey was never declared in this
+            // scope; the line threw ReferenceError on every element load and
+            // the surrounding try/catch swallowed it with a "Skipped
+            // element geometry" warning, dropping the mesh entirely. Even
+            // when it didn't throw, _instKey was undefined → 0 instanced
+            // meshes in scene → 5 GB heap, 54k draw calls per frame.
+            // mat is the shared material from _ccSharedMatCache, so two
+            // meshes with the same RGBA share the same uuid — exactly what
+            // we need to group them.
+            mesh.userData._instKey = geoExpId + ':' + (mat.uuid || 'na');
             elMeshes.push(mesh); meshes.push(mesh);
           } catch(e) { console.warn('Skipped element geometry #'+expressID+': '+(e.message||e)); }
           finally { if (gd) try { gd.delete(); } catch(e2) {} }
