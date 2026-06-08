@@ -1,5 +1,8 @@
 # Changelog
 
+## v5.19.3 (2026-06-08)
+- fix(critical): _ccSetSRGBOutput infinite recursion crashed production
+
 ## v5.19.2 (2026-06-08)
 - BCF provenance round-trip, autonomy envelope, splat Phase 1, bump-prep (#591)
 
