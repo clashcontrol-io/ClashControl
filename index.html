@@ -628,19 +628,7 @@ function startApp() {
   var CC_VERSION = {v:'5.19.48',hash:'2260aae',date:'2026-06-08T15:49:23Z'};
   window.CC_VERSION = CC_VERSION;
 
-  // ── Three.js bump-prep harness ─────────────────────────────────────────────
-  // Centralizes the Three.js CDN version so the eventual r128 → r179+ bump
-  // touches one constant instead of 6 string literals. Examples-base also
-  // serves the same role for the on-demand loader scripts (GLTFLoader,
-  // TransformControls, PLYLoader, PCDLoader, EffectComposer chain, etc.).
-  //
-  // When we bump:
-  //   1. Update THREE_VERSION + THREE_EXAMPLES_PATH below.
-  //   2. Switch the <script> tag in the document head to the new build URL
-  //      (which becomes ESM at r161+ — the bump checklist covers it).
-  //   3. Regenerate SRI hashes via scripts/generate-sri.js.
-  //   4. Replace _ccSetSRGBOutput's r128 branch with the modern branch.
-  // Everything else in the codebase keeps working.
+  // ── Three.js bump-prep harness ──  See INTERNALS.md § 21.1
   var THREE_VERSION = '0.128.0';
   var THREE_EXAMPLES_BASE = 'https://cdn.jsdelivr.net/npm/three@' + THREE_VERSION + '/examples/js/';
   window._ccThreeCDN = { version: THREE_VERSION, examplesBase: THREE_EXAMPLES_BASE };
@@ -925,23 +913,7 @@ function startApp() {
     homeView:_ccLoadPref('homeView',null), // {pos:[x,y,z],target:[x,y,z]} — saved home camera; null = fit-all
     // Rendered-mode lighting controls (sliders surfaced in the toolbar Style popover)
     lightSettings:_ccLoadPref('lightSettings',{sun:1.0, ambient:1.0, exposure:1.0, shadow:1.0, time:13}),
-    // Graduated autonomy envelope (Day, AEC Magazine, "Agentic BIM's missing
-    // infrastructure", Apr 2026). Per-project setting that defines what the
-    // built-in AI is permitted to do without escalation. Maps to:
-    //   nudge      — current behaviour. Resolve/fix-clash queries return a
-    //                "connect your own LLM" message; the built-in assistant
-    //                never proposes a fix. Most conservative.
-    //   suggest    — the connected own-LLM (Smart Bridge) may reason about
-    //                resolutions and reply with options, but never dispatches
-    //                state changes. The architect remains the decision-maker.
-    //                (Future: when own-LLM is not connected, fall through to a
-    //                neutral copy instead of the nudge ad.)
-    //   auto      — reserved. The agent may dispatch reversible state changes
-    //                (mark resolved, set severity) without confirmation. Off
-    //                by default, no UI to enable yet — reserved so the
-    //                envelope literal exists and we don't have to migrate.
-    // The envelope is global today; per-project scoping comes when a project
-    // record exists for solo (non-shared) use.
+    // Graduated autonomy envelope.  See INTERNALS.md § 21.2
     aiEnvelope:_ccLoadPref('aiEnvelope',{resolveClashes:'nudge'}),
   };
   // Restore section state persisted from previous session
@@ -1843,17 +1815,8 @@ function startApp() {
         props:  ed.props
       };
     });
-    // Run the same draw-call optimisation the live load path uses. Before
-    // this, restore-from-cache (project switch / reload) bypassed chunk-merge
-    // entirely, so a reloaded session showed "0 merged chunks" and 146k draw
-    // objects even with the flag ON (#572). el.meshes[] stays per-element
-    // (chunk-merge mutates only the render list), so clash/highlight are
-    // unaffected. _instKey is now set per mesh via the geometry-fingerprint
-    // path above so instancing runs cleanly on restored meshes — was the
-    // root cause of the post-r180 perf regression on cache-restored
-    // federations (73402 distinct geometries, 0 instanced, 5 GB heap).
-    // Strip survey base-point / nulpunt markers on restore too, so a
-    // reloaded session matches a fresh load (no giant floating letters).
+    // Restore-path parity with the live load: strip survey markers, then
+    // instance. See INTERNALS.md § 21.3
     if (typeof _ccStripSurveyMarkers === 'function') {
       var _smR = _ccStripSurveyMarkers(elements, meshes); elements = _smR.elements; meshes = _smR.meshes;
     }
@@ -1917,26 +1880,7 @@ function startApp() {
   // GPU instancing constants
   var INST_THRESHOLD = 4; // min identical placements before collapsing to InstancedMesh
 
-  // [Meshlet] Spatial chunk merge — ON by default (Stages 1+2 complete).
-  // Disable from console with `window._ccChunkMerge = false` BEFORE loading a model
-  // for an exact revert, then compare `window._ccPerfSnapshot()`.
-  // It merges the non-instanced static mesh remainder into a small number of large
-  // geometries (spatial grid × material) to slash draw calls and shrink the cull loop.
-  // Only the render list is touched — element.meshes[] is untouched, so clash
-  // detection / geo-cache serialization / bounds are unaffected and flag-off is an
-  // exact revert. Identity features are restored on chunks: picking via a per-chunk
-  // faceIndex→expressId range table; highlight/ghost/isolate via the surviving
-  // element.meshes[] proxies (Stage 2A); hide via per-chunk index masking and
-  // color-by-class/DQ via per-vertex colors (Stage 2B).
-  // Chunk-merge default OFF. The Stage 1/2A/2B trial baked all same-material
-  // elements in a grid cell into one merged BufferGeometry — collapsing
-  // visual distinctions between adjacent elements, breaking Style switching
-  // (chunks render with a locked material), and changing how selection
-  // outlines read on dense models. Reverting to per-element rendering, same
-  // behaviour as pre-30-May before chunk-merge landed. Memory wins kept:
-  // _ccGetSharedPhongMat cross-load materials, _ccQuantizeNormalAttr Int8
-  // normals, survey base-point/nulpunt strip. Set true via console if you
-  // want the merge path back for testing.
+  // Spatial chunk-merge — default OFF.  See INTERNALS.md § 21.4
   if (typeof window._ccChunkMerge === 'undefined') window._ccChunkMerge = false;
   window._ccPerfSnapshot = function(){
     var s = (typeof S!=='undefined'&&S&&S.perf)?S.perf:null;
@@ -2115,17 +2059,7 @@ function startApp() {
     return null;
   }
 
-  // ── Pset / Quantities canonicalization ─────────────────────────
-  // Many IFC elements share byte-identical property sets — every wall of a
-  // type carries the same Pset_WallCommon, every column the same Pset_ColumnCommon,
-  // etc. In a 50k-element model with ~50 unique signatures, naive storage
-  // allocates ~50k pset objects where ~50 would do.
-  //
-  // We canonicalize twice: once on each inner pset (high-frequency hits) and
-  // once on the outer container (full combination). Frozen objects are returned
-  // as-is — that's our marker for "already canonical, don't re-hash".
-  // Caches live on window so they survive across model loads in the same
-  // session; re-loading a model finds the same canonical refs.
+  // ── Pset / Quantities canonicalization ──  See INTERNALS.md § 21.5
   var _ccPsetCanonCache  = window._ccPsetCanonCache  || (window._ccPsetCanonCache  = new Map());
   var _ccPsetInnerCache  = window._ccPsetInnerCache  || (window._ccPsetInnerCache  = new Map());
   var _ccQtoCanonCache   = window._ccQtoCanonCache   || (window._ccQtoCanonCache   = new Map());
@@ -2953,18 +2887,7 @@ function startApp() {
     return m;
   }
 
-  // ── Survey base-point / nulpunt marker stripping ──
-  // Some IFC files ship surveyor "project zero" / base-point reference
-  // markers as IfcBuildingElementProxy elements whose geometry is extruded
-  // 3-D text of the company / project name (e.g. "PIETERS", "KLI_Nulpunt").
-  // They sit at the project origin, often mirrored or at odd scale, and:
-  //   • render as giant floating letters in the viewer, and
-  //   • generate junk clashes against each other (the source of the
-  //     -197000 mm / -1.1e10 sentinel-distance pairs).
-  // They carry no coordination value, so we drop them from both the render
-  // list and the clash set at load time — same treatment the loader already
-  // gives openings / spaces / grids (just matched by name, since the IFC
-  // type is a generic proxy).
+  // ── Survey base-point / nulpunt marker stripping ──  See INTERNALS.md § 21.6
   function _ccIsSurveyMarker(props) {
     if (!props) return false;
     var t = (props.ifcType || '').toLowerCase();
@@ -25911,18 +25834,7 @@ function startApp() {
       }
     }
 
-    // ── Tiered AI: basic assistant vs. your own LLM for clash-solving ──
-    // The built-in assistant (Groq) only does basic commands + light Q&A.
-    // Real clash-resolution / fix suggestions need a stronger model: route to
-    // the user's own LLM via the Connector when connected, otherwise nudge them
-    // to connect it in one click — a warm-up toward the bring-your-own-LLM tier.
-    //
-    // Graduated autonomy: the envelope (s.prefs.aiEnvelope) decides what's
-    // allowed without escalation. mode='nudge' (default) routes clash-resolve
-    // to the user's own LLM if connected, else returns the connect message.
-    // mode='suggest' is the same path for now (own-LLM produces advice, never
-    // dispatches state changes — same architect-as-decision-maker contract).
-    // mode='auto' is reserved; reaching it requires explicit user opt-in.
+    // ── Tiered AI: basic assistant vs. your own LLM ──  See INTERNALS.md § 21.7
     if (!replyContext) {
       var _solveRx = /\b(resolv\w*|solv\w*|fix(?:ing|es|ed)?|deconflict\w*|mitigat\w*|work[\s-]?around|recommend\w*|suggest\w*|propose\w*)\b/i;
       var _aboutClash = /\b(clash\w*|conflict\w*|collision\w*|overlap\w*|intersect\w*)\b/i;

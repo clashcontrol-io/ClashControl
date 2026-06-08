@@ -219,3 +219,79 @@ Mount uses `ReactDOM.createRoot` (React 18) with `ErrorBoundary` fallback. Addon
 - **Adaptive BVH cache + pair-result cache** persist across detection runs (cleared per-model on `DEL_MODEL`/`REPLACE_MODEL`)
 - **Lazy WASM loading** avoids blocking initial page render with a 5MB download
 - **Delta merge** preserves user work across re-detection without re-classifying resolved clashes
+
+---
+
+## 21. Extracted Code Rationale
+
+Long-form rationale blocks that used to live inline in `index.html`. Each subsection corresponds to a `// See INTERNALS.md § 21.x` reference in the code.
+
+### 21.1 Three.js bump-prep harness
+
+**Code reference:** `// ── Three.js bump-prep harness ──` (near the top of `startApp()`)
+
+`THREE_VERSION` + `THREE_EXAMPLES_BASE` constants centralize the CDN version so the next bump touches one place instead of six string literals. The examples-base also drives the on-demand loader scripts (GLTFLoader, TransformControls, PLYLoader, PCDLoader, EffectComposer chain, etc.).
+
+When bumping the Three.js version:
+1. Update `THREE_VERSION` and `THREE_EXAMPLES_PATH` constants.
+2. Switch the `<script>` tag in `<head>` to the new build URL (ESM at r161+ — checklist covers it).
+3. Regenerate SRI hashes via `scripts/generate-sri.js`.
+4. Replace `_ccSetSRGBOutput`'s r128 branch with the modern branch.
+
+Everything else in the codebase keeps working.
+
+### 21.2 Graduated autonomy envelope
+
+**Code reference:** in `INIT.prefs.aiEnvelope` default initialization.
+
+Per-project setting (currently global) that defines what the built-in AI is permitted to do without escalation. Based on Day, *AEC Magazine* — "Agentic BIM's missing infrastructure" (Apr 2026).
+
+- `nudge` — current default. Clash-resolve / fix queries return a "connect your own LLM" message; the built-in assistant never proposes a fix.
+- `suggest` — connected own-LLM (Smart Bridge) may reason and reply with options, but never dispatches state changes. Architect remains decision-maker.
+- `auto` — reserved. Agent may dispatch reversible state changes (mark resolved, set severity) without confirmation. Off by default, no UI to enable yet — the literal exists so we don't need to migrate later.
+
+Per-project scoping arrives when a project record exists for solo (non-shared) use.
+
+### 21.3 Cache-restore chunk-merge + instancing parity
+
+**Code reference:** end of `_geoDeserialize()` after element reconstruction.
+
+The restore path runs the same draw-call optimisations as the live load path (survey-marker strip, instancing, chunk-merge). Before this, restore-from-cache (project switch / reload) bypassed chunk-merge entirely — a reloaded session showed "0 merged chunks" and 146k draw objects even with the flag ON.
+
+`el.meshes[]` stays per-element (chunk-merge mutates only the render list), so clash detection and highlight are unaffected. `_instKey` is set per mesh via the `gid` (cache v:7+) or fingerprint fallback (older caches) so instancing runs cleanly on restored meshes.
+
+### 21.4 Spatial chunk-merge — default OFF
+
+**Code reference:** `window._ccChunkMerge` initialization.
+
+Stage 1/2A/2B trial baked all same-material elements in a grid cell into one merged BufferGeometry. Won draw-call count and CPU cull time, but collapsed visual distinctions between adjacent elements, broke Style switching (chunks render with a locked material), and changed how selection outlines read on dense models. Reverted to per-element rendering — pre-30-May behaviour.
+
+Memory wins kept independently: `_ccGetSharedPhongMat` cross-load material dedup, `_ccQuantizeNormalAttr` Int8 normals, survey base-point / nulpunt strip.
+
+Set `window._ccChunkMerge = true` from console BEFORE loading a model to opt in for testing; compare with `window._ccPerfSnapshot()`.
+
+### 21.5 Pset / Quantities canonicalization
+
+**Code reference:** `_ccCanonPsets` / `_ccCanonQuantities` setup.
+
+Many IFC elements share byte-identical property sets — every wall of a type carries the same `Pset_WallCommon`, every column the same `Pset_ColumnCommon`. In a 50k-element model with ~50 unique signatures, naive storage allocates ~50k pset objects where ~50 would do.
+
+Canonicalize twice: once on each inner pset (high-frequency hits), once on the outer container (full combination). Frozen objects are returned as-is — that's the marker for "already canonical, don't re-hash". Caches live on `window` so they survive across model loads in the same session; re-loading a model finds the same canonical refs.
+
+### 21.6 Survey base-point / nulpunt marker stripping
+
+**Code reference:** `_ccIsSurveyMarker()` / `_ccStripSurveyMarkers()`.
+
+Some IFC files ship surveyor "project zero" / base-point reference markers as `IfcBuildingElementProxy` elements whose geometry is extruded 3-D text of the company / project name (e.g. "PIETERS", "KLI_Nulpunt"). They sit at the project origin, often mirrored or at odd scale, and:
+- render as giant floating letters in the viewer
+- generate junk clashes against each other (the source of the `-197000 mm` / `-1.1e10` sentinel-distance pairs).
+
+They carry no coordination value, so they're dropped from both the render list and the clash set at load time — same treatment the loader gives openings / spaces / grids (just matched by name, since the IFC type is a generic proxy).
+
+### 21.7 Tiered AI — basic assistant vs. your own LLM
+
+**Code reference:** in the NL-command routing logic.
+
+The built-in assistant (Groq) handles basic commands + light Q&A. Real clash-resolution / fix suggestions need a stronger model: route to the user's own LLM via the Connector when connected, otherwise nudge them to connect it in one click — warm-up toward the bring-your-own-LLM tier.
+
+Graduated autonomy: the envelope (`s.prefs.aiEnvelope`) decides what's allowed without escalation. `mode='nudge'` (default) routes clash-resolve to the user's own LLM if connected, else returns the connect message. `mode='suggest'` is the same path for now (own-LLM produces advice, never dispatches state).
