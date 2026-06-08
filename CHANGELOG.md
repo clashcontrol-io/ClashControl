@@ -1,5 +1,8 @@
 # Changelog
 
+## v5.19.40 (2026-06-08)
+- perf(conflicts): progressive reveal + memo IssueRow
+
 ## v5.19.39 (2026-06-08)
 - feat(plan): floor picker in 2D toolbar + cut-height stepper
 
