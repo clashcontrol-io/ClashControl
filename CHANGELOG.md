@@ -1,5 +1,8 @@
 # Changelog
 
+## v5.19.38 (2026-06-08)
+- fix(ui): measure toolbar no longer kills section box
+
 ## v5.19.37 (2026-06-08)
 - feat(api): add window.ClashControl.* public namespace alias
 
