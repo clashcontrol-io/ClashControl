@@ -1,5 +1,8 @@
 # Changelog
 
+## v5.19.23 (2026-06-08)
+- feat(reach): PWA install banner + public Developer API landing page
+
 ## v5.19.22 (2026-06-08)
 - fix(walk): pointer lock on FIRST mouse click — don't try from useEffect
 
