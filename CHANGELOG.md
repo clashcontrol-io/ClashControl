@@ -1,5 +1,8 @@
 # Changelog
 
+## v5.19.9 (2026-06-08)
+- fix(section-box): BX shortcut falls back to single-element selection before full model
+
 ## v5.19.8 (2026-06-08)
 - feat(splat): scale/rotation opts, change events, Models-tab inventory panel
 
