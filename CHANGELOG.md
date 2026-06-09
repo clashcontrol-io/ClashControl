@@ -1,5 +1,8 @@
 # Changelog
 
+## v5.19.64 (2026-06-09)
+- feat(visibility): third clash category — sight-line obstruction detection
+
 ## v5.19.63 (2026-06-09)
 - feat(align): per-hotspot snapshots + printable deviation report PDF
 
