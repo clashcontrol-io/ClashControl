@@ -1,5 +1,8 @@
 # Changelog
 
+## v5.19.51 (2026-06-09)
+- chore: post-bump simplification — drop r128 fallbacks and bump-prep scaffolding
+
 ## v5.19.50 (2026-06-09)
 - chore(console): gate noisy probe + opt-out warnings to once per session
 
