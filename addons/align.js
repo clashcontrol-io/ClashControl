@@ -298,6 +298,219 @@
     }
     window._ccAlignCancel = _cancel;
 
+    // ── Deviation heatmap (Phase 2 follow-up to alignment) ───────
+    // For each scan point we compute the distance to the nearest IFC
+    // element bounding box and recolour the cloud red→amber→green by
+    // that distance. Triangle-accurate distance is more expensive and
+    // lands in a later phase; bbox-distance already gives a useful
+    // first pass — "this region of the scan is or isn't close to any
+    // design geometry" — which is the visual the OpenAEC demo wants.
+    //
+    // Spatial acceleration: bin IFC elements into a uniform grid by
+    // their bbox centre. For each scan point we probe the cell and
+    // its 26 neighbours. Cell size = median element size so each cell
+    // holds a roughly constant element count.
+    //
+    // Public API:
+    //   _ccDeviationCompute(targetId, opts)  → Promise<{stats}>
+    //     opts.greenAt  metres at and below which a point is green   (default 0.02)
+    //     opts.redAt    metres at and above which a point is red     (default 0.10)
+    //   _ccDeviationClear(targetId)
+    var _deviationOriginal = {}; // targetId → original color attribute (for restore)
+    var COLOR_GOOD = [0.13, 0.77, 0.37];  // green
+    var COLOR_WARN = [0.96, 0.62, 0.04];  // amber
+    var COLOR_BAD  = [0.93, 0.27, 0.27];  // red
+
+    function _interpColor(t) {
+      // 0 → green, 0.5 → amber, 1 → red
+      if (t < 0.5) {
+        var k = t * 2;
+        return [
+          COLOR_GOOD[0]*(1-k) + COLOR_WARN[0]*k,
+          COLOR_GOOD[1]*(1-k) + COLOR_WARN[1]*k,
+          COLOR_GOOD[2]*(1-k) + COLOR_WARN[2]*k
+        ];
+      }
+      var k2 = (t - 0.5) * 2;
+      return [
+        COLOR_WARN[0]*(1-k2) + COLOR_BAD[0]*k2,
+        COLOR_WARN[1]*(1-k2) + COLOR_BAD[1]*k2,
+        COLOR_WARN[2]*(1-k2) + COLOR_BAD[2]*k2
+      ];
+    }
+
+    function _collectIfcBoxes() {
+      var s = window._ccLatestState;
+      if (!s || !s.models || !s.models.length) return null;
+      var boxes = []; // {cx,cy,cz,hx,hy,hz,size}
+      var diagSum = 0, diagN = 0;
+      s.models.forEach(function(m){
+        if (m.visible === false) return;
+        (m.elements || []).forEach(function(el){
+          if (!el.box) return;
+          var bmin = el.box.min, bmax = el.box.max;
+          var hx = (bmax.x - bmin.x) * 0.5;
+          var hy = (bmax.y - bmin.y) * 0.5;
+          var hz = (bmax.z - bmin.z) * 0.5;
+          var size = Math.max(hx, hy, hz);
+          if (!isFinite(size) || size <= 0) return;
+          boxes.push({
+            cx: (bmin.x + bmax.x) * 0.5,
+            cy: (bmin.y + bmax.y) * 0.5,
+            cz: (bmin.z + bmax.z) * 0.5,
+            hx: hx, hy: hy, hz: hz
+          });
+          diagSum += Math.sqrt(hx*hx + hy*hy + hz*hz);
+          diagN++;
+        });
+      });
+      if (!boxes.length) return null;
+      var meanDiag = diagSum / diagN;
+      return { boxes: boxes, meanDiag: meanDiag };
+    }
+
+    // Distance from a point to an AABB defined by centre + half-extents.
+    // Standard separating-axis formulation: clamp per axis, return the
+    // Euclidean distance of the residual.
+    function _pointToBoxDistance(px, py, pz, b) {
+      var dx = Math.max(0, Math.abs(px - b.cx) - b.hx);
+      var dy = Math.max(0, Math.abs(py - b.cy) - b.hy);
+      var dz = Math.max(0, Math.abs(pz - b.cz) - b.hz);
+      return Math.sqrt(dx*dx + dy*dy + dz*dz);
+    }
+
+    function _buildGrid(boxes, cellSize) {
+      var grid = Object.create(null);
+      for (var i = 0; i < boxes.length; i++) {
+        var b = boxes[i];
+        var gx = Math.floor(b.cx / cellSize);
+        var gy = Math.floor(b.cy / cellSize);
+        var gz = Math.floor(b.cz / cellSize);
+        var k = gx + ',' + gy + ',' + gz;
+        (grid[k] || (grid[k] = [])).push(b);
+      }
+      return grid;
+    }
+
+    window._ccDeviationCompute = function(targetId, opts) {
+      opts = opts || {};
+      var greenAt = opts.greenAt != null ? opts.greenAt : 0.02; // ≤ 2 cm → green
+      var redAt   = opts.redAt   != null ? opts.redAt   : 0.10; // ≥ 10 cm → red
+      var tgt = _findTarget(targetId);
+      if (!tgt || !tgt.geometry) return Promise.reject(new Error('Scan target not found'));
+      var ifc = _collectIfcBoxes();
+      if (!ifc) return Promise.reject(new Error('No IFC elements loaded — cannot compute deviation'));
+
+      var geom = tgt.geometry;
+      var pos = geom.getAttribute('position');
+      if (!pos) return Promise.reject(new Error('Scan has no positions'));
+      var N = pos.count;
+
+      // Stash the original colour attribute so _ccDeviationClear can
+      // restore it. If the scan had no colours we just delete on clear.
+      var origCol = geom.getAttribute('color');
+      _deviationOriginal[targetId] = origCol ? origCol.clone() : null;
+
+      // Build the spatial grid sized to the median element diagonal so
+      // each cell holds O(1) candidate elements on average.
+      var cellSize = Math.max(0.5, ifc.meanDiag * 2);
+      var grid = _buildGrid(ifc.boxes, cellSize);
+
+      // Transform the scan's local positions into world coords so the
+      // deviation matches the user's eye — the cloud may have been
+      // aligned/translated and its local frame differs from IFC space.
+      tgt.updateMatrixWorld(true);
+      var M = tgt.matrixWorld;
+      var v = new THREE.Vector3();
+
+      // Output colour buffer
+      var col = new Float32Array(N * 3);
+
+      // Stats
+      var minD = Infinity, maxD = 0, sumD = 0;
+      var nGreen = 0, nAmber = 0, nRed = 0;
+
+      // Time-slice the work so we don't lock the UI on big scans.
+      var batchSize = 100000;
+      var i = 0;
+      return new Promise(function(resolve) {
+        function _step() {
+          var end = Math.min(N, i + batchSize);
+          for (; i < end; i++) {
+            v.set(pos.getX(i), pos.getY(i), pos.getZ(i)).applyMatrix4(M);
+            var px = v.x, py = v.y, pz = v.z;
+            var gx = Math.floor(px / cellSize);
+            var gy = Math.floor(py / cellSize);
+            var gz = Math.floor(pz / cellSize);
+            // Probe the 3×3×3 cell neighbourhood
+            var best = Infinity;
+            for (var ox = -1; ox <= 1; ox++) for (var oy = -1; oy <= 1; oy++) for (var oz = -1; oz <= 1; oz++) {
+              var k = (gx+ox) + ',' + (gy+oy) + ',' + (gz+oz);
+              var bucket = grid[k];
+              if (!bucket) continue;
+              for (var j = 0; j < bucket.length; j++) {
+                var d = _pointToBoxDistance(px, py, pz, bucket[j]);
+                if (d < best) best = d;
+                if (best === 0) break;
+              }
+              if (best === 0) break;
+            }
+            if (best === Infinity) best = redAt; // no nearby element — count as worst
+            if (best < minD) minD = best;
+            if (best > maxD) maxD = best;
+            sumD += best;
+            // Map distance to colour
+            var t;
+            if (best <= greenAt) { t = 0; nGreen++; }
+            else if (best >= redAt) { t = 1; nRed++; }
+            else { t = (best - greenAt) / (redAt - greenAt); nAmber++; }
+            var c = _interpColor(t);
+            col[i*3] = c[0]; col[i*3+1] = c[1]; col[i*3+2] = c[2];
+          }
+          if (i < N) {
+            // Yield to the event loop so the UI stays responsive.
+            setTimeout(_step, 0);
+            return;
+          }
+          // Done — install the colour attribute and switch the material
+          // to vertex colours.
+          geom.setAttribute('color', new THREE.BufferAttribute(col, 3));
+          if (tgt.material) {
+            tgt.material.vertexColors = true;
+            tgt.material.color = new THREE.Color(0xffffff); // let vertex colours win
+            tgt.material.needsUpdate = true;
+          }
+          _invalidate(3);
+          var stats = {
+            min: minD, max: maxD, mean: sumD / N,
+            greenCount: nGreen, amberCount: nAmber, redCount: nRed,
+            total: N, greenAt: greenAt, redAt: redAt
+          };
+          if (tgt.userData) tgt.userData.deviation = stats;
+          _toast('Deviation: min ' + minD.toFixed(3) + ' m · mean ' + (sumD/N).toFixed(3) + ' m · max ' + maxD.toFixed(3) + ' m');
+          resolve(stats);
+        }
+        _step();
+      });
+    };
+
+    window._ccDeviationClear = function(targetId) {
+      var tgt = _findTarget(targetId);
+      if (!tgt || !tgt.geometry) return false;
+      var orig = _deviationOriginal[targetId];
+      if (orig) {
+        tgt.geometry.setAttribute('color', orig);
+        if (tgt.material) { tgt.material.vertexColors = true; tgt.material.needsUpdate = true; }
+      } else {
+        tgt.geometry.deleteAttribute('color');
+        if (tgt.material) { tgt.material.vertexColors = false; tgt.material.color = new THREE.Color(0x9ec5fe); tgt.material.needsUpdate = true; }
+      }
+      delete _deviationOriginal[targetId];
+      if (tgt.userData) tgt.userData.deviation = null;
+      _invalidate(3);
+      return true;
+    };
+
     // Remove a previously-applied alignment and re-anchor the cloud at
     // its original position (the load-time centring offset stays — it's
     // a precision thing, not user-visible).

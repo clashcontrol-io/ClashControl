@@ -14326,7 +14326,7 @@ function startApp() {
                   onInput=${function(e){window._ccUpdateReferenceLayer && window._ccUpdateReferenceLayer(rl.id,{opacity:+e.target.value});}}
                   style=${{flex:1,height:'2px',cursor:'pointer'}} />
               </div>
-              ${window._ccAlignStart && html`<div style=${{display:'flex',alignItems:'center',gap:'.3rem',marginTop:'.2rem',paddingLeft:'1.1rem'}}>
+              ${window._ccAlignStart && html`<div style=${{display:'flex',alignItems:'center',gap:'.3rem',marginTop:'.2rem',paddingLeft:'1.1rem',flexWrap:'wrap'}}>
                 <button onClick=${function(){ if(window._ccAlignStart) window._ccAlignStart(rl.id); }}
                   title="Align this scan to the IFC by picking three matching reference points"
                   style=${{fontSize:'.6rem',padding:'.12rem .4rem',background:'var(--accent-bg)',color:'var(--accent)',border:'1px solid var(--accent-subtle)',borderRadius:'var(--radius-xs)',cursor:'pointer',fontWeight:600}}>
@@ -14336,6 +14336,19 @@ function startApp() {
                   title="Remove alignment"
                   style=${{fontSize:'.6rem',padding:'.12rem .3rem',background:'none',color:'var(--text-faint)',border:'1px solid var(--border)',borderRadius:'var(--radius-xs)',cursor:'pointer'}}>
                   Clear
+                </button>`}
+                ${window._ccDeviationCompute && html`<button onClick=${function(){
+                    if(!window._ccDeviationCompute) return;
+                    window._ccDeviationCompute(rl.id).catch(function(e){ if(window._ccToast) window._ccToast('Deviation: '+(e.message||e)); });
+                  }}
+                  title="Colour each scan point by distance to the nearest IFC element (green ≤ 2 cm, red ≥ 10 cm)"
+                  style=${{fontSize:'.6rem',padding:'.12rem .4rem',background:'rgba(34,197,94,.12)',color:'#22c55e',border:'1px solid rgba(34,197,94,.4)',borderRadius:'var(--radius-xs)',cursor:'pointer',fontWeight:600}}>
+                  ▦ Deviation map
+                </button>`}
+                ${window._ccDeviationClear && html`<button onClick=${function(){ if(window._ccDeviationClear) window._ccDeviationClear(rl.id); }}
+                  title="Remove deviation colouring"
+                  style=${{fontSize:'.6rem',padding:'.12rem .3rem',background:'none',color:'var(--text-faint)',border:'1px solid var(--border)',borderRadius:'var(--radius-xs)',cursor:'pointer'}}>
+                  Reset colour
                 </button>`}
               </div>`}
             </div>`;
