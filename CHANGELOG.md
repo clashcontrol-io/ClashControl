@@ -1,5 +1,8 @@
 # Changelog
 
+## v5.19.57 (2026-06-09)
+- feat(openaec-bridge): localhost integration with open-pointcloud-studio
+
 ## v5.19.56 (2026-06-09)
 - feat(pointcloud): proper PTS + PTX parsers (Leica scan formats)
 
