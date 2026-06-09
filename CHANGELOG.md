@@ -1,5 +1,8 @@
 # Changelog
 
+## v5.19.50 (2026-06-09)
+- chore(console): gate noisy probe + opt-out warnings to once per session
+
 ## v5.19.49 (2026-06-08)
 - docs: extract 7 longest rationale blocks from index.html to INTERNALS.md
 
