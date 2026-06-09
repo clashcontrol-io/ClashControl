@@ -2367,13 +2367,7 @@ function startApp() {
       }
     } catch(e) { console.warn('Property map build failed:', e.message||e); }
 
-    // Propagate type-level psets/quantities to instances via IfcRelDefinesByType.
-    // The loop above already built propMap entries for element *type* entities
-    // (IfcBeamType, IfcColumnType, etc.) because they can be targets of
-    // IfcRelDefinesByProperties too.  We now copy those entries down to each
-    // related instance without overwriting instance-level assignments — so
-    // structural profile psets (Pset_ProfileProperties, Pset_BeamCommon, …)
-    // that live on the type become visible on each beam/column instance.
+    // Type-pset propagation via IfcRelDefinesByType.  See INTERNALS.md § 21.18
     try {
       var typeRelIds = api.GetLineIDsWithType(modelID, IFC.IFCRELDEFINESBYTYPE);
       for (var ti = 0; ti < typeRelIds.size(); ti++) {
@@ -3527,12 +3521,7 @@ function startApp() {
     try { localStorage.removeItem('cc_typePairMemo:' + key); } catch(e) {}
   };
 
-  // ── Pair-result cache (narrow-phase) ────────────────────────────
-  // Stores clash objects from previous detection runs, keyed by
-  // (mA:eidA | mB:eidB | rulesHash). When changeAware is on and neither
-  // element changed since last run, re-emit the cached clash instead of
-  // dropping it silently (the legacy changeAware behaviour). Misses are
-  // not cached — undefined lookup falls through naturally.
+  // ── Pair-result cache (narrow-phase) ──  See INTERNALS.md § 21.19
   var _PAIR_CACHE_MAX = 50000;
   var _pairResultCache = new Map();
   function _pairKey(mA, eA, mB, eB) {
@@ -5840,13 +5829,7 @@ function startApp() {
       }
     })();
 
-    // Pointer lock CANNOT be requested here. _walkEnter runs from a React
-    // useEffect that fires after the click event has completed, so the
-    // browser sees no active user gesture and silently rejects the lock.
-    // Pre-fix users had to press Escape and click again to "unstick" mouse
-    // look — really the click handler at the canvas was just finally
-    // grabbing the lock with a fresh gesture. Now we don't try here; the
-    // canvas's mousedown handler takes the first click and locks instantly.
+    // Pointer-lock timing.  See INTERNALS.md § 21.21
     invalidate(999);
   }
 
@@ -6061,11 +6044,7 @@ function startApp() {
       _walkBobBaseY = newY;
       invalidate(3);
     }
-    // ── Vertical ground-snap (gravity + stair step-up) ────────────
-    // Cast a ray downward from a bit above eye height, find the closest
-    // floor/stair surface within step-up reach, and snap camera Y so we
-    // stand on it at eye-height. This keeps stairs walkable while leaving
-    // walls free to pass through.
+    // ── Vertical ground-snap (gravity + stair step-up) ──  See INTERNALS.md § 21.20
     // Vignette tween: 0..1 based on sprint state
     var vTarget = sprinting && velMoving ? 1 : 0;
     if (_walkVignette !== vTarget){
@@ -7541,13 +7520,7 @@ function startApp() {
       // ── Active Clash Point Marker (bright blue) ──
       var _activeClashMarker = null;
       window._ccShowActiveClashMarker = function(point) {
-        // The legacy active-clash 3D pin (two intersecting forest-green rings)
-        // overlapped the new Points hotspot at the same location whenever the
-        // user selected a clash, creating "two markers" for one element. The
-        // EdgesGeometry outline on the selected elements + the Points dot now
-        // carry the same information, so the 3D pin geometry is suppressed.
-        // The function is kept to preserve the orbit-target side effect every
-        // call-site relies on.
+        // Active-clash 3D pin removed.  See INTERNALS.md § 21.28
         window._ccRemoveActiveClashMarker();
         if(!point||point.length<3) return;
         S.orbit.target.set(point[0], point[1], point[2]);
@@ -8166,13 +8139,7 @@ function startApp() {
         foundMarkersRef.current = [];
       };
 
-      // ── Snap engine + live measurement preview ─────────────────────
-      // Computes the best snap point near the cursor from a raycaster hit:
-      // vertex > midpoint > edge > face-centroid > raw face point.
-      // Returns {point: Vector3, type, normal, screenX, screenY, srcObj}.
-      // Pixel radius scales with element size on screen so dense parts of
-      // the model don't snap too aggressively. Kept side-effect-free so
-      // the click handler can re-call it on the click event.
+      // ── Snap engine + live measurement preview ──  See INTERNALS.md § 21.29
       var _SNAP_PX = 18;
       var _proj = new THREE.Vector3();
       function _projectToPx(p3, w, h){
@@ -9519,12 +9486,7 @@ function startApp() {
           if(_phR){ _pickedHit=_ph; _pickedEid=_phR.eid; _pickedInstId=_phR.instId; break; }
         }
 
-        // ── Alt+click on a placed length endpoint: resume as area polygon ──
-        // The user re-activates the measure tool, hovers a previously placed endpoint
-        // (sees the "Alt+click → trace area" hint), then Alt+clicks to continue tracing
-        // an area polygon from that edge. Gated on measure mode being active and no
-        // in-progress measurement (so it doesn't conflict with throwaway-dim alt-clicks).
-        // Must come before the section-pick Alt handler so endpoints take priority.
+        // ── Alt+click endpoint → area polygon ──  See INTERNALS.md § 21.27
         if (e.altKey && measureModeRef.current && (!measurePtsRef.current || measurePtsRef.current.length === 0)) {
           var _epClick = _hitMeasureEndpoint(e.clientX, e.clientY);
           if (_epClick && _epClick.type === 'length') {
@@ -9562,12 +9524,7 @@ function startApp() {
           }
         }
 
-        // ── Section Pick: click any surface to use it as a section plane ──
-        // Triggered either by the toolbar "Make Section" mode (pick-pending
-        // flag) or — as a one-step shortcut — by holding Alt while clicking
-        // a face. Borrowed from Onshape / Trimble Connect / Shapr3D.
-        // Alt-shortcut for section pick is blocked while a measure tool is active —
-        // Alt is already used there for throwaway dims and the endpoint-to-area shortcut.
+        // ── Section pick + Alt-click shortcut ──  See INTERNALS.md § 21.26
         if ((window._ccSectionPickPending || (e.altKey && !measureModeRef.current)) && hits.length > 0) {
           var spHit = hits[0];
           var nWorld = new THREE.Vector3();
@@ -9576,13 +9533,6 @@ function startApp() {
           } else {
             nWorld.set(0,1,0);
           }
-          // Use the hit point on the picked face as the section anchor.
-          // sectionCustom is read elsewhere as `sc.normal[0..2]` (see lines
-          // 7347+, 7451+, 7486+) so it has to be an array, not a {x,y,z}
-          // object — the right-click context menu and drag handlers were
-          // already arrays; the earlier object shape here meant the plane
-          // was built with Vector3(undefined, undefined, undefined) → (0,0,0)
-          // → degenerate plane → no clipping.
           var nArr = [nWorld.x, nWorld.y, nWorld.z];
           var pArr = [spHit.point.x, spHit.point.y, spHit.point.z];
           if (window._ccDispatch) {
@@ -9736,12 +9686,6 @@ function startApp() {
             d({t:A.ADD_MEASUREMENT, v:{id:_id, type:'length', value:dist, label:label, points:pts.map(function(p){return [p.x,p.y,p.z]})}});
             if (window._ccCaptureMeasurementSnapshot) window._ccCaptureMeasurementSnapshot(_id);
             if (window._ccRegisterMeasurementGeo) window._ccRegisterMeasurementGeo(_id, 'length', 2, 1);
-            // Chain into area mode: keep the 2 placed points as the first edge of a
-            // polygon. The user can keep clicking to trace more vertices and close to
-            // get an area, or press Esc to cancel the chain and return to a clean state.
-            // _ccChainedArea flag tells the area commit to skip _registerMeasurementGeo
-            // (the committed length line sits between the old dots and new dots in the
-            // array, which breaks the slice arithmetic for drag-edit — acceptable tradeoff).
             _clearPreview();
             measureModeRef.current = 'area';
             window._ccChainedArea = true;
@@ -10406,13 +10350,7 @@ function startApp() {
       window._ccApplyViewpoint = _restoreViewpoint;
       window._ccCaptureViewpoint = _captureViewpoint;
 
-      // Sky-bounce hemi: clean white sky from above, light gray ground from below.
-      // Light intensities use their original (pre-bump) calibrated values.
-      // The × π multiplier I shipped initially overshot — that conversion
-      // is only correct for projects that had physicallyCorrectLights=true
-      // before r155. ClashControl was on the legacy default, so values
-      // translate ~directly. Hot-fixed back to original after user reported
-      // "rendered is too bright".
+      // Rendered lighting — original intensities (no ×π).  See INTERNALS.md § 21.25
       S._ambLight = new THREE.HemisphereLight(0xffffff, 0xc0c0c0, 0.55);
       scene.add(S._ambLight);
       // Warm directional sun (slight warm tint, like late-afternoon site visit)
@@ -10582,13 +10520,7 @@ function startApp() {
           if (movedLOD && camLOD) clashMarkersRef.current.userData.updateLOD(camLOD);
         }
 
-        // ── Normalize section-box handle sizes to a constant pixel size ──
-        // Without this, handles built at world scale ~maxDim*0.01 look
-        // disproportionately large on big models and tiny on small ones.
-        // Re-scales every frame so each tagged handle keeps its target
-        // pixel footprint regardless of model scale / camera distance.
-        // Face arrows scale to geometry-relative size once per frame (box may be live-dragged).
-        // All other handles are sized at creation time relative to the geometry — no camera-distance scaling.
+        // Constant-pixel section-box handles.  See INTERNALS.md § 21.24
         if (S._sboxFaceHandles) {
           S._sboxFaceHandles.forEach(function(h) {
             if (h && h.userData && h.userData._maxWorldSize && h.userData._baseSize) {
@@ -10598,13 +10530,7 @@ function startApp() {
           });
         }
 
-        // ── Section-plane gizmo: constant on-screen handle size ──────────
-        // The move arrow + rotation ring live in a sub-group anchored at the
-        // plane centre. Scaling it to a fixed pixel size each frame stops the
-        // handles from appearing to grow/shrink as the plane is dragged toward
-        // or away from the camera, and keeps the arrow compact so its tip no
-        // longer whips across the screen when orbiting. The plane rectangle
-        // itself stays world-sized (it represents the real cut extent).
+        // Constant-pixel section-plane gizmo.  See INTERNALS.md § 21.24
         if (S._sectionPlaneVis && S._sectionPlaneVis._secHandleGroup) {
           var _giz = S._sectionPlaneVis;
           var _cam = S.camera;
@@ -16128,13 +16054,7 @@ function startApp() {
     </div>`;
   }
 
-  // ── Run Detection Modal — single entry point for clash setup. ──
-  // Wraps the existing ClashRulesPanel (Quick Run + Advanced) and the
-  // StandardsPanel (default clearance, IFC type-pair rules, discipline
-  // -pair rules) so all detection setup lives behind one button.
-  // Pre-run placement sanity. Geolocation never enters the clash math — but if
-  // two federated models disagree on base point or CRS they won't overlap, and
-  // the run quietly finds nothing. Flag that before a detection run is wasted.
+  // ── Run Detection modal + placement sanity ──  See INTERNALS.md § 21.22
   window._ccPlacementWarnings = function(models){
     var out = [];
     try {
@@ -28058,13 +27978,7 @@ function startApp() {
 
   // ── Memory Warning Modal ────────────────────────────────────────
 
-  // Gather a diagnostic breakdown of where the JS heap is going, so a
-  // [Memory] report is actionable instead of just "5.9 GB total". Every probe
-  // is defensive — renderer / web-ifc / caches may be absent. Returns markdown
-  // lines. The big suspects for a heap >> file size are: the web-ifc WASM
-  // linear memory (grows to peak parse size, never shrinks — even after
-  // CloseModel), per-element retained CPU geometry + three-mesh-bvh boundsTrees
-  // (≈2× the raw geometry), and material/geometry clones from render styles.
+  // ── Memory diagnostic breakdown ──  See INTERNALS.md § 21.23
   function _ccMemDiag(s) {
     var L = [];
     var fmtMB = function(b){ return (b/1048576).toFixed(1) + ' MB'; };

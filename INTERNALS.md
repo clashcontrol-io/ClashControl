@@ -382,3 +382,87 @@ Gated by an unchanged-model fingerprint: any geometric edit or load change inval
 Surfaces the browser's deferred install prompt in a small dismissible banner inside the Models tab. Most users never find the "Install" entry buried in the More menu; this gets it in front of them once per session with one-click acceptance.
 
 The Splat reference-layers panel (just above) shows what's loaded via `_ccLoadSplat` (drag-drop `.spz` / `.ply` / `.ksplat` or `_ccTestSplat()`) with one-click unload. The splat addon owns its renderer; this panel is purely an inventory view that reacts to the addon's `cc-splats-changed` event.
+
+### 21.18 Type pset propagation via IfcRelDefinesByType
+
+**Code reference:** in `loadIFC()` after the main property loop.
+
+Propagates type-level psets/quantities to instances. The main loop builds `propMap` entries for type entities (`IfcBeamType`, `IfcColumnType`, etc.) because they can be targets of `IfcRelDefinesByProperties`. We then copy those entries down to each related instance without overwriting instance-level assignments — so structural profile psets (`Pset_ProfileProperties`, `Pset_BeamCommon`, …) that live on the type become visible on each beam/column instance.
+
+### 21.19 Pair-result cache (narrow-phase)
+
+**Code reference:** `_pairResultCache` / `_PAIR_CACHE_MAX`.
+
+Stores clash objects from previous detection runs, keyed by `(mA:eidA | mB:eidB | rulesHash)`. When changeAware is on and neither element changed since last run, re-emit the cached clash instead of dropping it silently (legacy `changeAware` behaviour). Misses are not cached — undefined lookup falls through naturally.
+
+### 21.20 Walk-mode vertical ground-snap
+
+**Code reference:** vertical-snap block in `_walkStep`.
+
+Casts a ray downward from a bit above eye height, finds the closest floor/stair surface within step-up reach, and snaps camera Y so we stand on it at eye-height. Keeps stairs walkable while leaving walls free to pass through.
+
+### 21.21 Walk-mode pointer lock timing
+
+**Code reference:** end of `_walkEnter`.
+
+Pointer lock CAN'T be requested in `_walkEnter` — it runs from a React `useEffect` that fires after the click event has completed, so the browser sees no active user gesture and silently rejects the lock. The canvas `mousedown` handler takes the first click and locks instantly.
+
+### 21.22 Run Detection modal + pre-run placement sanity
+
+**Code reference:** RunDetectionModal + `_ccPlacementWarnings`.
+
+Single entry point for clash setup. Wraps the existing `ClashRulesPanel` (Quick Run + Advanced) and `StandardsPanel` (default clearance, IFC type-pair rules, discipline-pair rules) so all detection setup lives behind one button.
+
+Pre-run placement sanity: geolocation never enters the clash math — but if two federated models disagree on base point or CRS they won't overlap, and the run quietly finds nothing. `_ccPlacementWarnings` flags that before a detection run is wasted.
+
+### 21.23 Memory-diagnostic breakdown
+
+**Code reference:** `_ccMemDiag()`.
+
+Gathers a diagnostic breakdown of where the JS heap is going so a `[Memory]` report is actionable instead of just "5.9 GB total". Every probe is defensive — renderer / web-ifc / caches may be absent. Returns markdown lines.
+
+Big suspects for heap >> file size: web-ifc WASM linear memory (grows to peak parse size, never shrinks — even after `CloseModel`), per-element retained CPU geometry + three-mesh-bvh boundsTrees (~2× the raw geometry), and material/geometry clones from render styles.
+
+### 21.24 Section-plane gizmo + section-box handles — constant on-screen size
+
+**Code reference:** the per-frame `_secHandleGroup.scale.setScalar(...)` block.
+
+The move arrow + rotation ring live in a sub-group anchored at the plane centre. Scaling it to a fixed pixel size each frame stops the handles from appearing to grow/shrink as the plane is dragged toward/away from the camera, and keeps the arrow compact so its tip no longer whips across the screen when orbiting. The plane rectangle itself stays world-sized (it represents the real cut extent).
+
+Section-box face handles use the same idea: world scale `~maxDim*0.01` looks disproportionately large on big models and tiny on small ones, so they're re-scaled every frame to a target pixel footprint. Face arrows scale to geometry-relative size once per frame (box may be live-dragged); all other handles are sized at creation time relative to geometry — no camera-distance scaling.
+
+### 21.25 Rendered lighting — original intensities (no ×π)
+
+**Code reference:** the HemisphereLight / DirectionalLight constructors in render-style setup.
+
+Light intensities use their original (pre-bump) calibrated values. The ×π multiplier shipped initially overshot — that conversion is only correct for projects that had `physicallyCorrectLights=true` before r155. ClashControl was on the legacy default, so values translate ~directly. Hot-fixed back to original after user reported "rendered is too bright".
+
+### 21.26 Section-pick — click a face / Alt-click shortcut
+
+**Code reference:** picker's section-pick branch.
+
+Click any surface to use it as a section plane. Triggered either by the toolbar "Make Section" mode (`_ccSectionPickPending` flag) or as a one-step shortcut by holding Alt while clicking a face. Borrowed from Onshape / Trimble Connect / Shapr3D. Alt-shortcut is blocked while a measure tool is active — Alt is already used there for throwaway dims and the endpoint-to-area shortcut.
+
+`sectionCustom` is stored as `[x,y,z]` arrays, not `{x,y,z}` objects — the right-click context menu and drag handlers expect arrays. An earlier object shape made the plane build with `Vector3(undefined,...)` → (0,0,0) → degenerate plane → no clipping.
+
+### 21.27 Measure-mode Alt-click — extend length into area polygon
+
+**Code reference:** measure-pick branch's Alt+endpoint shortcut.
+
+When the measure tool is active and the user hovers a previously placed length endpoint, the "Alt+click → trace area" hint appears. Alt-clicking continues tracing an area polygon from that edge.
+
+Gated on measure mode active + no in-progress measurement so it doesn't conflict with throwaway-dim alt-clicks. Must come before the section-pick Alt handler so endpoints take priority.
+
+The chained area mode sets the `_ccChainedArea` flag so the area commit skips `_registerMeasurementGeo` — the committed length line sits between old dots and new dots in the array, which breaks slice arithmetic for drag-edit. Acceptable tradeoff.
+
+### 21.28 Active-clash 3D pin removed
+
+**Code reference:** `window._ccShowActiveClashMarker` / `_ccRemoveActiveClashMarker`.
+
+The legacy active-clash 3D pin (two intersecting forest-green rings) overlapped the new Points hotspot at the same location whenever the user selected a clash, creating "two markers" for one element. The EdgesGeometry outline on the selected elements + the Points dot now carry the same information, so the 3D pin geometry is suppressed. The function is kept to preserve the orbit-target side effect every call-site relies on.
+
+### 21.29 Snap engine — vertex > midpoint > edge > centroid
+
+**Code reference:** `_SNAP_PX` and the snap helper.
+
+Computes the best snap point near the cursor from a raycaster hit: vertex > midpoint > edge > face-centroid > raw face point. Returns `{point, type, normal, screenX, screenY, srcObj}`. Pixel radius scales with element size on screen so dense parts of the model don't snap too aggressively. Side-effect-free so the click handler can re-call it on the click event.
