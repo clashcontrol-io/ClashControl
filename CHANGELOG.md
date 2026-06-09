@@ -1,5 +1,8 @@
 # Changelog
 
+## v5.19.60 (2026-06-09)
+- feat(align): deviation heatmap — colour scan by distance to nearest IFC
+
 ## v5.19.59 (2026-06-09)
 - docs+ui: surface alignment workflow in README/llms.txt + Align button
 
