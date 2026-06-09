@@ -1,5 +1,8 @@
 # Changelog
 
+## v5.19.61 (2026-06-09)
+- feat(bcf): point-cloud reference extension (cc:scanRef) round-trip
+
 ## v5.19.60 (2026-06-09)
 - feat(align): deviation heatmap — colour scan by distance to nearest IFC
 
