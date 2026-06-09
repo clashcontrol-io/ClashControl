@@ -1,5 +1,8 @@
 # Changelog
 
+## v5.19.62 (2026-06-09)
+- feat(align): ICP refinement + auto-issue at deviation hotspots
+
 ## v5.19.61 (2026-06-09)
 - feat(bcf): point-cloud reference extension (cc:scanRef) round-trip
 
