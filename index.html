@@ -5170,6 +5170,8 @@ function startApp() {
             var visType = null, visFrom = null, visTo = null;
             var visBlocker = null, visBlockerName = null, visBlockerType = null;
             var visDist = NaN, visRange = NaN;
+            var visPartial = false, visBlockedSamples = null, visTotalSamples = null;
+            var visOcclusionRate = NaN, visCoverageGap = false;
             var labelNodes = topic.querySelectorAll('Labels');
             for (var li = 0; li < labelNodes.length; li++) {
               var txt = (labelNodes[li].textContent || '').trim();
@@ -5189,6 +5191,11 @@ function startApp() {
               else if (txt.indexOf('cc:visBlockerType=')=== 0) visBlockerType = txt.slice(18);
               else if (txt.indexOf('cc:visDist=')       === 0) visDist        = parseFloat(txt.slice(11));
               else if (txt.indexOf('cc:visRange=')      === 0) visRange       = parseFloat(txt.slice(12));
+              else if (txt.indexOf('cc:visPartial=')    === 0) visPartial     = txt.slice(13) === '1';
+              else if (txt.indexOf('cc:visBlockedSamples=') === 0) visBlockedSamples = parseInt(txt.slice(22), 10);
+              else if (txt.indexOf('cc:visTotalSamples=')   === 0) visTotalSamples   = parseInt(txt.slice(20), 10);
+              else if (txt.indexOf('cc:visOcclusionRate=')  === 0) visOcclusionRate  = parseFloat(txt.slice(21));
+              else if (txt.indexOf('cc:visCoverageGap=')    === 0) visCoverageGap    = txt.slice(18) === '1';
             }
             var issuePayload = {
               id:uid(), source:'bcf_import', type:mappedType, status:mappedStatus,
@@ -5224,6 +5231,11 @@ function startApp() {
               if (visBlockerType)         issuePayload.elemBlockerType = visBlockerType;
               if (isFinite(visDist))      issuePayload.distance        = visDist;
               if (isFinite(visRange))     issuePayload.rangeTotal      = visRange;
+              if (visPartial)             issuePayload.partialOcclusion = true;
+              if (visBlockedSamples != null && !isNaN(visBlockedSamples)) issuePayload.blockedSamples = visBlockedSamples;
+              if (visTotalSamples   != null && !isNaN(visTotalSamples))   issuePayload.totalSamples   = visTotalSamples;
+              if (isFinite(visOcclusionRate)) issuePayload.occlusionRate = visOcclusionRate;
+              if (visCoverageGap)         issuePayload.coverageGap     = true;
             }
             // Point-cloud references: any DocumentReference whose Description
             // starts with 'cc:scanRef=' is one of ours. Reconstitute the
@@ -5376,6 +5388,11 @@ function startApp() {
         if (it.elemBlockerType)     markup += '    <Labels>cc:visBlockerType='+esc(it.elemBlockerType)+'</Labels>\n';
         if (it.distance != null)    markup += '    <Labels>cc:visDist='+esc(it.distance)+'</Labels>\n';
         if (it.rangeTotal != null)  markup += '    <Labels>cc:visRange='+esc(it.rangeTotal)+'</Labels>\n';
+        if (it.partialOcclusion)    markup += '    <Labels>cc:visPartial=1</Labels>\n';
+        if (it.blockedSamples != null) markup += '    <Labels>cc:visBlockedSamples='+esc(it.blockedSamples)+'</Labels>\n';
+        if (it.totalSamples != null)   markup += '    <Labels>cc:visTotalSamples='+esc(it.totalSamples)+'</Labels>\n';
+        if (it.occlusionRate != null)  markup += '    <Labels>cc:visOcclusionRate='+esc(it.occlusionRate)+'</Labels>\n';
+        if (it.coverageGap)         markup += '    <Labels>cc:visCoverageGap=1</Labels>\n';
       }
       markup += '    <CreationDate>'+(it.createdAt||new Date().toISOString())+'</CreationDate>\n';
       markup += '    <CreationAuthor>'+authorEsc+'</CreationAuthor>\n';
@@ -18486,6 +18503,55 @@ function startApp() {
           style=${{fontSize:'0.69rem',padding:'.3rem .5rem',background:'var(--bg-secondary)',color:'var(--text-faint)',border:'1px solid var(--border)',borderRadius:4,cursor:'pointer'}}>↑</button>
       </div>
 
+      ${typeof window._ccVisibilityPresets === 'function' && html`<div style=${{marginTop:'1.2rem',paddingTop:'.8rem',borderTop:'2px solid var(--border)'}}>
+        <div style=${{fontSize:'0.75rem',fontWeight:700,color:'var(--text-muted)',textTransform:'uppercase',letterSpacing:'.06em',marginBottom:'.4rem'}}>Visibility &amp; coverage checks</div>
+        <div style=${{fontSize:'0.65rem',color:'var(--text-faint)',marginBottom:'.5rem',lineHeight:1.4}}>
+          Sight-line obstruction (third clash category — exit signs, signage, line-of-sight) and inverse coverage (camera, sensor, observation gaps).
+          Each preset runs immediately and merges results into the Conflicts panel. ⌘K also exposes the same entries.
+        </div>
+        ${(window._ccVisibilityPresets() || []).map(function(preset){
+          var isCov = preset.mode === 'coverage';
+          var col   = isCov ? '#a855f7' : '#3b82f6';
+          var bg    = isCov ? 'rgba(168,85,247,.10)' : 'rgba(59,130,246,.10)';
+          return html`<div key=${preset.sampleId||preset.key} style=${{display:'flex',alignItems:'center',gap:'.4rem',padding:'.35rem .45rem',marginBottom:'.25rem',borderRadius:'var(--radius-xs)',background:bg,border:'1px solid '+col+'33'}}>
+            <div style=${{flex:1,minWidth:0}}>
+              <div style=${{fontSize:'0.72rem',fontWeight:600,color:'var(--text-primary)',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>${preset.sampleId || preset.key}</div>
+              <div style=${{fontSize:'0.6rem',color:'var(--text-faint)'}}>
+                ${isCov ? 'coverage' : 'obstruction'} · target: ${(preset.target && preset.target.types || []).join('/')} ·
+                range ${preset.maxRange || 25} m
+              </div>
+            </div>
+            <button onClick=${function(){
+                if (window._ccToast) window._ccToast('Running ' + (isCov?'coverage':'visibility') + ' check: ' + (preset.sampleId||preset.key) + '…');
+                var runner = isCov
+                  ? (window._ccDetectCoverageAndMerge || function(p){ return window._ccDetectCoverage(p); })
+                  : (window._ccDetectVisibilityAndMerge || function(p){ return window._ccDetectVisibility(p); });
+                runner(preset).then(function(res){
+                  var sum = res.summary;
+                  if (window._ccToast) {
+                    window._ccToast(
+                      (isCov ? 'Coverage ' : 'Visibility ') + (preset.sampleId||preset.key) + ' — ' +
+                      (isCov
+                        ? ((sum && sum.uncovered || 0) + ' gaps of ' + (sum && sum.viewerPoints || 0) + ' points')
+                        : (res.clashes.length + ' blocked of ' + (sum && sum.raysCast || 0) + ' rays')
+                      )
+                    );
+                  }
+                  if (res.clashes.length) d({t:A.TAB, v:'clashes'});
+                }).catch(function(e){ if (window._ccToast) window._ccToast('Check failed: ' + (e.message||e)); });
+              }}
+              style=${{fontSize:'0.65rem',padding:'.22rem .55rem',background:col,color:'#fff',border:'none',borderRadius:'var(--radius-xs)',cursor:'pointer',fontWeight:600,whiteSpace:'nowrap',flexShrink:0}}>
+              Run
+            </button>
+          </div>`;
+        })}
+        <div style=${{fontSize:'0.62rem',color:'var(--text-faint)',marginTop:'.6rem',lineHeight:1.4}}>
+          Power users: <code style=${{fontSize:'0.6rem',background:'var(--bg-tertiary)',padding:'1px 4px',borderRadius:3}}>_ccDetectVisibility(rule)</code> /
+          <code style=${{fontSize:'0.6rem',background:'var(--bg-tertiary)',padding:'1px 4px',borderRadius:3}}>_ccDetectCoverage(rule)</code> in the console for custom rules
+          — see <code style=${{fontSize:'0.6rem',background:'var(--bg-tertiary)',padding:'1px 4px',borderRadius:3}}>_ccVisibilityRuleSchema()</code> for the schema.
+        </div>
+      </div>`}
+
     </div>`;
   }
 
@@ -21774,25 +21840,33 @@ function startApp() {
     push({group:'Tools', label:'Add comment pin',
       keywords:'note comment pin annotation pin',
       onSelect:function(){ d({t:A.COMMENT_MODE,v:!s.commentMode}); }});
-    // Visibility checks — third clash category (sight-line obstruction).
-    // Each preset runs immediately and merges its results into the
-    // conflicts list. Coordinator opens the Conflicts tab afterwards
-    // to triage. ⌘K → "visibility exit signs" → enter.
-    if (typeof window._ccDetectVisibilityAndMerge === 'function' && typeof window._ccVisibilityPresets === 'function') {
+    // Visibility checks — third clash category (sight-line obstruction
+    // + inverse coverage). Each preset runs immediately and merges its
+    // results into the conflicts list. ⌘K → name → enter.
+    if (typeof window._ccVisibilityPresets === 'function') {
       (window._ccVisibilityPresets() || []).forEach(function(preset){
-        var label = 'Visibility check: ' + (preset.sampleId || preset.key);
+        var isCoverage = preset.mode === 'coverage';
+        var label = (isCoverage ? 'Coverage check: ' : 'Visibility check: ') + (preset.sampleId || preset.key);
         push({group:'Visibility', label: label,
-          keywords:'visibility sight line obstruction ' + (preset.sampleId||''),
+          keywords:(isCoverage?'coverage gap surveillance ':'visibility sight line obstruction ') + (preset.sampleId||''),
           onSelect:function(){
-            if (window._ccToast) window._ccToast('Running visibility check: ' + (preset.sampleId||preset.key) + '…');
-            window._ccDetectVisibilityAndMerge(preset).then(function(res){
+            if (window._ccToast) window._ccToast('Running ' + (isCoverage?'coverage':'visibility') + ' check: ' + (preset.sampleId||preset.key) + '…');
+            var runner = isCoverage
+              ? (window._ccDetectCoverageAndMerge || function(p){ return window._ccDetectCoverage(p); })
+              : window._ccDetectVisibilityAndMerge;
+            runner(preset).then(function(res){
               var sum = res.summary;
               if (window._ccToast) {
-                window._ccToast('Visibility ' + (preset.sampleId||preset.key) + ' done — ' +
-                  (res.clashes.length) + ' blocked of ' + (sum && sum.raysCast || 0) + ' rays');
+                if (isCoverage) {
+                  window._ccToast('Coverage ' + (preset.sampleId||preset.key) + ' done — ' +
+                    (sum && sum.uncovered || 0) + ' gaps of ' + (sum && sum.viewerPoints || 0) + ' sampled points');
+                } else {
+                  window._ccToast('Visibility ' + (preset.sampleId||preset.key) + ' done — ' +
+                    (res.clashes.length) + ' blocked of ' + (sum && sum.raysCast || 0) + ' rays');
+                }
               }
               if (res.clashes.length) d({t:A.TAB, v:'clashes'});
-            }).catch(function(e){ if (window._ccToast) window._ccToast('Visibility check failed: ' + (e.message||e)); });
+            }).catch(function(e){ if (window._ccToast) window._ccToast('Check failed: ' + (e.message||e)); });
           }});
       });
     }
@@ -26384,6 +26458,45 @@ function startApp() {
     if (_toM && window._ccComputeTakeoff) { window._ccComputeTakeoff(_toM[1].trim()); var rr = window._ccLastTakeoff; if (rr) return 'Takeoff '+rr.filter+': '+rr.count+' element'+(rr.count===1?'':'s')+'.'; }
     if (/(?:stop|exit|cancel|end)\s+measur/.test(text)) { d({t:A.MEASURE_MODE,v:null}); return 'Measurement off.'; }
     if (/(?:clear|delete|remove)\s+(?:all\s+)?measurements?/.test(text)) { d({t:A.CLEAR_MEASUREMENTS}); return 'Measurements cleared.'; }
+
+    // Visibility / coverage NL commands — dispatch to the preset
+    // library when the user types "check visibility exit signs",
+    // "find coverage gaps for cameras", etc. Falls through to the
+    // generic NL pipeline when no preset matches the user's intent.
+    if (/(?:visibility|sight[- ]?line|line[- ]?of[- ]?sight)/.test(text) || /\bcoverage\b.*\b(?:check|gap|gaps|run|find)/.test(text)) {
+      if (window._ccVisibilityPresets && (window._ccDetectVisibility || window._ccDetectCoverage)) {
+        var presets = window._ccVisibilityPresets() || [];
+        // Score each preset by overlap between its keywords + sampleId
+        // and the user's command. Highest score wins; ties broken by
+        // preset definition order so 'generic' beats jurisdiction-
+        // specific variants when no jurisdiction is mentioned.
+        var bestPreset = null, bestScore = 0;
+        presets.forEach(function(p){
+          var hay = ((p.sampleId||'') + ' ' + (p.key||'') + ' ' + JSON.stringify(p.target||{})).toLowerCase();
+          var tokens = text.toLowerCase().split(/\W+/).filter(function(t){return t.length>2;});
+          var score = 0;
+          tokens.forEach(function(t){ if (hay.indexOf(t) >= 0) score++; });
+          if (score > bestScore) { bestScore = score; bestPreset = p; }
+        });
+        if (bestPreset) {
+          var isCov = bestPreset.mode === 'coverage';
+          var runner = isCov
+            ? (window._ccDetectCoverageAndMerge || function(p){ return window._ccDetectCoverage(p); })
+            : (window._ccDetectVisibilityAndMerge || function(p){ return window._ccDetectVisibility(p); });
+          runner(bestPreset).then(function(res){
+            var msg = (isCov ? 'Coverage ' : 'Visibility ') + bestPreset.sampleId + ' done — ' +
+              (isCov
+                ? ((res.summary && res.summary.uncovered || 0) + ' gaps')
+                : (res.clashes.length + ' blocked')
+              );
+            if (window._ccToast) window._ccToast(msg);
+            if (res.clashes.length) d({t:A.TAB, v:'clashes'});
+          }).catch(function(e){ if (window._ccToast) window._ccToast('Check failed: ' + (e.message||e)); });
+          return 'Running ' + (isCov ? 'coverage' : 'visibility') + ' check: ' + bestPreset.sampleId + '…';
+        }
+        return 'No matching preset. Try: visibility exit signs · visibility window view · coverage cameras · coverage smoke';
+      }
+    }
 
     if (/(?:save|capture|store)\s+(?:this\s+)?(?:view|viewpoint|camera)/.test(text)) {
       if(_captureViewpoint) { _captureViewpoint('Viewpoint ' + (s.viewpoints.length+1)); return 'Viewpoint saved.'; }

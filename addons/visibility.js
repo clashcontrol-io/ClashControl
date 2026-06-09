@@ -145,9 +145,12 @@
     }
 
     // ── Target surface sampling ──────────────────────────────────
-    // 3×3 grid on the target bbox face nearest the viewer is overkill
-    // for MVP — just use the centroid. Partial occlusion can land in
-    // Phase 2 once the basic flow proves out.
+    // Returns N sample points on the target bbox face most likely to
+    // face a typical viewer. We pick the bbox face whose normal aligns
+    // best with the candidate viewer direction, then grid it.
+    // For partial-occlusion grading the caller iterates samples and
+    // counts hits — fully blocked vs partially blocked emerges naturally.
+    // For single-sample (legacy) callers we return just the centroid.
     function _targetSamplePoint(targetEntry) {
       var box = targetEntry.el.box;
       if (!box) return null;
@@ -156,6 +159,48 @@
         (box.min.y + box.max.y) * 0.5,
         (box.min.z + box.max.z) * 0.5
       ];
+    }
+    function _targetSurfaceSamples(targetEntry, viewerPos, grid) {
+      // grid = 1 → centroid only (cheap, same as legacy single-sample);
+      //       2 → 4 corners + centroid;
+      //       3 → 3×3 grid (the documented default).
+      grid = Math.max(1, Math.min(5, grid || 1));
+      var box = targetEntry.el.box; if (!box) return [];
+      var cx = (box.min.x + box.max.x) * 0.5;
+      var cy = (box.min.y + box.max.y) * 0.5;
+      var cz = (box.min.z + box.max.z) * 0.5;
+      if (grid === 1) return [[cx, cy, cz]];
+      // Pick the bbox face whose outward normal best aligns with
+      // (viewer → centroid). For a flat sign mounted on a wall this
+      // picks the front face; for an omnidirectional light it picks the
+      // side closest to the viewer.
+      var vx = cx - viewerPos[0], vy = cy - viewerPos[1], vz = cz - viewerPos[2];
+      var ax = Math.abs(vx), ay = Math.abs(vy), az = Math.abs(vz);
+      var axis = (ax >= ay && ax >= az) ? 0 : (ay >= az ? 1 : 2);
+      // Grid the two axes orthogonal to the chosen face.
+      var sx = box.min.x, ex = box.max.x;
+      var sy = box.min.y, ey = box.max.y;
+      var sz = box.min.z, ez = box.max.z;
+      var fixed = (axis === 0)
+        ? (vx > 0 ? sx : ex)
+        : (axis === 1) ? (vy > 0 ? sy : ey)
+                       : (vz > 0 ? sz : ez);
+      var samples = [];
+      // Inset by 2% so corner rays don't graze the bbox edge and miss
+      // the BVH leaf in a numerically-edge-case way.
+      var inset = 0.02;
+      function _lerp(a, b, t) { return a + (b - a) * t; }
+      var n = grid;
+      for (var i = 0; i < n; i++) for (var j = 0; j < n; j++) {
+        var u = n === 1 ? 0.5 : (inset + (1 - 2*inset) * i / (n - 1));
+        var v = n === 1 ? 0.5 : (inset + (1 - 2*inset) * j / (n - 1));
+        var px, py, pz;
+        if (axis === 0)      { px = fixed; py = _lerp(sy, ey, u); pz = _lerp(sz, ez, v); }
+        else if (axis === 1) { py = fixed; px = _lerp(sx, ex, u); pz = _lerp(sz, ez, v); }
+        else                 { pz = fixed; px = _lerp(sx, ex, u); py = _lerp(sy, ey, v); }
+        samples.push([px, py, pz]);
+      }
+      return samples;
     }
 
     // ── Ray-AABB intersection (slab test) ─────────────────────────
@@ -289,14 +334,70 @@
         };
       });
 
-      // Collect target sample points once.
-      var targetSamples = targets.map(function(t){
-        return { entry: t, point: _targetSamplePoint(t) };
-      }).filter(function(t){ return t.point != null; });
+      // Target sampling: grid size on the target face. 1 = centroid
+      // (cheap, legacy). 3 = 3×3 → partial occlusion can be graded.
+      var targetGrid = (rule.target && rule.target.surfaceGrid != null)
+        ? rule.target.surfaceGrid
+        : (rule.targetGrid != null ? rule.targetGrid : 3);
 
       var clashes = [];
-      var nRays = 0, nHits = 0;
+      var nRays = 0, nHits = 0, nPartial = 0;
       var sampleId = rule.sampleId || ('vis_' + Date.now().toString(36));
+
+      // Per-pair test: cast one ray for each surface sample of the
+      // target and aggregate the results. Returns:
+      //   { samples, blocked, worstT, worstBlocker, worstHitPoint, worstT_target }
+      // The "worst" tracking picks the nearest blocker (the one a
+      // coordinator should consider relocating first) and its
+      // corresponding target sample point so the sight-line viz reads
+      // along the most-blocked ray.
+      function _testPair(V, tgt) {
+        var samples = _targetSurfaceSamples(tgt, V, targetGrid);
+        var blocked = 0;
+        var worstT = Infinity;
+        var worstBlocker = null;
+        var worstT_target = null;
+        for (var si = 0; si < samples.length; si++) {
+          var T = samples[si];
+          var dxL = T[0] - V[0], dyL = T[1] - V[1], dzL = T[2] - V[2];
+          var lenL = Math.sqrt(dxL*dxL + dyL*dyL + dzL*dzL);
+          if (lenL < 1e-6) continue;
+          if (lenL > maxRange) continue;
+          dxL /= lenL; dyL /= lenL; dzL /= lenL;
+          if (coneCos != null && facing) {
+            var dotFL = facing[0]*dxL + facing[1]*dyL + facing[2]*dzL;
+            if (dotFL < coneCos) continue;
+          }
+          nRays++;
+          var bestT = lenL;
+          var hitBlocker = null;
+          for (var oi = 0; oi < obstructerSnapshot.length; oi++) {
+            var snap = obstructerSnapshot[oi];
+            if (V[0] > snap.mxx && T[0] > snap.mxx) continue;
+            if (V[0] < snap.mnx && T[0] < snap.mnx) continue;
+            if (V[1] > snap.mxy && T[1] > snap.mxy) continue;
+            if (V[1] < snap.mny && T[1] < snap.mny) continue;
+            if (V[2] > snap.mxz && T[2] > snap.mxz) continue;
+            if (V[2] < snap.mnz && T[2] < snap.mnz) continue;
+            if (snap.bvh === null) {
+              snap.bvh = (typeof window._ccGetBVH === 'function') ? window._ccGetBVH(snap.entry.el) : null;
+              if (snap.bvh === null) snap.bvh = false;
+            }
+            if (!snap.bvh) continue;
+            var h = _bvhRayCast(snap.bvh.root, snap.bvh.tris, V[0], V[1], V[2], dxL, dyL, dzL, bestT);
+            if (h < bestT) { bestT = h; hitBlocker = snap.entry; if (h < 0.05) break; }
+          }
+          if (hitBlocker) {
+            blocked++;
+            if (bestT < worstT) {
+              worstT = bestT;
+              worstBlocker = hitBlocker;
+              worstT_target = T;
+            }
+          }
+        }
+        return { samples: samples.length, blocked: blocked, worstT: worstT, worstBlocker: worstBlocker, worstT_target: worstT_target };
+      }
 
       // Time-slice viewer iteration so big federations don't lock the UI.
       var vi = 0;
@@ -309,58 +410,34 @@
             var samples = _viewerSamples(v, rule.viewer && rule.viewer.sampling);
             for (var s = 0; s < samples.length; s++) {
               var V = samples[s];
-              for (var ti = 0; ti < targetSamples.length; ti++) {
-                var T = targetSamples[ti].point;
-                var tgt = targetSamples[ti].entry;
-                var dx = T[0] - V[0], dy = T[1] - V[1], dz = T[2] - V[2];
-                var len = Math.sqrt(dx*dx + dy*dy + dz*dz);
-                if (len < 1e-6) continue;
-                if (len > maxRange) continue;
-                dx /= len; dy /= len; dz /= len;
-                // Cone-of-view filter.
-                if (coneCos != null && facing) {
-                  var dotF = facing[0]*dx + facing[1]*dy + facing[2]*dz;
-                  if (dotF < coneCos) continue;
-                }
-                nRays++;
-                // For each obstructer, do an AABB segment test first;
-                // only descend into the BVH for survivors.
-                var blocker = null;
-                var bestT = len;
-                for (var oi = 0; oi < obstructerSnapshot.length; oi++) {
-                  var snap = obstructerSnapshot[oi];
-                  // Cheap AABB segment overlap
-                  if (V[0] > snap.mxx && T[0] > snap.mxx) continue;
-                  if (V[0] < snap.mnx && T[0] < snap.mnx) continue;
-                  if (V[1] > snap.mxy && T[1] > snap.mxy) continue;
-                  if (V[1] < snap.mny && T[1] < snap.mny) continue;
-                  if (V[2] > snap.mxz && T[2] > snap.mxz) continue;
-                  if (V[2] < snap.mnz && T[2] < snap.mnz) continue;
-                  // Lazy BVH build via the exposed core helper.
-                  if (snap.bvh === null) {
-                    snap.bvh = (typeof window._ccGetBVH === 'function') ? window._ccGetBVH(snap.entry.el) : null;
-                    if (snap.bvh === null) snap.bvh = false; // mark as no-geo
-                  }
-                  if (!snap.bvh) continue;
-                  var hit = _bvhRayCast(snap.bvh.root, snap.bvh.tris, V[0], V[1], V[2], dx, dy, dz, bestT);
-                  if (hit < bestT) {
-                    bestT = hit;
-                    blocker = snap.entry;
-                    if (hit < 0.05) break; // can't get closer; bail
-                  }
-                }
-                if (blocker) {
+              for (var ti = 0; ti < targets.length; ti++) {
+                var tgt = targets[ti];
+                var res = _testPair(V, tgt);
+                if (res.samples === 0 || res.blocked === 0) continue;
+                var occlusionRate = res.blocked / res.samples;
+                var isPartial = res.blocked < res.samples;
+                if (isPartial) nPartial++;
+                var T = res.worstT_target;
+                var len = Math.sqrt(
+                  (T[0]-V[0])*(T[0]-V[0]) + (T[1]-V[1])*(T[1]-V[1]) + (T[2]-V[2])*(T[2]-V[2])
+                );
+                var blocker = res.worstBlocker;
+                var bestT = res.worstT;
+                if (true) {
                   nHits++;
                   clashes.push({
                     id: 'vis_' + sampleId + '_' + v.el.expressId + '_' + tgt.el.expressId + '_' + s,
                     type: 'visibility',
                     status: 'open',
-                    priority: 'normal',
-                    title: 'Visibility blocked: ' + (_nameOf(tgt.el) || ('#' + tgt.el.expressId)) +
-                           ' from ' + (_nameOf(v.el) || ('#' + v.el.expressId)),
+                    priority: isPartial ? 'low' : 'normal',
+                    title: (isPartial ? 'Partial visibility block: ' : 'Visibility blocked: ') +
+                           (_nameOf(tgt.el) || ('#' + tgt.el.expressId)) +
+                           ' from ' + (_nameOf(v.el) || ('#' + v.el.expressId)) +
+                           (isPartial ? ' (' + Math.round(occlusionRate*100) + '% blocked)' : ''),
                     description: 'Sight line from ' + (_nameOf(v.el) || ('viewer #' + v.el.expressId)) +
                                  ' to ' + (_nameOf(tgt.el) || ('target #' + tgt.el.expressId)) +
-                                 ' is blocked by ' + (_nameOf(blocker.el) || ('#' + blocker.el.expressId)) +
+                                 ' is ' + (isPartial ? 'partially' : 'fully') + ' blocked by ' +
+                                 (_nameOf(blocker.el) || ('#' + blocker.el.expressId)) +
                                  ' (' + (_typeOf(blocker.el) || 'unknown type') + ')' +
                                  ' at ' + bestT.toFixed(2) + ' m along a ' + len.toFixed(2) + ' m line.',
                     point: [V[0] + dx*bestT, V[1] + dy*bestT, V[2] + dz*bestT],
@@ -379,6 +456,10 @@
                     rangeTotal: len,
                     sightFrom: V.slice(),
                     sightTo: T.slice(),
+                    partialOcclusion: isPartial,
+                    blockedSamples: res.blocked,
+                    totalSamples: res.samples,
+                    occlusionRate: occlusionRate,
                     category: 'visibility',
                     source: 'visibility_check',
                     sampleId: sampleId,
@@ -397,6 +478,8 @@
               obstructers: obstructers.length,
               raysCast: nRays,
               blocked: nHits,
+              partialBlocked: nPartial,
+              targetGrid: targetGrid,
               clearRate: nRays > 0 ? (1 - nHits/nRays) : 0
             }
           });
@@ -447,35 +530,246 @@
         viewer:  { types:['IfcSpace'], sampling:{mode:'grid', eyeHeight:1.65, stride:3.0} },
         target:  { types:['IfcSign','IfcLightFixture'], namePattern:'exit|uitgang|sortie|notausgang' },
         obstructer: { excludeTypes:['IfcFurnishingElement'] },
-        maxRange: 25.0
+        maxRange: 25.0,
+        mode: 'obstruction'
+      },
+      // EN 1838 emergency-lighting variant: same idea as the generic
+      // preset but with the 25 m luminaire-spacing rule baked into
+      // maxRange and a stricter obstructer set (furniture counts).
+      'exit-signs-EN-1838': {
+        sampleId: 'exit-signs-EN-1838',
+        viewer:  { types:['IfcSpace'], sampling:{mode:'grid', eyeHeight:1.65, stride:2.0} },
+        target:  { types:['IfcSign','IfcLightFixture'], namePattern:'exit|escape|emergency|notausgang' },
+        obstructer: { excludeTypes:[] },
+        maxRange: 25.0,
+        mode: 'obstruction'
+      },
+      // BS 5499-style — UK exit signs, same geometry, label kept
+      // distinct so the BCF / report carries the regulation context.
+      'exit-signs-BS-5499': {
+        sampleId: 'exit-signs-BS-5499',
+        viewer:  { types:['IfcSpace'], sampling:{mode:'grid', eyeHeight:1.65, stride:2.0} },
+        target:  { types:['IfcSign'], namePattern:'exit|escape' },
+        obstructer: { excludeTypes:[] },
+        maxRange: 25.0,
+        mode: 'obstruction'
       },
       'workplace-window-view-NL': {
         sampleId: 'workplace-view-NL',
         viewer:  { types:['IfcFurnishingElement'], namePattern:'desk|werkplek|workstation', sampling:{mode:'centroid', eyeHeight:1.20} },
         target:  { types:['IfcWindow'] },
         obstructer: { excludeTypes:['IfcFurnishingElement','IfcDoor'] },
-        maxRange: 6.0
+        maxRange: 6.0,
+        mode: 'obstruction'
       },
       'nurse-station-LOS': {
         sampleId: 'nurse-station-LOS',
         viewer:  { types:['IfcFurnishingElement'], namePattern:'nurse|verpleeg|station', sampling:{mode:'centroid', eyeHeight:1.20} },
         target:  { types:['IfcSpace'], namePattern:'bed|patient|kamer|room' },
         obstructer: { excludeTypes:[] },
-        maxRange: 25.0
+        maxRange: 25.0,
+        mode: 'obstruction'
       },
       'wheelchair-exit-signs-1200': {
         sampleId: 'wheelchair-exit-signs',
         viewer:  { types:['IfcSpace'], sampling:{mode:'grid', eyeHeight:1.20, stride:3.0} },
         target:  { types:['IfcSign','IfcLightFixture'], namePattern:'exit|uitgang|sortie' },
         obstructer: { excludeTypes:['IfcFurnishingElement'] },
-        maxRange: 25.0
+        maxRange: 25.0,
+        mode: 'obstruction'
+      },
+      // Reception line-of-sight — receptionist must see the front
+      // door + waiting area. Frequently violated by tall plants /
+      // standing screens that designers add after the fact.
+      'reception-front-door-LOS': {
+        sampleId: 'reception-LOS',
+        viewer:  { types:['IfcFurnishingElement'], namePattern:'reception|balie|receptie', sampling:{mode:'centroid', eyeHeight:1.20} },
+        target:  { types:['IfcDoor'], namePattern:'entrance|main|hoofdingang' },
+        obstructer: { excludeTypes:[] },
+        maxRange: 30.0,
+        mode: 'obstruction'
+      },
+      // ── Inverse / coverage presets ─────────────────────────────
+      'surveillance-camera-coverage': {
+        sampleId: 'cam-coverage',
+        viewer:  { types:['IfcSpace'], sampling:{mode:'grid', eyeHeight:1.50, stride:2.0} },
+        target:  { types:['IfcFlowTerminal','IfcSensor','IfcAudioVisualAppliance'], namePattern:'camera|cctv|surveillance' },
+        obstructer: { excludeTypes:[] },
+        maxRange: 15.0,
+        mode: 'coverage'
+      },
+      'smoke-detector-coverage': {
+        sampleId: 'smoke-coverage',
+        viewer:  { types:['IfcSpace'], sampling:{mode:'grid', eyeHeight:2.20, stride:2.0} },
+        target:  { types:['IfcSensor','IfcFlowTerminal'], namePattern:'smoke|rook|detector' },
+        obstructer: { excludeTypes:[] },
+        maxRange: 8.0,
+        mode: 'coverage'
+      },
+      'patient-bay-nurse-observation': {
+        sampleId: 'patient-observ',
+        viewer:  { types:['IfcSpace'], namePattern:'bed|patient|kamer', sampling:{mode:'centroid', eyeHeight:1.0} },
+        target:  { types:['IfcFurnishingElement'], namePattern:'nurse|verpleeg|station' },
+        obstructer: { excludeTypes:[] },
+        maxRange: 25.0,
+        mode: 'coverage'
       }
     };
     window._ccVisibilityPresets = function() { return Object.keys(PRESETS).map(function(k){ return Object.assign({key:k}, PRESETS[k]); }); };
     window._ccVisibilityRunPreset = function(key) {
       var p = PRESETS[key];
       if (!p) return Promise.reject(new Error('Unknown visibility preset: ' + key));
-      return window._ccDetectVisibility(p);
+      return p.mode === 'coverage' ? window._ccDetectCoverage(p) : window._ccDetectVisibility(p);
+    };
+
+    // ── Inverse / coverage mode ───────────────────────────────────
+    //
+    // Same engine, flipped semantic. In the obstruction case we report
+    // each viewer→target pair where the line is blocked. In coverage
+    // mode we report each viewer that is NOT clearly seen by ANY of the
+    // targets. Unlocks:
+    //   - Surveillance camera coverage gaps (viewer = sampled floor
+    //     point, target = IfcFlowTerminal "camera")
+    //   - Fire / smoke sensor coverage (viewer = ceiling sample,
+    //     target = sensors)
+    //   - Nurse-station observation gaps (viewer = patient bay sample,
+    //     target = nurse station)
+    //
+    // Result clashes are anchored on the under-covered viewer point
+    // (.point), with elemB=null because no single target "owns" the
+    // gap. The 3D viz path treats sightFrom only and skips the sight
+    // line — a coverage gap is visualised as a red dot in space, not a
+    // line.
+    window._ccDetectCoverage = function(rule) {
+      rule = rule || {};
+      // Reuse the same filter resolution + obstructer construction;
+      // we just need to invert the per-pair logic.
+      var all = _allElements();
+      var viewers = _resolveFilter(rule.viewer, all);
+      var targets = _resolveFilter(rule.target, all);
+      if (!viewers.length || !targets.length) {
+        return Promise.resolve({ clashes: [], summary: { reason: 'no viewers (' + viewers.length + ') or targets (' + targets.length + ')' } });
+      }
+      var excludeTypes = Object.assign({}, DEFAULT_OBSTRUCTER_EXCLUDES);
+      if (rule.obstructer && Array.isArray(rule.obstructer.excludeTypes)) {
+        rule.obstructer.excludeTypes.forEach(function(t){ excludeTypes[t] = true; });
+      }
+      var viewerIds = {}; viewers.forEach(function(v){ viewerIds[v.el.expressId] = true; });
+      var targetIds = {}; targets.forEach(function(t){ targetIds[t.el.expressId] = true; });
+      var obstructers = all.filter(function(e){
+        if (viewerIds[e.el.expressId] || targetIds[e.el.expressId]) return false;
+        if (excludeTypes[_typeOf(e.el)]) return false;
+        return true;
+      });
+      var maxRange = rule.maxRange != null ? rule.maxRange : 25.0;
+      var obstSnaps = obstructers.map(function(entry){
+        var b = entry.el.box;
+        return {
+          entry: entry,
+          mnx: b ? b.min.x : 0, mxx: b ? b.max.x : 0,
+          mny: b ? b.min.y : 0, mxy: b ? b.max.y : 0,
+          mnz: b ? b.min.z : 0, mxz: b ? b.max.z : 0,
+          bvh: null
+        };
+      });
+      var targetPoints = targets.map(function(t){
+        var b = t.el.box; if (!b) return null;
+        return {
+          entry: t,
+          point: [(b.min.x + b.max.x)*0.5, (b.min.y + b.max.y)*0.5, (b.min.z + b.max.z)*0.5]
+        };
+      }).filter(function(t){ return t != null; });
+
+      function _isClear(V, T) {
+        var dxL = T[0] - V[0], dyL = T[1] - V[1], dzL = T[2] - V[2];
+        var lenL = Math.sqrt(dxL*dxL + dyL*dyL + dzL*dzL);
+        if (lenL > maxRange || lenL < 1e-6) return false;
+        dxL /= lenL; dyL /= lenL; dzL /= lenL;
+        for (var oi = 0; oi < obstSnaps.length; oi++) {
+          var snap = obstSnaps[oi];
+          if (V[0] > snap.mxx && T[0] > snap.mxx) continue;
+          if (V[0] < snap.mnx && T[0] < snap.mnx) continue;
+          if (V[1] > snap.mxy && T[1] > snap.mxy) continue;
+          if (V[1] < snap.mny && T[1] < snap.mny) continue;
+          if (V[2] > snap.mxz && T[2] > snap.mxz) continue;
+          if (V[2] < snap.mnz && T[2] < snap.mnz) continue;
+          if (snap.bvh === null) {
+            snap.bvh = (typeof window._ccGetBVH === 'function') ? window._ccGetBVH(snap.entry.el) : null;
+            if (snap.bvh === null) snap.bvh = false;
+          }
+          if (!snap.bvh) continue;
+          var h = _bvhRayCast(snap.bvh.root, snap.bvh.tris, V[0], V[1], V[2], dxL, dyL, dzL, lenL);
+          if (h > 0 && h < lenL) return false;
+        }
+        return true;
+      }
+
+      var clashes = [];
+      var nViewerPts = 0, nUncovered = 0;
+      var sampleId = rule.sampleId || ('cov_' + Date.now().toString(36));
+      var vi = 0, BATCH = 4;
+      return new Promise(function(resolve) {
+        function _step() {
+          var stopAt = Math.min(viewers.length, vi + BATCH);
+          for (; vi < stopAt; vi++) {
+            var v = viewers[vi];
+            var samples = _viewerSamples(v, rule.viewer && rule.viewer.sampling);
+            for (var s = 0; s < samples.length; s++) {
+              var V = samples[s];
+              nViewerPts++;
+              var coveredBy = null;
+              for (var ti = 0; ti < targetPoints.length; ti++) {
+                if (_isClear(V, targetPoints[ti].point)) { coveredBy = targetPoints[ti].entry; break; }
+              }
+              if (!coveredBy) {
+                nUncovered++;
+                clashes.push({
+                  id: 'cov_' + sampleId + '_' + v.el.expressId + '_' + s,
+                  type: 'visibility',
+                  status: 'open',
+                  priority: 'normal',
+                  title: 'Coverage gap in ' + (_nameOf(v.el) || ('#' + v.el.expressId)) +
+                         ' — no ' + (rule.target && rule.target.types ? rule.target.types.join('/') : 'target') + ' visible',
+                  description: 'Point [' + V.map(function(x){return x.toFixed(2);}).join(', ') + '] is not in clear line of sight of any candidate target within ' + maxRange + ' m.',
+                  point: V.slice(),
+                  elemA: v.el.expressId,
+                  elemAName: _nameOf(v.el),
+                  elemAType: _typeOf(v.el),
+                  modelAId: v.modelId,
+                  sightFrom: V.slice(),
+                  category: 'visibility',
+                  source: 'visibility_coverage',
+                  sampleId: sampleId,
+                  coverageGap: true,
+                  rangeTotal: maxRange,
+                  createdAt: new Date().toISOString()
+                });
+              }
+            }
+          }
+          if (vi < viewers.length) { setTimeout(_step, 0); return; }
+          resolve({
+            clashes: clashes,
+            summary: {
+              viewers: viewers.length,
+              targets: targets.length,
+              obstructers: obstructers.length,
+              viewerPoints: nViewerPts,
+              uncovered: nUncovered,
+              coverageRate: nViewerPts > 0 ? (1 - nUncovered/nViewerPts) : 0
+            }
+          });
+        }
+        _step();
+      });
+    };
+    window._ccDetectCoverageAndMerge = function(rule) {
+      return window._ccDetectCoverage(rule).then(function(res){
+        if (res.clashes.length && window._ccDispatch) {
+          window._ccDispatch({ t: 'ADD_CLASHES', v: res.clashes });
+        }
+        return res;
+      });
     };
 
     // Convenience: run a check and merge results into the existing
