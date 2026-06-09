@@ -1,5 +1,8 @@
 # Changelog
 
+## v5.19.56 (2026-06-09)
+- feat(pointcloud): proper PTS + PTX parsers (Leica scan formats)
+
 ## v5.19.55 (2026-06-09)
 - chore: remove chunk-merge subsystem (#5)
 
