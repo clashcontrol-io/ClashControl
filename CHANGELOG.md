@@ -1,5 +1,8 @@
 # Changelog
 
+## v5.19.59 (2026-06-09)
+- docs+ui: surface alignment workflow in README/llms.txt + Align button
+
 ## v5.19.58 (2026-06-09)
 - feat(align): manual 3-point point-cloud ↔ IFC alignment (MVP)
 
