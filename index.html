@@ -5183,6 +5183,28 @@ function startApp() {
                 source: aiSource || null,
                 at:     aiAt     || null };
             }
+            // Point-cloud references: any DocumentReference whose Description
+            // starts with 'cc:scanRef=' is one of ours. Reconstitute the
+            // alignment + deviation payload so the round-trip preserves
+            // both. The actual scan file (LAS/PLY/...) is NOT in the BCF —
+            // the user supplies it from disk; the reference records what
+            // file to look for and what transform to apply when found.
+            var scanRefs = [];
+            var docRefNodes = doc.querySelectorAll('DocumentReference');
+            for (var dri = 0; dri < docRefNodes.length; dri++) {
+              var dn = docRefNodes[dri];
+              var descNode = dn.querySelector('Description');
+              var refNode  = dn.querySelector('ReferencedDocument');
+              if (!descNode || !refNode) continue;
+              var descText = (descNode.textContent || '').trim();
+              if (descText.indexOf('cc:scanRef=') !== 0) continue;
+              try {
+                var pl = JSON.parse(descText.slice('cc:scanRef='.length));
+                pl.file = pl.file || (refNode.textContent || '').trim();
+                scanRefs.push(pl);
+              } catch(_e) {}
+            }
+            if (scanRefs.length) issuePayload.scanReferences = scanRefs;
             d({t:A.ADD_ISSUE, v:issuePayload});
             imported++;
           } catch(e) { console.warn('BCF parse error:', e); }
@@ -5331,14 +5353,82 @@ function startApp() {
       }
 
       var itemSheetId = pinsByItem[it.id];
+      // Aggregate DocumentReferences: floor plan + point-cloud refs share
+      // the same <DocumentReferences> wrapper so the BCF stays schema-valid.
+      var docRefs = [];
       if (itemSheetId && sheetPngs[itemSheetId]) {
         f.file('plan.png', sheetPngs[itemSheetId], {base64: true});
-        markup += '  <DocumentReferences>\n';
-        markup += '    <DocumentReference>\n';
-        markup += '      <ReferencedDocument>plan.png</ReferencedDocument>\n';
-        markup += '      <Description>Floor plan sheet</Description>\n';
-        markup += '    </DocumentReference>\n';
-        markup += '  </DocumentReferences>\n';
+        docRefs.push(
+          '    <DocumentReference>\n' +
+          '      <ReferencedDocument>plan.png</ReferencedDocument>\n' +
+          '      <Description>Floor plan sheet</Description>\n' +
+          '    </DocumentReference>\n'
+        );
+      }
+      // Point-cloud references: every loaded scan in state.referenceLayers
+      // becomes a DocumentReference with a relative-path filename + a
+      // ClashControl-namespaced description carrying alignment metadata.
+      // BCF doesn't natively reference external 3D data, so the payload
+      // is embedded in <Description> as JSON. Other BCF readers preserve
+      // unknown content; CC and open-pointcloud-studio recognise the
+      // 'cc:scanRef' prefix and reconstitute the reference on import.
+      //
+      // Why not embed the point cloud in the zip? Scans are routinely
+      // hundreds of MB to several GB — embedding them would defeat the
+      // 'BCF as lightweight coordination' design. The reference points
+      // at a relative path (e.g. 'scans/site-20260609.las'); both apps
+      // resolve it against whichever folder the BCF was opened from.
+      if (state && state.referenceLayers && state.referenceLayers.length) {
+        state.referenceLayers.forEach(function(rl){
+          if (!rl || !rl.name) return;
+          var payload = { schema: 1, kind: 'pointcloud', file: rl.name };
+          // Pull the live alignment + deviation off the THREE.Points
+          // userData. The reducer doesn't currently mirror those into
+          // state.referenceLayers — they live on the scene object — so
+          // we reach for the scene to read them. Fail-safe: missing
+          // alignment just means a fresh reference with no transform.
+          try {
+            var S3 = window._ccState3d;
+            var refGrp = S3 && S3.scene && S3.scene.getObjectByName('cc-reference-layers');
+            if (refGrp) {
+              for (var ci = 0; ci < refGrp.children.length; ci++) {
+                var o = refGrp.children[ci];
+                if (o.userData && o.userData.refId === rl.id) {
+                  if (o.userData.alignment && Array.isArray(o.userData.alignment.applied)) {
+                    payload.alignment = {
+                      applied: o.userData.alignment.applied,
+                      timestamp: o.userData.alignment.timestamp || null,
+                      worstResidual: o.userData.alignment.worstResidual != null ? o.userData.alignment.worstResidual : null
+                    };
+                  }
+                  if (o.userData.deviation) {
+                    payload.deviation = {
+                      min: o.userData.deviation.min,
+                      max: o.userData.deviation.max,
+                      mean: o.userData.deviation.mean,
+                      greenAt: o.userData.deviation.greenAt,
+                      redAt: o.userData.deviation.redAt
+                    };
+                  }
+                  break;
+                }
+              }
+            }
+          } catch(_) {}
+          // Encode the payload as a single line of JSON inside the
+          // Description, prefixed so importers can spot it without
+          // attempting to JSON-parse arbitrary descriptions.
+          var descJson = 'cc:scanRef=' + JSON.stringify(payload);
+          docRefs.push(
+            '    <DocumentReference>\n' +
+            '      <ReferencedDocument>' + esc(rl.name) + '</ReferencedDocument>\n' +
+            '      <Description>' + esc(descJson) + '</Description>\n' +
+            '    </DocumentReference>\n'
+          );
+        });
+      }
+      if (docRefs.length) {
+        markup += '  <DocumentReferences>\n' + docRefs.join('') + '  </DocumentReferences>\n';
       }
 
       markup += '</Markup>';

@@ -40,6 +40,29 @@ Public API (stable, MIT): `window._ccAlignStart(targetId)`, `_ccAlignCancel()`, 
 
 ClashControl integrates with sibling OpenAEC Foundation desktop apps over localhost. Phase 1 targets [open-pointcloud-studio](https://github.com/OpenAEC-Foundation/open-pointcloud-studio): the addon discovers a running instance on port 49100+, shipping actions via their HTTP `/eval` endpoint. Public API: `_ccOpenAECStatus()`, `_ccOpenAECSyncCamera()`, `_ccOpenAECPullCamera()`, `_ccOpenAECOpenCloud(path)`, `_ccOpenAECListClouds()`, `_ccOpenAECReconnect()`.
 
+## BCF point-cloud reference extension (`cc:scanRef`)
+
+ClashControl's BCF 2.1 / 3.0 export embeds point-cloud references inside the standard `<DocumentReferences>` element of each Topic's `markup.bcf`. The payload sits in the `<Description>` text with a `cc:scanRef=` prefix and is a JSON object:
+
+```
+<DocumentReference>
+  <ReferencedDocument>scans/site-20260609.las</ReferencedDocument>
+  <Description>cc:scanRef={"schema":1,"kind":"pointcloud","file":"scans/site-20260609.las","alignment":{"applied":[...16 floats column-major...],"timestamp":"2026-06-09T14:23:11.000Z","worstResidual":0.018},"deviation":{"min":0.001,"max":0.182,"mean":0.034,"greenAt":0.02,"redAt":0.1}}</Description>
+</DocumentReference>
+```
+
+Fields:
+- `schema` — extension schema version (currently 1).
+- `kind` — always `"pointcloud"` in this version.
+- `file` — relative path to the scan; both apps resolve against the folder the BCF was opened from. The scan is NOT embedded in the BCF zip (scans are routinely hundreds of MB to several GB).
+- `alignment.applied` — the 4×4 rigid transform that maps the scan into the design IFC coordinate frame, as 16 floats in column-major order (Three.js Matrix4 element order).
+- `alignment.worstResidual` — metres; the largest pick-pair distance after the transform was applied. Sanity check.
+- `deviation` — optional, present only if the deviation heatmap was computed. Distance statistics in metres plus the green/red thresholds used.
+
+Other BCF readers preserve unknown DocumentReference Descriptions, so the data round-trips cleanly without breaking compatibility. The reciprocal contract for sibling tools: on import, look for any DocumentReference whose Description starts with `cc:scanRef=`, JSON-parse the remainder, and apply the transform. CC's importer reconstitutes the reference list onto the issue as `issue.scanReferences = [...]`.
+
+OpenAEC Foundation sibling apps are invited to recognise the same prefix. The extension is MIT and documented here as the canonical reference.
+
 ## Agentic governance (audit trail)
 
 Every AI-touched decision in ClashControl carries provenance: which model produced it, when, and which endpoint it came from. Surfaced as an "AI" chip in the Issues panel (hover for the model + timestamp); persisted on clashes and triage results as `aiProvenance: {actor, model, source, at}`. This addresses the gap Martyn Day called out in AEC Magazine ("Agentic BIM's missing infrastructure", April 2026): the current generation of agentic BIM platforms treat MCP as a governance layer when it is only an interface layer. ClashControl logs every AI decision with model attribution, runs an explicit graduated-autonomy envelope (the built-in assistant is intentionally basic; clash-resolution escalates to the user's own LLM), and uses no shared foundation-model monoculture — your LLM is your choice.
