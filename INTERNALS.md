@@ -466,3 +466,97 @@ The legacy active-clash 3D pin (two intersecting forest-green rings) overlapped 
 **Code reference:** `_SNAP_PX` and the snap helper.
 
 Computes the best snap point near the cursor from a raycaster hit: vertex > midpoint > edge > face-centroid > raw face point. Returns `{point, type, normal, screenX, screenY, srcObj}`. Pixel radius scales with element size on screen so dense parts of the model don't snap too aggressively. Side-effect-free so the click handler can re-call it on the click event.
+
+### 21.30 Chunk-merge — per-element hide on merged chunks (Stage 2B)
+
+**Code reference:** `_ccChunkApplyHidden()`.
+
+A merged chunk (see § 21.4) has no per-element mesh to toggle, so visibility is applied by rebuilding its index to drop hidden elements' triangles. `_ccHiddenReg` unions the independent hide sources (class filter, storey filter, temp-hide); picking stays correct via a parallel `_activeRanges` table recomputed alongside the filtered index. `_fullIndex` preserves the original.
+
+Currently inert because chunk-merge defaults OFF.
+
+### 21.31 Chunk-merge — color-by-class on merged chunks (Stage 2B)
+
+**Code reference:** `_ccGetChunkColorMat()`, `_ccChunkApplyColors()`.
+
+Per-element material colour can't address a chunk, so colours are written into a per-vertex RGBA `color` attribute (alpha ghosts unmatched elements) and the chunk renders through one shared `vertexColors` material. The chunk's pre-colour material is stashed and restored on clear; the render-style loop skips chunks flagged `_ccColored` (like it skips ghost materials).
+
+Currently inert because chunk-merge defaults OFF.
+
+### 21.32 Race-safe model dedup in the reducer
+
+**Code reference:** the `ADD_MODEL` case in the reducer.
+
+The reducer is the single serialization point, so a concurrent same-name (or same-id) load that slipped past the check-then-act guard in the loader is collapsed here into a replace rather than a second copy. This is what caused "4 files → 8 models" — two in-flight loads of the same file both saw no existing match in `window._ccLatestState` and both dispatched `ADD_MODEL`.
+
+### 21.33 Imperative section-plane drag
+
+**Code reference:** `_secPlaneLiveMove()`.
+
+Moves the section plane imperatively during a drag — updates the live clip plane (shared by reference with every model material) and the gizmo in place, then `invalidate()`. This is the orbit-drag pattern: dispatching to the reducer on every `mousemove` round-trips through a full gizmo rebuild + per-material clip reassignment, which made the drag lag behind the cursor. State is committed once on `mouseup`.
+
+### 21.34 Section-plane handle group — constant on-screen size
+
+**Code reference:** `_secHandleGroup` setup inside the plane gizmo.
+
+Arrow + ring live in a sub-group anchored at the plane centre. The tick loop scales this sub-group every frame to a constant on-screen size, so the handles no longer "grow/shrink" as the plane is dragged toward/away from the camera, and the long tip stops whipping across the screen when orbiting. The fill/border stay world-sized so the rectangle represents the real cut extent.
+
+### 21.35 Section rotation ring — world-up reorient for vertical planes
+
+**Code reference:** the ring re-orient block in the section-plane tick.
+
+For vertical section planes the plane normal is horizontal, so the ring (axis = local +Z = plane normal) ends up standing upright. The drag-rotate logic spins the plane around world up, so the ring visually mismatches the motion. Re-orient the ring each frame so its central axis is world-up whenever the plane is vertical — gives a horizontal "spinning record" handle to match the rotation.
+
+### 21.36 Per-material clipping (instead of global)
+
+**Code reference:** `S.renderer.clippingPlanes` reset + per-material assignment.
+
+Setting clip planes on each model mesh material instead of globally means gizmos / helpers / visualization objects (no expressId) are NEVER clipped and always render — section-box handles stay visible. The render loop and render-style effect both call this through the dep array so newly-swapped style materials pick up the planes automatically.
+
+### 21.37 Floor-plan cut-plane arrow — clippingPlanes:[] required
+
+**Code reference:** floor-plan drag handle build.
+
+Floor-plan handle uses the same geometry/colours as the section-plane gizmo so the two read as one family. `clippingPlanes:[]` on the materials is critical here — the floor-plan clipping plane removes everything above the cut, and the arrow extends UP from the cut elevation, so it would otherwise be entirely clipped away.
+
+### 21.38 cc-render-frame timing — before render(), not after
+
+**Code reference:** the `cc-render-frame` dispatch in the main render loop.
+
+Fires before `renderer.render()` so sibling addons (splat overlay etc.) get their per-frame update call first. Spark's `SplatMesh.frameUpdate(camera, renderer)` sorts splats by camera distance and uploads GPU state; if it runs AFTER the render, the next frame uses stale data and the splat appears invisible until the camera moves again.
+
+### 21.39 Hidden Line style — opaque Lambert + glass
+
+**Code reference:** Hidden Line branch in the render-style switcher.
+
+A single shared `MeshLambertMaterial` for opaque elements + a per-mesh translucent material for glass. Curtain walls and windows read as see-through line drawings instead of solid gray boxes. Glass detection mirrors the Shaded branch; the monochrome shared mat is used for everything else, so perf cost is bounded to the small glass subset.
+
+### 21.40 Rendered style — IFC colour respected
+
+**Code reference:** the rendered-style material constructor.
+
+Photorealistic respects the IFC-exported colour from the source software (Revit / ArchiCAD / etc.) — `origColor` came from `placed.color`, which is the resolved `IfcSurfaceStyle` colour. Material name and IFC type only inform PBR characteristics (roughness, metalness, glass transparency); the colour itself is whatever the architect set in their authoring tool.
+
+### 21.41 Conflicts panel — progressive reveal
+
+**Code reference:** `VirtualList`'s reveal state machine.
+
+Renders the first `INITIAL_REVEAL` items immediately so the panel paints fast; expands to the full list after a paint frame. Critical at 10k+ clashes — the upstream `groupAndSort` / sort / group-bucket pass is O(N) on every render, and pushing it past first paint makes tab switching feel instant instead of stalling for hundreds of ms.
+
+### 21.42 Conflicts panel — IssueRow memoization
+
+**Code reference:** `IssueRow = React.memo(IssueRow);`.
+
+Memo by shallow prop equality so visible rows don't re-render on every `VirtualList` scroll / parent state change. The row is heavy (storey label, dot colour, status pill, expandable detail block) and rendering 15 of them on every scroll tick is what made the panel feel laggy at 10k+ clashes. `item` identity stays stable in the reducer when nothing about that clash changes.
+
+### 21.43 _ccDebugInstancing — collision detection
+
+**Code reference:** `window._ccDebugInstancing()`.
+
+Walks every mesh on every loaded element and reports whether `_instKey` is set, distinct-key count, largest group sizes, and a few sample keys. Also samples up to 4 meshes per InstancedMesh group and compares their local bbox extents — if two share a key but have measurably different bboxes (>5cm in any axis), that IS a real collision, flagged as `suspectCollisions` with a console warning telling the user how to opt out (`localStorage.cc_restoreInstancing = 'off'`).
+
+### 21.44 Memory-warning modal — privacy by design
+
+**Code reference:** `MemoryWarningModal`.
+
+Model names are NEVER included in diagnostic reports — privacy by design. Model names often expose client/project identifiers ("669001A_..._BWK_..."). The opt-in checkbox has been removed; the `includeNames = false` constant survives so the report-generator branch remains unchanged.

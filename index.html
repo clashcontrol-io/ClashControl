@@ -1077,12 +1077,7 @@ function startApp() {
   function reducer(s,a) {
     switch(a.t) {
       case A.ADD_MODEL:   var _am=a.v; if(s.modelMeta){var _mm=s.modelMeta.find(function(m){return m.id===_am.id});if(_mm){if(_mm.visible===false)_am=Object.assign({},_am,{visible:false});if(_mm.discipline)_am=Object.assign({},_am,{discipline:_mm.discipline});if(_mm.color)_am=Object.assign({},_am,{color:_mm.color});if(_mm.tag)_am=Object.assign({},_am,{tag:_mm.tag});if(_mm.georef)_am=Object.assign({},_am,{georef:_mm.georef});}}
-        // Race-safe dedup: the reducer is the single serialization point, so a
-        // concurrent same-name (or same-id) load that slipped past the
-        // check-then-act guard in the loader is collapsed here into a replace
-        // rather than a second copy. This is what caused 4 files → 8 models
-        // (#572): two in-flight loads of the same file both saw no existing
-        // match in window._ccLatestState and both dispatched ADD_MODEL.
+        // Race-safe model dedup.  See INTERNALS.md § 21.32
         var _dupIdx = -1;
         for (var _di=0; _di<s.models.length; _di++) {
           var _em = s.models[_di];
@@ -2646,12 +2641,7 @@ function startApp() {
     return null;
   };
 
-  // ── [Stage 2B] Per-element HIDE on merged chunks ──────────────────────────
-  // A chunk has no per-element mesh to toggle, so visibility is applied by
-  // rebuilding its index to drop hidden elements' triangles. _ccHiddenReg
-  // unions the independent hide sources (class filter, storey filter,
-  // temp-hide); picking stays correct via a parallel _activeRanges table
-  // recomputed alongside the filtered index. _fullIndex preserves the original.
+  // ── Per-element hide on merged chunks ──  See INTERNALS.md § 21.30
   window._ccHiddenReg = { class:{}, storey:{}, temp:{} }; // each: "modelId_eid" -> true
   window._ccChunkApplyHidden = function(){
     if (!window._ccChunkMerge) return;
@@ -2689,12 +2679,7 @@ function startApp() {
     invalidate();
   };
 
-  // ── [Stage 2B] Color-by-class / DQ coloring on merged chunks ──────────────
-  // Per-element material.color can't address a chunk, so colors are written
-  // into a per-vertex RGBA `color` attribute (alpha ghosts unmatched elements)
-  // and the chunk renders through one shared vertexColors material. The chunk's
-  // pre-color material is stashed and restored on clear; the render-style loop
-  // skips chunks flagged _ccColored (like it skips ghost materials).
+  // ── Color-by-class / DQ on merged chunks ──  See INTERNALS.md § 21.31
   var _ccChunkColorMat = null;
   function _ccGetChunkColorMat(){
     // Opaque vertex-color material — matched elements get the class/DQ color,
@@ -10021,12 +10006,7 @@ function startApp() {
         }
         return null;
       }
-      // Move the section plane imperatively during a drag — update the live clip
-      // plane (shared by reference with every model material) and the gizmo in
-      // place, then invalidate(). This is the orbit-drag pattern: dispatching to
-      // the reducer on every mousemove round-trips through a full gizmo rebuild +
-      // per-material clip reassignment, which is what made the drag lag behind the
-      // cursor. State is committed once on mouseup.
+      // Imperative section-plane drag.  See INTERNALS.md § 21.33
       function _secPlaneLiveMove(newPos) {
         var S2 = state3d.current; if (!S2) return;
         var cs = window._ccCurrentSection; if (!cs) return;
@@ -10545,12 +10525,7 @@ function startApp() {
           var _scG = (_wpp * 110) / (_giz._secHandleSpan || 1); // ~110px arrow
           if (_scG > 0 && isFinite(_scG)) _giz._secHandleGroup.scale.setScalar(_scG);
 
-          // For vertical section planes the plane normal is horizontal, so the
-          // ring (axis = local +Z = plane normal) ends up standing upright. The
-          // drag-rotate logic spins the plane around world up, so the ring
-          // visually mismatches the motion. Re-orient the ring each frame so
-          // its central axis is world up whenever the plane is vertical — gives
-          // the user a horizontal "spinning record" handle to match the rotation.
+          // Vertical-plane ring reorient.  See INTERNALS.md § 21.35
           var _ring = _giz._secRotRing;
           if (_ring) {
             var _wq = _giz.getWorldQuaternion(new THREE.Quaternion());
@@ -10605,12 +10580,7 @@ function startApp() {
         }
         try {
           renderer.setViewport(0,0,el.clientWidth,el.clientHeight);
-          // Fire a frame event so sibling addons (splat overlay etc.) get
-          // their per-frame update call BEFORE the render. Spark's
-          // SplatMesh.update(camera, renderer) sorts splats by camera
-          // distance and uploads GPU state; if it runs after the render
-          // the next frame uses stale data and the splat appears invisible
-          // until the camera moves again.
+          // cc-render-frame timing — before render().  See INTERNALS.md § 21.38
           if (window._ccHasSplats || window._ccHasFrameListener) {
             try { window.dispatchEvent(new CustomEvent('cc-render-frame')); } catch(_){}
           }
@@ -10893,12 +10863,7 @@ function startApp() {
         border.renderOrder = 999;
         grp.add(border);
 
-        // Arrow + ring live in a sub-group anchored at the plane centre. The
-        // tick loop scales this sub-group every frame to a constant on-screen
-        // size, so the handles no longer appear to "grow/shrink" as the plane is
-        // dragged toward/away from the camera, and the long tip stops whipping
-        // across the screen when orbiting. The fill/border stay world-sized so
-        // the rectangle still represents the real cut extent.
+        // Section-plane handle group — constant on-screen size.  See INTERNALS.md § 21.34
         var handleGroup = new THREE.Group();
         handleGroup.userData._sectionPlane = true;
 
@@ -11008,12 +10973,7 @@ function startApp() {
         S.scene.add(vis2);
         S._sectionPlaneVis = vis2;
       }
-      // ── Per-material clipping (replaces global renderer.clippingPlanes) ──────
-      // Setting planes on each model mesh material instead of globally means
-      // gizmos / helpers / visualization objects (no expressId) are NEVER clipped
-      // and always render — the section box handles become visible again.
-      // The render loop and render-style effect both call this through the dep
-      // array so newly-swapped style materials pick up the planes automatically.
+      // ── Per-material clipping ──  See INTERNALS.md § 21.36
       S.renderer.clippingPlanes = [];
       S.renderer.localClippingEnabled = true;
       S.scene.traverse(function(obj){
@@ -11492,12 +11452,7 @@ function startApp() {
       var border = new THREE.LineSegments(borderGeo, borderMat);
       border.rotation.x = -Math.PI/2;
       cutGroup.add(border);
-      // Drag handle: amber arrow standing on top of the plane, pointing up.
-      // Same geometry/colours as the section-plane gizmo so the two read as one
-      // family. clippingPlanes:[] on the materials is critical here — the floor
-      // plan's clipping plane removes everything above the cut, and the arrow
-      // extends UP from the cut elevation, so it would otherwise be entirely
-      // clipped away.
+      // Floor-plan cut-plane arrow.  See INTERNALS.md § 21.37
       var fpHandleGroup = new THREE.Group();
       var shaftLen = 1.8, shaftCylR = 0.03, tipR = 0.12, tipLen = 0.3;
       var arrowMat = new THREE.MeshBasicMaterial({color:0xf59e0b, transparent:true, opacity:0.85, depthTest:false});
@@ -11962,12 +11917,7 @@ function startApp() {
             transparent: true, opacity: 0.85, side: THREE.FrontSide
           }));
         } else if (style === 'standard') {
-          // Hidden Line: a single shared Lambert for opaque elements + a
-          // per-mesh translucent material for glass. Curtain walls and
-          // windows now read as see-through line drawings instead of solid
-          // gray boxes. Glass detection mirrors the Shaded branch; the
-          // monochrome shared mat is still used for everything else, so
-          // perf cost is bounded to the small glass subset.
+          // Hidden Line — shared Lambert + glass.  See INTERNALS.md § 21.39
           _disposeEdges(obj);
           var _hlMatName  = (obj.userData._ifcMaterial || '').toLowerCase();
           var _hlType     = _eidToType[obj.userData.expressId] || '';
@@ -12022,12 +11972,7 @@ function startApp() {
         } else if (style === 'rendered') {
           _disposeEdges(obj);
           if (!cache.rendered) {
-            // Photorealistic: respect the IFC-exported colour from the source
-            // software (Revit / ArchiCAD / etc.) — origColor came from
-            // placed.color, which is the resolved IfcSurfaceStyle colour.
-            // Material name and IFC type only inform PBR characteristics
-            // (roughness, metalness, glass transparency); the colour itself
-            // is whatever the architect set in their authoring tool.
+            // Rendered style — IFC colour respected.  See INTERNALS.md § 21.40
             var _matName = (obj.userData._ifcMaterial || '').toLowerCase();
             var _rdType = _eidToType[obj.userData.expressId] || '';
             var _r = 0.85, _m = 0.0;
@@ -19021,12 +18966,7 @@ function startApp() {
     var coll = useState({}), collapsed=coll[0], setCollapsed=coll[1];
     var grpLimits = useState({}), groupLimits=grpLimits[0], setGroupLimits=grpLimits[1];
 
-    // ── Progressive reveal ─────────────────────────────────────
-    // Render the first INITIAL_REVEAL items immediately so the panel paints
-    // fast; expand to the full list after a paint frame. Critical at 10k+
-    // clashes — the upstream groupAndSort/sort/group-bucket pass becomes
-    // O(N) on every render, and pushing it past first paint makes tab
-    // switching feel instant instead of stalling for hundreds of ms.
+    // ── Progressive reveal ──  See INTERNALS.md § 21.41
     var revealSt = useState(Math.min(INITIAL_REVEAL, rawItemsProp.length));
     var reveal = revealSt[0], setReveal = revealSt[1];
     useEffect(function(){
@@ -19761,12 +19701,7 @@ function startApp() {
       </div>`}
     </div>`;
   }
-  // Memo by shallow prop equality so visible rows don't re-render on every
-  // VirtualList scroll / parent state change. The row is heavy (storey label,
-  // dot color, status pill, expandable detail block) and rendering 15 of
-  // them on every scroll tick is what makes the panel feel laggy at 10k+
-  // clashes. `item` identity stays stable in the reducer when nothing
-  // about that clash changes.
+  // IssueRow memoization.  See INTERNALS.md § 21.42
   IssueRow = React.memo(IssueRow);
 
 
@@ -28068,12 +28003,7 @@ function startApp() {
   // verifying post-bump regressions (instanced count, distinct materials,
   // chunk-merge state, etc.). Usage: _ccMemReport() in the console.
 
-  // Walks every mesh on every loaded element and reports whether _instKey
-  // is set, how many distinct keys exist, the largest group sizes, and a
-  // few sample keys. Tells us exactly what's broken in the instancing
-  // path without needing a fresh model load. Usage:
-  //   _ccDebugInstancing()
-  // in the console after models are loaded.
+  // _ccDebugInstancing — usage: _ccDebugInstancing().  See INTERNALS.md § 21.43
   window._ccDebugInstancing = function() {
     var s = window._ccLatestState || {};
     // Collect per-key mesh refs so we can detect *real* hash collisions:
@@ -28183,12 +28113,7 @@ function startApp() {
     var usedMB = mem.usedJSHeapSize ? Math.round(mem.usedJSHeapSize / 1048576) : 0;
     var totalMB = mem.totalJSHeapSize ? Math.round(mem.totalJSHeapSize / 1048576) : 0;
     var limitMB = mem.jsHeapSizeLimit ? Math.round(mem.jsHeapSizeLimit / 1048576) : 0;
-    // Default OFF — model names often expose client/project identifiers
-    // ("669001A_..._BWK_..."). User must explicitly opt in to share them.
-    // Model names are NEVER included in diagnostic reports — privacy by
-    // design. The opt-in checkbox has been removed; the toggle and its
-    // state survive here as constants so the report-generator branch
-    // remains unchanged.
+    // Memory-report privacy — model names never included.  See INTERNALS.md § 21.44
     var includeNames = false;
     var inclBrowser = useState(true), includeBrowser=inclBrowser[0], setIncludeBrowser=inclBrowser[1];
     var msgSt = useState(''), userMsg=msgSt[0], setUserMsg=msgSt[1];
