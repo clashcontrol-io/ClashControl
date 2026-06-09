@@ -790,17 +790,53 @@
           });
           // Sort biggest / worst first.
           clusters.sort(function(a, b){ return b.maxDistance - a.maxDistance; });
-          // Dispatch issues.
+          // Dispatch issues + capture a viewpoint per cluster so the
+          // deviation report has a 3D snapshot anchored on each hotspot.
+          // Position the camera looking down-and-in at the centroid from
+          // a distance scaled by cluster span so big clusters frame
+          // wider; render synchronously, then call _ccCaptureViewpoint
+          // (which reads the just-rendered canvas + the current
+          // camera/orbit/section state). The captured viewpoint's id is
+          // attached to the issue via linkedId so the Issues panel +
+          // PDF report can restore the view in one click.
           var dispatch = window._ccDispatch;
           var A_ENUM = (window.A && window.A.ADD_ISSUE) || 'ADD_ISSUE';
+          var A_VP   = (window.A && window.A.ADD_VIEWPOINT) || 'ADD_VIEWPOINT';
+          var S3     = window._ccState3d;
+          function _snapAtPoint(point, span) {
+            if (!S3 || !S3.camera || !S3.orbit || !S3.renderer || !S3.scene) return null;
+            var t = new THREE.Vector3(point[0], point[1], point[2]);
+            // Distance: max(5 m, ~2× cluster span) so the cluster fills
+            // the frame without being claustrophobic. Camera offset is
+            // a fixed "down-3/4 view" relative to the target.
+            var dist = Math.max(5, span * 2);
+            S3.camera.position.set(t.x + dist*0.7, t.y + dist*0.55, t.z + dist*0.7);
+            S3.orbit.target.copy(t);
+            S3.orbit.sync(); S3.orbit.apply();
+            S3.camera.lookAt(t);
+            S3.renderer.render(S3.scene, S3.camera);
+          }
           var made = 0;
           if (dispatch) {
+            // Stash the camera so we can restore it after the snapshot run.
+            var camSave = S3 && S3.camera ? {
+              pos: S3.camera.position.clone(),
+              tgt: S3.orbit.target.clone()
+            } : null;
             clusters.forEach(function(c, i){
+              var span = Math.cbrt(c.cellCount) * cellSize; // rough cluster radius
+              _snapAtPoint(c.centroid, span);
+              var issueId = (typeof uid === 'function') ? uid() : 'dev_' + Date.now() + '_' + i;
+              var vp = null;
+              if (typeof window._ccCaptureViewpoint === 'function') {
+                try { vp = window._ccCaptureViewpoint('Deviation hotspot #' + (i+1), issueId); } catch(_) {}
+              }
+              if (vp) dispatch({ t: A_VP, v: vp });
               var title = 'Deviation hotspot #' + (i+1) + ' · '
                 + (c.maxDistance*1000).toFixed(0) + ' mm max · '
                 + c.pointCount + ' pts';
               dispatch({ t: A_ENUM, v: {
-                id: (typeof uid === 'function') ? uid() : 'dev_' + Date.now() + '_' + i,
+                id: issueId,
                 source: 'deviation_auto',
                 type: c.maxDistance > 0.2 ? 'hard' : 'soft',
                 status: 'open',
@@ -815,6 +851,13 @@
               }});
               made++;
             });
+            // Restore camera so the user lands back where they were.
+            if (camSave && S3 && S3.camera && S3.orbit) {
+              S3.camera.position.copy(camSave.pos);
+              S3.orbit.target.copy(camSave.tgt);
+              S3.orbit.sync(); S3.orbit.apply();
+              S3.renderer.render(S3.scene, S3.camera);
+            }
           }
           _toast('Created ' + made + ' deviation issue' + (made === 1 ? '' : 's'));
           resolve({ count: made, clusters: clusters });
@@ -940,6 +983,159 @@
     window._ccAlignOnChange = function(cb) {
       _onChange.push(cb);
       return function(){ _onChange = _onChange.filter(function(f){return f !== cb;}); };
+    };
+
+    // ── Deviation report PDF ──────────────────────────────────────
+    // Opens a print-ready report window with a cover summary + one
+    // page per auto-issue (snapshot, location, statistics, status).
+    // The user clicks Print → save as PDF in their browser. Reuses
+    // the snapshots already captured by _ccDeviationCreateIssues via
+    // linkedId → viewpoint matching, so no second render pass needed.
+    //
+    // Public:
+    //   _ccDeviationExportReport(targetId) → opens a new window
+    function _escapeHtml(s) {
+      return String(s == null ? '' : s)
+        .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+    }
+    function _formatDistance(m) {
+      if (m == null || !isFinite(m)) return '—';
+      if (m >= 1) return m.toFixed(2) + ' m';
+      return (m * 1000).toFixed(0) + ' mm';
+    }
+    window._ccDeviationExportReport = function(targetId) {
+      var tgt = _findTarget(targetId);
+      if (!tgt) { _toast('Scan target not found'); return; }
+      var dev = tgt.userData && tgt.userData.deviation;
+      if (!dev) { _toast('Compute the deviation map first'); return; }
+      var state = window._ccLatestState || {};
+      var issues = (state.issues || []).filter(function(it){ return it.source === 'deviation_auto'; });
+      if (!issues.length) {
+        _toast('No auto-issues for this scan yet — click "Issues at hotspots" first');
+        return;
+      }
+      var viewpoints = state.viewpoints || [];
+      var vpByLinkedId = {};
+      viewpoints.forEach(function(v){ if (v.linkedId) vpByLinkedId[v.linkedId] = v; });
+
+      // Aggregate stats for the cover page.
+      var critN = issues.filter(function(i){return i.priority==='critical';}).length;
+      var highN = issues.filter(function(i){return i.priority==='high';}).length;
+      var normN = issues.length - critN - highN;
+
+      var scanName = tgt.name || 'Point cloud';
+      var modelNames = (state.models || []).map(function(m){return m.name;}).filter(Boolean).join(', ') || '—';
+      var generatedAt = new Date().toLocaleString();
+      var ccVer = (window.CC_VERSION && window.CC_VERSION.v) ? ('v' + window.CC_VERSION.v) : '';
+
+      var rowsHtml = issues.map(function(it, i){
+        return '<tr>'
+          + '<td>' + (i+1) + '</td>'
+          + '<td>' + _escapeHtml(it.title) + '</td>'
+          + '<td style="text-transform:capitalize">' + _escapeHtml(it.priority || 'normal') + '</td>'
+          + '<td>' + _escapeHtml(it.status || 'open') + '</td>'
+          + '<td style="font-family:monospace;font-size:10px">' + (it.point ? it.point.map(function(x){return x.toFixed(2);}).join(', ') : '—') + '</td>'
+          + '</tr>';
+      }).join('');
+
+      var pagesHtml = issues.map(function(it, i){
+        var vp = vpByLinkedId[it.id];
+        var img = vp && vp.snapshot ? ('<img src="' + vp.snapshot + '" alt="hotspot snapshot" />') : '<div class="no-snap">No snapshot captured</div>';
+        return '<section class="hotspot-page">'
+          + '<h2>Hotspot ' + (i+1) + ' · ' + _escapeHtml(it.title) + '</h2>'
+          + '<div class="hotspot-grid">'
+          +   '<div class="snap">' + img + '</div>'
+          +   '<dl class="meta">'
+          +     '<dt>Priority</dt><dd style="text-transform:capitalize">' + _escapeHtml(it.priority || 'normal') + '</dd>'
+          +     '<dt>Status</dt><dd>' + _escapeHtml(it.status || 'open') + '</dd>'
+          +     '<dt>Type</dt><dd>' + _escapeHtml(it.type || '—') + '</dd>'
+          +     '<dt>Location (x, y, z)</dt><dd>' + (it.point ? it.point.map(function(x){return x.toFixed(3);}).join(', ') : '—') + '</dd>'
+          +     '<dt>Detected</dt><dd>' + _escapeHtml(it.createdAt || '—') + '</dd>'
+          +   '</dl>'
+          + '</div>'
+          + '<div class="description">' + _escapeHtml(it.description || '') + '</div>'
+          + '</section>';
+      }).join('');
+
+      // Alignment + deviation summary cards
+      var aln = tgt.userData && tgt.userData.alignment;
+      var alnHtml = aln ? (
+        '<div class="card"><h3>Alignment</h3>'
+        + '<dl>'
+        +   '<dt>Captured at</dt><dd>' + _escapeHtml(aln.timestamp || '—') + '</dd>'
+        +   '<dt>Worst pick residual</dt><dd>' + _formatDistance(aln.worstResidual) + '</dd>'
+        +   (aln.icpRMSE != null ? ('<dt>ICP RMSE</dt><dd>' + _formatDistance(aln.icpRMSE) + ' · ' + (aln.icpIters || '—') + ' iterations</dd>') : '')
+        + '</dl></div>'
+      ) : '';
+
+      var devHtml = '<div class="card"><h3>Deviation</h3>'
+        + '<dl>'
+        +   '<dt>Min</dt><dd>' + _formatDistance(dev.min) + '</dd>'
+        +   '<dt>Mean</dt><dd>' + _formatDistance(dev.mean) + '</dd>'
+        +   '<dt>Max</dt><dd>' + _formatDistance(dev.max) + '</dd>'
+        +   '<dt>Green threshold</dt><dd>≤ ' + _formatDistance(dev.greenAt) + '</dd>'
+        +   '<dt>Red threshold</dt><dd>≥ ' + _formatDistance(dev.redAt) + '</dd>'
+        +   '<dt>Points (green/amber/red)</dt><dd>' + dev.greenCount + ' / ' + dev.amberCount + ' / ' + dev.redCount + '</dd>'
+        + '</dl></div>';
+
+      var docHtml = '<!DOCTYPE html><html><head><meta charset="utf-8" />'
+        + '<title>Deviation report — ' + _escapeHtml(scanName) + '</title>'
+        + '<style>'
+        + '  body { font-family: -apple-system, "Segoe UI", Roboto, sans-serif; color:#1f2937; margin:0; padding:0 32px 32px; background:#fff; }'
+        + '  h1 { font-size:28px; margin:32px 0 4px; }'
+        + '  h2 { font-size:18px; margin:24px 0 8px; color:#111827; }'
+        + '  h3 { font-size:13px; text-transform:uppercase; letter-spacing:.06em; color:#6b7280; margin:0 0 8px; }'
+        + '  .sub { color:#6b7280; font-size:13px; }'
+        + '  .cards { display:grid; grid-template-columns:1fr 1fr 1fr; gap:12px; margin:24px 0; }'
+        + '  .card { border:1px solid #e5e7eb; border-radius:8px; padding:12px; background:#f9fafb; }'
+        + '  .card dl { display:grid; grid-template-columns:auto 1fr; gap:4px 12px; margin:0; font-size:12px; }'
+        + '  .card dt { color:#6b7280; }'
+        + '  .card dd { margin:0; color:#111827; font-family:ui-monospace,monospace; font-size:11px; }'
+        + '  table { width:100%; border-collapse:collapse; font-size:12px; margin:12px 0 32px; }'
+        + '  th, td { border-bottom:1px solid #e5e7eb; padding:6px 8px; text-align:left; }'
+        + '  th { color:#6b7280; font-weight:600; font-size:11px; text-transform:uppercase; letter-spacing:.04em; }'
+        + '  .hotspot-page { page-break-before:always; margin-top:32px; }'
+        + '  .hotspot-grid { display:grid; grid-template-columns:2fr 1fr; gap:18px; align-items:start; }'
+        + '  .snap img { width:100%; height:auto; border:1px solid #e5e7eb; border-radius:6px; display:block; }'
+        + '  .no-snap { padding:32px; border:1px dashed #d1d5db; border-radius:6px; text-align:center; color:#9ca3af; font-size:12px; }'
+        + '  .description { margin-top:14px; font-size:12px; color:#374151; line-height:1.5; }'
+        + '  .footer { border-top:1px solid #e5e7eb; padding:12px 0; color:#9ca3af; font-size:10px; margin-top:48px; }'
+        + '  @media print { .noprint { display:none } .card { background:#fff } body { padding:0 16px 16px } }'
+        + '  .toolbar { position:sticky; top:0; background:#fff; padding:12px 0; border-bottom:1px solid #e5e7eb; margin-bottom:16px; z-index:10; }'
+        + '  .toolbar button { padding:6px 14px; margin-right:8px; border:1px solid #d1d5db; background:#fff; border-radius:6px; cursor:pointer; font-size:13px; }'
+        + '  .toolbar button.primary { background:#1f2937; color:#fff; border-color:#1f2937; }'
+        + '</style></head><body>'
+        + '<div class="toolbar noprint">'
+        +   '<button class="primary" onclick="window.print()">Print / Save as PDF</button>'
+        +   '<button onclick="window.close()">Close</button>'
+        +   '<span style="color:#6b7280;font-size:12px;margin-left:8px">Generated by ClashControl ' + _escapeHtml(ccVer) + '</span>'
+        + '</div>'
+        + '<h1>Deviation report</h1>'
+        + '<div class="sub">Scan: <strong>' + _escapeHtml(scanName) + '</strong> · Model(s): ' + _escapeHtml(modelNames) + ' · Generated: ' + _escapeHtml(generatedAt) + '</div>'
+        + '<div class="cards">'
+        +   '<div class="card"><h3>Summary</h3>'
+        +   '<dl>'
+        +     '<dt>Hotspots</dt><dd>' + issues.length + '</dd>'
+        +     '<dt>Critical</dt><dd>' + critN + '</dd>'
+        +     '<dt>High</dt><dd>' + highN + '</dd>'
+        +     '<dt>Normal</dt><dd>' + normN + '</dd>'
+        +   '</dl></div>'
+        +   alnHtml
+        +   devHtml
+        + '</div>'
+        + '<h2>Hotspot index</h2>'
+        + '<table><thead><tr><th>#</th><th>Title</th><th>Priority</th><th>Status</th><th>Location (x, y, z)</th></tr></thead>'
+        + '<tbody>' + rowsHtml + '</tbody></table>'
+        + pagesHtml
+        + '<div class="footer">ClashControl ' + _escapeHtml(ccVer) + ' · deviation-report v1 · ' + _escapeHtml(generatedAt) + '</div>'
+        + '</body></html>';
+
+      var pw = window.open('', '_blank', 'width=1024,height=720');
+      if (!pw) { _toast('Pop-up blocked — allow pop-ups for ClashControl'); return; }
+      pw.document.write(docHtml);
+      pw.document.close();
+      setTimeout(function(){ pw.focus(); }, 200);
     };
 
     if (typeof window._ccRegisterAddon === 'function') {

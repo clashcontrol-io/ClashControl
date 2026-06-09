@@ -33,9 +33,10 @@ ClashControl is the BIM coordination tool that ships **point cloud ↔ IFC manua
 5. The scan lands in the design coordinate frame. Worst-pick residual surfaces as a sanity check. Alignment persists in `localStorage` keyed by scan file name, so a reload restores it automatically.
 6. Optional: click **Refine (ICP)** to iteratively snap the scan to the nearest IFC elements. Each iteration samples ~2000 scan points, finds the closest IFC element centroid per sample, picks the three cleanest non-collinear correspondences, and re-runs the same closed-form 3-pair solver. SVD-free, ~20 iterations to convergence, dependency-free.
 7. Optional: click **Deviation map** to colour the cloud green→amber→red by distance to the nearest IFC element. Spatial-grid acceleration with time-sliced batches keeps the UI responsive on multi-million-point scans.
-8. Optional: click **Issues at hotspots** to auto-create one BCF-compatible issue per spatial cluster of red points above a configurable size — turns survey deviation into a coordination backlog instantly.
+8. Optional: click **Issues at hotspots** to auto-create one BCF-compatible issue per spatial cluster of red points above a configurable size. Each issue gets a 3D snapshot captured automatically (camera positioned looking at the cluster centroid before render), linked via `viewpoint.linkedId`. Turns survey deviation into a coordination backlog instantly.
+9. Optional: click **Report PDF** to open a print-ready deviation report — cover page with model + scan names, summary statistics, alignment + deviation cards, hotspot index table, and one page per hotspot with the captured snapshot, location, priority, status, and description. User prints / saves as PDF.
 
-Public API (stable, MIT): `window._ccAlignStart(targetId)`, `_ccAlignCancel()`, `_ccAlignClear(targetId)`, `_ccAlignStatus()`, `_ccAlignOnChange(cb)`, `_ccAlignRefineICP(targetId, opts)`, `_ccDeviationCompute(targetId, opts)`, `_ccDeviationClear(targetId)`, `_ccDeviationCreateIssues(targetId, opts)`.
+Public API (stable, MIT): `window._ccAlignStart(targetId)`, `_ccAlignCancel()`, `_ccAlignClear(targetId)`, `_ccAlignStatus()`, `_ccAlignOnChange(cb)`, `_ccAlignRefineICP(targetId, opts)`, `_ccDeviationCompute(targetId, opts)`, `_ccDeviationClear(targetId)`, `_ccDeviationCreateIssues(targetId, opts)`, `_ccDeviationExportReport(targetId)`.
 
 ## OpenAEC Foundation interop
 
