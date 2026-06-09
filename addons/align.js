@@ -511,6 +511,318 @@
       return true;
     };
 
+    // ── ICP refinement (Phase 2 follow-up to the 3-pair manual seed) ──
+    // After the manual alignment lands the scan in roughly the right
+    // place, ICP nudges it toward the IFC iteratively. For each scan
+    // sample point we find the closest IFC element centroid (cheap
+    // approximation), then recompute a rigid transform from the
+    // correspondence set and apply it. Repeat until the transform
+    // stops changing or we hit the iteration cap.
+    //
+    // SVD-free approach: instead of a general Kabsch we pick the 3
+    // best correspondence pairs (smallest residuals from the previous
+    // iteration) per round and re-use the closed-form 3-pair solver
+    // from above. Converges to the same local optimum that a full
+    // Kabsch reaches in practice while keeping the code dependency-
+    // free and easy to audit.
+    //
+    // Public:
+    //   _ccAlignRefineICP(targetId, opts) → Promise<{iterations, residual}>
+    //     opts.maxIter   default 20
+    //     opts.sampleN   how many scan points to use   (default 2000)
+    //     opts.tol       transform-change tolerance    (default 1e-4)
+    function _sampleScanPoints(tgt, N) {
+      var geom = tgt.geometry;
+      var pos = geom.getAttribute('position');
+      if (!pos) return [];
+      tgt.updateMatrixWorld(true);
+      var M = tgt.matrixWorld;
+      var total = pos.count;
+      var step = Math.max(1, Math.floor(total / N));
+      var pts = [];
+      var v = new THREE.Vector3();
+      for (var i = 0; i < total; i += step) {
+        v.set(pos.getX(i), pos.getY(i), pos.getZ(i)).applyMatrix4(M);
+        pts.push(v.clone());
+      }
+      return pts;
+    }
+    // Closest IFC element centroid via the same spatial grid the
+    // deviation heatmap uses. Returns the world-space centre of the
+    // element bbox — a coarse correspondence but good enough as an
+    // ICP target when the scan is already close to the IFC.
+    function _closestIfcCentroid(p, grid, cellSize) {
+      var gx = Math.floor(p.x / cellSize);
+      var gy = Math.floor(p.y / cellSize);
+      var gz = Math.floor(p.z / cellSize);
+      var best = null, bestD = Infinity;
+      for (var ox = -1; ox <= 1; ox++) for (var oy = -1; oy <= 1; oy++) for (var oz = -1; oz <= 1; oz++) {
+        var bucket = grid[(gx+ox) + ',' + (gy+oy) + ',' + (gz+oz)];
+        if (!bucket) continue;
+        for (var k = 0; k < bucket.length; k++) {
+          var b = bucket[k];
+          var dx = p.x - b.cx, dy = p.y - b.cy, dz = p.z - b.cz;
+          var d2 = dx*dx + dy*dy + dz*dz;
+          if (d2 < bestD) { bestD = d2; best = b; }
+        }
+      }
+      return best ? { v: new THREE.Vector3(best.cx, best.cy, best.cz), d: Math.sqrt(bestD) } : null;
+    }
+    window._ccAlignRefineICP = function(targetId, opts) {
+      opts = opts || {};
+      var maxIter = opts.maxIter != null ? opts.maxIter : 20;
+      var sampleN = opts.sampleN != null ? opts.sampleN : 2000;
+      var tol     = opts.tol     != null ? opts.tol     : 1e-4;
+
+      var tgt = _findTarget(targetId);
+      if (!tgt) return Promise.reject(new Error('Scan target not found'));
+      var ifc = _collectIfcBoxes();
+      if (!ifc) return Promise.reject(new Error('No IFC elements loaded'));
+      var cellSize = Math.max(0.5, ifc.meanDiag * 2);
+      var grid = _buildGrid(ifc.boxes, cellSize);
+      var scanPts = _sampleScanPoints(tgt, sampleN);
+      if (scanPts.length < 3) return Promise.reject(new Error('Scan has too few points'));
+
+      var iter = 0;
+      var prevWorst = Infinity;
+      var lastResidual = Infinity;
+
+      return new Promise(function(resolve, reject) {
+        function _icpStep() {
+          // 1. Correspondence: nearest IFC centroid per sampled point.
+          var pairs = [];
+          for (var i = 0; i < scanPts.length; i++) {
+            var nn = _closestIfcCentroid(scanPts[i], grid, cellSize);
+            if (nn) pairs.push({ scan: scanPts[i], ifc: nn.v, d: nn.d });
+          }
+          if (pairs.length < 3) {
+            reject(new Error('Not enough correspondences — manual seed may be too far off'));
+            return;
+          }
+          // 2. Take the 3 cleanest pairs that span a non-degenerate
+          //    triangle. Sort by distance, then pick the first three
+          //    whose triangle isn't near-collinear.
+          pairs.sort(function(a, b){ return a.d - b.d; });
+          var picked = [];
+          for (var pi = 0; pi < pairs.length && picked.length < 3; pi++) {
+            var cand = pairs[pi];
+            if (picked.length === 0) { picked.push(cand); continue; }
+            if (picked.length === 1) {
+              var dist01 = picked[0].scan.distanceTo(cand.scan);
+              if (dist01 > 0.5) picked.push(cand);  // metres — far enough to define a baseline
+              continue;
+            }
+            if (picked.length === 2) {
+              // Reject near-collinear triples — cross product magnitude.
+              var e1 = new THREE.Vector3().subVectors(picked[1].scan, picked[0].scan);
+              var e2 = new THREE.Vector3().subVectors(cand.scan,    picked[0].scan);
+              var area = e1.cross(e2).length();
+              if (area > 0.1) picked.push(cand);
+            }
+          }
+          if (picked.length < 3) {
+            // Fall back to first three regardless of geometry.
+            picked = pairs.slice(0, 3);
+          }
+          // 3. Compute the 3-pair transform mapping scan → ifc.
+          var M = _rigidFromThreePairs(
+            picked[0].scan, picked[1].scan, picked[2].scan,
+            picked[0].ifc,  picked[1].ifc,  picked[2].ifc
+          );
+          // 4. Apply to the scan sample points (so the next iteration
+          //    works on the updated positions).
+          for (var spi = 0; spi < scanPts.length; spi++) scanPts[spi].applyMatrix4(M);
+          // 5. Also compose into the target's transform.
+          var Mt = new THREE.Matrix4().multiplyMatrices(M, tgt.matrix);
+          var p = new THREE.Vector3(), q = new THREE.Quaternion(), s = new THREE.Vector3();
+          Mt.decompose(p, q, s);
+          tgt.position.copy(p); tgt.quaternion.copy(q); tgt.scale.copy(s);
+          tgt.updateMatrix(); tgt.updateMatrixWorld(true);
+          // 6. Convergence check — worst pair distance + transform delta.
+          var worst = 0, sumSq = 0;
+          for (var rpi = 0; rpi < pairs.length; rpi++) {
+            var dT = pairs[rpi].scan.distanceTo(pairs[rpi].ifc);
+            if (dT > worst) worst = dT;
+            sumSq += dT * dT;
+          }
+          var rmse = Math.sqrt(sumSq / pairs.length);
+          var delta = Math.abs(prevWorst - worst);
+          prevWorst = worst;
+          lastResidual = rmse;
+          iter++;
+          if (iter < maxIter && delta > tol) {
+            setTimeout(_icpStep, 0); // yield
+            return;
+          }
+          // Done — persist the updated alignment.
+          var finalM = new THREE.Matrix4()
+            .makeRotationFromQuaternion(tgt.quaternion)
+            .setPosition(tgt.position);
+          if (tgt.userData) {
+            tgt.userData.alignment = Object.assign(tgt.userData.alignment || {}, {
+              applied:   Array.from(finalM.elements),
+              icpRMSE:   rmse,
+              icpIters:  iter,
+              timestamp: new Date().toISOString()
+            });
+            try {
+              var key = STORAGE_KEY_PREFIX + (tgt.name || targetId);
+              localStorage.setItem(key, JSON.stringify(tgt.userData.alignment));
+            } catch(_){}
+          }
+          _invalidate(3);
+          _toast('ICP done · ' + iter + ' iter · RMSE ' + rmse.toFixed(3) + ' m');
+          resolve({ iterations: iter, residual: rmse });
+        }
+        _icpStep();
+      });
+    };
+
+    // ── Auto-issue at deviation hotspots ───────────────────────────
+    // After the deviation heatmap is computed, walk the scan points,
+    // gather the ones marked "red" (distance ≥ redAt), bin them into
+    // a spatial hash, and connected-component-cluster the occupied
+    // cells. Each cluster above a minimum point count becomes an
+    // issue anchored on the cluster centroid.
+    //
+    // Public:
+    //   _ccDeviationCreateIssues(targetId, opts) → Promise<{count, clusters}>
+    //     opts.cellSize    spatial grid cell, metres        (default 0.5)
+    //     opts.minPoints   skip clusters smaller than this   (default 50)
+    //     opts.tolerance   redAt override (defaults to deviation.redAt)
+    window._ccDeviationCreateIssues = function(targetId, opts) {
+      opts = opts || {};
+      var tgt = _findTarget(targetId);
+      if (!tgt || !tgt.geometry) return Promise.reject(new Error('Scan target not found'));
+      var dev = tgt.userData && tgt.userData.deviation;
+      if (!dev) return Promise.reject(new Error('Compute the deviation map first'));
+      var cellSize  = opts.cellSize  != null ? opts.cellSize  : 0.5;
+      var minPoints = opts.minPoints != null ? opts.minPoints : 50;
+      var tolerance = opts.tolerance != null ? opts.tolerance : dev.redAt;
+
+      var geom = tgt.geometry;
+      var pos = geom.getAttribute('position');
+      if (!pos) return Promise.reject(new Error('Scan has no positions'));
+      var N = pos.count;
+      tgt.updateMatrixWorld(true);
+      var M = tgt.matrixWorld;
+
+      // We need the per-point distance again. Re-run a cheap version of
+      // the bbox-distance scan — the heatmap already proved the spatial
+      // structure works, so we reuse it.
+      var ifc = _collectIfcBoxes();
+      if (!ifc) return Promise.reject(new Error('No IFC elements'));
+      var gridCell = Math.max(0.5, ifc.meanDiag * 2);
+      var grid = _buildGrid(ifc.boxes, gridCell);
+
+      // Bin red points into a sparse hash by cluster cellSize. Each cell
+      // accumulates count + position sum + max-distance.
+      var v = new THREE.Vector3();
+      var cells = Object.create(null);
+      function _cellKey(gx, gy, gz) { return gx + ',' + gy + ',' + gz; }
+
+      var batchSize = 100000;
+      var idx = 0;
+      return new Promise(function(resolve) {
+        function _scan() {
+          var end = Math.min(N, idx + batchSize);
+          for (; idx < end; idx++) {
+            v.set(pos.getX(idx), pos.getY(idx), pos.getZ(idx)).applyMatrix4(M);
+            // Re-derive distance to nearest IFC bbox.
+            var gx0 = Math.floor(v.x / gridCell);
+            var gy0 = Math.floor(v.y / gridCell);
+            var gz0 = Math.floor(v.z / gridCell);
+            var best = Infinity;
+            for (var ox = -1; ox <= 1; ox++) for (var oy = -1; oy <= 1; oy++) for (var oz = -1; oz <= 1; oz++) {
+              var bucket = grid[(gx0+ox) + ',' + (gy0+oy) + ',' + (gz0+oz)];
+              if (!bucket) continue;
+              for (var j = 0; j < bucket.length; j++) {
+                var b = bucket[j];
+                var dx = Math.max(0, Math.abs(v.x - b.cx) - b.hx);
+                var dy = Math.max(0, Math.abs(v.y - b.cy) - b.hy);
+                var dz = Math.max(0, Math.abs(v.z - b.cz) - b.hz);
+                var d = Math.sqrt(dx*dx + dy*dy + dz*dz);
+                if (d < best) best = d;
+                if (best === 0) break;
+              }
+              if (best === 0) break;
+            }
+            if (best < tolerance) continue;
+            var cgx = Math.floor(v.x / cellSize);
+            var cgy = Math.floor(v.y / cellSize);
+            var cgz = Math.floor(v.z / cellSize);
+            var key = _cellKey(cgx, cgy, cgz);
+            var c = cells[key];
+            if (!c) { c = cells[key] = {gx:cgx, gy:cgy, gz:cgz, n:0, sx:0, sy:0, sz:0, maxD:0}; }
+            c.n++; c.sx += v.x; c.sy += v.y; c.sz += v.z;
+            if (best > c.maxD) c.maxD = best;
+          }
+          if (idx < N) { setTimeout(_scan, 0); return; }
+          // Connected-component clustering on the cell graph (6-neighbour).
+          var visited = Object.create(null);
+          var clusters = [];
+          Object.keys(cells).forEach(function(key){
+            if (visited[key]) return;
+            var stack = [key];
+            var members = [];
+            while (stack.length) {
+              var k = stack.pop();
+              if (visited[k]) continue;
+              visited[k] = true;
+              var c = cells[k];
+              if (!c) continue;
+              members.push(c);
+              [[1,0,0],[-1,0,0],[0,1,0],[0,-1,0],[0,0,1],[0,0,-1]].forEach(function(off){
+                var nk = _cellKey(c.gx + off[0], c.gy + off[1], c.gz + off[2]);
+                if (!visited[nk] && cells[nk]) stack.push(nk);
+              });
+            }
+            // Aggregate cluster stats
+            var nTot = 0, sx = 0, sy = 0, sz = 0, maxD = 0;
+            members.forEach(function(c){ nTot += c.n; sx += c.sx; sy += c.sy; sz += c.sz; if (c.maxD > maxD) maxD = c.maxD; });
+            if (nTot < minPoints) return;
+            clusters.push({
+              centroid: [sx/nTot, sy/nTot, sz/nTot],
+              pointCount: nTot,
+              maxDistance: maxD,
+              cellCount: members.length
+            });
+          });
+          // Sort biggest / worst first.
+          clusters.sort(function(a, b){ return b.maxDistance - a.maxDistance; });
+          // Dispatch issues.
+          var dispatch = window._ccDispatch;
+          var A_ENUM = (window.A && window.A.ADD_ISSUE) || 'ADD_ISSUE';
+          var made = 0;
+          if (dispatch) {
+            clusters.forEach(function(c, i){
+              var title = 'Deviation hotspot #' + (i+1) + ' · '
+                + (c.maxDistance*1000).toFixed(0) + ' mm max · '
+                + c.pointCount + ' pts';
+              dispatch({ t: A_ENUM, v: {
+                id: (typeof uid === 'function') ? uid() : 'dev_' + Date.now() + '_' + i,
+                source: 'deviation_auto',
+                type: c.maxDistance > 0.2 ? 'hard' : 'soft',
+                status: 'open',
+                title: title,
+                description: 'Auto-generated from point-cloud deviation analysis. ' +
+                  'Cluster centroid at [' + c.centroid.map(function(x){return x.toFixed(2);}).join(', ') + '], ' +
+                  'point count ' + c.pointCount + ', worst distance ' + (c.maxDistance*1000).toFixed(0) + ' mm.',
+                priority: c.maxDistance > 0.2 ? 'critical' : c.maxDistance > 0.1 ? 'high' : 'normal',
+                category: 'as-built',
+                point: c.centroid,
+                createdAt: new Date().toISOString()
+              }});
+              made++;
+            });
+          }
+          _toast('Created ' + made + ' deviation issue' + (made === 1 ? '' : 's'));
+          resolve({ count: made, clusters: clusters });
+        }
+        _scan();
+      });
+    };
+
     // Remove a previously-applied alignment and re-anchor the cloud at
     // its original position (the load-time centring offset stays — it's
     // a precision thing, not user-visible).

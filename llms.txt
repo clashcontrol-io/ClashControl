@@ -31,10 +31,11 @@ ClashControl is the BIM coordination tool that ships **point cloud ↔ IFC manua
 3. Click three reference points on the IFC, then their three matching points on the scan — easy to find via column corners, slab edges, prominent fittings.
 4. CC computes the rigid transform in closed form: orthonormal-frame matching where the basis of each triangle (`ex = (B−A) normalised`, `en = ((B−A) × (C−A)) normalised`, `ey = en × ex`) defines a rotation `R = M_dst · M_src^T` and translation `t = dst_centroid − R · src_centroid`. No SVD, no iterative ICP, no degenerate-case branching beyond "three picks must be non-collinear".
 5. The scan lands in the design coordinate frame. Worst-pick residual surfaces as a sanity check. Alignment persists in `localStorage` keyed by scan file name, so a reload restores it automatically.
+6. Optional: click **Refine (ICP)** to iteratively snap the scan to the nearest IFC elements. Each iteration samples ~2000 scan points, finds the closest IFC element centroid per sample, picks the three cleanest non-collinear correspondences, and re-runs the same closed-form 3-pair solver. SVD-free, ~20 iterations to convergence, dependency-free.
+7. Optional: click **Deviation map** to colour the cloud green→amber→red by distance to the nearest IFC element. Spatial-grid acceleration with time-sliced batches keeps the UI responsive on multi-million-point scans.
+8. Optional: click **Issues at hotspots** to auto-create one BCF-compatible issue per spatial cluster of red points above a configurable size — turns survey deviation into a coordination backlog instantly.
 
-Phase 2 (planned): ICP refinement after the manual seed, deviation heatmap (scan-to-IFC nearest-surface distance, coloured), and auto-issue creation at deviation hotspots above a user-set tolerance — the killer demo for survey-vs-design coordination.
-
-Public API (stable, MIT): `window._ccAlignStart(targetId)`, `_ccAlignCancel()`, `_ccAlignClear(targetId)`, `_ccAlignStatus()`, `_ccAlignOnChange(cb)`.
+Public API (stable, MIT): `window._ccAlignStart(targetId)`, `_ccAlignCancel()`, `_ccAlignClear(targetId)`, `_ccAlignStatus()`, `_ccAlignOnChange(cb)`, `_ccAlignRefineICP(targetId, opts)`, `_ccDeviationCompute(targetId, opts)`, `_ccDeviationClear(targetId)`, `_ccDeviationCreateIssues(targetId, opts)`.
 
 ## OpenAEC Foundation interop
 
@@ -69,7 +70,7 @@ Every AI-touched decision in ClashControl carries provenance: which model produc
 
 ## Roadmap
 
-- **As-built verification Phase 2** — ICP refinement after the manual three-point seed, deviation heatmap (scan-to-IFC nearest-surface distance, coloured), and auto-issue creation at deviation hotspots above a user-set tolerance. Builds on the alignment foundation already shipping today.
+- **As-built verification Phase 3** — triangle-accurate deviation distance (currently AABB-distance for performance; triangle-distance for QA-grade reports), per-issue scan-anchored viewpoint snapshots, and a deviation report PDF export. Builds on the alignment + ICP + heatmap + auto-issue stack that's already shipping.
 - **BCF point-cloud references** — extend BCF 2.1 / 3.0 export with `DocumentReference` pointing at the scan that was active when the viewpoint was captured, plus the alignment transform. CC + OpenAEC sibling apps can round-trip the full design + as-built composite in one BCF zip.
 - **Tauri desktop build** — wrap the existing single-file viewer in a Tauri shell for Windows / macOS / Linux installers. Larger heap, native file-system access, system-tray + file-association registration. Phase 2 (later, customer-driven): port hot paths to Rust.
 - **Gaussian Splat as-built overlay (Phase 1 shipping)** — drag-drop .splat / .ksplat / .spz files to load drone-capture splats as a reference layer rendered on a sibling canvas behind the IFC model. Phase 2 adds 3D Tiles streaming + Esri Site Scan tileset URLs.

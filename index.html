@@ -14440,6 +14440,22 @@ function startApp() {
                   style=${{fontSize:'.6rem',padding:'.12rem .3rem',background:'none',color:'var(--text-faint)',border:'1px solid var(--border)',borderRadius:'var(--radius-xs)',cursor:'pointer'}}>
                   Reset colour
                 </button>`}
+                ${window._ccAlignRefineICP && html`<button onClick=${function(){
+                    if(!window._ccAlignRefineICP) return;
+                    window._ccAlignRefineICP(rl.id).catch(function(e){ if(window._ccToast) window._ccToast('ICP: '+(e.message||e)); });
+                  }}
+                  title="Refine the alignment iteratively (point-to-IFC nearest-element ICP, ~20 iterations)"
+                  style=${{fontSize:'.6rem',padding:'.12rem .4rem',background:'rgba(99,102,241,.12)',color:'#6366f1',border:'1px solid rgba(99,102,241,.4)',borderRadius:'var(--radius-xs)',cursor:'pointer',fontWeight:600}}>
+                  ↻ Refine (ICP)
+                </button>`}
+                ${window._ccDeviationCreateIssues && html`<button onClick=${function(){
+                    if(!window._ccDeviationCreateIssues) return;
+                    window._ccDeviationCreateIssues(rl.id).catch(function(e){ if(window._ccToast) window._ccToast('Auto-issue: '+(e.message||e)); });
+                  }}
+                  title="Cluster red deviation points and create one issue per hotspot"
+                  style=${{fontSize:'.6rem',padding:'.12rem .4rem',background:'rgba(239,68,68,.12)',color:'#ef4444',border:'1px solid rgba(239,68,68,.4)',borderRadius:'var(--radius-xs)',cursor:'pointer',fontWeight:600}}>
+                  ⚑ Issues at hotspots
+                </button>`}
               </div>`}
             </div>`;
           })}
