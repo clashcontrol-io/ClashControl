@@ -108,8 +108,9 @@ vercel.json                 — Vercel config: COOP/COEP headers, function durat
 package.json                — Neon Postgres driver for serverless functions
 addons/data-quality.js      — Data quality / BIM / ILS-NL/SfB check engines
 addons/local-engine.js      — Bridge to localhost Python exact-mesh clash engine
+addons/openaec-bridge.js    — Bridge to OpenAEC Foundation sibling apps (Phase 1: open-pointcloud-studio over localhost HTTP)
 addons/geoplace.js          — Real-world basemap placement (IfcSite lat/lon + IFC4 map conversion), tiles via /api/tile
-addons/pointcloud.js        — Load LAS/PLY/PCD/XYZ point clouds as reference layers
+addons/pointcloud.js        — Load LAS/PLY/PCD/XYZ/PTS/PTX point clouds as reference layers
 addons/pwa.js               — Service worker registration, install prompt, update check
 addons/revit-bridge.js      — Revit Connector WebSocket live link + clash push-back
 addons/shared-project.js    — File System Access folder-sync collaboration
