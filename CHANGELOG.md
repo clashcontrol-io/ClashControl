@@ -1,5 +1,8 @@
 # Changelog
 
+## v5.19.65 (2026-06-09)
+- feat(visibility): 3D sight-line visualization for active visibility clashes
+
 ## v5.19.64 (2026-06-09)
 - feat(visibility): third clash category — sight-line obstruction detection
 
