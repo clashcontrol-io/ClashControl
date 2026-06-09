@@ -295,3 +295,90 @@ They carry no coordination value, so they're dropped from both the render list a
 The built-in assistant (Groq) handles basic commands + light Q&A. Real clash-resolution / fix suggestions need a stronger model: route to the user's own LLM via the Connector when connected, otherwise nudge them to connect it in one click — warm-up toward the bring-your-own-LLM tier.
 
 Graduated autonomy: the envelope (`s.prefs.aiEnvelope`) decides what's allowed without escalation. `mode='nudge'` (default) routes clash-resolve to the user's own LLM if connected, else returns the connect message. `mode='suggest'` is the same path for now (own-LLM produces advice, never dispatches state).
+
+### 21.8 BVH LRU cache (bounded cross-run reuse)
+
+**Code reference:** `_BVH_CACHE_MAX` and the BVH cache `Map`.
+
+Keeps the last `_BVH_CACHE_MAX` element BVHs alive between detection runs so re-runs on the same model don't rebuild. A `Map` preserves insertion order, so `delete+set` gives O(1) move-to-end (LRU touch) and `keys().next()` gives O(1) eviction of the oldest entry.
+
+Cap is adaptive to available heap when the runtime exposes it (Chromium). Average BVH is ~50 KB; we allow ~5% of the heap budget, clamped to [300, 2500] so small devices stay safe and big workstations don't thrash.
+
+### 21.9 Int8 normal quantization
+
+**Code reference:** `_ccQuantizeNormalAttr()`.
+
+Shrinks the resident normal attribute from Float32 (12 B/vert) to normalized Int8 (3 B/vert). Normals are a render-only attribute — the GPU normalizes them in the vertex shader, and nothing on the CPU side (clash `_getWorldVerts` / `_getWorldTris`, raycast picking, measurement snap) reads them. Precision-safe for everything but lighting, where 1/127 angular resolution is imperceptible.
+
+Positions stay Float32 (quantizing them needs a dequant-aware CPU read path). Idempotent + shared-geometry safe (guarded on `geo.userData`).
+
+### 21.10 GPU instancing — _buildInstancedMeshes
+
+**Code reference:** `_buildInstancedMeshes()`.
+
+Collapses repeated placements into `THREE.InstancedMesh`. `elements[]` and `meshes[]` are mutated in-place. Individual proxy meshes remain in `element.meshes` for clash detection (geometry + baked matrixWorld). Returns `{meshes, groups, instanced}`.
+
+The chunk-merge variant (currently OFF — see § 21.4) concatenates several same-material meshes into one `BufferGeometry` with hand-written typed-array merge and index rebasing. Source geometry is local-space; world transform lives in `mesh.matrix` (baked, parents are identity — same assumption GPU instancing relies on at `setMatrixAt`). Returns the merged geometry plus a triangle-range → expressId table for pick resolution.
+
+### 21.11 Render styles — materials per style
+
+**Code reference:** the style switcher useEffect.
+
+- `standard` ("Hidden Line") — flat white/gray surfaces, intended for technical-drawing aesthetic (architectural edge lines are TODO — not currently drawn). polygonOffset would push surfaces back so edges stay in front.
+- `shaded` — IFC colors + Lambert. Same as Revit "Consistent Colors". Clean, well-lit, no shadows. Matches professional massing renders.
+- `rendered` — PBR + IBL + directional sun + static shadow map.
+- `wireframe` — `MeshBasicMaterial` wireframe.
+
+FrontSide everywhere — DoubleSide doubles shadow contributions and z-fights.
+
+### 21.12 Render-style lighting (Revit-inspired)
+
+**Code reference:** the style switcher's tone-mapping / light-intensity branch.
+
+- `standard` → flat white surfaces, thin black edges (technical drawing)
+- `shaded` → original colors, ambient-only, no shadows (architectural massing)
+- `rendered` → PBR-like, sun + shadows + contact plane (presentation)
+- `wireframe` → edges only, transparent fills (CAD wireframe)
+
+Rendered exposure dropped 1.0 → 0.4 after the r180 bump — post-r155 tone-mapping reads brighter than r128 at the same exposure even without any light-intensity change.
+
+### 21.13 Section-box drag — closest-point axis math
+
+**Code reference:** section-box face-arrow drag handler.
+
+Robust axis drag uses the closest point between the mouse ray and the face-normal line through the handle. The earlier ray ∩ plane approach became ill-conditioned when the camera looked nearly along the face normal (side arrows viewed edge-on) — the plane was near-parallel to the view ray, the intersection shot off, and the box scaled wildly.
+
+Closest-point degrades gracefully: it just stops moving when the drag is geometrically ill-posed (you can't drag along an axis that points straight at the camera).
+
+### 21.14 Clash markers — single Points object
+
+**Code reference:** `_ccSevColorRGB()` and the markers `Points` builder.
+
+Replaces the previous "2 Meshes per clash" approach (20k Mesh objects for 10k clashes → 100-400 MB of JS heap) with a single `THREE.Points` object. One `BufferGeometry`, one draw call, ~1 MB heap. Hotspots are computed per Week-1 cluster: clusters with >1 member render as one sized centroid; singletons render as a leaf. Click → cluster key → first member id, which the existing handler then activates.
+
+### 21.15 WASM batch hard-clash warmup
+
+**Code reference:** `_chunkBatchCache` and the per-chunk batch-intersect loop.
+
+For each chunk we group surviving candidates by `elA` and call `_ccWasmBatchIntersect` once per group, instead of N JS↔WASM calls. The cache is per-chunk: built fresh, consulted inside `_processCandidate`, freed at chunk end. Map values:
+- `[cx,cy,cz,depth]` → hit
+- `null` → batched, confirmed miss
+- absent → not batched (small group / no WASM): fall through
+
+`_BATCH_MIN_GROUP = 4` — groups smaller than this stay per-pair.
+
+### 21.16 Type-pair impossibility memo
+
+**Code reference:** `_TP_MEMO_*` constants and check in `_processCandidate`.
+
+Per-set-of-loaded-models record of which (typeA, typeB) IFC type pairs have produced zero clashes for K consecutive runs. Skipped at `_processCandidate` entry to avoid testing pairs that historically never clash (e.g. `IfcWall × IfcSpace`).
+
+Gated by an unchanged-model fingerprint: any geometric edit or load change invalidates the memo, falling back to full testing. TTL 30 days.
+
+### 21.17 PWA install banner
+
+**Code reference:** `_InstallAppBanner()`.
+
+Surfaces the browser's deferred install prompt in a small dismissible banner inside the Models tab. Most users never find the "Install" entry buried in the More menu; this gets it in front of them once per session with one-click acceptance.
+
+The Splat reference-layers panel (just above) shows what's loaded via `_ccLoadSplat` (drag-drop `.spz` / `.ply` / `.ksplat` or `_ccTestSplat()`) with one-click unload. The splat addon owns its renderer; this panel is purely an inventory view that reacts to the addon's `cc-splats-changed` event.

@@ -1616,14 +1616,7 @@ function startApp() {
     return out;
   }
 
-  // PR-A: shrink the resident normal attribute from Float32 (12 B/vert) to
-  // normalized Int8 (3 B/vert). Normals are a render-only attribute — the GPU
-  // normalizes them in the vertex shader, and nothing on the CPU side
-  // (clash _getWorldVerts/_getWorldTris, raycast picking, measurement snap)
-  // reads them, so this is precision-safe for everything but lighting, where
-  // 1/127 angular resolution is imperceptible. Positions stay Float32 here;
-  // quantizing those needs a dequant-aware CPU read path (separate change).
-  // Idempotent + shared-geometry safe (guarded on geo.userData).
+  // ── Int8 normal quantization ──  See INTERNALS.md § 21.9
   function _ccQuantizeNormalAttr(geo) {
     if (window._ccQuantizeNormals === false) return;
     if (!geo || !geo.userData || geo.userData._nrmQuantized) return;
@@ -2538,15 +2531,7 @@ function startApp() {
 
   var _ccLoadGeneration = 0; // incremented each load to cancel stale in-progress loads
 
-  // ── GPU Instancing: collapse repeated placements into THREE.InstancedMesh ──
-  // elements[] and meshes[] are mutated in-place. Returns {meshes, groups, instanced}.
-  // Individual proxy meshes remain in element.meshes for clash detection (geometry + baked matrixWorld).
-  // [PoC] Concatenate several same-material meshes into one BufferGeometry.
-  // BufferGeometryUtils is NOT loaded in this build, so this is a hand-written
-  // typed-array merge with index rebasing. Source geometry is local-space; the
-  // world transform lives in mesh.matrix (baked, parents are identity — same
-  // assumption GPU instancing relies on at setMatrixAt). Returns the merged
-  // geometry plus a triangle-range→expressId table for pick resolution.
+  // ── GPU instancing + chunk merge ──  See INTERNALS.md § 21.10
   function _ccMergeChunkGeometries(srcMeshes) {
     var totalVerts = 0, totalIdx = 0, i, g, pa;
     for (i=0;i<srcMeshes.length;i++){
@@ -2959,15 +2944,6 @@ function startApp() {
             mesh.userData._geoExpId = geoExpId;
             elBox.expandByObject(mesh);
             _ccBakeMesh(mesh);
-            // INSTANCING REGRESSION FIX: matKey was never declared in this
-            // scope; the line threw ReferenceError on every element load and
-            // the surrounding try/catch swallowed it with a "Skipped
-            // element geometry" warning, dropping the mesh entirely. Even
-            // when it didn't throw, _instKey was undefined → 0 instanced
-            // meshes in scene → 5 GB heap, 54k draw calls per frame.
-            // mat is the shared material from _ccSharedMatCache, so two
-            // meshes with the same RGBA share the same uuid — exactly what
-            // we need to group them.
             mesh.userData._instKey = geoExpId + ':' + (mat.uuid || 'na');
             elMeshes.push(mesh); meshes.push(mesh);
           } catch(e) { console.warn('Skipped element geometry #'+expressID+': '+(e.message||e)); }
@@ -3500,14 +3476,7 @@ function startApp() {
             b.max.x.toFixed(3), b.max.y.toFixed(3), b.max.z.toFixed(3)].join('|');
   }
 
-  // ── Type-pair impossibility memo ────────────────────────────────
-  // Per-set-of-loaded-models record of which (typeA, typeB) IFC type pairs
-  // have produced zero clashes for K consecutive runs. Skipped at
-  // _processCandidate entry to avoid testing pairs that historically
-  // never clash (e.g. IfcWall × IfcSpace).
-  //
-  // Gated by an unchanged-model fingerprint: any geometric edit or load
-  // change invalidates the memo, falling back to full testing.
+  // ── Type-pair impossibility memo ──  See INTERNALS.md § 21.16
   var _TP_MEMO_EMPTY_RUNS_THRESHOLD = 3;
   var _TP_MEMO_TTL_MS = 30 * 24 * 60 * 60 * 1000;
   function _tpMemoModelsKey(models) {
@@ -3715,15 +3684,7 @@ function startApp() {
             Math.sqrt(sdx*sdx+sdy*sdy+sdz*sdz)];
   }
 
-  // ── BVH LRU cache — bounded cross-run reuse ──────────────────────
-  // Keeps the last _BVH_CACHE_MAX element BVHs alive between detection runs so
-  // re-runs on the same model don't rebuild. A Map preserves insertion order,
-  // so delete+set gives O(1) move-to-end (LRU touch) and keys().next() gives
-  // O(1) eviction of the oldest entry.
-  //
-  // Cap is adaptive to available heap when the runtime exposes it (Chromium).
-  // Average BVH is ~50 KB; we allow ~5 % of the heap budget, clamped to
-  // [300, 2500] so small devices stay safe and big workstations don't thrash.
+  // ── BVH LRU cache ──  See INTERNALS.md § 21.8
   var _BVH_CACHE_MAX = (function() {
     try {
       var m = (typeof performance !== 'undefined') && performance.memory;
@@ -4457,14 +4418,7 @@ function startApp() {
     // ── Per-candidate timing accumulators ─────────────────────────
     var _tHard = 0, _tSoft = 0, _tFilters = 0, _nHardTests = 0, _nSoftTests = 0, _nHardTestsBatched = 0;
 
-    // ── WASM batch hard-clash warmup ──────────────────────────────
-    // For each chunk we group surviving candidates by elA and call
-    // _ccWasmBatchIntersect once per group, instead of N JS↔WASM calls.
-    // The cache is per-chunk: built fresh, consulted inside
-    // _processCandidate, freed at chunk end. Map values:
-    //   [cx,cy,cz,depth]  → hit
-    //   null              → batched, confirmed miss
-    //   absent            → not batched (small group / no WASM): fall through
+    // ── WASM batch hard-clash warmup ──  See INTERNALS.md § 21.15
     var _chunkBatchCache = null;
     var _BATCH_MIN_GROUP = 4;        // groups smaller than this stay per-pair
     var _BATCH_MAX_TRIS = 1500000;   // soft cap on triangles per WASM call
@@ -7618,14 +7572,7 @@ function startApp() {
         }
       };
 
-      // ── Clash Markers ──
-      // ── Points-based marker system (Phase D1) ──
-      // Replaces the previous "2 Meshes per clash" approach (20k Mesh objects
-      // for 10k clashes → 100-400 MB of JS heap) with a single THREE.Points
-      // object. One BufferGeometry, one draw call, ~1 MB heap. Hotspots are
-      // computed per Week-1 cluster: clusters with >1 member render as one
-      // sized centroid; singletons render as a leaf. Click → cluster key →
-      // first member id, which the existing handler then activates.
+      // ── Clash markers — single Points object ──  See INTERNALS.md § 21.14
       function _ccSevColorRGB(sev, type) {
         // 0xRRGGBB-as-floats
         switch (sev || type) {
@@ -9396,14 +9343,7 @@ function startApp() {
           invalidate();
           _sboxHudShow((newRot*180/Math.PI).toFixed(1)+'°', e.clientX, e.clientY);
         } else if(ds.type==='face'){
-          // Robust axis drag: closest point between the mouse ray and the
-          // face-normal line through the handle. The old ray∩plane approach
-          // became ill-conditioned when the camera looked nearly along the face
-          // normal (side arrows viewed edge-on) — the plane was near-parallel to
-          // the view ray, so the intersection shot off and the box scaled
-          // wildly. Closest-point degrades gracefully: it just stops moving when
-          // the drag is geometrically ill-posed (you can't drag along an axis
-          // that points straight at the camera).
+          // Closest-point axis drag.  See INTERNALS.md § 21.13
           var uF=ds.axis; // unit face normal
           var roF=raycaster.ray.origin, rdF=raycaster.ray.direction; // rdF unit
           var w0x=ds.startPos.x-roF.x, w0y=ds.startPos.y-roF.y, w0z=ds.startPos.z-roF.z;
@@ -11919,15 +11859,7 @@ function startApp() {
         return {dx:dirX, dy:dirY, dz:dirZ, r:r, g:g, b:b, intensity:intensityMul, alt:altitude};
       }
 
-      // ── Lighting model per style (Revit-inspired): ──
-      //   standard  → flat white surfaces, thin black edges   (technical drawing)
-      //   shaded    → original colors, ambient-only, no shadows (architectural massing)
-      //   rendered  → PBR-like, sun + shadows + contact plane  (presentation)
-      //   wireframe → edges only, transparent fills           (CAD wireframe)
-      // Rendered exposure dropped 1.0 → 0.7 after the r180 bump — post-r155
-      // tone-mapping reads brighter than r128 at the same exposure even
-      // without any light-intensity change. 0.7 lands close to the
-      // pre-bump look without requiring per-light retuning.
+      // ── Lighting + tone-mapping per style ──  See INTERNALS.md § 21.12
       if (S.renderer) S.renderer.toneMappingExposure = expoMul * (style==='rendered' ? 0.4 : style==='shaded' ? 0.88 : 1.0);
       if (S._sunLight) {
         if (style==='rendered') {
@@ -12057,16 +11989,7 @@ function startApp() {
         });
       });
 
-      // ── Materials per style ────────────────────────────────────
-      // standard  = "Hidden Line": flat white/gray surfaces + architectural edge lines
-      //             (EdgesGeometry at 15° crease — shows wall/slab outlines, not triangles)
-      //             polygonOffset pushes surfaces back so edges are always in front.
-      // shaded    = IFC colors + Lambert — same as Revit "Consistent Colors".
-      //             Clean, well-lit, no shadows. Matches professional massing renders.
-      // rendered  = PBR + IBL + directional sun + static shadow map.
-      // wireframe = MeshBasicMaterial wireframe.
-      // FrontSide everywhere — DoubleSide doubles shadow contributions and z-fights.
-
+      // ── Materials per render style ──  See INTERNALS.md § 21.11
       function _disposeEdges(obj) {
         if (obj.userData._edges) {
           try { obj.remove(obj.userData._edges); obj.userData._edges.geometry.dispose(); obj.userData._edges.material.dispose(); } catch(e){}
@@ -14932,15 +14855,7 @@ function startApp() {
     return Promise.reject(new Error('Unknown provider'));
   }
 
-  // Splat reference-layers panel — surfaces what's loaded via _ccLoadSplat
-  // (drag-drop SPZ/PLY/KSPLAT or _ccTestSplat()) with one-click unload.
-  // The splat addon owns the renderer; this panel is purely an inventory
-  // view that reacts to the addon's 'cc-splats-changed' event.
-  // ── PWA install banner ─────────────────────────────────────────────
-  // Surfaces the browser's deferred install prompt in a small dismissible
-  // banner inside the Models tab. Most users never find the "Install" entry
-  // buried in the More menu; this gets it in front of them once, per
-  // session, with one-click acceptance.
+  // ── Splat reference-layers panel + PWA install banner ──  See INTERNALS.md § 21.17
   function _InstallAppBanner() {
     var stShow = useState(false);
     var show = stShow[0], setShow = stShow[1];
