@@ -76,24 +76,23 @@
       };
     }
 
-    // ── Lookup the target THREE.Points or SplatMesh ───────────────
-    // Point clouds live under 'cc-reference-layers' (set up by
-    // addons/pointcloud.js). Splats live under 'cc-splat-layers'.
-    // We accept either as the alignment target — same transform pipeline.
+    // Lookup the target THREE.Points or SplatMesh by id (refId for point
+    // clouds set by addons/pointcloud.js, _ccSplatId for splats set by
+    // addons/splat.js, or a Three uuid for either).
     function _findTarget(id) {
       var sc = _scene(); if (!sc) return null;
       var refs = sc.getObjectByName('cc-reference-layers');
       if (refs) {
         for (var i = 0; i < refs.children.length; i++) {
           var o = refs.children[i];
-          if (o.userData && (o.userData._ccLayerId === id || o.uuid === id)) return o;
+          if (o.userData && (o.userData.refId === id || o.userData._ccLayerId === id) || o.uuid === id) return o;
         }
       }
       var splats = sc.getObjectByName('cc-splat-layers');
       if (splats) {
         for (var j = 0; j < splats.children.length; j++) {
           var s = splats.children[j];
-          if (s.userData && (s.userData._ccSplatId === id || s.uuid === id)) return s;
+          if (s.userData && (s.userData._ccSplatId === id) || s.uuid === id) return s;
         }
       }
       return null;

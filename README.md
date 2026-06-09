@@ -17,13 +17,15 @@ Built for architects, engineers, and BIM coordinators who are tired of paying th
 
 - **Load multiple IFC models** — drag & drop or browse, supports any IFC 2x3/4 file
 - **Geometric clash detection** — hard clashes (intersections) and soft clashes (clearance violations) via AABB broad-phase + BVH triangle–triangle (Möller–Trumbore) narrow-phase, with optional WASM acceleration
+- **As-built verification** — load a laser scan (LAS / PLY / PCD / XYZ / PTS / PTX), align it to the design IFC with a three-point manual rigid transform, see where reality drifts from intent. The foundational workflow for coordination between design and survey.
 - **3D viewer** — orbit, pan, zoom, section planes, section boxes, floor plan cuts, walk mode, measurement tools
 - **Model explorer** — browse elements by storey, IFC type, discipline, or material with visibility toggles and color-by-classification
 - **Issue management** — create issues linked to elements, set priority/status/category, assign to team members
 - **Data quality & IDS** — BIM-basics, ILS and NL-SfB classification checks, plus IDS (Information Delivery Specification) import/validation
 - **AI assistant** — type plain-language commands ("show structural vs MEP clashes", "top view"), and get AI-generated clash titles and triage suggestions
-- **Real-world context** — drop the model onto a satellite/OSM basemap from its IFC georeferencing, and load LAS/PLY/PCD/XYZ point clouds as reference layers
-- **BCF import/export** — standard BCF 2.1 format for interoperability with Revit, Navisworks, Solibri, and BIMcollab
+- **Real-world context** — drop the model onto a satellite/OSM basemap from its IFC georeferencing, and load LAS/PLY/PCD/XYZ/PTS/PTX point clouds as reference layers
+- **BCF import/export** — standard BCF 2.1 / 3.0 format for interoperability with Revit, Navisworks, Solibri, and BIMcollab
+- **OpenAEC interop** — talks to sibling OpenAEC Foundation desktop apps over localhost (Phase 1: open-pointcloud-studio sync — push CC's view into their scan window and back)
 - **Share projects** — save your entire session (clashes, issues, viewpoints, settings) as a `.ccproject` file and share it with teammates. They import it to see your exact results and continue the work.
 - **Viewpoints** — save and restore camera positions with snapshots
 - **Dark & light mode** — full theme support
@@ -32,8 +34,11 @@ Built for architects, engineers, and BIM coordinators who are tired of paying th
 
 ## What's new
 
+- **Point cloud ↔ IFC alignment** — pick three reference points on the IFC, then their three counterparts on the scan; CC computes the rigid transform in closed form (no SVD, no ICP iterations) and the scan lands in the design coordinate frame. Foundation for as-built verification, deviation analysis, and survey-to-design QA.
+- **OpenAEC Foundation bridge** — `addons/openaec-bridge.js` discovers a running open-pointcloud-studio on localhost (port range 49100+) and ships actions over their `/eval` HTTP endpoint. CC and OPS can sync cameras, open files in each other, and round-trip viewpoints.
+- **PTS + PTX point cloud loaders** — proper Leica scan-format parsers (PTS handles header counts and intensity/RGB columns correctly; PTX applies per-scan transforms and drops missing-return zero points). Multi-scan files supported.
 - **Run Detection modal + clustered triage** — one surface for clash setup (quick presets, scope picker, project standards); results collapse into Sentry/Linear-style cluster cards with keyboard triage (J/K/T/R/X) instead of a wall of duplicate hits
-- **Real-world placement** — drop the model onto a satellite/OSM basemap from its IFC georeferencing, and load point clouds (LAS/PLY/PCD/XYZ) as reference layers
+- **Real-world placement** — drop the model onto a satellite/OSM basemap from its IFC georeferencing, and load point clouds (LAS/PLY/PCD/XYZ/PTS/PTX) as reference layers
 - **IFC4 georeferencing** — reads `IfcMapConversion` / `IfcProjectedCRS` (EPSG, offset, rotation) for context, with a pre-run placement check that warns when federated models don't share a coordinate base
 - **Lighter & faster** — Int8 normals (~630 MB saved on large federations) and instanced rendering for repetitive geometry
 

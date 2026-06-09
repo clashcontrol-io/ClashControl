@@ -14326,6 +14326,18 @@ function startApp() {
                   onInput=${function(e){window._ccUpdateReferenceLayer && window._ccUpdateReferenceLayer(rl.id,{opacity:+e.target.value});}}
                   style=${{flex:1,height:'2px',cursor:'pointer'}} />
               </div>
+              ${window._ccAlignStart && html`<div style=${{display:'flex',alignItems:'center',gap:'.3rem',marginTop:'.2rem',paddingLeft:'1.1rem'}}>
+                <button onClick=${function(){ if(window._ccAlignStart) window._ccAlignStart(rl.id); }}
+                  title="Align this scan to the IFC by picking three matching reference points"
+                  style=${{fontSize:'.6rem',padding:'.12rem .4rem',background:'var(--accent-bg)',color:'var(--accent)',border:'1px solid var(--accent-subtle)',borderRadius:'var(--radius-xs)',cursor:'pointer',fontWeight:600}}>
+                  ◇ Align to IFC
+                </button>
+                ${(window._ccAlignClear) && html`<button onClick=${function(){ if(window._ccAlignClear) window._ccAlignClear(rl.id); }}
+                  title="Remove alignment"
+                  style=${{fontSize:'.6rem',padding:'.12rem .3rem',background:'none',color:'var(--text-faint)',border:'1px solid var(--border)',borderRadius:'var(--radius-xs)',cursor:'pointer'}}>
+                  Clear
+                </button>`}
+              </div>`}
             </div>`;
           })}
         </div>`}

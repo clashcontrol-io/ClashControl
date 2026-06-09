@@ -9,16 +9,36 @@ ClashControl is a single-page web app at https://www.clashcontrol.io/ aimed at A
 - Online IFC viewer: IFC 2x3 and IFC4 via web-ifc WASM, 3D orbit/pan/zoom, model tree by storey/type/discipline/material
 - Mesh-based clash detection: AABB broad-phase + BVH tri-tri narrow-phase (Möller–Trumbore), optional WASM acceleration
 - Hard clashes (geometric intersection) and soft clashes (clearance/tolerance)
-- BCF 2.1 import and export (viewpoints, markup, snapshots)
-- 3D viewer with section planes, section box, floor cuts, walk mode, render styles, measurement tools
+- **As-built verification: point cloud ↔ IFC manual three-point rigid alignment** — pick three reference points on the design, three on the scan; CC computes the rigid transform in closed form (orthonormal-frame matching, no SVD, no ICP iterations) and the scan lands in the design coordinate frame. Persists across reloads. The foundational workflow for comparing reality against intent.
+- BCF 2.1 / 3.0 import and export (viewpoints, markup, snapshots, custom AI-provenance + Revit-ID round-trip labels)
+- 3D viewer with section planes, section box, floor cuts (draggable horizontal handle), walk mode, render styles, measurement tools
 - IDS (Information Delivery Specification) validation
 - Data quality checks: BIM basics, ILS, NL-SfB classification
 - Accessibility (toegankelijkheid) geometric checks
 - Issue management with PDF overlay and saved viewpoints
 - AI assistant: plain-language commands, clash titles and triage; bring-your-own LLM via the one-click Connector (Ollama, LM Studio, llama.cpp, Jan, or Claude Desktop)
-- Real-world basemap placement and LAS/PLY/PCD/XYZ point cloud overlay
+- Real-world basemap placement and LAS / PLY / PCD / XYZ / PTS / PTX point cloud overlay (Leica PTS + PTX scan formats first-class)
+- OpenAEC Foundation bridge: discovers a running sibling app (open-pointcloud-studio) on localhost port 49100+ and syncs cameras, opens files, round-trips viewpoints over their HTTP `/eval` endpoint
 - Shared projects via short keys (no login)
 - Progressive Web App — installable, offline-capable
+
+## As-built verification workflow
+
+ClashControl is the BIM coordination tool that ships **point cloud ↔ IFC manual rigid alignment** as a first-class feature. The flow:
+
+1. Load the design IFC and a laser scan (LAS / PLY / PCD / XYZ / PTS / PTX).
+2. Enter alignment mode via `_ccAlignStart(targetId)` or the panel button.
+3. Click three reference points on the IFC, then their three matching points on the scan — easy to find via column corners, slab edges, prominent fittings.
+4. CC computes the rigid transform in closed form: orthonormal-frame matching where the basis of each triangle (`ex = (B−A) normalised`, `en = ((B−A) × (C−A)) normalised`, `ey = en × ex`) defines a rotation `R = M_dst · M_src^T` and translation `t = dst_centroid − R · src_centroid`. No SVD, no iterative ICP, no degenerate-case branching beyond "three picks must be non-collinear".
+5. The scan lands in the design coordinate frame. Worst-pick residual surfaces as a sanity check. Alignment persists in `localStorage` keyed by scan file name, so a reload restores it automatically.
+
+Phase 2 (planned): ICP refinement after the manual seed, deviation heatmap (scan-to-IFC nearest-surface distance, coloured), and auto-issue creation at deviation hotspots above a user-set tolerance — the killer demo for survey-vs-design coordination.
+
+Public API (stable, MIT): `window._ccAlignStart(targetId)`, `_ccAlignCancel()`, `_ccAlignClear(targetId)`, `_ccAlignStatus()`, `_ccAlignOnChange(cb)`.
+
+## OpenAEC Foundation interop
+
+ClashControl integrates with sibling OpenAEC Foundation desktop apps over localhost. Phase 1 targets [open-pointcloud-studio](https://github.com/OpenAEC-Foundation/open-pointcloud-studio): the addon discovers a running instance on port 49100+, shipping actions via their HTTP `/eval` endpoint. Public API: `_ccOpenAECStatus()`, `_ccOpenAECSyncCamera()`, `_ccOpenAECPullCamera()`, `_ccOpenAECOpenCloud(path)`, `_ccOpenAECListClouds()`, `_ccOpenAECReconnect()`.
 
 ## Agentic governance (audit trail)
 
@@ -26,8 +46,11 @@ Every AI-touched decision in ClashControl carries provenance: which model produc
 
 ## Roadmap
 
+- **As-built verification Phase 2** — ICP refinement after the manual three-point seed, deviation heatmap (scan-to-IFC nearest-surface distance, coloured), and auto-issue creation at deviation hotspots above a user-set tolerance. Builds on the alignment foundation already shipping today.
+- **BCF point-cloud references** — extend BCF 2.1 / 3.0 export with `DocumentReference` pointing at the scan that was active when the viewpoint was captured, plus the alignment transform. CC + OpenAEC sibling apps can round-trip the full design + as-built composite in one BCF zip.
+- **Tauri desktop build** — wrap the existing single-file viewer in a Tauri shell for Windows / macOS / Linux installers. Larger heap, native file-system access, system-tray + file-association registration. Phase 2 (later, customer-driven): port hot paths to Rust.
 - **Gaussian Splat as-built overlay (Phase 1 shipping)** — drag-drop .splat / .ksplat / .spz files to load drone-capture splats as a reference layer rendered on a sibling canvas behind the IFC model. Phase 2 adds 3D Tiles streaming + Esri Site Scan tileset URLs.
-- WebGPU-accelerated clash detection — scheduled when a customer hits unacceptable detection times on a large federation. Requires a Three.js core bump (r128 → r179+) paired with a 2-week WebGPU compute path with WebGL2 fallback. Expected ~10× speedup on 10k+ element models.
+- WebGPU-accelerated clash detection — scheduled when a customer hits unacceptable detection times on a large federation. Expected ~10× speedup on 10k+ element models.
 
 ## Links
 
