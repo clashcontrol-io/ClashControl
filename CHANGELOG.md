@@ -1,5 +1,8 @@
 # Changelog
 
+## v5.19.52 (2026-06-09)
+- docs: extract 10 more rationale blocks to INTERNALS.md § 21.8-21.17
+
 ## v5.19.51 (2026-06-09)
 - chore: post-bump simplification — drop r128 fallbacks and bump-prep scaffolding
 
