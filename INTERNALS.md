@@ -260,15 +260,9 @@ The restore path runs the same draw-call optimisations as the live load path (su
 
 `el.meshes[]` stays per-element (chunk-merge mutates only the render list), so clash detection and highlight are unaffected. `_instKey` is set per mesh via the `gid` (cache v:7+) or fingerprint fallback (older caches) so instancing runs cleanly on restored meshes.
 
-### 21.4 Spatial chunk-merge — default OFF
+### 21.4 Spatial chunk-merge — REMOVED
 
-**Code reference:** `window._ccChunkMerge` initialization.
-
-Stage 1/2A/2B trial baked all same-material elements in a grid cell into one merged BufferGeometry. Won draw-call count and CPU cull time, but collapsed visual distinctions between adjacent elements, broke Style switching (chunks render with a locked material), and changed how selection outlines read on dense models. Reverted to per-element rendering — pre-30-May behaviour.
-
-Memory wins kept independently: `_ccGetSharedPhongMat` cross-load material dedup, `_ccQuantizeNormalAttr` Int8 normals, survey base-point / nulpunt strip.
-
-Set `window._ccChunkMerge = true` from console BEFORE loading a model to opt in for testing; compare with `window._ccPerfSnapshot()`.
+Removed in the post-bump simplification pass. The trial baked same-material elements per grid cell into one merged BufferGeometry; won draw-call count but collapsed visual distinctions, broke Style switching, and required parallel maintenance of picking, hide, and color-by-class code paths. Flag was default-OFF for months. Memory wins are kept independently (`_ccGetSharedPhongMat`, `_ccQuantizeNormalAttr`, survey-marker strip). See git history for the implementation.
 
 ### 21.5 Pset / Quantities canonicalization
 
@@ -317,8 +311,6 @@ Positions stay Float32 (quantizing them needs a dequant-aware CPU read path). Id
 **Code reference:** `_buildInstancedMeshes()`.
 
 Collapses repeated placements into `THREE.InstancedMesh`. `elements[]` and `meshes[]` are mutated in-place. Individual proxy meshes remain in `element.meshes` for clash detection (geometry + baked matrixWorld). Returns `{meshes, groups, instanced}`.
-
-The chunk-merge variant (currently OFF — see § 21.4) concatenates several same-material meshes into one `BufferGeometry` with hand-written typed-array merge and index rebasing. Source geometry is local-space; world transform lives in `mesh.matrix` (baked, parents are identity — same assumption GPU instancing relies on at `setMatrixAt`). Returns the merged geometry plus a triangle-range → expressId table for pick resolution.
 
 ### 21.11 Render styles — materials per style
 
@@ -467,21 +459,13 @@ The legacy active-clash 3D pin (two intersecting forest-green rings) overlapped 
 
 Computes the best snap point near the cursor from a raycaster hit: vertex > midpoint > edge > face-centroid > raw face point. Returns `{point, type, normal, screenX, screenY, srcObj}`. Pixel radius scales with element size on screen so dense parts of the model don't snap too aggressively. Side-effect-free so the click handler can re-call it on the click event.
 
-### 21.30 Chunk-merge — per-element hide on merged chunks (Stage 2B)
+### 21.30 Chunk-merge per-element hide — REMOVED
 
-**Code reference:** `_ccChunkApplyHidden()`.
+Removed with chunk-merge. The hide source union (`window._ccHiddenReg`) is kept since it's still consulted by the per-element hide path.
 
-A merged chunk (see § 21.4) has no per-element mesh to toggle, so visibility is applied by rebuilding its index to drop hidden elements' triangles. `_ccHiddenReg` unions the independent hide sources (class filter, storey filter, temp-hide); picking stays correct via a parallel `_activeRanges` table recomputed alongside the filtered index. `_fullIndex` preserves the original.
+### 21.31 Chunk-merge color-by-class — REMOVED
 
-Currently inert because chunk-merge defaults OFF.
-
-### 21.31 Chunk-merge — color-by-class on merged chunks (Stage 2B)
-
-**Code reference:** `_ccGetChunkColorMat()`, `_ccChunkApplyColors()`.
-
-Per-element material colour can't address a chunk, so colours are written into a per-vertex RGBA `color` attribute (alpha ghosts unmatched elements) and the chunk renders through one shared `vertexColors` material. The chunk's pre-colour material is stashed and restored on clear; the render-style loop skips chunks flagged `_ccColored` (like it skips ghost materials).
-
-Currently inert because chunk-merge defaults OFF.
+Removed with chunk-merge.
 
 ### 21.32 Race-safe model dedup in the reducer
 
