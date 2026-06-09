@@ -1829,7 +1829,10 @@ function startApp() {
       var _instOff = false;
       try { _instOff = !!window._ccDisableRestoreInstancing || (localStorage.getItem('cc_restoreInstancing') === 'off'); } catch(_){}
       if (_instOff) {
-        console.warn('[restore] instancing disabled via opt-out — expect higher draw-call count');
+        if (!window._ccRestoreInstOptOutWarned) {
+          console.warn('[restore] instancing disabled via opt-out — expect higher draw-call count. Clear with localStorage.removeItem(\'cc_restoreInstancing\') + hard refresh.');
+          window._ccRestoreInstOptOutWarned = true;
+        }
       } else {
         try { meshes = _buildInstancedMeshes(elements, meshes).meshes; }
         catch(e){ console.warn('[restore] instancing skipped:', e); }

@@ -123,7 +123,13 @@
         return true;
       })
       .catch(function(err){
-        console.log('[LocalEngine] /status probe failed:', err && err.message || err);
+        // Connection-refused / timeout is the normal idle state (no local
+        // engine running). Only log on the first failure of a session so
+        // the console doesn't fill with the same line every poll.
+        if (!window._ccLocalEngineProbeWarned) {
+          console.log('[LocalEngine] /status probe failed:', err && err.message || err);
+          window._ccLocalEngineProbeWarned = true;
+        }
         if (d) d({t:'UPD_LOCAL_ENGINE', u:{available:false, checking:false}});
         return false;
       });
