@@ -1,5 +1,8 @@
 # Changelog
 
+## v5.19.63 (2026-06-09)
+- feat(align): per-hotspot snapshots + printable deviation report PDF
+
 ## v5.19.62 (2026-06-09)
 - feat(align): ICP refinement + auto-issue at deviation hotspots
 
