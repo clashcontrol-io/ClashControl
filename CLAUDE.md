@@ -106,6 +106,7 @@ scripts/bump-version.sh     — Pre-commit version bump script
 scripts/generate-sri.js     — Generate SRI hashes for CDN scripts
 vercel.json                 — Vercel config: COOP/COEP headers, function durations
 package.json                — Neon Postgres driver for serverless functions
+addons/align.js             — Point-cloud ↔ IFC manual 3-point rigid alignment (as-built verification)
 addons/data-quality.js      — Data quality / BIM / ILS-NL/SfB check engines
 addons/local-engine.js      — Bridge to localhost Python exact-mesh clash engine
 addons/openaec-bridge.js    — Bridge to OpenAEC Foundation sibling apps (Phase 1: open-pointcloud-studio over localhost HTTP)
