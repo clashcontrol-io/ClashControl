@@ -5167,6 +5167,9 @@ function startApp() {
             // cc:aiSource, cc:aiAt. Carries the audit-trail chip through BCF round-trips.
             var revitIdA = null, revitIdB = null;
             var aiModel = null, aiSource = null, aiAt = null;
+            var visType = null, visFrom = null, visTo = null;
+            var visBlocker = null, visBlockerName = null, visBlockerType = null;
+            var visDist = NaN, visRange = NaN;
             var labelNodes = topic.querySelectorAll('Labels');
             for (var li = 0; li < labelNodes.length; li++) {
               var txt = (labelNodes[li].textContent || '').trim();
@@ -5175,6 +5178,17 @@ function startApp() {
               else if (txt.indexOf('cc:aiModel=') === 0) aiModel  = txt.slice(11);
               else if (txt.indexOf('cc:aiSource=')=== 0) aiSource = txt.slice(12);
               else if (txt.indexOf('cc:aiAt=')    === 0) aiAt     = txt.slice(8);
+              // Visibility (sight-line) clash labels — restored further
+              // down so the imported issue's type is 'visibility' and the
+              // sight-line viz fires when it becomes active.
+              else if (txt.indexOf('cc:visType=')       === 0) visType        = txt.slice(11);
+              else if (txt.indexOf('cc:visFrom=')       === 0) visFrom        = txt.slice(11);
+              else if (txt.indexOf('cc:visTo=')         === 0) visTo          = txt.slice(9);
+              else if (txt.indexOf('cc:visBlocker=')    === 0) visBlocker     = txt.slice(14);
+              else if (txt.indexOf('cc:visBlockerName=')=== 0) visBlockerName = txt.slice(18);
+              else if (txt.indexOf('cc:visBlockerType=')=== 0) visBlockerType = txt.slice(18);
+              else if (txt.indexOf('cc:visDist=')       === 0) visDist        = parseFloat(txt.slice(11));
+              else if (txt.indexOf('cc:visRange=')      === 0) visRange       = parseFloat(txt.slice(12));
             }
             var issuePayload = {
               id:uid(), source:'bcf_import', type:mappedType, status:mappedStatus,
@@ -5189,6 +5203,27 @@ function startApp() {
                 model:  aiModel  || null,
                 source: aiSource || null,
                 at:     aiAt     || null };
+            }
+            // Visibility clash reconstitution. cc:visType marks the
+            // topic as a sight-line obstruction; the From/To vectors
+            // and blocker id let the 3D viewer redraw the line when
+            // the issue is selected after import.
+            if (visType === 'visibility') {
+              issuePayload.type = 'visibility';
+              issuePayload.category = 'visibility';
+              if (visFrom) {
+                var vf = visFrom.split(',').map(parseFloat);
+                if (vf.length === 3 && vf.every(isFinite)) issuePayload.sightFrom = vf;
+              }
+              if (visTo) {
+                var vt = visTo.split(',').map(parseFloat);
+                if (vt.length === 3 && vt.every(isFinite)) issuePayload.sightTo = vt;
+              }
+              if (visBlocker != null)     issuePayload.elemBlocker     = isNaN(+visBlocker) ? visBlocker : +visBlocker;
+              if (visBlockerName)         issuePayload.elemBlockerName = visBlockerName;
+              if (visBlockerType)         issuePayload.elemBlockerType = visBlockerType;
+              if (isFinite(visDist))      issuePayload.distance        = visDist;
+              if (isFinite(visRange))     issuePayload.rangeTotal      = visRange;
             }
             // Point-cloud references: any DocumentReference whose Description
             // starts with 'cc:scanRef=' is one of ours. Reconstitute the
@@ -5327,6 +5362,21 @@ function startApp() {
       if (_aip && _aip.model)  markup += '    <Labels>cc:aiModel='+esc(_aip.model)+'</Labels>\n';
       if (_aip && _aip.source) markup += '    <Labels>cc:aiSource='+esc(_aip.source)+'</Labels>\n';
       if (_aip && _aip.at)     markup += '    <Labels>cc:aiAt='+esc(_aip.at)+'</Labels>\n';
+      // Visibility (sight-line) clash extension. Other BCF readers
+      // preserve unknown Labels; the importer reconstructs the full
+      // visibility clash from cc:visType / cc:visFrom / cc:visTo /
+      // cc:visBlocker so the third clash category round-trips with
+      // its semantics intact instead of degrading to a generic Request.
+      if (it.type === 'visibility') {
+        markup += '    <Labels>cc:visType=visibility</Labels>\n';
+        if (it.sightFrom) markup += '    <Labels>cc:visFrom='+esc(it.sightFrom.join(','))+'</Labels>\n';
+        if (it.sightTo)   markup += '    <Labels>cc:visTo='+esc(it.sightTo.join(','))+'</Labels>\n';
+        if (it.elemBlocker != null) markup += '    <Labels>cc:visBlocker='+esc(it.elemBlocker)+'</Labels>\n';
+        if (it.elemBlockerName)     markup += '    <Labels>cc:visBlockerName='+esc(it.elemBlockerName)+'</Labels>\n';
+        if (it.elemBlockerType)     markup += '    <Labels>cc:visBlockerType='+esc(it.elemBlockerType)+'</Labels>\n';
+        if (it.distance != null)    markup += '    <Labels>cc:visDist='+esc(it.distance)+'</Labels>\n';
+        if (it.rangeTotal != null)  markup += '    <Labels>cc:visRange='+esc(it.rangeTotal)+'</Labels>\n';
+      }
       markup += '    <CreationDate>'+(it.createdAt||new Date().toISOString())+'</CreationDate>\n';
       markup += '    <CreationAuthor>'+authorEsc+'</CreationAuthor>\n';
       markup += '    <ModifiedDate>'+new Date().toISOString()+'</ModifiedDate>\n';
@@ -15456,7 +15506,7 @@ function startApp() {
     if (!items.length) return null;
     // Single O(N) pass instead of 7 filters — matters at 10k+ clashes.
     var counts = React.useMemo(function(){
-      var c = {total:items.length, untitled:0, open:0, inProg:0, resolved:0, hard:0, soft:0, dup:0};
+      var c = {total:items.length, untitled:0, open:0, inProg:0, resolved:0, hard:0, soft:0, dup:0, vis:0};
       for (var i=0; i<items.length; i++) {
         var it = items[i];
         if (isClash && !it.aiTitle) c.untitled++;
@@ -15467,11 +15517,12 @@ function startApp() {
           if (it.type==='hard') c.hard++;
           else if (it.type==='soft') c.soft++;
           else if (it.type==='duplicate') c.dup++;
+          else if (it.type==='visibility') c.vis++;
         }
       }
       return c;
     }, [items, isClash]);
-    var total = counts.total, untitled = counts.untitled, open = counts.open, inProg = counts.inProg, resolved = counts.resolved, hard = counts.hard, soft = counts.soft, dup = counts.dup;
+    var total = counts.total, untitled = counts.untitled, open = counts.open, inProg = counts.inProg, resolved = counts.resolved, hard = counts.hard, soft = counts.soft, dup = counts.dup, vis = counts.vis;
     var pct = total > 0 ? Math.round(resolved / total * 100) : 0;
     var barCol = pct >= 80 ? '#22c55e' : pct >= 40 ? '#f59e0b' : '#ef4444';
 
@@ -15496,6 +15547,7 @@ function startApp() {
         ${isClash && hard > 0 && CHIP('Hard', hard, '#7f1d1d', '#fca5a5')}
         ${isClash && soft > 0 && CHIP('Soft', soft, '#78350f', '#fcd34d')}
         ${isClash && dup > 0 && CHIP('Dup', dup, 'var(--bg-tertiary)', 'var(--text-muted)')}
+        ${isClash && vis > 0 && CHIP('Vis', vis, '#1e3a8a', '#93c5fd')}
         ${isClash && untitled > 0 && html`<button onClick=${function(){
           if (titlesBusy || !window._ccGenerateAITitles) return;
           setTitlesBusy(true);
