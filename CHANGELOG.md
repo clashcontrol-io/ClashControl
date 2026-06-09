@@ -1,5 +1,8 @@
 # Changelog
 
+## v5.19.66 (2026-06-09)
+- feat(visibility): stats chip + BCF cc:vis* round-trip
+
 ## v5.19.65 (2026-06-09)
 - feat(visibility): 3D sight-line visualization for active visibility clashes
 
