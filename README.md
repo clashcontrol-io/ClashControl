@@ -26,7 +26,6 @@ Built for architects, engineers, and BIM coordinators who are tired of paying th
 - **AI assistant** — type plain-language commands ("show structural vs MEP clashes", "top view"), and get AI-generated clash titles and triage suggestions
 - **Real-world context** — drop the model onto a satellite/OSM basemap from its IFC georeferencing, and load LAS/PLY/PCD/XYZ/PTS/PTX point clouds as reference layers
 - **BCF import/export** — standard BCF 2.1 / 3.0 format for interoperability with Revit, Navisworks, Solibri, and BIMcollab
-- **OpenAEC interop** — talks to sibling OpenAEC Foundation desktop apps over localhost (Phase 1: open-pointcloud-studio sync — push CC's view into their scan window and back)
 - **Share projects** — save your entire session (clashes, issues, viewpoints, settings) as a `.ccproject` file and share it with teammates. They import it to see your exact results and continue the work.
 - **Viewpoints** — save and restore camera positions with snapshots
 - **Dark & light mode** — full theme support
@@ -36,7 +35,6 @@ Built for architects, engineers, and BIM coordinators who are tired of paying th
 ## What's new
 
 - **Point cloud ↔ IFC alignment** — pick three reference points on the IFC, then their three counterparts on the scan; CC computes the rigid transform in closed form (orthonormal-frame matching, no SVD) and the scan lands in the design coordinate frame. **ICP refinement** snaps the alignment to the IFC iteratively. **Deviation heatmap** colours each scan point by distance to the nearest IFC element. **Auto-issues at hotspots** cluster red deviation points and emit one BCF-ready issue per spatial cluster, each with a 3D snapshot. **Deviation report PDF** ties it all together — cover summary, hotspot index, and per-hotspot snapshot pages, printable as a deliverable PDF. Design-vs-reality coordination in five clicks.
-- **OpenAEC Foundation bridge** — `addons/openaec-bridge.js` discovers a running open-pointcloud-studio on localhost (port range 49100+) and ships actions over their `/eval` HTTP endpoint. CC and OPS can sync cameras, open files in each other, and round-trip viewpoints.
 - **PTS + PTX point cloud loaders** — proper Leica scan-format parsers (PTS handles header counts and intensity/RGB columns correctly; PTX applies per-scan transforms and drops missing-return zero points). Multi-scan files supported.
 - **Run Detection modal + clustered triage** — one surface for clash setup (quick presets, scope picker, project standards); results collapse into Sentry/Linear-style cluster cards with keyboard triage (J/K/T/R/X) instead of a wall of duplicate hits
 - **Real-world placement** — drop the model onto a satellite/OSM basemap from its IFC georeferencing, and load point clouds (LAS/PLY/PCD/XYZ/PTS/PTX) as reference layers
