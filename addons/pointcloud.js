@@ -1,10 +1,9 @@
 // ClashControl pointcloud addon — reference layers
-// Loads PLY / PCD / XYZ / LAS files as THREE.Points and adds them to the
-// scene as reference geometry. Reference layers are excluded from clash
-// detection (they never live in s.models) but participate in fit-all.
-//
-// LAZ is intentionally not supported in v1 — convert via CloudCompare /
-// las2las → .las and retry.
+// Loads PLY / PCD / XYZ / LAS / PTS / PTX files as THREE.Points and adds
+// them to the scene as reference geometry. Reference layers are excluded
+// from clash detection (they never live in s.models) but participate in
+// fit-all. LAZ is intentionally not supported in v1 — convert via
+// CloudCompare / las2las → .las and retry.
 (function(){
   if (typeof window === 'undefined') return;
 
@@ -98,6 +97,185 @@
     if (hasCol) geom.setAttribute('color', new THREE.Float32BufferAttribute(col, 3));
     geom.computeBoundingBox();
     return Promise.resolve(geom);
+  }
+
+  // ── Centering helper (shared by ASCII parsers) ────────────────
+  // Keeps survey-scale coords inside Float32 precision by recentring on
+  // the bbox midpoint; the offset is stashed on geom.userData.lasOrigin so
+  // the geoplace addon can restore real-world coords later.
+  function _finishGeom(rawF64, colF32, ptCount) {
+    var minX=Infinity, minY=Infinity, minZ=Infinity;
+    var maxX=-Infinity, maxY=-Infinity, maxZ=-Infinity;
+    for (var i = 0; i < ptCount; i++) {
+      var x = rawF64[i*3], y = rawF64[i*3+1], z = rawF64[i*3+2];
+      if (x < minX) minX = x; if (x > maxX) maxX = x;
+      if (y < minY) minY = y; if (y > maxY) maxY = y;
+      if (z < minZ) minZ = z; if (z > maxZ) maxZ = z;
+    }
+    var cx = (minX + maxX) / 2, cy = (minY + maxY) / 2, cz = (minZ + maxZ) / 2;
+    var pos = new Float32Array(ptCount * 3);
+    for (var j = 0; j < ptCount; j++) {
+      pos[j*3]   = rawF64[j*3]   - cx;
+      pos[j*3+1] = rawF64[j*3+1] - cy;
+      pos[j*3+2] = rawF64[j*3+2] - cz;
+    }
+    var geom = new THREE.BufferGeometry();
+    geom.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+    if (colF32) geom.setAttribute('color', new THREE.BufferAttribute(colF32, 3));
+    geom.computeBoundingBox();
+    geom.userData = geom.userData || {};
+    geom.userData.lasOrigin = [cx, cy, cz];
+    return geom;
+  }
+
+  // Leica PTS — ASCII point format. Spec (Leica/Cyclone):
+  //   line 0: integer point count
+  //   line N: x y z [intensity] [r g b]
+  // intensity is an integer 0..255 (or sometimes -2048..2047 from older
+  // Cyclone exports); RGB are 8-bit channels. We detect column count and
+  // fall back gracefully if the header count is wrong (multi-scan PTS
+  // files concatenate several headered blocks back-to-back).
+  function parsePTS(buf) {
+    var text = new TextDecoder('utf-8').decode(new Uint8Array(buf));
+    var lines = text.split(/\r?\n/);
+    // Two-pass: scan everything, then centre — same pattern as parseLAS.
+    var raw = []; var col = []; var hasCol = false; var hasInt = false;
+    for (var i = 0; i < lines.length; i++) {
+      var line = lines[i].trim();
+      if (!line || line.charAt(0) === '#') continue;
+      var parts = line.split(/[\s,]+/);
+      // Single-number lines are PTS section headers — skip them. A real
+      // point row always has at least 3 columns.
+      if (parts.length < 3) continue;
+      var x = +parts[0], y = +parts[1], z = +parts[2];
+      if (!isFinite(x) || !isFinite(y) || !isFinite(z)) continue;
+      raw.push(x, y, z);
+      if (parts.length >= 7) {
+        // x y z intensity r g b
+        hasCol = true; hasInt = true;
+        col.push((+parts[4])/255, (+parts[5])/255, (+parts[6])/255);
+      } else if (parts.length >= 6) {
+        // x y z r g b
+        hasCol = true;
+        col.push((+parts[3])/255, (+parts[4])/255, (+parts[5])/255);
+      } else if (parts.length === 4) {
+        // x y z intensity → grayscale fallback so the cloud isn't flat
+        hasCol = true; hasInt = true;
+        var v = (+parts[3]);
+        // Normalise both 0..255 and 0..1 conventions
+        var g = v > 1 ? v / 255 : v;
+        if (g < 0) g = 0; else if (g > 1) g = 1;
+        col.push(g, g, g);
+      }
+    }
+    var ptCount = raw.length / 3;
+    var rawF64 = new Float64Array(raw);
+    var colF32 = hasCol ? new Float32Array(col) : null;
+    return Promise.resolve(_finishGeom(rawF64, colF32, ptCount));
+  }
+
+  // Leica PTX — gridded ASCII format. Spec (Leica/Cyclone):
+  //   cols, rows                       ← scan-pattern dimensions
+  //   sx sy sz                         ← scanner position
+  //   rx ry rz                         ← scanner X-axis (right vector)
+  //   ux uy uz                         ← scanner Y-axis (up vector)
+  //   fx fy fz                         ← scanner Z-axis (forward vector)
+  //   4 lines of 4 floats each         ← 4×4 transform matrix (column-major)
+  //   x y z [intensity] [r g b]        ← rows*cols point lines
+  // Missing returns are encoded as "0 0 0" (with intensity 0 and rgb 0 0 0
+  // when present). Multiple scans can be concatenated back-to-back.
+  function parsePTX(buf) {
+    var text = new TextDecoder('utf-8').decode(new Uint8Array(buf));
+    var lines = text.split(/\r?\n/);
+    var raw = []; var col = []; var hasCol = false;
+    var i = 0, N = lines.length;
+    function nextNonEmpty() {
+      while (i < N) {
+        var ln = lines[i].trim();
+        if (ln && ln.charAt(0) !== '#') return ln;
+        i++;
+      }
+      return null;
+    }
+    var _mTmp = [0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0];
+    while (i < N) {
+      var hdr = nextNonEmpty();
+      if (hdr === null) break;
+      var cols = parseInt(hdr, 10);
+      i++;
+      var rowsLine = nextNonEmpty();
+      if (rowsLine === null) break;
+      var rows = parseInt(rowsLine, 10);
+      i++;
+      if (!isFinite(cols) || !isFinite(rows) || cols <= 0 || rows <= 0) break;
+      // Skip scanner position + 3 axis vectors (4 lines, 3 floats each — we
+      // could expose these as metadata later).
+      for (var sk = 0; sk < 4; sk++) { if (nextNonEmpty() === null) break; i++; }
+      // Read 4x4 transform — column-major in the file.
+      var mtxOK = true;
+      for (var c = 0; c < 4; c++) {
+        var mLine = nextNonEmpty();
+        if (mLine === null) { mtxOK = false; break; }
+        var ms = mLine.split(/[\s,]+/);
+        if (ms.length < 4) { mtxOK = false; break; }
+        _mTmp[c*4 + 0] = +ms[0];
+        _mTmp[c*4 + 1] = +ms[1];
+        _mTmp[c*4 + 2] = +ms[2];
+        _mTmp[c*4 + 3] = +ms[3];
+        i++;
+      }
+      if (!mtxOK) break;
+      // Apply transform inline so the scan ends up in the file's declared
+      // world frame. Column-major → row-major access for the multiply.
+      function tx(x, y, z, m) {
+        var w = m[3]*x + m[7]*y + m[11]*z + m[15];
+        if (w === 0) w = 1;
+        return [
+          (m[0]*x + m[4]*y + m[8]*z  + m[12]) / w,
+          (m[1]*x + m[5]*y + m[9]*z  + m[13]) / w,
+          (m[2]*x + m[6]*y + m[10]*z + m[14]) / w
+        ];
+      }
+      var expected = rows * cols;
+      var read = 0;
+      while (read < expected && i < N) {
+        var pLine = lines[i].trim();
+        i++;
+        if (!pLine) { read++; continue; } // blank line = missing return
+        var parts = pLine.split(/[\s,]+/);
+        if (parts.length < 3) { read++; continue; }
+        var px = +parts[0], py = +parts[1], pz = +parts[2];
+        read++;
+        if (!isFinite(px) || !isFinite(py) || !isFinite(pz)) continue;
+        // Encoded missing return — Leica writes 0,0,0,0,0,0,0 for no-hit pixels
+        if (px === 0 && py === 0 && pz === 0) continue;
+        var w = tx(px, py, pz, _mTmp);
+        raw.push(w[0], w[1], w[2]);
+        if (parts.length >= 7) {
+          // x y z intensity r g b
+          hasCol = true;
+          col.push((+parts[4])/255, (+parts[5])/255, (+parts[6])/255);
+        } else if (parts.length >= 6) {
+          // x y z r g b
+          hasCol = true;
+          col.push((+parts[3])/255, (+parts[4])/255, (+parts[5])/255);
+        } else if (parts.length === 4) {
+          // x y z intensity → grayscale
+          hasCol = true;
+          var v = (+parts[3]);
+          var g = v > 1 ? v / 255 : v;
+          if (g < 0) g = 0; else if (g > 1) g = 1;
+          col.push(g, g, g);
+        } else if (hasCol) {
+          // Keep colour buffer aligned with positions if some lines lack RGB.
+          col.push(1, 1, 1);
+        }
+      }
+    }
+    var ptCount = raw.length / 3;
+    var rawF64 = new Float64Array(raw);
+    var colF32 = hasCol ? new Float32Array(col) : null;
+    return Promise.resolve(_finishGeom(rawF64, colF32, ptCount));
   }
 
   // Minimal LAS 1.0–1.4 parser, point data record formats 0–3.
@@ -195,7 +373,9 @@
     return file.arrayBuffer().then(function(buf){
       if (ext === 'ply') return parsePLY(buf);
       if (ext === 'pcd') return parsePCD(buf);
-      if (ext === 'xyz' || ext === 'txt' || ext === 'pts') return parseXYZ(buf);
+      if (ext === 'xyz' || ext === 'txt') return parseXYZ(buf);
+      if (ext === 'pts') return parsePTS(buf);
+      if (ext === 'ptx') return parsePTX(buf);
       if (ext === 'las') return parseLAS(buf);
       if (ext === 'laz') return Promise.reject(new Error('LAZ is not supported yet. Convert to LAS or PLY first (CloudCompare → File → Save As → LAS).'));
       return Promise.reject(new Error('Unsupported point cloud format: .' + ext));

@@ -13727,8 +13727,8 @@ function startApp() {
         }
       }
       // Route point cloud files to the pointcloud addon, if loaded.
-      var pcFiles = files.filter(function(f){return /\.(ply|pcd|xyz|pts|las|laz)$/i.test(f.name);});
-      files = files.filter(function(f){return !/\.(ply|pcd|xyz|pts|las|laz)$/i.test(f.name);});
+      var pcFiles = files.filter(function(f){return /\.(ply|pcd|xyz|pts|ptx|las|laz)$/i.test(f.name);});
+      files = files.filter(function(f){return !/\.(ply|pcd|xyz|pts|ptx|las|laz)$/i.test(f.name);});
       if (pcFiles.length) {
         if (window._ccLoadPointCloud) {
           pcFiles.forEach(function(f){
@@ -14208,7 +14208,7 @@ function startApp() {
           ${loading?loadMsg||'Loading…':'Add'}
         </button>
       </div>
-      <input ref=${fileRef} type="file" accept=".ifc,.glb,.ifcmeta,.ifcprops,.ply,.pcd,.xyz,.pts,.las,.splat,.ksplat,.spz" multiple style=${{display:'none'}} onChange=${onFiles} />
+      <input ref=${fileRef} type="file" accept=".ifc,.glb,.ifcmeta,.ifcprops,.ply,.pcd,.xyz,.pts,.ptx,.las,.splat,.ksplat,.spz" multiple style=${{display:'none'}} onChange=${onFiles} />
       <input ref=${file2dRef} type="file" accept=".dxf,.pdf,.dwg,.nwd,.nwc,.nwf" multiple style=${{display:'none'}} onChange=${onFiles} />
       ${err && html`<div style=${{padding:'.35rem .75rem',background:'var(--color-danger-bg)',borderBottom:'1px solid var(--color-danger-border)',fontSize:'.7rem',color:'var(--color-danger-fg)',whiteSpace:'pre-line',lineHeight:1.4}}>${err}</div>`}
       <div style=${{flex:1,overflowY:'auto',minHeight:0,padding:'.4rem .45rem',display:'flex',flexDirection:'column',gap:'.18rem'}}>
@@ -29093,7 +29093,7 @@ function startApp() {
         enterCount = 0; setDragging(false);
         var allFiles = Array.from(e.dataTransfer.files||[]);
         var modelFiles = allFiles.filter(function(f){return /\.(ifc|glb)$/i.test(f.name);});
-        var pcFiles = allFiles.filter(function(f){return /\.(ply|pcd|xyz|pts|las|laz)$/i.test(f.name);});
+        var pcFiles = allFiles.filter(function(f){return /\.(ply|pcd|xyz|pts|ptx|las|laz)$/i.test(f.name);});
         if ((modelFiles.length || pcFiles.length)) e.preventDefault();
         if (modelFiles.length && window._ccLoadFiles) window._ccLoadFiles(modelFiles);
         if (pcFiles.length && window._ccLoadPointCloud) {
