@@ -1,5 +1,8 @@
 # Changelog
 
+## v5.19.67 (2026-06-09)
+- feat(visibility): multi-sample target + inverse coverage + presets + NL + panel
+
 ## v5.19.66 (2026-06-09)
 - feat(visibility): stats chip + BCF cc:vis* round-trip
 
