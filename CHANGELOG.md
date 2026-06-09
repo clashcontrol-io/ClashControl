@@ -1,5 +1,8 @@
 # Changelog
 
+## v5.19.53 (2026-06-09)
+- docs: batch 3 — extract 12 more rationale blocks (§ 21.18-21.29)
+
 ## v5.19.52 (2026-06-09)
 - docs: extract 10 more rationale blocks to INTERNALS.md § 21.8-21.17
 
