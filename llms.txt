@@ -65,6 +65,27 @@ Other BCF readers preserve unknown DocumentReference Descriptions, so the data r
 
 OpenAEC Foundation sibling apps are invited to recognise the same prefix. The extension is MIT and documented here as the canonical reference.
 
+## BCF visibility-clash extension (`cc:vis*` labels)
+
+ClashControl's third clash category — visibility (sight-line obstruction) — round-trips through BCF 2.1 / 3.0 via standard `<Labels>` elements on the Topic. Standard BCF readers preserve unknown Labels, so the data round-trips cleanly without breaking compatibility, and sister tools that implement this convention can render full visibility semantics instead of degrading to a generic Request.
+
+Label keys (each appears in its own `<Labels>` element):
+
+| Label                  | Meaning                                                  |
+|------------------------|----------------------------------------------------------|
+| `cc:visType=visibility`| Marks the topic as a sight-line obstruction clash.       |
+| `cc:visFrom=x,y,z`     | World-space viewer pose (sight-line origin), metres.     |
+| `cc:visTo=x,y,z`       | World-space target sample point (sight-line endpoint).   |
+| `cc:visBlocker=<id>`   | ExpressId (or stable identifier) of the obstructer.      |
+| `cc:visBlockerName=…`  | Human-readable name of the obstructer.                   |
+| `cc:visBlockerType=…`  | IFC type of the obstructer (e.g. `IfcColumn`).           |
+| `cc:visDist=<m>`       | Distance from viewer to blocker hit point, metres.       |
+| `cc:visRange=<m>`      | Total intended sight distance (viewer → target), metres. |
+
+On import, CC reconstructs the clash with `type: 'visibility'`, attaches `sightFrom` / `sightTo` / `elemBlocker` to the issue payload, and the 3D viewer re-renders the sight line (solid green to blocker, dashed red to target) the moment the issue becomes active.
+
+Sibling implementers: this is a minimal, MIT-documented schema. We're happy to coordinate on extensions — sight-cone metadata, multi-sample partial occlusion, regulation-clause references.
+
 ## Agentic governance (audit trail)
 
 Every AI-touched decision in ClashControl carries provenance: which model produced it, when, and which endpoint it came from. Surfaced as an "AI" chip in the Issues panel (hover for the model + timestamp); persisted on clashes and triage results as `aiProvenance: {actor, model, source, at}`. This addresses the gap Martyn Day called out in AEC Magazine ("Agentic BIM's missing infrastructure", April 2026): the current generation of agentic BIM platforms treat MCP as a governance layer when it is only an interface layer. ClashControl logs every AI decision with model attribution, runs an explicit graduated-autonomy envelope (the built-in assistant is intentionally basic; clash-resolution escalates to the user's own LLM), and uses no shared foundation-model monoculture — your LLM is your choice.
