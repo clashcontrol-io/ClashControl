@@ -17,6 +17,7 @@ Built for architects, engineers, and BIM coordinators who are tired of paying th
 
 - **Load multiple IFC models** — drag & drop or browse, supports any IFC 2x3/4 file
 - **Geometric clash detection** — hard clashes (intersections) and soft clashes (clearance violations) via AABB broad-phase + BVH triangle–triangle (Möller–Trumbore) narrow-phase, with optional WASM acceleration
+- **Visibility clashes** — third category: detects when something blocks a viewer's sight line to a target (exit signs, traffic signs, surveillance coverage, nurse-station observation, workplace window views, reception line-of-sight). Same BVH the hard/soft engine uses, with regulation presets (NEN 6088, EN 1838, NL Arbo) shipping out of the box. When a visibility clash is selected, the 3D view draws the sight line — solid green to the blocker, dashed red from there to the target.
 - **As-built verification** — load a laser scan (LAS / PLY / PCD / XYZ / PTS / PTX), align it to the design IFC with a three-point manual rigid transform, see where reality drifts from intent. The foundational workflow for coordination between design and survey.
 - **3D viewer** — orbit, pan, zoom, section planes, section boxes, floor plan cuts, walk mode, measurement tools
 - **Model explorer** — browse elements by storey, IFC type, discipline, or material with visibility toggles and color-by-classification

@@ -8,7 +8,7 @@ ClashControl is a single-page web app at https://www.clashcontrol.io/ aimed at A
 
 - Online IFC viewer: IFC 2x3 and IFC4 via web-ifc WASM, 3D orbit/pan/zoom, model tree by storey/type/discipline/material
 - Mesh-based clash detection: AABB broad-phase + BVH tri-tri narrow-phase (Möller–Trumbore), optional WASM acceleration
-- Hard clashes (geometric intersection) and soft clashes (clearance/tolerance)
+- Hard clashes (geometric intersection), soft clashes (clearance/tolerance), and **visibility clashes (sight-line obstruction)** — the third category nobody else ships. Ray-cast against the same BVH the clash engine builds, with viewer/target/obstructer filters by IFC type + name regex + manual pick. Regulation preset library: exit signs (NEN 6088 / EN 1838 style), workplace window views (Arbo), nurse-station line-of-sight, wheelchair-eye-height variants. ⌘K → "visibility exit signs" → result merges into the same Conflicts panel hard/soft clashes use.
 - **As-built verification: point cloud ↔ IFC manual three-point rigid alignment** — pick three reference points on the design, three on the scan; CC computes the rigid transform in closed form (orthonormal-frame matching, no SVD, no ICP iterations) and the scan lands in the design coordinate frame. Persists across reloads. The foundational workflow for comparing reality against intent.
 - BCF 2.1 / 3.0 import and export (viewpoints, markup, snapshots, custom AI-provenance + Revit-ID round-trip labels)
 - 3D viewer with section planes, section box, floor cuts (draggable horizontal handle), walk mode, render styles, measurement tools

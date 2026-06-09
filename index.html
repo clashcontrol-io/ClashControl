@@ -7343,9 +7343,70 @@ function startApp() {
 
       // ── Active Clash Point Marker (bright blue) ──
       var _activeClashMarker = null;
+      var _activeSightLine = null;
+
+      // For visibility clashes: draw the sight line in 3D as two segments.
+      // From viewer to blocker = solid green ("clear" portion). From
+      // blocker to target = dashed red ("blocked" remainder). Helps the
+      // coordinator instantly see which element to move and where it
+      // sits relative to the intended sight.
+      function _drawSightLine(clash) {
+        if (!clash || !clash.sightFrom || !clash.sightTo) return;
+        var from = clash.sightFrom, to = clash.sightTo;
+        var hit  = clash.point || to;
+        var grp = new THREE.Group();
+        grp.userData._isSightLine = true;
+        grp.renderOrder = 999;
+        // Solid green clear portion
+        var clearGeo = new THREE.BufferGeometry().setFromPoints([
+          new THREE.Vector3(from[0], from[1], from[2]),
+          new THREE.Vector3(hit[0],  hit[1],  hit[2])
+        ]);
+        var clearMat = new THREE.LineBasicMaterial({
+          color: 0x22c55e, transparent: true, opacity: 0.95, depthTest: false
+        });
+        var clearLine = new THREE.Line(clearGeo, clearMat);
+        clearLine.renderOrder = 999;
+        grp.add(clearLine);
+        // Dashed red blocked portion
+        var blockedGeo = new THREE.BufferGeometry().setFromPoints([
+          new THREE.Vector3(hit[0], hit[1], hit[2]),
+          new THREE.Vector3(to[0],  to[1],  to[2])
+        ]);
+        var blockedMat = new THREE.LineDashedMaterial({
+          color: 0xef4444, transparent: true, opacity: 0.95, depthTest: false,
+          dashSize: 0.25, gapSize: 0.15
+        });
+        var blockedLine = new THREE.Line(blockedGeo, blockedMat);
+        blockedLine.computeLineDistances();
+        blockedLine.renderOrder = 999;
+        grp.add(blockedLine);
+        // Small spheres at both endpoints + the hit point
+        function _ball(p, color) {
+          var m = new THREE.Mesh(
+            new THREE.SphereGeometry(0.08, 12, 12),
+            new THREE.MeshBasicMaterial({color: color, depthTest: false, transparent: true, opacity: 0.95})
+          );
+          m.position.set(p[0], p[1], p[2]);
+          m.renderOrder = 1000;
+          return m;
+        }
+        grp.add(_ball(from, 0x60a5fa)); // viewer = blue
+        grp.add(_ball(hit,  0xef4444)); // blocker = red
+        grp.add(_ball(to,   0xfbbf24)); // target = amber
+        S.scene.add(grp);
+        _activeSightLine = grp;
+      }
+
       window._ccShowActiveClashMarker = function(point) {
         // Active-clash 3D pin removed.  See INTERNALS.md § 21.28
+        // For visibility clashes we replace it with a sight-line.
         window._ccRemoveActiveClashMarker();
+        var st = window._ccLatestState || {};
+        var active = (st.clashes || []).find(function(c){return c.id === st.activeId;});
+        if (active && active.type === 'visibility' && active.sightFrom && active.sightTo) {
+          _drawSightLine(active);
+        }
         if(!point||point.length<3) return;
         S.orbit.target.set(point[0], point[1], point[2]);
         setTimeout(function(){
@@ -7365,8 +7426,12 @@ function startApp() {
         if(_activeClashMarker) {
           _disposeGroup(_activeClashMarker);
           _activeClashMarker = null;
-          invalidate();
         }
+        if (_activeSightLine) {
+          _disposeGroup(_activeSightLine);
+          _activeSightLine = null;
+        }
+        invalidate();
       };
 
       // ── Clash markers — single Points object ──  See INTERNALS.md § 21.14
