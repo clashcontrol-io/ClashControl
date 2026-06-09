@@ -117,6 +117,7 @@ addons/revit-bridge.js      — Revit Connector WebSocket live link + clash push
 addons/shared-project.js    — File System Access folder-sync collaboration
 addons/smart-bridge.js      — LLM bridge (MCP / ChatGPT / REST) — executes tool calls from AI assistants
 addons/training-data.js     — Training data storage, JSONL export, sharing
+addons/visibility.js        — Visibility (sight-line) clash detection — ray-cast against BVH for viewer/target/obstructer rules + regulation presets
 addons/wasm-engine.js       — Rust WASM clash accelerator (mesh_intersect / mesh_min_distance), JS fallback
 api/health.js               — Health check: AI + DB status
 api/nl.js                   — NL proxy: Groq-only (OpenAI tool-calling). Basic tier; clash-solving nudges to the Connector

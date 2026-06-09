@@ -1041,7 +1041,7 @@ function startApp() {
   window._ccIsAddonActive = function(id) { return !!_ccAddonActive[id]; };
 
   function _loadAddonScripts() {
-    var addonFiles = ['training-data', 'pwa', 'local-engine', 'shared-project', 'revit-bridge', 'data-quality', 'smart-bridge', 'pointcloud', 'geoplace', 'accessibility', 'splat', 'align', 'openaec-bridge'];
+    var addonFiles = ['training-data', 'pwa', 'local-engine', 'shared-project', 'revit-bridge', 'data-quality', 'smart-bridge', 'pointcloud', 'geoplace', 'accessibility', 'splat', 'align', 'openaec-bridge', 'visibility'];
     addonFiles.forEach(function(name) {
       var script = document.createElement('script');
       script.src = 'addons/' + name + '.js';
@@ -3512,6 +3512,13 @@ function startApp() {
     _bvhLRU.set(el, true);
     return el._bvhCache;
   }
+
+  // Expose BVH + tri accessors so addons (visibility check, deviation
+  // tri-distance, custom analysis) can ride the same spatial structure
+  // the clash engine already builds. Read-only — addons must not mutate
+  // returned arrays.
+  window._ccGetBVH       = _getBVH;
+  window._ccGetWorldTris = _getWorldTris;
 
   function _bvhTraverseAll(nA, trisA, nB, trisB, pts, maxPts, maxDepth, earlyExit) {
     if (pts.length >= maxPts) return;
@@ -19257,6 +19264,7 @@ function startApp() {
       if (it.type==='hard')           return 'var(--sev-critical)';
       if (it.type==='soft')           return 'var(--sev-major)';
       if (it.type==='duplicate')      return 'var(--sev-info)';
+      if (it.type==='visibility')     return '#3b82f6';  // blue — distinct from hazard categories
       return 'var(--sev-info)';
     })();
     var icon = html`<span aria-hidden="true" style=${{display:'inline-block',width:7,height:7,borderRadius:'50%',background:dotColor,flexShrink:0,marginTop:6}}></span>`;
@@ -21649,6 +21657,28 @@ function startApp() {
     push({group:'Tools', label:'Add comment pin',
       keywords:'note comment pin annotation pin',
       onSelect:function(){ d({t:A.COMMENT_MODE,v:!s.commentMode}); }});
+    // Visibility checks — third clash category (sight-line obstruction).
+    // Each preset runs immediately and merges its results into the
+    // conflicts list. Coordinator opens the Conflicts tab afterwards
+    // to triage. ⌘K → "visibility exit signs" → enter.
+    if (typeof window._ccDetectVisibilityAndMerge === 'function' && typeof window._ccVisibilityPresets === 'function') {
+      (window._ccVisibilityPresets() || []).forEach(function(preset){
+        var label = 'Visibility check: ' + (preset.sampleId || preset.key);
+        push({group:'Visibility', label: label,
+          keywords:'visibility sight line obstruction ' + (preset.sampleId||''),
+          onSelect:function(){
+            if (window._ccToast) window._ccToast('Running visibility check: ' + (preset.sampleId||preset.key) + '…');
+            window._ccDetectVisibilityAndMerge(preset).then(function(res){
+              var sum = res.summary;
+              if (window._ccToast) {
+                window._ccToast('Visibility ' + (preset.sampleId||preset.key) + ' done — ' +
+                  (res.clashes.length) + ' blocked of ' + (sum && sum.raysCast || 0) + ' rays');
+              }
+              if (res.clashes.length) d({t:A.TAB, v:'clashes'});
+            }).catch(function(e){ if (window._ccToast) window._ccToast('Visibility check failed: ' + (e.message||e)); });
+          }});
+      });
+    }
     // Panels & tabs
     push({group:'Panels', label:'Open Conflicts',
       keywords:'conflicts clashes issues list', r:'coordinate',
