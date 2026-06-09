@@ -10,7 +10,7 @@
 <!-- BEGIN:project-state -->
 ## Project State
 
-**Version:** 5.19.14 (2026-06-08)
+**Version:** 5.19.49 (2026-06-09)
 
 **Live features (all working):**
 - Mesh-based clash detection engine: AABB broad-phase + BVH tri-tri narrow-phase (Möller–Trumbore), optional `_ccWasmIntersect`/`_ccWasmMinDist` WASM accelerators; rules (discipline filters, clearance, group-by); soft/clearance via spatial-hash vertex distance; optional escalation to `local-engine.js` for true solid boolean ops
@@ -213,6 +213,127 @@ On branch `claude/code-review-quality-IjbhT` (2026-05-28) — code-review qualit
 <!-- END:active-work -->
 
 <!-- BEGIN:session-log -->
+### 2026-06-09
+**Summary:** 111 commit(s) landed (no AI summary — set ANTHROPIC_API_KEY secret for richer entries).
+**Changed:** see commits
+**Notable:** —
+
+<details><summary>Commits</summary>
+
+- 9fa447f chore: bump version to 5.19.49
+- 61f8a46 docs: extract 7 longest rationale blocks from index.html to INTERNALS.md
+- 3ec5e85 chore: bump version to 5.19.48
+- 2260aae fix(restore): persist geometryExpressID, use as canonical _instKey
+- 25a09fb chore: bump version to 5.19.47
+- d18ffde diag(restore): detect real hash collisions + add opt-out switch
+- 37e53aa chore: bump version to 5.19.46
+- d01a75e fix(restore): belt-and-braces _instKey to kill 32-bit hash collisions
+- 2d7b6a6 fix(splat): call frameUpdate, the actual Spark per-frame method
+- 29c2dd3 chore: bump version to 5.19.45
+- 5c41162 fix(restore): hash entire position+index buffer + bump cache version
+- 21ef6ae chore: bump version to 5.19.44
+- cfaf47c fix(splat): dispatch frame event before render + flip gate flag
+- b30c11e chore: bump version to 5.19.43
+- 7d17c71 fix(restore): fingerprint position buffer for _instKey
+- 8219acb chore: bump version to 5.19.42
+- fbcd677 fix(plan): cut-plane arrow + plane unclipped, match section gizmo
+- 09b183b chore: bump version to 5.19.41
+- a4b1c60 feat(plan): draggable horizontal cut plane in floor-plan view
+- 909a4db chore: bump version to 5.19.40
+- ca54a1f perf(conflicts): progressive reveal + memo IssueRow
+- 297457f chore: bump version to 5.19.39
+- 4bb2e23 feat(plan): floor picker in 2D toolbar + cut-height stepper
+- f8b6365 chore: bump version to 5.19.38
+- 7bc6ca9 fix(ui): measure toolbar no longer kills section box
+- 860f674 chore: bump version to 5.19.37
+- f6b04ce feat(api): add window.ClashControl.* public namespace alias
+- 9d900f9 chore: bump version to 5.19.36
+- 2cbe7c7 fix(pick): tiebreak coplanar hits by element size
+- 43d6a44 chore: bump version to 5.19.35
+- ca7a0c4 chore: remove instancing/survey-marker diagnostic console logs
+- e0b176d chore: bump version to 5.19.34
+- 25750a4 fix(ui): hide Fit All Clashes / Markers bar when no models loaded
+- 6480f30 chore: bump version to 5.19.33
+- 78db12f hotfix: defensive bbox shape detection in _geoDeserialize _instKey calc
+- 42e7b1d chore: bump version to 5.19.32
+- 3f1c99b fix(perf): cache-restore branch also missing _instKey + instancing call
+- e26d081 chore: bump version to 5.19.31
+- 4941735 fix(perf): instancing regression — matKey was never declared
+- f962855 chore: bump version to 5.19.30
+- 9d29006 feat(debug): _ccDebugInstancing() console helper — works on already-loaded models
+- b5af82f chore: bump version to 5.19.29
+- 0feece3 diag: top-of-function ping in instancing + move QualityScore chip to Review workspace
+- 832a89a chore: bump version to 5.19.28
+- d10194f diag: revert auto chunk-merge + expand instancing diagnostic
+- e9a27af chore: bump version to 5.19.27
+- f6e7a9e perf(emergency): auto-enable chunk-merge for >5k-element models
+- 0559e77 chore: bump version to 5.19.26
+- 1bd4065 fix(viewer): hidden-line glass + instancing diagnostics + sRGBEncoding warn cleanup
+- 77298a0 chore: bump version to 5.19.25
+- 8d37c00 feat(debug): _ccMemReport() console helper — same diagnostic, no popup
+- 1cfac35 chore: bump version to 5.19.24
+- 7c06569 fix(viewer): drop rendered exposure 0.55 → 0.4 (still too bright at 0.55)
+- 74a852b chore: bump version to 5.19.23
+- d60e3ce feat(reach): PWA install banner + public Developer API landing page
+- d4826f9 chore: bump version to 5.19.22
+- d2b9ecd fix(walk): pointer lock on FIRST mouse click — don't try from useEffect
+- 9db6d6f chore: bump version to 5.19.21
+- fe5096b feat(quality-score): single 0-100 score across data-quality + accessibility checks
+- 12f6cbf chore: bump version to 5.19.20
+- ac195f9 docs(security): public Security & Privacy page — IFC stays in your browser
+- 6103403 chore: bump version to 5.19.19
+- 3891aa5 perf(three-bump): explicitly attach all critical THREE classes after spread
+- 9ab7ed2 chore: bump version to 5.19.18
+- 851281e fix(viewer): disable shadows on remaining section-box helpers + force shadow refresh + diagnostic privacy
+- a81656c chore: bump version to 5.19.17
+- 35943db fix(viewer): drop rendered exposure 0.7 → 0.55 (still too punchy at 0.7)
+- 8b4cb9a chore: bump version to 5.19.16
+- b046330 perf(viewer): disable r155+ ColorManagement default to restore pre-bump speed
+- a107366 chore: bump version to 5.19.15
+- 97471c9 fix(viewer): section-box helpers don't cast shadows + lower rendered exposure
+- 9fd0266 chore: daily memory sync 2026-06-08
+- bb1b37e fix(splat): kick render-on-demand invalidate during async splat load
+- cb92ac4 chore: bump version to 5.19.14
+- 995f108 hotfix(lighting): revert × π light intensity overshoot
+- cab3365 chore: bump version to 5.19.13
+- cf2c8ff hotfix: spread Three.js module namespace into a mutable object before attach
+- 62af537 chore: bump version to 5.19.12
+- 1359abd Three.js r128 → r180 bump (phased) (#595)
+- 8365ab2 chore: bump version to 5.19.11
+- bfc8f82 fix(section-gizmo): add TC anchor to scene graph
+- 949daab chore: bump version to 5.19.10
+- e840a79 fix(ai-status): Settings shows actual model from /api/health, not hardcoded "Gemma 4"
+- 2dea5ea fix(splat): layer above IFC instead of forcing the IFC canvas transparent
+- dff83b9 chore: bump version to 5.19.9
+- 27a7a4b fix(section-box): BX shortcut falls back to single-element selection before full model
+- 466931b chore: bump version to 5.19.8
+- 77c588c feat(splat): scale/rotation opts, change events, Models-tab inventory panel
+- 83c1d63 chore: bump version to 5.19.7
+- b14d785 fix(section-box): snap to selected element's bbox, not the merged chunk's bbox
+- cbc9fff fix(splat): default-position the splat at the IFC's bbox center
+- b831dc1 chore: bump version to 5.19.6
+- 7dc30f1 fix(splat): test URL → Spark's hosted butterfly.spz (HuggingFace 404'd) + CSP allowlist
+- a86d712 chore: bump version to 5.19.5
+- a13639e fix(splat): dedupe Three.js — load Spark's unbundled ESM + document-head import map
+- ab3dbd1 chore: bump version to 5.19.4
+- e67544b fix(csp+splat): allow data: in connect-src so Spark.js can load its inline WASM
+- dd7d267 chore: bump version to 5.19.3
+- e3cea72 fix(critical): _ccSetSRGBOutput infinite recursion crashed production
+- 6883630 chore: bump version to 5.19.2
+- 35c69d9 BCF provenance round-trip, autonomy envelope, splat Phase 1, bump-prep (#591)
+- d8cbb1d Claude/jolly cannon yz uwi (#594)
+- 2c7c584 fix(health): report Groq as the NL backend, not Gemma (#593)
+- 40537b4 docs: refresh Project State (Groq-only NL, v5.19.0) (#592)
+- 766c02b chore: bump version to 5.19.1
+- e950a99 Security + agentic governance: MCP hardening, AI provenance, autonomy envelope (#589)
+- 2c5b01c fix(health): report Groq as the NL backend, not Gemma (#590)
+- 0396f6d docs: refresh Project State (Groq-only NL, v5.19.0) (#588)
+- c969f8a chore: bump version to 5.19.0
+- 3f45b8d feat(ai): make /api/nl Groq-only + nudge to own-LLM for clash-solving
+- b2f97c8 feat(ai): Groq as basic NL backend + own-LLM Connector in Ask AI panel
+
+</details>
+
 ### 2026-06-08
 **Summary:** 50 commit(s) landed (no AI summary — set ANTHROPIC_API_KEY secret for richer entries).
 **Changed:** see commits
