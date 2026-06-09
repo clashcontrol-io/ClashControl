@@ -1,5 +1,8 @@
 # Changelog
 
+## v5.19.58 (2026-06-09)
+- feat(align): manual 3-point point-cloud ↔ IFC alignment (MVP)
+
 ## v5.19.57 (2026-06-09)
 - feat(openaec-bridge): localhost integration with open-pointcloud-studio
 
