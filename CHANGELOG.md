@@ -1,5 +1,8 @@
 # Changelog
 
+## v5.19.54 (2026-06-09)
+- docs: batch 4 — extract 15 more rationale blocks (§ 21.30-21.44)
+
 ## v5.19.53 (2026-06-09)
 - docs: batch 3 — extract 12 more rationale blocks (§ 21.18-21.29)
 
