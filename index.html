@@ -147,12 +147,8 @@
        call sites keep working without a per-call refactor. -->
   <script type="module">
     // CRITICAL: ESM Module namespace objects are FROZEN — you cannot assign
-    // properties directly to `import * as THREE from 'three'`. Doing so
-    // throws "Cannot assign to property 'GLTFLoader' of [object Module]".
-    // We spread the namespace into a plain mutable object, then attach our
-    // addon classes to that. window.THREE points to the plain object;
-    // existing `new THREE.GLTFLoader(...)` / `THREE.Vector3` / etc. call
-    // sites all keep working unchanged.
+    // ESM namespace objects are frozen — addons (GLTFLoader, etc.) can't be
+    // attached to them directly. Spread into a mutable object and attach.
     import * as THREE_NS              from 'three';
     import { GLTFLoader }             from 'three/addons/loaders/GLTFLoader.js';
     import { GLTFExporter }           from 'three/addons/exporters/GLTFExporter.js';
@@ -163,34 +159,7 @@
     import { RenderPass }             from 'three/addons/postprocessing/RenderPass.js';
     import { SAOPass }                from 'three/addons/postprocessing/SAOPass.js';
     import { OutlinePass }            from 'three/addons/postprocessing/OutlinePass.js';
-    const THREE = { ...THREE_NS };  // mutable copy of the namespace
-    // Defensive: critical classes used by perf-sensitive paths (instancing,
-    // BVH, material dedup) MUST be on window.THREE or those paths silently
-    // no-op via `if (!THREE.InstancedMesh) return ...`. Spread copies own
-    // enumerable props, which works for r180 but doesn't hurt to belt-and-
-    // brace these explicitly + log if any are missing. User memory report
-    // showed 0 instanced + 73k distinct materials → exactly the symptom of
-    // a silent class-missing no-op.
-    [
-      'InstancedMesh','Mesh','Group','BufferGeometry','BufferAttribute',
-      'Float32BufferAttribute','MeshPhongMaterial','MeshStandardMaterial',
-      'MeshLambertMaterial','MeshBasicMaterial','LineBasicMaterial',
-      'LineSegments','Line','Points','PerspectiveCamera','OrthographicCamera',
-      'Scene','Color','Vector3','Vector2','Matrix4','Quaternion','Box3',
-      'Sphere','Frustum','Raycaster','EdgesGeometry','PlaneGeometry',
-      'BoxGeometry','SphereGeometry','TorusGeometry','ConeGeometry',
-      'CylinderGeometry','OctahedronGeometry','CanvasTexture','PMREMGenerator',
-      'WebGLRenderer','ShaderMaterial','MathUtils','GridHelper','AxesHelper',
-      'BoxHelper','AmbientLight','DirectionalLight','HemisphereLight',
-      'ACESFilmicToneMapping','EquirectangularReflectionMapping','LinearFilter',
-      'PCFShadowMap','FrontSide','DoubleSide','SRGBColorSpace'
-      // sRGBEncoding was removed at r152 in favour of SRGBColorSpace —
-      // our _ccSetSRGB shim already handles both paths, so its absence
-      // here is expected and not worth warning about.
-    ].forEach(function(k){
-      if (THREE_NS[k] !== undefined) THREE[k] = THREE_NS[k];
-      else console.warn('[three-bump] THREE.'+k+' missing from r180 ESM bundle');
-    });
+    const THREE = { ...THREE_NS };
     if (THREE_NS.ColorManagement) THREE_NS.ColorManagement.enabled = false;
     THREE.GLTFLoader        = GLTFLoader;
     THREE.GLTFExporter      = GLTFExporter;
@@ -628,34 +597,13 @@ function startApp() {
   var CC_VERSION = {v:'5.19.50',hash:'01d0a0b',date:'2026-06-09T10:55:08Z'};
   window.CC_VERSION = CC_VERSION;
 
-  // ── Three.js bump-prep harness ──  See INTERNALS.md § 21.1
-  var THREE_VERSION = '0.128.0';
-  var THREE_EXAMPLES_BASE = 'https://cdn.jsdelivr.net/npm/three@' + THREE_VERSION + '/examples/js/';
-  window._ccThreeCDN = { version: THREE_VERSION, examplesBase: THREE_EXAMPLES_BASE };
-
-  // sRGB output shim. r128 uses `renderer.outputEncoding = THREE.sRGBEncoding`;
-  // r152+ replaced it with `renderer.outputColorSpace = THREE.SRGBColorSpace`.
-  // Detecting which branch to take per-renderer makes this code survive the
-  // bump unchanged — drop the legacy branch when r128 stops shipping.
   window._ccSetSRGBOutput = function(renderer) {
     if (!renderer || !window.THREE) return;
-    // r152+ preferred path. The `in` guard keeps us safe on r128.
-    if ('outputColorSpace' in renderer && THREE.SRGBColorSpace) {
-      renderer.outputColorSpace = THREE.SRGBColorSpace;
-      return;
-    }
-    // r128 fallback — direct property write. DO NOT refactor into a
-    // recursive _ccSetSRGBOutput call (that caused a stack-overflow
-    // production crash; see commit history).
-    if ('outputEncoding' in renderer && THREE.sRGBEncoding) {
-      renderer.outputEncoding = THREE.sRGBEncoding;
-    }
+    renderer.outputColorSpace = THREE.SRGBColorSpace;
   };
-  // Texture-side variant. Textures use the same encoding/colorSpace dance.
   window._ccSetSRGBTexture = function(tex) {
     if (!tex || !window.THREE) return;
-    if ('colorSpace' in tex && THREE.SRGBColorSpace) tex.colorSpace = THREE.SRGBColorSpace;
-    else if ('encoding' in tex && THREE.sRGBEncoding) tex.encoding = THREE.sRGBEncoding;
+    tex.colorSpace = THREE.SRGBColorSpace;
   };
 
   function _gcEvent(name, title) {
@@ -6669,26 +6617,10 @@ function startApp() {
         });
       }
       function _ccLoadPostProcessing() {
-        if (S._postLoading) return S._postLoading;
-        if (typeof THREE.EffectComposer === 'function' && typeof THREE.SAOPass === 'function') {
-          S._postLoading = Promise.resolve();
-          return S._postLoading;
-        }
-        var base = THREE_EXAMPLES_BASE;
-        S._postLoading = _ccLoadScript(base+'shaders/CopyShader.js')
-          .then(function(){ return _ccLoadScript(base+'shaders/LuminosityHighPassShader.js').catch(function(){}); })
-          .then(function(){ return _ccLoadScript(base+'shaders/SAOShader.js'); })
-          .then(function(){ return _ccLoadScript(base+'shaders/DepthLimitedBlurShader.js'); })
-          .then(function(){ return _ccLoadScript(base+'shaders/UnpackDepthRGBAShader.js'); })
-          .then(function(){ return _ccLoadScript(base+'shaders/FXAAShader.js').catch(function(){}); })
-          .then(function(){ return _ccLoadScript(base+'postprocessing/Pass.js').catch(function(){}); })
-          .then(function(){ return _ccLoadScript(base+'postprocessing/EffectComposer.js'); })
-          .then(function(){ return _ccLoadScript(base+'postprocessing/RenderPass.js'); })
-          .then(function(){ return _ccLoadScript(base+'postprocessing/ShaderPass.js'); })
-          .then(function(){ return _ccLoadScript(base+'postprocessing/SAOPass.js'); })
-          .then(function(){ return _ccLoadScript(base+'postprocessing/OutlinePass.js'); })
-          .then(function(){ return _ccLoadScript(base+'shaders/SMAAShader.js').catch(function(){}); })
-          .then(function(){ return _ccLoadScript(base+'postprocessing/SMAAPass.js').catch(function(){}); });
+        // Post-processing modules (EffectComposer, SAOPass, etc.) are
+        // imported in the ESM bootstrap and attached to THREE.* at startup.
+        // This is a no-op kept so the existing call sites stay simple.
+        if (!S._postLoading) S._postLoading = Promise.resolve();
         return S._postLoading;
       }
       function _ccBuildComposer() {
@@ -11263,11 +11195,7 @@ function startApp() {
     }, [s.sectionAxis, s.sectionPos, s.sectionCustom, s.sectionFlip, s.sectionHatch, s.models, s.prefs&&s.prefs.renderStyle]);
 
     // ── TransformControls section gizmo (PR-A) ─────────────────
-    // Adds a draggable 3-axis-aware translate gizmo on the active section
-    // plane so users can grab the arrow and slide. Falls back gracefully
-    // if examples/js/controls/TransformControls.js fails to load — the
-    // existing raycast drag on the visible arrow still works.
-    var tcLoadedRef = useRef(false);
+    // Draggable 3-axis-aware translate gizmo on the active section plane.
     useEffect(function(){
       var S = state3d.current;
       if (!S || !S.scene || !S.camera || !S.renderer) return;
@@ -11289,18 +11217,8 @@ function startApp() {
 
       function ensureGizmo(cb) {
         if (S._sectionTC) { cb(); return; }
-        if (typeof THREE.TransformControls !== 'function') {
-          if (tcLoadedRef.current) { cb(); return; }
-          tcLoadedRef.current = true;
-          var url = THREE_EXAMPLES_BASE + 'controls/TransformControls.js';
-          var sc = document.createElement('script');
-          sc.src = url; sc.async = true;
-          sc.onload = function(){ if (typeof THREE.TransformControls === 'function') buildAndCb(); else cb(); };
-          sc.onerror = function(){ console.warn('[gizmo] TransformControls load failed'); cb(); };
-          document.head.appendChild(sc);
-        } else {
-          buildAndCb();
-        }
+        if (typeof THREE.TransformControls !== 'function') { cb(); return; }
+        buildAndCb();
         function buildAndCb() {
           if (S._sectionTC) { cb(); return; }
           var anchor = new THREE.Object3D();
@@ -17582,9 +17500,7 @@ function startApp() {
 
   function exportGLTF(scene, models, format) {
     _gcEvent('gltf-export', format.toUpperCase()+' export');
-    var script = document.createElement('script');
-    script.src = THREE_EXAMPLES_BASE + 'exporters/GLTFExporter.js';
-    script.onload = function() {
+    (function runExport() {
       var exporter = new THREE.GLTFExporter();
       var exportScene = new THREE.Scene();
       models.forEach(function(model) {
@@ -17611,8 +17527,7 @@ function startApp() {
         URL.revokeObjectURL(a.href);
         exportScene.traverse(function(obj) { if (obj.geometry) obj.geometry.dispose(); });
       }, function(err) { console.error('glTF export failed:', err); }, options);
-    };
-    document.head.appendChild(script);
+    })();
   }
 
   // ── IFCSidecar Export (GLB + .ifcmeta + .ifcprops) ──────────────
@@ -17671,37 +17586,31 @@ function startApp() {
       });
     }
 
-    var script = document.createElement('script');
-    script.src = THREE_EXAMPLES_BASE + 'exporters/GLTFExporter.js';
-    script.onload = function() {
-      var exportScene = new THREE.Scene();
-      var meshCount = 0;
-      elements.forEach(function(el) {
-        var gid = (el.props || {}).globalId || '';
-        (el.meshes || []).forEach(function(mesh) {
-          if (!mesh.geometry) return;
-          var clone = mesh.clone();
-          if (mesh._origMaterial) clone.material = mesh._origMaterial.clone();
-          clone.name = gid;
-          clone.userData.globalId = gid;
-          clone.userData.expressId = el.expressId || 0;
-          exportScene.add(clone);
-          meshCount++;
-        });
+    var exportScene = new THREE.Scene();
+    var meshCount = 0;
+    elements.forEach(function(el) {
+      var gid = (el.props || {}).globalId || '';
+      (el.meshes || []).forEach(function(mesh) {
+        if (!mesh.geometry) return;
+        var clone = mesh.clone();
+        if (mesh._origMaterial) clone.material = mesh._origMaterial.clone();
+        clone.name = gid;
+        clone.userData.globalId = gid;
+        clone.userData.expressId = el.expressId || 0;
+        exportScene.add(clone);
+        meshCount++;
       });
-      if (!meshCount) return;
-      new THREE.GLTFExporter().parse(exportScene, function(result) {
-        _dlBlob(new Blob([result], {type:'application/octet-stream'}), baseName + '.glb');
-        _dlBlob(new Blob([JSON.stringify(ifcprops, null, 2)], {type:'application/json'}), baseName + '.ifcprops');
-        _dlBlob(new Blob([JSON.stringify(ifcmeta, null, 2)], {type:'application/json'}), baseName + '.ifcmeta');
-        exportScene.traverse(function(o) {
-          if (o.geometry) o.geometry.dispose();
-          if (o.material) { if (Array.isArray(o.material)) o.material.forEach(function(m){m.dispose();}); else o.material.dispose(); }
-        });
-      }, function(err) { console.error('Sidecar GLB export failed:', err); }, {binary: true});
-    };
-    if (typeof THREE !== 'undefined' && THREE.GLTFExporter) script.onload();
-    else document.head.appendChild(script);
+    });
+    if (!meshCount) return;
+    new THREE.GLTFExporter().parse(exportScene, function(result) {
+      _dlBlob(new Blob([result], {type:'application/octet-stream'}), baseName + '.glb');
+      _dlBlob(new Blob([JSON.stringify(ifcprops, null, 2)], {type:'application/json'}), baseName + '.ifcprops');
+      _dlBlob(new Blob([JSON.stringify(ifcmeta, null, 2)], {type:'application/json'}), baseName + '.ifcmeta');
+      exportScene.traverse(function(o) {
+        if (o.geometry) o.geometry.dispose();
+        if (o.material) { if (Array.isArray(o.material)) o.material.forEach(function(m){m.dispose();}); else o.material.dispose(); }
+      });
+    }, function(err) { console.error('Sidecar GLB export failed:', err); }, {binary: true});
   }
 
   function _dlBlob(blob, name) {
