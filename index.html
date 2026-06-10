@@ -1876,25 +1876,40 @@ function startApp() {
   function _prefetchWebIfcWasm() {
     if (_webIfcWasmBuf) return Promise.resolve(_webIfcWasmBuf);
     var wasmUrl = 'https://cdn.jsdelivr.net/npm/web-ifc@0.0.77/web-ifc.wasm';
-    var fetchP = fetch(wasmUrl, {cache:'reload', mode:'cors', credentials:'omit'})
-      .then(function(resp) {
-        if (!resp.ok) throw new Error('web-ifc.wasm HTTP ' + resp.status + ' ' + resp.statusText);
-        return resp.arrayBuffer();
+    function _fetchOnce(cacheMode) {
+      return fetch(wasmUrl, {cache:cacheMode, mode:'cors', credentials:'omit'})
+        .then(function(resp) {
+          if (!resp.ok) throw new Error('web-ifc.wasm HTTP ' + resp.status + ' ' + resp.statusText);
+          return resp.arrayBuffer();
+        })
+        .then(function(buf) {
+          var b = new Uint8Array(buf);
+          if (b.length < 8 || b[0] !== 0x00 || b[1] !== 0x61 || b[2] !== 0x73 || b[3] !== 0x6D) {
+            throw new Error('web-ifc.wasm is corrupt (' + b.length + ' bytes, magic=' +
+              [b[0]||0,b[1]||0,b[2]||0,b[3]||0].map(function(x){return x.toString(16);}).join(' ') + ')');
+          }
+          return buf;
+        });
+    }
+    // HTTP-cache first (the SW never touches web-ifc and the magic-byte check
+    // above catches corruption); only a corrupt/failed cached copy forces the
+    // multi-MB cache-bypassing re-download that used to happen on EVERY load.
+    var fetchP = _fetchOnce('default')
+      .catch(function(e) {
+        console.warn('[IFC] cached web-ifc.wasm rejected (' + (e && e.message) + ') — refetching from network');
+        return _fetchOnce('reload');
       })
-      .then(function(buf) {
-        var b = new Uint8Array(buf);
-        if (b.length < 8 || b[0] !== 0x00 || b[1] !== 0x61 || b[2] !== 0x73 || b[3] !== 0x6D) {
-          throw new Error('web-ifc.wasm is corrupt (' + b.length + ' bytes, magic=' +
-            [b[0]||0,b[1]||0,b[2]||0,b[3]||0].map(function(x){return x.toString(16);}).join(' ') + ')');
-        }
-        _webIfcWasmBuf = buf;
-        return buf;
-      });
+      .then(function(buf) { _webIfcWasmBuf = buf; return buf; });
     var timeoutP = new Promise(function(_, rej) {
       setTimeout(function() { rej(new Error('web-ifc.wasm fetch timed out (12s)')); }, 12000);
     });
     return Promise.race([fetchP, timeoutP]);
   }
+  // Warm the WASM during idle time right after boot — by the time the user
+  // picks a file, the multi-MB download is already done and "Fetching IFC
+  // library 17%" becomes instant. No-op cost if they never load a model
+  // beyond one cached fetch.
+  setTimeout(function() { _prefetchWebIfcWasm().catch(function(){ /* retried on real load */ }); }, 2500);
 
   function getIfcAPI() {
     if (_ifcAPI) return Promise.resolve(_ifcAPI);
@@ -2863,24 +2878,10 @@ function startApp() {
         ready = Promise.resolve(_api);
       } else {
         progress('Fetching IFC library 17%');
-        var _wasmUrl = 'https://cdn.jsdelivr.net/npm/web-ifc@0.0.77/web-ifc.wasm';
-        var _wasmFetchP = fetch(_wasmUrl, {cache:'reload', mode:'cors', credentials:'omit'})
-          .then(function(resp) {
-            if (!resp.ok) throw new Error('web-ifc.wasm HTTP ' + resp.status);
-            return resp.arrayBuffer();
-          })
-          .then(function(buf) {
-            var b = new Uint8Array(buf);
-            if (b.length < 8 || b[0] !== 0x00 || b[1] !== 0x61 || b[2] !== 0x73 || b[3] !== 0x6D) {
-              throw new Error('web-ifc.wasm corrupt (' + b.length + ' bytes)');
-            }
-            return buf;
-          });
-        var _wasmTimeoutP = new Promise(function(_, rej) {
-          setTimeout(function() { rej(new Error('web-ifc.wasm fetch timed out (12s)')); }, 12000);
-        });
+        // Shared prefetch: cached-first with corrupt-retry + session memo —
+        // usually already resolved by the idle warm-up after boot.
         var _modImportP = import('https://cdn.jsdelivr.net/npm/web-ifc@0.0.77/web-ifc-api.js');
-        ready = Promise.all([Promise.race([_wasmFetchP, _wasmTimeoutP]), _modImportP]).then(function(parts) {
+        ready = Promise.all([_prefetchWebIfcWasm(), _modImportP]).then(function(parts) {
           var wasmBuf = parts[0], mod = parts[1];
           progress('Initializing WASM 18%');
           var blobUrl = URL.createObjectURL(new Blob([wasmBuf], {type:'application/wasm'}));
