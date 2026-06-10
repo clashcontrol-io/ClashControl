@@ -783,4 +783,15 @@
   }
   window._ccComputeQualityScore = computeQualityScore;
 
+
+  // Visible in the Addons panel as a built-in capability (the engines are
+  // globals; the Data Quality panel itself lives in index.html).
+  if (typeof window._ccRegisterAddon === 'function') {
+    window._ccRegisterAddon({
+      id: 'data-quality',
+      alwaysOn: true,
+      name: 'Data quality checks',
+      description: 'BIM-basics, ILS and NL-SfB classification check engines behind the Data Quality panel — naming, classification, property completeness, IDS import/export.'
+    });
+  }
 })();

@@ -49,7 +49,7 @@
 
     return import(base + 'clashcontrol_engine.js').then(function(mod) {
       // The wasm-pack --target web output has an init() default export
-      return mod.default(base + 'clashcontrol_engine_bg.wasm').then(function() {
+      return mod.default({ module_or_path: base + 'clashcontrol_engine_bg.wasm' }).then(function() {
         _wasm = mod;
         _publishGlobals();
         _loading = false;

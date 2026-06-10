@@ -99,6 +99,25 @@ On branch `claude/codebase-review-ae7481` (2026-06-10) — codebase review: conn
 - ~~Dead code: removed suggestOmniClass+_aiResJson, _ccLoadScript, _ccFormatLen (dup of _ccFmtLength), _ccDrawTitleBlock/ScaleBar/NorthArrow (dead duplicates of the inline 2D-sheet drawing) — ~136 lines.~~ (2026-06-10)
 - ~~PWA offline was broken for addons: fetch handler only runtime-caches CDN hosts, addons weren't precached → 404 offline. All 15 addons + wasm pkg added to PRECACHE (cache name rotates per release).~~ (2026-06-10)
 - **Deliberately skipped:** hiding model names from `/api/health` — Settings intentionally displays the live model (e840a79) and it's public in llms.txt; hiding it would regress a feature for negligible gain.
+- **Chunk-merge caveat list is moot:** the whole chunk-merge subsystem was removed in 704837f (2026-06-09) — the Stage 2B "~15 visibility / ~34 color setters not chunk-aware" follow-up no longer applies. This session removed the orphaned write-only `_ccHiddenReg` registry the removal left behind. If chunk-merge ever returns, it returns with its own registry.
+
+Second batch same branch (2026-06-10) — product features + test infra ("do all 1-9"):
+
+- ~~Run history + trend: `s.runHistory` (capped 100) appended on MERGE_CLASHES, persisted in .ccproject + IndexedDB autosave; sparkline in ClashStatsBar "This run" row.~~ (2026-06-10)
+- ~~Clash coordination report: `_ccClashReport(s)` print-to-PDF window (align.js pattern) — cover cards, models, rules summary, runHistory trend chart+table, clusters ranked by open count (cap 300), viewpoint snapshot appendix. Export dropdown entry.~~ (2026-06-10)
+- ~~BCF 3.0 export made actually valid (verified against official buildingSMART release_3_0 XSDs): viewpoints inside Topic, Labels/Label wrapper (importer parses both shapes now), Files/IsExternal header, lowercase GUIDs, AspectRatio, no bogus xmlns, no DetailedVersion; DocumentReferences moved inside Topic (was invalid in BOTH versions). Locked by tests/bcf-export.test.js. BCF-API client NOT done (needs live OAuth server).~~ (2026-06-10)
+- ~~`_ccBenchEngine(pairLimit)` console helper: JS vs WASM narrow-phase A/B on real overlapping pairs + hit-count parity check. Run after a detection.~~ (2026-06-10)
+- ~~Browser smoke test: tests/fixtures/smoke-clash.ifc (hand-written IFC4, two crossing walls, verified to parse under web-ifc 0.0.77) + tests/browser/smoke.mjs (Playwright headless Chromium, real WASM pipeline, real detection) + ci.yml browser-smoke job + `ClashControl.runDetection()`. NOT run locally (Playwright CDN blocked in sandbox) — first execution is CI on the PR.~~ (2026-06-10)
+- ~~Globals discipline: rule in CLAUDE.md (public surface → window.ClashControl.*); namespace grew loadFiles/runDetection/benchEngine/clashReport.~~ (2026-06-10)
+- ~~Memory guardrail: toast+console warn at >75% of tab heap limit after IFC load batch.~~ (2026-06-10)
+- ~~TAURI.md: phased desktop plan (same index.html, capability-detected tauri-bridge addon, native engine/ reuse, streamed reads, disk geo-cache, built-in Smart Bridge). Phase 0 not started — awaiting go.~~ (2026-06-10)
+
+Third batch same branch (2026-06-10) — cross-repo contract audit (user-supplied PAT, since deleted) + addon one-click UX:
+
+- ~~**ClashControlEngine audit** → two real bugs fixed both sides: GET /update sends {latest,release_url} but addon read {update_version,update_url} AND the addon's /update handler never dispatched the info into state → update banner always blank. Addon now accepts both shapes + dispatches (main repo); engine adds aliases + modelAId/modelBId on clash objects (O(1) resolve) — ClashControlEngine PR #24 (draft; merge to main auto-releases).~~ (2026-06-10)
+- ~~**ClashControlConnector audit**: protocol contract SOLID — version 1.0 both sides with semver handshake, all 22 message types handled bidirectionally, 14/16 items of its CLASHCONTROL_INTEGRATION_IMPROVEMENTS.md wishlist already implemented. Only note: browser sends `modelFilter` in export, plugin parses but ignores it (future scoped re-export).~~ (2026-06-10)
+- ~~**ClashControlSmartBridge repo is superseded** (stopped at 0.2.3; bridge lives in main repo as 0.3.x and the app downloads from main-repo releases). Deprecation-banner PR #14 opened; recommend archiving the repo after merge.~~ (2026-06-10)
+- ~~**Addon one-click UX**: new `alwaysOn` addon flag (forces active; Addons panel shows "Built in · always on" instead of a do-nothing toggle). Applied to align/splat/visibility (were registered but never auto-activated — features sat behind a dead Settings toggle) and to newly-registered data-quality/accessibility/training-data (were invisible in the panel). External-dep addons keep real toggles + their existing one-click connect flows.~~ (2026-06-10)
 
 On branch `claude/jolly-cannon-YZUwi-followup` (2026-06-08) — Splat addon Phase 1 + Three.js bump scheduled:
 

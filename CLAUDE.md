@@ -70,6 +70,12 @@ The file follows this layout top to bottom:
 - It auto-increments patch, updates `version.json`, injects version into `index.html`, updates `README.md` version badge, and appends commit message to `CHANGELOG.md`
 - Current version: check `version.json`
 
+### Globals discipline
+There are ~280 `window._cc*` globals — do not add to the sprawl casually.
+- `window._cc*` is for **internal plumbing only** (core ↔ addon contracts). Always guard calls with `typeof window._ccFoo === 'function'`.
+- Anything meant for users, automation, or external tools goes on the **`window.ClashControl.*` namespace** (defined near `_ccViewport` in index.html) as a thin guarded alias — follow the existing pattern there.
+- Before adding a new global, check whether an existing one already covers it.
+
 ### When making changes
 - **Always edit `index.html`** — that's where all the code is
 - **Call `invalidate()`** after any change that affects the 3D view (camera, materials, visibility, highlights, ghost, grid, etc.)
@@ -130,6 +136,10 @@ api/_lib.js                 — Shared serverless helpers (CORS allow-list, rate
 ```
 
 ## Addons — how they plug in
+
+> **Vocabulary:** in user-facing UI these are always called **Integrations**
+> (tab title, header button, palette entry). "Addon" is the internal/code
+> term only (`addons/` dir, `_ccRegisterAddon`, docs). Don't mix them in UI copy.
 
 Each addon is a plain IIFE loaded at runtime by the core via `addons/<name>.js` (see the `_ccLoadAddon` helper near the top of `index.html`'s main script). They share state with the core by:
 

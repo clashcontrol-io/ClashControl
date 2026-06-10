@@ -789,6 +789,7 @@
     if (typeof window._ccRegisterAddon === 'function') {
       window._ccRegisterAddon({
         id: 'visibility',
+        alwaysOn: true,
         name: 'Visibility clash detection',
         description: 'Third clash category — geometric ray-cast against the BVH the clash engine builds. Catches sight-line obstructions: exit signs, traffic signs, surveillance coverage, nurse-station observation, reception line-of-sight, workplace window views. Layered filters (IFC type, name regex, custom pset, manual pick) for viewer / target / obstructer roles plus a preset library for common regulations.'
       });

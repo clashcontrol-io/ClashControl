@@ -335,4 +335,16 @@
   window._ccExportAITrainingData = exportAITrainingData;
   window._ccShareAITrainingData = shareAITrainingData;
   window._ccAIVerdictMap = _AI_VERDICT_MAP;
+
+  // Registered for transparency: this addon only stores data locally
+  // (ring buffer) — nothing leaves the browser unless sharing is enabled
+  // in Settings (consent header enforced server-side).
+  if (typeof window._ccRegisterAddon === 'function') {
+    window._ccRegisterAddon({
+      id: 'training-data',
+      alwaysOn: true,
+      name: 'Training data (local)',
+      description: 'Local ring-buffer of clash feedback + NL commands with JSONL export. Sharing is opt-in via Settings and requires explicit consent; nothing is sent otherwise.'
+    });
+  }
 })();
