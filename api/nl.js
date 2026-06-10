@@ -266,6 +266,18 @@ const TOOLS = [
       },
     },
   },
+  {
+    name: 'count_elements',
+    description: 'Count loaded model elements by type, optionally filtered by storey/level and/or model. Use for "how many walls", "count doors on level 2", "number of columns in the MEP model", "hoeveel wanden op begane grond". The client computes the exact count from the loaded models.',
+    parameters: {
+      type: 'object',
+      properties: {
+        ifcType: { type: 'string', description: 'Element type, friendly or IFC name: "wall", "door", "IFCWALL". Omit to count all elements.' },
+        storey: { type: 'string', description: 'Storey/level name or part of it, e.g. "begane grond", "level 2"' },
+        model: { type: 'string', description: 'Model name substring' },
+      },
+    },
+  },
   // --- Live queries (answered by Gemma using current state in the prompt) ---
   {
     name: 'query',
@@ -691,6 +703,32 @@ module.exports = async function handler(req, res) {
       }
       var gErrText = await gResp.text();
       console.error('Groq API error:', gResp.status, gErrText.slice(0, 500));
+      // Llama tool-calling flake: the model emitted a malformed tool call
+      // (Groq 400, code "tool_use_failed"). Retry once WITHOUT tools — a
+      // plain-text answer the client can show beats a 502 it can only
+      // shrug at. The client still has its offline regex fallback after.
+      if (gResp.status === 400 && gErrText.indexOf('tool_use_failed') !== -1) {
+        try {
+          var rResp = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + groqKey },
+            body: JSON.stringify({
+              model: GROQ_MODEL,
+              messages: groqMessages,
+              temperature: 0.1,
+              max_tokens: 256,
+            }),
+          });
+          if (rResp.ok) {
+            var rData = await rResp.json();
+            var rMsg = rData.choices && rData.choices[0] && rData.choices[0].message;
+            var rText = ((rMsg && rMsg.content) || '').trim();
+            if (rText) {
+              return res.status(200).json({ intent: 'unknown', text: rText, _model: 'groq:' + GROQ_MODEL, _fallback: true });
+            }
+          }
+        } catch (_) { /* fall through to the normal error response */ }
+      }
       var isQuota = gResp.status === 429;
       return res.status(isQuota ? 429 : 502).json({
         error: isQuota ? 'AI quota exceeded' : 'AI request failed',
