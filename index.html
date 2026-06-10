@@ -5175,8 +5175,11 @@ function startApp() {
             var visDist = NaN, visRange = NaN;
             var visPartial = false, visBlockedSamples = null, visTotalSamples = null;
             var visOcclusionRate = NaN, visCoverageGap = false;
-            var labelNodes = topic.querySelectorAll('Labels');
+            // 2.1 repeats <Labels>text</Labels>; 3.0 wraps as <Labels><Label>text</Label></Labels>.
+            // Query both and skip the 3.0 wrapper itself (its textContent would concatenate children).
+            var labelNodes = topic.querySelectorAll('Labels, Label');
             for (var li = 0; li < labelNodes.length; li++) {
+              if (labelNodes[li].tagName === 'Labels' && labelNodes[li].querySelector('Label')) continue;
               var txt = (labelNodes[li].textContent || '').trim();
               if      (txt.indexOf('cc:revitA=')  === 0) revitIdA = txt.slice(10);
               else if (txt.indexOf('cc:revitB=')  === 0) revitIdB = txt.slice(10);
@@ -5336,18 +5339,23 @@ function startApp() {
       'ClashControl is a free, open-source IFC clash detection tool that runs entirely in your browser.\n' +
       '\n' +
       'Learn more or open this file at: ' + ccUrl + '\n');
-    var versionXmlns = v3 ? 'http://www.buildingsmart-tech.org/bcf/version/3.0' : 'http://www.buildingsmart-tech.org/bcf/version/2.1';
-    zip.file('bcf.version','<?xml version="1.0" encoding="UTF-8"?>\n'+attrComment+'<Version VersionId="'+versionId+'" xmlns="'+versionXmlns+'"><DetailedVersion>'+versionId+'</DetailedVersion></Version>');
+    // BCF XSDs (2.1 and 3.0) have no target namespace — emit plain XML.
+    // 3.0 removed <DetailedVersion>.
+    zip.file('bcf.version', v3
+      ? '<?xml version="1.0" encoding="UTF-8"?>\n'+attrComment+'<Version VersionId="3.0"/>'
+      : '<?xml version="1.0" encoding="UTF-8"?>\n'+attrComment+'<Version VersionId="2.1"><DetailedVersion>2.1</DetailedVersion></Version>');
 
     if (v3) {
-      zip.file('extensions.xml', '<?xml version="1.0" encoding="UTF-8"?>\n'+attrComment+'<Extensions xmlns="http://www.buildingsmart-tech.org/bcf/extensions/3.0"><TopicTypes><TopicType>Issue</TopicType><TopicType>Warning</TopicType><TopicType>Request</TopicType></TopicTypes><TopicStatuses><TopicStatus>Open</TopicStatus><TopicStatus>In Progress</TopicStatus><TopicStatus>Closed</TopicStatus></TopicStatuses><Priorities><Priority>Critical</Priority><Priority>High</Priority><Priority>Normal</Priority><Priority>Low</Priority></Priorities></Extensions>');
-      zip.file('project.bcfp','<?xml version="1.0" encoding="UTF-8"?>\n'+attrComment+'<ProjectInfo xmlns="http://www.buildingsmart-tech.org/bcf/project/3.0"><Project ProjectId="'+guid()+'"><Name>ClashControl</Name></Project></ProjectInfo>');
+      zip.file('extensions.xml', '<?xml version="1.0" encoding="UTF-8"?>\n'+attrComment+'<Extensions><TopicTypes><TopicType>Issue</TopicType><TopicType>Warning</TopicType><TopicType>Request</TopicType></TopicTypes><TopicStatuses><TopicStatus>Open</TopicStatus><TopicStatus>In Progress</TopicStatus><TopicStatus>Closed</TopicStatus></TopicStatuses><Priorities><Priority>Critical</Priority><Priority>High</Priority><Priority>Normal</Priority><Priority>Low</Priority></Priorities></Extensions>');
+      zip.file('project.bcfp','<?xml version="1.0" encoding="UTF-8"?>\n'+attrComment+'<ProjectInfo><Project ProjectId="'+guid().toLowerCase()+'"><Name>ClashControl</Name></Project></ProjectInfo>');
     } else {
       zip.file('project.bcfp','<?xml version="1.0" encoding="UTF-8"?>\n'+attrComment+'<ProjectExtension xmlns="http://www.buildingsmart-tech.org/bcf/project/2.1"><Project ProjectId="'+guid()+'"><Name>ClashControl</Name></Project><ExtensionSchema/></ProjectExtension>');
     }
 
     items.forEach(function(it) {
-      var g = it.bcfGuid || guid(), f = zip.folder(g);
+      // 3.0 requires lowercase GUIDs (topic folder name included).
+      var g = it.bcfGuid || guid(); if (v3) g = String(g).toLowerCase();
+      var f = zip.folder(g);
       var type = it.type==='hard'?'Issue':it.type==='soft'?'Warning':'Request';
       var st = it.status==='resolved'||it.status==='closed'?'Closed':it.status==='in_progress'?'In Progress':'Open';
       var priority = it.priority || (it.type==='hard'?'Critical':'Normal');
@@ -5357,90 +5365,51 @@ function startApp() {
       if (viewpoints) {
         vp = viewpoints.find(function(v){ return v.linkedId === it.id; });
       }
-      var vpGuid = vp ? guid() : null;
+      var vpGuid = vp ? (v3 ? guid().toLowerCase() : guid()) : null;
 
-      var markupXmlns = v3 ? 'http://www.buildingsmart-tech.org/bcf/markup/3.0' : 'http://www.buildingsmart-tech.org/bcf/markup/2.1';
-      var markup = '<?xml version="1.0" encoding="UTF-8"?>\n'+attrComment+'<Markup xmlns="'+markupXmlns+'">\n';
-      markup += '  <Header>\n    <File IfcProject="" IfcSpatialStructureElement="" isExternal="true">\n      <Filename>'+esc(ccTool)+'</Filename>\n      <Date>'+(it.createdAt||new Date().toISOString())+'</Date>\n    </File>\n  </Header>\n';
-      // Topic child elements must follow BCF schema order:
-      markup += '  <Topic Guid="'+g+'" TopicType="'+type+'" TopicStatus="'+st+'">\n';
-      markup += '    <Title>'+esc(it.title)+'</Title>\n';
-      markup += '    <Priority>'+priority+'</Priority>\n';
+      // ── Collect label strings (cc:* round-trip payload) ─────────
+      // 2.1 emits repeated <Labels>; 3.0 wraps them as <Labels><Label>.
+      var labels = [];
       // Round-trip Revit element IDs via Labels (standard BCF field, arbitrary
       // string content). Matching labels are parsed back on import.
-      if (it.revitIdA != null) markup += '    <Labels>cc:revitA='+esc(it.revitIdA)+'</Labels>\n';
-      if (it.revitIdB != null) markup += '    <Labels>cc:revitB='+esc(it.revitIdB)+'</Labels>\n';
+      if (it.revitIdA != null) labels.push('cc:revitA='+esc(it.revitIdA));
+      if (it.revitIdB != null) labels.push('cc:revitB='+esc(it.revitIdB));
       // AI provenance — model + source + timestamp for every AI-touched issue.
       // Other BCF readers preserve unknown Labels; the importer reconstructs
       // aiProvenance from them so the audit-trail chip survives the round-trip.
       var _aip = it.aiProvenance;
-      if (_aip && _aip.model)  markup += '    <Labels>cc:aiModel='+esc(_aip.model)+'</Labels>\n';
-      if (_aip && _aip.source) markup += '    <Labels>cc:aiSource='+esc(_aip.source)+'</Labels>\n';
-      if (_aip && _aip.at)     markup += '    <Labels>cc:aiAt='+esc(_aip.at)+'</Labels>\n';
+      if (_aip && _aip.model)  labels.push('cc:aiModel='+esc(_aip.model));
+      if (_aip && _aip.source) labels.push('cc:aiSource='+esc(_aip.source));
+      if (_aip && _aip.at)     labels.push('cc:aiAt='+esc(_aip.at));
       // Visibility (sight-line) clash extension. Other BCF readers
       // preserve unknown Labels; the importer reconstructs the full
       // visibility clash from cc:visType / cc:visFrom / cc:visTo /
       // cc:visBlocker so the third clash category round-trips with
       // its semantics intact instead of degrading to a generic Request.
       if (it.type === 'visibility') {
-        markup += '    <Labels>cc:visType=visibility</Labels>\n';
-        if (it.sightFrom) markup += '    <Labels>cc:visFrom='+esc(it.sightFrom.join(','))+'</Labels>\n';
-        if (it.sightTo)   markup += '    <Labels>cc:visTo='+esc(it.sightTo.join(','))+'</Labels>\n';
-        if (it.elemBlocker != null) markup += '    <Labels>cc:visBlocker='+esc(it.elemBlocker)+'</Labels>\n';
-        if (it.elemBlockerName)     markup += '    <Labels>cc:visBlockerName='+esc(it.elemBlockerName)+'</Labels>\n';
-        if (it.elemBlockerType)     markup += '    <Labels>cc:visBlockerType='+esc(it.elemBlockerType)+'</Labels>\n';
-        if (it.distance != null)    markup += '    <Labels>cc:visDist='+esc(it.distance)+'</Labels>\n';
-        if (it.rangeTotal != null)  markup += '    <Labels>cc:visRange='+esc(it.rangeTotal)+'</Labels>\n';
-        if (it.partialOcclusion)    markup += '    <Labels>cc:visPartial=1</Labels>\n';
-        if (it.blockedSamples != null) markup += '    <Labels>cc:visBlockedSamples='+esc(it.blockedSamples)+'</Labels>\n';
-        if (it.totalSamples != null)   markup += '    <Labels>cc:visTotalSamples='+esc(it.totalSamples)+'</Labels>\n';
-        if (it.occlusionRate != null)  markup += '    <Labels>cc:visOcclusionRate='+esc(it.occlusionRate)+'</Labels>\n';
-        if (it.coverageGap)         markup += '    <Labels>cc:visCoverageGap=1</Labels>\n';
-      }
-      markup += '    <CreationDate>'+(it.createdAt||new Date().toISOString())+'</CreationDate>\n';
-      markup += '    <CreationAuthor>'+authorEsc+'</CreationAuthor>\n';
-      markup += '    <ModifiedDate>'+new Date().toISOString()+'</ModifiedDate>\n';
-      markup += '    <ModifiedAuthor>'+authorEsc+'</ModifiedAuthor>\n';
-      if (it.dueDate) markup += '    <DueDate>'+esc(it.dueDate)+'</DueDate>\n';
-      if (it.assignee) markup += '    <AssignedTo>'+esc(it.assignee)+'</AssignedTo>\n';
-      markup += '    <Description>'+esc(it.description||'')+'</Description>\n';
-      markup += '  </Topic>\n';
-
-      if (vp && vpGuid) {
-        markup += '  <Viewpoints Guid="'+vpGuid+'">\n';
-        markup += '    <Viewpoint>'+vpGuid+'.bcfv</Viewpoint>\n';
-        if (vp.snapshot) markup += '    <Snapshot>'+vpGuid+'.png</Snapshot>\n';
-        markup += '  </Viewpoints>\n';
-
-        var visXmlns = v3 ? 'http://www.buildingsmart-tech.org/bcf/visualizationinfo/3.0' : 'http://www.buildingsmart-tech.org/bcf/visualizationinfo/2.1';
-        var vpXml = '<?xml version="1.0" encoding="UTF-8"?>\n<VisualizationInfo Guid="'+vpGuid+'" xmlns="'+visXmlns+'">\n';
-        vpXml += '  <PerspectiveCamera>\n';
-        vpXml += '    <CameraViewPoint><X>'+vp.camera.px.toFixed(6)+'</X><Y>'+vp.camera.py.toFixed(6)+'</Y><Z>'+vp.camera.pz.toFixed(6)+'</Z></CameraViewPoint>\n';
-        vpXml += '    <CameraDirection><X>'+vp.camera.dx.toFixed(6)+'</X><Y>'+vp.camera.dy.toFixed(6)+'</Y><Z>'+vp.camera.dz.toFixed(6)+'</Z></CameraDirection>\n';
-        vpXml += '    <CameraUpVector><X>'+vp.camera.ux.toFixed(6)+'</X><Y>'+vp.camera.uy.toFixed(6)+'</Y><Z>'+vp.camera.uz.toFixed(6)+'</Z></CameraUpVector>\n';
-        vpXml += '    <FieldOfView>60</FieldOfView>\n';
-        vpXml += '  </PerspectiveCamera>\n';
-        vpXml += '</VisualizationInfo>';
-        f.file(vpGuid+'.bcfv', vpXml);
-
-        if (vp.snapshot) {
-          var snapData = vp.snapshot.replace(/^data:image\/png;base64,/, '');
-          f.file(vpGuid+'.png', snapData, {base64:true});
-        }
+        labels.push('cc:visType=visibility');
+        if (it.sightFrom) labels.push('cc:visFrom='+esc(it.sightFrom.join(',')));
+        if (it.sightTo)   labels.push('cc:visTo='+esc(it.sightTo.join(',')));
+        if (it.elemBlocker != null) labels.push('cc:visBlocker='+esc(it.elemBlocker));
+        if (it.elemBlockerName)     labels.push('cc:visBlockerName='+esc(it.elemBlockerName));
+        if (it.elemBlockerType)     labels.push('cc:visBlockerType='+esc(it.elemBlockerType));
+        if (it.distance != null)    labels.push('cc:visDist='+esc(it.distance));
+        if (it.rangeTotal != null)  labels.push('cc:visRange='+esc(it.rangeTotal));
+        if (it.partialOcclusion)    labels.push('cc:visPartial=1');
+        if (it.blockedSamples != null) labels.push('cc:visBlockedSamples='+esc(it.blockedSamples));
+        if (it.totalSamples != null)   labels.push('cc:visTotalSamples='+esc(it.totalSamples));
+        if (it.occlusionRate != null)  labels.push('cc:visOcclusionRate='+esc(it.occlusionRate));
+        if (it.coverageGap)         labels.push('cc:visCoverageGap=1');
       }
 
+      // ── Collect DocumentReferences BEFORE assembling the markup ──
+      // (they live INSIDE <Topic> in both schema versions; the old code
+      // wrongly emitted them at Markup level).
+      var docRefs = []; // [{ref, desc}]
       var itemSheetId = pinsByItem[it.id];
-      // Aggregate DocumentReferences: floor plan + point-cloud refs share
-      // the same <DocumentReferences> wrapper so the BCF stays schema-valid.
-      var docRefs = [];
       if (itemSheetId && sheetPngs[itemSheetId]) {
         f.file('plan.png', sheetPngs[itemSheetId], {base64: true});
-        docRefs.push(
-          '    <DocumentReference>\n' +
-          '      <ReferencedDocument>plan.png</ReferencedDocument>\n' +
-          '      <Description>Floor plan sheet</Description>\n' +
-          '    </DocumentReference>\n'
-        );
+        docRefs.push({ ref: 'plan.png', desc: 'Floor plan sheet' });
       }
       // Point-cloud references: every loaded scan in state.referenceLayers
       // becomes a DocumentReference with a relative-path filename + a
@@ -5495,21 +5464,100 @@ function startApp() {
           // Encode the payload as a single line of JSON inside the
           // Description, prefixed so importers can spot it without
           // attempting to JSON-parse arbitrary descriptions.
-          var descJson = 'cc:scanRef=' + JSON.stringify(payload);
-          docRefs.push(
-            '    <DocumentReference>\n' +
-            '      <ReferencedDocument>' + esc(rl.name) + '</ReferencedDocument>\n' +
-            '      <Description>' + esc(descJson) + '</Description>\n' +
-            '    </DocumentReference>\n'
-          );
+          docRefs.push({ ref: rl.name, desc: 'cc:scanRef=' + JSON.stringify(payload) });
         });
       }
-      if (docRefs.length) {
-        markup += '  <DocumentReferences>\n' + docRefs.join('') + '  </DocumentReferences>\n';
-      }
 
+      // ── Assemble markup.bcf (no xmlns — the XSDs have no namespace) ──
+      var markup = '<?xml version="1.0" encoding="UTF-8"?>\n'+attrComment+'<Markup>\n';
+      var hdrDate = it.createdAt||new Date().toISOString();
+      if (v3) {
+        // 3.0: Files wrapper, IsExternal capitalised; empty IfcProject/
+        // IfcSpatialStructureElement attrs are invalid — omit them.
+        markup += '  <Header>\n    <Files>\n      <File IsExternal="true">\n        <Filename>'+esc(ccTool)+'</Filename>\n        <Date>'+hdrDate+'</Date>\n      </File>\n    </Files>\n  </Header>\n';
+      } else {
+        markup += '  <Header>\n    <File isExternal="true">\n      <Filename>'+esc(ccTool)+'</Filename>\n      <Date>'+hdrDate+'</Date>\n    </File>\n  </Header>\n';
+      }
+      // Topic child elements must follow BCF schema order (Title, Priority,
+      // Labels, CreationDate/Author, Modified*, DueDate, AssignedTo,
+      // Description, DocumentReference(s), then in 3.0 Comments/Viewpoints):
+      markup += '  <Topic Guid="'+g+'" TopicType="'+type+'" TopicStatus="'+st+'">\n';
+      markup += '    <Title>'+(esc(it.title)||'Untitled')+'</Title>\n';
+      markup += '    <Priority>'+priority+'</Priority>\n';
+      if (labels.length) {
+        if (v3) markup += '    <Labels>\n'+labels.map(function(l){return '      <Label>'+l+'</Label>\n';}).join('')+'    </Labels>\n';
+        else labels.forEach(function(l){ markup += '    <Labels>'+l+'</Labels>\n'; });
+      }
+      markup += '    <CreationDate>'+(it.createdAt||new Date().toISOString())+'</CreationDate>\n';
+      markup += '    <CreationAuthor>'+authorEsc+'</CreationAuthor>\n';
+      markup += '    <ModifiedDate>'+new Date().toISOString()+'</ModifiedDate>\n';
+      markup += '    <ModifiedAuthor>'+authorEsc+'</ModifiedAuthor>\n';
+      if (it.dueDate) markup += '    <DueDate>'+esc(it.dueDate)+'</DueDate>\n';
+      if (it.assignee) markup += '    <AssignedTo>'+esc(it.assignee)+'</AssignedTo>\n';
+      // 3.0 forbids empty strings in optional elements — omit when blank.
+      if (v3) { if (it.description) markup += '    <Description>'+esc(it.description)+'</Description>\n'; }
+      else markup += '    <Description>'+esc(it.description||'')+'</Description>\n';
+      if (docRefs.length) {
+        if (v3) {
+          // 3.0: <DocumentReferences> wrapper; each ref needs a Guid and a
+          // choice of DocumentGuid (embedded) or Url (we use relative Url).
+          markup += '    <DocumentReferences>\n';
+          docRefs.forEach(function(dr){
+            markup += '      <DocumentReference Guid="'+guid().toLowerCase()+'">\n';
+            markup += '        <Url>'+esc(dr.ref)+'</Url>\n';
+            if (dr.desc) markup += '        <Description>'+esc(dr.desc)+'</Description>\n';
+            markup += '      </DocumentReference>\n';
+          });
+          markup += '    </DocumentReferences>\n';
+        } else {
+          // 2.1: repeated <DocumentReference> directly under Topic.
+          docRefs.forEach(function(dr){
+            markup += '    <DocumentReference>\n';
+            markup += '      <ReferencedDocument>'+esc(dr.ref)+'</ReferencedDocument>\n';
+            if (dr.desc) markup += '      <Description>'+esc(dr.desc)+'</Description>\n';
+            markup += '    </DocumentReference>\n';
+          });
+        }
+      }
+      if (v3 && vp && vpGuid) {
+        // 3.0: viewpoints live INSIDE Topic as <Viewpoints><ViewPoint>.
+        markup += '    <Viewpoints>\n      <ViewPoint Guid="'+vpGuid+'">\n        <Viewpoint>'+vpGuid+'.bcfv</Viewpoint>\n';
+        if (vp.snapshot) markup += '        <Snapshot>'+vpGuid+'.png</Snapshot>\n';
+        markup += '      </ViewPoint>\n    </Viewpoints>\n';
+      }
+      markup += '  </Topic>\n';
+      if (!v3 && vp && vpGuid) {
+        // 2.1: viewpoints are repeated Markup-level <Viewpoints Guid> elements.
+        markup += '  <Viewpoints Guid="'+vpGuid+'">\n';
+        markup += '    <Viewpoint>'+vpGuid+'.bcfv</Viewpoint>\n';
+        if (vp.snapshot) markup += '    <Snapshot>'+vpGuid+'.png</Snapshot>\n';
+        markup += '  </Viewpoints>\n';
+      }
       markup += '</Markup>';
       f.file('markup.bcf', markup);
+
+      if (vp && vpGuid) {
+        var vpXml = '<?xml version="1.0" encoding="UTF-8"?>\n<VisualizationInfo Guid="'+vpGuid+'">\n';
+        vpXml += '  <PerspectiveCamera>\n';
+        vpXml += '    <CameraViewPoint><X>'+vp.camera.px.toFixed(6)+'</X><Y>'+vp.camera.py.toFixed(6)+'</Y><Z>'+vp.camera.pz.toFixed(6)+'</Z></CameraViewPoint>\n';
+        vpXml += '    <CameraDirection><X>'+vp.camera.dx.toFixed(6)+'</X><Y>'+vp.camera.dy.toFixed(6)+'</Y><Z>'+vp.camera.dz.toFixed(6)+'</Z></CameraDirection>\n';
+        vpXml += '    <CameraUpVector><X>'+vp.camera.ux.toFixed(6)+'</X><Y>'+vp.camera.uy.toFixed(6)+'</Y><Z>'+vp.camera.uz.toFixed(6)+'</Z></CameraUpVector>\n';
+        vpXml += '    <FieldOfView>60</FieldOfView>\n';
+        if (v3) {
+          // 3.0 added a required AspectRatio to both camera types.
+          var _ar = 16/9;
+          try { var _cam = window._ccViewport && window._ccViewport.getCamera && window._ccViewport.getCamera(); if (_cam && _cam.aspect > 0) _ar = _cam.aspect; } catch(_) {}
+          vpXml += '    <AspectRatio>'+_ar.toFixed(6)+'</AspectRatio>\n';
+        }
+        vpXml += '  </PerspectiveCamera>\n';
+        vpXml += '</VisualizationInfo>';
+        f.file(vpGuid+'.bcfv', vpXml);
+
+        if (vp.snapshot) {
+          var snapData = vp.snapshot.replace(/^data:image\/png;base64,/, '');
+          f.file(vpGuid+'.png', snapData, {base64:true});
+        }
+      }
     });
 
     // Custom measurement payload (T3.5). BCF 2.1/3.0 has no native measurement
