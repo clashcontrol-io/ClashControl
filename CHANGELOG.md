@@ -1,5 +1,8 @@
 # Changelog
 
+## v5.20.0 (2026-06-10)
+- Coordination features, plan-view fix, Integrations UX, loader perf, browser smoke CI (#597)
+
 ## v5.19.68 (2026-06-10)
 - Codebase review: connect the WASM engine + fix verified open ends (#596)
 
