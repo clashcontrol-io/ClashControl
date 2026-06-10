@@ -17,6 +17,7 @@
   var TILES_CDN = 'https://cdn.jsdelivr.net/npm/3d-tiles-renderer@0.4.28';
   var _tiles = null;
   var _frameHandler = null;
+  var _pump = null;       // keeps frames ticking while tiles are streaming
   var _tilesCam = null;   // proxy camera with clamped far plane = context range
   var _rangeM = (function(){ try { return Number(localStorage.getItem('cc_tiles3d_range')) || 3000; } catch(_) { return 3000; } })();
 
@@ -53,29 +54,20 @@
   // tiles are neither rendered NOR downloaded, so a small building never
   // pulls in half the country. Reads the live range so widening it while
   // viewing streams the additional ring immediately.
-  function _SiteRadiusPlugin(getRadius) {
+  function _SiteRadiusPlugin(getRadius, anchorECEF) {
     this.name = 'CC_SITE_RADIUS';
     this._getRadius = getRadius;
-    this._origin = null; // scene-space anchor = origin of the tiles group's parent space
+    // Anchor directly in the tiles' native (ECEF) frame — computed from the
+    // lat/lon frame at setup, so no group-matrix inversion races.
+    this._origin = anchorECEF;
   }
   _SiteRadiusPlugin.prototype.init = function(tiles) { this._tiles = tiles; };
   _SiteRadiusPlugin.prototype.calculateTileViewError = function(tile, target) {
     var r = this._getRadius();
     if (!isFinite(r)) return false; // no-op at ∞
+    if (!this._origin) return false;
     var bv = tile.engineData && tile.engineData.boundingVolume;
     if (!bv || !bv.distanceToPoint) return false;
-    if (!this._origin) {
-      // Anchor in the tiles' LOCAL (ECEF) frame: the group matrix maps it
-      // to the scene origin, so invert once. Use .matrix (set explicitly at
-      // setup, parent is the scene) — matrixWorld is still identity on the
-      // first update tick and would anchor at Earth's centre, masking
-      // every tile permanently.
-      var gm = this._tiles.group.matrix;
-      var _e = gm.elements;
-      var _isIdentity = _e[12] === 0 && _e[13] === 0 && _e[14] === 0 && _e[0] === 1 && _e[5] === 1 && _e[10] === 1;
-      if (_isIdentity) return false; // transform not applied yet — no-op this tick
-      this._origin = new window.THREE.Vector3(0, 0, 0).applyMatrix4(gm.clone().invert());
-    }
     if (bv.distanceToPoint(this._origin) > r) { target.inView = false; return true; }
     return false;
   };
@@ -99,6 +91,7 @@
 
   function _teardown() {
     _hideAttribution();
+    if (_pump) { clearInterval(_pump); _pump = null; }
     if (_frameHandler) { window.removeEventListener('cc-render-frame', _frameHandler); _frameHandler = null; }
     if (_tiles) {
       try { if (_tiles.group && _tiles.group.parent) _tiles.group.parent.remove(_tiles.group); } catch (_) {}
@@ -125,7 +118,14 @@
     if (!S || !S.scene || !S.camera || !S.renderer) return Promise.reject(new Error('Viewer not ready'));
     var lat = Number(opts.lat), lon = Number(opts.lon);
     if (!isFinite(lat) || !isFinite(lon)) return Promise.reject(new Error('3D tiles need a latitude/longitude — set one in Geo Placement first.'));
-    if (opts.preset === 'nl') { opts.url = PDOK_NL_TILESET; opts.attribution = '3D: Kadaster / PDOK (CC-BY 4.0)'; }
+    if (opts.preset === 'nl') {
+      opts.url = PDOK_NL_TILESET;
+      opts.attribution = '3D: Kadaster / PDOK (CC-BY 4.0)';
+      // PDOK tiles are ECEF, so heights are ellipsoidal. NL geoid offset is
+      // ~+43 m (NAP ≈ ellipsoid − 43); anchoring at 0 floats the whole
+      // context ~43 m above the model. Overridable via opts.height.
+      if (!isFinite(Number(opts.height))) opts.height = 43;
+    }
     var key = (opts.key || '').trim();
     if (!key && !opts.url) return Promise.reject(new Error('Google Map Tiles API key required (or a custom tileset URL).'));
     _teardown();
@@ -143,12 +143,11 @@
         tiles = new core.TilesRenderer();
         tiles.registerPlugin(new plugins.GoogleCloudAuthPlugin({ apiToken: key, autoRefreshToken: true }));
       }
-      try { tiles.registerPlugin(new _SiteRadiusPlugin(function(){ return _rangeM; })); } catch (_) {}
-      if (plugins.TileCompressionPlugin) { try { tiles.registerPlugin(new plugins.TileCompressionPlugin()); } catch (_) {} }
-      if (plugins.TilesFadePlugin) { try { tiles.registerPlugin(new plugins.TilesFadePlugin()); } catch (_) {} }
 
-      // Anchor lat/lon at the scene origin, Y-up: take the East-North-Up
-      // frame at the anchor, invert (planet → local), then Z-up → Y-up.
+      // Anchor frame: East-North-Up at the lat/lon, inverted (planet →
+      // local), then Z-up → Y-up, then translated to opts.origin — the
+      // world point the anchor should sit at (the geoplace basemap puts
+      // the same lat/lon at the model bbox centre, so both layers agree).
       var frame = new THREE3.Matrix4();
       var height = isFinite(Number(opts.height)) ? Number(opts.height) : 0;
       // Signature is (lat, lon, height, target). For grid-north/true-north
@@ -156,8 +155,19 @@
       core.WGS84_ELLIPSOID.getEastNorthUpFrame(
         lat * Math.PI / 180, lon * Math.PI / 180, height, frame
       );
+      // The anchor's ECEF position — the radius plugin masks against this
+      // in the tiles' native frame, no group-matrix inversion needed.
+      var anchorECEF = new THREE3.Vector3().setFromMatrixPosition(frame);
+      try { tiles.registerPlugin(new _SiteRadiusPlugin(function(){ return _rangeM; }, anchorECEF)); } catch (_) {}
+      if (plugins.TileCompressionPlugin) { try { tiles.registerPlugin(new plugins.TileCompressionPlugin()); } catch (_) {} }
+      if (plugins.TilesFadePlugin) { try { tiles.registerPlugin(new plugins.TilesFadePlugin()); } catch (_) {} }
+
       tiles.group.matrix.copy(frame).invert()
         .premultiply(new THREE3.Matrix4().makeRotationX(-Math.PI / 2));
+      if (opts.origin && isFinite(Number(opts.origin.x))) {
+        tiles.group.matrix.premultiply(new THREE3.Matrix4().makeTranslation(
+          Number(opts.origin.x), Number(opts.origin.y) || 0, Number(opts.origin.z) || 0));
+      }
       tiles.group.matrix.decompose(tiles.group.position, tiles.group.quaternion, tiles.group.scale);
       tiles.group.matrixAutoUpdate = false;
       tiles.group.updateMatrix();
@@ -181,8 +191,23 @@
 
       // Streaming progress must keep the render-on-demand loop alive.
       tiles.addEventListener('load-model', function() { _inv(2); });
-      tiles.addEventListener('load-tile-set', function() { _inv(3); });
+      tiles.addEventListener('load-tileset', function() {
+        console.log('[Tiles3D] tileset loaded — streaming content');
+        _inv(3);
+      });
       tiles.addEventListener('tiles-load-end', function() { _inv(2); });
+      // Failures used to be invisible — the toast said "streaming in" and
+      // nothing ever appeared. Surface the first error loudly.
+      var _errToasted = false;
+      tiles.addEventListener('load-error', function(ev) {
+        var msg = (ev && ev.error && (ev.error.message || ev.error)) || 'unknown error';
+        console.warn('[Tiles3D] load error:', msg, ev && ev.url ? String(ev.url) : '');
+        if (!_errToasted && window._ccToast) {
+          _errToasted = true;
+          window._ccToast('3D world context: tile load failed — ' + msg, 'error');
+        }
+        _inv(1);
+      });
 
       S.scene.add(tiles.group);
       _tiles = tiles;
@@ -207,6 +232,16 @@
         } catch (_) {}
       };
       window.addEventListener('cc-render-frame', _frameHandler);
+      // Render-on-demand pump: tiles.update() only runs on rendered frames,
+      // so once the camera stops moving the streaming pipeline would stall
+      // mid-download. Tick frames while work is pending (plus a grace
+      // window for the initial tileset fetch, which stats don't count).
+      var _pumpT0 = Date.now();
+      _pump = setInterval(function() {
+        if (!_tiles) return;
+        var st = _tiles.stats || {};
+        if (Date.now() - _pumpT0 < 15000 || (st.downloading || 0) + (st.parsing || 0) > 0) _inv(1);
+      }, 300);
       try { localStorage.setItem('cc_tiles3d_on', '1'); } catch (_) {}
       _showAttribution(opts.attribution || (key ? 'Map data: Google' : null));
       _inv(5);

@@ -92,6 +92,18 @@
     var cx = lonToTileX(lon, zoom);
     var cy = latToTileY(lat, zoom);
 
+    // The grid is centred on the whole TILE containing (lat,lon), not on
+    // the point itself — at z18/lat52 a tile is ~94 m, so treating the
+    // canvas centre as the anchor drifts the map up to ~47 m per axis.
+    // Compute the anchor's offset from the canvas centre in ground metres
+    // so the typed coordinate is what lands on the model.
+    var nTiles = Math.pow(2, zoom);
+    var fracX = (lon + 180) / 360 * nTiles - cx;   // 0..1 inside centre tile
+    var rlat = lat * Math.PI / 180;
+    var fracY = (1 - Math.log(Math.tan(rlat) + 1/Math.cos(rlat)) / Math.PI) / 2 * nTiles - cy;
+    var anchorOffE = (fracX - 0.5) * metresPerTile;        // anchor east of canvas centre
+    var anchorOffN = (0.5 - fracY) * metresPerTile;        // north (tile y grows south)
+
     var tileSize = 256;
     var canvasSize = totalSide * tileSize;
     var canvas = document.createElement('canvas');
@@ -151,16 +163,21 @@
       mesh.castShadow = false;
       mesh.receiveShadow = false;
       mesh.matrixAutoUpdate = false;
-      // Position at model bbox centre, just below ground so the model doesn't
-      // z-fight with the plane.
+      // Position so the anchor (lat,lon) — not the canvas centre — sits at
+      // the model bbox centre, just below ground so the model doesn't
+      // z-fight with the plane. Rotation (true north) is about the mesh
+      // origin, so rotate the anchor offset along with it.
+      if (opts.trueNorthDeg) {
+        mesh.rotation.y = -opts.trueNorthDeg * Math.PI / 180;
+      }
       var bbox = _getModelBBox(modelId);
       if (bbox && !bbox.isEmpty()) {
         var c = bbox.getCenter(new THREE.Vector3());
-        mesh.position.set(c.x, bbox.min.y - 0.05, c.z);
-      }
-      // Rotate by model's true-north override (degrees)
-      if (opts.trueNorthDeg) {
-        mesh.rotation.y = -opts.trueNorthDeg * Math.PI / 180;
+        var th = mesh.rotation.y || 0;
+        // Local anchor offset (E, -N) in plane space, rotated into world.
+        var ax = anchorOffE * Math.cos(th) - anchorOffN * Math.sin(th);
+        var az = -anchorOffE * Math.sin(th) - anchorOffN * Math.cos(th);
+        mesh.position.set(c.x - ax, bbox.min.y - 0.05, c.z - az);
       }
       mesh.updateMatrix();
       clearBasemap();
