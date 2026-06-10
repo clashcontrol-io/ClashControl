@@ -2630,9 +2630,12 @@ function startApp() {
   // proven safe by the instancing precedent). Opaque geometry only:
   // per-instance opacity doesn't exist, and transparent sorting inside a
   // batch is wrong anyway.
-  var _CC_BATCH_MIN_MESHES = 5000;      // don't bother below this
-  var _CC_BATCH_FORCE_AT  = 20000;      // always batch above this
-  var _CC_BATCH_RATIO     = 10;         // geoUnique/elements pathology trigger
+  // Tuned against a real 9-model federation (48.5k draw calls · 6 fps):
+  // the pathology is cumulative — four models at 10-13k meshes each — so
+  // the per-model bar must be low enough to catch them all.
+  var _CC_BATCH_MIN_MESHES = 3000;      // don't bother below this
+  var _CC_BATCH_FORCE_AT  = 6000;       // always batch above this
+  var _CC_BATCH_RATIO     = 4;          // meshes-per-element pathology trigger
   var _CC_BATCH_MAX_INST  = 40000;      // per-batch caps → multiple batches
   var _CC_BATCH_MAX_VERTS = 4000000;
   var _CC_BATCH_MAX_IDX   = 12000000;
@@ -2648,7 +2651,9 @@ function startApp() {
       if (!mat || mat.transparent || (mat.opacity != null && mat.opacity < 0.99)) return;
       candidates.push(m);
     });
-    var ratio = elements.length ? (geoUnique || 0) / elements.length : 0;
+    // meshes-per-element works on every path (geoUnique is unavailable on
+    // cache restore); multi-geometry elements are what multiply draw calls.
+    var ratio = elements.length ? candidates.length / elements.length : 0;
     var pathological = candidates.length >= _CC_BATCH_FORCE_AT ||
       (candidates.length >= _CC_BATCH_MIN_MESHES && ratio > _CC_BATCH_RATIO) ||
       (window._ccForceBatch && candidates.length > 0); // test hook for CI
@@ -3274,7 +3279,12 @@ function startApp() {
     _ccActiveLoads.splice(0).forEach(function(l) {
       try { l.worker.terminate(); } catch(_) {}
       try { l.settle(null); } catch(_) {}
+      try { if (l.onAbort) l.onAbort(); } catch(_) {}
     });
+    // Belt-and-braces: clear the global loading flag so skeleton rows and
+    // the strip never stay stuck regardless of counter state.
+    window._ccModelLoading = false;
+    try { window.dispatchEvent(new CustomEvent('cc-model-loading', { detail: { loading: false } })); } catch(_) {}
     if (window._ccToast) window._ccToast('Loading cancelled.');
   };
 
@@ -3285,7 +3295,12 @@ function startApp() {
       var worker;
       try { worker = new Worker(_getIFCWorkerUrl()); }
       catch(e) { reject(e); return; }
-      var _loadReg = { worker: worker, settle: resolve };
+      var _loadReg = { worker: worker, settle: resolve,
+        // Cancelling kills the worker before its 'props' message — the
+        // caller's onProps gate (lazy-worker counter → loading strip /
+        // skeleton rows) must still be released or the UI stays in its
+        // loading state forever.
+        onAbort: function() { if (onProps) { try { onProps({}, 'aborted'); } catch (_) {} } } };
       _ccActiveLoads.push(_loadReg);
       var _unreg = function() { var i = _ccActiveLoads.indexOf(_loadReg); if (i !== -1) _ccActiveLoads.splice(i, 1); };
 
