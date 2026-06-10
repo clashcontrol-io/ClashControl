@@ -1467,6 +1467,19 @@ function startApp() {
     }).catch(function(e) { console.warn('Failed to read IndexedDB:', e); return []; });
   }
 
+  // Reload a partially-loaded (storey-scoped) model in full: fetch the
+  // stored file bytes and re-feed the normal pipeline with no scope. The
+  // loader's same-name path replaces the existing model in place.
+  window._ccReloadModelFull = function(modelId) {
+    var s = window._ccLatestState || {};
+    idbGetProjectFiles(s.activeProject || 'default').then(function(files) {
+      var f = files.find(function(x) { return x.id === modelId; });
+      if (!f || !f.buffer) { if (window._ccToast) window._ccToast('Original file not found in browser storage — re-add it via + Add.'); return; }
+      window._ccNextLoadScope = null;
+      if (window._ccLoadFiles) window._ccLoadFiles([new File([f.buffer], f.name)]);
+    });
+  };
+
   function idbDeleteProjectFiles(projectId) {
     return idbGetProjectFiles(projectId).then(function(files){
       files.forEach(function(f){ idbDeleteGeoCache(f.id); });
@@ -14998,6 +15011,9 @@ function startApp() {
         ${m._version>1 && html`<span style=${{fontSize:'0.57rem',color:'var(--accent)',background:'var(--accent-bg)',padding:'.05rem .25rem',borderRadius:3,flexShrink:0,fontWeight:600}}>v${m._version}</span>`}
         ${m._stub && html`<span style=${{fontSize:'0.63rem',color:'#f59e0b',background:'var(--pill-amber-bg)',padding:'.05rem .3rem',borderRadius:4,flexShrink:0}}>stub</span>`}
         ${m.stats && m.stats.loadType && html`<span style=${{fontSize:'0.57rem',padding:'1px 4px',borderRadius:3,background:'var(--accent-bg)',color:'var(--accent)',fontWeight:600,flexShrink:0}}>${m.stats.loadType}</span>`}
+        ${m.stats && m.stats.loadedScope && html`<button onClick=${function(e){e.stopPropagation();if(window._ccReloadModelFull)window._ccReloadModelFull(m.id);}}
+          title=${'Partial load: '+m.stats.loadedScope.join(', ')+' ('+(m.stats.scopedOutCount||0)+' elements skipped). Click to load the full model.'}
+          style=${{fontSize:'0.6rem',padding:'0 .3rem',borderRadius:99,background:'var(--color-warning-bg, #78350f)',color:'var(--color-warning-fg, #fcd34d)',border:'none',cursor:'pointer',flexShrink:0,fontFamily:'var(--font-body)'}}>partial</button>`}
         ${m.stats && m.stats.loadTime && html`<span style=${{fontSize:'0.63rem',color:'var(--text-faint)',flexShrink:0}}>${(m.stats.loadTime/1000).toFixed(1)}s</span>`}
         <button onClick=${function(){setOpen(!open)}} style=${{...S_BTN,padding:'0 2px',background:'none',color:'var(--text-faint)',fontSize:'0.69rem'}}>${open?'▲':'▼'}</button>
         <button onClick=${function(){if(!confirm('Remove "'+m.name+'" from this project?'))return;d({t:A.DEL_MODEL,id:m.id});idbDeleteFile(m.id);idbDeleteGeoCache(m.id);}} style=${{...S_BTN,padding:'0 2px',background:'none',color:'var(--text-faint)',fontSize:'0.69rem'}}>✕</button>
