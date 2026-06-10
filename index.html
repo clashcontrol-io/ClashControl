@@ -15082,6 +15082,16 @@ function startApp() {
               style=${{flex:1,fontSize:'.66rem',padding:'.22rem .4rem',background:(window._ccTiles3DActive && window._ccTiles3DActive())?'var(--bg-secondary)':'none',color:'var(--text-primary)',border:'1px solid var(--border)',borderRadius:'var(--radius-xs)',cursor:'pointer'}}>
               ${(window._ccTiles3DActive && window._ccTiles3DActive()) ? 'Remove 3D world context' : '\ud83c\udf0d 3D world context\u2026'}
             </button>
+            ${(window._ccTiles3DActive && window._ccTiles3DActive()) && html`<select
+              value=${String(window._ccTiles3DRange ? window._ccTiles3DRange() : 3000)}
+              onChange=${function(e){ if (window._ccSetTiles3DRange) window._ccSetTiles3DRange(Number(e.target.value) || 0); }}
+              title="Context range — tiles beyond this distance are never downloaded (saves Google tile quota and memory)"
+              style=${{fontSize:'.62rem',padding:'.18rem .2rem',background:'var(--bg-secondary)',color:'var(--text-secondary)',border:'1px solid var(--border)',borderRadius:'var(--radius-xs)',fontFamily:'var(--font-body)'}}>
+              <option value="1000">1 km</option>
+              <option value="3000">3 km</option>
+              <option value="10000">10 km</option>
+              <option value="0">\u221e</option>
+            </select>`}
           </div>`}
         </div>`}
         ${(s.referenceLayers && s.referenceLayers.length > 0) && html`<div style=${{marginTop:'.3rem',borderTop:'1px solid var(--hairline)',paddingTop:'.3rem'}}>

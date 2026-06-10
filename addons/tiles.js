@@ -17,6 +17,20 @@
   var TILES_CDN = 'https://cdn.jsdelivr.net/npm/3d-tiles-renderer@0.4.28';
   var _tiles = null;
   var _frameHandler = null;
+  var _tilesCam = null;   // proxy camera with clamped far plane = context range
+  var _rangeM = (function(){ try { return Number(localStorage.getItem('cc_tiles3d_range')) || 3000; } catch(_) { return 3000; } })();
+
+  // Context range: tiles are culled/LOD'd against a CLONE of the viewer
+  // camera whose far plane is clamped to the range — tiles beyond it are
+  // never considered visible, so they are never downloaded. Keeps Google
+  // tile quota (billed per request) and memory proportional to what the
+  // user actually wants to see.
+  window._ccSetTiles3DRange = function(meters) {
+    _rangeM = Number(meters) > 0 ? Number(meters) : Infinity;
+    try { localStorage.setItem('cc_tiles3d_range', String(_rangeM === Infinity ? 0 : _rangeM)); } catch(_) {}
+    _inv(3);
+  };
+  window._ccTiles3DRange = function() { return _rangeM; };
 
   function _S3() { return window._ccState3d || null; }
   function _inv(n) { if (typeof window._ccInvalidate === 'function') window._ccInvalidate(n || 2); }
@@ -78,9 +92,13 @@
       tiles.group.updateMatrix();
       tiles.group.userData._ccTiles3D = true;
 
-      tiles.setCamera(S.camera);
-      tiles.setResolutionFromRenderer(S.camera, S.renderer);
+      _tilesCam = S.camera.clone();
+      tiles.setCamera(_tilesCam);
+      tiles.setResolutionFromRenderer(_tilesCam, S.renderer);
       tiles.errorTarget = 12;
+      // Keep streaming bounded even at large ranges.
+      try { if (tiles.lruCache) { tiles.lruCache.maxBytesSize = 512 * 1024 * 1024; } } catch (_) {}
+      try { tiles.downloadQueue.maxJobs = 12; } catch (_) {}
 
       // Streaming progress must keep the render-on-demand loop alive.
       tiles.addEventListener('load-model', function() { _inv(2); });
@@ -95,7 +113,17 @@
         if (!_tiles) return;
         try {
           S.camera.updateMatrixWorld();
-          _tiles.setResolutionFromRenderer(S.camera, S.renderer);
+          // Mirror the live camera into the tiles proxy, clamping the far
+          // plane to the context range (drives both culling and LOD).
+          _tilesCam.position.copy(S.camera.position);
+          _tilesCam.quaternion.copy(S.camera.quaternion);
+          _tilesCam.fov = S.camera.fov;
+          _tilesCam.aspect = S.camera.aspect;
+          _tilesCam.near = S.camera.near;
+          _tilesCam.far = (_rangeM === Infinity) ? S.camera.far : Math.min(S.camera.far, _rangeM);
+          _tilesCam.updateProjectionMatrix();
+          _tilesCam.updateMatrixWorld(true);
+          _tiles.setResolutionFromRenderer(_tilesCam, S.renderer);
           _tiles.update();
         } catch (_) {}
       };
