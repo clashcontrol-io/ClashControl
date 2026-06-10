@@ -32214,6 +32214,9 @@ function startApp() {
         alert('Folder watching requires Chrome or Edge.');
         return;
       }
+      // The browser's File System Access prompt sounds alarming ("view and
+      // copy files") — set expectations before it appears: read-only, local.
+      if (window._ccToast) window._ccToast('Your browser will ask permission for the folder — access is read-only and stays on your device.');
       var dirHandle;
       try { dirHandle = await window.showDirectoryPicker({ mode: 'read' }); }
       catch(e) { return; }
