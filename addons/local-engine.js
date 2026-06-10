@@ -85,6 +85,7 @@
   // version changes, which the UI treats as "force reconnect" because
   // the new engine may have a different port or backend set.
   function _applyStatus(j, d) {
+    try { localStorage.setItem('cc_local_engine_seen', '1'); } catch(e){}
     var version = j && j.version || null;
     var cores = j && j.cores || null;
     var backends = j && j.backends || null;
@@ -332,7 +333,13 @@
       }
       // Passive probe only — we can't fire the URL scheme without a
       // user gesture, so the actual connect happens on button click or onEnable.
-      _checkLocalEngine(dispatch);
+      // Boot-time probe only when this machine has ever seen the engine:
+      // for everyone else the localhost fetch is guaranteed ECONNREFUSED
+      // console noise on every page load. First-time connect still probes
+      // via the panel button / onEnable.
+      var _seen = false;
+      try { _seen = localStorage.getItem('cc_local_engine_seen') === '1'; } catch(e){}
+      if (wasActive || _seen) _checkLocalEngine(dispatch);
       // Periodic update check every 30 minutes while the addon is active.
       _updateInterval = setInterval(function() {
         var le = (window._ccLatestState || {}).localEngine;
