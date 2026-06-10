@@ -26,8 +26,14 @@
     return 'addons/';
   }
 
+  function _publishGlobals() {
+    window._ccWasmIntersect = _wasmIntersect;
+    window._ccWasmMinDist = _wasmMinDist;
+    window._ccWasmBatchIntersect = _wasmBatchIntersect;
+  }
+
   function _loadWasm() {
-    if (_wasm) return Promise.resolve(_wasm);
+    if (_wasm) { _publishGlobals(); return Promise.resolve(_wasm); }
     if (_failed) return Promise.reject(new Error('WASM engine previously failed to load'));
     if (_loading) {
       return new Promise(function(resolve, reject) {
@@ -45,6 +51,7 @@
       // The wasm-pack --target web output has an init() default export
       return mod.default(base + 'clashcontrol_engine_bg.wasm').then(function() {
         _wasm = mod;
+        _publishGlobals();
         _loading = false;
         _loadTime = Math.round(performance.now() - t0);
         console.log('%c[WASM Engine] Loaded in ' + _loadTime + 'ms (35 KB)', 'color:#22c55e;font-weight:bold');
@@ -66,7 +73,11 @@
    * @param {Float32Array} trisB - flat xyz, 9 floats per tri
    * @returns {Array|false} [cx, cy, cz, depth] or false
    */
-  window._ccWasmIntersect = function(trisA, trisB) {
+  // NOT assigned to window until the WASM module has initialized: the core
+  // clash loop treats `typeof window._ccWasmIntersect === 'function'` as
+  // "WASM available, skip the JS engine", so an eager assignment would make
+  // a failed/in-flight load report zero clashes instead of falling back.
+  function _wasmIntersect(trisA, trisB) {
     if (!_wasm) return false;
     try {
       var result = _wasm.mesh_intersect(trisA, trisB, 1e-6);
@@ -86,7 +97,7 @@
    * @param {Float64Array} [outPair] - optional 6-element buffer [ax,ay,az, bx,by,bz]
    * @returns {number} distance, or Infinity if beyond threshold
    */
-  window._ccWasmMinDist = function(vertsA, vertsB, threshold, outPair) {
+  function _wasmMinDist(vertsA, vertsB, threshold, outPair) {
     if (!_wasm) return Infinity;
     try {
       var result = _wasm.mesh_min_distance(vertsA, vertsB, threshold);
@@ -109,7 +120,7 @@
    * @param {Uint32Array} offsets - [start0, end0, start1, end1, ...] into allTris
    * @returns {Array} [{meshIdx, point:[cx,cy,cz], depth}, ...]
    */
-  window._ccWasmBatchIntersect = function(trisA, allTris, offsets) {
+  function _wasmBatchIntersect(trisA, allTris, offsets) {
     if (!_wasm) return [];
     try {
       var raw = _wasm.batch_intersect(trisA, allTris, offsets, 1e-6);
@@ -152,7 +163,7 @@
       icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/></svg>',
 
       initState: {
-        wasmEngine: { loaded: false, loading: false, failed: false, loadTime: 0 }
+        wasmEngine: { active: false, loaded: false, loading: false, failed: false, loadTime: 0 }
       },
 
       reducerCases: {
@@ -165,10 +176,21 @@
         // Pre-load WASM immediately
         d({ t: 'UPD_WASM_ENGINE', u: { loading: true } });
         _loadWasm().then(function() {
-          d({ t: 'UPD_WASM_ENGINE', u: { loaded: true, loading: false, loadTime: _loadTime } });
+          // `active` is what the engine pill + Settings selector read.
+          d({ t: 'UPD_WASM_ENGINE', u: { active: true, loaded: true, loading: false, loadTime: _loadTime } });
         }).catch(function() {
-          d({ t: 'UPD_WASM_ENGINE', u: { failed: true, loading: false } });
+          d({ t: 'UPD_WASM_ENGINE', u: { active: false, failed: true, loading: false } });
         });
+      },
+
+      destroy: function() {
+        // Unpublish so the core clash loop falls back to the JS engine.
+        delete window._ccWasmIntersect;
+        delete window._ccWasmMinDist;
+        delete window._ccWasmBatchIntersect;
+        if (typeof window._ccDispatch === 'function') {
+          try { window._ccDispatch({ t: 'UPD_WASM_ENGINE', u: { active: false } }); } catch (_) {}
+        }
       },
 
       panel: function(html, state, d) {
@@ -182,7 +204,7 @@
         if (we.failed) {
           return html`<div style=${{ fontSize: '0.69rem', color: '#fca5a5' }}>
             WASM engine failed to load. Using JavaScript fallback.
-            <button onClick=${function() { d({ t: 'UPD_WASM_ENGINE', u: { failed: false, loading: true } }); _failed = false; _loadWasm().then(function() { d({ t: 'UPD_WASM_ENGINE', u: { loaded: true, loading: false, loadTime: _loadTime } }); }).catch(function() { d({ t: 'UPD_WASM_ENGINE', u: { failed: true, loading: false } }); }); }}
+            <button onClick=${function() { d({ t: 'UPD_WASM_ENGINE', u: { failed: false, loading: true } }); _failed = false; _loadWasm().then(function() { d({ t: 'UPD_WASM_ENGINE', u: { active: true, loaded: true, loading: false, loadTime: _loadTime } }); }).catch(function() { d({ t: 'UPD_WASM_ENGINE', u: { active: false, failed: true, loading: false } }); }); }}
               style=${{ marginTop: '.3rem', padding: '.2rem .5rem', borderRadius: 5, fontSize: '0.69rem', fontWeight: 600, cursor: 'pointer', border: 'none', background: 'var(--accent)', color: '#fff', fontFamily: 'inherit', display: 'block' }}>Retry</button>
           </div>`;
         }
