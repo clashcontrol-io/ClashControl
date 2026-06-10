@@ -1958,7 +1958,9 @@ function startApp() {
     function _fromKeepCache() {
       if (!('caches' in window)) return Promise.reject(new Error('no Cache API'));
       return caches.open(KEEP_CACHE)
-        .then(function(c) { return c.match(wasmUrl); })
+        // Explicit Request: Cache.match does URL matching, but a bare string
+        // arg trips CodeQL's string-as-regexp model (js/incomplete-hostname-regexp).
+        .then(function(c) { return c.match(new Request(wasmUrl)); })
         .then(function(resp) {
           if (!resp) throw new Error('not in keep-cache');
           console.log('[IFC] web-ifc.wasm served from offline keep-cache');
