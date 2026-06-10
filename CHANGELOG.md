@@ -1,5 +1,8 @@
 # Changelog
 
+## v5.19.68 (2026-06-10)
+- Codebase review: connect the WASM engine + fix verified open ends (#596)
+
 ## v5.19.67 (2026-06-09)
 - feat(visibility): multi-sample target + inverse coverage + presets + NL + panel
 
