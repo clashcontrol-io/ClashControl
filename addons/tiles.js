@@ -41,7 +41,11 @@
     if (!text) return;
     var el = document.createElement('div');
     el.textContent = text;
-    el.style.cssText = 'position:fixed;left:8px;bottom:8px;z-index:30;font:10px/1.4 sans-serif;color:#475569;background:rgba(255,255,255,.75);padding:1px 6px;border-radius:4px;pointer-events:none';
+    el.style.cssText = 'position:fixed;left:8px;bottom:8px;z-index:30;' +
+      'font:var(--text-2xs, 10px)/1.4 var(--font-body, sans-serif);' +
+      'color:var(--text-muted);background:var(--bg-secondary);' +
+      'border:1px solid var(--border-subtle);opacity:.85;' +
+      'padding:1px 6px;border-radius:var(--radius-xs, 4px);pointer-events:none';
     document.body.appendChild(el);
     _attrEl = el;
   }
