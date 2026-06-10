@@ -70,6 +70,12 @@ The file follows this layout top to bottom:
 - It auto-increments patch, updates `version.json`, injects version into `index.html`, updates `README.md` version badge, and appends commit message to `CHANGELOG.md`
 - Current version: check `version.json`
 
+### Globals discipline
+There are ~280 `window._cc*` globals — do not add to the sprawl casually.
+- `window._cc*` is for **internal plumbing only** (core ↔ addon contracts). Always guard calls with `typeof window._ccFoo === 'function'`.
+- Anything meant for users, automation, or external tools goes on the **`window.ClashControl.*` namespace** (defined near `_ccViewport` in index.html) as a thin guarded alias — follow the existing pattern there.
+- Before adding a new global, check whether an existing one already covers it.
+
 ### When making changes
 - **Always edit `index.html`** — that's where all the code is
 - **Call `invalidate()`** after any change that affects the 3D view (camera, materials, visibility, highlights, ghost, grid, etc.)
