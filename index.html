@@ -3521,6 +3521,55 @@ function startApp() {
   window._ccGetBVH       = _getBVH;
   window._ccGetWorldTris = _getWorldTris;
 
+  // ── Engine A/B benchmark (console helper) ────────────────────────
+  // Times the narrow phase JS vs WASM on real overlapping pairs from the
+  // loaded models. Run AFTER a detection (elements get their broad-phase
+  // .box there). A hit-count mismatch between the two engines is flagged —
+  // this doubles as the JS↔WASM parity check on real geometry.
+  window._ccBenchEngine = function(pairLimit) {
+    var lim = pairLimit || 200;
+    var s = window._ccLatestState;
+    if (!s || !s.models || !s.models.length) { console.warn('[bench] Load a model first'); return null; }
+    var els = [];
+    s.models.forEach(function(m){ (m.elements||[]).forEach(function(el){ if (el.box && el.meshes && el.meshes.length) els.push(el); }); });
+    if (els.length < 2) { console.warn('[bench] Run a clash detection first (elements need broad-phase boxes)'); return null; }
+    var pairs = [];
+    outer: for (var i = 0; i < els.length; i++) {
+      var A = els[i];
+      for (var j = i + 1; j < els.length; j++) {
+        var B = els[j];
+        if (A.box.max.x < B.box.min.x || B.box.max.x < A.box.min.x ||
+            A.box.max.y < B.box.min.y || B.box.max.y < A.box.min.y ||
+            A.box.max.z < B.box.min.z || B.box.max.z < A.box.min.z) continue;
+        pairs.push([A, B]);
+        if (pairs.length >= lim) break outer;
+      }
+    }
+    if (!pairs.length) { console.warn('[bench] No overlapping pairs found'); return null; }
+    // Warm the tri/BVH caches so both passes time pure narrow-phase work.
+    pairs.forEach(function(p){ _getWorldTris(p[0]); _getWorldTris(p[1]); _getBVH(p[0]); _getBVH(p[1]); });
+    function pass() {
+      var hits = 0, t0 = performance.now();
+      pairs.forEach(function(p){ if (_meshesIntersect(p[0], p[1])) hits++; });
+      return { ms: Math.round((performance.now() - t0) * 10) / 10, hits: hits };
+    }
+    var savedI = window._ccWasmIntersect, savedM = window._ccWasmMinDist;
+    var wasm = (typeof savedI === 'function') ? pass() : null;
+    delete window._ccWasmIntersect; delete window._ccWasmMinDist;
+    var js;
+    try { js = pass(); } finally {
+      if (savedI) window._ccWasmIntersect = savedI;
+      if (savedM) window._ccWasmMinDist = savedM;
+    }
+    var out = { pairs: pairs.length, js: js, wasm: wasm,
+      speedup: wasm ? Math.round(js.ms / Math.max(wasm.ms, 0.01) * 100) / 100 : null };
+    console.log('[bench] ' + pairs.length + ' overlapping pairs — JS ' + js.ms + 'ms (' + js.hits + ' hits)'
+      + (wasm ? (' · WASM ' + wasm.ms + 'ms (' + wasm.hits + ' hits) · speedup ×' + out.speedup
+        + (js.hits !== wasm.hits ? ' · ⚠ HIT MISMATCH — engines disagree, investigate' : ''))
+        : ' · WASM not loaded'));
+    return out;
+  };
+
   function _bvhTraverseAll(nA, trisA, nB, trisB, pts, maxPts, maxDepth, earlyExit) {
     if (pts.length >= maxPts) return;
     if (nA.mnx>nB.mxx||nA.mxx<nB.mnx||
