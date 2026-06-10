@@ -207,9 +207,10 @@
     // North rotation comes from the loaded IFC (IfcMapConversion grid
     // rotation wins over TrueNorth, which is often left default). The
     // fresh model value overrides any previously persisted trueNorthDeg —
-    // the model is the source of truth, and this self-heals projects that
-    // saved a value under an older sign convention.
-    if (typeof window._ccModelNorthDeg === 'function') {
+    // EXCEPT when the user dialled it in manually (northManual): Revit
+    // project-north exports carry no usable north at all, so the manual
+    // value is the only truth there.
+    if (!geo.northManual && typeof window._ccModelNorthDeg === 'function') {
       var _tn = window._ccModelNorthDeg(modelId);
       if (_tn != null) geo = Object.assign({}, geo, {trueNorthDeg: _tn});
     }
@@ -225,7 +226,8 @@
     }
     var georef = {
       refLat:geo.refLat, refLon:geo.refLon, refElev:geo.refElev||0,
-      trueNorthDeg:geo.trueNorthDeg||0, radiusM:radiusM, source:geo.source||'manual'
+      trueNorthDeg:geo.trueNorthDeg||0, northManual:!!geo.northManual,
+      radiusM:radiusM, source:geo.source||'manual'
     };
     if (window._ccDispatch) {
       window._ccDispatch({t:'SET_MODEL_GEO', id:modelId, u:georef});
