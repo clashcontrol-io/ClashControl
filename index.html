@@ -6273,7 +6273,8 @@ function startApp() {
         e.preventDefault();
         var fp = window._ccCurrentFloorPlan;
         if(fp){
-          var delta = e.deltaY > 0 ? -0.15 : 0.15;
+          // delta is metres in world space; fp.elevation is in storey units.
+          var delta = (e.deltaY > 0 ? -0.15 : 0.15) / (window._ccPlanGeoFactor || 1);
           var newElev = fp.elevation + delta;
           window._ccDispatch({t:A.FLOOR_PLAN,v:Object.assign({},fp,{elevation:newElev})});
         }
@@ -10120,7 +10121,7 @@ function startApp() {
         if (_fpDrag.didDrag && _fpDrag.lastCutAt != null && window._ccDispatch) {
           var fp = (window._ccLatestState||{}).floorPlan;
           if (fp) {
-            var nextCutHeight = Math.max(0.1, Math.min(50, _fpDrag.lastCutAt - fp.elevation));
+            var nextCutHeight = Math.max(0.1, Math.min(50, _fpDrag.lastCutAt - fp.elevation * (window._ccPlanGeoFactor || 1)));
             window._ccDispatch({t:A.FLOOR_PLAN, v:Object.assign({}, fp, {cutHeight: nextCutHeight})});
           }
         }
@@ -11458,7 +11459,14 @@ function startApp() {
         return;
       }
       var fp = s.floorPlan;
-      var cutElev = fp.elevation;
+      // Storey elevations come straight from IFC storeyData and are often in
+      // mm while geometry is metres (this model: "01 bk ruwe vloer" = 3720).
+      // Without the storey→geometry factor the cut plane sits kilometres up
+      // and the plan view shows nothing. Same conversion the 2D sheet applies.
+      var _planGf = 1;
+      try { _planGf = _ccStoreyToGeoFactor(s.models) || 1; } catch(_) {}
+      window._ccPlanGeoFactor = _planGf;
+      var cutElev = (Number(fp.elevation) || 0) * _planGf;
       var cutHeight = fp.cutHeight || 1.2;
       var cutAt = cutElev + cutHeight;
       window._ccFloorPlanActive = true;
@@ -12425,7 +12433,7 @@ function startApp() {
       ${html`<${ViewCube} state3d=${state3d} theme=${s.prefs.theme||'light'} />`}
       ${s.floorPlan && html`<div style=${{...P,top:'9.75rem',right:'var(--space-2)',background:'var(--accent)',color:'#fff',pointerEvents:'auto',cursor:'pointer',display:'flex',alignItems:'center',gap:'var(--space-2)'}}
         onClick=${function(){d({t:A.FLOOR_PLAN,v:null})}}>
-        <span>3D Section: ${s.floorPlan.storeyName} · ${_ccFormatElev(s.floorPlan.elevation+(s.floorPlan.cutHeight||1.2))}</span>
+        <span>3D Section: ${s.floorPlan.storeyName} · ${_ccFormatElev(s.floorPlan.elevation+(s.floorPlan.cutHeight||1.2)/(window._ccPlanGeoFactor||1))}</span>
         <span style=${{fontSize:'var(--text-xs)',opacity:.7}} title="Exit 3D section" aria-label="Exit floor plan view">✕</span>
       </div>`}
 
@@ -23367,8 +23375,10 @@ function startApp() {
 
     function plotClashes() {
       if (!activeSheet) return;
-      var lo = activeSheet.elevation;
-      var hi = activeSheet.elevation + (activeSheet.cutHeight || 1.2);
+      // Clash points are world metres; sheet elevations are storey units.
+      var _pgf = activeSheet._geoFactor || _ccStoreyToGeoFactor(s.models) || 1;
+      var lo = (Number(activeSheet.elevation) || 0) * _pgf;
+      var hi = lo + (activeSheet.cutHeight || 1.2);
       var pins = [];
       (s.clashes || []).forEach(function(c) {
         if (!c.point || c.point.length < 3) return;
