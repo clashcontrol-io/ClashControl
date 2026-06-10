@@ -2686,6 +2686,7 @@ function startApp() {
       b.perObjectFrustumCulled = true;
       b.userData._isCCBatch = true;
       b.userData.batchExprIds = [];
+      b.userData.batchGeomIds = [];
       b.userData._origColors = [];
       batches.push(b);
       return b;
@@ -2722,6 +2723,7 @@ function startApp() {
               b.setMatrixAt(iidI, _tmpIM);
               b.setColorAt(iidI, _col);
               b.userData.batchExprIds[iidI] = exprIds[k];
+              b.userData.batchGeomIds[iidI] = gidI;
               b.userData._origColors[iidI] = _col.getHex();
               nBatched++;
             }
@@ -2736,6 +2738,7 @@ function startApp() {
           _col.copy(m.material.color || _col.set(0xcccccc));
           b.setColorAt(iid, _col);
           b.userData.batchExprIds[iid] = m.userData.expressId;
+          b.userData.batchGeomIds[iid] = gid;
           b.userData._origColors[iid] = _col.getHex();
           m.userData._batchRef = { bMesh: b, instanceId: iid };
           removed[m.uuid] = true;
@@ -9852,6 +9855,7 @@ function startApp() {
         // Prefer front-face hits (prevents DoubleSide back-face of a beam
         // behind a wall from stealing the click). Fall back to all hits if
         // the geometry has inverted winding or no front-face hit exists.
+        var _pickTmpSphere = new THREE.Sphere();
         var frontHits = hits.filter(_isFrontFaceHit);
         var candidateHits = frontHits.length > 0 ? frontHits : hits;
         // Curtain-wall tiebreak: when several hits land within ~2 cm of the
@@ -9863,14 +9867,22 @@ function startApp() {
           var _t0 = candidateHits[0].distance;
           var _near = candidateHits.filter(function(h){ return h.distance - _t0 < 0.02; });
           if (_near.length > 1) {
-            _near.sort(function(a, b){
-              var ga = a.object.geometry, gb = b.object.geometry;
-              if (ga && !ga.boundingSphere) { try { ga.computeBoundingSphere(); } catch(_){} }
-              if (gb && !gb.boundingSphere) { try { gb.computeBoundingSphere(); } catch(_){} }
-              var ra = (ga && ga.boundingSphere) ? ga.boundingSphere.radius : Infinity;
-              var rb = (gb && gb.boundingSphere) ? gb.boundingSphere.radius : Infinity;
-              return ra - rb;
-            });
+            var _hitRadius = function(h){
+              var o = h.object;
+              if (o.userData && o.userData._isCCBatch && h.batchId != null) {
+                // Whole-batch boundingSphere spans the model — use the hit
+                // instance's own geometry bounds.
+                var gidB = (o.userData.batchGeomIds || [])[h.batchId];
+                if (gidB != null && o.getBoundingSphereAt) {
+                  try { return o.getBoundingSphereAt(gidB, _pickTmpSphere).radius; } catch(_){}
+                }
+                return Infinity;
+              }
+              var g = o.geometry;
+              if (g && !g.boundingSphere) { try { g.computeBoundingSphere(); } catch(_){} }
+              return (g && g.boundingSphere) ? g.boundingSphere.radius : Infinity;
+            };
+            _near.sort(function(a, b){ return _hitRadius(a) - _hitRadius(b); });
             // Splice the winner to the front of candidateHits.
             var _winner = _near[0];
             var _wi = candidateHits.indexOf(_winner);
