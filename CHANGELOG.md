@@ -1,5 +1,8 @@
 # Changelog
 
+## v5.20.2 (2026-06-10)
+- Loader worker fix, plan-cut units, scoped loading, Tauri Phase 0, section gizmo r180 (#599)
+
 ## v5.20.1 (2026-06-10)
 - fix(restore): spikey model after hard refresh — scale-invariant hash collisions (#598)
 
