@@ -1,5 +1,8 @@
 # Changelog
 
+## v5.20.5 (2026-06-10)
+- perf(batch)+fix(hover): fold small instanced groups + per-instance hover on batches
+
 ## v5.20.4 (2026-06-10)
 - fix(loader): Cancel left the UI in loading state — skeleton rows stuck
 
