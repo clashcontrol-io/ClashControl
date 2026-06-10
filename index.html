@@ -1797,7 +1797,10 @@ function startApp() {
           window._ccRestoreInstOptOutWarned = true;
         }
       } else {
-        try { meshes = _buildInstancedMeshes(elements, meshes).meshes; }
+        try {
+          meshes = _buildInstancedMeshes(elements, meshes).meshes;
+          meshes = _ccBatchPathological(elements, meshes, 0).meshes;
+        }
         catch(e){ console.warn('[restore] instancing skipped:', e); }
       }
     }
@@ -2615,6 +2618,124 @@ function startApp() {
     return {meshes:filtered, groups:nGroups, instanced:nInstanced};
   }
 
+  // ── BatchedMesh for pathological models ─────────────────────────
+  // Models like facade cladding (74k UNIQUE geometries on 2.5k elements,
+  // zero instancing potential) drown the GPU in draw calls. r180's
+  // THREE.BatchedMesh collapses them into a handful of draws while every
+  // element stays individually addressable — setVisibleAt (hide),
+  // setColorAt (color), raycast batchId (pick) — which is exactly where
+  // the hand-rolled chunk-merge (removed in 704837f) kept breaking.
+  // Original per-element meshes are kept OFF-SCENE in element.meshes[]
+  // (clash engine, serialization and the selection outline read those;
+  // proven safe by the instancing precedent). Opaque geometry only:
+  // per-instance opacity doesn't exist, and transparent sorting inside a
+  // batch is wrong anyway.
+  var _CC_BATCH_MIN_MESHES = 5000;      // don't bother below this
+  var _CC_BATCH_FORCE_AT  = 20000;      // always batch above this
+  var _CC_BATCH_RATIO     = 10;         // geoUnique/elements pathology trigger
+  var _CC_BATCH_MAX_INST  = 40000;      // per-batch caps → multiple batches
+  var _CC_BATCH_MAX_VERTS = 4000000;
+  var _CC_BATCH_MAX_IDX   = 12000000;
+
+  function _ccBatchPathological(elements, meshes, geoUnique) {
+    if (typeof THREE.BatchedMesh !== 'function') return {meshes:meshes, batches:0, batched:0};
+    var candidates = [];
+    meshes.forEach(function(m) {
+      if (!m.isMesh || m.isInstancedMesh || m.isBatchedMesh) return;
+      if (m.userData._instanceRef || m.userData.expressId == null) return;
+      var g = m.geometry, mat = m.material;
+      if (!g || !g.index || !g.attributes.position) return;
+      if (!mat || mat.transparent || (mat.opacity != null && mat.opacity < 0.99)) return;
+      candidates.push(m);
+    });
+    var ratio = elements.length ? (geoUnique || 0) / elements.length : 0;
+    var pathological = candidates.length >= _CC_BATCH_FORCE_AT ||
+      (candidates.length >= _CC_BATCH_MIN_MESHES && ratio > _CC_BATCH_RATIO) ||
+      (window._ccForceBatch && candidates.length > 0); // test hook for CI
+    if (!pathological) return {meshes:meshes, batches:0, batched:0};
+
+    // Pack into capped batches. One shared white material — the source
+    // material colour moves to the per-instance colour, so render-style
+    // material swaps keep working and elements never visually blend.
+    var batches = [], removed = {};
+    var cur = null;
+    function _newBatch(seed) {
+      var instCap = Math.min(_CC_BATCH_MAX_INST, seed.count);
+      var b = new THREE.BatchedMesh(instCap, seed.verts, seed.idx,
+        new THREE.MeshPhongMaterial({ color: 0xffffff, side: THREE.DoubleSide }));
+      b.frustumCulled = false;             // whole-batch box is huge; per-instance culling below
+      b.perObjectFrustumCulled = true;
+      b.userData._isCCBatch = true;
+      b.userData.batchExprIds = [];
+      b.userData._origColors = [];
+      batches.push(b);
+      return b;
+    }
+    // Pre-measure totals in capped windows
+    var win = { count:0, verts:0, idx:0, items:[] }, wins = [win];
+    candidates.forEach(function(m) {
+      var v = m.geometry.attributes.position.count, ix = m.geometry.index.count;
+      if (win.count >= _CC_BATCH_MAX_INST || win.verts + v > _CC_BATCH_MAX_VERTS || win.idx + ix > _CC_BATCH_MAX_IDX) {
+        win = { count:0, verts:0, idx:0, items:[] }; wins.push(win);
+      }
+      win.count++; win.verts += v; win.idx += ix; win.items.push(m);
+    });
+    var nBatched = 0;
+    wins.forEach(function(w) {
+      if (!w.items.length) return;
+      var b = _newBatch(w);
+      var _col = new THREE.Color();
+      w.items.forEach(function(m) {
+        try {
+          var gid = b.addGeometry(m.geometry);
+          var iid = b.addInstance(gid);
+          m.updateMatrix();
+          b.setMatrixAt(iid, m.matrix);
+          _col.copy(m.material.color || _col.set(0xcccccc));
+          b.setColorAt(iid, _col);
+          b.userData.batchExprIds[iid] = m.userData.expressId;
+          b.userData._origColors[iid] = _col.getHex();
+          m.userData._batchRef = { bMesh: b, instanceId: iid };
+          removed[m.uuid] = true;
+          nBatched++;
+        } catch (e) { /* capacity edge — leave this mesh per-element */ }
+      });
+      _ccBakeMesh(b);
+    });
+    if (!nBatched) return {meshes:meshes, batches:0, batched:0};
+    var filtered = meshes.filter(function(m) { return !removed[m.uuid]; });
+    batches.forEach(function(b) { filtered.push(b); });
+    console.log('%c[Batch] ' + nBatched + ' meshes \u2192 ' + batches.length + ' BatchedMesh draw group(s)', 'color:#22c55e;font-weight:bold');
+    return {meshes:filtered, batches:batches.length, batched:nBatched};
+  }
+
+  // Iterate every batched instance under a model group (or the whole scene
+  // group). fn(batch, instanceId, expressId, modelId).
+  function _ccForEachBatchInstance(root, fn) {
+    if (!root) return;
+    root.traverse(function(o) {
+      if (!o.userData || !o.userData._isCCBatch) return;
+      var modelId = o.parent && o.parent.userData ? o.parent.userData.modelId : null;
+      var ids = o.userData.batchExprIds || [];
+      for (var i = 0; i < ids.length; i++) {
+        if (ids[i] != null) fn(o, i, ids[i], modelId);
+      }
+    });
+  }
+  window._ccForEachBatchInstance = _ccForEachBatchInstance;
+
+  // Per-instance visibility on batches is one bit shared by three hide
+  // sources (class / storey / temp) — union them here. Keys: modelId_eid
+  // for class+storey, bare eid for temp (it is model-agnostic).
+  var _ccBatchHidden = { class: {}, storey: {}, temp: {} };
+  function _ccBatchApplyVisibility(root) {
+    _ccForEachBatchInstance(root, function(b, i, eid, mid) {
+      var k = (mid || '') + '_' + eid;
+      var hidden = !!(_ccBatchHidden.class[k] || _ccBatchHidden.storey[k] || _ccBatchHidden.temp[eid]);
+      try { b.setVisibleAt(i, !hidden); } catch (_) {}
+    });
+  }
+
   // Module-level material cache shared across all IFC + GLB loads. Same RGBA
   // → one MeshPhongMaterial across every model. Before this, each loadIFC call
   // had its own matCache, so loading the same file twice doubled the material
@@ -2862,8 +2983,10 @@ function startApp() {
             // clean signal on what's failing post-r180.
             var _instResult = _buildInstancedMeshes(elements, meshes);
             meshes = _instResult.meshes;
-            var loadTime = Math.round(performance.now() - loadStart);
             var _geoUnique = Object.keys(geoCache).length;
+            var _batchRes = _ccBatchPathological(elements, meshes, _geoUnique);
+            meshes = _batchRes.meshes;
+            var loadTime = Math.round(performance.now() - loadStart);
             var stats = {loadTime:loadTime, fileSize:buffer.byteLength, elementCount:elements.length, meshCount:meshes.length, geoUnique:_geoUnique, geoReused:_geoReused, instancedGroups:_instResult.groups, instancedElements:_instResult.instanced, phases:_lp.phases, loadType:'IFC', loadedScope:(_scopeSet ? scope.storeys : null), scopedOutCount:_scopedOut};
             (function() {
               var ph = _lp.phases, prev = 0;
@@ -3267,6 +3390,8 @@ function startApp() {
           var _sm = _ccStripSurveyMarkers(elements, meshes); elements = _sm.elements; meshes = _sm.meshes;
           var _instResult = _buildInstancedMeshes(elements, meshes);
           meshes = _instResult.meshes;
+          var _batchRes = _ccBatchPathological(elements, meshes, msg.geoUnique || 0);
+          meshes = _batchRes.meshes;
 
           var loadTime = Math.round(performance.now() - loadStart);
           var phases = msg.phases || {};
@@ -7323,6 +7448,34 @@ function startApp() {
           if(_isGhostMat(obj.material)) return; // already ghosted
           var meshModelId = obj.parent && obj.parent.userData && obj.parent.userData.modelId;
 
+          if(obj.userData._isCCBatch) {
+            // Batched model: ghost the whole batch material, split kept
+            // elements out as real meshes from their off-scene originals
+            // (element.meshes — same proxy source the outline uses).
+            var bIds = obj.userData.batchExprIds || [];
+            var bSplit = [], bHiddenIdx = [];
+            for(var bi=0; bi<bIds.length; bi++){
+              var beid = bIds[bi]; if(beid==null) continue;
+              var bkeep = keepAny[beid] || (keepScoped[beid] && meshModelId && keepScoped[beid][meshModelId]);
+              if(!bkeep) continue;
+              var pm = (typeof _ccProxyMeshFor==='function') ? _ccProxyMeshFor(beid, meshModelId) : null;
+              if(pm && pm.geometry){
+                var bm = new THREE.Mesh(pm.geometry, pm.material);
+                bm.applyMatrix4(pm.matrix);
+                _ccBakeMesh(bm);
+                bm.userData.expressId = beid;
+                bm.userData._splitOut = true;
+                obj.parent.add(bm);
+                bSplit.push(bm);
+              }
+              try { obj.setVisibleAt(bi, false); } catch(_){}
+              bHiddenIdx.push(bi);
+            }
+            _ghostedMeshes.push({mesh:null, bMesh:obj, origMaterial:obj.material, splitOuts:bSplit, bHiddenIdx:bHiddenIdx});
+            obj.material = _makeGhostClone(obj.material);
+            return;
+          }
+
           if(obj.isInstancedMesh) {
             var exprIds = obj.userData.instanceExprIds || [];
             var ghostMat = _makeGhostClone(obj.material);
@@ -7365,6 +7518,13 @@ function startApp() {
         _ghostedMeshes.forEach(function(g){
           if(g._keptProxies){
             g._keptProxies.forEach(function(m){ if(m.parent) m.parent.remove(m); });
+            return;
+          }
+          if(g.bMesh){
+            g.bMesh.material = g.origMaterial;
+            (g.splitOuts||[]).forEach(function(sm){ if(sm.parent) sm.parent.remove(sm); });
+            (g.bHiddenIdx||[]).forEach(function(bi){ try { g.bMesh.setVisibleAt(bi, true); } catch(_){} });
+            _ccBatchApplyVisibility(g.bMesh.parent || g.bMesh);
             return;
           }
           if(g.iMesh){
@@ -7436,6 +7596,8 @@ function startApp() {
 
       var _tempHiddenMeshes = [];
       window._ccTempHide = function(expressIds) {
+        (expressIds || []).forEach(function(id){ _ccBatchHidden.temp[id] = true; });
+        _ccBatchApplyVisibility(S.mg);
         if(!expressIds||!expressIds.length||!S.mg) return;
         var idSet = {};
         expressIds.forEach(function(id){idSet[id]=true;});
@@ -7452,6 +7614,8 @@ function startApp() {
       window._ccTempUnhide = function() {
         _tempHiddenMeshes.forEach(function(m){ m.visible = true; });
         _tempHiddenMeshes = [];
+        _ccBatchHidden.temp = {};
+        _ccBatchApplyVisibility(S.mg);
         invalidate();
       };
       window._ccIsolate = function(expressIds) {
@@ -9606,6 +9770,10 @@ function startApp() {
           var hInst = h.instanceId != null ? h.instanceId : -1;
           if(hEid==null && h.object.isInstancedMesh && hInst >= 0)
             hEid = (h.object.userData.instanceExprIds || [])[hInst];
+          if(hEid==null && h.object.userData._isCCBatch && h.batchId != null) {
+            hEid = (h.object.userData.batchExprIds || [])[h.batchId];
+            hInst = h.batchId;
+          }
           return hEid != null ? {eid:hEid, instId:hInst} : null;
         }
         // Helper: true when the hit face is visible from the camera
@@ -10595,7 +10763,7 @@ function startApp() {
         S.mg.traverse(function(obj){
           if(obj.isMesh && obj.parent && obj.parent.userData.modelId && !obj.parent.visible) { obj.visible = false; return; }
           if(!obj.isMesh) return;
-          if(obj.userData.expressId==null) return;
+          if(obj.userData.expressId==null) { if(obj.userData._isCCBatch) obj.visible = true; return; }
           if(obj.userData._storeyHidden || obj.userData._classHidden) { return; }
           if(!obj.geometry.boundingSphere) obj.geometry.computeBoundingSphere();
           var bs = obj.geometry.boundingSphere;
@@ -10960,6 +11128,10 @@ function startApp() {
                 obj.userData._storeyHidden = hidden;
               }
             });
+            var _pfx = model.id + '_';
+            Object.keys(_ccBatchHidden.storey).forEach(function(k){ if (k.indexOf(_pfx) === 0) delete _ccBatchHidden.storey[k]; });
+            Object.keys(em).forEach(function(eid){ if (hs[em[eid]||'']) _ccBatchHidden.storey[_pfx+eid] = true; });
+            _ccBatchApplyVisibility(S.map[model.id]);
               }
         }
       });
@@ -11696,6 +11868,8 @@ function startApp() {
             if(!modelHidden && !obj.userData._storeyHidden) obj.visible=true;
           }
         });
+        _ccBatchHidden.class = {};
+        _ccBatchApplyVisibility(S.mg);
         invalidate();
         return;
       }
@@ -11715,6 +11889,9 @@ function startApp() {
         obj.userData._classHidden = isClassHidden;
         obj.visible = !isClassHidden;
       });
+      _ccBatchHidden.class = {};
+      hiddenIds.forEach(function(k){ _ccBatchHidden.class[k] = true; });
+      _ccBatchApplyVisibility(S.mg);
       invalidate();
     }, [s.hiddenClasses, s.classifications]);
 
@@ -11732,6 +11909,10 @@ function startApp() {
             entry.mesh.visible = entry.wasVisible;
           });
           origColorsRef.current=null;
+          _ccForEachBatchInstance(S.mg, function(b, i){
+            var hex = (b.userData._origColors || [])[i];
+            if (hex != null) { try { b.setColorAt(i, new THREE.Color(hex)); } catch(_){} }
+          });
           invalidate();
         }
         return;
@@ -11752,6 +11933,11 @@ function startApp() {
         }
       });
       var saved=[];
+      _ccForEachBatchInstance(S.mg, function(b, i, eid, mid){
+        var c = _chunkColors[(mid||'') + '_' + eid];
+        // matched → class colour; unmatched → keep original (still distinct)
+        try { b.setColorAt(i, c || new THREE.Color((b.userData._origColors||[])[i] != null ? b.userData._origColors[i] : 0xcccccc)); } catch(_){}
+      });
       S.mg.traverse(function(obj){
         if(!obj.isMesh||!obj.material) return;
         var eid=obj.userData.expressId;
@@ -28409,6 +28595,40 @@ function startApp() {
   // but printed to the dev console — no warning popup needed. Useful for
   // verifying post-bump regressions (instanced count, distinct materials,
   // chunk-merge state, etc.). Usage: _ccMemReport() in the console.
+
+  // _ccRenderReport — usage: _ccRenderReport(). Draw calls, frame time and
+  // per-model mesh/batch counts; the acceptance metric for batching work.
+  window._ccRenderReport = function() {
+    var S3 = window._ccState3d;
+    if (!S3 || !S3.renderer) { console.warn('[render] viewer not ready'); return null; }
+    var rows = [];
+    var s = window._ccLatestState || {};
+    (s.models || []).forEach(function(m) {
+      var grp = S3.map && S3.map[m.id];
+      var nMesh = 0, nInst = 0, nBatch = 0, nBatchInst = 0;
+      if (grp) grp.traverse(function(o) {
+        if (o.userData && o.userData._isCCBatch) { nBatch++; nBatchInst += (o.userData.batchExprIds || []).length; }
+        else if (o.isInstancedMesh) nInst++;
+        else if (o.isMesh) nMesh++;
+      });
+      rows.push({ Model: (m.name || m.id).slice(0, 28), Meshes: nMesh, Instanced: nInst, Batches: nBatch, BatchedItems: nBatchInst });
+    });
+    // Frame-time sample: force ~30 rendered frames and time them.
+    var info = S3.renderer.info;
+    var t0 = performance.now(), f0 = info.render.frame;
+    if (typeof window._ccInvalidate === 'function') window._ccInvalidate(30);
+    return new Promise(function(resolve) {
+      setTimeout(function() {
+        var frames = Math.max(1, info.render.frame - f0);
+        var msPerFrame = (performance.now() - t0) / frames;
+        var out = { drawCalls: info.render.calls, triangles: info.render.triangles,
+          msPerFrame: Math.round(msPerFrame * 10) / 10, fpsEstimate: Math.round(1000 / msPerFrame), models: rows };
+        console.table(rows);
+        console.log('%c[render] ' + out.drawCalls + ' draw calls · ' + (out.triangles/1e6).toFixed(1) + 'M tris · ~' + out.fpsEstimate + ' fps (' + out.msPerFrame + ' ms/frame)', 'color:#38bdf8;font-weight:bold');
+        resolve(out);
+      }, 600);
+    });
+  };
 
   // _ccDebugInstancing — usage: _ccDebugInstancing().  See INTERNALS.md § 21.43
   window._ccDebugInstancing = function() {
