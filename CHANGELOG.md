@@ -1,5 +1,8 @@
 # Changelog
 
+## v5.20.10 (2026-06-10)
+- fix: PDOK first-click crash + batched-element selection outline (#610)
+
 ## v5.20.9 (2026-06-10)
 - feat(tiles): PDOK NL 3D layer, range+detail controls, site-radius masking, offline hardening (#606)
 
