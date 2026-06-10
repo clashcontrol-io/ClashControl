@@ -9774,7 +9774,7 @@ function startApp() {
           if(S3._sboxRotRing) S3._sboxRotRing.position.copy(ctr3).addScaledVector(axY3,hy3+(S3._sboxRotRing.userData._floatH||0.5));
           // Update clipping planes immediately
           var np3=[new THREE.Plane().setFromNormalAndCoplanarPoint(axX3.clone(),ctr3.clone().addScaledVector(axX3,-hx3)),new THREE.Plane().setFromNormalAndCoplanarPoint(axX3.clone().negate(),ctr3.clone().addScaledVector(axX3,hx3)),new THREE.Plane().setFromNormalAndCoplanarPoint(axY3.clone(),ctr3.clone().addScaledVector(axY3,-hy3)),new THREE.Plane().setFromNormalAndCoplanarPoint(axY3.clone().negate(),ctr3.clone().addScaledVector(axY3,hy3)),new THREE.Plane().setFromNormalAndCoplanarPoint(axZ3.clone(),ctr3.clone().addScaledVector(axZ3,-hz3)),new THREE.Plane().setFromNormalAndCoplanarPoint(axZ3.clone().negate(),ctr3.clone().addScaledVector(axZ3,hz3))];
-          S3.scene.traverse(function(obj){if(!obj.isMesh||!obj.material||(obj.userData.expressId==null&&!obj.isInstancedMesh))return;var ms=Array.isArray(obj.material)?obj.material:[obj.material];ms.forEach(function(m){m.clippingPlanes=np3;m.needsUpdate=true;});var sm=obj.userData._styleMats;if(sm)Object.keys(sm).forEach(function(k){if(sm[k]){sm[k].clippingPlanes=np3;sm[k].needsUpdate=true;}});});
+          S3.scene.traverse(function(obj){if(!obj.isMesh||!obj.material||(obj.userData.expressId==null&&!obj.isInstancedMesh&&!obj.userData._isCCBatch))return;var ms=Array.isArray(obj.material)?obj.material:[obj.material];ms.forEach(function(m){m.clippingPlanes=np3;m.needsUpdate=true;});var sm=obj.userData._styleMats;if(sm)Object.keys(sm).forEach(function(k){if(sm[k]){sm[k].clippingPlanes=np3;sm[k].needsUpdate=true;}});});
           window._ccCurrentSbox=newSb;
           invalidate();
           _sboxHudShow((newRot*180/Math.PI).toFixed(1)+'°', e.clientX, e.clientY);
@@ -11479,7 +11479,7 @@ function startApp() {
       S.renderer.clippingPlanes = [];
       S.renderer.localClippingEnabled = true;
       S.scene.traverse(function(obj){
-        if(!obj.isMesh||!obj.material||(obj.userData.expressId==null&&!obj.isInstancedMesh)) return;
+        if(!obj.isMesh||!obj.material||(obj.userData.expressId==null&&!obj.isInstancedMesh&&!obj.userData._isCCBatch)) return;
         var mats=Array.isArray(obj.material)?obj.material:[obj.material];
         mats.forEach(function(m){ if(m.clippingPlanes!==planes){m.clippingPlanes=planes;m.needsUpdate=true;} });
         // Apply to all cached style materials so render-style swaps don't lose clipping
@@ -11680,7 +11680,7 @@ function startApp() {
           // active — it will re-apply its own planes on its next effect run).
           if(!s.sectionAxis && !s.sectionCustom) {
             S.scene.traverse(function(obj){
-              if(!obj.isMesh||obj.userData.expressId==null||!obj.material) return;
+              if(!obj.isMesh||!obj.material||(obj.userData.expressId==null&&!obj.isInstancedMesh&&!obj.userData._isCCBatch)) return;
               var mats=Array.isArray(obj.material)?obj.material:[obj.material];
               mats.forEach(function(m){ if(m.clippingPlanes&&m.clippingPlanes.length){m.clippingPlanes=[];m.needsUpdate=true;} });
               var sm=obj.userData._styleMats;
@@ -11719,7 +11719,7 @@ function startApp() {
       S.renderer.clippingPlanes=[];
       S.renderer.localClippingEnabled=true;
       S.scene.traverse(function(obj){
-        if(!obj.isMesh||!obj.material||(obj.userData.expressId==null&&!obj.isInstancedMesh)) return;
+        if(!obj.isMesh||!obj.material||(obj.userData.expressId==null&&!obj.isInstancedMesh&&!obj.userData._isCCBatch)) return;
         // Apply to active material
         var mats=Array.isArray(obj.material)?obj.material:[obj.material];
         mats.forEach(function(m){ m.clippingPlanes=planes; m.needsUpdate=true; });
