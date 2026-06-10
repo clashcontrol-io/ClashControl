@@ -19,6 +19,35 @@
   var _frameHandler = null;
   var _pump = null;       // keeps frames ticking while tiles are streaming
   var _tilesCam = null;   // proxy camera with clamped far plane = context range
+  var _anchorFrame = null, _anchorOrigin = null, _north = 0;
+
+  // Anchor ENU frame inverted (planet → local), Z-up → Y-up, optional
+  // north rotation about the anchor (which maps to local 0,0,0 at that
+  // stage — same sign convention as the geoplace basemap: rotation.y =
+  // -deg), then translated to the shared anchor world point.
+  function _applyGroupMatrix(group) {
+    var THREE3 = window.THREE;
+    group.matrix.copy(_anchorFrame).invert()
+      .premultiply(new THREE3.Matrix4().makeRotationX(-Math.PI / 2));
+    if (_north) {
+      group.matrix.premultiply(new THREE3.Matrix4().makeRotationY(-_north * Math.PI / 180));
+    }
+    if (_anchorOrigin) {
+      group.matrix.premultiply(new THREE3.Matrix4().makeTranslation(
+        Number(_anchorOrigin.x), Number(_anchorOrigin.y) || 0, Number(_anchorOrigin.z) || 0));
+    }
+    group.matrix.decompose(group.position, group.quaternion, group.scale);
+    group.matrixAutoUpdate = false;
+    group.updateMatrix();
+  }
+  // Live north dial — rotates the streamed world about the anchor.
+  window._ccSetTiles3DNorth = function(deg) {
+    if (!_tiles || !_anchorFrame) return;
+    _north = Number(deg) || 0;
+    _applyGroupMatrix(_tiles.group);
+    _inv(3);
+  };
+  window._ccTiles3DNorth = function() { return _north; };
   var _rangeM = (function(){ try { return Number(localStorage.getItem('cc_tiles3d_range')) || 3000; } catch(_) { return 3000; } })();
 
   // Context range: tiles are culled/LOD'd against a CLONE of the viewer
@@ -198,24 +227,18 @@
       var anchorECEF = new THREE3.Vector3().setFromMatrixPosition(frame);
       try { tiles.registerPlugin(new _SiteRadiusPlugin(function(){ return _rangeM; }, anchorECEF)); } catch (_) {}
       if (plugins.TileCompressionPlugin) { try { tiles.registerPlugin(new plugins.TileCompressionPlugin()); } catch (_) {} }
-      if (plugins.TilesFadePlugin) { try { tiles.registerPlugin(new plugins.TilesFadePlugin()); } catch (_) {} }
+      // NO TilesFadePlugin: it animates tile opacity over continuous
+      // frames, but this viewer renders on demand — when the pump stops,
+      // fading tiles freeze near-invisible ("everything loaded, nothing
+      // visible").
 
-      tiles.group.matrix.copy(frame).invert()
-        .premultiply(new THREE3.Matrix4().makeRotationX(-Math.PI / 2));
-      // North rotation (degrees clockwise from project +Y, from the IFC's
-      // map conversion / TrueNorth) — about the anchor, which maps to
-      // (0,0,0) at this stage, so a plain Y-rotation pivots correctly.
-      // Same sign convention as the geoplace basemap (rotation.y = -deg).
-      if (isFinite(Number(opts.north)) && Number(opts.north) !== 0) {
-        tiles.group.matrix.premultiply(new THREE3.Matrix4().makeRotationY(-Number(opts.north) * Math.PI / 180));
-      }
-      if (opts.origin && isFinite(Number(opts.origin.x))) {
-        tiles.group.matrix.premultiply(new THREE3.Matrix4().makeTranslation(
-          Number(opts.origin.x), Number(opts.origin.y) || 0, Number(opts.origin.z) || 0));
-      }
-      tiles.group.matrix.decompose(tiles.group.position, tiles.group.quaternion, tiles.group.scale);
-      tiles.group.matrixAutoUpdate = false;
-      tiles.group.updateMatrix();
+      // Keep the anchor pieces so the north rotation can be changed live
+      // (window._ccSetTiles3DNorth) without reloading the tileset —
+      // project-north Revit exports often need a manual dial-in.
+      _anchorFrame = frame.clone();
+      _anchorOrigin = (opts.origin && isFinite(Number(opts.origin.x))) ? opts.origin : null;
+      _north = isFinite(Number(opts.north)) ? Number(opts.north) : 0;
+      _applyGroupMatrix(tiles.group);
       tiles.group.userData._ccTiles3D = true;
 
       _tilesCam = S.camera.clone();
@@ -235,12 +258,31 @@
       try { tiles.downloadQueue.maxJobs = 12; } catch (_) {}
 
       // Streaming progress must keep the render-on-demand loop alive.
-      tiles.addEventListener('load-model', function() { _inv(2); });
+      var _firstContent = false;
+      tiles.addEventListener('load-model', function() {
+        if (!_firstContent) { _firstContent = true; console.log('[Tiles3D] first tile content in the scene'); }
+        _inv(10);
+      });
       tiles.addEventListener('load-tileset', function() {
         console.log('[Tiles3D] tileset loaded — streaming content');
         _inv(3);
       });
-      tiles.addEventListener('tiles-load-end', function() { _inv(2); });
+      tiles.addEventListener('tiles-load-end', function() { _inv(5); });
+      // One definitive status line 10 s in — separates "nothing downloads"
+      // (masking/frustum) from "downloads but fails" (failed>0) from
+      // "renders but invisible" (visible>0).
+      setTimeout(function() {
+        if (!_tiles || _tiles !== tiles) return;
+        try {
+          var st = tiles.stats || {};
+          console.log('[Tiles3D] 10s status:', JSON.stringify({
+            downloading: st.downloading, parsing: st.parsing, failed: st.failed,
+            inFrustum: st.inFrustum, used: st.used, active: st.active, visible: st.visible,
+            loadProgress: Math.round((tiles.loadProgress || 0) * 100) / 100,
+            groupChildren: tiles.group.children.length
+          }));
+        } catch (e) { console.warn('[Tiles3D] status failed:', e.message || e); }
+      }, 10000);
       // Failures used to be invisible — the toast said "streaming in" and
       // nothing ever appeared. Surface the first error loudly.
       var _errToasted = false;

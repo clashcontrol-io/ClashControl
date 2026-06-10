@@ -15093,7 +15093,19 @@ function startApp() {
           ${s.modelGeo
             ? html`<div style=${{padding:'.25rem .35rem',borderRadius:'var(--radius-xs)',background:'rgba(91,141,239,0.08)',borderLeft:'2px solid #5b8def',fontSize:'.66rem',color:'var(--text-primary)',fontFamily:'var(--font-mono)',lineHeight:1.5}}>
                 ${(+s.modelGeo.refLat).toFixed(6)}, ${(+s.modelGeo.refLon).toFixed(6)}<br/>
-                <span style=${{color:'var(--text-faint)'}}>${s.modelGeo.source||'manual'} · ${(s.modelGeo.radiusM||0).toFixed(0)}m radius${s.modelGeo.trueNorthDeg ? ' · north ' + (+s.modelGeo.trueNorthDeg).toFixed(1) + '°' : ''}</span>
+                <span style=${{color:'var(--text-faint)'}}>${s.modelGeo.source||'manual'} · ${(s.modelGeo.radiusM||0).toFixed(0)}m radius</span>
+                <span style=${{display:'flex',alignItems:'center',gap:'.3rem',marginTop:'.2rem'}}>
+                  <span title="Rotate the map and 3D context around the anchor — for project-north exports the IFC carries no north, so dial it in here" style=${{color:'var(--text-faint)'}}>north</span>
+                  <input type="number" step="1" value=${Math.round(((+s.modelGeo.trueNorthDeg)||0)*10)/10}
+                    onChange=${function(e){
+                      var v = parseFloat(e.target.value); if (!isFinite(v)) v = 0;
+                      window._ccGeoplaceModel(s.modelGeo.modelId, Object.assign({}, s.modelGeo, {trueNorthDeg:v, northManual:true}))
+                        .catch(function(err){ console.warn('[Geoplace] north update failed:', err); });
+                      if (window._ccTiles3DActive && window._ccTiles3DActive() && window._ccSetTiles3DNorth) window._ccSetTiles3DNorth(v);
+                    }}
+                    style=${{width:48,padding:'.06rem .2rem',fontSize:'.64rem',fontFamily:'var(--font-mono)',background:'var(--bg-primary)',color:'var(--text-primary)',border:'1px solid var(--border)',borderRadius:'var(--radius-xs)'}} />
+                  <span style=${{color:'var(--text-faint)'}}>°${s.modelGeo.northManual ? ' manual' : (s.modelGeo.trueNorthDeg ? ' from IFC' : '')}</span>
+                </span>
               </div>`
             : html`<div style=${{display:'flex',gap:'.2rem',padding:'0 .2rem'}}>
                 ${(function(){
@@ -15160,9 +15172,13 @@ function startApp() {
                     }
                   }
                 } catch(_){}
-                // Same north rotation the basemap uses, read from the IFC.
+                // Same north rotation the basemap uses: a manual dial-in
+                // wins (project-north exports carry no IFC north), then
+                // the IFC value, then whatever the georef saved.
                 try {
-                  var _nd = (typeof window._ccModelNorthDeg === 'function') ? window._ccModelNorthDeg(latLon.modelId) : null;
+                  var _nd = null;
+                  if (s.modelGeo && s.modelGeo.northManual && s.modelGeo.trueNorthDeg != null) _nd = +s.modelGeo.trueNorthDeg;
+                  if (_nd == null && typeof window._ccModelNorthDeg === 'function') _nd = window._ccModelNorthDeg(latLon.modelId);
                   if (_nd == null && s.modelGeo && s.modelGeo.trueNorthDeg) _nd = +s.modelGeo.trueNorthDeg;
                   if (_nd != null && isFinite(_nd)) latLon.north = _nd;
                 } catch(_){}
@@ -32266,6 +32282,32 @@ function startApp() {
     }, []);
     var _whatsNewTimer = useRef(null);
     function _dismissWhatsNew() { try{localStorage.setItem('cc_seen_version',CC_VERSION.v);}catch(e){} setShowWhatsNew(false); }
+    // Real release notes: read CHANGELOG.md (the CI bump appends each
+    // release's commit subject) and show everything since the last-seen
+    // version. The hardcoded list below is only the offline fallback —
+    // it used to be the ONLY content, so the version updated every
+    // release while the bullets never did.
+    var _wnSt = useState(null), whatsNewItems=_wnSt[0], setWhatsNewItems=_wnSt[1];
+    useEffect(function(){
+      if (!showWhatsNew) return;
+      fetch('CHANGELOG.md', {cache:'no-cache'}).then(function(r){ return r.ok ? r.text() : null; }).then(function(txt){
+        if (!txt) return;
+        var seen = null; try { seen = localStorage.getItem('cc_seen_version'); } catch(_){}
+        var items = [], lines = txt.split('\n');
+        for (var i=0; i<lines.length && items.length<5; i++) {
+          var vm = lines[i].match(/^## v([0-9][^\s]*)/);
+          if (vm) { if (seen && vm[1] === seen) break; continue; }
+          var bm = lines[i].match(/^- (.+)/);
+          if (!bm) continue;
+          var t = bm[1].trim()
+            .replace(/^(?:fix|feat|chore|docs|ui|ci|refactor|perf|test)(?:\([^)]*\))?!?:\s*/i,'')
+            .replace(/\s*\(#\d+\)\s*$/,'');
+          if (t.length > 84) t = t.slice(0, 81) + '…';
+          if (t && items.indexOf(t) === -1) items.push(t);
+        }
+        if (items.length) setWhatsNewItems(items);
+      }).catch(function(){});
+    }, [showWhatsNew]);
     useEffect(function(){
       if (!showWhatsNew) return;
       _whatsNewTimer.current = setTimeout(_dismissWhatsNew, 5000);
@@ -32935,10 +32977,7 @@ function startApp() {
           <button onClick=${_dismissWhatsNew} style=${{background:'none',border:'none',color:'var(--text-muted)',cursor:'pointer',fontSize:'1.1rem',lineHeight:1,padding:'0 .15rem',flexShrink:0}}>×</button>
         </div>
         <ul style=${{margin:0,paddingLeft:'1.1rem',color:'var(--text-secondary)',fontSize:'0.72rem',lineHeight:1.6}}>
-          <li>Walk mode — navigate at eye height</li>
-          <li>Sheets — floor plan cuts with DXF export</li>
-          <li>IDS import/export for data quality</li>
-          <li>Discipline-colored element outlines</li>
+          ${(whatsNewItems || ['Section cuts and selection on large merged models','Geo placement: real-world map + Dutch 3D buildings (PDOK)','AI element counting ("how many walls on level 1")','Desktop app builds for Windows, macOS and Linux']).map(function(it){ return html`<li key=${it}>${it}</li>`; })}
         </ul>
         <a href="https://github.com/clashcontrol-io/clashcontrol/blob/main/CHANGELOG.md" target="_blank" rel="noopener" style=${{fontSize:'0.69rem',color:'var(--accent)',textDecoration:'none'}}>Full changelog →</a>
       </div>`}
