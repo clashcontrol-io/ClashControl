@@ -16813,6 +16813,11 @@ function startApp() {
                   BCF 3.0
                   <span style=${{display:'block',fontSize:'0.63rem',color:'var(--text-faint)'}}>Extended spec, newer tools</span>
                 </button>
+                <button onClick=${function(){if(window._ccClashReport)window._ccClashReport(s);setExportOpen(false);}}
+                  style=${{display:'block',width:'100%',textAlign:'left',padding:'.45rem .7rem',fontSize:'0.75rem',background:'none',border:'none',color:'var(--text-primary)',cursor:'pointer',fontFamily:'var(--font-body)',borderTop:'1px solid var(--border-subtle)'}}>
+                  ⎙ Clash report
+                  <span style=${{display:'block',fontSize:'0.63rem',color:'var(--text-faint)'}}>Print-ready summary, trend + clusters</span>
+                </button>
               </div>`}
             </div>`;
           }()}
@@ -17241,6 +17246,150 @@ function startApp() {
       URL.revokeObjectURL(a.href);
     });
   }
+
+  // ── Clash coordination report (print → PDF) ─────────────────────
+  // Same pattern as the align.js deviation report: open a print-ready
+  // window with a cover summary + trend + cluster table; the user prints
+  // to PDF. Weekly clash reports are a contractual deliverable on most
+  // BIM execution plans, so this is branded and self-contained.
+  function _ccClashReport(s) {
+    var clashes = s.clashes || [];
+    if (!clashes.length) { if (window._ccToast) window._ccToast('No clashes to report'); return; }
+    _gcEvent('clash-report');
+    var now = new Date();
+    var author = (typeof _ccChangelogUser === 'string' && _ccChangelogUser.trim()) ? _ccChangelogUser.trim() : '';
+    var projName = (s.activeProject && s.activeProject !== 'default') ? s.activeProject
+      : (s.models && s.models.length ? s.models.map(function(m){return m.name;}).join(' + ').slice(0, 80) : 'Untitled project');
+
+    var counts = { open:0, inProg:0, resolved:0, autoRes:0, hard:0, soft:0, dup:0, vis:0 };
+    clashes.forEach(function(c){
+      if (c.status==='open') counts.open++;
+      else if (c.status==='in_progress') counts.inProg++;
+      else if (c.status==='auto_resolved') counts.autoRes++;
+      else if (c.status==='resolved'||c.status==='closed') counts.resolved++;
+      if (c.type==='hard') counts.hard++; else if (c.type==='soft') counts.soft++;
+      else if (c.type==='duplicate') counts.dup++; else if (c.type==='visibility') counts.vis++;
+    });
+
+    // Group into clusters (same identity as the Grouped view).
+    var clusters = {}, order = [];
+    clashes.forEach(function(c){
+      var k = window._ccClusterKeyFor ? window._ccClusterKeyFor(c) : (c.id||Math.random());
+      if (!clusters[k]) { clusters[k] = []; order.push(k); }
+      clusters[k].push(c);
+    });
+    var SEV_RANK = { critical:4, high:3, medium:2, low:1 };
+    var rows = order.map(function(k){
+      var items = clusters[k];
+      var open = 0, sev = '', sevR = 0, assignees = {};
+      items.forEach(function(c){
+        if (c.status==='open'||c.status==='in_progress') open++;
+        var r = SEV_RANK[(c.aiSeverity||'').toLowerCase()]||0;
+        if (r > sevR) { sevR = r; sev = c.aiSeverity; }
+        if (c.assignee) assignees[c.assignee] = true;
+      });
+      var first = items[0];
+      return {
+        label: first.aiTitle || first.title || (window._ccClusterLabelFor ? window._ccClusterLabelFor(first) : 'Clash'),
+        count: items.length, open: open, sev: sev,
+        storey: first.storey || first.storeyName || '',
+        assignees: Object.keys(assignees).join(', '),
+      };
+    }).sort(function(a,b){ return b.open - a.open || b.count - a.count; });
+    var ROW_CAP = 300;
+    var truncated = rows.length > ROW_CAP;
+    rows = rows.slice(0, ROW_CAP);
+
+    var hist = s.runHistory || [];
+    function _trendSvg() {
+      if (hist.length < 2) return '';
+      var W = 640, H = 120, P = 8, max = 1;
+      hist.forEach(function(r){ if (r.total > max) max = r.total; });
+      function pts(key) {
+        return hist.map(function(r, i){
+          var x = P + (i/(hist.length-1)) * (W-2*P);
+          var y = H - P - ((r[key]||0)/max) * (H-2*P);
+          return x.toFixed(1)+','+y.toFixed(1);
+        }).join(' ');
+      }
+      return '<svg width="'+W+'" height="'+H+'" style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:6px">'
+        + '<polyline points="'+pts('total')+'" fill="none" stroke="#64748b" stroke-width="1.5"/>'
+        + '<polyline points="'+pts('open')+'" fill="none" stroke="#f59e0b" stroke-width="2"/>'
+        + '</svg>'
+        + '<div style="font-size:11px;color:#64748b;margin-top:2px">grey = total, amber = open · '+hist.length+' detection runs · peak '+max+'</div>';
+    }
+    function _histRows() {
+      return hist.slice(-10).map(function(r){
+        return '<tr><td>'+new Date(r.ts).toLocaleString()+'</td><td>'+r.total+'</td><td>'+r.open+'</td><td>'+(r.newCount||0)+'</td><td>'+(r.autoResolved||0)+'</td></tr>';
+      }).join('');
+    }
+
+    // Snapshot appendix: viewpoints linked to issues (capped — snapshots are heavy).
+    var snaps = [];
+    (s.viewpoints||[]).forEach(function(v){
+      if (snaps.length >= 12 || !v.snapshot || !v.linkedId) return;
+      var it = (s.issues||[]).find(function(i){ return i.id === v.linkedId; });
+      snaps.push({ img: v.snapshot, title: (it && it.title) || v.name || 'Viewpoint' });
+    });
+
+    var rules = '';
+    try { rules = _ccSummariseRules(s.rules, s.models); } catch(_) {}
+
+    var h = '<!DOCTYPE html><html><head><meta charset="utf-8"><title>Clash report — '+esc(projName)+'</title><style>'
+      + 'body{font-family:-apple-system,Segoe UI,Roboto,sans-serif;color:#0f172a;margin:0;padding:24px 32px;background:#fff}'
+      + 'h1{font-size:22px;margin:0 0 2px}h2{font-size:15px;margin:26px 0 8px;border-bottom:2px solid #16a34a;padding-bottom:4px}'
+      + '.sub{color:#64748b;font-size:12px;margin-bottom:18px}'
+      + '.cards{display:flex;gap:10px;flex-wrap:wrap;margin:14px 0}'
+      + '.card{border:1px solid #e2e8f0;border-radius:8px;padding:10px 16px;min-width:90px}'
+      + '.card b{display:block;font-size:22px}.card span{font-size:11px;color:#64748b}'
+      + 'table{border-collapse:collapse;width:100%;font-size:12px}th{text-align:left;background:#f1f5f9;padding:5px 8px;border-bottom:2px solid #cbd5e1}'
+      + 'td{padding:4px 8px;border-bottom:1px solid #e2e8f0;vertical-align:top}'
+      + '.snapgrid{display:flex;flex-wrap:wrap;gap:12px}.snap{width:300px}.snap img{width:100%;border:1px solid #e2e8f0;border-radius:6px}.snap div{font-size:11px;color:#475569;margin-top:2px}'
+      + '.brand{color:#16a34a;font-weight:700}.foot{margin-top:30px;font-size:10px;color:#94a3b8}'
+      + '.toolbar{position:sticky;top:0;background:#fff;padding:8px 0;border-bottom:1px solid #e2e8f0;margin-bottom:14px}'
+      + '.toolbar button{background:#16a34a;color:#fff;border:none;border-radius:6px;padding:8px 16px;font-size:13px;font-weight:600;cursor:pointer}'
+      + '@media print{.noprint{display:none}body{padding:0 8px}}'
+      + '</style></head><body>'
+      + '<div class="toolbar noprint"><button onclick="window.print()">Print / Save as PDF</button></div>'
+      + '<h1><span class="brand">ClashControl</span> — Clash coordination report</h1>'
+      + '<div class="sub">'+esc(projName)+' · '+now.toLocaleString()+(author?' · prepared by '+esc(author):'')+(rules?' · '+esc(rules):'')+'</div>'
+      + '<div class="cards">'
+      +   '<div class="card"><b>'+clashes.length+'</b><span>total clashes</span></div>'
+      +   '<div class="card"><b style="color:#dc2626">'+counts.open+'</b><span>open</span></div>'
+      +   '<div class="card"><b style="color:#d97706">'+counts.inProg+'</b><span>in progress</span></div>'
+      +   '<div class="card"><b style="color:#16a34a">'+(counts.resolved+counts.autoRes)+'</b><span>resolved'+(counts.autoRes?' ('+counts.autoRes+' auto)':'')+'</span></div>'
+      +   '<div class="card"><b>'+rows.length+(truncated?'+':'')+'</b><span>clusters</span></div>'
+      + '</div>'
+      + '<div class="sub">Hard '+counts.hard+' · Soft/clearance '+counts.soft+' · Duplicates '+counts.dup+(counts.vis?' · Sight-line '+counts.vis:'')+'</div>'
+      + '<h2>Models</h2><table><tr><th>Model</th><th>Discipline</th></tr>'
+      +   (s.models||[]).map(function(m){ return '<tr><td>'+esc(m.name)+'</td><td>'+esc(m.discipline||'—')+'</td></tr>'; }).join('')
+      + '</table>'
+      + (hist.length >= 2
+        ? '<h2>Trend</h2>'+_trendSvg()
+          +'<table style="margin-top:8px"><tr><th>Run</th><th>Total</th><th>Open</th><th>New</th><th>Auto-resolved</th></tr>'+_histRows()+'</table>'
+        : '')
+      + '<h2>Clash clusters'+(truncated?' (top '+ROW_CAP+' by open count)':'')+'</h2>'
+      + '<table><tr><th>#</th><th>Cluster</th><th>Clashes</th><th>Open</th><th>Severity</th><th>Storey</th><th>Assignee</th></tr>'
+      +   rows.map(function(r, i){
+            return '<tr><td>'+(i+1)+'</td><td>'+esc(r.label)+'</td><td>'+r.count+'</td>'
+              + '<td>'+(r.open ? '<b style="color:#dc2626">'+r.open+'</b>' : '0')+'</td>'
+              + '<td>'+esc(r.sev||'—')+'</td><td>'+esc(r.storey||'—')+'</td><td>'+esc(r.assignees||'—')+'</td></tr>';
+          }).join('')
+      + '</table>'
+      + (snaps.length
+        ? '<h2>Viewpoints</h2><div class="snapgrid">'
+          + snaps.map(function(sn){ return '<div class="snap"><img src="'+sn.img+'"/><div>'+esc(sn.title)+'</div></div>'; }).join('')
+          + '</div>'
+        : '')
+      + '<div class="foot">Generated by ClashControl '+esc((window.CC_VERSION&&window.CC_VERSION.v)||'')+' — free, open-source IFC clash detection · clashcontrol.io</div>'
+      + '</body></html>';
+
+    var w = window.open('', '_blank');
+    if (!w) { if (window._ccToast) window._ccToast('Popup blocked — allow popups to open the report'); return; }
+    w.document.write(h);
+    w.document.close();
+  }
+  window._ccClashReport = _ccClashReport;
 
   function generateValidationReport(results, summary, specs) {
     _gcEvent('html-report');
