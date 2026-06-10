@@ -2633,6 +2633,37 @@ function startApp() {
     return { elements: kept, meshes: keptMeshes, removed: removed };
   }
 
+  // ── Declared IFC length unit ─────────────────────────────────────
+  // Reads the project's declared LENGTHUNIT (IFCSIUNIT prefix) straight
+  // from the STEP text, so unit conversion is a fact, not a heuristic.
+  // Returns the storey-unit scale matching _ccDetectUnitScale's convention
+  // (1000 = mm, 100 = cm, 10 = dm, 1 = m), or null when not declared as a
+  // plain SI metre unit (e.g. CONVERSIONBASEDUNIT feet) — callers fall
+  // back to the spacing heuristic then.
+  function _ccExtractIfcLengthUnit(buffer) {
+    try {
+      var bytes = new Uint8Array(buffer);
+      var needle = 'LENGTHUNIT';
+      var n0 = needle.charCodeAt(0);
+      var lim = bytes.length - needle.length;
+      for (var i = 0; i < lim; i++) {
+        if (bytes[i] !== 76 /* 'L' */) continue;
+        var hit = true;
+        for (var k = 1; k < 10; k++) { if (bytes[i + k] !== needle.charCodeAt(k)) { hit = false; break; } }
+        if (!hit) continue;
+        // Decode a small window around the match and parse the entity.
+        var s = Math.max(0, i - 120), e = Math.min(bytes.length, i + 160);
+        var txt = '';
+        for (var j = s; j < e; j++) txt += String.fromCharCode(bytes[j]);
+        var m = /IFCSIUNIT\s*\(\s*\*\s*,\s*\.LENGTHUNIT\.\s*,\s*(?:\.(MILLI|CENTI|DECI)\.|\$)\s*,\s*\.METRE\.\s*\)/.exec(txt);
+        if (m) return m[1] === 'MILLI' ? 1000 : m[1] === 'CENTI' ? 100 : m[1] === 'DECI' ? 10 : 1;
+        if (/CONVERSIONBASEDUNIT/.test(txt)) return null; // imperial etc. — heuristic
+        // keep scanning: this LENGTHUNIT may belong to a derived/area unit line
+      }
+    } catch (_) {}
+    return null;
+  }
+
   function loadIFC(buffer, fallbackColor, onProgress, _parentGen) {
     var loadStart = performance.now();
     var _lp = { t0: loadStart, phases: {} };
@@ -14421,6 +14452,10 @@ function startApp() {
             var disc='structural', col=DISC[0].c;
             var _lazyPropsTarget = {modelId: null};
             _lazyWorkersActive++;
+            // Declared IFC unit — read once from the raw bytes; attached to
+            // result.stats below so it persists via the geo-cache and the
+            // unit pipeline stops guessing for well-formed files.
+            var _declUnit = _ccExtractIfcLengthUnit(buf);
             var _loadP = loadIFCWorker(buf, col, _onProg, function(propMap, propErr) {
               if (!propErr && _lazyPropsTarget.modelId) {
                 _mergeLazyProps(_lazyPropsTarget.modelId, propMap);
@@ -14437,6 +14472,7 @@ function startApp() {
             });
             return _loadP.then(function(result) {
               if (!result) return; // load was cancelled by a newer load
+              if (_declUnit != null) { result.stats = result.stats || {}; result.stats.unitScale = _declUnit; }
               disc = detectDiscipline(result.elements);
               var dObj = DISC.find(function(x){return x.id===disc;});
               col = dObj ? dObj.c : col;
@@ -23071,6 +23107,12 @@ function startApp() {
     var st = window._ccLatestState;
     if (st && st.prefs && st.prefs.unitScaleOverride && st.prefs.unitScaleOverride !== 'auto') {
       return Number(st.prefs.unitScaleOverride) || 1;
+    }
+    // Declared IFC unit beats every heuristic (extracted at load from
+    // IFCSIUNIT, persisted in stats via the geo-cache).
+    for (var di = 0; di < (models || []).length; di++) {
+      var dm = models[di];
+      if (dm && dm.stats && dm.stats.unitScale) return dm.stats.unitScale;
     }
     var storeys = _ccCollectStoreys(models || []);
     if (storeys.length < 2) {
