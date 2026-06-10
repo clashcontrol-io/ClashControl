@@ -131,9 +131,38 @@
     if (!key && !ion && !opts.url) return Promise.reject(new Error('A tile source is needed: PDOK (NL), a Cesium ion token, a Google Map Tiles API key, or a tileset URL.'));
     _teardown();
 
+    // Validate a custom/preset tileset URL up front: fetch it, require a
+    // 3D Tiles document (has .root), and fall back to <url>/tileset.json
+    // (OGC API 3D GeoVolumes serves either shape). Failures produce a
+    // console line + toast naming the real cause — previously a bad URL
+    // died silently behind the "streaming in" toast.
+    function _resolveTilesetUrl(u) {
+      function probe(x) {
+        return fetch(x, { mode: 'cors' }).then(function(r) {
+          if (!r.ok) throw new Error('HTTP ' + r.status);
+          var ct = (r.headers.get('content-type') || '').toLowerCase();
+          return r.json().catch(function() { throw new Error('not JSON (' + ct + ')'); });
+        }).then(function(j) {
+          if (!j || !j.root) throw new Error('JSON but not a 3D Tiles tileset (no .root)');
+          console.log('[Tiles3D] tileset OK at', x);
+          return x;
+        });
+      }
+      return probe(u).catch(function(e1) {
+        var alt = u.replace(/\/+$/, '') + '/tileset.json';
+        return probe(alt).catch(function(e2) {
+          throw new Error('tileset unreachable — ' + u + ': ' + (e1.message || e1) + ' | ' + alt + ': ' + (e2.message || e2));
+        });
+      });
+    }
+
+    var _urlReady = opts.url ? _resolveTilesetUrl(opts.url).then(function(u) { opts.url = u; })
+      : Promise.resolve();
+
     return Promise.all([
       import(TILES_CDN + '/build/index.js'),
-      import(TILES_CDN + '/build/index.plugins.js')
+      import(TILES_CDN + '/build/index.plugins.js'),
+      _urlReady
     ]).then(function(mods) {
       var core = mods[0], plugins = mods[1];
       var THREE3 = window.THREE;
@@ -245,8 +274,17 @@
           _tilesCam.updateMatrixWorld(true);
           _tiles.setResolutionFromRenderer(_tilesCam, S.renderer);
           _tiles.update();
-        } catch (_) {}
+        } catch (err) {
+          // A throwing update() means NOTHING streams — say so once
+          // instead of swallowing it every frame.
+          if (!_frameErrLogged) {
+            _frameErrLogged = true;
+            console.warn('[Tiles3D] update() failing:', err && (err.message || err));
+            if (window._ccToast) window._ccToast('3D world context: renderer error — ' + (err && (err.message || err)), 'error');
+          }
+        }
       };
+      var _frameErrLogged = false;
       window.addEventListener('cc-render-frame', _frameHandler);
       // Render-on-demand pump: tiles.update() only runs on rendered frames,
       // so once the camera stops moving the streaming pipeline would stall
