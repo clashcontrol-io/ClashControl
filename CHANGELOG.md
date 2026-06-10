@@ -1,5 +1,8 @@
 # Changelog
 
+## v5.20.13 (2026-06-10)
+- fix(tiles): tileset URL validation + surfaced errors; Integrations below + New project (#615)
+
 ## v5.20.12 (2026-06-10)
 - fix: sections on batched models + drag direction, geo north/per-project, Y-menu integrations, AI counting, Cesium ion, Windows MSI icon (#614)
 
