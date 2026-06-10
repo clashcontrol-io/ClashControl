@@ -23094,28 +23094,16 @@ function startApp() {
   }
 
   function _ccStoreyToGeoFactor(models) {
-    var storeys = _ccCollectStoreys(models || []);
-    if (storeys.length < 2) return 1;
-    var storeySpan = Math.abs(storeys[storeys.length - 1].elevation - storeys[0].elevation);
-    if (storeySpan < 1e-6) return 1;
-    var geoMinY = Infinity, geoMaxY = -Infinity;
-    (models || []).forEach(function(m) {
-      (m.elements || []).forEach(function(el) {
-        if (!el.box || (el.box.isEmpty && el.box.isEmpty())) return;
-        if (el.box.min.y < geoMinY) geoMinY = el.box.min.y;
-        if (el.box.max.y > geoMaxY) geoMaxY = el.box.max.y;
-      });
-    });
-    if (!isFinite(geoMinY) || !isFinite(geoMaxY)) return 1;
-    var geoSpan = geoMaxY - geoMinY;
-    if (geoSpan < 1e-6) return 1;
-    var ratio = geoSpan / storeySpan;
-    if (ratio < 0.003) return 0.001;  // storeys ~1000x larger → mm vs m
-    if (ratio < 0.03)  return 0.01;   // storeys ~100x larger → cm vs m
-    if (ratio > 300)   return 1000;   // storeys ~1000x smaller → m vs mm geo
-    if (ratio > 30)    return 100;    // storeys ~100x smaller → m vs cm geo
-    return 1;
+    // Storey elevations are raw IFC project units; geometry is metres.
+    // Convert via the storey-SPACING heuristic in _ccDetectUnitScale
+    // (typical floors are ~3 m apart; honours prefs.unitScaleOverride) —
+    // NOT via total geometry span vs storey span: deep foundations make a
+    // building far taller than its storey range and mis-bucket the ratio
+    // (observed: mm model + 20 m piles → factor 0.01 instead of 0.001,
+    // putting the plan cut at 38 m).
+    return 1 / (_ccDetectUnitScale(models) || 1);
   }
+
 
   function _ccFormatElev(val, unitScale, decimals) {
     if (val == null) return '—';
