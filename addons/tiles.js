@@ -151,8 +151,10 @@
       // frame at the anchor, invert (planet → local), then Z-up → Y-up.
       var frame = new THREE3.Matrix4();
       var height = isFinite(Number(opts.height)) ? Number(opts.height) : 0;
+      // Signature is (lat, lon, height, target). For grid-north/true-north
+      // rotation later, getOrientedEastNorthUpFrame adds az/el/roll args.
       core.WGS84_ELLIPSOID.getEastNorthUpFrame(
-        lat * Math.PI / 180, lon * Math.PI / 180, height, 0, 0, 0, frame
+        lat * Math.PI / 180, lon * Math.PI / 180, height, frame
       );
       tiles.group.matrix.copy(frame).invert()
         .premultiply(new THREE3.Matrix4().makeRotationX(-Math.PI / 2));

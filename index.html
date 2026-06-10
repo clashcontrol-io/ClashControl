@@ -7781,6 +7781,10 @@ function startApp() {
       // Build an edge-outline THREE.Group for a single mesh with the given
       function _buildHighlightGroupForMesh(mesh, colorHex) {
         if (!mesh) return null;
+        // Off-scene proxy originals (batched/instanced elements) are
+        // parentless and never receive matrixWorld updates — refresh from
+        // the local matrix or the outline lands at the origin.
+        if (!mesh.parent) mesh.updateMatrixWorld(true);
         var grp = new THREE.Group();
         var wasHidden = !mesh.visible;
         if (wasHidden) mesh.visible = true;
@@ -10347,22 +10351,31 @@ function startApp() {
             try {
               // Batched hit: hit.geometry is the ENTIRE merged batch — the
               // outline (and the face cap) must use the element's off-scene
-              // original instead.
-              var _outGeo = hit.geometry, _outMx = _hitWorldMx;
+              // originals instead. Those originals are parentless (never
+              // added to the scene), so their matrixWorld is a stale
+              // identity — refresh it from .matrix before use, and outline
+              // ALL meshes of the element (multi-body elements).
+              var _outParts = [];
               if(_hitIsBatch){
-                var _opm = _ccProxyMeshFor(eid, _hitModelId);
-                if(_opm && _opm.geometry){ _outGeo = _opm.geometry; _outMx = _opm.matrixWorld || _opm.matrix; }
-                else _outGeo = null;
+                var _opr = _ccProxyElement(eid, _hitModelId);
+                (((_opr||{}).el||{}).meshes||[]).forEach(function(_opm){
+                  if(!_opm || !_opm.geometry) return;
+                  if(!_opm.parent) _opm.updateMatrixWorld(true);
+                  _outParts.push({geo:_opm.geometry, mx:_opm.matrixWorld});
+                });
+              } else {
+                _outParts.push({geo:hit.geometry, mx:_hitWorldMx});
               }
-              var fc2 = _outGeo ? (_outGeo.index ? _outGeo.index.count/3 : (_outGeo.attributes.position?_outGeo.attributes.position.count/3:0)) : Infinity;
-              if(fc2 < 50000) {
-                var edgeGeo2 = new THREE.EdgesGeometry(_outGeo, 50);
+              _outParts.forEach(function(_p){
+                var fc2 = _p.geo.index ? _p.geo.index.count/3 : (_p.geo.attributes.position?_p.geo.attributes.position.count/3:0);
+                if(fc2 >= 50000) return;
+                var edgeGeo2 = new THREE.EdgesGeometry(_p.geo, 50);
                 var edgeMat2 = new THREE.LineBasicMaterial({color:clickDiscColor, transparent:true, opacity:0.4, depthTest:false});
                 var edgeLines2 = new THREE.LineSegments(edgeGeo2, edgeMat2);
-                edgeLines2.applyMatrix4(_outMx);
+                edgeLines2.applyMatrix4(_p.mx);
                 edgeLines2.renderOrder = 999;
                 hlGrp.add(edgeLines2);
-              }
+              });
             } catch(e){}
             scene.add(hlGrp);
             hlRef.current = hlGrp;
@@ -10377,6 +10390,7 @@ function startApp() {
               }
               if(!_gotBB){
                 var _bpm = _ccProxyMeshFor(eid, _hitModelId);
+                if(_bpm && !_bpm.parent) _bpm.updateMatrixWorld(true); // parentless original — matrixWorld is stale
                 if(_bpm) hitBox.setFromObject(_bpm); else hitBox.setFromCenterAndSize(_pickedHit.point, new THREE.Vector3(1,1,1));
               }
             } else if(hit.isInstancedMesh && _hitInstId >= 0){
