@@ -46,6 +46,33 @@
   window._ccTiles3DDetail = function() { return _detail; };
 
   function _S3() { return window._ccState3d || null; }
+
+  // Masks tiles outside `radius` metres of the site anchor (scene origin —
+  // the tiles group is transformed so the anchor sits there). Implements
+  // the renderer's calculateTileViewError plugin contract: inView=false
+  // tiles are neither rendered NOR downloaded, so a small building never
+  // pulls in half the country. Reads the live range so widening it while
+  // viewing streams the additional ring immediately.
+  function _SiteRadiusPlugin(getRadius) {
+    this.name = 'CC_SITE_RADIUS';
+    this._getRadius = getRadius;
+    this._origin = null; // scene-space anchor = origin of the tiles group's parent space
+  }
+  _SiteRadiusPlugin.prototype.init = function(tiles) { this._tiles = tiles; };
+  _SiteRadiusPlugin.prototype.calculateTileViewError = function(tile, target) {
+    var r = this._getRadius();
+    if (!isFinite(r)) return false; // no-op at ∞
+    var bv = tile.engineData && tile.engineData.boundingVolume;
+    if (!bv || !bv.distanceToPoint) return false;
+    if (!this._origin) {
+      // Anchor in the tiles' LOCAL (ECEF) frame: the group matrix maps it
+      // to the scene origin, so invert once.
+      var inv = this._tiles.group.matrixWorld.clone().invert();
+      this._origin = new window.THREE.Vector3(0, 0, 0).applyMatrix4(inv);
+    }
+    if (bv.distanceToPoint(this._origin) > r) { target.inView = false; return true; }
+    return false;
+  };
   function _inv(n) { if (typeof window._ccInvalidate === 'function') window._ccInvalidate(n || 2); }
 
   var _attrEl = null;
@@ -110,6 +137,7 @@
         tiles = new core.TilesRenderer();
         tiles.registerPlugin(new plugins.GoogleCloudAuthPlugin({ apiToken: key, autoRefreshToken: true }));
       }
+      try { tiles.registerPlugin(new _SiteRadiusPlugin(function(){ return _rangeM; })); } catch (_) {}
       if (plugins.TileCompressionPlugin) { try { tiles.registerPlugin(new plugins.TileCompressionPlugin()); } catch (_) {} }
       if (plugins.TilesFadePlugin) { try { tiles.registerPlugin(new plugins.TilesFadePlugin()); } catch (_) {} }
 
