@@ -905,6 +905,7 @@ function startApp() {
     selected:{}, // {id:true} — selected clash/issue IDs
     selectMode:false,
     lastDeltaSummary: null, // {new, persisting, autoResolved, ts} — set after each merge run
+    runHistory: [], // [{ts,total,open,newCount,persisting,autoResolved}] — one entry per detection run, capped at 100; feeds trend sparkline + clash report
     idsValidation: {
       results: [],       // [{specName, ruleDesc, severity, status:'pass'|'fail', elementId, globalId, ifcType, elementName, modelId}]
       specs: [],         // [{name, rules:[{desc, applicability, requirement, severity}]}]
@@ -1101,7 +1102,7 @@ function startApp() {
       case A.UPD_MODEL:   return Object.assign({},s,{models:s.models.map(function(m){return m.id===a.id?Object.assign({},m,a.u):m})});
       case A.TOGGLE_ALL_STOREYS: return Object.assign({},s,{models:s.models.map(function(m){if(m.id!==a.id)return m;return Object.assign({},m,{hiddenStoreys:a.hide?a.storeys.reduce(function(o,st){o[st]=true;return o;},{}):{}}); })});
       case A.SET_CLASHES: /* falls through to MERGE_CLASHES with no prev clashes */
-      case A.MERGE_CLASHES: var _mr=mergeDetectionResults(a.v, a.t===A.MERGE_CLASHES?s.clashes:[]); _gcEvent('clash-detection', _mr.clashes.length+' clashes'); var _st={clashes:_mr.clashes,detecting:false,activeId:null,floors:deriveFloors(_mr.clashes),lastDeltaSummary:_mr.deltaSummary}; if(a.detectionSettings)_st.detectionSettings=a.detectionSettings; if(s.prefs.resetFiltersOnRun!==false)_st.filters=Object.assign({},INIT_FILTERS); /* Default to Grouped only when the user has nothing chosen AND the result is small enough that thousands of sticky-positioned cluster headers won't tax the browser. Never write localStorage here — that's the user-facing CLASH_GROUP_BY dispatch's job. */ if((!Array.isArray(s.clashGroupBy)||s.clashGroupBy.length===0) && _mr.clashes.length>0 && _mr.clashes.length<=2000) { _st.clashGroupBy=['cluster']; }
+      case A.MERGE_CLASHES: var _mr=mergeDetectionResults(a.v, a.t===A.MERGE_CLASHES?s.clashes:[]); _gcEvent('clash-detection', _mr.clashes.length+' clashes'); var _st={clashes:_mr.clashes,detecting:false,activeId:null,floors:deriveFloors(_mr.clashes),lastDeltaSummary:_mr.deltaSummary}; var _rhOpen=0; _mr.clashes.forEach(function(c){if(c.status==='open'||c.status==='in_progress')_rhOpen++;}); _st.runHistory=(s.runHistory||[]).concat([{ts:_mr.deltaSummary.ts,total:_mr.clashes.length,open:_rhOpen,newCount:_mr.deltaSummary.newCount,persisting:_mr.deltaSummary.persisting,autoResolved:_mr.deltaSummary.autoResolved}]).slice(-100); if(a.detectionSettings)_st.detectionSettings=a.detectionSettings; if(s.prefs.resetFiltersOnRun!==false)_st.filters=Object.assign({},INIT_FILTERS); /* Default to Grouped only when the user has nothing chosen AND the result is small enough that thousands of sticky-positioned cluster headers won't tax the browser. Never write localStorage here — that's the user-facing CLASH_GROUP_BY dispatch's job. */ if((!Array.isArray(s.clashGroupBy)||s.clashGroupBy.length===0) && _mr.clashes.length>0 && _mr.clashes.length<=2000) { _st.clashGroupBy=['cluster']; }
         return Object.assign({},s,_st);
       case A.ADD_CLASHES: { /* additive, non-destructive append (does NOT auto-resolve existing clashes like MERGE_CLASHES). Used by the accessibility panel. */
         var _addc=(a.v||[]).filter(Boolean); if(!_addc.length) return s;
@@ -5031,6 +5032,7 @@ function startApp() {
       issues:  s.issues,
       floors:  s.floors,
       lastDeltaSummary: s.lastDeltaSummary || null,
+      runHistory: s.runHistory || [],
       viewpoints: (s.viewpoints||[]).map(function(v){return Object.assign({},v,{snapshot:undefined})}),
       measurements: s.measurements||[],
       selectionSets: s.selectionSets||[],
@@ -5060,6 +5062,7 @@ function startApp() {
           });
           d({ t:A.UPD_RULES, u: data.rules });
           if (data.clashes) d({ t:A.SET_CLASHES, v: data.clashes });
+          if (data.runHistory || data.lastDeltaSummary) d({ t:A.LOAD_PROJECT_STATE, data:{ runHistory:data.runHistory||[], lastDeltaSummary:data.lastDeltaSummary||null } });
           (data.issues||[]).forEach(function(i) { d({ t:A.ADD_ISSUE, v:i }); });
           (data.viewpoints||[]).forEach(function(v) { d({ t:A.ADD_VIEWPOINT, v:v }); });
           if (data.measurements) data.measurements.forEach(function(m) { d({ t:A.ADD_MEASUREMENT, v:m }); });
@@ -12831,6 +12834,7 @@ function startApp() {
       viewpoints:(s.viewpoints||[]).map(function(v){return Object.assign({},v,{snapshot:undefined})}),
       measurements:s.measurements||[], filters:s.filters,
       lastDeltaSummary:s.lastDeltaSummary||null,
+      runHistory:s.runHistory||[],
       sheets:s.sheets||[], activeSheetId:s.activeSheetId||null,
       sheetPins:s.sheetPins||[], markups:s.markups||[],
       modelMeta:s.models.map(function(m){return {id:m.id,name:m.name,discipline:m.discipline,color:m.color,visible:m.visible,tag:m.tag||'',georef:m.georef||null};})
@@ -15472,6 +15476,34 @@ function startApp() {
     </div>`;
   }
 
+  // Tiny inline trend of total + open clashes across detection runs.
+  // Hidden until there are 2+ runs (one point is not a trend).
+  function _RunTrendSparkline(props) {
+    var h = props.history || [];
+    if (h.length < 2) return null;
+    var W = 96, H = 18, P = 1;
+    var max = 1;
+    h.forEach(function(r){ if (r.total > max) max = r.total; });
+    function pts(key) {
+      return h.map(function(r, i) {
+        var x = P + (i / (h.length - 1)) * (W - 2 * P);
+        var y = H - P - ((r[key] || 0) / max) * (H - 2 * P);
+        return x.toFixed(1) + ',' + y.toFixed(1);
+      }).join(' ');
+    }
+    var last = h[h.length - 1];
+    var tip = h.length + ' runs · last: ' + last.total + ' total, ' + last.open + ' open'
+      + (last.newCount ? ', +' + last.newCount + ' new' : '')
+      + (last.autoResolved ? ', ' + last.autoResolved + ' auto-resolved' : '');
+    return html`<span title=${tip} style=${{display:'inline-flex',alignItems:'center',gap:'.25rem',marginLeft:'auto'}}>
+      <svg width=${W} height=${H} style=${{display:'block'}}>
+        <polyline points=${pts('total')} fill="none" stroke="var(--text-faint)" stroke-width="1"/>
+        <polyline points=${pts('open')} fill="none" stroke="#f59e0b" stroke-width="1.2"/>
+      </svg>
+      <span style=${{fontSize:'0.6rem',color:'var(--text-faint)'}}>${h.length}×</span>
+    </span>`;
+  }
+
   function ClashStatsBar(props) {
     var items = props.items, isClash = props.isClash, delta = props.delta;
     var stTitlesBusy = useState(false), titlesBusy = stTitlesBusy[0], setTitlesBusy = stTitlesBusy[1];
@@ -15539,6 +15571,7 @@ function startApp() {
         ${delta.newCount > 0 && CHIP('New', delta.newCount, 'var(--accent-bg)', 'var(--accent)')}
         ${delta.persisting > 0 && CHIP('Unchanged', delta.persisting, 'var(--tag-bg)', 'var(--text-secondary)')}
         ${delta.autoResolved > 0 && CHIP('Auto-res', delta.autoResolved, '#0f172a', '#64748b')}
+        <${_RunTrendSparkline} history=${props.history}/>
       </div>`}
     </div>`;
   }
@@ -16513,7 +16546,7 @@ function startApp() {
       </div>`}
 
       ${isClashTab && rawItems.length > 0 && rawItems.some(function(c){return c.aiSeverity;}) && html`<${ClashAISummary} items=${rawItems} />`}
-      ${!isExplorerTab && !isStandardsTab && rawItems.length > 0 && html`<${ClashStatsBar} items=${rawItems} isClash=${isClashTab} delta=${isClashTab ? s.lastDeltaSummary : null} />`}
+      ${!isExplorerTab && !isStandardsTab && rawItems.length > 0 && html`<${ClashStatsBar} items=${rawItems} isClash=${isClashTab} delta=${isClashTab ? s.lastDeltaSummary : null} history=${isClashTab ? (s.runHistory||null) : null} />`}
 
       ${s.tab==='navigator' && html`<${NavigatorPanel} s=${s} d=${d} />`}
       ${isStandardsTab && html`<${StandardsPanel} s=${s} d=${d} />`}
