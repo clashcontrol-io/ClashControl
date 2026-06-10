@@ -8059,6 +8059,16 @@ function startApp() {
         loadPointCloud:   function(file){ if (window._ccLoadPointCloud) return window._ccLoadPointCloud(file); },
         geoplaceModel:    function(modelId, opts){ if (window._ccGeoplaceModel) return window._ccGeoplaceModel(modelId, opts); },
         loadFiles:        function(files){ if (window._ccLoadFiles) return window._ccLoadFiles(files); },
+        runDetection:     function(rulesOverride){
+          var st = window._ccLatestState;
+          if (!st || !st.models || !st.models.length) return Promise.resolve(null);
+          var r = Object.assign({}, st.rules, rulesOverride || {});
+          return detectClashesAsync(st.models, r).then(function(result){
+            classifyClashes(result);
+            if (window._ccDispatch) window._ccDispatch({ t:'MERGE_CLASHES', v:result });
+            return result;
+          });
+        },
         benchEngine:      function(pairLimit){ if (window._ccBenchEngine) return window._ccBenchEngine(pairLimit); },
         clashReport:      function(){ if (window._ccClashReport && window._ccLatestState) return window._ccClashReport(window._ccLatestState); },
         addons: {
