@@ -1,5 +1,8 @@
 # Changelog
 
+## v5.20.3 (2026-06-10)
+- test(browser): BatchedMesh identity assertions — the chunk-merge revert symptoms as CI gates (Phase 2)
+
 ## v5.20.2 (2026-06-10)
 - Loader worker fix, plan-cut units, scoped loading, Tauri Phase 0, section gizmo r180 (#599)
 
