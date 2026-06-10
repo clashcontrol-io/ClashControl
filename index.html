@@ -2630,9 +2630,12 @@ function startApp() {
   // proven safe by the instancing precedent). Opaque geometry only:
   // per-instance opacity doesn't exist, and transparent sorting inside a
   // batch is wrong anyway.
-  var _CC_BATCH_MIN_MESHES = 5000;      // don't bother below this
-  var _CC_BATCH_FORCE_AT  = 20000;      // always batch above this
-  var _CC_BATCH_RATIO     = 10;         // geoUnique/elements pathology trigger
+  // Tuned against a real 9-model federation (48.5k draw calls · 6 fps):
+  // the pathology is cumulative — four models at 10-13k meshes each — so
+  // the per-model bar must be low enough to catch them all.
+  var _CC_BATCH_MIN_MESHES = 3000;      // don't bother below this
+  var _CC_BATCH_FORCE_AT  = 6000;       // always batch above this
+  var _CC_BATCH_RATIO     = 4;          // meshes-per-element pathology trigger
   var _CC_BATCH_MAX_INST  = 40000;      // per-batch caps → multiple batches
   var _CC_BATCH_MAX_VERTS = 4000000;
   var _CC_BATCH_MAX_IDX   = 12000000;
@@ -2648,7 +2651,9 @@ function startApp() {
       if (!mat || mat.transparent || (mat.opacity != null && mat.opacity < 0.99)) return;
       candidates.push(m);
     });
-    var ratio = elements.length ? (geoUnique || 0) / elements.length : 0;
+    // meshes-per-element works on every path (geoUnique is unavailable on
+    // cache restore); multi-geometry elements are what multiply draw calls.
+    var ratio = elements.length ? candidates.length / elements.length : 0;
     var pathological = candidates.length >= _CC_BATCH_FORCE_AT ||
       (candidates.length >= _CC_BATCH_MIN_MESHES && ratio > _CC_BATCH_RATIO) ||
       (window._ccForceBatch && candidates.length > 0); // test hook for CI
