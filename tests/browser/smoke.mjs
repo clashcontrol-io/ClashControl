@@ -65,7 +65,9 @@ try {
   }, null, { timeout: 120_000 }).catch(() => fail('model did not load/process within 120s (web-ifc WASM path)'));
 
   const counts = await page.evaluate(async () => {
-    const result = await window.ClashControl.runDetection();
+    // Default rules exclude within-model pairs (excludeSelf:true) — the
+    // fixture is one model with two crossing walls, so opt self-clash in.
+    const result = await window.ClashControl.runDetection({ selfClashModels: 'all', excludeSelf: false });
     const s = window._ccLatestState;
     return { detected: result ? result.length : 0, inState: s.clashes.length, sample: s.clashes[0] || null };
   });
