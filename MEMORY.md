@@ -112,6 +112,12 @@ Second batch same branch (2026-06-10) — product features + test infra ("do all
 - ~~Memory guardrail: toast+console warn at >75% of tab heap limit after IFC load batch.~~ (2026-06-10)
 - ~~TAURI.md: phased desktop plan (same index.html, capability-detected tauri-bridge addon, native engine/ reuse, streamed reads, disk geo-cache, built-in Smart Bridge). Phase 0 not started — awaiting go.~~ (2026-06-10)
 
+Fourth batch (2026-06-10) — spike fix + loading status correction:
+
+- ~~**Spikey-model-on-refresh ROOT CAUSE found and fixed (#598):** geo-cache hash-fallback `_instKey` hashes bbox-NORMALIZED qpos bytes — scale-invariant, so same-proportion different-size shapes (12 m vs 18 m piles) hash identically → wrong instancing groups. Fix: absolute mm-rounded bbox appended to key + `_geoExpId` stashed on restore. The five 5.19.29-48 hotfixes couldn't work — the bytes carry no scale.~~ (2026-06-10)
+- **In-browser IFC loading status (corrects earlier open-points list):** worker parsing ALREADY EXISTS (`loadIFCWorker`, primary path at the load call site) and WASM model cleanup is correct. IFC 4.3 (IFC4X3_ADD2) PARSES WITH GEOMETRY under pinned web-ifc 0.0.77 (Node-verified) — claimed in llms.txt. Remaining real item: storey/discipline-scoped loading (big; next session, before Tauri Phase 0).
+- **Stale-branch audit:** all 24 non-main remote branches' content is in main (squash-merged), superseded (geoplace-persist → modelMeta georef; threejs-r179-bump → #595), or deliberately reverted (Free-RAM family). Nothing to merge. Safe to bulk-delete for hygiene.
+
 Third batch same branch (2026-06-10) — cross-repo contract audit (user-supplied PAT, since deleted) + addon one-click UX:
 
 - ~~**ClashControlEngine audit** → two real bugs fixed both sides: GET /update sends {latest,release_url} but addon read {update_version,update_url} AND the addon's /update handler never dispatched the info into state → update banner always blank. Addon now accepts both shapes + dispatches (main repo); engine adds aliases + modelAId/modelBId on clash objects (O(1) resolve) — ClashControlEngine PR #24 (draft; merge to main auto-releases).~~ (2026-06-10)
