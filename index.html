@@ -110,7 +110,7 @@
   <!-- CSP: restrict resource loading to known CDN origins -->
   <!-- 'unsafe-eval' required by pdf.js v3 for custom font rendering (CFF/Type1 font programs) -->
   <!-- Includes localhost:* and 127.0.0.1:* for addon servers (Smart Bridge v0.1.3, ClashControlEngine) -->
-  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval' 'wasm-unsafe-eval' https://cdnjs.cloudflare.com https://cdn.jsdelivr.net https://gc.zgo.at; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com data:; connect-src 'self' https://cdn.jsdelivr.net https://cdnjs.cloudflare.com https://*.goatcounter.com https://huggingface.co https://cdn-lfs.huggingface.co https://cdn-lfs-us-1.huggingface.co https://*.hf.co https://sparkjs.dev http://localhost:11434 https://api.anthropic.com https://api.openai.com https://generativelanguage.googleapis.com https://api.github.com http://localhost:* ws://localhost:* http://127.0.0.1:* ws://127.0.0.1:* blob: data:; worker-src 'self' blob:; img-src 'self' blob: data:;">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval' 'wasm-unsafe-eval' https://cdnjs.cloudflare.com https://cdn.jsdelivr.net https://gc.zgo.at; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com data:; connect-src 'self' https://cdn.jsdelivr.net https://cdnjs.cloudflare.com https://tile.googleapis.com https://*.goatcounter.com https://huggingface.co https://cdn-lfs.huggingface.co https://cdn-lfs-us-1.huggingface.co https://*.hf.co https://sparkjs.dev http://localhost:11434 https://api.anthropic.com https://api.openai.com https://generativelanguage.googleapis.com https://api.github.com http://localhost:* ws://localhost:* http://127.0.0.1:* ws://127.0.0.1:* blob: data:; worker-src 'self' blob:; img-src 'self' blob: data:;">
 
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -1045,7 +1045,7 @@ function startApp() {
   window._ccIsAddonActive = function(id) { return !!_ccAddonActive[id]; };
 
   function _loadAddonScripts() {
-    var addonFiles = ['training-data', 'pwa', 'local-engine', 'shared-project', 'revit-bridge', 'data-quality', 'smart-bridge', 'pointcloud', 'geoplace', 'accessibility', 'splat', 'align', 'openaec-bridge', 'visibility', 'wasm-engine'];
+    var addonFiles = ['training-data', 'pwa', 'local-engine', 'shared-project', 'revit-bridge', 'data-quality', 'smart-bridge', 'pointcloud', 'geoplace', 'accessibility', 'splat', 'align', 'openaec-bridge', 'visibility', 'wasm-engine', 'tiles'];
     addonFiles.forEach(function(name) {
       var script = document.createElement('script');
       script.src = 'addons/' + name + '.js';
@@ -15052,6 +15052,37 @@ function startApp() {
                   Enter lat/lon…
                 </button>
               </div>`}
+          ${window._ccLoadTiles3D && html`<div style=${{display:'flex',gap:'.25rem',marginTop:'.25rem'}}>
+            <button onClick=${function(){
+                if (window._ccTiles3DActive && window._ccTiles3DActive()) { window._ccUnloadTiles3D(); return; }
+                var latLon = null;
+                for (var ti = 0; ti < s.models.length; ti++) {
+                  var tg = window._ccGetModelGeoref && window._ccGetModelGeoref(s.models[ti]);
+                  if (tg) { latLon = {lat:+tg.refLat, lon:+tg.refLon}; break; }
+                }
+                if (!latLon && s.modelGeo && s.modelGeo.refLat != null) latLon = {lat:+s.modelGeo.refLat, lon:+s.modelGeo.refLon};
+                if (!latLon) {
+                  var li = prompt('Latitude, longitude for the 3D world context\nExample: 52.3676, 4.9041');
+                  if (!li) return;
+                  var lp = li.split(/[,;\s]+/).filter(Boolean).map(parseFloat);
+                  if (lp.length < 2 || !isFinite(lp[0]) || !isFinite(lp[1])) { alert('Could not parse lat/lon'); return; }
+                  latLon = {lat:lp[0], lon:lp[1]};
+                }
+                var tkey = '';
+                try { tkey = localStorage.getItem('cc_google_tiles_key') || ''; } catch(_){}
+                if (!tkey) {
+                  tkey = prompt('Google Map Tiles API key (stays in your browser).\nGet one: console.cloud.google.com \u2192 Map Tiles API');
+                  if (!tkey) return;
+                  try { localStorage.setItem('cc_google_tiles_key', tkey.trim()); } catch(_){}
+                }
+                window._ccLoadTiles3D({ key: tkey, lat: latLon.lat, lon: latLon.lon })
+                  .catch(function(err){ alert('3D tiles failed: ' + (err && err.message || err)); });
+              }}
+              title="Stream photorealistic Google 3D Tiles of the real world around your georeferenced model (bring your own Map Tiles API key)"
+              style=${{flex:1,fontSize:'.66rem',padding:'.22rem .4rem',background:(window._ccTiles3DActive && window._ccTiles3DActive())?'var(--bg-secondary)':'none',color:'var(--text-primary)',border:'1px solid var(--border)',borderRadius:'var(--radius-xs)',cursor:'pointer'}}>
+              ${(window._ccTiles3DActive && window._ccTiles3DActive()) ? 'Remove 3D world context' : '\ud83c\udf0d 3D world context\u2026'}
+            </button>
+          </div>`}
         </div>`}
         ${(s.referenceLayers && s.referenceLayers.length > 0) && html`<div style=${{marginTop:'.3rem',borderTop:'1px solid var(--hairline)',paddingTop:'.3rem'}}>
           <div style=${{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:'.25rem',padding:'0 .2rem'}}>
