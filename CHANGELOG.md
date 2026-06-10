@@ -1,5 +1,8 @@
 # Changelog
 
+## v5.20.8 (2026-06-10)
+- feat(tiles): 3D world context — Google Photorealistic 3D Tiles under the IFC (#605)
+
 ## v5.20.7 (2026-06-10)
 - fix(pick): batched element selection — tiebreak bounds, click outline/bbox, idle probe (#604)
 
