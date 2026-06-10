@@ -22123,6 +22123,9 @@ function startApp() {
     push({group:'Panels', label:'Open Navigator',
       keywords:'navigator tree elements explorer browse',
       onSelect:function(){ d({t:A.TAB,v:'navigator'}); }});
+    push({group:'Panels', label:'Open Integrations',
+      keywords:'integrations addons plugins modules revit bridge engine connector ai',
+      onSelect:function(){ d({t:A.TAB,v:'addons'}); }});
     push({group:'Panels', label:'Run detection / Open rules',
       keywords:'detection clash rules standards ids run setup compliance',
       onSelect:function(){ d({t:A.SHOW_RUN_MODAL,v:true}); }});
@@ -26748,7 +26751,7 @@ function startApp() {
       [['summary','overview','report'],function(){return processNLCommand('analyze clashes',s,d)||'No data yet.';}, 1],
       [['status','problems'],     function(){return processNLCommand('any problems',s,d)||'No data yet.';}, 1],
       [['count','many','how'],    function(){return processNLCommand('how many clashes',s,d)||_offerRunDetection(s);}, 2],
-      [['addons','addon','plugins'],function(){d({t:A.TAB,v:'ai'});return 'Addons tab.';}, 1]
+      [['addons','addon','plugins','integrations'],function(){d({t:A.TAB,v:'addons'});return 'Integrations panel.';}, 1]
     ];
     var inputWords = text.replace(/[,;:!?.]+/g,' ').split(/\s+/);
     var bestIntent = null, bestScore = 0, bestKwCount = 0;
@@ -30092,6 +30095,18 @@ function startApp() {
                 <span style=${{fontSize:'var(--text-2xs)',color:'var(--ink-faint)',fontFamily:'var(--font-mono)'}}>PDF · DXF — auto-placed on its level</span>
               </span>
             </button>
+            <button onClick=${function(){setAddOpen(false); if(window._ccOpenIFC) window._ccOpenIFC();}}
+              style=${{display:'flex',alignItems:'flex-start',gap:'.6rem',width:'100%',
+                padding:'.55rem .8rem',background:'none',border:'none',cursor:'pointer',textAlign:'left',
+                fontFamily:'var(--font-body)',color:'var(--ink-primary)'}}
+              onMouseEnter=${function(e){e.currentTarget.style.background='var(--surface-warm)';}}
+              onMouseLeave=${function(e){e.currentTarget.style.background='none';}}>
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" style=${{marginTop:2,flexShrink:0,color:'var(--ink-secondary)'}}><circle cx="6" cy="8" r="1"/><circle cx="12" cy="5" r="1"/><circle cx="18" cy="9" r="1"/><circle cx="8" cy="14" r="1"/><circle cx="15" cy="13" r="1"/><circle cx="11" cy="18" r="1"/><circle cx="18" cy="17" r="1"/></svg>
+              <span style=${{display:'flex',flexDirection:'column',gap:1}}>
+                <span style=${{fontSize:'var(--text-sm)',fontWeight:500}}>Point cloud / splat</span>
+                <span style=${{fontSize:'var(--text-2xs)',color:'var(--ink-faint)',fontFamily:'var(--font-mono)'}}>LAS · PLY · PCD · SPZ — as-built reference overlay</span>
+              </span>
+            </button>
             <div style=${{height:1,background:'var(--hairline)',margin:'.25rem 0'}}></div>
             <button onClick=${function(){
                 setAddOpen(false);
@@ -32125,7 +32140,7 @@ function startApp() {
       paddingTop:'max(env(titlebar-area-height, 0px), env(safe-area-inset-top, 0px))',
       display:'flex',flexDirection:'column',overflow:'hidden',position:'relative'
     }}>
-      <input ref=${_gFileRef} type="file" accept=".ifc,.glb,.ifcmeta,.ifcprops" multiple style=${{display:'none'}} onChange=${_gOnFiles} />
+      <input ref=${_gFileRef} type="file" accept=".ifc,.glb,.ifcmeta,.ifcprops,.ply,.pcd,.xyz,.pts,.ptx,.las,.splat,.ksplat,.spz" multiple style=${{display:'none'}} onChange=${_gOnFiles} />
       <input ref=${_gFile2dRef} type="file" accept=".dxf,.pdf,.dwg" multiple style=${{display:'none'}} onChange=${_gOnFiles} />
       <${DesktopTopBar} s=${s} d=${d} />
       <${TopToolbar} s=${s} d=${d} />
