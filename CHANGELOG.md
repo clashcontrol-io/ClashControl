@@ -1,5 +1,8 @@
 # Changelog
 
+## v5.20.9 (2026-06-10)
+- feat(tiles): PDOK NL 3D layer, range+detail controls, site-radius masking, offline hardening (#606)
+
 ## v5.20.8 (2026-06-10)
 - feat(tiles): 3D world context — Google Photorealistic 3D Tiles under the IFC (#605)
 
