@@ -112,6 +112,12 @@ Second batch same branch (2026-06-10) — product features + test infra ("do all
 - ~~Memory guardrail: toast+console warn at >75% of tab heap limit after IFC load batch.~~ (2026-06-10)
 - ~~TAURI.md: phased desktop plan (same index.html, capability-detected tauri-bridge addon, native engine/ reuse, streamed reads, disk geo-cache, built-in Smart Bridge). Phase 0 not started — awaiting go.~~ (2026-06-10)
 
+Fifth batch (2026-06-10) — declared units + registry; scoped-loading design queued:
+
+- ~~Declared IFC LENGTHUNIT extraction (`_ccExtractIfcLengthUnit`) wired: load → result.stats.unitScale → geo-cache persist → `_ccDetectUnitScale` precedence override>declared>spacing-heuristic. tests/ifc-units.test.js locks it.~~ (2026-06-10)
+- ~~Port/protocol registry: INTERNALS.md §22 — all companion-app contracts in one table.~~ (2026-06-10)
+- **NEXT — storey/discipline-scoped loading (design):** the IFC worker is assembled by stringifying the SAME shared functions the main-thread fallback uses (`_getIFCWorkerUrl`, index.html:~3075) — so the scope filter goes into the shared stream-processing function once and both paths get it. Plan: (1) fast pre-pass already exists (`loadIFCMetadataOnly` ~13451 + `extractStoreys`) → storey list before geometry; (2) UI: storey-picker step in the load flow (reuse Levels-panel rendering) with "Load all" default so the flow stays one-click; (3) thread `scope:{storeys:[...]}` through loadIFCWorker message + loadIFC signature; in the StreamAllMeshes callback, `continue` for elements whose storeyMap entry is out of scope (storeyMap is built BEFORE geometry streaming); (4) un-loaded storeys listed in Levels panel greyed with a "load now" affordance → re-parse with widened scope (file bytes are in IDB via idbSaveFile). Memory + time win proportional to scope; geo-cache keying must include the scope or only cache full loads (simpler: only cache full loads, v1).
+- **Then Tauri Phase 0** per TAURI.md (user-approved order).
 Fourth batch (2026-06-10) — spike fix + loading status correction:
 
 - ~~**Spikey-model-on-refresh ROOT CAUSE found and fixed (#598):** geo-cache hash-fallback `_instKey` hashes bbox-NORMALIZED qpos bytes — scale-invariant, so same-proportion different-size shapes (12 m vs 18 m piles) hash identically → wrong instancing groups. Fix: absolute mm-rounded bbox appended to key + `_geoExpId` stashed on restore. The five 5.19.29-48 hotfixes couldn't work — the bytes carry no scale.~~ (2026-06-10)
