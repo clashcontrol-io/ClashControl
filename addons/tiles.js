@@ -35,7 +35,20 @@
   function _S3() { return window._ccState3d || null; }
   function _inv(n) { if (typeof window._ccInvalidate === 'function') window._ccInvalidate(n || 2); }
 
+  var _attrEl = null;
+  function _showAttribution(text) {
+    _hideAttribution();
+    if (!text) return;
+    var el = document.createElement('div');
+    el.textContent = text;
+    el.style.cssText = 'position:fixed;left:8px;bottom:8px;z-index:30;font:10px/1.4 sans-serif;color:#475569;background:rgba(255,255,255,.75);padding:1px 6px;border-radius:4px;pointer-events:none';
+    document.body.appendChild(el);
+    _attrEl = el;
+  }
+  function _hideAttribution() { if (_attrEl) { try { _attrEl.remove(); } catch(_){} _attrEl = null; } }
+
   function _teardown() {
+    _hideAttribution();
     if (_frameHandler) { window.removeEventListener('cc-render-frame', _frameHandler); _frameHandler = null; }
     if (_tiles) {
       try { if (_tiles.group && _tiles.group.parent) _tiles.group.parent.remove(_tiles.group); } catch (_) {}
@@ -52,12 +65,17 @@
   };
   window._ccTiles3DActive = function() { return !!_tiles; };
 
+  // Free Dutch national 3D layer: Kadaster 3D Basisvoorziening via PDOK
+  // (OGC API 3D GeoVolumes). Buildings are LoD 2.2 from BAG + AHN. No key.
+  var PDOK_NL_TILESET = 'https://api.pdok.nl/kadaster/3d-basisvoorziening/ogc/v1_0/collections/gebouwen/3dtiles';
+
   window._ccLoadTiles3D = function(opts) {
     opts = opts || {};
     var S = _S3();
     if (!S || !S.scene || !S.camera || !S.renderer) return Promise.reject(new Error('Viewer not ready'));
     var lat = Number(opts.lat), lon = Number(opts.lon);
     if (!isFinite(lat) || !isFinite(lon)) return Promise.reject(new Error('3D tiles need a latitude/longitude — set one in Geo Placement first.'));
+    if (opts.preset === 'nl') { opts.url = PDOK_NL_TILESET; opts.attribution = '3D: Kadaster / PDOK (CC-BY 4.0)'; }
     var key = (opts.key || '').trim();
     if (!key && !opts.url) return Promise.reject(new Error('Google Map Tiles API key required (or a custom tileset URL).'));
     _teardown();
@@ -129,6 +147,7 @@
       };
       window.addEventListener('cc-render-frame', _frameHandler);
       try { localStorage.setItem('cc_tiles3d_on', '1'); } catch (_) {}
+      _showAttribution(opts.attribution || (key ? 'Map data: Google' : null));
       _inv(5);
       if (window._ccToast) window._ccToast('3D world context streaming in — give it a few seconds.');
       return tiles;
