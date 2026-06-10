@@ -99,6 +99,7 @@ On branch `claude/codebase-review-ae7481` (2026-06-10) — codebase review: conn
 - ~~Dead code: removed suggestOmniClass+_aiResJson, _ccLoadScript, _ccFormatLen (dup of _ccFmtLength), _ccDrawTitleBlock/ScaleBar/NorthArrow (dead duplicates of the inline 2D-sheet drawing) — ~136 lines.~~ (2026-06-10)
 - ~~PWA offline was broken for addons: fetch handler only runtime-caches CDN hosts, addons weren't precached → 404 offline. All 15 addons + wasm pkg added to PRECACHE (cache name rotates per release).~~ (2026-06-10)
 - **Deliberately skipped:** hiding model names from `/api/health` — Settings intentionally displays the live model (e840a79) and it's public in llms.txt; hiding it would regress a feature for negligible gain.
+- **Chunk-merge caveat list is moot:** the whole chunk-merge subsystem was removed in 704837f (2026-06-09) — the Stage 2B "~15 visibility / ~34 color setters not chunk-aware" follow-up no longer applies. This session removed the orphaned write-only `_ccHiddenReg` registry the removal left behind. If chunk-merge ever returns, it returns with its own registry.
 
 On branch `claude/jolly-cannon-YZUwi-followup` (2026-06-08) — Splat addon Phase 1 + Three.js bump scheduled:
 

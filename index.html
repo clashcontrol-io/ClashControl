@@ -2516,11 +2516,6 @@ function startApp() {
 
   var _ccLoadGeneration = 0; // incremented each load to cancel stale in-progress loads
 
-  // _ccHiddenReg: hide-source union for class/storey/temp filters.
-  // "modelId_eid" -> true. Still used by the per-element hide path; no longer
-  // needs the merged-chunk index-rebuild helper.
-  window._ccHiddenReg = { class:{}, storey:{}, temp:{} };
-
   // ── GPU instancing ──  See INTERNALS.md § 21.10
   function _buildInstancedMeshes(elements, meshes) {
     if (!THREE.InstancedMesh) return {meshes:meshes, groups:0, instanced:0};
@@ -7336,14 +7331,11 @@ function startApp() {
             _tempHiddenMeshes.push(obj);
           }
         });
-        // [Stage 2B] temp-hide is model-agnostic → keyed by bare eid
-        expressIds.forEach(function(id){ window._ccHiddenReg.temp[id] = true; });
         invalidate();
       };
       window._ccTempUnhide = function() {
         _tempHiddenMeshes.forEach(function(m){ m.visible = true; });
         _tempHiddenMeshes = [];
-        window._ccHiddenReg.temp = {};            // [Stage 2B]
         invalidate();
       };
       window._ccIsolate = function(expressIds) {
@@ -10856,12 +10848,6 @@ function startApp() {
                 obj.userData._storeyHidden = hidden;
               }
             });
-            // [Stage 2B] mirror storey hide into the chunk registry for this model
-            var _pfx = model.id + '_';
-            Object.keys(window._ccHiddenReg.storey).forEach(function(k){
-              if (k.indexOf(_pfx) === 0) delete window._ccHiddenReg.storey[k];
-            });
-            Object.keys(em).forEach(function(eid){ if (hs[em[eid]||'']) window._ccHiddenReg.storey[_pfx+eid] = true; });
               }
         }
       });
@@ -11586,7 +11572,6 @@ function startApp() {
             if(!modelHidden && !obj.userData._storeyHidden) obj.visible=true;
           }
         });
-        window._ccHiddenReg.class = {};            // [Stage 2B]
         invalidate();
         return;
       }
@@ -11596,9 +11581,6 @@ function startApp() {
         var grp = cls[view]&&cls[view][grpKey];
         if(grp&&grp.items) grp.items.forEach(function(it){hiddenIds.add(it.modelId+'_'+it.expressId);});
       });
-      var _classReg = {};                          // [Stage 2B] mirror hide set for chunks
-      hiddenIds.forEach(function(k){ _classReg[k] = true; });
-      window._ccHiddenReg.class = _classReg;
       S.mg.traverse(function(obj){
         if(!obj.isMesh) return;
         var eid=obj.userData.expressId; if(eid==null) return;
