@@ -1,5 +1,8 @@
 # Changelog
 
+## v5.20.14 (2026-06-10)
+- feat(geo): manual north dial, PDOK visibility fixes; What's new from CHANGELOG (#616)
+
 ## v5.20.13 (2026-06-10)
 - fix(tiles): tileset URL validation + surfaced errors; Integrations below + New project (#615)
 
