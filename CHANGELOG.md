@@ -1,5 +1,8 @@
 # Changelog
 
+## v5.20.11 (2026-06-10)
+- fix(geo): one anchor, two layers — basemap half-tile drift + 3D tiles anchored to model
+
 ## v5.20.10 (2026-06-10)
 - fix: PDOK first-click crash + batched-element selection outline (#610)
 
