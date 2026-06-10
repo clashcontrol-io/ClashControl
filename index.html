@@ -2664,7 +2664,7 @@ function startApp() {
     return null;
   }
 
-  function loadIFC(buffer, fallbackColor, onProgress, _parentGen) {
+  function loadIFC(buffer, fallbackColor, onProgress, _parentGen, scope) {
     var loadStart = performance.now();
     var _lp = { t0: loadStart, phases: {} };
     function _lmark(name) { _lp.phases[name] = performance.now() - _lp.t0; }
@@ -2703,6 +2703,14 @@ function startApp() {
       }
       var _skippedPredecode = 0;
 
+      // Storey-scoped loading: when scope.storeys is set, geometry outside
+      // the selected storeys is skipped before decode — memory and time
+      // scale with the scope. storeyMap is already built above.
+      var _scopeSet = null, _scopedOut = 0;
+      if (scope && Array.isArray(scope.storeys) && scope.storeys.length) {
+        _scopeSet = {};
+        scope.storeys.forEach(function(n){ _scopeSet[n] = true; });
+      }
       var rawElements = [];
       var meshes = [];
       var matCache = {}; // material dedup: "r,g,b,a" → MeshPhongMaterial
@@ -2713,6 +2721,7 @@ function startApp() {
       var _streamCount = 0;
       api.StreamAllMeshes(modelID, function(ifcMesh) {
         var expressID = ifcMesh.expressID;
+        if (_scopeSet && !_scopeSet[storeyMap[expressID] || '']) { _scopedOut++; return; }
         _streamCount++;
         if (_skipGeoEids[expressID]) { _skippedPredecode++; return; }
         if (onProgress && (_streamCount & 255) === 0) {
@@ -2827,7 +2836,7 @@ function startApp() {
             meshes = _instResult.meshes;
             var loadTime = Math.round(performance.now() - loadStart);
             var _geoUnique = Object.keys(geoCache).length;
-            var stats = {loadTime:loadTime, fileSize:buffer.byteLength, elementCount:elements.length, meshCount:meshes.length, geoUnique:_geoUnique, geoReused:_geoReused, instancedGroups:_instResult.groups, instancedElements:_instResult.instanced, phases:_lp.phases, loadType:'IFC'};
+            var stats = {loadTime:loadTime, fileSize:buffer.byteLength, elementCount:elements.length, meshCount:meshes.length, geoUnique:_geoUnique, geoReused:_geoReused, instancedGroups:_instResult.groups, instancedElements:_instResult.instanced, phases:_lp.phases, loadType:'IFC', loadedScope:(_scopeSet ? scope.storeys : null), scopedOutCount:_scopedOut};
             (function() {
               var ph = _lp.phases, prev = 0;
               var rows = [];
@@ -2907,6 +2916,7 @@ function startApp() {
     var _api = null;
     self.onmessage = function(e) {
       var buf = e.data.buffer;
+      var _scope = e.data.scope || null;
       var phases = {};
       var t0 = performance.now();
       function mark(n) { phases[n] = performance.now() - t0; }
@@ -2969,6 +2979,13 @@ function startApp() {
           } catch(e) {}
         }
         var _skippedPredecode = 0;
+        // Storey-scoped loading (mirrors the main-thread path): skip
+        // geometry outside scope.storeys before decode.
+        var _scopeSet = null, _scopedOut = 0;
+        if (_scope && _scope.storeys && _scope.storeys.length) {
+          _scopeSet = {};
+          for (var _si = 0; _si < _scope.storeys.length; _si++) _scopeSet[_scope.storeys[_si]] = true;
+        }
 
         var rawEls = [];
         var xfer = [];
@@ -2982,6 +2999,7 @@ function startApp() {
 
         api.StreamAllMeshes(modelID, function(ifcMesh) {
           var eid = ifcMesh.expressID;
+          if (_scopeSet && !_scopeSet[storeyMap[eid] || '']) { _scopedOut++; return; }
           _streamCount++;
           if (_skipGeoEids[eid]) { _skippedPredecode++; return; }
           if ((_streamCount & 255) === 0) {
@@ -3042,6 +3060,7 @@ function startApp() {
 
         var _geoUnique = Object.keys(_geoTable).length;
         self.postMessage({type:'result', rawEls:rawEls, geoTable:_geoTable,
+          loadedScope:(_scopeSet ? _scope.storeys : null), scopedOutCount:_scopedOut,
           geoUnique:_geoUnique, geoReused:_geoReused,
           storeys:Object.keys(allStoreys).sort(), storeyData:storeyData,
           spatialHierarchy:spatialHierarchy,
@@ -3092,7 +3111,7 @@ function startApp() {
     return _ifcWorkerUrl;
   }
 
-  function loadIFCWorker(buffer, fallbackColor, onProgress, onProps) {
+  function loadIFCWorker(buffer, fallbackColor, onProgress, onProps, scope) {
     var loadStart = performance.now();
     var _myGen = ++_ccLoadGeneration;
     return new Promise(function(resolve, reject) {
@@ -3211,7 +3230,7 @@ function startApp() {
           };
           var streamSub = msg.streamSub || null;
           var _gu = msg.geoUnique || Object.keys(geoCache).length, _gr = msg.geoReused || 0;
-          var stats = {loadTime:loadTime, fileSize:msg.fileSize, elementCount:elements.length, meshCount:meshes.length, geoUnique:_gu, geoReused:_gr, instancedGroups:_instResult.groups, instancedElements:_instResult.instanced, phases:phases, streamSub:streamSub, sceneSub:sceneSub, loadType:'IFC'};
+          var stats = {loadTime:loadTime, fileSize:msg.fileSize, elementCount:elements.length, meshCount:meshes.length, geoUnique:_gu, geoReused:_gr, instancedGroups:_instResult.groups, instancedElements:_instResult.instanced, phases:phases, streamSub:streamSub, sceneSub:sceneSub, loadType:'IFC', loadedScope:msg.loadedScope||null, scopedOutCount:msg.scopedOutCount||0};
 
           (function() {
             var ph = phases, prev = 0;
@@ -3253,7 +3272,7 @@ function startApp() {
         reject(new Error('IFC Worker failed: ' + (err.message || err)));
       };
       try {
-        worker.postMessage({buffer:buffer});
+        worker.postMessage({buffer:buffer, scope:scope||null});
       } catch(postErr) {
         _clearWatchdog();
         try { worker.terminate(); } catch(e) {}
@@ -8096,7 +8115,10 @@ function startApp() {
         loadSplat:        function(url, opts){ if (window._ccLoadSplat) return window._ccLoadSplat(url, opts); },
         loadPointCloud:   function(file){ if (window._ccLoadPointCloud) return window._ccLoadPointCloud(file); },
         geoplaceModel:    function(modelId, opts){ if (window._ccGeoplaceModel) return window._ccGeoplaceModel(modelId, opts); },
-        loadFiles:        function(files){ if (window._ccLoadFiles) return window._ccLoadFiles(files); },
+        loadFiles:        function(files, opts){
+          if (opts && Array.isArray(opts.storeys) && opts.storeys.length) window._ccNextLoadScope = { storeys: opts.storeys.slice() };
+          if (window._ccLoadFiles) return window._ccLoadFiles(files);
+        },
         runDetection:     function(rulesOverride){
           var st = window._ccLatestState;
           if (!st || !st.models || !st.models.length) return Promise.resolve(null);
@@ -14456,6 +14478,9 @@ function startApp() {
             // result.stats below so it persists via the geo-cache and the
             // unit pipeline stops guessing for well-formed files.
             var _declUnit = _ccExtractIfcLengthUnit(buf);
+            // Storey-scoped loading: set via ClashControl.loadFiles(files,
+            // {storeys:[...]}) — applies to this batch, then clears.
+            var _loadScope = window._ccNextLoadScope || null;
             var _loadP = loadIFCWorker(buf, col, _onProg, function(propMap, propErr) {
               if (!propErr && _lazyPropsTarget.modelId) {
                 _mergeLazyProps(_lazyPropsTarget.modelId, propMap);
@@ -14464,11 +14489,11 @@ function startApp() {
               if (_lazyWorkersActive === 0 && _chainEndFired) {
                 _finishLoadingStrip(500);
               }
-            });
+            }, _loadScope);
             var _workerGen = _ccLoadGeneration; // capture generation assigned by loadIFCWorker
             _loadP = _loadP.catch(function(workerErr) {
               console.warn('[IFC Worker fallback]', workerErr.message || workerErr);
-              return loadIFC(buf, col, _onProg, _workerGen);
+              return loadIFC(buf, col, _onProg, _workerGen, _loadScope);
             });
             return _loadP.then(function(result) {
               if (!result) return; // load was cancelled by a newer load
@@ -14510,7 +14535,10 @@ function startApp() {
               consoleElementProfile(baseName, (result.stats&&result.stats.loadType)||'IFC', result.elements);
               var _verMeta = existing ? {_version:(existing._version||1)+1, _versionDiff:versionDiff} : {_version:1};
               idbSaveFile(modelId, f.name, buf, s.activeProject||'default', null, _verMeta);
-              idbSaveGeoCache(modelId, _geoSerialize(result)); // cache geometry for fast project-switch restore
+              // Cache geometry for fast project-switch restore — full loads
+              // only: a storey-scoped result would restore as a partial
+              // model with no record of what's missing.
+              if (!(result.stats && result.stats.loadedScope)) idbSaveGeoCache(modelId, _geoSerialize(result));
             });
           }).catch(function(er) {
             console.error(er);
@@ -14521,6 +14549,7 @@ function startApp() {
       chain.then(function() {
         _chainEndFired = true;
         if (errors.length) setErr(errors.join('\n'));
+        window._ccNextLoadScope = null; // one-shot: scope applies to a single batch
         if (totalIfc > 0) _gcEvent('ifc-loaded', totalIfc+' file'+(totalIfc>1?'s':''));
         // Memory guardrail: warn before the browser heap wall instead of
         // letting the next model OOM the tab (Chrome-only API; no-op elsewhere).

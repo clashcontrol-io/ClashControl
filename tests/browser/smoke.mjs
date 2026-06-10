@@ -83,6 +83,27 @@ try {
     return c ? c.type + ' ' + (c.title || c.aiTitle || '') : '';
   });
   console.log('SMOKE OK — model loaded, detection found ' + detected + ' clash(es), state updated; first: ' + sample);
+
+  // ── Scoped loading: same fixture, storey filter must thread through the
+  // worker → only in-scope geometry materialises ───────────────────────────
+  await page.evaluate(async () => {
+    const buf = await (await fetch('/tests/fixtures/smoke-clash.ifc')).arrayBuffer();
+    window.ClashControl.loadFiles([new File([buf], 'scoped-bogus.ifc')], { storeys: ['NoSuchLevel'] });
+  });
+  await page.waitForFunction(() => {
+    const s = window._ccLatestState;
+    const m = s && s.models.find((x) => x.name.indexOf('scoped-bogus') === 0);
+    return m && m.stats && m.stats.loadedScope; // load finished, scope recorded
+  }, null, { timeout: 60_000 }).catch(() => fail('scoped load (bogus storey) did not finish'));
+  const scoped = await page.evaluate(() => {
+    const s = window._ccLatestState;
+    const m = s.models.find((x) => x.name.indexOf('scoped-bogus') === 0);
+    return { els: (m.elements || []).length, out: m.stats.scopedOutCount, storeys: (m.storeys || []).length };
+  });
+  if (scoped.els !== 0) fail('bogus-storey scope still loaded ' + scoped.els + ' elements');
+  if (scoped.out < 2) fail('expected >=2 scoped-out elements, got ' + scoped.out);
+  if (scoped.storeys < 1) fail('storey list must stay complete on scoped loads');
+  console.log('SMOKE OK — scoped load: 0 elements materialised, ' + scoped.out + ' skipped, storey list intact');
 } finally {
   await browser.close();
   server.close();
