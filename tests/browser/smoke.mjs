@@ -64,17 +64,25 @@ try {
     return s && s.models.length === 1 && (s.models[0].elements || []).length >= 2;
   }, null, { timeout: 120_000 }).catch(() => fail('model did not load/process within 120s (web-ifc WASM path)'));
 
-  const counts = await page.evaluate(async () => {
+  const detected = await page.evaluate(async () => {
     // Default rules exclude within-model pairs (excludeSelf:true) — the
     // fixture is one model with two crossing walls, so opt self-clash in.
     const result = await window.ClashControl.runDetection({ selfClashModels: 'all', excludeSelf: false });
-    const s = window._ccLatestState;
-    return { detected: result ? result.length : 0, inState: s.clashes.length, sample: s.clashes[0] || null };
+    return result ? result.length : 0;
   });
+  if (detected < 1) fail('two crossing walls produced 0 clashes');
 
-  if (counts.inState < 1) fail('two crossing walls produced 0 clashes (detected=' + counts.detected + ')');
-  console.log('SMOKE OK — model loaded, detection found ' + counts.inState + ' clash(es); first: '
-    + (counts.sample ? counts.sample.type + ' ' + (counts.sample.title || '') : ''));
+  // The MERGE_CLASHES dispatch lands on the next React render — wait for it.
+  await page.waitForFunction(
+    () => window._ccLatestState && window._ccLatestState.clashes.length > 0,
+    null, { timeout: 10_000 }
+  ).catch(() => fail('detection found ' + detected + ' clash(es) but they never reached app state'));
+
+  const sample = await page.evaluate(() => {
+    const c = window._ccLatestState.clashes[0];
+    return c ? c.type + ' ' + (c.title || c.aiTitle || '') : '';
+  });
+  console.log('SMOKE OK — model loaded, detection found ' + detected + ' clash(es), state updated; first: ' + sample);
 } finally {
   await browser.close();
   server.close();
