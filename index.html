@@ -2368,7 +2368,7 @@ function startApp() {
       for (var i = 0; i < total; i++) {
         if (onProgress && i % 500 === 0) {
           var _ppct = total > 0 ? 25 + Math.round(i / total * 15) : 25;
-          onProgress('Reading properties ' + _ppct + '%');
+          onProgress('Reading element details ' + _ppct + '%');
         }
         try {
           var rel = api.GetLine(modelID, relIds.get(i));
@@ -2700,11 +2700,11 @@ function startApp() {
 
     return getIfcAPI().then(function(api) {
       _lmark('WASM ready');
-      if(onProgress) onProgress('Opening model 20%');
+      if(onProgress) onProgress('Opening your file 20%');
       var modelID = api.OpenModel(new Uint8Array(buffer), {USE_FAST_BOOLS: true});
       _lmark('Model open');
 
-      if(onProgress) onProgress('Building property maps 25%');
+      if(onProgress) onProgress('Reading storeys, materials \u0026 properties 25%');
 
       var storeyResult = extractStoreys(api, modelID);
       var storeyMap = storeyResult.map;
@@ -2717,7 +2717,7 @@ function startApp() {
       Object.keys(storeyMap).forEach(function(k){ allStoreys[storeyMap[k]] = true; });
       _lmark('Property maps');
 
-      if(onProgress) onProgress('Streaming geometry 45%');
+      if(onProgress) onProgress('Building the 3D model 45%');
 
       var _skipGeoEids = {};
       var _skipTypes = [IFC.IFCOPENINGELEMENT, IFC.IFCSPACE, IFC.IFCVIRTUALELEMENT, IFC.IFCANNOTATION, IFC.IFCGRID];
@@ -2754,7 +2754,7 @@ function startApp() {
         if (_skipGeoEids[expressID]) { _skippedPredecode++; return; }
         if (onProgress && (_streamCount & 255) === 0) {
           var _spct = 45 + Math.min(33, Math.round(_streamCount / _estTotal * 33));
-          onProgress('Streaming geometry ' + _spct + '%');
+          onProgress('Building the 3D model ' + _spct + '%');
         }
         var elMeshes = [], elBox = new THREE.Box3();
         for (var i = 0; i < ifcMesh.geometries.size(); i++) {
@@ -2838,7 +2838,7 @@ function startApp() {
       api.CloseModel(modelID);
       _lmark('Geometry stream');
 
-      if(onProgress) onProgress('Processing elements 85%');
+      if(onProgress) onProgress('Placing elements in the scene 85%');
 
       var elements = [];
       var CHUNK = 200;
@@ -2852,7 +2852,7 @@ function startApp() {
           }
           if (end < rawElements.length) {
             var _epct = 85 + Math.round(end / rawElements.length * 13);
-            if(onProgress) onProgress('Processing elements ' + _epct + '%');
+            if(onProgress) onProgress('Placing elements in the scene ' + _epct + '%');
             setTimeout(function(){ processChunk(end); }, 0);
           } else {
             _lmark('Element processing');
@@ -2950,19 +2950,19 @@ function startApp() {
       function mark(n) { phases[n] = performance.now() - t0; }
       function progress(msg) { self.postMessage({type:'progress', msg:msg}); }
 
-      progress('Loading IFC engine 16%');
+      progress('Starting up 16%');
 
       var ready;
       if (_api) {
         ready = Promise.resolve(_api);
       } else {
-        progress('Fetching IFC library 17%');
+        progress('Downloading the IFC reader 17%');
         // Shared prefetch: cached-first with corrupt-retry + session memo —
         // usually already resolved by the idle warm-up after boot.
         var _modImportP = import('https://cdn.jsdelivr.net/npm/web-ifc@0.0.77/web-ifc-api.js');
         ready = Promise.all([_prefetchWebIfcWasm(), _modImportP]).then(function(parts) {
           var wasmBuf = parts[0], mod = parts[1];
-          progress('Initializing WASM 18%');
+          progress('Starting the IFC reader 18%');
           var blobUrl = URL.createObjectURL(new Blob([wasmBuf], {type:'application/wasm'}));
           _api = new mod.IfcAPI();
           // CRITICAL: any path that isn't web-ifc.wasm MUST be returned as
@@ -2980,11 +2980,11 @@ function startApp() {
 
       ready.then(function(api) {
         mark('WASM ready');
-        progress('Opening model 20%');
+        progress('Opening your file 20%');
         var modelID = api.OpenModel(new Uint8Array(buf), {USE_FAST_BOOLS: true});
         mark('Model open');
 
-        progress('Building property maps 25%');
+        progress('Reading storeys, materials \u0026 properties 25%');
         var storeyResult = extractStoreys(api, modelID);
         var storeyMap = storeyResult.map;
         var storeyData = storeyResult.data;
@@ -2996,7 +2996,7 @@ function startApp() {
         Object.keys(storeyMap).forEach(function(k) { allStoreys[storeyMap[k]] = true; });
         mark('Property maps');
 
-        progress('Streaming geometry 45%');
+        progress('Building the 3D model 45%');
 
         // skipped in the worker because the worker has no equivalent of the
         var _skipGeoEids = {};
@@ -3032,7 +3032,7 @@ function startApp() {
           if (_skipGeoEids[eid]) { _skippedPredecode++; return; }
           if ((_streamCount & 255) === 0) {
             var _spct = 45 + Math.min(33, Math.round(_streamCount / _estTotal * 33));
-            progress('Streaming geometry ' + _spct + '%');
+            progress('Building the 3D model ' + _spct + '%');
           }
           var geos = [];
           for (var i = 0; i < ifcMesh.geometries.size(); i++) {
@@ -3097,16 +3097,16 @@ function startApp() {
 
         // ── Phase 2: lazy property extraction ──────────────────────
         try {
-          progress('Loading properties 98%');
+          progress('Loading element details 98%');
           var lazyPropMap = buildPropertyMap(api, modelID, function(msg) {
             var m = msg && msg.match(/(\d+)\s*%/);
             if (m) {
               var local = parseInt(m[1], 10) - 25; // 0..15
               var pct = 98 + Math.min(1, Math.round(local / 15));
-              progress('Loading properties ' + pct + '%');
+              progress('Loading element details ' + pct + '%');
             }
           });
-          progress('Done 100%');
+          progress('Finishing up 100%');
           api.CloseModel(modelID);
           self.postMessage({type:'props', propMap:lazyPropMap});
         } catch(propErr) {
@@ -3202,7 +3202,7 @@ function startApp() {
         }
         if (msg.type === 'result') {
           if (_myGen !== _ccLoadGeneration) { worker.terminate(); resolve(null); return; } // cancelled — also kills the in-flight buildPropertyMap
-          if (onProgress) onProgress('Building 3D scene 85%');
+          if (onProgress) onProgress('Placing elements in the scene 85%');
           var rawEls = msg.rawEls;
           var gt = msg.geoTable || {};
           var meshes = [];
