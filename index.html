@@ -2686,6 +2686,7 @@ function startApp() {
       b.perObjectFrustumCulled = true;
       b.userData._isCCBatch = true;
       b.userData.batchExprIds = [];
+      b.userData.batchGeomIds = [];
       b.userData._origColors = [];
       batches.push(b);
       return b;
@@ -2722,6 +2723,7 @@ function startApp() {
               b.setMatrixAt(iidI, _tmpIM);
               b.setColorAt(iidI, _col);
               b.userData.batchExprIds[iidI] = exprIds[k];
+              b.userData.batchGeomIds[iidI] = gidI;
               b.userData._origColors[iidI] = _col.getHex();
               nBatched++;
             }
@@ -2736,6 +2738,7 @@ function startApp() {
           _col.copy(m.material.color || _col.set(0xcccccc));
           b.setColorAt(iid, _col);
           b.userData.batchExprIds[iid] = m.userData.expressId;
+          b.userData.batchGeomIds[iid] = gid;
           b.userData._origColors[iid] = _col.getHex();
           m.userData._batchRef = { bMesh: b, instanceId: iid };
           removed[m.uuid] = true;
@@ -9852,6 +9855,7 @@ function startApp() {
         // Prefer front-face hits (prevents DoubleSide back-face of a beam
         // behind a wall from stealing the click). Fall back to all hits if
         // the geometry has inverted winding or no front-face hit exists.
+        var _pickTmpSphere = new THREE.Sphere();
         var frontHits = hits.filter(_isFrontFaceHit);
         var candidateHits = frontHits.length > 0 ? frontHits : hits;
         // Curtain-wall tiebreak: when several hits land within ~2 cm of the
@@ -9863,14 +9867,22 @@ function startApp() {
           var _t0 = candidateHits[0].distance;
           var _near = candidateHits.filter(function(h){ return h.distance - _t0 < 0.02; });
           if (_near.length > 1) {
-            _near.sort(function(a, b){
-              var ga = a.object.geometry, gb = b.object.geometry;
-              if (ga && !ga.boundingSphere) { try { ga.computeBoundingSphere(); } catch(_){} }
-              if (gb && !gb.boundingSphere) { try { gb.computeBoundingSphere(); } catch(_){} }
-              var ra = (ga && ga.boundingSphere) ? ga.boundingSphere.radius : Infinity;
-              var rb = (gb && gb.boundingSphere) ? gb.boundingSphere.radius : Infinity;
-              return ra - rb;
-            });
+            var _hitRadius = function(h){
+              var o = h.object;
+              if (o.userData && o.userData._isCCBatch && h.batchId != null) {
+                // Whole-batch boundingSphere spans the model — use the hit
+                // instance's own geometry bounds.
+                var gidB = (o.userData.batchGeomIds || [])[h.batchId];
+                if (gidB != null && o.getBoundingSphereAt) {
+                  try { return o.getBoundingSphereAt(gidB, _pickTmpSphere).radius; } catch(_){}
+                }
+                return Infinity;
+              }
+              var g = o.geometry;
+              if (g && !g.boundingSphere) { try { g.computeBoundingSphere(); } catch(_){} }
+              return (g && g.boundingSphere) ? g.boundingSphere.radius : Infinity;
+            };
+            _near.sort(function(a, b){ return _hitRadius(a) - _hitRadius(b); });
             // Splice the winner to the front of candidateHits.
             var _winner = _near[0];
             var _wi = candidateHits.indexOf(_winner);
@@ -10288,20 +10300,31 @@ function startApp() {
               var dObj2 = DISC.find(function(x){return x.id===found.model.discipline;});
               if(dObj2) clickDiscColor = new THREE.Color(dObj2.c).getHex();
             }
-            // For InstancedMesh hits, get the per-instance world matrix for edge outline and bbox
+            // For InstancedMesh/BatchedMesh hits, get the per-instance world
+            // matrix for edge outline and bbox.
+            var _hitIsBatch = !!(hit.userData && hit.userData._isCCBatch && _hitInstId >= 0);
             var _hitWorldMx = hit.matrixWorld;
-            if(hit.isInstancedMesh && _hitInstId >= 0){
+            if((hit.isInstancedMesh || _hitIsBatch) && _hitInstId >= 0){
               _hitWorldMx = new THREE.Matrix4();
               hit.getMatrixAt(_hitInstId, _hitWorldMx);
             }
             var hlGrp = new THREE.Group();
             try {
-              var fc2 = hit.geometry.index ? hit.geometry.index.count/3 : (hit.geometry.attributes.position?hit.geometry.attributes.position.count/3:0);
+              // Batched hit: hit.geometry is the ENTIRE merged batch — the
+              // outline (and the face cap) must use the element's off-scene
+              // original instead.
+              var _outGeo = hit.geometry, _outMx = _hitWorldMx;
+              if(_hitIsBatch){
+                var _opm = _ccProxyMeshFor(eid, _hitModelId);
+                if(_opm && _opm.geometry){ _outGeo = _opm.geometry; _outMx = _opm.matrixWorld || _opm.matrix; }
+                else _outGeo = null;
+              }
+              var fc2 = _outGeo ? (_outGeo.index ? _outGeo.index.count/3 : (_outGeo.attributes.position?_outGeo.attributes.position.count/3:0)) : Infinity;
               if(fc2 < 50000) {
-                var edgeGeo2 = new THREE.EdgesGeometry(hit.geometry, 50);
+                var edgeGeo2 = new THREE.EdgesGeometry(_outGeo, 50);
                 var edgeMat2 = new THREE.LineBasicMaterial({color:clickDiscColor, transparent:true, opacity:0.4, depthTest:false});
                 var edgeLines2 = new THREE.LineSegments(edgeGeo2, edgeMat2);
-                edgeLines2.applyMatrix4(_hitWorldMx);
+                edgeLines2.applyMatrix4(_outMx);
                 edgeLines2.renderOrder = 999;
                 hlGrp.add(edgeLines2);
               }
@@ -10310,7 +10333,18 @@ function startApp() {
             hlRef.current = hlGrp;
 
             var hitBox;
-            if(hit.isInstancedMesh && _hitInstId >= 0){
+            if(_hitIsBatch){
+              hitBox = new THREE.Box3();
+              var _bgid = (hit.userData.batchGeomIds || [])[_hitInstId];
+              var _gotBB = false;
+              if(_bgid != null && hit.getBoundingBoxAt){
+                try { hit.getBoundingBoxAt(_bgid, hitBox); hitBox.applyMatrix4(_hitWorldMx); _gotBB = true; } catch(_){}
+              }
+              if(!_gotBB){
+                var _bpm = _ccProxyMeshFor(eid, _hitModelId);
+                if(_bpm) hitBox.setFromObject(_bpm); else hitBox.setFromCenterAndSize(_pickedHit.point, new THREE.Vector3(1,1,1));
+              }
+            } else if(hit.isInstancedMesh && _hitInstId >= 0){
               hit.geometry.computeBoundingBox();
               hitBox = hit.geometry.boundingBox.clone().applyMatrix4(_hitWorldMx);
             } else {
