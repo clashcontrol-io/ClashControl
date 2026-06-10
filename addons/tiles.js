@@ -32,6 +32,19 @@
   };
   window._ccTiles3DRange = function() { return _rangeM; };
 
+  // Live detail dial — maps to the renderer's screen-space error target
+  // (lower = sharper = more tiles). Takes effect on the next update, no
+  // reload: tiles refine or coarsen in place as you change it.
+  var _DETAIL = { low: 28, standard: 16, high: 8 };
+  var _detail = (function(){ try { return localStorage.getItem('cc_tiles3d_detail') || 'standard'; } catch(_) { return 'standard'; } })();
+  window._ccSetTiles3DDetail = function(level) {
+    if (!_DETAIL[level]) return;
+    _detail = level;
+    try { localStorage.setItem('cc_tiles3d_detail', level); } catch(_) {}
+    if (_tiles) { _tiles.errorTarget = _DETAIL[level]; _inv(4); }
+  };
+  window._ccTiles3DDetail = function() { return _detail; };
+
   function _S3() { return window._ccState3d || null; }
   function _inv(n) { if (typeof window._ccInvalidate === 'function') window._ccInvalidate(n || 2); }
 
@@ -117,9 +130,17 @@
       _tilesCam = S.camera.clone();
       tiles.setCamera(_tilesCam);
       tiles.setResolutionFromRenderer(_tilesCam, S.renderer);
-      tiles.errorTarget = 12;
-      // Keep streaming bounded even at large ranges.
-      try { if (tiles.lruCache) { tiles.lruCache.maxBytesSize = 512 * 1024 * 1024; } } catch (_) {}
+      tiles.errorTarget = _DETAIL[_detail] || 16;
+      // Keep streaming bounded even at large ranges — the viewer also holds
+      // a multi-million-triangle federation, so the world context must stay
+      // a guest, not a squatter: byte AND tile-count caps.
+      try {
+        if (tiles.lruCache) {
+          tiles.lruCache.maxBytesSize = 384 * 1024 * 1024;
+          tiles.lruCache.maxSize = 3000;
+          tiles.lruCache.minSize = 900;
+        }
+      } catch (_) {}
       try { tiles.downloadQueue.maxJobs = 12; } catch (_) {}
 
       // Streaming progress must keep the render-on-demand loop alive.
