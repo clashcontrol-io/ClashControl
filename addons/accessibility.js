@@ -198,4 +198,13 @@
   // Follows the data-quality.js pattern: expose engine globals only. The panel
   // (AccessibilityPanel) and the failure→clash/BCF wiring live in index.html.
   console.log('[Accessibility] Engine ready');
+
+  if (typeof window._ccRegisterAddon === 'function') {
+    window._ccRegisterAddon({
+      id: 'accessibility',
+      alwaysOn: true,
+      name: 'Accessibility checks',
+      description: 'Deterministic building-code geometry checks (door clear width, thresholds, ramp slope, corridor width, turning circles) with NL Bbl/NEN defaults — behind the Accessibility panel.'
+    });
+  }
 })();

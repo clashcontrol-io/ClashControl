@@ -180,6 +180,6 @@
   };
 
   if (typeof window._ccRegisterAddon === 'function') {
-    window._ccRegisterAddon({ id: 'splat', name: 'Gaussian Splat overlay', description: 'Load 3D Gaussian Splat as-built captures as a first-class scene member alongside IFC and point clouds. Supports .splat/.ply/.ksplat/.spz. Phase 1: drag-drop or URL; 3D Tiles streaming + Esri ingest in Phase 2.' });
+    window._ccRegisterAddon({ id: 'splat', alwaysOn: true, name: 'Gaussian Splat overlay', description: 'Load 3D Gaussian Splat as-built captures as a first-class scene member alongside IFC and point clouds. Supports .splat/.ply/.ksplat/.spz. Phase 1: drag-drop or URL; 3D Tiles streaming + Esri ingest in Phase 2.' });
   }
 })();

@@ -1141,6 +1141,7 @@
     if (typeof window._ccRegisterAddon === 'function') {
       window._ccRegisterAddon({
         id: 'align',
+        alwaysOn: true,
         name: 'Point cloud ↔ IFC alignment',
         description: 'Three-point manual alignment that lifts an as-built scan into the design IFC coordinate frame. Foundation for as-built verification — the killer workflow for AEC coordination.'
       });

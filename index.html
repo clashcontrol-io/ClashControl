@@ -1000,7 +1000,10 @@ function startApp() {
     if (def.initState) {
       Object.keys(def.initState).forEach(function(k){ if (!(k in INIT)) INIT[k] = def.initState[k]; });
     }
-    if (_ccAddonActive[def.id] === undefined && def.autoActivate) _ccAddonActive[def.id] = true;
+    // alwaysOn = pure capability with no background cost (engines, loaders):
+    // always active, panel shows "Built in" instead of a do-nothing toggle.
+    if (def.alwaysOn) _ccAddonActive[def.id] = true;
+    else if (_ccAddonActive[def.id] === undefined && def.autoActivate) _ccAddonActive[def.id] = true;
     if (_ccAddonActive[def.id] && window._ccDispatch) {
       // If the addon registered after the React mount, INIT-side merging is
       // too late — inject any missing initState keys via _ADDON_INIT_STATE.
@@ -28697,8 +28700,8 @@ function startApp() {
               </div>
               <div style=${{fontSize:'var(--text-xs)',color:'var(--text-muted)',lineHeight:1.5}}>${addon.description||''}</div>
             </div>
-            ${id==='pwa' && active && window.matchMedia && window.matchMedia('(display-mode: standalone)').matches
-              ? html`<span style=${{fontSize:'var(--text-2xs)',color:'var(--text-faint)'}}>Always on</span>`
+            ${addon.alwaysOn || (id==='pwa' && active && window.matchMedia && window.matchMedia('(display-mode: standalone)').matches)
+              ? html`<span style=${{fontSize:'var(--text-2xs)',color:'var(--text-faint)'}}>${addon.alwaysOn ? 'Built in · always on' : 'Always on'}</span>`
               : addonBtn(active?'Disable':'Enable', function(){
                   if (active) { window._ccDeactivateAddon(id); }
                   else {
