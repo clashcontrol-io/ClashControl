@@ -110,7 +110,7 @@
   <!-- CSP: restrict resource loading to known CDN origins -->
   <!-- 'unsafe-eval' required by pdf.js v3 for custom font rendering (CFF/Type1 font programs) -->
   <!-- Includes localhost:* and 127.0.0.1:* for addon servers (Smart Bridge v0.1.3, ClashControlEngine) -->
-  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval' 'wasm-unsafe-eval' https://cdnjs.cloudflare.com https://cdn.jsdelivr.net https://gc.zgo.at; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com data:; connect-src 'self' https://cdn.jsdelivr.net https://cdnjs.cloudflare.com https://tile.googleapis.com https://*.goatcounter.com https://huggingface.co https://cdn-lfs.huggingface.co https://cdn-lfs-us-1.huggingface.co https://*.hf.co https://sparkjs.dev http://localhost:11434 https://api.anthropic.com https://api.openai.com https://generativelanguage.googleapis.com https://api.github.com http://localhost:* ws://localhost:* http://127.0.0.1:* ws://127.0.0.1:* blob: data:; worker-src 'self' blob:; img-src 'self' blob: data:;">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval' 'wasm-unsafe-eval' https://cdnjs.cloudflare.com https://cdn.jsdelivr.net https://gc.zgo.at; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com data:; connect-src 'self' https://cdn.jsdelivr.net https://cdnjs.cloudflare.com https://tile.googleapis.com https://api.pdok.nl https://*.goatcounter.com https://huggingface.co https://cdn-lfs.huggingface.co https://cdn-lfs-us-1.huggingface.co https://*.hf.co https://sparkjs.dev http://localhost:11434 https://api.anthropic.com https://api.openai.com https://generativelanguage.googleapis.com https://api.github.com http://localhost:* ws://localhost:* http://127.0.0.1:* ws://127.0.0.1:* blob: data:; worker-src 'self' blob:; img-src 'self' blob: data:;">
 
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -1422,6 +1422,16 @@ function startApp() {
   }
 
   function idbSaveFile(id, name, buffer, projectId, sidecarData, meta) {
+    // Models on disk are the offline story — ask the browser to protect
+    // them from storage-pressure eviction (one-time, silent if denied).
+    try {
+      if (navigator.storage && navigator.storage.persist && !window._ccPersistAsked) {
+        window._ccPersistAsked = true;
+        navigator.storage.persist().then(function(granted) {
+          if (granted) console.log('[storage] persistent storage granted — models survive eviction');
+        }).catch(function(){});
+      }
+    } catch (_) {}
     return _openIDB().then(function(db) {
       return new Promise(function(resolve, reject) {
         var tx = db.transaction(IDB_STORE, 'readwrite');
@@ -1941,10 +1951,35 @@ function startApp() {
     // HTTP-cache first (the SW never touches web-ifc and the magic-byte check
     // above catches corruption); only a corrupt/failed cached copy forces the
     // multi-MB cache-bypassing re-download that used to happen on EVERY load.
+    // Final fallback for the offline-at-the-client scenario: a validated copy
+    // kept in a page-managed Cache bucket the SW never wipes — re-parsing a
+    // model with no internet keeps working even if the HTTP cache evicted.
+    var KEEP_CACHE = 'cc-keep-webifc';
+    function _fromKeepCache() {
+      if (!('caches' in window)) return Promise.reject(new Error('no Cache API'));
+      return caches.open(KEEP_CACHE)
+        .then(function(c) { return c.match(wasmUrl); })
+        .then(function(resp) {
+          if (!resp) throw new Error('not in keep-cache');
+          console.log('[IFC] web-ifc.wasm served from offline keep-cache');
+          return resp.arrayBuffer();
+        });
+    }
+    function _toKeepCache(buf) {
+      try {
+        if (!('caches' in window)) return;
+        caches.open(KEEP_CACHE).then(function(c) {
+          c.put(wasmUrl, new Response(buf.slice(0), { headers: { 'Content-Type': 'application/wasm' } }));
+        }).catch(function(){});
+      } catch (_) {}
+    }
     var fetchP = _fetchOnce('default')
+      .then(function(buf) { _toKeepCache(buf); return buf; })
       .catch(function(e) {
         console.warn('[IFC] cached web-ifc.wasm rejected (' + (e && e.message) + ') — refetching from network');
-        return _fetchOnce('reload');
+        return _fetchOnce('reload')
+          .then(function(buf) { _toKeepCache(buf); return buf; })
+          .catch(function(e2) { return _fromKeepCache(); });
       })
       .then(function(buf) { _webIfcWasmBuf = buf; return buf; });
     var timeoutP = new Promise(function(_, rej) {
@@ -15053,8 +15088,9 @@ function startApp() {
                 </button>
               </div>`}
           ${window._ccLoadTiles3D && html`<div style=${{display:'flex',gap:'.25rem',marginTop:'.25rem'}}>
-            <button onClick=${function(){
-                if (window._ccTiles3DActive && window._ccTiles3DActive()) { window._ccUnloadTiles3D(); return; }
+            ${(function(){
+              var tilesOn = !!(window._ccTiles3DActive && window._ccTiles3DActive());
+              function _tilesLatLon(){
                 var latLon = null;
                 for (var ti = 0; ti < s.models.length; ti++) {
                   var tg = window._ccGetModelGeoref && window._ccGetModelGeoref(s.models[ti]);
@@ -15063,25 +15099,59 @@ function startApp() {
                 if (!latLon && s.modelGeo && s.modelGeo.refLat != null) latLon = {lat:+s.modelGeo.refLat, lon:+s.modelGeo.refLon};
                 if (!latLon) {
                   var li = prompt('Latitude, longitude for the 3D world context\nExample: 52.3676, 4.9041');
-                  if (!li) return;
+                  if (!li) return null;
                   var lp = li.split(/[,;\s]+/).filter(Boolean).map(parseFloat);
-                  if (lp.length < 2 || !isFinite(lp[0]) || !isFinite(lp[1])) { alert('Could not parse lat/lon'); return; }
+                  if (lp.length < 2 || !isFinite(lp[0]) || !isFinite(lp[1])) { alert('Could not parse lat/lon'); return null; }
                   latLon = {lat:lp[0], lon:lp[1]};
                 }
-                var tkey = '';
-                try { tkey = localStorage.getItem('cc_google_tiles_key') || ''; } catch(_){}
-                if (!tkey) {
-                  tkey = prompt('Google Map Tiles API key (stays in your browser).\nGet one: console.cloud.google.com \u2192 Map Tiles API');
-                  if (!tkey) return;
-                  try { localStorage.setItem('cc_google_tiles_key', tkey.trim()); } catch(_){}
-                }
-                window._ccLoadTiles3D({ key: tkey, lat: latLon.lat, lon: latLon.lon })
-                  .catch(function(err){ alert('3D tiles failed: ' + (err && err.message || err)); });
-              }}
-              title="Stream photorealistic Google 3D Tiles of the real world around your georeferenced model (bring your own Map Tiles API key)"
-              style=${{flex:1,fontSize:'.66rem',padding:'.22rem .4rem',background:(window._ccTiles3DActive && window._ccTiles3DActive())?'var(--bg-secondary)':'none',color:'var(--text-primary)',border:'1px solid var(--border)',borderRadius:'var(--radius-xs)',cursor:'pointer'}}>
-              ${(window._ccTiles3DActive && window._ccTiles3DActive()) ? 'Remove 3D world context' : '\ud83c\udf0d 3D world context\u2026'}
-            </button>
+                return latLon;
+              }
+              if (tilesOn) return html`<button onClick=${function(){ window._ccUnloadTiles3D(); }}
+                style=${{flex:1,fontSize:'.66rem',padding:'.22rem .4rem',background:'var(--bg-secondary)',color:'var(--text-primary)',border:'1px solid var(--border)',borderRadius:'var(--radius-xs)',cursor:'pointer'}}>
+                Remove 3D world context</button>`;
+              return html`<button onClick=${function(){
+                  var ll = _tilesLatLon(); if (!ll) return;
+                  window._ccLoadTiles3D({ preset:'nl', lat: ll.lat, lon: ll.lon })
+                    .catch(function(err){ alert('PDOK 3D tiles failed: ' + (err && err.message || err)); });
+                }}
+                title="Free Dutch national 3D buildings (Kadaster 3D Basisvoorziening via PDOK, LoD 2.2 from BAG + AHN) around your georeferenced model — no key needed"
+                style=${{flex:1,fontSize:'.66rem',padding:'.22rem .4rem',background:'var(--accent)',color:'#fff',border:'none',borderRadius:'var(--radius-xs)',cursor:'pointer'}}>
+                3D omgeving \u2014 NL (PDOK)</button>
+              <button onClick=${function(){
+                  var ll = _tilesLatLon(); if (!ll) return;
+                  var tkey = '';
+                  try { tkey = localStorage.getItem('cc_google_tiles_key') || ''; } catch(_){}
+                  if (!tkey) {
+                    tkey = prompt('Google Map Tiles API key (stays in your browser).\nGet one: console.cloud.google.com \u2192 Map Tiles API');
+                    if (!tkey) return;
+                    try { localStorage.setItem('cc_google_tiles_key', tkey.trim()); } catch(_){}
+                  }
+                  window._ccLoadTiles3D({ key: tkey, lat: ll.lat, lon: ll.lon })
+                    .catch(function(err){ alert('3D tiles failed: ' + (err && err.message || err)); });
+                }}
+                title="Photorealistic Google 3D Tiles (worldwide; bring your own Map Tiles API key)"
+                style=${{fontSize:'.66rem',padding:'.22rem .4rem',background:'none',color:'var(--text-primary)',border:'1px solid var(--border)',borderRadius:'var(--radius-xs)',cursor:'pointer'}}>
+                Google\u2026</button>`;
+            })()}
+            ${(window._ccTiles3DActive && window._ccTiles3DActive()) && html`<select
+              value=${String(window._ccTiles3DRange ? window._ccTiles3DRange() : 3000)}
+              onChange=${function(e){ if (window._ccSetTiles3DRange) window._ccSetTiles3DRange(Number(e.target.value) || 0); }}
+              title="Context range — tiles beyond this distance are never downloaded (saves Google tile quota and memory)"
+              style=${{fontSize:'.62rem',padding:'.18rem .2rem',background:'var(--bg-secondary)',color:'var(--text-secondary)',border:'1px solid var(--border)',borderRadius:'var(--radius-xs)',fontFamily:'var(--font-body)'}}>
+              <option value="1000">1 km</option>
+              <option value="3000">3 km</option>
+              <option value="10000">10 km</option>
+              <option value="0">\u221e</option>
+            </select>`}
+            ${(window._ccTiles3DActive && window._ccTiles3DActive()) && html`<select
+              value=${window._ccTiles3DDetail ? window._ccTiles3DDetail() : 'standard'}
+              onChange=${function(e){ if (window._ccSetTiles3DDetail) window._ccSetTiles3DDetail(e.target.value); }}
+              title="Tile detail — adjusts live; lower detail = fewer tiles, lighter on GPU and memory"
+              style=${{fontSize:'.62rem',padding:'.18rem .2rem',background:'var(--bg-secondary)',color:'var(--text-secondary)',border:'1px solid var(--border)',borderRadius:'var(--radius-xs)',fontFamily:'var(--font-body)'}}>
+              <option value="low">Low</option>
+              <option value="standard">Std</option>
+              <option value="high">High</option>
+            </select>`}
           </div>`}
         </div>`}
         ${(s.referenceLayers && s.referenceLayers.length > 0) && html`<div style=${{marginTop:'.3rem',borderTop:'1px solid var(--hairline)',paddingTop:'.3rem'}}>
@@ -15366,7 +15436,7 @@ function startApp() {
         ${m.stats && m.stats.loadType && html`<span style=${{fontSize:'0.57rem',padding:'1px 4px',borderRadius:3,background:'var(--accent-bg)',color:'var(--accent)',fontWeight:600,flexShrink:0}}>${m.stats.loadType}</span>`}
         ${m.stats && m.stats.loadedScope && html`<button onClick=${function(e){e.stopPropagation();if(window._ccReloadModelFull)window._ccReloadModelFull(m.id);}}
           title=${'Partial load: '+m.stats.loadedScope.join(', ')+' ('+(m.stats.scopedOutCount||0)+' elements skipped). Click to load the full model.'}
-          style=${{fontSize:'0.6rem',padding:'0 .3rem',borderRadius:99,background:'var(--color-warning-bg, #78350f)',color:'var(--color-warning-fg, #fcd34d)',border:'none',cursor:'pointer',flexShrink:0,fontFamily:'var(--font-body)'}}>partial</button>`}
+          style=${{fontSize:'0.6rem',padding:'0 .3rem',borderRadius:99,background:'var(--color-warning-bg)',color:'var(--color-warning-fg)',border:'none',cursor:'pointer',flexShrink:0,fontFamily:'var(--font-body)'}}>partial</button>`}
         ${m.stats && m.stats.loadTime && html`<span style=${{fontSize:'0.63rem',color:'var(--text-faint)',flexShrink:0}}>${(m.stats.loadTime/1000).toFixed(1)}s</span>`}
         <button onClick=${function(){setOpen(!open)}} style=${{...S_BTN,padding:'0 2px',background:'none',color:'var(--text-faint)',fontSize:'0.69rem'}}>${open?'▲':'▼'}</button>
         <button onClick=${function(){if(!confirm('Remove "'+m.name+'" from this project?'))return;d({t:A.DEL_MODEL,id:m.id});idbDeleteFile(m.id);idbDeleteGeoCache(m.id);}} style=${{...S_BTN,padding:'0 2px',background:'none',color:'var(--text-faint)',fontSize:'0.69rem'}}>✕</button>
@@ -16063,7 +16133,7 @@ function startApp() {
     return html`<span title=${tip} style=${{display:'inline-flex',alignItems:'center',gap:'.25rem',marginLeft:'auto'}}>
       <svg width=${W} height=${H} style=${{display:'block'}}>
         <polyline points=${pts('total')} fill="none" stroke="var(--text-faint)" stroke-width="1"/>
-        <polyline points=${pts('open')} fill="none" stroke="#f59e0b" stroke-width="1.2"/>
+        <polyline points=${pts('open')} fill="none" stroke="var(--color-warning)" stroke-width="1.2"/>
       </svg>
       <span style=${{fontSize:'0.6rem',color:'var(--text-faint)'}}>${h.length}×</span>
     </span>`;

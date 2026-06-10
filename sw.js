@@ -68,7 +68,9 @@ self.addEventListener('activate', function(e) {
   e.waitUntil(
     caches.keys().then(function(names) {
       return Promise.all(
-        names.filter(function(n) { return n !== CACHE; })
+        // 'cc-keep-*' caches are page-managed and version-independent
+        // (e.g. the validated web-ifc.wasm offline fallback) — never wipe.
+        names.filter(function(n) { return n !== CACHE && n.indexOf('cc-keep-') !== 0; })
           .map(function(n) { return caches.delete(n); })
       );
     }).then(function() {

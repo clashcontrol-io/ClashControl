@@ -17,11 +17,88 @@
   var TILES_CDN = 'https://cdn.jsdelivr.net/npm/3d-tiles-renderer@0.4.28';
   var _tiles = null;
   var _frameHandler = null;
+  var _tilesCam = null;   // proxy camera with clamped far plane = context range
+  var _rangeM = (function(){ try { return Number(localStorage.getItem('cc_tiles3d_range')) || 3000; } catch(_) { return 3000; } })();
+
+  // Context range: tiles are culled/LOD'd against a CLONE of the viewer
+  // camera whose far plane is clamped to the range — tiles beyond it are
+  // never considered visible, so they are never downloaded. Keeps Google
+  // tile quota (billed per request) and memory proportional to what the
+  // user actually wants to see.
+  window._ccSetTiles3DRange = function(meters) {
+    _rangeM = Number(meters) > 0 ? Number(meters) : Infinity;
+    try { localStorage.setItem('cc_tiles3d_range', String(_rangeM === Infinity ? 0 : _rangeM)); } catch(_) {}
+    _inv(3);
+  };
+  window._ccTiles3DRange = function() { return _rangeM; };
+
+  // Live detail dial — maps to the renderer's screen-space error target
+  // (lower = sharper = more tiles). Takes effect on the next update, no
+  // reload: tiles refine or coarsen in place as you change it.
+  var _DETAIL = { low: 28, standard: 16, high: 8 };
+  var _detail = (function(){ try { return localStorage.getItem('cc_tiles3d_detail') || 'standard'; } catch(_) { return 'standard'; } })();
+  window._ccSetTiles3DDetail = function(level) {
+    if (!_DETAIL[level]) return;
+    _detail = level;
+    try { localStorage.setItem('cc_tiles3d_detail', level); } catch(_) {}
+    if (_tiles) { _tiles.errorTarget = _DETAIL[level]; _inv(4); }
+  };
+  window._ccTiles3DDetail = function() { return _detail; };
 
   function _S3() { return window._ccState3d || null; }
+
+  // Masks tiles outside `radius` metres of the site anchor (scene origin —
+  // the tiles group is transformed so the anchor sits there). Implements
+  // the renderer's calculateTileViewError plugin contract: inView=false
+  // tiles are neither rendered NOR downloaded, so a small building never
+  // pulls in half the country. Reads the live range so widening it while
+  // viewing streams the additional ring immediately.
+  function _SiteRadiusPlugin(getRadius) {
+    this.name = 'CC_SITE_RADIUS';
+    this._getRadius = getRadius;
+    this._origin = null; // scene-space anchor = origin of the tiles group's parent space
+  }
+  _SiteRadiusPlugin.prototype.init = function(tiles) { this._tiles = tiles; };
+  _SiteRadiusPlugin.prototype.calculateTileViewError = function(tile, target) {
+    var r = this._getRadius();
+    if (!isFinite(r)) return false; // no-op at ∞
+    var bv = tile.engineData && tile.engineData.boundingVolume;
+    if (!bv || !bv.distanceToPoint) return false;
+    if (!this._origin) {
+      // Anchor in the tiles' LOCAL (ECEF) frame: the group matrix maps it
+      // to the scene origin, so invert once. Use .matrix (set explicitly at
+      // setup, parent is the scene) — matrixWorld is still identity on the
+      // first update tick and would anchor at Earth's centre, masking
+      // every tile permanently.
+      var gm = this._tiles.group.matrix;
+      var _e = gm.elements;
+      var _isIdentity = _e[12] === 0 && _e[13] === 0 && _e[14] === 0 && _e[0] === 1 && _e[5] === 1 && _e[10] === 1;
+      if (_isIdentity) return false; // transform not applied yet — no-op this tick
+      this._origin = new window.THREE.Vector3(0, 0, 0).applyMatrix4(gm.clone().invert());
+    }
+    if (bv.distanceToPoint(this._origin) > r) { target.inView = false; return true; }
+    return false;
+  };
   function _inv(n) { if (typeof window._ccInvalidate === 'function') window._ccInvalidate(n || 2); }
 
+  var _attrEl = null;
+  function _showAttribution(text) {
+    _hideAttribution();
+    if (!text) return;
+    var el = document.createElement('div');
+    el.textContent = text;
+    el.style.cssText = 'position:fixed;left:8px;bottom:8px;z-index:30;' +
+      'font:var(--text-2xs, 10px)/1.4 var(--font-body, sans-serif);' +
+      'color:var(--text-muted);background:var(--bg-secondary);' +
+      'border:1px solid var(--border-subtle);opacity:.85;' +
+      'padding:1px 6px;border-radius:var(--radius-xs, 4px);pointer-events:none';
+    document.body.appendChild(el);
+    _attrEl = el;
+  }
+  function _hideAttribution() { if (_attrEl) { try { _attrEl.remove(); } catch(_){} _attrEl = null; } }
+
   function _teardown() {
+    _hideAttribution();
     if (_frameHandler) { window.removeEventListener('cc-render-frame', _frameHandler); _frameHandler = null; }
     if (_tiles) {
       try { if (_tiles.group && _tiles.group.parent) _tiles.group.parent.remove(_tiles.group); } catch (_) {}
@@ -38,12 +115,17 @@
   };
   window._ccTiles3DActive = function() { return !!_tiles; };
 
+  // Free Dutch national 3D layer: Kadaster 3D Basisvoorziening via PDOK
+  // (OGC API 3D GeoVolumes). Buildings are LoD 2.2 from BAG + AHN. No key.
+  var PDOK_NL_TILESET = 'https://api.pdok.nl/kadaster/3d-basisvoorziening/ogc/v1_0/collections/gebouwen/3dtiles';
+
   window._ccLoadTiles3D = function(opts) {
     opts = opts || {};
     var S = _S3();
     if (!S || !S.scene || !S.camera || !S.renderer) return Promise.reject(new Error('Viewer not ready'));
     var lat = Number(opts.lat), lon = Number(opts.lon);
     if (!isFinite(lat) || !isFinite(lon)) return Promise.reject(new Error('3D tiles need a latitude/longitude — set one in Geo Placement first.'));
+    if (opts.preset === 'nl') { opts.url = PDOK_NL_TILESET; opts.attribution = '3D: Kadaster / PDOK (CC-BY 4.0)'; }
     var key = (opts.key || '').trim();
     if (!key && !opts.url) return Promise.reject(new Error('Google Map Tiles API key required (or a custom tileset URL).'));
     _teardown();
@@ -61,6 +143,7 @@
         tiles = new core.TilesRenderer();
         tiles.registerPlugin(new plugins.GoogleCloudAuthPlugin({ apiToken: key, autoRefreshToken: true }));
       }
+      try { tiles.registerPlugin(new _SiteRadiusPlugin(function(){ return _rangeM; })); } catch (_) {}
       if (plugins.TileCompressionPlugin) { try { tiles.registerPlugin(new plugins.TileCompressionPlugin()); } catch (_) {} }
       if (plugins.TilesFadePlugin) { try { tiles.registerPlugin(new plugins.TilesFadePlugin()); } catch (_) {} }
 
@@ -78,9 +161,21 @@
       tiles.group.updateMatrix();
       tiles.group.userData._ccTiles3D = true;
 
-      tiles.setCamera(S.camera);
-      tiles.setResolutionFromRenderer(S.camera, S.renderer);
-      tiles.errorTarget = 12;
+      _tilesCam = S.camera.clone();
+      tiles.setCamera(_tilesCam);
+      tiles.setResolutionFromRenderer(_tilesCam, S.renderer);
+      tiles.errorTarget = _DETAIL[_detail] || 16;
+      // Keep streaming bounded even at large ranges — the viewer also holds
+      // a multi-million-triangle federation, so the world context must stay
+      // a guest, not a squatter: byte AND tile-count caps.
+      try {
+        if (tiles.lruCache) {
+          tiles.lruCache.maxBytesSize = 384 * 1024 * 1024;
+          tiles.lruCache.maxSize = 3000;
+          tiles.lruCache.minSize = 900;
+        }
+      } catch (_) {}
+      try { tiles.downloadQueue.maxJobs = 12; } catch (_) {}
 
       // Streaming progress must keep the render-on-demand loop alive.
       tiles.addEventListener('load-model', function() { _inv(2); });
@@ -95,12 +190,23 @@
         if (!_tiles) return;
         try {
           S.camera.updateMatrixWorld();
-          _tiles.setResolutionFromRenderer(S.camera, S.renderer);
+          // Mirror the live camera into the tiles proxy, clamping the far
+          // plane to the context range (drives both culling and LOD).
+          _tilesCam.position.copy(S.camera.position);
+          _tilesCam.quaternion.copy(S.camera.quaternion);
+          _tilesCam.fov = S.camera.fov;
+          _tilesCam.aspect = S.camera.aspect;
+          _tilesCam.near = S.camera.near;
+          _tilesCam.far = (_rangeM === Infinity) ? S.camera.far : Math.min(S.camera.far, _rangeM);
+          _tilesCam.updateProjectionMatrix();
+          _tilesCam.updateMatrixWorld(true);
+          _tiles.setResolutionFromRenderer(_tilesCam, S.renderer);
           _tiles.update();
         } catch (_) {}
       };
       window.addEventListener('cc-render-frame', _frameHandler);
       try { localStorage.setItem('cc_tiles3d_on', '1'); } catch (_) {}
+      _showAttribution(opts.attribution || (key ? 'Map data: Google' : null));
       _inv(5);
       if (window._ccToast) window._ccToast('3D world context streaming in — give it a few seconds.');
       return tiles;
