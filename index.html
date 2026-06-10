@@ -1958,7 +1958,9 @@ function startApp() {
     function _fromKeepCache() {
       if (!('caches' in window)) return Promise.reject(new Error('no Cache API'));
       return caches.open(KEEP_CACHE)
-        .then(function(c) { return c.match(wasmUrl); })
+        // Explicit Request: Cache.match does URL matching, but a bare string
+        // arg trips CodeQL's string-as-regexp model (js/incomplete-hostname-regexp).
+        .then(function(c) { return c.match(new Request(wasmUrl)); })
         .then(function(resp) {
           if (!resp) throw new Error('not in keep-cache');
           console.log('[IFC] web-ifc.wasm served from offline keep-cache');
@@ -15108,16 +15110,32 @@ function startApp() {
                 var latLon = null;
                 for (var ti = 0; ti < s.models.length; ti++) {
                   var tg = window._ccGetModelGeoref && window._ccGetModelGeoref(s.models[ti]);
-                  if (tg) { latLon = {lat:+tg.refLat, lon:+tg.refLon}; break; }
+                  if (tg) { latLon = {lat:+tg.refLat, lon:+tg.refLon, modelId:s.models[ti].id}; break; }
                 }
-                if (!latLon && s.modelGeo && s.modelGeo.refLat != null) latLon = {lat:+s.modelGeo.refLat, lon:+s.modelGeo.refLon};
+                if (!latLon && s.modelGeo && s.modelGeo.refLat != null) latLon = {lat:+s.modelGeo.refLat, lon:+s.modelGeo.refLon, modelId:s.modelGeo.modelId};
                 if (!latLon) {
                   var li = prompt('Latitude, longitude for the 3D world context\nExample: 52.3676, 4.9041');
                   if (!li) return null;
                   var lp = li.split(/[,;\s]+/).filter(Boolean).map(parseFloat);
                   if (lp.length < 2 || !isFinite(lp[0]) || !isFinite(lp[1])) { alert('Could not parse lat/lon'); return null; }
-                  latLon = {lat:lp[0], lon:lp[1]};
+                  latLon = {lat:lp[0], lon:lp[1], modelId:(s.models[0]&&s.models[0].id)};
                 }
+                // World point where the anchor lat/lon sits: the geoplace
+                // basemap maps it to the model bbox centre at ground level —
+                // the 3D tiles must use the same point or the two layers
+                // land in different places.
+                try {
+                  var S3a = window._ccState3d;
+                  var grpA = S3a && S3a.map && latLon.modelId != null && S3a.map[latLon.modelId];
+                  if (!grpA && S3a && S3a.map && s.models[0]) grpA = S3a.map[s.models[0].id];
+                  if (grpA) {
+                    var bbA = new THREE.Box3().setFromObject(grpA);
+                    if (!bbA.isEmpty()) {
+                      var cA = bbA.getCenter(new THREE.Vector3());
+                      latLon.origin = {x:cA.x, y:bbA.min.y, z:cA.z};
+                    }
+                  }
+                } catch(_){}
                 return latLon;
               }
               if (tilesOn) return html`<button onClick=${function(){ window._ccUnloadTiles3D(); }}
@@ -15125,7 +15143,7 @@ function startApp() {
                 Remove 3D world context</button>`;
               return html`<button onClick=${function(){
                   var ll = _tilesLatLon(); if (!ll) return;
-                  window._ccLoadTiles3D({ preset:'nl', lat: ll.lat, lon: ll.lon })
+                  window._ccLoadTiles3D({ preset:'nl', lat: ll.lat, lon: ll.lon, origin: ll.origin })
                     .catch(function(err){ alert('PDOK 3D tiles failed: ' + (err && err.message || err)); });
                 }}
                 title="Free Dutch national 3D buildings (Kadaster 3D Basisvoorziening via PDOK, LoD 2.2 from BAG + AHN) around your georeferenced model — no key needed"
@@ -15140,7 +15158,7 @@ function startApp() {
                     if (!tkey) return;
                     try { localStorage.setItem('cc_google_tiles_key', tkey.trim()); } catch(_){}
                   }
-                  window._ccLoadTiles3D({ key: tkey, lat: ll.lat, lon: ll.lon })
+                  window._ccLoadTiles3D({ key: tkey, lat: ll.lat, lon: ll.lon, origin: ll.origin })
                     .catch(function(err){ alert('3D tiles failed: ' + (err && err.message || err)); });
                 }}
                 title="Photorealistic Google 3D Tiles (worldwide; bring your own Map Tiles API key)"
