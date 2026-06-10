@@ -66,9 +66,15 @@
     if (!bv || !bv.distanceToPoint) return false;
     if (!this._origin) {
       // Anchor in the tiles' LOCAL (ECEF) frame: the group matrix maps it
-      // to the scene origin, so invert once.
-      var inv = this._tiles.group.matrixWorld.clone().invert();
-      this._origin = new window.THREE.Vector3(0, 0, 0).applyMatrix4(inv);
+      // to the scene origin, so invert once. Use .matrix (set explicitly at
+      // setup, parent is the scene) — matrixWorld is still identity on the
+      // first update tick and would anchor at Earth's centre, masking
+      // every tile permanently.
+      var gm = this._tiles.group.matrix;
+      var _e = gm.elements;
+      var _isIdentity = _e[12] === 0 && _e[13] === 0 && _e[14] === 0 && _e[0] === 1 && _e[5] === 1 && _e[10] === 1;
+      if (_isIdentity) return false; // transform not applied yet — no-op this tick
+      this._origin = new window.THREE.Vector3(0, 0, 0).applyMatrix4(gm.clone().invert());
     }
     if (bv.distanceToPoint(this._origin) > r) { target.inView = false; return true; }
     return false;
