@@ -1,5 +1,8 @@
 # Changelog
 
+## v5.20.4 (2026-06-10)
+- fix(loader): Cancel left the UI in loading state — skeleton rows stuck
+
 ## v5.20.3 (2026-06-10)
 - test(browser): BatchedMesh identity assertions — the chunk-merge revert symptoms as CI gates (Phase 2)
 
