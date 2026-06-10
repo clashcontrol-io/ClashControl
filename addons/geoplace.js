@@ -204,6 +204,13 @@
     if (geo.refLat == null || geo.refLon == null) {
       return Promise.reject(new Error('refLat / refLon required'));
     }
+    // North rotation from the loaded IFC when not given explicitly:
+    // IfcMapConversion grid rotation (deliberate IFC4 georef) wins over
+    // IfcGeometricRepresentationContext.TrueNorth (often left default).
+    if (geo.trueNorthDeg == null && typeof window._ccModelNorthDeg === 'function') {
+      var _tn = window._ccModelNorthDeg(modelId);
+      if (_tn != null) geo = Object.assign({}, geo, {trueNorthDeg: _tn});
+    }
     var radiusM = geo.radiusM;
     if (!radiusM) {
       var bbox = _getModelBBox(modelId);

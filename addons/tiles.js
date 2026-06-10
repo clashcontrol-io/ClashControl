@@ -164,6 +164,13 @@
 
       tiles.group.matrix.copy(frame).invert()
         .premultiply(new THREE3.Matrix4().makeRotationX(-Math.PI / 2));
+      // North rotation (degrees clockwise from project +Y, from the IFC's
+      // map conversion / TrueNorth) — about the anchor, which maps to
+      // (0,0,0) at this stage, so a plain Y-rotation pivots correctly.
+      // Same sign convention as the geoplace basemap (rotation.y = -deg).
+      if (isFinite(Number(opts.north)) && Number(opts.north) !== 0) {
+        tiles.group.matrix.premultiply(new THREE3.Matrix4().makeRotationY(-Number(opts.north) * Math.PI / 180));
+      }
       if (opts.origin && isFinite(Number(opts.origin.x))) {
         tiles.group.matrix.premultiply(new THREE3.Matrix4().makeTranslation(
           Number(opts.origin.x), Number(opts.origin.y) || 0, Number(opts.origin.z) || 0));
