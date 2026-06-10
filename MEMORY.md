@@ -10,7 +10,7 @@
 <!-- BEGIN:project-state -->
 ## Project State
 
-**Version:** 5.19.49 (2026-06-09)
+**Version:** 5.20.2 (2026-06-10)
 
 **Live features (all working):**
 - Mesh-based clash detection engine: AABB broad-phase + BVH tri-tri narrow-phase (Möller–Trumbore), optional `_ccWasmIntersect`/`_ccWasmMinDist` WASM accelerators; rules (discipline filters, clearance, group-by); soft/clearance via spatial-hash vertex distance; optional escalation to `local-engine.js` for true solid boolean ops
@@ -258,6 +258,63 @@ On branch `claude/code-review-quality-IjbhT` (2026-05-28) — code-review qualit
 <!-- END:active-work -->
 
 <!-- BEGIN:session-log -->
+### 2026-06-10
+**Summary:** 47 commit(s) landed (no AI summary — set ANTHROPIC_API_KEY secret for richer entries).
+**Changed:** see commits
+**Notable:** —
+
+<details><summary>Commits</summary>
+
+- d0e523b chore: bump version to 5.20.2
+- 3b8c242 Loader worker fix, plan-cut units, scoped loading, Tauri Phase 0, section gizmo r180 (#599)
+- 675f317 chore: bump version to 5.20.1
+- 2c69478 fix(restore): spikey model after hard refresh — scale-invariant hash collisions (#598)
+- 9dee1d2 chore: bump version to 5.20.0
+- c4e1bdf Coordination features, plan-view fix, Integrations UX, loader perf, browser smoke CI (#597)
+- ae5cb70 chore: bump version to 5.19.68
+- bb77893 Codebase review: connect the WASM engine + fix verified open ends (#596)
+- 62b025a docs(readme): remove OpenAEC interop mentions
+- 979724d chore: bump version to 5.19.67
+- f970ddb feat(visibility): multi-sample target + inverse coverage + presets + NL + panel
+- 4ebac16 docs(visibility): canonical BCF cc:vis* extension schema in llms.txt
+- 16f19d9 chore: bump version to 5.19.66
+- cfa55ff feat(visibility): stats chip + BCF cc:vis* round-trip
+- 7c30945 chore: bump version to 5.19.65
+- fe06bab feat(visibility): 3D sight-line visualization for active visibility clashes
+- 41ba4f3 chore: bump version to 5.19.64
+- 7baf8e2 feat(visibility): third clash category — sight-line obstruction detection
+- 81657bc chore: bump version to 5.19.63
+- cc065cb feat(align): per-hotspot snapshots + printable deviation report PDF
+- d2fe582 chore: bump version to 5.19.62
+- 81ae72d feat(align): ICP refinement + auto-issue at deviation hotspots
+- b30d631 chore: bump version to 5.19.61
+- 29d81ca feat(bcf): point-cloud reference extension (cc:scanRef) round-trip
+- 803d118 chore: bump version to 5.19.60
+- 7b16484 feat(align): deviation heatmap — colour scan by distance to nearest IFC
+- 20f9b7b chore: bump version to 5.19.59
+- 0239b12 docs+ui: surface alignment workflow in README/llms.txt + Align button
+- 9b547e8 chore: bump version to 5.19.58
+- 4a5358b feat(align): manual 3-point point-cloud ↔ IFC alignment (MVP)
+- 0e3b203 chore: bump version to 5.19.57
+- 421c711 feat(openaec-bridge): localhost integration with open-pointcloud-studio
+- f6f5592 chore: bump version to 5.19.56
+- 9a42add feat(pointcloud): proper PTS + PTX parsers (Leica scan formats)
+- 0896514 chore: bump version to 5.19.55
+- 704837f chore: remove chunk-merge subsystem (#5)
+- 267e2df chore: bump version to 5.19.54
+- 9fc5260 docs: batch 4 — extract 15 more rationale blocks (§ 21.30-21.44)
+- afd5070 chore: bump version to 5.19.53
+- 2d07386 docs: batch 3 — extract 12 more rationale blocks (§ 21.18-21.29)
+- 629a860 chore: bump version to 5.19.52
+- 6219d65 docs: extract 10 more rationale blocks to INTERNALS.md § 21.8-21.17
+- 69b3671 chore: bump version to 5.19.51
+- ad9339f chore: post-bump simplification — drop r128 fallbacks and bump-prep scaffolding
+- b2917b0 chore: bump version to 5.19.50
+- 01d0a0b chore(console): gate noisy probe + opt-out warnings to once per session
+- 9f6412d chore: daily memory sync 2026-06-09
+
+</details>
+
 ### 2026-06-09
 **Summary:** 111 commit(s) landed (no AI summary — set ANTHROPIC_API_KEY secret for richer entries).
 **Changed:** see commits
