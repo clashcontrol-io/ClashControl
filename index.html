@@ -14458,6 +14458,17 @@ function startApp() {
         _chainEndFired = true;
         if (errors.length) setErr(errors.join('\n'));
         if (totalIfc > 0) _gcEvent('ifc-loaded', totalIfc+' file'+(totalIfc>1?'s':''));
+        // Memory guardrail: warn before the browser heap wall instead of
+        // letting the next model OOM the tab (Chrome-only API; no-op elsewhere).
+        try {
+          var _pm = performance.memory;
+          if (_pm && _pm.jsHeapSizeLimit && _pm.usedJSHeapSize > _pm.jsHeapSizeLimit * 0.75) {
+            var _usedGb = (_pm.usedJSHeapSize/1073741824).toFixed(1), _limGb = (_pm.jsHeapSizeLimit/1073741824).toFixed(1);
+            if (window._ccToast) window._ccToast('Memory high: '+_usedGb+' GB of the ~'+_limGb+' GB browser limit. Unload unused models before loading more.');
+            console.warn('[memory] '+_usedGb+'/'+_limGb+' GB after load — tab heap limit approaching; see _ccMemReport()');
+            _gcEvent('memory-guardrail');
+          }
+        } catch(_) {}
         if (_lazyWorkersActive === 0) {
           _finishLoadingStrip(0);
         }
