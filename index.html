@@ -1853,6 +1853,21 @@ function startApp() {
   var _INST_HIDE_MX = typeof THREE !== 'undefined' ? new THREE.Matrix4().makeScale(0,0,0) : null; // hides one instance from its InstancedMesh
 
   // ── Bake static mesh transforms for rendering perf ──────────── INTERNALS.md §7
+  // World-space normal for a raycast hit. InstancedMesh hits report
+  // face.normal in the SOURCE geometry's local space — the instance matrix
+  // must be composed or rotated instances give the source orientation.
+  function _ccHitWorldNormal(h, out) {
+    var n = out || new THREE.Vector3();
+    if (!h.face || !h.face.normal) return n.set(0, 1, 0);
+    var m = new THREE.Matrix4().copy(h.object.matrixWorld);
+    if (h.object.isInstancedMesh && h.instanceId != null) {
+      var im = new THREE.Matrix4();
+      h.object.getMatrixAt(h.instanceId, im);
+      m.multiply(im);
+    }
+    return n.copy(h.face.normal).transformDirection(m).normalize();
+  }
+
   function _ccBakeMesh(mesh) {
     mesh.updateMatrix();            // one-time compose from pos/quat/scale
     mesh.updateMatrixWorld(true);   // bake matrixWorld from current parent chain
@@ -9597,8 +9612,7 @@ function startApp() {
         // (face normal opposes ray direction — i.e. front-face hit)
         function _isFrontFaceHit(h){
           if(!h.face) return true; // no face data, allow
-          var n = h.face.normal.clone();
-          n.transformDirection(h.object.matrixWorld).normalize();
+          var n = _ccHitWorldNormal(h);
           return raycaster.ray.direction.dot(n) < 0;
         }
         // Prefer front-face hits (prevents DoubleSide back-face of a beam
@@ -9679,12 +9693,7 @@ function startApp() {
         // ── Section pick + Alt-click shortcut ──  See INTERNALS.md § 21.26
         if ((window._ccSectionPickPending || (e.altKey && !measureModeRef.current)) && hits.length > 0) {
           var spHit = hits[0];
-          var nWorld = new THREE.Vector3();
-          if (spHit.face && spHit.face.normal) {
-            nWorld.copy(spHit.face.normal).transformDirection(spHit.object.matrixWorld).normalize();
-          } else {
-            nWorld.set(0,1,0);
-          }
+          var nWorld = _ccHitWorldNormal(spHit);
           var nArr = [nWorld.x, nWorld.y, nWorld.z];
           var pArr = [spHit.point.x, spHit.point.y, spHit.point.z];
           if (window._ccDispatch) {
@@ -10125,8 +10134,7 @@ function startApp() {
         });
         if(hits.length>0 && hits[0].face) {
           var hit = hits[0];
-          var faceNormal = hit.face.normal.clone();
-          faceNormal.transformDirection(hit.object.matrixWorld);
+          var faceNormal = _ccHitWorldNormal(hit);
           var pt = hit.point;
           var ctxEid = hit.object.userData.expressId;
           if (ctxEid && _highlightById) _highlightById(ctxEid, false);
