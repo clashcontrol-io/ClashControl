@@ -1,5 +1,8 @@
 # Changelog
 
+## v5.20.6 (2026-06-10)
+- fix(pick): rotated batched elements unselectable — front-face filter got local-space normals
+
 ## v5.20.5 (2026-06-10)
 - perf(batch)+fix(hover): fold small instanced groups + per-instance hover on batches
 
