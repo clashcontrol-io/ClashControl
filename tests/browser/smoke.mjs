@@ -36,7 +36,14 @@ const browser = await chromium.launch();
 const page = await browser.newPage();
 const errors = [];
 page.on('pageerror', (e) => errors.push('pageerror: ' + e.message));
-page.on('console', (m) => { if (m.type() === 'error') errors.push('console: ' + m.text()); });
+let workerFellBack = false;
+page.on('console', (m) => {
+  if (m.type() === 'error') errors.push('console: ' + m.text());
+  // The worker path is the product; a silent fallback to the main-thread
+  // parser (e.g. a ReferenceError inside the stringified worker source)
+  // must fail CI, not just run slower.
+  if (m.text().includes('[IFC Worker fallback]')) workerFellBack = true;
+});
 
 function fail(msg) {
   console.error('SMOKE FAIL: ' + msg);
@@ -82,6 +89,7 @@ try {
     const c = window._ccLatestState.clashes[0];
     return c ? c.type + ' ' + (c.title || c.aiTitle || '') : '';
   });
+  if (workerFellBack) fail('IFC worker crashed and fell back to the main-thread parser — check the stringified worker source for missing functions');
   console.log('SMOKE OK — model loaded, detection found ' + detected + ' clash(es), state updated; first: ' + sample);
 
   // ── Scoped loading: same fixture, storey filter must thread through the
