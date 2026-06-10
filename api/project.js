@@ -1,7 +1,7 @@
 // ClashControl — Shared project & issues sync endpoint
 // No login required — uses shareable project keys
 
-var { cors, rateLimit, clientIp, dbUrl: getDbUrl } = require('./_lib');
+var { cors, llmGuard, dbUrl: getDbUrl } = require('./_lib');
 
 // Generate a short project key: PREFIX-XXXXXX
 function generateKey(name) {
@@ -48,7 +48,10 @@ function stripToShared(issue) {
 module.exports = async function handler(req, res) {
   if (cors(req, res, 'GET, POST, PUT, DELETE')) return;
 
-  if (rateLimit(clientIp(req), 30)) return res.status(429).json({ error: 'Too many requests' });
+  // Rate limit + payload cap — this is the only unauthenticated DB-write
+  // endpoint, so unbounded PUT bodies could bloat Postgres. 256 KB fits a
+  // ~1000-issue batch (shared records are ~250 bytes each).
+  if (llmGuard(req, res, { perMin: 30, maxBytes: 262144 })) return;
 
   var url = getDbUrl();
   if (!url) return res.status(503).json({ error: 'Database not configured' });
