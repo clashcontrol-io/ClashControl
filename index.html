@@ -2630,32 +2630,40 @@ function startApp() {
   // proven safe by the instancing precedent). Opaque geometry only:
   // per-instance opacity doesn't exist, and transparent sorting inside a
   // batch is wrong anyway.
-  // Tuned against a real 9-model federation (48.5k draw calls · 6 fps):
-  // the pathology is cumulative — four models at 10-13k meshes each — so
-  // the per-model bar must be low enough to catch them all.
-  var _CC_BATCH_MIN_MESHES = 3000;      // don't bother below this
-  var _CC_BATCH_FORCE_AT  = 6000;       // always batch above this
-  var _CC_BATCH_RATIO     = 4;          // meshes-per-element pathology trigger
+  // Tuned against a real 9-model federation. Round 1 (mesh-only, >=6k bar):
+  // 48.5k calls/6fps → 14.4k calls/16fps, with ~10.7k of the remainder
+  // being TINY InstancedMesh groups (3-5 instances each = 1 draw each).
+  // Round 2: fold small instanced groups into the batch too (instances
+  // share geometry inside a BatchedMesh) and lower the mesh bar.
+  var _CC_BATCH_MIN_MESHES = 1000;      // batch any model above this
+  var _CC_BATCH_FOLD_INST  = 64;        // fold InstancedMesh groups smaller than this
   var _CC_BATCH_MAX_INST  = 40000;      // per-batch caps → multiple batches
   var _CC_BATCH_MAX_VERTS = 4000000;
   var _CC_BATCH_MAX_IDX   = 12000000;
 
   function _ccBatchPathological(elements, meshes, geoUnique) {
     if (typeof THREE.BatchedMesh !== 'function') return {meshes:meshes, batches:0, batched:0};
+    function _matOk(mat) { return mat && !mat.transparent && !(mat.opacity != null && mat.opacity < 0.99); }
     var candidates = [];
     meshes.forEach(function(m) {
-      if (!m.isMesh || m.isInstancedMesh || m.isBatchedMesh) return;
+      if (m.isBatchedMesh) return;
+      if (m.isInstancedMesh) {
+        // Small instanced groups cost one draw call each — thousands of
+        // 3-5 instance groups dominate after plain meshes are batched.
+        // Inside a BatchedMesh the instances share their geometry anyway.
+        if (m.count >= _CC_BATCH_FOLD_INST) return;
+        if (!m.geometry || !m.geometry.index || !_matOk(m.material)) return;
+        candidates.push({ inst: m });
+        return;
+      }
+      if (!m.isMesh) return;
       if (m.userData._instanceRef || m.userData.expressId == null) return;
       var g = m.geometry, mat = m.material;
       if (!g || !g.index || !g.attributes.position) return;
-      if (!mat || mat.transparent || (mat.opacity != null && mat.opacity < 0.99)) return;
-      candidates.push(m);
+      if (!_matOk(mat)) return;
+      candidates.push({ mesh: m });
     });
-    // meshes-per-element works on every path (geoUnique is unavailable on
-    // cache restore); multi-geometry elements are what multiply draw calls.
-    var ratio = elements.length ? candidates.length / elements.length : 0;
-    var pathological = candidates.length >= _CC_BATCH_FORCE_AT ||
-      (candidates.length >= _CC_BATCH_MIN_MESHES && ratio > _CC_BATCH_RATIO) ||
+    var pathological = candidates.length >= _CC_BATCH_MIN_MESHES ||
       (window._ccForceBatch && candidates.length > 0); // test hook for CI
     if (!pathological) return {meshes:meshes, batches:0, batched:0};
 
@@ -2676,22 +2684,45 @@ function startApp() {
       batches.push(b);
       return b;
     }
-    // Pre-measure totals in capped windows
+    // Pre-measure totals in capped windows (instanced groups add their
+    // geometry once but one batch instance per IFC instance).
     var win = { count:0, verts:0, idx:0, items:[] }, wins = [win];
-    candidates.forEach(function(m) {
-      var v = m.geometry.attributes.position.count, ix = m.geometry.index.count;
-      if (win.count >= _CC_BATCH_MAX_INST || win.verts + v > _CC_BATCH_MAX_VERTS || win.idx + ix > _CC_BATCH_MAX_IDX) {
+    candidates.forEach(function(c) {
+      var g = (c.mesh || c.inst).geometry;
+      var v = g.attributes.position.count, ix = g.index.count;
+      var n = c.inst ? c.inst.count : 1;
+      if (win.count + n > _CC_BATCH_MAX_INST || win.verts + v > _CC_BATCH_MAX_VERTS || win.idx + ix > _CC_BATCH_MAX_IDX) {
         win = { count:0, verts:0, idx:0, items:[] }; wins.push(win);
       }
-      win.count++; win.verts += v; win.idx += ix; win.items.push(m);
+      win.count += n; win.verts += v; win.idx += ix; win.items.push(c);
     });
     var nBatched = 0;
+    var _tmpIM = new THREE.Matrix4();
     wins.forEach(function(w) {
       if (!w.items.length) return;
       var b = _newBatch(w);
       var _col = new THREE.Color();
-      w.items.forEach(function(m) {
+      w.items.forEach(function(c) {
         try {
+          if (c.inst) {
+            var im = c.inst;
+            var gidI = b.addGeometry(im.geometry);
+            _col.copy(im.material.color || _col.set(0xcccccc));
+            var exprIds = im.userData.instanceExprIds || [];
+            im.updateMatrixWorld(true);
+            for (var k = 0; k < im.count; k++) {
+              var iidI = b.addInstance(gidI);
+              im.getMatrixAt(k, _tmpIM);
+              b.setMatrixAt(iidI, _tmpIM);
+              b.setColorAt(iidI, _col);
+              b.userData.batchExprIds[iidI] = exprIds[k];
+              b.userData._origColors[iidI] = _col.getHex();
+              nBatched++;
+            }
+            removed[im.uuid] = true;
+            return;
+          }
+          var m = c.mesh;
           var gid = b.addGeometry(m.geometry);
           var iid = b.addInstance(gid);
           m.updateMatrix();
@@ -2703,7 +2734,7 @@ function startApp() {
           m.userData._batchRef = { bMesh: b, instanceId: iid };
           removed[m.uuid] = true;
           nBatched++;
-        } catch (e) { /* capacity edge — leave this mesh per-element */ }
+        } catch (e) { /* capacity edge — leave this entry per-element */ }
       });
       _ccBakeMesh(b);
     });
@@ -9485,7 +9516,11 @@ function startApp() {
           }
         }
         var hitMesh = null, hitInstanceId = -1;
-        if(hits.length>0 && hits[0].object.isMesh) { hitMesh = hits[0].object; hitInstanceId = hits[0].instanceId != null ? hits[0].instanceId : -1; }
+        if(hits.length>0 && hits[0].object.isMesh) {
+          hitMesh = hits[0].object;
+          hitInstanceId = hits[0].instanceId != null ? hits[0].instanceId
+            : (hits[0].batchId != null ? hits[0].batchId : -1);
+        }
         if(hitMesh && _isGhostMat(hitMesh.material)) hitMesh = null;
         if(hitMesh && !hitMesh.isInstancedMesh && !hitMesh.visible) hitMesh = null;
         if(hitMesh && hitMesh.parent && hitMesh.parent.userData.modelId && !hitMesh.parent.visible) hitMesh = null;
@@ -9493,7 +9528,9 @@ function startApp() {
         if(sameHit) return;
         // restore previous hover
         if(lastHoveredMesh && lastHoverOriginals){
-          if(lastHoveredMesh.isInstancedMesh && lastHoverOriginals._instanceId != null){
+          if(lastHoveredMesh.userData && lastHoveredMesh.userData._isCCBatch && lastHoverOriginals._instanceId != null){
+            try { lastHoveredMesh.setColorAt(lastHoverOriginals._instanceId, lastHoverOriginals._origColor); } catch(_){}
+          } else if(lastHoveredMesh.isInstancedMesh && lastHoverOriginals._instanceId != null){
             lastHoveredMesh.setColorAt(lastHoverOriginals._instanceId, lastHoverOriginals._origColor);
             lastHoveredMesh.instanceColor.needsUpdate = true;
           } else if(lastHoveredMesh.material && !_isGhostMat(lastHoveredMesh.material)){
@@ -9504,7 +9541,15 @@ function startApp() {
         }
         _clearHoverRef();
         if(hitMesh){
-          if(hitMesh.isInstancedMesh && hitInstanceId >= 0 && hitMesh.instanceColor){
+          if(hitMesh.userData && hitMesh.userData._isCCBatch && hitInstanceId >= 0){
+            // BatchedMesh: tint ONE instance — emissive on the shared batch
+            // material lit up the entire facade.
+            var _bOrig = new THREE.Color();
+            try { hitMesh.getColorAt(hitInstanceId, _bOrig); } catch(_) { _bOrig.set(0xcccccc); }
+            lastHoverOriginals = {_instanceId:hitInstanceId, _origColor:_bOrig.clone()};
+            var _bBlend = new THREE.Color().copy(_bOrig).lerp(new THREE.Color(0xffffff), 0.35);
+            try { hitMesh.setColorAt(hitInstanceId, _bBlend); } catch(_){}
+          } else if(hitMesh.isInstancedMesh && hitInstanceId >= 0 && hitMesh.instanceColor){
             var _hOrigColor = new THREE.Color();
             hitMesh.getColorAt(hitInstanceId, _hOrigColor);
             lastHoverOriginals = {_instanceId:hitInstanceId, _origColor:_hOrigColor};
@@ -13631,7 +13676,7 @@ function startApp() {
             ${unread>0 && html`<span style=${{position:'absolute',top:-4,right:-4,background:'#ef4444',color:'#fff',fontSize:'0.6rem',fontWeight:700,padding:'1px 5px',borderRadius:99,lineHeight:1.3,minWidth:14,textAlign:'center',boxShadow:'0 1px 3px rgba(0,0,0,.4)'}}>${unread>9?'9+':unread}</span>`}
           </button>`;
         })()}
-        <button class="cc-hide-mobile cc-btn-press" onClick=${function(){d({t:A.TAB,v:'addons'});}}
+        <button class="cc-btn-press" onClick=${function(){d({t:A.TAB,v:'addons'});}}
           title="Integrations — Revit live link, local clash engine, AI bridge, shared folders and other modules"
           style=${{...S_BTN,background:'var(--bg-secondary)',color:'var(--text-secondary)',border:'1px solid var(--border)',fontSize:'var(--text-xs)',display:'flex',alignItems:'center',gap:'.35rem'}}>
           <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 7V2m6 5V2M7 7h10v5a5 5 0 0 1-10 0z"/><path d="M12 17v5"/></svg>
@@ -30745,8 +30790,19 @@ function startApp() {
           whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis',maxWidth:480
         }} title=${modelName}>${modelName}</span>`}
       </div>
-      <!-- Right: Share + avatar -->
+      <!-- Right: Integrations + Share + avatar -->
       <div style=${{display:'flex',alignItems:'center',gap:'var(--space-2)',flexShrink:0,height:'100%'}}>
+        <button class="cc-btn-press" onClick=${function(){d({t:A.TAB,v:'addons'});}}
+          title="Integrations — Revit live link, local clash engine, AI bridge, shared folders and other modules"
+          style=${{background:'none',color:'var(--ink-secondary)',fontWeight:500,
+            padding:'.28rem .65rem',fontSize:'var(--text-xs)',display:'flex',alignItems:'center',gap:'.35rem',
+            border:'1px solid var(--hairline-strong)',borderRadius:'var(--radius-sm)',cursor:'pointer',fontFamily:'var(--font-body)',
+            letterSpacing:0,lineHeight:1.2}}
+          onMouseEnter=${function(e){e.currentTarget.style.background='var(--surface-warm)';e.currentTarget.style.color='var(--ink-primary)';}}
+          onMouseLeave=${function(e){e.currentTarget.style.background='none';e.currentTarget.style.color='var(--ink-secondary)';}}>
+          <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M9 7V2m6 5V2M7 7h10v5a5 5 0 0 1-10 0z"/><path d="M12 17v5"/></svg>
+          <span>Integrations</span>
+        </button>
         <button class="cc-btn-press" onClick=${openShare}
           title=${connected?'Shared via '+(sp.folderName||'folder'):'Share this model'}
           style=${{position:'relative',background:'none',color:'var(--ink-secondary)',fontWeight:500,
