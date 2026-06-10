@@ -30939,31 +30939,6 @@ function startApp() {
           </div>
           ${row('Open model…', function(){ if(window._ccOpenIFC) window._ccOpenIFC(); }, 'O')}
           <div style=${{height:1,background:'var(--hairline)',margin:'.3rem 0'}}></div>
-          <div style=${{position:'relative'}}
-            onMouseEnter=${function(){setConnOpen(true);}} onMouseLeave=${function(){setConnOpen(false);}}>
-            <button onClick=${function(){setConnOpen(!connOpen);}}
-              style=${{display:'flex',alignItems:'center',justifyContent:'space-between',gap:'.6rem',width:'100%',
-                padding:'.5rem .8rem',background:connOpen?'var(--surface-warm)':'none',border:'none',cursor:'pointer',textAlign:'left',
-                fontFamily:'var(--font-body)',fontSize:'var(--text-sm)',color:'var(--ink-primary)',
-                transition:'background var(--duration-fast) var(--ease-standard)'}}>
-              <span>Integrations</span>
-              <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style=${{color:'var(--ink-faint)'}}><polyline points="15 18 9 12 15 6"/></svg>
-            </button>
-            ${connOpen && html`<div style=${{
-              position:'absolute',right:'100%',top:-5,marginRight:2,zIndex:401,minWidth:180,
-              background:'var(--surface)',border:'1px solid var(--hairline-strong)',
-              borderRadius:'var(--radius-md)',boxShadow:'var(--shadow-lifted)',padding:'.3rem 0'}}>
-              ${[['revit-bridge','Revit Connector'],['local-engine','Clash Engine'],['smart-bridge','Smart Bridge']].map(function(it){
-                var _hint = '';
-                try {
-                  if (it[0]==='revit-bridge' && s.revitDirect && s.revitDirect.connected) _hint = 'connected';
-                  else if (window._ccIsAddonActive && window._ccIsAddonActive(it[0])) _hint = 'on';
-                } catch(_){}
-                return row(it[1], function(){ window._ccAddonsFocus = it[0]; d({t:A.TAB,v:'addons'}); }, _hint);
-              })}
-            </div>`}
-          </div>
-          <div style=${{height:1,background:'var(--hairline)',margin:'.3rem 0'}}></div>
           <div style=${{padding:'.25rem .8rem',fontSize:'var(--text-2xs)',textTransform:'uppercase',letterSpacing:'.08em',color:'var(--ink-muted)',fontWeight:500}}>Project</div>
           ${projects.map(function(p){
             var on = p.id===s.activeProject;
@@ -31014,6 +30989,31 @@ function startApp() {
             </div>`;
           })}
           ${row('+ New project…', newProject)}
+          <div style=${{height:1,background:'var(--hairline)',margin:'.3rem 0'}}></div>
+          <div style=${{position:'relative'}}
+            onMouseEnter=${function(){setConnOpen(true);}} onMouseLeave=${function(){setConnOpen(false);}}>
+            <button onClick=${function(){setConnOpen(!connOpen);}}
+              style=${{display:'flex',alignItems:'center',justifyContent:'space-between',gap:'.6rem',width:'100%',
+                padding:'.5rem .8rem',background:connOpen?'var(--surface-warm)':'none',border:'none',cursor:'pointer',textAlign:'left',
+                fontFamily:'var(--font-body)',fontSize:'var(--text-sm)',color:'var(--ink-primary)',
+                transition:'background var(--duration-fast) var(--ease-standard)'}}>
+              <span>Integrations</span>
+              <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style=${{color:'var(--ink-faint)'}}><polyline points="15 18 9 12 15 6"/></svg>
+            </button>
+            ${connOpen && html`<div style=${{
+              position:'absolute',right:'100%',top:-5,marginRight:2,zIndex:401,minWidth:180,
+              background:'var(--surface)',border:'1px solid var(--hairline-strong)',
+              borderRadius:'var(--radius-md)',boxShadow:'var(--shadow-lifted)',padding:'.3rem 0'}}>
+              ${[['revit-bridge','Revit Connector'],['local-engine','Clash Engine'],['smart-bridge','Smart Bridge']].map(function(it){
+                var _hint = '';
+                try {
+                  if (it[0]==='revit-bridge' && s.revitDirect && s.revitDirect.connected) _hint = 'connected';
+                  else if (window._ccIsAddonActive && window._ccIsAddonActive(it[0])) _hint = 'on';
+                } catch(_){}
+                return row(it[1], function(){ window._ccAddonsFocus = it[0]; d({t:A.TAB,v:'addons'}); }, _hint);
+              })}
+            </div>`}
+          </div>
           <div style=${{height:1,background:'var(--hairline)',margin:'.3rem 0'}}></div>
           ${row('Theme: '+(isDark?'Dark':'Light'), function(){ d({t:A.UPD_PREFS,u:{theme:isDark?'light':'dark'}}); })}
           ${row('Settings…', function(){ d({t:A.SETTINGS,v:true}); }, ',')}
