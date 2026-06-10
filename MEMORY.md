@@ -89,6 +89,17 @@ Things to be careful about. Do not remove without a good reason — add a note i
 Update this section at the start and end of each session.
 Mark completed items with ~~strikethrough~~ and date, then let the daily sync archive them.
 
+On branch `claude/codebase-review-ae7481` (2026-06-10) — codebase review: connect open ends + fix bucket:
+
+- ~~**WASM clash engine connected for the first time.** It was never wired: `'wasm-engine'` missing from `addonFiles` AND `addons/wasm-engine-pkg/` never built/committed — the documented 4-8× acceleration never ran. Built `engine/` (wasm32 + wasm-bindgen 0.2.123, 35 KB), committed the pkg, added to the load list. **Critical fix while wiring:** the addon eagerly defined `_ccWasmIntersect`/`_ccWasmMinDist`/`_ccWasmBatchIntersect` with not-ready returns (false/Infinity/[]) while the core treats their *existence* as "skip JS fallback" — a failed/in-flight load would have silently reported zero clashes. Globals now publish only after successful init, unpublish on deactivate; `active:true/false` dispatched so the engine pill + Settings selector (which read `s.wasmEngine.active`, never set before) work. Node smoke test passes; verify the pill on Vercel preview.~~ (2026-06-10)
+- ~~Bridge URL bug fixed (`smart-bridge-server.js`): `new URL('/v1/...', baseUrl)` dropped path prefixes (Groq/OpenRouter). New `llmEndpointUrl()` appends, skips double `/v1`; applied to callLlmApi + probeLlm; bridge 0.3.0→0.3.1; regression test `tests/bridge-url.test.js`.~~ (2026-06-10)
+- ~~`UPD_OPENAEC_BRIDGE` was a silent no-op (no reducerCases registered) — addon now registers initState+reducerCases → `s.openaecBridge` tracks {available,checking,port,info}.~~ (2026-06-10)
+- ~~`/api/project` (only unauthenticated DB-write) had no body cap — swapped bare rateLimit for `llmGuard` 30/min + 256 KB; 413 test added.~~ (2026-06-10)
+- ~~Doc drift: CLAUDE/INTERNALS/PERFORMANCE_NOTES/OPEN_SOURCE_COMPONENTS/MEMORY still said Three.js r128 — corrected to r180 ESM import map; 2 "OBB engine" tooltips → AABB+BVH.~~ (2026-06-10)
+- ~~Dead code: removed suggestOmniClass+_aiResJson, _ccLoadScript, _ccFormatLen (dup of _ccFmtLength), _ccDrawTitleBlock/ScaleBar/NorthArrow (dead duplicates of the inline 2D-sheet drawing) — ~136 lines.~~ (2026-06-10)
+- ~~PWA offline was broken for addons: fetch handler only runtime-caches CDN hosts, addons weren't precached → 404 offline. All 15 addons + wasm pkg added to PRECACHE (cache name rotates per release).~~ (2026-06-10)
+- **Deliberately skipped:** hiding model names from `/api/health` — Settings intentionally displays the live model (e840a79) and it's public in llms.txt; hiding it would regress a feature for negligible gain.
+
 On branch `claude/jolly-cannon-YZUwi-followup` (2026-06-08) — Splat addon Phase 1 + Three.js bump scheduled:
 
 - **`addons/splat.js` (Phase 1, sibling-canvas pattern):** opt-in addon that lazy-loads Three.js r180 + Spark.js 2.0 as ESM only when the user actually loads a splat. Mounts its own WebGL canvas BEHIND the main IFC canvas (z-index 0, pointer-events:none), mirrors the core's camera each frame via `_ccViewport.getCamera()` and a new `cc-render-frame` event the core fires after every render. IFC canvas clear-color forced transparent while splats are active; restored on unload. **Core stays on r128.** Drag-drop wired for `.splat / .ksplat / .spz` (alongside `.ply / .pcd` for point clouds). Public API: `_ccLoadSplat(urlOrFile, opts)`, `_ccUnloadSplats(id?)`, `_ccListSplats()`, `_ccTestSplat()` (loads a public sample for the spike).
