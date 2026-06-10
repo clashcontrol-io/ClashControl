@@ -28,7 +28,7 @@ Optional, non-critical features are split into lazy-loaded files under `addons/`
 ### Tech stack
 - **Preact/React 18** via CDN (UMD) — UI framework
 - **htm** — hand-written tagged template literal parser (inlined in the file, replaces JSX)
-- **Three.js r128** via CDN — 3D rendering
+- **Three.js r180** via CDN (ESM import map) — 3D rendering
 - **JSZip** via CDN — BCF zip export/import
 - **pdf.js** via CDN — PDF preview/overlay in the Issues panel
 - **web-ifc** WASM — IFC parsing, lazy-loaded via ESM on first model load
@@ -85,7 +85,7 @@ The file follows this layout top to bottom:
 - The render-on-demand system (`_needsRender` / `invalidate`) — breaking this causes either no rendering or constant GPU waste
 
 ### Known quirks
-- Three.js r128 is used (not latest) — some newer Three.js APIs won't work
+- Three.js r180 is loaded as ESM via an import map (bumped from UMD r128 in v5.19.12) — use r180 docs; post-r155 color management / lighting defaults are explicitly tuned in the renderer setup, don't "fix" them back
 - The view cube uses quaternion inversion (`cubeGroup.quaternion.copy(camera.quaternion).invert()`) — don't switch to camera-position approach, it causes mirroring
 - Fly-to auto-detects whether to preserve camera angle or re-orient based on travel distance vs current camera distance
 - The pre-commit hook only triggers when `index.html` is in the staged files

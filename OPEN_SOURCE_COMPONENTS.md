@@ -8,7 +8,7 @@ ClashControl uses the following open source libraries and components:
 |-----------|---------|---------|---------|
 | [React](https://reactjs.org/) | 18.2.0 | MIT | UI rendering framework |
 | [ReactDOM](https://reactjs.org/) | 18.2.0 | MIT | React DOM renderer |
-| [Three.js](https://threejs.org/) | r128 | MIT | 3D WebGL rendering engine |
+| [Three.js](https://threejs.org/) | r180 | MIT | 3D WebGL rendering engine |
 | [JSZip](https://stuk.github.io/jszip/) | 3.10.1 | MIT / GPLv3 (used under MIT) | ZIP file creation for BCF export/import |
 | [PDF.js](https://mozilla.github.io/pdf.js/) | 3.11.174 | Apache-2.0 | PDF rendering for in-app document viewing |
 

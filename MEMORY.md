@@ -50,7 +50,8 @@ These are permanent. Do not remove entries — add new ones when significant dec
 | Date | Decision | Reason |
 |------|----------|--------|
 | founding | Single `index.html` app, no build step | Zero setup for users; open-source transparency; easy to fork/inspect |
-| founding | Three.js r128 (pinned, not latest) | API stability; newer versions break existing render/material code |
+| founding | Three.js r128 (pinned, not latest) — *superseded 2026-06-08, see r180 row below* | API stability; newer versions break existing render/material code |
+| 2026-06-08 | Three.js bumped r128 → r180, loaded as ESM via import map (#595, v5.19.12) | Unblocks modern-Three features (splat addon dedup, future WebGPU clash path); post-r155 color management/lighting explicitly re-tuned |
 | founding | In-browser clash engine: AABB broad-phase + BVH tri-tri narrow-phase (legacy name "OBB engine" is a simplification — orientation only enters via the slimline-axis prune for directional elements). `_ccWasmIntersect`/`_ccWasmMinDist` accelerate when loaded. Optional `local-engine.js` addon escalates to true solid boolean ops on a localhost Python server. | Tri-tri is the browser sweet spot: tighter than AABB-only (kills false positives on rotated beams/pipes), fast enough for thousands of pairs in JS, and has a clean WASM acceleration path. True solid boolean ops are too slow in JS so they live in the Python local engine. |
 | founding | CDN deps pinned with SRI hashes | Reproducible builds; integrity verification |
 | founding | Addons pattern (`addons/*.js` IIFE) | Keeps `index.html` lean; optional features don't block initial load |
@@ -68,7 +69,7 @@ These are permanent. Do not remove entries — add new ones when significant dec
 
 Things to be careful about. Do not remove without a good reason — add a note if something is fixed.
 
-- **Three.js r128 API**: Use r128 docs. `BufferGeometry.setAttribute`, not `addAttribute`. `MeshStandardMaterial` not `MeshPhysicalMaterial` for standard use.
+- **Three.js r180 API** (was r128 until v5.19.12): use r180 docs. ESM via import map — no UMD `<script>` tag anymore. Post-r155 color management and light-intensity behaviour are deliberately tuned in the renderer setup (e.g. rendered-mode exposure 0.4); don't "correct" them back to library defaults.
 - **View cube mirroring**: The nav cube MUST use `cubeGroup.quaternion.copy(camera.quaternion).invert()`. Camera-position approach causes left/right mirror. Don't "fix" this.
 - **web-ifc WASM hang**: A 10-second timeout detects WASM init hangs (slow connections). Don't remove this guard.
 - **IFC unit scale**: Storey elevations from IFC are often in mm; geometry is in metres. Always apply `geoFactor` when converting. Walk mode and 2D sheet have fixed this.

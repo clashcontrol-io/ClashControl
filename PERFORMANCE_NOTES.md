@@ -78,7 +78,7 @@ Analysis of GPU instancing feasibility (prompted by comparison with Fragments .f
 | updateCulling | Per-instance visibility via count/instanceColor | `index.html:5833` |
 | Clash detection | `getMatrixAt(i, m)` + apply to base geometry for `_wvCache`/`_triCache` | `index.html:2468` |
 
-**Constraint:** Three.js r128 supports `THREE.InstancedMesh` natively. `EXT_mesh_gpu_instancing` GLB extension requires r135+ — GLB path cannot use GLTF-embedded instancing without a loader upgrade.
+**Constraint (lifted):** the core now runs Three.js r180, so the `EXT_mesh_gpu_instancing` GLB extension (r135+) is available to the GLB path if wanted.
 **Order:** IFC path first. GLB path requires gap #2 (geometry dedup) to be solved first.
 
 ---
@@ -93,7 +93,7 @@ Analysis of GPU instancing feasibility (prompted by comparison with Fragments .f
 | `_ccBakeMesh` | Correctly freezes transforms; instancing must be inserted before this is called |
 | `invalidate()` render-on-demand system | Breaking causes GPU waste or no rendering |
 | View cube quaternion inversion | Documented quirk; switching breaks mirroring |
-| Three.js r128 version | Do not assume r135+ features |
+| Three.js version pinning | r180 via import map — bump deliberately, never float to latest |
 | Per-model geoCache scope | Cross-model dedup requires content-hashing; not worth the complexity |
 
 ---
