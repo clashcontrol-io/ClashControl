@@ -268,6 +268,17 @@ border (horizontal). Inactive tabs use `var(--text-muted)`; active uses
 
 ---
 
+### Iconography & button labels
+
+- **No emoji in the UI.** Icons are inline SVGs (`stroke="currentColor"`,
+  1.5–2px stroke, 11–16px) so they inherit theme colors — emoji render
+  with their own colors on every platform and break the monochrome
+  chrome. Established unicode tool glyphs (`⎙` print) are grandfathered;
+  don't add new ones.
+- Button labels are plain language, sentence case, no marketing words
+  ("free"/"gratis") — pricing/positioning lives on the website, not in
+  chrome. Source or scope goes in parentheses: "3D omgeving — NL (PDOK)".
+
 ## 5. Layout Principles
 
 ### Spacing scale (4dp grid)
