@@ -1,0 +1,58 @@
+name: Build and Release Desktop (Tauri)
+
+# Auto-release: bump desktop/desktop-version.json on main → builds + publishes.
+# Any other change under desktop/ → CI build only (verifies, no publish).
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'desktop/**'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: ubuntu-latest
+          - platform: windows-latest
+          - platform: macos-latest
+    runs-on: ${{ matrix.platform }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Linux WebView deps
+        if: matrix.platform == 'ubuntu-latest'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
+
+      - name: Read desktop version
+        id: ver
+        shell: bash
+        run: echo "version=$(node -p "require('./desktop/desktop-version.json').version")" >> "$GITHUB_OUTPUT"
+
+      - name: Generate platform icons
+        working-directory: desktop
+        run: npx --yes @tauri-apps/cli@^2 icon ../icons/icon-512.png -o src-tauri/icons
+
+      - name: Build (and release on version bump)
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          projectPath: desktop/src-tauri
+          tagName: desktop-v${{ steps.ver.outputs.version }}
+          releaseName: 'ClashControl Desktop v${{ steps.ver.outputs.version }}'
+          releaseBody: 'Phase 0 shell — same app as www.clashcontrol.io in a native window. See TAURI.md.'
+          releaseDraft: true
