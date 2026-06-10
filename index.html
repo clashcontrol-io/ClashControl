@@ -10693,15 +10693,19 @@ function startApp() {
           var cs = window._ccCurrentSection;
           var S2 = state3d.current;
           var newPos;
-          if (cs && cs.axis && S2 && S2.camera) {
-            // Section plane lives along the axis but its visible "kept" side
-            // is the opposite of the axis normal (negated in line 6861). Mouse
-            // should move the cut WITH the drag direction in screen space — so
-            // we invert the dot product.
-            var axMap = {x:[1,0,0], y:[0,1,0], z:[0,0,1]};
-            var axArr = axMap[cs.axis] || [0,1,0];
-            var origin = new THREE.Vector3(0,0,0).project(S2.camera);
-            var tip    = new THREE.Vector3(axArr[0],axArr[1],axArr[2]).project(S2.camera);
+          // Project the plane's travel direction (+axis, or the custom
+          // plane's normal) to screen space and follow the mouse along it:
+          // dragging in the direction the axis points on screen increases
+          // pos. Same math for axis and picked-face planes — the old
+          // axis-only version inverted the dot (cut ran against the mouse)
+          // and custom planes used raw screen-Y regardless of orientation.
+          var _sdDir = null;
+          if (cs && cs.axis) _sdDir = ({x:[1,0,0], y:[0,1,0], z:[0,0,1]})[cs.axis];
+          else if (cs && cs.custom && cs.custom.normal) _sdDir = cs.custom.normal;
+          if (_sdDir && S2 && S2.camera) {
+            var _gizP = (S2._sectionPlaneVis && S2._sectionPlaneVis.position) || new THREE.Vector3(0,0,0);
+            var origin = _gizP.clone().project(S2.camera);
+            var tip    = _gizP.clone().add(new THREE.Vector3(_sdDir[0],_sdDir[1],_sdDir[2])).project(S2.camera);
             var sx = tip.x - origin.x, sy = tip.y - origin.y;
             var sLen = Math.sqrt(sx*sx + sy*sy) || 1;
             sx /= sLen; sy /= sLen;
@@ -10709,7 +10713,7 @@ function startApp() {
             var mdx =  dx / el.clientWidth  * 2;
             var mdy = -dy / el.clientHeight * 2;
             var dot = mdx * sx + mdy * sy;
-            newPos = Math.max(0, Math.min(1, _secDrag.startPos - dot * 0.5));
+            newPos = Math.max(0, Math.min(1, _secDrag.startPos + dot * 0.5));
           } else {
             newPos = Math.max(0, Math.min(1, _secDrag.startPos + dy * 0.003));
           }
