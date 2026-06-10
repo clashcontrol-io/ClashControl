@@ -50,7 +50,8 @@ These are permanent. Do not remove entries — add new ones when significant dec
 | Date | Decision | Reason |
 |------|----------|--------|
 | founding | Single `index.html` app, no build step | Zero setup for users; open-source transparency; easy to fork/inspect |
-| founding | Three.js r128 (pinned, not latest) | API stability; newer versions break existing render/material code |
+| founding | Three.js r128 (pinned, not latest) — *superseded 2026-06-08, see r180 row below* | API stability; newer versions break existing render/material code |
+| 2026-06-08 | Three.js bumped r128 → r180, loaded as ESM via import map (#595, v5.19.12) | Unblocks modern-Three features (splat addon dedup, future WebGPU clash path); post-r155 color management/lighting explicitly re-tuned |
 | founding | In-browser clash engine: AABB broad-phase + BVH tri-tri narrow-phase (legacy name "OBB engine" is a simplification — orientation only enters via the slimline-axis prune for directional elements). `_ccWasmIntersect`/`_ccWasmMinDist` accelerate when loaded. Optional `local-engine.js` addon escalates to true solid boolean ops on a localhost Python server. | Tri-tri is the browser sweet spot: tighter than AABB-only (kills false positives on rotated beams/pipes), fast enough for thousands of pairs in JS, and has a clean WASM acceleration path. True solid boolean ops are too slow in JS so they live in the Python local engine. |
 | founding | CDN deps pinned with SRI hashes | Reproducible builds; integrity verification |
 | founding | Addons pattern (`addons/*.js` IIFE) | Keeps `index.html` lean; optional features don't block initial load |
@@ -68,7 +69,7 @@ These are permanent. Do not remove entries — add new ones when significant dec
 
 Things to be careful about. Do not remove without a good reason — add a note if something is fixed.
 
-- **Three.js r128 API**: Use r128 docs. `BufferGeometry.setAttribute`, not `addAttribute`. `MeshStandardMaterial` not `MeshPhysicalMaterial` for standard use.
+- **Three.js r180 API** (was r128 until v5.19.12): use r180 docs. ESM via import map — no UMD `<script>` tag anymore. Post-r155 color management and light-intensity behaviour are deliberately tuned in the renderer setup (e.g. rendered-mode exposure 0.4); don't "correct" them back to library defaults.
 - **View cube mirroring**: The nav cube MUST use `cubeGroup.quaternion.copy(camera.quaternion).invert()`. Camera-position approach causes left/right mirror. Don't "fix" this.
 - **web-ifc WASM hang**: A 10-second timeout detects WASM init hangs (slow connections). Don't remove this guard.
 - **IFC unit scale**: Storey elevations from IFC are often in mm; geometry is in metres. Always apply `geoFactor` when converting. Walk mode and 2D sheet have fixed this.
@@ -87,6 +88,17 @@ Things to be careful about. Do not remove without a good reason — add a note i
 
 Update this section at the start and end of each session.
 Mark completed items with ~~strikethrough~~ and date, then let the daily sync archive them.
+
+On branch `claude/codebase-review-ae7481` (2026-06-10) — codebase review: connect open ends + fix bucket:
+
+- ~~**WASM clash engine connected for the first time.** It was never wired: `'wasm-engine'` missing from `addonFiles` AND `addons/wasm-engine-pkg/` never built/committed — the documented 4-8× acceleration never ran. Built `engine/` (wasm32 + wasm-bindgen 0.2.123, 35 KB), committed the pkg, added to the load list. **Critical fix while wiring:** the addon eagerly defined `_ccWasmIntersect`/`_ccWasmMinDist`/`_ccWasmBatchIntersect` with not-ready returns (false/Infinity/[]) while the core treats their *existence* as "skip JS fallback" — a failed/in-flight load would have silently reported zero clashes. Globals now publish only after successful init, unpublish on deactivate; `active:true/false` dispatched so the engine pill + Settings selector (which read `s.wasmEngine.active`, never set before) work. Node smoke test passes; verify the pill on Vercel preview.~~ (2026-06-10)
+- ~~Bridge URL bug fixed (`smart-bridge-server.js`): `new URL('/v1/...', baseUrl)` dropped path prefixes (Groq/OpenRouter). New `llmEndpointUrl()` appends, skips double `/v1`; applied to callLlmApi + probeLlm; bridge 0.3.0→0.3.1; regression test `tests/bridge-url.test.js`.~~ (2026-06-10)
+- ~~`UPD_OPENAEC_BRIDGE` was a silent no-op (no reducerCases registered) — addon now registers initState+reducerCases → `s.openaecBridge` tracks {available,checking,port,info}.~~ (2026-06-10)
+- ~~`/api/project` (only unauthenticated DB-write) had no body cap — swapped bare rateLimit for `llmGuard` 30/min + 256 KB; 413 test added.~~ (2026-06-10)
+- ~~Doc drift: CLAUDE/INTERNALS/PERFORMANCE_NOTES/OPEN_SOURCE_COMPONENTS/MEMORY still said Three.js r128 — corrected to r180 ESM import map; 2 "OBB engine" tooltips → AABB+BVH.~~ (2026-06-10)
+- ~~Dead code: removed suggestOmniClass+_aiResJson, _ccLoadScript, _ccFormatLen (dup of _ccFmtLength), _ccDrawTitleBlock/ScaleBar/NorthArrow (dead duplicates of the inline 2D-sheet drawing) — ~136 lines.~~ (2026-06-10)
+- ~~PWA offline was broken for addons: fetch handler only runtime-caches CDN hosts, addons weren't precached → 404 offline. All 15 addons + wasm pkg added to PRECACHE (cache name rotates per release).~~ (2026-06-10)
+- **Deliberately skipped:** hiding model names from `/api/health` — Settings intentionally displays the live model (e840a79) and it's public in llms.txt; hiding it would regress a feature for negligible gain.
 
 On branch `claude/jolly-cannon-YZUwi-followup` (2026-06-08) — Splat addon Phase 1 + Three.js bump scheduled:
 

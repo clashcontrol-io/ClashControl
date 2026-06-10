@@ -141,7 +141,7 @@ Pre-allocated vectors (`_tmpVec`, `_tmpDir`, `_tmpRight`) avoid per-frame alloca
 
 **Code section:** `// ── Three.js Viewer Component ──`
 
-Three.js r128 (not latest — some newer APIs won't work). WebGL1 renderer with antialiasing.
+Three.js r180, loaded as ESM via an import map (bumped from UMD r128 in v5.19.12). WebGL2 renderer with antialiasing.
 
 **Render-on-demand:** `_needsRender` counter, decremented each frame. `invalidate(frames)` sets the counter. When `_needsRender <= 0`, the render pass is skipped — saves GPU when nothing changes.
 
@@ -232,11 +232,10 @@ Long-form rationale blocks that used to live inline in `index.html`. Each subsec
 
 `THREE_VERSION` + `THREE_EXAMPLES_BASE` constants centralize the CDN version so the next bump touches one place instead of six string literals. The examples-base also drives the on-demand loader scripts (GLTFLoader, TransformControls, PLYLoader, PCDLoader, EffectComposer chain, etc.).
 
-When bumping the Three.js version:
+When bumping the Three.js version (last done: r128 → r180, v5.19.12):
 1. Update `THREE_VERSION` and `THREE_EXAMPLES_PATH` constants.
-2. Switch the `<script>` tag in `<head>` to the new build URL (ESM at r161+ — checklist covers it).
+2. Update the ESM import-map URLs in `<head>` (and the sw.js PRECACHE list).
 3. Regenerate SRI hashes via `scripts/generate-sri.js`.
-4. Replace `_ccSetSRGBOutput`'s r128 branch with the modern branch.
 
 Everything else in the codebase keeps working.
 

@@ -235,6 +235,14 @@
       id: 'openaec-bridge',
       name: 'OpenAEC bridge',
       description: 'Talks to sibling OpenAEC Foundation desktop apps over localhost — Phase 1 targets open-pointcloud-studio so CC can sync views, open scans, and round-trip viewpoints.',
+      initState: {
+        openaecBridge: { available: false, checking: false, port: null, info: null }
+      },
+      reducerCases: {
+        UPD_OPENAEC_BRIDGE: function(s, a) {
+          return Object.assign({}, s, { openaecBridge: Object.assign({}, s.openaecBridge, a.u) });
+        }
+      },
       init: function(){ _init(); }
     });
   } else {

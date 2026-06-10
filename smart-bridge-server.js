@@ -127,6 +127,17 @@ const LOCAL_LLM_CANDIDATES = [
   { provider: 'jan',      label: 'Jan',       baseUrl: 'http://localhost:1337'  }
 ];
 
+// Build an endpoint URL by APPENDING to the base URL's path. `new URL('/v1/...',
+// base)` is wrong here: a root-relative path discards any path prefix in the base
+// (Groq's https://api.groq.com/openai, OpenRouter's https://openrouter.ai/api,
+// path-routed proxies). Bases that already end in /v1 (LM Studio convention)
+// don't get a second /v1.
+function llmEndpointUrl(baseUrl, endpointPath) {
+  const base = baseUrl.replace(/\/+$/, '');
+  const p = base.endsWith('/v1') ? endpointPath.replace(/^\/v1/, '') : endpointPath;
+  return new URL(base + p);
+}
+
 function loadLlmConfig() {
   try { return Object.assign({}, LLM_DEFAULTS, JSON.parse(fs.readFileSync(LLM_CONFIG_PATH, 'utf8'))); }
   catch (_) { return Object.assign({}, LLM_DEFAULTS); }
@@ -149,7 +160,7 @@ function callLlmApi(cfg, messages, tools) {
     const apiKey  = cfg.apiKey  || 'ollama';
 
     let targetUrl;
-    try { targetUrl = new URL('/v1/chat/completions', baseUrl); }
+    try { targetUrl = llmEndpointUrl(baseUrl, '/v1/chat/completions'); }
     catch (e) {
       const err = new Error('Invalid LLM base URL: ' + baseUrl);
       err.code = ERR.LLM_INVALID_URL;
@@ -218,7 +229,7 @@ function probeLlm(cfg) {
   return new Promise((resolve) => {
     const baseUrl = (cfg.baseUrl || 'http://localhost:11434').replace(/\/$/, '');
     let targetUrl;
-    try { targetUrl = new URL('/v1/models', baseUrl); }
+    try { targetUrl = llmEndpointUrl(baseUrl, '/v1/models'); }
     catch (_) { return resolve({ ok: false, code: ERR.LLM_INVALID_URL, error: 'Invalid baseUrl' }); }
 
     const isHttps = targetUrl.protocol === 'https:';

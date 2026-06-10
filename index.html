@@ -1041,7 +1041,7 @@ function startApp() {
   window._ccIsAddonActive = function(id) { return !!_ccAddonActive[id]; };
 
   function _loadAddonScripts() {
-    var addonFiles = ['training-data', 'pwa', 'local-engine', 'shared-project', 'revit-bridge', 'data-quality', 'smart-bridge', 'pointcloud', 'geoplace', 'accessibility', 'splat', 'align', 'openaec-bridge', 'visibility'];
+    var addonFiles = ['training-data', 'pwa', 'local-engine', 'shared-project', 'revit-bridge', 'data-quality', 'smart-bridge', 'pointcloud', 'geoplace', 'accessibility', 'splat', 'align', 'openaec-bridge', 'visibility', 'wasm-engine'];
     addonFiles.forEach(function(name) {
       var script = document.createElement('script');
       script.src = 'addons/' + name + '.js';
@@ -6468,16 +6468,6 @@ function startApp() {
       S._postPassesActive = false;
       S._postOutlinePass = null;
       S._postLoading = null;
-      function _ccLoadScript(url) {
-        return new Promise(function(resolve, reject){
-          if (document.querySelector('script[src="'+url+'"]')) { resolve(); return; }
-          var s = document.createElement('script');
-          s.src = url; s.async = true;
-          s.onload = function(){ resolve(); };
-          s.onerror = function(){ reject(new Error('Failed: '+url)); };
-          document.head.appendChild(s);
-        });
-      }
       function _ccLoadPostProcessing() {
         // Post-processing modules (EffectComposer, SAOPass, etc.) are
         // imported in the ESM bootstrap and attached to THREE.* at startup.
@@ -14687,41 +14677,6 @@ function startApp() {
     return {_total:(elements||[]).length};
   }
 
-  // Turn a non-ok AI-provider HTTP response into a rejection so the caller's
-  // error path runs, instead of silently parsing an error body into ''.
-  function _aiResJson(r){ if(!r.ok) throw new Error('AI provider error '+r.status); return r.json(); }
-
-  function suggestOmniClass(bridge, el) {
-    if (!bridge||!bridge.provider||!bridge.apiKey) return Promise.reject(new Error('No AI provider configured — set up Anthropic/OpenAI/Google in Revit Bridge settings.'));
-    var p = el.props||{};
-    var psetLines = '';
-    if (p.psets&&typeof p.psets==='object') {
-      Object.keys(p.psets).slice(0,3).forEach(function(g) {
-        var grp = p.psets[g];
-        if (grp&&typeof grp==='object') {
-          var pairs = Object.keys(grp).slice(0,5).map(function(k){return k+': '+grp[k];}).join(', ');
-          if (pairs) psetLines += g+' | '+pairs+'\n';
-        }
-      });
-    }
-    var prompt = 'Suggest the most specific OmniClass Table 23 (Products) code for this BIM element.\nReply with ONLY the code and title. Example: "23-13 11 11 Cast-in-Place Concrete Walls"\n\nName: '+(p.name||'?')+'\nIFC type: '+(p.ifcType||'?')+'\nRevit category: '+(p.objectType||'?')+'\nMaterial: '+(p.material||'?')+'\nLevel: '+(p.storey||'?')+'\nProperties:\n'+(psetLines||'(none)');
-    var h = {'Content-Type':'application/json'};
-    if (bridge.provider==='anthropic') {
-      return fetch('https://api.anthropic.com/v1/messages',{method:'POST',headers:Object.assign({},h,{'x-api-key':bridge.apiKey,'anthropic-version':'2023-06-01','anthropic-dangerous-direct-browser-access':'true'}),
-        body:JSON.stringify({model:'claude-haiku-4-5-20251001',max_tokens:64,messages:[{role:'user',content:prompt}]})
-      }).then(_aiResJson).then(function(res){return (res.content&&res.content[0]&&res.content[0].text||'').trim();});
-    } else if (bridge.provider==='openai') {
-      return fetch('https://api.openai.com/v1/chat/completions',{method:'POST',headers:Object.assign({},h,{'Authorization':'Bearer '+bridge.apiKey}),
-        body:JSON.stringify({model:'gpt-4o-mini',max_tokens:64,messages:[{role:'user',content:prompt}]})
-      }).then(_aiResJson).then(function(res){return (res.choices&&res.choices[0]&&res.choices[0].message&&res.choices[0].message.content||'').trim();});
-    } else if (bridge.provider==='google') {
-      return fetch('https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key='+bridge.apiKey,{method:'POST',headers:h,
-        body:JSON.stringify({contents:[{role:'user',parts:[{text:prompt}]}]})
-      }).then(_aiResJson).then(function(res){return (res.candidates&&res.candidates[0]&&res.candidates[0].content&&res.candidates[0].content.parts&&res.candidates[0].content.parts[0]&&res.candidates[0].content.parts[0].text||'').trim();});
-    }
-    return Promise.reject(new Error('Unknown provider'));
-  }
-
   // ── Splat reference-layers panel + PWA install banner ──  See INTERNALS.md § 21.17
   function _InstallAppBanner() {
     var stShow = useState(false);
@@ -16372,7 +16327,7 @@ function startApp() {
               onClickEngine = function(){ try{ if(window._ccActivateAddon) window._ccActivateAddon('local-engine'); }catch(e){} };
             } else {
               engineLabel = 'Browser engine'; engineDot = 'var(--text-faint)';
-              engineHint = 'Built-in JavaScript OBB engine';
+              engineHint = 'Built-in JavaScript AABB+BVH engine';
               onClickEngine = function(){ try{ if(window._ccActivateAddon) window._ccActivateAddon('local-engine'); }catch(e){} };
             }
             return html`<button onClick=${onClickEngine}
@@ -22855,14 +22810,6 @@ function startApp() {
     return val.toFixed(d) + ' m';
   }
 
-  function _ccFormatLen(val, unitScale) {
-    if (val == null) return '—';
-    var us = unitScale || _ccDetectUnitScale(window._ccLatestState && window._ccLatestState.models);
-    if (us >= 1000) return val.toFixed(0) + ' mm';
-    if (us >= 100)  return val.toFixed(1) + ' cm';
-    return val.toFixed(2) + ' m';
-  }
-
   // ── Measurement format helpers ────────────────────────────────────
   // Geometry is internally always metres. These format display labels
   // for measurement values, respecting prefs.measureUnits / prefs.measurePrecision.
@@ -23672,89 +23619,6 @@ function startApp() {
           ctx.restore();
         }());
       }
-      ctx.restore();
-    }
-
-    function _ccDrawTitleBlock(ctx, w, h, sheet) {
-      var tb = sheet.titleBlock || {};
-      var bw = 260, bh = 110;
-      var x = w - bw - 12, y = h - bh - 12;
-      ctx.save();
-      ctx.fillStyle = 'rgba(15,23,42,0.92)';
-      ctx.strokeStyle = '#64748b';
-      ctx.lineWidth = 1.5;
-      ctx.fillRect(x, y, bw, bh);
-      ctx.strokeRect(x, y, bw, bh);
-      ctx.beginPath(); ctx.moveTo(x, y + 22); ctx.lineTo(x + bw, y + 22); ctx.stroke();
-      ctx.beginPath(); ctx.moveTo(x + bw * 0.6, y + 22); ctx.lineTo(x + bw * 0.6, y + bh); ctx.stroke();
-      ctx.fillStyle = '#e2e8f0';
-      ctx.font = 'bold 12px sans-serif';
-      ctx.fillText(tb.project || sheet.name || 'ClashControl Plan', x + 8, y + 15);
-      ctx.font = '10px sans-serif';
-      ctx.fillStyle = '#94a3b8';
-      ctx.fillText('Storey: ' + (sheet.storeyName || '—'), x + 8, y + 38);
-      var _us = sheet._unitScale || 1;
-      var _dispElev = sheet._storeyElevation != null ? sheet._storeyElevation : sheet.elevation;
-      ctx.fillText('Elev: ' + _ccFormatElev(_dispElev, _us), x + 8, y + 52);
-      ctx.fillText('Cut: ' + (sheet.cutHeight != null ? sheet.cutHeight.toFixed(2) + ' m' : '1.20 m'), x + 8, y + 66);
-      var scaleRatio = Math.round(1000 / ((sheet.scale && sheet.scale.pxPerMeter) || 100) * 10);
-      var paperLabel = (sheet.paper && sheet.paper.size || 'A3') + ' ' + (sheet.paper && sheet.paper.orient || 'landscape');
-      ctx.fillText('Scale 1:' + scaleRatio + '  ' + paperLabel, x + 8, y + 80);
-      ctx.fillText(tb.author ? 'By ' + tb.author : '', x + 8, y + 94);
-      ctx.fillText(tb.date || new Date(sheet.createdAt || Date.now()).toLocaleDateString(), x + bw * 0.6 + 8, y + 38);
-      ctx.fillText(tb.revision ? 'Rev ' + tb.revision : 'Rev —', x + bw * 0.6 + 8, y + 52);
-      if (tb.notes) {
-        var notesLines = String(tb.notes).slice(0, 60).match(/.{1,28}/g) || [];
-        notesLines.forEach(function(ln, i) { ctx.fillText(ln, x + bw * 0.6 + 8, y + 66 + i * 12); });
-      }
-      ctx.restore();
-    }
-
-    function _ccDrawScaleBar(ctx, w, h, sheet, zoom) {
-      var pxm = (sheet.scale && sheet.scale.pxPerMeter) || 100;
-      var targetPx = 150;
-      var mPerBar = targetPx / (pxm * zoom);
-      var niceSteps = [0.1, 0.2, 0.5, 1, 2, 5, 10, 20, 50, 100];
-      var chosen = niceSteps[0];
-      for (var i = 0; i < niceSteps.length; i++) if (niceSteps[i] <= mPerBar) chosen = niceSteps[i];
-      var barPx = chosen * pxm * zoom;
-      var barLabel = chosen < 1 ? (chosen * 1000) + ' mm' : chosen + ' m';
-      var x = 16, y = h - 28;
-      ctx.save();
-      ctx.fillStyle = 'rgba(15,23,42,0.85)';
-      ctx.fillRect(x - 6, y - 20, barPx + 12, 32);
-      ctx.strokeStyle = '#e2e8f0'; ctx.lineWidth = 2;
-      ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(x + barPx, y); ctx.stroke();
-      ctx.beginPath(); ctx.moveTo(x, y - 6); ctx.lineTo(x, y + 6); ctx.stroke();
-      ctx.beginPath(); ctx.moveTo(x + barPx, y - 6); ctx.lineTo(x + barPx, y + 6); ctx.stroke();
-      ctx.beginPath(); ctx.moveTo(x + barPx / 2, y - 4); ctx.lineTo(x + barPx / 2, y + 4); ctx.stroke();
-      ctx.fillStyle = '#e2e8f0'; ctx.font = '11px sans-serif';
-      ctx.fillText(barLabel, x, y - 8);
-      ctx.restore();
-    }
-
-    function _ccDrawNorthArrow(ctx, w, h, sheet) {
-      var cx = w - 40, cy = 44;
-      var r = 22;
-      var angRad = ((sheet.northDeg || 0) - 90) * Math.PI / 180;
-      ctx.save();
-      ctx.fillStyle = 'rgba(15,23,42,0.85)';
-      ctx.beginPath(); ctx.arc(cx, cy, r + 4, 0, Math.PI * 2); ctx.fill();
-      ctx.strokeStyle = '#64748b'; ctx.lineWidth = 1; ctx.stroke();
-      ctx.translate(cx, cy);
-      ctx.rotate(angRad);
-      ctx.beginPath();
-      ctx.moveTo(0, -r);
-      ctx.lineTo(r * 0.4, r * 0.6);
-      ctx.lineTo(0, r * 0.3);
-      ctx.lineTo(-r * 0.4, r * 0.6);
-      ctx.closePath();
-      ctx.fillStyle = '#ef4444'; ctx.fill();
-      ctx.strokeStyle = '#e2e8f0'; ctx.lineWidth = 1; ctx.stroke();
-      ctx.rotate(-angRad);
-      ctx.fillStyle = '#e2e8f0'; ctx.font = 'bold 11px sans-serif'; ctx.textAlign = 'center';
-      ctx.fillText('N', 0, -r - 6);
-      ctx.textAlign = 'start';
       ctx.restore();
     }
 
@@ -30681,7 +30545,7 @@ function startApp() {
             var lbl, dot, hint, click;
             if(le.active && le.available){ lbl='Exact'; dot='#22c55e'; hint='ClashControlEngine (local Python · exact mesh)'; click=function(){if(window._ccDeactivateAddon)window._ccDeactivateAddon('local-engine');}; }
             else if(we.active){ lbl='WASM'; dot='#22c55e'; hint='WASM engine (in-browser, accelerated). Click to try local engine.'; click=function(){if(window._ccActivateAddon)window._ccActivateAddon('local-engine');}; }
-            else { lbl='Browser'; dot='#94a3b8'; hint='Built-in JS OBB engine. Click to switch to local exact-mesh engine (requires Python server on :19800).'; click=function(){if(window._ccActivateAddon)window._ccActivateAddon('local-engine');}; }
+            else { lbl='Browser'; dot='#94a3b8'; hint='Built-in JS AABB+BVH engine. Click to switch to local exact-mesh engine (requires Python server on :19800).'; click=function(){if(window._ccActivateAddon)window._ccActivateAddon('local-engine');}; }
             return html`<button onClick=${click} title=${hint}
               style=${{height:30,padding:'0 .55rem',background:'var(--bg-secondary)',border:'1px solid var(--border)',borderRadius:'var(--radius-sm)',cursor:'pointer',fontFamily:'var(--font-body)',fontSize:'.7rem',color:'var(--text-secondary)',display:'inline-flex',alignItems:'center',gap:'.35rem',whiteSpace:'nowrap'}}>
               <span style=${{width:7,height:7,borderRadius:'50%',background:dot,flexShrink:0}}></span>
