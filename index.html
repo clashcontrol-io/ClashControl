@@ -11183,11 +11183,16 @@ function startApp() {
           var tc = new THREE.TransformControls(S.camera, S.renderer.domElement);
           tc.setMode('translate');
           tc.setSize(0.85);
+          if (!tc.userData) tc.userData = {}; // r180 Controls has no userData
           tc.userData._isSectionTC = true;
+          var _tcV0 = _tcVisual(tc);
+          if (_tcV0) { _tcV0.userData = _tcV0.userData || {}; _tcV0.userData._isSectionTC = true; }
           // Brand-recolour the gizmo (was R/G/B per-axis) to ClashControl green.
           // Done on next tick so the internal gizmo is fully built first.
           setTimeout(function(){
-            tc.traverse(function(o){
+            var _tcVis0 = _tcVisual(tc) || tc;
+            if (typeof _tcVis0.traverse !== 'function') return;
+            _tcVis0.traverse(function(o){
               if (!o.material) return;
               var mats = Array.isArray(o.material) ? o.material : [o.material];
               mats.forEach(function(m){
