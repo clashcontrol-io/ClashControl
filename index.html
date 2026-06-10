@@ -1867,6 +1867,12 @@ function startApp() {
       var im = new THREE.Matrix4();
       h.object.getMatrixAt(h.instanceId, im);
       m.multiply(im);
+    } else if (h.object.userData && h.object.userData._isCCBatch && h.batchId != null) {
+      // BatchedMesh hits report face.normal in the instance's local space
+      // too — without this, rotated batched elements read as back-faces and
+      // the click pick's front-face filter discards them ("can't select").
+      var bm = new THREE.Matrix4();
+      try { h.object.getMatrixAt(h.batchId, bm); m.multiply(bm); } catch (_) {}
     }
     return n.copy(h.face.normal).transformDirection(m).normalize();
   }
