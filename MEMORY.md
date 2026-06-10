@@ -112,6 +112,16 @@ Second batch same branch (2026-06-10) — product features + test infra ("do all
 - ~~Memory guardrail: toast+console warn at >75% of tab heap limit after IFC load batch.~~ (2026-06-10)
 - ~~TAURI.md: phased desktop plan (same index.html, capability-detected tauri-bridge addon, native engine/ reuse, streamed reads, disk geo-cache, built-in Smart Bridge). Phase 0 not started — awaiting go.~~ (2026-06-10)
 
+Sixth batch (2026-06-10) — perf plan after user's laggy 7-model federation (USER APPROVAL PENDING for execution):
+
+- **Lag root cause (user log):** ZDS_BWK_PDR_gevelbekleding — 2,510 elements, 74,772 UNIQUE geometries, 0 reused → ~75k meshes/draw calls from one cladding model. Instancing can't help (nothing repeats).
+- **Why all past merge attempts failed (from revert 366c7cc + MEMORY):** hand-rolled chunk-merge on r128 broke identity features — (1) same-material elements visually blended, (2) render-style switch no-op on chunks, (3) selection outlines blended, (4) hide/color needed index-rebuild registries, ~49 setters never became chunk-aware. Removed entirely in 704837f. Free-RAM/dehydrate = wrong problem (RAM not draw calls), removed.
+- **PLAN (BatchedMesh, post-r180 — the primitive that didn't exist during prior attempts):**
+  - Phase 0: `_ccRenderReport()` (draw calls via renderer.info, frame time, per-model mesh counts); acceptance gates: ≥30fps orbit on the user's federation AND hide/color/style/pick/outline identical to per-element.
+  - Phase 1: THREE.BatchedMesh for pathological models only (trigger: geoUnique/elements > 10 OR >20k meshes/model). Original per-element meshes kept off-scene as proxies (proven Stage 2A pattern — element.meshes[] stays source of truth for clash/serialize/outline). Identity features via natives: setVisibleAt (hide), setColorAt (color-by-class), raycast batchId→expressId (pick), .material swap (render styles).
+  - Phase 2: every historical revert symptom becomes a browser-smoke CI assertion on a batched model BEFORE any default-on expansion.
+  - Phase 3 (parallel): storey-picker UI for scoped loading; Tauri Phase 2 native engine.
+
 Fifth batch (2026-06-10) — declared units + registry; scoped-loading design queued:
 
 - ~~Declared IFC LENGTHUNIT extraction (`_ccExtractIfcLengthUnit`) wired: load → result.stats.unitScale → geo-cache persist → `_ccDetectUnitScale` precedence override>declared>spacing-heuristic. tests/ifc-units.test.js locks it.~~ (2026-06-10)
