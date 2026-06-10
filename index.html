@@ -594,7 +594,7 @@ window.onload = function() {
 
 function startApp() {
   // ── Version (auto-updated by pre-commit hook) ──
-  var CC_VERSION = {v:'5.20.2',hash:'3b8c242',date:'2026-06-10T09:12:22Z'};
+  var CC_VERSION = {v:'5.20.0',hash:'c4e1bdf',date:'2026-06-10T08:07:21Z'};
   window.CC_VERSION = CC_VERSION;
 
   window._ccSetSRGBOutput = function(renderer) {
@@ -3126,6 +3126,20 @@ function startApp() {
     return _ifcWorkerUrl;
   }
 
+  // Active-load registry: lets the loading strip's Cancel button terminate
+  // in-flight parse workers AND settle their promises (null result = the
+  // existing "cancelled by a newer load" path), so the load chain finishes
+  // cleanly instead of stalling.
+  var _ccActiveLoads = [];
+  window._ccAbortLoading = function() {
+    _ccLoadGeneration++; // invalidates main-thread fallback loads at their gen checkpoints
+    _ccActiveLoads.splice(0).forEach(function(l) {
+      try { l.worker.terminate(); } catch(_) {}
+      try { l.settle(null); } catch(_) {}
+    });
+    if (window._ccToast) window._ccToast('Loading cancelled.');
+  };
+
   function loadIFCWorker(buffer, fallbackColor, onProgress, onProps, scope) {
     var loadStart = performance.now();
     var _myGen = ++_ccLoadGeneration;
@@ -3133,10 +3147,14 @@ function startApp() {
       var worker;
       try { worker = new Worker(_getIFCWorkerUrl()); }
       catch(e) { reject(e); return; }
+      var _loadReg = { worker: worker, settle: resolve };
+      _ccActiveLoads.push(_loadReg);
+      var _unreg = function() { var i = _ccActiveLoads.indexOf(_loadReg); if (i !== -1) _ccActiveLoads.splice(i, 1); };
 
       // + dynamic import in some browser/SW states) and reject so the caller
       var _watchdog = setTimeout(function() {
         _watchdog = null;
+        _unreg();
         try { worker.terminate(); } catch(e) {}
         reject(new Error('IFC Worker timed out (no progress in 20s)'));
       }, 20000);
@@ -3278,11 +3296,13 @@ function startApp() {
             console.groupEnd();
           })();
 
+          _unreg();
           resolve({meshes:meshes, elements:elements, storeys:msg.storeys, storeyData:msg.storeyData, spatialHierarchy:msg.spatialHierarchy||{}, relatedPairs:msg.relatedPairs, stats:stats});
         }
       };
       worker.onerror = function(err) {
         _clearWatchdog();
+        _unreg();
         worker.terminate();
         reject(new Error('IFC Worker failed: ' + (err.message || err)));
       };
@@ -3290,6 +3310,7 @@ function startApp() {
         worker.postMessage({buffer:buffer, scope:scope||null});
       } catch(postErr) {
         _clearWatchdog();
+        _unreg();
         try { worker.terminate(); } catch(e) {}
         reject(postErr);
       }
@@ -22137,10 +22158,16 @@ function startApp() {
       ${slow ? html`<div style=${{
         fontSize:'var(--text-xs)', color:'var(--text-muted)', lineHeight:'var(--leading-base)'
       }}>This is taking longer than usual — slow network or a very large model? It'll keep going.</div>` : null}
-      <div style=${{
-        fontFamily:'var(--font-mono)', fontSize:'var(--text-2xs)',
-        color:'var(--text-faint)', textAlign:'right', letterSpacing:'.04em'
-      }}>${elapsed}s elapsed</div>
+      <div style=${{display:'flex', alignItems:'center', justifyContent:'space-between'}}>
+        <button onClick=${function(){ if (window._ccAbortLoading) window._ccAbortLoading(); }}
+          style=${{fontSize:'var(--text-2xs)', padding:'.15rem .5rem', background:'none',
+            border:'1px solid var(--border)', borderRadius:'var(--radius-pill)', cursor:'pointer',
+            color:'var(--text-muted)', fontFamily:'var(--font-body)'}}>Cancel</button>
+        <span style=${{
+          fontFamily:'var(--font-mono)', fontSize:'var(--text-2xs)',
+          color:'var(--text-faint)', letterSpacing:'.04em'
+        }}>${elapsed}s elapsed</span>
+      </div>
     </div>`;
   }
 
