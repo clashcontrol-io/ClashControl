@@ -127,7 +127,8 @@
       if (!isFinite(Number(opts.height))) opts.height = 43;
     }
     var key = (opts.key || '').trim();
-    if (!key && !opts.url) return Promise.reject(new Error('Google Map Tiles API key required (or a custom tileset URL).'));
+    var ion = opts.ion && opts.ion.token ? opts.ion : null;
+    if (!key && !ion && !opts.url) return Promise.reject(new Error('A tile source is needed: PDOK (NL), a Cesium ion token, a Google Map Tiles API key, or a tileset URL.'));
     _teardown();
 
     return Promise.all([
@@ -139,6 +140,14 @@
       var tiles;
       if (opts.url) {
         tiles = new core.TilesRenderer(opts.url);
+      } else if (ion) {
+        // Cesium ion (free community tier). Default asset: Cesium OSM
+        // Buildings (96188) — worldwide building massing, no Google key.
+        tiles = new core.TilesRenderer();
+        tiles.registerPlugin(new plugins.CesiumIonAuthPlugin({
+          apiToken: ion.token, assetId: String(ion.assetId || '96188'), autoRefreshToken: true
+        }));
+        if (!opts.attribution) opts.attribution = '3D: Cesium ion / OSM Buildings (© OpenStreetMap contributors)';
       } else {
         tiles = new core.TilesRenderer();
         tiles.registerPlugin(new plugins.GoogleCloudAuthPlugin({ apiToken: key, autoRefreshToken: true }));
@@ -256,6 +265,14 @@
       return tiles;
     });
   };
+
+  // The world context belongs to the project that loaded it — drop it on
+  // project switch (quietly: no toast, and clear the restore flag).
+  window.addEventListener('cc-project-switch', function() {
+    if (!_tiles) return;
+    _teardown();
+    try { localStorage.removeItem('cc_tiles3d_on'); } catch (_) {}
+  });
 
   if (typeof window._ccRegisterAddon === 'function') {
     window._ccRegisterAddon({

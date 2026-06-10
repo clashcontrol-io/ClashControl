@@ -204,10 +204,12 @@
     if (geo.refLat == null || geo.refLon == null) {
       return Promise.reject(new Error('refLat / refLon required'));
     }
-    // North rotation from the loaded IFC when not given explicitly:
-    // IfcMapConversion grid rotation (deliberate IFC4 georef) wins over
-    // IfcGeometricRepresentationContext.TrueNorth (often left default).
-    if (geo.trueNorthDeg == null && typeof window._ccModelNorthDeg === 'function') {
+    // North rotation comes from the loaded IFC (IfcMapConversion grid
+    // rotation wins over TrueNorth, which is often left default). The
+    // fresh model value overrides any previously persisted trueNorthDeg —
+    // the model is the source of truth, and this self-heals projects that
+    // saved a value under an older sign convention.
+    if (typeof window._ccModelNorthDeg === 'function') {
       var _tn = window._ccModelNorthDeg(modelId);
       if (_tn != null) geo = Object.assign({}, geo, {trueNorthDeg: _tn});
     }
@@ -285,9 +287,26 @@
 
     init: function() {
       console.log('[Geoplace] Addon ready');
-      // Auto-restore a basemap if a previously-loaded model has a saved
-      // georef (persisted via modelMeta → IndexedDB). Poll briefly because
-      // model rehydration runs asynchronously after addon init.
+      _autoRestore();
+      // The basemap belongs to the project that placed it: detach on
+      // project switch (visuals + live state only — the persisted georef
+      // stays with the model, so switching back restores it).
+      window.addEventListener('cc-project-switch', function(){
+        clearBasemap();
+        if (window._ccDispatch) window._ccDispatch({t:'CLR_MODEL_GEO'});
+        _autoRestore();
+      });
+    },
+
+    destroy: function() {
+      clearBasemap();
+    }
+  });
+
+  // Auto-restore a basemap if a loaded model has a saved georef (persisted
+  // via modelMeta → IndexedDB). Polls briefly because model rehydration
+  // runs asynchronously after addon init / project switch.
+  function _autoRestore() {
       var attempts = 0;
       var iv = setInterval(function(){
         attempts++;
@@ -318,10 +337,5 @@
           console.warn('[Geoplace] auto-restore failed:', err);
         });
       }, 500);
-    },
-
-    destroy: function() {
-      clearBasemap();
-    }
-  });
+  }
 })();

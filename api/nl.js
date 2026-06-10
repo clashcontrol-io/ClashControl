@@ -266,6 +266,18 @@ const TOOLS = [
       },
     },
   },
+  {
+    name: 'count_elements',
+    description: 'Count loaded model elements by type, optionally filtered by storey/level and/or model. Use for "how many walls", "count doors on level 2", "number of columns in the MEP model", "hoeveel wanden op begane grond". The client computes the exact count from the loaded models.',
+    parameters: {
+      type: 'object',
+      properties: {
+        ifcType: { type: 'string', description: 'Element type, friendly or IFC name: "wall", "door", "IFCWALL". Omit to count all elements.' },
+        storey: { type: 'string', description: 'Storey/level name or part of it, e.g. "begane grond", "level 2"' },
+        model: { type: 'string', description: 'Model name substring' },
+      },
+    },
+  },
   // --- Live queries (answered by Gemma using current state in the prompt) ---
   {
     name: 'query',

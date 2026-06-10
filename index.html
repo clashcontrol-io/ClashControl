@@ -13793,12 +13793,6 @@ function startApp() {
             ${unread>0 && html`<span style=${{position:'absolute',top:-4,right:-4,background:'#ef4444',color:'#fff',fontSize:'0.6rem',fontWeight:700,padding:'1px 5px',borderRadius:99,lineHeight:1.3,minWidth:14,textAlign:'center',boxShadow:'0 1px 3px rgba(0,0,0,.4)'}}>${unread>9?'9+':unread}</span>`}
           </button>`;
         })()}
-        <button class="cc-btn-press" onClick=${function(){d({t:A.TAB,v:'addons'});}}
-          title="Integrations — Revit live link, local clash engine, AI bridge, shared folders and other modules"
-          style=${{...S_BTN,background:'var(--bg-secondary)',color:'var(--text-secondary)',border:'1px solid var(--border)',fontSize:'var(--text-xs)',display:'flex',alignItems:'center',gap:'.35rem'}}>
-          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 7V2m6 5V2M7 7h10v5a5 5 0 0 1-10 0z"/><path d="M12 17v5"/></svg>
-          <span>Integrations</span>
-        </button>
         <button class="cc-hide-mobile cc-btn-press" onClick=${function(){d({t:A.SMART_VIEWS,v:!s.showSmartViews});}}
           title="Smart Views — one-click presets, saved views, shareable link"
           style=${{...S_BTN,background:'var(--bg-secondary)',color:'var(--text-secondary)',border:'1px solid var(--border)',fontSize:'var(--text-xs)',display:'flex',alignItems:'center',gap:'.35rem'}}>
@@ -15181,6 +15175,21 @@ function startApp() {
                 title="Free Dutch national 3D buildings (Kadaster 3D Basisvoorziening via PDOK, LoD 2.2 from BAG + AHN) around your georeferenced model — no key needed"
                 style=${{flex:1,fontSize:'.66rem',padding:'.22rem .4rem',background:'var(--accent)',color:'#fff',border:'none',borderRadius:'var(--radius-xs)',cursor:'pointer'}}>
                 3D omgeving \u2014 NL (PDOK)</button>
+              <button onClick=${function(){
+                  var ll = _tilesLatLon(); if (!ll) return;
+                  var itok = '';
+                  try { itok = localStorage.getItem('cc_cesium_ion_token') || ''; } catch(_){}
+                  if (!itok) {
+                    itok = prompt('Cesium ion access token (stays in your browser).\nFree account: ion.cesium.com \u2192 Access Tokens');
+                    if (!itok) return;
+                    try { localStorage.setItem('cc_cesium_ion_token', itok.trim()); } catch(_){}
+                  }
+                  window._ccLoadTiles3D({ ion: {token: itok.trim()}, lat: ll.lat, lon: ll.lon, origin: ll.origin, north: ll.north })
+                    .catch(function(err){ alert('Cesium ion 3D tiles failed: ' + (err && err.message || err)); });
+                }}
+                title="Worldwide OSM Buildings via Cesium ion (free account token)"
+                style=${{fontSize:'.66rem',padding:'.22rem .4rem',background:'none',color:'var(--text-primary)',border:'1px solid var(--border)',borderRadius:'var(--radius-xs)',cursor:'pointer'}}>
+                ion\u2026</button>
               <button onClick=${function(){
                   var ll = _tilesLatLon(); if (!ll) return;
                   var tkey = '';
@@ -26026,6 +26035,39 @@ function startApp() {
       case 'reset_filters': d({t:A.RESET_FILTERS}); return 'Filters cleared — showing everything.';
       case 'group_by': var gv = {storey:'storey',floor:'storey',level:'storey',discipline:'discipline',status:'status',type:'type',none:'none'}[action.groupBy]||'none'; d({t:A.CLASH_GROUP_BY,v:gv==='none'?[]:[gv]}); d({t:A.TAB,v:'clashes'}); return 'Grouped by '+gv+'.';
       case 'export_bcf': if (!s.issues.length&&!s.clashes.length) return _offerExport(s); var items=s.issues.length?s.issues:s.clashes; exportBCF(items,'2.1',s.viewpoints,s); return 'Done — '+items.length+' items exported as BCF.';
+      case 'count_elements': {
+        if (!s.models.length) return _offerLoadIFC();
+        var ctRaw = String(action.ifcType||'').trim();
+        // 'walls' / 'IfcWallStandardCase' / 'IFCWALL' all reduce to 'wall'
+        var ctNorm = ctRaw.toLowerCase().replace(/^ifc/,'').replace(/[^a-z]/g,'').replace(/s$/,'');
+        var ctStorey = String(action.storey||'').trim().toLowerCase();
+        var ctModel = resolveModel(action.model);
+        var ctTotal = 0, ctPerModel = [], ctStoreysSeen = {};
+        s.models.forEach(function(m){
+          if (ctModel && m.id !== ctModel.id) return;
+          var n = 0;
+          (m.elements||[]).forEach(function(el){
+            var p = el.props||{};
+            if (p.storey) ctStoreysSeen[p.storey] = true;
+            if (ctNorm) {
+              var t = String(p.ifcType||'').toLowerCase().replace(/^ifc/,'');
+              if (t.indexOf(ctNorm) === -1) return;
+            }
+            if (ctStorey && String(p.storey||'').toLowerCase().indexOf(ctStorey) === -1) return;
+            n++;
+          });
+          if (n > 0) ctPerModel.push(m.name + ': ' + n);
+          ctTotal += n;
+        });
+        var ctWhat = ctRaw ? ctRaw.replace(/^ifc/i,'').toLowerCase() + (ctTotal === 1 ? '' : 's') : (ctTotal === 1 ? 'element' : 'elements');
+        var ctWhere = ctStorey ? ' on "' + action.storey + '"' : '';
+        if (ctTotal === 0 && ctStorey && !Object.keys(ctStoreysSeen).some(function(k){return k.toLowerCase().indexOf(ctStorey)!==-1;})) {
+          var ctNames = Object.keys(ctStoreysSeen).slice(0,8).join(', ');
+          return 'No storey matches "' + action.storey + '". Storeys here: ' + (ctNames||'(none)') + '.';
+        }
+        return ctTotal + ' ' + ctWhat + ctWhere +
+          (ctPerModel.length > 1 ? ' — ' + ctPerModel.join(', ') : (ctModel ? ' in ' + ctModel.name : '')) + '.';
+      }
       case 'query': return processNLCommand(action.metric||action.query||'', s, d);
       case 'help': return processNLCommand('help', s, d);
       case 'load_model': if (window._ccOpenIFC) { window._ccOpenIFC(); return 'Opening file picker — pick one or more .ifc files.'; } return 'File picker unavailable. Drag an .ifc file onto the window instead.';
@@ -26581,6 +26623,12 @@ function startApp() {
       var soft = s.clashes.filter(function(c){return c.type==='soft'||c.type==='clearance';}).length;
       var dup = s.clashes.filter(function(c){return c.type==='duplicate';}).length;
       return s.clashes.length + ' clashes: ' + hard + ' hard, ' + soft + ' soft' + (dup ? ', ' + dup + ' duplicates' : '') + '.';
+    }
+    // Element counting — works offline too. "how many walls", "count doors
+    // on level 2", "hoeveel wanden op begane grond".
+    var mCnt = text.match(/^(?:how\s+many|count(?:\s+the)?|number\s+of|hoeveel)\s+(.+?)(?:\s+(?:on|in|op|at)\s+(?:the\s+)?(?:level|storey|floor|verdieping|niveau|laag)?\s*(.+?))?\s*\??$/);
+    if (mCnt && !/clash|issue|conflict|^models?$/.test(mCnt[1].trim())) {
+      return dispatchServerAction({intent:'count_elements', ifcType:mCnt[1].trim(), storey:(mCnt[2]||'').trim()}, s, d);
     }
     if (/(?:which|what)\s+discipline|discipline\s+(?:has|with)\s+most|clashes?\s+by\s+discipline/.test(text)) {
       if (!s.clashes.length) return _offerRunDetection(s);
@@ -29282,6 +29330,12 @@ function startApp() {
     },[]);
     var addons = window._ccGetAddons ? window._ccGetAddons() : {};
     var ids = Object.keys(addons);
+    // Opened from the avatar menu (Revit Connector / Clash Engine /
+    // Smart Bridge): show just that integration. "Show all" reveals the
+    // full list; the focus resets when the panel closes.
+    var focusId = window._ccAddonsFocus;
+    if (focusId && addons[focusId]) ids = [focusId];
+    useEffect(function(){ return function(){ window._ccAddonsFocus = null; }; }, []);
 
     function addonBtn(label, onClick, variant) {
       var styles = {
@@ -29403,6 +29457,9 @@ function startApp() {
           </div>`}
         </div>`;
       })}
+      ${focusId && addons[focusId] && html`<div style=${{padding:'.6rem 1rem'}}>
+        ${addonBtn('Show all integrations', function(){ window._ccAddonsFocus = null; forceUpdate(function(n){return n+1;}); }, 'ghost')}
+      </div>`}
     </div>`;
   }
 
@@ -30803,7 +30860,8 @@ function startApp() {
     var activeProj = projects.find(function(p){return p.id===s.activeProject;}) || projects[0] || {id:'default',name:'Default'};
     var dc = useState(null), deleteConfirm=dc[0], setDeleteConfirm=dc[1];
     var rn = useState({id:null,val:''}), renaming=rn[0], setRenaming=rn[1];
-    function close(){ d({t:A.AVATAR_MENU,v:false}); setDeleteConfirm(null); setRenaming({id:null,val:''}); }
+    var co = useState(false), connOpen=co[0], setConnOpen=co[1];
+    function close(){ d({t:A.AVATAR_MENU,v:false}); setDeleteConfirm(null); setRenaming({id:null,val:''}); setConnOpen(false); }
     function commitRename(id){
       var name = (renaming.val||'').trim();
       setRenaming({id:null,val:''});
@@ -30876,6 +30934,31 @@ function startApp() {
             <div style=${{fontSize:'var(--text-xs)',color:'var(--ink-muted)',marginTop:1}}>${activeProj.name}</div>
           </div>
           ${row('Open model…', function(){ if(window._ccOpenIFC) window._ccOpenIFC(); }, 'O')}
+          <div style=${{height:1,background:'var(--hairline)',margin:'.3rem 0'}}></div>
+          <div style=${{position:'relative'}}
+            onMouseEnter=${function(){setConnOpen(true);}} onMouseLeave=${function(){setConnOpen(false);}}>
+            <button onClick=${function(){setConnOpen(!connOpen);}}
+              style=${{display:'flex',alignItems:'center',justifyContent:'space-between',gap:'.6rem',width:'100%',
+                padding:'.5rem .8rem',background:connOpen?'var(--surface-warm)':'none',border:'none',cursor:'pointer',textAlign:'left',
+                fontFamily:'var(--font-body)',fontSize:'var(--text-sm)',color:'var(--ink-primary)',
+                transition:'background var(--duration-fast) var(--ease-standard)'}}>
+              <span>Integrations</span>
+              <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style=${{color:'var(--ink-faint)'}}><polyline points="15 18 9 12 15 6"/></svg>
+            </button>
+            ${connOpen && html`<div style=${{
+              position:'absolute',right:'100%',top:-5,marginRight:2,zIndex:401,minWidth:180,
+              background:'var(--surface)',border:'1px solid var(--hairline-strong)',
+              borderRadius:'var(--radius-md)',boxShadow:'var(--shadow-lifted)',padding:'.3rem 0'}}>
+              ${[['revit-bridge','Revit Connector'],['local-engine','Clash Engine'],['smart-bridge','Smart Bridge']].map(function(it){
+                var _hint = '';
+                try {
+                  if (it[0]==='revit-bridge' && s.revitDirect && s.revitDirect.connected) _hint = 'connected';
+                  else if (window._ccIsAddonActive && window._ccIsAddonActive(it[0])) _hint = 'on';
+                } catch(_){}
+                return row(it[1], function(){ window._ccAddonsFocus = it[0]; d({t:A.TAB,v:'addons'}); }, _hint);
+              })}
+            </div>`}
+          </div>
           <div style=${{height:1,background:'var(--hairline)',margin:'.3rem 0'}}></div>
           <div style=${{padding:'.25rem .8rem',fontSize:'var(--text-2xs)',textTransform:'uppercase',letterSpacing:'.08em',color:'var(--ink-muted)',fontWeight:500}}>Project</div>
           ${projects.map(function(p){
@@ -30995,19 +31078,8 @@ function startApp() {
           whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis',maxWidth:480
         }} title=${modelName}>${modelName}</span>`}
       </div>
-      <!-- Right: Integrations + Share + avatar -->
+      <!-- Right: Share + avatar (integrations live in the avatar menu) -->
       <div style=${{display:'flex',alignItems:'center',gap:'var(--space-2)',flexShrink:0,height:'100%'}}>
-        <button class="cc-btn-press" onClick=${function(){d({t:A.TAB,v:'addons'});}}
-          title="Integrations — Revit live link, local clash engine, AI bridge, shared folders and other modules"
-          style=${{background:'none',color:'var(--ink-secondary)',fontWeight:500,
-            padding:'.28rem .65rem',fontSize:'var(--text-xs)',display:'flex',alignItems:'center',gap:'.35rem',
-            border:'1px solid var(--hairline-strong)',borderRadius:'var(--radius-sm)',cursor:'pointer',fontFamily:'var(--font-body)',
-            letterSpacing:0,lineHeight:1.2}}
-          onMouseEnter=${function(e){e.currentTarget.style.background='var(--surface-warm)';e.currentTarget.style.color='var(--ink-primary)';}}
-          onMouseLeave=${function(e){e.currentTarget.style.background='none';e.currentTarget.style.color='var(--ink-secondary)';}}>
-          <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M9 7V2m6 5V2M7 7h10v5a5 5 0 0 1-10 0z"/><path d="M12 17v5"/></svg>
-          <span>Integrations</span>
-        </button>
         <button class="cc-btn-press" onClick=${openShare}
           title=${connected?'Shared via '+(sp.folderName||'folder'):'Share this model'}
           style=${{position:'relative',background:'none',color:'var(--ink-secondary)',fontWeight:500,
@@ -32026,9 +32098,13 @@ function startApp() {
         if (modelId != null && m.id !== modelId) continue;
         var h = m.spatialHierarchy;
         if (!h) { if (modelId != null) return null; continue; }
+        // Sign calibrated against a live RD-georeferenced model (the
+        // theoretical reading of XAxisAbscissa/Ordinate and TrueNorth is
+        // ambiguous in the wild — Revit and archicad exports disagree):
+        // positive = map rotates counter-clockwise in plan.
         var mcr = h.mapConversion && h.mapConversion.rotationDeg;
-        if (mcr != null && isFinite(mcr) && Math.abs(mcr) > 0.01) return mcr;
-        if (h.trueNorthDeg != null && isFinite(h.trueNorthDeg)) return h.trueNorthDeg;
+        if (mcr != null && isFinite(mcr) && Math.abs(mcr) > 0.01) return -mcr;
+        if (h.trueNorthDeg != null && isFinite(h.trueNorthDeg)) return -h.trueNorthDeg;
         if (modelId != null) return null;
       }
       return null;
