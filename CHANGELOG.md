@@ -1,5 +1,8 @@
 # Changelog
 
+## v5.20.1 (2026-06-10)
+- fix(restore): spikey model after hard refresh — scale-invariant hash collisions (#598)
+
 ## v5.20.0 (2026-06-10)
 - Coordination features, plan-view fix, Integrations UX, loader perf, browser smoke CI (#597)
 
