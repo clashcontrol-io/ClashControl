@@ -96,6 +96,13 @@ self.addEventListener('fetch', function(e) {
   // Never cache API calls — these must always go to the server
   if (parsedUrl.pathname.indexOf('/api/') === 0) return;
 
+  // Never intercept localhost companion apps (local engine :19800/:19801,
+  // Revit Connector :19780, Smart Bridge :19802+, OpenAEC :49100+). Their
+  // probes are EXPECTED to fail when the app isn't running — routed through
+  // the SW they surface as unhandled-rejection console noise, and caching
+  // their responses would be wrong anyway.
+  if (host === 'localhost' || host === '127.0.0.1') return;
+
   // Never intercept web-ifc — the SW's cache-first fetch handler has repeatedly
   // pinned broken/short/opaque responses for web-ifc.wasm, causing WebAssembly
   // .instantiate() to hang forever in Init() and stalling every IFC load at 18%.
@@ -141,6 +148,10 @@ self.addEventListener('fetch', function(e) {
           }
         }
         return response;
+      }).catch(function() {
+        // Offline + not precached: answer with a clean 504 instead of an
+        // unhandled rejection in the FetchEvent.
+        return new Response('', { status: 504, statusText: 'Offline' });
       });
     })
   );

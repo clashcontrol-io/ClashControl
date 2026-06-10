@@ -137,6 +137,10 @@ api/_lib.js                 — Shared serverless helpers (CORS allow-list, rate
 
 ## Addons — how they plug in
 
+> **Vocabulary:** in user-facing UI these are always called **Integrations**
+> (tab title, header button, palette entry). "Addon" is the internal/code
+> term only (`addons/` dir, `_ccRegisterAddon`, docs). Don't mix them in UI copy.
+
 Each addon is a plain IIFE loaded at runtime by the core via `addons/<name>.js` (see the `_ccLoadAddon` helper near the top of `index.html`'s main script). They share state with the core by:
 
 - Reading globals the core exposes (e.g. `window._ccDispatch`, `window._ccBakeMesh`, `window._ccUid`)
