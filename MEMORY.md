@@ -112,6 +112,11 @@ Second batch same branch (2026-06-10) — product features + test infra ("do all
 - ~~Memory guardrail: toast+console warn at >75% of tab heap limit after IFC load batch.~~ (2026-06-10)
 - ~~TAURI.md: phased desktop plan (same index.html, capability-detected tauri-bridge addon, native engine/ reuse, streamed reads, disk geo-cache, built-in Smart Bridge). Phase 0 not started — awaiting go.~~ (2026-06-10)
 
+Seventh batch (2026-06-10) — 3D Tiles world context (the June-22 That-Open-launch flex):
+
+- **addons/tiles.js**: NASA-AMMOS 3DTilesRendererJS 0.4.28 ESM (bare `three` resolves via the page import map → shares core r180; splat precedent). Google Photorealistic 3D Tiles via GoogleCloudAuthPlugin (BYO Map Tiles API key, localStorage `cc_google_tiles_key`) or any tileset URL. Georef: anchor lat/lon → `WGS84_ELLIPSOID.getEastNorthUpFrame` → invert → rotX(-90°) so the anchor sits at scene origin Y-up; the IFC never moves. Per-frame `tiles.update()` on the core's `cc-render-frame`; streaming events call invalidate so render-on-demand keeps painting. UI: "🌍 3D world context…" in Geo Placement (prefills from IfcSite/manual georef). CSP connect-src += tile.googleapis.com. NOT browser-verified in-session — needs a real key on the preview; ENU→Y-up sign convention is the thing to eyeball first (if the city is mirrored/under the model, flip the rotX sign).
+- Same batch: batched-click selection fully fixed (#604 merged: per-instance tiebreak bounds + click outline/bbox from off-scene originals); local-engine boot probe gated on 'seen' flag.
+
 Sixth batch (2026-06-10) — perf plan after user's laggy 7-model federation (USER APPROVED — Phases 0+1+2 SHIPPED on the branch; verify _ccRenderReport() on the real federation before/after, then consider widening the trigger):
 
 - **Lag root cause (user log):** ZDS_BWK_PDR_gevelbekleding — 2,510 elements, 74,772 UNIQUE geometries, 0 reused → ~75k meshes/draw calls from one cladding model. Instancing can't help (nothing repeats).

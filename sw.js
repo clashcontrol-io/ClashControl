@@ -28,6 +28,7 @@ var PRECACHE = [
   'addons/openaec-bridge.js',
   'addons/visibility.js',
   'addons/wasm-engine.js',
+  'addons/tiles.js',
   'addons/wasm-engine-pkg/clashcontrol_engine.js',
   'addons/wasm-engine-pkg/clashcontrol_engine_bg.wasm',
   'https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js',
