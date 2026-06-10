@@ -1,5 +1,8 @@
 # Changelog
 
+## v5.20.7 (2026-06-10)
+- fix(pick): batched element selection — tiebreak bounds, click outline/bbox, idle probe (#604)
+
 ## v5.20.6 (2026-06-10)
 - fix(pick): rotated batched elements unselectable — front-face filter got local-space normals
 
