@@ -112,6 +112,55 @@ try {
   if (scoped.out < 2) fail('expected >=2 scoped-out elements, got ' + scoped.out);
   if (scoped.storeys < 1) fail('storey list must stay complete on scoped loads');
   console.log('SMOKE OK — scoped load: 0 elements materialised, ' + scoped.out + ' skipped, storey list intact');
+
+  // ── BatchedMesh identity features: every symptom that caused the old
+  // chunk-merge reverts (366c7cc) is asserted here ────────────────────────
+  await page.evaluate(async () => {
+    window._ccForceBatch = true;
+    const buf = await (await fetch('/tests/fixtures/smoke-clash.ifc')).arrayBuffer();
+    window.ClashControl.loadFiles([new File([buf], 'batched.ifc')]);
+  });
+  await page.waitForFunction(() => {
+    const s = window._ccLatestState;
+    const m = s && s.models.find((x) => x.name.indexOf('batched') === 0);
+    return m && (m.elements || []).length >= 2;
+  }, null, { timeout: 60_000 }).catch(() => fail('force-batched load did not finish'));
+
+  const batch = await page.evaluate(() => {
+    const s = window._ccLatestState;
+    const m = s.models.find((x) => x.name.indexOf('batched') === 0);
+    const grp = window._ccState3d.map[m.id];
+    let b = null;
+    grp.traverse((o) => { if (o.userData && o.userData._isCCBatch) b = o; });
+    if (!b) return { found: false };
+    const eids = b.userData.batchExprIds.filter((e) => e != null);
+    // symptom: hide — per-element visibility without index rebuilds
+    const target = eids[0];
+    const idx = b.userData.batchExprIds.indexOf(target);
+    window._ccTempHide([target]);
+    const hiddenAfterHide = b.getVisibleAt(idx) === false;
+    window._ccTempUnhide();
+    const shownAfterUnhide = b.getVisibleAt(idx) === true;
+    // symptom: style switch — material swap must reach the batch
+    const matBefore = b.material.uuid;
+    window._ccDispatch({ t: 'UPD_PREFS', u: { renderStyle: 'rendered' } });
+    return new Promise((resolve) => setTimeout(() => {
+      const matAfterStyle = b.material.uuid;
+      window._ccDispatch({ t: 'UPD_PREFS', u: { renderStyle: 'shaded' } });
+      resolve({
+        found: true, items: eids.length, hiddenAfterHide, shownAfterUnhide,
+        styleSwapsMaterial: matAfterStyle !== matBefore,
+        // symptom: blending — per-instance colors recorded for distinction/restore
+        origColors: (b.userData._origColors || []).filter((c) => c != null).length,
+      });
+    }, 400));
+  });
+  if (!batch.found) fail('forced batching produced no BatchedMesh');
+  if (batch.items < 2) fail('batch lost elements: ' + batch.items);
+  if (!batch.hiddenAfterHide || !batch.shownAfterUnhide) fail('per-element hide on batch broken (revert symptom)');
+  if (!batch.styleSwapsMaterial) fail('render-style switch did not reach the batch material (revert symptom)');
+  if (batch.origColors < 2) fail('per-instance colors missing — elements would blend (revert symptom)');
+  console.log('SMOKE OK — BatchedMesh: ' + batch.items + ' items, hide/style/colors all behave per-element');
 } finally {
   await browser.close();
   server.close();
