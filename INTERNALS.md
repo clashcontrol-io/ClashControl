@@ -543,3 +543,22 @@ Walks every mesh on every loaded element and reports whether `_instKey` is set, 
 **Code reference:** `MemoryWarningModal`.
 
 Model names are NEVER included in diagnostic reports — privacy by design. Model names often expose client/project identifiers ("669001A_..._BWK_..."). The opt-in checkbox has been removed; the `includeNames = false` constant survives so the report-generator branch remains unchanged.
+
+## 22. Companion-app port & protocol registry
+
+One place for every localhost contract. The service worker deliberately
+never intercepts localhost/127.0.0.1 (sw.js) — probes to absent apps must
+fail silently.
+
+| Port | App | Protocol | Client (this repo) | Server repo | Version contract |
+|---|---|---|---|---|---|
+| 19780 | Revit Connector | WebSocket + HTTP health GET / | `addons/revit-bridge.js` | ClashControlConnector | `EXPECTED_PROTOCOL_VERSION '1.0'`; semver handshake in status/pong, major mismatch hard-fails |
+| 19800 | Local clash engine | HTTP: GET /status, GET+POST /update, POST /detect | `addons/local-engine.js` | ClashControlEngine | version-agnostic; /status polled, version change forces reconnect |
+| 19801 | Local engine progress | WebSocket: progress/phase/complete | `addons/local-engine.js` | ClashControlEngine | optional — engine falls back to HTTP-only without websockets pkg |
+| 19802 | Smart Bridge ↔ browser | WebSocket (tool relay) | `addons/smart-bridge.js` | this repo: `smart-bridge-server.js` (released as `bridge-v*`) | `bridge-version.json`; addon checks GitHub releases for updates |
+| 19803 | Smart Bridge chat/REST | HTTP: /chat, /llm/autodetect, /llm/config | `addons/smart-bridge.js`, Ask AI nudge | this repo: `smart-bridge-server.js` | /llm/autodetect 404 ⇒ pre-0.3.0 Connector, addon falls back to manual presets |
+| 49100–49115 | OpenAEC siblings (open-pointcloud-studio) | HTTP: /health probe, parallel port scan | `addons/openaec-bridge.js` | open-pointcloud-studio | `s.openaecBridge` state only; no UI consumer yet |
+| 11434 / 1234 / 8080 / 1337 | User's local LLMs (Ollama / LM Studio / llama.cpp / Jan) | OpenAI-compatible /v1/* | via Smart Bridge `/llm/autodetect` (browser can't reach them: mixed content) | third-party | `llmEndpointUrl()` appends paths, never replaces base path prefixes |
+
+Rule: a new companion app claims the next free 198xx port, gets a row here,
+and its probe failures must be silent (guard + catch, no unhandled rejections).
