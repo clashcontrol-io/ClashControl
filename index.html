@@ -1721,6 +1721,9 @@ function startApp() {
       // back to a position+index byte-hash fingerprint with size guards.
       if (md.gid != null) {
         mesh.userData._instKey = 'gid:' + md.gid + ':' + (mat.uuid || 'na');
+        // Keep the canonical key on the mesh so any later re-serialize of a
+        // restored result preserves gid instead of degrading to the hash path.
+        mesh.userData._geoExpId = md.gid;
       } else {
         var _qbytes = md.qpos ? new Uint8Array(md.qpos) : (md.pos ? new Uint8Array(new Float32Array(md.pos).buffer) : null);
         var _ibytes = md.idx ? new Uint8Array(md.idx) : null;
@@ -1739,8 +1742,15 @@ function startApp() {
         var _iLen = _ibytes ? _ibytes.byteLength : 0;
         var _qHash = _fnv1a(_qbytes);
         var _iHash = _fnv1a(_ibytes);
+        // CRITICAL: qpos is quantized against the mesh's OWN bbox, so the
+        // bytes are scale-invariant — a 12 m pile and an 18 m pile with the
+        // same cross-section produce IDENTICAL quantized buffers and hashes.
+        // Grouping them renders every member with the first member's
+        // geometry → the "spikey model after hard refresh" bug. The
+        // absolute bbox (mm-rounded) restores the lost scale/offset.
+        var _bb = (md.bbox || []).map(function(x){ return Math.round(x * 1000); }).join(',');
         mesh.userData._instKey = 'h:' + _vc + ':' + _qLen + ':' + _iLen + ':' +
-          _qHash.toString(36) + ':' + _iHash.toString(36) + ':' + (mat.uuid || 'na');
+          _qHash.toString(36) + ':' + _iHash.toString(36) + ':' + _bb + ':' + (mat.uuid || 'na');
       }
       if(!meshByEid[md.eid]) meshByEid[md.eid] = [];
       meshByEid[md.eid].push(mesh);
