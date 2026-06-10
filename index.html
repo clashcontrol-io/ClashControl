@@ -1422,6 +1422,16 @@ function startApp() {
   }
 
   function idbSaveFile(id, name, buffer, projectId, sidecarData, meta) {
+    // Models on disk are the offline story — ask the browser to protect
+    // them from storage-pressure eviction (one-time, silent if denied).
+    try {
+      if (navigator.storage && navigator.storage.persist && !window._ccPersistAsked) {
+        window._ccPersistAsked = true;
+        navigator.storage.persist().then(function(granted) {
+          if (granted) console.log('[storage] persistent storage granted — models survive eviction');
+        }).catch(function(){});
+      }
+    } catch (_) {}
     return _openIDB().then(function(db) {
       return new Promise(function(resolve, reject) {
         var tx = db.transaction(IDB_STORE, 'readwrite');
@@ -1941,10 +1951,35 @@ function startApp() {
     // HTTP-cache first (the SW never touches web-ifc and the magic-byte check
     // above catches corruption); only a corrupt/failed cached copy forces the
     // multi-MB cache-bypassing re-download that used to happen on EVERY load.
+    // Final fallback for the offline-at-the-client scenario: a validated copy
+    // kept in a page-managed Cache bucket the SW never wipes — re-parsing a
+    // model with no internet keeps working even if the HTTP cache evicted.
+    var KEEP_CACHE = 'cc-keep-webifc';
+    function _fromKeepCache() {
+      if (!('caches' in window)) return Promise.reject(new Error('no Cache API'));
+      return caches.open(KEEP_CACHE)
+        .then(function(c) { return c.match(wasmUrl); })
+        .then(function(resp) {
+          if (!resp) throw new Error('not in keep-cache');
+          console.log('[IFC] web-ifc.wasm served from offline keep-cache');
+          return resp.arrayBuffer();
+        });
+    }
+    function _toKeepCache(buf) {
+      try {
+        if (!('caches' in window)) return;
+        caches.open(KEEP_CACHE).then(function(c) {
+          c.put(wasmUrl, new Response(buf.slice(0), { headers: { 'Content-Type': 'application/wasm' } }));
+        }).catch(function(){});
+      } catch (_) {}
+    }
     var fetchP = _fetchOnce('default')
+      .then(function(buf) { _toKeepCache(buf); return buf; })
       .catch(function(e) {
         console.warn('[IFC] cached web-ifc.wasm rejected (' + (e && e.message) + ') — refetching from network');
-        return _fetchOnce('reload');
+        return _fetchOnce('reload')
+          .then(function(buf) { _toKeepCache(buf); return buf; })
+          .catch(function(e2) { return _fromKeepCache(); });
       })
       .then(function(buf) { _webIfcWasmBuf = buf; return buf; });
     var timeoutP = new Promise(function(_, rej) {
