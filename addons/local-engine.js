@@ -3,7 +3,8 @@
 // intersection. Falls back to the built-in browser OBB engine when
 // the server isn't running.
 //
-// Targets clashcontrol-engine v0.2.3 (see _engineReleaseTag below).
+// Works with clashcontrol-engine ≥0.2.x (version-agnostic — the engine
+// reports its version at /status; latest release tag fetched from GitHub).
 //
 // Install (recommended):
 //   pip install clashcontrol-engine
@@ -97,8 +98,11 @@
     _lastKnownVersion = version;
     if (versionChanged) { _updateChecked = false; }
     var updateAvailable = !!(j && j.update_available);
-    var updateVersion = (j && j.update_version) || null;
-    var updateUrl = (j && j.update_url) || null;
+    // Engine ≤0.2.5 sends {latest, release_url}; the planned shape is
+    // {update_version, update_url}. Accept both so the update banner
+    // shows a version + link against every released engine.
+    var updateVersion = (j && (j.update_version || j.latest)) || null;
+    var updateUrl = (j && (j.update_url || j.release_url)) || null;
     if (d) d({t:'UPD_LOCAL_ENGINE', u:{
       available:true, checking:false, connecting:false, installing:false, failed:false,
       active:true, wasInstalled:true,
@@ -147,7 +151,13 @@
       .then(function(r){ if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
       .then(function(j) {
         if (j && j.update_available) {
-          console.log('%c[LocalEngine] Update available — auto-updating to', 'color:#fbbf24;font-weight:bold', j.version || 'latest');
+          // Engine ≤0.2.5 sends {latest, release_url}; accept the planned
+          // {update_version, update_url} shape too. This is the only place
+          // the update info reaches state — /status never carries it.
+          var _uv = j.update_version || j.latest || null;
+          var _uu = j.update_url || j.release_url || null;
+          if (d) d({t:'UPD_LOCAL_ENGINE', u:{updateAvailable:true, updateVersion:_uv, updateUrl:_uu}});
+          console.log('%c[LocalEngine] Update available — auto-updating to', 'color:#fbbf24;font-weight:bold', _uv || 'latest');
           // Auto-trigger the self-update: POST /update, then poll /status
           // until the engine restarts. No user interaction required.
           _applyEngineUpdate(d);
