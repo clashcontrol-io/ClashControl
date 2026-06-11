@@ -1,5 +1,8 @@
 # Changelog
 
+## v5.20.15 (2026-06-11)
+- Geo align nudge + site clearing for the 3D world context (#620)
+
 ## v5.20.14 (2026-06-10)
 - feat(geo): manual north dial, PDOK visibility fixes; What's new from CHANGELOG (#616)
 
