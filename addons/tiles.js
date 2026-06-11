@@ -121,7 +121,11 @@
   function _teardown() {
     _hideAttribution();
     if (_pump) { clearInterval(_pump); _pump = null; }
-    if (_frameHandler) { window.removeEventListener('cc-render-frame', _frameHandler); _frameHandler = null; }
+    if (_frameHandler) {
+      window.removeEventListener('cc-render-frame', _frameHandler);
+      _frameHandler = null;
+      window._ccHasFrameListener = Math.max(0, (window._ccHasFrameListener || 1) - 1);
+    }
     if (_tiles) {
       try { if (_tiles.group && _tiles.group.parent) _tiles.group.parent.remove(_tiles.group); } catch (_) {}
       try { _tiles.dispose(); } catch (_) {}
@@ -328,6 +332,12 @@
       };
       var _frameErrLogged = false;
       window.addEventListener('cc-render-frame', _frameHandler);
+      // CRITICAL: the core only dispatches cc-render-frame when
+      // _ccHasSplats or _ccHasFrameListener is truthy — without this flag
+      // the handler above never runs, tiles.update() is never called and
+      // the root tileset never even starts loading (the exact silent
+      // nothing-streams failure seen in live testing).
+      window._ccHasFrameListener = (window._ccHasFrameListener || 0) + 1;
       // Render-on-demand pump: tiles.update() only runs on rendered frames,
       // so once the camera stops moving the streaming pipeline would stall
       // mid-download. Tick frames while work is pending (plus a grace
