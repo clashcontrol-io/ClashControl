@@ -103,6 +103,7 @@ version.json                — Current version numbers
 CHANGELOG.md                — Version history (auto-updated on commit)
 README.md                   — Project readme with version badge
 DESIGN.md                   — UI/UX design principles
+AS_BUILT_DEVIATION.md       — Scope/roadmap: point-cloud-vs-BIM surface deviation (status, build plan, Wkb/Bbl Borger framing)
 LICENSE                     — License file
 OPEN_SOURCE_COMPONENTS.md   — Third-party library credits
 manifest.json               — PWA manifest for installable app
