@@ -89,6 +89,12 @@ Things to be careful about. Do not remove without a good reason — add a note i
 Update this section at the start and end of each session.
 Mark completed items with ~~strikethrough~~ and date, then let the daily sync archive them.
 
+Ninth batch (2026-06-11) — 3D world context live-test round 3:
+
+- ~~**PDOK tiles all failed to parse** ("setMeshoptDecoder must be called before loading compressed files", 21/21 failed): PDOK 3d-basisvoorziening glbs use EXT_meshopt_compression and the renderer's GLTFLoader had no decoders. tiles.js now registers GLTFExtensionsPlugin with MeshoptDecoder + DRACOLoader + KTX2Loader (latter two for Google photorealistic tiles, same wall). Merged as #619 → main `2bc3b62`. User confirmed PDOK buildings render.~~ (2026-06-11)
+- **Geo align nudge** (PR #620): panel `align` row (camera-relative arrows + step select) slides basemap + tiles together in world XZ metres; offset persisted on model georef (offsetX/offsetZ), reapplied on rebuild/auto-restore/context reload. APIs: `_ccGeoplaceSetOffset`, `_ccSetTiles3DOffset`/`_ccTiles3DOffset`, `opts.offset` on `_ccLoadTiles3D`. Applied AFTER north rotation (world space) in both layers.
+- **Site clearing** (PR #620): `Site: keep / Clear +N m` select carves context inside the models' union footprint + margin using 4 vertical clip planes with clipIntersection (PDOK/Google merge many buildings per mesh → per-building hiding impossible). Gotcha: core flips `renderer.localClippingEnabled` off when no section is active — tiles frame handler re-asserts it while clearing is on. Persisted in localStorage `cc_tiles3d_clear` (-1 = off).
+
 Eighth batch (2026-06-10 evening, merged as #614 → main `92a4bbc`) — live-test loop round 2:
 
 - ~~**Sections cut nothing on batched models**: all four per-material clipping sweeps (section plane apply, section box apply, box clear, floor-plan cut) gated on `expressId==null && !isInstancedMesh` which excludes every BatchedMesh — sweeps now include `userData._isCCBatch`. Pattern to remember: ANY scene material sweep written pre-batching probably has this filter; render-style swap on batches still unaudited (cosmetic).~~ (2026-06-10)

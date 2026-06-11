@@ -15106,6 +15106,55 @@ function startApp() {
                     style=${{width:48,padding:'.06rem .2rem',fontSize:'.64rem',fontFamily:'var(--font-mono)',background:'var(--bg-primary)',color:'var(--text-primary)',border:'1px solid var(--border)',borderRadius:'var(--radius-xs)'}} />
                   <span style=${{color:'var(--text-faint)'}}>°${s.modelGeo.northManual ? ' manual' : (s.modelGeo.trueNorthDeg ? ' from IFC' : '')}</span>
                 </span>
+                <span style=${{display:'flex',alignItems:'center',gap:'.2rem',marginTop:'.2rem'}}>
+                  <span title="Slide the basemap + 3D context under the model to fine-align it — arrows follow the camera, the model never moves" style=${{color:'var(--text-faint)'}}>align</span>
+                  ${(function(){
+                    var offX = (+s.modelGeo.offsetX)||0, offZ = (+s.modelGeo.offsetZ)||0;
+                    function _step(){ var v = 1; try { v = parseFloat(localStorage.getItem('cc_geo_nudge_step')) || 1; } catch(_){} return v; }
+                    function _camDirs(){
+                      // Camera-relative ground vectors so "left" is left on
+                      // screen at any orbit angle (fallback: world axes).
+                      try {
+                        var cam = window._ccState3d && window._ccState3d.camera;
+                        var f = new THREE.Vector3(); cam.getWorldDirection(f); f.y = 0;
+                        if (f.lengthSq() < 1e-6) f.set(0,0,-1);
+                        f.normalize();
+                        var r = new THREE.Vector3().crossVectors(f, new THREE.Vector3(0,1,0)).normalize();
+                        return {f:f, r:r};
+                      } catch(_) { return {f:{x:0,z:-1}, r:{x:1,z:0}}; }
+                    }
+                    function _apply(nx, nz){
+                      nx = Math.round(nx*100)/100; nz = Math.round(nz*100)/100;
+                      if (window._ccGeoplaceSetOffset) window._ccGeoplaceSetOffset(nx, nz);
+                      if (window._ccTiles3DActive && window._ccTiles3DActive() && window._ccSetTiles3DOffset) window._ccSetTiles3DOffset(nx, nz);
+                      var ger = Object.assign({}, s.modelGeo, {offsetX:nx, offsetZ:nz});
+                      delete ger.modelId;
+                      d({t:'SET_MODEL_GEO', id:s.modelGeo.modelId, u:ger});
+                      d({t:'UPD_MODEL', id:s.modelGeo.modelId, u:{georef:ger}});
+                    }
+                    function _nudge(dr, df){
+                      var v = _camDirs(), st = _step();
+                      _apply(offX + (v.r.x*dr + v.f.x*df)*st, offZ + (v.r.z*dr + v.f.z*df)*st);
+                    }
+                    function nbtn(label, dr, df, tip){
+                      return html`<button onClick=${function(){_nudge(dr, df);}} title=${tip}
+                        style=${{width:20,height:18,padding:0,fontSize:'.6rem',lineHeight:1,background:'var(--bg-secondary)',color:'var(--text-secondary)',border:'1px solid var(--border)',borderRadius:'var(--radius-xs)',cursor:'pointer'}}>${label}</button>`;
+                    }
+                    return html`${nbtn('◀',-1,0,'Move map left')}${nbtn('▲',0,1,'Move map away')}${nbtn('▼',0,-1,'Move map toward you')}${nbtn('▶',1,0,'Move map right')}
+                      <select value=${String(_step())} onChange=${function(e){ try { localStorage.setItem('cc_geo_nudge_step', e.target.value); } catch(_){} }}
+                        title="Nudge step (metres)"
+                        style=${{fontSize:'.6rem',padding:'.05rem .1rem',background:'var(--bg-secondary)',color:'var(--text-secondary)',border:'1px solid var(--border)',borderRadius:'var(--radius-xs)',fontFamily:'var(--font-body)'}}>
+                        <option value="0.25">0.25 m</option>
+                        <option value="0.5">0.5 m</option>
+                        <option value="1">1 m</option>
+                        <option value="2">2 m</option>
+                        <option value="5">5 m</option>
+                        <option value="10">10 m</option>
+                      </select>
+                      ${(offX || offZ) ? html`<button onClick=${function(){_apply(0,0);}} title=${'Reset alignment offset (now '+offX.toFixed(1)+' / '+offZ.toFixed(1)+' m)'}
+                        style=${{fontSize:'.6rem',padding:'.05rem .25rem',background:'none',color:'var(--text-muted)',border:'1px solid var(--border)',borderRadius:'var(--radius-xs)',cursor:'pointer'}}>⟲</button>` : null}`;
+                  })()}
+                </span>
               </div>`
             : html`<div style=${{display:'flex',gap:'.2rem',padding:'0 .2rem'}}>
                 ${(function(){
@@ -15182,6 +15231,13 @@ function startApp() {
                   if (_nd == null && s.modelGeo && s.modelGeo.trueNorthDeg) _nd = +s.modelGeo.trueNorthDeg;
                   if (_nd != null && isFinite(_nd)) latLon.north = _nd;
                 } catch(_){}
+                // Carry the saved alignment nudge so a (re)loaded context
+                // lands exactly where the user dialled it in.
+                try {
+                  if (s.modelGeo && (s.modelGeo.offsetX || s.modelGeo.offsetZ)) {
+                    latLon.offset = {x:(+s.modelGeo.offsetX)||0, z:(+s.modelGeo.offsetZ)||0};
+                  }
+                } catch(_){}
                 return latLon;
               }
               if (tilesOn) return html`<button onClick=${function(){ window._ccUnloadTiles3D(); }}
@@ -15189,7 +15245,7 @@ function startApp() {
                 Remove 3D world context</button>`;
               return html`<button onClick=${function(){
                   var ll = _tilesLatLon(); if (!ll) return;
-                  window._ccLoadTiles3D({ preset:'nl', lat: ll.lat, lon: ll.lon, origin: ll.origin, north: ll.north })
+                  window._ccLoadTiles3D({ preset:'nl', lat: ll.lat, lon: ll.lon, origin: ll.origin, north: ll.north, offset: ll.offset })
                     .catch(function(err){ alert('PDOK 3D tiles failed: ' + (err && err.message || err)); });
                 }}
                 title="Free Dutch national 3D buildings (Kadaster 3D Basisvoorziening via PDOK, LoD 2.2 from BAG + AHN) around your georeferenced model — no key needed"
@@ -15204,7 +15260,7 @@ function startApp() {
                     if (!itok) return;
                     try { localStorage.setItem('cc_cesium_ion_token', itok.trim()); } catch(_){}
                   }
-                  window._ccLoadTiles3D({ ion: {token: itok.trim()}, lat: ll.lat, lon: ll.lon, origin: ll.origin, north: ll.north })
+                  window._ccLoadTiles3D({ ion: {token: itok.trim()}, lat: ll.lat, lon: ll.lon, origin: ll.origin, north: ll.north, offset: ll.offset })
                     .catch(function(err){ alert('Cesium ion 3D tiles failed: ' + (err && err.message || err)); });
                 }}
                 title="Worldwide OSM Buildings via Cesium ion (free account token)"
@@ -15219,7 +15275,7 @@ function startApp() {
                     if (!tkey) return;
                     try { localStorage.setItem('cc_google_tiles_key', tkey.trim()); } catch(_){}
                   }
-                  window._ccLoadTiles3D({ key: tkey, lat: ll.lat, lon: ll.lon, origin: ll.origin, north: ll.north })
+                  window._ccLoadTiles3D({ key: tkey, lat: ll.lat, lon: ll.lon, origin: ll.origin, north: ll.north, offset: ll.offset })
                     .catch(function(err){ alert('3D tiles failed: ' + (err && err.message || err)); });
                 }}
                 title="Photorealistic Google 3D Tiles (worldwide; bring your own Map Tiles API key)"
@@ -15244,6 +15300,17 @@ function startApp() {
               <option value="low">Low</option>
               <option value="standard">Std</option>
               <option value="high">High</option>
+            </select>`}
+            ${(window._ccTiles3DActive && window._ccTiles3DActive() && window._ccSetTiles3DClearing) && html`<select
+              value=${String(window._ccTiles3DClearing ? window._ccTiles3DClearing() : -1)}
+              onChange=${function(e){ window._ccSetTiles3DClearing(Number(e.target.value)); }}
+              title="Clear site — hides context buildings inside the model footprint (+ margin), e.g. the old existing building your new design replaces"
+              style=${{fontSize:'.62rem',padding:'.18rem .2rem',background:'var(--bg-secondary)',color:'var(--text-secondary)',border:'1px solid var(--border)',borderRadius:'var(--radius-xs)',fontFamily:'var(--font-body)'}}>
+              <option value="-1">Site: keep</option>
+              <option value="0">Clear 0 m</option>
+              <option value="5">Clear +5 m</option>
+              <option value="10">Clear +10 m</option>
+              <option value="25">Clear +25 m</option>
             </select>`}
           </div>`}
         </div>`}

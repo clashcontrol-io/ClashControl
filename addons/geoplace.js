@@ -179,6 +179,14 @@
         var az = -anchorOffE * Math.sin(th) - anchorOffN * Math.cos(th);
         mesh.position.set(c.x - ax, bbox.min.y - 0.05, c.z - az);
       }
+      // Alignment nudge: world-space XZ offset on top of the georef
+      // position — slides the map under the model (the model never
+      // moves). Base position kept so the offset can be changed live.
+      mesh.userData._ccBasePos = mesh.position.clone();
+      if (opts.offset) {
+        mesh.position.x += Number(opts.offset.x) || 0;
+        mesh.position.z += Number(opts.offset.z) || 0;
+      }
       mesh.updateMatrix();
       clearBasemap();
       scene.add(mesh);
@@ -227,6 +235,7 @@
     var georef = {
       refLat:geo.refLat, refLon:geo.refLon, refElev:geo.refElev||0,
       trueNorthDeg:geo.trueNorthDeg||0, northManual:!!geo.northManual,
+      offsetX:Number(geo.offsetX)||0, offsetZ:Number(geo.offsetZ)||0,
       radiusM:radiusM, source:geo.source||'manual'
     };
     if (window._ccDispatch) {
@@ -236,8 +245,21 @@
       window._ccDispatch({t:'UPD_MODEL', id:modelId, u:{georef:georef}});
     }
     return buildBasemap(modelId, geo.refLat, geo.refLon, radiusM, {
-      trueNorthDeg: geo.trueNorthDeg||0
+      trueNorthDeg: geo.trueNorthDeg||0,
+      offset: {x:georef.offsetX, z:georef.offsetZ}
     });
+  };
+
+  // Live alignment nudge — slides the existing basemap plane in world XZ
+  // without re-fetching tiles. Absolute metres from the georef position;
+  // persisting the offset is the caller's job (the panel stores it on the
+  // model georef so rebuilds and reloads land in the same place).
+  window._ccGeoplaceSetOffset = function(x, z) {
+    if (!_basemap || !_basemap.userData._ccBasePos) return;
+    var bp = _basemap.userData._ccBasePos;
+    _basemap.position.set(bp.x + (Number(x) || 0), bp.y, bp.z + (Number(z) || 0));
+    _basemap.updateMatrix();
+    invalidate(2);
   };
 
   window._ccGeoplaceClear = function() {
