@@ -20,6 +20,7 @@
   var _pump = null;       // keeps frames ticking while tiles are streaming
   var _tilesCam = null;   // proxy camera with clamped far plane = context range
   var _anchorFrame = null, _anchorOrigin = null, _north = 0;
+  var _offset = { x: 0, z: 0 }; // world XZ alignment nudge (metres)
 
   // Anchor ENU frame inverted (planet → local), Z-up → Y-up, optional
   // north rotation about the anchor (which maps to local 0,0,0 at that
@@ -36,6 +37,11 @@
       group.matrix.premultiply(new THREE3.Matrix4().makeTranslation(
         Number(_anchorOrigin.x), Number(_anchorOrigin.y) || 0, Number(_anchorOrigin.z) || 0));
     }
+    // Alignment nudge: world-space, applied after the north rotation so it
+    // matches the geoplace basemap offset 1:1.
+    if (_offset.x || _offset.z) {
+      group.matrix.premultiply(new THREE3.Matrix4().makeTranslation(_offset.x, 0, _offset.z));
+    }
     group.matrix.decompose(group.position, group.quaternion, group.scale);
     group.matrixAutoUpdate = false;
     group.updateMatrix();
@@ -48,6 +54,62 @@
     _inv(3);
   };
   window._ccTiles3DNorth = function() { return _north; };
+  // Live alignment nudge — slides the streamed world in world XZ (metres),
+  // mirroring the geoplace basemap offset so the two layers stay glued.
+  window._ccSetTiles3DOffset = function(x, z) {
+    _offset = { x: Number(x) || 0, z: Number(z) || 0 };
+    if (_tiles && _anchorFrame) { _applyGroupMatrix(_tiles.group); _inv(3); }
+  };
+  window._ccTiles3DOffset = function() { return { x: _offset.x, z: _offset.z }; };
+
+  // ── Site clearing ────────────────────────────────────────────────
+  // Carves the context geometry away inside the loaded models' footprint
+  // (+ margin) with 4 vertical clip planes (clipIntersection — a fragment
+  // is discarded only when it's inside ALL planes, i.e. inside the prism).
+  // PDOK/Google tiles merge many buildings into one mesh, so hiding whole
+  // meshes can't isolate "the old existing building" — clipping can. The
+  // prism is infinite vertically so towers disappear fully; the basemap
+  // plane is untouched (it's the map, not a building).
+  var _clearM = (function(){ try { var v = localStorage.getItem('cc_tiles3d_clear'); return v == null ? -1 : Number(v); } catch(_) { return -1; } })(); // <0 = off
+  var _clipPlanes = null;
+  function _buildClipPlanes() {
+    var THREE3 = window.THREE, S = _S3();
+    if (!S || !S.map) return null;
+    var box = new THREE3.Box3();
+    Object.keys(S.map).forEach(function(id) {
+      try { box.expandByObject(S.map[id]); } catch (_) {}
+    });
+    if (box.isEmpty()) return null;
+    var m = Math.max(0, _clearM);
+    // Outward normals; constant = signed distance such that "inside the
+    // prism" is the negative side of every plane.
+    return [
+      new THREE3.Plane(new THREE3.Vector3( 1, 0, 0), -(box.max.x + m)),
+      new THREE3.Plane(new THREE3.Vector3(-1, 0, 0),  (box.min.x - m)),
+      new THREE3.Plane(new THREE3.Vector3(0, 0,  1), -(box.max.z + m)),
+      new THREE3.Plane(new THREE3.Vector3(0, 0, -1),  (box.min.z - m))
+    ];
+  }
+  function _applyClipping(root) {
+    if (!root) return;
+    root.traverse(function(o) {
+      if (!o.isMesh || !o.material) return;
+      var mats = Array.isArray(o.material) ? o.material : [o.material];
+      mats.forEach(function(mat) {
+        mat.clippingPlanes = _clipPlanes;
+        mat.clipIntersection = !!_clipPlanes;
+        mat.needsUpdate = true;
+      });
+    });
+  }
+  // marginM < 0 (or null/undefined) = off; >= 0 = clear footprint + margin.
+  window._ccSetTiles3DClearing = function(marginM) {
+    _clearM = (marginM == null || Number(marginM) < 0) ? -1 : Number(marginM);
+    try { localStorage.setItem('cc_tiles3d_clear', String(_clearM)); } catch (_) {}
+    _clipPlanes = _clearM >= 0 ? _buildClipPlanes() : null;
+    if (_tiles) { _applyClipping(_tiles.group); _inv(3); }
+  };
+  window._ccTiles3DClearing = function() { return _clearM; };
   var _rangeM = (function(){ try { return Number(localStorage.getItem('cc_tiles3d_range')) || 3000; } catch(_) { return 3000; } })();
 
   // Context range: tiles are culled/LOD'd against a CLONE of the viewer
@@ -262,6 +324,7 @@
       _anchorFrame = frame.clone();
       _anchorOrigin = (opts.origin && isFinite(Number(opts.origin.x))) ? opts.origin : null;
       _north = isFinite(Number(opts.north)) ? Number(opts.north) : 0;
+      if (opts.offset) _offset = { x: Number(opts.offset.x) || 0, z: Number(opts.offset.z) || 0 };
       _applyGroupMatrix(tiles.group);
       tiles.group.userData._ccTiles3D = true;
 
@@ -283,8 +346,10 @@
 
       // Streaming progress must keep the render-on-demand loop alive.
       var _firstContent = false;
-      tiles.addEventListener('load-model', function() {
+      tiles.addEventListener('load-model', function(ev) {
         if (!_firstContent) { _firstContent = true; console.log('[Tiles3D] first tile content in the scene'); }
+        // Site clearing applies per tile as it streams in.
+        if (_clipPlanes && ev && ev.scene) _applyClipping(ev.scene);
         _inv(10);
       });
       tiles.addEventListener('load-tileset', function() {
@@ -322,11 +387,19 @@
 
       S.scene.add(tiles.group);
       _tiles = tiles;
+      // Restore a persisted site clearing — planes are rebuilt from the
+      // currently loaded models, applied per tile as content streams in.
+      _clipPlanes = _clearM >= 0 ? _buildClipPlanes() : null;
 
       // Core fires cc-render-frame before every rendered frame.
       _frameHandler = function() {
         if (!_tiles) return;
         try {
+          // The core flips localClippingEnabled off when no section is
+          // active — re-assert it while site clearing is on (model
+          // materials carry no clip planes then, so this is a no-op for
+          // the IFC itself).
+          if (_clipPlanes) S.renderer.localClippingEnabled = true;
           S.camera.updateMatrixWorld();
           // Mirror the live camera into the tiles proxy, clamping the far
           // plane to the context range (drives both culling and LOD).
