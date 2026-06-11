@@ -192,12 +192,20 @@
     var _urlReady = opts.url ? _resolveTilesetUrl(opts.url).then(function(u) { opts.url = u; })
       : Promise.resolve();
 
+    // Decoder modules resolve through the page's import map (same pinned
+    // three version as the core); THREE_JSM must match the import map in
+    // index.html when bumping three.
+    var THREE_JSM = 'https://cdn.jsdelivr.net/npm/three@0.180.0/examples/jsm/';
     return Promise.all([
       import(TILES_CDN + '/build/index.js'),
       import(TILES_CDN + '/build/index.plugins.js'),
+      import('three/addons/libs/meshopt_decoder.module.js'),
+      import('three/addons/loaders/DRACOLoader.js'),
+      import('three/addons/loaders/KTX2Loader.js'),
       _urlReady
     ]).then(function(mods) {
       var core = mods[0], plugins = mods[1];
+      var MeshoptDecoder = mods[2].MeshoptDecoder, DRACOLoader = mods[3].DRACOLoader, KTX2Loader = mods[4].KTX2Loader;
       var THREE3 = window.THREE;
       var tiles;
       if (opts.url) {
@@ -231,6 +239,18 @@
       var anchorECEF = new THREE3.Vector3().setFromMatrixPosition(frame);
       try { tiles.registerPlugin(new _SiteRadiusPlugin(function(){ return _rangeM; }, anchorECEF)); } catch (_) {}
       if (plugins.TileCompressionPlugin) { try { tiles.registerPlugin(new plugins.TileCompressionPlugin()); } catch (_) {} }
+      // Compressed glTF payloads: PDOK serves EXT_meshopt_compression glbs,
+      // Google serves Draco + KTX2 textures. Without these decoders every
+      // tile fails to parse ("setMeshoptDecoder must be called before
+      // loading compressed files") and nothing ever appears. autoDispose
+      // (plugin default) releases the Draco/KTX workers on teardown.
+      try {
+        tiles.registerPlugin(new plugins.GLTFExtensionsPlugin({
+          meshoptDecoder: MeshoptDecoder,
+          dracoLoader: new DRACOLoader().setDecoderPath(THREE_JSM + 'libs/draco/gltf/'),
+          ktxLoader: new KTX2Loader().setTranscoderPath(THREE_JSM + 'libs/basis/').detectSupport(S.renderer)
+        }));
+      } catch (e) { console.warn('[Tiles3D] glTF decoder setup failed:', e && (e.message || e)); }
       // NO TilesFadePlugin: it animates tile opacity over continuous
       // frames, but this viewer renders on demand — when the pump stops,
       // fading tiles freeze near-invisible ("everything loaded, nothing
