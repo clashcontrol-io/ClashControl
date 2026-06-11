@@ -20,7 +20,13 @@
   var _pump = null;       // keeps frames ticking while tiles are streaming
   var _tilesCam = null;   // proxy camera with clamped far plane = context range
   var _anchorFrame = null, _anchorOrigin = null, _north = 0;
-  var _offset = { x: 0, z: 0 }; // world XZ alignment nudge (metres)
+  var _offset = { x: 0, z: 0 }; // world XZ alignment nudge (metres) — shared with the geoplace basemap
+  // Vertical nudge (metres), tiles-ONLY. The basemap is a flat plane pinned
+  // to the model floor, so it never needs height correction; the 3D context
+  // does — PDOK heights are ellipsoidal (NAP ≈ ellipsoid − ~43 m) and the
+  // geoid offset varies enough by location that the fixed default leaves the
+  // world hovering. This lets the user drop it onto the ground live.
+  var _heightOffset = (function(){ try { return Number(localStorage.getItem('cc_tiles3d_height')) || 0; } catch(_) { return 0; } })();
 
   // Anchor ENU frame inverted (planet → local), Z-up → Y-up, optional
   // north rotation about the anchor (which maps to local 0,0,0 at that
@@ -37,10 +43,10 @@
       group.matrix.premultiply(new THREE3.Matrix4().makeTranslation(
         Number(_anchorOrigin.x), Number(_anchorOrigin.y) || 0, Number(_anchorOrigin.z) || 0));
     }
-    // Alignment nudge: world-space, applied after the north rotation so it
-    // matches the geoplace basemap offset 1:1.
-    if (_offset.x || _offset.z) {
-      group.matrix.premultiply(new THREE3.Matrix4().makeTranslation(_offset.x, 0, _offset.z));
+    // Alignment nudge: world-space. XZ matches the geoplace basemap offset
+    // 1:1; Y is tiles-only (the basemap needs no height correction).
+    if (_offset.x || _offset.z || _heightOffset) {
+      group.matrix.premultiply(new THREE3.Matrix4().makeTranslation(_offset.x, _heightOffset, _offset.z));
     }
     group.matrix.decompose(group.position, group.quaternion, group.scale);
     group.matrixAutoUpdate = false;
@@ -61,6 +67,16 @@
     if (_tiles && _anchorFrame) { _applyGroupMatrix(_tiles.group); _inv(3); }
   };
   window._ccTiles3DOffset = function() { return { x: _offset.x, z: _offset.z }; };
+  // Live vertical nudge — raises/lowers the streamed world in world Y
+  // (metres). Tiles-only: drops the 3D context onto the model floor when
+  // the ellipsoidal/geoid height leaves it hovering. Persisted so a reload
+  // lands at the same height.
+  window._ccSetTiles3DHeight = function(m) {
+    _heightOffset = Number(m) || 0;
+    try { localStorage.setItem('cc_tiles3d_height', String(_heightOffset)); } catch(_) {}
+    if (_tiles && _anchorFrame) { _applyGroupMatrix(_tiles.group); _inv(3); }
+  };
+  window._ccTiles3DHeight = function() { return _heightOffset; };
 
   // ── Site clearing ────────────────────────────────────────────────
   // Carves the context geometry away inside the loaded models' footprint

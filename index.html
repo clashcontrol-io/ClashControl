@@ -15312,6 +15312,31 @@ function startApp() {
               <option value="10">Clear +10 m</option>
               <option value="25">Clear +25 m</option>
             </select>`}
+            ${(window._ccTiles3DActive && window._ccTiles3DActive() && window._ccSetTiles3DHeight) && (function(){
+              // Vertical nudge — drops the 3D context onto the model floor
+              // when ellipsoidal/geoid height leaves it hovering. Tiles-only.
+              var h = window._ccTiles3DHeight ? window._ccTiles3DHeight() : 0;
+              function step(){ var v = 0.5; try { v = parseFloat(localStorage.getItem('cc_tiles3d_hstep')) || 0.5; } catch(_){} return v; }
+              function set(v){ window._ccSetTiles3DHeight(Math.round(v*100)/100); }
+              function hbtn(label, dh, tip){
+                return html`<button onClick=${function(){ set(h + dh*step()); }} title=${tip}
+                  style=${{width:18,height:18,padding:0,fontSize:'.62rem',lineHeight:1,background:'var(--bg-secondary)',color:'var(--text-secondary)',border:'1px solid var(--border)',borderRadius:'var(--radius-xs)',cursor:'pointer'}}>${label}</button>`;
+              }
+              return html`<span title="Raise / lower the 3D world context — use it to drop PDOK onto the model floor when it hovers (ellipsoidal vs NAP height)" style=${{display:'flex',alignItems:'center',gap:'.15rem'}}>
+                <span style=${{fontSize:'.6rem',color:'var(--text-faint)'}}>height</span>
+                ${hbtn('▼',-1,'Lower context')}${hbtn('▲',1,'Raise context')}
+                <span style=${{fontSize:'.6rem',color:'var(--text-muted)',fontFamily:'var(--font-mono)',minWidth:'2.4rem',textAlign:'right'}}>${(h>0?'+':'')+h.toFixed(1)}m</span>
+                <select value=${String(step())} onChange=${function(e){ try { localStorage.setItem('cc_tiles3d_hstep', e.target.value); } catch(_){} }}
+                  title="Height step (metres)"
+                  style=${{fontSize:'.58rem',padding:'.05rem .1rem',background:'var(--bg-secondary)',color:'var(--text-secondary)',border:'1px solid var(--border)',borderRadius:'var(--radius-xs)',fontFamily:'var(--font-body)'}}>
+                  <option value="0.1">0.1</option>
+                  <option value="0.5">0.5</option>
+                  <option value="1">1</option>
+                  <option value="5">5</option>
+                </select>
+                ${h ? html`<button onClick=${function(){ set(0); }} title="Reset height" style=${{fontSize:'.58rem',padding:'.05rem .2rem',background:'none',color:'var(--text-muted)',border:'1px solid var(--border)',borderRadius:'var(--radius-xs)',cursor:'pointer'}}>⟲</button>` : null}
+              </span>`;
+            })()}
           </div>`}
         </div>`}
         ${(s.referenceLayers && s.referenceLayers.length > 0) && html`<div style=${{marginTop:'.3rem',borderTop:'1px solid var(--hairline)',paddingTop:'.3rem'}}>
