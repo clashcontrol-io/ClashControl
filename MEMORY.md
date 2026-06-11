@@ -10,7 +10,7 @@
 <!-- BEGIN:project-state -->
 ## Project State
 
-**Version:** 5.20.2 (2026-06-10)
+**Version:** 5.20.15 (2026-06-11)
 
 **Live features (all working):**
 - Mesh-based clash detection engine: AABB broad-phase + BVH tri-tri narrow-phase (Möller–Trumbore), optional `_ccWasmIntersect`/`_ccWasmMinDist` WASM accelerators; rules (discipline filters, clearance, group-by); soft/clearance via spatial-hash vertex distance; optional escalation to `local-engine.js` for true solid boolean ops
@@ -295,6 +295,73 @@ On branch `claude/code-review-quality-IjbhT` (2026-05-28) — code-review qualit
 <!-- END:active-work -->
 
 <!-- BEGIN:session-log -->
+### 2026-06-11
+**Summary:** 57 commit(s) landed (no AI summary — set ANTHROPIC_API_KEY secret for richer entries).
+**Changed:** see commits
+**Notable:** —
+
+<details><summary>Commits</summary>
+
+- d8797ba chore: bump version to 5.20.15
+- 16bffc1 Geo align nudge + site clearing for the 3D world context (#620)
+- 2bc3b62 Fix 3D Tiles: register glTF decoders (meshopt/Draco/KTX2) — PDOK tiles failed to parse (#619)
+- 4a30a52 fix(tiles): cc-render-frame gate — tiles.update() never ran, root tileset never loaded (#617)
+- 3ee4a9d fix(tiles): set _ccHasFrameListener — cc-render-frame is gated and never fired, so tiles.update() never ran
+- 27148b9 chore: bump version to 5.20.14
+- 1dcd75c feat(geo): manual north dial, PDOK visibility fixes; What's new from CHANGELOG (#616)
+- a2bd954 feat(geo): manual north dial + tiles fade removal + streaming status; What's new reads CHANGELOG
+- fff85ec chore: bump version to 5.20.13
+- a0a89d6 fix(tiles): tileset URL validation + surfaced errors; Integrations below + New project (#615)
+- 4b650cd ui: Integrations row moved below + New project in the avatar menu
+- 9323745 fix(tiles): validate tileset URL up front (PDOK OGC may need /tileset.json) + surface swallowed update() errors
+- d097ff8 docs: MEMORY.md — desktop complete (all platforms), #612 post-mortem correction
+- c63311e docs: MEMORY.md — eighth batch session log (live-test loop round 2)
+- 2ee5caf chore: bump version to 5.20.12
+- 92a4bbc fix: sections on batched models + drag direction, geo north/per-project, Y-menu integrations, AI counting, Cesium ion, Windows MSI icon (#614)
+- b8e3c7e chore: bump version to 5.20.11
+- 167161e fix(geo): one anchor, two layers — basemap half-tile drift + 3D tiles anchored to model
+- 573df1a fix: pass explicit Request to Cache.match — clears CodeQL incomplete-hostname-regexp alert
+- a5f2d4a fix(desktop): list generated .ico/.icns in bundle.icon — Windows MSI bundler requires a .ico
+- 9191d80 chore: bump version to 5.20.10
+- 294aebf fix: PDOK first-click crash + batched-element selection outline (#610)
+- fef2eec fix(select): batched-element click outline — refresh stale matrixWorld on off-scene originals
+- cb9cf61 fix(tiles): getEastNorthUpFrame takes (lat, lon, height, target) — first PDOK click crashed
+- 926812f fix(desktop): cross-platform Node dist-assembler (#609)
+- 32b0d13 fix(desktop): resolve build script via git toplevel (#608)
+- f18acb7 fix(desktop): beforeBuildCommand path — tauri-action builds from repo root (#607)
+- aa8b664 chore: bump version to 5.20.9
+- 1e44c95 feat(tiles): PDOK NL 3D layer, range+detail controls, site-radius masking, offline hardening (#606)
+- 839f4ae chore: bump version to 5.20.8
+- 42f56ec feat(tiles): 3D world context — Google Photorealistic 3D Tiles under the IFC (#605)
+- df045cf chore: bump version to 5.20.7
+- 0fb81e2 fix(pick): batched element selection — tiebreak bounds, click outline/bbox, idle probe (#604)
+- b67006a chore: bump version to 5.20.6
+- e58837b fix(pick): rotated batched elements unselectable — front-face filter got local-space normals
+- dd4bc1e chore: bump version to 5.20.5
+- cd86fa9 perf(batch)+fix(hover): fold small instanced groups + per-instance hover on batches
+- caa876e fix(ux): Integrations button was added to the wrong header — invisible everywhere
+- b385103 chore: bump version to 5.20.4
+- eaa53b0 fix(loader): Cancel left the UI in loading state — skeleton rows stuck
+- 103b191 perf(batch): retune triggers against the real federation — 0 batches fired
+- 6897a1a chore: bump version to 5.20.3
+- 1b07b9b test(browser): BatchedMesh identity assertions — the chunk-merge revert symptoms as CI gates (Phase 2)
+- 40008d8 perf(viewer): BatchedMesh for pathological models + _ccRenderReport (Phases 0+1)
+- c4f9702 docs(memory): BatchedMesh perf plan + history of failed merge attempts
+- df996c9 chore: daily memory sync 2026-06-10
+- 59e3adf ux(loader): progress labels in plain language, not parser jargon
+- 9a2a76e fix(section): plane orientation wrong on instanced surfaces — instance matrix skipped
+- fb9e010 feat(loader): Cancel button on the loading strip
+- d0e523b chore: bump version to 5.20.2
+- 3b8c242 Loader worker fix, plan-cut units, scoped loading, Tauri Phase 0, section gizmo r180 (#599)
+- 675f317 chore: bump version to 5.20.1
+- 2c69478 fix(restore): spikey model after hard refresh — scale-invariant hash collisions (#598)
+- 9dee1d2 chore: bump version to 5.20.0
+- c4e1bdf Coordination features, plan-view fix, Integrations UX, loader perf, browser smoke CI (#597)
+- ae5cb70 chore: bump version to 5.19.68
+- bb77893 Codebase review: connect the WASM engine + fix verified open ends (#596)
+
+</details>
+
 ### 2026-06-10
 **Summary:** 47 commit(s) landed (no AI summary — set ANTHROPIC_API_KEY secret for richer entries).
 **Changed:** see commits
