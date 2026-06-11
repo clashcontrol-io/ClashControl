@@ -399,7 +399,7 @@
       var tgt = _findTarget(targetId);
       if (!tgt || !tgt.geometry) return Promise.reject(new Error('Scan target not found'));
       var ifc = _collectIfcBoxes();
-      if (!ifc) return Promise.reject(new Error('No IFC elements loaded — cannot compute deviation'));
+      if (!ifc) return Promise.reject(new Error('No IFC elements loaded — cannot compute proximity'));
 
       var geom = tgt.geometry;
       var pos = geom.getAttribute('position');
@@ -487,7 +487,7 @@
             total: N, greenAt: greenAt, redAt: redAt
           };
           if (tgt.userData) tgt.userData.deviation = stats;
-          _toast('Deviation: min ' + minD.toFixed(3) + ' m · mean ' + (sumD/N).toFixed(3) + ' m · max ' + maxD.toFixed(3) + ' m');
+          _toast('Proximity (1st-pass, to element bbox): nearest ' + minD.toFixed(3) + ' m · mean ' + (sumD/N).toFixed(3) + ' m · farthest ' + maxD.toFixed(3) + ' m — not measured surface deviation');
           resolve(stats);
         }
         _step();
@@ -829,11 +829,11 @@
               var issueId = (typeof uid === 'function') ? uid() : 'dev_' + Date.now() + '_' + i;
               var vp = null;
               if (typeof window._ccCaptureViewpoint === 'function') {
-                try { vp = window._ccCaptureViewpoint('Deviation hotspot #' + (i+1), issueId); } catch(_) {}
+                try { vp = window._ccCaptureViewpoint('Proximity hotspot #' + (i+1), issueId); } catch(_) {}
               }
               if (vp) dispatch({ t: A_VP, v: vp });
-              var title = 'Deviation hotspot #' + (i+1) + ' · '
-                + (c.maxDistance*1000).toFixed(0) + ' mm max · '
+              var title = 'Proximity hotspot #' + (i+1) + ' · ~'
+                + (c.maxDistance*1000).toFixed(0) + ' mm to nearest element (bbox) · '
                 + c.pointCount + ' pts';
               dispatch({ t: A_ENUM, v: {
                 id: issueId,
@@ -841,9 +841,11 @@
                 type: c.maxDistance > 0.2 ? 'hard' : 'soft',
                 status: 'open',
                 title: title,
-                description: 'Auto-generated from point-cloud deviation analysis. ' +
+                description: 'Auto-generated from first-pass point-cloud proximity analysis ' +
+                  '(distance to nearest IFC element BOUNDING BOX, not measured surface deviation). ' +
                   'Cluster centroid at [' + c.centroid.map(function(x){return x.toFixed(2);}).join(', ') + '], ' +
-                  'point count ' + c.pointCount + ', worst distance ' + (c.maxDistance*1000).toFixed(0) + ' mm.',
+                  'point count ' + c.pointCount + ', farthest bbox distance ~' + (c.maxDistance*1000).toFixed(0) + ' mm. ' +
+                  'Verify on site / with surface-accurate measurement before acting.',
                 priority: c.maxDistance > 0.2 ? 'critical' : c.maxDistance > 0.1 ? 'high' : 'normal',
                 category: 'as-built',
                 point: c.centroid,
@@ -859,7 +861,7 @@
               S3.renderer.render(S3.scene, S3.camera);
             }
           }
-          _toast('Created ' + made + ' deviation issue' + (made === 1 ? '' : 's'));
+          _toast('Created ' + made + ' proximity issue' + (made === 1 ? '' : 's'));
           resolve({ count: made, clusters: clusters });
         }
         _scan();
@@ -1069,7 +1071,7 @@
         + '</dl></div>'
       ) : '';
 
-      var devHtml = '<div class="card"><h3>Deviation</h3>'
+      var devHtml = '<div class="card"><h3>Proximity (to element bbox)</h3>'
         + '<dl>'
         +   '<dt>Min</dt><dd>' + _formatDistance(dev.min) + '</dd>'
         +   '<dt>Mean</dt><dd>' + _formatDistance(dev.mean) + '</dd>'
@@ -1080,7 +1082,7 @@
         + '</dl></div>';
 
       var docHtml = '<!DOCTYPE html><html><head><meta charset="utf-8" />'
-        + '<title>Deviation report — ' + _escapeHtml(scanName) + '</title>'
+        + '<title>As-built proximity report (first-pass) — ' + _escapeHtml(scanName) + '</title>'
         + '<style>'
         + '  body { font-family: -apple-system, "Segoe UI", Roboto, sans-serif; color:#1f2937; margin:0; padding:0 32px 32px; background:#fff; }'
         + '  h1 { font-size:28px; margin:32px 0 4px; }'
@@ -1105,14 +1107,21 @@
         + '  .toolbar { position:sticky; top:0; background:#fff; padding:12px 0; border-bottom:1px solid #e5e7eb; margin-bottom:16px; z-index:10; }'
         + '  .toolbar button { padding:6px 14px; margin-right:8px; border:1px solid #d1d5db; background:#fff; border-radius:6px; cursor:pointer; font-size:13px; }'
         + '  .toolbar button.primary { background:#1f2937; color:#fff; border-color:#1f2937; }'
+        + '  .method-note { border:1px solid #f59e0b; background:#fffbeb; color:#92400e; border-radius:8px; padding:10px 14px; margin:16px 0; font-size:12px; line-height:1.5; }'
+        + '  .method-note strong { color:#78350f; }'
         + '</style></head><body>'
         + '<div class="toolbar noprint">'
         +   '<button class="primary" onclick="window.print()">Print / Save as PDF</button>'
         +   '<button onclick="window.close()">Close</button>'
         +   '<span style="color:#6b7280;font-size:12px;margin-left:8px">Generated by ClashControl ' + _escapeHtml(ccVer) + '</span>'
         + '</div>'
-        + '<h1>Deviation report</h1>'
+        + '<h1>As-built proximity report <span class="sub">(first-pass)</span></h1>'
         + '<div class="sub">Scan: <strong>' + _escapeHtml(scanName) + '</strong> · Model(s): ' + _escapeHtml(modelNames) + ' · Generated: ' + _escapeHtml(generatedAt) + '</div>'
+        + '<div class="method-note"><strong>Method — first-pass proximity, not measured deviation.</strong> '
+        +   'Distances are from each scan point to the nearest IFC element’s axis-aligned <strong>bounding box</strong>, '
+        +   'not to the element surface. A point inside an element’s bounding box but far from any face reads as close; '
+        +   'thin or angled elements read loose. Use this report to locate where the as-built scan is or isn’t near design '
+        +   'geometry — not to certify millimetre conformance. Surface-accurate deviation is a separate measurement.</div>'
         + '<div class="cards">'
         +   '<div class="card"><h3>Summary</h3>'
         +   '<dl>'
@@ -1128,7 +1137,7 @@
         + '<table><thead><tr><th>#</th><th>Title</th><th>Priority</th><th>Status</th><th>Location (x, y, z)</th></tr></thead>'
         + '<tbody>' + rowsHtml + '</tbody></table>'
         + pagesHtml
-        + '<div class="footer">ClashControl ' + _escapeHtml(ccVer) + ' · deviation-report v1 · ' + _escapeHtml(generatedAt) + '</div>'
+        + '<div class="footer">ClashControl ' + _escapeHtml(ccVer) + ' · proximity-report v1 (first-pass, bbox-distance) · ' + _escapeHtml(generatedAt) + '</div>'
         + '</body></html>';
 
       var pw = window.open('', '_blank', 'width=1024,height=720');
