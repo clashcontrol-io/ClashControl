@@ -15082,12 +15082,32 @@ function startApp() {
               style=${{fontSize:'.6rem',padding:'.08rem .28rem',background:'none',border:'1px solid var(--border)',borderRadius:'var(--radius-xs)',cursor:'pointer',color:'var(--text-muted)'}}>Clear</button>`}
           </div>
           ${(function(){
-            var mcModel = null;
-            for (var i=0;i<s.models.length;i++){ var h=s.models[i].spatialHierarchy; if (h && h.mapConversion){ mcModel=h.mapConversion; break; } }
+            var mcModel = null, mcModelId = null;
+            for (var i=0;i<s.models.length;i++){ var h=s.models[i].spatialHierarchy; if (h && h.mapConversion){ mcModel=h.mapConversion; mcModelId=s.models[i].id; break; } }
             if (!mcModel) return null;
-            return html`<div title="IFC4 IfcMapConversion / IfcProjectedCRS — read for context, not used by the clash engine" style=${{padding:'.2rem .35rem',marginBottom:'.25rem',borderRadius:'var(--radius-xs)',background:'rgba(91,141,239,0.06)',fontSize:'.62rem',color:'var(--text-muted)',fontFamily:'var(--font-mono)',lineHeight:1.5}}>
-              <span style=${{color:'var(--text-secondary)',fontWeight:600}}>${mcModel.epsg||'Projected CRS'}</span>${mcModel.rotationDeg!=null?' · rot '+mcModel.rotationDeg.toFixed(2)+'°':''}<br/>
-              <span style=${{color:'var(--text-faint)'}}>E ${mcModel.eastings!=null?mcModel.eastings.toFixed(1):'—'}, N ${mcModel.northings!=null?mcModel.northings.toFixed(1):'—'}</span>
+            var hasEN = mcModel.eastings!=null && mcModel.northings!=null;
+            var detectedKey = (window._ccCRSResolve && window._ccCRSResolve(mcModel.epsg)) || null;
+            var crsList = (window._ccCRSList && window._ccCRSList()) || [];
+            var crsRef = {current:null};
+            return html`<div style=${{marginBottom:'.25rem'}}>
+              <div title="IFC4 IfcMapConversion / IfcProjectedCRS read from the model" style=${{padding:'.2rem .35rem',borderRadius:'var(--radius-xs)',background:'rgba(91,141,239,0.06)',fontSize:'.62rem',color:'var(--text-muted)',fontFamily:'var(--font-mono)',lineHeight:1.5}}>
+                <span style=${{color:'var(--text-secondary)',fontWeight:600}}>${mcModel.epsg||'Projected CRS'}</span>${(mcModel.epsg&&!detectedKey)?' · unrecognised':''}${mcModel.rotationDeg!=null?' · rot '+mcModel.rotationDeg.toFixed(2)+'°':''}<br/>
+                <span style=${{color:'var(--text-faint)'}}>E ${mcModel.eastings!=null?mcModel.eastings.toFixed(1):'—'}, N ${mcModel.northings!=null?mcModel.northings.toFixed(1):'—'}</span>
+              </div>
+              ${hasEN && !s.modelGeo && window._ccGeoplaceFromCRS && html`<div style=${{display:'flex',gap:'.2rem',marginTop:'.2rem',alignItems:'stretch'}}>
+                <select ref=${function(el){ crsRef.current=el; }} defaultValue=${detectedKey||'28992'}
+                  title="Coordinate reference system of the projected Eastings/Northings. Auto-detected from the IFC when recognised; pick it here otherwise."
+                  style=${{flex:1,minWidth:0,fontSize:'.6rem',padding:'.1rem .15rem',background:'var(--bg-secondary)',color:'var(--text-secondary)',border:'1px solid var(--border)',borderRadius:'var(--radius-xs)',fontFamily:'var(--font-body)'}}>
+                  ${crsList.map(function(c){ return html`<option key=${c.epsg} value=${c.epsg}>EPSG:${c.epsg} · ${c.label}</option>`; })}
+                </select>
+                <button onClick=${function(){
+                    var key = (crsRef.current && crsRef.current.value) || detectedKey || '28992';
+                    window._ccGeoplaceFromCRS(mcModelId, mcModel, key)
+                      .catch(function(err){ alert('CRS placement failed: ' + (err && err.message || err)); });
+                  }}
+                  title="Reproject the projected E/N to lat/lon (placement-grade, ~1 m — not RDNAPTRANS survey-grade) and drop the basemap there. The model never moves."
+                  style=${{fontSize:'.62rem',padding:'.1rem .4rem',background:'var(--accent)',color:'#fff',border:'none',borderRadius:'var(--radius-xs)',cursor:'pointer',whiteSpace:'nowrap'}}>Place from CRS</button>
+              </div>`}
             </div>`;
           })()}
           ${s.modelGeo
