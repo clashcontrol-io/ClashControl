@@ -1,5 +1,8 @@
 # Changelog
 
+## v5.20.18 (2026-06-12)
+- CRS-aware geo-placement — reproject IFC4 projected coordinates to lat/lon (#623)
+
 ## v5.20.17 (2026-06-12)
 - IDS 1.0 execution engine — run imported .ids files against loaded models (#622)
 
