@@ -20,7 +20,16 @@
   var _pump = null;       // keeps frames ticking while tiles are streaming
   var _tilesCam = null;   // proxy camera with clamped far plane = context range
   var _anchorFrame = null, _anchorOrigin = null, _north = 0;
-  var _offset = { x: 0, z: 0 }; // world XZ alignment nudge (metres)
+  var _offset = { x: 0, z: 0 }; // world XZ alignment nudge (metres) — shared with the geoplace basemap
+  // Vertical placement (metres), tiles-ONLY. The basemap is a flat plane
+  // pinned to the model floor, so it never needs height correction; the 3D
+  // context does — PDOK heights are ellipsoidal (NAP ≈ ellipsoid − ~43 m)
+  // and the geoid offset varies by location, so no constant lands it right.
+  // Default is AUTO: once tiles stream in, the ground near the anchor is
+  // measured from the actual geometry and aligned to the model floor (see
+  // _autoSnapHeight). The manual nudge is an override that turns auto off.
+  var _heightOffset = (function(){ try { return Number(localStorage.getItem('cc_tiles3d_height')) || 0; } catch(_) { return 0; } })();
+  var _autoHeight = (function(){ try { var v = localStorage.getItem('cc_tiles3d_height_auto'); return v == null ? true : v === '1'; } catch(_) { return true; } })();
 
   // Anchor ENU frame inverted (planet → local), Z-up → Y-up, optional
   // north rotation about the anchor (which maps to local 0,0,0 at that
@@ -37,10 +46,10 @@
       group.matrix.premultiply(new THREE3.Matrix4().makeTranslation(
         Number(_anchorOrigin.x), Number(_anchorOrigin.y) || 0, Number(_anchorOrigin.z) || 0));
     }
-    // Alignment nudge: world-space, applied after the north rotation so it
-    // matches the geoplace basemap offset 1:1.
-    if (_offset.x || _offset.z) {
-      group.matrix.premultiply(new THREE3.Matrix4().makeTranslation(_offset.x, 0, _offset.z));
+    // Alignment nudge: world-space. XZ matches the geoplace basemap offset
+    // 1:1; Y is tiles-only (the basemap needs no height correction).
+    if (_offset.x || _offset.z || _heightOffset) {
+      group.matrix.premultiply(new THREE3.Matrix4().makeTranslation(_offset.x, _heightOffset, _offset.z));
     }
     group.matrix.decompose(group.position, group.quaternion, group.scale);
     group.matrixAutoUpdate = false;
@@ -61,6 +70,73 @@
     if (_tiles && _anchorFrame) { _applyGroupMatrix(_tiles.group); _inv(3); }
   };
   window._ccTiles3DOffset = function() { return { x: _offset.x, z: _offset.z }; };
+  // Manual vertical override — raises/lowers the streamed world in world Y
+  // (metres) and turns auto-snap OFF (the user has taken the wheel).
+  // Persisted so a reload lands at the same height.
+  window._ccSetTiles3DHeight = function(m) {
+    _heightOffset = Number(m) || 0;
+    _autoHeight = false;
+    try {
+      localStorage.setItem('cc_tiles3d_height', String(_heightOffset));
+      localStorage.setItem('cc_tiles3d_height_auto', '0');
+    } catch(_) {}
+    if (_tiles && _anchorFrame) { _applyGroupMatrix(_tiles.group); _inv(3); }
+  };
+  window._ccTiles3DHeight = function() { return _heightOffset; };
+  window._ccTiles3DHeightAuto = function() { return _autoHeight; };
+  // Re-enable auto-snap (the reset button) — re-measures and re-lands the
+  // context on the model floor.
+  window._ccResetTiles3DHeightAuto = function() {
+    _autoHeight = true;
+    try { localStorage.setItem('cc_tiles3d_height_auto', '1'); } catch(_) {}
+    _autoSnapHeight(true);
+  };
+
+  // Measure the local PDOK ground near the anchor: the lowest point of any
+  // tile mesh whose centre is within R metres of the anchor (in XZ). PDOK
+  // "gebouwen" is buildings only, so a building's base ≈ ground (AHN) — good
+  // enough to seat the context. Returns null when no geometry is near yet.
+  var _wbox = null, _wctr = null;
+  function _measurePdokGround() {
+    var THREE3 = window.THREE;
+    if (!_tiles || !_anchorOrigin || !THREE3) return null;
+    if (!_wbox) { _wbox = new THREE3.Box3(); _wctr = new THREE3.Vector3(); }
+    try { _tiles.group.updateMatrixWorld(true); } catch (_) {}
+    var ax = Number(_anchorOrigin.x) + _offset.x;
+    var az = Number(_anchorOrigin.z) + _offset.z;
+    var R2 = 150 * 150, minY = Infinity, n = 0;
+    _tiles.group.traverse(function(o) {
+      if (!o.isMesh || !o.geometry) return;
+      _wbox.setFromObject(o);
+      if (_wbox.isEmpty()) return;
+      _wbox.getCenter(_wctr);
+      var dx = _wctr.x - ax, dz = _wctr.z - az;
+      if (dx * dx + dz * dz <= R2 && _wbox.min.y < minY) { minY = _wbox.min.y; n++; }
+    });
+    return (n > 0 && isFinite(minY)) ? minY : null;
+  }
+
+  // Auto-snap: align the measured PDOK ground to the model floor
+  // (_anchorOrigin.y, where the 2D basemap also sits). Debounced because
+  // tiles stream in bursts; converges as more ground near the anchor loads,
+  // then stops (delta < 5 cm). No-op once the user takes manual control.
+  var _snapT = null;
+  function _autoSnapHeight(force) {
+    if (!_autoHeight && !force) return;
+    if (_snapT) clearTimeout(_snapT);
+    _snapT = setTimeout(function() {
+      _snapT = null;
+      if ((!_autoHeight && !force) || !_tiles || !_anchorOrigin) return;
+      var g = _measurePdokGround();
+      if (g == null) return;
+      var delta = (Number(_anchorOrigin.y) || 0) - g;
+      if (Math.abs(delta) < 0.05) return;
+      _heightOffset += delta;
+      try { localStorage.setItem('cc_tiles3d_height', String(_heightOffset)); } catch(_) {}
+      _applyGroupMatrix(_tiles.group);
+      _inv(4);
+    }, 400);
+  }
 
   // ── Site clearing ────────────────────────────────────────────────
   // Carves the context geometry away inside the loaded models' footprint
@@ -350,13 +426,14 @@
         if (!_firstContent) { _firstContent = true; console.log('[Tiles3D] first tile content in the scene'); }
         // Site clearing applies per tile as it streams in.
         if (_clipPlanes && ev && ev.scene) _applyClipping(ev.scene);
+        _autoSnapHeight();
         _inv(10);
       });
       tiles.addEventListener('load-tileset', function() {
         console.log('[Tiles3D] tileset loaded — streaming content');
         _inv(3);
       });
-      tiles.addEventListener('tiles-load-end', function() { _inv(5); });
+      tiles.addEventListener('tiles-load-end', function() { _autoSnapHeight(); _inv(5); });
       // One definitive status line 10 s in — separates "nothing downloads"
       // (masking/frustum) from "downloads but fails" (failed>0) from
       // "renders but invisible" (visible>0).

@@ -375,11 +375,24 @@
 
   handlers.update_clash = function(p) {
     var s = _getState(); var clashes = s.clashes || [];
+    function apply(q, target) {
+      var u = {};
+      if (q.status) u.status = q.status; if (q.priority) u.priority = q.priority;
+      if (q.assignee != null) u.assignee = q.assignee; if (q.title) u.title = q.title;
+      _dispatch({ t: 'UPD_CLASH', id: target.id, u: u });
+    }
+    if (Array.isArray(p.items)) {
+      // Resolve every target from the snapshot BEFORE mutating so a batch
+      // can't act on an index that shifted mid-run.
+      var pairs = p.items.map(function(q){
+        return { q:q, t:(q.clashIndex>=0 && q.clashIndex<clashes.length) ? clashes[q.clashIndex] : null };
+      });
+      var done=0, bad=0;
+      pairs.forEach(function(pr){ if (pr.t) { apply(pr.q, pr.t); done++; } else bad++; });
+      return 'Updated ' + done + ' clash' + (done===1?'':'es') + (bad?' ('+bad+' invalid index)':'') + '.';
+    }
     if (p.clashIndex < 0 || p.clashIndex >= clashes.length) return 'Invalid clash index.';
-    var u = {};
-    if (p.status) u.status = p.status; if (p.priority) u.priority = p.priority;
-    if (p.assignee != null) u.assignee = p.assignee; if (p.title) u.title = p.title;
-    _dispatch({ t: 'UPD_CLASH', id: clashes[p.clashIndex].id, u: u });
+    apply(p, clashes[p.clashIndex]);
     return 'Updated clash ' + (p.clashIndex + 1) + '.';
   };
 
@@ -655,13 +668,21 @@
   handlers.add_annotation = function(p) {
     var s = _getState();
     if (!s.activeSheetId) return 'No active sheet. Use create_2d_sheet first.';
-    var id = window._ccUid ? window._ccUid() : 'mk_' + Date.now();
-    var type = p.type || 'text';
-    var pts = (type === 'pin' || type === 'text')
-      ? [p.x || 0, p.y || 0, p.x || 0, p.y || 0]
-      : [p.x || 0, p.y || 0, (p.x2 != null ? p.x2 : p.x || 0), (p.y2 != null ? p.y2 : p.y || 0)];
-    _dispatch({ t: 'ADD_MARKUP', v: { id: id, type: type, color: p.color || '#f59e0b', text: p.text || '', points: pts } });
-    return 'Added ' + type + ' annotation to active sheet.';
+    function one(q) {
+      var id = window._ccUid ? window._ccUid() : 'mk_' + Date.now() + '_' + Math.random().toString(36).slice(2, 7);
+      var type = q.type || 'text';
+      var pts = (type === 'pin' || type === 'text')
+        ? [q.x || 0, q.y || 0, q.x || 0, q.y || 0]
+        : [q.x || 0, q.y || 0, (q.x2 != null ? q.x2 : q.x || 0), (q.y2 != null ? q.y2 : q.y || 0)];
+      _dispatch({ t: 'ADD_MARKUP', v: { id: id, type: type, color: q.color || '#f59e0b', text: q.text || '', points: pts } });
+      return type;
+    }
+    if (Array.isArray(p.items)) {
+      var types = p.items.map(one);
+      return 'Added ' + types.length + ' annotations to active sheet.';
+    }
+    one(p);
+    return 'Added ' + (p.type || 'text') + ' annotation to active sheet.';
   };
 
   handlers.measure_on_sheet = function(p) {
@@ -679,31 +700,62 @@
   // ── Issue management handlers ─────────────────────────────────
 
   handlers.create_issue = function(p) {
-    var id = (window._ccUid) ? window._ccUid() : 'i_' + Date.now();
-    _dispatch({ t: 'ADD_ISSUE', v: {
-      id: id, title: p.title || 'New Issue', description: p.description || '',
-      status: p.status || 'open', priority: p.priority || 'normal',
-      assignee: p.assignee || '', category: p.category || 'coordination',
-      createdAt: new Date().toISOString()
-    }});
+    function one(q) {
+      // Random suffix so a bulk create in the same millisecond can't collide
+      // when _ccUid is unavailable.
+      var id = (window._ccUid) ? window._ccUid() : 'i_' + Date.now() + '_' + Math.random().toString(36).slice(2, 7);
+      _dispatch({ t: 'ADD_ISSUE', v: {
+        id: id, title: q.title || 'New Issue', description: q.description || '',
+        status: q.status || 'open', priority: q.priority || 'normal',
+        assignee: q.assignee || '', category: q.category || 'coordination',
+        createdAt: new Date().toISOString()
+      }});
+      return q.title || 'New Issue';
+    }
+    if (Array.isArray(p.items)) {
+      var titles = p.items.map(one);
+      return 'Created ' + titles.length + ' issues: ' + titles.map(function(t){return '"'+t+'"';}).join(', ') + '.';
+    }
+    one(p);
     return 'Issue "' + (p.title || 'New Issue') + '" created.';
   };
 
   handlers.update_issue = function(p) {
     var s = _getState(); var issues = s.issues || [];
+    function apply(q, target) {
+      var u = {};
+      if (q.status) u.status = q.status;
+      if (q.priority) u.priority = q.priority;
+      if (q.assignee != null) u.assignee = q.assignee;
+      if (q.title) u.title = q.title;
+      if (q.description != null) u.description = q.description;
+      _dispatch({ t: 'UPD_ISSUE', id: target.id, u: u });
+    }
+    if (Array.isArray(p.items)) {
+      var pairs = p.items.map(function(q){
+        return { q:q, t:(q.issueIndex>=0 && q.issueIndex<issues.length) ? issues[q.issueIndex] : null };
+      });
+      var done=0, bad=0;
+      pairs.forEach(function(pr){ if (pr.t) { apply(pr.q, pr.t); done++; } else bad++; });
+      return 'Updated ' + done + ' issue' + (done===1?'':'s') + (bad?' ('+bad+' invalid index)':'') + '.';
+    }
     if (p.issueIndex < 0 || p.issueIndex >= issues.length) return 'Invalid issue index.';
-    var u = {};
-    if (p.status) u.status = p.status;
-    if (p.priority) u.priority = p.priority;
-    if (p.assignee != null) u.assignee = p.assignee;
-    if (p.title) u.title = p.title;
-    if (p.description != null) u.description = p.description;
-    _dispatch({ t: 'UPD_ISSUE', id: issues[p.issueIndex].id, u: u });
+    apply(p, issues[p.issueIndex]);
     return 'Updated issue ' + (p.issueIndex + 1) + '.';
   };
 
   handlers.delete_issue = function(p) {
     var s = _getState(); var issues = s.issues || [];
+    if (Array.isArray(p.items)) {
+      // Resolve ids up front so deleting one doesn't shift the indices of
+      // the rest mid-batch (the index-fragility trap).
+      var ids = [], bad = 0;
+      p.items.forEach(function(q){
+        if (q.issueIndex >= 0 && q.issueIndex < issues.length) ids.push(issues[q.issueIndex].id); else bad++;
+      });
+      ids.forEach(function(id){ _dispatch({ t: 'DEL_ISSUE', id: id }); });
+      return 'Deleted ' + ids.length + ' issue' + (ids.length===1?'':'s') + (bad?' ('+bad+' invalid index)':'') + '.';
+    }
     if (p.issueIndex < 0 || p.issueIndex >= issues.length) return 'Invalid issue index.';
     _dispatch({ t: 'DEL_ISSUE', id: issues[p.issueIndex].id });
     return 'Deleted issue ' + (p.issueIndex + 1) + '.';
@@ -853,8 +905,8 @@
       params:{ modelA:{type:'string',opt:1}, modelB:{type:'string',opt:1}, maxGap:{type:'number',opt:1}, hard:{type:'boolean',opt:1}, excludeSelf:{type:'boolean',opt:1} } },
     { name:'set_detection_rules', description:'Updates detection parameters without running detection.',
       params:{ maxGap:{type:'number',opt:1}, hard:{type:'boolean',opt:1}, excludeSelf:{type:'boolean',opt:1}, duplicates:{type:'boolean',opt:1} } },
-    { name:'update_clash',        description:'Updates a single clash by 0-based index: status, priority, assignee, or title.',
-      params:{ clashIndex:{type:'number'}, status:{type:'string',opt:1}, priority:{type:'string',opt:1}, assignee:{type:'string',opt:1}, title:{type:'string',opt:1} } },
+    { name:'update_clash',        description:'Updates one clash by 0-based index, or many at once via items[]. For bulk pass items:[{clashIndex,status?,priority?,assignee?,title?}, ...] — all targets are resolved before any change, so a batch is index-safe.',
+      params:{ clashIndex:{type:'number',opt:1}, status:{type:'string',opt:1}, priority:{type:'string',opt:1}, assignee:{type:'string',opt:1}, title:{type:'string',opt:1}, items:{type:'array',items:{type:'object'},opt:1} } },
     { name:'batch_update_clashes',description:'Applies a batch action to clashes matching a natural-language filter.',
       params:{ action:{type:'string'}, filter:{type:'string'} } },
     { name:'filter_clashes',      description:'Applies status/priority filters to the clash list UI.',
@@ -916,16 +968,16 @@
     { name:'zoom_2d_sheet',       description:'Sets the 2D floor plan zoom level (0.05–50). 1.0 = natural size.',
       params:{ level:{type:'number'} } },
     { name:'fit_2d_bounds',       description:'Auto-fits the 2D floor plan to show all geometry.' },
-    { name:'add_annotation',      description:'Adds a markup annotation (text, pin, line, rect, arrow) to the active 2D sheet.',
-      params:{ type:{type:'string',enum:['text','pin','line','rect','arrow'],opt:1}, x:{type:'number'}, y:{type:'number'}, x2:{type:'number',opt:1}, y2:{type:'number',opt:1}, text:{type:'string',opt:1}, color:{type:'string',opt:1} } },
+    { name:'add_annotation',      description:'Adds one markup annotation (text, pin, line, rect, arrow) to the active 2D sheet, or many at once via items[] (array of the same fields).',
+      params:{ type:{type:'string',enum:['text','pin','line','rect','arrow'],opt:1}, x:{type:'number',opt:1}, y:{type:'number',opt:1}, x2:{type:'number',opt:1}, y2:{type:'number',opt:1}, text:{type:'string',opt:1}, color:{type:'string',opt:1}, items:{type:'array',items:{type:'object'},opt:1} } },
     { name:'measure_on_sheet',    description:'Adds a dimension annotation between two world-space points on the active 2D sheet.',
       params:{ points:{type:'array',items:{type:'number'},minItems:4,maxItems:4}, color:{type:'string',opt:1} } },
-    { name:'create_issue',        description:'Creates a coordination issue.',
-      params:{ title:{type:'string'}, description:{type:'string',opt:1}, status:{type:'string',opt:1}, priority:{type:'string',opt:1}, assignee:{type:'string',opt:1}, category:{type:'string',opt:1} } },
-    { name:'update_issue',        description:'Updates an issue by 0-based index.',
-      params:{ issueIndex:{type:'number'}, status:{type:'string',opt:1}, priority:{type:'string',opt:1}, assignee:{type:'string',opt:1}, title:{type:'string',opt:1}, description:{type:'string',opt:1} } },
-    { name:'delete_issue',        description:'Deletes an issue by 0-based index.',
-      params:{ issueIndex:{type:'number'} } },
+    { name:'create_issue',        description:'Creates one coordination issue, or many at once via items[] (array of {title,description?,status?,priority?,assignee?,category?}). Prefer one bulk call over many single calls.',
+      params:{ title:{type:'string',opt:1}, description:{type:'string',opt:1}, status:{type:'string',opt:1}, priority:{type:'string',opt:1}, assignee:{type:'string',opt:1}, category:{type:'string',opt:1}, items:{type:'array',items:{type:'object'},opt:1} } },
+    { name:'update_issue',        description:'Updates one issue by 0-based index, or many at once via items:[{issueIndex,...}]. Targets are resolved before any change, so a batch is index-safe.',
+      params:{ issueIndex:{type:'number',opt:1}, status:{type:'string',opt:1}, priority:{type:'string',opt:1}, assignee:{type:'string',opt:1}, title:{type:'string',opt:1}, description:{type:'string',opt:1}, items:{type:'array',items:{type:'object'},opt:1} } },
+    { name:'delete_issue',        description:'Deletes one issue by 0-based index, or many at once via items:[{issueIndex}, ...]. Indices are resolved to ids up front, so deleting several at once is safe from index shifting.',
+      params:{ issueIndex:{type:'number',opt:1}, items:{type:'array',items:{type:'object'},opt:1} } },
     { name:'export_bcf',          description:'Exports all clashes or issues as a BCF ZIP file.',
       params:{ version:{type:'string',enum:['2.1','3.0'],opt:1} } },
     { name:'create_project',      description:'Creates a new project.',

@@ -89,6 +89,8 @@ Things to be careful about. Do not remove without a good reason — add a note i
 Update this section at the start and end of each session.
 Mark completed items with ~~strikethrough~~ and date, then let the daily sync archive them.
 
+Doc added (2026-06-11): **`AS_BUILT_DEVIATION.md`** — scope/roadmap for point-cloud-vs-BIM surface deviation. Captures the capability audit (alignment + bbox-proxy heatmap exist; true point-to-surface distance is NOT built, deferred to "Phase 2" in `align.js`), reuse-vs-build (BVH + `_getWorldTris` triangle soup + Rust engine all reusable; net-new = point-to-triangle primitive + BVH closest-point descent + Rust kernel), the Phase 1/2/3 plan (~1wk demo / ~3–4wk client-grade), and the Wkb/Bbl **Borger** product framing (sell the dossier outcome, not the geometry; scan verifies the *geometric subset* of Bbl risk items only). Not built — awaiting go-ahead.
+
 Ninth batch (2026-06-11) — 3D world context live-test round 3:
 
 - ~~**PDOK tiles all failed to parse** ("setMeshoptDecoder must be called before loading compressed files", 21/21 failed): PDOK 3d-basisvoorziening glbs use EXT_meshopt_compression and the renderer's GLTFLoader had no decoders. tiles.js now registers GLTFExtensionsPlugin with MeshoptDecoder + DRACOLoader + KTX2Loader (latter two for Google photorealistic tiles, same wall). Merged as #619 → main `2bc3b62`. User confirmed PDOK buildings render.~~ (2026-06-11)
