@@ -594,7 +594,7 @@ window.onload = function() {
 
 function startApp() {
   // ── Version (auto-updated by pre-commit hook) ──
-  var CC_VERSION = {v:'5.20.15',hash:'16bffc1',date:'2026-06-11T09:21:15Z'};
+  var CC_VERSION = {v:'5.20.16',hash:'57e6dd5',date:'2026-06-12T06:59:54Z'};
   window.CC_VERSION = CC_VERSION;
 
   window._ccSetSRGBOutput = function(renderer) {
@@ -15312,6 +15312,33 @@ function startApp() {
               <option value="10">Clear +10 m</option>
               <option value="25">Clear +25 m</option>
             </select>`}
+            ${(window._ccTiles3DActive && window._ccTiles3DActive() && window._ccSetTiles3DHeight) && (function(){
+              // Height seats the 3D context on the model floor. Auto by
+              // default (measured from the streamed geometry); the ▼/▲ buttons
+              // are a manual override, ⟲ returns to auto.
+              var h = window._ccTiles3DHeight ? window._ccTiles3DHeight() : 0;
+              var auto = !!(window._ccTiles3DHeightAuto && window._ccTiles3DHeightAuto());
+              function step(){ var v = 0.5; try { v = parseFloat(localStorage.getItem('cc_tiles3d_hstep')) || 0.5; } catch(_){} return v; }
+              function set(v){ window._ccSetTiles3DHeight(Math.round(v*100)/100); }
+              function hbtn(label, dh, tip){
+                return html`<button onClick=${function(){ set(h + dh*step()); }} title=${tip}
+                  style=${{width:18,height:18,padding:0,fontSize:'.62rem',lineHeight:1,background:'var(--bg-secondary)',color:'var(--text-secondary)',border:'1px solid var(--border)',borderRadius:'var(--radius-xs)',cursor:'pointer'}}>${label}</button>`;
+              }
+              return html`<span title="Vertical placement of the 3D world context. Auto-aligns to the model floor from the streamed geometry; ▼/▲ override manually." style=${{display:'flex',alignItems:'center',gap:'.15rem'}}>
+                <span style=${{fontSize:'.6rem',color:'var(--text-faint)'}}>height</span>
+                ${hbtn('▼',-1,'Lower context (manual)')}${hbtn('▲',1,'Raise context (manual)')}
+                <span title=${auto?'Auto-aligned to model floor':'Manual height'} style=${{fontSize:'.6rem',color:auto?'var(--color-success, #22c55e)':'var(--text-muted)',fontFamily:'var(--font-mono)',minWidth:'2.6rem',textAlign:'right'}}>${auto ? 'auto' : (h>0?'+':'')+h.toFixed(1)+'m'}</span>
+                <select value=${String(step())} onChange=${function(e){ try { localStorage.setItem('cc_tiles3d_hstep', e.target.value); } catch(_){} }}
+                  title="Height step (metres)"
+                  style=${{fontSize:'.58rem',padding:'.05rem .1rem',background:'var(--bg-secondary)',color:'var(--text-secondary)',border:'1px solid var(--border)',borderRadius:'var(--radius-xs)',fontFamily:'var(--font-body)'}}>
+                  <option value="0.1">0.1</option>
+                  <option value="0.5">0.5</option>
+                  <option value="1">1</option>
+                  <option value="5">5</option>
+                </select>
+                ${!auto ? html`<button onClick=${function(){ window._ccResetTiles3DHeightAuto && window._ccResetTiles3DHeightAuto(); }} title="Back to auto-align" style=${{fontSize:'.58rem',padding:'.05rem .2rem',background:'none',color:'var(--text-muted)',border:'1px solid var(--border)',borderRadius:'var(--radius-xs)',cursor:'pointer'}}>⟲ auto</button>` : null}
+              </span>`;
+            })()}
           </div>`}
         </div>`}
         ${(s.referenceLayers && s.referenceLayers.length > 0) && html`<div style=${{marginTop:'.3rem',borderTop:'1px solid var(--hairline)',paddingTop:'.3rem'}}>
@@ -15354,14 +15381,14 @@ function startApp() {
                 </button>`}
                 ${window._ccDeviationCompute && html`<button onClick=${function(){
                     if(!window._ccDeviationCompute) return;
-                    window._ccDeviationCompute(rl.id).catch(function(e){ if(window._ccToast) window._ccToast('Deviation: '+(e.message||e)); });
+                    window._ccDeviationCompute(rl.id).catch(function(e){ if(window._ccToast) window._ccToast('Proximity: '+(e.message||e)); });
                   }}
-                  title="Colour each scan point by distance to the nearest IFC element (green ≤ 2 cm, red ≥ 10 cm)"
+                  title="First-pass proximity view: colours each scan point by distance to the nearest IFC element's BOUNDING BOX (green ≤ 2 cm, red ≥ 10 cm). This is not surface-accurate measured deviation — it's a coarse 'is this region near any design geometry' pass."
                   style=${{fontSize:'.6rem',padding:'.12rem .4rem',background:'rgba(34,197,94,.12)',color:'#22c55e',border:'1px solid rgba(34,197,94,.4)',borderRadius:'var(--radius-xs)',cursor:'pointer',fontWeight:600}}>
-                  ▦ Deviation map
+                  ▦ Proximity (1st-pass)
                 </button>`}
                 ${window._ccDeviationClear && html`<button onClick=${function(){ if(window._ccDeviationClear) window._ccDeviationClear(rl.id); }}
-                  title="Remove deviation colouring"
+                  title="Remove proximity colouring"
                   style=${{fontSize:'.6rem',padding:'.12rem .3rem',background:'none',color:'var(--text-faint)',border:'1px solid var(--border)',borderRadius:'var(--radius-xs)',cursor:'pointer'}}>
                   Reset colour
                 </button>`}
@@ -15377,14 +15404,14 @@ function startApp() {
                     if(!window._ccDeviationCreateIssues) return;
                     window._ccDeviationCreateIssues(rl.id).catch(function(e){ if(window._ccToast) window._ccToast('Auto-issue: '+(e.message||e)); });
                   }}
-                  title="Cluster red deviation points and create one issue per hotspot"
+                  title="Cluster the red (closest-proximity) points and create one issue per hotspot. Distances are first-pass proximity to element bounding boxes, not measured surface deviation."
                   style=${{fontSize:'.6rem',padding:'.12rem .4rem',background:'rgba(239,68,68,.12)',color:'#ef4444',border:'1px solid rgba(239,68,68,.4)',borderRadius:'var(--radius-xs)',cursor:'pointer',fontWeight:600}}>
                   ⚑ Issues at hotspots
                 </button>`}
                 ${window._ccDeviationExportReport && html`<button onClick=${function(){
                     if(window._ccDeviationExportReport) window._ccDeviationExportReport(rl.id);
                   }}
-                  title="Open a print-ready deviation report (cover summary + one page per hotspot with snapshot, location, statistics)"
+                  title="Open a print-ready proximity report (cover summary + one page per hotspot with snapshot, location, statistics). Labelled first-pass proximity, not measured surface deviation."
                   style=${{fontSize:'.6rem',padding:'.12rem .4rem',background:'rgba(31,41,55,.06)',color:'var(--text-primary)',border:'1px solid var(--border)',borderRadius:'var(--radius-xs)',cursor:'pointer',fontWeight:600}}>
                   ⎙ Report PDF
                 </button>`}
