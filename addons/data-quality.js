@@ -653,42 +653,533 @@
     return xml;
   }
 
-  // ── IDS Import ──────────────────────────────────────────────────
-  // Parses an IDS XML file and returns a summary of specifications.
-  // Does NOT run the checks — just reports what rules the IDS contains
-  // so users can see what validations will be applied.
+  // ── IDS 1.0 Parse + Execution Engine ─────────────────────────────
+  // Full buildingSMART IDS 1.0 support: parses .ids XML into facet
+  // structures and EXECUTES the specifications against the loaded
+  // elements (props extracted by the core loader). Re-implemented from
+  // the published IDS 1.0 standard; behaviour is modelled on IfcTester
+  // (the reference implementation) but no code is ported from it.
+  //
+  // Honesty rule: anything the in-browser data model cannot evaluate
+  // (PredefinedType, partOf relations other than storey containment,
+  // XSD-only regex constructs, dataType checks) is reported as
+  // "not checkable" — never silently passed or failed.
 
-  function importIDS(xmlString) {
-    var parser = new DOMParser();
-    var doc = parser.parseFromString(xmlString, 'application/xml');
-    if (doc.querySelector('parsererror')) return {error: 'Invalid IDS XML'};
-    var info = doc.querySelector('info');
-    var title = info && info.querySelector('title') ? info.querySelector('title').textContent : 'Imported IDS';
-    var specs = doc.querySelectorAll('specification');
-    var rules = [];
-    specs.forEach(function(spec) {
-      var name = spec.getAttribute('name') || 'Unnamed';
-      var applicability = spec.querySelector('applicability');
-      var requirements = spec.querySelector('requirements');
-      var entityEl = applicability ? applicability.querySelector('entity name simpleValue') : null;
-      var entity = entityEl ? entityEl.textContent : '*';
-      var reqTypes = [];
-      if (requirements) {
-        requirements.querySelectorAll('attribute').forEach(function(a){ reqTypes.push('attribute: '+(a.querySelector('name simpleValue')||{}).textContent); });
-        requirements.querySelectorAll('property').forEach(function(p){
-          var ps = (p.querySelector('propertySet simpleValue')||{}).textContent||'?';
-          var bn = (p.querySelector('baseName simpleValue')||{}).textContent||'*';
-          reqTypes.push('property: '+ps+'.'+bn);
+  // Minimal strict XML parser (no DOMParser dependency, so the engine
+  // also runs under Node for tests). Namespace prefixes are stripped;
+  // IDS matching is done on local names.
+  function _xmlParse(text) {
+    var src = String(text || '').replace(/^﻿/, '');
+    var pos = 0, len = src.length;
+    function fail(msg) { throw new Error(msg + ' (offset ' + pos + ')'); }
+    function decode(s) {
+      return s.replace(/&(#x?[0-9a-fA-F]+|amp|lt|gt|quot|apos);/g, function(m, e) {
+        if (e === 'amp') return '&'; if (e === 'lt') return '<'; if (e === 'gt') return '>';
+        if (e === 'quot') return '"'; if (e === 'apos') return "'";
+        var cp = (e.charAt(1) === 'x' || e.charAt(1) === 'X') ? parseInt(e.slice(2), 16) : parseInt(e.slice(1), 10);
+        return isNaN(cp) ? m : String.fromCodePoint(cp);
+      });
+    }
+    function local(name) { var i = name.indexOf(':'); return i >= 0 ? name.slice(i + 1) : name; }
+    function skipMisc() {
+      for (;;) {
+        while (pos < len && /\s/.test(src.charAt(pos))) pos++;
+        if (src.startsWith('<?', pos)) { pos = src.indexOf('?>', pos); if (pos < 0) fail('unterminated PI'); pos += 2; continue; }
+        if (src.startsWith('<!--', pos)) { pos = src.indexOf('-->', pos); if (pos < 0) fail('unterminated comment'); pos += 3; continue; }
+        if (src.startsWith('<!', pos)) { pos = src.indexOf('>', pos); if (pos < 0) fail('unterminated declaration'); pos += 1; continue; }
+        return;
+      }
+    }
+    function parseElement() {
+      if (src.charAt(pos) !== '<') fail('expected element');
+      pos++;
+      var nm = /^[^\s/>]+/.exec(src.slice(pos, pos + 256));
+      if (!nm) fail('bad tag name');
+      var node = { tag: local(nm[0]), attrs: {}, children: [], text: '' };
+      pos += nm[0].length;
+      for (;;) {
+        while (pos < len && /\s/.test(src.charAt(pos))) pos++;
+        if (pos >= len) fail('unterminated tag');
+        if (src.charAt(pos) === '/') { if (src.charAt(pos + 1) !== '>') fail('bad self-close'); pos += 2; return node; }
+        if (src.charAt(pos) === '>') { pos++; break; }
+        var am = /^([^\s=/>]+)\s*=\s*(?:"([^"]*)"|'([^']*)')/.exec(src.slice(pos));
+        if (!am) fail('bad attribute');
+        node.attrs[local(am[1])] = decode(am[2] != null ? am[2] : am[3]);
+        pos += am[0].length;
+      }
+      for (;;) {
+        if (pos >= len) fail('unterminated element <' + node.tag + '>');
+        if (src.startsWith('<!--', pos)) { var ec = src.indexOf('-->', pos); if (ec < 0) fail('unterminated comment'); pos = ec + 3; continue; }
+        if (src.startsWith('<![CDATA[', pos)) { var ed = src.indexOf(']]>', pos); if (ed < 0) fail('unterminated CDATA'); node.text += src.slice(pos + 9, ed); pos = ed + 3; continue; }
+        if (src.startsWith('</', pos)) { var ee = src.indexOf('>', pos); if (ee < 0) fail('unterminated close tag'); pos = ee + 1; return node; }
+        if (src.charAt(pos) === '<') { node.children.push(parseElement()); continue; }
+        var nx = src.indexOf('<', pos);
+        if (nx < 0) fail('text after content');
+        node.text += decode(src.slice(pos, nx));
+        pos = nx;
+      }
+    }
+    skipMisc();
+    if (pos >= len) fail('empty document');
+    return parseElement();
+  }
+
+  function _kid(node, tag) {
+    if (!node) return null;
+    for (var i = 0; i < node.children.length; i++) if (node.children[i].tag === tag) return node.children[i];
+    return null;
+  }
+  function _kids(node, tag) {
+    var out = [];
+    if (node) for (var i = 0; i < node.children.length; i++) if (node.children[i].tag === tag) out.push(node.children[i]);
+    return out;
+  }
+  function _textOf(node) { return node ? String(node.text || '').trim() : ''; }
+
+  // idsValue = <simpleValue> or <xs:restriction> → normalised value spec
+  function _parseValueSpec(node) {
+    if (!node) return null;
+    var sv = _kid(node, 'simpleValue');
+    if (sv) return { simple: _textOf(sv) };
+    var r = _kid(node, 'restriction');
+    if (!r) return null;
+    var R = { base: r.attrs.base || '' };
+    r.children.forEach(function(c) {
+      var v = c.attrs.value;
+      switch (c.tag) {
+        case 'enumeration': (R.enumeration = R.enumeration || []).push(v); break;
+        case 'pattern': R.pattern = v; break;
+        case 'minInclusive': case 'maxInclusive': case 'minExclusive': case 'maxExclusive':
+          R[c.tag] = parseFloat(v); break;
+        case 'length': case 'minLength': case 'maxLength':
+          R[c.tag] = parseInt(v, 10); break;
+        case 'annotation': break;
+        default: (R.unsupported = R.unsupported || []).push(c.tag);
+      }
+    });
+    return { restriction: R };
+  }
+
+  // XSD regex → JS RegExp. XSD patterns are implicitly anchored. The
+  // XSD-only constructs we cannot translate (\i \c name escapes, class
+  // subtraction) yield null = "not checkable" instead of a wrong verdict.
+  function _xsdPatternToRegExp(pat, ci) {
+    if (/\\[icIC]/.test(pat) || /-\[/.test(pat)) return null;
+    try { return new RegExp('^(?:' + pat + ')$', ci ? 'i' : ''); } catch (e) { return null; }
+  }
+
+  function _normVal(v) {
+    if (typeof v === 'boolean') return v ? 'true' : 'false';
+    return String(v);
+  }
+
+  // Single-value equality: exact string, then numeric with relative
+  // tolerance, then boolean spelling variants (.T./1/yes etc.).
+  function _valEq(expected, actual) {
+    var a = _normVal(actual), e = String(expected);
+    if (a === e) return true;
+    var NUM_RE = /^[+\-]?(\d+\.?\d*|\.\d+)([eE][+\-]?\d+)?$/;
+    if (NUM_RE.test(a.trim()) && NUM_RE.test(e.trim())) {
+      var an = parseFloat(a), en = parseFloat(e);
+      return Math.abs(an - en) <= 1e-6 * Math.max(1, Math.abs(en));
+    }
+    if (/^(true|false)$/i.test(e)) {
+      var ab = /^(true|\.t\.|1|yes)$/i.test(a.trim()) ? 'true' :
+               /^(false|\.f\.|0|no)$/i.test(a.trim()) ? 'false' : null;
+      if (ab) return ab === e.trim().toLowerCase();
+    }
+    return false;
+  }
+
+  // Match an actual value against a value spec.
+  // Returns true | false | null (null = restriction not checkable).
+  function _matchValue(vs, actual) {
+    if (actual == null || String(actual).trim() === '') return false;
+    if (!vs) return true; // presence-only
+    if ('simple' in vs) return _valEq(vs.simple, actual);
+    var R = vs.restriction || {};
+    if (R.unsupported && R.unsupported.length) return null;
+    var a = _normVal(actual);
+    if (R.enumeration) {
+      for (var i = 0; i < R.enumeration.length; i++) if (_valEq(R.enumeration[i], actual)) return true;
+      return false;
+    }
+    var ok = true;
+    if (R.pattern != null) {
+      var re = _xsdPatternToRegExp(R.pattern, false);
+      if (!re) return null;
+      ok = ok && re.test(a);
+    }
+    if (R.minInclusive != null || R.maxInclusive != null || R.minExclusive != null || R.maxExclusive != null) {
+      var n = parseFloat(a);
+      if (isNaN(n)) return false;
+      if (R.minInclusive != null) ok = ok && n >= R.minInclusive;
+      if (R.maxInclusive != null) ok = ok && n <= R.maxInclusive;
+      if (R.minExclusive != null) ok = ok && n > R.minExclusive;
+      if (R.maxExclusive != null) ok = ok && n < R.maxExclusive;
+    }
+    if (R.length != null) ok = ok && a.length === R.length;
+    if (R.minLength != null) ok = ok && a.length >= R.minLength;
+    if (R.maxLength != null) ok = ok && a.length <= R.maxLength;
+    return ok;
+  }
+
+  // Entity names in IDS are uppercase; compare case-insensitively but
+  // EXACTLY (no substring, no subtype expansion — per the standard,
+  // IFCWALL does not match IFCWALLSTANDARDCASE).
+  function _matchEntity(vs, typeUpper) {
+    if (!vs) return true;
+    if ('simple' in vs) return String(vs.simple).toUpperCase() === typeUpper;
+    var R = vs.restriction || {};
+    if (R.unsupported && R.unsupported.length) return null;
+    if (R.enumeration) {
+      for (var i = 0; i < R.enumeration.length; i++) if (String(R.enumeration[i]).toUpperCase() === typeUpper) return true;
+      return false;
+    }
+    if (R.pattern != null) {
+      var re = _xsdPatternToRegExp(R.pattern, true);
+      return re ? re.test(typeUpper) : null;
+    }
+    return null;
+  }
+
+  function _parseFacet(node) {
+    var f = { type: node.tag, cardinality: node.attrs.cardinality || 'required', instructions: node.attrs.instructions || '' };
+    switch (node.tag) {
+      case 'entity':
+        f.name = _parseValueSpec(_kid(node, 'name'));
+        f.predefinedType = _parseValueSpec(_kid(node, 'predefinedType'));
+        break;
+      case 'attribute':
+        f.name = _parseValueSpec(_kid(node, 'name'));
+        f.value = _parseValueSpec(_kid(node, 'value'));
+        break;
+      case 'property':
+        f.propertySet = _parseValueSpec(_kid(node, 'propertySet'));
+        f.baseName = _parseValueSpec(_kid(node, 'baseName'));
+        f.value = _parseValueSpec(_kid(node, 'value'));
+        f.dataType = node.attrs.dataType || '';
+        break;
+      case 'classification':
+        f.system = _parseValueSpec(_kid(node, 'system'));
+        f.value = _parseValueSpec(_kid(node, 'value'));
+        break;
+      case 'material':
+        f.value = _parseValueSpec(_kid(node, 'value'));
+        break;
+      case 'partOf':
+        f.relation = node.attrs.relation || '';
+        var ent = _kid(node, 'entity');
+        f.entity = ent ? _parseValueSpec(_kid(ent, 'name')) : null;
+        break;
+      default:
+        f.type = 'unsupported';
+        f.tag = node.tag;
+    }
+    return f;
+  }
+
+  function _vsDesc(vs) {
+    if (!vs) return '(any)';
+    if ('simple' in vs) return vs.simple;
+    var R = vs.restriction || {};
+    if (R.enumeration) return R.enumeration.join('|');
+    if (R.pattern != null) return '~' + R.pattern;
+    var parts = [];
+    if (R.minInclusive != null) parts.push('≥ ' + R.minInclusive);
+    if (R.maxInclusive != null) parts.push('≤ ' + R.maxInclusive);
+    if (R.minExclusive != null) parts.push('> ' + R.minExclusive);
+    if (R.maxExclusive != null) parts.push('< ' + R.maxExclusive);
+    if (R.length != null) parts.push('length ' + R.length);
+    if (R.minLength != null) parts.push('length ≥ ' + R.minLength);
+    if (R.maxLength != null) parts.push('length ≤ ' + R.maxLength);
+    return parts.join(', ') || '(restricted)';
+  }
+
+  function _facetDesc(f) {
+    switch (f.type) {
+      case 'entity': return 'entity ' + _vsDesc(f.name) + (f.predefinedType ? '.' + _vsDesc(f.predefinedType) : '');
+      case 'attribute': return 'attribute ' + _vsDesc(f.name) + (f.value ? ' = ' + _vsDesc(f.value) : '');
+      case 'property': return 'property ' + _vsDesc(f.propertySet) + '.' + _vsDesc(f.baseName) + (f.value ? ' = ' + _vsDesc(f.value) : '');
+      case 'classification': return 'classification' + (f.system ? ' [' + _vsDesc(f.system) + ']' : '') + (f.value ? ' = ' + _vsDesc(f.value) : '');
+      case 'material': return 'material' + (f.value ? ' = ' + _vsDesc(f.value) : '');
+      case 'partOf': return 'partOf ' + (f.relation || 'container') + (f.entity ? ' ' + _vsDesc(f.entity) : '');
+    }
+    return f.tag || f.type;
+  }
+
+  // Parse a .ids file into the executable structure.
+  function parseIDSSpec(xmlString) {
+    var root;
+    try { root = _xmlParse(xmlString); }
+    catch (e) { return { error: 'Invalid IDS XML: ' + e.message }; }
+    if (!root || root.tag !== 'ids') return { error: 'Not an IDS document (root element is <' + (root && root.tag) + '>)' };
+    var info = _kid(root, 'info');
+    var out = {
+      title: _textOf(_kid(info, 'title')) || 'Imported IDS',
+      description: _textOf(_kid(info, 'description')),
+      date: _textOf(_kid(info, 'date')),
+      specs: []
+    };
+    var specsEl = _kid(root, 'specifications');
+    _kids(specsEl, 'specification').forEach(function(spEl, i) {
+      var app = _kid(spEl, 'applicability');
+      var req = _kid(spEl, 'requirements');
+      var spec = {
+        name: spEl.attrs.name || ('Specification ' + (i + 1)),
+        identifier: spEl.attrs.identifier || '',
+        description: spEl.attrs.description || '',
+        instructions: spEl.attrs.instructions || '',
+        ifcVersion: spEl.attrs.ifcVersion || '',
+        cardinality: 'required',
+        applicability: [],
+        requirements: []
+      };
+      if (app) {
+        // IDS 1.0 spec cardinality lives on applicability@minOccurs/maxOccurs:
+        // maxOccurs=0 → prohibited, minOccurs=0 → optional, else required.
+        if (String(app.attrs.maxOccurs) === '0') spec.cardinality = 'prohibited';
+        else if (app.attrs.minOccurs == null || String(app.attrs.minOccurs) === '0') spec.cardinality = 'optional';
+        app.children.forEach(function(c) { spec.applicability.push(_parseFacet(c)); });
+      }
+      if (req) req.children.forEach(function(c) { spec.requirements.push(_parseFacet(c)); });
+      out.specs.push(spec);
+    });
+    return out;
+  }
+
+  // IFC attributes reachable from the loader's extracted props. Anything
+  // outside this map (Tag, PredefinedType, …) is "not checkable".
+  var IDS_ATTR_MAP = {
+    NAME: 'name', DESCRIPTION: 'description', GLOBALID: 'globalId',
+    OBJECTTYPE: 'objectType', LONGNAME: 'longName'
+  };
+
+  var CLASS_PSET_RE = /classification|sfb|omniclass|uniclass|uniformat|masterformat/;
+
+  function _classificationCandidates(p) {
+    var out = [];
+    var psets = p.psets || {};
+    Object.keys(psets).forEach(function(ps) {
+      var grp = psets[ps] || {};
+      var psIsClass = CLASS_PSET_RE.test(ps.toLowerCase());
+      Object.keys(grp).forEach(function(k) {
+        var kl = k.toLowerCase().replace(/[\s_\/\-]/g, '');
+        var keyIsClass = kl === 'assemblycode' || kl === 'classificationcode' || kl === 'classification' ||
+          kl === 'omniclass' || kl === 'omniclassnumber' || kl === 'uniclass' || kl === 'uniformat' ||
+          kl === 'masterformat' || kl === 'nlsfb' || kl === 'sfbcode';
+        var keyInClassPset = psIsClass && (kl === 'code' || kl === 'reference' || kl === 'value' || kl === 'elementcode' || kl === 'itemreference');
+        var v = grp[k];
+        if ((keyIsClass || keyInClassPset) && v != null && String(v).trim()) {
+          out.push({ system: ps, key: k, code: String(v).trim() });
+        }
+      });
+    });
+    return out;
+  }
+
+  // Evaluate one facet against an element's props.
+  // Returns {present, matches} with matches ∈ true|false, or null when
+  // the facet cannot be evaluated from the in-browser data model.
+  function _facetEval(f, p) {
+    switch (f.type) {
+      case 'entity': {
+        var t = String(p.ifcType || '').toUpperCase();
+        if (!t) return { present: false, matches: false };
+        if (f.predefinedType) return null; // PredefinedType is not extracted by the loader
+        var em = _matchEntity(f.name, t);
+        return em === null ? null : { present: true, matches: em };
+      }
+      case 'attribute': {
+        if (!f.name || !('simple' in f.name)) return null; // restriction-named attributes unsupported
+        var key = IDS_ATTR_MAP[String(f.name.simple).toUpperCase()];
+        if (!key) return null;
+        var v = p[key];
+        if (v == null || String(v).trim() === '') return { present: false, matches: false };
+        var am = f.value ? _matchValue(f.value, v) : true;
+        return am === null ? null : { present: true, matches: am };
+      }
+      case 'property': {
+        var hits = [], unchecked = false;
+        var psets = p.psets || {};
+        Object.keys(psets).forEach(function(ps) {
+          var pm = _matchValue(f.propertySet, ps);
+          if (pm === null) { unchecked = true; return; }
+          if (!pm) return;
+          var grp = psets[ps] || {};
+          Object.keys(grp).forEach(function(k) {
+            var bm = _matchValue(f.baseName, k);
+            if (bm === null) { unchecked = true; return; }
+            if (bm && grp[k] != null && String(grp[k]).trim() !== '') hits.push(grp[k]);
+          });
         });
-        requirements.querySelectorAll('material').forEach(function(){ reqTypes.push('material'); });
-        requirements.querySelectorAll('partOf').forEach(function(po){
-          var pe = (po.querySelector('entity name simpleValue')||{}).textContent||'?';
-          reqTypes.push('partOf: '+pe);
+        // The loader flattens quantity sets (names lost), so Qto_*/
+        // BaseQuantities requests search quantity names directly.
+        if (f.propertySet && 'simple' in f.propertySet && /^(qto_|basequantities$)/i.test(f.propertySet.simple) && p.quantities) {
+          Object.keys(p.quantities).forEach(function(qk) {
+            var qm = _matchValue(f.baseName, qk);
+            if (qm === null) { unchecked = true; return; }
+            if (qm && p.quantities[qk] != null && String(p.quantities[qk]).trim() !== '') hits.push(p.quantities[qk]);
+          });
+        }
+        if (!hits.length) return unchecked ? null : { present: false, matches: false };
+        if (!f.value) return { present: true, matches: true };
+        var any = false, anyNull = false;
+        hits.forEach(function(v) {
+          var m = _matchValue(f.value, v);
+          if (m === null) anyNull = true; else if (m) any = true;
+        });
+        if (any) return { present: true, matches: true };
+        return anyNull ? null : { present: true, matches: false };
+      }
+      case 'classification': {
+        var cands = _classificationCandidates(p);
+        if (!cands.length) return { present: false, matches: false };
+        if (!f.system && !f.value) return { present: true, matches: true };
+        var hit = false, sysUnknown = false;
+        for (var ci = 0; ci < cands.length; ci++) {
+          var c = cands[ci];
+          var vOk = f.value ? _matchValue(f.value, c.code) : true;
+          if (vOk !== true) continue;
+          if (!f.system) { hit = true; break; }
+          // We only know the pset/key the code came from, not the declared
+          // classification system — try both, else report unverifiable.
+          var sOk = _matchValue(f.system, c.system);
+          var sOk2 = sOk === true ? true : _matchValue(f.system, c.key);
+          if (sOk === true || sOk2 === true) { hit = true; break; }
+          sysUnknown = true;
+        }
+        if (hit) return { present: true, matches: true };
+        return sysUnknown ? null : { present: true, matches: false };
+      }
+      case 'material': {
+        var mat = String(p.material || '').trim();
+        if (!mat) return { present: false, matches: false };
+        if (!f.value) return { present: true, matches: true };
+        var segs = mat.split(/[;,|]+/).map(function(s) { return s.trim(); }).filter(Boolean);
+        segs.push(mat);
+        var mAny = false, mNull = false;
+        segs.forEach(function(sv) {
+          var m = _matchValue(f.value, sv);
+          if (m === null) mNull = true; else if (m) mAny = true;
+        });
+        if (mAny) return { present: true, matches: true };
+        return mNull ? null : { present: true, matches: false };
+      }
+      case 'partOf': {
+        var rel = String(f.relation || '').toUpperCase();
+        if (rel && rel !== 'IFCRELCONTAINEDINSPATIALSTRUCTURE') return null; // only containment is extracted
+        if (f.entity) {
+          var pe = _matchEntity(f.entity, 'IFCBUILDINGSTOREY');
+          if (pe !== true) return null; // container types other than storey unsupported
+        }
+        var st = String(p.storey || '').trim();
+        return { present: !!st, matches: !!st };
+      }
+    }
+    return null;
+  }
+
+  // Applicability semantics: the facet must be present AND match.
+  function _facetHolds(f, p) {
+    var r = _facetEval(f, p);
+    if (r === null) return null;
+    return r.present && r.matches === true;
+  }
+
+  // Requirement semantics: honour the facet cardinality.
+  function _facetRequired(f, p) {
+    var r = _facetEval(f, p);
+    if (r === null) return null;
+    var hit = r.present && r.matches === true;
+    if (f.cardinality === 'prohibited') return !hit;
+    if (f.cardinality === 'optional') return !r.present || r.matches === true;
+    return hit;
+  }
+
+  function _reqDesc(f) {
+    var pre = f.cardinality === 'prohibited' ? 'Must not have ' : f.cardinality === 'optional' ? 'If present: ' : 'Required: ';
+    return pre + _facetDesc(f);
+  }
+
+  // Execute parsed IDS specifications against the loaded models.
+  // Output shape matches the core's IDS results pipeline
+  // (results rows + summary.bySpec) so the existing panel renders it.
+  function runIDSSpecs(specs, models) {
+    var results = [];
+    var summary = { total: 0, pass: 0, fail: 0, bySpec: {} };
+    (specs || []).forEach(function(spec) {
+      var bs = { pass: 0, fail: 0, applicable: 0, unchecked: 0, notes: [] };
+      summary.bySpec[spec.name] = bs;
+      var appNull = false;
+      function note(msg) { if (bs.notes.indexOf(msg) < 0) bs.notes.push(msg); }
+      function row(desc, el, p, model) {
+        results.push({
+          specName: spec.name, ruleDesc: desc, severity: 'error', status: 'fail',
+          elementId: el.expressId, globalId: p.globalId || '', ifcType: p.ifcType || '',
+          elementName: p.name || ('#' + el.expressId), modelId: model.id, storey: p.storey || ''
         });
       }
-      rules.push({name:name, entity:entity, requirements:reqTypes});
+      (models || []).forEach(function(model) {
+        if (model.visible === false) return;
+        (model.elements || []).forEach(function(el) {
+          var p = el.props || {};
+          var applies = true;
+          for (var i = 0; i < spec.applicability.length; i++) {
+            var h = _facetHolds(spec.applicability[i], p);
+            if (h === null) {
+              appNull = true;
+              note('Applicability "' + _facetDesc(spec.applicability[i]) + '" not checkable in-browser');
+              applies = false; break;
+            }
+            if (!h) { applies = false; break; }
+          }
+          if (!applies) return;
+          bs.applicable++;
+          if (spec.cardinality === 'prohibited') {
+            summary.total++; summary.fail++; bs.fail++;
+            row('Prohibited: no elements may match this applicability', el, p, model);
+            return;
+          }
+          var elFailed = false, elUnchecked = false;
+          spec.requirements.forEach(function(f) {
+            if (f.type === 'property' && f.dataType) note('dataType "' + f.dataType + '" not checked (value-only comparison)');
+            var res = _facetRequired(f, p);
+            if (res === null) { elUnchecked = true; note('Requirement "' + _facetDesc(f) + '" not checkable in-browser'); return; }
+            summary.total++;
+            if (res) { summary.pass++; }
+            else { summary.fail++; elFailed = true; row(_reqDesc(f), el, p, model); }
+          });
+          if (elUnchecked) bs.unchecked++;
+          if (elFailed) bs.fail++; else bs.pass++;
+        });
+      });
+      if (spec.cardinality === 'required' && bs.applicable === 0) {
+        if (appNull) note('Specification skipped (unsupported applicability)');
+        else {
+          note('No applicable elements found — this specification requires at least one');
+          summary.total++; summary.fail++; bs.fail++;
+        }
+      }
+      bs.note = bs.notes.join(' · ');
     });
-    return {title:title, ruleCount:rules.length, rules:rules};
+    return { results: results, summary: summary };
+  }
+
+  // ── IDS Import (summary) ─────────────────────────────────────────
+  // Parses an IDS XML file and returns a human-readable summary of the
+  // specifications (used to preview what a file contains). Built on the
+  // same parser as the execution engine.
+
+  function importIDS(xmlString) {
+    var parsed = parseIDSSpec(xmlString);
+    if (parsed.error) return { error: parsed.error };
+    var rules = parsed.specs.map(function(sp) {
+      var entity = '*';
+      sp.applicability.forEach(function(f) { if (f.type === 'entity' && f.name) entity = _vsDesc(f.name); });
+      return { name: sp.name, entity: entity, requirements: sp.requirements.map(_facetDesc) };
+    });
+    return { title: parsed.title, ruleCount: rules.length, rules: rules };
   }
 
   // ── Expose on window for DataQualityPanel in index.html ───────────
@@ -701,6 +1192,8 @@
   window._ccNLSFB_TABLE1 = NLSFB_TABLE1;
   window._ccExportIDS = exportIDS;
   window._ccImportIDS = importIDS;
+  window._ccParseIDS = parseIDSSpec;
+  window._ccRunIDS = runIDSSpecs;
 
   // ── ClashControl Quality Score (0–100) ───────────────────────────
   // Single-number summary across the existing data-quality + accessibility
@@ -791,7 +1284,7 @@
       id: 'data-quality',
       alwaysOn: true,
       name: 'Data quality checks',
-      description: 'BIM-basics, ILS and NL-SfB classification check engines behind the Data Quality panel — naming, classification, property completeness, IDS import/export.'
+      description: 'BIM-basics, ILS and NL-SfB classification check engines behind the Data Quality panel — naming, classification, property completeness, plus a buildingSMART IDS 1.0 engine (parse, execute against the loaded models, import/export).'
     });
   }
 })();

@@ -17823,6 +17823,21 @@ function startApp() {
   ];
 
   function parseIDSXml(xmlText) {
+    // Full IDS 1.0 engine (all facets, restrictions, cardinality) lives in
+    // the data-quality addon. When it's loaded, parse there and tag the
+    // specs so runIDSValidation routes them to the addon executor. The
+    // legacy regex-based parser below stays as the no-addon fallback.
+    if (typeof window._ccParseIDS === 'function' && typeof window._ccRunIDS === 'function') {
+      var v2 = window._ccParseIDS(xmlText);
+      if (v2 && !v2.error && v2.specs && v2.specs.length) {
+        return v2.specs.map(function(sp) {
+          sp.__ids2 = true;
+          sp.rules = sp.rules || []; // legacy tooltip/count code reads .rules
+          return sp;
+        });
+      }
+      if (v2 && v2.error) console.warn('IDS parse:', v2.error);
+    }
     var parser = new DOMParser();
     var doc = parser.parseFromString(xmlText, 'text/xml');
     var specs = [];
@@ -17903,6 +17918,19 @@ function startApp() {
     var summary = {total: 0, pass: 0, fail: 0, bySpec: {}};
 
     setTimeout(function() {
+      // Specs parsed by the data-quality addon's IDS 1.0 engine run there
+      // (full facet/cardinality semantics); bundled simplified specs keep
+      // the legacy regex loop below.
+      var v2specs = specs.filter(function(sp) { return sp.__ids2; });
+      if (v2specs.length && typeof window._ccRunIDS === 'function') {
+        var r2 = window._ccRunIDS(v2specs, models);
+        results = results.concat(r2.results);
+        summary.total += r2.summary.total;
+        summary.pass += r2.summary.pass;
+        summary.fail += r2.summary.fail;
+        Object.keys(r2.summary.bySpec).forEach(function(k) { summary.bySpec[k] = r2.summary.bySpec[k]; });
+      }
+      specs = specs.filter(function(sp) { return !sp.__ids2; });
       specs.forEach(function(spec) {
         var specPass = 0, specFail = 0;
         spec.rules.forEach(function(rule) {
@@ -19132,6 +19160,9 @@ function startApp() {
             <div style=${{height: 3, background: 'var(--bg-primary)', borderRadius: 2, overflow: 'hidden'}}>
               <div style=${{height: '100%', width: pct + '%', background: pct >= 80 ? '#4ade80' : pct >= 50 ? '#fbbf24' : '#f87171', borderRadius: 2}}></div>
             </div>
+            ${(ss.note || ss.unchecked > 0) && html`<div style=${{fontSize: '0.57rem', color: 'var(--text-faint)', marginTop: 1}}>
+              ${ss.note}${ss.unchecked > 0 ? ((ss.note ? ' · ' : '') + ss.unchecked + ' element' + (ss.unchecked !== 1 ? 's' : '') + ' partially checked') : ''}
+            </div>`}
           </div>`;
         })}
 
