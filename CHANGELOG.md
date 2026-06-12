@@ -1,5 +1,8 @@
 # Changelog
 
+## v5.20.17 (2026-06-12)
+- IDS 1.0 execution engine — run imported .ids files against loaded models (#622)
+
 ## v5.20.16 (2026-06-12)
 - smart-bridge: bulk-by-default inputs for mutating tools (cut agent round-trips)
 
