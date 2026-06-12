@@ -1,8 +1,11 @@
-// ClashControl geoplace addon — places the IFC in a real-world context
-// v1 path: read IfcSite RefLatitude/Longitude from the loaded model (or take
-// a manual lat/lon from the user), then render a textured raster basemap
-// plane under the model. No proj4js, no IfcMapConversion yet — those are
-// v1.1 when a paying user needs them.
+// ClashControl geoplace addon — places the IFC in a real-world context.
+// Coordinate sources, in order of convenience:
+//   1. IfcSite RefLatitude/Longitude read straight from the model
+//   2. IFC4 IfcMapConversion projected Eastings/Northings, reprojected to
+//      lat/lon via proj4 (placement-grade, ~1 m — see the reprojection
+//      block below; NOT RDNAPTRANS survey-grade)
+//   3. a manual lat/lon typed by the user
+// then render a textured raster basemap plane under the model.
 //
 // IFC origin leads: the model never moves. The basemap is positioned in IFC
 // space at the model's bbox centre, oriented to the model's true north
@@ -205,6 +208,101 @@
     return box;
   }
 
+  // ── Projected CRS → WGS84 reprojection (placement-grade) ───────
+  // Turns the IFC4 IfcMapConversion projected Eastings/Northings into
+  // lat/lon so a georeferenced model auto-places on the basemap without
+  // the user hand-typing coordinates. proj4 is lazy-loaded only when a
+  // projection is actually requested.
+  //
+  // Accuracy: the defs below carry the 7-parameter Helmert (towgs84), so
+  // no grid file is needed and the result lands within ~1 m. This is
+  // PLACEMENT-grade (basemap / 3D context), NOT RDNAPTRANS-certified
+  // survey-grade — full RD↔ETRS89 needs the NTv2 grid + quasi-geoid,
+  // which is a megabytes-scale opt-in we deliberately don't ship here.
+  var PROJ4_URL = 'https://cdn.jsdelivr.net/npm/proj4@2.20.9/dist/proj4.js';
+
+  // EPSG → {label, def}. Just the systems our users actually hit; the
+  // selector is the escape hatch for anything an IFC doesn't name.
+  var CRS_DEFS = {
+    '28992': {label:'Amersfoort / RD New — Netherlands', def:'+proj=sterea +lat_0=52.1561605555556 +lon_0=5.38763888888889 +k=0.9999079 +x_0=155000 +y_0=463000 +ellps=bessel +towgs84=565.417,50.3319,465.552,-0.398957,0.343988,-1.8774,4.0725 +units=m +no_defs'},
+    '31370': {label:'Belgian Lambert 72 — Belgium', def:'+proj=lcc +lat_1=51.16666723333333 +lat_2=49.8333339 +lat_0=90 +lon_0=4.367486666666666 +x_0=150000.013 +y_0=5400088.438 +ellps=intl +towgs84=-106.8686,52.2978,-103.7239,0.3366,-0.457,1.8422,-1.2747 +units=m +no_defs'},
+    '2056':  {label:'CH1903+ / LV95 — Switzerland', def:'+proj=somerc +lat_0=46.95240555555556 +lon_0=7.439583333333333 +k_0=1 +x_0=2600000 +y_0=1200000 +ellps=bessel +towgs84=674.374,15.056,405.346,0,0,0,0 +units=m +no_defs'},
+    '27700': {label:'OSGB36 / British National Grid — UK', def:'+proj=tmerc +lat_0=49 +lon_0=-2 +k=0.9996012717 +x_0=400000 +y_0=-100000 +ellps=airy +towgs84=446.448,-125.157,542.06,0.15,0.247,0.842,-20.489 +units=m +no_defs'},
+    '25831': {label:'ETRS89 / UTM 31N — NL/BE', def:'+proj=utm +zone=31 +ellps=GRS80 +towgs84=0,0,0,0,0,0,0 +units=m +no_defs'},
+    '25832': {label:'ETRS89 / UTM 32N — DE/NL', def:'+proj=utm +zone=32 +ellps=GRS80 +towgs84=0,0,0,0,0,0,0 +units=m +no_defs'},
+    '3857':  {label:'Web Mercator', def:'+proj=merc +a=6378137 +b=6378137 +lat_ts=0 +lon_0=0 +x_0=0 +y_0=0 +k=1 +units=m +nadgrids=@null +no_defs'},
+    '4326':  {label:'WGS84 — already lat/lon', def:'+proj=longlat +datum=WGS84 +no_defs'}
+  };
+
+  // Map an IFC TargetCRS.Name to a registry key. Handles "EPSG:28992",
+  // "urn:ogc:def:crs:EPSG::28992", bare codes, and a few common names.
+  function resolveEpsg(epsgStr) {
+    if (!epsgStr) return null;
+    var m = String(epsgStr).match(/(\d{4,6})/);
+    if (m && CRS_DEFS[m[1]]) return m[1];
+    var low = String(epsgStr).toLowerCase();
+    if (low.indexOf('rd new') >= 0 || low.indexOf('amersfoort') >= 0 || low.indexOf('rijksdriehoek') >= 0) return '28992';
+    if (low.indexOf('lambert 72') >= 0 || low.indexOf('lambert72') >= 0 || low.indexOf('belge') >= 0) return '31370';
+    if (low.indexOf('british national') >= 0 || low.indexOf('osgb') >= 0) return '27700';
+    if (low.indexOf('lv95') >= 0 || low.indexOf('ch1903') >= 0) return '2056';
+    return null;
+  }
+
+  var _proj4P = null;
+  function loadProj4() {
+    if (window.proj4) return Promise.resolve(window.proj4);
+    if (_proj4P) return _proj4P;
+    _proj4P = new Promise(function(resolve, reject){
+      var s = document.createElement('script');
+      s.src = PROJ4_URL; s.async = true;
+      s.onload = function(){ window.proj4 ? resolve(window.proj4) : reject(new Error('proj4 loaded but global missing')); };
+      s.onerror = function(){ _proj4P = null; reject(new Error('Failed to load proj4 from CDN')); };
+      document.head.appendChild(s);
+    });
+    return _proj4P;
+  }
+
+  // List of {epsg, label} for the CRS selector.
+  window._ccCRSList = function() {
+    return Object.keys(CRS_DEFS).map(function(k){ return {epsg:k, label:CRS_DEFS[k].label}; });
+  };
+  // Resolve an IFC CRS name → registry key (or null if unrecognised).
+  window._ccCRSResolve = resolveEpsg;
+
+  // Reproject projected (E, N) in the given CRS to {lat, lon} WGS84.
+  window._ccReprojectToWGS84 = function(eastings, northings, crsKey) {
+    var entry = CRS_DEFS[crsKey];
+    if (!entry) return Promise.reject(new Error('Unknown CRS: ' + crsKey));
+    var e = Number(eastings), n = Number(northings);
+    if (!isFinite(e) || !isFinite(n)) return Promise.reject(new Error('Eastings/Northings are not numeric'));
+    return loadProj4().then(function(proj4){
+      var ll = proj4(entry.def, 'WGS84', [e, n]); // → [lon, lat]
+      return {lon: ll[0], lat: ll[1]};
+    });
+  };
+
+  // One-shot: reproject a model's IfcMapConversion and place the basemap.
+  // North/elevation flow through the existing _ccGeoplaceModel path
+  // (which already prefers IfcMapConversion grid rotation for north), so
+  // the reprojection only adds the horizontal lat/lon.
+  window._ccGeoplaceFromCRS = function(modelId, mc, crsKey) {
+    if (!mc || mc.eastings == null || mc.northings == null) {
+      return Promise.reject(new Error('No projected Eastings/Northings on this model'));
+    }
+    var key = crsKey || resolveEpsg(mc.epsg);
+    if (!key) return Promise.reject(new Error('Unrecognised CRS' + (mc.epsg ? ' "' + mc.epsg + '"' : '') + ' — pick one from the list'));
+    return window._ccReprojectToWGS84(mc.eastings, mc.northings, key).then(function(ll){
+      if (!isFinite(ll.lat) || !isFinite(ll.lon) || Math.abs(ll.lat) > 90 || Math.abs(ll.lon) > 180) {
+        throw new Error('Reprojection gave out-of-range lat/lon — wrong CRS for this model?');
+      }
+      return window._ccGeoplaceModel(modelId, {
+        refLat: ll.lat, refLon: ll.lon,
+        refElev: Number(mc.orthogonalHeight) || 0,
+        source: 'CRS:' + key
+      });
+    });
+  };
+
   // ── Public API ────────────────────────────────────────────────
   // Apply / refresh a basemap for the given model
   window._ccGeoplaceModel = function(modelId, geo) {
@@ -291,7 +389,7 @@
   register({
     id: 'geoplace',
     name: 'Geo Placement',
-    description: 'Place the model on a real-world basemap. Reads IfcSite lat/lon when present, or accepts manual coordinates.',
+    description: 'Place the model on a real-world basemap. Reads IfcSite lat/lon or the IFC4 projected CRS (reprojected to lat/lon, placement-grade), with a CRS selector and manual entry as fallbacks.',
     autoActivate: true,
     icon: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#5b8def" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/></svg>',
 
