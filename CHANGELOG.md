@@ -1,5 +1,8 @@
 # Changelog
 
+## v5.20.16 (2026-06-12)
+- smart-bridge: bulk-by-default inputs for mutating tools (cut agent round-trips)
+
 ## v5.20.15 (2026-06-11)
 - Geo align nudge + site clearing for the 3D world context (#620)
 
