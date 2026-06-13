@@ -1,5 +1,8 @@
 # Changelog
 
+## v5.20.23 (2026-06-13)
+- feat: surface last detection error via get_status.lastDetectionError (message+stack) so the orchestrator can report failures without console access (#633)
+
 ## v5.20.22 (2026-06-13)
 - Scoped sync: exclude heavy models from the live Revit sync (skip on receive + persist + re-include) (#632)
 
