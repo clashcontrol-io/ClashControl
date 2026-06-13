@@ -85,10 +85,12 @@ const TOOLS = [
   {
     name: 'get_status',
     description:
-      'Returns a snapshot of the current ClashControl session: loaded IFC models with discipline ' +
-      'and element counts, total clash and issue counts, active detection rules (gap tolerance, ' +
-      'hard/soft mode), current UI tab, walk mode state, and theme. Use this first to understand ' +
-      'what the user is working with.',
+      'Returns a snapshot of the current ClashControl session: loaded models — each with discipline, ' +
+      'element count, source ("revit-direct" for a live Revit link, else "ifc"), version, lastSync, ' +
+      'and a coarse revision stamp — plus total clash and issue counts, active detection rules (gap ' +
+      'tolerance, hard/soft mode), current UI tab, walk mode state, and theme. Use this first to ' +
+      "understand what the user is working with, and use each model's revision/lastSync to check " +
+      'whether CC is in sync with another live tool (e.g. PDRA on the same Revit model).',
     inputSchema: { type: 'object', properties: {}, required: [] },
   },
   {
@@ -96,7 +98,11 @@ const TOOLS = [
     description:
       'Retrieves detected clash pairs between IFC elements. Each clash includes its index, title, ' +
       'status (open/resolved), priority, building storey, element types and names for both sides, ' +
-      'distance in mm, AI-assigned severity, and category. Filter by status and limit results.',
+      'distance in mm, AI-assigned severity, and category. Also returns stable element identity for ' +
+      'each side — globalIdA/globalIdB (IFC GlobalId, equal to the Revit IfcGUID for Revit-exported ' +
+      'models) and revitIdA/revitIdB (Revit ElementId, present only on live-linked models). Use these ' +
+      'GUIDs to cross-reference a clash element with other tools or models (e.g. a Revit/PDRA element ' +
+      'by IfcGUID). Filter by status and limit results.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -117,7 +123,9 @@ const TOOLS = [
     name: 'get_issues',
     description:
       'Retrieves coordination issues (manually created or promoted from clashes). Each issue ' +
-      'includes index, title, status, priority, assignee, and description.',
+      'includes index, title, status, priority, assignee, description, and the IFC GlobalIds of the ' +
+      'elements it involves (globalIds[]) plus Revit ElementIds when present (revitIdA/revitIdB) for ' +
+      'cross-tool joins.',
     inputSchema: {
       type: 'object',
       properties: {
