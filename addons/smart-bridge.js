@@ -385,6 +385,9 @@
       // orchestrator can report it without browser-console access. null when OK.
       lastDetectionError: (function(){ try { return window._ccLastDetectError || null; } catch(e){ return null; } })(),
       detecting: !!s.detecting,
+      // Live progress while detecting so the orchestrator gets intermediate
+      // feedback instead of just true→false. {done,total,pct} or null when idle.
+      detectionProgress: (function(){ try { return (s.detecting && window._ccDetectProgress) ? window._ccDetectProgress : null; } catch(e){ return null; } })(),
       activeTab: s.tab || 'clashes', walkMode: !!s.walkMode,
       theme: document.documentElement.getAttribute('data-theme') || 'dark'
     };
@@ -630,6 +633,7 @@
   handlers.run_detection = function(p) {
     var s = _getState();
     if (!s.models || !s.models.length) return 'No models loaded. Open an IFC file first.';
+    if (s.detecting) return 'Detection already in progress — poll get_status (detecting / detectionProgress) until it finishes before starting another.';
     var updates = {};
     if (p.modelA) updates.modelA = p.modelA;
     if (p.modelB) updates.modelB = p.modelB;
@@ -637,10 +641,16 @@
     if (p.hard != null) updates.hard = p.hard;
     if (p.excludeSelf != null) updates.excludeSelf = p.excludeSelf;
     _dispatch({ t: 'UPD_RULES', u: updates });
+    // Force a fresh compute: a stale type-pair "impossibility" memo from a prior
+    // (crashed/empty) run can make detection short-circuit to 0 instantly. Clearing
+    // it guarantees the orchestrator gets a real result (correctness over cache).
+    try { if (window._ccResetTypePairMemo) window._ccResetTypePairMemo(); } catch(e) {}
     if (window._ccRunDetection) {
-      window._ccRunDetection();
+      var started = window._ccRunDetection();
+      if (started === false) return 'Detection already in progress — poll get_status until it finishes.';
       return 'Detection started: ' + (p.modelA || 'all') + ' vs ' + (p.modelB || 'all') +
-        (p.maxGap != null ? ', gap ' + p.maxGap + 'mm' : '') + (p.hard ? ', hard clashes' : '');
+        (p.maxGap != null ? ', gap ' + p.maxGap + 'mm' : '') + (p.hard ? ', hard clashes' : '') +
+        '. Async — poll get_status (detecting/detectionProgress); results via get_clashes; failures via get_status.lastDetectionError.';
     }
     return 'Detection trigger not available. Make sure models are loaded.';
   };
