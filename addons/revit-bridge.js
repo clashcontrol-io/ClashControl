@@ -345,7 +345,10 @@
           isLink: isLink,
           elements:[], meshes:[],
           count: msg.elementCount || 0,
-          received: 0
+          received: 0,
+          // Document version (Connector) → model.stats → modelInstanceId + freshness.
+          docVersion: msg.docVersion || null,
+          numberOfSaves: msg.numberOfSaves || 0
         };
         d({t:'UPD_REVIT_DIRECT', u:{loading:true, progress:0, elementCount:msg.elementCount||0}});
         d({t:'BRIDGE_LOG', logType:'pull', text:'Receiving ' + (isLink ? 'linked model' : 'model') + ' "' + msg.name + '" (' + (msg.elementCount||'?') + ' elements)...'});
@@ -654,7 +657,7 @@
         storeyData: storeyData,
         spatialHierarchy: {},
         relatedPairs: relatedPairs,
-        stats: {elementCount:finalElements.length, source:'revit-direct', lastSync:Date.now()}
+        stats: {elementCount:finalElements.length, source:'revit-direct', lastSync:Date.now(), docVersion:_revitBuf.docVersion||null, numberOfSaves:_revitBuf.numberOfSaves||0}
       };
       window._ccDispatch({t:'REPLACE_MODEL', id:existingModel.id, v:modelData});
       _revitModelMap[mapKey] = existingModel.id;
@@ -666,7 +669,7 @@
         id: modelId, name: _revitBuf.name, discipline:disc, color:col, visible:true, _version:1,
         meshes:_revitBuf.meshes, elements:_revitBuf.elements, storeys:storeys,
         storeyData:storeyData, spatialHierarchy:{}, relatedPairs:relatedPairs,
-        stats:{elementCount:_revitBuf.elements.length, source:'revit-direct', lastSync:Date.now()}
+        stats:{elementCount:_revitBuf.elements.length, source:'revit-direct', lastSync:Date.now(), docVersion:_revitBuf.docVersion||null, numberOfSaves:_revitBuf.numberOfSaves||0}
       };
       window._ccDispatch({t:'ADD_MODEL', v:modelData2});
       _revitModelMap[mapKey] = modelId;
