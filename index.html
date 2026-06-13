@@ -791,6 +791,15 @@ function startApp() {
     detectClashesAsync(s.models, s.rules).then(function(result) {
       classifyClashes(result);
       d({t:'MERGE_CLASHES', v:result});
+    }).catch(function(err) {
+      // Surface failures (e.g. RangeError "Invalid string length" on very large
+      // federations) instead of leaving an unhandled rejection + stuck spinner.
+      // The full stack is logged so it can be diagnosed.
+      console.error('[Detection] failed:', err);
+      d({t:'STOP_DETECT'});
+      var msg = (err && err.message) || String(err);
+      if (window._ccToast) window._ccToast('Detection failed: ' + msg +
+        (msg.indexOf('string length') >= 0 ? ' — a very large model overflowed serialization; exclude it from sync and retry.' : ''));
     });
   };
 
@@ -15654,7 +15663,9 @@ function startApp() {
   function ModelCard(props) {
     var m=props.m, d=props.d, s=props.s;
     var op=useState(false), open=op[0], setOpen=op[1];
-    return html`<div style=${{background:'var(--bg-secondary)',border:'1px solid var(--border)',borderRadius:8,overflow:'hidden'}}>
+    // flexShrink:0 — in the shared scrolling column, many levels below would
+    // otherwise compress these rows to thin blank lines instead of scrolling.
+    return html`<div style=${{background:'var(--bg-secondary)',border:'1px solid var(--border)',borderRadius:8,overflow:'hidden',flexShrink:0}}>
       <div style=${{display:'flex',alignItems:'center',gap:'.35rem',padding:'.35rem .5rem'}}>
         <span onClick=${function(){d({t:A.UPD_MODEL,id:m.id,u:{visible:!m.visible}})}}
           style=${{width:14,height:14,borderRadius:3,border:'2px solid '+(m.visible!==false?'var(--accent)':'#475569'),background:m.visible!==false?'var(--accent)':'transparent',cursor:'pointer',flexShrink:0,display:'flex',alignItems:'center',justifyContent:'center'}}>
@@ -15670,7 +15681,11 @@ function startApp() {
           style=${{fontSize:'0.6rem',padding:'0 .3rem',borderRadius:99,background:'var(--color-warning-bg)',color:'var(--color-warning-fg)',border:'none',cursor:'pointer',flexShrink:0,fontFamily:'var(--font-body)'}}>partial</button>`}
         ${m.stats && m.stats.loadTime && html`<span style=${{fontSize:'0.63rem',color:'var(--text-faint)',flexShrink:0}}>${(m.stats.loadTime/1000).toFixed(1)}s</span>`}
         <button onClick=${function(){setOpen(!open)}} style=${{...S_BTN,padding:'0 2px',background:'none',color:'var(--text-faint)',fontSize:'0.69rem'}}>${open?'▲':'▼'}</button>
-        <button onClick=${function(){if(!confirm('Remove "'+m.name+'" from this project?'))return;d({t:A.DEL_MODEL,id:m.id});idbDeleteFile(m.id);idbDeleteGeoCache(m.id);}} style=${{...S_BTN,padding:'0 2px',background:'none',color:'var(--text-faint)',fontSize:'0.69rem'}}>✕</button>
+        <button onClick=${function(){if(!confirm('Remove "'+m.name+'" from this project?'))return;
+          // For a live Revit model, also exclude it from future syncs so a refresh
+          // doesn't re-pull it (scoped sync). Re-include via the Revit Bridge panel.
+          if(m.stats&&m.stats.source==='revit-direct'&&window._ccRevitExcludeModel)window._ccRevitExcludeModel(m.rawName||m.name);
+          d({t:A.DEL_MODEL,id:m.id});idbDeleteFile(m.id);idbDeleteGeoCache(m.id);}} style=${{...S_BTN,padding:'0 2px',background:'none',color:'var(--text-faint)',fontSize:'0.69rem'}}>✕</button>
       </div>
       ${open && html`<div style=${{padding:'.5rem',borderTop:'1px solid var(--border)',display:'flex',flexDirection:'column',gap:'.35rem'}}>
         <select value=${m.discipline} onChange=${function(e){var p=DISC.find(function(x){return x.id===e.target.value});d({t:A.UPD_MODEL,id:m.id,u:{discipline:e.target.value,color:p?p.c:m.color}})}}
@@ -31990,6 +32005,12 @@ function startApp() {
     var keySt = useState(br.apiKey || ''), apiKey = keySt[0], setApiKey = keySt[1];
     var hostSt = useState(br.mcpHost || 'localhost'), mcpHost = hostSt[0], setMcpHost = hostSt[1];
     var mcpPortSt = useState(br.mcpPort || 8080), mcpPort = mcpPortSt[0], setMcpPort = mcpPortSt[1];
+    var exclSt = useState(function(){ try { return window._ccRevitGetExcluded ? window._ccRevitGetExcluded() : []; } catch(e){ return []; } });
+    var excluded = exclSt[0], setExcluded = exclSt[1];
+    function _reincludeModel(name){
+      if (window._ccRevitIncludeModel) window._ccRevitIncludeModel(name);
+      setExcluded(window._ccRevitGetExcluded ? window._ccRevitGetExcluded() : []);
+    }
 
     useEffect(function() {
       if (window._loadBridgeConfig) {
@@ -32056,6 +32077,16 @@ function startApp() {
               </span>
               ${rd.connected && rd.pluginVersion && html`<span style=${{fontSize:'0.63rem',color:'var(--text-faint)',marginLeft:'.3rem'}}>v${rd.pluginVersion}</span>`}
             </div>
+
+            ${excluded.length>0 && html`<div style=${{padding:'.4rem .5rem',background:'var(--bg-secondary)',border:'1px solid var(--border)',borderRadius:6}}>
+              <div style=${{fontSize:'0.69rem',fontWeight:600,color:'var(--text-muted)',marginBottom:'.25rem'}}>Excluded from sync (${excluded.length})</div>
+              <div style=${{fontSize:'0.6rem',color:'var(--text-faint)',marginBottom:'.3rem',lineHeight:1.4}}>These models are skipped on sync (not re-pulled on refresh). Re-include to sync them again.</div>
+              ${excluded.map(function(nm){return html`<div key=${nm} style=${{display:'flex',alignItems:'center',gap:'.3rem',padding:'.15rem 0'}}>
+                <span style=${{flex:1,fontSize:'0.72rem',color:'var(--text-secondary)',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}} title=${nm}>${nm}</span>
+                <button onClick=${function(){_reincludeModel(nm);}} style=${{...S_BTN2,padding:'.1rem .4rem',fontSize:'0.63rem',background:'var(--accent)',color:'#fff'}}>Re-include</button>
+              </div>`;})}
+              <div style=${{fontSize:'0.58rem',color:'var(--text-faint)',marginTop:'.25rem'}}>Re-sync (or refresh) after re-including to load them.</div>
+            </div>`}
 
             ${rd.versionWarning && html`<div style=${{fontSize:'0.69rem',color:'#fbbf24',background:'#422006',padding:'.35rem .5rem',borderRadius:6}}>
               Protocol mismatch: ${rd.versionWarning}. Some features may not work.

@@ -418,6 +418,10 @@
           // NOTE: clashes store elem*Type/Name/Storey — read those (the old
           // typeA/nameA/storey fields don't exist on the clash, so they were null).
           storey: c.storey || c.elemAStorey || c.elemBStorey || null,
+          // Per-side storey + element bbox SIZE (mm, [w,d,h]) — for the orchestrator's
+          // storey-band rule (arch finish-floor vs structural slab in a storey's band).
+          storeyA: c.elemAStorey || null, storeyB: c.elemBStorey || null,
+          bboxA: c.bboxA || null, bboxB: c.bboxB || null,
           typeA: c.typeA || c.elemAType || null, typeB: c.typeB || c.elemBType || null,
           nameA: c.nameA || c.elemAName || null, nameB: c.nameB || c.elemBName || null,
           distance: c.distance != null ? c.distance : null,
