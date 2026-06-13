@@ -358,6 +358,8 @@
       openClashes: (s.clashes || []).filter(function(c) { return c.status !== 'resolved'; }).length,
       issueCount: (s.issues || []).length,
       activeProject: s.activeProject || null,
+      projectKey: s.activeProject || 'local', // connective-spine partition key
+      source: 'clashcontrol',
       rules: { maxGap: r.maxGap || 10, hard: !!r.hard, modelA: r.modelA || 'all', modelB: r.modelB || 'all', excludeSelf: !!r.excludeSelf },
       activeTab: s.tab || 'clashes', walkMode: !!s.walkMode,
       theme: document.documentElement.getAttribute('data-theme') || 'dark'
@@ -384,6 +386,7 @@
       (m.elements || []).forEach(function(el) { if (nm[el.expressId]) map[el.expressId] = _classOf(el.props); });
     });
     function classFor(mid, eid) { return (classIdx[mid] && classIdx[mid][eid]) || null; }
+    var pk = s.activeProject || 'local'; // projectKey — partitions the connective graph
 
     return {
       total: clashes.length,
@@ -404,13 +407,20 @@
           // Classification (NL-SfB/Uniclass/...) — the join key to finance/spec
           // sources that IFC GUID can't reach. storey is the spatial (zone) bucket.
           classificationA: classFor(c.modelAId, c.elemA),
-          classificationB: classFor(c.modelBId, c.elemB) };
+          classificationB: classFor(c.modelBId, c.elemB),
+          // Connective-spine MUST keys (for the provenance ledger / write-back):
+          // source + projectKey (the clash is the write target for set_clash_status,
+          // so clashId is its sourceLocalId; each element side carries its own).
+          source: 'clashcontrol', projectKey: pk, clashId: c.id || null,
+          sourceLocalIdA: c.globalIdA || (c.elemA != null ? String(c.elemA) : null),
+          sourceLocalIdB: c.globalIdB || (c.elemB != null ? String(c.elemB) : null) };
       })
     };
   };
 
   handlers.get_issues = function(p) {
     var s = _getState(); var issues = s.issues || []; var limit = p.limit || 50;
+    var pk = s.activeProject || 'local';
     return { total: issues.length,
       issues: issues.slice(0, limit).map(function(issue, i) {
         // Gather whatever element identity the issue carries, from any source:
@@ -427,7 +437,9 @@
           assignee: issue.assignee || null, description: issue.description || null,
           globalIds: gids,
           revitIdA: issue.revitIdA != null ? issue.revitIdA : null,
-          revitIdB: issue.revitIdB != null ? issue.revitIdB : null };
+          revitIdB: issue.revitIdB != null ? issue.revitIdB : null,
+          // Connective-spine MUST keys.
+          source: 'clashcontrol', projectKey: pk, sourceLocalId: issue.id || null };
       })
     };
   };
@@ -447,6 +459,7 @@
     if (!Object.keys(wantG).length && !Object.keys(wantR).length)
       return 'Provide globalId/globalIds (IFC GlobalId) or revitId/revitIds (Revit ElementId).';
     var limit = p.limit || 50;
+    var pk = s.activeProject || 'local';
     var out = [];
     (s.models || []).some(function(m) {
       (m.elements || []).some(function(el) {
@@ -457,7 +470,11 @@
             globalId: gid || null, revitId: rid != null ? rid : null,
             ifcType: pr.ifcType || null, name: pr.name || null,
             storey: pr.storey || null, material: pr.material || null,
-            classification: _classOf(pr) });
+            classification: _classOf(pr),
+            // Connective-spine MUST keys (element record). sourceLocalId = the
+            // element's stable id in CC (GlobalId, else expressId).
+            source: 'clashcontrol', projectKey: pk,
+            sourceLocalId: gid || String(el.expressId) });
         }
         return out.length >= limit;
       });
