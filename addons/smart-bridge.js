@@ -307,7 +307,20 @@
   handlers.get_status = function() {
     var s = _getState();
     var models = (s.models || []).map(function(m) {
-      return { name: m.name, discipline: m.discipline || 'Unknown', elements: (m.elements || []).length, visible: m.visible !== false };
+      // Source-aware revision stamp so an external tool (e.g. a PDRA join) can
+      // tell whether CC is talking about the same model state. Live link uses the
+      // Connector sync (source + lastSync + version); a loaded IFC is a snapshot
+      // identified by file name + element count + version. Both are coarse — they
+      // answer "same revision or not", not byte-equality.
+      var st = m.stats || {};
+      var live = st.source === 'revit-direct';
+      var revision = live
+        ? ('revit:' + (m.name || '') + '@v' + (m._version || 1) + (st.lastSync ? ('/' + st.lastSync) : ''))
+        : ('ifc:' + (m.name || '') + '#' + ((m.elements || []).length) + '@v' + (m._version || 1));
+      return { name: m.name, discipline: m.discipline || 'Unknown',
+        elements: (m.elements || []).length, visible: m.visible !== false,
+        source: st.source || 'ifc', version: m._version || 1,
+        lastSync: st.lastSync || null, revision: revision };
     });
     var r = s.rules || {};
     return {
@@ -335,7 +348,14 @@
           storey: c.storey || null, typeA: c.typeA || null, typeB: c.typeB || null,
           nameA: c.nameA || null, nameB: c.nameB || null,
           distance: c.distance != null ? c.distance : null,
-          aiSeverity: c.aiSeverity || null, aiCategory: c.aiCategory || null };
+          aiSeverity: c.aiSeverity || null, aiCategory: c.aiCategory || null,
+          // Stable identity for cross-tool joins (e.g. correlating a clash with a
+          // PDRA/Revit element). globalId = IFC GlobalId (= Revit IfcGUID for
+          // models exported from Revit); revitId = Revit ElementId when present
+          // (live link only — null for plain IFC loads). Present in both modes.
+          globalIdA: c.globalIdA || null, globalIdB: c.globalIdB || null,
+          revitIdA: c.revitIdA != null ? c.revitIdA : null,
+          revitIdB: c.revitIdB != null ? c.revitIdB : null };
       })
     };
   };
@@ -344,9 +364,21 @@
     var s = _getState(); var issues = s.issues || []; var limit = p.limit || 50;
     return { total: issues.length,
       issues: issues.slice(0, limit).map(function(issue, i) {
+        // Gather whatever element identity the issue carries, from any source:
+        // clash-promoted issues (globalIdA/B), data-quality issues (qualityGids),
+        // or single-element/BCF issues (globalId). Enables the same GUID join as
+        // clashes.
+        var gids = [];
+        if (issue.globalIdA) gids.push(issue.globalIdA);
+        if (issue.globalIdB) gids.push(issue.globalIdB);
+        if (Array.isArray(issue.qualityGids)) gids = gids.concat(issue.qualityGids);
+        if (issue.globalId) gids.push(issue.globalId);
         return { index: i, title: issue.title || ('Issue ' + (i + 1)),
           status: issue.status || 'open', priority: issue.priority || 'normal',
-          assignee: issue.assignee || null, description: issue.description || null };
+          assignee: issue.assignee || null, description: issue.description || null,
+          globalIds: gids,
+          revitIdA: issue.revitIdA != null ? issue.revitIdA : null,
+          revitIdB: issue.revitIdB != null ? issue.revitIdB : null };
       })
     };
   };
@@ -901,10 +933,10 @@
   // Schema format: JSON Schema subset (OpenAPI-compatible).
 
   var _TOOL_MANIFEST = [
-    { name:'get_status',          description:'Returns a snapshot of the current session: models, clash/issue counts, detection rules, active tab, walk mode, theme.' },
-    { name:'get_clashes',         description:'Retrieves detected clash pairs with status, priority, severity, storey, element types/names, and distance.',
+    { name:'get_status',          description:'Snapshot of the current session: models (with source, version, lastSync and a coarse revision stamp per model — use to check sync with another live tool), clash/issue counts, detection rules, active tab, walk mode, theme.' },
+    { name:'get_clashes',         description:'Retrieves detected clash pairs with status, priority, severity, storey, element types/names, distance, and stable element identity (globalIdA/B = IFC GlobalId / Revit IfcGUID; revitIdA/B = Revit ElementId on live links) for cross-tool joins.',
       params:{ status:{type:'string',enum:['all','open','resolved','approved'],opt:1}, limit:{type:'number',opt:1} } },
-    { name:'get_issues',          description:'Retrieves coordination issues with status, priority, assignee, and description.',
+    { name:'get_issues',          description:'Retrieves coordination issues with status, priority, assignee, description, involved element IFC GlobalIds (globalIds[]) and Revit ElementIds (revitIdA/B) for cross-tool joins.',
       params:{ status:{type:'string',enum:['all','open','in_progress','resolved','closed'],opt:1}, limit:{type:'number',opt:1} } },
     { name:'run_detection',       description:'Starts clash detection between loaded IFC models. Results available via get_clashes.',
       params:{ modelA:{type:'string',opt:1}, modelB:{type:'string',opt:1}, maxGap:{type:'number',opt:1}, hard:{type:'boolean',opt:1}, excludeSelf:{type:'boolean',opt:1} } },
@@ -1327,7 +1359,12 @@
               Smart Bridge is running. Connect your AI — one click, no API key:
             </div>`}
 
-            ${!sb.llmConnected && html`<div style=${{background:'var(--bg-secondary)',borderRadius:6,padding:'.45rem .5rem',display:'flex',flexDirection:'column',gap:'.35rem'}}>
+            ${!sb.llmConnected && html`<button onClick=${function(){ if(d) d({t:'UPD_SMART_BRIDGE', u:{showSetup: !sb.showSetup}}); }}
+              style=${{..._btnSmall,background:'var(--bg-secondary)',color:'var(--text-secondary)',alignSelf:'stretch',textAlign:'left',fontWeight:600}}>
+              ${sb.showSetup ? '▾' : '▸'} Connect an AI assistant — Claude, ChatGPT, REST
+            </button>`}
+
+            ${!sb.llmConnected && sb.showSetup && html`<div style=${{background:'var(--bg-secondary)',borderRadius:6,padding:'.45rem .5rem',display:'flex',flexDirection:'column',gap:'.35rem'}}>
               <div style=${{display:'flex',alignItems:'center',gap:'.4rem'}}>
                 <span style=${{fontSize:'0.69rem',fontWeight:600,color:'#c084fc',flex:1}}>Claude Desktop / Claude Code</span>
                 <button id="cc-sb-claude-btn" onClick=${_autoConfigureClaude}

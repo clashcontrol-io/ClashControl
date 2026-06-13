@@ -85,10 +85,12 @@ const TOOLS = [
   {
     name: 'get_status',
     description:
-      'Returns a snapshot of the current ClashControl session: loaded IFC models with discipline ' +
-      'and element counts, total clash and issue counts, active detection rules (gap tolerance, ' +
-      'hard/soft mode), current UI tab, walk mode state, and theme. Use this first to understand ' +
-      'what the user is working with.',
+      'Returns a snapshot of the current ClashControl session: loaded models — each with discipline, ' +
+      'element count, source ("revit-direct" for a live Revit link, else "ifc"), version, lastSync, ' +
+      'and a coarse revision stamp — plus total clash and issue counts, active detection rules (gap ' +
+      'tolerance, hard/soft mode), current UI tab, walk mode state, and theme. Use this first to ' +
+      "understand what the user is working with, and use each model's revision/lastSync to check " +
+      'whether CC is in sync with another live tool (e.g. PDRA on the same Revit model).',
     inputSchema: { type: 'object', properties: {}, required: [] },
   },
   {
@@ -96,7 +98,11 @@ const TOOLS = [
     description:
       'Retrieves detected clash pairs between IFC elements. Each clash includes its index, title, ' +
       'status (open/resolved), priority, building storey, element types and names for both sides, ' +
-      'distance in mm, AI-assigned severity, and category. Filter by status and limit results.',
+      'distance in mm, AI-assigned severity, and category. Also returns stable element identity for ' +
+      'each side — globalIdA/globalIdB (IFC GlobalId, equal to the Revit IfcGUID for Revit-exported ' +
+      'models) and revitIdA/revitIdB (Revit ElementId, present only on live-linked models). Use these ' +
+      'GUIDs to cross-reference a clash element with other tools or models (e.g. a Revit/PDRA element ' +
+      'by IfcGUID). Filter by status and limit results.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -117,7 +123,9 @@ const TOOLS = [
     name: 'get_issues',
     description:
       'Retrieves coordination issues (manually created or promoted from clashes). Each issue ' +
-      'includes index, title, status, priority, assignee, and description.',
+      'includes index, title, status, priority, assignee, description, and the IFC GlobalIds of the ' +
+      'elements it involves (globalIds[]) plus Revit ElementIds when present (revitIdA/revitIdB) for ' +
+      'cross-tool joins.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -775,51 +783,33 @@ async function callBridge(toolName, params) {
 }
 
 // ── MCP stdio transport ───────────────────────────────────────────────────────
-// Protocol: each message is framed with "Content-Length: N\r\n\r\n" followed
-// by N bytes of UTF-8 JSON. Same format for both input (stdin) and output (stdout).
+// Protocol: the MCP stdio transport is NEWLINE-DELIMITED JSON — each JSON-RPC
+// message is a single line terminated by "\n", with no embedded newlines. (This
+// is NOT the LSP "Content-Length" framing — using that makes Claude Desktop fail
+// the initialize handshake with "Could not attach to MCP server".)
 // stdout is SACRED — only JSON-RPC messages go there. All logging uses stderr.
 
-let _inputBuf = Buffer.alloc(0);
+let _inputBuf = '';
 
 function send(msg) {
-  const json = JSON.stringify(msg);
-  const header = `Content-Length: ${Buffer.byteLength(json, 'utf8')}\r\n\r\n`;
-  process.stdout.write(header + json);
+  process.stdout.write(JSON.stringify(msg) + '\n');
 }
 
 process.stdin.on('data', (chunk) => {
-  _inputBuf = Buffer.concat([_inputBuf, chunk]);
-  drain();
-});
-
-function drain() {
-  while (true) {
-    const str = _inputBuf.toString('utf8');
-    const sep = str.indexOf('\r\n\r\n');
-    if (sep === -1) break;
-
-    const headers = str.slice(0, sep);
-    const m = headers.match(/content-length:\s*(\d+)/i);
-    if (!m) {
-      // Malformed — skip past the separator
-      _inputBuf = _inputBuf.slice(Buffer.byteLength(str.slice(0, sep + 4), 'utf8'));
-      continue;
-    }
-
-    const bodyLen = parseInt(m[1], 10);
-    const bodyStart = Buffer.byteLength(str.slice(0, sep + 4), 'utf8');
-    if (_inputBuf.length < bodyStart + bodyLen) break; // wait for more data
-
-    const bodyStr = _inputBuf.slice(bodyStart, bodyStart + bodyLen).toString('utf8');
-    _inputBuf = _inputBuf.slice(bodyStart + bodyLen);
+  _inputBuf += chunk.toString('utf8');
+  let idx;
+  while ((idx = _inputBuf.indexOf('\n')) !== -1) {
+    const line = _inputBuf.slice(0, idx).trim();
+    _inputBuf = _inputBuf.slice(idx + 1);
+    if (!line) continue; // tolerate blank lines / \r\n
 
     let msg;
-    try { msg = JSON.parse(bodyStr); }
+    try { msg = JSON.parse(line); }
     catch (e) { console.error('[mcp] JSON parse error:', e.message); continue; }
 
     handle(msg).catch((e) => console.error('[mcp] handle error:', e));
   }
-}
+});
 
 async function handle(msg) {
   const { id, method, params } = msg;
