@@ -655,6 +655,19 @@
     return 'Detection trigger not available. Make sure models are loaded.';
   };
 
+  // Reset a wedged/stuck detection from the MCP side (no browser restart needed).
+  // Clears the detecting flag so a fresh run_detection can start.
+  handlers.cancel_detection = function() {
+    var wasDetecting = !!(_getState() || {}).detecting;
+    try {
+      if (window._ccCancelDetection) window._ccCancelDetection();
+      else _dispatch({ t: 'STOP_DETECT' });
+    } catch (e) { return 'Cancel failed: ' + (e && e.message || e); }
+    try { window._ccDetectProgress = null; } catch (e) {}
+    return wasDetecting ? 'Detection cancelled and reset — you can run_detection again.'
+                        : 'No detection was running; state reset anyway.';
+  };
+
   handlers.set_detection_rules = function(p) {
     var u = {};
     if (p.maxGap != null) u.maxGap = p.maxGap;
@@ -1202,6 +1215,7 @@
     { name:'resync',              description:'Force the live Revit link to re-pull the model so CC matches the current Revit state. Live-link only (no-op for static IFC loads). Re-check get_status afterwards for the new revision.' },
     { name:'run_detection',       description:'Starts clash detection between loaded models (async). Results via get_clashes; on failure (e.g. very large federation) get_status.lastDetectionError reports the message + stack.',
       params:{ modelA:{type:'string',opt:1}, modelB:{type:'string',opt:1}, maxGap:{type:'number',opt:1}, hard:{type:'boolean',opt:1}, excludeSelf:{type:'boolean',opt:1} } },
+    { name:'cancel_detection',    description:'Reset a stuck/wedged detection (clears detecting:true) so a new run_detection can start — no browser restart needed.' },
     { name:'set_detection_rules', description:'Updates detection parameters without running detection.',
       params:{ maxGap:{type:'number',opt:1}, hard:{type:'boolean',opt:1}, excludeSelf:{type:'boolean',opt:1}, duplicates:{type:'boolean',opt:1} } },
     { name:'update_clash',        description:"Updates one clash by 0-based index, or many at once via items[] (bulk-safe: all targets resolved before any change). status can be open|resolved|approved|closed|expected. Use 'expected' (NOT 'resolved') for by-design/false-positive clashes — it's a reversible suppressed bucket, kept out of the open count and re-openable by setting status back to 'open'. 'resolved' means a real clash was actually fixed.",

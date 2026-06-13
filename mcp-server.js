@@ -237,6 +237,13 @@ const TOOLS = [
     },
   },
   {
+    name: 'cancel_detection',
+    description:
+      'Resets a stuck/wedged detection (clears the detecting flag) so a fresh run_detection can ' +
+      'start — recovers from a hung run without a browser/SmartBridge restart.',
+    inputSchema: { type: 'object', properties: {}, required: [] },
+  },
+  {
     name: 'set_detection_rules',
     description:
       'Updates clash detection parameters without running detection. Configures gap tolerance, ' +
