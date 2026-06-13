@@ -787,6 +787,7 @@ function startApp() {
     var s = window._ccLatestState;
     var d = window._ccDispatch;
     if (!s || !d || !s.models || !s.models.length) return;
+    try { window._ccLastDetectError = null; } catch(e) {} // clear stale error on new run
     d({t:'DETECTING'}); d({t:'TAB',v:'clashes'});
     detectClashesAsync(s.models, s.rules).then(function(result) {
       classifyClashes(result);
@@ -794,10 +795,15 @@ function startApp() {
     }).catch(function(err) {
       // Surface failures (e.g. RangeError "Invalid string length" on very large
       // federations) instead of leaving an unhandled rejection + stuck spinner.
-      // The full stack is logged so it can be diagnosed.
       console.error('[Detection] failed:', err);
       d({t:'STOP_DETECT'});
       var msg = (err && err.message) || String(err);
+      // Stash for the orchestrator: get_status surfaces this so the agent can
+      // report the failure (incl. the JS stack) without browser-console access.
+      try {
+        window._ccLastDetectError = { message: msg, ts: Date.now(),
+          stack: (err && err.stack) ? String(err.stack).slice(0, 4000) : null };
+      } catch(e) {}
       if (window._ccToast) window._ccToast('Detection failed: ' + msg +
         (msg.indexOf('string length') >= 0 ? ' — a very large model overflowed serialization; exclude it from sync and retry.' : ''));
     });
