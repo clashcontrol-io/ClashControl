@@ -143,6 +143,33 @@ const TOOLS = [
     },
   },
   {
+    name: 'get_element_by_guid',
+    description:
+      'Resolves loaded element(s) by IFC GlobalId or Revit ElementId — the inverse of the clash GUIDs: ' +
+      'turn a GUID from another tool (e.g. a Revit/PDRA element) into the matching ClashControl element ' +
+      'with its model, expressId, ifcType, name, storey and material. Accepts a single globalId/revitId ' +
+      'or arrays globalIds[]/revitIds[].',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        globalId: { type: 'string', description: 'A single IFC GlobalId to resolve.' },
+        revitId: { type: 'string', description: 'A single Revit ElementId to resolve.' },
+        globalIds: { type: 'array', items: { type: 'string' }, description: 'Multiple IFC GlobalIds.' },
+        revitIds: { type: 'array', items: { type: 'string' }, description: 'Multiple Revit ElementIds.' },
+        limit: { type: 'number', description: 'Max elements to return. Default 50.' },
+      },
+      required: [],
+    },
+  },
+  {
+    name: 'resync',
+    description:
+      'Forces the live Revit link to re-pull the model so ClashControl matches the current Revit state. ' +
+      'Use before a cross-tool join when get_status shows CC is behind the live model. Live-link only — ' +
+      'a no-op for static IFC file loads. Re-check get_status afterwards for the updated revision.',
+    inputSchema: { type: 'object', properties: {}, required: [] },
+  },
+  {
     name: 'run_detection',
     description:
       'Starts clash detection between loaded IFC models. Optionally set which models to compare, ' +

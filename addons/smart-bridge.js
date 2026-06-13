@@ -383,6 +383,51 @@
     };
   };
 
+  // Resolve element(s) by IFC GlobalId or Revit ElementId — the other half of
+  // the cross-tool join: given a GUID from another tool (e.g. a PDRA/Revit
+  // element), find the matching CC element and its model/type/storey. Accepts a
+  // single globalId/revitId or arrays (globalIds[]/revitIds[]).
+  handlers.get_element_by_guid = function(p) {
+    var s = _getState();
+    var wantG = {}, wantR = {};
+    function addG(v){ if (v != null && v !== '') wantG[String(v)] = true; }
+    function addR(v){ if (v != null && v !== '') wantR[String(v)] = true; }
+    addG(p.globalId); addR(p.revitId);
+    if (Array.isArray(p.globalIds)) p.globalIds.forEach(addG);
+    if (Array.isArray(p.revitIds)) p.revitIds.forEach(addR);
+    if (!Object.keys(wantG).length && !Object.keys(wantR).length)
+      return 'Provide globalId/globalIds (IFC GlobalId) or revitId/revitIds (Revit ElementId).';
+    var limit = p.limit || 50;
+    var out = [];
+    (s.models || []).some(function(m) {
+      (m.elements || []).some(function(el) {
+        var pr = el.props || {};
+        var gid = pr.globalId || '', rid = pr.revitId;
+        if ((gid && wantG[gid]) || (rid != null && wantR[String(rid)])) {
+          out.push({ modelId: m.id, modelName: m.name, expressId: el.expressId,
+            globalId: gid || null, revitId: rid != null ? rid : null,
+            ifcType: pr.ifcType || null, name: pr.name || null,
+            storey: pr.storey || null, material: pr.material || null });
+        }
+        return out.length >= limit;
+      });
+      return out.length >= limit;
+    });
+    return { count: out.length, elements: out };
+  };
+
+  // Force the live Revit link to re-pull the model so CC catches up to the
+  // current Revit state (use before a cross-tool join if revisions differ).
+  // Live-link only — a no-op for plain IFC loads.
+  handlers.resync = function() {
+    var rd = (_getState() || {}).revitDirect || {};
+    if (!rd.connected) return 'Not connected to a live Revit link — nothing to resync. (Plain IFC models are static snapshots; reload the file to refresh.)';
+    if (typeof window._revitDirectExport !== 'function') return 'Revit bridge not available.';
+    try { window._revitDirectExport(['all']); }
+    catch (e) { return 'Resync request failed: ' + (e && e.message || e); }
+    return 'Resync requested from Revit — the model will refresh shortly. Re-query get_status to confirm the new revision.';
+  };
+
   handlers.run_detection = function(p) {
     var s = _getState();
     if (!s.models || !s.models.length) return 'No models loaded. Open an IFC file first.';
@@ -938,6 +983,9 @@
       params:{ status:{type:'string',enum:['all','open','resolved','approved'],opt:1}, limit:{type:'number',opt:1} } },
     { name:'get_issues',          description:'Retrieves coordination issues with status, priority, assignee, description, involved element IFC GlobalIds (globalIds[]) and Revit ElementIds (revitIdA/B) for cross-tool joins.',
       params:{ status:{type:'string',enum:['all','open','in_progress','resolved','closed'],opt:1}, limit:{type:'number',opt:1} } },
+    { name:'get_element_by_guid',  description:'Resolve loaded element(s) by IFC GlobalId or Revit ElementId — the inverse join: turn a GUID from another tool (e.g. a Revit/PDRA element) into the matching CC element with its model, type, storey and material. Accepts a single globalId/revitId or arrays globalIds[]/revitIds[].',
+      params:{ globalId:{type:'string',opt:1}, revitId:{type:'string',opt:1}, globalIds:{type:'array',opt:1}, revitIds:{type:'array',opt:1}, limit:{type:'number',opt:1} } },
+    { name:'resync',              description:'Force the live Revit link to re-pull the model so CC matches the current Revit state. Live-link only (no-op for static IFC loads). Re-check get_status afterwards for the new revision.' },
     { name:'run_detection',       description:'Starts clash detection between loaded IFC models. Results available via get_clashes.',
       params:{ modelA:{type:'string',opt:1}, modelB:{type:'string',opt:1}, maxGap:{type:'number',opt:1}, hard:{type:'boolean',opt:1}, excludeSelf:{type:'boolean',opt:1} } },
     { name:'set_detection_rules', description:'Updates detection parameters without running detection.',
