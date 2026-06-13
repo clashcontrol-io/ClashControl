@@ -791,6 +791,15 @@ function startApp() {
     detectClashesAsync(s.models, s.rules).then(function(result) {
       classifyClashes(result);
       d({t:'MERGE_CLASHES', v:result});
+    }).catch(function(err) {
+      // Surface failures (e.g. RangeError "Invalid string length" on very large
+      // federations) instead of leaving an unhandled rejection + stuck spinner.
+      // The full stack is logged so it can be diagnosed.
+      console.error('[Detection] failed:', err);
+      d({t:'STOP_DETECT'});
+      var msg = (err && err.message) || String(err);
+      if (window._ccToast) window._ccToast('Detection failed: ' + msg +
+        (msg.indexOf('string length') >= 0 ? ' — a very large model overflowed serialization; exclude it from sync and retry.' : ''));
     });
   };
 
