@@ -13,6 +13,7 @@
 
   var _revitWs = null;
   var _revitBuf = null;
+  var _lastLoadPct = -1; // throttle the loading-card event to one per whole % (avoids a re-render per batch)
   var _revitReconnect = null;
   var _revitReconnectDelay = 0; // exponential backoff: 0 = no reconnect scheduled
   var _revitLastPort = 19780;
@@ -367,6 +368,7 @@
         };
         d({t:'UPD_REVIT_DIRECT', u:{loading:true, progress:0, elementCount:msg.elementCount||0}});
         d({t:'BRIDGE_LOG', logType:'pull', text:'Receiving ' + (isLink ? 'linked model' : 'model') + ' "' + msg.name + '" (' + (msg.elementCount||'?') + ' elements)...'});
+        _lastLoadPct = -1;
         _revitLoadingEvent(true, (msg.name || 'Revit model') + ': receiving…');
         break;
 
@@ -383,7 +385,11 @@
         var prog = msg.totalBatches > 0 ? (msg.batchIndex + 1) / msg.totalBatches
           : _revitBuf.count > 0 ? _revitBuf.received / _revitBuf.count : 0;
         d({t:'UPD_REVIT_DIRECT', u:{progress: Math.min(prog, 0.99), elementCount: _revitBuf.received}});
-        _revitLoadingEvent(true, (_revitBuf.rawName || 'Revit model') + ': ' + Math.round(Math.min(prog, 0.99) * 100) + '%');
+        var _pctNow = Math.round(Math.min(prog, 0.99) * 100);
+        if (_pctNow !== _lastLoadPct) {  // only emit on a whole-% change → ~100 events, not one per batch
+          _lastLoadPct = _pctNow;
+          _revitLoadingEvent(true, (_revitBuf.rawName || 'Revit model') + ': ' + _pctNow + '%');
+        }
         break;
 
       case 'model-end':
