@@ -229,8 +229,13 @@
     function tick() {
       if (gen !== _connectGen) return Promise.resolve(null);
       if (Date.now() >= deadline) {
+        // Bridge binary isn't running. The failure is already in state
+        // (failed:true), and every caller is fire-and-forget — rejecting here
+        // just produces unhandled-promise-rejection spam in the console. Resolve
+        // null instead so "not installed" is a normal, observable outcome.
         if (d) d({t:'UPD_SMART_BRIDGE', u:{connecting:false, installing:false, failed:true}});
-        return Promise.reject(new Error('BRIDGE_NOT_INSTALLED'));
+        console.warn('[Smart Bridge] bridge not reachable on ' + REST_URL + ' — is the Connector running?');
+        return Promise.resolve(null);
       }
       var elapsed = Date.now() - start;
       var pollInterval = elapsed < 6000 ? 300 : 2000;
