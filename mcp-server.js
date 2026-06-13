@@ -102,7 +102,9 @@ const TOOLS = [
       'each side — globalIdA/globalIdB (IFC GlobalId, equal to the Revit IfcGUID for Revit-exported ' +
       'models) and revitIdA/revitIdB (Revit ElementId, present only on live-linked models). Use these ' +
       'GUIDs to cross-reference a clash element with other tools or models (e.g. a Revit/PDRA element ' +
-      'by IfcGUID). Filter by status and limit results.',
+      'by IfcGUID). Also returns classificationA/classificationB ({system, code} — NL-SfB/Uniclass/etc.), ' +
+      'the join key to non-model sources like finance/ERP and specifications; storey is the spatial ' +
+      '(zone) bucket. Filter by status and limit results.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -147,7 +149,8 @@ const TOOLS = [
     description:
       'Resolves loaded element(s) by IFC GlobalId or Revit ElementId — the inverse of the clash GUIDs: ' +
       'turn a GUID from another tool (e.g. a Revit/PDRA element) into the matching ClashControl element ' +
-      'with its model, expressId, ifcType, name, storey and material. Accepts a single globalId/revitId ' +
+      'with its model, expressId, ifcType, name, storey, material and classification ({system, code} — ' +
+      'NL-SfB/Uniclass/etc., the join key to finance/spec sources). Accepts a single globalId/revitId ' +
       'or arrays globalIds[]/revitIds[].',
     inputSchema: {
       type: 'object',

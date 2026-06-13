@@ -304,6 +304,35 @@
 
   var handlers = {};
 
+  // Extract a classification code (NL-SfB / Uniclass / assembly / OmniClass) from
+  // an element's nested property sets. Self-contained (no cross-addon import) — the
+  // key list mirrors the data-quality addon. Classification is the join key to
+  // non-model sources (finance/ERP, spec) that GUID can't reach. Returns
+  // { system, code } or null.
+  function _classOf(props) {
+    var ps = props && props.psets;
+    if (!ps) return null;
+    var hit = null;
+    Object.keys(ps).forEach(function(pset) {
+      if (hit) return;
+      var grp = ps[pset] || {};
+      Object.keys(grp).forEach(function(k) {
+        if (hit) return;
+        var kl = k.toLowerCase().replace(/[\s_\/-]/g, '');
+        var sys = kl.indexOf('nlsfb') >= 0 || kl.indexOf('sfb') >= 0 ? 'NL-SfB'
+                : kl.indexOf('uniclass') >= 0 ? 'Uniclass'
+                : kl.indexOf('omniclass') >= 0 ? 'OmniClass'
+                : kl.indexOf('uniformat') >= 0 ? 'Uniformat'
+                : (kl === 'assemblycode' || kl.indexOf('classification') >= 0 || kl === 'classificationcode') ? 'Classification'
+                : null;
+        if (!sys) return;
+        var v = grp[k];
+        if (v != null && String(v).trim() !== '') hit = { system: sys, code: String(v).trim() };
+      });
+    });
+    return hit;
+  }
+
   handlers.get_status = function() {
     var s = _getState();
     var models = (s.models || []).map(function(m) {
@@ -340,9 +369,25 @@
     var clashes = s.clashes || [];
     if (p.status && p.status !== 'all') clashes = clashes.filter(function(c) { return c.status === p.status; });
     var limit = p.limit || 50;
+    var slice = clashes.slice(0, limit);
+
+    // Resolve a classification code per clash element (the join key to finance /
+    // spec sources). Build an index only over the models + expressIds the slice
+    // references, so this stays bounded even on large federations.
+    var needed = {};
+    function need(mid, eid) { if (mid && eid != null) { (needed[mid] || (needed[mid] = {}))[eid] = true; } }
+    slice.forEach(function(c) { need(c.modelAId, c.elemA); need(c.modelBId, c.elemB); });
+    var classIdx = {}; // modelId -> expressId -> {system,code}
+    (s.models || []).forEach(function(m) {
+      var nm = needed[m.id]; if (!nm) return;
+      var map = classIdx[m.id] = {};
+      (m.elements || []).forEach(function(el) { if (nm[el.expressId]) map[el.expressId] = _classOf(el.props); });
+    });
+    function classFor(mid, eid) { return (classIdx[mid] && classIdx[mid][eid]) || null; }
+
     return {
       total: clashes.length,
-      clashes: clashes.slice(0, limit).map(function(c, i) {
+      clashes: slice.map(function(c, i) {
         return { index: i, title: c.title || c.aiTitle || ('Clash ' + (i + 1)),
           status: c.status || 'open', priority: c.priority || 'normal',
           storey: c.storey || null, typeA: c.typeA || null, typeB: c.typeB || null,
@@ -355,7 +400,11 @@
           // (live link only — null for plain IFC loads). Present in both modes.
           globalIdA: c.globalIdA || null, globalIdB: c.globalIdB || null,
           revitIdA: c.revitIdA != null ? c.revitIdA : null,
-          revitIdB: c.revitIdB != null ? c.revitIdB : null };
+          revitIdB: c.revitIdB != null ? c.revitIdB : null,
+          // Classification (NL-SfB/Uniclass/...) — the join key to finance/spec
+          // sources that IFC GUID can't reach. storey is the spatial (zone) bucket.
+          classificationA: classFor(c.modelAId, c.elemA),
+          classificationB: classFor(c.modelBId, c.elemB) };
       })
     };
   };
@@ -407,7 +456,8 @@
           out.push({ modelId: m.id, modelName: m.name, expressId: el.expressId,
             globalId: gid || null, revitId: rid != null ? rid : null,
             ifcType: pr.ifcType || null, name: pr.name || null,
-            storey: pr.storey || null, material: pr.material || null });
+            storey: pr.storey || null, material: pr.material || null,
+            classification: _classOf(pr) });
         }
         return out.length >= limit;
       });
@@ -979,11 +1029,11 @@
 
   var _TOOL_MANIFEST = [
     { name:'get_status',          description:'Snapshot of the current session: models (with source, version, lastSync and a coarse revision stamp per model — use to check sync with another live tool), clash/issue counts, detection rules, active tab, walk mode, theme.' },
-    { name:'get_clashes',         description:'Retrieves detected clash pairs with status, priority, severity, storey, element types/names, distance, and stable element identity (globalIdA/B = IFC GlobalId / Revit IfcGUID; revitIdA/B = Revit ElementId on live links) for cross-tool joins.',
+    { name:'get_clashes',         description:'Retrieves detected clash pairs with status, priority, severity, storey, element types/names, distance, stable element identity (globalIdA/B = IFC GlobalId / Revit IfcGUID; revitIdA/B = Revit ElementId on live links), and classificationA/B ({system,code} NL-SfB/Uniclass — the join key to finance/spec sources).',
       params:{ status:{type:'string',enum:['all','open','resolved','approved'],opt:1}, limit:{type:'number',opt:1} } },
     { name:'get_issues',          description:'Retrieves coordination issues with status, priority, assignee, description, involved element IFC GlobalIds (globalIds[]) and Revit ElementIds (revitIdA/B) for cross-tool joins.',
       params:{ status:{type:'string',enum:['all','open','in_progress','resolved','closed'],opt:1}, limit:{type:'number',opt:1} } },
-    { name:'get_element_by_guid',  description:'Resolve loaded element(s) by IFC GlobalId or Revit ElementId — the inverse join: turn a GUID from another tool (e.g. a Revit/PDRA element) into the matching CC element with its model, type, storey and material. Accepts a single globalId/revitId or arrays globalIds[]/revitIds[].',
+    { name:'get_element_by_guid',  description:'Resolve loaded element(s) by IFC GlobalId or Revit ElementId — the inverse join: turn a GUID from another tool (e.g. a Revit/PDRA element) into the matching CC element with its model, type, storey, material and classification ({system,code}). Accepts a single globalId/revitId or arrays globalIds[]/revitIds[].',
       params:{ globalId:{type:'string',opt:1}, revitId:{type:'string',opt:1}, globalIds:{type:'array',opt:1}, revitIds:{type:'array',opt:1}, limit:{type:'number',opt:1} } },
     { name:'resync',              description:'Force the live Revit link to re-pull the model so CC matches the current Revit state. Live-link only (no-op for static IFC loads). Re-check get_status afterwards for the new revision.' },
     { name:'run_detection',       description:'Starts clash detection between loaded IFC models. Results available via get_clashes.',
