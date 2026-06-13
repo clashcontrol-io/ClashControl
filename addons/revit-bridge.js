@@ -289,6 +289,10 @@
         quantities: el.quantities || {},
         psets: el.parameters || {},
         revitId: el.revitId || null,
+        // Revit's only stable cross-document key (ElementId is doc-local). The
+        // Connector must send it; null until then. This is the reliable join key
+        // back to a live Revit doc / PDRA.
+        uniqueId: el.uniqueId || el.UniqueId || null,
         hostId: el.hostId || null,
         hostRelationships: el.hostRelationships || null,
         linkName: linkName,
@@ -528,6 +532,34 @@
     _finalizeModelInner(msg, d);
   }
 
+  // Discipline from a Revit model name + element category mix. Returns a
+  // discipline id or null (caller falls back to the IFC-type detector). Keyword
+  // lists cover EN + NL (the common Revit UI languages here).
+  function _revitDiscipline(name, elements) {
+    var n = (name || '').toLowerCase();
+    var STRUCT_N = ['structur', 'struct', 'construct', 'constructie', 'constructief', 'draag'];
+    var MEP_N = ['installat', 'mep', 'hvac', 'mechanic', 'electric', 'elektr', 'plumb', 'sanitair', 'leiding', 'kanaal', 'ventilat', 'cv', 'w-install', 'e-install'];
+    var ARCH_N = ['architect', 'bouwkund', 'arch', 'interieur'];
+    function hit(list) { for (var i = 0; i < list.length; i++) if (n.indexOf(list[i]) >= 0) return true; return false; }
+    if (hit(MEP_N)) return 'mep';
+    if (hit(STRUCT_N)) return 'structural';
+    if (hit(ARCH_N)) return 'architectural';
+    // Name inconclusive — vote on Revit category keywords across the elements.
+    var STRUCT_C = ['beam', 'column', 'footing', 'foundation', 'framing', 'truss', 'rebar', 'brace', 'pile', 'structural'];
+    var MEP_C = ['pipe', 'duct', 'cable', 'conduit', 'mechanical', 'electrical', 'plumbing', 'sprinkler', 'lighting fixture', 'air terminal', 'hvac'];
+    var sc = 0, mc = 0;
+    (elements || []).forEach(function(el) {
+      var t = ((el.props && el.props.ifcType) || '').toLowerCase();
+      var i;
+      for (i = 0; i < MEP_C.length; i++) if (t.indexOf(MEP_C[i]) >= 0) { mc++; return; }
+      for (i = 0; i < STRUCT_C.length; i++) if (t.indexOf(STRUCT_C[i]) >= 0) { sc++; return; }
+    });
+    var total = (elements || []).length || 1;
+    if (mc / total > 0.4 && mc >= sc) return 'mep';
+    if (sc / total > 0.4) return 'structural';
+    return null; // inconclusive — let the IFC-type detector decide
+  }
+
   function _finalizeModelInner(msg, d) {
     var storeys = msg.storeys || [];
     var storeyData = msg.storeyData || [];
@@ -565,7 +597,13 @@
     var detectDiscipline = window._ccDetectDiscipline || function() { return 'architectural'; };
     var DISC = window._ccDISC || [{id:'architectural', c:'#60a5fa'}];
 
-    var disc = detectDiscipline(_revitBuf.elements);
+    // Revit-aware discipline tagging. The shared detectDiscipline() matches IFC
+    // types, but Revit-direct elements carry Revit *category* names, so it would
+    // default everything to "architectural" — which collapses cross-discipline
+    // filtering and floods detection with arch-vs-arch false positives. Use the
+    // model name first (it usually encodes discipline), then the Revit-category
+    // distribution, then fall back to the IFC-type detector.
+    var disc = _revitDiscipline(_revitBuf.rawName || _revitBuf.name, _revitBuf.elements) || detectDiscipline(_revitBuf.elements);
     var dObj = DISC.find(function(x){return x.id===disc;});
     var col = dObj ? dObj.c : DISC[0].c;
 
