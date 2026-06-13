@@ -35,7 +35,12 @@
  */
 
 // ── --mcp / --install: delegate to mcp-server.js ─────────────────────────────
-if (process.argv.includes('--mcp') || process.argv.includes('--install') || process.stdin.isTTY) {
+// Claude Desktop spawns this with `--mcp` (see ensureMcpConfig below); `--install`
+// writes the config and exits. With no such flag we ALWAYS start the WS/REST
+// server. (Do NOT key MCP mode off process.stdin.isTTY — running the server from
+// an interactive terminal makes stdin a TTY, which used to wrongly drop into MCP
+// stdio mode and never bind 19802/19803, so the browser saw ECONNREFUSED.)
+if (process.argv.includes('--mcp') || process.argv.includes('--install')) {
   require('./mcp-server.js');
   // mcp-server.js installs stdin listeners and takes over — nothing more to do here.
   // (In pkg the file is included as a bundled module.)
@@ -337,16 +342,27 @@ function _cfgPath() {
   return path.join(os.homedir(), '.config', 'claude-desktop', 'claude_desktop_config.json');
 }
 
+// How Claude Desktop should spawn the MCP server.
+//   • Packaged (pkg) binary: it embeds this script, so exec the binary with --mcp.
+//   • From source (`node smart-bridge-server.js`): process.execPath is just the
+//     node binary, so we MUST pass this script's absolute path too — otherwise
+//     Claude Desktop runs `node --mcp` (a no-op REPL) and no connector appears.
+function _mcpInvocation() {
+  if (process.pkg) return { command: process.execPath, args: ['--mcp'] };
+  return { command: process.execPath, args: [__filename, '--mcp'] };
+}
+
 function ensureMcpConfig() {
   const cfgPath = _cfgPath();
   try {
     let cfg = {};
     try { cfg = JSON.parse(fs.readFileSync(cfgPath, 'utf8')); } catch (_) {}
-    const want = JSON.stringify({ command: process.execPath, args: ['--mcp'] });
+    const inv = _mcpInvocation();
+    const want = JSON.stringify(inv);
     const have = cfg.mcpServers && cfg.mcpServers.clashcontrol;
     if (have && JSON.stringify({ command: have.command, args: have.args }) === want) return;
     if (!cfg.mcpServers) cfg.mcpServers = {};
-    cfg.mcpServers.clashcontrol = { command: process.execPath, args: ['--mcp'] };
+    cfg.mcpServers.clashcontrol = inv;
     fs.mkdirSync(path.dirname(cfgPath), { recursive: true });
     fs.writeFileSync(cfgPath, JSON.stringify(cfg, null, 2) + '\n');
     console.log('[SmartBridge] Claude Desktop configured — restart Claude to apply.');
@@ -361,7 +377,7 @@ function writeMcpConfig() {
     let cfg = {};
     try { cfg = JSON.parse(fs.readFileSync(cfgPath, 'utf8')); } catch (_) {}
     if (!cfg.mcpServers) cfg.mcpServers = {};
-    cfg.mcpServers.clashcontrol = { command: process.execPath, args: ['--mcp'] };
+    cfg.mcpServers.clashcontrol = _mcpInvocation();
     fs.mkdirSync(path.dirname(cfgPath), { recursive: true });
     fs.writeFileSync(cfgPath, JSON.stringify(cfg, null, 2) + '\n');
     return { success: true, path: cfgPath };

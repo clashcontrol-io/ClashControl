@@ -1191,6 +1191,10 @@
       },
 
       destroy: function() {
+        // Cancel any in-flight connect poll loop — otherwise disabling the
+        // integration leaves tick() hammering /status (and spamming the console
+        // with ERR_CONNECTION_REFUSED) until its deadline expires.
+        _cancelPendingConnect();
         _disconnectWs();
         clearInterval(_updateInterval); _updateInterval = null;
         try { localStorage.removeItem('cc_smart_bridge'); } catch (e) {}
