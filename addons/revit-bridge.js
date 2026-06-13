@@ -182,7 +182,10 @@
     // Include projectId for project scoping
     var targetProj = window._ccRevitTargetProject;
     if (targetProj) msg.projectId = targetProj;
+    // Scoped sync: tell a filter-aware Connector not to send excluded models
+    // (we also skip them on receive, so this works even with an older Connector).
     if (modelFilter) msg.modelFilter = modelFilter;
+    else if (_revitExcluded.length) msg.modelFilter = { exclude: _revitExcluded.slice() };
     // Delta-export hashes: only send when there's actually a matching
     // model already in state for the current project. On a first sync
     // (no Revit model loaded yet for this project) sending a bag of
@@ -352,6 +355,11 @@
 
       case 'model-start':
         if (_revitAborted) break; // user cancelled this export
+        if (_isExcluded(msg.name)) { // scoped sync: drop this model — don't mesh it
+          _revitBuf = null; // its element-batches/model-end will be skipped (guards check _revitBuf)
+          d({t:'BRIDGE_LOG', logType:'info', text:'Skipping excluded model "' + (msg.name||'?') + '" (' + (msg.elementCount||'?') + ' elements).'});
+          break;
+        }
         var isLink = !!(msg.isLink || msg.isLinked); // connector sends isLinked, bridge expects isLink
         var modelLabel = (isLink ? '[Link] ' : '') + (msg.name || 'Revit Model');
         // Diagnostic: log the full model-start payload so we can see
@@ -678,6 +686,7 @@
       var modelData = {
         id: existingModel.id,
         name: _revitBuf.name,
+        rawName: _revitBuf.rawName, // original Revit model name — used by scoped-sync exclude
         discipline: existingModel.discipline || disc,
         color: existingModel.color || col,
         visible: existingModel.visible !== false,
@@ -698,7 +707,7 @@
       // ADD new model
       var modelId = uid();
       var modelData2 = {
-        id: modelId, name: _revitBuf.name, discipline:disc, color:col, visible:true, _version:1,
+        id: modelId, name: _revitBuf.name, rawName: _revitBuf.rawName, discipline:disc, color:col, visible:true, _version:1,
         meshes:_revitBuf.meshes, elements:_revitBuf.elements, storeys:storeys,
         storeyData:storeyData, spatialHierarchy:{}, relatedPairs:relatedPairs,
         stats:{elementCount:_revitBuf.elements.length, source:'revit-direct', lastSync:Date.now(), docVersion:_revitBuf.docVersion||null, numberOfSaves:_revitBuf.numberOfSaves||0}
@@ -1039,6 +1048,25 @@
   function _loadDirectPort() {
     try { return parseInt(localStorage.getItem('cc_revit_direct_port'), 10) || 19780; } catch(e) { return 19780; }
   }
+
+  // ── Scoped sync: per-model exclude list ────────────────────────
+  // Lets the user drop a heavy linked model (e.g. an 82k MEP file) from the sync
+  // so it isn't re-pulled/meshed on every refresh. Excluded models are skipped on
+  // receive (no meshing) AND sent to the Connector as modelFilter.exclude so a
+  // filter-aware Connector won't even transmit them. Keyed by the model's raw name.
+  var _revitExcluded = (function() {
+    try { return JSON.parse(localStorage.getItem('cc_revit_excluded') || '[]'); } catch(e) { return []; }
+  })();
+  function _saveExcluded() { try { localStorage.setItem('cc_revit_excluded', JSON.stringify(_revitExcluded)); } catch(e) {} }
+  function _isExcluded(rawName) { return !!rawName && _revitExcluded.indexOf(rawName) !== -1; }
+  window._ccRevitExcludeModel = function(rawName) {
+    if (rawName && _revitExcluded.indexOf(rawName) === -1) { _revitExcluded.push(rawName); _saveExcluded(); }
+  };
+  window._ccRevitIncludeModel = function(rawName) {
+    var i = _revitExcluded.indexOf(rawName);
+    if (i !== -1) { _revitExcluded.splice(i, 1); _saveExcluded(); }
+  };
+  window._ccRevitGetExcluded = function() { return _revitExcluded.slice(); };
 
   // ── Expose globally ────────────────────────────────────────────
 
