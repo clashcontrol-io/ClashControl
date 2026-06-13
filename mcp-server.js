@@ -109,8 +109,8 @@ const TOOLS = [
       properties: {
         status: {
           type: 'string',
-          enum: ['all', 'open', 'resolved', 'approved'],
-          description: "Filter clashes by status. Omit or 'all' for everything.",
+          enum: ['all', 'open', 'resolved', 'approved', 'expected', 'closed'],
+          description: "Filter clashes by status. 'expected' = the suppressed/by-design bucket. Omit or 'all' for everything.",
         },
         category: {
           type: 'string',
@@ -255,12 +255,14 @@ const TOOLS = [
     name: 'update_clash',
     description:
       'Updates a single clash by its index (0-based, from get_clashes). Change status, priority, ' +
-      'assignee, or title.',
+      "assignee, or title. Use status 'expected' (NOT 'resolved') for by-design / false-positive " +
+      "clashes — it's a reversible suppressed bucket, excluded from the open count and re-openable by " +
+      "setting status back to 'open'. 'resolved' is for real clashes that were actually fixed.",
     inputSchema: {
       type: 'object',
       properties: {
         clashIndex: { type: 'number', description: '0-based index of the clash from get_clashes results.' },
-        status: { type: 'string', enum: ['open', 'resolved', 'approved'], description: 'New status for the clash.' },
+        status: { type: 'string', enum: ['open', 'resolved', 'approved', 'expected', 'closed'], description: "New status. 'expected' = suppressed/by-design (reversible); 'open' re-opens." },
         priority: { type: 'string', enum: ['low', 'normal', 'high', 'critical'], description: 'New priority level.' },
         assignee: { type: 'string', description: 'Person or team to assign this clash to.' },
         title: { type: 'string', description: 'Override the clash title.' },
