@@ -1,5 +1,8 @@
 # Changelog
 
+## v5.20.24 (2026-06-13)
+- fix(detection): live progress in get_status, reject concurrent runs, 90s stall watchdog (no eternal detecting:true), clear stale type-pair memo on bridge runs (instant-0 fix) (#634)
+
 ## v5.20.23 (2026-06-13)
 - feat: surface last detection error via get_status.lastDetectionError (message+stack) so the orchestrator can report failures without console access (#633)
 
