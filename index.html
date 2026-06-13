@@ -4535,6 +4535,17 @@ function startApp() {
         if (m.relatedPairs) _modelRelPairs[m.id] = m.relatedPairs;
       });
     }
+    // relatedPairs may be keyed by expressId (IFC loader) OR globalId/uniqueId/
+    // revitId (Revit Connector), in either order. Collect all of an element's ids
+    // (cached) so the host-aware skip matches regardless of how pairs were keyed.
+    function _relIdList(el) {
+      var p = el.props || {}, a = [];
+      if (el.expressId != null) a.push(el.expressId);
+      if (p.globalId) a.push(p.globalId);
+      if (p.uniqueId) a.push(p.uniqueId);
+      if (p.revitId != null) a.push(p.revitId);
+      return a;
+    }
 
     var newHashes = {}, changedElements = {};
     if (rules.changeAware) {
@@ -4767,8 +4778,18 @@ function startApp() {
       }
       var _semanticSkipHard = false;
       if (sameModel && _modelRelPairs[mA.id]) {
-        var _rpKey = eA.expressId < eB.expressId ? eA.expressId + ':' + eB.expressId : eB.expressId + ':' + eA.expressId;
-        if (_modelRelPairs[mA.id][_rpKey]) _semanticSkipHard = true;
+        // By-design hosted relationship (opening↔host wall, hosted family, fill) →
+        // don't register a HARD clash (soft/clearance still runs). Match against
+        // every id form, both orders, so it works for IFC (expressId) AND Revit
+        // (globalId/uniqueId/revitId) sourced relatedPairs.
+        var _rp = _modelRelPairs[mA.id];
+        var _ia = eA._relIds || (eA._relIds = _relIdList(eA));
+        var _ib = eB._relIds || (eB._relIds = _relIdList(eB));
+        for (var _ri = 0; _ri < _ia.length && !_semanticSkipHard; _ri++) {
+          for (var _rj = 0; _rj < _ib.length; _rj++) {
+            if (_rp[_ia[_ri] + ':' + _ib[_rj]] || _rp[_ib[_rj] + ':' + _ia[_ri]]) { _semanticSkipHard = true; break; }
+          }
+        }
       }
       var hardPt=false, isSoft=false, geoDist=Infinity;
       if (_semanticSkipHard && rules.hard) {
