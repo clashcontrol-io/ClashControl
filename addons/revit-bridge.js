@@ -62,6 +62,19 @@
     _revitReconnectDelay = 0;
   }
 
+  // ── On-screen loading feedback ─────────────────────────────────
+  // After a hard refresh the bridge auto-reconnects and re-pulls the model with
+  // no visible feedback (blank canvas). Drive the core's existing centered
+  // LoadProgressCard / WelcomePopup via the same cc-model-loading event the IFC
+  // loader uses, so the user sees "reconnecting / receiving N%".
+  function _revitLoadingEvent(on, msg) {
+    try {
+      window._ccModelLoading = !!on;
+      window._ccModelLoadMsg = on ? (msg || 'Revit: loading…') : '';
+      window.dispatchEvent(new CustomEvent('cc-model-loading', { detail: { loading: !!on, msg: msg || '' } }));
+    } catch (e) {}
+  }
+
   // ── WebSocket connection ───────────────────────────────────────
 
   function _revitDirectConnect(port, d) {
@@ -121,12 +134,14 @@
     _revitWs.onclose = function() {
       d({t:'UPD_REVIT_DIRECT', u:{connected:false, loading:false}});
       d({t:'BRIDGE_LOG', logType:'info', text:'Revit connection closed.'});
+      _revitLoadingEvent(false); // clear the loading card if the link drops mid-pull
       _revitWs = null;
       _scheduleReconnect();
     };
 
     _revitWs.onerror = function() {
       d({t:'UPD_REVIT_DIRECT', u:{connected:false, loading:false}});
+      _revitLoadingEvent(false);
       // Only log error if not already reconnecting (avoid spam)
       if (!_revitReconnectDelay) d({t:'BRIDGE_LOG', logType:'error', text:'Could not connect to Revit. Is the plugin running?'});
       _revitWs = null;
@@ -289,6 +304,10 @@
         quantities: el.quantities || {},
         psets: el.parameters || {},
         revitId: el.revitId || null,
+        // Revit's only stable cross-document key (ElementId is doc-local). The
+        // Connector must send it; null until then. This is the reliable join key
+        // back to a live Revit doc / PDRA.
+        uniqueId: el.uniqueId || el.UniqueId || null,
         hostId: el.hostId || null,
         hostRelationships: el.hostRelationships || null,
         linkName: linkName,
@@ -341,10 +360,14 @@
           isLink: isLink,
           elements:[], meshes:[],
           count: msg.elementCount || 0,
-          received: 0
+          received: 0,
+          // Document version (Connector) → model.stats → modelInstanceId + freshness.
+          docVersion: msg.docVersion || null,
+          numberOfSaves: msg.numberOfSaves || 0
         };
         d({t:'UPD_REVIT_DIRECT', u:{loading:true, progress:0, elementCount:msg.elementCount||0}});
         d({t:'BRIDGE_LOG', logType:'pull', text:'Receiving ' + (isLink ? 'linked model' : 'model') + ' "' + msg.name + '" (' + (msg.elementCount||'?') + ' elements)...'});
+        _revitLoadingEvent(true, (msg.name || 'Revit model') + ': receiving…');
         break;
 
       case 'element-batch':
@@ -360,6 +383,7 @@
         var prog = msg.totalBatches > 0 ? (msg.batchIndex + 1) / msg.totalBatches
           : _revitBuf.count > 0 ? _revitBuf.received / _revitBuf.count : 0;
         d({t:'UPD_REVIT_DIRECT', u:{progress: Math.min(prog, 0.99), elementCount: _revitBuf.received}});
+        _revitLoadingEvent(true, (_revitBuf.rawName || 'Revit model') + ': ' + Math.round(Math.min(prog, 0.99) * 100) + '%');
         break;
 
       case 'model-end':
@@ -528,6 +552,34 @@
     _finalizeModelInner(msg, d);
   }
 
+  // Discipline from a Revit model name + element category mix. Returns a
+  // discipline id or null (caller falls back to the IFC-type detector). Keyword
+  // lists cover EN + NL (the common Revit UI languages here).
+  function _revitDiscipline(name, elements) {
+    var n = (name || '').toLowerCase();
+    var STRUCT_N = ['structur', 'struct', 'construct', 'constructie', 'constructief', 'draag'];
+    var MEP_N = ['installat', 'mep', 'hvac', 'mechanic', 'electric', 'elektr', 'plumb', 'sanitair', 'leiding', 'kanaal', 'ventilat', 'cv', 'w-install', 'e-install'];
+    var ARCH_N = ['architect', 'bouwkund', 'arch', 'interieur'];
+    function hit(list) { for (var i = 0; i < list.length; i++) if (n.indexOf(list[i]) >= 0) return true; return false; }
+    if (hit(MEP_N)) return 'mep';
+    if (hit(STRUCT_N)) return 'structural';
+    if (hit(ARCH_N)) return 'architectural';
+    // Name inconclusive — vote on Revit category keywords across the elements.
+    var STRUCT_C = ['beam', 'column', 'footing', 'foundation', 'framing', 'truss', 'rebar', 'brace', 'pile', 'structural'];
+    var MEP_C = ['pipe', 'duct', 'cable', 'conduit', 'mechanical', 'electrical', 'plumbing', 'sprinkler', 'lighting fixture', 'air terminal', 'hvac'];
+    var sc = 0, mc = 0;
+    (elements || []).forEach(function(el) {
+      var t = ((el.props && el.props.ifcType) || '').toLowerCase();
+      var i;
+      for (i = 0; i < MEP_C.length; i++) if (t.indexOf(MEP_C[i]) >= 0) { mc++; return; }
+      for (i = 0; i < STRUCT_C.length; i++) if (t.indexOf(STRUCT_C[i]) >= 0) { sc++; return; }
+    });
+    var total = (elements || []).length || 1;
+    if (mc / total > 0.4 && mc >= sc) return 'mep';
+    if (sc / total > 0.4) return 'structural';
+    return null; // inconclusive — let the IFC-type detector decide
+  }
+
   function _finalizeModelInner(msg, d) {
     var storeys = msg.storeys || [];
     var storeyData = msg.storeyData || [];
@@ -565,7 +617,13 @@
     var detectDiscipline = window._ccDetectDiscipline || function() { return 'architectural'; };
     var DISC = window._ccDISC || [{id:'architectural', c:'#60a5fa'}];
 
-    var disc = detectDiscipline(_revitBuf.elements);
+    // Revit-aware discipline tagging. The shared detectDiscipline() matches IFC
+    // types, but Revit-direct elements carry Revit *category* names, so it would
+    // default everything to "architectural" — which collapses cross-discipline
+    // filtering and floods detection with arch-vs-arch false positives. Use the
+    // model name first (it usually encodes discipline), then the Revit-category
+    // distribution, then fall back to the IFC-type detector.
+    var disc = _revitDiscipline(_revitBuf.rawName || _revitBuf.name, _revitBuf.elements) || detectDiscipline(_revitBuf.elements);
     var dObj = DISC.find(function(x){return x.id===disc;});
     var col = dObj ? dObj.c : DISC[0].c;
 
@@ -616,7 +674,7 @@
         storeyData: storeyData,
         spatialHierarchy: {},
         relatedPairs: relatedPairs,
-        stats: {elementCount:finalElements.length, source:'revit-direct', lastSync:Date.now()}
+        stats: {elementCount:finalElements.length, source:'revit-direct', lastSync:Date.now(), docVersion:_revitBuf.docVersion||null, numberOfSaves:_revitBuf.numberOfSaves||0}
       };
       window._ccDispatch({t:'REPLACE_MODEL', id:existingModel.id, v:modelData});
       _revitModelMap[mapKey] = existingModel.id;
@@ -628,7 +686,7 @@
         id: modelId, name: _revitBuf.name, discipline:disc, color:col, visible:true, _version:1,
         meshes:_revitBuf.meshes, elements:_revitBuf.elements, storeys:storeys,
         storeyData:storeyData, spatialHierarchy:{}, relatedPairs:relatedPairs,
-        stats:{elementCount:_revitBuf.elements.length, source:'revit-direct', lastSync:Date.now()}
+        stats:{elementCount:_revitBuf.elements.length, source:'revit-direct', lastSync:Date.now(), docVersion:_revitBuf.docVersion||null, numberOfSaves:_revitBuf.numberOfSaves||0}
       };
       window._ccDispatch({t:'ADD_MODEL', v:modelData2});
       _revitModelMap[mapKey] = modelId;
@@ -636,6 +694,7 @@
     }
 
     d({t:'UPD_REVIT_DIRECT', u:{loading:false, progress:1}});
+    _revitLoadingEvent(false); // model is in — hide the loading card
     _revitBuf = null;
   }
 
@@ -1003,6 +1062,9 @@
     if (typeof _revitDirectConnect !== 'function' || !dispatch) return;
     var port = _loadDirectPort();
     window._ccPullOnConnect = true;
+    // Show feedback immediately on a hard refresh — the model is about to stream
+    // in and the canvas is otherwise blank. Cleared on model-end or on failure.
+    _revitLoadingEvent(true, 'Revit: reconnecting…');
     // Defer slightly so React state has fully mounted before we dispatch
     // connection state and logs into it.
     setTimeout(function() {

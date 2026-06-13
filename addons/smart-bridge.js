@@ -309,26 +309,37 @@
   // key list mirrors the data-quality addon. Classification is the join key to
   // non-model sources (finance/ERP, spec) that GUID can't reach. Returns
   // { system, code } or null.
+  function _classSysOf(key) {
+    var kl = String(key).toLowerCase().replace(/[\s_\/-]/g, '');
+    return kl.indexOf('nlsfb') >= 0 || kl.indexOf('sfb') >= 0 ? 'NL-SfB'
+         : kl.indexOf('uniclass') >= 0 ? 'Uniclass'
+         : kl.indexOf('omniclass') >= 0 ? 'OmniClass'
+         : kl.indexOf('uniformat') >= 0 ? 'Uniformat'
+         : (kl === 'assemblycode' || kl.indexOf('classification') >= 0 || kl === 'classificationcode') ? 'Classification'
+         : null;
+  }
   function _classOf(props) {
     var ps = props && props.psets;
     if (!ps) return null;
     var hit = null;
     Object.keys(ps).forEach(function(pset) {
       if (hit) return;
-      var grp = ps[pset] || {};
-      Object.keys(grp).forEach(function(k) {
-        if (hit) return;
-        var kl = k.toLowerCase().replace(/[\s_\/-]/g, '');
-        var sys = kl.indexOf('nlsfb') >= 0 || kl.indexOf('sfb') >= 0 ? 'NL-SfB'
-                : kl.indexOf('uniclass') >= 0 ? 'Uniclass'
-                : kl.indexOf('omniclass') >= 0 ? 'OmniClass'
-                : kl.indexOf('uniformat') >= 0 ? 'Uniformat'
-                : (kl === 'assemblycode' || kl.indexOf('classification') >= 0 || kl === 'classificationcode') ? 'Classification'
-                : null;
-        if (!sys) return;
-        var v = grp[k];
-        if (v != null && String(v).trim() !== '') hit = { system: sys, code: String(v).trim() };
-      });
+      var grp = ps[pset];
+      // psets may be NESTED ({Pset:{key:val}}, IFC loads) or FLAT
+      // ({paramName:val}, Revit-direct parameters). Handle both.
+      if (grp && typeof grp === 'object' && !Array.isArray(grp)) {
+        Object.keys(grp).forEach(function(k) {
+          if (hit) return;
+          var sys = _classSysOf(k);
+          if (!sys) return;
+          var v = grp[k];
+          if (v != null && String(v).trim() !== '') hit = { system: sys, code: String(v).trim() };
+        });
+      } else {
+        // Flat: the pset key IS the parameter name, grp is its value.
+        var sys = _classSysOf(pset);
+        if (sys && grp != null && String(grp).trim() !== '') hit = { system: sys, code: String(grp).trim() };
+      }
     });
     return hit;
   }
@@ -349,7 +360,16 @@
       return { name: m.name, discipline: m.discipline || 'Unknown',
         elements: (m.elements || []).length, visible: m.visible !== false,
         source: st.source || 'ifc', version: m._version || 1,
-        lastSync: st.lastSync || null, revision: revision };
+        lastSync: st.lastSync || null, revision: revision,
+        // modelInstanceId distinguishes document copies so a join can't silently
+        // cross two copies of the "same" model. m.id is CC's per-load instance;
+        // the authoritative token (Revit Document VersionGUID) must come from the
+        // Connector — surface it when present.
+        modelInstanceId: st.docVersion || st.versionGuid || m.id || null,
+        // Uniform freshness stamp (connective-spine §2) — generic staleness guard.
+        freshness: { source: 'clashcontrol', revisionId: revision,
+          asOf: st.lastSync ? new Date(st.lastSync).toISOString() : null,
+          confidence: live ? 'live' : 'snapshot' } };
     });
     var r = s.rules || {};
     return {
@@ -370,8 +390,10 @@
     var s = _getState();
     var clashes = s.clashes || [];
     if (p.status && p.status !== 'all') clashes = clashes.filter(function(c) { return c.status === p.status; });
+    if (p.category) clashes = clashes.filter(function(c) { return (c.aiCategory || '') === p.category; });
     var limit = p.limit || 50;
-    var slice = clashes.slice(0, limit);
+    var offset = p.offset > 0 ? Math.floor(p.offset) : 0; // pagination — page the full set
+    var slice = clashes.slice(offset, offset + limit);
 
     // Resolve a classification code per clash element (the join key to finance /
     // spec sources). Build an index only over the models + expressIds the slice
@@ -389,32 +411,73 @@
     var pk = s.activeProject || 'local'; // projectKey — partitions the connective graph
 
     return {
-      total: clashes.length,
+      total: clashes.length, offset: offset, returned: slice.length,
       clashes: slice.map(function(c, i) {
-        return { index: i, title: c.title || c.aiTitle || ('Clash ' + (i + 1)),
+        return { index: offset + i, title: c.title || c.aiTitle || ('Clash ' + (offset + i + 1)),
           status: c.status || 'open', priority: c.priority || 'normal',
-          storey: c.storey || null, typeA: c.typeA || null, typeB: c.typeB || null,
-          nameA: c.nameA || null, nameB: c.nameB || null,
+          // NOTE: clashes store elem*Type/Name/Storey — read those (the old
+          // typeA/nameA/storey fields don't exist on the clash, so they were null).
+          storey: c.storey || c.elemAStorey || c.elemBStorey || null,
+          typeA: c.typeA || c.elemAType || null, typeB: c.typeB || c.elemBType || null,
+          nameA: c.nameA || c.elemAName || null, nameB: c.nameB || c.elemBName || null,
           distance: c.distance != null ? c.distance : null,
+          // Elevation of the clash point (m) — lets a consumer (orchestrator) test
+          // a slab/slab overlap against a storey's floor build-up band.
+          elevation: c.elevation != null ? c.elevation : null,
           aiSeverity: c.aiSeverity || null, aiCategory: c.aiCategory || null,
-          // Stable identity for cross-tool joins (e.g. correlating a clash with a
-          // PDRA/Revit element). globalId = IFC GlobalId (= Revit IfcGUID for
-          // models exported from Revit); revitId = Revit ElementId when present
-          // (live link only — null for plain IFC loads). Present in both modes.
+          // Stable identity for cross-tool joins. globalId = IFC GlobalId; revitId =
+          // Revit ElementId (doc-local); uniqueId = Revit UniqueId — the only stable
+          // cross-document key, so the reliable join back to a live Revit doc / PDRA.
           globalIdA: c.globalIdA || null, globalIdB: c.globalIdB || null,
           revitIdA: c.revitIdA != null ? c.revitIdA : null,
           revitIdB: c.revitIdB != null ? c.revitIdB : null,
+          uniqueIdA: c.uniqueIdA || null, uniqueIdB: c.uniqueIdB || null,
           // Classification (NL-SfB/Uniclass/...) — the join key to finance/spec
           // sources that IFC GUID can't reach. storey is the spatial (zone) bucket.
           classificationA: classFor(c.modelAId, c.elemA),
           classificationB: classFor(c.modelBId, c.elemB),
+          // Disciplines of the two sides — lets a consumer tell arch×structural
+          // (expected floor build-up) from same-discipline (a real problem).
+          disciplines: c.disciplines || null,
           // Connective-spine MUST keys (for the provenance ledger / write-back):
           // source + projectKey (the clash is the write target for set_clash_status,
           // so clashId is its sourceLocalId; each element side carries its own).
           source: 'clashcontrol', projectKey: pk, clashId: c.id || null,
-          sourceLocalIdA: c.globalIdA || (c.elemA != null ? String(c.elemA) : null),
-          sourceLocalIdB: c.globalIdB || (c.elemB != null ? String(c.elemB) : null) };
+          modelAId: c.modelAId || null, modelBId: c.modelBId || null,
+          sourceLocalIdA: c.uniqueIdA || c.globalIdA || (c.elemA != null ? String(c.elemA) : null),
+          sourceLocalIdB: c.uniqueIdB || c.globalIdB || (c.elemB != null ? String(c.elemB) : null) };
       })
+    };
+  };
+
+  // Aggregate profile of the WHOLE clash set without paging it — so a consumer
+  // (orchestrator) can see the category distribution and spot the few root causes
+  // behind a large count. Counts by status, AI category, discipline-pair,
+  // type-pair (top N), and storey.
+  handlers.get_clash_summary = function(p) {
+    var s = _getState();
+    var clashes = s.clashes || [];
+    var topN = p && p.topN > 0 ? Math.floor(p.topN) : 20;
+    function bump(o, k) { k = k || '(none)'; o[k] = (o[k] || 0) + 1; }
+    var byStatus = {}, byCategory = {}, byDiscipline = {}, byTypePair = {}, byStorey = {};
+    clashes.forEach(function(c) {
+      bump(byStatus, c.status || 'open');
+      bump(byCategory, c.aiCategory);
+      var d = c.disciplines || [];
+      bump(byDiscipline, [d[0] || '?', d[1] || '?'].sort().join(' × '));
+      var tp = [c.elemAType || c.typeA || '?', c.elemBType || c.typeB || '?'].sort().join(' × ');
+      bump(byTypePair, tp);
+      bump(byStorey, c.storey || c.elemAStorey || c.elemBStorey || '(none)');
+    });
+    function top(o) {
+      return Object.keys(o).map(function(k) { return { key: k, count: o[k] }; })
+        .sort(function(a, b) { return b.count - a.count; }).slice(0, topN);
+    }
+    return {
+      total: clashes.length,
+      open: clashes.filter(function(c) { return c.status !== 'resolved'; }).length,
+      byStatus: byStatus, byCategory: byCategory, byDiscipline: byDiscipline,
+      byTypePair: top(byTypePair), byStorey: top(byStorey)
     };
   };
 
@@ -450,31 +513,34 @@
   // single globalId/revitId or arrays (globalIds[]/revitIds[]).
   handlers.get_element_by_guid = function(p) {
     var s = _getState();
-    var wantG = {}, wantR = {};
+    var wantG = {}, wantR = {}, wantU = {};
     function addG(v){ if (v != null && v !== '') wantG[String(v)] = true; }
     function addR(v){ if (v != null && v !== '') wantR[String(v)] = true; }
-    addG(p.globalId); addR(p.revitId);
+    function addU(v){ if (v != null && v !== '') wantU[String(v)] = true; }
+    addG(p.globalId); addR(p.revitId); addU(p.uniqueId);
     if (Array.isArray(p.globalIds)) p.globalIds.forEach(addG);
     if (Array.isArray(p.revitIds)) p.revitIds.forEach(addR);
-    if (!Object.keys(wantG).length && !Object.keys(wantR).length)
-      return 'Provide globalId/globalIds (IFC GlobalId) or revitId/revitIds (Revit ElementId).';
+    if (Array.isArray(p.uniqueIds)) p.uniqueIds.forEach(addU);
+    if (!Object.keys(wantG).length && !Object.keys(wantR).length && !Object.keys(wantU).length)
+      return 'Provide uniqueId/uniqueIds (Revit UniqueId — most reliable), globalId/globalIds (IFC GlobalId), or revitId/revitIds (Revit ElementId).';
     var limit = p.limit || 50;
     var pk = s.activeProject || 'local';
     var out = [];
     (s.models || []).some(function(m) {
       (m.elements || []).some(function(el) {
         var pr = el.props || {};
-        var gid = pr.globalId || '', rid = pr.revitId;
-        if ((gid && wantG[gid]) || (rid != null && wantR[String(rid)])) {
+        var gid = pr.globalId || '', rid = pr.revitId, uid2 = pr.uniqueId;
+        if ((gid && wantG[gid]) || (rid != null && wantR[String(rid)]) || (uid2 && wantU[String(uid2)])) {
           out.push({ modelId: m.id, modelName: m.name, expressId: el.expressId,
             globalId: gid || null, revitId: rid != null ? rid : null,
+            uniqueId: uid2 || null,
             ifcType: pr.ifcType || null, name: pr.name || null,
             storey: pr.storey || null, material: pr.material || null,
             classification: _classOf(pr),
             // Connective-spine MUST keys (element record). sourceLocalId = the
-            // element's stable id in CC (GlobalId, else expressId).
+            // element's stable id (Revit UniqueId, else GlobalId, else expressId).
             source: 'clashcontrol', projectKey: pk,
-            sourceLocalId: gid || String(el.expressId) });
+            sourceLocalId: uid2 || gid || String(el.expressId) });
         }
         return out.length >= limit;
       });
@@ -493,6 +559,64 @@
     try { window._revitDirectExport(['all']); }
     catch (e) { return 'Resync request failed: ' + (e && e.message || e); }
     return 'Resync requested from Revit — the model will refresh shortly. Re-query get_status to confirm the new revision.';
+  };
+
+  // Per-element data-quality annotations, keyed by uniqueId/globalId. A *parallel*
+  // signal for the orchestrator's triage — NOT a detection gate (a flagged proxy
+  // is still clashed; it's just down-ranked). Flags: untyped_proxy, no_classification,
+  // degenerate_bbox (no geometry / zero size), oversized_bbox (>200 m, almost always
+  // an export error). Returns only elements that have ≥1 flag.
+  handlers.get_element_quality = function(p) {
+    var s = _getState();
+    var pk = s.activeProject || 'local';
+    var limit = p && p.limit > 0 ? Math.floor(p.limit) : 1000;
+    var models = s.models || [];
+    if (p && p.modelId) models = models.filter(function(m) { return m.id === p.modelId; });
+    var out = [];
+    models.some(function(m) {
+      (m.elements || []).some(function(el) {
+        var pr = el.props || {};
+        var flags = [];
+        var t = (pr.ifcType || '').toLowerCase();
+        if (t.indexOf('proxy') >= 0 || t === '' || t === 'element') flags.push('untyped_proxy');
+        if (!_classOf(pr)) flags.push('no_classification');
+        if (el.box && typeof el.box.isEmpty === 'function') {
+          if (el.box.isEmpty()) flags.push('degenerate_bbox');
+          else {
+            var dx = el.box.max.x - el.box.min.x, dy = el.box.max.y - el.box.min.y, dz = el.box.max.z - el.box.min.z;
+            if (dx < 1e-4 && dy < 1e-4 && dz < 1e-4) flags.push('degenerate_bbox');
+            else if (dx > 200 || dy > 200 || dz > 200) flags.push('oversized_bbox');
+          }
+        }
+        if (!flags.length) return false;
+        out.push({ uniqueId: pr.uniqueId || null, globalId: pr.globalId || null,
+          revitId: pr.revitId != null ? pr.revitId : null, expressId: el.expressId,
+          modelId: m.id, source: 'clashcontrol', projectKey: pk,
+          ifcType: pr.ifcType || null, name: pr.name || null, flags: flags });
+        return out.length >= limit;
+      });
+      return out.length >= limit;
+    });
+    return { projectKey: pk, source: 'clashcontrol', count: out.length, annotations: out };
+  };
+
+  // Per-model level/storey elevations — raw data so the orchestrator can compute
+  // floor build-up bands. NOTE: `elevation` is in the model's stored units;
+  // `elevationM` is metres when unitScale is known (clash elevation in get_clashes
+  // is scene metres) — reconcile on those.
+  handlers.get_levels = function() {
+    var s = _getState();
+    var pk = s.activeProject || 'local';
+    return { projectKey: pk, source: 'clashcontrol',
+      note: 'elevation = model stored units; elevationM = metres when unitScale known; get_clashes.elevation is scene metres.',
+      models: (s.models || []).map(function(m) {
+        var us = (m.stats && m.stats.unitScale) || null;
+        return { modelId: m.id, modelName: m.name, discipline: m.discipline || 'Unknown', unitScale: us,
+          levels: (m.storeyData || []).map(function(sd) {
+            return { name: sd.name, id: sd.id || null, elevation: sd.elevation,
+              elevationM: us != null ? sd.elevation * us : null };
+          }) };
+      }) };
   };
 
   handlers.run_detection = function(p) {
@@ -1046,12 +1170,17 @@
 
   var _TOOL_MANIFEST = [
     { name:'get_status',          description:'Snapshot of the current session: models (with source, version, lastSync and a coarse revision stamp per model — use to check sync with another live tool), clash/issue counts, detection rules, active tab, walk mode, theme.' },
-    { name:'get_clashes',         description:'Retrieves detected clash pairs with status, priority, severity, storey, element types/names, distance, stable element identity (globalIdA/B = IFC GlobalId / Revit IfcGUID; revitIdA/B = Revit ElementId on live links), and classificationA/B ({system,code} NL-SfB/Uniclass — the join key to finance/spec sources).',
-      params:{ status:{type:'string',enum:['all','open','resolved','approved'],opt:1}, limit:{type:'number',opt:1} } },
+    { name:'get_clashes',         description:'Detected clash pairs: status, priority, severity, storey, types/names, distance (mm), elevation (m), disciplines (arch×structural vs same-discipline), and stable identity per side — uniqueIdA/B (Revit UniqueId, most reliable cross-doc key; prefer it), globalIdA/B (IFC GlobalId), revitIdA/B (ElementId, doc-local) — plus classificationA/B ({system,code} NL-SfB/Uniclass) and modelAId/B.',
+      params:{ status:{type:'string',enum:['all','open','resolved','approved'],opt:1}, category:{type:'string',opt:1}, limit:{type:'number',opt:1}, offset:{type:'number',opt:1} } },
+    { name:'get_clash_summary',   description:'Aggregate profile of the WHOLE clash set without paging it: total/open, and counts byStatus, byCategory (AI), byDiscipline (pair), byTypePair (top N), byStorey. Use to find the few root causes behind a large count.',
+      params:{ topN:{type:'number',opt:1} } },
+    { name:'get_element_quality', description:'Per-element data-quality annotations keyed by uniqueId/globalId (untyped_proxy, no_classification, degenerate_bbox, oversized_bbox). A parallel triage signal — NOT a detection gate. Returns only flagged elements.',
+      params:{ modelId:{type:'string',opt:1}, limit:{type:'number',opt:1} } },
+    { name:'get_levels',          description:"Per-model level/storey elevations (raw + elevationM when unitScale known) so a consumer can compute floor build-up bands. get_clashes.elevation is scene metres." },
     { name:'get_issues',          description:'Retrieves coordination issues with status, priority, assignee, description, involved element IFC GlobalIds (globalIds[]) and Revit ElementIds (revitIdA/B) for cross-tool joins.',
       params:{ status:{type:'string',enum:['all','open','in_progress','resolved','closed'],opt:1}, limit:{type:'number',opt:1} } },
-    { name:'get_element_by_guid',  description:'Resolve loaded element(s) by IFC GlobalId or Revit ElementId — the inverse join: turn a GUID from another tool (e.g. a Revit/PDRA element) into the matching CC element with its model, type, storey, material and classification ({system,code}). Accepts a single globalId/revitId or arrays globalIds[]/revitIds[].',
-      params:{ globalId:{type:'string',opt:1}, revitId:{type:'string',opt:1}, globalIds:{type:'array',opt:1}, revitIds:{type:'array',opt:1}, limit:{type:'number',opt:1} } },
+    { name:'get_element_by_guid',  description:'Resolve loaded element(s) by Revit UniqueId (preferred), IFC GlobalId, or Revit ElementId — the inverse join: turn a key from another tool into the matching CC element with its model, type, storey, material, uniqueId and classification. Accepts single uniqueId/globalId/revitId or arrays uniqueIds[]/globalIds[]/revitIds[].',
+      params:{ uniqueId:{type:'string',opt:1}, globalId:{type:'string',opt:1}, revitId:{type:'string',opt:1}, uniqueIds:{type:'array',opt:1}, globalIds:{type:'array',opt:1}, revitIds:{type:'array',opt:1}, limit:{type:'number',opt:1} } },
     { name:'resync',              description:'Force the live Revit link to re-pull the model so CC matches the current Revit state. Live-link only (no-op for static IFC loads). Re-check get_status afterwards for the new revision.' },
     { name:'run_detection',       description:'Starts clash detection between loaded IFC models. Results available via get_clashes.',
       params:{ modelA:{type:'string',opt:1}, modelB:{type:'string',opt:1}, maxGap:{type:'number',opt:1}, hard:{type:'boolean',opt:1}, excludeSelf:{type:'boolean',opt:1} } },

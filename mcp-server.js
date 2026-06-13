@@ -96,15 +96,14 @@ const TOOLS = [
   {
     name: 'get_clashes',
     description:
-      'Retrieves detected clash pairs between IFC elements. Each clash includes its index, title, ' +
-      'status (open/resolved), priority, building storey, element types and names for both sides, ' +
-      'distance in mm, AI-assigned severity, and category. Also returns stable element identity for ' +
-      'each side — globalIdA/globalIdB (IFC GlobalId, equal to the Revit IfcGUID for Revit-exported ' +
-      'models) and revitIdA/revitIdB (Revit ElementId, present only on live-linked models). Use these ' +
-      'GUIDs to cross-reference a clash element with other tools or models (e.g. a Revit/PDRA element ' +
-      'by IfcGUID). Also returns classificationA/classificationB ({system, code} — NL-SfB/Uniclass/etc.), ' +
-      'the join key to non-model sources like finance/ERP and specifications; storey is the spatial ' +
-      '(zone) bucket. Filter by status and limit results.',
+      'Retrieves detected clash pairs between elements. Each clash includes index, title, status, ' +
+      'priority, storey, typeA/typeB, nameA/nameB, distance (mm), elevation (m), disciplines (the two ' +
+      "sides' disciplines — use to tell arch×structural, e.g. an expected floor build-up, from a " +
+      'same-discipline real problem), and AI severity/category. Stable element identity per side: ' +
+      'uniqueIdA/uniqueIdB (Revit UniqueId — the most reliable cross-document join key; prefer this), ' +
+      'globalIdA/globalIdB (IFC GlobalId), revitIdA/revitIdB (Revit ElementId, doc-local). Plus ' +
+      'classificationA/classificationB ({system, code} NL-SfB/Uniclass — the join key to finance/ERP & ' +
+      'specs) and modelAId/modelBId. Filter by status and limit results.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -113,13 +112,57 @@ const TOOLS = [
           enum: ['all', 'open', 'resolved', 'approved'],
           description: "Filter clashes by status. Omit or 'all' for everything.",
         },
+        category: {
+          type: 'string',
+          description: "Filter by AI category (e.g. 'false_positive', 'needs_review', 'penetration').",
+        },
         limit: {
           type: 'number',
           description: 'Max clashes to return. Default 50.',
         },
+        offset: {
+          type: 'number',
+          description: 'Start index for pagination — page the full set with offset+limit.',
+        },
       },
       required: [],
     },
+  },
+  {
+    name: 'get_clash_summary',
+    description:
+      'Aggregate profile of the WHOLE clash set without paging it: total/open and counts byStatus, ' +
+      'byCategory (AI), byDiscipline (pair), byTypePair (top N), byStorey. Use this to find the few ' +
+      'root causes behind a large clash count before drilling in with get_clashes(offset).',
+    inputSchema: {
+      type: 'object',
+      properties: { topN: { type: 'number', description: 'Max entries per ranked list (type-pair, storey). Default 20.' } },
+      required: [],
+    },
+  },
+  {
+    name: 'get_element_quality',
+    description:
+      'Per-element data-quality annotations keyed by uniqueId/globalId — a parallel triage signal, NOT ' +
+      'a detection gate (flagged elements are still clashed, just down-rankable). Flags: untyped_proxy, ' +
+      'no_classification, degenerate_bbox (no geometry/zero size), oversized_bbox (>200 m). Returns only ' +
+      'flagged elements.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        modelId: { type: 'string', description: 'Limit to one model. Omit for all.' },
+        limit: { type: 'number', description: 'Max annotations. Default 1000.' },
+      },
+      required: [],
+    },
+  },
+  {
+    name: 'get_levels',
+    description:
+      'Per-model level/storey elevations (raw `elevation` in model units + `elevationM` in metres when ' +
+      'unitScale is known) so a consumer can compute floor build-up bands. get_clashes.elevation is in ' +
+      'scene metres — reconcile on that.',
+    inputSchema: { type: 'object', properties: {}, required: [] },
   },
   {
     name: 'get_issues',
@@ -147,16 +190,18 @@ const TOOLS = [
   {
     name: 'get_element_by_guid',
     description:
-      'Resolves loaded element(s) by IFC GlobalId or Revit ElementId — the inverse of the clash GUIDs: ' +
-      'turn a GUID from another tool (e.g. a Revit/PDRA element) into the matching ClashControl element ' +
-      'with its model, expressId, ifcType, name, storey, material and classification ({system, code} — ' +
-      'NL-SfB/Uniclass/etc., the join key to finance/spec sources). Accepts a single globalId/revitId ' +
-      'or arrays globalIds[]/revitIds[].',
+      'Resolves loaded element(s) by Revit UniqueId, IFC GlobalId, or Revit ElementId — the inverse of ' +
+      'the clash identity: turn a key from another tool (e.g. a Revit/PDRA element) into the matching ' +
+      'ClashControl element with its model, expressId, uniqueId, ifcType, name, storey, material and ' +
+      'classification. Prefer uniqueId (most reliable cross-document key). Accepts a single ' +
+      'uniqueId/globalId/revitId or arrays uniqueIds[]/globalIds[]/revitIds[].',
     inputSchema: {
       type: 'object',
       properties: {
+        uniqueId: { type: 'string', description: 'A single Revit UniqueId to resolve (most reliable).' },
         globalId: { type: 'string', description: 'A single IFC GlobalId to resolve.' },
         revitId: { type: 'string', description: 'A single Revit ElementId to resolve.' },
+        uniqueIds: { type: 'array', items: { type: 'string' }, description: 'Multiple Revit UniqueIds.' },
         globalIds: { type: 'array', items: { type: 'string' }, description: 'Multiple IFC GlobalIds.' },
         revitIds: { type: 'array', items: { type: 'string' }, description: 'Multiple Revit ElementIds.' },
         limit: { type: 'number', description: 'Max elements to return. Default 50.' },
