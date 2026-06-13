@@ -18,7 +18,7 @@
   var REST_URL = 'http://127.0.0.1:19803';
   var _ws = null;
   var _connected = false;
-  var _releaseTag = 'bridge-v0.2.0'; // fallback; will be updated from GitHub API
+  var _releaseTag = 'bridge-v0.3.2'; // fallback; will be updated from GitHub API
 
   function _buildDownloads() {
     var _releaseBase = 'https://github.com/clashcontrol-io/ClashControl/releases/download/' + _releaseTag + '/';
