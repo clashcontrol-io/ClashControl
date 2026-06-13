@@ -786,13 +786,35 @@ function startApp() {
   window._ccRunDetection = function() {
     var s = window._ccLatestState;
     var d = window._ccDispatch;
-    if (!s || !d || !s.models || !s.models.length) return;
+    if (!s || !d || !s.models || !s.models.length) return false;
+    if (s.detecting) { console.warn('[Detection] already running — ignoring concurrent request'); return false; }
     try { window._ccLastDetectError = null; } catch(e) {} // clear stale error on new run
     d({t:'DETECTING'}); d({t:'TAB',v:'clashes'});
+    // Stall watchdog: if the engine makes no progress for 90s, abort so the UI
+    // (and the orchestrator's get_status) don't sit on detecting:true forever.
+    // A genuinely slow run keeps advancing window._ccDetectProgress.done and
+    // won't trip this; only a true hang does.
+    var _wd = { last: -1, since: Date.now() };
+    var _wdTimer = setInterval(function() {
+      var st = window._ccLatestState;
+      if (!st || !st.detecting) { clearInterval(_wdTimer); return; }
+      var p = window._ccDetectProgress;
+      var done = p ? (p.done || 0) : 0;
+      if (done !== _wd.last) { _wd.last = done; _wd.since = Date.now(); return; }
+      if (Date.now() - _wd.since > 90000) {
+        clearInterval(_wdTimer);
+        console.error('[Detection] stalled — no progress for 90s; aborting.');
+        try { window._ccLastDetectError = { message: 'Detection stalled (no progress for 90s) — aborted. Try a smaller scope, fewer/lighter models, or reload.', ts: Date.now(), stack: null }; } catch(e) {}
+        if (window._ccCancelDetection) window._ccCancelDetection(); else d({t:'STOP_DETECT'});
+        if (window._ccToast) window._ccToast('Detection stalled — aborted. Try a smaller scope.');
+      }
+    }, 5000);
     detectClashesAsync(s.models, s.rules).then(function(result) {
+      clearInterval(_wdTimer);
       classifyClashes(result);
       d({t:'MERGE_CLASHES', v:result});
     }).catch(function(err) {
+      clearInterval(_wdTimer);
       // Surface failures (e.g. RangeError "Invalid string length" on very large
       // federations) instead of leaving an unhandled rejection + stuck spinner.
       console.error('[Detection] failed:', err);
@@ -807,6 +829,7 @@ function startApp() {
       if (window._ccToast) window._ccToast('Detection failed: ' + msg +
         (msg.indexOf('string length') >= 0 ? ' — a very large model overflowed serialization; exclude it from sync and retry.' : ''));
     });
+    return true;
   };
 
   // ── Reducer ──────────────────────────────────────────────────── INTERNALS.md §4
