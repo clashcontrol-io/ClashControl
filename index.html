@@ -3387,6 +3387,8 @@ function startApp() {
     // Belt-and-braces: clear the global loading flag so skeleton rows and
     // the strip never stay stuck regardless of counter state.
     window._ccModelLoading = false;
+    // Also stop a live Revit pull (its WS stream isn't an IFC worker).
+    try { if (window._ccRevitCancelLoad) window._ccRevitCancelLoad(); } catch(_) {}
     try { window.dispatchEvent(new CustomEvent('cc-model-loading', { detail: { loading: false } })); } catch(_) {}
     if (window._ccToast) window._ccToast('Loading cancelled.');
   };

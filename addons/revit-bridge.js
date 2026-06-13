@@ -13,7 +13,7 @@
 
   var _revitWs = null;
   var _revitBuf = null;
-  var _lastLoadPct = -1; // throttle the loading-card event to one per whole % (avoids a re-render per batch)
+  var _revitAborted = false; // set by Cancel — ignore further export messages until the next export-start
   var _revitReconnect = null;
   var _revitReconnectDelay = 0; // exponential backoff: 0 = no reconnect scheduled
   var _revitLastPort = 19780;
@@ -213,8 +213,15 @@
   }
 
   function _revitDirectCancelExport() {
-    if (!_revitWs || _revitWs.readyState !== 1) return;
-    _revitWs.send(JSON.stringify({type:'cancel-export'}));
+    // Stop processing this export: flag so late model-start/element-batch messages
+    // are ignored (the WS may keep delivering already-queued batches), tell the
+    // Connector to stop, drop the buffer, and clear the loading card.
+    _revitAborted = true;
+    _revitLoadingEvent(false);
+    if (_revitLastDispatch) _revitLastDispatch({t:'UPD_REVIT_DIRECT', u:{loading:false, progress:0}});
+    if (_revitWs && _revitWs.readyState === 1) {
+      try { _revitWs.send(JSON.stringify({type:'cancel-export'})); } catch(e) {}
+    }
     _revitBuf = null;
   }
 
@@ -344,6 +351,7 @@
         break;
 
       case 'model-start':
+        if (_revitAborted) break; // user cancelled this export
         var isLink = !!(msg.isLink || msg.isLinked); // connector sends isLinked, bridge expects isLink
         var modelLabel = (isLink ? '[Link] ' : '') + (msg.name || 'Revit Model');
         // Diagnostic: log the full model-start payload so we can see
@@ -368,12 +376,10 @@
         };
         d({t:'UPD_REVIT_DIRECT', u:{loading:true, progress:0, elementCount:msg.elementCount||0}});
         d({t:'BRIDGE_LOG', logType:'pull', text:'Receiving ' + (isLink ? 'linked model' : 'model') + ' "' + msg.name + '" (' + (msg.elementCount||'?') + ' elements)...'});
-        _lastLoadPct = -1;
-        _revitLoadingEvent(true, (msg.name || 'Revit model') + ': receiving…');
         break;
 
       case 'element-batch':
-        if (!_revitBuf) break;
+        if (!_revitBuf || _revitAborted) break;
         var nextId = _revitBuf.elements.length + 1;
         (msg.elements || []).forEach(function(el) {
           var converted = _revitElementToMesh(el, nextId++);
@@ -385,11 +391,9 @@
         var prog = msg.totalBatches > 0 ? (msg.batchIndex + 1) / msg.totalBatches
           : _revitBuf.count > 0 ? _revitBuf.received / _revitBuf.count : 0;
         d({t:'UPD_REVIT_DIRECT', u:{progress: Math.min(prog, 0.99), elementCount: _revitBuf.received}});
-        var _pctNow = Math.round(Math.min(prog, 0.99) * 100);
-        if (_pctNow !== _lastLoadPct) {  // only emit on a whole-% change → ~100 events, not one per batch
-          _lastLoadPct = _pctNow;
-          _revitLoadingEvent(true, (_revitBuf.rawName || 'Revit model') + ': ' + _pctNow + '%');
-        }
+        // NB: no cc-model-loading event here — firing it per batch caused a
+        // re-render per batch (~1600 on an 82k model → minutes). The loading card
+        // is driven once by export-start / export-end instead.
         break;
 
       case 'model-end':
@@ -475,11 +479,16 @@
         break;
 
       case 'export-start':
+        _revitAborted = false; // fresh export — clear any prior cancel
         d({t:'BRIDGE_LOG', logType:'pull', text:'Export started — ' + (msg.totalModels||1) + ' model(s), ' + (msg.totalElements||'?') + ' elements total'});
+        // Single loading-card event for the whole pull (cleared at export-end) —
+        // no per-model/per-batch events (those caused the slow-pull regression).
+        _revitLoadingEvent(true, 'Receiving model from Revit…');
         break;
 
       case 'export-end':
         d({t:'BRIDGE_LOG', logType:'pull', text:'Export complete.'});
+        _revitLoadingEvent(false);
         break;
     }
   }
@@ -700,7 +709,8 @@
     }
 
     d({t:'UPD_REVIT_DIRECT', u:{loading:false, progress:1}});
-    _revitLoadingEvent(false); // model is in — hide the loading card
+    // (loading card is cleared at export-end, not here — a federation has several
+    // model-ends and we don't want to hide the card between models.)
     _revitBuf = null;
   }
 
@@ -1046,6 +1056,8 @@
 
   window._revitDirectConnect = _revitDirectConnect;
   window._revitDirectDisconnect = _revitDirectDisconnect;
+  // Let the generic load-cancel (LoadProgressCard → _ccAbortLoading) stop a Revit pull too.
+  window._ccRevitCancelLoad = _revitDirectCancelExport;
   window._revitDirectExport = _revitDirectExport;
   window._revitDirectCancelExport = _revitDirectCancelExport;
   window._revitDirectPushClashes = _revitDirectPushClashes;
