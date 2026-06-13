@@ -995,6 +995,22 @@
   window._revitKeepPartialModel = _keepPartialModel;
   window._revitDiscardPartialModel = _discardPartialModel;
 
+  // ── Auto-reconnect on load / re-enable ─────────────────────────
+  // Being active means the user previously enabled the bridge and expects the
+  // link restored — the WebSocket connect needs no user gesture, so we rebuild
+  // the session automatically and re-pull the model lost on refresh.
+  function _revitAutoReconnect(dispatch) {
+    if (typeof _revitDirectConnect !== 'function' || !dispatch) return;
+    var port = _loadDirectPort();
+    window._ccPullOnConnect = true;
+    // Defer slightly so React state has fully mounted before we dispatch
+    // connection state and logs into it.
+    setTimeout(function() {
+      try { _revitDirectConnect(port, dispatch); }
+      catch(e) { console.warn('[RevitBridge] auto-reconnect failed:', e && e.message || e); }
+    }, 150);
+  }
+
   // ── Register addon ─────────────────────────────────────────────
 
   // Guard per addon convention: the core must define this before the addon loads.
@@ -1065,20 +1081,7 @@
     },
 
     init: function(dispatch, getState) {
-      // Auto-reconnect on page load / re-enable. Being active at this
-      // moment means the user previously enabled the bridge and expects
-      // the link to be restored — the WebSocket connect doesn't need a
-      // user gesture, so we can rebuild the session automatically and
-      // re-pull the model that was lost when the page refreshed.
-      if (typeof _revitDirectConnect !== 'function') return;
-      var port = _loadDirectPort();
-      window._ccPullOnConnect = true;
-      // Defer slightly so React state has fully mounted before we start
-      // dispatching connection state and logs into it.
-      setTimeout(function() {
-        try { _revitDirectConnect(port, dispatch); }
-        catch(e) { console.warn('[RevitBridge] auto-reconnect failed:', e && e.message || e); }
-      }, 150);
+      _revitAutoReconnect(dispatch);
     },
 
     destroy: function() {
@@ -1461,4 +1464,24 @@
   window._revitBridgePush = _revitBridgePush;
   window._revitBridgePull = _revitBridgePull;
   window._testBridgeConnection = _testBridgeConnection;
+
+  // ── Deferred init fallback ─────────────────────────────────────
+  // React 18 (createRoot) schedules its first render asynchronously, so on a
+  // hard refresh this cached addon can register BEFORE window._ccDispatch is
+  // set — in which case _ccRegisterAddon skips init() and the live link is
+  // never auto-restored. Poll until dispatch is ready and run the reconnect
+  // ourselves. (_revitDirectConnect guards against a duplicate live socket.)
+  (function() {
+    if (window._ccDispatch) return; // dispatch was ready — _ccRegisterAddon already called init
+    if (!window._ccIsAddonActive || !window._ccIsAddonActive('revit-bridge')) return; // not active
+    var _t = setInterval(function() {
+      if (window._ccDispatch) {
+        clearInterval(_t);
+        if (window._ccIsAddonActive('revit-bridge')) {
+          console.log('[RevitBridge] Deferred init (dispatch was not ready at register time)');
+          _revitAutoReconnect(window._ccDispatch);
+        }
+      }
+    }, 20);
+  })();
 })();

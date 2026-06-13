@@ -1327,7 +1327,12 @@
               Smart Bridge is running. Connect your AI — one click, no API key:
             </div>`}
 
-            ${!sb.llmConnected && html`<div style=${{background:'var(--bg-secondary)',borderRadius:6,padding:'.45rem .5rem',display:'flex',flexDirection:'column',gap:'.35rem'}}>
+            ${!sb.llmConnected && html`<button onClick=${function(){ if(d) d({t:'UPD_SMART_BRIDGE', u:{showSetup: !sb.showSetup}}); }}
+              style=${{..._btnSmall,background:'var(--bg-secondary)',color:'var(--text-secondary)',alignSelf:'stretch',textAlign:'left',fontWeight:600}}>
+              ${sb.showSetup ? '▾' : '▸'} Connect an AI assistant — Claude, ChatGPT, REST
+            </button>`}
+
+            ${!sb.llmConnected && sb.showSetup && html`<div style=${{background:'var(--bg-secondary)',borderRadius:6,padding:'.45rem .5rem',display:'flex',flexDirection:'column',gap:'.35rem'}}>
               <div style=${{display:'flex',alignItems:'center',gap:'.4rem'}}>
                 <span style=${{fontSize:'0.69rem',fontWeight:600,color:'#c084fc',flex:1}}>Claude Desktop / Claude Code</span>
                 <button id="cc-sb-claude-btn" onClick=${_autoConfigureClaude}

@@ -775,51 +775,33 @@ async function callBridge(toolName, params) {
 }
 
 // ── MCP stdio transport ───────────────────────────────────────────────────────
-// Protocol: each message is framed with "Content-Length: N\r\n\r\n" followed
-// by N bytes of UTF-8 JSON. Same format for both input (stdin) and output (stdout).
+// Protocol: the MCP stdio transport is NEWLINE-DELIMITED JSON — each JSON-RPC
+// message is a single line terminated by "\n", with no embedded newlines. (This
+// is NOT the LSP "Content-Length" framing — using that makes Claude Desktop fail
+// the initialize handshake with "Could not attach to MCP server".)
 // stdout is SACRED — only JSON-RPC messages go there. All logging uses stderr.
 
-let _inputBuf = Buffer.alloc(0);
+let _inputBuf = '';
 
 function send(msg) {
-  const json = JSON.stringify(msg);
-  const header = `Content-Length: ${Buffer.byteLength(json, 'utf8')}\r\n\r\n`;
-  process.stdout.write(header + json);
+  process.stdout.write(JSON.stringify(msg) + '\n');
 }
 
 process.stdin.on('data', (chunk) => {
-  _inputBuf = Buffer.concat([_inputBuf, chunk]);
-  drain();
-});
-
-function drain() {
-  while (true) {
-    const str = _inputBuf.toString('utf8');
-    const sep = str.indexOf('\r\n\r\n');
-    if (sep === -1) break;
-
-    const headers = str.slice(0, sep);
-    const m = headers.match(/content-length:\s*(\d+)/i);
-    if (!m) {
-      // Malformed — skip past the separator
-      _inputBuf = _inputBuf.slice(Buffer.byteLength(str.slice(0, sep + 4), 'utf8'));
-      continue;
-    }
-
-    const bodyLen = parseInt(m[1], 10);
-    const bodyStart = Buffer.byteLength(str.slice(0, sep + 4), 'utf8');
-    if (_inputBuf.length < bodyStart + bodyLen) break; // wait for more data
-
-    const bodyStr = _inputBuf.slice(bodyStart, bodyStart + bodyLen).toString('utf8');
-    _inputBuf = _inputBuf.slice(bodyStart + bodyLen);
+  _inputBuf += chunk.toString('utf8');
+  let idx;
+  while ((idx = _inputBuf.indexOf('\n')) !== -1) {
+    const line = _inputBuf.slice(0, idx).trim();
+    _inputBuf = _inputBuf.slice(idx + 1);
+    if (!line) continue; // tolerate blank lines / \r\n
 
     let msg;
-    try { msg = JSON.parse(bodyStr); }
+    try { msg = JSON.parse(line); }
     catch (e) { console.error('[mcp] JSON parse error:', e.message); continue; }
 
     handle(msg).catch((e) => console.error('[mcp] handle error:', e));
   }
-}
+});
 
 async function handle(msg) {
   const { id, method, params } = msg;
