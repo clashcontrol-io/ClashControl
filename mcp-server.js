@@ -112,11 +112,31 @@ const TOOLS = [
           enum: ['all', 'open', 'resolved', 'approved'],
           description: "Filter clashes by status. Omit or 'all' for everything.",
         },
+        category: {
+          type: 'string',
+          description: "Filter by AI category (e.g. 'false_positive', 'needs_review', 'penetration').",
+        },
         limit: {
           type: 'number',
           description: 'Max clashes to return. Default 50.',
         },
+        offset: {
+          type: 'number',
+          description: 'Start index for pagination — page the full set with offset+limit.',
+        },
       },
+      required: [],
+    },
+  },
+  {
+    name: 'get_clash_summary',
+    description:
+      'Aggregate profile of the WHOLE clash set without paging it: total/open and counts byStatus, ' +
+      'byCategory (AI), byDiscipline (pair), byTypePair (top N), byStorey. Use this to find the few ' +
+      'root causes behind a large clash count before drilling in with get_clashes(offset).',
+    inputSchema: {
+      type: 'object',
+      properties: { topN: { type: 'number', description: 'Max entries per ranked list (type-pair, storey). Default 20.' } },
       required: [],
     },
   },

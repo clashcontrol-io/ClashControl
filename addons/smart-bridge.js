@@ -390,8 +390,10 @@
     var s = _getState();
     var clashes = s.clashes || [];
     if (p.status && p.status !== 'all') clashes = clashes.filter(function(c) { return c.status === p.status; });
+    if (p.category) clashes = clashes.filter(function(c) { return (c.aiCategory || '') === p.category; });
     var limit = p.limit || 50;
-    var slice = clashes.slice(0, limit);
+    var offset = p.offset > 0 ? Math.floor(p.offset) : 0; // pagination — page the full set
+    var slice = clashes.slice(offset, offset + limit);
 
     // Resolve a classification code per clash element (the join key to finance /
     // spec sources). Build an index only over the models + expressIds the slice
@@ -409,9 +411,9 @@
     var pk = s.activeProject || 'local'; // projectKey — partitions the connective graph
 
     return {
-      total: clashes.length,
+      total: clashes.length, offset: offset, returned: slice.length,
       clashes: slice.map(function(c, i) {
-        return { index: i, title: c.title || c.aiTitle || ('Clash ' + (i + 1)),
+        return { index: offset + i, title: c.title || c.aiTitle || ('Clash ' + (offset + i + 1)),
           status: c.status || 'open', priority: c.priority || 'normal',
           // NOTE: clashes store elem*Type/Name/Storey — read those (the old
           // typeA/nameA/storey fields don't exist on the clash, so they were null).
@@ -445,6 +447,37 @@
           sourceLocalIdA: c.uniqueIdA || c.globalIdA || (c.elemA != null ? String(c.elemA) : null),
           sourceLocalIdB: c.uniqueIdB || c.globalIdB || (c.elemB != null ? String(c.elemB) : null) };
       })
+    };
+  };
+
+  // Aggregate profile of the WHOLE clash set without paging it — so a consumer
+  // (orchestrator) can see the category distribution and spot the few root causes
+  // behind a large count. Counts by status, AI category, discipline-pair,
+  // type-pair (top N), and storey.
+  handlers.get_clash_summary = function(p) {
+    var s = _getState();
+    var clashes = s.clashes || [];
+    var topN = p && p.topN > 0 ? Math.floor(p.topN) : 20;
+    function bump(o, k) { k = k || '(none)'; o[k] = (o[k] || 0) + 1; }
+    var byStatus = {}, byCategory = {}, byDiscipline = {}, byTypePair = {}, byStorey = {};
+    clashes.forEach(function(c) {
+      bump(byStatus, c.status || 'open');
+      bump(byCategory, c.aiCategory);
+      var d = c.disciplines || [];
+      bump(byDiscipline, [d[0] || '?', d[1] || '?'].sort().join(' × '));
+      var tp = [c.elemAType || c.typeA || '?', c.elemBType || c.typeB || '?'].sort().join(' × ');
+      bump(byTypePair, tp);
+      bump(byStorey, c.storey || c.elemAStorey || c.elemBStorey || '(none)');
+    });
+    function top(o) {
+      return Object.keys(o).map(function(k) { return { key: k, count: o[k] }; })
+        .sort(function(a, b) { return b.count - a.count; }).slice(0, topN);
+    }
+    return {
+      total: clashes.length,
+      open: clashes.filter(function(c) { return c.status !== 'resolved'; }).length,
+      byStatus: byStatus, byCategory: byCategory, byDiscipline: byDiscipline,
+      byTypePair: top(byTypePair), byStorey: top(byStorey)
     };
   };
 
@@ -1080,7 +1113,9 @@
   var _TOOL_MANIFEST = [
     { name:'get_status',          description:'Snapshot of the current session: models (with source, version, lastSync and a coarse revision stamp per model — use to check sync with another live tool), clash/issue counts, detection rules, active tab, walk mode, theme.' },
     { name:'get_clashes',         description:'Detected clash pairs: status, priority, severity, storey, types/names, distance (mm), elevation (m), disciplines (arch×structural vs same-discipline), and stable identity per side — uniqueIdA/B (Revit UniqueId, most reliable cross-doc key; prefer it), globalIdA/B (IFC GlobalId), revitIdA/B (ElementId, doc-local) — plus classificationA/B ({system,code} NL-SfB/Uniclass) and modelAId/B.',
-      params:{ status:{type:'string',enum:['all','open','resolved','approved'],opt:1}, limit:{type:'number',opt:1} } },
+      params:{ status:{type:'string',enum:['all','open','resolved','approved'],opt:1}, category:{type:'string',opt:1}, limit:{type:'number',opt:1}, offset:{type:'number',opt:1} } },
+    { name:'get_clash_summary',   description:'Aggregate profile of the WHOLE clash set without paging it: total/open, and counts byStatus, byCategory (AI), byDiscipline (pair), byTypePair (top N), byStorey. Use to find the few root causes behind a large count.',
+      params:{ topN:{type:'number',opt:1} } },
     { name:'get_issues',          description:'Retrieves coordination issues with status, priority, assignee, description, involved element IFC GlobalIds (globalIds[]) and Revit ElementIds (revitIdA/B) for cross-tool joins.',
       params:{ status:{type:'string',enum:['all','open','in_progress','resolved','closed'],opt:1}, limit:{type:'number',opt:1} } },
     { name:'get_element_by_guid',  description:'Resolve loaded element(s) by Revit UniqueId (preferred), IFC GlobalId, or Revit ElementId — the inverse join: turn a key from another tool into the matching CC element with its model, type, storey, material, uniqueId and classification. Accepts single uniqueId/globalId/revitId or arrays uniqueIds[]/globalIds[]/revitIds[].',
