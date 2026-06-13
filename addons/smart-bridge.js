@@ -375,7 +375,7 @@
     return {
       models: models, modelCount: models.length,
       clashCount: (s.clashes || []).length,
-      openClashes: (s.clashes || []).filter(function(c) { return c.status !== 'resolved'; }).length,
+      openClashes: (s.clashes || []).filter(function(c) { var st = c.status || 'open'; return st !== 'resolved' && st !== 'expected' && st !== 'closed'; }).length,
       issueCount: (s.issues || []).length,
       activeProject: s.activeProject || null,
       projectKey: s.activeProject || 'local', // connective-spine partition key
@@ -1171,7 +1171,7 @@
   var _TOOL_MANIFEST = [
     { name:'get_status',          description:'Snapshot of the current session: models (with source, version, lastSync and a coarse revision stamp per model — use to check sync with another live tool), clash/issue counts, detection rules, active tab, walk mode, theme.' },
     { name:'get_clashes',         description:'Detected clash pairs: status, priority, severity, storey, types/names, distance (mm), elevation (m), disciplines (arch×structural vs same-discipline), and stable identity per side — uniqueIdA/B (Revit UniqueId, most reliable cross-doc key; prefer it), globalIdA/B (IFC GlobalId), revitIdA/B (ElementId, doc-local) — plus classificationA/B ({system,code} NL-SfB/Uniclass) and modelAId/B.',
-      params:{ status:{type:'string',enum:['all','open','resolved','approved'],opt:1}, category:{type:'string',opt:1}, limit:{type:'number',opt:1}, offset:{type:'number',opt:1} } },
+      params:{ status:{type:'string',enum:['all','open','resolved','approved','expected','closed'],opt:1}, category:{type:'string',opt:1}, limit:{type:'number',opt:1}, offset:{type:'number',opt:1} } },
     { name:'get_clash_summary',   description:'Aggregate profile of the WHOLE clash set without paging it: total/open, and counts byStatus, byCategory (AI), byDiscipline (pair), byTypePair (top N), byStorey. Use to find the few root causes behind a large count.',
       params:{ topN:{type:'number',opt:1} } },
     { name:'get_element_quality', description:'Per-element data-quality annotations keyed by uniqueId/globalId (untyped_proxy, no_classification, degenerate_bbox, oversized_bbox). A parallel triage signal — NOT a detection gate. Returns only flagged elements.',
@@ -1186,7 +1186,7 @@
       params:{ modelA:{type:'string',opt:1}, modelB:{type:'string',opt:1}, maxGap:{type:'number',opt:1}, hard:{type:'boolean',opt:1}, excludeSelf:{type:'boolean',opt:1} } },
     { name:'set_detection_rules', description:'Updates detection parameters without running detection.',
       params:{ maxGap:{type:'number',opt:1}, hard:{type:'boolean',opt:1}, excludeSelf:{type:'boolean',opt:1}, duplicates:{type:'boolean',opt:1} } },
-    { name:'update_clash',        description:'Updates one clash by 0-based index, or many at once via items[]. For bulk pass items:[{clashIndex,status?,priority?,assignee?,title?}, ...] — all targets are resolved before any change, so a batch is index-safe.',
+    { name:'update_clash',        description:"Updates one clash by 0-based index, or many at once via items[] (bulk-safe: all targets resolved before any change). status can be open|resolved|approved|closed|expected. Use 'expected' (NOT 'resolved') for by-design/false-positive clashes — it's a reversible suppressed bucket, kept out of the open count and re-openable by setting status back to 'open'. 'resolved' means a real clash was actually fixed.",
       params:{ clashIndex:{type:'number',opt:1}, status:{type:'string',opt:1}, priority:{type:'string',opt:1}, assignee:{type:'string',opt:1}, title:{type:'string',opt:1}, items:{type:'array',items:{type:'object'},opt:1} } },
     { name:'batch_update_clashes',description:'Applies a batch action to clashes matching a natural-language filter.',
       params:{ action:{type:'string'}, filter:{type:'string'} } },
