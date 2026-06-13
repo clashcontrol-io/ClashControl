@@ -15654,7 +15654,9 @@ function startApp() {
   function ModelCard(props) {
     var m=props.m, d=props.d, s=props.s;
     var op=useState(false), open=op[0], setOpen=op[1];
-    return html`<div style=${{background:'var(--bg-secondary)',border:'1px solid var(--border)',borderRadius:8,overflow:'hidden'}}>
+    // flexShrink:0 — in the shared scrolling column, many levels below would
+    // otherwise compress these rows to thin blank lines instead of scrolling.
+    return html`<div style=${{background:'var(--bg-secondary)',border:'1px solid var(--border)',borderRadius:8,overflow:'hidden',flexShrink:0}}>
       <div style=${{display:'flex',alignItems:'center',gap:'.35rem',padding:'.35rem .5rem'}}>
         <span onClick=${function(){d({t:A.UPD_MODEL,id:m.id,u:{visible:!m.visible}})}}
           style=${{width:14,height:14,borderRadius:3,border:'2px solid '+(m.visible!==false?'var(--accent)':'#475569'),background:m.visible!==false?'var(--accent)':'transparent',cursor:'pointer',flexShrink:0,display:'flex',alignItems:'center',justifyContent:'center'}}>
