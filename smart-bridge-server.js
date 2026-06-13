@@ -35,7 +35,12 @@
  */
 
 // ── --mcp / --install: delegate to mcp-server.js ─────────────────────────────
-if (process.argv.includes('--mcp') || process.argv.includes('--install') || process.stdin.isTTY) {
+// Claude Desktop spawns this with `--mcp` (see ensureMcpConfig below); `--install`
+// writes the config and exits. With no such flag we ALWAYS start the WS/REST
+// server. (Do NOT key MCP mode off process.stdin.isTTY — running the server from
+// an interactive terminal makes stdin a TTY, which used to wrongly drop into MCP
+// stdio mode and never bind 19802/19803, so the browser saw ECONNREFUSED.)
+if (process.argv.includes('--mcp') || process.argv.includes('--install')) {
   require('./mcp-server.js');
   // mcp-server.js installs stdin listeners and takes over — nothing more to do here.
   // (In pkg the file is included as a bundled module.)
