@@ -222,7 +222,8 @@ const TOOLS = [
     description:
       'Starts clash detection between loaded IFC models. Optionally set which models to compare, ' +
       'gap tolerance in mm, and whether to detect only hard clashes (physical intersections). ' +
-      'Results appear in get_clashes after detection completes.',
+      'Results appear in get_clashes after detection completes. Detection is async — if it fails ' +
+      '(e.g. a very large federation), get_status.lastDetectionError reports the message + stack.',
     inputSchema: {
       type: 'object',
       properties: {
