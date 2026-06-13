@@ -1,5 +1,8 @@
 # Changelog
 
+## v5.20.21 (2026-06-13)
+- Host-aware detection for Revit-keyed relatedPairs + throttle reconnect loading indicator (#630)
+
 ## v5.20.20 (2026-06-13)
 - Live-test fixes: clash metadata (type/name/storey), uniqueId join key, discipline tagging, classification shape (#629)
 
