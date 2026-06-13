@@ -141,6 +141,30 @@ const TOOLS = [
     },
   },
   {
+    name: 'get_element_quality',
+    description:
+      'Per-element data-quality annotations keyed by uniqueId/globalId — a parallel triage signal, NOT ' +
+      'a detection gate (flagged elements are still clashed, just down-rankable). Flags: untyped_proxy, ' +
+      'no_classification, degenerate_bbox (no geometry/zero size), oversized_bbox (>200 m). Returns only ' +
+      'flagged elements.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        modelId: { type: 'string', description: 'Limit to one model. Omit for all.' },
+        limit: { type: 'number', description: 'Max annotations. Default 1000.' },
+      },
+      required: [],
+    },
+  },
+  {
+    name: 'get_levels',
+    description:
+      'Per-model level/storey elevations (raw `elevation` in model units + `elevationM` in metres when ' +
+      'unitScale is known) so a consumer can compute floor build-up bands. get_clashes.elevation is in ' +
+      'scene metres — reconcile on that.',
+    inputSchema: { type: 'object', properties: {}, required: [] },
+  },
+  {
     name: 'get_issues',
     description:
       'Retrieves coordination issues (manually created or promoted from clashes). Each issue ' +

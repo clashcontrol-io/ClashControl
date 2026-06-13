@@ -62,6 +62,19 @@
     _revitReconnectDelay = 0;
   }
 
+  // ── On-screen loading feedback ─────────────────────────────────
+  // After a hard refresh the bridge auto-reconnects and re-pulls the model with
+  // no visible feedback (blank canvas). Drive the core's existing centered
+  // LoadProgressCard / WelcomePopup via the same cc-model-loading event the IFC
+  // loader uses, so the user sees "reconnecting / receiving N%".
+  function _revitLoadingEvent(on, msg) {
+    try {
+      window._ccModelLoading = !!on;
+      window._ccModelLoadMsg = on ? (msg || 'Revit: loading…') : '';
+      window.dispatchEvent(new CustomEvent('cc-model-loading', { detail: { loading: !!on, msg: msg || '' } }));
+    } catch (e) {}
+  }
+
   // ── WebSocket connection ───────────────────────────────────────
 
   function _revitDirectConnect(port, d) {
@@ -121,12 +134,14 @@
     _revitWs.onclose = function() {
       d({t:'UPD_REVIT_DIRECT', u:{connected:false, loading:false}});
       d({t:'BRIDGE_LOG', logType:'info', text:'Revit connection closed.'});
+      _revitLoadingEvent(false); // clear the loading card if the link drops mid-pull
       _revitWs = null;
       _scheduleReconnect();
     };
 
     _revitWs.onerror = function() {
       d({t:'UPD_REVIT_DIRECT', u:{connected:false, loading:false}});
+      _revitLoadingEvent(false);
       // Only log error if not already reconnecting (avoid spam)
       if (!_revitReconnectDelay) d({t:'BRIDGE_LOG', logType:'error', text:'Could not connect to Revit. Is the plugin running?'});
       _revitWs = null;
@@ -352,6 +367,7 @@
         };
         d({t:'UPD_REVIT_DIRECT', u:{loading:true, progress:0, elementCount:msg.elementCount||0}});
         d({t:'BRIDGE_LOG', logType:'pull', text:'Receiving ' + (isLink ? 'linked model' : 'model') + ' "' + msg.name + '" (' + (msg.elementCount||'?') + ' elements)...'});
+        _revitLoadingEvent(true, (msg.name || 'Revit model') + ': receiving…');
         break;
 
       case 'element-batch':
@@ -367,6 +383,7 @@
         var prog = msg.totalBatches > 0 ? (msg.batchIndex + 1) / msg.totalBatches
           : _revitBuf.count > 0 ? _revitBuf.received / _revitBuf.count : 0;
         d({t:'UPD_REVIT_DIRECT', u:{progress: Math.min(prog, 0.99), elementCount: _revitBuf.received}});
+        _revitLoadingEvent(true, (_revitBuf.rawName || 'Revit model') + ': ' + Math.round(Math.min(prog, 0.99) * 100) + '%');
         break;
 
       case 'model-end':
@@ -677,6 +694,7 @@
     }
 
     d({t:'UPD_REVIT_DIRECT', u:{loading:false, progress:1}});
+    _revitLoadingEvent(false); // model is in — hide the loading card
     _revitBuf = null;
   }
 
@@ -1044,6 +1062,9 @@
     if (typeof _revitDirectConnect !== 'function' || !dispatch) return;
     var port = _loadDirectPort();
     window._ccPullOnConnect = true;
+    // Show feedback immediately on a hard refresh — the model is about to stream
+    // in and the canvas is otherwise blank. Cleared on model-end or on failure.
+    _revitLoadingEvent(true, 'Revit: reconnecting…');
     // Defer slightly so React state has fully mounted before we dispatch
     // connection state and logs into it.
     setTimeout(function() {

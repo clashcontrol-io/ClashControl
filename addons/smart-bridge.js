@@ -561,6 +561,64 @@
     return 'Resync requested from Revit — the model will refresh shortly. Re-query get_status to confirm the new revision.';
   };
 
+  // Per-element data-quality annotations, keyed by uniqueId/globalId. A *parallel*
+  // signal for the orchestrator's triage — NOT a detection gate (a flagged proxy
+  // is still clashed; it's just down-ranked). Flags: untyped_proxy, no_classification,
+  // degenerate_bbox (no geometry / zero size), oversized_bbox (>200 m, almost always
+  // an export error). Returns only elements that have ≥1 flag.
+  handlers.get_element_quality = function(p) {
+    var s = _getState();
+    var pk = s.activeProject || 'local';
+    var limit = p && p.limit > 0 ? Math.floor(p.limit) : 1000;
+    var models = s.models || [];
+    if (p && p.modelId) models = models.filter(function(m) { return m.id === p.modelId; });
+    var out = [];
+    models.some(function(m) {
+      (m.elements || []).some(function(el) {
+        var pr = el.props || {};
+        var flags = [];
+        var t = (pr.ifcType || '').toLowerCase();
+        if (t.indexOf('proxy') >= 0 || t === '' || t === 'element') flags.push('untyped_proxy');
+        if (!_classOf(pr)) flags.push('no_classification');
+        if (el.box && typeof el.box.isEmpty === 'function') {
+          if (el.box.isEmpty()) flags.push('degenerate_bbox');
+          else {
+            var dx = el.box.max.x - el.box.min.x, dy = el.box.max.y - el.box.min.y, dz = el.box.max.z - el.box.min.z;
+            if (dx < 1e-4 && dy < 1e-4 && dz < 1e-4) flags.push('degenerate_bbox');
+            else if (dx > 200 || dy > 200 || dz > 200) flags.push('oversized_bbox');
+          }
+        }
+        if (!flags.length) return false;
+        out.push({ uniqueId: pr.uniqueId || null, globalId: pr.globalId || null,
+          revitId: pr.revitId != null ? pr.revitId : null, expressId: el.expressId,
+          modelId: m.id, source: 'clashcontrol', projectKey: pk,
+          ifcType: pr.ifcType || null, name: pr.name || null, flags: flags });
+        return out.length >= limit;
+      });
+      return out.length >= limit;
+    });
+    return { projectKey: pk, source: 'clashcontrol', count: out.length, annotations: out };
+  };
+
+  // Per-model level/storey elevations — raw data so the orchestrator can compute
+  // floor build-up bands. NOTE: `elevation` is in the model's stored units;
+  // `elevationM` is metres when unitScale is known (clash elevation in get_clashes
+  // is scene metres) — reconcile on those.
+  handlers.get_levels = function() {
+    var s = _getState();
+    var pk = s.activeProject || 'local';
+    return { projectKey: pk, source: 'clashcontrol',
+      note: 'elevation = model stored units; elevationM = metres when unitScale known; get_clashes.elevation is scene metres.',
+      models: (s.models || []).map(function(m) {
+        var us = (m.stats && m.stats.unitScale) || null;
+        return { modelId: m.id, modelName: m.name, discipline: m.discipline || 'Unknown', unitScale: us,
+          levels: (m.storeyData || []).map(function(sd) {
+            return { name: sd.name, id: sd.id || null, elevation: sd.elevation,
+              elevationM: us != null ? sd.elevation * us : null };
+          }) };
+      }) };
+  };
+
   handlers.run_detection = function(p) {
     var s = _getState();
     if (!s.models || !s.models.length) return 'No models loaded. Open an IFC file first.';
@@ -1116,6 +1174,9 @@
       params:{ status:{type:'string',enum:['all','open','resolved','approved'],opt:1}, category:{type:'string',opt:1}, limit:{type:'number',opt:1}, offset:{type:'number',opt:1} } },
     { name:'get_clash_summary',   description:'Aggregate profile of the WHOLE clash set without paging it: total/open, and counts byStatus, byCategory (AI), byDiscipline (pair), byTypePair (top N), byStorey. Use to find the few root causes behind a large count.',
       params:{ topN:{type:'number',opt:1} } },
+    { name:'get_element_quality', description:'Per-element data-quality annotations keyed by uniqueId/globalId (untyped_proxy, no_classification, degenerate_bbox, oversized_bbox). A parallel triage signal — NOT a detection gate. Returns only flagged elements.',
+      params:{ modelId:{type:'string',opt:1}, limit:{type:'number',opt:1} } },
+    { name:'get_levels',          description:"Per-model level/storey elevations (raw + elevationM when unitScale known) so a consumer can compute floor build-up bands. get_clashes.elevation is scene metres." },
     { name:'get_issues',          description:'Retrieves coordination issues with status, priority, assignee, description, involved element IFC GlobalIds (globalIds[]) and Revit ElementIds (revitIdA/B) for cross-tool joins.',
       params:{ status:{type:'string',enum:['all','open','in_progress','resolved','closed'],opt:1}, limit:{type:'number',opt:1} } },
     { name:'get_element_by_guid',  description:'Resolve loaded element(s) by Revit UniqueId (preferred), IFC GlobalId, or Revit ElementId — the inverse join: turn a key from another tool into the matching CC element with its model, type, storey, material, uniqueId and classification. Accepts single uniqueId/globalId/revitId or arrays uniqueIds[]/globalIds[]/revitIds[].',
