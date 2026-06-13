@@ -1,5 +1,8 @@
 # Changelog
 
+## v5.20.19 (2026-06-13)
+- Start-screen Revit live-link option + Smart Bridge rejection fix (#624)
+
 ## v5.20.18 (2026-06-12)
 - CRS-aware geo-placement — reproject IFC4 projected coordinates to lat/lon (#623)
 
