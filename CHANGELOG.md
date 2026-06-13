@@ -1,5 +1,8 @@
 # Changelog
 
+## v5.20.20 (2026-06-13)
+- Live-test fixes: clash metadata (type/name/storey), uniqueId join key, discipline tagging, classification shape (#629)
+
 ## v5.20.19 (2026-06-13)
 - Start-screen Revit live-link option + Smart Bridge rejection fix (#624)
 
