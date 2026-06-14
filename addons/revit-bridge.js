@@ -78,6 +78,40 @@
     } catch (e) {}
   }
 
+  // ── Connector update check ─────────────────────────────────────
+  // Compare the connected Connector's reported version against the latest GitHub
+  // release; surface an update prompt (with the installer link) in the Revit Bridge
+  // panel so users don't keep running a stale plugin. Runs at most once per page.
+  var _connUpdateChecked = false;
+  function _verCmp(a, b) { // returns 1 if a>b, -1 if a<b, 0 equal (numeric-dotted)
+    var pa = String(a).replace(/^v/, '').split('.').map(function(n){return parseInt(n,10)||0;});
+    var pb = String(b).replace(/^v/, '').split('.').map(function(n){return parseInt(n,10)||0;});
+    for (var i = 0; i < Math.max(pa.length, pb.length); i++) {
+      var x = pa[i] || 0, y = pb[i] || 0;
+      if (x > y) return 1; if (x < y) return -1;
+    }
+    return 0;
+  }
+  function _revitCheckConnectorUpdate(d, currentVersion) {
+    if (_connUpdateChecked || !currentVersion) return;
+    _connUpdateChecked = true;
+    fetch('https://api.github.com/repos/clashcontrol-io/ClashControlConnector/releases/latest', { cache: 'no-store' })
+      .then(function(r){ return r.ok ? r.json() : null; })
+      .then(function(rel){
+        if (!rel || !rel.tag_name) return;
+        var latest = String(rel.tag_name).replace(/^v/, '');
+        if (_verCmp(latest, currentVersion) <= 0) return; // up to date (or newer)
+        // Prefer the installer .exe asset, else the release page.
+        var url = rel.html_url || null;
+        (rel.assets || []).forEach(function(a){ if (/Installer.*\.exe$/i.test(a.name) && a.browser_download_url) url = a.browser_download_url; });
+        d({t:'UPD_REVIT_DIRECT', u:{ connectorUpdate: { current: currentVersion, latest: latest, url: url } }});
+        d({t:'BRIDGE_LOG', logType:'info', text:'Connector update available: v' + currentVersion + ' → v' + latest + '. Download the latest installer.'});
+        if (window._ccToast) window._ccToast('Revit Connector update available (v' + latest + ') — download the latest installer.');
+      })
+      .catch(function(){ /* offline / rate-limited — skip silently */ });
+  }
+  window._revitCheckConnectorUpdate = _revitCheckConnectorUpdate;
+
   // ── WebSocket connection ───────────────────────────────────────
 
   function _revitDirectConnect(port, d) {
@@ -429,6 +463,12 @@
           }
         }
         if (msg.version) d({t:'UPD_REVIT_DIRECT', u:{pluginVersion:msg.version}});
+        // Connector app version (App.Version) — used to prompt for an update when a
+        // newer Connector has been released. Capture it, then check GitHub once.
+        if (msg.connectorVersion) {
+          d({t:'UPD_REVIT_DIRECT', u:{connectorVersion: msg.connectorVersion}});
+          try { _revitCheckConnectorUpdate(d, msg.connectorVersion); } catch(_e) {}
+        }
         break;
 
       case 'model-start':
