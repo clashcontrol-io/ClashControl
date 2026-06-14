@@ -1,5 +1,8 @@
 # Changelog
 
+## v5.20.25 (2026-06-14)
+- Fix detection instant-0 regression + one-click Revit live link + faster 82k pull (#636)
+
 ## v5.20.24 (2026-06-13)
 - fix(detection): live progress in get_status, reject concurrent runs, 90s stall watchdog (no eternal detecting:true), clear stale type-pair memo on bridge runs (instant-0 fix) (#634)
 
