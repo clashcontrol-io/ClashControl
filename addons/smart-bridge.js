@@ -386,6 +386,14 @@
           confidence: live ? 'live' : 'snapshot' } };
     });
     var r = s.rules || {};
+    // Detection freshness. clashCount:0 is ambiguous (no clashes vs never ran);
+    // lastDetection:null means detection has never run this session. clashesStale
+    // flags that a model synced AFTER the last run, so the clash set is out of date
+    // (re-run before acting). _rh comes from the run-history the reducer keeps.
+    var _rh = (s.runHistory && s.runHistory.length) ? s.runHistory[s.runHistory.length - 1] : null;
+    var _maxSync = 0;
+    (s.models || []).forEach(function(m) { var ls = (m.stats && m.stats.lastSync) || 0; if (ls > _maxSync) _maxSync = ls; });
+    var _clashesStale = !!(_rh && _maxSync && _maxSync > _rh.ts);
     return {
       models: models, modelCount: models.length,
       clashCount: (s.clashes || []).length,
@@ -402,6 +410,31 @@
       // Live progress while detecting so the orchestrator gets intermediate
       // feedback instead of just true→false. {done,total,pct} or null when idle.
       detectionProgress: (function(){ try { return (s.detecting && window._ccDetectProgress) ? window._ccDetectProgress : null; } catch(e){ return null; } })(),
+      // When detection last completed (null = never run this session) + its result
+      // counts, and whether a later model sync makes the current clashes stale.
+      lastDetection: _rh ? { at: _rh.ts, total: _rh.total, open: _rh.open, newCount: _rh.newCount } : null,
+      clashesStale: _clashesStale,
+      // Live Revit-bridge ingest state. Without this an agent can't tell that a
+      // model is still streaming in ("Receiving model from Revit 77%") — modelCount
+      // already shows the slot while the data is half-loaded. `ingesting:true` means
+      // DO NOT act on model/clash data yet; poll until state==='ready'.
+      connector: (function(){
+        try {
+          var rd = s.revitDirect || {};
+          var receiving = !!rd.loading;
+          return {
+            connected: !!rd.connected,
+            state: receiving ? 'receiving' : (rd.connected ? 'ready' : 'disconnected'),
+            ingesting: receiving,
+            percent: receiving ? Math.round((rd.progress || 0) * 100) : (rd.connected ? 100 : 0),
+            elementCount: rd.elementCount || 0,
+            documentName: rd.documentName || null,
+            // Last pull error (e.g. a partial/failed export) so the agent doesn't
+            // treat a half-loaded or stale model as complete. null when OK.
+            lastError: rd.exportError || null
+          };
+        } catch(e) { return null; }
+      })(),
       activeTab: s.tab || 'clashes', walkMode: !!s.walkMode,
       theme: document.documentElement.getAttribute('data-theme') || 'dark'
     };
@@ -697,9 +730,19 @@
 
   handlers.update_clash = function(p) {
     var s = _getState(); var clashes = s.clashes || [];
+    var _remapped = 0;
     function apply(q, target) {
       var u = {};
-      if (q.status) u.status = q.status; if (q.priority) u.priority = q.priority;
+      if (q.status) {
+        // Guard the AI-sweep auto-resolve incident: 'resolved' means a real clash
+        // was ACTUALLY FIXED (a human/Revit action CC can't verify). The bridge
+        // (an AI/agent) must bucket, not decide — so route 'resolved' to the
+        // reversible 'expected' (suppressed/by-design) bucket instead. Keeps it out
+        // of the open count, re-openable, and never destroys the signal.
+        if (q.status === 'resolved') { u.status = 'expected'; _remapped++; }
+        else u.status = q.status;
+      }
+      if (q.priority) u.priority = q.priority;
       if (q.assignee != null) u.assignee = q.assignee; if (q.title) u.title = q.title;
       _dispatch({ t: 'UPD_CLASH', id: target.id, u: u });
     }
@@ -711,14 +754,23 @@
       });
       var done=0, bad=0;
       pairs.forEach(function(pr){ if (pr.t) { apply(pr.q, pr.t); done++; } else bad++; });
-      return 'Updated ' + done + ' clash' + (done===1?'':'es') + (bad?' ('+bad+' invalid index)':'') + '.';
+      return 'Updated ' + done + ' clash' + (done===1?'':'es') + (bad?' ('+bad+' invalid index)':'') +
+        (_remapped ? ' — ' + _remapped + " routed to 'expected' (by-design/suppressed): the bridge does not mark clashes 'resolved' (that means actually fixed). Re-openable." : '') + '.';
     }
     if (p.clashIndex < 0 || p.clashIndex >= clashes.length) return 'Invalid clash index.';
     apply(p, clashes[p.clashIndex]);
-    return 'Updated clash ' + (p.clashIndex + 1) + '.';
+    return 'Updated clash ' + (p.clashIndex + 1) + '.' +
+      (_remapped ? " Status routed to 'expected' (by-design/suppressed) — the bridge does not set 'resolved' (= actually fixed). Re-openable." : '');
   };
 
   handlers.batch_update_clashes = function(p) {
+    // Same guard as update_clash: never let a bulk AI action mark clashes
+    // 'resolved' (the all-7,420-resolved incident). Bucket into 'expected' instead.
+    var action = String(p.action || '').toLowerCase();
+    if (/resolv/.test(action)) {
+      return "Refused: the bridge does not bulk-'resolve' clashes ('resolved' = a real clash actually fixed, which an agent can't verify). " +
+        "To suppress by-design/false-positive clashes, use action 'expected' (reversible, kept out of the open count) — e.g. batch_update_clashes(action:'expected', filter:'" + (p.filter||'') + "').";
+    }
     if (window._ccProcessNLCommand) return window._ccProcessNLCommand('batch ' + p.action + ' ' + p.filter) || 'Batch update applied.';
     return 'Batch update: not available.';
   };
@@ -1218,7 +1270,7 @@
   // Schema format: JSON Schema subset (OpenAPI-compatible).
 
   var _TOOL_MANIFEST = [
-    { name:'get_status',          description:'Snapshot of the current session: models (with source, version, lastSync and a coarse revision stamp per model — use to check sync with another live tool), clash/issue counts, detection rules, active tab, walk mode, theme.' },
+    { name:'get_status',          description:'Snapshot of the current session: models (with source, version, lastSync and a coarse revision stamp per model — use to check sync with another live tool), clash/issue counts, detection rules, active tab, walk mode, theme. Includes connector:{state(receiving|ready|disconnected),ingesting,percent,elementCount} — when connector.ingesting is true the Revit model is still streaming in, so DO NOT act on model/clash data until state==="ready". Also detecting/detectionProgress and lastDetectionError.' },
     { name:'get_clashes',         description:'Detected clash pairs: status, priority, severity, storey, types/names, distance (mm), elevation (m), disciplines (arch×structural vs same-discipline), and stable identity per side — uniqueIdA/B (Revit UniqueId, most reliable cross-doc key; prefer it), globalIdA/B (IFC GlobalId), revitIdA/B (ElementId, doc-local) — plus classificationA/B ({system,code} NL-SfB/Uniclass) and modelAId/B.',
       params:{ status:{type:'string',enum:['all','open','resolved','approved','expected','closed'],opt:1}, category:{type:'string',opt:1}, limit:{type:'number',opt:1}, offset:{type:'number',opt:1} } },
     { name:'get_clash_summary',   description:'Aggregate profile of the WHOLE clash set without paging it: total/open, and counts byStatus, byCategory (AI), byDiscipline (pair), byTypePair (top N), byStorey. Use to find the few root causes behind a large count.',
@@ -1231,12 +1283,12 @@
     { name:'get_element_by_guid',  description:'Resolve loaded element(s) by Revit UniqueId (preferred), IFC GlobalId, or Revit ElementId — the inverse join: turn a key from another tool into the matching CC element with its model, type, storey, material, uniqueId and classification. Accepts single uniqueId/globalId/revitId or arrays uniqueIds[]/globalIds[]/revitIds[].',
       params:{ uniqueId:{type:'string',opt:1}, globalId:{type:'string',opt:1}, revitId:{type:'string',opt:1}, uniqueIds:{type:'array',opt:1}, globalIds:{type:'array',opt:1}, revitIds:{type:'array',opt:1}, limit:{type:'number',opt:1} } },
     { name:'resync',              description:'Force the live Revit link to re-pull the model so CC matches the current Revit state. Live-link only (no-op for static IFC loads). Re-check get_status afterwards for the new revision.' },
-    { name:'run_detection',       description:'Starts clash detection between loaded models (async). Results via get_clashes; on failure (e.g. very large federation) get_status.lastDetectionError reports the message + stack.',
+    { name:'run_detection',       description:'Starts clash detection between loaded models (async). modelA/modelB accept "all", a model name, "disc:<discipline>" (disc:architectural/structural/mep — disciplines from get_status), or "tag:<tag>"; use disc: on both sides to scope to cross-discipline pairs only and cut same-discipline noise at source. Results via get_clashes; on failure (e.g. very large federation) get_status.lastDetectionError reports the message + stack.',
       params:{ modelA:{type:'string',opt:1}, modelB:{type:'string',opt:1}, maxGap:{type:'number',opt:1}, hard:{type:'boolean',opt:1}, excludeSelf:{type:'boolean',opt:1} } },
     { name:'cancel_detection',    description:'Reset a stuck/wedged detection (clears detecting:true) so a new run_detection can start — no browser restart needed.' },
     { name:'set_detection_rules', description:'Updates detection parameters without running detection.',
       params:{ maxGap:{type:'number',opt:1}, hard:{type:'boolean',opt:1}, excludeSelf:{type:'boolean',opt:1}, duplicates:{type:'boolean',opt:1} } },
-    { name:'update_clash',        description:"Updates one clash by 0-based index, or many at once via items[] (bulk-safe: all targets resolved before any change). status can be open|resolved|approved|closed|expected. Use 'expected' (NOT 'resolved') for by-design/false-positive clashes — it's a reversible suppressed bucket, kept out of the open count and re-openable by setting status back to 'open'. 'resolved' means a real clash was actually fixed.",
+    { name:'update_clash',        description:"Updates one clash by 0-based index, or many at once via items[] (bulk-safe: all targets resolved before any change). status can be open|approved|closed|expected. Use 'expected' for by-design/false-positive clashes — a reversible suppressed bucket, kept out of the open count and re-openable by setting status back to 'open'. NOTE: 'resolved' (= a real clash actually fixed, which an agent can't verify) is automatically routed to 'expected' here — the bridge buckets, it does not decide a clash is fixed.",
       params:{ clashIndex:{type:'number',opt:1}, status:{type:'string',opt:1}, priority:{type:'string',opt:1}, assignee:{type:'string',opt:1}, title:{type:'string',opt:1}, items:{type:'array',items:{type:'object'},opt:1} } },
     { name:'batch_update_clashes',description:'Applies a batch action to clashes matching a natural-language filter.',
       params:{ action:{type:'string'}, filter:{type:'string'} } },
