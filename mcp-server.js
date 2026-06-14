@@ -843,6 +843,21 @@ const TOOLS = [
     },
   },
   {
+    name: 'import_bcf',
+    description:
+      'Imports a BCF (BIM Collaboration Format) file into ClashControl, adding each topic as an ' +
+      'issue (with element GUIDs, status, priority and viewpoints, and round-tripping ClashControl ' +
+      'provenance). Pass the .bcf/.bcfzip as a base64 string to import directly; omit it to open the ' +
+      'file picker for the user to choose a file in the browser.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        base64: { type: 'string', description: 'Base64-encoded .bcf/.bcfzip content. Omit to open the file-picker dialog instead.' },
+      },
+      required: [],
+    },
+  },
+  {
     name: 'create_project',
     description: 'Creates a new project in ClashControl to organise clashes and issues.',
     inputSchema: {

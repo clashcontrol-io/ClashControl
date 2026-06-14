@@ -1051,6 +1051,19 @@
   handlers.sort_clashes = function(p) { _dispatch({ t: 'CLASH_SORT', v: p.sortBy }); return 'Sorted by ' + p.sortBy + '.'; };
   handlers.group_clashes = function(p) { _dispatch({ t: 'CLASH_GROUP_BY', v: p.groupBy === 'none' ? [] : [p.groupBy] }); return 'Grouped by ' + p.groupBy + '.'; };
   handlers.export_bcf = function(p) { var s = _getState(); var items = s.issues && s.issues.length ? s.issues : (s.clashes || []); if (!items.length) return 'Nothing to export.'; if (window._ccExportBCF) { window._ccExportBCF(items, p.version || '2.1'); return 'Exported ' + items.length + ' items as BCF.'; } return 'BCF export not available.'; };
+  handlers.import_bcf = function(p) {
+    if (!window._ccImportBCF) return 'BCF import not available.';
+    // Two modes: an agent with the file passes base64 BCF content (parsed
+    // directly, no dialog); otherwise open the file picker for the user.
+    var b64 = p && (p.base64 || p.bcfBase64 || p.content);
+    if (b64) {
+      var ok = window._ccImportBCF({ base64: String(b64) });
+      return ok ? 'Importing BCF — topics are being added as issues (check the Issues tab).'
+                : 'Could not read the provided BCF content. Pass a base64-encoded .bcf/.bcfzip.';
+    }
+    window._ccImportBCF();
+    return 'Opened the BCF import dialog in ClashControl — choose a .bcf/.bcfzip file to import its topics as issues. (To import without a dialog, pass the file as base64.)';
+  };
   handlers.create_project = function(p) { _dispatch({ t: 'CREATE_PROJECT', name: p.name }); return 'Project "' + p.name + '" created.'; };
   handlers.switch_project = function(p) { var s = _getState(); var projects = s.projectList || []; var match = projects.find(function(pr) { return (pr.name || '').toLowerCase().indexOf(p.name.toLowerCase()) >= 0; }); if (match) { _dispatch({ t: 'SET_PROJECT', id: match.id }); return 'Switched to "' + match.name + '".'; } return 'Project "' + p.name + '" not found.'; };
   handlers.measure = function(p) {
@@ -1633,6 +1646,8 @@
       params:{ issueIndex:{type:'number',opt:1}, items:{type:'array',items:{type:'object'},opt:1} } },
     { name:'export_bcf',          description:'Exports all clashes or issues as a BCF ZIP file.',
       params:{ version:{type:'string',enum:['2.1','3.0'],opt:1} } },
+    { name:'import_bcf',          description:'Imports a BCF (2.1/3.0) file, adding its topics as issues (with element GUIDs, status, priority, viewpoints). Pass base64 of the .bcf/.bcfzip to import directly without a dialog; omit it to open the file picker for the user to choose a file.',
+      params:{ base64:{type:'string',opt:1} } },
     { name:'create_project',      description:'Creates a new project.',
       params:{ name:{type:'string'} } },
     { name:'switch_project',      description:'Switches to a project by name (fuzzy match).',
