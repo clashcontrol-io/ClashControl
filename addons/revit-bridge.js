@@ -13,6 +13,7 @@
 
   var _revitWs = null;
   var _revitBuf = null;
+  var _revitMatCache = {}; // colour "r,g,b,a" → shared MeshPhongMaterial (dedup, see #572)
   var _revitAborted = false; // set by Cancel — ignore further export messages until the next export-start
   var _revitReconnect = null;
   var _revitReconnectDelay = 0; // exponential backoff: 0 = no reconnect scheduled
@@ -267,12 +268,23 @@
       }
       geom.computeBoundingBox();
       var c = el.geometry.color || [0.65, 0.65, 0.65, 1.0];
-      var mat = new THREE.MeshPhongMaterial({
-        color: new THREE.Color(c[0], c[1], c[2]),
-        opacity: c[3] != null ? c[3] : 1,
-        transparent: c[3] != null && c[3] < 0.99,
-        side: THREE.DoubleSide
-      });
+      // Material dedup by colour, mirroring the IFC loader's matCache (#572):
+      // a fresh MeshPhongMaterial per element meant ~82k distinct materials on
+      // the big model — heavy on memory and draw-call state changes. Identical
+      // colours now share one material. Safe with the highlight/ghost/render-
+      // style systems, which swap mesh.material by reference (and stash
+      // _origMaterial) rather than mutating the material in place.
+      var _ck = c[0] + ',' + c[1] + ',' + c[2] + ',' + (c[3] != null ? c[3] : 1);
+      var mat = _revitMatCache[_ck];
+      if (!mat) {
+        mat = new THREE.MeshPhongMaterial({
+          color: new THREE.Color(c[0], c[1], c[2]),
+          opacity: c[3] != null ? c[3] : 1,
+          transparent: c[3] != null && c[3] < 0.99,
+          side: THREE.DoubleSide
+        });
+        _revitMatCache[_ck] = mat;
+      }
       var mesh = new THREE.Mesh(geom, mat);
       mesh.name = el.globalId || '';
       mesh.userData.expressId = el.expressId || nextId;
