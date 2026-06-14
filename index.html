@@ -4229,6 +4229,11 @@ function startApp() {
       (m.elements||[]).forEach(function(el) {
         if (!el.box) return;
         if (exTypes && el.props && exTypes.indexOf(el.props.ifcType)!==-1) return;
+        // Rooms/spaces (IfcSpace) enclose everything inside them, so they're kept
+        // out of standard clash detection — including them would flag every element
+        // in a room as a "clash". Opt in with rules.includeSpaces (set when the
+        // user explicitly asks to clash against rooms/spaces, e.g. space-intrusion).
+        if (!rules.includeSpaces && el.props && el.props.ifcType === 'IfcSpace') return;
         items.push({el:el, m:m});
       });
     });
@@ -11133,6 +11138,89 @@ function startApp() {
       scene.add(S.grid);
       S.axes = new THREE.AxesHelper(3);
       scene.add(S.axes);
+
+      // ── Structural grid overlay (from the Revit bridge) ──────────────
+      // model.gridLines = [{ name, pts:[x1,z1,x2,z2,...] }] in ground-plane
+      // metres. Drawn as reference lines + name pins, and used for nearest-grid
+      // ("near A-3") position lookups. Reference only — never clashable geometry.
+      S.gridOverlay = new THREE.Group();
+      S.gridOverlay.name = 'gridOverlay';
+      scene.add(S.gridOverlay);
+      function _ccGridLinesAll() {
+        var out = [], st = window._ccLatestState;
+        if (!st || !st.models) return out;
+        st.models.forEach(function(m){
+          if (m.visible === false) return;
+          (m.gridLines || []).forEach(function(g){ if (g && g.pts && g.pts.length >= 4) out.push(g); });
+        });
+        return out;
+      }
+      function _ccMakeGridLabel(name) {
+        try {
+          var c = document.createElement('canvas'); c.width = 128; c.height = 64;
+          var g = c.getContext('2d');
+          g.fillStyle = 'rgba(37,99,235,0.92)';
+          g.beginPath(); g.arc(64, 32, 28, 0, Math.PI*2); g.fill();
+          g.strokeStyle = '#fff'; g.lineWidth = 3; g.stroke();
+          g.fillStyle = '#fff'; g.font = 'bold 30px -apple-system, sans-serif';
+          g.textAlign = 'center'; g.textBaseline = 'middle';
+          g.fillText(String(name).slice(0, 4), 64, 34);
+          var t = new THREE.CanvasTexture(c); t.minFilter = THREE.LinearFilter; t.needsUpdate = true;
+          return t;
+        } catch(e) { return null; }
+      }
+      window._ccRefreshGridOverlay = function() {
+        if (!S.gridOverlay) return;
+        while (S.gridOverlay.children.length) {
+          var ch = S.gridOverlay.children.pop();
+          if (ch.geometry) ch.geometry.dispose();
+          if (ch.material) { if (ch.material.map) ch.material.map.dispose(); ch.material.dispose(); }
+        }
+        var grids = _ccGridLinesAll();
+        if (grids.length) {
+          var lineMat = new THREE.LineBasicMaterial({ color: 0x60a5fa, transparent: true, opacity: 0.45 });
+          grids.forEach(function(gr){
+            var pts = gr.pts, v = [];
+            for (var i = 0; i + 1 < pts.length; i += 2) v.push(new THREE.Vector3(pts[i], 0.02, pts[i+1]));
+            if (v.length < 2) return;
+            var line = new THREE.Line(new THREE.BufferGeometry().setFromPoints(v), lineMat);
+            line.frustumCulled = false;
+            S.gridOverlay.add(line);
+            var tex = _ccMakeGridLabel(gr.name);
+            if (tex) {
+              var sp = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, depthTest: false, transparent: true }));
+              sp.position.set(v[0].x, 0.6, v[0].z); sp.scale.set(1.8, 0.9, 1); sp.renderOrder = 999;
+              S.gridOverlay.add(sp);
+            }
+          });
+        }
+        var prefs = window._ccLatestState && window._ccLatestState.prefs;
+        S.gridOverlay.visible = !(prefs && prefs.showGrids === false);
+        invalidate(2);
+      };
+      // Nearest-grid lookup for a scene point. Returns a bay label like "A-3"
+      // (one axis from each grid family) or null when no grids are loaded.
+      window._ccGridBayForPoint = function(p) {
+        if (!p) return null;
+        var grids = _ccGridLinesAll();
+        if (!grids.length) return null;
+        var px = p.x != null ? p.x : p[0];
+        var pz = p.z != null ? p.z : (p[2] != null ? p[2] : p[1]);
+        if (px == null || pz == null) return null;
+        var bestX = null, bestXd = Infinity, bestZ = null, bestZd = Infinity;
+        grids.forEach(function(gr){
+          var pts = gr.pts; if (!pts || pts.length < 4) return;
+          var x1 = pts[0], z1 = pts[1], x2 = pts[pts.length-2], z2 = pts[pts.length-1];
+          var dx = x2 - x1, dz = z2 - z1, len = Math.hypot(dx, dz) || 1;
+          var dist = Math.abs((dz*(px - x1) - dx*(pz - z1)) / len);
+          if (Math.abs(dx) >= Math.abs(dz)) { if (dist < bestZd) { bestZd = dist; bestZ = gr.name; } }
+          else { if (dist < bestXd) { bestXd = dist; bestX = gr.name; } }
+        });
+        var parts = [];
+        if (bestX) parts.push(bestX);
+        if (bestZ) parts.push(bestZ);
+        return parts.length ? parts.join('-') : null;
+      };
 
       var mg = new THREE.Group(); scene.add(mg); S.mg = mg;
 
@@ -26822,6 +26910,14 @@ function startApp() {
     var discList = Object.keys(uniqueDisciplines);
     var r = s.rules || {};
     var openClashes = s.clashes ? s.clashes.filter(function(c){return c.status!=='resolved';}).length : 0;
+    // Spatial reference for position-aware queries ("clashes on level 2", "near
+    // grid A-3"). Levels come from every model's storeyData; grids from the Revit
+    // bridge (model.gridLines). Both are deduped and summarised for the assistant.
+    var _levelSeen = {}, _levels = [];
+    (s.models || []).forEach(function(m){ (m.storeyData || []).forEach(function(sd){ if (!sd || !sd.name) return; var k = sd.name + '@' + (sd.elevation||0); if (!_levelSeen[k]) { _levelSeen[k] = 1; _levels.push({ name: sd.name, elevation: sd.elevation }); } }); });
+    _levels.sort(function(a,b){ return (a.elevation||0) - (b.elevation||0); });
+    var _gridSeen = {}, _gridNames = [];
+    (s.models || []).forEach(function(m){ (m.gridLines || []).forEach(function(g){ if (g && g.name && !_gridSeen[g.name]) { _gridSeen[g.name] = 1; _gridNames.push(g.name); } }); });
     var context = {
       models: modelList,
       modelCount: (s.models || []).length,
@@ -26830,6 +26926,10 @@ function startApp() {
       }),
       disciplineCount: discList.length,
       disciplines: discList.join(', ') || 'none',
+      levels: _levels,
+      levelNames: _levels.map(function(l){ return l.name; }),
+      grids: _gridNames,
+      hasGrids: _gridNames.length > 0,
       maxGap: r.maxGap, hard: !!r.hard, modelA: r.modelA, modelB: r.modelB,
       clashCount: s.clashes ? s.clashes.length : 0,
       openClashCount: openClashes,

@@ -107,7 +107,9 @@ const TOOLS = [
       'uniqueIdA/uniqueIdB (Revit UniqueId — the most reliable cross-document join key; prefer this), ' +
       'globalIdA/globalIdB (IFC GlobalId), revitIdA/revitIdB (Revit ElementId, doc-local). Plus ' +
       'classificationA/classificationB ({system, code} NL-SfB/Uniclass — the join key to finance/ERP & ' +
-      'specs) and modelAId/modelBId. Filter by status and limit results.',
+      'specs) and modelAId/modelBId. Also gridBay — the nearest structural-grid bay (e.g. "A-3") for ' +
+      'the clash point when grids are loaded via the Revit bridge, for "near grid A-3" queries. ' +
+      'Filter by status and limit results.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -166,6 +168,14 @@ const TOOLS = [
       'Per-model level/storey elevations (raw `elevation` in model units + `elevationM` in metres when ' +
       'unitScale is known) so a consumer can compute floor build-up bands. get_clashes.elevation is in ' +
       'scene metres — reconcile on that.',
+    inputSchema: { type: 'object', properties: {}, required: [] },
+  },
+  {
+    name: 'get_grids',
+    description:
+      'Structural grid axis names (e.g. "A", "B", "1", "2") brought into ClashControl via the Revit ' +
+      'bridge. Pair with get_clashes.gridBay (each clash\'s nearest grid bay, e.g. "A-3") to locate or ' +
+      'filter clashes by grid position. Empty for plain IFC loads (grids come from the live Revit link).',
     inputSchema: { type: 'object', properties: {}, required: [] },
   },
   {
@@ -230,6 +240,8 @@ const TOOLS = [
       'disc:structural, disc:mep — disciplines come from get_status), or "tag:<tag>". ' +
       'Use disc: on both sides to scope to cross-discipline pairs only (e.g. modelA "disc:architectural", ' +
       'modelB "disc:structural") and cut same-discipline noise at source. ' +
+      'Rooms/spaces (IfcSpace) are excluded by default — set includeSpaces:true to clash against rooms ' +
+      '(space-intrusion checks). ' +
       'Results appear in get_clashes after detection completes. Detection is async — if it fails ' +
       '(e.g. a very large federation), get_status.lastDetectionError reports the message + stack.',
     inputSchema: {
@@ -240,6 +252,7 @@ const TOOLS = [
         maxGap: { type: 'number', description: 'Gap tolerance in mm. Elements within this distance count as clashing. Default 10mm.' },
         hard: { type: 'boolean', description: 'True = detect only hard clashes (physical intersections).' },
         excludeSelf: { type: 'boolean', description: 'True = skip clashes within the same model.' },
+        includeSpaces: { type: 'boolean', description: 'True = include rooms/spaces (IfcSpace) in detection for space-intrusion checks. Default false (rooms excluded).' },
       },
       required: [],
     },

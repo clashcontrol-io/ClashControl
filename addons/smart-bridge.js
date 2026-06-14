@@ -517,6 +517,9 @@
           // Elevation of the clash point (m) — lets a consumer (orchestrator) test
           // a slab/slab overlap against a storey's floor build-up band.
           elevation: c.elevation != null ? c.elevation : null,
+          // Nearest structural-grid bay (e.g. "A-3") for the clash point, when grids
+          // were brought in via the Revit bridge. Enables "clashes near grid A-3".
+          gridBay: (c.point && typeof window._ccGridBayForPoint === 'function') ? window._ccGridBayForPoint(c.point) : null,
           aiSeverity: c.aiSeverity || null, aiCategory: c.aiCategory || null,
           // Stable identity for cross-tool joins. globalId = IFC GlobalId; revitId =
           // Revit ElementId (doc-local); uniqueId = Revit UniqueId — the only stable
@@ -726,6 +729,18 @@
       }) };
   };
 
+  handlers.get_grids = function() {
+    var s = _getState();
+    var pk = _projectKey(s);
+    var seen = {}, names = [];
+    (s.models || []).forEach(function(m) {
+      (m.gridLines || []).forEach(function(g) { if (g && g.name && !seen[g.name]) { seen[g.name] = 1; names.push(g.name); } });
+    });
+    return { projectKey: pk, source: 'clashcontrol', total: names.length, grids: names,
+      note: names.length ? 'Structural grids from the Revit bridge. get_clashes.gridBay gives each clash\'s nearest bay (e.g. "A-3").'
+                         : 'No grids loaded. Grids come in via the Revit bridge (Connector) — not from plain IFC loads.' };
+  };
+
   handlers.run_detection = function(p) {
     var s = _getState();
     if (!s.models || !s.models.length) return 'No models loaded. Open an IFC file first.';
@@ -757,6 +772,9 @@
     if (p.maxGap != null) updates.maxGap = p.maxGap;
     if (p.hard != null) updates.hard = p.hard;
     if (p.excludeSelf != null) updates.excludeSelf = p.excludeSelf;
+    // Rooms/spaces (IfcSpace) are excluded from detection by default. Set
+    // includeSpaces:true to clash *against* rooms (e.g. space-intrusion checks).
+    if (p.includeSpaces != null) updates.includeSpaces = p.includeSpaces;
     _dispatch({ t: 'UPD_RULES', u: updates });
     // Force a fresh compute: a stale type-pair "impossibility" memo from a prior
     // (crashed/empty) run can make detection short-circuit to 0 instantly. Clearing
@@ -1511,20 +1529,21 @@
 
   var _TOOL_MANIFEST = [
     { name:'get_status',          description:'Snapshot of the current session: models (with source, version, lastSync and a coarse revision stamp per model — use to check sync with another live tool), clash/issue counts, detection rules, active tab, walk mode, theme. Includes connector:{state(receiving|ready|disconnected),ingesting,percent,elementCount} — when connector.ingesting is true the Revit model is still streaming in, so DO NOT act on model/clash data until state==="ready". Also detecting/detectionProgress and lastDetectionError.' },
-    { name:'get_clashes',         description:'Detected clash pairs: status, priority, severity, storey, types/names, distance (mm), elevation (m), disciplines (arch×structural vs same-discipline), and stable identity per side — uniqueIdA/B (Revit UniqueId, most reliable cross-doc key; prefer it), globalIdA/B (IFC GlobalId), revitIdA/B (ElementId, doc-local) — plus classificationA/B ({system,code} NL-SfB/Uniclass) and modelAId/B.',
+    { name:'get_clashes',         description:'Detected clash pairs: status, priority, severity, storey, types/names, distance (mm), elevation (m), gridBay (nearest structural-grid bay e.g. "A-3" when grids loaded via the Revit bridge), disciplines (arch×structural vs same-discipline), and stable identity per side — uniqueIdA/B (Revit UniqueId, most reliable cross-doc key; prefer it), globalIdA/B (IFC GlobalId), revitIdA/B (ElementId, doc-local) — plus classificationA/B ({system,code} NL-SfB/Uniclass) and modelAId/B.',
       params:{ status:{type:'string',enum:['all','open','resolved','approved','expected','closed'],opt:1}, category:{type:'string',opt:1}, limit:{type:'number',opt:1}, offset:{type:'number',opt:1} } },
     { name:'get_clash_summary',   description:'Aggregate profile of the WHOLE clash set without paging it: total/open, and counts byStatus, byCategory (AI), byDiscipline (pair), byTypePair (top N), byStorey. Use to find the few root causes behind a large count.',
       params:{ topN:{type:'number',opt:1} } },
     { name:'get_element_quality', description:'Per-element data-quality annotations keyed by uniqueId/globalId (untyped_proxy, no_classification, degenerate_bbox, oversized_bbox). A parallel triage signal — NOT a detection gate. Returns only flagged elements.',
       params:{ modelId:{type:'string',opt:1}, limit:{type:'number',opt:1} } },
     { name:'get_levels',          description:"Per-model level/storey elevations (raw + elevationM when unitScale known) so a consumer can compute floor build-up bands. get_clashes.elevation is scene metres." },
+    { name:'get_grids',           description:'Structural grid axis names (e.g. "A","B","1","2") brought in via the Revit bridge. Pair with get_clashes.gridBay to locate or filter clashes by grid position ("near grid A-3"). Empty for plain IFC loads.' },
     { name:'get_issues',          description:'Retrieves coordination issues with status, priority, assignee, description, involved element IFC GlobalIds (globalIds[]) and Revit ElementIds (revitIdA/B) for cross-tool joins.',
       params:{ status:{type:'string',enum:['all','open','in_progress','resolved','closed'],opt:1}, limit:{type:'number',opt:1} } },
     { name:'get_element_by_guid',  description:'Resolve loaded element(s) by Revit UniqueId (preferred), IFC GlobalId, or Revit ElementId — the inverse join: turn a key from another tool into the matching CC element with its model, type, storey, material, uniqueId and classification. Accepts single uniqueId/globalId/revitId or arrays uniqueIds[]/globalIds[]/revitIds[].',
       params:{ uniqueId:{type:'string',opt:1}, globalId:{type:'string',opt:1}, revitId:{type:'string',opt:1}, uniqueIds:{type:'array',opt:1}, globalIds:{type:'array',opt:1}, revitIds:{type:'array',opt:1}, limit:{type:'number',opt:1} } },
     { name:'resync',              description:'Force the live Revit link to re-pull the model so CC matches the current Revit state. Live-link only (no-op for static IFC loads). Re-check get_status afterwards for the new revision.' },
-    { name:'run_detection',       description:'Starts clash detection between loaded models (async). modelA/modelB accept "all", a model name, "disc:<discipline>" (disc:architectural/structural/mep — disciplines from get_status), or "tag:<tag>"; use disc: on both sides to scope to cross-discipline pairs only and cut same-discipline noise at source. Results via get_clashes; on failure (e.g. very large federation) get_status.lastDetectionError reports the message + stack.',
-      params:{ modelA:{type:'string',opt:1}, modelB:{type:'string',opt:1}, maxGap:{type:'number',opt:1}, hard:{type:'boolean',opt:1}, excludeSelf:{type:'boolean',opt:1} } },
+    { name:'run_detection',       description:'Starts clash detection between loaded models (async). modelA/modelB accept "all", a model name, "disc:<discipline>" (disc:architectural/structural/mep — disciplines from get_status), or "tag:<tag>"; use disc: on both sides to scope to cross-discipline pairs only and cut same-discipline noise at source. Rooms/spaces (IfcSpace) are excluded by default — set includeSpaces:true to clash against rooms (space-intrusion checks). Results via get_clashes; on failure (e.g. very large federation) get_status.lastDetectionError reports the message + stack.',
+      params:{ modelA:{type:'string',opt:1}, modelB:{type:'string',opt:1}, maxGap:{type:'number',opt:1}, hard:{type:'boolean',opt:1}, excludeSelf:{type:'boolean',opt:1}, includeSpaces:{type:'boolean',opt:1} } },
     { name:'run_detection_ruleset', description:"Rule-based / cross-discipline detection (Solibri-style): runs several scoped rules — each a discipline/model pair with its own gap — and returns the UNION (deduped). Cuts volume at source vs flat all-vs-all; hosted/by-design pairs are excluded at detection time. With no rules[], preset 'cross_discipline' auto-builds every distinct discipline pair present (arch×structural, arch×mep, structural×mep). Async — results via get_clashes.",
       params:{ rules:{type:'array',items:{type:'object'},opt:1}, preset:{type:'string',opt:1}, maxGap:{type:'number',opt:1}, hard:{type:'boolean',opt:1} } },
     { name:'cancel_detection',    description:'Reset a stuck/wedged detection (clears detecting:true) so a new run_detection can start — no browser restart needed.' },
