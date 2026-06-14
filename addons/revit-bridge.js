@@ -14,6 +14,7 @@
   var _revitWs = null;
   var _revitBuf = null;
   var _revitMatCache = {}; // colour "r,g,b,a" → shared MeshPhongMaterial (dedup, see #572)
+  var _revitTmpMtx = null; // reused per placement; lazy-init once THREE is loaded
   var _revitAborted = false; // set by Cancel — ignore further export messages until the next export-start
   var _revitReconnect = null;
   var _revitReconnectDelay = 0; // exponential backoff: 0 = no reconnect scheduled
@@ -251,6 +252,39 @@
     return new Uint32Array(buf);
   }
 
+  // ── Non-renderable element filter ──────────────────────────────
+  // The Revit Connector can hand us elements that Revit never shows in its 3D
+  // view and that should never clash — datums (grids/levels/reference planes),
+  // survey/base-point markers, spatial containers (rooms/areas/spaces), scope
+  // boxes, cameras, etc. Left in, they appear as stray geometry "flying" far
+  // from the model (base points sit at the survey origin) and pollute clash
+  // results. This mirrors the IFC path, which skips IfcSpace / IfcOpeningElement
+  // / IfcVirtualElement / IfcAnnotation / IfcGrid and survey markers.
+  //
+  // Honour an explicit visibility flag from the Connector first (most reliable),
+  // then fall back to a conservative category keyword list. Kept conservative so
+  // real building geometry is never dropped.
+  // Matched against the (lower-cased) Revit category name; chosen to hit the real
+  // category strings (mostly plural) without snagging building elements.
+  var _REVIT_SKIP_CATS = [
+    'rooms', 'areas', 'spaces', 'mep spaces',            // spatial containers
+    'survey point', 'project base point', 'internal origin', 'base point',
+    'reference planes', 'reference lines', 'grids', 'levels', 'scope boxes',
+    'cameras', 'section box', 'property lines', 'matchline', 'analytical',
+    'sun path', 'viewports'
+  ];
+  function _revitSkipElement(el) {
+    if (!el) return true;
+    // Explicit visibility from the Connector, if provided.
+    if (el.visible === false || el.hidden === true || el.isHidden === true) return true;
+    var cat = (el.category || el.type || '').toLowerCase();
+    if (!cat) return false;
+    for (var i = 0; i < _REVIT_SKIP_CATS.length; i++) {
+      if (cat.indexOf(_REVIT_SKIP_CATS[i]) >= 0) return true;
+    }
+    return false;
+  }
+
   // ── Convert Revit element to Three.js mesh ─────────────────────
 
   function _revitElementToMesh(el, nextId) {
@@ -266,26 +300,48 @@
       } else {
         geom.computeVertexNormals();
       }
+      // Quantize normals to Int8 (same memory win as the IFC path) when the core
+      // helper is available.
+      try { if (window._ccQuantizeNormalAttr) window._ccQuantizeNormalAttr(geom); } catch(_e) {}
       geom.computeBoundingBox();
       var c = el.geometry.color || [0.65, 0.65, 0.65, 1.0];
-      // Material dedup by colour, mirroring the IFC loader's matCache (#572):
-      // a fresh MeshPhongMaterial per element meant ~82k distinct materials on
-      // the big model — heavy on memory and draw-call state changes. Identical
-      // colours now share one material. Safe with the highlight/ghost/render-
-      // style systems, which swap mesh.material by reference (and stash
-      // _origMaterial) rather than mutating the material in place.
-      var _ck = c[0] + ',' + c[1] + ',' + c[2] + ',' + (c[3] != null ? c[3] : 1);
-      var mat = _revitMatCache[_ck];
-      if (!mat) {
-        mat = new THREE.MeshPhongMaterial({
-          color: new THREE.Color(c[0], c[1], c[2]),
-          opacity: c[3] != null ? c[3] : 1,
-          transparent: c[3] != null && c[3] < 0.99,
-          side: THREE.DoubleSide
-        });
-        _revitMatCache[_ck] = mat;
+      var _a = c[3] != null ? c[3] : 1;
+      // Material dedup by colour. Prefer the core's shared cache so EVERY load
+      // path (IFC + Revit live-link) shares one material per colour — the whole
+      // point of #572. Falls back to a local per-addon cache if the core helper
+      // isn't exposed yet. A fresh material per element meant ~82k distinct
+      // materials on the big model — heavy on memory and draw-call changes. Safe
+      // with the highlight/ghost/render-style systems, which swap mesh.material
+      // by reference (and stash _origMaterial) rather than mutating it in place.
+      var mat;
+      if (window._ccGetSharedPhongMat) {
+        mat = window._ccGetSharedPhongMat(c[0], c[1], c[2], _a);
+      } else {
+        var _ck = c[0] + ',' + c[1] + ',' + c[2] + ',' + _a;
+        mat = _revitMatCache[_ck];
+        if (!mat) {
+          mat = new THREE.MeshPhongMaterial({
+            color: new THREE.Color(c[0], c[1], c[2]),
+            opacity: _a, transparent: _a < 0.99, side: THREE.DoubleSide
+          });
+          _revitMatCache[_ck] = mat;
+        }
       }
       var mesh = new THREE.Mesh(geom, mat);
+      // Placement transform. The Connector should send geometry already in world
+      // (shared) coordinates. When it instead sends an element's geometry in a
+      // local space (a common Revit pitfall: family-instance symbol geometry, or
+      // linked-model elements, without the instance/link transform applied), the
+      // element appears "flying" away from the model. If the Connector provides
+      // the transform (flat 16-element column-major 4x4 on el.transform /
+      // el.geometry.transform), apply it here so placement is corrected client-
+      // side; absent it, geometry is used as-is (the Connector must bake world
+      // coords — see PropertyExporter geometry extraction).
+      var _xf = el.transform || (el.geometry && el.geometry.transform);
+      if (_xf && _xf.length === 16) {
+        if (!_revitTmpMtx) _revitTmpMtx = new THREE.Matrix4();
+        mesh.applyMatrix4(_revitTmpMtx.fromArray(_xf));
+      }
       mesh.name = el.globalId || '';
       mesh.userData.expressId = el.expressId || nextId;
       // Bake the mesh for rendering perf (matrixAutoUpdate=false +
@@ -411,6 +467,9 @@
         if (!_revitBuf || _revitAborted) break;
         var nextId = _revitBuf.elements.length + 1;
         (msg.elements || []).forEach(function(el) {
+          // Drop datums / spatial containers / markers Revit never shows in 3D —
+          // they otherwise show up as stray geometry far from the model and clash.
+          if (_revitSkipElement(el)) { _revitBuf.skipped = (_revitBuf.skipped || 0) + 1; return; }
           var converted = _revitElementToMesh(el, nextId++);
           _revitBuf.elements.push(converted);
           converted.meshes.forEach(function(m) { _revitBuf.meshes.push(m); });

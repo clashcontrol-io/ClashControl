@@ -1700,6 +1700,9 @@ function startApp() {
     geo.setAttribute('normal', new THREE.Int8BufferAttribute(i8, 3, true));
     geo.userData._nrmQuantized = true;
   }
+  // Exposed for addons (Revit live-link stream) so their geometry gets the same
+  // normal-memory reduction as the IFC path.
+  window._ccQuantizeNormalAttr = _ccQuantizeNormalAttr;
 
   function _geoSerialize(result) {
     // Collect individual meshes from elements rather than result.meshes, because
@@ -2913,6 +2916,9 @@ function startApp() {
     }
     return m;
   }
+  // Expose to addons (e.g. the Revit live-link stream) so every load path shares
+  // one material per colour — the whole point of the #572 shared cache.
+  window._ccGetSharedPhongMat = _ccGetSharedPhongMat;
 
   // ── Survey base-point / nulpunt marker stripping ──  See INTERNALS.md § 21.6
   function _ccIsSurveyMarker(props) {
