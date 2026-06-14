@@ -407,14 +407,17 @@
         // Use batchIndex/totalBatches from Connector if available, else fall back to element count
         var prog = msg.totalBatches > 0 ? (msg.batchIndex + 1) / msg.totalBatches
           : _revitBuf.count > 0 ? _revitBuf.received / _revitBuf.count : 0;
-        // Throttle the progress dispatch to whole-percent steps. Each dispatch is a
-        // full React re-render of the app; firing one per batch (~1600 on an 82k
-        // model) is what made the pull take minutes. Capping at ~100 renders keeps
-        // the bar smooth without the re-render storm. (cc-model-loading is likewise
-        // driven once by export-start/export-end, not per batch.)
+        // Throttle the progress dispatch hard. Each dispatch is a full React
+        // re-render of the app; firing one per batch (~1600 on an 82k model) is
+        // what made the pull take minutes. We cap updates by BOTH whole-percent
+        // steps AND a minimum interval (≈3/sec) so the re-render cost stays tiny
+        // and constant no matter how fast batches stream in. The bar still moves;
+        // it just doesn't repaint the whole app on every frame.
         var _pctNow = Math.round(Math.min(prog, 0.99) * 100);
-        if (_pctNow !== _revitBuf._lastPct) {
+        var _nowTs = Date.now();
+        if (_pctNow !== _revitBuf._lastPct && (_nowTs - (_revitBuf._lastProgTs || 0) >= 300)) {
           _revitBuf._lastPct = _pctNow;
+          _revitBuf._lastProgTs = _nowTs;
           d({t:'UPD_REVIT_DIRECT', u:{progress: _pctNow / 100, elementCount: _revitBuf.received}});
         }
         break;
