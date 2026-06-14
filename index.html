@@ -783,12 +783,20 @@ function startApp() {
 
   window._ccUid = uid;
   window._ccDISC = DISC;
-  window._ccRunDetection = function() {
+  window._ccRunDetection = function(rulesOverride) {
     var s = window._ccLatestState;
     var d = window._ccDispatch;
     if (!s || !d || !s.models || !s.models.length) return false;
     if (s.detecting) { console.warn('[Detection] already running — ignoring concurrent request'); return false; }
     try { window._ccLastDetectError = null; } catch(e) {} // clear stale error on new run
+    // Rules to run with. When a caller (e.g. the Smart Bridge run_detection)
+    // dispatches UPD_RULES and then immediately runs, window._ccLatestState
+    // still holds the PRE-dispatch rules (the reducer/render is async), so the
+    // run would use a stale scope (modelA/modelB) — that silently produced 0
+    // candidates → "0 clashes instantly" when the orchestrator scoped to
+    // specific models. Apply the override here so the run always uses the
+    // intended scope, regardless of when the state re-render lands.
+    var runRules = rulesOverride ? Object.assign({}, s.rules, rulesOverride) : s.rules;
     d({t:'DETECTING'}); d({t:'TAB',v:'clashes'});
     // Stall watchdog: if the engine makes no progress for 90s, abort so the UI
     // (and the orchestrator's get_status) don't sit on detecting:true forever.
@@ -809,7 +817,7 @@ function startApp() {
         if (window._ccToast) window._ccToast('Detection stalled — aborted. Try a smaller scope.');
       }
     }, 5000);
-    detectClashesAsync(s.models, s.rules).then(function(result) {
+    detectClashesAsync(s.models, runRules).then(function(result) {
       clearInterval(_wdTimer);
       classifyClashes(result);
       d({t:'MERGE_CLASHES', v:result});
@@ -1051,7 +1059,10 @@ function startApp() {
           if (_state && !(k in _state)) window._ccDispatch({t:'_ADDON_INIT_STATE', k:k, v:def.initState[k]});
         });
       }
-      try { if (def.init) def.init(window._ccDispatch, function(){ return window._ccLatestState; }); } catch(e) { console.warn('[Addon] init error:', def.id, e); }
+      // restored:true — this init is a page-reload restore of a persisted-active
+      // addon (not a fresh user activation). Addons that auto-connect on reload
+      // (e.g. revit-bridge) key off this so a manual open doesn't force-connect.
+      try { if (def.init) def.init(window._ccDispatch, function(){ return window._ccLatestState; }, {restored:true}); } catch(e) { console.warn('[Addon] init error:', def.id, e); }
     }
     window.dispatchEvent(new Event('cc-addons-changed'));
   };
@@ -1689,6 +1700,9 @@ function startApp() {
     geo.setAttribute('normal', new THREE.Int8BufferAttribute(i8, 3, true));
     geo.userData._nrmQuantized = true;
   }
+  // Exposed for addons (Revit live-link stream) so their geometry gets the same
+  // normal-memory reduction as the IFC path.
+  window._ccQuantizeNormalAttr = _ccQuantizeNormalAttr;
 
   function _geoSerialize(result) {
     // Collect individual meshes from elements rather than result.meshes, because
@@ -2902,6 +2916,9 @@ function startApp() {
     }
     return m;
   }
+  // Expose to addons (e.g. the Revit live-link stream) so every load path shares
+  // one material per colour — the whole point of the #572 shared cache.
+  window._ccGetSharedPhongMat = _ccGetSharedPhongMat;
 
   // ── Survey base-point / nulpunt marker stripping ──  See INTERNALS.md § 21.6
   function _ccIsSurveyMarker(props) {
@@ -5078,7 +5095,7 @@ function startApp() {
           soft: runSoft,
           duplicate: runDup,
           candidatesChecked: candidates.length,
-          elementsScanned: Object.keys(_bvhSeen).length,
+          elementsScanned: _prof._nElements || 0,
           modelCount: models.length,
           typePairDistribution: typePairs
         },
@@ -30788,7 +30805,7 @@ function startApp() {
               <span style=${{color:'var(--ink-faint)',fontSize:'var(--text-xs)'}}>Desktop Connector · ACC</span>
             </button>
 
-            <button onClick=${function(){ try { if(window._ccActivateAddon) window._ccActivateAddon('revit-bridge'); } catch(_e){} d({t:'REVIT_BRIDGE',v:true}); }}
+            <button onClick=${function(){ window._ccRevitAutoConnect = true; try { if(window._ccActivateAddon) window._ccActivateAddon('revit-bridge'); } catch(_e){} d({t:'REVIT_BRIDGE',v:true}); }}
               style=${{
                 display:'flex',alignItems:'center',justifyContent:'space-between',gap:'1rem',
                 padding:'.7rem 0',background:'none',border:'none',
@@ -31043,6 +31060,7 @@ function startApp() {
             <div style=${{height:1,background:'var(--hairline)',margin:'.25rem 0'}}></div>
             <button onClick=${function(){
                 setAddOpen(false);
+                window._ccRevitAutoConnect = false; // Integrations entry shows a Connect button, no auto-connect
                 try { if(window._ccActivateAddon) window._ccActivateAddon('revit-bridge'); } catch(_e){}
                 d({t:A.REVIT_BRIDGE,v:true});
               }}
@@ -32030,6 +32048,11 @@ function startApp() {
     var portSt = useState(rd.port || (window._loadDirectPort ? window._loadDirectPort() : 19780));
     var port = portSt[0], setPort = portSt[1];
     var tabSt = useState('direct'), tab = tabSt[0], setTab = tabSt[1];
+    // Simple-first UX: by default this is a small centered "connect to the open
+    // Revit project" dialog. The full tabbed panel (port, AI Bridge, sync, log)
+    // is tucked behind an "Advanced" toggle for power users.
+    var advSt = useState(false), adv = advSt[0], setAdv = advSt[1];
+    var attemptedSt = useState(false), attempted = attemptedSt[0], setAttempted = attemptedSt[1];
     var provSt = useState(br.provider || ''), prov = provSt[0], setProv = provSt[1];
     var keySt = useState(br.apiKey || ''), apiKey = keySt[0], setApiKey = keySt[1];
     var hostSt = useState(br.mcpHost || 'localhost'), mcpHost = hostSt[0], setMcpHost = hostSt[1];
@@ -32054,6 +32077,25 @@ function startApp() {
       if (window._loadDirectPort) setPort(window._loadDirectPort());
     }, []);
 
+    // One-click connect to the Revit model open on this machine. The Connector
+    // listens on a fixed localhost port, so no config is needed for the happy path.
+    function _doConnect() {
+      setAttempted(true);
+      var p = (window._loadDirectPort ? window._loadDirectPort() : port) || 19780;
+      window._ccPullOnConnect = true; // auto-pull the model once the link is up
+      try { if (!window._revitDirectConnect && window._ccActivateAddon) window._ccActivateAddon('revit-bridge'); } catch(_e) {}
+      try { if (window._saveDirectPort) window._saveDirectPort(p); } catch(_e) {}
+      if (window._revitDirectConnect) window._revitDirectConnect(p, d);
+    }
+    // Start-screen "Live link to Revit" sets this so the dialog connects on open
+    // ("just one click"); the Integrations entry leaves it unset → shows Connect.
+    useEffect(function() {
+      if (window._ccRevitAutoConnect && !rd.connected) {
+        window._ccRevitAutoConnect = false;
+        _doConnect();
+      }
+    }, []);
+
     var projects = s.projectList || [];
     var targetProjSt = useState(s.activeProject || 'default');
     var targetProj = targetProjSt[0], setTargetProj = targetProjSt[1];
@@ -32063,26 +32105,103 @@ function startApp() {
     var S_INP = {width:'100%',padding:'.35rem .5rem',background:'var(--bg-primary)',color:'var(--text-primary)',border:'1px solid var(--border)',borderRadius:6,fontSize:'0.8rem',fontFamily:'inherit',outline:'none'};
     var S_BTN2 = {padding:'.4rem .8rem',borderRadius:6,fontSize:'0.8rem',fontWeight:600,cursor:'pointer',border:'none',fontFamily:'inherit'};
 
+    // Name shown in the simple dialog: the live Revit document once known,
+    // else the active ClashControl project, else a friendly default.
+    var _activeProj = projects.filter(function(p){return p.id===s.activeProject;})[0];
+    var projName = rd.documentName || (_activeProj && _activeProj.name) || 'Revit live link';
+    // Connection phase for the simple dialog.
+    var phase = rd.connected ? (rd.loading ? 'loading' : 'connected')
+              : rd.reconnecting ? 'connecting'
+              : attempted ? 'failed' : 'idle';
+
     return html`<div style=${{position:'fixed',inset:0,zIndex:9000,background:'rgba(0,0,0,.6)',display:'flex',alignItems:'center',justifyContent:'center'}}
       onClick=${function(e){if(e.target===e.currentTarget)d({t:'REVIT_BRIDGE',v:false})}}>
-      <div style=${{background:'var(--bg-secondary)',border:'1px solid var(--border)',borderRadius:12,width:560,maxWidth:'95vw',maxHeight:'90vh',display:'flex',flexDirection:'column',overflow:'hidden',boxShadow:'0 8px 32px rgba(0,0,0,.5)'}}>
+      <div style=${{background:'var(--bg-secondary)',border:'1px solid var(--border)',borderRadius:12,width:adv?560:420,maxWidth:'95vw',maxHeight:'90vh',display:'flex',flexDirection:'column',overflow:'hidden',boxShadow:'0 8px 32px rgba(0,0,0,.5)'}}>
         <div style=${{display:'flex',alignItems:'center',justifyContent:'space-between',padding:'.75rem 1rem',borderBottom:'1px solid var(--border)'}}>
-          <div style=${{display:'flex',alignItems:'center',gap:'.5rem'}}>
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style=${{color:'var(--accent)'}}><path d="M4 14a1 1 0 0 1-.78-1.63l9.9-10.2a.5.5 0 0 1 .86.46l-1.92 6.02A1 1 0 0 0 13 10h7a1 1 0 0 1 .78 1.63l-9.9 10.2a.5.5 0 0 1-.86-.46l1.92-6.02A1 1 0 0 0 11 14z"/></svg>
-            <span style=${{fontSize:'1rem',fontWeight:700,color:'var(--text-primary)'}}>Revit Bridge</span>
+          <div style=${{display:'flex',alignItems:'center',gap:'.5rem',minWidth:0}}>
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style=${{color:'var(--accent)',flexShrink:0}}><path d="M4 14a1 1 0 0 1-.78-1.63l9.9-10.2a.5.5 0 0 1 .86.46l-1.92 6.02A1 1 0 0 0 13 10h7a1 1 0 0 1 .78 1.63l-9.9 10.2a.5.5 0 0 1-.86-.46l1.92-6.02A1 1 0 0 0 11 14z"/></svg>
+            <span style=${{fontSize:'1rem',fontWeight:700,color:'var(--text-primary)',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}} title=${adv?'Revit Bridge':projName}>${adv ? 'Revit Bridge' : projName}</span>
           </div>
-          <button onClick=${function(){d({t:'REVIT_BRIDGE',v:false})}} style=${{background:'none',border:'none',color:'var(--text-muted)',cursor:'pointer',fontSize:'1.2rem',padding:'0 .2rem'}}>×</button>
+          <button onClick=${function(){d({t:'REVIT_BRIDGE',v:false})}} style=${{background:'none',border:'none',color:'var(--text-muted)',cursor:'pointer',fontSize:'1.2rem',padding:'0 .2rem',flexShrink:0}}>×</button>
         </div>
 
-        <div style=${{display:'flex',borderBottom:'1px solid var(--border)'}}>
+        ${!adv && html`<div style=${{padding:'1.4rem 1.25rem',display:'flex',flexDirection:'column',gap:'1rem'}}>
+          ${phase==='idle' && html`<div style=${{display:'flex',flexDirection:'column',gap:'.9rem'}}>
+            <div style=${{fontSize:'0.82rem',color:'var(--text-secondary)',lineHeight:1.5}}>
+              Link this project to the Revit model open on your machine. Detected clashes update live.
+            </div>
+            <button onClick=${_doConnect} style=${{...S_BTN2,background:'var(--accent)',color:'#fff',padding:'.6rem',fontSize:'0.9rem'}}>Connect to Revit</button>
+            <div style=${{fontSize:'0.69rem',color:'var(--text-faint)',lineHeight:1.5}}>
+              Make sure the${' '}<a href="https://github.com/clashcontrol-io/ClashControlConnector/releases/latest/download/ClashControlConnectorInstaller.exe" target="_blank" rel="noopener" download style=${{color:'var(--accent)',textDecoration:'none',fontWeight:600}}>ClashControl Connector</a>${' '}plugin is running in Revit (2024–2027).
+            </div>
+          </div>`}
+
+          ${(phase==='connecting') && html`<div style=${{display:'flex',flexDirection:'column',gap:'.75rem'}}>
+            <div style=${{display:'flex',alignItems:'center',gap:'.5rem',fontSize:'0.85rem',color:'var(--text-secondary)'}}>
+              <span style=${{width:9,height:9,borderRadius:'50%',background:'#eab308'}}></span>
+              ${attempted ? 'Connecting to Revit…' : 'Reconnecting' + (rd.reconnectIn ? ' in ' + Math.round((rd.reconnectIn||1000)/1000) + 's' : '') + '…'}
+            </div>
+            <div style=${{width:'100%',height:4,background:'var(--bg-primary)',borderRadius:2,overflow:'hidden'}}>
+              <div style=${{width:'40%',height:'100%',background:'var(--accent)',borderRadius:2,animation:'ccLoadIndet 1.1s ease-in-out infinite'}}></div>
+            </div>
+            <button onClick=${function(){if(window._revitDirectDisconnect)window._revitDirectDisconnect(d); setAttempted(false);}} style=${{...S_BTN2,background:'var(--bg-tertiary)',color:'var(--text-muted)',alignSelf:'flex-start',padding:'.3rem .7rem',fontSize:'0.72rem'}}>Cancel</button>
+          </div>`}
+
+          ${phase==='loading' && html`<div style=${{display:'flex',flexDirection:'column',gap:'.75rem'}}>
+            <div style=${{display:'flex',alignItems:'center',gap:'.5rem',fontSize:'0.85rem',color:'var(--text-secondary)'}}>
+              <span style=${{width:9,height:9,borderRadius:'50%',background:'#22c55e'}}></span>
+              Loading model${rd.progress>0?' — '+Math.round(rd.progress*100)+'%':''}${rd.elementCount?' ('+rd.elementCount+' elements)':'…'}
+            </div>
+            <div style=${{width:'100%',height:4,background:'var(--bg-primary)',borderRadius:2,overflow:'hidden'}}>
+              <div style=${{width:Math.round((rd.progress||0)*100)+'%',height:'100%',background:'var(--accent)',borderRadius:2,transition:'width .3s'}}></div>
+            </div>
+            <button onClick=${function(){if(window._revitDirectCancelExport) window._revitDirectCancelExport(); d({t:'UPD_REVIT_DIRECT', u:{loading:false, progress:0}});}} style=${{...S_BTN2,background:'var(--bg-tertiary)',color:'#f87171',alignSelf:'flex-start',padding:'.3rem .7rem',fontSize:'0.72rem'}}>Cancel</button>
+          </div>`}
+
+          ${phase==='connected' && html`<div style=${{display:'flex',flexDirection:'column',gap:'.9rem'}}>
+            <div style=${{display:'flex',alignItems:'center',gap:'.5rem',fontSize:'0.9rem',color:'#4ade80',fontWeight:600}}>
+              <span style=${{width:10,height:10,borderRadius:'50%',background:'#22c55e'}}></span>
+              Connected${rd.documentName?' — '+rd.documentName:''}
+            </div>
+            ${rd.reconnectPrompt && html`<div style=${{display:'flex',alignItems:'center',gap:'.4rem',padding:'.45rem .55rem',background:'var(--accent-bg)',borderRadius:6}}>
+              <span style=${{fontSize:'0.74rem',color:'var(--accent-subtle)',flex:1}}>Reconnected. Pull the model again?</span>
+              <button onClick=${function(){d({t:'UPD_REVIT_DIRECT',u:{reconnectPrompt:false}}); if(window._revitDirectExport) window._revitDirectExport(['all']);}} style=${{...S_BTN2,background:'var(--accent)',color:'#fff',fontSize:'0.72rem',padding:'.3rem .7rem'}}>Pull</button>
+            </div>`}
+            <div style=${{display:'flex',gap:'.4rem'}}>
+              <button onClick=${function(){if(window._revitDirectExport) window._revitDirectExport(['all'])}} style=${{...S_BTN2,flex:1,background:'var(--accent-bg)',color:'var(--accent-subtle)'}}>Re-pull model</button>
+              <button onClick=${function(){d({t:'REVIT_BRIDGE',v:false})}} style=${{...S_BTN2,flex:1,background:'var(--accent)',color:'#fff'}}>Done</button>
+            </div>
+          </div>`}
+
+          ${phase==='failed' && html`<div style=${{display:'flex',flexDirection:'column',gap:'.8rem'}}>
+            <div style=${{display:'flex',alignItems:'center',gap:'.5rem',fontSize:'0.85rem',color:'#f87171',fontWeight:600}}>
+              <span style=${{width:9,height:9,borderRadius:'50%',background:'#ef4444'}}></span>
+              Couldn't reach Revit
+            </div>
+            <div style=${{fontSize:'0.72rem',color:'var(--text-muted)',lineHeight:1.6,background:'var(--bg-primary)',borderRadius:6,padding:'.55rem .65rem'}}>
+              <div style=${{fontWeight:600,color:'var(--text-secondary)',marginBottom:'.25rem'}}>Troubleshoot</div>
+              • Open your model in Revit and make sure the ClashControl Connector add-in is loaded.<br/>
+              • Click <b>Connect</b> on the ClashControl panel inside Revit.<br/>
+              • Then retry below. Still stuck? Open Advanced to change the port.
+            </div>
+            <div style=${{display:'flex',gap:'.4rem'}}>
+              <button onClick=${_doConnect} style=${{...S_BTN2,flex:1,background:'var(--accent)',color:'#fff'}}>Retry</button>
+              <a href="https://github.com/clashcontrol-io/ClashControlConnector/releases/latest/download/ClashControlConnectorInstaller.exe" target="_blank" rel="noopener" download style=${{...S_BTN2,flex:1,background:'var(--bg-tertiary)',color:'var(--text-secondary)',textAlign:'center',textDecoration:'none'}}>Get installer</a>
+            </div>
+          </div>`}
+
+          <button onClick=${function(){setAdv(true);}} style=${{background:'none',border:'none',color:'var(--text-faint)',fontSize:'0.69rem',cursor:'pointer',alignSelf:'center',fontFamily:'inherit',marginTop:'.2rem'}}>Advanced settings</button>
+        </div>`}
+
+        ${adv && html`<div style=${{display:'flex',borderBottom:'1px solid var(--border)'}}>
           ${[{id:'direct',label:'Direct Connector'},{id:'ai',label:'AI Bridge'}].map(function(t){
             return html`<button key=${t.id} onClick=${function(){setTab(t.id)}}
               style=${{flex:1,padding:'.5rem',background:tab===t.id?'var(--bg-tertiary)':'transparent',color:tab===t.id?'var(--text-primary)':'var(--text-muted)',
                 border:'none',borderBottom:tab===t.id?'2px solid var(--accent)':'2px solid transparent',cursor:'pointer',fontSize:'0.8rem',fontWeight:600,fontFamily:'inherit'}}>${t.label}</button>`;
           })}
-        </div>
+        </div>`}
 
-        <div style=${{padding:'1rem',overflowY:'auto',flex:1}}>
+        ${adv && html`<div style=${{padding:'1rem',overflowY:'auto',flex:1}}>
           ${tab==='direct' && html`<div style=${{display:'flex',flexDirection:'column',gap:'.75rem'}}>
             <div>
               <div style=${S_LBL}>WebSocket Port</div>
@@ -32273,6 +32392,7 @@ function startApp() {
             </div>`;
           })}
         </div>`}
+        `}
       </div>
     </div>`;
   }
@@ -33275,7 +33395,7 @@ function startApp() {
 
   Object.keys(_ccAddons).forEach(function(aid) {
     if (_ccAddonActive[aid] && _ccAddons[aid].init && window._ccDispatch) {
-      try { _ccAddons[aid].init(window._ccDispatch, function(){ return window._ccLatestState; }); } catch(e) { console.warn('[Addon] late init error:', aid, e); }
+      try { _ccAddons[aid].init(window._ccDispatch, function(){ return window._ccLatestState; }, {restored:true}); } catch(e) { console.warn('[Addon] late init error:', aid, e); }
     }
   });
 

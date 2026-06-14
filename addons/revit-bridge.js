@@ -13,6 +13,8 @@
 
   var _revitWs = null;
   var _revitBuf = null;
+  var _revitMatCache = {}; // colour "r,g,b,a" → shared MeshPhongMaterial (dedup, see #572)
+  var _revitTmpMtx = null; // reused per placement; lazy-init once THREE is loaded
   var _revitAborted = false; // set by Cancel — ignore further export messages until the next export-start
   var _revitReconnect = null;
   var _revitReconnectDelay = 0; // exponential backoff: 0 = no reconnect scheduled
@@ -87,19 +89,24 @@
     var url = 'ws://localhost:' + _revitLastPort;
     d({t:'BRIDGE_LOG', logType:'info', text:'Connecting to Revit at ' + url + '...'});
     d({t:'UPD_REVIT_DIRECT', u:{connected:false, loading:false, progress:0, reconnecting:false}});
-    try { _revitWs = new WebSocket(url); } catch(e) {
+    var ws;
+    try { ws = new WebSocket(url); _revitWs = ws; } catch(e) {
       d({t:'BRIDGE_LOG', logType:'error', text:'WebSocket error: ' + e.message});
       _scheduleReconnect();
       return;
     }
-    _revitWs.binaryType = 'arraybuffer';
+    ws.binaryType = 'arraybuffer';
 
-    _revitWs.onopen = function() {
+    ws.onopen = function() {
+      // Guard against a stale socket: a prior attempt's onopen can race in
+      // after a reconnect superseded it (or after close nulled _revitWs),
+      // which previously threw "Cannot read properties of null (reading 'send')".
+      if (_revitWs !== ws || ws.readyState !== 1) { try { ws.close(); } catch(_){} return; }
       var wasReconnect = _revitReconnectDelay > 0;
       _resetReconnectDelay();
       d({t:'UPD_REVIT_DIRECT', u:{connected:true, reconnecting:false}});
       d({t:'BRIDGE_LOG', logType:'info', text:wasReconnect ? 'Reconnected to Revit plugin.' : 'Connected to Revit plugin.'});
-      _revitWs.send(JSON.stringify({type:'ping'}));
+      ws.send(JSON.stringify({type:'ping'}));
       // Auto-pull on first user-initiated connect
       if (_pullOnConnect || window._ccPullOnConnect) {
         _pullOnConnect = false;
@@ -132,7 +139,9 @@
       }
     };
 
-    _revitWs.onclose = function() {
+    ws.onclose = function() {
+      // Ignore a superseded socket's close — it must not tear down a newer one.
+      if (_revitWs && _revitWs !== ws) return;
       d({t:'UPD_REVIT_DIRECT', u:{connected:false, loading:false}});
       d({t:'BRIDGE_LOG', logType:'info', text:'Revit connection closed.'});
       _revitLoadingEvent(false); // clear the loading card if the link drops mid-pull
@@ -140,7 +149,8 @@
       _scheduleReconnect();
     };
 
-    _revitWs.onerror = function() {
+    ws.onerror = function() {
+      if (_revitWs && _revitWs !== ws) return; // superseded socket
       d({t:'UPD_REVIT_DIRECT', u:{connected:false, loading:false}});
       _revitLoadingEvent(false);
       // Only log error if not already reconnecting (avoid spam)
@@ -149,7 +159,8 @@
       // onclose will also fire and trigger reconnect
     };
 
-    _revitWs.onmessage = function(ev) {
+    ws.onmessage = function(ev) {
+      if (_revitWs !== ws) return; // ignore frames from a superseded socket
       var msg;
       try { msg = JSON.parse(ev.data); }
       catch(e) {
@@ -241,6 +252,39 @@
     return new Uint32Array(buf);
   }
 
+  // ── Non-renderable element filter ──────────────────────────────
+  // The Revit Connector can hand us elements that Revit never shows in its 3D
+  // view and that should never clash — datums (grids/levels/reference planes),
+  // survey/base-point markers, spatial containers (rooms/areas/spaces), scope
+  // boxes, cameras, etc. Left in, they appear as stray geometry "flying" far
+  // from the model (base points sit at the survey origin) and pollute clash
+  // results. This mirrors the IFC path, which skips IfcSpace / IfcOpeningElement
+  // / IfcVirtualElement / IfcAnnotation / IfcGrid and survey markers.
+  //
+  // Honour an explicit visibility flag from the Connector first (most reliable),
+  // then fall back to a conservative category keyword list. Kept conservative so
+  // real building geometry is never dropped.
+  // Matched against the (lower-cased) Revit category name; chosen to hit the real
+  // category strings (mostly plural) without snagging building elements.
+  var _REVIT_SKIP_CATS = [
+    'rooms', 'areas', 'spaces', 'mep spaces',            // spatial containers
+    'survey point', 'project base point', 'internal origin', 'base point',
+    'reference planes', 'reference lines', 'grids', 'levels', 'scope boxes',
+    'cameras', 'section box', 'property lines', 'matchline', 'analytical',
+    'sun path', 'viewports'
+  ];
+  function _revitSkipElement(el) {
+    if (!el) return true;
+    // Explicit visibility from the Connector, if provided.
+    if (el.visible === false || el.hidden === true || el.isHidden === true) return true;
+    var cat = (el.category || el.type || '').toLowerCase();
+    if (!cat) return false;
+    for (var i = 0; i < _REVIT_SKIP_CATS.length; i++) {
+      if (cat.indexOf(_REVIT_SKIP_CATS[i]) >= 0) return true;
+    }
+    return false;
+  }
+
   // ── Convert Revit element to Three.js mesh ─────────────────────
 
   function _revitElementToMesh(el, nextId) {
@@ -256,15 +300,48 @@
       } else {
         geom.computeVertexNormals();
       }
+      // Quantize normals to Int8 (same memory win as the IFC path) when the core
+      // helper is available.
+      try { if (window._ccQuantizeNormalAttr) window._ccQuantizeNormalAttr(geom); } catch(_e) {}
       geom.computeBoundingBox();
       var c = el.geometry.color || [0.65, 0.65, 0.65, 1.0];
-      var mat = new THREE.MeshPhongMaterial({
-        color: new THREE.Color(c[0], c[1], c[2]),
-        opacity: c[3] != null ? c[3] : 1,
-        transparent: c[3] != null && c[3] < 0.99,
-        side: THREE.DoubleSide
-      });
+      var _a = c[3] != null ? c[3] : 1;
+      // Material dedup by colour. Prefer the core's shared cache so EVERY load
+      // path (IFC + Revit live-link) shares one material per colour — the whole
+      // point of #572. Falls back to a local per-addon cache if the core helper
+      // isn't exposed yet. A fresh material per element meant ~82k distinct
+      // materials on the big model — heavy on memory and draw-call changes. Safe
+      // with the highlight/ghost/render-style systems, which swap mesh.material
+      // by reference (and stash _origMaterial) rather than mutating it in place.
+      var mat;
+      if (window._ccGetSharedPhongMat) {
+        mat = window._ccGetSharedPhongMat(c[0], c[1], c[2], _a);
+      } else {
+        var _ck = c[0] + ',' + c[1] + ',' + c[2] + ',' + _a;
+        mat = _revitMatCache[_ck];
+        if (!mat) {
+          mat = new THREE.MeshPhongMaterial({
+            color: new THREE.Color(c[0], c[1], c[2]),
+            opacity: _a, transparent: _a < 0.99, side: THREE.DoubleSide
+          });
+          _revitMatCache[_ck] = mat;
+        }
+      }
       var mesh = new THREE.Mesh(geom, mat);
+      // Placement transform. The Connector should send geometry already in world
+      // (shared) coordinates. When it instead sends an element's geometry in a
+      // local space (a common Revit pitfall: family-instance symbol geometry, or
+      // linked-model elements, without the instance/link transform applied), the
+      // element appears "flying" away from the model. If the Connector provides
+      // the transform (flat 16-element column-major 4x4 on el.transform /
+      // el.geometry.transform), apply it here so placement is corrected client-
+      // side; absent it, geometry is used as-is (the Connector must bake world
+      // coords — see PropertyExporter geometry extraction).
+      var _xf = el.transform || (el.geometry && el.geometry.transform);
+      if (_xf && _xf.length === 16) {
+        if (!_revitTmpMtx) _revitTmpMtx = new THREE.Matrix4();
+        mesh.applyMatrix4(_revitTmpMtx.fromArray(_xf));
+      }
       mesh.name = el.globalId || '';
       mesh.userData.expressId = el.expressId || nextId;
       // Bake the mesh for rendering perf (matrixAutoUpdate=false +
@@ -338,6 +415,7 @@
     switch (msg.type) {
       case 'pong':
       case 'status':
+        if (msg.projectUniqueId) { try { window._ccRevitProjectUniqueId = msg.projectUniqueId; } catch(_e) {} }
         if (msg.documentName) d({t:'UPD_REVIT_DIRECT', u:{documentName:msg.documentName}});
         if (msg.connected != null) d({t:'UPD_REVIT_DIRECT', u:{connected:msg.connected}});
         // Protocol version negotiation
@@ -390,6 +468,9 @@
         if (!_revitBuf || _revitAborted) break;
         var nextId = _revitBuf.elements.length + 1;
         (msg.elements || []).forEach(function(el) {
+          // Drop datums / spatial containers / markers Revit never shows in 3D —
+          // they otherwise show up as stray geometry far from the model and clash.
+          if (_revitSkipElement(el)) { _revitBuf.skipped = (_revitBuf.skipped || 0) + 1; return; }
           var converted = _revitElementToMesh(el, nextId++);
           _revitBuf.elements.push(converted);
           converted.meshes.forEach(function(m) { _revitBuf.meshes.push(m); });
@@ -398,10 +479,19 @@
         // Use batchIndex/totalBatches from Connector if available, else fall back to element count
         var prog = msg.totalBatches > 0 ? (msg.batchIndex + 1) / msg.totalBatches
           : _revitBuf.count > 0 ? _revitBuf.received / _revitBuf.count : 0;
-        d({t:'UPD_REVIT_DIRECT', u:{progress: Math.min(prog, 0.99), elementCount: _revitBuf.received}});
-        // NB: no cc-model-loading event here — firing it per batch caused a
-        // re-render per batch (~1600 on an 82k model → minutes). The loading card
-        // is driven once by export-start / export-end instead.
+        // Throttle the progress dispatch hard. Each dispatch is a full React
+        // re-render of the app; firing one per batch (~1600 on an 82k model) is
+        // what made the pull take minutes. We cap updates by BOTH whole-percent
+        // steps AND a minimum interval (≈3/sec) so the re-render cost stays tiny
+        // and constant no matter how fast batches stream in. The bar still moves;
+        // it just doesn't repaint the whole app on every frame.
+        var _pctNow = Math.round(Math.min(prog, 0.99) * 100);
+        var _nowTs = Date.now();
+        if (_pctNow !== _revitBuf._lastPct && (_nowTs - (_revitBuf._lastProgTs || 0) >= 300)) {
+          _revitBuf._lastPct = _pctNow;
+          _revitBuf._lastProgTs = _nowTs;
+          d({t:'UPD_REVIT_DIRECT', u:{progress: _pctNow / 100, elementCount: _revitBuf.received}});
+        }
         break;
 
       case 'model-end':
@@ -488,6 +578,10 @@
 
       case 'export-start':
         _revitAborted = false; // fresh export — clear any prior cancel
+        // Stable Revit project identity (host doc ProjectInformation.UniqueId) so
+        // the Smart Bridge can emit a deterministic projectKey ("revit:<uid>")
+        // that matches PDRA/Loam for the same open document.
+        if (msg.projectUniqueId) { try { window._ccRevitProjectUniqueId = msg.projectUniqueId; } catch(_e) {} }
         d({t:'BRIDGE_LOG', logType:'pull', text:'Export started — ' + (msg.totalModels||1) + ' model(s), ' + (msg.totalElements||'?') + ' elements total'});
         // Single loading-card event for the whole pull (cleared at export-end) —
         // no per-model/per-batch events (those caused the slow-pull regression).
@@ -1188,8 +1282,11 @@
       }
     },
 
-    init: function(dispatch, getState) {
-      _revitAutoReconnect(dispatch);
+    init: function(dispatch, getState, opts) {
+      // Only auto-reconnect on a genuine page-reload restore (restored:true) or
+      // when the previous session was actively connected — NOT on a plain manual
+      // activate/open, where the Revit Bridge dialog drives the connect explicitly.
+      if (opts && opts.restored) _revitAutoReconnect(dispatch);
     },
 
     destroy: function() {
