@@ -646,7 +646,11 @@
     // it guarantees the orchestrator gets a real result (correctness over cache).
     try { if (window._ccResetTypePairMemo) window._ccResetTypePairMemo(); } catch(e) {}
     if (window._ccRunDetection) {
-      var started = window._ccRunDetection();
+      // Pass `updates` as an override: _dispatch is async, so without this the
+      // run would read the pre-dispatch rules (stale scope) and could test the
+      // wrong/empty model pair → "0 clashes instantly". The override guarantees
+      // the run uses the modelA/modelB/gap the orchestrator just asked for.
+      var started = window._ccRunDetection(updates);
       if (started === false) return 'Detection already in progress — poll get_status until it finishes.';
       return 'Detection started: ' + (p.modelA || 'all') + ' vs ' + (p.modelB || 'all') +
         (p.maxGap != null ? ', gap ' + p.maxGap + 'mm' : '') + (p.hard ? ', hard clashes' : '') +

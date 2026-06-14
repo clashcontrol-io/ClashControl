@@ -87,19 +87,24 @@
     var url = 'ws://localhost:' + _revitLastPort;
     d({t:'BRIDGE_LOG', logType:'info', text:'Connecting to Revit at ' + url + '...'});
     d({t:'UPD_REVIT_DIRECT', u:{connected:false, loading:false, progress:0, reconnecting:false}});
-    try { _revitWs = new WebSocket(url); } catch(e) {
+    var ws;
+    try { ws = new WebSocket(url); _revitWs = ws; } catch(e) {
       d({t:'BRIDGE_LOG', logType:'error', text:'WebSocket error: ' + e.message});
       _scheduleReconnect();
       return;
     }
-    _revitWs.binaryType = 'arraybuffer';
+    ws.binaryType = 'arraybuffer';
 
-    _revitWs.onopen = function() {
+    ws.onopen = function() {
+      // Guard against a stale socket: a prior attempt's onopen can race in
+      // after a reconnect superseded it (or after close nulled _revitWs),
+      // which previously threw "Cannot read properties of null (reading 'send')".
+      if (_revitWs !== ws || ws.readyState !== 1) { try { ws.close(); } catch(_){} return; }
       var wasReconnect = _revitReconnectDelay > 0;
       _resetReconnectDelay();
       d({t:'UPD_REVIT_DIRECT', u:{connected:true, reconnecting:false}});
       d({t:'BRIDGE_LOG', logType:'info', text:wasReconnect ? 'Reconnected to Revit plugin.' : 'Connected to Revit plugin.'});
-      _revitWs.send(JSON.stringify({type:'ping'}));
+      ws.send(JSON.stringify({type:'ping'}));
       // Auto-pull on first user-initiated connect
       if (_pullOnConnect || window._ccPullOnConnect) {
         _pullOnConnect = false;
@@ -132,7 +137,9 @@
       }
     };
 
-    _revitWs.onclose = function() {
+    ws.onclose = function() {
+      // Ignore a superseded socket's close — it must not tear down a newer one.
+      if (_revitWs && _revitWs !== ws) return;
       d({t:'UPD_REVIT_DIRECT', u:{connected:false, loading:false}});
       d({t:'BRIDGE_LOG', logType:'info', text:'Revit connection closed.'});
       _revitLoadingEvent(false); // clear the loading card if the link drops mid-pull
@@ -140,7 +147,8 @@
       _scheduleReconnect();
     };
 
-    _revitWs.onerror = function() {
+    ws.onerror = function() {
+      if (_revitWs && _revitWs !== ws) return; // superseded socket
       d({t:'UPD_REVIT_DIRECT', u:{connected:false, loading:false}});
       _revitLoadingEvent(false);
       // Only log error if not already reconnecting (avoid spam)
@@ -149,7 +157,8 @@
       // onclose will also fire and trigger reconnect
     };
 
-    _revitWs.onmessage = function(ev) {
+    ws.onmessage = function(ev) {
+      if (_revitWs !== ws) return; // ignore frames from a superseded socket
       var msg;
       try { msg = JSON.parse(ev.data); }
       catch(e) {
@@ -398,10 +407,16 @@
         // Use batchIndex/totalBatches from Connector if available, else fall back to element count
         var prog = msg.totalBatches > 0 ? (msg.batchIndex + 1) / msg.totalBatches
           : _revitBuf.count > 0 ? _revitBuf.received / _revitBuf.count : 0;
-        d({t:'UPD_REVIT_DIRECT', u:{progress: Math.min(prog, 0.99), elementCount: _revitBuf.received}});
-        // NB: no cc-model-loading event here — firing it per batch caused a
-        // re-render per batch (~1600 on an 82k model → minutes). The loading card
-        // is driven once by export-start / export-end instead.
+        // Throttle the progress dispatch to whole-percent steps. Each dispatch is a
+        // full React re-render of the app; firing one per batch (~1600 on an 82k
+        // model) is what made the pull take minutes. Capping at ~100 renders keeps
+        // the bar smooth without the re-render storm. (cc-model-loading is likewise
+        // driven once by export-start/export-end, not per batch.)
+        var _pctNow = Math.round(Math.min(prog, 0.99) * 100);
+        if (_pctNow !== _revitBuf._lastPct) {
+          _revitBuf._lastPct = _pctNow;
+          d({t:'UPD_REVIT_DIRECT', u:{progress: _pctNow / 100, elementCount: _revitBuf.received}});
+        }
         break;
 
       case 'model-end':
@@ -1188,8 +1203,11 @@
       }
     },
 
-    init: function(dispatch, getState) {
-      _revitAutoReconnect(dispatch);
+    init: function(dispatch, getState, opts) {
+      // Only auto-reconnect on a genuine page-reload restore (restored:true) or
+      // when the previous session was actively connected — NOT on a plain manual
+      // activate/open, where the Revit Bridge dialog drives the connect explicitly.
+      if (opts && opts.restored) _revitAutoReconnect(dispatch);
     },
 
     destroy: function() {
