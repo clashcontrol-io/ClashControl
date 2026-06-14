@@ -1,5 +1,8 @@
 # Changelog
 
+## v5.20.26 (2026-06-14)
+- Reconcile clashes across runs by stable identity (#638)
+
 ## v5.20.25 (2026-06-14)
 - Fix detection instant-0 regression + one-click Revit live link + faster 82k pull (#636)
 
