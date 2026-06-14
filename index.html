@@ -1206,6 +1206,31 @@ function startApp() {
     if (item._groupedElems) item._groupedElems.forEach(function(eid){ refs.push({modelId: null, expressId: eid, role: 'grouped'}); });
     return refs;
   }
+  // Stamp the participating-element identities from a clash onto an issue so every
+  // issue (manual or clash-promoted) can be joined back to the model and to
+  // finance/spec sources. uniqueIdA/B (Revit UniqueId) is the primary cross-doc
+  // key; revitIdA/B + globalIds[] are secondary. modelAId/B + elemA/B let the
+  // Smart Bridge derive classification the same way get_clashes does. Without
+  // these the issue is an island — see get_issues.
+  function _issueIdentityFromClash(c) {
+    if (!c) return {};
+    var gids = [];
+    if (c.globalIdA) gids.push(c.globalIdA);
+    if (c.globalIdB) gids.push(c.globalIdB);
+    return {
+      uniqueIdA: c.uniqueIdA || null, uniqueIdB: c.uniqueIdB || null,
+      uniqueIds: [c.uniqueIdA, c.uniqueIdB].filter(Boolean),
+      revitIdA: c.revitIdA != null ? c.revitIdA : null,
+      revitIdB: c.revitIdB != null ? c.revitIdB : null,
+      globalIdA: c.globalIdA || null, globalIdB: c.globalIdB || null,
+      globalIds: gids,
+      modelAId: c.modelAId || null, modelBId: c.modelBId || null,
+      elemA: c.elemA != null ? c.elemA : null, elemB: c.elemB != null ? c.elemB : null,
+      storey: c.storey || c.elemAStorey || c.elemBStorey || '',
+      disciplines: (c.disciplines && c.disciplines.length) ? c.disciplines.slice() : null,
+      linkedClashId: c.id || null
+    };
+  }
   function _clearElCaches(model) {
     _bvhLRURemoveModel(model);
     if (model && model.id && typeof _pairCacheClearForModel === 'function') {
@@ -21126,11 +21151,12 @@ function startApp() {
           issue.clashId = fromClash.id;
           issue.clashIdentityKey = fromClash._identityKey;
           issue.point = fromClash.point;
-          issue.storey = fromClash.elemAStorey || fromClash.elemBStorey || '';
+          // Stamp the clash's element identities so the issue can be joined back.
+          Object.assign(issue, _issueIdentityFromClash(fromClash));
           d({t:A.UPD_CLASH, id:fromClash.id, u:{linkedIssueId:issue.id, status:'in_progress'}});
         } else if (activeId) {
           var linkedClash = clashes.find(function(c){return c.id===activeId && (c.elemA===el.expressId || c.elemB===el.expressId);});
-          if (linkedClash) { issue.clashId = linkedClash.id; issue.clashIdentityKey = linkedClash._identityKey; }
+          if (linkedClash) { issue.clashId = linkedClash.id; issue.clashIdentityKey = linkedClash._identityKey; Object.assign(issue, _issueIdentityFromClash(linkedClash)); }
         }
       }
       d({t:A.ADD_ISSUE,v:issue});

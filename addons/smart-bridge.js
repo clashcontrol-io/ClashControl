@@ -607,10 +607,15 @@
           revitIdA: issue.revitIdA != null ? issue.revitIdA : null,
           revitIdB: issue.revitIdB != null ? issue.revitIdB : null,
           storey: issue.storey || null,
-          classificationA: issue.classificationA || issue.classification || null,
-          classificationB: issue.classificationB || null,
+          // Classification: use what's stamped, else derive from the element refs
+          // (modelAId/elemA) the same way get_clashes does — so a UI-promoted issue
+          // (which stamps refs but not classification) still joins to finance/spec.
+          classificationA: issue.classificationA || issue.classification || _classByElem(issue.modelAId, issue.elemA) || null,
+          classificationB: issue.classificationB || _classByElem(issue.modelBId, issue.elemB) || null,
           disciplines: issue.disciplines || null,
-          linkedClashId: issue.linkedClashId || null,
+          revitIds: (function(){ var r=[]; if(issue.revitIdA!=null)r.push(issue.revitIdA); if(issue.revitIdB!=null)r.push(issue.revitIdB); if(Array.isArray(issue.revitIds))r=r.concat(issue.revitIds); return r; })(),
+          modelAId: issue.modelAId || null, modelBId: issue.modelBId || null,
+          linkedClashId: issue.linkedClashId || issue.clashId || null,
           // Connective-spine MUST keys.
           source: 'clashcontrol', projectKey: pk, sourceLocalId: issue.id || null };
       })
