@@ -252,6 +252,27 @@ const TOOLS = [
     inputSchema: { type: 'object', properties: {}, required: [] },
   },
   {
+    name: 'ingest_detection_feedback',
+    description:
+      "Receiver for an orchestrator's (Loam's) outcome feedback. Feed back which detection " +
+      'suppressions turned out to eat REAL clashes so CC stops auto-suppressing them. ' +
+      "feedback.byPair[].key is an element-type pair (e.g. 'IfcSlab x IfcSlab'); realRate = " +
+      'real/(real+false). On the next run, pairs with realRate >= 0.34 are no longer auto-suppressed ' +
+      'by the type-pair memo. Stored per projectKey, survives refresh; round-trip is visible in ' +
+      'get_status.detectionFeedback. byRule is stored for inspection.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        projectKey: { type: 'string', description: 'Partition key (revit:<uid>). Omit to use the current session projectKey.' },
+        feedback: {
+          type: 'object',
+          description: 'Object with byRule[] and byPair[] arrays of {key, real, false, realRate, recommendation}.',
+        },
+      },
+      required: ['feedback'],
+    },
+  },
+  {
     name: 'set_detection_rules',
     description:
       'Updates clash detection parameters without running detection. Configures gap tolerance, ' +

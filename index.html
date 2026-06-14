@@ -3692,6 +3692,21 @@ function startApp() {
   function _tpPairKey(a, b) {
     return a < b ? a + ':' + b : b + ':' + a;
   }
+  // Normalized element-type-pair key for matching against detection-feedback
+  // (ingest_detection_feedback). Strips the "Ifc" prefix, case, and separators so
+  // "IfcSlab × IfcSlab", "Slab:Slab", "slab|slab" all collapse to one token.
+  function _normTypePairKey(a, b) {
+    function tok(t){ return String(t||'').toLowerCase().replace(/[^a-z0-9]/g,'').replace(/^ifc/,''); }
+    var x = tok(a), y = tok(b);
+    return x < y ? x+'|'+y : y+'|'+x;
+  }
+  // Parse a feedback pair key like "IfcSlab × IfcWall" / "Slab vs Wall" into the
+  // same normalized token, so the engine can look it up regardless of vocabulary.
+  _normTypePairKey.fromKey = function(key) {
+    var parts = String(key||'').split(/×|✕|\bx\b|\bvs\b|[:|/]/i);
+    if (parts.length < 2) parts = [key, key];
+    return _normTypePairKey(parts[0], parts[parts.length-1]);
+  };
   window._ccResetTypePairMemo = function(models) {
     var key = _tpMemoModelsKey(models || (window._ccLatestState && window._ccLatestState.models) || []);
     try { localStorage.removeItem('cc_typePairMemo:' + key); } catch(e) {}
@@ -4630,6 +4645,25 @@ function startApp() {
     var _activeMemoSet = _tpMemoApplied ? new Set(_tpMemoBefore.activeMemo) : null;
     var _nMemoSkipped = 0;
     var _nPairCacheReemit = 0;
+    // Detection-feedback "protected" pairs (Loam's ingest_detection_feedback): an
+    // element-type pair whose suppression turned out to eat REAL clashes
+    // (realRate ≥ threshold) must NOT be auto-suppressed by the type-pair memo.
+    // Keyed on a normalized type token (Ifc-prefix/case/separators stripped) so
+    // "IfcSlab × IfcSlab", "Slab:Slab" etc. all reconcile.
+    var _protectedPairs = (function(){
+      try {
+        var fb = window._ccDetectionFeedback;
+        if (!fb || !fb.byPair) return null;
+        var TH = (window._ccFeedbackRealRateThreshold != null) ? window._ccFeedbackRealRateThreshold : 0.34;
+        var set = {};
+        fb.byPair.forEach(function(e){
+          if (!e || !e.key) return;
+          var rate = (e.realRate != null) ? e.realRate : ((e.real||0)/Math.max(1,(e.real||0)+(e['false']||0)));
+          if (rate >= TH) set[_normTypePairKey.fromKey(e.key)] = true;
+        });
+        return Object.keys(set).length ? set : null;
+      } catch(e) { return null; }
+    })();
 
     var _exPairSet = {};
     if (rules.excludeTypePairs && rules.excludeTypePairs.length) {
@@ -4769,8 +4803,11 @@ function startApp() {
       // invalidates it automatically (memo not applied, just rebuilt).
       if (_activeMemoSet && eA.props && eB.props && eA.props.ifcType && eB.props.ifcType) {
         if (_activeMemoSet.has(_tpPairKey(eA.props.ifcType, eB.props.ifcType))) {
-          _nMemoSkipped++;
-          return;
+          // Don't memo-suppress a pair Loam flagged as eating real clashes.
+          if (!(_protectedPairs && _protectedPairs[_normTypePairKey(eA.props.ifcType, eB.props.ifcType)])) {
+            _nMemoSkipped++;
+            return;
+          }
         }
       }
 
