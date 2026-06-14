@@ -589,8 +589,10 @@
         var gids = [];
         if (issue.globalIdA) gids.push(issue.globalIdA);
         if (issue.globalIdB) gids.push(issue.globalIdB);
+        if (Array.isArray(issue.globalIds)) gids = gids.concat(issue.globalIds); // BCF topics can reference >2 elements
         if (Array.isArray(issue.qualityGids)) gids = gids.concat(issue.qualityGids);
         if (issue.globalId) gids.push(issue.globalId);
+        gids = gids.filter(function(g, ix){ return g && gids.indexOf(g) === ix; }); // dedupe
         // Revit UniqueIds (the most reliable cross-doc join key) from either the
         // per-side fields or an array — mirrors get_clashes so a promoted issue
         // joins back the same way a clash does.

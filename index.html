@@ -5788,6 +5788,28 @@ function startApp() {
     inp.click();
   }
 
+  // Resolve up to two IFC GlobalIds against the loaded models, returning the
+  // matched elements' uniqueId / revitId / storey + model+expressId refs. Lets a
+  // BCF-imported topic recover full element identity from the GUIDs it carries.
+  function _resolveGidsToElements(gids) {
+    var out = { uniqueIds:[], uniqueIdA:null, uniqueIdB:null, revitIdA:null, revitIdB:null, modelAId:null, modelBId:null, elemA:null, elemB:null, storey:null };
+    var st = window._ccLatestState;
+    if (!st || !st.models || !gids || !gids.length) return out;
+    var found = {};
+    st.models.forEach(function(m) {
+      (m.elements || []).forEach(function(el) {
+        var g = el.props && el.props.globalId;
+        if (g && gids.indexOf(g) >= 0 && !found[g]) {
+          found[g] = { uniqueId: (el.props.uniqueId||null), revitId: (el.props.revitId!=null?el.props.revitId:null), modelId: m.id, expressId: el.expressId, storey: (el.props.storey||null) };
+        }
+      });
+    });
+    var keys = gids.filter(function(g) { return found[g]; });
+    if (keys[0]) { var a = found[keys[0]]; out.uniqueIdA=a.uniqueId; out.revitIdA=a.revitId; out.modelAId=a.modelId; out.elemA=a.expressId; out.storey=a.storey; if (a.uniqueId) out.uniqueIds.push(a.uniqueId); }
+    if (keys[1]) { var b = found[keys[1]]; out.uniqueIdB=b.uniqueId; out.revitIdB=b.revitId; out.modelBId=b.modelId; out.elemB=b.expressId; if (b.uniqueId) out.uniqueIds.push(b.uniqueId); }
+    return out;
+  }
+
   // Import BCF from an ArrayBuffer. Shared by the file-picker UI (importBCF) and
   // the LLM/bridge path (window._ccImportBCF), which can hand in BCF content
   // directly so an agent that already has a .bcfzip can import without a picker.
@@ -5797,7 +5819,15 @@ function startApp() {
         zip.forEach(function(path, entry) {
           if (path.match(/markup\.bcf$/i)) {
             promises.push(entry.async('text').then(function(xml) {
-              return {folder: path.split('/')[0], xml: xml};
+              return {kind:'markup', folder: path.split('/')[0], xml: xml};
+            }));
+          } else if (path.match(/\.bcfv$/i)) {
+            // Viewpoint files carry the topic's referenced element IfcGuids
+            // (<Components><Component IfcGuid=...>). Collect them so imported
+            // issues keep their element identity — the join key for inspection
+            // items (E5) through the GUID spine.
+            promises.push(entry.async('text').then(function(xml) {
+              return {kind:'viewpoint', folder: path.split('/')[0], xml: xml};
             }));
           }
         });
@@ -5816,7 +5846,22 @@ function startApp() {
           });
         }
         return Promise.all(promises);
-      }).then(function(markups) {
+      }).then(function(parts) {
+        // Index referenced IfcGuids per topic folder from the viewpoint files.
+        var vpByFolder = {};
+        parts.forEach(function(p) {
+          if (p.kind !== 'viewpoint') return;
+          try {
+            var vdoc = new DOMParser().parseFromString(p.xml, 'text/xml');
+            var comps = vdoc.querySelectorAll('Component');
+            var arr = vpByFolder[p.folder] || (vpByFolder[p.folder] = []);
+            for (var ci = 0; ci < comps.length; ci++) {
+              var g = comps[ci].getAttribute('IfcGuid') || comps[ci].getAttribute('ifcGuid');
+              if (g && arr.indexOf(g) < 0) arr.push(g);
+            }
+          } catch(_e) {}
+        });
+        var markups = parts.filter(function(p) { return p.kind === 'markup'; });
         var imported = 0;
         markups.forEach(function(m) {
           try {
@@ -5936,6 +5981,30 @@ function startApp() {
               } catch(_e) {}
             }
             if (scanRefs.length) issuePayload.scanReferences = scanRefs;
+            // Carry the topic's referenced element IfcGuids onto the issue (from
+            // the viewpoint files, plus any IfcGuid attributes in the markup), and
+            // resolve uniqueId/revitId/storey against the loaded model so the
+            // imported issue joins through the GUID spine like a native one.
+            var bcfGids = (vpByFolder[m.folder] || []).slice();
+            var attrNodes = doc.querySelectorAll('[IfcGuid]');
+            for (var ai = 0; ai < attrNodes.length; ai++) {
+              var ag = attrNodes[ai].getAttribute('IfcGuid');
+              if (ag && bcfGids.indexOf(ag) < 0) bcfGids.push(ag);
+            }
+            if (bcfGids.length) {
+              issuePayload.globalIds = bcfGids;
+              if (!issuePayload.globalIdA) issuePayload.globalIdA = bcfGids[0] || null;
+              if (!issuePayload.globalIdB && bcfGids[1]) issuePayload.globalIdB = bcfGids[1];
+              var res = _resolveGidsToElements(bcfGids);
+              if (res.uniqueIds.length) issuePayload.uniqueIds = res.uniqueIds;
+              if (res.uniqueIdA && !issuePayload.uniqueIdA) issuePayload.uniqueIdA = res.uniqueIdA;
+              if (res.uniqueIdB && !issuePayload.uniqueIdB) issuePayload.uniqueIdB = res.uniqueIdB;
+              if (res.revitIdA != null && issuePayload.revitIdA == null) issuePayload.revitIdA = res.revitIdA;
+              if (res.revitIdB != null && issuePayload.revitIdB == null) issuePayload.revitIdB = res.revitIdB;
+              if (res.modelAId) { issuePayload.modelAId = res.modelAId; issuePayload.elemA = res.elemA; }
+              if (res.modelBId) { issuePayload.modelBId = res.modelBId; issuePayload.elemB = res.elemB; }
+              if (!issuePayload.storey && res.storey) issuePayload.storey = res.storey;
+            }
             d({t:A.ADD_ISSUE, v:issuePayload});
             imported++;
           } catch(e) { console.warn('BCF parse error:', e); }
