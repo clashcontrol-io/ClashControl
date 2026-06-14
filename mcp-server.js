@@ -90,34 +90,83 @@ const TOOLS = [
       'and a coarse revision stamp — plus total clash and issue counts, active detection rules (gap ' +
       'tolerance, hard/soft mode), current UI tab, walk mode state, and theme. Use this first to ' +
       "understand what the user is working with, and use each model's revision/lastSync to check " +
-      'whether CC is in sync with another live tool (e.g. PDRA on the same Revit model).',
+      'whether CC is in sync with another live tool (e.g. PDRA on the same Revit model). ' +
+      'Also returns connector:{state ("receiving"|"ready"|"disconnected"), ingesting, percent, ' +
+      'elementCount, documentName}: when connector.ingesting is true the Revit model is still ' +
+      'streaming in (modelCount shows the slot before data is complete), so DO NOT act on model or ' +
+      'clash data until connector.state === "ready". Plus detecting/detectionProgress and lastDetectionError.',
     inputSchema: { type: 'object', properties: {}, required: [] },
   },
   {
     name: 'get_clashes',
     description:
-      'Retrieves detected clash pairs between IFC elements. Each clash includes its index, title, ' +
-      'status (open/resolved), priority, building storey, element types and names for both sides, ' +
-      'distance in mm, AI-assigned severity, and category. Also returns stable element identity for ' +
-      'each side — globalIdA/globalIdB (IFC GlobalId, equal to the Revit IfcGUID for Revit-exported ' +
-      'models) and revitIdA/revitIdB (Revit ElementId, present only on live-linked models). Use these ' +
-      'GUIDs to cross-reference a clash element with other tools or models (e.g. a Revit/PDRA element ' +
-      'by IfcGUID). Filter by status and limit results.',
+      'Retrieves detected clash pairs between elements. Each clash includes index, title, status, ' +
+      'priority, storey, typeA/typeB, nameA/nameB, distance (mm), elevation (m), disciplines (the two ' +
+      "sides' disciplines — use to tell arch×structural, e.g. an expected floor build-up, from a " +
+      'same-discipline real problem), and AI severity/category. Stable element identity per side: ' +
+      'uniqueIdA/uniqueIdB (Revit UniqueId — the most reliable cross-document join key; prefer this), ' +
+      'globalIdA/globalIdB (IFC GlobalId), revitIdA/revitIdB (Revit ElementId, doc-local). Plus ' +
+      'classificationA/classificationB ({system, code} NL-SfB/Uniclass — the join key to finance/ERP & ' +
+      'specs) and modelAId/modelBId. Filter by status and limit results.',
     inputSchema: {
       type: 'object',
       properties: {
         status: {
           type: 'string',
-          enum: ['all', 'open', 'resolved', 'approved'],
-          description: "Filter clashes by status. Omit or 'all' for everything.",
+          enum: ['all', 'open', 'resolved', 'approved', 'expected', 'closed'],
+          description: "Filter clashes by status. 'expected' = the suppressed/by-design bucket. Omit or 'all' for everything.",
+        },
+        category: {
+          type: 'string',
+          description: "Filter by AI category (e.g. 'false_positive', 'needs_review', 'penetration').",
         },
         limit: {
           type: 'number',
           description: 'Max clashes to return. Default 50.',
         },
+        offset: {
+          type: 'number',
+          description: 'Start index for pagination — page the full set with offset+limit.',
+        },
       },
       required: [],
     },
+  },
+  {
+    name: 'get_clash_summary',
+    description:
+      'Aggregate profile of the WHOLE clash set without paging it: total/open and counts byStatus, ' +
+      'byCategory (AI), byDiscipline (pair), byTypePair (top N), byStorey. Use this to find the few ' +
+      'root causes behind a large clash count before drilling in with get_clashes(offset).',
+    inputSchema: {
+      type: 'object',
+      properties: { topN: { type: 'number', description: 'Max entries per ranked list (type-pair, storey). Default 20.' } },
+      required: [],
+    },
+  },
+  {
+    name: 'get_element_quality',
+    description:
+      'Per-element data-quality annotations keyed by uniqueId/globalId — a parallel triage signal, NOT ' +
+      'a detection gate (flagged elements are still clashed, just down-rankable). Flags: untyped_proxy, ' +
+      'no_classification, degenerate_bbox (no geometry/zero size), oversized_bbox (>200 m). Returns only ' +
+      'flagged elements.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        modelId: { type: 'string', description: 'Limit to one model. Omit for all.' },
+        limit: { type: 'number', description: 'Max annotations. Default 1000.' },
+      },
+      required: [],
+    },
+  },
+  {
+    name: 'get_levels',
+    description:
+      'Per-model level/storey elevations (raw `elevation` in model units + `elevationM` in metres when ' +
+      'unitScale is known) so a consumer can compute floor build-up bands. get_clashes.elevation is in ' +
+      'scene metres — reconcile on that.',
+    inputSchema: { type: 'object', properties: {}, required: [] },
   },
   {
     name: 'get_issues',
@@ -143,21 +192,107 @@ const TOOLS = [
     },
   },
   {
-    name: 'run_detection',
+    name: 'get_element_by_guid',
     description:
-      'Starts clash detection between loaded IFC models. Optionally set which models to compare, ' +
-      'gap tolerance in mm, and whether to detect only hard clashes (physical intersections). ' +
-      'Results appear in get_clashes after detection completes.',
+      'Resolves loaded element(s) by Revit UniqueId, IFC GlobalId, or Revit ElementId — the inverse of ' +
+      'the clash identity: turn a key from another tool (e.g. a Revit/PDRA element) into the matching ' +
+      'ClashControl element with its model, expressId, uniqueId, ifcType, name, storey, material and ' +
+      'classification. Prefer uniqueId (most reliable cross-document key). Accepts a single ' +
+      'uniqueId/globalId/revitId or arrays uniqueIds[]/globalIds[]/revitIds[].',
     inputSchema: {
       type: 'object',
       properties: {
-        modelA: { type: 'string', description: "Name of first model to test. 'all' or omit for all models." },
-        modelB: { type: 'string', description: "Name of second model to test against. 'all' or omit for all models." },
+        uniqueId: { type: 'string', description: 'A single Revit UniqueId to resolve (most reliable).' },
+        globalId: { type: 'string', description: 'A single IFC GlobalId to resolve.' },
+        revitId: { type: 'string', description: 'A single Revit ElementId to resolve.' },
+        uniqueIds: { type: 'array', items: { type: 'string' }, description: 'Multiple Revit UniqueIds.' },
+        globalIds: { type: 'array', items: { type: 'string' }, description: 'Multiple IFC GlobalIds.' },
+        revitIds: { type: 'array', items: { type: 'string' }, description: 'Multiple Revit ElementIds.' },
+        limit: { type: 'number', description: 'Max elements to return. Default 50.' },
+      },
+      required: [],
+    },
+  },
+  {
+    name: 'resync',
+    description:
+      'Forces the live Revit link to re-pull the model so ClashControl matches the current Revit state. ' +
+      'Use before a cross-tool join when get_status shows CC is behind the live model. Live-link only — ' +
+      'a no-op for static IFC file loads. Re-check get_status afterwards for the updated revision.',
+    inputSchema: { type: 'object', properties: {}, required: [] },
+  },
+  {
+    name: 'run_detection',
+    description:
+      'Starts clash detection between loaded models. Optionally set which models to compare, ' +
+      'gap tolerance in mm, and whether to detect only hard clashes (physical intersections). ' +
+      'modelA/modelB accept: "all", a model name, "disc:<discipline>" (e.g. disc:architectural, ' +
+      'disc:structural, disc:mep — disciplines come from get_status), or "tag:<tag>". ' +
+      'Use disc: on both sides to scope to cross-discipline pairs only (e.g. modelA "disc:architectural", ' +
+      'modelB "disc:structural") and cut same-discipline noise at source. ' +
+      'Results appear in get_clashes after detection completes. Detection is async — if it fails ' +
+      '(e.g. a very large federation), get_status.lastDetectionError reports the message + stack.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        modelA: { type: 'string', description: "First side: 'all', a model name, 'disc:<discipline>', or 'tag:<tag>'. Omit for all models." },
+        modelB: { type: 'string', description: "Second side: 'all', a model name, 'disc:<discipline>', or 'tag:<tag>'. Omit for all models." },
         maxGap: { type: 'number', description: 'Gap tolerance in mm. Elements within this distance count as clashing. Default 10mm.' },
         hard: { type: 'boolean', description: 'True = detect only hard clashes (physical intersections).' },
         excludeSelf: { type: 'boolean', description: 'True = skip clashes within the same model.' },
       },
       required: [],
+    },
+  },
+  {
+    name: 'run_detection_ruleset',
+    description:
+      'Rule-based / cross-discipline detection (Solibri-style): runs several scoped rules — each a ' +
+      'discipline/model pair with its own gap — and returns the UNION (deduped). Cuts clash volume ' +
+      'at source vs a flat all-vs-all run; hosted/by-design pairs are excluded at detection time. ' +
+      "With no rules[], preset 'cross_discipline' auto-builds every distinct discipline pair present " +
+      '(arch×structural, arch×mep, structural×mep). Async — results via get_clashes.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        rules: {
+          type: 'array',
+          description: 'Rules, each: { disciplineA, disciplineB } (or modelA/modelB names) plus optional maxGap (mm) and hard. Omit to use the cross_discipline preset.',
+          items: { type: 'object' },
+        },
+        preset: { type: 'string', description: "Ruleset preset. 'cross_discipline' (default) = all distinct discipline pairs." },
+        maxGap: { type: 'number', description: 'Default gap tolerance (mm) for rules that omit one.' },
+        hard: { type: 'boolean', description: 'Default hard/soft for rules that omit it.' },
+      },
+      required: [],
+    },
+  },
+  {
+    name: 'cancel_detection',
+    description:
+      'Resets a stuck/wedged detection (clears the detecting flag) so a fresh run_detection can ' +
+      'start — recovers from a hung run without a browser/SmartBridge restart.',
+    inputSchema: { type: 'object', properties: {}, required: [] },
+  },
+  {
+    name: 'ingest_detection_feedback',
+    description:
+      "Receiver for an orchestrator's (Loam's) outcome feedback. Feed back which detection " +
+      'suppressions turned out to eat REAL clashes so CC stops auto-suppressing them. ' +
+      "feedback.byPair[].key is an element-type pair (e.g. 'IfcSlab x IfcSlab'); realRate = " +
+      'real/(real+false). On the next run, pairs with realRate >= 0.34 are no longer auto-suppressed ' +
+      'by the type-pair memo. Stored per projectKey, survives refresh; round-trip is visible in ' +
+      'get_status.detectionFeedback. byRule is stored for inspection.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        projectKey: { type: 'string', description: 'Partition key (revit:<uid>). Omit to use the current session projectKey.' },
+        feedback: {
+          type: 'object',
+          description: 'Object with byRule[] and byPair[] arrays of {key, real, false, realRate, recommendation}.',
+        },
+      },
+      required: ['feedback'],
     },
   },
   {
@@ -180,12 +315,14 @@ const TOOLS = [
     name: 'update_clash',
     description:
       'Updates a single clash by its index (0-based, from get_clashes). Change status, priority, ' +
-      'assignee, or title.',
+      "assignee, or title. Use status 'expected' (NOT 'resolved') for by-design / false-positive " +
+      "clashes — it's a reversible suppressed bucket, excluded from the open count and re-openable by " +
+      "setting status back to 'open'. 'resolved' is for real clashes that were actually fixed.",
     inputSchema: {
       type: 'object',
       properties: {
         clashIndex: { type: 'number', description: '0-based index of the clash from get_clashes results.' },
-        status: { type: 'string', enum: ['open', 'resolved', 'approved'], description: 'New status for the clash.' },
+        status: { type: 'string', enum: ['open', 'resolved', 'approved', 'expected', 'closed'], description: "New status. 'expected' = suppressed/by-design (reversible); 'open' re-opens." },
         priority: { type: 'string', enum: ['low', 'normal', 'high', 'critical'], description: 'New priority level.' },
         assignee: { type: 'string', description: 'Person or team to assign this clash to.' },
         title: { type: 'string', description: 'Override the clash title.' },
@@ -609,8 +746,32 @@ const TOOLS = [
     },
   },
   {
+    name: 'promote_clash_to_issue',
+    description:
+      'Promote a detected clash (by 0-based clashIndex, or many via items[]) to a coordination issue, ' +
+      'COPYING its element identity (uniqueIdA/B, globalIdA/B, revitIdA/B), storey, types, disciplines ' +
+      'and classification — so the Issue is joinable back to the model / Loam (a plain create_issue ' +
+      'would have globalIds:[]). Links the clash to the issue (linkedIssueId); does NOT resolve the clash.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        clashIndex: { type: 'number', description: '0-based index of the clash to promote (from get_clashes).' },
+        items: { type: 'array', description: 'Promote many: array of { clashIndex, title?, description?, priority?, assignee? }.', items: { type: 'object' } },
+        title: { type: 'string', description: 'Override issue title (defaults to the clash title).' },
+        description: { type: 'string', description: 'Override description (defaults to the clash AI reason).' },
+        priority: { type: 'string', enum: ['low', 'normal', 'high', 'critical'], description: 'Issue priority.' },
+        assignee: { type: 'string', description: 'Person or team responsible.' },
+      },
+      required: [],
+    },
+  },
+  {
     name: 'create_issue',
-    description: 'Creates a coordination issue in ClashControl.',
+    description:
+      'Creates a coordination issue in ClashControl. For element linkage (so the issue can be joined ' +
+      'back to the model/Loam), pass globalIds[]/revitIds[]/uniqueIds[] or per-side globalIdA/B, ' +
+      'revitIdA/B, uniqueIdA/B, plus storey/classification. To promote a detected clash, prefer ' +
+      'promote_clash_to_issue (copies the element identity automatically).',
     inputSchema: {
       type: 'object',
       properties: {
@@ -620,6 +781,10 @@ const TOOLS = [
         priority: { type: 'string', enum: ['low', 'normal', 'high', 'critical'], description: "Priority. Default 'normal'." },
         assignee: { type: 'string', description: 'Person or team responsible.' },
         category: { type: 'string', description: "Issue category, e.g. 'coordination', 'design', 'rfi'." },
+        globalIds: { type: 'array', description: 'IFC GlobalIds of involved elements.', items: { type: 'string' } },
+        revitIds: { type: 'array', description: 'Revit ElementIds of involved elements.', items: { type: 'number' } },
+        uniqueIds: { type: 'array', description: 'Revit UniqueIds of involved elements (preferred join key).', items: { type: 'string' } },
+        storey: { type: 'string', description: 'Storey/level the issue sits on.' },
       },
       required: ['title'],
     },

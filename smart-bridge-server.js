@@ -391,6 +391,9 @@ let _browser     = null;   // current browser WebSocket
 let _manifest    = [];     // tool manifest sent by browser on connect
 let _pending     = Object.create(null); // id → { resolve, reject, timer }
 let _seq         = 0;
+let _lastEvent   = null;        // last unsolicited browser push (e.g. detection_complete)
+let _eventSeq    = 0;           // monotonic id so a poller can detect new events
+const _sseClients = new Set();  // open GET /events responses (SSE push subscribers)
 
 const wss = new WebSocketServer({
   host: '127.0.0.1',     // loopback only — never expose to the network
@@ -430,6 +433,17 @@ wss.on('connection', (ws) => {
     if (msg.type === 'install_mcp_config') {
       const r = writeMcpConfig();
       try { ws.send(JSON.stringify({ type: 'mcp_config_installed', ...r })); } catch (_) {}
+      return;
+    }
+
+    // Unsolicited push event from the browser (e.g. detection_complete). Store it
+    // as the last event and stream it to any SSE subscribers so a connected
+    // orchestrator/LLM gets pinged instead of polling get_status forever.
+    if (msg.type === 'event') {
+      _lastEvent = Object.assign({}, msg, { _seq: ++_eventSeq, _at: Date.now() });
+      const line = 'data: ' + JSON.stringify(_lastEvent) + '\n\n';
+      for (const r of _sseClients) { try { r.write(line); } catch (_) {} }
+      console.log('[SmartBridge] event: ' + (msg.event || '?') + (msg.total != null ? ' (' + msg.total + ' clashes, ' + (msg.open != null ? msg.open : '?') + ' open)' : ''));
       return;
     }
 
@@ -581,6 +595,28 @@ const httpServer = http.createServer(async (req, res) => {
 
   if (req.method === 'GET' && pathname === '/tools') {
     return json(200, _manifest);
+  }
+
+  // Poll fallback: last unsolicited event (detection_complete, …) + its seq, so an
+  // orchestrator can detect "a run finished" without holding a connection open.
+  if (req.method === 'GET' && pathname === '/last-event') {
+    return json(200, { event: _lastEvent, seq: _eventSeq });
+  }
+
+  // Push channel (Server-Sent Events): an orchestrator/LLM subscribes here and is
+  // pinged the moment a detection run completes — no idle polling of get_status.
+  if (req.method === 'GET' && pathname === '/events') {
+    res.writeHead(200, {
+      'Content-Type': 'text/event-stream',
+      'Cache-Control': 'no-cache',
+      'Connection': 'keep-alive'
+    });
+    res.write('retry: 3000\n\n');
+    if (_lastEvent) { try { res.write('data: ' + JSON.stringify(_lastEvent) + '\n\n'); } catch (_) {} }
+    _sseClients.add(res);
+    const ka = setInterval(() => { try { res.write(': keep-alive\n\n'); } catch (_) {} }, 25000);
+    req.on('close', () => { clearInterval(ka); _sseClients.delete(res); });
+    return;
   }
 
   if (req.method === 'GET' && pathname === '/openapi.json') {

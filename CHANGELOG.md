@@ -1,5 +1,35 @@
 # Changelog
 
+## v5.20.29 (2026-06-14)
+- Cross-discipline ruleset detection + clash→issue promotion with element link (#642)
+
+## v5.20.28 (2026-06-14)
+- Scoped detection resolves models by name + ping orchestrator on run completion (#640)
+
+## v5.20.27 (2026-06-14)
+- ingest_detection_feedback: stop suppressing pairs that ate real clashes (#639)
+
+## v5.20.26 (2026-06-14)
+- Reconcile clashes across runs by stable identity (#638)
+
+## v5.20.25 (2026-06-14)
+- Fix detection instant-0 regression + one-click Revit live link + faster 82k pull (#636)
+
+## v5.20.24 (2026-06-13)
+- fix(detection): live progress in get_status, reject concurrent runs, 90s stall watchdog (no eternal detecting:true), clear stale type-pair memo on bridge runs (instant-0 fix) (#634)
+
+## v5.20.23 (2026-06-13)
+- feat: surface last detection error via get_status.lastDetectionError (message+stack) so the orchestrator can report failures without console access (#633)
+
+## v5.20.22 (2026-06-13)
+- Scoped sync: exclude heavy models from the live Revit sync (skip on receive + persist + re-include) (#632)
+
+## v5.20.21 (2026-06-13)
+- Host-aware detection for Revit-keyed relatedPairs + throttle reconnect loading indicator (#630)
+
+## v5.20.20 (2026-06-13)
+- Live-test fixes: clash metadata (type/name/storey), uniqueId join key, discipline tagging, classification shape (#629)
+
 ## v5.20.19 (2026-06-13)
 - Start-screen Revit live-link option + Smart Bridge rejection fix (#624)
 

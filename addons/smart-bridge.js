@@ -18,7 +18,7 @@
   var REST_URL = 'http://127.0.0.1:19803';
   var _ws = null;
   var _connected = false;
-  var _releaseTag = 'bridge-v0.2.0'; // fallback; will be updated from GitHub API
+  var _releaseTag = 'bridge-v0.3.3'; // fallback; will be updated from GitHub API
 
   function _buildDownloads() {
     var _releaseBase = 'https://github.com/clashcontrol-io/ClashControl/releases/download/' + _releaseTag + '/';
@@ -300,9 +300,95 @@
     if (window._ccDispatch) window._ccDispatch(action);
   }
 
+  // Deterministic projectKey (connective-spine partition key). Must be identical
+  // across tools (PDRA, Loam) for the SAME open Revit doc so the join lines up.
+  // A per-session CC slug breaks that, so prefer the Revit project identity the
+  // Connector forwards (ProjectInformation.UniqueId) as "revit:<uid>" — same open
+  // document → same string everywhere. Falls back to the active CC project, then
+  // a stable literal.
+  function _projectKey(s) {
+    try {
+      var rpid = window._ccRevitProjectUniqueId;
+      if (rpid) return 'revit:' + rpid;
+    } catch (e) {}
+    return (s && s.activeProject) || 'local';
+  }
+
   // ── Action handlers ───────────────────────────────────────────────
 
   var handlers = {};
+
+  // Extract a classification code (NL-SfB / Uniclass / assembly / OmniClass) from
+  // an element's nested property sets. Self-contained (no cross-addon import) — the
+  // key list mirrors the data-quality addon. Classification is the join key to
+  // non-model sources (finance/ERP, spec) that GUID can't reach. Returns
+  // { system, code } or null.
+  function _classSysOf(key) {
+    var kl = String(key).toLowerCase().replace(/[\s_\/-]/g, '');
+    return kl.indexOf('nlsfb') >= 0 || kl.indexOf('sfb') >= 0 ? 'NL-SfB'
+         : kl.indexOf('uniclass') >= 0 ? 'Uniclass'
+         : kl.indexOf('omniclass') >= 0 ? 'OmniClass'
+         : kl.indexOf('uniformat') >= 0 ? 'Uniformat'
+         : (kl === 'assemblycode' || kl.indexOf('classification') >= 0 || kl === 'classificationcode') ? 'Classification'
+         : null;
+  }
+  // Generic "this field holds the code" key names (used when the SYSTEM is carried
+  // by the pset/group name instead, e.g. a pset "NL-SfB" with a key "Code").
+  function _isGenericCodeKey(key) {
+    var kl = String(key).toLowerCase().replace(/[\s_\/-]/g, '');
+    return kl === 'code' || kl === 'value' || kl === 'elementcode' || kl === 'nummer' || kl === 'number';
+  }
+  function _classOf(props) {
+    var ps = props && props.psets;
+    var hit = null;
+    if (ps) {
+      Object.keys(ps).forEach(function(pset) {
+        if (hit) return;
+        var grp = ps[pset];
+        var psetSys = _classSysOf(pset); // system carried by the GROUP name?
+        // psets may be NESTED ({Pset:{key:val}}, IFC loads) or FLAT
+        // ({paramName:val}, Revit-direct parameters). Handle both.
+        if (grp && typeof grp === 'object' && !Array.isArray(grp)) {
+          Object.keys(grp).forEach(function(k) {
+            if (hit) return;
+            // System from the key, else from the group name when the key is a
+            // generic code field (mirrors the DQ addon's _extractNLSfB breadth —
+            // catches a "NL-SfB"/"Classification" pset whose key is just "Code").
+            var sys = _classSysOf(k) || (psetSys && _isGenericCodeKey(k) ? psetSys : null);
+            if (!sys) return;
+            var v = grp[k];
+            if (v != null && String(v).trim() !== '') hit = { system: sys, code: String(v).trim() };
+          });
+        } else {
+          // Flat: the pset key IS the parameter name, grp is its value.
+          var sys = _classSysOf(pset);
+          if (sys && grp != null && String(grp).trim() !== '') hit = { system: sys, code: String(grp).trim() };
+        }
+      });
+    }
+    // Fallback: NL-SfB often lives in ObjectType as "(NN)" or "NN.xx ..." (the DQ
+    // addon does the same). Only used when no explicit classification field found.
+    if (!hit && props && props.objectType) {
+      var m = /\((\d{2}(?:\.\d{1,2})*)\)/.exec(props.objectType) || /^(\d{2}(?:\.\d{1,2})*)[\.\-\s]/.exec(props.objectType);
+      if (m) hit = { system: 'NL-SfB', code: m[1] };
+    }
+    return hit;
+  }
+
+  // Classification for one element by model + expressId (one-off lookup, used when
+  // promoting a clash to an issue so the Issue carries the same join key).
+  function _classByElem(modelId, eid) {
+    if (!modelId || eid == null) return null;
+    var ms = (_getState().models) || [];
+    for (var i = 0; i < ms.length; i++) {
+      if (ms[i].id !== modelId) continue;
+      var els = ms[i].elements || [];
+      for (var j = 0; j < els.length; j++) {
+        if (els[j].expressId === eid) return _classOf(els[j].props);
+      }
+    }
+    return null;
+  }
 
   handlers.get_status = function() {
     var s = _getState();
@@ -320,16 +406,70 @@
       return { name: m.name, discipline: m.discipline || 'Unknown',
         elements: (m.elements || []).length, visible: m.visible !== false,
         source: st.source || 'ifc', version: m._version || 1,
-        lastSync: st.lastSync || null, revision: revision };
+        lastSync: st.lastSync || null, revision: revision,
+        // modelInstanceId distinguishes document copies so a join can't silently
+        // cross two copies of the "same" model. m.id is CC's per-load instance;
+        // the authoritative token (Revit Document VersionGUID) must come from the
+        // Connector — surface it when present.
+        modelInstanceId: st.docVersion || st.versionGuid || m.id || null,
+        // Uniform freshness stamp (connective-spine §2) — generic staleness guard.
+        freshness: { source: 'clashcontrol', revisionId: revision,
+          asOf: st.lastSync ? new Date(st.lastSync).toISOString() : null,
+          confidence: live ? 'live' : 'snapshot' } };
     });
     var r = s.rules || {};
+    // Detection freshness. clashCount:0 is ambiguous (no clashes vs never ran);
+    // lastDetection:null means detection has never run this session. clashesStale
+    // flags that a model synced AFTER the last run, so the clash set is out of date
+    // (re-run before acting). _rh comes from the run-history the reducer keeps.
+    var _rh = (s.runHistory && s.runHistory.length) ? s.runHistory[s.runHistory.length - 1] : null;
+    var _maxSync = 0;
+    (s.models || []).forEach(function(m) { var ls = (m.stats && m.stats.lastSync) || 0; if (ls > _maxSync) _maxSync = ls; });
+    var _clashesStale = !!(_rh && _maxSync && _maxSync > _rh.ts);
     return {
       models: models, modelCount: models.length,
       clashCount: (s.clashes || []).length,
-      openClashes: (s.clashes || []).filter(function(c) { return c.status !== 'resolved'; }).length,
+      openClashes: (s.clashes || []).filter(function(c) { var st = c.status || 'open'; return st !== 'resolved' && st !== 'expected' && st !== 'closed'; }).length,
       issueCount: (s.issues || []).length,
       activeProject: s.activeProject || null,
+      projectKey: _projectKey(s), // connective-spine partition key (deterministic)
+      source: 'clashcontrol',
       rules: { maxGap: r.maxGap || 10, hard: !!r.hard, modelA: r.modelA || 'all', modelB: r.modelB || 'all', excludeSelf: !!r.excludeSelf },
+      // Loam detection-feedback round-trip: confirms ingest_detection_feedback
+      // landed (projectKey, counts, when) so the auto-feed can verify it stuck.
+      detectionFeedback: (function(){ try { var fb = window._ccDetectionFeedback; return fb ? { projectKey: fb.projectKey || null, rules: (fb.byRule||[]).length, pairs: (fb.byPair||[]).length, ts: fb.ts || null } : null; } catch(e){ return null; } })(),
+      // Last detection failure (e.g. RangeError on a huge federation) so the
+      // orchestrator can report it without browser-console access. null when OK.
+      lastDetectionError: (function(){ try { return window._ccLastDetectError || null; } catch(e){ return null; } })(),
+      detecting: !!s.detecting,
+      // Live progress while detecting so the orchestrator gets intermediate
+      // feedback instead of just true→false. {done,total,pct} or null when idle.
+      detectionProgress: (function(){ try { return (s.detecting && window._ccDetectProgress) ? window._ccDetectProgress : null; } catch(e){ return null; } })(),
+      // When detection last completed (null = never run this session) + its result
+      // counts, and whether a later model sync makes the current clashes stale.
+      lastDetection: _rh ? { at: _rh.ts, total: _rh.total, open: _rh.open, newCount: _rh.newCount } : null,
+      clashesStale: _clashesStale,
+      // Live Revit-bridge ingest state. Without this an agent can't tell that a
+      // model is still streaming in ("Receiving model from Revit 77%") — modelCount
+      // already shows the slot while the data is half-loaded. `ingesting:true` means
+      // DO NOT act on model/clash data yet; poll until state==='ready'.
+      connector: (function(){
+        try {
+          var rd = s.revitDirect || {};
+          var receiving = !!rd.loading;
+          return {
+            connected: !!rd.connected,
+            state: receiving ? 'receiving' : (rd.connected ? 'ready' : 'disconnected'),
+            ingesting: receiving,
+            percent: receiving ? Math.round((rd.progress || 0) * 100) : (rd.connected ? 100 : 0),
+            elementCount: rd.elementCount || 0,
+            documentName: rd.documentName || null,
+            // Last pull error (e.g. a partial/failed export) so the agent doesn't
+            // treat a half-loaded or stale model as complete. null when OK.
+            lastError: rd.exportError || null
+          };
+        } catch(e) { return null; }
+      })(),
       activeTab: s.tab || 'clashes', walkMode: !!s.walkMode,
       theme: document.documentElement.getAttribute('data-theme') || 'dark'
     };
@@ -339,29 +479,104 @@
     var s = _getState();
     var clashes = s.clashes || [];
     if (p.status && p.status !== 'all') clashes = clashes.filter(function(c) { return c.status === p.status; });
+    if (p.category) clashes = clashes.filter(function(c) { return (c.aiCategory || '') === p.category; });
     var limit = p.limit || 50;
+    var offset = p.offset > 0 ? Math.floor(p.offset) : 0; // pagination — page the full set
+    var slice = clashes.slice(offset, offset + limit);
+
+    // Resolve a classification code per clash element (the join key to finance /
+    // spec sources). Build an index only over the models + expressIds the slice
+    // references, so this stays bounded even on large federations.
+    var needed = {};
+    function need(mid, eid) { if (mid && eid != null) { (needed[mid] || (needed[mid] = {}))[eid] = true; } }
+    slice.forEach(function(c) { need(c.modelAId, c.elemA); need(c.modelBId, c.elemB); });
+    var classIdx = {}; // modelId -> expressId -> {system,code}
+    (s.models || []).forEach(function(m) {
+      var nm = needed[m.id]; if (!nm) return;
+      var map = classIdx[m.id] = {};
+      (m.elements || []).forEach(function(el) { if (nm[el.expressId]) map[el.expressId] = _classOf(el.props); });
+    });
+    function classFor(mid, eid) { return (classIdx[mid] && classIdx[mid][eid]) || null; }
+    var pk = _projectKey(s); // projectKey — partitions the connective graph (deterministic)
+
     return {
-      total: clashes.length,
-      clashes: clashes.slice(0, limit).map(function(c, i) {
-        return { index: i, title: c.title || c.aiTitle || ('Clash ' + (i + 1)),
+      total: clashes.length, offset: offset, returned: slice.length,
+      clashes: slice.map(function(c, i) {
+        return { index: offset + i, title: c.title || c.aiTitle || ('Clash ' + (offset + i + 1)),
           status: c.status || 'open', priority: c.priority || 'normal',
-          storey: c.storey || null, typeA: c.typeA || null, typeB: c.typeB || null,
-          nameA: c.nameA || null, nameB: c.nameB || null,
+          // NOTE: clashes store elem*Type/Name/Storey — read those (the old
+          // typeA/nameA/storey fields don't exist on the clash, so they were null).
+          storey: c.storey || c.elemAStorey || c.elemBStorey || null,
+          // Per-side storey + element bbox SIZE (mm, [w,d,h]) — for the orchestrator's
+          // storey-band rule (arch finish-floor vs structural slab in a storey's band).
+          storeyA: c.elemAStorey || null, storeyB: c.elemBStorey || null,
+          bboxA: c.bboxA || null, bboxB: c.bboxB || null,
+          typeA: c.typeA || c.elemAType || null, typeB: c.typeB || c.elemBType || null,
+          nameA: c.nameA || c.elemAName || null, nameB: c.nameB || c.elemBName || null,
           distance: c.distance != null ? c.distance : null,
+          // Elevation of the clash point (m) — lets a consumer (orchestrator) test
+          // a slab/slab overlap against a storey's floor build-up band.
+          elevation: c.elevation != null ? c.elevation : null,
           aiSeverity: c.aiSeverity || null, aiCategory: c.aiCategory || null,
-          // Stable identity for cross-tool joins (e.g. correlating a clash with a
-          // PDRA/Revit element). globalId = IFC GlobalId (= Revit IfcGUID for
-          // models exported from Revit); revitId = Revit ElementId when present
-          // (live link only — null for plain IFC loads). Present in both modes.
+          // Stable identity for cross-tool joins. globalId = IFC GlobalId; revitId =
+          // Revit ElementId (doc-local); uniqueId = Revit UniqueId — the only stable
+          // cross-document key, so the reliable join back to a live Revit doc / PDRA.
           globalIdA: c.globalIdA || null, globalIdB: c.globalIdB || null,
           revitIdA: c.revitIdA != null ? c.revitIdA : null,
-          revitIdB: c.revitIdB != null ? c.revitIdB : null };
+          revitIdB: c.revitIdB != null ? c.revitIdB : null,
+          uniqueIdA: c.uniqueIdA || null, uniqueIdB: c.uniqueIdB || null,
+          // Classification (NL-SfB/Uniclass/...) — the join key to finance/spec
+          // sources that IFC GUID can't reach. storey is the spatial (zone) bucket.
+          classificationA: classFor(c.modelAId, c.elemA),
+          classificationB: classFor(c.modelBId, c.elemB),
+          // Disciplines of the two sides — lets a consumer tell arch×structural
+          // (expected floor build-up) from same-discipline (a real problem).
+          disciplines: c.disciplines || null,
+          // Connective-spine MUST keys (for the provenance ledger / write-back):
+          // source + projectKey (the clash is the write target for set_clash_status,
+          // so clashId is its sourceLocalId; each element side carries its own).
+          source: 'clashcontrol', projectKey: pk, clashId: c.id || null,
+          modelAId: c.modelAId || null, modelBId: c.modelBId || null,
+          sourceLocalIdA: c.uniqueIdA || c.globalIdA || (c.elemA != null ? String(c.elemA) : null),
+          sourceLocalIdB: c.uniqueIdB || c.globalIdB || (c.elemB != null ? String(c.elemB) : null) };
       })
+    };
+  };
+
+  // Aggregate profile of the WHOLE clash set without paging it — so a consumer
+  // (orchestrator) can see the category distribution and spot the few root causes
+  // behind a large count. Counts by status, AI category, discipline-pair,
+  // type-pair (top N), and storey.
+  handlers.get_clash_summary = function(p) {
+    var s = _getState();
+    var clashes = s.clashes || [];
+    var topN = p && p.topN > 0 ? Math.floor(p.topN) : 20;
+    function bump(o, k) { k = k || '(none)'; o[k] = (o[k] || 0) + 1; }
+    var byStatus = {}, byCategory = {}, byDiscipline = {}, byTypePair = {}, byStorey = {};
+    clashes.forEach(function(c) {
+      bump(byStatus, c.status || 'open');
+      bump(byCategory, c.aiCategory);
+      var d = c.disciplines || [];
+      bump(byDiscipline, [d[0] || '?', d[1] || '?'].sort().join(' × '));
+      var tp = [c.elemAType || c.typeA || '?', c.elemBType || c.typeB || '?'].sort().join(' × ');
+      bump(byTypePair, tp);
+      bump(byStorey, c.storey || c.elemAStorey || c.elemBStorey || '(none)');
+    });
+    function top(o) {
+      return Object.keys(o).map(function(k) { return { key: k, count: o[k] }; })
+        .sort(function(a, b) { return b.count - a.count; }).slice(0, topN);
+    }
+    return {
+      total: clashes.length,
+      open: clashes.filter(function(c) { return c.status !== 'resolved'; }).length,
+      byStatus: byStatus, byCategory: byCategory, byDiscipline: byDiscipline,
+      byTypePair: top(byTypePair), byStorey: top(byStorey)
     };
   };
 
   handlers.get_issues = function(p) {
     var s = _getState(); var issues = s.issues || []; var limit = p.limit || 50;
+    var pk = _projectKey(s);
     return { total: issues.length,
       issues: issues.slice(0, limit).map(function(issue, i) {
         // Gather whatever element identity the issue carries, from any source:
@@ -373,19 +588,169 @@
         if (issue.globalIdB) gids.push(issue.globalIdB);
         if (Array.isArray(issue.qualityGids)) gids = gids.concat(issue.qualityGids);
         if (issue.globalId) gids.push(issue.globalId);
+        // Revit UniqueIds (the most reliable cross-doc join key) from either the
+        // per-side fields or an array — mirrors get_clashes so a promoted issue
+        // joins back the same way a clash does.
+        var uids = [];
+        if (issue.uniqueIdA) uids.push(issue.uniqueIdA);
+        if (issue.uniqueIdB) uids.push(issue.uniqueIdB);
+        if (Array.isArray(issue.uniqueIds)) uids = uids.concat(issue.uniqueIds);
         return { index: i, title: issue.title || ('Issue ' + (i + 1)),
           status: issue.status || 'open', priority: issue.priority || 'normal',
           assignee: issue.assignee || null, description: issue.description || null,
           globalIds: gids,
+          uniqueIds: uids,
+          uniqueIdA: issue.uniqueIdA || null, uniqueIdB: issue.uniqueIdB || null,
           revitIdA: issue.revitIdA != null ? issue.revitIdA : null,
-          revitIdB: issue.revitIdB != null ? issue.revitIdB : null };
+          revitIdB: issue.revitIdB != null ? issue.revitIdB : null,
+          storey: issue.storey || null,
+          classificationA: issue.classificationA || issue.classification || null,
+          classificationB: issue.classificationB || null,
+          disciplines: issue.disciplines || null,
+          linkedClashId: issue.linkedClashId || null,
+          // Connective-spine MUST keys.
+          source: 'clashcontrol', projectKey: pk, sourceLocalId: issue.id || null };
       })
     };
+  };
+
+  // Resolve element(s) by IFC GlobalId or Revit ElementId — the other half of
+  // the cross-tool join: given a GUID from another tool (e.g. a PDRA/Revit
+  // element), find the matching CC element and its model/type/storey. Accepts a
+  // single globalId/revitId or arrays (globalIds[]/revitIds[]).
+  handlers.get_element_by_guid = function(p) {
+    var s = _getState();
+    var wantG = {}, wantR = {}, wantU = {};
+    function addG(v){ if (v != null && v !== '') wantG[String(v)] = true; }
+    function addR(v){ if (v != null && v !== '') wantR[String(v)] = true; }
+    function addU(v){ if (v != null && v !== '') wantU[String(v)] = true; }
+    addG(p.globalId); addR(p.revitId); addU(p.uniqueId);
+    if (Array.isArray(p.globalIds)) p.globalIds.forEach(addG);
+    if (Array.isArray(p.revitIds)) p.revitIds.forEach(addR);
+    if (Array.isArray(p.uniqueIds)) p.uniqueIds.forEach(addU);
+    if (!Object.keys(wantG).length && !Object.keys(wantR).length && !Object.keys(wantU).length)
+      return 'Provide uniqueId/uniqueIds (Revit UniqueId — most reliable), globalId/globalIds (IFC GlobalId), or revitId/revitIds (Revit ElementId).';
+    var limit = p.limit || 50;
+    var pk = _projectKey(s);
+    var out = [];
+    (s.models || []).some(function(m) {
+      (m.elements || []).some(function(el) {
+        var pr = el.props || {};
+        var gid = pr.globalId || '', rid = pr.revitId, uid2 = pr.uniqueId;
+        if ((gid && wantG[gid]) || (rid != null && wantR[String(rid)]) || (uid2 && wantU[String(uid2)])) {
+          out.push({ modelId: m.id, modelName: m.name, expressId: el.expressId,
+            globalId: gid || null, revitId: rid != null ? rid : null,
+            uniqueId: uid2 || null,
+            ifcType: pr.ifcType || null, name: pr.name || null,
+            storey: pr.storey || null, material: pr.material || null,
+            classification: _classOf(pr),
+            // Connective-spine MUST keys (element record). sourceLocalId = the
+            // element's stable id (Revit UniqueId, else GlobalId, else expressId).
+            source: 'clashcontrol', projectKey: pk,
+            sourceLocalId: uid2 || gid || String(el.expressId) });
+        }
+        return out.length >= limit;
+      });
+      return out.length >= limit;
+    });
+    return { count: out.length, elements: out };
+  };
+
+  // Force the live Revit link to re-pull the model so CC catches up to the
+  // current Revit state (use before a cross-tool join if revisions differ).
+  // Live-link only — a no-op for plain IFC loads.
+  handlers.resync = function() {
+    var rd = (_getState() || {}).revitDirect || {};
+    if (!rd.connected) return 'Not connected to a live Revit link — nothing to resync. (Plain IFC models are static snapshots; reload the file to refresh.)';
+    if (typeof window._revitDirectExport !== 'function') return 'Revit bridge not available.';
+    try { window._revitDirectExport(['all']); }
+    catch (e) { return 'Resync request failed: ' + (e && e.message || e); }
+    return 'Resync requested from Revit — the model will refresh shortly. Re-query get_status to confirm the new revision.';
+  };
+
+  // Per-element data-quality annotations, keyed by uniqueId/globalId. A *parallel*
+  // signal for the orchestrator's triage — NOT a detection gate (a flagged proxy
+  // is still clashed; it's just down-ranked). Flags: untyped_proxy, no_classification,
+  // degenerate_bbox (no geometry / zero size), oversized_bbox (>200 m, almost always
+  // an export error). Returns only elements that have ≥1 flag.
+  handlers.get_element_quality = function(p) {
+    var s = _getState();
+    var pk = _projectKey(s);
+    var limit = p && p.limit > 0 ? Math.floor(p.limit) : 1000;
+    var models = s.models || [];
+    if (p && p.modelId) models = models.filter(function(m) { return m.id === p.modelId; });
+    var out = [];
+    models.some(function(m) {
+      (m.elements || []).some(function(el) {
+        var pr = el.props || {};
+        var flags = [];
+        var t = (pr.ifcType || '').toLowerCase();
+        if (t.indexOf('proxy') >= 0 || t === '' || t === 'element') flags.push('untyped_proxy');
+        if (!_classOf(pr)) flags.push('no_classification');
+        if (el.box && typeof el.box.isEmpty === 'function') {
+          if (el.box.isEmpty()) flags.push('degenerate_bbox');
+          else {
+            var dx = el.box.max.x - el.box.min.x, dy = el.box.max.y - el.box.min.y, dz = el.box.max.z - el.box.min.z;
+            if (dx < 1e-4 && dy < 1e-4 && dz < 1e-4) flags.push('degenerate_bbox');
+            else if (dx > 200 || dy > 200 || dz > 200) flags.push('oversized_bbox');
+          }
+        }
+        if (!flags.length) return false;
+        out.push({ uniqueId: pr.uniqueId || null, globalId: pr.globalId || null,
+          revitId: pr.revitId != null ? pr.revitId : null, expressId: el.expressId,
+          modelId: m.id, source: 'clashcontrol', projectKey: pk,
+          ifcType: pr.ifcType || null, name: pr.name || null, flags: flags });
+        return out.length >= limit;
+      });
+      return out.length >= limit;
+    });
+    return { projectKey: pk, source: 'clashcontrol', count: out.length, annotations: out };
+  };
+
+  // Per-model level/storey elevations — raw data so the orchestrator can compute
+  // floor build-up bands. NOTE: `elevation` is in the model's stored units;
+  // `elevationM` is metres when unitScale is known (clash elevation in get_clashes
+  // is scene metres) — reconcile on those.
+  handlers.get_levels = function() {
+    var s = _getState();
+    var pk = _projectKey(s);
+    return { projectKey: pk, source: 'clashcontrol',
+      note: 'elevation = model stored units; elevationM = metres when unitScale known; get_clashes.elevation is scene metres.',
+      models: (s.models || []).map(function(m) {
+        var us = (m.stats && m.stats.unitScale) || null;
+        return { modelId: m.id, modelName: m.name, discipline: m.discipline || 'Unknown', unitScale: us,
+          levels: (m.storeyData || []).map(function(sd) {
+            return { name: sd.name, id: sd.id || null, elevation: sd.elevation,
+              elevationM: us != null ? sd.elevation * us : null };
+          }) };
+      }) };
   };
 
   handlers.run_detection = function(p) {
     var s = _getState();
     if (!s.models || !s.models.length) return 'No models loaded. Open an IFC file first.';
+    if (s.detecting) return 'Detection already in progress — poll get_status (detecting / detectionProgress) until it finishes before starting another.';
+    // Resolve a scope reference (id / name / rawName / case-insensitive substring,
+    // or 'all' / 'disc:<d>' / 'tag:<t>') the same way the engine's pick() does, so
+    // we can reject a scope that matches NO models up front instead of silently
+    // running to 0 clashes (the "scoped run returns 0 instantly" trap).
+    function _resolveScope(ref) {
+      if (!ref || ref === 'all') return s.models;
+      var r = String(ref);
+      if (r.indexOf('disc:') === 0) { var d = r.slice(5); return s.models.filter(function(m){ return (m.discipline||'') === d; }); }
+      if (r.indexOf('tag:') === 0) { var t = r.slice(4).toLowerCase(); return s.models.filter(function(m){ return m.tag && m.tag.toLowerCase() === t; }); }
+      var exact = s.models.filter(function(m){ return m.id === r || m.name === r || m.rawName === r; });
+      if (exact.length) return exact;
+      var n = r.toLowerCase();
+      return s.models.filter(function(m){ return (m.name||'').toLowerCase().indexOf(n) >= 0 || (m.rawName||'').toLowerCase().indexOf(n) >= 0; });
+    }
+    if (p.modelA || p.modelB) {
+      var names = s.models.map(function(m){ return m.name; });
+      if (p.modelA && _resolveScope(p.modelA).length === 0)
+        return 'modelA "' + p.modelA + '" matched no loaded model. Available: ' + JSON.stringify(names) + '. Use a full/partial name, "all", or "disc:<discipline>".';
+      if (p.modelB && _resolveScope(p.modelB).length === 0)
+        return 'modelB "' + p.modelB + '" matched no loaded model. Available: ' + JSON.stringify(names) + '. Use a full/partial name, "all", or "disc:<discipline>".';
+    }
     var updates = {};
     if (p.modelA) updates.modelA = p.modelA;
     if (p.modelB) updates.modelB = p.modelB;
@@ -393,12 +758,122 @@
     if (p.hard != null) updates.hard = p.hard;
     if (p.excludeSelf != null) updates.excludeSelf = p.excludeSelf;
     _dispatch({ t: 'UPD_RULES', u: updates });
+    // Force a fresh compute: a stale type-pair "impossibility" memo from a prior
+    // (crashed/empty) run can make detection short-circuit to 0 instantly. Clearing
+    // it guarantees the orchestrator gets a real result (correctness over cache).
+    try { if (window._ccResetTypePairMemo) window._ccResetTypePairMemo(); } catch(e) {}
     if (window._ccRunDetection) {
-      window._ccRunDetection();
+      // Pass `updates` as an override: _dispatch is async, so without this the
+      // run would read the pre-dispatch rules (stale scope) and could test the
+      // wrong/empty model pair → "0 clashes instantly". The override guarantees
+      // the run uses the modelA/modelB/gap the orchestrator just asked for.
+      var started = window._ccRunDetection(updates);
+      if (started === false) return 'Detection already in progress — poll get_status until it finishes.';
       return 'Detection started: ' + (p.modelA || 'all') + ' vs ' + (p.modelB || 'all') +
-        (p.maxGap != null ? ', gap ' + p.maxGap + 'mm' : '') + (p.hard ? ', hard clashes' : '');
+        (p.maxGap != null ? ', gap ' + p.maxGap + 'mm' : '') + (p.hard ? ', hard clashes' : '') +
+        '. Async — poll get_status (detecting/detectionProgress); results via get_clashes; failures via get_status.lastDetectionError.';
     }
     return 'Detection trigger not available. Make sure models are loaded.';
+  };
+
+  // Rule-based / cross-discipline detection (Solibri-style): run several scoped
+  // rules — each a discipline/model pair with its own gap — and return the UNION
+  // (deduped). Cuts volume at source vs flat all-vs-all; hosted/by-design pairs are
+  // excluded at detection time (inherits useSemanticFilter). Body:
+  //   { rules:[{ disciplineA?, disciplineB?, modelA?, modelB?, maxGap?, hard? }],
+  //     preset?:'cross_discipline', maxGap?, hard? }
+  // With no rules, preset 'cross_discipline' auto-builds every distinct discipline
+  // pair present (arch×structural, arch×mep, structural×mep, …).
+  handlers.run_detection_ruleset = function(p) {
+    var s = _getState();
+    if (!s.models || !s.models.length) return 'No models loaded. Open a model first.';
+    if (s.detecting) return 'Detection already in progress — poll get_status until it finishes.';
+    var gap = p.maxGap != null ? p.maxGap : 10;
+    var hard = p.hard != null ? !!p.hard : true;
+    var rules = Array.isArray(p.rules) && p.rules.length ? p.rules.map(function(r) {
+      return {
+        modelA: r.modelA || (r.disciplineA ? 'disc:' + r.disciplineA : 'all'),
+        modelB: r.modelB || (r.disciplineB ? 'disc:' + r.disciplineB : 'all'),
+        maxGap: r.maxGap != null ? r.maxGap : gap,
+        hard: r.hard != null ? !!r.hard : hard
+      };
+    }) : null;
+    if (!rules) {
+      // Preset: every distinct discipline pair present among loaded models.
+      var discs = {};
+      (s.models || []).forEach(function(m) { if (m.discipline) discs[m.discipline] = true; });
+      var list = Object.keys(discs);
+      if (list.length < 2) return 'Need at least 2 disciplines for cross-discipline detection. Loaded: ' + JSON.stringify(list) + '. Pass explicit rules[] instead.';
+      rules = [];
+      for (var i = 0; i < list.length; i++)
+        for (var j = i + 1; j < list.length; j++)
+          rules.push({ modelA: 'disc:' + list[i], modelB: 'disc:' + list[j], maxGap: gap, hard: hard });
+    }
+    if (window._ccRunDetectionRuleset) {
+      var started = window._ccRunDetectionRuleset(rules);
+      if (started === false) return 'Could not start (already running, or no models).';
+      return 'Ruleset detection started: ' + rules.length + ' rule(s) — ' +
+        rules.map(function(r){ return r.modelA + '×' + r.modelB + (r.maxGap != null ? '@' + r.maxGap + 'mm' : ''); }).join(', ') +
+        '. Async — poll get_status (detecting/detectionProgress); results via get_clashes (union, deduped).';
+    }
+    return 'Ruleset detection not available.';
+  };
+
+  // Reset a wedged/stuck detection from the MCP side (no browser restart needed).
+  // Clears the detecting flag so a fresh run_detection can start.
+  handlers.cancel_detection = function() {
+    var wasDetecting = !!(_getState() || {}).detecting;
+    try {
+      if (window._ccCancelDetection) window._ccCancelDetection();
+      else _dispatch({ t: 'STOP_DETECT' });
+    } catch (e) { return 'Cancel failed: ' + (e && e.message || e); }
+    try { window._ccDetectProgress = null; } catch (e) {}
+    return wasDetecting ? 'Detection cancelled and reset — you can run_detection again.'
+                        : 'No detection was running; state reset anyway.';
+  };
+
+  // Receiver for Loam's outcome feedback (push_detection_feedback). CC consumes it
+  // to stop auto-suppressing element-type pairs whose suppression turned out to eat
+  // REAL clashes. Local-first: stored per projectKey, applied on the next run.
+  // Payload: { projectKey?, feedback:{ byRule:[{key,real,false,realRate,recommendation}],
+  //            byPair:[{key,real,false,realRate,recommendation}] } }
+  var _FEEDBACK_REALRATE_TH = 0.34; // realRate >= this => stop suppressing that pair
+  function _loadDetectionFeedback() {
+    // Restore the most recent stored payload on page load so it survives refresh.
+    try {
+      var latest = null;
+      for (var i = 0; i < localStorage.length; i++) {
+        var k = localStorage.key(i);
+        if (k && k.indexOf('cc_detection_feedback:') === 0) {
+          var v = JSON.parse(localStorage.getItem(k));
+          if (v && (!latest || (v.ts || 0) > (latest.ts || 0))) latest = v;
+        }
+      }
+      if (latest) window._ccDetectionFeedback = latest;
+    } catch (e) {}
+  }
+  _loadDetectionFeedback();
+
+  handlers.ingest_detection_feedback = function(p) {
+    var s = _getState();
+    var pk = p.projectKey || _projectKey(s);
+    var fb = p.feedback || {};
+    var byRule = Array.isArray(fb.byRule) ? fb.byRule : [];
+    var byPair = Array.isArray(fb.byPair) ? fb.byPair : [];
+    var payload = { projectKey: pk, byRule: byRule, byPair: byPair, ts: Date.now() };
+    try { localStorage.setItem('cc_detection_feedback:' + pk, JSON.stringify(payload)); } catch (e) {}
+    try { window._ccDetectionFeedback = payload; } catch (e) {}
+    var protectedPairs = byPair.filter(function (e) {
+      var rate = (e && e.realRate != null) ? e.realRate
+        : ((e && e.real || 0) / Math.max(1, (e && e.real || 0) + (e && e['false'] || 0)));
+      return rate >= _FEEDBACK_REALRATE_TH;
+    }).map(function (e) { return e.key; });
+    return { ok: true, projectKey: pk,
+      received: { rules: byRule.length, pairs: byPair.length },
+      protectedPairs: protectedPairs,
+      note: 'Stored. On the next detection run, type-pairs with realRate >= ' + _FEEDBACK_REALRATE_TH +
+        ' are no longer auto-suppressed by the type-pair memo (CC stops eating those real clashes). ' +
+        'byRule is stored for inspection; the actionable hook is byPair -> the type-pair impossibility memo.' };
   };
 
   handlers.set_detection_rules = function(p) {
@@ -412,9 +887,19 @@
 
   handlers.update_clash = function(p) {
     var s = _getState(); var clashes = s.clashes || [];
+    var _remapped = 0;
     function apply(q, target) {
       var u = {};
-      if (q.status) u.status = q.status; if (q.priority) u.priority = q.priority;
+      if (q.status) {
+        // Guard the AI-sweep auto-resolve incident: 'resolved' means a real clash
+        // was ACTUALLY FIXED (a human/Revit action CC can't verify). The bridge
+        // (an AI/agent) must bucket, not decide — so route 'resolved' to the
+        // reversible 'expected' (suppressed/by-design) bucket instead. Keeps it out
+        // of the open count, re-openable, and never destroys the signal.
+        if (q.status === 'resolved') { u.status = 'expected'; _remapped++; }
+        else u.status = q.status;
+      }
+      if (q.priority) u.priority = q.priority;
       if (q.assignee != null) u.assignee = q.assignee; if (q.title) u.title = q.title;
       _dispatch({ t: 'UPD_CLASH', id: target.id, u: u });
     }
@@ -426,14 +911,23 @@
       });
       var done=0, bad=0;
       pairs.forEach(function(pr){ if (pr.t) { apply(pr.q, pr.t); done++; } else bad++; });
-      return 'Updated ' + done + ' clash' + (done===1?'':'es') + (bad?' ('+bad+' invalid index)':'') + '.';
+      return 'Updated ' + done + ' clash' + (done===1?'':'es') + (bad?' ('+bad+' invalid index)':'') +
+        (_remapped ? ' — ' + _remapped + " routed to 'expected' (by-design/suppressed): the bridge does not mark clashes 'resolved' (that means actually fixed). Re-openable." : '') + '.';
     }
     if (p.clashIndex < 0 || p.clashIndex >= clashes.length) return 'Invalid clash index.';
     apply(p, clashes[p.clashIndex]);
-    return 'Updated clash ' + (p.clashIndex + 1) + '.';
+    return 'Updated clash ' + (p.clashIndex + 1) + '.' +
+      (_remapped ? " Status routed to 'expected' (by-design/suppressed) — the bridge does not set 'resolved' (= actually fixed). Re-openable." : '');
   };
 
   handlers.batch_update_clashes = function(p) {
+    // Same guard as update_clash: never let a bulk AI action mark clashes
+    // 'resolved' (the all-7,420-resolved incident). Bucket into 'expected' instead.
+    var action = String(p.action || '').toLowerCase();
+    if (/resolv/.test(action)) {
+      return "Refused: the bridge does not bulk-'resolve' clashes ('resolved' = a real clash actually fixed, which an agent can't verify). " +
+        "To suppress by-design/false-positive clashes, use action 'expected' (reversible, kept out of the open count) — e.g. batch_update_clashes(action:'expected', filter:'" + (p.filter||'') + "').";
+    }
     if (window._ccProcessNLCommand) return window._ccProcessNLCommand('batch ' + p.action + ' ' + p.filter) || 'Batch update applied.';
     return 'Batch update: not available.';
   };
@@ -741,13 +1235,40 @@
       // Random suffix so a bulk create in the same millisecond can't collide
       // when _ccUid is unavailable.
       var id = (window._ccUid) ? window._ccUid() : 'i_' + Date.now() + '_' + Math.random().toString(36).slice(2, 7);
-      _dispatch({ t: 'ADD_ISSUE', v: {
+      var issue = {
         id: id, title: q.title || 'New Issue', description: q.description || '',
         status: q.status || 'open', priority: q.priority || 'normal',
         assignee: q.assignee || '', category: q.category || 'coordination',
         createdAt: new Date().toISOString()
-      }});
-      return q.title || 'New Issue';
+      };
+      // Element linkage — without this a promoted/created issue has globalIds:[] and
+      // can't be joined back to the model / Loam. Accept per-side ids or arrays.
+      if (q.globalIdA) issue.globalIdA = q.globalIdA;
+      if (q.globalIdB) issue.globalIdB = q.globalIdB;
+      if (Array.isArray(q.globalIds) && q.globalIds.length) {
+        issue.qualityGids = q.globalIds.slice();
+        if (!issue.globalIdA) issue.globalIdA = q.globalIds[0] || null;
+        if (!issue.globalIdB && q.globalIds[1]) issue.globalIdB = q.globalIds[1];
+      }
+      if (q.revitIdA != null) issue.revitIdA = q.revitIdA;
+      if (q.revitIdB != null) issue.revitIdB = q.revitIdB;
+      if (Array.isArray(q.revitIds) && q.revitIds.length) {
+        issue.revitIds = q.revitIds.slice();
+        if (issue.revitIdA == null) issue.revitIdA = q.revitIds[0];
+        if (issue.revitIdB == null && q.revitIds[1] != null) issue.revitIdB = q.revitIds[1];
+      }
+      if (q.uniqueIdA) issue.uniqueIdA = q.uniqueIdA;
+      if (q.uniqueIdB) issue.uniqueIdB = q.uniqueIdB;
+      if (Array.isArray(q.uniqueIds) && q.uniqueIds.length) {
+        issue.uniqueIds = q.uniqueIds.slice();
+        if (!issue.uniqueIdA) issue.uniqueIdA = q.uniqueIds[0] || null;
+        if (!issue.uniqueIdB && q.uniqueIds[1]) issue.uniqueIdB = q.uniqueIds[1];
+      }
+      if (q.storey) issue.storey = q.storey;
+      if (q.classification) issue.classification = q.classification;
+      if (q.clashId) issue.linkedClashId = q.clashId;
+      _dispatch({ t: 'ADD_ISSUE', v: issue });
+      return issue.title;
     }
     if (Array.isArray(p.items)) {
       var titles = p.items.map(one);
@@ -755,6 +1276,48 @@
     }
     one(p);
     return 'Issue "' + (p.title || 'New Issue') + '" created.';
+  };
+
+  // Promote one (or many via items[]) detected clash to a coordination issue,
+  // COPYING the clash's element identity (uniqueId/globalId/revitId per side),
+  // storey, types, disciplines and classification — so the Issue is joinable back
+  // to the model / Loam. Links the clash → issue (linkedIssueId); does NOT resolve
+  // the clash (CC buckets/signals, it doesn't decide a clash is fixed).
+  handlers.promote_clash_to_issue = function(p) {
+    var s = _getState(); var clashes = s.clashes || [];
+    function promote(idx, extra) {
+      var c = (idx >= 0 && idx < clashes.length) ? clashes[idx] : null;
+      if (!c) return null;
+      extra = extra || {};
+      var id = (window._ccUid) ? window._ccUid() : 'i_' + Date.now() + '_' + Math.random().toString(36).slice(2, 7);
+      var issue = {
+        id: id,
+        title: extra.title || c.title || c.aiTitle || ('Clash ' + (idx + 1)),
+        description: extra.description || c.aiReason || c.description || '',
+        status: extra.status || 'open', priority: extra.priority || c.priority || 'normal',
+        assignee: extra.assignee || '', category: 'coordination', createdAt: new Date().toISOString(),
+        globalIdA: c.globalIdA || null, globalIdB: c.globalIdB || null,
+        revitIdA: c.revitIdA != null ? c.revitIdA : null, revitIdB: c.revitIdB != null ? c.revitIdB : null,
+        uniqueIdA: c.uniqueIdA || null, uniqueIdB: c.uniqueIdB || null,
+        storey: c.storey || c.elemAStorey || c.elemBStorey || '',
+        elemAType: c.elemAType || null, elemBType: c.elemBType || null,
+        disciplines: c.disciplines || null,
+        classificationA: _classByElem(c.modelAId, c.elemA),
+        classificationB: _classByElem(c.modelBId, c.elemB),
+        linkedClashId: c.id || null
+      };
+      _dispatch({ t: 'ADD_ISSUE', v: issue });
+      if (c.id) _dispatch({ t: 'UPD_CLASH', id: c.id, u: { linkedIssueId: id } });
+      return issue.title;
+    }
+    if (Array.isArray(p.items)) {
+      var done = 0, bad = 0;
+      p.items.forEach(function(q){ if (promote(q.clashIndex, q) != null) done++; else bad++; });
+      return 'Promoted ' + done + ' clash' + (done === 1 ? '' : 'es') + ' to issues' + (bad ? ' (' + bad + ' invalid index)' : '') + '.';
+    }
+    var t = promote(p.clashIndex, p);
+    return t != null ? 'Promoted clash ' + (p.clashIndex + 1) + ' to issue "' + t + '" (element link copied).'
+                     : 'Invalid clash index.';
   };
 
   handlers.update_issue = function(p) {
@@ -888,8 +1451,22 @@
   // ── NL / AI handler ───────────────────────────────────────────
 
   handlers.send_nl_command = function(p) {
+    var cmd = p.command || p.message || '';
+    // Close the AI mass-resolve hole: update_clash/batch_update_clashes already
+    // route 'resolved' to 'expected', but send_nl_command was a raw passthrough to
+    // the NL engine, whose "(mark|resolve) all … clashes" grammar defaults to
+    // status 'resolved'. Refuse that here so an agent can't empty openClashes and
+    // starve triage. Queries ("show/list/how many … resolved") are unaffected.
+    if (/\b(mark|set|change|update|resolve|close)\s+all\b/i.test(cmd) &&
+        /\b(resolv|close|closed)\b/i.test(cmd) &&
+        !/\b(show|list|filter|how many|count|select|highlight)\b/i.test(cmd)) {
+      return "Refused: the bridge won't bulk-resolve clashes from a free-text command " +
+        "('resolved'/'closed' means actually fixed/closed — an agent can't verify that). " +
+        "To suppress by-design/false-positive clashes use update_clash or batch_update_clashes " +
+        "with status 'expected' (reversible, kept out of the open count).";
+    }
     if (window._ccProcessNLCommand) {
-      var result = window._ccProcessNLCommand(p.command || p.message || '');
+      var result = window._ccProcessNLCommand(cmd);
       return result || 'Command processed.';
     }
     return 'NL command processing not available.';
@@ -933,16 +1510,29 @@
   // Schema format: JSON Schema subset (OpenAPI-compatible).
 
   var _TOOL_MANIFEST = [
-    { name:'get_status',          description:'Snapshot of the current session: models (with source, version, lastSync and a coarse revision stamp per model — use to check sync with another live tool), clash/issue counts, detection rules, active tab, walk mode, theme.' },
-    { name:'get_clashes',         description:'Retrieves detected clash pairs with status, priority, severity, storey, element types/names, distance, and stable element identity (globalIdA/B = IFC GlobalId / Revit IfcGUID; revitIdA/B = Revit ElementId on live links) for cross-tool joins.',
-      params:{ status:{type:'string',enum:['all','open','resolved','approved'],opt:1}, limit:{type:'number',opt:1} } },
+    { name:'get_status',          description:'Snapshot of the current session: models (with source, version, lastSync and a coarse revision stamp per model — use to check sync with another live tool), clash/issue counts, detection rules, active tab, walk mode, theme. Includes connector:{state(receiving|ready|disconnected),ingesting,percent,elementCount} — when connector.ingesting is true the Revit model is still streaming in, so DO NOT act on model/clash data until state==="ready". Also detecting/detectionProgress and lastDetectionError.' },
+    { name:'get_clashes',         description:'Detected clash pairs: status, priority, severity, storey, types/names, distance (mm), elevation (m), disciplines (arch×structural vs same-discipline), and stable identity per side — uniqueIdA/B (Revit UniqueId, most reliable cross-doc key; prefer it), globalIdA/B (IFC GlobalId), revitIdA/B (ElementId, doc-local) — plus classificationA/B ({system,code} NL-SfB/Uniclass) and modelAId/B.',
+      params:{ status:{type:'string',enum:['all','open','resolved','approved','expected','closed'],opt:1}, category:{type:'string',opt:1}, limit:{type:'number',opt:1}, offset:{type:'number',opt:1} } },
+    { name:'get_clash_summary',   description:'Aggregate profile of the WHOLE clash set without paging it: total/open, and counts byStatus, byCategory (AI), byDiscipline (pair), byTypePair (top N), byStorey. Use to find the few root causes behind a large count.',
+      params:{ topN:{type:'number',opt:1} } },
+    { name:'get_element_quality', description:'Per-element data-quality annotations keyed by uniqueId/globalId (untyped_proxy, no_classification, degenerate_bbox, oversized_bbox). A parallel triage signal — NOT a detection gate. Returns only flagged elements.',
+      params:{ modelId:{type:'string',opt:1}, limit:{type:'number',opt:1} } },
+    { name:'get_levels',          description:"Per-model level/storey elevations (raw + elevationM when unitScale known) so a consumer can compute floor build-up bands. get_clashes.elevation is scene metres." },
     { name:'get_issues',          description:'Retrieves coordination issues with status, priority, assignee, description, involved element IFC GlobalIds (globalIds[]) and Revit ElementIds (revitIdA/B) for cross-tool joins.',
       params:{ status:{type:'string',enum:['all','open','in_progress','resolved','closed'],opt:1}, limit:{type:'number',opt:1} } },
-    { name:'run_detection',       description:'Starts clash detection between loaded IFC models. Results available via get_clashes.',
+    { name:'get_element_by_guid',  description:'Resolve loaded element(s) by Revit UniqueId (preferred), IFC GlobalId, or Revit ElementId — the inverse join: turn a key from another tool into the matching CC element with its model, type, storey, material, uniqueId and classification. Accepts single uniqueId/globalId/revitId or arrays uniqueIds[]/globalIds[]/revitIds[].',
+      params:{ uniqueId:{type:'string',opt:1}, globalId:{type:'string',opt:1}, revitId:{type:'string',opt:1}, uniqueIds:{type:'array',opt:1}, globalIds:{type:'array',opt:1}, revitIds:{type:'array',opt:1}, limit:{type:'number',opt:1} } },
+    { name:'resync',              description:'Force the live Revit link to re-pull the model so CC matches the current Revit state. Live-link only (no-op for static IFC loads). Re-check get_status afterwards for the new revision.' },
+    { name:'run_detection',       description:'Starts clash detection between loaded models (async). modelA/modelB accept "all", a model name, "disc:<discipline>" (disc:architectural/structural/mep — disciplines from get_status), or "tag:<tag>"; use disc: on both sides to scope to cross-discipline pairs only and cut same-discipline noise at source. Results via get_clashes; on failure (e.g. very large federation) get_status.lastDetectionError reports the message + stack.',
       params:{ modelA:{type:'string',opt:1}, modelB:{type:'string',opt:1}, maxGap:{type:'number',opt:1}, hard:{type:'boolean',opt:1}, excludeSelf:{type:'boolean',opt:1} } },
+    { name:'run_detection_ruleset', description:"Rule-based / cross-discipline detection (Solibri-style): runs several scoped rules — each a discipline/model pair with its own gap — and returns the UNION (deduped). Cuts volume at source vs flat all-vs-all; hosted/by-design pairs are excluded at detection time. With no rules[], preset 'cross_discipline' auto-builds every distinct discipline pair present (arch×structural, arch×mep, structural×mep). Async — results via get_clashes.",
+      params:{ rules:{type:'array',items:{type:'object'},opt:1}, preset:{type:'string',opt:1}, maxGap:{type:'number',opt:1}, hard:{type:'boolean',opt:1} } },
+    { name:'cancel_detection',    description:'Reset a stuck/wedged detection (clears detecting:true) so a new run_detection can start — no browser restart needed.' },
+    { name:'ingest_detection_feedback', description:"Receiver for Loam's outcome feedback. Body: { projectKey?, feedback:{ byRule:[{key,real,false,realRate,recommendation}], byPair:[{key,real,false,realRate,recommendation}] } }. byPair.key = element-type pair (e.g. 'IfcSlab × IfcSlab'); realRate = real/(real+false). On the next detection run, pairs with realRate >= 0.34 are no longer auto-suppressed by the type-pair memo (CC stops eating those real clashes). Stored per projectKey, survives refresh; round-trip visible in get_status.detectionFeedback. byRule is stored for inspection.",
+      params:{ projectKey:{type:'string',opt:1}, feedback:{type:'object'} } },
     { name:'set_detection_rules', description:'Updates detection parameters without running detection.',
       params:{ maxGap:{type:'number',opt:1}, hard:{type:'boolean',opt:1}, excludeSelf:{type:'boolean',opt:1}, duplicates:{type:'boolean',opt:1} } },
-    { name:'update_clash',        description:'Updates one clash by 0-based index, or many at once via items[]. For bulk pass items:[{clashIndex,status?,priority?,assignee?,title?}, ...] — all targets are resolved before any change, so a batch is index-safe.',
+    { name:'update_clash',        description:"Updates one clash by 0-based index, or many at once via items[] (bulk-safe: all targets resolved before any change). status can be open|approved|closed|expected. Use 'expected' for by-design/false-positive clashes — a reversible suppressed bucket, kept out of the open count and re-openable by setting status back to 'open'. NOTE: 'resolved' (= a real clash actually fixed, which an agent can't verify) is automatically routed to 'expected' here — the bridge buckets, it does not decide a clash is fixed.",
       params:{ clashIndex:{type:'number',opt:1}, status:{type:'string',opt:1}, priority:{type:'string',opt:1}, assignee:{type:'string',opt:1}, title:{type:'string',opt:1}, items:{type:'array',items:{type:'object'},opt:1} } },
     { name:'batch_update_clashes',description:'Applies a batch action to clashes matching a natural-language filter.',
       params:{ action:{type:'string'}, filter:{type:'string'} } },
@@ -1009,7 +1599,9 @@
       params:{ type:{type:'string',enum:['text','pin','line','rect','arrow'],opt:1}, x:{type:'number',opt:1}, y:{type:'number',opt:1}, x2:{type:'number',opt:1}, y2:{type:'number',opt:1}, text:{type:'string',opt:1}, color:{type:'string',opt:1}, items:{type:'array',items:{type:'object'},opt:1} } },
     { name:'measure_on_sheet',    description:'Adds a dimension annotation between two world-space points on the active 2D sheet.',
       params:{ points:{type:'array',items:{type:'number'},minItems:4,maxItems:4}, color:{type:'string',opt:1} } },
-    { name:'create_issue',        description:'Creates one coordination issue, or many at once via items[] (array of {title,description?,status?,priority?,assignee?,category?}). Prefer one bulk call over many single calls.',
+    { name:'promote_clash_to_issue', description:'Promote a detected clash (by 0-based clashIndex, or many via items[]) to a coordination issue, COPYING its element identity (uniqueIdA/B, globalIdA/B, revitIdA/B), storey, types, disciplines and classification — so the Issue is joinable back to the model/Loam (manual create_issue would have globalIds:[]). Links clash→issue (linkedIssueId); does NOT resolve the clash.',
+      params:{ clashIndex:{type:'number',opt:1}, items:{type:'array',items:{type:'object'},opt:1}, title:{type:'string',opt:1}, description:{type:'string',opt:1}, priority:{type:'string',opt:1}, assignee:{type:'string',opt:1} } },
+    { name:'create_issue',        description:'Creates one coordination issue, or many at once via items[]. Each: {title,description?,status?,priority?,assignee?,category?}. For element linkage (so the issue joins back to the model/Loam) pass globalIds[]/revitIds[]/uniqueIds[] or per-side globalIdA/B, revitIdA/B, uniqueIdA/B, plus storey/classification. To promote a detected clash, prefer promote_clash_to_issue (copies identity automatically).',
       params:{ title:{type:'string',opt:1}, description:{type:'string',opt:1}, status:{type:'string',opt:1}, priority:{type:'string',opt:1}, assignee:{type:'string',opt:1}, category:{type:'string',opt:1}, items:{type:'array',items:{type:'object'},opt:1} } },
     { name:'update_issue',        description:'Updates one issue by 0-based index, or many at once via items:[{issueIndex,...}]. Targets are resolved before any change, so a batch is index-safe.',
       params:{ issueIndex:{type:'number',opt:1}, status:{type:'string',opt:1}, priority:{type:'string',opt:1}, assignee:{type:'string',opt:1}, title:{type:'string',opt:1}, description:{type:'string',opt:1}, items:{type:'array',items:{type:'object'},opt:1} } },
@@ -1141,6 +1733,27 @@
   }
 
   // ── Expose globals ────────────────────────────────────────────────
+
+  // Relay CC's detection-complete ping to the bridge (and on to the LLM) so a
+  // connected orchestrator gets pushed a "run done" message instead of polling /
+  // sitting idle. Registered once; no-op when the bridge WS isn't connected.
+  if (!window._ccSbDetectDoneWired) {
+    window._ccSbDetectDoneWired = true;
+    window.addEventListener('cc-detection-complete', function(ev) {
+      try {
+        if (!_ws || _ws.readyState !== 1) return;
+        var det = (ev && ev.detail) || {};
+        var s = _getState();
+        _ws.send(JSON.stringify({ type: 'event', event: 'detection_complete',
+          ok: det.ok !== false,
+          total: det.total != null ? det.total : ((s.clashes||[]).length),
+          open: det.open != null ? det.open : null,
+          modelA: det.modelA || null, modelB: det.modelB || null,
+          error: det.error || null,
+          projectKey: _projectKey(s), source: 'clashcontrol', ts: det.ts || Date.now() }));
+      } catch (e) {}
+    });
+  }
 
   window._ccSmartBridgeConnect = function(d) { _connectBridge(d || window._ccDispatch); };
   window._ccSmartBridgeInstall = function(d) { _triggerDownload(); _connectBridge(d || window._ccDispatch, {installing:true}); };
