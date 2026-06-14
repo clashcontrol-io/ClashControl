@@ -332,29 +332,46 @@
          : (kl === 'assemblycode' || kl.indexOf('classification') >= 0 || kl === 'classificationcode') ? 'Classification'
          : null;
   }
+  // Generic "this field holds the code" key names (used when the SYSTEM is carried
+  // by the pset/group name instead, e.g. a pset "NL-SfB" with a key "Code").
+  function _isGenericCodeKey(key) {
+    var kl = String(key).toLowerCase().replace(/[\s_\/-]/g, '');
+    return kl === 'code' || kl === 'value' || kl === 'elementcode' || kl === 'nummer' || kl === 'number';
+  }
   function _classOf(props) {
     var ps = props && props.psets;
-    if (!ps) return null;
     var hit = null;
-    Object.keys(ps).forEach(function(pset) {
-      if (hit) return;
-      var grp = ps[pset];
-      // psets may be NESTED ({Pset:{key:val}}, IFC loads) or FLAT
-      // ({paramName:val}, Revit-direct parameters). Handle both.
-      if (grp && typeof grp === 'object' && !Array.isArray(grp)) {
-        Object.keys(grp).forEach(function(k) {
-          if (hit) return;
-          var sys = _classSysOf(k);
-          if (!sys) return;
-          var v = grp[k];
-          if (v != null && String(v).trim() !== '') hit = { system: sys, code: String(v).trim() };
-        });
-      } else {
-        // Flat: the pset key IS the parameter name, grp is its value.
-        var sys = _classSysOf(pset);
-        if (sys && grp != null && String(grp).trim() !== '') hit = { system: sys, code: String(grp).trim() };
-      }
-    });
+    if (ps) {
+      Object.keys(ps).forEach(function(pset) {
+        if (hit) return;
+        var grp = ps[pset];
+        var psetSys = _classSysOf(pset); // system carried by the GROUP name?
+        // psets may be NESTED ({Pset:{key:val}}, IFC loads) or FLAT
+        // ({paramName:val}, Revit-direct parameters). Handle both.
+        if (grp && typeof grp === 'object' && !Array.isArray(grp)) {
+          Object.keys(grp).forEach(function(k) {
+            if (hit) return;
+            // System from the key, else from the group name when the key is a
+            // generic code field (mirrors the DQ addon's _extractNLSfB breadth —
+            // catches a "NL-SfB"/"Classification" pset whose key is just "Code").
+            var sys = _classSysOf(k) || (psetSys && _isGenericCodeKey(k) ? psetSys : null);
+            if (!sys) return;
+            var v = grp[k];
+            if (v != null && String(v).trim() !== '') hit = { system: sys, code: String(v).trim() };
+          });
+        } else {
+          // Flat: the pset key IS the parameter name, grp is its value.
+          var sys = _classSysOf(pset);
+          if (sys && grp != null && String(grp).trim() !== '') hit = { system: sys, code: String(grp).trim() };
+        }
+      });
+    }
+    // Fallback: NL-SfB often lives in ObjectType as "(NN)" or "NN.xx ..." (the DQ
+    // addon does the same). Only used when no explicit classification field found.
+    if (!hit && props && props.objectType) {
+      var m = /\((\d{2}(?:\.\d{1,2})*)\)/.exec(props.objectType) || /^(\d{2}(?:\.\d{1,2})*)[\.\-\s]/.exec(props.objectType);
+      if (m) hit = { system: 'NL-SfB', code: m[1] };
+    }
     return hit;
   }
 
@@ -1293,8 +1310,22 @@
   // ── NL / AI handler ───────────────────────────────────────────
 
   handlers.send_nl_command = function(p) {
+    var cmd = p.command || p.message || '';
+    // Close the AI mass-resolve hole: update_clash/batch_update_clashes already
+    // route 'resolved' to 'expected', but send_nl_command was a raw passthrough to
+    // the NL engine, whose "(mark|resolve) all … clashes" grammar defaults to
+    // status 'resolved'. Refuse that here so an agent can't empty openClashes and
+    // starve triage. Queries ("show/list/how many … resolved") are unaffected.
+    if (/\b(mark|set|change|update|resolve|close)\s+all\b/i.test(cmd) &&
+        /\b(resolv|close|closed)\b/i.test(cmd) &&
+        !/\b(show|list|filter|how many|count|select|highlight)\b/i.test(cmd)) {
+      return "Refused: the bridge won't bulk-resolve clashes from a free-text command " +
+        "('resolved'/'closed' means actually fixed/closed — an agent can't verify that). " +
+        "To suppress by-design/false-positive clashes use update_clash or batch_update_clashes " +
+        "with status 'expected' (reversible, kept out of the open count).";
+    }
     if (window._ccProcessNLCommand) {
-      var result = window._ccProcessNLCommand(p.command || p.message || '');
+      var result = window._ccProcessNLCommand(cmd);
       return result || 'Command processed.';
     }
     return 'NL command processing not available.';
