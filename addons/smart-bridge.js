@@ -730,9 +730,19 @@
 
   handlers.update_clash = function(p) {
     var s = _getState(); var clashes = s.clashes || [];
+    var _remapped = 0;
     function apply(q, target) {
       var u = {};
-      if (q.status) u.status = q.status; if (q.priority) u.priority = q.priority;
+      if (q.status) {
+        // Guard the AI-sweep auto-resolve incident: 'resolved' means a real clash
+        // was ACTUALLY FIXED (a human/Revit action CC can't verify). The bridge
+        // (an AI/agent) must bucket, not decide — so route 'resolved' to the
+        // reversible 'expected' (suppressed/by-design) bucket instead. Keeps it out
+        // of the open count, re-openable, and never destroys the signal.
+        if (q.status === 'resolved') { u.status = 'expected'; _remapped++; }
+        else u.status = q.status;
+      }
+      if (q.priority) u.priority = q.priority;
       if (q.assignee != null) u.assignee = q.assignee; if (q.title) u.title = q.title;
       _dispatch({ t: 'UPD_CLASH', id: target.id, u: u });
     }
@@ -744,14 +754,23 @@
       });
       var done=0, bad=0;
       pairs.forEach(function(pr){ if (pr.t) { apply(pr.q, pr.t); done++; } else bad++; });
-      return 'Updated ' + done + ' clash' + (done===1?'':'es') + (bad?' ('+bad+' invalid index)':'') + '.';
+      return 'Updated ' + done + ' clash' + (done===1?'':'es') + (bad?' ('+bad+' invalid index)':'') +
+        (_remapped ? ' — ' + _remapped + " routed to 'expected' (by-design/suppressed): the bridge does not mark clashes 'resolved' (that means actually fixed). Re-openable." : '') + '.';
     }
     if (p.clashIndex < 0 || p.clashIndex >= clashes.length) return 'Invalid clash index.';
     apply(p, clashes[p.clashIndex]);
-    return 'Updated clash ' + (p.clashIndex + 1) + '.';
+    return 'Updated clash ' + (p.clashIndex + 1) + '.' +
+      (_remapped ? " Status routed to 'expected' (by-design/suppressed) — the bridge does not set 'resolved' (= actually fixed). Re-openable." : '');
   };
 
   handlers.batch_update_clashes = function(p) {
+    // Same guard as update_clash: never let a bulk AI action mark clashes
+    // 'resolved' (the all-7,420-resolved incident). Bucket into 'expected' instead.
+    var action = String(p.action || '').toLowerCase();
+    if (/resolv/.test(action)) {
+      return "Refused: the bridge does not bulk-'resolve' clashes ('resolved' = a real clash actually fixed, which an agent can't verify). " +
+        "To suppress by-design/false-positive clashes, use action 'expected' (reversible, kept out of the open count) — e.g. batch_update_clashes(action:'expected', filter:'" + (p.filter||'') + "').";
+    }
     if (window._ccProcessNLCommand) return window._ccProcessNLCommand('batch ' + p.action + ' ' + p.filter) || 'Batch update applied.';
     return 'Batch update: not available.';
   };
@@ -1264,12 +1283,12 @@
     { name:'get_element_by_guid',  description:'Resolve loaded element(s) by Revit UniqueId (preferred), IFC GlobalId, or Revit ElementId — the inverse join: turn a key from another tool into the matching CC element with its model, type, storey, material, uniqueId and classification. Accepts single uniqueId/globalId/revitId or arrays uniqueIds[]/globalIds[]/revitIds[].',
       params:{ uniqueId:{type:'string',opt:1}, globalId:{type:'string',opt:1}, revitId:{type:'string',opt:1}, uniqueIds:{type:'array',opt:1}, globalIds:{type:'array',opt:1}, revitIds:{type:'array',opt:1}, limit:{type:'number',opt:1} } },
     { name:'resync',              description:'Force the live Revit link to re-pull the model so CC matches the current Revit state. Live-link only (no-op for static IFC loads). Re-check get_status afterwards for the new revision.' },
-    { name:'run_detection',       description:'Starts clash detection between loaded models (async). Results via get_clashes; on failure (e.g. very large federation) get_status.lastDetectionError reports the message + stack.',
+    { name:'run_detection',       description:'Starts clash detection between loaded models (async). modelA/modelB accept "all", a model name, "disc:<discipline>" (disc:architectural/structural/mep — disciplines from get_status), or "tag:<tag>"; use disc: on both sides to scope to cross-discipline pairs only and cut same-discipline noise at source. Results via get_clashes; on failure (e.g. very large federation) get_status.lastDetectionError reports the message + stack.',
       params:{ modelA:{type:'string',opt:1}, modelB:{type:'string',opt:1}, maxGap:{type:'number',opt:1}, hard:{type:'boolean',opt:1}, excludeSelf:{type:'boolean',opt:1} } },
     { name:'cancel_detection',    description:'Reset a stuck/wedged detection (clears detecting:true) so a new run_detection can start — no browser restart needed.' },
     { name:'set_detection_rules', description:'Updates detection parameters without running detection.',
       params:{ maxGap:{type:'number',opt:1}, hard:{type:'boolean',opt:1}, excludeSelf:{type:'boolean',opt:1}, duplicates:{type:'boolean',opt:1} } },
-    { name:'update_clash',        description:"Updates one clash by 0-based index, or many at once via items[] (bulk-safe: all targets resolved before any change). status can be open|resolved|approved|closed|expected. Use 'expected' (NOT 'resolved') for by-design/false-positive clashes — it's a reversible suppressed bucket, kept out of the open count and re-openable by setting status back to 'open'. 'resolved' means a real clash was actually fixed.",
+    { name:'update_clash',        description:"Updates one clash by 0-based index, or many at once via items[] (bulk-safe: all targets resolved before any change). status can be open|approved|closed|expected. Use 'expected' for by-design/false-positive clashes — a reversible suppressed bucket, kept out of the open count and re-openable by setting status back to 'open'. NOTE: 'resolved' (= a real clash actually fixed, which an agent can't verify) is automatically routed to 'expected' here — the bridge buckets, it does not decide a clash is fixed.",
       params:{ clashIndex:{type:'number',opt:1}, status:{type:'string',opt:1}, priority:{type:'string',opt:1}, assignee:{type:'string',opt:1}, title:{type:'string',opt:1}, items:{type:'array',items:{type:'object'},opt:1} } },
     { name:'batch_update_clashes',description:'Applies a batch action to clashes matching a natural-language filter.',
       params:{ action:{type:'string'}, filter:{type:'string'} } },

@@ -224,15 +224,19 @@ const TOOLS = [
   {
     name: 'run_detection',
     description:
-      'Starts clash detection between loaded IFC models. Optionally set which models to compare, ' +
+      'Starts clash detection between loaded models. Optionally set which models to compare, ' +
       'gap tolerance in mm, and whether to detect only hard clashes (physical intersections). ' +
+      'modelA/modelB accept: "all", a model name, "disc:<discipline>" (e.g. disc:architectural, ' +
+      'disc:structural, disc:mep — disciplines come from get_status), or "tag:<tag>". ' +
+      'Use disc: on both sides to scope to cross-discipline pairs only (e.g. modelA "disc:architectural", ' +
+      'modelB "disc:structural") and cut same-discipline noise at source. ' +
       'Results appear in get_clashes after detection completes. Detection is async — if it fails ' +
       '(e.g. a very large federation), get_status.lastDetectionError reports the message + stack.',
     inputSchema: {
       type: 'object',
       properties: {
-        modelA: { type: 'string', description: "Name of first model to test. 'all' or omit for all models." },
-        modelB: { type: 'string', description: "Name of second model to test against. 'all' or omit for all models." },
+        modelA: { type: 'string', description: "First side: 'all', a model name, 'disc:<discipline>', or 'tag:<tag>'. Omit for all models." },
+        modelB: { type: 'string', description: "Second side: 'all', a model name, 'disc:<discipline>', or 'tag:<tag>'. Omit for all models." },
         maxGap: { type: 'number', description: 'Gap tolerance in mm. Elements within this distance count as clashing. Default 10mm.' },
         hard: { type: 'boolean', description: 'True = detect only hard clashes (physical intersections).' },
         excludeSelf: { type: 'boolean', description: 'True = skip clashes within the same model.' },
