@@ -1,5 +1,8 @@
 # Changelog
 
+## v5.20.29 (2026-06-14)
+- Cross-discipline ruleset detection + clash→issue promotion with element link (#642)
+
 ## v5.20.28 (2026-06-14)
 - Scoped detection resolves models by name + ping orchestrator on run completion (#640)
 
