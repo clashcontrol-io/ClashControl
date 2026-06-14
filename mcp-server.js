@@ -245,6 +245,29 @@ const TOOLS = [
     },
   },
   {
+    name: 'run_detection_ruleset',
+    description:
+      'Rule-based / cross-discipline detection (Solibri-style): runs several scoped rules — each a ' +
+      'discipline/model pair with its own gap — and returns the UNION (deduped). Cuts clash volume ' +
+      'at source vs a flat all-vs-all run; hosted/by-design pairs are excluded at detection time. ' +
+      "With no rules[], preset 'cross_discipline' auto-builds every distinct discipline pair present " +
+      '(arch×structural, arch×mep, structural×mep). Async — results via get_clashes.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        rules: {
+          type: 'array',
+          description: 'Rules, each: { disciplineA, disciplineB } (or modelA/modelB names) plus optional maxGap (mm) and hard. Omit to use the cross_discipline preset.',
+          items: { type: 'object' },
+        },
+        preset: { type: 'string', description: "Ruleset preset. 'cross_discipline' (default) = all distinct discipline pairs." },
+        maxGap: { type: 'number', description: 'Default gap tolerance (mm) for rules that omit one.' },
+        hard: { type: 'boolean', description: 'Default hard/soft for rules that omit it.' },
+      },
+      required: [],
+    },
+  },
+  {
     name: 'cancel_detection',
     description:
       'Resets a stuck/wedged detection (clears the detecting flag) so a fresh run_detection can ' +
@@ -723,8 +746,32 @@ const TOOLS = [
     },
   },
   {
+    name: 'promote_clash_to_issue',
+    description:
+      'Promote a detected clash (by 0-based clashIndex, or many via items[]) to a coordination issue, ' +
+      'COPYING its element identity (uniqueIdA/B, globalIdA/B, revitIdA/B), storey, types, disciplines ' +
+      'and classification — so the Issue is joinable back to the model / Loam (a plain create_issue ' +
+      'would have globalIds:[]). Links the clash to the issue (linkedIssueId); does NOT resolve the clash.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        clashIndex: { type: 'number', description: '0-based index of the clash to promote (from get_clashes).' },
+        items: { type: 'array', description: 'Promote many: array of { clashIndex, title?, description?, priority?, assignee? }.', items: { type: 'object' } },
+        title: { type: 'string', description: 'Override issue title (defaults to the clash title).' },
+        description: { type: 'string', description: 'Override description (defaults to the clash AI reason).' },
+        priority: { type: 'string', enum: ['low', 'normal', 'high', 'critical'], description: 'Issue priority.' },
+        assignee: { type: 'string', description: 'Person or team responsible.' },
+      },
+      required: [],
+    },
+  },
+  {
     name: 'create_issue',
-    description: 'Creates a coordination issue in ClashControl.',
+    description:
+      'Creates a coordination issue in ClashControl. For element linkage (so the issue can be joined ' +
+      'back to the model/Loam), pass globalIds[]/revitIds[]/uniqueIds[] or per-side globalIdA/B, ' +
+      'revitIdA/B, uniqueIdA/B, plus storey/classification. To promote a detected clash, prefer ' +
+      'promote_clash_to_issue (copies the element identity automatically).',
     inputSchema: {
       type: 'object',
       properties: {
@@ -734,6 +781,10 @@ const TOOLS = [
         priority: { type: 'string', enum: ['low', 'normal', 'high', 'critical'], description: "Priority. Default 'normal'." },
         assignee: { type: 'string', description: 'Person or team responsible.' },
         category: { type: 'string', description: "Issue category, e.g. 'coordination', 'design', 'rfi'." },
+        globalIds: { type: 'array', description: 'IFC GlobalIds of involved elements.', items: { type: 'string' } },
+        revitIds: { type: 'array', description: 'Revit ElementIds of involved elements.', items: { type: 'number' } },
+        uniqueIds: { type: 'array', description: 'Revit UniqueIds of involved elements (preferred join key).', items: { type: 'string' } },
+        storey: { type: 'string', description: 'Storey/level the issue sits on.' },
       },
       required: ['title'],
     },
