@@ -1,5 +1,8 @@
 # Changelog
 
+## v5.20.33 (2026-06-14)
+- BCF import: carry referenced IfcGUIDs onto issues (#646)
+
 ## v5.20.32 (2026-06-14)
 - Expose BCF import to the LLM + wire BCF export (#645)
 
