@@ -821,6 +821,17 @@ function startApp() {
       clearInterval(_wdTimer);
       classifyClashes(result);
       d({t:'MERGE_CLASHES', v:result});
+      // Push a completion ping so a connected orchestrator/LLM doesn't sit idle
+      // waiting on a poll. The Smart Bridge relays this over its WS. open count is
+      // computed here (pre-AI-sweep); the agent should triage the open set now.
+      try {
+        var _open = 0; (result||[]).forEach(function(c){ var st=c.status||'open'; if(st!=='resolved'&&st!=='expected'&&st!=='closed') _open++; });
+        window.dispatchEvent(new CustomEvent('cc-detection-complete', { detail: {
+          ok: true, total: (result||[]).length, open: _open,
+          modelA: (runRules&&runRules.modelA)||'all', modelB: (runRules&&runRules.modelB)||'all',
+          ts: Date.now()
+        }}));
+      } catch(e) {}
     }).catch(function(err) {
       clearInterval(_wdTimer);
       // Surface failures (e.g. RangeError "Invalid string length" on very large
@@ -833,6 +844,11 @@ function startApp() {
       try {
         window._ccLastDetectError = { message: msg, ts: Date.now(),
           stack: (err && err.stack) ? String(err.stack).slice(0, 4000) : null };
+      } catch(e) {}
+      try {
+        window.dispatchEvent(new CustomEvent('cc-detection-complete', { detail: {
+          ok: false, error: msg, ts: Date.now()
+        }}));
       } catch(e) {}
       if (window._ccToast) window._ccToast('Detection failed: ' + msg +
         (msg.indexOf('string length') >= 0 ? ' — a very large model overflowed serialization; exclude it from sync and retry.' : ''));
@@ -4524,7 +4540,25 @@ function startApp() {
         var tag = id.slice(4).toLowerCase();
         return models.filter(function(m){ return m.tag && m.tag.toLowerCase() === tag; });
       }
-      return models.filter(function(m){return m.id===id});
+      // Resolve a model reference by id OR name. The orchestrator only sees model
+      // NAMES (get_status/get_clashes never expose the internal UUID id), so a
+      // scoped run_detection passes a name — matching m.id only meant the scope
+      // resolved to nothing and detection returned 0 instantly. Try, in order:
+      // exact id, exact name/rawName, then case-insensitive substring on
+      // name/rawName (so "Constructie" matches "[Link] PIE_HOR_Constructie.rvt"
+      // and "PDR_Horizons_BWK" matches the full arch filename).
+      var exact = models.filter(function(m){
+        return m.id === id || m.name === id || m.rawName === id;
+      });
+      if (exact.length) return exact;
+      if (typeof id === 'string' && id) {
+        var needle = id.toLowerCase();
+        return models.filter(function(m){
+          var nm = (m.name || '').toLowerCase(), rn = (m.rawName || '').toLowerCase();
+          return nm.indexOf(needle) >= 0 || rn.indexOf(needle) >= 0;
+        });
+      }
+      return [];
     };
     var grpA = pick(rules.modelA), grpB = pick(rules.modelB);
     var maxGapM = (rules.maxGap||0)/1000;

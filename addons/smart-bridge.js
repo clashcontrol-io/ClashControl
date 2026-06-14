@@ -684,6 +684,27 @@
     var s = _getState();
     if (!s.models || !s.models.length) return 'No models loaded. Open an IFC file first.';
     if (s.detecting) return 'Detection already in progress — poll get_status (detecting / detectionProgress) until it finishes before starting another.';
+    // Resolve a scope reference (id / name / rawName / case-insensitive substring,
+    // or 'all' / 'disc:<d>' / 'tag:<t>') the same way the engine's pick() does, so
+    // we can reject a scope that matches NO models up front instead of silently
+    // running to 0 clashes (the "scoped run returns 0 instantly" trap).
+    function _resolveScope(ref) {
+      if (!ref || ref === 'all') return s.models;
+      var r = String(ref);
+      if (r.indexOf('disc:') === 0) { var d = r.slice(5); return s.models.filter(function(m){ return (m.discipline||'') === d; }); }
+      if (r.indexOf('tag:') === 0) { var t = r.slice(4).toLowerCase(); return s.models.filter(function(m){ return m.tag && m.tag.toLowerCase() === t; }); }
+      var exact = s.models.filter(function(m){ return m.id === r || m.name === r || m.rawName === r; });
+      if (exact.length) return exact;
+      var n = r.toLowerCase();
+      return s.models.filter(function(m){ return (m.name||'').toLowerCase().indexOf(n) >= 0 || (m.rawName||'').toLowerCase().indexOf(n) >= 0; });
+    }
+    if (p.modelA || p.modelB) {
+      var names = s.models.map(function(m){ return m.name; });
+      if (p.modelA && _resolveScope(p.modelA).length === 0)
+        return 'modelA "' + p.modelA + '" matched no loaded model. Available: ' + JSON.stringify(names) + '. Use a full/partial name, "all", or "disc:<discipline>".';
+      if (p.modelB && _resolveScope(p.modelB).length === 0)
+        return 'modelB "' + p.modelB + '" matched no loaded model. Available: ' + JSON.stringify(names) + '. Use a full/partial name, "all", or "disc:<discipline>".';
+    }
     var updates = {};
     if (p.modelA) updates.modelA = p.modelA;
     if (p.modelB) updates.modelB = p.modelB;
@@ -1536,6 +1557,27 @@
   }
 
   // ── Expose globals ────────────────────────────────────────────────
+
+  // Relay CC's detection-complete ping to the bridge (and on to the LLM) so a
+  // connected orchestrator gets pushed a "run done" message instead of polling /
+  // sitting idle. Registered once; no-op when the bridge WS isn't connected.
+  if (!window._ccSbDetectDoneWired) {
+    window._ccSbDetectDoneWired = true;
+    window.addEventListener('cc-detection-complete', function(ev) {
+      try {
+        if (!_ws || _ws.readyState !== 1) return;
+        var det = (ev && ev.detail) || {};
+        var s = _getState();
+        _ws.send(JSON.stringify({ type: 'event', event: 'detection_complete',
+          ok: det.ok !== false,
+          total: det.total != null ? det.total : ((s.clashes||[]).length),
+          open: det.open != null ? det.open : null,
+          modelA: det.modelA || null, modelB: det.modelB || null,
+          error: det.error || null,
+          projectKey: _projectKey(s), source: 'clashcontrol', ts: det.ts || Date.now() }));
+      } catch (e) {}
+    });
+  }
 
   window._ccSmartBridgeConnect = function(d) { _connectBridge(d || window._ccDispatch); };
   window._ccSmartBridgeInstall = function(d) { _triggerDownload(); _connectBridge(d || window._ccDispatch, {installing:true}); };
