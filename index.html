@@ -856,6 +856,76 @@ function startApp() {
     return true;
   };
 
+  // Run a RULESET — several scoped detection rules (e.g. discipline pairs arch×MEP,
+  // struct×MEP, arch×struct), each with its own gap — and merge the UNION into one
+  // clash set (deduped by identity). Cuts volume at source vs a flat all-vs-all run;
+  // the per-rule rules inherit s.rules (so useSemanticFilter / hosted-by-design
+  // exclusion stays on). Runs sub-detections sequentially (no concurrent-gen races).
+  // rules: [{ modelA, modelB, maxGap?, hard? }] — modelA/B accept all/name/disc:/tag:.
+  window._ccRunDetectionRuleset = function(rules) {
+    var s = window._ccLatestState;
+    var d = window._ccDispatch;
+    if (!s || !d || !s.models || !s.models.length) return false;
+    if (s.detecting) { console.warn('[Detection] already running — ignoring ruleset request'); return false; }
+    if (!Array.isArray(rules) || !rules.length) return false;
+    try { window._ccLastDetectError = null; } catch(e) {}
+    d({t:'DETECTING'}); d({t:'TAB',v:'clashes'});
+    // Stall watchdog spanning the whole ruleset (same idea as _ccRunDetection).
+    var _wd = { last: -1, since: Date.now() };
+    var _wdTimer = setInterval(function() {
+      var st = window._ccLatestState;
+      if (!st || !st.detecting) { clearInterval(_wdTimer); return; }
+      var p = window._ccDetectProgress, done = p ? (p.done || 0) : 0;
+      if (done !== _wd.last) { _wd.last = done; _wd.since = Date.now(); return; }
+      if (Date.now() - _wd.since > 90000) {
+        clearInterval(_wdTimer);
+        try { window._ccLastDetectError = { message: 'Ruleset detection stalled (no progress 90s) — aborted.', ts: Date.now(), stack: null }; } catch(e) {}
+        if (window._ccCancelDetection) window._ccCancelDetection(); else d({t:'STOP_DETECT'});
+        if (window._ccToast) window._ccToast('Detection stalled — aborted.');
+      }
+    }, 5000);
+    var byKey = {}; // identityKey → clash (first rule that finds a pair wins)
+    var ri = 0;
+    function runNext() {
+      if (ri >= rules.length) {
+        clearInterval(_wdTimer);
+        var union = Object.keys(byKey).map(function(k){ return byKey[k]; });
+        classifyClashes(union);
+        d({t:'MERGE_CLASHES', v:union});
+        try {
+          var _open = 0; union.forEach(function(c){ var st=c.status||'open'; if(st!=='resolved'&&st!=='expected'&&st!=='closed') _open++; });
+          window.dispatchEvent(new CustomEvent('cc-detection-complete', { detail: {
+            ok:true, total:union.length, open:_open, ruleset:true, rules:rules.length, ts:Date.now() }}));
+        } catch(e) {}
+        return;
+      }
+      var r = rules[ri++];
+      var merged = Object.assign({}, s.rules, {
+        modelA: r.modelA != null ? r.modelA : 'all',
+        modelB: r.modelB != null ? r.modelB : 'all',
+        maxGap: r.maxGap != null ? r.maxGap : s.rules.maxGap,
+        hard: r.hard != null ? !!r.hard : s.rules.hard
+      });
+      detectClashesAsync(s.models, merged).then(function(result) {
+        (result || []).forEach(function(c) {
+          var k = computeClashIdentityKey(c);
+          if (!byKey[k]) byKey[k] = c;
+        });
+        runNext();
+      }).catch(function(err) {
+        clearInterval(_wdTimer);
+        console.error('[Detection ruleset] failed:', err);
+        d({t:'STOP_DETECT'});
+        var msg = (err && err.message) || String(err);
+        try { window._ccLastDetectError = { message: msg, ts: Date.now(), stack: (err && err.stack) ? String(err.stack).slice(0,4000) : null }; } catch(e) {}
+        try { window.dispatchEvent(new CustomEvent('cc-detection-complete', { detail: { ok:false, error:msg, ts:Date.now() }})); } catch(e) {}
+        if (window._ccToast) window._ccToast('Detection failed: ' + msg);
+      });
+    }
+    runNext();
+    return true;
+  };
+
   // ── Reducer ──────────────────────────────────────────────────── INTERNALS.md §4
 
   var INIT_FILTERS = {

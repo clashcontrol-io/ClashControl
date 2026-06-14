@@ -375,6 +375,21 @@
     return hit;
   }
 
+  // Classification for one element by model + expressId (one-off lookup, used when
+  // promoting a clash to an issue so the Issue carries the same join key).
+  function _classByElem(modelId, eid) {
+    if (!modelId || eid == null) return null;
+    var ms = (_getState().models) || [];
+    for (var i = 0; i < ms.length; i++) {
+      if (ms[i].id !== modelId) continue;
+      var els = ms[i].elements || [];
+      for (var j = 0; j < els.length; j++) {
+        if (els[j].expressId === eid) return _classOf(els[j].props);
+      }
+    }
+    return null;
+  }
+
   handlers.get_status = function() {
     var s = _getState();
     var models = (s.models || []).map(function(m) {
@@ -573,12 +588,26 @@
         if (issue.globalIdB) gids.push(issue.globalIdB);
         if (Array.isArray(issue.qualityGids)) gids = gids.concat(issue.qualityGids);
         if (issue.globalId) gids.push(issue.globalId);
+        // Revit UniqueIds (the most reliable cross-doc join key) from either the
+        // per-side fields or an array — mirrors get_clashes so a promoted issue
+        // joins back the same way a clash does.
+        var uids = [];
+        if (issue.uniqueIdA) uids.push(issue.uniqueIdA);
+        if (issue.uniqueIdB) uids.push(issue.uniqueIdB);
+        if (Array.isArray(issue.uniqueIds)) uids = uids.concat(issue.uniqueIds);
         return { index: i, title: issue.title || ('Issue ' + (i + 1)),
           status: issue.status || 'open', priority: issue.priority || 'normal',
           assignee: issue.assignee || null, description: issue.description || null,
           globalIds: gids,
+          uniqueIds: uids,
+          uniqueIdA: issue.uniqueIdA || null, uniqueIdB: issue.uniqueIdB || null,
           revitIdA: issue.revitIdA != null ? issue.revitIdA : null,
           revitIdB: issue.revitIdB != null ? issue.revitIdB : null,
+          storey: issue.storey || null,
+          classificationA: issue.classificationA || issue.classification || null,
+          classificationB: issue.classificationB || null,
+          disciplines: issue.disciplines || null,
+          linkedClashId: issue.linkedClashId || null,
           // Connective-spine MUST keys.
           source: 'clashcontrol', projectKey: pk, sourceLocalId: issue.id || null };
       })
@@ -745,6 +774,49 @@
         '. Async — poll get_status (detecting/detectionProgress); results via get_clashes; failures via get_status.lastDetectionError.';
     }
     return 'Detection trigger not available. Make sure models are loaded.';
+  };
+
+  // Rule-based / cross-discipline detection (Solibri-style): run several scoped
+  // rules — each a discipline/model pair with its own gap — and return the UNION
+  // (deduped). Cuts volume at source vs flat all-vs-all; hosted/by-design pairs are
+  // excluded at detection time (inherits useSemanticFilter). Body:
+  //   { rules:[{ disciplineA?, disciplineB?, modelA?, modelB?, maxGap?, hard? }],
+  //     preset?:'cross_discipline', maxGap?, hard? }
+  // With no rules, preset 'cross_discipline' auto-builds every distinct discipline
+  // pair present (arch×structural, arch×mep, structural×mep, …).
+  handlers.run_detection_ruleset = function(p) {
+    var s = _getState();
+    if (!s.models || !s.models.length) return 'No models loaded. Open a model first.';
+    if (s.detecting) return 'Detection already in progress — poll get_status until it finishes.';
+    var gap = p.maxGap != null ? p.maxGap : 10;
+    var hard = p.hard != null ? !!p.hard : true;
+    var rules = Array.isArray(p.rules) && p.rules.length ? p.rules.map(function(r) {
+      return {
+        modelA: r.modelA || (r.disciplineA ? 'disc:' + r.disciplineA : 'all'),
+        modelB: r.modelB || (r.disciplineB ? 'disc:' + r.disciplineB : 'all'),
+        maxGap: r.maxGap != null ? r.maxGap : gap,
+        hard: r.hard != null ? !!r.hard : hard
+      };
+    }) : null;
+    if (!rules) {
+      // Preset: every distinct discipline pair present among loaded models.
+      var discs = {};
+      (s.models || []).forEach(function(m) { if (m.discipline) discs[m.discipline] = true; });
+      var list = Object.keys(discs);
+      if (list.length < 2) return 'Need at least 2 disciplines for cross-discipline detection. Loaded: ' + JSON.stringify(list) + '. Pass explicit rules[] instead.';
+      rules = [];
+      for (var i = 0; i < list.length; i++)
+        for (var j = i + 1; j < list.length; j++)
+          rules.push({ modelA: 'disc:' + list[i], modelB: 'disc:' + list[j], maxGap: gap, hard: hard });
+    }
+    if (window._ccRunDetectionRuleset) {
+      var started = window._ccRunDetectionRuleset(rules);
+      if (started === false) return 'Could not start (already running, or no models).';
+      return 'Ruleset detection started: ' + rules.length + ' rule(s) — ' +
+        rules.map(function(r){ return r.modelA + '×' + r.modelB + (r.maxGap != null ? '@' + r.maxGap + 'mm' : ''); }).join(', ') +
+        '. Async — poll get_status (detecting/detectionProgress); results via get_clashes (union, deduped).';
+    }
+    return 'Ruleset detection not available.';
   };
 
   // Reset a wedged/stuck detection from the MCP side (no browser restart needed).
@@ -1163,13 +1235,40 @@
       // Random suffix so a bulk create in the same millisecond can't collide
       // when _ccUid is unavailable.
       var id = (window._ccUid) ? window._ccUid() : 'i_' + Date.now() + '_' + Math.random().toString(36).slice(2, 7);
-      _dispatch({ t: 'ADD_ISSUE', v: {
+      var issue = {
         id: id, title: q.title || 'New Issue', description: q.description || '',
         status: q.status || 'open', priority: q.priority || 'normal',
         assignee: q.assignee || '', category: q.category || 'coordination',
         createdAt: new Date().toISOString()
-      }});
-      return q.title || 'New Issue';
+      };
+      // Element linkage — without this a promoted/created issue has globalIds:[] and
+      // can't be joined back to the model / Loam. Accept per-side ids or arrays.
+      if (q.globalIdA) issue.globalIdA = q.globalIdA;
+      if (q.globalIdB) issue.globalIdB = q.globalIdB;
+      if (Array.isArray(q.globalIds) && q.globalIds.length) {
+        issue.qualityGids = q.globalIds.slice();
+        if (!issue.globalIdA) issue.globalIdA = q.globalIds[0] || null;
+        if (!issue.globalIdB && q.globalIds[1]) issue.globalIdB = q.globalIds[1];
+      }
+      if (q.revitIdA != null) issue.revitIdA = q.revitIdA;
+      if (q.revitIdB != null) issue.revitIdB = q.revitIdB;
+      if (Array.isArray(q.revitIds) && q.revitIds.length) {
+        issue.revitIds = q.revitIds.slice();
+        if (issue.revitIdA == null) issue.revitIdA = q.revitIds[0];
+        if (issue.revitIdB == null && q.revitIds[1] != null) issue.revitIdB = q.revitIds[1];
+      }
+      if (q.uniqueIdA) issue.uniqueIdA = q.uniqueIdA;
+      if (q.uniqueIdB) issue.uniqueIdB = q.uniqueIdB;
+      if (Array.isArray(q.uniqueIds) && q.uniqueIds.length) {
+        issue.uniqueIds = q.uniqueIds.slice();
+        if (!issue.uniqueIdA) issue.uniqueIdA = q.uniqueIds[0] || null;
+        if (!issue.uniqueIdB && q.uniqueIds[1]) issue.uniqueIdB = q.uniqueIds[1];
+      }
+      if (q.storey) issue.storey = q.storey;
+      if (q.classification) issue.classification = q.classification;
+      if (q.clashId) issue.linkedClashId = q.clashId;
+      _dispatch({ t: 'ADD_ISSUE', v: issue });
+      return issue.title;
     }
     if (Array.isArray(p.items)) {
       var titles = p.items.map(one);
@@ -1177,6 +1276,48 @@
     }
     one(p);
     return 'Issue "' + (p.title || 'New Issue') + '" created.';
+  };
+
+  // Promote one (or many via items[]) detected clash to a coordination issue,
+  // COPYING the clash's element identity (uniqueId/globalId/revitId per side),
+  // storey, types, disciplines and classification — so the Issue is joinable back
+  // to the model / Loam. Links the clash → issue (linkedIssueId); does NOT resolve
+  // the clash (CC buckets/signals, it doesn't decide a clash is fixed).
+  handlers.promote_clash_to_issue = function(p) {
+    var s = _getState(); var clashes = s.clashes || [];
+    function promote(idx, extra) {
+      var c = (idx >= 0 && idx < clashes.length) ? clashes[idx] : null;
+      if (!c) return null;
+      extra = extra || {};
+      var id = (window._ccUid) ? window._ccUid() : 'i_' + Date.now() + '_' + Math.random().toString(36).slice(2, 7);
+      var issue = {
+        id: id,
+        title: extra.title || c.title || c.aiTitle || ('Clash ' + (idx + 1)),
+        description: extra.description || c.aiReason || c.description || '',
+        status: extra.status || 'open', priority: extra.priority || c.priority || 'normal',
+        assignee: extra.assignee || '', category: 'coordination', createdAt: new Date().toISOString(),
+        globalIdA: c.globalIdA || null, globalIdB: c.globalIdB || null,
+        revitIdA: c.revitIdA != null ? c.revitIdA : null, revitIdB: c.revitIdB != null ? c.revitIdB : null,
+        uniqueIdA: c.uniqueIdA || null, uniqueIdB: c.uniqueIdB || null,
+        storey: c.storey || c.elemAStorey || c.elemBStorey || '',
+        elemAType: c.elemAType || null, elemBType: c.elemBType || null,
+        disciplines: c.disciplines || null,
+        classificationA: _classByElem(c.modelAId, c.elemA),
+        classificationB: _classByElem(c.modelBId, c.elemB),
+        linkedClashId: c.id || null
+      };
+      _dispatch({ t: 'ADD_ISSUE', v: issue });
+      if (c.id) _dispatch({ t: 'UPD_CLASH', id: c.id, u: { linkedIssueId: id } });
+      return issue.title;
+    }
+    if (Array.isArray(p.items)) {
+      var done = 0, bad = 0;
+      p.items.forEach(function(q){ if (promote(q.clashIndex, q) != null) done++; else bad++; });
+      return 'Promoted ' + done + ' clash' + (done === 1 ? '' : 'es') + ' to issues' + (bad ? ' (' + bad + ' invalid index)' : '') + '.';
+    }
+    var t = promote(p.clashIndex, p);
+    return t != null ? 'Promoted clash ' + (p.clashIndex + 1) + ' to issue "' + t + '" (element link copied).'
+                     : 'Invalid clash index.';
   };
 
   handlers.update_issue = function(p) {
@@ -1384,6 +1525,8 @@
     { name:'resync',              description:'Force the live Revit link to re-pull the model so CC matches the current Revit state. Live-link only (no-op for static IFC loads). Re-check get_status afterwards for the new revision.' },
     { name:'run_detection',       description:'Starts clash detection between loaded models (async). modelA/modelB accept "all", a model name, "disc:<discipline>" (disc:architectural/structural/mep — disciplines from get_status), or "tag:<tag>"; use disc: on both sides to scope to cross-discipline pairs only and cut same-discipline noise at source. Results via get_clashes; on failure (e.g. very large federation) get_status.lastDetectionError reports the message + stack.',
       params:{ modelA:{type:'string',opt:1}, modelB:{type:'string',opt:1}, maxGap:{type:'number',opt:1}, hard:{type:'boolean',opt:1}, excludeSelf:{type:'boolean',opt:1} } },
+    { name:'run_detection_ruleset', description:"Rule-based / cross-discipline detection (Solibri-style): runs several scoped rules — each a discipline/model pair with its own gap — and returns the UNION (deduped). Cuts volume at source vs flat all-vs-all; hosted/by-design pairs are excluded at detection time. With no rules[], preset 'cross_discipline' auto-builds every distinct discipline pair present (arch×structural, arch×mep, structural×mep). Async — results via get_clashes.",
+      params:{ rules:{type:'array',items:{type:'object'},opt:1}, preset:{type:'string',opt:1}, maxGap:{type:'number',opt:1}, hard:{type:'boolean',opt:1} } },
     { name:'cancel_detection',    description:'Reset a stuck/wedged detection (clears detecting:true) so a new run_detection can start — no browser restart needed.' },
     { name:'ingest_detection_feedback', description:"Receiver for Loam's outcome feedback. Body: { projectKey?, feedback:{ byRule:[{key,real,false,realRate,recommendation}], byPair:[{key,real,false,realRate,recommendation}] } }. byPair.key = element-type pair (e.g. 'IfcSlab × IfcSlab'); realRate = real/(real+false). On the next detection run, pairs with realRate >= 0.34 are no longer auto-suppressed by the type-pair memo (CC stops eating those real clashes). Stored per projectKey, survives refresh; round-trip visible in get_status.detectionFeedback. byRule is stored for inspection.",
       params:{ projectKey:{type:'string',opt:1}, feedback:{type:'object'} } },
@@ -1456,7 +1599,9 @@
       params:{ type:{type:'string',enum:['text','pin','line','rect','arrow'],opt:1}, x:{type:'number',opt:1}, y:{type:'number',opt:1}, x2:{type:'number',opt:1}, y2:{type:'number',opt:1}, text:{type:'string',opt:1}, color:{type:'string',opt:1}, items:{type:'array',items:{type:'object'},opt:1} } },
     { name:'measure_on_sheet',    description:'Adds a dimension annotation between two world-space points on the active 2D sheet.',
       params:{ points:{type:'array',items:{type:'number'},minItems:4,maxItems:4}, color:{type:'string',opt:1} } },
-    { name:'create_issue',        description:'Creates one coordination issue, or many at once via items[] (array of {title,description?,status?,priority?,assignee?,category?}). Prefer one bulk call over many single calls.',
+    { name:'promote_clash_to_issue', description:'Promote a detected clash (by 0-based clashIndex, or many via items[]) to a coordination issue, COPYING its element identity (uniqueIdA/B, globalIdA/B, revitIdA/B), storey, types, disciplines and classification — so the Issue is joinable back to the model/Loam (manual create_issue would have globalIds:[]). Links clash→issue (linkedIssueId); does NOT resolve the clash.',
+      params:{ clashIndex:{type:'number',opt:1}, items:{type:'array',items:{type:'object'},opt:1}, title:{type:'string',opt:1}, description:{type:'string',opt:1}, priority:{type:'string',opt:1}, assignee:{type:'string',opt:1} } },
+    { name:'create_issue',        description:'Creates one coordination issue, or many at once via items[]. Each: {title,description?,status?,priority?,assignee?,category?}. For element linkage (so the issue joins back to the model/Loam) pass globalIds[]/revitIds[]/uniqueIds[] or per-side globalIdA/B, revitIdA/B, uniqueIdA/B, plus storey/classification. To promote a detected clash, prefer promote_clash_to_issue (copies identity automatically).',
       params:{ title:{type:'string',opt:1}, description:{type:'string',opt:1}, status:{type:'string',opt:1}, priority:{type:'string',opt:1}, assignee:{type:'string',opt:1}, category:{type:'string',opt:1}, items:{type:'array',items:{type:'object'},opt:1} } },
     { name:'update_issue',        description:'Updates one issue by 0-based index, or many at once via items:[{issueIndex,...}]. Targets are resolved before any change, so a batch is index-safe.',
       params:{ issueIndex:{type:'number',opt:1}, status:{type:'string',opt:1}, priority:{type:'string',opt:1}, assignee:{type:'string',opt:1}, title:{type:'string',opt:1}, description:{type:'string',opt:1}, items:{type:'array',items:{type:'object'},opt:1} } },
