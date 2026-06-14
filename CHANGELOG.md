@@ -1,5 +1,8 @@
 # Changelog
 
+## v5.20.28 (2026-06-14)
+- Scoped detection resolves models by name + ping orchestrator on run completion (#640)
+
 ## v5.20.27 (2026-06-14)
 - ingest_detection_feedback: stop suppressing pairs that ate real clashes (#639)
 
