@@ -340,6 +340,10 @@
       geom.computeBoundingBox();
       var c = el.geometry.color || [0.65, 0.65, 0.65, 1.0];
       var _a = c[3] != null ? c[3] : 1;
+      // Rooms/spaces arrive as IfcSpace volumes. Render them translucent so they
+      // read as room boundaries without hiding the building inside; they're also
+      // excluded from standard clash detection (see _sweepAndPrune, includeSpaces).
+      if (el.category === 'IfcSpace') { c = [0.30, 0.66, 0.95]; _a = 0.14; }
       // Material dedup by colour. Prefer the core's shared cache so EVERY load
       // path (IFC + Revit live-link) shares one material per colour — the whole
       // point of #572. Falls back to a local per-addon cache if the core helper
@@ -741,6 +745,10 @@
     var storeys = msg.storeys || [];
     var storeyData = msg.storeyData || [];
     var relatedPairs = msg.relatedPairs || {};
+    // Structural grid reference lines [{name, pts:[x1,z1,x2,z2,...]}] in CC
+    // ground-plane metres. Reference data only (overlay + "near grid X" queries),
+    // never clashable geometry.
+    var gridLines = msg.grids || [];
 
     // Derive storeys from elements if not provided
     if (storeys.length === 0) {
@@ -830,6 +838,7 @@
         elements: finalElements,
         storeys: storeys,
         storeyData: storeyData,
+        gridLines: gridLines.length ? gridLines : (existingModel.gridLines || []),
         spatialHierarchy: {},
         relatedPairs: relatedPairs,
         stats: {elementCount:finalElements.length, source:'revit-direct', lastSync:Date.now(), docVersion:_revitBuf.docVersion||null, numberOfSaves:_revitBuf.numberOfSaves||0}
@@ -843,7 +852,7 @@
       var modelData2 = {
         id: modelId, name: _revitBuf.name, rawName: _revitBuf.rawName, discipline:disc, color:col, visible:true, _version:1,
         meshes:_revitBuf.meshes, elements:_revitBuf.elements, storeys:storeys,
-        storeyData:storeyData, spatialHierarchy:{}, relatedPairs:relatedPairs,
+        storeyData:storeyData, gridLines:gridLines, spatialHierarchy:{}, relatedPairs:relatedPairs,
         stats:{elementCount:_revitBuf.elements.length, source:'revit-direct', lastSync:Date.now(), docVersion:_revitBuf.docVersion||null, numberOfSaves:_revitBuf.numberOfSaves||0}
       };
       window._ccDispatch({t:'ADD_MODEL', v:modelData2});
@@ -852,6 +861,8 @@
     }
 
     d({t:'UPD_REVIT_DIRECT', u:{loading:false, progress:1}});
+    // Rebuild the structural-grid overlay from the freshly-loaded gridLines.
+    try { if (window._ccRefreshGridOverlay) window._ccRefreshGridOverlay(); } catch(_e) {}
     // (loading card is cleared at export-end, not here — a federation has several
     // model-ends and we don't want to hide the card between models.)
     _revitBuf = null;
