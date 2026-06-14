@@ -1,5 +1,8 @@
 # Changelog
 
+## v5.20.27 (2026-06-14)
+- ingest_detection_feedback: stop suppressing pairs that ate real clashes (#639)
+
 ## v5.20.26 (2026-06-14)
 - Reconcile clashes across runs by stable identity (#638)
 
