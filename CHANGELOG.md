@@ -1,5 +1,11 @@
 # Changelog
 
+## v5.20.31 (2026-06-14)
+- Rooms, structural grids & levels via the Revit bridge + issue element keys (#644)
+
+## v5.20.30 (2026-06-14)
+- Revit bridge: Connector update prompt + promoted-issue in-app navigation (#643)
+
 ## v5.20.29 (2026-06-14)
 - Cross-discipline ruleset detection + clash→issue promotion with element link (#642)
 

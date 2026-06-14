@@ -1332,6 +1332,14 @@
         description: extra.description || c.aiReason || c.description || '',
         status: extra.status || 'open', priority: extra.priority || c.priority || 'normal',
         assignee: extra.assignee || '', category: 'coordination', createdAt: new Date().toISOString(),
+        // In-app navigation: the Issues UI Zoom A/B / Box / highlight read
+        // elemA/elemB + modelAId/modelBId + point (via _itemRefs) — same fields the
+        // native "From clash" button sets. Without these the zoom buttons no-op.
+        elemA: c.elemA != null ? c.elemA : null, elemB: c.elemB != null ? c.elemB : null,
+        modelAId: c.modelAId || null, modelBId: c.modelBId || null,
+        point: c.point || null,
+        clashId: c.id || null, clashIdentityKey: c._identityKey || null,
+        // Cross-tool join identity per side.
         globalIdA: c.globalIdA || null, globalIdB: c.globalIdB || null,
         revitIdA: c.revitIdA != null ? c.revitIdA : null, revitIdB: c.revitIdB != null ? c.revitIdB : null,
         uniqueIdA: c.uniqueIdA || null, uniqueIdB: c.uniqueIdB || null,
