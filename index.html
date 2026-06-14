@@ -5260,8 +5260,17 @@ function startApp() {
   // ── Clash Identity & Delta Merge ────────────────────────────── INTERNALS.md §9
 
   function computeClashPair(clash) {
-    var idA = (clash.globalIdA && clash.globalIdA !== '') ? clash.globalIdA : ('eid:'+clash.elemA);
-    var idB = (clash.globalIdB && clash.globalIdB !== '') ? clash.globalIdB : ('eid:'+clash.elemB);
+    // Stable cross-run identity per element. Prefer Revit UniqueId (survives a
+    // re-pull — expressId is reassigned every pull), then IFC GlobalId, then
+    // expressId as a last resort. Keying on expressId broke reconciliation after a
+    // hard-refresh re-pull: the new run's clashes didn't match the persisted ones,
+    // so every prior OPEN clash was wrongly auto-resolved. Reconcile, don't reset —
+    // carry status forward by stable identity. (Loam hand-off.)
+    function elemId(u, g, e) {
+      return u ? ('u:' + u) : (g && g !== '' ? g : ('eid:' + e));
+    }
+    var idA = elemId(clash.uniqueIdA, clash.globalIdA, clash.elemA);
+    var idB = elemId(clash.uniqueIdB, clash.globalIdB, clash.elemB);
     return idA < idB ? idA+'|'+idB : idB+'|'+idA;
   }
 
@@ -5309,7 +5318,10 @@ function startApp() {
     var now = Date.now();
     var prevByKey = {};
     prevClashes.forEach(function(c) {
-      var key = c._identityKey || computeClashIdentityKey(c);
+      // Recompute fresh (don't trust a cached _identityKey): the identity scheme now
+      // keys on uniqueId, and clashes persisted under the old expressId/globalId
+      // scheme would otherwise never match — re-orphaning everything once.
+      var key = computeClashIdentityKey(c);
       prevByKey[key] = c;
     });
 
@@ -5364,9 +5376,9 @@ function startApp() {
     var arCount = 0, AR_CAP = 200;
     prevClashes.forEach(function(c) {
       if (arCount >= AR_CAP) return;
-      var key = c._identityKey || computeClashIdentityKey(c);
+      var key = computeClashIdentityKey(c); // fresh — must use the same scheme as newKeys
       if (!newKeys[key] && (c.status==='open' || c.status==='in_progress')) {
-        merged.push(Object.assign({}, c, {_delta:'auto_resolved', _lastSeen:now, status:'auto_resolved'}));
+        merged.push(Object.assign({}, c, {_identityKey:key, _delta:'auto_resolved', _lastSeen:now, status:'auto_resolved'}));
         arCount++;
       }
     });
