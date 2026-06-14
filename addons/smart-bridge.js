@@ -403,6 +403,9 @@
       projectKey: _projectKey(s), // connective-spine partition key (deterministic)
       source: 'clashcontrol',
       rules: { maxGap: r.maxGap || 10, hard: !!r.hard, modelA: r.modelA || 'all', modelB: r.modelB || 'all', excludeSelf: !!r.excludeSelf },
+      // Loam detection-feedback round-trip: confirms ingest_detection_feedback
+      // landed (projectKey, counts, when) so the auto-feed can verify it stuck.
+      detectionFeedback: (function(){ try { var fb = window._ccDetectionFeedback; return fb ? { projectKey: fb.projectKey || null, rules: (fb.byRule||[]).length, pairs: (fb.byPair||[]).length, ts: fb.ts || null } : null; } catch(e){ return null; } })(),
       // Last detection failure (e.g. RangeError on a huge federation) so the
       // orchestrator can report it without browser-console access. null when OK.
       lastDetectionError: (function(){ try { return window._ccLastDetectError || null; } catch(e){ return null; } })(),
@@ -717,6 +720,50 @@
     try { window._ccDetectProgress = null; } catch (e) {}
     return wasDetecting ? 'Detection cancelled and reset — you can run_detection again.'
                         : 'No detection was running; state reset anyway.';
+  };
+
+  // Receiver for Loam's outcome feedback (push_detection_feedback). CC consumes it
+  // to stop auto-suppressing element-type pairs whose suppression turned out to eat
+  // REAL clashes. Local-first: stored per projectKey, applied on the next run.
+  // Payload: { projectKey?, feedback:{ byRule:[{key,real,false,realRate,recommendation}],
+  //            byPair:[{key,real,false,realRate,recommendation}] } }
+  var _FEEDBACK_REALRATE_TH = 0.34; // realRate >= this => stop suppressing that pair
+  function _loadDetectionFeedback() {
+    // Restore the most recent stored payload on page load so it survives refresh.
+    try {
+      var latest = null;
+      for (var i = 0; i < localStorage.length; i++) {
+        var k = localStorage.key(i);
+        if (k && k.indexOf('cc_detection_feedback:') === 0) {
+          var v = JSON.parse(localStorage.getItem(k));
+          if (v && (!latest || (v.ts || 0) > (latest.ts || 0))) latest = v;
+        }
+      }
+      if (latest) window._ccDetectionFeedback = latest;
+    } catch (e) {}
+  }
+  _loadDetectionFeedback();
+
+  handlers.ingest_detection_feedback = function(p) {
+    var s = _getState();
+    var pk = p.projectKey || _projectKey(s);
+    var fb = p.feedback || {};
+    var byRule = Array.isArray(fb.byRule) ? fb.byRule : [];
+    var byPair = Array.isArray(fb.byPair) ? fb.byPair : [];
+    var payload = { projectKey: pk, byRule: byRule, byPair: byPair, ts: Date.now() };
+    try { localStorage.setItem('cc_detection_feedback:' + pk, JSON.stringify(payload)); } catch (e) {}
+    try { window._ccDetectionFeedback = payload; } catch (e) {}
+    var protectedPairs = byPair.filter(function (e) {
+      var rate = (e && e.realRate != null) ? e.realRate
+        : ((e && e.real || 0) / Math.max(1, (e && e.real || 0) + (e && e['false'] || 0)));
+      return rate >= _FEEDBACK_REALRATE_TH;
+    }).map(function (e) { return e.key; });
+    return { ok: true, projectKey: pk,
+      received: { rules: byRule.length, pairs: byPair.length },
+      protectedPairs: protectedPairs,
+      note: 'Stored. On the next detection run, type-pairs with realRate >= ' + _FEEDBACK_REALRATE_TH +
+        ' are no longer auto-suppressed by the type-pair memo (CC stops eating those real clashes). ' +
+        'byRule is stored for inspection; the actionable hook is byPair -> the type-pair impossibility memo.' };
   };
 
   handlers.set_detection_rules = function(p) {
@@ -1286,6 +1333,8 @@
     { name:'run_detection',       description:'Starts clash detection between loaded models (async). modelA/modelB accept "all", a model name, "disc:<discipline>" (disc:architectural/structural/mep — disciplines from get_status), or "tag:<tag>"; use disc: on both sides to scope to cross-discipline pairs only and cut same-discipline noise at source. Results via get_clashes; on failure (e.g. very large federation) get_status.lastDetectionError reports the message + stack.',
       params:{ modelA:{type:'string',opt:1}, modelB:{type:'string',opt:1}, maxGap:{type:'number',opt:1}, hard:{type:'boolean',opt:1}, excludeSelf:{type:'boolean',opt:1} } },
     { name:'cancel_detection',    description:'Reset a stuck/wedged detection (clears detecting:true) so a new run_detection can start — no browser restart needed.' },
+    { name:'ingest_detection_feedback', description:"Receiver for Loam's outcome feedback. Body: { projectKey?, feedback:{ byRule:[{key,real,false,realRate,recommendation}], byPair:[{key,real,false,realRate,recommendation}] } }. byPair.key = element-type pair (e.g. 'IfcSlab × IfcSlab'); realRate = real/(real+false). On the next detection run, pairs with realRate >= 0.34 are no longer auto-suppressed by the type-pair memo (CC stops eating those real clashes). Stored per projectKey, survives refresh; round-trip visible in get_status.detectionFeedback. byRule is stored for inspection.",
+      params:{ projectKey:{type:'string',opt:1}, feedback:{type:'object'} } },
     { name:'set_detection_rules', description:'Updates detection parameters without running detection.',
       params:{ maxGap:{type:'number',opt:1}, hard:{type:'boolean',opt:1}, excludeSelf:{type:'boolean',opt:1}, duplicates:{type:'boolean',opt:1} } },
     { name:'update_clash',        description:"Updates one clash by 0-based index, or many at once via items[] (bulk-safe: all targets resolved before any change). status can be open|approved|closed|expected. Use 'expected' for by-design/false-positive clashes — a reversible suppressed bucket, kept out of the open count and re-openable by setting status back to 'open'. NOTE: 'resolved' (= a real clash actually fixed, which an agent can't verify) is automatically routed to 'expected' here — the bridge buckets, it does not decide a clash is fixed.",
