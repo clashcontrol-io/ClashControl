@@ -1,5 +1,8 @@
 # Changelog
 
+## v5.20.32 (2026-06-14)
+- Expose BCF import to the LLM + wire BCF export (#645)
+
 ## v5.20.31 (2026-06-14)
 - Rooms, structural grids & levels via the Revit bridge + issue element keys (#644)
 
