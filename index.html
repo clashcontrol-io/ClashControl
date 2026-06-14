@@ -5783,9 +5783,16 @@ function startApp() {
     inp.type = 'file'; inp.accept = '.bcf,.bcfzip';
     inp.onchange = function(e) {
       var f = e.target.files[0]; if (!f) return;
-      f.arrayBuffer().then(function(buf) {
-        return JSZip.loadAsync(buf);
-      }).then(function(zip) {
+      f.arrayBuffer().then(function(buf) { _runBCFImport(buf, d); });
+    };
+    inp.click();
+  }
+
+  // Import BCF from an ArrayBuffer. Shared by the file-picker UI (importBCF) and
+  // the LLM/bridge path (window._ccImportBCF), which can hand in BCF content
+  // directly so an agent that already has a .bcfzip can import without a picker.
+  function _runBCFImport(buf, d) {
+    return JSZip.loadAsync(buf).then(function(zip) {
         var promises = [];
         zip.forEach(function(path, entry) {
           if (path.match(/markup\.bcf$/i)) {
@@ -5942,9 +5949,27 @@ function startApp() {
       }).catch(function(err) {
         alert('BCF import failed: ' + err.message);
       });
-    };
-    inp.click();
   }
+
+  // Expose BCF import/export to the bridge/LLM (smart-bridge import_bcf/export_bcf).
+  // Import accepts {base64} BCF content (decode → reuse the parse path) or, with no
+  // content, opens the file picker for the user to choose a .bcf/.bcfzip.
+  window._ccImportBCF = function(opts) {
+    var d = window._ccDispatch;
+    if (opts && opts.base64) {
+      try {
+        var bin = atob(opts.base64), n = bin.length, u8 = new Uint8Array(n);
+        for (var i = 0; i < n; i++) u8[i] = bin.charCodeAt(i);
+        _runBCFImport(u8.buffer, d);
+        return true;
+      } catch (e) { console.warn('[BCF] import from base64 failed:', e); return false; }
+    }
+    importBCF(d);
+    return true;
+  };
+  window._ccExportBCF = function(items, version, viewpoints, state) {
+    exportBCF(items || [], version || '2.1', viewpoints, state || window._ccLatestState);
+  };
 
   // ── Training Data (loaded from addons/training-data.js) ──────
   var _getClashTrainStore = function() { return (window._ccGetClashTrainStore || function(){ return {}; })(); };
