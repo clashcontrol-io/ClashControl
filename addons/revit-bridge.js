@@ -415,6 +415,7 @@
     switch (msg.type) {
       case 'pong':
       case 'status':
+        if (msg.projectUniqueId) { try { window._ccRevitProjectUniqueId = msg.projectUniqueId; } catch(_e) {} }
         if (msg.documentName) d({t:'UPD_REVIT_DIRECT', u:{documentName:msg.documentName}});
         if (msg.connected != null) d({t:'UPD_REVIT_DIRECT', u:{connected:msg.connected}});
         // Protocol version negotiation
@@ -577,6 +578,10 @@
 
       case 'export-start':
         _revitAborted = false; // fresh export — clear any prior cancel
+        // Stable Revit project identity (host doc ProjectInformation.UniqueId) so
+        // the Smart Bridge can emit a deterministic projectKey ("revit:<uid>")
+        // that matches PDRA/Loam for the same open document.
+        if (msg.projectUniqueId) { try { window._ccRevitProjectUniqueId = msg.projectUniqueId; } catch(_e) {} }
         d({t:'BRIDGE_LOG', logType:'pull', text:'Export started — ' + (msg.totalModels||1) + ' model(s), ' + (msg.totalElements||'?') + ' elements total'});
         // Single loading-card event for the whole pull (cleared at export-end) —
         // no per-model/per-batch events (those caused the slow-pull regression).

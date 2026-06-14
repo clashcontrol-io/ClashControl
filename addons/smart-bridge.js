@@ -300,6 +300,20 @@
     if (window._ccDispatch) window._ccDispatch(action);
   }
 
+  // Deterministic projectKey (connective-spine partition key). Must be identical
+  // across tools (PDRA, Loam) for the SAME open Revit doc so the join lines up.
+  // A per-session CC slug breaks that, so prefer the Revit project identity the
+  // Connector forwards (ProjectInformation.UniqueId) as "revit:<uid>" — same open
+  // document → same string everywhere. Falls back to the active CC project, then
+  // a stable literal.
+  function _projectKey(s) {
+    try {
+      var rpid = window._ccRevitProjectUniqueId;
+      if (rpid) return 'revit:' + rpid;
+    } catch (e) {}
+    return (s && s.activeProject) || 'local';
+  }
+
   // ── Action handlers ───────────────────────────────────────────────
 
   var handlers = {};
@@ -378,7 +392,7 @@
       openClashes: (s.clashes || []).filter(function(c) { var st = c.status || 'open'; return st !== 'resolved' && st !== 'expected' && st !== 'closed'; }).length,
       issueCount: (s.issues || []).length,
       activeProject: s.activeProject || null,
-      projectKey: s.activeProject || 'local', // connective-spine partition key
+      projectKey: _projectKey(s), // connective-spine partition key (deterministic)
       source: 'clashcontrol',
       rules: { maxGap: r.maxGap || 10, hard: !!r.hard, modelA: r.modelA || 'all', modelB: r.modelB || 'all', excludeSelf: !!r.excludeSelf },
       // Last detection failure (e.g. RangeError on a huge federation) so the
@@ -415,7 +429,7 @@
       (m.elements || []).forEach(function(el) { if (nm[el.expressId]) map[el.expressId] = _classOf(el.props); });
     });
     function classFor(mid, eid) { return (classIdx[mid] && classIdx[mid][eid]) || null; }
-    var pk = s.activeProject || 'local'; // projectKey — partitions the connective graph
+    var pk = _projectKey(s); // projectKey — partitions the connective graph (deterministic)
 
     return {
       total: clashes.length, offset: offset, returned: slice.length,
@@ -494,7 +508,7 @@
 
   handlers.get_issues = function(p) {
     var s = _getState(); var issues = s.issues || []; var limit = p.limit || 50;
-    var pk = s.activeProject || 'local';
+    var pk = _projectKey(s);
     return { total: issues.length,
       issues: issues.slice(0, limit).map(function(issue, i) {
         // Gather whatever element identity the issue carries, from any source:
@@ -535,7 +549,7 @@
     if (!Object.keys(wantG).length && !Object.keys(wantR).length && !Object.keys(wantU).length)
       return 'Provide uniqueId/uniqueIds (Revit UniqueId — most reliable), globalId/globalIds (IFC GlobalId), or revitId/revitIds (Revit ElementId).';
     var limit = p.limit || 50;
-    var pk = s.activeProject || 'local';
+    var pk = _projectKey(s);
     var out = [];
     (s.models || []).some(function(m) {
       (m.elements || []).some(function(el) {
@@ -579,7 +593,7 @@
   // an export error). Returns only elements that have ≥1 flag.
   handlers.get_element_quality = function(p) {
     var s = _getState();
-    var pk = s.activeProject || 'local';
+    var pk = _projectKey(s);
     var limit = p && p.limit > 0 ? Math.floor(p.limit) : 1000;
     var models = s.models || [];
     if (p && p.modelId) models = models.filter(function(m) { return m.id === p.modelId; });
@@ -617,7 +631,7 @@
   // is scene metres) — reconcile on those.
   handlers.get_levels = function() {
     var s = _getState();
-    var pk = s.activeProject || 'local';
+    var pk = _projectKey(s);
     return { projectKey: pk, source: 'clashcontrol',
       note: 'elevation = model stored units; elevationM = metres when unitScale known; get_clashes.elevation is scene metres.',
       models: (s.models || []).map(function(m) {
