@@ -386,6 +386,14 @@
           confidence: live ? 'live' : 'snapshot' } };
     });
     var r = s.rules || {};
+    // Detection freshness. clashCount:0 is ambiguous (no clashes vs never ran);
+    // lastDetection:null means detection has never run this session. clashesStale
+    // flags that a model synced AFTER the last run, so the clash set is out of date
+    // (re-run before acting). _rh comes from the run-history the reducer keeps.
+    var _rh = (s.runHistory && s.runHistory.length) ? s.runHistory[s.runHistory.length - 1] : null;
+    var _maxSync = 0;
+    (s.models || []).forEach(function(m) { var ls = (m.stats && m.stats.lastSync) || 0; if (ls > _maxSync) _maxSync = ls; });
+    var _clashesStale = !!(_rh && _maxSync && _maxSync > _rh.ts);
     return {
       models: models, modelCount: models.length,
       clashCount: (s.clashes || []).length,
@@ -402,6 +410,31 @@
       // Live progress while detecting so the orchestrator gets intermediate
       // feedback instead of just true→false. {done,total,pct} or null when idle.
       detectionProgress: (function(){ try { return (s.detecting && window._ccDetectProgress) ? window._ccDetectProgress : null; } catch(e){ return null; } })(),
+      // When detection last completed (null = never run this session) + its result
+      // counts, and whether a later model sync makes the current clashes stale.
+      lastDetection: _rh ? { at: _rh.ts, total: _rh.total, open: _rh.open, newCount: _rh.newCount } : null,
+      clashesStale: _clashesStale,
+      // Live Revit-bridge ingest state. Without this an agent can't tell that a
+      // model is still streaming in ("Receiving model from Revit 77%") — modelCount
+      // already shows the slot while the data is half-loaded. `ingesting:true` means
+      // DO NOT act on model/clash data yet; poll until state==='ready'.
+      connector: (function(){
+        try {
+          var rd = s.revitDirect || {};
+          var receiving = !!rd.loading;
+          return {
+            connected: !!rd.connected,
+            state: receiving ? 'receiving' : (rd.connected ? 'ready' : 'disconnected'),
+            ingesting: receiving,
+            percent: receiving ? Math.round((rd.progress || 0) * 100) : (rd.connected ? 100 : 0),
+            elementCount: rd.elementCount || 0,
+            documentName: rd.documentName || null,
+            // Last pull error (e.g. a partial/failed export) so the agent doesn't
+            // treat a half-loaded or stale model as complete. null when OK.
+            lastError: rd.exportError || null
+          };
+        } catch(e) { return null; }
+      })(),
       activeTab: s.tab || 'clashes', walkMode: !!s.walkMode,
       theme: document.documentElement.getAttribute('data-theme') || 'dark'
     };
@@ -1218,7 +1251,7 @@
   // Schema format: JSON Schema subset (OpenAPI-compatible).
 
   var _TOOL_MANIFEST = [
-    { name:'get_status',          description:'Snapshot of the current session: models (with source, version, lastSync and a coarse revision stamp per model — use to check sync with another live tool), clash/issue counts, detection rules, active tab, walk mode, theme.' },
+    { name:'get_status',          description:'Snapshot of the current session: models (with source, version, lastSync and a coarse revision stamp per model — use to check sync with another live tool), clash/issue counts, detection rules, active tab, walk mode, theme. Includes connector:{state(receiving|ready|disconnected),ingesting,percent,elementCount} — when connector.ingesting is true the Revit model is still streaming in, so DO NOT act on model/clash data until state==="ready". Also detecting/detectionProgress and lastDetectionError.' },
     { name:'get_clashes',         description:'Detected clash pairs: status, priority, severity, storey, types/names, distance (mm), elevation (m), disciplines (arch×structural vs same-discipline), and stable identity per side — uniqueIdA/B (Revit UniqueId, most reliable cross-doc key; prefer it), globalIdA/B (IFC GlobalId), revitIdA/B (ElementId, doc-local) — plus classificationA/B ({system,code} NL-SfB/Uniclass) and modelAId/B.',
       params:{ status:{type:'string',enum:['all','open','resolved','approved','expected','closed'],opt:1}, category:{type:'string',opt:1}, limit:{type:'number',opt:1}, offset:{type:'number',opt:1} } },
     { name:'get_clash_summary',   description:'Aggregate profile of the WHOLE clash set without paging it: total/open, and counts byStatus, byCategory (AI), byDiscipline (pair), byTypePair (top N), byStorey. Use to find the few root causes behind a large count.',

@@ -90,7 +90,11 @@ const TOOLS = [
       'and a coarse revision stamp — plus total clash and issue counts, active detection rules (gap ' +
       'tolerance, hard/soft mode), current UI tab, walk mode state, and theme. Use this first to ' +
       "understand what the user is working with, and use each model's revision/lastSync to check " +
-      'whether CC is in sync with another live tool (e.g. PDRA on the same Revit model).',
+      'whether CC is in sync with another live tool (e.g. PDRA on the same Revit model). ' +
+      'Also returns connector:{state ("receiving"|"ready"|"disconnected"), ingesting, percent, ' +
+      'elementCount, documentName}: when connector.ingesting is true the Revit model is still ' +
+      'streaming in (modelCount shows the slot before data is complete), so DO NOT act on model or ' +
+      'clash data until connector.state === "ready". Plus detecting/detectionProgress and lastDetectionError.',
     inputSchema: { type: 'object', properties: {}, required: [] },
   },
   {
