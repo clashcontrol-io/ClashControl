@@ -7000,6 +7000,32 @@ function startApp() {
     var _tmpRight = new THREE.Vector3();
     var _tmpUp = new THREE.Vector3();
     var _up = new THREE.Vector3(0,1,0);
+    var _zoomRay = new THREE.Raycaster();
+    // Nearest VISIBLE surface point under the cursor, for zoom-to-cursor. Honours
+    // active section clipping planes (Raycaster ignores clipping on its own) so we
+    // never aim the zoom at geometry the section has hidden. Null over empty space.
+    function _zoomPickPoint(e){
+      var S = window._ccState3d;
+      if(!S || !S.mg || !S.mg.children || !S.mg.children.length) return null;
+      var rect = el.getBoundingClientRect();
+      var nx = ((e.clientX-rect.left)/rect.width)*2-1;
+      var ny = -((e.clientY-rect.top)/rect.height)*2+1;
+      _zoomRay.setFromCamera({x:nx,y:ny}, camera);
+      var hits = _zoomRay.intersectObjects(S.mg.children, true);
+      var planes = (S.renderer && S.renderer.clippingPlanes) || null;
+      for (var i=0;i<hits.length;i++){
+        var h = hits[i];
+        if (!h.object || !h.object.visible) continue;
+        if (typeof _isGhostMat === 'function' && _isGhostMat(h.object.material)) continue;
+        if (planes && planes.length){
+          var clipped = false;
+          for (var p=0;p<planes.length;p++){ if (planes[p].distanceToPoint(h.point) < 0){ clipped = true; break; } }
+          if (clipped) continue;
+        }
+        return h.point.clone();
+      }
+      return null;
+    }
 
     function sync() {
       var o = _tmpVec.copy(camera.position).sub(target);
@@ -7084,13 +7110,26 @@ function startApp() {
         }
       }
       var zoomFactor = 1+e.deltaY*0.0008;
+      // Zoom IN toward the point under the cursor so you can always approach what
+      // you're looking at — e.g. a section cut that isn't at the orbit centre.
+      // Moving the target toward the picked point moves the camera with it
+      // (apply() derives the camera from target+sph), so the sph.r min-distance
+      // floor never blocks the approach (was: zoom dead-stopped "at a certain
+      // depth" around the model centre, very visible with a section plane).
+      if (zoomFactor < 1 && !orbit.camera.isOrthographicCamera) {
+        var _zp = _zoomPickPoint(e);
+        if (_zp) {
+          var f = Math.min(0.6, (1 - zoomFactor) * 3.5);
+          target.lerp(_zp, f);
+          orbit.apply(); invalidate(); e.preventDefault();
+          return;
+        }
+      }
       var prevR = sph.r;
       sph.r *= zoomFactor;
-      // When zooming IN and the radius would clamp at the floor (0.5 in
-      // apply()), advance the target along the view direction instead.
-      // Without this, users get stuck the moment sph.r hits 0.5 — closer
-      // detail inspection is impossible until they pan or rotate the target.
-      // (Blender / Rhino "drive forward" pattern.)
+      // Empty space under the cursor: fall back to the radius zoom, and when the
+      // radius would clamp at the floor (0.5 in apply()), advance the target along
+      // the view direction instead (Blender / Rhino "drive forward" pattern).
       if (zoomFactor < 1 && sph.r < 0.5 && !orbit.camera.isOrthographicCamera) {
         var advance = Math.max(0, prevR - sph.r); // how much we wanted to close in by
         orbit.camera.getWorldDirection(_tmpDir);
