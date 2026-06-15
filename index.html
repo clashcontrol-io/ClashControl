@@ -575,6 +575,7 @@
      NL-SfB), shared projects without login, and a live link to Revit. Runs fully in the browser
      and offline as a Progressive Web App.</p>
   <nav aria-label="ClashControl pages">
+    <a href="/tour/">ClashControl tour and features</a>
     <a href="/best-free-ifc-viewer/">Best free IFC viewers compared</a>
     <a href="/free-ifc-viewer-online/">Free online IFC viewer</a>
     <a href="/ifc-clash-detection-online/">Online IFC clash detection</a>
@@ -604,6 +605,7 @@
        <a href="https://github.com/clashcontrol-io/ClashControl">the GitHub repository</a>
        to learn more.</p>
     <p>Learn more:
+       <a href="/tour/">Tour and features</a> ·
        <a href="/best-free-ifc-viewer/">Best free IFC viewers compared</a> ·
        <a href="/free-ifc-viewer-online/">Free online IFC viewer</a> ·
        <a href="/ifc-clash-detection-online/">Online IFC clash detection</a> ·
@@ -31244,7 +31246,11 @@ function startApp() {
 
           </div>
 
-          <div style=${{marginTop:'1.4rem',display:'flex',gap:'1rem',alignItems:'center'}}>
+          <div style=${{marginTop:'1.4rem',display:'flex',gap:'1rem',alignItems:'center',flexWrap:'wrap'}}>
+            <a href="/tour/" style=${{
+                fontFamily:'var(--font-body)',fontSize:'var(--text-xs)',
+                color:'var(--ink-faint)',textDecoration:'underline',textUnderlineOffset:'3px',textDecorationThickness:'1px'
+              }}>New here? Take the tour.</a>
             <button onClick=${function(){ if(window._pickSharedFolder) window._pickSharedFolder(d); }}
               style=${{
                 background:'none',border:'none',cursor:'pointer',padding:0,
@@ -33833,6 +33839,62 @@ function startApp() {
   });
 
 } // end startApp
+</script>
+<script>
+// ── Hand-off from the /tour/ marketing page ──────────────────────────────────
+// The tour page can stash a dropped IFC in IndexedDB (db "cc-handoff") and/or
+// request the Revit live link, then redirect here with a query flag. We pick
+// that up once the app's load API is ready. Fully guarded — anything failing
+// here must never block normal boot.
+(function () {
+  try {
+    var q = new URLSearchParams(location.search);
+    var wantLoad = q.has('load');
+    var wantRevit = q.get('connect') === 'revit';
+    if (!wantLoad && !wantRevit) return;
+
+    function clearParams() { try { history.replaceState(null, '', location.pathname); } catch (e) {} }
+    function whenReady(test, cb, tries) {
+      tries = (tries == null) ? 150 : tries; // ~30s at 200ms
+      if (test()) return cb();
+      if (tries <= 0) return;
+      setTimeout(function () { whenReady(test, cb, tries - 1); }, 200);
+    }
+
+    if (wantRevit) {
+      whenReady(function () { return typeof window._ccDispatch === 'function'; }, function () {
+        try { window._ccRevitAutoConnect = true; } catch (e) {}
+        try { if (window._ccActivateAddon) window._ccActivateAddon('revit-bridge'); } catch (e) {}
+        try { window._ccDispatch({ t: 'REVIT_BRIDGE', v: true }); } catch (e) {}
+      });
+    }
+
+    if (wantLoad) {
+      var open = indexedDB.open('cc-handoff', 1);
+      open.onupgradeneeded = function () { try { open.result.createObjectStore('pending'); } catch (e) {} };
+      open.onsuccess = function () {
+        var db = open.result, store;
+        try { store = db.transaction('pending', 'readwrite').objectStore('pending'); }
+        catch (e) { clearParams(); return; }
+        var getReq = store.get('file');
+        getReq.onsuccess = function () {
+          var rec = getReq.result;
+          try { store.delete('file'); } catch (e) {}
+          if (!rec || !rec.blob) { clearParams(); return; }
+          var file;
+          try { file = new File([rec.blob], rec.name || 'model.ifc', { type: rec.type || 'application/octet-stream' }); }
+          catch (e) { clearParams(); return; }
+          whenReady(function () { return typeof window._ccLoadFiles === 'function'; }, function () {
+            try { window._ccLoadFiles([file]); } catch (e) {}
+            clearParams();
+          });
+        };
+        getReq.onerror = function () { clearParams(); };
+      };
+      open.onerror = function () { clearParams(); };
+    }
+  } catch (e) { /* never block boot */ }
+})();
 </script>
 </body>
 </html>
