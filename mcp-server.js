@@ -163,6 +163,25 @@ const TOOLS = [
     },
   },
   {
+    name: 'get_data_quality',
+    description:
+      'Project-level data-quality summary — the aggregate companion to the per-element ' +
+      'get_element_quality. Returns an overall score (0-100) + grade (A-F), plus per-category ' +
+      'sub-scores and raw flagged counts under metrics.{completeness, materials, brokenLinks, ' +
+      'naming, classification, geometry}, and a flat checks[] ({key, label, sev, cat, bucket, ' +
+      'count, rate}). The numeric fields are stable so a consumer (Loam) can track completeness / ' +
+      'materials / broken links / naming over time. Computed from the open, auditable rules in the ' +
+      'Data Quality engine — no detection round-trip. score/grade reconcile 1:1 with the in-app ' +
+      'Quality Score chip (data-quality + accessibility).',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        modelId: { type: 'string', description: 'Limit to one model. Omit for the whole federation.' },
+      },
+      required: [],
+    },
+  },
+  {
     name: 'get_levels',
     description:
       'Per-model level/storey elevations (raw `elevation` in model units + `elevationM` in metres when ' +

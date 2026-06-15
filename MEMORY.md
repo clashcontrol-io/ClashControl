@@ -89,6 +89,12 @@ Things to be careful about. Do not remove without a good reason — add a note i
 Update this section at the start and end of each session.
 Mark completed items with ~~strikethrough~~ and date, then let the daily sync archive them.
 
+On branch `claude/loam-api-stability-enrichment-gxh8gc` (2026-06-15) — Loam API stability + enrichment:
+
+- **Loam's 5-point request triaged against the live bridge surface.** Points 1 (classification + storeyA/storeyB on get_clashes), 3 (uniqueIdA/B + storey + classification on get_issues) and 4 (ingest_detection_feedback, byRule/byPair) were ALREADY shipped (#639–#646) — confirmed in `addons/smart-bridge.js` (get_clashes ~478, get_issues ~580, ingest_detection_feedback ~882). Point 5 (stable weekly detection config) **skipped per user.**
+- **Point 2 BUILT — new `get_data_quality` MCP tool** (the named gap: Loam defaults to `get_data_quality`, overridable via `LOAM_CC_DQ_TOOL`; CC only had per-element `get_element_quality`). New `handlers.get_data_quality` in `addons/smart-bridge.js` (after get_element_quality): flattens all elements, runs `_ccRunDataQualityChecks` + `_ccRunBIMModelChecks` (both guarded), rolls checks into headline buckets **completeness / materials / brokenLinks / naming / classification / geometry** (per-bucket 0-100 sub-score via the same weighted-failure-ratio as the Quality Score chip + raw flaggedCount), overall score/grade from `_ccComputeQualityScore` (reconciles 1:1 with the in-app chip), plus a flat `checks[]`. Stable numeric fields for Loam's pulse. Declared in the addon `_TOOL_MANIFEST` and `mcp-server.js` TOOLS (forwarding is generic — `callBridge(name)` → `handlers[name]`, no allowlist). Optional `modelId` to scope to one model.
+- **Not browser-verified in sandbox** — `node --check` passes on both files; handler is pure logic over plain element objects. First real run = Smart Bridge connected with a model loaded.
+
 On branch `claude/sharp-rubin-tlowao` (2026-06-13) — start-screen Revit live link:
 
 - **4th option on the Welcome/start screen**: added a "Live link to Revit…" row (under "Watch a folder…") in `WelcomePopup` (index.html ~30723). Activates the `revit-bridge` addon then dispatches `{t:'REVIT_BRIDGE',v:true}` to open the Revit Bridge panel — same proven pattern as the "+Add → Live from Revit" menu entry (`_ccActivateAddon('revit-bridge')` first, since addon reducerCases only run when the addon is active). Uses the string action literal `'REVIT_BRIDGE'` (the close handler does too); `A.REVIT_BRIDGE` is not a defined A-key.
