@@ -4,7 +4,7 @@
 // Bump the CACHE version on any URL change here so old clients invalidate
 // their precache. Three.js r128 (UMD) → r180 (ESM module) is the trigger
 // for v5.20.0.
-var CACHE = 'clashcontrol-v5.20.34';
+var CACHE = 'clashcontrol-v5.20.35';
 
 var PRECACHE = [
   './',

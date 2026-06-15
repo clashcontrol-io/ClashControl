@@ -1,5 +1,8 @@
 # Changelog
 
+## v5.20.35 (2026-06-15)
+- Tour rewrite, discipline auto-detect, viewer drag/box fixes, friendlier errors (#648)
+
 ## v5.20.34 (2026-06-15)
 - Loam API enrichment (get_data_quality) + SEO tour & comparison pages (#647)
 
