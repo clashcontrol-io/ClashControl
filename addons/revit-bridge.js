@@ -17,6 +17,8 @@
   var _revitTmpMtx = null; // reused per placement; lazy-init once THREE is loaded
   var _revitAborted = false; // set by Cancel — ignore further export messages until the next export-start
   var _revitReconnect = null;
+  var _revitConnectTimeout = null; // watchdog: fails a socket stuck in CONNECTING (handshake never completes)
+  var CONNECT_TIMEOUT_MS = 5000;   // how long to wait for the WS handshake before giving up
   var _revitReconnectDelay = 0; // exponential backoff: 0 = no reconnect scheduled
   var _revitLastPort = 19780;
   var _revitLastDispatch = null;
@@ -122,6 +124,14 @@
   // ── WebSocket connection ───────────────────────────────────────
 
   function _revitDirectConnect(port, d) {
+    // Debounce repeat triggers while an attempt to the same port is already in
+    // flight (impatient Connect clicks). Aborting the in-flight socket only
+    // restarts the clock and spams "closed before the connection is
+    // established" — let the existing attempt and its watchdog resolve first.
+    if (_revitWs && _revitWs.readyState === 0 && _revitLastPort === (port || 19780)) {
+      if (d) d({t:'BRIDGE_LOG', logType:'info', text:'Already connecting to Revit — please wait…'});
+      return;
+    }
     // Tear down any prior socket AND detach its handlers before opening a new
     // one. If we close a socket but leave its onclose/onerror attached, that
     // superseded socket can still fire _scheduleReconnect() — stacking a second
@@ -133,6 +143,7 @@
       _revitWs = null;
     }
     clearTimeout(_revitReconnect);
+    clearTimeout(_revitConnectTimeout);
     _revitLastPort = port || 19780;
     _revitLastDispatch = d;
     _revitUserDisconnected = false;
@@ -147,7 +158,24 @@
     }
     ws.binaryType = 'arraybuffer';
 
+    // Handshake watchdog: a wedged Connector can accept the TCP connection but
+    // never complete the WebSocket upgrade, leaving the socket stuck in
+    // CONNECTING with no onopen/onerror — a silent hang. Fail it explicitly
+    // after CONNECT_TIMEOUT_MS with a clear message, then fall into the normal
+    // backoff so a later attempt (or a Connector restart) can recover.
+    clearTimeout(_revitConnectTimeout);
+    _revitConnectTimeout = setTimeout(function() {
+      if (_revitWs !== ws || ws.readyState !== 0) return; // already opened/closed
+      d({t:'BRIDGE_LOG', logType:'error', text:'Revit handshake timed out after ' + (CONNECT_TIMEOUT_MS/1000) + 's. The Connector may be wedged — toggle it off then on in Revit.'});
+      d({t:'UPD_REVIT_DIRECT', u:{connected:false, loading:false}});
+      try { ws.onopen = ws.onclose = ws.onerror = ws.onmessage = null; } catch(_) {}
+      try { ws.close(); } catch(_) {}
+      _revitWs = null;
+      _scheduleReconnect();
+    }, CONNECT_TIMEOUT_MS);
+
     ws.onopen = function() {
+      clearTimeout(_revitConnectTimeout);
       // Guard against a stale socket: a prior attempt's onopen can race in
       // after a reconnect superseded it (or after close nulled _revitWs),
       // which previously threw "Cannot read properties of null (reading 'send')".
@@ -195,6 +223,7 @@
       // is ignored. Strict !== — not "_revitWs && _revitWs !== ws" — so a null
       // _revitWs can't let a stale socket through to _scheduleReconnect().
       if (_revitWs !== ws) return;
+      clearTimeout(_revitConnectTimeout);
       d({t:'UPD_REVIT_DIRECT', u:{connected:false, loading:false}});
       d({t:'BRIDGE_LOG', logType:'info', text:'Revit connection closed.'});
       _revitLoadingEvent(false); // clear the loading card if the link drops mid-pull
@@ -204,6 +233,7 @@
 
     ws.onerror = function() {
       if (_revitWs !== ws) return; // superseded socket
+      clearTimeout(_revitConnectTimeout);
       d({t:'UPD_REVIT_DIRECT', u:{connected:false, loading:false}});
       _revitLoadingEvent(false);
       // Only log error if not already reconnecting (avoid spam)
@@ -228,8 +258,13 @@
   function _revitDirectDisconnect(d) {
     _revitUserDisconnected = true;
     clearTimeout(_revitReconnect);
+    clearTimeout(_revitConnectTimeout);
     _resetReconnectDelay();
-    if (_revitWs) { _revitWs.close(); _revitWs = null; }
+    if (_revitWs) {
+      try { _revitWs.onopen = _revitWs.onclose = _revitWs.onerror = _revitWs.onmessage = null; } catch(_) {}
+      try { _revitWs.close(); } catch(_) {}
+      _revitWs = null;
+    }
     _revitBuf = null;
     d({t:'UPD_REVIT_DIRECT', u:{connected:false, loading:false, progress:0, documentName:'', reconnecting:false}});
   }
@@ -1363,8 +1398,13 @@
     destroy: function() {
       _revitUserDisconnected = true;
       clearTimeout(_revitReconnect);
+      clearTimeout(_revitConnectTimeout);
       _resetReconnectDelay();
-      if (_revitWs) { _revitWs.close(); _revitWs = null; }
+      if (_revitWs) {
+        try { _revitWs.onopen = _revitWs.onclose = _revitWs.onerror = _revitWs.onmessage = null; } catch(_) {}
+        try { _revitWs.close(); } catch(_) {}
+        _revitWs = null;
+      }
       _revitBuf = null;
     }
   });
