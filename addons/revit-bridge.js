@@ -590,6 +590,15 @@
           _revitBuf._lastPct = _pctNow;
           _revitBuf._lastProgTs = _nowTs;
           d({t:'UPD_REVIT_DIRECT', u:{progress: _pctNow / 100, elementCount: _revitBuf.received}});
+          // Also drive the big centered loading card. The panel badge is easy to
+          // miss on a long pull, so a bare "Receiving model from Revit…" looked
+          // frozen on an 82k model. Feed it a live count + percent (the card
+          // parses the "%" into its progress chip). Piggybacks the same ~3/sec
+          // throttle, so it can't reintroduce the per-batch slow-pull cost.
+          var _cardMsg = _revitBuf.count > 0
+            ? 'Receiving from Revit: ' + _revitBuf.received.toLocaleString() + ' / ' + _revitBuf.count.toLocaleString() + ' elements (' + _pctNow + '%)'
+            : 'Receiving from Revit: ' + _revitBuf.received.toLocaleString() + ' elements…';
+          _revitLoadingEvent(true, _cardMsg);
         }
         break;
 
