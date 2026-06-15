@@ -52,6 +52,13 @@
 
   function _scheduleReconnect() {
     if (_revitUserDisconnected || !_revitLastDispatch) return;
+    // Never let two reconnect chains run at once. _revitReconnect holds a single
+    // timer id, so if a second schedule overwrites it the first timer leaks —
+    // _revitDirectConnect's lone clearTimeout can't cancel it, and the orphan
+    // fires its own connect, which multiplies into a runaway loop (many
+    // "Connecting…" log lines per second, "can't connect at all").
+    clearTimeout(_revitReconnect);
+    if (_revitWs && _revitWs.readyState <= 1) return; // a connect is already in flight
     _revitReconnectDelay = Math.min((_revitReconnectDelay || 1000) * 2, 30000);
     var delay = _revitReconnectDelay;
     _revitLastDispatch({t:'UPD_REVIT_DIRECT', u:{reconnecting:true, reconnectIn:delay}});
@@ -115,7 +122,16 @@
   // ── WebSocket connection ───────────────────────────────────────
 
   function _revitDirectConnect(port, d) {
-    if (_revitWs && _revitWs.readyState <= 1) { _revitWs.close(); }
+    // Tear down any prior socket AND detach its handlers before opening a new
+    // one. If we close a socket but leave its onclose/onerror attached, that
+    // superseded socket can still fire _scheduleReconnect() — stacking a second
+    // reconnect chain alongside the new attempt. Detaching first guarantees only
+    // the current socket can ever drive reconnect/log state.
+    if (_revitWs) {
+      try { _revitWs.onopen = _revitWs.onclose = _revitWs.onerror = _revitWs.onmessage = null; } catch(_) {}
+      try { if (_revitWs.readyState <= 1) _revitWs.close(); } catch(_) {}
+      _revitWs = null;
+    }
     clearTimeout(_revitReconnect);
     _revitLastPort = port || 19780;
     _revitLastDispatch = d;
@@ -174,8 +190,11 @@
     };
 
     ws.onclose = function() {
-      // Ignore a superseded socket's close — it must not tear down a newer one.
-      if (_revitWs && _revitWs !== ws) return;
+      // Only the current socket may drive teardown + reconnect. A superseded
+      // socket (or one closed by a deliberate disconnect, which nulls _revitWs)
+      // is ignored. Strict !== — not "_revitWs && _revitWs !== ws" — so a null
+      // _revitWs can't let a stale socket through to _scheduleReconnect().
+      if (_revitWs !== ws) return;
       d({t:'UPD_REVIT_DIRECT', u:{connected:false, loading:false}});
       d({t:'BRIDGE_LOG', logType:'info', text:'Revit connection closed.'});
       _revitLoadingEvent(false); // clear the loading card if the link drops mid-pull
@@ -184,13 +203,14 @@
     };
 
     ws.onerror = function() {
-      if (_revitWs && _revitWs !== ws) return; // superseded socket
+      if (_revitWs !== ws) return; // superseded socket
       d({t:'UPD_REVIT_DIRECT', u:{connected:false, loading:false}});
       _revitLoadingEvent(false);
       // Only log error if not already reconnecting (avoid spam)
       if (!_revitReconnectDelay) d({t:'BRIDGE_LOG', logType:'error', text:'Could not connect to Revit. Is the plugin running?'});
-      _revitWs = null;
-      // onclose will also fire and trigger reconnect
+      // Do NOT null _revitWs here — that would defeat onclose's "is this still
+      // the current socket?" guard. onclose fires right after and owns teardown
+      // (null + _scheduleReconnect).
     };
 
     ws.onmessage = function(ev) {
