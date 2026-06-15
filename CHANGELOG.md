@@ -1,5 +1,8 @@
 # Changelog
 
+## v5.21.0 (2026-06-15)
+- Measure coexists with the section plane + zoom-toward-cursor (#649)
+
 ## v5.20.35 (2026-06-15)
 - Tour rewrite, discipline auto-detect, viewer drag/box fixes, friendlier errors (#648)
 
