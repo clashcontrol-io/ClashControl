@@ -1,5 +1,8 @@
 # Changelog
 
+## v5.20.34 (2026-06-15)
+- Loam API enrichment (get_data_quality) + SEO tour & comparison pages (#647)
+
 ## v5.20.33 (2026-06-14)
 - BCF import: carry referenced IfcGUIDs onto issues (#646)
 
