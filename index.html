@@ -753,15 +753,36 @@ function startApp() {
   window._ccParseLoadPct = _parseLoadPct;
 
   function _readFileWithProgress(file, onProgress) {
-    return new Promise(function(resolve, reject) {
-      var r = new FileReader();
-      r.onload = function(e) { resolve(e.target.result); };
-      r.onerror = function() { reject(r.error || new Error('FileReader error')); };
-      r.onprogress = function(e) {
-        if (onProgress && e.lengthComputable) onProgress(e.loaded, e.total);
-      };
-      r.readAsArrayBuffer(file);
-    });
+    function attempt(retriesLeft) {
+      return new Promise(function(resolve, reject) {
+        var r = new FileReader();
+        r.onload = function(e) { resolve(e.target.result); };
+        r.onerror = function() {
+          var err = r.error || new Error('FileReader error');
+          // NotReadableError / SecurityError = the OS wouldn't hand over the
+          // bytes. Almost always a cloud placeholder (OneDrive/SharePoint "online
+          // only") that isn't downloaded, a file still open/locked in another app
+          // (e.g. Revit mid-export), or one moved/renamed after it was picked.
+          var locked = err && (err.name === 'NotReadableError' || err.name === 'SecurityError');
+          // One retry often clears a transient lock or lets on-demand sync finish.
+          if (locked && retriesLeft > 0) {
+            setTimeout(function(){ attempt(retriesLeft - 1).then(resolve, reject); }, 700);
+            return;
+          }
+          if (locked) {
+            var friendly = new Error('Could not read the file. If it lives in OneDrive/SharePoint/Dropbox, set it to "Always keep on this device" so it downloads, then retry. Otherwise it may be open in another program (close it) or it was moved/renamed after you picked it.');
+            friendly.name = err.name;
+            return reject(friendly);
+          }
+          reject(err);
+        };
+        r.onprogress = function(e) {
+          if (onProgress && e.lengthComputable) onProgress(e.loaded, e.total);
+        };
+        r.readAsArrayBuffer(file);
+      });
+    }
+    return attempt(1);
   }
   window._ccReadFileWithProgress = _readFileWithProgress;
 
@@ -6998,7 +7019,7 @@ function startApp() {
     sync();
 
     el.addEventListener('mousedown', function(e) {
-      if(_sboxDragging || _walkActive) return; // don't orbit while dragging section box handles or in walk mode
+      if(_sboxDragging || _walkActive || window._ccSectionDragging) return; // don't orbit while dragging section box / plane handles or in walk mode
       if (e.button===0) { dragging=true; _orbitDragging=true; var _s3d=window._ccState3d; if(_s3d&&_s3d._sectionCutLines) _s3d._sectionCutLines.visible=false; }
       if (e.button===1) { panning=true; _orbitDragging=true; e.preventDefault(); el.style.cursor='move'; var _s3d2=window._ccState3d; if(_s3d2&&_s3d2._sectionCutLines) _s3d2._sectionCutLines.visible=false; }
       if (e.button===2) return; // reserved for context menu
@@ -7008,6 +7029,9 @@ function startApp() {
       if(!dragging&&!panning) return;
       // If walk mode activated while orbit drag was held, clear the drag state
       if(_walkActive){ dragging=false; panning=false; el.style.cursor=''; _orbitDragging=false; return; }
+      // A section-plane / section-box / floor-plan handle drag owns the gesture —
+      // never orbit at the same time (was: camera rotated while dragging a handle).
+      if(window._ccSectionDragging || _sboxDragging){ dragging=false; panning=false; el.style.cursor=''; _orbitDragging=false; return; }
       var dx=e.clientX-lx, dy=e.clientY-ly; lx=e.clientX; ly=e.clientY;
       if(dragging){ sph.theta-=dx*0.007; sph.phi-=dy*0.007; orbit.apply(); invalidate(); }
       if(panning){
@@ -7478,7 +7502,10 @@ function startApp() {
       function _walkRequestLock(e) {
         if (!_walkActive || _walkPointerLocked) return;
         if (e && e.button !== undefined && e.button !== 0) return; // left only
-        try { renderer.domElement.requestPointerLock(); } catch(_){}
+        // requestPointerLock rejects ASYNCHRONOUSLY (e.g. "cannot be acquired
+        // immediately after the user exited the lock") — a sync try/catch misses
+        // it, so it surfaced as a flood of unhandled rejections. Swallow it.
+        try { var _plp = renderer.domElement.requestPointerLock(); if (_plp && typeof _plp.catch === 'function') _plp.catch(function(){}); } catch(_){}
       }
       renderer.domElement.addEventListener('mousedown', _walkRequestLock);
       renderer.domElement.addEventListener('click',     _walkRequestLock);
@@ -8903,6 +8930,13 @@ function startApp() {
       // ── Activate Section Box — Revit-style: around selected element if one is active,
       //    otherwise around the full model (useful for global orientation/cropping). ──
       window._ccActivateSectionBox = function() {
+        // Priority 0: a MULTI-selection — box the selected elements together, not
+        // the whole building (was: multi-select fell through to the full-model box).
+        var refs = window._ccSelectedRefs;
+        if (refs && refs.length > 1 && _sboxAroundElements) {
+          _sboxAroundElements(refs);
+          return true;
+        }
         // Priority 1: selected element has a pre-computed bounding box
         var sel = window._ccSelectedEl;
         if (sel && sel.box && !sel.box.isEmpty()) {
@@ -11004,6 +11038,7 @@ function startApp() {
             if (fpHits.length > 0) {
               e.preventDefault(); e.stopImmediatePropagation();
               S2.orbit.enabled = false;
+              window._ccSectionDragging = true; // claim the gesture so orbit can't start
               _fpDrag = {
                 startY: e.clientY,
                 startCutAt: S2._cutPlaneHelper.position.y,
@@ -11032,6 +11067,7 @@ function startApp() {
           if (hits.length > 0) {
             e.preventDefault(); e.stopImmediatePropagation(); // prevent orbit mousedown from also firing
             S2.orbit.enabled = false;
+            window._ccSectionDragging = true; // claim the gesture immediately so orbit can't start
             var wantsRotate = hits[0].object.userData._secHandle === 'rotate' || e.shiftKey;
             if (wantsRotate) {
               var np = _getSecNormalAndPoint(cs);
@@ -11111,12 +11147,21 @@ function startApp() {
           if (cs && cs.axis) _sdDir = ({x:[1,0,0], y:[0,1,0], z:[0,0,1]})[cs.axis];
           else if (cs && cs.custom && cs.custom.normal) _sdDir = cs.custom.normal;
           if (_sdDir && S2 && S2.camera) {
-            var _gizP = (S2._sectionPlaneVis && S2._sectionPlaneVis.position) || new THREE.Vector3(0,0,0);
-            var origin = _gizP.clone().project(S2.camera);
-            var tip    = _gizP.clone().add(new THREE.Vector3(_sdDir[0],_sdDir[1],_sdDir[2])).project(S2.camera);
-            var sx = tip.x - origin.x, sy = tip.y - origin.y;
-            var sLen = Math.sqrt(sx*sx + sy*sy) || 1;
-            sx /= sLen; sy /= sLen;
+            // Cache the screen-space travel direction ONCE at the first move. The
+            // gizmo slides as you drag; recomputing the projection from its moving
+            // position fed back into the mapping and made the cut bump forward/back.
+            var sx, sy;
+            if (_secDrag.screenDir) {
+              sx = _secDrag.screenDir.x; sy = _secDrag.screenDir.y;
+            } else {
+              var _gizP = (S2._sectionPlaneVis && S2._sectionPlaneVis.position) || new THREE.Vector3(0,0,0);
+              var origin = _gizP.clone().project(S2.camera);
+              var tip    = _gizP.clone().add(new THREE.Vector3(_sdDir[0],_sdDir[1],_sdDir[2])).project(S2.camera);
+              sx = tip.x - origin.x; sy = tip.y - origin.y;
+              var sLen = Math.sqrt(sx*sx + sy*sy) || 1;
+              sx /= sLen; sy /= sLen;
+              _secDrag.screenDir = {x:sx, y:sy};
+            }
             var el = renderer.domElement;
             var mdx =  dx / el.clientWidth  * 2;
             var mdy = -dy / el.clientHeight * 2;
@@ -11500,15 +11545,17 @@ function startApp() {
           if (movedLOD && camLOD) clashMarkersRef.current.userData.updateLOD(camLOD);
         }
 
-        // Constant-pixel section-box handles.  See INTERNALS.md § 21.24
-        if (S._sboxFaceHandles) {
-          S._sboxFaceHandles.forEach(function(h) {
-            if (h && h.userData && h.userData._maxWorldSize && h.userData._baseSize) {
-              var s = h.userData._maxWorldSize / h.userData._baseSize;
-              if (s > 0 && isFinite(s)) h.scale.setScalar(s);
-            }
-          });
-        }
+        // Constant-size section-box handles — face arrows AND corner grips, so
+        // both read at the same scale.  See INTERNALS.md § 21.24
+        var _sboxScaleAll = [];
+        if (S._sboxFaceHandles) _sboxScaleAll = _sboxScaleAll.concat(S._sboxFaceHandles);
+        if (S._sboxHandles)     _sboxScaleAll = _sboxScaleAll.concat(S._sboxHandles);
+        _sboxScaleAll.forEach(function(h) {
+          if (h && h.userData && h.userData._maxWorldSize && h.userData._baseSize) {
+            var s = h.userData._maxWorldSize / h.userData._baseSize;
+            if (s > 0 && isFinite(s)) h.scale.setScalar(s);
+          }
+        });
 
         // Constant-pixel section-plane gizmo.  See INTERNALS.md § 21.24
         if (S._sectionPlaneVis && S._sectionPlaneVis._secHandleGroup) {
@@ -12252,6 +12299,9 @@ function startApp() {
         {w:hx*2,h:hy*2,pos:axZ.clone().multiplyScalar(-hz),lookDir:'-z'}  // -Z face
       ];
       faceDefs.forEach(function(fd){
+        // Skip the bottom fill: it sat on the floor like a shadow and (because of
+        // its Euler order) spun counter to the box when rotating. Turning it off.
+        if(fd.lookDir==='-y') return;
         var pg=new THREE.PlaneGeometry(fd.w,fd.h);
         var pm=new THREE.Mesh(pg,new THREE.MeshBasicMaterial({color:0x1a6b4a,transparent:true,opacity:0.06,side:THREE.DoubleSide,depthWrite:false}));
         pm.castShadow = false;     // see wireframe note above
@@ -12277,6 +12327,10 @@ function startApp() {
       // regardless of model scale or camera distance — otherwise the same
       // handle looks tiny on a 5 m apartment and huge on a 500 m tower.
       var handleSize = Math.max(0.07, Math.min(maxDim*0.028, 0.20));
+      // Corner grips get the SAME constant-size treatment as the face arrows
+      // (re-applied every frame in the tick loop) so they don't read at a
+      // different scale than the arrows on big or small models.
+      var _cornerMaxWorld = Math.max(0.08, Math.min(maxDim*0.02, 0.28));
       var handleGeo=new THREE.SphereGeometry(handleSize,8,8);
       var handles=[];
       // renderer.clippingPlanes clips everything outside the section box, including
@@ -12302,6 +12356,7 @@ function startApp() {
         mesh.userData._handleAxY=axY.clone();
         mesh.userData._handleAxZ=axZ.clone();
         mesh.userData._baseSize=handleSize;
+        mesh.userData._maxWorldSize=_cornerMaxWorld;
         mesh.renderOrder=999;
         _sboxUnclip(mesh);
         S.scene.add(mesh);
@@ -13945,7 +14000,7 @@ function startApp() {
               });
           }).then(function(result){
             if (!result) return; // load was cancelled
-            var disc = detectDiscipline(result.elements);
+            var disc = detectDiscipline(result.elements, entry.name);
             var dObj = DISC.find(function(x){return x.id===disc;});
             var col = dObj ? dObj.c : DISC[0].c;
             var fSize = result.stats ? result.stats.fileSize : entry.buffer.byteLength;
@@ -14926,17 +14981,35 @@ function startApp() {
     return null;
   }
 
-  function detectDiscipline(elements) {
-    var mepTypes = {'IfcFlowSegment':1,'IfcFlowTerminal':1,'IfcFlowFitting':1,'IfcDistributionFlowElement':1,'IfcPipeSegment':1,'IfcDuctSegment':1};
-    var structTypes = {'IfcBeam':1,'IfcColumn':1,'IfcFooting':1,'IfcPile':1,'IfcMember':1,'IfcPlate':1};
-    var mepCount=0, structCount=0, archCount=0;
+  function detectDiscipline(elements, name) {
+    // Only DISCRIMINATING element types vote. Walls, slabs, roofs, spaces and
+    // generic proxies are shared by every discipline (a concrete structural
+    // model is mostly walls and slabs), so counting them just drags everything
+    // to "architectural" — which is the bug this replaces.
+    var MEP = {IfcFlowSegment:1,IfcFlowFitting:1,IfcFlowTerminal:1,IfcFlowController:1,IfcFlowMovingDevice:1,IfcFlowStorageDevice:1,IfcFlowTreatmentDevice:1,IfcEnergyConversionDevice:1,IfcDistributionElement:1,IfcDistributionFlowElement:1,IfcDistributionControlElement:1,IfcDistributionChamberElement:1,IfcPipeSegment:1,IfcPipeFitting:1,IfcDuctSegment:1,IfcDuctFitting:1,IfcDuctSilencer:1,IfcCableCarrierSegment:1,IfcCableCarrierFitting:1,IfcCableSegment:1,IfcCableFitting:1,IfcJunctionBox:1,IfcAirTerminal:1,IfcAirTerminalBox:1,IfcSanitaryTerminal:1,IfcWasteTerminal:1,IfcStackTerminal:1,IfcValve:1,IfcPump:1,IfcTank:1,IfcBoiler:1,IfcChiller:1,IfcCoil:1,IfcCompressor:1,IfcCondenser:1,IfcCooledBeam:1,IfcCoolingTower:1,IfcFan:1,IfcFilter:1,IfcHeatExchanger:1,IfcHumidifier:1,IfcSpaceHeater:1,IfcUnitaryEquipment:1,IfcElectricAppliance:1,IfcElectricDistributionBoard:1,IfcElectricFlowStorageDevice:1,IfcElectricGenerator:1,IfcElectricMotor:1,IfcLamp:1,IfcLightFixture:1,IfcOutlet:1,IfcSwitchingDevice:1,IfcProtectiveDevice:1,IfcMotorConnection:1,IfcTransformer:1,IfcSensor:1,IfcActuator:1,IfcController:1,IfcAlarm:1,IfcMedicalDevice:1,IfcAudioVisualAppliance:1,IfcCommunicationsAppliance:1};
+    var STR = {IfcBeam:1,IfcColumn:1,IfcFooting:1,IfcPile:1,IfcMember:1,IfcReinforcingBar:1,IfcReinforcingMesh:1,IfcReinforcingElement:1,IfcTendon:1,IfcTendonAnchor:1,IfcStructuralMember:1,IfcStructuralCurveMember:1,IfcStructuralSurfaceMember:1};
+    var ARC = {IfcDoor:1,IfcWindow:1,IfcStair:1,IfcStairFlight:1,IfcRamp:1,IfcRampFlight:1,IfcRailing:1,IfcCovering:1,IfcCurtainWall:1,IfcFurnishingElement:1,IfcFurniture:1,IfcSystemFurnitureElement:1};
+    var CIV = {IfcCivilElement:1,IfcPavement:1,IfcCourse:1,IfcKerb:1,IfcEarthworksElement:1,IfcEarthworksCut:1,IfcEarthworksFill:1,IfcBridge:1,IfcRoad:1,IfcAlignment:1,IfcGeotechnicalElement:1,IfcGeotechnicalStratum:1};
+    var mep=0, str=0, arc=0, civ=0;
     (elements||[]).forEach(function(el){
       var t=(el.props&&el.props.ifcType)||'';
-      if(mepTypes[t]) mepCount++; else if(structTypes[t]) structCount++; else archCount++;
+      if(MEP[t])mep++; else if(STR[t])str++; else if(ARC[t])arc++; else if(CIV[t])civ++;
     });
-    if(mepCount>structCount&&mepCount>archCount) return 'mep';
-    if(structCount>archCount) return 'structural';
-    return 'architectural';
+    var total = mep+str+arc+civ;
+    function lead(){ var m=Math.max(mep,str,arc,civ); return m===0?null:(m===mep?'mep':m===str?'structural':m===civ?'civil':'architectural'); }
+    // Confident element-based guess: a clear majority among discriminating types.
+    if (total >= 5 && Math.max(mep,str,arc,civ) >= total*0.5) return lead();
+    // Otherwise lean on the file/model name — federated models are almost always
+    // named by discipline (NL + EN keywords).
+    var nm = (name||'').toLowerCase();
+    if (nm) {
+      if (/installat|ventilat|klimaat|sanitair|riool|verwarm|elektr|electr|hvac|\bmep\b|mechanic|plumb|piping|\bduct|\bhv\b/.test(nm)) return 'mep';
+      if (/constructi|structur|draagc|fundering|wapening|beton|staalc|framing|rebar|\bstr\b|[\-_]str[\-_]/.test(nm)) return 'structural';
+      if (/bouwkundig|architect|gevel|interieur|afbouw|\barch\b|\bark\b|\bbk\b/.test(nm)) return 'architectural';
+      if (/\bcivi|terrein|infra|wegen|bridge|\bgww\b|maaiveld/.test(nm)) return 'civil';
+    }
+    // Last resort: whichever discriminating bucket led, else architectural.
+    return lead() || 'architectural';
   }
   window._ccDetectDiscipline = detectDiscipline;
 
@@ -15170,7 +15243,7 @@ function startApp() {
                   } else if (_overlapWarn) {
                     setErr(_overlapWarn);
                   }
-                  var disc = detectDiscipline(result.elements);
+                  var disc = detectDiscipline(result.elements, base);
                   var dObj = DISC.find(function(x){return x.id===disc;});
                   var col = dObj ? dObj.c : DISC[0].c;
                   var modelId = uid();
@@ -15273,7 +15346,7 @@ function startApp() {
                 result = joinGLBWithSidecar(syntheticGlb, parsed, function(msg){ setLoadMsg(base + ': ' + msg); });
               }
               if (result.warnings && result.warnings.length) result.warnings.forEach(function(w){ errors.push(w); });
-              var disc = detectDiscipline(result.elements);
+              var disc = detectDiscipline(result.elements, base);
               var dObj = DISC.find(function(x){return x.id===disc;});
               var col = dObj ? dObj.c : _existingModel.color;
               d({t:A.REPLACE_MODEL, id:_existingModel.id, v:{
@@ -15399,7 +15472,7 @@ function startApp() {
             return _loadP.then(function(result) {
               if (!result) return; // load was cancelled by a newer load
               if (_declUnit != null) { result.stats = result.stats || {}; result.stats.unitScale = _declUnit; }
-              disc = detectDiscipline(result.elements);
+              disc = detectDiscipline(result.elements, f.name);
               var dObj = DISC.find(function(x){return x.id===disc;});
               col = dObj ? dObj.c : col;
               var fSize = result.stats ? result.stats.fileSize : buf.byteLength;
@@ -21442,7 +21515,10 @@ function startApp() {
       if (e.button !== 0) return;
       // Prefer fresh raycast at click position; fall back to last-move hit
       var h2 = raycastFloor(e) || hit;
-      if (!h2 || !h2.point){ return; } // only block if no surface at all
+      if (!h2 || !h2.point){ return; } // no surface at all
+      // The reticle was red/amber (no valid floor, or too thin to stand on) — the
+      // drop used to commit anyway and walk mode showed nothing. Reject instead.
+      if (!h2.valid || h2.thin){ try { window.dispatchEvent(new CustomEvent('cc-walk-tele-reject',{detail:{}})); } catch(_){} return; }
       var unit = (typeof _walkResolveUnitScale === 'function') ? _walkResolveUnitScale() : 1;
       var heightM = (typeof window._ccWalkGetFlags==='function'? (window._ccWalkGetFlags().height||1.7) : 1.7);
       var entry = {
@@ -23218,7 +23294,7 @@ function startApp() {
       if (!loading) return;
       var t = setInterval(function(){
         setTick(function(x){ return x + 1; });
-        if (startedAt && Date.now() - startedAt > 8000) setSlow(true);
+        if (startedAt && Date.now() - startedAt > 20000) setSlow(true);
       }, 1000);
       return function(){ clearInterval(t); };
     }, [loading, startedAt]);
@@ -23238,6 +23314,24 @@ function startApp() {
       if (!phase) phase = 'Opening model…';
     }
     var elapsed = startedAt ? Math.floor((Date.now() - startedAt) / 1000) : 0;
+    // Once we cross the "slow" threshold, rotate a light message every ~5s so a
+    // long load feels alive instead of frozen. First line is the honest one;
+    // the rest are easter eggs.
+    var SLOW_MSGS = [
+      "Taking longer than usual — big model or a slow disk. It’ll keep going.",
+      "Still crunching the geometry…",
+      "Counting all the ducts…",
+      "Untangling the MEP spaghetti…",
+      "Reticulating splines…",
+      "Asking the beams to hold still…",
+      "Negotiating with the IFC schema…",
+      "Bribing the clash engine with coffee…",
+      "Herding stray elements back into their storeys…",
+      "Aligning the chakras of your model…",
+      "Almost there — thanks for your patience."
+    ];
+    var _slowStep = Math.floor((elapsed - 20) / 5);
+    var slowMsg = _slowStep <= 0 ? SLOW_MSGS[0] : SLOW_MSGS[1 + ((_slowStep - 1) % (SLOW_MSGS.length - 1))];
 
     return html`<div aria-live="polite" role="status"
       style=${{
@@ -23288,7 +23382,7 @@ function startApp() {
       </div>
       ${slow ? html`<div style=${{
         fontSize:'var(--text-xs)', color:'var(--text-muted)', lineHeight:'var(--leading-base)'
-      }}>This is taking longer than usual — slow network or a very large model? It'll keep going.</div>` : null}
+      }}>${slowMsg}</div>` : null}
       <div style=${{display:'flex', alignItems:'center', justifyContent:'space-between'}}>
         <button onClick=${function(){ if (window._ccAbortLoading) window._ccAbortLoading(); }}
           style=${{fontSize:'var(--text-2xs)', padding:'.15rem .5rem', background:'none',
