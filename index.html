@@ -753,15 +753,36 @@ function startApp() {
   window._ccParseLoadPct = _parseLoadPct;
 
   function _readFileWithProgress(file, onProgress) {
-    return new Promise(function(resolve, reject) {
-      var r = new FileReader();
-      r.onload = function(e) { resolve(e.target.result); };
-      r.onerror = function() { reject(r.error || new Error('FileReader error')); };
-      r.onprogress = function(e) {
-        if (onProgress && e.lengthComputable) onProgress(e.loaded, e.total);
-      };
-      r.readAsArrayBuffer(file);
-    });
+    function attempt(retriesLeft) {
+      return new Promise(function(resolve, reject) {
+        var r = new FileReader();
+        r.onload = function(e) { resolve(e.target.result); };
+        r.onerror = function() {
+          var err = r.error || new Error('FileReader error');
+          // NotReadableError / SecurityError = the OS wouldn't hand over the
+          // bytes. Almost always a cloud placeholder (OneDrive/SharePoint "online
+          // only") that isn't downloaded, a file still open/locked in another app
+          // (e.g. Revit mid-export), or one moved/renamed after it was picked.
+          var locked = err && (err.name === 'NotReadableError' || err.name === 'SecurityError');
+          // One retry often clears a transient lock or lets on-demand sync finish.
+          if (locked && retriesLeft > 0) {
+            setTimeout(function(){ attempt(retriesLeft - 1).then(resolve, reject); }, 700);
+            return;
+          }
+          if (locked) {
+            var friendly = new Error('Could not read the file. If it lives in OneDrive/SharePoint/Dropbox, set it to "Always keep on this device" so it downloads, then retry. Otherwise it may be open in another program (close it) or it was moved/renamed after you picked it.');
+            friendly.name = err.name;
+            return reject(friendly);
+          }
+          reject(err);
+        };
+        r.onprogress = function(e) {
+          if (onProgress && e.lengthComputable) onProgress(e.loaded, e.total);
+        };
+        r.readAsArrayBuffer(file);
+      });
+    }
+    return attempt(1);
   }
   window._ccReadFileWithProgress = _readFileWithProgress;
 
@@ -13945,7 +13966,7 @@ function startApp() {
               });
           }).then(function(result){
             if (!result) return; // load was cancelled
-            var disc = detectDiscipline(result.elements);
+            var disc = detectDiscipline(result.elements, entry.name);
             var dObj = DISC.find(function(x){return x.id===disc;});
             var col = dObj ? dObj.c : DISC[0].c;
             var fSize = result.stats ? result.stats.fileSize : entry.buffer.byteLength;
@@ -14926,17 +14947,35 @@ function startApp() {
     return null;
   }
 
-  function detectDiscipline(elements) {
-    var mepTypes = {'IfcFlowSegment':1,'IfcFlowTerminal':1,'IfcFlowFitting':1,'IfcDistributionFlowElement':1,'IfcPipeSegment':1,'IfcDuctSegment':1};
-    var structTypes = {'IfcBeam':1,'IfcColumn':1,'IfcFooting':1,'IfcPile':1,'IfcMember':1,'IfcPlate':1};
-    var mepCount=0, structCount=0, archCount=0;
+  function detectDiscipline(elements, name) {
+    // Only DISCRIMINATING element types vote. Walls, slabs, roofs, spaces and
+    // generic proxies are shared by every discipline (a concrete structural
+    // model is mostly walls and slabs), so counting them just drags everything
+    // to "architectural" — which is the bug this replaces.
+    var MEP = {IfcFlowSegment:1,IfcFlowFitting:1,IfcFlowTerminal:1,IfcFlowController:1,IfcFlowMovingDevice:1,IfcFlowStorageDevice:1,IfcFlowTreatmentDevice:1,IfcEnergyConversionDevice:1,IfcDistributionElement:1,IfcDistributionFlowElement:1,IfcDistributionControlElement:1,IfcDistributionChamberElement:1,IfcPipeSegment:1,IfcPipeFitting:1,IfcDuctSegment:1,IfcDuctFitting:1,IfcDuctSilencer:1,IfcCableCarrierSegment:1,IfcCableCarrierFitting:1,IfcCableSegment:1,IfcCableFitting:1,IfcJunctionBox:1,IfcAirTerminal:1,IfcAirTerminalBox:1,IfcSanitaryTerminal:1,IfcWasteTerminal:1,IfcStackTerminal:1,IfcValve:1,IfcPump:1,IfcTank:1,IfcBoiler:1,IfcChiller:1,IfcCoil:1,IfcCompressor:1,IfcCondenser:1,IfcCooledBeam:1,IfcCoolingTower:1,IfcFan:1,IfcFilter:1,IfcHeatExchanger:1,IfcHumidifier:1,IfcSpaceHeater:1,IfcUnitaryEquipment:1,IfcElectricAppliance:1,IfcElectricDistributionBoard:1,IfcElectricFlowStorageDevice:1,IfcElectricGenerator:1,IfcElectricMotor:1,IfcLamp:1,IfcLightFixture:1,IfcOutlet:1,IfcSwitchingDevice:1,IfcProtectiveDevice:1,IfcMotorConnection:1,IfcTransformer:1,IfcSensor:1,IfcActuator:1,IfcController:1,IfcAlarm:1,IfcMedicalDevice:1,IfcAudioVisualAppliance:1,IfcCommunicationsAppliance:1};
+    var STR = {IfcBeam:1,IfcColumn:1,IfcFooting:1,IfcPile:1,IfcMember:1,IfcReinforcingBar:1,IfcReinforcingMesh:1,IfcReinforcingElement:1,IfcTendon:1,IfcTendonAnchor:1,IfcStructuralMember:1,IfcStructuralCurveMember:1,IfcStructuralSurfaceMember:1};
+    var ARC = {IfcDoor:1,IfcWindow:1,IfcStair:1,IfcStairFlight:1,IfcRamp:1,IfcRampFlight:1,IfcRailing:1,IfcCovering:1,IfcCurtainWall:1,IfcFurnishingElement:1,IfcFurniture:1,IfcSystemFurnitureElement:1};
+    var CIV = {IfcCivilElement:1,IfcPavement:1,IfcCourse:1,IfcKerb:1,IfcEarthworksElement:1,IfcEarthworksCut:1,IfcEarthworksFill:1,IfcBridge:1,IfcRoad:1,IfcAlignment:1,IfcGeotechnicalElement:1,IfcGeotechnicalStratum:1};
+    var mep=0, str=0, arc=0, civ=0;
     (elements||[]).forEach(function(el){
       var t=(el.props&&el.props.ifcType)||'';
-      if(mepTypes[t]) mepCount++; else if(structTypes[t]) structCount++; else archCount++;
+      if(MEP[t])mep++; else if(STR[t])str++; else if(ARC[t])arc++; else if(CIV[t])civ++;
     });
-    if(mepCount>structCount&&mepCount>archCount) return 'mep';
-    if(structCount>archCount) return 'structural';
-    return 'architectural';
+    var total = mep+str+arc+civ;
+    function lead(){ var m=Math.max(mep,str,arc,civ); return m===0?null:(m===mep?'mep':m===str?'structural':m===civ?'civil':'architectural'); }
+    // Confident element-based guess: a clear majority among discriminating types.
+    if (total >= 5 && Math.max(mep,str,arc,civ) >= total*0.5) return lead();
+    // Otherwise lean on the file/model name — federated models are almost always
+    // named by discipline (NL + EN keywords).
+    var nm = (name||'').toLowerCase();
+    if (nm) {
+      if (/installat|ventilat|klimaat|sanitair|riool|verwarm|elektr|electr|hvac|\bmep\b|mechanic|plumb|piping|\bduct|\bhv\b/.test(nm)) return 'mep';
+      if (/constructi|structur|draagc|fundering|wapening|beton|staalc|framing|rebar|\bstr\b|[\-_]str[\-_]/.test(nm)) return 'structural';
+      if (/bouwkundig|architect|gevel|interieur|afbouw|\barch\b|\bark\b|\bbk\b/.test(nm)) return 'architectural';
+      if (/\bcivi|terrein|infra|wegen|bridge|\bgww\b|maaiveld/.test(nm)) return 'civil';
+    }
+    // Last resort: whichever discriminating bucket led, else architectural.
+    return lead() || 'architectural';
   }
   window._ccDetectDiscipline = detectDiscipline;
 
@@ -15170,7 +15209,7 @@ function startApp() {
                   } else if (_overlapWarn) {
                     setErr(_overlapWarn);
                   }
-                  var disc = detectDiscipline(result.elements);
+                  var disc = detectDiscipline(result.elements, base);
                   var dObj = DISC.find(function(x){return x.id===disc;});
                   var col = dObj ? dObj.c : DISC[0].c;
                   var modelId = uid();
@@ -15273,7 +15312,7 @@ function startApp() {
                 result = joinGLBWithSidecar(syntheticGlb, parsed, function(msg){ setLoadMsg(base + ': ' + msg); });
               }
               if (result.warnings && result.warnings.length) result.warnings.forEach(function(w){ errors.push(w); });
-              var disc = detectDiscipline(result.elements);
+              var disc = detectDiscipline(result.elements, base);
               var dObj = DISC.find(function(x){return x.id===disc;});
               var col = dObj ? dObj.c : _existingModel.color;
               d({t:A.REPLACE_MODEL, id:_existingModel.id, v:{
@@ -15399,7 +15438,7 @@ function startApp() {
             return _loadP.then(function(result) {
               if (!result) return; // load was cancelled by a newer load
               if (_declUnit != null) { result.stats = result.stats || {}; result.stats.unitScale = _declUnit; }
-              disc = detectDiscipline(result.elements);
+              disc = detectDiscipline(result.elements, f.name);
               var dObj = DISC.find(function(x){return x.id===disc;});
               col = dObj ? dObj.c : col;
               var fSize = result.stats ? result.stats.fileSize : buf.byteLength;
@@ -23218,7 +23257,7 @@ function startApp() {
       if (!loading) return;
       var t = setInterval(function(){
         setTick(function(x){ return x + 1; });
-        if (startedAt && Date.now() - startedAt > 8000) setSlow(true);
+        if (startedAt && Date.now() - startedAt > 20000) setSlow(true);
       }, 1000);
       return function(){ clearInterval(t); };
     }, [loading, startedAt]);
@@ -23238,6 +23277,24 @@ function startApp() {
       if (!phase) phase = 'Opening model…';
     }
     var elapsed = startedAt ? Math.floor((Date.now() - startedAt) / 1000) : 0;
+    // Once we cross the "slow" threshold, rotate a light message every ~5s so a
+    // long load feels alive instead of frozen. First line is the honest one;
+    // the rest are easter eggs.
+    var SLOW_MSGS = [
+      "Taking longer than usual — big model or a slow disk. It’ll keep going.",
+      "Still crunching the geometry…",
+      "Counting all the ducts…",
+      "Untangling the MEP spaghetti…",
+      "Reticulating splines…",
+      "Asking the beams to hold still…",
+      "Negotiating with the IFC schema…",
+      "Bribing the clash engine with coffee…",
+      "Herding stray elements back into their storeys…",
+      "Aligning the chakras of your model…",
+      "Almost there — thanks for your patience."
+    ];
+    var _slowStep = Math.floor((elapsed - 20) / 5);
+    var slowMsg = _slowStep <= 0 ? SLOW_MSGS[0] : SLOW_MSGS[1 + ((_slowStep - 1) % (SLOW_MSGS.length - 1))];
 
     return html`<div aria-live="polite" role="status"
       style=${{
@@ -23288,7 +23345,7 @@ function startApp() {
       </div>
       ${slow ? html`<div style=${{
         fontSize:'var(--text-xs)', color:'var(--text-muted)', lineHeight:'var(--leading-base)'
-      }}>This is taking longer than usual — slow network or a very large model? It'll keep going.</div>` : null}
+      }}>${slowMsg}</div>` : null}
       <div style=${{display:'flex', alignItems:'center', justifyContent:'space-between'}}>
         <button onClick=${function(){ if (window._ccAbortLoading) window._ccAbortLoading(); }}
           style=${{fontSize:'var(--text-2xs)', padding:'.15rem .5rem', background:'none',
