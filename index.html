@@ -7019,7 +7019,7 @@ function startApp() {
     sync();
 
     el.addEventListener('mousedown', function(e) {
-      if(_sboxDragging || _walkActive) return; // don't orbit while dragging section box handles or in walk mode
+      if(_sboxDragging || _walkActive || window._ccSectionDragging) return; // don't orbit while dragging section box / plane handles or in walk mode
       if (e.button===0) { dragging=true; _orbitDragging=true; var _s3d=window._ccState3d; if(_s3d&&_s3d._sectionCutLines) _s3d._sectionCutLines.visible=false; }
       if (e.button===1) { panning=true; _orbitDragging=true; e.preventDefault(); el.style.cursor='move'; var _s3d2=window._ccState3d; if(_s3d2&&_s3d2._sectionCutLines) _s3d2._sectionCutLines.visible=false; }
       if (e.button===2) return; // reserved for context menu
@@ -7029,6 +7029,9 @@ function startApp() {
       if(!dragging&&!panning) return;
       // If walk mode activated while orbit drag was held, clear the drag state
       if(_walkActive){ dragging=false; panning=false; el.style.cursor=''; _orbitDragging=false; return; }
+      // A section-plane / section-box / floor-plan handle drag owns the gesture —
+      // never orbit at the same time (was: camera rotated while dragging a handle).
+      if(window._ccSectionDragging || _sboxDragging){ dragging=false; panning=false; el.style.cursor=''; _orbitDragging=false; return; }
       var dx=e.clientX-lx, dy=e.clientY-ly; lx=e.clientX; ly=e.clientY;
       if(dragging){ sph.theta-=dx*0.007; sph.phi-=dy*0.007; orbit.apply(); invalidate(); }
       if(panning){
@@ -7499,7 +7502,10 @@ function startApp() {
       function _walkRequestLock(e) {
         if (!_walkActive || _walkPointerLocked) return;
         if (e && e.button !== undefined && e.button !== 0) return; // left only
-        try { renderer.domElement.requestPointerLock(); } catch(_){}
+        // requestPointerLock rejects ASYNCHRONOUSLY (e.g. "cannot be acquired
+        // immediately after the user exited the lock") — a sync try/catch misses
+        // it, so it surfaced as a flood of unhandled rejections. Swallow it.
+        try { var _plp = renderer.domElement.requestPointerLock(); if (_plp && typeof _plp.catch === 'function') _plp.catch(function(){}); } catch(_){}
       }
       renderer.domElement.addEventListener('mousedown', _walkRequestLock);
       renderer.domElement.addEventListener('click',     _walkRequestLock);
@@ -8924,6 +8930,13 @@ function startApp() {
       // ── Activate Section Box — Revit-style: around selected element if one is active,
       //    otherwise around the full model (useful for global orientation/cropping). ──
       window._ccActivateSectionBox = function() {
+        // Priority 0: a MULTI-selection — box the selected elements together, not
+        // the whole building (was: multi-select fell through to the full-model box).
+        var refs = window._ccSelectedRefs;
+        if (refs && refs.length > 1 && _sboxAroundElements) {
+          _sboxAroundElements(refs);
+          return true;
+        }
         // Priority 1: selected element has a pre-computed bounding box
         var sel = window._ccSelectedEl;
         if (sel && sel.box && !sel.box.isEmpty()) {
@@ -11025,6 +11038,7 @@ function startApp() {
             if (fpHits.length > 0) {
               e.preventDefault(); e.stopImmediatePropagation();
               S2.orbit.enabled = false;
+              window._ccSectionDragging = true; // claim the gesture so orbit can't start
               _fpDrag = {
                 startY: e.clientY,
                 startCutAt: S2._cutPlaneHelper.position.y,
@@ -11053,6 +11067,7 @@ function startApp() {
           if (hits.length > 0) {
             e.preventDefault(); e.stopImmediatePropagation(); // prevent orbit mousedown from also firing
             S2.orbit.enabled = false;
+            window._ccSectionDragging = true; // claim the gesture immediately so orbit can't start
             var wantsRotate = hits[0].object.userData._secHandle === 'rotate' || e.shiftKey;
             if (wantsRotate) {
               var np = _getSecNormalAndPoint(cs);
@@ -11132,12 +11147,21 @@ function startApp() {
           if (cs && cs.axis) _sdDir = ({x:[1,0,0], y:[0,1,0], z:[0,0,1]})[cs.axis];
           else if (cs && cs.custom && cs.custom.normal) _sdDir = cs.custom.normal;
           if (_sdDir && S2 && S2.camera) {
-            var _gizP = (S2._sectionPlaneVis && S2._sectionPlaneVis.position) || new THREE.Vector3(0,0,0);
-            var origin = _gizP.clone().project(S2.camera);
-            var tip    = _gizP.clone().add(new THREE.Vector3(_sdDir[0],_sdDir[1],_sdDir[2])).project(S2.camera);
-            var sx = tip.x - origin.x, sy = tip.y - origin.y;
-            var sLen = Math.sqrt(sx*sx + sy*sy) || 1;
-            sx /= sLen; sy /= sLen;
+            // Cache the screen-space travel direction ONCE at the first move. The
+            // gizmo slides as you drag; recomputing the projection from its moving
+            // position fed back into the mapping and made the cut bump forward/back.
+            var sx, sy;
+            if (_secDrag.screenDir) {
+              sx = _secDrag.screenDir.x; sy = _secDrag.screenDir.y;
+            } else {
+              var _gizP = (S2._sectionPlaneVis && S2._sectionPlaneVis.position) || new THREE.Vector3(0,0,0);
+              var origin = _gizP.clone().project(S2.camera);
+              var tip    = _gizP.clone().add(new THREE.Vector3(_sdDir[0],_sdDir[1],_sdDir[2])).project(S2.camera);
+              sx = tip.x - origin.x; sy = tip.y - origin.y;
+              var sLen = Math.sqrt(sx*sx + sy*sy) || 1;
+              sx /= sLen; sy /= sLen;
+              _secDrag.screenDir = {x:sx, y:sy};
+            }
             var el = renderer.domElement;
             var mdx =  dx / el.clientWidth  * 2;
             var mdy = -dy / el.clientHeight * 2;
@@ -11521,15 +11545,17 @@ function startApp() {
           if (movedLOD && camLOD) clashMarkersRef.current.userData.updateLOD(camLOD);
         }
 
-        // Constant-pixel section-box handles.  See INTERNALS.md § 21.24
-        if (S._sboxFaceHandles) {
-          S._sboxFaceHandles.forEach(function(h) {
-            if (h && h.userData && h.userData._maxWorldSize && h.userData._baseSize) {
-              var s = h.userData._maxWorldSize / h.userData._baseSize;
-              if (s > 0 && isFinite(s)) h.scale.setScalar(s);
-            }
-          });
-        }
+        // Constant-size section-box handles — face arrows AND corner grips, so
+        // both read at the same scale.  See INTERNALS.md § 21.24
+        var _sboxScaleAll = [];
+        if (S._sboxFaceHandles) _sboxScaleAll = _sboxScaleAll.concat(S._sboxFaceHandles);
+        if (S._sboxHandles)     _sboxScaleAll = _sboxScaleAll.concat(S._sboxHandles);
+        _sboxScaleAll.forEach(function(h) {
+          if (h && h.userData && h.userData._maxWorldSize && h.userData._baseSize) {
+            var s = h.userData._maxWorldSize / h.userData._baseSize;
+            if (s > 0 && isFinite(s)) h.scale.setScalar(s);
+          }
+        });
 
         // Constant-pixel section-plane gizmo.  See INTERNALS.md § 21.24
         if (S._sectionPlaneVis && S._sectionPlaneVis._secHandleGroup) {
@@ -12273,6 +12299,9 @@ function startApp() {
         {w:hx*2,h:hy*2,pos:axZ.clone().multiplyScalar(-hz),lookDir:'-z'}  // -Z face
       ];
       faceDefs.forEach(function(fd){
+        // Skip the bottom fill: it sat on the floor like a shadow and (because of
+        // its Euler order) spun counter to the box when rotating. Turning it off.
+        if(fd.lookDir==='-y') return;
         var pg=new THREE.PlaneGeometry(fd.w,fd.h);
         var pm=new THREE.Mesh(pg,new THREE.MeshBasicMaterial({color:0x1a6b4a,transparent:true,opacity:0.06,side:THREE.DoubleSide,depthWrite:false}));
         pm.castShadow = false;     // see wireframe note above
@@ -12298,6 +12327,10 @@ function startApp() {
       // regardless of model scale or camera distance — otherwise the same
       // handle looks tiny on a 5 m apartment and huge on a 500 m tower.
       var handleSize = Math.max(0.07, Math.min(maxDim*0.028, 0.20));
+      // Corner grips get the SAME constant-size treatment as the face arrows
+      // (re-applied every frame in the tick loop) so they don't read at a
+      // different scale than the arrows on big or small models.
+      var _cornerMaxWorld = Math.max(0.08, Math.min(maxDim*0.02, 0.28));
       var handleGeo=new THREE.SphereGeometry(handleSize,8,8);
       var handles=[];
       // renderer.clippingPlanes clips everything outside the section box, including
@@ -12323,6 +12356,7 @@ function startApp() {
         mesh.userData._handleAxY=axY.clone();
         mesh.userData._handleAxZ=axZ.clone();
         mesh.userData._baseSize=handleSize;
+        mesh.userData._maxWorldSize=_cornerMaxWorld;
         mesh.renderOrder=999;
         _sboxUnclip(mesh);
         S.scene.add(mesh);
@@ -21481,7 +21515,10 @@ function startApp() {
       if (e.button !== 0) return;
       // Prefer fresh raycast at click position; fall back to last-move hit
       var h2 = raycastFloor(e) || hit;
-      if (!h2 || !h2.point){ return; } // only block if no surface at all
+      if (!h2 || !h2.point){ return; } // no surface at all
+      // The reticle was red/amber (no valid floor, or too thin to stand on) — the
+      // drop used to commit anyway and walk mode showed nothing. Reject instead.
+      if (!h2.valid || h2.thin){ try { window.dispatchEvent(new CustomEvent('cc-walk-tele-reject',{detail:{}})); } catch(_){} return; }
       var unit = (typeof _walkResolveUnitScale === 'function') ? _walkResolveUnitScale() : 1;
       var heightM = (typeof window._ccWalkGetFlags==='function'? (window._ccWalkGetFlags().height||1.7) : 1.7);
       var entry = {
