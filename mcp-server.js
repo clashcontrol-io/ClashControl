@@ -163,6 +163,25 @@ const TOOLS = [
     },
   },
   {
+    name: 'get_data_quality',
+    description:
+      'Project-level data-quality summary — the aggregate companion to the per-element ' +
+      'get_element_quality. Returns an overall score (0-100) + grade (A-F), plus per-category ' +
+      'sub-scores and raw flagged counts under metrics.{completeness, materials, brokenLinks, ' +
+      'naming, classification, geometry}, and a flat checks[] ({key, label, sev, cat, bucket, ' +
+      'count, rate}). The numeric fields are stable so a consumer (Loam) can track completeness / ' +
+      'materials / broken links / naming over time. Computed from the open, auditable rules in the ' +
+      'Data Quality engine — no detection round-trip. score/grade reconcile 1:1 with the in-app ' +
+      'Quality Score chip (data-quality + accessibility).',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        modelId: { type: 'string', description: 'Limit to one model. Omit for the whole federation.' },
+      },
+      required: [],
+    },
+  },
+  {
     name: 'get_levels',
     description:
       'Per-model level/storey elevations (raw `elevation` in model units + `elevationM` in metres when ' +
@@ -975,6 +994,41 @@ async function callBridge(toolName, params) {
   }
 }
 
+// ── Live tool catalog ─────────────────────────────────────────────────────────
+// Single source of truth for the tool surface is the browser: the Smart Bridge
+// addon pushes its _TOOL_MANIFEST to the bridge, which serves it at GET /tools.
+// We fetch that live catalog so new handlers don't have to be declared twice
+// (here AND in the addon). The hardcoded TOOLS below stays as the fallback for
+// when no browser is connected yet — an MCP client (Claude Desktop) asks for the
+// catalog at spawn time, before ClashControl is necessarily open.
+let _liveTools = null; // cached once the bridge is reachable
+
+async function fetchLiveTools() {
+  try {
+    const res = await fetch(`${BASE}/tools`, {
+      headers: { Accept: 'application/json' },
+      signal: AbortSignal.timeout(3000),
+    });
+    if (!res.ok) return null;
+    const data = await res.json();
+    if (Array.isArray(data) && data.length && data.every((t) => t && typeof t.name === 'string')) {
+      return data;
+    }
+    return null;
+  } catch {
+    return null; // bridge down / not yet connected — caller falls back to TOOLS
+  }
+}
+
+// Returns the live catalog when the bridge is reachable, else the hardcoded
+// TOOLS fallback. Cached for the process lifetime once a live list is obtained.
+async function getTools() {
+  if (_liveTools) return _liveTools;
+  const live = await fetchLiveTools();
+  if (live) _liveTools = live;
+  return live || TOOLS;
+}
+
 // ── MCP stdio transport ───────────────────────────────────────────────────────
 // Protocol: the MCP stdio transport is NEWLINE-DELIMITED JSON — each JSON-RPC
 // message is a single line terminated by "\n", with no embedded newlines. (This
@@ -1033,7 +1087,8 @@ async function handle(msg) {
   }
 
   if (method === 'tools/list') {
-    send({ jsonrpc: '2.0', id, result: { tools: TOOLS } });
+    const tools = await getTools();
+    send({ jsonrpc: '2.0', id, result: { tools } });
     return;
   }
 
@@ -1049,7 +1104,11 @@ async function handle(msg) {
       return;
     }
 
-    const known = TOOLS.find((t) => t.name === toolName);
+    // Validate against the live catalog when reachable, falling back to the
+    // hardcoded TOOLS — accept a name present in either so a tool added in the
+    // browser isn't rejected just because it predates this file's static list.
+    const liveTools = await getTools();
+    const known = liveTools.some((t) => t.name === toolName) || TOOLS.some((t) => t.name === toolName);
     if (!known) {
       send({
         jsonrpc: '2.0', id,

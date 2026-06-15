@@ -717,6 +717,111 @@
     return { projectKey: pk, source: 'clashcontrol', count: out.length, annotations: out };
   };
 
+  // Project-level data-quality summary — the aggregate companion to the
+  // per-element get_element_quality. Loam calls this by default (tool name
+  // overridable via LOAM_CC_DQ_TOOL) and tracks the numeric fields over time
+  // in its pulse, so the shape is stable numbers: an overall score/grade plus
+  // per-category sub-scores + raw flagged counts (completeness, materials,
+  // brokenLinks, naming, classification, geometry). Computed from the open,
+  // auditable rules in addons/data-quality.js — no detection round-trip.
+  var _DQ_W = { error: 3, warn: 2, info: 1 };
+  // Which headline bucket each check rolls up into. BIM checks also carry a
+  // `cat`, used as the fallback for any key not listed here.
+  var _DQ_BUCKET = {
+    noMaterial: 'materials',
+    genericName: 'naming', duplicateName: 'naming', invalidName: 'naming',
+    proxy: 'classification', noClassification: 'classification', noObjectType: 'classification',
+    guidCollision: 'brokenLinks', noGlobalId: 'brokenLinks', unhostedOpenings: 'brokenLinks',
+    noProperties: 'completeness', noDescription: 'completeness', noStorey: 'completeness',
+    noFireRating: 'completeness', noIsExternal: 'completeness', noLoadBearing: 'completeness',
+    missingCommonPset: 'completeness', missingArea: 'completeness', missingVolume: 'completeness',
+    emptyGeometry: 'geometry', zeroLayers: 'geometry', thicknessMismatch: 'geometry'
+  };
+  var _DQ_CAT_BUCKET = { properties: 'completeness', quantities: 'completeness',
+    naming: 'naming', classification: 'classification', geometry: 'geometry' };
+  function _dqBucketFor(key, check) {
+    return _DQ_BUCKET[key] || _DQ_CAT_BUCKET[check && check.cat] || 'completeness';
+  }
+  // Per-category score using the same weighted-failure-ratio formula as the
+  // Quality Score chip: 100 * (1 - Σ(min(1, count/total)·w) / Σw).
+  function _dqScore(checks, total) {
+    if (!checks.length || !total) return 100;
+    var damage = 0, weight = 0;
+    checks.forEach(function(c) {
+      var w = _DQ_W[c.sev] || 1;
+      damage += Math.min(1, c.count / total) * w;
+      weight += w;
+    });
+    return weight ? Math.round(100 * (1 - damage / weight)) : 100;
+  }
+  handlers.get_data_quality = function(p) {
+    var s = _getState();
+    var pk = _projectKey(s);
+    var models = s.models || [];
+    if (p && p.modelId) models = models.filter(function(m) { return m.id === p.modelId; });
+    var all = [];
+    models.forEach(function(m) { (m.elements || []).forEach(function(el) { all.push(el); }); });
+    var total = all.length;
+    if (!total) {
+      return { projectKey: pk, source: 'clashcontrol', elementCount: 0, modelCount: models.length,
+        score: null, grade: null, metrics: {}, checks: [],
+        note: 'No elements loaded — load a model first.' };
+    }
+
+    // Flatten every check from the available engines into one list, tagging
+    // each with its headline bucket. Both engines are guarded (the addon is
+    // alwaysOn, but stay defensive — the core must work if it failed to load).
+    var raw = [];
+    function collect(res) {
+      if (!res) return;
+      Object.keys(res).forEach(function(k) {
+        if (k.charAt(0) === '_') return; // _total / _dist
+        var c = res[k];
+        if (!c || typeof c.count !== 'number') return;
+        raw.push({ key: k, label: c.label || k, sev: c.sev || 'info', cat: c.cat || null,
+          count: c.count, bucket: _dqBucketFor(k, c) });
+      });
+    }
+    try { if (typeof window._ccRunDataQualityChecks === 'function') collect(window._ccRunDataQualityChecks(all)); } catch (e) {}
+    try { if (typeof window._ccRunBIMModelChecks === 'function') collect(window._ccRunBIMModelChecks(all)); } catch (e) {}
+
+    // Roll the flat checks up into the headline buckets Loam tracks.
+    var buckets = {};
+    raw.forEach(function(c) {
+      var b = buckets[c.bucket] || (buckets[c.bucket] = { flaggedCount: 0, checks: [] });
+      b.flaggedCount += c.count;
+      b.checks.push({ key: c.key, label: c.label, sev: c.sev, count: c.count,
+        rate: total ? c.count / total : 0 });
+    });
+    var metrics = {};
+    Object.keys(buckets).forEach(function(name) {
+      var b = buckets[name];
+      metrics[name] = { score: _dqScore(b.checks, total), flaggedCount: b.flaggedCount, checks: b.checks };
+    });
+
+    // Overall score/grade from the same engine that powers the in-app chip
+    // (data-quality + accessibility), so the headline number reconciles 1:1.
+    var overall = { score: null, grade: null };
+    try {
+      if (typeof window._ccComputeQualityScore === 'function') {
+        var e = window._ccComputeQualityScore(all, models);
+        if (e) { overall.score = e.score; overall.grade = e.grade; }
+      }
+    } catch (e) {}
+
+    return { projectKey: pk, source: 'clashcontrol', at: Date.now(),
+      elementCount: total, modelCount: models.length,
+      score: overall.score, grade: overall.grade,
+      metrics: metrics,
+      checks: raw.map(function(c) {
+        return { key: c.key, label: c.label, sev: c.sev, cat: c.cat, bucket: c.bucket,
+          count: c.count, rate: total ? c.count / total : 0 };
+      }),
+      note: 'score/grade = data-quality + accessibility (same as the in-app chip). ' +
+        'metrics.<bucket>.score is a 0-100 sub-score; flaggedCount sums each check (an element can fail more than one). ' +
+        'Per-element detail: get_element_quality.' };
+  };
+
   // Per-model level/storey elevations — raw data so the orchestrator can compute
   // floor build-up bands. NOTE: `elevation` is in the model's stored units;
   // `elevationM` is metres when unitScale is known (clash elevation in get_clashes
@@ -1563,6 +1668,8 @@
       params:{ topN:{type:'number',opt:1} } },
     { name:'get_element_quality', description:'Per-element data-quality annotations keyed by uniqueId/globalId (untyped_proxy, no_classification, degenerate_bbox, oversized_bbox). A parallel triage signal — NOT a detection gate. Returns only flagged elements.',
       params:{ modelId:{type:'string',opt:1}, limit:{type:'number',opt:1} } },
+    { name:'get_data_quality',    description:'Project-level data-quality summary (the aggregate companion to per-element get_element_quality): overall score (0-100) + grade (A-F), plus per-category sub-scores and raw flagged counts under metrics.{completeness,materials,brokenLinks,naming,classification,geometry} and a flat checks[] ({key,label,sev,cat,bucket,count,rate}). Numeric fields are stable for tracking over time. Computed from the open, auditable rules in the Data Quality engine — no detection round-trip.',
+      params:{ modelId:{type:'string',opt:1} } },
     { name:'get_levels',          description:"Per-model level/storey elevations (raw + elevationM when unitScale known) so a consumer can compute floor build-up bands. get_clashes.elevation is scene metres." },
     { name:'get_grids',           description:'Structural grid axis names (e.g. "A","B","1","2") brought in via the Revit bridge. Pair with get_clashes.gridBay to locate or filter clashes by grid position ("near grid A-3"). Empty for plain IFC loads.' },
     { name:'get_issues',          description:'Retrieves coordination issues with status, priority, assignee, description, involved element IFC GlobalIds (globalIds[]) and Revit ElementIds (revitIdA/B) for cross-tool joins.',
