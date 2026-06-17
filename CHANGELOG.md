@@ -1,5 +1,8 @@
 # Changelog
 
+## v5.21.2 (2026-06-17)
+- fix: section-plane zoom stop and gizmo handle size
+
 ## v5.21.1 (2026-06-17)
 - fix: zoom-to-cursor no longer zooms out over off-centre geometry
 
