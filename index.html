@@ -7019,7 +7019,9 @@ function startApp() {
         if (typeof _isGhostMat === 'function' && _isGhostMat(h.object.material)) continue;
         if (planes && planes.length){
           var clipped = false;
-          for (var p=0;p<planes.length;p++){ if (planes[p].distanceToPoint(h.point) < 0){ clipped = true; break; } }
+          // Small tolerance: triangles straddling the cut plane can have their hit
+          // point land fractionally past the boundary — don't falsely filter them.
+          for (var p=0;p<planes.length;p++){ if (planes[p].distanceToPoint(h.point) < -0.01){ clipped = true; break; } }
           if (clipped) continue;
         }
         return h.point.clone();
@@ -7129,6 +7131,10 @@ function startApp() {
           if (_distFwd <= 0) { _distFwd = 0; } // safety: should never happen
           var _advance = _distFwd * Math.min(0.6, (1 - zoomFactor) * 3.5);
           target.addScaledVector(_tmpDir, _advance);
+          // Shrink the orbit radius too — keeps it proportional to the current
+          // zoom level so orbiting feels right after zooming in, and prevents
+          // the advance from becoming asymptotically tiny at close range.
+          sph.r = Math.max(0.5, sph.r * zoomFactor);
           orbit.apply(); invalidate(); e.preventDefault();
           return;
         }
@@ -11604,20 +11610,9 @@ function startApp() {
           }
         });
 
-        // Constant-pixel section-plane gizmo.  See INTERNALS.md § 21.24
+        // Section-plane gizmo ring reorientation (scale is fixed at creation time).
         if (S._sectionPlaneVis && S._sectionPlaneVis._secHandleGroup) {
           var _giz = S._sectionPlaneVis;
-          var _cam = S.camera;
-          var _vpH = renderer.domElement.clientHeight || 1;
-          var _wpp; // world units per screen pixel at the gizmo
-          if (_cam.isOrthographicCamera) {
-            _wpp = ((_cam.top - _cam.bottom) / (_cam.zoom || 1)) / _vpH;
-          } else {
-            var _dist = _cam.position.distanceTo(_giz.position);
-            _wpp = (2 * Math.tan((_cam.fov * Math.PI / 180) / 2) * _dist) / _vpH;
-          }
-          var _scG = (_wpp * 110) / (_giz._secHandleSpan || 1); // ~110px arrow
-          if (_scG > 0 && isFinite(_scG)) _giz._secHandleGroup.scale.setScalar(_scG);
 
           // Vertical-plane ring reorient.  See INTERNALS.md § 21.35
           var _ring = _giz._secRotRing;
@@ -12045,6 +12040,10 @@ function startApp() {
         else if(s.sectionAxis==='y'){ hw=size.x*0.9; hh=size.z*0.9; pos.set(center.x,cut,center.z); q.setFromAxisAngle(new THREE.Vector3(1,0,0),-Math.PI/2); }
         else { hw=size.x*1.0; hh=_visHalfH; pos.set(center.x,_visCtrY,cut); }
         var vis = _makeSectionVis(hw, hh, pos, q);
+        // Fixed world-proportional handle size: ~3.5 % of model diagonal,
+        // independent of camera distance so the gizmo never grows on zoom-out.
+        var _visScale = box.getSize(new THREE.Vector3()).length() * 0.035 / (vis._secHandleSpan || 2.1);
+        vis._secHandleGroup.scale.setScalar(Math.max(0.5, _visScale));
         S.scene.add(vis);
         S._sectionPlaneVis = vis;
       } else if(s.sectionCustom){
@@ -12061,6 +12060,8 @@ function startApp() {
         var halfDim = diag * 0.22;
         var vis2 = _makeSectionVis(halfDim, halfDim, shiftedPt, null);
         vis2.lookAt(shiftedPt.clone().add(normal));
+        var _visScale2 = diag * 0.035 / (vis2._secHandleSpan || 2.1);
+        vis2._secHandleGroup.scale.setScalar(Math.max(0.5, _visScale2));
         S.scene.add(vis2);
         S._sectionPlaneVis = vis2;
       }
