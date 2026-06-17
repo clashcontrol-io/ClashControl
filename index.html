@@ -7119,14 +7119,16 @@ function startApp() {
       if (zoomFactor < 1 && !orbit.camera.isOrthographicCamera) {
         var _zp = _zoomPickPoint(e);
         if (_zp) {
-          var f = Math.min(0.6, (1 - zoomFactor) * 3.5);
-          // Only advance target along the camera forward direction.
-          // The old target.lerp(_zp, f) had a lateral component whenever
-          // the cursor was over off-centre geometry, causing the view to jump
-          // sideways (or appear to zoom out) on every wheel tick.
+          // Advance the orbit target forward along the camera look axis.
+          // Measuring from camera.position (not target) guarantees distFwd is
+          // always positive — the hit point is always in front of the camera —
+          // so we never accidentally zoom *out* when the cursor rests over
+          // geometry that sits "behind" the orbit centre.
           camera.getWorldDirection(_tmpDir);
-          var _fwd = _tmpDir.dot(_tmpVec.copy(_zp).sub(target)) * f;
-          target.addScaledVector(_tmpDir, _fwd);
+          var _distFwd = _tmpDir.dot(_tmpVec.copy(_zp).sub(camera.position));
+          if (_distFwd <= 0) { _distFwd = 0; } // safety: should never happen
+          var _advance = _distFwd * Math.min(0.6, (1 - zoomFactor) * 3.5);
+          target.addScaledVector(_tmpDir, _advance);
           orbit.apply(); invalidate(); e.preventDefault();
           return;
         }
