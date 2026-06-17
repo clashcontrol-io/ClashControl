@@ -666,6 +666,51 @@
     return { count: out.length, elements: out };
   };
 
+  // Full IFC property sets + quantities for one or more elements.
+  // Returns every Pset_*/Qset_* value the IFC file carries — the same data
+  // shown in the sidebar property panel when a human clicks an element.
+  handlers.get_element_properties = function(p) {
+    var s = _getState();
+    var wantG = {}, wantR = {}, wantU = {};
+    function addG(v){ if (v != null && v !== '') wantG[String(v)] = true; }
+    function addR(v){ if (v != null && v !== '') wantR[String(v)] = true; }
+    function addU(v){ if (v != null && v !== '') wantU[String(v)] = true; }
+    addG(p.globalId); addR(p.revitId); addU(p.uniqueId);
+    if (Array.isArray(p.globalIds)) p.globalIds.forEach(addG);
+    if (Array.isArray(p.revitIds))  p.revitIds.forEach(addR);
+    if (Array.isArray(p.uniqueIds)) p.uniqueIds.forEach(addU);
+    if (!Object.keys(wantG).length && !Object.keys(wantR).length && !Object.keys(wantU).length)
+      return 'Provide uniqueId/uniqueIds (Revit UniqueId), globalId/globalIds (IFC GlobalId), or revitId/revitIds.';
+    var limit = p.limit || 50;
+    var out = [];
+    (s.models || []).some(function(m) {
+      (m.elements || []).some(function(el) {
+        var pr = el.props || {};
+        var gid = pr.globalId || '', rid = pr.revitId, uid2 = pr.uniqueId;
+        if ((gid && wantG[gid]) || (rid != null && wantR[String(rid)]) || (uid2 && wantU[String(uid2)])) {
+          out.push({
+            modelName: m.name,
+            globalId: gid || null,
+            uniqueId: uid2 || null,
+            revitId: rid != null ? rid : null,
+            ifcType: pr.ifcType || null,
+            name: pr.name || null,
+            description: pr.description || null,
+            objectType: pr.objectType || null,
+            storey: pr.storey || null,
+            material: pr.material || null,
+            psets: pr.psets || {},
+            quantities: pr.quantities || {}
+          });
+        }
+        return out.length >= limit;
+      });
+      return out.length >= limit;
+    });
+    if (!out.length) return 'No elements found for the given identifier(s).';
+    return { count: out.length, elements: out };
+  };
+
   // Force the live Revit link to re-pull the model so CC catches up to the
   // current Revit state (use before a cross-tool join if revisions differ).
   // Live-link only — a no-op for plain IFC loads.
@@ -1675,6 +1720,8 @@
     { name:'get_issues',          description:'Retrieves coordination issues with status, priority, assignee, description, involved element IFC GlobalIds (globalIds[]) and Revit ElementIds (revitIdA/B) for cross-tool joins.',
       params:{ status:{type:'string',enum:['all','open','in_progress','resolved','closed'],opt:1}, limit:{type:'number',opt:1} } },
     { name:'get_element_by_guid',  description:'Resolve loaded element(s) by Revit UniqueId (preferred), IFC GlobalId, or Revit ElementId — the inverse join: turn a key from another tool into the matching CC element with its model, type, storey, material, uniqueId and classification. Accepts single uniqueId/globalId/revitId or arrays uniqueIds[]/globalIds[]/revitIds[].',
+      params:{ uniqueId:{type:'string',opt:1}, globalId:{type:'string',opt:1}, revitId:{type:'string',opt:1}, uniqueIds:{type:'array',opt:1}, globalIds:{type:'array',opt:1}, revitIds:{type:'array',opt:1}, limit:{type:'number',opt:1} } },
+    { name:'get_element_properties', description:'Full IFC property sets and quantities for one or more elements — every Pset_*/Qset_* value from the IFC file (e.g. Pset_WallCommon.LoadBearing, Pset_CoveringCommon.FireRating, Qto_WallBaseQuantities.Length). Returns psets:{} and quantities:{} alongside the standard summary fields. Use get_element_by_guid for a lightweight summary; use this when you need the raw properties a human sees in the sidebar panel. Works for plain IFC and Revit-connected models alike.',
       params:{ uniqueId:{type:'string',opt:1}, globalId:{type:'string',opt:1}, revitId:{type:'string',opt:1}, uniqueIds:{type:'array',opt:1}, globalIds:{type:'array',opt:1}, revitIds:{type:'array',opt:1}, limit:{type:'number',opt:1} } },
     { name:'resync',              description:'Force the live Revit link to re-pull the model so CC matches the current Revit state. Live-link only (no-op for static IFC loads). Re-check get_status afterwards for the new revision.' },
     { name:'run_detection',       description:'Starts clash detection between loaded models (async). modelA/modelB accept "all", a model name, "disc:<discipline>" (disc:architectural/structural/mep — disciplines from get_status), or "tag:<tag>"; use disc: on both sides to scope to cross-discipline pairs only and cut same-discipline noise at source. Rooms/spaces (IfcSpace) are excluded by default — set includeSpaces:true to clash against rooms (space-intrusion checks). Results via get_clashes; on failure (e.g. very large federation) get_status.lastDetectionError reports the message + stack.',
