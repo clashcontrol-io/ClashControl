@@ -7120,7 +7120,13 @@ function startApp() {
         var _zp = _zoomPickPoint(e);
         if (_zp) {
           var f = Math.min(0.6, (1 - zoomFactor) * 3.5);
-          target.lerp(_zp, f);
+          // Only advance target along the camera forward direction.
+          // The old target.lerp(_zp, f) had a lateral component whenever
+          // the cursor was over off-centre geometry, causing the view to jump
+          // sideways (or appear to zoom out) on every wheel tick.
+          camera.getWorldDirection(_tmpDir);
+          var _fwd = _tmpDir.dot(_tmpVec.copy(_zp).sub(target)) * f;
+          target.addScaledVector(_tmpDir, _fwd);
           orbit.apply(); invalidate(); e.preventDefault();
           return;
         }
