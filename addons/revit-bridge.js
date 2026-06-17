@@ -63,6 +63,14 @@
     if (_revitWs && _revitWs.readyState <= 1) return; // a connect is already in flight
     _revitReconnectDelay = Math.min((_revitReconnectDelay || 1000) * 2, 30000);
     var delay = _revitReconnectDelay;
+    // Give up after ~30s total (~4 attempts: 2s+4s+8s+16s) rather than retrying
+    // forever. The user sees "Couldn't reach Revit" and can Retry manually.
+    if (delay >= 16000) {
+      _resetReconnectDelay();
+      _revitLastDispatch({t:'UPD_REVIT_DIRECT', u:{reconnecting:false, reconnectIn:0}});
+      _revitLastDispatch({t:'BRIDGE_LOG', logType:'error', text:'Revit not reachable — is the Connector running? Click Retry when ready.'});
+      return;
+    }
     _revitLastDispatch({t:'UPD_REVIT_DIRECT', u:{reconnecting:true, reconnectIn:delay}});
     _revitLastDispatch({t:'BRIDGE_LOG', logType:'info', text:'Reconnecting in ' + (delay/1000) + 's...'});
     _revitReconnect = setTimeout(function() {
@@ -149,7 +157,9 @@
     _revitUserDisconnected = false;
     var url = 'ws://localhost:' + _revitLastPort;
     d({t:'BRIDGE_LOG', logType:'info', text:'Connecting to Revit at ' + url + '...'});
-    d({t:'UPD_REVIT_DIRECT', u:{connected:false, loading:false, progress:0, reconnecting:false}});
+    // reconnecting:true while the WS handshake is in flight so the UI shows
+    // "Connecting…" rather than "Couldn't reach Revit" before the first result.
+    d({t:'UPD_REVIT_DIRECT', u:{connected:false, loading:false, progress:0, reconnecting:true}});
     var ws;
     try { ws = new WebSocket(url); _revitWs = ws; } catch(e) {
       d({t:'BRIDGE_LOG', logType:'error', text:'WebSocket error: ' + e.message});
