@@ -63,14 +63,6 @@
     if (_revitWs && _revitWs.readyState <= 1) return; // a connect is already in flight
     _revitReconnectDelay = Math.min((_revitReconnectDelay || 1000) * 2, 30000);
     var delay = _revitReconnectDelay;
-    // Give up after ~30s total (~4 attempts: 2s+4s+8s+16s) rather than retrying
-    // forever. The user sees "Couldn't reach Revit" and can Retry manually.
-    if (delay >= 16000) {
-      _resetReconnectDelay();
-      _revitLastDispatch({t:'UPD_REVIT_DIRECT', u:{reconnecting:false, reconnectIn:0}});
-      _revitLastDispatch({t:'BRIDGE_LOG', logType:'error', text:'Revit not reachable — is the Connector running? Click Retry when ready.'});
-      return;
-    }
     _revitLastDispatch({t:'UPD_REVIT_DIRECT', u:{reconnecting:true, reconnectIn:delay}});
     _revitLastDispatch({t:'BRIDGE_LOG', logType:'info', text:'Reconnecting in ' + (delay/1000) + 's...'});
     _revitReconnect = setTimeout(function() {
@@ -155,7 +147,10 @@
     _revitLastPort = port || 19780;
     _revitLastDispatch = d;
     _revitUserDisconnected = false;
-    var url = 'ws://localhost:' + _revitLastPort;
+    // Use 127.0.0.1 instead of 'localhost' — on Windows, 'localhost' resolves
+    // via DNS (IPv6 first), which can silently hang in CONNECTING when nothing
+    // listens on [::1]:port. The Connector binds to IPv4; 127.0.0.1 is direct.
+    var url = 'ws://127.0.0.1:' + _revitLastPort;
     d({t:'BRIDGE_LOG', logType:'info', text:'Connecting to Revit at ' + url + '...'});
     // reconnecting:true while the WS handshake is in flight so the UI shows
     // "Connecting…" rather than "Couldn't reach Revit" before the first result.
@@ -1175,7 +1170,7 @@
       var controller = typeof AbortController !== 'undefined' ? new AbortController() : null;
       var opts = {method:'GET', mode:'no-cors'};
       if (controller) { opts.signal = controller.signal; setTimeout(function(){ controller.abort(); }, 2000); }
-      fetch('http://localhost:19780', opts).then(function() {
+      fetch('http://127.0.0.1:19780', opts).then(function() {
         d({t:'UPD_REVIT_DIRECT', u:{autoDetected:true}});
       }).catch(function() {});
     } catch(e) {}
