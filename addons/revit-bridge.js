@@ -168,6 +168,7 @@
       if (_revitWs !== ws || ws.readyState !== 0) return; // already opened/closed
       d({t:'BRIDGE_LOG', logType:'error', text:'Revit handshake timed out after ' + (CONNECT_TIMEOUT_MS/1000) + 's. The Connector may be wedged — toggle it off then on in Revit.'});
       d({t:'UPD_REVIT_DIRECT', u:{connected:false, loading:false}});
+      _revitLoadingEvent(false); // dismiss the loading modal — onerror/onclose won't fire for a silently-hung socket
       try { ws.onopen = ws.onclose = ws.onerror = ws.onmessage = null; } catch(_) {}
       try { ws.close(); } catch(_) {}
       _revitWs = null;
