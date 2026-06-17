@@ -1,5 +1,8 @@
 # Changelog
 
+## v5.21.1 (2026-06-17)
+- fix: zoom-to-cursor no longer zooms out over off-centre geometry
+
 ## v5.21.0 (2026-06-15)
 - Measure coexists with the section plane + zoom-toward-cursor (#649)
 
