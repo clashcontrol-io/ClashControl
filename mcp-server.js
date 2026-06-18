@@ -25,7 +25,25 @@
  */
 
 const PORT = process.env.CLASHCONTROL_PORT || '19803';
-const BASE = `http://127.0.0.1:${PORT}`;
+// Try 127.0.0.1 first; fall back to [::1] if the bridge binds to IPv6 loopback.
+// _BASE is updated on first successful connection and reused for all subsequent calls.
+let _BASE     = `http://127.0.0.1:${PORT}`;
+const _BASE6  = `http://[::1]:${PORT}`;
+const BASE    = _BASE; // kept for readability — internal code uses _bridgeFetch
+async function _bridgeFetch(path, opts) {
+  try {
+    const r = await fetch(_BASE + path, opts);
+    return r;
+  } catch (e) {
+    if (_BASE === _BASE6) throw e; // already on IPv6, no more candidates
+    const msg = (e && e.message) || '';
+    if (!msg.includes('ECONNREFUSED') && !msg.includes('fetch failed')) throw e;
+    // 127.0.0.1 is not listening — try [::1] and lock to it on success
+    const r = await fetch(_BASE6 + path, opts);
+    _BASE = _BASE6;
+    return r;
+  }
+}
 
 // ── One-time install mode ─────────────────────────────────────────────────────
 // Detects two scenarios:
@@ -956,7 +974,7 @@ const TOOLS = [
 
 async function callBridge(toolName, params) {
   try {
-    const res = await fetch(`${BASE}/call/${toolName}`, {
+    const res = await _bridgeFetch(`/call/${toolName}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
       body: JSON.stringify(params || {}),
@@ -1005,7 +1023,7 @@ let _liveTools = null; // cached once the bridge is reachable
 
 async function fetchLiveTools() {
   try {
-    const res = await fetch(`${BASE}/tools`, {
+    const res = await _bridgeFetch(`/tools`, {
       headers: { Accept: 'application/json' },
       signal: AbortSignal.timeout(3000),
     });
