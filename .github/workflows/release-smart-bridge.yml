@@ -1,10 +1,10 @@
 name: Build and Release Smart Bridge
 
 # ── Triggers ──────────────────────────────────────────────────────────────────
-# Auto-release: bump bridge-version.json on main → builds + publishes.
-# CI build only: change mcp-server.js or smart-bridge-server.js without bumping
-#   the version → workflow builds the binaries to verify but does NOT publish.
+# Auto-release: any change to mcp-server.js or smart-bridge-server.js on main
+#   → auto-bumps patch in bridge-version.json and publishes a new release.
 # Manual: workflow_dispatch with optional version override.
+# Guard: skip runs triggered by the bot's own release commits (no loop).
 
 on:
   push:
@@ -22,6 +22,9 @@ on:
 jobs:
   build-and-release:
     runs-on: ubuntu-latest
+    # Prevent infinite loop: the bot commits bridge-version.json + addons/smart-bridge.js
+    # at the end; those commits must not re-trigger a new release run.
+    if: github.actor != 'github-actions[bot]'
     permissions:
       contents: write
 
@@ -29,29 +32,41 @@ jobs:
       # ── Checkout ─────────────────────────────────────────────────────────────
       - uses: actions/checkout@v4
         with:
-          fetch-depth: 2   # need parent commit to diff bridge-version.json
+          fetch-depth: 2   # need parent commit to diff changed files
 
       # ── Resolve version ───────────────────────────────────────────────────────
       - name: Resolve version and release flag
         id: ver
         run: |
-          # Manual override wins
           if [ -n "${{ github.event.inputs.version }}" ]; then
+            # Manual override: use provided version, always release
             VERSION="${{ github.event.inputs.version }}"
+            node -e "
+              var v=require('fs').readFileSync('/dev/stdin','utf8').trim();
+              require('fs').writeFileSync('bridge-version.json', JSON.stringify({version:v})+'\n');
+            " <<< "$VERSION"
             SHOULD_RELEASE=true
-          else
+            AUTO_BUMPED=false
+          elif git diff HEAD~1 -- bridge-version.json | grep -q '^+'; then
+            # bridge-version.json was bumped manually — honour it
             VERSION=$(node -p "require('./bridge-version.json').version")
-            # Only publish a release if bridge-version.json itself changed
-            if git diff HEAD~1 -- bridge-version.json | grep -q '^+'; then
-              SHOULD_RELEASE=true
-            else
-              SHOULD_RELEASE=false
-            fi
+            SHOULD_RELEASE=true
+            AUTO_BUMPED=false
+          else
+            # Server files changed but no manual bump — auto-bump patch and release
+            CURRENT=$(node -p "require('./bridge-version.json').version")
+            IFS='.' read -r MAJOR MINOR PATCH <<< "$CURRENT"
+            VERSION="$MAJOR.$MINOR.$((PATCH + 1))"
+            node -e "require('fs').writeFileSync('bridge-version.json', JSON.stringify({version:'$VERSION'})+'\n');"
+            echo "Auto-bumped patch: $CURRENT → $VERSION"
+            SHOULD_RELEASE=true
+            AUTO_BUMPED=true
           fi
           echo "version=$VERSION"           >> $GITHUB_OUTPUT
           echo "tag=bridge-v$VERSION"       >> $GITHUB_OUTPUT
           echo "release=$SHOULD_RELEASE"    >> $GITHUB_OUTPUT
-          echo "Version: $VERSION  |  Release: $SHOULD_RELEASE"
+          echo "auto_bumped=$AUTO_BUMPED"   >> $GITHUB_OUTPUT
+          echo "Version: $VERSION  |  Release: $SHOULD_RELEASE  |  AutoBumped: $AUTO_BUMPED"
 
       # ── Node setup ───────────────────────────────────────────────────────────
       - uses: actions/setup-node@v4
@@ -117,8 +132,7 @@ jobs:
             dist/clashcontrol-smart-bridge-mac.tar.gz
             dist/clashcontrol-smart-bridge-linux.tar.gz
 
-      # ── Update _releaseTag in the addon ───────────────────────────────────────
-      # Keeps the addon's fallback version in sync with the latest release.
+      # ── Update _releaseTag in the addon + commit bridge-version.json if auto-bumped
       - name: Bump _releaseTag in addon
         if: steps.ver.outputs.release == 'true'
         run: |
@@ -126,11 +140,15 @@ jobs:
           sed -i "s|var _releaseTag = '[^']*'|var _releaseTag = '${TAG}'|" addons/smart-bridge.js
           echo "Updated _releaseTag to $TAG"
 
-      - name: Commit updated _releaseTag
+      - name: Commit updated files
         if: steps.ver.outputs.release == 'true'
         run: |
           git config user.name  "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add addons/smart-bridge.js
-          git diff --staged --quiet || git commit -m "chore: bump Smart Bridge _releaseTag to ${{ steps.ver.outputs.tag }}"
+          # Stage bridge-version.json only if it was auto-bumped (manual bumps are already committed)
+          if [ "${{ steps.ver.outputs.auto_bumped }}" = "true" ]; then
+            git add bridge-version.json
+          fi
+          git diff --staged --quiet || git commit -m "chore: bump Smart Bridge to ${{ steps.ver.outputs.tag }}"
           git push
