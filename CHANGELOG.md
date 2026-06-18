@@ -1,5 +1,8 @@
 # Changelog
 
+## v5.21.6 (2026-06-18)
+- fix: use explicit [::1] ports in CSP — Chrome rejects IPv6 wildcard (#664)
+
 ## v5.21.5 (2026-06-18)
 - fix: add [::1] IPv6 loopback origins to CSP connect-src (#663)
 
