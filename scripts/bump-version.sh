@@ -35,8 +35,8 @@ if [ -z "$CI_VERSION_BUMP" ]; then
   if [ "$CURRENT_BRANCH" != "main" ]; then
     exit 0
   fi
-  # Check if index.html is being committed
-  if ! git diff --cached --name-only | grep -q "index.html"; then
+  # Check if index.html or any addon file is being committed
+  if ! git diff --cached --name-only | grep -qE "(index\.html|^addons/.+\.js$)"; then
     exit 0
   fi
 fi
@@ -44,8 +44,8 @@ fi
 # ── Diff source ───────────────────────────────────────────────────
 if [ -n "$CI_VERSION_BUMP" ]; then
   # CI: look at what just landed on main
-  if ! git diff HEAD^..HEAD --name-only | grep -q "index.html"; then
-    echo "  index.html not changed in this merge, skipping version bump"
+  if ! git diff HEAD^..HEAD --name-only | grep -qE "(index\.html|^addons/.+\.js$)"; then
+    echo "  index.html or addons/*.js not changed in this merge, skipping version bump"
     exit 0
   fi
   DIFF=$(git diff HEAD^..HEAD -- "$INDEX_FILE")
