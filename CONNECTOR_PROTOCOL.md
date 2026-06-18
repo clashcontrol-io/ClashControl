@@ -12,7 +12,67 @@ This document describes the open WebSocket protocol that ClashControl (`www.clas
 | Smart Bridge WS | `19802` | WebSocket | CC listens; AI assistant connects |
 | Smart Bridge REST | `19803` | HTTP | CC listens; AI assistant calls |
 
-ClashControl always dials **`127.0.0.1`** (not `localhost`) to avoid the Windows DNS quirk where `localhost` resolves to `[::1]` before `127.0.0.1`, silently hanging the connection if the Connector only listens on IPv4.
+ClashControl dials **`127.0.0.1`** first (explicit IPv4 loopback, avoids the Windows DNS quirk where `localhost` resolves to `[::1]` before `127.0.0.1`). If the socket closes before it ever opens — i.e. immediate `ECONNREFUSED` — CC automatically retries on **`[::1]`** (IPv6 loopback) before starting exponential backoff. This covers both binding configurations without user action.
+
+**Connector binding recommendation:** listen on `0.0.0.0:<port>` (all IPv4 interfaces) or `::` with dual-stack enabled. Binding to a specific loopback address (`127.0.0.1` or `[::1]` only) forces clients to know which one you chose. The same recommendation applies to the Smart Bridge server (ports 19802/19803).
+
+---
+
+## Smart Bridge server (ports 19802 and 19803)
+
+The **Smart Bridge** is a locally-running binary (`clashcontrol-smart-bridge`) that bridges CC to AI assistants (Claude Desktop/Code via MCP, ChatGPT via REST, or any function-calling LLM). Unlike the Connector (which CC dials), the Smart Bridge **owns the server** on two ports:
+
+| Port | Transport | Role |
+|------|-----------|------|
+| `19802` | WebSocket | Smart Bridge listens; CC dials in as client |
+| `19803` | HTTP REST | Smart Bridge listens; CC polls `/status`, `/llm-config`, `/update`, `/chat` |
+
+CC probes `http://<host>:19803/status` on a 500 ms timeout to detect whether the binary is running, then opens `ws://<host>:19802`. It applies the same `127.0.0.1` → `[::1]` fallback as for the Connector.
+
+### Smart Bridge REST endpoints
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `GET` | `/status` | Returns `{ version, ...}`. Used as a liveness probe. |
+| `GET` | `/update` | Returns `{ update_available, version }`. |
+| `POST` | `/update` | Triggers self-update: binary downloads latest release and restarts. |
+| `GET` | `/llm-config` | Returns stored LLM provider config. |
+| `POST` | `/llm-config` | Saves LLM provider config. Body: `{ provider, model, baseUrl, apiKey }`. |
+| `GET` | `/llm/autodetect` | Auto-detects running local LLM servers. Returns `{ found: [...] }`. |
+| `POST` | `/chat` | Forwards a user message to the configured LLM. Body: `{ message, history }`. |
+
+### Smart Bridge WebSocket protocol
+
+CC connects to `ws://127.0.0.1:19802` (with `[::1]` fallback). On `onopen` CC sends a `tool_manifest` frame:
+
+```json
+{ "type": "tool_manifest", "tools": [ { "name": "get_status", "description": "...", "inputSchema": { ... } } ] }
+```
+
+The bridge forwards tool calls from the AI as:
+
+```json
+{ "id": "abc123", "action": "get_status", "params": {} }
+```
+
+CC executes the handler and replies:
+
+```json
+{ "id": "abc123", "result": { ... } }
+```
+
+Server-push notifications from the bridge to CC:
+
+| `type` | Meaning |
+|--------|---------|
+| `update_available` | A newer bridge binary is available. Fields: `version`, `url`. |
+| `update_downloading` | Bridge is downloading its own update. |
+| `update_installed` | Update complete; bridge is about to restart. |
+| `mcp_config_installed` | Claude Desktop config file was written on request. |
+
+### Smart Bridge binding recommendation
+
+The binary should call `net.Listen("tcp", "127.0.0.1:19802")` **and** `net.Listen("tcp6", "[::1]:19802")` (or equivalent), or bind to `0.0.0.0:19802` / `[::]:19802` with dual-stack. Binding to only one loopback address forces the CC fallback and adds one extra round-trip on first connect.
 
 ---
 
