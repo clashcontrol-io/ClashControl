@@ -1,5 +1,8 @@
 # Changelog
 
+## v5.21.4 (2026-06-18)
+- fix(smart-bridge): IPv4/IPv6 loopback fallback + Smart Bridge API docs
+
 ## v5.21.3 (2026-06-18)
 - fix(revit-bridge): IPv4/IPv6 loopback fallback + SW cache bust + CONNECTOR_PROTOCOL.md
 
