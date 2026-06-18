@@ -147,9 +147,14 @@
     _revitLastPort = port || 19780;
     _revitLastDispatch = d;
     _revitUserDisconnected = false;
-    var url = 'ws://localhost:' + _revitLastPort;
+    // Use 127.0.0.1 instead of 'localhost' — on Windows, 'localhost' resolves
+    // via DNS (IPv6 first), which can silently hang in CONNECTING when nothing
+    // listens on [::1]:port. The Connector binds to IPv4; 127.0.0.1 is direct.
+    var url = 'ws://127.0.0.1:' + _revitLastPort;
     d({t:'BRIDGE_LOG', logType:'info', text:'Connecting to Revit at ' + url + '...'});
-    d({t:'UPD_REVIT_DIRECT', u:{connected:false, loading:false, progress:0, reconnecting:false}});
+    // reconnecting:true while the WS handshake is in flight so the UI shows
+    // "Connecting…" rather than "Couldn't reach Revit" before the first result.
+    d({t:'UPD_REVIT_DIRECT', u:{connected:false, loading:false, progress:0, reconnecting:true}});
     var ws;
     try { ws = new WebSocket(url); _revitWs = ws; } catch(e) {
       d({t:'BRIDGE_LOG', logType:'error', text:'WebSocket error: ' + e.message});
@@ -1165,7 +1170,7 @@
       var controller = typeof AbortController !== 'undefined' ? new AbortController() : null;
       var opts = {method:'GET', mode:'no-cors'};
       if (controller) { opts.signal = controller.signal; setTimeout(function(){ controller.abort(); }, 2000); }
-      fetch('http://localhost:19780', opts).then(function() {
+      fetch('http://127.0.0.1:19780', opts).then(function() {
         d({t:'UPD_REVIT_DIRECT', u:{autoDetected:true}});
       }).catch(function() {});
     } catch(e) {}
