@@ -1,5 +1,8 @@
 # Changelog
 
+## v5.21.5 (2026-06-18)
+- fix: add [::1] IPv6 loopback origins to CSP connect-src (#663)
+
 ## v5.21.4 (2026-06-18)
 - fix(smart-bridge): IPv4/IPv6 loopback fallback + Smart Bridge API docs
 
