@@ -415,7 +415,7 @@ wss.on('listening', () => {
   ensureMcpConfig();
 });
 
-wss.on('connection', (ws) => {
+function _onBrowserConnect(ws) {
   if (_browser) { try { _browser.close(1001, 'New connection'); } catch (_) {} }
   _browser = ws;
   console.log('[SmartBridge] Browser connected');
@@ -471,9 +471,29 @@ wss.on('connection', (ws) => {
   });
 
   ws.on('error', (e) => console.error('[SmartBridge] WS error:', e.message));
-});
+}
+
+wss.on('connection', _onBrowserConnect);
 
 wss.on('error', (e) => console.error('[SmartBridge] WS server error:', e.message));
+
+// Also listen on the IPv6 loopback so CC can connect on either address family.
+// On Windows, Node.js 'localhost' may resolve to [::1]; binding only 127.0.0.1
+// causes immediate ECONNREFUSED on that interface. Two explicit loopback listeners
+// (never 0.0.0.0/::) keeps the server strictly machine-local.
+const _wss6 = new WebSocketServer({
+  host: '::1',
+  port: WS_PORT,
+  verifyClient: function(info, cb) {
+    var origin = info.origin || (info.req && info.req.headers && info.req.headers.origin) || '';
+    if (isAllowedOrigin(origin)) return cb(true);
+    console.warn('[SmartBridge] WS handshake rejected — origin not allowed:', origin || '(empty)');
+    return cb(false, 403, 'Origin not allowed');
+  }
+});
+_wss6.on('connection', _onBrowserConnect);
+_wss6.on('listening', () => console.log('[SmartBridge] WebSocket  ws://[::1]:' + WS_PORT));
+_wss6.on('error', (e) => { if (e.code !== 'EADDRINUSE') console.warn('[SmartBridge] IPv6 WS listen failed:', e.message); });
 
 // ── Forward a call to the browser and await its response ──────────────────────
 function callBrowser(action, params) {
@@ -712,6 +732,12 @@ httpServer.on('clientError', (e, sock) => {
 });
 httpServer.listen(REST_PORT, '127.0.0.1');
 httpServer.on('error', (e) => console.error('[SmartBridge] HTTP error:', e.message));
+
+// IPv6 loopback mirror — delegates to the same request handler as httpServer.
+const _httpServer6 = http.createServer((req, res) => httpServer.emit('request', req, res));
+_httpServer6.listen(REST_PORT, '::1');
+_httpServer6.on('clientError', (e, sock) => { try { sock.end('HTTP/1.1 400 Bad Request\r\n\r\n'); } catch (_) {} });
+_httpServer6.on('error', (e) => { if (e.code !== 'EADDRINUSE') console.warn('[SmartBridge] IPv6 REST listen failed:', e.message); });
 
 // ── Graceful shutdown ─────────────────────────────────────────────────────────
 function shutdown() { wss.close(); httpServer.close(); process.exit(0); }
