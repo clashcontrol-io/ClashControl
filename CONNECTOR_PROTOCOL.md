@@ -14,7 +14,7 @@ This document describes the open WebSocket protocol that ClashControl (`www.clas
 
 ClashControl dials **`127.0.0.1`** first (explicit IPv4 loopback, avoids the Windows DNS quirk where `localhost` resolves to `[::1]` before `127.0.0.1`). If the socket closes before it ever opens — i.e. immediate `ECONNREFUSED` — CC automatically retries on **`[::1]`** (IPv6 loopback) before starting exponential backoff. This covers both binding configurations without user action.
 
-**Connector binding recommendation:** listen on `0.0.0.0:<port>` (all IPv4 interfaces) or `::` with dual-stack enabled. Binding to a specific loopback address (`127.0.0.1` or `[::1]` only) forces clients to know which one you chose. The same recommendation applies to the Smart Bridge server (ports 19802/19803).
+**Connector binding recommendation:** listen on **both** `127.0.0.1:<port>` (IPv4 loopback) **and** `[::1]:<port>` (IPv6 loopback) — two explicit listeners, not `0.0.0.0` or `::`. Binding to `0.0.0.0`/`::` would expose the server on every network interface (LAN, Wi-Fi), which is unintended for a local desktop tool. Dual-loopback gives reachability on both IPv4 and IPv6 with no network exposure. The same recommendation applies to the Smart Bridge server (ports 19802/19803).
 
 ---
 
@@ -72,7 +72,7 @@ Server-push notifications from the bridge to CC:
 
 ### Smart Bridge binding recommendation
 
-The binary should call `net.Listen("tcp", "127.0.0.1:19802")` **and** `net.Listen("tcp6", "[::1]:19802")` (or equivalent), or bind to `0.0.0.0:19802` / `[::]:19802` with dual-stack. Binding to only one loopback address forces the CC fallback and adds one extra round-trip on first connect.
+The binary should listen on **both** `127.0.0.1:19802` (IPv4 loopback) **and** `[::1]:19802` (IPv6 loopback) — two explicit listeners. Do **not** bind to `0.0.0.0` or `::`: that would expose ports 19802/19803 on every network interface (LAN, Wi-Fi), allowing anyone on the same network to call CC tools. Dual-loopback is localhost-only and reachable on both address families. Apply the same to port 19803.
 
 ---
 
