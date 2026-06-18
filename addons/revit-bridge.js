@@ -22,6 +22,13 @@
   var _revitReconnectDelay = 0; // exponential backoff: 0 = no reconnect scheduled
   var _revitLastPort = 19780;
   var _revitLastDispatch = null;
+  // Address candidates tried in order. 127.0.0.1 (IPv4) is direct loopback;
+  // [::1] (IPv6) is the fallback for Connectors that bind to the IPv6 loopback
+  // interface on Windows (where binding to 'localhost' resolves to [::1]).
+  // If the first candidate fails before the socket ever opens, we try the next
+  // before starting exponential backoff.
+  var _revitHosts = ['127.0.0.1', '[::1]'];
+  var _revitHostIdx = 0;
   var _revitUserDisconnected = false; // true when user clicks Disconnect
   var _pullOnConnect = false; // true when user-initiated connect should auto-pull
   // Track which CC model ID corresponds to which Revit document name
@@ -147,10 +154,14 @@
     _revitLastPort = port || 19780;
     _revitLastDispatch = d;
     _revitUserDisconnected = false;
-    // Use 127.0.0.1 instead of 'localhost' — on Windows, 'localhost' resolves
-    // via DNS (IPv6 first), which can silently hang in CONNECTING when nothing
-    // listens on [::1]:port. The Connector binds to IPv4; 127.0.0.1 is direct.
-    var url = 'ws://127.0.0.1:' + _revitLastPort;
+    // Prefer 127.0.0.1 (explicit IPv4 loopback) over 'localhost' — on Windows,
+    // 'localhost' resolves via DNS with IPv6 first, which silently hangs in
+    // CONNECTING when the Connector only listens on IPv4. If 127.0.0.1 fails
+    // immediately (Connector bound to IPv6 loopback instead), the onclose handler
+    // below tries [::1] before starting exponential backoff.
+    var host = _revitHosts[_revitHostIdx];
+    var url = 'ws://' + host + ':' + _revitLastPort;
+    var _wsOpened = false; // did THIS socket ever reach onopen?
     d({t:'BRIDGE_LOG', logType:'info', text:'Connecting to Revit at ' + url + '...'});
     // reconnecting:true while the WS handshake is in flight so the UI shows
     // "Connecting…" rather than "Couldn't reach Revit" before the first result.
@@ -186,6 +197,8 @@
       // after a reconnect superseded it (or after close nulled _revitWs),
       // which previously threw "Cannot read properties of null (reading 'send')".
       if (_revitWs !== ws || ws.readyState !== 1) { try { ws.close(); } catch(_){} return; }
+      _wsOpened = true;
+      _revitHostIdx = 0; // this address works — reset so next connect starts from primary
       var wasReconnect = _revitReconnectDelay > 0;
       _resetReconnectDelay();
       d({t:'UPD_REVIT_DIRECT', u:{connected:true, reconnecting:false}});
@@ -230,10 +243,26 @@
       // _revitWs can't let a stale socket through to _scheduleReconnect().
       if (_revitWs !== ws) return;
       clearTimeout(_revitConnectTimeout);
-      d({t:'UPD_REVIT_DIRECT', u:{connected:false, loading:false}});
-      d({t:'BRIDGE_LOG', logType:'info', text:'Revit connection closed.'});
       _revitLoadingEvent(false); // clear the loading card if the link drops mid-pull
       _revitWs = null;
+      // If the socket never opened, try the next address candidate before backoff.
+      // Handles Connectors bound to [::1] (IPv6) where 127.0.0.1 (IPv4) gets
+      // immediate ECONNREFUSED, and the reverse.
+      if (!_wsOpened && !_revitUserDisconnected) {
+        var nextIdx = _revitHostIdx + 1;
+        if (nextIdx < _revitHosts.length) {
+          _revitHostIdx = nextIdx;
+          d({t:'UPD_REVIT_DIRECT', u:{connected:false, loading:false}});
+          var _nextD = _revitLastDispatch;
+          setTimeout(function() {
+            if (!_revitUserDisconnected && _nextD) _revitDirectConnect(_revitLastPort, _nextD);
+          }, 100);
+          return;
+        }
+        _revitHostIdx = 0; // exhausted all candidates — reset before backoff
+      }
+      d({t:'UPD_REVIT_DIRECT', u:{connected:false, loading:false}});
+      d({t:'BRIDGE_LOG', logType:'info', text:'Revit connection closed.'});
       _scheduleReconnect();
     };
 
