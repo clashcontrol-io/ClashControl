@@ -8724,7 +8724,7 @@ function startApp() {
         if(clashMarkersRef.current){
           var obj = clashMarkersRef.current;
           if (obj.geometry) obj.geometry.dispose();
-          if (obj.material) obj.material.dispose();
+          if (obj.material) { (Array.isArray(obj.material)?obj.material:[obj.material]).forEach(function(m){m.dispose();}); }
           scene.remove(obj);
           clashMarkersRef.current = null;
           invalidate();
@@ -8769,7 +8769,7 @@ function startApp() {
         if(issueMarkersRef.current){
           var obj = issueMarkersRef.current;
           if (obj.geometry) obj.geometry.dispose();
-          if (obj.material) obj.material.dispose();
+          if (obj.material) { (Array.isArray(obj.material)?obj.material:[obj.material]).forEach(function(m){m.dispose();}); }
           scene.remove(obj);
           issueMarkersRef.current = null;
           invalidate();
@@ -11882,7 +11882,7 @@ function startApp() {
       Object.keys(S.map).forEach(function(id){
         if(ids.indexOf(id)===-1){
           if(S._pruneGhostCache) S._pruneGhostCache(S.map[id]);
-          S.map[id].traverse(function(obj){if(obj.isMesh){obj.geometry&&obj.geometry.dispose();obj.material&&obj.material.dispose();}});
+          S.map[id].traverse(function(obj){if(obj.isMesh){obj.geometry&&obj.geometry.dispose();if(obj.material){(Array.isArray(obj.material)?obj.material:[obj.material]).forEach(function(m){m.dispose();});}}});
           S.mg.remove(S.map[id]);delete S.map[id];
           if(S._elMapCache) delete S._elMapCache[id];
           if(S._hsCache) delete S._hsCache[id];
@@ -11895,7 +11895,7 @@ function startApp() {
           if (needsSwap) {
             if(S._unghostAll) S._unghostAll(); // clear stale ghost refs before dispose
             if(S._pruneGhostCache) S._pruneGhostCache(existingGrp);
-            existingGrp.traverse(function(obj){if(obj.isMesh){obj.geometry&&obj.geometry.dispose();obj.material&&obj.material.dispose();}});
+            existingGrp.traverse(function(obj){if(obj.isMesh){obj.geometry&&obj.geometry.dispose();if(obj.material){(Array.isArray(obj.material)?obj.material:[obj.material]).forEach(function(m){m.dispose();});}}});
             S.mg.remove(existingGrp); delete S.map[model.id];
             if(S._elMapCache) delete S._elMapCache[model.id];
             if(S._hsCache) delete S._hsCache[model.id];
@@ -12319,7 +12319,7 @@ function startApp() {
       function _disposeMesh(obj){
         S.scene.remove(obj);
         if(obj.geometry) obj.geometry.dispose();
-        if(obj.material) obj.material.dispose();
+        if(obj.material) { (Array.isArray(obj.material)?obj.material:[obj.material]).forEach(function(m){m.dispose();}); }
       }
       function cleanupSbox(){
         if(S._sboxHelper){_disposeMesh(S._sboxHelper);S._sboxHelper=null;}
@@ -12821,7 +12821,7 @@ function startApp() {
         measureObjsRef.current.forEach(function(obj){
           if(S.scene) S.scene.remove(obj);
           if(obj.geometry) obj.geometry.dispose();
-          if(obj.material) obj.material.dispose();
+          if(obj.material) { (Array.isArray(obj.material)?obj.material:[obj.material]).forEach(function(m){m.dispose();}); }
         });
         measureObjsRef.current = [];
         measurePtsRef.current = [];
