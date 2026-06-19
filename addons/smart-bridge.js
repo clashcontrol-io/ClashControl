@@ -15,11 +15,13 @@
   'use strict';
 
   // Address candidates tried in order. 127.0.0.1 (IPv4) is direct loopback;
-  // [::1] (IPv6) is the fallback for bridge servers that bind to the IPv6
-  // loopback interface on Windows (where 'localhost' resolves to [::1] first).
-  // _probeStatus locks _sbHostIdx to the first host that responds; _connectWs
-  // uses the same index so REST and WS always target the same interface.
-  var _sbHosts = ['127.0.0.1', '[::1]'];
+  // Browsers can ONLY reach the bridge over IPv4 127.0.0.1: Chrome's CSP
+  // engine rejects IPv6 literals like [::1] in connect-src as "invalid source"
+  // and ignores them, so any [::1] fetch/WS is unconditionally blocked — no
+  // CSP entry can whitelist it. Bridge servers must bind 127.0.0.1 (or dual
+  // stack) to be reachable from the page. _probeStatus locks _sbHostIdx to the
+  // first host that responds; _connectWs uses the same index.
+  var _sbHosts = ['127.0.0.1'];
   var _sbHostIdx = 0;
   function _wsUrl()   { return 'ws://'   + _sbHosts[_sbHostIdx] + ':19802'; }
   function _restUrl() { return 'http://' + _sbHosts[_sbHostIdx] + ':19803'; }
