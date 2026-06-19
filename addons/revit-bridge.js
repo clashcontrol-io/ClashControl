@@ -441,21 +441,36 @@
       // materials on the big model — heavy on memory and draw-call changes. Safe
       // with the highlight/ghost/render-style systems, which swap mesh.material
       // by reference (and stash _origMaterial) rather than mutating it in place.
-      var mat;
-      if (window._ccGetSharedPhongMat) {
-        mat = window._ccGetSharedPhongMat(c[0], c[1], c[2], _a);
-      } else {
-        var _ck = c[0] + ',' + c[1] + ',' + c[2] + ',' + _a;
-        mat = _revitMatCache[_ck];
-        if (!mat) {
-          mat = new THREE.MeshPhongMaterial({
-            color: new THREE.Color(c[0], c[1], c[2]),
-            opacity: _a, transparent: _a < 0.99, side: THREE.DoubleSide
+      function _getRevitMat(rc) {
+        var ra = rc[3] != null ? rc[3] : 1.0;
+        if (window._ccGetSharedPhongMat) return window._ccGetSharedPhongMat(rc[0], rc[1], rc[2], ra);
+        var rk = rc[0] + ',' + rc[1] + ',' + rc[2] + ',' + ra;
+        if (!_revitMatCache[rk]) {
+          _revitMatCache[rk] = new THREE.MeshPhongMaterial({
+            color: new THREE.Color(rc[0], rc[1], rc[2]),
+            opacity: ra, transparent: ra < 0.99, side: THREE.DoubleSide
           });
-          _revitMatCache[_ck] = mat;
         }
+        return _revitMatCache[rk];
       }
-      var mesh = new THREE.Mesh(geom, mat);
+      var mesh;
+      var _groups = el.geometry.groups;
+      if (_groups && _groups.length > 0) {
+        // Per-face-group path: Connector grouped faces by material (e.g. frame vs. glass).
+        // Build geometry groups + material array so each face group gets its own
+        // material and alpha — glass faces can be transparent while frame stays opaque.
+        var _gMats = [], _gMatIdx = {};
+        for (var gi = 0; gi < _groups.length; gi++) {
+          var _g = _groups[gi];
+          var _gc = _g.color || c;
+          var _gk = _gc[0] + ',' + _gc[1] + ',' + _gc[2] + ',' + (_gc[3] != null ? _gc[3] : 1);
+          if (_gMatIdx[_gk] == null) { _gMatIdx[_gk] = _gMats.length; _gMats.push(_getRevitMat(_gc)); }
+          geom.addGroup(_g.start, _g.count, _gMatIdx[_gk]);
+        }
+        mesh = new THREE.Mesh(geom, _gMats.length === 1 ? _gMats[0] : _gMats);
+      } else {
+        mesh = new THREE.Mesh(geom, _getRevitMat(c));
+      }
       // Placement transform. The Connector should send geometry already in world
       // (shared) coordinates. When it instead sends an element's geometry in a
       // local space (a common Revit pitfall: family-instance symbol geometry, or
