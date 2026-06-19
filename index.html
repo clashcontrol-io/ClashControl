@@ -6658,10 +6658,15 @@ function startApp() {
     }
 
     // ── Smooth entry: glide camera from current position to walk position ──
+    // Delay the animation by two rAF frames so React can flush the renderStyle
+    // dispatch above and apply rendered materials BEFORE the camera starts moving.
     var entryStartPos = S.camera.position.clone();
     var entryEndPos = new THREE.Vector3(camX, camY, camZ);
     _walkEnteringAnim = true;
     _walkApplyLook(S);
+    invalidate(2);
+    requestAnimationFrame(function(){
+    requestAnimationFrame(function(){
     var enterStart = performance.now();
     var enterDuration = 350;
     (function tickEnter(){
@@ -6676,6 +6681,7 @@ function startApp() {
         _walkLastTime = performance.now();
       }
     })();
+    });});
 
     // Pointer-lock timing.  See INTERNALS.md § 21.21
     invalidate(999);
