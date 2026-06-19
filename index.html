@@ -6525,30 +6525,64 @@ function startApp() {
   function _walkSmartEntry(S){
     var unit = _walkResolveUnitScale();
     var models = (window._ccLatestState || {}).models || [];
+    var box = null;
+    try { box = (typeof _elemsBBox === 'function') ? _elemsBBox() : null; } catch(e){}
+
+    // Prefer orbit target XZ so re-entry spawns near where the user was looking,
+    // not always at model centre. Fall back to model centre if no camera available.
+    var cx = 0, cz = 0;
+    if (S && S.orbit && S.orbit.target){
+      cx = S.orbit.target.x;
+      cz = S.orbit.target.z;
+    } else if (box && !box.isEmpty()){
+      cx = (box.min.x + box.max.x)/2;
+      cz = (box.min.z + box.max.z)/2;
+    }
+
+    // Pick the storey whose elevation is closest to (but not above) the orbit target Y,
+    // so the user lands on the floor they were looking at rather than always ground floor.
+    var targetY = (S && S.orbit && S.orbit.target) ? S.orbit.target.y : null;
     var bestStorey = null, bestElev = Infinity;
     for (var mi=0; mi<models.length; mi++){
       var m = models[mi];
       var sd = m && m.storeyData;
       if (!sd || !sd.length) continue;
-      // pick the lowest storey with elevation ≥ -0.5m (allow a small tolerance below grade)
       for (var si=0; si<sd.length; si++){
         var st = sd[si];
-        var ev = (Number(st.elevation)||0);
-        if (ev >= -0.5 && ev < bestElev){ bestElev = ev; bestStorey = {storey:st, modelId:m.id}; }
+        var ev = (Number(st.elevation)||0) * unit;
+        if (targetY != null){
+          // pick the storey whose floor is nearest below (or at) target, within 10m
+          if (ev <= targetY + 0.5 && (targetY - ev) < bestElev){ bestElev = targetY - ev; bestStorey = {storey:st, modelId:m.id, elevScene:ev}; }
+        } else {
+          // first-entry fallback: lowest storey ≥ -0.5m
+          if (ev >= -0.5*unit && ev < bestElev){ bestElev = ev; bestStorey = {storey:st, modelId:m.id, elevScene:ev}; }
+        }
       }
     }
-    var box = null;
-    try { box = (typeof _elemsBBox === 'function') ? _elemsBBox() : null; } catch(e){}
-    var cx = 0, cz = 0, eyeY = 0;
-    if (box && !box.isEmpty()){
-      cx = (box.min.x + box.max.x)/2;
-      cz = (box.min.z + box.max.z)/2;
+    // If no storey matched (camera above all floors), pick lowest
+    if (!bestStorey){
+      bestElev = Infinity;
+      for (var mi2=0; mi2<models.length; mi2++){
+        var m2 = models[mi2];
+        var sd2 = m2 && m2.storeyData;
+        if (!sd2||!sd2.length) continue;
+        for (var si2=0; si2<sd2.length; si2++){
+          var st2 = sd2[si2];
+          var ev2 = (Number(st2.elevation)||0)*unit;
+          if (ev2 >= -0.5*unit && ev2 < bestElev){ bestElev = ev2; bestStorey = {storey:st2, modelId:m2.id, elevScene:ev2}; }
+        }
+      }
     }
-    var elevScene = bestStorey ? bestStorey.storey.elevation * unit : (box ? box.min.y : 0);
-    eyeY = elevScene + (_walkUserHeight * unit);
-    // face longest axis
+    var elevScene = bestStorey ? bestStorey.elevScene : (box ? box.min.y : 0);
+    var eyeY = elevScene + (_walkUserHeight * unit);
+
+    // Yaw: inherit current camera direction so re-entry faces the same way
     var yaw = 0;
-    if (box && !box.isEmpty()){
+    if (S && S.camera){
+      var dir = new THREE.Vector3();
+      S.camera.getWorldDirection(dir);
+      yaw = Math.atan2(dir.x, dir.z);
+    } else if (box && !box.isEmpty()){
       var dx = box.max.x - box.min.x, dz = box.max.z - box.min.z;
       yaw = (dx >= dz) ? Math.PI/2 : 0;
     }
