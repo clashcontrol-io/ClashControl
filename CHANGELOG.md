@@ -1,5 +1,8 @@
 # Changelog
 
+## v5.21.10 (2026-06-19)
+- fix: curtain panel glass renders opaque grey from Revit Bridge
+
 ## v5.21.9 (2026-06-19)
 - fix: resolve prefsRef scope error breaking scroll zoom
 
