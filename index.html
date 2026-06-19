@@ -13149,11 +13149,13 @@ function startApp() {
               var srcCol = src && src.color ? src.color : origRef.color;
               var srcTransp = !!(src && src.transparent);
               var srcOpac = src && src.opacity != null ? src.opacity : 1.0;
-              // Per-group glass: trust this group's own alpha first; only fall back to
-              // the element-wide name/type hint for single-material meshes (on a
-              // multi-material mesh that hint would wrongly glass-ify the mullion too).
+              var srcNameGlass = !!(src && src.name && /glass|glas\b|glazing|fenst|vitrage|vitro|verre|vetro|beglazing|kristal/i.test(src.name));
+              // For multi-material meshes: use a strict opacity threshold so opaque
+              // wall/slab groups that happen to have transparent=true aren't ghosted.
+              // For single-material meshes the element-level IFC type/name hints are safe.
               var _g = !_shHardFrame && (
-                (srcTransp && srcOpac < 0.6)
+                (_isArrSh ? (srcTransp && srcOpac < 0.25) || srcNameGlass
+                          : (srcTransp && srcOpac < 0.6))
                 || (!_isArrSh && _shNameGlass)
                 || (!_isArrSh && !_shOpaque && !_shSoftFrame && srcTransp && srcOpac < 0.3)
               );
@@ -13195,8 +13197,12 @@ function startApp() {
               var srcCol = src && src.color ? src.color : origRef.color;
               var srcTransp = !!(src && src.transparent);
               var srcOpac = src && src.opacity != null ? src.opacity : 1.0;
+              var srcNameGlass = !!(src && src.name && /glass|glas\b|glazing|fenst|vitrage|vitro|verre|vetro|beglazing|kristal/i.test(src.name));
+              // Same conservative threshold as shaded: strict < 0.25 for per-group
+              // detection so opaque wall groups with transparent=true stay solid.
               var _g = !_rdHardFrame && (
-                (srcTransp && srcOpac < 0.6)
+                (_isArrRd ? (srcTransp && srcOpac < 0.25) || srcNameGlass
+                          : (srcTransp && srcOpac < 0.6))
                 || (!_isArrRd && _rdNameGlass)
                 || (!_isArrRd && !_rdSoftFrame && srcTransp && srcOpac < 0.5)
               );
