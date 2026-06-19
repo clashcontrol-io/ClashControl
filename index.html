@@ -7647,7 +7647,10 @@ function startApp() {
       _wlAdd('mousemove', function(e) {
         if (!_walkActive || _walkEnteringAnim) return;
         var dx, dy;
-        if (_walkPointerLocked) {
+        // Check DOM directly — _walkPointerLocked lags by one async pointerlockchange
+        // event, so clientX/Y would be frozen while the flag was still false.
+        var _plLive = document.pointerLockElement === renderer.domElement;
+        if (_plLive) {
           dx = e.movementX || 0;
           dy = e.movementY || 0;
         } else if (_walkLmbDragging) {
@@ -13080,8 +13083,8 @@ function startApp() {
             var _shForceOpaque = !_shGlass && (_shHardFrame || _shSoftFrame || _shOpaque);
             cache.shaded = new THREE.MeshLambertMaterial({
               color: _shGlass ? new THREE.Color(0xbfe8ff) : origColor,
-              transparent: _shGlass ? true : (_shForceOpaque ? false : orig.transparent),
-              opacity: _shGlass ? 0.25 : (_shForceOpaque ? 1.0 : orig.opacity),
+              transparent: _shGlass ? true : (_shForceOpaque ? false : (orig.transparent || false)),
+              opacity: _shGlass ? 0.25 : (_shForceOpaque ? 1.0 : (orig.opacity != null ? orig.opacity : 1.0)),
               depthWrite: _shGlass ? false : true,
               side: _shGlass ? THREE.DoubleSide : THREE.FrontSide
             });
@@ -13122,8 +13125,8 @@ function startApp() {
               color: origColor,
               roughness: _r, metalness: _m,
               envMapIntensity: 0.85,
-              transparent: _isGlass ? true : (_rdForceOpaque ? false : orig.transparent),
-              opacity: _isGlass ? Math.min(0.35, orig.opacity > 0.05 ? orig.opacity : 0.25) : (_rdForceOpaque ? 1.0 : orig.opacity),
+              transparent: _isGlass ? true : (_rdForceOpaque ? false : (orig.transparent || false)),
+              opacity: _isGlass ? Math.min(0.35, (orig.opacity||0) > 0.05 ? orig.opacity : 0.25) : (_rdForceOpaque ? 1.0 : (orig.opacity != null ? orig.opacity : 1.0)),
               depthWrite: _isGlass ? false : true,
               side: _isGlass ? THREE.DoubleSide : THREE.FrontSide
             });
@@ -22048,7 +22051,7 @@ function startApp() {
           style=${{width:60,accentColor:'var(--accent)',margin:'0 .15rem'}} />
         <span style=${{fontSize:'var(--text-xs)',color:'var(--text-secondary)',fontFamily:'var(--font-mono)',minWidth:28,textAlign:'right'}}>${Math.round(fov)}°</span>
         ${SEP}
-        ${tog(flags.collision?'Walk':'Fly', !flags.collision, function(){ if(window._ccWalkSetCollision) window._ccWalkSetCollision(!flags.collision); })}
+        ${tog(flags.collision?'Collision On':'Collision Off', flags.collision, function(){ if(window._ccWalkSetCollision) window._ccWalkSetCollision(!flags.collision); })}
         ${!isPresent && tog(flags.crouch?'Crouching':'Crouch', !!flags.crouch, function(){})}
         ${SEP}
         <button onClick=${function(){ setHelpOpen(!helpOpen); setMoreOpen(false); }} title="Keyboard shortcuts"
