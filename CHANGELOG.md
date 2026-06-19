@@ -1,5 +1,8 @@
 # Changelog
 
+## v5.21.13 (2026-06-19)
+- fix: array-safe material dispose for multi-material meshes
+
 ## v5.21.12 (2026-06-19)
 - fix: per-group materials for multi-material curtain walls
 
