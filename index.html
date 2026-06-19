@@ -7114,7 +7114,7 @@ function startApp() {
       // Normalize across deltaMode (pixel=0, line=1, page=2) and apply user sensitivity.
       // Old coefficient was 0.0008 which gave 8% per 100px-notch — too fast.
       var _zd = e.deltaMode === 1 ? e.deltaY * 33 : e.deltaMode === 2 ? e.deltaY * 800 : e.deltaY;
-      var zoomFactor = 1 + _zd * 0.0004 * ((prefsRef.current && prefsRef.current.zoomSens != null ? prefsRef.current.zoomSens : 1));
+      var zoomFactor = 1 + _zd * 0.0004 * (window._ccZoomSens != null ? window._ccZoomSens : 1);
       // Zoom IN toward the point under the cursor so you can always approach what
       // you're looking at — e.g. a section cut that isn't at the orbit centre.
       // Moving the target toward the picked point moves the camera with it
@@ -7290,6 +7290,7 @@ function startApp() {
     window._ccElemsBBox = _elemsBBox;
     var prefsRef = useRef(s.prefs);
     prefsRef.current = s.prefs;
+    window._ccZoomSens = s.prefs.zoomSens != null ? s.prefs.zoomSens : 1;
     var measureModeRef = useRef(s.measureMode);
     measureModeRef.current = s.measureMode;
     var clashesRef = useRef(s.clashes);
