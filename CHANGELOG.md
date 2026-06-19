@@ -1,5 +1,8 @@
 # Changelog
 
+## v5.21.15 (2026-06-19)
+- fix(walk): delay entry animation until rendered style is applied
+
 ## v5.21.14 (2026-06-19)
 - fix(materials): stricter glass threshold for multi-material mesh groups
 
