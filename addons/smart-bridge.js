@@ -14,8 +14,15 @@
 (function() {
   'use strict';
 
-  var WS_URL = 'ws://127.0.0.1:19802';
-  var REST_URL = 'http://127.0.0.1:19803';
+  // Address candidates tried in order. 127.0.0.1 (IPv4) is direct loopback;
+  // [::1] (IPv6) is the fallback for bridge servers that bind to the IPv6
+  // loopback interface on Windows (where 'localhost' resolves to [::1] first).
+  // _probeStatus locks _sbHostIdx to the first host that responds; _connectWs
+  // uses the same index so REST and WS always target the same interface.
+  var _sbHosts = ['127.0.0.1', '[::1]'];
+  var _sbHostIdx = 0;
+  function _wsUrl()   { return 'ws://'   + _sbHosts[_sbHostIdx] + ':19802'; }
+  function _restUrl() { return 'http://' + _sbHosts[_sbHostIdx] + ':19803'; }
   var _ws = null;
   var _connected = false;
   var _releaseTag = 'bridge-v0.3.3'; // fallback; will be updated from GitHub API
@@ -100,11 +107,24 @@
 
   // ── Status probe ──────────────────────────────────────────────────
 
-  function _probeStatus(timeoutMs) {
+  function _probeStatus(timeoutMs, _candidateIdx) {
+    var idx = (_candidateIdx !== undefined) ? _candidateIdx : _sbHostIdx;
+    var url = 'http://' + _sbHosts[idx] + ':19803/status';
     var fetchOpts = {method:'GET', cache:'no-store'};
     try { if (AbortSignal.timeout) fetchOpts.signal = AbortSignal.timeout(timeoutMs || 500); } catch(e){}
-    return fetch(REST_URL + '/status', fetchOpts)
-      .then(function(r){ if (!r.ok) throw new Error('HTTP '+r.status); return r.json(); });
+    return fetch(url, fetchOpts)
+      .then(function(r) {
+        if (!r.ok) throw new Error('HTTP '+r.status);
+        _sbHostIdx = idx; // lock to this host for all subsequent REST + WS calls
+        return r.json();
+      })
+      .catch(function(e) {
+        // If this candidate failed immediately, try the next before giving up.
+        // ECONNREFUSED returns in < 1ms so the fallback adds negligible latency.
+        var nextIdx = idx + 1;
+        if (nextIdx < _sbHosts.length) return _probeStatus(timeoutMs, nextIdx);
+        throw e;
+      });
   }
 
   // ── Download trigger ──────────────────────────────────────────────
@@ -148,7 +168,7 @@
   function _checkForUpdate(d) {
     var fetchOpts = {method:'GET', cache:'no-store'};
     try { if (AbortSignal.timeout) fetchOpts.signal = AbortSignal.timeout(3000); } catch(e){}
-    return fetch(REST_URL + '/update', fetchOpts)
+    return fetch(_restUrl() + '/update', fetchOpts)
       .then(function(r){ if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
       .then(function(j) {
         if (j && j.update_available) {
@@ -190,7 +210,7 @@
     if (d) d({t:'UPD_SMART_BRIDGE', u:{updating:true, updateAvailable:false}});
     var fetchOpts = {method:'POST', cache:'no-store'};
     try { if (AbortSignal.timeout) fetchOpts.signal = AbortSignal.timeout(5000); } catch(e){}
-    return fetch(REST_URL + '/update', fetchOpts)
+    return fetch(_restUrl() + '/update', fetchOpts)
       .then(function() {
         console.log('%c[Smart Bridge] Self-update triggered, waiting for restart\u2026', 'color:#fbbf24');
         _pollForRestart(d, 60000); // up to 60s for the update + restart
@@ -234,7 +254,7 @@
         // just produces unhandled-promise-rejection spam in the console. Resolve
         // null instead so "not installed" is a normal, observable outcome.
         if (d) d({t:'UPD_SMART_BRIDGE', u:{connecting:false, installing:false, failed:true}});
-        console.warn('[Smart Bridge] bridge not reachable on ' + REST_URL + ' — is the Connector running?');
+        console.warn('[Smart Bridge] bridge not reachable on ' + _restUrl() + ' — is the Connector running?');
         return Promise.resolve(null);
       }
       var elapsed = Date.now() - start;
@@ -663,6 +683,51 @@
       });
       return out.length >= limit;
     });
+    return { count: out.length, elements: out };
+  };
+
+  // Full IFC property sets + quantities for one or more elements.
+  // Returns every Pset_*/Qset_* value the IFC file carries — the same data
+  // shown in the sidebar property panel when a human clicks an element.
+  handlers.get_element_properties = function(p) {
+    var s = _getState();
+    var wantG = {}, wantR = {}, wantU = {};
+    function addG(v){ if (v != null && v !== '') wantG[String(v)] = true; }
+    function addR(v){ if (v != null && v !== '') wantR[String(v)] = true; }
+    function addU(v){ if (v != null && v !== '') wantU[String(v)] = true; }
+    addG(p.globalId); addR(p.revitId); addU(p.uniqueId);
+    if (Array.isArray(p.globalIds)) p.globalIds.forEach(addG);
+    if (Array.isArray(p.revitIds))  p.revitIds.forEach(addR);
+    if (Array.isArray(p.uniqueIds)) p.uniqueIds.forEach(addU);
+    if (!Object.keys(wantG).length && !Object.keys(wantR).length && !Object.keys(wantU).length)
+      return 'Provide uniqueId/uniqueIds (Revit UniqueId), globalId/globalIds (IFC GlobalId), or revitId/revitIds.';
+    var limit = p.limit || 50;
+    var out = [];
+    (s.models || []).some(function(m) {
+      (m.elements || []).some(function(el) {
+        var pr = el.props || {};
+        var gid = pr.globalId || '', rid = pr.revitId, uid2 = pr.uniqueId;
+        if ((gid && wantG[gid]) || (rid != null && wantR[String(rid)]) || (uid2 && wantU[String(uid2)])) {
+          out.push({
+            modelName: m.name,
+            globalId: gid || null,
+            uniqueId: uid2 || null,
+            revitId: rid != null ? rid : null,
+            ifcType: pr.ifcType || null,
+            name: pr.name || null,
+            description: pr.description || null,
+            objectType: pr.objectType || null,
+            storey: pr.storey || null,
+            material: pr.material || null,
+            psets: pr.psets || {},
+            quantities: pr.quantities || {}
+          });
+        }
+        return out.length >= limit;
+      });
+      return out.length >= limit;
+    });
+    if (!out.length) return 'No elements found for the given identifier(s).';
     return { count: out.length, elements: out };
   };
 
@@ -1676,6 +1741,8 @@
       params:{ status:{type:'string',enum:['all','open','in_progress','resolved','closed'],opt:1}, limit:{type:'number',opt:1} } },
     { name:'get_element_by_guid',  description:'Resolve loaded element(s) by Revit UniqueId (preferred), IFC GlobalId, or Revit ElementId — the inverse join: turn a key from another tool into the matching CC element with its model, type, storey, material, uniqueId and classification. Accepts single uniqueId/globalId/revitId or arrays uniqueIds[]/globalIds[]/revitIds[].',
       params:{ uniqueId:{type:'string',opt:1}, globalId:{type:'string',opt:1}, revitId:{type:'string',opt:1}, uniqueIds:{type:'array',opt:1}, globalIds:{type:'array',opt:1}, revitIds:{type:'array',opt:1}, limit:{type:'number',opt:1} } },
+    { name:'get_element_properties', description:'Full IFC property sets and quantities for one or more elements — every Pset_*/Qset_* value from the IFC file (e.g. Pset_WallCommon.LoadBearing, Pset_CoveringCommon.FireRating, Qto_WallBaseQuantities.Length). Returns psets:{} and quantities:{} alongside the standard summary fields. Use get_element_by_guid for a lightweight summary; use this when you need the raw properties a human sees in the sidebar panel. Works for plain IFC and Revit-connected models alike.',
+      params:{ uniqueId:{type:'string',opt:1}, globalId:{type:'string',opt:1}, revitId:{type:'string',opt:1}, uniqueIds:{type:'array',opt:1}, globalIds:{type:'array',opt:1}, revitIds:{type:'array',opt:1}, limit:{type:'number',opt:1} } },
     { name:'resync',              description:'Force the live Revit link to re-pull the model so CC matches the current Revit state. Live-link only (no-op for static IFC loads). Re-check get_status afterwards for the new revision.' },
     { name:'run_detection',       description:'Starts clash detection between loaded models (async). modelA/modelB accept "all", a model name, "disc:<discipline>" (disc:architectural/structural/mep — disciplines from get_status), or "tag:<tag>"; use disc: on both sides to scope to cross-discipline pairs only and cut same-discipline noise at source. Rooms/spaces (IfcSpace) are excluded by default — set includeSpaces:true to clash against rooms (space-intrusion checks). Results via get_clashes; on failure (e.g. very large federation) get_status.lastDetectionError reports the message + stack.',
       params:{ modelA:{type:'string',opt:1}, modelB:{type:'string',opt:1}, maxGap:{type:'number',opt:1}, hard:{type:'boolean',opt:1}, excludeSelf:{type:'boolean',opt:1}, includeSpaces:{type:'boolean',opt:1} } },
@@ -1807,14 +1874,16 @@
   function _connectWs(d) {
     if (_ws && _ws.readyState <= 1) return;
     var capturedGen = _wsGen;
-    try { _ws = new WebSocket(WS_URL); } catch (e) { return; }
+    var _wsOpened = false; // did THIS socket ever reach onopen?
+    try { _ws = new WebSocket(_wsUrl()); } catch (e) { return; }
 
     _ws.onopen = function() {
+      _wsOpened = true;
       _connected = true;
       if (d) d({t:'UPD_SMART_BRIDGE', u:{connected:true, bridgeUpdating:false, bridgeReconnecting:false}});
       console.log('%c[Smart Bridge] Connected', 'color:#22c55e;font-weight:bold');
       // Fetch stored LLM config so the chat panel pre-fills correctly
-      fetch(REST_URL + '/llm-config', {cache:'no-store'})
+      fetch(_restUrl() + '/llm-config', {cache:'no-store'})
         .then(function(r){ return r.ok ? r.json() : null; })
         .then(function(j){ if (j && d) d({t:'UPD_SMART_BRIDGE', u:{llmConfig:j}}); })
         .catch(function(){}); // bridge may not support /llm-config yet — ignore
@@ -1873,6 +1942,17 @@
     _ws.onclose = function() {
       _connected = false;
       if (d) d({t:'UPD_SMART_BRIDGE', u:{connected:false, llmConnected:false}});
+      // If the socket never opened, try the next address candidate before backoff.
+      // Handles bridge servers bound to [::1] where 127.0.0.1 gets immediate ECONNREFUSED.
+      if (!_wsOpened) {
+        var nextIdx = _sbHostIdx + 1;
+        if (nextIdx < _sbHosts.length) {
+          _sbHostIdx = nextIdx;
+          setTimeout(function() { if (_wsGen === capturedGen) _connectWs(d); }, 100);
+          return;
+        }
+        _sbHostIdx = 0; // exhausted all candidates — reset before backoff
+      }
       // Auto-reconnect after 3s, but only if still in the same session (not destroyed)
       setTimeout(function() { if (_wsGen === capturedGen) _connectWs(d); }, 3000);
     };
@@ -2201,7 +2281,7 @@
               function _detectLocal() {
                 var btn = document.getElementById('cc-sb-detect-btn');
                 if (btn) btn.textContent = 'Detecting…';
-                fetch(REST_URL + '/llm/autodetect')
+                fetch(_restUrl() + '/llm/autodetect')
                   .then(function(r){ if (r.status === 404) throw new Error('Update your Connector to auto-detect — or pick a preset below'); return r.json(); })
                   .then(function(j){
                     var found = (j && j.found) || [];
@@ -2209,7 +2289,7 @@
                     var pick = found[0];
                     var model = (pick.models && pick.models[0]) || 'local-model';
                     var newCfg = {provider:pick.provider, model:model, baseUrl:pick.baseUrl, apiKey:''};
-                    fetch(REST_URL + '/llm-config', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(newCfg)})
+                    fetch(_restUrl() + '/llm-config', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(newCfg)})
                       .then(function(){ if (d) d({t:'UPD_SMART_BRIDGE', u:{llmConfig:{provider:pick.provider, model:model, baseUrl:pick.baseUrl, hasKey:false}}}); });
                   })
                   .catch(function(e){ if (btn) { btn.textContent = e.message || 'Detect failed'; setTimeout(function(){ if (btn) btn.textContent = 'Connect my desktop LLM'; }, 3400); } });
@@ -2229,7 +2309,7 @@
                 };
                 var btn = document.getElementById('cc-sb-llm-save-btn');
                 if (btn) btn.textContent = 'Saving\u2026';
-                fetch(REST_URL + '/llm-config', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(newCfg)})
+                fetch(_restUrl() + '/llm-config', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(newCfg)})
                   .then(function(){ if (d) d({t:'UPD_SMART_BRIDGE', u:{llmConfig:{provider:newCfg.provider, model:newCfg.model, baseUrl:newCfg.baseUrl, hasKey:!!newCfg.apiKey}}}); if (btn) { btn.textContent = 'Saved \u2713'; setTimeout(function(){ if (btn) btn.textContent='Save'; }, 1800); } })
                   .catch(function(e){ if (btn) btn.textContent = 'Failed'; console.warn('[Smart Bridge] save llm config:', e); });
               }
@@ -2243,7 +2323,7 @@
                 if (d) d({t:'UPD_SMART_BRIDGE', u:{chatBusy:true, chatError:null, chatMessages:updMsgs}});
                 // Build history from current messages (skip the last user msg we just added)
                 var history = msgs.map(function(m){ return {role:m.role, content:m.content}; });
-                fetch(REST_URL + '/chat', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({message:msg, history:history})})
+                fetch(_restUrl() + '/chat', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({message:msg, history:history})})
                   .then(function(r){ if (!r.ok) return r.json().then(function(j){ throw new Error(j.error || ('HTTP '+r.status)); }); return r.json(); })
                   .then(function(j){ if (d) d({t:'UPD_SMART_BRIDGE', u:{chatBusy:false, chatMessages:updMsgs.concat([{role:'assistant', content:j.response}])}}); })
                   .catch(function(e){ if (d) d({t:'UPD_SMART_BRIDGE', u:{chatBusy:false, chatError:e.message}}); });

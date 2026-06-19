@@ -1,5 +1,35 @@
 # Changelog
 
+## v5.21.10 (2026-06-19)
+- fix: curtain panel glass renders opaque grey from Revit Bridge
+
+## v5.21.9 (2026-06-19)
+- fix: resolve prefsRef scope error breaking scroll zoom
+
+## v5.21.8 (2026-06-19)
+- feat: scroll zoom speed slider, orbit-around-selected, glass detection fix
+
+## v5.21.7 (2026-06-19)
+- feat: support per-face-group materials in Revit Bridge mesh builder
+
+## v5.21.6 (2026-06-18)
+- fix: use explicit [::1] ports in CSP — Chrome rejects IPv6 wildcard (#664)
+
+## v5.21.5 (2026-06-18)
+- fix: add [::1] IPv6 loopback origins to CSP connect-src (#663)
+
+## v5.21.4 (2026-06-18)
+- fix(smart-bridge): IPv4/IPv6 loopback fallback + Smart Bridge API docs
+
+## v5.21.3 (2026-06-18)
+- fix(revit-bridge): IPv4/IPv6 loopback fallback + SW cache bust + CONNECTOR_PROTOCOL.md
+
+## v5.21.2 (2026-06-17)
+- fix: section-plane zoom stop and gizmo handle size
+
+## v5.21.1 (2026-06-17)
+- fix: zoom-to-cursor no longer zooms out over off-centre geometry
+
 ## v5.21.0 (2026-06-15)
 - Measure coexists with the section plane + zoom-toward-cursor (#649)
 

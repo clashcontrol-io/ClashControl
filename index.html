@@ -140,8 +140,10 @@
 
   <!-- CSP: restrict resource loading to known CDN origins -->
   <!-- 'unsafe-eval' required by pdf.js v3 for custom font rendering (CFF/Type1 font programs) -->
-  <!-- Includes localhost:* and 127.0.0.1:* for addon servers (Smart Bridge v0.1.3, ClashControlEngine) -->
-  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval' 'wasm-unsafe-eval' https://cdnjs.cloudflare.com https://cdn.jsdelivr.net https://gc.zgo.at; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com data:; connect-src 'self' https://cdn.jsdelivr.net https://cdnjs.cloudflare.com https://tile.googleapis.com https://api.pdok.nl https://*.goatcounter.com https://huggingface.co https://cdn-lfs.huggingface.co https://cdn-lfs-us-1.huggingface.co https://*.hf.co https://sparkjs.dev http://localhost:11434 https://api.anthropic.com https://api.openai.com https://generativelanguage.googleapis.com https://api.github.com http://localhost:* ws://localhost:* http://127.0.0.1:* ws://127.0.0.1:* http://[::1]:* ws://[::1]:* blob: data:; worker-src 'self' blob:; img-src 'self' blob: data:;">
+  <!-- Includes localhost:*, 127.0.0.1:*, and explicit [::1] ports for addon servers (Smart Bridge, Revit Bridge, LocalEngine) -->
+  <!-- Chrome CSP bug: ws://[::1]:* wildcard does not match IPv6 literals — must use explicit ports -->
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval' 'wasm-unsafe-eval' https://cdnjs.cloudflare.com https://cdn.jsdelivr.net https://gc.zgo.at; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com data:; connect-src 'self' https://cdn.jsdelivr.net https://cdnjs.cloudflare.com https://tile.googleapis.com https://api.pdok.nl https://*.goatcounter.com https://huggingface.co https://cdn-lfs.huggingface.co https://cdn-lfs-us-1.huggingface.co https://*.hf.co https://sparkjs.dev http://localhost:11434 https://api.anthropic.com https://api.openai.com https://generativelanguage.googleapis.com https://api.github.com http://localhost:* ws://localhost:* http://127.0.0.1:* ws://127.0.0.1:* ws://[::1]:19780 ws://[::1]:19781 ws://[::1]:19782 ws://[::1]:19783 ws://[::1]:19784 ws://[::1]:19785 ws://[::1]:19786 ws://[::1]:19787 ws://[::1]:19788 ws://[::1]:19789 ws://[::1]:19802 http://[::1]:19800 http://[::1]:19803 blob: data:; worker-src 'self' blob:; img-src 'self' blob: data:;">
+
 
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -646,7 +648,7 @@ window.onload = function() {
 
 function startApp() {
   // ── Version (auto-updated by pre-commit hook) ──
-  var CC_VERSION = {v:'5.21.0',hash:'e0dc9a5',date:'2026-06-15T09:05:53Z'};
+  var CC_VERSION = {v:'5.21.10',hash:'535941c',date:'2026-06-19T11:38:27Z'};
   window.CC_VERSION = CC_VERSION;
 
   window._ccSetSRGBOutput = function(renderer) {
