@@ -6591,7 +6591,7 @@ function startApp() {
     }
     if (entry.yaw != null){
       _walkYaw = entry.yaw;
-      _walkPitch = 0;
+      _walkPitch = entry.pitch != null ? entry.pitch : 0;
     } else {
       var dir = new THREE.Vector3();
       S.camera.getWorldDirection(dir);
@@ -6656,6 +6656,9 @@ function startApp() {
     _walkKeys = {};
     _walkCrouching = false;
     _walkVignette = 0;
+    // Drop any persisted walk pose — leaving walk means a refresh should NOT
+    // re-enter it (see the pagehide save + boot restore).
+    try { sessionStorage.removeItem('cc_walkPose'); } catch (e) {}
     try { if (document.pointerLockElement) document.exitPointerLock(); } catch (e) {}
 
     // Restore render style
@@ -7694,6 +7697,14 @@ function startApp() {
       });
       window._ccWalkEnter = function(opts) { _walkEnter(S, opts); };
       window._ccWalkExit = function() { _walkExit(S); };
+      // Snapshot the current walk pose (world position + look angles) so it can
+      // be persisted across a hard refresh and restored on reload. Returns null
+      // when not walking.
+      window._ccWalkSavePose = function(){
+        if (!_walkActive || !S.camera) return null;
+        var p = S.camera.position;
+        return { position:{ x:p.x, y:p.y, z:p.z }, yaw:_walkYaw, pitch:_walkPitch };
+      };
       window._ccWalkGetYaw = function(){ return _walkYaw; };
       window._ccWalkSetYaw = function(y){ _walkYaw = y; if (_walkActive) _walkApplyLook(S); };
       // Hover-element capture for inspect-while-walking — throttled raycast
@@ -14141,7 +14152,28 @@ function startApp() {
             });
         });
       });
-      chain.then(function(){ d({t:A.SWITCHING_PROJECT, v:false}); });
+      chain.then(function(){
+        d({t:A.SWITCHING_PROJECT, v:false});
+        // Re-enter walk mode at the saved pose if the previous session was
+        // walking when the page was refreshed. Deferred so the model's
+        // auto-fit / fly-to settles first; walk enter then overrides the
+        // camera with the persisted position + look angles.
+        try {
+          var _wpRaw = !window._ccWalkPoseConsumed && sessionStorage.getItem('cc_walkPose');
+          window._ccWalkPoseConsumed = true; // first boot restore only — not project switches
+          if (_wpRaw) {
+            var _wp = JSON.parse(_wpRaw);
+            if (_wp && _wp.position) {
+              setTimeout(function(){
+                try {
+                  if (window._ccWalkEnter) window._ccWalkEnter({ position:_wp.position, yaw:_wp.yaw, pitch:_wp.pitch });
+                  if (window._ccDispatch) window._ccDispatch({t:A.WALK_MODE, v:true});
+                } catch(_e){}
+              }, 400);
+            }
+          }
+        } catch(_e){}
+      });
     });
   }
 
@@ -33216,6 +33248,12 @@ function startApp() {
         var cur = _latestSRef.current;
         if(_hasProjectData(cur)) _saveCurrentProjectData(cur);
         _flushAllViaBeacon(cur && cur.models || []);
+        // Persist walk-mode pose so a hard refresh drops back into walk mode at
+        // the same spot. Cleared on walk exit; consumed by the boot restore.
+        try {
+          var _wp = window._ccWalkSavePose && window._ccWalkSavePose();
+          if (_wp) sessionStorage.setItem('cc_walkPose', JSON.stringify(_wp));
+        } catch(_e){}
       }
       function onVisibility() { if (document.visibilityState === 'hidden') flush(); }
       window.addEventListener('pagehide', flush);
