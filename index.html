@@ -6649,11 +6649,24 @@ function startApp() {
     _walkPitchTarget = _walkPitch;
     _walkLastTime = performance.now();
 
+    // ── Force 'rendered' style: activates SAO + Outline + SMAA + shadows ──
+    var _curState = window._ccLatestState;
+    _walkSavedRenderStyle = (_curState && _curState.prefs && _curState.prefs.renderStyle) || null;
+    if (_walkSavedRenderStyle !== 'rendered') {
+      if (window._ccDispatch) window._ccDispatch({t:'UPD_PREFS', u:{renderStyle:'rendered'}});
+      if (window._ccActivatePostFX) window._ccActivatePostFX(true);
+    }
+
     // ── Smooth entry: glide camera from current position to walk position ──
+    // Delay the animation by two rAF frames so React can flush the renderStyle
+    // dispatch above and apply rendered materials BEFORE the camera starts moving.
     var entryStartPos = S.camera.position.clone();
     var entryEndPos = new THREE.Vector3(camX, camY, camZ);
     _walkEnteringAnim = true;
     _walkApplyLook(S);
+    invalidate(2);
+    requestAnimationFrame(function(){
+    requestAnimationFrame(function(){
     var enterStart = performance.now();
     var enterDuration = 350;
     (function tickEnter(){
@@ -6668,6 +6681,7 @@ function startApp() {
         _walkLastTime = performance.now();
       }
     })();
+    });});
 
     // Pointer-lock timing.  See INTERNALS.md § 21.21
     invalidate(999);
@@ -6690,6 +6704,11 @@ function startApp() {
     try { sessionStorage.removeItem('cc_walkPose'); } catch (e) {}
     try { if (document.pointerLockElement) document.exitPointerLock(); } catch (e) {}
 
+    // Restore render style
+    if (_walkSavedRenderStyle !== null && _walkSavedRenderStyle !== 'rendered') {
+      if (window._ccDispatch) window._ccDispatch({t:'UPD_PREFS', u:{renderStyle:_walkSavedRenderStyle}});
+      if (window._ccActivatePostFX) window._ccActivatePostFX(false);
+    }
     _walkSavedRenderStyle = null;
 
     var saved = _walkSavedCam;
