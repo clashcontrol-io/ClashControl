@@ -6649,14 +6649,6 @@ function startApp() {
     _walkPitchTarget = _walkPitch;
     _walkLastTime = performance.now();
 
-    // ── Force 'rendered' style: activates SAO + Outline + SMAA + shadows ──
-    var _curState = window._ccLatestState;
-    _walkSavedRenderStyle = (_curState && _curState.prefs && _curState.prefs.renderStyle) || null;
-    if (_walkSavedRenderStyle !== 'rendered') {
-      if (window._ccDispatch) window._ccDispatch({t:'UPD_PREFS', u:{renderStyle:'rendered'}});
-      if (window._ccActivatePostFX) window._ccActivatePostFX(true);
-    }
-
     // ── Smooth entry: glide camera from current position to walk position ──
     var entryStartPos = S.camera.position.clone();
     var entryEndPos = new THREE.Vector3(camX, camY, camZ);
@@ -6698,11 +6690,6 @@ function startApp() {
     try { sessionStorage.removeItem('cc_walkPose'); } catch (e) {}
     try { if (document.pointerLockElement) document.exitPointerLock(); } catch (e) {}
 
-    // Restore render style
-    if (_walkSavedRenderStyle !== null && _walkSavedRenderStyle !== 'rendered') {
-      if (window._ccDispatch) window._ccDispatch({t:'UPD_PREFS', u:{renderStyle:_walkSavedRenderStyle}});
-      if (window._ccActivatePostFX) window._ccActivatePostFX(false);
-    }
     _walkSavedRenderStyle = null;
 
     var saved = _walkSavedCam;
