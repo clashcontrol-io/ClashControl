@@ -481,7 +481,7 @@
           // style switcher works the same as for IFC-loaded models.
           var _catMap = {
             'Doors':'IfcDoor', 'Windows':'IfcWindow',
-            'Curtain Panels':'IfcPlate', 'Curtain Panel':'IfcPlate',
+            'Curtain Panels':'IfcWindow', 'Curtain Panel':'IfcWindow',
             'Curtain Wall Mullions':'IfcMember', 'Curtain Wall Mullion':'IfcMember',
             'Curtain Walls':'IfcCurtainWall',
             'Walls':'IfcWall', 'Wall':'IfcWall',
