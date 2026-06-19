@@ -1,5 +1,8 @@
 # Changelog
 
+## v5.21.8 (2026-06-19)
+- feat: scroll zoom speed slider, orbit-around-selected, glass detection fix
+
 ## v5.21.7 (2026-06-19)
 - feat: support per-face-group materials in Revit Bridge mesh builder
 
