@@ -144,6 +144,7 @@
   <!-- Chrome CSP bug: ws://[::1]:* wildcard does not match IPv6 literals — must use explicit ports -->
   <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval' 'wasm-unsafe-eval' https://cdnjs.cloudflare.com https://cdn.jsdelivr.net https://gc.zgo.at; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com data:; connect-src 'self' https://cdn.jsdelivr.net https://cdnjs.cloudflare.com https://tile.googleapis.com https://api.pdok.nl https://*.goatcounter.com https://huggingface.co https://cdn-lfs.huggingface.co https://cdn-lfs-us-1.huggingface.co https://*.hf.co https://sparkjs.dev http://localhost:11434 https://api.anthropic.com https://api.openai.com https://generativelanguage.googleapis.com https://api.github.com http://localhost:* ws://localhost:* http://127.0.0.1:* ws://127.0.0.1:* ws://[::1]:19780 ws://[::1]:19781 ws://[::1]:19782 ws://[::1]:19783 ws://[::1]:19784 ws://[::1]:19785 ws://[::1]:19786 ws://[::1]:19787 ws://[::1]:19788 ws://[::1]:19789 ws://[::1]:19802 http://[::1]:19800 http://[::1]:19803 blob: data:; worker-src 'self' blob:; img-src 'self' blob: data:;">
 
+
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Syne:wght@700;800&family=DM+Sans:wght@400;500;600;700&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
@@ -6592,7 +6593,7 @@ function startApp() {
     }
     if (entry.yaw != null){
       _walkYaw = entry.yaw;
-      _walkPitch = 0;
+      _walkPitch = entry.pitch != null ? entry.pitch : 0;
     } else {
       var dir = new THREE.Vector3();
       S.camera.getWorldDirection(dir);
@@ -6657,6 +6658,9 @@ function startApp() {
     _walkKeys = {};
     _walkCrouching = false;
     _walkVignette = 0;
+    // Drop any persisted walk pose — leaving walk means a refresh should NOT
+    // re-enter it (see the pagehide save + boot restore).
+    try { sessionStorage.removeItem('cc_walkPose'); } catch (e) {}
     try { if (document.pointerLockElement) document.exitPointerLock(); } catch (e) {}
 
     // Restore render style
@@ -7695,6 +7699,14 @@ function startApp() {
       });
       window._ccWalkEnter = function(opts) { _walkEnter(S, opts); };
       window._ccWalkExit = function() { _walkExit(S); };
+      // Snapshot the current walk pose (world position + look angles) so it can
+      // be persisted across a hard refresh and restored on reload. Returns null
+      // when not walking.
+      window._ccWalkSavePose = function(){
+        if (!_walkActive || !S.camera) return null;
+        var p = S.camera.position;
+        return { position:{ x:p.x, y:p.y, z:p.z }, yaw:_walkYaw, pitch:_walkPitch };
+      };
       window._ccWalkGetYaw = function(){ return _walkYaw; };
       window._ccWalkSetYaw = function(y){ _walkYaw = y; if (_walkActive) _walkApplyLook(S); };
       // Hover-element capture for inspect-while-walking — throttled raycast
@@ -13038,7 +13050,12 @@ function startApp() {
         if (S._isGhostMat && S._isGhostMat(obj.material)) continue;
         if (obj.userData._ccColored) continue; // [Stage 2B] chunk in color-by-class mode owns its material
         var cache = obj.userData._styleMats || (obj.userData._styleMats = {});
-        var origColor = orig.color ? orig.color.clone() : new THREE.Color(0xcccccc);
+        // Multi-material meshes (per-face-group, e.g. from Revit Bridge) have an
+        // array here. Use the first element as the representative for colour/
+        // transparency reads — the style result is a single uniform material so
+        // the mesh renders the dominant face colour rather than grey (0xcccccc).
+        var origRef = Array.isArray(orig) ? (orig[0] || orig) : orig;
+        var origColor = origRef.color ? origRef.color.clone() : new THREE.Color(0xcccccc);
         var mat;
         if (style === 'xray') {
           _disposeEdges(obj);
@@ -13062,8 +13079,8 @@ function startApp() {
           var _hlGlass = !_hlHardFrame && (
             /glass|glas\b|glazing|fenst|vitrage|vitro|verre|vetro|beglazing|kristal/i.test(_hlMatName)
             || (/^IfcWindow|curtain.panel/i.test(_hlType))
-            || (/^IfcWindow/i.test(_hlType) && orig.transparent && orig.opacity < 0.5)
-            || (!_hlOpaque && !_hlSoftFrame && orig.transparent && orig.opacity < 0.3)
+            || (/^IfcWindow/i.test(_hlType) && origRef.transparent && origRef.opacity < 0.5)
+            || (!_hlOpaque && !_hlSoftFrame && origRef.transparent && origRef.opacity < 0.3)
           );
           if (_hlGlass) {
             mat = cache.standardGlass || (cache.standardGlass = new THREE.MeshBasicMaterial({
@@ -13093,13 +13110,13 @@ function startApp() {
             var _shGlass = !_shHardFrame && (
               /glass|glas\b|glazing|fenst|vitrage|vitro|verre|vetro|beglazing|kristal/i.test(_shMatName)
               || /^IfcWindow|curtain.panel/i.test(_shType)
-              || (!_shOpaque && !_shSoftFrame && orig.transparent && orig.opacity < 0.3)
+              || (!_shOpaque && !_shSoftFrame && origRef.transparent && origRef.opacity < 0.3)
             );
             var _shForceOpaque = !_shGlass && (_shHardFrame || _shSoftFrame || _shOpaque);
             cache.shaded = new THREE.MeshLambertMaterial({
               color: _shGlass ? new THREE.Color(0xbfe8ff) : origColor,
-              transparent: _shGlass ? true : (_shForceOpaque ? false : (orig.transparent || false)),
-              opacity: _shGlass ? 0.25 : (_shForceOpaque ? 1.0 : (orig.opacity != null ? orig.opacity : 1.0)),
+              transparent: _shGlass ? true : (_shForceOpaque ? false : (origRef.transparent || false)),
+              opacity: _shGlass ? 0.25 : (_shForceOpaque ? 1.0 : (origRef.opacity != null ? origRef.opacity : 1.0)),
               depthWrite: _shGlass ? false : true,
               side: _shGlass ? THREE.DoubleSide : THREE.FrontSide
             });
@@ -13117,7 +13134,7 @@ function startApp() {
             var _rdOpaqueMat = /steel|metal|alum|copper|brass|iron|zinc|concrete|beton|brick|masonry|wood|timber|stone|gypsum|plaster|insul/.test(_matName);
             // Glass: trust the IFC alpha first; fall back to name guess.
             var _isGlass = !_rdHardFrame && (
-              (orig.transparent && orig.opacity < 0.5)
+              (origRef.transparent && origRef.opacity < 0.5)
               || /^IfcWindow|curtain.panel/i.test(_rdType)
               || (!_rdSoftFrame && /glass|glas\b|glazing|fenst|vitrage|vitro|verre|vetro|beglazing|kristal/i.test(_matName))
             );
@@ -13141,8 +13158,8 @@ function startApp() {
               color: origColor,
               roughness: _r, metalness: _m,
               envMapIntensity: 0.85,
-              transparent: _isGlass ? true : (_rdForceOpaque ? false : (orig.transparent || false)),
-              opacity: _isGlass ? Math.min(0.35, (orig.opacity||0) > 0.05 ? orig.opacity : 0.25) : (_rdForceOpaque ? 1.0 : (orig.opacity != null ? orig.opacity : 1.0)),
+              transparent: _isGlass ? true : (_rdForceOpaque ? false : (origRef.transparent || false)),
+              opacity: _isGlass ? Math.min(0.35, (origRef.opacity||0) > 0.05 ? origRef.opacity : 0.25) : (_rdForceOpaque ? 1.0 : (origRef.opacity != null ? origRef.opacity : 1.0)),
               depthWrite: _isGlass ? false : true,
               side: _isGlass ? THREE.DoubleSide : THREE.FrontSide
             });
@@ -13155,7 +13172,9 @@ function startApp() {
         }
         if (obj.material !== mat) {
           // Preserve per-material clipping planes (section box / section plane)
-          var _prevPlanes = obj.material.clippingPlanes;
+          // obj.material may be an array (multi-material mesh); read from first element.
+          var _curMat = Array.isArray(obj.material) ? obj.material[0] : obj.material;
+          var _prevPlanes = _curMat && _curMat.clippingPlanes;
           if (_prevPlanes && _prevPlanes.length) { mat.clippingPlanes = _prevPlanes; mat.needsUpdate = true; }
           else if (mat.clippingPlanes && mat.clippingPlanes.length) { mat.clippingPlanes = []; mat.needsUpdate = true; }
           obj.material = mat;
@@ -14135,7 +14154,28 @@ function startApp() {
             });
         });
       });
-      chain.then(function(){ d({t:A.SWITCHING_PROJECT, v:false}); });
+      chain.then(function(){
+        d({t:A.SWITCHING_PROJECT, v:false});
+        // Re-enter walk mode at the saved pose if the previous session was
+        // walking when the page was refreshed. Deferred so the model's
+        // auto-fit / fly-to settles first; walk enter then overrides the
+        // camera with the persisted position + look angles.
+        try {
+          var _wpRaw = !window._ccWalkPoseConsumed && sessionStorage.getItem('cc_walkPose');
+          window._ccWalkPoseConsumed = true; // first boot restore only — not project switches
+          if (_wpRaw) {
+            var _wp = JSON.parse(_wpRaw);
+            if (_wp && _wp.position) {
+              setTimeout(function(){
+                try {
+                  if (window._ccWalkEnter) window._ccWalkEnter({ position:_wp.position, yaw:_wp.yaw, pitch:_wp.pitch });
+                  if (window._ccDispatch) window._ccDispatch({t:A.WALK_MODE, v:true});
+                } catch(_e){}
+              }, 400);
+            }
+          }
+        } catch(_e){}
+      });
     });
   }
 
@@ -33210,6 +33250,12 @@ function startApp() {
         var cur = _latestSRef.current;
         if(_hasProjectData(cur)) _saveCurrentProjectData(cur);
         _flushAllViaBeacon(cur && cur.models || []);
+        // Persist walk-mode pose so a hard refresh drops back into walk mode at
+        // the same spot. Cleared on walk exit; consumed by the boot restore.
+        try {
+          var _wp = window._ccWalkSavePose && window._ccWalkSavePose();
+          if (_wp) sessionStorage.setItem('cc_walkPose', JSON.stringify(_wp));
+        } catch(_e){}
       }
       function onVisibility() { if (document.visibilityState === 'hidden') flush(); }
       window.addEventListener('pagehide', flush);
