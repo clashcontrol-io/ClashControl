@@ -1,5 +1,8 @@
 # Changelog
 
+## v5.21.7 (2026-06-19)
+- feat: support per-face-group materials in Revit Bridge mesh builder
+
 ## v5.21.6 (2026-06-18)
 - fix: use explicit [::1] ports in CSP — Chrome rejects IPv6 wildcard (#664)
 
