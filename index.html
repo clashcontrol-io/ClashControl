@@ -10290,7 +10290,7 @@ function startApp() {
           if(S3._sboxRotRing) S3._sboxRotRing.position.copy(ctr3).addScaledVector(axY3,hy3+(S3._sboxRotRing.userData._floatH||0.5));
           // Update clipping planes immediately
           var np3=[new THREE.Plane().setFromNormalAndCoplanarPoint(axX3.clone(),ctr3.clone().addScaledVector(axX3,-hx3)),new THREE.Plane().setFromNormalAndCoplanarPoint(axX3.clone().negate(),ctr3.clone().addScaledVector(axX3,hx3)),new THREE.Plane().setFromNormalAndCoplanarPoint(axY3.clone(),ctr3.clone().addScaledVector(axY3,-hy3)),new THREE.Plane().setFromNormalAndCoplanarPoint(axY3.clone().negate(),ctr3.clone().addScaledVector(axY3,hy3)),new THREE.Plane().setFromNormalAndCoplanarPoint(axZ3.clone(),ctr3.clone().addScaledVector(axZ3,-hz3)),new THREE.Plane().setFromNormalAndCoplanarPoint(axZ3.clone().negate(),ctr3.clone().addScaledVector(axZ3,hz3))];
-          S3.scene.traverse(function(obj){if(!obj.isMesh||!obj.material||(obj.userData.expressId==null&&!obj.isInstancedMesh&&!obj.userData._isCCBatch))return;var ms=Array.isArray(obj.material)?obj.material:[obj.material];ms.forEach(function(m){m.clippingPlanes=np3;m.needsUpdate=true;});var sm=obj.userData._styleMats;if(sm)Object.keys(sm).forEach(function(k){if(sm[k]){sm[k].clippingPlanes=np3;sm[k].needsUpdate=true;}});});
+          S3.scene.traverse(function(obj){if(!obj.isMesh||!obj.material||(obj.userData.expressId==null&&!obj.isInstancedMesh&&!obj.userData._isCCBatch))return;var ms=Array.isArray(obj.material)?obj.material:[obj.material];ms.forEach(function(m){m.clippingPlanes=np3;m.needsUpdate=true;});var sm=obj.userData._styleMats;if(sm)Object.keys(sm).forEach(function(k){(Array.isArray(sm[k])?sm[k]:[sm[k]]).forEach(function(m){if(m){m.clippingPlanes=np3;m.needsUpdate=true;}});});});
           window._ccCurrentSbox=newSb;
           invalidate();
           _sboxHudShow((newRot*180/Math.PI).toFixed(1)+'°', e.clientX, e.clientY);
@@ -12104,7 +12104,7 @@ function startApp() {
         mats.forEach(function(m){ if(m.clippingPlanes!==planes){m.clippingPlanes=planes;m.needsUpdate=true;} });
         // Apply to all cached style materials so render-style swaps don't lose clipping
         var sm = obj.userData._styleMats;
-        if (sm && planes.length) Object.keys(sm).forEach(function(k){ if(sm[k]&&sm[k].clippingPlanes!==planes){sm[k].clippingPlanes=planes;sm[k].needsUpdate=true;} });
+        if (sm && planes.length) Object.keys(sm).forEach(function(k){ (Array.isArray(sm[k])?sm[k]:[sm[k]]).forEach(function(m){ if(m&&m.clippingPlanes!==planes){m.clippingPlanes=planes;m.needsUpdate=true;} }); });
       });
       if(!planes.length && !(s.sectionBox&&s.sectionBox.enabled)) S.renderer.localClippingEnabled=false;
       if(!(s.sectionBox&&s.sectionBox.enabled)) window._ccActivePlanes = planes; // expose for click filter
@@ -12304,7 +12304,7 @@ function startApp() {
               var mats=Array.isArray(obj.material)?obj.material:[obj.material];
               mats.forEach(function(m){ if(m.clippingPlanes&&m.clippingPlanes.length){m.clippingPlanes=[];m.needsUpdate=true;} });
               var sm=obj.userData._styleMats;
-              if(sm) Object.keys(sm).forEach(function(k){ if(sm[k]&&sm[k].clippingPlanes&&sm[k].clippingPlanes.length){sm[k].clippingPlanes=[];sm[k].needsUpdate=true;} });
+              if(sm) Object.keys(sm).forEach(function(k){ (Array.isArray(sm[k])?sm[k]:[sm[k]]).forEach(function(m){ if(m&&m.clippingPlanes&&m.clippingPlanes.length){m.clippingPlanes=[];m.needsUpdate=true;} }); });
             });
             S.renderer.clippingPlanes=[];
             S.renderer.localClippingEnabled=false;
@@ -12345,7 +12345,7 @@ function startApp() {
         mats.forEach(function(m){ m.clippingPlanes=planes; m.needsUpdate=true; });
         // Also apply to all cached style materials so a render-style swap doesn't lose clipping
         var sm = obj.userData._styleMats;
-        if (sm) Object.keys(sm).forEach(function(k){ if(sm[k]){sm[k].clippingPlanes=planes;sm[k].needsUpdate=true;} });
+        if (sm) Object.keys(sm).forEach(function(k){ (Array.isArray(sm[k])?sm[k]:[sm[k]]).forEach(function(m){ if(m){m.clippingPlanes=planes;m.needsUpdate=true;} }); });
       });
       S._sectionBoxActive=true;
       window._ccCurrentSbox=sb; // expose for drag handlers
@@ -13104,23 +13104,35 @@ function startApp() {
             var _shHardFrame = /^Ifc(Member|CurtainWall|Beam|Column|Pile|Footing|Wall|Slab|Roof|Stair|Ramp|Covering|Railing|Rail)/i.test(_shType);
             // Soft frame types: opaque by default but glass if material explicitly says so.
             var _shSoftFrame = /^Ifc(Door|BuildingElementProxy)/i.test(_shType);
-            // Glass only when the type cannot possibly be structural.
-            // IfcWindow needs orig.transparent check: Revit exports curtain wall
-            // frames as IfcWindow with no material (opaque geometry), while real
-            // glass panels have transparent geometry (opacity < 0.5 from IFC).
-            var _shGlass = !_shHardFrame && (
-              /glass|glas\b|glazing|fenst|vitrage|vitro|verre|vetro|beglazing|kristal/i.test(_shMatName)
-              || /^IfcWindow|curtain.panel/i.test(_shType)
-              || (!_shOpaque && !_shSoftFrame && origRef.transparent && origRef.opacity < 0.3)
-            );
-            var _shForceOpaque = !_shGlass && (_shHardFrame || _shSoftFrame || _shOpaque);
-            cache.shaded = new THREE.MeshLambertMaterial({
-              color: _shGlass ? new THREE.Color(0xbfe8ff) : origColor,
-              transparent: _shGlass ? true : (_shForceOpaque ? false : (origRef.transparent || false)),
-              opacity: _shGlass ? 0.25 : (_shForceOpaque ? 1.0 : (origRef.opacity != null ? origRef.opacity : 1.0)),
-              depthWrite: _shGlass ? false : true,
-              side: _shGlass ? THREE.DoubleSide : THREE.FrontSide
-            });
+            var _shNameGlass = /glass|glas\b|glazing|fenst|vitrage|vitro|verre|vetro|beglazing|kristal/i.test(_shMatName)
+              || /^IfcWindow|curtain.panel/i.test(_shType);
+            // Build a styled Lambert from ONE source sub-material. For multi-material
+            // meshes (per-face-group curtain walls: mullion + glass pane in one mesh)
+            // each group keeps its OWN colour/alpha — the per-group transparency tells
+            // glass from frame, so the pane no longer inherits the mullion material.
+            var _isArrSh = Array.isArray(orig);
+            function _mkShaded(src){
+              var srcCol = src && src.color ? src.color : origRef.color;
+              var srcTransp = !!(src && src.transparent);
+              var srcOpac = src && src.opacity != null ? src.opacity : 1.0;
+              // Per-group glass: trust this group's own alpha first; only fall back to
+              // the element-wide name/type hint for single-material meshes (on a
+              // multi-material mesh that hint would wrongly glass-ify the mullion too).
+              var _g = !_shHardFrame && (
+                (srcTransp && srcOpac < 0.6)
+                || (!_isArrSh && _shNameGlass)
+                || (!_isArrSh && !_shOpaque && !_shSoftFrame && srcTransp && srcOpac < 0.3)
+              );
+              var _fo = !_g && (_shHardFrame || _shSoftFrame || _shOpaque);
+              return new THREE.MeshLambertMaterial({
+                color: _g ? new THREE.Color(0xbfe8ff) : (srcCol ? srcCol.clone() : origColor),
+                transparent: _g ? true : (_fo ? false : srcTransp),
+                opacity: _g ? 0.25 : (_fo ? 1.0 : srcOpac),
+                depthWrite: _g ? false : true,
+                side: _g ? THREE.DoubleSide : THREE.FrontSide
+              });
+            }
+            cache.shaded = _isArrSh ? orig.map(_mkShaded) : _mkShaded(origRef);
           }
           mat = cache.shaded;
         } else if (style === 'rendered') {
@@ -13129,55 +13141,60 @@ function startApp() {
             // Rendered style — IFC colour respected.  See INTERNALS.md § 21.40
             var _matName = (obj.userData._ifcMaterial || '').toLowerCase();
             var _rdType = _eidToType[obj.userData.expressId] || '';
-            var _r = 0.85, _m = 0.0;
             var _rdHardFrame = /^Ifc(Member|CurtainWall|Beam|Column|Pile|Footing|Wall|Slab|Roof|Stair|Ramp|Covering|Railing|Rail)/i.test(_rdType);
             var _rdSoftFrame = /^Ifc(Door|BuildingElementProxy)/i.test(_rdType);
             var _rdOpaqueMat = /steel|metal|alum|copper|brass|iron|zinc|concrete|beton|brick|masonry|wood|timber|stone|gypsum|plaster|insul/.test(_matName);
-            // Glass: trust the IFC alpha first; fall back to name guess.
-            var _isGlass = !_rdHardFrame && (
-              (origRef.transparent && origRef.opacity < 0.5)
-              || /^IfcWindow|curtain.panel/i.test(_rdType)
-              || (!_rdSoftFrame && /glass|glas\b|glazing|fenst|vitrage|vitro|verre|vetro|beglazing|kristal/i.test(_matName))
-            );
-            if (_isGlass) {
-              _r = 0.05; _m = 0.0;
-            } else if (/steel|metal|alum|copper|brass|iron|zinc/.test(_matName)) {
-              _r = 0.25; _m = 0.9;
-            } else if (/concrete|beton|cast/.test(_matName)) {
-              _r = 0.95; _m = 0.0;
-            } else if (/wood|timber|oak|pine|parquet|ply/.test(_matName)) {
-              _r = 0.80; _m = 0.0;
-            } else if (/brick|masonry|tile|ceramic|stone/.test(_matName)) {
-              _r = 0.90; _m = 0.0;
-            } else if (/gypsum|plasterboard|plaster|drywall|gips/.test(_matName)) {
-              _r = 0.85; _m = 0.0;
-            } else if (/insul|foam|mineral|rockwool|glass.*wool/.test(_matName)) {
-              _r = 1.0; _m = 0.0;
+            var _rdNameGlass = /glass|glas\b|glazing|fenst|vitrage|vitro|verre|vetro|beglazing|kristal/i.test(_matName)
+              || /^IfcWindow|curtain.panel/i.test(_rdType);
+            // PBR roughness/metalness keys off the element-wide material name.
+            var _rdBaseR = 0.85, _rdBaseM = 0.0;
+            if (/steel|metal|alum|copper|brass|iron|zinc/.test(_matName)) { _rdBaseR = 0.25; _rdBaseM = 0.9; }
+            else if (/concrete|beton|cast/.test(_matName)) { _rdBaseR = 0.95; }
+            else if (/wood|timber|oak|pine|parquet|ply/.test(_matName)) { _rdBaseR = 0.80; }
+            else if (/brick|masonry|tile|ceramic|stone/.test(_matName)) { _rdBaseR = 0.90; }
+            else if (/gypsum|plasterboard|plaster|drywall|gips/.test(_matName)) { _rdBaseR = 0.85; }
+            else if (/insul|foam|mineral|rockwool|glass.*wool/.test(_matName)) { _rdBaseR = 1.0; }
+            // Per-group styling so multi-material curtain walls keep distinct
+            // mullion vs. glass-pane materials (see shaded branch for rationale).
+            var _isArrRd = Array.isArray(orig);
+            function _mkRendered(src){
+              var srcCol = src && src.color ? src.color : origRef.color;
+              var srcTransp = !!(src && src.transparent);
+              var srcOpac = src && src.opacity != null ? src.opacity : 1.0;
+              var _g = !_rdHardFrame && (
+                (srcTransp && srcOpac < 0.6)
+                || (!_isArrRd && _rdNameGlass)
+                || (!_isArrRd && !_rdSoftFrame && srcTransp && srcOpac < 0.5)
+              );
+              var _r = _g ? 0.05 : _rdBaseR;
+              var _fo = !_g && (_rdHardFrame || _rdSoftFrame || _rdOpaqueMat);
+              return new THREE.MeshStandardMaterial({
+                color: srcCol ? srcCol.clone() : origColor,
+                roughness: _r, metalness: _g ? 0.0 : _rdBaseM,
+                envMapIntensity: 0.85,
+                transparent: _g ? true : (_fo ? false : srcTransp),
+                opacity: _g ? Math.min(0.35, srcOpac > 0.05 ? srcOpac : 0.25) : (_fo ? 1.0 : srcOpac),
+                depthWrite: _g ? false : true,
+                side: _g ? THREE.DoubleSide : THREE.FrontSide
+              });
             }
-            var _rdForceOpaque = !_isGlass && (_rdHardFrame || _rdSoftFrame || _rdOpaqueMat);
-            cache.rendered = new THREE.MeshStandardMaterial({
-              color: origColor,
-              roughness: _r, metalness: _m,
-              envMapIntensity: 0.85,
-              transparent: _isGlass ? true : (_rdForceOpaque ? false : (origRef.transparent || false)),
-              opacity: _isGlass ? Math.min(0.35, (origRef.opacity||0) > 0.05 ? origRef.opacity : 0.25) : (_rdForceOpaque ? 1.0 : (origRef.opacity != null ? origRef.opacity : 1.0)),
-              depthWrite: _isGlass ? false : true,
-              side: _isGlass ? THREE.DoubleSide : THREE.FrontSide
-            });
+            cache.rendered = _isArrRd ? orig.map(_mkRendered) : _mkRendered(origRef);
           }
           mat = cache.rendered;
-          mat.envMapIntensity = 0.85 * ambMul;
+          (Array.isArray(mat) ? mat : [mat]).forEach(function(m){ m.envMapIntensity = 0.85 * ambMul; });
         } else {
           _disposeEdges(obj);
           mat = orig;
         }
         if (obj.material !== mat) {
-          // Preserve per-material clipping planes (section box / section plane)
-          // obj.material may be an array (multi-material mesh); read from first element.
+          // Preserve per-material clipping planes (section box / section plane).
+          // Either side may be an array (multi-material mesh) — read from the
+          // first element and apply to every styled sub-material.
           var _curMat = Array.isArray(obj.material) ? obj.material[0] : obj.material;
           var _prevPlanes = _curMat && _curMat.clippingPlanes;
-          if (_prevPlanes && _prevPlanes.length) { mat.clippingPlanes = _prevPlanes; mat.needsUpdate = true; }
-          else if (mat.clippingPlanes && mat.clippingPlanes.length) { mat.clippingPlanes = []; mat.needsUpdate = true; }
+          var _matArr = Array.isArray(mat) ? mat : [mat];
+          if (_prevPlanes && _prevPlanes.length) { _matArr.forEach(function(m){ m.clippingPlanes = _prevPlanes; m.needsUpdate = true; }); }
+          else { _matArr.forEach(function(m){ if (m.clippingPlanes && m.clippingPlanes.length) { m.clippingPlanes = []; m.needsUpdate = true; } }); }
           obj.material = mat;
         }
       }
