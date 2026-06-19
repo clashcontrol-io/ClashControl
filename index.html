@@ -1050,7 +1050,7 @@ function startApp() {
   }
 
   var INIT_PREFS = {
-    autoFlyTo:_ccLoadPref('autoFlyTo',true), autoHighlight:_ccLoadPref('autoHighlight',true), showGrid:_ccLoadPref('showGrid',true), showAxes:_ccLoadPref('showAxes',true),
+    autoFlyTo:_ccLoadPref('autoFlyTo',true), autoHighlight:_ccLoadPref('autoHighlight',true), showGrid:_ccLoadPref('showGrid',true), showAxes:_ccLoadPref('showAxes',true), zoomSens:_ccLoadPref('zoomSens',1),
     showMarkers:_ccLoadPref('showMarkers',false), hoverHighlight:_ccLoadPref('hoverHighlight',true), outlineSelected:_ccLoadPref('outlineSelected',true),
     defaultPriority:_ccLoadPref('defaultPriority','normal'), defaultCategory:_ccLoadPref('defaultCategory','design'), defaultStatus:_ccLoadPref('defaultStatus','open'),
     defaultMaxGap:_ccLoadPref('defaultMaxGap',50), resetFiltersOnRun:_ccLoadPref('resetFiltersOnRun',true),
@@ -1545,7 +1545,7 @@ function startApp() {
       case A.TRAINING_MODE: var tm=a.v!=null?!!a.v:!s.trainingMode;try{localStorage.setItem('cc_trainingMode',tm?'1':'0');}catch(e){}return Object.assign({},s,{trainingMode:tm});
       case A.UPD_PREFS:
         if(a.u&&a.u.defaultTolerances!==undefined){try{localStorage.setItem('cc_defaultTolerances',JSON.stringify(a.u.defaultTolerances));}catch(e){}}
-        if(a.u){var _pk=['autoFlyTo','autoHighlight','showGrid','showAxes','showMarkers','hoverHighlight','outlineSelected','defaultPriority','defaultCategory','defaultStatus','defaultMaxGap','resetFiltersOnRun','renderStyle','unitScaleOverride','lightSettings','measureUnits','measurePrecision','measureMagnifier','measureCalibration','homeView'];_pk.forEach(function(k){if(a.u[k]!==undefined){try{localStorage.setItem('cc_'+k,JSON.stringify(a.u[k]));}catch(e){}}});}
+        if(a.u){var _pk=['autoFlyTo','autoHighlight','showGrid','showAxes','showMarkers','hoverHighlight','outlineSelected','defaultPriority','defaultCategory','defaultStatus','defaultMaxGap','resetFiltersOnRun','renderStyle','unitScaleOverride','lightSettings','measureUnits','measurePrecision','measureMagnifier','measureCalibration','homeView','zoomSens'];_pk.forEach(function(k){if(a.u[k]!==undefined){try{localStorage.setItem('cc_'+k,JSON.stringify(a.u[k]));}catch(e){}}});}
         return Object.assign({},s,{prefs:Object.assign({},s.prefs,a.u)});
       case A.MEASURE_MODE: return Object.assign({},s,{measureMode:a.v, walkMode:a.v?false:s.walkMode, commentMode:a.v?false:s.commentMode}); // keeps section plane/box — measure coexists with them
       case A.ADD_MEASUREMENT: _gcEvent('measurement', a.v&&a.v.type||'length'); return Object.assign({},s,{measurements:s.measurements.concat([a.v])});
@@ -7111,7 +7111,10 @@ function startApp() {
           return;
         }
       }
-      var zoomFactor = 1+e.deltaY*0.0008;
+      // Normalize across deltaMode (pixel=0, line=1, page=2) and apply user sensitivity.
+      // Old coefficient was 0.0008 which gave 8% per 100px-notch — too fast.
+      var _zd = e.deltaMode === 1 ? e.deltaY * 33 : e.deltaMode === 2 ? e.deltaY * 800 : e.deltaY;
+      var zoomFactor = 1 + _zd * 0.0004 * ((prefsRef.current && prefsRef.current.zoomSens != null ? prefsRef.current.zoomSens : 1));
       // Zoom IN toward the point under the cursor so you can always approach what
       // you're looking at — e.g. a section cut that isn't at the orbit centre.
       // Moving the target toward the picked point moves the camera with it
@@ -10926,6 +10929,15 @@ function startApp() {
               hitBox = new THREE.Box3().setFromObject(hit);
             }
             var hitCtr = hitBox.getCenter(new THREE.Vector3());
+            // Shift orbit pivot to clicked element — camera stays put, rotation
+            // centre moves. Fly-to (below) will override sph/target if it runs.
+            try {
+              var _orb = S.orbit;
+              if (_orb && S.camera) {
+                _orb.sph.setFromVector3(S.camera.position.clone().sub(hitCtr));
+                _orb.target.copy(hitCtr);
+              }
+            } catch(_e) {}
             var hitPt = [hitCtr.x, hitCtr.y, hitCtr.z];
             var hitNormal = null;
             if(_pickedHit.face && _pickedHit.face.normal) {
@@ -13046,7 +13058,8 @@ function startApp() {
           var _hlHardFrame = /^Ifc(Member|CurtainWall|Beam|Column|Pile|Footing|Wall|Slab|Roof|Stair|Ramp|Covering|Railing|Rail)/i.test(_hlType);
           var _hlSoftFrame = /^Ifc(Door|Plate|BuildingElementProxy)/i.test(_hlType);
           var _hlGlass = !_hlHardFrame && (
-            /glass|glazing|fenst/.test(_hlMatName)
+            /glass|glas\b|glazing|fenst|vitrage|vitro|verre|vetro|beglazing|kristal/i.test(_hlMatName)
+            || (/^IfcWindow|curtain.panel/i.test(_hlType))
             || (/^IfcWindow/i.test(_hlType) && orig.transparent && orig.opacity < 0.5)
             || (!_hlOpaque && !_hlSoftFrame && orig.transparent && orig.opacity < 0.3)
           );
@@ -13076,8 +13089,8 @@ function startApp() {
             // frames as IfcWindow with no material (opaque geometry), while real
             // glass panels have transparent geometry (opacity < 0.5 from IFC).
             var _shGlass = !_shHardFrame && (
-              /glass|glazing|fenst/.test(_shMatName)
-              || (/^IfcWindow/i.test(_shType) && orig.transparent && orig.opacity < 0.5)
+              /glass|glas\b|glazing|fenst|vitrage|vitro|verre|vetro|beglazing|kristal/i.test(_shMatName)
+              || /^IfcWindow|curtain.panel/i.test(_shType)
               || (!_shOpaque && !_shSoftFrame && orig.transparent && orig.opacity < 0.3)
             );
             var _shForceOpaque = !_shGlass && (_shHardFrame || _shSoftFrame || _shOpaque);
@@ -13103,7 +13116,8 @@ function startApp() {
             // Glass: trust the IFC alpha first; fall back to name guess.
             var _isGlass = !_rdHardFrame && (
               (orig.transparent && orig.opacity < 0.5)
-              || (!_rdSoftFrame && /glass|glazing|fenst/.test(_matName))
+              || /^IfcWindow|curtain.panel/i.test(_rdType)
+              || (!_rdSoftFrame && /glass|glas\b|glazing|fenst|vitrage|vitro|verre|vetro|beglazing|kristal/i.test(_matName))
             );
             if (_isGlass) {
               _r = 0.05; _m = 0.0;
@@ -23774,6 +23788,16 @@ function startApp() {
         <div style=${TROW}>
           <div><div style=${TLBL}>Auto highlight element</div><div style=${TSUB}>Highlight the element with a blue box when clicking a clash or issue</div></div>
           <${Toggle} on=${p.autoHighlight!==false} onToggle=${tog('autoHighlight')} />
+        </div>
+        <div style=${TROW}>
+          <div><div style=${TLBL}>Scroll zoom speed</div><div style=${TSUB}>How fast the viewport zooms when you scroll. Default 1×.</div></div>
+          <div style=${{display:'flex',alignItems:'center',gap:'.5rem'}}>
+            <input type="range" min="0.25" max="4" step="0.05"
+              value=${p.zoomSens != null ? p.zoomSens : 1}
+              onInput=${function(e){ d({t:A.UPD_PREFS,u:{zoomSens:parseFloat(e.target.value)}}); }}
+              style=${{width:90,accentColor:'var(--accent)'}} />
+            <span style=${{fontFamily:'var(--font-mono)',minWidth:30,fontSize:'var(--text-xs)'}}>${((p.zoomSens!=null?p.zoomSens:1)).toFixed(2)}×</span>
+          </div>
         </div>
         <div style=${TROW}>
           <div><div style=${TLBL}>Show grid</div><div style=${TSUB}>Display the reference grid in the 3D view</div></div>
