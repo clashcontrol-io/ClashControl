@@ -1,5 +1,8 @@
 # Changelog
 
+## v5.21.9 (2026-06-19)
+- fix: resolve prefsRef scope error breaking scroll zoom
+
 ## v5.21.8 (2026-06-19)
 - feat: scroll zoom speed slider, orbit-around-selected, glass detection fix
 
