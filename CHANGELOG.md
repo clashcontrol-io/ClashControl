@@ -1,5 +1,8 @@
 # Changelog
 
+## v5.21.12 (2026-06-19)
+- fix: per-group materials for multi-material curtain walls
+
 ## v5.21.10 (2026-06-19)
 - fix: curtain panel glass renders opaque grey from Revit Bridge
 
