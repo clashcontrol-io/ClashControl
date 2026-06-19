@@ -526,7 +526,35 @@
       box: box,
       props: {
         globalId: el.globalId || '',
-        ifcType: el.category || 'IfcBuildingElementProxy',
+        ifcType: (function(cat){
+          // Map Revit categories to IFC types so glass/frame detection in the
+          // style switcher works the same as for IFC-loaded models.
+          var _catMap = {
+            'Doors':'IfcDoor', 'Windows':'IfcWindow',
+            'Curtain Panels':'IfcPlate', 'Curtain Panel':'IfcPlate',
+            'Curtain Wall Mullions':'IfcMember', 'Curtain Wall Mullion':'IfcMember',
+            'Curtain Walls':'IfcCurtainWall',
+            'Walls':'IfcWall', 'Wall':'IfcWall',
+            'Floors':'IfcSlab', 'Floor':'IfcSlab',
+            'Roofs':'IfcRoof', 'Roof':'IfcRoof',
+            'Columns':'IfcColumn', 'Structural Columns':'IfcColumn',
+            'Beams':'IfcBeam', 'Structural Framing':'IfcBeam',
+            'Stairs':'IfcStair', 'Stair':'IfcStair',
+            'Railings':'IfcRailing', 'Railing':'IfcRailing',
+            'Ceilings':'IfcCovering', 'Ceiling':'IfcCovering',
+            'Spaces':'IfcSpace', 'Rooms':'IfcSpace', 'Room':'IfcSpace',
+            'Furniture':'IfcFurnishingElement', 'Casework':'IfcFurnishingElement',
+            'Pipes':'IfcPipeSegment', 'Pipe':'IfcPipeSegment',
+            'Ducts':'IfcDuctSegment', 'Duct':'IfcDuctSegment',
+            'Mechanical Equipment':'IfcFlowTerminal',
+            'Plumbing Fixtures':'IfcFlowTerminal',
+            'Lighting Fixtures':'IfcLightFixture',
+            'Cable Trays':'IfcCableCarrierSegment',
+            'Glazing':'IfcWindow', 'Glass':'IfcWindow'
+          };
+          if (!cat) return 'IfcBuildingElementProxy';
+          return _catMap[cat] || cat;
+        })(el.category),
         name: el.name || '',
         description: el.description || '',
         objectType: el.type || '',
