@@ -1,5 +1,8 @@
 # Changelog
 
+## v5.21.14 (2026-06-19)
+- fix(materials): stricter glass threshold for multi-material mesh groups
+
 ## v5.21.13 (2026-06-19)
 - fix: array-safe material dispose for multi-material meshes
 
