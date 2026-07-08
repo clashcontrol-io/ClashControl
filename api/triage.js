@@ -8,6 +8,10 @@
 
 var { cors, llmGuard } = require('./_lib');
 
+// Overridable without a deploy — if the upstream ever 404s the default id
+// (check Vercel logs for 'Gemma triage API error'), set GEMMA_MODEL in the env.
+var GEMMA_MODEL = process.env.GEMMA_MODEL || 'gemma-4-31b-it';
+
 var TRIAGE_CACHE_MAX    = 100;
 var TRIAGE_CACHE_TTL_MS = 60 * 60 * 1000;
 var _triageCache = new Map();
@@ -72,7 +76,7 @@ module.exports = async function handler(req, res) {
     return res.status(200).json({
       triage: cached,
       cached: true,
-      _model: 'gemma-4-31b-it',
+      _model: GEMMA_MODEL,
       _at: new Date().toISOString()
     });
   }
@@ -116,7 +120,7 @@ module.exports = async function handler(req, res) {
   ].filter(Boolean).join('\n');
 
   try {
-    var url = 'https://generativelanguage.googleapis.com/v1beta/models/gemma-4-31b-it:generateContent?key=' + encodeURIComponent(key);
+    var url = 'https://generativelanguage.googleapis.com/v1beta/models/' + encodeURIComponent(GEMMA_MODEL) + ':generateContent?key=' + encodeURIComponent(key);
     var resp = await fetch(url, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -155,7 +159,7 @@ module.exports = async function handler(req, res) {
     return res.status(200).json({
       triage: triage,
       cached: false,
-      _model: 'gemma-4-31b-it',
+      _model: GEMMA_MODEL,
       _at: new Date().toISOString()
     });
   } catch (e) {
