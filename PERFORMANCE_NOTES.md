@@ -4,7 +4,7 @@
 
 Analysis of GPU instancing feasibility (prompted by comparison with Fragments .frag format), covering what the codebase already does well, confirmed efficiency gaps, and what to leave alone.
 
-> **Implementation status.** Implemented: GPU instancing on the IFC path (`InstancedMesh`), the chunk-merge draw-call reducer (defaults **OFF**), Int8 geometry normals, and an adaptive BVH cache + pair-result cache that persist across detection runs. Open: the GLB-path dedup items (#1–#3). Line numbers in this document are indicative — locate code by the named symbol or section header.
+> **Implementation status (2026-07-08).** Implemented: GPU instancing on the IFC path (`InstancedMesh`), BatchedMesh for pathological models (`_ccBatchPathological`), Int8 geometry normals, an adaptive BVH cache + pair-result cache that persist across detection runs, and GLB-path matCache/geoCache dedup (#1, #2 — confirmed in code, this doc previously said open). Open: GLB worker mesh dedup (#3). The chunk-merge draw-call reducer mentioned in earlier revisions of this doc **no longer exists** — removed entirely and replaced by BatchedMesh (see MEMORY.md architecture decisions). Line numbers in this document are indicative and drift as the file grows — locate code by the named symbol or section header, not the line number.
 
 ---
 
@@ -45,15 +45,13 @@ Analysis of GPU instancing feasibility (prompted by comparison with Fragments .f
 
 ## Confirmed Efficiency Gaps
 
-### 1. GLB path: no matCache — LOW effort
-**Gap:** `loadGLB` (`index.html:7766`) creates `new THREE.MeshPhongMaterial` per node. No deduplication.
-**Fix:** Add `matCache["r,g,b,a"]` identical to the IFC path.
-**Risk:** None.
+### 1. GLB path: matCache — ✅ implemented
+**Was:** `loadGLB` created `new THREE.MeshPhongMaterial` per node with no dedup.
+**Now:** `loadGLB` (`function loadGLB`, search for it — it's grown well past any fixed line number) keeps a `matCache` keyed by color+alpha, matching the IFC path.
 
-### 2. GLB path: geometry cloned per node, normals recomputed per clone — LOW effort
-**Gap:** `child.geometry.clone()` (`index.html:7777`) is called for every GLTF node even when nodes share the same mesh. `computeVertexNormals()` (`index.html:7778`) is then called on every clone.
-**Fix:** Track seen `child.geometry.uuid`; skip the clone for duplicates and reuse the existing `THREE.BufferGeometry`. `computeVertexNormals` then runs once per unique geometry.
-**Risk:** Low. Geometries are read-only at this stage.
+### 2. GLB path: geometry dedup + normals-once — ✅ implemented
+**Was:** geometry cloned and `computeVertexNormals()` re-run per node even when nodes shared a mesh.
+**Now:** `geoCache` keyed by `geoUuid`; `computeVertexNormals()` only runs on cache miss.
 
 ### 3. GLB worker: shared GLTF mesh primitives re-extracted per node — MEDIUM effort
 **Gap:** The worker (`index.html:2969–2992`) re-reads primitive vertex data each time a node references the same `node.mesh` index. For a building with 500 identical columns, primitive data is parsed 500 times.
@@ -64,7 +62,7 @@ Analysis of GPU instancing feasibility (prompted by comparison with Fragments .f
 **Status:** An adaptive `_BVH_CACHE_MAX` (sized to a heap budget) and a bounded LRU `_pairResultCache` keyed by `(mA:eidA|mB:eidB|rulesHash)` persist geometry/BVH work across detection runs; both are cleared per-model on `DEL_MODEL`/`REPLACE_MODEL`.
 
 ### 5. GPU instancing via `THREE.InstancedMesh` — ✅ implemented (IFC path)
-**Status:** A post-streaming pass (`_buildInstancedMeshes`) groups by `(geoExpId, matKey)` and emits `InstancedMesh` for repeated geometry; raycast/hover/ghost/culling map `instanceId → expressId`. The optional chunk-merge pass (`_ccChunkMerge`, spatially-clustered draw-call reduction) defaults **OFF**. The GLB path is not instanced (it needs gap #2 first).
+**Status:** A post-streaming pass (`_buildInstancedMeshes`) groups by `(geoExpId, matKey)` and emits `InstancedMesh` for repeated geometry; raycast/hover/ghost/culling map `instanceId → expressId`. The GLB path is not instanced (it needs gap #3 first). For pathological non-repetitive models (many unique geometries, e.g. cladding), `_ccBatchPathological` uses `THREE.BatchedMesh` instead — see MEMORY.md "sixth batch" for the trigger constants and identity-feature parity work.
 
 **Subsystems requiring changes:**
 
@@ -102,8 +100,9 @@ Analysis of GPU instancing feasibility (prompted by comparison with Fragments .f
 
 | # | Improvement | Effort | Gain | Risk | Status |
 |---|---|---|---|---|---|
-| 1 | GLB matCache | Low | Material memory reduction | None | ⬜ open |
-| 2 | GLB geometry dedup + normals once | Low | Memory + CPU at load | Low | ⬜ open |
+| 1 | GLB matCache | Low | Material memory reduction | None | ✅ implemented |
+| 2 | GLB geometry dedup + normals once | Low | Memory + CPU at load | Low | ✅ implemented |
 | 3 | GLB worker mesh dedup | Medium | CPU at clash-prep for large GLBs | Low | ⬜ open |
 | 4 | Persistent BVH cache across runs | Medium | CPU at repeat detection | Medium | ✅ implemented |
 | 5 | GPU instancing (IFC path first) | High | Draw calls for large repetitive buildings | Medium | ✅ implemented |
+| 6 | BatchedMesh for pathological (non-repetitive) models | High | Draw calls where instancing can't help | Medium | ✅ implemented |

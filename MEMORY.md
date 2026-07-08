@@ -10,13 +10,13 @@
 <!-- BEGIN:project-state -->
 ## Project State
 
-**Version:** 5.20.15 (2026-06-11)
+**Version:** 5.21.15 (2026-06-19) — daily-sync was silently crashing on MEMORY.md's own prose (see Known Issues); this line was stale for a month as a direct result, now corrected by hand.
 
 **Live features (all working):**
 - Mesh-based clash detection engine: AABB broad-phase + BVH tri-tri narrow-phase (Möller–Trumbore), optional `_ccWasmIntersect`/`_ccWasmMinDist` WASM accelerators; rules (discipline filters, clearance, group-by); soft/clearance via spatial-hash vertex distance; optional escalation to `local-engine.js` for true solid boolean ops
 - BCF 2.1 import/export (viewpoints, markup, snapshots)
 - IFC loading via web-ifc WASM (lazy, with geometry + property extraction)
-- AI NL command interface (Groq via `/api/nl`, 13 tool declarations, OpenAI function calling; intentionally basic — clash-solving nudges to your own LLM via the Connector)
+- AI NL command interface (Groq via `/api/nl`, 25+ tool declarations — grew well past the "13" once quoted here, check `TOOLS` in `api/nl.js` for the live count — OpenAI function calling; intentionally basic — clash-solving nudges to your own LLM via the Connector)
 - Shared projects (no login, project keys, Neon Postgres backend)
 - Data quality checks addon (BIM basics, ILS, NL-SfB classification)
 - Smart Bridge: MCP server (`mcp-server.js`) for IDE/AI tool integration
@@ -78,9 +78,11 @@ Things to be careful about. Do not remove without a good reason — add a note i
 - **Render loop skips GPU work**: `_needsRender` counter > 0 means render. Counter decrements each frame. Call `invalidate(N)` for N frames of rendering.
 - **Addon guard required**: Core code calling addon functions must guard with `typeof window._ccFoo === 'function'`. The app must work without addons.
 - **Service worker excludes `/api/*`**: Don't add API paths to the SW cache list.
-- **NL pre-block**: Conversational messages that look like commands are allowed through to Gemma. Don't make the pre-block over-eager.
+- **NL pre-block**: Conversational messages that look like commands are allowed through to Groq. Don't make the pre-block over-eager.
 - **2D annotation coordinates**: Fixed in v4.15.4. Coordinate bug was in annotation placement — if re-implementing annotation rendering, test coordinate transform carefully.
 - **IFC spatial hierarchy is NOT a clash-pruning filter**: `IfcProject → IfcSite → IfcBuilding → IfcBuildingStorey → IfcSpace` is logical containment, not proximity. Real geometry spans containment boundaries (vertical ducts cross storeys, foundations sit between site and building, stairs intersect two slabs). Pair pruning must come from the AABB broad-phase / spatial index, not from shared spatial parent. Don't be tempted to "speed up" detection by filtering pairs that share an IfcBuildingStorey only.
+- **`scripts/update-memory.py` `replace_section()` must use a callable `re.sub` replacement, not a string one.** A string replacement lets `re.sub` interpret backslashes as group references; this file's own prose contains literal sequences like `\i \c` (documenting XSD regex escapes in the IDS engine notes) which crashed the daily-sync job with "bad escape \i" on every run since it was written — silently, because nothing surfaced the failure. This is why the Project State version line went stale for a month (fixed 2026-07-08). If you see the version line drift again, check the Actions run for this workflow first.
+- **Coplanar triangle pairs are deliberately NOT reported as clashes**, in both the browser JS engine (`index.html`, `_triTriTest`) and the Python engine (`intersection.py`, `tri_tri_intersect`). Flush surface contact (a wall base sitting in a slab's top-face plane) is universal in real models — treating it as a hard clash would flood every project with false positives. This is a policy choice, not a missing feature; the explicit near-zero-`d` early-out also avoids a 0/0 NaN in the interval math. Don't "fix" this by making coplanar overlap report a hit.
 <!-- END:known-issues -->
 
 <!-- BEGIN:active-work -->
@@ -88,6 +90,10 @@ Things to be careful about. Do not remove without a good reason — add a note i
 
 Update this section at the start and end of each session.
 Mark completed items with ~~strikethrough~~ and date, then let the daily sync archive them.
+
+On branch `claude/codebase-review-optimization-3nltcw` (2026-07-08) — four-repo review sweep (in progress):
+
+- Two-round audit of ClashControl + Connector + Engine + SmartBridge (superseded). Fix wave in flight: core dead features (ClashControl.version / _ccFlyToMeasurement / palette Fit), IFC-worker watchdog re-arm, shared-project data-loss merge, JS coplanar NaN guard, WASM-path LRU registration, backend (title/triage model verify, project.js editKey + batched upsert, tile.js validation), daily-sync repair, doc/memory reconciliation. Engine + Connector fixes on same-named branches in their repos (release-pipeline workflow_call fix, all-vs-all dedup, coplanar branch, modelFilter exclude semantics, quantities/description emission).
 
 On branch `claude/loam-api-stability-enrichment-gxh8gc` (2026-06-15) — Loam API stability + enrichment:
 
@@ -179,7 +185,7 @@ Fifth batch (2026-06-10) — declared units + registry; scoped-loading design qu
 
 - ~~Declared IFC LENGTHUNIT extraction (`_ccExtractIfcLengthUnit`) wired: load → result.stats.unitScale → geo-cache persist → `_ccDetectUnitScale` precedence override>declared>spacing-heuristic. tests/ifc-units.test.js locks it.~~ (2026-06-10)
 - ~~Port/protocol registry: INTERNALS.md §22 — all companion-app contracts in one table.~~ (2026-06-10)
-- ~~Storey-scoped loading SHIPPED (core): `ClashControl.loadFiles(files,{storeys})` one-shot batch scope → both load paths skip out-of-scope geometry pre-decode; stats.loadedScope/scopedOutCount; partial loads never write geo-cache; 'partial' badge on model row + `_ccReloadModelFull` one-click full reload; smoke test asserts the filter end-to-end.~~ (2026-06-10) **Remaining: pre-load storey-picker modal UI (browser-verified design work; API + badge cover the function).**
+- ~~Storey-scoped loading SHIPPED (core): `ClashControl.loadFiles(files,{storeys})` one-shot batch scope → both load paths skip out-of-scope geometry pre-decode; stats.loadedScope/scopedOutCount; partial loads never write geo-cache; 'partial' badge on model row + `_ccReloadModelFull` one-click full reload; smoke test asserts the filter end-to-end.~~ (2026-06-10) ~~**Remaining: pre-load storey-picker modal UI.**~~ Shipped: `StoreyPickerModal` (`index.html:24856`, wired via `window._ccShowStoreyPicker`). (2026-07-08, confirmed by audit)
 - ~~Tauri Phase 0 scaffold: desktop/ (Tauri v2 conf + main.rs + build-dist.sh, sw.js excluded from dist) + release-desktop.yml (matrix installers via tauri-action, publishes draft release on desktop-version.json bump). First real build = CI after merge.~~ (2026-06-10)
 - **Original design notes (kept for the picker follow-up):** the IFC worker is assembled by stringifying the SAME shared functions the main-thread fallback uses (`_getIFCWorkerUrl`, index.html:~3075) — so the scope filter goes into the shared stream-processing function once and both paths get it. Plan: (1) fast pre-pass already exists (`loadIFCMetadataOnly` ~13451 + `extractStoreys`) → storey list before geometry; (2) UI: storey-picker step in the load flow (reuse Levels-panel rendering) with "Load all" default so the flow stays one-click; (3) thread `scope:{storeys:[...]}` through loadIFCWorker message + loadIFC signature; in the StreamAllMeshes callback, `continue` for elements whose storeyMap entry is out of scope (storeyMap is built BEFORE geometry streaming); (4) un-loaded storeys listed in Levels panel greyed with a "load now" affordance → re-parse with widened scope (file bytes are in IDB via idbSaveFile). Memory + time win proportional to scope; geo-cache keying must include the scope or only cache full loads (simpler: only cache full loads, v1).
 - **Then Tauri Phase 0** per TAURI.md (user-approved order).
@@ -231,6 +237,7 @@ On branch `claude/screenshot-clashcontrol-review-tiHAk` (2026-06-07) — Accessi
 - **Panel: `AccessibilityPanel`** in `index.html` (before `DataQualityPanel`), DESIGN tokens. Reachable via Review-workspace toolbar button (`k:'a11y'`) + left-panel tab `'accessibility'` (added to `TITLES` + render switch). Model selector, Run, per-check pass/fail with measured vs required + caveat, "Isolate failing" (ghostOthers), "Create issues".
 - **Failure rail = issues, NOT the clash MERGE path.** Routing through `MERGE_CLASHES` would auto-resolve all real clashes (it treats its payload as *the* detection result). So failures dispatch `A.ADD_ISSUE` (`source:'accessibility'`, `qualityGids`), exactly like data-quality → Issues tab + BCF export. If items are wanted literally in the Conflicts/Clashes tab, that needs a new non-destructive `ADD_CLASH` action (follow-up).
 - **Not done:** thresholds UI (defaults only, engine accepts overrides); true free-space corridor/turning geometry (v2); the clearance-kernel check. Not browser-tested in env — main script parses via `node --check`; verify on the Vercel preview.
+  - ~~The `ADD_CLASH` follow-up above shipped as `A.ADD_CLASHES` (non-destructive, additive — reducer case `index.html:1346`, dispatched by the accessibility panel).~~ (2026-07-08, confirmed by audit)
 
 On branch `claude/screenshot-clashcontrol-review-tiHAk` (2026-06-07) — repo docs refresh: corrected clash-engine description (AABB+BVH, not OBB), green brand accent in DESIGN.md, web-ifc 0.0.77, added geoplace/pointcloud addons + tile/triage APIs to CLAUDE.md, marked instancing/BVH-cache as implemented in PERFORMANCE_NOTES, archived 185 lines of completed [STALE?] MEMORY blocks. Docs state current facts only (no change-history phrasing).
 

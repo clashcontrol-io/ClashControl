@@ -21,7 +21,7 @@ are about to do. When you finish, mark completed items with ~~strikethrough~~ + 
 ClashControl is a free, open-source IFC clash detection web app. It lets users load IFC building models, detect geometric clashes between elements, create/manage issues, and export to BCF format.
 
 ## Architecture — Single File App + Lazy Addons
-The **core application** lives in `index.html` (~31k lines). There is no build step, no bundler, no node_modules. Just open the file in a browser.
+The **core application** lives in `index.html` (~34k lines — check with `wc -l` before quoting an exact count, it grows). There is no build step, no bundler, no node_modules. Just open the file in a browser.
 
 Optional, non-critical features are split into lazy-loaded files under `addons/` (see the Addons section below). These are loaded at runtime via a simple `<script src="addons/<name>.js">` injection and the core app works without them.
 
@@ -113,6 +113,7 @@ scripts/bump-version.sh     — Pre-commit version bump script
 scripts/generate-sri.js     — Generate SRI hashes for CDN scripts
 vercel.json                 — Vercel config: COOP/COEP headers, function durations
 package.json                — Neon Postgres driver for serverless functions
+addons/accessibility.js     — Deterministic building-code geometry checks (door width, thresholds, ramp slope, corridor/turning) with NL Bbl/NEN defaults
 addons/align.js             — Point-cloud ↔ IFC manual 3-point rigid alignment (as-built verification)
 addons/data-quality.js      — Data quality / BIM / ILS-NL/SfB check engines
 addons/local-engine.js      — Bridge to localhost Python exact-mesh clash engine
@@ -123,6 +124,8 @@ addons/pwa.js               — Service worker registration, install prompt, upd
 addons/revit-bridge.js      — Revit Connector WebSocket live link + clash push-back
 addons/shared-project.js    — File System Access folder-sync collaboration
 addons/smart-bridge.js      — LLM bridge (MCP / ChatGPT / REST) — executes tool calls from AI assistants
+addons/splat.js             — Gaussian Splat as-built captures as a first-class scene layer (.splat/.ply/.ksplat/.spz)
+addons/tiles.js              — Streams photorealistic 3D Tiles (Google/Cesium/any tileset) as real-world context around a georeferenced model
 addons/training-data.js     — Training data storage, JSONL export, sharing
 addons/visibility.js        — Visibility (sight-line) clash detection — ray-cast against BVH for viewer/target/obstructer rules + regulation presets
 addons/wasm-engine.js       — Rust WASM clash accelerator (mesh_intersect / mesh_min_distance), JS fallback
@@ -154,14 +157,17 @@ Each addon is a plain IIFE loaded at runtime by the core via `addons/<name>.js` 
 - **Put new heavy features here first.** If a feature is optional, rarely used, or loads large data, make it an addon instead of bloating `index.html`.
 
 ### What each addon does
+- `accessibility.js` — Deterministic building-code geometry checks (door clear width, threshold height, ramp slope, corridor/turning clearance) with NL Bbl/NEN defaults, overridable thresholds. Exposed via `window._ccRunAccessibilityChecks`.
 - `data-quality.js` — All check engines used by the Data Quality panel (BIM basics, ILS, NL-SfB classification checks). Exposed via `window._ccRunDataQualityChecks` et al.
-- `local-engine.js` — Talks to the localhost `clashcontrol-engine` Python server (port 19800) for exact mesh intersection. Transparently falls back to the core AABB+BVH engine when the server isn't running. Targets `clashcontrol-engine` v0.2.2.
+- `local-engine.js` — Talks to the localhost `clashcontrol-engine` Python server (port 19800) for exact mesh intersection. Transparently falls back to the core AABB+BVH engine when the server isn't running. Version-agnostic — reads the live engine version from `/status` and the latest release tag from GitHub at runtime; not pinned to a specific engine release.
 - `geoplace.js` — Places the loaded model on a real-world raster basemap. Reads `IfcSite` RefLatitude/Longitude (and the IFC4 `IfcMapConversion`/`IfcProjectedCRS` georef the core extracts into `spatialHierarchy.mapConversion`), or accepts a manual lat/lon, then stitches map tiles (via the same-origin `/api/tile` proxy) onto a ground plane. The model never moves — the basemap is positioned in IFC space. No reprojection (proj4js) yet; projected CRS data is read for display + the pre-run placement-sanity check only.
 - `pointcloud.js` — Loads LAS/PLY/PCD/XYZ point clouds as reference layers (e.g. survey scans), recentred near origin for precision. Display-only; not fed to the clash engine.
 - `pwa.js` — Service-worker registration, update polling, and the "install as app" prompt. Everything else in the app works without it.
 - `revit-bridge.js` — WebSocket live link to the ClashControl Connector Revit plugin. Ingests geometry + properties, converts to Three.js meshes, supports `REPLACE_MODEL` on re-sync and linked models. Also handles one-way push of clashes back to Revit.
 - `shared-project.js` — File System Access API collaboration. Users pick a shared folder (OneDrive/Dropbox/NAS), and a `.ccproject` file is synced every 60s. No backend.
 - `smart-bridge.js` — LLM bridge connecting ClashControl to AI assistants over WebSocket: Claude Desktop/Code via the bundled MCP server, ChatGPT via a REST bridge + OpenAPI Actions, or any function-calling LLM via REST. Receives tool calls from the bridge server (localhost:19802) and executes them through `window._ccDispatch` and friends.
+- `splat.js` — Loads 3D Gaussian Splat as-built captures (.splat/.ply/.ksplat/.spz) as a first-class scene layer alongside IFC and point clouds, via Spark.js on its own r180 ESM canvas synced to the core camera.
+- `tiles.js` — Streams photorealistic 3D Tiles (Google Photorealistic, Cesium ion, or any tileset URL) as real-world context around a georeferenced model via NASA-AMMOS 3DTilesRendererJS. The model never moves; the tileset is placed in ENU/ECEF space around the anchor.
 - `training-data.js` — Pure data layer for clash + NL training data: ring-buffer storage (cap 5000 clash / 2000 NL), JSONL export, share helpers.
 - `wasm-engine.js` — Loads the Rust WASM module for hardware-accelerated clash detection, exposing `window._ccWasmIntersect` / `window._ccWasmMinDist` as drop-in replacements for the JS BVH+Möller engine. Falls back to the built-in JS engine if WASM fails to load.
 

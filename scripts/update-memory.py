@@ -30,7 +30,7 @@ VERSION_FILE = REPO_ROOT / "version.json"
 MAX_SESSION_LOG_DAYS = 60   # entries older than this are pruned
 MAX_ACTIVE_STALE_DAYS = 14  # flag active-work items untouched for this long
 ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY", "")
-MODEL = "claude-sonnet-4-6"
+MODEL = "claude-sonnet-4-5"
 FORCE = "--force" in sys.argv
 
 # ── Section helpers ──────────────────────────────────────────────────────────
@@ -48,7 +48,13 @@ def replace_section(content: str, name: str, new_body: str) -> str:
         re.DOTALL,
     )
     if pattern.search(content):
-        return pattern.sub(replacement, content)
+        # Use a callable replacement, not a string one — re.sub treats
+        # backslashes in a string repl as group refs (\1, \g<name>, ...),
+        # and MEMORY.md's own prose contains literal backslash sequences
+        # (e.g. the IDS engine notes documenting XSD "\i \c" escapes),
+        # which crashed every run with "bad escape \i" and is the reason
+        # daily-sync.yml has never produced a commit.
+        return pattern.sub(lambda _m: replacement, content)
     # Section missing — append it
     return content.rstrip() + f"\n\n{replacement}\n"
 
