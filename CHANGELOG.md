@@ -1,5 +1,8 @@
 # Changelog
 
+## v5.21.16 (2026-07-08)
+- fix: dead public API, clash-engine parity, shared-project data loss, daily-sync crash (#676)
+
 ## v5.21.15 (2026-06-19)
 - fix(walk): delay entry animation until rendered style is applied
 
