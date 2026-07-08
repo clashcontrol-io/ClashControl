@@ -49,7 +49,7 @@ function dbUrl() {
 }
 
 // LLM endpoint guard — combines per-IP rate limiting and request-size caps.
-// Cost protection for /api/nl and /api/title (both spend Gemma quota).
+// Cost protection for /api/nl (Groq) and /api/title + /api/triage (Gemma).
 // Returns true if the request was rejected (and the error response written).
 //
 //   perMin   — max requests per IP per minute (default 20)
@@ -57,7 +57,8 @@ function dbUrl() {
 //
 // Vercel's in-memory `rateMap` resets per cold start, so this is best-effort
 // abuse prevention, not strict accounting. Sustained quota drain is still
-// gated by Gemma's own per-key quota and the fallback chain in /api/nl.
+// gated by each provider's own per-key quota and the offline-regex fallback
+// in the client when /api/nl is down.
 function llmGuard(req, res, opts) {
   opts = opts || {};
   var perMin = opts.perMin || 20;

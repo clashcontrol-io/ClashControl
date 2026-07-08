@@ -442,6 +442,13 @@
     invalidate(2);
   };
 
+  // Reference layers are per-project scene content — drop them on project
+  // switch (same policy as tiles.js/geoplace.js) so project A's scans don't
+  // bleed into project B or accumulate GPU memory across switches.
+  window.addEventListener('cc-project-switch', function() {
+    try { Object.keys(_objects).forEach(function(id){ window._ccRemovePointCloud(id); }); } catch(_){}
+  });
+
   window._ccUpdateReferenceLayer = function(id, updates) {
     var obj = _objects[id];
     if (!obj) return;

@@ -2234,9 +2234,11 @@ function startApp() {
   // beyond one cached fetch.
   setTimeout(function() { _prefetchWebIfcWasm().catch(function(){ /* retried on real load */ }); }, 2500);
 
+  var _ifcAPIInflight = null; // memoized in-flight init — two concurrent first loads must not double-init the WASM
   function getIfcAPI() {
     if (_ifcAPI) return Promise.resolve(_ifcAPI);
-    return Promise.all([
+    if (_ifcAPIInflight) return _ifcAPIInflight;
+    _ifcAPIInflight = Promise.all([
       _prefetchWebIfcWasm(),
       import('https://cdn.jsdelivr.net/npm/web-ifc@0.0.77/web-ifc-api.js')
     ]).then(function(parts) {
@@ -2254,8 +2256,13 @@ function startApp() {
       var timeoutP = new Promise(function(_, rej) {
         setTimeout(function() { rej(new Error('WASM Init timed out (15s) — locateFile hook may not be supported by web-ifc 0.0.76')); }, 15000);
       });
-      return Promise.race([initP, timeoutP]);
+      return Promise.race([initP, timeoutP]).catch(function(err) {
+        URL.revokeObjectURL(blobUrl); // don't leak the multi-MB wasm blob on a failed/timed-out init
+        throw err;
+      });
     });
+    _ifcAPIInflight.catch(function() { _ifcAPIInflight = null; }); // failed init → next call retries fresh
+    return _ifcAPIInflight;
   }
 
   var IFC = {
@@ -2881,7 +2888,7 @@ function startApp() {
     return pairs;
   }
 
-  var _ccLoadGeneration = 0; // incremented each load to cancel stale in-progress loads
+  var _ccLoadGeneration = 0; // bumped by _ccAbortLoading to invalidate in-progress loads; loads snapshot it so concurrent batches coexist
 
   // ── GPU instancing ──  See INTERNALS.md § 21.10
   function _buildInstancedMeshes(elements, meshes) {
@@ -3167,7 +3174,7 @@ function startApp() {
     var loadStart = performance.now();
     var _lp = { t0: loadStart, phases: {} };
     function _lmark(name) { _lp.phases[name] = performance.now() - _lp.t0; }
-    var _myGen = _parentGen || ++_ccLoadGeneration;
+    var _myGen = (_parentGen != null) ? _parentGen : _ccLoadGeneration;
 
     return getIfcAPI().then(function(api) {
       _lmark('WASM ready');
@@ -3637,7 +3644,7 @@ function startApp() {
 
   function loadIFCWorker(buffer, fallbackColor, onProgress, onProps, scope) {
     var loadStart = performance.now();
-    var _myGen = ++_ccLoadGeneration;
+    var _myGen = _ccLoadGeneration;
     return new Promise(function(resolve, reject) {
       var worker;
       try { worker = new Worker(_getIFCWorkerUrl()); }
@@ -3652,33 +3659,48 @@ function startApp() {
       var _unreg = function() { var i = _ccActiveLoads.indexOf(_loadReg); if (i !== -1) _ccActiveLoads.splice(i, 1); };
 
       // + dynamic import in some browser/SW states) and reject so the caller
-      var _watchdog = setTimeout(function() {
-        _watchdog = null;
+      // Watchdog re-arms on every progress message — "no progress in 20s",
+      // not "no first message in 20s". A worker that hangs mid-stream
+      // (web-ifc OOM without throwing) would otherwise stall the load UI forever.
+      var _watchdog = null, _watchdogDone = false;
+      function _armWatchdog(ms, onFire) {
+        if (_watchdogDone) return;
+        if (_watchdog) clearTimeout(_watchdog);
+        _watchdog = setTimeout(onFire, ms);
+      }
+      function _clearWatchdog() { _watchdogDone = true; if (_watchdog) { clearTimeout(_watchdog); _watchdog = null; } }
+      function _watchdogFire() {
+        _watchdog = null; _watchdogDone = true;
         _unreg();
         try { worker.terminate(); } catch(e) {}
         reject(new Error('IFC Worker timed out (no progress in 20s)'));
-      }, 20000);
-      function _clearWatchdog() { if (_watchdog) { clearTimeout(_watchdog); _watchdog = null; } }
+      }
+      _armWatchdog(20000, _watchdogFire);
+      var _propsGuard = null; // caps the post-result lazy-props phase (see 'result' branch)
 
       worker.onmessage = function(e) {
-        _clearWatchdog();
         var msg = e.data;
         if (msg.type === 'progress') {
+          _armWatchdog(20000, _watchdogFire);
           if (onProgress) onProgress(msg.msg);
           return;
         }
+        _clearWatchdog();
         if (msg.type === 'error') {
+          _unreg();
           worker.terminate();
           reject(new Error(msg.msg));
           return;
         }
         if (msg.type === 'props') {
+          if (_propsGuard) { clearTimeout(_propsGuard); _propsGuard = null; }
           try { if (onProps) onProps(msg.propMap || {}, null); }
           catch(propMergeErr) { console.warn('[IFC] onProps callback failed:', propMergeErr); }
           worker.terminate();
           return;
         }
         if (msg.type === 'props-error') {
+          if (_propsGuard) { clearTimeout(_propsGuard); _propsGuard = null; }
           console.warn('[IFC] Lazy property extraction failed (model loaded without psets):', msg.msg);
           try { if (onProps) onProps({}, msg.msg || 'props-error'); }
           catch(e) { console.warn('[IFC] onProps(err) callback failed:', e); }
@@ -3686,7 +3708,11 @@ function startApp() {
           return;
         }
         if (msg.type === 'result') {
-          if (_myGen !== _ccLoadGeneration) { worker.terminate(); resolve(null); return; } // cancelled — also kills the in-flight buildPropertyMap
+          if (_myGen !== _ccLoadGeneration) { // cancelled — also kills the in-flight buildPropertyMap
+            _unreg();
+            try { if (onProps) onProps({}, 'aborted'); } catch(_) {} // release the props gate or the loading strip sticks
+            worker.terminate(); resolve(null); return;
+          }
           if (onProgress) onProgress('Placing elements in the scene 85%');
           var rawEls = msg.rawEls;
           var gt = msg.geoTable || {};
@@ -3799,6 +3825,13 @@ function startApp() {
           })();
 
           _unreg();
+          // Worker stays alive for lazy buildPropertyMap; if it hangs there
+          // the onProps gate (loading strip) would never release — cap it.
+          _propsGuard = setTimeout(function() {
+            _propsGuard = null;
+            try { if (onProps) onProps({}, 'props-timeout'); } catch(_) {}
+            try { worker.terminate(); } catch(_) {}
+          }, 120000);
           resolve({meshes:meshes, elements:elements, storeys:msg.storeys, storeyData:msg.storeyData, spatialHierarchy:msg.spatialHierarchy||{}, relatedPairs:msg.relatedPairs, stats:stats});
         }
       };
@@ -3934,7 +3967,8 @@ function startApp() {
   // ── Geometry-accurate narrow-phase clash detection ──────────────
 
   function _getWorldVerts(el) {
-    if (el._wvCache) return el._wvCache;
+    if (el._wvCache) { _bvhLRUTouch(el); return el._wvCache; }
+    _bvhLRUEvict(); // caps peak memory on the soft/clearance path too
     var all = [];
     (el.meshes || []).forEach(function(mesh) {
       var pos = mesh.geometry && mesh.geometry.attributes && mesh.geometry.attributes.position;
@@ -3949,11 +3983,15 @@ function startApp() {
       }
     });
     el._wvCache = new Float32Array(all);
+    _bvhLRU.set(el, true);
     return el._wvCache;
   }
 
   function _getWorldTris(el) {
-    if (el._triCache) return el._triCache;
+    // LRU registration matters most on the WASM path, which never calls
+    // _getBVH — without it the per-element tri caches grow uncapped.
+    if (el._triCache) { _bvhLRUTouch(el); return el._triCache; }
+    _bvhLRUEvict();
     var tris = [];
     (el.meshes || []).forEach(function(mesh) {
       var geo = mesh.geometry;
@@ -3975,6 +4013,7 @@ function startApp() {
       }
     });
     el._triCache = new Float32Array(tris);
+    _bvhLRU.set(el, true);
     return el._triCache;
   }
 
@@ -4000,6 +4039,12 @@ function startApp() {
     var eps2 = 1e-6 * Math.sqrt(nl2);
     if(da0>eps2&&da1>eps2&&da2>eps2) return false;
     if(da0<-eps2&&da1<-eps2&&da2<-eps2) return false;
+    // Coplanar pair: flush surface contact (wall base in slab-top plane),
+    // not volumetric interpenetration — by policy touches are not clashes,
+    // same rationale as the edge-only-touch exclusion below. Explicit
+    // early-out also prevents 0/0 → NaN in the interval computation.
+    // Solids that truly overlap are still caught via non-coplanar face pairs.
+    if(Math.abs(da0)<=eps2&&Math.abs(da1)<=eps2&&Math.abs(da2)<=eps2) return false;
 
     var f1x=a1x-a0x,f1y=a1y-a0y,f1z=a1z-a0z;
     var f2x=a2x-a0x,f2y=a2y-a0y,f2z=a2z-a0z;
@@ -4100,12 +4145,12 @@ function startApp() {
     if (hi-lo <= 4) { node.lo=lo; node.hi=hi; node.idx=indices; return node; } // leaf
     var dx=mxx-mnx, dy=mxy-mny, dz=mxz-mnz;
     var axis = (dx>=dy&&dx>=dz) ? 0 : (dy>=dz) ? 1 : 2;
-    var sub = Array.prototype.slice.call(indices, lo, hi);
-    sub.sort(function(a,b){
+    // In-place subrange sort — a subarray is a view, so no per-node
+    // slice/copy-back allocations (they dominated build time on big elements).
+    indices.subarray(lo, hi).sort(function(a,b){
       return (tris[a*9+axis]+tris[a*9+3+axis]+tris[a*9+6+axis])
             -(tris[b*9+axis]+tris[b*9+3+axis]+tris[b*9+6+axis]);
     });
-    for (var i=lo; i<hi; i++) indices[i]=sub[i-lo];
     var mid=(lo+hi)>>1;
     node.cnt=hi-lo;
     node.left =_buildBVHNode(tris,indices,lo,mid);
@@ -4208,6 +4253,9 @@ function startApp() {
     }
   }
 
+  // Scratch buffers reused across pairs — a big detection run calls this
+  // for every overlapping candidate; fresh arrays per call were pure GC churn.
+  var _miProbe = [], _miPts = [], _miValid = [], _miProbeDepth = [0], _miMaxDepth = [0];
   function _meshesIntersect(elA, elB) {
     // Try WASM engine first (4-8x faster)
     if (typeof window._ccWasmIntersect === 'function') {
@@ -4219,15 +4267,18 @@ function startApp() {
     // JS fallback
     var bA = _getBVH(elA), bB = _getBVH(elB);
     if (!bA || !bB) return false;
-    var probe = [], probeDepth = [0];
+    var probe = _miProbe, probeDepth = _miProbeDepth;
+    probe.length = 0; probeDepth[0] = 0;
     _bvhTraverseAll(bA.root, bA.tris, bB.root, bB.tris, probe, 3, probeDepth, true);
     if (!probe.length) return false;
-    var pts = [], maxDepth = [0];
+    var pts = _miPts, maxDepth = _miMaxDepth;
+    pts.length = 0; maxDepth[0] = 0;
     _bvhTraverseAll(bA.root, bA.tris, bB.root, bB.tris, pts, 24, maxDepth, false);
     if (!pts.length) return false;
     var boxA = elA.box, boxB = elB.box;
     var margin = 0.01; // 10mm tolerance for point-in-box check
-    var valid = [];
+    var valid = _miValid;
+    valid.length = 0;
     for (var i=0; i<pts.length; i+=3) {
       var px=pts[i], py=pts[i+1], pz=pts[i+2];
       if (px >= boxA.min.x-margin && px <= boxA.max.x+margin &&
@@ -4864,6 +4915,11 @@ function startApp() {
       try {
         var fb = window._ccDetectionFeedback;
         if (!fb || !fb.byPair) return null;
+        // Feedback is stored per projectKey — a payload from another project
+        // must not un-suppress pairs here (the addon may restore the newest
+        // payload across ALL projects on boot).
+        var _apk = ((window._ccLatestState||{}).activeProject) || 'local';
+        if (fb.projectKey && fb.projectKey !== _apk) return null;
         var TH = (window._ccFeedbackRealRateThreshold != null) ? window._ccFeedbackRealRateThreshold : 0.34;
         var set = {};
         fb.byPair.forEach(function(e){
@@ -5620,11 +5676,14 @@ function startApp() {
       return Object.assign({}, c, {_identityKey:key, _delta:'new', _firstSeen:now, _lastSeen:now, _runCount:1});
     });
 
-    var arCount = 0, AR_CAP = 200;
+    // AR_CAP bounds how many full auto_resolved records the merged list
+    // carries (a scope change can resolve thousands at once); overflow is
+    // still COUNTED in deltaSummary so the trend/run history stays honest.
+    var arCount = 0, arOverflow = 0, AR_CAP = 200;
     prevClashes.forEach(function(c) {
-      if (arCount >= AR_CAP) return;
       var key = computeClashIdentityKey(c); // fresh — must use the same scheme as newKeys
       if (!newKeys[key] && (c.status==='open' || c.status==='in_progress')) {
+        if (arCount >= AR_CAP) { arOverflow++; return; }
         merged.push(Object.assign({}, c, {_identityKey:key, _delta:'auto_resolved', _lastSeen:now, status:'auto_resolved'}));
         arCount++;
       }
@@ -5649,7 +5708,7 @@ function startApp() {
 
     var _nw=0,_pe=0,_ar=0;
     merged.forEach(function(c){if(c._delta==='new')_nw++;else if(c._delta==='persisting')_pe++;else if(c._delta==='auto_resolved')_ar++;});
-    return {clashes:merged, deltaSummary:{newCount:_nw,persisting:_pe,autoResolved:_ar,ts:now}};
+    return {clashes:merged, deltaSummary:{newCount:_nw,persisting:_pe,autoResolved:_ar+arOverflow,autoResolvedTruncated:arOverflow||undefined,ts:now}};
   }
 
   // ── AI Auto-Classifier ─────────────────────────────────────────── INTERNALS.md §10
@@ -6376,7 +6435,8 @@ function startApp() {
         vpXml += '    <CameraViewPoint><X>'+vp.camera.px.toFixed(6)+'</X><Y>'+vp.camera.py.toFixed(6)+'</Y><Z>'+vp.camera.pz.toFixed(6)+'</Z></CameraViewPoint>\n';
         vpXml += '    <CameraDirection><X>'+vp.camera.dx.toFixed(6)+'</X><Y>'+vp.camera.dy.toFixed(6)+'</Y><Z>'+vp.camera.dz.toFixed(6)+'</Z></CameraDirection>\n';
         vpXml += '    <CameraUpVector><X>'+vp.camera.ux.toFixed(6)+'</X><Y>'+vp.camera.uy.toFixed(6)+'</Y><Z>'+vp.camera.uz.toFixed(6)+'</Z></CameraUpVector>\n';
-        vpXml += '    <FieldOfView>60</FieldOfView>\n';
+        var _vpFov = (vp.camera && vp.camera.fov) || 55; // legacy viewpoints predate fov capture — 55 is the app default
+        vpXml += '    <FieldOfView>'+_vpFov+'</FieldOfView>\n';
         if (v3) {
           // 3.0 added a required AspectRatio to both camera types.
           var _ar = 16/9;
@@ -8247,7 +8307,14 @@ function startApp() {
             if (g.iMesh) ghostOrig.set(g.iMesh, g.origMaterial);
           });
         }
-        function dropMat(m){ if (m && m.uuid) _ghostMatCache.delete(m.uuid); }
+        function dropMat(m){
+          if (!m || !m.uuid) return;
+          var clone = _ghostMatCache.get(m.uuid);
+          if (clone) {
+            _ghostMatCache.delete(m.uuid);
+            try { clone.dispose(); } catch(_) {} // free the GPU program — the clone dies with its source material
+          }
+        }
         grp.traverse(function(obj){
           if (!obj.isMesh) return;
           var mat = (ghostOrig && ghostOrig.get(obj)) || obj.material;
@@ -8988,7 +9055,7 @@ function startApp() {
       // API. Same behaviour, nicer names — both surfaces are public and
       // we won't break them in patch releases.
       window.ClashControl = window.ClashControl || {
-        get version() { try { return (document.querySelector('meta[name="cc-version"]')||{}).content || null; } catch(_) { return null; } },
+        get version() { try { return (window.CC_VERSION && window.CC_VERSION.v) || null; } catch(_) { return null; } },
         get state()    { return window._ccLatestState || null; },
         dispatch:      function(a){ if (window._ccDispatch) return window._ccDispatch(a); },
         invalidate:    function(n){ if (window._ccInvalidate) return window._ccInvalidate(n); },
@@ -9417,10 +9484,17 @@ function startApp() {
         if (!m || !m.points || !m.points.length) return;
         var box = new THREE.Box3();
         m.points.forEach(function(p){ box.expandByPoint(new THREE.Vector3(p[0],p[1],p[2])); });
-        if (window._ccFlyToBox) window._ccFlyToBox(box, 1.6);
-        else if (window._ccFlyTo) {
-          var c = box.getCenter(new THREE.Vector3());
-          window._ccFlyTo(c, 5);
+        var c = box.getCenter(new THREE.Vector3());
+        var sz = box.getSize(new THREE.Vector3());
+        var dist = Math.max(4, Math.max(sz.x, sz.y, sz.z) * 1.6);
+        var cam = window._ccViewport && window._ccViewport.getCamera && window._ccViewport.getCamera();
+        if (cam && typeof window._ccFlyToView === 'function') {
+          var dir = cam.position.clone().sub(c);
+          if (dir.lengthSq() < 1e-6) dir.set(1, 0.6, 1);
+          dir.normalize();
+          window._ccFlyToView(c, c.clone().addScaledVector(dir, dist));
+        } else if (typeof window._ccFlyToPoint === 'function') {
+          window._ccFlyToPoint([c.x, c.y, c.z]);
         }
       };
       // Resolve the picked Three.js object back to an IFC element record.
@@ -9660,10 +9734,34 @@ function startApp() {
         }
         if (window._ccRegisterMeasurementGeo) window._ccRegisterMeasurementGeo(id, 'clearance', 2, 1);
       };
-      // Toast: re-uses any existing toast facility, otherwise console.
+      // Toast UI: plain DOM (no reducer round-trip) so it works from any
+      // code path — addons, worker callbacks, render loop. The .cc-toast
+      // class is what presentation mode's hide-rule targets.
+      window._ccShowToast = function(msg, kind){
+        try {
+          var host = document.getElementById('cc-toast-host');
+          if (!host) {
+            host = document.createElement('div');
+            host.id = 'cc-toast-host';
+            host.style.cssText = 'position:fixed;bottom:1.2rem;left:50%;transform:translateX(-50%);z-index:200;display:flex;flex-direction:column;gap:.4rem;align-items:center;pointer-events:none;max-width:min(92vw,480px)';
+            document.body.appendChild(host);
+          }
+          var t = document.createElement('div');
+          t.className = 'cc-toast' + (kind === 'error' ? ' cc-toast-error' : '');
+          t.textContent = String(msg);
+          t.style.cssText = 'pointer-events:auto;padding:.5rem .8rem;border-radius:var(--radius-sm,6px);border:1px solid ' + (kind === 'error' ? 'var(--color-danger,#ef4444)' : 'var(--border,#334155)') + ';background:var(--bg-secondary,#1e293b);color:var(--text-primary,#e2e8f0);font-size:var(--text-xs,.75rem);box-shadow:0 4px 16px rgba(0,0,0,.35);opacity:0;transition:opacity .18s ease';
+          host.appendChild(t);
+          while (host.children.length > 4) host.removeChild(host.firstChild);
+          requestAnimationFrame(function(){ t.style.opacity = '1'; });
+          setTimeout(function(){
+            t.style.opacity = '0';
+            setTimeout(function(){ if (t.parentNode) t.parentNode.removeChild(t); }, 220);
+          }, kind === 'error' ? 6000 : 3800);
+        } catch(e) {}
+      };
       if (!window._ccToast) {
-        window._ccToast = function(msg){
-          try { if (window._ccShowToast) window._ccShowToast(msg); else console.log('%c[CC]','color:#b8533a', msg); } catch(e){}
+        window._ccToast = function(msg, kind){
+          try { window._ccShowToast(msg, kind); console.log('%c[CC]','color:#b8533a', msg); } catch(e){}
         };
       }
 
@@ -11380,7 +11478,8 @@ function startApp() {
             px:+camera.position.x.toFixed(4), py:+camera.position.y.toFixed(4), pz:+camera.position.z.toFixed(4),
             dx:+dir.x.toFixed(4), dy:+dir.y.toFixed(4), dz:+dir.z.toFixed(4),
             ux:+up.x.toFixed(4), uy:+up.y.toFixed(4), uz:+up.z.toFixed(4),
-            tx:+S.orbit.target.x.toFixed(4), ty:+S.orbit.target.y.toFixed(4), tz:+S.orbit.target.z.toFixed(4)
+            tx:+S.orbit.target.x.toFixed(4), ty:+S.orbit.target.y.toFixed(4), tz:+S.orbit.target.z.toFixed(4),
+            fov:+S.camera.fov.toFixed(2)
           },
           section:_section
         };
@@ -11391,6 +11490,11 @@ function startApp() {
         camera.position.set(c.px, c.py, c.pz);
         if(c.tx!=null) S.orbit.target.set(c.tx, c.ty, c.tz);
         else S.orbit.target.set(c.px+c.dx*10, c.py+c.dy*10, c.pz+c.dz*10);
+        // Restore captured FOV (legacy viewpoints lack it). Walk mode owns
+        // the FOV while active — don't fight it.
+        if (c.fov && !((window._ccLatestState||{}).walkMode) && S.camera.fov !== c.fov) {
+          S.camera.fov = c.fov; S.camera.updateProjectionMatrix();
+        }
         S.orbit.sync(); S.orbit.apply();
         // Restore the section state. Older viewpoints predating this field
         // simply have section:undefined — we clear in that case so the
@@ -21851,7 +21955,7 @@ function startApp() {
             try { window._ccDispatch({t:A.INSPECTOR_OPEN, v:true}); } catch(_){}
           }
         } else if ((e.key === 'i' || e.key === 'I') && !e.metaKey && !e.ctrlKey){
-          try { if (window._ccCreateIssueFromView) window._ccCreateIssueFromView(); else if (window._ccDispatch) window._ccDispatch({t:A.MODAL,v:'issue'}); } catch(_){}
+          try { if (window._ccDispatch) window._ccDispatch({t:A.MODAL,v:'issue'}); } catch(_){}
         }
       }
       window.addEventListener('keydown', onKey);
@@ -23592,7 +23696,7 @@ function startApp() {
       onSelect:function(){ d({t:A.DIAGNOSTICS,v:!s.diagnostics}); }});
     // View
     push({group:'View', label:'Fit to view', hint:'F', keywords:'fit zoom extents reset framing',
-      onSelect:function(){ try{ if(window._ccFit) window._ccFit(); }catch(e){} }});
+      onSelect:function(){ try{ if(window._ccFitAll) window._ccFitAll(); }catch(e){} }});
     push({group:'View', label:'Toggle floor plan view', keywords:'plan 2d sheet floor underlay',
       onSelect:function(){ d({t:A.FLOOR_PLAN,v:!s.floorPlan}); }});
     push({group:'View', label:'Walk mode', keywords:'walk wasd fps first person navigate pegman', r:'present',
@@ -26816,6 +26920,8 @@ function startApp() {
         try {
           localStorage.setItem('cc_sharedProjectId', data.id);
           localStorage.setItem('cc_sharedProjectName', data.name);
+          // Creator-held; the API requires it for DELETE (never share it with the project key)
+          if (data.editKey) localStorage.setItem('cc_sharedProjectEditKey', data.editKey);
         } catch(e) {}
         _sharedStartPolling();
         return data;
@@ -27055,7 +27161,6 @@ function startApp() {
         var rsMap = {wireframe:'wireframe',shaded:'shaded',rendered:'rendered',standard:'standard',xray:'xray','x-ray':'xray'};
         var rs = rsMap[action.style] || 'shaded';
         d({t:A.UPD_PREFS,u:{renderStyle:rs}});
-        if (window._ccSetRenderStyle) window._ccSetRenderStyle(rs);
         return rs.charAt(0).toUpperCase()+rs.slice(1)+' mode.';
       }
       case 'set_section': {
@@ -28276,9 +28381,9 @@ function startApp() {
       [['axes','axis','hide'],    function(){d({t:A.UPD_PREFS,u:{showAxes:false}});return 'Axes off.';}, 2],
       [['markers','show','on'],   function(){d({t:A.UPD_PREFS,u:{showMarkers:true}});return 'Markers on.';}, 2],
       [['markers','hide','off'],  function(){d({t:A.UPD_PREFS,u:{showMarkers:false}});return 'Markers off.';}, 2],
-      [['wireframe','wire'],      function(){d({t:A.UPD_PREFS,u:{renderStyle:'wireframe'}});if(window._ccSetRenderStyle)window._ccSetRenderStyle('wireframe');return 'Wireframe.';}, 1],
-      [['shaded','shade'],        function(){d({t:A.UPD_PREFS,u:{renderStyle:'shaded'}});if(window._ccSetRenderStyle)window._ccSetRenderStyle('shaded');return 'Shaded.';}, 1],
-      [['rendered','realistic'],  function(){d({t:A.UPD_PREFS,u:{renderStyle:'rendered'}});if(window._ccSetRenderStyle)window._ccSetRenderStyle('rendered');return 'Rendered.';}, 1],
+      [['wireframe','wire'],      function(){d({t:A.UPD_PREFS,u:{renderStyle:'wireframe'}});return 'Wireframe.';}, 1],
+      [['shaded','shade'],        function(){d({t:A.UPD_PREFS,u:{renderStyle:'shaded'}});return 'Shaded.';}, 1],
+      [['rendered','realistic'],  function(){d({t:A.UPD_PREFS,u:{renderStyle:'rendered'}});return 'Rendered.';}, 1],
       [['reset','view','home','fit'],function(){if(_resetView)_resetView();return 'View reset.';}, 2],
       [['section','cut','clear','off','none'],function(){d({t:A.SECTION,axis:null});d({t:A.SECTION_BOX,v:null});return 'Sections cleared.';}, 2],
       [['section','cut','x'],     function(){d({t:A.SECTION,axis:'x'});return 'Section X.';}, 2],
@@ -30631,7 +30736,7 @@ function startApp() {
         <div style=${{display:'flex',alignItems:'center',gap:'.4rem'}}>
           <span style=${{fontSize:'var(--text-2xs)',textTransform:'uppercase',letterSpacing:'.06em',color:'var(--text-muted)'}}>${ms.length} measurement${ms.length===1?'':'s'}</span>
           <div style=${{flex:1}}></div>
-          <button onClick=${function(){if(window._ccOpenMeasureSettings)window._ccOpenMeasureSettings(true);else d({t:A.SETTINGS,v:true});}}
+          <button onClick=${function(){d({t:A.SETTINGS,v:true});}}
             title="Units & precision" style=${{background:'none',border:'1px solid var(--border)',borderRadius:'var(--radius-xs)',padding:'.15rem .45rem',fontSize:'var(--text-2xs)',color:'var(--text-secondary)',cursor:'pointer',fontFamily:'var(--font-mono)'}}>
             ${unitLabel} ⚙
           </button>

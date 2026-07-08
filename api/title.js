@@ -12,6 +12,10 @@
 
 var { cors, llmGuard } = require('./_lib');
 
+// Overridable without a deploy — if the upstream ever 404s the default id
+// (check Vercel logs for 'title API error'), set GEMMA_MODEL in the env.
+var GEMMA_MODEL = process.env.GEMMA_MODEL || 'gemma-4-31b-it';
+
 // Matches the client's per-call batch size (index.html sends clashes in
 // groups of 20) and the documented contract. Oversized payloads are rejected
 // rather than silently truncated.
@@ -131,7 +135,7 @@ module.exports = async function handler(req, res) {
   ].join('\n');
 
   try {
-    var url = 'https://generativelanguage.googleapis.com/v1beta/models/gemma-4-31b-it:generateContent?key=' + encodeURIComponent(key);
+    var url = 'https://generativelanguage.googleapis.com/v1beta/models/' + encodeURIComponent(GEMMA_MODEL) + ':generateContent?key=' + encodeURIComponent(key);
     var resp = await fetch(url, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -146,7 +150,10 @@ module.exports = async function handler(req, res) {
     });
 
     if (!resp.ok) {
-      console.error('Gemma title API error:', resp.status);
+      // Log the upstream body server-side: a 404 here means GEMMA_MODEL
+      // names a model the API doesn't serve — fix via env, no deploy needed.
+      var errBody = ''; try { errBody = (await resp.text()).slice(0, 300); } catch (_) {}
+      console.error('Gemma title API error:', resp.status, GEMMA_MODEL, errBody);
       return res.status(502).json({ error: 'AI request failed' });
     }
 
@@ -192,7 +199,7 @@ module.exports = async function handler(req, res) {
     // produced the title, even if we're serving from cache now.
     return res.status(200).json({
       titles: cachedTitles.concat(generated),
-      _model: 'gemma-4-31b-it',
+      _model: GEMMA_MODEL,
       _at: new Date().toISOString()
     });
   } catch (e) {

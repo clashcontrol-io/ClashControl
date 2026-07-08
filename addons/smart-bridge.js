@@ -336,6 +336,13 @@
     return (s && s.activeProject) || 'local';
   }
 
+  // Single definition of "open" — get_status and get_clash_summary must agree
+  // or an agent calling both back-to-back sees contradictory counts.
+  function _isOpenClash(c) {
+    var st = (c && c.status) || 'open';
+    return st !== 'resolved' && st !== 'auto_resolved' && st !== 'expected' && st !== 'closed';
+  }
+
   // ── Action handlers ───────────────────────────────────────────────
 
   var handlers = {};
@@ -451,7 +458,7 @@
     return {
       models: models, modelCount: models.length,
       clashCount: (s.clashes || []).length,
-      openClashes: (s.clashes || []).filter(function(c) { var st = c.status || 'open'; return st !== 'resolved' && st !== 'expected' && st !== 'closed'; }).length,
+      openClashes: (s.clashes || []).filter(_isOpenClash).length,
       issueCount: (s.issues || []).length,
       activeProject: s.activeProject || null,
       projectKey: _projectKey(s), // connective-spine partition key (deterministic)
@@ -593,7 +600,7 @@
     }
     return {
       total: clashes.length,
-      open: clashes.filter(function(c) { return c.status !== 'resolved'; }).length,
+      open: clashes.filter(_isOpenClash).length,
       byStatus: byStatus, byCategory: byCategory, byDiscipline: byDiscipline,
       byTypePair: top(byTypePair), byStorey: top(byStorey)
     };
@@ -1036,8 +1043,17 @@
   //            byPair:[{key,real,false,realRate,recommendation}] } }
   var _FEEDBACK_REALRATE_TH = 0.34; // realRate >= this => stop suppressing that pair
   function _loadDetectionFeedback() {
-    // Restore the most recent stored payload on page load so it survives refresh.
+    // Restore the ACTIVE project's stored payload so it survives refresh.
+    // Falls back to the newest across projects only when the active key has
+    // none — the core additionally filters by projectKey at detection time,
+    // so a wrong-project payload can never un-suppress pairs.
     try {
+      var pk = null;
+      try { pk = _projectKey(_getState()); } catch (_) {}
+      if (pk) {
+        var exact = localStorage.getItem('cc_detection_feedback:' + pk);
+        if (exact) { window._ccDetectionFeedback = JSON.parse(exact); return; }
+      }
       var latest = null;
       for (var i = 0; i < localStorage.length; i++) {
         var k = localStorage.key(i);
@@ -1050,6 +1066,8 @@
     } catch (e) {}
   }
   _loadDetectionFeedback();
+  // Re-resolve when the user switches projects — the payload is per-project.
+  try { window.addEventListener('cc-project-switch', _loadDetectionFeedback); } catch (e) {}
 
   handlers.ingest_detection_feedback = function(p) {
     var s = _getState();
@@ -1059,6 +1077,18 @@
     var byPair = Array.isArray(fb.byPair) ? fb.byPair : [];
     var payload = { projectKey: pk, byRule: byRule, byPair: byPair, ts: Date.now() };
     try { localStorage.setItem('cc_detection_feedback:' + pk, JSON.stringify(payload)); } catch (e) {}
+    try { // cap stored payloads — keep the 10 newest, one key per project
+      var fbKeys = [];
+      for (var fi = 0; fi < localStorage.length; fi++) {
+        var fk = localStorage.key(fi);
+        if (fk && fk.indexOf('cc_detection_feedback:') === 0) {
+          var fv = null; try { fv = JSON.parse(localStorage.getItem(fk)); } catch (_) {}
+          fbKeys.push({ k: fk, ts: (fv && fv.ts) || 0 });
+        }
+      }
+      fbKeys.sort(function (a, b) { return b.ts - a.ts; });
+      fbKeys.slice(10).forEach(function (e) { localStorage.removeItem(e.k); });
+    } catch (e) {}
     try { window._ccDetectionFeedback = payload; } catch (e) {}
     var protectedPairs = byPair.filter(function (e) {
       var rate = (e && e.realRate != null) ? e.realRate

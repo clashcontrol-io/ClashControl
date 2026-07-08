@@ -21,7 +21,7 @@ module.exports = async function handler(req, res) {
     db: false,
     model: groqKey ? ('groq:' + groqModel) : null,
     // /api/title + /api/triage still run on Google AI Studio (Gemma).
-    titleTriage: { configured: !!geminiKey, model: geminiKey ? 'gemma-4-31b-it' : null },
+    titleTriage: { configured: !!geminiKey, model: geminiKey ? (process.env.GEMMA_MODEL || 'gemma-4-31b-it') : null },
   };
 
   // Optional: actually call Groq and surface the raw response so we can

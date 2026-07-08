@@ -25,6 +25,7 @@ jobs:
           token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Run memory updater
+        id: updater
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
         run: |
@@ -33,6 +34,16 @@ jobs:
           else
             python3 scripts/update-memory.py
           fi
+
+      # A crash here previously left MEMORY.md silently stale with no signal
+      # anywhere but a red X on a schedule nobody watches — this was the
+      # actual root cause of the Project State line going stale for weeks.
+      - name: Surface failure
+        if: failure() && steps.updater.outcome == 'failure'
+        run: |
+          echo "### :x: Daily memory sync failed" >> "$GITHUB_STEP_SUMMARY"
+          echo "scripts/update-memory.py exited non-zero — MEMORY.md was NOT updated." >> "$GITHUB_STEP_SUMMARY"
+          echo "Check the 'Run memory updater' step log above for the traceback." >> "$GITHUB_STEP_SUMMARY"
 
       - name: Commit and push if MEMORY.md changed
         run: |

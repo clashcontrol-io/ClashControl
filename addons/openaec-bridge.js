@@ -243,7 +243,11 @@
           return Object.assign({}, s, { openaecBridge: Object.assign({}, s.openaecBridge, a.u) });
         }
       },
-      init: function(){ _init(); }
+      init: function(){ _init(); },
+      destroy: function(){
+        _stopHealthPoll(); // deactivating must stop the 15s localhost probe
+        _opsPort = null; _opsInfo = null;
+      }
     });
   } else {
     // Fallback for environments where the addon registry isn't ready yet.

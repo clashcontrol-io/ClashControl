@@ -5,9 +5,13 @@
 CREATE TABLE IF NOT EXISTS shared_projects (
   id            TEXT PRIMARY KEY,           -- project key, e.g. "MEP-abc123"
   name          TEXT NOT NULL,
+  edit_key      TEXT,                       -- creator-held; required for DELETE (PUT stays open — that's the collaboration model)
   created_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
   last_activity TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+
+-- Migration for pre-editKey deployments (idempotent):
+ALTER TABLE shared_projects ADD COLUMN IF NOT EXISTS edit_key TEXT;
 
 CREATE TABLE IF NOT EXISTS shared_issues (
   id          TEXT NOT NULL,                -- clash/issue id (client-generated)

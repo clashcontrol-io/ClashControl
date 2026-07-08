@@ -25,6 +25,10 @@
  */
 
 const PORT = process.env.CLASHCONTROL_PORT || '19803';
+// Track the bridge release version when co-located with the repo; the
+// hardcoded fallback covers standalone downloads of this single file.
+let SERVER_VERSION = '1.0.0';
+try { SERVER_VERSION = require('./bridge-version.json').version || SERVER_VERSION; } catch (_) {}
 // Try 127.0.0.1 first; fall back to [::1] if the bridge binds to IPv6 loopback.
 // _BASE is updated on first successful connection and reused for all subsequent calls.
 let _BASE     = `http://127.0.0.1:${PORT}`;
@@ -49,7 +53,10 @@ async function _bridgeFetch(path, opts) {
 // Detects two scenarios:
 //  1. Explicit flag: node mcp-server.js --install
 //  2. Run directly in a terminal (stdin is a TTY — Claude Desktop always pipes stdin)
-if (process.argv.includes('--install') || process.stdin.isTTY) {
+// --mcp forces server mode even on a TTY (smart-bridge-server.js --mcp
+// delegates here; without the guard, running that in a terminal would
+// install-and-exit instead of serving).
+if (!process.argv.includes('--mcp') && (process.argv.includes('--install') || process.stdin.isTTY)) {
   (function install() {
     const os   = require('os');
     const fs   = require('fs');
@@ -246,6 +253,27 @@ const TOOLS = [
       'ClashControl element with its model, expressId, uniqueId, ifcType, name, storey, material and ' +
       'classification. Prefer uniqueId (most reliable cross-document key). Accepts a single ' +
       'uniqueId/globalId/revitId or arrays uniqueIds[]/globalIds[]/revitIds[].',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        uniqueId: { type: 'string', description: 'A single Revit UniqueId to resolve (most reliable).' },
+        globalId: { type: 'string', description: 'A single IFC GlobalId to resolve.' },
+        revitId: { type: 'string', description: 'A single Revit ElementId to resolve.' },
+        uniqueIds: { type: 'array', items: { type: 'string' }, description: 'Multiple Revit UniqueIds.' },
+        globalIds: { type: 'array', items: { type: 'string' }, description: 'Multiple IFC GlobalIds.' },
+        revitIds: { type: 'array', items: { type: 'string' }, description: 'Multiple Revit ElementIds.' },
+        limit: { type: 'number', description: 'Max elements to return. Default 50.' },
+      },
+      required: [],
+    },
+  },
+  {
+    name: 'get_element_properties',
+    description:
+      'Full IFC property sets and quantities for one or more elements — every Pset_*/Qset_* value from ' +
+      'the IFC file (e.g. Pset_WallCommon.LoadBearing, Qto_WallBaseQuantities.Length). Returns psets:{} ' +
+      'and quantities:{} alongside the standard summary fields. Use get_element_by_guid for a lightweight ' +
+      'summary; use this when you need the raw properties a human sees in the sidebar panel.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -593,6 +621,32 @@ const TOOLS = [
         },
       },
       required: ['mode'],
+    },
+  },
+  {
+    name: 'takeoff',
+    description:
+      'Aggregates length/area/volume across all elements matching an IFC type filter (e.g. IfcWall). ' +
+      'Reads Qto_* quantity sets.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        filter: { type: 'string', description: "IFC type filter, e.g. 'IfcWall' or 'wall'." },
+      },
+      required: ['filter'],
+    },
+  },
+  {
+    name: 'set_measure_units',
+    description:
+      "Changes measurement display units. 'auto' detects from IFC; 'metric' uses mm/m; " +
+      "'imperial-decimal' uses ft.dec; 'imperial-fractional' uses ft' in\".",
+    inputSchema: {
+      type: 'object',
+      properties: {
+        units: { type: 'string', enum: ['auto', 'metric', 'imperial-decimal', 'imperial-fractional'], description: 'Unit system to display.' },
+      },
+      required: ['units'],
     },
   },
   {
@@ -1086,7 +1140,7 @@ async function handle(msg) {
       result: {
         protocolVersion: '2024-11-05',
         capabilities: { tools: {} },
-        serverInfo: { name: 'clashcontrol-mcp', version: '1.0.0' },
+        serverInfo: { name: 'clashcontrol-mcp', version: SERVER_VERSION },
         instructions:
           'Connects to ClashControl, a local IFC clash detection application. ' +
           'Use these tools when users ask about BIM clashes, IFC model analysis, element conflicts, ' +

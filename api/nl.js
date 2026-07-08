@@ -1,14 +1,14 @@
-// ClashControl — Gemma 4 NL proxy with native function calling
+// ClashControl — Groq NL proxy with native (OpenAI-style) function calling
 // Receives { command, context } from client, returns { intent, ...params }
 
 var { cors, llmGuard } = require('./_lib');
 
 // Hard cap on the user-provided NL command. Anything longer than this is
 // either a copy-paste mistake or a deliberate abuse attempt — neither
-// produces useful tool routing and both burn Gemma tokens.
+// produces useful tool routing and both burn Groq tokens.
 var MAX_COMMAND_CHARS = 1000;
 
-// Gemma 4 tool declarations — one per NL intent
+// Tool declarations — one per NL intent (mapped to OpenAI tools format for Groq)
 const TOOLS = [
   {
     name: 'run_detection',
@@ -730,12 +730,15 @@ module.exports = async function handler(req, res) {
         } catch (_) { /* fall through to the normal error response */ }
       }
       var isQuota = gResp.status === 429;
+      // Upstream error body goes to the server log only — it can carry
+      // provider internals (quota ids, org names) that don't belong in a
+      // public API response.
+      console.error('NL proxy upstream error:', gResp.status, gErrText.slice(0, 500));
       return res.status(isQuota ? 429 : 502).json({
         error: isQuota ? 'AI quota exceeded' : 'AI request failed',
         reason: isQuota ? 'quota_exceeded' : 'upstream_error',
         model: 'groq:' + GROQ_MODEL,
         upstreamStatus: gResp.status,
-        upstreamBody: gErrText.slice(0, 500),
       });
     } catch (ge) {
       console.error('NL proxy error (groq):', ge && ge.message);

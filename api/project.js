@@ -3,16 +3,26 @@
 
 var { cors, llmGuard, dbUrl: getDbUrl } = require('./_lib');
 
+var crypto = require('crypto');
+
+var KEY_CHARS = 'abcdefghjkmnpqrstuvwxyz23456789'; // no ambiguous chars
+
+function randomToken(len) {
+  // crypto.randomInt does uniform rejection sampling internally — modulo on
+  // a raw random byte would bias low character-set indices (256 isn't a
+  // multiple of KEY_CHARS.length).
+  var out = '';
+  for (var i = 0; i < len; i++) out += KEY_CHARS[crypto.randomInt(0, KEY_CHARS.length)];
+  return out;
+}
+
 // Generate a short project key: PREFIX-XXXXXX
 function generateKey(name) {
   var prefix = (name || 'CC')
     .replace(/[^a-zA-Z0-9]/g, '')
     .slice(0, 4)
     .toUpperCase();
-  var chars = 'abcdefghjkmnpqrstuvwxyz23456789'; // no ambiguous chars
-  var suffix = '';
-  for (var i = 0; i < 6; i++) suffix += chars[Math.floor(Math.random() * chars.length)];
-  return prefix + '-' + suffix;
+  return prefix + '-' + randomToken(6);
 }
 
 // Validate the minimal shared issue shape
@@ -21,6 +31,7 @@ function validateIssue(issue) {
   if (!issue.id || typeof issue.id !== 'string') return false;
   // Must have at least identity (globalIds or title) + status
   if (!issue.status) return false;
+  if (!issue.globalIdA && !issue.globalIdB && !(issue.title && String(issue.title).trim())) return false;
   return true;
 }
 
@@ -68,25 +79,43 @@ module.exports = async function handler(req, res) {
       case 'POST': {
         var body = req.body || {};
         var name = (body.name || 'Untitled Project').slice(0, 100);
-        var key = generateKey(name);
 
-        // Ensure uniqueness (collision is astronomically unlikely but be safe)
-        var existing = await sql`SELECT id FROM shared_projects WHERE id = ${key}`;
-        if (existing.length > 0) key = generateKey(name); // retry once
+        // Ensure uniqueness — re-check after every regeneration (the old
+        // single retry could still 500 on a second collision).
+        var key, taken, tries = 0;
+        do {
+          key = generateKey(name);
+          taken = await sql`SELECT id FROM shared_projects WHERE id = ${key}`;
+        } while (taken.length > 0 && ++tries < 5);
+        if (taken.length > 0) return res.status(503).json({ error: 'Could not allocate a project key, retry' });
 
-        await sql`INSERT INTO shared_projects (id, name) VALUES (${key}, ${name})`;
+        // editKey: held by the creator only, required for DELETE on this
+        // project. PUT stays open to anyone with the project key — that IS
+        // the collaboration model (teammates join with just the key).
+        // Legacy deployments without the edit_key column keep working.
+        var editKey = randomToken(16);
+        try {
+          await sql`INSERT INTO shared_projects (id, name, edit_key) VALUES (${key}, ${name}, ${editKey})`;
+        } catch (colErr) {
+          await sql`INSERT INTO shared_projects (id, name) VALUES (${key}, ${name})`;
+          editKey = null;
+        }
 
-        // If initial issues are provided, insert them
+        // If initial issues are provided, insert them (batched)
         if (body.issues && Array.isArray(body.issues)) {
-          for (var issue of body.issues) {
-            if (!validateIssue(issue)) continue;
+          var initRows = body.issues.filter(validateIssue).map(function(issue) {
             var shared = stripToShared(issue);
+            return { id: shared.id, data: shared };
+          });
+          if (initRows.length) {
             await sql`INSERT INTO shared_issues (id, project_id, data, updated_by)
-              VALUES (${shared.id}, ${key}, ${JSON.stringify(shared)}, ${body.user || 'anonymous'})`;
+              SELECT r.id, ${key}, r.data, ${body.user || 'anonymous'}
+              FROM jsonb_to_recordset(${JSON.stringify(initRows)}::jsonb) AS r(id text, data jsonb)
+              ON CONFLICT (project_id, id) DO NOTHING`;
           }
         }
 
-        return res.status(201).json({ id: key, name: name });
+        return res.status(201).json({ id: key, name: name, editKey: editKey });
       }
 
       // GET — Pull all issues for a project
@@ -120,46 +149,60 @@ module.exports = async function handler(req, res) {
         if (project.length === 0) return res.status(404).json({ error: 'Project not found' });
 
         var body = req.body || {};
-        var issues = body.issues || [];
+        var issues = (body.issues || []).filter(validateIssue);
         var user = body.user || 'anonymous';
-        var synced = 0;
         var conflicts = [];
 
-        for (var issue of issues) {
-          if (!validateIssue(issue)) continue;
-          var shared = stripToShared(issue);
-
-          // Check if server has a newer version
-          var existing = await sql`SELECT updated_at FROM shared_issues WHERE project_id = ${projectId} AND id = ${shared.id}`;
-
-          if (existing.length > 0 && issue._updatedAt) {
-            var serverTime = new Date(existing[0].updated_at).getTime();
-            var clientTime = new Date(issue._updatedAt).getTime();
-            if (serverTime > clientTime) {
-              // Server wins — return conflict for client to merge
-              conflicts.push(shared.id);
-              continue;
-            }
+        // Two round-trips total instead of 2-per-issue: the old serial loop
+        // hit the 10s function ceiling on large syncs, leaving a partial write.
+        var candidates = issues.map(function(issue) {
+          return { issue: issue, shared: stripToShared(issue) };
+        });
+        var ids = candidates.map(function(c) { return c.shared.id; });
+        var serverTimes = {};
+        if (ids.length) {
+          var existing = await sql`SELECT id, updated_at FROM shared_issues WHERE project_id = ${projectId} AND id = ANY(${ids})`;
+          existing.forEach(function(row) { serverTimes[row.id] = new Date(row.updated_at).getTime(); });
+        }
+        var rows = [];
+        candidates.forEach(function(c) {
+          var serverTime = serverTimes[c.shared.id];
+          if (serverTime != null && c.issue._updatedAt && serverTime > new Date(c.issue._updatedAt).getTime()) {
+            conflicts.push(c.shared.id); // server wins — client merges
+            return;
           }
-
-          // Upsert
+          rows.push({ id: c.shared.id, data: c.shared });
+        });
+        if (rows.length) {
           await sql`INSERT INTO shared_issues (id, project_id, data, updated_by)
-            VALUES (${shared.id}, ${projectId}, ${JSON.stringify(shared)}, ${user})
+            SELECT r.id, ${projectId}, r.data, ${user}
+            FROM jsonb_to_recordset(${JSON.stringify(rows)}::jsonb) AS r(id text, data jsonb)
             ON CONFLICT (project_id, id)
-            DO UPDATE SET data = ${JSON.stringify(shared)}, updated_by = ${user}, updated_at = now()`;
-          synced++;
+            DO UPDATE SET data = EXCLUDED.data, updated_by = EXCLUDED.updated_by, updated_at = now()`;
         }
 
         await sql`UPDATE shared_projects SET last_activity = now() WHERE id = ${projectId}`;
 
-        return res.status(200).json({ synced: synced, conflicts: conflicts });
+        return res.status(200).json({ synced: rows.length, conflicts: conflicts });
       }
 
-      // DELETE — Remove a single issue
+      // DELETE — Remove a single issue. Destructive, so unlike PUT it
+      // requires the creator's editKey on projects that have one (legacy
+      // projects and legacy deployments without the column stay open).
       case 'DELETE': {
         if (!projectId) return res.status(400).json({ error: 'Missing project id' });
         var issueId = req.query.issue;
         if (!issueId) return res.status(400).json({ error: 'Missing issue id' });
+
+        var storedEditKey = null;
+        try {
+          var pRow = await sql`SELECT edit_key FROM shared_projects WHERE id = ${projectId}`;
+          storedEditKey = pRow.length ? pRow[0].edit_key : null;
+        } catch (colErr) { /* column not migrated — legacy open mode */ }
+        if (storedEditKey) {
+          var provided = req.headers['x-cc-edit-key'] || req.query.editKey || '';
+          if (provided !== storedEditKey) return res.status(403).json({ error: 'editKey required to delete' });
+        }
 
         await sql`DELETE FROM shared_issues WHERE project_id = ${projectId} AND id = ${issueId}`;
         return res.status(200).json({ ok: true });

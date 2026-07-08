@@ -171,7 +171,7 @@
       function finalize(fn) {
         _saveSharedHandle(dirHandle, fn);
         d({t:A_UPD, u:{enabled:true, folderName:dirHandle.name, fileName:fn, lastSync:null}});
-        _syncSharedProject(d);
+        _startSharedSync(d); // syncs now AND starts the recurring timer — a fresh link must not go silent until reload
       }
     }).catch(function(e) {
       if (e.name !== 'AbortError') console.warn('Folder picker error:', e);
@@ -188,19 +188,28 @@
 
   // ── File read/write ────────────────────────────────────────────
 
+  // Resolves to: parsed data | null (file genuinely absent → safe to init-write)
+  // | {__readError:true} (transient failure — permission hiccup, half-synced
+  // cloud file, parse error). The distinction matters: writing local state
+  // over a file we merely FAILED TO READ would erase the team's records.
   function _readSharedFile() {
     if (!_sharedDirHandle) return Promise.resolve(null);
     var state = window._ccLatestState;
     var fn = state && state.sharedProject ? state.sharedProject.fileName : 'project.ccproject';
     return _sharedDirHandle.getFileHandle(fn, {create:false}).then(function(fh) {
       _sharedFileHandle = fh;
-      return fh.getFile();
-    }).then(function(file) {
-      return file.text().then(function(txt) {
+      return fh.getFile().then(function(file) { return file.text(); }).then(function(txt) {
         var data = JSON.parse(txt);
         return data._cc === 'ClashControl' ? data : null;
+      }).catch(function(e) {
+        console.warn('Shared project read failed (skipping this sync):', e);
+        return {__readError: true};
       });
-    }).catch(function() { return null; });
+    }).catch(function(e) {
+      if (e && e.name === 'NotFoundError') return null; // no file yet — first writer initialises it
+      console.warn('Shared project open failed (skipping this sync):', e);
+      return {__readError: true};
+    });
   }
 
   function _writeSharedFile(d) {
@@ -235,6 +244,10 @@
       d({t:A_UPD, u:{lastSync:Date.now()}});
     }).catch(function(e) {
       console.warn('Shared project write failed:', e);
+      if (window._ccToast && e && (e.name === 'NotAllowedError' || e.name === 'SecurityError')) {
+        window._ccToast('Shared folder access lost — open Integrations and re-link the folder.', 'error');
+      }
+      throw e; // let the sync loop record the failure instead of stamping lastSync
     });
   }
 
@@ -247,26 +260,57 @@
     d({t:A_UPD, u:{syncing:true}});
 
     _readSharedFile().then(function(remote) {
+      if (remote && remote.__readError) {
+        // Transient read failure — do NOT write (we'd clobber records we
+        // couldn't see). Next tick retries.
+        d({t:A_UPD, u:{syncing:false}});
+        return null;
+      }
       if (!remote) {
-        return _writeSharedFile(d);
+        return _writeSharedFile(d).then(function(){ d({t:A_UPD, u:{syncing:false, lastSync:Date.now()}}); });
       }
       var remoteChangelog = remote.changelog || [];
       if (remoteChangelog.length) {
         d({t:A_MERGE, v:remoteChangelog});
       }
-      _replayRemoteChanges(remote, d);
-      return _writeSharedFile(d);
-    }).then(function() {
-      d({t:A_UPD, u:{syncing:false, lastSync:Date.now()}});
+      var ingested = _replayRemoteChanges(remote, d);
+      if (ingested) {
+        // We just dispatched remote-only records into local state, but the
+        // reducer hasn't committed yet — writing now would serialize the OLD
+        // arrays and erase what we ingested from the shared file. Skip this
+        // cycle's write; the next tick writes the merged state.
+        d({t:A_UPD, u:{syncing:false, lastSync:Date.now()}});
+        return null;
+      }
+      return _writeSharedFile(d).then(function(){ d({t:A_UPD, u:{syncing:false, lastSync:Date.now()}}); });
     }).catch(function(e) {
       console.warn('Shared sync error:', e);
       d({t:A_UPD, u:{syncing:false}});
     });
   }
 
+  // Returns true when remote-only records were dispatched into local state
+  // (the caller must then skip this cycle's write — see _syncSharedProject).
   function _replayRemoteChanges(remote, d) {
     var state = window._ccLatestState;
-    if (!state) return;
+    if (!state) return false;
+    var ingested = false;
+
+    // Ingest remote clashes/issues we don't have locally. Without this, a
+    // client that never ran detection writes its (shorter) arrays over the
+    // shared file and erases the team's records.
+    var localClashIds = {};
+    (state.clashes || []).forEach(function(c){ if (c && c.id) localClashIds[c.id] = true; });
+    var newClashes = (remote.clashes || []).filter(function(c){ return c && c.id && !localClashIds[c.id]; });
+    if (newClashes.length) {
+      d({t:'ADD_CLASHES', v:newClashes}); // additive — never auto-resolves existing local clashes
+      ingested = true;
+    }
+    var localIssueIds = {};
+    (state.issues || []).forEach(function(i){ if (i && i.id) localIssueIds[i.id] = true; });
+    (remote.issues || []).forEach(function(iss){
+      if (iss && iss.id && !localIssueIds[iss.id]) { d({t:'ADD_ISSUE', v:iss, _fromSync:true}); ingested = true; }
+    });
 
     // Merge in any remote viewpoints we don't already have. Snapshots are
     // stripped on write to keep the .ccproject file small, so recipients
@@ -275,7 +319,7 @@
       var localVpIds = {};
       (state.viewpoints || []).forEach(function(v){ if (v && v.id) localVpIds[v.id] = true; });
       remote.viewpoints.forEach(function(v) {
-        if (v && v.id && !localVpIds[v.id]) d({t:'ADD_VIEWPOINT', v:v});
+        if (v && v.id && !localVpIds[v.id]) { d({t:'ADD_VIEWPOINT', v:v}); ingested = true; }
       });
     }
 
@@ -287,7 +331,7 @@
     var localIds = {};
     state.changelog.forEach(function(e){ localIds[e.id] = true; });
     var newEntries = (remote.changelog || []).filter(function(e){ return !localIds[e.id]; });
-    if (!newEntries.length) return;
+    if (!newEntries.length) return ingested;
 
     var updates = {};
     newEntries.forEach(function(e) {
@@ -306,6 +350,7 @@
         d({t:'UPD_ISSUE', id:targetId, u:upd, _fromSync:true});
       }
     });
+    return ingested;
   }
 
   function _startSharedSync(d) {

@@ -34,6 +34,22 @@ export default async function handler(req) {
   }
   const zi = Number(z);
   if (zi < 0 || zi > 22) return new Response('bad zoom', { status: 400 });
+  // Tile indices are bounded by the zoom level — out-of-range is a caller
+  // bug, answer 400 ourselves instead of burning an upstream 4xx → 502.
+  const maxIdx = Math.pow(2, zi);
+  if (Number(x) >= maxIdx || Number(y) >= maxIdx) return new Response('bad coords', { status: 400 });
+
+  // Hotlink guard: when the browser identifies the calling page, it must be
+  // ours (or a preview). Requests with neither header stay allowed — same-
+  // origin GETs and curl send none — so this only stops third-party sites
+  // embedding the proxy and burning the MAPTILER_KEY quota.
+  const ALLOWED_PAGE = /^https:\/\/(www\.)?clashcontrol\.io$|^https:\/\/[a-z0-9-]+\.vercel\.app$|^https?:\/\/localhost(:\d+)?$|^https?:\/\/127\.0\.0\.1(:\d+)?$/;
+  const pageOrigin = req.headers.get('origin') || (() => {
+    try { const r = req.headers.get('referer'); return r ? new URL(r).origin : null; } catch (_) { return null; }
+  })();
+  if (pageOrigin && !ALLOWED_PAGE.test(pageOrigin)) {
+    return new Response('forbidden', { status: 403 });
+  }
 
   const key = process.env.MAPTILER_KEY;
   const provider = reqProvider === 'auto' ? (key ? 'maptiler' : 'osm') : reqProvider;

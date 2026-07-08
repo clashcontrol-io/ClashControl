@@ -88,9 +88,9 @@
       var SplatMesh = mod.SplatMesh || (mod.default && mod.default.SplatMesh);
       if (!SplatMesh) throw new Error('Spark SplatMesh not available');
 
-      var url;
+      var url, blobUrl = null;
       if (typeof src === 'string') url = src;
-      else if (src && src.name) url = URL.createObjectURL(src);
+      else if (src && src.name) url = blobUrl = URL.createObjectURL(src);
       else throw new Error('Splat source must be a URL string or File');
 
       var mesh = new SplatMesh({ url: url });
@@ -119,7 +119,7 @@
       mesh.userData._ccSplatId = 'splat-' + Date.now() + '-' + Math.floor(Math.random()*9999);
 
       grp.add(mesh);
-      _splats.push({ id: mesh.userData._ccSplatId, mesh: mesh, name: mesh.name, source: typeof src === 'string' ? src : (src.name || '(file)') });
+      _splats.push({ id: mesh.userData._ccSplatId, mesh: mesh, name: mesh.name, source: typeof src === 'string' ? src : (src.name || '(file)'), blobUrl: blobUrl });
       // Flip the gate the core render loop checks before dispatching
       // cc-render-frame. Without this, Spark's mesh.update(camera, renderer)
       // never gets called once the post-load invalidate-kick loop expires,
@@ -155,6 +155,7 @@
         if (s.mesh.parent) s.mesh.parent.remove(s.mesh);
         if (typeof s.mesh.dispose === 'function') s.mesh.dispose();
       } catch(_){}
+      if (s.blobUrl) { try { URL.revokeObjectURL(s.blobUrl); } catch(_){} } // file-loaded splats leak their blob otherwise
     });
     _splats = keep;
     if (!_splats.length && _splatGroup && _splatGroup.parent) {
@@ -178,6 +179,12 @@
       { name: 'butterfly (Spark sample)' }
     );
   };
+
+  // Splats are per-project scene content — drop them on project switch or
+  // project A's captures stay visible (and hold GPU memory) in project B.
+  window.addEventListener('cc-project-switch', function() {
+    try { window._ccUnloadSplats(); } catch(_){}
+  });
 
   if (typeof window._ccRegisterAddon === 'function') {
     window._ccRegisterAddon({ id: 'splat', alwaysOn: true, name: 'Gaussian Splat overlay', description: 'Load 3D Gaussian Splat as-built captures as a first-class scene member alongside IFC and point clouds. Supports .splat/.ply/.ksplat/.spz. Phase 1: drag-drop or URL; 3D Tiles streaming + Esri ingest in Phase 2.' });
