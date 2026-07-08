@@ -413,17 +413,23 @@
       // The basemap belongs to the project that placed it: detach on
       // project switch (visuals + live state only — the persisted georef
       // stays with the model, so switching back restores it).
-      window.addEventListener('cc-project-switch', function(){
-        clearBasemap();
-        if (window._ccDispatch) window._ccDispatch({t:'CLR_MODEL_GEO'});
-        _autoRestore();
-      });
+      // Named + removed in destroy: deactivate→reactivate must not stack
+      // duplicate handlers.
+      window.removeEventListener('cc-project-switch', _onProjectSwitch);
+      window.addEventListener('cc-project-switch', _onProjectSwitch);
     },
 
     destroy: function() {
+      window.removeEventListener('cc-project-switch', _onProjectSwitch);
       clearBasemap();
     }
   });
+
+  function _onProjectSwitch() {
+    clearBasemap();
+    if (window._ccDispatch) window._ccDispatch({t:'CLR_MODEL_GEO'});
+    _autoRestore();
+  }
 
   // Auto-restore a basemap if a loaded model has a saved georef (persisted
   // via modelMeta → IndexedDB). Polls briefly because model rehydration

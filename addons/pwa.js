@@ -7,6 +7,8 @@
 
   var _ccInstallPrompt = null;
   var _updateCheckTimer = null;
+  var _onControllerChange = null;
+  var _onBeforeInstallPrompt = null;
 
   // Guard per addon convention: the core must define this before the addon loads.
   (typeof window._ccRegisterAddon === 'function' ? window._ccRegisterAddon : function(){})({
@@ -37,9 +39,10 @@
       if ('serviceWorker' in navigator) {
         // Listen for controller change — fires when SW calls clients.claim()
         // This updates the status from "registered" to "active" without needing a reload
-        navigator.serviceWorker.addEventListener('controllerchange', function() {
+        _onControllerChange = function() {
           dispatch({t:'UPD_PWA', u:{swActive:true}});
-        });
+        };
+        navigator.serviceWorker.addEventListener('controllerchange', _onControllerChange);
         // If already controlled (e.g. return visit), mark active immediately
         if (navigator.serviceWorker.controller) {
           dispatch({t:'UPD_PWA', u:{swActive:true}});
@@ -72,15 +75,18 @@
       }
 
       // PWA install prompt
-      window.addEventListener('beforeinstallprompt', function(e) {
+      _onBeforeInstallPrompt = function(e) {
         e.preventDefault();
         _ccInstallPrompt = e;
         dispatch({t:'UPD_PWA', u:{installAvailable:true}});
-      });
+      };
+      window.addEventListener('beforeinstallprompt', _onBeforeInstallPrompt);
     },
 
     destroy: function() {
       if (_updateCheckTimer) { clearInterval(_updateCheckTimer); _updateCheckTimer = null; }
+      if (_onControllerChange) { try { navigator.serviceWorker.removeEventListener('controllerchange', _onControllerChange); } catch(_){} _onControllerChange = null; }
+      if (_onBeforeInstallPrompt) { window.removeEventListener('beforeinstallprompt', _onBeforeInstallPrompt); _onBeforeInstallPrompt = null; }
       // Note: we don't unregister the service worker — just stop checking for updates
     },
 

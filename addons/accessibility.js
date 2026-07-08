@@ -81,7 +81,10 @@
     var basis = 'quantity', note = 'IFC quantity — verify this is the leaf-deducted clear width, not nominal';
     if (w == null) {
       var bb = _bbox(el);
-      if (bb) { w = Math.min(bb.size.x, bb.size.z); basis = 'bbox'; note = 'measured from bounding geometry (nominal leaf width, not deducted)'; }
+      // Larger horizontal dimension = the leaf/opening width. The smaller one
+      // is the panel THICKNESS (~0.05-0.2 m) — using min failed every door
+      // that lacked a width quantity.
+      if (bb) { w = Math.max(bb.size.x, bb.size.z); basis = 'bbox'; note = 'measured from bounding geometry (nominal opening width, not deducted)'; }
     }
     if (w == null) return null;
     return _mk('door_clear_width', w, req, w >= req - 1e-4, 'm', note, basis);

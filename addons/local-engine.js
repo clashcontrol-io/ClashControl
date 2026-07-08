@@ -10,8 +10,9 @@
 //   pip install clashcontrol-engine
 //   clashcontrol-engine --install   # registers clashcontrol:// handler + starts engine
 //
-// Standalone binaries (v0.2.2) are also available via the GitHub
-// releases page — mac/linux as .tar.gz, Windows as .exe.
+// Standalone binaries are also available via the GitHub releases page —
+// mac/linux as .tar.gz, Windows as .exe. (Version-agnostic: the live
+// engine version comes from /status, the latest tag from the GitHub API.)
 
 (function() {
   'use strict';
@@ -28,7 +29,7 @@
   // ── Download URLs for standalone executables ──────────────────
   // mac/linux ship as tar.gz (preserves executable bit); Windows is a self-contained .exe.
   // Release tag is fetched from GitHub API; falls back to v0.2.3 if unavailable.
-  var _engineReleaseTag = 'v0.2.3'; // fallback; will be updated from GitHub API
+  var _engineReleaseTag = 'v0.2.6'; // fallback; will be updated from GitHub API
 
   function _buildDownloads() {
     var _releaseBase = 'https://github.com/clashcontrol-io/ClashControlEngine/releases/download/' + _engineReleaseTag + '/';
@@ -765,6 +766,8 @@ clashcontrol-engine --install</pre>
         return null;
       }
       return result.clashes.map(function(c) {
+        // Engine (>=0.2.6) sends modelAId/modelBId; c.modelA/B kept first for
+        // any fork that emits the short names.
         var rA = resolve(c.modelA || c.modelAId, c.elementA);
         var rB = resolve(c.modelB || c.modelBId, c.elementB);
         if (!rA || !rB) return null;
