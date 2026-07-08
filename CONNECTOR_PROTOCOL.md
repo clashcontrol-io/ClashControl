@@ -91,6 +91,8 @@ ClashControl probes `http://127.0.0.1:19780` with a `GET` in `no-cors` mode at s
 
 CC enforces a **5-second handshake timeout** — if the socket is accepted at TCP level but the WebSocket upgrade never completes, CC closes the socket and retries with exponential backoff (1 s → 2 s → 4 s … capped at 30 s).
 
+**Origin validation:** Connectors should validate the `Origin` header against an allow-list of ClashControl origins (plus common localhost dev ports). The literal string `"null"` is **deliberately accepted**: browsers send `Origin: null` for pages opened from `file://`, and being able to run a local dev copy of `index.html` straight from disk is a supported workflow. Requests with no `Origin` header at all (non-browser clients) are also accepted.
+
 ---
 
 ## Protocol version
@@ -147,7 +149,7 @@ Request a geometry export. The Connector streams back `export-start` → `model-
 |-------|------|-------------|
 | `categories` | string[] | Revit/tool categories to include. `["all"]` means everything. |
 | `projectId` | string? | Optional project scoping key. |
-| `modelFilter` | object? | `{ exclude: string[] }` — raw model names the Connector should skip sending. Older Connectors may ignore this field; CC also filters on receive. |
+| `modelFilter` | object? | `{ exclude: string[] }` — raw model names (exactly as announced in `model-start.name`) the Connector must skip sending. Matched by **exact** name, so excluding `"Arch.rvt"` does not also exclude `"Arch.rvt (2)"`. A legacy include-by-name form (a `{name}` object, a bare string, or an array of either — only listed models export, matched case-insensitively) is also accepted for back-compat. Honored by the reference Connector since v0.1.8; older Connectors may ignore this field, and CC also filters on receive. |
 | `knownElements` | object? | Content-addressable delta cache: a map of `globalId → contentHash` for elements CC already has. The Connector should only stream elements whose hash has changed. Omitted on a first-time pull. Capped at 20 000 entries by CC. |
 
 ---
@@ -265,7 +267,7 @@ Reply to `ping`, or an unsolicited status update.
 {
   "type": "pong",
   "version": "1.0",
-  "connectorVersion": "2.1.0",
+  "connectorVersion": "0.1.8",
   "documentName": "Project.rvt",
   "projectUniqueId": "8a3f...",
   "connected": true
@@ -275,7 +277,7 @@ Reply to `ping`, or an unsolicited status update.
 | Field | Type | Description |
 |-------|------|-------------|
 | `version` | string | Protocol version (e.g. `"1.0"`). |
-| `connectorVersion` | string? | Connector application version (e.g. `"2.1.0"`). CC checks GitHub for updates. |
+| `connectorVersion` | string? | Connector application version (e.g. `"0.1.8"`). CC checks GitHub for updates. |
 | `documentName` | string? | Human-readable name of the open document. |
 | `projectUniqueId` | string? | Stable project identity (used to match a session across reconnects). |
 | `connected` | bool? | Optional connected flag. |
@@ -344,9 +346,7 @@ One or more batches of elements following a `model-start`.
       "parameters": {
         "Pset_WallCommon": { "LoadBearing": true, "FireRating": "REI60" }
       },
-      "quantities": {
-        "Qto_WallBaseQuantities": { "Length": 4.2, "Height": 3.0 }
-      },
+      "quantities": { "Length": 4.2, "Area": 12.6, "Volume": 2.52, "Thickness": 0.2 },
       "hostId": "parentGlobalId",
       "linkName": "Structure.rvt",
       "linkInstanceId": "inst-001",
@@ -355,6 +355,10 @@ One or more batches of elements following a `model-start`.
         "indices": "<base64 Uint32Array>",
         "normals": "<base64 Float32Array>",
         "color": [0.65, 0.65, 0.65, 1.0],
+        "groups": [
+          { "start": 0, "count": 120, "color": [0.65, 0.65, 0.65, 1.0] },
+          { "start": 120, "count": 48, "color": [0.6, 0.8, 1.0, 0.15] }
+        ],
         "transform": [1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1]
       }
     }
@@ -374,13 +378,14 @@ One or more batches of elements following a `model-start`.
 | `type` | string? | Revit family type name. |
 | `level` | string? | Level / storey name. |
 | `materials` | string[]? | Material names. |
-| `visible` | bool? | `false` to suppress non-renderable elements (grids, rooms, etc.). CC also filters by `hidden`/`isHidden`. |
+| `visible` | bool? | `false` to suppress non-renderable elements (grids, rooms, etc.). CC also filters by `hidden`/`isHidden`. *Reserved — not emitted by the reference Connector (it omits non-renderable elements instead).* |
 | `parameters` | object? | IFC property sets, grouped by Pset name: `{ "Pset_WallCommon": { ... } }`. |
-| `quantities` | object? | IFC quantities, grouped by Qset name: `{ "Qto_WallBaseQuantities": { ... } }`. |
-| `hostId` | string? | GlobalId of the host element (for hosted elements like doors in walls). |
-| `linkName` | string? | Source linked-file name. If present, CC creates a separate model entry for this link. Also accepted as `linkDocumentName`. |
-| `linkInstanceId` | string? | Link instance id — distinguishes multiple placements of the same linked file. Also accepted as `linkInstance`. |
-| `description` | string? | Element description. |
+| `quantities` | object? | Quantity values. The reference Connector (v0.1.8+) emits a **flat map of common quantities in SI units** (m / m² / m³): `Length`, `Area`, `Volume`, `Width`, `Height`, `Thickness` — only the ones present on the element. Qset-grouped maps from other connectors are stored as-is. |
+| `hostId` | string? | GlobalId of the host element (for hosted elements like doors in walls). *Reserved — the reference Connector delivers host/child pairs via `model-end.relatedPairs` instead.* |
+| `hostRelationships` | string[]? | GlobalIds of child elements hosted by this element. *Reserved — not emitted by the reference Connector; see `model-end.relatedPairs`.* |
+| `linkName` | string? | Source linked-file name. If present, CC creates a separate model entry for this link. Also accepted as `linkDocumentName`. *Reserved — the reference Connector streams each linked file as its own `model-start` instead.* |
+| `linkInstanceId` | string? | Link instance id — distinguishes multiple placements of the same linked file. Also accepted as `linkInstance`. *Reserved — not emitted by the reference Connector.* |
+| `description` | string? | Element description (emitted by the reference Connector since v0.1.8: instance description, falling back to the type's). Omitted when empty. |
 
 **Geometry fields (`geometry` object):**
 
@@ -390,7 +395,8 @@ One or more batches of elements following a `model-start`.
 | `indices` | string | Base64-encoded `Uint32Array` of triangle indices. Three indices per triangle. |
 | `normals` | string? | Base64-encoded `Float32Array` of per-vertex normals. Computed by CC if absent. |
 | `color` | [r,g,b,a]? | RGBA colour in 0–1 range. Defaults to `[0.65, 0.65, 0.65, 1.0]` (mid-grey). |
-| `transform` | number[16]? | Column-major 4×4 transform matrix. Applied on top of the geometry if provided. When absent, positions must already be in world space. |
+| `groups` | object[]? | Per-material draw ranges into the index buffer: `{ start, count, color:[r,g,b,a] }`, where `start`/`count` are index offsets (triangles × 3). Present only when an element has more than one material (e.g. a window's frame + glass) so transparent sections render correctly; single-material elements use the flat `color`. Opaque groups come before transparent ones. Emitted by the reference Connector since v0.1.7. |
+| `transform` | number[16]? | Column-major 4×4 transform matrix. Applied on top of the geometry if provided. When absent, positions must already be in world space. *Reserved — not emitted by the reference Connector (it bakes link placements into positions).* |
 
 > **Important:** CC does not reproject geometry. Positions must be in a consistent world-space coordinate system in **metres**, with the same origin across all models in a session.
 
@@ -421,7 +427,7 @@ Signals the end of one model's element stream.
 |-------|------|-------------|
 | `storeys` | string[]? | Ordered storey names. Derived from element levels if absent. |
 | `storeyData` | object[]? | `{ name, elevation }` per storey. |
-| `grids` | object[]? | Structural grid lines `{ name, pts:[x1,z1,x2,z2,...] }` in metres (ground-plane). Display only. |
+| `grids` | object[]? | Structural grid lines `{ name, pts:[x1,z1,x2,z2,...] }` in metres (ground-plane). Display only. *Reserved — not emitted by the reference Connector.* |
 | `relatedPairs` | object? | Host/child element pairs `{ "hostGlobalId:childGlobalId": true }`. |
 | `elementHashes` | object? | Content hashes for delta-export caching. Stored locally by CC and sent back on the next `export` request. |
 | `unchanged` | string[]? | GlobalIds of elements that were not re-sent because their hash matched `knownElements`. CC merges them from its existing model. |
