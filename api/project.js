@@ -8,9 +8,11 @@ var crypto = require('crypto');
 var KEY_CHARS = 'abcdefghjkmnpqrstuvwxyz23456789'; // no ambiguous chars
 
 function randomToken(len) {
-  var bytes = crypto.randomBytes(len);
+  // crypto.randomInt does uniform rejection sampling internally — modulo on
+  // a raw random byte would bias low character-set indices (256 isn't a
+  // multiple of KEY_CHARS.length).
   var out = '';
-  for (var i = 0; i < len; i++) out += KEY_CHARS[bytes[i] % KEY_CHARS.length];
+  for (var i = 0; i < len; i++) out += KEY_CHARS[crypto.randomInt(0, KEY_CHARS.length)];
   return out;
 }
 
