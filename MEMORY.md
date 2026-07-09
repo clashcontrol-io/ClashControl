@@ -10,7 +10,7 @@
 <!-- BEGIN:project-state -->
 ## Project State
 
-**Version:** 5.21.15 (2026-06-19) — daily-sync was silently crashing on MEMORY.md's own prose (see Known Issues); this line was stale for a month as a direct result, now corrected by hand.
+**Version:** 5.21.16 (2026-07-09) — daily-sync was silently crashing on MEMORY.md's own prose (see Known Issues); this line was stale for a month as a direct result, now corrected by hand.
 
 **Live features (all working):**
 - Mesh-based clash detection engine: AABB broad-phase + BVH tri-tri narrow-phase (Möller–Trumbore), optional `_ccWasmIntersect`/`_ccWasmMinDist` WASM accelerators; rules (discipline filters, clearance, group-by); soft/clearance via spatial-hash vertex distance; optional escalation to `local-engine.js` for true solid boolean ops
@@ -95,7 +95,7 @@ On branch `claude/codebase-review-optimization-3nltcw` (2026-07-08) — four-rep
 
 - Two-round audit of ClashControl + Connector + Engine + SmartBridge (superseded). Fix wave in flight: core dead features (ClashControl.version / _ccFlyToMeasurement / palette Fit), IFC-worker watchdog re-arm, shared-project data-loss merge, JS coplanar NaN guard, WASM-path LRU registration, backend (title/triage model verify, project.js editKey + batched upsert, tile.js validation), daily-sync repair, doc/memory reconciliation. Engine + Connector fixes on same-named branches in their repos (release-pipeline workflow_call fix, all-vs-all dedup, coplanar branch, modelFilter exclude semantics, quantities/description emission).
 
-On branch `claude/loam-api-stability-enrichment-gxh8gc` (2026-06-15) — Loam API stability + enrichment:
+On branch `claude/loam-api-stability-enrichment-gxh8gc` (2026-06-15) — Loam API stability + enrichment:  **[STALE?]**
 
 - **Loam's 5-point request triaged against the live bridge surface.** Points 1 (classification + storeyA/storeyB on get_clashes), 3 (uniqueIdA/B + storey + classification on get_issues) and 4 (ingest_detection_feedback, byRule/byPair) were ALREADY shipped (#639–#646) — confirmed in `addons/smart-bridge.js` (get_clashes ~478, get_issues ~580, ingest_detection_feedback ~882). Point 5 (stable weekly detection config) **skipped per user.**
 - **Point 2 BUILT — new `get_data_quality` MCP tool** (the named gap: Loam defaults to `get_data_quality`, overridable via `LOAM_CC_DQ_TOOL`; CC only had per-element `get_element_quality`). New `handlers.get_data_quality` in `addons/smart-bridge.js` (after get_element_quality): flattens all elements, runs `_ccRunDataQualityChecks` + `_ccRunBIMModelChecks` (both guarded), rolls checks into headline buckets **completeness / materials / brokenLinks / naming / classification / geometry** (per-bucket 0-100 sub-score via the same weighted-failure-ratio as the Quality Score chip + raw flaggedCount), overall score/grade from `_ccComputeQualityScore` (reconciles 1:1 with the in-app chip), plus a flat `checks[]`. Stable numeric fields for Loam's pulse. Declared in the addon `_TOOL_MANIFEST` and `mcp-server.js` TOOLS (forwarding is generic — `callBridge(name)` → `handlers[name]`, no allowlist). Optional `modelId` to scope to one model.
@@ -103,31 +103,31 @@ On branch `claude/loam-api-stability-enrichment-gxh8gc` (2026-06-15) — Loam AP
 - **SEO/AEO push (to break into AI "best free IFC viewer" lists):** (1) new `/best-free-ifc-viewer/` comparison page (ItemList + SoftwareApplication + FAQPage schema, side-by-side table vs Open IFC Viewer/BIMvision/usBIM/Dalux/Bonsai/FZKViewer) — the listicle shape answer engines extract; (2) homepage Organization + WebSite @graph + `sameAs` (GitHub) for entity recognition; (3) **de-orphaned landing pages** — the app linked to none of them; added a crawlable internal-links `<nav>` in the hidden SEO block + noscript fallback; (4) new **`/tour/` explanatory page** (full feature breakdown + Q&A + schema) with a **functional hero**: dropped/chosen IFC is stashed in IndexedDB (db `cc-handoff`, store `pending`, key `file`) then redirects to `/?load=1`; a guarded boot hook at the end of index.html reads it and calls `window._ccLoadFiles([file])`; `/?connect=revit` auto-opens the Revit bridge. WelcomePopup got a "New here? Take the tour." link. All pages in sitemap. SW is network-first for navigations so the static pages aren't hijacked by the SPA. **Decision: subdir, NOT a subdomain** (subdomain splits SEO authority). Off-repo still needed: AlternativeTo/G2/Capterra listings, listicles, Reddit/LinkedIn. **Not browser-verified** — JSON-LD + all scripts parse via node.
 - **De-duplicated the tool catalog (follow-up):** the tool surface was declared twice — the addon `_TOOL_MANIFEST` (dynamic, pushed to the bridge → served at `GET /tools`) AND `mcp-server.js` `TOOLS` (static). The two "routes" (MCP stdio via mcp-server.js; REST/`/chat`/OpenAPI via smart-bridge-server.js) actually CONVERGE — mcp-server.js's `callBridge` just `fetch`es the same bridge (`/call/<tool>` on 19803) → WS → the one set of browser `handlers`. mcp-server.js is a thin MCP-protocol shim, not a separate impl. Made the addon manifest the single source of truth: `mcp-server.js` now fetches `GET /tools` at `tools/list` time (`getTools()`, cached once reachable, 3 s timeout) and falls back to the hardcoded `TOOLS` only when the bridge isn't connected yet (MCP clients ask for the catalog at spawn, before a browser is up). Call validation accepts a name in either list. New tools now only need declaring in the addon `_TOOL_MANIFEST`.
 
-On branch `claude/sharp-rubin-tlowao` (2026-06-13) — start-screen Revit live link:
+On branch `claude/sharp-rubin-tlowao` (2026-06-13) — start-screen Revit live link:  **[STALE?]**
 
 - **4th option on the Welcome/start screen**: added a "Live link to Revit…" row (under "Watch a folder…") in `WelcomePopup` (index.html ~30723). Activates the `revit-bridge` addon then dispatches `{t:'REVIT_BRIDGE',v:true}` to open the Revit Bridge panel — same proven pattern as the "+Add → Live from Revit" menu entry (`_ccActivateAddon('revit-bridge')` first, since addon reducerCases only run when the addon is active). Uses the string action literal `'REVIT_BRIDGE'` (the close handler does too); `A.REVIT_BRIDGE` is not a defined A-key.
 
-Eleventh batch (2026-06-12) — CRS-aware geo-placement (proj4 reprojection, completes the v5.16.2 geoplace work):
+Eleventh batch (2026-06-12) — CRS-aware geo-placement (proj4 reprojection, completes the v5.16.2 geoplace work):  **[STALE?]**
 
 - ~~**Projected CRS → WGS84 reprojection in `addons/geoplace.js`**: the loader already extracts IFC4 `IfcMapConversion` → `IfcProjectedCRS` (eastings/northings/grid-rotation/EPSG) but only displayed it. Now a georeferenced model auto-places without typing lat/lon. New globals: `_ccCRSList` (selector data), `_ccCRSResolve` (IFC TargetCRS.Name → EPSG key — handles `EPSG:28992`, URN, bare code, names), `_ccReprojectToWGS84(E,N,key)`, `_ccGeoplaceFromCRS(modelId,mc,key)` (reproject → existing `_ccGeoplaceModel`; north/elev flow through the existing path which already prefers map-conversion rotation). proj4 lazy-loaded from jsdelivr (`proj4@2.20.9`, CSP script-src already allows the host; no SRI, same as web-ifc/spark runtime loads) only when a projection is requested. CRS registry (8 systems, def strings carry 7-param towgs84 → no grid file): RD New 28992, Belgian Lambert 31370, CH1903+/LV95 2056, OSGB 27700, ETRS89 UTM 31N/32N, Web Mercator, WGS84. **Placement-grade (~1 m), NOT RDNAPTRANS survey-grade** (full RD needs the NTv2 grid + quasi-geoid — deliberately not shipped). UI: Geo Placement panel — when a model has projected E/N and isn't placed yet, a CRS `<select>` (defaults to detected EPSG or 28992) + "Place from CRS" button; "· unrecognised" badge when the IFC names a CRS not in the registry. Guards: missing E/N, unrecognised CRS, out-of-range reprojection all reject with a clear message. 8 tests in tests/geoplace-crs.test.js (proj4 stubbed — geodesy is proj4's job).~~ (2026-06-12)
 - **Deferred (as planned):** auto-aligning federated models by map conversion (touches model transforms — riskier); true RDNAPTRANS grids (megabytes, survey-grade opt-in); vertical datum selector (NAP-vs-ellipsoid is a constant offset, already handled +43 m for tiles). North-sign convention bit us before (negated after live test) — verify map-conversion rotation on a real georeferenced model before trusting it.
 - **NOT browser-verified in sandbox** (jsdelivr host-blocked, no GPU/sample IFC): geoplace.js syntax-checked, main inline script parses via `new Function`, 8 reprojection tests pass with proj4 stubbed. First real run = Vercel preview with a georeferenced IFC (RD New is the easy NL test).
 
-Tenth batch (2026-06-12) — IDS 1.0 execution engine (transposing the ifc-ids-mcp capability, Phase 1):
+Tenth batch (2026-06-12) — IDS 1.0 execution engine (transposing the ifc-ids-mcp capability, Phase 1):  **[STALE?]**
 
 - ~~**Full buildingSMART IDS 1.0 engine in `addons/data-quality.js`** (`window._ccParseIDS` + `window._ccRunIDS`): user asked to "transpose" github.com/vinnividivicci/ifc-ids-mcp (Python MCP wrapper over IfcTester) into our ecosystem — capability re-implemented in JS from the published standard, no code ported (IfcTester is LGPL). Parser is a hand-written dependency-free XML parser (no DOMParser → Node-testable). Facets: entity (EXACT match per spec — fixes legacy substring bug where IFCWALL matched IfcWallStandardCase), attribute (Name/Description/GlobalId/ObjectType/LongName), property (pset+baseName+value, Qto_/BaseQuantities → flattened quantities), classification (pset-key heuristics), material (segment split), partOf (storey containment only). Restrictions: enumeration, pattern (XSD→JS anchored `^(?:…)$`; \i \c / class subtraction → not-checkable), bounds, length; numeric tolerance + boolean spelling variants. Cardinality: facet required/optional/prohibited + spec-level via applicability min/maxOccurs. **Honesty rule: anything un-evaluable (PredefinedType, non-storey partOf, dataType, unsupported regex) reports "not checkable" — never silently passes.** Core wiring: `parseIDSXml` delegates to addon when loaded (tags specs `__ids2`), `runIDSValidation` routes them to `_ccRunIDS`, panel shows per-spec notes/partially-checked counts; legacy regex path kept as no-addon fallback + for bundled specs. `importIDS` rebuilt on the same parser. 15 tests in tests/ids-engine.test.js incl. round-trip of our own exportIDS output. Merged as #622.~~ (2026-06-12)
 - **Phase 2 (queued):** CI conformance job comparing verdicts vs IfcTester on shared fixtures (pip in CI only); extract PredefinedType + Tag in the loader so those facets stop being "not checkable"; dataType checking.
 - **Phase 3 (queued):** IDS authoring tools on `mcp-server.js` (create_ids/add_*_facet/export, mirroring ifc-ids-mcp's tool surface) so an AI can author a spec via Smart Bridge and run it against the live federation.
 
-Doc added (2026-06-11): **`AS_BUILT_DEVIATION.md`** — scope/roadmap for point-cloud-vs-BIM surface deviation. Captures the capability audit (alignment + bbox-proxy heatmap exist; true point-to-surface distance is NOT built, deferred to "Phase 2" in `align.js`), reuse-vs-build (BVH + `_getWorldTris` triangle soup + Rust engine all reusable; net-new = point-to-triangle primitive + BVH closest-point descent + Rust kernel), the Phase 1/2/3 plan (~1wk demo / ~3–4wk client-grade), and the Wkb/Bbl **Borger** product framing (sell the dossier outcome, not the geometry; scan verifies the *geometric subset* of Bbl risk items only). Not built — awaiting go-ahead.
+Doc added (2026-06-11): **`AS_BUILT_DEVIATION.md`** — scope/roadmap for point-cloud-vs-BIM surface deviation. Captures the capability audit (alignment + bbox-proxy heatmap exist; true point-to-surface distance is NOT built, deferred to "Phase 2" in `align.js`), reuse-vs-build (BVH + `_getWorldTris` triangle soup + Rust engine all reusable; net-new = point-to-triangle primitive + BVH closest-point descent + Rust kernel), the Phase 1/2/3 plan (~1wk demo / ~3–4wk client-grade), and the Wkb/Bbl **Borger** product framing (sell the dossier outcome, not the geometry; scan verifies the *geometric subset* of Bbl risk items only). Not built — awaiting go-ahead.  **[STALE?]**
 
-Ninth batch (2026-06-11) — 3D world context live-test round 3:
+Ninth batch (2026-06-11) — 3D world context live-test round 3:  **[STALE?]**
 
 - ~~**PDOK tiles all failed to parse** ("setMeshoptDecoder must be called before loading compressed files", 21/21 failed): PDOK 3d-basisvoorziening glbs use EXT_meshopt_compression and the renderer's GLTFLoader had no decoders. tiles.js now registers GLTFExtensionsPlugin with MeshoptDecoder + DRACOLoader + KTX2Loader (latter two for Google photorealistic tiles, same wall). Merged as #619 → main `2bc3b62`. User confirmed PDOK buildings render.~~ (2026-06-11)
 - **Geo align nudge** (PR #620): panel `align` row (camera-relative arrows + step select) slides basemap + tiles together in world XZ metres; offset persisted on model georef (offsetX/offsetZ), reapplied on rebuild/auto-restore/context reload. APIs: `_ccGeoplaceSetOffset`, `_ccSetTiles3DOffset`/`_ccTiles3DOffset`, `opts.offset` on `_ccLoadTiles3D`. Applied AFTER north rotation (world space) in both layers.
 - **Site clearing** (PR #620): `Site: keep / Clear +N m` select carves context inside the models' union footprint + margin using 4 vertical clip planes with clipIntersection (PDOK/Google merge many buildings per mesh → per-building hiding impossible). Gotcha: core flips `renderer.localClippingEnabled` off when no section is active — tiles frame handler re-asserts it while clearing is on. Persisted in localStorage `cc_tiles3d_clear` (-1 = off).
 
-Eighth batch (2026-06-10 evening, merged as #614 → main `92a4bbc`) — live-test loop round 2:
+Eighth batch (2026-06-10 evening, merged as #614 → main `92a4bbc`) — live-test loop round 2:  **[STALE?]**
 
 - ~~**Sections cut nothing on batched models**: all four per-material clipping sweeps (section plane apply, section box apply, box clear, floor-plan cut) gated on `expressId==null && !isInstancedMesh` which excludes every BatchedMesh — sweeps now include `userData._isCCBatch`. Pattern to remember: ANY scene material sweep written pre-batching probably has this filter; render-style swap on batches still unaudited (cosmetic).~~ (2026-06-10)
 - ~~**Section drag inverted**: axis path negated the screen-projected dot (horizontal cut ran against the mouse); picked-face custom planes used raw screen-Y. Now: project travel direction (+axis or custom normal) from the gizmo position, pos follows the mouse component.~~ (2026-06-10)
@@ -143,7 +143,7 @@ Eighth batch (2026-06-10 evening, merged as #614 → main `92a4bbc`) — live-te
 - **OPEN — PDOK 3D verification**: user retests after deploy; if still empty the new load-error toast names the cause. Sandbox cannot probe api.pdok.nl (host allowlist) — tileset URL unverified upstream; if 404/CORS, check PDOK OGC API landing (`.../ogc/v1_0`) for the exact 3dtiles link.
 - **NOT a CI flake this time (post-mortem)**: pull_request events stopped after a5f2d4a because **#612 had been merged from the UI at 19:13** — later pushes had no open PR, so no pull_request events; "cannot be reopened" = it was merged, not closed. Remedy that works either way: open a NEW PR for the branch. Before assuming the event flake, check whether the PR is still open. Anonymous GitHub API rate limit (60/h) exhausted by 30 s monitor polls — poll via authenticated MCP instead, or space polls ≥60 s.
 
-On branch `claude/codebase-review-ae7481` (2026-06-10) — codebase review: connect open ends + fix bucket:
+On branch `claude/codebase-review-ae7481` (2026-06-10) — codebase review: connect open ends + fix bucket:  **[STALE?]**
 
 - ~~**WASM clash engine connected for the first time.** It was never wired: `'wasm-engine'` missing from `addonFiles` AND `addons/wasm-engine-pkg/` never built/committed — the documented 4-8× acceleration never ran. Built `engine/` (wasm32 + wasm-bindgen 0.2.123, 35 KB), committed the pkg, added to the load list. **Critical fix while wiring:** the addon eagerly defined `_ccWasmIntersect`/`_ccWasmMinDist`/`_ccWasmBatchIntersect` with not-ready returns (false/Infinity/[]) while the core treats their *existence* as "skip JS fallback" — a failed/in-flight load would have silently reported zero clashes. Globals now publish only after successful init, unpublish on deactivate; `active:true/false` dispatched so the engine pill + Settings selector (which read `s.wasmEngine.active`, never set before) work. Node smoke test passes; verify the pill on Vercel preview.~~ (2026-06-10)
 - ~~Bridge URL bug fixed (`smart-bridge-server.js`): `new URL('/v1/...', baseUrl)` dropped path prefixes (Groq/OpenRouter). New `llmEndpointUrl()` appends, skips double `/v1`; applied to callLlmApi + probeLlm; bridge 0.3.0→0.3.1; regression test `tests/bridge-url.test.js`.~~ (2026-06-10)
@@ -153,9 +153,9 @@ On branch `claude/codebase-review-ae7481` (2026-06-10) — codebase review: conn
 - ~~Dead code: removed suggestOmniClass+_aiResJson, _ccLoadScript, _ccFormatLen (dup of _ccFmtLength), _ccDrawTitleBlock/ScaleBar/NorthArrow (dead duplicates of the inline 2D-sheet drawing) — ~136 lines.~~ (2026-06-10)
 - ~~PWA offline was broken for addons: fetch handler only runtime-caches CDN hosts, addons weren't precached → 404 offline. All 15 addons + wasm pkg added to PRECACHE (cache name rotates per release).~~ (2026-06-10)
 - **Deliberately skipped:** hiding model names from `/api/health` — Settings intentionally displays the live model (e840a79) and it's public in llms.txt; hiding it would regress a feature for negligible gain.
-- **Chunk-merge caveat list is moot:** the whole chunk-merge subsystem was removed in 704837f (2026-06-09) — the Stage 2B "~15 visibility / ~34 color setters not chunk-aware" follow-up no longer applies. This session removed the orphaned write-only `_ccHiddenReg` registry the removal left behind. If chunk-merge ever returns, it returns with its own registry.
+- **Chunk-merge caveat list is moot:** the whole chunk-merge subsystem was removed in 704837f (2026-06-09) — the Stage 2B "~15 visibility / ~34 color setters not chunk-aware" follow-up no longer applies. This session removed the orphaned write-only `_ccHiddenReg` registry the removal left behind. If chunk-merge ever returns, it returns with its own registry.  **[STALE?]**
 
-Second batch same branch (2026-06-10) — product features + test infra ("do all 1-9"):
+Second batch same branch (2026-06-10) — product features + test infra ("do all 1-9"):  **[STALE?]**
 
 - ~~Run history + trend: `s.runHistory` (capped 100) appended on MERGE_CLASHES, persisted in .ccproject + IndexedDB autosave; sparkline in ClashStatsBar "This run" row.~~ (2026-06-10)
 - ~~Clash coordination report: `_ccClashReport(s)` print-to-PDF window (align.js pattern) — cover cards, models, rules summary, runHistory trend chart+table, clusters ranked by open count (cap 300), viewpoint snapshot appendix. Export dropdown entry.~~ (2026-06-10)
@@ -166,12 +166,12 @@ Second batch same branch (2026-06-10) — product features + test infra ("do all
 - ~~Memory guardrail: toast+console warn at >75% of tab heap limit after IFC load batch.~~ (2026-06-10)
 - ~~TAURI.md: phased desktop plan (same index.html, capability-detected tauri-bridge addon, native engine/ reuse, streamed reads, disk geo-cache, built-in Smart Bridge). Phase 0 not started — awaiting go.~~ (2026-06-10)
 
-Seventh batch (2026-06-10) — 3D Tiles world context (the June-22 That-Open-launch flex):
+Seventh batch (2026-06-10) — 3D Tiles world context (the June-22 That-Open-launch flex):  **[STALE?]**
 
 - **addons/tiles.js**: NASA-AMMOS 3DTilesRendererJS 0.4.28 ESM (bare `three` resolves via the page import map → shares core r180; splat precedent). Google Photorealistic 3D Tiles via GoogleCloudAuthPlugin (BYO Map Tiles API key, localStorage `cc_google_tiles_key`) or any tileset URL. Georef: anchor lat/lon → `WGS84_ELLIPSOID.getEastNorthUpFrame` → invert → rotX(-90°) so the anchor sits at scene origin Y-up; the IFC never moves. Per-frame `tiles.update()` on the core's `cc-render-frame`; streaming events call invalidate so render-on-demand keeps painting. UI: "🌍 3D world context…" in Geo Placement (prefills from IfcSite/manual georef). CSP connect-src += tile.googleapis.com. NOT browser-verified in-session — needs a real key on the preview; ENU→Y-up sign convention is the thing to eyeball first (if the city is mirrored/under the model, flip the rotX sign).
 - Same batch: batched-click selection fully fixed (#604 merged: per-instance tiebreak bounds + click outline/bbox from off-scene originals); local-engine boot probe gated on 'seen' flag.
 
-Sixth batch (2026-06-10) — perf plan after user's laggy 7-model federation (USER APPROVED — Phases 0+1+2 SHIPPED on the branch; verify _ccRenderReport() on the real federation before/after, then consider widening the trigger):
+Sixth batch (2026-06-10) — perf plan after user's laggy 7-model federation (USER APPROVED — Phases 0+1+2 SHIPPED on the branch; verify _ccRenderReport() on the real federation before/after, then consider widening the trigger):  **[STALE?]**
 
 - **Lag root cause (user log):** ZDS_BWK_PDR_gevelbekleding — 2,510 elements, 74,772 UNIQUE geometries, 0 reused → ~75k meshes/draw calls from one cladding model. Instancing can't help (nothing repeats).
 - **Why all past merge attempts failed (from revert 366c7cc + MEMORY):** hand-rolled chunk-merge on r128 broke identity features — (1) same-material elements visually blended, (2) render-style switch no-op on chunks, (3) selection outlines blended, (4) hide/color needed index-rebuild registries, ~49 setters never became chunk-aware. Removed entirely in 704837f. Free-RAM/dehydrate = wrong problem (RAM not draw calls), removed.
@@ -181,7 +181,7 @@ Sixth batch (2026-06-10) — perf plan after user's laggy 7-model federation (US
   - Phase 2: every historical revert symptom becomes a browser-smoke CI assertion on a batched model BEFORE any default-on expansion.
   - Phase 3 (parallel): storey-picker UI for scoped loading; Tauri Phase 2 native engine.
 
-Fifth batch (2026-06-10) — declared units + registry; scoped-loading design queued:
+Fifth batch (2026-06-10) — declared units + registry; scoped-loading design queued:  **[STALE?]**
 
 - ~~Declared IFC LENGTHUNIT extraction (`_ccExtractIfcLengthUnit`) wired: load → result.stats.unitScale → geo-cache persist → `_ccDetectUnitScale` precedence override>declared>spacing-heuristic. tests/ifc-units.test.js locks it.~~ (2026-06-10)
 - ~~Port/protocol registry: INTERNALS.md §22 — all companion-app contracts in one table.~~ (2026-06-10)
@@ -189,20 +189,20 @@ Fifth batch (2026-06-10) — declared units + registry; scoped-loading design qu
 - ~~Tauri Phase 0 scaffold: desktop/ (Tauri v2 conf + main.rs + build-dist.sh, sw.js excluded from dist) + release-desktop.yml (matrix installers via tauri-action, publishes draft release on desktop-version.json bump). First real build = CI after merge.~~ (2026-06-10)
 - **Original design notes (kept for the picker follow-up):** the IFC worker is assembled by stringifying the SAME shared functions the main-thread fallback uses (`_getIFCWorkerUrl`, index.html:~3075) — so the scope filter goes into the shared stream-processing function once and both paths get it. Plan: (1) fast pre-pass already exists (`loadIFCMetadataOnly` ~13451 + `extractStoreys`) → storey list before geometry; (2) UI: storey-picker step in the load flow (reuse Levels-panel rendering) with "Load all" default so the flow stays one-click; (3) thread `scope:{storeys:[...]}` through loadIFCWorker message + loadIFC signature; in the StreamAllMeshes callback, `continue` for elements whose storeyMap entry is out of scope (storeyMap is built BEFORE geometry streaming); (4) un-loaded storeys listed in Levels panel greyed with a "load now" affordance → re-parse with widened scope (file bytes are in IDB via idbSaveFile). Memory + time win proportional to scope; geo-cache keying must include the scope or only cache full loads (simpler: only cache full loads, v1).
 - **Then Tauri Phase 0** per TAURI.md (user-approved order).
-Fourth batch (2026-06-10) — spike fix + loading status correction:
+Fourth batch (2026-06-10) — spike fix + loading status correction:  **[STALE?]**
 
 - ~~**Spikey-model-on-refresh ROOT CAUSE found and fixed (#598):** geo-cache hash-fallback `_instKey` hashes bbox-NORMALIZED qpos bytes — scale-invariant, so same-proportion different-size shapes (12 m vs 18 m piles) hash identically → wrong instancing groups. Fix: absolute mm-rounded bbox appended to key + `_geoExpId` stashed on restore. The five 5.19.29-48 hotfixes couldn't work — the bytes carry no scale.~~ (2026-06-10)
 - **In-browser IFC loading status (corrects earlier open-points list):** worker parsing ALREADY EXISTS (`loadIFCWorker`, primary path at the load call site) and WASM model cleanup is correct. IFC 4.3 (IFC4X3_ADD2) PARSES WITH GEOMETRY under pinned web-ifc 0.0.77 (Node-verified) — claimed in llms.txt. Remaining real item: storey/discipline-scoped loading (big; next session, before Tauri Phase 0).
 - **Stale-branch audit:** all 24 non-main remote branches' content is in main (squash-merged), superseded (geoplace-persist → modelMeta georef; threejs-r179-bump → #595), or deliberately reverted (Free-RAM family). Nothing to merge. Safe to bulk-delete for hygiene.
 
-Third batch same branch (2026-06-10) — cross-repo contract audit (user-supplied PAT, since deleted) + addon one-click UX:
+Third batch same branch (2026-06-10) — cross-repo contract audit (user-supplied PAT, since deleted) + addon one-click UX:  **[STALE?]**
 
 - ~~**ClashControlEngine audit** → two real bugs fixed both sides: GET /update sends {latest,release_url} but addon read {update_version,update_url} AND the addon's /update handler never dispatched the info into state → update banner always blank. Addon now accepts both shapes + dispatches (main repo); engine adds aliases + modelAId/modelBId on clash objects (O(1) resolve) — ClashControlEngine PR #24 (draft; merge to main auto-releases).~~ (2026-06-10)
 - ~~**ClashControlConnector audit**: protocol contract SOLID — version 1.0 both sides with semver handshake, all 22 message types handled bidirectionally, 14/16 items of its CLASHCONTROL_INTEGRATION_IMPROVEMENTS.md wishlist already implemented. Only note: browser sends `modelFilter` in export, plugin parses but ignores it (future scoped re-export).~~ (2026-06-10)
 - ~~**ClashControlSmartBridge repo is superseded** (stopped at 0.2.3; bridge lives in main repo as 0.3.x and the app downloads from main-repo releases). Deprecation-banner PR #14 opened; recommend archiving the repo after merge.~~ (2026-06-10)
 - ~~**Addon one-click UX**: new `alwaysOn` addon flag (forces active; Addons panel shows "Built in · always on" instead of a do-nothing toggle). Applied to align/splat/visibility (were registered but never auto-activated — features sat behind a dead Settings toggle) and to newly-registered data-quality/accessibility/training-data (were invisible in the panel). External-dep addons keep real toggles + their existing one-click connect flows.~~ (2026-06-10)
 
-On branch `claude/jolly-cannon-YZUwi-followup` (2026-06-08) — Splat addon Phase 1 + Three.js bump scheduled:
+On branch `claude/jolly-cannon-YZUwi-followup` (2026-06-08) — Splat addon Phase 1 + Three.js bump scheduled:  **[STALE?]**
 
 - **`addons/splat.js` (Phase 1, sibling-canvas pattern):** opt-in addon that lazy-loads Three.js r180 + Spark.js 2.0 as ESM only when the user actually loads a splat. Mounts its own WebGL canvas BEHIND the main IFC canvas (z-index 0, pointer-events:none), mirrors the core's camera each frame via `_ccViewport.getCamera()` and a new `cc-render-frame` event the core fires after every render. IFC canvas clear-color forced transparent while splats are active; restored on unload. **Core stays on r128.** Drag-drop wired for `.splat / .ksplat / .spz` (alongside `.ply / .pcd` for point clouds). Public API: `_ccLoadSplat(urlOrFile, opts)`, `_ccUnloadSplats(id?)`, `_ccListSplats()`, `_ccTestSplat()` (loads a public sample for the spike).
 - **Architecture decision (matters):** addons can bring their own modern Three.js. Core Three.js doesn't need to bump just to ship modern-Three features. The splat addon is the proof-of-concept; future modern-Three addons follow the same pattern until the bundle math turns against us (3-4 such addons each pulling 600KB).
@@ -210,13 +210,13 @@ On branch `claude/jolly-cannon-YZUwi-followup` (2026-06-08) — Splat addon Phas
 - **Splat Phase 2 (not yet):** 3D Tiles tileset.json streaming via NASA-AMMOS/3DTilesRendererJS (~r167+ required, Spark plugin available), Esri Site Scan tileset URLs (BYO ArcGIS access token), proj4js for IFC4-georef'd auto-placement.
 - **Not browser-tested in this session — main script parses via `new Function(body)`; addon parses via `node --check`. Spike validation = the user opening Vercel preview, dragging a public SPZ sample (or calling `window._ccTestSplat()` in console), and confirming the camera-sync feels right at IFC scales.**
 
-On branch `claude/jolly-cannon-YZUwi-followup` (2026-06-08) — BCF provenance round-trip, autonomy envelope UI, viewer fixes:
+On branch `claude/jolly-cannon-YZUwi-followup` (2026-06-08) — BCF provenance round-trip, autonomy envelope UI, viewer fixes:  **[STALE?]**
 
 - **BCF round-trip of `aiProvenance`** (`exportBCF` + `importBCF`): writes `cc:aiModel`, `cc:aiSource`, `cc:aiAt` as `<Labels>` on every topic that has aiProvenance set. Same proven pattern as `cc:revitA`/`cc:revitB`. Importer reconstructs aiProvenance on the issue payload (`source:'bcf_import'`); existing "AI" chip in IssueRow renders unchanged.
 - **Autonomy envelope UI** in SettingsModal "AI / Natural Language" section: segmented Nudge | Suggest control on `s.prefs.aiEnvelope.resolveClashes` (the state field shipped in #589). Default Nudge. `auto` mode stays reserved.
 - **Viewer fixes** (single commit): (1) section box + measure now coexist — `clearAllModes` accepts an optional `{sectionBox|measureMode:true}` keep set so the two tools don't cancel each other (other modes still mutually exclusive); (2) section-plane drag arrow + section-box face arrows changed `0x1a6b4a` (brand green) → `0xf59e0b` (amber) to match the rotation ring and read as one gizmo; opacity bumped 0.65 → 0.85; (3) wheel zoom no longer dead-stops at `sph.r=0.5` floor — when radius would clamp, target advances along view direction by the requested delta instead (Blender/Rhino "drive forward" pattern), so detail inspection works at any scale. PR #591.
 
-On branch `claude/screenshot-clashcontrol-review-tiHAk` (2026-06-08) — Tiered AI (Groq basic + own-LLM Connector) + IFC-viewer/Solibri SEO:
+On branch `claude/screenshot-clashcontrol-review-tiHAk` (2026-06-08) — Tiered AI (Groq basic + own-LLM Connector) + IFC-viewer/Solibri SEO:  **[STALE?]**
 
 - **Bridge simplified to zero-key:** dropped the API-key cloud presets I'd briefly added. Built-in chat now offers only one-click local autodetect (Ollama/LM Studio/llama.cpp/Jan) + the existing "Configure Claude" (Claude Desktop app, no key). Rationale: user said API keys are "outdated and too difficult."
 - **`/api/nl` is now Groq-ONLY** (`api/nl.js`): Gemma/Gemini fallback chain **removed** (user: "drop Gemma"). POST Groq `/openai/v1/chat/completions` with `TOOLS` mapped to OpenAI `tools` format, parse `tool_calls` → identical `{intent,...params}` contract. Default `llama-3.3-70b-versatile` (`GROQ_MODEL` overridable). On 429/down → 503/429 → client uses offline regex. `GEMINI_API_KEY` still used by `/api/title` + `/api/triage` only. Verified: success→intent, 429→quota_exceeded, no-key→503 (mocked-fetch handler tests). **User must set `GROQ_API_KEY` in Vercel.**
@@ -224,14 +224,14 @@ On branch `claude/screenshot-clashcontrol-review-tiHAk` (2026-06-08) — Tiered 
 - **SEO** (`index.html` head, `manifest.json`, `README.md`, `llms.txt`, `sitemap.xml`, new `free-solibri-alternative/index.html`): lead with "online IFC viewer", position as free Solibri/Navisworks alternative; added homepage `FAQPage` schema (Google rich results + LLM answer engines), `alternateName`/`keywords`/fuller `featureList` on `SoftwareApplication`.
 - **Verify on Vercel preview** (not browser-tested here): main inline script parses; `api/nl.js` Groq path unit-tested with mocked fetch; JSON-LD blocks validated.
 
-On branch `claude/screenshot-clashcontrol-review-tiHAk` (2026-06-07) — Smart Bridge: one-click "use your own AI":
+On branch `claude/screenshot-clashcontrol-review-tiHAk` (2026-06-07) — Smart Bridge: one-click "use your own AI":  **[STALE?]**
 
 - **Why:** the BYO-LLM agent loop already existed (`smart-bridge-server.js` `runAgentLoop` → any OpenAI-compatible `/v1/chat/completions` + `tool_calls` → `callBrowser` → `window._ccDispatch`), but was buried behind a 3-option dropdown with an empty `baseUrl` nobody knew how to fill. Goal: one click to connect the LLM the user already runs **on their desktop**. Local-desktop *requires* the bridge by design — the https app can't reach `http://localhost:11434` (mixed-content/CORS), so the native bridge proxies localhost. (Zero-install + local-desktop are mutually exclusive; user chose local-desktop.)
 - **Server (`smart-bridge-server.js`):** new `GET /llm/autodetect` probes `LOCAL_LLM_CANDIDATES` (Ollama :11434, LM Studio :1234, llama.cpp :8080, Jan :1337) in parallel via existing `probeLlm({baseUrl})`, returns `{found:[{provider,label,baseUrl,models}]}`. `bridge-version.json` 0.2.0→0.3.0. Verified end-to-end against a stub LLM (boots with a tiny `ws` stub since `ws` isn't installed here).
 - **Addon (`addons/smart-bridge.js`):** primary "Connect my desktop LLM" button → `/llm/autodetect` → auto-fills + saves config (`_detectLocal`); 404 → falls back to manual presets (older Connector). Presets expanded: local (Ollama/LM Studio/llama.cpp/Jan, no key) + cloud (OpenAI `gpt-4o-mini`, Claude `claude-sonnet-4-5` via Anthropic's OpenAI-compat, key). Copy reframed "Use your own AI"; "Get a key" links + Claude-compat-beta note.
 - **Note / out of scope:** cloud keys (Claude/OpenAI) don't *strictly* need the bridge — they live in the bridge panel for now; moving them to the no-bridge in-app NL bar is Tier-2. The root-relative URL bug (`new URL('/v1/chat/completions', baseUrl)` drops path prefixes → breaks Groq/OpenRouter/Gemini) is untouched; in-scope targets resolve correctly. Autodetect reaches users only on the next Connector release; addon degrades gracefully.
 
-On branch `claude/screenshot-clashcontrol-review-tiHAk` (2026-06-07) — Accessibility (toegankelijkheid) geometric check — first building-code geometric layer:
+On branch `claude/screenshot-clashcontrol-review-tiHAk` (2026-06-07) — Accessibility (toegankelijkheid) geometric check — first building-code geometric layer:  **[STALE?]**
 
 - **Engine: `addons/accessibility.js`** (follows data-quality.js — globals only, no register/toggle; added to `_loadAddonScripts` list). Exposes `window._ccRunAccessibilityChecks(elements, {thresholds})`. Deterministic, no LLM. Checks: door clear width, threshold height, ramp slope, corridor/escape-route width, turning clearance. Method is tiered honestly: ramp slope (bbox rise/run) + door width (IFC quantity, bbox fallback) + threshold (data-gated, n/a when absent) are exact; corridor/turning use footprint minor dimension (approximate for non-rectangular — true medial-axis / inscribed-circle deferred to v2). Every result carries `value/required/pass/unit/note/basis`. NL Bbl/NEN defaults (0.85/1.20/1.50/0.02 m, 1:12). `_ccAccessibilityClearance` wraps `_ccWasmMinDist` for a future element-to-element clearance check (the only check the min-distance kernel actually fits — the v1 dimensional checks are single-element/free-space, so the proposal's "reuse the kernel for everything" was oversold).
 - **Panel: `AccessibilityPanel`** in `index.html` (before `DataQualityPanel`), DESIGN tokens. Reachable via Review-workspace toolbar button (`k:'a11y'`) + left-panel tab `'accessibility'` (added to `TITLES` + render switch). Model selector, Run, per-check pass/fail with measured vs required + caveat, "Isolate failing" (ghostOthers), "Create issues".
@@ -241,7 +241,7 @@ On branch `claude/screenshot-clashcontrol-review-tiHAk` (2026-06-07) — Accessi
 
 On branch `claude/screenshot-clashcontrol-review-tiHAk` (2026-06-07) — repo docs refresh: corrected clash-engine description (AABB+BVH, not OBB), green brand accent in DESIGN.md, web-ifc 0.0.77, added geoplace/pointcloud addons + tile/triage APIs to CLAUDE.md, marked instancing/BVH-cache as implemented in PERFORMANCE_NOTES, archived 185 lines of completed [STALE?] MEMORY blocks. Docs state current facts only (no change-history phrasing).
 
-On branch `claude/screenshot-clashcontrol-review-tiHAk` (2026-06-07) — IFC4 georeferencing read + placement-sanity (context/QA, NOT a clash-accuracy feature):
+On branch `claude/screenshot-clashcontrol-review-tiHAk` (2026-06-07) — IFC4 georeferencing read + placement-sanity (context/QA, NOT a clash-accuracy feature):  **[STALE?]**
 
 - **Framing (deliberate):** clash detection is relative geometry and does not depend on geolocation. A geolocation/base-point mismatch between models shows up as gross systematic noise (everything off by one vector) — a coordination symptom, not a design conflict. So this work is positioned as *context + pre-run QA*, not "georef makes clashes trustworthy". The clash engine still runs in local coordinates; nothing here touches the geometry/clash math.
 - **Extraction (`extractSpatialHierarchy`, `index.html:~2049`):** added `IFCMAPCONVERSION:1709695098` + `IFCPROJECTEDCRS:3843373140` constants and read the IFC4 georef chain into `hierarchy.mapConversion = {eastings, northings, orthogonalHeight, rotationDeg, scale, epsg}`. `rotationDeg = atan2(XAxisOrdinate, XAxisAbscissa)` (grid rotation); `epsg` from `TargetCRS.Name`. Pure read, wrapped in try/catch — no behaviour change when absent. (The older `IfcSite` lat/lon path is unchanged.)
@@ -250,21 +250,21 @@ On branch `claude/screenshot-clashcontrol-review-tiHAk` (2026-06-07) — IFC4 ge
 - **NOT done (deliberately deferred):** proj4js / projected→WGS84 reprojection for an accurate basemap (still the `geoplace.js:4` deferral); auto-aligning federated models by map conversion; feeding `rotationDeg` into the basemap auto-rotation (sign convention not verified — kept display-only to avoid shipping a wrong rotation).
 - **Caveats:** not browser-tested this session (no GPU/sample IFC) — syntax-checked only (main inline script parses via `node --check`). `setFromObject` instance/chunk bounding follows the existing geoplace precedent. Rotation sign/zero-meridian conventions are display-only and unverified against a real georeferenced IFC.
 
-On branch `claude/jolly-planck-mgEaf` (2026-06-06) — Phase C: cluster cards as rows + keyboard triage:
+On branch `claude/jolly-planck-mgEaf` (2026-06-06) — Phase C: cluster cards as rows + keyboard triage:  **[STALE?]**
 
 - Cluster headers (Grouped mode, clash tab) upgraded to **Sentry/Linear-style cluster cards** with: severity dot on the left edge (colour from max `aiSeverity`/`type` across the cluster), 2-line layout (title + chips row), storey chip, **model-pair chip** (highlighted when cross-model so N-model federations make the owner obvious at a glance), open/resolved counts. Hover reveals two action buttons: **Triage** (calls `window._ccTriageCluster(items)`) and **Resolve all** (confirm dialog, then `_ccResolveCluster`).
 - New abstractions: `window._ccTriageCluster(clashes)` (today: copy AI prompt to clipboard with toast; Week 3 swaps for `fetch('/api/triage')` — UI doesn't change), `window._ccResolveCluster(clashes, dispatch)` (loops `UPD_CLASH` resolved), `window._ccClusterSeverity(items)` (rank table).
 - Keyboard shortcuts in `VirtualList` (clash tab only): **J/K** next/prev item (aliases for ArrowDown/Up), **T** triage current group, **R** resolve all open in current group (confirm prompt), **X** expand/collapse current group, **/** focus the search input. Existing Arrow/Tab/Esc unchanged.
 - Non-cluster grouping (storey/severity/discipline/etc.) keeps the original lean header — only cluster groups get the card treatment.
 
-On branch `claude/jolly-planck-mgEaf` (2026-06-06) — Phase A2: N-model scope picker (All / discipline / model)
+On branch `claude/jolly-planck-mgEaf` (2026-06-06) — Phase A2: N-model scope picker (All / discipline / model)  **[STALE?]**
 
 - New `_renderScopePicker(rules, models, d)` replaces the legacy "Check / against" rows in `ClashRulesPanel`. Segmented control: **All ↔ All / By discipline / By model**. Side A / Side B multi-pickers reuse `_modelMultiPicker`. Pair-count badge shows live "N model(s) loaded · ~K pairs" when narrowed.
 - New `rules.scopeMode` field is the UI hint; `rules.modelA` / `modelB` stay as engine truth. `_ccDerivedScopeMode(rules)` derives mode from existing modelA/modelB on first render so saved presets and shared `.ccproject` files keep working unchanged.
 - `_ccSummariseRules` rendered with array-aware label list (e.g. "structural + mep ↔ architectural").
 - Self-clash control unchanged in this commit — the existing `_selfClashPicker` already handles N models via multi-select. Deferred consolidation into a single Off/On-all/On-selected control.
 
-On branch `claude/jolly-planck-mgEaf` (2026-06-06) — Phase B: clashes panel header cleanup + grouped-by-default:
+On branch `claude/jolly-planck-mgEaf` (2026-06-06) — Phase B: clashes panel header cleanup + grouped-by-default:  **[STALE?]**
 
 - The 9-option Group dropdown is replaced (clash tab only) with a 2-button **Grouped | All** segmented control. Grouped = the Week-1 cluster de-dupe; All = flat list. A small secondary "by [storey/severity/discipline/…]" select appears only in All mode for the other axes.
 - After `A.MERGE_CLASHES`, `s.clashGroupBy` is seeded to `['cluster']` if the user has never explicitly picked a Group option (`localStorage` flag `cc_clashGroupBy`). First-time visceral demo: 400 raw clashes appear as ~15 cluster cards by default.
@@ -272,7 +272,7 @@ On branch `claude/jolly-planck-mgEaf` (2026-06-06) — Phase B: clashes panel he
 - Issue tab keeps its original Group dropdown (Phase B is clash-only).
 - Copy AI prompt button (Week 2) is now visible on every cluster header by default — no extra clicks needed to reach the AI triage prompt copy.
 
-On branch `claude/jolly-planck-mgEaf` (2026-06-06) — Phase A: Run Detection modal (UI overhaul step 1):
+On branch `claude/jolly-planck-mgEaf` (2026-06-06) — Phase A: Run Detection modal (UI overhaul step 1):  **[STALE?]**
 
 - New toolbar **Run detection** button (accent CTA in the TopToolbar's section/measure gap) opens a new `RunDetectionModal` (`index.html:~14894`) that wraps the existing `ClashRulesPanel` (Quick Run presets + Advanced) plus a collapsible **Project standards** section embedding `StandardsPanel`. One surface for all clash setup.
 - New `_ccSummariseRules(rules, models)` helper produces a one-line header (e.g. `Hard clashes · 6 models, all-vs-all`) shown under the modal title.
@@ -282,7 +282,7 @@ On branch `claude/jolly-planck-mgEaf` (2026-06-06) — Phase A: Run Detection mo
 - Not done in this commit: N-model scope picker (`rules.scope = { mode, sideA, sideB }`) and self-clash consolidation. The legacy `modelA`/`modelB` multi-picker still works for all N models, just less intuitive than the planned segmented control. Phase A2 next.
 - Caveats: untested in browser this session (no GPU/sample IFC); syntax-checked only via `new Function(body)`. The summary line shows `modelA ↔ modelB` for non-all rules but does not yet enumerate when `modelA`/`modelB` are arrays (`_modelSelectLabel` only handles scalar input). Cosmetic — not wrong.
 
-On branch `claude/jolly-planck-mgEaf` (2026-06-05) — AI Triage Weeks 1+2: clustering + prompt scaffolding (still no API call):
+On branch `claude/jolly-planck-mgEaf` (2026-06-05) — AI Triage Weeks 1+2: clustering + prompt scaffolding (still no API call):  **[STALE?]**
 
 **Week 2 — context-packet + prompt, manual copy-paste loop.** New `window._ccBuildClusterContext(clashes)` walks the cluster, looks up each element via `_ccElementFor(modelId, expressId)` (uses `window._ccLatestState`), and returns a JSON-ready context: ifcType / name / objectType / storey / material / curated quantities (Length, Diameter, Volume, etc.), cross-model + same-storey flags, hard/soft/duplicate counts, spatial extent + center in metres, min/max distance. `window._ccBuildTriagePrompt(ctx)` produces a senior-BIM-coordinator prompt asking for `{title, severity, explanation, discipline_conflict, false_positive_likelihood, resolution_options[]}` — advisory framing, no prescriptive structural changes. New "Copy AI prompt" button on each cluster group header (only when groupBy='cluster' and clash tab) copies the full prompt to clipboard so we can iterate against Claude/Gemma manually before wiring `/api/triage` in Week 3.
 
@@ -295,7 +295,7 @@ On branch `claude/jolly-planck-mgEaf` (2026-06-05) — AI Triage Weeks 1+2: clus
 - Caveats: cluster cache (`_ccClusterDisplay`) accumulates labels across detection runs — harmless (deterministic from clash data) but not GC'd; rebuild on `LOAD_MODEL` if it ever shows stale text. No spatial bucketing — same long duct hitting the same beam at two physically distinct spots will collapse to one group (rare; acceptable for v1).
 - Not done: visual count badge ("400 → 14") in the toolbar (the per-group count badge is already shown by VirtualList); fly-to that frames all clashes in a cluster; "Triage this group" button (Week 3); BCF write-back of group structure.
 
-On branch `claude/adoring-hopper-IEpvn` (2026-06-03) — SEO Phase 0+1+2 (canonical, crawlability, landing pages):
+On branch `claude/adoring-hopper-IEpvn` (2026-06-03) — SEO Phase 0+1+2 (canonical, crawlability, landing pages):  **[STALE?]**
 
 - Add `<link rel="canonical">`, `<noscript>` body content, visually-hidden `<h1>`, `SoftwareApplication` JSON-LD, `og:locale` to `index.html` head.
 - Add `vercel.json` 301 redirects for `/clash-control`, `/ClashControl`, `/index.html` → `/`.
@@ -303,18 +303,18 @@ On branch `claude/adoring-hopper-IEpvn` (2026-06-03) — SEO Phase 0+1+2 (canoni
 - Phase 2: shipped 5 use-case static pages (`/free-navisworks-alternative`, `/ifc-clash-detection-online`, `/free-bcf-viewer`, `/free-ifc-viewer-online`, `/ids-validation-online`) with `FAQPage` JSON-LD, cross-links, and Goatcounter CTA tagging. Sitemap + `llms.txt` updated.
 - Phase 3 remaining: submit sitemap in Google Search Console (needs owner access).
 
-On branch `claude/meshlets-research-OSMAL` (2026-05-30) — "can we use meshlets?" research + Stage-1 PoC:
+On branch `claude/meshlets-research-OSMAL` (2026-05-30) — "can we use meshlets?" research + Stage-1 PoC:  **[STALE?]**
 
 - Researched meshlets/mesh shaders. Verdict: hardware mesh shaders don't exist in WebGL/WebGPU; Needle/Nanite-style GPU meshlet rasterizers need WebGPU + three.js r160+ (too big a lift for this r128/no-build app). Meshlets do **not** help clash detection (the BVH already uses 4-tri leaves, finer than meshlets). The real, in-stack win is the *spirit* of meshlets: merge the 5k–200k per-material meshes into spatially-clustered chunks to slash draw calls + the per-mesh cull loop.
 - Implemented a **flag-gated Stage-1 PoC** (`window._ccChunkMerge`, default OFF → exact revert). New `_ccBuildMergedChunks`/`_ccMergeChunkGeometries` near `_buildInstancedMeshes` (`index.html:~2200`), hooked after both IFC instancing call sites. Buckets non-instanced static meshes by spatial grid cell × material, ≤65 535-vert budget, hand-written typed-array merge (BufferGeometryUtils isn't loaded). Mutates only the render list; `element.meshes[]` untouched (protects clash/serialize/bounds — the instancing precedent).
 - Picking preserved via per-chunk faceIndex→expressId range table (`window._ccChunkExprIdForFace`, used in `_hitExpressId`). Culling extended for `_isMergedChunk` (`updateCulling`). Section-clip traversals (×3) broadened so chunk/instanced materials still receive clipping planes. Hover highlight suppressed on chunks. Identity features (highlight outline / ghost / color-by-class / hide) naturally no-op on chunks under the flag (deferred to Stage 2 shader-LUT).
 - **Not done / caveats:** runtime browser verification (no GPU/sample IFC in this env — syntax-checked only via vm.Script); GLB + geo-cache-restore paths not hooked (fresh IFC loads only); transparent meshes merged into a chunk may sort imprecisely; merge trades away geoCache VRAM dedup (measure `renderer.info.memory.geometries`). Plan: `/root/.claude/plans/can-we-use-the-sprightly-waffle.md`.
-- **Stage 1 verified by user (2026-06-04): orbiting large models is "very smooth" now.** Merged via PR #561.
+- **Stage 1 verified by user (2026-06-04): orbiting large models is "very smooth" now.** Merged via PR #561.  **[STALE?]**
 - **Stage 2A — selection & isolation on merged chunks, NO shaders (proxy/split-out reuse). Merged via PR #566; user: "works amazing".** `_findMeshByRef` falls back to the off-scene per-element proxy (`element.meshes[0]`) via a new per-model index `_ccProxyElement`/`_ccProxyMeshFor` → selection EdgesGeometry outline works. `ghostOthers` ghosts whole chunks then re-surfaces kept elements as full-material proxy clones (`_keptProxy`), removed in `unghostAll`. Post-process outline guarded to in-scene meshes only. Skips instanced (`_instanceRef`) to avoid double-render.
 - **Stage 2B — bulk hide + color on chunks, in-place (no shaders, no unmerge); flips `window._ccChunkMerge` default → ON.** Render-style already applied to chunks (meshList = all meshes). **Hide** (class/storey/temp/isolate): `window._ccChunkApplyHidden` rebuilds each chunk's index to drop hidden elements' triangles, unioning a `window._ccHiddenReg` {class,storey,temp} registry that the 3 hide effects populate; picking stays correct via a parallel `_activeRanges` table (`_ccChunkExprIdForFace` prefers it); `_fullIndex` preserves the original for restore. **Color** (color-by-class + DQ `colorByDistribution`/`colorByILSDist`): `window._ccChunkApplyColors(map)` writes a per-vertex RGB `color` attr (matched→class/DQ color, unmatched→opaque context gray — all-opaque to dodge depth-sort artifacts) and swaps the chunk to one shared `vertexColors` material (`_ccColored`); render-style loop skips `_ccColored` chunks; `_ccChunkClearColors` restores. Default flip = one-line revert (`window._ccChunkMerge=false`).
 - **Stage 2B caveats / long tail NOT yet chunk-aware (default is now ON, so these silently no-op on merged chunks until swept):** BCF viewpoint per-element visibility, search-highlight, validation-failure highlight, and any other of the ~15 visibility / ~34 color setters that traverse by `expressId`. Edge: changing render-style *while* color-by-class is active leaves chunks one style behind until color is cleared. Not runtime-tested in this env (syntax-checked only).
 
-On branch `claude/code-review-quality-IjbhT` (2026-05-28) — code-review quality pass:
+On branch `claude/code-review-quality-IjbhT` (2026-05-28) — code-review quality pass:  **[STALE?]**
 
 - ~~`api/title.js`: `MAX_CLASHES` was 50 but the handler then sliced to 20, silently dropping clashes 21–50. Set the cap to 20 (matches the client's per-call batch in `index.html:~22662` and the documented contract) and slice with the constant, so oversized payloads get a clear 413.~~ (2026-05-28)
 - ~~Addon convention: `pwa.js`, `shared-project.js`, `local-engine.js`, `revit-bridge.js` called `window._ccRegisterAddon(...)` unguarded. Wrapped each in a `typeof === 'function'` guard (one-liner, no re-indent) matching `wasm-engine.js`.~~ (2026-05-28)
@@ -324,10 +324,130 @@ On branch `claude/code-review-quality-IjbhT` (2026-05-28) — code-review qualit
 - ~~Testing/CI: added a no-dependency `node:test` suite under `tests/` (CORS allow-list + rate limiter in `_lib.js`; title/nl validation incl. the 413 regression lock), `"test": "node --test"` script, and `.github/workflows/ci.yml` running it on PRs/pushes to main. Added `.gitignore` (none existed).~~ (2026-05-28)
 
 **Deferred (tracked follow-ups, not done this pass):** core reducer/state refactor (287-line reducer / 80+ cases / impure `_saveDeniedClash` inside the reducer / ~50 `window._cc*` globals) — do it only once the test suite covers the pure clash/reducer/BCF logic, which needs those helpers extracted from `index.html` first. Also: a CI check that re-verifies `index.html` SRI hashes against the live CDN, and 3D-canvas keyboard accessibility (no keyboard orbit/pan, no modal focus trap).
-
 <!-- END:active-work -->
 
 <!-- BEGIN:session-log -->
+### 2026-07-09
+**Summary:** 111 commit(s) landed (no AI summary — set ANTHROPIC_API_KEY secret for richer entries).
+**Changed:** see commits
+**Notable:** —
+
+<details><summary>Commits</summary>
+
+- c395cc8 chore: bump version to 5.21.16
+- 2a262d7 fix: dead public API, clash-engine parity, shared-project data loss, daily-sync crash (#676)
+- 3b5bece chore: bump version to 5.21.15
+- d659ae4 fix(walk): delay entry animation until rendered style is applied
+- 436823c fix(walk): don't force rendered style on walk entry
+- 86b0a4d chore: bump version to 5.21.14
+- c0dd744 fix(materials): stricter glass threshold for multi-material mesh groups
+- 48505b1 chore: bump version to 5.21.13
+- 61fedec fix: array-safe material dispose for multi-material meshes
+- 3b40f0d fix(walk): re-entry spawns at orbit target position, not model centre
+- 80984f8 chore: bump version to 5.21.12
+- 6ad7831 fix: per-group materials for multi-material curtain walls
+- b860bbd fix: drop unreachable [::1] bridge host — use 127.0.0.1 only
+- ffc6a32 chore: bump version to 5.21.11
+- 3d0cf52 feat: restore walk mode + position across a hard refresh
+- d94ba11 fix: multi-material meshes render grey + [::1] CSP block
+- 7f4310d chore: bump version to 5.21.10
+- eb6dbd0 fix: curtain panel glass renders opaque grey from Revit Bridge
+- b9b7e1b chore: bump version to 5.21.9
+- f857db5 fix: resolve prefsRef scope error breaking scroll zoom
+- 20d6a0c chore: bump version to 5.21.8
+- 2f5c0f7 feat: scroll zoom speed slider, orbit-around-selected, glass detection fix
+- 6554e6e fix: walk mode pointer-lock race, material undefined warnings, collision toggle label
+- 2e34cc6 chore: bump version to 5.21.7
+- 307cbe7 feat: support per-face-group materials in Revit Bridge mesh builder
+- 05260d2 chore: bump version to 5.21.6
+- 917596e fix: use explicit [::1] ports in CSP — Chrome rejects IPv6 wildcard (#664)
+- 207d300 fix: use explicit [::1] ports in CSP to work around Chrome IPv6 wildcard bug
+- 480c320 chore: bump version to 5.21.5
+- 8a1aa9d fix: add [::1] IPv6 loopback origins to CSP connect-src (#663)
+- 08e170f ci(smart-bridge): auto-bump patch and release on server file changes
+- da8bbd3 fix(smart-bridge-server): bind to both 127.0.0.1 and [::1] loopback interfaces
+- 9e1bf42 docs(CONNECTOR_PROTOCOL): recommend dual-loopback binding, not 0.0.0.0/::
+- 77ee052 chore: bump version to 5.21.4
+- 7466511 fix(smart-bridge): IPv4/IPv6 loopback fallback + Smart Bridge API docs
+- 568281b chore: bump version to 5.21.3
+- 16c17d4 fix(revit-bridge): IPv4/IPv6 loopback fallback + SW cache bust + CONNECTOR_PROTOCOL.md
+- 9aca443 fix(revit-bridge): use 127.0.0.1 instead of localhost for WS connection
+- 05eae26 fix(revit-bridge): dismiss loading modal when WS connect times out
+- b67be1c feat(smart-bridge): expose full IFC property sets via get_element_properties
+- 86aec4f chore: bump version to 5.21.2
+- b1d6ef7 fix: section-plane zoom stop and gizmo handle size
+- 02ea128 fix: section-plane zoom and gizmo handle size
+- 4f665c1 chore: bump version to 5.21.1
+- d163dde fix: zoom-to-cursor no longer zooms out over off-centre geometry
+- 7e55bb3 fix: zoom-to-cursor no longer zooms out over off-centre geometry
+- 112c44b Fix zoom-to-cursor lateral jump when hovering over off-centre geometry
+- 6a4db9c Revit Bridge: handshake timeout, connect debounce, live pull progress (#651)
+- b4452bb Fix Revit Bridge runaway reconnect loop on connector dropout (#650)
+- 16e141a chore: bump version to 5.21.0
+- e0dc9a5 Measure coexists with the section plane + zoom-toward-cursor (#649)
+- 94277e8 chore: bump version to 5.20.35
+- 51619a7 Tour rewrite, discipline auto-detect, viewer drag/box fixes, friendlier errors (#648)
+- 8108978 chore: bump version to 5.20.34
+- c462568 Loam API enrichment (get_data_quality) + SEO tour & comparison pages (#647)
+- a12ad5f chore: bump version to 5.20.33
+- e38caec BCF import: carry referenced IfcGUIDs onto issues (#646)
+- 17251e1 chore: bump version to 5.20.32
+- 041e2ef Expose BCF import to the LLM + wire BCF export (#645)
+- b56d878 chore: bump version to 5.20.31
+- 1022573 Rooms, structural grids & levels via the Revit bridge + issue element keys (#644)
+- db2f282 chore: bump version to 5.20.30
+- 7f7d19c Revit bridge: Connector update prompt + promoted-issue in-app navigation (#643)
+- f64c986 chore: bump version to 5.20.29
+- a710925 Cross-discipline ruleset detection + clash→issue promotion with element link (#642)
+- c673286 Broaden classification extraction (NL-SfB) + close last AI auto-resolve hole (#641)
+- b9f43a8 chore: bump version to 5.20.28
+- c7cf855 Scoped detection resolves models by name + ping orchestrator on run completion (#640)
+- db1ad9a chore: bump version to 5.20.27
+- 410a353 ingest_detection_feedback: stop suppressing pairs that ate real clashes (#639)
+- 5322277 Orchestrator integration fixes: get_status ingest/freshness, no auto-resolve, discipline scoping (#637)
+- 23c7f98 chore: bump version to 5.20.26
+- 36246b0 Reconcile clashes across runs by stable identity (#638)
+- 2d567c7 chore: bump version to 5.20.25
+- f7835bf Fix detection instant-0 regression + one-click Revit live link + faster 82k pull (#636)
+- 7fd2d25 feat(detection): cancel_detection tool — reset a wedged/stuck run from the MCP side (no browser restart) (#635)
+- 03a2e78 chore: bump version to 5.20.24
+- 9d06240 fix(detection): live progress in get_status, reject concurrent runs, 90s stall watchdog (no eternal detecting:true), clear stale type-pair memo on bridge runs (instant-0 fix) (#634)
+- ed679e5 chore: bump version to 5.20.23
+- 2d288da feat: surface last detection error via get_status.lastDetectionError (message+stack) so the orchestrator can report failures without console access (#633)
+- 6bc27a0 chore: bump version to 5.20.22
+- 1b5fafa Scoped sync: exclude heavy models from the live Revit sync (skip on receive + persist + re-include) (#632)
+- 1108df1 feat(clash-status): add reversible 'expected' (suppressed/by-design) status — distinct from resolved, excluded from open count, re-openable; tools route by-design here not resolved (#631)
+- 7f67c60 chore: bump version to 5.20.21
+- 81e8748 Host-aware detection for Revit-keyed relatedPairs + throttle reconnect loading indicator (#630)
+- e749dd9 chore: bump version to 5.20.20
+- 4481f69 Live-test fixes: clash metadata (type/name/storey), uniqueId join key, discipline tagging, classification shape (#629)
+- 7ecc093 feat(smart-bridge): emit connective-spine MUST keys (source, projectKey, sourceLocalId) on clash/issue/element tools (#628)
+- 30dae2d Phase 2 CC helpers: get_element_by_guid + resync (#627)
+- 91c53ae chore: bump Smart Bridge _releaseTag to bridge-v0.3.3
+- 668c632 Smart Bridge: Claude Desktop attach fix + live-link restore + CC↔PDRA join groundwork (#626)
+- 0bb3fa8 chore: bump Smart Bridge _releaseTag to bridge-v0.3.2
+- cc3b3d6 Smart Bridge: make "drive ClashControl from Claude Desktop" actually work (#625)
+- bcd4754 chore: bump version to 5.20.19
+- 9c8b4df Start-screen Revit live-link option + Smart Bridge rejection fix (#624)
+- 7e0b7dd chore: bump version to 5.20.18
+- d80121c CRS-aware geo-placement — reproject IFC4 projected coordinates to lat/lon (#623)
+- 2421ca1 chore: bump version to 5.20.17
+- 9b23c60 IDS 1.0 execution engine — run imported .ids files against loaded models (#622)
+- 38a3e50 chore: bump version to 5.20.16
+- ed2fe18 smart-bridge: bulk-by-default inputs for mutating tools (cut agent round-trips)
+- 58ef9e4 Relabel deviation heatmap as first-pass proximity (don't imply measured deviation)
+- b93d883 docs: add AS_BUILT_DEVIATION.md — point-cloud-vs-BIM deviation scope
+- b6d6b4d 3D world context: auto-seat on the model floor (height auto-snap)
+- 4909b55 3D world context: live vertical height nudge
+- 8f0f769 chore: daily memory sync 2026-06-11
+- d8797ba chore: bump version to 5.20.15
+- 16bffc1 Geo align nudge + site clearing for the 3D world context (#620)
+- 2bc3b62 Fix 3D Tiles: register glTF decoders (meshopt/Draco/KTX2) — PDOK tiles failed to parse (#619)
+- 4a30a52 fix(tiles): cc-render-frame gate — tiles.update() never ran, root tileset never loaded (#617)
+- 3ee4a9d fix(tiles): set _ccHasFrameListener — cc-render-frame is gated and never fired, so tiles.update() never ran
+
+</details>
+
 ### 2026-06-11
 **Summary:** 57 commit(s) landed (no AI summary — set ANTHROPIC_API_KEY secret for richer entries).
 **Changed:** see commits
@@ -1058,532 +1178,78 @@ On branch `claude/code-review-quality-IjbhT` (2026-05-28) — code-review qualit
 - a09a822 chore: daily memory sync 2026-05-09
 
 </details>
-
-### 2026-05-09
-**Summary:** 1 commit(s) landed (no AI summary — set ANTHROPIC_API_KEY secret for richer entries).
-**Changed:** see commits
-**Notable:** —
-
-<details><summary>Commits</summary>
-
-- bcba721 chore: daily memory sync 2026-05-08
-
-</details>
-
-### 2026-05-08
-**Summary:** 1 commit(s) landed (no AI summary — set ANTHROPIC_API_KEY secret for richer entries).
-**Changed:** see commits
-**Notable:** —
-
-<details><summary>Commits</summary>
-
-- 56c90cd chore: daily memory sync 2026-05-07
-
-</details>
-
-### 2026-05-07
-**Summary:** 57 commit(s) landed (no AI summary — set ANTHROPIC_API_KEY secret for richer entries).
-**Changed:** see commits
-**Notable:** —
-
-<details><summary>Commits</summary>
-
-- 5d33059 chore: bump version to 5.9.6
-- 29a232c fix walk mode: mouse look works during WASD by listening at window level
-- 7afbe4e chore: bump version to 5.9.5
-- f31d52f walk mode: free mouse look + dynamic resolution for performance
-- 6d43564 fix walk mode: pointer lock rotation, drone height, performance
-- 7564cc5 chore: bump version to 5.9.4
-- 0f94b83 Fix walk-mode auto-exit on 'w' key + ViewCube ReferenceError
-- c90826e chore: bump version to 5.9.3
-- b03efdf Remove [2D Outlines] / [2D Sheet] console.log spam
-- 6a34c59 Fix _isGhostMat ReferenceError crashing walk-tick gravity
-- 87894e6 chore: bump version to 5.9.2
-- d791312 Walk mode: call _ccWalkEnter directly from Pegman click
-- 0b44fe4 chore: bump version to 5.9.1
-- ea0bdd0 Fix Pegman placement, reduce walk-mode render overhead
-- cc593f1 chore: bump version to 5.9.0
-- ca0b6a2 Walk mode follow-up: spline recorder, bookmarks UI, sun slider, footprint check, Settings section
-- 30a5e0c chore: bump version to 5.8.0
-- e504753 chore: bump version to 5.7.13
-- 06c26c6 feat(measure): edge-vertex insert, Z-axis labels, and geo disposal
-- 1122987 Walk mode deep redesign: Pegman entry, teleport-anywhere, radar + minimap
-- 8884ecf chore: bump version to 5.7.12
-- c16efa0 feat(measure): smart polygon ordering for area tool
-- 35b9d51 Fix area seeding direction and replace right-click with caret for home view
-- 2fb3aed feat: differentiate Fit All and Reset View with context-awareness and saved home
-- 8b92a0c chore: bump version to 5.7.11
-- 0dbf122 Fix model replacement: stale ghost, stale meshList, ortho near-clip, stale state closure
-- eb6b5e1 Strip embedded NN%/N-of-M from loading phase text to avoid double percentage
-- c617ebb chore: bump version to 5.7.10
-- dcc31ea Fix glass detection for IfcWindow curtain wall frames + type-level material inheritance
-- d17d92b Fix clearance: sample real mesh vertices instead of bbox corners
-- 496b71c chore: bump version to 5.7.9
-- 3a5fa12 Fix glass detection, area preview edges, and add IFC type to Identity panel
-- 15bb2ea chore: bump version to 5.7.8
-- 947b7b0 Hide measurement 3D geometry when m.hidden toggled
-- 120ca6b Fix coordinate chip showing &nbsp; literally; alt+click seeds both endpoints
-- 066759f chore: bump version to 5.7.7
-- a127884 fix: raise click/drag threshold during active measurement to 8px
-- f879b88 fix: block alt+click section plane shortcut while measure tool is active
-- f982f4f chore: bump version to 5.7.6
-- c5f5571 fix: area icon, snap race condition, endpoint hint, area seeding
-- 0616c9a chore: bump version to 5.7.5
-- e45ba6c fix: only show alt+click endpoint hint when measure tool is active
-- 29cd66e feat: alt+click placed length endpoint to continue as area polygon
-- 9102282 chore: bump version to 5.7.4
-- 0db6416 Token compliance pass for yesterday's section + compare UI
-- f53447a Design token compliance pass for measurement UI additions
-- 703aabe Fix Esc deleting committed dimensions; hide section-clear when no section; add Alt-throwaway
-- 1fbeac4 chore: bump version to 5.7.3
-- f0233fa chore: daily memory sync 2026-05-05
-- 708a7b2 Add click-to-continue: length auto-chains into area on 3rd click
-- aaaf4c4 Consolidate measure cursor + snap marker into one combined element
-- fe9c48f chore: bump version to 5.7.2
-- d3ca74b Resurface IFC dimension & constraint properties in Inspector Details
-- 16ab0ef chore: bump version to 5.7.1
-- d94cbea Fix measurement tool UX: popover, cursor offset, icon, snap + drag feedback
-- 0677141 chore: bump version to 5.7.0
-- 8c8fbb3 Drag-to-edit endpoints + PointerLens magnifier render
-
-</details>
-
-### 2026-05-05
-**Summary:** 52 commit(s) landed (no AI summary — set ANTHROPIC_API_KEY secret for richer entries).
-**Changed:** see commits
-**Notable:** —
-
-<details><summary>Commits</summary>
-
-- fe9c48f chore: bump version to 5.7.2
-- d3ca74b Resurface IFC dimension & constraint properties in Inspector Details
-- 16ab0ef chore: bump version to 5.7.1
-- d94cbea Fix measurement tool UX: popover, cursor offset, icon, snap + drag feedback
-- 0677141 chore: bump version to 5.7.0
-- 8c8fbb3 Drag-to-edit endpoints + PointerLens magnifier render
-- 93e09a4 Measure tools deep redesign — snap engine, live preview, Qto_* element measure, clearance, takeoff, units
-- 8034c54 chore: bump version to 5.6.13
-- 8ae0680 Section box rotation + force-opaque framing elements
-- 195e6a1 chore: bump version to 5.6.12
-- b94104e Fix section box face drag, clipped-element clicks, and glass detection
-- 2e12b9c Remove orbit damping (felt sluggish at end of rotation)
-- 8290a75 chore: bump version to 5.6.11
-- fc182c8 Three viewer performance improvements + glass name detection
-- 6ad6f9e Fix metal mullions wrongly rendered as glass
-- e5983da chore: bump version to 5.6.10
-- a903f3e Fix section plane drag and rotation
-- 5c3f3e4 chore: bump version to 5.6.9
-- 9af8eba Drop custom section plane arrow/torus, recolour TransformControls green
-- 00e8916 chore: bump version to 5.6.8
-- c02735e Section handles glow on hover + no modifier needed to drag
-- 037a1f0 Detect glass by IFC type fallback (IfcWindow / IfcCurtainWall / IfcPlate)
-- 9d7c942 Make glass transparent in shaded mode too
-- 5e2237e chore: bump version to 5.6.7
-- 3f2d083 Fix glass transparency in rendered mode
-- c0f478b Fix section plane rotation direction — invert drag sign
-- b28c169 Match section plane arrow size to section box face arrows
-- a10cbe9 chore: bump version to 5.6.6
-- 42707d0 Replace stencil section hatch with polygon-based cap mesh
-- 5152127 Make Compare panel generic A/B instead of version-specific Old/New
-- 68bdbbd chore: bump version to 5.6.5
-- 7b40af0 Fix section box clip/wireframe rotating in opposite directions, +15% handles
-- c9cb710 chore: bump version to 5.6.4
-- 0058a25 Fix section box clipping, handle size -50%, rotation gizmo live update
-- 94a4ec6 chore: bump version to 5.6.3
-- cdd029f Fix section box not clipping + shrink handles
-- ac79945 Persist IFC v2 version metadata to IndexedDB so it survives page refresh
-- 05bc035 chore: bump version to 5.6.2
-- bf87d99 Version Compare: rename A/B to Old/New, auto-detect version pairs, update diff badges to design system
-- 710474b Fix section tools, shadows, hatch, handles, ground plane + remove wireframe
-- e5414ff chore: bump version to 5.6.1
-- 38f2add Fix section hatch camera-angle flicker + section box handle visibility
-- e0d4e5a Section hatch: size cap plane to model bounding box
-- ea8bcf9 chore: bump version to 5.6.0
-- 04a8a73 Section hatch: auto-rebuild on model change, skip thin shells
-- 4612a64 Add architectural section hatch — stencil-cap solid fill on cut faces
-- 02533de chore: bump version to 5.5.1
-- a51592d chore: daily memory sync 2026-05-04
-- 46bc120 fix(section): make the cut actually cut + show a visible plane
-- 991713a chore: bump version to 5.5.0
-- 950e404 feat(section): unified S key, Alt+click, F-flip, drag HUD, viewpoint persistence
-- a811bad fix(section): apply clipping reliably + clearer icons + axis-key alignment
-
-</details>
-
-### 2026-05-04
-**Summary:** 17 commit(s) landed (no AI summary — set ANTHROPIC_API_KEY secret for richer entries).
-**Changed:** see commits
-**Notable:** —
-
-<details><summary>Commits</summary>
-
-- 991713a chore: bump version to 5.5.0
-- 950e404 feat(section): unified S key, Alt+click, F-flip, drag HUD, viewpoint persistence
-- a811bad fix(section): apply clipping reliably + clearer icons + axis-key alignment
-- 521aec6 chore: bump version to 5.4.0
-- 45cecbf Update MEMORY.md — full plan complete
-- 014844a B1: Numbered pins (Speckle pattern) + @mention highlighting
-- c97db89 B7: Design option compare — blend two model versions
-- 8cbfabf B2 (rest): Rich markup tools on the 3D canvas
-- ee864f2 Engine in toolbar + B6 hover coords + A5 per-storey hide + B8 selection sets
-- be020c6 chore: bump version to 5.3.0
-- b54a889 Update MEMORY.md with completed session work
-- 47700ab B4: Material preview in Rendered mode
-- 963c7e6 B2 + B3: PDF export and walkthrough recording
-- ae3522f A2-A6 + B5 + B6: Panel improvements, X-Ray render style, area measurement
-- 861bae8 chore: bump version to 5.2.4
-- 788f1a2 ViewCube: fix off-screen clipping, remove arrows, fill wrapper
-- f41edc1 chore: daily memory sync 2026-05-03
-
-</details>
-
-### 2026-05-03
-**Summary:** 12 commit(s) landed (no AI summary — set ANTHROPIC_API_KEY secret for richer entries).
-**Changed:** see commits
-**Notable:** —
-
-<details><summary>Commits</summary>
-
-- 1f5a225 chore: bump version to 5.2.3
-- aa978cc Cmd-K: reorder items within each group by current workspace
-- f326556 Revert "Cmd-K palette: workspace-aware ordering and filtering"
-- 3551c35 Cmd-K palette: workspace-aware ordering and filtering
-- cdbea34 Toolbar tooltips: design-system styling
-- 7dc5520 chore: bump version to 5.2.2
-- 3070986 UI polish: remove LeftRail, fix Style dropdown, resize ViewCube, clean up viewer
-- 3f2e982 chore: bump version to 5.2.1
-- b8201f0 perf(render): Hidden Line uses one shared Lambert, not N per-mesh
-- 510c772 fix(ui): post-screenshot polish — welcome hides on load, restore Review, toolbar icons
-- a2a55de chore: daily memory sync 2026-05-02
-- c4e11b9 chore: bump version to 5.2.0
-
-</details>
-
-### 2026-05-02
-**Summary:** 63 commit(s) landed (no AI summary — set ANTHROPIC_API_KEY secret for richer entries).
-**Changed:** see commits
-**Notable:** —
-
-<details><summary>Commits</summary>
-
-- c4e11b9 chore: bump version to 5.2.0
-- e56937a feat(ui): DOM-anchored 3D clash chips — selection title floats above the model
-- 3be9ba5 feat(ui): Tier 3 — load progress card, tonal canvas, single icon scale, draw-in welcome
-- 3f1a4e7 feat(ui): Tier 2 — Cmd-K palette, fold Review→Coordinate, share promoted, copy clearer
-- 38d8bf0 feat(ui): Tier 1 — kill violet bleed, forest brand mark, wire shortcuts modal
-- 79c1c16 chore: bump version to 5.1.14
-- 5291125 Distribute remaining integrations into their natural places
-- 0d9f7a1 Distribute integrations to logical contexts; demote unified menu
-- eefc593 Sweep remaining blue colors from user-facing UI
-- 46e258e Replace remaining blue accents in clash/issues UI; clean up mobile chrome
-- 5c975df Hide ground shadow when all models are unchecked
-- 490c143 chore: bump version to 5.1.13
-- dedfabd Fix element picker selecting wrong element (wall click picking beam)
-- a75d334 Add inline project rename + responsive layout fixes
-- c7cc7a7 Add Ctrl/Cmd+Click to multi-select elements in 3D viewer
-- 9ed2d11 chore: bump version to 5.1.12
-- f96160c Fix toolbar tooltip (remove native title attr) and redesign Present details as property table
-- f497440 File-load opens right-panel Models tab; ViewCube arrows only on axis-aligned views
-- 52914bc Fix ground plane floating; hide Models tab label in right panel
-- 0b69d75 chore: bump version to 5.1.11
-- 3b90853 Models toolbar button toggles right panel (Models tab), not left panel
-- 2a652eb Models button back to toolbar; 2D underlay stays in 3D; ground plane glass fix
-- 4648dac Ground plane cutout, Integrations redesign, Details auto-open on element click
-- 3e7d6ac chore: bump version to 5.1.10
-- d498e2b UI reorganization: models to right panel, navigator to review, integrations to avatar menu, toolbar tooltips
-- 3c0e721 Memory optimizations: remove LOD proxy system, strip _glbBuffer from state, free geoCache
-- b3596a8 chore: bump version to 5.1.9
-- 9f7f1f9 ModelSidebar: tighten spacing and sizing in redesign
-- 0cded3c UI fixes: LOC boxes, ViewCube, tabs, modals, toolbar
-- 557fb29 chore: bump version to 5.1.8
-- 442263f Present prose, toolbar Ask AI, +Add dropdown, panel cleanup
-- 15a7735 chore: bump version to 5.1.7
-- 79ebeb2 Section box face arrows + Revit-style ViewCube
-- 1e15b87 chore: bump version to 5.1.6
-- 3e268c0 Workspaces renamed + inspector depth + UX polish
-- 1a2c18c Section box: Revit-style — fits selected element, falls back to full model
-- 7881f80 Popovers, walk HUD redesign, hover fix + Enscape-style scroll speed
-- cd6faaf Fix walk mode entry + default to Shaded style on load
-- 55dc6c5 chore: bump version to 5.1.5
-- 97836aa Render styles: Hidden Line mode + faster rendered view
-- f651b61 fix(walk+inspector): free WASD walk, no forced details re-open
-- a940172 feat(render): time-of-day sun, less-bright shaded, distinct standard
-- 95b2e61 chore: bump version to 5.1.4
-- 6b72c60 feat(toolbar+section): default to Standard, click-surface section, Add model
-- 817f0a2 fix(render): IBL ambient, working sliders, no z-fighting, real ground plane
-- b37640a chore: bump version to 5.1.3
-- ab58a2f fix(toolbar+panels): unbreak app, redesign panel headers, drop sample model
-- 21c6fb2 chore: daily memory sync 2026-05-01
-- 963fb70 chore: bump version to 5.1.2
-- d0731c5 feat(ui): zinc + forest palette, layout fix, Enscape walk, render quality
-- 1b9b0ed fix(inspector): collapse right panel when element is deselected
-- 027364f fix(ui): remove duplicate access points across viewer
-- a20e0f4 chore: bump version to 5.1.1
-- 3c3a46c feat(inspector): workspace-aware element details depth
-- b7f46f1 fix(ui): clean white palette, remove emojis, deduplicate element panel
-- 50cfd86 fix(ui): switch fonts to Syne + DM Sans, fix theme-color meta
-- e09b517 chore: bump version to 5.1.0
-- bf9e3a5 feat(ui): paper + ink + terracotta redesign — workspace switcher, xeokit toolbar, demoted Ask AI
-- 71b094b chore: bump version to 5.0.3
-- fa2d1a1 fix(mobile): hide right drawer entirely + add floating theme toggle (top-left)
-- 939798e feat(theme): default to light mode (Figma/Sketch/Notion convention) — boot script applies before paint to prevent flash
-- 413b0a9 chore: bump version to 5.0.2
-- 0ce33ee fix: sky gradient addColorStop needs hex, not CSS variable (Canvas 2D doesn't resolve var(--))
-
-</details>
-
-### 2026-05-01
-**Summary:** 64 commit(s) landed (no AI summary — set ANTHROPIC_API_KEY secret for richer entries).
-**Changed:** see commits
-**Notable:** —
-
-<details><summary>Commits</summary>
-
-- 963fb70 chore: bump version to 5.1.2
-- d0731c5 feat(ui): zinc + forest palette, layout fix, Enscape walk, render quality
-- 1b9b0ed fix(inspector): collapse right panel when element is deselected
-- 027364f fix(ui): remove duplicate access points across viewer
-- a20e0f4 chore: bump version to 5.1.1
-- 3c3a46c feat(inspector): workspace-aware element details depth
-- b7f46f1 fix(ui): clean white palette, remove emojis, deduplicate element panel
-- 50cfd86 fix(ui): switch fonts to Syne + DM Sans, fix theme-color meta
-- e09b517 chore: bump version to 5.1.0
-- bf9e3a5 feat(ui): paper + ink + terracotta redesign — workspace switcher, xeokit toolbar, demoted Ask AI
-- 71b094b chore: bump version to 5.0.3
-- fa2d1a1 fix(mobile): hide right drawer entirely + add floating theme toggle (top-left)
-- 939798e feat(theme): default to light mode (Figma/Sketch/Notion convention) — boot script applies before paint to prevent flash
-- 413b0a9 chore: bump version to 5.0.2
-- 0ce33ee fix: sky gradient addColorStop needs hex, not CSS variable (Canvas 2D doesn't resolve var(--))
-- c0f7db2 chore: bump version to 5.0.1
-- 3673f27 fix: remove escaped quotes in WelcomePopup template literal (SyntaxError at line 21137)
-- 685a945 chore: bump version to 5.0.0
-- dc57df1 ci: remove custom CodeQL workflow — conflicts with Default Setup already enabled on repo
-- 30ca36f ci: match CodeQL Default Setup categories (javascript-typescript + rust)
-- 0c9a7cb ci: add CodeQL workflow (fixes '1 configuration not found' failure)
-- 535ed8d fix(security): keep apiKey in memory only, not sessionStorage (js/clear-text-storage-of-sensitive-data)
-- 92e31eb fix(security): add SRI integrity hashes for GLTFLoader and pdf.js (js/functionality-from-untrusted-source #7)
-- e216fa2 fix(security): hostname allowlist in sw.js instead of URL substring checks (js/incomplete-url-substring-sanitization #5 #6)
-- bba1f5c fix(security): move apiKey from localStorage to sessionStorage (js/clear-text-storage-of-sensitive-data)
-- 8e27a28 fix(security): static format string in revit-bridge console.log (js/tainted-format-string)
-- 3b057aa fix(security): use static format string in local-engine console.log (js/tainted-format-string)
-- f2361b2 chore: update MEMORY.md — UI overhaul complete (PR-1 through PR-8)
-- f93b3f3 feat(overlay-panels): left/right panels float over canvas + details drawer + model load card
-- c19010c feat(pr4): violet left rail tabs, grid opacity, blue→violet sweep
-- 2925060 feat(pr3): slim desktop top bar — glass surface, Share accent, theme toggle
-- 6b54bf5 feat(pr2): bottom mode toolbar with 6 chips and sub-tool rows
-- 91ecc5d feat(pr1): violet accent, rounder radii, glass surface tokens
-- 4743a20 docs: UI overhaul — Chapter 7 (implementation roadmap)
-- 9b0ff1b docs: UI overhaul — Chapter 6 (first-run and onboarding)
-- f02aa30 docs: UI overhaul — Chapter 5 (feature remapping and naming pass)
-- 1f7a116 docs: UI overhaul — Chapter 4 (visual language and copy tone)
-- b1e4959 docs: UI overhaul — Chapter 3 (tools as architectural instruments)
-- 9d4cfa5 docs: UI overhaul — Chapter 2 (layout architecture)
-- e5e90ae docs: UI overhaul design doc — Chapter 1 (vision, personas, references)
-- 865944f fix: ViewCube nav arrows render as literal text on iOS Safari
-- 51dfbff chore: bump version to 4.19.0
-- ab207c1 feat(PR-A): TransformControls section gizmo
-- 6a4adf1 feat(PR-E): presentation v2 — slide auto-advance + brand logo
-- e272a7b feat(PR-B): SAO ambient occlusion + selection outline post-processing
-- 6822bc9 feat(PR-D): walk-mode polish — head-bob + no-clip + gamepad
-- 158a7ad feat(PR-C): Smart Views + shareable URL hash
-- 5a7e47a chore: bump version to 4.18.0
-- 885647a chore: bump version to 4.17.1
-- c2aaf71 feat: presentation/kiosk mode + roadmap
-- 84a57b9 feat: header Share button + walk-FOV HUD + ACES/shadows for cinematic look
-- 9772053 feat(revit-bridge): implement session resumption + keep/discard partial model UI
-- 9f80b5a chore: bump version to 4.17.0
-- de6b9dd feat: top-level Share entry + pin-on-model comments via folder-sync
-- 3d3c2f6 chore: bump version to 4.16.6
-- 954e61e fix(revit-bridge): handle isLinked→isLink field rename + add export-start/end logging
-- 61ef16f fix: remove LOD proxy boxes — show elements or hide, never show translucent AABB
-- 155b2f7 chore: bump version to 4.16.5
-- 2959d35 fix: bump geo cache to v4 to invalidate corrupted v3 entries from instancing
-- dda8647 fix: delete geo cache immediately when a project is deleted
-- fb4e1d2 chore: bump version to 4.16.4
-- 2b5d1cd fix: replace setFromObject(scene) with _elemsBBox() to fix instanced mesh bounds
-- 59d0917 fix viewer rotation lag and add ViewCube navigation arrows
-- 4cbfe5f chore: daily memory sync 2026-04-30
-
-</details>
-
-### 2026-04-30
-**Summary:** 1 commit(s) landed (no AI summary — set ANTHROPIC_API_KEY secret for richer entries).
-**Changed:** see commits
-**Notable:** —
-
-<details><summary>Commits</summary>
-
-- c45e1a5 chore: daily memory sync 2026-04-29
-
-</details>
-
-### 2026-04-29
-**Summary:** 1 commit(s) landed (no AI summary — set ANTHROPIC_API_KEY secret for richer entries).
-**Changed:** see commits
-**Notable:** —
-
-<details><summary>Commits</summary>
-
-- fa5a57f chore: daily memory sync 2026-04-28
-
-</details>
-
-### 2026-04-28
-**Summary:** 1 commit(s) landed (no AI summary — set ANTHROPIC_API_KEY secret for richer entries).
-**Changed:** see commits
-**Notable:** —
-
-<details><summary>Commits</summary>
-
-- 4b5274a chore: daily memory sync 2026-04-27
-
-</details>
-
-### 2026-04-27
-**Summary:** 5 commit(s) landed (no AI summary — set ANTHROPIC_API_KEY secret for richer entries).
-**Changed:** see commits
-**Notable:** —
-
-<details><summary>Commits</summary>
-
-- 4cc7120 chore: bump version to 4.16.3
-- 6c36924 perf+sec: kill periodic rotation hitch; rate-limit /api/nl + /api/title
-- 28fa548 feat(bridge): /llm/health probe, error codes, env-var timeouts
-- fdf26c2 chore: daily memory sync 2026-04-26
-- d942a27 chore: bump version to 4.16.2
-
-</details>
-
-### 2026-04-26
-**Summary:** 3 commit(s) landed (no AI summary — set ANTHROPIC_API_KEY secret for richer entries).
-**Changed:** see commits
-**Notable:** —
-
-<details><summary>Commits</summary>
-
-- d942a27 chore: bump version to 4.16.2
-- f37f17d fix: CORS exact-match, face panel material leak, dedupe cleanup blocks
-- f39737c chore: daily memory sync 2026-04-25
-
-</details>
-
-### 2026-04-25
-**Summary:** 1 commit(s) landed (no AI summary — set ANTHROPIC_API_KEY secret for richer entries).
-**Changed:** see commits
-**Notable:** —
-
-<details><summary>Commits</summary>
-
-- 028129f chore: daily memory sync 2026-04-24
-
-</details>
-
-### 2026-04-24
-**Summary:** 1 commit(s) landed (no AI summary — set ANTHROPIC_API_KEY secret for richer entries).
-**Changed:** see commits
-**Notable:** —
-
-<details><summary>Commits</summary>
-
-- 71ce56a chore: daily memory sync 2026-04-23
-
-</details>
-
-### 2026-04-23
-**Summary:** 1 commit(s) landed (no AI summary — set ANTHROPIC_API_KEY secret for richer entries).
-**Changed:** see commits
-**Notable:** —
-
-<details><summary>Commits</summary>
-
-- f490af8 chore: daily memory sync 2026-04-22
-
-</details>
-
-### 2026-04-22
-**Summary:** 5 commit(s) landed (no AI summary — set ANTHROPIC_API_KEY secret for richer entries).
-**Changed:** see commits
-**Notable:** —
-
-<details><summary>Commits</summary>
-
-- 4ffff92 chore: daily memory sync 2026-04-21
-- 0dcb06b chore: bump version to 4.16.1
-- 1b6c65e chore: update MEMORY.md active work log
-- f88c625 feat: wire unused data paths — DQ→Issues, feedback badge, BCF revit IDs, shared viewpoints
-- 4175de7 perf: O(1) BVH LRU + prune ghost mat cache on model unload
-
-</details>
-
-### 2026-04-21
-**Summary:** 8 commit(s) landed (no AI summary — set ANTHROPIC_API_KEY secret for richer entries).
-**Changed:** see commits
-**Notable:** —
-
-<details><summary>Commits</summary>
-
-- 0dcb06b chore: bump version to 4.16.1
-- 1b6c65e chore: update MEMORY.md active work log
-- f88c625 feat: wire unused data paths — DQ→Issues, feedback badge, BCF revit IDs, shared viewpoints
-- 4175de7 perf: O(1) BVH LRU + prune ghost mat cache on model unload
-- b20d0cb chore: daily memory sync 2026-04-20
-- 5e3e9be chore: bump version to 4.16.0
-- 23a1dcd perf: replace persistent BVH cache with LRU-bounded cross-run cache
-- 548aca6 perf: GPU instancing, GLB dedup, persistent BVH cache
-
-</details>
-
-### 2026-04-20
-**Summary:** 4 commit(s) landed (no AI summary — set ANTHROPIC_API_KEY secret for richer entries).
-**Changed:** see commits
-**Notable:** —
-
-<details><summary>Commits</summary>
-
-- 5e3e9be chore: bump version to 4.16.0
-- 23a1dcd perf: replace persistent BVH cache with LRU-bounded cross-run cache
-- 548aca6 perf: GPU instancing, GLB dedup, persistent BVH cache
-- f61d944 chore: daily memory sync 2026-04-19
-
-</details>
-
-### 2026-04-19
-**Summary:** 1 commit(s) landed (no AI summary — set ANTHROPIC_API_KEY secret for richer entries).
-**Changed:** see commits
-**Notable:** —
-
-<details><summary>Commits</summary>
-
-- a646758 chore: daily memory sync 2026-04-18
-
-</details>
-
-### 2026-04-18
-**Summary:** 1 commit(s) landed (no AI summary — set ANTHROPIC_API_KEY secret for richer entries).
-**Changed:** see commits
-**Notable:** —
-
-<details><summary>Commits</summary>
-
-- d7131ba feat: daily memory sync system for shared session continuity
-
-</details>
-
-## Session Log
-
-Daily summaries, newest first. Entries older than 60 days are pruned to the Cleanup Log.
-
-### 2026-04-17
-**Summary:** Initial MEMORY.md created to establish shared session memory. Seeded with project state at v4.15.4, architecture decisions, and known issues.
-**Changed:** MEMORY.md (new), scripts/update-memory.py (new), .github/workflows/daily-sync.yml (new), CLAUDE.md (updated)
-**Notable:** Daily automation uses `ANTHROPIC_API_KEY` GitHub secret for AI-powered summaries; falls back to plain commit list if key absent. Set the secret in repo Settings → Secrets → Actions.
 <!-- END:session-log -->
 
 <!-- BEGIN:cleanup-log -->
+### 2026-07-09 — pruned session entry 2026-05-09
+**Reason:** Entry is older than 60 days.
+
+### 2026-07-09 — pruned session entry 2026-05-08
+**Reason:** Entry is older than 60 days.
+
+### 2026-07-09 — pruned session entry 2026-05-07
+**Reason:** Entry is older than 60 days.
+
+### 2026-07-09 — pruned session entry 2026-05-05
+**Reason:** Entry is older than 60 days.
+
+### 2026-07-09 — pruned session entry 2026-05-04
+**Reason:** Entry is older than 60 days.
+
+### 2026-07-09 — pruned session entry 2026-05-03
+**Reason:** Entry is older than 60 days.
+
+### 2026-07-09 — pruned session entry 2026-05-02
+**Reason:** Entry is older than 60 days.
+
+### 2026-07-09 — pruned session entry 2026-05-01
+**Reason:** Entry is older than 60 days.
+
+### 2026-07-09 — pruned session entry 2026-04-30
+**Reason:** Entry is older than 60 days.
+
+### 2026-07-09 — pruned session entry 2026-04-29
+**Reason:** Entry is older than 60 days.
+
+### 2026-07-09 — pruned session entry 2026-04-28
+**Reason:** Entry is older than 60 days.
+
+### 2026-07-09 — pruned session entry 2026-04-27
+**Reason:** Entry is older than 60 days.
+
+### 2026-07-09 — pruned session entry 2026-04-26
+**Reason:** Entry is older than 60 days.
+
+### 2026-07-09 — pruned session entry 2026-04-25
+**Reason:** Entry is older than 60 days.
+
+### 2026-07-09 — pruned session entry 2026-04-24
+**Reason:** Entry is older than 60 days.
+
+### 2026-07-09 — pruned session entry 2026-04-23
+**Reason:** Entry is older than 60 days.
+
+### 2026-07-09 — pruned session entry 2026-04-22
+**Reason:** Entry is older than 60 days.
+
+### 2026-07-09 — pruned session entry 2026-04-21
+**Reason:** Entry is older than 60 days.
+
+### 2026-07-09 — pruned session entry 2026-04-20
+**Reason:** Entry is older than 60 days.
+
+### 2026-07-09 — pruned session entry 2026-04-19
+**Reason:** Entry is older than 60 days.
+
+### 2026-07-09 — pruned session entry 2026-04-18
+**Reason:** Entry is older than 60 days.
+
+### 2026-07-09 — pruned session entry 2026-04-17
+**Reason:** Entry is older than 60 days.
+
 ## Cleanup Log
 
 Records what was pruned from the session log and why. Permanent.
 
 _Nothing pruned yet._
-
 <!-- END:cleanup-log -->
