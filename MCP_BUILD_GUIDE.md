@@ -2,7 +2,7 @@
 
 ## Quick start — standalone server (no build required)
 
-`mcp-server.js` in the repo root is a zero-dependency Node.js MCP server with all 51 tools.
+`mcp-server.js` in the repo root is a zero-dependency Node.js MCP server with all 66 tools.
 It requires **Node 18+** and no `npm install`. Use it instead of (or alongside) the SmartBridge
 binary's built-in MCP server when you need the full tool set.
 
@@ -315,9 +315,9 @@ Rules:
 
 ---
 
-## All 35 tools — complete definitions
+## Tool definitions (37 of 66 documented below — see mcp-server.js for the full, current list)
 
-These map 1:1 to the handler functions in the browser addon (`addons/smart-bridge.js`). The SmartBridge binary relays calls to the browser via WebSocket; the MCP server calls the binary via REST.
+These map 1:1 to the handler functions in the browser addon (`addons/smart-bridge.js`). The SmartBridge binary relays calls to the browser via WebSocket; the MCP server calls the binary via REST. This section has not been kept in sync with every tool added to `mcp-server.js`'s `TOOLS` array since it was written — treat it as worked examples of the definition style, not an exhaustive reference.
 
 ### Data query tools
 
@@ -1097,7 +1097,7 @@ npx @modelcontextprotocol/inspector node build/index.js
 ```
 
 Opens at `http://localhost:6274`. Verify:
-- **Tools tab**: all 24 tools appear with correct names, descriptions, schemas
+- **Tools tab**: all 66 tools appear with correct names, descriptions, schemas
 - **Resources tab**: `clashcontrol://status` and `clashcontrol://clash-summary`
 - **Prompts tab**: 4 templates with argument schemas
 

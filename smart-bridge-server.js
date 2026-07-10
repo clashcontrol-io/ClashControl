@@ -6,7 +6,7 @@
  * Modes:
  *   Normal  — WebSocket server (port 19802) + REST API (port 19803).
  *             Auto-configures Claude Desktop on first run.
- *   --mcp   — MCP stdio server (51 tools). Claude Desktop spawns this.
+ *   --mcp   — MCP stdio server (66 tools). Claude Desktop spawns this.
  *   --install — Writes Claude Desktop config and exits.
  *
  * REST API endpoints (port 19803):
@@ -29,6 +29,18 @@
  *   CLASHCONTROL_WS_PORT      — WebSocket port (default 19802)
  *   CLASHCONTROL_TOOL_TIMEOUT — per-tool browser call timeout, ms (default 30000)
  *   CLASHCONTROL_LLM_TIMEOUT  — LLM request timeout, ms (default 120000)
+ *   CLASHCONTROL_AUTONOMY     — auto | confirm (default) | read_only — see
+ *                               bridge-governance.js. 'confirm' requires
+ *                               confirm:true on destructive tool calls
+ *                               (delete_*, batch_update_clashes, import_bcf).
+ *   CLASHCONTROL_AUTONOMY_GATE — on (default) | off — kill switch, disables
+ *                               the confirm gate entirely (audit logging
+ *                               still happens).
+ *
+ * Every tool call — via /call/{tool} or the /chat agent loop — is classified
+ * (bridge-governance.js) and appended to a hash-chained audit ledger under
+ * ~/.clashcontrol/audit/YYYY-MM-DD.jsonl (bridge-audit.js) before it reaches
+ * the browser. See BRIDGE_GOVERNANCE.md.
  *
  * Both files are bundled into the same binary by pkg.
  * Requires: ws (npm)
@@ -52,6 +64,8 @@ const os   = require('os');
 const fs   = require('fs');
 const path = require('path');
 const { WebSocketServer } = require('ws');
+const { checkAutonomy } = require('./bridge-governance');
+const auditLog = require('./bridge-audit');
 
 const VERSION  = require('./bridge-version.json').version;
 const WS_PORT  = parseInt(process.env.CLASHCONTROL_WS_PORT || '19802', 10);
@@ -107,7 +121,8 @@ const ERR = {
   LLM_INVALID_URL:       'llm_invalid_url',
   LLM_BAD_RESPONSE:      'llm_bad_response',
   LLM_API_ERROR:         'llm_api_error',
-  NOT_FOUND:             'not_found'
+  NOT_FOUND:             'not_found',
+  CONFIRMATION_REQUIRED: 'confirmation_required'
 };
 
 // ── LLM config persistence ─────────────────────────────────────────────────────
@@ -313,9 +328,9 @@ async function runAgentLoop(userMessage, history, cfg) {
       let result;
       try {
         const args = tc.function.arguments ? JSON.parse(tc.function.arguments) : {};
-        result = await callBrowser(tc.function.name, args);
+        result = await governedCallBrowser(tc.function.name, args, 'agent:chat-loop');
       } catch (e) {
-        result = { error: e.message };
+        result = { error: e.message, ...(e.steering ? { steering: e.steering } : {}) };
       }
       messages.push({
         role:         'tool',
@@ -521,6 +536,42 @@ function callBrowser(action, params) {
   });
 }
 
+// ── Governed entry point — every external tool call goes through here ────────
+// Wraps callBrowser with the autonomy gate (bridge-governance.js) and the
+// audit ledger (bridge-audit.js). `actor` is a pseudonymous ref identifying
+// the calling surface (REST /call, the local /chat agent loop, etc.) —
+// individual users are never identified.
+async function governedCallBrowser(action, params, actor) {
+  const decision = checkAutonomy(action, params);
+  const started = Date.now();
+
+  if (!decision.allowed) {
+    auditLog.record({
+      action, tier: decision.tier, result: 'rejected', actor,
+      durationMs: Date.now() - started, params, error: decision.error.reason,
+    });
+    const err = new Error(decision.error.reason);
+    err.code = 'confirmation_required';
+    err.steering = decision.error;
+    throw err;
+  }
+
+  try {
+    const result = await callBrowser(action, params);
+    auditLog.record({
+      action, tier: decision.tier, result: 'executed', actor,
+      durationMs: Date.now() - started, params, resultData: result,
+    });
+    return result;
+  } catch (e) {
+    auditLog.record({
+      action, tier: decision.tier, result: 'failed', actor,
+      durationMs: Date.now() - started, params, error: e && e.message,
+    });
+    throw e;
+  }
+}
+
 // ── HTTP / REST server ────────────────────────────────────────────────────────
 function buildOpenApi() {
   const paths = {};
@@ -707,9 +758,12 @@ const httpServer = http.createServer(async (req, res) => {
     let params = {};
     try { params = JSON.parse(body || '{}'); } catch (_) {}
     try {
-      const result = await callBrowser(action, params);
+      const result = await governedCallBrowser(action, params, 'agent:rest');
       return json(200, result);
     } catch (e) {
+      if (e.code === ERR.CONFIRMATION_REQUIRED) {
+        return json(409, { error: e.message, code: e.code, ...e.steering });
+      }
       return json(503, { error: e.message, code: e.code || ERR.BROWSER_NOT_CONNECTED });
     }
   }
