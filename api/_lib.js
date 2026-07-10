@@ -81,4 +81,35 @@ function llmGuard(req, res, opts) {
   return false;
 }
 
-module.exports = { cors, rateLimit, clientIp, dbUrl, llmGuard };
+// Retry transient upstream failures (network errors, 502/503/504) with
+// exponential backoff before handing control back to the caller. Adapted
+// from mealplannerapp's api/_lib/ai-call.js withRetry (cross-repo learning
+// plan, T11) — that repo's fallback-chain-plus-retry discipline was the
+// most battle-tested LLM plumbing across the account; ClashControl's /api/nl
+// and /api/triage had neither.
+//
+// Non-transient statuses (4xx, plain 500) are returned immediately so
+// callers keep their existing status-specific handling unchanged — /api/nl's
+// 429-quota and 400-tool_use_failed branches, in particular, must see the
+// first response as-is.
+async function fetchWithRetry(url, options, maxAttempts) {
+  maxAttempts = maxAttempts || 3;
+  var lastError;
+  for (var attempt = 0; attempt < maxAttempts; attempt++) {
+    try {
+      var res = await fetch(url, options);
+      if (res.status !== 502 && res.status !== 503 && res.status !== 504) return res;
+      if (attempt === maxAttempts - 1) return res; // exhausted — let the caller handle the final response
+      lastError = new Error('Upstream ' + res.status);
+    } catch (err) {
+      lastError = err;
+      if (attempt === maxAttempts - 1) throw err;
+    }
+    var delay = 500 * Math.pow(2, attempt); // 500ms, 1s
+    console.warn('[fetchWithRetry] transient failure (attempt ' + (attempt + 1) + '), retrying in ' + delay + 'ms:', lastError && lastError.message);
+    await new Promise(function (r) { setTimeout(r, delay); });
+  }
+  throw lastError;
+}
+
+module.exports = { cors, rateLimit, clientIp, dbUrl, llmGuard, fetchWithRetry };

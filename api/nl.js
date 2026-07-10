@@ -1,7 +1,7 @@
 // ClashControl — Groq NL proxy with native (OpenAI-style) function calling
 // Receives { command, context } from client, returns { intent, ...params }
 
-var { cors, llmGuard } = require('./_lib');
+var { cors, llmGuard, fetchWithRetry } = require('./_lib');
 
 // Hard cap on the user-provided NL command. Anything longer than this is
 // either a copy-paste mistake or a deliberate abuse attempt — neither
@@ -675,7 +675,7 @@ module.exports = async function handler(req, res) {
     if (body.replyContext) groqMessages.push({ role: 'assistant', content: body.replyContext });
     groqMessages.push({ role: 'user', content: body.command });
     try {
-      var gResp = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+      var gResp = await fetchWithRetry('https://api.groq.com/openai/v1/chat/completions', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + groqKey },
         body: JSON.stringify({
