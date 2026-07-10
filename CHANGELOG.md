@@ -1,5 +1,8 @@
 # Changelog
 
+## v5.21.17 (2026-07-10)
+- Add tool governance layer to the Smart Bridge (audit log + confirm gate) (#677)
+
 ## v5.21.16 (2026-07-08)
 - fix: dead public API, clash-engine parity, shared-project data loss, daily-sync crash (#676)
 
