@@ -10,7 +10,7 @@
 <!-- BEGIN:project-state -->
 ## Project State
 
-**Version:** 5.21.16 (2026-07-09) — daily-sync was silently crashing on MEMORY.md's own prose (see Known Issues); this line was stale for a month as a direct result, now corrected by hand.
+**Version:** 5.21.17 (2026-07-10) — daily-sync was silently crashing on MEMORY.md's own prose (see Known Issues); this line was stale for a month as a direct result, now corrected by hand.
 
 **Live features (all working):**
 - Mesh-based clash detection engine: AABB broad-phase + BVH tri-tri narrow-phase (Möller–Trumbore), optional `_ccWasmIntersect`/`_ccWasmMinDist` WASM accelerators; rules (discipline filters, clearance, group-by); soft/clearance via spatial-hash vertex distance; optional escalation to `local-engine.js` for true solid boolean ops
@@ -327,6 +327,19 @@ On branch `claude/code-review-quality-IjbhT` (2026-05-28) — code-review qualit
 <!-- END:active-work -->
 
 <!-- BEGIN:session-log -->
+### 2026-07-10
+**Summary:** 3 commit(s) landed (no AI summary — set ANTHROPIC_API_KEY secret for richer entries).
+**Changed:** see commits
+**Notable:** —
+
+<details><summary>Commits</summary>
+
+- 0fbe4f6 chore: bump version to 5.21.17
+- 0871fcc Add tool governance layer to the Smart Bridge (audit log + confirm gate) (#677)
+- 616ad35 chore: daily memory sync 2026-07-09
+
+</details>
+
 ### 2026-07-09
 **Summary:** 111 commit(s) landed (no AI summary — set ANTHROPIC_API_KEY secret for richer entries).
 **Changed:** see commits
@@ -1167,20 +1180,12 @@ On branch `claude/code-review-quality-IjbhT` (2026-05-28) — code-review qualit
 - f9b0010 chore: daily memory sync 2026-05-10
 
 </details>
-
-### 2026-05-10
-**Summary:** 1 commit(s) landed (no AI summary — set ANTHROPIC_API_KEY secret for richer entries).
-**Changed:** see commits
-**Notable:** —
-
-<details><summary>Commits</summary>
-
-- a09a822 chore: daily memory sync 2026-05-09
-
-</details>
 <!-- END:session-log -->
 
 <!-- BEGIN:cleanup-log -->
+### 2026-07-10 — pruned session entry 2026-05-10
+**Reason:** Entry is older than 60 days.
+
 ### 2026-07-09 — pruned session entry 2026-05-09
 **Reason:** Entry is older than 60 days.
 
