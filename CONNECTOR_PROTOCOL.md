@@ -2,6 +2,23 @@
 
 This document describes the open WebSocket protocol that ClashControl (`www.clashcontrol.io`) uses to communicate with a locally-running **Connector** application. Any tool — Revit plugin, Archicad add-on, Rhino script, Python service, etc. — that implements this protocol can act as a live data source for ClashControl.
 
+## Conformance language
+
+The keywords **MUST**, **SHOULD**, and **MAY** in this document are used per RFC 2119
+(adopted from Mycelium's `spec/connective-spine.md`, cross-repo learning plan T12 — this
+protocol was versioned informally before, with "should" used loosely rather than as a
+defined term). Existing prose below predates this section and has not been retrofitted
+keyword-by-keyword; new sections and edits should use the keywords deliberately.
+
+## Versioning
+
+Contract semver, matching Mycelium's convention: an **additive** change (a new optional
+field, a new message `type`, a new server-push notification) bumps **minor**; a **breaking**
+change (removing/renaming a required field, changing a message's shape, changing join/handshake
+semantics) bumps **major** and needs a documented migration note in this file. See
+[Protocol version](#protocol-version) below for the wire-level compatibility rule this
+maps to.
+
 ---
 
 ## Ports and transport
