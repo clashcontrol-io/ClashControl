@@ -6,7 +6,7 @@
  * Modes:
  *   Normal  — WebSocket server (port 19802) + REST API (port 19803).
  *             Auto-configures Claude Desktop on first run.
- *   --mcp   — MCP stdio server (51 tools). Claude Desktop spawns this.
+ *   --mcp   — MCP stdio server (66 tools). Claude Desktop spawns this.
  *   --install — Writes Claude Desktop config and exits.
  *
  * REST API endpoints (port 19803):

@@ -1210,4 +1210,4 @@ process.stdin.on('end', () => process.exit(0));
 process.on('uncaughtException', (err) => { console.error('[mcp] Fatal:', err); process.exit(1); });
 process.on('unhandledRejection', (err) => { console.error('[mcp] Unhandled:', err); process.exit(1); });
 
-console.error('[mcp] ClashControl MCP server ready (51 tools). Waiting for Claude Desktop…');
+console.error('[mcp] ClashControl MCP server ready (66 tools). Waiting for Claude Desktop…');

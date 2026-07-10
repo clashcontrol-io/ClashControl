@@ -2259,7 +2259,7 @@
                     : html`Auto-configures <code style=${{fontSize:'0.58rem',background:'var(--bg-tertiary)',padding:'1px 3px',borderRadius:2}}>~/.config/claude-desktop/claude_desktop_config.json</code> and restarts Claude.`}
                 ${' Or run '}
                 <code style=${{fontSize:'0.58rem',background:'var(--bg-tertiary)',padding:'1px 3px',borderRadius:2}}>node mcp-server.js --install</code>
-                ${' in the ClashControl folder for all 51 tools.'}
+                ${' in the ClashControl folder for all 66 tools.'}
               </div>
               <details>
                 <summary style=${{fontSize:'0.58rem',color:'var(--text-faint)',cursor:'pointer',userSelect:'none'}}>Show block to add</summary>

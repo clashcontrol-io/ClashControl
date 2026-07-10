@@ -2,7 +2,7 @@
 /**
  * ClashControl Smart Bridge — tool governance
  *
- * Every one of the 51 tools in mcp-server.js / addons/smart-bridge.js reaches
+ * Every one of the 66 tools in mcp-server.js / addons/smart-bridge.js reaches
  * a live project through smart-bridge-server.js's callBrowser(). Until now
  * that path had no policy layer: an LLM (or any local process that can reach
  * the REST/MCP surface) could call delete_model, delete_issue, delete_sheet,

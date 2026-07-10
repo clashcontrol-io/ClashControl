@@ -7,7 +7,7 @@ browser app with no synchronous confirm-dialog host.
 
 ## Why
 
-`smart-bridge-server.js` forwards every one of the 51 tools an LLM can call
+`smart-bridge-server.js` forwards every one of the 66 tools an LLM can call
 (`mcp-server.js`, the REST `/call/{tool}` API, and the `/chat` agent loop) to
 the browser via `callBrowser()`. Before this change that path had no policy
 layer: any caller that could reach the bridge could call `delete_model`,
