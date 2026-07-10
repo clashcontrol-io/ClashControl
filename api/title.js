@@ -10,7 +10,7 @@
 //   * TITLE_CACHE_TTL_MS — soft TTL, expired-on-read entries are deleted
 // Cold starts naturally wipe the cache.
 
-var { cors, llmGuard } = require('./_lib');
+var { cors, llmGuard, fetchWithRetry } = require('./_lib');
 
 // Overridable without a deploy — if the upstream ever 404s the default id
 // (check Vercel logs for 'title API error'), set GEMMA_MODEL in the env.
@@ -136,7 +136,7 @@ module.exports = async function handler(req, res) {
 
   try {
     var url = 'https://generativelanguage.googleapis.com/v1beta/models/' + encodeURIComponent(GEMMA_MODEL) + ':generateContent?key=' + encodeURIComponent(key);
-    var resp = await fetch(url, {
+    var resp = await fetchWithRetry(url, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
