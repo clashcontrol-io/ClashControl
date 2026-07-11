@@ -327,6 +327,20 @@ On branch `claude/code-review-quality-IjbhT` (2026-05-28) — code-review qualit
 <!-- END:active-work -->
 
 <!-- BEGIN:session-log -->
+### 2026-07-11
+**Summary:** 4 commit(s) landed (no AI summary — set ANTHROPIC_API_KEY secret for richer entries).
+**Changed:** see commits
+**Notable:** —
+
+<details><summary>Commits</summary>
+
+- 52a1faa resilience: retry transient LLM upstream failures with backoff (T11) (#678)
+- b7d6c6a chore: daily memory sync 2026-07-10
+- 0fbe4f6 chore: bump version to 5.21.17
+- 0871fcc Add tool governance layer to the Smart Bridge (audit log + confirm gate) (#677)
+
+</details>
+
 ### 2026-07-10
 **Summary:** 3 commit(s) landed (no AI summary — set ANTHROPIC_API_KEY secret for richer entries).
 **Changed:** see commits
@@ -1169,20 +1183,12 @@ On branch `claude/code-review-quality-IjbhT` (2026-05-28) — code-review qualit
 - 5af42ab feat: persist detection profile in detection-runs history
 
 </details>
-
-### 2026-05-11
-**Summary:** 1 commit(s) landed (no AI summary — set ANTHROPIC_API_KEY secret for richer entries).
-**Changed:** see commits
-**Notable:** —
-
-<details><summary>Commits</summary>
-
-- f9b0010 chore: daily memory sync 2026-05-10
-
-</details>
 <!-- END:session-log -->
 
 <!-- BEGIN:cleanup-log -->
+### 2026-07-11 — pruned session entry 2026-05-11
+**Reason:** Entry is older than 60 days.
+
 ### 2026-07-10 — pruned session entry 2026-05-10
 **Reason:** Entry is older than 60 days.
 
