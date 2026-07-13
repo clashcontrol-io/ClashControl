@@ -669,11 +669,29 @@ Solibri/Navisworks/OSS (IfcOpenShell, ThatOpen, xeokit, Speckle, BIMcollab, Revi
   inline color literals. `bca65a9`. 13 new tests across 2 files. 322/322 passing.
   **Still open from Wave 3**: `<ClippingPlanes>` export (deferred, confirmed shared gap not CC-specific) and
   stamp/auto-assignment rules (Revizto-style per-project templates — "no existing infrastructure found").
-- **Next**: the Wave 3 remainder just above, **watching the first real `ids-conformance` Actions run** (manual
-  or the Monday cron) and acting on whatever it finds — false positives/negatives in `wrong`, or a
-  corpus-fetch/harness bug in `errored` — since that's the one feature this session that shipped without any
-  local verification, Wave 5's IDS-conformance-CI item itself now fully closed out, and Wave 6 (Scale —
-  untouched; extra care required per this session's own
+- ~~**Stamp/auto-assignment rules (Wave 3's last item)**~~ (2026-07-13). Revizto-style per-project templates,
+  "discipline-pair × storey → assignee/priority", applied automatically to newly detected clashes. Scoped
+  first: clashes already carry a `disciplines` array (`_buildClashBase`) and `elemAStorey`/`elemBStorey`
+  directly — no new extraction needed, just consumption. New `_ccMatchAssignmentRule`/`_ccApplyAssignmentRules`
+  (pure, next to `mergeDetectionResults`) stamp only `c._delta==='new'` clashes with no assignee yet —
+  deliberately NOT touching `mergeDetectionResults` itself, whose persisting-clash branch already carries
+  forward a person's prior assignee/priority unconditionally. Disciplines match as an UNORDERED pair (a
+  clash's two sides carry no meaningful A/B order) with `'any'` wildcards; first matching rule wins.
+  New `s.assignmentRules` reducer slice, deliberately separate from `StandardsPanel`'s existing
+  discipline-pair clearance rules (those are global, plain `localStorage` — assignment policy is
+  project-specific), wired into all three persistence paths from day one (the previous commit's fix made
+  that possible to get right first try). UI lives inside `StandardsPanel` as a new "Assignment rules"
+  section — critically uses `DISC` (`structural/mep/architectural/civil/other`, what a clash's
+  `disciplines[]` actually carries) for its dropdowns, NOT `StandardsPanel`'s own `STANDARD_DISCIPLINES`
+  list (`mechanical`/`electrical`/...), which the scoping research flagged would silently never match
+  anything. `85edeb4`. 22 new tests across 2 files, 348/348 passing.
+  **Wave 3 is now done except `<ClippingPlanes>` export**, deliberately deferred (confirmed via Check 2 as a
+  shared gap, not CC-specific — validates the deferral rather than rushing untested camera/section math).
+- **Next**: `<ClippingPlanes>` export (Wave 3's one remaining piece — still deliberately deferred, not
+  attempted this session), **watching the first real `ids-conformance` Actions run** (manual or the Monday
+  cron) and acting on whatever it finds — false positives/negatives in `wrong`, or a corpus-fetch/harness bug
+  in `errored` — since that's the one feature this session that shipped without any local verification, and
+  Wave 6 (Scale — untouched; extra care required per this session's own
   history-informed guardrails: no geo-cache keying changes, no hand-rolled geometry merging).
 
 On branch `claude/codebase-review-optimization-3nltcw` (2026-07-08) — four-repo review sweep (in progress):
