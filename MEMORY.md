@@ -285,14 +285,57 @@ Solibri/Navisworks/OSS (IfcOpenShell, ThatOpen, xeokit, Speckle, BIMcollab, Revi
   an Advanced toggle by default. Wave 1.2's new default clash matrix means even the bare "Run detection"
   button (zero configuration) now runs with sane discipline filtering out of the box. The `excludeSelf`
   single-model gap above is the one real first-run trap left, and it's already logged separately.
+- ~~**Wave 1.7: show the detection funnel**~~ (2026-07-13). The default clash matrix (Wave 1.2) already
+  filters same-discipline noise on every run, but nothing surfaced that it had happened outside the
+  developer-only diagnostics panel. New `matrix_skipped` counter on the existing detection-profile object
+  (one counter, one increment site — the WASM chunk-warmup pre-filter re-tests the same matrix check as a
+  cache-population shortcut but every candidate still reaches the authoritative check in
+  `_processCandidate`, so counting only there avoids double-counting), shown as a new diagnostics-panel
+  row. More importantly: new `_showFunnelToast()` shows a one-line "N pairs checked → M filtered by
+  discipline matrix → K clashes found" toast to *every* user after *every* browser-engine run, no
+  diagnostics flag needed — hooked into `_browserDetect`'s own promise chain (the one function all 9
+  `detectClashesAsync` call sites funnel through) rather than touching each site, and only reads
+  `window._ccDetectProfile` right after that run set it so it can't show a stale number or leak in when
+  the local engine (which doesn't populate that global) handled the run. `f63743b` (PR #680 — #679 merged
+  mid-session, branch restarted from the new `main`, see below). 6 tests.
+  Wave 1.8 (spatial sub-clustering) and the `excludeSelf` single-model default trap remain deferred — same
+  reasoning as before (1.8 needs its own careful opt-in design, not a change to default grouping behavior;
+  `excludeSelf` touches dozens of call sites).
+- **PR #679 merged to `main` by explicit user instruction** ("merge to main. Continue with the to do's")
+  mid-session — squash-free `merge` method to preserve the granular one-fix-per-commit history. Per the
+  branch-restart convention, the designated branch was reset to the new `main` and PR #680 opened for
+  continued work — its diff is scoped to genuinely new commits (confirmed via `merge-base --is-ancestor`
+  before any push) rather than re-showing everything from #679. **Note for future sessions**: a
+  `force-with-lease` push during that reset was correctly blocked by the auto-mode classifier (the user's
+  merge instruction didn't name that specific destructive op) — the clean fix was cherry-picking the one
+  new commit onto the *old* (pre-reset) branch tip instead of onto the new `main`, since the old tip is now
+  an ancestor of `main` (regular merge, not squash) and a plain fast-forward push needs no force at all.
+- ~~**Wave 3.1: BCF viewpoints write `<Components><Selection>`**~~ (2026-07-13). The single biggest audited
+  interop gap: CC's BCF *exporter* wrote only `<PerspectiveCamera>` — no `<Components>` — so a CC-exported
+  BCF had no selectable elements in Solibri/BIMcollab/Navisworks, or even CC's own *importer*, which
+  already parses `<Component IfcGuid=...>` out of viewpoint files on the way in and has for a while. Every
+  exported topic now carries `<Components><Selection>` populated from the item's own identity data
+  (`globalIds`/`globalIdA`/`globalIdB`, deduped) — no new capture-side work needed, this data already
+  existed on every clash/issue. Placed before the camera element per the BCF schema's element order.
+  `34dc868`. 4 new tests in `tests/bcf-export.test.js` (element order, dedup, the no-identity-data case,
+  round-trip shape against CC's own importer).
+  **Deliberately narrow scope, two related gaps left for follow-up**: (1) issues with no linked, user-saved
+  viewpoint still get **no `.bcfv` file at all** — probably the common case for a quick "export these
+  clashes" action, since most users don't manually save+link a viewpoint per clash first. Fixing that means
+  synthesizing a reasonable default camera position from just a clash `point`, which needs its own careful
+  design (existing "frame a point" conventions live deep in the live-render closures, e.g. `_fitToClashes`/
+  `_zoomDist`, not yet checked for safe reuse at export time) rather than inventing new framing math under
+  time pressure — camera math is exactly the kind of thing this file already warns about getting wrong
+  without visual verification. (2) `<ClippingPlanes>` — CC already captures section-plane state on every
+  viewpoint (`vp.section`) but never exports it; the existing section-to-world-space conversion math (used
+  for live rendering, e.g. around `new THREE.Plane(...)` call sites in the section/section-box effects) is
+  deeply coupled to live scene state and wasn't yet confirmed safe to reuse at export time in one sitting.
 - **Next**: Wave 1.5 (`manifold3d` exact-volume tier, `ClashControlEngine` repo, own PR — separate repo,
-  hasn't been added to this session's write scope), Wave 1.7 (funnel UI — raw pairs → after matrix → after
-  tolerance → after grouping → issues, each count visible; needs instrumenting the detection pipeline
-  itself, more invasive than 1.6/1.9 turned out to be) or Wave 1.8 (spatial sub-clustering). Or the
-  `excludeSelf` single-model default trap just above — small in code, but touches enough call sites to
-  deserve dedicated attention rather than a rushed fix. Then Wave 3 (BCF fidelity — the single biggest
-  audited interop gap: CC's own BCF *exporter* never writes `<Components>`, so a CC-exported BCF has no
-  selectable elements in Solibri/BIMcollab despite CC's *importer* already parsing them).
+  hasn't been added to this session's write scope), Wave 1.8 (spatial sub-clustering, opt-in grouping
+  view), the `excludeSelf` single-model default trap, or the two BCF follow-ups just above (auto-synthesize
+  a viewpoint when none is linked; `<ClippingPlanes>` export). Then the rest of Wave 3 (bake 3D markups
+  into viewpoint snapshots; stamp/auto-assignment rules) and Waves 4-6 (search sets, IDS conformance,
+  scale).
 
 On branch `claude/codebase-review-optimization-3nltcw` (2026-07-08) — four-repo review sweep (in progress):
 
