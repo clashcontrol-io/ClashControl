@@ -653,12 +653,27 @@ Solibri/Navisworks/OSS (IfcOpenShell, ThatOpen, xeokit, Speckle, BIMcollab, Revi
   key off classification buckets, not ref lists, so a search set isn't a natural fit there.
   **Wave 4 is now fully done**: real find, copyable IDs, containment breadcrumb + hosted elements, Selection
   Set rename/`+`/`−` editing, element-vs-element diff, and dynamic search sets all shipped this session.
-- **Next**: the Wave 3 remainder (`<ClippingPlanes>` export — deferred, confirmed shared gap not CC-specific;
-  auto-synthesized default viewpoints for issues with no linked view; stamp/auto-assignment rules),
-  **watching the first real `ids-conformance` Actions run** (manual or the Monday cron) and acting on whatever
-  it finds — false positives/negatives in `wrong`, or a corpus-fetch/harness bug in `errored` — since that's
-  the one feature this session that shipped without any local verification, Wave 5's IDS-conformance-CI item
-  itself now fully closed out, and Wave 6 (Scale — untouched; extra care required per this session's own
+- ~~**Auto-synthesized default BCF viewpoints (Wave 3)**~~ (2026-07-13). Scoped first since this looked like
+  it might be another `<ClippingPlanes>`-shaped deferral ("needs live scene state that only exists inside
+  reducer-driven effects, not a pure function") — it wasn't: every element already carries a real world-space
+  bbox on `state.models[i].elements[j].box` (the same authoritative data `window._ccElemsBBox` already unions
+  live), flowing into `exportBCF`'s existing `state` parameter with zero new plumbing. The one thing genuinely
+  unavailable at export time is a "current camera angle" to imitate (no live Three.js scene), so the
+  synthesized camera always uses a fixed isometric-ish offset rather than guessing one. New
+  `_lookupElBox`/`_ccBoxFinite`/`_ccSynthesizeViewpoint` (placed right before `exportBCF`, their only caller):
+  handles both identity shapes issues carry — `elemA`/`elemB`+`modelAId`/`modelBId` (clash pairs, unions both
+  boxes) and `elementId`/`modelId` (single-element DQ/accessibility issues) — falling through to no
+  synthesized viewpoint (today's existing behavior) when nothing resolves, rather than fabricating a
+  meaningless generic camera with no real geometry behind it. Distance formula duplicated from the private
+  `_zoomDist` (different closure) rather than exposed cross-scope — same reasoning as the Coloring commit's
+  inline color literals. `bca65a9`. 13 new tests across 2 files. 322/322 passing.
+  **Still open from Wave 3**: `<ClippingPlanes>` export (deferred, confirmed shared gap not CC-specific) and
+  stamp/auto-assignment rules (Revizto-style per-project templates — "no existing infrastructure found").
+- **Next**: the Wave 3 remainder just above, **watching the first real `ids-conformance` Actions run** (manual
+  or the Monday cron) and acting on whatever it finds — false positives/negatives in `wrong`, or a
+  corpus-fetch/harness bug in `errored` — since that's the one feature this session that shipped without any
+  local verification, Wave 5's IDS-conformance-CI item itself now fully closed out, and Wave 6 (Scale —
+  untouched; extra care required per this session's own
   history-informed guardrails: no geo-cache keying changes, no hand-rolled geometry merging).
 
 On branch `claude/codebase-review-optimization-3nltcw` (2026-07-08) — four-repo review sweep (in progress):
