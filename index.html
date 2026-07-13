@@ -17544,6 +17544,12 @@ function startApp() {
           </div>`;
         })}
       </div>
+      ${multiSel.length===2 && html`<div style=${{borderTop:'1px solid var(--border)',padding:'.5rem .6rem',flexShrink:0,background:'var(--bg-secondary)',maxHeight:220,overflowY:'auto'}}>
+        <div style=${{fontSize:'0.69rem',fontWeight:700,color:'var(--text-muted)',textTransform:'uppercase',letterSpacing:'.04em',marginBottom:'.3rem'}}>Compare selected (2)</div>
+        <${PropDiffView}
+          pA=${_lookupElProps(s.models, multiSel[0].modelId, multiSel[0].expressId)}
+          pB=${_lookupElProps(s.models, multiSel[1].modelId, multiSel[1].expressId)} />
+      </div>`}
       ${/* Selection Sets — save & restore named element groups */ ''}
       <div style=${{borderTop:'1px solid var(--border)',padding:'.5rem .6rem',flexShrink:0,background:'var(--bg-secondary)'}}>
         <div style=${{display:'flex',alignItems:'center',gap:'.3rem',marginBottom:'.3rem'}}>
@@ -21197,12 +21203,89 @@ function startApp() {
   }
 
   function _lookupElProps(models, modelId, expressId) {
-    var m = models.find(function(m){ return m.id === modelId; });
-    if (!m) return null;
-    var el = (m.elements||[]).find(function(e){ return e.expressId === expressId; });
-    return el ? el.props : null;
+    // modelId is often null in practice (e.g. Selection Sets / Navigator
+    // multiSel refs never populate it) - fall back to searching every model
+    // by expressId alone, same lenient convention _findMeshByRef already
+    // uses ("if (modelId) filter by it" - never a hard requirement).
+    var pool = modelId ? models.filter(function(m){ return m.id === modelId; }) : models;
+    for (var i=0; i<pool.length; i++) {
+      var el = ((pool[i].elements)||[]).find(function(e){ return e.expressId === expressId; });
+      if (el) return el.props;
+    }
+    return null;
   }
   window._ccLookupElProps = _lookupElProps;
+
+  // Aligned element-vs-element property diff. multiSel + PropBlock already
+  // existed (stacked A/B display in the clash panel) but nothing aligned two
+  // elements' properties side by side or flagged which ones actually differ -
+  // exactly the comparison a coordinator reaches for when two similar-looking
+  // elements turn out to behave differently. Union of both sides' quantity/
+  // pset keys so a property only one element carries still shows as a row
+  // (missing on the other side), not silently dropped.
+  function _diffElementProps(pA, pB) {
+    var rows = [];
+    function addRow(label, a, b) {
+      a = a==null||a==='' ? null : String(a);
+      b = b==null||b==='' ? null : String(b);
+      rows.push({label:label, a:a, b:b, same: a===b});
+    }
+    addRow('Type', pA&&pA.ifcType, pB&&pB.ifcType);
+    addRow('Name', pA&&pA.name, pB&&pB.name);
+    addRow('Object Type', pA&&pA.objectType, pB&&pB.objectType);
+    addRow('Storey', pA&&pA.storey, pB&&pB.storey);
+    addRow('Material', pA&&pA.material, pB&&pB.material);
+    addRow('GlobalId', pA&&pA.globalId, pB&&pB.globalId);
+    var qKeys = {};
+    Object.keys((pA&&pA.quantities)||{}).forEach(function(k){qKeys[k]=1;});
+    Object.keys((pB&&pB.quantities)||{}).forEach(function(k){qKeys[k]=1;});
+    Object.keys(qKeys).sort().forEach(function(k){
+      addRow('Qty: '+k, pA&&pA.quantities&&pA.quantities[k], pB&&pB.quantities&&pB.quantities[k]);
+    });
+    var pPairs = {};
+    function collectPsetKeys(p) {
+      if (!p || !p.psets) return;
+      Object.keys(p.psets).forEach(function(setName){
+        Object.keys(p.psets[setName]||{}).forEach(function(propName){ pPairs[setName+' | '+propName] = {setName:setName, propName:propName}; });
+      });
+    }
+    collectPsetKeys(pA); collectPsetKeys(pB);
+    Object.keys(pPairs).sort().forEach(function(sk){
+      var pair = pPairs[sk];
+      var av = pA&&pA.psets&&pA.psets[pair.setName]&&pA.psets[pair.setName][pair.propName];
+      var bv = pB&&pB.psets&&pB.psets[pair.setName]&&pB.psets[pair.setName][pair.propName];
+      addRow(pair.setName+': '+pair.propName, av, bv);
+    });
+    return rows;
+  }
+  window._ccDiffElementProps = _diffElementProps;
+
+  function PropDiffView(props) {
+    var pA=props.pA, pB=props.pB;
+    if (!pA || !pB) return null;
+    var rows = _diffElementProps(pA, pB);
+    var diffRows = rows.filter(function(r){return !r.same;});
+    var LS={fontSize:'0.63rem',color:'var(--text-muted)'};
+    var GRID={display:'grid',gridTemplateColumns:'76px 1fr 1fr',gap:'.3rem',padding:'.15rem 0',borderBottom:'1px solid var(--border-subtle)'};
+    return html`<div>
+      <div style=${{fontSize:'0.63rem',color:'var(--text-faint)',marginBottom:'.3rem'}}>
+        ${diffRows.length} of ${rows.length} propert${rows.length===1?'y':'ies'} differ
+      </div>
+      <div style=${{...GRID,borderBottom:'1px solid var(--border)'}}>
+        <span style=${LS}></span>
+        <span style=${{...LS,fontWeight:700,color:'var(--accent-subtle)'}}>A</span>
+        <span style=${{...LS,fontWeight:700,color:'#fca5a5'}}>B</span>
+      </div>
+      ${rows.map(function(r,idx){
+        var VS={fontSize:'0.63rem',color:r.same?'var(--text-primary)':'#fbbf24',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'};
+        return html`<div key=${idx} style=${{...GRID,background:r.same?'none':'rgba(245,158,11,.08)'}}>
+          <span style=${LS} title=${r.label}>${r.label}</span>
+          <span style=${VS} title=${r.a||''}>${r.a==null?'—':r.a}</span>
+          <span style=${VS} title=${r.b||''}>${r.b==null?'—':r.b}</span>
+        </div>`;
+      })}
+    </div>`;
+  }
 
   function ClashProps(props) {
     var it=props.item, models=props.models, isClash=props.isClash!==false;
