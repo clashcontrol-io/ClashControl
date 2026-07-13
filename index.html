@@ -4948,6 +4948,24 @@ function startApp() {
   }
   window._ccCancelDetection = cancelDetection;
 
+  // Wave 1.7 funnel — a one-line "how did we get from raw pairs to this clash
+  // count" toast, so the matrix/tolerance filtering that already runs on every
+  // detection is visible without opening the diagnostics profile panel
+  // (s.diagnostics-gated, off by default — most users would never see it).
+  // window._ccDetectProfile is set synchronously at the end of
+  // _detectClashesCore, so reading it right after _browserDetect's own promise
+  // resolves is always the profile for THIS run, not a stale one from a
+  // previous run or the local engine (which doesn't populate this global).
+  function _showFunnelToast() {
+    try {
+      var p = window._ccDetectProfile;
+      if (!p || !window._ccToast || typeof p.candidates !== 'number') return;
+      var msg = p.candidates + ' pair' + (p.candidates===1?'':'s') + ' checked';
+      if (p.matrix_skipped > 0) msg += ' → ' + p.matrix_skipped + ' filtered by discipline matrix';
+      msg += ' → ' + p.clashes_found + ' clash' + (p.clashes_found===1?'':'es') + ' found';
+      window._ccToast(msg);
+    } catch(e) {}
+  }
   function _browserDetect(models, rules, onProgress, gen) {
     return _preExtractGLBGeometry(models).then(function() {
       return new Promise(function(resolve, reject) {
@@ -4962,6 +4980,9 @@ function startApp() {
           resolve([]);
         }
       });
+    }).then(function(result) {
+      if (gen === _ccDetectGeneration) _showFunnelToast();
+      return result;
     });
   }
 
@@ -5133,6 +5154,7 @@ function startApp() {
     var _activeMemoSet = _tpMemoApplied ? new Set(_tpMemoBefore.activeMemo) : null;
     var _nMemoSkipped = 0;
     var _nPairCacheReemit = 0;
+    var _nMatrixSkipped = 0; // Wave 1.7 funnel — see the _ccMatrixSkipsSameDiscipline call in _processCandidate
     // Detection-feedback "protected" pairs (Loam's ingest_detection_feedback): an
     // element-type pair whose suppression turned out to eat REAL clashes
     // (realRate ≥ threshold) must NOT be auto-suppressed by the type-pair memo.
@@ -5294,7 +5316,11 @@ function startApp() {
       }
 
       // Default clash matrix — see _ccMatrixSkipsSameDiscipline for the policy.
-      if (_ccMatrixSkipsSameDiscipline(eA, mA, eB, mB, sameModel, rules)) return;
+      // Every candidate pair reaches exactly this one check (the WASM chunk
+      // warmup pre-filter above re-tests the same call as a cache-population
+      // shortcut, but never bypasses this one), so counting only here gives
+      // an accurate, non-double-counted total for the funnel.
+      if (_ccMatrixSkipsSameDiscipline(eA, mA, eB, mB, sameModel, rules)) { _nMatrixSkipped++; return; }
 
       // ── Type-pair impossibility memo (Phase 2.4) ────────────────
       // Active only when the model fingerprint + rules hash both match
@@ -5680,6 +5706,7 @@ function startApp() {
       soft_tests: _nSoftTests,
       memo_skipped: _nMemoSkipped,
       memo_active_pairs: _activeMemoSet ? _activeMemoSet.size : 0,
+      matrix_skipped: _nMatrixSkipped,
       pair_cache_reemits: _nPairCacheReemit,
       pair_cache_size: _pairResultCache.size,
       bvh_cache_max: _BVH_CACHE_MAX,
@@ -13995,6 +14022,9 @@ function startApp() {
         </div>
         ${(detectProfile.memo_active_pairs > 0 || detectProfile.memo_skipped > 0) && html`<div style=${{display:'flex',justifyContent:'space-between',padding:'.1rem 0',color:'var(--text-faint)'}}>
           <span>Memo skipped</span><span style=${{fontFamily:'var(--font-mono)'}}>${detectProfile.memo_skipped} / ${detectProfile.memo_active_pairs} pairs</span>
+        </div>`}
+        ${detectProfile.matrix_skipped > 0 && html`<div style=${{display:'flex',justifyContent:'space-between',padding:'.1rem 0',color:'var(--text-faint)'}}>
+          <span>Matrix skipped</span><span style=${{fontFamily:'var(--font-mono)'}}>${detectProfile.matrix_skipped} pairs</span>
         </div>`}
         ${detectProfile.pair_cache_reemits > 0 && html`<div style=${{display:'flex',justifyContent:'space-between',padding:'.1rem 0',color:'var(--text-faint)'}}>
           <span>Pair cache re-emits</span><span style=${{fontFamily:'var(--font-mono)'}}>${detectProfile.pair_cache_reemits} / ${detectProfile.pair_cache_size}</span>
