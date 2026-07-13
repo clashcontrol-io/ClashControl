@@ -7183,7 +7183,11 @@ function startApp() {
 
     el.addEventListener('mousedown', function(e) {
       if(_sboxDragging || _walkActive || window._ccSectionDragging) return; // don't orbit while dragging section box / plane handles or in walk mode
-      if (e.button===0) { dragging=true; _orbitDragging=true; var _s3d=window._ccState3d; if(_s3d&&_s3d._sectionCutLines) _s3d._sectionCutLines.visible=false; }
+      // Shift+left = pan fallback for trackpad/no-middle-button users (real
+      // middle-mouse-button pan below is unaffected). Ctrl/Cmd is multi-select
+      // on click elsewhere in the app, so Shift is free here.
+      if (e.button===0 && e.shiftKey) { panning=true; _orbitDragging=true; e.preventDefault(); el.style.cursor='move'; var _s3d3=window._ccState3d; if(_s3d3&&_s3d3._sectionCutLines) _s3d3._sectionCutLines.visible=false; }
+      else if (e.button===0) { dragging=true; _orbitDragging=true; var _s3d=window._ccState3d; if(_s3d&&_s3d._sectionCutLines) _s3d._sectionCutLines.visible=false; }
       if (e.button===1) { panning=true; _orbitDragging=true; e.preventDefault(); el.style.cursor='move'; var _s3d2=window._ccState3d; if(_s3d2&&_s3d2._sectionCutLines) _s3d2._sectionCutLines.visible=false; }
       if (e.button===2) return; // reserved for context menu
       lx=e.clientX; ly=e.clientY; e.preventDefault();
@@ -23657,6 +23661,11 @@ function startApp() {
         ['?',           'Open this shortcuts panel'],
         ['Esc',         'Close any open modal, menu, or walk mode'],
         ['Cmd / Ctrl K','Open command palette (find any tool, run AI)'],
+      ]},
+      { title: 'Mouse', rows: [
+        ['Left-drag',   'Orbit'],
+        ['Middle-drag / Shift+Left-drag', 'Pan'],
+        ['Scroll',      'Zoom to cursor'],
       ]},
       { title: 'View', rows: [
         ['1',           'Standard rendering'],
