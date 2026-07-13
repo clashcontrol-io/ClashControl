@@ -692,6 +692,12 @@ function startApp() {
     { id:'civil',         label:'Civil',         c:'#10b981', accent:'#059669' },
     { id:'other',         label:'Other',         c:'#f59e0b', accent:'#d97706' },
   ];
+  // Same discipline → same color regardless of which one has the most
+  // elements in a given federation (unlike CLASS_COLORS, which is assigned
+  // by rank). Used by colorByClass:'byDiscipline' (3D scene + Navigator
+  // panel dots) so structural/MEP/etc. read consistently across projects.
+  var DISC_COLOR_BY_ID = {};
+  DISC.forEach(function(d){ DISC_COLOR_BY_ID[d.id] = d.c; });
   var STAT = {
     open:          { label:'Open',          bg:'#ef4444' },
     confirmed:     { label:'Confirmed',     bg:'#0f766e' },
@@ -12900,13 +12906,19 @@ function startApp() {
       var gKeys = Object.keys(groups).sort(function(a,b){return (groups[b].count||0)-(groups[a].count||0)});
       var colorMap={};
       var _chunkColors={};                                              // [Stage 2B] modelId_eid → THREE.Color
-      var _classCol = CLASS_COLORS.map(function(h){ return new THREE.Color(h); });
+      // byDiscipline: same discipline gets the same color regardless of which
+      // one happens to have the most elements in this federation (DISC, not
+      // rank). Every other view keeps the existing rank-indexed palette.
+      var _groupHex = gKeys.map(function(k,idx){
+        return (view==='byDiscipline' && DISC_COLOR_BY_ID[k]) ? DISC_COLOR_BY_ID[k] : CLASS_COLORS[idx%CLASS_COLORS.length];
+      });
+      var _classCol = _groupHex.map(function(h){ return new THREE.Color(h); });
       gKeys.forEach(function(k,idx){
         var grp=groups[k];
         if(grp&&grp.items){
           grp.items.forEach(function(it){
             colorMap[it.modelId+'_'+it.expressId]=idx;
-            _chunkColors[it.modelId+'_'+it.expressId]=_classCol[idx%_classCol.length];
+            _chunkColors[it.modelId+'_'+it.expressId]=_classCol[idx];
           });
         }
       });
@@ -12925,7 +12937,7 @@ function startApp() {
         var ci=colorMap[modelId+'_'+eid];
         if(ci!=null){
           saved.push({mesh:obj, color:obj.material.color.clone(), wasVisible:obj.visible});
-          obj.material.color.set(CLASS_COLORS[ci%CLASS_COLORS.length]);
+          obj.material.color.set(_groupHex[ci]);
           obj.visible = true;
         } else {
           var origMat = obj.material;
@@ -17026,7 +17038,7 @@ function startApp() {
           var pct = total>0 ? Math.round(grp.count/total*100) : 0;
           var visKey = classView+':'+k;
           var isHidden = !!s.hiddenClasses[visKey];
-          var barColor = s.colorByClass===classView ? CLASS_COLORS[idx%CLASS_COLORS.length] : (classView==='byDiscipline'?'#60a5fa':classView==='byType'?'#c084fc':classView==='byStorey'?'#34d399':'#fbbf24');
+          var barColor = s.colorByClass===classView ? (classView==='byDiscipline' && DISC_COLOR_BY_ID[k] ? DISC_COLOR_BY_ID[k] : CLASS_COLORS[idx%CLASS_COLORS.length]) : (classView==='byDiscipline'?'#60a5fa':classView==='byType'?'#c084fc':classView==='byStorey'?'#34d399':'#fbbf24');
           return html`<div key=${k} style=${{padding:'.3rem .6rem',borderBottom:'1px solid var(--border-subtle)',opacity:isHidden?.4:1,transition:'opacity .2s'}}>
             <div style=${{display:'flex',alignItems:'center',gap:'.3rem',marginBottom:'.15rem'}}>
               <span onClick=${function(){d({t:A.TOGGLE_CLASS_VIS,key:visKey})}}
