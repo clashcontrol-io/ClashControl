@@ -13785,6 +13785,7 @@ function startApp() {
         </button>
       </div>`}
       ${html`<${ViewCube} state3d=${state3d} theme=${s.prefs.theme||'light'} />`}
+      ${html`<${ColorLegend} s=${s} />`}
       ${s.floorPlan && html`<div style=${{...P,top:'9.75rem',right:'var(--space-2)',background:'var(--accent)',color:'#fff',pointerEvents:'auto',cursor:'pointer',display:'flex',alignItems:'center',gap:'var(--space-2)'}}
         onClick=${function(){d({t:A.FLOOR_PLAN,v:null})}}>
         <span>3D Section: ${s.floorPlan.storeyName} · ${_ccFormatElev(s.floorPlan.elevation+(s.floorPlan.cutHeight||1.2)/(window._ccPlanGeoFactor||1))}</span>
@@ -13905,6 +13906,41 @@ function startApp() {
           </button>
         </div>
       </div>`}
+    </div>`;
+  }
+
+  // ── On-canvas color legend ─────────────────────────────────────
+  // Mirrors the swatch/label/count each color-by-class row already shows in
+  // the Navigator panel (17135), but next to the model so you don't have to
+  // cross the screen to read what a color means (BIMcollab Smart-View parity).
+  // Sort + color-index logic is intentionally identical to the 3D scene tint
+  // effect (colorByClass useEffect above) so swatches never drift from what's
+  // actually painted on the model.
+  function ColorLegend(props) {
+    var s = props.s;
+    var view = s.colorByClass;
+    var groups = view && s.classifications ? s.classifications[view] || {} : {};
+    var gKeys = Object.keys(groups).sort(function(a,b){return (groups[b].count||0)-(groups[a].count||0);});
+    if (!view || !gKeys.length) return null;
+    var CLASS_COLORS = ['#60a5fa','#f87171','#34d399','#fbbf24','#c084fc','#fb923c','#22d3ee','#e879f9','#a3e635','#f472b6','#38bdf8','#facc15','#4ade80','#f97316','#818cf8'];
+    var VIEW_LABELS = {byType:'IFC Type', byStorey:'Storey', byDiscipline:'Discipline', byMaterial:'Material'};
+    var CAP = 10;
+    var shown = gKeys.slice(0, CAP);
+    var extra = gKeys.length - shown.length;
+    return html`<div style=${{position:'absolute',bottom:'var(--space-3)',left:'var(--space-3)',background:'var(--overlay-bg-strong)',border:'1px solid var(--border-subtle)',borderRadius:'var(--radius-sm)',padding:'var(--space-2) var(--space-3)',pointerEvents:'none',maxWidth:220,zIndex:6}}>
+      <div style=${{fontSize:'var(--text-2xs)',fontWeight:'var(--weight-semibold)',textTransform:'uppercase',letterSpacing:'.06em',color:'var(--text-muted)',marginBottom:'var(--space-1)'}}>${VIEW_LABELS[view]||view}</div>
+      <div style=${{display:'flex',flexDirection:'column',gap:'2px'}}>
+        ${shown.map(function(k,idx){
+          var grp = groups[k];
+          var hex = (view==='byDiscipline' && DISC_COLOR_BY_ID[k]) ? DISC_COLOR_BY_ID[k] : CLASS_COLORS[idx%CLASS_COLORS.length];
+          return html`<div key=${k} style=${{display:'flex',alignItems:'center',gap:'var(--space-2)',fontSize:'var(--text-2xs)'}}>
+            <span style=${{width:8,height:8,borderRadius:'50%',background:hex,flexShrink:0}}></span>
+            <span style=${{color:'var(--text-secondary)',flex:1,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>${grp.label||k}</span>
+            <span style=${{color:'var(--text-faint)',fontFamily:'var(--font-mono)'}}>${grp.count||0}</span>
+          </div>`;
+        })}
+        ${extra>0 && html`<div style=${{fontSize:'var(--text-2xs)',color:'var(--text-faint)',fontStyle:'italic',marginTop:'2px'}}>+${extra} more</div>`}
+      </div>
     </div>`;
   }
 
