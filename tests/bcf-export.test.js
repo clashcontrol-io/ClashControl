@@ -53,13 +53,23 @@ function runExport(version) {
   };
   const fn = new Function(...Object.keys(sandbox), fnSrc + '; return exportBCF;')(...Object.values(sandbox));
 
+  // bcfGuid is set explicitly on both items - the sandbox's guid() stub
+  // always returns the same fixed value, which would make two items
+  // collide on the same zip folder and silently overwrite each other.
   const items = [{
-    id: 'i1', title: 'Duct <hits> beam', type: 'hard', status: 'open',
+    id: 'i1', bcfGuid: 'topic-1', title: 'Duct <hits> beam', type: 'hard', status: 'open',
     description: 'desc', assignee: 'a@b.c', createdAt: '2026-06-10T00:00:00Z',
-    revitIdA: '111',
+    revitIdA: '111', globalIdA: 'GUID_DUCT_AAAA', globalIdB: 'GUID_BEAM_BBBB',
+    globalIds: ['GUID_DUCT_AAAA', 'GUID_BEAM_BBBB'],
+  }, {
+    id: 'i2', bcfGuid: 'topic-2', title: 'No identity data', type: 'soft', status: 'open',
+    description: 'desc', createdAt: '2026-06-10T00:00:00Z',
   }];
   const viewpoints = [{
     linkedId: 'i1', snapshot: 'data:image/png;base64,AAAA',
+    camera: { px: 1, py: 2, pz: 3, dx: 0, dy: 1, dz: 0, ux: 0, uy: 0, uz: 1 },
+  }, {
+    linkedId: 'i2', snapshot: 'data:image/png;base64,AAAA',
     camera: { px: 1, py: 2, pz: 3, dx: 0, dy: 1, dz: 0, ux: 0, uy: 0, uz: 1 },
   }];
   fn(items, version, viewpoints, {});
@@ -109,4 +119,44 @@ test('BCF 2.1 export keeps Markup-level viewpoints and repeated Labels', () => {
   assert.ok(vpPos > topicEnd, '2.1 Viewpoints are Markup-level, after Topic');
   const bcfv = files[names.find((n) => n.endsWith('.bcfv'))];
   assert.ok(!bcfv.includes('<AspectRatio>'), 'AspectRatio is 3.0-only');
+});
+
+test('viewpoints carry <Components><Selection> for the participating elements, deduplicated', () => {
+  const files = runExport('3.0');
+  const bcfvName = Object.keys(files).find((n) => n.startsWith('topic-1/') && n.endsWith('.bcfv'));
+  const bcfv = files[bcfvName];
+  assert.ok(bcfv.includes('<Components>'), 'Components block must be present when identity data exists');
+  const compMatches = bcfv.match(/<Component IfcGuid="[^"]*"\/>/g) || [];
+  assert.deepEqual(compMatches.sort(), [
+    '<Component IfcGuid="GUID_BEAM_BBBB"/>',
+    '<Component IfcGuid="GUID_DUCT_AAAA"/>',
+  ], 'globalIds and globalIdA/B overlap - each GUID must appear exactly once, not 4 times');
+});
+
+test('<Components> precedes the camera element (BCF schema element order)', () => {
+  const files = runExport('3.0');
+  const bcfvName = Object.keys(files).find((n) => n.startsWith('topic-1/') && n.endsWith('.bcfv'));
+  const bcfv = files[bcfvName];
+  const compPos = bcfv.indexOf('<Components>');
+  const camPos = bcfv.indexOf('<PerspectiveCamera>');
+  assert.ok(compPos !== -1 && camPos !== -1 && compPos < camPos);
+});
+
+test('no <Components> block at all when the item carries no identity data (avoids an empty, pointless element)', () => {
+  const files = runExport('3.0');
+  const bcfvName = Object.keys(files).find((n) => n.startsWith('topic-2/') && n.endsWith('.bcfv'));
+  const bcfv = files[bcfvName];
+  assert.ok(!bcfv.includes('<Components>'));
+});
+
+test('<Components><Selection> shape matches what ClashControl\'s own BCF importer parses back out', () => {
+  // The importer (index.html, BCF import) does vdoc.querySelectorAll('Component')
+  // and reads the IfcGuid attribute - confirm the exporter's tag/attribute name
+  // matches exactly, both BCF versions, so CC can round-trip its own exports.
+  ['2.1', '3.0'].forEach((version) => {
+    const files = runExport(version);
+    const bcfvName = Object.keys(files).find((n) => n.startsWith('topic-1/') && n.endsWith('.bcfv'));
+    const bcfv = files[bcfvName];
+    assert.ok(/<Selection>[\s\S]*<Component IfcGuid="GUID_DUCT_AAAA"\/>[\s\S]*<\/Selection>/.test(bcfv));
+  });
 });

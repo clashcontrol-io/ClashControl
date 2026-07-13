@@ -6531,6 +6531,21 @@ function startApp() {
       }
       var vpGuid = vp ? (v3 ? guid().toLowerCase() : guid()) : null;
 
+      // <Components><Selection> — the participating element(s), so the
+      // topic actually has something selectable when opened in Solibri/
+      // BIMcollab/Navisworks. CC's own BCF *importer* already parses
+      // <Component IfcGuid=...> out of the viewpoint file (see the import
+      // side above); the exporter never wrote it, so a CC-exported BCF had
+      // no selectable elements anywhere, in any tool including CC itself.
+      // Clash-promoted issues carry globalIds (from _issueIdentityFromClash)
+      // and/or globalIdA/B directly; check both defensively so this works
+      // for both a raw clash object and a promoted issue.
+      var _compGuids = [];
+      if (Array.isArray(it.globalIds)) it.globalIds.forEach(function(g){ if (g && _compGuids.indexOf(g)<0) _compGuids.push(g); });
+      if (it.globalIdA && _compGuids.indexOf(it.globalIdA)<0) _compGuids.push(it.globalIdA);
+      if (it.globalIdB && _compGuids.indexOf(it.globalIdB)<0) _compGuids.push(it.globalIdB);
+      if (it.globalId && _compGuids.indexOf(it.globalId)<0) _compGuids.push(it.globalId);
+
       // ── Collect label strings (cc:* round-trip payload) ─────────
       // 2.1 emits repeated <Labels>; 3.0 wraps them as <Labels><Label>.
       var labels = [];
@@ -6702,6 +6717,12 @@ function startApp() {
 
       if (vp && vpGuid) {
         var vpXml = '<?xml version="1.0" encoding="UTF-8"?>\n<VisualizationInfo Guid="'+vpGuid+'">\n';
+        // Components must precede the camera choice in the BCF schema order.
+        if (_compGuids.length) {
+          vpXml += '  <Components>\n    <Selection>\n';
+          _compGuids.forEach(function(cg){ vpXml += '      <Component IfcGuid="'+esc(cg)+'"/>\n'; });
+          vpXml += '    </Selection>\n  </Components>\n';
+        }
         vpXml += '  <PerspectiveCamera>\n';
         vpXml += '    <CameraViewPoint><X>'+vp.camera.px.toFixed(6)+'</X><Y>'+vp.camera.py.toFixed(6)+'</Y><Z>'+vp.camera.pz.toFixed(6)+'</Z></CameraViewPoint>\n';
         vpXml += '    <CameraDirection><X>'+vp.camera.dx.toFixed(6)+'</X><Y>'+vp.camera.dy.toFixed(6)+'</Y><Z>'+vp.camera.dz.toFixed(6)+'</Z></CameraDirection>\n';
