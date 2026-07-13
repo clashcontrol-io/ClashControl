@@ -589,6 +589,10 @@ clashcontrol-engine --install</pre>
       if (!m.elements) return;
       m.elements.forEach(function(el) {
         if (!el.meshes || !el.meshes.length) return;
+        // Mirror the browser engine's own pre-filter (index.html ~4388) so the
+        // "exact" engine is never less filtered than the browser one while the
+        // Python side doesn't yet honor rules.includeSpaces itself.
+        if (!rules.includeSpaces && el.props && el.props.ifcType === 'IfcSpace') return;
         var verts = [], indices = [];
         el.meshes.forEach(function(mesh) {
           if (!mesh.geometry) return;
@@ -615,9 +619,27 @@ clashcontrol-engine --install</pre>
         });
       });
     });
-    var r = {modelA:rules.modelA, modelB:rules.modelB, maxGap:rules.maxGap||0, mode:rules.mode||'hard'};
+    // rules.mode isn't a field the browser's own rules object carries (it uses
+    // rules.hard + rules.maxGap instead, see _detectClashesCore/_processCandidate
+    // in index.html) - derive the engine's hard/soft/both the same way the
+    // browser branches: hard-only, hard+near-miss ("both"), or soft-only.
+    // Previously this always fell through to the 'hard' default below, so a
+    // soft/clearance-only run silently ran as hard-only on the local engine.
+    var mode = rules.hard ? ((rules.maxGap||0) > 0 ? 'both' : 'hard') : 'soft';
+    var r = {
+      modelA: rules.modelA, modelB: rules.modelB, mode: mode,
+      maxGap: rules.maxGap||0, minGap: rules.minGap||0,
+      duplicates: !!rules.duplicates, includeSpaces: !!rules.includeSpaces,
+      minOverlapVolM3: rules.minOverlapVolM3||0, excludeTypes: rules.excludeTypes||[]
+    };
     if (rules.excludeSelf != null) r.excludeSelf = rules.excludeSelf;
     if (rules.excludeTypePairs) r.excludeTypePairs = rules.excludeTypePairs;
+    if (rules.toleranceByTypePair) r.toleranceByTypePair = rules.toleranceByTypePair;
+    // NOTE: rules.useSemanticFilter (host/opening relationship skip) is NOT yet
+    // serialized - it depends on each model's relatedPairs map, which isn't part
+    // of the elements payload today. Wiring it needs both a payload-shape change
+    // here and matching consumer logic in the Python engine; deferred, tracked
+    // in IMPROVEMENT_PLAN.md rather than half-wired into this fix.
     return {elements:elements, rules:r};
   }
 
