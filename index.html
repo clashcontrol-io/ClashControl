@@ -714,6 +714,25 @@ function startApp() {
   function guid() { return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g,function(c){var r=Math.random()*16|0;return(c==='x'?r:(r&0x3|0x8)).toString(16)}); }
   function esc(s) { return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
 
+  // Copy an ID/value to the clipboard with a toast confirmation. Same
+  // clipboard-API-with-execCommand-fallback shape as AIChatPanel's copyMsg,
+  // minus the per-message index state — callers here don't have a natural
+  // index to key visual feedback off, so a toast carries it instead.
+  function _ccCopyToClipboard(text, label) {
+    var value = String(text == null ? '' : text);
+    function done() { if (window._ccToast) window._ccToast((label ? label + ' copied' : 'Copied') + ' to clipboard'); }
+    try {
+      if (navigator.clipboard && navigator.clipboard.writeText) { navigator.clipboard.writeText(value).then(done); return; }
+    } catch(e) {}
+    try {
+      var ta = document.createElement('textarea');
+      ta.value = value; ta.style.position = 'fixed'; ta.style.opacity = '0';
+      document.body.appendChild(ta); ta.select();
+      document.execCommand('copy'); document.body.removeChild(ta);
+      done();
+    } catch(e) {}
+  }
+
   // ── Chat text renderer ──────────────────────────────────────── INTERNALS.md §2
   function renderChatText(text) {
     if (text == null) return '';
@@ -31610,6 +31629,12 @@ function startApp() {
       var CARD = {background:'var(--bg-secondary)',borderRadius:'var(--radius-sm)',padding:'.5rem .75rem',border:'1px solid var(--border-subtle)'};
       var HDR  = {fontSize:'var(--text-2xs)',fontWeight:'var(--weight-bold)',color:'var(--text-muted)',textTransform:'uppercase',letterSpacing:'.08em',marginBottom:'var(--space-2)'};
       var MONO = {fontFamily:'var(--font-mono)',fontSize:'var(--text-2xs)'};
+      function _copyBtn(text, label) {
+        return html`<button onClick=${function(ev){ev.stopPropagation();_ccCopyToClipboard(text,label);}} title=${'Copy '+label} aria-label=${'Copy '+label}
+          style=${{background:'none',border:'none',padding:0,margin:0,cursor:'pointer',color:'var(--text-faint)',display:'inline-flex',flexShrink:0,lineHeight:0}}>
+          <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+        </button>`;
+      }
 
       if (!el) {
         return html`<div style=${{flex:1,display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',
@@ -31897,8 +31922,8 @@ function startApp() {
           <div style=${CARD}>
             <div style=${HDR}>Identity</div>
             ${ep&&ep.ifcType     && html`<div style=${ROW}><span style=${LBL}>IFC type</span><span style=${{...VAL,...MONO}}>${ep.ifcType}</span></div>`}
-            ${ep&&ep.globalId    && html`<div style=${ROW}><span style=${LBL}>GlobalId</span><span style=${{...VAL,...MONO}}>${ep.globalId}</span></div>`}
-            ${ep&&ep.expressId   && html`<div style=${ROW}><span style=${LBL}>Express ID</span><span style=${{...VAL,...MONO}}>#${ep.expressId}</span></div>`}
+            ${ep&&ep.globalId    && html`<div style=${ROW}><span style=${LBL}>GlobalId</span><span style=${{...VAL,...MONO,display:'flex',alignItems:'center',gap:'.35rem'}}><span style=${{overflow:'hidden',textOverflow:'ellipsis'}}>${ep.globalId}</span>${_copyBtn(ep.globalId,'GlobalId')}</span></div>`}
+            ${ep&&ep.expressId   && html`<div style=${ROW}><span style=${LBL}>Express ID</span><span style=${{...VAL,...MONO,display:'flex',alignItems:'center',gap:'.35rem'}}><span>#${ep.expressId}</span>${_copyBtn(ep.expressId,'Express ID')}</span></div>`}
             ${ep&&ep.objectType  && html`<div style=${ROW}><span style=${LBL}>Object type</span><span style=${VAL}>${ep.objectType}</span></div>`}
             ${ep&&ep.description && html`<div style=${ROW}><span style=${LBL}>Description</span><span style=${VAL}>${ep.description}</span></div>`}
             ${storey             && html`<div style=${ROW}><span style=${LBL}>Floor</span><span style=${VAL}>${storey}</span></div>`}
@@ -31984,7 +32009,7 @@ function startApp() {
           ${ep&&ep.material    && html`<div style=${ROW}><span style=${LBL}>Material</span><span style=${VAL}>${ep.material}</span></div>`}
           ${ep&&ep.objectType  && html`<div style=${ROW}><span style=${LBL}>Object type</span><span style=${VAL}>${ep.objectType}</span></div>`}
           ${ep&&ep.description && html`<div style=${ROW}><span style=${LBL}>Description</span><span style=${VAL}>${ep.description}</span></div>`}
-          ${ep&&ep.globalId    && html`<div style=${ROW}><span style=${LBL}>GlobalId</span><span style=${{...VAL,...MONO,opacity:.65}}>${ep.globalId.slice(0,16)}…</span></div>`}
+          ${ep&&ep.globalId    && html`<div style=${ROW}><span style=${LBL}>GlobalId</span><span style=${{...VAL,...MONO,opacity:.65,display:'flex',alignItems:'center',gap:'.35rem'}}><span>${ep.globalId.slice(0,16)}…</span>${_copyBtn(ep.globalId,'GlobalId')}</span></div>`}
         </div>
         <!-- Dimensions & Constraints -->
         ${hasConstraints && html`<div style=${CARD}>
