@@ -11087,7 +11087,12 @@ function startApp() {
             try {
               var _orb = S.orbit;
               if (_orb && S.camera) {
-                _orb.sph.setFromVector3(S.camera.position.clone().sub(hitCtr));
+                /* sph is a plain {r,phi,theta} (not THREE.Spherical) — recompute
+                   it inline with the same convention apply()/sync() use. */
+                var _ov = S.camera.position.clone().sub(hitCtr);
+                _orb.sph.r = _ov.length() || 60;
+                _orb.sph.phi = Math.acos(Math.max(-1, Math.min(1, _ov.y / _orb.sph.r)));
+                _orb.sph.theta = Math.atan2(_ov.x, _ov.z);
                 _orb.target.copy(hitCtr);
               }
             } catch(_e) {}
