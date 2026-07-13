@@ -4624,6 +4624,17 @@ function startApp() {
         items.push({el:el, m:m});
       });
     });
+    // "Exclude self-clashes" is only a meaningful distinction when there's a
+    // second model to compare against. When the effective scope (grpA ∪ grpB)
+    // collapses to exactly one model — a single combined IFC file, or a run
+    // explicitly scoped to one model on both sides — "cross-model only"
+    // always yields zero pairs by construction, not a real "no clashes"
+    // result. That made the single most prominent first-run action (one-click
+    // "Run detection" with excludeSelf defaulting true) silently report 0
+    // clashes for anyone whose whole project is one federated file. Effective
+    // -only override: rules.excludeSelf itself is left untouched so it still
+    // applies correctly once a second model is in scope.
+    var _singleModelScope = Object.keys(seenModels).length === 1;
     if (items.length < 2) return [];
 
     var n=items.length, sx=0,sy=0,sz=0,sx2=0,sy2=0,sz2=0;
@@ -4661,7 +4672,9 @@ function startApp() {
           // linked files flattened twice, etc.) so we must let
           var scmVal = rules.selfClashModels;
           var selfAllowed;
-          if (scmVal !== undefined) {
+          if (_singleModelScope) {
+            selfAllowed = true;
+          } else if (scmVal !== undefined) {
             if (scmVal === 'none') { selfAllowed = false; }
             else if (scmVal === 'all') { selfAllowed = true; }
             else {
