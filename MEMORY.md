@@ -456,9 +456,40 @@ Solibri/Navisworks/OSS (IfcOpenShell, ThatOpen, xeokit, Speckle, BIMcollab, Revi
   resolution server-side), so the equivalent fix belongs in `ClashControlEngine`'s own sweep/scope code —
   a separate repo, out of this session's write scope, same situation as the Wave-0 local-engine rule-parity
   fix.
-- **Next**: the two BCF follow-ups (auto-synthesized viewpoints; `<ClippingPlanes>` export — now
-  doubly-confirmed as a shared, not CC-specific, gap per Check 2), a possible `<Coloring>` export (newly
-  confirmed gap from Check 2), rest of Wave 3 (stamp/auto-assignment rules), and Waves 4-6.
+- ~~**Wave 4 (partial): copyable inspector IDs + Navigator real find**~~ (2026-07-13). Continuing "go full
+  throttle to the end" past the user's explicit redirect (Build 1/3, Check 2) and the excludeSelf fix,
+  back onto the roadmap:
+  - **Copyable GlobalId/Express ID**: both were plain, unselectable-feeling text in the Details inspector
+    (Coordinate's full Identity card + Present mode's truncated Quick identity card). New shared
+    `_ccCopyToClipboard(text, label)` (clipboard API + execCommand fallback, toast confirmation instead of
+    AIChatPanel's copyMsg per-index state, since these call sites have no natural index) wired via a small
+    `_copyBtn` helper in `renderDetails`. The truncated Present-mode row copies the full untruncated
+    GlobalId, not the visible ellipsis text. `3eca120`.
+  - **Navigator search, two bugs found by reading the code before touching it, not just the one in the
+    plan**: (1) every element-search call site (spatial view, tree/"Flat list" view, its keyboard-nav
+    duplicate for arrow-key traversal, and `_findAndHighlightElements`/Items Finder used by NL commands)
+    duplicated its own 2-6 field inline check — none matched GlobalId, so pasting a GlobalId from a BCF
+    issue into the search box found nothing; none matched property/quantity VALUES either. (2) **bigger
+    find**: the default "Hierarchy" (spatial) view — `viewMode==='spatial'`, what every new user sees
+    first — never read `treeSearch` at all; `stEls`/`noSt` were rendered fully unfiltered, so the search
+    box had literally zero effect in the default view. Only the secondary "Flat list" view actually
+    filtered anything. New shared `_elMatchesSearch(el, q)`: name/ifcType/expressId (pre-existing) +
+    GlobalId/ObjectType/material/description/storey + every pset/quantity value. All 5 call sites
+    migrated onto it (removing the duplication as a side effect); spatial view now computes `q` and
+    filters `stEls`/`noSt` like the other views always should have. Storey render caps (200/100 elements)
+    widen to 1000/500 while actively searching — search is exactly the case where seeing more matters more
+    than DOM-node headroom. `da26294`. 14 new tests across 4 files (matcher unit tests + grep-based wiring
+    locks confirming no stale duplicated matcher text remains and the spatial view specifically computes
+    `q`). 231/231 passing.
+  - **Deliberately not done**: a "flat cross-model results list" (today's results still nest inside the
+    per-model/per-storey tree, just correctly filtered now) and auto-expand-on-search (matching a node
+    still requires manually expanding its ancestors, same as before) — both bigger, separate UX redesigns,
+    not part of this fix's scope. Saved "search sets" (re-resolving named queries, +/−/= editing,
+    `REN_SELSET`) and element-vs-element diff are still fully unstarted Wave 4 items.
+- **Next**: the rest of Wave 4 (search sets, element-vs-element diff, containment breadcrumb), the two BCF
+  follow-ups (auto-synthesized viewpoints; `<ClippingPlanes>` export — now doubly-confirmed as a shared,
+  not CC-specific, gap per Check 2), a possible `<Coloring>` export (newly confirmed gap from Check 2),
+  rest of Wave 3 (stamp/auto-assignment rules), and Waves 5-6.
 
 On branch `claude/codebase-review-optimization-3nltcw` (2026-07-08) — four-repo review sweep (in progress):
 
