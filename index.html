@@ -18981,6 +18981,11 @@ function startApp() {
                   ⎙ Clash report
                   <span style=${{display:'block',fontSize:'0.63rem',color:'var(--text-faint)'}}>Print-ready summary, trend + clusters</span>
                 </button>
+                <button onClick=${function(){if(window._ccDataQualityReport)window._ccDataQualityReport(s);setExportOpen(false);}}
+                  style=${{display:'block',width:'100%',textAlign:'left',padding:'.45rem .7rem',fontSize:'0.75rem',background:'none',border:'none',color:'var(--text-primary)',cursor:'pointer',fontFamily:'var(--font-body)',borderTop:'1px solid var(--border-subtle)'}}>
+                  ⎙ Data quality report
+                  <span style=${{display:'block',fontSize:'0.63rem',color:'var(--text-faint)'}}>Quality Score, BIM basics, ILS, RVB, accessibility</span>
+                </button>
               </div>`}
             </div>`;
           }()}
@@ -19582,6 +19587,97 @@ function startApp() {
     w.document.close();
   }
   window._ccClashReport = _ccClashReport;
+
+  // Print-ready Data Quality report — same new-window/window.print() pattern
+  // as _ccClashReport above, covering the checks that report doesn't:
+  // general DQ, BIM basics, ILS/NL-SfB, RVB BIM Norm, accessibility, and the
+  // composite Quality Score. IDS specifications have their own dedicated
+  // report already (generateValidationReport, below) and are not repeated
+  // here. Self-sufficient like _ccClashReport - re-runs the check engines
+  // from s.models directly rather than depending on DataQualityPanel's own
+  // React state, so it works whether or not that panel was ever opened.
+  function _ccDataQualityReport(s) {
+    var elements = [];
+    (s.models||[]).forEach(function(m){ (m.elements||[]).forEach(function(el){ el._modelId = m.id; elements.push(el); }); });
+    if (!elements.length) { if (window._ccToast) window._ccToast('No elements to report — load a model first'); return; }
+    _gcEvent('data-quality-report');
+    var now = new Date();
+    var author = (typeof _ccChangelogUser === 'string' && _ccChangelogUser.trim()) ? _ccChangelogUser.trim() : '';
+    var projName = (s.activeProject && s.activeProject !== 'default') ? s.activeProject
+      : (s.models && s.models.length ? s.models.map(function(m){return m.name;}).join(' + ').slice(0, 80) : 'Untitled project');
+
+    var qc = runDataQualityChecks(elements);
+    var bim = runBIMModelChecks(elements);
+    var ils = runILSChecks(elements);
+    var rvb = runRVBChecks(s.models);
+    var acc = (typeof window._ccRunAccessibilityChecks === 'function') ? window._ccRunAccessibilityChecks(elements) : null;
+    var score = (typeof window._ccComputeQualityScore === 'function') ? window._ccComputeQualityScore(elements, s.models) : null;
+
+    function checkRows(checksResult, keys) {
+      var out = '';
+      keys.forEach(function(k) {
+        var c = checksResult && checksResult[k]; if (!c) return;
+        var color = c.count===0 ? '#16a34a' : c.sev==='error' ? '#dc2626' : c.sev==='warn' ? '#d97706' : '#2563eb';
+        out += '<tr><td>'+esc(c.label||k)+'</td><td style="text-align:right;font-weight:600;color:'+color+'">'+(c.count===0?'✓':c.count)+'</td></tr>';
+      });
+      return out;
+    }
+    var QC_KEYS = Object.keys(qc||{}).filter(function(k){return k!=='_total';});
+    var BIM_KEYS = Object.keys(bim||{}).filter(function(k){return k!=='_total'&&k!=='_dist';});
+    var ILS_REPORT_KEYS = Object.keys(ils||{}).filter(function(k){return k.charAt(0)!=='_';});
+    var RVB_REPORT_KEYS = Object.keys(rvb||{}).filter(function(k){return k.charAt(0)!=='_';});
+
+    function scoreCard(cat) {
+      var col = cat.score>=90?'#16a34a':cat.score>=60?'#d97706':'#dc2626';
+      return '<div class="card"><b style="color:'+col+'">'+cat.score+'</b><span>'+esc(cat.label)+(cat.countsTowardScore===false?' (shown, not scored)':'')+'</span></div>';
+    }
+
+    var h = '<!DOCTYPE html><html><head><meta charset="utf-8"><title>Data quality report — '+esc(projName)+'</title><style>'
+      + 'body{font-family:-apple-system,Segoe UI,Roboto,sans-serif;color:#0f172a;margin:0;padding:24px 32px;background:#fff}'
+      + 'h1{font-size:22px;margin:0 0 2px}h2{font-size:15px;margin:26px 0 8px;border-bottom:2px solid #16a34a;padding-bottom:4px}'
+      + '.sub{color:#64748b;font-size:12px;margin-bottom:18px}'
+      + '.cards{display:flex;gap:10px;flex-wrap:wrap;margin:14px 0}'
+      + '.card{border:1px solid #e2e8f0;border-radius:8px;padding:10px 16px;min-width:110px}'
+      + '.card b{display:block;font-size:22px}.card span{font-size:11px;color:#64748b}'
+      + 'table{border-collapse:collapse;width:100%;font-size:12px}th{text-align:left;background:#f1f5f9;padding:5px 8px;border-bottom:2px solid #cbd5e1}'
+      + 'td{padding:4px 8px;border-bottom:1px solid #e2e8f0;vertical-align:top}'
+      + '.twocol{display:flex;gap:24px;flex-wrap:wrap}.twocol>table{flex:1;min-width:280px}'
+      + '.brand{color:#16a34a;font-weight:700}.foot{margin-top:30px;font-size:10px;color:#94a3b8}'
+      + '.toolbar{position:sticky;top:0;background:#fff;padding:8px 0;border-bottom:1px solid #e2e8f0;margin-bottom:14px}'
+      + '.toolbar button{background:#16a34a;color:#fff;border:none;border-radius:6px;padding:8px 16px;font-size:13px;font-weight:600;cursor:pointer}'
+      + '@media print{.noprint{display:none}body{padding:0 8px}}'
+      + '</style></head><body>'
+      + '<div class="toolbar noprint"><button onclick="window.print()">Print / Save as PDF</button></div>'
+      + '<h1><span class="brand">ClashControl</span> — Data quality report</h1>'
+      + '<div class="sub">'+esc(projName)+' · '+now.toLocaleString()+(author?' · prepared by '+esc(author):'')+'</div>'
+      + '<div class="cards">'
+      +   (score && score.score != null ? '<div class="card"><b style="font-size:28px;color:'+(score.score>=90?'#16a34a':score.score>=60?'#d97706':'#dc2626')+'">'+score.score+'</b><span>Quality Score ('+esc(score.grade||'')+')</span></div>' : '')
+      +   (score && score.breakdown ? score.breakdown.categories.map(scoreCard).join('') : '')
+      + '</div>'
+      + '<h2>Models</h2><table><tr><th>Model</th><th>Discipline</th><th>Elements</th></tr>'
+      +   (s.models||[]).map(function(m){ return '<tr><td>'+esc(m.name)+'</td><td>'+esc(m.discipline||'—')+'</td><td>'+(m.elements||[]).length+'</td></tr>'; }).join('')
+      + '</table>'
+      + '<h2>General &amp; BIM basics</h2><div class="twocol">'
+      +   '<table><tr><th>Check</th><th>Count</th></tr>'+checkRows(qc, QC_KEYS)+'</table>'
+      +   '<table><tr><th>Check</th><th>Count</th></tr>'+checkRows(bim, BIM_KEYS)+'</table>'
+      + '</div>'
+      + '<h2>ILS / NL-SfB (NL-BIM Basis ILS v2)</h2><table><tr><th>Check</th><th>Count</th></tr>'+checkRows(ils, ILS_REPORT_KEYS)+'</table>'
+      + '<h2>RVB BIM Norm v1.1</h2><div class="sub" style="margin-bottom:6px">Rijksvastgoedbedrijf project/site/building/zone metadata — shown for visibility, excluded from the Quality Score.</div>'
+      +   '<table><tr><th>Check</th><th>Count</th></tr>'+checkRows(rvb, RVB_REPORT_KEYS)+'</table>'
+      + (acc && acc.groups
+        ? '<h2>Accessibility (NL Bbl/NEN)</h2><table><tr><th>Check</th><th>Pass / total</th></tr>'
+          + Object.keys(acc.groups).map(function(k){ var g=acc.groups[k]; if(!g||!g.total) return ''; return '<tr><td>'+esc(g.label||k)+'</td><td>'+(g.total-(g.fail||0))+' / '+g.total+'</td></tr>'; }).join('')
+          + '</table>'
+        : '')
+      + '<div class="foot">Generated by ClashControl '+esc((window.CC_VERSION&&window.CC_VERSION.v)||'')+' — free, open-source IFC clash detection · clashcontrol.io</div>'
+      + '</body></html>';
+
+    var w = window.open('', '_blank');
+    if (!w) { if (window._ccToast) window._ccToast('Popup blocked — allow popups to open the report'); return; }
+    w.document.write(h);
+    w.document.close();
+  }
+  window._ccDataQualityReport = _ccDataQualityReport;
 
   function generateValidationReport(results, summary, specs) {
     _gcEvent('html-report');
@@ -20466,14 +20562,18 @@ function startApp() {
             <button onClick=${function(){if(_unghostAll)_unghostAll();var S=window._ccState3d;if(S&&S._dqOrigColors){S._dqOrigColors.forEach(function(e){if(e.mesh&&e.mesh.material)e.mesh.material.color.copy(e.color);});S._dqOrigColors=null;}setActiveDistKey(null);invalidate();}}
               style=${{fontSize:'0.63rem',padding:'.15rem .4rem',background:'var(--bg-secondary)',color:'var(--text-muted)',border:'1px solid var(--border)',borderRadius:4,cursor:'pointer',fontFamily:'inherit'}}>Reset view</button>
           </div>
-          <div style=${{display:'flex',gap:'.3rem'}}>
+          <div style=${{display:'flex',gap:'.3rem',flexWrap:'wrap'}}>
+            <button onClick=${function(){ if (window._ccDataQualityReport) window._ccDataQualityReport(s); }} title="Open a print-ready report (Quality Score, BIM basics, ILS/NL-SfB, RVB BIM Norm, accessibility)"
+              style=${{flex:1,fontSize:'0.69rem',padding:'.3rem .5rem',background:'var(--bg-secondary)',color:'var(--text-secondary)',border:'1px solid var(--border)',borderRadius:4,cursor:'pointer',fontWeight:600,fontFamily:'inherit',whiteSpace:'nowrap'}}>
+              ⎙ Print report
+            </button>
             <button onClick=${exportCSV} title="Download all findings as CSV"
-              style=${{flex:1,fontSize:'0.69rem',padding:'.3rem .5rem',background:'var(--bg-secondary)',color:'var(--text-secondary)',border:'1px solid var(--border)',borderRadius:4,cursor:'pointer',fontWeight:600,fontFamily:'inherit'}}>
-              ↓ Export report
+              style=${{flex:1,fontSize:'0.69rem',padding:'.3rem .5rem',background:'var(--bg-secondary)',color:'var(--text-secondary)',border:'1px solid var(--border)',borderRadius:4,cursor:'pointer',fontWeight:600,fontFamily:'inherit',whiteSpace:'nowrap'}}>
+              ↓ Export CSV
             </button>
             ${totalIssues+totalBim+totalIls > 0 && html`<button onClick=${createAllIssues}
               title=${'Create '+(totalIssues+totalBim+totalIls)+' issues from all failing checks'}
-              style=${{flex:1,fontSize:'0.69rem',padding:'.3rem .5rem',background:'var(--accent-bg)',color:'var(--accent)',border:'1px solid var(--accent-subtle)',borderRadius:4,cursor:'pointer',fontWeight:600,fontFamily:'inherit'}}>
+              style=${{flex:1,fontSize:'0.69rem',padding:'.3rem .5rem',background:'var(--accent-bg)',color:'var(--accent)',border:'1px solid var(--accent-subtle)',borderRadius:4,cursor:'pointer',fontWeight:600,fontFamily:'inherit',whiteSpace:'nowrap'}}>
               + Create all issues
             </button>`}
           </div>
