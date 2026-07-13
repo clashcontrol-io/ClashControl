@@ -49,7 +49,8 @@ test('runChecks() builds rvbModels from the same selectedModel-filtered loop as 
   const fnSrc = src.slice(start, end);
   assert.ok(/var rvbModels = \[\]/.test(fnSrc), 'rvbModels must be a fresh array per run');
   assert.ok(/rvbModels\.push\(m\)/.test(fnSrc), 'rvbModels must be populated inside the same selectedModel-filtered forEach as elements');
-  assert.ok(/setRvb\(runRVBChecks\(rvbModels\)\)/.test(fnSrc), 'setRvb must be called with the filtered models, not s.models directly');
+  assert.ok(/var newRvb = runRVBChecks\(rvbModels\)/.test(fnSrc), 'the rvb result must be computed from the filtered models, not s.models directly');
+  assert.ok(/setRvb\(newRvb\)/.test(fnSrc), 'setRvb must be called with that same computed result');
 });
 
 test('the top issues badge total is NOT affected by rvb (totalRvb kept separate)', () => {
