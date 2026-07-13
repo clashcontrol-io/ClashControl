@@ -8535,6 +8535,14 @@ function startApp() {
         if(alsoGhost!==false) ghostOthers([{modelId: modelId || null, expressId: expressId}]);
         invalidate();
       };
+      // A clash pair (_itemRefs role 'A'/'B') gets fixed, distinct colors per
+      // side instead of the per-model discipline color below — discipline
+      // color collapses to a single color whenever both sides share a
+      // discipline (same-model self-clashes, same-trade duplicates), which is
+      // exactly when telling A from B in the viewport matters most. Any ref
+      // without a role (selection sets, multi-select, single elements) keeps
+      // the discipline color, unchanged.
+      var _PAIR_ROLE_COLOR = {A: 0xef4444, B: 0x22d3ee};
       _highlightRefs = function(refs, alsoGhost) {
         if (!refs || !refs.length || !S.mg) return;
         _clearHighlightGroups();
@@ -8545,7 +8553,8 @@ function startApp() {
           var mesh = _findMeshByRef(ref.expressId, ref.modelId);
           if (!mesh) return;
           if (mesh.parent) outlineMeshes.push(mesh); // skip off-scene chunk proxies for post-outline
-          var color = _discColorForModelId(ref.modelId || (mesh.parent && mesh.parent.userData && mesh.parent.userData.modelId));
+          var color = _PAIR_ROLE_COLOR[ref.role] != null ? _PAIR_ROLE_COLOR[ref.role]
+            : _discColorForModelId(ref.modelId || (mesh.parent && mesh.parent.userData && mesh.parent.userData.modelId));
           var sub = _buildHighlightGroupForMesh(mesh, color);
           if (sub) combinedGrp.add(sub);
         });
