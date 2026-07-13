@@ -1,5 +1,8 @@
 # Changelog
 
+## v5.22.0 (2026-07-13)
+- docs: record Wave 1.6/1.9 in MEMORY.md, flag excludeSelf default trap
+
 ## v5.21.17 (2026-07-10)
 - Add tool governance layer to the Smart Bridge (audit log + confirm gate) (#677)
 
