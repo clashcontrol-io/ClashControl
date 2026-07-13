@@ -18987,7 +18987,7 @@ function startApp() {
         var selGrp  = grpArr.length  ? grpArr[0]  : 'none';
         var selSort = sortArr.length ? sortArr[0] : 'none';
         var secondaryGrpOpts = isClashTab
-          ? [['none','—'],['severity','Severity'],['storey','Storey'],['discipline','Discipline'],['model','Model'],['status','Status'],['type','Type'],['priority','Priority'],['assignee','Assignee']]
+          ? [['none','—'],['severity','Severity'],['storey','Storey'],['discipline','Discipline'],['nearby','Location'],['model','Model'],['status','Status'],['type','Type'],['priority','Priority'],['assignee','Assignee']]
           : [['none','—'],['status','Status'],['priority','Priority'],['category','Category'],['assignee','Assignee']];
         var sortOptsList = isClashTab
           ? [['none','None'],['severity_desc','Severity (high first)'],['severity_asc','Severity (low first)'],['spatial','Spatial'],['distance_asc','Gap (small first)'],['distance_desc','Gap (large first)'],['priority_desc','Priority (high first)'],['storey_asc','Storey A–Z'],['storey_desc','Storey Z–A'],['name_asc','Name A–Z'],['name_desc','Name Z–A'],['date_desc','Date (newest)'],['date_asc','Date (oldest)']]
@@ -21305,7 +21305,69 @@ function startApp() {
     return lines.join('\n');
   };
 
-  function _groupKeyFor(it, groupKey, modelsById) {
+  // Spatial sub-clustering (Wave 1.8) \u2014 distance-threshold union-find on
+  // clash points. This is deliberately separate from _ccClusterKeyFor (the
+  // 'cluster' groupBy, element-PAIR identity: same two elements' touch
+  // points collapse into one group, e.g. a duct crossing one beam at 3
+  // points along its run). This groups DIFFERENT element pairs that happen
+  // to sit near each other in space (e.g. one duct crossing 5 different
+  // joists in the same corridor bay reads as "one problem area" instead of
+  // 5 unrelated-looking groups) \u2014 ifcclash/OPTICS parity, per the plan.
+  // Opt-in via the "Location" secondary group-by option; never changes what
+  // the default "Grouped" (cluster) view shows.
+  var _SPATIAL_CLUSTER_RADIUS_M = 1.5;
+  function _ccSpatialClusterMap(items, radiusM) {
+    radiusM = radiusM > 0 ? radiusM : _SPATIAL_CLUSTER_RADIUS_M;
+    var n = items.length;
+    var parent = new Array(n);
+    for (var i=0; i<n; i++) parent[i] = i;
+    function find(x){ while(parent[x]!==x){ parent[x]=parent[parent[x]]; x=parent[x]; } return x; }
+    function union(a,b){ var ra=find(a), rb=find(b); if (ra!==rb) parent[ra]=rb; }
+    // Grid-bucket the points so only nearby cells are compared (same spirit
+    // as the engine's _SpatialHash) instead of all-pairs O(n\u00b2).
+    var cell = radiusM;
+    var buckets = new Map();
+    var pts = new Array(n);
+    for (var i=0; i<n; i++) {
+      var p = items[i] && items[i].point;
+      pts[i] = (p && p.length===3) ? p : null;
+      if (!pts[i]) continue;
+      var k = Math.floor(p[0]/cell)+','+Math.floor(p[1]/cell)+','+Math.floor(p[2]/cell);
+      var b = buckets.get(k); if (!b) { b=[]; buckets.set(k,b); }
+      b.push(i);
+    }
+    var r2 = radiusM*radiusM;
+    for (var i=0; i<n; i++) {
+      if (!pts[i]) continue;
+      var p = pts[i];
+      var cx=Math.floor(p[0]/cell), cy=Math.floor(p[1]/cell), cz=Math.floor(p[2]/cell);
+      for (var dx=-1; dx<=1; dx++) for (var dy=-1; dy<=1; dy++) for (var dz=-1; dz<=1; dz++) {
+        var b = buckets.get((cx+dx)+','+(cy+dy)+','+(cz+dz));
+        if (!b) continue;
+        for (var bi=0; bi<b.length; bi++) {
+          var j = b[bi];
+          if (j<=i) continue; // each unordered pair once
+          var q = pts[j];
+          var ddx=p[0]-q[0], ddy=p[1]-q[1], ddz=p[2]-q[2];
+          if (ddx*ddx+ddy*ddy+ddz*ddz <= r2) union(i,j);
+        }
+      }
+    }
+    // Stable, human-readable, zero-padded labels (padded so "Area 02" sorts
+    // correctly before "Area 10" under the plain lexicographic group-key sort).
+    var rootToLabel = new Map();
+    var map = new Map(); // item id -> label
+    for (var i=0; i<n; i++) {
+      if (!pts[i]) { map.set(items[i].id, 'Unlocated'); continue; }
+      var root = find(i);
+      var label = rootToLabel.get(root);
+      if (!label) { label = 'Area ' + String(rootToLabel.size+1).padStart(2,'0'); rootToLabel.set(root, label); }
+      map.set(items[i].id, label);
+    }
+    return map;
+  }
+
+  function _groupKeyFor(it, groupKey, modelsById, spatialMap) {
     switch(groupKey) {
       case 'storey': return it.elemAStorey || it.elemBStorey || it.storey || 'Unknown';
       case 'discipline': return (it.disciplines||[]).sort().join(' \u2194 ') || 'Unknown';
@@ -21315,6 +21377,7 @@ function startApp() {
       case 'category': return it.category || 'other';
       case 'assignee': return it.assignee || 'Unassigned';
       case 'severity': return it.aiSeverity || _ccDeterministicSeverity(it);
+      case 'nearby': return (spatialMap && spatialMap.get(it.id)) || 'Unlocated';
       case 'cluster': {
         var ck = window._ccClusterKeyFor(it);
         if (!window._ccClusterDisplay) window._ccClusterDisplay = {};
@@ -21347,9 +21410,13 @@ function startApp() {
     }
     var modelsById = {};
     (opts.models||[]).forEach(function(m){ modelsById[m.id] = m; });
+    // 'nearby' needs every item's location at once (union-find), unlike every
+    // other groupBy dimension which only looks at the item itself — compute
+    // it once here rather than per-item inside _groupKeyFor.
+    var spatialMap = groupByArr.indexOf('nearby') !== -1 ? _ccSpatialClusterMap(items) : null;
     var groupMap = {};
     items.forEach(function(it) {
-      var parts = groupByArr.map(function(g){ return _groupKeyFor(it, g, modelsById); });
+      var parts = groupByArr.map(function(g){ return _groupKeyFor(it, g, modelsById, spatialMap); });
       var k = parts.join(' \u2502 '); // use │ as separator (visually distinct, rare in names)
       if (!groupMap[k]) groupMap[k] = [];
       groupMap[k].push(it);
