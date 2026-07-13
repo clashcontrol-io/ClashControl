@@ -19786,6 +19786,10 @@ function startApp() {
     if (window._ccRunILSChecks) return window._ccRunILSChecks(elements);
     return {_total:(elements||[]).length, _nlsfbDist:{}, _compDist:{}};
   }
+  function runRVBChecks(models) {
+    if (window._ccRunRVBChecks) return window._ccRunRVBChecks(models);
+    return {_total:(models||[]).length};
+  }
 
   // ── Data Quality Panel (dedicated tab) ─────────────────────────────
 
@@ -19949,11 +19953,12 @@ function startApp() {
     var qcSt = useState(null), qc = qcSt[0], setQc = qcSt[1];
     var bimSt = useState(null), bim = bimSt[0], setBim = bimSt[1];
     var ilsSt = useState(null), ils = ilsSt[0], setIls = ilsSt[1];
+    var rvbSt = useState(null), rvb = rvbSt[0], setRvb = rvbSt[1];
     var expSt = useState({}), expanded = expSt[0], setExpanded = expSt[1];
     var selModel = useState('all'), selectedModel = selModel[0], setSelectedModel = selModel[1];
     var running = useState(false), isRunning = running[0], setRunning = running[1];
     var lcSt = useState(null), lastChecked = lcSt[0], setLastChecked = lcSt[1];
-    var secSt = useState({general:true,bim:true,ils:true,dist:true,ids:true}), sections = secSt[0], setSections = secSt[1];
+    var secSt = useState({general:true,bim:true,ils:true,rvb:true,dist:true,ids:true}), sections = secSt[0], setSections = secSt[1];
 
     // Full runILSChecks() key set, incl. the NL-BIM Basis ILS v2 additions
     // (storeyNaming..mepNoRenovationStatus) - previously computed by the
@@ -19961,6 +19966,7 @@ function startApp() {
     // findings were invisible even though they'd already run.
     var ILS_KEYS = ['noNLSfB','invalidNLSfB','mismatchNLSfB','missingILSProp','noDescription','noMaterial','noStorey','noObjectType','noName',
       'storeyNaming','doorNaming','spaceIncomplete','fireRatingInvalid','extWallNoUValue','loadBearingInvalidMaterial','mepNoRenovationStatus'];
+    var RVB_KEYS = ['projectIncomplete','siteIncomplete','buildingIncomplete','zoneIncomplete','storeyNoElevation'];
 
     function toggleSection(key) { setSections(function(p){var n=Object.assign({},p);n[key]=!n[key];return n;}); }
 
@@ -19968,13 +19974,16 @@ function startApp() {
       setRunning(true);
       setTimeout(function() {
         var elements = [];
+        var rvbModels = [];
         (s.models||[]).forEach(function(m) {
           if (selectedModel !== 'all' && m.id !== selectedModel) return;
+          rvbModels.push(m);
           (m.elements||[]).forEach(function(el) { el._modelId = m.id; elements.push(el); });
         });
         setQc(runDataQualityChecks(elements));
         setBim(runBIMModelChecks(elements));
         setIls(runILSChecks(elements));
+        setRvb(runRVBChecks(rvbModels));
         setExpanded({});
         setLastChecked(Date.now());
         setRunning(false);
@@ -20166,6 +20175,7 @@ function startApp() {
       addRows(qc, ['guidCollision','noGlobalId','proxy','genericName','duplicateName','noMaterial','noStorey','emptyGeometry','zeroLayers','unhostedOpenings','noProperties','noDescription']);
       addRows(bim, ['thicknessMismatch','noFireRating','noIsExternal','noLoadBearing','missingCommonPset','noClassification','noObjectType','invalidName','missingArea','missingVolume']);
       addRows(ils, ILS_KEYS);
+      addRows(rvb, RVB_KEYS);
       var csv = rows.map(function(r){return r.map(function(c){return '"'+(String(c||'').replace(/"/g,'""'))+'"';}).join(',');}).join('\r\n');
       var a = document.createElement('a'); a.href = 'data:text/csv;charset=utf-8,'+encodeURIComponent(csv);
       a.download = 'data-quality-'+new Date().toISOString().slice(0,10)+'.csv'; a.click();
@@ -20178,6 +20188,7 @@ function startApp() {
       addFromChecks(qc, ['guidCollision','noGlobalId','proxy','genericName','duplicateName','noMaterial','noStorey','emptyGeometry','zeroLayers','unhostedOpenings','noProperties','noDescription']);
       addFromChecks(bim, ['thicknessMismatch','noFireRating','noIsExternal','noLoadBearing','missingCommonPset','noClassification','noObjectType','invalidName','missingArea','missingVolume']);
       addFromChecks(ils, ILS_KEYS);
+      addFromChecks(rvb, RVB_KEYS);
       if (created > 0) d({t:A.TAB, v:'issues'});
     }
 
@@ -20196,6 +20207,16 @@ function startApp() {
     if (ils) {
       var ilsKeys = Object.keys(ils).filter(function(k){return k[0]!=='_';});
       ilsKeys.forEach(function(k){totalIls += ils[k].count||0;});
+    }
+    // RVB deliberately excluded from the top "N issues" badge above (unlike
+    // qc/bim/ils) - it's a single Dutch central-government client's own BIM
+    // norm, and most users have no reason to target it. Same reasoning as
+    // computeQualityScore never folding it into the headline score. It still
+    // gets its own local badge on the RVB section header below.
+    var totalRvb = 0;
+    if (rvb) {
+      var rvbKeys = Object.keys(rvb).filter(function(k){return k[0]!=='_';});
+      rvbKeys.forEach(function(k){totalRvb += rvb[k].count||0;});
     }
 
     var SEV = {error:'#ef4444', warn:'#f59e0b', info:'#60a5fa'};
@@ -20361,6 +20382,22 @@ function startApp() {
                 })}
               </div>
             </div>`}
+          </div>`}
+        </div>`}
+
+        ${rvb && html`<div>
+          <div onClick=${function(){toggleSection('rvb');}} style=${SEC}>
+            <span>RVB BIM Norm</span>
+            <span style=${{display:'flex',alignItems:'center',gap:'.3rem'}}>
+              ${totalRvb > 0 ? html`<span style=${{fontSize:'0.57rem',padding:'1px 5px',borderRadius:99,background:'#78350f',color:'#fcd34d',fontWeight:600}}>${totalRvb}</span>` : null}
+              <span style=${{fontSize:'0.57rem',color:'var(--text-faint)'}}>${sections.rvb?'▲':'▼'}</span>
+            </span>
+          </div>
+          ${sections.rvb && html`<div>
+            ${renderCheckGroup(rvb, RVB_KEYS, 'RVB')}
+            <div style=${{padding:'.4rem .6rem',fontSize:'0.6rem',color:'var(--text-faint)',lineHeight:1.5}}>
+              Rijksvastgoedbedrijf BIM Norm v1.1 project/site/building/zone metadata — a Dutch central-government client standard, shown for visibility only and excluded from the Quality Score and the badge above.
+            </div>
           </div>`}
         </div>`}
 

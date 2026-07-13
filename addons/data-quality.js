@@ -1339,6 +1339,33 @@
       });
     }
 
+    // Like _foldCheckMap, but for check maps whose buckets each carry their
+    // OWN denominator (checksResult[k].total) instead of sharing one
+    // checksResult._total - runRVBChecks mixes project/site/building/zone/
+    // storey counts, which aren't the same population, so a single shared
+    // total would misstate every bucket's failure ratio.
+    function _foldEntityCheckMap(label, checksResult, fold) {
+      if (!checksResult) return;
+      var catDamage = 0, catWeight = 0, catChecks = 0;
+      Object.keys(checksResult).forEach(function(k){
+        if (k.charAt(0) === '_') return;
+        var c = checksResult[k]; if (!c || typeof c.count !== 'number') return;
+        var total = (typeof c.total === 'number' && c.total > 0) ? c.total : 1;
+        catChecks++;
+        var w = W[c.sev] || 1;
+        var fail = Math.min(1, c.count / total);
+        catDamage += fail * w;
+        catWeight += w;
+      });
+      if (fold) { damage += catDamage; totalWeight += catWeight; }
+      breakdown.categories.push({
+        label: label,
+        score: catWeight ? Math.round(100 * (1 - catDamage / catWeight)) : 100,
+        checks: catChecks,
+        countsTowardScore: !!fold
+      });
+    }
+
     // ── Data quality checks ──
     try { _foldCheckMap('Data quality', runDataQualityChecks(elements), true); } catch(e) {}
 
@@ -1364,6 +1391,14 @@
       var nlsfbAdopted = (ilsTotal - noNLSfBCount) / ilsTotal >= 0.2;
       _foldCheckMap('ILS / NL-SfB', ils, nlsfbAdopted);
     } catch(e) {}
+
+    // ── RVB BIM Norm v1.1 (project/site/building/zone metadata) - a single
+    //    Dutch central-government client's own BIM norm, narrower than
+    //    NL-SfB. Always shown for visibility, never folded into the
+    //    headline score - most projects have no reason to target it, and
+    //    "missing IfcSite georeference" shouldn't tank the score of a
+    //    renovation-only model that was never meant to be geo-referenced. ──
+    try { _foldEntityCheckMap('RVB BIM Norm', runRVBChecks(models), false); } catch(e) {}
 
     // ── Accessibility checks (if engine loaded) ──
     try {
