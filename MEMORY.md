@@ -502,10 +502,38 @@ Solibri/Navisworks/OSS (IfcOpenShell, ThatOpen, xeokit, Speckle, BIMcollab, Revi
     that re-evaluates against the live model, distinct from today's static snapshot-of-refs sets) and
     element-vs-element compare/diff (`multiSel` + `PropBlock` already exist and are used as stacked A/B in
     the clash panel — reusing them for an aligned diff view is the natural next step, just not started).
-- **Next**: the two still-unstarted Wave 4 items above, the two BCF follow-ups (auto-synthesized
-  viewpoints; `<ClippingPlanes>` export — now doubly-confirmed as a shared, not CC-specific, gap per Check
-  2), a possible `<Coloring>` export (newly confirmed gap from Check 2), rest of Wave 3 (stamp/auto-
-  assignment rules), and Waves 5-6.
+- ~~**Element-vs-element property diff (Wave 4)**~~ (2026-07-13). `multiSel` (Shift-click) + `PropBlock`
+  already existed but only ever stacked two elements' properties as separate A/B blocks (`ClashProps`) —
+  nothing aligned them side by side or flagged which actually differ. New `_diffElementProps(pA, pB)`:
+  aligned rows for identity fields + the UNION of both sides' quantity/pset keys, so a property only one
+  element carries shows as a row with the other side marked missing rather than silently dropped. New
+  `PropDiffView` (3-column table, differing rows highlighted) wired into `NavigatorPanel`: selecting
+  exactly 2 elements shows "Compare selected (2)". **Real bug found while wiring it up**: `_lookupElProps`
+  required an exact `modelId` match, but Selection Sets/Navigator `multiSel` refs never populate `modelId`
+  in practice (only one call site in the whole file ever sets it, and even that one falls back to `null`)
+  — the new Compare view would have silently shown nothing. Fixed by falling back to searching every model
+  by expressId alone, matching `_findMeshByRef`'s existing lenient convention exactly; `ClashProps` (the
+  only pre-existing caller) is unaffected since clash items always carry real model ids. `3d725af`. 12
+  tests across 2 files. 260/260 passing.
+  **Process note for future sessions**: an `Edit` tool-call embedded a stray `\x01` control byte in place
+  of an intended plain delimiter inside a hand-written string-join key (`setName+'\x01'+k`), which silently
+  broke `Object.keys(...).sort()` grouping — caught immediately by re-running the exact-match `Edit` (it
+  correctly refused to match, since the file's real bytes didn't equal what was intended) rather than by
+  a test. Fixed via a small Node one-off (`cat -A` to confirm the exact byte, then `String.split/join` in
+  a `node -e` script) instead of fighting the Edit tool's literal-text matching against an uncopyable
+  control character. Lesson: if `Edit`'s exact-match unexpectedly fails on text you just read verbatim,
+  suspect a hidden/control character before assuming a stale read — `cat -A` (or `od -c`) confirms it in
+  one step, and a `node -e` `String.split/join` script sidesteps needing to type the character at all.
+- **Wave 4 is now substantially done**: real find, copyable IDs, containment breadcrumb + hosted elements,
+  Selection Set rename/`+`/`−` editing, and element-vs-element diff all shipped this session. **Still
+  unstarted**: dynamic/re-resolving "search sets" (save a classification filter as a named query that
+  re-evaluates against the live model — today's sets are still a static snapshot-of-refs; this is a
+  bigger, separate feature: query definition UI + a live re-resolution engine + wiring into the clash-scope
+  picker, not attempted this session).
+- **Next**: dynamic search sets (the one remaining Wave 4 item, and the largest), the two BCF follow-ups
+  (auto-synthesized viewpoints; `<ClippingPlanes>` export — now doubly-confirmed as a shared, not
+  CC-specific, gap per Check 2), a possible `<Coloring>` export (newly confirmed gap from Check 2), rest of
+  Wave 3 (stamp/auto-assignment rules), and Waves 5-6.
 
 On branch `claude/codebase-review-optimization-3nltcw` (2026-07-08) — four-repo review sweep (in progress):
 
