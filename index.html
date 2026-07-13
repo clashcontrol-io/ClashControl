@@ -11838,8 +11838,9 @@ function startApp() {
           S._lastDpr = _targetDpr;
         }
         cullFrame++;
-        if(cullFrame >= cullEvery && S.mg && S.mg.children.length > 0){
+        if((cullFrame >= cullEvery || S._forceCull) && S.mg && S.mg.children.length > 0){
           cullFrame = 0;
+          S._forceCull = false;
           var _camKey = _camFingerprint();
           if (_camKey !== S._lastCullCamKey) {
             S._lastCullCamKey = _camKey;
@@ -11994,6 +11995,12 @@ function startApp() {
       var S = state3d.current; if(!S.mg) return;
       var ids = s.models.map(function(m){return m.id});
       S._lastCullCamKey = '';
+      // Force the next tick's culling pass to run immediately, bypassing the
+      // 8-frame throttle below — otherwise a model just re-shown stays
+      // individually invisible (its meshes were left .visible=false by the
+      // last cull pass while hidden) until enough frames accumulate, which
+      // in practice only happens once the user orbits/pans.
+      S._forceCull = true;
       Object.keys(S.map).forEach(function(id){
         if(ids.indexOf(id)===-1){
           if(S._pruneGhostCache) S._pruneGhostCache(S.map[id]);
