@@ -1313,6 +1313,38 @@ function startApp() {
       linkedClashId: c.id || null
     };
   }
+  // Deterministic severity fallback — Wave 1.6. AI triage (_ccBuildTriagePrompt
+  // / api/title.js) writes aiSeverity, but that's an opt-in per-cluster/batch
+  // action; most clashes in most projects never get it, and every existing
+  // severity-driven site (sort, cluster-card dot, row dot, group-by) fell
+  // back to a flat per-TYPE guess when it was absent (every hard clash the
+  // same "critical", every soft clash the same tier, no matter how deep or
+  // how close). Now that hard clashes carry a real (approximate) depth
+  // (_estimatePenetrationDepthM, Wave 1.4) and disciplines is per-element
+  // (Wave 1.6 fix above), the fallback can actually use them. Vocabulary
+  // matches aiSeverity exactly (critical/major/minor/info) so this slots
+  // into every existing rank table / color map / sort comparator - callers
+  // should read `c.aiSeverity || _ccDeterministicSeverity(c)`, never this
+  // alone, so a real AI verdict always wins.
+  var _SEV_DISC_WEIGHT = { structural: 3, mep: 2, civil: 2, architectural: 1, other: 1 };
+  function _ccDeterministicSeverity(c) {
+    if (!c) return 'info';
+    if (c.type === 'duplicate') return 'info'; // data-quality noise, not a coordination problem
+    if (c.type === 'visibility') return 'major'; // real design/code issue, but not a depth-measurable one
+    if (c.type !== 'hard') {
+      // Soft/clearance: a near-touching gap is a near-miss (more urgent to
+      // review) than a wide maintenance-clearance note.
+      var gapMm = typeof c.clearanceMm === 'number' ? c.clearanceMm : null;
+      return (gapMm != null && gapMm <= 15) ? 'major' : 'minor';
+    }
+    var discs = (c.disciplines || []).map(function (d) { return _SEV_DISC_WEIGHT[d] || 1; });
+    var maxDisc = discs.length ? Math.max.apply(null, discs) : 1;
+    var depthMm = (typeof c.distance === 'number' && c.distance < 0) ? -c.distance : 0;
+    if (depthMm < 10) return 'minor'; // shallow hard clash — likely tolerance/rounding, matches the
+    // industry-convention "hard clash, penetration ≥ 10mm" floor (IMPROVEMENT_PLAN.md §F).
+    if (depthMm >= 50 || (maxDisc >= 3 && depthMm >= 20)) return 'critical'; // deep, or structural + real overlap
+    return 'major'; // a genuine ≥10mm hard clash
+  }
   function _clearElCaches(model) {
     _bvhLRURemoveModel(model);
     if (model && model.id && typeof _pairCacheClearForModel === 'function') {
@@ -8858,6 +8890,7 @@ function startApp() {
           case 'soft':     return [0.96, 0.62, 0.04];     // f59e0b
           case 'duplicate':return [0.55, 0.36, 0.93];     // 8b5cf6
           case 'minor':    return [0.58, 0.64, 0.72];     // text-muted
+          case 'info':     return [0.58, 0.64, 0.72];     // text-muted, same as minor
           default:         return [0.94, 0.27, 0.27];
         }
       }
@@ -8907,14 +8940,14 @@ function startApp() {
           if (!c.point || c.point.length<3) continue;
           var key = keyFor ? keyFor(c) : ('k'+i);
           var cl = clusters[key];
-          if (!cl) cl = clusters[key] = { ids:[], pts:[], sevs:[], sev:'soft', sx:0, sy:0, sz:0 };
+          if (!cl) cl = clusters[key] = { ids:[], pts:[], sevs:[], sev:'info', sx:0, sy:0, sz:0 };
           cl.ids.push(c.id);
           cl.pts.push(c.point);
-          cl.sevs.push(c.aiSeverity || c.type || 'soft');
+          var _mkSev = c.aiSeverity || _ccDeterministicSeverity(c);
+          cl.sevs.push(_mkSev);
           cl.sx += c.point[0]; cl.sy += c.point[1]; cl.sz += c.point[2];
-          var s = c.aiSeverity || c.type;
-          var rank = {critical:4, major:3, hard:3, soft:2, minor:2, duplicate:1};
-          if ((rank[s]||1) > (rank[cl.sev]||1)) cl.sev = s;
+          var rank = {critical:4, major:3, minor:2, info:1};
+          if ((rank[_mkSev]||1) > (rank[cl.sev]||1)) cl.sev = _mkSev;
         }
         var keys = Object.keys(clusters);
         if (!keys.length) return;
@@ -19376,14 +19409,15 @@ function startApp() {
       if (!clusters[k]) { clusters[k] = []; order.push(k); }
       clusters[k].push(c);
     });
-    var SEV_RANK = { critical:4, high:3, medium:2, low:1 };
+    var SEV_RANK = { critical:4, major:3, minor:2, info:1 };
     var rows = order.map(function(k){
       var items = clusters[k];
       var open = 0, sev = '', sevR = 0, assignees = {};
       items.forEach(function(c){
         if (c.status==='open'||c.status==='in_progress') open++;
-        var r = SEV_RANK[(c.aiSeverity||'').toLowerCase()]||0;
-        if (r > sevR) { sevR = r; sev = c.aiSeverity; }
+        var cSev = c.aiSeverity || _ccDeterministicSeverity(c);
+        var r = SEV_RANK[(cSev||'').toLowerCase()]||0;
+        if (r > sevR) { sevR = r; sev = cSev; }
         if (c.assignee) assignees[c.assignee] = true;
       });
       var first = items[0];
@@ -20969,8 +21003,13 @@ function startApp() {
     date_desc: function(a,b){ return (b.createdAt||'').localeCompare(a.createdAt||''); },
     priority_asc: function(a,b){ var o={critical:0,high:1,normal:2,low:3}; return (o[a.priority]||2)-(o[b.priority]||2); },
     priority_desc: function(a,b){ var o={critical:0,high:1,normal:2,low:3}; return (o[b.priority]||2)-(o[a.priority]||2); },
-    severity_asc: function(a,b){ var o={critical:0,major:1,minor:2,info:3}; return (o[a.aiSeverity]||2)-(o[b.aiSeverity]||2); },
-    severity_desc: function(a,b){ var o={critical:0,major:1,minor:2,info:3}; return (o[b.aiSeverity]||2)-(o[a.aiSeverity]||2); },
+    // Falls back to the deterministic severity (Wave 1.6) so "sort by severity"
+    // actually differentiates the vast majority of clashes that never get AI
+    // triage, instead of every one of them tying at the same default rank.
+    // Explicit null checks, not `||`, because 'critical' ranks 0 - falsy,
+    // so `o[x]||2` was silently treating every critical clash as rank 2.
+    severity_asc: function(a,b){ var o={critical:0,major:1,minor:2,info:3}; var ra=o[a.aiSeverity||_ccDeterministicSeverity(a)], rb=o[b.aiSeverity||_ccDeterministicSeverity(b)]; return (ra==null?2:ra)-(rb==null?2:rb); },
+    severity_desc: function(a,b){ var o={critical:0,major:1,minor:2,info:3}; var ra=o[a.aiSeverity||_ccDeterministicSeverity(a)], rb=o[b.aiSeverity||_ccDeterministicSeverity(b)]; return (rb==null?2:rb)-(ra==null?2:ra); },
     type_asc: function(a,b){ var o={hard:0,'near-miss':1,soft:2,duplicate:3}; return (o[a.type]||0)-(o[b.type]||0); },
     type_desc: function(a,b){ var o={hard:0,'near-miss':1,soft:2,duplicate:3}; return (o[b.type]||0)-(o[a.type]||0); },
     storey_asc: function(a,b){ return (a.elemAStorey||a.elemBStorey||'').localeCompare(b.elemAStorey||b.elemBStorey||''); },
@@ -21175,12 +21214,12 @@ function startApp() {
     if (window._ccToast) window._ccToast('Resolved ' + clashes.length + ' clash' + (clashes.length===1?'':'es'));
   };
   // Severity rank used to colour the cluster card left-edge dot.
-  // Reads aiSeverity first; falls back to type.
+  // Reads aiSeverity first; falls back to the deterministic severity (Wave 1.6).
   window._ccClusterSeverity = function(items) {
-    var rank = {critical:4, major:3, hard:3, soft:2, minor:2, duplicate:1, info:0};
+    var rank = {critical:4, major:3, minor:2, info:1};
     var best = -1, label = 'info';
     (items||[]).forEach(function(it){
-      var sev = it.aiSeverity || it.type;
+      var sev = it.aiSeverity || _ccDeterministicSeverity(it);
       var r = rank[sev]; if (r==null) r = 1;
       if (r > best) { best = r; label = sev || 'info'; }
     });
@@ -21199,7 +21238,7 @@ function startApp() {
     lines.push('Return JSON of the form:');
     lines.push('{');
     lines.push('  "title": "<\u2264 80 chars, names the conflict>",');
-    lines.push('  "severity": "critical | high | medium | low",');
+    lines.push('  "severity": "critical | major | minor | info",');
     lines.push('  "explanation": "<2\u20134 sentences, plain language, grounded only in the data above>",');
     lines.push('  "discipline_conflict": "<e.g. MEP vs structural, MEP vs MEP>",');
     lines.push('  "false_positive_likelihood": "low | medium | high",');
@@ -21224,7 +21263,7 @@ function startApp() {
       case 'priority': return it.priority || 'normal';
       case 'category': return it.category || 'other';
       case 'assignee': return it.assignee || 'Unassigned';
-      case 'severity': return it.aiSeverity || 'minor';
+      case 'severity': return it.aiSeverity || _ccDeterministicSeverity(it);
       case 'cluster': {
         var ck = window._ccClusterKeyFor(it);
         if (!window._ccClusterDisplay) window._ccClusterDisplay = {};
@@ -21744,15 +21783,17 @@ function startApp() {
 
        The legacy typeLabel / sevLabel / typeBg / typeCol / sevBg / sevCol
        are kept as no-op fallbacks so any sub-render that still references
-       them downstream renders nothing visible. */
+       them downstream renders nothing visible.
+
+       Falls back to _ccDeterministicSeverity (Wave 1.6) instead of a flat
+       per-type color — every hard clash used to render the identical
+       critical-red dot regardless of actual depth or discipline. */
     var dotColor = (function(){
-      if (it.aiSeverity==='critical') return 'var(--sev-critical)';
-      if (it.aiSeverity==='major')    return 'var(--sev-major)';
-      if (it.aiSeverity==='minor')    return 'var(--sev-minor)';
-      if (it.type==='hard')           return 'var(--sev-critical)';
-      if (it.type==='soft')           return 'var(--sev-major)';
-      if (it.type==='duplicate')      return 'var(--sev-info)';
-      if (it.type==='visibility')     return '#3b82f6';  // blue — distinct from hazard categories
+      if (it.type==='visibility') return '#3b82f6';  // blue — distinct from hazard categories, checked first
+      var sev = it.aiSeverity || _ccDeterministicSeverity(it);
+      if (sev==='critical') return 'var(--sev-critical)';
+      if (sev==='major')    return 'var(--sev-major)';
+      if (sev==='minor')    return 'var(--sev-minor)';
       return 'var(--sev-info)';
     })();
     var icon = html`<span aria-hidden="true" style=${{display:'inline-block',width:7,height:7,borderRadius:'50%',background:dotColor,flexShrink:0,marginTop:6}}></span>`;
@@ -28574,7 +28615,7 @@ function startApp() {
     if (batchSevMatch) {
       var sevKey = batchSevMatch[1].toLowerCase();
       var sevStatus = batchSevMatch[2] ? batchSevMatch[2].replace(/\s+/g,'_') : 'resolved';
-      var sevTargets = s.clashes.filter(function(c){return c.aiSeverity===sevKey;});
+      var sevTargets = s.clashes.filter(function(c){return (c.aiSeverity||_ccDeterministicSeverity(c))===sevKey;});
       sevTargets.forEach(function(c){ d({t:A.UPD_CLASH, id:c.id, u:{status:sevStatus}}); });
       return 'Done — ' + sevTargets.length + ' ' + sevKey + ' clashes set to ' + sevStatus + '.';
     }
@@ -28612,7 +28653,7 @@ function startApp() {
       var prioFilter = batchPrioMatch[1].toLowerCase();
       var newPrio = batchPrioMatch[2].toLowerCase();
       var prioTargets = s.clashes.filter(function(c){
-        if (prioFilter === 'critical' || prioFilter === 'major' || prioFilter === 'minor' || prioFilter === 'info') return c.aiSeverity === prioFilter;
+        if (prioFilter === 'critical' || prioFilter === 'major' || prioFilter === 'minor' || prioFilter === 'info') return (c.aiSeverity||_ccDeterministicSeverity(c)) === prioFilter;
         if (prioFilter === 'hard' || prioFilter === 'soft') return c.type === prioFilter;
         if (prioFilter === 'open') return c.status === 'open';
         return false;
