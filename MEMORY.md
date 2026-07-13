@@ -13,7 +13,7 @@
 **Version:** 5.21.17 (2026-07-10) — daily-sync was silently crashing on MEMORY.md's own prose (see Known Issues); this line was stale for a month as a direct result, now corrected by hand.
 
 **Live features (all working):**
-- Mesh-based clash detection engine: AABB broad-phase + BVH tri-tri narrow-phase (Möller–Trumbore), optional `_ccWasmIntersect`/`_ccWasmMinDist` WASM accelerators; rules (discipline filters, clearance, group-by); soft/clearance via spatial-hash vertex distance; optional escalation to `local-engine.js` for true solid boolean ops
+- Mesh-based clash detection engine: AABB broad-phase + BVH tri-tri narrow-phase (Möller–Trumbore), optional `_ccWasmIntersect`/`_ccWasmMinDist` WASM accelerators; rules (discipline filters, clearance, group-by); soft/clearance via spatial-hash vertex distance; optional escalation to `local-engine.js` for the **same** tri-tri+BVH algorithm at native speed (Numba JIT + multiprocess + scipy KD-tree) — not solid boolean ops; neither engine computes true penetration depth today (see Known Issues)
 - BCF 2.1 import/export (viewpoints, markup, snapshots)
 - IFC loading via web-ifc WASM (lazy, with geometry + property extraction)
 - AI NL command interface (Groq via `/api/nl`, 25+ tool declarations — grew well past the "13" once quoted here, check `TOOLS` in `api/nl.js` for the live count — OpenAI function calling; intentionally basic — clash-solving nudges to your own LLM via the Connector)
@@ -52,7 +52,7 @@ These are permanent. Do not remove entries — add new ones when significant dec
 | founding | Single `index.html` app, no build step | Zero setup for users; open-source transparency; easy to fork/inspect |
 | founding | Three.js r128 (pinned, not latest) — *superseded 2026-06-08, see r180 row below* | API stability; newer versions break existing render/material code |
 | 2026-06-08 | Three.js bumped r128 → r180, loaded as ESM via import map (#595, v5.19.12) | Unblocks modern-Three features (splat addon dedup, future WebGPU clash path); post-r155 color management/lighting explicitly re-tuned |
-| founding | In-browser clash engine: AABB broad-phase + BVH tri-tri narrow-phase (legacy name "OBB engine" is a simplification — orientation only enters via the slimline-axis prune for directional elements). `_ccWasmIntersect`/`_ccWasmMinDist` accelerate when loaded. Optional `local-engine.js` addon escalates to true solid boolean ops on a localhost Python server. | Tri-tri is the browser sweet spot: tighter than AABB-only (kills false positives on rotated beams/pipes), fast enough for thousands of pairs in JS, and has a clean WASM acceleration path. True solid boolean ops are too slow in JS so they live in the Python local engine. |
+| founding | In-browser clash engine: AABB broad-phase + BVH tri-tri narrow-phase (legacy name "OBB engine" is a simplification — orientation only enters via the slimline-axis prune for directional elements). `_ccWasmIntersect`/`_ccWasmMinDist` accelerate when loaded. Optional `local-engine.js` addon escalates to the local Python server for the same tri-tri+BVH algorithm at native speed. *(Corrected 2026-07-13: this row previously claimed the Python engine does "true solid boolean ops" — verified false by reading `ClashControlEngine/src/clashcontrol_engine/intersection.py`; it runs the identical Möller tri-tri + dual-BVH algorithm as the browser, just faster via Numba JIT + multiprocess + scipy KD-tree. Escalating buys speed, not more-correct geometry — see IMPROVEMENT_PLAN.md CW-1 for the plan to make it genuinely more exact via real penetration depth + `manifold3d` intersection volume.)* | Tri-tri is the browser sweet spot: tighter than AABB-only (kills false positives on rotated beams/pipes), fast enough for thousands of pairs in JS, and has a clean WASM acceleration path. The Python engine gives the same algorithm the CPU headroom (multi-process, JIT) a browser tab can't. |
 | founding | CDN deps pinned with SRI hashes | Reproducible builds; integrity verification |
 | founding | Addons pattern (`addons/*.js` IIFE) | Keeps `index.html` lean; optional features don't block initial load |
 | founding | Preact/React via CDN UMD (not ESM) | Avoids bundler; works with htm tagged templates inline |
@@ -83,6 +83,20 @@ Things to be careful about. Do not remove without a good reason — add a note i
 - **IFC spatial hierarchy is NOT a clash-pruning filter**: `IfcProject → IfcSite → IfcBuilding → IfcBuildingStorey → IfcSpace` is logical containment, not proximity. Real geometry spans containment boundaries (vertical ducts cross storeys, foundations sit between site and building, stairs intersect two slabs). Pair pruning must come from the AABB broad-phase / spatial index, not from shared spatial parent. Don't be tempted to "speed up" detection by filtering pairs that share an IfcBuildingStorey only.
 - **`scripts/update-memory.py` `replace_section()` must use a callable `re.sub` replacement, not a string one.** A string replacement lets `re.sub` interpret backslashes as group references; this file's own prose contains literal sequences like `\i \c` (documenting XSD regex escapes in the IDS engine notes) which crashed the daily-sync job with "bad escape \i" on every run since it was written — silently, because nothing surfaced the failure. This is why the Project State version line went stale for a month (fixed 2026-07-08). If you see the version line drift again, check the Actions run for this workflow first.
 - **Coplanar triangle pairs are deliberately NOT reported as clashes**, in both the browser JS engine (`index.html`, `_triTriTest`) and the Python engine (`intersection.py`, `tri_tri_intersect`). Flush surface contact (a wall base sitting in a slab's top-face plane) is universal in real models — treating it as a hard clash would flood every project with false positives. This is a policy choice, not a missing feature; the explicit near-zero-`d` early-out also avoids a 0/0 NaN in the interval math. Don't "fix" this by making coplanar overlap report a hit.
+- **Neither clash engine computes a real penetration depth.** The browser's `distance` field is the longest
+  sampled tri-tri intersection *chord* (falls back to the smallest AABB-overlap extent when the chord is
+  zero) — not how deep the meshes interpenetrate. The Python engine's `penetration_est` is explicitly
+  documented as an AABB-overlap *upper bound* (`intersection.py`, `meshes_intersect_prepared`). A shallow
+  corner graze and a duct punched clean through a column can report the same number. This means an
+  industry-standard "hard clash, penetration ≥ 10mm" filter can't be trusted yet — see
+  `IMPROVEMENT_PLAN.md` CW-1 (Wave 1) for the plan (inside-vertex + closest-point MTD-approx in both
+  engines, plus a `manifold3d` intersection-volume path in the Python "exact" tier). Don't build a
+  triage/severity feature on top of `distance`/`overlapVolM3`/`penetration_est` as if they were trustworthy
+  depth numbers until that work lands.
+- **The Python local engine is NOT "exact" in the sense of solid boolean ops** — it runs the identical
+  Möller tri-tri + BVH algorithm as the browser (`intersection.py`/`sweep.py`), just faster (Numba JIT,
+  multiprocess, scipy KD-tree). Escalating to it today buys speed, not more-correct geometry. See the
+  corrected Architecture Decisions row above and `IMPROVEMENT_PLAN.md` CW-1.
 <!-- END:known-issues -->
 
 <!-- BEGIN:active-work -->
@@ -90,6 +104,74 @@ Things to be careful about. Do not remove without a good reason — add a note i
 
 Update this section at the start and end of each session.
 Mark completed items with ~~strikethrough~~ and date, then let the daily sync archive them.
+
+On branch `claude/clashcontrol-competitive-analysis-gra92c` (2026-07-13) — competitive analysis vs
+Solibri/Navisworks/OSS (IfcOpenShell, ThatOpen, xeokit, Speckle, BIMcollab, Revizto, buildingSMART IDS)
++ Wave-0 correctness fixes:
+
+- **`IMPROVEMENT_PLAN.md` added** — full analysis + 6-wave roadmap. Thesis (evidence-backed): CC already
+  has the pro FEATURE set (cross-run clash reconciliation `computeClashIdentityKey`/`mergeDetectionResults`
+  is comparable-or-better than Navisworks' GUID matching, clustering, BCF 2.1/3.0, workspace-aware
+  inspector, ahead-of-bar measurement snapping) — the gap vs competitors is **honesty** (fake penetration
+  depth, phantom `minGap`, exact-engine silently dropping rules, hollow BCF viewpoints, quality score
+  skipping checks shown in its own panel), **noise** (no default clash matrix/tolerance floor → 10k-clash
+  first runs), and **feel** (dead orbit-pivot bug, AO/edges built-but-disabled). Waves 1-6 (triage funnel,
+  review loop/camera feel, BCF fidelity, search sets, IDS conformance, scale) are roadmap, not yet built.
+- ~~**Wave 0 correctness fixes, 9 items, each its own commit + test where the fix is pure logic**~~ (2026-07-13):
+  - ~~Orbit pivot recenters to selection~~ — `sph.setFromVector3` on a plain `{r,phi,theta}` object silently
+    threw and was swallowed; camera always orbited the pre-selection target. `ab5e5a2`.
+  - ~~Model visibility toggle no longer needs a camera nudge~~ — the manual per-mesh culling pass
+    (`updateCulling`) throttles to 1-per-8 rendered frames; a bare `invalidate()` (2 frames) wasn't enough
+    to cross that gate, so re-shown models stayed individually `.visible=false` until orbiting kept
+    invalidating long enough. New `S._forceCull` bypasses the throttle once per models-list change.
+    `204a039`. (Found live mid-session from a user bug report, not the original research pass.)
+  - ~~`minGap` actually applies~~ — collected/displayed everywhere but never checked; `isSoft` only tested
+    the upper bound. Now `[minGap, maxGap]`. `623727a`.
+  - ~~Local-engine rule parity~~ — `_serializeForLocalEngine` sent only modelA/B+maxGap+a `mode` field the
+    browser's rules object never sets (always fell through to `'hard'` — a configured soft-only run
+    silently ran hard-only on the exact engine). Now sends the full scalar rule set + pre-filters
+    `IfcSpace` client-side; semantic-filter (`relatedPairs`) parity explicitly deferred (needs a payload
+    shape change). Engine-repo companion change (apply the new fields in `engine.py`/`sweep.py`) documented
+    in `IMPROVEMENT_PLAN.md`, not yet done in that repo. `739af54`.
+  - ~~Assignee/priority survive re-runs~~ — `mergeDetectionResults`' persisting-clash branch carried status/AI
+    fields/linkedIssueId forward but not `assignee`/`priority`. `ff02b09`.
+  - ~~JS/WASM hit-point parity~~ — JS validated candidate points against both elements' AABBs±10mm before
+    accepting a hit; the WASM path returned its raw point unvalidated, so results (and even hit/miss)
+    could differ depending on whether WASM loaded. Extracted `_pointInBothBoxes`, gated both paths on it.
+    `e020f1a`.
+  - ~~Quality Score includes BIM-basics~~ — `computeQualityScore` only ever folded in
+    `runDataQualityChecks`+accessibility. `runBIMModelChecks` now always folds in (generic, region-neutral).
+    `runILSChecks` (Dutch NL-BIM Basis ILS v2) is nuanced: `noNLSfB` has no IfcType gating, so an
+    unadopted-NL-SfB project would score near-zero on a standard it never uses — ILS now always shows as
+    its own breakdown category but only counts toward the headline number once the project shows real
+    adoption (≥20% of elements carry a code). IDS deliberately not touched (different result shape,
+    belongs with Wave 5). `fcad866`.
+  - ~~Render key 5 = wireframe~~ (was a duplicate of xray; wireframe had no key) + ~~walk-mode postFX fixed~~
+    (`_walkEnter` turned SAO/Outline/SMAA on synchronously but only when the pre-walk style wasn't already
+    `'rendered'`, and even then the `renderStyle:'rendered'` dispatch's own re-render immediately re-ran the
+    normal-mode "disable postFX, it blurs" effect right after — walk mode never actually got it). `55ca009`.
+  - ~~Stable discipline colors~~ — `byDiscipline` color-by assigned colors by element-count rank
+    (`CLASS_COLORS[idx]`), not by what the discipline IS — structural could be blue in one federation, red
+    in another, never matching the app's own `DISC` semantic map used elsewhere. New `DISC_COLOR_BY_ID`
+    lookup used by both the 3D scene and the Navigator panel dots; other views (byType/byStorey/byMaterial)
+    unchanged. `fe33b2e`.
+  - Doc drift fixed: MEMORY.md's Project State + Architecture Decisions both claimed the Python local
+    engine does "true solid boolean ops" — verified false by reading `ClashControlEngine/src/
+    clashcontrol_engine/intersection.py` directly; it runs the identical Möller tri-tri + BVH algorithm as
+    the browser, just faster (Numba JIT + multiprocess + scipy KD-tree). Corrected both rows.
+  - Verification: `npm test` (83/83 passing, up from 68 — 4 new test files, each extracting real
+    production code out of `index.html`/addons the same way `tests/ifc-units.test.js` does, not
+    reimplementing the logic under test), main-script parse via `new Function` after every edit. NOT
+    browser-verified (Playwright/CDN blocked in this sandbox per prior sessions) — the detection-engine
+    changes (`minGap`, WASM/JS parity) and the culling-throttle fix in particular need a real browser
+    pass; flagged in each commit message.
+- 3 sibling repos cloned into the session for reference (`ClashControlEngine`, `ClashControlConnector`,
+  `ClashControlSmartBridge` — the last is confirmed superseded, see its own README banner). Engine's
+  `intersection.py`/`sweep.py` read directly to ground CW-1 (real penetration depth + `manifold3d`
+  intersection volume — Wave 1, not started) and the local-engine parity fix above.
+- **Next**: push branch, open draft PR, `subscribe_pr_activity`. Waves 1-6 in `IMPROVEMENT_PLAN.md` are
+  future sessions' work — start with Wave 1 (the triage funnel) since it's the product's core and mostly
+  reuses existing rule plumbing (`excludeTypePairs`/`toleranceByTypePair`/`includeSpaces` already exist).
 
 On branch `claude/codebase-review-optimization-3nltcw` (2026-07-08) — four-repo review sweep (in progress):
 
