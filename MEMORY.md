@@ -605,14 +605,37 @@ Solibri/Navisworks/OSS (IfcOpenShell, ThatOpen, xeokit, Speckle, BIMcollab, Revi
   cron or a human clicking "Run workflow". `74de5ce` (grading logic + tests), `f25ee77` (driver + workflow).
   281/281 `npm test` passing throughout (the browser-driven `.mjs` itself is intentionally outside that count,
   same as `smoke.mjs`).
-- **Next**: dynamic search sets (the one remaining Wave 4 item, and the largest), the two BCF follow-ups
-  (auto-synthesized viewpoints; `<ClippingPlanes>` export — now doubly-confirmed as a shared, not
-  CC-specific, gap per Check 2), a possible `<Coloring>` export (newly confirmed gap from Check 2), rest of
-  Wave 3 (stamp/auto-assignment rules), **watching the first real `ids-conformance` Actions run** (manual or
-  the Monday cron) and acting on whatever it finds — false positives/negatives in `wrong`, or a corpus-fetch/
-  harness bug in `errored` — since this is the one feature this session that shipped without any local
-  verification, and Wave 6 (Scale — untouched; extra care required per this session's own history-informed
-  guardrails: no geo-cache keying changes, no hand-rolled geometry merging).
+- ~~**BCF `<Visibility>`/`<Coloring>` export (Wave 3)**~~ (2026-07-13). Went to fetch the real
+  `visinfo.xsd` (both `release_2_1` and `release_3_0`) before writing any code, since this session's own
+  earlier Check 2 notes (secondary-source, read from a sibling Rust project rather than the schema itself)
+  turned out to have the structure wrong — worth re-verifying, exactly the lesson the IDS-conformance item
+  above just re-learned from a different angle. **Corrected understanding**: `<Coloring>` is a CHILD of
+  `<Components>` (alongside `<Selection>`/`<Visibility>`), not a sibling of `<Components>` at the
+  `VisualizationInfo` level as Check 2 had said. **Bigger, unrelated finding from reading the real schema**:
+  `<Visibility>` has `minOccurs="1"` inside `ComponentVisibility` in BCF 2.1 — meaning every BCF 2.1 file CC
+  had ever exported with a `<Components>` block (i.e. every clash-pair viewpoint) was already schema-invalid,
+  missing a required element, before today. Fixed both in one pass since they're the same block: now always
+  emits `<Visibility DefaultVisibility="true"/>` right after `<Selection>` whenever `<Components>` exists (3.0
+  makes Visibility optional, but writing it explicitly avoids relying on 3.0's `DefaultVisibility="false"`
+  schema default; CC has no per-viewpoint hidden-elements snapshot to export as `<Exceptions>`, so
+  "everything visible, no exceptions" is the honest claim available today) — and `<Coloring>` for clash-pair
+  items only (`globalIdA`+`globalIdB` both present), reusing the exact Wave 2.1 clash-focus A/B colors
+  (`#ef4444`/`#22d3ee`, `_PAIR_ROLE_COLOR` in `_highlightRefs`) so a BCF viewer shows the pair the way CC
+  itself does. **2.1 and 3.0 genuinely differ inside `<Color>`**: 2.1 holds `<Component>` directly, 3.0 wraps
+  it in a nested `<Components>` — confirmed against both real XSDs, not assumed symmetric. Single-GUID items
+  (DQ/accessibility issues) get Selection+Visibility but no Coloring — no second side to contrast against.
+  Updated the pre-existing "deduplicated" test to scope its GUID-count assertion to `<Selection>` specifically
+  (Coloring now legitimately repeats those GUIDs elsewhere in the file — counting across the whole file would
+  no longer test what it originally meant to). 5 new tests. `5945f31`. 286/286 passing.
+  **Still open from Wave 3**: `<ClippingPlanes>` export (doubly-confirmed as a shared, not CC-specific, gap
+  per Check 2 — deferred, not rushed), auto-synthesized default viewpoints for issues with no linked view, and
+  stamp/auto-assignment rules (Revizto-style per-project templates).
+- **Next**: dynamic search sets (the one remaining Wave 4 item, and the largest), the Wave 3 remainder just
+  above, **watching the first real `ids-conformance` Actions run** (manual or the Monday cron) and acting on
+  whatever it finds — false positives/negatives in `wrong`, or a corpus-fetch/harness bug in `errored` — since
+  that's the one feature this session that shipped without any local verification, and Wave 6 (Scale —
+  untouched; extra care required per this session's own history-informed guardrails: no geo-cache keying
+  changes, no hand-rolled geometry merging).
 
 On branch `claude/codebase-review-optimization-3nltcw` (2026-07-08) — four-repo review sweep (in progress):
 
