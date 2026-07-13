@@ -484,12 +484,28 @@ Solibri/Navisworks/OSS (IfcOpenShell, ThatOpen, xeokit, Speckle, BIMcollab, Revi
   - **Deliberately not done**: a "flat cross-model results list" (today's results still nest inside the
     per-model/per-storey tree, just correctly filtered now) and auto-expand-on-search (matching a node
     still requires manually expanding its ancestors, same as before) — both bigger, separate UX redesigns,
-    not part of this fix's scope. Saved "search sets" (re-resolving named queries, +/−/= editing,
-    `REN_SELSET`) and element-vs-element diff are still fully unstarted Wave 4 items.
-- **Next**: the rest of Wave 4 (search sets, element-vs-element diff, containment breadcrumb), the two BCF
-  follow-ups (auto-synthesized viewpoints; `<ClippingPlanes>` export — now doubly-confirmed as a shared,
-  not CC-specific, gap per Check 2), a possible `<Coloring>` export (newly confirmed gap from Check 2),
-  rest of Wave 3 (stamp/auto-assignment rules), and Waves 5-6.
+    not part of this fix's scope.
+  - ~~**Selection Sets: rename + `+`/`−` membership editing**~~. `REN_SELSET` had a reducer case but
+    genuinely zero dispatch call sites anywhere in the app — no rename button existed at all. Click a
+    set's name to rename (wires the existing action). New `UPD_SELSET_REFS` reducer case (a dedicated case
+    rather than delete+re-add, so a set's `createdAt`/`color` aren't reset by editing membership) backs new
+    `+`/`−` buttons that add/remove the current selection from an already-saved set. `b89cd1e`.
+  - ~~**Containment breadcrumb + hosted elements in the Details inspector**~~. The Coordinate workspace's
+    Identity card only ever showed a bare storey string — no Project/Site/Building chain, no way to see
+    what an element is hosting (e.g. a wall's doors/windows) — despite both data sets already existing
+    (`spatialHierarchy` from `extractSpatialHierarchy`, `hostId` from the loader). New breadcrumb (each
+    level included only when unambiguous — 0 or 2+ sites/buildings are omitted rather than guessed, with a
+    fallback to the old plain row when nothing resolves) + a "Hosted elements" card, click to highlight /
+    double-click to frame (same convention as the Navigator tree's own element nodes). `63534de`.
+  - 17 more tests across 4 files this round (block-extraction + grep wiring locks). 248/248 passing.
+  - **Still unstarted**: dynamic/re-resolving "search sets" (save a classification filter as a named query
+    that re-evaluates against the live model, distinct from today's static snapshot-of-refs sets) and
+    element-vs-element compare/diff (`multiSel` + `PropBlock` already exist and are used as stacked A/B in
+    the clash panel — reusing them for an aligned diff view is the natural next step, just not started).
+- **Next**: the two still-unstarted Wave 4 items above, the two BCF follow-ups (auto-synthesized
+  viewpoints; `<ClippingPlanes>` export — now doubly-confirmed as a shared, not CC-specific, gap per Check
+  2), a possible `<Coloring>` export (newly confirmed gap from Check 2), rest of Wave 3 (stamp/auto-
+  assignment rules), and Waves 5-6.
 
 On branch `claude/codebase-review-optimization-3nltcw` (2026-07-08) — four-repo review sweep (in progress):
 
