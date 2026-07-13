@@ -565,6 +565,86 @@
     };
   }
 
+  // ── RVB BIM Norm v1.1 — Project/Site/Building/Zone metadata ──────────
+  //
+  // Rule set derived from the public RVB BIM Norm v1.1 standard
+  // (Rijksvastgoedbedrijf / buildingSMART Benelux), covering the
+  // project-level metadata specs (2.2.7.1-2.2.7.4, 2.2.7.7) that
+  // runILSChecks above can't reach because they live above the
+  // per-element level: IfcProject/IfcSite/IfcBuilding/IfcZone, plus
+  // IfcBuildingStorey.Elevation (extractStoreys' storeyData, not part of
+  // the per-element props runILSChecks reads). The individual checks are
+  // re-implementations against the standard's requirements — no code is
+  // copied from any specific validator implementation. The RVB
+  // element-level gap-fills (furnishing NL-SfB, space quantities) live in
+  // runILSChecks itself, alongside the ILS checks they extend.
+  //
+  // Takes the loaded models directly (spatialHierarchy/storeyData are
+  // per-model, not per-element) rather than a flat elements array.
+  function runRVBChecks(models) {
+    var acc = {
+      projectIncomplete: [], siteIncomplete: [], buildingIncomplete: [],
+      zoneIncomplete: [], storeyNoElevation: []
+    };
+    var totals = {projectIncomplete:0, siteIncomplete:0, buildingIncomplete:0, zoneIncomplete:0, storeyNoElevation:0};
+
+    (models||[]).forEach(function(m) {
+      var sh = m.spatialHierarchy || {};
+      var mName = m.name || m.id || 'model';
+
+      // 2.2.7.1 — Project informatie
+      totals.projectIncomplete++;
+      if (!sh.project || !sh.project._hasName) {
+        acc.projectIncomplete.push({name:mName, ifcType:'IfcProject', detail:'Name'});
+      }
+
+      // 2.2.7.2 — Terrein informatie (Name + georeferentie)
+      (sh.sites||[]).forEach(function(site) {
+        totals.siteIncomplete++;
+        var missing = [];
+        if (!site._hasName) missing.push('Name');
+        var g = site.georef;
+        if (!g || g.refLat == null || g.refLon == null) missing.push('RefLatitude/RefLongitude');
+        if (!g || g.refElev == null) missing.push('RefElevation');
+        if (missing.length) acc.siteIncomplete.push({name:mName+' — '+site.name, ifcType:'IfcSite', detail:missing.join(', ')});
+      });
+
+      // 2.2.7.3 — Gebouw informatie
+      (sh.buildings||[]).forEach(function(bld) {
+        totals.buildingIncomplete++;
+        if (!bld._hasName) acc.buildingIncomplete.push({name:mName+' — '+bld.name, ifcType:'IfcBuilding', detail:'Name'});
+      });
+
+      // 2.2.7.7 — Zone informatie. IfcZone is an optional IFC grouping —
+      // most models legitimately have none, so an empty set is not itself
+      // flagged, only zones that DO exist and are incomplete.
+      (sh.zones||[]).forEach(function(zone) {
+        totals.zoneIncomplete++;
+        var zMissing = [];
+        if (!zone._hasName) zMissing.push('Name');
+        if (!zone.objectType) zMissing.push('ObjectType');
+        if (zMissing.length) acc.zoneIncomplete.push({name:mName+' — '+zone.name, ifcType:'IfcZone', detail:zMissing.join(', ')});
+      });
+
+      // 2.2.7.4 — Bouwlaag: Elevation. Name-format is already checked by
+      // runILSChecks' storeyNaming (ILS 3.3); this is the RVB addition,
+      // read from storeyData since Elevation isn't in per-element props.
+      (m.storeyData||[]).forEach(function(sd) {
+        totals.storeyNoElevation++;
+        if (!sd.hasElevation) acc.storeyNoElevation.push({name:mName+' — '+sd.name, ifcType:'IfcBuildingStorey', detail:'Elevation'});
+      });
+    });
+
+    return {
+      projectIncomplete:{label:'IfcProject zonder naam (RVB 2.2.7.1)',sev:'warn',cat:'metadata',count:acc.projectIncomplete.length,total:totals.projectIncomplete,ex:acc.projectIncomplete.slice(0,8)},
+      siteIncomplete:{label:'IfcSite: naam of georeferentie ontbreekt (RVB 2.2.7.2)',sev:'info',cat:'metadata',count:acc.siteIncomplete.length,total:totals.siteIncomplete,ex:acc.siteIncomplete.slice(0,8)},
+      buildingIncomplete:{label:'IfcBuilding zonder naam (RVB 2.2.7.3)',sev:'warn',cat:'metadata',count:acc.buildingIncomplete.length,total:totals.buildingIncomplete,ex:acc.buildingIncomplete.slice(0,8)},
+      zoneIncomplete:{label:'IfcZone: naam of ObjectType ontbreekt (RVB 2.2.7.7)',sev:'info',cat:'metadata',count:acc.zoneIncomplete.length,total:totals.zoneIncomplete,ex:acc.zoneIncomplete.slice(0,8)},
+      storeyNoElevation:{label:'Bouwlaag zonder Elevation (RVB 2.2.7.4)',sev:'info',cat:'metadata',count:acc.storeyNoElevation.length,total:totals.storeyNoElevation,ex:acc.storeyNoElevation.slice(0,8)},
+      _total: (models||[]).length
+    };
+  }
+
   // ── IDS (Information Delivery Specification) Export ─────────────
   // Generates a buildingSMART IDS 1.0 XML file from ClashControl's
   // data quality and BIM model checks. IDS-compatible checks are
@@ -1201,6 +1281,7 @@
   window._ccRunDataQualityChecks = runDataQualityChecks;
   window._ccRunBIMModelChecks = runBIMModelChecks;
   window._ccRunILSChecks = runILSChecks;
+  window._ccRunRVBChecks = runRVBChecks;
   window._ccNLSFB_TABLE1 = NLSFB_TABLE1;
   window._ccExportIDS = exportIDS;
   window._ccImportIDS = importIDS;
