@@ -283,7 +283,10 @@
     IfcFlowTerminal:['53','55','56','57','63'],
     IfcSanitaryTerminal:['53'], IfcLightFixture:['63'],
     IfcSwitchingDevice:['61','62'], IfcOutlet:['62'],
-    IfcDistributionElement:['52','53','54','55','56','57','61','62','63','64']
+    IfcDistributionElement:['52','53','54','55','56','57','61','62','63','64'],
+    // RVB BIM Norm v1.1 2.2.7.11 "Meubilair" - fixed furnishing falls under
+    // NL/SfB group 90 (Vaste inrichting).
+    IfcFurnishingElement:['90']
   };
 
   var ILS_REQUIRED = {
