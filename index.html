@@ -7277,6 +7277,24 @@ function startApp() {
           return;
         }
       }
+      // Zoom OUT anchored to the point under the cursor too — mirrors the zoom-in
+      // branch above (retreat the target away from the picked point instead of
+      // advancing toward it, grow sph.r instead of shrinking it) so the picked
+      // point recedes along the same ray you scrolled on rather than the view
+      // just scaling around the old, possibly off-screen, orbit target.
+      if (zoomFactor > 1 && !orbit.camera.isOrthographicCamera) {
+        var _zpOut = _zoomPickPoint(e);
+        if (_zpOut) {
+          camera.getWorldDirection(_tmpDir);
+          var _distFwdOut = _tmpDir.dot(_tmpVec.copy(_zpOut).sub(camera.position));
+          if (_distFwdOut <= 0) { _distFwdOut = 0; } // safety: should never happen
+          var _retreatAmt = _distFwdOut * Math.min(0.6, (zoomFactor - 1) * 3.5);
+          target.addScaledVector(_tmpDir, -_retreatAmt);
+          sph.r = Math.min(5000, sph.r * zoomFactor);
+          orbit.apply(); invalidate(); e.preventDefault();
+          return;
+        }
+      }
       var prevR = sph.r;
       sph.r *= zoomFactor;
       // Empty space under the cursor: fall back to the radius zoom, and when the
