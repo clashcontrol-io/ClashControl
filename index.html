@@ -14836,6 +14836,14 @@ function startApp() {
       runHistory:s.runHistory||[],
       sheets:s.sheets||[], activeSheetId:s.activeSheetId||null,
       sheetPins:s.sheetPins||[], markups:s.markups||[],
+      // selectionSets/searchSets predate the explicit-file saveProject/
+      // loadProject wiring they DO have — this IndexedDB auto-persist path
+      // is separate (survives a refresh/project-switch without a manual
+      // export) and had silently never carried either, so a set defined
+      // this session vanished on next load unless the user happened to
+      // export/import a project file. LOAD_PROJECT_STATE is a blind
+      // Object.assign merge, so adding the keys here is the whole fix.
+      selectionSets:s.selectionSets||[], searchSets:s.searchSets||[],
       modelMeta:s.models.map(function(m){return {id:m.id,name:m.name,discipline:m.discipline,color:m.color,visible:m.visible,tag:m.tag||'',georef:m.georef||null};})
     }, 0);
     return idbSaveProjectData(pid, data);
