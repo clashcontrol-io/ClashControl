@@ -15341,20 +15341,37 @@ function startApp() {
   }
   window._ccElementDiscipline = _ccElementDiscipline;
 
-  // Default clash matrix: should this pair be skipped for being same-
-  // discipline? Same-discipline pairs (structural-vs-structural, MEP-vs-MEP)
-  // are the #1 cited false-positive flood in BIM coordination guidance.
-  // rules.excludeSameDiscipline===false (a future matrix-UI toggle)
-  // re-enables them. rules.duplicates is exempt: a duplicate pair (two
-  // copy-pasted ducts) is almost always same-discipline by nature, and that
-  // check in _processCandidate runs independently of hard/soft, so the
-  // matrix must never discard it. Shared by both _detectClashesCore call
-  // sites (chunk pre-filter + the authoritative check) so they can't drift.
+  // Default clash matrix: should this pair be skipped? rules.duplicates is
+  // exempt regardless of discipline — a duplicate pair (two copy-pasted
+  // ducts) is almost always same-discipline by nature, and that check in
+  // _processCandidate runs independently of hard/soft, so the matrix must
+  // never discard it. Otherwise, precedence is:
+  //   1. An explicit rules.disciplineMatrix[pairKey] cell (matrix-UI override)
+  //   2. Same-discipline pairs default to skipped (rules.excludeSameDiscipline,
+  //      the #1 cited false-positive flood in BIM coordination guidance)
+  //   3. Cross-discipline pairs always default to tested
+  // Shared by both _detectClashesCore call sites (chunk pre-filter + the
+  // authoritative check) so they can't drift, and by _ccDisciplinePairEnabled
+  // (matrix-UI cell state) so the UI and the engine can't disagree either.
   function _ccMatrixSkipsSameDiscipline(eA, mA, eB, mB, rules) {
-    if (rules.excludeSameDiscipline === false || rules.duplicates) return false;
-    return _ccElementDiscipline(eA, mA && mA.discipline) === _ccElementDiscipline(eB, mB && mB.discipline);
+    if (rules.duplicates) return false;
+    var dA = _ccElementDiscipline(eA, mA && mA.discipline);
+    var dB = _ccElementDiscipline(eB, mB && mB.discipline);
+    return !_ccDisciplinePairEnabled(dA, dB, rules);
   }
   window._ccMatrixSkipsSameDiscipline = _ccMatrixSkipsSameDiscipline;
+
+  // Effective on/off state for one discipline-pair cell — used directly by the
+  // matrix UI (no real elements needed) and by _ccMatrixSkipsSameDiscipline
+  // above, so they share one precedence rule and can never disagree.
+  function _ccDisciplinePairEnabled(discA, discB, rules) {
+    var pairKey = discA < discB ? discA+':'+discB : discB+':'+discA;
+    var dm = rules.disciplineMatrix;
+    if (dm && dm[pairKey] !== undefined) return dm[pairKey] !== false;
+    if (discA !== discB) return true;
+    return rules.excludeSameDiscipline === false;
+  }
+  window._ccDisciplinePairEnabled = _ccDisciplinePairEnabled;
 
   function detectDiscipline(elements, name) {
     // Only DISCRIMINATING element types vote — see _DISC_TYPE_MAP above.
@@ -17651,6 +17668,61 @@ function startApp() {
     </div>`;
   }
 
+  // ── Discipline matrix: N×N grid, lower triangle only (structural×MEP and
+  // MEP×structural are the same cell) ──  See _ccDisciplinePairEnabled for
+  // the state precedence this mirrors exactly, so the UI can never disagree
+  // with the engine about whether a pair is tested.
+  function _renderDisciplineMatrix(rules, d) {
+    function cellKey(a, b) { return a < b ? a+':'+b : b+':'+a; }
+    function toggle(discA, discB) {
+      var on = _ccDisciplinePairEnabled(discA, discB, rules);
+      var dm = Object.assign({}, rules.disciplineMatrix||{});
+      dm[cellKey(discA, discB)] = !on;
+      d({t:A.UPD_RULES, u:{disciplineMatrix:dm}});
+    }
+    var hasOverrides = rules.disciplineMatrix && Object.keys(rules.disciplineMatrix).length > 0;
+    var cell = {width:20,height:20,borderRadius:4,cursor:'pointer',display:'flex',alignItems:'center',justifyContent:'center'};
+    var dot = {width:8,height:8,borderRadius:2};
+    return html`<div>
+      <div style=${{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:'.2rem'}}>
+        <span style=${{fontSize:'0.72rem',fontWeight:600,color:'var(--text-primary)'}}>Discipline matrix</span>
+        ${hasOverrides && html`<button onClick=${function(){d({t:A.UPD_RULES,u:{disciplineMatrix:{}}})}}
+          style=${{...S_BTN,fontSize:'0.57rem',padding:'0 4px',background:'none',color:'var(--text-faint)'}}>Reset overrides</button>`}
+      </div>
+      <div style=${{fontSize:'0.62rem',color:'var(--text-faint)',marginBottom:'.3rem'}}>Which discipline pairs get tested. Same-discipline pairs (the diagonal) are off by default — the single biggest source of clash noise.</div>
+      <table style=${{borderCollapse:'collapse'}}>
+        <tbody>
+          ${DISC.map(function(rowDisc, i){
+            return html`<tr key=${rowDisc.id}>
+              <td style=${{padding:'1px 5px 1px 0',fontSize:'0.63rem',color:rowDisc.c,fontWeight:600,whiteSpace:'nowrap',textAlign:'right'}}>${rowDisc.label}</td>
+              ${DISC.map(function(colDisc, j){
+                if (j > i) return html`<td key=${colDisc.id}></td>`; // upper triangle: same cell as [j][i], shown once
+                var on = _ccDisciplinePairEnabled(rowDisc.id, colDisc.id, rules);
+                var same = rowDisc.id === colDisc.id;
+                var label = same ? rowDisc.label+' self-clash' : rowDisc.label+' ↔ '+colDisc.label;
+                return html`<td key=${colDisc.id} style=${{padding:1}}>
+                  <div onClick=${function(){toggle(rowDisc.id, colDisc.id)}} role="switch" aria-checked=${on}
+                    title=${label+': '+(on?'tested':'skipped')}
+                    style=${{...cell, background:on?'var(--accent-bg)':'var(--bg-tertiary)', border:'1px solid '+(on?'var(--accent-subtle)':'var(--border-subtle)')}}>
+                    ${on && html`<div style=${{...dot, background:'var(--accent)'}}></div>`}
+                  </div>
+                </td>`;
+              })}
+            </tr>`;
+          })}
+          <tr>
+            <td></td>
+            ${DISC.map(function(colDisc){
+              return html`<td key=${'lbl-'+colDisc.id} style=${{padding:'2px 1px 0',textAlign:'center'}}>
+                <div style=${{fontSize:'0.6rem',color:colDisc.c,fontWeight:600}}>${colDisc.label.slice(0,3)}</div>
+              </td>`;
+            })}
+          </tr>
+        </tbody>
+      </table>
+    </div>`;
+  }
+
   // ── Phase A: one-line summary of effective rules, used in the Run Detection modal header ──
   function _ccSummariseRules(rules, models) {
     if (!rules) return '';
@@ -18122,6 +18194,9 @@ function startApp() {
               style=${{...S_INPUT,fontSize:'0.72rem',width:48,padding:'.15rem .25rem',textAlign:'right'}} />
             <span style=${{fontSize:'0.69rem',color:'var(--text-faint)'}}>cm\u00B3</span>
           </div>`}
+
+          <!-- Discipline matrix -->
+          <div style=${{marginBottom:'.4rem'}}>${_renderDisciplineMatrix(rules, d)}</div>
 
           <!-- Type-pair tolerances -->
           ${_renderTypePairTolerances(rules, models, tpState, setTPState, d)}
