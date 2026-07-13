@@ -1435,6 +1435,50 @@
   }
   window._ccComputeQualityScore = computeQualityScore;
 
+  // ── DQ re-run reconciliation ──────────────────────────────────────
+  // Clash detection has full GUID-identity reconciliation (new/persisting/
+  // auto-resolved, computeClashIdentityKey/mergeDetectionResults in
+  // index.html); Data Quality re-runs just overwrote the previous result
+  // with no trend at all. A true per-element identity diff (like clashes
+  // get) would need every check bucket to also return its full, uncapped
+  // GlobalId list - today `ex` is deliberately capped (6-8 items) for
+  // display, so it can't answer "is this SPECIFIC element still failing".
+  // This reconciles at the check level instead: did THIS check's count go
+  // up, down, or stay the same since the last run - same "was N, now M"
+  // framing the clash trend sparkline already uses, without requiring an
+  // engine-shape change. Prefixed by engine name since bucket keys collide
+  // across engines (e.g. both runDataQualityChecks and runILSChecks have a
+  // 'noMaterial' bucket checking a different thing).
+  function flattenDQCounts(results) {
+    var flat = {};
+    Object.keys(results || {}).forEach(function(engineName) {
+      var r = results[engineName];
+      if (!r) return;
+      Object.keys(r).forEach(function(k) {
+        if (k.charAt(0) === '_') return;
+        var c = r[k];
+        if (!c || typeof c.count !== 'number') return;
+        flat[engineName + ':' + k] = { count: c.count, label: c.label, sev: c.sev };
+      });
+    });
+    return flat;
+  }
+  window._ccFlattenDQCounts = flattenDQCounts;
+
+  function diffDQCounts(current, previous) {
+    var worse = [], better = [], unchangedCount = 0;
+    Object.keys(current || {}).forEach(function(key) {
+      var cur = current[key];
+      var prevCount = (previous && previous[key]) ? previous[key].count : 0;
+      if (cur.count > prevCount) worse.push({ key: key, label: cur.label, sev: cur.sev, from: prevCount, to: cur.count });
+      else if (cur.count < prevCount) better.push({ key: key, label: cur.label, sev: cur.sev, from: prevCount, to: cur.count });
+      else unchangedCount++;
+    });
+    worse.sort(function(a, b) { return (b.to - b.from) - (a.to - a.from); });
+    better.sort(function(a, b) { return (a.to - a.from) - (b.to - b.from); });
+    return { worse: worse, better: better, unchangedCount: unchangedCount };
+  }
+  window._ccDiffDQCounts = diffDQCounts;
 
   // Visible in the Addons panel as a built-in capability (the engines are
   // globals; the Data Quality panel itself lives in index.html).

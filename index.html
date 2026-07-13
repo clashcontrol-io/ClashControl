@@ -20141,6 +20141,12 @@ function startApp() {
     var bimSt = useState(null), bim = bimSt[0], setBim = bimSt[1];
     var ilsSt = useState(null), ils = ilsSt[0], setIls = ilsSt[1];
     var rvbSt = useState(null), rvb = rvbSt[0], setRvb = rvbSt[1];
+    // DQ re-run reconciliation - session-local (not persisted like clash
+    // runHistory): compares this run's per-check counts against the
+    // immediately preceding run in the same session, so re-checking after
+    // fixing a batch of elements shows what actually moved.
+    var prevDqSt = useState(null), prevDqCounts = prevDqSt[0], setPrevDqCounts = prevDqSt[1];
+    var dqDeltaSt = useState(null), dqDelta = dqDeltaSt[0], setDqDelta = dqDeltaSt[1];
     var expSt = useState({}), expanded = expSt[0], setExpanded = expSt[1];
     var selModel = useState('all'), selectedModel = selModel[0], setSelectedModel = selModel[1];
     var running = useState(false), isRunning = running[0], setRunning = running[1];
@@ -20167,10 +20173,19 @@ function startApp() {
           rvbModels.push(m);
           (m.elements||[]).forEach(function(el) { el._modelId = m.id; elements.push(el); });
         });
-        setQc(runDataQualityChecks(elements));
-        setBim(runBIMModelChecks(elements));
-        setIls(runILSChecks(elements));
-        setRvb(runRVBChecks(rvbModels));
+        var newQc = runDataQualityChecks(elements);
+        var newBim = runBIMModelChecks(elements);
+        var newIls = runILSChecks(elements);
+        var newRvb = runRVBChecks(rvbModels);
+        if (typeof window._ccFlattenDQCounts === 'function') {
+          var flatNow = window._ccFlattenDQCounts({qc:newQc, bim:newBim, ils:newIls, rvb:newRvb});
+          setDqDelta(prevDqCounts && typeof window._ccDiffDQCounts === 'function' ? window._ccDiffDQCounts(flatNow, prevDqCounts) : null);
+          setPrevDqCounts(flatNow);
+        }
+        setQc(newQc);
+        setBim(newBim);
+        setIls(newIls);
+        setRvb(newRvb);
         setExpanded({});
         setLastChecked(Date.now());
         setRunning(false);
@@ -20468,6 +20483,22 @@ function startApp() {
           </button>
         </div>
         ${lastChecked && html`<span style=${{fontSize:'0.63rem',color:'var(--text-faint)'}}>Last checked: ${Math.round((Date.now()-lastChecked)/60000)} min ago</span>`}
+        ${dqDelta && (dqDelta.worse.length>0 || dqDelta.better.length>0) && html`<div>
+          <div onClick=${function(){toggleExp('dq_delta');}} style=${{display:'flex',gap:'.35rem',alignItems:'center',fontSize:'0.63rem',cursor:'pointer'}}>
+            <span style=${{color:'var(--text-faint)'}}>Since last run:</span>
+            ${dqDelta.worse.length>0 && html`<span style=${{color:'#f87171',fontWeight:600}}>${dqDelta.worse.length} worse</span>`}
+            ${dqDelta.better.length>0 && html`<span style=${{color:'#4ade80',fontWeight:600}}>${dqDelta.better.length} better</span>`}
+            <span style=${{color:'var(--text-faint)'}}>${expanded['dq_delta']?'▲':'▼'}</span>
+          </div>
+          ${expanded['dq_delta'] && html`<div style=${{padding:'.2rem 0 0 .3rem',display:'flex',flexDirection:'column',gap:'.1rem'}}>
+            ${dqDelta.worse.map(function(w,i){return html`<div key=${'w'+i} style=${{fontSize:'0.6rem',color:'var(--text-secondary)'}}>
+              <span style=${{color:'#f87171'}}>▲</span> ${w.label}: ${w.from} → ${w.to}
+            </div>`;})}
+            ${dqDelta.better.map(function(bt,i){return html`<div key=${'b'+i} style=${{fontSize:'0.6rem',color:'var(--text-secondary)'}}>
+              <span style=${{color:'#4ade80'}}>▼</span> ${bt.label}: ${bt.from} → ${bt.to}
+            </div>`;})}
+          </div>`}
+        </div>`}
         ${!hasModels && html`<span style=${{fontSize:'0.69rem',color:'var(--text-faint)'}}>Load a model to run data quality checks.</span>`}
         <div style=${{display:'flex',gap:'.2rem',alignItems:'center',fontSize:'0.63rem',color:'var(--text-faint)'}}>
           <span style=${{width:7,height:7,borderRadius:'50%',background:'#ef4444',flexShrink:0,display:'inline-block'}}></span> Error
