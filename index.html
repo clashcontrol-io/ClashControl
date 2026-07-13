@@ -1613,6 +1613,7 @@ function startApp() {
       }
       case 'DEL_SELSET': return Object.assign({},s,{selectionSets:(s.selectionSets||[]).filter(function(x){return x.id!==a.id;})});
       case 'REN_SELSET': return Object.assign({},s,{selectionSets:(s.selectionSets||[]).map(function(x){return x.id===a.id?Object.assign({},x,{name:a.name}):x;})});
+      case 'UPD_SELSET_REFS': return Object.assign({},s,{selectionSets:(s.selectionSets||[]).map(function(x){return x.id===a.id?Object.assign({},x,{refs:a.refs}):x;})});
       case A.INSPECTOR_OPEN:{ var io=!!a.v; _ccPersistUI('inspectorOpen',io); return Object.assign({},s,{inspectorOpen:io}); }
       case A.AVATAR_MENU:   return Object.assign({},s,{avatarMenuOpen:!!a.v});
       case A.SMART_VIEWS: return Object.assign({},s,{showSmartViews:!!a.v});
@@ -17563,12 +17564,28 @@ function startApp() {
           : html`<div style=${{display:'flex',flexDirection:'column',gap:'.15rem',maxHeight:140,overflowY:'auto'}}>
               ${s.selectionSets.map(function(ss){
                 return html`<div key=${ss.id} style=${{display:'flex',alignItems:'center',gap:'.3rem',padding:'.2rem .3rem',background:'var(--bg-primary)',border:'1px solid var(--border-subtle)',borderRadius:4}}>
-                  <span style=${{fontSize:'0.7rem',color:'var(--text-secondary)',flex:1,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}} title=${ss.name+' ('+ss.refs.length+')'}>${ss.name}</span>
+                  <span onClick=${function(){var nm=prompt('Rename selection set:',ss.name);if(nm&&nm.trim())d({t:'REN_SELSET',id:ss.id,name:nm.trim()});}}
+                    title=${ss.name+' ('+ss.refs.length+') — click to rename'} style=${{fontSize:'0.7rem',color:'var(--text-secondary)',flex:1,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',cursor:'pointer'}}>${ss.name}</span>
                   <span style=${{fontSize:'0.6rem',color:'var(--text-faint)',flexShrink:0}}>${ss.refs.length}</span>
                   <button onClick=${function(){if(_highlightRefs)_highlightRefs(ss.refs,true);}}
                     title="Isolate" style=${{background:'none',border:'none',cursor:'pointer',color:'var(--text-muted)',fontSize:'0.65rem',padding:'0 .2rem'}}>◉</button>
                   <button onClick=${function(){if(_highlightRefs)_highlightRefs(ss.refs,false);}}
                     title="Highlight" style=${{background:'none',border:'none',cursor:'pointer',color:'var(--text-muted)',fontSize:'0.65rem',padding:'0 .2rem'}}>★</button>
+                  <button onClick=${function(){
+                      var refs = multiSel.length ? multiSel : (window._ccSelectedExpressId ? [{expressId:window._ccSelectedExpressId, modelId:null}] : []);
+                      if(!refs.length){ alert('Select one or more elements first (click in 3D, or shift-click in the navigator), then use + / − to edit the set.'); return; }
+                      var merged = ss.refs.slice();
+                      refs.forEach(function(r){ if(!merged.some(function(m){return m.expressId===r.expressId;})) merged.push(r); });
+                      d({t:'UPD_SELSET_REFS',id:ss.id,refs:merged});
+                    }}
+                    title="Add current selection to this set" style=${{background:'none',border:'none',cursor:'pointer',color:'var(--text-muted)',fontSize:'0.75rem',padding:'0 .2rem',fontWeight:700}}>+</button>
+                  <button onClick=${function(){
+                      var refs = multiSel.length ? multiSel : (window._ccSelectedExpressId ? [{expressId:window._ccSelectedExpressId, modelId:null}] : []);
+                      if(!refs.length){ alert('Select one or more elements first, then use + / − to edit the set.'); return; }
+                      var remaining = ss.refs.filter(function(m){ return !refs.some(function(r){return r.expressId===m.expressId;}); });
+                      d({t:'UPD_SELSET_REFS',id:ss.id,refs:remaining});
+                    }}
+                    title="Remove current selection from this set" style=${{background:'none',border:'none',cursor:'pointer',color:'var(--text-muted)',fontSize:'0.75rem',padding:'0 .2rem',fontWeight:700}}>−</button>
                   <button onClick=${function(){d({t:'DEL_SELSET',id:ss.id});}}
                     title="Delete" style=${{background:'none',border:'none',cursor:'pointer',color:'#f87171',fontSize:'0.7rem',padding:'0 .2rem'}}>×</button>
                 </div>`;
