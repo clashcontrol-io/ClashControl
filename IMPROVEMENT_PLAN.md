@@ -53,13 +53,25 @@ Each item is an independently committed, verified bug fix:
 1. **Orbit pivot recenters to selection** — replace the dead `sph.setFromVector3`
    call (`index.html:11090`) with the inline spherical computation (the hand-rolled
    convention `x=r·sinφ·sinθ, y=r·cosφ, z=r·sinφ·cosθ` matches THREE.Spherical's).
-2. **`minGap` works** — wired as the touch/near-miss suppression floor in the soft
-   path of `_processCandidate` and serialized to the local engine. Detection caches
-   (type-pair memo, pair cache) are versioned/invalidated with the rules change.
+2. **`minGap` works** — `isSoft` now requires the gap to sit within `[minGap, maxGap]`
+   instead of only checking the upper bound, matching the UI's own "Soft clashes
+   X–Y mm" framing. The type-pair memo and pair-result cache already key on a hash
+   of the whole `rules` object, so they invalidate automatically on this kind of
+   rules-shape change — no separate cache work needed.
 3. **Local-engine rule parity (browser side)** — `_serializeForLocalEngine` now sends
-   the full rule set (excludeTypes, toleranceByTypePair, minOverlapVolM3, semantic
-   filter pairs, duplicates, includeSpaces, minGap). Older engines ignore unknown
-   fields; the companion Engine-repo change (below) applies them.
+   the full scalar rule set (excludeTypes, toleranceByTypePair, minOverlapVolM3,
+   duplicates, includeSpaces, minGap) and pre-filters `IfcSpace` client-side so the
+   "exact" engine is never less filtered than the browser even before the Python
+   side reads these fields itself. It also fixes a real bug found while wiring this:
+   `mode` was read from a field the browser's rules object never sets, so it always
+   fell through to `'hard'` — a configured soft/clearance-only run silently executed
+   as hard-only on the local engine. Mode is now derived the same way the browser
+   engine branches (hard-only / hard+near-miss / soft-only). Semantic-filter
+   (host/opening relationship skip) parity is **not** included — it depends on each
+   model's `relatedPairs` map, which isn't part of the elements payload today; wiring
+   it needs a payload-shape change plus new Python-side consumer logic, so it's left
+   as a tracked gap rather than half-wired. The companion Engine-repo change (below)
+   applies the newly-sent fields.
 4. **Assignee/priority survive re-runs** — added to the preserved list in
    `mergeDetectionResults` (`:5651-74`).
 5. **JS/WASM result parity** — WASM-returned hit points get the same
@@ -82,8 +94,14 @@ Each item is an independently committed, verified bug fix:
 because this repo's branch cannot carry it): accept and apply the newly serialized
 rule fields in `engine.py`/`sweep.py` — excludeTypes, toleranceByTypePair,
 minOverlapVolM3, includeSpaces (filter IfcSpace/IfcOpeningElement server-side),
-duplicates, minGap. Unknown-field tolerance already exists; parity means *applying*
-them so the exact tier is never less-filtered than the browser.
+duplicates, minGap. `mode` itself needed no server-side change — `engine.py` already
+reads it correctly via `rules.get('mode','hard')`; the bug was entirely on the
+browser side never setting it. All fields are read via plain `dict.get(...)` with
+defaults (confirmed in `server.py`/`engine.py`/`protocol.py` — no schema validation
+that would reject unknown keys), so this repo's newly-sent fields are safe against
+older engine versions; parity means the Python side starts *applying* them. Semantic
+filter parity would additionally need `relatedPairs` added to the payload shape and
+new consumer logic — out of scope for this wave.
 
 ## Wave 1 — The triage funnel (Coordinate's core: 10,000 → dozens)
 
