@@ -415,12 +415,21 @@
         var spaceMissing = [];
         if (!p.name || !p.name.trim()) spaceMissing.push('Name');
         if (!p.longName || !p.longName.trim()) spaceMissing.push('LongName');
+        if (!p.objectType || !p.objectType.trim()) spaceMissing.push('ObjectType');
+        var spacePsets = p.psets||{};
+        if (_findPropValue(spacePsets, 'IsExternal') === null) spaceMissing.push('IsExternal');
         var q = p.quantities||{};
-        var hasNetArea = false;
+        var hasNetArea = false, hasGrossArea = false, hasHeight = false;
         Object.keys(q).forEach(function(qk){
           if (/netfloorarea|net\s*floor\s*area|netarea/i.test(qk) && parseFloat(q[qk]) > 0) hasNetArea = true;
+          if (/grossfloorarea|gross\s*floor\s*area/i.test(qk) && parseFloat(q[qk]) > 0) hasGrossArea = true;
+          if (/^(height|finishceilingheight|finish\s*ceiling\s*height)$/i.test(qk.trim()) && parseFloat(q[qk]) > 0) hasHeight = true;
         });
         if (!hasNetArea) spaceMissing.push('NetFloorArea');
+        // RVB BIM Norm v1.1 2.2.7.6b (Qto_SpaceBaseQuantities) - GrossFloorArea/Height,
+        // alongside NL-BIM Basis ILS v2 4.1's NetFloorArea above.
+        if (!hasGrossArea) spaceMissing.push('GrossFloorArea');
+        if (!hasHeight) spaceMissing.push('Height');
         if (spaceMissing.length) {
           acc.spaceIncomplete.push(Object.assign({}, it, {detail: spaceMissing.join(', ')}));
         }
@@ -545,7 +554,7 @@
       // NL-BIM Basis ILS v2 additions
       storeyNaming:   {label:'Bouwlaag naamgeving (ILS 3.3)',        sev:'info', cat:'naming', count:acc.storeyNaming.length,    ex:acc.storeyNaming.slice(0,8)},
       doorNaming:     {label:'Deurnaamgeving D-### (ILS 3.5)',       sev:'info', cat:'naming', count:acc.doorNaming.length,      ex:acc.doorNaming.slice(0,8)},
-      spaceIncomplete:{label:'IfcSpace mist Name/LongName/Area (ILS 4.1)',sev:'warn',cat:'properties',count:acc.spaceIncomplete.length,ex:acc.spaceIncomplete.slice(0,8)},
+      spaceIncomplete:{label:'IfcSpace onvolledig: naam, classificatie of hoeveelheden (ILS 4.1 / RVB 2.2.7.6)',sev:'warn',cat:'properties',count:acc.spaceIncomplete.length,ex:acc.spaceIncomplete.slice(0,8)},
       fireRatingInvalid:{label:'FireRating ongeldige waarde (ILS 4.5)',sev:'warn',cat:'properties',count:acc.fireRatingInvalid.length,ex:acc.fireRatingInvalid.slice(0,8)},
       extWallNoUValue:{label:'Buitenwand zonder ThermalTransmittance (ILS 4.6)',sev:'warn',cat:'properties',count:acc.extWallNoUValue.length,ex:acc.extWallNoUValue.slice(0,8)},
       loadBearingInvalidMaterial:{label:'Dragende wand: niet-constructief materiaal (ILS 4.7.2)',sev:'warn',cat:'properties',count:acc.loadBearingInvalidMaterial.length,ex:acc.loadBearingInvalidMaterial.slice(0,8)},
