@@ -220,6 +220,14 @@ test('partOf: storey containment supported, other relations honestly unchecked',
   assert.equal(r.summary.bySpec['Agg'].unchecked, 2);
   assert.equal(r.summary.bySpec['Agg'].fail, 0);
   assert.match(r.summary.bySpec['Agg'].note, /not checkable/);
+  // An element whose only requirement is unchecked must not be counted as a
+  // pass either — it was never verified. Both applicable elements landed in
+  // `unchecked`, so `pass` (and `fail`) must stay 0, not silently inflate to
+  // 2 — the IDS panel and generateValidationReport both compute their
+  // pass-rate bar as pass/(pass+fail), so a phantom pass here would report
+  // a specification as 100% compliant when nothing was actually checked.
+  assert.equal(r.summary.bySpec['Agg'].pass, 0);
+  assert.equal(r.summary.bySpec['Agg'].applicable, 2);
 });
 
 test('PredefinedType in applicability marks the spec skipped, never guessed', () => {

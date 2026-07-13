@@ -1243,7 +1243,7 @@
             else { summary.fail++; elFailed = true; row(_reqDesc(f), el, p, model); }
           });
           if (elUnchecked) bs.unchecked++;
-          if (elFailed) bs.fail++; else bs.pass++;
+          if (elFailed) bs.fail++; else if (!elUnchecked) bs.pass++;
         });
       });
       if (spec.cardinality === 'required' && bs.applicable === 0) {
