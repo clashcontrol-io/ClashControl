@@ -256,11 +256,43 @@ Solibri/Navisworks/OSS (IfcOpenShell, ThatOpen, xeokit, Speckle, BIMcollab, Revi
   - Wave 2.2 (occluder-reveal toggle) and 2.4 (edges/SSAO in normal viewing) intentionally deferred —
     ghosting already gets most of 2.2's value now that it exists, and 2.4 is explicitly the highest-risk
     remaining item per this file's own history-informed guardrails (renderer/tone-mapping touchiness).
-- **Next**: Wave 1.5 (`manifold3d` exact-volume tier, `ClashControlEngine` repo, own PR) or Wave 1.6-1.9
-  (severity model / funnel UI / clustering / one-click run, now that real depth data exists to weight by) —
-  whichever a fresh session picks up. Then Wave 3 (BCF fidelity — the single biggest audited interop gap:
-  CC's own BCF *exporter* never writes `<Components>`, so a CC-exported BCF has no selectable elements in
-  Solibri/BIMcollab despite CC's *importer* already parsing them).
+- ~~**Wave 1.6: deterministic severity model**~~ (2026-07-13). `aiSeverity` (critical/major/minor/info)
+  already drove sort/group-by/cluster-dot/row-dot, but it's only ever set by opt-in AI actions — every one
+  of those sites fell back to a flat per-*type* guess when absent (every hard clash the same critical-red
+  dot, tied for the same sort rank, no matter the actual depth or discipline). New
+  `_ccDeterministicSeverity(c)` uses the real depth from CW-1a + per-element disciplines (max of the pair,
+  not an average) to produce a real critical/major/minor/info verdict for every clash; every site above now
+  reads `c.aiSeverity || _ccDeterministicSeverity(c)`. Tracing every fallback site to wire this in
+  consistently turned up **3 independent, real, pre-existing vocabulary bugs**, all fixed in the same
+  commit: the AI triage prompt asked for `critical|high|medium|low` against display code that only
+  recognizes `critical|major|minor|info` (so a compliant AI response would render with no color); a
+  cluster-summary table's own rank map used the same wrong vocabulary (major/minor always fell through to
+  rank 0); and `severity_asc`/`_desc`'s `o[a.aiSeverity]||2` silently mistreated every *critical* clash as
+  rank 2 (tied with minor) because `'critical'` ranks `0`, which `||` reads as falsy. `551011e`. Also:
+  `disciplines:[mA.discipline,mB.discipline]` (whole-model, stale even after Wave 1.1) →
+  `_ccElementDiscipline`-based (per-element) — the same upgrade the clash matrix got, this separate
+  display/severity field had never received it. `e22301a`. 13 tests in `tests/severity-model.test.js`.
+  **Found but deliberately deferred**: `rules.excludeSelf` defaults to `true` app-wide (confirmed
+  consistent across `INIT.rules`, every preset, and the NL-command layer — not an oversight, a real design
+  choice), meaning a project that's a single combined IFC file finds **zero** clashes on the very first,
+  most prominent "Run detection" click, with no visible explanation why. Touches dozens of call sites
+  (NL parsing, presets, `_captureDetectionSettings`) — needs its own focused pass, not a bolt-on.
+- ~~**Wave 1.9: one-click run — verified already substantially satisfied, no changes needed**~~ (2026-07-13).
+  Checked `RunDetectionModal`/`ClashRulesPanel` against the plan item ("auto-matrix + defaults + funnel;
+  existing panel becomes Advanced") before building anything new: the modal already leads with 6 one-click
+  preset buttons + a single prominent "Run detection" footer button that runs with whatever `s.rules`
+  currently is, and both the matrix/tolerance editor and "Project standards" are already collapsed behind
+  an Advanced toggle by default. Wave 1.2's new default clash matrix means even the bare "Run detection"
+  button (zero configuration) now runs with sane discipline filtering out of the box. The `excludeSelf`
+  single-model gap above is the one real first-run trap left, and it's already logged separately.
+- **Next**: Wave 1.5 (`manifold3d` exact-volume tier, `ClashControlEngine` repo, own PR — separate repo,
+  hasn't been added to this session's write scope), Wave 1.7 (funnel UI — raw pairs → after matrix → after
+  tolerance → after grouping → issues, each count visible; needs instrumenting the detection pipeline
+  itself, more invasive than 1.6/1.9 turned out to be) or Wave 1.8 (spatial sub-clustering). Or the
+  `excludeSelf` single-model default trap just above — small in code, but touches enough call sites to
+  deserve dedicated attention rather than a rushed fix. Then Wave 3 (BCF fidelity — the single biggest
+  audited interop gap: CC's own BCF *exporter* never writes `<Components>`, so a CC-exported BCF has no
+  selectable elements in Solibri/BIMcollab despite CC's *importer* already parsing them).
 
 On branch `claude/codebase-review-optimization-3nltcw` (2026-07-08) — four-repo review sweep (in progress):
 
