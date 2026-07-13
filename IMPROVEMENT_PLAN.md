@@ -77,8 +77,18 @@ Each item is an independently committed, verified bug fix:
 5. **JS/WASM result parity** — WASM-returned hit points get the same
    point-in-AABB±10 mm validation as the JS path, so results no longer depend on
    whether the WASM accelerator loaded.
-6. **Quality Score honesty** — the score now includes the BIM-basics and ILS check
-   families (previously silently excluded), so the headline number reflects the panel.
+6. **Quality Score honesty** — the score now includes the BIM-basics check family
+   (previously silently excluded even though it's shown in the same panel). ILS/NL-SfB
+   is more nuanced than "just fold it in": `noNLSfB` has no type gating, so on a
+   project that never adopted the Dutch NL-BIM Basis ILS v2 classification, every
+   single element fails it and the category alone would tank the score for reasons
+   that have nothing to do with real data quality. ILS is now always shown as its own
+   breakdown category (so Dutch users see the full picture) but only counts toward
+   the headline number once the project is actually using NL-SfB (≥20% of elements
+   carry a code) — otherwise the check isn't applicable. IDS is deliberately **not**
+   folded in here; it has a different pass/fail/not-checkable shape than the other
+   engines' `{count,sev}` maps and belongs with the Wave 5 IDS-conformance work
+   instead of a same-day reshape.
 7. **Render fixes** — hotkey `5` = wireframe (was a duplicate of xray; wireframe had
    no key), and the walk-mode postFX activation no longer self-defeats (style-effect
    ordering).

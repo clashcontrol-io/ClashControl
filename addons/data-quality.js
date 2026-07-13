@@ -1220,25 +1220,56 @@
     var totalWeight = 0, damage = 0;
     var breakdown = { categories: [] };
 
-    // ── Data quality checks ──
-    try {
-      var dq = runDataQualityChecks(elements);
-      var dqTotal = dq._total || (elements||[]).length || 1;
-      var dqDamage = 0, dqWeight = 0;
-      Object.keys(dq).forEach(function(k){
+    // Shared by any check engine returning the {checkKey:{count,sev}} map
+    // shape (runDataQualityChecks / runBIMModelChecks / runILSChecks all do).
+    // fold=false still adds the category to the breakdown for visibility but
+    // keeps it out of the single headline number - see the ILS call below.
+    function _foldCheckMap(label, checksResult, fold) {
+      if (!checksResult) return;
+      var total = checksResult._total || (elements||[]).length || 1;
+      var catDamage = 0, catWeight = 0, catChecks = 0;
+      Object.keys(checksResult).forEach(function(k){
         if (k.charAt(0) === '_') return;
-        var c = dq[k]; if (!c || typeof c.count !== 'number') return;
+        var c = checksResult[k]; if (!c || typeof c.count !== 'number') return;
+        catChecks++;
         var w = W[c.sev] || 1;
-        var fail = Math.min(1, c.count / dqTotal);
-        dqDamage += fail * w;
-        dqWeight += w;
+        var fail = Math.min(1, c.count / total);
+        catDamage += fail * w;
+        catWeight += w;
       });
-      damage += dqDamage; totalWeight += dqWeight;
+      if (fold) { damage += catDamage; totalWeight += catWeight; }
       breakdown.categories.push({
-        label: 'Data quality',
-        score: dqWeight ? Math.round(100 * (1 - dqDamage / dqWeight)) : 100,
-        checks: Object.keys(dq).filter(function(k){return k.charAt(0)!=='_';}).length
+        label: label,
+        score: catWeight ? Math.round(100 * (1 - catDamage / catWeight)) : 100,
+        checks: catChecks,
+        countsTowardScore: !!fold
       });
+    }
+
+    // ── Data quality checks ──
+    try { _foldCheckMap('Data quality', runDataQualityChecks(elements), true); } catch(e) {}
+
+    // ── BIM basics (FireRating, IsExternal, LoadBearing, classification,
+    //    common psets, thickness) - generic, applies to any IFC model
+    //    regardless of region, so always folds into the headline score. ──
+    try { _foldCheckMap('BIM basics', runBIMModelChecks(elements), true); } catch(e) {}
+
+    // ── ILS / NL-SfB (Dutch NL-BIM Basis ILS v2) - region/methodology
+    //    specific. noNLSfB alone fires on every element with no NL-SfB
+    //    classification at all (no type gating, unlike the BIM-basics
+    //    checks above), so on a project that never adopted NL-SfB this
+    //    category would always score near-zero for reasons that have
+    //    nothing to do with actual data quality. Always shown as its own
+    //    breakdown category (so Dutch users see the full picture), but
+    //    only folded into the single headline number once the project is
+    //    actually using NL-SfB (at least 20% of elements carry a code) -
+    //    otherwise the check isn't applicable and shouldn't tank the score. ──
+    try {
+      var ils = runILSChecks(elements);
+      var ilsTotal = ils._total || (elements||[]).length || 1;
+      var noNLSfBCount = (ils.noNLSfB && ils.noNLSfB.count) || 0;
+      var nlsfbAdopted = (ilsTotal - noNLSfBCount) / ilsTotal >= 0.2;
+      _foldCheckMap('ILS / NL-SfB', ils, nlsfbAdopted);
     } catch(e) {}
 
     // ── Accessibility checks (if engine loaded) ──
