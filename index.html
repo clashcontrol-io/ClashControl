@@ -733,6 +733,44 @@ function startApp() {
     } catch(e) {}
   }
 
+  // Element search matcher shared by the Navigator tree/keyboard-nav and (in
+  // future) saved search sets. Previously each call site duplicated its own
+  // 2-3 field check (name/ifcType/expressId only) - GlobalId, ObjectType,
+  // material, description, and every property/quantity VALUE (not key) were
+  // never searchable, so pasting a GlobalId from a BCF issue, or searching
+  // for a property value like a fire rating, found nothing. `q` must already
+  // be lower-cased by the caller (callers only lower-case it once per
+  // keystroke, not once per element).
+  function _elMatchesSearch(el, q) {
+    if (!q) return true;
+    var p = el.props || {};
+    if ((p.name||'').toLowerCase().indexOf(q)!==-1) return true;
+    if ((p.ifcType||'').toLowerCase().indexOf(q)!==-1) return true;
+    if (String(el.expressId).indexOf(q)!==-1) return true;
+    if ((p.globalId||'').toLowerCase().indexOf(q)!==-1) return true;
+    if ((p.objectType||'').toLowerCase().indexOf(q)!==-1) return true;
+    if ((p.material||'').toLowerCase().indexOf(q)!==-1) return true;
+    if ((p.description||'').toLowerCase().indexOf(q)!==-1) return true;
+    if ((p.storey||'').toLowerCase().indexOf(q)!==-1) return true;
+    if (p.psets) {
+      var setNames = Object.keys(p.psets);
+      for (var i=0; i<setNames.length; i++) {
+        var grp = p.psets[setNames[i]] || {};
+        var keys = Object.keys(grp);
+        for (var j=0; j<keys.length; j++) {
+          if (String(grp[keys[j]]).toLowerCase().indexOf(q)!==-1) return true;
+        }
+      }
+    }
+    if (p.quantities) {
+      var qKeys = Object.keys(p.quantities);
+      for (var k=0; k<qKeys.length; k++) {
+        if (String(p.quantities[qKeys[k]]).toLowerCase().indexOf(q)!==-1) return true;
+      }
+    }
+    return false;
+  }
+
   // ── Chat text renderer ──────────────────────────────────────── INTERNALS.md §2
   function renderChatText(text) {
     if (text == null) return '';
@@ -9554,14 +9592,7 @@ function startApp() {
         var results = [];
         models.forEach(function(model){
           (model.elements||[]).forEach(function(el){
-            var p = el.props||{};
-            var match = (p.name||'').toLowerCase().indexOf(q)!==-1 ||
-                        (p.ifcType||'').toLowerCase().indexOf(q)!==-1 ||
-                        (p.objectType||'').toLowerCase().indexOf(q)!==-1 ||
-                        (p.storey||'').toLowerCase().indexOf(q)!==-1 ||
-                        (p.material||'').toLowerCase().indexOf(q)!==-1 ||
-                        String(el.expressId).indexOf(q)!==-1;
-            if(match) results.push({el:el, model:model});
+            if(_elMatchesSearch(el, q)) results.push({el:el, model:model});
           });
         });
         var markers = [];
@@ -17167,11 +17198,11 @@ function startApp() {
           Object.keys(storeyGroups).sort().forEach(function(st){
             var sKey='s_'+model.id+'_'+st;
             var els=storeyGroups[st];
-            var filtered=q?els.filter(function(el){var p=el.props||{};return (p.name||'').toLowerCase().indexOf(q)!==-1||(p.ifcType||'').toLowerCase().indexOf(q)!==-1||String(el.expressId).indexOf(q)!==-1;}):els;
+            var filtered=q?els.filter(function(el){return _elMatchesSearch(el,q);}):els;
             if(q&&filtered.length===0) return;
             nodes.push({key:sKey,type:'storey',model:model,storey:st});
             if(!expanded[sKey]) return;
-            filtered.slice(0,200).forEach(function(el){
+            filtered.slice(0,q?1000:200).forEach(function(el){
               nodes.push({key:'e_'+el.expressId,type:'element',model:model,element:el});
             });
           });
@@ -17179,7 +17210,7 @@ function startApp() {
             var nsKey='s_'+model.id+'_none';
             nodes.push({key:nsKey,type:'storey',model:model,storey:'(No storey)'});
             if(expanded[nsKey]){
-              noStorey.filter(function(el){if(!q)return true;var p=el.props||{};return (p.name||'').toLowerCase().indexOf(q)!==-1||(p.ifcType||'').toLowerCase().indexOf(q)!==-1;}).slice(0,100).forEach(function(el){
+              noStorey.filter(function(el){return _elMatchesSearch(el,q);}).slice(0,q?500:100).forEach(function(el){
                 nodes.push({key:'e_'+el.expressId,type:'element',model:model,element:el});
               });
             }
@@ -17293,6 +17324,7 @@ function startApp() {
           var buildings = sh.buildings && sh.buildings.length ? sh.buildings : [{name:'Default Building'}];
           var pKey='sp_'+model.id;
           var _mIdx = modelIndexes[model.id] || {storeyGroups:{}, noStorey:[]};
+          var q = treeSearch.toLowerCase();
           function _elNode(el, level) {
             var p=el.props||{};
             var eKey='e_'+el.expressId;
@@ -17339,9 +17371,10 @@ function startApp() {
                     children:[].concat(
                       (model.storeyData||[]).map(function(sd){
                         var stKey='st_'+model.id+'_'+sd.name;
-                        var stEls = _mIdx.storeyGroups[sd.name] || [];
+                        var stEls = q ? (_mIdx.storeyGroups[sd.name]||[]).filter(function(el){return _elMatchesSearch(el,q);}) : (_mIdx.storeyGroups[sd.name] || []);
                         var stIsOpen = !!expanded[stKey];
                         var stHidden = !!s.hiddenClasses['byStorey:'+sd.name];
+                        var _stCap = q ? 1000 : 200;
                         return tvNode({
                           key:stKey, level:4,
                           icon:'▬', iconColor:'var(--color-success-fg)',
@@ -17354,16 +17387,17 @@ function startApp() {
                           onClick:function(){toggle(stKey);setExplorerFocus(stKey);},
                           onToggle:function(){toggle(stKey);setExplorerFocus(stKey);},
                           children:stIsOpen ? [].concat(
-                            stEls.slice(0,200).map(function(el){return _elNode(el, 5);}),
-                            stEls.length>200 ? [html`<li class="cc-tv__truncate" key="trunc">+${stEls.length-200} more…</li>`] : []
+                            stEls.slice(0,_stCap).map(function(el){return _elNode(el, 5);}),
+                            stEls.length>_stCap ? [html`<li class="cc-tv__truncate" key="trunc">+${stEls.length-_stCap} more…</li>`] : []
                           ) : null
                         });
                       }),
                       function(){
-                        var noSt = _mIdx.noStorey || [];
+                        var noSt = q ? (_mIdx.noStorey||[]).filter(function(el){return _elMatchesSearch(el,q);}) : (_mIdx.noStorey || []);
                         if(!noSt.length) return [];
                         var nsKey='st_'+model.id+'_none';
                         var nsIsOpen = !!expanded[nsKey];
+                        var _nsCap = q ? 500 : 100;
                         return [tvNode({
                           key:nsKey, level:4,
                           label:'(No storey)',
@@ -17372,7 +17406,7 @@ function startApp() {
                           selected:explorerFocus===nsKey,
                           onClick:function(){toggle(nsKey);setExplorerFocus(nsKey);},
                           onToggle:function(){toggle(nsKey);setExplorerFocus(nsKey);},
-                          children:nsIsOpen ? noSt.slice(0,100).map(function(el){return _elNode(el, 5);}) : null
+                          children:nsIsOpen ? noSt.slice(0,_nsCap).map(function(el){return _elNode(el, 5);}) : null
                         })];
                       }()
                     )
@@ -17433,11 +17467,12 @@ function startApp() {
             storeyKeys.forEach(function(st){
               var sKey='s_'+model.id+'_'+st;
               var els=storeyGroups[st];
-              var filtered = q ? els.filter(function(el){var p=el.props||{};return (p.name||'').toLowerCase().indexOf(q)!==-1||(p.ifcType||'').toLowerCase().indexOf(q)!==-1||String(el.expressId).indexOf(q)!==-1;}) : els;
+              var filtered = q ? els.filter(function(el){return _elMatchesSearch(el,q);}) : els;
               if(q && filtered.length===0) return;
               var sIsOpen = !!expanded[sKey];
               var topLevel = sIsOpen ? filtered.filter(function(el){ return !_hasParent[el.expressId]; }) : null;
               var sHiddenT = !!s.hiddenClasses['byStorey:'+st];
+              var _sCap = q ? 1000 : 200;
               storeyChildren.push(tvNode({
                 key:sKey, level:2,
                 icon:'▬', iconColor:'var(--color-success-fg)',
@@ -17449,16 +17484,17 @@ function startApp() {
                 onClick:function(){toggle(sKey);setExplorerFocus(sKey);},
                 onToggle:function(){toggle(sKey);setExplorerFocus(sKey);},
                 children:sIsOpen ? [].concat(
-                  topLevel.slice(0,200).map(function(el){return _elNode(el, 3);}),
-                  topLevel.length>200 ? [html`<li class="cc-tv__truncate" key="trunc">+${topLevel.length-200} more…</li>`] : []
+                  topLevel.slice(0,_sCap).map(function(el){return _elNode(el, 3);}),
+                  topLevel.length>_sCap ? [html`<li class="cc-tv__truncate" key="trunc">+${topLevel.length-_sCap} more…</li>`] : []
                 ) : null
               }));
             });
             if(noStorey.length>0){
               var nsKey='s_'+model.id+'_none';
-              var nsFiltered = noStorey.filter(function(el){if(!q)return true;var p=el.props||{};return (p.name||'').toLowerCase().indexOf(q)!==-1||(p.ifcType||'').toLowerCase().indexOf(q)!==-1;});
+              var nsFiltered = noStorey.filter(function(el){return _elMatchesSearch(el,q);});
               if(nsFiltered.length>0){
                 var nsIsOpen = !!expanded[nsKey];
+                var _nsCap = q ? 500 : 100;
                 storeyChildren.push(tvNode({
                   key:nsKey, level:2,
                   label:'(No storey)', count:nsFiltered.length, italic:true,
@@ -17466,7 +17502,7 @@ function startApp() {
                   selected:explorerFocus===nsKey,
                   onClick:function(){toggle(nsKey);setExplorerFocus(nsKey);},
                   onToggle:function(){toggle(nsKey);setExplorerFocus(nsKey);},
-                  children:nsIsOpen ? nsFiltered.slice(0,100).map(function(el){return _elNode(el, 3);}) : null
+                  children:nsIsOpen ? nsFiltered.slice(0,_nsCap).map(function(el){return _elNode(el, 3);}) : null
                 }));
               }
             }
