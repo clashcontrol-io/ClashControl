@@ -413,16 +413,31 @@ Solibri/Navisworks/OSS (IfcOpenShell, ThatOpen, xeokit, Speckle, BIMcollab, Revi
   `Bitmap`) that CC's own Wave 3.1 exporter correctly follows (locked by the "precedes the camera element"
   test in `bcf-export.test.js`). Net: CC's own BCF viewpoint schema-order compliance looks MORE correct
   than this sibling tool's on this specific point — a positive validation of Wave 3.1, not a gap to close.
-- **Next**: Build 3 (openaec-reports-inspired PDF report generation) — decided against porting
-  ReportLab/Python (wrong stack entirely) or adding a jsPDF CDN dependency (couldn't self-verify an SRI
-  hash in this sandbox — CDN fetches 403 here per the existing "CDN blocked in sandbox" note, and a wrong
-  hardcoded hash would silently break the feature for every user, worse than not having one). Building a
-  **printable report view + `window.print()`** instead — zero new dependencies, matches CLAUDE.md's "no
-  other runtime dependencies" ethos, sidesteps the SRI problem entirely. Researching modal/palette/print-CSS
-  conventions before implementing. Then the `excludeSelf` single-model default trap, the two BCF follow-ups
-  above (auto-synthesized viewpoints; `<ClippingPlanes>` export — now doubly-confirmed as a shared, not
-  CC-specific, gap), a possible `<Coloring>` export (newly confirmed gap from Check 2), rest of Wave 3, and
-  Waves 4-6.
+- ~~**Build 3: print-ready Data Quality report**~~ (2026-07-13). Research before writing any code turned up
+  a course-correcting discovery: CC already has a mature, working report generator —
+  `_ccClashReport(s)` (index.html:19446) — builds a self-contained HTML document (inline CSS, a
+  `@media print{.noprint{display:none}}` block, a "Print / Save as PDF" button calling `window.print()`)
+  and opens it via `window.open('','_blank')` + `document.write`. A third sibling,
+  `generateValidationReport`, already covers IDS specs. So the real gap wasn't "CC has no report feature,"
+  it was "Data Quality has no report feature" (only CSV export). Built `_ccDataQualityReport(s)` as a
+  fourth report using the *identical* pattern (deliberately did not invent a shared modal/print-CSS system
+  — see the superseded plan below) — Quality Score + breakdown, General/BIM-basics/ILS/RVB check tables,
+  accessibility pass/fail, models table. Self-sufficient like `_ccClashReport` (re-runs the check engines
+  from `s.models` directly, doesn't depend on `DataQualityPanel`'s own React state having already run).
+  Wired into two entry points: a new "⎙ Print report" button in the DQ panel (renamed the pre-existing CSV
+  button off the now-ambiguous "↓ Export report" to "↓ Export CSV"), and a new "⎙ Data quality report"
+  entry in `IssuePanel`'s Export flyout next to the pre-existing "⎙ Clash report". 12 new tests across 2
+  files (function-body extraction + sandboxed stub engines, same style as `bcf-export.test.js`; a grep-based
+  wiring lock for both entry points). 206/206 passing.
+  **Superseded plan, kept for the record**: before finding `_ccClashReport`, the plan was a jsPDF CDN
+  dependency — dropped because this sandbox's CDN fetches 403 (couldn't self-verify an SRI hash, and a
+  wrong hardcoded one would silently break the feature for every user), then a from-scratch
+  modal+`window.print()` system — dropped once `_ccClashReport` showed the project already has a proven,
+  simpler, dependency-free convention for exactly this. Lesson: grep for `window.print` /  `@media print`
+  /  `⎙` before designing a new report/export feature from scratch — this file already has three.
+- **Next**: the `excludeSelf` single-model default trap, the two BCF follow-ups (auto-synthesized
+  viewpoints; `<ClippingPlanes>` export — now doubly-confirmed as a shared, not CC-specific, gap per Check
+  2), a possible `<Coloring>` export (newly confirmed gap from Check 2), rest of Wave 3, and Waves 4-6.
 
 On branch `claude/codebase-review-optimization-3nltcw` (2026-07-08) — four-repo review sweep (in progress):
 
