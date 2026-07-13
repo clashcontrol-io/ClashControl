@@ -771,6 +771,37 @@ function startApp() {
     return false;
   }
 
+  // Resolves a search set's saved QUERY against the live model tree — the
+  // "dynamic" half of search sets (vs. a Selection Set's frozen refs[]).
+  // Query shape mirrors the IDS engine's applicability/requirement facets
+  // (ifcType regex + pset-scoped property, index.html ~19452-19475) rather
+  // than inventing a new one: {ifcType, storey, material, propertySet,
+  // propertyName, propertyValue}. All present fields AND together; an empty
+  // query matches every element (vacuous truth) — the UI is responsible for
+  // requiring at least one field before a set can be saved.
+  function _resolveSearchSet(query, models) {
+    var q = query || {};
+    var typeRe = null;
+    if (q.ifcType) { try { typeRe = new RegExp(q.ifcType, 'i'); } catch(e) { typeRe = null; } }
+    var out = [];
+    (models || []).forEach(function(m) {
+      if (m.visible === false) return;
+      (m.elements || []).forEach(function(el) {
+        var p = el.props || {};
+        if (typeRe && !typeRe.test(p.ifcType || '')) return;
+        if (q.storey && (p.storey||'').toLowerCase().indexOf(String(q.storey).toLowerCase())<0) return;
+        if (q.material && (p.material||'').toLowerCase().indexOf(String(q.material).toLowerCase())<0) return;
+        if (q.propertySet && q.propertyName) {
+          var pset = (p.psets||{})[q.propertySet];
+          if (!pset || !Object.prototype.hasOwnProperty.call(pset, q.propertyName)) return;
+          if (q.propertyValue && String(pset[q.propertyName]).toLowerCase().indexOf(String(q.propertyValue).toLowerCase())<0) return;
+        }
+        out.push({ expressId: el.expressId, modelId: m.id });
+      });
+    });
+    return out;
+  }
+
   // ── Chat text renderer ──────────────────────────────────────── INTERNALS.md §2
   function renderChatText(text) {
     if (text == null) return '';
@@ -1138,7 +1169,7 @@ function startApp() {
   // Restore section state persisted from previous session
   var _savedSection=(function(){try{return JSON.parse(localStorage.getItem('cc_section')||'null');}catch(e){return null;}})();
   var INIT = {
-    models:[], clashes:[], issues:[], activeId:null, showModal:false, showSettings:false, modalElement:null, tab:null, isRecording:false, selectionSets:[],
+    models:[], clashes:[], issues:[], activeId:null, showModal:false, showSettings:false, modalElement:null, tab:null, isRecording:false, selectionSets:[], searchSets:[],
     rules:{ modelA:'all', modelB:'all', hard:true, maxGap:50, minGap:0, duplicates:false, changeAware:false, excludeSelf:true, excludeTypes:[], excludeTypePairs:[], minOverlapVolM3:1e-5, toleranceByTypePair:{}, useSemanticFilter:true, includeSpaces:false, excludeSameDiscipline:true },
     detectionSettings:null, // Captured at detection run time: {clearance_mm, discipline_filters}
     trainingMode:(function(){try{var v=localStorage.getItem('cc_trainingMode');return v===null?true:v==='1';}catch(e){return true;}}()),
@@ -1614,6 +1645,18 @@ function startApp() {
       case 'DEL_SELSET': return Object.assign({},s,{selectionSets:(s.selectionSets||[]).filter(function(x){return x.id!==a.id;})});
       case 'REN_SELSET': return Object.assign({},s,{selectionSets:(s.selectionSets||[]).map(function(x){return x.id===a.id?Object.assign({},x,{name:a.name}):x;})});
       case 'UPD_SELSET_REFS': return Object.assign({},s,{selectionSets:(s.selectionSets||[]).map(function(x){return x.id===a.id?Object.assign({},x,{refs:a.refs}):x;})});
+      // Search sets — a saved QUERY (ifcType/storey/material/property), not a
+      // frozen ref list. Membership is never stored; _resolveSearchSet(query,
+      // s.models) re-evaluates it live every time it's read, so a search set
+      // stays correct as the model changes (or is re-loaded) instead of
+      // thawing into stale expressIds like a Selection Set's refs would.
+      case 'ADD_SEARCHSET': {
+        var nqset = {id:a.v.id||uid(), name:a.v.name||'Search', query:a.v.query||{}, color:a.v.color||null, createdAt:new Date().toISOString()};
+        return Object.assign({},s,{searchSets:(s.searchSets||[]).concat([nqset])});
+      }
+      case 'DEL_SEARCHSET': return Object.assign({},s,{searchSets:(s.searchSets||[]).filter(function(x){return x.id!==a.id;})});
+      case 'REN_SEARCHSET': return Object.assign({},s,{searchSets:(s.searchSets||[]).map(function(x){return x.id===a.id?Object.assign({},x,{name:a.name}):x;})});
+      case 'UPD_SEARCHSET_QUERY': return Object.assign({},s,{searchSets:(s.searchSets||[]).map(function(x){return x.id===a.id?Object.assign({},x,{query:a.query}):x;})});
       case A.INSPECTOR_OPEN:{ var io=!!a.v; _ccPersistUI('inspectorOpen',io); return Object.assign({},s,{inspectorOpen:io}); }
       case A.AVATAR_MENU:   return Object.assign({},s,{avatarMenuOpen:!!a.v});
       case A.SMART_VIEWS: return Object.assign({},s,{showSmartViews:!!a.v});
@@ -6186,6 +6229,7 @@ function startApp() {
       viewpoints: (s.viewpoints||[]).map(function(v){return Object.assign({},v,{snapshot:undefined})}),
       measurements: s.measurements||[],
       selectionSets: s.selectionSets||[],
+      searchSets: s.searchSets||[],
       changelog: s.changelog||[],
     };
     var blob = new Blob([JSON.stringify(data, null, 2)], {type:'application/json'});
@@ -6217,6 +6261,11 @@ function startApp() {
           (data.viewpoints||[]).forEach(function(v) { d({ t:A.ADD_VIEWPOINT, v:v }); });
           if (data.measurements) data.measurements.forEach(function(m) { d({ t:A.ADD_MEASUREMENT, v:m }); });
           if (data.selectionSets) data.selectionSets.forEach(function(ss){ d({t:'ADD_SELSET', v:ss}); });
+          // Search sets restore the QUERY, not stale refs — membership
+          // re-resolves live once real geometry is re-uploaded (models
+          // restore as {_stub:true, elements:[]} above), so an empty count
+          // right after load is correct, not a bug.
+          if (data.searchSets) data.searchSets.forEach(function(qs){ d({t:'ADD_SEARCHSET', v:qs}); });
           if (data.changelog && data.changelog.length) d({ t:A.MERGE_CHANGELOG, v:data.changelog });
         } catch(err) {
           alert('Load failed: ' + err.message);
@@ -17110,6 +17159,13 @@ function startApp() {
     var sq = useState(''), treeSearch=sq[0], setTreeSearch=sq[1];
     var ex = useState({}), expanded=ex[0], setExpanded=ex[1];
     function toggle(key){setExpanded(function(prev){var n=Object.assign({},prev);if(n[key])delete n[key];else n[key]=true;return n;});}
+    // Search sets query-builder form: showSearchForm toggles it open;
+    // editingSearchSetId is the set being edited (null = creating new).
+    var sfv = useState(false), showSearchForm=sfv[0], setShowSearchForm=sfv[1];
+    var sfq = useState({}), searchForm=sfq[0], setSearchForm=sfq[1];
+    var sfn = useState(''), searchFormName=sfn[0], setSearchFormName=sfn[1];
+    var sfe = useState(null), editingSearchSetId=sfe[0], setEditingSearchSetId=sfe[1];
+    function _searchFormHasCriteria(f) { return !!(f.ifcType || f.storey || f.material || (f.propertySet && f.propertyName)); }
 
     // because UPD_MODEL replaces the model reference.
     var modelIndexes = useMemo(function(){
@@ -17624,6 +17680,77 @@ function startApp() {
                     }}
                     title="Remove current selection from this set" style=${{background:'none',border:'none',cursor:'pointer',color:'var(--text-muted)',fontSize:'0.75rem',padding:'0 .2rem',fontWeight:700}}>−</button>
                   <button onClick=${function(){d({t:'DEL_SELSET',id:ss.id});}}
+                    title="Delete" style=${{background:'none',border:'none',cursor:'pointer',color:'#f87171',fontSize:'0.7rem',padding:'0 .2rem'}}>×</button>
+                </div>`;
+              })}
+            </div>`}
+      </div>
+      ${/* Search sets — a saved QUERY (ifcType/storey/material/property)
+          that re-resolves against the live model every time it's read,
+          unlike a Selection Set's frozen refs[]. */ ''}
+      <div style=${{borderTop:'1px solid var(--border)',padding:'.5rem .6rem',flexShrink:0,background:'var(--bg-secondary)'}}>
+        <div style=${{display:'flex',alignItems:'center',gap:'.3rem',marginBottom:'.3rem'}}>
+          <span style=${{fontSize:'0.69rem',fontWeight:700,color:'var(--text-muted)',textTransform:'uppercase',letterSpacing:'.04em',flex:1}}>Search sets</span>
+          <button onClick=${function(){
+              if (showSearchForm) { setShowSearchForm(false); setEditingSearchSetId(null); }
+              else { setEditingSearchSetId(null); setSearchForm({}); setSearchFormName(''); setShowSearchForm(true); }
+            }}
+            style=${{fontSize:'0.69rem',padding:'.2rem .45rem',background:'var(--accent-bg)',color:'var(--accent)',border:'1px solid var(--accent-subtle)',borderRadius:4,cursor:'pointer',fontWeight:600,fontFamily:'inherit'}}>
+            ${showSearchForm ? 'Cancel' : '+ New'}
+          </button>
+        </div>
+        ${showSearchForm && (function(){
+          var liveCount = _resolveSearchSet(searchForm, s.models).length;
+          function field(key, placeholder) {
+            return html`<input type="text" placeholder=${placeholder} value=${searchForm[key]||''}
+              onInput=${function(e){ var v=e.target.value; setSearchForm(function(prev){var n=Object.assign({},prev);if(v)n[key]=v;else delete n[key];return n;}); }}
+              style=${{...S_INPUT,fontSize:'0.68rem',padding:'.2rem .35rem',marginBottom:'.25rem'}} />`;
+          }
+          return html`<div style=${{display:'flex',flexDirection:'column',padding:'.4rem',marginBottom:'.35rem',background:'var(--bg-primary)',border:'1px solid var(--border-subtle)',borderRadius:4}}>
+            <input type="text" placeholder="Name" value=${searchFormName}
+              onInput=${function(e){setSearchFormName(e.target.value);}}
+              style=${{...S_INPUT,fontSize:'0.68rem',padding:'.2rem .35rem',marginBottom:'.25rem',fontWeight:600}} />
+            ${field('ifcType','IFC Type (e.g. IfcDoor)')}
+            ${field('storey','Storey contains…')}
+            ${field('material','Material contains…')}
+            ${field('propertySet','Property set (e.g. Pset_WallCommon)')}
+            ${field('propertyName','Property name (e.g. FireRating)')}
+            ${field('propertyValue','Value contains… (optional, needs set+name)')}
+            <div style=${{fontSize:'0.63rem',color:'var(--text-faint)',marginBottom:'.3rem'}}>
+              ${_searchFormHasCriteria(searchForm) ? liveCount+' matching element'+(liveCount!==1?'s':'')+' right now' : 'Enter at least one filter above'}
+            </div>
+            <button onClick=${function(){
+                if (!_searchFormHasCriteria(searchForm)) { alert('Enter at least one filter (IFC Type, Storey, Material, or a Property).'); return; }
+                var name = searchFormName.trim() || 'Search '+((s.searchSets||[]).length+1);
+                if (editingSearchSetId) {
+                  d({t:'UPD_SEARCHSET_QUERY', id:editingSearchSetId, query:searchForm});
+                  d({t:'REN_SEARCHSET', id:editingSearchSetId, name:name});
+                } else {
+                  d({t:'ADD_SEARCHSET', v:{id:uid(), name:name, query:searchForm}});
+                }
+                setShowSearchForm(false); setEditingSearchSetId(null); setSearchForm({}); setSearchFormName('');
+              }}
+              style=${{fontSize:'0.68rem',padding:'.25rem .5rem',background:'var(--accent)',color:'var(--bg-primary)',border:'none',borderRadius:4,cursor:'pointer',fontWeight:600,fontFamily:'inherit'}}>
+              ${editingSearchSetId ? 'Update' : 'Save'} search set
+            </button>
+          </div>`;
+        })()}
+        ${(s.searchSets||[]).length === 0
+          ? html`<div style=${{fontSize:'0.65rem',color:'var(--text-faint)'}}>No saved searches. Define a filter above — membership updates live as the model changes.</div>`
+          : html`<div style=${{display:'flex',flexDirection:'column',gap:'.15rem',maxHeight:140,overflowY:'auto'}}>
+              ${s.searchSets.map(function(qs){
+                var refs = _resolveSearchSet(qs.query, s.models);
+                return html`<div key=${qs.id} style=${{display:'flex',alignItems:'center',gap:'.3rem',padding:'.2rem .3rem',background:'var(--bg-primary)',border:'1px solid var(--border-subtle)',borderRadius:4}}>
+                  <span onClick=${function(){
+                      setEditingSearchSetId(qs.id); setSearchForm(qs.query||{}); setSearchFormName(qs.name); setShowSearchForm(true);
+                    }}
+                    title=${qs.name+' ('+refs.length+' now matching) — click to edit'} style=${{fontSize:'0.7rem',color:'var(--text-secondary)',flex:1,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',cursor:'pointer'}}>${qs.name}</span>
+                  <span style=${{fontSize:'0.6rem',color:'var(--text-faint)',flexShrink:0}}>${refs.length}</span>
+                  <button onClick=${function(){if(_highlightRefs)_highlightRefs(refs,true);}}
+                    title="Isolate" style=${{background:'none',border:'none',cursor:'pointer',color:'var(--text-muted)',fontSize:'0.65rem',padding:'0 .2rem'}}>◉</button>
+                  <button onClick=${function(){if(_highlightRefs)_highlightRefs(refs,false);}}
+                    title="Highlight" style=${{background:'none',border:'none',cursor:'pointer',color:'var(--text-muted)',fontSize:'0.65rem',padding:'0 .2rem'}}>★</button>
+                  <button onClick=${function(){d({t:'DEL_SEARCHSET',id:qs.id});}}
                     title="Delete" style=${{background:'none',border:'none',cursor:'pointer',color:'#f87171',fontSize:'0.7rem',padding:'0 .2rem'}}>×</button>
                 </div>`;
               })}
