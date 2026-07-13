@@ -530,10 +530,36 @@ Solibri/Navisworks/OSS (IfcOpenShell, ThatOpen, xeokit, Speckle, BIMcollab, Revi
   re-evaluates against the live model — today's sets are still a static snapshot-of-refs; this is a
   bigger, separate feature: query definition UI + a live re-resolution engine + wiring into the clash-scope
   picker, not attempted this session).
+- ~~**DQ re-run reconciliation (Wave 5)**~~ (2026-07-13). Clash detection has had full GUID-identity
+  reconciliation (new/persisting/auto-resolved) since `#638`; Data Quality re-runs just overwrote the prior
+  result with no trend at all — running the DQ panel twice gave no sense of whether things got better or
+  worse. A true per-element identity diff (GlobalId × checkId) would need every check bucket to also return
+  an uncapped GlobalId list — today `ex` is deliberately capped at 6-8 items for display, so that would be
+  an engine-shape change across all four check engines (qc/bim/ils/rvb). Reconciled at the check-COUNT level
+  instead ("was N, now M" per bucket), which needs no engine-shape change: new `flattenDQCounts(results)` /
+  `diffDQCounts(current, previous)` (`addons/data-quality.js`, exposed as `window._ccFlattenDQCounts`/
+  `window._ccDiffDQCounts`) flatten all four engines into one map keyed `engineName:bucketKey` (prefixed so
+  same-named buckets in different engines, e.g. two different `noMaterial` checks in `qc` vs `ils`, never
+  collide), then diff two snapshots into `{worse[], better[], unchangedCount}`, sorted by largest swing
+  first. Wired into `DataQualityPanel.runChecks()`: computes `newQc`/`newBim`/`newIls`/`newRvb` as named
+  locals (needed so they can be flattened before the setters run), flattens+diffs against the previous run's
+  snapshot (`null` on the first run — nothing to compare against), stores the new snapshot as "previous" for
+  next time. New "Since last run: N worse, M better" summary line under "Last checked", expandable (reusing
+  the existing `expanded[...]` section-toggle pattern) into the full worse/better list with labels and
+  from→to counts. **Deliberately session-local, not persisted** — `prevDqCounts` is component state, cleared
+  on reload, matching how the rest of the DQ panel already behaves (no snapshot persistence exists anywhere
+  else in Review mode either). `9d475b9`. 11 new tests across 2 files (`dq-reconciliation` — flatten/diff
+  logic incl. engine-prefix collision avoidance and sort order; `dq-reconciliation-wiring` — panel wiring).
+  Caught and fixed a stale assertion in `tests/rvb-panel-wiring.test.js` from the `runChecks()` refactor
+  (literal-text match on `setRvb(runRVBChecks(rvbModels))`, now `var newRvb = ...; setRvb(newRvb)` —
+  behavior-equivalent, just restructured) in a separate follow-up commit, `e4fa73a`. 271/271 passing.
 - **Next**: dynamic search sets (the one remaining Wave 4 item, and the largest), the two BCF follow-ups
   (auto-synthesized viewpoints; `<ClippingPlanes>` export — now doubly-confirmed as a shared, not
   CC-specific, gap per Check 2), a possible `<Coloring>` export (newly confirmed gap from Check 2), rest of
-  Wave 3 (stamp/auto-assignment rules), and Waves 5-6.
+  Wave 3 (stamp/auto-assignment rules), IDS conformance CI against the buildingSMART 250-case audit suite
+  (Wave 5's one remaining piece now that DQ reconciliation is done — already queued as "Phase 2" earlier in
+  this file), and Wave 6 (Scale — untouched; extra care required per this session's own history-informed
+  guardrails: no geo-cache keying changes, no hand-rolled geometry merging).
 
 On branch `claude/codebase-review-optimization-3nltcw` (2026-07-08) — four-repo review sweep (in progress):
 
