@@ -4256,13 +4256,30 @@ function startApp() {
   // Scratch buffers reused across pairs — a big detection run calls this
   // for every overlapping candidate; fresh arrays per call were pure GC churn.
   var _miProbe = [], _miPts = [], _miValid = [], _miProbeDepth = [0], _miMaxDepth = [0];
+  var _MI_MARGIN = 0.01; // 10mm tolerance for point-in-box check
+  // A raw tri-tri hit point can sit outside both elements' AABBs (near-tangent /
+  // degenerate configurations); both engines must agree on what counts as a real
+  // hit, so this one check gates both the JS BVH path and the WASM path below.
+  function _pointInBothBoxes(px, py, pz, boxA, boxB, margin) {
+    return px >= boxA.min.x-margin && px <= boxA.max.x+margin &&
+           py >= boxA.min.y-margin && py <= boxA.max.y+margin &&
+           pz >= boxA.min.z-margin && pz <= boxA.max.z+margin &&
+           px >= boxB.min.x-margin && px <= boxB.max.x+margin &&
+           py >= boxB.min.y-margin && py <= boxB.max.y+margin &&
+           pz >= boxB.min.z-margin && pz <= boxB.max.z+margin;
+  }
   function _meshesIntersect(elA, elB) {
     // Try WASM engine first (4-8x faster)
     if (typeof window._ccWasmIntersect === 'function') {
       var tA = _getWorldTris(elA), tB = _getWorldTris(elB);
       if (!tA.length || !tB.length) return false;
       var r = window._ccWasmIntersect(tA, tB);
-      return r || false;
+      if (!r) return false;
+      // WASM returns one raw point with no AABB validation of its own - apply the
+      // same check the JS path uses below so a loaded WASM accelerator can't
+      // report hits (or miss real hits) the JS fallback wouldn't agree with.
+      if (!_pointInBothBoxes(r[0], r[1], r[2], elA.box, elB.box, _MI_MARGIN)) return false;
+      return r;
     }
     // JS fallback
     var bA = _getBVH(elA), bB = _getBVH(elB);
@@ -4276,18 +4293,11 @@ function startApp() {
     _bvhTraverseAll(bA.root, bA.tris, bB.root, bB.tris, pts, 24, maxDepth, false);
     if (!pts.length) return false;
     var boxA = elA.box, boxB = elB.box;
-    var margin = 0.01; // 10mm tolerance for point-in-box check
     var valid = _miValid;
     valid.length = 0;
     for (var i=0; i<pts.length; i+=3) {
-      var px=pts[i], py=pts[i+1], pz=pts[i+2];
-      if (px >= boxA.min.x-margin && px <= boxA.max.x+margin &&
-          py >= boxA.min.y-margin && py <= boxA.max.y+margin &&
-          pz >= boxA.min.z-margin && pz <= boxA.max.z+margin &&
-          px >= boxB.min.x-margin && px <= boxB.max.x+margin &&
-          py >= boxB.min.y-margin && py <= boxB.max.y+margin &&
-          pz >= boxB.min.z-margin && pz <= boxB.max.z+margin) {
-        valid.push(px, py, pz);
+      if (_pointInBothBoxes(pts[i], pts[i+1], pts[i+2], boxA, boxB, _MI_MARGIN)) {
+        valid.push(pts[i], pts[i+1], pts[i+2]);
       }
     }
     if (!valid.length) return false;
