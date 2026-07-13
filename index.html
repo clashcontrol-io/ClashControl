@@ -4992,7 +4992,7 @@ function startApp() {
         }
         // Default clash matrix — cheap pre-filter; the authoritative check is
         // the same call inside _processCandidate below.
-        if (_ccMatrixSkipsSameDiscipline(c.eA, c.mA, c.eB, c.mB, rules)) continue;
+        if (_ccMatrixSkipsSameDiscipline(c.eA, c.mA, c.eB, c.mB, c.sameModel, rules)) continue;
         var gkey = c.mA.id + ':' + c.eA.expressId;
         var g = groups.get(gkey);
         if (!g) { g = { eA:c.eA, mA:c.mA, items:[] }; groups.set(gkey, g); }
@@ -5084,7 +5084,7 @@ function startApp() {
       }
 
       // Default clash matrix — see _ccMatrixSkipsSameDiscipline for the policy.
-      if (_ccMatrixSkipsSameDiscipline(eA, mA, eB, mB, rules)) return;
+      if (_ccMatrixSkipsSameDiscipline(eA, mA, eB, mB, sameModel, rules)) return;
 
       // ── Type-pair impossibility memo (Phase 2.4) ────────────────
       // Active only when the model fingerprint + rules hash both match
@@ -15341,11 +15341,19 @@ function startApp() {
   }
   window._ccElementDiscipline = _ccElementDiscipline;
 
-  // Default clash matrix: should this pair be skipped? rules.duplicates is
-  // exempt regardless of discipline — a duplicate pair (two copy-pasted
-  // ducts) is almost always same-discipline by nature, and that check in
-  // _processCandidate runs independently of hard/soft, so the matrix must
-  // never discard it. Otherwise, precedence is:
+  // Default clash matrix: should this pair be skipped? Only ever applies to
+  // CROSS-model pairs — sameModel same-discipline pairs (e.g. two walls
+  // physically overlapping inside one architectural model) are a data-
+  // integrity error, not federation coordination noise, and must still be
+  // caught. (Caught live: the browser smoke test's two-crossing-walls
+  // fixture is a single model — an earlier version of this function excluded
+  // it as "same discipline" and silently reported zero clashes.) Same-model
+  // self-clash inclusion is the existing, separate rules.excludeSelf / self-
+  // clash-picker control, not this matrix. rules.duplicates is additionally
+  // exempt regardless — a duplicate pair (two copy-pasted ducts) is almost
+  // always same-discipline by nature, and that check in _processCandidate
+  // runs independently of hard/soft, so the matrix must never discard it.
+  // Otherwise, precedence for a cross-model pair is:
   //   1. An explicit rules.disciplineMatrix[pairKey] cell (matrix-UI override)
   //   2. Same-discipline pairs default to skipped (rules.excludeSameDiscipline,
   //      the #1 cited false-positive flood in BIM coordination guidance)
@@ -15353,8 +15361,8 @@ function startApp() {
   // Shared by both _detectClashesCore call sites (chunk pre-filter + the
   // authoritative check) so they can't drift, and by _ccDisciplinePairEnabled
   // (matrix-UI cell state) so the UI and the engine can't disagree either.
-  function _ccMatrixSkipsSameDiscipline(eA, mA, eB, mB, rules) {
-    if (rules.duplicates) return false;
+  function _ccMatrixSkipsSameDiscipline(eA, mA, eB, mB, sameModel, rules) {
+    if (rules.duplicates || sameModel) return false;
     var dA = _ccElementDiscipline(eA, mA && mA.discipline);
     var dB = _ccElementDiscipline(eB, mB && mB.discipline);
     return !_ccDisciplinePairEnabled(dA, dB, rules);

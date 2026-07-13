@@ -19,9 +19,11 @@ const _window = {};
 new Function('window', src.slice(start, closeIdx))(_window);
 const _ccElementDiscipline = _window._ccElementDiscipline;
 const _ccMatrixSkipsSameDiscipline = _window._ccMatrixSkipsSameDiscipline;
+const _ccDisciplinePairEnabled = _window._ccDisciplinePairEnabled;
 const detectDiscipline = _window._ccDetectDiscipline;
 assert.equal(typeof _ccElementDiscipline, 'function');
 assert.equal(typeof _ccMatrixSkipsSameDiscipline, 'function');
+assert.equal(typeof _ccDisciplinePairEnabled, 'function');
 assert.equal(typeof detectDiscipline, 'function');
 
 function el(ifcType) { return { props: { ifcType: ifcType } }; }
@@ -70,27 +72,44 @@ test('detectDiscipline behavior is unchanged by the refactor (majority vote, nam
 });
 
 // ── _ccMatrixSkipsSameDiscipline — the default clash matrix's core decision ──
+// All CROSS-model (sameModel=false) unless a test says otherwise.
 
 function mdl(id, discipline) { return { id: id, discipline: discipline }; }
 
-test('same-discipline pairs are skipped by default', () => {
+test('same-discipline CROSS-model pairs are skipped by default', () => {
   const rules = { excludeSameDiscipline: true };
-  assert.equal(_ccMatrixSkipsSameDiscipline(el('IfcBeam'), mdl('a', 'structural'), el('IfcColumn'), mdl('b', 'structural'), rules), true);
+  assert.equal(_ccMatrixSkipsSameDiscipline(el('IfcBeam'), mdl('a', 'structural'), el('IfcColumn'), mdl('b', 'structural'), false, rules), true);
+});
+
+test('REGRESSION: same-discipline SAME-model pairs are never skipped, regardless of excludeSameDiscipline', () => {
+  // Caught live by CI: the browser smoke test's fixture is two crossing
+  // walls in ONE model. Both walls fall back to that one model's discipline,
+  // so they're "same discipline" - but this is a same-model self-clash (a
+  // data-integrity error: two walls physically occupying the same space),
+  // not federation coordination noise between two teams' models. The matrix
+  // solves the latter; excluding the former made the smoke test report zero
+  // clashes on a model with an actual physical overlap.
+  const rules = { excludeSameDiscipline: true };
+  assert.equal(_ccMatrixSkipsSameDiscipline(el('IfcWall'), mdl('a', 'architectural'), el('IfcWall'), mdl('a', 'architectural'), true, rules), false);
+  // Even an explicit disciplineMatrix cell trying to skip it doesn't apply -
+  // sameModel is checked first and always wins over any discipline logic.
+  const withOverride = { disciplineMatrix: { 'architectural:architectural': false } };
+  assert.equal(_ccMatrixSkipsSameDiscipline(el('IfcWall'), mdl('a', 'architectural'), el('IfcWall'), mdl('a', 'architectural'), true, withOverride), false);
 });
 
 test('cross-discipline pairs are never skipped', () => {
   const rules = { excludeSameDiscipline: true };
-  assert.equal(_ccMatrixSkipsSameDiscipline(el('IfcDuctSegment'), mdl('a', 'mep'), el('IfcBeam'), mdl('b', 'structural'), rules), false);
+  assert.equal(_ccMatrixSkipsSameDiscipline(el('IfcDuctSegment'), mdl('a', 'mep'), el('IfcBeam'), mdl('b', 'structural'), false, rules), false);
 });
 
 test('excludeSameDiscipline===false (future matrix-UI toggle) re-enables same-discipline testing', () => {
   const rules = { excludeSameDiscipline: false };
-  assert.equal(_ccMatrixSkipsSameDiscipline(el('IfcBeam'), mdl('a', 'structural'), el('IfcColumn'), mdl('b', 'structural'), rules), false);
+  assert.equal(_ccMatrixSkipsSameDiscipline(el('IfcBeam'), mdl('a', 'structural'), el('IfcColumn'), mdl('b', 'structural'), false, rules), false);
 });
 
 test('excludeSameDiscipline is absent (pre-existing saved rules objects) defaults to skipping, same as true', () => {
   const rules = {}; // simulates a rules object saved before this field existed
-  assert.equal(_ccMatrixSkipsSameDiscipline(el('IfcBeam'), mdl('a', 'structural'), el('IfcColumn'), mdl('b', 'structural'), rules), true);
+  assert.equal(_ccMatrixSkipsSameDiscipline(el('IfcBeam'), mdl('a', 'structural'), el('IfcColumn'), mdl('b', 'structural'), false, rules), true);
 });
 
 test('REGRESSION: rules.duplicates exempts the matrix entirely, even for same-discipline pairs', () => {
@@ -101,14 +120,59 @@ test('REGRESSION: rules.duplicates exempts the matrix entirely, even for same-di
   // rules.duplicates branch - silently breaking "Include duplicate hits" for
   // every same-discipline duplicate, which is the overwhelming majority of them.
   const rules = { excludeSameDiscipline: true, duplicates: true };
-  assert.equal(_ccMatrixSkipsSameDiscipline(el('IfcDuctSegment'), mdl('a', 'mep'), el('IfcDuctSegment'), mdl('b', 'mep'), rules), false);
+  assert.equal(_ccMatrixSkipsSameDiscipline(el('IfcDuctSegment'), mdl('a', 'mep'), el('IfcDuctSegment'), mdl('b', 'mep'), false, rules), false);
 });
 
 test('non-discriminating elements resolve through their model discipline before comparing', () => {
   const rules = { excludeSameDiscipline: true };
   // Two walls, one in a structural model, one in an architectural model -
   // different disciplines via the model fallback, so NOT skipped.
-  assert.equal(_ccMatrixSkipsSameDiscipline(el('IfcWall'), mdl('a', 'structural'), el('IfcWall'), mdl('b', 'architectural'), rules), false);
-  // Same two walls, both in structural models - skipped.
-  assert.equal(_ccMatrixSkipsSameDiscipline(el('IfcWall'), mdl('a', 'structural'), el('IfcWall'), mdl('b', 'structural'), rules), true);
+  assert.equal(_ccMatrixSkipsSameDiscipline(el('IfcWall'), mdl('a', 'structural'), el('IfcWall'), mdl('b', 'architectural'), false, rules), false);
+  // Same two walls, both in structural models (still cross-model, different
+  // model ids) - skipped.
+  assert.equal(_ccMatrixSkipsSameDiscipline(el('IfcWall'), mdl('a', 'structural'), el('IfcWall'), mdl('b', 'structural'), false, rules), true);
+});
+
+// ── _ccDisciplinePairEnabled — the matrix-UI cell state (and the precedence
+// _ccMatrixSkipsSameDiscipline defers to) ──
+
+test('default cell states: same-discipline off, cross-discipline on', () => {
+  const rules = { excludeSameDiscipline: true };
+  assert.equal(_ccDisciplinePairEnabled('structural', 'structural', rules), false);
+  assert.equal(_ccDisciplinePairEnabled('mep', 'mep', rules), false);
+  assert.equal(_ccDisciplinePairEnabled('structural', 'mep', rules), true);
+  assert.equal(_ccDisciplinePairEnabled('architectural', 'civil', rules), true);
+});
+
+test('an explicit disciplineMatrix cell overrides the coarse default in either direction', () => {
+  // Re-enable one specific same-discipline pair (e.g. checking structural
+  // elements for accidental self-overlap) while every other same-discipline
+  // pair stays off.
+  const reEnabled = { excludeSameDiscipline: true, disciplineMatrix: { 'structural:structural': true } };
+  assert.equal(_ccDisciplinePairEnabled('structural', 'structural', reEnabled), true);
+  assert.equal(_ccDisciplinePairEnabled('mep', 'mep', reEnabled), false); // untouched cell, still default
+
+  // Turn off one specific cross-discipline pair while others stay on.
+  const disabled = { disciplineMatrix: { 'architectural:mep': false } };
+  assert.equal(_ccDisciplinePairEnabled('architectural', 'mep', disabled), false);
+  assert.equal(_ccDisciplinePairEnabled('structural', 'mep', disabled), true); // untouched, still default
+});
+
+test('disciplineMatrix cell key order does not matter (sorted internally)', () => {
+  const rules = { disciplineMatrix: { 'architectural:mep': false } };
+  assert.equal(_ccDisciplinePairEnabled('mep', 'architectural', rules), false);
+});
+
+test('_ccMatrixSkipsSameDiscipline and _ccDisciplinePairEnabled agree by construction (same precedence)', () => {
+  const rules = { excludeSameDiscipline: true, disciplineMatrix: { 'structural:structural': true, 'architectural:mep': false } };
+  // structural:structural re-enabled by the matrix -> NOT skipped, even
+  // though excludeSameDiscipline is true.
+  assert.equal(_ccMatrixSkipsSameDiscipline(el('IfcBeam'), mdl('a', 'structural'), el('IfcColumn'), mdl('b', 'structural'), false, rules), false);
+  // architectural:mep disabled by the matrix -> skipped, even though it's cross-discipline.
+  assert.equal(_ccMatrixSkipsSameDiscipline(el('IfcDoor'), mdl('a', 'architectural'), el('IfcDuctSegment'), mdl('b', 'mep'), false, rules), true);
+});
+
+test('rules.duplicates exempts the matrix even when a disciplineMatrix cell would otherwise skip it', () => {
+  const rules = { disciplineMatrix: { 'mep:mep': false }, duplicates: true };
+  assert.equal(_ccMatrixSkipsSameDiscipline(el('IfcDuctSegment'), mdl('a', 'mep'), el('IfcDuctSegment'), mdl('b', 'mep'), false, rules), false);
 });
