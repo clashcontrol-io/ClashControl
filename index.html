@@ -8903,6 +8903,96 @@ function startApp() {
         _clearHoverRef();
         invalidate();
       }
+      // Occluder-reveal (Wave 2.2): temporarily hides whatever sits between
+      // the camera and a clash point, layered ADDITIVELY on top of whatever
+      // ghostOthers already did — this never calls ghostOthers/unghostAll
+      // itself, so the existing isolate/ghost mechanism is untouched. Each
+      // occluder is hidden via its own mesh type's NATIVE mechanism, the
+      // exact primitives ghostOthers already uses for the kept set above:
+      // regular Mesh -> .visible=false; InstancedMesh -> setMatrixAt(idx,
+      // _INST_HIDE_MX); BatchedMesh -> setVisibleAt(idx,false). Reversible
+      // via _ccRevealOccluders without touching ghost state at all. No
+      // renderer/material/postFX changes — pure scene-graph visibility.
+      function _ccResolveOccluderHits(hits, excludeEids) {
+        var exclude = {};
+        (excludeEids||[]).forEach(function(eid){ if(eid!=null) exclude[eid]=true; });
+        var seen = {}; // a ray can cross one mesh's own geometry more than once
+        var out = [];
+        (hits||[]).forEach(function(h){
+          if(!h||!h.object) return;
+          var obj = h.object, eid = null, kind = null, idx = null;
+          if(obj.isInstancedMesh && h.instanceId != null){
+            eid = (obj.userData.instanceExprIds||[])[h.instanceId];
+            kind = 'instanced'; idx = h.instanceId;
+          } else if(obj.userData && obj.userData._isCCBatch && h.batchId != null){
+            eid = (obj.userData.batchExprIds||[])[h.batchId];
+            kind = 'batch'; idx = h.batchId;
+          } else if(obj.isMesh){
+            eid = obj.userData ? obj.userData.expressId : null;
+            kind = 'mesh'; idx = null;
+          }
+          if(eid == null || exclude[eid]) return;
+          var key = kind+':'+(obj.uuid||'')+':'+idx;
+          if(seen[key]) return;
+          seen[key] = true;
+          out.push({object:obj, kind:kind, idx:idx, eid:eid});
+        });
+        return out;
+      }
+      function _ccApplyOccluderHide(occluders) {
+        var tracked = [];
+        (occluders||[]).forEach(function(o){
+          if(o.kind === 'mesh'){
+            tracked.push({kind:'mesh', object:o.object, prevVisible:o.object.visible});
+            o.object.visible = false;
+          } else if(o.kind === 'instanced'){
+            var prevMx = new THREE.Matrix4();
+            o.object.getMatrixAt(o.idx, prevMx);
+            tracked.push({kind:'instanced', object:o.object, idx:o.idx, prevMatrix:prevMx});
+            o.object.setMatrixAt(o.idx, _INST_HIDE_MX);
+            o.object.instanceMatrix.needsUpdate = true;
+          } else if(o.kind === 'batch'){
+            tracked.push({kind:'batch', object:o.object, idx:o.idx});
+            try { o.object.setVisibleAt(o.idx, false); } catch(_){}
+          }
+        });
+        if(tracked.length) invalidate();
+        return tracked;
+      }
+      function _ccRevealOccluders(tracked) {
+        (tracked||[]).forEach(function(t){
+          if(t.kind === 'mesh'){
+            t.object.visible = t.prevVisible;
+          } else if(t.kind === 'instanced'){
+            t.object.setMatrixAt(t.idx, t.prevMatrix);
+            t.object.instanceMatrix.needsUpdate = true;
+          } else if(t.kind === 'batch'){
+            try { t.object.setVisibleAt(t.idx, true); } catch(_){}
+          }
+        });
+        if(tracked && tracked.length) invalidate();
+      }
+      // The only impure entry point here: builds a fresh Raycaster from the
+      // live camera toward a clash point, bounded to stop just short of it
+      // (so the clash pair's own geometry is never mistaken for an
+      // occluder — excludeEids is a second, belt-and-suspenders safety net
+      // for the rare case a pair element's geometry extends past that
+      // point). Everything above this function is pure and unit-tested.
+      function _ccHideOccluders(clashPoint, excludeEids) {
+        if(!clashPoint || !S.mg || !S.camera) return [];
+        var origin = S.camera.position;
+        var target = new THREE.Vector3(clashPoint[0], clashPoint[1], clashPoint[2]);
+        var dir = target.clone().sub(origin);
+        var dist = dir.length();
+        if(dist < 1e-6) return [];
+        dir.normalize();
+        var _oray = new THREE.Raycaster(origin, dir, 0, Math.max(0, dist - 0.05));
+        var hits = _oray.intersectObjects(S.mg.children, true);
+        return _ccApplyOccluderHide(_ccResolveOccluderHits(hits, excludeEids));
+      }
+      window._ccHideOccluders = _ccHideOccluders;
+      window._ccRevealOccluders = _ccRevealOccluders;
+
       S._ghostOthers = ghostOthers;
       S._unghostAll = unghostAll;
       // Called before disposing a model's meshes: drop ghost clones whose
@@ -22598,6 +22688,19 @@ function startApp() {
     var it=props.item, active=props.active, d=props.d, isClash=props.isClash, pr=props.prefs||{}; pr._models=props.models||[];
     var selectMode=props.selectMode, isSelected=props.isSelected;
     var trainingMode=props.trainingMode;
+    // Occluder-reveal (Wave 2.2) — local to this row, not the reducer:
+    // purely a transient viewport state, gone the moment this clash stops
+    // being the active one. occTrackedRef holds what _ccHideOccluders
+    // returned so it can be handed back to _ccRevealOccluders verbatim.
+    var orv=useState(false), occReveal=orv[0], setOccReveal=orv[1];
+    var occTrackedRef=useRef([]);
+    useEffect(function(){
+      if(!active && occReveal){
+        if(typeof window._ccRevealOccluders==='function') window._ccRevealOccluders(occTrackedRef.current);
+        occTrackedRef.current=[];
+        setOccReveal(false);
+      }
+    }, [active]);
     /* Severity dot — the row's only colour. Maps the existing aiSeverity /
        type signal to the desaturated --sev-* tokens. The previous emoji
        icon (🔴 / 🟡 / 🏗 / 📌) is replaced by a 7-px dot rendered inline so
@@ -22749,6 +22852,20 @@ function startApp() {
             }}
             title="Accept but flag for later verification"
             style=${{...S_BTN,fontSize:'var(--text-2xs)',padding:'var(--space-1) var(--space-2)',background:'var(--bg-secondary)',color:'var(--color-info-fg)',border:'1px solid var(--color-info-border)',fontWeight:'var(--weight-semibold)'}} aria-label="Accept clash and flag for later verification">Accept · Check</button>`}
+          ${isClash && it.point && typeof window._ccHideOccluders==='function' && html`<button class="cc-btn-press" onClick=${function(e){
+              e.stopPropagation();
+              if(occReveal){
+                if(window._ccRevealOccluders) window._ccRevealOccluders(occTrackedRef.current);
+                occTrackedRef.current=[];
+                setOccReveal(false);
+              } else {
+                var excl=[it.elemA,it.elemB,it.elementId].filter(function(v){return v!=null;});
+                occTrackedRef.current=window._ccHideOccluders(it.point, excl)||[];
+                setOccReveal(true);
+              }
+            }}
+            title="Temporarily hide whatever's between the camera and this clash"
+            style=${{...S_BTN,fontSize:'var(--text-2xs)',padding:'var(--space-1) var(--space-2)',background:occReveal?'var(--accent-bg)':'var(--bg-secondary)',color:occReveal?'var(--accent)':'var(--text-faint)',border:occReveal?'1px solid var(--accent-subtle)':'1px solid var(--border)',fontWeight:'var(--weight-semibold)'}} aria-label="Toggle occluder reveal">${occReveal?'Occluders hidden':'Hide occluders'}</button>`}
           ${!isClash && EDITABLE_STATUSES.map(function(k){return html`<button class="cc-btn-press" key=${k}
             onClick=${function(e){e.stopPropagation();d({t:A.UPD_ISSUE,id:it.id,u:{status:k}})}}
             style=${{...S_BTN,fontSize:'var(--text-2xs)',padding:'var(--space-1) var(--space-2)',background:it.status===k?STAT[k].bg:'var(--bg-secondary)',color:it.status===k?'#fff':'var(--text-faint)',fontWeight:'var(--weight-medium)'}}>${STAT[k].label}</button>`})}
