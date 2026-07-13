@@ -1169,7 +1169,7 @@ function startApp() {
   // Restore section state persisted from previous session
   var _savedSection=(function(){try{return JSON.parse(localStorage.getItem('cc_section')||'null');}catch(e){return null;}})();
   var INIT = {
-    models:[], clashes:[], issues:[], activeId:null, showModal:false, showSettings:false, modalElement:null, tab:null, isRecording:false, selectionSets:[], searchSets:[],
+    models:[], clashes:[], issues:[], activeId:null, showModal:false, showSettings:false, modalElement:null, tab:null, isRecording:false, selectionSets:[], searchSets:[], assignmentRules:[],
     rules:{ modelA:'all', modelB:'all', hard:true, maxGap:50, minGap:0, duplicates:false, changeAware:false, excludeSelf:true, excludeTypes:[], excludeTypePairs:[], minOverlapVolM3:1e-5, toleranceByTypePair:{}, useSemanticFilter:true, includeSpaces:false, excludeSameDiscipline:true },
     detectionSettings:null, // Captured at detection run time: {clearance_mm, discipline_filters}
     trainingMode:(function(){try{var v=localStorage.getItem('cc_trainingMode');return v===null?true:v==='1';}catch(e){return true;}}()),
@@ -1467,7 +1467,7 @@ function startApp() {
       case A.UPD_MODEL:   return Object.assign({},s,{models:s.models.map(function(m){return m.id===a.id?Object.assign({},m,a.u):m})});
       case A.TOGGLE_ALL_STOREYS: return Object.assign({},s,{models:s.models.map(function(m){if(m.id!==a.id)return m;return Object.assign({},m,{hiddenStoreys:a.hide?a.storeys.reduce(function(o,st){o[st]=true;return o;},{}):{}}); })});
       case A.SET_CLASHES: /* falls through to MERGE_CLASHES with no prev clashes */
-      case A.MERGE_CLASHES: var _mr=mergeDetectionResults(a.v, a.t===A.MERGE_CLASHES?s.clashes:[]); _gcEvent('clash-detection', _mr.clashes.length+' clashes'); var _st={clashes:_mr.clashes,detecting:false,activeId:null,floors:deriveFloors(_mr.clashes),lastDeltaSummary:_mr.deltaSummary}; var _rhOpen=0; _mr.clashes.forEach(function(c){if(c.status==='open'||c.status==='in_progress')_rhOpen++;}); _st.runHistory=(s.runHistory||[]).concat([{ts:_mr.deltaSummary.ts,total:_mr.clashes.length,open:_rhOpen,newCount:_mr.deltaSummary.newCount,persisting:_mr.deltaSummary.persisting,autoResolved:_mr.deltaSummary.autoResolved}]).slice(-100); if(a.detectionSettings)_st.detectionSettings=a.detectionSettings; if(s.prefs.resetFiltersOnRun!==false)_st.filters=Object.assign({},INIT_FILTERS); /* Default to Grouped only when the user has nothing chosen AND the result is small enough that thousands of sticky-positioned cluster headers won't tax the browser. Never write localStorage here — that's the user-facing CLASH_GROUP_BY dispatch's job. */ if((!Array.isArray(s.clashGroupBy)||s.clashGroupBy.length===0) && _mr.clashes.length>0 && _mr.clashes.length<=2000) { _st.clashGroupBy=['cluster']; }
+      case A.MERGE_CLASHES: var _mr=mergeDetectionResults(a.v, a.t===A.MERGE_CLASHES?s.clashes:[]); _mr.clashes=_ccApplyAssignmentRules(_mr.clashes, s.assignmentRules); _gcEvent('clash-detection', _mr.clashes.length+' clashes'); var _st={clashes:_mr.clashes,detecting:false,activeId:null,floors:deriveFloors(_mr.clashes),lastDeltaSummary:_mr.deltaSummary}; var _rhOpen=0; _mr.clashes.forEach(function(c){if(c.status==='open'||c.status==='in_progress')_rhOpen++;}); _st.runHistory=(s.runHistory||[]).concat([{ts:_mr.deltaSummary.ts,total:_mr.clashes.length,open:_rhOpen,newCount:_mr.deltaSummary.newCount,persisting:_mr.deltaSummary.persisting,autoResolved:_mr.deltaSummary.autoResolved}]).slice(-100); if(a.detectionSettings)_st.detectionSettings=a.detectionSettings; if(s.prefs.resetFiltersOnRun!==false)_st.filters=Object.assign({},INIT_FILTERS); /* Default to Grouped only when the user has nothing chosen AND the result is small enough that thousands of sticky-positioned cluster headers won't tax the browser. Never write localStorage here — that's the user-facing CLASH_GROUP_BY dispatch's job. */ if((!Array.isArray(s.clashGroupBy)||s.clashGroupBy.length===0) && _mr.clashes.length>0 && _mr.clashes.length<=2000) { _st.clashGroupBy=['cluster']; }
         return Object.assign({},s,_st);
       case A.ADD_CLASHES: { /* additive, non-destructive append (does NOT auto-resolve existing clashes like MERGE_CLASHES). Used by the accessibility panel. */
         var _addc=(a.v||[]).filter(Boolean); if(!_addc.length) return s;
@@ -1657,6 +1657,20 @@ function startApp() {
       case 'DEL_SEARCHSET': return Object.assign({},s,{searchSets:(s.searchSets||[]).filter(function(x){return x.id!==a.id;})});
       case 'REN_SEARCHSET': return Object.assign({},s,{searchSets:(s.searchSets||[]).map(function(x){return x.id===a.id?Object.assign({},x,{name:a.name}):x;})});
       case 'UPD_SEARCHSET_QUERY': return Object.assign({},s,{searchSets:(s.searchSets||[]).map(function(x){return x.id===a.id?Object.assign({},x,{query:a.query}):x;})});
+      // Assignment rules — Revizto-style "discipline-pair × storey ->
+      // assignee/priority" templates, applied automatically to newly
+      // detected clashes (see MERGE_CLASHES below). Per-project (reducer
+      // state, round-tripped through saveProject/loadProject and the
+      // IndexedDB auto-persist), unlike StandardsPanel's existing
+      // discipline-pair clearance rules, which are deliberately global
+      // (plain localStorage) — assignment policy is project-specific in a
+      // way clearance conventions usually aren't.
+      case 'ADD_ASSIGN_RULE': {
+        var narule = {id:a.v.id||uid(), discipline1:a.v.discipline1||'any', discipline2:a.v.discipline2||'any', storey:a.v.storey||'any', assignee:a.v.assignee||'', priority:a.v.priority||'', createdAt:new Date().toISOString()};
+        return Object.assign({},s,{assignmentRules:(s.assignmentRules||[]).concat([narule])});
+      }
+      case 'DEL_ASSIGN_RULE': return Object.assign({},s,{assignmentRules:(s.assignmentRules||[]).filter(function(x){return x.id!==a.id;})});
+      case 'UPD_ASSIGN_RULE': return Object.assign({},s,{assignmentRules:(s.assignmentRules||[]).map(function(x){return x.id===a.id?Object.assign({},x,a.u):x;})});
       case A.INSPECTOR_OPEN:{ var io=!!a.v; _ccPersistUI('inspectorOpen',io); return Object.assign({},s,{inspectorOpen:io}); }
       case A.AVATAR_MENU:   return Object.assign({},s,{avatarMenuOpen:!!a.v});
       case A.SMART_VIEWS: return Object.assign({},s,{showSmartViews:!!a.v});
@@ -6001,6 +6015,53 @@ function startApp() {
     return distMm <= 150;
   }
 
+  // Finds the first assignment rule whose discipline-pair and storey match
+  // a clash. Disciplines are matched as an UNORDERED pair — a clash's
+  // disciplines[0]/[1] carry no meaningful A/B order (see
+  // _ccElementDiscipline), so a rule of (structural, mep) must also match
+  // a clash reporting (mep, structural). 'any' on either side of a rule
+  // matches every discipline, including a same-discipline self-clash
+  // (structural+structural still satisfies discipline1:'structural',
+  // discipline2:'any'). Rules are matched in array order — first match
+  // wins, same "earlier rule takes precedence" convention as
+  // StandardsPanel's discipline-pair clearance rules (isDuplicate there).
+  function _ccMatchAssignmentRule(rules, c) {
+    if (!rules || !rules.length) return null;
+    var ds = c.disciplines || [];
+    var d1 = ds[0] || null, d2 = ds[1] || null;
+    var storey = c.elemAStorey || c.elemBStorey || '';
+    for (var i = 0; i < rules.length; i++) {
+      var r = rules[i];
+      var m1 = r.discipline1 === 'any' || r.discipline1 === d1 || r.discipline1 === d2;
+      var m2 = r.discipline2 === 'any' || r.discipline2 === d1 || r.discipline2 === d2;
+      if (!m1 || !m2) continue;
+      if (r.storey && r.storey !== 'any' && r.storey !== storey) continue;
+      return r;
+    }
+    return null;
+  }
+  // Stamps assignee/priority from the first matching rule onto newly
+  // detected clashes only (c._delta==='new', set by mergeDetectionResults
+  // just before this runs) — never onto persisting clashes, which already
+  // carry forward whatever assignee/priority a person set on a prior run
+  // (mergeDetectionResults' own persisting-clash branch). A clash that
+  // already has an assignee (stamped by an earlier rule this same run,
+  // or somehow set some other way) is left alone — first match wins, not
+  // last. Returns new clash objects only where something actually changed,
+  // so unaffected clashes keep referential identity.
+  function _ccApplyAssignmentRules(clashes, rules) {
+    if (!rules || !rules.length) return clashes;
+    return clashes.map(function(c) {
+      if (c._delta !== 'new' || c.assignee) return c;
+      var r = _ccMatchAssignmentRule(rules, c);
+      if (!r) return c;
+      var upd = {};
+      if (r.assignee) upd.assignee = r.assignee;
+      if (r.priority) upd.priority = r.priority;
+      return Object.keys(upd).length ? Object.assign({}, c, upd) : c;
+    });
+  }
+
   function mergeDetectionResults(newClashes, prevClashes) {
     newClashes = newClashes.filter(function(c){ return !_isDeniedClash(c); });
     if (!prevClashes || prevClashes.length === 0) {
@@ -6230,6 +6291,7 @@ function startApp() {
       measurements: s.measurements||[],
       selectionSets: s.selectionSets||[],
       searchSets: s.searchSets||[],
+      assignmentRules: s.assignmentRules||[],
       changelog: s.changelog||[],
     };
     var blob = new Blob([JSON.stringify(data, null, 2)], {type:'application/json'});
@@ -6266,6 +6328,7 @@ function startApp() {
           // restore as {_stub:true, elements:[]} above), so an empty count
           // right after load is correct, not a bug.
           if (data.searchSets) data.searchSets.forEach(function(qs){ d({t:'ADD_SEARCHSET', v:qs}); });
+          if (data.assignmentRules) data.assignmentRules.forEach(function(ar){ d({t:'ADD_ASSIGN_RULE', v:ar}); });
           if (data.changelog && data.changelog.length) d({ t:A.MERGE_CHANGELOG, v:data.changelog });
         } catch(err) {
           alert('Load failed: ' + err.message);
@@ -14843,7 +14906,7 @@ function startApp() {
       // this session vanished on next load unless the user happened to
       // export/import a project file. LOAD_PROJECT_STATE is a blind
       // Object.assign merge, so adding the keys here is the whole fix.
-      selectionSets:s.selectionSets||[], searchSets:s.searchSets||[],
+      selectionSets:s.selectionSets||[], searchSets:s.searchSets||[], assignmentRules:s.assignmentRules||[],
       modelMeta:s.models.map(function(m){return {id:m.id,name:m.name,discipline:m.discipline,color:m.color,visible:m.visible,tag:m.tag||'',georef:m.georef||null};})
     }, 0);
     return idbSaveProjectData(pid, data);
@@ -21387,6 +21450,56 @@ function startApp() {
         <button onClick=${function(){importDiscRef.current&&importDiscRef.current.click();}} title="Import discipline-pair rules"
           style=${{fontSize:'0.69rem',padding:'.3rem .5rem',background:'var(--bg-secondary)',color:'var(--text-faint)',border:'1px solid var(--border)',borderRadius:4,cursor:'pointer'}}>↑</button>
       </div>
+
+      ${(function(){
+        var arules = s.assignmentRules||[];
+        var storeys = [];
+        (s.models||[]).forEach(function(m){ (m.storeys||[]).forEach(function(st){ if(st && storeys.indexOf(st)<0) storeys.push(st); }); });
+        return html`<div style=${{marginTop:'1.2rem',paddingTop:'.8rem',borderTop:'2px solid var(--border)',marginBottom:'1.5rem'}}>
+          <div style=${{fontSize:'0.75rem',fontWeight:700,color:'var(--text-muted)',textTransform:'uppercase',letterSpacing:'.06em',marginBottom:'.4rem'}}>Assignment rules</div>
+          <div style=${{fontSize:'0.65rem',color:'var(--text-faint)',marginBottom:'.5rem',lineHeight:1.4}}>
+            Stamp an assignee/priority on newly detected clashes automatically, by discipline pair and (optionally) storey. First matching rule wins. Never overrides an assignee already set on a persisting clash.
+          </div>
+          ${arules.length===0 && html`<div style=${{padding:'.6rem',background:'var(--bg-secondary)',borderRadius:6,fontSize:'0.69rem',color:'var(--text-faint)',textAlign:'center',marginBottom:'.5rem'}}>
+            No assignment rules configured yet. New clashes get no automatic assignee.
+          </div>`}
+          ${arules.map(function(r){
+            return html`<div key=${r.id} style=${{padding:'.4rem',background:'var(--bg-secondary)',borderRadius:6,marginBottom:'.35rem',border:'1px solid var(--border-subtle)'}}>
+              <div style=${{display:'flex',gap:'.3rem',alignItems:'center',marginBottom:'.25rem'}}>
+                <select value=${r.discipline1} onChange=${function(e){d({t:'UPD_ASSIGN_RULE',id:r.id,u:{discipline1:e.target.value}});}} style=${selStyle}>
+                  <option value="any">Any discipline</option>
+                  ${DISC.map(function(dd){return html`<option key=${dd.id} value=${dd.id}>${dd.label}</option>`})}
+                </select>
+                <span style=${{fontSize:'0.69rem',color:'var(--text-faint)'}}>×</span>
+                <select value=${r.discipline2} onChange=${function(e){d({t:'UPD_ASSIGN_RULE',id:r.id,u:{discipline2:e.target.value}});}} style=${selStyle}>
+                  <option value="any">Any discipline</option>
+                  ${DISC.map(function(dd){return html`<option key=${dd.id} value=${dd.id}>${dd.label}</option>`})}
+                </select>
+                <button onClick=${function(){d({t:'DEL_ASSIGN_RULE',id:r.id});}} title="Remove rule"
+                  style=${{background:'none',border:'none',color:'#f87171',cursor:'pointer',fontSize:'0.86rem',padding:'0 .2rem',lineHeight:1}}>×</button>
+              </div>
+              <div style=${{display:'flex',gap:'.3rem',alignItems:'center'}}>
+                <select value=${r.storey||'any'} onChange=${function(e){d({t:'UPD_ASSIGN_RULE',id:r.id,u:{storey:e.target.value}});}} style=${selStyle} title="Storey">
+                  <option value="any">Any storey</option>
+                  ${storeys.map(function(st){return html`<option key=${st} value=${st}>${st}</option>`})}
+                </select>
+                <input type="text" placeholder="Assignee (name/email)" value=${r.assignee||''}
+                  onInput=${function(e){d({t:'UPD_ASSIGN_RULE',id:r.id,u:{assignee:e.target.value}});}}
+                  style=${Object.assign({},rowInputStyle,{flex:1.4})} />
+                <select value=${r.priority||''} onChange=${function(e){d({t:'UPD_ASSIGN_RULE',id:r.id,u:{priority:e.target.value}});}} style=${selStyle} title="Priority">
+                  <option value="">No priority</option>
+                  <option value="critical">Critical</option>
+                  <option value="high">High</option>
+                  <option value="normal">Normal</option>
+                  <option value="low">Low</option>
+                </select>
+              </div>
+            </div>`;
+          })}
+          <button onClick=${function(){d({t:'ADD_ASSIGN_RULE',v:{}});}}
+            style=${{fontSize:'0.69rem',padding:'.3rem .6rem',background:'var(--bg-secondary)',color:'var(--accent)',border:'1px solid var(--accent-subtle)',borderRadius:'var(--radius-xs)',cursor:'pointer',fontWeight:600,width:'100%'}}>+ Add assignment rule</button>
+        </div>`;
+      })()}
 
       ${typeof window._ccVisibilityPresets === 'function' && html`<div style=${{marginTop:'1.2rem',paddingTop:'.8rem',borderTop:'2px solid var(--border)'}}>
         <div style=${{fontSize:'0.75rem',fontWeight:700,color:'var(--text-muted)',textTransform:'uppercase',letterSpacing:'.06em',marginBottom:'.4rem'}}>Visibility &amp; coverage checks</div>
