@@ -1,0 +1,60 @@
+name: IDS Conformance
+
+# Drives every pass-/fail-/invalid- .ifc+.ids pair from the official
+# buildingSMART/IDS conformance corpus (Documentation/ImplementersDocumentation/
+# TestCases) through the real app in headless Chromium — real web-ifc WASM
+# load, real window._ccParseIDS/_ccRunIDS — and grades each one against the
+# corpus's documented expected outcome (see tests/browser/ids-grade.js for
+# why "wrong" and "incomplete" are scored separately: CC's engine honestly
+# reports facets it can't verify yet instead of guessing, and a naive
+# pass-rate gate would count every one of those as a failure).
+#
+# Manual/scheduled only, not on every PR: ~250+ headless-browser round trips
+# is meaningfully heavier than the browser-smoke job, and this is a new job
+# that could not be verified locally before it first shipped (this dev
+# sandbox's proxy blocks the CDNs the app itself needs — see MEMORY.md — so
+# a real Actions run is the only way to prove it out). Once a few runs are
+# green, wiring this to run automatically on pushes/PRs that touch
+# addons/data-quality.js or tests/(browser/)?ids-* is a natural follow-up —
+# see MEMORY.md.
+#
+# Corpus is fetched at "development" HEAD on every run rather than pinned to
+# a commit, so "conformant" always means conformant with the CURRENT
+# official suite. That's deliberate while this job is non-blocking
+# (continue-on-error) — once it's promoted to a required check, pin it to a
+# specific commit first so an upstream corpus change can't silently start
+# blocking unrelated PRs.
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '17 4 * * 1' # weekly, Monday 04:17 UTC — catches corpus drift
+
+permissions:
+  contents: read
+
+jobs:
+  ids-conformance:
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Fetch buildingSMART IDS conformance corpus
+        run: |
+          git clone --depth 1 --filter=blob:none --sparse --branch development \
+            https://github.com/buildingSMART/IDS.git /tmp/ids-corpus
+          cd /tmp/ids-corpus
+          git sparse-checkout set Documentation/ImplementersDocumentation/TestCases
+
+      - name: Install Playwright Chromium
+        run: |
+          npm install --no-save playwright@1
+          npx playwright install --with-deps chromium
+
+      - name: Run IDS conformance suite
+        run: node tests/browser/ids-conformance.mjs /tmp/ids-corpus/Documentation/ImplementersDocumentation/TestCases
