@@ -435,9 +435,30 @@ Solibri/Navisworks/OSS (IfcOpenShell, ThatOpen, xeokit, Speckle, BIMcollab, Revi
   modal+`window.print()` system — dropped once `_ccClashReport` showed the project already has a proven,
   simpler, dependency-free convention for exactly this. Lesson: grep for `window.print` /  `@media print`
   /  `⎙` before designing a new report/export feature from scratch — this file already has three.
-- **Next**: the `excludeSelf` single-model default trap, the two BCF follow-ups (auto-synthesized
-  viewpoints; `<ClippingPlanes>` export — now doubly-confirmed as a shared, not CC-specific, gap per Check
-  2), a possible `<Coloring>` export (newly confirmed gap from Check 2), rest of Wave 3, and Waves 4-6.
+- ~~**Fixed the `excludeSelf` single-model default trap**~~ (2026-07-13). `rules.excludeSelf` defaults
+  `true`, and one-click "Run detection" runs with whatever rules currently are. For a project with only
+  one combined IFC model (a common federated-export shape), `grpA`/`grpB` both resolve to that single
+  model, so "cross-model only" always yields zero pairs by construction — the single most prominent
+  first-run action silently reported "0 clashes" regardless of real physical overlaps. Fix is inside
+  `_sweepAndPrune` (index.html:4605, takes `grpA`/`grpB` directly — no refactor needed to reach the right
+  scope): reuses the `seenModels` map it already builds when merging `grpA.concat(grpB)` into `items`, and
+  when that union collapses to exactly one model, forces `selfAllowed = true` for the same-model gating
+  branch — covers both "only one model loaded globally" and a run explicitly scoped to one model on both
+  sides (NL command / preset), since both collapse the same way. Deliberately does NOT mutate
+  `rules.excludeSelf` itself (an effective-only override), so the dozens of UI/NL-command/preset call
+  sites that SET it keep working unchanged, and multi-model behavior is provably unaffected (locked by a
+  same-model-pair-must-still-be-excluded regression test). 7 tests extracting the real `_sweepAndPrune`
+  (plain `{min:{x,y,z},max:{x,y,z}}` boxes, no THREE.js needed). `6d4ed0f`. 213/213 passing.
+  **Companion follow-up, not done here**: the local ("exact") Python engine has the same trap in its own
+  model-scope resolution — `_serializeForLocalEngine` (`addons/local-engine.js:586`) passes
+  `rules.excludeSelf` through as-is and doesn't have access to the resolved `grpA`/`grpB` (it serializes
+  ALL passed-in models unconditionally and lets the Python engine do its own `modelA`/`modelB` string
+  resolution server-side), so the equivalent fix belongs in `ClashControlEngine`'s own sweep/scope code —
+  a separate repo, out of this session's write scope, same situation as the Wave-0 local-engine rule-parity
+  fix.
+- **Next**: the two BCF follow-ups (auto-synthesized viewpoints; `<ClippingPlanes>` export — now
+  doubly-confirmed as a shared, not CC-specific, gap per Check 2), a possible `<Coloring>` export (newly
+  confirmed gap from Check 2), rest of Wave 3 (stamp/auto-assignment rules), and Waves 4-6.
 
 On branch `claude/codebase-review-optimization-3nltcw` (2026-07-08) — four-repo review sweep (in progress):
 
