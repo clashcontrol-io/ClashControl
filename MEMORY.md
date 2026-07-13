@@ -393,13 +393,36 @@ Solibri/Navisworks/OSS (IfcOpenShell, ThatOpen, xeokit, Speckle, BIMcollab, Revi
   - **Not done**: `exportIDS()` (CC's own hardcoded-specs → .ids XML exporter) doesn't yet emit the new RVB
     checks as exportable IDS specs — the check ENGINE is done, the export-as-IDS representation is a
     separate, smaller follow-up if wanted.
-- **Next**: Build 3 (openaec-reports-inspired PDF report generation — architecture not yet decided) and
-  Check 2 (cross-check CC's BCF `<Components>`/`<ClippingPlanes>` handling against `openaec-bcf-platform`'s
-  Rust implementation — blocked last attempt by WebFetch's inability to browse that repo's `crates/`
-  sub-paths, see the GitHub sub-path caveat above; try `raw.githubusercontent.com` with guessed/discovered
-  file paths, or ask the user to `add_repo` it into the session for direct access). Then the
-  `excludeSelf` single-model default trap, the two BCF follow-ups (auto-synthesized viewpoints;
-  `<ClippingPlanes>` export), rest of Wave 3, and Waves 4-6.
+- ~~**Check 2: cross-checked CC's BCF handling against `openaec-bcf-platform`'s Rust implementation**~~
+  (2026-07-13). Unblocked the prior sub-path fetch failure by fetching `Cargo.toml` first (revealed the
+  `crates/bcf-core` + `crates/bcf-server` workspace layout) then `crates/bcf-core/src/{lib,visinfo,
+  xml_types}.rs` directly via `raw.githubusercontent.com` — general lesson: when a repo root page works but
+  `/tree/<branch>/<path>` 404s, fetch a known-likely file path directly instead of trying to browse.
+  Findings: (1) **Components/Selection** — `XmlComponents.selection → XmlSelection.components: Vec<Xml
+  Component>` with `#[serde(rename="Component")]`/`IfcGuid`-shaped, structurally identical to CC's own
+  exporter/importer convention — confirms round-trip interop, no action needed. (2) **Coloring** — the
+  platform DOES model `<Coloring><Color Color="#hex"><Component IfcGuid=.../></Color></Coloring>`; CC
+  exports no `<Coloring>` at all (confirmed absent, not just theorized) — a real, now-confirmed gap, logged
+  as a candidate follow-up, not built this session (Check 2 was investigate-only). (3) **ClippingPlanes** —
+  confirmed ABSENT in this sibling project too (not just CC) — reassuring: CC isn't behind the ecosystem
+  here, it's an unbuilt corner on both sides, validates deferring it rather than rushing untested camera
+  math. (4) **Element order** — `XmlVisualizationInfo`'s Rust struct field order is `guid → perspective_
+  camera/orthogonal_camera → components`, meaning (since their serde+quick-xml-style setup serializes in
+  declaration order) their writer likely emits the camera choice BEFORE `<Components>` — the OPPOSITE of
+  the true buildingSMART XSD sequence (`Components` → camera choice → `Lines` → `ClippingPlanes` →
+  `Bitmap`) that CC's own Wave 3.1 exporter correctly follows (locked by the "precedes the camera element"
+  test in `bcf-export.test.js`). Net: CC's own BCF viewpoint schema-order compliance looks MORE correct
+  than this sibling tool's on this specific point — a positive validation of Wave 3.1, not a gap to close.
+- **Next**: Build 3 (openaec-reports-inspired PDF report generation) — decided against porting
+  ReportLab/Python (wrong stack entirely) or adding a jsPDF CDN dependency (couldn't self-verify an SRI
+  hash in this sandbox — CDN fetches 403 here per the existing "CDN blocked in sandbox" note, and a wrong
+  hardcoded hash would silently break the feature for every user, worse than not having one). Building a
+  **printable report view + `window.print()`** instead — zero new dependencies, matches CLAUDE.md's "no
+  other runtime dependencies" ethos, sidesteps the SRI problem entirely. Researching modal/palette/print-CSS
+  conventions before implementing. Then the `excludeSelf` single-model default trap, the two BCF follow-ups
+  above (auto-synthesized viewpoints; `<ClippingPlanes>` export — now doubly-confirmed as a shared, not
+  CC-specific, gap), a possible `<Coloring>` export (newly confirmed gap from Check 2), rest of Wave 3, and
+  Waves 4-6.
 
 On branch `claude/codebase-review-optimization-3nltcw` (2026-07-08) — four-repo review sweep (in progress):
 
