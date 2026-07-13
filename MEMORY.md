@@ -553,12 +553,65 @@ Solibri/Navisworks/OSS (IfcOpenShell, ThatOpen, xeokit, Speckle, BIMcollab, Revi
   Caught and fixed a stale assertion in `tests/rvb-panel-wiring.test.js` from the `runChecks()` refactor
   (literal-text match on `setRvb(runRVBChecks(rvbModels))`, now `var newRvb = ...; setRvb(newRvb)` —
   behavior-equivalent, just restructured) in a separate follow-up commit, `e4fa73a`. 271/271 passing.
+- ~~**Fixed a real IDS honesty bug found while scoping the item below**~~ (2026-07-13). `runIDSSpecs`
+  (`addons/data-quality.js:1200`) unconditionally counted a non-failed element as a pass in the per-spec
+  `bs.pass`/`bs.fail` rollup, even when its only requirement came back "not checkable" (`elUnchecked`) — the
+  requirement-level `summary.total/pass/fail` already excluded unchecked requirements correctly, but
+  `bs.pass` (used by both `generateValidationReport` and the live IDS panel's pass-rate bar,
+  `pass/(pass+fail)`) didn't, so a specification whose only applicable elements were unverifiable would
+  render as 100% compliant. Fixed to `if (elFailed) bs.fail++; else if (!elUnchecked) bs.pass++;` — unchecked
+  elements now contribute to `applicable`/`unchecked` but not `pass`/`fail`. `f075029`. One new assertion pair
+  in the existing `partOf: ... honestly unchecked` test (`tests/ids-engine.test.js`), 271/271 passing.
+- ~~**IDS conformance CI against the buildingSMART audit suite (Wave 5's last piece)**~~ (2026-07-13).
+  Researched the actual corpus first rather than trusting IMPROVEMENT_PLAN.md's own citation of it (that
+  entry had flagged its own numbers as "search-synthesized" — worth re-verifying, not just building against):
+  it's `github.com/buildingSMART/IDS` (not `IDS-Audit-tool`, which turned out to be a schema-validator, not a
+  paired-test-case corpus), `development` branch,
+  `Documentation/ImplementersDocumentation/TestCases/{attribute,classification,entity,ids,material,partof,
+  property,restriction,tolerance}/`, confirmed 250+ pairs sharing a basename (`<prefix>-<slug>.ids`+`.ifc`,
+  prefix ∈ pass/fail/invalid) — confirmed via `scripts.md` in that folder, not guessed. Names line up directly
+  with the 4 subtle rules already flagged in this file's Wave 5 section (e.g.
+  `property/pass-floating_point_numbers_are_compared_with_a_1e_6_tolerance_1_4`).
+  **Verification constraint that shaped the whole design**: confirmed via direct test (not assumption) that
+  this dev sandbox's proxy 403s the exact CDN hosts (`cdnjs.cloudflare.com`, `cdn.jsdelivr.net`) the app
+  itself needs to boot — so unlike every other feature this session, the browser-driving part of this one
+  could NOT be verified locally before shipping, only via a real GitHub Actions run. Split the work along
+  that fault line: `tests/browser/ids-grade.js` — pure `gradeIDSCase(prefix, summary)` — is the one part that
+  COULD be wrong in a subtle way (the corpus only has pass/fail/invalid; CC's engine has a 4th, honest
+  "not checkable" outcome for facets it won't guess on, e.g. PredefinedType/non-storey partOf/XSD dataType
+  coercion — naively grading those as "wrong" would repeat exactly the dishonest-number pattern Wave 0 spent
+  this whole effort round eliminating), so it's pulled out standalone and unit-tested directly (10 tests, no
+  browser/network). Everything downstream of it — `tests/browser/ids-conformance.mjs` (new sibling to
+  `smoke.mjs`: fetches nothing itself, takes a corpus dir as argv[2], discovers every case, drives each one
+  through `window.ClashControl.loadFiles` → real web-ifc → `window._ccParseIDS`/`_ccRunIDS` → `gradeIDSCase`,
+  `DEL_MODEL`s before the next case) is comparatively thin plumbing, verified by careful reading only.
+  **Two bugs caught by reading the loader before trusting it, not by running anything** (would have silently
+  broken the whole job): (1) copied `smoke.mjs`'s scoped-load readiness signal (`m.stats.loadedScope`)
+  at first — traced the loader and found `loadedScope` is explicitly `null` for a normal unscoped load
+  (`index.html:3452`), so every one of the 250+ cases would have hung until timeout; switched to `m.stats`
+  truthiness (set once, for any completed load, scoped or not). (2) reusing one model filename across cases
+  to force `REPLACE_MODEL` (avoiding accumulation) would race the next case's "did it load yet" poll against
+  the previous case's already-true state; switched to a unique per-case model name (plain `ADD_MODEL` every
+  time) plus an explicit `DEL_MODEL` after grading each case, keeping the running app light across 250+
+  iterations without the race. New workflow `.github/workflows/ids-conformance.yml`: **manual dispatch +
+  weekly schedule only, deliberately not on every PR** — ~250+ headless-Chromium round trips is much heavier
+  than `browser-smoke`, and shipping a new, page could-not-verify-locally job as a blocking gate on day one
+  would risk breaking every unrelated PR on this repo; `continue-on-error:true` so it's visible but never
+  blocks while it proves itself. Corpus fetched at `development` HEAD (not pinned) so a pass means "conformant
+  with the CURRENT official suite" — fine while non-blocking; **pin to a commit before ever promoting this to
+  a required check**, or an upstream corpus change could silently start blocking unrelated PRs. Tried to fire
+  it once via `actions_run_trigger` for real signal this session — got a 403 (session's GitHub integration
+  lacks `actions:write`), so **this job has NOT been run for real yet**; its first signal will be the Monday
+  cron or a human clicking "Run workflow". `74de5ce` (grading logic + tests), `f25ee77` (driver + workflow).
+  281/281 `npm test` passing throughout (the browser-driven `.mjs` itself is intentionally outside that count,
+  same as `smoke.mjs`).
 - **Next**: dynamic search sets (the one remaining Wave 4 item, and the largest), the two BCF follow-ups
   (auto-synthesized viewpoints; `<ClippingPlanes>` export — now doubly-confirmed as a shared, not
   CC-specific, gap per Check 2), a possible `<Coloring>` export (newly confirmed gap from Check 2), rest of
-  Wave 3 (stamp/auto-assignment rules), IDS conformance CI against the buildingSMART 250-case audit suite
-  (Wave 5's one remaining piece now that DQ reconciliation is done — already queued as "Phase 2" earlier in
-  this file), and Wave 6 (Scale — untouched; extra care required per this session's own history-informed
+  Wave 3 (stamp/auto-assignment rules), **watching the first real `ids-conformance` Actions run** (manual or
+  the Monday cron) and acting on whatever it finds — false positives/negatives in `wrong`, or a corpus-fetch/
+  harness bug in `errored` — since this is the one feature this session that shipped without any local
+  verification, and Wave 6 (Scale — untouched; extra care required per this session's own history-informed
   guardrails: no geo-cache keying changes, no hand-rolled geometry merging).
 
 On branch `claude/codebase-review-optimization-3nltcw` (2026-07-08) — four-repo review sweep (in progress):
