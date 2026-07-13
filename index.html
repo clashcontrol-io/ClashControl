@@ -19946,6 +19946,13 @@ function startApp() {
     var lcSt = useState(null), lastChecked = lcSt[0], setLastChecked = lcSt[1];
     var secSt = useState({general:true,bim:true,ils:true,dist:true,ids:true}), sections = secSt[0], setSections = secSt[1];
 
+    // Full runILSChecks() key set, incl. the NL-BIM Basis ILS v2 additions
+    // (storeyNaming..mepNoRenovationStatus) - previously computed by the
+    // engine but never rendered/exported/actioned in this panel, so those
+    // findings were invisible even though they'd already run.
+    var ILS_KEYS = ['noNLSfB','invalidNLSfB','mismatchNLSfB','missingILSProp','noDescription','noMaterial','noStorey','noObjectType','noName',
+      'storeyNaming','doorNaming','spaceIncomplete','fireRatingInvalid','extWallNoUValue','loadBearingInvalidMaterial','mepNoRenovationStatus'];
+
     function toggleSection(key) { setSections(function(p){var n=Object.assign({},p);n[key]=!n[key];return n;}); }
 
     function runChecks() {
@@ -20149,7 +20156,7 @@ function startApp() {
       }
       addRows(qc, ['guidCollision','noGlobalId','proxy','genericName','duplicateName','noMaterial','noStorey','emptyGeometry','zeroLayers','unhostedOpenings','noProperties','noDescription']);
       addRows(bim, ['thicknessMismatch','noFireRating','noIsExternal','noLoadBearing','missingCommonPset','noClassification','noObjectType','invalidName','missingArea','missingVolume']);
-      addRows(ils, ['noNLSfB','invalidNLSfB','mismatchNLSfB','missingILSProp','noDescription','noMaterial','noStorey','noObjectType','noName']);
+      addRows(ils, ILS_KEYS);
       var csv = rows.map(function(r){return r.map(function(c){return '"'+(String(c||'').replace(/"/g,'""'))+'"';}).join(',');}).join('\r\n');
       var a = document.createElement('a'); a.href = 'data:text/csv;charset=utf-8,'+encodeURIComponent(csv);
       a.download = 'data-quality-'+new Date().toISOString().slice(0,10)+'.csv'; a.click();
@@ -20161,6 +20168,7 @@ function startApp() {
       }
       addFromChecks(qc, ['guidCollision','noGlobalId','proxy','genericName','duplicateName','noMaterial','noStorey','emptyGeometry','zeroLayers','unhostedOpenings','noProperties','noDescription']);
       addFromChecks(bim, ['thicknessMismatch','noFireRating','noIsExternal','noLoadBearing','missingCommonPset','noClassification','noObjectType','invalidName','missingArea','missingVolume']);
+      addFromChecks(ils, ILS_KEYS);
       if (created > 0) d({t:A.TAB, v:'issues'});
     }
 
@@ -20277,7 +20285,7 @@ function startApp() {
             </span>
           </div>
           ${sections.ils && html`<div>
-            ${renderCheckGroup(ils, ['noNLSfB','invalidNLSfB','mismatchNLSfB','missingILSProp','noDescription','noMaterial','noStorey','noObjectType','noName'], 'ILS')}
+            ${renderCheckGroup(ils, ILS_KEYS, 'ILS')}
 
             ${ils._nlsfbDist && html`<div style=${{borderTop:'1px solid var(--border-subtle)'}}>
               <div style=${{display:'flex',alignItems:'center',gap:'.35rem',padding:'.4rem .6rem'}}>
