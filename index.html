@@ -4374,6 +4374,184 @@ function startApp() {
     return Math.sqrt(minSq);
   }
 
+  // ── Approximate penetration depth for confirmed hard clashes ────
+  // CW-1a. What _triTriTest's [3] ("depth") actually measures is the length
+  // of one triangle pair's SAT overlap interval along their mutual cross-
+  // normal axis — a real number, but not mesh-to-mesh penetration: two large,
+  // shallow-crossing triangles produce a long chord for a near-zero true
+  // interpenetration, and fine tessellation shrinks it regardless of how deep
+  // the solids actually overlap. This block replaces that chord-length with
+  // an MTD-style approximation: for each mesh's vertices that test as lying
+  // *inside* the other mesh (odd-parity ray count against its BVH, 3-axis
+  // majority vote for robustness against axis-aligned edge/vertex grazing),
+  // find that vertex's true closest-point distance to the other mesh's
+  // surface (not just its nearest vertex). The max such distance across both
+  // sides ≈ how far the solids interpenetrate. Callers must treat a null
+  // return as "couldn't tell" (open/non-manifold mesh, or a graze with no
+  // vertex actually inside) and fall back to the existing AABB-overlap
+  // estimate — this is an approximation, not exact solid geometry (that's
+  // CW-1b, the Python manifold3d tier).
+  function _rayTriHit(ox,oy,oz, dx,dy,dz, tris, o9) {
+    var v0x=tris[o9],v0y=tris[o9+1],v0z=tris[o9+2];
+    var v1x=tris[o9+3],v1y=tris[o9+4],v1z=tris[o9+5];
+    var v2x=tris[o9+6],v2y=tris[o9+7],v2z=tris[o9+8];
+    var e1x=v1x-v0x,e1y=v1y-v0y,e1z=v1z-v0z;
+    var e2x=v2x-v0x,e2y=v2y-v0y,e2z=v2z-v0z;
+    var px=dy*e2z-dz*e2y, py=dz*e2x-dx*e2z, pz=dx*e2y-dy*e2x;
+    var det=e1x*px+e1y*py+e1z*pz;
+    if (det>-1e-12 && det<1e-12) return -1;
+    var invDet=1/det;
+    var tx=ox-v0x,ty=oy-v0y,tz=oz-v0z;
+    var u=(tx*px+ty*py+tz*pz)*invDet;
+    if (u<-1e-9||u>1+1e-9) return -1;
+    var qx=ty*e1z-tz*e1y, qy=tz*e1x-tx*e1z, qz=tx*e1y-ty*e1x;
+    var v=(dx*qx+dy*qy+dz*qz)*invDet;
+    if (v<-1e-9||u+v>1+1e-9) return -1;
+    return (e2x*qx+e2y*qy+e2z*qz)*invDet;
+  }
+  // Ray directions for the inside/outside parity test below: near-axis but
+  // deliberately NOT exactly axis-aligned. IFC geometry is overwhelmingly
+  // axis-aligned (walls, slabs, beams, ducts), which makes a pure
+  // (1,0,0)/(0,1,0)/(0,0,1) ray the single WORST choice here — it's exactly
+  // the direction most likely to land squarely on a shared edge between two
+  // triangles of a watertight mesh. _rayTriHit's edge tolerance is
+  // inclusive (so a true crossing is never missed at a triangle boundary),
+  // which means a ray landing exactly on a shared edge gets counted by
+  // BOTH triangles that share it — one real crossing double-counted as two,
+  // flipping odd parity to even and turning a true "inside" into a false
+  // "outside" (caught by a unit test: the exact center of a symmetric test
+  // cube, cast along a pure axis, hit precisely on such a shared diagonal
+  // on all 3 axes at once — no majority vote survives that). These fixed
+  // small tilts make an exact graze astronomically unlikely while staying
+  // close enough to axis-aligned for BVH node pruning to still be
+  // effective, and as a side effect every direction component is non-zero,
+  // so the generic slab test below never divides by zero.
+  var _PEN_RAY_DIRS = (function(){
+    var raw = [[1,0.0131,0.0177],[0.0149,1,0.0163],[0.0121,0.0139,1]];
+    return raw.map(function(d){
+      var len = Math.sqrt(d[0]*d[0]+d[1]*d[1]+d[2]*d[2]);
+      return [d[0]/len, d[1]/len, d[2]/len, 1/(d[0]/len), 1/(d[1]/len), 1/(d[2]/len)];
+    });
+  })();
+  function _rayAABBHit(ox,oy,oz, idx,idy,idz, node) {
+    var tx1=(node.mnx-ox)*idx, tx2=(node.mxx-ox)*idx;
+    var tmin=Math.min(tx1,tx2), tmax=Math.max(tx1,tx2);
+    var ty1=(node.mny-oy)*idy, ty2=(node.mxy-oy)*idy;
+    tmin=Math.max(tmin,Math.min(ty1,ty2)); tmax=Math.min(tmax,Math.max(ty1,ty2));
+    var tz1=(node.mnz-oz)*idz, tz2=(node.mxz-oz)*idz;
+    tmin=Math.max(tmin,Math.min(tz1,tz2)); tmax=Math.min(tmax,Math.max(tz1,tz2));
+    return tmax>=Math.max(tmin,0);
+  }
+  function _bvhRayCount(node, tris, ox,oy,oz, dx,dy,dz, idx,idy,idz) {
+    if (!_rayAABBHit(ox,oy,oz,idx,idy,idz,node)) return 0;
+    if (node.lo !== undefined) {
+      var cnt=0;
+      for (var i=node.lo;i<node.hi;i++) { if (_rayTriHit(ox,oy,oz,dx,dy,dz,tris,node.idx[i]*9) > 1e-7) cnt++; }
+      return cnt;
+    }
+    return _bvhRayCount(node.left,tris,ox,oy,oz,dx,dy,dz,idx,idy,idz) + _bvhRayCount(node.right,tris,ox,oy,oz,dx,dy,dz,idx,idy,idz);
+  }
+  function _pointInMeshBVH(px,py,pz, bvh) {
+    if (!bvh || !bvh.root) return false;
+    var votes = 0;
+    for (var i=0; i<3; i++) {
+      var d = _PEN_RAY_DIRS[i];
+      var cnt = _bvhRayCount(bvh.root, bvh.tris, px,py,pz, d[0],d[1],d[2], d[3],d[4],d[5]);
+      if (cnt & 1) votes++;
+    }
+    return votes >= 2;
+  }
+  // Closest point on a single triangle (Ericson, "Real-Time Collision
+  // Detection" §5.1.5 — the standard barycentric-region method) — returns
+  // squared distance only, callers don't need the point itself here.
+  function _closestPtTriDistSq(px,py,pz, tris, o9) {
+    var ax=tris[o9],ay=tris[o9+1],az=tris[o9+2];
+    var bx=tris[o9+3],by=tris[o9+4],bz=tris[o9+5];
+    var cx=tris[o9+6],cy=tris[o9+7],cz=tris[o9+8];
+    var abx=bx-ax,aby=by-ay,abz=bz-az;
+    var acx=cx-ax,acy=cy-ay,acz=cz-az;
+    var apx=px-ax,apy=py-ay,apz=pz-az;
+    var d1=abx*apx+aby*apy+abz*apz, d2=acx*apx+acy*apy+acz*apz;
+    if (d1<=0 && d2<=0) return apx*apx+apy*apy+apz*apz;
+    var bpx=px-bx,bpy=py-by,bpz=pz-bz;
+    var d3=abx*bpx+aby*bpy+abz*bpz, d4=acx*bpx+acy*bpy+acz*bpz;
+    if (d3>=0 && d4<=d3) return bpx*bpx+bpy*bpy+bpz*bpz;
+    var vc=d1*d4-d3*d2;
+    if (vc<=0 && d1>=0 && d3<=0) {
+      var v=d1/(d1-d3), qx=ax+abx*v-px, qy=ay+aby*v-py, qz=az+abz*v-pz;
+      return qx*qx+qy*qy+qz*qz;
+    }
+    var cpx=px-cx,cpy=py-cy,cpz=pz-cz;
+    var d5=abx*cpx+aby*cpy+abz*cpz, d6=acx*cpx+acy*cpy+acz*cpz;
+    if (d6>=0 && d5<=d6) return cpx*cpx+cpy*cpy+cpz*cpz;
+    var vb=d5*d2-d1*d6;
+    if (vb<=0 && d2>=0 && d6<=0) {
+      var w=d2/(d2-d6), qx=ax+acx*w-px, qy=ay+acy*w-py, qz=az+acz*w-pz;
+      return qx*qx+qy*qy+qz*qz;
+    }
+    var va=d3*d6-d5*d4;
+    if (va<=0 && (d4-d3)>=0 && (d5-d6)>=0) {
+      var w2=(d4-d3)/((d4-d3)+(d5-d6)), qx=bx+(cx-bx)*w2-px, qy=by+(cy-by)*w2-py, qz=bz+(cz-bz)*w2-pz;
+      return qx*qx+qy*qy+qz*qz;
+    }
+    var denom=1/(va+vb+vc), v2=vb*denom, w3=vc*denom;
+    var qx=ax+abx*v2+acx*w3-px, qy=ay+aby*v2+acy*w3-py, qz=az+abz*v2+acz*w3-pz;
+    return qx*qx+qy*qy+qz*qz;
+  }
+  function _pointToAABBDistSq(px,py,pz, node) {
+    var dx=Math.max(node.mnx-px, 0, px-node.mxx);
+    var dy=Math.max(node.mny-py, 0, py-node.mxy);
+    var dz=Math.max(node.mnz-pz, 0, pz-node.mxz);
+    return dx*dx+dy*dy+dz*dz;
+  }
+  function _bvhClosestDistSq(node, tris, px,py,pz, best) {
+    if (_pointToAABBDistSq(px,py,pz,node) >= best[0]) return;
+    if (node.lo !== undefined) {
+      for (var i=node.lo;i<node.hi;i++) {
+        var d2=_closestPtTriDistSq(px,py,pz,tris,node.idx[i]*9);
+        if (d2<best[0]) best[0]=d2;
+      }
+      return;
+    }
+    _bvhClosestDistSq(node.left,tris,px,py,pz,best);
+    _bvhClosestDistSq(node.right,tris,px,py,pz,best);
+  }
+  function _closestDistToBVH(px,py,pz, bvh) {
+    if (!bvh || !bvh.root) return Infinity;
+    var best=[Infinity];
+    _bvhClosestDistSq(bvh.root, bvh.tris, px,py,pz, best);
+    return Math.sqrt(best[0]);
+  }
+  // Sampling cap mirrors _meshMinDist's shape (step up once vertex count
+  // gets large) but tuned lower — each sample here is a 3-axis BVH ray count
+  // plus, when inside, a full BVH closest-point search, both much pricier
+  // per-sample than a spatial-hash vertex lookup. Only ever called on
+  // CONFIRMED hard-clash pairs (tri-tri already returned a hit), never on
+  // the broad-phase candidate set, so the cap bounds worst case per pair
+  // rather than per detection run.
+  function _estimatePenetrationDepthM(elA, elB) {
+    var bvhA = _getBVH(elA), bvhB = _getBVH(elB);
+    if (!bvhA || !bvhB) return null;
+    var vertsA = _getWorldVerts(elA), vertsB = _getWorldVerts(elB);
+    if (!vertsA.length || !vertsB.length) return null;
+    var best = 0, found = false;
+    var stepA = vertsA.length > 3000 ? 3*Math.ceil(vertsA.length/1000) : 3;
+    for (var i=0; i<vertsA.length; i+=stepA) {
+      if (_pointInMeshBVH(vertsA[i],vertsA[i+1],vertsA[i+2], bvhB)) {
+        var d = _closestDistToBVH(vertsA[i],vertsA[i+1],vertsA[i+2], bvhB);
+        if (isFinite(d) && d>best) { best=d; found=true; }
+      }
+    }
+    var stepB = vertsB.length > 3000 ? 3*Math.ceil(vertsB.length/1000) : 3;
+    for (var i=0; i<vertsB.length; i+=stepB) {
+      if (_pointInMeshBVH(vertsB[i],vertsB[i+1],vertsB[i+2], bvhA)) {
+        var d = _closestDistToBVH(vertsB[i],vertsB[i+1],vertsB[i+2], bvhA);
+        if (isFinite(d) && d>best) { best=d; found=true; }
+      }
+    }
+    return found ? best : null;
+  }
+
   function _flushGeoCache(models) {
     (models || []).forEach(function(m) {
       (m.elements || []).forEach(function(el) {
@@ -5230,7 +5408,16 @@ function startApp() {
         }
         var dist;
         if (hardPt) {
-          var meshDepthMm = Math.round(hardPt[3] * 1000);
+          // Real (approximate) penetration depth — see _estimatePenetrationDepthM
+          // above. Falls back to hardPt[3] (the old tri-pair chord-length proxy)
+          // whenever it can't tell: throws, or returns null (open/non-manifold
+          // mesh, or a graze with no vertex of either side actually inside the
+          // other — see the "thin post fully through a slab" test). If THAT is
+          // also 0, the AABB-overlap estimate below is the final fallback,
+          // same three-tier structure as before this existed.
+          var penM = null;
+          try { penM = _estimatePenetrationDepthM(eA, eB); } catch (_penErr) { penM = null; }
+          var meshDepthMm = penM != null ? Math.round(penM * 1000) : Math.round(hardPt[3] * 1000);
           if (meshDepthMm > 0) {
             dist = -meshDepthMm;
           } else {
