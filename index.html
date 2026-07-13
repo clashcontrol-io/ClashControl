@@ -2345,7 +2345,7 @@ function startApp() {
     IFCRELVOIDSELEMENT:1401173127, IFCRELFILLSVOID:3940055652,
     IFCRELAGGREGATES:160246688, IFCRELCONNECTSELEMENTS:1204542856,
     IFCBUILDING:4031249490, IFCSITE:4097777520,
-    IFCPROJECT:103090709,
+    IFCPROJECT:103090709, IFCZONE:1033361043,
     IFCMAPCONVERSION:1709695098, IFCPROJECTEDCRS:3843373140,
     IFCOPENINGELEMENT:3588315303,
     IFCVIRTUALELEMENT:2769231204, IFCANNOTATION:1674181508, IFCGRID:3009204131
@@ -2466,11 +2466,11 @@ function startApp() {
           var sl = api.GetLine(modelID, sid);
           var name = safeStr(sl.Name) || ('Storey #'+sid);
           storeys[sid] = name;
-          var elev = 0;
-          if (sl.Elevation != null) {
+          var elev = 0, hasElev = sl.Elevation != null;
+          if (hasElev) {
             elev = typeof sl.Elevation === 'object' ? (sl.Elevation.value||0) : sl.Elevation;
           }
-          storeyData.push({name:name, elevation:Number(elev)||0, id:sid});
+          storeyData.push({name:name, elevation:Number(elev)||0, hasElevation:hasElev, id:sid});
         } catch(e) { storeys[sid] = 'Storey #'+sid; }
       }
       var relIds = api.GetLineIDsWithType(modelID, IFC.IFCRELCONTAINEDINSPATIALSTRUCTURE);
@@ -2494,18 +2494,18 @@ function startApp() {
   }
 
   function extractSpatialHierarchy(api, modelID) {
-    var hierarchy = {project:null, sites:[], buildings:[]};
+    var hierarchy = {project:null, sites:[], buildings:[], zones:[]};
     try {
       var projIds = api.GetLineIDsWithType(modelID, IFC.IFCPROJECT);
       if (projIds.size() > 0) {
         var pLine = api.GetLine(modelID, projIds.get(0));
-        hierarchy.project = {id:projIds.get(0), name:safeStr(pLine.Name)||'IfcProject', description:safeStr(pLine.Description)};
+        hierarchy.project = {id:projIds.get(0), name:safeStr(pLine.Name)||'IfcProject', description:safeStr(pLine.Description), _hasName:!!safeStr(pLine.Name)};
       }
       var siteIds = api.GetLineIDsWithType(modelID, IFC.IFCSITE);
       for (var i = 0; i < siteIds.size(); i++) {
         try {
           var sLine = api.GetLine(modelID, siteIds.get(i));
-          var site = {id:siteIds.get(i), name:safeStr(sLine.Name)||'IfcSite', description:safeStr(sLine.Description)};
+          var site = {id:siteIds.get(i), name:safeStr(sLine.Name)||'IfcSite', description:safeStr(sLine.Description), _hasName:!!safeStr(sLine.Name)};
           // Georef — IfcSite RefLatitude/Longitude are compound plane angles:
           // [degrees, minutes, seconds, millionth-seconds]. Convert to decimal.
           function _compoundToDeg(arr) {
@@ -2580,7 +2580,16 @@ function startApp() {
       for (var i = 0; i < bldIds.size(); i++) {
         try {
           var bLine = api.GetLine(modelID, bldIds.get(i));
-          hierarchy.buildings.push({id:bldIds.get(i), name:safeStr(bLine.Name)||'IfcBuilding', description:safeStr(bLine.Description)});
+          hierarchy.buildings.push({id:bldIds.get(i), name:safeStr(bLine.Name)||'IfcBuilding', description:safeStr(bLine.Description), _hasName:!!safeStr(bLine.Name)});
+        } catch(e) {}
+      }
+      // IfcZone — optional grouping of spaces (fire compartments, HVAC zones,
+      // etc.); most models have none. Read for RVB BIM Norm v1.1 2.2.7.7 only.
+      var zoneIds = api.GetLineIDsWithType(modelID, IFC.IFCZONE);
+      for (var i = 0; i < zoneIds.size(); i++) {
+        try {
+          var zLine = api.GetLine(modelID, zoneIds.get(i));
+          hierarchy.zones.push({id:zoneIds.get(i), name:safeStr(zLine.Name)||'IfcZone', objectType:safeStr(zLine.ObjectType), _hasName:!!safeStr(zLine.Name)});
         } catch(e) {}
       }
     } catch(e) { console.warn('Spatial hierarchy extraction failed:', e.message||e); }
