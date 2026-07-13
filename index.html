@@ -1082,7 +1082,7 @@ function startApp() {
   var _savedSection=(function(){try{return JSON.parse(localStorage.getItem('cc_section')||'null');}catch(e){return null;}})();
   var INIT = {
     models:[], clashes:[], issues:[], activeId:null, showModal:false, showSettings:false, modalElement:null, tab:null, isRecording:false, selectionSets:[],
-    rules:{ modelA:'all', modelB:'all', hard:true, maxGap:50, minGap:0, duplicates:false, changeAware:false, excludeSelf:true, excludeTypes:[], excludeTypePairs:[], minOverlapVolM3:1e-5, toleranceByTypePair:{}, useSemanticFilter:true },
+    rules:{ modelA:'all', modelB:'all', hard:true, maxGap:50, minGap:0, duplicates:false, changeAware:false, excludeSelf:true, excludeTypes:[], excludeTypePairs:[], minOverlapVolM3:1e-5, toleranceByTypePair:{}, useSemanticFilter:true, includeSpaces:false, excludeSameDiscipline:true },
     detectionSettings:null, // Captured at detection run time: {clearance_mm, discipline_filters}
     trainingMode:(function(){try{var v=localStorage.getItem('cc_trainingMode');return v===null?true:v==='1';}catch(e){return true;}}()),
     clashGroupBy:(function(){var v=_ccLoadPref('clashGroupBy',[]);return Array.isArray(v)?v:(v&&v!=='none'?[v]:[]);}()), clashSortBy:(function(){var v=_ccLoadPref('clashSortBy',[]);return Array.isArray(v)?v:(v&&v!=='none'?[v]:[]);}()),
@@ -4990,6 +4990,9 @@ function startApp() {
           var _ek = c.eA.props.ifcType < c.eB.props.ifcType ? c.eA.props.ifcType+':'+c.eB.props.ifcType : c.eB.props.ifcType+':'+c.eA.props.ifcType;
           if (_exPairSet[_ek]) continue;
         }
+        // Default clash matrix — cheap pre-filter; the authoritative check is
+        // the same call inside _processCandidate below.
+        if (_ccMatrixSkipsSameDiscipline(c.eA, c.mA, c.eB, c.mB, rules)) continue;
         var gkey = c.mA.id + ':' + c.eA.expressId;
         var g = groups.get(gkey);
         if (!g) { g = { eA:c.eA, mA:c.mA, items:[] }; groups.set(gkey, g); }
@@ -5079,6 +5082,9 @@ function startApp() {
         var _epKey = eA.props.ifcType < eB.props.ifcType ? eA.props.ifcType+':'+eB.props.ifcType : eB.props.ifcType+':'+eA.props.ifcType;
         if (_exPairSet[_epKey]) return;
       }
+
+      // Default clash matrix — see _ccMatrixSkipsSameDiscipline for the policy.
+      if (_ccMatrixSkipsSameDiscipline(eA, mA, eB, mB, rules)) return;
 
       // ── Type-pair impossibility memo (Phase 2.4) ────────────────
       // Active only when the model fingerprint + rules hash both match
@@ -15334,6 +15340,21 @@ function startApp() {
     return _DISC_TYPE_MAP[t] || modelDiscipline || 'other';
   }
   window._ccElementDiscipline = _ccElementDiscipline;
+
+  // Default clash matrix: should this pair be skipped for being same-
+  // discipline? Same-discipline pairs (structural-vs-structural, MEP-vs-MEP)
+  // are the #1 cited false-positive flood in BIM coordination guidance.
+  // rules.excludeSameDiscipline===false (a future matrix-UI toggle)
+  // re-enables them. rules.duplicates is exempt: a duplicate pair (two
+  // copy-pasted ducts) is almost always same-discipline by nature, and that
+  // check in _processCandidate runs independently of hard/soft, so the
+  // matrix must never discard it. Shared by both _detectClashesCore call
+  // sites (chunk pre-filter + the authoritative check) so they can't drift.
+  function _ccMatrixSkipsSameDiscipline(eA, mA, eB, mB, rules) {
+    if (rules.excludeSameDiscipline === false || rules.duplicates) return false;
+    return _ccElementDiscipline(eA, mA && mA.discipline) === _ccElementDiscipline(eB, mB && mB.discipline);
+  }
+  window._ccMatrixSkipsSameDiscipline = _ccMatrixSkipsSameDiscipline;
 
   function detectDiscipline(elements, name) {
     // Only DISCRIMINATING element types vote — see _DISC_TYPE_MAP above.
