@@ -6727,8 +6727,12 @@ function startApp() {
     _walkSavedRenderStyle = (_curState && _curState.prefs && _curState.prefs.renderStyle) || null;
     if (_walkSavedRenderStyle !== 'rendered') {
       if (window._ccDispatch) window._ccDispatch({t:'UPD_PREFS', u:{renderStyle:'rendered'}});
-      if (window._ccActivatePostFX) window._ccActivatePostFX(true);
     }
+    // Always activate postFX on entry, even if the style was already
+    // 'rendered' before walk started — otherwise a user who pressed "3" and
+    // then "W W" got no SAO/Outline/SMAA at all (the dispatch above, and the
+    // guard on it, was the only thing that used to call this).
+    if (window._ccActivatePostFX) window._ccActivatePostFX(true);
 
     // ── Smooth entry: glide camera from current position to walk position ──
     // Delay the animation by two rAF frames so React can flush the renderStyle
@@ -13103,7 +13107,13 @@ function startApp() {
 
       // Disable post-processing entirely — SAO + SMAA caused blur. Plain
       // ACES + native shadow mapping looks much sharper at far less cost.
-      if (window._ccActivatePostFX) window._ccActivatePostFX(false);
+      // Skip while walk mode is active: _walkEnter forces renderStyle:'rendered'
+      // and turns postFX ON *synchronously*, but that dispatch's re-render lands
+      // here on the next tick and was unconditionally turning it back OFF right
+      // after — walk mode never actually got SAO/Outline/SMAA. _walkActive is
+      // already true by the time this effect runs (set at the very start of
+      // _walkEnter, before the dispatch), so it's a safe, immediate signal.
+      if (window._ccActivatePostFX && !_walkActive) window._ccActivatePostFX(false);
 
       // Hide the GridHelper in rendered mode — replaced by the ground plane
       if (S.grid) S.grid.visible = (style !== 'rendered') && (s.prefs.showGrid !== false);
@@ -23493,6 +23503,7 @@ function startApp() {
         ['2',           'Shaded rendering'],
         ['3',           'Rendered (lit) view'],
         ['4',           'X-Ray (semi-transparent)'],
+        ['5',           'Wireframe'],
         ['Home',        'Fit model to view'],
         ['R',           'Reset camera'],
         ['O',           'Orbit mode'],
@@ -33811,7 +33822,7 @@ function startApp() {
           if(e.key==='2'){ d({t:A.UPD_PREFS,u:{renderStyle:'shaded'}}); return; }
           if(e.key==='3'){ d({t:A.UPD_PREFS,u:{renderStyle:'rendered'}}); return; }
           if(e.key==='4'){ d({t:A.UPD_PREFS,u:{renderStyle:'xray'}}); return; }
-          if(e.key==='5'){ d({t:A.UPD_PREFS,u:{renderStyle:'xray'}}); return; }
+          if(e.key==='5'){ d({t:A.UPD_PREFS,u:{renderStyle:'wireframe'}}); return; }
         }
 
         if(e.key==='m'&&!ctrl&&!e.shiftKey){ d({t:A.MEASURE_MODE,v:s.measureMode?null:'length'}); return; }
