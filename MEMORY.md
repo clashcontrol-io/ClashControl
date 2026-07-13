@@ -630,12 +630,36 @@ Solibri/Navisworks/OSS (IfcOpenShell, ThatOpen, xeokit, Speckle, BIMcollab, Revi
   **Still open from Wave 3**: `<ClippingPlanes>` export (doubly-confirmed as a shared, not CC-specific, gap
   per Check 2 — deferred, not rushed), auto-synthesized default viewpoints for issues with no linked view, and
   stamp/auto-assignment rules (Revizto-style per-project templates).
-- **Next**: dynamic search sets (the one remaining Wave 4 item, and the largest), the Wave 3 remainder just
-  above, **watching the first real `ids-conformance` Actions run** (manual or the Monday cron) and acting on
-  whatever it finds — false positives/negatives in `wrong`, or a corpus-fetch/harness bug in `errored` — since
-  that's the one feature this session that shipped without any local verification, and Wave 6 (Scale —
-  untouched; extra care required per this session's own history-informed guardrails: no geo-cache keying
-  changes, no hand-rolled geometry merging).
+- ~~**Dynamic search sets (Wave 4's last item)**~~ (2026-07-13). Scoped first (Explore agent): the only
+  existing structured (not free-text) element-filter code anywhere in the file is the legacy IDS engine's
+  applicability/requirement facets (`ifcType` regex + pset-scoped property, ~19452-19475) — modeled the query
+  shape on that instead of inventing a DSL: `{ifcType, storey, material, propertySet, propertyName,
+  propertyValue}`, AND'd together. New pure `_resolveSearchSet(query, models)` next to `_elMatchesSearch`
+  (deliberately not sharing code with it — structured vs. free-text are different problems). New `s.searchSets`
+  state + `ADD_SEARCHSET`/`DEL_SEARCHSET`/`REN_SEARCHSET`/`UPD_SEARCHSET_QUERY` — a **separate slice from
+  `selectionSets`**, not a `query` field bolted on: every existing selSet consumer (count display,
+  `_highlightRefs`, the `+`/`−` editor) assumes already-resolved refs, and a query-defined set has no coherent
+  `+`/`−` operation anyway (the query is what's authoritative, not the membership). UI: a parallel "Search
+  sets" section in the Navigator — query-builder form (6 filter fields + name, live match-count preview,
+  refuses to save with zero criteria) and a list reusing the exact same `_highlightRefs` Isolate/Highlight
+  buttons Selection Sets already wired up, plus click-to-edit. `saveProject`/`loadProject` round-trip the
+  QUERY, not resolved refs — correct even through the stub-reload cycle (restored models start with
+  `elements:[]` until geometry is re-uploaded, so a search set's count honestly reads 0 until then, rather
+  than a thawed selSet's stale non-zero count). `9f2088c`. 23 new tests across 2 files, 309/309 passing.
+  **Deliberately out of scope** (confirmed by the scoping research, not just deferred on a hunch): wiring a
+  search set into the clash-matrix or clash-scope picker — no "scope detection to an arbitrary named set"
+  plumbing exists anywhere today, would need a new expressId-membership check in `_sweepAndPrune` alongside
+  `excludeTypes` (itself real, but a separate follow-up); `colorByClass`/`TOGGLE_CLASS_VIS` integration — those
+  key off classification buckets, not ref lists, so a search set isn't a natural fit there.
+  **Wave 4 is now fully done**: real find, copyable IDs, containment breadcrumb + hosted elements, Selection
+  Set rename/`+`/`−` editing, element-vs-element diff, and dynamic search sets all shipped this session.
+- **Next**: the Wave 3 remainder (`<ClippingPlanes>` export — deferred, confirmed shared gap not CC-specific;
+  auto-synthesized default viewpoints for issues with no linked view; stamp/auto-assignment rules),
+  **watching the first real `ids-conformance` Actions run** (manual or the Monday cron) and acting on whatever
+  it finds — false positives/negatives in `wrong`, or a corpus-fetch/harness bug in `errored` — since that's
+  the one feature this session that shipped without any local verification, Wave 5's IDS-conformance-CI item
+  itself now fully closed out, and Wave 6 (Scale — untouched; extra care required per this session's own
+  history-informed guardrails: no geo-cache keying changes, no hand-rolled geometry merging).
 
 On branch `claude/codebase-review-optimization-3nltcw` (2026-07-08) — four-repo review sweep (in progress):
 
