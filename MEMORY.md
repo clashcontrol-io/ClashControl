@@ -13,7 +13,7 @@
 **Version:** 5.21.17 (2026-07-10) — daily-sync was silently crashing on MEMORY.md's own prose (see Known Issues); this line was stale for a month as a direct result, now corrected by hand.
 
 **Live features (all working):**
-- Mesh-based clash detection engine: AABB broad-phase + BVH tri-tri narrow-phase (Möller–Trumbore), optional `_ccWasmIntersect`/`_ccWasmMinDist` WASM accelerators; rules (discipline filters, clearance, group-by); soft/clearance via spatial-hash vertex distance; optional escalation to `local-engine.js` for true solid boolean ops
+- Mesh-based clash detection engine: AABB broad-phase + BVH tri-tri narrow-phase (Möller–Trumbore), optional `_ccWasmIntersect`/`_ccWasmMinDist` WASM accelerators; default clash matrix (skips same-discipline pairs, per-element classification, never skips same-model self-clashes) + N×N matrix UI; rules (discipline filters, clearance, group-by); soft/clearance via spatial-hash vertex distance; hard clashes now report a **real (approximate) penetration depth** (`_estimatePenetrationDepthM` — vertex-inside-mesh ray-parity + true closest-point-on-surface, MTD-style, browser only so far) instead of the old tri-pair SAT chord length; optional escalation to `local-engine.js` for the **same** tri-tri+BVH algorithm at native speed (Numba JIT + multiprocess + scipy KD-tree) — not solid boolean ops, and the Python side doesn't have the new depth estimator yet either (see Known Issues / Active Work)
 - BCF 2.1 import/export (viewpoints, markup, snapshots)
 - IFC loading via web-ifc WASM (lazy, with geometry + property extraction)
 - AI NL command interface (Groq via `/api/nl`, 25+ tool declarations — grew well past the "13" once quoted here, check `TOOLS` in `api/nl.js` for the live count — OpenAI function calling; intentionally basic — clash-solving nudges to your own LLM via the Connector)
@@ -30,7 +30,7 @@
 - IDS format export/import for data quality checks
 - Shift+click multi-select in navigator tree
 - Color-grade FPS counter (grey→red based on framerate)
-- Render style hotkeys 1–4 (standard/shaded/rendered/wireframe)
+- Render style hotkeys 1–5 (standard/shaded/rendered/x-ray/wireframe)
 
 **Backend (Vercel serverless + Neon Postgres):**
 - `/api/nl` — Groq NL proxy (Groq-only; Gemma dropped). Basic tier; clash-solving nudges to the own-LLM Connector
@@ -52,7 +52,7 @@ These are permanent. Do not remove entries — add new ones when significant dec
 | founding | Single `index.html` app, no build step | Zero setup for users; open-source transparency; easy to fork/inspect |
 | founding | Three.js r128 (pinned, not latest) — *superseded 2026-06-08, see r180 row below* | API stability; newer versions break existing render/material code |
 | 2026-06-08 | Three.js bumped r128 → r180, loaded as ESM via import map (#595, v5.19.12) | Unblocks modern-Three features (splat addon dedup, future WebGPU clash path); post-r155 color management/lighting explicitly re-tuned |
-| founding | In-browser clash engine: AABB broad-phase + BVH tri-tri narrow-phase (legacy name "OBB engine" is a simplification — orientation only enters via the slimline-axis prune for directional elements). `_ccWasmIntersect`/`_ccWasmMinDist` accelerate when loaded. Optional `local-engine.js` addon escalates to true solid boolean ops on a localhost Python server. | Tri-tri is the browser sweet spot: tighter than AABB-only (kills false positives on rotated beams/pipes), fast enough for thousands of pairs in JS, and has a clean WASM acceleration path. True solid boolean ops are too slow in JS so they live in the Python local engine. |
+| founding | In-browser clash engine: AABB broad-phase + BVH tri-tri narrow-phase (legacy name "OBB engine" is a simplification — orientation only enters via the slimline-axis prune for directional elements). `_ccWasmIntersect`/`_ccWasmMinDist` accelerate when loaded. Optional `local-engine.js` addon escalates to the local Python server for the same tri-tri+BVH algorithm at native speed. *(Corrected 2026-07-13: this row previously claimed the Python engine does "true solid boolean ops" — verified false by reading `ClashControlEngine/src/clashcontrol_engine/intersection.py`; it runs the identical Möller tri-tri + dual-BVH algorithm as the browser, just faster via Numba JIT + multiprocess + scipy KD-tree. Escalating buys speed, not more-correct geometry — see IMPROVEMENT_PLAN.md CW-1 for the plan to make it genuinely more exact via real penetration depth + `manifold3d` intersection volume.)* | Tri-tri is the browser sweet spot: tighter than AABB-only (kills false positives on rotated beams/pipes), fast enough for thousands of pairs in JS, and has a clean WASM acceleration path. The Python engine gives the same algorithm the CPU headroom (multi-process, JIT) a browser tab can't. |
 | founding | CDN deps pinned with SRI hashes | Reproducible builds; integrity verification |
 | founding | Addons pattern (`addons/*.js` IIFE) | Keeps `index.html` lean; optional features don't block initial load |
 | founding | Preact/React via CDN UMD (not ESM) | Avoids bundler; works with htm tagged templates inline |
@@ -83,6 +83,25 @@ Things to be careful about. Do not remove without a good reason — add a note i
 - **IFC spatial hierarchy is NOT a clash-pruning filter**: `IfcProject → IfcSite → IfcBuilding → IfcBuildingStorey → IfcSpace` is logical containment, not proximity. Real geometry spans containment boundaries (vertical ducts cross storeys, foundations sit between site and building, stairs intersect two slabs). Pair pruning must come from the AABB broad-phase / spatial index, not from shared spatial parent. Don't be tempted to "speed up" detection by filtering pairs that share an IfcBuildingStorey only.
 - **`scripts/update-memory.py` `replace_section()` must use a callable `re.sub` replacement, not a string one.** A string replacement lets `re.sub` interpret backslashes as group references; this file's own prose contains literal sequences like `\i \c` (documenting XSD regex escapes in the IDS engine notes) which crashed the daily-sync job with "bad escape \i" on every run since it was written — silently, because nothing surfaced the failure. This is why the Project State version line went stale for a month (fixed 2026-07-08). If you see the version line drift again, check the Actions run for this workflow first.
 - **Coplanar triangle pairs are deliberately NOT reported as clashes**, in both the browser JS engine (`index.html`, `_triTriTest`) and the Python engine (`intersection.py`, `tri_tri_intersect`). Flush surface contact (a wall base sitting in a slab's top-face plane) is universal in real models — treating it as a hard clash would flood every project with false positives. This is a policy choice, not a missing feature; the explicit near-zero-`d` early-out also avoids a 0/0 NaN in the interval math. Don't "fix" this by making coplanar overlap report a hit.
+- **The browser engine now computes a real (approximate) penetration depth for hard clashes**
+  (`_estimatePenetrationDepthM`, 2026-07-13, CW-1a) — vertex-inside-mesh (3-axis ray-parity, majority vote)
+  + true closest-point-on-surface (Ericson's algorithm), maxed over both sides, MTD-style. Falls back to
+  the old tri-pair SAT-chord estimate, then the AABB-overlap estimate, when it can't tell (open/
+  non-manifold mesh, or a graze where no vertex of either side is actually inside the other — e.g. a thin
+  post clean through a slab; a real documented limitation, not a bug). It's still an *approximation*
+  (vertex sampling, not a true solid intersection) — good enough to build the "hard clash, penetration ≥
+  10mm" default floor on top of, not good enough to call "exact."
+  **The Python local engine does NOT have this yet** — its `penetration_est` is still the old
+  AABB-overlap *upper bound* (`intersection.py`, `meshes_intersect_prepared`). Escalating to the local
+  engine today for "more accurate depth" would currently give you a WORSE number than the browser already
+  computes for free — port the same technique there next (CW-1a Python half), then layer the `manifold3d`
+  exact-volume tier on top (CW-1b) — see `IMPROVEMENT_PLAN.md` CW-1 / Wave 1.5. Don't build a triage/
+  severity feature on top of `overlapVolM3`/`penetration_est` as if they were trustworthy depth numbers —
+  only the browser's `distance` field is real now, and only for hard clashes.
+- **The Python local engine is NOT "exact" in the sense of solid boolean ops** — it runs the identical
+  Möller tri-tri + BVH algorithm as the browser (`intersection.py`/`sweep.py`), just faster (Numba JIT,
+  multiprocess, scipy KD-tree). Escalating to it today buys speed, not more-correct geometry. See the
+  corrected Architecture Decisions row above and `IMPROVEMENT_PLAN.md` CW-1.
 <!-- END:known-issues -->
 
 <!-- BEGIN:active-work -->
@@ -90,6 +109,190 @@ Things to be careful about. Do not remove without a good reason — add a note i
 
 Update this section at the start and end of each session.
 Mark completed items with ~~strikethrough~~ and date, then let the daily sync archive them.
+
+On branch `claude/clashcontrol-competitive-analysis-gra92c` (2026-07-13) — competitive analysis vs
+Solibri/Navisworks/OSS (IfcOpenShell, ThatOpen, xeokit, Speckle, BIMcollab, Revizto, buildingSMART IDS)
++ Wave-0 correctness fixes:
+
+- **`IMPROVEMENT_PLAN.md` added** — full analysis + 6-wave roadmap. Thesis (evidence-backed): CC already
+  has the pro FEATURE set (cross-run clash reconciliation `computeClashIdentityKey`/`mergeDetectionResults`
+  is comparable-or-better than Navisworks' GUID matching, clustering, BCF 2.1/3.0, workspace-aware
+  inspector, ahead-of-bar measurement snapping) — the gap vs competitors is **honesty** (fake penetration
+  depth, phantom `minGap`, exact-engine silently dropping rules, hollow BCF viewpoints, quality score
+  skipping checks shown in its own panel), **noise** (no default clash matrix/tolerance floor → 10k-clash
+  first runs), and **feel** (dead orbit-pivot bug, AO/edges built-but-disabled). Waves 1-6 (triage funnel,
+  review loop/camera feel, BCF fidelity, search sets, IDS conformance, scale) are roadmap, not yet built.
+- ~~**Wave 0 correctness fixes, 9 items, each its own commit + test where the fix is pure logic**~~ (2026-07-13):
+  - ~~Orbit pivot recenters to selection~~ — `sph.setFromVector3` on a plain `{r,phi,theta}` object silently
+    threw and was swallowed; camera always orbited the pre-selection target. `ab5e5a2`.
+  - ~~Model visibility toggle no longer needs a camera nudge~~ — the manual per-mesh culling pass
+    (`updateCulling`) throttles to 1-per-8 rendered frames; a bare `invalidate()` (2 frames) wasn't enough
+    to cross that gate, so re-shown models stayed individually `.visible=false` until orbiting kept
+    invalidating long enough. New `S._forceCull` bypasses the throttle once per models-list change.
+    `204a039`. (Found live mid-session from a user bug report, not the original research pass.)
+  - ~~`minGap` actually applies~~ — collected/displayed everywhere but never checked; `isSoft` only tested
+    the upper bound. Now `[minGap, maxGap]`. `623727a`.
+  - ~~Local-engine rule parity~~ — `_serializeForLocalEngine` sent only modelA/B+maxGap+a `mode` field the
+    browser's rules object never sets (always fell through to `'hard'` — a configured soft-only run
+    silently ran hard-only on the exact engine). Now sends the full scalar rule set + pre-filters
+    `IfcSpace` client-side; semantic-filter (`relatedPairs`) parity explicitly deferred (needs a payload
+    shape change). Engine-repo companion change (apply the new fields in `engine.py`/`sweep.py`) documented
+    in `IMPROVEMENT_PLAN.md`, not yet done in that repo. `739af54`.
+  - ~~Assignee/priority survive re-runs~~ — `mergeDetectionResults`' persisting-clash branch carried status/AI
+    fields/linkedIssueId forward but not `assignee`/`priority`. `ff02b09`.
+  - ~~JS/WASM hit-point parity~~ — JS validated candidate points against both elements' AABBs±10mm before
+    accepting a hit; the WASM path returned its raw point unvalidated, so results (and even hit/miss)
+    could differ depending on whether WASM loaded. Extracted `_pointInBothBoxes`, gated both paths on it.
+    `e020f1a`.
+  - ~~Quality Score includes BIM-basics~~ — `computeQualityScore` only ever folded in
+    `runDataQualityChecks`+accessibility. `runBIMModelChecks` now always folds in (generic, region-neutral).
+    `runILSChecks` (Dutch NL-BIM Basis ILS v2) is nuanced: `noNLSfB` has no IfcType gating, so an
+    unadopted-NL-SfB project would score near-zero on a standard it never uses — ILS now always shows as
+    its own breakdown category but only counts toward the headline number once the project shows real
+    adoption (≥20% of elements carry a code). IDS deliberately not touched (different result shape,
+    belongs with Wave 5). `fcad866`.
+  - ~~Render key 5 = wireframe~~ (was a duplicate of xray; wireframe had no key) + ~~walk-mode postFX fixed~~
+    (`_walkEnter` turned SAO/Outline/SMAA on synchronously but only when the pre-walk style wasn't already
+    `'rendered'`, and even then the `renderStyle:'rendered'` dispatch's own re-render immediately re-ran the
+    normal-mode "disable postFX, it blurs" effect right after — walk mode never actually got it). `55ca009`.
+  - ~~Stable discipline colors~~ — `byDiscipline` color-by assigned colors by element-count rank
+    (`CLASS_COLORS[idx]`), not by what the discipline IS — structural could be blue in one federation, red
+    in another, never matching the app's own `DISC` semantic map used elsewhere. New `DISC_COLOR_BY_ID`
+    lookup used by both the 3D scene and the Navigator panel dots; other views (byType/byStorey/byMaterial)
+    unchanged. `fe33b2e`.
+  - Doc drift fixed: MEMORY.md's Project State + Architecture Decisions both claimed the Python local
+    engine does "true solid boolean ops" — verified false by reading `ClashControlEngine/src/
+    clashcontrol_engine/intersection.py` directly; it runs the identical Möller tri-tri + BVH algorithm as
+    the browser, just faster (Numba JIT + multiprocess + scipy KD-tree). Corrected both rows.
+  - Verification: `npm test` (83/83 passing, up from 68 — 4 new test files, each extracting real
+    production code out of `index.html`/addons the same way `tests/ifc-units.test.js` does, not
+    reimplementing the logic under test), main-script parse via `new Function` after every edit. NOT
+    browser-verified (Playwright/CDN blocked in this sandbox per prior sessions) — the detection-engine
+    changes (`minGap`, WASM/JS parity) and the culling-throttle fix in particular need a real browser
+    pass; flagged in each commit message.
+- 3 sibling repos cloned into the session for reference (`ClashControlEngine`, `ClashControlConnector`,
+  `ClashControlSmartBridge` — the last is confirmed superseded, see its own README banner). Engine's
+  `intersection.py`/`sweep.py` read directly to ground CW-1 (real penetration depth + `manifold3d`
+  intersection volume — Wave 1, not started) and the local-engine parity fix above.
+- PR #679 opened (draft), `subscribe_pr_activity` on. User then said "go full throttle to the end" (execute
+  Waves 1-6 autonomously, no further check-ins) and "pile it into one PR, or multiple only if they get big"
+  (stay on #679 unless a piece of work is large enough to need its own — `ClashControlEngine` is the one
+  structural exception, separate repo). Continuing on the same branch/PR:
+- ~~**Wave 1.1-1.3: the default clash matrix (the triage funnel's first, highest-leverage lever)**~~
+  (2026-07-13):
+  - Per-element discipline classification: `_DISC_TYPE_MAP` (flat IfcType→discipline, extracted from
+    `detectDiscipline`'s inline tables, behavior-preserving) + `_ccElementDiscipline(el, modelDiscipline)`
+    (discriminating type wins, else falls back to the model's own vote) — closes the per-model-granularity
+    gap a combined STR+MEP IFC file had (one label for the whole model). `22bdb80`.
+  - Default matrix: `rules.excludeSameDiscipline` (default true) + `rules.disciplineMatrix` (sparse
+    `"discA:discB"` override map) + `_ccMatrixSkipsSameDiscipline(...)` wired into both the chunk
+    pre-filter and `_processCandidate`'s authoritative check. `1aac245`.
+  - Matrix UI: 5×5 triangular grid in `ClashRulesPanel` advanced section, click-to-toggle any cell.
+    `6ef0e6c`.
+  - **CRITICAL FIX same day, caught by `browser-smoke` CI, not by me**: the default matrix skipped
+    same-*discipline* pairs, but the smoke fixture is two crossing walls in ONE model — both fall back to
+    that model's single discipline, so they read as "same discipline" and got skipped, reporting 0 clashes
+    on a real physical overlap. Same-discipline is a *cross-model* federation-noise concept; a same-model
+    self-clash is a data-integrity error and must never be suppressed by it. Added a `sameModel` param to
+    `_ccMatrixSkipsSameDiscipline`, checked *before* any discipline/matrix logic, always wins. `e7c4100`.
+  - 17 tests in `tests/discipline-classification.test.js` (incl. the `sameModel` regression) + 3 in
+    `tests/discipline-colors.test.js`.
+- ~~**Wave 1.4: real (approximate) penetration depth — CW-1a**~~ (2026-07-13). The user's explicit
+  directive from earlier in the session ("escalating to \[the local engine\] gets you speed, not
+  fundamentally more correct geometry") committed this as its own workstream. What hard clashes reported as
+  "depth" was `_triTriTest`'s 4th return value — the SAT overlap-interval length of *one* colliding triangle
+  pair along their cross-normal axis, maxed across all colliding pairs. Real number, not penetration depth:
+  long for a shallow graze between two big triangles, shrinks on fine tessellation regardless of true
+  overlap. New `_estimatePenetrationDepthM(elA, elB)`: for each mesh's vertices that ray-parity-test as
+  *inside* the other mesh (3-axis majority vote against its BVH), find the true closest-point-on-surface
+  distance (Ericson's algorithm, not nearest-*vertex*) to the other mesh; max across both sides ≈ true
+  penetration (MTD-style approximation). Runs only on confirmed hard-clash pairs (post tri-tri), never the
+  broad-phase set. Null (open/non-manifold mesh, or a graze where no vertex of either side is actually
+  inside — e.g. a thin post clean through a slab with both meshes' corners outside each other, a real
+  documented limitation) falls through to the old chord-length estimate, then the AABB-overlap estimate —
+  same fallback shape as before, just with a genuinely better first tier.
+  **Caught a real bug pre-commit**: casting the parity rays exactly axis-aligned is the worst possible
+  choice for *this* codebase specifically (IFC geometry is overwhelmingly axis-aligned) — a ray from the
+  exact center of a symmetric test cube landed precisely on a shared triangle edge on all 3 axes at once,
+  and the ray-triangle test's inclusive edge tolerance double-counted that one crossing (once per triangle
+  sharing the edge), flipping odd parity to even — reporting the center of a unit cube as *outside* it, and
+  no majority vote could catch it since all 3 axes failed identically. Fixed by casting along small fixed
+  off-axis tilts instead of pure axes (also lets the BVH node-prune use a standard generic slab test, since
+  no direction component is ever exactly 0 anymore). `e8425ea`. 16 analytic-solid tests in
+  `tests/penetration-depth.test.js` (offset cubes, a post partially into a slab, the full-through-slab null
+  case, disjoint cubes, a symmetric fully-contained cube) — verified against hand-computed expected depths,
+  not just "doesn't throw."
+  **Not yet done: the Python-engine companion (CW-1b, same technique + `manifold3d` exact-volume tier) — a
+  separate repo (`ClashControlEngine`), needs its own PR per the branch-scoping rule.**
+- ~~**Wave 2.1, 2.3, 2.5, 2.6 — camera/review-loop feel**~~ (2026-07-13):
+  - Zoom-out now honors the cursor too (mirrors the existing zoom-in-to-cursor branch: retreat the target
+    away from the picked point and grow `sph.r`, instead of the old pure `sph.r *= zoomFactor` around
+    whatever the orbit target happened to be). `bd37b37`.
+  - Shift+left-drag = pan fallback (was middle-mouse-button only — no trackpad path at all). Checked for
+    key collisions first: Ctrl/Cmd is multi-select on click, Shift is unclaimed on the orbit canvas's own
+    mousedown handler. Added a "Mouse" section to the shortcuts modal (orbit/pan/zoom had zero in-app
+    documentation before this). `49a7bc8`.
+  - Double-click-to-frame turned out to already exist (`index.html` ~7996, predates this session) — no
+    work needed, closes that Wave 2.3 item. Present-mode click-to-frame ("present is inert") turned out to
+    already be *intentionally* disabled with a clear rationale ("read-only walkthrough; framing fights the
+    user") — the Wave-0 orbit-pivot fix (unconditional, runs before the fly-gate) already made present-mode
+    clicks meaningful again (recenters the pivot for subsequent drags), so no further change — overriding a
+    deliberate, commented design decision based on stale pre-Wave-0 research would have been wrong.
+  - On-canvas color legend (`ColorLegend`, bottom-left of the viewport) for `colorByClass` views — swatch/
+    label/count next to the model instead of only in the side-panel Navigator list (BIMcollab Smart-View
+    parity). Sort + color-index logic copied verbatim from the 3D scene tint effect so it can't drift.
+    `bbc5717`.
+  - Distinct A/B clash-pair colors: `_itemRefs` already tagged each ref `role:'A'`/`'B'`, but
+    `_highlightRefs` only ever colored by model discipline — so same-discipline pairs (incl. every
+    same-model self-clash) highlighted both sides identically. `_highlightRefs` now checks `ref.role` first,
+    fixed red/cyan for A/B, falling back to discipline color for every other caller (verified `_itemRefs` is
+    the only producer of role A/B anywhere in the file). `77bd6f8`.
+  - Keyboard status hotkeys (C/D/V = confirm/deny/accept-check) reuse the exact
+    `_ccPrepareAdvance`→`UPD_CLASH`→`_ccAdvanceToNext` sequence the existing mouse-only buttons already used
+    — J/K → C/D/V is now a full keyboard-only triage loop. Added a "Clash triage" shortcuts section (J/K/
+    Tab/T/R/X/'/' had none either). `46eb1c9`. Together, tween-frame + isolate/ghost(~12%) + J/K all already
+    existed; A/B color + status hotkeys were the two actually-missing pieces of "Wave 2.1: clash focus
+    state."
+  - Wave 2.2 (occluder-reveal toggle) and 2.4 (edges/SSAO in normal viewing) intentionally deferred —
+    ghosting already gets most of 2.2's value now that it exists, and 2.4 is explicitly the highest-risk
+    remaining item per this file's own history-informed guardrails (renderer/tone-mapping touchiness).
+- ~~**Wave 1.6: deterministic severity model**~~ (2026-07-13). `aiSeverity` (critical/major/minor/info)
+  already drove sort/group-by/cluster-dot/row-dot, but it's only ever set by opt-in AI actions — every one
+  of those sites fell back to a flat per-*type* guess when absent (every hard clash the same critical-red
+  dot, tied for the same sort rank, no matter the actual depth or discipline). New
+  `_ccDeterministicSeverity(c)` uses the real depth from CW-1a + per-element disciplines (max of the pair,
+  not an average) to produce a real critical/major/minor/info verdict for every clash; every site above now
+  reads `c.aiSeverity || _ccDeterministicSeverity(c)`. Tracing every fallback site to wire this in
+  consistently turned up **3 independent, real, pre-existing vocabulary bugs**, all fixed in the same
+  commit: the AI triage prompt asked for `critical|high|medium|low` against display code that only
+  recognizes `critical|major|minor|info` (so a compliant AI response would render with no color); a
+  cluster-summary table's own rank map used the same wrong vocabulary (major/minor always fell through to
+  rank 0); and `severity_asc`/`_desc`'s `o[a.aiSeverity]||2` silently mistreated every *critical* clash as
+  rank 2 (tied with minor) because `'critical'` ranks `0`, which `||` reads as falsy. `551011e`. Also:
+  `disciplines:[mA.discipline,mB.discipline]` (whole-model, stale even after Wave 1.1) →
+  `_ccElementDiscipline`-based (per-element) — the same upgrade the clash matrix got, this separate
+  display/severity field had never received it. `e22301a`. 13 tests in `tests/severity-model.test.js`.
+  **Found but deliberately deferred**: `rules.excludeSelf` defaults to `true` app-wide (confirmed
+  consistent across `INIT.rules`, every preset, and the NL-command layer — not an oversight, a real design
+  choice), meaning a project that's a single combined IFC file finds **zero** clashes on the very first,
+  most prominent "Run detection" click, with no visible explanation why. Touches dozens of call sites
+  (NL parsing, presets, `_captureDetectionSettings`) — needs its own focused pass, not a bolt-on.
+- ~~**Wave 1.9: one-click run — verified already substantially satisfied, no changes needed**~~ (2026-07-13).
+  Checked `RunDetectionModal`/`ClashRulesPanel` against the plan item ("auto-matrix + defaults + funnel;
+  existing panel becomes Advanced") before building anything new: the modal already leads with 6 one-click
+  preset buttons + a single prominent "Run detection" footer button that runs with whatever `s.rules`
+  currently is, and both the matrix/tolerance editor and "Project standards" are already collapsed behind
+  an Advanced toggle by default. Wave 1.2's new default clash matrix means even the bare "Run detection"
+  button (zero configuration) now runs with sane discipline filtering out of the box. The `excludeSelf`
+  single-model gap above is the one real first-run trap left, and it's already logged separately.
+- **Next**: Wave 1.5 (`manifold3d` exact-volume tier, `ClashControlEngine` repo, own PR — separate repo,
+  hasn't been added to this session's write scope), Wave 1.7 (funnel UI — raw pairs → after matrix → after
+  tolerance → after grouping → issues, each count visible; needs instrumenting the detection pipeline
+  itself, more invasive than 1.6/1.9 turned out to be) or Wave 1.8 (spatial sub-clustering). Or the
+  `excludeSelf` single-model default trap just above — small in code, but touches enough call sites to
+  deserve dedicated attention rather than a rushed fix. Then Wave 3 (BCF fidelity — the single biggest
+  audited interop gap: CC's own BCF *exporter* never writes `<Components>`, so a CC-exported BCF has no
+  selectable elements in Solibri/BIMcollab despite CC's *importer* already parsing them).
 
 On branch `claude/codebase-review-optimization-3nltcw` (2026-07-08) — four-repo review sweep (in progress):
 

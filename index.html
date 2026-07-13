@@ -692,6 +692,12 @@ function startApp() {
     { id:'civil',         label:'Civil',         c:'#10b981', accent:'#059669' },
     { id:'other',         label:'Other',         c:'#f59e0b', accent:'#d97706' },
   ];
+  // Same discipline → same color regardless of which one has the most
+  // elements in a given federation (unlike CLASS_COLORS, which is assigned
+  // by rank). Used by colorByClass:'byDiscipline' (3D scene + Navigator
+  // panel dots) so structural/MEP/etc. read consistently across projects.
+  var DISC_COLOR_BY_ID = {};
+  DISC.forEach(function(d){ DISC_COLOR_BY_ID[d.id] = d.c; });
   var STAT = {
     open:          { label:'Open',          bg:'#ef4444' },
     confirmed:     { label:'Confirmed',     bg:'#0f766e' },
@@ -1076,7 +1082,7 @@ function startApp() {
   var _savedSection=(function(){try{return JSON.parse(localStorage.getItem('cc_section')||'null');}catch(e){return null;}})();
   var INIT = {
     models:[], clashes:[], issues:[], activeId:null, showModal:false, showSettings:false, modalElement:null, tab:null, isRecording:false, selectionSets:[],
-    rules:{ modelA:'all', modelB:'all', hard:true, maxGap:50, minGap:0, duplicates:false, changeAware:false, excludeSelf:true, excludeTypes:[], excludeTypePairs:[], minOverlapVolM3:1e-5, toleranceByTypePair:{}, useSemanticFilter:true },
+    rules:{ modelA:'all', modelB:'all', hard:true, maxGap:50, minGap:0, duplicates:false, changeAware:false, excludeSelf:true, excludeTypes:[], excludeTypePairs:[], minOverlapVolM3:1e-5, toleranceByTypePair:{}, useSemanticFilter:true, includeSpaces:false, excludeSameDiscipline:true },
     detectionSettings:null, // Captured at detection run time: {clearance_mm, discipline_filters}
     trainingMode:(function(){try{var v=localStorage.getItem('cc_trainingMode');return v===null?true:v==='1';}catch(e){return true;}}()),
     clashGroupBy:(function(){var v=_ccLoadPref('clashGroupBy',[]);return Array.isArray(v)?v:(v&&v!=='none'?[v]:[]);}()), clashSortBy:(function(){var v=_ccLoadPref('clashSortBy',[]);return Array.isArray(v)?v:(v&&v!=='none'?[v]:[]);}()),
@@ -1306,6 +1312,38 @@ function startApp() {
       disciplines: (c.disciplines && c.disciplines.length) ? c.disciplines.slice() : null,
       linkedClashId: c.id || null
     };
+  }
+  // Deterministic severity fallback — Wave 1.6. AI triage (_ccBuildTriagePrompt
+  // / api/title.js) writes aiSeverity, but that's an opt-in per-cluster/batch
+  // action; most clashes in most projects never get it, and every existing
+  // severity-driven site (sort, cluster-card dot, row dot, group-by) fell
+  // back to a flat per-TYPE guess when it was absent (every hard clash the
+  // same "critical", every soft clash the same tier, no matter how deep or
+  // how close). Now that hard clashes carry a real (approximate) depth
+  // (_estimatePenetrationDepthM, Wave 1.4) and disciplines is per-element
+  // (Wave 1.6 fix above), the fallback can actually use them. Vocabulary
+  // matches aiSeverity exactly (critical/major/minor/info) so this slots
+  // into every existing rank table / color map / sort comparator - callers
+  // should read `c.aiSeverity || _ccDeterministicSeverity(c)`, never this
+  // alone, so a real AI verdict always wins.
+  var _SEV_DISC_WEIGHT = { structural: 3, mep: 2, civil: 2, architectural: 1, other: 1 };
+  function _ccDeterministicSeverity(c) {
+    if (!c) return 'info';
+    if (c.type === 'duplicate') return 'info'; // data-quality noise, not a coordination problem
+    if (c.type === 'visibility') return 'major'; // real design/code issue, but not a depth-measurable one
+    if (c.type !== 'hard') {
+      // Soft/clearance: a near-touching gap is a near-miss (more urgent to
+      // review) than a wide maintenance-clearance note.
+      var gapMm = typeof c.clearanceMm === 'number' ? c.clearanceMm : null;
+      return (gapMm != null && gapMm <= 15) ? 'major' : 'minor';
+    }
+    var discs = (c.disciplines || []).map(function (d) { return _SEV_DISC_WEIGHT[d] || 1; });
+    var maxDisc = discs.length ? Math.max.apply(null, discs) : 1;
+    var depthMm = (typeof c.distance === 'number' && c.distance < 0) ? -c.distance : 0;
+    if (depthMm < 10) return 'minor'; // shallow hard clash — likely tolerance/rounding, matches the
+    // industry-convention "hard clash, penetration ≥ 10mm" floor (IMPROVEMENT_PLAN.md §F).
+    if (depthMm >= 50 || (maxDisc >= 3 && depthMm >= 20)) return 'critical'; // deep, or structural + real overlap
+    return 'major'; // a genuine ≥10mm hard clash
   }
   function _clearElCaches(model) {
     _bvhLRURemoveModel(model);
@@ -4256,13 +4294,30 @@ function startApp() {
   // Scratch buffers reused across pairs — a big detection run calls this
   // for every overlapping candidate; fresh arrays per call were pure GC churn.
   var _miProbe = [], _miPts = [], _miValid = [], _miProbeDepth = [0], _miMaxDepth = [0];
+  var _MI_MARGIN = 0.01; // 10mm tolerance for point-in-box check
+  // A raw tri-tri hit point can sit outside both elements' AABBs (near-tangent /
+  // degenerate configurations); both engines must agree on what counts as a real
+  // hit, so this one check gates both the JS BVH path and the WASM path below.
+  function _pointInBothBoxes(px, py, pz, boxA, boxB, margin) {
+    return px >= boxA.min.x-margin && px <= boxA.max.x+margin &&
+           py >= boxA.min.y-margin && py <= boxA.max.y+margin &&
+           pz >= boxA.min.z-margin && pz <= boxA.max.z+margin &&
+           px >= boxB.min.x-margin && px <= boxB.max.x+margin &&
+           py >= boxB.min.y-margin && py <= boxB.max.y+margin &&
+           pz >= boxB.min.z-margin && pz <= boxB.max.z+margin;
+  }
   function _meshesIntersect(elA, elB) {
     // Try WASM engine first (4-8x faster)
     if (typeof window._ccWasmIntersect === 'function') {
       var tA = _getWorldTris(elA), tB = _getWorldTris(elB);
       if (!tA.length || !tB.length) return false;
       var r = window._ccWasmIntersect(tA, tB);
-      return r || false;
+      if (!r) return false;
+      // WASM returns one raw point with no AABB validation of its own - apply the
+      // same check the JS path uses below so a loaded WASM accelerator can't
+      // report hits (or miss real hits) the JS fallback wouldn't agree with.
+      if (!_pointInBothBoxes(r[0], r[1], r[2], elA.box, elB.box, _MI_MARGIN)) return false;
+      return r;
     }
     // JS fallback
     var bA = _getBVH(elA), bB = _getBVH(elB);
@@ -4276,18 +4331,11 @@ function startApp() {
     _bvhTraverseAll(bA.root, bA.tris, bB.root, bB.tris, pts, 24, maxDepth, false);
     if (!pts.length) return false;
     var boxA = elA.box, boxB = elB.box;
-    var margin = 0.01; // 10mm tolerance for point-in-box check
     var valid = _miValid;
     valid.length = 0;
     for (var i=0; i<pts.length; i+=3) {
-      var px=pts[i], py=pts[i+1], pz=pts[i+2];
-      if (px >= boxA.min.x-margin && px <= boxA.max.x+margin &&
-          py >= boxA.min.y-margin && py <= boxA.max.y+margin &&
-          pz >= boxA.min.z-margin && pz <= boxA.max.z+margin &&
-          px >= boxB.min.x-margin && px <= boxB.max.x+margin &&
-          py >= boxB.min.y-margin && py <= boxB.max.y+margin &&
-          pz >= boxB.min.z-margin && pz <= boxB.max.z+margin) {
-        valid.push(px, py, pz);
+      if (_pointInBothBoxes(pts[i], pts[i+1], pts[i+2], boxA, boxB, _MI_MARGIN)) {
+        valid.push(pts[i], pts[i+1], pts[i+2]);
       }
     }
     if (!valid.length) return false;
@@ -4356,6 +4404,184 @@ function startApp() {
     }
     if (outPair) { outPair[0]=bq0; outPair[1]=bq1; outPair[2]=bq2; outPair[3]=bg0; outPair[4]=bg1; outPair[5]=bg2; }
     return Math.sqrt(minSq);
+  }
+
+  // ── Approximate penetration depth for confirmed hard clashes ────
+  // CW-1a. What _triTriTest's [3] ("depth") actually measures is the length
+  // of one triangle pair's SAT overlap interval along their mutual cross-
+  // normal axis — a real number, but not mesh-to-mesh penetration: two large,
+  // shallow-crossing triangles produce a long chord for a near-zero true
+  // interpenetration, and fine tessellation shrinks it regardless of how deep
+  // the solids actually overlap. This block replaces that chord-length with
+  // an MTD-style approximation: for each mesh's vertices that test as lying
+  // *inside* the other mesh (odd-parity ray count against its BVH, 3-axis
+  // majority vote for robustness against axis-aligned edge/vertex grazing),
+  // find that vertex's true closest-point distance to the other mesh's
+  // surface (not just its nearest vertex). The max such distance across both
+  // sides ≈ how far the solids interpenetrate. Callers must treat a null
+  // return as "couldn't tell" (open/non-manifold mesh, or a graze with no
+  // vertex actually inside) and fall back to the existing AABB-overlap
+  // estimate — this is an approximation, not exact solid geometry (that's
+  // CW-1b, the Python manifold3d tier).
+  function _rayTriHit(ox,oy,oz, dx,dy,dz, tris, o9) {
+    var v0x=tris[o9],v0y=tris[o9+1],v0z=tris[o9+2];
+    var v1x=tris[o9+3],v1y=tris[o9+4],v1z=tris[o9+5];
+    var v2x=tris[o9+6],v2y=tris[o9+7],v2z=tris[o9+8];
+    var e1x=v1x-v0x,e1y=v1y-v0y,e1z=v1z-v0z;
+    var e2x=v2x-v0x,e2y=v2y-v0y,e2z=v2z-v0z;
+    var px=dy*e2z-dz*e2y, py=dz*e2x-dx*e2z, pz=dx*e2y-dy*e2x;
+    var det=e1x*px+e1y*py+e1z*pz;
+    if (det>-1e-12 && det<1e-12) return -1;
+    var invDet=1/det;
+    var tx=ox-v0x,ty=oy-v0y,tz=oz-v0z;
+    var u=(tx*px+ty*py+tz*pz)*invDet;
+    if (u<-1e-9||u>1+1e-9) return -1;
+    var qx=ty*e1z-tz*e1y, qy=tz*e1x-tx*e1z, qz=tx*e1y-ty*e1x;
+    var v=(dx*qx+dy*qy+dz*qz)*invDet;
+    if (v<-1e-9||u+v>1+1e-9) return -1;
+    return (e2x*qx+e2y*qy+e2z*qz)*invDet;
+  }
+  // Ray directions for the inside/outside parity test below: near-axis but
+  // deliberately NOT exactly axis-aligned. IFC geometry is overwhelmingly
+  // axis-aligned (walls, slabs, beams, ducts), which makes a pure
+  // (1,0,0)/(0,1,0)/(0,0,1) ray the single WORST choice here — it's exactly
+  // the direction most likely to land squarely on a shared edge between two
+  // triangles of a watertight mesh. _rayTriHit's edge tolerance is
+  // inclusive (so a true crossing is never missed at a triangle boundary),
+  // which means a ray landing exactly on a shared edge gets counted by
+  // BOTH triangles that share it — one real crossing double-counted as two,
+  // flipping odd parity to even and turning a true "inside" into a false
+  // "outside" (caught by a unit test: the exact center of a symmetric test
+  // cube, cast along a pure axis, hit precisely on such a shared diagonal
+  // on all 3 axes at once — no majority vote survives that). These fixed
+  // small tilts make an exact graze astronomically unlikely while staying
+  // close enough to axis-aligned for BVH node pruning to still be
+  // effective, and as a side effect every direction component is non-zero,
+  // so the generic slab test below never divides by zero.
+  var _PEN_RAY_DIRS = (function(){
+    var raw = [[1,0.0131,0.0177],[0.0149,1,0.0163],[0.0121,0.0139,1]];
+    return raw.map(function(d){
+      var len = Math.sqrt(d[0]*d[0]+d[1]*d[1]+d[2]*d[2]);
+      return [d[0]/len, d[1]/len, d[2]/len, 1/(d[0]/len), 1/(d[1]/len), 1/(d[2]/len)];
+    });
+  })();
+  function _rayAABBHit(ox,oy,oz, idx,idy,idz, node) {
+    var tx1=(node.mnx-ox)*idx, tx2=(node.mxx-ox)*idx;
+    var tmin=Math.min(tx1,tx2), tmax=Math.max(tx1,tx2);
+    var ty1=(node.mny-oy)*idy, ty2=(node.mxy-oy)*idy;
+    tmin=Math.max(tmin,Math.min(ty1,ty2)); tmax=Math.min(tmax,Math.max(ty1,ty2));
+    var tz1=(node.mnz-oz)*idz, tz2=(node.mxz-oz)*idz;
+    tmin=Math.max(tmin,Math.min(tz1,tz2)); tmax=Math.min(tmax,Math.max(tz1,tz2));
+    return tmax>=Math.max(tmin,0);
+  }
+  function _bvhRayCount(node, tris, ox,oy,oz, dx,dy,dz, idx,idy,idz) {
+    if (!_rayAABBHit(ox,oy,oz,idx,idy,idz,node)) return 0;
+    if (node.lo !== undefined) {
+      var cnt=0;
+      for (var i=node.lo;i<node.hi;i++) { if (_rayTriHit(ox,oy,oz,dx,dy,dz,tris,node.idx[i]*9) > 1e-7) cnt++; }
+      return cnt;
+    }
+    return _bvhRayCount(node.left,tris,ox,oy,oz,dx,dy,dz,idx,idy,idz) + _bvhRayCount(node.right,tris,ox,oy,oz,dx,dy,dz,idx,idy,idz);
+  }
+  function _pointInMeshBVH(px,py,pz, bvh) {
+    if (!bvh || !bvh.root) return false;
+    var votes = 0;
+    for (var i=0; i<3; i++) {
+      var d = _PEN_RAY_DIRS[i];
+      var cnt = _bvhRayCount(bvh.root, bvh.tris, px,py,pz, d[0],d[1],d[2], d[3],d[4],d[5]);
+      if (cnt & 1) votes++;
+    }
+    return votes >= 2;
+  }
+  // Closest point on a single triangle (Ericson, "Real-Time Collision
+  // Detection" §5.1.5 — the standard barycentric-region method) — returns
+  // squared distance only, callers don't need the point itself here.
+  function _closestPtTriDistSq(px,py,pz, tris, o9) {
+    var ax=tris[o9],ay=tris[o9+1],az=tris[o9+2];
+    var bx=tris[o9+3],by=tris[o9+4],bz=tris[o9+5];
+    var cx=tris[o9+6],cy=tris[o9+7],cz=tris[o9+8];
+    var abx=bx-ax,aby=by-ay,abz=bz-az;
+    var acx=cx-ax,acy=cy-ay,acz=cz-az;
+    var apx=px-ax,apy=py-ay,apz=pz-az;
+    var d1=abx*apx+aby*apy+abz*apz, d2=acx*apx+acy*apy+acz*apz;
+    if (d1<=0 && d2<=0) return apx*apx+apy*apy+apz*apz;
+    var bpx=px-bx,bpy=py-by,bpz=pz-bz;
+    var d3=abx*bpx+aby*bpy+abz*bpz, d4=acx*bpx+acy*bpy+acz*bpz;
+    if (d3>=0 && d4<=d3) return bpx*bpx+bpy*bpy+bpz*bpz;
+    var vc=d1*d4-d3*d2;
+    if (vc<=0 && d1>=0 && d3<=0) {
+      var v=d1/(d1-d3), qx=ax+abx*v-px, qy=ay+aby*v-py, qz=az+abz*v-pz;
+      return qx*qx+qy*qy+qz*qz;
+    }
+    var cpx=px-cx,cpy=py-cy,cpz=pz-cz;
+    var d5=abx*cpx+aby*cpy+abz*cpz, d6=acx*cpx+acy*cpy+acz*cpz;
+    if (d6>=0 && d5<=d6) return cpx*cpx+cpy*cpy+cpz*cpz;
+    var vb=d5*d2-d1*d6;
+    if (vb<=0 && d2>=0 && d6<=0) {
+      var w=d2/(d2-d6), qx=ax+acx*w-px, qy=ay+acy*w-py, qz=az+acz*w-pz;
+      return qx*qx+qy*qy+qz*qz;
+    }
+    var va=d3*d6-d5*d4;
+    if (va<=0 && (d4-d3)>=0 && (d5-d6)>=0) {
+      var w2=(d4-d3)/((d4-d3)+(d5-d6)), qx=bx+(cx-bx)*w2-px, qy=by+(cy-by)*w2-py, qz=bz+(cz-bz)*w2-pz;
+      return qx*qx+qy*qy+qz*qz;
+    }
+    var denom=1/(va+vb+vc), v2=vb*denom, w3=vc*denom;
+    var qx=ax+abx*v2+acx*w3-px, qy=ay+aby*v2+acy*w3-py, qz=az+abz*v2+acz*w3-pz;
+    return qx*qx+qy*qy+qz*qz;
+  }
+  function _pointToAABBDistSq(px,py,pz, node) {
+    var dx=Math.max(node.mnx-px, 0, px-node.mxx);
+    var dy=Math.max(node.mny-py, 0, py-node.mxy);
+    var dz=Math.max(node.mnz-pz, 0, pz-node.mxz);
+    return dx*dx+dy*dy+dz*dz;
+  }
+  function _bvhClosestDistSq(node, tris, px,py,pz, best) {
+    if (_pointToAABBDistSq(px,py,pz,node) >= best[0]) return;
+    if (node.lo !== undefined) {
+      for (var i=node.lo;i<node.hi;i++) {
+        var d2=_closestPtTriDistSq(px,py,pz,tris,node.idx[i]*9);
+        if (d2<best[0]) best[0]=d2;
+      }
+      return;
+    }
+    _bvhClosestDistSq(node.left,tris,px,py,pz,best);
+    _bvhClosestDistSq(node.right,tris,px,py,pz,best);
+  }
+  function _closestDistToBVH(px,py,pz, bvh) {
+    if (!bvh || !bvh.root) return Infinity;
+    var best=[Infinity];
+    _bvhClosestDistSq(bvh.root, bvh.tris, px,py,pz, best);
+    return Math.sqrt(best[0]);
+  }
+  // Sampling cap mirrors _meshMinDist's shape (step up once vertex count
+  // gets large) but tuned lower — each sample here is a 3-axis BVH ray count
+  // plus, when inside, a full BVH closest-point search, both much pricier
+  // per-sample than a spatial-hash vertex lookup. Only ever called on
+  // CONFIRMED hard-clash pairs (tri-tri already returned a hit), never on
+  // the broad-phase candidate set, so the cap bounds worst case per pair
+  // rather than per detection run.
+  function _estimatePenetrationDepthM(elA, elB) {
+    var bvhA = _getBVH(elA), bvhB = _getBVH(elB);
+    if (!bvhA || !bvhB) return null;
+    var vertsA = _getWorldVerts(elA), vertsB = _getWorldVerts(elB);
+    if (!vertsA.length || !vertsB.length) return null;
+    var best = 0, found = false;
+    var stepA = vertsA.length > 3000 ? 3*Math.ceil(vertsA.length/1000) : 3;
+    for (var i=0; i<vertsA.length; i+=stepA) {
+      if (_pointInMeshBVH(vertsA[i],vertsA[i+1],vertsA[i+2], bvhB)) {
+        var d = _closestDistToBVH(vertsA[i],vertsA[i+1],vertsA[i+2], bvhB);
+        if (isFinite(d) && d>best) { best=d; found=true; }
+      }
+    }
+    var stepB = vertsB.length > 3000 ? 3*Math.ceil(vertsB.length/1000) : 3;
+    for (var i=0; i<vertsB.length; i+=stepB) {
+      if (_pointInMeshBVH(vertsB[i],vertsB[i+1],vertsB[i+2], bvhA)) {
+        var d = _closestDistToBVH(vertsB[i],vertsB[i+1],vertsB[i+2], bvhA);
+        if (isFinite(d) && d>best) { best=d; found=true; }
+      }
+    }
+    return found ? best : null;
   }
 
   function _flushGeoCache(models) {
@@ -4789,6 +5015,7 @@ function startApp() {
     };
     var grpA = pick(rules.modelA), grpB = pick(rules.modelB);
     var maxGapM = (rules.maxGap||0)/1000;
+    var minGapM = (rules.minGap||0)/1000;
     var clashes = [];
     var _tmpSizeA = new THREE.Vector3(), _tmpSizeB = new THREE.Vector3();
     var _tmpCtrA  = new THREE.Vector3(), _tmpCtrB  = new THREE.Vector3();
@@ -4848,7 +5075,7 @@ function startApp() {
           id:uid(), source:'auto', status:'open', createdAt:new Date().toISOString(),
           modelAId:mA.id, modelBId:mB.id, elemA:eA.expressId, elemB:eB.expressId,
           point:point, elevation:Math.round(point[1]*1000)/1000,
-          disciplines:[mA.discipline,mB.discipline], selfClash:sameModel,
+          disciplines:[_ccElementDiscipline(eA,mA.discipline),_ccElementDiscipline(eB,mB.discipline)], selfClash:sameModel,
           elemAType:tA, elemBType:tB, elemAName:nA, elemBName:nB,
           globalIdA:pA.globalId||'', globalIdB:pB.globalId||'',
           revitIdA:pA.revitId||null, revitIdB:pB.revitId||null,
@@ -4973,6 +5200,9 @@ function startApp() {
           var _ek = c.eA.props.ifcType < c.eB.props.ifcType ? c.eA.props.ifcType+':'+c.eB.props.ifcType : c.eB.props.ifcType+':'+c.eA.props.ifcType;
           if (_exPairSet[_ek]) continue;
         }
+        // Default clash matrix — cheap pre-filter; the authoritative check is
+        // the same call inside _processCandidate below.
+        if (_ccMatrixSkipsSameDiscipline(c.eA, c.mA, c.eB, c.mB, c.sameModel, rules)) continue;
         var gkey = c.mA.id + ':' + c.eA.expressId;
         var g = groups.get(gkey);
         if (!g) { g = { eA:c.eA, mA:c.mA, items:[] }; groups.set(gkey, g); }
@@ -5062,6 +5292,9 @@ function startApp() {
         var _epKey = eA.props.ifcType < eB.props.ifcType ? eA.props.ifcType+':'+eB.props.ifcType : eB.props.ifcType+':'+eA.props.ifcType;
         if (_exPairSet[_epKey]) return;
       }
+
+      // Default clash matrix — see _ccMatrixSkipsSameDiscipline for the policy.
+      if (_ccMatrixSkipsSameDiscipline(eA, mA, eB, mB, sameModel, rules)) return;
 
       // ── Type-pair impossibility memo (Phase 2.4) ────────────────
       // Active only when the model fingerprint + rules hash both match
@@ -5188,7 +5421,7 @@ function startApp() {
         geoDist = _meshMinDist(eA, eB, pairGapM, _softPairBuf);
         _tSoft += performance.now() - _t2;
         _nSoftTests++;
-        isSoft = geoDist<=pairGapM;
+        isSoft = geoDist<=pairGapM && geoDist>=minGapM;
       }
 
       if (hardPt || isSoft) {
@@ -5207,7 +5440,16 @@ function startApp() {
         }
         var dist;
         if (hardPt) {
-          var meshDepthMm = Math.round(hardPt[3] * 1000);
+          // Real (approximate) penetration depth — see _estimatePenetrationDepthM
+          // above. Falls back to hardPt[3] (the old tri-pair chord-length proxy)
+          // whenever it can't tell: throws, or returns null (open/non-manifold
+          // mesh, or a graze with no vertex of either side actually inside the
+          // other — see the "thin post fully through a slab" test). If THAT is
+          // also 0, the AABB-overlap estimate below is the final fallback,
+          // same three-tier structure as before this existed.
+          var penM = null;
+          try { penM = _estimatePenetrationDepthM(eA, eB); } catch (_penErr) { penM = null; }
+          var meshDepthMm = penM != null ? Math.round(penM * 1000) : Math.round(hardPt[3] * 1000);
           if (meshDepthMm > 0) {
             dist = -meshDepthMm;
           } else {
@@ -5659,6 +5901,8 @@ function startApp() {
           _prevDepth: prev.distance,
           _prevPoint: prev.point,
           status: prev.status === 'auto_resolved' ? 'open' : prev.status,
+          assignee: prev.assignee,
+          priority: prev.priority,
           aiSignals: prev.aiSignals,
           aiFeedback: prev.aiFeedback,
           aiReasons: prev.aiReasons,
@@ -6714,8 +6958,12 @@ function startApp() {
     _walkSavedRenderStyle = (_curState && _curState.prefs && _curState.prefs.renderStyle) || null;
     if (_walkSavedRenderStyle !== 'rendered') {
       if (window._ccDispatch) window._ccDispatch({t:'UPD_PREFS', u:{renderStyle:'rendered'}});
-      if (window._ccActivatePostFX) window._ccActivatePostFX(true);
     }
+    // Always activate postFX on entry, even if the style was already
+    // 'rendered' before walk started — otherwise a user who pressed "3" and
+    // then "W W" got no SAO/Outline/SMAA at all (the dispatch above, and the
+    // guard on it, was the only thing that used to call this).
+    if (window._ccActivatePostFX) window._ccActivatePostFX(true);
 
     // ── Smooth entry: glide camera from current position to walk position ──
     // Delay the animation by two rAF frames so React can flush the renderStyle
@@ -7154,7 +7402,11 @@ function startApp() {
 
     el.addEventListener('mousedown', function(e) {
       if(_sboxDragging || _walkActive || window._ccSectionDragging) return; // don't orbit while dragging section box / plane handles or in walk mode
-      if (e.button===0) { dragging=true; _orbitDragging=true; var _s3d=window._ccState3d; if(_s3d&&_s3d._sectionCutLines) _s3d._sectionCutLines.visible=false; }
+      // Shift+left = pan fallback for trackpad/no-middle-button users (real
+      // middle-mouse-button pan below is unaffected). Ctrl/Cmd is multi-select
+      // on click elsewhere in the app, so Shift is free here.
+      if (e.button===0 && e.shiftKey) { panning=true; _orbitDragging=true; e.preventDefault(); el.style.cursor='move'; var _s3d3=window._ccState3d; if(_s3d3&&_s3d3._sectionCutLines) _s3d3._sectionCutLines.visible=false; }
+      else if (e.button===0) { dragging=true; _orbitDragging=true; var _s3d=window._ccState3d; if(_s3d&&_s3d._sectionCutLines) _s3d._sectionCutLines.visible=false; }
       if (e.button===1) { panning=true; _orbitDragging=true; e.preventDefault(); el.style.cursor='move'; var _s3d2=window._ccState3d; if(_s3d2&&_s3d2._sectionCutLines) _s3d2._sectionCutLines.visible=false; }
       if (e.button===2) return; // reserved for context menu
       lx=e.clientX; ly=e.clientY; e.preventDefault();
@@ -7244,6 +7496,24 @@ function startApp() {
           // zoom level so orbiting feels right after zooming in, and prevents
           // the advance from becoming asymptotically tiny at close range.
           sph.r = Math.max(0.5, sph.r * zoomFactor);
+          orbit.apply(); invalidate(); e.preventDefault();
+          return;
+        }
+      }
+      // Zoom OUT anchored to the point under the cursor too — mirrors the zoom-in
+      // branch above (retreat the target away from the picked point instead of
+      // advancing toward it, grow sph.r instead of shrinking it) so the picked
+      // point recedes along the same ray you scrolled on rather than the view
+      // just scaling around the old, possibly off-screen, orbit target.
+      if (zoomFactor > 1 && !orbit.camera.isOrthographicCamera) {
+        var _zpOut = _zoomPickPoint(e);
+        if (_zpOut) {
+          camera.getWorldDirection(_tmpDir);
+          var _distFwdOut = _tmpDir.dot(_tmpVec.copy(_zpOut).sub(camera.position));
+          if (_distFwdOut <= 0) { _distFwdOut = 0; } // safety: should never happen
+          var _retreatAmt = _distFwdOut * Math.min(0.6, (zoomFactor - 1) * 3.5);
+          target.addScaledVector(_tmpDir, -_retreatAmt);
+          sph.r = Math.min(5000, sph.r * zoomFactor);
           orbit.apply(); invalidate(); e.preventDefault();
           return;
         }
@@ -8484,6 +8754,14 @@ function startApp() {
         if(alsoGhost!==false) ghostOthers([{modelId: modelId || null, expressId: expressId}]);
         invalidate();
       };
+      // A clash pair (_itemRefs role 'A'/'B') gets fixed, distinct colors per
+      // side instead of the per-model discipline color below — discipline
+      // color collapses to a single color whenever both sides share a
+      // discipline (same-model self-clashes, same-trade duplicates), which is
+      // exactly when telling A from B in the viewport matters most. Any ref
+      // without a role (selection sets, multi-select, single elements) keeps
+      // the discipline color, unchanged.
+      var _PAIR_ROLE_COLOR = {A: 0xef4444, B: 0x22d3ee};
       _highlightRefs = function(refs, alsoGhost) {
         if (!refs || !refs.length || !S.mg) return;
         _clearHighlightGroups();
@@ -8494,7 +8772,8 @@ function startApp() {
           var mesh = _findMeshByRef(ref.expressId, ref.modelId);
           if (!mesh) return;
           if (mesh.parent) outlineMeshes.push(mesh); // skip off-scene chunk proxies for post-outline
-          var color = _discColorForModelId(ref.modelId || (mesh.parent && mesh.parent.userData && mesh.parent.userData.modelId));
+          var color = _PAIR_ROLE_COLOR[ref.role] != null ? _PAIR_ROLE_COLOR[ref.role]
+            : _discColorForModelId(ref.modelId || (mesh.parent && mesh.parent.userData && mesh.parent.userData.modelId));
           var sub = _buildHighlightGroupForMesh(mesh, color);
           if (sub) combinedGrp.add(sub);
         });
@@ -8611,6 +8890,7 @@ function startApp() {
           case 'soft':     return [0.96, 0.62, 0.04];     // f59e0b
           case 'duplicate':return [0.55, 0.36, 0.93];     // 8b5cf6
           case 'minor':    return [0.58, 0.64, 0.72];     // text-muted
+          case 'info':     return [0.58, 0.64, 0.72];     // text-muted, same as minor
           default:         return [0.94, 0.27, 0.27];
         }
       }
@@ -8660,14 +8940,14 @@ function startApp() {
           if (!c.point || c.point.length<3) continue;
           var key = keyFor ? keyFor(c) : ('k'+i);
           var cl = clusters[key];
-          if (!cl) cl = clusters[key] = { ids:[], pts:[], sevs:[], sev:'soft', sx:0, sy:0, sz:0 };
+          if (!cl) cl = clusters[key] = { ids:[], pts:[], sevs:[], sev:'info', sx:0, sy:0, sz:0 };
           cl.ids.push(c.id);
           cl.pts.push(c.point);
-          cl.sevs.push(c.aiSeverity || c.type || 'soft');
+          var _mkSev = c.aiSeverity || _ccDeterministicSeverity(c);
+          cl.sevs.push(_mkSev);
           cl.sx += c.point[0]; cl.sy += c.point[1]; cl.sz += c.point[2];
-          var s = c.aiSeverity || c.type;
-          var rank = {critical:4, major:3, hard:3, soft:2, minor:2, duplicate:1};
-          if ((rank[s]||1) > (rank[cl.sev]||1)) cl.sev = s;
+          var rank = {critical:4, major:3, minor:2, info:1};
+          if ((rank[_mkSev]||1) > (rank[cl.sev]||1)) cl.sev = _mkSev;
         }
         var keys = Object.keys(clusters);
         if (!keys.length) return;
@@ -11087,7 +11367,12 @@ function startApp() {
             try {
               var _orb = S.orbit;
               if (_orb && S.camera) {
-                _orb.sph.setFromVector3(S.camera.position.clone().sub(hitCtr));
+                /* sph is a plain {r,phi,theta} (not THREE.Spherical) — recompute
+                   it inline with the same convention apply()/sync() use. */
+                var _ov = S.camera.position.clone().sub(hitCtr);
+                _orb.sph.r = _ov.length() || 60;
+                _orb.sph.phi = Math.acos(Math.max(-1, Math.min(1, _ov.y / _orb.sph.r)));
+                _orb.sph.theta = Math.atan2(_ov.x, _ov.z);
                 _orb.target.copy(hitCtr);
               }
             } catch(_e) {}
@@ -11833,8 +12118,9 @@ function startApp() {
           S._lastDpr = _targetDpr;
         }
         cullFrame++;
-        if(cullFrame >= cullEvery && S.mg && S.mg.children.length > 0){
+        if((cullFrame >= cullEvery || S._forceCull) && S.mg && S.mg.children.length > 0){
           cullFrame = 0;
+          S._forceCull = false;
           var _camKey = _camFingerprint();
           if (_camKey !== S._lastCullCamKey) {
             S._lastCullCamKey = _camKey;
@@ -11989,6 +12275,12 @@ function startApp() {
       var S = state3d.current; if(!S.mg) return;
       var ids = s.models.map(function(m){return m.id});
       S._lastCullCamKey = '';
+      // Force the next tick's culling pass to run immediately, bypassing the
+      // 8-frame throttle below — otherwise a model just re-shown stays
+      // individually invisible (its meshes were left .visible=false by the
+      // last cull pass while hidden) until enough frames accumulate, which
+      // in practice only happens once the user orbits/pans.
+      S._forceCull = true;
       Object.keys(S.map).forEach(function(id){
         if(ids.indexOf(id)===-1){
           if(S._pruneGhostCache) S._pruneGhostCache(S.map[id]);
@@ -12871,13 +13163,19 @@ function startApp() {
       var gKeys = Object.keys(groups).sort(function(a,b){return (groups[b].count||0)-(groups[a].count||0)});
       var colorMap={};
       var _chunkColors={};                                              // [Stage 2B] modelId_eid → THREE.Color
-      var _classCol = CLASS_COLORS.map(function(h){ return new THREE.Color(h); });
+      // byDiscipline: same discipline gets the same color regardless of which
+      // one happens to have the most elements in this federation (DISC, not
+      // rank). Every other view keeps the existing rank-indexed palette.
+      var _groupHex = gKeys.map(function(k,idx){
+        return (view==='byDiscipline' && DISC_COLOR_BY_ID[k]) ? DISC_COLOR_BY_ID[k] : CLASS_COLORS[idx%CLASS_COLORS.length];
+      });
+      var _classCol = _groupHex.map(function(h){ return new THREE.Color(h); });
       gKeys.forEach(function(k,idx){
         var grp=groups[k];
         if(grp&&grp.items){
           grp.items.forEach(function(it){
             colorMap[it.modelId+'_'+it.expressId]=idx;
-            _chunkColors[it.modelId+'_'+it.expressId]=_classCol[idx%_classCol.length];
+            _chunkColors[it.modelId+'_'+it.expressId]=_classCol[idx];
           });
         }
       });
@@ -12896,7 +13194,7 @@ function startApp() {
         var ci=colorMap[modelId+'_'+eid];
         if(ci!=null){
           saved.push({mesh:obj, color:obj.material.color.clone(), wasVisible:obj.visible});
-          obj.material.color.set(CLASS_COLORS[ci%CLASS_COLORS.length]);
+          obj.material.color.set(_groupHex[ci]);
           obj.visible = true;
         } else {
           var origMat = obj.material;
@@ -13078,7 +13376,13 @@ function startApp() {
 
       // Disable post-processing entirely — SAO + SMAA caused blur. Plain
       // ACES + native shadow mapping looks much sharper at far less cost.
-      if (window._ccActivatePostFX) window._ccActivatePostFX(false);
+      // Skip while walk mode is active: _walkEnter forces renderStyle:'rendered'
+      // and turns postFX ON *synchronously*, but that dispatch's re-render lands
+      // here on the next tick and was unconditionally turning it back OFF right
+      // after — walk mode never actually got SAO/Outline/SMAA. _walkActive is
+      // already true by the time this effect runs (set at the very start of
+      // _walkEnter, before the dispatch), so it's a safe, immediate signal.
+      if (window._ccActivatePostFX && !_walkActive) window._ccActivatePostFX(false);
 
       // Hide the GridHelper in rendered mode — replaced by the ground plane
       if (S.grid) S.grid.visible = (style !== 'rendered') && (s.prefs.showGrid !== false);
@@ -13710,6 +14014,7 @@ function startApp() {
         </button>
       </div>`}
       ${html`<${ViewCube} state3d=${state3d} theme=${s.prefs.theme||'light'} />`}
+      ${html`<${ColorLegend} s=${s} />`}
       ${s.floorPlan && html`<div style=${{...P,top:'9.75rem',right:'var(--space-2)',background:'var(--accent)',color:'#fff',pointerEvents:'auto',cursor:'pointer',display:'flex',alignItems:'center',gap:'var(--space-2)'}}
         onClick=${function(){d({t:A.FLOOR_PLAN,v:null})}}>
         <span>3D Section: ${s.floorPlan.storeyName} · ${_ccFormatElev(s.floorPlan.elevation+(s.floorPlan.cutHeight||1.2)/(window._ccPlanGeoFactor||1))}</span>
@@ -13830,6 +14135,41 @@ function startApp() {
           </button>
         </div>
       </div>`}
+    </div>`;
+  }
+
+  // ── On-canvas color legend ─────────────────────────────────────
+  // Mirrors the swatch/label/count each color-by-class row already shows in
+  // the Navigator panel (17135), but next to the model so you don't have to
+  // cross the screen to read what a color means (BIMcollab Smart-View parity).
+  // Sort + color-index logic is intentionally identical to the 3D scene tint
+  // effect (colorByClass useEffect above) so swatches never drift from what's
+  // actually painted on the model.
+  function ColorLegend(props) {
+    var s = props.s;
+    var view = s.colorByClass;
+    var groups = view && s.classifications ? s.classifications[view] || {} : {};
+    var gKeys = Object.keys(groups).sort(function(a,b){return (groups[b].count||0)-(groups[a].count||0);});
+    if (!view || !gKeys.length) return null;
+    var CLASS_COLORS = ['#60a5fa','#f87171','#34d399','#fbbf24','#c084fc','#fb923c','#22d3ee','#e879f9','#a3e635','#f472b6','#38bdf8','#facc15','#4ade80','#f97316','#818cf8'];
+    var VIEW_LABELS = {byType:'IFC Type', byStorey:'Storey', byDiscipline:'Discipline', byMaterial:'Material'};
+    var CAP = 10;
+    var shown = gKeys.slice(0, CAP);
+    var extra = gKeys.length - shown.length;
+    return html`<div style=${{position:'absolute',bottom:'var(--space-3)',left:'var(--space-3)',background:'var(--overlay-bg-strong)',border:'1px solid var(--border-subtle)',borderRadius:'var(--radius-sm)',padding:'var(--space-2) var(--space-3)',pointerEvents:'none',maxWidth:220,zIndex:6}}>
+      <div style=${{fontSize:'var(--text-2xs)',fontWeight:'var(--weight-semibold)',textTransform:'uppercase',letterSpacing:'.06em',color:'var(--text-muted)',marginBottom:'var(--space-1)'}}>${VIEW_LABELS[view]||view}</div>
+      <div style=${{display:'flex',flexDirection:'column',gap:'2px'}}>
+        ${shown.map(function(k,idx){
+          var grp = groups[k];
+          var hex = (view==='byDiscipline' && DISC_COLOR_BY_ID[k]) ? DISC_COLOR_BY_ID[k] : CLASS_COLORS[idx%CLASS_COLORS.length];
+          return html`<div key=${k} style=${{display:'flex',alignItems:'center',gap:'var(--space-2)',fontSize:'var(--text-2xs)'}}>
+            <span style=${{width:8,height:8,borderRadius:'50%',background:hex,flexShrink:0}}></span>
+            <span style=${{color:'var(--text-secondary)',flex:1,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>${grp.label||k}</span>
+            <span style=${{color:'var(--text-faint)',fontFamily:'var(--font-mono)'}}>${grp.count||0}</span>
+          </div>`;
+        })}
+        ${extra>0 && html`<div style=${{fontSize:'var(--text-2xs)',color:'var(--text-faint)',fontStyle:'italic',marginTop:'2px'}}>+${extra} more</div>`}
+      </div>
     </div>`;
   }
 
@@ -15256,19 +15596,85 @@ function startApp() {
     return null;
   }
 
-  function detectDiscipline(elements, name) {
-    // Only DISCRIMINATING element types vote. Walls, slabs, roofs, spaces and
-    // generic proxies are shared by every discipline (a concrete structural
-    // model is mostly walls and slabs), so counting them just drags everything
-    // to "architectural" — which is the bug this replaces.
+  // Discriminating IfcTypes — ones that only ever belong to a single discipline.
+  // Walls, slabs, roofs, spaces and generic proxies are shared by every
+  // discipline (a concrete structural model is mostly walls and slabs), so
+  // they're deliberately absent here; detectDiscipline() and
+  // _ccElementDiscipline() both fall back to the *model's* discipline for them.
+  // Single flat map (not four separate lookups) so classification is one hash
+  // access per element, and detectDiscipline()'s per-model vote and
+  // _ccElementDiscipline()'s per-element lookup can never drift apart.
+  var _DISC_TYPE_MAP = {};
+  (function(){
     var MEP = {IfcFlowSegment:1,IfcFlowFitting:1,IfcFlowTerminal:1,IfcFlowController:1,IfcFlowMovingDevice:1,IfcFlowStorageDevice:1,IfcFlowTreatmentDevice:1,IfcEnergyConversionDevice:1,IfcDistributionElement:1,IfcDistributionFlowElement:1,IfcDistributionControlElement:1,IfcDistributionChamberElement:1,IfcPipeSegment:1,IfcPipeFitting:1,IfcDuctSegment:1,IfcDuctFitting:1,IfcDuctSilencer:1,IfcCableCarrierSegment:1,IfcCableCarrierFitting:1,IfcCableSegment:1,IfcCableFitting:1,IfcJunctionBox:1,IfcAirTerminal:1,IfcAirTerminalBox:1,IfcSanitaryTerminal:1,IfcWasteTerminal:1,IfcStackTerminal:1,IfcValve:1,IfcPump:1,IfcTank:1,IfcBoiler:1,IfcChiller:1,IfcCoil:1,IfcCompressor:1,IfcCondenser:1,IfcCooledBeam:1,IfcCoolingTower:1,IfcFan:1,IfcFilter:1,IfcHeatExchanger:1,IfcHumidifier:1,IfcSpaceHeater:1,IfcUnitaryEquipment:1,IfcElectricAppliance:1,IfcElectricDistributionBoard:1,IfcElectricFlowStorageDevice:1,IfcElectricGenerator:1,IfcElectricMotor:1,IfcLamp:1,IfcLightFixture:1,IfcOutlet:1,IfcSwitchingDevice:1,IfcProtectiveDevice:1,IfcMotorConnection:1,IfcTransformer:1,IfcSensor:1,IfcActuator:1,IfcController:1,IfcAlarm:1,IfcMedicalDevice:1,IfcAudioVisualAppliance:1,IfcCommunicationsAppliance:1};
     var STR = {IfcBeam:1,IfcColumn:1,IfcFooting:1,IfcPile:1,IfcMember:1,IfcReinforcingBar:1,IfcReinforcingMesh:1,IfcReinforcingElement:1,IfcTendon:1,IfcTendonAnchor:1,IfcStructuralMember:1,IfcStructuralCurveMember:1,IfcStructuralSurfaceMember:1};
     var ARC = {IfcDoor:1,IfcWindow:1,IfcStair:1,IfcStairFlight:1,IfcRamp:1,IfcRampFlight:1,IfcRailing:1,IfcCovering:1,IfcCurtainWall:1,IfcFurnishingElement:1,IfcFurniture:1,IfcSystemFurnitureElement:1};
     var CIV = {IfcCivilElement:1,IfcPavement:1,IfcCourse:1,IfcKerb:1,IfcEarthworksElement:1,IfcEarthworksCut:1,IfcEarthworksFill:1,IfcBridge:1,IfcRoad:1,IfcAlignment:1,IfcGeotechnicalElement:1,IfcGeotechnicalStratum:1};
+    Object.keys(MEP).forEach(function(t){ _DISC_TYPE_MAP[t]='mep'; });
+    Object.keys(STR).forEach(function(t){ _DISC_TYPE_MAP[t]='structural'; });
+    Object.keys(ARC).forEach(function(t){ _DISC_TYPE_MAP[t]='architectural'; });
+    Object.keys(CIV).forEach(function(t){ _DISC_TYPE_MAP[t]='civil'; });
+  })();
+
+  // Per-element discipline: a discriminating IfcType always wins; anything
+  // else (walls, slabs, spaces, proxies) inherits the model's own detected
+  // discipline. This is what lets a single combined IFC (structure + MEP in
+  // one file, one model.discipline label) still classify individual elements
+  // correctly instead of the whole file voting one way — the matrix and the
+  // discipline-pair presets both key off this, not off model.discipline alone.
+  function _ccElementDiscipline(el, modelDiscipline) {
+    var t = (el && el.props && el.props.ifcType) || '';
+    return _DISC_TYPE_MAP[t] || modelDiscipline || 'other';
+  }
+  window._ccElementDiscipline = _ccElementDiscipline;
+
+  // Default clash matrix: should this pair be skipped? Only ever applies to
+  // CROSS-model pairs — sameModel same-discipline pairs (e.g. two walls
+  // physically overlapping inside one architectural model) are a data-
+  // integrity error, not federation coordination noise, and must still be
+  // caught. (Caught live: the browser smoke test's two-crossing-walls
+  // fixture is a single model — an earlier version of this function excluded
+  // it as "same discipline" and silently reported zero clashes.) Same-model
+  // self-clash inclusion is the existing, separate rules.excludeSelf / self-
+  // clash-picker control, not this matrix. rules.duplicates is additionally
+  // exempt regardless — a duplicate pair (two copy-pasted ducts) is almost
+  // always same-discipline by nature, and that check in _processCandidate
+  // runs independently of hard/soft, so the matrix must never discard it.
+  // Otherwise, precedence for a cross-model pair is:
+  //   1. An explicit rules.disciplineMatrix[pairKey] cell (matrix-UI override)
+  //   2. Same-discipline pairs default to skipped (rules.excludeSameDiscipline,
+  //      the #1 cited false-positive flood in BIM coordination guidance)
+  //   3. Cross-discipline pairs always default to tested
+  // Shared by both _detectClashesCore call sites (chunk pre-filter + the
+  // authoritative check) so they can't drift, and by _ccDisciplinePairEnabled
+  // (matrix-UI cell state) so the UI and the engine can't disagree either.
+  function _ccMatrixSkipsSameDiscipline(eA, mA, eB, mB, sameModel, rules) {
+    if (rules.duplicates || sameModel) return false;
+    var dA = _ccElementDiscipline(eA, mA && mA.discipline);
+    var dB = _ccElementDiscipline(eB, mB && mB.discipline);
+    return !_ccDisciplinePairEnabled(dA, dB, rules);
+  }
+  window._ccMatrixSkipsSameDiscipline = _ccMatrixSkipsSameDiscipline;
+
+  // Effective on/off state for one discipline-pair cell — used directly by the
+  // matrix UI (no real elements needed) and by _ccMatrixSkipsSameDiscipline
+  // above, so they share one precedence rule and can never disagree.
+  function _ccDisciplinePairEnabled(discA, discB, rules) {
+    var pairKey = discA < discB ? discA+':'+discB : discB+':'+discA;
+    var dm = rules.disciplineMatrix;
+    if (dm && dm[pairKey] !== undefined) return dm[pairKey] !== false;
+    if (discA !== discB) return true;
+    return rules.excludeSameDiscipline === false;
+  }
+  window._ccDisciplinePairEnabled = _ccDisciplinePairEnabled;
+
+  function detectDiscipline(elements, name) {
+    // Only DISCRIMINATING element types vote — see _DISC_TYPE_MAP above.
     var mep=0, str=0, arc=0, civ=0;
     (elements||[]).forEach(function(el){
       var t=(el.props&&el.props.ifcType)||'';
-      if(MEP[t])mep++; else if(STR[t])str++; else if(ARC[t])arc++; else if(CIV[t])civ++;
+      var d=_DISC_TYPE_MAP[t];
+      if(d==='mep')mep++; else if(d==='structural')str++; else if(d==='architectural')arc++; else if(d==='civil')civ++;
     });
     var total = mep+str+arc+civ;
     function lead(){ var m=Math.max(mep,str,arc,civ); return m===0?null:(m===mep?'mep':m===str?'structural':m===civ?'civil':'architectural'); }
@@ -16991,7 +17397,7 @@ function startApp() {
           var pct = total>0 ? Math.round(grp.count/total*100) : 0;
           var visKey = classView+':'+k;
           var isHidden = !!s.hiddenClasses[visKey];
-          var barColor = s.colorByClass===classView ? CLASS_COLORS[idx%CLASS_COLORS.length] : (classView==='byDiscipline'?'#60a5fa':classView==='byType'?'#c084fc':classView==='byStorey'?'#34d399':'#fbbf24');
+          var barColor = s.colorByClass===classView ? (classView==='byDiscipline' && DISC_COLOR_BY_ID[k] ? DISC_COLOR_BY_ID[k] : CLASS_COLORS[idx%CLASS_COLORS.length]) : (classView==='byDiscipline'?'#60a5fa':classView==='byType'?'#c084fc':classView==='byStorey'?'#34d399':'#fbbf24');
           return html`<div key=${k} style=${{padding:'.3rem .6rem',borderBottom:'1px solid var(--border-subtle)',opacity:isHidden?.4:1,transition:'opacity .2s'}}>
             <div style=${{display:'flex',alignItems:'center',gap:'.3rem',marginBottom:'.15rem'}}>
               <span onClick=${function(){d({t:A.TOGGLE_CLASS_VIS,key:visKey})}}
@@ -17557,6 +17963,61 @@ function startApp() {
     </div>`;
   }
 
+  // ── Discipline matrix: N×N grid, lower triangle only (structural×MEP and
+  // MEP×structural are the same cell) ──  See _ccDisciplinePairEnabled for
+  // the state precedence this mirrors exactly, so the UI can never disagree
+  // with the engine about whether a pair is tested.
+  function _renderDisciplineMatrix(rules, d) {
+    function cellKey(a, b) { return a < b ? a+':'+b : b+':'+a; }
+    function toggle(discA, discB) {
+      var on = _ccDisciplinePairEnabled(discA, discB, rules);
+      var dm = Object.assign({}, rules.disciplineMatrix||{});
+      dm[cellKey(discA, discB)] = !on;
+      d({t:A.UPD_RULES, u:{disciplineMatrix:dm}});
+    }
+    var hasOverrides = rules.disciplineMatrix && Object.keys(rules.disciplineMatrix).length > 0;
+    var cell = {width:20,height:20,borderRadius:4,cursor:'pointer',display:'flex',alignItems:'center',justifyContent:'center'};
+    var dot = {width:8,height:8,borderRadius:2};
+    return html`<div>
+      <div style=${{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:'.2rem'}}>
+        <span style=${{fontSize:'0.72rem',fontWeight:600,color:'var(--text-primary)'}}>Discipline matrix</span>
+        ${hasOverrides && html`<button onClick=${function(){d({t:A.UPD_RULES,u:{disciplineMatrix:{}}})}}
+          style=${{...S_BTN,fontSize:'0.57rem',padding:'0 4px',background:'none',color:'var(--text-faint)'}}>Reset overrides</button>`}
+      </div>
+      <div style=${{fontSize:'0.62rem',color:'var(--text-faint)',marginBottom:'.3rem'}}>Which discipline pairs get tested. Same-discipline pairs (the diagonal) are off by default — the single biggest source of clash noise.</div>
+      <table style=${{borderCollapse:'collapse'}}>
+        <tbody>
+          ${DISC.map(function(rowDisc, i){
+            return html`<tr key=${rowDisc.id}>
+              <td style=${{padding:'1px 5px 1px 0',fontSize:'0.63rem',color:rowDisc.c,fontWeight:600,whiteSpace:'nowrap',textAlign:'right'}}>${rowDisc.label}</td>
+              ${DISC.map(function(colDisc, j){
+                if (j > i) return html`<td key=${colDisc.id}></td>`; // upper triangle: same cell as [j][i], shown once
+                var on = _ccDisciplinePairEnabled(rowDisc.id, colDisc.id, rules);
+                var same = rowDisc.id === colDisc.id;
+                var label = same ? rowDisc.label+' self-clash' : rowDisc.label+' ↔ '+colDisc.label;
+                return html`<td key=${colDisc.id} style=${{padding:1}}>
+                  <div onClick=${function(){toggle(rowDisc.id, colDisc.id)}} role="switch" aria-checked=${on}
+                    title=${label+': '+(on?'tested':'skipped')}
+                    style=${{...cell, background:on?'var(--accent-bg)':'var(--bg-tertiary)', border:'1px solid '+(on?'var(--accent-subtle)':'var(--border-subtle)')}}>
+                    ${on && html`<div style=${{...dot, background:'var(--accent)'}}></div>`}
+                  </div>
+                </td>`;
+              })}
+            </tr>`;
+          })}
+          <tr>
+            <td></td>
+            ${DISC.map(function(colDisc){
+              return html`<td key=${'lbl-'+colDisc.id} style=${{padding:'2px 1px 0',textAlign:'center'}}>
+                <div style=${{fontSize:'0.6rem',color:colDisc.c,fontWeight:600}}>${colDisc.label.slice(0,3)}</div>
+              </td>`;
+            })}
+          </tr>
+        </tbody>
+      </table>
+    </div>`;
+  }
+
   // ── Phase A: one-line summary of effective rules, used in the Run Detection modal header ──
   function _ccSummariseRules(rules, models) {
     if (!rules) return '';
@@ -18028,6 +18489,9 @@ function startApp() {
               style=${{...S_INPUT,fontSize:'0.72rem',width:48,padding:'.15rem .25rem',textAlign:'right'}} />
             <span style=${{fontSize:'0.69rem',color:'var(--text-faint)'}}>cm\u00B3</span>
           </div>`}
+
+          <!-- Discipline matrix -->
+          <div style=${{marginBottom:'.4rem'}}>${_renderDisciplineMatrix(rules, d)}</div>
 
           <!-- Type-pair tolerances -->
           ${_renderTypePairTolerances(rules, models, tpState, setTPState, d)}
@@ -18945,14 +19409,15 @@ function startApp() {
       if (!clusters[k]) { clusters[k] = []; order.push(k); }
       clusters[k].push(c);
     });
-    var SEV_RANK = { critical:4, high:3, medium:2, low:1 };
+    var SEV_RANK = { critical:4, major:3, minor:2, info:1 };
     var rows = order.map(function(k){
       var items = clusters[k];
       var open = 0, sev = '', sevR = 0, assignees = {};
       items.forEach(function(c){
         if (c.status==='open'||c.status==='in_progress') open++;
-        var r = SEV_RANK[(c.aiSeverity||'').toLowerCase()]||0;
-        if (r > sevR) { sevR = r; sev = c.aiSeverity; }
+        var cSev = c.aiSeverity || _ccDeterministicSeverity(c);
+        var r = SEV_RANK[(cSev||'').toLowerCase()]||0;
+        if (r > sevR) { sevR = r; sev = cSev; }
         if (c.assignee) assignees[c.assignee] = true;
       });
       var first = items[0];
@@ -20538,8 +21003,13 @@ function startApp() {
     date_desc: function(a,b){ return (b.createdAt||'').localeCompare(a.createdAt||''); },
     priority_asc: function(a,b){ var o={critical:0,high:1,normal:2,low:3}; return (o[a.priority]||2)-(o[b.priority]||2); },
     priority_desc: function(a,b){ var o={critical:0,high:1,normal:2,low:3}; return (o[b.priority]||2)-(o[a.priority]||2); },
-    severity_asc: function(a,b){ var o={critical:0,major:1,minor:2,info:3}; return (o[a.aiSeverity]||2)-(o[b.aiSeverity]||2); },
-    severity_desc: function(a,b){ var o={critical:0,major:1,minor:2,info:3}; return (o[b.aiSeverity]||2)-(o[a.aiSeverity]||2); },
+    // Falls back to the deterministic severity (Wave 1.6) so "sort by severity"
+    // actually differentiates the vast majority of clashes that never get AI
+    // triage, instead of every one of them tying at the same default rank.
+    // Explicit null checks, not `||`, because 'critical' ranks 0 - falsy,
+    // so `o[x]||2` was silently treating every critical clash as rank 2.
+    severity_asc: function(a,b){ var o={critical:0,major:1,minor:2,info:3}; var ra=o[a.aiSeverity||_ccDeterministicSeverity(a)], rb=o[b.aiSeverity||_ccDeterministicSeverity(b)]; return (ra==null?2:ra)-(rb==null?2:rb); },
+    severity_desc: function(a,b){ var o={critical:0,major:1,minor:2,info:3}; var ra=o[a.aiSeverity||_ccDeterministicSeverity(a)], rb=o[b.aiSeverity||_ccDeterministicSeverity(b)]; return (rb==null?2:rb)-(ra==null?2:ra); },
     type_asc: function(a,b){ var o={hard:0,'near-miss':1,soft:2,duplicate:3}; return (o[a.type]||0)-(o[b.type]||0); },
     type_desc: function(a,b){ var o={hard:0,'near-miss':1,soft:2,duplicate:3}; return (o[b.type]||0)-(o[a.type]||0); },
     storey_asc: function(a,b){ return (a.elemAStorey||a.elemBStorey||'').localeCompare(b.elemAStorey||b.elemBStorey||''); },
@@ -20744,12 +21214,12 @@ function startApp() {
     if (window._ccToast) window._ccToast('Resolved ' + clashes.length + ' clash' + (clashes.length===1?'':'es'));
   };
   // Severity rank used to colour the cluster card left-edge dot.
-  // Reads aiSeverity first; falls back to type.
+  // Reads aiSeverity first; falls back to the deterministic severity (Wave 1.6).
   window._ccClusterSeverity = function(items) {
-    var rank = {critical:4, major:3, hard:3, soft:2, minor:2, duplicate:1, info:0};
+    var rank = {critical:4, major:3, minor:2, info:1};
     var best = -1, label = 'info';
     (items||[]).forEach(function(it){
-      var sev = it.aiSeverity || it.type;
+      var sev = it.aiSeverity || _ccDeterministicSeverity(it);
       var r = rank[sev]; if (r==null) r = 1;
       if (r > best) { best = r; label = sev || 'info'; }
     });
@@ -20768,7 +21238,7 @@ function startApp() {
     lines.push('Return JSON of the form:');
     lines.push('{');
     lines.push('  "title": "<\u2264 80 chars, names the conflict>",');
-    lines.push('  "severity": "critical | high | medium | low",');
+    lines.push('  "severity": "critical | major | minor | info",');
     lines.push('  "explanation": "<2\u20134 sentences, plain language, grounded only in the data above>",');
     lines.push('  "discipline_conflict": "<e.g. MEP vs structural, MEP vs MEP>",');
     lines.push('  "false_positive_likelihood": "low | medium | high",');
@@ -20793,7 +21263,7 @@ function startApp() {
       case 'priority': return it.priority || 'normal';
       case 'category': return it.category || 'other';
       case 'assignee': return it.assignee || 'Unassigned';
-      case 'severity': return it.aiSeverity || 'minor';
+      case 'severity': return it.aiSeverity || _ccDeterministicSeverity(it);
       case 'cluster': {
         var ck = window._ccClusterKeyFor(it);
         if (!window._ccClusterDisplay) window._ccClusterDisplay = {};
@@ -20950,6 +21420,25 @@ function startApp() {
           if (gX) {
             e.preventDefault();
             setCollapsed(function(prev){ var n=Object.assign({},prev); n[gX.label]=!n[gX.label]; return n; });
+            return;
+          }
+        }
+        // Single-clash status keys — same three transitions the Confirm/Deny/
+        // Accept·Check buttons dispatch (21664-21682), reusing their exact
+        // _ccPrepareAdvance → UPD_CLASH → _ccAdvanceToNext sequence so the
+        // pair-highlight/ghost/fly-to focus state carries straight to the next
+        // clash. No artificial delay here (the buttons hold theirs only to let
+        // the clicked DOM node show its checkmark text before it re-renders —
+        // there's no button to watch on a keypress).
+        if (isClash && (e.key==='c'||e.key==='C'||e.key==='d'||e.key==='D'||e.key==='v'||e.key==='V') && activeId!=null) {
+          var itCDV = null;
+          for (var cdvI=0; cdvI<flatItems.length; cdvI++) { if (flatItems[cdvI].id===activeId) { itCDV = flatItems[cdvI]; break; } }
+          if (itCDV && itCDV.status!=='confirmed') {
+            e.preventDefault();
+            var cdvStatus = (e.key==='c'||e.key==='C') ? 'confirmed' : (e.key==='d'||e.key==='D') ? 'denied' : 'accepted_needs_check';
+            if (window._ccPrepareAdvance) window._ccPrepareAdvance(activeId);
+            d({t:A.UPD_CLASH, id:activeId, u:{status:cdvStatus}});
+            if (window._ccAdvanceToNext) window._ccAdvanceToNext(activeId);
             return;
           }
         }
@@ -21294,15 +21783,17 @@ function startApp() {
 
        The legacy typeLabel / sevLabel / typeBg / typeCol / sevBg / sevCol
        are kept as no-op fallbacks so any sub-render that still references
-       them downstream renders nothing visible. */
+       them downstream renders nothing visible.
+
+       Falls back to _ccDeterministicSeverity (Wave 1.6) instead of a flat
+       per-type color — every hard clash used to render the identical
+       critical-red dot regardless of actual depth or discipline. */
     var dotColor = (function(){
-      if (it.aiSeverity==='critical') return 'var(--sev-critical)';
-      if (it.aiSeverity==='major')    return 'var(--sev-major)';
-      if (it.aiSeverity==='minor')    return 'var(--sev-minor)';
-      if (it.type==='hard')           return 'var(--sev-critical)';
-      if (it.type==='soft')           return 'var(--sev-major)';
-      if (it.type==='duplicate')      return 'var(--sev-info)';
-      if (it.type==='visibility')     return '#3b82f6';  // blue — distinct from hazard categories
+      if (it.type==='visibility') return '#3b82f6';  // blue — distinct from hazard categories, checked first
+      var sev = it.aiSeverity || _ccDeterministicSeverity(it);
+      if (sev==='critical') return 'var(--sev-critical)';
+      if (sev==='major')    return 'var(--sev-major)';
+      if (sev==='minor')    return 'var(--sev-minor)';
       return 'var(--sev-info)';
     })();
     var icon = html`<span aria-hidden="true" style=${{display:'inline-block',width:7,height:7,borderRadius:'50%',background:dotColor,flexShrink:0,marginTop:6}}></span>`;
@@ -23463,11 +23954,17 @@ function startApp() {
         ['Esc',         'Close any open modal, menu, or walk mode'],
         ['Cmd / Ctrl K','Open command palette (find any tool, run AI)'],
       ]},
+      { title: 'Mouse', rows: [
+        ['Left-drag',   'Orbit'],
+        ['Middle-drag / Shift+Left-drag', 'Pan'],
+        ['Scroll',      'Zoom to cursor'],
+      ]},
       { title: 'View', rows: [
         ['1',           'Standard rendering'],
         ['2',           'Shaded rendering'],
         ['3',           'Rendered (lit) view'],
         ['4',           'X-Ray (semi-transparent)'],
+        ['5',           'Wireframe'],
         ['Home',        'Fit model to view'],
         ['R',           'Reset camera'],
         ['O',           'Orbit mode'],
@@ -23490,6 +23987,17 @@ function startApp() {
         ['Click',       'Select element'],
         ['Shift + Click','Add element to selection'],
         ['Double click','Fly to element'],
+      ]},
+      { title: 'Clash triage', rows: [
+        ['J / K',       'Next / previous clash — frames, isolates, and colors the pair'],
+        ['Tab / Shift+Tab', 'Next / previous group'],
+        ['C',           'Confirm active clash'],
+        ['D',           'Deny active clash (false positive)'],
+        ['V',           'Accept, flag for later verification'],
+        ['T',           'AI-triage the active group'],
+        ['R',           'Resolve all open clashes in the active group'],
+        ['X',           'Expand / collapse the active group'],
+        ['/',           'Focus the filter box'],
       ]},
       { title: 'Walk mode', rows: [
         ['W A S D',     'Move'],
@@ -28107,7 +28615,7 @@ function startApp() {
     if (batchSevMatch) {
       var sevKey = batchSevMatch[1].toLowerCase();
       var sevStatus = batchSevMatch[2] ? batchSevMatch[2].replace(/\s+/g,'_') : 'resolved';
-      var sevTargets = s.clashes.filter(function(c){return c.aiSeverity===sevKey;});
+      var sevTargets = s.clashes.filter(function(c){return (c.aiSeverity||_ccDeterministicSeverity(c))===sevKey;});
       sevTargets.forEach(function(c){ d({t:A.UPD_CLASH, id:c.id, u:{status:sevStatus}}); });
       return 'Done — ' + sevTargets.length + ' ' + sevKey + ' clashes set to ' + sevStatus + '.';
     }
@@ -28145,7 +28653,7 @@ function startApp() {
       var prioFilter = batchPrioMatch[1].toLowerCase();
       var newPrio = batchPrioMatch[2].toLowerCase();
       var prioTargets = s.clashes.filter(function(c){
-        if (prioFilter === 'critical' || prioFilter === 'major' || prioFilter === 'minor' || prioFilter === 'info') return c.aiSeverity === prioFilter;
+        if (prioFilter === 'critical' || prioFilter === 'major' || prioFilter === 'minor' || prioFilter === 'info') return (c.aiSeverity||_ccDeterministicSeverity(c)) === prioFilter;
         if (prioFilter === 'hard' || prioFilter === 'soft') return c.type === prioFilter;
         if (prioFilter === 'open') return c.status === 'open';
         return false;
@@ -33786,7 +34294,7 @@ function startApp() {
           if(e.key==='2'){ d({t:A.UPD_PREFS,u:{renderStyle:'shaded'}}); return; }
           if(e.key==='3'){ d({t:A.UPD_PREFS,u:{renderStyle:'rendered'}}); return; }
           if(e.key==='4'){ d({t:A.UPD_PREFS,u:{renderStyle:'xray'}}); return; }
-          if(e.key==='5'){ d({t:A.UPD_PREFS,u:{renderStyle:'xray'}}); return; }
+          if(e.key==='5'){ d({t:A.UPD_PREFS,u:{renderStyle:'wireframe'}}); return; }
         }
 
         if(e.key==='m'&&!ctrl&&!e.shiftKey){ d({t:A.MEASURE_MODE,v:s.measureMode?null:'length'}); return; }
