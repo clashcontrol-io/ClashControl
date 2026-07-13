@@ -126,11 +126,94 @@ test('viewpoints carry <Components><Selection> for the participating elements, d
   const bcfvName = Object.keys(files).find((n) => n.startsWith('topic-1/') && n.endsWith('.bcfv'));
   const bcfv = files[bcfvName];
   assert.ok(bcfv.includes('<Components>'), 'Components block must be present when identity data exists');
-  const compMatches = bcfv.match(/<Component IfcGuid="[^"]*"\/>/g) || [];
+  // Scoped to <Selection> specifically — <Coloring> (below) legitimately
+  // repeats globalIdA/B in its own <Component> entries, so counting matches
+  // across the whole file would no longer reflect Selection's own dedup.
+  const selection = /<Selection>([\s\S]*?)<\/Selection>/.exec(bcfv)[1];
+  const compMatches = selection.match(/<Component IfcGuid="[^"]*"\/>/g) || [];
   assert.deepEqual(compMatches.sort(), [
     '<Component IfcGuid="GUID_BEAM_BBBB"/>',
     '<Component IfcGuid="GUID_DUCT_AAAA"/>',
-  ], 'globalIds and globalIdA/B overlap - each GUID must appear exactly once, not 4 times');
+  ], 'globalIds and globalIdA/B overlap - each GUID must appear exactly once in Selection, not 4 times');
+});
+
+test('<Visibility DefaultVisibility="true"/> is present whenever <Components> is (required by the 2.1 schema)', () => {
+  ['2.1', '3.0'].forEach((version) => {
+    const files = runExport(version);
+    const bcfvName = Object.keys(files).find((n) => n.startsWith('topic-1/') && n.endsWith('.bcfv'));
+    const bcfv = files[bcfvName];
+    assert.ok(bcfv.includes('<Visibility DefaultVisibility="true"/>'), version + ' must emit Visibility');
+    const selEnd = bcfv.indexOf('</Selection>');
+    const visPos = bcfv.indexOf('<Visibility');
+    assert.ok(visPos > selEnd, version + ': Visibility must follow Selection (schema order)');
+  });
+});
+
+test('no <Visibility>/<Coloring> when there is no <Components> block at all', () => {
+  const files = runExport('3.0');
+  const bcfvName = Object.keys(files).find((n) => n.startsWith('topic-2/') && n.endsWith('.bcfv'));
+  const bcfv = files[bcfvName];
+  assert.ok(!bcfv.includes('<Visibility'));
+  assert.ok(!bcfv.includes('<Coloring'));
+});
+
+test('<Coloring> reuses the clash-focus A/B colors (#ef4444/#22d3ee) for a clash-pair item, 6 hex digits, no #', () => {
+  ['2.1', '3.0'].forEach((version) => {
+    const files = runExport(version);
+    const bcfvName = Object.keys(files).find((n) => n.startsWith('topic-1/') && n.endsWith('.bcfv'));
+    const bcfv = files[bcfvName];
+    assert.ok(/<Color Color="EF4444">[\s\S]*GUID_DUCT_AAAA[\s\S]*<\/Color>/.test(bcfv), version + ': A-side color');
+    assert.ok(/<Color Color="22D3EE">[\s\S]*GUID_BEAM_BBBB[\s\S]*<\/Color>/.test(bcfv), version + ': B-side color');
+    const coloringPos = bcfv.indexOf('<Coloring>');
+    const visPos = bcfv.indexOf('<Visibility');
+    assert.ok(coloringPos > visPos, version + ': Coloring must follow Visibility (schema order)');
+  });
+});
+
+test('BCF 3.0 <Color> wraps its <Component> in a nested <Components> element; 2.1 does not (verified against both release XSDs)', () => {
+  const v3 = runExport('3.0');
+  const bcfv3 = v3[Object.keys(v3).find((n) => n.startsWith('topic-1/') && n.endsWith('.bcfv'))];
+  assert.ok(/<Color Color="EF4444">\s*<Components>\s*<Component IfcGuid="GUID_DUCT_AAAA"\/>\s*<\/Components>\s*<\/Color>/.test(bcfv3));
+
+  const v21 = runExport('2.1');
+  const bcfv21 = v21[Object.keys(v21).find((n) => n.startsWith('topic-1/') && n.endsWith('.bcfv'))];
+  assert.ok(/<Color Color="EF4444">\s*<Component IfcGuid="GUID_DUCT_AAAA"\/>\s*<\/Color>/.test(bcfv21));
+  assert.ok(!bcfv21.includes('<Components>\n          <Component'), '2.1 must not nest an inner <Components> inside <Color>');
+});
+
+test('no <Coloring> for a single-GUID item (DQ/accessibility issue) — nothing to contrast a color against', () => {
+  const html = fs.readFileSync(path.join(__dirname, '..', 'index.html'), 'utf8');
+  const fnSrc = extractFunction(html, 'function exportBCF(items, version, viewpoints, state)');
+  const files = {};
+  function makeZip(prefix) {
+    return {
+      file(name, content) { files[prefix + name] = content; },
+      folder(name) { return makeZip(prefix + name + '/'); },
+      generateAsync() { return { then() {} }; },
+    };
+  }
+  const sandbox = {
+    JSZip: function () { return makeZip(''); },
+    guid: () => 'AB12CD34-EF56-0789-ABCD-EF0123456789',
+    esc: (s) => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;'),
+    _gcEvent: () => {}, _ccChangelogUser: 'Tester', _ccRenderSheetToCanvas: () => null,
+    window: { CC_VERSION: { v: 'test' }, _ccViewport: { getCamera: () => ({ aspect: 1.5 }) } },
+    confirm: () => false,
+  };
+  const fn = new Function(...Object.keys(sandbox), fnSrc + '; return exportBCF;')(...Object.values(sandbox));
+  const items = [{
+    id: 'i3', bcfGuid: 'topic-3', title: 'DQ finding', type: 'soft', status: 'open',
+    description: 'desc', createdAt: '2026-06-10T00:00:00Z', globalIds: ['GUID_SOLO_ONLY'],
+  }];
+  const viewpoints = [{
+    linkedId: 'i3', snapshot: 'data:image/png;base64,AAAA',
+    camera: { px: 1, py: 2, pz: 3, dx: 0, dy: 1, dz: 0, ux: 0, uy: 0, uz: 1 },
+  }];
+  fn(items, '3.0', viewpoints, {});
+  const bcfv = files[Object.keys(files).find((n) => n.startsWith('topic-3/') && n.endsWith('.bcfv'))];
+  assert.ok(bcfv.includes('<Selection>'), 'Selection must still be present — there is one GUID to select');
+  assert.ok(bcfv.includes('<Visibility DefaultVisibility="true"/>'), 'Visibility is unconditional whenever Components exists');
+  assert.ok(!bcfv.includes('<Coloring'), 'no A/B pair to color, so Coloring must be omitted');
 });
 
 test('<Components> precedes the camera element (BCF schema element order)', () => {

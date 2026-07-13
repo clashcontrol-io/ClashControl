@@ -6801,7 +6801,38 @@ function startApp() {
         if (_compGuids.length) {
           vpXml += '  <Components>\n    <Selection>\n';
           _compGuids.forEach(function(cg){ vpXml += '      <Component IfcGuid="'+esc(cg)+'"/>\n'; });
-          vpXml += '    </Selection>\n  </Components>\n';
+          vpXml += '    </Selection>\n';
+          // <Visibility> is required by the 2.1 schema whenever <Components>
+          // is present (ComponentVisibility has minOccurs="1"; verified
+          // against the release_2_1 visinfo.xsd) — 3.0 makes it optional,
+          // but writing it explicitly avoids relying on 3.0's
+          // DefaultVisibility="false" schema default. CC doesn't track a
+          // per-viewpoint hidden-elements snapshot to export as
+          // <Exceptions>, so "everything visible, no exceptions" is the
+          // honest, always-correct claim to make here.
+          vpXml += '    <Visibility DefaultVisibility="true"/>\n';
+          // <Coloring> — only meaningful for a clash-pair item: reuse the
+          // exact colors the Wave 2.1 clash-focus view (J/K next/prev)
+          // already highlights A/B with (_PAIR_ROLE_COLOR in _highlightRefs,
+          // #ef4444/#22d3ee) so a BCF viewer shows the clashing pair the
+          // same way ClashControl itself does. Not emitted for single-GUID
+          // items (DQ/accessibility issues) — there's no second side to
+          // contrast against. Color attribute is 6 hex digits, no '#'
+          // (xs:pattern "[0-9A-Fa-f]{6}([0-9A-Fa-f]{2})?"). 2.1's <Color>
+          // holds <Component> directly; 3.0 wraps them in a nested
+          // <Components> — verified against both release visinfo.xsd files,
+          // they genuinely differ here.
+          if (it.globalIdA && it.globalIdB) {
+            vpXml += '    <Coloring>\n';
+            [['EF4444', it.globalIdA], ['22D3EE', it.globalIdB]].forEach(function(pc){
+              vpXml += '      <Color Color="'+pc[0]+'">\n';
+              if (v3) vpXml += '        <Components>\n          <Component IfcGuid="'+esc(pc[1])+'"/>\n        </Components>\n';
+              else vpXml += '        <Component IfcGuid="'+esc(pc[1])+'"/>\n';
+              vpXml += '      </Color>\n';
+            });
+            vpXml += '    </Coloring>\n';
+          }
+          vpXml += '  </Components>\n';
         }
         vpXml += '  <PerspectiveCamera>\n';
         vpXml += '    <CameraViewPoint><X>'+vp.camera.px.toFixed(6)+'</X><Y>'+vp.camera.py.toFixed(6)+'</Y><Z>'+vp.camera.pz.toFixed(6)+'</Z></CameraViewPoint>\n';
