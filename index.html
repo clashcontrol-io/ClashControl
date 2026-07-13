@@ -21197,6 +21197,25 @@ function startApp() {
             return;
           }
         }
+        // Single-clash status keys — same three transitions the Confirm/Deny/
+        // Accept·Check buttons dispatch (21664-21682), reusing their exact
+        // _ccPrepareAdvance → UPD_CLASH → _ccAdvanceToNext sequence so the
+        // pair-highlight/ghost/fly-to focus state carries straight to the next
+        // clash. No artificial delay here (the buttons hold theirs only to let
+        // the clicked DOM node show its checkmark text before it re-renders —
+        // there's no button to watch on a keypress).
+        if (isClash && (e.key==='c'||e.key==='C'||e.key==='d'||e.key==='D'||e.key==='v'||e.key==='V') && activeId!=null) {
+          var itCDV = null;
+          for (var cdvI=0; cdvI<flatItems.length; cdvI++) { if (flatItems[cdvI].id===activeId) { itCDV = flatItems[cdvI]; break; } }
+          if (itCDV && itCDV.status!=='confirmed') {
+            e.preventDefault();
+            var cdvStatus = (e.key==='c'||e.key==='C') ? 'confirmed' : (e.key==='d'||e.key==='D') ? 'denied' : 'accepted_needs_check';
+            if (window._ccPrepareAdvance) window._ccPrepareAdvance(activeId);
+            d({t:A.UPD_CLASH, id:activeId, u:{status:cdvStatus}});
+            if (window._ccAdvanceToNext) window._ccAdvanceToNext(activeId);
+            return;
+          }
+        }
         if(e.key!=='ArrowDown'&&e.key!=='ArrowUp'&&e.key!=='Tab'&&e.key!=='j'&&e.key!=='J'&&e.key!=='k'&&e.key!=='K') return;
         if(flatItems.length===0) return;
         e.preventDefault();
@@ -23740,6 +23759,17 @@ function startApp() {
         ['Click',       'Select element'],
         ['Shift + Click','Add element to selection'],
         ['Double click','Fly to element'],
+      ]},
+      { title: 'Clash triage', rows: [
+        ['J / K',       'Next / previous clash — frames, isolates, and colors the pair'],
+        ['Tab / Shift+Tab', 'Next / previous group'],
+        ['C',           'Confirm active clash'],
+        ['D',           'Deny active clash (false positive)'],
+        ['V',           'Accept, flag for later verification'],
+        ['T',           'AI-triage the active group'],
+        ['R',           'Resolve all open clashes in the active group'],
+        ['X',           'Expand / collapse the active group'],
+        ['/',           'Focus the filter box'],
       ]},
       { title: 'Walk mode', rows: [
         ['W A S D',     'Move'],
