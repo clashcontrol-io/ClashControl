@@ -687,12 +687,39 @@ Solibri/Navisworks/OSS (IfcOpenShell, ThatOpen, xeokit, Speckle, BIMcollab, Revi
   anything. `85edeb4`. 22 new tests across 2 files, 348/348 passing.
   **Wave 3 is now done except `<ClippingPlanes>` export**, deliberately deferred (confirmed via Check 2 as a
   shared gap, not CC-specific — validates the deferral rather than rushing untested camera/section math).
+- ~~**Occluder-reveal toggle (Wave 2.2)**~~ (2026-07-13). The first render-adjacent feature this session —
+  scoped carefully first against this project's own documented guardrails (never touch renderer/tone-mapping;
+  additive-only; must handle BatchedMesh/InstancedMesh) before writing anything. Confirmed via research: needs
+  zero renderer/material/postFX changes — pure `THREE.Raycaster.intersectObjects` scene-graph visibility,
+  the exact pattern already used at 14+ call sites for picking, just aimed at a world point instead of the
+  mouse. New `_ccResolveOccluderHits`/`_ccApplyOccluderHide`/`_ccRevealOccluders` (pure) +
+  `_ccHideOccluders` (the one impure entry point — builds a real `Raycaster` from camera to the active
+  clash's point, bounded short of it, excludes the pair as a second safety net) placed next to `ghostOthers`.
+  **Deliberately never calls `ghostOthers`/`unghostAll`** — occluder-hide is strictly additive on top of
+  whatever ghost state clash-focus already set up, using each mesh type's own native hide primitive (the
+  same ones `ghostOthers` itself uses for the kept set): regular Mesh `.visible=false`; InstancedMesh
+  `setMatrixAt(idx,_INST_HIDE_MX)`; BatchedMesh `setVisibleAt(idx,false)`. **Verified this mattered**: the
+  more obvious reuse candidate, `_ccTempHide`, has no InstancedMesh branch at all and would have silently
+  no-op'd on instanced elements. New "Hide occluders" button in `IssueRow`'s active-clash button row, local
+  `useState`+`useRef` (transient viewport state, not reducer), a `useEffect` keyed on `[active]` reveals any
+  stale hide when the row stops being focused (guards a virtualized-list row staying mounted across a J/K
+  navigation) — deliberately does not touch the existing J/K keyboard handler itself at all.
+  **Testing ceiling stated plainly** (matches the IDS-conformance item's honesty, not overclaimed): unlike
+  every other feature this session, no CI job exercises live Three.js scene mutation, so `_ccHideOccluders`
+  itself is untested — it's pure glue with no logic of its own. Everything that could actually be wrong (hit
+  resolution across all 3 mesh types, pair exclusion, dedup, native hide/reveal) is pure and unit-tested
+  against plain-object THREE stand-ins. `633251e`. 21 new tests across 2 files. 369/369 passing.
 - **Next**: `<ClippingPlanes>` export (Wave 3's one remaining piece — still deliberately deferred, not
   attempted this session), **watching the first real `ids-conformance` Actions run** (manual or the Monday
   cron) and acting on whatever it finds — false positives/negatives in `wrong`, or a corpus-fetch/harness bug
-  in `errored` — since that's the one feature this session that shipped without any local verification, and
-  Wave 6 (Scale — untouched; extra care required per this session's own
-  history-informed guardrails: no geo-cache keying changes, no hand-rolled geometry merging).
+  in `errored` — since that's the one feature this session that shipped without any local verification
+  (occluder-reveal above is now a second, smaller instance of the same honestly-stated gap), and Wave 6
+  (Scale — untouched; extra care required per this session's own
+  history-informed guardrails: no geo-cache keying changes, no hand-rolled geometry merging). Wave 2.4
+  (Edges + SSAO in normal viewing) is the one remaining Wave 2 item — also render-touching, but unlike
+  occluder-reveal it directly implicates the SAO/Outline postFX passes this project's guardrails single out
+  by name ("re-enable only as opt-in, without SMAA, verified on batched models before any default flip") —
+  approach with proportionally more caution.
 
 On branch `claude/codebase-review-optimization-3nltcw` (2026-07-08) — four-repo review sweep (in progress):
 
