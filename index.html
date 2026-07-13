@@ -6596,6 +6596,68 @@ function startApp() {
 
   // ── BCF Export (supports v2.1 and v3.0) ────────────────────── INTERNALS.md §11
 
+  // Element-only lookup (mirrors _lookupElProps' lenient modelId convention
+  // without depending on it — that function is extracted standalone in its
+  // own test, so coupling them would mean updating that extraction too for
+  // what's otherwise a small, self-contained helper).
+  function _lookupElBox(models, modelId, expressId) {
+    if (expressId == null) return null;
+    var pool = modelId ? (models||[]).filter(function(m){ return m.id === modelId; }) : (models||[]);
+    for (var i=0; i<pool.length; i++) {
+      var el = ((pool[i].elements)||[]).find(function(e){ return e.expressId === expressId; });
+      if (el && el.box) return el.box;
+    }
+    return null;
+  }
+  function _ccBoxFinite(box) {
+    return !!(box && box.min && box.max &&
+      isFinite(box.min.x) && isFinite(box.min.y) && isFinite(box.min.z) &&
+      isFinite(box.max.x) && isFinite(box.max.y) && isFinite(box.max.z));
+  }
+  // Synthesizes a default camera viewpoint for a BCF issue with no
+  // manually-captured view, so the exported BCF still carries visual
+  // context instead of an empty topic. Frames the issue's known element(s)
+  // using their real world-space bbox already carried on
+  // state.models[i].elements[j].box (the same authoritative per-element
+  // data window._ccElemsBBox unions live, ~7861) — no live Three.js scene
+  // access needed or used, which is what makes this feasible at export
+  // time at all (contrast ClippingPlanes export, still deferred: that
+  // needs live section→world-plane conversion that only exists inside
+  // reducer-driven effects). There's no "current camera angle" to imitate
+  // outside a live scene, so this always uses a fixed isometric-ish
+  // offset rather than trying to guess one. Distance formula duplicated
+  // from the private _zoomDist (~9409, a different closure) — same
+  // reasoning as the Coloring commit's inline color literals: cheap,
+  // avoids a cross-closure dependency for two numbers.
+  function _ccSynthesizeViewpoint(it, models) {
+    var boxA = _lookupElBox(models, it.modelAId, it.elemA);
+    var boxB = _lookupElBox(models, it.modelBId, it.elemB);
+    var box;
+    if (_ccBoxFinite(boxA) && _ccBoxFinite(boxB)) {
+      box = {
+        min: {x:Math.min(boxA.min.x,boxB.min.x), y:Math.min(boxA.min.y,boxB.min.y), z:Math.min(boxA.min.z,boxB.min.z)},
+        max: {x:Math.max(boxA.max.x,boxB.max.x), y:Math.max(boxA.max.y,boxB.max.y), z:Math.max(boxA.max.z,boxB.max.z)}
+      };
+    } else if (_ccBoxFinite(boxA)) { box = boxA; }
+    else if (_ccBoxFinite(boxB)) { box = boxB; }
+    else {
+      var boxSingle = _lookupElBox(models, it.modelId || it.modelAId, it.elementId);
+      box = _ccBoxFinite(boxSingle) ? boxSingle : null;
+    }
+    if (!box) return null;
+    var cx = (box.min.x+box.max.x)/2, cy = (box.min.y+box.max.y)/2, cz = (box.min.z+box.max.z)/2;
+    var maxDim = Math.max(box.max.x-box.min.x, box.max.y-box.min.y, box.max.z-box.min.z, 0.3);
+    var scale = 1.8 - (Math.min(maxDim, 20) / 20) * 0.6;
+    var dist = Math.max(maxDim * Math.max(1.2, Math.min(1.8, scale)), 1.2);
+    var off = 1 / Math.sqrt(3);
+    return { camera: {
+      px: cx+dist*off, py: cy+dist*off, pz: cz+dist*off,
+      dx: -off, dy: -off, dz: -off,
+      ux: 0, uy: 1, uz: 0,
+      fov: 55
+    } };
+  }
+
   function exportBCF(items, version, viewpoints, state) {
     if (!items.length) return;
     _gcEvent('bcf-export', 'BCF '+version+' ('+items.length+' items)');
@@ -6657,6 +6719,16 @@ function startApp() {
       var vp = null;
       if (viewpoints) {
         vp = viewpoints.find(function(v){ return v.linkedId === it.id; });
+      }
+      // No manually-captured view for this issue — synthesize a default
+      // camera framing its known element(s) rather than shipping a topic
+      // with no visual context at all. snapshot stays null (there is no
+      // real screenshot); everything downstream (Components/Visibility/
+      // Coloring/camera XML) already only depends on vp existing, so a
+      // synthesized vp needs no special-casing past this point.
+      if (!vp) {
+        var _synth = _ccSynthesizeViewpoint(it, state && state.models);
+        if (_synth) vp = { camera: _synth.camera, snapshot: null };
       }
       var vpGuid = vp ? (v3 ? guid().toLowerCase() : guid()) : null;
 

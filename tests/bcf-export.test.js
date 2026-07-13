@@ -29,9 +29,14 @@ function extractFunction(src, header) {
   return src.slice(start, fnClose + 1);
 }
 
-function runExport(version) {
+function runExport(version, extraModels) {
   const html = fs.readFileSync(path.join(__dirname, '..', 'index.html'), 'utf8');
-  const fnSrc = extractFunction(html, 'function exportBCF(items, version, viewpoints, state)');
+  // Start at _lookupElBox (the first of exportBCF's three synthesized-
+  // viewpoint helpers, declared just above it) rather than at exportBCF
+  // itself, so a no-viewpoint item can actually exercise
+  // _ccSynthesizeViewpoint in this sandbox instead of hitting a
+  // ReferenceError only the "no matching viewpoint" tests would ever see.
+  const fnSrc = extractFunction(html, 'function _lookupElBox(models, modelId, expressId)');
 
   const files = {}; // path -> content
   function makeZip(prefix) {
@@ -72,7 +77,7 @@ function runExport(version) {
     linkedId: 'i2', snapshot: 'data:image/png;base64,AAAA',
     camera: { px: 1, py: 2, pz: 3, dx: 0, dy: 1, dz: 0, ux: 0, uy: 0, uz: 1 },
   }];
-  fn(items, version, viewpoints, {});
+  fn(items, version, viewpoints, { models: extraModels || [] });
   return files;
 }
 
@@ -242,4 +247,70 @@ test('<Components><Selection> shape matches what ClashControl\'s own BCF importe
     const bcfv = files[bcfvName];
     assert.ok(/<Selection>[\s\S]*<Component IfcGuid="GUID_DUCT_AAAA"\/>[\s\S]*<\/Selection>/.test(bcfv));
   });
+});
+
+// ── Auto-synthesized default viewpoints (Wave 3) ────────────────────────
+// When an issue has no manually-captured viewpoint at all, exportBCF now
+// synthesizes one from the issue's known element(s) real world bbox on
+// state.models, rather than shipping a topic with zero visual context.
+// See bcf-synth-viewpoint.test.js for the pure _ccSynthesizeViewpoint math.
+
+function runExportNoViewpoints(version, items, models) {
+  const html = fs.readFileSync(path.join(__dirname, '..', 'index.html'), 'utf8');
+  const fnSrc = extractFunction(html, 'function _lookupElBox(models, modelId, expressId)');
+  const files = {};
+  function makeZip(prefix) {
+    return {
+      file(name, content) { files[prefix + name] = content; },
+      folder(name) { return makeZip(prefix + name + '/'); },
+      generateAsync() { return { then() {} }; },
+    };
+  }
+  const sandbox = {
+    JSZip: function () { return makeZip(''); },
+    guid: () => 'AB12CD34-EF56-0789-ABCD-EF0123456789',
+    esc: (s) => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;'),
+    _gcEvent: () => {}, _ccChangelogUser: 'Tester', _ccRenderSheetToCanvas: () => null,
+    window: { CC_VERSION: { v: 'test' }, _ccViewport: { getCamera: () => ({ aspect: 1.5 }) } },
+    confirm: () => false,
+  };
+  const fn = new Function(...Object.keys(sandbox), fnSrc + '; return exportBCF;')(...Object.values(sandbox));
+  // No viewpoints array at all - every item must go through the synthesis path.
+  fn(items, version, null, { models: models });
+  return files;
+}
+
+test('synthesizes a viewpoint for a clash-pair issue with no captured view, when its elements resolve to real boxes', () => {
+  const models = [{
+    id: 'm1', visible: true,
+    elements: [
+      { expressId: 10, box: { min: { x: 0, y: 0, z: 0 }, max: { x: 1, y: 1, z: 1 } } },
+      { expressId: 20, box: { min: { x: 5, y: 5, z: 5 }, max: { x: 6, y: 6, z: 6 } } },
+    ],
+  }];
+  const items = [{
+    id: 'i1', bcfGuid: 'topic-1', title: 'No captured view', type: 'hard', status: 'open',
+    description: 'desc', createdAt: '2026-06-10T00:00:00Z',
+    modelAId: 'm1', elemA: 10, modelBId: 'm1', elemB: 20,
+    globalIdA: 'GUID_A', globalIdB: 'GUID_B', globalIds: ['GUID_A', 'GUID_B'],
+  }];
+  const files = runExportNoViewpoints('3.0', items, models);
+  const bcfvName = Object.keys(files).find((n) => n.startsWith('topic-1/') && n.endsWith('.bcfv'));
+  assert.ok(bcfvName, 'a .bcfv must be written even though no viewpoint was ever captured');
+  const bcfv = files[bcfvName];
+  assert.ok(bcfv.includes('<Components>'), 'the synthesized viewpoint still carries the real Components/Selection');
+  assert.ok(bcfv.includes('<PerspectiveCamera>'));
+  assert.ok(!/NaN|Infinity/.test(bcfv), 'no degenerate numbers leaked into the XML');
+  assert.ok(!files[Object.keys(files).find((n) => n.startsWith('topic-1/') && n.endsWith('.png'))], 'no snapshot exists for a synthesized viewpoint');
+});
+
+test('does not synthesize a viewpoint when the issue\'s elements are not resolvable in state.models (no boxes to frame)', () => {
+  const items = [{
+    id: 'i1', bcfGuid: 'topic-1', title: 'Unresolvable', type: 'hard', status: 'open',
+    description: 'desc', createdAt: '2026-06-10T00:00:00Z',
+    modelAId: 'm-does-not-exist', elemA: 999, globalIdA: 'GUID_A', globalIds: ['GUID_A'],
+  }];
+  const files = runExportNoViewpoints('3.0', items, []);
+  const bcfvName = Object.keys(files).find((n) => n.startsWith('topic-1/') && n.endsWith('.bcfv'));
+  assert.ok(!bcfvName, 'no .bcfv should be written when there is nothing to frame — matches the pre-existing "no vp, skip the whole file" behavior');
 });
