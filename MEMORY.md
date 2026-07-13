@@ -342,13 +342,64 @@ Solibri/Navisworks/OSS (IfcOpenShell, ThatOpen, xeokit, Speckle, BIMcollab, Revi
   stability, grid-bucket neighbor search across a cell boundary).
   **Wave 1 (the triage funnel) is now fully shipped except 1.5** (the Python `manifold3d` exact-volume
   tier — separate repo, hasn't been added to this session's write scope).
-- **Next**: the `excludeSelf` single-model default trap, or the two BCF follow-ups above (auto-synthesize
-  a viewpoint when none is linked; `<ClippingPlanes>` export — investigated this session, confirmed the
-  live section→world-plane conversion is baked into a reducer-state-driven side effect, not a pure
-  function, so it isn't safely reusable at export time without either duplicating that math or temporarily
-  mutating live view state — whoever picks this up next should start there, not from scratch). Then the
-  rest of Wave 3 (bake 3D markups into viewpoint snapshots; stamp/auto-assignment rules) and Waves 4-6
-  (search sets, IDS conformance, scale).
+- **User redirected priorities mid-session**: asked for a plan on 4 external OpenAEC-ecosystem repos
+  (`jochem25/OpenAEC-BIM-validator`, `OpenAEC-Foundation/openaec-reports`, `-bcf-platform`,
+  `-monty-ifc-viewer`). Researched via WebFetch (note: GitHub `/tree/<branch>/<path>` sub-paths 404 through
+  this session's WebFetch — only repo-root pages and `raw.githubusercontent.com` file content work; also
+  cost time discovering `OpenAEC-BIM-validator`'s default branch is `master`, not `main`). Proposed
+  build/check/defer/skip; user said **"Build 1 and 3, check number 2"** — RVB BIM Norm port (build), PDF
+  reports (build, overriding my own suggestion to defer it), BCF-platform cross-check (investigate only).
+- ~~**Build 1: RVB BIM Norm v1.1 port**~~ (2026-07-13). Read `OpenAEC-BIM-validator`'s two public-standard
+  `.ids` files directly (`RVB_BIM_Norm_v1.1.ids` 27 specs, `NL_BIM_Basis_ILS_v2.ids` 12 specs, both on
+  `master`) — clean-room reimplementation against the standards' requirements, same policy as the existing
+  `runILSChecks` comment states (no code copied from the validator). Mapped every RVB spec against CC's
+  existing `runILSChecks`/`runBIMModelChecks` coverage first — most of NL-BIM Basis ILS v2 was ALREADY
+  covered, often more thoroughly than the reference; work narrowed to the genuine gaps:
+  - **Bug found + fixed first**: 7 of `runILSChecks`' 16 buckets (the "NL-BIM Basis ILS v2 additions" —
+    storeyNaming, doorNaming, spaceIncomplete, fireRatingInvalid, extWallNoUValue,
+    loadBearingInvalidMaterial, mepNoRenovationStatus) were computed every run but never appeared in the DQ
+    panel's row list, CSV export, or "Create all issues" action — real findings silently invisible. New
+    shared `ILS_KEYS` constant used everywhere the panel touches `ils`. `939693e`.
+  - `IfcFurnishingElement` was already checked for NL-SfB presence but missing from `IFC_TO_NLSFB`, so a
+    furnishing element miscoded with another discipline's group silently passed the mismatch check. Mapped
+    to group 90 (Vaste inrichting), per RVB 2.2.7.11. `41b043a`.
+  - `spaceIncomplete` extended: ObjectType, IsExternal (Pset_SpaceCommon), GrossFloorArea/Height
+    (Qto_SpaceBaseQuantities) — RVB 2.2.7.6a/6b, alongside the pre-existing Name/LongName/NetFloorArea. A
+    space could pass every old check while missing all four new ones. `a43956e`.
+  - New IFC loader groundwork (purely additive, no existing field's shape/value changed): `IFCZONE`
+    constant (`1033361043`, cross-verified against `ThatOpen/engine_web-ifc`'s `ifc-schema.ts` since 3 of
+    the file's other hardcoded numeric IDs matched exactly); `extractSpatialHierarchy` now reads IfcZone
+    (RVB 2.2.7.7) and stamps `_hasName` on project/site/building/zone (so a `safeStr(...)||'IfcProject'`
+    fallback name can't be mistaken for a real one); `extractStoreys` stamps `hasElevation` (an explicit
+    0.0 ground-floor elevation is otherwise indistinguishable from Elevation never being set). `7ee8167`.
+  - New `runRVBChecks(models)` engine (addons/data-quality.js) — takes models directly, not a flat elements
+    array, since spatialHierarchy/storeyData are per-model: IfcProject Name (2.2.7.1), IfcSite
+    Name+georef (2.2.7.2), IfcBuilding Name (2.2.7.3), IfcZone Name/ObjectType for zones that exist
+    (2.2.7.7, a model with none is not flagged — IfcZone is optional in IFC), IfcBuildingStorey Elevation
+    (2.2.7.4). `f691141`.
+  - Wired into `computeQualityScore` via a new `_foldEntityCheckMap` (each bucket carries its OWN `total` —
+    project/site/building/zone/storey aren't the same population, so a shared `_total` like
+    `_foldCheckMap` uses would misstate every bucket's failure ratio) and into the DQ panel as a new RVB
+    section. **Deliberately never folds into the headline score or the panel's top "N issues" badge** — RVB
+    is one Dutch central-government client's own norm, narrower even than the already-adoption-gated NL-SfB
+    category; "missing IfcSite georeference" shouldn't tank the score of a model never meant to be
+    geo-referenced. Reuses the existing `renderCheckGroup` (its "Highlight in 3D" button is a harmless
+    no-op for these rows — project/site/building/zone entities aren't matched by GlobalId the way elements
+    are — but "+issue" works correctly). `a79f434`.
+  - 35 new tests across 6 files (`ils-panel-visibility`, `ils-furnishing`, `ils-space-quantities`,
+    `spatial-hierarchy-rvb`, `rvb-checks`, `quality-score-rvb`, `rvb-panel-wiring`); `extractSpatialHierarchy`/
+    `extractStoreys` tested via a minimal fake web-ifc `api` (same style as `bcf-export.test.js`'s fake
+    JSZip). 194/194 passing.
+  - **Not done**: `exportIDS()` (CC's own hardcoded-specs → .ids XML exporter) doesn't yet emit the new RVB
+    checks as exportable IDS specs — the check ENGINE is done, the export-as-IDS representation is a
+    separate, smaller follow-up if wanted.
+- **Next**: Build 3 (openaec-reports-inspired PDF report generation — architecture not yet decided) and
+  Check 2 (cross-check CC's BCF `<Components>`/`<ClippingPlanes>` handling against `openaec-bcf-platform`'s
+  Rust implementation — blocked last attempt by WebFetch's inability to browse that repo's `crates/`
+  sub-paths, see the GitHub sub-path caveat above; try `raw.githubusercontent.com` with guessed/discovered
+  file paths, or ask the user to `add_repo` it into the session for direct access). Then the
+  `excludeSelf` single-model default trap, the two BCF follow-ups (auto-synthesized viewpoints;
+  `<ClippingPlanes>` export), rest of Wave 3, and Waves 4-6.
 
 On branch `claude/codebase-review-optimization-3nltcw` (2026-07-08) — four-repo review sweep (in progress):
 
