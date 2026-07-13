@@ -4789,6 +4789,7 @@ function startApp() {
     };
     var grpA = pick(rules.modelA), grpB = pick(rules.modelB);
     var maxGapM = (rules.maxGap||0)/1000;
+    var minGapM = (rules.minGap||0)/1000;
     var clashes = [];
     var _tmpSizeA = new THREE.Vector3(), _tmpSizeB = new THREE.Vector3();
     var _tmpCtrA  = new THREE.Vector3(), _tmpCtrB  = new THREE.Vector3();
@@ -5188,7 +5189,7 @@ function startApp() {
         geoDist = _meshMinDist(eA, eB, pairGapM, _softPairBuf);
         _tSoft += performance.now() - _t2;
         _nSoftTests++;
-        isSoft = geoDist<=pairGapM;
+        isSoft = geoDist<=pairGapM && geoDist>=minGapM;
       }
 
       if (hardPt || isSoft) {
