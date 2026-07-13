@@ -330,12 +330,25 @@ Solibri/Navisworks/OSS (IfcOpenShell, ThatOpen, xeokit, Speckle, BIMcollab, Revi
   viewpoint (`vp.section`) but never exports it; the existing section-to-world-space conversion math (used
   for live rendering, e.g. around `new THREE.Plane(...)` call sites in the section/section-box effects) is
   deeply coupled to live scene state and wasn't yet confirmed safe to reuse at export time in one sitting.
-- **Next**: Wave 1.5 (`manifold3d` exact-volume tier, `ClashControlEngine` repo, own PR — separate repo,
-  hasn't been added to this session's write scope), Wave 1.8 (spatial sub-clustering, opt-in grouping
-  view), the `excludeSelf` single-model default trap, or the two BCF follow-ups just above (auto-synthesize
-  a viewpoint when none is linked; `<ClippingPlanes>` export). Then the rest of Wave 3 (bake 3D markups
-  into viewpoint snapshots; stamp/auto-assignment rules) and Waves 4-6 (search sets, IDS conformance,
-  scale).
+- ~~**Wave 1.8: spatial sub-clustering**~~ (2026-07-13). The existing `'cluster'` groupBy
+  (`_ccClusterKeyFor`) groups touch points between the *same two elements* — a duct crossing one beam at 3
+  points along its run correctly collapses to one group, but a duct crossing 5 *different* joists in the
+  same corridor bay showed as 5 separate-looking groups, even though it reads as one problem area. New
+  `_ccSpatialClusterMap(items, radiusM)`: distance-threshold union-find on clash points (1.5m default),
+  grid-bucketed (same spirit as the engine's `_SpatialHash`) for O(n) average. Wired in as a new `'nearby'`
+  groupBy dimension ("Location" in the secondary group-by dropdown) — deliberately additive, doesn't touch
+  the default "Grouped" (cluster) view. `4ab0bba`. 8 tests (radius boundary, transitive chaining through a
+  bridging point — why this needs real union-find not a naive pairwise pass —, unlocated items, label
+  stability, grid-bucket neighbor search across a cell boundary).
+  **Wave 1 (the triage funnel) is now fully shipped except 1.5** (the Python `manifold3d` exact-volume
+  tier — separate repo, hasn't been added to this session's write scope).
+- **Next**: the `excludeSelf` single-model default trap, or the two BCF follow-ups above (auto-synthesize
+  a viewpoint when none is linked; `<ClippingPlanes>` export — investigated this session, confirmed the
+  live section→world-plane conversion is baked into a reducer-state-driven side effect, not a pure
+  function, so it isn't safely reusable at export time without either duplicating that math or temporarily
+  mutating live view state — whoever picks this up next should start there, not from scratch). Then the
+  rest of Wave 3 (bake 3D markups into viewpoint snapshots; stamp/auto-assignment rules) and Waves 4-6
+  (search sets, IDS conformance, scale).
 
 On branch `claude/codebase-review-optimization-3nltcw` (2026-07-08) — four-repo review sweep (in progress):
 
