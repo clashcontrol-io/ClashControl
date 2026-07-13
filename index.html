@@ -31717,6 +31717,28 @@ function startApp() {
       var psetCount  = ep&&ep.psets ? Object.keys(ep.psets).length : 0;
       var qtyCount   = ep&&ep.quantities ? Object.keys(ep.quantities).length : 0;
 
+      // Containment breadcrumb (Project › Site › Building › Storey) + hosted
+      // elements (e.g. a wall's hosted doors/windows). Data already exists
+      // per-model (spatialHierarchy from extractSpatialHierarchy, hostId from
+      // the IFC loader) but was never surfaced here - only the bare storey
+      // string was shown, with no way to see what an element is hosting.
+      var breadcrumb = [];
+      var hostedEls = [];
+      if (_latestEl && _mdl) {
+        var _sh = _mdl.spatialHierarchy || {};
+        if (_sh.project && _sh.project.name) breadcrumb.push(_sh.project.name);
+        if (_sh.sites && _sh.sites.length === 1) breadcrumb.push(_sh.sites[0].name);
+        if (_sh.buildings && _sh.buildings.length === 1) breadcrumb.push(_sh.buildings[0].name);
+        if (storey) breadcrumb.push(storey);
+        var _hostGid = ep && ep.globalId;
+        if (_hostGid && _mdl.elements) {
+          for (var _hi=0; _hi<_mdl.elements.length; _hi++) {
+            var _hp = _mdl.elements[_hi].props;
+            if (_hp && (_hp.hostId===_hostGid || _hp.host_global_id===_hostGid)) hostedEls.push(_mdl.elements[_hi]);
+          }
+        }
+      }
+
       // Helper: format dimension values — show raw IFC value with correct unit suffix
       var _qtyUs = (typeof _ccDetectUnitScale === 'function') ? _ccDetectUnitScale(latestState && latestState.models) : 1;
       var _lenUnit  = _qtyUs >= 1000 ? 'mm' : (_qtyUs >= 100 ? 'cm' : 'm');
@@ -31979,9 +32001,26 @@ function startApp() {
             ${ep&&ep.expressId   && html`<div style=${ROW}><span style=${LBL}>Express ID</span><span style=${{...VAL,...MONO,display:'flex',alignItems:'center',gap:'.35rem'}}><span>#${ep.expressId}</span>${_copyBtn(ep.expressId,'Express ID')}</span></div>`}
             ${ep&&ep.objectType  && html`<div style=${ROW}><span style=${LBL}>Object type</span><span style=${VAL}>${ep.objectType}</span></div>`}
             ${ep&&ep.description && html`<div style=${ROW}><span style=${LBL}>Description</span><span style=${VAL}>${ep.description}</span></div>`}
-            ${storey             && html`<div style=${ROW}><span style=${LBL}>Floor</span><span style=${VAL}>${storey}</span></div>`}
+            ${breadcrumb.length>0
+              ? html`<div style=${ROW}><span style=${LBL}>Location</span><span style=${VAL} title=${breadcrumb.join(' › ')}>${breadcrumb.join(' › ')}</span></div>`
+              : storey && html`<div style=${ROW}><span style=${LBL}>Floor</span><span style=${VAL}>${storey}</span></div>`}
             ${ep&&ep.material    && html`<div style=${ROW}><span style=${LBL}>Material</span><span style=${VAL}>${ep.material}</span></div>`}
           </div>
+          <!-- Hosted elements (e.g. doors/windows hosted in this wall) -->
+          ${hostedEls.length>0 && html`<div style=${CARD}>
+            <div style=${HDR}>Hosted elements (${hostedEls.length})</div>
+            ${hostedEls.slice(0,20).map(function(he){
+              var hp = he.props||{};
+              return html`<div key=${he.expressId} onClick=${function(){if(_highlightById)_highlightById(he.expressId);}}
+                onDblClick=${function(){if(_fitToElement)_fitToElement(he.expressId);}}
+                title="Click to highlight, double-click to frame"
+                style=${{...ROW,cursor:'pointer'}}>
+                <span style=${{...LBL,minWidth:0,flex:1,color:'var(--text-secondary)',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>${hp.name||('#'+he.expressId)}</span>
+                <span style=${{fontSize:'var(--text-2xs)',color:'var(--text-faint)',flexShrink:0}}>${(hp.ifcType||'').replace(/^Ifc/,'')}</span>
+              </div>`;
+            })}
+            ${hostedEls.length>20 && html`<div style=${{fontSize:'var(--text-2xs)',color:'var(--text-faint)',fontStyle:'italic',paddingTop:'.2rem'}}>+${hostedEls.length-20} more</div>`}
+          </div>`}
           <!-- Dimensions & Constraints -->
           ${hasConstraints && html`<div style=${CARD}>
             <div style=${HDR}>Dimensions &amp; Constraints</div>
