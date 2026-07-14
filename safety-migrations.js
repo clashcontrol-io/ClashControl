@@ -163,6 +163,34 @@
     return diagnostics.slice();
   }
 
+  function createRunCoordinator() {
+    var sequence = 0;
+    var active = null;
+    return Object.freeze({
+      begin: function(label) {
+        if (active) return null;
+        active = Object.freeze({ id: ++sequence, label: String(label || 'run') });
+        return active;
+      },
+      isCurrent: function(token) {
+        return !!(token && active && token.id === active.id);
+      },
+      finish: function(token) {
+        if (!token || !active || token.id !== active.id) return false;
+        active = null;
+        return true;
+      },
+      cancel: function() {
+        var cancelled = active;
+        active = null;
+        return cancelled;
+      },
+      snapshot: function() {
+        return active;
+      }
+    });
+  }
+
   function _setFlagsForTest(next) {
     flags = Object.freeze(Object.assign({}, next || {}));
   }
@@ -175,6 +203,7 @@
     clashFingerprint: clashFingerprint,
     compareFingerprints: compareFingerprints,
     guardedAsync: guardedAsync,
+    createRunCoordinator: createRunCoordinator,
     record: record,
     diagnostics: diagnosticsSnapshot,
     _setFlagsForTest: _setFlagsForTest

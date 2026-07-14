@@ -94,3 +94,24 @@ test('candidate result is returned only when equivalence passes', async () => {
   assert.deepEqual(result, [{ key: 'a', value: 1 }]);
   assert.equal(safety.diagnostics().at(-1).outcome, 'candidate');
 });
+
+test('run coordinator admits one writer and rejects overlapping starts', () => {
+  const coordinator = safety.createRunCoordinator();
+  const first = coordinator.begin('detection');
+  assert.ok(first);
+  assert.equal(coordinator.begin('detection'), null);
+  assert.equal(coordinator.isCurrent(first), true);
+  assert.equal(coordinator.finish({ id: first.id + 1 }), false);
+  assert.equal(coordinator.isCurrent(first), true);
+  assert.equal(coordinator.finish(first), true);
+  assert.ok(coordinator.begin('detection'));
+});
+
+test('cancelling a coordinated run invalidates its token immediately', () => {
+  const coordinator = safety.createRunCoordinator();
+  const token = coordinator.begin('detection');
+  assert.deepEqual(coordinator.cancel(), token);
+  assert.equal(coordinator.isCurrent(token), false);
+  assert.equal(coordinator.finish(token), false);
+  assert.ok(coordinator.begin('replacement'));
+});

@@ -1022,8 +1022,7 @@ function startApp() {
     }, 5000);
     detectClashesAsync(s.models, runRules).then(function(result) {
       clearInterval(_wdTimer);
-      classifyClashes(result);
-      d({t:'MERGE_CLASHES', v:result});
+      if (!_ccCommitDetectionResult(result, d)) return;
       // Same-discipline 0-clash trap: a federation whose models share a
       // discipline returns 0 because every cross-model pair is skipped by the
       // excludeSameDiscipline default. Don't fail silently — say why + how.
@@ -1123,6 +1122,10 @@ function startApp() {
         hard: r.hard != null ? !!r.hard : s.rules.hard
       });
       detectClashesAsync(s.models, merged).then(function(result) {
+        if (!_ccDetectionResultUsable(result)) {
+          clearInterval(_wdTimer);
+          return;
+        }
         (result || []).forEach(function(c) {
           var k = computeClashIdentityKey(c);
           if (!byKey[k]) byKey[k] = c;
@@ -5098,8 +5101,50 @@ function startApp() {
   // ── Async clash detection with chunked processing ─────────────── INTERNALS.md §9
   var _DETECT_CHUNK_SIZE = 80; // candidates per chunk before yielding
   var _ccDetectGeneration = 0; // incremented each detection run to cancel stale async chunks
+  var _ccDetectionCoordinator = window._ccSafetyMigrations &&
+    window._ccSafetyMigrations.createRunCoordinator ?
+    window._ccSafetyMigrations.createRunCoordinator() : null;
   window._ccDetectProgress = null; // {done, total, pct} — updated during async detection
+  function _ccConcurrencyV2Enabled() {
+    return !!(window._ccSafetyMigrations &&
+      window._ccSafetyMigrations.isEnabled('concurrencyV2'));
+  }
+  function _ccTagDetectionResult(result, generation, suppressed) {
+    var value = Array.isArray(result) ? result : [];
+    try {
+      Object.defineProperty(value, '_ccGeneration', {value:generation, configurable:true});
+      if (suppressed) Object.defineProperty(value, '_ccSuppressed', {value:suppressed, configurable:true});
+    } catch(e) {
+      value._ccGeneration = generation;
+      if (suppressed) value._ccSuppressed = suppressed;
+    }
+    return value;
+  }
+  function _ccDetectionResultUsable(result) {
+    if (!_ccConcurrencyV2Enabled()) return true;
+    return !!(result && !result._ccSuppressed && result._ccGeneration === _ccDetectGeneration);
+  }
+  function _ccCommitDetectionResult(result, dispatch, detectionSettings) {
+    if (!_ccDetectionResultUsable(result)) {
+      try { window._ccSafetyMigrations.record({migration:'concurrencyV2', outcome:'stale-write-blocked',
+        reason:result && result._ccSuppressed || 'stale-generation'}); } catch(e) {}
+      return false;
+    }
+    classifyClashes(result);
+    if (dispatch) {
+      var action = {t:A.MERGE_CLASHES, v:result};
+      if (detectionSettings !== undefined) action.detectionSettings = detectionSettings;
+      dispatch(action);
+    }
+    return true;
+  }
+  window._ccCommitDetectionResult = _ccCommitDetectionResult;
   function detectClashesAsync(models, rules, onProgress) {
+    var coordinated = _ccConcurrencyV2Enabled() && _ccDetectionCoordinator;
+    var token = coordinated ? _ccDetectionCoordinator.begin('detection') : null;
+    if (coordinated && !token) {
+      return Promise.resolve(_ccTagDetectionResult([], _ccDetectGeneration, 'already-running'));
+    }
     _detectCancelled = false;
     var gen = ++_ccDetectGeneration;
     var _userCb = onProgress;
@@ -5111,19 +5156,31 @@ function startApp() {
     };
     var state = window._ccLatestState;
     var useLocal = state && state.localEngine && state.localEngine.active && state.localEngine.available && window._detectOnLocalEngine;
+    var work;
     if (useLocal) {
-      return window._detectOnLocalEngine(models, rules, onProgress).then(function(result) {
+      work = window._detectOnLocalEngine(models, rules, onProgress).then(function(result) {
         if (result !== null && gen === _ccDetectGeneration) return result;
         // Fallback to browser engine
         return _browserDetect(models, rules, onProgress, gen);
       });
+    } else {
+      work = _browserDetect(models, rules, onProgress, gen);
     }
-    return _browserDetect(models, rules, onProgress, gen);
+    if (!coordinated) return work;
+    return work.then(function(result) {
+      var current = _ccDetectionCoordinator.isCurrent(token) && gen === _ccDetectGeneration;
+      _ccDetectionCoordinator.finish(token);
+      return _ccTagDetectionResult(result, gen, current ? null : 'stale-generation');
+    }, function(error) {
+      _ccDetectionCoordinator.finish(token);
+      throw error;
+    });
   }
 
   var _detectCancelled = false;
   function cancelDetection() {
     _ccDetectGeneration++;
+    if (_ccDetectionCoordinator) _ccDetectionCoordinator.cancel();
     _detectCancelled = true;
     if (window._ccDispatch) window._ccDispatch({t:'STOP_DETECT'});
     window._ccDetectProgress = null;
@@ -9967,8 +10024,7 @@ function startApp() {
           if (!st || !st.models || !st.models.length) return Promise.resolve(null);
           var r = Object.assign({}, st.rules, rulesOverride || {});
           return detectClashesAsync(st.models, r).then(function(result){
-            classifyClashes(result);
-            if (window._ccDispatch) window._ccDispatch({ t:'MERGE_CLASHES', v:result });
+            _ccCommitDetectionResult(result, window._ccDispatch);
             return result;
           });
         },
@@ -18916,7 +18972,7 @@ function startApp() {
       if (discs.length===0) discs = ['all'];
       var ds = { clearance_mm: rules.maxGap > 0 ? rules.maxGap : null, discipline_filters: discs };
       d({t:A.DETECTING}); d({t:A.TAB,v:'clashes'});
-      detectClashesAsync(s.models, rules).then(function(result){ classifyClashes(result); d({t:A.MERGE_CLASHES, v:result, detectionSettings:ds}); });
+      detectClashesAsync(s.models, rules).then(function(result){ _ccCommitDetectionResult(result, d, ds); });
     }
     return html`<div class="cc-modal-backdrop" style=${S_BACKDROP} role="dialog" aria-modal="true" aria-labelledby="cc-run-detection-title"
       onClick=${close}>
@@ -19014,7 +19070,7 @@ function startApp() {
       _confirmIfClashes(function(){
         var ds = _captureDetectionSettings(s.rules, s.models);
         d({t:A.DETECTING}); d({t:A.TAB,v:'clashes'});
-        detectClashesAsync(s.models, s.rules).then(function(result){ classifyClashes(result); d({t:A.MERGE_CLASHES, v:result, detectionSettings:ds}); });
+        detectClashesAsync(s.models, s.rules).then(function(result){ _ccCommitDetectionResult(result, d, ds); });
       });
     }
     function applyAndRun(preset) {
@@ -19024,7 +19080,7 @@ function startApp() {
         var ds = _captureDetectionSettings(merged, s.models);
         d({t:A.UPD_RULES, u:preset.r});
         d({t:A.DETECTING}); d({t:A.TAB,v:'clashes'});
-        detectClashesAsync(s.models, merged).then(function(result){ classifyClashes(result); d({t:A.MERGE_CLASHES, v:result, detectionSettings:ds}); });
+        detectClashesAsync(s.models, merged).then(function(result){ _ccCommitDetectionResult(result, d, ds); });
       });
     }
 
@@ -19088,7 +19144,7 @@ function startApp() {
                   if(!canRun)return;
                   var merged=Object.assign({},s.rules,sp.rules);
                   d({t:A.UPD_RULES,u:sp.rules});d({t:A.DETECTING});d({t:A.TAB,v:'clashes'});
-                  detectClashesAsync(s.models,merged).then(function(result){classifyClashes(result);d({t:A.MERGE_CLASHES,v:result});});
+                  detectClashesAsync(s.models,merged).then(function(result){_ccCommitDetectionResult(result,d);});
                 }} disabled=${!canRun} title="Load & Run"
                   style=${{...S_BTN,fontSize:'0.63rem',padding:'.15rem .25rem',background:'var(--accent-bg)',color:'var(--accent-subtle)',borderRadius:'0',borderLeft:'1px solid var(--border-subtle)'}}>▶</button>
                 <button onClick=${function(){
@@ -29701,7 +29757,7 @@ function startApp() {
         if (/run/.test(text) && s.models.length && !s.detecting) {
           var merged = Object.assign({}, s.rules, found.rules);
           d({t:A.DETECTING}); d({t:A.TAB,v:'clashes'});
-          detectClashesAsync(s.models, merged).then(function(result){ classifyClashes(result); d({t:A.MERGE_CLASHES, v:result}); });
+          detectClashesAsync(s.models, merged).then(function(result){ _ccCommitDetectionResult(result, d); });
           return 'Running "' + found.name + '"…';
         }
         return 'Loaded "' + found.name + '". Say "run" to start.';
@@ -29721,7 +29777,7 @@ function startApp() {
       if (!s.models.length) return _offerLoadIFC();
       if (s.detecting) return 'Already on it…';
       d({t:A.DETECTING}); d({t:A.TAB,v:'clashes'});
-      detectClashesAsync(s.models,s.rules).then(function(result){ classifyClashes(result); d({t:A.MERGE_CLASHES, v:result}); });
+      detectClashesAsync(s.models,s.rules).then(function(result){ _ccCommitDetectionResult(result, d); });
       var r2 = s.rules;
       return 'Running detection' + (r2.maxGap ? ' (max gap ' + r2.maxGap + 'mm)' : '') + '…';
     }
@@ -30212,12 +30268,33 @@ function startApp() {
         if (s.detecting) return;
         d({t:A.DETECTING}); d({t:A.TAB,v:'clashes'});
         var mergedRules = Object.assign({},s.rules,rules);
-        Promise.all(multiSelf.map(function(pass){
+        function _runSelfPass(pass) {
           var passRules = Object.assign({}, mergedRules, {modelA:pass.id, modelB:pass.id, excludeSelf:false});
           return detectClashesAsync(s.models, passRules);
-        })).then(function(results){
+        }
+        var multiRun;
+        if (_ccConcurrencyV2Enabled()) {
+          // Single-flight mode deliberately serializes this one historical
+          // multi-pass caller. Running the passes concurrently would make the
+          // coordinator suppress all but the first one.
+          multiRun = multiSelf.reduce(function(chain, pass) {
+            return chain.then(function(results) {
+              if (results === null) return null;
+              return _runSelfPass(pass).then(function(result) {
+                if (!_ccDetectionResultUsable(result)) return null;
+                results.push(result);
+                return results;
+              });
+            });
+          }, Promise.resolve([]));
+        } else {
+          multiRun = Promise.all(multiSelf.map(_runSelfPass));
+        }
+        multiRun.then(function(results){
+          if (!results) return;
           var allClashes = [];
           results.forEach(function(r){allClashes=allClashes.concat(r);});
+          if (_ccConcurrencyV2Enabled()) classifyClashes(allClashes);
           d({t:A.MERGE_CLASHES, v:allClashes});
         });
         return;
@@ -30583,7 +30660,7 @@ function startApp() {
       d({t:A.UPD_RULES, u:rules});
       if (s.detecting) return;
       d({t:A.DETECTING}); d({t:A.TAB,v:'clashes'});
-      detectClashesAsync(s.models, Object.assign({},s.rules,rules)).then(function(result){ classifyClashes(result); d({t:A.MERGE_CLASHES, v:result}); });
+      detectClashesAsync(s.models, Object.assign({},s.rules,rules)).then(function(result){ _ccCommitDetectionResult(result, d); });
     }
 
     // ── NL feedback for unmatched commands (training mode only) ─
