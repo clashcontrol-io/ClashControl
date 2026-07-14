@@ -35,7 +35,12 @@ await new Promise((r) => server.listen(8765, '127.0.0.1', r));
 const browser = await chromium.launch();
 const page = await browser.newPage();
 const errors = [];
-page.on('dialog', (d) => { console.error('DIALOG: ' + d.type() + ' | ' + d.message()); d.dismiss(); });
+// The force-batched step below reloads the same fixture geometry under a new
+// filename to reach the BatchedMesh path, which trips the app's real
+// duplicate-model-overlap confirm(). Playwright auto-dismisses unhandled
+// dialogs (Cancel), which silently drops that load — accept it here so the
+// intentional re-load proceeds like a user choosing "Load anyway".
+page.on('dialog', (d) => d.accept());
 page.on('pageerror', (e) => errors.push('pageerror: ' + e.message));
 let workerFellBack = false;
 page.on('console', (m) => {
@@ -184,21 +189,7 @@ try {
     const s = window._ccLatestState;
     const m = s && s.models.find((x) => x.name.indexOf('batched') === 0);
     return m && (m.elements || []).length >= 2;
-  }, null, { timeout: 60_000 }).catch(async () => {
-    const diag = await page.evaluate(() => {
-      const s = window._ccLatestState;
-      return {
-        models: (s.models || []).map((m) => ({ name: m.name, els: (m.elements || []).length, stats: m.stats })),
-        nextLoadScope: window._ccNextLoadScope,
-        lazyWorkersActive: window._lazyWorkersActive,
-        modelLoading: window._ccModelLoading,
-        modelLoadMsg: window._ccModelLoadMsg,
-        safetyDiag: (window._ccSafetyMigrations && window._ccSafetyMigrations.diagnostics()) || null,
-      };
-    });
-    console.error('DIAG: ' + JSON.stringify(diag));
-    fail('force-batched load did not finish');
-  });
+  }, null, { timeout: 60_000 }).catch(() => fail('force-batched load did not finish'));
 
   const batch = await page.evaluate(() => {
     const s = window._ccLatestState;
