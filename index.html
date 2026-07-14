@@ -535,6 +535,15 @@
       .cc-hide-desktop{display:inline-block!important}
       .cc-ai-panel,.cc-ai-collapsed-tab{display:none!important}
     }
+    /* Phone: the "Open a model" welcome card was left-inset (min(8vw,6rem))
+       with a two-column text+illustration grid and a 2.6rem headline — cramped
+       and pushed off-centre on a narrow screen. Go full-width single-column,
+       drop the illustration, and shrink the headline/padding. */
+    @media(max-width:640px){
+      .cc-welcome-card{margin-left:1rem!important;margin-right:1rem!important;width:auto!important;max-width:calc(100vw - 2rem)!important;grid-template-columns:1fr!important;padding:1.6rem 1.3rem 1.4rem!important;gap:0!important;}
+      .cc-welcome-card h1{font-size:2rem!important;}
+      .cc-welcome-illus{display:none!important;}
+    }
     /* ── Mobile floating theme toggle ── */
     .cc-mobile-theme{display:none!important}
     body[data-presenting="1"] .cc-mobile-theme{display:none!important}
@@ -991,6 +1000,19 @@ function startApp() {
       clearInterval(_wdTimer);
       classifyClashes(result);
       d({t:'MERGE_CLASHES', v:result});
+      // Same-discipline 0-clash trap: a federation whose models share a
+      // discipline returns 0 because every cross-model pair is skipped by the
+      // excludeSameDiscipline default. Don't fail silently — say why + how.
+      try {
+        if ((result||[]).length === 0 && runRules.excludeSameDiscipline !== false && s.models && s.models.length >= 2) {
+          var _dc = {};
+          s.models.forEach(function(m){ if(m && m.visible!==false){ var k=m.discipline||'?'; _dc[k]=(_dc[k]||0)+1; } });
+          var _shared = Object.keys(_dc).filter(function(k){ return _dc[k]>=2; });
+          if (_shared.length && window._ccToast) {
+            window._ccToast('0 clashes — same-discipline pairs are skipped by default (' + _shared.map(function(k){return _dc[k]+'× '+k;}).join(', ') + '). Turn off "Exclude same discipline" in Detection rules to check these models against each other.', 'info');
+          }
+        }
+      } catch(e){}
       // Push a completion ping so a connected orchestrator/LLM doesn't sit idle
       // waiting on a poll. The Smart Bridge relays this over its WS. open count is
       // computed here (pre-AI-sweep); the agent should triage the open set now.
@@ -7705,6 +7727,39 @@ function startApp() {
       return null;
     }
 
+    // Cached model bounds for zoom clamping — _elemsBBox() is O(elements),
+    // far too heavy to call on every wheel notch, so recompute only when the
+    // model set (ids × element counts) actually changes.
+    // makeOrbit is a top-level helper (sibling of the App component), so the
+    // component's modelsRef / _elemsBBox are NOT in scope here — reach the
+    // model bounds through the globals the component publishes instead.
+    // getBounds() returns {min:[x,y,z], max:[x,y,z], center, size} (arrays).
+    var _zoomBBoxCache = { sig: null, box: null };
+    function _zoomModelBBox() {
+      var mdls = (window._ccLatestState && window._ccLatestState.models) || [];
+      var sig = mdls.map(function(m){ return m.id + ':' + ((m.elements||[]).length); }).join('|');
+      if (_zoomBBoxCache.sig !== sig) {
+        try { _zoomBBoxCache.box = (window._ccViewport && window._ccViewport.getBounds) ? window._ccViewport.getBounds() : null; }
+        catch(_) { _zoomBBoxCache.box = null; }
+        _zoomBBoxCache.sig = sig;
+      }
+      return _zoomBBoxCache.box;
+    }
+    // Keep the orbit target inside the model bounds + a half-size margin so
+    // zoom-in (which advances the target toward the cursor / drives it forward
+    // through empty gaps) can't march the camera off into the infinite void —
+    // the "20 notches and the screen goes blank" bug. The margin still lets you
+    // step a bit outside the model; it only stops the runaway.
+    function _clampZoomTarget(t) {
+      var bb = _zoomModelBBox();
+      if (!bb || !bb.min || !bb.max) return;
+      var m = Math.max(bb.max[0]-bb.min[0], bb.max[1]-bb.min[1], bb.max[2]-bb.min[2]) * 0.5;
+      if (!(m > 0)) return;
+      t.x = Math.max(bb.min[0]-m, Math.min(bb.max[0]+m, t.x));
+      t.y = Math.max(bb.min[1]-m, Math.min(bb.max[1]+m, t.y));
+      t.z = Math.max(bb.min[2]-m, Math.min(bb.max[2]+m, t.z));
+    }
+
     function sync() {
       var o = _tmpVec.copy(camera.position).sub(target);
       sph.r = o.length()||60;
@@ -7814,6 +7869,7 @@ function startApp() {
           if (_distFwd <= 0) { _distFwd = 0; } // safety: should never happen
           var _advance = _distFwd * Math.min(0.6, (1 - zoomFactor) * 3.5);
           target.addScaledVector(_tmpDir, _advance);
+          _clampZoomTarget(target);
           // Shrink the orbit radius too — keeps it proportional to the current
           // zoom level so orbiting feels right after zooming in, and prevents
           // the advance from becoming asymptotically tiny at close range.
@@ -7835,6 +7891,7 @@ function startApp() {
           if (_distFwdOut <= 0) { _distFwdOut = 0; } // safety: should never happen
           var _retreatAmt = _distFwdOut * Math.min(0.6, (zoomFactor - 1) * 3.5);
           target.addScaledVector(_tmpDir, -_retreatAmt);
+          _clampZoomTarget(target);
           sph.r = Math.min(5000, sph.r * zoomFactor);
           orbit.apply(); invalidate(); e.preventDefault();
           return;
@@ -7849,6 +7906,7 @@ function startApp() {
         var advance = Math.max(0, prevR - sph.r); // how much we wanted to close in by
         orbit.camera.getWorldDirection(_tmpDir);
         target.addScaledVector(_tmpDir, advance);
+        _clampZoomTarget(target); // don't let empty-space drive-forward run to infinity
         sph.r = prevR; // keep camera in place; we moved the target instead
       }
       if(orbit.camera.isOrthographicCamera) {
@@ -7931,6 +7989,7 @@ function startApp() {
   var _highlightRefs = null;
   var _fitToClashes = null;
   var _fitToElement = null;
+  var _shiftPivotToElement = null; // recenter orbit pivot on an element (no camera move)
   var _flyToElements = null;
   var _showClashMarkers = null;
   var _clearClashMarkers = null;
@@ -9144,7 +9203,7 @@ function startApp() {
         }
         return 0x1a6b4a;
       }
-      _highlightById = function(expressId, alsoGhost, modelId) {
+      _highlightById = function(expressId, alsoGhost, modelId, keepPivot) {
         if(!expressId||!S.mg) return;
         _clearHighlightGroups();
         var found = _findMeshByRef(expressId, modelId);
@@ -9160,6 +9219,12 @@ function startApp() {
           // off-scene chunk proxy can't be drawn into the outline buffer, so
           // pass [] for it (the EdgesGeometry overlay above still shows).
           if (window._ccPostOutlineFor) window._ccPostOutlineFor(found.parent ? [found] : []);
+          // Recenter the orbit pivot on the selected element so it becomes the
+          // rotation centre — matching a 3D-canvas click. This is the shared
+          // selection primitive (tree, search, list, public highlight() API),
+          // so selecting any way now behaves the same. `keepPivot` lets a
+          // caller opt out. Camera does not move; the next orbit rotates here.
+          if (keepPivot !== true && _shiftPivotToElement) _shiftPivotToElement(expressId, meshModelId);
         } else if (window._ccPostOutlineFor) {
           window._ccPostOutlineFor([]);
         }
@@ -9629,6 +9694,38 @@ function startApp() {
         var ctr = box.getCenter(new THREE.Vector3());
         var sz = box.getSize(new THREE.Vector3());
         _flyTo([ctr.x,ctr.y,ctr.z], _zoomDist(Math.max(sz.x,sz.y,sz.z)), hint||null);
+      };
+
+      // Shift the orbit pivot (rotation centre) onto a world point, camera
+      // left exactly where it is: recompute sph from the new target so the
+      // next orbit rotates around it. Same math the 3D-canvas pick uses, so
+      // "selected element = centre of rotation" holds however you selected.
+      function _shiftPivotTo(ctr){
+        var _orb = S.orbit;
+        if(!_orb || !S.camera || !ctr) return;
+        var _ov = S.camera.position.clone().sub(ctr);
+        _orb.sph.r = _ov.length() || 60;
+        _orb.sph.phi = Math.acos(Math.max(-1, Math.min(1, _ov.y / _orb.sph.r)));
+        _orb.sph.theta = Math.atan2(_ov.x, _ov.z);
+        _orb.target.copy(ctr);
+      }
+      // Recenter the pivot on an element by expressId (tree / list / search
+      // selection path). Uses the load-time world-space element box.
+      _shiftPivotToElement = function(expressId, modelId){
+        if(expressId==null) return;
+        try {
+          var _mdls = (window._ccLatestState && window._ccLatestState.models) || [];
+          for(var _mi=0; _mi<_mdls.length; _mi++){
+            if(modelId && _mdls[_mi].id !== modelId) continue;
+            var _els = _mdls[_mi].elements || [];
+            for(var _ei=0; _ei<_els.length; _ei++){
+              if(_els[_ei].expressId === expressId && _els[_ei].box && !_els[_ei].box.isEmpty()){
+                _shiftPivotTo(_els[_ei].box.getCenter(new THREE.Vector3()));
+                return;
+              }
+            }
+          }
+        } catch(_e){}
       };
 
       _flyToElements = function(targets, fallbackPt) {
@@ -11769,18 +11866,7 @@ function startApp() {
             var hitCtr = hitBox.getCenter(new THREE.Vector3());
             // Shift orbit pivot to clicked element — camera stays put, rotation
             // centre moves. Fly-to (below) will override sph/target if it runs.
-            try {
-              var _orb = S.orbit;
-              if (_orb && S.camera) {
-                /* sph is a plain {r,phi,theta} (not THREE.Spherical) — recompute
-                   it inline with the same convention apply()/sync() use. */
-                var _ov = S.camera.position.clone().sub(hitCtr);
-                _orb.sph.r = _ov.length() || 60;
-                _orb.sph.phi = Math.acos(Math.max(-1, Math.min(1, _ov.y / _orb.sph.r)));
-                _orb.sph.theta = Math.atan2(_ov.x, _ov.z);
-                _orb.target.copy(hitCtr);
-              }
-            } catch(_e) {}
+            try { _shiftPivotTo(hitCtr); } catch(_e) {}
             var hitPt = [hitCtr.x, hitCtr.y, hitCtr.z];
             var hitNormal = null;
             if(_pickedHit.face && _pickedHit.face.normal) {
@@ -11835,7 +11921,7 @@ function startApp() {
           var faceNormal = _ccHitWorldNormal(hit);
           var pt = hit.point;
           var ctxEid = hit.object.userData.expressId;
-          if (ctxEid && _highlightById) _highlightById(ctxEid, false);
+          if (ctxEid && _highlightById) _highlightById(ctxEid, false, null, true); // keepPivot: right-click opens a menu, don't move rotation centre
           setCtxMenu({
             x: e.clientX - rect.left,
             y: e.clientY - rect.top,
@@ -16545,6 +16631,23 @@ function startApp() {
             var disc='structural', col=DISC[0].c;
             var _lazyPropsTarget = {modelId: null};
             _lazyWorkersActive++;
+            // Release the lazy-props gate exactly once. The worker path
+            // releases it from onProps; the sync fallback (below) releases it
+            // when loadIFC settles. Every loadIFCWorker rejection path (Worker
+            // ctor throw, 20s watchdog, worker 'error') rejects *without*
+            // calling onProps, so without this the counter never returns to 0
+            // and the loading strip / progress modal sticks forever after an
+            // otherwise-successful fallback — most likely on big files that
+            // trip the watchdog.
+            var _gateReleased = false;
+            function _releaseLazyGate() {
+              if (_gateReleased) return;
+              _gateReleased = true;
+              _lazyWorkersActive--;
+              if (_lazyWorkersActive === 0 && _chainEndFired) {
+                _finishLoadingStrip(500);
+              }
+            }
             // Declared IFC unit — read once from the raw bytes; attached to
             // result.stats below so it persists via the geo-cache and the
             // unit pipeline stops guessing for well-formed files.
@@ -16556,15 +16659,14 @@ function startApp() {
               if (!propErr && _lazyPropsTarget.modelId) {
                 _mergeLazyProps(_lazyPropsTarget.modelId, propMap);
               }
-              _lazyWorkersActive--;
-              if (_lazyWorkersActive === 0 && _chainEndFired) {
-                _finishLoadingStrip(500);
-              }
+              _releaseLazyGate();
             }, _loadScope);
             var _workerGen = _ccLoadGeneration; // capture generation assigned by loadIFCWorker
             _loadP = _loadP.catch(function(workerErr) {
               console.warn('[IFC Worker fallback]', workerErr.message || workerErr);
-              return loadIFC(buf, col, _onProg, _workerGen, _loadScope);
+              // Release the gate once the sync fallback settles (not before —
+              // the strip should stay up until geometry is actually placed).
+              return loadIFC(buf, col, _onProg, _workerGen, _loadScope).finally(_releaseLazyGate);
             });
             return _loadP.then(function(result) {
               if (!result) return; // load was cancelled by a newer load
@@ -22446,16 +22548,46 @@ function startApp() {
       }); });
     }, [activeId]);
 
-    if(items.length===0) return html`<div style=${{flex:1,overflowY:'auto'}}>
-      <div style=${{textAlign:'center',color:'var(--text-faint)',fontSize:'0.86rem',padding:'2.5rem 1rem'}}>
-        <div style=${{marginBottom:'.3rem',display:'flex',justifyContent:'center'}}>
-          ${isClash
-            ? html`<svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/></svg>`
-            : html`<svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="M4 15s1-1 4-1 5 2 8 2 4-1 4-1V3s-1 1-4 1-5-2-8-2-4 1-4 1z"/><line x1="4" y1="22" x2="4" y2="15"/></svg>`}
+    if(items.length===0) {
+      // Same-discipline 0-clash trap (see runDetection): when a federation of
+      // same-discipline models returns nothing because cross-model pairs were
+      // all skipped, explain it inline and offer a one-click re-run with the
+      // exclusion off — instead of a blank "No clashes" that reads as "clean".
+      var _emptyNudge = null;
+      if (isClash) {
+        try {
+          var _es = window._ccLatestState || {};
+          var _ranAlready = (_es.runHistory||[]).length > 0;
+          var _exclOn = !_es.rules || _es.rules.excludeSameDiscipline !== false;
+          if (_ranAlready && _exclOn && (_es.models||[]).length >= 2) {
+            var _dcnt = {};
+            (_es.models||[]).forEach(function(m){ if(m && m.visible!==false){ var k=m.discipline||'?'; _dcnt[k]=(_dcnt[k]||0)+1; } });
+            var _sh = Object.keys(_dcnt).filter(function(k){ return _dcnt[k]>=2; });
+            if (_sh.length) {
+              _emptyNudge = html`<div style=${{margin:'0 1rem',padding:'.65rem .75rem',background:'var(--accent-bg)',border:'1px solid var(--accent-subtle)',borderRadius:8,textAlign:'left',fontSize:'0.75rem',color:'var(--text-secondary)',lineHeight:1.5}}>
+                <strong style=${{color:'var(--text-primary)'}}>Same-discipline pairs were skipped.</strong>
+                ${' You have '+_sh.map(function(k){return _dcnt[k]+' '+k;}).join(', ')+' models. By default ClashControl only checks different disciplines against each other, so models of the same discipline are not compared.'}
+                <button onClick=${function(){ if(window._ccDispatch) window._ccDispatch({t:A.UPD_RULES,u:{excludeSameDiscipline:false}}); if(window._ccRunDetection) window._ccRunDetection({excludeSameDiscipline:false}); }}
+                  style=${{display:'block',marginTop:'.55rem',fontSize:'0.72rem',padding:'.35rem .6rem',borderRadius:6,background:'var(--accent)',color:'#fff',border:'none',cursor:'pointer',fontWeight:600}}>
+                  Check same-discipline pairs & re-run
+                </button>
+              </div>`;
+            }
+          }
+        } catch(_e){}
+      }
+      return html`<div style=${{flex:1,overflowY:'auto'}}>
+        <div style=${{textAlign:'center',color:'var(--text-faint)',fontSize:'0.86rem',padding:_emptyNudge?'2rem 1rem 1rem':'2.5rem 1rem'}}>
+          <div style=${{marginBottom:'.3rem',display:'flex',justifyContent:'center'}}>
+            ${isClash
+              ? html`<svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/></svg>`
+              : html`<svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="M4 15s1-1 4-1 5 2 8 2 4-1 4-1V3s-1 1-4 1-5-2-8-2-4 1-4 1z"/><line x1="4" y1="22" x2="4" y2="15"/></svg>`}
+          </div>
+          ${'No '+(isClash?'clashes found yet':'issues yet')}
         </div>
-        ${'No '+(isClash?'clashes found yet':'issues yet')}
-      </div>
-    </div>`;
+        ${_emptyNudge}
+      </div>`;
+    }
     if (groups) {
       function toggleGroup(label) {
         setCollapsed(function(prev) {
@@ -22663,6 +22795,66 @@ function startApp() {
     </div>`;
   }
 
+  // Extracted from IssueRow's active-row template (was a conditional IIFE
+  // calling useState — hook count changed when a row expanded, crashing
+  // React with error #310 on every clash-card click).
+  function ClashToleranceEditor(props) {
+    var it=props.item, d=props.d;
+    var _tolSt=useState(function(){
+      var prefill=_getToleranceForClash(it);
+      return {val:it.userToleranceMm!=null?it.userToleranceMm:(prefill!=null?prefill:''),edited:it.userToleranceMm!=null,promptAction:null};
+    });
+    var tolState=_tolSt[0],setTolState=_tolSt[1];
+    var discA=(it.disciplines||[])[0]||'?',discB=(it.disciplines||[])[1]||'?';
+    var typeA=it.elemAType||'',typeB=it.elemBType||'';
+    var standardVal=_getToleranceForClash(it);
+    var curVal=tolState.val;
+    var changed=curVal!==''&&curVal!=null&&Number(curVal)!==standardVal;
+    var isExpected=!!it.expectedClash;
+    return html`<div style=${{marginTop:'.3rem',paddingTop:'.3rem',borderTop:'1px solid var(--border-subtle)'}}>
+      <div style=${{display:'flex',gap:'.3rem',alignItems:'center',marginBottom:'.2rem'}}>
+        <span style=${{fontSize:'0.63rem',color:'var(--text-muted)',flexShrink:0}}>Acceptable min. clearance (mm)</span>
+        <input type="number" min="0" step="1" placeholder="Not set"
+          value=${curVal!=null&&curVal!==''?curVal:''}
+          onClick=${function(e){e.stopPropagation();}}
+          onInput=${function(e){
+            var v=e.target.value===''?'':Number(e.target.value);
+            setTolState(function(p){return Object.assign({},p,{val:v,edited:true,promptAction:null});});
+            d({t:A.UPD_CLASH,id:it.id,u:{userToleranceMm:v===''?null:v}});
+          }}
+          style=${{fontSize:'0.63rem',padding:'.15rem .3rem',background:'var(--bg-secondary)',border:'1px solid var(--border)',borderRadius:3,color:'var(--text-primary)',width:'5rem'}} />
+        <label style=${{display:'flex',alignItems:'center',gap:'.15rem',fontSize:'0.57rem',color:isExpected?'#f59e0b':'var(--text-faint)',cursor:'pointer',whiteSpace:'nowrap',marginLeft:'.2rem'}}>
+          <input type="checkbox" checked=${isExpected}
+            onClick=${function(e){e.stopPropagation();}}
+            onChange=${function(e){d({t:A.UPD_CLASH,id:it.id,u:{expectedClash:e.target.checked}});}}
+            style=${{accentColor:'#f59e0b'}} />
+          Expected clash
+        </label>
+      </div>
+      ${changed && tolState.promptAction!=='dismissed' && html`<div style=${{fontSize:'0.57rem',color:'var(--accent-subtle)',background:'#0f172a',padding:'.25rem .4rem',borderRadius:4,marginBottom:'.2rem',display:'flex',alignItems:'center',gap:'.3rem',flexWrap:'wrap'}}>
+        <span>${standardVal!=null?'Update':'Add'} standard for ${typeA&&typeB?typeA+' vs '+typeB:discA+' vs '+discB} to ${curVal}mm?</span>
+        <button onClick=${function(e){e.stopPropagation();
+          if(typeA&&typeB){
+            var tRules=_getStandardTypePairRules();var found=false;
+            for(var i=0;i<tRules.length;i++){if((tRules[i].ifc_type_a===typeA&&tRules[i].ifc_type_b===typeB)||(tRules[i].ifc_type_a===typeB&&tRules[i].ifc_type_b===typeA)){tRules[i]=Object.assign({},tRules[i],{clearance_mm:Number(curVal)});found=true;break;}}
+            if(!found)tRules.push({ifc_type_a:typeA,ifc_type_b:typeB,clearance_mm:Number(curVal),hard_always_flagged:true});
+            _setStandardTypePairRules(tRules);
+          } else if(discA!=='?'&&discB!=='?'){
+            var dRules=_getStandardPairRules();var found2=false;
+            for(var j=0;j<dRules.length;j++){if((dRules[j].discipline_a===discA&&dRules[j].discipline_b===discB)||(dRules[j].discipline_a===discB&&dRules[j].discipline_b===discA)){dRules[j]=Object.assign({},dRules[j],{clearance_mm:Number(curVal)});found2=true;break;}}
+            if(!found2)dRules.push({discipline_a:discA,discipline_b:discB,clearance_mm:Number(curVal),hard_always_flagged:true});
+            _setStandardPairRules(dRules);
+          }
+          setTolState(function(p){return Object.assign({},p,{promptAction:'updated'});});
+        }}
+          style=${{fontSize:'0.57rem',padding:'.1rem .3rem',background:'var(--accent-bg)',color:'var(--accent)',border:'1px solid var(--accent-subtle)',borderRadius:3,cursor:'pointer',fontWeight:600}}>Update</button>
+        <button onClick=${function(e){e.stopPropagation();setTolState(function(p){return Object.assign({},p,{promptAction:'dismissed'});});}}
+          style=${{fontSize:'0.57rem',padding:'.1rem .3rem',background:'var(--bg-secondary)',color:'var(--text-faint)',border:'1px solid var(--border)',borderRadius:3,cursor:'pointer'}}>Keep local</button>
+      </div>`}
+      ${tolState.promptAction==='updated' && html`<div style=${{fontSize:'0.57rem',color:'#4ade80',marginBottom:'.2rem'}}>Standard updated.</div>`}
+    </div>`;
+  }
+
   function IssueRow(props) {
     var it=props.item, active=props.active, d=props.d, isClash=props.isClash, pr=props.prefs||{}; pr._models=props.models||[];
     var selectMode=props.selectMode, isSelected=props.isSelected;
@@ -22859,61 +23051,7 @@ function startApp() {
             onInput=${function(e){d({t:isClash?'UPD_CLASH':'UPD_ISSUE',id:it.id,u:{assignee:e.target.value}});}}
             style=${{...S_INPUT,fontSize:'0.63rem',padding:'.15rem .3rem',flex:1}} />
         </div>
-        ${isClash && function(){
-          var _tolSt=useState(function(){
-            var prefill=_getToleranceForClash(it);
-            return {val:it.userToleranceMm!=null?it.userToleranceMm:(prefill!=null?prefill:''),edited:it.userToleranceMm!=null,promptAction:null};
-          });
-          var tolState=_tolSt[0],setTolState=_tolSt[1];
-          var discA=(it.disciplines||[])[0]||'?',discB=(it.disciplines||[])[1]||'?';
-          var typeA=it.elemAType||'',typeB=it.elemBType||'';
-          var standardVal=_getToleranceForClash(it);
-          var curVal=tolState.val;
-          var changed=curVal!==''&&curVal!=null&&Number(curVal)!==standardVal;
-          var isExpected=!!it.expectedClash;
-          return html`<div style=${{marginTop:'.3rem',paddingTop:'.3rem',borderTop:'1px solid var(--border-subtle)'}}>
-            <div style=${{display:'flex',gap:'.3rem',alignItems:'center',marginBottom:'.2rem'}}>
-              <span style=${{fontSize:'0.63rem',color:'var(--text-muted)',flexShrink:0}}>Acceptable min. clearance (mm)</span>
-              <input type="number" min="0" step="1" placeholder="Not set"
-                value=${curVal!=null&&curVal!==''?curVal:''}
-                onClick=${function(e){e.stopPropagation();}}
-                onInput=${function(e){
-                  var v=e.target.value===''?'':Number(e.target.value);
-                  setTolState(function(p){return Object.assign({},p,{val:v,edited:true,promptAction:null});});
-                  d({t:A.UPD_CLASH,id:it.id,u:{userToleranceMm:v===''?null:v}});
-                }}
-                style=${{fontSize:'0.63rem',padding:'.15rem .3rem',background:'var(--bg-secondary)',border:'1px solid var(--border)',borderRadius:3,color:'var(--text-primary)',width:'5rem'}} />
-              <label style=${{display:'flex',alignItems:'center',gap:'.15rem',fontSize:'0.57rem',color:isExpected?'#f59e0b':'var(--text-faint)',cursor:'pointer',whiteSpace:'nowrap',marginLeft:'.2rem'}}>
-                <input type="checkbox" checked=${isExpected}
-                  onClick=${function(e){e.stopPropagation();}}
-                  onChange=${function(e){d({t:A.UPD_CLASH,id:it.id,u:{expectedClash:e.target.checked}});}}
-                  style=${{accentColor:'#f59e0b'}} />
-                Expected clash
-              </label>
-            </div>
-            ${changed && tolState.promptAction!=='dismissed' && html`<div style=${{fontSize:'0.57rem',color:'var(--accent-subtle)',background:'#0f172a',padding:'.25rem .4rem',borderRadius:4,marginBottom:'.2rem',display:'flex',alignItems:'center',gap:'.3rem',flexWrap:'wrap'}}>
-              <span>${standardVal!=null?'Update':'Add'} standard for ${typeA&&typeB?typeA+' vs '+typeB:discA+' vs '+discB} to ${curVal}mm?</span>
-              <button onClick=${function(e){e.stopPropagation();
-                if(typeA&&typeB){
-                  var tRules=_getStandardTypePairRules();var found=false;
-                  for(var i=0;i<tRules.length;i++){if((tRules[i].ifc_type_a===typeA&&tRules[i].ifc_type_b===typeB)||(tRules[i].ifc_type_a===typeB&&tRules[i].ifc_type_b===typeA)){tRules[i]=Object.assign({},tRules[i],{clearance_mm:Number(curVal)});found=true;break;}}
-                  if(!found)tRules.push({ifc_type_a:typeA,ifc_type_b:typeB,clearance_mm:Number(curVal),hard_always_flagged:true});
-                  _setStandardTypePairRules(tRules);
-                } else if(discA!=='?'&&discB!=='?'){
-                  var dRules=_getStandardPairRules();var found2=false;
-                  for(var j=0;j<dRules.length;j++){if((dRules[j].discipline_a===discA&&dRules[j].discipline_b===discB)||(dRules[j].discipline_a===discB&&dRules[j].discipline_b===discA)){dRules[j]=Object.assign({},dRules[j],{clearance_mm:Number(curVal)});found2=true;break;}}
-                  if(!found2)dRules.push({discipline_a:discA,discipline_b:discB,clearance_mm:Number(curVal),hard_always_flagged:true});
-                  _setStandardPairRules(dRules);
-                }
-                setTolState(function(p){return Object.assign({},p,{promptAction:'updated'});});
-              }}
-                style=${{fontSize:'0.57rem',padding:'.1rem .3rem',background:'var(--accent-bg)',color:'var(--accent)',border:'1px solid var(--accent-subtle)',borderRadius:3,cursor:'pointer',fontWeight:600}}>Update</button>
-              <button onClick=${function(e){e.stopPropagation();setTolState(function(p){return Object.assign({},p,{promptAction:'dismissed'});});}}
-                style=${{fontSize:'0.57rem',padding:'.1rem .3rem',background:'var(--bg-secondary)',color:'var(--text-faint)',border:'1px solid var(--border)',borderRadius:3,cursor:'pointer'}}>Keep local</button>
-            </div>`}
-            ${tolState.promptAction==='updated' && html`<div style=${{fontSize:'0.57rem',color:'#4ade80',marginBottom:'.2rem'}}>Standard updated.</div>`}
-          </div>`;
-        }()}
+        ${isClash && html`<${ClashToleranceEditor} item=${it} d=${d} />`}
         ${(isClash ? trainingMode : !!it.clashId) && function(){
           var CTYPES=[{k:'hard',l:'Hard'},{k:'soft',l:'Soft'},{k:'duplicate',l:'Duplicate'},{k:'no_clash',l:'None'}];
           var REASONS=['Design error','Within tolerance','Functional clearance','Needs more tolerance','Already resolved','Modelling error','Missing opening','Shared space allowed','Duplicate geometry','Not relevant','Expected clash'];
@@ -22952,8 +23090,13 @@ function startApp() {
             </div>`;
           }
 
-          return html`<div style=${{marginTop:'.4rem',paddingTop:'.4rem',borderTop:'1px solid var(--border-subtle)',background:'var(--accent-bg)',borderRadius:'var(--radius-sm)',padding:'.4rem'}}>
-            <div style=${{fontSize:'0.63rem',fontWeight:600,color:'var(--accent)',marginBottom:'.3rem',textTransform:'uppercase',letterSpacing:'.04em'}}>AI Training Feedback</div>
+          // Collapsed by default via native <details> — this training UI was
+          // the bulk of the expanded clash card's height ("too much going on").
+          // Native disclosure = zero React state, so no risk of reintroducing a
+          // conditional-hook (this IIFE deliberately calls no hooks).
+          return html`<details style=${{marginTop:'.4rem',borderTop:'1px solid var(--border-subtle)',background:'var(--accent-bg)',borderRadius:'var(--radius-sm)',padding:'.35rem .4rem'}}>
+            <summary onClick=${function(e){e.stopPropagation();}} style=${{fontSize:'0.63rem',fontWeight:600,color:'var(--accent)',textTransform:'uppercase',letterSpacing:'.04em',cursor:'pointer'}}>Train the AI <span style=${{color:'var(--text-faint)',fontWeight:400,textTransform:'none',letterSpacing:0}}>— optional</span></summary>
+            <div style=${{marginTop:'.35rem'}}>
             <div style=${{fontSize:'0.63rem',fontWeight:600,color:'var(--text-muted)',marginBottom:'.15rem'}}>Verdict</div>
             <div style=${{display:'flex',gap:'.25rem',marginBottom:'.3rem',flexWrap:'wrap'}}>
               ${VERDICTS.map(function(v){var sel=fb===v.k;return html`<button key=${v.k}
@@ -22998,7 +23141,8 @@ function startApp() {
               onInput=${function(e){updItem({aiNote:e.target.value});}}
               style=${{width:'100%',fontSize:'0.63rem',padding:'.2rem .3rem',background:'var(--bg-secondary)',
                 border:'1px solid var(--border)',borderRadius:3,color:'var(--text-primary)',boxSizing:'border-box'}} />
-          </div>`;
+            </div>
+          </details>`;
         }()}
         ${!isClash && it.assignee && html`<div style=${{fontSize:'0.63rem',color:'var(--text-secondary)',marginTop:'.2rem'}}>Assigned: ${it.assignee}</div>`}
         ${!isClash && it.dueDate && html`<div style=${{fontSize:'0.63rem',color:'var(--text-secondary)'}}>Due: ${it.dueDate}</div>`}
@@ -32981,7 +33125,7 @@ function startApp() {
       }}></div>`}
 
       <!-- Left-weighted card at ~38% from left, asymmetric, no glass -->
-      <div style=${{
+      <div class="cc-welcome-card" style=${{
         marginLeft:'min(8vw, 6rem)',marginRight:'auto',
         width:600,maxWidth:'92vw',
         background:'var(--surface)',border:'1px solid var(--hairline-strong)',
@@ -33117,7 +33261,7 @@ function startApp() {
         </div>
 
         <!-- Hand-drawn isometric ballast — single 1.5px stroke, no fill -->
-        <svg width="120" height="120" viewBox="0 0 120 120" aria-hidden="true"
+        <svg class="cc-welcome-illus" width="120" height="120" viewBox="0 0 120 120" aria-hidden="true"
           style=${{display:'block',color:'var(--ink-primary)',opacity:.85,flexShrink:0}}>
           <g fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round" stroke-linecap="round">
             <!-- ground -->

@@ -110,6 +110,59 @@ Things to be careful about. Do not remove without a good reason — add a note i
 Update this section at the start and end of each session.
 Mark completed items with ~~strikethrough~~ and date, then let the daily sync archive them.
 
+On branch `claude/task-pending-55wmp1` (2026-07-14) — sandboxed stress-testing of the live app
+(headless Chromium + Playwright, synthetic IFC fixtures up to ~41k products) surfaced and fixed
+three genuine, root-caused, regression-tested bugs:
+
+- **Clash-review crash (React #310), FIXED** — clicking any clash card in the Conflicts panel crashed the
+  whole app to the "Something went wrong" boundary. Root cause: an `${isClash && function(){ …useState… }()}`
+  conditional IIFE inside `IssueRow`'s render — the hook count changed when a row expanded, violating the
+  Rules of Hooks. Extracted into a proper `ClashToleranceEditor` component. This broke the *entire* clash
+  triage workflow. Verified: clearance field + "update standard?" prompt + collapse/re-expand + switching
+  clashes, zero hook errors. `IssueRow` now has only 3 unconditional top-level hooks (whole bug class cleared).
+- **Stuck loading modal on worker fallback, FIXED** — every `loadIFCWorker` rejection path (Worker-ctor throw,
+  20s watchdog, worker `error`) rejects *without* calling `onProps`, so the sync `loadIFC` fallback never
+  released `_lazyWorkersActive` → the "Placing elements 85%" modal stuck forever (Cancel didn't help) even
+  though the model loaded fine. Most likely on big files that trip the watchdog. Fixed with an idempotent
+  `_releaseLazyGate()` called from both the `onProps` success path and the fallback's `.finally`. Verified by
+  forcing `new Worker` to throw → model loads via fallback → modal clears.
+- **Rotation-centre inconsistent across selection paths, FIXED** — a 3D-canvas click recentred the orbit pivot
+  on the clicked element, but selecting the same element from the model tree / search / list / public
+  `highlight()` API did **not** (pivot stayed ~19 m away). Extracted the canvas pick's pivot math into a shared
+  `_shiftPivotTo` / `_shiftPivotToElement`, and moved the shift into `_highlightById` (the shared selection
+  primitive) with a `keepPivot` opt-out for right-click. Now every selection path recentres the pivot (verified
+  0.00 m on all paths; was 19.23 m for tree/API). Matches the user's expectation "selected element = centre of rotation".
+
+Follow-up wave (same branch, 2026-07-14) — the "still open" items above, now built + verified:
+
+- **Federation same-discipline 0-clash trap, FIXED** — two same-discipline models federated returned 0 clashes
+  in 0.2s with no explanation (`excludeSameDiscipline` default skips every cross-model pair). Now a toast on
+  completion names the shared discipline(s), plus a persistent actionable banner in the empty Conflicts panel
+  with a one-click "Check same-discipline pairs & re-run" button (dispatches `UPD_RULES {excludeSameDiscipline:false}`
+  + `_ccRunDetection`). Verified 0 → 612 cross-model clashes.
+- **Wheel-zoom fly-to-void, FIXED** — zoom-to-cursor / empty-space drive-forward advanced the orbit target
+  every notch unbounded, so ~20 notches flew the camera into blank space. Added `_clampZoomTarget` (target
+  kept within model AABB + half-size margin) on all three target-advancing branches. NB: `makeOrbit` is a
+  top-level helper — it cannot see the App component's `modelsRef`/`_elemsBBox` (that threw and *broke* zoom
+  in the first attempt); reach bounds via `window._ccViewport.getBounds()` instead, cached by model signature
+  so it's not O(n)/notch. Verified: dollies in, extreme zoom floors at sph.r 0.5 (not ∞), no pageerror.
+- **Clash card over-dense, FIXED** — the AI-training-feedback block (Verdict + Clash type + 11-chip Reason
+  grid + Resolution + Note) was the bulk of the expanded card. Wrapped in a native `<details>`/`<summary>`
+  ("Train the AI — optional"), collapsed by default. Native disclosure = zero React state, so it CANNOT
+  reintroduce a conditional hook (that render IIFE calls no hooks — keep it that way).
+- **Phone layout, FIXED (3 targeted, low-risk changes)** — (a) `/tour/` + `/best-free-ifc-viewer/` sticky
+  headers had no `@media`; nav wrapped 2–3 rows over the logo (~112px). Added max-width:600px rules that drop
+  the nav under the brand (~80px, no overlap). (b) The main-app "Open a model" welcome card was left-inset
+  (`min(8vw,6rem)`) with a 2-col grid + 2.6rem h1 — off-centre + cramped on phones. Added a max-width:640px
+  rule (scoped to new `.cc-welcome-card`/`.cc-welcome-illus`) → full-width single-column, illustration hidden,
+  smaller headline. Desktop unchanged. NB: on ≤768px the desktop `.cc-ai-panel` is already `display:none` and
+  a purpose-built mobile UI (`.cc-mobile-nav` bottom tabs, `.cc-mobile-theme`) takes over — the viewer-with-model
+  mobile experience is already good; don't rip it out.
+
+All 54 `tests/*.test.js` pass after every change. PR #681 carries all of the above (6 commits). Reverted the
+compare-page "make ClashControl win the 3 verdicts" copy edit — per the owner, those category wins should be
+earned by the product, not spun in marketing copy.
+
 On branch `claude/clashcontrol-competitive-analysis-gra92c` (2026-07-13) — competitive analysis vs
 Solibri/Navisworks/OSS (IfcOpenShell, ThatOpen, xeokit, Speckle, BIMcollab, Revizto, buildingSMART IDS)
 + Wave-0 correctness fixes:
