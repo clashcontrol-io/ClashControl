@@ -1,5 +1,8 @@
 # Changelog
 
+## v5.23.0 (2026-07-14)
+- docs: record occluder-reveal toggle in MEMORY.md
+
 ## v5.22.0 (2026-07-13)
 - docs: record Wave 1.6/1.9 in MEMORY.md, flag excludeSelf default trap
 
