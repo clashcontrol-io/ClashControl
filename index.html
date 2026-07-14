@@ -654,6 +654,7 @@
 
 <!-- Default-off containment and equivalence helpers for high-risk migrations. -->
 <script src="safety-migrations.js"></script>
+<script src="section-clipping.js"></script>
 <script>
 window.addEventListener('error', function(e) {
   console.error('[ClashControl] Uncaught error:', e.error || e.message);
@@ -680,6 +681,46 @@ function startApp() {
     if (!renderer || !window.THREE) return;
     renderer.outputColorSpace = THREE.SRGBColorSpace;
   };
+
+  function _ccApplySectionMaterialPlanes(S, planes, mode) {
+    var api = window._ccSectionClipping;
+    if (!S || !S.scene) return null;
+    if (!api) {
+      // Offline/stale-service-worker fallback: preserve the former inline
+      // implementation if the new local helper was not cached yet.
+      S.scene.traverse(function(obj){
+        if(!obj.isMesh||!obj.material||(obj.userData.expressId==null&&!obj.isInstancedMesh&&!obj.userData._isCCBatch)) return;
+        var active=Array.isArray(obj.material)?obj.material:[obj.material];
+        var apply=function(material,cached){
+          if(!material)return;
+          if(mode==='clear'){
+            if(material.clippingPlanes&&material.clippingPlanes.length){material.clippingPlanes=planes;material.needsUpdate=true;}
+          }else if(mode==='box'){
+            material.clippingPlanes=planes;material.needsUpdate=true;
+          }else if(!cached||planes.length){
+            if(material.clippingPlanes!==planes){material.clippingPlanes=planes;material.needsUpdate=true;}
+          }
+        };
+        active.forEach(function(material){apply(material,false);});
+        var styles=obj.userData._styleMats;
+        if(styles)Object.keys(styles).forEach(function(k){(Array.isArray(styles[k])?styles[k]:[styles[k]]).forEach(function(material){apply(material,true);});});
+      });
+      return {path:'inline-legacy'};
+    }
+    var enabled = !!(window._ccSafetyMigrations &&
+      window._ccSafetyMigrations.isEnabled('batchedSectionsV2'));
+    return api.applyGuarded({
+      enabled: enabled,
+      scene: S.scene,
+      modelRoot: S.mg,
+      planes: planes,
+      mode: mode,
+      record: function(event) {
+        try { window._ccSafetyMigrations.record(Object.assign({migration:'batchedSectionsV2'}, event)); } catch(e) {}
+      }
+    });
+  }
+  window._ccApplySectionMaterialPlanes = _ccApplySectionMaterialPlanes;
   window._ccSetSRGBTexture = function(tex) {
     if (!tex || !window.THREE) return;
     tex.colorSpace = THREE.SRGBColorSpace;
@@ -13247,14 +13288,7 @@ function startApp() {
       // ── Per-material clipping ──  See INTERNALS.md § 21.36
       S.renderer.clippingPlanes = [];
       S.renderer.localClippingEnabled = true;
-      S.scene.traverse(function(obj){
-        if(!obj.isMesh||!obj.material||(obj.userData.expressId==null&&!obj.isInstancedMesh&&!obj.userData._isCCBatch)) return;
-        var mats=Array.isArray(obj.material)?obj.material:[obj.material];
-        mats.forEach(function(m){ if(m.clippingPlanes!==planes){m.clippingPlanes=planes;m.needsUpdate=true;} });
-        // Apply to all cached style materials so render-style swaps don't lose clipping
-        var sm = obj.userData._styleMats;
-        if (sm && planes.length) Object.keys(sm).forEach(function(k){ (Array.isArray(sm[k])?sm[k]:[sm[k]]).forEach(function(m){ if(m&&m.clippingPlanes!==planes){m.clippingPlanes=planes;m.needsUpdate=true;} }); });
-      });
+      _ccApplySectionMaterialPlanes(S, planes, 'section');
       if(!planes.length && !(s.sectionBox&&s.sectionBox.enabled)) S.renderer.localClippingEnabled=false;
       if(!(s.sectionBox&&s.sectionBox.enabled)) window._ccActivePlanes = planes; // expose for click filter
       // Debounced section cut highlight lines
@@ -13448,13 +13482,7 @@ function startApp() {
           // Clear per-material clipping on model meshes (skip if section plane is also
           // active — it will re-apply its own planes on its next effect run).
           if(!s.sectionAxis && !s.sectionCustom) {
-            S.scene.traverse(function(obj){
-              if(!obj.isMesh||!obj.material||(obj.userData.expressId==null&&!obj.isInstancedMesh&&!obj.userData._isCCBatch)) return;
-              var mats=Array.isArray(obj.material)?obj.material:[obj.material];
-              mats.forEach(function(m){ if(m.clippingPlanes&&m.clippingPlanes.length){m.clippingPlanes=[];m.needsUpdate=true;} });
-              var sm=obj.userData._styleMats;
-              if(sm) Object.keys(sm).forEach(function(k){ (Array.isArray(sm[k])?sm[k]:[sm[k]]).forEach(function(m){ if(m&&m.clippingPlanes&&m.clippingPlanes.length){m.clippingPlanes=[];m.needsUpdate=true;} }); });
-            });
+            _ccApplySectionMaterialPlanes(S, [], 'clear');
             S.renderer.clippingPlanes=[];
             S.renderer.localClippingEnabled=false;
           }
@@ -13487,15 +13515,7 @@ function startApp() {
       // section box planes; handles, gizmos, and vis objects render unclipped.
       S.renderer.clippingPlanes=[];
       S.renderer.localClippingEnabled=true;
-      S.scene.traverse(function(obj){
-        if(!obj.isMesh||!obj.material||(obj.userData.expressId==null&&!obj.isInstancedMesh&&!obj.userData._isCCBatch)) return;
-        // Apply to active material
-        var mats=Array.isArray(obj.material)?obj.material:[obj.material];
-        mats.forEach(function(m){ m.clippingPlanes=planes; m.needsUpdate=true; });
-        // Also apply to all cached style materials so a render-style swap doesn't lose clipping
-        var sm = obj.userData._styleMats;
-        if (sm) Object.keys(sm).forEach(function(k){ (Array.isArray(sm[k])?sm[k]:[sm[k]]).forEach(function(m){ if(m){m.clippingPlanes=planes;m.needsUpdate=true;} }); });
-      });
+      _ccApplySectionMaterialPlanes(S, planes, 'box');
       S._sectionBoxActive=true;
       window._ccCurrentSbox=sb; // expose for drag handlers
       cleanupSbox();

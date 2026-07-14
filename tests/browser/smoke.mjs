@@ -52,7 +52,9 @@ function fail(msg) {
 }
 
 try {
-  await page.goto('http://127.0.0.1:8765/', { waitUntil: 'domcontentloaded' });
+  // Candidate migrations remain disabled for users, but CI explicitly opts
+  // into the BatchedMesh section path so it cannot drift unexercised.
+  await page.goto('http://127.0.0.1:8765/?ccSafety=batchedSectionsV2', { waitUntil: 'domcontentloaded' });
 
   // App mounted (CDN deps + main script executed)
   await page.waitForFunction(
@@ -189,12 +191,20 @@ try {
     return new Promise((resolve) => setTimeout(() => {
       const matAfterStyle = b.material.uuid;
       window._ccDispatch({ t: 'UPD_PREFS', u: { renderStyle: 'shaded' } });
-      resolve({
-        found: true, items: eids.length, hiddenAfterHide, shownAfterUnhide,
-        styleSwapsMaterial: matAfterStyle !== matBefore,
-        // symptom: blending — per-instance colors recorded for distinction/restore
-        origColors: (b.userData._origColors || []).filter((c) => c != null).length,
-      });
+      window._ccDispatch({ t: 'SECTION', axis: 'x', pos: 0.5 });
+      setTimeout(() => {
+        const clippingPlanes = (b.material.clippingPlanes || []).length;
+        const sectionDiag = (window._ccSafetyMigrations.diagnostics() || [])
+          .filter((d) => d.migration === 'batchedSectionsV2').at(-1) || null;
+        window._ccDispatch({ t: 'SECTION', axis: null, pos: 0.5 });
+        resolve({
+          found: true, items: eids.length, hiddenAfterHide, shownAfterUnhide,
+          styleSwapsMaterial: matAfterStyle !== matBefore,
+          // symptom: blending — per-instance colors recorded for distinction/restore
+          origColors: (b.userData._origColors || []).filter((c) => c != null).length,
+          clippingPlanes, sectionDiag,
+        });
+      }, 300);
     }, 400));
   });
   if (!batch.found) fail('forced batching produced no BatchedMesh');
@@ -202,7 +212,10 @@ try {
   if (!batch.hiddenAfterHide || !batch.shownAfterUnhide) fail('per-element hide on batch broken (revert symptom)');
   if (!batch.styleSwapsMaterial) fail('render-style switch did not reach the batch material (revert symptom)');
   if (batch.origColors < 2) fail('per-instance colors missing — elements would blend (revert symptom)');
-  console.log('SMOKE OK — BatchedMesh: ' + batch.items + ' items, hide/style/colors all behave per-element');
+  if (batch.clippingPlanes !== 1) fail('section plane did not reach BatchedMesh material');
+  if (!batch.sectionDiag || batch.sectionDiag.outcome !== 'candidate' || batch.sectionDiag.stats.batches < 1)
+    fail('BatchedMesh section candidate did not pass its runtime equivalence gate');
+  console.log('SMOKE OK — BatchedMesh: ' + batch.items + ' items, hide/style/colors/section all behave per-element');
 } finally {
   await browser.close();
   server.close();
