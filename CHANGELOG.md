@@ -1,5 +1,8 @@
 # Changelog
 
+## v5.23.1 (2026-07-14)
+- chore: bump version to 5.23.0
+
 ## v5.23.0 (2026-07-14)
 - docs: record occluder-reveal toggle in MEMORY.md
 
