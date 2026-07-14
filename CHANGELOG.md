@@ -1,5 +1,8 @@
 # Changelog
 
+## v6.0.0 (2026-07-14)
+- fix: accept the duplicate-model overlap dialog in browser smoke test
+
 ## v5.24.1 (2026-07-14)
 - perf: O(n²)→O(n) clash clustering (167s→22s at 47k clashes) + palette label fix (#682)
 
