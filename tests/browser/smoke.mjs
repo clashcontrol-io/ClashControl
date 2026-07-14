@@ -92,6 +92,48 @@ try {
   if (workerFellBack) fail('IFC worker crashed and fell back to the main-thread parser — check the stringified worker source for missing functions');
   console.log('SMOKE OK — model loaded, detection found ' + detected + ' clash(es), state updated; first: ' + sample);
 
+  // ── Hard-refresh/cache restore: the five-hotfix "spikey model" incident
+  // only appeared after reload, never on a fresh parse. Keep the real IDB +
+  // geo-cache path in CI and compare element bounds before/after. The
+  // diagnostic additionally detects different-sized geometries sharing one
+  // restore instancing key (the exact PR #598 root-cause signature).
+  const beforeRefresh = await page.evaluate(() => {
+    const m = window._ccLatestState.models.find((x) => x.name.indexOf('smoke-clash') === 0);
+    return (m.elements || []).map((e) => {
+      const b = e.box;
+      return [e.expressId, b.min.x, b.min.y, b.min.z, b.max.x, b.max.y, b.max.z]
+        .map((v, i) => i === 0 ? String(v) : Number(v).toFixed(6)).join(':');
+    }).sort();
+  });
+  // Let the existing 2s project autosave settle. File bytes are already in
+  // IndexedDB, but this also exercises the real pagehide flush on reload.
+  await page.waitForTimeout(2500);
+  await page.reload({ waitUntil: 'domcontentloaded' });
+  await page.waitForFunction(
+    () => window.ClashControl && typeof window._ccDispatch === 'function',
+    null, { timeout: 60_000 }
+  ).catch(() => fail('app did not remount after hard refresh'));
+  await page.waitForFunction(() => {
+    const s = window._ccLatestState;
+    const m = s && s.models.find((x) => x.name.indexOf('smoke-clash') === 0);
+    return !!(m && m.stats && (m.elements || []).length >= 2);
+  }, null, { timeout: 120_000 }).catch(() => fail('cached model did not restore after hard refresh'));
+  const afterRefresh = await page.evaluate(() => {
+    const m = window._ccLatestState.models.find((x) => x.name.indexOf('smoke-clash') === 0);
+    const bounds = (m.elements || []).map((e) => {
+      const b = e.box;
+      return [e.expressId, b.min.x, b.min.y, b.min.z, b.max.x, b.max.y, b.max.z]
+        .map((v, i) => i === 0 ? String(v) : Number(v).toFixed(6)).join(':');
+    }).sort();
+    const instancing = window._ccDebugInstancing ? window._ccDebugInstancing() : null;
+    return { bounds, collisionCount: instancing ? instancing.collisionCount : null };
+  });
+  if (JSON.stringify(afterRefresh.bounds) !== JSON.stringify(beforeRefresh))
+    fail('element bounds changed across hard-refresh/cache restore');
+  if (afterRefresh.collisionCount !== 0)
+    fail('cache restore produced ' + afterRefresh.collisionCount + ' suspect instancing-key collision(s)');
+  console.log('SMOKE OK — hard refresh restored identical bounds with zero suspect instancing collisions');
+
   // ── Scoped loading: same fixture, storey filter must thread through the
   // worker → only in-scope geometry materialises ───────────────────────────
   await page.evaluate(async () => {

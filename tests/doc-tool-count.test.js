@@ -33,6 +33,7 @@ const FILES_WITH_TOOL_COUNT_CLAIMS = [
   'mcp-server.js',
   'bridge-governance.js',
   'BRIDGE_GOVERNANCE.md',
+  '.github/workflows/release-smart-bridge.yml',
 ];
 
 // One deliberate exception: MCP_BUILD_GUIDE.md's worked-examples section

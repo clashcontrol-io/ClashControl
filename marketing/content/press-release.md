@@ -6,11 +6,11 @@
 
 ## ClashControl v4.14 Adds Walk Mode and Annotated Floor Plans to Free, Browser-Based BIM Clash Detection
 
-*Open-source tool now lets coordinators navigate IFC models in first-person and export annotated DXF floor plans — still with no install, no license, and no cost*
+*Source-available tool now lets coordinators navigate IFC models in first-person and export annotated DXF floor plans — still with no install, subscription, or cost*
 
 ---
 
-ClashControl, the free open-source IFC clash detection tool used by BIM coordinators at architecture and engineering firms who need results without per-seat licensing, today released version 4.14 — its most significant update since launch.
+ClashControl, the free source-available IFC clash detection tool used by BIM coordinators at architecture and engineering firms who need results without per-seat licensing, today released version 4.14 — its most significant update since launch.
 
 The release adds two capabilities that previously required separate commercial tools: first-person walk-mode navigation through loaded IFC models, and a Sheets feature that generates annotated 2D floor plan cuts exportable as DXF files. Both features are included at no cost in the existing single-file web application available at clashcontrol.io.
 
@@ -40,7 +40,7 @@ Soft clash markers have been repositioned to the actual closest point between el
 
 ### Availability
 
-ClashControl v4.14.26 is available now at [clashcontrol.io](https://www.clashcontrol.io) and as a downloadable single HTML file at [github.com/clashcontrol-io/clashcontrol](https://github.com/clashcontrol-io/clashcontrol). No registration, installation, or subscription is required. The application is licensed under MIT and runs in Chrome, Edge, and Firefox, including offline.
+ClashControl v4.14.26 is available now at [clashcontrol.io](https://www.clashcontrol.io) and as a downloadable single HTML file at [github.com/clashcontrol-io/ClashControl](https://github.com/clashcontrol-io/ClashControl). No registration, installation, or subscription is required. The application is licensed under SSPL v1 and runs in Chrome, Edge, and Firefox, including offline.
 
 ClashControl accepts community support through GitHub Sponsors.
 
@@ -48,7 +48,7 @@ ClashControl accepts community support through GitHub Sponsors.
 
 ### About ClashControl
 
-ClashControl is a free, open-source BIM coordination tool for architects, engineers, and BIM coordinators. It loads IFC 2x3/4 models, detects hard and soft geometric clashes using OBB-based collision detection, provides AI-assisted triage with natural language commands, and exports to BCF 2.1 for interoperability with Revit, Navisworks, Solibri, BIMcollab, and other platforms. The entire application ships as a single HTML file.
+ClashControl is a free, source-available BIM coordination tool for architects, engineers, and BIM coordinators. It loads IFC 2x3/4 models, detects hard and soft geometric clashes, provides AI-assisted triage with natural language commands, and exports to BCF 2.1 for interoperability with Revit, Navisworks, Solibri, BIMcollab, and other platforms. The entire application ships as a single HTML file under SSPL v1.
 
 ---
 

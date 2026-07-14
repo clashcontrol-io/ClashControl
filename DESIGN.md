@@ -1,6 +1,6 @@
 # Design System: ClashControl
 
-ClashControl is a free, open-source IFC clash-detection web app that lives
+ClashControl is a free, source-available IFC clash-detection web app that lives
 inside a single `index.html`. This document is the source of truth for its
 visual language. It follows the [Google Stitch
 `design.md`](https://stitch.withgoogle.com/docs/design-md/overview/) template

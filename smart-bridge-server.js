@@ -13,6 +13,8 @@
  *   GET  /health | /status     — health check + browser connection state
  *   GET  /tools                — tool manifest (updated live from browser)
  *   GET  /openapi.json         — OpenAPI 3.0 spec for ChatGPT custom actions
+ *   GET  /update               — discover a newer manual release
+ *   POST /update               — manual-install guidance (no self-replace)
  *   POST /call/{tool}          — execute a single tool
  *   GET  /llm-config           — read stored Ollama/OpenAI config
  *   POST /llm-config           — save Ollama/OpenAI config to disk
@@ -66,6 +68,7 @@ const path = require('path');
 const { WebSocketServer } = require('ws');
 const { checkAutonomy } = require('./bridge-governance');
 const auditLog = require('./bridge-audit');
+const bridgeUpdate = require('./bridge-update');
 
 const VERSION  = require('./bridge-version.json').version;
 const WS_PORT  = parseInt(process.env.CLASHCONTROL_WS_PORT || '19802', 10);
@@ -73,6 +76,30 @@ const REST_PORT = parseInt(process.env.CLASHCONTROL_PORT   || '19803', 10);
 const TOOL_TIMEOUT_MS = parseInt(process.env.CLASHCONTROL_TOOL_TIMEOUT || '30000', 10);
 const LLM_TIMEOUT_MS  = parseInt(process.env.CLASHCONTROL_LLM_TIMEOUT  || '120000', 10);
 const MAX_REQUEST_BYTES = 1024 * 1024; // 1 MB cap on REST bodies — DoS guard.
+let _updateCache = null;
+let _updateCacheAt = 0;
+
+async function getCachedUpdateStatus() {
+  const now = Date.now();
+  if (_updateCache && now - _updateCacheAt < 30 * 60 * 1000) return _updateCache;
+  try {
+    _updateCache = await bridgeUpdate.getUpdateStatus(VERSION);
+    _updateCacheAt = now;
+    return _updateCache;
+  } catch (_) {
+    // Update discovery must never affect the bridge's primary job.
+    _updateCache = {
+      update_available: false,
+      current_version: VERSION,
+      version: null,
+      url: bridgeUpdate.RELEASES_PAGE,
+      automatic: false,
+      check_failed: true
+    };
+    _updateCacheAt = now;
+    return _updateCache;
+  }
+}
 
 // ── Origin / Host allow-list (security) ──────────────────────────────────────
 // Why this exists: the bridge runs on localhost but anything the user's
@@ -662,6 +689,19 @@ const httpServer = http.createServer(async (req, res) => {
 
   if (req.method === 'GET' && (pathname === '/health' || pathname === '/status')) {
     return json(200, statusBody());
+  }
+
+  if (req.method === 'GET' && pathname === '/update') {
+    return json(200, await getCachedUpdateStatus());
+  }
+
+  if (req.method === 'POST' && pathname === '/update') {
+    return json(409, {
+      error: 'Automatic binary replacement is disabled. Download and run the release explicitly.',
+      code: 'manual_update_required',
+      automatic: false,
+      url: bridgeUpdate.RELEASES_PAGE
+    });
   }
 
   if (req.method === 'GET' && pathname === '/tools') {

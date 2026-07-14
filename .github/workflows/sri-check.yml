@@ -1,0 +1,28 @@
+name: CDN SRI Verification
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - index.html
+      - scripts/generate-sri.js
+      - .github/workflows/sri-check.yml
+  workflow_dispatch:
+  schedule:
+    - cron: '31 5 1 * *'
+
+permissions:
+  contents: read
+
+jobs:
+  verify-sri:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Verify committed CDN integrity hashes
+        run: node scripts/generate-sri.js --check

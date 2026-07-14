@@ -39,7 +39,7 @@ BIM Coordinator or BIM Manager at an architecture or MEP engineering firm (5–1
 - Save money without sacrificing capability
 - Impress clients / management by removing a line item from project budgets
 - Be the person who found the cool tool
-- Open-source credibility: can audit and trust the tool
+- Source-available credibility: can audit and trust the tool
 
 **Where they spend time:**
 - LinkedIn (heavy): BIM groups, Architecture/Engineering communities
@@ -74,7 +74,7 @@ Architecture or civil/MEP engineering student at a university, or a professor ru
 ## 3. Key Messages
 
 **Core campaign message:**
-"BIM coordination shouldn't cost $5,000 a seat. ClashControl is free, open-source, and runs entirely in your browser — no install, no license, no compromise."
+"BIM coordination shouldn't cost $5,000 a seat. ClashControl is free, source-available under SSPL, and runs entirely in your browser — no install or subscription."
 
 ### Supporting messages
 
@@ -83,7 +83,7 @@ Architecture or civil/MEP engineering student at a university, or a professor ru
 | 1 | **Zero install, zero cost.** Open a browser tab and detect clashes in minutes. | Install barriers, IT approvals, license costs | Single HTML file — drag onto Chrome and it works |
 | 2 | **Fully BCF-compatible.** Export clashes to BCF 2.1 and bring them straight into Revit, Navisworks, or BIMcollab. | Fear of vendor lock-in; interoperability | BCF 2.1 export confirmed; tested against Revit and BIMcollab workflows |
 | 3 | **AI-assisted triage.** ClashControl auto-classifies severity, generates human-readable titles, and understands natural language commands. | Manual clash review fatigue; hours spent triaging | NL chat, AI title generation, severity classifier — all in the free tier |
-| 4 | **Open source — audit everything.** No black box, no data harvesting without consent, no surprise paywalls. | Trust / privacy concerns; "what does it send?" | MIT-licensed, full source on GitHub, opt-out analytics documented line-by-line |
+| 4 | **Source-available — audit everything.** No black box, no data sharing without explicit consent, no surprise paywalls. | Trust / privacy concerns; "what does it send?" | SSPL v1, full source on GitHub, opt-in sharing documented line-by-line |
 
 ### Message variations by channel
 

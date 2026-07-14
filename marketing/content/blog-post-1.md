@@ -1,20 +1,20 @@
 ---
 title: "Your Clash Detection Software Costs $5,000 a Year. It Doesn't Have To."
 slug: free-ifc-clash-detection-browser
-description: "ClashControl is a free, open-source IFC clash detection tool that runs entirely in your browser. No install, no license, no subscription — load your models and detect clashes in minutes."
+description: "ClashControl is a free, source-available IFC clash detection tool that runs entirely in your browser. No install or subscription — load your models and detect clashes in minutes."
 primary_keyword: free IFC clash detection
 secondary_keywords: [open source clash detection, BIM coordination tool, IFC viewer browser, Navisworks alternative free, BCF export free]
 headline_options:
   - "Your Clash Detection Software Costs $5,000 a Year. It Doesn't Have To." ← recommended
   - "Free IFC Clash Detection That Runs in Your Browser — No Install Required"
-  - "The Free, Open-Source Alternative to Navisworks That Lives in a Browser Tab"
+  - "The Free, Source-Available Alternative to Navisworks That Lives in a Browser Tab"
 word_count: ~1000
 internal_links:
   - /changelog → anchor "v4.14"
   - /addons/data-quality → "Data Quality addon"
 external_links:
   - buildingSMART BCF spec → "BCF 2.1"
-  - GitHub repo → "open-source"
+  - GitHub repo → "source-available under SSPL"
 image_alt: "ClashControl 3D viewer showing MEP duct clashing with structural beam highlighted in red and blue discipline colors"
 ---
 
@@ -30,7 +30,7 @@ This is the daily reality of BIM coordination in 2026. Not a technical problem. 
 
 ## Clash detection that lives in a browser tab
 
-[ClashControl](https://www.clashcontrol.io) is a free, open-source IFC clash detection tool. There is no installer. There is no license key. There is no account to create. You open a browser, drag in your IFC files, and start detecting clashes — on any machine, anywhere, right now.
+[ClashControl](https://www.clashcontrol.io) is a free, source-available IFC clash detection tool licensed under SSPL v1. There is no installer, subscription, or account to create. You open a browser, drag in your IFC files, and start detecting clashes — on any machine, anywhere, right now.
 
 Load multiple IFC models simultaneously. Set up clash rules: architecture versus MEP, structure versus MEP, hard clashes for actual intersections, soft clashes for clearance violations with a distance you define. Hit Run. In 5–30 seconds, depending on model size, you have a full clash list, prioritised and ready to review.
 
@@ -74,7 +74,7 @@ BIM coordination is already a hard job. Wrangling federated models from three di
 
 Licensing fees aren't legitimate friction. They're a tax on doing your job. A two-person architecture studio shouldn't need to budget $15,000 to run three clash checks a month. A freelance coordinator between contracts shouldn't lose tool access when their subscription lapses. A structural engineering student shouldn't need an Autodesk Education license to learn BCF workflows before it expires in May.
 
-ClashControl is MIT-licensed, source on GitHub, no freemium tier, no feature flags behind a paywall. Audit every line. Fork it. Run it locally. It works offline.
+ClashControl is SSPL v1-licensed, with source on GitHub, no freemium tier, and no feature flags behind a paywall. Audit every line and run it locally subject to the license terms. It works offline.
 
 If it saves your team money this year, [consider sponsoring the project](https://github.com/sponsors/clashcontrol-io).
 
@@ -95,22 +95,22 @@ The meeting starts in two hours. You have time.
 
 ---
 
-*[ClashControl](https://www.clashcontrol.io) is free, open-source, and actively maintained. v4.14.26 — released April 13, 2026.*
+*[ClashControl](https://www.clashcontrol.io) is free, source-available under SSPL, and actively maintained. v4.14.26 — released April 13, 2026.*
 
 ---
 
 ## SEO notes
 
 **Keyword placement**
-- Primary keyword "free IFC clash detection" in: H1 (implied via "clash detection" + "free"), intro paragraph ("ClashControl is a free, open-source clash detection tool"), and meta description
-- Secondary keywords placed naturally: "open-source clash detection" (Why it's free section), "BIM coordination" (intro + workflow), "BCF export" (Step 6 + workflow list), "IFC viewer" (Step 2), "Navisworks alternative" (licensing section)
+- Primary keyword "free IFC clash detection" in: H1 (implied via "clash detection" + "free"), intro paragraph ("ClashControl is a free, source-available clash detection tool"), and meta description
+- Secondary keywords placed naturally: "source-available clash detection" (Why it's free section), "BIM coordination" (intro + workflow), "BCF export" (Step 6 + workflow list), "IFC viewer" (Step 2), "Navisworks alternative" (licensing section)
 - "Browser" appears in H1, meta description, intro, and conclusion — reinforces the zero-install differentiator
 
 **Title tag** (60 chars max):
 `Free IFC Clash Detection in Your Browser | ClashControl`
 
 **Meta description** (155 chars):
-`ClashControl is a free, open-source IFC clash detection tool that runs in your browser. No install, no license. Load models, detect clashes, export BCF 2.1.`
+`ClashControl is a free, source-available IFC clash detection tool that runs in your browser under SSPL v1. No install or subscription. Load models, detect clashes, export BCF 2.1.`
 
 **Heading structure**
 - H1: title (primary keyword)

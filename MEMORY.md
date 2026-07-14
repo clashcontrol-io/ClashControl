@@ -187,6 +187,31 @@ All 54 `tests/*.test.js` pass after every change. PR #681 carries all of the abo
 compare-page "make ClashControl win the 3 verdicts" copy edit — per the owner, those category wins should be
 earned by the product, not spun in marketing copy.
 
+On branch `codex/phase0-trust-hardening` (2026-07-14) — narrowly scoped trust and
+release hardening requested after a codebase review. No geometry, IFC-loader,
+renderer, clash-engine, BCF, or Revit-protocol changes are in scope.
+
+- ~~Telemetry/training sharing now requires an explicit choice; analytics uses the
+  same gate on the app and secondary pages, legacy opt-outs stay denied, and old
+  auto-seeded grants are re-prompted.~~ (2026-07-14)
+- ~~`/api/training` now caps request/batch/field/nested JSON sizes, validates known
+  record types, clamps numbers, and repeats path/email minimisation server-side.~~
+  (2026-07-14)
+- ~~Smart Bridge now implements cached `GET /update`, safely degrades if GitHub is
+  unavailable, and links to a manual checksum-published release. Unsigned automatic
+  binary replacement was removed; `POST /update` returns manual guidance.~~ (2026-07-14)
+- ~~SSPL is consistently described as source-available. Loam is documented and kept
+  external; `ingest_detection_feedback` is its narrow adapter over the general
+  Smart Bridge/connective-spine boundary.~~ (2026-07-14)
+- ~~Release/doc drift fixed: real 66-tool count is regression-checked, docs-only
+  pushes no longer bump the app, issue links use the canonical repo, and the full
+  Node suite passes (386/386) plus all standalone JS syntax checks.~~ (2026-07-14)
+
+Follow-up (2026-07-14, this branch) — rebased the above trust-hardening series onto
+main post-#682 and merged the four default-off safety migrations (`concurrencyV2`,
+`geoCacheV8`, `batchedSectionsV2`, `rendererV2`; see `safety-migrations.js`) plus the
+incident-regression test pack. Full suite green after rebase. See PR #683.
+
 On branch `claude/clashcontrol-competitive-analysis-gra92c` (2026-07-13) — competitive analysis vs
 Solibri/Navisworks/OSS (IfcOpenShell, ThatOpen, xeokit, Speckle, BIMcollab, Revizto, buildingSMART IDS)
 + Wave-0 correctness fixes:

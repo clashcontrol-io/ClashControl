@@ -65,14 +65,18 @@
     return false;
   }
 
-  // Trigger auto-update if latestTag is newer than runningVersion.
+  // Surface an update if latestTag is newer than runningVersion.
   // Called from both the GitHub API callback and after bridge connection,
   // whichever resolves last, to cover both orderings.
-  function _maybeAutoUpdate(d, runningVersion, latestTag) {
+  function _maybeOfferUpdate(d, runningVersion, latestTag) {
     if (!runningVersion || !latestTag) return;
     if (_semverGt(latestTag, runningVersion)) {
-      console.log('%c[Smart Bridge] Running v' + runningVersion + ' < latest ' + latestTag + ' — auto-updating', 'color:#fbbf24;font-weight:bold');
-      _applyBridgeUpdate(d);
+      console.log('%c[Smart Bridge] Running v' + runningVersion + ' < latest ' + latestTag + ' — update available', 'color:#fbbf24;font-weight:bold');
+      if (d) d({t:'UPD_SMART_BRIDGE', u:{
+        updateAvailable:true,
+        updateVersion:String(latestTag).replace(/^bridge-v|^v/, ''),
+        updateUrl:'https://github.com/clashcontrol-io/ClashControl/releases/tag/' + latestTag
+      }});
     }
   }
 
@@ -92,7 +96,7 @@
         // Trigger A: GitHub resolved — compare against running bridge version (if already connected).
         if (d) {
           var sb = (window._ccLatestState || {}).smartBridge || {};
-          _maybeAutoUpdate(d, sb.version, newTag);
+          _maybeOfferUpdate(d, sb.version, newTag);
         }
       })
       .catch(function(e) {
@@ -164,8 +168,8 @@
 
   // ── Update check: GET /update ────────────────────────────────────
   // Called once after each successful connection and periodically.
-  // If the bridge reports update_available, automatically triggers the
-  // self-update flow (POST /update + poll until restart).
+  // If the bridge reports update_available, surface its manual release link.
+  // The addon never downloads, replaces, or executes a binary automatically.
   // Silently ignored if the bridge is down or doesn't support the endpoint.
   function _checkForUpdate(d) {
     var fetchOpts = {method:'GET', cache:'no-store'};
@@ -174,53 +178,15 @@
       .then(function(r){ if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
       .then(function(j) {
         if (j && j.update_available) {
-          console.log('%c[Smart Bridge] Update available — auto-updating to', 'color:#fbbf24;font-weight:bold', j.version || 'latest');
-          // Auto-trigger the self-update: POST /update, then poll /status
-          // until the bridge restarts. No user interaction required.
-          _applyBridgeUpdate(d);
+          console.log('%c[Smart Bridge] Update available:', 'color:#fbbf24;font-weight:bold', j.version || 'latest');
+          if (d) d({t:'UPD_SMART_BRIDGE', u:{
+            updateAvailable:true,
+            updateVersion:j.version || null,
+            updateUrl:j.url || 'https://github.com/clashcontrol-io/ClashControl/releases'
+          }});
         }
       })
       .catch(function() { /* /update not present or bridge unreachable — ignore */ });
-  }
-
-  // ── Poll /status until bridge restarts (post-update) ──────────────
-  // Does NOT fire the URL scheme — the bridge restarts itself.
-  function _pollForRestart(d, timeoutMs) {
-    var gen = ++_connectGen;
-    var deadline = Date.now() + (timeoutMs || 30000);
-    function tick() {
-      if (gen !== _connectGen) return;
-      if (Date.now() >= deadline) {
-        if (d) d({t:'UPD_SMART_BRIDGE', u:{updating:false, available:false, failed:true}});
-        return;
-      }
-      _probeStatus(2000)
-        .then(function(j) {
-          if (gen !== _connectGen) return;
-          if (d) d({t:'UPD_SMART_BRIDGE', u:{available:true, updating:false, version:j.version||null}});
-          _connectWs(d);
-        })
-        .catch(function() { setTimeout(tick, 2000); });
-    }
-    setTimeout(tick, 1500); // wait for bridge to start shutting down
-  }
-
-  // ── Trigger self-update: POST /update ──────────────────────────────
-  // Tells the bridge to download the latest release, replace its own
-  // binary, and restart. We then poll until it comes back online.
-  function _applyBridgeUpdate(d) {
-    if (d) d({t:'UPD_SMART_BRIDGE', u:{updating:true, updateAvailable:false}});
-    var fetchOpts = {method:'POST', cache:'no-store'};
-    try { if (AbortSignal.timeout) fetchOpts.signal = AbortSignal.timeout(5000); } catch(e){}
-    return fetch(_restUrl() + '/update', fetchOpts)
-      .then(function() {
-        console.log('%c[Smart Bridge] Self-update triggered, waiting for restart\u2026', 'color:#fbbf24');
-        _pollForRestart(d, 60000); // up to 60s for the update + restart
-      })
-      .catch(function(e) {
-        console.warn('[Smart Bridge] POST /update failed:', e && e.message || e);
-        if (d) d({t:'UPD_SMART_BRIDGE', u:{updating:false, updateAvailable:true}});
-      });
   }
 
   // ── Connect with polling ──────────────────────────────────────────
@@ -277,7 +243,7 @@
             _updateChecked = true;
             _checkForUpdate(d);
             // Trigger B: bridge version now known — compare against GitHub tag (if already resolved).
-            _maybeAutoUpdate(d, j.version, _releaseTag);
+            _maybeOfferUpdate(d, j.version, _releaseTag);
           }
           return j;
         })
@@ -302,7 +268,7 @@
           _updateChecked = true;
           _checkForUpdate(d);
           // Trigger B: bridge version now known — compare against GitHub tag (if already resolved).
-          _maybeAutoUpdate(d, j.version, _releaseTag);
+          _maybeOfferUpdate(d, j.version, _releaseTag);
         }
         return j;
       })

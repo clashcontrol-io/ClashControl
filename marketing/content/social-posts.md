@@ -15,7 +15,7 @@ Somewhere right now, a BIM coordinator is waiting on IT to approve a Navisworks 
 
 We built ClashControl because that's absurd.
 
-It's a free, open-source IFC clash detection tool that runs entirely in your browser. No install. No license. No account. You drag in your IFC files and you're detecting clashes in under two minutes.
+It's a free, source-available IFC clash detection tool that runs entirely in your browser. No install, subscription, or account. You drag in your IFC files and you're detecting clashes in under two minutes.
 
 It does the things that matter:
 — Hard and soft clash detection with configurable clearance
@@ -24,7 +24,7 @@ It does the things that matter:
 — BCF 2.1 export — opens straight in Revit, BIMcollab, Navisworks, Solibri
 — Walk mode. Annotated floor plans. DXF export. Works offline.
 
-All of it. Free. MIT license. Single HTML file. No vendor account required.
+All of it. Free. SSPL v1 license. Single HTML file. No vendor account required.
 
 It's not trying to be everything. It's trying to be available to everyone — the two-person studio, the freelance coordinator, the student who can't justify a $5k seat.
 
@@ -121,7 +121,7 @@ Flag false positives. Move on.
 Step 5: Export BCF 2.1
 Loads in Revit. Opens in BIMcollab.
 Imports into Navisworks. Archives as a project record.
-Free. Open source. clashcontrol.io
+Free. Source-available under SSPL. clashcontrol.io
 
 ---
 
@@ -205,7 +205,7 @@ Or cut a floor plan at any height and export as DXF for the site team.
 7/7
 All of it:
 → Free
-→ MIT licensed
+→ SSPL v1 licensed
 → Runs in your browser
 → Works offline
 → No account, no vendor, no lock-in
@@ -278,13 +278,13 @@ Thank you. clashcontrol.io
 
 ### r/BIM — Show & Tell (Week 3)
 
-**Title:** Built a free, open-source IFC clash detection tool that runs in a browser — here's what v4.14 can do [OC]
+**Title:** Built a free, source-available IFC clash detection tool that runs in a browser — here's what v4.14 can do [OC]
 
 **Body:**
 
 Hey r/BIM — I've been building ClashControl for a while and this community has been on my mind as I add features, so here's a proper show-and-tell.
 
-**What it is:** Free, open-source clash detection. Runs entirely in your browser. Single HTML file — no install, no vendor account, no license.
+**What it is:** Free, source-available clash detection. Runs entirely in your browser. Single HTML file — no install, vendor account, or subscription.
 
 **What it does:**
 
@@ -301,7 +301,7 @@ Hey r/BIM — I've been building ClashControl for a while and this community has
 
 **What it doesn't do (yet):** It won't replace a full issue management platform for a 50-person project team, and for exact mesh-to-mesh intersection on very complex geometry there's an optional local Python engine addon. OBB-based detection handles the vast majority of coordination workflows.
 
-Source: github.com/clashcontrol-io/clashcontrol (MIT license)
+Source: github.com/clashcontrol-io/ClashControl (SSPL v1)
 App: clashcontrol.io
 
 Screenshots in comments. Happy to answer any questions about the architecture or roadmap.
@@ -317,5 +317,5 @@ Load your IFC models, run hard and soft clash detection against architecture or 
 
 Walk mode in v4.14 is genuinely useful for reviewing clearance clashes in mechanical rooms — first-person navigation at eye height so you can actually see whether the gap matters.
 
-It's open source so you can see exactly what it does: clashcontrol.io
+It's source-available, so you can see exactly what it does: clashcontrol.io
 ```

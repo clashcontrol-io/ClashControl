@@ -61,7 +61,7 @@ We built ClashControl because the technical constraint doesn't exist. Hard and s
 
 The question worth asking isn't "can a small firm afford clash detection software?" It's "why does clash detection software cost this much in the first place?"
 
-→ clashcontrol.io — free, open source, no license required
+→ clashcontrol.io — free, source-available under SSPL, no subscription required
 
 #BIM #BIMCoordination #AECTech #Architecture #OpenBIM
 
@@ -135,7 +135,7 @@ What's still missing is the cultural shift. The AEC industry has been trained to
 
 The next five years will see a meaningful shift toward open-source and browser-native BIM tooling. Not because open source is ideologically superior, but because the quality gap is closing and the price gap isn't.
 
-ClashControl is one small piece of that. A free, open-source clash detection tool that runs in a browser. We're not the whole answer. But we're evidence that the technical barriers are lower than the industry thinks.
+ClashControl is one small piece of that. A free, source-available clash detection tool that runs in a browser under SSPL v1. We're not the whole answer. But we're evidence that the technical barriers are lower than the industry thinks.
 
 → clashcontrol.io
 
@@ -186,7 +186,7 @@ There's a free way.
 
 **Slide 5:** Review and assign — fly to each clash — AI-generated titles, discipline-colored highlights — set status, priority, owner
 
-**Slide 6:** Export BCF 2.1 — opens in Revit, loads in BIMcollab, imports into Navisworks — free, open source — clashcontrol.io
+**Slide 6:** Export BCF 2.1 — opens in Revit, loads in BIMcollab, imports into Navisworks — free, source-available — clashcontrol.io
 
 ---
 
@@ -251,7 +251,7 @@ You can't afford $6,600 for a solo Navisworks seat on the off-chance you land a 
 
 This is a gap in the tooling ecosystem that nobody with a commercial interest in the status quo wants to fix.
 
-ClashControl is free. MIT licensed. A single HTML file you can download and keep. It works offline. It doesn't require an account. It won't stop working when a subscription lapses.
+ClashControl is free and SSPL v1-licensed. A single HTML file you can download and keep. It works offline. It doesn't require an account. It won't stop working when a subscription lapses.
 
 If you're a freelance coordinator, it's worth having in your toolkit for exactly this reason.
 
@@ -559,7 +559,7 @@ ClashControl:
 ✓ Walk mode
 ✓ DXF floor plans
 ✓ Works offline
-✓ Open source
+✓ Source-available (SSPL)
 
 $5,000/year licence:
 ✓ The same things
@@ -909,7 +909,7 @@ D. Something else — comment below
 
 What's coming in ClashControl:
 
-We don't publish a fixed roadmap — this is an open-source project and priorities shift based on what users actually need. But here's what's on the table.
+We don't publish a fixed roadmap — this is a source-available project and priorities shift based on what users actually need. But here's what's on the table.
 
 Better multi-model coordination: more granular control over which element types participate in each clash rule.
 
@@ -1021,9 +1021,9 @@ The tradeoff: the file is ~1.2MB and growing. Features that are optional or rare
 
 The technical stack: Preact for the UI, Three.js for 3D, web-ifc WASM for IFC parsing. All loaded from CDN with integrity hashes. Everything else is hand-written.
 
-Is this the right architecture for a large team? Probably not. Is it the right architecture for an open-source tool that anyone should be able to audit, fork, and run locally without a computer science degree? I think so.
+Is this the right architecture for a large team? Probably not. Is it the right architecture for a source-available tool that anyone should be able to audit and run locally without a computer science degree? I think so.
 
-Source: github.com/clashcontrol-io/clashcontrol
+Source: github.com/clashcontrol-io/ClashControl
 
 #BIM #OpenSource #WebDev #AECTech
 
@@ -1035,7 +1035,7 @@ Source: github.com/clashcontrol-io/clashcontrol
 
 **Why I'm building ClashControl in the open — and what I've learned**
 
-When we made the decision to open-source ClashControl, the argument was simple: BIM coordination tooling should be accessible to everyone, and open source is the most durable way to make that true.
+When we made the decision to publish ClashControl's source under SSPL, the argument was simple: BIM coordination tooling should be accessible and auditable.
 
 What I didn't fully anticipate was how building in the open would change the product itself.
 
@@ -1049,11 +1049,11 @@ The people who find ClashControl through GitHub are not the same as the people w
 
 **Free doesn't mean low-trust**
 
-I expected that making the tool free would mean users treated it as disposable. The opposite is true. When a tool is free and open-source, the implicit contract is different — you're trusting us with your model data and your coordination workflow without a vendor relationship to fall back on. Users who make that choice are invested in the outcome.
+I expected that making the tool free would mean users treated it as disposable. The opposite is true. When a tool is free and source-available, the implicit contract is different — you're trusting us with your model data and your coordination workflow without a vendor relationship to fall back on. Users who make that choice are invested in the outcome.
 
 **The sustainability question is real**
 
-Open source doesn't pay salaries. GitHub Sponsors helps. The people who support ClashControl financially are, for the most part, people who have used it on real projects and decided the value was worth contributing to. That's a genuine vote of confidence and I take it seriously.
+Source-available software doesn't pay salaries by itself. GitHub Sponsors helps. The people who support ClashControl financially are, for the most part, people who have used it on real projects and decided the value was worth contributing to. That's a genuine vote of confidence and I take it seriously.
 
 What I've learned building in the open: the work is harder, the feedback is better, and the relationship with users is more honest than anything I've experienced in commercial software development.
 
@@ -1073,7 +1073,7 @@ What I've learned building in the open: the work is harder, the feedback is bett
 [X] GitHub stars gained
 [X] countries where people opened the app
 
-The tool: still free. Still open source. Still runs in a browser tab.
+The tool: still free. Still source-available under SSPL. Still runs in a browser tab.
 
 → clashcontrol.io
 
@@ -1138,4 +1138,3 @@ ClashControl is built on all of this: IFC input, BCF output, IDS validation, bro
 → clashcontrol.io
 
 #BIM #AECTech #FutureOfWork #OpenBIM #BuildingSMART
-

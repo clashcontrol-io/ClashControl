@@ -1,6 +1,6 @@
 # ClashControl
 
-> Free, open-source online IFC viewer and BIM clash detection that runs in the browser. View IFC building models in 3D, detect hard and soft clashes between disciplines, run IDS and data-quality checks, and export to BCF 2.1. A free alternative to Solibri and Navisworks. No install, no license, no subscription.
+> Free, source-available online IFC viewer and BIM clash detection that runs in the browser. View IFC building models in 3D, detect hard and soft clashes between disciplines, run IDS and data-quality checks, and export to BCF 2.1. A free alternative to Solibri and Navisworks. No install or subscription; licensed under SSPL v1.
 
 ClashControl is a single-page web app at https://www.clashcontrol.io/ aimed at AEC / BIM coordinators. It is both an online IFC viewer and a clash-detection / model-checking tool. The full app — viewer, clash engine, issues panel, BCF export, IDS validation, data quality checks — runs entirely client-side. Optional addons (Revit live link, local exact-mesh engine, smart bridge for LLMs) connect to localhost services. It is commonly used as a free alternative to Solibri, Navisworks and BIMcollab for the everyday IFC coordination loop.
 
@@ -36,7 +36,7 @@ ClashControl is the BIM coordination tool that ships **point cloud ↔ IFC manua
 8. Optional: click **Issues at hotspots** to auto-create one BCF-compatible issue per spatial cluster of red points above a configurable size. Each issue gets a 3D snapshot captured automatically (camera positioned looking at the cluster centroid before render), linked via `viewpoint.linkedId`. Turns survey deviation into a coordination backlog instantly.
 9. Optional: click **Report PDF** to open a print-ready deviation report — cover page with model + scan names, summary statistics, alignment + deviation cards, hotspot index table, and one page per hotspot with the captured snapshot, location, priority, status, and description. User prints / saves as PDF.
 
-Public API (stable, MIT): `window._ccAlignStart(targetId)`, `_ccAlignCancel()`, `_ccAlignClear(targetId)`, `_ccAlignStatus()`, `_ccAlignOnChange(cb)`, `_ccAlignRefineICP(targetId, opts)`, `_ccDeviationCompute(targetId, opts)`, `_ccDeviationClear(targetId)`, `_ccDeviationCreateIssues(targetId, opts)`, `_ccDeviationExportReport(targetId)`.
+Public API (stable; ClashControl SSPL v1 license applies): `window._ccAlignStart(targetId)`, `_ccAlignCancel()`, `_ccAlignClear(targetId)`, `_ccAlignStatus()`, `_ccAlignOnChange(cb)`, `_ccAlignRefineICP(targetId, opts)`, `_ccDeviationCompute(targetId, opts)`, `_ccDeviationClear(targetId)`, `_ccDeviationCreateIssues(targetId, opts)`, `_ccDeviationExportReport(targetId)`.
 
 ## OpenAEC Foundation interop
 
@@ -63,7 +63,7 @@ Fields:
 
 Other BCF readers preserve unknown DocumentReference Descriptions, so the data round-trips cleanly without breaking compatibility. The reciprocal contract for sibling tools: on import, look for any DocumentReference whose Description starts with `cc:scanRef=`, JSON-parse the remainder, and apply the transform. CC's importer reconstitutes the reference list onto the issue as `issue.scanReferences = [...]`.
 
-OpenAEC Foundation sibling apps are invited to recognise the same prefix. The extension is MIT and documented here as the canonical reference.
+OpenAEC Foundation sibling apps are invited to recognise the same prefix. The extension is documented here as the canonical reference; ClashControl's SSPL v1 license applies to its implementation.
 
 ## BCF visibility-clash extension (`cc:vis*` labels)
 
@@ -89,7 +89,7 @@ Label keys (each appears in its own `<Labels>` element):
 
 On import, CC reconstructs the clash with `type: 'visibility'`, attaches `sightFrom` / `sightTo` / `elemBlocker` to the issue payload, and the 3D viewer re-renders the sight line (solid green to blocker, dashed red to target) the moment the issue becomes active.
 
-Sibling implementers: this is a minimal, MIT-documented schema. We're happy to coordinate on extensions — sight-cone metadata, multi-sample partial occlusion, regulation-clause references.
+Sibling implementers: this is a minimal, publicly documented schema. We're happy to coordinate on extensions — sight-cone metadata, multi-sample partial occlusion, regulation-clause references.
 
 ## Agentic governance (audit trail)
 
@@ -124,14 +124,14 @@ Every AI-touched decision in ClashControl carries provenance: which model produc
 
 ## Public APIs
 
-ClashControl exposes four extension surfaces: (1) JavaScript globals on `window.ClashControl.*` / `window._cc*` for reading state, dispatching actions, accessing the viewport camera + bounds, running quality and accessibility checks, and loading reference layers (splats, point clouds); (2) an addon system at `addons/*.js` where any IIFE can expose its own globals and register via `_ccRegisterAddon`; (3) a localhost REST API on `127.0.0.1:19803` via the Smart Bridge binary, with auto-generated OpenAPI; (4) an MCP (Model Context Protocol) server exposing 66 tools so Claude Desktop, ChatGPT Connectors, or any function-calling LLM can drive the viewer. All MIT-licensed. Full reference at https://www.clashcontrol.io/developers/.
+ClashControl exposes four extension surfaces: (1) JavaScript globals on `window.ClashControl.*` / `window._cc*` for reading state, dispatching actions, accessing the viewport camera + bounds, running quality and accessibility checks, and loading reference layers (splats, point clouds); (2) an addon system at `addons/*.js` where any IIFE can expose its own globals and register via `_ccRegisterAddon`; (3) a localhost REST API on `127.0.0.1:19803` via the Smart Bridge binary, with auto-generated OpenAPI; (4) an MCP (Model Context Protocol) server exposing 66 tools so Claude Desktop, ChatGPT Connectors, or any function-calling LLM can drive the viewer. ClashControl is licensed under SSPL v1. Full reference at https://www.clashcontrol.io/developers/.
 
 ## Privacy & data security
 
-ClashControl processes IFC, GLB, and BCF files entirely on the user's device via WebAssembly (web-ifc). Files never leave the browser; there is no server-side model upload. Optional features that touch our backend (anonymous usage analytics, shared-project issue metadata sync, AI assistant) are individually opt-out and never send model geometry. The entire source is open under MIT at github.com/clashcontrol-io/ClashControl and the app is a single static HTML file that can be self-hosted on a corporate intranet. Full details at https://www.clashcontrol.io/security/.
+ClashControl processes IFC, GLB, and BCF files entirely on the user's device via WebAssembly (web-ifc). Files never leave the browser; there is no server-side model upload. Usage/training sharing is off until explicitly allowed; shared-project issue metadata sync and the AI assistant are used only when invoked and never send model geometry. The entire source is available under SSPL v1 at github.com/clashcontrol-io/ClashControl and the app is a single static HTML file that can be self-hosted subject to the license terms. Full details at https://www.clashcontrol.io/security/.
 
 ## How it compares
 
 - vs Navisworks: ClashControl is free, browser-based, BCF-first; Navisworks is a paid Autodesk desktop product. ClashControl targets the daily IFC coordination loop, not every Navisworks workflow.
 - vs Solibri: both speak IFC + BCF; ClashControl is free and zero-install, Solibri has deeper rule scripting.
-- vs BIMcollab ZOOM: similar browser-based approach; ClashControl is open-source and runs without an account.
+- vs BIMcollab ZOOM: similar browser-based approach; ClashControl is source-available under SSPL and runs without an account.
