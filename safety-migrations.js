@@ -191,6 +191,50 @@
     });
   }
 
+  function geoCacheKey(fileId, candidate) {
+    return candidate ? 'v8:' + String(fileId) : fileId;
+  }
+
+  function _finiteTuple(value, length) {
+    return Array.isArray(value) && value.length === length && value.every(function(n) {
+      return typeof n === 'number' && isFinite(n);
+    });
+  }
+
+  function _buffer(value) {
+    return typeof ArrayBuffer !== 'undefined' &&
+      (value instanceof ArrayBuffer || (ArrayBuffer.isView && ArrayBuffer.isView(value)));
+  }
+
+  function validateGeoCachePayload(payload) {
+    if (!payload || typeof payload !== 'object') return { valid:false, reason:'not-an-object' };
+    if (payload.v !== 8) return { valid:false, reason:'schema-version' };
+    if (!Array.isArray(payload.meshData) || !Array.isArray(payload.elData)) {
+      return { valid:false, reason:'missing-arrays' };
+    }
+    var elementIds = {};
+    for (var ei = 0; ei < payload.elData.length; ei++) {
+      var element = payload.elData[ei];
+      if (!element || element.eid == null || !_finiteTuple(element.box, 6)) {
+        return { valid:false, reason:'invalid-element-' + ei };
+      }
+      elementIds[String(element.eid)] = true;
+    }
+    for (var mi = 0; mi < payload.meshData.length; mi++) {
+      var mesh = payload.meshData[mi];
+      if (!mesh || mesh.eid == null || !elementIds[String(mesh.eid)]) {
+        return { valid:false, reason:'orphan-mesh-' + mi };
+      }
+      if (!_finiteTuple(mesh.bbox, 6) || !_finiteTuple(mesh.mtx, 16) || !_finiteTuple(mesh.col, 4)) {
+        return { valid:false, reason:'invalid-mesh-metadata-' + mi };
+      }
+      if (!_buffer(mesh.qpos) || !_buffer(mesh.qnrm) || !_buffer(mesh.idx)) {
+        return { valid:false, reason:'invalid-mesh-buffer-' + mi };
+      }
+    }
+    return { valid:true, reason:null };
+  }
+
   function _setFlagsForTest(next) {
     flags = Object.freeze(Object.assign({}, next || {}));
   }
@@ -204,6 +248,8 @@
     compareFingerprints: compareFingerprints,
     guardedAsync: guardedAsync,
     createRunCoordinator: createRunCoordinator,
+    geoCacheKey: geoCacheKey,
+    validateGeoCachePayload: validateGeoCachePayload,
     record: record,
     diagnostics: diagnosticsSnapshot,
     _setFlagsForTest: _setFlagsForTest

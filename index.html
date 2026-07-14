@@ -1969,11 +1969,35 @@ function startApp() {
   // ── Geometry cache (fast project-switch without re-parsing IFC) ─
   // TODO(fragments): If this project moves to a multi-file / bundled architecture,
 
-  function idbSaveGeoCache(fileId, data) {
+  function _ccGeoCacheV8Enabled() {
+    return !!(window._ccSafetyMigrations && window._ccSafetyMigrations.isEnabled('geoCacheV8'));
+  }
+  function _ccGeoCacheKey(fileId, candidate) {
+    if (window._ccSafetyMigrations && window._ccSafetyMigrations.geoCacheKey) {
+      return window._ccSafetyMigrations.geoCacheKey(fileId, candidate);
+    }
+    return candidate ? 'v8:' + String(fileId) : fileId;
+  }
+  function _idbDeleteGeoCacheKey(key) {
     return _openIDB().then(function(db) {
       return new Promise(function(resolve, reject) {
         var tx = db.transaction(IDB_GEOCACHE, 'readwrite');
-        tx.objectStore(IDB_GEOCACHE).put({id:fileId, data:data, savedAt:Date.now()});
+        tx.objectStore(IDB_GEOCACHE).delete(key);
+        tx.oncomplete = function() { resolve(); };
+        tx.onerror = function(e) { reject(e.target.error); };
+      });
+    }).catch(function(e) { console.warn('Failed to delete geo cache:', e); });
+  }
+
+  function idbSaveGeoCache(fileId, data) {
+    var candidate = _ccGeoCacheV8Enabled();
+    var cacheKey = _ccGeoCacheKey(fileId, candidate);
+    return _openIDB().then(function(db) {
+      return new Promise(function(resolve, reject) {
+        var tx = db.transaction(IDB_GEOCACHE, 'readwrite');
+        var record = candidate ? {id:cacheKey, sourceId:fileId, schema:8,
+          data:data, savedAt:Date.now()} : {id:fileId, data:data, savedAt:Date.now()};
+        tx.objectStore(IDB_GEOCACHE).put(record);
         tx.oncomplete = function() { resolve(); };
         tx.onerror = function(e) { reject(e.target.error); };
       });
@@ -1981,21 +2005,40 @@ function startApp() {
   }
 
   function idbGetGeoCache(fileId) {
+    var candidate = _ccGeoCacheV8Enabled();
+    var cacheKey = _ccGeoCacheKey(fileId, candidate);
     return _openIDB().then(function(db) {
       return new Promise(function(resolve, reject) {
         var tx = db.transaction(IDB_GEOCACHE, 'readonly');
-        var req = tx.objectStore(IDB_GEOCACHE).get(fileId);
-        req.onsuccess = function() { resolve(req.result ? req.result.data : null); };
+        var req = tx.objectStore(IDB_GEOCACHE).get(cacheKey);
+        req.onsuccess = function() {
+          var payload = req.result ? req.result.data : null;
+          if (candidate && payload) {
+            var verdict = window._ccSafetyMigrations && window._ccSafetyMigrations.validateGeoCachePayload ?
+              window._ccSafetyMigrations.validateGeoCachePayload(payload) : {valid:false, reason:'validator-unavailable'};
+            if (!verdict.valid) {
+              try { window._ccSafetyMigrations.record({migration:'geoCacheV8', outcome:'cache-rejected',
+                fileId:String(fileId), reason:verdict.reason}); } catch(e) {}
+              _idbDeleteGeoCacheKey(cacheKey);
+              resolve(null);
+              return;
+            }
+          }
+          resolve(payload);
+        };
         req.onerror = function(e) { reject(e.target.error); };
       });
     }).catch(function(e) { console.warn('Failed to read geo cache:', e); return null; });
   }
 
   function idbDeleteGeoCache(fileId) {
+    var keys = _ccGeoCacheV8Enabled() ?
+      [fileId, _ccGeoCacheKey(fileId, true)] : [fileId];
     return _openIDB().then(function(db) {
       return new Promise(function(resolve, reject) {
         var tx = db.transaction(IDB_GEOCACHE, 'readwrite');
-        tx.objectStore(IDB_GEOCACHE).delete(fileId);
+        var store = tx.objectStore(IDB_GEOCACHE);
+        keys.forEach(function(key){ store.delete(key); });
         tx.oncomplete = function() { resolve(); };
         tx.onerror = function(e) { reject(e.target.error); };
       });
@@ -2018,7 +2061,10 @@ function startApp() {
           req2.onsuccess = function() { resolve(req2.result||[]); };
           req2.onerror = function() { resolve([]); };
         }).then(function(cacheKeys) {
-          var orphans = cacheKeys.filter(function(k){ return !validSet[k]; });
+          var orphans = cacheKeys.filter(function(k){
+            var sourceKey = typeof k === 'string' && k.indexOf('v8:') === 0 ? k.slice(3) : k;
+            return !validSet[sourceKey];
+          });
           if (!orphans.length) return;
           var tx3 = db.transaction(IDB_GEOCACHE, 'readwrite');
           var store = tx3.objectStore(IDB_GEOCACHE);
@@ -2146,7 +2192,7 @@ function startApp() {
         props: el.props
       };
     });
-    return {v:7, hasPsets:hasPsets, meshData:meshData, elData:elData, storeys:result.storeys, storeyData:result.storeyData, relatedPairs:result.relatedPairs||{}, stats:result.stats};
+    return {v:_ccGeoCacheV8Enabled()?8:7, hasPsets:hasPsets, meshData:meshData, elData:elData, storeys:result.storeys, storeyData:result.storeyData, relatedPairs:result.relatedPairs||{}, stats:result.stats};
   }
 
 
@@ -2256,6 +2302,24 @@ function startApp() {
       }
     }
     return {meshes:meshes, elements:elements, storeys:cached.storeys, storeyData:cached.storeyData, relatedPairs:cached.relatedPairs||{}, stats:cached.stats};
+  }
+
+  function _ccRestoredGeoMatchesCache(cached, result) {
+    if (!cached || !result || !Array.isArray(cached.elData) || !Array.isArray(result.elements)) return false;
+    if (cached.elData.length !== result.elements.length) return false;
+    var byId = {};
+    result.elements.forEach(function(el){ byId[String(el.expressId)] = el; });
+    for (var i = 0; i < cached.elData.length; i++) {
+      var expected = cached.elData[i], actual = byId[String(expected.eid)];
+      if (!actual || !actual.box || !actual.box.min || !actual.box.max) return false;
+      var box = expected.box || [];
+      var got = [actual.box.min.x,actual.box.min.y,actual.box.min.z,
+        actual.box.max.x,actual.box.max.y,actual.box.max.z];
+      for (var j = 0; j < 6; j++) {
+        if (!isFinite(got[j]) || Math.abs(got[j] - box[j]) > 0.000001) return false;
+      }
+    }
+    return true;
   }
 
   function idbDeleteProjectData(projectId) {
@@ -15233,6 +15297,31 @@ function startApp() {
       window._ccModelLoading = !!v;
       window.dispatchEvent(new CustomEvent('cc-model-loading', {detail:{loading:!!v}}));
     }
+    function _coldParseAndCache(entry) {
+      return loadIFC(entry.buffer, DISC[0].c, function(){})
+        .then(function(result) {
+          if (result) idbSaveGeoCache(entry.id, _geoSerialize(result));
+          return result;
+        });
+    }
+    function _restoreCacheOrColdParse(entry, cached) {
+      // Flag-off path remains exactly the established v7 behaviour.
+      if (!_ccGeoCacheV8Enabled()) {
+        if (cached && cached.v >= 7 && cached.hasPsets) return _geoDeserialize(cached);
+        return _coldParseAndCache(entry);
+      }
+      if (!(cached && cached.v === 8 && cached.hasPsets)) return _coldParseAndCache(entry);
+      try {
+        var restored = _geoDeserialize(cached);
+        if (!_ccRestoredGeoMatchesCache(cached, restored)) throw new Error('restored geometry failed semantic validation');
+        return restored;
+      } catch (error) {
+        try { window._ccSafetyMigrations.record({migration:'geoCacheV8', outcome:'cold-parse-fallback',
+          fileId:String(entry.id), error:String(error && error.message || error)}); } catch(e) {}
+        _idbDeleteGeoCacheKey(_ccGeoCacheKey(entry.id, true));
+        return _coldParseAndCache(entry);
+      }
+    }
     idbGetProjectData(pid).then(function(data){
       if(data) {
         if(data.clashes) data.clashes = data.clashes.map(function(c){ return c._delta ? Object.assign({},c,{_delta:null}) : c; });
@@ -15247,12 +15336,7 @@ function startApp() {
         chain = chain.then(function(){
           _setGlobalLoading(true);
           return idbGetGeoCache(entry.id).then(function(cached) {
-            if(cached && cached.v >= 7 && cached.hasPsets) return _geoDeserialize(cached);
-            return loadIFC(entry.buffer, DISC[0].c, function(){})
-              .then(function(result) {
-                if (result) idbSaveGeoCache(entry.id, _geoSerialize(result));
-                return result;
-              });
+            return _restoreCacheOrColdParse(entry, cached);
           }).then(function(result){
             if (!result) return; // load was cancelled
             var disc = detectDiscipline(result.elements, entry.name);

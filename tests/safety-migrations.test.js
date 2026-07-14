@@ -115,3 +115,37 @@ test('cancelling a coordinated run invalidates its token immediately', () => {
   assert.equal(coordinator.finish(token), false);
   assert.ok(coordinator.begin('replacement'));
 });
+
+test('v8 cache keys are isolated and the legacy key remains byte-for-byte unchanged', () => {
+  assert.equal(safety.geoCacheKey('model-1', true), 'v8:model-1');
+  assert.equal(safety.geoCacheKey('model-1', false), 'model-1');
+});
+
+function validCachePayload() {
+  return {
+    v: 8,
+    meshData: [{
+      eid: 7,
+      bbox: [0, 0, 0, 1, 1, 1],
+      mtx: [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1],
+      col: [0.1, 0.2, 0.3, 1],
+      qpos: new ArrayBuffer(6), qnrm: new ArrayBuffer(2), idx: new ArrayBuffer(2)
+    }],
+    elData: [{ eid: 7, box: [0, 0, 0, 1, 1, 1], props: {} }]
+  };
+}
+
+test('v8 cache validator accepts a complete payload', () => {
+  assert.deepEqual(safety.validateGeoCachePayload(validCachePayload()), { valid:true, reason:null });
+});
+
+test('v8 cache validator rejects old schemas, invalid bounds, buffers and orphan meshes', () => {
+  const old = validCachePayload(); old.v = 7;
+  assert.equal(safety.validateGeoCachePayload(old).valid, false);
+  const badBounds = validCachePayload(); badBounds.elData[0].box[2] = Infinity;
+  assert.equal(safety.validateGeoCachePayload(badBounds).valid, false);
+  const badBuffer = validCachePayload(); badBuffer.meshData[0].qpos = null;
+  assert.equal(safety.validateGeoCachePayload(badBuffer).valid, false);
+  const orphan = validCachePayload(); orphan.meshData[0].eid = 99;
+  assert.equal(safety.validateGeoCachePayload(orphan).valid, false);
+});
