@@ -1,5 +1,8 @@
 # Changelog
 
+## v5.24.1 (2026-07-14)
+- perf: O(n²)→O(n) clash clustering (167s→22s at 47k clashes) + palette label fix (#682)
+
 ## v5.24.0 (2026-07-14)
 - fix: 6 stress-test findings — crash, stuck loader, pivot, federation, zoom, panel + phone UX (#681)
 
