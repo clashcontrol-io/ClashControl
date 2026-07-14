@@ -991,6 +991,19 @@ function startApp() {
       clearInterval(_wdTimer);
       classifyClashes(result);
       d({t:'MERGE_CLASHES', v:result});
+      // Same-discipline 0-clash trap: a federation whose models share a
+      // discipline returns 0 because every cross-model pair is skipped by the
+      // excludeSameDiscipline default. Don't fail silently — say why + how.
+      try {
+        if ((result||[]).length === 0 && runRules.excludeSameDiscipline !== false && s.models && s.models.length >= 2) {
+          var _dc = {};
+          s.models.forEach(function(m){ if(m && m.visible!==false){ var k=m.discipline||'?'; _dc[k]=(_dc[k]||0)+1; } });
+          var _shared = Object.keys(_dc).filter(function(k){ return _dc[k]>=2; });
+          if (_shared.length && window._ccToast) {
+            window._ccToast('0 clashes — same-discipline pairs are skipped by default (' + _shared.map(function(k){return _dc[k]+'× '+k;}).join(', ') + '). Turn off "Exclude same discipline" in Detection rules to check these models against each other.', 'info');
+          }
+        }
+      } catch(e){}
       // Push a completion ping so a connected orchestrator/LLM doesn't sit idle
       // waiting on a poll. The Smart Bridge relays this over its WS. open count is
       // computed here (pre-AI-sweep); the agent should triage the open set now.
@@ -7705,6 +7718,39 @@ function startApp() {
       return null;
     }
 
+    // Cached model bounds for zoom clamping — _elemsBBox() is O(elements),
+    // far too heavy to call on every wheel notch, so recompute only when the
+    // model set (ids × element counts) actually changes.
+    // makeOrbit is a top-level helper (sibling of the App component), so the
+    // component's modelsRef / _elemsBBox are NOT in scope here — reach the
+    // model bounds through the globals the component publishes instead.
+    // getBounds() returns {min:[x,y,z], max:[x,y,z], center, size} (arrays).
+    var _zoomBBoxCache = { sig: null, box: null };
+    function _zoomModelBBox() {
+      var mdls = (window._ccLatestState && window._ccLatestState.models) || [];
+      var sig = mdls.map(function(m){ return m.id + ':' + ((m.elements||[]).length); }).join('|');
+      if (_zoomBBoxCache.sig !== sig) {
+        try { _zoomBBoxCache.box = (window._ccViewport && window._ccViewport.getBounds) ? window._ccViewport.getBounds() : null; }
+        catch(_) { _zoomBBoxCache.box = null; }
+        _zoomBBoxCache.sig = sig;
+      }
+      return _zoomBBoxCache.box;
+    }
+    // Keep the orbit target inside the model bounds + a half-size margin so
+    // zoom-in (which advances the target toward the cursor / drives it forward
+    // through empty gaps) can't march the camera off into the infinite void —
+    // the "20 notches and the screen goes blank" bug. The margin still lets you
+    // step a bit outside the model; it only stops the runaway.
+    function _clampZoomTarget(t) {
+      var bb = _zoomModelBBox();
+      if (!bb || !bb.min || !bb.max) return;
+      var m = Math.max(bb.max[0]-bb.min[0], bb.max[1]-bb.min[1], bb.max[2]-bb.min[2]) * 0.5;
+      if (!(m > 0)) return;
+      t.x = Math.max(bb.min[0]-m, Math.min(bb.max[0]+m, t.x));
+      t.y = Math.max(bb.min[1]-m, Math.min(bb.max[1]+m, t.y));
+      t.z = Math.max(bb.min[2]-m, Math.min(bb.max[2]+m, t.z));
+    }
+
     function sync() {
       var o = _tmpVec.copy(camera.position).sub(target);
       sph.r = o.length()||60;
@@ -7814,6 +7860,7 @@ function startApp() {
           if (_distFwd <= 0) { _distFwd = 0; } // safety: should never happen
           var _advance = _distFwd * Math.min(0.6, (1 - zoomFactor) * 3.5);
           target.addScaledVector(_tmpDir, _advance);
+          _clampZoomTarget(target);
           // Shrink the orbit radius too — keeps it proportional to the current
           // zoom level so orbiting feels right after zooming in, and prevents
           // the advance from becoming asymptotically tiny at close range.
@@ -7835,6 +7882,7 @@ function startApp() {
           if (_distFwdOut <= 0) { _distFwdOut = 0; } // safety: should never happen
           var _retreatAmt = _distFwdOut * Math.min(0.6, (zoomFactor - 1) * 3.5);
           target.addScaledVector(_tmpDir, -_retreatAmt);
+          _clampZoomTarget(target);
           sph.r = Math.min(5000, sph.r * zoomFactor);
           orbit.apply(); invalidate(); e.preventDefault();
           return;
@@ -7849,6 +7897,7 @@ function startApp() {
         var advance = Math.max(0, prevR - sph.r); // how much we wanted to close in by
         orbit.camera.getWorldDirection(_tmpDir);
         target.addScaledVector(_tmpDir, advance);
+        _clampZoomTarget(target); // don't let empty-space drive-forward run to infinity
         sph.r = prevR; // keep camera in place; we moved the target instead
       }
       if(orbit.camera.isOrthographicCamera) {
@@ -22490,16 +22539,46 @@ function startApp() {
       }); });
     }, [activeId]);
 
-    if(items.length===0) return html`<div style=${{flex:1,overflowY:'auto'}}>
-      <div style=${{textAlign:'center',color:'var(--text-faint)',fontSize:'0.86rem',padding:'2.5rem 1rem'}}>
-        <div style=${{marginBottom:'.3rem',display:'flex',justifyContent:'center'}}>
-          ${isClash
-            ? html`<svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/></svg>`
-            : html`<svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="M4 15s1-1 4-1 5 2 8 2 4-1 4-1V3s-1 1-4 1-5-2-8-2-4 1-4 1z"/><line x1="4" y1="22" x2="4" y2="15"/></svg>`}
+    if(items.length===0) {
+      // Same-discipline 0-clash trap (see runDetection): when a federation of
+      // same-discipline models returns nothing because cross-model pairs were
+      // all skipped, explain it inline and offer a one-click re-run with the
+      // exclusion off — instead of a blank "No clashes" that reads as "clean".
+      var _emptyNudge = null;
+      if (isClash) {
+        try {
+          var _es = window._ccLatestState || {};
+          var _ranAlready = (_es.runHistory||[]).length > 0;
+          var _exclOn = !_es.rules || _es.rules.excludeSameDiscipline !== false;
+          if (_ranAlready && _exclOn && (_es.models||[]).length >= 2) {
+            var _dcnt = {};
+            (_es.models||[]).forEach(function(m){ if(m && m.visible!==false){ var k=m.discipline||'?'; _dcnt[k]=(_dcnt[k]||0)+1; } });
+            var _sh = Object.keys(_dcnt).filter(function(k){ return _dcnt[k]>=2; });
+            if (_sh.length) {
+              _emptyNudge = html`<div style=${{margin:'0 1rem',padding:'.65rem .75rem',background:'var(--accent-bg)',border:'1px solid var(--accent-subtle)',borderRadius:8,textAlign:'left',fontSize:'0.75rem',color:'var(--text-secondary)',lineHeight:1.5}}>
+                <strong style=${{color:'var(--text-primary)'}}>Same-discipline pairs were skipped.</strong>
+                ${' You have '+_sh.map(function(k){return _dcnt[k]+' '+k;}).join(', ')+' models. By default ClashControl only checks different disciplines against each other, so models of the same discipline are not compared.'}
+                <button onClick=${function(){ if(window._ccDispatch) window._ccDispatch({t:A.UPD_RULES,u:{excludeSameDiscipline:false}}); if(window._ccRunDetection) window._ccRunDetection({excludeSameDiscipline:false}); }}
+                  style=${{display:'block',marginTop:'.55rem',fontSize:'0.72rem',padding:'.35rem .6rem',borderRadius:6,background:'var(--accent)',color:'#fff',border:'none',cursor:'pointer',fontWeight:600}}>
+                  Check same-discipline pairs & re-run
+                </button>
+              </div>`;
+            }
+          }
+        } catch(_e){}
+      }
+      return html`<div style=${{flex:1,overflowY:'auto'}}>
+        <div style=${{textAlign:'center',color:'var(--text-faint)',fontSize:'0.86rem',padding:_emptyNudge?'2rem 1rem 1rem':'2.5rem 1rem'}}>
+          <div style=${{marginBottom:'.3rem',display:'flex',justifyContent:'center'}}>
+            ${isClash
+              ? html`<svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/></svg>`
+              : html`<svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="M4 15s1-1 4-1 5 2 8 2 4-1 4-1V3s-1 1-4 1-5-2-8-2-4 1-4 1z"/><line x1="4" y1="22" x2="4" y2="15"/></svg>`}
+          </div>
+          ${'No '+(isClash?'clashes found yet':'issues yet')}
         </div>
-        ${'No '+(isClash?'clashes found yet':'issues yet')}
-      </div>
-    </div>`;
+        ${_emptyNudge}
+      </div>`;
+    }
     if (groups) {
       function toggleGroup(label) {
         setCollapsed(function(prev) {
