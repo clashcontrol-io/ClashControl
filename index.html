@@ -714,6 +714,94 @@ function startApp() {
   function guid() { return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g,function(c){var r=Math.random()*16|0;return(c==='x'?r:(r&0x3|0x8)).toString(16)}); }
   function esc(s) { return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
 
+  // Copy an ID/value to the clipboard with a toast confirmation. Same
+  // clipboard-API-with-execCommand-fallback shape as AIChatPanel's copyMsg,
+  // minus the per-message index state — callers here don't have a natural
+  // index to key visual feedback off, so a toast carries it instead.
+  function _ccCopyToClipboard(text, label) {
+    var value = String(text == null ? '' : text);
+    function done() { if (window._ccToast) window._ccToast((label ? label + ' copied' : 'Copied') + ' to clipboard'); }
+    try {
+      if (navigator.clipboard && navigator.clipboard.writeText) { navigator.clipboard.writeText(value).then(done); return; }
+    } catch(e) {}
+    try {
+      var ta = document.createElement('textarea');
+      ta.value = value; ta.style.position = 'fixed'; ta.style.opacity = '0';
+      document.body.appendChild(ta); ta.select();
+      document.execCommand('copy'); document.body.removeChild(ta);
+      done();
+    } catch(e) {}
+  }
+
+  // Element search matcher shared by the Navigator tree/keyboard-nav and (in
+  // future) saved search sets. Previously each call site duplicated its own
+  // 2-3 field check (name/ifcType/expressId only) - GlobalId, ObjectType,
+  // material, description, and every property/quantity VALUE (not key) were
+  // never searchable, so pasting a GlobalId from a BCF issue, or searching
+  // for a property value like a fire rating, found nothing. `q` must already
+  // be lower-cased by the caller (callers only lower-case it once per
+  // keystroke, not once per element).
+  function _elMatchesSearch(el, q) {
+    if (!q) return true;
+    var p = el.props || {};
+    if ((p.name||'').toLowerCase().indexOf(q)!==-1) return true;
+    if ((p.ifcType||'').toLowerCase().indexOf(q)!==-1) return true;
+    if (String(el.expressId).indexOf(q)!==-1) return true;
+    if ((p.globalId||'').toLowerCase().indexOf(q)!==-1) return true;
+    if ((p.objectType||'').toLowerCase().indexOf(q)!==-1) return true;
+    if ((p.material||'').toLowerCase().indexOf(q)!==-1) return true;
+    if ((p.description||'').toLowerCase().indexOf(q)!==-1) return true;
+    if ((p.storey||'').toLowerCase().indexOf(q)!==-1) return true;
+    if (p.psets) {
+      var setNames = Object.keys(p.psets);
+      for (var i=0; i<setNames.length; i++) {
+        var grp = p.psets[setNames[i]] || {};
+        var keys = Object.keys(grp);
+        for (var j=0; j<keys.length; j++) {
+          if (String(grp[keys[j]]).toLowerCase().indexOf(q)!==-1) return true;
+        }
+      }
+    }
+    if (p.quantities) {
+      var qKeys = Object.keys(p.quantities);
+      for (var k=0; k<qKeys.length; k++) {
+        if (String(p.quantities[qKeys[k]]).toLowerCase().indexOf(q)!==-1) return true;
+      }
+    }
+    return false;
+  }
+
+  // Resolves a search set's saved QUERY against the live model tree — the
+  // "dynamic" half of search sets (vs. a Selection Set's frozen refs[]).
+  // Query shape mirrors the IDS engine's applicability/requirement facets
+  // (ifcType regex + pset-scoped property, index.html ~19452-19475) rather
+  // than inventing a new one: {ifcType, storey, material, propertySet,
+  // propertyName, propertyValue}. All present fields AND together; an empty
+  // query matches every element (vacuous truth) — the UI is responsible for
+  // requiring at least one field before a set can be saved.
+  function _resolveSearchSet(query, models) {
+    var q = query || {};
+    var typeRe = null;
+    if (q.ifcType) { try { typeRe = new RegExp(q.ifcType, 'i'); } catch(e) { typeRe = null; } }
+    var out = [];
+    (models || []).forEach(function(m) {
+      if (m.visible === false) return;
+      (m.elements || []).forEach(function(el) {
+        var p = el.props || {};
+        if (typeRe && !typeRe.test(p.ifcType || '')) return;
+        if (q.storey && (p.storey||'').toLowerCase().indexOf(String(q.storey).toLowerCase())<0) return;
+        if (q.material && (p.material||'').toLowerCase().indexOf(String(q.material).toLowerCase())<0) return;
+        if (q.propertySet && q.propertyName) {
+          var pset = (p.psets||{})[q.propertySet];
+          if (!pset || !Object.prototype.hasOwnProperty.call(pset, q.propertyName)) return;
+          if (q.propertyValue && String(pset[q.propertyName]).toLowerCase().indexOf(String(q.propertyValue).toLowerCase())<0) return;
+        }
+        out.push({ expressId: el.expressId, modelId: m.id });
+      });
+    });
+    return out;
+  }
+
   // ── Chat text renderer ──────────────────────────────────────── INTERNALS.md §2
   function renderChatText(text) {
     if (text == null) return '';
@@ -1081,7 +1169,7 @@ function startApp() {
   // Restore section state persisted from previous session
   var _savedSection=(function(){try{return JSON.parse(localStorage.getItem('cc_section')||'null');}catch(e){return null;}})();
   var INIT = {
-    models:[], clashes:[], issues:[], activeId:null, showModal:false, showSettings:false, modalElement:null, tab:null, isRecording:false, selectionSets:[],
+    models:[], clashes:[], issues:[], activeId:null, showModal:false, showSettings:false, modalElement:null, tab:null, isRecording:false, selectionSets:[], searchSets:[], assignmentRules:[],
     rules:{ modelA:'all', modelB:'all', hard:true, maxGap:50, minGap:0, duplicates:false, changeAware:false, excludeSelf:true, excludeTypes:[], excludeTypePairs:[], minOverlapVolM3:1e-5, toleranceByTypePair:{}, useSemanticFilter:true, includeSpaces:false, excludeSameDiscipline:true },
     detectionSettings:null, // Captured at detection run time: {clearance_mm, discipline_filters}
     trainingMode:(function(){try{var v=localStorage.getItem('cc_trainingMode');return v===null?true:v==='1';}catch(e){return true;}}()),
@@ -1379,7 +1467,7 @@ function startApp() {
       case A.UPD_MODEL:   return Object.assign({},s,{models:s.models.map(function(m){return m.id===a.id?Object.assign({},m,a.u):m})});
       case A.TOGGLE_ALL_STOREYS: return Object.assign({},s,{models:s.models.map(function(m){if(m.id!==a.id)return m;return Object.assign({},m,{hiddenStoreys:a.hide?a.storeys.reduce(function(o,st){o[st]=true;return o;},{}):{}}); })});
       case A.SET_CLASHES: /* falls through to MERGE_CLASHES with no prev clashes */
-      case A.MERGE_CLASHES: var _mr=mergeDetectionResults(a.v, a.t===A.MERGE_CLASHES?s.clashes:[]); _gcEvent('clash-detection', _mr.clashes.length+' clashes'); var _st={clashes:_mr.clashes,detecting:false,activeId:null,floors:deriveFloors(_mr.clashes),lastDeltaSummary:_mr.deltaSummary}; var _rhOpen=0; _mr.clashes.forEach(function(c){if(c.status==='open'||c.status==='in_progress')_rhOpen++;}); _st.runHistory=(s.runHistory||[]).concat([{ts:_mr.deltaSummary.ts,total:_mr.clashes.length,open:_rhOpen,newCount:_mr.deltaSummary.newCount,persisting:_mr.deltaSummary.persisting,autoResolved:_mr.deltaSummary.autoResolved}]).slice(-100); if(a.detectionSettings)_st.detectionSettings=a.detectionSettings; if(s.prefs.resetFiltersOnRun!==false)_st.filters=Object.assign({},INIT_FILTERS); /* Default to Grouped only when the user has nothing chosen AND the result is small enough that thousands of sticky-positioned cluster headers won't tax the browser. Never write localStorage here — that's the user-facing CLASH_GROUP_BY dispatch's job. */ if((!Array.isArray(s.clashGroupBy)||s.clashGroupBy.length===0) && _mr.clashes.length>0 && _mr.clashes.length<=2000) { _st.clashGroupBy=['cluster']; }
+      case A.MERGE_CLASHES: var _mr=mergeDetectionResults(a.v, a.t===A.MERGE_CLASHES?s.clashes:[]); _mr.clashes=_ccApplyAssignmentRules(_mr.clashes, s.assignmentRules); _gcEvent('clash-detection', _mr.clashes.length+' clashes'); var _st={clashes:_mr.clashes,detecting:false,activeId:null,floors:deriveFloors(_mr.clashes),lastDeltaSummary:_mr.deltaSummary}; var _rhOpen=0; _mr.clashes.forEach(function(c){if(c.status==='open'||c.status==='in_progress')_rhOpen++;}); _st.runHistory=(s.runHistory||[]).concat([{ts:_mr.deltaSummary.ts,total:_mr.clashes.length,open:_rhOpen,newCount:_mr.deltaSummary.newCount,persisting:_mr.deltaSummary.persisting,autoResolved:_mr.deltaSummary.autoResolved}]).slice(-100); if(a.detectionSettings)_st.detectionSettings=a.detectionSettings; if(s.prefs.resetFiltersOnRun!==false)_st.filters=Object.assign({},INIT_FILTERS); /* Default to Grouped only when the user has nothing chosen AND the result is small enough that thousands of sticky-positioned cluster headers won't tax the browser. Never write localStorage here — that's the user-facing CLASH_GROUP_BY dispatch's job. */ if((!Array.isArray(s.clashGroupBy)||s.clashGroupBy.length===0) && _mr.clashes.length>0 && _mr.clashes.length<=2000) { _st.clashGroupBy=['cluster']; }
         return Object.assign({},s,_st);
       case A.ADD_CLASHES: { /* additive, non-destructive append (does NOT auto-resolve existing clashes like MERGE_CLASHES). Used by the accessibility panel. */
         var _addc=(a.v||[]).filter(Boolean); if(!_addc.length) return s;
@@ -1556,6 +1644,33 @@ function startApp() {
       }
       case 'DEL_SELSET': return Object.assign({},s,{selectionSets:(s.selectionSets||[]).filter(function(x){return x.id!==a.id;})});
       case 'REN_SELSET': return Object.assign({},s,{selectionSets:(s.selectionSets||[]).map(function(x){return x.id===a.id?Object.assign({},x,{name:a.name}):x;})});
+      case 'UPD_SELSET_REFS': return Object.assign({},s,{selectionSets:(s.selectionSets||[]).map(function(x){return x.id===a.id?Object.assign({},x,{refs:a.refs}):x;})});
+      // Search sets — a saved QUERY (ifcType/storey/material/property), not a
+      // frozen ref list. Membership is never stored; _resolveSearchSet(query,
+      // s.models) re-evaluates it live every time it's read, so a search set
+      // stays correct as the model changes (or is re-loaded) instead of
+      // thawing into stale expressIds like a Selection Set's refs would.
+      case 'ADD_SEARCHSET': {
+        var nqset = {id:a.v.id||uid(), name:a.v.name||'Search', query:a.v.query||{}, color:a.v.color||null, createdAt:new Date().toISOString()};
+        return Object.assign({},s,{searchSets:(s.searchSets||[]).concat([nqset])});
+      }
+      case 'DEL_SEARCHSET': return Object.assign({},s,{searchSets:(s.searchSets||[]).filter(function(x){return x.id!==a.id;})});
+      case 'REN_SEARCHSET': return Object.assign({},s,{searchSets:(s.searchSets||[]).map(function(x){return x.id===a.id?Object.assign({},x,{name:a.name}):x;})});
+      case 'UPD_SEARCHSET_QUERY': return Object.assign({},s,{searchSets:(s.searchSets||[]).map(function(x){return x.id===a.id?Object.assign({},x,{query:a.query}):x;})});
+      // Assignment rules — Revizto-style "discipline-pair × storey ->
+      // assignee/priority" templates, applied automatically to newly
+      // detected clashes (see MERGE_CLASHES below). Per-project (reducer
+      // state, round-tripped through saveProject/loadProject and the
+      // IndexedDB auto-persist), unlike StandardsPanel's existing
+      // discipline-pair clearance rules, which are deliberately global
+      // (plain localStorage) — assignment policy is project-specific in a
+      // way clearance conventions usually aren't.
+      case 'ADD_ASSIGN_RULE': {
+        var narule = {id:a.v.id||uid(), discipline1:a.v.discipline1||'any', discipline2:a.v.discipline2||'any', storey:a.v.storey||'any', assignee:a.v.assignee||'', priority:a.v.priority||'', createdAt:new Date().toISOString()};
+        return Object.assign({},s,{assignmentRules:(s.assignmentRules||[]).concat([narule])});
+      }
+      case 'DEL_ASSIGN_RULE': return Object.assign({},s,{assignmentRules:(s.assignmentRules||[]).filter(function(x){return x.id!==a.id;})});
+      case 'UPD_ASSIGN_RULE': return Object.assign({},s,{assignmentRules:(s.assignmentRules||[]).map(function(x){return x.id===a.id?Object.assign({},x,a.u):x;})});
       case A.INSPECTOR_OPEN:{ var io=!!a.v; _ccPersistUI('inspectorOpen',io); return Object.assign({},s,{inspectorOpen:io}); }
       case A.AVATAR_MENU:   return Object.assign({},s,{avatarMenuOpen:!!a.v});
       case A.SMART_VIEWS: return Object.assign({},s,{showSmartViews:!!a.v});
@@ -2345,7 +2460,7 @@ function startApp() {
     IFCRELVOIDSELEMENT:1401173127, IFCRELFILLSVOID:3940055652,
     IFCRELAGGREGATES:160246688, IFCRELCONNECTSELEMENTS:1204542856,
     IFCBUILDING:4031249490, IFCSITE:4097777520,
-    IFCPROJECT:103090709,
+    IFCPROJECT:103090709, IFCZONE:1033361043,
     IFCMAPCONVERSION:1709695098, IFCPROJECTEDCRS:3843373140,
     IFCOPENINGELEMENT:3588315303,
     IFCVIRTUALELEMENT:2769231204, IFCANNOTATION:1674181508, IFCGRID:3009204131
@@ -2466,11 +2581,11 @@ function startApp() {
           var sl = api.GetLine(modelID, sid);
           var name = safeStr(sl.Name) || ('Storey #'+sid);
           storeys[sid] = name;
-          var elev = 0;
-          if (sl.Elevation != null) {
+          var elev = 0, hasElev = sl.Elevation != null;
+          if (hasElev) {
             elev = typeof sl.Elevation === 'object' ? (sl.Elevation.value||0) : sl.Elevation;
           }
-          storeyData.push({name:name, elevation:Number(elev)||0, id:sid});
+          storeyData.push({name:name, elevation:Number(elev)||0, hasElevation:hasElev, id:sid});
         } catch(e) { storeys[sid] = 'Storey #'+sid; }
       }
       var relIds = api.GetLineIDsWithType(modelID, IFC.IFCRELCONTAINEDINSPATIALSTRUCTURE);
@@ -2494,18 +2609,18 @@ function startApp() {
   }
 
   function extractSpatialHierarchy(api, modelID) {
-    var hierarchy = {project:null, sites:[], buildings:[]};
+    var hierarchy = {project:null, sites:[], buildings:[], zones:[]};
     try {
       var projIds = api.GetLineIDsWithType(modelID, IFC.IFCPROJECT);
       if (projIds.size() > 0) {
         var pLine = api.GetLine(modelID, projIds.get(0));
-        hierarchy.project = {id:projIds.get(0), name:safeStr(pLine.Name)||'IfcProject', description:safeStr(pLine.Description)};
+        hierarchy.project = {id:projIds.get(0), name:safeStr(pLine.Name)||'IfcProject', description:safeStr(pLine.Description), _hasName:!!safeStr(pLine.Name)};
       }
       var siteIds = api.GetLineIDsWithType(modelID, IFC.IFCSITE);
       for (var i = 0; i < siteIds.size(); i++) {
         try {
           var sLine = api.GetLine(modelID, siteIds.get(i));
-          var site = {id:siteIds.get(i), name:safeStr(sLine.Name)||'IfcSite', description:safeStr(sLine.Description)};
+          var site = {id:siteIds.get(i), name:safeStr(sLine.Name)||'IfcSite', description:safeStr(sLine.Description), _hasName:!!safeStr(sLine.Name)};
           // Georef — IfcSite RefLatitude/Longitude are compound plane angles:
           // [degrees, minutes, seconds, millionth-seconds]. Convert to decimal.
           function _compoundToDeg(arr) {
@@ -2580,7 +2695,16 @@ function startApp() {
       for (var i = 0; i < bldIds.size(); i++) {
         try {
           var bLine = api.GetLine(modelID, bldIds.get(i));
-          hierarchy.buildings.push({id:bldIds.get(i), name:safeStr(bLine.Name)||'IfcBuilding', description:safeStr(bLine.Description)});
+          hierarchy.buildings.push({id:bldIds.get(i), name:safeStr(bLine.Name)||'IfcBuilding', description:safeStr(bLine.Description), _hasName:!!safeStr(bLine.Name)});
+        } catch(e) {}
+      }
+      // IfcZone — optional grouping of spaces (fire compartments, HVAC zones,
+      // etc.); most models have none. Read for RVB BIM Norm v1.1 2.2.7.7 only.
+      var zoneIds = api.GetLineIDsWithType(modelID, IFC.IFCZONE);
+      for (var i = 0; i < zoneIds.size(); i++) {
+        try {
+          var zLine = api.GetLine(modelID, zoneIds.get(i));
+          hierarchy.zones.push({id:zoneIds.get(i), name:safeStr(zLine.Name)||'IfcZone', objectType:safeStr(zLine.ObjectType), _hasName:!!safeStr(zLine.Name)});
         } catch(e) {}
       }
     } catch(e) { console.warn('Spatial hierarchy extraction failed:', e.message||e); }
@@ -4615,6 +4739,17 @@ function startApp() {
         items.push({el:el, m:m});
       });
     });
+    // "Exclude self-clashes" is only a meaningful distinction when there's a
+    // second model to compare against. When the effective scope (grpA ∪ grpB)
+    // collapses to exactly one model — a single combined IFC file, or a run
+    // explicitly scoped to one model on both sides — "cross-model only"
+    // always yields zero pairs by construction, not a real "no clashes"
+    // result. That made the single most prominent first-run action (one-click
+    // "Run detection" with excludeSelf defaulting true) silently report 0
+    // clashes for anyone whose whole project is one federated file. Effective
+    // -only override: rules.excludeSelf itself is left untouched so it still
+    // applies correctly once a second model is in scope.
+    var _singleModelScope = Object.keys(seenModels).length === 1;
     if (items.length < 2) return [];
 
     var n=items.length, sx=0,sy=0,sz=0,sx2=0,sy2=0,sz2=0;
@@ -4652,7 +4787,9 @@ function startApp() {
           // linked files flattened twice, etc.) so we must let
           var scmVal = rules.selfClashModels;
           var selfAllowed;
-          if (scmVal !== undefined) {
+          if (_singleModelScope) {
+            selfAllowed = true;
+          } else if (scmVal !== undefined) {
             if (scmVal === 'none') { selfAllowed = false; }
             else if (scmVal === 'all') { selfAllowed = true; }
             else {
@@ -4948,6 +5085,24 @@ function startApp() {
   }
   window._ccCancelDetection = cancelDetection;
 
+  // Wave 1.7 funnel — a one-line "how did we get from raw pairs to this clash
+  // count" toast, so the matrix/tolerance filtering that already runs on every
+  // detection is visible without opening the diagnostics profile panel
+  // (s.diagnostics-gated, off by default — most users would never see it).
+  // window._ccDetectProfile is set synchronously at the end of
+  // _detectClashesCore, so reading it right after _browserDetect's own promise
+  // resolves is always the profile for THIS run, not a stale one from a
+  // previous run or the local engine (which doesn't populate this global).
+  function _showFunnelToast() {
+    try {
+      var p = window._ccDetectProfile;
+      if (!p || !window._ccToast || typeof p.candidates !== 'number') return;
+      var msg = p.candidates + ' pair' + (p.candidates===1?'':'s') + ' checked';
+      if (p.matrix_skipped > 0) msg += ' → ' + p.matrix_skipped + ' filtered by discipline matrix';
+      msg += ' → ' + p.clashes_found + ' clash' + (p.clashes_found===1?'':'es') + ' found';
+      window._ccToast(msg);
+    } catch(e) {}
+  }
   function _browserDetect(models, rules, onProgress, gen) {
     return _preExtractGLBGeometry(models).then(function() {
       return new Promise(function(resolve, reject) {
@@ -4962,6 +5117,9 @@ function startApp() {
           resolve([]);
         }
       });
+    }).then(function(result) {
+      if (gen === _ccDetectGeneration) _showFunnelToast();
+      return result;
     });
   }
 
@@ -5133,6 +5291,7 @@ function startApp() {
     var _activeMemoSet = _tpMemoApplied ? new Set(_tpMemoBefore.activeMemo) : null;
     var _nMemoSkipped = 0;
     var _nPairCacheReemit = 0;
+    var _nMatrixSkipped = 0; // Wave 1.7 funnel — see the _ccMatrixSkipsSameDiscipline call in _processCandidate
     // Detection-feedback "protected" pairs (Loam's ingest_detection_feedback): an
     // element-type pair whose suppression turned out to eat REAL clashes
     // (realRate ≥ threshold) must NOT be auto-suppressed by the type-pair memo.
@@ -5294,7 +5453,11 @@ function startApp() {
       }
 
       // Default clash matrix — see _ccMatrixSkipsSameDiscipline for the policy.
-      if (_ccMatrixSkipsSameDiscipline(eA, mA, eB, mB, sameModel, rules)) return;
+      // Every candidate pair reaches exactly this one check (the WASM chunk
+      // warmup pre-filter above re-tests the same call as a cache-population
+      // shortcut, but never bypasses this one), so counting only here gives
+      // an accurate, non-double-counted total for the funnel.
+      if (_ccMatrixSkipsSameDiscipline(eA, mA, eB, mB, sameModel, rules)) { _nMatrixSkipped++; return; }
 
       // ── Type-pair impossibility memo (Phase 2.4) ────────────────
       // Active only when the model fingerprint + rules hash both match
@@ -5680,6 +5843,7 @@ function startApp() {
       soft_tests: _nSoftTests,
       memo_skipped: _nMemoSkipped,
       memo_active_pairs: _activeMemoSet ? _activeMemoSet.size : 0,
+      matrix_skipped: _nMatrixSkipped,
       pair_cache_reemits: _nPairCacheReemit,
       pair_cache_size: _pairResultCache.size,
       bvh_cache_max: _BVH_CACHE_MAX,
@@ -5849,6 +6013,53 @@ function startApp() {
     var p = clash.point||[0,0,0], dp = denied.point||[0,0,0];
     var distMm = Math.sqrt(Math.pow((p[0]-dp[0])*1000,2)+Math.pow((p[1]-dp[1])*1000,2)+Math.pow((p[2]-dp[2])*1000,2));
     return distMm <= 150;
+  }
+
+  // Finds the first assignment rule whose discipline-pair and storey match
+  // a clash. Disciplines are matched as an UNORDERED pair — a clash's
+  // disciplines[0]/[1] carry no meaningful A/B order (see
+  // _ccElementDiscipline), so a rule of (structural, mep) must also match
+  // a clash reporting (mep, structural). 'any' on either side of a rule
+  // matches every discipline, including a same-discipline self-clash
+  // (structural+structural still satisfies discipline1:'structural',
+  // discipline2:'any'). Rules are matched in array order — first match
+  // wins, same "earlier rule takes precedence" convention as
+  // StandardsPanel's discipline-pair clearance rules (isDuplicate there).
+  function _ccMatchAssignmentRule(rules, c) {
+    if (!rules || !rules.length) return null;
+    var ds = c.disciplines || [];
+    var d1 = ds[0] || null, d2 = ds[1] || null;
+    var storey = c.elemAStorey || c.elemBStorey || '';
+    for (var i = 0; i < rules.length; i++) {
+      var r = rules[i];
+      var m1 = r.discipline1 === 'any' || r.discipline1 === d1 || r.discipline1 === d2;
+      var m2 = r.discipline2 === 'any' || r.discipline2 === d1 || r.discipline2 === d2;
+      if (!m1 || !m2) continue;
+      if (r.storey && r.storey !== 'any' && r.storey !== storey) continue;
+      return r;
+    }
+    return null;
+  }
+  // Stamps assignee/priority from the first matching rule onto newly
+  // detected clashes only (c._delta==='new', set by mergeDetectionResults
+  // just before this runs) — never onto persisting clashes, which already
+  // carry forward whatever assignee/priority a person set on a prior run
+  // (mergeDetectionResults' own persisting-clash branch). A clash that
+  // already has an assignee (stamped by an earlier rule this same run,
+  // or somehow set some other way) is left alone — first match wins, not
+  // last. Returns new clash objects only where something actually changed,
+  // so unaffected clashes keep referential identity.
+  function _ccApplyAssignmentRules(clashes, rules) {
+    if (!rules || !rules.length) return clashes;
+    return clashes.map(function(c) {
+      if (c._delta !== 'new' || c.assignee) return c;
+      var r = _ccMatchAssignmentRule(rules, c);
+      if (!r) return c;
+      var upd = {};
+      if (r.assignee) upd.assignee = r.assignee;
+      if (r.priority) upd.priority = r.priority;
+      return Object.keys(upd).length ? Object.assign({}, c, upd) : c;
+    });
   }
 
   function mergeDetectionResults(newClashes, prevClashes) {
@@ -6079,6 +6290,8 @@ function startApp() {
       viewpoints: (s.viewpoints||[]).map(function(v){return Object.assign({},v,{snapshot:undefined})}),
       measurements: s.measurements||[],
       selectionSets: s.selectionSets||[],
+      searchSets: s.searchSets||[],
+      assignmentRules: s.assignmentRules||[],
       changelog: s.changelog||[],
     };
     var blob = new Blob([JSON.stringify(data, null, 2)], {type:'application/json'});
@@ -6110,6 +6323,12 @@ function startApp() {
           (data.viewpoints||[]).forEach(function(v) { d({ t:A.ADD_VIEWPOINT, v:v }); });
           if (data.measurements) data.measurements.forEach(function(m) { d({ t:A.ADD_MEASUREMENT, v:m }); });
           if (data.selectionSets) data.selectionSets.forEach(function(ss){ d({t:'ADD_SELSET', v:ss}); });
+          // Search sets restore the QUERY, not stale refs — membership
+          // re-resolves live once real geometry is re-uploaded (models
+          // restore as {_stub:true, elements:[]} above), so an empty count
+          // right after load is correct, not a bug.
+          if (data.searchSets) data.searchSets.forEach(function(qs){ d({t:'ADD_SEARCHSET', v:qs}); });
+          if (data.assignmentRules) data.assignmentRules.forEach(function(ar){ d({t:'ADD_ASSIGN_RULE', v:ar}); });
           if (data.changelog && data.changelog.length) d({ t:A.MERGE_CHANGELOG, v:data.changelog });
         } catch(err) {
           alert('Load failed: ' + err.message);
@@ -6440,6 +6659,68 @@ function startApp() {
 
   // ── BCF Export (supports v2.1 and v3.0) ────────────────────── INTERNALS.md §11
 
+  // Element-only lookup (mirrors _lookupElProps' lenient modelId convention
+  // without depending on it — that function is extracted standalone in its
+  // own test, so coupling them would mean updating that extraction too for
+  // what's otherwise a small, self-contained helper).
+  function _lookupElBox(models, modelId, expressId) {
+    if (expressId == null) return null;
+    var pool = modelId ? (models||[]).filter(function(m){ return m.id === modelId; }) : (models||[]);
+    for (var i=0; i<pool.length; i++) {
+      var el = ((pool[i].elements)||[]).find(function(e){ return e.expressId === expressId; });
+      if (el && el.box) return el.box;
+    }
+    return null;
+  }
+  function _ccBoxFinite(box) {
+    return !!(box && box.min && box.max &&
+      isFinite(box.min.x) && isFinite(box.min.y) && isFinite(box.min.z) &&
+      isFinite(box.max.x) && isFinite(box.max.y) && isFinite(box.max.z));
+  }
+  // Synthesizes a default camera viewpoint for a BCF issue with no
+  // manually-captured view, so the exported BCF still carries visual
+  // context instead of an empty topic. Frames the issue's known element(s)
+  // using their real world-space bbox already carried on
+  // state.models[i].elements[j].box (the same authoritative per-element
+  // data window._ccElemsBBox unions live, ~7861) — no live Three.js scene
+  // access needed or used, which is what makes this feasible at export
+  // time at all (contrast ClippingPlanes export, still deferred: that
+  // needs live section→world-plane conversion that only exists inside
+  // reducer-driven effects). There's no "current camera angle" to imitate
+  // outside a live scene, so this always uses a fixed isometric-ish
+  // offset rather than trying to guess one. Distance formula duplicated
+  // from the private _zoomDist (~9409, a different closure) — same
+  // reasoning as the Coloring commit's inline color literals: cheap,
+  // avoids a cross-closure dependency for two numbers.
+  function _ccSynthesizeViewpoint(it, models) {
+    var boxA = _lookupElBox(models, it.modelAId, it.elemA);
+    var boxB = _lookupElBox(models, it.modelBId, it.elemB);
+    var box;
+    if (_ccBoxFinite(boxA) && _ccBoxFinite(boxB)) {
+      box = {
+        min: {x:Math.min(boxA.min.x,boxB.min.x), y:Math.min(boxA.min.y,boxB.min.y), z:Math.min(boxA.min.z,boxB.min.z)},
+        max: {x:Math.max(boxA.max.x,boxB.max.x), y:Math.max(boxA.max.y,boxB.max.y), z:Math.max(boxA.max.z,boxB.max.z)}
+      };
+    } else if (_ccBoxFinite(boxA)) { box = boxA; }
+    else if (_ccBoxFinite(boxB)) { box = boxB; }
+    else {
+      var boxSingle = _lookupElBox(models, it.modelId || it.modelAId, it.elementId);
+      box = _ccBoxFinite(boxSingle) ? boxSingle : null;
+    }
+    if (!box) return null;
+    var cx = (box.min.x+box.max.x)/2, cy = (box.min.y+box.max.y)/2, cz = (box.min.z+box.max.z)/2;
+    var maxDim = Math.max(box.max.x-box.min.x, box.max.y-box.min.y, box.max.z-box.min.z, 0.3);
+    var scale = 1.8 - (Math.min(maxDim, 20) / 20) * 0.6;
+    var dist = Math.max(maxDim * Math.max(1.2, Math.min(1.8, scale)), 1.2);
+    var off = 1 / Math.sqrt(3);
+    return { camera: {
+      px: cx+dist*off, py: cy+dist*off, pz: cz+dist*off,
+      dx: -off, dy: -off, dz: -off,
+      ux: 0, uy: 1, uz: 0,
+      fov: 55
+    } };
+  }
+
   function exportBCF(items, version, viewpoints, state) {
     if (!items.length) return;
     _gcEvent('bcf-export', 'BCF '+version+' ('+items.length+' items)');
@@ -6502,7 +6783,32 @@ function startApp() {
       if (viewpoints) {
         vp = viewpoints.find(function(v){ return v.linkedId === it.id; });
       }
+      // No manually-captured view for this issue — synthesize a default
+      // camera framing its known element(s) rather than shipping a topic
+      // with no visual context at all. snapshot stays null (there is no
+      // real screenshot); everything downstream (Components/Visibility/
+      // Coloring/camera XML) already only depends on vp existing, so a
+      // synthesized vp needs no special-casing past this point.
+      if (!vp) {
+        var _synth = _ccSynthesizeViewpoint(it, state && state.models);
+        if (_synth) vp = { camera: _synth.camera, snapshot: null };
+      }
       var vpGuid = vp ? (v3 ? guid().toLowerCase() : guid()) : null;
+
+      // <Components><Selection> — the participating element(s), so the
+      // topic actually has something selectable when opened in Solibri/
+      // BIMcollab/Navisworks. CC's own BCF *importer* already parses
+      // <Component IfcGuid=...> out of the viewpoint file (see the import
+      // side above); the exporter never wrote it, so a CC-exported BCF had
+      // no selectable elements anywhere, in any tool including CC itself.
+      // Clash-promoted issues carry globalIds (from _issueIdentityFromClash)
+      // and/or globalIdA/B directly; check both defensively so this works
+      // for both a raw clash object and a promoted issue.
+      var _compGuids = [];
+      if (Array.isArray(it.globalIds)) it.globalIds.forEach(function(g){ if (g && _compGuids.indexOf(g)<0) _compGuids.push(g); });
+      if (it.globalIdA && _compGuids.indexOf(it.globalIdA)<0) _compGuids.push(it.globalIdA);
+      if (it.globalIdB && _compGuids.indexOf(it.globalIdB)<0) _compGuids.push(it.globalIdB);
+      if (it.globalId && _compGuids.indexOf(it.globalId)<0) _compGuids.push(it.globalId);
 
       // ── Collect label strings (cc:* round-trip payload) ─────────
       // 2.1 emits repeated <Labels>; 3.0 wraps them as <Labels><Label>.
@@ -6675,6 +6981,43 @@ function startApp() {
 
       if (vp && vpGuid) {
         var vpXml = '<?xml version="1.0" encoding="UTF-8"?>\n<VisualizationInfo Guid="'+vpGuid+'">\n';
+        // Components must precede the camera choice in the BCF schema order.
+        if (_compGuids.length) {
+          vpXml += '  <Components>\n    <Selection>\n';
+          _compGuids.forEach(function(cg){ vpXml += '      <Component IfcGuid="'+esc(cg)+'"/>\n'; });
+          vpXml += '    </Selection>\n';
+          // <Visibility> is required by the 2.1 schema whenever <Components>
+          // is present (ComponentVisibility has minOccurs="1"; verified
+          // against the release_2_1 visinfo.xsd) — 3.0 makes it optional,
+          // but writing it explicitly avoids relying on 3.0's
+          // DefaultVisibility="false" schema default. CC doesn't track a
+          // per-viewpoint hidden-elements snapshot to export as
+          // <Exceptions>, so "everything visible, no exceptions" is the
+          // honest, always-correct claim to make here.
+          vpXml += '    <Visibility DefaultVisibility="true"/>\n';
+          // <Coloring> — only meaningful for a clash-pair item: reuse the
+          // exact colors the Wave 2.1 clash-focus view (J/K next/prev)
+          // already highlights A/B with (_PAIR_ROLE_COLOR in _highlightRefs,
+          // #ef4444/#22d3ee) so a BCF viewer shows the clashing pair the
+          // same way ClashControl itself does. Not emitted for single-GUID
+          // items (DQ/accessibility issues) — there's no second side to
+          // contrast against. Color attribute is 6 hex digits, no '#'
+          // (xs:pattern "[0-9A-Fa-f]{6}([0-9A-Fa-f]{2})?"). 2.1's <Color>
+          // holds <Component> directly; 3.0 wraps them in a nested
+          // <Components> — verified against both release visinfo.xsd files,
+          // they genuinely differ here.
+          if (it.globalIdA && it.globalIdB) {
+            vpXml += '    <Coloring>\n';
+            [['EF4444', it.globalIdA], ['22D3EE', it.globalIdB]].forEach(function(pc){
+              vpXml += '      <Color Color="'+pc[0]+'">\n';
+              if (v3) vpXml += '        <Components>\n          <Component IfcGuid="'+esc(pc[1])+'"/>\n        </Components>\n';
+              else vpXml += '        <Component IfcGuid="'+esc(pc[1])+'"/>\n';
+              vpXml += '      </Color>\n';
+            });
+            vpXml += '    </Coloring>\n';
+          }
+          vpXml += '  </Components>\n';
+        }
         vpXml += '  <PerspectiveCamera>\n';
         vpXml += '    <CameraViewPoint><X>'+vp.camera.px.toFixed(6)+'</X><Y>'+vp.camera.py.toFixed(6)+'</Y><Z>'+vp.camera.pz.toFixed(6)+'</Z></CameraViewPoint>\n';
         vpXml += '    <CameraDirection><X>'+vp.camera.dx.toFixed(6)+'</X><Y>'+vp.camera.dy.toFixed(6)+'</Y><Z>'+vp.camera.dz.toFixed(6)+'</Z></CameraDirection>\n';
@@ -8560,6 +8903,96 @@ function startApp() {
         _clearHoverRef();
         invalidate();
       }
+      // Occluder-reveal (Wave 2.2): temporarily hides whatever sits between
+      // the camera and a clash point, layered ADDITIVELY on top of whatever
+      // ghostOthers already did — this never calls ghostOthers/unghostAll
+      // itself, so the existing isolate/ghost mechanism is untouched. Each
+      // occluder is hidden via its own mesh type's NATIVE mechanism, the
+      // exact primitives ghostOthers already uses for the kept set above:
+      // regular Mesh -> .visible=false; InstancedMesh -> setMatrixAt(idx,
+      // _INST_HIDE_MX); BatchedMesh -> setVisibleAt(idx,false). Reversible
+      // via _ccRevealOccluders without touching ghost state at all. No
+      // renderer/material/postFX changes — pure scene-graph visibility.
+      function _ccResolveOccluderHits(hits, excludeEids) {
+        var exclude = {};
+        (excludeEids||[]).forEach(function(eid){ if(eid!=null) exclude[eid]=true; });
+        var seen = {}; // a ray can cross one mesh's own geometry more than once
+        var out = [];
+        (hits||[]).forEach(function(h){
+          if(!h||!h.object) return;
+          var obj = h.object, eid = null, kind = null, idx = null;
+          if(obj.isInstancedMesh && h.instanceId != null){
+            eid = (obj.userData.instanceExprIds||[])[h.instanceId];
+            kind = 'instanced'; idx = h.instanceId;
+          } else if(obj.userData && obj.userData._isCCBatch && h.batchId != null){
+            eid = (obj.userData.batchExprIds||[])[h.batchId];
+            kind = 'batch'; idx = h.batchId;
+          } else if(obj.isMesh){
+            eid = obj.userData ? obj.userData.expressId : null;
+            kind = 'mesh'; idx = null;
+          }
+          if(eid == null || exclude[eid]) return;
+          var key = kind+':'+(obj.uuid||'')+':'+idx;
+          if(seen[key]) return;
+          seen[key] = true;
+          out.push({object:obj, kind:kind, idx:idx, eid:eid});
+        });
+        return out;
+      }
+      function _ccApplyOccluderHide(occluders) {
+        var tracked = [];
+        (occluders||[]).forEach(function(o){
+          if(o.kind === 'mesh'){
+            tracked.push({kind:'mesh', object:o.object, prevVisible:o.object.visible});
+            o.object.visible = false;
+          } else if(o.kind === 'instanced'){
+            var prevMx = new THREE.Matrix4();
+            o.object.getMatrixAt(o.idx, prevMx);
+            tracked.push({kind:'instanced', object:o.object, idx:o.idx, prevMatrix:prevMx});
+            o.object.setMatrixAt(o.idx, _INST_HIDE_MX);
+            o.object.instanceMatrix.needsUpdate = true;
+          } else if(o.kind === 'batch'){
+            tracked.push({kind:'batch', object:o.object, idx:o.idx});
+            try { o.object.setVisibleAt(o.idx, false); } catch(_){}
+          }
+        });
+        if(tracked.length) invalidate();
+        return tracked;
+      }
+      function _ccRevealOccluders(tracked) {
+        (tracked||[]).forEach(function(t){
+          if(t.kind === 'mesh'){
+            t.object.visible = t.prevVisible;
+          } else if(t.kind === 'instanced'){
+            t.object.setMatrixAt(t.idx, t.prevMatrix);
+            t.object.instanceMatrix.needsUpdate = true;
+          } else if(t.kind === 'batch'){
+            try { t.object.setVisibleAt(t.idx, true); } catch(_){}
+          }
+        });
+        if(tracked && tracked.length) invalidate();
+      }
+      // The only impure entry point here: builds a fresh Raycaster from the
+      // live camera toward a clash point, bounded to stop just short of it
+      // (so the clash pair's own geometry is never mistaken for an
+      // occluder — excludeEids is a second, belt-and-suspenders safety net
+      // for the rare case a pair element's geometry extends past that
+      // point). Everything above this function is pure and unit-tested.
+      function _ccHideOccluders(clashPoint, excludeEids) {
+        if(!clashPoint || !S.mg || !S.camera) return [];
+        var origin = S.camera.position;
+        var target = new THREE.Vector3(clashPoint[0], clashPoint[1], clashPoint[2]);
+        var dir = target.clone().sub(origin);
+        var dist = dir.length();
+        if(dist < 1e-6) return [];
+        dir.normalize();
+        var _oray = new THREE.Raycaster(origin, dir, 0, Math.max(0, dist - 0.05));
+        var hits = _oray.intersectObjects(S.mg.children, true);
+        return _ccApplyOccluderHide(_ccResolveOccluderHits(hits, excludeEids));
+      }
+      window._ccHideOccluders = _ccHideOccluders;
+      window._ccRevealOccluders = _ccRevealOccluders;
+
       S._ghostOthers = ghostOthers;
       S._unghostAll = unghostAll;
       // Called before disposing a model's meshes: drop ghost clones whose
@@ -9465,14 +9898,7 @@ function startApp() {
         var results = [];
         models.forEach(function(model){
           (model.elements||[]).forEach(function(el){
-            var p = el.props||{};
-            var match = (p.name||'').toLowerCase().indexOf(q)!==-1 ||
-                        (p.ifcType||'').toLowerCase().indexOf(q)!==-1 ||
-                        (p.objectType||'').toLowerCase().indexOf(q)!==-1 ||
-                        (p.storey||'').toLowerCase().indexOf(q)!==-1 ||
-                        (p.material||'').toLowerCase().indexOf(q)!==-1 ||
-                        String(el.expressId).indexOf(q)!==-1;
-            if(match) results.push({el:el, model:model});
+            if(_elMatchesSearch(el, q)) results.push({el:el, model:model});
           });
         });
         var markers = [];
@@ -13996,6 +14422,9 @@ function startApp() {
         ${(detectProfile.memo_active_pairs > 0 || detectProfile.memo_skipped > 0) && html`<div style=${{display:'flex',justifyContent:'space-between',padding:'.1rem 0',color:'var(--text-faint)'}}>
           <span>Memo skipped</span><span style=${{fontFamily:'var(--font-mono)'}}>${detectProfile.memo_skipped} / ${detectProfile.memo_active_pairs} pairs</span>
         </div>`}
+        ${detectProfile.matrix_skipped > 0 && html`<div style=${{display:'flex',justifyContent:'space-between',padding:'.1rem 0',color:'var(--text-faint)'}}>
+          <span>Matrix skipped</span><span style=${{fontFamily:'var(--font-mono)'}}>${detectProfile.matrix_skipped} pairs</span>
+        </div>`}
         ${detectProfile.pair_cache_reemits > 0 && html`<div style=${{display:'flex',justifyContent:'space-between',padding:'.1rem 0',color:'var(--text-faint)'}}>
           <span>Pair cache re-emits</span><span style=${{fontFamily:'var(--font-mono)'}}>${detectProfile.pair_cache_reemits} / ${detectProfile.pair_cache_size}</span>
         </div>`}
@@ -14560,6 +14989,14 @@ function startApp() {
       runHistory:s.runHistory||[],
       sheets:s.sheets||[], activeSheetId:s.activeSheetId||null,
       sheetPins:s.sheetPins||[], markups:s.markups||[],
+      // selectionSets/searchSets predate the explicit-file saveProject/
+      // loadProject wiring they DO have — this IndexedDB auto-persist path
+      // is separate (survives a refresh/project-switch without a manual
+      // export) and had silently never carried either, so a set defined
+      // this session vanished on next load unless the user happened to
+      // export/import a project file. LOAD_PROJECT_STATE is a blind
+      // Object.assign merge, so adding the keys here is the whole fix.
+      selectionSets:s.selectionSets||[], searchSets:s.searchSets||[], assignmentRules:s.assignmentRules||[],
       modelMeta:s.models.map(function(m){return {id:m.id,name:m.name,discipline:m.discipline,color:m.color,visible:m.visible,tag:m.tag||'',georef:m.georef||null};})
     }, 0);
     return idbSaveProjectData(pid, data);
@@ -16955,6 +17392,13 @@ function startApp() {
     var sq = useState(''), treeSearch=sq[0], setTreeSearch=sq[1];
     var ex = useState({}), expanded=ex[0], setExpanded=ex[1];
     function toggle(key){setExpanded(function(prev){var n=Object.assign({},prev);if(n[key])delete n[key];else n[key]=true;return n;});}
+    // Search sets query-builder form: showSearchForm toggles it open;
+    // editingSearchSetId is the set being edited (null = creating new).
+    var sfv = useState(false), showSearchForm=sfv[0], setShowSearchForm=sfv[1];
+    var sfq = useState({}), searchForm=sfq[0], setSearchForm=sfq[1];
+    var sfn = useState(''), searchFormName=sfn[0], setSearchFormName=sfn[1];
+    var sfe = useState(null), editingSearchSetId=sfe[0], setEditingSearchSetId=sfe[1];
+    function _searchFormHasCriteria(f) { return !!(f.ifcType || f.storey || f.material || (f.propertySet && f.propertyName)); }
 
     // because UPD_MODEL replaces the model reference.
     var modelIndexes = useMemo(function(){
@@ -17075,11 +17519,11 @@ function startApp() {
           Object.keys(storeyGroups).sort().forEach(function(st){
             var sKey='s_'+model.id+'_'+st;
             var els=storeyGroups[st];
-            var filtered=q?els.filter(function(el){var p=el.props||{};return (p.name||'').toLowerCase().indexOf(q)!==-1||(p.ifcType||'').toLowerCase().indexOf(q)!==-1||String(el.expressId).indexOf(q)!==-1;}):els;
+            var filtered=q?els.filter(function(el){return _elMatchesSearch(el,q);}):els;
             if(q&&filtered.length===0) return;
             nodes.push({key:sKey,type:'storey',model:model,storey:st});
             if(!expanded[sKey]) return;
-            filtered.slice(0,200).forEach(function(el){
+            filtered.slice(0,q?1000:200).forEach(function(el){
               nodes.push({key:'e_'+el.expressId,type:'element',model:model,element:el});
             });
           });
@@ -17087,7 +17531,7 @@ function startApp() {
             var nsKey='s_'+model.id+'_none';
             nodes.push({key:nsKey,type:'storey',model:model,storey:'(No storey)'});
             if(expanded[nsKey]){
-              noStorey.filter(function(el){if(!q)return true;var p=el.props||{};return (p.name||'').toLowerCase().indexOf(q)!==-1||(p.ifcType||'').toLowerCase().indexOf(q)!==-1;}).slice(0,100).forEach(function(el){
+              noStorey.filter(function(el){return _elMatchesSearch(el,q);}).slice(0,q?500:100).forEach(function(el){
                 nodes.push({key:'e_'+el.expressId,type:'element',model:model,element:el});
               });
             }
@@ -17201,6 +17645,7 @@ function startApp() {
           var buildings = sh.buildings && sh.buildings.length ? sh.buildings : [{name:'Default Building'}];
           var pKey='sp_'+model.id;
           var _mIdx = modelIndexes[model.id] || {storeyGroups:{}, noStorey:[]};
+          var q = treeSearch.toLowerCase();
           function _elNode(el, level) {
             var p=el.props||{};
             var eKey='e_'+el.expressId;
@@ -17247,9 +17692,10 @@ function startApp() {
                     children:[].concat(
                       (model.storeyData||[]).map(function(sd){
                         var stKey='st_'+model.id+'_'+sd.name;
-                        var stEls = _mIdx.storeyGroups[sd.name] || [];
+                        var stEls = q ? (_mIdx.storeyGroups[sd.name]||[]).filter(function(el){return _elMatchesSearch(el,q);}) : (_mIdx.storeyGroups[sd.name] || []);
                         var stIsOpen = !!expanded[stKey];
                         var stHidden = !!s.hiddenClasses['byStorey:'+sd.name];
+                        var _stCap = q ? 1000 : 200;
                         return tvNode({
                           key:stKey, level:4,
                           icon:'▬', iconColor:'var(--color-success-fg)',
@@ -17262,16 +17708,17 @@ function startApp() {
                           onClick:function(){toggle(stKey);setExplorerFocus(stKey);},
                           onToggle:function(){toggle(stKey);setExplorerFocus(stKey);},
                           children:stIsOpen ? [].concat(
-                            stEls.slice(0,200).map(function(el){return _elNode(el, 5);}),
-                            stEls.length>200 ? [html`<li class="cc-tv__truncate" key="trunc">+${stEls.length-200} more…</li>`] : []
+                            stEls.slice(0,_stCap).map(function(el){return _elNode(el, 5);}),
+                            stEls.length>_stCap ? [html`<li class="cc-tv__truncate" key="trunc">+${stEls.length-_stCap} more…</li>`] : []
                           ) : null
                         });
                       }),
                       function(){
-                        var noSt = _mIdx.noStorey || [];
+                        var noSt = q ? (_mIdx.noStorey||[]).filter(function(el){return _elMatchesSearch(el,q);}) : (_mIdx.noStorey || []);
                         if(!noSt.length) return [];
                         var nsKey='st_'+model.id+'_none';
                         var nsIsOpen = !!expanded[nsKey];
+                        var _nsCap = q ? 500 : 100;
                         return [tvNode({
                           key:nsKey, level:4,
                           label:'(No storey)',
@@ -17280,7 +17727,7 @@ function startApp() {
                           selected:explorerFocus===nsKey,
                           onClick:function(){toggle(nsKey);setExplorerFocus(nsKey);},
                           onToggle:function(){toggle(nsKey);setExplorerFocus(nsKey);},
-                          children:nsIsOpen ? noSt.slice(0,100).map(function(el){return _elNode(el, 5);}) : null
+                          children:nsIsOpen ? noSt.slice(0,_nsCap).map(function(el){return _elNode(el, 5);}) : null
                         })];
                       }()
                     )
@@ -17341,11 +17788,12 @@ function startApp() {
             storeyKeys.forEach(function(st){
               var sKey='s_'+model.id+'_'+st;
               var els=storeyGroups[st];
-              var filtered = q ? els.filter(function(el){var p=el.props||{};return (p.name||'').toLowerCase().indexOf(q)!==-1||(p.ifcType||'').toLowerCase().indexOf(q)!==-1||String(el.expressId).indexOf(q)!==-1;}) : els;
+              var filtered = q ? els.filter(function(el){return _elMatchesSearch(el,q);}) : els;
               if(q && filtered.length===0) return;
               var sIsOpen = !!expanded[sKey];
               var topLevel = sIsOpen ? filtered.filter(function(el){ return !_hasParent[el.expressId]; }) : null;
               var sHiddenT = !!s.hiddenClasses['byStorey:'+st];
+              var _sCap = q ? 1000 : 200;
               storeyChildren.push(tvNode({
                 key:sKey, level:2,
                 icon:'▬', iconColor:'var(--color-success-fg)',
@@ -17357,16 +17805,17 @@ function startApp() {
                 onClick:function(){toggle(sKey);setExplorerFocus(sKey);},
                 onToggle:function(){toggle(sKey);setExplorerFocus(sKey);},
                 children:sIsOpen ? [].concat(
-                  topLevel.slice(0,200).map(function(el){return _elNode(el, 3);}),
-                  topLevel.length>200 ? [html`<li class="cc-tv__truncate" key="trunc">+${topLevel.length-200} more…</li>`] : []
+                  topLevel.slice(0,_sCap).map(function(el){return _elNode(el, 3);}),
+                  topLevel.length>_sCap ? [html`<li class="cc-tv__truncate" key="trunc">+${topLevel.length-_sCap} more…</li>`] : []
                 ) : null
               }));
             });
             if(noStorey.length>0){
               var nsKey='s_'+model.id+'_none';
-              var nsFiltered = noStorey.filter(function(el){if(!q)return true;var p=el.props||{};return (p.name||'').toLowerCase().indexOf(q)!==-1||(p.ifcType||'').toLowerCase().indexOf(q)!==-1;});
+              var nsFiltered = noStorey.filter(function(el){return _elMatchesSearch(el,q);});
               if(nsFiltered.length>0){
                 var nsIsOpen = !!expanded[nsKey];
+                var _nsCap = q ? 500 : 100;
                 storeyChildren.push(tvNode({
                   key:nsKey, level:2,
                   label:'(No storey)', count:nsFiltered.length, italic:true,
@@ -17374,7 +17823,7 @@ function startApp() {
                   selected:explorerFocus===nsKey,
                   onClick:function(){toggle(nsKey);setExplorerFocus(nsKey);},
                   onToggle:function(){toggle(nsKey);setExplorerFocus(nsKey);},
-                  children:nsIsOpen ? nsFiltered.slice(0,100).map(function(el){return _elNode(el, 3);}) : null
+                  children:nsIsOpen ? nsFiltered.slice(0,_nsCap).map(function(el){return _elNode(el, 3);}) : null
                 }));
               }
             }
@@ -17415,6 +17864,12 @@ function startApp() {
           </div>`;
         })}
       </div>
+      ${multiSel.length===2 && html`<div style=${{borderTop:'1px solid var(--border)',padding:'.5rem .6rem',flexShrink:0,background:'var(--bg-secondary)',maxHeight:220,overflowY:'auto'}}>
+        <div style=${{fontSize:'0.69rem',fontWeight:700,color:'var(--text-muted)',textTransform:'uppercase',letterSpacing:'.04em',marginBottom:'.3rem'}}>Compare selected (2)</div>
+        <${PropDiffView}
+          pA=${_lookupElProps(s.models, multiSel[0].modelId, multiSel[0].expressId)}
+          pB=${_lookupElProps(s.models, multiSel[1].modelId, multiSel[1].expressId)} />
+      </div>`}
       ${/* Selection Sets — save & restore named element groups */ ''}
       <div style=${{borderTop:'1px solid var(--border)',padding:'.5rem .6rem',flexShrink:0,background:'var(--bg-secondary)'}}>
         <div style=${{display:'flex',alignItems:'center',gap:'.3rem',marginBottom:'.3rem'}}>
@@ -17435,13 +17890,100 @@ function startApp() {
           : html`<div style=${{display:'flex',flexDirection:'column',gap:'.15rem',maxHeight:140,overflowY:'auto'}}>
               ${s.selectionSets.map(function(ss){
                 return html`<div key=${ss.id} style=${{display:'flex',alignItems:'center',gap:'.3rem',padding:'.2rem .3rem',background:'var(--bg-primary)',border:'1px solid var(--border-subtle)',borderRadius:4}}>
-                  <span style=${{fontSize:'0.7rem',color:'var(--text-secondary)',flex:1,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}} title=${ss.name+' ('+ss.refs.length+')'}>${ss.name}</span>
+                  <span onClick=${function(){var nm=prompt('Rename selection set:',ss.name);if(nm&&nm.trim())d({t:'REN_SELSET',id:ss.id,name:nm.trim()});}}
+                    title=${ss.name+' ('+ss.refs.length+') — click to rename'} style=${{fontSize:'0.7rem',color:'var(--text-secondary)',flex:1,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',cursor:'pointer'}}>${ss.name}</span>
                   <span style=${{fontSize:'0.6rem',color:'var(--text-faint)',flexShrink:0}}>${ss.refs.length}</span>
                   <button onClick=${function(){if(_highlightRefs)_highlightRefs(ss.refs,true);}}
                     title="Isolate" style=${{background:'none',border:'none',cursor:'pointer',color:'var(--text-muted)',fontSize:'0.65rem',padding:'0 .2rem'}}>◉</button>
                   <button onClick=${function(){if(_highlightRefs)_highlightRefs(ss.refs,false);}}
                     title="Highlight" style=${{background:'none',border:'none',cursor:'pointer',color:'var(--text-muted)',fontSize:'0.65rem',padding:'0 .2rem'}}>★</button>
+                  <button onClick=${function(){
+                      var refs = multiSel.length ? multiSel : (window._ccSelectedExpressId ? [{expressId:window._ccSelectedExpressId, modelId:null}] : []);
+                      if(!refs.length){ alert('Select one or more elements first (click in 3D, or shift-click in the navigator), then use + / − to edit the set.'); return; }
+                      var merged = ss.refs.slice();
+                      refs.forEach(function(r){ if(!merged.some(function(m){return m.expressId===r.expressId;})) merged.push(r); });
+                      d({t:'UPD_SELSET_REFS',id:ss.id,refs:merged});
+                    }}
+                    title="Add current selection to this set" style=${{background:'none',border:'none',cursor:'pointer',color:'var(--text-muted)',fontSize:'0.75rem',padding:'0 .2rem',fontWeight:700}}>+</button>
+                  <button onClick=${function(){
+                      var refs = multiSel.length ? multiSel : (window._ccSelectedExpressId ? [{expressId:window._ccSelectedExpressId, modelId:null}] : []);
+                      if(!refs.length){ alert('Select one or more elements first, then use + / − to edit the set.'); return; }
+                      var remaining = ss.refs.filter(function(m){ return !refs.some(function(r){return r.expressId===m.expressId;}); });
+                      d({t:'UPD_SELSET_REFS',id:ss.id,refs:remaining});
+                    }}
+                    title="Remove current selection from this set" style=${{background:'none',border:'none',cursor:'pointer',color:'var(--text-muted)',fontSize:'0.75rem',padding:'0 .2rem',fontWeight:700}}>−</button>
                   <button onClick=${function(){d({t:'DEL_SELSET',id:ss.id});}}
+                    title="Delete" style=${{background:'none',border:'none',cursor:'pointer',color:'#f87171',fontSize:'0.7rem',padding:'0 .2rem'}}>×</button>
+                </div>`;
+              })}
+            </div>`}
+      </div>
+      ${/* Search sets — a saved QUERY (ifcType/storey/material/property)
+          that re-resolves against the live model every time it's read,
+          unlike a Selection Set's frozen refs[]. */ ''}
+      <div style=${{borderTop:'1px solid var(--border)',padding:'.5rem .6rem',flexShrink:0,background:'var(--bg-secondary)'}}>
+        <div style=${{display:'flex',alignItems:'center',gap:'.3rem',marginBottom:'.3rem'}}>
+          <span style=${{fontSize:'0.69rem',fontWeight:700,color:'var(--text-muted)',textTransform:'uppercase',letterSpacing:'.04em',flex:1}}>Search sets</span>
+          <button onClick=${function(){
+              if (showSearchForm) { setShowSearchForm(false); setEditingSearchSetId(null); }
+              else { setEditingSearchSetId(null); setSearchForm({}); setSearchFormName(''); setShowSearchForm(true); }
+            }}
+            style=${{fontSize:'0.69rem',padding:'.2rem .45rem',background:'var(--accent-bg)',color:'var(--accent)',border:'1px solid var(--accent-subtle)',borderRadius:4,cursor:'pointer',fontWeight:600,fontFamily:'inherit'}}>
+            ${showSearchForm ? 'Cancel' : '+ New'}
+          </button>
+        </div>
+        ${showSearchForm && (function(){
+          var liveCount = _resolveSearchSet(searchForm, s.models).length;
+          function field(key, placeholder) {
+            return html`<input type="text" placeholder=${placeholder} value=${searchForm[key]||''}
+              onInput=${function(e){ var v=e.target.value; setSearchForm(function(prev){var n=Object.assign({},prev);if(v)n[key]=v;else delete n[key];return n;}); }}
+              style=${{...S_INPUT,fontSize:'0.68rem',padding:'.2rem .35rem',marginBottom:'.25rem'}} />`;
+          }
+          return html`<div style=${{display:'flex',flexDirection:'column',padding:'.4rem',marginBottom:'.35rem',background:'var(--bg-primary)',border:'1px solid var(--border-subtle)',borderRadius:4}}>
+            <input type="text" placeholder="Name" value=${searchFormName}
+              onInput=${function(e){setSearchFormName(e.target.value);}}
+              style=${{...S_INPUT,fontSize:'0.68rem',padding:'.2rem .35rem',marginBottom:'.25rem',fontWeight:600}} />
+            ${field('ifcType','IFC Type (e.g. IfcDoor)')}
+            ${field('storey','Storey contains…')}
+            ${field('material','Material contains…')}
+            ${field('propertySet','Property set (e.g. Pset_WallCommon)')}
+            ${field('propertyName','Property name (e.g. FireRating)')}
+            ${field('propertyValue','Value contains… (optional, needs set+name)')}
+            <div style=${{fontSize:'0.63rem',color:'var(--text-faint)',marginBottom:'.3rem'}}>
+              ${_searchFormHasCriteria(searchForm) ? liveCount+' matching element'+(liveCount!==1?'s':'')+' right now' : 'Enter at least one filter above'}
+            </div>
+            <button onClick=${function(){
+                if (!_searchFormHasCriteria(searchForm)) { alert('Enter at least one filter (IFC Type, Storey, Material, or a Property).'); return; }
+                var name = searchFormName.trim() || 'Search '+((s.searchSets||[]).length+1);
+                if (editingSearchSetId) {
+                  d({t:'UPD_SEARCHSET_QUERY', id:editingSearchSetId, query:searchForm});
+                  d({t:'REN_SEARCHSET', id:editingSearchSetId, name:name});
+                } else {
+                  d({t:'ADD_SEARCHSET', v:{id:uid(), name:name, query:searchForm}});
+                }
+                setShowSearchForm(false); setEditingSearchSetId(null); setSearchForm({}); setSearchFormName('');
+              }}
+              style=${{fontSize:'0.68rem',padding:'.25rem .5rem',background:'var(--accent)',color:'var(--bg-primary)',border:'none',borderRadius:4,cursor:'pointer',fontWeight:600,fontFamily:'inherit'}}>
+              ${editingSearchSetId ? 'Update' : 'Save'} search set
+            </button>
+          </div>`;
+        })()}
+        ${(s.searchSets||[]).length === 0
+          ? html`<div style=${{fontSize:'0.65rem',color:'var(--text-faint)'}}>No saved searches. Define a filter above — membership updates live as the model changes.</div>`
+          : html`<div style=${{display:'flex',flexDirection:'column',gap:'.15rem',maxHeight:140,overflowY:'auto'}}>
+              ${s.searchSets.map(function(qs){
+                var refs = _resolveSearchSet(qs.query, s.models);
+                return html`<div key=${qs.id} style=${{display:'flex',alignItems:'center',gap:'.3rem',padding:'.2rem .3rem',background:'var(--bg-primary)',border:'1px solid var(--border-subtle)',borderRadius:4}}>
+                  <span onClick=${function(){
+                      setEditingSearchSetId(qs.id); setSearchForm(qs.query||{}); setSearchFormName(qs.name); setShowSearchForm(true);
+                    }}
+                    title=${qs.name+' ('+refs.length+' now matching) — click to edit'} style=${{fontSize:'0.7rem',color:'var(--text-secondary)',flex:1,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',cursor:'pointer'}}>${qs.name}</span>
+                  <span style=${{fontSize:'0.6rem',color:'var(--text-faint)',flexShrink:0}}>${refs.length}</span>
+                  <button onClick=${function(){if(_highlightRefs)_highlightRefs(refs,true);}}
+                    title="Isolate" style=${{background:'none',border:'none',cursor:'pointer',color:'var(--text-muted)',fontSize:'0.65rem',padding:'0 .2rem'}}>◉</button>
+                  <button onClick=${function(){if(_highlightRefs)_highlightRefs(refs,false);}}
+                    title="Highlight" style=${{background:'none',border:'none',cursor:'pointer',color:'var(--text-muted)',fontSize:'0.65rem',padding:'0 .2rem'}}>★</button>
+                  <button onClick=${function(){d({t:'DEL_SEARCHSET',id:qs.id});}}
                     title="Delete" style=${{background:'none',border:'none',cursor:'pointer',color:'#f87171',fontSize:'0.7rem',padding:'0 .2rem'}}>×</button>
                 </div>`;
               })}
@@ -18921,6 +19463,11 @@ function startApp() {
                   ⎙ Clash report
                   <span style=${{display:'block',fontSize:'0.63rem',color:'var(--text-faint)'}}>Print-ready summary, trend + clusters</span>
                 </button>
+                <button onClick=${function(){if(window._ccDataQualityReport)window._ccDataQualityReport(s);setExportOpen(false);}}
+                  style=${{display:'block',width:'100%',textAlign:'left',padding:'.45rem .7rem',fontSize:'0.75rem',background:'none',border:'none',color:'var(--text-primary)',cursor:'pointer',fontFamily:'var(--font-body)',borderTop:'1px solid var(--border-subtle)'}}>
+                  ⎙ Data quality report
+                  <span style=${{display:'block',fontSize:'0.63rem',color:'var(--text-faint)'}}>Quality Score, BIM basics, ILS, RVB, accessibility</span>
+                </button>
               </div>`}
             </div>`;
           }()}
@@ -18936,7 +19483,7 @@ function startApp() {
         var selGrp  = grpArr.length  ? grpArr[0]  : 'none';
         var selSort = sortArr.length ? sortArr[0] : 'none';
         var secondaryGrpOpts = isClashTab
-          ? [['none','—'],['severity','Severity'],['storey','Storey'],['discipline','Discipline'],['model','Model'],['status','Status'],['type','Type'],['priority','Priority'],['assignee','Assignee']]
+          ? [['none','—'],['severity','Severity'],['storey','Storey'],['discipline','Discipline'],['nearby','Location'],['model','Model'],['status','Status'],['type','Type'],['priority','Priority'],['assignee','Assignee']]
           : [['none','—'],['status','Status'],['priority','Priority'],['category','Category'],['assignee','Assignee']];
         var sortOptsList = isClashTab
           ? [['none','None'],['severity_desc','Severity (high first)'],['severity_asc','Severity (low first)'],['spatial','Spatial'],['distance_asc','Gap (small first)'],['distance_desc','Gap (large first)'],['priority_desc','Priority (high first)'],['storey_asc','Storey A–Z'],['storey_desc','Storey Z–A'],['name_asc','Name A–Z'],['name_desc','Name Z–A'],['date_desc','Date (newest)'],['date_asc','Date (oldest)']]
@@ -19523,6 +20070,97 @@ function startApp() {
   }
   window._ccClashReport = _ccClashReport;
 
+  // Print-ready Data Quality report — same new-window/window.print() pattern
+  // as _ccClashReport above, covering the checks that report doesn't:
+  // general DQ, BIM basics, ILS/NL-SfB, RVB BIM Norm, accessibility, and the
+  // composite Quality Score. IDS specifications have their own dedicated
+  // report already (generateValidationReport, below) and are not repeated
+  // here. Self-sufficient like _ccClashReport - re-runs the check engines
+  // from s.models directly rather than depending on DataQualityPanel's own
+  // React state, so it works whether or not that panel was ever opened.
+  function _ccDataQualityReport(s) {
+    var elements = [];
+    (s.models||[]).forEach(function(m){ (m.elements||[]).forEach(function(el){ el._modelId = m.id; elements.push(el); }); });
+    if (!elements.length) { if (window._ccToast) window._ccToast('No elements to report — load a model first'); return; }
+    _gcEvent('data-quality-report');
+    var now = new Date();
+    var author = (typeof _ccChangelogUser === 'string' && _ccChangelogUser.trim()) ? _ccChangelogUser.trim() : '';
+    var projName = (s.activeProject && s.activeProject !== 'default') ? s.activeProject
+      : (s.models && s.models.length ? s.models.map(function(m){return m.name;}).join(' + ').slice(0, 80) : 'Untitled project');
+
+    var qc = runDataQualityChecks(elements);
+    var bim = runBIMModelChecks(elements);
+    var ils = runILSChecks(elements);
+    var rvb = runRVBChecks(s.models);
+    var acc = (typeof window._ccRunAccessibilityChecks === 'function') ? window._ccRunAccessibilityChecks(elements) : null;
+    var score = (typeof window._ccComputeQualityScore === 'function') ? window._ccComputeQualityScore(elements, s.models) : null;
+
+    function checkRows(checksResult, keys) {
+      var out = '';
+      keys.forEach(function(k) {
+        var c = checksResult && checksResult[k]; if (!c) return;
+        var color = c.count===0 ? '#16a34a' : c.sev==='error' ? '#dc2626' : c.sev==='warn' ? '#d97706' : '#2563eb';
+        out += '<tr><td>'+esc(c.label||k)+'</td><td style="text-align:right;font-weight:600;color:'+color+'">'+(c.count===0?'✓':c.count)+'</td></tr>';
+      });
+      return out;
+    }
+    var QC_KEYS = Object.keys(qc||{}).filter(function(k){return k!=='_total';});
+    var BIM_KEYS = Object.keys(bim||{}).filter(function(k){return k!=='_total'&&k!=='_dist';});
+    var ILS_REPORT_KEYS = Object.keys(ils||{}).filter(function(k){return k.charAt(0)!=='_';});
+    var RVB_REPORT_KEYS = Object.keys(rvb||{}).filter(function(k){return k.charAt(0)!=='_';});
+
+    function scoreCard(cat) {
+      var col = cat.score>=90?'#16a34a':cat.score>=60?'#d97706':'#dc2626';
+      return '<div class="card"><b style="color:'+col+'">'+cat.score+'</b><span>'+esc(cat.label)+(cat.countsTowardScore===false?' (shown, not scored)':'')+'</span></div>';
+    }
+
+    var h = '<!DOCTYPE html><html><head><meta charset="utf-8"><title>Data quality report — '+esc(projName)+'</title><style>'
+      + 'body{font-family:-apple-system,Segoe UI,Roboto,sans-serif;color:#0f172a;margin:0;padding:24px 32px;background:#fff}'
+      + 'h1{font-size:22px;margin:0 0 2px}h2{font-size:15px;margin:26px 0 8px;border-bottom:2px solid #16a34a;padding-bottom:4px}'
+      + '.sub{color:#64748b;font-size:12px;margin-bottom:18px}'
+      + '.cards{display:flex;gap:10px;flex-wrap:wrap;margin:14px 0}'
+      + '.card{border:1px solid #e2e8f0;border-radius:8px;padding:10px 16px;min-width:110px}'
+      + '.card b{display:block;font-size:22px}.card span{font-size:11px;color:#64748b}'
+      + 'table{border-collapse:collapse;width:100%;font-size:12px}th{text-align:left;background:#f1f5f9;padding:5px 8px;border-bottom:2px solid #cbd5e1}'
+      + 'td{padding:4px 8px;border-bottom:1px solid #e2e8f0;vertical-align:top}'
+      + '.twocol{display:flex;gap:24px;flex-wrap:wrap}.twocol>table{flex:1;min-width:280px}'
+      + '.brand{color:#16a34a;font-weight:700}.foot{margin-top:30px;font-size:10px;color:#94a3b8}'
+      + '.toolbar{position:sticky;top:0;background:#fff;padding:8px 0;border-bottom:1px solid #e2e8f0;margin-bottom:14px}'
+      + '.toolbar button{background:#16a34a;color:#fff;border:none;border-radius:6px;padding:8px 16px;font-size:13px;font-weight:600;cursor:pointer}'
+      + '@media print{.noprint{display:none}body{padding:0 8px}}'
+      + '</style></head><body>'
+      + '<div class="toolbar noprint"><button onclick="window.print()">Print / Save as PDF</button></div>'
+      + '<h1><span class="brand">ClashControl</span> — Data quality report</h1>'
+      + '<div class="sub">'+esc(projName)+' · '+now.toLocaleString()+(author?' · prepared by '+esc(author):'')+'</div>'
+      + '<div class="cards">'
+      +   (score && score.score != null ? '<div class="card"><b style="font-size:28px;color:'+(score.score>=90?'#16a34a':score.score>=60?'#d97706':'#dc2626')+'">'+score.score+'</b><span>Quality Score ('+esc(score.grade||'')+')</span></div>' : '')
+      +   (score && score.breakdown ? score.breakdown.categories.map(scoreCard).join('') : '')
+      + '</div>'
+      + '<h2>Models</h2><table><tr><th>Model</th><th>Discipline</th><th>Elements</th></tr>'
+      +   (s.models||[]).map(function(m){ return '<tr><td>'+esc(m.name)+'</td><td>'+esc(m.discipline||'—')+'</td><td>'+(m.elements||[]).length+'</td></tr>'; }).join('')
+      + '</table>'
+      + '<h2>General &amp; BIM basics</h2><div class="twocol">'
+      +   '<table><tr><th>Check</th><th>Count</th></tr>'+checkRows(qc, QC_KEYS)+'</table>'
+      +   '<table><tr><th>Check</th><th>Count</th></tr>'+checkRows(bim, BIM_KEYS)+'</table>'
+      + '</div>'
+      + '<h2>ILS / NL-SfB (NL-BIM Basis ILS v2)</h2><table><tr><th>Check</th><th>Count</th></tr>'+checkRows(ils, ILS_REPORT_KEYS)+'</table>'
+      + '<h2>RVB BIM Norm v1.1</h2><div class="sub" style="margin-bottom:6px">Rijksvastgoedbedrijf project/site/building/zone metadata — shown for visibility, excluded from the Quality Score.</div>'
+      +   '<table><tr><th>Check</th><th>Count</th></tr>'+checkRows(rvb, RVB_REPORT_KEYS)+'</table>'
+      + (acc && acc.groups
+        ? '<h2>Accessibility (NL Bbl/NEN)</h2><table><tr><th>Check</th><th>Pass / total</th></tr>'
+          + Object.keys(acc.groups).map(function(k){ var g=acc.groups[k]; if(!g||!g.total) return ''; return '<tr><td>'+esc(g.label||k)+'</td><td>'+(g.total-(g.fail||0))+' / '+g.total+'</td></tr>'; }).join('')
+          + '</table>'
+        : '')
+      + '<div class="foot">Generated by ClashControl '+esc((window.CC_VERSION&&window.CC_VERSION.v)||'')+' — free, open-source IFC clash detection · clashcontrol.io</div>'
+      + '</body></html>';
+
+    var w = window.open('', '_blank');
+    if (!w) { if (window._ccToast) window._ccToast('Popup blocked — allow popups to open the report'); return; }
+    w.document.write(h);
+    w.document.close();
+  }
+  window._ccDataQualityReport = _ccDataQualityReport;
+
   function generateValidationReport(results, summary, specs) {
     _gcEvent('html-report');
     var date = new Date().toISOString().slice(0, 10);
@@ -19726,6 +20364,10 @@ function startApp() {
     if (window._ccRunILSChecks) return window._ccRunILSChecks(elements);
     return {_total:(elements||[]).length, _nlsfbDist:{}, _compDist:{}};
   }
+  function runRVBChecks(models) {
+    if (window._ccRunRVBChecks) return window._ccRunRVBChecks(models);
+    return {_total:(models||[]).length};
+  }
 
   // ── Data Quality Panel (dedicated tab) ─────────────────────────────
 
@@ -19889,11 +20531,26 @@ function startApp() {
     var qcSt = useState(null), qc = qcSt[0], setQc = qcSt[1];
     var bimSt = useState(null), bim = bimSt[0], setBim = bimSt[1];
     var ilsSt = useState(null), ils = ilsSt[0], setIls = ilsSt[1];
+    var rvbSt = useState(null), rvb = rvbSt[0], setRvb = rvbSt[1];
+    // DQ re-run reconciliation - session-local (not persisted like clash
+    // runHistory): compares this run's per-check counts against the
+    // immediately preceding run in the same session, so re-checking after
+    // fixing a batch of elements shows what actually moved.
+    var prevDqSt = useState(null), prevDqCounts = prevDqSt[0], setPrevDqCounts = prevDqSt[1];
+    var dqDeltaSt = useState(null), dqDelta = dqDeltaSt[0], setDqDelta = dqDeltaSt[1];
     var expSt = useState({}), expanded = expSt[0], setExpanded = expSt[1];
     var selModel = useState('all'), selectedModel = selModel[0], setSelectedModel = selModel[1];
     var running = useState(false), isRunning = running[0], setRunning = running[1];
     var lcSt = useState(null), lastChecked = lcSt[0], setLastChecked = lcSt[1];
-    var secSt = useState({general:true,bim:true,ils:true,dist:true,ids:true}), sections = secSt[0], setSections = secSt[1];
+    var secSt = useState({general:true,bim:true,ils:true,rvb:true,dist:true,ids:true}), sections = secSt[0], setSections = secSt[1];
+
+    // Full runILSChecks() key set, incl. the NL-BIM Basis ILS v2 additions
+    // (storeyNaming..mepNoRenovationStatus) - previously computed by the
+    // engine but never rendered/exported/actioned in this panel, so those
+    // findings were invisible even though they'd already run.
+    var ILS_KEYS = ['noNLSfB','invalidNLSfB','mismatchNLSfB','missingILSProp','noDescription','noMaterial','noStorey','noObjectType','noName',
+      'storeyNaming','doorNaming','spaceIncomplete','fireRatingInvalid','extWallNoUValue','loadBearingInvalidMaterial','mepNoRenovationStatus'];
+    var RVB_KEYS = ['projectIncomplete','siteIncomplete','buildingIncomplete','zoneIncomplete','storeyNoElevation'];
 
     function toggleSection(key) { setSections(function(p){var n=Object.assign({},p);n[key]=!n[key];return n;}); }
 
@@ -19901,13 +20558,25 @@ function startApp() {
       setRunning(true);
       setTimeout(function() {
         var elements = [];
+        var rvbModels = [];
         (s.models||[]).forEach(function(m) {
           if (selectedModel !== 'all' && m.id !== selectedModel) return;
+          rvbModels.push(m);
           (m.elements||[]).forEach(function(el) { el._modelId = m.id; elements.push(el); });
         });
-        setQc(runDataQualityChecks(elements));
-        setBim(runBIMModelChecks(elements));
-        setIls(runILSChecks(elements));
+        var newQc = runDataQualityChecks(elements);
+        var newBim = runBIMModelChecks(elements);
+        var newIls = runILSChecks(elements);
+        var newRvb = runRVBChecks(rvbModels);
+        if (typeof window._ccFlattenDQCounts === 'function') {
+          var flatNow = window._ccFlattenDQCounts({qc:newQc, bim:newBim, ils:newIls, rvb:newRvb});
+          setDqDelta(prevDqCounts && typeof window._ccDiffDQCounts === 'function' ? window._ccDiffDQCounts(flatNow, prevDqCounts) : null);
+          setPrevDqCounts(flatNow);
+        }
+        setQc(newQc);
+        setBim(newBim);
+        setIls(newIls);
+        setRvb(newRvb);
         setExpanded({});
         setLastChecked(Date.now());
         setRunning(false);
@@ -20098,7 +20767,8 @@ function startApp() {
       }
       addRows(qc, ['guidCollision','noGlobalId','proxy','genericName','duplicateName','noMaterial','noStorey','emptyGeometry','zeroLayers','unhostedOpenings','noProperties','noDescription']);
       addRows(bim, ['thicknessMismatch','noFireRating','noIsExternal','noLoadBearing','missingCommonPset','noClassification','noObjectType','invalidName','missingArea','missingVolume']);
-      addRows(ils, ['noNLSfB','invalidNLSfB','mismatchNLSfB','missingILSProp','noDescription','noMaterial','noStorey','noObjectType','noName']);
+      addRows(ils, ILS_KEYS);
+      addRows(rvb, RVB_KEYS);
       var csv = rows.map(function(r){return r.map(function(c){return '"'+(String(c||'').replace(/"/g,'""'))+'"';}).join(',');}).join('\r\n');
       var a = document.createElement('a'); a.href = 'data:text/csv;charset=utf-8,'+encodeURIComponent(csv);
       a.download = 'data-quality-'+new Date().toISOString().slice(0,10)+'.csv'; a.click();
@@ -20110,6 +20780,8 @@ function startApp() {
       }
       addFromChecks(qc, ['guidCollision','noGlobalId','proxy','genericName','duplicateName','noMaterial','noStorey','emptyGeometry','zeroLayers','unhostedOpenings','noProperties','noDescription']);
       addFromChecks(bim, ['thicknessMismatch','noFireRating','noIsExternal','noLoadBearing','missingCommonPset','noClassification','noObjectType','invalidName','missingArea','missingVolume']);
+      addFromChecks(ils, ILS_KEYS);
+      addFromChecks(rvb, RVB_KEYS);
       if (created > 0) d({t:A.TAB, v:'issues'});
     }
 
@@ -20128,6 +20800,16 @@ function startApp() {
     if (ils) {
       var ilsKeys = Object.keys(ils).filter(function(k){return k[0]!=='_';});
       ilsKeys.forEach(function(k){totalIls += ils[k].count||0;});
+    }
+    // RVB deliberately excluded from the top "N issues" badge above (unlike
+    // qc/bim/ils) - it's a single Dutch central-government client's own BIM
+    // norm, and most users have no reason to target it. Same reasoning as
+    // computeQualityScore never folding it into the headline score. It still
+    // gets its own local badge on the RVB section header below.
+    var totalRvb = 0;
+    if (rvb) {
+      var rvbKeys = Object.keys(rvb).filter(function(k){return k[0]!=='_';});
+      rvbKeys.forEach(function(k){totalRvb += rvb[k].count||0;});
     }
 
     var SEV = {error:'#ef4444', warn:'#f59e0b', info:'#60a5fa'};
@@ -20192,6 +20874,22 @@ function startApp() {
           </button>
         </div>
         ${lastChecked && html`<span style=${{fontSize:'0.63rem',color:'var(--text-faint)'}}>Last checked: ${Math.round((Date.now()-lastChecked)/60000)} min ago</span>`}
+        ${dqDelta && (dqDelta.worse.length>0 || dqDelta.better.length>0) && html`<div>
+          <div onClick=${function(){toggleExp('dq_delta');}} style=${{display:'flex',gap:'.35rem',alignItems:'center',fontSize:'0.63rem',cursor:'pointer'}}>
+            <span style=${{color:'var(--text-faint)'}}>Since last run:</span>
+            ${dqDelta.worse.length>0 && html`<span style=${{color:'#f87171',fontWeight:600}}>${dqDelta.worse.length} worse</span>`}
+            ${dqDelta.better.length>0 && html`<span style=${{color:'#4ade80',fontWeight:600}}>${dqDelta.better.length} better</span>`}
+            <span style=${{color:'var(--text-faint)'}}>${expanded['dq_delta']?'▲':'▼'}</span>
+          </div>
+          ${expanded['dq_delta'] && html`<div style=${{padding:'.2rem 0 0 .3rem',display:'flex',flexDirection:'column',gap:'.1rem'}}>
+            ${dqDelta.worse.map(function(w,i){return html`<div key=${'w'+i} style=${{fontSize:'0.6rem',color:'var(--text-secondary)'}}>
+              <span style=${{color:'#f87171'}}>▲</span> ${w.label}: ${w.from} → ${w.to}
+            </div>`;})}
+            ${dqDelta.better.map(function(bt,i){return html`<div key=${'b'+i} style=${{fontSize:'0.6rem',color:'var(--text-secondary)'}}>
+              <span style=${{color:'#4ade80'}}>▼</span> ${bt.label}: ${bt.from} → ${bt.to}
+            </div>`;})}
+          </div>`}
+        </div>`}
         ${!hasModels && html`<span style=${{fontSize:'0.69rem',color:'var(--text-faint)'}}>Load a model to run data quality checks.</span>`}
         <div style=${{display:'flex',gap:'.2rem',alignItems:'center',fontSize:'0.63rem',color:'var(--text-faint)'}}>
           <span style=${{width:7,height:7,borderRadius:'50%',background:'#ef4444',flexShrink:0,display:'inline-block'}}></span> Error
@@ -20226,7 +20924,7 @@ function startApp() {
             </span>
           </div>
           ${sections.ils && html`<div>
-            ${renderCheckGroup(ils, ['noNLSfB','invalidNLSfB','mismatchNLSfB','missingILSProp','noDescription','noMaterial','noStorey','noObjectType','noName'], 'ILS')}
+            ${renderCheckGroup(ils, ILS_KEYS, 'ILS')}
 
             ${ils._nlsfbDist && html`<div style=${{borderTop:'1px solid var(--border-subtle)'}}>
               <div style=${{display:'flex',alignItems:'center',gap:'.35rem',padding:'.4rem .6rem'}}>
@@ -20296,6 +20994,22 @@ function startApp() {
           </div>`}
         </div>`}
 
+        ${rvb && html`<div>
+          <div onClick=${function(){toggleSection('rvb');}} style=${SEC}>
+            <span>RVB BIM Norm</span>
+            <span style=${{display:'flex',alignItems:'center',gap:'.3rem'}}>
+              ${totalRvb > 0 ? html`<span style=${{fontSize:'0.57rem',padding:'1px 5px',borderRadius:99,background:'#78350f',color:'#fcd34d',fontWeight:600}}>${totalRvb}</span>` : null}
+              <span style=${{fontSize:'0.57rem',color:'var(--text-faint)'}}>${sections.rvb?'▲':'▼'}</span>
+            </span>
+          </div>
+          ${sections.rvb && html`<div>
+            ${renderCheckGroup(rvb, RVB_KEYS, 'RVB')}
+            <div style=${{padding:'.4rem .6rem',fontSize:'0.6rem',color:'var(--text-faint)',lineHeight:1.5}}>
+              Rijksvastgoedbedrijf BIM Norm v1.1 project/site/building/zone metadata — a Dutch central-government client standard, shown for visibility only and excluded from the Quality Score and the badge above.
+            </div>
+          </div>`}
+        </div>`}
+
         ${bim && bim._dist && html`<div>
           <div onClick=${function(){toggleSection('dist');}} style=${SEC}>
             <span>Property Distribution</span>
@@ -20361,14 +21075,18 @@ function startApp() {
             <button onClick=${function(){if(_unghostAll)_unghostAll();var S=window._ccState3d;if(S&&S._dqOrigColors){S._dqOrigColors.forEach(function(e){if(e.mesh&&e.mesh.material)e.mesh.material.color.copy(e.color);});S._dqOrigColors=null;}setActiveDistKey(null);invalidate();}}
               style=${{fontSize:'0.63rem',padding:'.15rem .4rem',background:'var(--bg-secondary)',color:'var(--text-muted)',border:'1px solid var(--border)',borderRadius:4,cursor:'pointer',fontFamily:'inherit'}}>Reset view</button>
           </div>
-          <div style=${{display:'flex',gap:'.3rem'}}>
+          <div style=${{display:'flex',gap:'.3rem',flexWrap:'wrap'}}>
+            <button onClick=${function(){ if (window._ccDataQualityReport) window._ccDataQualityReport(s); }} title="Open a print-ready report (Quality Score, BIM basics, ILS/NL-SfB, RVB BIM Norm, accessibility)"
+              style=${{flex:1,fontSize:'0.69rem',padding:'.3rem .5rem',background:'var(--bg-secondary)',color:'var(--text-secondary)',border:'1px solid var(--border)',borderRadius:4,cursor:'pointer',fontWeight:600,fontFamily:'inherit',whiteSpace:'nowrap'}}>
+              ⎙ Print report
+            </button>
             <button onClick=${exportCSV} title="Download all findings as CSV"
-              style=${{flex:1,fontSize:'0.69rem',padding:'.3rem .5rem',background:'var(--bg-secondary)',color:'var(--text-secondary)',border:'1px solid var(--border)',borderRadius:4,cursor:'pointer',fontWeight:600,fontFamily:'inherit'}}>
-              ↓ Export report
+              style=${{flex:1,fontSize:'0.69rem',padding:'.3rem .5rem',background:'var(--bg-secondary)',color:'var(--text-secondary)',border:'1px solid var(--border)',borderRadius:4,cursor:'pointer',fontWeight:600,fontFamily:'inherit',whiteSpace:'nowrap'}}>
+              ↓ Export CSV
             </button>
             ${totalIssues+totalBim+totalIls > 0 && html`<button onClick=${createAllIssues}
               title=${'Create '+(totalIssues+totalBim+totalIls)+' issues from all failing checks'}
-              style=${{flex:1,fontSize:'0.69rem',padding:'.3rem .5rem',background:'var(--accent-bg)',color:'var(--accent)',border:'1px solid var(--accent-subtle)',borderRadius:4,cursor:'pointer',fontWeight:600,fontFamily:'inherit'}}>
+              style=${{flex:1,fontSize:'0.69rem',padding:'.3rem .5rem',background:'var(--accent-bg)',color:'var(--accent)',border:'1px solid var(--accent-subtle)',borderRadius:4,cursor:'pointer',fontWeight:600,fontFamily:'inherit',whiteSpace:'nowrap'}}>
               + Create all issues
             </button>`}
           </div>
@@ -20823,6 +21541,56 @@ function startApp() {
           style=${{fontSize:'0.69rem',padding:'.3rem .5rem',background:'var(--bg-secondary)',color:'var(--text-faint)',border:'1px solid var(--border)',borderRadius:4,cursor:'pointer'}}>↑</button>
       </div>
 
+      ${(function(){
+        var arules = s.assignmentRules||[];
+        var storeys = [];
+        (s.models||[]).forEach(function(m){ (m.storeys||[]).forEach(function(st){ if(st && storeys.indexOf(st)<0) storeys.push(st); }); });
+        return html`<div style=${{marginTop:'1.2rem',paddingTop:'.8rem',borderTop:'2px solid var(--border)',marginBottom:'1.5rem'}}>
+          <div style=${{fontSize:'0.75rem',fontWeight:700,color:'var(--text-muted)',textTransform:'uppercase',letterSpacing:'.06em',marginBottom:'.4rem'}}>Assignment rules</div>
+          <div style=${{fontSize:'0.65rem',color:'var(--text-faint)',marginBottom:'.5rem',lineHeight:1.4}}>
+            Stamp an assignee/priority on newly detected clashes automatically, by discipline pair and (optionally) storey. First matching rule wins. Never overrides an assignee already set on a persisting clash.
+          </div>
+          ${arules.length===0 && html`<div style=${{padding:'.6rem',background:'var(--bg-secondary)',borderRadius:6,fontSize:'0.69rem',color:'var(--text-faint)',textAlign:'center',marginBottom:'.5rem'}}>
+            No assignment rules configured yet. New clashes get no automatic assignee.
+          </div>`}
+          ${arules.map(function(r){
+            return html`<div key=${r.id} style=${{padding:'.4rem',background:'var(--bg-secondary)',borderRadius:6,marginBottom:'.35rem',border:'1px solid var(--border-subtle)'}}>
+              <div style=${{display:'flex',gap:'.3rem',alignItems:'center',marginBottom:'.25rem'}}>
+                <select value=${r.discipline1} onChange=${function(e){d({t:'UPD_ASSIGN_RULE',id:r.id,u:{discipline1:e.target.value}});}} style=${selStyle}>
+                  <option value="any">Any discipline</option>
+                  ${DISC.map(function(dd){return html`<option key=${dd.id} value=${dd.id}>${dd.label}</option>`})}
+                </select>
+                <span style=${{fontSize:'0.69rem',color:'var(--text-faint)'}}>×</span>
+                <select value=${r.discipline2} onChange=${function(e){d({t:'UPD_ASSIGN_RULE',id:r.id,u:{discipline2:e.target.value}});}} style=${selStyle}>
+                  <option value="any">Any discipline</option>
+                  ${DISC.map(function(dd){return html`<option key=${dd.id} value=${dd.id}>${dd.label}</option>`})}
+                </select>
+                <button onClick=${function(){d({t:'DEL_ASSIGN_RULE',id:r.id});}} title="Remove rule"
+                  style=${{background:'none',border:'none',color:'#f87171',cursor:'pointer',fontSize:'0.86rem',padding:'0 .2rem',lineHeight:1}}>×</button>
+              </div>
+              <div style=${{display:'flex',gap:'.3rem',alignItems:'center'}}>
+                <select value=${r.storey||'any'} onChange=${function(e){d({t:'UPD_ASSIGN_RULE',id:r.id,u:{storey:e.target.value}});}} style=${selStyle} title="Storey">
+                  <option value="any">Any storey</option>
+                  ${storeys.map(function(st){return html`<option key=${st} value=${st}>${st}</option>`})}
+                </select>
+                <input type="text" placeholder="Assignee (name/email)" value=${r.assignee||''}
+                  onInput=${function(e){d({t:'UPD_ASSIGN_RULE',id:r.id,u:{assignee:e.target.value}});}}
+                  style=${Object.assign({},rowInputStyle,{flex:1.4})} />
+                <select value=${r.priority||''} onChange=${function(e){d({t:'UPD_ASSIGN_RULE',id:r.id,u:{priority:e.target.value}});}} style=${selStyle} title="Priority">
+                  <option value="">No priority</option>
+                  <option value="critical">Critical</option>
+                  <option value="high">High</option>
+                  <option value="normal">Normal</option>
+                  <option value="low">Low</option>
+                </select>
+              </div>
+            </div>`;
+          })}
+          <button onClick=${function(){d({t:'ADD_ASSIGN_RULE',v:{}});}}
+            style=${{fontSize:'0.69rem',padding:'.3rem .6rem',background:'var(--bg-secondary)',color:'var(--accent)',border:'1px solid var(--accent-subtle)',borderRadius:'var(--radius-xs)',cursor:'pointer',fontWeight:600,width:'100%'}}>+ Add assignment rule</button>
+        </div>`;
+      })()}
+
       ${typeof window._ccVisibilityPresets === 'function' && html`<div style=${{marginTop:'1.2rem',paddingTop:'.8rem',borderTop:'2px solid var(--border)'}}>
         <div style=${{fontSize:'0.75rem',fontWeight:700,color:'var(--text-muted)',textTransform:'uppercase',letterSpacing:'.06em',marginBottom:'.4rem'}}>Visibility &amp; coverage checks</div>
         <div style=${{fontSize:'0.65rem',color:'var(--text-faint)',marginBottom:'.5rem',lineHeight:1.4}}>
@@ -20907,12 +21675,89 @@ function startApp() {
   }
 
   function _lookupElProps(models, modelId, expressId) {
-    var m = models.find(function(m){ return m.id === modelId; });
-    if (!m) return null;
-    var el = (m.elements||[]).find(function(e){ return e.expressId === expressId; });
-    return el ? el.props : null;
+    // modelId is often null in practice (e.g. Selection Sets / Navigator
+    // multiSel refs never populate it) - fall back to searching every model
+    // by expressId alone, same lenient convention _findMeshByRef already
+    // uses ("if (modelId) filter by it" - never a hard requirement).
+    var pool = modelId ? models.filter(function(m){ return m.id === modelId; }) : models;
+    for (var i=0; i<pool.length; i++) {
+      var el = ((pool[i].elements)||[]).find(function(e){ return e.expressId === expressId; });
+      if (el) return el.props;
+    }
+    return null;
   }
   window._ccLookupElProps = _lookupElProps;
+
+  // Aligned element-vs-element property diff. multiSel + PropBlock already
+  // existed (stacked A/B display in the clash panel) but nothing aligned two
+  // elements' properties side by side or flagged which ones actually differ -
+  // exactly the comparison a coordinator reaches for when two similar-looking
+  // elements turn out to behave differently. Union of both sides' quantity/
+  // pset keys so a property only one element carries still shows as a row
+  // (missing on the other side), not silently dropped.
+  function _diffElementProps(pA, pB) {
+    var rows = [];
+    function addRow(label, a, b) {
+      a = a==null||a==='' ? null : String(a);
+      b = b==null||b==='' ? null : String(b);
+      rows.push({label:label, a:a, b:b, same: a===b});
+    }
+    addRow('Type', pA&&pA.ifcType, pB&&pB.ifcType);
+    addRow('Name', pA&&pA.name, pB&&pB.name);
+    addRow('Object Type', pA&&pA.objectType, pB&&pB.objectType);
+    addRow('Storey', pA&&pA.storey, pB&&pB.storey);
+    addRow('Material', pA&&pA.material, pB&&pB.material);
+    addRow('GlobalId', pA&&pA.globalId, pB&&pB.globalId);
+    var qKeys = {};
+    Object.keys((pA&&pA.quantities)||{}).forEach(function(k){qKeys[k]=1;});
+    Object.keys((pB&&pB.quantities)||{}).forEach(function(k){qKeys[k]=1;});
+    Object.keys(qKeys).sort().forEach(function(k){
+      addRow('Qty: '+k, pA&&pA.quantities&&pA.quantities[k], pB&&pB.quantities&&pB.quantities[k]);
+    });
+    var pPairs = {};
+    function collectPsetKeys(p) {
+      if (!p || !p.psets) return;
+      Object.keys(p.psets).forEach(function(setName){
+        Object.keys(p.psets[setName]||{}).forEach(function(propName){ pPairs[setName+' | '+propName] = {setName:setName, propName:propName}; });
+      });
+    }
+    collectPsetKeys(pA); collectPsetKeys(pB);
+    Object.keys(pPairs).sort().forEach(function(sk){
+      var pair = pPairs[sk];
+      var av = pA&&pA.psets&&pA.psets[pair.setName]&&pA.psets[pair.setName][pair.propName];
+      var bv = pB&&pB.psets&&pB.psets[pair.setName]&&pB.psets[pair.setName][pair.propName];
+      addRow(pair.setName+': '+pair.propName, av, bv);
+    });
+    return rows;
+  }
+  window._ccDiffElementProps = _diffElementProps;
+
+  function PropDiffView(props) {
+    var pA=props.pA, pB=props.pB;
+    if (!pA || !pB) return null;
+    var rows = _diffElementProps(pA, pB);
+    var diffRows = rows.filter(function(r){return !r.same;});
+    var LS={fontSize:'0.63rem',color:'var(--text-muted)'};
+    var GRID={display:'grid',gridTemplateColumns:'76px 1fr 1fr',gap:'.3rem',padding:'.15rem 0',borderBottom:'1px solid var(--border-subtle)'};
+    return html`<div>
+      <div style=${{fontSize:'0.63rem',color:'var(--text-faint)',marginBottom:'.3rem'}}>
+        ${diffRows.length} of ${rows.length} propert${rows.length===1?'y':'ies'} differ
+      </div>
+      <div style=${{...GRID,borderBottom:'1px solid var(--border)'}}>
+        <span style=${LS}></span>
+        <span style=${{...LS,fontWeight:700,color:'var(--accent-subtle)'}}>A</span>
+        <span style=${{...LS,fontWeight:700,color:'#fca5a5'}}>B</span>
+      </div>
+      ${rows.map(function(r,idx){
+        var VS={fontSize:'0.63rem',color:r.same?'var(--text-primary)':'#fbbf24',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'};
+        return html`<div key=${idx} style=${{...GRID,background:r.same?'none':'rgba(245,158,11,.08)'}}>
+          <span style=${LS} title=${r.label}>${r.label}</span>
+          <span style=${VS} title=${r.a||''}>${r.a==null?'—':r.a}</span>
+          <span style=${VS} title=${r.b||''}>${r.b==null?'—':r.b}</span>
+        </div>`;
+      })}
+    </div>`;
+  }
 
   function ClashProps(props) {
     var it=props.item, models=props.models, isClash=props.isClash!==false;
@@ -21254,7 +22099,69 @@ function startApp() {
     return lines.join('\n');
   };
 
-  function _groupKeyFor(it, groupKey, modelsById) {
+  // Spatial sub-clustering (Wave 1.8) \u2014 distance-threshold union-find on
+  // clash points. This is deliberately separate from _ccClusterKeyFor (the
+  // 'cluster' groupBy, element-PAIR identity: same two elements' touch
+  // points collapse into one group, e.g. a duct crossing one beam at 3
+  // points along its run). This groups DIFFERENT element pairs that happen
+  // to sit near each other in space (e.g. one duct crossing 5 different
+  // joists in the same corridor bay reads as "one problem area" instead of
+  // 5 unrelated-looking groups) \u2014 ifcclash/OPTICS parity, per the plan.
+  // Opt-in via the "Location" secondary group-by option; never changes what
+  // the default "Grouped" (cluster) view shows.
+  var _SPATIAL_CLUSTER_RADIUS_M = 1.5;
+  function _ccSpatialClusterMap(items, radiusM) {
+    radiusM = radiusM > 0 ? radiusM : _SPATIAL_CLUSTER_RADIUS_M;
+    var n = items.length;
+    var parent = new Array(n);
+    for (var i=0; i<n; i++) parent[i] = i;
+    function find(x){ while(parent[x]!==x){ parent[x]=parent[parent[x]]; x=parent[x]; } return x; }
+    function union(a,b){ var ra=find(a), rb=find(b); if (ra!==rb) parent[ra]=rb; }
+    // Grid-bucket the points so only nearby cells are compared (same spirit
+    // as the engine's _SpatialHash) instead of all-pairs O(n\u00b2).
+    var cell = radiusM;
+    var buckets = new Map();
+    var pts = new Array(n);
+    for (var i=0; i<n; i++) {
+      var p = items[i] && items[i].point;
+      pts[i] = (p && p.length===3) ? p : null;
+      if (!pts[i]) continue;
+      var k = Math.floor(p[0]/cell)+','+Math.floor(p[1]/cell)+','+Math.floor(p[2]/cell);
+      var b = buckets.get(k); if (!b) { b=[]; buckets.set(k,b); }
+      b.push(i);
+    }
+    var r2 = radiusM*radiusM;
+    for (var i=0; i<n; i++) {
+      if (!pts[i]) continue;
+      var p = pts[i];
+      var cx=Math.floor(p[0]/cell), cy=Math.floor(p[1]/cell), cz=Math.floor(p[2]/cell);
+      for (var dx=-1; dx<=1; dx++) for (var dy=-1; dy<=1; dy++) for (var dz=-1; dz<=1; dz++) {
+        var b = buckets.get((cx+dx)+','+(cy+dy)+','+(cz+dz));
+        if (!b) continue;
+        for (var bi=0; bi<b.length; bi++) {
+          var j = b[bi];
+          if (j<=i) continue; // each unordered pair once
+          var q = pts[j];
+          var ddx=p[0]-q[0], ddy=p[1]-q[1], ddz=p[2]-q[2];
+          if (ddx*ddx+ddy*ddy+ddz*ddz <= r2) union(i,j);
+        }
+      }
+    }
+    // Stable, human-readable, zero-padded labels (padded so "Area 02" sorts
+    // correctly before "Area 10" under the plain lexicographic group-key sort).
+    var rootToLabel = new Map();
+    var map = new Map(); // item id -> label
+    for (var i=0; i<n; i++) {
+      if (!pts[i]) { map.set(items[i].id, 'Unlocated'); continue; }
+      var root = find(i);
+      var label = rootToLabel.get(root);
+      if (!label) { label = 'Area ' + String(rootToLabel.size+1).padStart(2,'0'); rootToLabel.set(root, label); }
+      map.set(items[i].id, label);
+    }
+    return map;
+  }
+
+  function _groupKeyFor(it, groupKey, modelsById, spatialMap) {
     switch(groupKey) {
       case 'storey': return it.elemAStorey || it.elemBStorey || it.storey || 'Unknown';
       case 'discipline': return (it.disciplines||[]).sort().join(' \u2194 ') || 'Unknown';
@@ -21264,6 +22171,7 @@ function startApp() {
       case 'category': return it.category || 'other';
       case 'assignee': return it.assignee || 'Unassigned';
       case 'severity': return it.aiSeverity || _ccDeterministicSeverity(it);
+      case 'nearby': return (spatialMap && spatialMap.get(it.id)) || 'Unlocated';
       case 'cluster': {
         var ck = window._ccClusterKeyFor(it);
         if (!window._ccClusterDisplay) window._ccClusterDisplay = {};
@@ -21296,9 +22204,13 @@ function startApp() {
     }
     var modelsById = {};
     (opts.models||[]).forEach(function(m){ modelsById[m.id] = m; });
+    // 'nearby' needs every item's location at once (union-find), unlike every
+    // other groupBy dimension which only looks at the item itself — compute
+    // it once here rather than per-item inside _groupKeyFor.
+    var spatialMap = groupByArr.indexOf('nearby') !== -1 ? _ccSpatialClusterMap(items) : null;
     var groupMap = {};
     items.forEach(function(it) {
-      var parts = groupByArr.map(function(g){ return _groupKeyFor(it, g, modelsById); });
+      var parts = groupByArr.map(function(g){ return _groupKeyFor(it, g, modelsById, spatialMap); });
       var k = parts.join(' \u2502 '); // use │ as separator (visually distinct, rare in names)
       if (!groupMap[k]) groupMap[k] = [];
       groupMap[k].push(it);
@@ -21776,6 +22688,19 @@ function startApp() {
     var it=props.item, active=props.active, d=props.d, isClash=props.isClash, pr=props.prefs||{}; pr._models=props.models||[];
     var selectMode=props.selectMode, isSelected=props.isSelected;
     var trainingMode=props.trainingMode;
+    // Occluder-reveal (Wave 2.2) — local to this row, not the reducer:
+    // purely a transient viewport state, gone the moment this clash stops
+    // being the active one. occTrackedRef holds what _ccHideOccluders
+    // returned so it can be handed back to _ccRevealOccluders verbatim.
+    var orv=useState(false), occReveal=orv[0], setOccReveal=orv[1];
+    var occTrackedRef=useRef([]);
+    useEffect(function(){
+      if(!active && occReveal){
+        if(typeof window._ccRevealOccluders==='function') window._ccRevealOccluders(occTrackedRef.current);
+        occTrackedRef.current=[];
+        setOccReveal(false);
+      }
+    }, [active]);
     /* Severity dot — the row's only colour. Maps the existing aiSeverity /
        type signal to the desaturated --sev-* tokens. The previous emoji
        icon (🔴 / 🟡 / 🏗 / 📌) is replaced by a 7-px dot rendered inline so
@@ -21927,6 +22852,20 @@ function startApp() {
             }}
             title="Accept but flag for later verification"
             style=${{...S_BTN,fontSize:'var(--text-2xs)',padding:'var(--space-1) var(--space-2)',background:'var(--bg-secondary)',color:'var(--color-info-fg)',border:'1px solid var(--color-info-border)',fontWeight:'var(--weight-semibold)'}} aria-label="Accept clash and flag for later verification">Accept · Check</button>`}
+          ${isClash && it.point && typeof window._ccHideOccluders==='function' && html`<button class="cc-btn-press" onClick=${function(e){
+              e.stopPropagation();
+              if(occReveal){
+                if(window._ccRevealOccluders) window._ccRevealOccluders(occTrackedRef.current);
+                occTrackedRef.current=[];
+                setOccReveal(false);
+              } else {
+                var excl=[it.elemA,it.elemB,it.elementId].filter(function(v){return v!=null;});
+                occTrackedRef.current=window._ccHideOccluders(it.point, excl)||[];
+                setOccReveal(true);
+              }
+            }}
+            title="Temporarily hide whatever's between the camera and this clash"
+            style=${{...S_BTN,fontSize:'var(--text-2xs)',padding:'var(--space-1) var(--space-2)',background:occReveal?'var(--accent-bg)':'var(--bg-secondary)',color:occReveal?'var(--accent)':'var(--text-faint)',border:occReveal?'1px solid var(--accent-subtle)':'1px solid var(--border)',fontWeight:'var(--weight-semibold)'}} aria-label="Toggle occluder reveal">${occReveal?'Occluders hidden':'Hide occluders'}</button>`}
           ${!isClash && EDITABLE_STATUSES.map(function(k){return html`<button class="cc-btn-press" key=${k}
             onClick=${function(e){e.stopPropagation();d({t:A.UPD_ISSUE,id:it.id,u:{status:k}})}}
             style=${{...S_BTN,fontSize:'var(--text-2xs)',padding:'var(--space-1) var(--space-2)',background:it.status===k?STAT[k].bg:'var(--bg-secondary)',color:it.status===k?'#fff':'var(--text-faint)',fontWeight:'var(--weight-medium)'}}>${STAT[k].label}</button>`})}
@@ -31325,6 +32264,12 @@ function startApp() {
       var CARD = {background:'var(--bg-secondary)',borderRadius:'var(--radius-sm)',padding:'.5rem .75rem',border:'1px solid var(--border-subtle)'};
       var HDR  = {fontSize:'var(--text-2xs)',fontWeight:'var(--weight-bold)',color:'var(--text-muted)',textTransform:'uppercase',letterSpacing:'.08em',marginBottom:'var(--space-2)'};
       var MONO = {fontFamily:'var(--font-mono)',fontSize:'var(--text-2xs)'};
+      function _copyBtn(text, label) {
+        return html`<button onClick=${function(ev){ev.stopPropagation();_ccCopyToClipboard(text,label);}} title=${'Copy '+label} aria-label=${'Copy '+label}
+          style=${{background:'none',border:'none',padding:0,margin:0,cursor:'pointer',color:'var(--text-faint)',display:'inline-flex',flexShrink:0,lineHeight:0}}>
+          <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+        </button>`;
+      }
 
       if (!el) {
         return html`<div style=${{flex:1,display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',
@@ -31353,6 +32298,28 @@ function startApp() {
       var discipline = el.modelName||'';
       var psetCount  = ep&&ep.psets ? Object.keys(ep.psets).length : 0;
       var qtyCount   = ep&&ep.quantities ? Object.keys(ep.quantities).length : 0;
+
+      // Containment breadcrumb (Project › Site › Building › Storey) + hosted
+      // elements (e.g. a wall's hosted doors/windows). Data already exists
+      // per-model (spatialHierarchy from extractSpatialHierarchy, hostId from
+      // the IFC loader) but was never surfaced here - only the bare storey
+      // string was shown, with no way to see what an element is hosting.
+      var breadcrumb = [];
+      var hostedEls = [];
+      if (_latestEl && _mdl) {
+        var _sh = _mdl.spatialHierarchy || {};
+        if (_sh.project && _sh.project.name) breadcrumb.push(_sh.project.name);
+        if (_sh.sites && _sh.sites.length === 1) breadcrumb.push(_sh.sites[0].name);
+        if (_sh.buildings && _sh.buildings.length === 1) breadcrumb.push(_sh.buildings[0].name);
+        if (storey) breadcrumb.push(storey);
+        var _hostGid = ep && ep.globalId;
+        if (_hostGid && _mdl.elements) {
+          for (var _hi=0; _hi<_mdl.elements.length; _hi++) {
+            var _hp = _mdl.elements[_hi].props;
+            if (_hp && (_hp.hostId===_hostGid || _hp.host_global_id===_hostGid)) hostedEls.push(_mdl.elements[_hi]);
+          }
+        }
+      }
 
       // Helper: format dimension values — show raw IFC value with correct unit suffix
       var _qtyUs = (typeof _ccDetectUnitScale === 'function') ? _ccDetectUnitScale(latestState && latestState.models) : 1;
@@ -31612,13 +32579,30 @@ function startApp() {
           <div style=${CARD}>
             <div style=${HDR}>Identity</div>
             ${ep&&ep.ifcType     && html`<div style=${ROW}><span style=${LBL}>IFC type</span><span style=${{...VAL,...MONO}}>${ep.ifcType}</span></div>`}
-            ${ep&&ep.globalId    && html`<div style=${ROW}><span style=${LBL}>GlobalId</span><span style=${{...VAL,...MONO}}>${ep.globalId}</span></div>`}
-            ${ep&&ep.expressId   && html`<div style=${ROW}><span style=${LBL}>Express ID</span><span style=${{...VAL,...MONO}}>#${ep.expressId}</span></div>`}
+            ${ep&&ep.globalId    && html`<div style=${ROW}><span style=${LBL}>GlobalId</span><span style=${{...VAL,...MONO,display:'flex',alignItems:'center',gap:'.35rem'}}><span style=${{overflow:'hidden',textOverflow:'ellipsis'}}>${ep.globalId}</span>${_copyBtn(ep.globalId,'GlobalId')}</span></div>`}
+            ${ep&&ep.expressId   && html`<div style=${ROW}><span style=${LBL}>Express ID</span><span style=${{...VAL,...MONO,display:'flex',alignItems:'center',gap:'.35rem'}}><span>#${ep.expressId}</span>${_copyBtn(ep.expressId,'Express ID')}</span></div>`}
             ${ep&&ep.objectType  && html`<div style=${ROW}><span style=${LBL}>Object type</span><span style=${VAL}>${ep.objectType}</span></div>`}
             ${ep&&ep.description && html`<div style=${ROW}><span style=${LBL}>Description</span><span style=${VAL}>${ep.description}</span></div>`}
-            ${storey             && html`<div style=${ROW}><span style=${LBL}>Floor</span><span style=${VAL}>${storey}</span></div>`}
+            ${breadcrumb.length>0
+              ? html`<div style=${ROW}><span style=${LBL}>Location</span><span style=${VAL} title=${breadcrumb.join(' › ')}>${breadcrumb.join(' › ')}</span></div>`
+              : storey && html`<div style=${ROW}><span style=${LBL}>Floor</span><span style=${VAL}>${storey}</span></div>`}
             ${ep&&ep.material    && html`<div style=${ROW}><span style=${LBL}>Material</span><span style=${VAL}>${ep.material}</span></div>`}
           </div>
+          <!-- Hosted elements (e.g. doors/windows hosted in this wall) -->
+          ${hostedEls.length>0 && html`<div style=${CARD}>
+            <div style=${HDR}>Hosted elements (${hostedEls.length})</div>
+            ${hostedEls.slice(0,20).map(function(he){
+              var hp = he.props||{};
+              return html`<div key=${he.expressId} onClick=${function(){if(_highlightById)_highlightById(he.expressId);}}
+                onDblClick=${function(){if(_fitToElement)_fitToElement(he.expressId);}}
+                title="Click to highlight, double-click to frame"
+                style=${{...ROW,cursor:'pointer'}}>
+                <span style=${{...LBL,minWidth:0,flex:1,color:'var(--text-secondary)',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>${hp.name||('#'+he.expressId)}</span>
+                <span style=${{fontSize:'var(--text-2xs)',color:'var(--text-faint)',flexShrink:0}}>${(hp.ifcType||'').replace(/^Ifc/,'')}</span>
+              </div>`;
+            })}
+            ${hostedEls.length>20 && html`<div style=${{fontSize:'var(--text-2xs)',color:'var(--text-faint)',fontStyle:'italic',paddingTop:'.2rem'}}>+${hostedEls.length-20} more</div>`}
+          </div>`}
           <!-- Dimensions & Constraints -->
           ${hasConstraints && html`<div style=${CARD}>
             <div style=${HDR}>Dimensions &amp; Constraints</div>
@@ -31699,7 +32683,7 @@ function startApp() {
           ${ep&&ep.material    && html`<div style=${ROW}><span style=${LBL}>Material</span><span style=${VAL}>${ep.material}</span></div>`}
           ${ep&&ep.objectType  && html`<div style=${ROW}><span style=${LBL}>Object type</span><span style=${VAL}>${ep.objectType}</span></div>`}
           ${ep&&ep.description && html`<div style=${ROW}><span style=${LBL}>Description</span><span style=${VAL}>${ep.description}</span></div>`}
-          ${ep&&ep.globalId    && html`<div style=${ROW}><span style=${LBL}>GlobalId</span><span style=${{...VAL,...MONO,opacity:.65}}>${ep.globalId.slice(0,16)}…</span></div>`}
+          ${ep&&ep.globalId    && html`<div style=${ROW}><span style=${LBL}>GlobalId</span><span style=${{...VAL,...MONO,opacity:.65,display:'flex',alignItems:'center',gap:'.35rem'}}><span>${ep.globalId.slice(0,16)}…</span>${_copyBtn(ep.globalId,'GlobalId')}</span></div>`}
         </div>
         <!-- Dimensions & Constraints -->
         ${hasConstraints && html`<div style=${CARD}>

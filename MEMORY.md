@@ -285,14 +285,441 @@ Solibri/Navisworks/OSS (IfcOpenShell, ThatOpen, xeokit, Speckle, BIMcollab, Revi
   an Advanced toggle by default. Wave 1.2's new default clash matrix means even the bare "Run detection"
   button (zero configuration) now runs with sane discipline filtering out of the box. The `excludeSelf`
   single-model gap above is the one real first-run trap left, and it's already logged separately.
-- **Next**: Wave 1.5 (`manifold3d` exact-volume tier, `ClashControlEngine` repo, own PR — separate repo,
-  hasn't been added to this session's write scope), Wave 1.7 (funnel UI — raw pairs → after matrix → after
-  tolerance → after grouping → issues, each count visible; needs instrumenting the detection pipeline
-  itself, more invasive than 1.6/1.9 turned out to be) or Wave 1.8 (spatial sub-clustering). Or the
-  `excludeSelf` single-model default trap just above — small in code, but touches enough call sites to
-  deserve dedicated attention rather than a rushed fix. Then Wave 3 (BCF fidelity — the single biggest
-  audited interop gap: CC's own BCF *exporter* never writes `<Components>`, so a CC-exported BCF has no
-  selectable elements in Solibri/BIMcollab despite CC's *importer* already parsing them).
+- ~~**Wave 1.7: show the detection funnel**~~ (2026-07-13). The default clash matrix (Wave 1.2) already
+  filters same-discipline noise on every run, but nothing surfaced that it had happened outside the
+  developer-only diagnostics panel. New `matrix_skipped` counter on the existing detection-profile object
+  (one counter, one increment site — the WASM chunk-warmup pre-filter re-tests the same matrix check as a
+  cache-population shortcut but every candidate still reaches the authoritative check in
+  `_processCandidate`, so counting only there avoids double-counting), shown as a new diagnostics-panel
+  row. More importantly: new `_showFunnelToast()` shows a one-line "N pairs checked → M filtered by
+  discipline matrix → K clashes found" toast to *every* user after *every* browser-engine run, no
+  diagnostics flag needed — hooked into `_browserDetect`'s own promise chain (the one function all 9
+  `detectClashesAsync` call sites funnel through) rather than touching each site, and only reads
+  `window._ccDetectProfile` right after that run set it so it can't show a stale number or leak in when
+  the local engine (which doesn't populate that global) handled the run. `f63743b` (PR #680 — #679 merged
+  mid-session, branch restarted from the new `main`, see below). 6 tests.
+  Wave 1.8 (spatial sub-clustering) and the `excludeSelf` single-model default trap remain deferred — same
+  reasoning as before (1.8 needs its own careful opt-in design, not a change to default grouping behavior;
+  `excludeSelf` touches dozens of call sites).
+- **PR #679 merged to `main` by explicit user instruction** ("merge to main. Continue with the to do's")
+  mid-session — squash-free `merge` method to preserve the granular one-fix-per-commit history. Per the
+  branch-restart convention, the designated branch was reset to the new `main` and PR #680 opened for
+  continued work — its diff is scoped to genuinely new commits (confirmed via `merge-base --is-ancestor`
+  before any push) rather than re-showing everything from #679. **Note for future sessions**: a
+  `force-with-lease` push during that reset was correctly blocked by the auto-mode classifier (the user's
+  merge instruction didn't name that specific destructive op) — the clean fix was cherry-picking the one
+  new commit onto the *old* (pre-reset) branch tip instead of onto the new `main`, since the old tip is now
+  an ancestor of `main` (regular merge, not squash) and a plain fast-forward push needs no force at all.
+- ~~**Wave 3.1: BCF viewpoints write `<Components><Selection>`**~~ (2026-07-13). The single biggest audited
+  interop gap: CC's BCF *exporter* wrote only `<PerspectiveCamera>` — no `<Components>` — so a CC-exported
+  BCF had no selectable elements in Solibri/BIMcollab/Navisworks, or even CC's own *importer*, which
+  already parses `<Component IfcGuid=...>` out of viewpoint files on the way in and has for a while. Every
+  exported topic now carries `<Components><Selection>` populated from the item's own identity data
+  (`globalIds`/`globalIdA`/`globalIdB`, deduped) — no new capture-side work needed, this data already
+  existed on every clash/issue. Placed before the camera element per the BCF schema's element order.
+  `34dc868`. 4 new tests in `tests/bcf-export.test.js` (element order, dedup, the no-identity-data case,
+  round-trip shape against CC's own importer).
+  **Deliberately narrow scope, two related gaps left for follow-up**: (1) issues with no linked, user-saved
+  viewpoint still get **no `.bcfv` file at all** — probably the common case for a quick "export these
+  clashes" action, since most users don't manually save+link a viewpoint per clash first. Fixing that means
+  synthesizing a reasonable default camera position from just a clash `point`, which needs its own careful
+  design (existing "frame a point" conventions live deep in the live-render closures, e.g. `_fitToClashes`/
+  `_zoomDist`, not yet checked for safe reuse at export time) rather than inventing new framing math under
+  time pressure — camera math is exactly the kind of thing this file already warns about getting wrong
+  without visual verification. (2) `<ClippingPlanes>` — CC already captures section-plane state on every
+  viewpoint (`vp.section`) but never exports it; the existing section-to-world-space conversion math (used
+  for live rendering, e.g. around `new THREE.Plane(...)` call sites in the section/section-box effects) is
+  deeply coupled to live scene state and wasn't yet confirmed safe to reuse at export time in one sitting.
+- ~~**Wave 1.8: spatial sub-clustering**~~ (2026-07-13). The existing `'cluster'` groupBy
+  (`_ccClusterKeyFor`) groups touch points between the *same two elements* — a duct crossing one beam at 3
+  points along its run correctly collapses to one group, but a duct crossing 5 *different* joists in the
+  same corridor bay showed as 5 separate-looking groups, even though it reads as one problem area. New
+  `_ccSpatialClusterMap(items, radiusM)`: distance-threshold union-find on clash points (1.5m default),
+  grid-bucketed (same spirit as the engine's `_SpatialHash`) for O(n) average. Wired in as a new `'nearby'`
+  groupBy dimension ("Location" in the secondary group-by dropdown) — deliberately additive, doesn't touch
+  the default "Grouped" (cluster) view. `4ab0bba`. 8 tests (radius boundary, transitive chaining through a
+  bridging point — why this needs real union-find not a naive pairwise pass —, unlocated items, label
+  stability, grid-bucket neighbor search across a cell boundary).
+  **Wave 1 (the triage funnel) is now fully shipped except 1.5** (the Python `manifold3d` exact-volume
+  tier — separate repo, hasn't been added to this session's write scope).
+- **User redirected priorities mid-session**: asked for a plan on 4 external OpenAEC-ecosystem repos
+  (`jochem25/OpenAEC-BIM-validator`, `OpenAEC-Foundation/openaec-reports`, `-bcf-platform`,
+  `-monty-ifc-viewer`). Researched via WebFetch (note: GitHub `/tree/<branch>/<path>` sub-paths 404 through
+  this session's WebFetch — only repo-root pages and `raw.githubusercontent.com` file content work; also
+  cost time discovering `OpenAEC-BIM-validator`'s default branch is `master`, not `main`). Proposed
+  build/check/defer/skip; user said **"Build 1 and 3, check number 2"** — RVB BIM Norm port (build), PDF
+  reports (build, overriding my own suggestion to defer it), BCF-platform cross-check (investigate only).
+- ~~**Build 1: RVB BIM Norm v1.1 port**~~ (2026-07-13). Read `OpenAEC-BIM-validator`'s two public-standard
+  `.ids` files directly (`RVB_BIM_Norm_v1.1.ids` 27 specs, `NL_BIM_Basis_ILS_v2.ids` 12 specs, both on
+  `master`) — clean-room reimplementation against the standards' requirements, same policy as the existing
+  `runILSChecks` comment states (no code copied from the validator). Mapped every RVB spec against CC's
+  existing `runILSChecks`/`runBIMModelChecks` coverage first — most of NL-BIM Basis ILS v2 was ALREADY
+  covered, often more thoroughly than the reference; work narrowed to the genuine gaps:
+  - **Bug found + fixed first**: 7 of `runILSChecks`' 16 buckets (the "NL-BIM Basis ILS v2 additions" —
+    storeyNaming, doorNaming, spaceIncomplete, fireRatingInvalid, extWallNoUValue,
+    loadBearingInvalidMaterial, mepNoRenovationStatus) were computed every run but never appeared in the DQ
+    panel's row list, CSV export, or "Create all issues" action — real findings silently invisible. New
+    shared `ILS_KEYS` constant used everywhere the panel touches `ils`. `939693e`.
+  - `IfcFurnishingElement` was already checked for NL-SfB presence but missing from `IFC_TO_NLSFB`, so a
+    furnishing element miscoded with another discipline's group silently passed the mismatch check. Mapped
+    to group 90 (Vaste inrichting), per RVB 2.2.7.11. `41b043a`.
+  - `spaceIncomplete` extended: ObjectType, IsExternal (Pset_SpaceCommon), GrossFloorArea/Height
+    (Qto_SpaceBaseQuantities) — RVB 2.2.7.6a/6b, alongside the pre-existing Name/LongName/NetFloorArea. A
+    space could pass every old check while missing all four new ones. `a43956e`.
+  - New IFC loader groundwork (purely additive, no existing field's shape/value changed): `IFCZONE`
+    constant (`1033361043`, cross-verified against `ThatOpen/engine_web-ifc`'s `ifc-schema.ts` since 3 of
+    the file's other hardcoded numeric IDs matched exactly); `extractSpatialHierarchy` now reads IfcZone
+    (RVB 2.2.7.7) and stamps `_hasName` on project/site/building/zone (so a `safeStr(...)||'IfcProject'`
+    fallback name can't be mistaken for a real one); `extractStoreys` stamps `hasElevation` (an explicit
+    0.0 ground-floor elevation is otherwise indistinguishable from Elevation never being set). `7ee8167`.
+  - New `runRVBChecks(models)` engine (addons/data-quality.js) — takes models directly, not a flat elements
+    array, since spatialHierarchy/storeyData are per-model: IfcProject Name (2.2.7.1), IfcSite
+    Name+georef (2.2.7.2), IfcBuilding Name (2.2.7.3), IfcZone Name/ObjectType for zones that exist
+    (2.2.7.7, a model with none is not flagged — IfcZone is optional in IFC), IfcBuildingStorey Elevation
+    (2.2.7.4). `f691141`.
+  - Wired into `computeQualityScore` via a new `_foldEntityCheckMap` (each bucket carries its OWN `total` —
+    project/site/building/zone/storey aren't the same population, so a shared `_total` like
+    `_foldCheckMap` uses would misstate every bucket's failure ratio) and into the DQ panel as a new RVB
+    section. **Deliberately never folds into the headline score or the panel's top "N issues" badge** — RVB
+    is one Dutch central-government client's own norm, narrower even than the already-adoption-gated NL-SfB
+    category; "missing IfcSite georeference" shouldn't tank the score of a model never meant to be
+    geo-referenced. Reuses the existing `renderCheckGroup` (its "Highlight in 3D" button is a harmless
+    no-op for these rows — project/site/building/zone entities aren't matched by GlobalId the way elements
+    are — but "+issue" works correctly). `a79f434`.
+  - 35 new tests across 6 files (`ils-panel-visibility`, `ils-furnishing`, `ils-space-quantities`,
+    `spatial-hierarchy-rvb`, `rvb-checks`, `quality-score-rvb`, `rvb-panel-wiring`); `extractSpatialHierarchy`/
+    `extractStoreys` tested via a minimal fake web-ifc `api` (same style as `bcf-export.test.js`'s fake
+    JSZip). 194/194 passing.
+  - **Not done**: `exportIDS()` (CC's own hardcoded-specs → .ids XML exporter) doesn't yet emit the new RVB
+    checks as exportable IDS specs — the check ENGINE is done, the export-as-IDS representation is a
+    separate, smaller follow-up if wanted.
+- ~~**Check 2: cross-checked CC's BCF handling against `openaec-bcf-platform`'s Rust implementation**~~
+  (2026-07-13). Unblocked the prior sub-path fetch failure by fetching `Cargo.toml` first (revealed the
+  `crates/bcf-core` + `crates/bcf-server` workspace layout) then `crates/bcf-core/src/{lib,visinfo,
+  xml_types}.rs` directly via `raw.githubusercontent.com` — general lesson: when a repo root page works but
+  `/tree/<branch>/<path>` 404s, fetch a known-likely file path directly instead of trying to browse.
+  Findings: (1) **Components/Selection** — `XmlComponents.selection → XmlSelection.components: Vec<Xml
+  Component>` with `#[serde(rename="Component")]`/`IfcGuid`-shaped, structurally identical to CC's own
+  exporter/importer convention — confirms round-trip interop, no action needed. (2) **Coloring** — the
+  platform DOES model `<Coloring><Color Color="#hex"><Component IfcGuid=.../></Color></Coloring>`; CC
+  exports no `<Coloring>` at all (confirmed absent, not just theorized) — a real, now-confirmed gap, logged
+  as a candidate follow-up, not built this session (Check 2 was investigate-only). (3) **ClippingPlanes** —
+  confirmed ABSENT in this sibling project too (not just CC) — reassuring: CC isn't behind the ecosystem
+  here, it's an unbuilt corner on both sides, validates deferring it rather than rushing untested camera
+  math. (4) **Element order** — `XmlVisualizationInfo`'s Rust struct field order is `guid → perspective_
+  camera/orthogonal_camera → components`, meaning (since their serde+quick-xml-style setup serializes in
+  declaration order) their writer likely emits the camera choice BEFORE `<Components>` — the OPPOSITE of
+  the true buildingSMART XSD sequence (`Components` → camera choice → `Lines` → `ClippingPlanes` →
+  `Bitmap`) that CC's own Wave 3.1 exporter correctly follows (locked by the "precedes the camera element"
+  test in `bcf-export.test.js`). Net: CC's own BCF viewpoint schema-order compliance looks MORE correct
+  than this sibling tool's on this specific point — a positive validation of Wave 3.1, not a gap to close.
+- ~~**Build 3: print-ready Data Quality report**~~ (2026-07-13). Research before writing any code turned up
+  a course-correcting discovery: CC already has a mature, working report generator —
+  `_ccClashReport(s)` (index.html:19446) — builds a self-contained HTML document (inline CSS, a
+  `@media print{.noprint{display:none}}` block, a "Print / Save as PDF" button calling `window.print()`)
+  and opens it via `window.open('','_blank')` + `document.write`. A third sibling,
+  `generateValidationReport`, already covers IDS specs. So the real gap wasn't "CC has no report feature,"
+  it was "Data Quality has no report feature" (only CSV export). Built `_ccDataQualityReport(s)` as a
+  fourth report using the *identical* pattern (deliberately did not invent a shared modal/print-CSS system
+  — see the superseded plan below) — Quality Score + breakdown, General/BIM-basics/ILS/RVB check tables,
+  accessibility pass/fail, models table. Self-sufficient like `_ccClashReport` (re-runs the check engines
+  from `s.models` directly, doesn't depend on `DataQualityPanel`'s own React state having already run).
+  Wired into two entry points: a new "⎙ Print report" button in the DQ panel (renamed the pre-existing CSV
+  button off the now-ambiguous "↓ Export report" to "↓ Export CSV"), and a new "⎙ Data quality report"
+  entry in `IssuePanel`'s Export flyout next to the pre-existing "⎙ Clash report". 12 new tests across 2
+  files (function-body extraction + sandboxed stub engines, same style as `bcf-export.test.js`; a grep-based
+  wiring lock for both entry points). 206/206 passing.
+  **Superseded plan, kept for the record**: before finding `_ccClashReport`, the plan was a jsPDF CDN
+  dependency — dropped because this sandbox's CDN fetches 403 (couldn't self-verify an SRI hash, and a
+  wrong hardcoded one would silently break the feature for every user), then a from-scratch
+  modal+`window.print()` system — dropped once `_ccClashReport` showed the project already has a proven,
+  simpler, dependency-free convention for exactly this. Lesson: grep for `window.print` /  `@media print`
+  /  `⎙` before designing a new report/export feature from scratch — this file already has three.
+- ~~**Fixed the `excludeSelf` single-model default trap**~~ (2026-07-13). `rules.excludeSelf` defaults
+  `true`, and one-click "Run detection" runs with whatever rules currently are. For a project with only
+  one combined IFC model (a common federated-export shape), `grpA`/`grpB` both resolve to that single
+  model, so "cross-model only" always yields zero pairs by construction — the single most prominent
+  first-run action silently reported "0 clashes" regardless of real physical overlaps. Fix is inside
+  `_sweepAndPrune` (index.html:4605, takes `grpA`/`grpB` directly — no refactor needed to reach the right
+  scope): reuses the `seenModels` map it already builds when merging `grpA.concat(grpB)` into `items`, and
+  when that union collapses to exactly one model, forces `selfAllowed = true` for the same-model gating
+  branch — covers both "only one model loaded globally" and a run explicitly scoped to one model on both
+  sides (NL command / preset), since both collapse the same way. Deliberately does NOT mutate
+  `rules.excludeSelf` itself (an effective-only override), so the dozens of UI/NL-command/preset call
+  sites that SET it keep working unchanged, and multi-model behavior is provably unaffected (locked by a
+  same-model-pair-must-still-be-excluded regression test). 7 tests extracting the real `_sweepAndPrune`
+  (plain `{min:{x,y,z},max:{x,y,z}}` boxes, no THREE.js needed). `6d4ed0f`. 213/213 passing.
+  **Companion follow-up, not done here**: the local ("exact") Python engine has the same trap in its own
+  model-scope resolution — `_serializeForLocalEngine` (`addons/local-engine.js:586`) passes
+  `rules.excludeSelf` through as-is and doesn't have access to the resolved `grpA`/`grpB` (it serializes
+  ALL passed-in models unconditionally and lets the Python engine do its own `modelA`/`modelB` string
+  resolution server-side), so the equivalent fix belongs in `ClashControlEngine`'s own sweep/scope code —
+  a separate repo, out of this session's write scope, same situation as the Wave-0 local-engine rule-parity
+  fix.
+- ~~**Wave 4 (partial): copyable inspector IDs + Navigator real find**~~ (2026-07-13). Continuing "go full
+  throttle to the end" past the user's explicit redirect (Build 1/3, Check 2) and the excludeSelf fix,
+  back onto the roadmap:
+  - **Copyable GlobalId/Express ID**: both were plain, unselectable-feeling text in the Details inspector
+    (Coordinate's full Identity card + Present mode's truncated Quick identity card). New shared
+    `_ccCopyToClipboard(text, label)` (clipboard API + execCommand fallback, toast confirmation instead of
+    AIChatPanel's copyMsg per-index state, since these call sites have no natural index) wired via a small
+    `_copyBtn` helper in `renderDetails`. The truncated Present-mode row copies the full untruncated
+    GlobalId, not the visible ellipsis text. `3eca120`.
+  - **Navigator search, two bugs found by reading the code before touching it, not just the one in the
+    plan**: (1) every element-search call site (spatial view, tree/"Flat list" view, its keyboard-nav
+    duplicate for arrow-key traversal, and `_findAndHighlightElements`/Items Finder used by NL commands)
+    duplicated its own 2-6 field inline check — none matched GlobalId, so pasting a GlobalId from a BCF
+    issue into the search box found nothing; none matched property/quantity VALUES either. (2) **bigger
+    find**: the default "Hierarchy" (spatial) view — `viewMode==='spatial'`, what every new user sees
+    first — never read `treeSearch` at all; `stEls`/`noSt` were rendered fully unfiltered, so the search
+    box had literally zero effect in the default view. Only the secondary "Flat list" view actually
+    filtered anything. New shared `_elMatchesSearch(el, q)`: name/ifcType/expressId (pre-existing) +
+    GlobalId/ObjectType/material/description/storey + every pset/quantity value. All 5 call sites
+    migrated onto it (removing the duplication as a side effect); spatial view now computes `q` and
+    filters `stEls`/`noSt` like the other views always should have. Storey render caps (200/100 elements)
+    widen to 1000/500 while actively searching — search is exactly the case where seeing more matters more
+    than DOM-node headroom. `da26294`. 14 new tests across 4 files (matcher unit tests + grep-based wiring
+    locks confirming no stale duplicated matcher text remains and the spatial view specifically computes
+    `q`). 231/231 passing.
+  - **Deliberately not done**: a "flat cross-model results list" (today's results still nest inside the
+    per-model/per-storey tree, just correctly filtered now) and auto-expand-on-search (matching a node
+    still requires manually expanding its ancestors, same as before) — both bigger, separate UX redesigns,
+    not part of this fix's scope.
+  - ~~**Selection Sets: rename + `+`/`−` membership editing**~~. `REN_SELSET` had a reducer case but
+    genuinely zero dispatch call sites anywhere in the app — no rename button existed at all. Click a
+    set's name to rename (wires the existing action). New `UPD_SELSET_REFS` reducer case (a dedicated case
+    rather than delete+re-add, so a set's `createdAt`/`color` aren't reset by editing membership) backs new
+    `+`/`−` buttons that add/remove the current selection from an already-saved set. `b89cd1e`.
+  - ~~**Containment breadcrumb + hosted elements in the Details inspector**~~. The Coordinate workspace's
+    Identity card only ever showed a bare storey string — no Project/Site/Building chain, no way to see
+    what an element is hosting (e.g. a wall's doors/windows) — despite both data sets already existing
+    (`spatialHierarchy` from `extractSpatialHierarchy`, `hostId` from the loader). New breadcrumb (each
+    level included only when unambiguous — 0 or 2+ sites/buildings are omitted rather than guessed, with a
+    fallback to the old plain row when nothing resolves) + a "Hosted elements" card, click to highlight /
+    double-click to frame (same convention as the Navigator tree's own element nodes). `63534de`.
+  - 17 more tests across 4 files this round (block-extraction + grep wiring locks). 248/248 passing.
+  - **Still unstarted**: dynamic/re-resolving "search sets" (save a classification filter as a named query
+    that re-evaluates against the live model, distinct from today's static snapshot-of-refs sets) and
+    element-vs-element compare/diff (`multiSel` + `PropBlock` already exist and are used as stacked A/B in
+    the clash panel — reusing them for an aligned diff view is the natural next step, just not started).
+- ~~**Element-vs-element property diff (Wave 4)**~~ (2026-07-13). `multiSel` (Shift-click) + `PropBlock`
+  already existed but only ever stacked two elements' properties as separate A/B blocks (`ClashProps`) —
+  nothing aligned them side by side or flagged which actually differ. New `_diffElementProps(pA, pB)`:
+  aligned rows for identity fields + the UNION of both sides' quantity/pset keys, so a property only one
+  element carries shows as a row with the other side marked missing rather than silently dropped. New
+  `PropDiffView` (3-column table, differing rows highlighted) wired into `NavigatorPanel`: selecting
+  exactly 2 elements shows "Compare selected (2)". **Real bug found while wiring it up**: `_lookupElProps`
+  required an exact `modelId` match, but Selection Sets/Navigator `multiSel` refs never populate `modelId`
+  in practice (only one call site in the whole file ever sets it, and even that one falls back to `null`)
+  — the new Compare view would have silently shown nothing. Fixed by falling back to searching every model
+  by expressId alone, matching `_findMeshByRef`'s existing lenient convention exactly; `ClashProps` (the
+  only pre-existing caller) is unaffected since clash items always carry real model ids. `3d725af`. 12
+  tests across 2 files. 260/260 passing.
+  **Process note for future sessions**: an `Edit` tool-call embedded a stray `\x01` control byte in place
+  of an intended plain delimiter inside a hand-written string-join key (`setName+'\x01'+k`), which silently
+  broke `Object.keys(...).sort()` grouping — caught immediately by re-running the exact-match `Edit` (it
+  correctly refused to match, since the file's real bytes didn't equal what was intended) rather than by
+  a test. Fixed via a small Node one-off (`cat -A` to confirm the exact byte, then `String.split/join` in
+  a `node -e` script) instead of fighting the Edit tool's literal-text matching against an uncopyable
+  control character. Lesson: if `Edit`'s exact-match unexpectedly fails on text you just read verbatim,
+  suspect a hidden/control character before assuming a stale read — `cat -A` (or `od -c`) confirms it in
+  one step, and a `node -e` `String.split/join` script sidesteps needing to type the character at all.
+- **Wave 4 is now substantially done**: real find, copyable IDs, containment breadcrumb + hosted elements,
+  Selection Set rename/`+`/`−` editing, and element-vs-element diff all shipped this session. **Still
+  unstarted**: dynamic/re-resolving "search sets" (save a classification filter as a named query that
+  re-evaluates against the live model — today's sets are still a static snapshot-of-refs; this is a
+  bigger, separate feature: query definition UI + a live re-resolution engine + wiring into the clash-scope
+  picker, not attempted this session).
+- ~~**DQ re-run reconciliation (Wave 5)**~~ (2026-07-13). Clash detection has had full GUID-identity
+  reconciliation (new/persisting/auto-resolved) since `#638`; Data Quality re-runs just overwrote the prior
+  result with no trend at all — running the DQ panel twice gave no sense of whether things got better or
+  worse. A true per-element identity diff (GlobalId × checkId) would need every check bucket to also return
+  an uncapped GlobalId list — today `ex` is deliberately capped at 6-8 items for display, so that would be
+  an engine-shape change across all four check engines (qc/bim/ils/rvb). Reconciled at the check-COUNT level
+  instead ("was N, now M" per bucket), which needs no engine-shape change: new `flattenDQCounts(results)` /
+  `diffDQCounts(current, previous)` (`addons/data-quality.js`, exposed as `window._ccFlattenDQCounts`/
+  `window._ccDiffDQCounts`) flatten all four engines into one map keyed `engineName:bucketKey` (prefixed so
+  same-named buckets in different engines, e.g. two different `noMaterial` checks in `qc` vs `ils`, never
+  collide), then diff two snapshots into `{worse[], better[], unchangedCount}`, sorted by largest swing
+  first. Wired into `DataQualityPanel.runChecks()`: computes `newQc`/`newBim`/`newIls`/`newRvb` as named
+  locals (needed so they can be flattened before the setters run), flattens+diffs against the previous run's
+  snapshot (`null` on the first run — nothing to compare against), stores the new snapshot as "previous" for
+  next time. New "Since last run: N worse, M better" summary line under "Last checked", expandable (reusing
+  the existing `expanded[...]` section-toggle pattern) into the full worse/better list with labels and
+  from→to counts. **Deliberately session-local, not persisted** — `prevDqCounts` is component state, cleared
+  on reload, matching how the rest of the DQ panel already behaves (no snapshot persistence exists anywhere
+  else in Review mode either). `9d475b9`. 11 new tests across 2 files (`dq-reconciliation` — flatten/diff
+  logic incl. engine-prefix collision avoidance and sort order; `dq-reconciliation-wiring` — panel wiring).
+  Caught and fixed a stale assertion in `tests/rvb-panel-wiring.test.js` from the `runChecks()` refactor
+  (literal-text match on `setRvb(runRVBChecks(rvbModels))`, now `var newRvb = ...; setRvb(newRvb)` —
+  behavior-equivalent, just restructured) in a separate follow-up commit, `e4fa73a`. 271/271 passing.
+- ~~**Fixed a real IDS honesty bug found while scoping the item below**~~ (2026-07-13). `runIDSSpecs`
+  (`addons/data-quality.js:1200`) unconditionally counted a non-failed element as a pass in the per-spec
+  `bs.pass`/`bs.fail` rollup, even when its only requirement came back "not checkable" (`elUnchecked`) — the
+  requirement-level `summary.total/pass/fail` already excluded unchecked requirements correctly, but
+  `bs.pass` (used by both `generateValidationReport` and the live IDS panel's pass-rate bar,
+  `pass/(pass+fail)`) didn't, so a specification whose only applicable elements were unverifiable would
+  render as 100% compliant. Fixed to `if (elFailed) bs.fail++; else if (!elUnchecked) bs.pass++;` — unchecked
+  elements now contribute to `applicable`/`unchecked` but not `pass`/`fail`. `f075029`. One new assertion pair
+  in the existing `partOf: ... honestly unchecked` test (`tests/ids-engine.test.js`), 271/271 passing.
+- ~~**IDS conformance CI against the buildingSMART audit suite (Wave 5's last piece)**~~ (2026-07-13).
+  Researched the actual corpus first rather than trusting IMPROVEMENT_PLAN.md's own citation of it (that
+  entry had flagged its own numbers as "search-synthesized" — worth re-verifying, not just building against):
+  it's `github.com/buildingSMART/IDS` (not `IDS-Audit-tool`, which turned out to be a schema-validator, not a
+  paired-test-case corpus), `development` branch,
+  `Documentation/ImplementersDocumentation/TestCases/{attribute,classification,entity,ids,material,partof,
+  property,restriction,tolerance}/`, confirmed 250+ pairs sharing a basename (`<prefix>-<slug>.ids`+`.ifc`,
+  prefix ∈ pass/fail/invalid) — confirmed via `scripts.md` in that folder, not guessed. Names line up directly
+  with the 4 subtle rules already flagged in this file's Wave 5 section (e.g.
+  `property/pass-floating_point_numbers_are_compared_with_a_1e_6_tolerance_1_4`).
+  **Verification constraint that shaped the whole design**: confirmed via direct test (not assumption) that
+  this dev sandbox's proxy 403s the exact CDN hosts (`cdnjs.cloudflare.com`, `cdn.jsdelivr.net`) the app
+  itself needs to boot — so unlike every other feature this session, the browser-driving part of this one
+  could NOT be verified locally before shipping, only via a real GitHub Actions run. Split the work along
+  that fault line: `tests/browser/ids-grade.js` — pure `gradeIDSCase(prefix, summary)` — is the one part that
+  COULD be wrong in a subtle way (the corpus only has pass/fail/invalid; CC's engine has a 4th, honest
+  "not checkable" outcome for facets it won't guess on, e.g. PredefinedType/non-storey partOf/XSD dataType
+  coercion — naively grading those as "wrong" would repeat exactly the dishonest-number pattern Wave 0 spent
+  this whole effort round eliminating), so it's pulled out standalone and unit-tested directly (10 tests, no
+  browser/network). Everything downstream of it — `tests/browser/ids-conformance.mjs` (new sibling to
+  `smoke.mjs`: fetches nothing itself, takes a corpus dir as argv[2], discovers every case, drives each one
+  through `window.ClashControl.loadFiles` → real web-ifc → `window._ccParseIDS`/`_ccRunIDS` → `gradeIDSCase`,
+  `DEL_MODEL`s before the next case) is comparatively thin plumbing, verified by careful reading only.
+  **Two bugs caught by reading the loader before trusting it, not by running anything** (would have silently
+  broken the whole job): (1) copied `smoke.mjs`'s scoped-load readiness signal (`m.stats.loadedScope`)
+  at first — traced the loader and found `loadedScope` is explicitly `null` for a normal unscoped load
+  (`index.html:3452`), so every one of the 250+ cases would have hung until timeout; switched to `m.stats`
+  truthiness (set once, for any completed load, scoped or not). (2) reusing one model filename across cases
+  to force `REPLACE_MODEL` (avoiding accumulation) would race the next case's "did it load yet" poll against
+  the previous case's already-true state; switched to a unique per-case model name (plain `ADD_MODEL` every
+  time) plus an explicit `DEL_MODEL` after grading each case, keeping the running app light across 250+
+  iterations without the race. New workflow `.github/workflows/ids-conformance.yml`: **manual dispatch +
+  weekly schedule only, deliberately not on every PR** — ~250+ headless-Chromium round trips is much heavier
+  than `browser-smoke`, and shipping a new, page could-not-verify-locally job as a blocking gate on day one
+  would risk breaking every unrelated PR on this repo; `continue-on-error:true` so it's visible but never
+  blocks while it proves itself. Corpus fetched at `development` HEAD (not pinned) so a pass means "conformant
+  with the CURRENT official suite" — fine while non-blocking; **pin to a commit before ever promoting this to
+  a required check**, or an upstream corpus change could silently start blocking unrelated PRs. Tried to fire
+  it once via `actions_run_trigger` for real signal this session — got a 403 (session's GitHub integration
+  lacks `actions:write`), so **this job has NOT been run for real yet**; its first signal will be the Monday
+  cron or a human clicking "Run workflow". `74de5ce` (grading logic + tests), `f25ee77` (driver + workflow).
+  281/281 `npm test` passing throughout (the browser-driven `.mjs` itself is intentionally outside that count,
+  same as `smoke.mjs`).
+- ~~**BCF `<Visibility>`/`<Coloring>` export (Wave 3)**~~ (2026-07-13). Went to fetch the real
+  `visinfo.xsd` (both `release_2_1` and `release_3_0`) before writing any code, since this session's own
+  earlier Check 2 notes (secondary-source, read from a sibling Rust project rather than the schema itself)
+  turned out to have the structure wrong — worth re-verifying, exactly the lesson the IDS-conformance item
+  above just re-learned from a different angle. **Corrected understanding**: `<Coloring>` is a CHILD of
+  `<Components>` (alongside `<Selection>`/`<Visibility>`), not a sibling of `<Components>` at the
+  `VisualizationInfo` level as Check 2 had said. **Bigger, unrelated finding from reading the real schema**:
+  `<Visibility>` has `minOccurs="1"` inside `ComponentVisibility` in BCF 2.1 — meaning every BCF 2.1 file CC
+  had ever exported with a `<Components>` block (i.e. every clash-pair viewpoint) was already schema-invalid,
+  missing a required element, before today. Fixed both in one pass since they're the same block: now always
+  emits `<Visibility DefaultVisibility="true"/>` right after `<Selection>` whenever `<Components>` exists (3.0
+  makes Visibility optional, but writing it explicitly avoids relying on 3.0's `DefaultVisibility="false"`
+  schema default; CC has no per-viewpoint hidden-elements snapshot to export as `<Exceptions>`, so
+  "everything visible, no exceptions" is the honest claim available today) — and `<Coloring>` for clash-pair
+  items only (`globalIdA`+`globalIdB` both present), reusing the exact Wave 2.1 clash-focus A/B colors
+  (`#ef4444`/`#22d3ee`, `_PAIR_ROLE_COLOR` in `_highlightRefs`) so a BCF viewer shows the pair the way CC
+  itself does. **2.1 and 3.0 genuinely differ inside `<Color>`**: 2.1 holds `<Component>` directly, 3.0 wraps
+  it in a nested `<Components>` — confirmed against both real XSDs, not assumed symmetric. Single-GUID items
+  (DQ/accessibility issues) get Selection+Visibility but no Coloring — no second side to contrast against.
+  Updated the pre-existing "deduplicated" test to scope its GUID-count assertion to `<Selection>` specifically
+  (Coloring now legitimately repeats those GUIDs elsewhere in the file — counting across the whole file would
+  no longer test what it originally meant to). 5 new tests. `5945f31`. 286/286 passing.
+  **Still open from Wave 3**: `<ClippingPlanes>` export (doubly-confirmed as a shared, not CC-specific, gap
+  per Check 2 — deferred, not rushed), auto-synthesized default viewpoints for issues with no linked view, and
+  stamp/auto-assignment rules (Revizto-style per-project templates).
+- ~~**Dynamic search sets (Wave 4's last item)**~~ (2026-07-13). Scoped first (Explore agent): the only
+  existing structured (not free-text) element-filter code anywhere in the file is the legacy IDS engine's
+  applicability/requirement facets (`ifcType` regex + pset-scoped property, ~19452-19475) — modeled the query
+  shape on that instead of inventing a DSL: `{ifcType, storey, material, propertySet, propertyName,
+  propertyValue}`, AND'd together. New pure `_resolveSearchSet(query, models)` next to `_elMatchesSearch`
+  (deliberately not sharing code with it — structured vs. free-text are different problems). New `s.searchSets`
+  state + `ADD_SEARCHSET`/`DEL_SEARCHSET`/`REN_SEARCHSET`/`UPD_SEARCHSET_QUERY` — a **separate slice from
+  `selectionSets`**, not a `query` field bolted on: every existing selSet consumer (count display,
+  `_highlightRefs`, the `+`/`−` editor) assumes already-resolved refs, and a query-defined set has no coherent
+  `+`/`−` operation anyway (the query is what's authoritative, not the membership). UI: a parallel "Search
+  sets" section in the Navigator — query-builder form (6 filter fields + name, live match-count preview,
+  refuses to save with zero criteria) and a list reusing the exact same `_highlightRefs` Isolate/Highlight
+  buttons Selection Sets already wired up, plus click-to-edit. `saveProject`/`loadProject` round-trip the
+  QUERY, not resolved refs — correct even through the stub-reload cycle (restored models start with
+  `elements:[]` until geometry is re-uploaded, so a search set's count honestly reads 0 until then, rather
+  than a thawed selSet's stale non-zero count). `9f2088c`. 23 new tests across 2 files, 309/309 passing.
+  **Deliberately out of scope** (confirmed by the scoping research, not just deferred on a hunch): wiring a
+  search set into the clash-matrix or clash-scope picker — no "scope detection to an arbitrary named set"
+  plumbing exists anywhere today, would need a new expressId-membership check in `_sweepAndPrune` alongside
+  `excludeTypes` (itself real, but a separate follow-up); `colorByClass`/`TOGGLE_CLASS_VIS` integration — those
+  key off classification buckets, not ref lists, so a search set isn't a natural fit there.
+  **Wave 4 is now fully done**: real find, copyable IDs, containment breadcrumb + hosted elements, Selection
+  Set rename/`+`/`−` editing, element-vs-element diff, and dynamic search sets all shipped this session.
+- ~~**Auto-synthesized default BCF viewpoints (Wave 3)**~~ (2026-07-13). Scoped first since this looked like
+  it might be another `<ClippingPlanes>`-shaped deferral ("needs live scene state that only exists inside
+  reducer-driven effects, not a pure function") — it wasn't: every element already carries a real world-space
+  bbox on `state.models[i].elements[j].box` (the same authoritative data `window._ccElemsBBox` already unions
+  live), flowing into `exportBCF`'s existing `state` parameter with zero new plumbing. The one thing genuinely
+  unavailable at export time is a "current camera angle" to imitate (no live Three.js scene), so the
+  synthesized camera always uses a fixed isometric-ish offset rather than guessing one. New
+  `_lookupElBox`/`_ccBoxFinite`/`_ccSynthesizeViewpoint` (placed right before `exportBCF`, their only caller):
+  handles both identity shapes issues carry — `elemA`/`elemB`+`modelAId`/`modelBId` (clash pairs, unions both
+  boxes) and `elementId`/`modelId` (single-element DQ/accessibility issues) — falling through to no
+  synthesized viewpoint (today's existing behavior) when nothing resolves, rather than fabricating a
+  meaningless generic camera with no real geometry behind it. Distance formula duplicated from the private
+  `_zoomDist` (different closure) rather than exposed cross-scope — same reasoning as the Coloring commit's
+  inline color literals. `bca65a9`. 13 new tests across 2 files. 322/322 passing.
+  **Still open from Wave 3**: `<ClippingPlanes>` export (deferred, confirmed shared gap not CC-specific) and
+  stamp/auto-assignment rules (Revizto-style per-project templates — "no existing infrastructure found").
+- ~~**Stamp/auto-assignment rules (Wave 3's last item)**~~ (2026-07-13). Revizto-style per-project templates,
+  "discipline-pair × storey → assignee/priority", applied automatically to newly detected clashes. Scoped
+  first: clashes already carry a `disciplines` array (`_buildClashBase`) and `elemAStorey`/`elemBStorey`
+  directly — no new extraction needed, just consumption. New `_ccMatchAssignmentRule`/`_ccApplyAssignmentRules`
+  (pure, next to `mergeDetectionResults`) stamp only `c._delta==='new'` clashes with no assignee yet —
+  deliberately NOT touching `mergeDetectionResults` itself, whose persisting-clash branch already carries
+  forward a person's prior assignee/priority unconditionally. Disciplines match as an UNORDERED pair (a
+  clash's two sides carry no meaningful A/B order) with `'any'` wildcards; first matching rule wins.
+  New `s.assignmentRules` reducer slice, deliberately separate from `StandardsPanel`'s existing
+  discipline-pair clearance rules (those are global, plain `localStorage` — assignment policy is
+  project-specific), wired into all three persistence paths from day one (the previous commit's fix made
+  that possible to get right first try). UI lives inside `StandardsPanel` as a new "Assignment rules"
+  section — critically uses `DISC` (`structural/mep/architectural/civil/other`, what a clash's
+  `disciplines[]` actually carries) for its dropdowns, NOT `StandardsPanel`'s own `STANDARD_DISCIPLINES`
+  list (`mechanical`/`electrical`/...), which the scoping research flagged would silently never match
+  anything. `85edeb4`. 22 new tests across 2 files, 348/348 passing.
+  **Wave 3 is now done except `<ClippingPlanes>` export**, deliberately deferred (confirmed via Check 2 as a
+  shared gap, not CC-specific — validates the deferral rather than rushing untested camera/section math).
+- ~~**Occluder-reveal toggle (Wave 2.2)**~~ (2026-07-13). The first render-adjacent feature this session —
+  scoped carefully first against this project's own documented guardrails (never touch renderer/tone-mapping;
+  additive-only; must handle BatchedMesh/InstancedMesh) before writing anything. Confirmed via research: needs
+  zero renderer/material/postFX changes — pure `THREE.Raycaster.intersectObjects` scene-graph visibility,
+  the exact pattern already used at 14+ call sites for picking, just aimed at a world point instead of the
+  mouse. New `_ccResolveOccluderHits`/`_ccApplyOccluderHide`/`_ccRevealOccluders` (pure) +
+  `_ccHideOccluders` (the one impure entry point — builds a real `Raycaster` from camera to the active
+  clash's point, bounded short of it, excludes the pair as a second safety net) placed next to `ghostOthers`.
+  **Deliberately never calls `ghostOthers`/`unghostAll`** — occluder-hide is strictly additive on top of
+  whatever ghost state clash-focus already set up, using each mesh type's own native hide primitive (the
+  same ones `ghostOthers` itself uses for the kept set): regular Mesh `.visible=false`; InstancedMesh
+  `setMatrixAt(idx,_INST_HIDE_MX)`; BatchedMesh `setVisibleAt(idx,false)`. **Verified this mattered**: the
+  more obvious reuse candidate, `_ccTempHide`, has no InstancedMesh branch at all and would have silently
+  no-op'd on instanced elements. New "Hide occluders" button in `IssueRow`'s active-clash button row, local
+  `useState`+`useRef` (transient viewport state, not reducer), a `useEffect` keyed on `[active]` reveals any
+  stale hide when the row stops being focused (guards a virtualized-list row staying mounted across a J/K
+  navigation) — deliberately does not touch the existing J/K keyboard handler itself at all.
+  **Testing ceiling stated plainly** (matches the IDS-conformance item's honesty, not overclaimed): unlike
+  every other feature this session, no CI job exercises live Three.js scene mutation, so `_ccHideOccluders`
+  itself is untested — it's pure glue with no logic of its own. Everything that could actually be wrong (hit
+  resolution across all 3 mesh types, pair exclusion, dedup, native hide/reveal) is pure and unit-tested
+  against plain-object THREE stand-ins. `633251e`. 21 new tests across 2 files. 369/369 passing.
+- **Next**: `<ClippingPlanes>` export (Wave 3's one remaining piece — still deliberately deferred, not
+  attempted this session), **watching the first real `ids-conformance` Actions run** (manual or the Monday
+  cron) and acting on whatever it finds — false positives/negatives in `wrong`, or a corpus-fetch/harness bug
+  in `errored` — since that's the one feature this session that shipped without any local verification
+  (occluder-reveal above is now a second, smaller instance of the same honestly-stated gap), and Wave 6
+  (Scale — untouched; extra care required per this session's own
+  history-informed guardrails: no geo-cache keying changes, no hand-rolled geometry merging). Wave 2.4
+  (Edges + SSAO in normal viewing) is the one remaining Wave 2 item — also render-touching, but unlike
+  occluder-reveal it directly implicates the SAO/Outline postFX passes this project's guardrails single out
+  by name ("re-enable only as opt-in, without SMAA, verified on batched models before any default flip") —
+  approach with proportionally more caution.
 
 On branch `claude/codebase-review-optimization-3nltcw` (2026-07-08) — four-repo review sweep (in progress):
 

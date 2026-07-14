@@ -283,7 +283,10 @@
     IfcFlowTerminal:['53','55','56','57','63'],
     IfcSanitaryTerminal:['53'], IfcLightFixture:['63'],
     IfcSwitchingDevice:['61','62'], IfcOutlet:['62'],
-    IfcDistributionElement:['52','53','54','55','56','57','61','62','63','64']
+    IfcDistributionElement:['52','53','54','55','56','57','61','62','63','64'],
+    // RVB BIM Norm v1.1 2.2.7.11 "Meubilair" - fixed furnishing falls under
+    // NL/SfB group 90 (Vaste inrichting).
+    IfcFurnishingElement:['90']
   };
 
   var ILS_REQUIRED = {
@@ -412,12 +415,21 @@
         var spaceMissing = [];
         if (!p.name || !p.name.trim()) spaceMissing.push('Name');
         if (!p.longName || !p.longName.trim()) spaceMissing.push('LongName');
+        if (!p.objectType || !p.objectType.trim()) spaceMissing.push('ObjectType');
+        var spacePsets = p.psets||{};
+        if (_findPropValue(spacePsets, 'IsExternal') === null) spaceMissing.push('IsExternal');
         var q = p.quantities||{};
-        var hasNetArea = false;
+        var hasNetArea = false, hasGrossArea = false, hasHeight = false;
         Object.keys(q).forEach(function(qk){
           if (/netfloorarea|net\s*floor\s*area|netarea/i.test(qk) && parseFloat(q[qk]) > 0) hasNetArea = true;
+          if (/grossfloorarea|gross\s*floor\s*area/i.test(qk) && parseFloat(q[qk]) > 0) hasGrossArea = true;
+          if (/^(height|finishceilingheight|finish\s*ceiling\s*height)$/i.test(qk.trim()) && parseFloat(q[qk]) > 0) hasHeight = true;
         });
         if (!hasNetArea) spaceMissing.push('NetFloorArea');
+        // RVB BIM Norm v1.1 2.2.7.6b (Qto_SpaceBaseQuantities) - GrossFloorArea/Height,
+        // alongside NL-BIM Basis ILS v2 4.1's NetFloorArea above.
+        if (!hasGrossArea) spaceMissing.push('GrossFloorArea');
+        if (!hasHeight) spaceMissing.push('Height');
         if (spaceMissing.length) {
           acc.spaceIncomplete.push(Object.assign({}, it, {detail: spaceMissing.join(', ')}));
         }
@@ -542,7 +554,7 @@
       // NL-BIM Basis ILS v2 additions
       storeyNaming:   {label:'Bouwlaag naamgeving (ILS 3.3)',        sev:'info', cat:'naming', count:acc.storeyNaming.length,    ex:acc.storeyNaming.slice(0,8)},
       doorNaming:     {label:'Deurnaamgeving D-### (ILS 3.5)',       sev:'info', cat:'naming', count:acc.doorNaming.length,      ex:acc.doorNaming.slice(0,8)},
-      spaceIncomplete:{label:'IfcSpace mist Name/LongName/Area (ILS 4.1)',sev:'warn',cat:'properties',count:acc.spaceIncomplete.length,ex:acc.spaceIncomplete.slice(0,8)},
+      spaceIncomplete:{label:'IfcSpace onvolledig: naam, classificatie of hoeveelheden (ILS 4.1 / RVB 2.2.7.6)',sev:'warn',cat:'properties',count:acc.spaceIncomplete.length,ex:acc.spaceIncomplete.slice(0,8)},
       fireRatingInvalid:{label:'FireRating ongeldige waarde (ILS 4.5)',sev:'warn',cat:'properties',count:acc.fireRatingInvalid.length,ex:acc.fireRatingInvalid.slice(0,8)},
       extWallNoUValue:{label:'Buitenwand zonder ThermalTransmittance (ILS 4.6)',sev:'warn',cat:'properties',count:acc.extWallNoUValue.length,ex:acc.extWallNoUValue.slice(0,8)},
       loadBearingInvalidMaterial:{label:'Dragende wand: niet-constructief materiaal (ILS 4.7.2)',sev:'warn',cat:'properties',count:acc.loadBearingInvalidMaterial.length,ex:acc.loadBearingInvalidMaterial.slice(0,8)},
@@ -550,6 +562,86 @@
       _total: (elements||[]).length,
       _nlsfbDist: nlsfbDist,
       _compDist: ilsCompDist
+    };
+  }
+
+  // ── RVB BIM Norm v1.1 — Project/Site/Building/Zone metadata ──────────
+  //
+  // Rule set derived from the public RVB BIM Norm v1.1 standard
+  // (Rijksvastgoedbedrijf / buildingSMART Benelux), covering the
+  // project-level metadata specs (2.2.7.1-2.2.7.4, 2.2.7.7) that
+  // runILSChecks above can't reach because they live above the
+  // per-element level: IfcProject/IfcSite/IfcBuilding/IfcZone, plus
+  // IfcBuildingStorey.Elevation (extractStoreys' storeyData, not part of
+  // the per-element props runILSChecks reads). The individual checks are
+  // re-implementations against the standard's requirements — no code is
+  // copied from any specific validator implementation. The RVB
+  // element-level gap-fills (furnishing NL-SfB, space quantities) live in
+  // runILSChecks itself, alongside the ILS checks they extend.
+  //
+  // Takes the loaded models directly (spatialHierarchy/storeyData are
+  // per-model, not per-element) rather than a flat elements array.
+  function runRVBChecks(models) {
+    var acc = {
+      projectIncomplete: [], siteIncomplete: [], buildingIncomplete: [],
+      zoneIncomplete: [], storeyNoElevation: []
+    };
+    var totals = {projectIncomplete:0, siteIncomplete:0, buildingIncomplete:0, zoneIncomplete:0, storeyNoElevation:0};
+
+    (models||[]).forEach(function(m) {
+      var sh = m.spatialHierarchy || {};
+      var mName = m.name || m.id || 'model';
+
+      // 2.2.7.1 — Project informatie
+      totals.projectIncomplete++;
+      if (!sh.project || !sh.project._hasName) {
+        acc.projectIncomplete.push({name:mName, ifcType:'IfcProject', detail:'Name'});
+      }
+
+      // 2.2.7.2 — Terrein informatie (Name + georeferentie)
+      (sh.sites||[]).forEach(function(site) {
+        totals.siteIncomplete++;
+        var missing = [];
+        if (!site._hasName) missing.push('Name');
+        var g = site.georef;
+        if (!g || g.refLat == null || g.refLon == null) missing.push('RefLatitude/RefLongitude');
+        if (!g || g.refElev == null) missing.push('RefElevation');
+        if (missing.length) acc.siteIncomplete.push({name:mName+' — '+site.name, ifcType:'IfcSite', detail:missing.join(', ')});
+      });
+
+      // 2.2.7.3 — Gebouw informatie
+      (sh.buildings||[]).forEach(function(bld) {
+        totals.buildingIncomplete++;
+        if (!bld._hasName) acc.buildingIncomplete.push({name:mName+' — '+bld.name, ifcType:'IfcBuilding', detail:'Name'});
+      });
+
+      // 2.2.7.7 — Zone informatie. IfcZone is an optional IFC grouping —
+      // most models legitimately have none, so an empty set is not itself
+      // flagged, only zones that DO exist and are incomplete.
+      (sh.zones||[]).forEach(function(zone) {
+        totals.zoneIncomplete++;
+        var zMissing = [];
+        if (!zone._hasName) zMissing.push('Name');
+        if (!zone.objectType) zMissing.push('ObjectType');
+        if (zMissing.length) acc.zoneIncomplete.push({name:mName+' — '+zone.name, ifcType:'IfcZone', detail:zMissing.join(', ')});
+      });
+
+      // 2.2.7.4 — Bouwlaag: Elevation. Name-format is already checked by
+      // runILSChecks' storeyNaming (ILS 3.3); this is the RVB addition,
+      // read from storeyData since Elevation isn't in per-element props.
+      (m.storeyData||[]).forEach(function(sd) {
+        totals.storeyNoElevation++;
+        if (!sd.hasElevation) acc.storeyNoElevation.push({name:mName+' — '+sd.name, ifcType:'IfcBuildingStorey', detail:'Elevation'});
+      });
+    });
+
+    return {
+      projectIncomplete:{label:'IfcProject zonder naam (RVB 2.2.7.1)',sev:'warn',cat:'metadata',count:acc.projectIncomplete.length,total:totals.projectIncomplete,ex:acc.projectIncomplete.slice(0,8)},
+      siteIncomplete:{label:'IfcSite: naam of georeferentie ontbreekt (RVB 2.2.7.2)',sev:'info',cat:'metadata',count:acc.siteIncomplete.length,total:totals.siteIncomplete,ex:acc.siteIncomplete.slice(0,8)},
+      buildingIncomplete:{label:'IfcBuilding zonder naam (RVB 2.2.7.3)',sev:'warn',cat:'metadata',count:acc.buildingIncomplete.length,total:totals.buildingIncomplete,ex:acc.buildingIncomplete.slice(0,8)},
+      zoneIncomplete:{label:'IfcZone: naam of ObjectType ontbreekt (RVB 2.2.7.7)',sev:'info',cat:'metadata',count:acc.zoneIncomplete.length,total:totals.zoneIncomplete,ex:acc.zoneIncomplete.slice(0,8)},
+      storeyNoElevation:{label:'Bouwlaag zonder Elevation (RVB 2.2.7.4)',sev:'info',cat:'metadata',count:acc.storeyNoElevation.length,total:totals.storeyNoElevation,ex:acc.storeyNoElevation.slice(0,8)},
+      _total: (models||[]).length
     };
   }
 
@@ -1151,7 +1243,7 @@
             else { summary.fail++; elFailed = true; row(_reqDesc(f), el, p, model); }
           });
           if (elUnchecked) bs.unchecked++;
-          if (elFailed) bs.fail++; else bs.pass++;
+          if (elFailed) bs.fail++; else if (!elUnchecked) bs.pass++;
         });
       });
       if (spec.cardinality === 'required' && bs.applicable === 0) {
@@ -1189,6 +1281,7 @@
   window._ccRunDataQualityChecks = runDataQualityChecks;
   window._ccRunBIMModelChecks = runBIMModelChecks;
   window._ccRunILSChecks = runILSChecks;
+  window._ccRunRVBChecks = runRVBChecks;
   window._ccNLSFB_TABLE1 = NLSFB_TABLE1;
   window._ccExportIDS = exportIDS;
   window._ccImportIDS = importIDS;
@@ -1246,6 +1339,33 @@
       });
     }
 
+    // Like _foldCheckMap, but for check maps whose buckets each carry their
+    // OWN denominator (checksResult[k].total) instead of sharing one
+    // checksResult._total - runRVBChecks mixes project/site/building/zone/
+    // storey counts, which aren't the same population, so a single shared
+    // total would misstate every bucket's failure ratio.
+    function _foldEntityCheckMap(label, checksResult, fold) {
+      if (!checksResult) return;
+      var catDamage = 0, catWeight = 0, catChecks = 0;
+      Object.keys(checksResult).forEach(function(k){
+        if (k.charAt(0) === '_') return;
+        var c = checksResult[k]; if (!c || typeof c.count !== 'number') return;
+        var total = (typeof c.total === 'number' && c.total > 0) ? c.total : 1;
+        catChecks++;
+        var w = W[c.sev] || 1;
+        var fail = Math.min(1, c.count / total);
+        catDamage += fail * w;
+        catWeight += w;
+      });
+      if (fold) { damage += catDamage; totalWeight += catWeight; }
+      breakdown.categories.push({
+        label: label,
+        score: catWeight ? Math.round(100 * (1 - catDamage / catWeight)) : 100,
+        checks: catChecks,
+        countsTowardScore: !!fold
+      });
+    }
+
     // ── Data quality checks ──
     try { _foldCheckMap('Data quality', runDataQualityChecks(elements), true); } catch(e) {}
 
@@ -1271,6 +1391,14 @@
       var nlsfbAdopted = (ilsTotal - noNLSfBCount) / ilsTotal >= 0.2;
       _foldCheckMap('ILS / NL-SfB', ils, nlsfbAdopted);
     } catch(e) {}
+
+    // ── RVB BIM Norm v1.1 (project/site/building/zone metadata) - a single
+    //    Dutch central-government client's own BIM norm, narrower than
+    //    NL-SfB. Always shown for visibility, never folded into the
+    //    headline score - most projects have no reason to target it, and
+    //    "missing IfcSite georeference" shouldn't tank the score of a
+    //    renovation-only model that was never meant to be geo-referenced. ──
+    try { _foldEntityCheckMap('RVB BIM Norm', runRVBChecks(models), false); } catch(e) {}
 
     // ── Accessibility checks (if engine loaded) ──
     try {
@@ -1307,6 +1435,50 @@
   }
   window._ccComputeQualityScore = computeQualityScore;
 
+  // ── DQ re-run reconciliation ──────────────────────────────────────
+  // Clash detection has full GUID-identity reconciliation (new/persisting/
+  // auto-resolved, computeClashIdentityKey/mergeDetectionResults in
+  // index.html); Data Quality re-runs just overwrote the previous result
+  // with no trend at all. A true per-element identity diff (like clashes
+  // get) would need every check bucket to also return its full, uncapped
+  // GlobalId list - today `ex` is deliberately capped (6-8 items) for
+  // display, so it can't answer "is this SPECIFIC element still failing".
+  // This reconciles at the check level instead: did THIS check's count go
+  // up, down, or stay the same since the last run - same "was N, now M"
+  // framing the clash trend sparkline already uses, without requiring an
+  // engine-shape change. Prefixed by engine name since bucket keys collide
+  // across engines (e.g. both runDataQualityChecks and runILSChecks have a
+  // 'noMaterial' bucket checking a different thing).
+  function flattenDQCounts(results) {
+    var flat = {};
+    Object.keys(results || {}).forEach(function(engineName) {
+      var r = results[engineName];
+      if (!r) return;
+      Object.keys(r).forEach(function(k) {
+        if (k.charAt(0) === '_') return;
+        var c = r[k];
+        if (!c || typeof c.count !== 'number') return;
+        flat[engineName + ':' + k] = { count: c.count, label: c.label, sev: c.sev };
+      });
+    });
+    return flat;
+  }
+  window._ccFlattenDQCounts = flattenDQCounts;
+
+  function diffDQCounts(current, previous) {
+    var worse = [], better = [], unchangedCount = 0;
+    Object.keys(current || {}).forEach(function(key) {
+      var cur = current[key];
+      var prevCount = (previous && previous[key]) ? previous[key].count : 0;
+      if (cur.count > prevCount) worse.push({ key: key, label: cur.label, sev: cur.sev, from: prevCount, to: cur.count });
+      else if (cur.count < prevCount) better.push({ key: key, label: cur.label, sev: cur.sev, from: prevCount, to: cur.count });
+      else unchangedCount++;
+    });
+    worse.sort(function(a, b) { return (b.to - b.from) - (a.to - a.from); });
+    better.sort(function(a, b) { return (a.to - a.from) - (b.to - b.from); });
+    return { worse: worse, better: better, unchangedCount: unchangedCount };
+  }
+  window._ccDiffDQCounts = diffDQCounts;
 
   // Visible in the Addons panel as a built-in capability (the engines are
   // globals; the Data Quality panel itself lives in index.html).
