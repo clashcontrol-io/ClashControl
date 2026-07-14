@@ -92,7 +92,7 @@ const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="${H}" 
 
   <!-- Footer URL -->
   <text x="1128" y="588" font-family="Helvetica, Arial, sans-serif" font-size="22" font-weight="600" fill="${MUTED}" text-anchor="end">clashcontrol.io</text>
-  <text x="72" y="588" font-family="Helvetica, Arial, sans-serif" font-size="16" fill="${MUTED}">Open source on GitHub · github.com/clashcontrol-io</text>
+  <text x="72" y="588" font-family="Helvetica, Arial, sans-serif" font-size="16" fill="${MUTED}">Source-available under SSPL · github.com/clashcontrol-io</text>
 </svg>`;
 
 (async () => {

@@ -12,6 +12,7 @@ on:
     paths:
       - mcp-server.js
       - smart-bridge-server.js
+      - bridge-update.js
       - bridge-version.json
   workflow_dispatch:
     inputs:
@@ -79,6 +80,9 @@ jobs:
       - name: Install build dependencies
         run: npm install --save-dev @yao-pkg/pkg ws
 
+      - name: Run regression tests
+        run: npm test
+
       # ── Build binaries ────────────────────────────────────────────────────────
       - name: Build standalone binaries
         run: |
@@ -94,6 +98,9 @@ jobs:
           chmod +x clashcontrol-smart-bridge-macos clashcontrol-smart-bridge-linux
           tar -czf clashcontrol-smart-bridge-mac.tar.gz   clashcontrol-smart-bridge-macos
           tar -czf clashcontrol-smart-bridge-linux.tar.gz clashcontrol-smart-bridge-linux
+          sha256sum clashcontrol-smart-bridge-win.exe \
+            clashcontrol-smart-bridge-mac.tar.gz \
+            clashcontrol-smart-bridge-linux.tar.gz > SHA256SUMS
           ls -lh
 
       # ── Publish GitHub Release (only on version bump or manual trigger) ───────
@@ -108,7 +115,7 @@ jobs:
             ## ClashControl Smart Bridge ${{ steps.ver.outputs.tag }}
 
             LLM bridge — connect Claude, ChatGPT, or any AI to control ClashControl
-            with natural language. 51 MCP tools available.
+            with natural language. 66 MCP tools available.
 
             ### Zero-click setup
             1. Open ClashControl → Addons → **Enable Smart Bridge**
@@ -124,6 +131,8 @@ jobs:
             | macOS    | `clashcontrol-smart-bridge-mac.tar.gz` |
             | Linux    | `clashcontrol-smart-bridge-linux.tar.gz` |
 
+            Verify a download with the published `SHA256SUMS` file before running it.
+
             ### Connect other AI assistants
             - **ChatGPT:** Custom GPT → Actions → Import from `http://localhost:19803/openapi.json`
             - **Any LLM:** `POST http://localhost:19803/call/{tool_name}` · [view tools](http://localhost:19803/tools)
@@ -131,6 +140,7 @@ jobs:
             dist/clashcontrol-smart-bridge-win.exe
             dist/clashcontrol-smart-bridge-mac.tar.gz
             dist/clashcontrol-smart-bridge-linux.tar.gz
+            dist/SHA256SUMS
 
       # ── Update _releaseTag in the addon + commit bridge-version.json if auto-bumped
       - name: Bump _releaseTag in addon

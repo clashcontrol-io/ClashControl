@@ -51,8 +51,8 @@ CC probes `http://<host>:19803/status` on a 500 ms timeout to detect whether the
 | Method | Path | Description |
 |--------|------|-------------|
 | `GET` | `/status` | Returns `{ version, ...}`. Used as a liveness probe. |
-| `GET` | `/update` | Returns `{ update_available, version }`. |
-| `POST` | `/update` | Triggers self-update: binary downloads latest release and restarts. |
+| `GET` | `/update` | Returns `{ update_available, current_version, version, url, automatic:false }`. The result is cached for 30 minutes and discovery failure does not affect bridge health. |
+| `POST` | `/update` | Returns `409 manual_update_required` with the release URL. Automatic binary replacement is disabled; the user explicitly downloads and runs a release. |
 | `GET` | `/llm-config` | Returns stored LLM provider config. |
 | `POST` | `/llm-config` | Saves LLM provider config. Body: `{ provider, model, baseUrl, apiKey }`. |
 | `GET` | `/llm/autodetect` | Auto-detects running local LLM servers. Returns `{ found: [...] }`. |
@@ -83,13 +83,19 @@ Server-push notifications from the bridge to CC:
 | `type` | Meaning |
 |--------|---------|
 | `update_available` | A newer bridge binary is available. Fields: `version`, `url`. |
-| `update_downloading` | Bridge is downloading its own update. |
-| `update_installed` | Update complete; bridge is about to restart. |
+| `update_downloading` | Reserved for a future signed updater; current releases do not self-update. |
+| `update_installed` | Reserved for a future signed updater; current releases do not self-update. |
 | `mcp_config_installed` | Claude Desktop config file was written on request. |
 
 ### Smart Bridge binding recommendation
 
 The binary should listen on **both** `127.0.0.1:19802` (IPv4 loopback) **and** `[::1]:19802` (IPv6 loopback) — two explicit listeners. Do **not** bind to `0.0.0.0` or `::`: that would expose ports 19802/19803 on every network interface (LAN, Wi-Fi), allowing anyone on the same network to call CC tools. Dual-loopback is localhost-only and reachable on both address families. Apply the same to port 19803.
+
+### External orchestrators and Loam
+
+Loam is an **external repository and runtime**, not a ClashControl dependency or embedded subsystem. It integrates through the versioned Smart Bridge REST/MCP surface and the connective-spine identity fields. The `ingest_detection_feedback` handler in `addons/smart-bridge.js` is a boundary adapter: it accepts outcome feedback from an external orchestrator and stores only the per-project payload ClashControl needs for the next detection run.
+
+ClashControl MUST remain usable without Loam, and Loam MUST be able to upgrade independently. New Loam-specific behavior therefore belongs in an external adapter or in additive, generally useful protocol fields; private Loam orchestration, strategy, storage, and intelligence code MUST NOT be copied into this repository.
 
 ---
 

@@ -111,7 +111,7 @@ def call_claude(prompt: str, max_tokens: int = 1200) -> str | None:
 def generate_session_entry(today: str, commits: str, memory_snapshot: str) -> str:
     """Generate a session log entry — via Claude if possible, else plain."""
     if ANTHROPIC_API_KEY:
-        prompt = f"""You are the automated memory keeper for ClashControl, an open-source IFC clash detection web app.
+        prompt = f"""You are the automated memory keeper for ClashControl, a source-available SSPL-licensed IFC clash detection web app.
 
 Today is {today}.
 

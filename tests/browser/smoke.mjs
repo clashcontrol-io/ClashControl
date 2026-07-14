@@ -35,6 +35,12 @@ await new Promise((r) => server.listen(8765, '127.0.0.1', r));
 const browser = await chromium.launch();
 const page = await browser.newPage();
 const errors = [];
+// The force-batched step below reloads the same fixture geometry under a new
+// filename to reach the BatchedMesh path, which trips the app's real
+// duplicate-model-overlap confirm(). Playwright auto-dismisses unhandled
+// dialogs (Cancel), which silently drops that load — accept it here so the
+// intentional re-load proceeds like a user choosing "Load anyway".
+page.on('dialog', (d) => d.accept());
 page.on('pageerror', (e) => errors.push('pageerror: ' + e.message));
 let workerFellBack = false;
 page.on('console', (m) => {
@@ -52,13 +58,30 @@ function fail(msg) {
 }
 
 try {
-  await page.goto('http://127.0.0.1:8765/', { waitUntil: 'domcontentloaded' });
+  // Candidate migrations remain disabled for users, but CI explicitly opts
+  // into all four paths so none can drift unexercised behind its safety flag.
+  await page.goto('http://127.0.0.1:8765/?ccSafety=concurrencyV2,geoCacheV8,batchedSectionsV2,rendererV2', { waitUntil: 'domcontentloaded' });
 
   // App mounted (CDN deps + main script executed)
   await page.waitForFunction(
     () => window.ClashControl && typeof window._ccDispatch === 'function',
     null, { timeout: 60_000 }
   ).catch(() => fail('app did not mount within 60s'));
+
+  const rendererGate = await page.evaluate(() => ({
+    path: window._ccRendererMigration && window._ccRendererMigration.path,
+    state: window._ccRendererContractSnapshot,
+    diagnostic: (window._ccSafetyMigrations.diagnostics() || [])
+      .filter((d) => d.migration === 'rendererV2').at(-1) || null,
+  }));
+  if (rendererGate.path !== 'candidate') fail('rendererV2 did not pass its guarded factory');
+  if (!rendererGate.state || !rendererGate.state.srgb || !rendererGate.state.aces ||
+      !rendererGate.state.shadows || rendererGate.state.shadowAutoUpdate !== false ||
+      rendererGate.state.localClippingEnabled !== false)
+    fail('rendererV2 contract snapshot does not match the established renderer');
+  if (!rendererGate.diagnostic || rendererGate.diagnostic.outcome !== 'candidate')
+    fail('rendererV2 did not publish a passing runtime diagnostic');
+  console.log('SMOKE OK — rendererV2 matches the pinned r180 renderer contract');
 
   // Load the fixture through the real file pipeline (web-ifc WASM from CDN)
   await page.evaluate(async () => {
@@ -91,6 +114,48 @@ try {
   });
   if (workerFellBack) fail('IFC worker crashed and fell back to the main-thread parser — check the stringified worker source for missing functions');
   console.log('SMOKE OK — model loaded, detection found ' + detected + ' clash(es), state updated; first: ' + sample);
+
+  // ── Hard-refresh/cache restore: the five-hotfix "spikey model" incident
+  // only appeared after reload, never on a fresh parse. Keep the real IDB +
+  // geo-cache path in CI and compare element bounds before/after. The
+  // diagnostic additionally detects different-sized geometries sharing one
+  // restore instancing key (the exact PR #598 root-cause signature).
+  const beforeRefresh = await page.evaluate(() => {
+    const m = window._ccLatestState.models.find((x) => x.name.indexOf('smoke-clash') === 0);
+    return (m.elements || []).map((e) => {
+      const b = e.box;
+      return [e.expressId, b.min.x, b.min.y, b.min.z, b.max.x, b.max.y, b.max.z]
+        .map((v, i) => i === 0 ? String(v) : Number(v).toFixed(6)).join(':');
+    }).sort();
+  });
+  // Let the existing 2s project autosave settle. File bytes are already in
+  // IndexedDB, but this also exercises the real pagehide flush on reload.
+  await page.waitForTimeout(2500);
+  await page.reload({ waitUntil: 'domcontentloaded' });
+  await page.waitForFunction(
+    () => window.ClashControl && typeof window._ccDispatch === 'function',
+    null, { timeout: 60_000 }
+  ).catch(() => fail('app did not remount after hard refresh'));
+  await page.waitForFunction(() => {
+    const s = window._ccLatestState;
+    const m = s && s.models.find((x) => x.name.indexOf('smoke-clash') === 0);
+    return !!(m && m.stats && (m.elements || []).length >= 2);
+  }, null, { timeout: 120_000 }).catch(() => fail('cached model did not restore after hard refresh'));
+  const afterRefresh = await page.evaluate(() => {
+    const m = window._ccLatestState.models.find((x) => x.name.indexOf('smoke-clash') === 0);
+    const bounds = (m.elements || []).map((e) => {
+      const b = e.box;
+      return [e.expressId, b.min.x, b.min.y, b.min.z, b.max.x, b.max.y, b.max.z]
+        .map((v, i) => i === 0 ? String(v) : Number(v).toFixed(6)).join(':');
+    }).sort();
+    const instancing = window._ccDebugInstancing ? window._ccDebugInstancing() : null;
+    return { bounds, collisionCount: instancing ? instancing.collisionCount : null };
+  });
+  if (JSON.stringify(afterRefresh.bounds) !== JSON.stringify(beforeRefresh))
+    fail('element bounds changed across hard-refresh/cache restore');
+  if (afterRefresh.collisionCount !== 0)
+    fail('cache restore produced ' + afterRefresh.collisionCount + ' suspect instancing-key collision(s)');
+  console.log('SMOKE OK — hard refresh restored identical bounds with zero suspect instancing collisions');
 
   // ── Scoped loading: same fixture, storey filter must thread through the
   // worker → only in-scope geometry materialises ───────────────────────────
@@ -147,12 +212,20 @@ try {
     return new Promise((resolve) => setTimeout(() => {
       const matAfterStyle = b.material.uuid;
       window._ccDispatch({ t: 'UPD_PREFS', u: { renderStyle: 'shaded' } });
-      resolve({
-        found: true, items: eids.length, hiddenAfterHide, shownAfterUnhide,
-        styleSwapsMaterial: matAfterStyle !== matBefore,
-        // symptom: blending — per-instance colors recorded for distinction/restore
-        origColors: (b.userData._origColors || []).filter((c) => c != null).length,
-      });
+      window._ccDispatch({ t: 'SECTION', axis: 'x', pos: 0.5 });
+      setTimeout(() => {
+        const clippingPlanes = (b.material.clippingPlanes || []).length;
+        const sectionDiag = (window._ccSafetyMigrations.diagnostics() || [])
+          .filter((d) => d.migration === 'batchedSectionsV2').at(-1) || null;
+        window._ccDispatch({ t: 'SECTION', axis: null, pos: 0.5 });
+        resolve({
+          found: true, items: eids.length, hiddenAfterHide, shownAfterUnhide,
+          styleSwapsMaterial: matAfterStyle !== matBefore,
+          // symptom: blending — per-instance colors recorded for distinction/restore
+          origColors: (b.userData._origColors || []).filter((c) => c != null).length,
+          clippingPlanes, sectionDiag,
+        });
+      }, 300);
     }, 400));
   });
   if (!batch.found) fail('forced batching produced no BatchedMesh');
@@ -160,7 +233,10 @@ try {
   if (!batch.hiddenAfterHide || !batch.shownAfterUnhide) fail('per-element hide on batch broken (revert symptom)');
   if (!batch.styleSwapsMaterial) fail('render-style switch did not reach the batch material (revert symptom)');
   if (batch.origColors < 2) fail('per-instance colors missing — elements would blend (revert symptom)');
-  console.log('SMOKE OK — BatchedMesh: ' + batch.items + ' items, hide/style/colors all behave per-element');
+  if (batch.clippingPlanes !== 1) fail('section plane did not reach BatchedMesh material');
+  if (!batch.sectionDiag || batch.sectionDiag.outcome !== 'candidate' || batch.sectionDiag.stats.batches < 1)
+    fail('BatchedMesh section candidate did not pass its runtime equivalence gate');
+  console.log('SMOKE OK — BatchedMesh: ' + batch.items + ' items, hide/style/colors/section all behave per-element');
 } finally {
   await browser.close();
   server.close();

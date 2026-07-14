@@ -18,12 +18,8 @@ name: IDS Conformance
 # addons/data-quality.js or tests/(browser/)?ids-* is a natural follow-up —
 # see MEMORY.md.
 #
-# Corpus is fetched at "development" HEAD on every run rather than pinned to
-# a commit, so "conformant" always means conformant with the CURRENT
-# official suite. That's deliberate while this job is non-blocking
-# (continue-on-error) — once it's promoted to a required check, pin it to a
-# specific commit first so an upstream corpus change can't silently start
-# blocking unrelated PRs.
+# The corpus is pinned. Updating it is an explicit reviewable change, so an
+# upstream testcase edit cannot silently change ClashControl's baseline.
 
 on:
   workflow_dispatch:
@@ -37,6 +33,9 @@ jobs:
   ids-conformance:
     runs-on: ubuntu-latest
     continue-on-error: true
+    env:
+      # buildingSMART/IDS development, verified 2026-07-14.
+      IDS_CORPUS_COMMIT: 016bbadce0d227d8eabbbc3e8b2b3788590b8a97
     steps:
       - uses: actions/checkout@v4
 
@@ -46,10 +45,12 @@ jobs:
 
       - name: Fetch buildingSMART IDS conformance corpus
         run: |
-          git clone --depth 1 --filter=blob:none --sparse --branch development \
+          git clone --filter=blob:none --no-checkout --sparse \
             https://github.com/buildingSMART/IDS.git /tmp/ids-corpus
           cd /tmp/ids-corpus
           git sparse-checkout set Documentation/ImplementersDocumentation/TestCases
+          git fetch --depth 1 origin "$IDS_CORPUS_COMMIT"
+          git checkout --detach "$IDS_CORPUS_COMMIT"
 
       - name: Install Playwright Chromium
         run: |
@@ -57,4 +58,14 @@ jobs:
           npx playwright install --with-deps chromium
 
       - name: Run IDS conformance suite
+        env:
+          IDS_REPORT_PATH: ids-conformance-report.json
         run: node tests/browser/ids-conformance.mjs /tmp/ids-corpus/Documentation/ImplementersDocumentation/TestCases
+
+      - name: Publish IDS baseline artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ids-conformance-${{ env.IDS_CORPUS_COMMIT }}
+          path: ids-conformance-report.json
+          if-no-files-found: warn

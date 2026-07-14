@@ -18,7 +18,7 @@ are about to do. When you finish, mark completed items with ~~strikethrough~~ + 
 > `--text-*`, `--space-*`, `--radius-*`.
 
 ## What is this?
-ClashControl is a free, open-source IFC clash detection web app. It lets users load IFC building models, detect geometric clashes between elements, create/manage issues, and export to BCF format.
+ClashControl is a free, source-available IFC clash detection web app licensed under SSPL v1. It lets users load IFC building models, detect geometric clashes between elements, create/manage issues, and export to BCF format.
 
 ## Architecture — Single File App + Lazy Addons
 The **core application** lives in `index.html` (~34k lines — check with `wc -l` before quoting an exact count, it grows). There is no build step, no bundler, no node_modules. Just open the file in a browser.
@@ -32,7 +32,7 @@ Optional, non-critical features are split into lazy-loaded files under `addons/`
 - **JSZip** via CDN — BCF zip export/import
 - **pdf.js** via CDN — PDF preview/overlay in the Issues panel
 - **web-ifc** WASM — IFC parsing, lazy-loaded via ESM on first model load
-- CDN scripts are pinned with SRI integrity hashes (regenerate with `node scripts/generate-sri.js` when bumping versions)
+- CDN classic scripts are pinned with SRI integrity hashes (verify with `node scripts/generate-sri.js --check`; regenerate with `node scripts/generate-sri.js` when bumping versions)
 - **No other runtime dependencies** (`package.json` only pulls `@neondatabase/serverless` for the Vercel functions)
 
 ### Code structure inside index.html

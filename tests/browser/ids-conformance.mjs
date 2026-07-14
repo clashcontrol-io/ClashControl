@@ -23,7 +23,7 @@
 // this environment's proxy denies (see MEMORY.md). Verified on CI only —
 // same as tests/browser/smoke.mjs originally was.
 import { createServer } from 'node:http';
-import { readFile, readdir } from 'node:fs/promises';
+import { readFile, readdir, writeFile } from 'node:fs/promises';
 import { extname, join, normalize, relative, basename } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { chromium } from 'playwright';
@@ -174,6 +174,24 @@ console.log('');
 console.log('IDS CONFORMANCE: ' + total + ' cases — ' + outcomes.conform + ' conform, ' +
   outcomes.incomplete + ' incomplete (honestly not-checkable), ' +
   outcomes.wrong.length + ' WRONG, ' + outcomes.errored.length + ' errored');
+
+const report = {
+  schema: 1,
+  generatedAt: new Date().toISOString(),
+  corpusCommit: process.env.IDS_CORPUS_COMMIT || null,
+  totals: {
+    cases: total,
+    conform: outcomes.conform,
+    incomplete: outcomes.incomplete,
+    wrong: outcomes.wrong.length,
+    errored: outcomes.errored.length,
+  },
+  outcomes,
+};
+if (process.env.IDS_REPORT_PATH) {
+  await writeFile(process.env.IDS_REPORT_PATH, JSON.stringify(report, null, 2) + '\n', 'utf8');
+  console.log('Wrote machine-readable baseline: ' + process.env.IDS_REPORT_PATH);
+}
 
 if (outcomes.wrong.length > 0) {
   console.error('\nWRONG verdicts (CC asserted an incorrect result):');

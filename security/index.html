@@ -4,20 +4,20 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Security &amp; Privacy — Your IFC Stays in Your Browser | ClashControl</title>
-  <meta name="description" content="ClashControl is an open-source IFC viewer + clash detection tool that runs 100% in the browser. Your model never leaves your device. Public, auditable, MIT-licensed.">
+  <meta name="description" content="ClashControl is a source-available IFC viewer + clash detection tool that runs 100% in the browser. Your model never leaves your device. Public, auditable, SSPL-licensed.">
   <link rel="canonical" href="https://www.clashcontrol.io/security/">
   <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 48 48'%3E%3Crect width='48' height='48' rx='8' fill='%231a6b4a'/%3E%3Crect x='10' y='10' width='28' height='28' fill='none' stroke='%23ffffff' stroke-width='2'/%3E%3Cline x1='10' y1='38' x2='38' y2='10' stroke='%23ffffff' stroke-width='2'/%3E%3C/svg%3E">
 
   <meta property="og:type" content="article">
   <meta property="og:url" content="https://www.clashcontrol.io/security/">
   <meta property="og:title" content="Security &amp; Privacy — Your IFC Stays in Your Browser">
-  <meta property="og:description" content="100% browser-side IFC processing. Your model never leaves your device. Open-source and auditable.">
+  <meta property="og:description" content="100% browser-side IFC processing. Your model never leaves your device. Source-available and auditable.">
   <meta property="og:image" content="https://www.clashcontrol.io/og-image.png?v=2">
   <meta property="og:site_name" content="ClashControl">
   <meta property="og:locale" content="en_US">
   <meta name="twitter:card" content="summary_large_image">
   <meta name="twitter:title" content="Security &amp; Privacy — Your IFC Stays in Your Browser">
-  <meta name="twitter:description" content="100% client-side IFC processing. Open-source, auditable, MIT-licensed.">
+  <meta name="twitter:description" content="100% client-side IFC processing. Source-available, auditable, SSPL-licensed.">
   <meta name="twitter:image" content="https://www.clashcontrol.io/og-image.png?v=2">
 
   <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -32,15 +32,15 @@
       { "@type": "Question", "name": "Where is my IFC file processed?",
         "acceptedAnswer": { "@type": "Answer", "text": "Entirely in your browser. ClashControl uses web-ifc, a WebAssembly IFC parser, that runs locally on your device. Your IFC, GLB, or BCF file is never uploaded to any server." } },
       { "@type": "Question", "name": "What data does ClashControl send to its servers?",
-        "acceptedAnswer": { "@type": "Answer", "text": "Only what you explicitly enable: optional anonymous usage metrics (counts only, no filenames or coordinates) and optional shared-project issue metadata (status, priority, assignee — never geometry). Both are opt-out. The default behaviour is: nothing leaves your browser." } },
-      { "@type": "Question", "name": "Is ClashControl open-source?",
-        "acceptedAnswer": { "@type": "Answer", "text": "Yes. The entire source — every line of code that touches your IFC — is published under the MIT license at github.com/clashcontrol-io/ClashControl. You can read it, audit it, fork it, or self-host it." } },
+        "acceptedAnswer": { "@type": "Answer", "text": "Only what you explicitly enable: optional minimised usage and training data, and shared-project issue metadata when you use sharing (status, priority, assignee — never geometry). Usage and training sharing is off until you explicitly allow it." } },
+      { "@type": "Question", "name": "Is ClashControl source-available?",
+        "acceptedAnswer": { "@type": "Answer", "text": "Yes. The entire source — every line of code that touches your IFC — is published under the Server Side Public License (SSPL) v1 at github.com/clashcontrol-io/ClashControl. You can read and audit it; reuse and hosting are governed by the SSPL terms." } },
       { "@type": "Question", "name": "Can my company self-host ClashControl?",
         "acceptedAnswer": { "@type": "Answer", "text": "Yes. ClashControl is a single static HTML file. Drop it on any web server, an internal IIS, or a corporate intranet share. No build step, no backend required for the viewer + clash detection." } }
     ]
   }
   </script>
-  <script data-goatcounter="https://clashcontrol.goatcounter.com/count" async src="//gc.zgo.at/count.js"></script>
+  <script src="/analytics-consent.js" defer></script>
 
   <style>
     :root { --bg:#fff; --fg:#0f172a; --muted:#475569; --faint:#94a3b8; --accent:#1a6b4a; --border:#e2e8f0; --good:#dcfce7; --good-fg:#166534; }
@@ -127,8 +127,8 @@
 
   <p>Three optional features touch our servers. Each is described below; each can be turned off.</p>
 
-  <h3>1. Anonymous usage analytics (opt-out)</h3>
-  <p>We run a lightweight cookie-less counter (<a href="https://www.goatcounter.com/">GoatCounter</a>) for page-visit numbers. Optionally, with your consent, we collect aggregated counts of IFC types in your models, geometric metrics of clashes (size ratios, gap distances &mdash; numbers only), and the natural-language commands you type into the AI assistant. <strong>No filenames, no GUIDs, no coordinates, no IP addresses logged.</strong> You can disable this in <strong>Settings &rarr; Privacy</strong>, or by setting <code>localStorage.cc_data_consent = 'denied'</code> in your browser console.</p>
+  <h3>1. Usage analytics and training feedback (opt-in)</h3>
+  <p>Only after you explicitly allow sharing, we load a lightweight cookie-less counter (<a href="https://www.goatcounter.com/">GoatCounter</a>) and may collect minimised geometric metrics of clashes (size ratios, gap distances &mdash; numbers only) and sanitised natural-language command feedback. <strong>No filenames, no GUIDs, no coordinates.</strong> The default is off. Choose in the first-run privacy banner or change it any time in <strong>Settings &rarr; Privacy</strong>; older opt-outs remain denied.</p>
 
   <h3>2. Shared projects (opt-in)</h3>
   <p>If you create a shared project (for team coordination), only the <strong>issue metadata</strong> (status, priority, assignee, title) syncs through our backend &mdash; never the IFC geometry. Each teammate loads their own local copy of the IFC file. No accounts, no logins; a short project key is your only identifier.</p>
@@ -140,9 +140,9 @@
 
   <p>Every clash title, severity score, and triage suggestion produced by AI carries a <strong>provenance record</strong> &mdash; which model, which endpoint, which timestamp. Hover the &ldquo;AI&rdquo; chip on any issue to see who decided what. The trail round-trips through BCF as custom labels (<code>cc:aiModel</code>, <code>cc:aiSource</code>, <code>cc:aiAt</code>) so it survives export to Revit, Navisworks, or any other BCF-aware tool. We built this in response to the AEC industry&rsquo;s 2026 conversation around agentic-BIM governance &mdash; auditability is the differentiator the incumbents don&rsquo;t ship.</p>
 
-  <h2>Open source, MIT-licensed, auditable</h2>
+  <h2>Source-available, SSPL-licensed, auditable</h2>
 
-  <p>Every line of code that touches your IFC is published at <a href="https://github.com/clashcontrol-io/ClashControl">github.com/clashcontrol-io/ClashControl</a> under the MIT license. The app is a <em>single HTML file</em> with no build step and no bundler &mdash; you can read it top to bottom. Network requests are auditable in browser DevTools; the absence of an upload request for your IFC is verifiable in seconds.</p>
+  <p>Every line of code that touches your IFC is published at <a href="https://github.com/clashcontrol-io/ClashControl">github.com/clashcontrol-io/ClashControl</a> under the Server Side Public License (SSPL) v1. The app is a <em>single HTML file</em> with no build step and no bundler &mdash; you can read it top to bottom. Network requests are auditable in browser DevTools; the absence of an upload request for your IFC is verifiable in seconds.</p>
 
   <h2>Self-host on your corporate network</h2>
 
@@ -158,7 +158,7 @@
 
   <h2>License &amp; contact</h2>
 
-  <p>ClashControl is released under the <a href="https://github.com/clashcontrol-io/ClashControl/blob/main/LICENSE">MIT license</a>. For specific compliance questions or to report a security issue privately, open a GitHub issue or contact <a href="mailto:info@clashcontrol.io">info@clashcontrol.io</a>.</p>
+  <p>ClashControl is released under the <a href="https://github.com/clashcontrol-io/ClashControl/blob/main/LICENSE">Server Side Public License (SSPL) v1</a>. For specific compliance questions or to report a security issue privately, open a GitHub issue or contact <a href="mailto:info@clashcontrol.io">info@clashcontrol.io</a>.</p>
 
   <a href="/" class="cta" data-goatcounter-click="cta-app-from-security">Open the app &rarr;</a>
 </main>

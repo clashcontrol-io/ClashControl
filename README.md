@@ -3,7 +3,9 @@
 
 [![Sponsor](https://img.shields.io/badge/Sponsor-%E2%9D%A4-ec4899?logo=githubsponsors&logoColor=white)](https://github.com/sponsors/clashcontrol-io)
 
-**Free, open-source online IFC viewer & BIM clash detection — right in your browser.**
+**Free, source-available online IFC viewer & BIM clash detection — right in your browser.**
+
+ClashControl's source is published under the **Server Side Public License (SSPL) v1**. See [LICENSE](LICENSE) for the terms.
 
 A free alternative to Solibri and Navisworks for the everyday IFC coordination loop. No installs. No licenses. No subscriptions. Just open the file and start viewing and checking your models.
 
@@ -68,7 +70,7 @@ Full security architecture, what data optionally goes where, self-host instructi
 
 ## Privacy
 
-ClashControl shares **anonymous usage data by default** to help improve the AI clash classifier. This is opt-out — you can disable it any time from the Settings menu.
+ClashControl shares optional minimised usage and training data only after an **explicit opt-in**. The default is off, and you can change the choice any time from Settings.
 
 **What is sent**
 
@@ -85,11 +87,11 @@ ClashControl shares **anonymous usage data by default** to help improve the AI c
 - Personal information of any kind
 - Your IP address (beyond what every web request sends; we don't log it)
 
-**How to opt out**
+**How to manage consent**
 
-- Settings → Privacy → toggle off "Anonymous data sharing"
-- Or set `localStorage.cc_data_consent = 'denied'` in the browser console
-- The first-run banner also has an "Opt out" button
+- Use the first-run privacy banner to allow sharing or choose "No thanks"
+- Settings → Privacy → toggle "Anonymous data sharing" at any time
+- Existing opt-outs from older versions remain denied
 
 The collection endpoint is [`api/training.js`](api/training.js) — it's a thin Vercel function that writes to a Postgres table. Source is in this repo, audit anything you want.
 
@@ -109,4 +111,4 @@ Single-file app built with Preact, Three.js, and web-ifc. No build tools, no bun
 
 ## License
 
-See [LICENSE](LICENSE) for details.
+ClashControl is source-available under the **Server Side Public License (SSPL) v1**. See [LICENSE](LICENSE) for the complete terms.

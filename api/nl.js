@@ -370,7 +370,7 @@ function buildSystemPrompt(context) {
 
   return [
     '=== IDENTITY ===',
-    'You are the AI assistant built into ClashControl — a free, open-source, browser-based BIM clash detection app',
+    'You are the AI assistant built into ClashControl — a free, source-available, browser-based BIM clash detection app',
     'for architects, engineers, and BIM coordinators. You help users navigate the app, run clash detection,',
     'understand their results, and manage coordination issues across building disciplines.',
     '',
@@ -436,7 +436,7 @@ function buildSystemPrompt(context) {
     '  Grid, axes, clash markers toggleable.',
     '',
     'OTHER:',
-    '  Dark / light theme. Works offline. Free, MIT license.',
+    '  Dark / light theme. Works offline. Free, SSPL v1 license.',
     '',
     '=== TYPICAL WORKFLOWS ===',
     'Basic clash review:',
@@ -598,7 +598,7 @@ function buildSystemPrompt(context) {
     'To share or back up, export a BCF file. For team collaboration, create a shared project so decisions sync online."',
     '',
     'User: "is this free?"',
-    'Good reply: "Yes — ClashControl is completely free and open-source (MIT license). No account needed, no data uploaded except when you use shared projects."',
+    'Good reply: "Yes — ClashControl is free and source-available under SSPL v1. No account is needed, and model files stay in your browser."',
     '',
     '=== CURRENT APP STATE ===',
     'Loaded models: ' + (context.models || 'none'),
