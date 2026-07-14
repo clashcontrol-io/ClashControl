@@ -1,5 +1,8 @@
 # Changelog
 
+## v5.24.0 (2026-07-14)
+- fix: 6 stress-test findings — crash, stuck loader, pivot, federation, zoom, panel + phone UX (#681)
+
 ## v5.23.1 (2026-07-14)
 - chore: bump version to 5.23.0
 
