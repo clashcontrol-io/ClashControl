@@ -7931,6 +7931,7 @@ function startApp() {
   var _highlightRefs = null;
   var _fitToClashes = null;
   var _fitToElement = null;
+  var _shiftPivotToElement = null; // recenter orbit pivot on an element (no camera move)
   var _flyToElements = null;
   var _showClashMarkers = null;
   var _clearClashMarkers = null;
@@ -9144,7 +9145,7 @@ function startApp() {
         }
         return 0x1a6b4a;
       }
-      _highlightById = function(expressId, alsoGhost, modelId) {
+      _highlightById = function(expressId, alsoGhost, modelId, keepPivot) {
         if(!expressId||!S.mg) return;
         _clearHighlightGroups();
         var found = _findMeshByRef(expressId, modelId);
@@ -9160,6 +9161,12 @@ function startApp() {
           // off-scene chunk proxy can't be drawn into the outline buffer, so
           // pass [] for it (the EdgesGeometry overlay above still shows).
           if (window._ccPostOutlineFor) window._ccPostOutlineFor(found.parent ? [found] : []);
+          // Recenter the orbit pivot on the selected element so it becomes the
+          // rotation centre — matching a 3D-canvas click. This is the shared
+          // selection primitive (tree, search, list, public highlight() API),
+          // so selecting any way now behaves the same. `keepPivot` lets a
+          // caller opt out. Camera does not move; the next orbit rotates here.
+          if (keepPivot !== true && _shiftPivotToElement) _shiftPivotToElement(expressId, meshModelId);
         } else if (window._ccPostOutlineFor) {
           window._ccPostOutlineFor([]);
         }
@@ -9629,6 +9636,38 @@ function startApp() {
         var ctr = box.getCenter(new THREE.Vector3());
         var sz = box.getSize(new THREE.Vector3());
         _flyTo([ctr.x,ctr.y,ctr.z], _zoomDist(Math.max(sz.x,sz.y,sz.z)), hint||null);
+      };
+
+      // Shift the orbit pivot (rotation centre) onto a world point, camera
+      // left exactly where it is: recompute sph from the new target so the
+      // next orbit rotates around it. Same math the 3D-canvas pick uses, so
+      // "selected element = centre of rotation" holds however you selected.
+      function _shiftPivotTo(ctr){
+        var _orb = S.orbit;
+        if(!_orb || !S.camera || !ctr) return;
+        var _ov = S.camera.position.clone().sub(ctr);
+        _orb.sph.r = _ov.length() || 60;
+        _orb.sph.phi = Math.acos(Math.max(-1, Math.min(1, _ov.y / _orb.sph.r)));
+        _orb.sph.theta = Math.atan2(_ov.x, _ov.z);
+        _orb.target.copy(ctr);
+      }
+      // Recenter the pivot on an element by expressId (tree / list / search
+      // selection path). Uses the load-time world-space element box.
+      _shiftPivotToElement = function(expressId, modelId){
+        if(expressId==null) return;
+        try {
+          var _mdls = (window._ccLatestState && window._ccLatestState.models) || [];
+          for(var _mi=0; _mi<_mdls.length; _mi++){
+            if(modelId && _mdls[_mi].id !== modelId) continue;
+            var _els = _mdls[_mi].elements || [];
+            for(var _ei=0; _ei<_els.length; _ei++){
+              if(_els[_ei].expressId === expressId && _els[_ei].box && !_els[_ei].box.isEmpty()){
+                _shiftPivotTo(_els[_ei].box.getCenter(new THREE.Vector3()));
+                return;
+              }
+            }
+          }
+        } catch(_e){}
       };
 
       _flyToElements = function(targets, fallbackPt) {
@@ -11769,18 +11808,7 @@ function startApp() {
             var hitCtr = hitBox.getCenter(new THREE.Vector3());
             // Shift orbit pivot to clicked element — camera stays put, rotation
             // centre moves. Fly-to (below) will override sph/target if it runs.
-            try {
-              var _orb = S.orbit;
-              if (_orb && S.camera) {
-                /* sph is a plain {r,phi,theta} (not THREE.Spherical) — recompute
-                   it inline with the same convention apply()/sync() use. */
-                var _ov = S.camera.position.clone().sub(hitCtr);
-                _orb.sph.r = _ov.length() || 60;
-                _orb.sph.phi = Math.acos(Math.max(-1, Math.min(1, _ov.y / _orb.sph.r)));
-                _orb.sph.theta = Math.atan2(_ov.x, _ov.z);
-                _orb.target.copy(hitCtr);
-              }
-            } catch(_e) {}
+            try { _shiftPivotTo(hitCtr); } catch(_e) {}
             var hitPt = [hitCtr.x, hitCtr.y, hitCtr.z];
             var hitNormal = null;
             if(_pickedHit.face && _pickedHit.face.normal) {
@@ -11835,7 +11863,7 @@ function startApp() {
           var faceNormal = _ccHitWorldNormal(hit);
           var pt = hit.point;
           var ctxEid = hit.object.userData.expressId;
-          if (ctxEid && _highlightById) _highlightById(ctxEid, false);
+          if (ctxEid && _highlightById) _highlightById(ctxEid, false, null, true); // keepPivot: right-click opens a menu, don't move rotation centre
           setCtxMenu({
             x: e.clientX - rect.left,
             y: e.clientY - rect.top,
@@ -16545,6 +16573,23 @@ function startApp() {
             var disc='structural', col=DISC[0].c;
             var _lazyPropsTarget = {modelId: null};
             _lazyWorkersActive++;
+            // Release the lazy-props gate exactly once. The worker path
+            // releases it from onProps; the sync fallback (below) releases it
+            // when loadIFC settles. Every loadIFCWorker rejection path (Worker
+            // ctor throw, 20s watchdog, worker 'error') rejects *without*
+            // calling onProps, so without this the counter never returns to 0
+            // and the loading strip / progress modal sticks forever after an
+            // otherwise-successful fallback — most likely on big files that
+            // trip the watchdog.
+            var _gateReleased = false;
+            function _releaseLazyGate() {
+              if (_gateReleased) return;
+              _gateReleased = true;
+              _lazyWorkersActive--;
+              if (_lazyWorkersActive === 0 && _chainEndFired) {
+                _finishLoadingStrip(500);
+              }
+            }
             // Declared IFC unit — read once from the raw bytes; attached to
             // result.stats below so it persists via the geo-cache and the
             // unit pipeline stops guessing for well-formed files.
@@ -16556,15 +16601,14 @@ function startApp() {
               if (!propErr && _lazyPropsTarget.modelId) {
                 _mergeLazyProps(_lazyPropsTarget.modelId, propMap);
               }
-              _lazyWorkersActive--;
-              if (_lazyWorkersActive === 0 && _chainEndFired) {
-                _finishLoadingStrip(500);
-              }
+              _releaseLazyGate();
             }, _loadScope);
             var _workerGen = _ccLoadGeneration; // capture generation assigned by loadIFCWorker
             _loadP = _loadP.catch(function(workerErr) {
               console.warn('[IFC Worker fallback]', workerErr.message || workerErr);
-              return loadIFC(buf, col, _onProg, _workerGen, _loadScope);
+              // Release the gate once the sync fallback settles (not before —
+              // the strip should stay up until geometry is actually placed).
+              return loadIFC(buf, col, _onProg, _workerGen, _loadScope).finally(_releaseLazyGate);
             });
             return _loadP.then(function(result) {
               if (!result) return; // load was cancelled by a newer load
@@ -22663,6 +22707,66 @@ function startApp() {
     </div>`;
   }
 
+  // Extracted from IssueRow's active-row template (was a conditional IIFE
+  // calling useState — hook count changed when a row expanded, crashing
+  // React with error #310 on every clash-card click).
+  function ClashToleranceEditor(props) {
+    var it=props.item, d=props.d;
+    var _tolSt=useState(function(){
+      var prefill=_getToleranceForClash(it);
+      return {val:it.userToleranceMm!=null?it.userToleranceMm:(prefill!=null?prefill:''),edited:it.userToleranceMm!=null,promptAction:null};
+    });
+    var tolState=_tolSt[0],setTolState=_tolSt[1];
+    var discA=(it.disciplines||[])[0]||'?',discB=(it.disciplines||[])[1]||'?';
+    var typeA=it.elemAType||'',typeB=it.elemBType||'';
+    var standardVal=_getToleranceForClash(it);
+    var curVal=tolState.val;
+    var changed=curVal!==''&&curVal!=null&&Number(curVal)!==standardVal;
+    var isExpected=!!it.expectedClash;
+    return html`<div style=${{marginTop:'.3rem',paddingTop:'.3rem',borderTop:'1px solid var(--border-subtle)'}}>
+      <div style=${{display:'flex',gap:'.3rem',alignItems:'center',marginBottom:'.2rem'}}>
+        <span style=${{fontSize:'0.63rem',color:'var(--text-muted)',flexShrink:0}}>Acceptable min. clearance (mm)</span>
+        <input type="number" min="0" step="1" placeholder="Not set"
+          value=${curVal!=null&&curVal!==''?curVal:''}
+          onClick=${function(e){e.stopPropagation();}}
+          onInput=${function(e){
+            var v=e.target.value===''?'':Number(e.target.value);
+            setTolState(function(p){return Object.assign({},p,{val:v,edited:true,promptAction:null});});
+            d({t:A.UPD_CLASH,id:it.id,u:{userToleranceMm:v===''?null:v}});
+          }}
+          style=${{fontSize:'0.63rem',padding:'.15rem .3rem',background:'var(--bg-secondary)',border:'1px solid var(--border)',borderRadius:3,color:'var(--text-primary)',width:'5rem'}} />
+        <label style=${{display:'flex',alignItems:'center',gap:'.15rem',fontSize:'0.57rem',color:isExpected?'#f59e0b':'var(--text-faint)',cursor:'pointer',whiteSpace:'nowrap',marginLeft:'.2rem'}}>
+          <input type="checkbox" checked=${isExpected}
+            onClick=${function(e){e.stopPropagation();}}
+            onChange=${function(e){d({t:A.UPD_CLASH,id:it.id,u:{expectedClash:e.target.checked}});}}
+            style=${{accentColor:'#f59e0b'}} />
+          Expected clash
+        </label>
+      </div>
+      ${changed && tolState.promptAction!=='dismissed' && html`<div style=${{fontSize:'0.57rem',color:'var(--accent-subtle)',background:'#0f172a',padding:'.25rem .4rem',borderRadius:4,marginBottom:'.2rem',display:'flex',alignItems:'center',gap:'.3rem',flexWrap:'wrap'}}>
+        <span>${standardVal!=null?'Update':'Add'} standard for ${typeA&&typeB?typeA+' vs '+typeB:discA+' vs '+discB} to ${curVal}mm?</span>
+        <button onClick=${function(e){e.stopPropagation();
+          if(typeA&&typeB){
+            var tRules=_getStandardTypePairRules();var found=false;
+            for(var i=0;i<tRules.length;i++){if((tRules[i].ifc_type_a===typeA&&tRules[i].ifc_type_b===typeB)||(tRules[i].ifc_type_a===typeB&&tRules[i].ifc_type_b===typeA)){tRules[i]=Object.assign({},tRules[i],{clearance_mm:Number(curVal)});found=true;break;}}
+            if(!found)tRules.push({ifc_type_a:typeA,ifc_type_b:typeB,clearance_mm:Number(curVal),hard_always_flagged:true});
+            _setStandardTypePairRules(tRules);
+          } else if(discA!=='?'&&discB!=='?'){
+            var dRules=_getStandardPairRules();var found2=false;
+            for(var j=0;j<dRules.length;j++){if((dRules[j].discipline_a===discA&&dRules[j].discipline_b===discB)||(dRules[j].discipline_a===discB&&dRules[j].discipline_b===discA)){dRules[j]=Object.assign({},dRules[j],{clearance_mm:Number(curVal)});found2=true;break;}}
+            if(!found2)dRules.push({discipline_a:discA,discipline_b:discB,clearance_mm:Number(curVal),hard_always_flagged:true});
+            _setStandardPairRules(dRules);
+          }
+          setTolState(function(p){return Object.assign({},p,{promptAction:'updated'});});
+        }}
+          style=${{fontSize:'0.57rem',padding:'.1rem .3rem',background:'var(--accent-bg)',color:'var(--accent)',border:'1px solid var(--accent-subtle)',borderRadius:3,cursor:'pointer',fontWeight:600}}>Update</button>
+        <button onClick=${function(e){e.stopPropagation();setTolState(function(p){return Object.assign({},p,{promptAction:'dismissed'});});}}
+          style=${{fontSize:'0.57rem',padding:'.1rem .3rem',background:'var(--bg-secondary)',color:'var(--text-faint)',border:'1px solid var(--border)',borderRadius:3,cursor:'pointer'}}>Keep local</button>
+      </div>`}
+      ${tolState.promptAction==='updated' && html`<div style=${{fontSize:'0.57rem',color:'#4ade80',marginBottom:'.2rem'}}>Standard updated.</div>`}
+    </div>`;
+  }
+
   function IssueRow(props) {
     var it=props.item, active=props.active, d=props.d, isClash=props.isClash, pr=props.prefs||{}; pr._models=props.models||[];
     var selectMode=props.selectMode, isSelected=props.isSelected;
@@ -22859,61 +22963,7 @@ function startApp() {
             onInput=${function(e){d({t:isClash?'UPD_CLASH':'UPD_ISSUE',id:it.id,u:{assignee:e.target.value}});}}
             style=${{...S_INPUT,fontSize:'0.63rem',padding:'.15rem .3rem',flex:1}} />
         </div>
-        ${isClash && function(){
-          var _tolSt=useState(function(){
-            var prefill=_getToleranceForClash(it);
-            return {val:it.userToleranceMm!=null?it.userToleranceMm:(prefill!=null?prefill:''),edited:it.userToleranceMm!=null,promptAction:null};
-          });
-          var tolState=_tolSt[0],setTolState=_tolSt[1];
-          var discA=(it.disciplines||[])[0]||'?',discB=(it.disciplines||[])[1]||'?';
-          var typeA=it.elemAType||'',typeB=it.elemBType||'';
-          var standardVal=_getToleranceForClash(it);
-          var curVal=tolState.val;
-          var changed=curVal!==''&&curVal!=null&&Number(curVal)!==standardVal;
-          var isExpected=!!it.expectedClash;
-          return html`<div style=${{marginTop:'.3rem',paddingTop:'.3rem',borderTop:'1px solid var(--border-subtle)'}}>
-            <div style=${{display:'flex',gap:'.3rem',alignItems:'center',marginBottom:'.2rem'}}>
-              <span style=${{fontSize:'0.63rem',color:'var(--text-muted)',flexShrink:0}}>Acceptable min. clearance (mm)</span>
-              <input type="number" min="0" step="1" placeholder="Not set"
-                value=${curVal!=null&&curVal!==''?curVal:''}
-                onClick=${function(e){e.stopPropagation();}}
-                onInput=${function(e){
-                  var v=e.target.value===''?'':Number(e.target.value);
-                  setTolState(function(p){return Object.assign({},p,{val:v,edited:true,promptAction:null});});
-                  d({t:A.UPD_CLASH,id:it.id,u:{userToleranceMm:v===''?null:v}});
-                }}
-                style=${{fontSize:'0.63rem',padding:'.15rem .3rem',background:'var(--bg-secondary)',border:'1px solid var(--border)',borderRadius:3,color:'var(--text-primary)',width:'5rem'}} />
-              <label style=${{display:'flex',alignItems:'center',gap:'.15rem',fontSize:'0.57rem',color:isExpected?'#f59e0b':'var(--text-faint)',cursor:'pointer',whiteSpace:'nowrap',marginLeft:'.2rem'}}>
-                <input type="checkbox" checked=${isExpected}
-                  onClick=${function(e){e.stopPropagation();}}
-                  onChange=${function(e){d({t:A.UPD_CLASH,id:it.id,u:{expectedClash:e.target.checked}});}}
-                  style=${{accentColor:'#f59e0b'}} />
-                Expected clash
-              </label>
-            </div>
-            ${changed && tolState.promptAction!=='dismissed' && html`<div style=${{fontSize:'0.57rem',color:'var(--accent-subtle)',background:'#0f172a',padding:'.25rem .4rem',borderRadius:4,marginBottom:'.2rem',display:'flex',alignItems:'center',gap:'.3rem',flexWrap:'wrap'}}>
-              <span>${standardVal!=null?'Update':'Add'} standard for ${typeA&&typeB?typeA+' vs '+typeB:discA+' vs '+discB} to ${curVal}mm?</span>
-              <button onClick=${function(e){e.stopPropagation();
-                if(typeA&&typeB){
-                  var tRules=_getStandardTypePairRules();var found=false;
-                  for(var i=0;i<tRules.length;i++){if((tRules[i].ifc_type_a===typeA&&tRules[i].ifc_type_b===typeB)||(tRules[i].ifc_type_a===typeB&&tRules[i].ifc_type_b===typeA)){tRules[i]=Object.assign({},tRules[i],{clearance_mm:Number(curVal)});found=true;break;}}
-                  if(!found)tRules.push({ifc_type_a:typeA,ifc_type_b:typeB,clearance_mm:Number(curVal),hard_always_flagged:true});
-                  _setStandardTypePairRules(tRules);
-                } else if(discA!=='?'&&discB!=='?'){
-                  var dRules=_getStandardPairRules();var found2=false;
-                  for(var j=0;j<dRules.length;j++){if((dRules[j].discipline_a===discA&&dRules[j].discipline_b===discB)||(dRules[j].discipline_a===discB&&dRules[j].discipline_b===discA)){dRules[j]=Object.assign({},dRules[j],{clearance_mm:Number(curVal)});found2=true;break;}}
-                  if(!found2)dRules.push({discipline_a:discA,discipline_b:discB,clearance_mm:Number(curVal),hard_always_flagged:true});
-                  _setStandardPairRules(dRules);
-                }
-                setTolState(function(p){return Object.assign({},p,{promptAction:'updated'});});
-              }}
-                style=${{fontSize:'0.57rem',padding:'.1rem .3rem',background:'var(--accent-bg)',color:'var(--accent)',border:'1px solid var(--accent-subtle)',borderRadius:3,cursor:'pointer',fontWeight:600}}>Update</button>
-              <button onClick=${function(e){e.stopPropagation();setTolState(function(p){return Object.assign({},p,{promptAction:'dismissed'});});}}
-                style=${{fontSize:'0.57rem',padding:'.1rem .3rem',background:'var(--bg-secondary)',color:'var(--text-faint)',border:'1px solid var(--border)',borderRadius:3,cursor:'pointer'}}>Keep local</button>
-            </div>`}
-            ${tolState.promptAction==='updated' && html`<div style=${{fontSize:'0.57rem',color:'#4ade80',marginBottom:'.2rem'}}>Standard updated.</div>`}
-          </div>`;
-        }()}
+        ${isClash && html`<${ClashToleranceEditor} item=${it} d=${d} />`}
         ${(isClash ? trainingMode : !!it.clashId) && function(){
           var CTYPES=[{k:'hard',l:'Hard'},{k:'soft',l:'Soft'},{k:'duplicate',l:'Duplicate'},{k:'no_clash',l:'None'}];
           var REASONS=['Design error','Within tolerance','Functional clearance','Needs more tolerance','Already resolved','Modelling error','Missing opening','Shared space allowed','Duplicate geometry','Not relevant','Expected clash'];

@@ -110,6 +110,35 @@ Things to be careful about. Do not remove without a good reason — add a note i
 Update this section at the start and end of each session.
 Mark completed items with ~~strikethrough~~ and date, then let the daily sync archive them.
 
+On branch `claude/task-pending-55wmp1` (2026-07-14) — sandboxed stress-testing of the live app
+(headless Chromium + Playwright, synthetic IFC fixtures up to ~41k products) surfaced and fixed
+three genuine, root-caused, regression-tested bugs:
+
+- **Clash-review crash (React #310), FIXED** — clicking any clash card in the Conflicts panel crashed the
+  whole app to the "Something went wrong" boundary. Root cause: an `${isClash && function(){ …useState… }()}`
+  conditional IIFE inside `IssueRow`'s render — the hook count changed when a row expanded, violating the
+  Rules of Hooks. Extracted into a proper `ClashToleranceEditor` component. This broke the *entire* clash
+  triage workflow. Verified: clearance field + "update standard?" prompt + collapse/re-expand + switching
+  clashes, zero hook errors. `IssueRow` now has only 3 unconditional top-level hooks (whole bug class cleared).
+- **Stuck loading modal on worker fallback, FIXED** — every `loadIFCWorker` rejection path (Worker-ctor throw,
+  20s watchdog, worker `error`) rejects *without* calling `onProps`, so the sync `loadIFC` fallback never
+  released `_lazyWorkersActive` → the "Placing elements 85%" modal stuck forever (Cancel didn't help) even
+  though the model loaded fine. Most likely on big files that trip the watchdog. Fixed with an idempotent
+  `_releaseLazyGate()` called from both the `onProps` success path and the fallback's `.finally`. Verified by
+  forcing `new Worker` to throw → model loads via fallback → modal clears.
+- **Rotation-centre inconsistent across selection paths, FIXED** — a 3D-canvas click recentred the orbit pivot
+  on the clicked element, but selecting the same element from the model tree / search / list / public
+  `highlight()` API did **not** (pivot stayed ~19 m away). Extracted the canvas pick's pivot math into a shared
+  `_shiftPivotTo` / `_shiftPivotToElement`, and moved the shift into `_highlightById` (the shared selection
+  primitive) with a `keepPivot` opt-out for right-click. Now every selection path recentres the pivot (verified
+  0.00 m on all paths; was 19.23 m for tree/API). Matches the user's expectation "selected element = centre of rotation".
+
+All 54 `tests/*.test.js` pass. Still open / reported for direction (not yet built): clash side-panel is
+over-dense on mobile (expanded card stacks status + occluder + zoom + props + clearance + the full
+AI-TRAINING-FEEDBACK block — user: "too much going on"); main app + `/tour/` layout not phone-optimised;
+federated same-discipline models silently return 0 clashes (the `excludeSameDiscipline` default trap — no
+user-facing explanation); wheel-zoom can overshoot past the model.
+
 On branch `claude/clashcontrol-competitive-analysis-gra92c` (2026-07-13) — competitive analysis vs
 Solibri/Navisworks/OSS (IfcOpenShell, ThatOpen, xeokit, Speckle, BIMcollab, Revizto, buildingSMART IDS)
 + Wave-0 correctness fixes:
