@@ -535,6 +535,15 @@
       .cc-hide-desktop{display:inline-block!important}
       .cc-ai-panel,.cc-ai-collapsed-tab{display:none!important}
     }
+    /* Phone: the "Open a model" welcome card was left-inset (min(8vw,6rem))
+       with a two-column text+illustration grid and a 2.6rem headline — cramped
+       and pushed off-centre on a narrow screen. Go full-width single-column,
+       drop the illustration, and shrink the headline/padding. */
+    @media(max-width:640px){
+      .cc-welcome-card{margin-left:1rem!important;margin-right:1rem!important;width:auto!important;max-width:calc(100vw - 2rem)!important;grid-template-columns:1fr!important;padding:1.6rem 1.3rem 1.4rem!important;gap:0!important;}
+      .cc-welcome-card h1{font-size:2rem!important;}
+      .cc-welcome-illus{display:none!important;}
+    }
     /* ── Mobile floating theme toggle ── */
     .cc-mobile-theme{display:none!important}
     body[data-presenting="1"] .cc-mobile-theme{display:none!important}
@@ -33116,7 +33125,7 @@ function startApp() {
       }}></div>`}
 
       <!-- Left-weighted card at ~38% from left, asymmetric, no glass -->
-      <div style=${{
+      <div class="cc-welcome-card" style=${{
         marginLeft:'min(8vw, 6rem)',marginRight:'auto',
         width:600,maxWidth:'92vw',
         background:'var(--surface)',border:'1px solid var(--hairline-strong)',
@@ -33252,7 +33261,7 @@ function startApp() {
         </div>
 
         <!-- Hand-drawn isometric ballast — single 1.5px stroke, no fill -->
-        <svg width="120" height="120" viewBox="0 0 120 120" aria-hidden="true"
+        <svg class="cc-welcome-illus" width="120" height="120" viewBox="0 0 120 120" aria-hidden="true"
           style=${{display:'block',color:'var(--ink-primary)',opacity:.85,flexShrink:0}}>
           <g fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round" stroke-linecap="round">
             <!-- ground -->
