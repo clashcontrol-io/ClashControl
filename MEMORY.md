@@ -110,6 +110,30 @@ Things to be careful about. Do not remove without a good reason — add a note i
 Update this section at the start and end of each session.
 Mark completed items with ~~strikethrough~~ and date, then let the daily sync archive them.
 
+Post-merge follow-up (branch `claude/task-pending-55wmp1`, restarted from main after #681 merged, 2026-07-14) —
+the three open points from the stress-test report, now done:
+
+- **Exhaustive tool-combination sweep** — drove 40 tool combos + weird combinations (section/walk/2D/measure/
+  markup/projection/render-style/panel/tab thrash) and the key behavioural flows (BCF export **and** import
+  roundtrip 0→187 issues, confirm→issue, federation, model reload/REPLACE, isolate). **Zero crashes, zero real
+  bugs** — the app is robust across the surface driven. (BCF import needs the `{base64}` signature, not a File —
+  `_ccImportBCF(File)` silently falls through to the interactive picker; that tripped my first test, not a bug.)
+- **Detection performance wall, FIXED (the big one)** — profiled: the clash MATH is fast (~1.4s/15k clashes);
+  the wall was `classifyClashes`' cluster-grouping — an all-pairs O(clashes²) scan (~2.2 BILLION iterations at
+  47k clashes = most of the 167s). Replaced with a spatial hash (bucket by type-pair|storey|500mm cell, seed
+  compares own+26 neighbour cells). Behaviour-identical (verified vs an in-browser O(n²) reference on a dense
+  fixture: 3 clusters sizes 6/4/2, exact match). **mega 167s→21.6s (7.7×), huge 15.7s→6.7s.** Next linear
+  target (not done, low-risk future work): core `merge_and_post` is now 73% of mega (~15s) but LINEAR
+  (~0.08ms/candidate) — per-candidate clash-object construction; cache per-element material/discipline to shave it.
+- **Mobile — assessed good, small fix** — the ≤768px UI is purpose-built and solid: full-width mobile panels
+  (Navigator/Issues/Conflicts/Models), bottom `.cc-mobile-nav` with badges, command palette (Search) exposing
+  ALL viewer tools (section/measure/walk/2D/wireframe), and my declutter fix keeps the mobile clash card compact.
+  No rebuild needed. Found + fixed one real bug surfaced here: the command palette showed **"Render: undefined"**
+  because `renderStyles` includes `'xray'` but `renderLabels` lacked it → added `xray:'X-Ray'`.
+
+Synthetic fixtures live in scratchpad/serve/fixtures (medium ~230 / large ~2.8k / huge ~10k / mega ~41k products,
+plus dense.ifc for cluster testing). All 54 tests/*.test.js pass throughout.
+
 On branch `claude/task-pending-55wmp1` (2026-07-14) — sandboxed stress-testing of the live app
 (headless Chromium + Playwright, synthetic IFC fixtures up to ~41k products) surfaced and fixed
 three genuine, root-caused, regression-tested bugs:
