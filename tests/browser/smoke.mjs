@@ -35,6 +35,7 @@ await new Promise((r) => server.listen(8765, '127.0.0.1', r));
 const browser = await chromium.launch();
 const page = await browser.newPage();
 const errors = [];
+page.on('dialog', (d) => { console.error('DIALOG: ' + d.type() + ' | ' + d.message()); d.dismiss(); });
 page.on('pageerror', (e) => errors.push('pageerror: ' + e.message));
 let workerFellBack = false;
 page.on('console', (m) => {
