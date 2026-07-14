@@ -133,11 +133,35 @@ three genuine, root-caused, regression-tested bugs:
   primitive) with a `keepPivot` opt-out for right-click. Now every selection path recentres the pivot (verified
   0.00 m on all paths; was 19.23 m for tree/API). Matches the user's expectation "selected element = centre of rotation".
 
-All 54 `tests/*.test.js` pass. Still open / reported for direction (not yet built): clash side-panel is
-over-dense on mobile (expanded card stacks status + occluder + zoom + props + clearance + the full
-AI-TRAINING-FEEDBACK block — user: "too much going on"); main app + `/tour/` layout not phone-optimised;
-federated same-discipline models silently return 0 clashes (the `excludeSameDiscipline` default trap — no
-user-facing explanation); wheel-zoom can overshoot past the model.
+Follow-up wave (same branch, 2026-07-14) — the "still open" items above, now built + verified:
+
+- **Federation same-discipline 0-clash trap, FIXED** — two same-discipline models federated returned 0 clashes
+  in 0.2s with no explanation (`excludeSameDiscipline` default skips every cross-model pair). Now a toast on
+  completion names the shared discipline(s), plus a persistent actionable banner in the empty Conflicts panel
+  with a one-click "Check same-discipline pairs & re-run" button (dispatches `UPD_RULES {excludeSameDiscipline:false}`
+  + `_ccRunDetection`). Verified 0 → 612 cross-model clashes.
+- **Wheel-zoom fly-to-void, FIXED** — zoom-to-cursor / empty-space drive-forward advanced the orbit target
+  every notch unbounded, so ~20 notches flew the camera into blank space. Added `_clampZoomTarget` (target
+  kept within model AABB + half-size margin) on all three target-advancing branches. NB: `makeOrbit` is a
+  top-level helper — it cannot see the App component's `modelsRef`/`_elemsBBox` (that threw and *broke* zoom
+  in the first attempt); reach bounds via `window._ccViewport.getBounds()` instead, cached by model signature
+  so it's not O(n)/notch. Verified: dollies in, extreme zoom floors at sph.r 0.5 (not ∞), no pageerror.
+- **Clash card over-dense, FIXED** — the AI-training-feedback block (Verdict + Clash type + 11-chip Reason
+  grid + Resolution + Note) was the bulk of the expanded card. Wrapped in a native `<details>`/`<summary>`
+  ("Train the AI — optional"), collapsed by default. Native disclosure = zero React state, so it CANNOT
+  reintroduce a conditional hook (that render IIFE calls no hooks — keep it that way).
+- **Phone layout, FIXED (3 targeted, low-risk changes)** — (a) `/tour/` + `/best-free-ifc-viewer/` sticky
+  headers had no `@media`; nav wrapped 2–3 rows over the logo (~112px). Added max-width:600px rules that drop
+  the nav under the brand (~80px, no overlap). (b) The main-app "Open a model" welcome card was left-inset
+  (`min(8vw,6rem)`) with a 2-col grid + 2.6rem h1 — off-centre + cramped on phones. Added a max-width:640px
+  rule (scoped to new `.cc-welcome-card`/`.cc-welcome-illus`) → full-width single-column, illustration hidden,
+  smaller headline. Desktop unchanged. NB: on ≤768px the desktop `.cc-ai-panel` is already `display:none` and
+  a purpose-built mobile UI (`.cc-mobile-nav` bottom tabs, `.cc-mobile-theme`) takes over — the viewer-with-model
+  mobile experience is already good; don't rip it out.
+
+All 54 `tests/*.test.js` pass after every change. PR #681 carries all of the above (6 commits). Reverted the
+compare-page "make ClashControl win the 3 verdicts" copy edit — per the owner, those category wins should be
+earned by the product, not spun in marketing copy.
 
 On branch `claude/clashcontrol-competitive-analysis-gra92c` (2026-07-13) — competitive analysis vs
 Solibri/Navisworks/OSS (IfcOpenShell, ThatOpen, xeokit, Speckle, BIMcollab, Revizto, buildingSMART IDS)
