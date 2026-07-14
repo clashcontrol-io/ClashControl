@@ -655,6 +655,7 @@
 <!-- Default-off containment and equivalence helpers for high-risk migrations. -->
 <script src="safety-migrations.js"></script>
 <script src="section-clipping.js"></script>
+<script src="renderer-contract.js"></script>
 <script>
 window.addEventListener('error', function(e) {
   console.error('[ClashControl] Uncaught error:', e.error || e.message);
@@ -8355,19 +8356,47 @@ function startApp() {
       camera.lookAt(0,0,0);
       S.camera = camera;
 
-      var renderer = new THREE.WebGLRenderer({antialias:true, powerPreference:'high-performance'});
       var _baseDpr = Math.min(window.devicePixelRatio || 1, 1.5);
-      renderer.setPixelRatio(_baseDpr);
-      renderer.setSize(el.clientWidth, el.clientHeight);
-      renderer.localClippingEnabled = false;
-      // ── Architectural-quality output (r128) ────────────────────────────
-      _ccSetSRGBOutput(renderer);
-      renderer.toneMapping = THREE.ACESFilmicToneMapping;
-      renderer.toneMappingExposure = 1.0;
-      renderer.shadowMap.enabled = true;
-      renderer.shadowMap.type = THREE.PCFShadowMap; // faster than PCFSoft; rebuild only on demand
-      renderer.shadowMap.autoUpdate = false; // static shadows — only rebuild when scene changes
-      renderer.physicallyCorrectLights = true;
+      function _createLegacyRenderer() {
+        var legacy = new THREE.WebGLRenderer({antialias:true, powerPreference:'high-performance'});
+        legacy.setPixelRatio(_baseDpr);
+        legacy.setSize(el.clientWidth, el.clientHeight);
+        legacy.localClippingEnabled = false;
+        // ── Architectural-quality output (r180) ──────────────────────────
+        _ccSetSRGBOutput(legacy);
+        legacy.toneMapping = THREE.ACESFilmicToneMapping;
+        legacy.toneMappingExposure = 1.0;
+        legacy.shadowMap.enabled = true;
+        legacy.shadowMap.type = THREE.PCFShadowMap; // faster than PCFSoft; rebuild only on demand
+        legacy.shadowMap.autoUpdate = false; // static shadows — only rebuild when scene changes
+        legacy.physicallyCorrectLights = true;
+        return legacy;
+      }
+      var _rendererV2 = !!(window._ccSafetyMigrations &&
+        window._ccSafetyMigrations.isEnabled('rendererV2'));
+      var _rendererMigration = null;
+      var renderer;
+      if (_rendererV2 && window._ccRendererContract) {
+        _rendererMigration = window._ccRendererContract.createGuarded({
+          THREE: THREE,
+          pixelRatio: _baseDpr,
+          width: el.clientWidth,
+          height: el.clientHeight,
+          setSRGBOutput: _ccSetSRGBOutput,
+          legacy: _createLegacyRenderer,
+          record: function(event) {
+            try { window._ccSafetyMigrations.record(Object.assign({migration:'rendererV2'}, event)); } catch(e) {}
+          }
+        });
+        renderer = _rendererMigration.renderer;
+      } else {
+        renderer = _createLegacyRenderer();
+        _rendererMigration = {path:'legacy', renderer:renderer};
+      }
+      window._ccRendererMigration = {path:_rendererMigration.path};
+      if (window._ccRendererContract) {
+        window._ccRendererContractSnapshot = window._ccRendererContract.snapshot(renderer, THREE, _baseDpr);
+      }
       el.appendChild(renderer.domElement);
       // The WebGL canvas is the primary interactive surface. Make it reachable
       // and identifiable to keyboard/screen-reader users without changing any

@@ -53,14 +53,29 @@ function fail(msg) {
 
 try {
   // Candidate migrations remain disabled for users, but CI explicitly opts
-  // into the BatchedMesh section path so it cannot drift unexercised.
-  await page.goto('http://127.0.0.1:8765/?ccSafety=batchedSectionsV2', { waitUntil: 'domcontentloaded' });
+  // into all four paths so none can drift unexercised behind its safety flag.
+  await page.goto('http://127.0.0.1:8765/?ccSafety=concurrencyV2,geoCacheV8,batchedSectionsV2,rendererV2', { waitUntil: 'domcontentloaded' });
 
   // App mounted (CDN deps + main script executed)
   await page.waitForFunction(
     () => window.ClashControl && typeof window._ccDispatch === 'function',
     null, { timeout: 60_000 }
   ).catch(() => fail('app did not mount within 60s'));
+
+  const rendererGate = await page.evaluate(() => ({
+    path: window._ccRendererMigration && window._ccRendererMigration.path,
+    state: window._ccRendererContractSnapshot,
+    diagnostic: (window._ccSafetyMigrations.diagnostics() || [])
+      .filter((d) => d.migration === 'rendererV2').at(-1) || null,
+  }));
+  if (rendererGate.path !== 'candidate') fail('rendererV2 did not pass its guarded factory');
+  if (!rendererGate.state || !rendererGate.state.srgb || !rendererGate.state.aces ||
+      !rendererGate.state.shadows || rendererGate.state.shadowAutoUpdate !== false ||
+      rendererGate.state.localClippingEnabled !== false)
+    fail('rendererV2 contract snapshot does not match the established renderer');
+  if (!rendererGate.diagnostic || rendererGate.diagnostic.outcome !== 'candidate')
+    fail('rendererV2 did not publish a passing runtime diagnostic');
+  console.log('SMOKE OK — rendererV2 matches the pinned r180 renderer contract');
 
   // Load the fixture through the real file pipeline (web-ifc WASM from CDN)
   await page.evaluate(async () => {
