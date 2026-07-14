@@ -23081,8 +23081,13 @@ function startApp() {
             </div>`;
           }
 
-          return html`<div style=${{marginTop:'.4rem',paddingTop:'.4rem',borderTop:'1px solid var(--border-subtle)',background:'var(--accent-bg)',borderRadius:'var(--radius-sm)',padding:'.4rem'}}>
-            <div style=${{fontSize:'0.63rem',fontWeight:600,color:'var(--accent)',marginBottom:'.3rem',textTransform:'uppercase',letterSpacing:'.04em'}}>AI Training Feedback</div>
+          // Collapsed by default via native <details> — this training UI was
+          // the bulk of the expanded clash card's height ("too much going on").
+          // Native disclosure = zero React state, so no risk of reintroducing a
+          // conditional-hook (this IIFE deliberately calls no hooks).
+          return html`<details style=${{marginTop:'.4rem',borderTop:'1px solid var(--border-subtle)',background:'var(--accent-bg)',borderRadius:'var(--radius-sm)',padding:'.35rem .4rem'}}>
+            <summary onClick=${function(e){e.stopPropagation();}} style=${{fontSize:'0.63rem',fontWeight:600,color:'var(--accent)',textTransform:'uppercase',letterSpacing:'.04em',cursor:'pointer'}}>Train the AI <span style=${{color:'var(--text-faint)',fontWeight:400,textTransform:'none',letterSpacing:0}}>— optional</span></summary>
+            <div style=${{marginTop:'.35rem'}}>
             <div style=${{fontSize:'0.63rem',fontWeight:600,color:'var(--text-muted)',marginBottom:'.15rem'}}>Verdict</div>
             <div style=${{display:'flex',gap:'.25rem',marginBottom:'.3rem',flexWrap:'wrap'}}>
               ${VERDICTS.map(function(v){var sel=fb===v.k;return html`<button key=${v.k}
@@ -23127,7 +23132,8 @@ function startApp() {
               onInput=${function(e){updItem({aiNote:e.target.value});}}
               style=${{width:'100%',fontSize:'0.63rem',padding:'.2rem .3rem',background:'var(--bg-secondary)',
                 border:'1px solid var(--border)',borderRadius:3,color:'var(--text-primary)',boxSizing:'border-box'}} />
-          </div>`;
+            </div>
+          </details>`;
         }()}
         ${!isClash && it.assignee && html`<div style=${{fontSize:'0.63rem',color:'var(--text-secondary)',marginTop:'.2rem'}}>Assigned: ${it.assignee}</div>`}
         ${!isClash && it.dueDate && html`<div style=${{fontSize:'0.63rem',color:'var(--text-secondary)'}}>Due: ${it.dueDate}</div>`}
