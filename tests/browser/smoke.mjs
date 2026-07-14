@@ -183,7 +183,21 @@ try {
     const s = window._ccLatestState;
     const m = s && s.models.find((x) => x.name.indexOf('batched') === 0);
     return m && (m.elements || []).length >= 2;
-  }, null, { timeout: 60_000 }).catch(() => fail('force-batched load did not finish'));
+  }, null, { timeout: 60_000 }).catch(async () => {
+    const diag = await page.evaluate(() => {
+      const s = window._ccLatestState;
+      return {
+        models: (s.models || []).map((m) => ({ name: m.name, els: (m.elements || []).length, stats: m.stats })),
+        nextLoadScope: window._ccNextLoadScope,
+        lazyWorkersActive: window._lazyWorkersActive,
+        modelLoading: window._ccModelLoading,
+        modelLoadMsg: window._ccModelLoadMsg,
+        safetyDiag: (window._ccSafetyMigrations && window._ccSafetyMigrations.diagnostics()) || null,
+      };
+    });
+    console.error('DIAG: ' + JSON.stringify(diag));
+    fail('force-batched load did not finish');
+  });
 
   const batch = await page.evaluate(() => {
     const s = window._ccLatestState;
