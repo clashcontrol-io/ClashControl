@@ -32,6 +32,12 @@ const server = createServer(async (req, res) => {
 });
 await new Promise((r) => server.listen(8765, '127.0.0.1', r));
 
+// Service-worker-initiated fetches bypass page.route(); the experimental
+// flag (must be set before launch) lets the offline mirror below intercept
+// them at the context level too, so the hard-refresh path works offline.
+if (process.env.CC_BROWSER_OFFLINE_DEPS === '1')
+  process.env.PW_EXPERIMENTAL_SERVICE_WORKER_NETWORK_EVENTS = '1';
+
 const localChromium = process.env.CC_CHROMIUM_EXECUTABLE;
 const browser = await chromium.launch(localChromium ? {
   executablePath: localChromium,
@@ -49,7 +55,7 @@ page.on('dialog', (d) => d.accept());
 page.on('pageerror', (e) => errors.push('pageerror: ' + e.message));
 let workerFellBack = false;
 page.on('console', (m) => {
-  if (m.type() === 'error') errors.push('console: ' + m.text());
+  if (m.type() === 'error') errors.push('console: ' + m.text() + ' [' + ((m.location() && m.location().url) || '') + ']');
   // The worker path is the product; a silent fallback to the main-thread
   // parser (e.g. a ReferenceError inside the stringified worker source)
   // must fail CI, not just run slower.
@@ -68,22 +74,22 @@ if (process.env.CC_BROWSER_OFFLINE_DEPS === '1') {
       headers: { 'content-type': contentType || 'text/javascript', 'access-control-allow-origin': '*' },
     });
   }
-  await page.route('https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js', (r) => local(r, 'react/umd/react.production.min.js'));
-  await page.route('https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js', (r) => local(r, 'react-dom/umd/react-dom.production.min.js'));
-  await page.route('https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js', (r) => local(r, 'jszip/dist/jszip.min.js'));
-  await page.route('https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js', (r) => local(r, 'pdfjs-dist/build/pdf.min.js'));
-  await page.route('https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js', (r) => local(r, 'pdfjs-dist/build/pdf.worker.min.js'));
-  await page.route('https://cdn.jsdelivr.net/npm/three@0.180.0/**', async (route) => {
+  await page.context().route('https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js', (r) => local(r, 'react/umd/react.production.min.js'));
+  await page.context().route('https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js', (r) => local(r, 'react-dom/umd/react-dom.production.min.js'));
+  await page.context().route('https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js', (r) => local(r, 'jszip/dist/jszip.min.js'));
+  await page.context().route('https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js', (r) => local(r, 'pdfjs-dist/build/pdf.min.js'));
+  await page.context().route('https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js', (r) => local(r, 'pdfjs-dist/build/pdf.worker.min.js'));
+  await page.context().route('https://cdn.jsdelivr.net/npm/three@0.180.0/**', async (route) => {
     const suffix = new URL(route.request().url()).pathname.split('/three@0.180.0/')[1];
     await local(route, 'three/' + suffix);
   });
-  await page.route('https://cdn.jsdelivr.net/npm/web-ifc@0.0.77/**', async (route) => {
+  await page.context().route('https://cdn.jsdelivr.net/npm/web-ifc@0.0.77/**', async (route) => {
     const suffix = new URL(route.request().url()).pathname.split('/web-ifc@0.0.77/')[1];
     await local(route, 'web-ifc/' + suffix, suffix.endsWith('.wasm') ? 'application/wasm' : 'text/javascript');
   });
-  await page.route('https://fonts.googleapis.com/**', (route) => route.fulfill({status:200, body:'', contentType:'text/css'}));
-  await page.route('https://fonts.gstatic.com/**', (route) => route.abort());
-  await page.route('https://gc.zgo.at/**', (route) => route.fulfill({status:200, body:'', contentType:'text/javascript'}));
+  await page.context().route('https://fonts.googleapis.com/**', (route) => route.fulfill({status:200, body:'', contentType:'text/css'}));
+  await page.context().route('https://fonts.gstatic.com/**', (route) => route.abort());
+  await page.context().route('https://gc.zgo.at/**', (route) => route.fulfill({status:200, body:'', contentType:'text/javascript'}));
 }
 
 function fail(msg) {
