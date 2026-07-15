@@ -659,6 +659,7 @@
 <script src="clash-discipline-core.js"></script>
 <script src="clash-assignment-core.js"></script>
 <script src="clash-identity-core.js"></script>
+<script src="clash-reconciliation-core.js"></script>
 <script>
 window.addEventListener('error', function(e) {
   console.error('[ClashControl] Uncaught error:', e.error || e.message);
@@ -6379,7 +6380,7 @@ function startApp() {
   }
   window._ccAssignmentCoreStatus = Object.freeze({requested:_ccAssignmentCoreRequested, active:_ccAssignmentCoreActive, validation:_ccAssignmentCoreValidation});
 
-  function mergeDetectionResults(newClashes, prevClashes) {
+  function _ccLegacyMergeDetectionResults(newClashes, prevClashes) {
     newClashes = newClashes.filter(function(c){ return !_isDeniedClash(c); });
     if (!prevClashes || prevClashes.length === 0) {
       var now0 = Date.now();
@@ -6482,6 +6483,73 @@ function startApp() {
     merged.forEach(function(c){if(c._delta==='new')_nw++;else if(c._delta==='persisting')_pe++;else if(c._delta==='auto_resolved')_ar++;});
     return {clashes:merged, deltaSummary:{newCount:_nw,persisting:_pe,autoResolved:_ar+arOverflow,autoResolvedTruncated:arOverflow||undefined,ts:now}};
   }
+
+  function _ccReconciliationDeps(now) {
+    var deps = {
+      computeClashIdentityKey:computeClashIdentityKey,
+      computeClashPair:computeClashPair,
+      isDeniedClash:_isDeniedClash
+    };
+    if (now != null) deps.now = now;
+    return deps;
+  }
+
+  function _ccNormalizeReconciliationTimes(result) {
+    var copy = JSON.parse(JSON.stringify(result));
+    (copy.clashes || []).forEach(function(clash) {
+      if (clash._firstSeen != null) clash._firstSeen = '<time>';
+      if (clash._lastSeen != null) clash._lastSeen = '<time>';
+    });
+    if (copy.deltaSummary && copy.deltaSummary.ts != null) copy.deltaSummary.ts = '<time>';
+    return copy;
+  }
+
+  // Reconciliation carries human decisions between runs. The candidate stays
+  // behind an exact legacy comparison covering the regressions from #638 and
+  // ff02b09; a mismatch leaves the inline implementation active.
+  function _ccValidateReconciliationCore(core) {
+    if (!core || core.contractVersion !== 1 || core.autoResolveCap !== 200 ||
+        typeof core.mergeDetectionResults !== 'function') {
+      return {equal:false, failures:['contract']};
+    }
+    var failures = [];
+    function clash(id, a, b, point, extra) {
+      return Object.assign({id:id,uniqueIdA:a,uniqueIdB:b,point:point,distance:-10,status:'open'}, extra || {});
+    }
+    var prev = [clash('stable','a','b',[0.24,0,0],{
+      number:7,_firstSeen:123,_runCount:2,status:'in_progress',assignee:'jane',priority:'high',
+      aiSeverity:'major',aiCategory:'coordination',_clusterGroup:'C-01',linkedIssueId:'issue-1'
+    }), clash('gone','c','d',[2,0,0],{number:3,status:'open'})];
+    var next = [clash('fresh-id','a','b',[0.26,0,0]), clash('new','e','f',[4,0,0])];
+    try {
+      var legacy = _ccNormalizeReconciliationTimes(_ccLegacyMergeDetectionResults(next, prev));
+      var candidate = _ccNormalizeReconciliationTimes(core.mergeDetectionResults(next, prev, _ccReconciliationDeps(456)));
+      if (JSON.stringify(legacy) !== JSON.stringify(candidate)) failures.push('merge-output');
+      var denied = clash('denied','x','y',[0,0,0]);
+      var deniedDeps = _ccReconciliationDeps(789);
+      deniedDeps.isDeniedClash = function(c){ return c === denied; };
+      var deniedOut = core.mergeDetectionResults([denied], [], deniedDeps);
+      if (deniedOut.clashes.length !== 0 || deniedOut.deltaSummary.newCount !== 0) failures.push('denied-filter');
+    } catch (error) {
+      failures.push('exception:'+String(error && error.message || error));
+    }
+    return {equal:failures.length===0, failures:failures};
+  }
+
+  var _ccReconciliationCoreCandidate = window._ccClashReconciliationCore || null;
+  var _ccReconciliationCoreRequested = !!(window._ccSafetyMigrations && window._ccSafetyMigrations.isEnabled('reconciliationCoreV2'));
+  var _ccReconciliationCoreValidation = _ccReconciliationCoreRequested ?
+    _ccValidateReconciliationCore(_ccReconciliationCoreCandidate) : {equal:false, failures:['flag-off']};
+  var _ccReconciliationCoreActive = _ccReconciliationCoreRequested && _ccReconciliationCoreValidation.equal === true;
+  if (_ccReconciliationCoreRequested && window._ccSafetyMigrations && window._ccSafetyMigrations.record) {
+    window._ccSafetyMigrations.record({migration:'reconciliationCoreV2', outcome:_ccReconciliationCoreActive?'candidate':'fallback', comparison:_ccReconciliationCoreValidation});
+  }
+  function mergeDetectionResults(newClashes, prevClashes) {
+    return _ccReconciliationCoreActive ?
+      _ccReconciliationCoreCandidate.mergeDetectionResults(newClashes, prevClashes, _ccReconciliationDeps()) :
+      _ccLegacyMergeDetectionResults(newClashes, prevClashes);
+  }
+  window._ccReconciliationCoreStatus = Object.freeze({requested:_ccReconciliationCoreRequested, active:_ccReconciliationCoreActive, validation:_ccReconciliationCoreValidation});
 
   // ── AI Auto-Classifier ─────────────────────────────────────────── INTERNALS.md §10
 
