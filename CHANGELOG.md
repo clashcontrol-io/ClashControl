@@ -1,5 +1,8 @@
 # Changelog
 
+## v6.1.0 (2026-07-15)
+- Add model×model clash matrix to the Conflicts panel (#686)
+
 ## v6.0.2 (2026-07-15)
 - Fix: structural clash severity is case-insensitive on discipline (#685)
 
