@@ -1,5 +1,8 @@
 # Changelog
 
+## v6.0.1 (2026-07-15)
+- Guarded core-refactor patch train: six default-off extracted clash-pipeline modules (#684)
+
 ## v6.0.0 (2026-07-14)
 - fix: accept the duplicate-model overlap dialog in browser smoke test
 
