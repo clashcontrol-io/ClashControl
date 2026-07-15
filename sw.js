@@ -10,6 +10,18 @@ var PRECACHE = [
   './',
   'icons/icon-192.png',
   'icons/icon-512.png',
+  // Refactor/migration helpers must be available offline. Each has an inline
+  // legacy fallback, but precaching lets opted-in validation use the same
+  // module after a hard refresh without relying on a network response.
+  'safety-migrations.js',
+  'section-clipping.js',
+  'renderer-contract.js',
+  'clash-discipline-core.js',
+  'clash-assignment-core.js',
+  'clash-identity-core.js',
+  'clash-reconciliation-core.js',
+  'clash-classification-core.js',
+  'project-codec.js',
   // Addons — same-origin files are never runtime-cached (the fetch handler
   // only caches ALLOWED_CDN_HOSTS), so without precaching they 404 offline.
   // Safe to pin: the CACHE name above is rotated on every version bump.

@@ -110,6 +110,22 @@ Things to be careful about. Do not remove without a good reason — add a note i
 Update this section at the start and end of each session.
 Mark completed items with ~~strikethrough~~ and date, then let the daily sync archive them.
 
+~~**Guarded core-refactor patch train ported to main** (branch `claude/cc-repo-code-review-gk4421`, 2026-07-15)~~ —
+six externally-authored patches (Codex) extracting discipline / assignment / identity / reconciliation /
+classification / project-codec logic into standalone modules behind default-off `ccSafety` flags with boot-time
+legacy-equivalence gates, extending the #683 containment pattern. Ported (not applied verbatim — base commit
+`1a5dcae` never existed here): sw.js keeps its version-derived CACHE name (CI bump rotates it; the original
+`-refactorN` suffix would have been wiped by `bump-version.sh`), cache-name test assertions are version-agnostic,
+the redundant smoke dialog handler was dropped (main fixed it in `1e187a1`), and **the classification module was
+re-extracted from main's spatial-hash `classifyClashes`** — the original patch carried the pre-optimization O(n²)
+scan, which the value-equality gate would have silently activated. All six flags default off; opted-in validation
+runs once at boot and falls back to the inline legacy code on any mismatch. Verified: 521/521 unit tests + full
+Chromium smoke (all ten `ccSafety` opt-ins, IFC/WASM load, detection, hard-refresh restore, scoped load,
+BatchedMesh, zero console errors). Bonus fix the new strict smoke gate exposed: Chromium's preload scanner was
+fetching the literal URL `'+sn.img+'` from the report-builder string on every page load (`'<im'+'g'` split).
+Smoke now supports `CC_CHROMIUM_EXECUTABLE` + `CC_BROWSER_OFFLINE_DEPS=1` (context-level routing so the service
+worker's fetches hit the mirror too) for restricted runners.
+
 Post-merge follow-up (branch `claude/task-pending-55wmp1`, restarted from main after #681 merged, 2026-07-14) —
 the three open points from the stress-test report, now done:
 

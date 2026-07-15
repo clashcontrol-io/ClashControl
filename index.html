@@ -656,6 +656,12 @@
 <script src="safety-migrations.js"></script>
 <script src="section-clipping.js"></script>
 <script src="renderer-contract.js"></script>
+<script src="clash-discipline-core.js"></script>
+<script src="clash-assignment-core.js"></script>
+<script src="clash-identity-core.js"></script>
+<script src="clash-reconciliation-core.js"></script>
+<script src="clash-classification-core.js"></script>
+<script src="project-codec.js"></script>
 <script>
 window.addEventListener('error', function(e) {
   console.error('[ClashControl] Uncaught error:', e.error || e.message);
@@ -6177,7 +6183,7 @@ function startApp() {
 
   // ── Clash Identity & Delta Merge ────────────────────────────── INTERNALS.md §9
 
-  function computeClashPair(clash) {
+  function _ccLegacyComputeClashPair(clash) {
     // Stable cross-run identity per element. Prefer Revit UniqueId (survives a
     // re-pull — expressId is reassigned every pull), then IFC GlobalId, then
     // expressId as a last resort. Keying on expressId broke reconciliation after a
@@ -6192,14 +6198,69 @@ function startApp() {
     return idA < idB ? idA+'|'+idB : idB+'|'+idA;
   }
 
-  function computeClashIdentityKey(clash) {
-    var pair = computeClashPair(clash);
+  function _ccLegacyComputeClashIdentityKey(clash) {
+    var pair = _ccLegacyComputeClashPair(clash);
     var p = clash.point || [0,0,0];
     var gx = Math.round(p[0] / 0.5);
     var gy = Math.round(p[1] / 0.5);
     var gz = Math.round(p[2] / 0.5);
     return pair + '@' + gx + ',' + gy + ',' + gz;
   }
+
+  // Refactor gate: identity controls whether user status, assignee and priority
+  // survive a re-run. Keep the exact inline implementation active unless the
+  // extracted module passes the UniqueId-first contract introduced by #638.
+  function _ccValidateIdentityCore(core) {
+    if (!core || core.contractVersion !== 1 ||
+        typeof core.computeClashPair !== 'function' ||
+        typeof core.computeClashIdentityKey !== 'function') {
+      return {equal:false, failures:['contract']};
+    }
+    var failures = [];
+    function same(label, legacy, candidate) {
+      if (legacy !== candidate) failures.push(label);
+    }
+    var fixtures = [
+      {label:'unique-id-first', clash:{uniqueIdA:'revit-b',globalIdA:'ifc-a',elemA:9,uniqueIdB:'revit-a',globalIdB:'ifc-b',elemB:2,point:[1,2,3]}},
+      {label:'global-id-fallback', clash:{globalIdA:'z-guid',elemA:9,globalIdB:'a-guid',elemB:2,point:[0.24,0.25,0.26]}},
+      {label:'express-id-fallback', clash:{globalIdA:'',elemA:41,globalIdB:null,elemB:7,point:[-0.25,-0.26,0]}},
+      {label:'missing-point', clash:{uniqueIdA:'one',uniqueIdB:'two'}}
+    ];
+    try {
+      fixtures.forEach(function(fixture) {
+        same(fixture.label+'-pair', _ccLegacyComputeClashPair(fixture.clash), core.computeClashPair(fixture.clash));
+        same(fixture.label+'-key', _ccLegacyComputeClashIdentityKey(fixture.clash), core.computeClashIdentityKey(fixture.clash));
+        var swapped = Object.assign({}, fixture.clash, {
+          uniqueIdA:fixture.clash.uniqueIdB, globalIdA:fixture.clash.globalIdB, elemA:fixture.clash.elemB,
+          uniqueIdB:fixture.clash.uniqueIdA, globalIdB:fixture.clash.globalIdA, elemB:fixture.clash.elemA
+        });
+        same(fixture.label+'-order', core.computeClashPair(fixture.clash), core.computeClashPair(swapped));
+      });
+    } catch (error) {
+      failures.push('exception:'+String(error && error.message || error));
+    }
+    return {equal:failures.length===0, failures:failures};
+  }
+
+  var _ccIdentityCoreCandidate = window._ccClashIdentityCore || null;
+  var _ccIdentityCoreRequested = !!(window._ccSafetyMigrations && window._ccSafetyMigrations.isEnabled('identityCoreV2'));
+  var _ccIdentityCoreValidation = _ccIdentityCoreRequested ?
+    _ccValidateIdentityCore(_ccIdentityCoreCandidate) : {equal:false, failures:['flag-off']};
+  var _ccIdentityCoreActive = _ccIdentityCoreRequested && _ccIdentityCoreValidation.equal === true;
+  if (_ccIdentityCoreRequested && window._ccSafetyMigrations && window._ccSafetyMigrations.record) {
+    window._ccSafetyMigrations.record({migration:'identityCoreV2', outcome:_ccIdentityCoreActive?'candidate':'fallback', comparison:_ccIdentityCoreValidation});
+  }
+  function computeClashPair(clash) {
+    return _ccIdentityCoreActive ?
+      _ccIdentityCoreCandidate.computeClashPair(clash) :
+      _ccLegacyComputeClashPair(clash);
+  }
+  function computeClashIdentityKey(clash) {
+    return _ccIdentityCoreActive ?
+      _ccIdentityCoreCandidate.computeClashIdentityKey(clash) :
+      _ccLegacyComputeClashIdentityKey(clash);
+  }
+  window._ccIdentityCoreStatus = Object.freeze({requested:_ccIdentityCoreRequested, active:_ccIdentityCoreActive, validation:_ccIdentityCoreValidation});
 
   // ── Denied clash suppression ──────────────────────────────────
   function _getDeniedClashStore() {
@@ -6234,7 +6295,7 @@ function startApp() {
   // discipline2:'any'). Rules are matched in array order — first match
   // wins, same "earlier rule takes precedence" convention as
   // StandardsPanel's discipline-pair clearance rules (isDuplicate there).
-  function _ccMatchAssignmentRule(rules, c) {
+  function _ccLegacyMatchAssignmentRule(rules, c) {
     if (!rules || !rules.length) return null;
     var ds = c.disciplines || [];
     var d1 = ds[0] || null, d2 = ds[1] || null;
@@ -6258,11 +6319,11 @@ function startApp() {
   // or somehow set some other way) is left alone — first match wins, not
   // last. Returns new clash objects only where something actually changed,
   // so unaffected clashes keep referential identity.
-  function _ccApplyAssignmentRules(clashes, rules) {
+  function _ccLegacyApplyAssignmentRules(clashes, rules) {
     if (!rules || !rules.length) return clashes;
     return clashes.map(function(c) {
       if (c._delta !== 'new' || c.assignee) return c;
-      var r = _ccMatchAssignmentRule(rules, c);
+      var r = _ccLegacyMatchAssignmentRule(rules, c);
       if (!r) return c;
       var upd = {};
       if (r.assignee) upd.assignee = r.assignee;
@@ -6271,7 +6332,57 @@ function startApp() {
     });
   }
 
-  function mergeDetectionResults(newClashes, prevClashes) {
+  function _ccValidateAssignmentCore(core) {
+    if (!core || core.contractVersion !== 1 ||
+        typeof core.matchAssignmentRule !== 'function' ||
+        typeof core.applyAssignmentRules !== 'function') {
+      return {equal:false, failures:['contract']};
+    }
+    var failures = [];
+    var rules = [
+      {id:'first',discipline1:'mep',discipline2:'structural',storey:'Level 2',assignee:'alice',priority:'high'},
+      {id:'fallback',discipline1:'any',discipline2:'any',storey:'any',assignee:'bob',priority:''}
+    ];
+    var clashes = [
+      {id:'new-match',_delta:'new',disciplines:['structural','mep'],elemAStorey:'Level 2'},
+      {id:'persisting',_delta:'persisting',disciplines:['mep','structural'],elemAStorey:'Level 2'},
+      {id:'assigned',_delta:'new',disciplines:['mep','structural'],elemAStorey:'Level 2',assignee:'owner'}
+    ];
+    try {
+      if (_ccLegacyMatchAssignmentRule(rules, clashes[0]) !== core.matchAssignmentRule(rules, clashes[0])) failures.push('first-match-identity');
+      var legacy = _ccLegacyApplyAssignmentRules(clashes, rules);
+      var candidate = core.applyAssignmentRules(clashes, rules);
+      if (JSON.stringify(legacy) !== JSON.stringify(candidate)) failures.push('batch-output');
+      if (legacy[1] !== clashes[1] || candidate[1] !== clashes[1]) failures.push('persisting-reference');
+      if (legacy[2] !== clashes[2] || candidate[2] !== clashes[2]) failures.push('assigned-reference');
+      if (_ccLegacyMatchAssignmentRule(null, clashes[0]) !== core.matchAssignmentRule(null, clashes[0])) failures.push('null-rules');
+    } catch (error) {
+      failures.push('exception:'+String(error && error.message || error));
+    }
+    return {equal:failures.length===0, failures:failures};
+  }
+
+  var _ccAssignmentCoreCandidate = window._ccClashAssignmentCore || null;
+  var _ccAssignmentCoreRequested = !!(window._ccSafetyMigrations && window._ccSafetyMigrations.isEnabled('assignmentCoreV2'));
+  var _ccAssignmentCoreValidation = _ccAssignmentCoreRequested ?
+    _ccValidateAssignmentCore(_ccAssignmentCoreCandidate) : {equal:false, failures:['flag-off']};
+  var _ccAssignmentCoreActive = _ccAssignmentCoreRequested && _ccAssignmentCoreValidation.equal === true;
+  if (_ccAssignmentCoreRequested && window._ccSafetyMigrations && window._ccSafetyMigrations.record) {
+    window._ccSafetyMigrations.record({migration:'assignmentCoreV2', outcome:_ccAssignmentCoreActive?'candidate':'fallback', comparison:_ccAssignmentCoreValidation});
+  }
+  function _ccMatchAssignmentRule(rules, clash) {
+    return _ccAssignmentCoreActive ?
+      _ccAssignmentCoreCandidate.matchAssignmentRule(rules, clash) :
+      _ccLegacyMatchAssignmentRule(rules, clash);
+  }
+  function _ccApplyAssignmentRules(clashes, rules) {
+    return _ccAssignmentCoreActive ?
+      _ccAssignmentCoreCandidate.applyAssignmentRules(clashes, rules) :
+      _ccLegacyApplyAssignmentRules(clashes, rules);
+  }
+  window._ccAssignmentCoreStatus = Object.freeze({requested:_ccAssignmentCoreRequested, active:_ccAssignmentCoreActive, validation:_ccAssignmentCoreValidation});
+
+  function _ccLegacyMergeDetectionResults(newClashes, prevClashes) {
     newClashes = newClashes.filter(function(c){ return !_isDeniedClash(c); });
     if (!prevClashes || prevClashes.length === 0) {
       var now0 = Date.now();
@@ -6375,9 +6486,76 @@ function startApp() {
     return {clashes:merged, deltaSummary:{newCount:_nw,persisting:_pe,autoResolved:_ar+arOverflow,autoResolvedTruncated:arOverflow||undefined,ts:now}};
   }
 
+  function _ccReconciliationDeps(now) {
+    var deps = {
+      computeClashIdentityKey:computeClashIdentityKey,
+      computeClashPair:computeClashPair,
+      isDeniedClash:_isDeniedClash
+    };
+    if (now != null) deps.now = now;
+    return deps;
+  }
+
+  function _ccNormalizeReconciliationTimes(result) {
+    var copy = JSON.parse(JSON.stringify(result));
+    (copy.clashes || []).forEach(function(clash) {
+      if (clash._firstSeen != null) clash._firstSeen = '<time>';
+      if (clash._lastSeen != null) clash._lastSeen = '<time>';
+    });
+    if (copy.deltaSummary && copy.deltaSummary.ts != null) copy.deltaSummary.ts = '<time>';
+    return copy;
+  }
+
+  // Reconciliation carries human decisions between runs. The candidate stays
+  // behind an exact legacy comparison covering the regressions from #638 and
+  // ff02b09; a mismatch leaves the inline implementation active.
+  function _ccValidateReconciliationCore(core) {
+    if (!core || core.contractVersion !== 1 || core.autoResolveCap !== 200 ||
+        typeof core.mergeDetectionResults !== 'function') {
+      return {equal:false, failures:['contract']};
+    }
+    var failures = [];
+    function clash(id, a, b, point, extra) {
+      return Object.assign({id:id,uniqueIdA:a,uniqueIdB:b,point:point,distance:-10,status:'open'}, extra || {});
+    }
+    var prev = [clash('stable','a','b',[0.24,0,0],{
+      number:7,_firstSeen:123,_runCount:2,status:'in_progress',assignee:'jane',priority:'high',
+      aiSeverity:'major',aiCategory:'coordination',_clusterGroup:'C-01',linkedIssueId:'issue-1'
+    }), clash('gone','c','d',[2,0,0],{number:3,status:'open'})];
+    var next = [clash('fresh-id','a','b',[0.26,0,0]), clash('new','e','f',[4,0,0])];
+    try {
+      var legacy = _ccNormalizeReconciliationTimes(_ccLegacyMergeDetectionResults(next, prev));
+      var candidate = _ccNormalizeReconciliationTimes(core.mergeDetectionResults(next, prev, _ccReconciliationDeps(456)));
+      if (JSON.stringify(legacy) !== JSON.stringify(candidate)) failures.push('merge-output');
+      var denied = clash('denied','x','y',[0,0,0]);
+      var deniedDeps = _ccReconciliationDeps(789);
+      deniedDeps.isDeniedClash = function(c){ return c === denied; };
+      var deniedOut = core.mergeDetectionResults([denied], [], deniedDeps);
+      if (deniedOut.clashes.length !== 0 || deniedOut.deltaSummary.newCount !== 0) failures.push('denied-filter');
+    } catch (error) {
+      failures.push('exception:'+String(error && error.message || error));
+    }
+    return {equal:failures.length===0, failures:failures};
+  }
+
+  var _ccReconciliationCoreCandidate = window._ccClashReconciliationCore || null;
+  var _ccReconciliationCoreRequested = !!(window._ccSafetyMigrations && window._ccSafetyMigrations.isEnabled('reconciliationCoreV2'));
+  var _ccReconciliationCoreValidation = _ccReconciliationCoreRequested ?
+    _ccValidateReconciliationCore(_ccReconciliationCoreCandidate) : {equal:false, failures:['flag-off']};
+  var _ccReconciliationCoreActive = _ccReconciliationCoreRequested && _ccReconciliationCoreValidation.equal === true;
+  if (_ccReconciliationCoreRequested && window._ccSafetyMigrations && window._ccSafetyMigrations.record) {
+    window._ccSafetyMigrations.record({migration:'reconciliationCoreV2', outcome:_ccReconciliationCoreActive?'candidate':'fallback', comparison:_ccReconciliationCoreValidation});
+  }
+  function mergeDetectionResults(newClashes, prevClashes) {
+    return _ccReconciliationCoreActive ?
+      _ccReconciliationCoreCandidate.mergeDetectionResults(newClashes, prevClashes, _ccReconciliationDeps()) :
+      _ccLegacyMergeDetectionResults(newClashes, prevClashes);
+  }
+  window._ccReconciliationCoreStatus = Object.freeze({requested:_ccReconciliationCoreRequested, active:_ccReconciliationCoreActive, validation:_ccReconciliationCoreValidation});
+
   // ── AI Auto-Classifier ─────────────────────────────────────────── INTERNALS.md §10
 
-  function classifyClashes(clashes) {
+  function _ccLegacyClassifyClashes(clashes) {
     var FP_TYPES = ['IfcOpeningElement','IfcOpeningStandardCase','IfcSpace','IfcVirtualElement'];
     var STRUCTURAL_DISC = 'Structural';
     var INSULATION_MAT = 'insulation';
@@ -6497,12 +6675,65 @@ function startApp() {
     }
   }
 
+  // ── Classification migration gate ─────────────────────────────
+
+  function _ccClassificationFixture() {
+    return [
+      {id:'opening',type:'hard',elemAType:'IfcOpeningElement',elemBType:'IfcWall',disciplines:['Structural','MEP'],point:[0,0,0],elemAStorey:'L1'},
+      {id:'ratio',type:'hard',elemAType:'IfcPipeSegment',elemBType:'IfcWall',_trainFV:{size_ratio:51},disciplines:['MEP','Structural'],point:[2,0,0],elemAStorey:'L1'},
+      {id:'duplicate',type:'duplicate',elemAType:'IfcDuctSegment',elemBType:'IfcBeam',point:[4,0,0],elemAStorey:'L1'},
+      {id:'near',type:'soft',clearanceMm:24,elemAType:'IfcDuctSegment',elemBType:'IfcBeam',disciplines:['MEP','Structural'],point:[6,0,0],elemAStorey:'L1'},
+      {id:'wide',type:'soft',clearanceMm:25,elemAType:'IfcDuctSegment',elemBType:'IfcBeam',disciplines:['MEP','MEP'],point:[8,0,0],elemAStorey:'L1'},
+      {id:'structural',type:'hard',elemAType:'IfcDuctSegment',elemBType:'IfcBeam',disciplines:['MEP','Structural'],point:[10,0,0],elemAStorey:'L1'},
+      {id:'insulation',type:'hard',elemAType:'IfcDuctSegment',elemBType:'IfcBeam',disciplines:['MEP','Structural'],_trainFV:{mat_cat_a:'insulation'},point:[12,0,0],elemAStorey:'L1'},
+      {id:'cluster-a',type:'hard',elemAType:'IfcPipeSegment',elemBType:'IfcSlab',disciplines:['MEP','Structural'],point:[20,0,0],elemAStorey:'L2'},
+      {id:'cluster-b',type:'hard',elemAType:'IfcPipeSegment',elemBType:'IfcSlab',disciplines:['MEP','Structural'],point:[20.5,0,0],elemAStorey:'L2'},
+      {id:'preclassified',type:'hard',aiSeverity:'info',aiCategory:'manual',aiReason:'kept',elemAType:'IfcPipeSegment',elemBType:'IfcSlab',point:[30,0,0],elemAStorey:'L3'}
+    ];
+  }
+
+  // The classifier mutates clash records in place and its output drives saved
+  // review state. Compare the complete mutation against the inline function
+  // once at boot; flag-off never executes candidate code.
+  function _ccValidateClassificationCore(core) {
+    if (!core || core.contractVersion !== 1 || typeof core.classifyClashes !== 'function') {
+      return {equal:false, failures:['contract']};
+    }
+    var failures = [];
+    try {
+      var legacy = _ccClassificationFixture();
+      var candidate = _ccClassificationFixture();
+      var legacyReturn = _ccLegacyClassifyClashes(legacy);
+      var candidateReturn = core.classifyClashes(candidate);
+      if (legacyReturn !== candidateReturn) failures.push('return-value');
+      if (JSON.stringify(legacy) !== JSON.stringify(candidate)) failures.push('mutated-output');
+    } catch (error) {
+      failures.push('exception:'+String(error && error.message || error));
+    }
+    return {equal:failures.length===0, failures:failures};
+  }
+
+  var _ccClassificationCoreCandidate = window._ccClashClassificationCore || null;
+  var _ccClassificationCoreRequested = !!(window._ccSafetyMigrations && window._ccSafetyMigrations.isEnabled('classificationCoreV2'));
+  var _ccClassificationCoreValidation = _ccClassificationCoreRequested ?
+    _ccValidateClassificationCore(_ccClassificationCoreCandidate) : {equal:false, failures:['flag-off']};
+  var _ccClassificationCoreActive = _ccClassificationCoreRequested && _ccClassificationCoreValidation.equal === true;
+  if (_ccClassificationCoreRequested && window._ccSafetyMigrations && window._ccSafetyMigrations.record) {
+    window._ccSafetyMigrations.record({migration:'classificationCoreV2', outcome:_ccClassificationCoreActive?'candidate':'fallback', comparison:_ccClassificationCoreValidation});
+  }
+  function classifyClashes(clashes) {
+    return _ccClassificationCoreActive ?
+      _ccClassificationCoreCandidate.classifyClashes(clashes) :
+      _ccLegacyClassifyClashes(clashes);
+  }
+  window._ccClassificationCoreStatus = Object.freeze({requested:_ccClassificationCoreRequested, active:_ccClassificationCoreActive, validation:_ccClassificationCoreValidation});
+
   // ── Save / Load Project ────────────────────────────────────────
 
-  function saveProject(s) {
-    var data = {
-      _cc: 'ClashControl', _v: CC_VERSION.v,
-      savedAt: new Date().toISOString(),
+  function _ccLegacySerializeProject(s, version, savedAt) {
+    return {
+      _cc: 'ClashControl', _v: version,
+      savedAt: savedAt,
       rules: s.rules,
       models: s.models.map(function(m) {
         return { id:m.id, name:m.name, discipline:m.discipline, color:m.color, visible:m.visible, tag:m.tag||'' };
@@ -6519,6 +6750,109 @@ function startApp() {
       assignmentRules: s.assignmentRules||[],
       changelog: s.changelog||[],
     };
+  }
+
+  function _ccLegacyValidateProject(data) {
+    if (!data._cc || data._cc !== 'ClashControl') throw new Error('Not a ClashControl project file.');
+  }
+
+  function _ccProjectActionTypes() {
+    return {
+      ADD_MODEL:A.ADD_MODEL, UPD_RULES:A.UPD_RULES, SET_CLASHES:A.SET_CLASHES,
+      LOAD_PROJECT_STATE:A.LOAD_PROJECT_STATE, ADD_ISSUE:A.ADD_ISSUE,
+      ADD_VIEWPOINT:A.ADD_VIEWPOINT, ADD_MEASUREMENT:A.ADD_MEASUREMENT,
+      ADD_SELSET:'ADD_SELSET', ADD_SEARCHSET:'ADD_SEARCHSET',
+      ADD_ASSIGN_RULE:'ADD_ASSIGN_RULE', MERGE_CHANGELOG:A.MERGE_CHANGELOG
+    };
+  }
+
+  function _ccLegacyRestoreProject(data, dispatch) {
+    data.models.forEach(function(m) {
+      dispatch({ t:A.ADD_MODEL, v: Object.assign({}, m, { meshes:[], elements:[], _stub:true }) });
+    });
+    dispatch({ t:A.UPD_RULES, u: data.rules });
+    if (data.clashes) dispatch({ t:A.SET_CLASHES, v: data.clashes });
+    if (data.runHistory || data.lastDeltaSummary) dispatch({ t:A.LOAD_PROJECT_STATE, data:{ runHistory:data.runHistory||[], lastDeltaSummary:data.lastDeltaSummary||null } });
+    (data.issues||[]).forEach(function(i) { dispatch({ t:A.ADD_ISSUE, v:i }); });
+    (data.viewpoints||[]).forEach(function(v) { dispatch({ t:A.ADD_VIEWPOINT, v:v }); });
+    if (data.measurements) data.measurements.forEach(function(m) { dispatch({ t:A.ADD_MEASUREMENT, v:m }); });
+    if (data.selectionSets) data.selectionSets.forEach(function(ss){ dispatch({t:'ADD_SELSET', v:ss}); });
+    if (data.searchSets) data.searchSets.forEach(function(qs){ dispatch({t:'ADD_SEARCHSET', v:qs}); });
+    if (data.assignmentRules) data.assignmentRules.forEach(function(ar){ dispatch({t:'ADD_ASSIGN_RULE', v:ar}); });
+    if (data.changelog && data.changelog.length) dispatch({ t:A.MERGE_CHANGELOG, v:data.changelog });
+  }
+
+  function _ccProjectCodecFixture() {
+    return {
+      rules:{hard:true},
+      models:[{id:'m1',name:'Model',discipline:'mep',color:'#123456',visible:false,tag:'coord',meshes:['not-saved'],elements:['not-saved']}],
+      clashes:[{id:'c1'}], issues:[{id:'i1'}], floors:[{id:'L1'}],
+      lastDeltaSummary:{newCount:1}, runHistory:[{ts:1}],
+      viewpoints:[{id:'v1',snapshot:'data:image/png;base64,abc',camera:{x:1}}],
+      measurements:[{id:'measure-1'}], selectionSets:[{id:'selection-1'}],
+      searchSets:[{id:'search-1',query:{ifcType:'IfcWall'}}],
+      assignmentRules:[{id:'assignment-1'}], changelog:[{id:'change-1'}]
+    };
+  }
+
+  function _ccProjectCodecError(validate, data) {
+    try { validate(data); return null; }
+    catch (error) { return String(error && error.message || error); }
+  }
+
+  // Manual project files are a compatibility boundary: old exports must keep
+  // restoring in the same dispatch order. Validate encoding, marker checks and
+  // every restore action before allowing the extracted codec to run.
+  function _ccValidateProjectCodec(core) {
+    if (!core || core.contractVersion !== 1 ||
+        typeof core.serializeProject !== 'function' ||
+        typeof core.validateProject !== 'function' ||
+        typeof core.restoreProject !== 'function') {
+      return {equal:false, failures:['contract']};
+    }
+    var failures = [];
+    try {
+      var legacyData = _ccLegacySerializeProject(_ccProjectCodecFixture(), 'test-version', '2026-01-02T03:04:05.000Z');
+      var candidateData = core.serializeProject(_ccProjectCodecFixture(), 'test-version', '2026-01-02T03:04:05.000Z');
+      if (JSON.stringify(legacyData) !== JSON.stringify(candidateData)) failures.push('serialized-output');
+      if (!Object.prototype.hasOwnProperty.call(candidateData.viewpoints[0], 'snapshot') || candidateData.viewpoints[0].snapshot !== undefined) failures.push('snapshot-strip');
+      var legacyActions = [], candidateActions = [];
+      _ccLegacyRestoreProject(legacyData, function(action){ legacyActions.push(action); });
+      core.restoreProject(candidateData, function(action){ candidateActions.push(action); }, _ccProjectActionTypes());
+      if (JSON.stringify(legacyActions) !== JSON.stringify(candidateActions)) failures.push('restore-actions');
+      var invalid = {_cc:'Other',models:[]};
+      if (_ccProjectCodecError(_ccLegacyValidateProject, invalid) !== _ccProjectCodecError(core.validateProject, invalid)) failures.push('validation-error');
+    } catch (error) {
+      failures.push('exception:'+String(error && error.message || error));
+    }
+    return {equal:failures.length===0, failures:failures};
+  }
+
+  var _ccProjectCodecCandidate = window._ccProjectCodec || null;
+  var _ccProjectCodecRequested = !!(window._ccSafetyMigrations && window._ccSafetyMigrations.isEnabled('projectCodecV2'));
+  var _ccProjectCodecValidation = _ccProjectCodecRequested ?
+    _ccValidateProjectCodec(_ccProjectCodecCandidate) : {equal:false, failures:['flag-off']};
+  var _ccProjectCodecActive = _ccProjectCodecRequested && _ccProjectCodecValidation.equal === true;
+  if (_ccProjectCodecRequested && window._ccSafetyMigrations && window._ccSafetyMigrations.record) {
+    window._ccSafetyMigrations.record({migration:'projectCodecV2', outcome:_ccProjectCodecActive?'candidate':'fallback', comparison:_ccProjectCodecValidation});
+  }
+  function _ccSerializeProject(s, version, savedAt) {
+    return _ccProjectCodecActive ?
+      _ccProjectCodecCandidate.serializeProject(s, version, savedAt) :
+      _ccLegacySerializeProject(s, version, savedAt);
+  }
+  function _ccValidateProject(data) {
+    return _ccProjectCodecActive ? _ccProjectCodecCandidate.validateProject(data) : _ccLegacyValidateProject(data);
+  }
+  function _ccRestoreProject(data, dispatch) {
+    return _ccProjectCodecActive ?
+      _ccProjectCodecCandidate.restoreProject(data, dispatch, _ccProjectActionTypes()) :
+      _ccLegacyRestoreProject(data, dispatch);
+  }
+  window._ccProjectCodecStatus = Object.freeze({requested:_ccProjectCodecRequested, active:_ccProjectCodecActive, validation:_ccProjectCodecValidation});
+
+  function saveProject(s) {
+    var data = _ccSerializeProject(s, CC_VERSION.v, new Date().toISOString());
     var blob = new Blob([JSON.stringify(data, null, 2)], {type:'application/json'});
     var a = document.createElement('a');
     a.href = URL.createObjectURL(blob);
@@ -6536,25 +6870,8 @@ function startApp() {
       r.onload = function(ev) {
         try {
           var data = JSON.parse(ev.target.result);
-          if (!data._cc || data._cc !== 'ClashControl') throw new Error('Not a ClashControl project file.');
-          // Restore models as stubs (geometry must be re-uploaded)
-          data.models.forEach(function(m) {
-            d({ t:A.ADD_MODEL, v: Object.assign({}, m, { meshes:[], elements:[], _stub:true }) });
-          });
-          d({ t:A.UPD_RULES, u: data.rules });
-          if (data.clashes) d({ t:A.SET_CLASHES, v: data.clashes });
-          if (data.runHistory || data.lastDeltaSummary) d({ t:A.LOAD_PROJECT_STATE, data:{ runHistory:data.runHistory||[], lastDeltaSummary:data.lastDeltaSummary||null } });
-          (data.issues||[]).forEach(function(i) { d({ t:A.ADD_ISSUE, v:i }); });
-          (data.viewpoints||[]).forEach(function(v) { d({ t:A.ADD_VIEWPOINT, v:v }); });
-          if (data.measurements) data.measurements.forEach(function(m) { d({ t:A.ADD_MEASUREMENT, v:m }); });
-          if (data.selectionSets) data.selectionSets.forEach(function(ss){ d({t:'ADD_SELSET', v:ss}); });
-          // Search sets restore the QUERY, not stale refs — membership
-          // re-resolves live once real geometry is re-uploaded (models
-          // restore as {_stub:true, elements:[]} above), so an empty count
-          // right after load is correct, not a bug.
-          if (data.searchSets) data.searchSets.forEach(function(qs){ d({t:'ADD_SEARCHSET', v:qs}); });
-          if (data.assignmentRules) data.assignmentRules.forEach(function(ar){ d({t:'ADD_ASSIGN_RULE', v:ar}); });
-          if (data.changelog && data.changelog.length) d({ t:A.MERGE_CHANGELOG, v:data.changelog });
+          _ccValidateProject(data);
+          _ccRestoreProject(data, d);
         } catch(err) {
           alert('Load failed: ' + err.message);
         }
@@ -9050,7 +9367,8 @@ function startApp() {
             +'  .noprint{display:none}'
             +'}'
             +'</style></head><body>'
-            +'<div class="frame"><img src="'+dataUrl+'" />'+svgMarkup+'</div>'
+            // '<im'+'g' guards against the preload-scanner literal fetch (see clash report builder).
+            +'<div class="frame"><im'+'g src="'+dataUrl+'" />'+svgMarkup+'</div>'
             +'<div class="meta">'+title+' &nbsp;·&nbsp; '+new Date().toLocaleString()+'</div>'
             +'<div class="meta noprint" style="margin-top:4px">'
             +'<button onclick="window.print()" style="padding:4px 12px;cursor:pointer;margin-right:8px">Print / Save PDF</button>'
@@ -16416,11 +16734,10 @@ function startApp() {
   // one file, one model.discipline label) still classify individual elements
   // correctly instead of the whole file voting one way — the matrix and the
   // discipline-pair presets both key off this, not off model.discipline alone.
-  function _ccElementDiscipline(el, modelDiscipline) {
+  function _ccLegacyElementDiscipline(el, modelDiscipline) {
     var t = (el && el.props && el.props.ifcType) || '';
     return _DISC_TYPE_MAP[t] || modelDiscipline || 'other';
   }
-  window._ccElementDiscipline = _ccElementDiscipline;
 
   // Default clash matrix: should this pair be skipped? Only ever applies to
   // CROSS-model pairs — sameModel same-discipline pairs (e.g. two walls
@@ -16442,27 +16759,25 @@ function startApp() {
   // Shared by both _detectClashesCore call sites (chunk pre-filter + the
   // authoritative check) so they can't drift, and by _ccDisciplinePairEnabled
   // (matrix-UI cell state) so the UI and the engine can't disagree either.
-  function _ccMatrixSkipsSameDiscipline(eA, mA, eB, mB, sameModel, rules) {
+  function _ccLegacyMatrixSkipsSameDiscipline(eA, mA, eB, mB, sameModel, rules) {
     if (rules.duplicates || sameModel) return false;
-    var dA = _ccElementDiscipline(eA, mA && mA.discipline);
-    var dB = _ccElementDiscipline(eB, mB && mB.discipline);
-    return !_ccDisciplinePairEnabled(dA, dB, rules);
+    var dA = _ccLegacyElementDiscipline(eA, mA && mA.discipline);
+    var dB = _ccLegacyElementDiscipline(eB, mB && mB.discipline);
+    return !_ccLegacyDisciplinePairEnabled(dA, dB, rules);
   }
-  window._ccMatrixSkipsSameDiscipline = _ccMatrixSkipsSameDiscipline;
 
   // Effective on/off state for one discipline-pair cell — used directly by the
   // matrix UI (no real elements needed) and by _ccMatrixSkipsSameDiscipline
   // above, so they share one precedence rule and can never disagree.
-  function _ccDisciplinePairEnabled(discA, discB, rules) {
+  function _ccLegacyDisciplinePairEnabled(discA, discB, rules) {
     var pairKey = discA < discB ? discA+':'+discB : discB+':'+discA;
     var dm = rules.disciplineMatrix;
     if (dm && dm[pairKey] !== undefined) return dm[pairKey] !== false;
     if (discA !== discB) return true;
     return rules.excludeSameDiscipline === false;
   }
-  window._ccDisciplinePairEnabled = _ccDisciplinePairEnabled;
 
-  function detectDiscipline(elements, name) {
+  function _ccLegacyDetectDiscipline(elements, name) {
     // Only DISCRIMINATING element types vote — see _DISC_TYPE_MAP above.
     var mep=0, str=0, arc=0, civ=0;
     (elements||[]).forEach(function(el){
@@ -16486,7 +16801,91 @@ function startApp() {
     // Last resort: whichever discriminating bucket led, else architectural.
     return lead() || 'architectural';
   }
+
+  // Refactor gate: production keeps the exact inline functions above unless
+  // disciplineCoreV2 is explicitly enabled AND the extracted pure module
+  // matches a compact set of the historical zero-clash regression contracts.
+  // Validation runs once; the hot pair-filter path never dual-runs.
+  function _ccValidateDisciplineCore(core) {
+    if (!core || core.contractVersion !== 1) return {equal:false, failures:['contract-version']};
+    var required = ['elementDiscipline','disciplinePairEnabled','matrixSkipsSameDiscipline','detectDiscipline'];
+    var failures = [];
+    required.forEach(function(name){ if (typeof core[name] !== 'function') failures.push('missing-'+name); });
+    if (!core.typeMap || typeof core.typeMap !== 'object') failures.push('missing-typeMap');
+    if (failures.length) return {equal:false, failures:failures};
+    function el(type){ return {props:{ifcType:type}}; }
+    function mdl(id, discipline){ return {id:id, discipline:discipline}; }
+    function same(label, legacy, candidate){ if (legacy !== candidate) failures.push(label); }
+    try {
+      var legacyTypes = Object.keys(_DISC_TYPE_MAP).sort();
+      var candidateTypes = Object.keys(core.typeMap).sort();
+      if (JSON.stringify(legacyTypes) !== JSON.stringify(candidateTypes)) failures.push('type-map-keys');
+      legacyTypes.forEach(function(type){ same('type-map-'+type, _DISC_TYPE_MAP[type], core.typeMap[type]); });
+      same('element-mep', _ccLegacyElementDiscipline(el('IfcDuctSegment'),'architectural'), core.elementDiscipline(el('IfcDuctSegment'),'architectural'));
+      same('element-structural', _ccLegacyElementDiscipline(el('IfcBeam'),'mep'), core.elementDiscipline(el('IfcBeam'),'mep'));
+      same('element-model-fallback', _ccLegacyElementDiscipline(el('IfcWall'),'structural'), core.elementDiscipline(el('IfcWall'),'structural'));
+      same('element-other-fallback', _ccLegacyElementDiscipline(el('IfcBuildingElementProxy'),null), core.elementDiscipline(el('IfcBuildingElementProxy'),null));
+      var majority = [el('IfcDuctSegment'),el('IfcDuctSegment'),el('IfcDuctSegment'),el('IfcDuctSegment'),el('IfcDuctSegment'),el('IfcBeam')];
+      same('detect-majority', _ccLegacyDetectDiscipline(majority,'combined-model'), core.detectDiscipline(majority,'combined-model'));
+      same('detect-name', _ccLegacyDetectDiscipline([],'Constructie model'), core.detectDiscipline([],'Constructie model'));
+      same('detect-default', _ccLegacyDetectDiscipline([],''), core.detectDiscipline([],''));
+      var defaults = {excludeSameDiscipline:true};
+      var override = {excludeSameDiscipline:true,disciplineMatrix:{'structural:structural':true,'architectural:mep':false}};
+      same('pair-default', _ccLegacyDisciplinePairEnabled('structural','structural',defaults), core.disciplinePairEnabled('structural','structural',defaults));
+      same('pair-order', _ccLegacyDisciplinePairEnabled('mep','architectural',override), core.disciplinePairEnabled('mep','architectural',override));
+      same('matrix-same-model', _ccLegacyMatrixSkipsSameDiscipline(el('IfcWall'),mdl('a','architectural'),el('IfcWall'),mdl('a','architectural'),true,defaults), core.matrixSkipsSameDiscipline(el('IfcWall'),mdl('a','architectural'),el('IfcWall'),mdl('a','architectural'),true,defaults));
+      same('matrix-cross-model', _ccLegacyMatrixSkipsSameDiscipline(el('IfcBeam'),mdl('a','structural'),el('IfcColumn'),mdl('b','structural'),false,defaults), core.matrixSkipsSameDiscipline(el('IfcBeam'),mdl('a','structural'),el('IfcColumn'),mdl('b','structural'),false,defaults));
+      var duplicates = {excludeSameDiscipline:true,duplicates:true};
+      same('matrix-duplicates', _ccLegacyMatrixSkipsSameDiscipline(el('IfcDuctSegment'),mdl('a','mep'),el('IfcDuctSegment'),mdl('b','mep'),false,duplicates), core.matrixSkipsSameDiscipline(el('IfcDuctSegment'),mdl('a','mep'),el('IfcDuctSegment'),mdl('b','mep'),false,duplicates));
+    } catch (error) {
+      failures.push('exception:'+String(error && error.message || error));
+    }
+    return {equal:failures.length===0, failures:failures};
+  }
+
+  var _ccDisciplineCoreCandidate = window._ccClashDisciplineCore || null;
+  var _ccDisciplineCoreRequested = !!(window._ccSafetyMigrations && window._ccSafetyMigrations.isEnabled('disciplineCoreV2'));
+  var _ccDisciplineCoreValidation = _ccDisciplineCoreRequested ?
+    _ccValidateDisciplineCore(_ccDisciplineCoreCandidate) : {equal:false, failures:['flag-off']};
+  var _ccDisciplineCoreActive = _ccDisciplineCoreRequested && _ccDisciplineCoreValidation.equal === true;
+  if (_ccDisciplineCoreRequested && window._ccSafetyMigrations && window._ccSafetyMigrations.record) {
+    window._ccSafetyMigrations.record({
+      migration:'disciplineCoreV2',
+      outcome:_ccDisciplineCoreActive ? 'candidate' : 'fallback',
+      comparison:_ccDisciplineCoreValidation
+    });
+  }
+
+  function _ccElementDiscipline(el, modelDiscipline) {
+    return _ccDisciplineCoreActive ?
+      _ccDisciplineCoreCandidate.elementDiscipline(el, modelDiscipline) :
+      _ccLegacyElementDiscipline(el, modelDiscipline);
+  }
+  function _ccDisciplinePairEnabled(discA, discB, rules) {
+    return _ccDisciplineCoreActive ?
+      _ccDisciplineCoreCandidate.disciplinePairEnabled(discA, discB, rules) :
+      _ccLegacyDisciplinePairEnabled(discA, discB, rules);
+  }
+  function _ccMatrixSkipsSameDiscipline(eA, mA, eB, mB, sameModel, rules) {
+    return _ccDisciplineCoreActive ?
+      _ccDisciplineCoreCandidate.matrixSkipsSameDiscipline(eA, mA, eB, mB, sameModel, rules) :
+      _ccLegacyMatrixSkipsSameDiscipline(eA, mA, eB, mB, sameModel, rules);
+  }
+  function detectDiscipline(elements, name) {
+    return _ccDisciplineCoreActive ?
+      _ccDisciplineCoreCandidate.detectDiscipline(elements, name) :
+      _ccLegacyDetectDiscipline(elements, name);
+  }
+
+  window._ccElementDiscipline = _ccElementDiscipline;
+  window._ccMatrixSkipsSameDiscipline = _ccMatrixSkipsSameDiscipline;
+  window._ccDisciplinePairEnabled = _ccDisciplinePairEnabled;
   window._ccDetectDiscipline = detectDiscipline;
+  window._ccDisciplineCoreStatus = Object.freeze({
+    requested:_ccDisciplineCoreRequested,
+    active:_ccDisciplineCoreActive,
+    validation:_ccDisciplineCoreValidation
+  });
 
 
   function ModelSidebar(props) {
@@ -20430,7 +20829,10 @@ function startApp() {
       + '</table>'
       + (snaps.length
         ? '<h2>Viewpoints</h2><div class="snapgrid">'
-          + snaps.map(function(sn){ return '<div class="snap"><img src="'+sn.img+'"/><div>'+esc(sn.title)+'</div></div>'; }).join('')
+          // '<im'+'g' is deliberate: Chromium's speculative preload scanner
+          // tokenizes raw bytes inside this inline script and would otherwise
+          // fetch the literal URL '+sn.img+' (a 404) on every page load.
+          + snaps.map(function(sn){ return '<div class="snap"><im'+'g src="'+sn.img+'"/><div>'+esc(sn.title)+'</div></div>'; }).join('')
           + '</div>'
         : '')
       + '<div class="foot">Generated by ClashControl '+esc((window.CC_VERSION&&window.CC_VERSION.v)||'')+' — free, source-available IFC clash detection · clashcontrol.io</div>'
