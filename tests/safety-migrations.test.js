@@ -7,7 +7,7 @@ test.afterEach(() => safety._setFlagsForTest({}));
 
 test('all risky migrations are closed and disabled by default', () => {
   assert.deepEqual(Object.keys(safety.manifest), [
-    'concurrencyV2', 'geoCacheV8', 'batchedSectionsV2', 'rendererV2', 'disciplineCoreV2'
+    'concurrencyV2', 'geoCacheV8', 'batchedSectionsV2', 'rendererV2', 'disciplineCoreV2', 'assignmentCoreV2'
   ]);
   for (const [name, config] of Object.entries(safety.manifest)) {
     assert.equal(config.defaultEnabled, false);

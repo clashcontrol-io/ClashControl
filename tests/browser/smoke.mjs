@@ -32,7 +32,12 @@ const server = createServer(async (req, res) => {
 });
 await new Promise((r) => server.listen(8765, '127.0.0.1', r));
 
-const browser = await chromium.launch();
+const localChromium = process.env.CC_CHROMIUM_EXECUTABLE;
+const browser = await chromium.launch(localChromium ? {
+  executablePath: localChromium,
+  args: ['--no-sandbox', '--disable-setuid-sandbox', '--single-process', '--no-zygote',
+    '--use-gl=angle', '--use-angle=swiftshader', '--enable-unsafe-swiftshader'],
+} : {});
 const page = await browser.newPage();
 const errors = [];
 // The force-batched step below reloads the same fixture geometry under a new
@@ -51,6 +56,36 @@ page.on('console', (m) => {
   if (m.text().includes('[IFC Worker fallback]')) workerFellBack = true;
 });
 
+// Optional deterministic dependency mirror for restricted/offline test
+// environments. Production and CI still exercise the pinned CDN URLs; the
+// browser keeps those URLs here too, while Playwright fulfils them from the
+// exact matching npm package bytes (including the committed SRI hashes).
+if (process.env.CC_BROWSER_OFFLINE_DEPS === '1') {
+  async function local(route, file, contentType) {
+    await route.fulfill({
+      status: 200,
+      body: await readFile(join(root, 'node_modules', file)),
+      headers: { 'content-type': contentType || 'text/javascript', 'access-control-allow-origin': '*' },
+    });
+  }
+  await page.route('https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js', (r) => local(r, 'react/umd/react.production.min.js'));
+  await page.route('https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js', (r) => local(r, 'react-dom/umd/react-dom.production.min.js'));
+  await page.route('https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js', (r) => local(r, 'jszip/dist/jszip.min.js'));
+  await page.route('https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js', (r) => local(r, 'pdfjs-dist/build/pdf.min.js'));
+  await page.route('https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js', (r) => local(r, 'pdfjs-dist/build/pdf.worker.min.js'));
+  await page.route('https://cdn.jsdelivr.net/npm/three@0.180.0/**', async (route) => {
+    const suffix = new URL(route.request().url()).pathname.split('/three@0.180.0/')[1];
+    await local(route, 'three/' + suffix);
+  });
+  await page.route('https://cdn.jsdelivr.net/npm/web-ifc@0.0.77/**', async (route) => {
+    const suffix = new URL(route.request().url()).pathname.split('/web-ifc@0.0.77/')[1];
+    await local(route, 'web-ifc/' + suffix, suffix.endsWith('.wasm') ? 'application/wasm' : 'text/javascript');
+  });
+  await page.route('https://fonts.googleapis.com/**', (route) => route.fulfill({status:200, body:'', contentType:'text/css'}));
+  await page.route('https://fonts.gstatic.com/**', (route) => route.abort());
+  await page.route('https://gc.zgo.at/**', (route) => route.fulfill({status:200, body:'', contentType:'text/javascript'}));
+}
+
 function fail(msg) {
   console.error('SMOKE FAIL: ' + msg);
   if (errors.length) console.error('Page errors:\n  ' + errors.slice(0, 20).join('\n  '));
@@ -59,8 +94,8 @@ function fail(msg) {
 
 try {
   // Candidate migrations remain disabled for users, but CI explicitly opts
-  // into all five paths so none can drift unexercised behind its safety flag.
-  await page.goto('http://127.0.0.1:8765/?ccSafety=concurrencyV2,geoCacheV8,batchedSectionsV2,rendererV2,disciplineCoreV2', { waitUntil: 'domcontentloaded' });
+  // into all six paths so none can drift unexercised behind its safety flag.
+  await page.goto('http://127.0.0.1:8765/?ccSafety=concurrencyV2,geoCacheV8,batchedSectionsV2,rendererV2,disciplineCoreV2,assignmentCoreV2', { waitUntil: 'domcontentloaded' });
 
   // App mounted (CDN deps + main script executed)
   await page.waitForFunction(
@@ -79,6 +114,18 @@ try {
   if (!disciplineGate.diagnostic || disciplineGate.diagnostic.outcome !== 'candidate')
     fail('disciplineCoreV2 did not publish a passing runtime diagnostic');
   console.log('SMOKE OK — disciplineCoreV2 matches the legacy discipline policy');
+
+  const assignmentGate = await page.evaluate(() => ({
+    status: window._ccAssignmentCoreStatus,
+    diagnostic: (window._ccSafetyMigrations.diagnostics() || [])
+      .filter((d) => d.migration === 'assignmentCoreV2').at(-1) || null,
+  }));
+  if (!assignmentGate.status || assignmentGate.status.active !== true ||
+      !assignmentGate.status.validation || assignmentGate.status.validation.equal !== true)
+    fail('assignmentCoreV2 did not pass its legacy-equivalence gate');
+  if (!assignmentGate.diagnostic || assignmentGate.diagnostic.outcome !== 'candidate')
+    fail('assignmentCoreV2 did not publish a passing runtime diagnostic');
+  console.log('SMOKE OK — assignmentCoreV2 matches the legacy assignment policy');
 
   const rendererGate = await page.evaluate(() => ({
     path: window._ccRendererMigration && window._ccRendererMigration.path,
@@ -192,6 +239,8 @@ try {
 
   // ── BatchedMesh identity features: every symptom that caused the old
   // chunk-merge reverts (366c7cc) is asserted here ────────────────────────
+  // (The intentional duplicate-model reload below trips CC's overlap
+  // confirm(); the global dialog handler near the top accepts it.)
   await page.evaluate(async () => {
     window._ccForceBatch = true;
     const buf = await (await fetch('/tests/fixtures/smoke-clash.ifc')).arrayBuffer();
@@ -201,7 +250,20 @@ try {
     const s = window._ccLatestState;
     const m = s && s.models.find((x) => x.name.indexOf('batched') === 0);
     return m && (m.elements || []).length >= 2;
-  }, null, { timeout: 60_000 }).catch(() => fail('force-batched load did not finish'));
+  }, null, { timeout: 60_000 }).catch(async () => {
+    const diagnostic = await page.evaluate(() => ({
+      loading: window._ccModelLoading,
+      loadMessage: window._ccModelLoadMsg,
+      pendingScope: window._ccNextLoadScope,
+      models: ((window._ccLatestState && window._ccLatestState.models) || []).map((m) => ({
+        name: m.name,
+        elements: (m.elements || []).length,
+        stats: m.stats || null,
+      })),
+    }));
+    console.error('Force-batch diagnostic: ' + JSON.stringify(diagnostic));
+    fail('force-batched load did not finish');
+  });
 
   const batch = await page.evaluate(() => {
     const s = window._ccLatestState;

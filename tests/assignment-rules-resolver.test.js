@@ -10,16 +10,14 @@ const path = require('node:path');
 
 const src = fs.readFileSync(path.join(__dirname, '..', 'index.html'), 'utf8');
 
-function extractFn(name) {
-  const header = 'function ' + name + '(';
-  const start = src.indexOf('  ' + header);
-  assert.ok(start !== -1, name + ' not found');
-  const end = src.indexOf('\n  }', start) + '\n  }'.length;
-  return src.slice(start, end);
-}
-
-const bundle = extractFn('_ccMatchAssignmentRule') + '\n' + extractFn('_ccApplyAssignmentRules');
-const { _ccMatchAssignmentRule, _ccApplyAssignmentRules } = new Function(bundle + '; return { _ccMatchAssignmentRule, _ccApplyAssignmentRules };')();
+const start = src.indexOf('  function _ccLegacyMatchAssignmentRule(');
+const endMarker = 'window._ccAssignmentCoreStatus = Object.freeze';
+const marker = src.indexOf(endMarker, start);
+const end = src.indexOf('\n', marker);
+assert.ok(start >= 0 && marker > start, 'assignment compatibility adapter not found');
+const { _ccMatchAssignmentRule, _ccApplyAssignmentRules } = new Function(
+  'window', src.slice(start, end) + '; return { _ccMatchAssignmentRule, _ccApplyAssignmentRules };'
+)({});
 
 function rule(discipline1, discipline2, storey, assignee, priority) {
   return { id: 'r-' + Math.random(), discipline1: discipline1, discipline2: discipline2, storey: storey || 'any', assignee: assignee || '', priority: priority || '' };

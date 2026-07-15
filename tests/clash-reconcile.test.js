@@ -18,8 +18,8 @@ const end = src.indexOf('function mergeDetectionResults', start);
 assert.ok(end !== -1, 'mergeDetectionResults not found');
 const closeIdx = src.indexOf('\n  }', end) + 4;
 const mergeDetectionResults = new Function(
-  src.slice(start, closeIdx) + '; return mergeDetectionResults;'
-)();
+  'window', src.slice(start, closeIdx) + '; return mergeDetectionResults;'
+)({});
 
 function baseClash(overrides) {
   return Object.assign({

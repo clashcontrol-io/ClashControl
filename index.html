@@ -657,6 +657,7 @@
 <script src="section-clipping.js"></script>
 <script src="renderer-contract.js"></script>
 <script src="clash-discipline-core.js"></script>
+<script src="clash-assignment-core.js"></script>
 <script>
 window.addEventListener('error', function(e) {
   console.error('[ClashControl] Uncaught error:', e.error || e.message);
@@ -6235,7 +6236,7 @@ function startApp() {
   // discipline2:'any'). Rules are matched in array order — first match
   // wins, same "earlier rule takes precedence" convention as
   // StandardsPanel's discipline-pair clearance rules (isDuplicate there).
-  function _ccMatchAssignmentRule(rules, c) {
+  function _ccLegacyMatchAssignmentRule(rules, c) {
     if (!rules || !rules.length) return null;
     var ds = c.disciplines || [];
     var d1 = ds[0] || null, d2 = ds[1] || null;
@@ -6259,11 +6260,11 @@ function startApp() {
   // or somehow set some other way) is left alone — first match wins, not
   // last. Returns new clash objects only where something actually changed,
   // so unaffected clashes keep referential identity.
-  function _ccApplyAssignmentRules(clashes, rules) {
+  function _ccLegacyApplyAssignmentRules(clashes, rules) {
     if (!rules || !rules.length) return clashes;
     return clashes.map(function(c) {
       if (c._delta !== 'new' || c.assignee) return c;
-      var r = _ccMatchAssignmentRule(rules, c);
+      var r = _ccLegacyMatchAssignmentRule(rules, c);
       if (!r) return c;
       var upd = {};
       if (r.assignee) upd.assignee = r.assignee;
@@ -6271,6 +6272,56 @@ function startApp() {
       return Object.keys(upd).length ? Object.assign({}, c, upd) : c;
     });
   }
+
+  function _ccValidateAssignmentCore(core) {
+    if (!core || core.contractVersion !== 1 ||
+        typeof core.matchAssignmentRule !== 'function' ||
+        typeof core.applyAssignmentRules !== 'function') {
+      return {equal:false, failures:['contract']};
+    }
+    var failures = [];
+    var rules = [
+      {id:'first',discipline1:'mep',discipline2:'structural',storey:'Level 2',assignee:'alice',priority:'high'},
+      {id:'fallback',discipline1:'any',discipline2:'any',storey:'any',assignee:'bob',priority:''}
+    ];
+    var clashes = [
+      {id:'new-match',_delta:'new',disciplines:['structural','mep'],elemAStorey:'Level 2'},
+      {id:'persisting',_delta:'persisting',disciplines:['mep','structural'],elemAStorey:'Level 2'},
+      {id:'assigned',_delta:'new',disciplines:['mep','structural'],elemAStorey:'Level 2',assignee:'owner'}
+    ];
+    try {
+      if (_ccLegacyMatchAssignmentRule(rules, clashes[0]) !== core.matchAssignmentRule(rules, clashes[0])) failures.push('first-match-identity');
+      var legacy = _ccLegacyApplyAssignmentRules(clashes, rules);
+      var candidate = core.applyAssignmentRules(clashes, rules);
+      if (JSON.stringify(legacy) !== JSON.stringify(candidate)) failures.push('batch-output');
+      if (legacy[1] !== clashes[1] || candidate[1] !== clashes[1]) failures.push('persisting-reference');
+      if (legacy[2] !== clashes[2] || candidate[2] !== clashes[2]) failures.push('assigned-reference');
+      if (_ccLegacyMatchAssignmentRule(null, clashes[0]) !== core.matchAssignmentRule(null, clashes[0])) failures.push('null-rules');
+    } catch (error) {
+      failures.push('exception:'+String(error && error.message || error));
+    }
+    return {equal:failures.length===0, failures:failures};
+  }
+
+  var _ccAssignmentCoreCandidate = window._ccClashAssignmentCore || null;
+  var _ccAssignmentCoreRequested = !!(window._ccSafetyMigrations && window._ccSafetyMigrations.isEnabled('assignmentCoreV2'));
+  var _ccAssignmentCoreValidation = _ccAssignmentCoreRequested ?
+    _ccValidateAssignmentCore(_ccAssignmentCoreCandidate) : {equal:false, failures:['flag-off']};
+  var _ccAssignmentCoreActive = _ccAssignmentCoreRequested && _ccAssignmentCoreValidation.equal === true;
+  if (_ccAssignmentCoreRequested && window._ccSafetyMigrations && window._ccSafetyMigrations.record) {
+    window._ccSafetyMigrations.record({migration:'assignmentCoreV2', outcome:_ccAssignmentCoreActive?'candidate':'fallback', comparison:_ccAssignmentCoreValidation});
+  }
+  function _ccMatchAssignmentRule(rules, clash) {
+    return _ccAssignmentCoreActive ?
+      _ccAssignmentCoreCandidate.matchAssignmentRule(rules, clash) :
+      _ccLegacyMatchAssignmentRule(rules, clash);
+  }
+  function _ccApplyAssignmentRules(clashes, rules) {
+    return _ccAssignmentCoreActive ?
+      _ccAssignmentCoreCandidate.applyAssignmentRules(clashes, rules) :
+      _ccLegacyApplyAssignmentRules(clashes, rules);
+  }
+  window._ccAssignmentCoreStatus = Object.freeze({requested:_ccAssignmentCoreRequested, active:_ccAssignmentCoreActive, validation:_ccAssignmentCoreValidation});
 
   function mergeDetectionResults(newClashes, prevClashes) {
     newClashes = newClashes.filter(function(c){ return !_isDeniedClash(c); });
