@@ -1200,7 +1200,8 @@ function startApp() {
     floor:'all', distMin:0, distMax:9999, elementId:'', selfClash:'all',
     ifcType:'all', storey:'all', material:'all', excludedTypes:[], excludedStoreys:[], excludedMaterials:[],
     deltaState:'all', // 'all','new','persisting','auto_resolved'
-    priority:'all', category:'all', assignee:'all', issueElementType:'all', issueStorey:'all'
+    priority:'all', category:'all', assignee:'all', issueElementType:'all', issueStorey:'all',
+    modelPair:null // {a:modelId, b:modelId} set by clicking a Model clash matrix cell
   };
   var _ccLoadPref = function(key,fallback){try{var v=localStorage.getItem('cc_'+key);return v!==null?JSON.parse(v):fallback;}catch(e){return fallback;}};
 
@@ -19857,6 +19858,103 @@ function startApp() {
     </div>`;
   }
 
+  // Pure aggregation for the Model × model clash matrix: folds a clash list
+  // into a symmetric models×models grid of {count, worst-severity}. Kept
+  // separate from the component so it can be unit-tested. Clashes with an
+  // unknown modelAId are skipped; single/same-model clashes land on the
+  // diagonal; denied clashes are ignored.
+  function _ccModelMatrixGrid(models, items) {
+    var idx = {}; models.forEach(function(m, i){ idx[m.id] = i; });
+    var SEV_RANK = { critical:4, major:3, minor:2, info:1 };
+    var grid = models.map(function(){ return models.map(function(){ return { count:0, worst:0 }; }); });
+    var total = 0;
+    (items || []).forEach(function(c){
+      var a = idx[c.modelAId];
+      if (a == null) return;                 // clash with no known model — skip
+      var b = idx[c.modelBId]; if (b == null) b = a;   // single/same-model → diagonal
+      if (c.status === 'denied') return;
+      var rank = SEV_RANK[c.aiSeverity] || 0;
+      grid[a][b].count++; if (rank > grid[a][b].worst) grid[a][b].worst = rank; total++;
+      if (a !== b) { grid[b][a].count++; if (rank > grid[b][a].worst) grid[b][a].worst = rank; }
+    });
+    return { grid: grid, total: total };
+  }
+  if (typeof window !== 'undefined') window._ccModelMatrixGrid = _ccModelMatrixGrid;
+
+  // Model × model clash matrix — a Navisworks/Dalux-style grid showing which
+  // loaded models clash with which, coloured by worst severity in each pair.
+  // Read-only overview; the clash list below stays the source of truth.
+  // Reads modelAId/modelBId off each clash (names resolve from s.models — the
+  // clash records only carry ids reliably) and folds every pair into a
+  // symmetric cell. Single-element / same-model clashes land on the diagonal.
+  function ModelClashMatrix(props) {
+    var s = props.s, d = props.d, items = props.items || [];
+    var activePair = (s.filters && s.filters.modelPair) || null;
+    var op = React.useState(false), open = op[0], setOpen = op[1];
+    var models = (s.models || []).filter(function(m){ return m && m.id; });
+    if (models.length < 1) return '';
+    var _mg = _ccModelMatrixGrid(models, items), grid = _mg.grid, total = _mg.total;
+    function cellStyle(cell){
+      if (cell.count === 0) return { background:'var(--bg-secondary)', color:'var(--text-faint)' };
+      // Kritiek (critical) → danger; everything else with hits → warning (Klein).
+      var crit = cell.worst >= 4;
+      return {
+        background: crit ? 'var(--color-danger-bg)' : 'var(--color-warning-bg)',
+        color: crit ? 'var(--color-danger-fg)' : 'var(--color-warning-fg)',
+        border: '1px solid ' + (crit ? 'var(--color-danger-border)' : 'var(--color-warning-border)'),
+      };
+    }
+    var TH = { padding:'.3rem .4rem', fontSize:'.66rem', fontWeight:500, color:'var(--text-muted)',
+      textAlign:'left', whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis', maxWidth:'8rem' };
+    var TD = { padding:'.25rem .4rem', textAlign:'center', fontFamily:'var(--font-mono)', fontSize:'.7rem',
+      borderRadius:'var(--radius-xs)', minWidth:'2rem' };
+    var dot = function(m){ return html`<span style=${{display:'inline-block',width:8,height:8,borderRadius:'50%',
+      background:m.color||'var(--text-faint)',marginRight:'.35rem',flexShrink:0,verticalAlign:'middle'}}></span>`; };
+    return html`<div style=${{borderBottom:'1px solid var(--border-subtle)',flexShrink:0}}>
+      <button onClick=${function(){ setOpen(!open); }}
+        style=${{...S_BTN,width:'100%',display:'flex',alignItems:'center',gap:'.4rem',padding:'.4rem .5rem',
+          background:'none',color:'var(--text-secondary)',fontSize:'.74rem',fontWeight:500}}
+        aria-expanded=${open} title="Which models clash with which — coloured by worst severity">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"
+          style=${{transform:open?'rotate(90deg)':'none',transition:'transform .15s'}}><path d="M9 6l6 6-6 6"/></svg>
+        <span>Model clash matrix</span>
+        <span style=${{fontFamily:'var(--font-mono)',fontSize:'.65rem',color:'var(--text-muted)'}}>${models.length}×${models.length}</span>
+        <span style=${{marginLeft:'auto',display:'inline-flex',gap:'.5rem',alignItems:'center',fontSize:'.62rem',color:'var(--text-muted)'}}>
+          <span style=${{display:'inline-flex',alignItems:'center',gap:'.25rem'}}><span style=${{width:9,height:9,borderRadius:2,background:'var(--color-warning-bg)',border:'1px solid var(--color-warning-border)'}}></span>Klein</span>
+          <span style=${{display:'inline-flex',alignItems:'center',gap:'.25rem'}}><span style=${{width:9,height:9,borderRadius:2,background:'var(--color-danger-bg)',border:'1px solid var(--color-danger-border)'}}></span>Kritiek</span>
+        </span>
+      </button>
+      ${open && html`<div style=${{overflowX:'auto',padding:'0 .5rem .55rem'}}>
+        <table style=${{borderCollapse:'separate',borderSpacing:'3px',fontSize:'.7rem'}}>
+          <thead><tr>
+            <th style=${{...TH,color:'var(--text-faint)'}}>${total} clash${total===1?'':'es'}</th>
+            ${models.map(function(m){ return html`<th key=${m.id} style=${{...TH,textAlign:'center',maxWidth:'6rem'}} title=${m.name}>${m.name}</th>`; })}
+          </tr></thead>
+          <tbody>
+            ${models.map(function(rm, r){ return html`<tr key=${rm.id}>
+              <th style=${TH} title=${rm.name}>${dot(rm)}${rm.name}</th>
+              ${models.map(function(cm, c){
+                var cell = grid[r][c];
+                var isActive = !!(activePair && ((activePair.a===rm.id && activePair.b===cm.id) || (activePair.a===cm.id && activePair.b===rm.id)));
+                var clickable = cell.count > 0 && typeof d === 'function';
+                return html`<td key=${cm.id}
+                  onClick=${clickable ? function(){ d({t:A.UPD_FILTERS, u:{modelPair: isActive ? null : {a:rm.id, b:cm.id}}}); } : null}
+                  style=${{...TD,...cellStyle(cell),
+                    cursor: clickable ? 'pointer' : 'default',
+                    outline: isActive ? '2px solid var(--accent)' : 'none', outlineOffset:'-2px'}}
+                  title=${(clickable ? (isActive ? 'Clear filter — ' : 'Filter clash list to ') : '') + rm.name+' × '+cm.name+' — '+cell.count+' clash'+(cell.count===1?'':'es')}>
+                  ${cell.count === 0
+                    ? html`<span style=${{color:'var(--text-faint)'}}>✓</span>`
+                    : cell.count}
+                </td>`;
+              })}
+            </tr>`; })}
+          </tbody>
+        </table>
+      </div>`}
+    </div>`;
+  }
+
   function IssuePanel(props) {
     var s=props.s, d=props.d, f=s.filters, hideTabBar=props.hideTabBar;
     var fo=useState(false), filtersOpen=fo[0], setFiltersOpen=fo[1];
@@ -19932,6 +20030,7 @@ function startApp() {
 
     var activeCount = 0;
     if(f.status!=='all') activeCount++;
+    if(f.modelPair) activeCount++;
     if(f.discipline!=='all') activeCount++;
     if(f.floor!=='all') activeCount++;
     if(f.selfClash!=='all') activeCount++;
@@ -19959,6 +20058,10 @@ function startApp() {
         if(f.status!=='all' && it.status!==f.status) return false;
         if(f.search){var q=f.search.toLowerCase();var hay=isClashTab?[it.title,it.description,it.type,it.elemAStorey,it.elemBStorey,it.elemAType,it.elemBType,it.elemAMaterial,it.elemBMaterial,it.status].filter(Boolean).join(' ').toLowerCase():(it.title||'').toLowerCase()+' '+(it.description||'').toLowerCase();if(hay.indexOf(q)===-1)return false;}
         if(isClashTab) {
+          if(f.modelPair) {
+            var _mpA=it.modelAId, _mpB=it.modelBId||it.modelAId, _mp=f.modelPair;
+            if(!((_mpA===_mp.a && _mpB===_mp.b) || (_mpA===_mp.b && _mpB===_mp.a))) return false;
+          }
           if(f.type!=='all' && it.type!==f.type) return false;
           if(f.discipline!=='all' && it.disciplines && it.disciplines.indexOf(f.discipline)===-1) return false;
           if(f.floor!=='all') {
@@ -20017,6 +20120,7 @@ function startApp() {
 
       ${isClashTab && rawItems.length > 0 && rawItems.some(function(c){return c.aiSeverity;}) && html`<${ClashAISummary} items=${rawItems} />`}
       ${!isExplorerTab && !isStandardsTab && rawItems.length > 0 && html`<${ClashStatsBar} items=${rawItems} isClash=${isClashTab} delta=${isClashTab ? s.lastDeltaSummary : null} history=${isClashTab ? (s.runHistory||null) : null} />`}
+      ${isClashTab && rawItems.length > 0 && (s.models||[]).length >= 2 && html`<${ModelClashMatrix} s=${s} d=${d} items=${rawItems} />`}
 
       ${s.tab==='navigator' && html`<${NavigatorPanel} s=${s} d=${d} />`}
       ${isStandardsTab && html`<${StandardsPanel} s=${s} d=${d} />`}
