@@ -1,5 +1,8 @@
 # Changelog
 
+## v6.0.2 (2026-07-15)
+- Fix: structural clash severity is case-insensitive on discipline (#685)
+
 ## v6.0.1 (2026-07-15)
 - Guarded core-refactor patch train: six default-off extracted clash-pipeline modules (#684)
 
