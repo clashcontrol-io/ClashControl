@@ -1,5 +1,8 @@
 # Changelog
 
+## v6.1.1 (2026-07-15)
+- Inspector: fix &-entity display bug + bounding-box dimensions fallback (#687)
+
 ## v6.1.0 (2026-07-15)
 - Add model×model clash matrix to the Conflicts panel (#686)
 
