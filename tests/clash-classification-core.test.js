@@ -121,3 +121,15 @@ test('spatial-hash clustering never groups same-cell points beyond 500mm', () =>
   assert.equal(items[0]._clusterGroup, undefined);
   assert.equal(items[1]._clusterGroup, undefined);
 });
+
+test('structural detection is case-insensitive — lowercase IFC disciplines still go critical', () => {
+  // Regression: the IFC discipline classifier yields lowercase 'structural',
+  // but the check used to compare against capital 'Structural', so structural
+  // penetrations from IFC models were silently downgraded to 'major'.
+  const lower = clash('lower', { disciplines: ['mep', 'structural'] });
+  const upper = clash('upper', { disciplines: ['MEP', 'Structural'] });
+  core.classifyClashes([lower, upper]);
+  assert.deepEqual([lower.aiSeverity, lower.aiCategory], ['critical', 'penetration']);
+  assert.deepEqual([upper.aiSeverity, upper.aiCategory], ['critical', 'penetration']);
+  assert.match(lower.aiReason, /penetrating primary structure/);
+});
