@@ -15048,7 +15048,7 @@ function startApp() {
           <button onClick=${function(){setDetectProfOpen(false)}} style=${{...S_BTN,padding:'0 var(--space-1)',background:'none',color:'var(--text-faint)',fontSize:'var(--text-xs)'}} aria-label="Close detection profile">✕</button>
         </div>
         <div style=${{display:'flex',justifyContent:'space-between',padding:'.1rem 0'}}>
-          <span>Sweep &amp; Prune</span><span style=${{color:'var(--text-primary)',fontFamily:'var(--font-mono)'}}>${detectProfile.sweep_and_prune_ms} ms</span>
+          <span>Sweep & Prune</span><span style=${{color:'var(--text-primary)',fontFamily:'var(--font-mono)'}}>${detectProfile.sweep_and_prune_ms} ms</span>
         </div>
         <div style=${{display:'flex',justifyContent:'space-between',padding:'.1rem 0'}}>
           <span>BVH build</span><span style=${{color:'var(--text-primary)',fontFamily:'var(--font-mono)'}}>${detectProfile.bvh_build_ms} ms</span>
@@ -15060,7 +15060,7 @@ function startApp() {
           <span>Soft clash</span><span style=${{color:'var(--text-primary)',fontFamily:'var(--font-mono)'}}>${detectProfile.soft_clash_ms} ms</span>
         </div>
         <div style=${{display:'flex',justifyContent:'space-between',padding:'.1rem 0'}}>
-          <span>Merge &amp; post</span><span style=${{color:'var(--text-primary)',fontFamily:'var(--font-mono)'}}>${detectProfile.merge_and_post_ms} ms</span>
+          <span>Merge & post</span><span style=${{color:'var(--text-primary)',fontFamily:'var(--font-mono)'}}>${detectProfile.merge_and_post_ms} ms</span>
         </div>
         <div style=${{display:'flex',justifyContent:'space-between',padding:'.1rem 0',borderTop:'1px solid var(--border-subtle)',marginTop:'.2rem',paddingTop:'.2rem'}}>
           <span>Total</span><span style=${{color:'var(--text-primary)',fontFamily:'var(--font-mono)',fontWeight:'var(--weight-semibold)'}}>${detectProfile.total_ms} ms</span>
@@ -22476,7 +22476,7 @@ function startApp() {
       })()}
 
       ${typeof window._ccVisibilityPresets === 'function' && html`<div style=${{marginTop:'1.2rem',paddingTop:'.8rem',borderTop:'2px solid var(--border)'}}>
-        <div style=${{fontSize:'0.75rem',fontWeight:700,color:'var(--text-muted)',textTransform:'uppercase',letterSpacing:'.06em',marginBottom:'.4rem'}}>Visibility &amp; coverage checks</div>
+        <div style=${{fontSize:'0.75rem',fontWeight:700,color:'var(--text-muted)',textTransform:'uppercase',letterSpacing:'.06em',marginBottom:'.4rem'}}>Visibility & coverage checks</div>
         <div style=${{fontSize:'0.65rem',color:'var(--text-faint)',marginBottom:'.5rem',lineHeight:1.4}}>
           Sight-line obstruction (third clash category — exit signs, signage, line-of-sight) and inverse coverage (camera, sensor, observation gaps).
           Each preset runs immediately and merges results into the Conflicts panel. ⌘K also exposes the same entries.
@@ -33283,6 +33283,35 @@ function startApp() {
       var otherQty = Object.keys(allQty).filter(function(k){return dimKeys.indexOf(k)===-1&&areaKeys.indexOf(k)===-1&&volKeys.indexOf(k)===-1;}).map(function(k){return {l:k,v:allQty[k],f:function(v){return String(v);}};});
       var allDims = dims.concat(areas).concat(vols).concat(otherQty);
 
+      // Geometry fallback: many IFC exports (e.g. Revit/Dalux without base
+      // quantities) carry no dimensional quantities at all, leaving the
+      // Dimensions panel empty. When there are no authored length quantities,
+      // derive Width/Depth/Height from the element's world bounding box so
+      // the panel still says something. Labelled "(bbox)" so it's never
+      // mistaken for authored data. App keeps IFC Z-up → height is the Z span.
+      var bboxDims = [];
+      if (dims.length === 0 && _latestEl && _latestEl.box && _latestEl.box.min && _latestEl.box.max) {
+        var _bb = _latestEl.box, _mn = _bb.min, _mx = _bb.max;
+        if (isFinite(_mn.x) && isFinite(_mx.x) && isFinite(_mn.y) && isFinite(_mx.y) && isFinite(_mn.z) && isFinite(_mx.z)) {
+          // web-ifc loads IFC (Z-up) into the Three.js world as Y-up, so the
+          // vertical span is the Y extent — height is Y, depth is Z.
+          var _bw = Math.abs(_mx.x - _mn.x), _bh = Math.abs(_mx.y - _mn.y), _bd = Math.abs(_mx.z - _mn.z);
+          if (_bw + _bh + _bd > 1e-6) {
+            var fmtBbox = function(v){ return (v < 1 ? v.toFixed(3) : v.toFixed(2)) + ' m'; };
+            bboxDims = [
+              { l:'Width (bbox)',  v:_bw, f:fmtBbox },
+              { l:'Depth (bbox)',  v:_bd, f:fmtBbox },
+              { l:'Height (bbox)', v:_bh, f:fmtBbox },
+            ];
+          }
+        }
+      }
+      var bboxCard = bboxDims.length > 0 ? html`<div style=${CARD}>
+        <div style=${HDR}>Size (bounding box)</div>
+        ${bboxDims.map(function(d){return html`<div style=${ROW}><span style=${LBL}>${d.l}</span><span style=${{...VAL,...MONO}}>${d.f(d.v)}</span></div>`;})}
+        <div style=${{fontSize:'var(--text-2xs)',color:'var(--text-faint)',fontStyle:'italic',paddingTop:'.2rem'}}>Derived from geometry — this element has no authored quantities.</div>
+      </div>` : '';
+
       // Collect all psets
       var allPsets = [];
       if (ep&&ep.psets) {
@@ -33547,7 +33576,7 @@ function startApp() {
           </div>`}
           <!-- Dimensions & Constraints -->
           ${hasConstraints && html`<div style=${CARD}>
-            <div style=${HDR}>Dimensions &amp; Constraints</div>
+            <div style=${HDR}>Dimensions & Constraints</div>
             ${constraintProps.map(function(p){return html`<div style=${ROW}>
               <span style=${LBL}>${p.label}</span>
               <span style=${{...VAL,...(/\d/.test(p.value.charAt(0))||p.value.charAt(0)==='-'?MONO:{})}}>${p.value}</span>
@@ -33567,6 +33596,7 @@ function startApp() {
             <div style=${HDR}>Quantities (${allDims.length})</div>
             ${allDims.map(function(d){return html`<div style=${ROW}><span style=${LBL}>${d.l}</span><span style=${{...VAL,...MONO}}>${d.f(d.v)}</span></div>`;})}
           </div>`}
+          ${bboxCard}
           <!-- All psets -->
           ${allPsets.length>0 && html`<div style=${CARD}>
             <div style=${HDR}>Property Sets (${psetCount})</div>
@@ -33629,7 +33659,7 @@ function startApp() {
         </div>
         <!-- Dimensions & Constraints -->
         ${hasConstraints && html`<div style=${CARD}>
-          <div style=${HDR}>Dimensions &amp; Constraints</div>
+          <div style=${HDR}>Dimensions & Constraints</div>
           ${constraintProps.map(function(p){return html`<div style=${ROW}>
             <span style=${LBL}>${p.label}</span>
             <span style=${{...VAL,...(/^\s*-?[\d.]/.test(p.value)?MONO:{})}}>${p.value}</span>
@@ -33649,6 +33679,7 @@ function startApp() {
           <div style=${HDR}>Dimensions</div>
           ${allDims.map(function(d){return html`<div style=${ROW}><span style=${LBL}>${d.l}</span><span style=${{...VAL,...MONO}}>${d.f(d.v)}</span></div>`;})}
         </div>`}
+        ${bboxCard}
         <!-- Switch to Data Quality for full checks -->
         <div style=${{textAlign:'center',padding:'.4rem 0'}}>
           <button onClick=${function(){d({t:A.SET_WORKSPACE,v:'review'});}}
