@@ -59,14 +59,26 @@ function fail(msg) {
 
 try {
   // Candidate migrations remain disabled for users, but CI explicitly opts
-  // into all four paths so none can drift unexercised behind its safety flag.
-  await page.goto('http://127.0.0.1:8765/?ccSafety=concurrencyV2,geoCacheV8,batchedSectionsV2,rendererV2', { waitUntil: 'domcontentloaded' });
+  // into all five paths so none can drift unexercised behind its safety flag.
+  await page.goto('http://127.0.0.1:8765/?ccSafety=concurrencyV2,geoCacheV8,batchedSectionsV2,rendererV2,disciplineCoreV2', { waitUntil: 'domcontentloaded' });
 
   // App mounted (CDN deps + main script executed)
   await page.waitForFunction(
     () => window.ClashControl && typeof window._ccDispatch === 'function',
     null, { timeout: 60_000 }
   ).catch(() => fail('app did not mount within 60s'));
+
+  const disciplineGate = await page.evaluate(() => ({
+    status: window._ccDisciplineCoreStatus,
+    diagnostic: (window._ccSafetyMigrations.diagnostics() || [])
+      .filter((d) => d.migration === 'disciplineCoreV2').at(-1) || null,
+  }));
+  if (!disciplineGate.status || disciplineGate.status.active !== true ||
+      !disciplineGate.status.validation || disciplineGate.status.validation.equal !== true)
+    fail('disciplineCoreV2 did not pass its legacy-equivalence gate');
+  if (!disciplineGate.diagnostic || disciplineGate.diagnostic.outcome !== 'candidate')
+    fail('disciplineCoreV2 did not publish a passing runtime diagnostic');
+  console.log('SMOKE OK — disciplineCoreV2 matches the legacy discipline policy');
 
   const rendererGate = await page.evaluate(() => ({
     path: window._ccRendererMigration && window._ccRendererMigration.path,

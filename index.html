@@ -656,6 +656,7 @@
 <script src="safety-migrations.js"></script>
 <script src="section-clipping.js"></script>
 <script src="renderer-contract.js"></script>
+<script src="clash-discipline-core.js"></script>
 <script>
 window.addEventListener('error', function(e) {
   console.error('[ClashControl] Uncaught error:', e.error || e.message);
@@ -16416,11 +16417,10 @@ function startApp() {
   // one file, one model.discipline label) still classify individual elements
   // correctly instead of the whole file voting one way — the matrix and the
   // discipline-pair presets both key off this, not off model.discipline alone.
-  function _ccElementDiscipline(el, modelDiscipline) {
+  function _ccLegacyElementDiscipline(el, modelDiscipline) {
     var t = (el && el.props && el.props.ifcType) || '';
     return _DISC_TYPE_MAP[t] || modelDiscipline || 'other';
   }
-  window._ccElementDiscipline = _ccElementDiscipline;
 
   // Default clash matrix: should this pair be skipped? Only ever applies to
   // CROSS-model pairs — sameModel same-discipline pairs (e.g. two walls
@@ -16442,27 +16442,25 @@ function startApp() {
   // Shared by both _detectClashesCore call sites (chunk pre-filter + the
   // authoritative check) so they can't drift, and by _ccDisciplinePairEnabled
   // (matrix-UI cell state) so the UI and the engine can't disagree either.
-  function _ccMatrixSkipsSameDiscipline(eA, mA, eB, mB, sameModel, rules) {
+  function _ccLegacyMatrixSkipsSameDiscipline(eA, mA, eB, mB, sameModel, rules) {
     if (rules.duplicates || sameModel) return false;
-    var dA = _ccElementDiscipline(eA, mA && mA.discipline);
-    var dB = _ccElementDiscipline(eB, mB && mB.discipline);
-    return !_ccDisciplinePairEnabled(dA, dB, rules);
+    var dA = _ccLegacyElementDiscipline(eA, mA && mA.discipline);
+    var dB = _ccLegacyElementDiscipline(eB, mB && mB.discipline);
+    return !_ccLegacyDisciplinePairEnabled(dA, dB, rules);
   }
-  window._ccMatrixSkipsSameDiscipline = _ccMatrixSkipsSameDiscipline;
 
   // Effective on/off state for one discipline-pair cell — used directly by the
   // matrix UI (no real elements needed) and by _ccMatrixSkipsSameDiscipline
   // above, so they share one precedence rule and can never disagree.
-  function _ccDisciplinePairEnabled(discA, discB, rules) {
+  function _ccLegacyDisciplinePairEnabled(discA, discB, rules) {
     var pairKey = discA < discB ? discA+':'+discB : discB+':'+discA;
     var dm = rules.disciplineMatrix;
     if (dm && dm[pairKey] !== undefined) return dm[pairKey] !== false;
     if (discA !== discB) return true;
     return rules.excludeSameDiscipline === false;
   }
-  window._ccDisciplinePairEnabled = _ccDisciplinePairEnabled;
 
-  function detectDiscipline(elements, name) {
+  function _ccLegacyDetectDiscipline(elements, name) {
     // Only DISCRIMINATING element types vote — see _DISC_TYPE_MAP above.
     var mep=0, str=0, arc=0, civ=0;
     (elements||[]).forEach(function(el){
@@ -16486,7 +16484,91 @@ function startApp() {
     // Last resort: whichever discriminating bucket led, else architectural.
     return lead() || 'architectural';
   }
+
+  // Refactor gate: production keeps the exact inline functions above unless
+  // disciplineCoreV2 is explicitly enabled AND the extracted pure module
+  // matches a compact set of the historical zero-clash regression contracts.
+  // Validation runs once; the hot pair-filter path never dual-runs.
+  function _ccValidateDisciplineCore(core) {
+    if (!core || core.contractVersion !== 1) return {equal:false, failures:['contract-version']};
+    var required = ['elementDiscipline','disciplinePairEnabled','matrixSkipsSameDiscipline','detectDiscipline'];
+    var failures = [];
+    required.forEach(function(name){ if (typeof core[name] !== 'function') failures.push('missing-'+name); });
+    if (!core.typeMap || typeof core.typeMap !== 'object') failures.push('missing-typeMap');
+    if (failures.length) return {equal:false, failures:failures};
+    function el(type){ return {props:{ifcType:type}}; }
+    function mdl(id, discipline){ return {id:id, discipline:discipline}; }
+    function same(label, legacy, candidate){ if (legacy !== candidate) failures.push(label); }
+    try {
+      var legacyTypes = Object.keys(_DISC_TYPE_MAP).sort();
+      var candidateTypes = Object.keys(core.typeMap).sort();
+      if (JSON.stringify(legacyTypes) !== JSON.stringify(candidateTypes)) failures.push('type-map-keys');
+      legacyTypes.forEach(function(type){ same('type-map-'+type, _DISC_TYPE_MAP[type], core.typeMap[type]); });
+      same('element-mep', _ccLegacyElementDiscipline(el('IfcDuctSegment'),'architectural'), core.elementDiscipline(el('IfcDuctSegment'),'architectural'));
+      same('element-structural', _ccLegacyElementDiscipline(el('IfcBeam'),'mep'), core.elementDiscipline(el('IfcBeam'),'mep'));
+      same('element-model-fallback', _ccLegacyElementDiscipline(el('IfcWall'),'structural'), core.elementDiscipline(el('IfcWall'),'structural'));
+      same('element-other-fallback', _ccLegacyElementDiscipline(el('IfcBuildingElementProxy'),null), core.elementDiscipline(el('IfcBuildingElementProxy'),null));
+      var majority = [el('IfcDuctSegment'),el('IfcDuctSegment'),el('IfcDuctSegment'),el('IfcDuctSegment'),el('IfcDuctSegment'),el('IfcBeam')];
+      same('detect-majority', _ccLegacyDetectDiscipline(majority,'combined-model'), core.detectDiscipline(majority,'combined-model'));
+      same('detect-name', _ccLegacyDetectDiscipline([],'Constructie model'), core.detectDiscipline([],'Constructie model'));
+      same('detect-default', _ccLegacyDetectDiscipline([],''), core.detectDiscipline([],''));
+      var defaults = {excludeSameDiscipline:true};
+      var override = {excludeSameDiscipline:true,disciplineMatrix:{'structural:structural':true,'architectural:mep':false}};
+      same('pair-default', _ccLegacyDisciplinePairEnabled('structural','structural',defaults), core.disciplinePairEnabled('structural','structural',defaults));
+      same('pair-order', _ccLegacyDisciplinePairEnabled('mep','architectural',override), core.disciplinePairEnabled('mep','architectural',override));
+      same('matrix-same-model', _ccLegacyMatrixSkipsSameDiscipline(el('IfcWall'),mdl('a','architectural'),el('IfcWall'),mdl('a','architectural'),true,defaults), core.matrixSkipsSameDiscipline(el('IfcWall'),mdl('a','architectural'),el('IfcWall'),mdl('a','architectural'),true,defaults));
+      same('matrix-cross-model', _ccLegacyMatrixSkipsSameDiscipline(el('IfcBeam'),mdl('a','structural'),el('IfcColumn'),mdl('b','structural'),false,defaults), core.matrixSkipsSameDiscipline(el('IfcBeam'),mdl('a','structural'),el('IfcColumn'),mdl('b','structural'),false,defaults));
+      var duplicates = {excludeSameDiscipline:true,duplicates:true};
+      same('matrix-duplicates', _ccLegacyMatrixSkipsSameDiscipline(el('IfcDuctSegment'),mdl('a','mep'),el('IfcDuctSegment'),mdl('b','mep'),false,duplicates), core.matrixSkipsSameDiscipline(el('IfcDuctSegment'),mdl('a','mep'),el('IfcDuctSegment'),mdl('b','mep'),false,duplicates));
+    } catch (error) {
+      failures.push('exception:'+String(error && error.message || error));
+    }
+    return {equal:failures.length===0, failures:failures};
+  }
+
+  var _ccDisciplineCoreCandidate = window._ccClashDisciplineCore || null;
+  var _ccDisciplineCoreRequested = !!(window._ccSafetyMigrations && window._ccSafetyMigrations.isEnabled('disciplineCoreV2'));
+  var _ccDisciplineCoreValidation = _ccDisciplineCoreRequested ?
+    _ccValidateDisciplineCore(_ccDisciplineCoreCandidate) : {equal:false, failures:['flag-off']};
+  var _ccDisciplineCoreActive = _ccDisciplineCoreRequested && _ccDisciplineCoreValidation.equal === true;
+  if (_ccDisciplineCoreRequested && window._ccSafetyMigrations && window._ccSafetyMigrations.record) {
+    window._ccSafetyMigrations.record({
+      migration:'disciplineCoreV2',
+      outcome:_ccDisciplineCoreActive ? 'candidate' : 'fallback',
+      comparison:_ccDisciplineCoreValidation
+    });
+  }
+
+  function _ccElementDiscipline(el, modelDiscipline) {
+    return _ccDisciplineCoreActive ?
+      _ccDisciplineCoreCandidate.elementDiscipline(el, modelDiscipline) :
+      _ccLegacyElementDiscipline(el, modelDiscipline);
+  }
+  function _ccDisciplinePairEnabled(discA, discB, rules) {
+    return _ccDisciplineCoreActive ?
+      _ccDisciplineCoreCandidate.disciplinePairEnabled(discA, discB, rules) :
+      _ccLegacyDisciplinePairEnabled(discA, discB, rules);
+  }
+  function _ccMatrixSkipsSameDiscipline(eA, mA, eB, mB, sameModel, rules) {
+    return _ccDisciplineCoreActive ?
+      _ccDisciplineCoreCandidate.matrixSkipsSameDiscipline(eA, mA, eB, mB, sameModel, rules) :
+      _ccLegacyMatrixSkipsSameDiscipline(eA, mA, eB, mB, sameModel, rules);
+  }
+  function detectDiscipline(elements, name) {
+    return _ccDisciplineCoreActive ?
+      _ccDisciplineCoreCandidate.detectDiscipline(elements, name) :
+      _ccLegacyDetectDiscipline(elements, name);
+  }
+
+  window._ccElementDiscipline = _ccElementDiscipline;
+  window._ccMatrixSkipsSameDiscipline = _ccMatrixSkipsSameDiscipline;
+  window._ccDisciplinePairEnabled = _ccDisciplinePairEnabled;
   window._ccDetectDiscipline = detectDiscipline;
+  window._ccDisciplineCoreStatus = Object.freeze({
+    requested:_ccDisciplineCoreRequested,
+    active:_ccDisciplineCoreActive,
+    validation:_ccDisciplineCoreValidation
+  });
 
 
   function ModelSidebar(props) {
