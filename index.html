@@ -661,6 +661,7 @@
 <script src="clash-identity-core.js"></script>
 <script src="clash-reconciliation-core.js"></script>
 <script src="clash-classification-core.js"></script>
+<script src="project-codec.js"></script>
 <script>
 window.addEventListener('error', function(e) {
   console.error('[ClashControl] Uncaught error:', e.error || e.message);
@@ -6729,10 +6730,10 @@ function startApp() {
 
   // ── Save / Load Project ────────────────────────────────────────
 
-  function saveProject(s) {
-    var data = {
-      _cc: 'ClashControl', _v: CC_VERSION.v,
-      savedAt: new Date().toISOString(),
+  function _ccLegacySerializeProject(s, version, savedAt) {
+    return {
+      _cc: 'ClashControl', _v: version,
+      savedAt: savedAt,
       rules: s.rules,
       models: s.models.map(function(m) {
         return { id:m.id, name:m.name, discipline:m.discipline, color:m.color, visible:m.visible, tag:m.tag||'' };
@@ -6749,6 +6750,109 @@ function startApp() {
       assignmentRules: s.assignmentRules||[],
       changelog: s.changelog||[],
     };
+  }
+
+  function _ccLegacyValidateProject(data) {
+    if (!data._cc || data._cc !== 'ClashControl') throw new Error('Not a ClashControl project file.');
+  }
+
+  function _ccProjectActionTypes() {
+    return {
+      ADD_MODEL:A.ADD_MODEL, UPD_RULES:A.UPD_RULES, SET_CLASHES:A.SET_CLASHES,
+      LOAD_PROJECT_STATE:A.LOAD_PROJECT_STATE, ADD_ISSUE:A.ADD_ISSUE,
+      ADD_VIEWPOINT:A.ADD_VIEWPOINT, ADD_MEASUREMENT:A.ADD_MEASUREMENT,
+      ADD_SELSET:'ADD_SELSET', ADD_SEARCHSET:'ADD_SEARCHSET',
+      ADD_ASSIGN_RULE:'ADD_ASSIGN_RULE', MERGE_CHANGELOG:A.MERGE_CHANGELOG
+    };
+  }
+
+  function _ccLegacyRestoreProject(data, dispatch) {
+    data.models.forEach(function(m) {
+      dispatch({ t:A.ADD_MODEL, v: Object.assign({}, m, { meshes:[], elements:[], _stub:true }) });
+    });
+    dispatch({ t:A.UPD_RULES, u: data.rules });
+    if (data.clashes) dispatch({ t:A.SET_CLASHES, v: data.clashes });
+    if (data.runHistory || data.lastDeltaSummary) dispatch({ t:A.LOAD_PROJECT_STATE, data:{ runHistory:data.runHistory||[], lastDeltaSummary:data.lastDeltaSummary||null } });
+    (data.issues||[]).forEach(function(i) { dispatch({ t:A.ADD_ISSUE, v:i }); });
+    (data.viewpoints||[]).forEach(function(v) { dispatch({ t:A.ADD_VIEWPOINT, v:v }); });
+    if (data.measurements) data.measurements.forEach(function(m) { dispatch({ t:A.ADD_MEASUREMENT, v:m }); });
+    if (data.selectionSets) data.selectionSets.forEach(function(ss){ dispatch({t:'ADD_SELSET', v:ss}); });
+    if (data.searchSets) data.searchSets.forEach(function(qs){ dispatch({t:'ADD_SEARCHSET', v:qs}); });
+    if (data.assignmentRules) data.assignmentRules.forEach(function(ar){ dispatch({t:'ADD_ASSIGN_RULE', v:ar}); });
+    if (data.changelog && data.changelog.length) dispatch({ t:A.MERGE_CHANGELOG, v:data.changelog });
+  }
+
+  function _ccProjectCodecFixture() {
+    return {
+      rules:{hard:true},
+      models:[{id:'m1',name:'Model',discipline:'mep',color:'#123456',visible:false,tag:'coord',meshes:['not-saved'],elements:['not-saved']}],
+      clashes:[{id:'c1'}], issues:[{id:'i1'}], floors:[{id:'L1'}],
+      lastDeltaSummary:{newCount:1}, runHistory:[{ts:1}],
+      viewpoints:[{id:'v1',snapshot:'data:image/png;base64,abc',camera:{x:1}}],
+      measurements:[{id:'measure-1'}], selectionSets:[{id:'selection-1'}],
+      searchSets:[{id:'search-1',query:{ifcType:'IfcWall'}}],
+      assignmentRules:[{id:'assignment-1'}], changelog:[{id:'change-1'}]
+    };
+  }
+
+  function _ccProjectCodecError(validate, data) {
+    try { validate(data); return null; }
+    catch (error) { return String(error && error.message || error); }
+  }
+
+  // Manual project files are a compatibility boundary: old exports must keep
+  // restoring in the same dispatch order. Validate encoding, marker checks and
+  // every restore action before allowing the extracted codec to run.
+  function _ccValidateProjectCodec(core) {
+    if (!core || core.contractVersion !== 1 ||
+        typeof core.serializeProject !== 'function' ||
+        typeof core.validateProject !== 'function' ||
+        typeof core.restoreProject !== 'function') {
+      return {equal:false, failures:['contract']};
+    }
+    var failures = [];
+    try {
+      var legacyData = _ccLegacySerializeProject(_ccProjectCodecFixture(), 'test-version', '2026-01-02T03:04:05.000Z');
+      var candidateData = core.serializeProject(_ccProjectCodecFixture(), 'test-version', '2026-01-02T03:04:05.000Z');
+      if (JSON.stringify(legacyData) !== JSON.stringify(candidateData)) failures.push('serialized-output');
+      if (!Object.prototype.hasOwnProperty.call(candidateData.viewpoints[0], 'snapshot') || candidateData.viewpoints[0].snapshot !== undefined) failures.push('snapshot-strip');
+      var legacyActions = [], candidateActions = [];
+      _ccLegacyRestoreProject(legacyData, function(action){ legacyActions.push(action); });
+      core.restoreProject(candidateData, function(action){ candidateActions.push(action); }, _ccProjectActionTypes());
+      if (JSON.stringify(legacyActions) !== JSON.stringify(candidateActions)) failures.push('restore-actions');
+      var invalid = {_cc:'Other',models:[]};
+      if (_ccProjectCodecError(_ccLegacyValidateProject, invalid) !== _ccProjectCodecError(core.validateProject, invalid)) failures.push('validation-error');
+    } catch (error) {
+      failures.push('exception:'+String(error && error.message || error));
+    }
+    return {equal:failures.length===0, failures:failures};
+  }
+
+  var _ccProjectCodecCandidate = window._ccProjectCodec || null;
+  var _ccProjectCodecRequested = !!(window._ccSafetyMigrations && window._ccSafetyMigrations.isEnabled('projectCodecV2'));
+  var _ccProjectCodecValidation = _ccProjectCodecRequested ?
+    _ccValidateProjectCodec(_ccProjectCodecCandidate) : {equal:false, failures:['flag-off']};
+  var _ccProjectCodecActive = _ccProjectCodecRequested && _ccProjectCodecValidation.equal === true;
+  if (_ccProjectCodecRequested && window._ccSafetyMigrations && window._ccSafetyMigrations.record) {
+    window._ccSafetyMigrations.record({migration:'projectCodecV2', outcome:_ccProjectCodecActive?'candidate':'fallback', comparison:_ccProjectCodecValidation});
+  }
+  function _ccSerializeProject(s, version, savedAt) {
+    return _ccProjectCodecActive ?
+      _ccProjectCodecCandidate.serializeProject(s, version, savedAt) :
+      _ccLegacySerializeProject(s, version, savedAt);
+  }
+  function _ccValidateProject(data) {
+    return _ccProjectCodecActive ? _ccProjectCodecCandidate.validateProject(data) : _ccLegacyValidateProject(data);
+  }
+  function _ccRestoreProject(data, dispatch) {
+    return _ccProjectCodecActive ?
+      _ccProjectCodecCandidate.restoreProject(data, dispatch, _ccProjectActionTypes()) :
+      _ccLegacyRestoreProject(data, dispatch);
+  }
+  window._ccProjectCodecStatus = Object.freeze({requested:_ccProjectCodecRequested, active:_ccProjectCodecActive, validation:_ccProjectCodecValidation});
+
+  function saveProject(s) {
+    var data = _ccSerializeProject(s, CC_VERSION.v, new Date().toISOString());
     var blob = new Blob([JSON.stringify(data, null, 2)], {type:'application/json'});
     var a = document.createElement('a');
     a.href = URL.createObjectURL(blob);
@@ -6766,25 +6870,8 @@ function startApp() {
       r.onload = function(ev) {
         try {
           var data = JSON.parse(ev.target.result);
-          if (!data._cc || data._cc !== 'ClashControl') throw new Error('Not a ClashControl project file.');
-          // Restore models as stubs (geometry must be re-uploaded)
-          data.models.forEach(function(m) {
-            d({ t:A.ADD_MODEL, v: Object.assign({}, m, { meshes:[], elements:[], _stub:true }) });
-          });
-          d({ t:A.UPD_RULES, u: data.rules });
-          if (data.clashes) d({ t:A.SET_CLASHES, v: data.clashes });
-          if (data.runHistory || data.lastDeltaSummary) d({ t:A.LOAD_PROJECT_STATE, data:{ runHistory:data.runHistory||[], lastDeltaSummary:data.lastDeltaSummary||null } });
-          (data.issues||[]).forEach(function(i) { d({ t:A.ADD_ISSUE, v:i }); });
-          (data.viewpoints||[]).forEach(function(v) { d({ t:A.ADD_VIEWPOINT, v:v }); });
-          if (data.measurements) data.measurements.forEach(function(m) { d({ t:A.ADD_MEASUREMENT, v:m }); });
-          if (data.selectionSets) data.selectionSets.forEach(function(ss){ d({t:'ADD_SELSET', v:ss}); });
-          // Search sets restore the QUERY, not stale refs — membership
-          // re-resolves live once real geometry is re-uploaded (models
-          // restore as {_stub:true, elements:[]} above), so an empty count
-          // right after load is correct, not a bug.
-          if (data.searchSets) data.searchSets.forEach(function(qs){ d({t:'ADD_SEARCHSET', v:qs}); });
-          if (data.assignmentRules) data.assignmentRules.forEach(function(ar){ d({t:'ADD_ASSIGN_RULE', v:ar}); });
-          if (data.changelog && data.changelog.length) d({ t:A.MERGE_CHANGELOG, v:data.changelog });
+          _ccValidateProject(data);
+          _ccRestoreProject(data, d);
         } catch(err) {
           alert('Load failed: ' + err.message);
         }

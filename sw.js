@@ -21,6 +21,7 @@ var PRECACHE = [
   'clash-identity-core.js',
   'clash-reconciliation-core.js',
   'clash-classification-core.js',
+  'project-codec.js',
   // Addons — same-origin files are never runtime-cached (the fetch handler
   // only caches ALLOWED_CDN_HOSTS), so without precaching they 404 offline.
   // Safe to pin: the CACHE name above is rotated on every version bump.

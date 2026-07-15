@@ -115,6 +115,7 @@ test('the Assignment Rules panel section exists in StandardsPanel, using DISC (n
 
 test('saveProject, loadProject, and _saveCurrentProjectData (IndexedDB auto-persist) all carry assignmentRules', () => {
   assert.ok(/assignmentRules: s\.assignmentRules\|\|\[\]/.test(src), 'saveProject must serialize assignmentRules');
-  assert.ok(/data\.assignmentRules\.forEach\(function\(ar\)\{ d\(\{t:'ADD_ASSIGN_RULE', v:ar\}\); \}\)/.test(src), 'loadProject must restore each saved assignment rule');
+  assert.ok(/data\.assignmentRules\.forEach\(function\(ar\)\{ dispatch\(\{t:'ADD_ASSIGN_RULE', v:ar\}\); \}\)/.test(src), 'the legacy restore adapter must restore each saved assignment rule');
+  assert.ok(/_ccRestoreProject\(data, d\)/.test(src), 'loadProject must route parsed data through the guarded restore adapter');
   assert.ok(/assignmentRules:s\.assignmentRules\|\|\[\]/.test(src), '_saveCurrentProjectData must include assignmentRules too, not just the explicit-export path');
 });

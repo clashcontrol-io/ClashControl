@@ -94,8 +94,8 @@ function fail(msg) {
 
 try {
   // Candidate migrations remain disabled for users, but CI explicitly opts
-  // into all nine paths so none can drift unexercised behind its safety flag.
-  await page.goto('http://127.0.0.1:8765/?ccSafety=concurrencyV2,geoCacheV8,batchedSectionsV2,rendererV2,disciplineCoreV2,assignmentCoreV2,identityCoreV2,reconciliationCoreV2,classificationCoreV2', { waitUntil: 'domcontentloaded' });
+  // into all ten paths so none can drift unexercised behind its safety flag.
+  await page.goto('http://127.0.0.1:8765/?ccSafety=concurrencyV2,geoCacheV8,batchedSectionsV2,rendererV2,disciplineCoreV2,assignmentCoreV2,identityCoreV2,reconciliationCoreV2,classificationCoreV2,projectCodecV2', { waitUntil: 'domcontentloaded' });
 
   // App mounted (CDN deps + main script executed)
   await page.waitForFunction(
@@ -162,6 +162,18 @@ try {
   if (!classificationGate.diagnostic || classificationGate.diagnostic.outcome !== 'candidate')
     fail('classificationCoreV2 did not publish a passing runtime diagnostic');
   console.log('SMOKE OK — classificationCoreV2 preserves deterministic triage mutations');
+
+  const projectCodecGate = await page.evaluate(() => ({
+    status: window._ccProjectCodecStatus,
+    diagnostic: (window._ccSafetyMigrations.diagnostics() || [])
+      .filter((d) => d.migration === 'projectCodecV2').at(-1) || null,
+  }));
+  if (!projectCodecGate.status || projectCodecGate.status.active !== true ||
+      !projectCodecGate.status.validation || projectCodecGate.status.validation.equal !== true)
+    fail('projectCodecV2 did not pass its legacy-equivalence gate');
+  if (!projectCodecGate.diagnostic || projectCodecGate.diagnostic.outcome !== 'candidate')
+    fail('projectCodecV2 did not publish a passing runtime diagnostic');
+  console.log('SMOKE OK — projectCodecV2 preserves manual export/import mapping');
 
   const rendererGate = await page.evaluate(() => ({
     path: window._ccRendererMigration && window._ccRendererMigration.path,
@@ -347,6 +359,8 @@ try {
   if (!batch.sectionDiag || batch.sectionDiag.outcome !== 'candidate' || batch.sectionDiag.stats.batches < 1)
     fail('BatchedMesh section candidate did not pass its runtime equivalence gate');
   console.log('SMOKE OK — BatchedMesh: ' + batch.items + ' items, hide/style/colors/section all behave per-element');
+  if (errors.length) fail('browser emitted uncaught page or console errors');
+  console.log('SMOKE OK — browser completed with no uncaught page or console errors');
 } finally {
   await browser.close();
   server.close();

@@ -16,7 +16,8 @@
     assignmentCoreV2: Object.freeze({ fallback: 'legacy', defaultEnabled: false }),
     identityCoreV2: Object.freeze({ fallback: 'legacy', defaultEnabled: false }),
     reconciliationCoreV2: Object.freeze({ fallback: 'legacy', defaultEnabled: false }),
-    classificationCoreV2: Object.freeze({ fallback: 'legacy', defaultEnabled: false })
+    classificationCoreV2: Object.freeze({ fallback: 'legacy', defaultEnabled: false }),
+    projectCodecV2: Object.freeze({ fallback: 'legacy', defaultEnabled: false })
   });
   var diagnostics = [];
 

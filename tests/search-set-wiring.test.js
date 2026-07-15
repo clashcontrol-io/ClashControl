@@ -116,5 +116,6 @@ test('the form refuses to save with zero criteria (client-side guard, not just a
 
 test('saveProject includes searchSets and loadProject restores them via ADD_SEARCHSET', () => {
   assert.ok(/searchSets: s\.searchSets\|\|\[\]/.test(src), 'saveProject must serialize searchSets');
-  assert.ok(/data\.searchSets\.forEach\(function\(qs\)\{ d\(\{t:'ADD_SEARCHSET', v:qs\}\); \}\)/.test(src), 'loadProject must restore each saved search set');
+  assert.ok(/data\.searchSets\.forEach\(function\(qs\)\{ dispatch\(\{t:'ADD_SEARCHSET', v:qs\}\); \}\)/.test(src), 'the legacy restore adapter must restore each saved search set');
+  assert.ok(/_ccRestoreProject\(data, d\)/.test(src), 'loadProject must route parsed data through the guarded restore adapter');
 });
