@@ -19853,6 +19853,29 @@ function startApp() {
     </div>`;
   }
 
+  // Pure aggregation for the Model × model clash matrix: folds a clash list
+  // into a symmetric models×models grid of {count, worst-severity}. Kept
+  // separate from the component so it can be unit-tested. Clashes with an
+  // unknown modelAId are skipped; single/same-model clashes land on the
+  // diagonal; denied clashes are ignored.
+  function _ccModelMatrixGrid(models, items) {
+    var idx = {}; models.forEach(function(m, i){ idx[m.id] = i; });
+    var SEV_RANK = { critical:4, major:3, minor:2, info:1 };
+    var grid = models.map(function(){ return models.map(function(){ return { count:0, worst:0 }; }); });
+    var total = 0;
+    (items || []).forEach(function(c){
+      var a = idx[c.modelAId];
+      if (a == null) return;                 // clash with no known model — skip
+      var b = idx[c.modelBId]; if (b == null) b = a;   // single/same-model → diagonal
+      if (c.status === 'denied') return;
+      var rank = SEV_RANK[c.aiSeverity] || 0;
+      grid[a][b].count++; if (rank > grid[a][b].worst) grid[a][b].worst = rank; total++;
+      if (a !== b) { grid[b][a].count++; if (rank > grid[b][a].worst) grid[b][a].worst = rank; }
+    });
+    return { grid: grid, total: total };
+  }
+  if (typeof window !== 'undefined') window._ccModelMatrixGrid = _ccModelMatrixGrid;
+
   // Model × model clash matrix — a Navisworks/Dalux-style grid showing which
   // loaded models clash with which, coloured by worst severity in each pair.
   // Read-only overview; the clash list below stays the source of truth.
@@ -19865,19 +19888,7 @@ function startApp() {
     var op = React.useState(false), open = op[0], setOpen = op[1];
     var models = (s.models || []).filter(function(m){ return m && m.id; });
     if (models.length < 1) return '';
-    var idx = {}; models.forEach(function(m, i){ idx[m.id] = i; });
-    var SEV_RANK = { critical:4, major:3, minor:2, info:1 };
-    var grid = models.map(function(){ return models.map(function(){ return { count:0, worst:0 }; }); });
-    var total = 0;
-    items.forEach(function(c){
-      var a = idx[c.modelAId];
-      if (a == null) return;                 // clash with no known model — skip
-      var b = idx[c.modelBId]; if (b == null) b = a;   // single/same-model → diagonal
-      if (c.status === 'denied') return;
-      var rank = SEV_RANK[c.aiSeverity] || 0;
-      grid[a][b].count++; if (rank > grid[a][b].worst) grid[a][b].worst = rank; total++;
-      if (a !== b) { grid[b][a].count++; if (rank > grid[b][a].worst) grid[b][a].worst = rank; }
-    });
+    var _mg = _ccModelMatrixGrid(models, items), grid = _mg.grid, total = _mg.total;
     function cellStyle(cell){
       if (cell.count === 0) return { background:'var(--bg-secondary)', color:'var(--text-faint)' };
       // Kritiek (critical) → danger; everything else with hits → warning (Klein).
