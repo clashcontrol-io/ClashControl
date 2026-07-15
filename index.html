@@ -1200,7 +1200,8 @@ function startApp() {
     floor:'all', distMin:0, distMax:9999, elementId:'', selfClash:'all',
     ifcType:'all', storey:'all', material:'all', excludedTypes:[], excludedStoreys:[], excludedMaterials:[],
     deltaState:'all', // 'all','new','persisting','auto_resolved'
-    priority:'all', category:'all', assignee:'all', issueElementType:'all', issueStorey:'all'
+    priority:'all', category:'all', assignee:'all', issueElementType:'all', issueStorey:'all',
+    modelPair:null // {a:modelId, b:modelId} set by clicking a Model clash matrix cell
   };
   var _ccLoadPref = function(key,fallback){try{var v=localStorage.getItem('cc_'+key);return v!==null?JSON.parse(v):fallback;}catch(e){return fallback;}};
 
@@ -19859,7 +19860,8 @@ function startApp() {
   // clash records only carry ids reliably) and folds every pair into a
   // symmetric cell. Single-element / same-model clashes land on the diagonal.
   function ModelClashMatrix(props) {
-    var s = props.s, items = props.items || [];
+    var s = props.s, d = props.d, items = props.items || [];
+    var activePair = (s.filters && s.filters.modelPair) || null;
     var op = React.useState(false), open = op[0], setOpen = op[1];
     var models = (s.models || []).filter(function(m){ return m && m.id; });
     if (models.length < 1) return '';
@@ -19917,8 +19919,14 @@ function startApp() {
               <th style=${TH} title=${rm.name}>${dot(rm)}${rm.name}</th>
               ${models.map(function(cm, c){
                 var cell = grid[r][c];
-                return html`<td key=${cm.id} style=${{...TD,...cellStyle(cell)}}
-                  title=${rm.name+' × '+cm.name+' — '+cell.count+' clash'+(cell.count===1?'':'es')}>
+                var isActive = !!(activePair && ((activePair.a===rm.id && activePair.b===cm.id) || (activePair.a===cm.id && activePair.b===rm.id)));
+                var clickable = cell.count > 0 && typeof d === 'function';
+                return html`<td key=${cm.id}
+                  onClick=${clickable ? function(){ d({t:A.UPD_FILTERS, u:{modelPair: isActive ? null : {a:rm.id, b:cm.id}}}); } : null}
+                  style=${{...TD,...cellStyle(cell),
+                    cursor: clickable ? 'pointer' : 'default',
+                    outline: isActive ? '2px solid var(--accent)' : 'none', outlineOffset:'-2px'}}
+                  title=${(clickable ? (isActive ? 'Clear filter — ' : 'Filter clash list to ') : '') + rm.name+' × '+cm.name+' — '+cell.count+' clash'+(cell.count===1?'':'es')}>
                   ${cell.count === 0
                     ? html`<span style=${{color:'var(--text-faint)'}}>✓</span>`
                     : cell.count}
@@ -20006,6 +20014,7 @@ function startApp() {
 
     var activeCount = 0;
     if(f.status!=='all') activeCount++;
+    if(f.modelPair) activeCount++;
     if(f.discipline!=='all') activeCount++;
     if(f.floor!=='all') activeCount++;
     if(f.selfClash!=='all') activeCount++;
@@ -20033,6 +20042,10 @@ function startApp() {
         if(f.status!=='all' && it.status!==f.status) return false;
         if(f.search){var q=f.search.toLowerCase();var hay=isClashTab?[it.title,it.description,it.type,it.elemAStorey,it.elemBStorey,it.elemAType,it.elemBType,it.elemAMaterial,it.elemBMaterial,it.status].filter(Boolean).join(' ').toLowerCase():(it.title||'').toLowerCase()+' '+(it.description||'').toLowerCase();if(hay.indexOf(q)===-1)return false;}
         if(isClashTab) {
+          if(f.modelPair) {
+            var _mpA=it.modelAId, _mpB=it.modelBId||it.modelAId, _mp=f.modelPair;
+            if(!((_mpA===_mp.a && _mpB===_mp.b) || (_mpA===_mp.b && _mpB===_mp.a))) return false;
+          }
           if(f.type!=='all' && it.type!==f.type) return false;
           if(f.discipline!=='all' && it.disciplines && it.disciplines.indexOf(f.discipline)===-1) return false;
           if(f.floor!=='all') {
@@ -20091,7 +20104,7 @@ function startApp() {
 
       ${isClashTab && rawItems.length > 0 && rawItems.some(function(c){return c.aiSeverity;}) && html`<${ClashAISummary} items=${rawItems} />`}
       ${!isExplorerTab && !isStandardsTab && rawItems.length > 0 && html`<${ClashStatsBar} items=${rawItems} isClash=${isClashTab} delta=${isClashTab ? s.lastDeltaSummary : null} history=${isClashTab ? (s.runHistory||null) : null} />`}
-      ${isClashTab && rawItems.length > 0 && (s.models||[]).length >= 2 && html`<${ModelClashMatrix} s=${s} items=${rawItems} />`}
+      ${isClashTab && rawItems.length > 0 && (s.models||[]).length >= 2 && html`<${ModelClashMatrix} s=${s} d=${d} items=${rawItems} />`}
 
       ${s.tab==='navigator' && html`<${NavigatorPanel} s=${s} d=${d} />`}
       ${isStandardsTab && html`<${StandardsPanel} s=${s} d=${d} />`}
