@@ -12,8 +12,8 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 const src = fs.readFileSync(path.join(__dirname, '..', 'index.html'), 'utf8');
-const start = src.indexOf('function computeClashPair');
-assert.ok(start !== -1, 'computeClashPair not found');
+const start = src.indexOf('function _ccLegacyComputeClashPair');
+assert.ok(start !== -1, '_ccLegacyComputeClashPair not found');
 const end = src.indexOf('function mergeDetectionResults', start);
 assert.ok(end !== -1, 'mergeDetectionResults not found');
 const closeIdx = src.indexOf('\n  }', end) + 4;

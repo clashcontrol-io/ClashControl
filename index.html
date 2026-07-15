@@ -658,6 +658,7 @@
 <script src="renderer-contract.js"></script>
 <script src="clash-discipline-core.js"></script>
 <script src="clash-assignment-core.js"></script>
+<script src="clash-identity-core.js"></script>
 <script>
 window.addEventListener('error', function(e) {
   console.error('[ClashControl] Uncaught error:', e.error || e.message);
@@ -6179,7 +6180,7 @@ function startApp() {
 
   // ── Clash Identity & Delta Merge ────────────────────────────── INTERNALS.md §9
 
-  function computeClashPair(clash) {
+  function _ccLegacyComputeClashPair(clash) {
     // Stable cross-run identity per element. Prefer Revit UniqueId (survives a
     // re-pull — expressId is reassigned every pull), then IFC GlobalId, then
     // expressId as a last resort. Keying on expressId broke reconciliation after a
@@ -6194,14 +6195,69 @@ function startApp() {
     return idA < idB ? idA+'|'+idB : idB+'|'+idA;
   }
 
-  function computeClashIdentityKey(clash) {
-    var pair = computeClashPair(clash);
+  function _ccLegacyComputeClashIdentityKey(clash) {
+    var pair = _ccLegacyComputeClashPair(clash);
     var p = clash.point || [0,0,0];
     var gx = Math.round(p[0] / 0.5);
     var gy = Math.round(p[1] / 0.5);
     var gz = Math.round(p[2] / 0.5);
     return pair + '@' + gx + ',' + gy + ',' + gz;
   }
+
+  // Refactor gate: identity controls whether user status, assignee and priority
+  // survive a re-run. Keep the exact inline implementation active unless the
+  // extracted module passes the UniqueId-first contract introduced by #638.
+  function _ccValidateIdentityCore(core) {
+    if (!core || core.contractVersion !== 1 ||
+        typeof core.computeClashPair !== 'function' ||
+        typeof core.computeClashIdentityKey !== 'function') {
+      return {equal:false, failures:['contract']};
+    }
+    var failures = [];
+    function same(label, legacy, candidate) {
+      if (legacy !== candidate) failures.push(label);
+    }
+    var fixtures = [
+      {label:'unique-id-first', clash:{uniqueIdA:'revit-b',globalIdA:'ifc-a',elemA:9,uniqueIdB:'revit-a',globalIdB:'ifc-b',elemB:2,point:[1,2,3]}},
+      {label:'global-id-fallback', clash:{globalIdA:'z-guid',elemA:9,globalIdB:'a-guid',elemB:2,point:[0.24,0.25,0.26]}},
+      {label:'express-id-fallback', clash:{globalIdA:'',elemA:41,globalIdB:null,elemB:7,point:[-0.25,-0.26,0]}},
+      {label:'missing-point', clash:{uniqueIdA:'one',uniqueIdB:'two'}}
+    ];
+    try {
+      fixtures.forEach(function(fixture) {
+        same(fixture.label+'-pair', _ccLegacyComputeClashPair(fixture.clash), core.computeClashPair(fixture.clash));
+        same(fixture.label+'-key', _ccLegacyComputeClashIdentityKey(fixture.clash), core.computeClashIdentityKey(fixture.clash));
+        var swapped = Object.assign({}, fixture.clash, {
+          uniqueIdA:fixture.clash.uniqueIdB, globalIdA:fixture.clash.globalIdB, elemA:fixture.clash.elemB,
+          uniqueIdB:fixture.clash.uniqueIdA, globalIdB:fixture.clash.globalIdA, elemB:fixture.clash.elemA
+        });
+        same(fixture.label+'-order', core.computeClashPair(fixture.clash), core.computeClashPair(swapped));
+      });
+    } catch (error) {
+      failures.push('exception:'+String(error && error.message || error));
+    }
+    return {equal:failures.length===0, failures:failures};
+  }
+
+  var _ccIdentityCoreCandidate = window._ccClashIdentityCore || null;
+  var _ccIdentityCoreRequested = !!(window._ccSafetyMigrations && window._ccSafetyMigrations.isEnabled('identityCoreV2'));
+  var _ccIdentityCoreValidation = _ccIdentityCoreRequested ?
+    _ccValidateIdentityCore(_ccIdentityCoreCandidate) : {equal:false, failures:['flag-off']};
+  var _ccIdentityCoreActive = _ccIdentityCoreRequested && _ccIdentityCoreValidation.equal === true;
+  if (_ccIdentityCoreRequested && window._ccSafetyMigrations && window._ccSafetyMigrations.record) {
+    window._ccSafetyMigrations.record({migration:'identityCoreV2', outcome:_ccIdentityCoreActive?'candidate':'fallback', comparison:_ccIdentityCoreValidation});
+  }
+  function computeClashPair(clash) {
+    return _ccIdentityCoreActive ?
+      _ccIdentityCoreCandidate.computeClashPair(clash) :
+      _ccLegacyComputeClashPair(clash);
+  }
+  function computeClashIdentityKey(clash) {
+    return _ccIdentityCoreActive ?
+      _ccIdentityCoreCandidate.computeClashIdentityKey(clash) :
+      _ccLegacyComputeClashIdentityKey(clash);
+  }
+  window._ccIdentityCoreStatus = Object.freeze({requested:_ccIdentityCoreRequested, active:_ccIdentityCoreActive, validation:_ccIdentityCoreValidation});
 
   // ── Denied clash suppression ──────────────────────────────────
   function _getDeniedClashStore() {

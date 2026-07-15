@@ -94,8 +94,8 @@ function fail(msg) {
 
 try {
   // Candidate migrations remain disabled for users, but CI explicitly opts
-  // into all six paths so none can drift unexercised behind its safety flag.
-  await page.goto('http://127.0.0.1:8765/?ccSafety=concurrencyV2,geoCacheV8,batchedSectionsV2,rendererV2,disciplineCoreV2,assignmentCoreV2', { waitUntil: 'domcontentloaded' });
+  // into all seven paths so none can drift unexercised behind its safety flag.
+  await page.goto('http://127.0.0.1:8765/?ccSafety=concurrencyV2,geoCacheV8,batchedSectionsV2,rendererV2,disciplineCoreV2,assignmentCoreV2,identityCoreV2', { waitUntil: 'domcontentloaded' });
 
   // App mounted (CDN deps + main script executed)
   await page.waitForFunction(
@@ -126,6 +126,18 @@ try {
   if (!assignmentGate.diagnostic || assignmentGate.diagnostic.outcome !== 'candidate')
     fail('assignmentCoreV2 did not publish a passing runtime diagnostic');
   console.log('SMOKE OK — assignmentCoreV2 matches the legacy assignment policy');
+
+  const identityGate = await page.evaluate(() => ({
+    status: window._ccIdentityCoreStatus,
+    diagnostic: (window._ccSafetyMigrations.diagnostics() || [])
+      .filter((d) => d.migration === 'identityCoreV2').at(-1) || null,
+  }));
+  if (!identityGate.status || identityGate.status.active !== true ||
+      !identityGate.status.validation || identityGate.status.validation.equal !== true)
+    fail('identityCoreV2 did not pass its legacy-equivalence gate');
+  if (!identityGate.diagnostic || identityGate.diagnostic.outcome !== 'candidate')
+    fail('identityCoreV2 did not publish a passing runtime diagnostic');
+  console.log('SMOKE OK — identityCoreV2 preserves UniqueId-first clash identity');
 
   const rendererGate = await page.evaluate(() => ({
     path: window._ccRendererMigration && window._ccRendererMigration.path,

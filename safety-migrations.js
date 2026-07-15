@@ -13,7 +13,8 @@
     batchedSectionsV2: Object.freeze({ fallback: 'legacy', defaultEnabled: false }),
     rendererV2: Object.freeze({ fallback: 'legacy', defaultEnabled: false }),
     disciplineCoreV2: Object.freeze({ fallback: 'legacy', defaultEnabled: false }),
-    assignmentCoreV2: Object.freeze({ fallback: 'legacy', defaultEnabled: false })
+    assignmentCoreV2: Object.freeze({ fallback: 'legacy', defaultEnabled: false }),
+    identityCoreV2: Object.freeze({ fallback: 'legacy', defaultEnabled: false })
   });
   var diagnostics = [];
 
