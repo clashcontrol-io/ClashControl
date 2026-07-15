@@ -10,7 +10,7 @@
 <!-- BEGIN:project-state -->
 ## Project State
 
-**Version:** 5.23.1 (2026-07-14) — daily-sync was silently crashing on MEMORY.md's own prose (see Known Issues); this line was stale for a month as a direct result, now corrected by hand.
+**Version:** 6.0.0 (2026-07-15) — daily-sync was silently crashing on MEMORY.md's own prose (see Known Issues); this line was stale for a month as a direct result, now corrected by hand.
 
 **Live features (all working):**
 - Mesh-based clash detection engine: AABB broad-phase + BVH tri-tri narrow-phase (Möller–Trumbore), optional `_ccWasmIntersect`/`_ccWasmMinDist` WASM accelerators; default clash matrix (skips same-discipline pairs, per-element classification, never skips same-model self-clashes) + N×N matrix UI; rules (discipline filters, clearance, group-by); soft/clearance via spatial-hash vertex distance; hard clashes now report a **real (approximate) penetration depth** (`_estimatePenetrationDepthM` — vertex-inside-mesh ray-parity + true closest-point-on-surface, MTD-style, browser only so far) instead of the old tri-pair SAT chord length; optional escalation to `local-engine.js` for the **same** tri-tri+BVH algorithm at native speed (Numba JIT + multiprocess + scipy KD-tree) — not solid boolean ops, and the Python side doesn't have the new depth estimator yet either (see Known Issues / Active Work)
@@ -1059,6 +1059,33 @@ On branch `claude/code-review-quality-IjbhT` (2026-05-28) — code-review qualit
 <!-- END:active-work -->
 
 <!-- BEGIN:session-log -->
+### 2026-07-15
+**Summary:** 17 commit(s) landed (no AI summary — set ANTHROPIC_API_KEY secret for richer entries).
+**Changed:** see commits
+**Notable:** —
+
+<details><summary>Commits</summary>
+
+- e4cdd27 chore: bump version to 6.0.0
+- 1e187a1 fix: accept the duplicate-model overlap dialog in browser smoke test
+- 0e84005 diag: log any confirm/alert dialogs during smoke test (temporary)
+- b4a8336 diag: dump state on force-batched load timeout (temporary)
+- cfa7d0f Contain renderer migration behind validated legacy fallback
+- 65c5842 Gate BatchedMesh section clipping with legacy fallback
+- c7e77e3 Isolate v8 geometry cache with cold-parse recovery
+- 714b02a Block stale detection writes behind concurrency gate
+- 87528dc Add default-off safety migration containment
+- 341ec75 Harden trust boundaries and regression gates
+- da7d783 chore: bump version to 5.24.1
+- 4e848e2 perf: O(n²)→O(n) clash clustering (167s→22s at 47k clashes) + palette label fix (#682)
+- 326eada chore: bump version to 5.24.0
+- 5b369ba fix: 6 stress-test findings — crash, stuck loader, pivot, federation, zoom, panel + phone UX (#681)
+- 9b711f7 chore: daily memory sync 2026-07-14
+- ac85366 chore: bump version to 5.23.1
+- 2d7009a chore: bump version to 5.23.0
+
+</details>
+
 ### 2026-07-14
 **Summary:** 73 commit(s) landed (no AI summary — set ANTHROPIC_API_KEY secret for richer entries).
 **Changed:** see commits
@@ -1940,38 +1967,12 @@ On branch `claude/code-review-quality-IjbhT` (2026-05-28) — code-review qualit
 - 65e7755 chore: daily memory sync 2026-05-15
 
 </details>
-
-### 2026-05-15
-**Summary:** 19 commit(s) landed (no AI summary — set ANTHROPIC_API_KEY secret for richer entries).
-**Changed:** see commits
-**Notable:** —
-
-<details><summary>Commits</summary>
-
-- 014f080 chore: bump version to 5.12.3
-- b301d3e Slow down section plane drag to better follow mouse speed
-- 8e75d02 Fix section plane rotation to match ring orientation
-- 3c23c97 Fix section plane rotation ring orientation — always lies flat (world-horizontal)
-- 8a1ac83 Remove flat end caps from section plane arrow shaft
-- 10145ab Lock face arrow size cap and fix tall-narrow box scaling
-- 22aadb1 chore: bump version to 5.12.2
-- a149c48 Tighten handle size caps to prevent oversizing on large models
-- 7cb1b49 Thin section plane arrow shaft (~40% of previous radius)
-- efcd7b5 chore: bump version to 5.12.1
-- 11585ef Fix handle sizing to be geometry-relative, not camera-distance based
-- 1c382ba chore: bump version to 5.12.0
-- 2494aa8 Unify section plane handles with section box style
-- 7e92932 Show IFC quantities in model's native unit, not converted to metres
-- 002d291 Fix IFC quantity dimensions ignoring project unit scale
-- c122a36 Fix Alt+click, section box arrows, bounds, rotation, and opacity
-- 0573dcf Fix text overflow in Details panel element name header
-- 557d246 Add folder watcher, inline project creation, remove Measure tab
-- 5a4b345 chore: daily memory sync 2026-05-14
-
-</details>
 <!-- END:session-log -->
 
 <!-- BEGIN:cleanup-log -->
+### 2026-07-15 — pruned session entry 2026-05-15
+**Reason:** Entry is older than 60 days.
+
 ### 2026-07-14 — pruned session entry 2026-05-14
 **Reason:** Entry is older than 60 days.
 
