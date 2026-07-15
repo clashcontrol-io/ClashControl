@@ -12,7 +12,7 @@
   // back, so this file must stay a byte-faithful port of the inline body.
   function classifyClashes(clashes) {
     var FP_TYPES = ['IfcOpeningElement','IfcOpeningStandardCase','IfcSpace','IfcVirtualElement'];
-    var STRUCTURAL_DISC = 'Structural';
+    var STRUCTURAL_DISC = 'structural';
     var INSULATION_MAT = 'insulation';
 
     clashes.forEach(function(c) {
@@ -22,7 +22,12 @@
       var typeB = c.elemBType || '';
       var discs = c.disciplines || [];
       var crossDisc = discs.length >= 2 && discs[0] !== discs[1];
-      var hasStructural = discs.indexOf(STRUCTURAL_DISC) !== -1;
+      // Case-insensitive: the IFC discipline classifier yields lowercase
+      // ('structural'), but Revit-bridge and preset sources can be capitalised.
+      var hasStructural = false, structuralAt = -1;
+      for (var _si = 0; _si < discs.length; _si++) {
+        if (String(discs[_si] || '').toLowerCase() === STRUCTURAL_DISC) { hasStructural = true; structuralAt = _si; break; }
+      }
       var fv = c._trainFV || {};
 
       var sev = 'minor', cat = 'needs_review', reason = '';
@@ -53,7 +58,7 @@
       } else {
         if (crossDisc && hasStructural) {
           sev = 'critical'; cat = 'penetration';
-          var otherDisc = discs[0] === STRUCTURAL_DISC ? discs[1] : discs[0];
+          var otherDisc = structuralAt === 0 ? discs[1] : discs[0];
           reason = (otherDisc || 'MEP') + ' penetrating primary structure';
         } else if (crossDisc) {
           sev = 'major'; cat = 'penetration';
