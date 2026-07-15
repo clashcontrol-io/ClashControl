@@ -94,8 +94,8 @@ function fail(msg) {
 
 try {
   // Candidate migrations remain disabled for users, but CI explicitly opts
-  // into all eight paths so none can drift unexercised behind its safety flag.
-  await page.goto('http://127.0.0.1:8765/?ccSafety=concurrencyV2,geoCacheV8,batchedSectionsV2,rendererV2,disciplineCoreV2,assignmentCoreV2,identityCoreV2,reconciliationCoreV2', { waitUntil: 'domcontentloaded' });
+  // into all nine paths so none can drift unexercised behind its safety flag.
+  await page.goto('http://127.0.0.1:8765/?ccSafety=concurrencyV2,geoCacheV8,batchedSectionsV2,rendererV2,disciplineCoreV2,assignmentCoreV2,identityCoreV2,reconciliationCoreV2,classificationCoreV2', { waitUntil: 'domcontentloaded' });
 
   // App mounted (CDN deps + main script executed)
   await page.waitForFunction(
@@ -150,6 +150,18 @@ try {
   if (!reconciliationGate.diagnostic || reconciliationGate.diagnostic.outcome !== 'candidate')
     fail('reconciliationCoreV2 did not publish a passing runtime diagnostic');
   console.log('SMOKE OK — reconciliationCoreV2 preserves review-state carry-over');
+
+  const classificationGate = await page.evaluate(() => ({
+    status: window._ccClassificationCoreStatus,
+    diagnostic: (window._ccSafetyMigrations.diagnostics() || [])
+      .filter((d) => d.migration === 'classificationCoreV2').at(-1) || null,
+  }));
+  if (!classificationGate.status || classificationGate.status.active !== true ||
+      !classificationGate.status.validation || classificationGate.status.validation.equal !== true)
+    fail('classificationCoreV2 did not pass its legacy-equivalence gate');
+  if (!classificationGate.diagnostic || classificationGate.diagnostic.outcome !== 'candidate')
+    fail('classificationCoreV2 did not publish a passing runtime diagnostic');
+  console.log('SMOKE OK — classificationCoreV2 preserves deterministic triage mutations');
 
   const rendererGate = await page.evaluate(() => ({
     path: window._ccRendererMigration && window._ccRendererMigration.path,

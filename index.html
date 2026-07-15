@@ -660,6 +660,7 @@
 <script src="clash-assignment-core.js"></script>
 <script src="clash-identity-core.js"></script>
 <script src="clash-reconciliation-core.js"></script>
+<script src="clash-classification-core.js"></script>
 <script>
 window.addEventListener('error', function(e) {
   console.error('[ClashControl] Uncaught error:', e.error || e.message);
@@ -6553,7 +6554,7 @@ function startApp() {
 
   // ── AI Auto-Classifier ─────────────────────────────────────────── INTERNALS.md §10
 
-  function classifyClashes(clashes) {
+  function _ccLegacyClassifyClashes(clashes) {
     var FP_TYPES = ['IfcOpeningElement','IfcOpeningStandardCase','IfcSpace','IfcVirtualElement'];
     var STRUCTURAL_DISC = 'Structural';
     var INSULATION_MAT = 'insulation';
@@ -6672,6 +6673,59 @@ function startApp() {
       }
     }
   }
+
+  // ── Classification migration gate ─────────────────────────────
+
+  function _ccClassificationFixture() {
+    return [
+      {id:'opening',type:'hard',elemAType:'IfcOpeningElement',elemBType:'IfcWall',disciplines:['Structural','MEP'],point:[0,0,0],elemAStorey:'L1'},
+      {id:'ratio',type:'hard',elemAType:'IfcPipeSegment',elemBType:'IfcWall',_trainFV:{size_ratio:51},disciplines:['MEP','Structural'],point:[2,0,0],elemAStorey:'L1'},
+      {id:'duplicate',type:'duplicate',elemAType:'IfcDuctSegment',elemBType:'IfcBeam',point:[4,0,0],elemAStorey:'L1'},
+      {id:'near',type:'soft',clearanceMm:24,elemAType:'IfcDuctSegment',elemBType:'IfcBeam',disciplines:['MEP','Structural'],point:[6,0,0],elemAStorey:'L1'},
+      {id:'wide',type:'soft',clearanceMm:25,elemAType:'IfcDuctSegment',elemBType:'IfcBeam',disciplines:['MEP','MEP'],point:[8,0,0],elemAStorey:'L1'},
+      {id:'structural',type:'hard',elemAType:'IfcDuctSegment',elemBType:'IfcBeam',disciplines:['MEP','Structural'],point:[10,0,0],elemAStorey:'L1'},
+      {id:'insulation',type:'hard',elemAType:'IfcDuctSegment',elemBType:'IfcBeam',disciplines:['MEP','Structural'],_trainFV:{mat_cat_a:'insulation'},point:[12,0,0],elemAStorey:'L1'},
+      {id:'cluster-a',type:'hard',elemAType:'IfcPipeSegment',elemBType:'IfcSlab',disciplines:['MEP','Structural'],point:[20,0,0],elemAStorey:'L2'},
+      {id:'cluster-b',type:'hard',elemAType:'IfcPipeSegment',elemBType:'IfcSlab',disciplines:['MEP','Structural'],point:[20.5,0,0],elemAStorey:'L2'},
+      {id:'preclassified',type:'hard',aiSeverity:'info',aiCategory:'manual',aiReason:'kept',elemAType:'IfcPipeSegment',elemBType:'IfcSlab',point:[30,0,0],elemAStorey:'L3'}
+    ];
+  }
+
+  // The classifier mutates clash records in place and its output drives saved
+  // review state. Compare the complete mutation against the inline function
+  // once at boot; flag-off never executes candidate code.
+  function _ccValidateClassificationCore(core) {
+    if (!core || core.contractVersion !== 1 || typeof core.classifyClashes !== 'function') {
+      return {equal:false, failures:['contract']};
+    }
+    var failures = [];
+    try {
+      var legacy = _ccClassificationFixture();
+      var candidate = _ccClassificationFixture();
+      var legacyReturn = _ccLegacyClassifyClashes(legacy);
+      var candidateReturn = core.classifyClashes(candidate);
+      if (legacyReturn !== candidateReturn) failures.push('return-value');
+      if (JSON.stringify(legacy) !== JSON.stringify(candidate)) failures.push('mutated-output');
+    } catch (error) {
+      failures.push('exception:'+String(error && error.message || error));
+    }
+    return {equal:failures.length===0, failures:failures};
+  }
+
+  var _ccClassificationCoreCandidate = window._ccClashClassificationCore || null;
+  var _ccClassificationCoreRequested = !!(window._ccSafetyMigrations && window._ccSafetyMigrations.isEnabled('classificationCoreV2'));
+  var _ccClassificationCoreValidation = _ccClassificationCoreRequested ?
+    _ccValidateClassificationCore(_ccClassificationCoreCandidate) : {equal:false, failures:['flag-off']};
+  var _ccClassificationCoreActive = _ccClassificationCoreRequested && _ccClassificationCoreValidation.equal === true;
+  if (_ccClassificationCoreRequested && window._ccSafetyMigrations && window._ccSafetyMigrations.record) {
+    window._ccSafetyMigrations.record({migration:'classificationCoreV2', outcome:_ccClassificationCoreActive?'candidate':'fallback', comparison:_ccClassificationCoreValidation});
+  }
+  function classifyClashes(clashes) {
+    return _ccClassificationCoreActive ?
+      _ccClassificationCoreCandidate.classifyClashes(clashes) :
+      _ccLegacyClassifyClashes(clashes);
+  }
+  window._ccClassificationCoreStatus = Object.freeze({requested:_ccClassificationCoreRequested, active:_ccClassificationCoreActive, validation:_ccClassificationCoreValidation});
 
   // ── Save / Load Project ────────────────────────────────────────
 
