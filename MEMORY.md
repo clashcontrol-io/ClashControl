@@ -10,7 +10,7 @@
 <!-- BEGIN:project-state -->
 ## Project State
 
-**Version:** 6.0.0 (2026-07-15) — daily-sync was silently crashing on MEMORY.md's own prose (see Known Issues); this line was stale for a month as a direct result, now corrected by hand.
+**Version:** 6.1.1 (2026-07-16) — daily-sync was silently crashing on MEMORY.md's own prose (see Known Issues); this line was stale for a month as a direct result, now corrected by hand.
 
 **Live features (all working):**
 - Mesh-based clash detection engine: AABB broad-phase + BVH tri-tri narrow-phase (Möller–Trumbore), optional `_ccWasmIntersect`/`_ccWasmMinDist` WASM accelerators; default clash matrix (skips same-discipline pairs, per-element classification, never skips same-model self-clashes) + N×N matrix UI; rules (discipline filters, clearance, group-by); soft/clearance via spatial-hash vertex distance; hard clashes now report a **real (approximate) penetration depth** (`_estimatePenetrationDepthM` — vertex-inside-mesh ray-parity + true closest-point-on-surface, MTD-style, browser only so far) instead of the old tri-pair SAT chord length; optional escalation to `local-engine.js` for the **same** tri-tri+BVH algorithm at native speed (Numba JIT + multiprocess + scipy KD-tree) — not solid boolean ops, and the Python side doesn't have the new depth estimator yet either (see Known Issues / Active Work)
@@ -1075,6 +1075,25 @@ On branch `claude/code-review-quality-IjbhT` (2026-05-28) — code-review qualit
 <!-- END:active-work -->
 
 <!-- BEGIN:session-log -->
+### 2026-07-16
+**Summary:** 9 commit(s) landed (no AI summary — set ANTHROPIC_API_KEY secret for richer entries).
+**Changed:** see commits
+**Notable:** —
+
+<details><summary>Commits</summary>
+
+- 4322123 chore: bump version to 6.1.1
+- da232d9 Inspector: fix &-entity display bug + bounding-box dimensions fallback (#687)
+- cbbeea2 chore: bump version to 6.1.0
+- 6c20fae Add model×model clash matrix to the Conflicts panel (#686)
+- 8d378bd chore: bump version to 6.0.2
+- 1c530c6 Fix: structural clash severity is case-insensitive on discipline (#685)
+- 440fce5 chore: bump version to 6.0.1
+- 525c059 Guarded core-refactor patch train: six default-off extracted clash-pipeline modules (#684)
+- 1cc3733 chore: daily memory sync 2026-07-15
+
+</details>
+
 ### 2026-07-15
 **Summary:** 17 commit(s) landed (no AI summary — set ANTHROPIC_API_KEY secret for richer entries).
 **Changed:** see commits
@@ -1972,20 +1991,12 @@ On branch `claude/code-review-quality-IjbhT` (2026-05-28) — code-review qualit
 - 15546dc chore: daily memory sync 2026-05-16
 
 </details>
-
-### 2026-05-16
-**Summary:** 1 commit(s) landed (no AI summary — set ANTHROPIC_API_KEY secret for richer entries).
-**Changed:** see commits
-**Notable:** —
-
-<details><summary>Commits</summary>
-
-- 65e7755 chore: daily memory sync 2026-05-15
-
-</details>
 <!-- END:session-log -->
 
 <!-- BEGIN:cleanup-log -->
+### 2026-07-16 — pruned session entry 2026-05-16
+**Reason:** Entry is older than 60 days.
+
 ### 2026-07-15 — pruned session entry 2026-05-15
 **Reason:** Entry is older than 60 days.
 
