@@ -110,6 +110,40 @@ Things to be careful about. Do not remove without a good reason — add a note i
 Update this section at the start and end of each session.
 Mark completed items with ~~strikethrough~~ and date, then let the daily sync archive them.
 
+~~**External (GPT) rewrite package reviewed, adjusted, and merged + UI plan critically consolidated**
+(branch `claude/review-rewrite-ui-plan-tfasne`, 2026-07-16)~~ — the user supplied a GPT-authored
+"local rewrite candidate" ZIP (baseline `018c679`, exactly this HEAD) and a UI improvement plan.
+Adopted after line-by-line diff review (~340-line index.html diff + cc-runtime.js + sw.js + tests):
+explicit `cc-runtime.js` runtime module (registry / deduplicating script loader / load coordinator),
+coordinator-based load lifecycle replacing the `_lazyWorkersActive`/`_chainEndFired` counter pair,
+true on-demand loading for smart-bridge + openaec-bridge (placeholder defs in the Integrations panel,
+`window._ccEnsureAddon(id)`, SW precache dropped + runtime-cached after first use), `defer` on the
+nine migration-helper scripts, 500→120 ms completion dwell, per-mesh `_styleMats`/`_edges` disposal on
+model unload/replace (verified per-mesh, NOT the shared #572 phong cache — that must never be disposed
+per-mesh), centralized section-cut-line disposal (also fixes a rebuild-path geometry leak), extended
+smoke (cancel / forced worker-fallback / lazy-addon load once) + `perf-local.mjs` / `memory-local.mjs`
+probes. **Three real defects found in review and fixed before merge** (details in `REWRITE_UI_PLAN.md`):
+(1) lazy activation silently skipped `def.onEnable` — the Integrations panel read the def synchronously,
+so first-ever Smart Bridge Enable would never kick off the Connector download/connect; `_ccActivateAddon`'s
+lazy branch now resolves with the real def and the panel fires `onEnable` after it settles (verified in
+real Chromium end-to-end); (2) the `defer` switch made Chromium's preload scanner deterministically fetch
+the literal URL `${vp.snapshot}` out of an htm template in the inline script (404 console noise; same bug
+class as the earlier `sn.img` fix; baseline already fired it intermittently) — fixed all four
+`<img src=${…}` htm sites with `\x3Cimg` (cooked string identical for the hand-written htm parser, which
+consumes cooked statics — verified; raw bytes hide the tag from the scanner); (3) dead `loadDeferred`
+wrapper removed + openaec placeholder description aligned with the real def. **Rule going forward:** any
+core read of a lazily-loaded addon's state slice (`s.smartBridge`, `s.openaecBridge`) must stay
+null-guarded — `initState` only merges after first activation now (all current reads audited, guarded).
+Verified: 535/535 unit tests + FULL real-Chromium smoke green in this sandbox (offline CDN mirror via
+`CC_BROWSER_OFFLINE_DEPS=1` + npm-pinned react/three/web-ifc etc. + `/opt/pw-browsers/chromium` —
+this now works in the CCR sandbox, note for future sessions). GPT's benchmark read critically: the
+headline −30% end-to-end is mostly the cosmetic dwell removal + WASM-first ordering; the −22.3% transfer
+is real (unused smart-bridge/openaec bytes); heap +4.1% is non-forced-GC noise. The UI plan's core
+diagnosis verified against code (VirtualList idle-reveals to FULL length — real 50k-row cost; ≤2000
+grouping guard real; history constraints corroborated) and was adopted as roadmap with re-prioritization
+(measurement harness → windowed list → empty-states/consent → operation feedback as coordinator consumer
+→ toolbar/panels/mobile → modal/a11y). Full consolidated 12-step plan in `REWRITE_UI_PLAN.md`.
+
 ~~**Guarded core-refactor patch train ported to main** (branch `claude/cc-repo-code-review-gk4421`, 2026-07-15)~~ —
 six externally-authored patches (Codex) extracting discipline / assignment / identity / reconciliation /
 classification / project-codec logic into standalone modules behind default-off `ccSafety` flags with boot-time

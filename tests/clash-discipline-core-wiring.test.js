@@ -26,7 +26,7 @@ function adapterWindow(candidate, enabled) {
 function el(type) { return { props: { ifcType: type } }; }
 
 test('discipline module loads before the application and is precached for offline use', () => {
-  const helper = source.indexOf('<script src="clash-discipline-core.js"></script>');
+  const helper = source.indexOf('<script src="clash-discipline-core.js" defer></script>');
   const main = source.indexOf('window.onload = function() {');
   assert.ok(helper >= 0 && main > helper);
   for (const file of ['safety-migrations.js', 'section-clipping.js', 'renderer-contract.js', 'clash-discipline-core.js']) {

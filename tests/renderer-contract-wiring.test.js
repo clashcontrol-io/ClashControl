@@ -33,7 +33,7 @@ test('candidate receives a legacy callback and records its migration outcome', (
 });
 
 test('renderer contract helper loads before the app and exposes a runtime snapshot', () => {
-  const helper = source.indexOf('<script src="renderer-contract.js"></script>');
+  const helper = source.indexOf('<script src="renderer-contract.js" defer></script>');
   const main = source.indexOf('window.onload = function() {');
   assert.ok(helper >= 0 && main > helper);
   assert.match(source, /window\._ccRendererContractSnapshot = window\._ccRendererContract\.snapshot/);

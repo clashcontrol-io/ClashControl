@@ -30,7 +30,7 @@ function sample(id, a, b, extra) {
 }
 
 test('reconciliation helper loads before the app and is available offline', () => {
-  const helper = source.indexOf('<script src="clash-reconciliation-core.js"></script>');
+  const helper = source.indexOf('<script src="clash-reconciliation-core.js" defer></script>');
   const main = source.indexOf('window.onload = function() {');
   assert.ok(helper >= 0 && main > helper);
   assert.match(worker, /'clash-reconciliation-core\.js'/);

@@ -365,6 +365,63 @@ try {
   if (!batch.sectionDiag || batch.sectionDiag.outcome !== 'candidate' || batch.sectionDiag.stats.batches < 1)
     fail('BatchedMesh section candidate did not pass its runtime equivalence gate');
   console.log('SMOKE OK — BatchedMesh: ' + batch.items + ' items, hide/style/colors/section all behave per-element');
+
+  // ── Load lifecycle: cancellation must settle the coordinator even when a
+  // worker never emits geometry or properties. This directly covers the gate
+  // that historically left the loading strip stuck after Cancel.
+  await page.evaluate(async () => {
+    window.Worker = class HangingWorker {
+      postMessage() {}
+      terminate() {}
+    };
+    const buf = await (await fetch('/tests/fixtures/smoke-clash.ifc')).arrayBuffer();
+    window.ClashControl.loadFiles([new File([buf], 'cancelled.ifc')]);
+  });
+  await page.waitForFunction(() => window._ccModelLoading === true, null, { timeout: 5_000 });
+  await page.evaluate(() => window._ccAbortLoading());
+  await page.waitForFunction(() => {
+    const coordinator = window._ccRuntime && window._ccRuntime.services.get('loadCoordinator');
+    return window._ccModelLoading === false && coordinator && coordinator.activeCount() === 0;
+  }, null, { timeout: 5_000 }).catch(() => fail('Cancel did not settle the load coordinator'));
+  console.log('SMOKE OK — cancellation releases the lazy-property gate and returns the loader to idle');
+
+  // ── Expected worker failure: the synchronous fallback must complete and
+  // release the same coordinator. The general smoke gate still rejects any
+  // other unexpected fallback.
+  workerFellBack = false;
+  await page.evaluate(async () => {
+    window.Worker = class FailingWorker { constructor() { throw new Error('forced smoke fallback'); } };
+    const buf = await (await fetch('/tests/fixtures/smoke-clash.ifc')).arrayBuffer();
+    window.ClashControl.loadFiles([new File([buf], 'fallback.ifc')]);
+  });
+  await page.waitForFunction(() => {
+    const s = window._ccLatestState;
+    const m = s && s.models.find((x) => x.name.indexOf('fallback') === 0);
+    const coordinator = window._ccRuntime && window._ccRuntime.services.get('loadCoordinator');
+    return m && (m.elements || []).length >= 2 && window._ccModelLoading === false &&
+      coordinator && coordinator.activeCount() === 0;
+  }, null, { timeout: 60_000 }).catch(() => fail('main-thread fallback did not finish cleanly'));
+  if (!workerFellBack) fail('forced Worker constructor failure did not use the visible main-thread fallback');
+  workerFellBack = false;
+  console.log('SMOKE OK — expected worker failure falls back and returns the loader to idle');
+
+  // ── Optional integration code is absent at boot and loaded once on demand.
+  const lazyAddon = await page.evaluate(async () => {
+    const before = window._ccGetAddons()['openaec-bridge'];
+    const beforeScripts = document.querySelectorAll('script[data-cc-feature="openaec-bridge"]').length;
+    await Promise.all([window._ccEnsureAddon('openaec-bridge'), window._ccEnsureAddon('openaec-bridge')]);
+    const after = window._ccGetAddons()['openaec-bridge'];
+    return {
+      placeholder: !!(before && before.lazy),
+      beforeScripts,
+      afterScripts: document.querySelectorAll('script[data-cc-feature="openaec-bridge"]').length,
+      registered: !!(after && !after.lazy)
+    };
+  });
+  if (!lazyAddon.placeholder || lazyAddon.beforeScripts !== 0 || lazyAddon.afterScripts !== 1 || !lazyAddon.registered)
+    fail('optional integration did not follow placeholder → one script → registered lifecycle');
+  console.log('SMOKE OK — inactive integration code loads once, only on demand');
+
   if (errors.length) fail('browser emitted uncaught page or console errors');
   console.log('SMOKE OK — browser completed with no uncaught page or console errors');
 } finally {

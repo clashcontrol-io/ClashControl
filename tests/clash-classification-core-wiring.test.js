@@ -29,7 +29,7 @@ function sample() {
 }
 
 test('classification helper loads before the app and is available offline', () => {
-  const helper = source.indexOf('<script src="clash-classification-core.js"></script>');
+  const helper = source.indexOf('<script src="clash-classification-core.js" defer></script>');
   const main = source.indexOf('window.onload = function() {');
   assert.ok(helper >= 0 && main > helper);
   assert.match(worker, /'clash-classification-core\.js'/);
