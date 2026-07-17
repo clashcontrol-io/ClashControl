@@ -1,5 +1,8 @@
 # Changelog
 
+## v7.0.0 (2026-07-17)
+- Adopt reviewed runtime/loader rewrite tranche + consolidated rewrite/UI plan
+
 ## v6.1.1 (2026-07-15)
 - Inspector: fix &-entity display bug + bounding-box dimensions fallback (#687)
 
