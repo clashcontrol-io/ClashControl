@@ -110,6 +110,26 @@ Things to be careful about. Do not remove without a good reason — add a note i
 Update this section at the start and end of each session.
 Mark completed items with ~~strikethrough~~ and date, then let the daily sync archive them.
 
+~~**REWRITE_UI_PLAN.md phases 2–12 executed and merged**
+(PR #689, branch `claude/review-rewrite-ui-plan-tfasne`, 2026-07-17)~~ — windowed conflict list
+(`ccUiWindowedConflicts`), truthful empty/filtered states (`ccUiEmptyStates`), `OperationCenter`
+(`ccUiOperationCenter`), six clash-pipeline cores promoted to `defaultEnabled:true` (with real
+opt-out support added to `safety-migrations.js`), IFC worker protocol versioning + differential
+worker/fallback fingerprint harness, shared focus-trap hook applied to `ShortcutsModal`
+(`ccUiModalV2`), true first-use lazy loading for `pointcloud.js`/`splat.js`, browser RSS
+instrumentation in `perf-local.mjs`/`memory-local.mjs`, and a pre-decode storey-scope chooser
+(`ccUiStoreyChooser`). 605/605 unit tests + full real-Chromium smoke green; a CodeQL
+`js/path-injection` finding on the new differential-harness test server was fixed (containment
+guard + loopback-only bind, matching sibling harnesses) before merge. **Not done: Phase 8's
+toolbar retrofit** — a live `ResponsiveToolGroup` integration into the toolbar's CAMERA cluster
+hit a real flexbox shrink/overflow bug (confirmed via `getBoundingClientRect`, genuine DOM overlap
+with an adjacent button) that wasn't resolved in time, so the integration was reverted rather than
+shipped broken. The component itself (`ResponsiveToolGroup`, its pure fitting algorithm, 9 passing
+unit tests) is still in `index.html` as unintegrated infrastructure — pick this up as its own
+follow-up rather than re-deriving it. `REWRITE_UI_PLAN.md` itself was deleted after this merge
+(11/12 items done, content preserved in the PR #688/#689 history) — this paragraph is now the
+only record of the outstanding toolbar item.
+
 ~~**External (GPT) rewrite package reviewed, adjusted, and merged + UI plan critically consolidated**
 (branch `claude/review-rewrite-ui-plan-tfasne`, 2026-07-16)~~ — the user supplied a GPT-authored
 "local rewrite candidate" ZIP (baseline `018c679`, exactly this HEAD) and a UI improvement plan.
