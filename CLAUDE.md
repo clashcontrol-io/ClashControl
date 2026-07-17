@@ -105,6 +105,7 @@ CHANGELOG.md                — Version history (auto-updated on commit)
 README.md                   — Project readme with version badge
 DESIGN.md                   — UI/UX design principles
 AS_BUILT_DEVIATION.md       — Scope/roadmap: point-cloud-vs-BIM surface deviation (status, build plan, Wkb/Bbl Borger framing)
+REDUCER_DECOMPOSITION_PLAN.md — Status + narrow-slices plan for separating the reducer's state transitions from its inline side effects (persistence, analytics, cache invalidation, event wiring, loader lifecycle)
 LICENSE                     — License file
 OPEN_SOURCE_COMPONENTS.md   — Third-party library credits
 manifest.json               — PWA manifest for installable app

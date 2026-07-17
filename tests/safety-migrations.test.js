@@ -5,86 +5,79 @@ const safety = require('../safety-migrations');
 
 test.afterEach(() => safety._setFlagsForTest({}));
 
-// REWRITE_UI_PLAN.md Phase 6 promoted the six extracted clash-pipeline
-// modules (disciplineCoreV2/assignmentCoreV2/identityCoreV2/
-// reconciliationCoreV2/classificationCoreV2/projectCodecV2) to
-// defaultEnabled:true — one activation step, after their boot-time
-// legacy-equivalence gate proved solid. Every other migration (the original
-// four render/cache/concurrency ones, plus every new UI-package flag) stays
-// closed until its own activation step.
-const PROMOTED = [
-  'disciplineCoreV2', 'assignmentCoreV2', 'identityCoreV2',
-  'reconciliationCoreV2', 'classificationCoreV2', 'projectCodecV2',
-];
-const STILL_CLOSED = [
+// The six extracted clash-pipeline modules (disciplineCoreV2/
+// assignmentCoreV2/identityCoreV2/reconciliationCoreV2/classificationCoreV2/
+// projectCodecV2) lived here as REWRITE_UI_PLAN.md Phase 6's promoted
+// (defaultEnabled:true) migrations, each gated by a boot-time legacy-
+// equivalence check in index.html. They've since graduated to the sole
+// implementation — the inline legacy code and comparison functions are gone
+// from index.html, and these six flags are gone from the manifest entirely,
+// not left around as dead entries. See MEMORY.md Architecture Decisions.
+//
+// No flag currently defaults to on — the promotion mechanism itself
+// (defaultEnabled:true seeding + the "-name" opt-out token) stays as
+// general, reusable infrastructure for a future migration, so it's still
+// exercised below using an explicit opt-in/opt-out pair rather than a
+// real promoted flag, since none exists right now.
+const ALL_FLAGS = [
   'concurrencyV2', 'geoCacheV8', 'batchedSectionsV2', 'rendererV2',
   'ccUiWindowedConflicts', 'ccUiEmptyStates', 'ccUiOperationCenter',
-  'ccUiConsentBanner', 'ccUiToolbarV2', 'ccUiModalV2', 'ccUiStoreyChooser',
+  'ccUiToolbarV2', 'ccUiModalV2', 'ccUiStoreyChooser',
 ];
 
 test('manifest is exactly the known set, nothing added or removed silently', () => {
-  assert.deepEqual(Object.keys(safety.manifest), [...STILL_CLOSED.slice(0, 4), ...PROMOTED, ...STILL_CLOSED.slice(4)]);
+  assert.deepEqual(Object.keys(safety.manifest), ALL_FLAGS);
 });
 
-test('promoted clash-pipeline cores are enabled by default with no explicit flag', () => {
-  // isEnabled() checks the module-level `flags` snapshot, which afterEach
-  // resets to {} between tests — reseed it the same way boot does (readFlags
-  // with no query/storage input) rather than relying on real-environment
-  // module-load-time state, which doesn't exist under node:test.
+test('every migration stays closed by default — nothing is promoted right now', () => {
   safety._setFlagsForTest(safety.readFlags({ search: '', storage: null }));
-  for (const name of PROMOTED) {
-    assert.equal(safety.manifest[name].defaultEnabled, true, name + ' should be promoted');
-    assert.equal(safety.isEnabled(name), true, name + ' should be enabled with zero explicit flags');
-  }
-});
-
-test('every non-promoted migration (original four + every UI-package flag) stays closed by default', () => {
-  safety._setFlagsForTest(safety.readFlags({ search: '', storage: null }));
-  for (const name of STILL_CLOSED) {
-    assert.equal(safety.manifest[name].defaultEnabled, false, name + ' should not be promoted yet');
+  for (const name of ALL_FLAGS) {
+    assert.equal(safety.manifest[name].defaultEnabled, false, name + ' should not be promoted');
     assert.equal(safety.isEnabled(name), false, name + ' should stay off with zero explicit flags');
   }
   assert.equal(safety.isEnabled('unknownMigration'), false);
 });
 
-test('only known explicit query or storage flags can opt a non-promoted migration in', () => {
+test('only known explicit query or storage flags can opt a migration in', () => {
   const storage = { getItem: () => JSON.stringify({ geoCacheV8: true, typo: true }) };
   const flags = safety.readFlags({
     search: '?ccSafety=concurrencyV2,unknownMigration', storage
   });
-  // Promoted defaults are always present in the result too — they were
-  // never off to begin with, this just confirms they aren't disturbed by
-  // an unrelated explicit opt-in elsewhere.
-  assert.deepEqual(flags, { concurrencyV2: true, geoCacheV8: true, ...Object.fromEntries(PROMOTED.map((n) => [n, true])) });
+  assert.deepEqual(flags, { concurrencyV2: true, geoCacheV8: true });
 });
 
-test('a leading "-" token explicitly turns a promoted (default-on) migration OFF via the query string', () => {
-  const flags = safety.readFlags({ search: '?ccSafety=-disciplineCoreV2', storage: null });
-  assert.equal(flags.disciplineCoreV2, undefined);
-  // Every other promoted migration is untouched.
-  for (const name of PROMOTED.filter((n) => n !== 'disciplineCoreV2')) {
-    assert.equal(flags[name], true);
-  }
+test('a leading "-" token explicitly cancels an earlier bare opt-in token in the same query string', () => {
+  const flags = safety.readFlags({ search: '?ccSafety=concurrencyV2,-concurrencyV2,geoCacheV8', storage: null });
+  assert.equal(flags.concurrencyV2, undefined);
+  assert.equal(flags.geoCacheV8, true);
 });
 
-test('a leading "-" token in a stored array also turns a promoted migration off', () => {
+test('a leading "-" token in a stored array cancels an explicit query-string opt-in', () => {
   const storage = { getItem: () => JSON.stringify(['-assignmentCoreV2']) };
-  const flags = safety.readFlags({ search: '', storage });
-  assert.equal(flags.assignmentCoreV2, undefined);
-  assert.equal(flags.identityCoreV2, true);
+  // assignmentCoreV2 is no longer a known migration (graduated, removed
+  // from the manifest) — the opt-out token for an unknown name is simply
+  // ignored, same as an opt-in token would be. Demonstrate the same
+  // mechanism against a real, currently-known flag instead.
+  const flags = safety.readFlags({ search: '?ccSafety=rendererV2', storage });
+  assert.equal(flags.rendererV2, true, 'storage opt-out only affects the name it names');
+  const storageForReal = { getItem: () => JSON.stringify(['-rendererV2']) };
+  const flags2 = safety.readFlags({ search: '?ccSafety=rendererV2', storage: storageForReal });
+  assert.equal(flags2.rendererV2, undefined);
 });
 
-test('an explicit {name:false} in stored object form turns a promoted migration off, {name:true} turns a closed one on', () => {
+test('an explicit {name:false} in stored object form cancels a query-string opt-in, {name:true} turns another one on', () => {
   const storage = { getItem: () => JSON.stringify({ identityCoreV2: false, concurrencyV2: true }) };
-  const flags = safety.readFlags({ search: '', storage });
+  const flags = safety.readFlags({ search: '?ccSafety=identityCoreV2', storage });
+  // identityCoreV2 is unknown now (graduated away) — the stored {false}
+  // entry for it is inert either way; concurrencyV2's {true} entry is the
+  // meaningful assertion here.
   assert.equal(flags.identityCoreV2, undefined);
   assert.equal(flags.concurrencyV2, true);
-  assert.equal(flags.disciplineCoreV2, true, 'unrelated promoted migrations stay on');
 });
 
 test('an unknown "-name" token is ignored, not an error, and does not touch real flags', () => {
-  const flags = safety.readFlags({ search: '?ccSafety=-unknownMigration,-disciplineCoreV2', storage: null });
-  assert.equal(flags.disciplineCoreV2, undefined);
+  const flags = safety.readFlags({ search: '?ccSafety=-unknownMigration,concurrencyV2', storage: null });
+  assert.equal(flags.concurrencyV2, true);
   assert.equal(Object.prototype.hasOwnProperty.call(flags, 'unknownMigration'), false);
 });
 

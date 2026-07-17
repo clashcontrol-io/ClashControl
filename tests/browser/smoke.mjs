@@ -100,8 +100,15 @@ function fail(msg) {
 
 try {
   // Candidate migrations remain disabled for users, but CI explicitly opts
-  // into all ten paths so none can drift unexercised behind its safety flag.
-  await page.goto('http://127.0.0.1:8765/?ccSafety=concurrencyV2,geoCacheV8,batchedSectionsV2,rendererV2,disciplineCoreV2,assignmentCoreV2,identityCoreV2,reconciliationCoreV2,classificationCoreV2,projectCodecV2', { waitUntil: 'domcontentloaded' });
+  // into every remaining flagged path so none can drift unexercised behind
+  // its safety flag. discipline/assignment/identity/reconciliation/
+  // classification/projectCodec don't appear here anymore — they graduated
+  // from flagged migrations to the sole implementation (see MEMORY.md
+  // Architecture Decisions), so there's no flag left to opt into; their
+  // correctness is exercised unconditionally by the rest of this smoke
+  // (model load -> discipline/identity classify it, detection -> matrix +
+  // reconciliation + classification run, save/load -> projectCodec runs).
+  await page.goto('http://127.0.0.1:8765/?ccSafety=concurrencyV2,geoCacheV8,batchedSectionsV2,rendererV2', { waitUntil: 'domcontentloaded' });
 
   // App mounted (CDN deps + main script executed)
   await page.waitForFunction(
@@ -109,77 +116,23 @@ try {
     null, { timeout: 60_000 }
   ).catch(() => fail('app did not mount within 60s'));
 
-  const disciplineGate = await page.evaluate(() => ({
-    status: window._ccDisciplineCoreStatus,
-    diagnostic: (window._ccSafetyMigrations.diagnostics() || [])
-      .filter((d) => d.migration === 'disciplineCoreV2').at(-1) || null,
+  const gradutedCoresLoaded = await page.evaluate(() => ({
+    discipline: !!(window._ccClashDisciplineCore && window._ccClashDisciplineCore.contractVersion === 1),
+    assignment: !!(window._ccClashAssignmentCore && window._ccClashAssignmentCore.contractVersion === 1),
+    identity: !!(window._ccClashIdentityCore && window._ccClashIdentityCore.contractVersion === 1),
+    reconciliation: !!(window._ccClashReconciliationCore && window._ccClashReconciliationCore.contractVersion === 1),
+    classification: !!(window._ccClashClassificationCore && window._ccClashClassificationCore.contractVersion === 1),
+    projectCodec: !!(window._ccProjectCodec && window._ccProjectCodec.contractVersion === 1),
+    // No flag/status/validation object should exist for any of the six —
+    // graduation means there's nothing left to gate.
+    noLeftoverGates: !window._ccDisciplineCoreStatus && !window._ccAssignmentCoreStatus &&
+      !window._ccIdentityCoreStatus && !window._ccReconciliationCoreStatus &&
+      !window._ccClassificationCoreStatus && !window._ccProjectCodecStatus,
   }));
-  if (!disciplineGate.status || disciplineGate.status.active !== true ||
-      !disciplineGate.status.validation || disciplineGate.status.validation.equal !== true)
-    fail('disciplineCoreV2 did not pass its legacy-equivalence gate');
-  if (!disciplineGate.diagnostic || disciplineGate.diagnostic.outcome !== 'candidate')
-    fail('disciplineCoreV2 did not publish a passing runtime diagnostic');
-  console.log('SMOKE OK — disciplineCoreV2 matches the legacy discipline policy');
-
-  const assignmentGate = await page.evaluate(() => ({
-    status: window._ccAssignmentCoreStatus,
-    diagnostic: (window._ccSafetyMigrations.diagnostics() || [])
-      .filter((d) => d.migration === 'assignmentCoreV2').at(-1) || null,
-  }));
-  if (!assignmentGate.status || assignmentGate.status.active !== true ||
-      !assignmentGate.status.validation || assignmentGate.status.validation.equal !== true)
-    fail('assignmentCoreV2 did not pass its legacy-equivalence gate');
-  if (!assignmentGate.diagnostic || assignmentGate.diagnostic.outcome !== 'candidate')
-    fail('assignmentCoreV2 did not publish a passing runtime diagnostic');
-  console.log('SMOKE OK — assignmentCoreV2 matches the legacy assignment policy');
-
-  const identityGate = await page.evaluate(() => ({
-    status: window._ccIdentityCoreStatus,
-    diagnostic: (window._ccSafetyMigrations.diagnostics() || [])
-      .filter((d) => d.migration === 'identityCoreV2').at(-1) || null,
-  }));
-  if (!identityGate.status || identityGate.status.active !== true ||
-      !identityGate.status.validation || identityGate.status.validation.equal !== true)
-    fail('identityCoreV2 did not pass its legacy-equivalence gate');
-  if (!identityGate.diagnostic || identityGate.diagnostic.outcome !== 'candidate')
-    fail('identityCoreV2 did not publish a passing runtime diagnostic');
-  console.log('SMOKE OK — identityCoreV2 preserves UniqueId-first clash identity');
-
-  const reconciliationGate = await page.evaluate(() => ({
-    status: window._ccReconciliationCoreStatus,
-    diagnostic: (window._ccSafetyMigrations.diagnostics() || [])
-      .filter((d) => d.migration === 'reconciliationCoreV2').at(-1) || null,
-  }));
-  if (!reconciliationGate.status || reconciliationGate.status.active !== true ||
-      !reconciliationGate.status.validation || reconciliationGate.status.validation.equal !== true)
-    fail('reconciliationCoreV2 did not pass its legacy-equivalence gate');
-  if (!reconciliationGate.diagnostic || reconciliationGate.diagnostic.outcome !== 'candidate')
-    fail('reconciliationCoreV2 did not publish a passing runtime diagnostic');
-  console.log('SMOKE OK — reconciliationCoreV2 preserves review-state carry-over');
-
-  const classificationGate = await page.evaluate(() => ({
-    status: window._ccClassificationCoreStatus,
-    diagnostic: (window._ccSafetyMigrations.diagnostics() || [])
-      .filter((d) => d.migration === 'classificationCoreV2').at(-1) || null,
-  }));
-  if (!classificationGate.status || classificationGate.status.active !== true ||
-      !classificationGate.status.validation || classificationGate.status.validation.equal !== true)
-    fail('classificationCoreV2 did not pass its legacy-equivalence gate');
-  if (!classificationGate.diagnostic || classificationGate.diagnostic.outcome !== 'candidate')
-    fail('classificationCoreV2 did not publish a passing runtime diagnostic');
-  console.log('SMOKE OK — classificationCoreV2 preserves deterministic triage mutations');
-
-  const projectCodecGate = await page.evaluate(() => ({
-    status: window._ccProjectCodecStatus,
-    diagnostic: (window._ccSafetyMigrations.diagnostics() || [])
-      .filter((d) => d.migration === 'projectCodecV2').at(-1) || null,
-  }));
-  if (!projectCodecGate.status || projectCodecGate.status.active !== true ||
-      !projectCodecGate.status.validation || projectCodecGate.status.validation.equal !== true)
-    fail('projectCodecV2 did not pass its legacy-equivalence gate');
-  if (!projectCodecGate.diagnostic || projectCodecGate.diagnostic.outcome !== 'candidate')
-    fail('projectCodecV2 did not publish a passing runtime diagnostic');
-  console.log('SMOKE OK — projectCodecV2 preserves manual export/import mapping');
+  for (const [name, loaded] of Object.entries(gradutedCoresLoaded)) {
+    if (!loaded) fail('graduated core module check failed: ' + name);
+  }
+  console.log('SMOKE OK — all six graduated clash-pipeline cores are loaded with no leftover flag/gate');
 
   const rendererGate = await page.evaluate(() => ({
     path: window._ccRendererMigration && window._ccRendererMigration.path,
@@ -227,6 +180,69 @@ try {
   });
   if (workerFellBack) fail('IFC worker crashed and fell back to the main-thread parser — check the stringified worker source for missing functions');
   console.log('SMOKE OK — model loaded, detection found ' + detected + ' clash(es), state updated; first: ' + sample);
+
+  // ── Settings modal: Claude-Desktop-style tabbed layout (8 tabs, including
+  // the Advanced/tolerance-matrix tab that was previously defined but never
+  // rendered anywhere — AdvancedSettingsTab existed with zero call sites
+  // until this session wired it in as a real tab).
+  await page.evaluate(() => window._ccDispatch({ t: 'SETTINGS', v: true }));
+  await page.waitForSelector('#cc-settings-title');
+  const expectedTabs = ['General', 'Measurement', 'Walk mode', 'Privacy & Data', 'Shared Project', 'AI', 'Issues', 'Advanced'];
+  const tabRail = page.getByRole('tablist', { name: 'Settings sections' });
+  const tabLabels = await tabRail.getByRole('tab').allTextContents();
+  if (JSON.stringify(tabLabels) !== JSON.stringify(expectedTabs)) fail('settings tab rail mismatch: ' + JSON.stringify(tabLabels));
+  if (!(await page.getByText('Auto fly-to on click').isVisible())) fail('General settings tab did not show Viewer content by default');
+  const settingsMarkers = {
+    'Measurement': 'Display units', 'Walk mode': 'Eye height', 'Privacy & Data': 'Anonymous data sharing',
+    'Shared Project': 'Your name', 'AI': 'AI Status', 'Issues': 'Default Priority', 'Advanced': 'Type-Pair Tolerances',
+  };
+  for (const [tab, marker] of Object.entries(settingsMarkers)) {
+    await tabRail.getByRole('tab', { name: tab, exact: true }).click();
+    await page.waitForTimeout(30);
+    if (!(await page.getByText(marker).first().isVisible())) fail(`settings "${tab}" tab did not show its marker content`);
+    if (await page.getByText('Auto fly-to on click').count()) fail(`settings "${tab}" tab leaked General content`);
+  }
+  // Advanced tab's toggle actually flips the pref and reveals the matrix control.
+  await page.getByText('Custom tolerances per type pair').locator('xpath=../following-sibling::*[1]').click();
+  await page.waitForTimeout(100);
+  if (!(await page.getByText(/tolerance matrix/i).isVisible())) fail('settings Advanced tab tolerance toggle did not reveal the matrix control');
+  await page.keyboard.press('Escape');
+  await page.waitForTimeout(50);
+  if (await page.locator('#cc-settings-title').count()) fail('Escape did not close the settings modal');
+  console.log('SMOKE OK — settings modal: all 8 tabs render distinct content, Advanced tab is wired and interactive');
+
+  // ── Export view as PDF: the markup (redline) SVG overlay must survive
+  // into the popup window. _ccExportViewPDF composites a raster screenshot
+  // with a *clone* of the live markup <svg>, found via
+  // renderer.domElement.parentElement.parentElement — the canvas's real
+  // grandparent (canvas -> ref div Three.js appends into -> Viewer's outer
+  // div, which is also the svg's direct parent). A one-level-shallow lookup
+  // silently found nothing and shipped PDFs with the redlines missing.
+  const svgSiblingOk = await page.evaluate(() => {
+    const canvas = document.querySelector('canvas');
+    const root = canvas && canvas.parentElement && canvas.parentElement.parentElement;
+    return !!(root && root.querySelector(':scope > svg'));
+  });
+  if (!svgSiblingOk) fail('markup svg overlay is not two levels up from the canvas — export-PDF svg capture would find nothing');
+  await page.evaluate(() => {
+    const canvas = document.querySelector('canvas');
+    const svg = canvas.parentElement.parentElement.querySelector(':scope > svg');
+    const rect = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
+    rect.setAttribute('x', '50'); rect.setAttribute('y', '50'); rect.setAttribute('width', '120'); rect.setAttribute('height', '80');
+    rect.setAttribute('stroke', '#dc2626'); rect.setAttribute('fill', 'none'); rect.setAttribute('data-test-marker', 'smoke-rect');
+    svg.appendChild(rect);
+  });
+  const [pdfPopup] = await Promise.all([
+    page.waitForEvent('popup'),
+    page.evaluate(() => window._ccExportViewPDF({ title: 'smoke test' })),
+  ]);
+  await pdfPopup.waitForLoadState('domcontentloaded');
+  await page.waitForTimeout(200);
+  if (!(await pdfPopup.evaluate(() => !!document.querySelector('[data-test-marker="smoke-rect"]')))) {
+    fail('export-view-as-PDF popup is missing the markup svg overlay content');
+  }
+  await pdfPopup.close();
+  console.log('SMOKE OK — export view as PDF carries the markup svg overlay into the popup');
 
   // ── Hard-refresh/cache restore: the five-hotfix "spikey model" incident
   // only appeared after reload, never on a fresh parse. Keep the real IDB +

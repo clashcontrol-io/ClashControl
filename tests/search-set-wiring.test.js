@@ -115,7 +115,11 @@ test('the form refuses to save with zero criteria (client-side guard, not just a
 });
 
 test('saveProject includes searchSets and loadProject restores them via ADD_SEARCHSET', () => {
-  assert.ok(/searchSets: s\.searchSets\|\|\[\]/.test(src), 'saveProject must serialize searchSets');
-  assert.ok(/data\.searchSets\.forEach\(function\(qs\)\{ dispatch\(\{t:'ADD_SEARCHSET', v:qs\}\); \}\)/.test(src), 'the legacy restore adapter must restore each saved search set');
+  // saveProject/loadProject now delegate to project-codec.js (projectCodecV2
+  // graduated to the sole implementation — see MEMORY.md Architecture
+  // Decisions); the serialize/restore assertions check the module directly.
+  const codecSrc = fs.readFileSync(path.join(__dirname, '..', 'project-codec.js'), 'utf8');
+  assert.ok(/searchSets: state\.searchSets \|\| \[\]/.test(codecSrc), 'project-codec.js must serialize searchSets');
+  assert.ok(/data\.searchSets\.forEach\(function\(searchSet\) \{ dispatch\(\{t:actions\.ADD_SEARCHSET, v:searchSet\}\); \}\)/.test(codecSrc), 'project-codec.js must restore each saved search set');
   assert.ok(/_ccRestoreProject\(data, d\)/.test(src), 'loadProject must route parsed data through the guarded restore adapter');
 });

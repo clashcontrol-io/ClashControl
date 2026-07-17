@@ -12,27 +12,20 @@
     geoCacheV8: Object.freeze({ fallback: 'cold-parse', defaultEnabled: false }),
     batchedSectionsV2: Object.freeze({ fallback: 'legacy', defaultEnabled: false }),
     rendererV2: Object.freeze({ fallback: 'legacy', defaultEnabled: false }),
-    // REWRITE_UI_PLAN.md Phase 6: promoted to default-on, one activation
-    // step, after the boot-time legacy-equivalence gate (each module's own
-    // _cc*CoreRequested/*Active/*Validation triplet in index.html) proved
-    // solid across 550+ unit tests, real-IFC browser smoke, and the fixture
-    // sweep recorded in MEMORY.md (#684/#687 patch train). Each module still
-    // independently self-falls-back to the inline legacy code within the
-    // SAME session if its own boot-time comparison ever mismatches — this
-    // flip changes the default a user starts with, not the safety net.
-    disciplineCoreV2: Object.freeze({ fallback: 'legacy', defaultEnabled: true }),
-    assignmentCoreV2: Object.freeze({ fallback: 'legacy', defaultEnabled: true }),
-    identityCoreV2: Object.freeze({ fallback: 'legacy', defaultEnabled: true }),
-    reconciliationCoreV2: Object.freeze({ fallback: 'legacy', defaultEnabled: true }),
-    classificationCoreV2: Object.freeze({ fallback: 'legacy', defaultEnabled: true }),
-    projectCodecV2: Object.freeze({ fallback: 'legacy', defaultEnabled: true }),
+    // discipline/assignment/identity/reconciliation/classification/
+    // projectCodec V2 lived here as promoted (defaultEnabled:true) flagged
+    // migrations, each gated by a boot-time legacy-equivalence check in
+    // index.html. Graduated to the sole implementation after a soak period —
+    // the six inline legacy implementations and their comparison functions
+    // are gone from index.html, not just unreachable, so there is nothing
+    // left for these six flags to gate. See MEMORY.md Architecture
+    // Decisions for the graduation history.
     // UI-package flags (REWRITE_UI_PLAN.md). Behavioral replacements, not
     // equivalence migrations — no guardedAsync comparison, just a render-time
     // isEnabled() branch. Each keeps its legacy path fully intact.
     ccUiWindowedConflicts: Object.freeze({ fallback: 'legacy', defaultEnabled: false }),
     ccUiEmptyStates: Object.freeze({ fallback: 'legacy', defaultEnabled: false }),
     ccUiOperationCenter: Object.freeze({ fallback: 'legacy', defaultEnabled: false }),
-    ccUiConsentBanner: Object.freeze({ fallback: 'legacy', defaultEnabled: false }),
     ccUiToolbarV2: Object.freeze({ fallback: 'legacy', defaultEnabled: false }),
     ccUiModalV2: Object.freeze({ fallback: 'legacy', defaultEnabled: false }),
     ccUiStoreyChooser: Object.freeze({ fallback: 'legacy', defaultEnabled: false })

@@ -62,6 +62,7 @@ These are permanent. Do not remove entries — add new ones when significant dec
 | 2026-04-10 | View cube uses `camera.quaternion.copy().invert()` | Camera-position approach causes left/right mirroring; quaternion inversion is correct |
 | 2026-04-13 | `processNLCommandWithLLM` wraps `/smart` command | Ensures async handling; keeps NL pipeline consistent |
 | 2026-04-15 | 2D sheet uses polygon-face section cut | Correct floor-plan geometry without full mesh boolean ops |
+| 2026-07-17 | Six extracted clash-pipeline cores (discipline/assignment/identity/reconciliation/classification/projectCodec) graduated from flagged migrations to the sole, unconditional implementation — inline legacy code, boot-time equivalence checks, and opt-out flags deleted entirely from `index.html`/`safety-migrations.js` | After a soak period at `defaultEnabled:true` with zero drift (550+ unit tests, repeated real-Chromium smoke), the per-boot dual-run validation was pure overhead with no remaining doubt to resolve; a missing module now fails loudly (`TypeError`) rather than silently degrading — deliberate, since there is no fallback left to degrade to |
 <!-- END:architecture-decisions -->
 
 <!-- BEGIN:known-issues -->
@@ -102,6 +103,45 @@ Things to be careful about. Do not remove without a good reason — add a note i
   Möller tri-tri + BVH algorithm as the browser (`intersection.py`/`sweep.py`), just faster (Numba JIT,
   multiprocess, scipy KD-tree). Escalating to it today buys speed, not more-correct geometry. See the
   corrected Architecture Decisions row above and `IMPROVEMENT_PLAN.md` CW-1.
+- **IFC worker static-file extraction — research finding (2026-07-17), not yet attempted.** The
+  `.toString()`-assembled worker (`_getIFCWorkerUrl`) isn't accidental complexity — it's the specific
+  workaround for "no build step + Worker/main-thread code must never drift" in a single-file app. The
+  worker Blob concatenates `.toString()` of ~11 functions (`_prefetchWebIfcWasm`, `safeStr`,
+  `_extractAxis`, `extractProperties`, `extractStoreys`, `extractSpatialHierarchy`,
+  `resolveMaterialName`, `buildMaterialMap`, `buildPropertyMap`, `buildRelationsMap`) plus 3
+  JSON-serialized constants (`IFC`, `IFC_TYPE_NAMES`, `_SPATIAL_CONTAINERS`), then wraps
+  `_ifcWorkerMain` (the postMessage protocol handler) around them. The main-thread fallback
+  (`loadIFC`, a separate function) calls the SAME function objects directly (same scope, no
+  stringification needed) — the `.toString()` trick is what guarantees the worker's copy can never
+  hand-drift from the fallback's copy, since it's literally serializing the same source.
+  **This means extraction is exactly the pattern already proven for the six clash-pipeline cores**
+  (`clash-discipline-core.js` etc., see the graduation entry above): move the shared functions to a
+  plain static file loaded via `<script defer>` for the main thread AND `importScripts()` inside the
+  worker (classic, non-module workers — which this codebase already uses — support this natively, no
+  bundler needed). `_ifcWorkerMain` itself (the small orchestration/protocol part) could stay inline
+  or extract too. **Caveat that raises the stakes:** these functions are NOT worker-exclusive utilities
+  — `safeStr` alone has 23 call sites elsewhere in `index.html`, and the others have 2-6 each — so this
+  is a real cross-cutting extraction, not an isolated one. Repo history offers little extra signal here
+  (shallow clone, ~173 commits visible, real history goes back much further); the reasoning above comes
+  from reading the actual current code, not archived discussion. Phase 7's protocol versioning +
+  differential fingerprint harness (`tests/browser/ifc-worker-fallback-differential.mjs`) is the
+  correct, already-built prerequisite — expand its coverage (multi-storey, quantities, unit conversion,
+  georeferencing, malformed records, cancellation) before attempting the actual extraction, not instead
+  of it. Do not attempt this without that expanded coverage — `CLAUDE.md` calls the IFC loader out
+  explicitly as complex-but-working, not to be touched without good reason.
+- **50MB-class IFC load: measured, not guessed (2026-07-17).** Generated a synthetic 53.67MB IFC-SPF
+  fixture (`tests/fixtures/generate-synthetic-ifc.js`, `storeyCount:10, wallsPerStorey:14567` → 145,670
+  `IfcWall` elements) and drove a real load through the actual UI in real Chromium (RSS via `/proc/pid/status`,
+  same instrumentation as Phase 11's `perf-local.mjs`/`memory-local.mjs`). Result: **174s dispatch→first-mesh,
+  180s to decode-stable, RSS peaked ~2.56GB (from a 358MB boot baseline), zero console/page errors** — the
+  load completes correctly, just slowly, and stays resident at ~2.4GB after settling (not a leak — flat
+  across a post-settle 2s window). **Caveat, important:** this is a worst-case *entity-count* stress test —
+  145,670 trivial, near-identical wall entities — not a representative real-world 50MB architectural IFC,
+  which would typically carry far fewer (thousands, not hundreds of thousands), richer elements with deeper
+  property sets, and hit a very different part of the cost curve (property/relation graph size vs. element
+  count). Don't quote the 174s/2.5GB numbers as "ClashControl's 50MB performance" without that caveat — they
+  characterize element-count scaling specifically. Re-run via the same fixture generator (params are the
+  only thing to change) for future comparison rather than building a new harness.
 <!-- END:known-issues -->
 
 <!-- BEGIN:active-work -->
@@ -109,6 +149,95 @@ Things to be careful about. Do not remove without a good reason — add a note i
 
 Update this section at the start and end of each session.
 Mark completed items with ~~strikethrough~~ and date, then let the daily sync archive them.
+
+~~**Export-view-as-PDF: markup redlines silently missing from the exported popup** (branch
+`claude/findings-and-plan`, 2026-07-17)~~ — found via the user's own live testing on the PR #692 Vercel
+preview (drew a redline rectangle + arrow, exported as PDF, the exported popup showed the clean model with
+no markup at all). Root cause: `window._ccExportViewPDF` (`index.html`) looks for the live markup `<svg>`
+overlay via `renderer.domElement.parentElement.querySelector(':scope > svg')` to clone it into the export
+popup — but the canvas's *immediate* parent is the ref `<div>` Three.js appends into
+(`el.appendChild(renderer.domElement)`, `Viewer`'s mount effect); the markup `<svg>` is a **sibling of that
+div**, one level further up, under `Viewer`'s own outer wrapper. The one-level-shallow lookup always
+resolved to `null`, so `svgMarkup` was always `''` — every PDF export silently dropped redlines, this whole
+time. (The separate "Save Viewpoint" feature was unaffected — `_ccSnapshotWithRedlines` bakes markups
+directly into the raster PNG via canvas 2D drawing, a different, correct mechanism.) Fixed by walking up one
+more level (`renderer.domElement.parentElement.parentElement`) before the `:scope > svg` query. Verified by
+reproducing the bug against the pre-fix code first (confirmed the popup really was missing the markup),
+then confirming the fix resolves it — both via a real-Chromium check that injects a labelled test `<rect>`
+into the live markup SVG, triggers the export, and asserts the popup's DOM contains it. Folded into
+`tests/browser/smoke.mjs` (reusing the already-loaded model rather than a second browser session). 605/605
+unit tests + full smoke green.
+
+~~**Reducer/state decomposition — Slice 1 (prefs-persistence consolidation) + full write-up of the rest;
+50MB large-model measurement; Claude-Desktop-style tabbed Settings menu** (branch `claude/findings-and-plan`,
+2026-07-17)~~ — same-day follow-up to the entry below. Reducer decomposition: consolidated ~8 duplicated
+inline `try{localStorage.setItem(...)}catch(e){}` reducer case branches onto the already-existing
+`_ccPersistUI` helper (first draft wrongly introduced a new `prefs-persistence.js` file before noticing the
+existing helper already covered the shape — reverted, consolidated in place instead); `UPD_PREFS`'s inline
+key array became the named `PERSISTED_PREF_KEYS` constant; `TRAINING_MODE`'s raw `'1'`/`'0'` format
+deliberately left untouched (folding it into the JSON-shaped helper would silently change the stored
+format for existing users). Verified with a new characterization test
+(`tests/prefs-persistence-consolidation.test.js`) plus a real-browser dispatch-and-read-`localStorage`
+check. Full remaining scope (cache invalidation, `_gcEvent` analytics reach, `INIT`-side persistence
+reads, IndexedDB, event wiring, loader/worker lifecycle, then finally the reducer's own transition logic)
+written up in `REDUCER_DECOMPOSITION_PLAN.md`, ordered by risk × blast-radius with explicit standing
+rules (characterization tests first, real-browser verification after every slice, don't add a new
+file/abstraction without checking for an existing fit, one area per slice). Large-model measurement:
+see the 2026-07-17 Known Issues entry above — 174s/2.5GB peak RSS for a 145,670-element synthetic
+53.67MB fixture, explicitly caveated as entity-count stress testing, not representative of a typical
+real-world 50MB file. **Settings menu retrofit** (a standing, previously-unfulfilled request): `SettingsModal`
+(`index.html`, was one long single-scroll list of ~8 `SEC` groupings) is now a left-sidebar tab rail +
+scrolling content pane, matching Claude Desktop's settings layout — General / Measurement / Walk mode /
+Privacy & Data / Shared Project / AI / Issues / Advanced, each tab wrapping its existing section content
+in a `${activeTab==='x' && html\`<${React.Fragment}>...\`}` conditional (no section content itself changed,
+only the chrome around it). The "Advanced" tab wires in `AdvancedSettingsTab` (the type-pair tolerance
+matrix) — that component existed fully built with zero call sites anywhere in the file before this session;
+it's real, tested functionality that had simply never been mounted. **Bonus fix found and fixed while
+testing this in a real browser with no model loaded:** `WelcomePopup`'s ("Open a model." empty-state) fixed
+full-viewport wrapper used the same `zIndex:50` as every modal's `S_BACKDROP`; same-z-index ties resolve by
+DOM order, and the welcome card's wrapper happened to win, silently eating clicks meant for the Settings
+modal (and, by extension, presumably any modal) whenever it was showing underneath — verified this predates
+this session's changes by running the same real-browser click-interception check against the last committed
+`index.html`. Fixed by dropping `WelcomePopup` to `zIndex:20` (still above ambient canvas-level overlays,
+which top out around `zIndex:11`, but below every modal). Verified: 605/605 unit tests, full real-Chromium
+smoke (new settings-tabs assertions folded into `tests/browser/smoke.mjs` right after the existing
+model-load step, reusing that session rather than spinning up a second browser) green throughout, plus a
+manual real-browser check at a 375px mobile viewport confirming the modal renders above `WelcomePopup` and
+every tab remains clickable.
+
+~~**Toolbar retrofit fixed and merged; external-review findings fixed; six clash-pipeline cores
+graduated to sole implementation** (branch `claude/findings-and-plan`, 2026-07-17)~~ — follow-up to
+the two entries below. Toolbar: root-caused the "flexbox overlap" that got Phase 8's toolbar retrofit
+reverted — it was a `getBoundingClientRect()` false positive (a child clipped by `overflow:hidden`
+still reports its full unclipped layout geometry; a screenshot showed no actual visual collision) with
+a *real* bug hiding underneath (a bare `minWidth:0` let the group shrink thinner than its own forced-
+visible active item + "More" toggle need, silently making the whole cluster unreachable). Fixed with a
+`worstCaseFloor` constant derived from `items` alone — an interim fix that derived the floor from the
+current render's `fit` decision instead created a closed measurement/render feedback loop that
+permanently disabled shrinking; caught by re-testing and finding the group had stopped collapsing at
+all. Wired into `TopToolbar`'s CAMERA cluster behind `ccUiToolbarV2` (still default off), merged as
+PR #691. External-review findings, each independently verified against the code before fixing: deleted
+the dead `ccUiConsentBanner` flag; memoized the windowed conflict list's row-offset table (was
+recomputed on every scroll-driven render, real avoidable CPU work at 50k+ conflicts —
+`winForceTick`, already bumped exactly when a real height measurement changes, is the correct `useMemo`
+dependency); replaced the storey chooser's `ifcFile.text()` (decoded the WHOLE file into one JS string
+before load — a real 300MB+ memory spike on exactly the large-model case the chooser exists for) with
+`_ccExtractStoreyNamesFromIfcFileIncremental`, a chunked `File.slice()`+`TextDecoder` scan that stops
+early once several chunks add nothing new and never reads past a 64MB ceiling. **Six clash-pipeline
+cores graduated** (discipline/assignment/identity/reconciliation/classification/projectCodec): user
+explicitly authorized removing the fallback safety net after being shown that "legacy" wasn't actually
+dead code — every boot ran a live equivalence check deciding whether the new core was even active, and
+was the real fallback path on any mismatch or opt-out. Deleted all six inline legacy implementations,
+their boot-time comparison functions, and their manifest flags/opt-out tokens entirely — the six
+`clash-*-core.js`/`project-codec.js` modules (already loaded as plain same-origin `<script defer>`,
+not addons) are now the sole, unconditional implementation, called directly with no branching. A
+missing module now throws a real `TypeError` instead of silently degrading — there is no fallback left,
+by design. Test files that extracted the inline legacy code from `index.html` for characterization
+(`discipline-classification.test.js` and others) now `require()` the standalone modules directly
+instead; two fully-redundant ones (`assignment-rules-resolver.test.js`, `clash-reconcile.test.js`) were
+deleted since `clash-assignment-core.test.js`/`clash-reconciliation-core.test.js` already cover the
+same ground against the module. Verified: 601/601 unit tests, full real-Chromium smoke green with the
+six `_ccClash*Core`/`_ccProjectCodec` modules confirmed loaded and zero leftover status/gate objects.
 
 ~~**REWRITE_UI_PLAN.md phases 2–12 executed and merged**
 (PR #689, branch `claude/review-rewrite-ui-plan-tfasne`, 2026-07-17)~~ — windowed conflict list
