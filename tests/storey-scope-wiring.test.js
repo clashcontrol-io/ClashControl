@@ -29,13 +29,53 @@ test('all three load triggers (file input, drag-drop, pending-files) route throu
 });
 
 test('"Load all" (unchanged default) never sets window._ccNextLoadScope', () => {
-  const start = html.indexOf('onConfirm=${function(chosen){');
+  const start = html.indexOf('onConfirm=${function(chosen, autoComplete){');
   const end = html.indexOf('}} />', start);
   const body = html.slice(start, end);
   assert.match(body, /if \(chosen\) window\._ccNextLoadScope = \{ storeys: chosen \};/);
   // The null branch (allChecked) intentionally does nothing to the scope —
   // confirmed by there being exactly one assignment, gated on `chosen`.
   assert.equal((body.match(/window\._ccNextLoadScope\s*=/g) || []).length, 1);
+});
+
+test('background-auto-complete only registers when a real partial scope was chosen', () => {
+  // "Load all" (chosen === null) must never register an auto-complete
+  // intent — there is nothing to complete in the background for a full
+  // load. Reuses the exact same tested _ccReloadModelFull the manual
+  // partial-load badge button already calls (see the loadedScope check in
+  // ModelSidebar's per-file load handler) — deliberately NOT a new
+  // incremental/partial loading state (see MEMORY.md's chunk-merge
+  // history for why that distinction matters).
+  const start = html.indexOf('onConfirm=${function(chosen, autoComplete){');
+  const end = html.indexOf('}} />', start);
+  const body = html.slice(start, end);
+  assert.match(body, /if \(chosen && autoComplete\) \{/);
+  assert.match(body, /window\._ccAutoCompleteScopedLoads\.add\(storeyChooser\.ifcFileName\)/);
+});
+
+test('the per-file load handler auto-triggers _ccReloadModelFull only for registered scoped loads, after the IDB persist settles', () => {
+  // Must wait for _persistDone (idbSaveFile) before calling
+  // _ccReloadModelFull, which reads the file straight back out of
+  // IndexedDB — firing synchronously is a real race (found via this
+  // session's own browser test: silent "Original file not found" no-op).
+  assert.match(html, /window\._ccAutoCompleteScopedLoads\.delete\(f\.name\);\s*\n\s*_persistDone\.then\(function\(\) \{\s*\n\s*if \(window\._ccReloadModelFull\) window\._ccReloadModelFull\(modelId\);\s*\n\s*\}\);/);
+  // Still gated behind the loadedScope check — a full (non-scoped) load
+  // must never look at the auto-complete registry at all.
+  assert.match(html, /if \(!\(result\.stats && result\.stats\.loadedScope\)\) \{\s*\n\s*idbSaveGeoCache\(modelId, _geoSerialize\(result\)\);\s*\n\s*\} else if \(window\._ccAutoCompleteScopedLoads/);
+});
+
+test('_ccReloadModelFull skips the scope picker on its own reload (would otherwise re-open it forever)', () => {
+  const start = html.indexOf('window._ccReloadModelFull = function(modelId) {');
+  const end = html.indexOf('\n  };', start);
+  const body = html.slice(start, end);
+  assert.match(body, /window\._ccSkipScopeCheckOnce = true;/);
+});
+
+test('maybeScopeThenProcess honors _ccSkipScopeCheckOnce and consumes it exactly once', () => {
+  const start = html.indexOf('function maybeScopeThenProcess(files) {');
+  const end = html.indexOf('\n    function onFiles', start);
+  const body = html.slice(start, end);
+  assert.match(body, /if \(window\._ccSkipScopeCheckOnce\) \{\s*\n\s*window\._ccSkipScopeCheckOnce = false;\s*\n\s*processFiles\(files\);\s*\n\s*return;\s*\n\s*\}/);
 });
 
 test('StoreyScopeModal reuses the Phase 9 shared focus-trap primitive', () => {
