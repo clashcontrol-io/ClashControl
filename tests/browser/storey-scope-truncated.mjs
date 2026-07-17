@@ -16,7 +16,7 @@ import { createServer } from 'node:http';
 import { readFile } from 'node:fs/promises';
 import { join, normalize } from 'node:path';
 
-const ROOT = '/home/user/ClashControl';
+const ROOT = new URL('../..', import.meta.url).pathname;
 const server = createServer(async (req, res) => {
   const p = req.url.split('?')[0];
   try {
