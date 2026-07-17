@@ -166,3 +166,20 @@ test('parity: windowed row order for expanded groups matches the legacy flatItem
 
   assert.deepEqual(windowedFlat, legacyFlat);
 });
+
+test('offsets table is memoized against a real invalidation signal, not recomputed on every render', () => {
+  // Prefix-sum offsets are O(rows), i.e. proportional to the FULL result
+  // count, not the visible window — recomputing on every scroll-driven
+  // re-render (winScrollTop changes on scroll) was real, avoidable CPU work
+  // at 50k+ conflicts. heightCacheRef is a mutable ref (can't be a useMemo
+  // dependency directly), so winForceTick — the state variable already
+  // bumped exactly when a real row-height measurement changes the cache —
+  // is the correct dependency instead. This locks the fix; a regression
+  // back to a bare `_ccComputeRowOffsets(wRows, heightCacheRef.current)`
+  // call with no useMemo wrapper would fail this.
+  const start = src.indexOf('function VirtualList(props) {');
+  assert.ok(start !== -1, 'VirtualList not found');
+  const end = src.indexOf('\n  function ', start + 30);
+  const body = src.slice(start, end);
+  assert.match(body, /var wOff = useMemo\(function\(\)\{\s*\n\s*return _ccComputeRowOffsets\(wRows, heightCacheRef\.current\);\s*\n\s*\}, \[wRows, winForceTick\]\);/);
+});

@@ -3888,6 +3888,69 @@ function startApp() {
   }
   window._ccExtractStoreyNamesFromIfcText = _ccExtractStoreyNamesFromIfcText;
 
+  // ── Incremental storey scan (ccUiStoreyChooser follow-up) ──
+  // The original pre-decode scan called ifcFile.text() — decoding the WHOLE
+  // file into one JS string before the real load even starts. On a 300MB
+  // IFC that's a 300MB+ transient string (more, since JS strings are UTF-16)
+  // just to regex out storey names — a real, avoidable memory spike on
+  // exactly the large-model case this chooser exists for. This reads the
+  // file in bounded chunks via File.slice()+TextDecoder instead, carrying
+  // any incomplete trailing SPF line across the chunk boundary (an
+  // IFCBUILDINGSTOREY record is one line; splitting it mid-line would
+  // silently miss it), and stops early once several consecutive chunks add
+  // no new storey name — real authoring tools cluster spatial structure
+  // near the top of the file, so scanning deep into bulk geometry/property
+  // data past that point is very likely wasted work. Never reads more than
+  // IFC_STOREY_SCAN_MAX_BYTES regardless of file size. Duck-typed on
+  // `file.size` + `file.slice(start,end).arrayBuffer()` (the real File API
+  // shape) so it's testable with a plain stub, no DOM needed.
+  var IFC_STOREY_SCAN_CHUNK_BYTES = 2 * 1024 * 1024;
+  var IFC_STOREY_SCAN_MAX_BYTES = 64 * 1024 * 1024;
+  var IFC_STOREY_SCAN_IDLE_CHUNKS = 4;
+  function _ccExtractStoreyNamesFromIfcFileIncremental(file) {
+    return new Promise(function(resolve) {
+      var seen = {};
+      var names = [];
+      var carry = '';
+      var offset = 0;
+      var idleChunks = 0;
+      var decoder = new TextDecoder('utf-8');
+      var total = Math.min(file.size, IFC_STOREY_SCAN_MAX_BYTES);
+
+      function scanChunk(text) {
+        var before = names.length;
+        _ccExtractStoreyNamesFromIfcText(text).forEach(function(n) {
+          if (!seen[n]) { seen[n] = true; names.push(n); }
+        });
+        return names.length > before;
+      }
+      function finish() { resolve(names); }
+      function step() {
+        if (offset >= total) { finish(); return; }
+        var end = Math.min(offset + IFC_STOREY_SCAN_CHUNK_BYTES, total);
+        var chunkStart = offset;
+        offset = end;
+        file.slice(chunkStart, end).arrayBuffer().then(function(buf) {
+          var atEnd = offset >= total;
+          var text = carry + decoder.decode(buf, { stream: !atEnd });
+          var lastNewline = text.lastIndexOf('\n');
+          if (lastNewline === -1 || atEnd) {
+            carry = '';
+          } else {
+            carry = text.slice(lastNewline + 1);
+            text = text.slice(0, lastNewline);
+          }
+          var gotNew = scanChunk(text);
+          idleChunks = gotNew ? 0 : idleChunks + 1;
+          if (names.length > 0 && idleChunks >= IFC_STOREY_SCAN_IDLE_CHUNKS) { finish(); return; }
+          step();
+        }).catch(function() { finish(); }); // best-effort — never block a real load on a read error
+      }
+      step();
+    });
+  }
+  window._ccExtractStoreyNamesFromIfcFileIncremental = _ccExtractStoreyNamesFromIfcFileIncremental;
+
   // REWRITE_UI_PLAN.md Phase 7 — bump this whenever a message field this
   // worker sends or receives changes shape. Injected verbatim into the
   // worker's own source (see _getIFCWorkerUrl) so both sides always agree
@@ -17705,8 +17768,14 @@ function startApp() {
       var storeyChooserOn = !!(window._ccSafetyMigrations && window._ccSafetyMigrations.isEnabled('ccUiStoreyChooser'));
       var ifcFile = storeyChooserOn ? files.filter(function(f){ return /\.ifc$/i.test(f.name); })[0] : null;
       if (!ifcFile) { processFiles(files); return; }
-      ifcFile.text().then(function(text){
-        var names = window._ccExtractStoreyNamesFromIfcText ? window._ccExtractStoreyNamesFromIfcText(text) : [];
+      // Incremental chunked scan (File.slice()+TextDecoder) — NOT
+      // ifcFile.text(), which would decode the entire file into one JS
+      // string before the real load even starts. See
+      // _ccExtractStoreyNamesFromIfcFileIncremental's own comment.
+      var scan = window._ccExtractStoreyNamesFromIfcFileIncremental
+        ? window._ccExtractStoreyNamesFromIfcFileIncremental(ifcFile)
+        : Promise.resolve([]);
+      scan.then(function(names){
         if (names.length < 2) { processFiles(files); return; } // nothing meaningful to scope
         setStoreyChooser({ files: files, names: names });
       }).catch(function(){ processFiles(files); }); // pre-scan is best-effort; never block a real load on it failing
@@ -23598,7 +23667,7 @@ function startApp() {
     var scrollRafRef = useRef(null);
     var wScrollSt = useState(0), winScrollTop=wScrollSt[0], setWinScrollTop=wScrollSt[1];
     var wViewSt = useState(600), winViewportH=wViewSt[0], setWinViewportH=wViewSt[1];
-    var wForceSt = useState(0), setWinForceTick=wForceSt[1]; // bumped to force a re-render after a row's real height is measured
+    var wForceSt = useState(0), winForceTick=wForceSt[0], setWinForceTick=wForceSt[1]; // bumped to force a re-render after a row's real height is measured; also the useMemo dependency that lets the offsets table below skip recomputation on pure-scroll re-renders
     function onWindowedScroll(e) {
       var top = e.target.scrollTop;
       if (scrollRafRef.current) return;
@@ -24095,7 +24164,19 @@ function startApp() {
       var wRows = useMemo(function(){
         return _ccBuildConflictRows(items, groups, collapsed, groupLimits, isClusterGroup);
       }, [items, groups, collapsed, groupLimits]);
-      var wOff = _ccComputeRowOffsets(wRows, heightCacheRef.current);
+      // Prefix-sum offsets over the FULL row list — proportional to total
+      // result count, not the visible window. Previously recomputed on every
+      // render, including every scroll-driven re-render (winScrollTop
+      // changes on scroll), which is real, avoidable CPU work at 50k+
+      // conflicts. heightCacheRef is a mutable ref (real per-row DOM
+      // measurements refine it over time), so its own changes can't be a
+      // useMemo dependency directly — winForceTick is the state variable
+      // that's deliberately bumped exactly when the cache changes (see
+      // above), so depending on it here recomputes offsets only on a real
+      // data or height-measurement change, not on every scroll frame.
+      var wOff = useMemo(function(){
+        return _ccComputeRowOffsets(wRows, heightCacheRef.current);
+      }, [wRows, winForceTick]);
       var wWin = _ccComputeVisibleRowWindow(wRows, wOff.offsets, winScrollTop, winViewportH, 600);
       var wVisibleRows = wRows.slice(wWin.startIdx, wWin.endIdx);
       return html`<div ref=${scrollRef} onScroll=${onWindowedScroll} style=${{flex:1,overflowY:'auto',position:'relative'}}>

@@ -19,7 +19,7 @@ const PROMOTED = [
 const STILL_CLOSED = [
   'concurrencyV2', 'geoCacheV8', 'batchedSectionsV2', 'rendererV2',
   'ccUiWindowedConflicts', 'ccUiEmptyStates', 'ccUiOperationCenter',
-  'ccUiConsentBanner', 'ccUiToolbarV2', 'ccUiModalV2', 'ccUiStoreyChooser',
+  'ccUiToolbarV2', 'ccUiModalV2', 'ccUiStoreyChooser',
 ];
 
 test('manifest is exactly the known set, nothing added or removed silently', () => {

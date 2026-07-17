@@ -32,7 +32,6 @@
     ccUiWindowedConflicts: Object.freeze({ fallback: 'legacy', defaultEnabled: false }),
     ccUiEmptyStates: Object.freeze({ fallback: 'legacy', defaultEnabled: false }),
     ccUiOperationCenter: Object.freeze({ fallback: 'legacy', defaultEnabled: false }),
-    ccUiConsentBanner: Object.freeze({ fallback: 'legacy', defaultEnabled: false }),
     ccUiToolbarV2: Object.freeze({ fallback: 'legacy', defaultEnabled: false }),
     ccUiModalV2: Object.freeze({ fallback: 'legacy', defaultEnabled: false }),
     ccUiStoreyChooser: Object.freeze({ fallback: 'legacy', defaultEnabled: false })

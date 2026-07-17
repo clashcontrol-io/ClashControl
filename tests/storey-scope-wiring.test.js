@@ -51,3 +51,19 @@ test('the pre-decode scan never fires for single-storey files (nothing meaningfu
   const body = html.slice(start, end);
   assert.match(body, /if \(names\.length < 2\) \{ processFiles\(files\); return; \}/);
 });
+
+test('the pre-decode scan reads the file incrementally, not via ifcFile.text()', () => {
+  // Regression guard for the memory-spike finding: ifcFile.text() decodes
+  // the WHOLE file into one JS string before the real load even starts —
+  // on a 300MB IFC that's a real, avoidable spike on exactly the large-model
+  // case this chooser exists for. Must go through the chunked
+  // File.slice()+TextDecoder scanner instead.
+  const start = html.indexOf('function maybeScopeThenProcess(files) {');
+  const end = html.indexOf('\n    function onFiles', start);
+  const body = html.slice(start, end);
+  assert.match(body, /window\._ccExtractStoreyNamesFromIfcFileIncremental[\s\S]*?window\._ccExtractStoreyNamesFromIfcFileIncremental\(ifcFile\)/);
+  // (the source's own comment mentions ifcFile.text() by name to explain
+  // what NOT to do — assert against the actual call form, not the bare
+  // substring, so that documentation doesn't trip its own regression guard)
+  assert.doesNotMatch(body, /=\s*ifcFile\.text\(\)|ifcFile\.text\(\)\.then/);
+});
