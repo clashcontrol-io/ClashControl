@@ -12,12 +12,30 @@
     geoCacheV8: Object.freeze({ fallback: 'cold-parse', defaultEnabled: false }),
     batchedSectionsV2: Object.freeze({ fallback: 'legacy', defaultEnabled: false }),
     rendererV2: Object.freeze({ fallback: 'legacy', defaultEnabled: false }),
-    disciplineCoreV2: Object.freeze({ fallback: 'legacy', defaultEnabled: false }),
-    assignmentCoreV2: Object.freeze({ fallback: 'legacy', defaultEnabled: false }),
-    identityCoreV2: Object.freeze({ fallback: 'legacy', defaultEnabled: false }),
-    reconciliationCoreV2: Object.freeze({ fallback: 'legacy', defaultEnabled: false }),
-    classificationCoreV2: Object.freeze({ fallback: 'legacy', defaultEnabled: false }),
-    projectCodecV2: Object.freeze({ fallback: 'legacy', defaultEnabled: false })
+    // REWRITE_UI_PLAN.md Phase 6: promoted to default-on, one activation
+    // step, after the boot-time legacy-equivalence gate (each module's own
+    // _cc*CoreRequested/*Active/*Validation triplet in index.html) proved
+    // solid across 550+ unit tests, real-IFC browser smoke, and the fixture
+    // sweep recorded in MEMORY.md (#684/#687 patch train). Each module still
+    // independently self-falls-back to the inline legacy code within the
+    // SAME session if its own boot-time comparison ever mismatches — this
+    // flip changes the default a user starts with, not the safety net.
+    disciplineCoreV2: Object.freeze({ fallback: 'legacy', defaultEnabled: true }),
+    assignmentCoreV2: Object.freeze({ fallback: 'legacy', defaultEnabled: true }),
+    identityCoreV2: Object.freeze({ fallback: 'legacy', defaultEnabled: true }),
+    reconciliationCoreV2: Object.freeze({ fallback: 'legacy', defaultEnabled: true }),
+    classificationCoreV2: Object.freeze({ fallback: 'legacy', defaultEnabled: true }),
+    projectCodecV2: Object.freeze({ fallback: 'legacy', defaultEnabled: true }),
+    // UI-package flags (REWRITE_UI_PLAN.md). Behavioral replacements, not
+    // equivalence migrations — no guardedAsync comparison, just a render-time
+    // isEnabled() branch. Each keeps its legacy path fully intact.
+    ccUiWindowedConflicts: Object.freeze({ fallback: 'legacy', defaultEnabled: false }),
+    ccUiEmptyStates: Object.freeze({ fallback: 'legacy', defaultEnabled: false }),
+    ccUiOperationCenter: Object.freeze({ fallback: 'legacy', defaultEnabled: false }),
+    ccUiConsentBanner: Object.freeze({ fallback: 'legacy', defaultEnabled: false }),
+    ccUiToolbarV2: Object.freeze({ fallback: 'legacy', defaultEnabled: false }),
+    ccUiModalV2: Object.freeze({ fallback: 'legacy', defaultEnabled: false }),
+    ccUiStoreyChooser: Object.freeze({ fallback: 'legacy', defaultEnabled: false })
   });
   var diagnostics = [];
 
@@ -26,11 +44,14 @@
   }
 
   function _tokens(value) {
+    // String/array forms only ever express additive "turn these on" (a
+    // leading '-' explicitly turns one off — see applyToken in readFlags).
+    // Object form (stored JSON like {name: true/false}) has its own
+    // true/false semantics and is handled separately below, not through
+    // this function.
     if (!value) return [];
     if (Array.isArray(value)) return value.map(String);
-    if (typeof value === 'object') {
-      return Object.keys(value).filter(function(k) { return value[k] === true; });
-    }
+    if (typeof value === 'object') return [];
     return String(value).split(',').map(function(v) { return v.trim(); }).filter(Boolean);
   }
 
@@ -43,20 +64,40 @@
       try { storage = root.localStorage; } catch (_) { storage = null; }
     }
     var enabled = {};
+    // Promoted migrations (defaultEnabled:true) are active for every user by
+    // default — this is what a completed activation step actually flips.
+    // Explicit tokens below always win over the default, in either
+    // direction: a '-name' query/localStorage-array token turns a promoted
+    // migration off; a bare 'name' token turns a non-promoted one on.
+    Object.keys(MANIFEST).forEach(function(name) {
+      if (MANIFEST[name].defaultEnabled === true) enabled[name] = true;
+    });
+    function applyToken(name) {
+      var off = String(name).charAt(0) === '-';
+      var bare = off ? String(name).slice(1) : String(name);
+      if (!_known(bare)) return;
+      if (off) delete enabled[bare]; else enabled[bare] = true;
+    }
     try {
       var params = new URLSearchParams(search || '');
-      _tokens(params.get('ccSafety')).forEach(function(name) {
-        if (_known(name)) enabled[name] = true;
-      });
+      _tokens(params.get('ccSafety')).forEach(applyToken);
     } catch (_) {}
     try {
       var raw = storage && storage.getItem('cc_safety_flags');
       if (raw) {
         var parsed;
         try { parsed = JSON.parse(raw); } catch (_) { parsed = raw; }
-        _tokens(parsed).forEach(function(name) {
-          if (_known(name)) enabled[name] = true;
-        });
+        if (Array.isArray(parsed)) {
+          parsed.map(String).forEach(applyToken);
+        } else if (parsed && typeof parsed === 'object') {
+          Object.keys(parsed).forEach(function(name) {
+            if (!_known(name)) return;
+            if (parsed[name] === true) enabled[name] = true;
+            else if (parsed[name] === false) delete enabled[name];
+          });
+        } else {
+          _tokens(parsed).forEach(applyToken);
+        }
       }
     } catch (_) {}
     return Object.freeze(enabled);
