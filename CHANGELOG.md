@@ -1,5 +1,8 @@
 # Changelog
 
+## v7.1.0 (2026-07-17)
+- Execute REWRITE_UI_PLAN.md phases 2-12 (windowed list, empty states, operation center, promoted cores, more)
+
 ## v7.0.0 (2026-07-17)
 - Adopt reviewed runtime/loader rewrite tranche + consolidated rewrite/UI plan
 
