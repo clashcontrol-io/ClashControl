@@ -1,5 +1,8 @@
 # Changelog
 
+## v7.2.3 (2026-07-17)
+- Large-model plan Phase 2, adjusted by project history: storey-scope auto-complete
+
 ## v7.2.2 (2026-07-17)
 - Browser-first large-model plan: verification + Phase 1 (harness extension + IFC worker protocol v2)
 
