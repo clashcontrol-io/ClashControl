@@ -5,9 +5,20 @@
 // avoidable memory spike on exactly the large-model case this chooser
 // exists for. This locks the replacement: a chunked File.slice()+
 // TextDecoder scan (_ccExtractStoreyNamesFromIfcFileIncremental, index.html)
-// that never holds more than one chunk in memory, carries incomplete
-// trailing SPF lines across chunk boundaries, and stops early once several
-// consecutive chunks add nothing new.
+// that never holds more than one chunk in memory and carries incomplete
+// trailing SPF lines across chunk boundaries.
+//
+// An external review of an earlier version (which stopped scanning early
+// once several consecutive chunks added nothing new) correctly flagged that
+// IFC-SPF entity order isn't guaranteed — a storey appended late in the file
+// could be silently missing from the chooser, and a user who then scoped
+// down to "everything shown" would silently lose it. The scan now always
+// covers the full file (up to a generous byte ceiling, since chunked reads
+// stay memory-safe at any length) and reports `truncated: true` when that
+// ceiling is hit, so the caller can refuse an unsafe partial selection
+// instead of presenting an incomplete list as if it were the whole
+// building. The "storey found late in a huge file" and "truncated flag"
+// tests below lock exactly that behavior.
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
@@ -24,10 +35,14 @@ assert.ok(end !== -1, '_ccExtractStoreyNamesFromIfcFileIncremental closing point
 const scanExports = new Function('window', src.slice(start, end) + `
   window._ccExtractStoreyNamesFromIfcText = _ccExtractStoreyNamesFromIfcText;
   window._ccExtractStoreyNamesFromIfcFileIncremental = _ccExtractStoreyNamesFromIfcFileIncremental;
+  window.IFC_STOREY_SCAN_CHUNK_BYTES = IFC_STOREY_SCAN_CHUNK_BYTES;
+  window.IFC_STOREY_SCAN_MAX_BYTES = IFC_STOREY_SCAN_MAX_BYTES;
   return window;
 `);
 const lib = scanExports({});
 const extractIncremental = lib._ccExtractStoreyNamesFromIfcFileIncremental;
+const CHUNK = lib.IFC_STOREY_SCAN_CHUNK_BYTES;
+const MAX = lib.IFC_STOREY_SCAN_MAX_BYTES;
 
 // Duck-typed stub matching the real File API shape the function actually
 // uses (file.size, file.slice(start,end).arrayBuffer()) — no DOM needed.
@@ -49,6 +64,26 @@ function makeStubFile(text, encoding) {
   };
 }
 
+// A "virtual" stub for ceiling/large-file tests: reports a `size` that can
+// be hundreds of MB without ever materializing that much real data. Each
+// slice() synthesizes only the requested byte range on demand via a
+// caller-supplied `contentAt(startByte, endByte)`, so total memory use stays
+// proportional to chunk size, not virtual file size — the ceiling itself is
+// what's under test here, not the fixture's ability to hold huge strings.
+function makeVirtualStubFile(size, contentAt) {
+  const calls = [];
+  return {
+    size,
+    _calls: calls,
+    slice(startByte, endByte) {
+      calls.push([startByte, endByte]);
+      const text = contentAt(startByte, endByte);
+      const bytes = Buffer.from(text, 'utf-8');
+      return { arrayBuffer: () => Promise.resolve(bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength)) };
+    },
+  };
+}
+
 function ifcLine(guid, name, elevation) {
   return `#1=IFCBUILDINGSTOREY('${guid}',$,'${name}',$,$,#2,$,$,.ELEMENT.,${elevation}.);`;
 }
@@ -62,57 +97,60 @@ function fillerOfLength(minLength) {
 }
 
 test('finds a storey whose record is split across a chunk boundary', async () => {
-  // Chunk size is 2MB — pad the file so the IFCBUILDINGSTOREY line itself
-  // straddles the boundary, then confirm it's still found (not silently
-  // dropped by a mid-line chunk split).
-  const CHUNK = 2 * 1024 * 1024;
+  // Pad the file so the IFCBUILDINGSTOREY line itself straddles the chunk
+  // boundary, then confirm it's still found (not silently dropped by a
+  // mid-line chunk split).
   const line = ifcLine('guid1', 'Split Level', 0);
   const padTarget = CHUNK - Math.floor(line.length / 2);
   const text = fillerOfLength(padTarget) + '\n' + line + '\n';
   const file = makeStubFile(text);
   assert.ok(file.size > CHUNK, 'fixture must actually straddle a chunk boundary for this test to mean anything');
-  const names = await extractIncremental(file);
-  assert.deepEqual(names, ['Split Level']);
+  const result = await extractIncremental(file);
+  assert.deepEqual(result.names, ['Split Level']);
+  assert.equal(result.truncated, false);
 });
 
 test('deduplicates across chunk boundaries the same way the pure text scan does', async () => {
-  const CHUNK = 2 * 1024 * 1024;
   const filler = fillerOfLength(CHUNK * 1.5);
   const text = ifcLine('g1', 'Ground Floor', 0) + '\n' + filler + ifcLine('g2', 'Ground Floor', 0) + '\n';
   const file = makeStubFile(text);
-  const names = await extractIncremental(file);
-  assert.deepEqual(names, ['Ground Floor']);
+  const result = await extractIncremental(file);
+  assert.deepEqual(result.names, ['Ground Floor']);
 });
 
-test('stops early once several consecutive chunks add nothing new, without reading the whole file', async () => {
-  const CHUNK = 2 * 1024 * 1024;
-  // Two real storeys up front, then many megabytes of filler with nothing
-  // new — the scan should give up long before reaching the end.
+test('finds a storey defined late in the file, after many chunks with nothing new — the completeness fix', async () => {
+  // Two real storeys up front, ~20MB of filler with nothing new, THEN a
+  // third real storey. IFC-SPF entity order isn't guaranteed — a real file
+  // could have exactly this shape (e.g. an addition appended after the
+  // original export). An earlier version of this scan gave up after a few
+  // idle chunks and would have silently missed 'Mezzanine' here.
   const head = ifcLine('g1', 'Level 1', 0) + '\n' + ifcLine('g2', 'Level 2', 3) + '\n';
   const filler = fillerOfLength(CHUNK * 20);
-  const file = makeStubFile(head + filler);
-  const names = await extractIncremental(file);
-  assert.deepEqual(names, ['Level 1', 'Level 2']);
-  // 20MB of filler at 2MB/chunk is ~10 chunks; the idle-chunk cutoff (4) plus
-  // the head chunk should stop well short of reading it all.
-  assert.ok(file._calls.length < 8, `expected an early stop, but read ${file._calls.length} chunks`);
+  const tail = ifcLine('g3', 'Mezzanine', 1.5) + '\n';
+  const file = makeStubFile(head + filler + tail);
+  const result = await extractIncremental(file);
+  assert.deepEqual(result.names, ['Level 1', 'Level 2', 'Mezzanine']);
+  assert.equal(result.truncated, false);
 });
 
-test('never reads more than the hard byte ceiling, even if nothing is ever found', async () => {
-  const CHUNK = 2 * 1024 * 1024;
-  const MAX = 64 * 1024 * 1024;
-  const filler = fillerOfLength(MAX * 1.2);
-  const file = makeStubFile(filler);
-  assert.ok(file.size > MAX, 'fixture must exceed the ceiling for this test to mean anything');
-  const names = await extractIncremental(file);
-  assert.deepEqual(names, []);
+test('never reads more than the hard byte ceiling, and reports truncated:true when the file exceeds it', async () => {
+  const file = makeVirtualStubFile(Math.round(MAX * 1.2), () => FILLER_LINE);
+  const result = await extractIncremental(file);
+  assert.deepEqual(result.names, []);
+  assert.equal(result.truncated, true);
   const totalRead = file._calls.reduce((sum, [s, e]) => sum + (e - s), 0);
   assert.ok(totalRead <= MAX, `read ${totalRead} bytes, expected <= ${MAX}`);
   assert.ok(file._calls.length <= Math.ceil(MAX / CHUNK) + 1, `expected roughly ${MAX / CHUNK} chunks, got ${file._calls.length}`);
 });
 
+test('truncated is false for a file at or under the ceiling, even when nothing is found', async () => {
+  const file = makeVirtualStubFile(Math.round(MAX * 0.9), () => FILLER_LINE);
+  const result = await extractIncremental(file);
+  assert.deepEqual(result.names, []);
+  assert.equal(result.truncated, false);
+});
+
 test('a slice()/read failure resolves with whatever was found so far, never rejects', async () => {
-  const CHUNK = 2 * 1024 * 1024;
   // Pad past one full chunk so a real second slice() call happens — a
   // single-chunk fixture would never exercise the failure path at all.
   const filler = fillerOfLength(CHUNK);
@@ -125,13 +163,14 @@ test('a slice()/read failure resolves with whatever was found so far, never reje
     if (call === 1) return realSlice(s, e);
     return { arrayBuffer: () => Promise.reject(new Error('simulated read failure')) };
   };
-  const names = await extractIncremental(file);
-  assert.deepEqual(names, ['Level 1']);
+  const result = await extractIncremental(file);
+  assert.deepEqual(result.names, ['Level 1']);
   assert.ok(call >= 2, 'expected the failure path to actually be exercised');
 });
 
 test('a completely empty file resolves to an empty array without throwing', async () => {
   const file = makeStubFile('');
-  const names = await extractIncremental(file);
-  assert.deepEqual(names, []);
+  const result = await extractIncremental(file);
+  assert.deepEqual(result.names, []);
+  assert.equal(result.truncated, false);
 });

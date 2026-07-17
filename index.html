@@ -3903,34 +3903,45 @@ function startApp() {
   // file in bounded chunks via File.slice()+TextDecoder instead, carrying
   // any incomplete trailing SPF line across the chunk boundary (an
   // IFCBUILDINGSTOREY record is one line; splitting it mid-line would
-  // silently miss it), and stops early once several consecutive chunks add
-  // no new storey name — real authoring tools cluster spatial structure
-  // near the top of the file, so scanning deep into bulk geometry/property
-  // data past that point is very likely wasted work. Never reads more than
-  // IFC_STOREY_SCAN_MAX_BYTES regardless of file size. Duck-typed on
-  // `file.size` + `file.slice(start,end).arrayBuffer()` (the real File API
-  // shape) so it's testable with a plain stub, no DOM needed.
+  // silently miss it).
+  //
+  // Always scans the FULL file (up to IFC_STOREY_SCAN_MAX_BYTES) rather than
+  // stopping early once storeys stop being found. An earlier version stopped
+  // after a few consecutive idle chunks on the assumption that authoring
+  // tools cluster spatial structure near the top of the file — true often
+  // enough, but IFC-SPF entity order isn't guaranteed, and a storey defined
+  // late in the file (e.g. an addition appended after the original export)
+  // would silently never appear in the chooser. Since the chooser's whole
+  // point is letting a user pick a SUBSET of storeys, a missing entry there
+  // isn't just a cosmetic gap — a user who scopes down to "everything I can
+  // see" would silently lose a real storey with no indication it existed.
+  // Chunked reads stay memory-safe at any length (each chunk is read,
+  // scanned, and discarded), so scanning further only costs time, not
+  // memory — worth spending to make the shown list actually complete.
+  // IFC_STOREY_SCAN_MAX_BYTES is a generous backstop against pathological
+  // files, not a normal-case limit; when a file exceeds it the scan still
+  // returns whatever it found, flagged `truncated: true` so the caller can
+  // warn the user and refuse an unsafe partial selection (see
+  // StoreyScopeModal) rather than silently presenting an incomplete list as
+  // if it were the whole building.
   var IFC_STOREY_SCAN_CHUNK_BYTES = 2 * 1024 * 1024;
-  var IFC_STOREY_SCAN_MAX_BYTES = 64 * 1024 * 1024;
-  var IFC_STOREY_SCAN_IDLE_CHUNKS = 4;
+  var IFC_STOREY_SCAN_MAX_BYTES = 512 * 1024 * 1024;
   function _ccExtractStoreyNamesFromIfcFileIncremental(file) {
     return new Promise(function(resolve) {
       var seen = {};
       var names = [];
       var carry = '';
       var offset = 0;
-      var idleChunks = 0;
       var decoder = new TextDecoder('utf-8');
       var total = Math.min(file.size, IFC_STOREY_SCAN_MAX_BYTES);
+      var truncated = file.size > IFC_STOREY_SCAN_MAX_BYTES;
 
       function scanChunk(text) {
-        var before = names.length;
         _ccExtractStoreyNamesFromIfcText(text).forEach(function(n) {
           if (!seen[n]) { seen[n] = true; names.push(n); }
         });
-        return names.length > before;
       }
-      function finish() { resolve(names); }
+      function finish() { resolve({ names: names, truncated: truncated }); }
       function step() {
         if (offset >= total) { finish(); return; }
         var end = Math.min(offset + IFC_STOREY_SCAN_CHUNK_BYTES, total);
@@ -3946,9 +3957,7 @@ function startApp() {
             carry = text.slice(lastNewline + 1);
             text = text.slice(0, lastNewline);
           }
-          var gotNew = scanChunk(text);
-          idleChunks = gotNew ? 0 : idleChunks + 1;
-          if (names.length > 0 && idleChunks >= IFC_STOREY_SCAN_IDLE_CHUNKS) { finish(); return; }
+          scanChunk(text);
           step();
         }).catch(function() { finish(); }); // best-effort — never block a real load on a read error
       }
@@ -17067,10 +17076,11 @@ function startApp() {
       // _ccExtractStoreyNamesFromIfcFileIncremental's own comment.
       var scan = window._ccExtractStoreyNamesFromIfcFileIncremental
         ? window._ccExtractStoreyNamesFromIfcFileIncremental(ifcFile)
-        : Promise.resolve([]);
-      scan.then(function(names){
+        : Promise.resolve({ names: [], truncated: false });
+      scan.then(function(result){
+        var names = result.names, truncated = result.truncated;
         if (names.length < 2) { processFiles(files); return; } // nothing meaningful to scope
-        setStoreyChooser({ files: files, names: names });
+        setStoreyChooser({ files: files, names: names, truncated: truncated });
       }).catch(function(){ processFiles(files); }); // pre-scan is best-effort; never block a real load on it failing
     }
     function onFiles(e) {
@@ -17118,7 +17128,7 @@ function startApp() {
     return html`<div style=${{display:'flex',flexDirection:'column',flex:1,overflow:'hidden',minHeight:0}}
       onDrop=${onDrop} onDragOver=${onDragOver} onDragEnter=${onDragEnter} onDragLeave=${onDragLeave}>
 
-      ${storeyChooser && html`<${StoreyScopeModal} storeyNames=${storeyChooser.names}
+      ${storeyChooser && html`<${StoreyScopeModal} storeyNames=${storeyChooser.names} truncated=${!!storeyChooser.truncated}
         onCancel=${function(){ setStoreyChooser(null); }}
         onConfirm=${function(chosen){
           var pendingFiles = storeyChooser.files;
@@ -25813,6 +25823,13 @@ function startApp() {
   // loadFiles(files,{storeys}) path) before calling the real onConfirm.
   function StoreyScopeModal(props) {
     var storeyNames = props.storeyNames, onConfirm = props.onConfirm, onCancel = props.onCancel;
+    // truncated: the pre-scan hit IFC_STOREY_SCAN_MAX_BYTES before reaching
+    // the end of the file, so storeyNames may be missing entries that appear
+    // later. A partial selection in that state is actively unsafe — the user
+    // would be scoping down to "everything I can see" while a real storey
+    // silently never shows up as an option at all. Lock the picker to
+    // full-load-only rather than let that happen quietly.
+    var truncated = !!props.truncated;
     var selSt = useState(function(){
       var initial = {};
       storeyNames.forEach(function(n){ initial[n] = true; });
@@ -25827,6 +25844,7 @@ function startApp() {
       return function(){ window.removeEventListener('keydown', onKey); };
     }, []);
     function toggle(name) {
+      if (truncated) return;
       setSelected(function(prev){ var n = Object.assign({}, prev); n[name] = !n[name]; return n; });
     }
     var allChecked = storeyNames.every(function(n){ return selected[n]; });
@@ -25841,9 +25859,13 @@ function startApp() {
           <div style=${{fontSize:'var(--text-sm)',color:'var(--text-muted)'}}>
             This file has ${storeyNames.length} storey${storeyNames.length===1?'':'s'}. Loading fewer materializes less geometry and finishes faster — you can always reload with a different selection.
           </div>
-          <label style=${{display:'flex',alignItems:'center',gap:'.5rem',cursor:'pointer',padding:'.3rem 0',borderBottom:'1px solid var(--border-subtle)'}}>
-            <input type="checkbox" checked=${allChecked}
+          ${truncated && html`<div style=${{fontSize:'var(--text-sm)',color:'var(--color-warning-fg)',background:'var(--color-warning-bg)',border:'1px solid var(--color-warning-border)',borderRadius:6,padding:'.5rem .65rem'}}>
+            This file is larger than the pre-scan can fully cover, so the storey list above may be incomplete. Loading a subset isn't available for this file — use "Load all storeys" to be sure nothing is missed.
+          </div>`}
+          <label style=${{display:'flex',alignItems:'center',gap:'.5rem',cursor:truncated?'default':'pointer',padding:'.3rem 0',borderBottom:'1px solid var(--border-subtle)',opacity:truncated?0.7:1}}>
+            <input type="checkbox" checked=${allChecked} disabled=${truncated}
               onChange=${function(){
+                if (truncated) return;
                 var next = {};
                 storeyNames.forEach(function(n){ next[n] = !allChecked; });
                 setSelected(next);
@@ -25852,8 +25874,8 @@ function startApp() {
           </label>
           <div style=${{maxHeight:260,overflowY:'auto',display:'flex',flexDirection:'column',gap:'.15rem'}}>
             ${storeyNames.map(function(name){
-              return html`<label key=${name} style=${{display:'flex',alignItems:'center',gap:'.5rem',cursor:'pointer',padding:'.2rem 0'}}>
-                <input type="checkbox" checked=${!!selected[name]} onChange=${function(){toggle(name);}} />
+              return html`<label key=${name} style=${{display:'flex',alignItems:'center',gap:'.5rem',cursor:truncated?'default':'pointer',padding:'.2rem 0',opacity:truncated?0.7:1}}>
+                <input type="checkbox" checked=${!!selected[name]} disabled=${truncated} onChange=${function(){toggle(name);}} />
                 <span>${name}</span>
               </label>`;
             })}
