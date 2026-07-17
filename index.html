@@ -22742,7 +22742,14 @@ function startApp() {
     }
   }
 
+  // Call counters for the windowed conflict list's hot path — always-on,
+  // negligible cost (one integer increment), exists so a real-browser test
+  // can assert these stay flat across scroll-driven re-renders instead of
+  // just asserting a useMemo call exists in the source (a source-pattern
+  // check can't catch an unmemoized upstream dependency invalidating it).
+  window._ccListPerfCounters = { groupAndSort: 0, buildConflictRows: 0, computeRowOffsets: 0 };
   function groupAndSort(items, groupBy, sortBy, opts) {
+    window._ccListPerfCounters.groupAndSort++;
     opts = opts || {};
     var groupByArr = Array.isArray(groupBy) ? groupBy.filter(function(g){return g&&g!=='none';})
                      : (groupBy&&groupBy!=='none'?[groupBy]:[]);
@@ -22867,6 +22874,7 @@ function startApp() {
   // grouping/sorting/filtering semantics stay byte-identical to legacy.
   var CC_WINDOW_DEFAULT_HEIGHTS = { header: 32, clusterHeader: 62, item: ROW_HEIGHT, more: 34 };
   function _ccBuildConflictRows(items, groups, collapsed, groupLimits, isClusterGroup) {
+    window._ccListPerfCounters.buildConflictRows++;
     var rows = [];
     if (!groups) {
       for (var i = 0; i < items.length; i++) {
@@ -22895,6 +22903,7 @@ function startApp() {
   // you go, estimate until then" approach as react-window's VariableSizeList,
   // hand-rolled here to avoid adding a dependency to a no-build app.
   function _ccComputeRowOffsets(rows, heightCache) {
+    window._ccListPerfCounters.computeRowOffsets++;
     var offsets = new Array(rows.length + 1);
     offsets[0] = 0;
     for (var i = 0; i < rows.length; i++) {
@@ -23020,7 +23029,18 @@ function startApp() {
     var items = windowedOn ? rawItemsProp : (reveal >= rawItemsProp.length ? rawItemsProp : rawItemsProp.slice(0, reveal));
 
     // ── Keyboard navigation: Arrow Down/Up = next/prev item, Tab/Shift+Tab = next/prev group ──
-    var groups = groupAndSort(items, groupBy, sortBy, {models: models});
+    // Memoized: groupAndSort() always returns a fresh array/object (or, for
+    // grouped input, does the full O(n) group+sort pass), so calling it
+    // unmemoized here silently invalidated every useMemo downstream (flatItems,
+    // groupStarts, and — in windowed mode — wRows/wOff) on EVERY render,
+    // including the scroll-driven ones those memos exist to skip. items/
+    // groupBy/sortBy/models are all stable state/prop references that only
+    // change on a real data or grouping change (see the s.clashGroupBy /
+    // s.issueGroupBy call site), so this is a safe, real memoization, not
+    // just a relocated one.
+    var groups = useMemo(function(){
+      return groupAndSort(items, groupBy, sortBy, {models: models});
+    }, [items, groupBy, sortBy, models]);
     var flatItems = useMemo(function(){
       if(!groups) return items;
       var flat = [];
