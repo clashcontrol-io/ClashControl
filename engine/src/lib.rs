@@ -13,9 +13,12 @@ use wasm_bindgen::prelude::*;
 mod bvh;
 mod tri_tri;
 mod spatial_hash;
+mod broadphase;
 
 use bvh::BvhNode;
 use spatial_hash::SpatialHash;
+
+pub use broadphase::sweep_and_prune;
 
 // ── High-level API (stateless, build BVH each call) ─────────────────
 

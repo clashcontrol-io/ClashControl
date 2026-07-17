@@ -15,7 +15,7 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
 ENGINE_DIR="$PROJECT_DIR/engine"
 OUT_DIR="$PROJECT_DIR/addons/wasm-engine-pkg"
-MAX_WASM_KB=100  # fail if .wasm exceeds this (currently ~35 KB)
+MAX_WASM_KB=100  # fail if .wasm exceeds this (currently ~43 KB)
 
 QUICK=false
 if [[ "${1:-}" == "--quick" ]]; then
@@ -88,7 +88,7 @@ echo "── Export verification ───────────────�
 JS_GLUE="$OUT_DIR/clashcontrol_engine.js"
 if [ -f "$JS_GLUE" ]; then
   MISSING=0
-  for FN in mesh_intersect mesh_min_distance batch_intersect; do
+  for FN in mesh_intersect mesh_min_distance batch_intersect sweep_and_prune; do
     if grep -q "export function $FN" "$JS_GLUE"; then
       echo "  ✓ $FN exported"
     else

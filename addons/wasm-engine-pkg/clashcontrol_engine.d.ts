@@ -35,6 +35,8 @@ export function mesh_intersect(tris_a: Float32Array, tris_b: Float32Array, epsil
  */
 export function mesh_min_distance(verts_a: Float32Array, verts_b: Float32Array, max_dist: number): Float32Array;
 
+export function sweep_and_prune(box_min: Float64Array, box_max: Float64Array, model_idx: Uint32Array, in_a: Uint8Array, in_b: Uint8Array, same_model_allowed: Uint8Array, margin: number): Uint32Array;
+
 export type InitInput = RequestInfo | URL | Response | BufferSource | WebAssembly.Module;
 
 export interface InitOutput {
@@ -42,6 +44,7 @@ export interface InitOutput {
     readonly batch_intersect: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number) => void;
     readonly mesh_intersect: (a: number, b: number, c: number, d: number, e: number, f: number) => void;
     readonly mesh_min_distance: (a: number, b: number, c: number, d: number, e: number, f: number) => void;
+    readonly sweep_and_prune: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: number, k: number, l: number, m: number, n: number) => void;
     readonly __wbindgen_add_to_stack_pointer: (a: number) => number;
     readonly __wbindgen_export: (a: number, b: number) => number;
     readonly __wbindgen_export2: (a: number, b: number, c: number) => void;
