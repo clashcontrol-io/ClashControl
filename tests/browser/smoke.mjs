@@ -181,6 +181,36 @@ try {
   if (workerFellBack) fail('IFC worker crashed and fell back to the main-thread parser — check the stringified worker source for missing functions');
   console.log('SMOKE OK — model loaded, detection found ' + detected + ' clash(es), state updated; first: ' + sample);
 
+  // ── Settings modal: Claude-Desktop-style tabbed layout (8 tabs, including
+  // the Advanced/tolerance-matrix tab that was previously defined but never
+  // rendered anywhere — AdvancedSettingsTab existed with zero call sites
+  // until this session wired it in as a real tab).
+  await page.evaluate(() => window._ccDispatch({ t: 'SETTINGS', v: true }));
+  await page.waitForSelector('#cc-settings-title');
+  const expectedTabs = ['General', 'Measurement', 'Walk mode', 'Privacy & Data', 'Shared Project', 'AI', 'Issues', 'Advanced'];
+  const tabRail = page.getByRole('tablist', { name: 'Settings sections' });
+  const tabLabels = await tabRail.getByRole('tab').allTextContents();
+  if (JSON.stringify(tabLabels) !== JSON.stringify(expectedTabs)) fail('settings tab rail mismatch: ' + JSON.stringify(tabLabels));
+  if (!(await page.getByText('Auto fly-to on click').isVisible())) fail('General settings tab did not show Viewer content by default');
+  const settingsMarkers = {
+    'Measurement': 'Display units', 'Walk mode': 'Eye height', 'Privacy & Data': 'Anonymous data sharing',
+    'Shared Project': 'Your name', 'AI': 'AI Status', 'Issues': 'Default Priority', 'Advanced': 'Type-Pair Tolerances',
+  };
+  for (const [tab, marker] of Object.entries(settingsMarkers)) {
+    await tabRail.getByRole('tab', { name: tab, exact: true }).click();
+    await page.waitForTimeout(30);
+    if (!(await page.getByText(marker).first().isVisible())) fail(`settings "${tab}" tab did not show its marker content`);
+    if (await page.getByText('Auto fly-to on click').count()) fail(`settings "${tab}" tab leaked General content`);
+  }
+  // Advanced tab's toggle actually flips the pref and reveals the matrix control.
+  await page.getByText('Custom tolerances per type pair').locator('xpath=../following-sibling::*[1]').click();
+  await page.waitForTimeout(100);
+  if (!(await page.getByText(/tolerance matrix/i).isVisible())) fail('settings Advanced tab tolerance toggle did not reveal the matrix control');
+  await page.keyboard.press('Escape');
+  await page.waitForTimeout(50);
+  if (await page.locator('#cc-settings-title').count()) fail('Escape did not close the settings modal');
+  console.log('SMOKE OK — settings modal: all 8 tabs render distinct content, Advanced tab is wired and interactive');
+
   // ── Hard-refresh/cache restore: the five-hotfix "spikey model" incident
   // only appeared after reload, never on a fresh parse. Keep the real IDB +
   // geo-cache path in CI and compare element bounds before/after. The

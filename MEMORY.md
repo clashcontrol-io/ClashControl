@@ -151,12 +151,12 @@ Update this section at the start and end of each session.
 Mark completed items with ~~strikethrough~~ and date, then let the daily sync archive them.
 
 ~~**Reducer/state decomposition — Slice 1 (prefs-persistence consolidation) + full write-up of the rest;
-50MB large-model measurement; settings menu tabs** (branch `claude/findings-and-plan`, 2026-07-17)~~ —
-same-day follow-up to the entry below. Reducer decomposition: consolidated ~8 duplicated inline
-`try{localStorage.setItem(...)}catch(e){}` reducer case branches onto the already-existing `_ccPersistUI`
-helper (first draft wrongly introduced a new `prefs-persistence.js` file before noticing the existing
-helper already covered the shape — reverted, consolidated in place instead); `UPD_PREFS`'s inline key
-array became the named `PERSISTED_PREF_KEYS` constant; `TRAINING_MODE`'s raw `'1'`/`'0'` format
+50MB large-model measurement; Claude-Desktop-style tabbed Settings menu** (branch `claude/findings-and-plan`,
+2026-07-17)~~ — same-day follow-up to the entry below. Reducer decomposition: consolidated ~8 duplicated
+inline `try{localStorage.setItem(...)}catch(e){}` reducer case branches onto the already-existing
+`_ccPersistUI` helper (first draft wrongly introduced a new `prefs-persistence.js` file before noticing the
+existing helper already covered the shape — reverted, consolidated in place instead); `UPD_PREFS`'s inline
+key array became the named `PERSISTED_PREF_KEYS` constant; `TRAINING_MODE`'s raw `'1'`/`'0'` format
 deliberately left untouched (folding it into the JSON-shaped helper would silently change the stored
 format for existing users). Verified with a new characterization test
 (`tests/prefs-persistence-consolidation.test.js`) plus a real-browser dispatch-and-read-`localStorage`
@@ -167,7 +167,25 @@ rules (characterization tests first, real-browser verification after every slice
 file/abstraction without checking for an existing fit, one area per slice). Large-model measurement:
 see the 2026-07-17 Known Issues entry above — 174s/2.5GB peak RSS for a 145,670-element synthetic
 53.67MB fixture, explicitly caveated as entity-count stress testing, not representative of a typical
-real-world 50MB file.
+real-world 50MB file. **Settings menu retrofit** (a standing, previously-unfulfilled request): `SettingsModal`
+(`index.html`, was one long single-scroll list of ~8 `SEC` groupings) is now a left-sidebar tab rail +
+scrolling content pane, matching Claude Desktop's settings layout — General / Measurement / Walk mode /
+Privacy & Data / Shared Project / AI / Issues / Advanced, each tab wrapping its existing section content
+in a `${activeTab==='x' && html\`<${React.Fragment}>...\`}` conditional (no section content itself changed,
+only the chrome around it). The "Advanced" tab wires in `AdvancedSettingsTab` (the type-pair tolerance
+matrix) — that component existed fully built with zero call sites anywhere in the file before this session;
+it's real, tested functionality that had simply never been mounted. **Bonus fix found and fixed while
+testing this in a real browser with no model loaded:** `WelcomePopup`'s ("Open a model." empty-state) fixed
+full-viewport wrapper used the same `zIndex:50` as every modal's `S_BACKDROP`; same-z-index ties resolve by
+DOM order, and the welcome card's wrapper happened to win, silently eating clicks meant for the Settings
+modal (and, by extension, presumably any modal) whenever it was showing underneath — verified this predates
+this session's changes by running the same real-browser click-interception check against the last committed
+`index.html`. Fixed by dropping `WelcomePopup` to `zIndex:20` (still above ambient canvas-level overlays,
+which top out around `zIndex:11`, but below every modal). Verified: 605/605 unit tests, full real-Chromium
+smoke (new settings-tabs assertions folded into `tests/browser/smoke.mjs` right after the existing
+model-load step, reusing that session rather than spinning up a second browser) green throughout, plus a
+manual real-browser check at a 375px mobile viewport confirming the modal renders above `WelcomePopup` and
+every tab remains clickable.
 
 ~~**Toolbar retrofit fixed and merged; external-review findings fixed; six clash-pipeline cores
 graduated to sole implementation** (branch `claude/findings-and-plan`, 2026-07-17)~~ — follow-up to
