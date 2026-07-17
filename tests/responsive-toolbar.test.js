@@ -3,14 +3,24 @@
 // (_ccFitToolbarItems, index.html) that ResponsiveToolGroup uses to decide
 // which toolbar items stay visible vs. move into the "More" popover.
 //
-// Scope note (see REWRITE_UI_PLAN.md): ResponsiveToolGroup itself is built
-// and this math is solid, but wiring it into the live TopToolbar's CAMERA
-// cluster surfaced a real flexbox shrink/overflow interaction bug (the
-// group's rendered content overlapped an adjacent, unrelated button under
-// certain widths) that needs dedicated visual debugging, not a rushed fix
-// under time pressure. That integration was reverted; TopToolbar is
-// unchanged. This file locks the piece that IS shippable: the fitting
-// algorithm, independent of any particular DOM layout.
+// Follow-up note: the first attempt at wiring this into TopToolbar's CAMERA
+// cluster hit a real flexbox shrink/overflow bug and was reverted (see the
+// old comment this replaces, and MEMORY.md's Active Work history). That bug
+// turned out to be twofold, root-caused and fixed in a follow-up pass with
+// real-Chromium `getBoundingClientRect()` verification: (1) the reported
+// "overlap" was a getBoundingClientRect() false positive — a clipped-but-
+// still-laid-out child reports its full unclipped geometry even though
+// overflow:hidden visually clips it — confirmed via an actual screenshot
+// showing no visible collision; (2) the REAL bug living under that false
+// alarm was that a bare `minWidth:0` let the group's box shrink thinner than
+// what its own forced-visible active item + "More" toggle need, clipping
+// both away and making the cluster unreachable. See ResponsiveToolGroup's
+// `worstCaseFloor` (a constant derived from `items` alone, deliberately NOT
+// from the current render's `fit` decision — an interim fix that computed
+// it from `fit.visible` created a closed measurement/render feedback loop
+// that permanently disabled shrinking). The integration is now live behind
+// `ccUiToolbarV2` — see tests/toolbar-v2-wiring.test.js for the wiring lock.
+// This file locks the algorithm itself, independent of any DOM layout.
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
