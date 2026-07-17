@@ -1,37 +1,35 @@
 'use strict';
+// projectCodecV2 graduated from a flagged migration (boot-time equivalence
+// check against inline legacy serialize/validate/restore functions,
+// opt-out flag) to the sole implementation — see MEMORY.md Architecture
+// Decisions. This locks the simplified wiring: index.html's
+// _ccSerializeProject/_ccValidateProject/_ccRestoreProject are a direct,
+// unconditional delegation to window._ccProjectCodec.
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 
-const codec = require('../project-codec');
 const source = fs.readFileSync(path.join(__dirname, '..', 'index.html'), 'utf8');
 const worker = fs.readFileSync(path.join(__dirname, '..', 'sw.js'), 'utf8');
 const A = {
-  ADD_MODEL:'ADD_MODEL',UPD_RULES:'UPD_RULES',SET_CLASHES:'SET_CLASHES',
-  LOAD_PROJECT_STATE:'LOAD_PROJECT_STATE',ADD_ISSUE:'ADD_ISSUE',ADD_VIEWPOINT:'ADD_VIEWPOINT',
-  ADD_MEASUREMENT:'ADD_MEASUREMENT',MERGE_CHANGELOG:'MERGE_CHANGELOG'
+  ADD_MODEL: 'ADD_MODEL', UPD_RULES: 'UPD_RULES', SET_CLASHES: 'SET_CLASHES',
+  LOAD_PROJECT_STATE: 'LOAD_PROJECT_STATE', ADD_ISSUE: 'ADD_ISSUE', ADD_VIEWPOINT: 'ADD_VIEWPOINT',
+  ADD_MEASUREMENT: 'ADD_MEASUREMENT', MERGE_CHANGELOG: 'MERGE_CHANGELOG'
 };
 
-function loadAdapter(candidate, enabled) {
-  const start = source.indexOf('  function _ccLegacySerializeProject(');
-  const marker = source.indexOf('window._ccProjectCodecStatus = Object.freeze', start);
-  const end = source.indexOf('\n', marker);
-  const diagnostics = [];
-  const window = {
-    _ccProjectCodec:candidate,
-    _ccSafetyMigrations:{
-      isEnabled:(name) => enabled && name === 'projectCodecV2',
-      record:(entry) => diagnostics.push(entry),
-    },
-  };
-  const api = new Function('window','A', source.slice(start, end) +
-    ';return {_ccSerializeProject,_ccValidateProject,_ccRestoreProject};')(window,A);
-  return {window,diagnostics,api};
+function loadAdapter(candidate) {
+  const start = source.indexOf('var _ccProjectCodec = window._ccProjectCodec;');
+  const end = source.indexOf('\n\n', source.indexOf('function _ccRestoreProject(data, dispatch)', start));
+  assert.ok(start >= 0 && end > start, 'project codec wiring block not found');
+  const window = { _ccProjectCodec: candidate };
+  const api = new Function('window', 'A', source.slice(start, end) +
+    ';return {_ccSerializeProject,_ccValidateProject,_ccRestoreProject};')(window, A);
+  return { window, api };
 }
 
 function sample() {
-  return {rules:{},models:[],clashes:[],issues:[],floors:[],viewpoints:[]};
+  return { rules: {}, models: [], clashes: [], issues: [], floors: [], viewpoints: [] };
 }
 
 test('project codec loads before the app and is available offline', () => {
@@ -42,38 +40,29 @@ test('project codec loads before the app and is available offline', () => {
   assert.match(worker, /var CACHE = 'clashcontrol-v\d+\.\d+\.\d+/);
 });
 
-test('flag-off never calls or validates candidate code', () => {
-  let calls = 0;
-  const broken = {
-    contractVersion:1,
-    serializeProject:()=>{calls++;return {};},
-    validateProject:()=>{calls++;},
-    restoreProject:()=>{calls++;}
-  };
-  const loaded = loadAdapter(broken, false);
-  const out = loaded.api._ccSerializeProject(sample(), 'v', 't');
-  assert.equal(loaded.window._ccProjectCodecStatus.active, false);
-  assert.equal(out._cc, 'ClashControl');
-  assert.equal(calls, 0);
-  assert.deepEqual(loaded.diagnostics, []);
+test('no flag, gate, or opt-out remains for this migration', () => {
+  assert.doesNotMatch(source, /isEnabled\('projectCodecV2'\)/);
+  assert.doesNotMatch(source, /_ccProjectCodecStatus/);
+  assert.doesNotMatch(source, /_ccProjectCodecActive/);
+  assert.doesNotMatch(source, /_ccValidateProjectCodec/);
 });
 
-test('valid opt-in activates codec after serialization and restore comparison', () => {
-  const loaded = loadAdapter(codec, true);
-  assert.equal(loaded.window._ccProjectCodecStatus.active, true);
-  assert.equal(loaded.window._ccProjectCodecStatus.validation.equal, true);
-  const out = loaded.api._ccSerializeProject(sample(), 'v', 't');
-  assert.equal(out._v, 'v');
+test('_ccSerializeProject/_ccValidateProject/_ccRestoreProject delegate directly and unconditionally to the module', () => {
+  const restoreCalls = [];
+  const { api } = loadAdapter({
+    serializeProject: (s, v, t) => ({ _cc: 'from-module', _v: v }),
+    validateProject: (data) => { restoreCalls.push('validated'); },
+    restoreProject: (data, dispatch, actionTypes) => { dispatch({ t: actionTypes.UPD_RULES }); },
+  });
+  assert.equal(api._ccSerializeProject(sample(), 'v1', 't1')._cc, 'from-module');
+  api._ccValidateProject({});
+  assert.deepEqual(restoreCalls, ['validated']);
   const actions = [];
-  loaded.api._ccRestoreProject(out, (action)=>actions.push(action));
-  assert.deepEqual(actions.map((action)=>action.t), ['UPD_RULES','SET_CLASHES','LOAD_PROJECT_STATE']);
-  assert.equal(loaded.diagnostics.at(-1).outcome, 'candidate');
+  api._ccRestoreProject({}, (action) => actions.push(action));
+  assert.deepEqual(actions, [{ t: 'UPD_RULES' }]);
 });
 
-test('candidate mismatch falls back to exact inline project mapping', () => {
-  const broken = Object.assign({}, codec, {serializeProject:()=>({_cc:'wrong'})});
-  const loaded = loadAdapter(broken, true);
-  assert.equal(loaded.window._ccProjectCodecStatus.active, false);
-  assert.equal(loaded.api._ccSerializeProject(sample(), 'v', 't')._cc, 'ClashControl');
-  assert.equal(loaded.diagnostics.at(-1).outcome, 'fallback');
+test('a missing module surfaces a real error rather than silently falling back to anything', () => {
+  const { api } = loadAdapter(undefined);
+  assert.throws(() => api._ccSerializeProject(sample(), 'v', 't'), TypeError);
 });

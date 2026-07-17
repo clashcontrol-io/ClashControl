@@ -114,8 +114,12 @@ test('the Assignment Rules panel section exists in StandardsPanel, using DISC (n
 });
 
 test('saveProject, loadProject, and _saveCurrentProjectData (IndexedDB auto-persist) all carry assignmentRules', () => {
-  assert.ok(/assignmentRules: s\.assignmentRules\|\|\[\]/.test(src), 'saveProject must serialize assignmentRules');
-  assert.ok(/data\.assignmentRules\.forEach\(function\(ar\)\{ dispatch\(\{t:'ADD_ASSIGN_RULE', v:ar\}\); \}\)/.test(src), 'the legacy restore adapter must restore each saved assignment rule');
+  // saveProject/loadProject now delegate to project-codec.js (projectCodecV2
+  // graduated to the sole implementation — see MEMORY.md Architecture
+  // Decisions); the serialize/restore assertions check the module directly.
+  const codecSrc = fs.readFileSync(path.join(__dirname, '..', 'project-codec.js'), 'utf8');
+  assert.ok(/assignmentRules: state\.assignmentRules \|\| \[\]/.test(codecSrc), 'project-codec.js must serialize assignmentRules');
+  assert.ok(/data\.assignmentRules\.forEach\(function\(rule\) \{ dispatch\(\{t:actions\.ADD_ASSIGN_RULE, v:rule\}\); \}\)/.test(codecSrc), 'project-codec.js must restore each saved assignment rule');
   assert.ok(/_ccRestoreProject\(data, d\)/.test(src), 'loadProject must route parsed data through the guarded restore adapter');
   assert.ok(/assignmentRules:s\.assignmentRules\|\|\[\]/.test(src), '_saveCurrentProjectData must include assignmentRules too, not just the explicit-export path');
 });

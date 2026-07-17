@@ -1,31 +1,28 @@
 'use strict';
+// identityCoreV2 graduated from a flagged migration (boot-time equivalence
+// check against an inline legacy implementation, opt-out flag) to the sole
+// implementation — see MEMORY.md Architecture Decisions. This locks the
+// simplified wiring: index.html's computeClashPair/computeClashIdentityKey
+// are a direct, unconditional delegation to window._ccClashIdentityCore.
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 
-const core = require('../clash-identity-core');
 const source = fs.readFileSync(path.join(__dirname, '..', 'index.html'), 'utf8');
 const worker = fs.readFileSync(path.join(__dirname, '..', 'sw.js'), 'utf8');
 
-function loadAdapter(candidate, enabled) {
-  const start = source.indexOf('  function _ccLegacyComputeClashPair(');
-  const marker = source.indexOf('window._ccIdentityCoreStatus = Object.freeze', start);
-  const end = source.indexOf('\n', marker);
-  const diagnostics = [];
-  const window = {
-    _ccClashIdentityCore:candidate,
-    _ccSafetyMigrations:{
-      isEnabled:(name) => enabled && name === 'identityCoreV2',
-      record:(entry) => diagnostics.push(entry),
-    },
-  };
+function loadAdapter(candidate) {
+  const start = source.indexOf('var _ccIdentityCore = window._ccClashIdentityCore;');
+  const end = source.indexOf('\n\n', source.indexOf('function computeClashIdentityKey(clash)', start));
+  assert.ok(start >= 0 && end > start, 'identity wiring block not found');
+  const window = { _ccClashIdentityCore: candidate };
   const api = new Function('window', source.slice(start, end) +
     ';return {computeClashPair,computeClashIdentityKey};')(window);
-  return {window, diagnostics, api};
+  return { window, api };
 }
 
-const sample = {uniqueIdA:'revit-b',uniqueIdB:'revit-a',globalIdA:'ifc-a',globalIdB:'ifc-b',elemA:9,elemB:2,point:[1,2,3]};
+const sample = { uniqueIdA: 'revit-b', uniqueIdB: 'revit-a', globalIdA: 'ifc-a', globalIdB: 'ifc-b', elemA: 9, elemB: 2, point: [1, 2, 3] };
 
 test('identity helper loads before the app and is available offline', () => {
   const helper = source.indexOf('<script src="clash-identity-core.js" defer></script>');
@@ -35,28 +32,23 @@ test('identity helper loads before the app and is available offline', () => {
   assert.match(worker, /var CACHE = 'clashcontrol-v\d+\.\d+\.\d+/);
 });
 
-test('flag-off never calls or validates candidate code', () => {
-  let calls = 0;
-  const broken = {contractVersion:1,computeClashPair:()=>{calls++;return 'bad';},computeClashIdentityKey:()=>{calls++;return 'bad';}};
-  const loaded = loadAdapter(broken, false);
-  assert.equal(loaded.window._ccIdentityCoreStatus.active, false);
-  assert.equal(loaded.api.computeClashPair(sample), 'u:revit-a|u:revit-b');
-  assert.equal(calls, 0);
-  assert.deepEqual(loaded.diagnostics, []);
+test('no flag, gate, or opt-out remains for this migration', () => {
+  assert.doesNotMatch(source, /isEnabled\('identityCoreV2'\)/);
+  assert.doesNotMatch(source, /_ccIdentityCoreStatus/);
+  assert.doesNotMatch(source, /_ccIdentityCoreActive/);
+  assert.doesNotMatch(source, /_ccValidateIdentityCore/);
 });
 
-test('valid opt-in activates candidate after legacy-equivalence validation', () => {
-  const loaded = loadAdapter(core, true);
-  assert.equal(loaded.window._ccIdentityCoreStatus.active, true);
-  assert.equal(loaded.window._ccIdentityCoreStatus.validation.equal, true);
-  assert.equal(loaded.api.computeClashIdentityKey(sample), 'u:revit-a|u:revit-b@2,4,6');
-  assert.equal(loaded.diagnostics.at(-1).outcome, 'candidate');
+test('computeClashPair and computeClashIdentityKey delegate directly and unconditionally to the module', () => {
+  const { api } = loadAdapter({
+    computeClashPair: (c) => 'pair:' + c.elemA,
+    computeClashIdentityKey: (c) => 'key:' + c.elemA,
+  });
+  assert.equal(api.computeClashPair(sample), 'pair:9');
+  assert.equal(api.computeClashIdentityKey(sample), 'key:9');
 });
 
-test('candidate mismatch falls back to the exact inline identity scheme', () => {
-  const broken = Object.assign({}, core, {computeClashPair:()=> 'wrong'});
-  const loaded = loadAdapter(broken, true);
-  assert.equal(loaded.window._ccIdentityCoreStatus.active, false);
-  assert.equal(loaded.api.computeClashPair(sample), 'u:revit-a|u:revit-b');
-  assert.equal(loaded.diagnostics.at(-1).outcome, 'fallback');
+test('a missing module surfaces a real error rather than silently falling back to anything', () => {
+  const { api } = loadAdapter(undefined);
+  assert.throws(() => api.computeClashPair(sample), TypeError);
 });

@@ -1,30 +1,20 @@
 'use strict';
-// Locks _DISC_TYPE_MAP / _ccElementDiscipline / _ccMatrixSkipsSameDiscipline /
-// detectDiscipline (index.html): the foundation Wave 1's clash matrix and
-// severity model are built on. Extracted the same way tests/ifc-units.test.js
-// pulls a slice out of the inline script - this slice is self-contained pure
-// logic (no DOM/THREE dependency).
+// Locks clash-discipline-core.js's elementDiscipline/matrixSkipsSameDiscipline/
+// disciplinePairEnabled/detectDiscipline: the foundation Wave 1's clash matrix
+// and severity model are built on. Was extracted from index.html's inline
+// _DISC_TYPE_MAP/_ccElementDiscipline/etc.; those graduated into this standalone
+// module (disciplineCoreV2 -> the sole implementation, no more inline copy to
+// extract from — see MEMORY.md Architecture Decisions), so this now requires
+// the module directly. The regression cases below (with their "why" comments)
+// are the whole point of this file and are unchanged by that move.
 const { test } = require('node:test');
 const assert = require('node:assert');
-const fs = require('node:fs');
-const path = require('node:path');
+const core = require('../clash-discipline-core');
 
-const src = fs.readFileSync(path.join(__dirname, '..', 'index.html'), 'utf8');
-const start = src.indexOf('var _DISC_TYPE_MAP = {};');
-assert.ok(start !== -1, '_DISC_TYPE_MAP not found');
-const end = src.indexOf('window._ccDetectDiscipline = detectDiscipline;', start);
-assert.ok(end !== -1, 'detectDiscipline not found');
-const closeIdx = end + 'window._ccDetectDiscipline = detectDiscipline;'.length;
-const _window = {};
-new Function('window', src.slice(start, closeIdx))(_window);
-const _ccElementDiscipline = _window._ccElementDiscipline;
-const _ccMatrixSkipsSameDiscipline = _window._ccMatrixSkipsSameDiscipline;
-const _ccDisciplinePairEnabled = _window._ccDisciplinePairEnabled;
-const detectDiscipline = _window._ccDetectDiscipline;
-assert.equal(typeof _ccElementDiscipline, 'function');
-assert.equal(typeof _ccMatrixSkipsSameDiscipline, 'function');
-assert.equal(typeof _ccDisciplinePairEnabled, 'function');
-assert.equal(typeof detectDiscipline, 'function');
+const _ccElementDiscipline = core.elementDiscipline;
+const _ccMatrixSkipsSameDiscipline = core.matrixSkipsSameDiscipline;
+const _ccDisciplinePairEnabled = core.disciplinePairEnabled;
+const detectDiscipline = core.detectDiscipline;
 
 function el(ifcType) { return { props: { ifcType: ifcType } }; }
 

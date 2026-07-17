@@ -62,6 +62,7 @@ These are permanent. Do not remove entries — add new ones when significant dec
 | 2026-04-10 | View cube uses `camera.quaternion.copy().invert()` | Camera-position approach causes left/right mirroring; quaternion inversion is correct |
 | 2026-04-13 | `processNLCommandWithLLM` wraps `/smart` command | Ensures async handling; keeps NL pipeline consistent |
 | 2026-04-15 | 2D sheet uses polygon-face section cut | Correct floor-plan geometry without full mesh boolean ops |
+| 2026-07-17 | Six extracted clash-pipeline cores (discipline/assignment/identity/reconciliation/classification/projectCodec) graduated from flagged migrations to the sole, unconditional implementation — inline legacy code, boot-time equivalence checks, and opt-out flags deleted entirely from `index.html`/`safety-migrations.js` | After a soak period at `defaultEnabled:true` with zero drift (550+ unit tests, repeated real-Chromium smoke), the per-boot dual-run validation was pure overhead with no remaining doubt to resolve; a missing module now fails loudly (`TypeError`) rather than silently degrading — deliberate, since there is no fallback left to degrade to |
 <!-- END:architecture-decisions -->
 
 <!-- BEGIN:known-issues -->
@@ -109,6 +110,40 @@ Things to be careful about. Do not remove without a good reason — add a note i
 
 Update this section at the start and end of each session.
 Mark completed items with ~~strikethrough~~ and date, then let the daily sync archive them.
+
+~~**Toolbar retrofit fixed and merged; external-review findings fixed; six clash-pipeline cores
+graduated to sole implementation** (branch `claude/findings-and-plan`, 2026-07-17)~~ — follow-up to
+the two entries below. Toolbar: root-caused the "flexbox overlap" that got Phase 8's toolbar retrofit
+reverted — it was a `getBoundingClientRect()` false positive (a child clipped by `overflow:hidden`
+still reports its full unclipped layout geometry; a screenshot showed no actual visual collision) with
+a *real* bug hiding underneath (a bare `minWidth:0` let the group shrink thinner than its own forced-
+visible active item + "More" toggle need, silently making the whole cluster unreachable). Fixed with a
+`worstCaseFloor` constant derived from `items` alone — an interim fix that derived the floor from the
+current render's `fit` decision instead created a closed measurement/render feedback loop that
+permanently disabled shrinking; caught by re-testing and finding the group had stopped collapsing at
+all. Wired into `TopToolbar`'s CAMERA cluster behind `ccUiToolbarV2` (still default off), merged as
+PR #691. External-review findings, each independently verified against the code before fixing: deleted
+the dead `ccUiConsentBanner` flag; memoized the windowed conflict list's row-offset table (was
+recomputed on every scroll-driven render, real avoidable CPU work at 50k+ conflicts —
+`winForceTick`, already bumped exactly when a real height measurement changes, is the correct `useMemo`
+dependency); replaced the storey chooser's `ifcFile.text()` (decoded the WHOLE file into one JS string
+before load — a real 300MB+ memory spike on exactly the large-model case the chooser exists for) with
+`_ccExtractStoreyNamesFromIfcFileIncremental`, a chunked `File.slice()`+`TextDecoder` scan that stops
+early once several chunks add nothing new and never reads past a 64MB ceiling. **Six clash-pipeline
+cores graduated** (discipline/assignment/identity/reconciliation/classification/projectCodec): user
+explicitly authorized removing the fallback safety net after being shown that "legacy" wasn't actually
+dead code — every boot ran a live equivalence check deciding whether the new core was even active, and
+was the real fallback path on any mismatch or opt-out. Deleted all six inline legacy implementations,
+their boot-time comparison functions, and their manifest flags/opt-out tokens entirely — the six
+`clash-*-core.js`/`project-codec.js` modules (already loaded as plain same-origin `<script defer>`,
+not addons) are now the sole, unconditional implementation, called directly with no branching. A
+missing module now throws a real `TypeError` instead of silently degrading — there is no fallback left,
+by design. Test files that extracted the inline legacy code from `index.html` for characterization
+(`discipline-classification.test.js` and others) now `require()` the standalone modules directly
+instead; two fully-redundant ones (`assignment-rules-resolver.test.js`, `clash-reconcile.test.js`) were
+deleted since `clash-assignment-core.test.js`/`clash-reconciliation-core.test.js` already cover the
+same ground against the module. Verified: 601/601 unit tests, full real-Chromium smoke green with the
+six `_ccClash*Core`/`_ccProjectCodec` modules confirmed loaded and zero leftover status/gate objects.
 
 ~~**External (GPT) rewrite package reviewed, adjusted, and merged + UI plan critically consolidated**
 (branch `claude/review-rewrite-ui-plan-tfasne`, 2026-07-16)~~ — the user supplied a GPT-authored

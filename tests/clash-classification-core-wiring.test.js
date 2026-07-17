@@ -1,31 +1,28 @@
 'use strict';
+// classificationCoreV2 graduated from a flagged migration (boot-time
+// equivalence check against an inline legacy implementation, opt-out flag)
+// to the sole implementation — see MEMORY.md Architecture Decisions. This
+// locks the simplified wiring: index.html's classifyClashes is a direct,
+// unconditional delegation to window._ccClashClassificationCore.
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 
-const core = require('../clash-classification-core');
 const source = fs.readFileSync(path.join(__dirname, '..', 'index.html'), 'utf8');
 const worker = fs.readFileSync(path.join(__dirname, '..', 'sw.js'), 'utf8');
 
-function loadAdapter(candidate, enabled) {
-  const start = source.indexOf('  function _ccLegacyClassifyClashes(');
-  const marker = source.indexOf('window._ccClassificationCoreStatus = Object.freeze', start);
-  const end = source.indexOf('\n', marker);
-  const diagnostics = [];
-  const window = {
-    _ccClashClassificationCore:candidate,
-    _ccSafetyMigrations:{
-      isEnabled:(name) => enabled && name === 'classificationCoreV2',
-      record:(entry) => diagnostics.push(entry),
-    },
-  };
+function loadAdapter(candidate) {
+  const start = source.indexOf('var _ccClassificationCore = window._ccClashClassificationCore;');
+  const end = source.indexOf('\n\n', source.indexOf('function classifyClashes(clashes)', start));
+  assert.ok(start >= 0 && end > start, 'classification wiring block not found');
+  const window = { _ccClashClassificationCore: candidate };
   const api = new Function('window', source.slice(start, end) + ';return {classifyClashes};')(window);
-  return {window, diagnostics, api};
+  return { window, api };
 }
 
 function sample() {
-  return [{id:'c',type:'hard',elemAType:'IfcDuctSegment',elemBType:'IfcBeam',disciplines:['MEP','Structural'],point:[0,0,0],elemAStorey:'L1'}];
+  return [{ id: 'c', type: 'hard', elemAType: 'IfcDuctSegment', elemBType: 'IfcBeam', disciplines: ['MEP', 'Structural'], point: [0, 0, 0], elemAStorey: 'L1' }];
 }
 
 test('classification helper loads before the app and is available offline', () => {
@@ -36,34 +33,21 @@ test('classification helper loads before the app and is available offline', () =
   assert.match(worker, /var CACHE = 'clashcontrol-v\d+\.\d+\.\d+/);
 });
 
-test('flag-off never calls or validates candidate code', () => {
-  let calls = 0;
-  const broken = {contractVersion:1,classifyClashes:()=>{calls++;}};
-  const loaded = loadAdapter(broken, false);
-  const input = sample();
-  loaded.api.classifyClashes(input);
-  assert.equal(loaded.window._ccClassificationCoreStatus.active, false);
-  assert.equal(input[0].aiSeverity, 'critical');
-  assert.equal(calls, 0);
-  assert.deepEqual(loaded.diagnostics, []);
+test('no flag, gate, or opt-out remains for this migration', () => {
+  assert.doesNotMatch(source, /isEnabled\('classificationCoreV2'\)/);
+  assert.doesNotMatch(source, /_ccClassificationCoreStatus/);
+  assert.doesNotMatch(source, /_ccClassificationCoreActive/);
+  assert.doesNotMatch(source, /_ccValidateClassificationCore/);
 });
 
-test('valid opt-in activates candidate after complete mutation comparison', () => {
-  const loaded = loadAdapter(core, true);
+test('classifyClashes delegates directly and unconditionally to the module', () => {
+  const { api } = loadAdapter({ classifyClashes: (items) => { items[0].aiSeverity = 'from-module'; } });
   const input = sample();
-  loaded.api.classifyClashes(input);
-  assert.equal(loaded.window._ccClassificationCoreStatus.active, true);
-  assert.equal(loaded.window._ccClassificationCoreStatus.validation.equal, true);
-  assert.equal(input[0].aiSeverity, 'critical');
-  assert.equal(loaded.diagnostics.at(-1).outcome, 'candidate');
+  api.classifyClashes(input);
+  assert.equal(input[0].aiSeverity, 'from-module');
 });
 
-test('candidate mismatch falls back to exact inline classification', () => {
-  const broken = {contractVersion:1,classifyClashes:(items)=>{items[0].aiSeverity='wrong';}};
-  const loaded = loadAdapter(broken, true);
-  const input = sample();
-  loaded.api.classifyClashes(input);
-  assert.equal(loaded.window._ccClassificationCoreStatus.active, false);
-  assert.equal(input[0].aiSeverity, 'critical');
-  assert.equal(loaded.diagnostics.at(-1).outcome, 'fallback');
+test('a missing module surfaces a real error rather than silently falling back to anything', () => {
+  const { api } = loadAdapter(undefined);
+  assert.throws(() => api.classifyClashes(sample()), TypeError);
 });
