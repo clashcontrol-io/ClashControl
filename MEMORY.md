@@ -103,6 +103,45 @@ Things to be careful about. Do not remove without a good reason — add a note i
   Möller tri-tri + BVH algorithm as the browser (`intersection.py`/`sweep.py`), just faster (Numba JIT,
   multiprocess, scipy KD-tree). Escalating to it today buys speed, not more-correct geometry. See the
   corrected Architecture Decisions row above and `IMPROVEMENT_PLAN.md` CW-1.
+- **IFC worker static-file extraction — research finding (2026-07-17), not yet attempted.** The
+  `.toString()`-assembled worker (`_getIFCWorkerUrl`) isn't accidental complexity — it's the specific
+  workaround for "no build step + Worker/main-thread code must never drift" in a single-file app. The
+  worker Blob concatenates `.toString()` of ~11 functions (`_prefetchWebIfcWasm`, `safeStr`,
+  `_extractAxis`, `extractProperties`, `extractStoreys`, `extractSpatialHierarchy`,
+  `resolveMaterialName`, `buildMaterialMap`, `buildPropertyMap`, `buildRelationsMap`) plus 3
+  JSON-serialized constants (`IFC`, `IFC_TYPE_NAMES`, `_SPATIAL_CONTAINERS`), then wraps
+  `_ifcWorkerMain` (the postMessage protocol handler) around them. The main-thread fallback
+  (`loadIFC`, a separate function) calls the SAME function objects directly (same scope, no
+  stringification needed) — the `.toString()` trick is what guarantees the worker's copy can never
+  hand-drift from the fallback's copy, since it's literally serializing the same source.
+  **This means extraction is exactly the pattern already proven for the six clash-pipeline cores**
+  (`clash-discipline-core.js` etc., see the graduation entry above): move the shared functions to a
+  plain static file loaded via `<script defer>` for the main thread AND `importScripts()` inside the
+  worker (classic, non-module workers — which this codebase already uses — support this natively, no
+  bundler needed). `_ifcWorkerMain` itself (the small orchestration/protocol part) could stay inline
+  or extract too. **Caveat that raises the stakes:** these functions are NOT worker-exclusive utilities
+  — `safeStr` alone has 23 call sites elsewhere in `index.html`, and the others have 2-6 each — so this
+  is a real cross-cutting extraction, not an isolated one. Repo history offers little extra signal here
+  (shallow clone, ~173 commits visible, real history goes back much further); the reasoning above comes
+  from reading the actual current code, not archived discussion. Phase 7's protocol versioning +
+  differential fingerprint harness (`tests/browser/ifc-worker-fallback-differential.mjs`) is the
+  correct, already-built prerequisite — expand its coverage (multi-storey, quantities, unit conversion,
+  georeferencing, malformed records, cancellation) before attempting the actual extraction, not instead
+  of it. Do not attempt this without that expanded coverage — `CLAUDE.md` calls the IFC loader out
+  explicitly as complex-but-working, not to be touched without good reason.
+- **50MB-class IFC load: measured, not guessed (2026-07-17).** Generated a synthetic 53.67MB IFC-SPF
+  fixture (`tests/fixtures/generate-synthetic-ifc.js`, `storeyCount:10, wallsPerStorey:14567` → 145,670
+  `IfcWall` elements) and drove a real load through the actual UI in real Chromium (RSS via `/proc/pid/status`,
+  same instrumentation as Phase 11's `perf-local.mjs`/`memory-local.mjs`). Result: **174s dispatch→first-mesh,
+  180s to decode-stable, RSS peaked ~2.56GB (from a 358MB boot baseline), zero console/page errors** — the
+  load completes correctly, just slowly, and stays resident at ~2.4GB after settling (not a leak — flat
+  across a post-settle 2s window). **Caveat, important:** this is a worst-case *entity-count* stress test —
+  145,670 trivial, near-identical wall entities — not a representative real-world 50MB architectural IFC,
+  which would typically carry far fewer (thousands, not hundreds of thousands), richer elements with deeper
+  property sets, and hit a very different part of the cost curve (property/relation graph size vs. element
+  count). Don't quote the 174s/2.5GB numbers as "ClashControl's 50MB performance" without that caveat — they
+  characterize element-count scaling specifically. Re-run via the same fixture generator (params are the
+  only thing to change) for future comparison rather than building a new harness.
 <!-- END:known-issues -->
 
 <!-- BEGIN:active-work -->
@@ -110,6 +149,25 @@ Things to be careful about. Do not remove without a good reason — add a note i
 
 Update this section at the start and end of each session.
 Mark completed items with ~~strikethrough~~ and date, then let the daily sync archive them.
+
+~~**Reducer/state decomposition — Slice 1 (prefs-persistence consolidation) + full write-up of the rest;
+50MB large-model measurement; settings menu tabs** (branch `claude/findings-and-plan`, 2026-07-17)~~ —
+same-day follow-up to the entry below. Reducer decomposition: consolidated ~8 duplicated inline
+`try{localStorage.setItem(...)}catch(e){}` reducer case branches onto the already-existing `_ccPersistUI`
+helper (first draft wrongly introduced a new `prefs-persistence.js` file before noticing the existing
+helper already covered the shape — reverted, consolidated in place instead); `UPD_PREFS`'s inline key
+array became the named `PERSISTED_PREF_KEYS` constant; `TRAINING_MODE`'s raw `'1'`/`'0'` format
+deliberately left untouched (folding it into the JSON-shaped helper would silently change the stored
+format for existing users). Verified with a new characterization test
+(`tests/prefs-persistence-consolidation.test.js`) plus a real-browser dispatch-and-read-`localStorage`
+check. Full remaining scope (cache invalidation, `_gcEvent` analytics reach, `INIT`-side persistence
+reads, IndexedDB, event wiring, loader/worker lifecycle, then finally the reducer's own transition logic)
+written up in `REDUCER_DECOMPOSITION_PLAN.md`, ordered by risk × blast-radius with explicit standing
+rules (characterization tests first, real-browser verification after every slice, don't add a new
+file/abstraction without checking for an existing fit, one area per slice). Large-model measurement:
+see the 2026-07-17 Known Issues entry above — 174s/2.5GB peak RSS for a 145,670-element synthetic
+53.67MB fixture, explicitly caveated as entity-count stress testing, not representative of a typical
+real-world 50MB file.
 
 ~~**Toolbar retrofit fixed and merged; external-review findings fixed; six clash-pipeline cores
 graduated to sole implementation** (branch `claude/findings-and-plan`, 2026-07-17)~~ — follow-up to
