@@ -14,6 +14,36 @@ import { extname, join, normalize } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { chromium } from 'playwright';
 
+// REWRITE_UI_PLAN.md Phase 11: whole-process RSS, in addition to the JS-heap-
+// only performance.memory this script already had. Same reasoning as
+// memory-local.mjs — this harness launches Chromium with --single-process
+// --no-zygote, so JS heap + WASM linear memory + GPU/SwiftShader all live in
+// the one process /proc/<pid>/status reports on. Linux only; null elsewhere.
+async function readRssBytes(pid) {
+  if (!pid) return null;
+  try {
+    const status = await readFile(`/proc/${pid}/status`, 'utf8');
+    const match = status.match(/^VmRSS:\s+(\d+)\s+kB$/m);
+    return match ? Number(match[1]) * 1024 : null;
+  } catch {
+    return null;
+  }
+}
+// Playwright's Browser class doesn't expose the OS process (Puppeteer-only
+// API) — get the real PID from Chromium's own CDP SystemInfo.getProcessInfo,
+// verified directly against /proc/<pid>/status to confirm it's a real,
+// readable PID and not some internal Chromium numbering scheme.
+async function getBrowserPid(browserHandle) {
+  try {
+    const cdp = await browserHandle.newBrowserCDPSession();
+    const info = await cdp.send('SystemInfo.getProcessInfo');
+    const entry = (info.processInfo || []).find((p) => p.type === 'browser') || info.processInfo?.[0];
+    return entry ? entry.id : null;
+  } catch {
+    return null;
+  }
+}
+
 const root = process.env.CC_REPO_ROOT || fileURLToPath(new URL('../..', import.meta.url));
 const dependencyRoot = process.env.CC_DEPS_ROOT || root;
 const MIME = {
@@ -137,10 +167,12 @@ try {
       };
     });
 
+    const rssBytes = await readRssBytes(await getBrowserPid(browser));
+
     if (workerFallback || errors.length || detected < 1) {
       throw new Error(`invalid sample ${run + 1}: fallback=${workerFallback} detected=${detected} errors=${errors.join(' | ')}`);
     }
-    samples.push({ run: run + 1, bootMs, geometryReadyMs, completeMs, detectionMs, totalMs: performance.now() - wallStart, ...metrics });
+    samples.push({ run: run + 1, bootMs, geometryReadyMs, completeMs, detectionMs, totalMs: performance.now() - wallStart, rssBytes, ...metrics });
     await context.close();
     await browser.close();
   }
@@ -148,7 +180,7 @@ try {
   server.close();
 }
 
-const numericKeys = ['bootMs', 'geometryReadyMs', 'completeMs', 'detectionMs', 'totalMs', 'fcpMs', 'resourceCount', 'encodedBytes', 'decodedBytes', 'heapBytes', 'domNodes'];
+const numericKeys = ['bootMs', 'geometryReadyMs', 'completeMs', 'detectionMs', 'totalMs', 'fcpMs', 'resourceCount', 'encodedBytes', 'decodedBytes', 'heapBytes', 'domNodes', 'rssBytes'];
 function median(values) {
   const sorted = values.filter(Number.isFinite).toSorted((a, b) => a - b);
   if (!sorted.length) return null;

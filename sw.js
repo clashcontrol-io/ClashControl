@@ -4,7 +4,7 @@
 // Bump the CACHE version on any URL change here so old clients invalidate
 // their precache. Three.js r128 (UMD) → r180 (ESM module) is the trigger
 // for v5.20.0.
-var CACHE = 'clashcontrol-v7.0.0';
+var CACHE = 'clashcontrol-v6.1.1';
 
 var PRECACHE = [
   './',
@@ -23,19 +23,22 @@ var PRECACHE = [
   'clash-reconciliation-core.js',
   'clash-classification-core.js',
   'project-codec.js',
-  // Addons — same-origin files are never runtime-cached (the fetch handler
-  // only caches ALLOWED_CDN_HOSTS), so without precaching they 404 offline.
-  // Safe to pin: the CACHE name above is rotated on every version bump.
+  // Addons that load eagerly at boot — precached so a first-ever offline
+  // session still has them (same-origin /addons/ responses ARE now runtime-
+  // cached too, see the fetch handler's sameOriginAddon check below, but
+  // that only helps after at least one successful online fetch). Genuinely
+  // on-demand addons (smart-bridge, openaec-bridge, pointcloud, splat) are
+  // deliberately absent here — precaching would undo the point of deferring
+  // their fetch. The CACHE name above is rotated on every version bump, so
+  // pinning the eager ones here is safe.
   'addons/training-data.js',
   'addons/pwa.js',
   'addons/local-engine.js',
   'addons/shared-project.js',
   'addons/revit-bridge.js',
   'addons/data-quality.js',
-  'addons/pointcloud.js',
   'addons/geoplace.js',
   'addons/accessibility.js',
-  'addons/splat.js',
   'addons/align.js',
   'addons/visibility.js',
   'addons/wasm-engine.js',

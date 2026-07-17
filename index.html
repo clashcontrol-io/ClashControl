@@ -682,7 +682,7 @@ window.onload = function() {
 
 function startApp() {
   // ── Version (auto-updated by pre-commit hook) ──
-  var CC_VERSION = {v:'7.0.0',hash:'f8aa0a1',date:'2026-07-17T05:43:20Z'};
+  var CC_VERSION = {v:'6.1.1',hash:'da232d9',date:'2026-07-15T14:33:46Z'};
   window.CC_VERSION = CC_VERSION;
 
   window._ccSetSRGBOutput = function(renderer) {
@@ -1406,6 +1406,25 @@ function startApp() {
     'openaec-bridge': {
       name:'OpenAEC bridge',
       description:'Talks to sibling OpenAEC Foundation desktop apps over localhost — Phase 1 targets open-pointcloud-studio so CC can sync views, open scans, and round-trip viewpoints.'
+    },
+    // REWRITE_UI_PLAN.md Phase 10: point clouds and Gaussian splats are
+    // narrow, file-type-gated capabilities — most sessions never load one.
+    // Real trigger: ModelSidebar.processFiles routes a dropped/selected
+    // .ply/.pcd/.xyz/.pts/.ptx/.las/.laz (pointcloud) or .splat/.ksplat/.spz
+    // (splat) file through _ccEnsureAddon before checking for the loader
+    // function, instead of the Integrations panel being the only path in.
+    // splat self-registers alwaysOn:true; pointcloud self-registers
+    // autoActivate:true (normal Enable/Disable toggle, just active by
+    // default the first time). This placeholder only defers the SCRIPT
+    // FETCH — activation semantics are unchanged once the real definition
+    // loads and replaces it.
+    'pointcloud': {
+      name:'Point Cloud',
+      description:'Loads LAS/PLY/PCD/XYZ/PTS/PTX point clouds as reference layers (e.g. survey scans), recentred near origin for precision. Display-only; not fed to the clash engine.'
+    },
+    'splat': {
+      name:'Gaussian Splat overlay',
+      description:'Load 3D Gaussian Splat as-built captures as a first-class scene member alongside IFC and point clouds. Supports .splat/.ply/.ksplat/.spz. Phase 1: drag-drop or URL; 3D Tiles streaming + Esri ingest in Phase 2.'
     }
   };
   var _ccAddonScriptLoader = window._ccRuntime && window._ccRuntime.createScriptLoader ?
@@ -3844,15 +3863,59 @@ function startApp() {
 
   var _ifcWorkerUrl = null;
 
+  // ── Pre-decode storey scope chooser (ccUiStoreyChooser) ──  REWRITE_UI_PLAN.md Phase 12
+  // Genuinely pre-decode: IFC-SPF is plain text, so IfcBuildingStorey names
+  // are readable via a cheap regex scan of the raw bytes, entirely separate
+  // from and before the real web-ifc WASM parse. Does not touch the IFC
+  // loader/worker/geometry pipeline at all — CLAUDE.md flags that code as
+  // not-to-touch-without-good-reason, and this doesn't need to.
+  // Line shape: #50=IFCBUILDINGSTOREY('guid',$,'Name',$,$,#51,$,$,.ELEMENT.,0.);
+  //   entity id  ^^^         attr1 ^  attr2(Name) ^^^^^^
+  function _ccExtractStoreyNamesFromIfcText(text) {
+    if (!text) return [];
+    var re = /IFCBUILDINGSTOREY\s*\(\s*'[^']*'\s*,\s*[^,]*,\s*'([^']*)'/gi;
+    var seen = {};
+    var names = [];
+    var m;
+    while ((m = re.exec(text))) {
+      var name = (m[1] || '').trim();
+      if (!name || seen[name]) continue;
+      seen[name] = true;
+      names.push(name);
+    }
+    return names;
+  }
+  window._ccExtractStoreyNamesFromIfcText = _ccExtractStoreyNamesFromIfcText;
+
+  // REWRITE_UI_PLAN.md Phase 7 — bump this whenever a message field this
+  // worker sends or receives changes shape. Injected verbatim into the
+  // worker's own source (see _getIFCWorkerUrl) so both sides always agree
+  // on the value from the SAME build, by construction.
+  var IFC_WORKER_PROTOCOL_VERSION = 1;
+
   function _ifcWorkerMain() {
     var _api = null;
+    // REWRITE_UI_PLAN.md Phase 7: versioned message protocol, added ahead of
+    // (and as an explicit prerequisite for) ever splitting this worker into
+    // a real static file. Every message either direction now carries the
+    // version it was built with; a mismatch is logged, not yet enforced —
+    // today the worker is always freshly reassembled from the CURRENT
+    // page's own source on every load (no caching layer sits between this
+    // Blob URL and the code that just ran), so skew is not actually
+    // reachable yet. It becomes reachable the moment a static file is
+    // introduced behind a service worker, which is exactly why the version
+    // field needs to exist BEFORE that change, not be bolted on after.
+    function _emit(msg, xfer) { msg.v = IFC_WORKER_PROTOCOL_VERSION; if (xfer) self.postMessage(msg, xfer); else self.postMessage(msg); }
     self.onmessage = function(e) {
+      if (e.data && e.data.v !== IFC_WORKER_PROTOCOL_VERSION) {
+        console.warn('[IFC Worker] protocol version mismatch: got', e.data.v, 'expected', IFC_WORKER_PROTOCOL_VERSION);
+      }
       var buf = e.data.buffer;
       var _scope = e.data.scope || null;
       var phases = {};
       var t0 = performance.now();
       function mark(n) { phases[n] = performance.now() - t0; }
-      function progress(msg) { self.postMessage({type:'progress', msg:msg}); }
+      function progress(msg) { _emit({type:'progress', msg:msg}); }
 
       progress('Starting up 16%');
 
@@ -3991,7 +4054,7 @@ function startApp() {
         };
 
         var _geoUnique = Object.keys(_geoTable).length;
-        self.postMessage({type:'result', rawEls:rawEls, geoTable:_geoTable,
+        _emit({type:'result', rawEls:rawEls, geoTable:_geoTable,
           loadedScope:(_scopeSet ? _scope.storeys : null), scopedOutCount:_scopedOut,
           geoUnique:_geoUnique, geoReused:_geoReused,
           storeys:Object.keys(allStoreys).sort(), storeyData:storeyData,
@@ -4012,13 +4075,13 @@ function startApp() {
           });
           progress('Finishing up 100%');
           api.CloseModel(modelID);
-          self.postMessage({type:'props', propMap:lazyPropMap});
+          _emit({type:'props', propMap:lazyPropMap});
         } catch(propErr) {
           try { api.CloseModel(modelID); } catch(e) {}
-          self.postMessage({type:'props-error', msg: propErr.message || String(propErr)});
+          _emit({type:'props-error', msg: propErr.message || String(propErr)});
         }
       }).catch(function(err) {
-        self.postMessage({type:'error', msg: err.message || String(err)});
+        _emit({type:'error', msg: err.message || String(err)});
       });
     };
   }
@@ -4026,6 +4089,7 @@ function startApp() {
   function _getIFCWorkerUrl() {
     if (_ifcWorkerUrl) return _ifcWorkerUrl;
     var src = 'var _webIfcWasmBuf=null;\n'
+      + 'var IFC_WORKER_PROTOCOL_VERSION=' + IFC_WORKER_PROTOCOL_VERSION + ';\n'
       + 'var _prefetchWebIfcWasm=' + _prefetchWebIfcWasm.toString() + ';\n'
       + 'var IFC=' + JSON.stringify(IFC) + ';\n'
       + 'var IFC_TYPE_NAMES=' + JSON.stringify(IFC_TYPE_NAMES) + ';\n'
@@ -4104,6 +4168,9 @@ function startApp() {
 
       worker.onmessage = function(e) {
         var msg = e.data;
+        if (msg && msg.v !== IFC_WORKER_PROTOCOL_VERSION) {
+          console.warn('[IFC] worker protocol version mismatch: got', msg.v, 'expected', IFC_WORKER_PROTOCOL_VERSION);
+        }
         if (msg.type === 'progress') {
           _armWatchdog(20000, _watchdogFire);
           if (onProgress) onProgress(msg.msg);
@@ -4266,7 +4333,7 @@ function startApp() {
         reject(new Error('IFC Worker failed: ' + (err.message || err)));
       };
       try {
-        worker.postMessage({buffer:buffer, scope:scope||null});
+        worker.postMessage({buffer:buffer, scope:scope||null, v:IFC_WORKER_PROTOCOL_VERSION});
       } catch(postErr) {
         _clearWatchdog();
         _unreg();
@@ -10570,8 +10637,11 @@ function startApp() {
         runDataQuality:   function(els){ if (window._ccRunDataQualityChecks) return window._ccRunDataQualityChecks(els); },
         runAccessibility: function(els){ if (window._ccRunAccessibilityChecks) return window._ccRunAccessibilityChecks(els); },
         computeQualityScore: function(els, models){ if (window._ccComputeQualityScore) return window._ccComputeQualityScore(els, models); },
-        loadSplat:        function(url, opts){ if (window._ccLoadSplat) return window._ccLoadSplat(url, opts); },
-        loadPointCloud:   function(file){ if (window._ccLoadPointCloud) return window._ccLoadPointCloud(file); },
+        // Both addons load lazily on first real use (REWRITE_UI_PLAN.md
+        // Phase 10) — ensure the script before calling into it so external
+        // automation doesn't have to know the addon might not be loaded yet.
+        loadSplat:        function(url, opts){ return (window._ccEnsureAddon ? window._ccEnsureAddon('splat') : Promise.resolve()).then(function(){ if (!window._ccLoadSplat) throw new Error('splat addon unavailable'); return window._ccLoadSplat(url, opts); }); },
+        loadPointCloud:   function(file){ return (window._ccEnsureAddon ? window._ccEnsureAddon('pointcloud') : Promise.resolve()).then(function(){ if (!window._ccLoadPointCloud) throw new Error('pointcloud addon unavailable'); return window._ccLoadPointCloud(file); }); },
         geoplaceModel:    function(modelId, opts){ if (window._ccGeoplaceModel) return window._ccGeoplaceModel(modelId, opts); },
         loadFiles:        function(files, opts){
           if (opts && Array.isArray(opts.storeys) && opts.storeys.length) window._ccNextLoadScope = { storeys: opts.storeys.slice() };
@@ -15700,6 +15770,62 @@ function startApp() {
   window._ccS_MODAL_BODY = S_MODAL_BODY;
   window._ccS_MODAL_TITLE = S_MODAL_TITLE;
 
+  // ── Shared modal focus-trap/restore primitive (ccUiModalV2) ──
+  // REWRITE_UI_PLAN.md Phase 9. A HOOK, not a wrapping component — every
+  // existing modal already owns its own backdrop/card DOM structure and
+  // Escape handler; this only adds focus behavior on top, deliberately
+  // minimizing the change surface after Phase 8 (index.html, ResponsiveTool
+  // Group) showed how much a wrapping-component approach can go wrong under
+  // real layout when only unit-tested in isolation. Call from inside a
+  // modal component: _ccUseFocusTrap(containerRef, true) — active is
+  // always true for a mounted modal (the modal unmounting IS "closing").
+  function _ccUseFocusTrap(containerRef, active) {
+    var openerRef = useRef(null);
+    useEffect(function(){
+      if (!active || !containerRef.current) return;
+      openerRef.current = document.activeElement;
+      var container = containerRef.current;
+      function focusables() {
+        if (!container) return [];
+        var nodes = container.querySelectorAll(
+          'a[href],button:not([disabled]),textarea:not([disabled]),input:not([disabled]),select:not([disabled]),[tabindex]:not([tabindex="-1"])'
+        );
+        return Array.prototype.filter.call(nodes, function(el){ return el.offsetParent !== null; });
+      }
+      var first = focusables()[0];
+      var target = first || container;
+      if (target && typeof target.focus === 'function') {
+        try { target.focus(); } catch(_) {}
+      }
+      function onKeyDown(e) {
+        if (e.key !== 'Tab') return;
+        var items = focusables();
+        if (!items.length) { e.preventDefault(); return; }
+        var idx = items.indexOf(document.activeElement);
+        if (e.shiftKey) {
+          if (idx <= 0) { e.preventDefault(); items[items.length - 1].focus(); }
+        } else {
+          if (idx === items.length - 1 || idx === -1) { e.preventDefault(); items[0].focus(); }
+        }
+      }
+      // Capture phase: a trapped Tab must never reach the canvas/list's own
+      // global key handlers underneath the modal (REWRITE_UI_PLAN.md's
+      // "prevents stacked global key handlers from triggering canvas/list
+      // actions underneath" rule). Only Tab is intercepted here — every
+      // other key (Escape, J/K, etc.) still reaches each modal's own
+      // existing handler unchanged.
+      document.addEventListener('keydown', onKeyDown, true);
+      return function(){
+        document.removeEventListener('keydown', onKeyDown, true);
+        var opener = openerRef.current;
+        if (opener && typeof opener.focus === 'function' && document.contains(opener)) {
+          try { opener.focus(); } catch(_) {}
+        }
+      };
+    }, [active]);
+  }
+  window._ccUseFocusTrap = _ccUseFocusTrap;
+
   // ── Header ─────────────────────────────────────────────────────
 
   // ── Project switching helpers ─────────────────────────────────
@@ -17004,6 +17130,9 @@ function startApp() {
     var er = useState(''), err=er[0], setErr=er[1];
     var dg = useState(false), dragging=dg[0], setDragging=dg[1];
     var dragCounter = useRef(0);
+    // REWRITE_UI_PLAN.md Phase 12 — pending files awaiting a storey-scope
+    // decision, and the names extracted from them via the pre-decode scan.
+    var scopeSt = useState(null), storeyChooser=scopeSt[0], setStoreyChooser=scopeSt[1]; // {files, names} | null
     function _finishLoadingStrip(delayMs) {
       setTimeout(function() {
         setLoading(false);
@@ -17013,7 +17142,12 @@ function startApp() {
     var loadCoordinatorRef = useRef(null);
     if (!loadCoordinatorRef.current && window._ccRuntime && window._ccRuntime.createLoadCoordinator) {
       loadCoordinatorRef.current = window._ccRuntime.createLoadCoordinator({
-        emitEvents:false,
+        // REWRITE_UI_PLAN.md Phase 5 (OperationCenter, ccUiOperationCenter)
+        // consumes the coordinator's own begin/hold/release/chain-done/
+        // terminal events via the standard 'cc-load-session' CustomEvent —
+        // same convention as this file's other cc-* events (cc-model-loading,
+        // cc-detect-profile, cc-addons-changed). No behavior change to the
+        // loading-strip finish path below; this only adds a listener target.
         onIdle:function(last) {
           var delay = last && last.meta && last.meta.delayMs || 0;
           _finishLoadingStrip(delay);
@@ -17086,29 +17220,36 @@ function startApp() {
       var splatFiles = files.filter(function(f){return /\.(splat|ksplat|spz)$/i.test(f.name);});
       files = files.filter(function(f){return !/\.(splat|ksplat|spz)$/i.test(f.name);});
       if (splatFiles.length) {
-        if (window._ccLoadSplat) {
-          splatFiles.forEach(function(f){
-            window._ccLoadSplat(f, {name:f.name}).catch(function(err){
-              setErr((function(prev){ return (prev?prev+'\n':'') + f.name + ': ' + (err && err.message || err); })(''));
+        // REWRITE_UI_PLAN.md Phase 10: true first-use loading — the splat
+        // addon's script isn't fetched at boot; this drop is what triggers
+        // it. _ccEnsureAddon resolves immediately if it's already loaded
+        // (e.g. a second splat file, or the user enabled it manually).
+        (window._ccEnsureAddon ? window._ccEnsureAddon('splat') : Promise.reject(new Error('addon loader unavailable')))
+          .then(function(){
+            if (!window._ccLoadSplat) throw new Error('splat addon loaded but did not register');
+            splatFiles.forEach(function(f){
+              window._ccLoadSplat(f, {name:f.name}).catch(function(err){
+                setErr((function(prev){ return (prev?prev+'\n':'') + f.name + ': ' + (err && err.message || err); })(''));
+              });
             });
-          });
-        } else {
-          setErr('Splat addon not loaded.');
-        }
+          })
+          .catch(function(){ setErr('Splat addon could not be loaded.'); });
       }
-      // Route point cloud files to the pointcloud addon, if loaded.
+      // Route point cloud files to the pointcloud addon (true first-use
+      // loading — see splat above for the same reasoning).
       var pcFiles = files.filter(function(f){return /\.(ply|pcd|xyz|pts|ptx|las|laz)$/i.test(f.name);});
       files = files.filter(function(f){return !/\.(ply|pcd|xyz|pts|ptx|las|laz)$/i.test(f.name);});
       if (pcFiles.length) {
-        if (window._ccLoadPointCloud) {
-          pcFiles.forEach(function(f){
-            window._ccLoadPointCloud(f).catch(function(err){
-              setErr((function(prev){ return (prev?prev+'\n':'') + f.name + ': ' + (err && err.message || err); })(''));
+        (window._ccEnsureAddon ? window._ccEnsureAddon('pointcloud') : Promise.reject(new Error('addon loader unavailable')))
+          .then(function(){
+            if (!window._ccLoadPointCloud) throw new Error('pointcloud addon loaded but did not register');
+            pcFiles.forEach(function(f){
+              window._ccLoadPointCloud(f).catch(function(err){
+                setErr((function(prev){ return (prev?prev+'\n':'') + f.name + ': ' + (err && err.message || err); })(''));
+              });
             });
-          });
-        } else {
-          setErr('Point cloud addon not loaded.');
-        }
+          })
+          .catch(function(){ setErr('Point cloud addon could not be loaded.'); });
       }
       if (!files.length) return;
       var errors = [];
@@ -17551,15 +17692,33 @@ function startApp() {
         else _finishLoadingStrip(0);
       });
     }
+    // REWRITE_UI_PLAN.md Phase 12 — single choke point in front of all three
+    // load triggers (file input, drag-drop, programmatic cc-pending-files).
+    // Flag off, or no .ifc among the files, or a single-storey file: calls
+    // processFiles(files) exactly as before — zero behavior change. Flag on
+    // with a multi-storey .ifc: shows the chooser first; confirming with a
+    // full selection also falls through to plain processFiles(files) (no
+    // window._ccNextLoadScope set), so "Load all" is byte-identical to the
+    // pre-Phase-12 path, not a differently-shaped equivalent one.
+    function maybeScopeThenProcess(files) {
+      var storeyChooserOn = !!(window._ccSafetyMigrations && window._ccSafetyMigrations.isEnabled('ccUiStoreyChooser'));
+      var ifcFile = storeyChooserOn ? files.filter(function(f){ return /\.ifc$/i.test(f.name); })[0] : null;
+      if (!ifcFile) { processFiles(files); return; }
+      ifcFile.text().then(function(text){
+        var names = window._ccExtractStoreyNamesFromIfcText ? window._ccExtractStoreyNamesFromIfcText(text) : [];
+        if (names.length < 2) { processFiles(files); return; } // nothing meaningful to scope
+        setStoreyChooser({ files: files, names: names });
+      }).catch(function(){ processFiles(files); }); // pre-scan is best-effort; never block a real load on it failing
+    }
     function onFiles(e) {
-      processFiles(Array.prototype.slice.call(e.target.files||[]));
+      maybeScopeThenProcess(Array.prototype.slice.call(e.target.files||[]));
       e.target.value='';
     }
     useEffect(function(){
       function onPending(){
         if(window._ccPendingFiles){
           var f=window._ccPendingFiles; window._ccPendingFiles=null;
-          processFiles(f);
+          maybeScopeThenProcess(f);
         }
       }
       onPending();
@@ -17570,7 +17729,7 @@ function startApp() {
       e.preventDefault(); e.stopPropagation();
       dragCounter.current = 0; setDragging(false);
       var files = Array.prototype.slice.call(e.dataTransfer.files||[]);
-      if(files.length) processFiles(files);
+      if(files.length) maybeScopeThenProcess(files);
     }
     function onDragOver(e){e.preventDefault();e.stopPropagation();}
     function onDragEnter(e){e.preventDefault();e.stopPropagation();dragCounter.current++;setDragging(true);}
@@ -17595,6 +17754,15 @@ function startApp() {
     }
     return html`<div style=${{display:'flex',flexDirection:'column',flex:1,overflow:'hidden',minHeight:0}}
       onDrop=${onDrop} onDragOver=${onDragOver} onDragEnter=${onDragEnter} onDragLeave=${onDragLeave}>
+
+      ${storeyChooser && html`<${StoreyScopeModal} storeyNames=${storeyChooser.names}
+        onCancel=${function(){ setStoreyChooser(null); }}
+        onConfirm=${function(chosen){
+          var pendingFiles = storeyChooser.files;
+          setStoreyChooser(null);
+          if (chosen) window._ccNextLoadScope = { storeys: chosen };
+          processFiles(pendingFiles);
+        }} />`}
 
       <!-- Header -->
       <div style=${{padding:'.65rem .85rem .5rem',borderBottom:'1px solid var(--hairline)',flexShrink:0,display:'flex',alignItems:'center',justifyContent:'space-between',gap:'.5rem'}}>
@@ -20163,6 +20331,22 @@ function startApp() {
     if(f.issueStorey!=='all') activeCount++;
     if(f.deltaState && f.deltaState!=='all') activeCount++;
 
+    // Visibility-only pass (no text/dropdown filters applied yet) — lets the
+    // empty-state decision tree tell "every model with conflicts is hidden"
+    // apart from "your filters hide every result" apart from "genuinely
+    // clean." Cheap to compute separately: same predicate as the first block
+    // inside the full `items` filter below, kept in sync deliberately (both
+    // read visibleModelIds the same way).
+    var visOnlyItems = useMemo(function(){
+      if (!isClashTab) return rawItems;
+      return rawItems.filter(function(it){
+        if(it.modelAId || it.modelBId) {
+          if(it.modelAId && !visibleModelIds[it.modelAId]) return false;
+          if(it.modelBId && !visibleModelIds[it.modelBId]) return false;
+        }
+        return true;
+      });
+    }, [rawItems, isClashTab, visibleModelIds]);
     var items = useMemo(function(){
       return rawItems.filter(function(it){
         if(isClashTab && (it.modelAId || it.modelBId)) {
@@ -20534,7 +20718,17 @@ function startApp() {
       }()}
       ${!isExplorerTab && !isStandardsTab && items.length>0 && html`<${BulkActionBar} s=${s} d=${d} items=${items} isClash=${isClashTab} />`}
 
-      ${!isExplorerTab && !isStandardsTab && html`<${VirtualList} items=${items} activeId=${s.activeId} d=${d} isClash=${isClashTab} prefs=${s.prefs} models=${s.models} groupBy=${isClashTab?s.clashGroupBy:s.issueGroupBy} sortBy=${isClashTab?s.clashSortBy:s.issueSortBy} selectMode=${s.selectMode} selected=${s.selected} trainingMode=${s.trainingMode} triageResults=${s.triageResults} />`}
+      ${!isExplorerTab && !isStandardsTab && html`<${VirtualList} items=${items} activeId=${s.activeId} d=${d} isClash=${isClashTab} prefs=${s.prefs} models=${s.models} groupBy=${isClashTab?s.clashGroupBy:s.issueGroupBy} sortBy=${isClashTab?s.clashSortBy:s.issueSortBy} selectMode=${s.selectMode} selected=${s.selected} trainingMode=${s.trainingMode} triageResults=${s.triageResults}
+        emptyCtx=${{
+          hasModel: (s.models||[]).length > 0,
+          detecting: !!s.detecting,
+          ranBefore: (s.runHistory||[]).length > 0,
+          rawCount: rawItems.length,
+          visOnlyCount: visOnlyItems.length,
+          filteredCount: items.length,
+          filtersActive: _ccFiltersAreActive(f),
+          hiddenModelCount: (s.models||[]).filter(function(m){return m.visible===false;}).length,
+        }} />`}
     </div>`;
   }
 
@@ -23227,9 +23421,153 @@ function startApp() {
     });
   }
 
+  // ── Truthful empty/filtered states (ccUiEmptyStates) ──  REWRITE_UI_PLAN.md Phase 4
+  // Pure decision tree, unit-testable without a component tree. Replaces the
+  // single generic "No clashes found yet" message with the 9 states the plan
+  // calls for. Only used for the CLASH tab — issues keep their existing
+  // (already-adequate) generic empty message, matching the plan's narrower
+  // "Conflicts panel" scope.
+  function _ccFiltersAreActive(f) {
+    if (!f) return false;
+    for (var k in INIT_FILTERS) {
+      if (!Object.prototype.hasOwnProperty.call(INIT_FILTERS, k)) continue;
+      var a = f[k], b = INIT_FILTERS[k];
+      if (Array.isArray(b)) { if (JSON.stringify(a||[]) !== JSON.stringify(b)) return true; continue; }
+      if (b !== null && typeof b === 'object') { if (JSON.stringify(a||null) !== JSON.stringify(b)) return true; continue; }
+      if ((a == null ? b : a) !== b) return true;
+    }
+    return false;
+  }
+  function _ccConflictEmptyState(ctx) {
+    ctx = ctx || {};
+    if (!ctx.hasModel) return { key: 'no-model', title: 'No model loaded', hint: 'Open or add a model to get started.', action: null };
+    if (ctx.modelsLoading) return { key: 'loading', title: 'Model is loading…', hint: 'Detection isn’t available until loading finishes.', action: null };
+    if (ctx.detecting) return { key: 'running', title: 'Checking for clashes…', hint: 'This can take a moment on large models.', action: 'cancel' };
+    if (ctx.failed) return { key: 'failed', title: 'Detection didn’t complete', hint: ctx.failReason || 'Something interrupted the run.', action: 'retry' };
+    if (!ctx.rawCount) {
+      if (!ctx.ranBefore) return { key: 'never-run', title: 'No coordination check has been run', hint: 'Run detection to find clashes between your models.', action: 'run' };
+      if (ctx.sameDisciplineSkipped) return { key: 'same-discipline-skipped', title: 'Same-discipline pairs were skipped', hint: null, action: 'check-same-discipline' };
+      return { key: 'completed-zero', title: 'No conflicts found with these rules', hint: 'Review your rule summary if this is unexpected.', action: 'review-rules' };
+    }
+    if (!ctx.visOnlyCount) return { key: 'hidden-by-visibility', title: 'Results are hidden by model visibility', hint: (ctx.hiddenModelCount||0) + ' model(s) with conflicts are currently hidden.', action: 'show-models' };
+    if (!ctx.filteredCount && ctx.filtersActive) return { key: 'filtered-to-zero', title: '0 of ' + ctx.rawCount + ' shown', hint: 'Your current filters hide every result.', action: 'clear-filters' };
+    return { key: 'completed-zero', title: 'No conflicts found with these rules', hint: null, action: 'review-rules' };
+  }
+  window._ccFiltersAreActive = _ccFiltersAreActive;
+  window._ccConflictEmptyState = _ccConflictEmptyState;
+
+  // ── Responsive toolbar overflow fitting (ccUiToolbarV2) ──  REWRITE_UI_PLAN.md Phase 8
+  // Pure "priority+ nav" fitting algorithm, unit-testable without a DOM.
+  // Given items in priority order (highest-priority first) with known pixel
+  // widths and the available container width, greedily includes items until
+  // the running total (plus a reserved "More" button width, but ONLY once
+  // there's at least one item that doesn't fit) would exceed the container.
+  // Never removes the CURRENTLY ACTIVE item from the visible set (an active
+  // tool must stay visible/exitable — REWRITE_UI_PLAN.md Phase 2 hard rule)
+  // even if that means it's the one thing pushed past the naive width cut.
+  function _ccFitToolbarItems(items, availableWidth, moreButtonWidth, activeId) {
+    items = items || [];
+    availableWidth = Math.max(0, availableWidth || 0);
+    moreButtonWidth = moreButtonWidth || 0;
+    var totalWidth = 0;
+    for (var i = 0; i < items.length; i++) totalWidth += items[i].width;
+    if (totalWidth <= availableWidth) {
+      return { visible: items.map(function(it){ return it.id; }), overflow: [] };
+    }
+    var budget = availableWidth - moreButtonWidth;
+    var visible = [], overflow = [], used = 0;
+    for (var j = 0; j < items.length; j++) {
+      var it = items[j];
+      if (used + it.width <= budget || it.id === activeId) {
+        visible.push(it.id);
+        used += it.width;
+      } else {
+        overflow.push(it.id);
+      }
+    }
+    return { visible: visible, overflow: overflow };
+  }
+  window._ccFitToolbarItems = _ccFitToolbarItems;
+
   var ROW_HEIGHT = 78; // approx height of IssueRow in px (clash rows are taller with extra metadata)
   var GROUP_PAGE_SIZE = 50; // max items rendered per group before "show more"
   var INITIAL_REVEAL = 200; // rows considered on first paint; rest loaded in the next idle frame
+
+  // ── Windowed conflict list (ccUiWindowedConflicts) ──  REWRITE_UI_PLAN.md Phase 3
+  // Pure, dependency-free helpers so the windowing math is unit-testable without
+  // a browser (same extraction-test convention as bcf-export.test.js). These
+  // build a flat "row" sequence (headers + items + "show more" rows, identical
+  // membership/order to what the legacy grouped/ungrouped render already
+  // produces) and answer "which rows are visible right now" against a
+  // measured-height cache so variable-height cluster cards don't need a fixed
+  // row-height guess. Deliberately does NOT touch groupAndSort/_groupKeyFor —
+  // grouping/sorting/filtering semantics stay byte-identical to legacy.
+  var CC_WINDOW_DEFAULT_HEIGHTS = { header: 32, clusterHeader: 62, item: ROW_HEIGHT, more: 34 };
+  function _ccBuildConflictRows(items, groups, collapsed, groupLimits, isClusterGroup) {
+    var rows = [];
+    if (!groups) {
+      for (var i = 0; i < items.length; i++) {
+        rows.push({ type: 'item', key: 'i:' + items[i].id, item: items[i], group: null });
+      }
+      return rows;
+    }
+    groups.forEach(function(g) {
+      var cluster = !!(isClusterGroup && isClusterGroup(g));
+      rows.push({ type: cluster ? 'clusterHeader' : 'header', key: 'h:' + g.label, group: g });
+      if (collapsed[g.label]) return;
+      var limit = (groupLimits && groupLimits[g.label]) || GROUP_PAGE_SIZE;
+      var visible = g.items.slice(0, limit);
+      for (var j = 0; j < visible.length; j++) {
+        rows.push({ type: 'item', key: 'i:' + visible[j].id, item: visible[j], group: g });
+      }
+      if (g.items.length > limit) {
+        rows.push({ type: 'more', key: 'm:' + g.label, group: g, limit: limit });
+      }
+    });
+    return rows;
+  }
+  // Prefix-sum offsets over the row list. heightCache holds real measured
+  // pixel heights keyed by row.key (filled in after mount); rows never
+  // measured yet fall back to a per-type default estimate — same "measure as
+  // you go, estimate until then" approach as react-window's VariableSizeList,
+  // hand-rolled here to avoid adding a dependency to a no-build app.
+  function _ccComputeRowOffsets(rows, heightCache) {
+    var offsets = new Array(rows.length + 1);
+    offsets[0] = 0;
+    for (var i = 0; i < rows.length; i++) {
+      var r = rows[i];
+      var h = (heightCache && heightCache[r.key]) || CC_WINDOW_DEFAULT_HEIGHTS[r.type] || ROW_HEIGHT;
+      offsets[i + 1] = offsets[i] + h;
+    }
+    return { offsets: offsets, totalHeight: offsets[rows.length] };
+  }
+  // First row index whose bottom edge is >= y (binary search over the
+  // monotonic offsets table).
+  function _ccFindRowIndexAtOffset(offsets, y) {
+    var rowCount = offsets.length - 1;
+    if (rowCount <= 0) return 0;
+    var lo = 0, hi = rowCount - 1;
+    while (lo < hi) {
+      var mid = (lo + hi) >> 1;
+      if (offsets[mid + 1] <= y) lo = mid + 1; else hi = mid;
+    }
+    return lo;
+  }
+  function _ccComputeVisibleRowWindow(rows, offsets, scrollTop, viewportHeight, overscanPx) {
+    if (!rows.length) return { startIdx: 0, endIdx: 0 };
+    overscanPx = overscanPx == null ? 600 : overscanPx;
+    var topY = Math.max(0, scrollTop - overscanPx);
+    var bottomY = scrollTop + (viewportHeight || 600) + overscanPx;
+    var startIdx = _ccFindRowIndexAtOffset(offsets, topY);
+    var endIdx = _ccFindRowIndexAtOffset(offsets, bottomY) + 1;
+    if (endIdx > rows.length) endIdx = rows.length;
+    if (startIdx > endIdx) startIdx = endIdx;
+    return { startIdx: startIdx, endIdx: endIdx };
+  }
+  window._ccBuildConflictRows = _ccBuildConflictRows;
+  window._ccComputeRowOffsets = _ccComputeRowOffsets;
+  window._ccComputeVisibleRowWindow = _ccComputeVisibleRowWindow;
+
   function VirtualList(props) {
     var rawItemsProp=props.items, activeId=props.activeId, d=props.d, isClash=props.isClash, prefs=props.prefs, models=props.models||[];
     var triageResults = props.triageResults || {};
@@ -23242,22 +23580,81 @@ function startApp() {
     var coll = useState({}), collapsed=coll[0], setCollapsed=coll[1];
     var grpLimits = useState({}), groupLimits=grpLimits[0], setGroupLimits=grpLimits[1];
 
+    // ── ccUiWindowedConflicts state (hooks always called — Rules of Hooks —
+    // only the render branch below is conditional on the flag) ──
+    var windowedOn = !!(window._ccSafetyMigrations && window._ccSafetyMigrations.isEnabled('ccUiWindowedConflicts'));
+    // ── ccUiEmptyStates: model-loading subscription (same window._ccModelLoading
+    // + 'cc-model-loading' event pattern already used elsewhere, e.g. the
+    // welcome-card/toolbar loading indicators) ──
+    var emptyStatesOn = !!(window._ccSafetyMigrations && window._ccSafetyMigrations.isEnabled('ccUiEmptyStates'));
+    var mlSt = useState(!!window._ccModelLoading), modelsLoadingFlag = mlSt[0], setModelsLoadingFlag = mlSt[1];
+    useEffect(function(){
+      function onML(e){ setModelsLoadingFlag(!!(e && e.detail && e.detail.loading)); }
+      window.addEventListener('cc-model-loading', onML);
+      return function(){ window.removeEventListener('cc-model-loading', onML); };
+    }, []);
+    var heightCacheRef = useRef({});
+    var scrollRafRef = useRef(null);
+    var wScrollSt = useState(0), winScrollTop=wScrollSt[0], setWinScrollTop=wScrollSt[1];
+    var wViewSt = useState(600), winViewportH=wViewSt[0], setWinViewportH=wViewSt[1];
+    var wForceSt = useState(0), setWinForceTick=wForceSt[1]; // bumped to force a re-render after a row's real height is measured
+    function onWindowedScroll(e) {
+      var top = e.target.scrollTop;
+      if (scrollRafRef.current) return;
+      scrollRafRef.current = requestAnimationFrame(function(){
+        scrollRafRef.current = null;
+        setWinScrollTop(top);
+      });
+    }
+    useEffect(function(){
+      if (!windowedOn || !scrollRef.current) return;
+      function measure(){ if (scrollRef.current) setWinViewportH(scrollRef.current.clientHeight || 600); }
+      measure();
+      var RO = window.ResizeObserver;
+      if (RO) { var ro = new RO(measure); ro.observe(scrollRef.current); return function(){ ro.disconnect(); }; }
+      window.addEventListener('resize', measure);
+      return function(){ window.removeEventListener('resize', measure); };
+    }, [windowedOn]);
+    // Refine the height cache from real DOM measurements of whatever is
+    // currently mounted. Cheap: bounded by the overscan window, not the
+    // full dataset. A changed measurement bumps a tick to force one more
+    // render so the offsets table (recomputed fresh every render from the
+    // cache) reflects it.
+    useEffect(function(){
+      if (!windowedOn || !scrollRef.current) return;
+      var changed = false;
+      var nodes = scrollRef.current.querySelectorAll('[data-row-key]');
+      for (var i = 0; i < nodes.length; i++) {
+        var key = nodes[i].getAttribute('data-row-key');
+        var h = nodes[i].offsetHeight;
+        if (h > 0 && Math.abs((heightCacheRef.current[key]||0) - h) > 1) {
+          heightCacheRef.current[key] = h;
+          changed = true;
+        }
+      }
+      if (changed) setWinForceTick(function(t){ return t+1; });
+    });
+
     // ── Progressive reveal ──  See INTERNALS.md § 21.41
+    // Windowed mode mounts a bounded slice regardless, so the reveal-to-all
+    // idle callback (whose whole purpose is bounding first-paint cost before
+    // the full set mounts) is unnecessary — items is the full set immediately.
     var revealSt = useState(Math.min(INITIAL_REVEAL, rawItemsProp.length));
     var reveal = revealSt[0], setReveal = revealSt[1];
     useEffect(function(){
+      if (windowedOn) return;
       if (reveal >= rawItemsProp.length) return;
       var ric = window.requestIdleCallback || function(cb){ return setTimeout(function(){ cb({ timeRemaining: function(){ return 0; } }); }, 32); };
       var cic = window.cancelIdleCallback || clearTimeout;
       var h = ric(function(){ setReveal(rawItemsProp.length); });
       return function(){ cic(h); };
-    }, [rawItemsProp, reveal]);
+    }, [rawItemsProp, reveal, windowedOn]);
     // When items prop identity changes (new filter, new detection), reset
     // the reveal cap so we don't paint a stale tail.
     useEffect(function(){
       setReveal(Math.min(INITIAL_REVEAL, rawItemsProp.length));
     }, [rawItemsProp]);
-    var items = reveal >= rawItemsProp.length ? rawItemsProp : rawItemsProp.slice(0, reveal);
+    var items = windowedOn ? rawItemsProp : (reveal >= rawItemsProp.length ? rawItemsProp : rawItemsProp.slice(0, reveal));
 
     // ── Keyboard navigation: Arrow Down/Up = next/prev item, Tab/Shift+Tab = next/prev group ──
     var groups = groupAndSort(items, groupBy, sortBy, {models: models});
@@ -23445,6 +23842,21 @@ function startApp() {
         if(needUpdate){
           setTimeout(function(){
             if(!scrollRef.current) return;
+            // Windowed: the row won't be in the DOM until scrollTop is near
+            // it (nothing to scrollIntoView yet) — jump straight to its
+            // computed offset instead, which mounts it on the next render.
+            if (windowedOn) {
+              var wRows1 = _ccBuildConflictRows(items, groups, collapsed, groupLimits, isClusterGroup);
+              var wOff1 = _ccComputeRowOffsets(wRows1, heightCacheRef.current);
+              var idx1 = -1;
+              for (var ri1=0; ri1<wRows1.length; ri1++) { if (wRows1[ri1].key === 'i:'+activeId) { idx1 = ri1; break; } }
+              if (idx1 >= 0) {
+                var target1 = Math.max(0, wOff1.offsets[idx1] - (scrollRef.current.clientHeight||600)/2);
+                scrollRef.current.scrollTop = target1;
+                setWinScrollTop(target1);
+              }
+              return;
+            }
             var row = scrollRef.current.querySelector('[data-item-id="'+activeId+'"]');
             if(row) row.scrollIntoView({block:'center',behavior:'smooth'});
           }, 80);
@@ -23452,6 +23864,18 @@ function startApp() {
         }
       }
       if(!scrollRef.current) return;
+      if (windowedOn) {
+        var wRows2 = _ccBuildConflictRows(items, groups, collapsed, groupLimits, isClusterGroup);
+        var wOff2 = _ccComputeRowOffsets(wRows2, heightCacheRef.current);
+        var idx2 = -1;
+        for (var ri2=0; ri2<wRows2.length; ri2++) { if (wRows2[ri2].key === 'i:'+activeId) { idx2 = ri2; break; } }
+        if (idx2 >= 0) {
+          var target2 = Math.max(0, wOff2.offsets[idx2] - (scrollRef.current.clientHeight||600)/2);
+          scrollRef.current.scrollTop = target2;
+          setWinScrollTop(target2);
+        }
+        return;
+      }
       var idx = -1;
       for(var i=0;i<items.length;i++){if(items[i].id===activeId){idx=i;break;}}
       if(idx>=0 && items.length>50 && !groups) {
@@ -23493,6 +23917,35 @@ function startApp() {
           }
         } catch(_e){}
       }
+      if (emptyStatesOn && isClash && props.emptyCtx) {
+        var ectx = Object.assign({}, props.emptyCtx, {
+          modelsLoading: modelsLoadingFlag,
+          sameDisciplineSkipped: !!_emptyNudge,
+        });
+        var st = _ccConflictEmptyState(ectx);
+        var actionBtn = null;
+        if (st.action === 'run') {
+          actionBtn = html`<button onClick=${function(){ try{ if(window._ccRunDetection) window._ccRunDetection(); }catch(e){} }}
+            style=${{marginTop:'.6rem',fontSize:'0.75rem',padding:'.4rem .8rem',borderRadius:6,background:'var(--accent)',color:'#fff',border:'none',cursor:'pointer',fontWeight:600}}>Run detection</button>`;
+        } else if (st.action === 'clear-filters') {
+          actionBtn = html`<button onClick=${function(){ if(window._ccDispatch) window._ccDispatch({t:A.RESET_FILTERS}); }}
+            style=${{marginTop:'.6rem',fontSize:'0.75rem',padding:'.4rem .8rem',borderRadius:6,background:'var(--accent)',color:'#fff',border:'none',cursor:'pointer',fontWeight:600}}>Clear filters</button>`;
+        } else if (st.action === 'show-models') {
+          actionBtn = html`<button onClick=${function(){ if(window._ccDispatch) window._ccDispatch({t:A.TAB,v:'models'}); }}
+            style=${{marginTop:'.6rem',fontSize:'0.75rem',padding:'.4rem .8rem',borderRadius:6,background:'var(--accent)',color:'#fff',border:'none',cursor:'pointer',fontWeight:600}}>Show models</button>`;
+        }
+        return html`<div style=${{flex:1,overflowY:'auto'}}>
+          <div data-empty-state=${st.key} style=${{textAlign:'center',color:'var(--text-faint)',fontSize:'0.86rem',padding:'2.5rem 1rem'}}>
+            <div style=${{marginBottom:'.3rem',display:'flex',justifyContent:'center'}}>
+              <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/></svg>
+            </div>
+            <div style=${{color:'var(--text-secondary)',fontWeight:600}}>${st.title}</div>
+            ${st.hint && html`<div style=${{marginTop:'.3rem',fontSize:'0.78rem'}}>${st.hint}</div>`}
+            ${actionBtn}
+          </div>
+          ${st.key==='same-discipline-skipped' && _emptyNudge}
+        </div>`;
+      }
       return html`<div style=${{flex:1,overflowY:'auto'}}>
         <div style=${{textAlign:'center',color:'var(--text-faint)',fontSize:'0.86rem',padding:_emptyNudge?'2rem 1rem 1rem':'2.5rem 1rem'}}>
           <div style=${{marginBottom:'.3rem',display:'flex',justifyContent:'center'}}>
@@ -23505,140 +23958,176 @@ function startApp() {
         ${_emptyNudge}
       </div>`;
     }
+    function toggleGroup(label) {
+      setCollapsed(function(prev) {
+        var n = Object.assign({}, prev);
+        n[label] = !n[label];
+        return n;
+      });
+    }
+    function showMore(label) {
+      setGroupLimits(function(prev) {
+        var n = Object.assign({}, prev);
+        n[label] = (n[label] || GROUP_PAGE_SIZE) + GROUP_PAGE_SIZE;
+        return n;
+      });
+    }
+    // Severity → semantic color token. Maps to --color-danger/warning/info/text-muted.
+    // 'duplicate' is purple (no token exists) — matches the existing inline-statusColors palette below for visual continuity.
+    var SEV_COLOR = {critical:'var(--color-danger)',major:'var(--color-warning)',hard:'var(--color-danger)',soft:'var(--color-warning)',minor:'var(--text-muted)',duplicate:'#8b5cf6',info:'var(--text-faint)'};
+    var statusColors = {open:'#ef4444',in_progress:'#f59e0b',resolved:'#22c55e',closed:'#64748b',hard:'#ef4444',soft:'#f59e0b',duplicate:'#8b5cf6'};
+    var modelById = {}; (models||[]).forEach(function(m){modelById[m.id]=m;});
+    function isClusterGroup(g) { return !!(isClash && window._ccClusterDisplay && window._ccClusterDisplay[g.label]); }
+
+    // Header JSX factored out of the per-group map loop so BOTH the legacy
+    // (fully-mounted) path and the windowed path render it identically —
+    // the two paths must never carry two copies of this markup. Returns only
+    // the header (+ cluster triage panel); items/"show more" are separate
+    // rows so the windowed path can mount them independently.
+    function renderHeaderRow(g) {
+      var isOpen = !collapsed[g.label];
+      if (isClusterGroup(g)) {
+        // ── Sentry/Linear-style cluster card ──
+        var sev = window._ccClusterSeverity(g.items);
+        var sevCol = SEV_COLOR[sev] || 'var(--text-muted)';
+        var label = window._ccClusterDisplay[g.label];
+        var c0 = g.items[0]||{};
+        var storey = c0.elemAStorey || c0.elemBStorey || '';
+        var mA = modelById[c0.modelAId], mB = modelById[c0.modelBId];
+        var modelPair = (mA||mB) ? ((mA?mA.name:'?') + ' ↔ ' + (mB?mB.name:'?')) : '';
+        var crossModel = mA && mB && mA.id !== mB.id;
+        var openCount = g.items.filter(function(it){return it.status!=='resolved'&&it.status!=='closed';}).length;
+        var resolved = g.items.length - openCount;
+        var triage = (triageResults && triageResults[g.label]) || null;
+        var triageLoading = !!(triage && triage.loading);
+        var triageResult = triage && triage.result;
+        var triageError = triage && triage.error;
+        return html`<div key=${g.label} data-cluster-key=${g.label}>
+          <div onClick=${function(){toggleGroup(g.label)}}
+            style=${{display:'flex',alignItems:'center',gap:'var(--space-2)',padding:'var(--space-2) var(--space-2) var(--space-2) var(--space-1)',cursor:'pointer',background:'var(--bg-tertiary)',borderBottom:'1px solid var(--border-subtle)',borderLeft:'3px solid '+sevCol,position:'sticky',top:0,zIndex:1}}
+            onMouseEnter=${function(e){var el=e.currentTarget.querySelector('.cc-cluster-actions'); if(el)el.style.opacity='1';}}
+            onMouseLeave=${function(e){var el=e.currentTarget.querySelector('.cc-cluster-actions'); if(el)el.style.opacity='0';}}>
+            <span style=${{fontSize:'var(--text-2xs)',color:'var(--text-faint)',width:10}}>${isOpen?'▼':'▶'}</span>
+            <div style=${{flex:1,minWidth:0,display:'flex',flexDirection:'column',gap:'2px'}}>
+              <span style=${{fontSize:'var(--text-sm)',fontWeight:'var(--weight-semibold)',color:'var(--text-primary)',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis',lineHeight:'var(--leading-tight)'}}>${label}</span>
+              <div style=${{display:'flex',gap:'var(--space-1)',flexWrap:'wrap',alignItems:'center'}}>
+                ${storey && html`<span class="cc-status-pill" style=${{padding:'1px var(--space-2)',background:'var(--bg-secondary)',color:'var(--text-secondary)',textTransform:'none',letterSpacing:0}}>${storey}</span>`}
+                ${modelPair && html`<span class="cc-status-pill" style=${{padding:'1px var(--space-2)',background:crossModel?'var(--accent-bg)':'var(--bg-secondary)',color:crossModel?'var(--accent-subtle)':'var(--text-secondary)',textTransform:'none',letterSpacing:0}}>${modelPair}</span>`}
+                <span style=${{fontSize:'var(--text-2xs)',color:'var(--text-faint)'}}>${openCount} open${resolved?(' · '+resolved+' resolved'):''}</span>
+              </div>
+            </div>
+            <div class="cc-cluster-actions" style=${{opacity:triageLoading?1:0,display:'flex',gap:'var(--space-1)',transition:'opacity var(--duration-fast) var(--ease-standard)'}}>
+              <button aria-label="Triage cluster with AI" title="Triage with AI (T) — sends cluster to /api/triage"
+                disabled=${triageLoading}
+                onClick=${function(e){e.stopPropagation(); window._ccTriageCluster(g.items, d, g.label);}}
+                style=${{...S_BTN,fontSize:'var(--text-2xs)',padding:'1px var(--space-2)',borderRadius:'var(--radius-xs)',border:'1px solid var(--accent-subtle)',background:'var(--accent-bg)',color:'var(--accent-subtle)',fontWeight:'var(--weight-semibold)',opacity:triageLoading?0.6:1}}>${triageLoading?'Triaging…':(triageResult?'Re-triage':'Triage')}</button>
+              <button aria-label="Resolve all clashes in this group" title="Resolve all in this group (R)"
+                onClick=${function(e){e.stopPropagation(); if (openCount===0 || confirm('Resolve all '+openCount+' open clashes in this group?')) window._ccResolveCluster(g.items.filter(function(it){return it.status!=='resolved'&&it.status!=='closed';}), d);}}
+                style=${{...S_BTN,fontSize:'var(--text-2xs)',padding:'1px var(--space-2)',borderRadius:'var(--radius-xs)',border:'1px solid var(--border)',background:'var(--bg-secondary)',color:'var(--text-secondary)'}}>Resolve all</button>
+            </div>
+            <span style=${{fontSize:'var(--text-2xs)',color:'var(--text-faint)',background:'var(--bg-secondary)',padding:'1px var(--space-2)',borderRadius:'var(--radius-pill)',fontFamily:'var(--font-mono)'}}>${g.items.length}</span>
+          </div>
+          ${(triageResult || triageError) && html`<div style=${{padding:'var(--space-2) var(--space-3)',background:'var(--bg-secondary)',borderBottom:'1px solid var(--border-subtle)',borderLeft:'3px solid '+sevCol}}>
+            ${triageError
+              ? html`<div style=${{fontSize:'var(--text-xs)',color:'var(--color-danger)'}}>Triage failed: ${triageError}</div>`
+              : html`<div style=${{display:'flex',flexDirection:'column',gap:'var(--space-2)'}}>
+                  <div style=${{display:'flex',alignItems:'center',gap:'var(--space-2)',flexWrap:'wrap'}}>
+                    ${triageResult.severity && html`<span class="cc-status-pill" style=${{background:SEV_COLOR[triageResult.severity]||'var(--text-muted)',color:'#fff'}}>${triageResult.severity}</span>`}
+                    ${triageResult.discipline_conflict && html`<span style=${{fontSize:'var(--text-2xs)',color:'var(--text-muted)'}}>${triageResult.discipline_conflict}</span>`}
+                    ${triageResult.false_positive_likelihood && html`<span style=${{fontSize:'var(--text-2xs)',color:'var(--text-faint)'}}>false-positive: ${triageResult.false_positive_likelihood}</span>`}
+                  </div>
+                  ${triageResult.title && html`<div style=${{fontSize:'var(--text-sm)',fontWeight:'var(--weight-semibold)',color:'var(--text-primary)',lineHeight:'var(--leading-tight)'}}>${triageResult.title}</div>`}
+                  ${triageResult.explanation && html`<div style=${{fontSize:'var(--text-xs)',color:'var(--text-secondary)',lineHeight:'var(--leading-base)'}}>${triageResult.explanation}</div>`}
+                  ${Array.isArray(triageResult.resolution_options) && triageResult.resolution_options.length>0 && html`<div style=${{display:'flex',flexDirection:'column',gap:'var(--space-1)'}}>
+                    <div style=${{fontSize:'var(--text-2xs)',fontWeight:'var(--weight-bold)',textTransform:'uppercase',letterSpacing:'.08em',color:'var(--text-muted)'}}>Resolution options</div>
+                    ${triageResult.resolution_options.map(function(opt, idx){return html`<div key=${idx} style=${{fontSize:'var(--text-xs)',color:'var(--text-secondary)',padding:'var(--space-1) var(--space-2)',background:'var(--bg-tertiary)',borderRadius:'var(--radius-xs)',borderLeft:'2px solid var(--accent-subtle)'}}>
+                      <div style=${{color:'var(--text-primary)',fontWeight:'var(--weight-medium)'}}>${idx+1}. ${opt.option}</div>
+                      ${opt.tradeoff && html`<div style=${{fontSize:'var(--text-2xs)',color:'var(--text-faint)',marginTop:'2px'}}>Tradeoff: ${opt.tradeoff}${opt.cost_impact?(' · cost: '+opt.cost_impact):''}</div>`}
+                    </div>`;})}
+                  </div>`}
+                  ${(function(){
+                    // Feedback row: cluster-level 👍/👎 dispatched as A.AI_FEEDBACK
+                    // for every clash in the cluster. Lights up the active choice
+                    // so it doesn't look like clicking did nothing on re-renders.
+                    var fb0 = (g.items[0] && g.items[0].aiFeedback) || null;
+                    var btn = function(label, val, on){return html`<button onClick=${function(e){
+                        e.stopPropagation();
+                        g.items.forEach(function(it){ d({t:A.AI_FEEDBACK, id:it.id, v:val}); });
+                        if (window._ccToast) window._ccToast('Thanks — feedback recorded');
+                      }}
+                      title=${val==='real_clash'?'Mark cluster as a real clash':val==='false_positive'?'Mark cluster as a false positive':'Clear feedback'}
+                      style=${{...S_BTN,fontSize:'var(--text-2xs)',padding:'1px var(--space-2)',borderRadius:'var(--radius-xs)',border:'1px solid '+(on?'var(--accent-subtle)':'var(--border)'),background:on?'var(--accent-bg)':'var(--bg-secondary)',color:on?'var(--accent-subtle)':'var(--text-secondary)',fontWeight:on?'var(--weight-semibold)':'var(--weight-regular)'}}>${label}</button>`;};
+                    return html`<div style=${{display:'flex',alignItems:'center',gap:'var(--space-1)',paddingTop:'var(--space-1)',borderTop:'1px dashed var(--border-subtle)'}}>
+                      <span style=${{fontSize:'var(--text-2xs)',color:'var(--text-faint)',marginRight:'var(--space-1)'}}>Was this useful?</span>
+                      ${btn('👍 Real clash', 'real_clash', fb0==='real_clash')}
+                      ${btn('👎 False positive', 'false_positive', fb0==='false_positive')}
+                    </div>`;
+                  })()}
+                </div>`}
+          </div>`}
+        </div>`;
+      }
+      // ── Non-cluster grouping (storey/severity/discipline/etc): keep the lean original header ──
+      var dotColor = statusColors[g.label] || 'var(--accent-light)';
+      return html`<div key=${g.label}
+        onClick=${function(){toggleGroup(g.label)}}
+        style=${{display:'flex',alignItems:'center',gap:'.3rem',padding:'.35rem .5rem',cursor:'pointer',background:'var(--bg-tertiary)',borderBottom:'1px solid var(--border-subtle)',position:'sticky',top:0,zIndex:1}}>
+        <span style=${{fontSize:'0.63rem',color:'var(--text-faint)'}}>${isOpen?'▼':'▶'}</span>
+        <span style=${{width:8,height:8,borderRadius:'50%',background:dotColor,flexShrink:0}}></span>
+        <span style=${{fontSize:'0.75rem',fontWeight:600,color:'var(--text-primary)',flex:1}}>${g.label}</span>
+        <span style=${{fontSize:'0.69rem',color:'var(--text-faint)',background:'var(--bg-secondary)',padding:'.1rem .35rem',borderRadius:10}}>${g.items.length}</span>
+      </div>`;
+    }
+    function renderItemRow(it) {
+      return html`<${IssueRow} key=${it.id} item=${it} active=${activeId===it.id} d=${d} isClash=${isClash} prefs=${prefs} models=${models} selectMode=${selectMode} isSelected=${!!selected[it.id]} trainingMode=${trainingMode} />`;
+    }
+    function renderMoreRow(g, limit) {
+      return html`<button key=${'more:'+g.label} onClick=${function(e){e.stopPropagation();showMore(g.label);}}
+        style=${{...S_BTN,width:'100%',padding:'.4rem',background:'var(--bg-tertiary)',color:'var(--accent)',fontSize:'0.75rem',borderTop:'1px solid var(--border-subtle)',borderRadius:0}}>
+        Show more (${limit} of ${g.items.length})…
+      </button>`;
+    }
+
+    if (windowedOn) {
+      // ── ccUiWindowedConflicts: true bounded mounting ──  REWRITE_UI_PLAN.md Phase 3
+      // Same groups/items as legacy — only which rows get mounted differs.
+      var wRows = useMemo(function(){
+        return _ccBuildConflictRows(items, groups, collapsed, groupLimits, isClusterGroup);
+      }, [items, groups, collapsed, groupLimits]);
+      var wOff = _ccComputeRowOffsets(wRows, heightCacheRef.current);
+      var wWin = _ccComputeVisibleRowWindow(wRows, wOff.offsets, winScrollTop, winViewportH, 600);
+      var wVisibleRows = wRows.slice(wWin.startIdx, wWin.endIdx);
+      return html`<div ref=${scrollRef} onScroll=${onWindowedScroll} style=${{flex:1,overflowY:'auto',position:'relative'}}>
+        <div style=${{height:wOff.totalHeight,position:'relative'}}>
+          ${wVisibleRows.map(function(r, ri) {
+            var idx = wWin.startIdx + ri;
+            var top = wOff.offsets[idx];
+            var content = r.type === 'item' ? renderItemRow(r.item)
+              : r.type === 'more' ? renderMoreRow(r.group, r.limit)
+              : renderHeaderRow(r.group);
+            return html`<div key=${r.key} data-row-key=${r.key} style=${{position:'absolute',top:top,left:0,right:0}}>${content}</div>`;
+          })}
+        </div>
+      </div>`;
+    }
+
     if (groups) {
-      function toggleGroup(label) {
-        setCollapsed(function(prev) {
-          var n = Object.assign({}, prev);
-          n[label] = !n[label];
-          return n;
-        });
-      }
-      function showMore(label) {
-        setGroupLimits(function(prev) {
-          var n = Object.assign({}, prev);
-          n[label] = (n[label] || GROUP_PAGE_SIZE) + GROUP_PAGE_SIZE;
-          return n;
-        });
-      }
-      var modelById = {}; (models||[]).forEach(function(m){modelById[m.id]=m;});
-      // Severity → semantic color token. Maps to --color-danger/warning/info/text-muted.
-      // 'duplicate' is purple (no token exists) — matches the existing inline-statusColors palette below for visual continuity.
-      var SEV_COLOR = {critical:'var(--color-danger)',major:'var(--color-warning)',hard:'var(--color-danger)',soft:'var(--color-warning)',minor:'var(--text-muted)',duplicate:'#8b5cf6',info:'var(--text-faint)'};
       return html`<div ref=${scrollRef} style=${{flex:1,overflowY:'auto'}}>
         ${groups.map(function(g) {
           var isOpen = !collapsed[g.label];
-          var statusColors = {open:'#ef4444',in_progress:'#f59e0b',resolved:'#22c55e',closed:'#64748b',hard:'#ef4444',soft:'#f59e0b',duplicate:'#8b5cf6'};
-          var isCluster = !!(isClash && window._ccClusterDisplay && window._ccClusterDisplay[g.label]);
           var limit = groupLimits[g.label] || GROUP_PAGE_SIZE;
           var visibleItems = g.items.slice(0, limit);
           var hasMore = g.items.length > limit;
-          if (isCluster) {
-            // ── Sentry/Linear-style cluster card ──
-            var sev = window._ccClusterSeverity(g.items);
-            var sevCol = SEV_COLOR[sev] || 'var(--text-muted)';
-            var label = window._ccClusterDisplay[g.label];
-            var c0 = g.items[0]||{};
-            var storey = c0.elemAStorey || c0.elemBStorey || '';
-            var mA = modelById[c0.modelAId], mB = modelById[c0.modelBId];
-            var modelPair = (mA||mB) ? ((mA?mA.name:'?') + ' ↔ ' + (mB?mB.name:'?')) : '';
-            var crossModel = mA && mB && mA.id !== mB.id;
-            var openCount = g.items.filter(function(it){return it.status!=='resolved'&&it.status!=='closed';}).length;
-            var resolved = g.items.length - openCount;
-            var triage = (triageResults && triageResults[g.label]) || null;
-            var triageLoading = !!(triage && triage.loading);
-            var triageResult = triage && triage.result;
-            var triageError = triage && triage.error;
-            return html`<div key=${g.label} data-cluster-key=${g.label}>
-              <div onClick=${function(){toggleGroup(g.label)}}
-                style=${{display:'flex',alignItems:'center',gap:'var(--space-2)',padding:'var(--space-2) var(--space-2) var(--space-2) var(--space-1)',cursor:'pointer',background:'var(--bg-tertiary)',borderBottom:'1px solid var(--border-subtle)',borderLeft:'3px solid '+sevCol,position:'sticky',top:0,zIndex:1}}
-                onMouseEnter=${function(e){var el=e.currentTarget.querySelector('.cc-cluster-actions'); if(el)el.style.opacity='1';}}
-                onMouseLeave=${function(e){var el=e.currentTarget.querySelector('.cc-cluster-actions'); if(el)el.style.opacity='0';}}>
-                <span style=${{fontSize:'var(--text-2xs)',color:'var(--text-faint)',width:10}}>${isOpen?'▼':'▶'}</span>
-                <div style=${{flex:1,minWidth:0,display:'flex',flexDirection:'column',gap:'2px'}}>
-                  <span style=${{fontSize:'var(--text-sm)',fontWeight:'var(--weight-semibold)',color:'var(--text-primary)',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis',lineHeight:'var(--leading-tight)'}}>${label}</span>
-                  <div style=${{display:'flex',gap:'var(--space-1)',flexWrap:'wrap',alignItems:'center'}}>
-                    ${storey && html`<span class="cc-status-pill" style=${{padding:'1px var(--space-2)',background:'var(--bg-secondary)',color:'var(--text-secondary)',textTransform:'none',letterSpacing:0}}>${storey}</span>`}
-                    ${modelPair && html`<span class="cc-status-pill" style=${{padding:'1px var(--space-2)',background:crossModel?'var(--accent-bg)':'var(--bg-secondary)',color:crossModel?'var(--accent-subtle)':'var(--text-secondary)',textTransform:'none',letterSpacing:0}}>${modelPair}</span>`}
-                    <span style=${{fontSize:'var(--text-2xs)',color:'var(--text-faint)'}}>${openCount} open${resolved?(' · '+resolved+' resolved'):''}</span>
-                  </div>
-                </div>
-                <div class="cc-cluster-actions" style=${{opacity:triageLoading?1:0,display:'flex',gap:'var(--space-1)',transition:'opacity var(--duration-fast) var(--ease-standard)'}}>
-                  <button aria-label="Triage cluster with AI" title="Triage with AI (T) — sends cluster to /api/triage"
-                    disabled=${triageLoading}
-                    onClick=${function(e){e.stopPropagation(); window._ccTriageCluster(g.items, d, g.label);}}
-                    style=${{...S_BTN,fontSize:'var(--text-2xs)',padding:'1px var(--space-2)',borderRadius:'var(--radius-xs)',border:'1px solid var(--accent-subtle)',background:'var(--accent-bg)',color:'var(--accent-subtle)',fontWeight:'var(--weight-semibold)',opacity:triageLoading?0.6:1}}>${triageLoading?'Triaging…':(triageResult?'Re-triage':'Triage')}</button>
-                  <button aria-label="Resolve all clashes in this group" title="Resolve all in this group (R)"
-                    onClick=${function(e){e.stopPropagation(); if (openCount===0 || confirm('Resolve all '+openCount+' open clashes in this group?')) window._ccResolveCluster(g.items.filter(function(it){return it.status!=='resolved'&&it.status!=='closed';}), d);}}
-                    style=${{...S_BTN,fontSize:'var(--text-2xs)',padding:'1px var(--space-2)',borderRadius:'var(--radius-xs)',border:'1px solid var(--border)',background:'var(--bg-secondary)',color:'var(--text-secondary)'}}>Resolve all</button>
-                </div>
-                <span style=${{fontSize:'var(--text-2xs)',color:'var(--text-faint)',background:'var(--bg-secondary)',padding:'1px var(--space-2)',borderRadius:'var(--radius-pill)',fontFamily:'var(--font-mono)'}}>${g.items.length}</span>
-              </div>
-              ${(triageResult || triageError) && html`<div style=${{padding:'var(--space-2) var(--space-3)',background:'var(--bg-secondary)',borderBottom:'1px solid var(--border-subtle)',borderLeft:'3px solid '+sevCol}}>
-                ${triageError
-                  ? html`<div style=${{fontSize:'var(--text-xs)',color:'var(--color-danger)'}}>Triage failed: ${triageError}</div>`
-                  : html`<div style=${{display:'flex',flexDirection:'column',gap:'var(--space-2)'}}>
-                      <div style=${{display:'flex',alignItems:'center',gap:'var(--space-2)',flexWrap:'wrap'}}>
-                        ${triageResult.severity && html`<span class="cc-status-pill" style=${{background:SEV_COLOR[triageResult.severity]||'var(--text-muted)',color:'#fff'}}>${triageResult.severity}</span>`}
-                        ${triageResult.discipline_conflict && html`<span style=${{fontSize:'var(--text-2xs)',color:'var(--text-muted)'}}>${triageResult.discipline_conflict}</span>`}
-                        ${triageResult.false_positive_likelihood && html`<span style=${{fontSize:'var(--text-2xs)',color:'var(--text-faint)'}}>false-positive: ${triageResult.false_positive_likelihood}</span>`}
-                      </div>
-                      ${triageResult.title && html`<div style=${{fontSize:'var(--text-sm)',fontWeight:'var(--weight-semibold)',color:'var(--text-primary)',lineHeight:'var(--leading-tight)'}}>${triageResult.title}</div>`}
-                      ${triageResult.explanation && html`<div style=${{fontSize:'var(--text-xs)',color:'var(--text-secondary)',lineHeight:'var(--leading-base)'}}>${triageResult.explanation}</div>`}
-                      ${Array.isArray(triageResult.resolution_options) && triageResult.resolution_options.length>0 && html`<div style=${{display:'flex',flexDirection:'column',gap:'var(--space-1)'}}>
-                        <div style=${{fontSize:'var(--text-2xs)',fontWeight:'var(--weight-bold)',textTransform:'uppercase',letterSpacing:'.08em',color:'var(--text-muted)'}}>Resolution options</div>
-                        ${triageResult.resolution_options.map(function(opt, idx){return html`<div key=${idx} style=${{fontSize:'var(--text-xs)',color:'var(--text-secondary)',padding:'var(--space-1) var(--space-2)',background:'var(--bg-tertiary)',borderRadius:'var(--radius-xs)',borderLeft:'2px solid var(--accent-subtle)'}}>
-                          <div style=${{color:'var(--text-primary)',fontWeight:'var(--weight-medium)'}}>${idx+1}. ${opt.option}</div>
-                          ${opt.tradeoff && html`<div style=${{fontSize:'var(--text-2xs)',color:'var(--text-faint)',marginTop:'2px'}}>Tradeoff: ${opt.tradeoff}${opt.cost_impact?(' · cost: '+opt.cost_impact):''}</div>`}
-                        </div>`;})}
-                      </div>`}
-                      ${(function(){
-                        // Feedback row: cluster-level 👍/👎 dispatched as A.AI_FEEDBACK
-                        // for every clash in the cluster. Lights up the active choice
-                        // so it doesn't look like clicking did nothing on re-renders.
-                        var fb0 = (g.items[0] && g.items[0].aiFeedback) || null;
-                        var btn = function(label, val, on){return html`<button onClick=${function(e){
-                            e.stopPropagation();
-                            g.items.forEach(function(it){ d({t:A.AI_FEEDBACK, id:it.id, v:val}); });
-                            if (window._ccToast) window._ccToast('Thanks — feedback recorded');
-                          }}
-                          title=${val==='real_clash'?'Mark cluster as a real clash':val==='false_positive'?'Mark cluster as a false positive':'Clear feedback'}
-                          style=${{...S_BTN,fontSize:'var(--text-2xs)',padding:'1px var(--space-2)',borderRadius:'var(--radius-xs)',border:'1px solid '+(on?'var(--accent-subtle)':'var(--border)'),background:on?'var(--accent-bg)':'var(--bg-secondary)',color:on?'var(--accent-subtle)':'var(--text-secondary)',fontWeight:on?'var(--weight-semibold)':'var(--weight-regular)'}}>${label}</button>`;};
-                        return html`<div style=${{display:'flex',alignItems:'center',gap:'var(--space-1)',paddingTop:'var(--space-1)',borderTop:'1px dashed var(--border-subtle)'}}>
-                          <span style=${{fontSize:'var(--text-2xs)',color:'var(--text-faint)',marginRight:'var(--space-1)'}}>Was this useful?</span>
-                          ${btn('👍 Real clash', 'real_clash', fb0==='real_clash')}
-                          ${btn('👎 False positive', 'false_positive', fb0==='false_positive')}
-                        </div>`;
-                      })()}
-                    </div>`}
-              </div>`}
-              ${isOpen && visibleItems.map(function(it){return html`<${IssueRow} key=${it.id} item=${it} active=${activeId===it.id} d=${d} isClash=${isClash} prefs=${prefs} models=${models} selectMode=${selectMode} isSelected=${!!selected[it.id]} trainingMode=${trainingMode} />`})}
-              ${isOpen && hasMore && html`<button onClick=${function(e){e.stopPropagation();showMore(g.label);}}
-                style=${{...S_BTN,width:'100%',padding:'.4rem',background:'var(--bg-tertiary)',color:'var(--accent)',fontSize:'0.75rem',borderTop:'1px solid var(--border-subtle)',borderRadius:0}}>
-                Show more (${limit} of ${g.items.length})…
-              </button>`}
-            </div>`;
-          }
-          // ── Non-cluster grouping (storey/severity/discipline/etc): keep the lean original header ──
-          var dotColor = statusColors[g.label] || 'var(--accent-light)';
           return html`<div key=${g.label}>
-            <div onClick=${function(){toggleGroup(g.label)}}
-              style=${{display:'flex',alignItems:'center',gap:'.3rem',padding:'.35rem .5rem',cursor:'pointer',background:'var(--bg-tertiary)',borderBottom:'1px solid var(--border-subtle)',position:'sticky',top:0,zIndex:1}}>
-              <span style=${{fontSize:'0.63rem',color:'var(--text-faint)'}}>${isOpen?'▼':'▶'}</span>
-              <span style=${{width:8,height:8,borderRadius:'50%',background:dotColor,flexShrink:0}}></span>
-              <span style=${{fontSize:'0.75rem',fontWeight:600,color:'var(--text-primary)',flex:1}}>${g.label}</span>
-              <span style=${{fontSize:'0.69rem',color:'var(--text-faint)',background:'var(--bg-secondary)',padding:'.1rem .35rem',borderRadius:10}}>${g.items.length}</span>
-            </div>
-            ${isOpen && visibleItems.map(function(it){return html`<${IssueRow} key=${it.id} item=${it} active=${activeId===it.id} d=${d} isClash=${isClash} prefs=${prefs} models=${models} selectMode=${selectMode} isSelected=${!!selected[it.id]} trainingMode=${trainingMode} />`})}
-            ${isOpen && hasMore && html`<button onClick=${function(e){e.stopPropagation();showMore(g.label);}}
-              style=${{...S_BTN,width:'100%',padding:'.4rem',background:'var(--bg-tertiary)',color:'var(--accent)',fontSize:'0.75rem',borderTop:'1px solid var(--border-subtle)',borderRadius:0}}>
-              Show more (${limit} of ${g.items.length})…
-            </button>`}
+            ${renderHeaderRow(g)}
+            ${isOpen && visibleItems.map(renderItemRow)}
+            ${isOpen && hasMore && renderMoreRow(g, limit)}
           </div>`;
         })}
       </div>`;
     }
     if(items.length <= 50) return html`<div ref=${scrollRef} style=${{flex:1,overflowY:'auto'}}>
-      ${items.map(function(it){return html`<${IssueRow} key=${it.id} item=${it} active=${activeId===it.id} d=${d} isClash=${isClash} prefs=${prefs} models=${models} selectMode=${selectMode} isSelected=${!!selected[it.id]} trainingMode=${trainingMode} />`})}
+      ${items.map(renderItemRow)}
     </div>`;
     var totalHeight = items.length * ROW_HEIGHT;
     var containerH = scrollRef.current && scrollRef.current.clientHeight > 0 ? scrollRef.current.clientHeight : 600;
@@ -23649,7 +24138,7 @@ function startApp() {
     return html`<div ref=${scrollRef} onScroll=${function(e){setScrollTop(e.target.scrollTop);}} style=${{flex:1,overflowY:'auto'}}>
       <div style=${{height:totalHeight,position:'relative'}}>
         <div style=${{position:'absolute',top:startIdx*ROW_HEIGHT,left:0,right:0}}>
-          ${visible.map(function(it){return html`<${IssueRow} key=${it.id} item=${it} active=${activeId===it.id} d=${d} isClash=${isClash} prefs=${prefs} models=${models} selectMode=${selectMode} isSelected=${!!selected[it.id]} trainingMode=${trainingMode} />`})}
+          ${visible.map(renderItemRow)}
         </div>
       </div>
     </div>`;
@@ -25920,6 +26409,76 @@ function startApp() {
 
   // ── Shortcuts Modal ──────────────────────────────────────────
 
+  // ── Storey scope chooser (ccUiStoreyChooser) ──  REWRITE_UI_PLAN.md Phase 12
+  // Shown before a real load starts, populated from the cheap pre-decode
+  // text scan above. "Load all storeys" (default, pre-checked) reproduces
+  // today's exact behavior — nothing changes unless the user deliberately
+  // narrows the selection. Confirming with a subset sets the EXISTING
+  // window._ccNextLoadScope (already used by the tested public
+  // loadFiles(files,{storeys}) path) before calling the real onConfirm.
+  function StoreyScopeModal(props) {
+    var storeyNames = props.storeyNames, onConfirm = props.onConfirm, onCancel = props.onCancel;
+    var selSt = useState(function(){
+      var initial = {};
+      storeyNames.forEach(function(n){ initial[n] = true; });
+      return initial;
+    });
+    var selected = selSt[0], setSelected = selSt[1];
+    var cardRef = useRef(null);
+    _ccUseFocusTrap(cardRef, true);
+    useEffect(function(){
+      function onKey(e){ if (e.key === 'Escape') onCancel(); }
+      window.addEventListener('keydown', onKey);
+      return function(){ window.removeEventListener('keydown', onKey); };
+    }, []);
+    function toggle(name) {
+      setSelected(function(prev){ var n = Object.assign({}, prev); n[name] = !n[name]; return n; });
+    }
+    var allChecked = storeyNames.every(function(n){ return selected[n]; });
+    var checkedCount = storeyNames.filter(function(n){ return selected[n]; }).length;
+    return html`<div class="cc-modal-backdrop" style=${S_BACKDROP} role="dialog" aria-modal="true" aria-labelledby="cc-storey-scope-title" onClick=${onCancel}>
+      <div ref=${cardRef} tabindex="-1" class="cc-modal-card" style=${{...S_MODAL_CARD,width:420,outline:'none'}} onClick=${function(e){e.stopPropagation();}}>
+        <div style=${S_MODAL_HEADER}>
+          <h2 id="cc-storey-scope-title" style=${S_MODAL_TITLE}>Choose storeys to load</h2>
+          <button aria-label="Close" style=${S_MODAL_CLOSE} onClick=${onCancel}>×</button>
+        </div>
+        <div style=${S_MODAL_BODY}>
+          <div style=${{fontSize:'var(--text-sm)',color:'var(--text-muted)'}}>
+            This file has ${storeyNames.length} storey${storeyNames.length===1?'':'s'}. Loading fewer materializes less geometry and finishes faster — you can always reload with a different selection.
+          </div>
+          <label style=${{display:'flex',alignItems:'center',gap:'.5rem',cursor:'pointer',padding:'.3rem 0',borderBottom:'1px solid var(--border-subtle)'}}>
+            <input type="checkbox" checked=${allChecked}
+              onChange=${function(){
+                var next = {};
+                storeyNames.forEach(function(n){ next[n] = !allChecked; });
+                setSelected(next);
+              }} />
+            <span style=${{fontWeight:600}}>Load all storeys</span>
+          </label>
+          <div style=${{maxHeight:260,overflowY:'auto',display:'flex',flexDirection:'column',gap:'.15rem'}}>
+            ${storeyNames.map(function(name){
+              return html`<label key=${name} style=${{display:'flex',alignItems:'center',gap:'.5rem',cursor:'pointer',padding:'.2rem 0'}}>
+                <input type="checkbox" checked=${!!selected[name]} onChange=${function(){toggle(name);}} />
+                <span>${name}</span>
+              </label>`;
+            })}
+          </div>
+          <div style=${{display:'flex',justifyContent:'flex-end',gap:'.5rem',marginTop:'.3rem'}}>
+            <button onClick=${onCancel} style=${{...S_BTN,background:'var(--bg-tertiary)',color:'var(--text-secondary)'}}>Cancel</button>
+            <button onClick=${function(){
+                var chosen = storeyNames.filter(function(n){ return selected[n]; });
+                onConfirm(allChecked ? null : chosen); // null = full load, exact current behavior
+              }}
+              disabled=${checkedCount===0}
+              style=${{...S_BTN,background:'var(--accent)',color:'#fff',opacity:checkedCount===0?0.5:1}}>
+              ${allChecked ? 'Load all' : 'Load ' + checkedCount + ' selected'}
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>`;
+  }
+
   function ShortcutsModal(props) {
     var onClose = props.onClose;
     useEffect(function(){
@@ -25927,6 +26486,12 @@ function startApp() {
       window.addEventListener('keydown', onKey);
       return function(){ window.removeEventListener('keydown', onKey); };
     }, []);
+    // REWRITE_UI_PLAN.md Phase 9 — first verified integration of the shared
+    // focus-trap primitive. Flag-gated; the modal's existing Escape handler
+    // and DOM structure above/below are completely unchanged either way.
+    var modalV2On = !!(window._ccSafetyMigrations && window._ccSafetyMigrations.isEnabled('ccUiModalV2'));
+    var cardRef = useRef(null);
+    _ccUseFocusTrap(cardRef, modalV2On);
     var sections = [
       { title: 'General', rows: [
         ['?',           'Open this shortcuts panel'],
@@ -25993,7 +26558,7 @@ function startApp() {
     var kbdStyle = {fontFamily:'var(--font-mono)',fontSize:'var(--text-xs)',background:'var(--bg-tertiary)',border:'1px solid var(--border)',borderBottom:'2px solid var(--border)',borderRadius:'var(--radius-xs)',padding:'2px 6px',color:'var(--text-primary)',whiteSpace:'nowrap',display:'inline-block',lineHeight:'var(--leading-tight)'};
     return html`<div class="cc-modal-backdrop" style=${S_BACKDROP} role="dialog" aria-modal="true" aria-labelledby="cc-shortcuts-title"
       onClick=${onClose}>
-      <div class="cc-modal-card" style=${{...S_MODAL_CARD,width:560}} onClick=${function(e){e.stopPropagation();}}>
+      <div ref=${cardRef} tabindex="-1" class="cc-modal-card" style=${{...S_MODAL_CARD,width:560,outline:'none'}} onClick=${function(e){e.stopPropagation();}}>
         <div style=${S_MODAL_HEADER}>
           <h2 id="cc-shortcuts-title" style=${S_MODAL_TITLE}>Keyboard shortcuts</h2>
           <button aria-label="Close shortcuts" style=${S_MODAL_CLOSE} onClick=${onClose}>×</button>
@@ -32387,6 +32952,97 @@ function startApp() {
     </div>`;
   }
 
+  // ── Operation Center (ccUiOperationCenter) ──  REWRITE_UI_PLAN.md Phase 5
+  // One presentational surface for load/detect/Revit-pull feedback, reading
+  // the SAME signals every one of those flows already emits (cc-model-loading,
+  // cc-load-session from the Phase-1 load coordinator, s.detecting, Revit's
+  // own s.revitDirect flags) rather than inventing a parallel progress model.
+  // At most one operation is shown at a time (priority: detect > load > Revit)
+  // so two progress surfaces never stack. Cancel reuses the exact existing
+  // abort hooks (_ccAbortLoading / cancelDetection / _revitDirectCancelExport)
+  // — no new cancellation path.
+  function OperationCenter(props) {
+    var s = props.s, d = props.d;
+    var on = !!(window._ccSafetyMigrations && window._ccSafetyMigrations.isEnabled('ccUiOperationCenter'));
+    var ldSt = useState(!!window._ccModelLoading), loading = ldSt[0], setLoading = ldSt[1];
+    var msgSt = useState(window._ccModelLoadMsg || ''), loadMsg = msgSt[0], setLoadMsg = msgSt[1];
+    var lcSt = useState(null), lcSnap = lcSt[0], setLcSnap = lcSt[1];
+    var startRef = useRef(null); // {kind, t0} for the currently-shown operation's elapsed timer
+    var tickSt = useState(0), setTick = tickSt[1];
+    useEffect(function(){
+      if (!on) return;
+      function onLoading(e){ setLoading(!!(e && e.detail && e.detail.loading)); setLoadMsg(window._ccModelLoadMsg || ''); }
+      function onSession(e){ setLcSnap((e && e.detail) || null); }
+      window.addEventListener('cc-model-loading', onLoading);
+      window.addEventListener('cc-load-session', onSession);
+      return function(){
+        window.removeEventListener('cc-model-loading', onLoading);
+        window.removeEventListener('cc-load-session', onSession);
+      };
+    }, [on]);
+    useEffect(function(){
+      if (!on) return;
+      var iv = setInterval(function(){ setTick(function(t){ return (t+1)%100000; }); }, 1000);
+      return function(){ clearInterval(iv); };
+    }, [on]);
+    if (!on) return null;
+
+    var revit = s.revitDirect || {};
+    var detecting = !!s.detecting;
+    var revitBusy = !!(revit.loading || revit.reconnecting);
+
+    var kind = detecting ? 'detect' : loading ? 'load' : revitBusy ? 'revit' : null;
+    if (startRef.current && startRef.current.kind !== kind) startRef.current = null;
+    if (kind && !startRef.current) startRef.current = { kind: kind, t0: Date.now() };
+    if (!kind) return null;
+
+    var elapsedS = startRef.current ? Math.max(0, Math.round((Date.now() - startRef.current.t0) / 1000)) : 0;
+    var slow = elapsedS >= 15;
+    var op;
+    if (kind === 'detect') {
+      op = {
+        label: 'Checking for clashes…',
+        detail: slow ? 'This is taking longer than usual — large models can take a minute.' : null,
+        onCancel: function(){ try { if (window._ccCancelDetection) window._ccCancelDetection(); else d({t:'STOP_DETECT'}); } catch(e){} },
+      };
+    } else if (kind === 'load') {
+      var pendingCount = (lcSnap && typeof lcSnap.pending === 'number') ? lcSnap.pending : null;
+      op = {
+        label: loadMsg || 'Loading model…',
+        detail: (pendingCount ? pendingCount + ' pending' : null) || (slow ? 'Large files can take a while on the first parse.' : null),
+        onCancel: function(){ try { if (window._ccAbortLoading) window._ccAbortLoading(); } catch(e){} },
+      };
+    } else {
+      op = {
+        label: revit.reconnecting ? 'Reconnecting to Revit…' : 'Pulling from Revit…',
+        detail: null,
+        onCancel: function(){
+          try { if (window._revitDirectCancelExport) window._revitDirectCancelExport(); } catch(e){}
+          d({t:'UPD_REVIT_DIRECT', u:{loading:false, progress:0}});
+        },
+      };
+    }
+
+    return html`<div role="status" aria-live="polite" data-operation=${kind} style=${{
+      position:'fixed', bottom:'4.4rem', left:'50%', transform:'translateX(-50%)',
+      zIndex:1450, minWidth:260, maxWidth:420, width:'92%',
+      background:'var(--bg-secondary)', border:'1px solid var(--border)',
+      borderRadius:10, padding:'.6rem .8rem',
+      boxShadow:'0 12px 32px rgba(0,0,0,.35)',
+      display:'flex', alignItems:'center', gap:'.6rem',
+      fontSize:'0.8rem', color:'var(--text-secondary)',
+      pointerEvents:'auto'
+    }}>
+      <span class="spin" style=${{width:14,height:14,borderRadius:'50%',border:'2px solid var(--border)',borderTopColor:'var(--accent)',flexShrink:0}}></span>
+      <span style=${{flex:1,minWidth:0}}>
+        <div style=${{color:'var(--text-primary)',fontWeight:600,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>${op.label}${elapsedS>2 ? ' · '+elapsedS+'s' : ''}</div>
+        ${op.detail && html`<div style=${{fontSize:'0.72rem',color:'var(--text-faint)',marginTop:'.1rem'}}>${op.detail}</div>`}
+      </span>
+      ${op.onCancel && html`<button onClick=${op.onCancel}
+        style=${{...S_BTN,padding:'.3rem .55rem',background:'transparent',border:'1px solid var(--border)',borderRadius:6,color:'var(--text-secondary)',fontSize:'0.72rem',whiteSpace:'nowrap',flexShrink:0}}>Cancel</button>`}
+    </div>`;
+  }
+
   // ── Right Rail (navigation tabs) ───────────────────────────────
 
   // ── Memory Warning Modal ────────────────────────────────────────
@@ -33987,13 +34643,21 @@ function startApp() {
         var pcFiles = allFiles.filter(function(f){return /\.(ply|pcd|xyz|pts|ptx|las|laz)$/i.test(f.name);});
         if ((modelFiles.length || pcFiles.length)) e.preventDefault();
         if (modelFiles.length && window._ccLoadFiles) window._ccLoadFiles(modelFiles);
-        if (pcFiles.length && window._ccLoadPointCloud) {
-          pcFiles.forEach(function(f){
-            window._ccLoadPointCloud(f).catch(function(err){
-              console.warn('[PointCloud] Failed to load', f.name, err);
-              alert('Could not load ' + f.name + ': ' + (err && err.message || err));
+        if (pcFiles.length) {
+          (window._ccEnsureAddon ? window._ccEnsureAddon('pointcloud') : Promise.reject(new Error('addon loader unavailable')))
+            .then(function(){
+              if (!window._ccLoadPointCloud) throw new Error('pointcloud addon loaded but did not register');
+              pcFiles.forEach(function(f){
+                window._ccLoadPointCloud(f).catch(function(err){
+                  console.warn('[PointCloud] Failed to load', f.name, err);
+                  alert('Could not load ' + f.name + ': ' + (err && err.message || err));
+                });
+              });
+            })
+            .catch(function(err){
+              console.warn('[PointCloud] addon could not be loaded', err);
+              alert('Point cloud addon could not be loaded.');
             });
-          });
         }
       }
       document.addEventListener('dragenter', onDragEnter);
@@ -34696,6 +35360,52 @@ function startApp() {
           ${row('Enter presentation', function(){ d({t:A.PRESENT,v:true}); })}
           ${row('Keyboard shortcuts', function(){ try{ window.dispatchEvent(new CustomEvent('cc-show-shortcuts')); }catch(e){} }, '?')}
         </div>
+      </div>`}
+    </div>`;
+  }
+
+  // ── Responsive tool group (ccUiToolbarV2) ──  REWRITE_UI_PLAN.md Phase 8
+  // Generic, reusable ResizeObserver + priority-fit wrapper: measures its own
+  // width, uses _ccFitToolbarItems (pure, unit-tested) to decide which items
+  // fit, and renders the rest into a "More" popover instead of relying on
+  // the toolbar's existing raw overflowX:auto horizontal scroll. Items are
+  // freshly rendered via renderItem(id) wherever they currently belong (row
+  // vs popover) rather than DOM-reparented — safe for stateless icon
+  // buttons, avoids portal complexity. The active item never moves into the
+  // popover (see _ccFitToolbarItems) so an in-progress tool stays reachable.
+  function ResponsiveToolGroup(props) {
+    var items = props.items, activeId = props.activeId, renderItem = props.renderItem;
+    var moreButtonWidth = props.moreButtonWidth != null ? props.moreButtonWidth : 36;
+    var containerRef = useRef(null);
+    var wSt = useState(9999), containerWidth = wSt[0], setContainerWidth = wSt[1];
+    var openSt = useState(false), moreOpen = openSt[0], setMoreOpen = openSt[1];
+    useEffect(function(){
+      if (!containerRef.current) return;
+      function measure(){ if (containerRef.current) setContainerWidth(containerRef.current.clientWidth); }
+      measure();
+      var RO = window.ResizeObserver;
+      if (RO) { var ro = new RO(measure); ro.observe(containerRef.current); return function(){ ro.disconnect(); }; }
+      window.addEventListener('resize', measure);
+      return function(){ window.removeEventListener('resize', measure); };
+    }, []);
+    var fit = _ccFitToolbarItems(items, containerWidth, moreButtonWidth, activeId);
+    return html`<div ref=${containerRef} style=${{display:'flex',alignItems:'center',gap:'var(--space-1)',minWidth:0,flex:'0 1 auto',overflow:'hidden'}}>
+      ${fit.visible.map(function(id){ return renderItem(id); })}
+      ${fit.overflow.length > 0 && html`<div style=${{position:'relative',display:'inline-flex',flexShrink:0}}>
+        <button aria-label="More tools" title="More tools" data-toolbar-overflow-toggle
+          onClick=${function(e){ e.stopPropagation(); setMoreOpen(function(v){ return !v; }); }}
+          style=${{width:36,height:36,display:'inline-flex',alignItems:'center',justifyContent:'center',
+            background:moreOpen?'var(--accent-bg)':'none',border:'none',cursor:'pointer',
+            color:moreOpen?'var(--accent)':'var(--ink-muted)',borderRadius:'var(--radius-xs)'}}>
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="5" cy="12" r="1.5"/><circle cx="12" cy="12" r="1.5"/><circle cx="19" cy="12" r="1.5"/></svg>
+        </button>
+        ${moreOpen && html`<div data-toolbar-overflow-panel onClick=${function(e){ e.stopPropagation(); }}
+          style=${{position:'absolute',top:'110%',right:0,zIndex:9999,background:'var(--bg-primary)',
+            border:'1px solid var(--border)',borderRadius:'var(--radius-sm)',boxShadow:'var(--shadow-md)',
+            padding:'.3rem',display:'flex',gap:'var(--space-1)'}}>
+          ${fit.overflow.map(function(id){ return renderItem(id); })}
+        </div>`}
+        ${moreOpen && html`<div onClick=${function(){ setMoreOpen(false); }} style=${{position:'fixed',inset:0,zIndex:9998,background:'transparent'}}></div>`}
       </div>`}
     </div>`;
   }
@@ -35437,7 +36147,7 @@ function startApp() {
         <span>Search</span>
       </button>`;
     }
-    return html`<nav class="cc-mobile-nav">
+    return html`<nav class="cc-mobile-nav" aria-label="Primary">
       ${searchBtn()}
       ${navBtn('models','<path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/><path d="M12 2L2 7l10 5 10-5-10-5z"/>','Models',0)}
       ${navBtn('clashes','<path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/>','Conflicts',clashN)}
@@ -36755,6 +37465,7 @@ function startApp() {
       <${GlobalDropZone} />
       <${WelcomePopup} s=${s} d=${d} />
       <${PrivacyBanner} />
+      <${OperationCenter} s=${s} d=${d} />
       <${TutorialPortal} d=${d} />
       ${showMemWarn && html`<${MemoryWarningModal} s=${s} onDismiss=${function(){setShowMemWarn(false);}} />`}
       ${showWhatsNew && html`<div onMouseEnter=${function(){ clearTimeout(_whatsNewTimer.current); }} onMouseLeave=${function(){ _whatsNewTimer.current = setTimeout(_dismissWhatsNew, 5000); }} style=${{position:'fixed',bottom:'1.2rem',right:'1rem',zIndex:9998,background:'var(--bg-secondary)',border:'1px solid var(--border)',borderRadius:10,padding:'.7rem .9rem',display:'flex',flexDirection:'column',gap:'.35rem',boxShadow:'0 4px 28px rgba(0,0,0,.45)',maxWidth:'270px',width:'calc(100vw - 2rem)'}}>

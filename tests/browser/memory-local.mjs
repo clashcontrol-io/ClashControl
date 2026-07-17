@@ -1,12 +1,48 @@
 // Reproducible local memory-retention probe for ClashControl.
-// Measures the main JS heap and Three.js resources after load, repeated
-// section-cut rebuilds, section clear and model unload. This does not claim to
-// measure Chromium's native/WASM/GPU process allocation.
+// Measures the main JS heap, Three.js resources, and (REWRITE_UI_PLAN.md
+// Phase 11) the actual browser process RSS after load, repeated section-cut
+// rebuilds, section clear and model unload. The RSS number is what the
+// original rewrite report's own limitations section explicitly said this
+// harness was missing ("does not claim to measure Chromium's native/WASM/
+// GPU process allocation") — this closes that gap for the one metric that's
+// reliably readable from Node without a native addon: since this harness
+// launches Chromium with --single-process --no-zygote (for sandboxed-runner
+// compatibility), the ENTIRE browser — JS heap, WASM linear memory, GPU
+// (SwiftShader software rendering), DOM — lives in exactly one OS process,
+// so /proc/<pid>/status's VmRSS is a real total, not a partial one that
+// misses a separate renderer/GPU subprocess. Linux-only (this sandbox);
+// returns null gracefully elsewhere rather than fabricating a number.
 import { createServer } from 'node:http';
 import { readFile, writeFile } from 'node:fs/promises';
 import { extname, join, normalize } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { chromium } from 'playwright';
+
+async function readRssBytes(pid) {
+  if (!pid) return null;
+  try {
+    const status = await readFile(`/proc/${pid}/status`, 'utf8');
+    const match = status.match(/^VmRSS:\s+(\d+)\s+kB$/m);
+    return match ? Number(match[1]) * 1024 : null;
+  } catch {
+    return null; // non-Linux, or the process already exited — never fabricate a number
+  }
+}
+// Playwright's Browser class does not expose the underlying OS process (that
+// is a Puppeteer-only API) — the real PID comes from Chromium's own CDP
+// SystemInfo.getProcessInfo, which in --single-process mode reports exactly
+// one {type:'browser', id:<pid>} entry. Verified against /proc/<pid>/status
+// directly before relying on it here.
+async function getBrowserPid(browserHandle) {
+  try {
+    const cdp = await browserHandle.newBrowserCDPSession();
+    const info = await cdp.send('SystemInfo.getProcessInfo');
+    const entry = (info.processInfo || []).find((p) => p.type === 'browser') || info.processInfo?.[0];
+    return entry ? entry.id : null;
+  } catch {
+    return null;
+  }
+}
 
 const root = process.env.CC_REPO_ROOT || fileURLToPath(new URL('../..', import.meta.url));
 const dependencyRoot = process.env.CC_DEPS_ROOT || root;
@@ -37,6 +73,7 @@ const browser = await chromium.launch({
     '--use-gl=angle','--use-angle=swiftshader','--enable-unsafe-swiftshader',
     '--enable-precise-memory-info','--js-flags=--expose-gc'],
 });
+const browserPid = await getBrowserPid(browser);
 
 async function local(route, file, contentType='text/javascript') {
   await route.fulfill({status:200, body:await readFile(join(dependencyRoot, 'node_modules', file)),
@@ -75,7 +112,7 @@ async function settle() {
 
 async function sample(label) {
   await settle();
-  return page.evaluate((name) => {
+  const inPage = await page.evaluate((name) => {
     const renderer = window._ccState3d && window._ccState3d.renderer;
     const info = renderer && renderer.info;
     const state = window._ccLatestState || {};
@@ -86,10 +123,14 @@ async function sample(label) {
       geometries:info && info.memory ? info.memory.geometries : null,
       textures:info && info.memory ? info.memory.textures : null,
       programs:info && info.programs ? info.programs.length : null,
+      drawCalls:info && info.render ? info.render.calls : null,
+      triangles:info && info.render ? info.render.triangles : null,
       models:(state.models || []).length,
       elements:(state.models || []).reduce((n, m) => n + (m.elements || []).length, 0),
     };
   }, label);
+  inPage.rssBytes = await readRssBytes(browserPid);
+  return inPage;
 }
 
 const samples = [];
@@ -154,7 +195,7 @@ try {
   if (errors.length) throw new Error(errors.join(' | '));
   const result = {
     generatedAt:new Date().toISOString(),
-    scope:'main JS heap plus Three.js counters; excludes Chromium native/WASM/GPU process memory',
+    scope:'main JS heap, Three.js renderer counters (geometries/textures/programs/drawCalls/triangles), and rssBytes (whole-process RSS via /proc — this launch uses --single-process --no-zygote so JS heap + WASM linear memory + GPU/SwiftShader all live in the one measured process; Linux only, null elsewhere)',
     sectionTimeline,
     samples,
   };
