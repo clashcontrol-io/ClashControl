@@ -14,20 +14,62 @@
 // type per element, order-independent) already exists precisely for this
 // kind of before/after equivalence check — see safety-migrations.js.
 //
+// Coverage: an external review of the browser-first large-model plan
+// (2026-07-17) flagged that this harness only ever exercised one small
+// two-wall fixture — not enough to trust before touching the loader's
+// worker-transfer protocol (see the zero-copy input-buffer transfer change
+// in the same commit as this expansion). Runs a case matrix instead of one
+// fixture: the original two-wall smoke case, the committed multi-storey
+// fixture, and four cases generated on the fly via
+// generate-synthetic-ifc.js's opt-in extensions — quantities (IfcElement
+// Quantity), unit conversion (millimetre IfcSIUnit — exercises geoFactor),
+// IFC4 georeferencing (IfcSite RefLatitude/Longitude compound values +
+// IfcMapConversion/IfcProjectedCRS), and a deliberately null-valued
+// ("degenerate") property record — spec-valid STEP, not invalid syntax
+// that could make the two parse paths crash differently instead of
+// diverge measurably.
+//
 // Usage: CC_CHROMIUM_EXECUTABLE=/path node tests/browser/ifc-worker-fallback-differential.mjs
 import { chromium } from 'playwright';
 import { createServer } from 'node:http';
-import { readFile } from 'node:fs/promises';
+import { readFile, writeFile, mkdir, rm } from 'node:fs/promises';
 import { join, dirname, normalize } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { generateSyntheticIfc } from '../fixtures/generate-synthetic-ifc.js';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
 const offline = process.env.CC_BROWSER_OFFLINE_DEPS === '1';
+const generatedDir = join(root, 'tests', 'fixtures', '_generated-differential');
 
 function fail(msg) {
   console.error('DIFFERENTIAL FAIL: ' + msg);
-  process.exit(1);
+  process.exitCode = 1;
 }
+
+const CASES = [
+  { name: 'baseline (two-wall smoke)', url: '/tests/fixtures/smoke-clash.ifc' },
+  { name: 'multi-storey', url: '/tests/fixtures/multi-storey-smoke.ifc' },
+  {
+    name: 'quantities (IfcElementQuantity)',
+    generate: { storeyCount: 1, wallsPerStorey: 2, withQuantities: true },
+  },
+  {
+    name: 'unit conversion (millimetre IfcSIUnit)',
+    generate: { storeyCount: 1, wallsPerStorey: 2, lengthUnit: 'MILLIMETRE' },
+  },
+  {
+    name: 'georeferencing (RefLat/Lon + IfcMapConversion)',
+    generate: {
+      storeyCount: 1, wallsPerStorey: 2,
+      geo: { lat: [52, 5, 0], lon: [4, 18, 0], elev: 10.5 },
+      mapConversion: { eastings: 150000, northings: 450000, epsg: 'RD_New' },
+    },
+  },
+  {
+    name: 'degenerate record (null-valued property)',
+    generate: { storeyCount: 1, wallsPerStorey: 2, withPsets: true },
+  },
+];
 
 const server = createServer(async (req, res) => {
   const p = req.url.split('?')[0];
@@ -55,7 +97,7 @@ const port = server.address().port;
 const browser = await chromium.launch({ executablePath: process.env.CC_CHROMIUM_EXECUTABLE });
 const errors = [];
 
-async function loadAndFingerprint(forceFallback) {
+async function loadAndFingerprint(forceFallback, fixtureUrl) {
   const page = await browser.newPage();
   page.on('pageerror', (e) => errors.push(String(e)));
   page.on('console', (m) => { if (m.type() === 'error') errors.push(m.text()); });
@@ -82,11 +124,11 @@ async function loadAndFingerprint(forceFallback) {
   }
   await page.goto(`http://127.0.0.1:${port}/`, { waitUntil: 'domcontentloaded' });
   await page.waitForFunction(() => window.ClashControl && typeof window._ccDispatch === 'function', null, { timeout: 60_000 });
-  const result = await page.evaluate(async (forceFallbackInner) => {
+  const result = await page.evaluate(async ({ forceFallbackInner, fixtureUrlInner }) => {
     if (forceFallbackInner) {
       window.Worker = class BrokenWorker { constructor() { throw new Error('forced fallback for differential test'); } };
     }
-    const buf = await (await fetch('/tests/fixtures/smoke-clash.ifc')).arrayBuffer();
+    const buf = await (await fetch(fixtureUrlInner)).arrayBuffer();
     window.ClashControl.loadFiles([new File([buf], 'differential.ifc')]);
     await new Promise((resolve, reject) => {
       const t0 = Date.now();
@@ -109,29 +151,68 @@ async function loadAndFingerprint(forceFallback) {
       fingerprint: window._ccSafetyMigrations.modelFingerprint([fixedIdModel]),
       elementCount: (model.elements || []).length,
       meshCount: (model.meshes || []).length,
+      unitScale: (model.stats || {}).unitScale != null ? model.stats.unitScale : null,
+      georef: (model.spatialHierarchy && model.spatialHierarchy.sites && model.spatialHierarchy.sites[0] && model.spatialHierarchy.sites[0].georef) || null,
+      mapConversion: (model.spatialHierarchy && model.spatialHierarchy.mapConversion) || null,
     };
-  }, forceFallback);
+  }, { forceFallbackInner: forceFallback, fixtureUrlInner: fixtureUrl });
   await page.close();
   return result;
 }
 
+let allOk = true;
 try {
-  const workerResult = await loadAndFingerprint(false);
-  console.log('Worker path: ' + workerResult.elementCount + ' elements, ' + workerResult.meshCount + ' meshes');
-  const fallbackResult = await loadAndFingerprint(true);
-  console.log('Fallback path: ' + fallbackResult.elementCount + ' elements, ' + fallbackResult.meshCount + ' meshes');
-
-  const comparison = JSON.stringify(workerResult.fingerprint) === JSON.stringify(fallbackResult.fingerprint);
-  if (!comparison) {
-    console.error('Worker fingerprint:', JSON.stringify(workerResult.fingerprint, null, 1));
-    console.error('Fallback fingerprint:', JSON.stringify(fallbackResult.fingerprint, null, 1));
-    fail('worker and main-thread-fallback IFC parses produced different model fingerprints');
+  await mkdir(generatedDir, { recursive: true });
+  const resolvedCases = [];
+  for (const c of CASES) {
+    if (c.url) { resolvedCases.push({ name: c.name, url: c.url }); continue; }
+    const fileName = c.name.replace(/[^a-z0-9]+/gi, '-').toLowerCase() + '.ifc';
+    const filePath = join(generatedDir, fileName);
+    await writeFile(filePath, generateSyntheticIfc(c.generate));
+    resolvedCases.push({ name: c.name, url: '/tests/fixtures/_generated-differential/' + fileName });
   }
-  if (workerResult.elementCount === 0) fail('worker path parsed zero elements — fixture or harness is broken, not a real pass');
-  if (errors.length) fail('browser emitted uncaught page or console errors: ' + JSON.stringify(errors.slice(0, 10)));
 
-  console.log('DIFFERENTIAL OK — worker and main-thread-fallback IFC parses are fingerprint-identical (' + workerResult.elementCount + ' elements)');
+  for (const c of resolvedCases) {
+    const workerResult = await loadAndFingerprint(false, c.url);
+    const fallbackResult = await loadAndFingerprint(true, c.url);
+    // modelFingerprint() itself only covers box/mesh/type per element — it
+    // does NOT include unit scale, georeferencing or map-conversion data,
+    // so a worker/fallback divergence limited to those fields would pass
+    // silently if only the fingerprint were compared. Extend parity to the
+    // full result payload for the fields those extra fixture cases exist
+    // to exercise.
+    const workerComparable = { fingerprint: workerResult.fingerprint, unitScale: workerResult.unitScale, georef: workerResult.georef, mapConversion: workerResult.mapConversion };
+    const fallbackComparable = { fingerprint: fallbackResult.fingerprint, unitScale: fallbackResult.unitScale, georef: fallbackResult.georef, mapConversion: fallbackResult.mapConversion };
+    const same = JSON.stringify(workerComparable) === JSON.stringify(fallbackComparable);
+    if (!same) {
+      console.error('Worker result:', JSON.stringify(workerComparable, null, 1));
+      console.error('Fallback result:', JSON.stringify(fallbackComparable, null, 1));
+      fail('[' + c.name + '] worker and main-thread-fallback IFC parses produced different results');
+      allOk = false;
+      continue;
+    }
+    if (workerResult.elementCount === 0) {
+      fail('[' + c.name + '] worker path parsed zero elements — fixture or harness is broken, not a real pass');
+      allOk = false;
+      continue;
+    }
+    console.log('DIFFERENTIAL OK — [' + c.name + '] worker and fallback are fingerprint-identical (' +
+      workerResult.elementCount + ' elements' +
+      (workerResult.unitScale != null ? ', unitScale=' + workerResult.unitScale : '') +
+      (workerResult.georef ? ', georef=' + JSON.stringify(workerResult.georef) : '') +
+      (workerResult.mapConversion ? ', mapConversion=' + JSON.stringify(workerResult.mapConversion) : '') +
+      ')');
+  }
+
+  if (errors.length) {
+    fail('browser emitted uncaught page or console errors: ' + JSON.stringify(errors.slice(0, 10)));
+    allOk = false;
+  }
+
+  if (allOk) console.log('DIFFERENTIAL OK — all ' + resolvedCases.length + ' fixture cases are worker/fallback fingerprint-identical');
 } finally {
   await browser.close();
   server.close();
+  await rm(generatedDir, { recursive: true, force: true });
 }
+if (!allOk) process.exit(1);

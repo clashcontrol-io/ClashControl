@@ -185,6 +185,70 @@ Things to be careful about. Do not remove without a good reason — add a note i
 Update this section at the start and end of each session.
 Mark completed items with ~~strikethrough~~ and date, then let the daily sync archive them.
 
+~~**Browser-first large-model plan, first implementation tranche: harness extension +
+zero-copy input-buffer transfer** (branch `claude/cc-claims-review-myhp9f`, 2026-07-17)~~ —
+same-session follow-up to the plan review below, executed in the order that review's
+adjustment #4 called for (expand differential coverage *before* touching the loader's
+transfer protocol, per `REDUCER_DECOMPOSITION_PLAN.md`'s loader-area high-risk/last
+sequencing). All four pieces of the recommended first step, plus the harness extension the
+review's adjustment #3 called for:
+- **Worker/fallback differential coverage expanded** — `ifc-worker-fallback-differential.mjs`
+  went from one hardcoded two-wall fixture to a 6-case matrix (baseline, multi-storey,
+  quantities, millimetre unit conversion, IFC4 georeferencing, a deliberately null-valued
+  "degenerate" property record) via new opt-in `generate-synthetic-ifc.js` extensions
+  (`withQuantities`, `withPsets`, `lengthUnit`, `geo`, `mapConversion` — all default-off,
+  verified byte-identical output when omitted). Caught and fixed two real bugs while building
+  this: (1) a malformed STEP real-number literal in the elevation field (`10.5.` — double
+  decimal point, invalid EXPRESS/STEP syntax) in the generator itself, and (2) the comparison
+  only checked `modelFingerprint()`, which doesn't cover unit scale/georef/mapConversion at
+  all — a worker/fallback divergence limited to those fields would have passed silently.
+  Extended the comparison to the full result payload. **Open finding, not investigated
+  further (out of scope for this session, flagged for later):** the georeferencing case's
+  `RefLatitude`/`RefLongitude` compound values come back as `null` from `extractSpatialHierarchy`
+  on BOTH the worker and fallback paths (identically — so parity holds, this is not a
+  divergence) — could be a fixture-format mismatch or a real latent bug in `_compoundToDeg`;
+  `RefElevation` (a plain REAL, not compound) parses correctly. All 6 cases green.
+- **Candidate-count / peak-candidate-memory metrics** — `profile.candidates` (element-pair
+  count) already existed; added `candidates_est_bytes` (documented ~96B/candidate estimate,
+  `_CANDIDATE_EST_BYTES` in index.html — explicitly labelled an approximation, not a measured
+  value) and surfaced both plus `sweepAndPruneMs`/`bvhBuildMs` into `perf-local.mjs`'s captured
+  metrics, closing the plan's Phase 0 "candidate count" measurement ask without a new harness.
+- **Corpus manifest + real-file plumbing** — `tests/fixtures/CORPUS_MANIFEST.md` documents the
+  plan's 50/150/300/500/750+MB tiers, the never-commit-real-IFC-files rule, and how to point
+  `perf-local.mjs`/`memory-local.mjs` at a real external file via new `CC_PERF_FIXTURE_PATH`
+  (served from a fixed, narrow, operator-controlled route — not the containment-guarded generic
+  file server, never derived from request input) with an auto-scaled load timeout
+  (`CC_PERF_LOAD_TIMEOUT_MS`, default 600s for corpus files). Verified against a synthetic
+  100-element fixture through the real plumbing (not just code review).
+- **`load-cancel-load-loop.mjs`** — new harness covering the plan's Phase 0 ask for
+  load-cancel-load + model-removal loop tests with a memory-plateau assertion (heap +
+  whole-process RSS via `/proc`, forced GC between samples). 5 cycles on a single persistent
+  page (not fresh-browser-per-cycle, so it can actually see a leak accumulate). Caught and
+  fixed a real bug while writing it: the Worker-stub restoration used `delete window.Worker`
+  expecting a prototype-chain fallback that browser globals don't have — every cycle after the
+  first would have silently kept using the broken stub. Fixed by saving the real constructor
+  once before the loop. Verified plateau: heap 1.02-1.03x, RSS 1.01-1.02x cycle-1→cycle-4 (well
+  under the 1.5x threshold). Repeated-federation and five-consecutive-project-opens (the plan's
+  other two Phase 0 asks) are explicitly NOT covered — documented as a gap in
+  `CORPUS_MANIFEST.md`, not silently subsumed.
+- **Zero-copy transfer for the IFC input buffer** (Phase 1, item 1 of the plan's recommended
+  first tranche) — `worker.postMessage({buffer,...}, [buffer])` now transfers instead of
+  structured-clones the input `ArrayBuffer` (`index.html` `loadIFCWorker`). Handled the
+  necessary consequence the plan itself flagged ("a transferred buffer is detached"): the
+  outer `buf` is used THREE times after the worker call in the caller (main-thread fallback
+  re-parse, `idbSaveFile` persistence, and a `fileSize` fallback read) — all three now
+  reacquire fresh bytes from the source `File` (`f.arrayBuffer()`, a local re-read, not a
+  network fetch) instead of touching the now-detached `buf`. Verified via the expanded
+  6-case differential harness (fingerprint-identical worker vs. fallback on every case,
+  including the forced-fallback path that exercises the reacquisition code directly) plus
+  full `smoke.mjs` (including its own pre-existing "expected worker failure falls back"
+  case) and 606/606 unit tests — all green.
+- Explicitly NOT attempted this session (deferred per the plan's own gating and
+  `REDUCER_DECOMPOSITION_PLAN.md`'s risk ordering): the `rawEls` protocol-v2 packed-typed-array
+  change (the dominant ~73%-of-Scene-build cost) and anything from Phase 2 onward. Those need
+  their own session with the now-wider differential net as the safety gate, not a same-session
+  follow-on to building that gate.
+
 ~~**External browser-first large-model plan verified against code + history** (branch
 `claude/cc-claims-review-myhp9f`, 2026-07-17)~~ — a user-supplied external plan
 ("ClashControl browser-first IFC and clash-engine plan", reviewed at `23bde34`/v7.2.1) was

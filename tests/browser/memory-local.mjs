@@ -52,9 +52,20 @@ const MIME = {
   '.svg':'image/svg+xml', '.ifc':'application/octet-stream', '.css':'text/css',
 };
 
+// Real-model corpus support (see tests/fixtures/CORPUS_MANIFEST.md) — same
+// operator-controlled-path pattern as perf-local.mjs: a fixed, narrow route
+// that only exists when the env var is set, never derived from request input.
+const corpusFixturePath = process.env.CC_PERF_FIXTURE_PATH || null;
+const fixtureUrl = corpusFixturePath ? '/__corpus-fixture__.ifc' : '/tests/fixtures/smoke-clash.ifc';
+
 const server = createServer(async (req, res) => {
   try {
     const path = decodeURIComponent(new URL(req.url, 'http://x').pathname);
+    if (corpusFixturePath && path === '/__corpus-fixture__.ifc') {
+      const body = await readFile(corpusFixturePath);
+      res.writeHead(200, { 'content-type': 'application/octet-stream' });
+      return res.end(body);
+    }
     const rel = path === '/' ? 'index.html' : path.slice(1);
     const file = normalize(join(root, rel));
     if (!file.startsWith(normalize(root))) { res.writeHead(403); return res.end(); }
@@ -139,11 +150,12 @@ try {
   await page.waitForFunction(() => window.ClashControl && typeof window._ccDispatch === 'function', null, {timeout:60_000});
   samples.push(await sample('boot'));
 
-  await page.evaluate(async () => {
-    const buffer = await (await fetch('/tests/fixtures/smoke-clash.ifc')).arrayBuffer();
+  await page.evaluate(async (url) => {
+    const buffer = await (await fetch(url)).arrayBuffer();
     window.ClashControl.loadFiles([new File([buffer], 'memory-smoke.ifc')]);
-  });
-  await page.waitForFunction(() => window._ccLatestState && window._ccLatestState.models.length === 1 && window._ccModelLoading === false, null, {timeout:120_000});
+  }, fixtureUrl);
+  const loadTimeoutMs = corpusFixturePath ? Number(process.env.CC_PERF_LOAD_TIMEOUT_MS || 600_000) : 120_000;
+  await page.waitForFunction(() => window._ccLatestState && window._ccLatestState.models.length === 1 && window._ccModelLoading === false, null, {timeout:loadTimeoutMs});
   samples.push(await sample('loaded'));
 
   await page.evaluate(() => {
@@ -195,6 +207,7 @@ try {
   if (errors.length) throw new Error(errors.join(' | '));
   const result = {
     generatedAt:new Date().toISOString(),
+    fixture: corpusFixturePath || 'tests/fixtures/smoke-clash.ifc (built-in)',
     scope:'main JS heap, Three.js renderer counters (geometries/textures/programs/drawCalls/triangles), and rssBytes (whole-process RSS via /proc — this launch uses --single-process --no-zygote so JS heap + WASM linear memory + GPU/SwiftShader all live in the one measured process; Linux only, null elsewhere)',
     sectionTimeline,
     samples,

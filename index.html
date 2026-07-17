@@ -4438,7 +4438,14 @@ function startApp() {
         reject(new Error('IFC Worker failed: ' + (err.message || err)));
       };
       try {
-        worker.postMessage({buffer:buffer, scope:scope||null, v:IFC_WORKER_PROTOCOL_VERSION});
+        // Transfer (not clone) the input buffer — it's the largest single
+        // object crossing this boundary and the browser can move ownership
+        // instead of structured-cloning it. `buffer` is DETACHED (byteLength
+        // 0) in the caller's scope the instant this call returns; the caller
+        // must reacquire fresh bytes from its own File/source for anything
+        // it still needs done with the bytes afterward (fallback re-parse,
+        // IndexedDB persistence) — see the loadIFCWorker call site.
+        worker.postMessage({buffer:buffer, scope:scope||null, v:IFC_WORKER_PROTOCOL_VERSION}, [buffer]);
       } catch(postErr) {
         _clearWatchdog();
         _unreg();
@@ -5485,6 +5492,17 @@ function startApp() {
 
   // ── Async clash detection with chunked processing ─────────────── INTERNALS.md §9
   var _DETECT_CHUNK_SIZE = 80; // candidates per chunk before yielding
+  // Rough per-candidate heap-size estimate (bytes) for the fully-materialized
+  // `candidates` array (_sweepAndPrune builds and returns the complete array
+  // before narrow phase starts — see the "browser-first large-model plan"
+  // review, 2026-07-17). Each candidate is a small V8 object literal with 5
+  // in-object properties ({eA,mA,eB,mB,sameModel}) — object header (~16B) +
+  // 5 pointer-sized slots (~8B each on a 64-bit build) ≈ 56B, rounded up for
+  // V8's property-backing-store/shape overhead. This is a documented
+  // approximation for trend-tracking in the perf harness, not a measured
+  // value — real per-object cost varies by V8 version/build and whether the
+  // object is in old-space by measurement time.
+  var _CANDIDATE_EST_BYTES = 96;
   var _ccDetectGeneration = 0; // incremented each detection run to cancel stale async chunks
   var _ccDetectionCoordinator = window._ccSafetyMigrations &&
     window._ccSafetyMigrations.createRunCoordinator ?
@@ -6325,6 +6343,7 @@ function startApp() {
       soft_clash_ms: Math.round(_tSoft),
       merge_and_post_ms: Math.round(Math.max(0, _mergeMs)),
       candidates: _prof._nCandidates,
+      candidates_est_bytes: _prof._nCandidates * _CANDIDATE_EST_BYTES,
       elements: _prof._nElements,
       hard_tests: _nHardTests,
       hard_tests_batched: _nHardTestsBatched,
@@ -17003,9 +17022,16 @@ function startApp() {
             var _workerGen = _ccLoadGeneration; // capture generation assigned by loadIFCWorker
             _loadP = _loadP.catch(function(workerErr) {
               console.warn('[IFC Worker fallback]', workerErr.message || workerErr);
-              // Release the gate once the sync fallback settles (not before —
-              // the strip should stay up until geometry is actually placed).
-              return loadIFC(buf, col, _onProg, _workerGen, _loadScope).finally(_releaseLazyGate);
+              // `buf` was transferred (zero-copy) into the worker's
+              // postMessage and is now a detached ArrayBuffer (byteLength 0)
+              // regardless of why the worker failed — reacquire fresh bytes
+              // from the source File rather than reusing it. A local
+              // File.arrayBuffer() re-read, not a network fetch.
+              return f.arrayBuffer().then(function(freshBuf) {
+                // Release the gate once the sync fallback settles (not before —
+                // the strip should stay up until geometry is actually placed).
+                return loadIFC(freshBuf, col, _onProg, _workerGen, _loadScope).finally(_releaseLazyGate);
+              });
             });
             return _loadP.then(function(result) {
               if (!result) return; // load was cancelled by a newer load
@@ -17013,7 +17039,10 @@ function startApp() {
               disc = detectDiscipline(result.elements, f.name);
               var dObj = DISC.find(function(x){return x.id===disc;});
               col = dObj ? dObj.c : col;
-              var fSize = result.stats ? result.stats.fileSize : buf.byteLength;
+              // `buf` is detached (transferred to the worker) on every path
+              // by this point, worker or fallback — fall back to the File's
+              // own .size, never buf.byteLength (would silently read 0).
+              var fSize = result.stats ? result.stats.fileSize : f.size;
               var baseName = f.name.replace(/\.ifc$/i,'');
               var _ifcOverlapWarn = _checkModelOverlap(result.elements, s.models.filter(function(m){return m.name!==baseName;}));
               if (_ifcOverlapWarn && typeof _ifcOverlapWarn === 'object') {
@@ -17046,7 +17075,12 @@ function startApp() {
               _lazyPropsTarget.modelId = modelId;
               consoleElementProfile(baseName, (result.stats&&result.stats.loadType)||'IFC', result.elements);
               var _verMeta = existing ? {_version:(existing._version||1)+1, _versionDiff:versionDiff} : {_version:1};
-              idbSaveFile(modelId, f.name, buf, s.activeProject||'default', null, _verMeta);
+              // `buf` is detached (transferred to the worker) by this point —
+              // reacquire fresh bytes from the File for IndexedDB persistence
+              // rather than storing an empty detached buffer.
+              f.arrayBuffer().then(function(persistBuf) {
+                idbSaveFile(modelId, f.name, persistBuf, s.activeProject||'default', null, _verMeta);
+              });
               // Cache geometry for fast project-switch restore — full loads
               // only: a storey-scoped result would restore as a partial
               // model with no record of what's missing.
