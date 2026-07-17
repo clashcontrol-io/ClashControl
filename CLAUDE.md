@@ -76,6 +76,9 @@ There are ~280 `window._cc*` globals — do not add to the sprawl casually.
 - Anything meant for users, automation, or external tools goes on the **`window.ClashControl.*` namespace** (defined near `_ccViewport` in index.html) as a thin guarded alias — follow the existing pattern there.
 - Before adding a new global, check whether an existing one already covers it.
 
+### Git / PR workflow
+- **Don't open a pull request for every change.** Pile up commits on the working branch and only open a PR when starting a new piece of work, or if a single change is really big/risky enough to warrant its own review checkpoint. Repeatedly opening-and-merging a PR per small increment is noisy and not the desired cadence.
+
 ### When making changes
 - **Always edit `index.html`** — that's where all the code is
 - **Call `invalidate()`** after any change that affects the 3D view (camera, materials, visibility, highlights, ghost, grid, etc.)
