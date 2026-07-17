@@ -160,6 +160,90 @@ async function loadAndFingerprint(forceFallback, fixtureUrl) {
   return result;
 }
 
+// Cancellation case — the last of the six named coverage topics from the
+// 2026-07-17 Known Issues note ("expand its coverage (multi-storey,
+// quantities, unit conversion, georeferencing, malformed records,
+// cancellation) before attempting the actual extraction"). Verifies a
+// cancel-then-successful-reload produces the SAME fingerprint as a clean
+// load with no cancellation in its history — i.e. an aborted in-flight
+// load leaves no residue (partial elements, a stale _ccLoadGeneration,
+// leftover worker state) that could silently corrupt the retry.
+async function loadCancelReloadAndFingerprint(fixtureUrl) {
+  const page = await browser.newPage();
+  page.on('pageerror', (e) => errors.push(String(e)));
+  page.on('console', (m) => { if (m.type() === 'error') errors.push(m.text()); });
+  if (offline) {
+    const local = async (route, file, ct) => route.fulfill({
+      status: 200, body: await readFile(join(root, 'node_modules', file)),
+      headers: { 'content-type': ct || 'text/javascript', 'access-control-allow-origin': '*' },
+    });
+    await page.context().route('https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js', (r) => local(r, 'react/umd/react.production.min.js'));
+    await page.context().route('https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js', (r) => local(r, 'react-dom/umd/react-dom.production.min.js'));
+    await page.context().route('https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js', (r) => local(r, 'jszip/dist/jszip.min.js'));
+    await page.context().route('https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js', (r) => local(r, 'pdfjs-dist/build/pdf.min.js'));
+    await page.context().route('https://cdn.jsdelivr.net/npm/three@0.180.0/**', async (route) => {
+      const suffix = new URL(route.request().url()).pathname.split('/three@0.180.0/')[1];
+      await local(route, 'three/' + suffix);
+    });
+    await page.context().route('https://cdn.jsdelivr.net/npm/web-ifc@0.0.77/**', async (route) => {
+      const suffix = new URL(route.request().url()).pathname.split('/web-ifc@0.0.77/')[1];
+      await local(route, 'web-ifc/' + suffix, suffix.endsWith('.wasm') ? 'application/wasm' : 'text/javascript');
+    });
+    await page.context().route('https://fonts.googleapis.com/**', (route) => route.fulfill({ status: 200, body: '', contentType: 'text/css' }));
+    await page.context().route('https://fonts.gstatic.com/**', (route) => route.abort());
+    await page.context().route('https://gc.zgo.at/**', (route) => route.fulfill({ status: 200, body: '', contentType: 'text/javascript' }));
+  }
+  await page.goto(`http://127.0.0.1:${port}/`, { waitUntil: 'domcontentloaded' });
+  await page.waitForFunction(() => window.ClashControl && typeof window._ccDispatch === 'function', null, { timeout: 60_000 });
+  const result = await page.evaluate(async (fixtureUrlInner) => {
+    const realWorker = window.Worker;
+    // 1. Start a load that never responds, then cancel it — same technique
+    // smoke.mjs's own cancellation case and load-cancel-load-loop.mjs use.
+    window.Worker = class HangingWorker { postMessage() {} terminate() {} };
+    const buf = await (await fetch(fixtureUrlInner)).arrayBuffer();
+    window.ClashControl.loadFiles([new File([buf], 'cancel-reload.ifc')]);
+    await new Promise((resolve, reject) => {
+      const t0 = Date.now();
+      const iv = setInterval(() => {
+        if (window._ccModelLoading === true) { clearInterval(iv); resolve(); }
+        if (Date.now() - t0 > 10000) { clearInterval(iv); reject(new Error('never entered loading state')); }
+      }, 50);
+    });
+    window._ccAbortLoading();
+    await new Promise((resolve, reject) => {
+      const t0 = Date.now();
+      const iv = setInterval(() => {
+        const coordinator = window._ccRuntime && window._ccRuntime.services.get('loadCoordinator');
+        if (window._ccModelLoading === false && coordinator && coordinator.activeCount() === 0) { clearInterval(iv); resolve(); }
+        if (Date.now() - t0 > 10000) { clearInterval(iv); reject(new Error('cancel never settled')); }
+      }, 50);
+    });
+    // 2. Restore the real Worker and load the SAME fixture for real.
+    window.Worker = realWorker;
+    window.ClashControl.loadFiles([new File([buf], 'cancel-reload.ifc')]);
+    await new Promise((resolve, reject) => {
+      const t0 = Date.now();
+      const iv = setInterval(() => {
+        const s = window._ccLatestState;
+        const m = s && s.models.find((x) => x.name.indexOf('cancel-reload') === 0);
+        if (m && (m.elements || []).length > 0) { clearInterval(iv); resolve(); }
+        if (Date.now() - t0 > 60000) { clearInterval(iv); reject(new Error('timed out waiting for post-cancel reload')); }
+      }, 100);
+    });
+    const model = window._ccLatestState.models.find((x) => x.name.indexOf('cancel-reload') === 0);
+    const fixedIdModel = Object.assign({}, model, { id: 'fixed' });
+    return {
+      fingerprint: window._ccSafetyMigrations.modelFingerprint([fixedIdModel]),
+      elementCount: (model.elements || []).length,
+      unitScale: (model.stats || {}).unitScale != null ? model.stats.unitScale : null,
+      georef: (model.spatialHierarchy && model.spatialHierarchy.sites && model.spatialHierarchy.sites[0] && model.spatialHierarchy.sites[0].georef) || null,
+      mapConversion: (model.spatialHierarchy && model.spatialHierarchy.mapConversion) || null,
+    };
+  }, fixtureUrl);
+  await page.close();
+  return result;
+}
+
 let allOk = true;
 try {
   await mkdir(generatedDir, { recursive: true });
@@ -202,6 +286,29 @@ try {
       (workerResult.georef ? ', georef=' + JSON.stringify(workerResult.georef) : '') +
       (workerResult.mapConversion ? ', mapConversion=' + JSON.stringify(workerResult.mapConversion) : '') +
       ')');
+  }
+
+  // Cancellation case, run against the baseline fixture: a cancel-then-
+  // reload must produce the exact same result as a clean load with no
+  // cancellation in its history.
+  {
+    const baselineUrl = resolvedCases[0].url;
+    const cleanResult = await loadAndFingerprint(false, baselineUrl);
+    const cancelReloadResult = await loadCancelReloadAndFingerprint(baselineUrl);
+    const cleanComparable = { fingerprint: cleanResult.fingerprint, unitScale: cleanResult.unitScale, georef: cleanResult.georef, mapConversion: cleanResult.mapConversion };
+    const cancelComparable = { fingerprint: cancelReloadResult.fingerprint, unitScale: cancelReloadResult.unitScale, georef: cancelReloadResult.georef, mapConversion: cancelReloadResult.mapConversion };
+    const same = JSON.stringify(cleanComparable) === JSON.stringify(cancelComparable);
+    if (!same) {
+      console.error('Clean load result:', JSON.stringify(cleanComparable, null, 1));
+      console.error('Cancel-then-reload result:', JSON.stringify(cancelComparable, null, 1));
+      fail('[cancellation] a cancel-then-reload produced a different result than a clean load');
+      allOk = false;
+    } else if (cancelReloadResult.elementCount === 0) {
+      fail('[cancellation] post-cancel reload parsed zero elements');
+      allOk = false;
+    } else {
+      console.log('DIFFERENTIAL OK — [cancellation] cancel-then-reload matches a clean load (' + cancelReloadResult.elementCount + ' elements)');
+    }
   }
 
   if (errors.length) {

@@ -185,6 +185,46 @@ Things to be careful about. Do not remove without a good reason — add a note i
 Update this section at the start and end of each session.
 Mark completed items with ~~strikethrough~~ and date, then let the daily sync archive them.
 
+~~**Browser-first large-model plan, Phase 1 completed: IFC worker protocol v2 (packed
+rawEls)** (branch `claude/cc-claims-review-myhp9f`, 2026-07-17)~~ — same-session follow-up
+to the tranche below, completing Phase 1 of the plan (the dominant measured cost: ~73%-of-
+Scene-build `transferGap`, per prior-session `sceneSub` instrumentation). Replaced the IFC
+worker's `rawEls` wire format — v1 was one JS object per element (`{expressId, geos:[...],
+props:{...}}`, each geometry placement its own nested object) sent over `postMessage` and
+structured-cloned in full — with `packedEls`: a structure-of-arrays encoding (element-parallel
+typed arrays for expressId/geoCount/typeId/axis; placement-flat typed arrays for
+geoId/color/16-float transforms, fed straight into `THREE.Matrix4.fromArray(arr, offset)` with
+no per-placement copy; a deduplicated string table + index arrays for the three highly
+repetitive per-element string fields — ifcType/storey/material — with globalId/name/
+description/objectType left as plain flat string arrays since those are near-unique per
+element and interning would only add index-indirection overhead there). Quantities/psets are
+deliberately NOT encoded — traced and confirmed the worker's primary streaming path always
+had `propMap` empty at that point (`if(pm){...}` was provably dead code, always false; the real
+psets/quantities arrive later via the separate lazy "Phase 2" `buildPropertyMap` message,
+unchanged) — the decoder reconstructs `quantities:{}, psets:{}` directly, identical to what
+that always-false branch left in place. `IFC_WORKER_PROTOCOL_VERSION` bumped 1→2. **Measured
+improvement** (same 25k-element synthetic fixture, before/after via `git stash` on `index.html`
+only, same sandbox, same run): `sceneSub.transferGap` 4128ms→2218ms (**46% reduction**), total
+load time 7663ms→5972ms (**22% reduction**, ~1.7s saved). Residual `transferGap` is now
+dominated by `geoTable`'s own one-object-per-unique-geometry shape (unchanged this pass, and
+this particular fixture is a worst case with zero geometry reuse — 25,000/25,000 unique) — a
+separate, already-known concern, not `rawEls`. Verified: 606/606 unit tests, full `smoke.mjs`
+green, and critically **all 7 differential-harness cases (the 6-fixture matrix + cancellation)
+still fingerprint-identical between worker and fallback** after the rewrite — re-run twice,
+once against the new code directly and once again after a stash/pop round-trip to confirm the
+comparison methodology itself was sound. **Not done this session (explicitly deferred, matches
+the plan's own phase gates):** Phase 2 (progressive chunked loading with backpressure, honest
+storey-scope preflight), Phase 3 (eliminate the dual scene representation — BatchedMesh as
+sole authoritative render source, rewrite selection/visibility/coloring/section/serialization/
+clash adapters to use handles instead of retained off-scene meshes), Phase 4 (move the clash
+hot path into the Rust/WASM kernel — the crate lives in-repo at `engine/` [`clashcontrol-engine`,
+~720 lines across `lib.rs`/`bvh.rs`/`tri_tri.rs`/`spatial_hash.rs`], so this is technically
+in-scope for a future session, just not attempted here), Phase 5 (COOP/COEP — confirmed
+`vercel.json` has no `headers` block at all; ~18 external CDN references in `index.html` alone
+would need self-hosting/pinning audit first), Phases 6-7. Each has its own explicit
+measurement/oracle-comparison gate in the plan and is sequenced for its own session, not a
+same-session follow-on to Phase 1.
+
 ~~**Browser-first large-model plan, first implementation tranche: harness extension +
 zero-copy input-buffer transfer** (branch `claude/cc-claims-review-myhp9f`, 2026-07-17)~~ —
 same-session follow-up to the plan review below, executed in the order that review's

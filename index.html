@@ -3970,7 +3970,15 @@ function startApp() {
   // worker sends or receives changes shape. Injected verbatim into the
   // worker's own source (see _getIFCWorkerUrl) so both sides always agree
   // on the value from the SAME build, by construction.
-  var IFC_WORKER_PROTOCOL_VERSION = 1;
+  // v2 (2026-07-17): 'result' messages carry packedEls (structure-of-arrays)
+  // instead of v1's rawEls (array of per-element objects) — see the
+  // packedEls comment block in _ifcWorkerMain. The worker is always
+  // reassembled fresh from the current page's own source (no caching layer
+  // between the Blob URL and the code that just ran — see the version-field
+  // rationale below), so a v1 worker can never talk to a v2 decoder or vice
+  // versa in practice; this bump exists to make that assumption checkable,
+  // not because a real skew was observed.
+  var IFC_WORKER_PROTOCOL_VERSION = 2;
 
   function _ifcWorkerMain() {
     var _api = null;
@@ -4061,7 +4069,6 @@ function startApp() {
           for (var _si = 0; _si < _scope.storeys.length; _si++) _scopeSet[_scope.storeys[_si]] = true;
         }
 
-        var rawEls = [];
         var xfer = [];
         var _geoTable = {}; // geometryExpressID → {pos, nrm, idx} (dedup)
         var _geoReused = 0;
@@ -4070,6 +4077,72 @@ function startApp() {
 
         var _estTotal = Math.max(500, Math.round(buf.byteLength / 500));
         var _streamCount = 0;
+
+        // Protocol v2 packed element encoding (browser-first large-model
+        // plan review, 2026-07-17) — replaces the v1 `rawEls` array (one JS
+        // object per element, with a nested array of per-placement objects
+        // each carrying a color object and a Float32Array transform). That
+        // shape was the measured dominant cost of the worker→main
+        // structured-clone transfer (~73% of "Scene build" at 25k elements,
+        // per `sceneSub.transferGap` instrumentation) — NOT because the byte
+        // volume is large (geometry buffers were already zero-copy
+        // Transferables), but because V8's structured-clone must walk and
+        // re-allocate a whole object graph: one element-wrapper object + one
+        // props object + one object per geometry placement, for every single
+        // element. Flat typed arrays plus a small set of string arrays clone
+        // as primitive-value copies with no per-element object allocation.
+        //
+        // Element-parallel arrays (index i = the i'th pushed element):
+        //   pkExpressIds, pkGeoCounts — identity + how many placements follow
+        //   pkGlobalIds/pkNames/pkDescriptions/pkObjectTypes — near-unique
+        //     per element (globalId is always a GUID); sent as flat string
+        //     arrays, NOT interned — interning only pays off for repetitive
+        //     values (see below), and would add pure index-indirection
+        //     overhead here for no dedup benefit.
+        //   pkIfcTypeIdx/pkStoreyIdx/pkMaterialIdx — HIGHLY repetitive
+        //     across elements (every wall shares "IfcWall"; every element on
+        //     one storey shares that storey's name) — indices into
+        //     pkStringTable, a deduplicated pool, for a real space win.
+        //   pkTypeId — IFC type constant, -1 sentinel for "was never set"
+        //     (matches extractProperties: `if (line.type != null)`).
+        //   pkHasAxis + pkAxisX/Y/Z — axis is only assigned (possibly to
+        //     null) for Beam/Column/Member/Pipe/Duct/Flow/Pile types; 0/0/0
+        //     is a safe "no axis" sentinel since _extractAxis only ever
+        //     returns a real unit vector or null (never the zero vector —
+        //     it explicitly bails when the input direction's length is
+        //     ~zero). pkHasAxis distinguishes "field never assigned"
+        //     (non-matching type) from "assigned but null" (matching type,
+        //     no axis found), matching the original's `props.axis` presence.
+        // Placement-flat arrays (index = running placement counter across
+        // ALL elements, sized by summing pkGeoCounts):
+        //   pkPlacementGeoIds, pkPlacementHasColor, pkPlacementColors (4
+        //     floats/placement), pkPlacementTransforms (16 floats/placement,
+        //     fed straight into THREE.Matrix4.fromArray(arr, offset) on
+        //     decode — no per-placement slice/copy needed).
+        // Quantities/psets are deliberately NOT encoded: on this worker path
+        // `propMap` is always `{}` at this point in the stream (it's filled
+        // by the separate, later "Phase 2" lazy buildPropertyMap pass — see
+        // below) — the original `if (pm) {...}` branch here was provably
+        // dead code, always false. The decoder reconstructs `quantities:{},
+        // psets:{}` directly, identical to what that always-false branch
+        // would have left in place.
+        var pkExpressIds = [], pkGeoCounts = [];
+        var pkGlobalIds = [], pkNames = [], pkDescriptions = [], pkObjectTypes = [];
+        var pkIfcTypeIdx = [], pkStoreyIdx = [], pkMaterialIdx = [];
+        var pkTypeId = [];
+        var pkHasAxis = [], pkAxisX = [], pkAxisY = [], pkAxisZ = [];
+        var pkPlacementGeoIds = [], pkPlacementHasColor = [], pkPlacementColors = [], pkPlacementTransforms = [];
+        var pkStringTable = [];
+        var _pkStringMap = new Map();
+        function _pkIntern(s) {
+          if (!s) return -1;
+          var existing = _pkStringMap.get(s);
+          if (existing !== undefined) return existing;
+          var idx = pkStringTable.length;
+          pkStringTable.push(s);
+          _pkStringMap.set(s, idx);
+          return idx;
+        }
 
         api.StreamAllMeshes(modelID, function(ifcMesh) {
           var eid = ifcMesh.expressID;
@@ -4080,7 +4153,7 @@ function startApp() {
             var _spct = 45 + Math.min(33, Math.round(_streamCount / _estTotal * 33));
             progress('Building the 3D model ' + _spct + '%');
           }
-          var geos = [];
+          var geoCount = 0;
           for (var i = 0; i < ifcMesh.geometries.size(); i++) {
             var placed = ifcMesh.geometries.get(i);
             var gd = null;
@@ -4104,23 +4177,41 @@ function startApp() {
                 xfer.push(pos.buffer, nrm.buffer, _geoTable[geoExpId].idx.buffer);
               } else { _geoReused++; }
               var c = placed.color;
-              var tf = new Float32Array(placed.flatTransformation);
-              geos.push({geoId:geoExpId,
-                color: c ? {r:c.x, g:c.y, b:c.z, a:c.w} : null,
-                tf:tf});
-              xfer.push(tf.buffer);
+              var tf = placed.flatTransformation;
+              pkPlacementGeoIds.push(geoExpId);
+              if (c) {
+                pkPlacementHasColor.push(1);
+                pkPlacementColors.push(c.x, c.y, c.z, c.w);
+              } else {
+                pkPlacementHasColor.push(0);
+                pkPlacementColors.push(0, 0, 0, 0);
+              }
+              for (var tfi = 0; tfi < 16; tfi++) pkPlacementTransforms.push(tf[tfi]);
+              geoCount++;
             } catch(ex) { console.warn('[IFC Worker] Geometry extraction failed for expressID=' + eid + ', geoExpId=' + (geoExpId||'?'), ex); }
             finally { if (gd) try { gd.delete(); } catch(e2) {} }
           }
-          if (geos.length > 0) {
+          if (geoCount > 0) {
             var _tP = performance.now();
             var elProps = extractProperties(api, modelID, eid);
-            elProps.storey = storeyMap[eid] || '';
-            elProps.material = matMap[eid] || '';
-            var pm = propMap[eid];
-            if (pm) { elProps.quantities = _ccCanonQuantities(pm.quantities); elProps.psets = _ccCanonPsets(pm.psets); }
             _tProps += performance.now() - _tP;
-            rawEls.push({expressId:eid, geos:geos, props:elProps});
+            pkExpressIds.push(eid);
+            pkGeoCounts.push(geoCount);
+            pkGlobalIds.push(elProps.globalId);
+            pkNames.push(elProps.name);
+            pkDescriptions.push(elProps.description);
+            pkObjectTypes.push(elProps.objectType);
+            pkIfcTypeIdx.push(_pkIntern(elProps.ifcType));
+            pkStoreyIdx.push(_pkIntern(storeyMap[eid] || ''));
+            pkMaterialIdx.push(_pkIntern(matMap[eid] || ''));
+            pkTypeId.push(elProps.typeId != null ? elProps.typeId : -1);
+            var _hasAxis = Object.prototype.hasOwnProperty.call(elProps, 'axis') ? 1 : 0;
+            pkHasAxis.push(_hasAxis);
+            if (_hasAxis && elProps.axis) {
+              pkAxisX.push(elProps.axis[0]); pkAxisY.push(elProps.axis[1]); pkAxisZ.push(elProps.axis[2]);
+            } else {
+              pkAxisX.push(0); pkAxisY.push(0); pkAxisZ.push(0);
+            }
           }
         });
 
@@ -4132,8 +4223,31 @@ function startApp() {
           extractProps:  Math.round(_tProps)
         };
 
+        var packedEls = {
+          expressIds: new Uint32Array(pkExpressIds),
+          geoCounts: new Uint32Array(pkGeoCounts),
+          globalIds: pkGlobalIds, names: pkNames, descriptions: pkDescriptions, objectTypes: pkObjectTypes,
+          ifcTypeIdx: new Int32Array(pkIfcTypeIdx),
+          storeyIdx: new Int32Array(pkStoreyIdx),
+          materialIdx: new Int32Array(pkMaterialIdx),
+          typeId: new Int32Array(pkTypeId),
+          hasAxis: new Uint8Array(pkHasAxis),
+          axisX: new Float32Array(pkAxisX), axisY: new Float32Array(pkAxisY), axisZ: new Float32Array(pkAxisZ),
+          placementGeoIds: new Uint32Array(pkPlacementGeoIds),
+          placementHasColor: new Uint8Array(pkPlacementHasColor),
+          placementColors: new Float32Array(pkPlacementColors),
+          placementTransforms: new Float32Array(pkPlacementTransforms),
+          stringTable: pkStringTable
+        };
+        xfer.push(packedEls.expressIds.buffer, packedEls.geoCounts.buffer,
+          packedEls.ifcTypeIdx.buffer, packedEls.storeyIdx.buffer, packedEls.materialIdx.buffer,
+          packedEls.typeId.buffer, packedEls.hasAxis.buffer,
+          packedEls.axisX.buffer, packedEls.axisY.buffer, packedEls.axisZ.buffer,
+          packedEls.placementGeoIds.buffer, packedEls.placementHasColor.buffer,
+          packedEls.placementColors.buffer, packedEls.placementTransforms.buffer);
+
         var _geoUnique = Object.keys(_geoTable).length;
-        _emit({type:'result', rawEls:rawEls, geoTable:_geoTable,
+        _emit({type:'result', packedEls:packedEls, geoTable:_geoTable,
           loadedScope:(_scopeSet ? _scope.storeys : null), scopedOutCount:_scopedOut,
           geoUnique:_geoUnique, geoReused:_geoReused,
           storeys:Object.keys(allStoreys).sort(), storeyData:storeyData,
@@ -4284,7 +4398,14 @@ function startApp() {
             worker.terminate(); resolve(null); return;
           }
           if (onProgress) onProgress('Placing elements in the scene 85%');
-          var rawEls = msg.rawEls;
+          // Protocol v2 decode — see the packedEls comment block in
+          // _ifcWorkerMain (worker side) for the full encoding rationale.
+          // Reconstructs the exact same elements/meshes shape the v1
+          // rawEls-array decode produced, from flat typed + string arrays
+          // instead of a structured-cloned object graph.
+          var pk = msg.packedEls;
+          var pkStrTable = pk.stringTable;
+          function _pkStr(idx) { return idx === -1 ? '' : pkStrTable[idx]; }
           var gt = msg.geoTable || {};
           var meshes = [];
           var elements = [];
@@ -4295,13 +4416,15 @@ function startApp() {
           var _sbStart = performance.now();
           var _tmpMtx4 = new THREE.Matrix4(); // reused per placement to avoid 5k-50k allocations per load
 
-          for (var i = 0; i < rawEls.length; i++) {
-            var raw = rawEls[i];
+          var _placementOffset = 0; // running index into placement-flat arrays
+          for (var i = 0; i < pk.expressIds.length; i++) {
+            var eid = pk.expressIds[i];
+            var gc = pk.geoCounts[i];
             var elMeshes = [];
             var elBox = new THREE.Box3();
-            for (var g = 0; g < raw.geos.length; g++) {
-              var gData = raw.geos[g];
-              var geoId = gData.geoId;
+            for (var g = 0; g < gc; g++) {
+              var pOff = _placementOffset + g;
+              var geoId = pk.placementGeoIds[pOff];
               var geo = geoCache[geoId];
               if (!geo) {
                 var gEntry = gt[geoId];
@@ -4317,17 +4440,19 @@ function startApp() {
                 } else { continue; }
               }
               var _tM = performance.now();
-              var c = gData.color;
-              if (c && c.a < 0.05) continue;
+              var hasColor = pk.placementHasColor[pOff];
+              var cOff = pOff * 4;
+              var ca = hasColor ? pk.placementColors[cOff + 3] : 1;
+              if (hasColor && ca < 0.05) continue;
               var col;
-              if (c) col = { r:c.r, g:c.g, b:c.b };
+              if (hasColor) col = { r:pk.placementColors[cOff], g:pk.placementColors[cOff+1], b:pk.placementColors[cOff+2] };
               else { var _fb2 = new THREE.Color(fallbackColor); col = { r:_fb2.r, g:_fb2.g, b:_fb2.b }; }
-              var mat = _ccGetSharedPhongMat(col.r, col.g, col.b, c ? c.a : 1);
-              var matKey = mat ? mat.color.r.toFixed(3)+','+mat.color.g.toFixed(3)+','+mat.color.b.toFixed(3)+','+(c?c.a:1).toFixed(3) : 'na';
+              var mat = _ccGetSharedPhongMat(col.r, col.g, col.b, ca);
+              var matKey = mat ? mat.color.r.toFixed(3)+','+mat.color.g.toFixed(3)+','+mat.color.b.toFixed(3)+','+ca.toFixed(3) : 'na';
               var mesh = new THREE.Mesh(geo, mat);
-              mesh.applyMatrix4(_tmpMtx4.fromArray(gData.tf));
-              mesh.userData.expressId = raw.expressId;
-              mesh.userData._ifcMaterial = (raw.props && raw.props.material) || '';
+              mesh.applyMatrix4(_tmpMtx4.fromArray(pk.placementTransforms, pOff * 16));
+              mesh.userData.expressId = eid;
+              mesh.userData._ifcMaterial = _pkStr(pk.materialIdx[i]);
               _ccBakeMesh(mesh);
               mesh.userData._instKey = geoId + ':' + matKey;
               _tMesh += performance.now() - _tM;
@@ -4336,12 +4461,28 @@ function startApp() {
               _tBBox += performance.now() - _tB;
               elMeshes.push(mesh); meshes.push(mesh);
             }
+            _placementOffset += gc;
             if (elMeshes.length > 0) {
-              if (raw.props) {
-                if (raw.props.psets)      raw.props.psets      = _ccCanonPsets(raw.props.psets);
-                if (raw.props.quantities) raw.props.quantities = _ccCanonQuantities(raw.props.quantities);
+              var props = {
+                expressId: eid,
+                globalId: pk.globalIds[i], name: pk.names[i], description: pk.descriptions[i], objectType: pk.objectTypes[i],
+                ifcType: _pkStr(pk.ifcTypeIdx[i]),
+                storey: _pkStr(pk.storeyIdx[i]), storeyId: null,
+                material: _pkStr(pk.materialIdx[i]),
+                // Always empty on this path — see the packedEls comment
+                // block (worker side) on why quantities/psets are never
+                // encoded here. _ccCanonPsets/_ccCanonQuantities are still
+                // called on the empty objects, matching v1's behavior
+                // exactly (v1's `if (raw.props.psets)` guard was truthy for
+                // `{}` too, so the canonicalizer always ran there as well).
+                quantities: _ccCanonQuantities({}), psets: _ccCanonPsets({})
+              };
+              if (pk.typeId[i] !== -1) props.typeId = pk.typeId[i];
+              if (pk.hasAxis[i]) {
+                var ax = pk.axisX[i], ay = pk.axisY[i], az = pk.axisZ[i];
+                props.axis = (ax === 0 && ay === 0 && az === 0) ? null : [ax, ay, az];
               }
-              elements.push({expressId:raw.expressId, meshes:elMeshes, box:elBox, props:raw.props});
+              elements.push({expressId:eid, meshes:elMeshes, box:elBox, props:props});
             }
           }
 
