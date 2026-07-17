@@ -1,5 +1,8 @@
 # Changelog
 
+## v7.2.0 (2026-07-17)
+- Fix external-review findings, graduate six clash cores, reducer decomposition slice 1, tabbed Settings (#692)
+
 ## v7.1.1 (2026-07-17)
 - Wire the CAMERA cluster's ResponsiveToolGroup into TopToolbar (ccUiToolbarV2)
 
