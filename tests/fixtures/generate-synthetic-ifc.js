@@ -14,6 +14,19 @@ function generateSyntheticIfc(opts) {
   const storeyCount = opts.storeyCount || 3;
   const wallsPerStorey = opts.wallsPerStorey || 4;
   const storeyHeight = opts.storeyHeight != null ? opts.storeyHeight : 3;
+  // Additive opt-in extensions (all default off — omitting them reproduces
+  // the exact prior output byte-for-byte). Added to build the worker/
+  // fallback differential harness's fixture matrix beyond the single
+  // two-wall smoke case: unit conversion, quantities, property sets
+  // (including one deliberately null-valued "degenerate" property — a
+  // spec-valid record with no value, not invalid SPF syntax that could
+  // make the two parse paths crash differently instead of diverge
+  // measurably), and IFC4 georeferencing.
+  const lengthUnitPrefix = opts.lengthUnit === 'MILLIMETRE' ? '.MILLI.' : '$';
+  const withQuantities = !!opts.withQuantities;
+  const withPsets = !!opts.withPsets;
+  const geo = opts.geo || null; // {lat:[d,m,s], lon:[d,m,s], elev}
+  const mapConversion = opts.mapConversion || null; // {eastings, northings, epsg}
 
   let id = 0;
   const next = () => ++id;
@@ -35,15 +48,37 @@ function generateSyntheticIfc(opts) {
   const originId = next();
   lines.push(`#${projectId}=IFCPROJECT('0SynthProject00000000${String(projectId).padStart(2, '0')}',$,'Synthetic Project',$,$,$,$,(#${geomCtxId}),#${unitAssignId});`);
   lines.push(`#${unitAssignId}=IFCUNITASSIGNMENT((#${siUnitId}));`);
-  lines.push(`#${siUnitId}=IFCSIUNIT(*,.LENGTHUNIT.,$,.METRE.);`);
+  lines.push(`#${siUnitId}=IFCSIUNIT(*,.LENGTHUNIT.,${lengthUnitPrefix},.METRE.);`);
   lines.push(`#${geomCtxId}=IFCGEOMETRICREPRESENTATIONCONTEXT($,'Model',3,1.0E-05,#${axisId},$);`);
   lines.push(`#${axisId}=IFCAXIS2PLACEMENT3D(#${originId},$,$);`);
   lines.push(`#${originId}=IFCCARTESIANPOINT((0.,0.,0.));`);
 
   const siteId = next();
   const sitePlacementId = next();
-  lines.push(`#${siteId}=IFCSITE('0SynthSite0000000000${String(siteId).padStart(2, '0')}',$,'Site',$,$,#${sitePlacementId},$,$,.ELEMENT.,$,$,$,$,$);`);
+  // RefLatitude/RefLongitude/RefElevation (IfcSite attrs 10-12) are $ (null)
+  // unless opts.geo supplies compound [deg,min,sec] arrays — matches the
+  // format extractSpatialHierarchy's _compoundToDeg reads (index.html).
+  const refLat = geo && geo.lat ? `(${geo.lat.join(',')})` : '$';
+  const refLon = geo && geo.lon ? `(${geo.lon.join(',')})` : '$';
+  // STEP REAL literals require a decimal point (e.g. "3." or "10.5") — never
+  // append one blindly, or a non-integer value like 10.5 becomes "10.5.",
+  // which is invalid EXPRESS/STEP syntax.
+  const refElev = geo && geo.elev != null
+    ? (String(geo.elev).indexOf('.') === -1 ? `${geo.elev}.` : `${geo.elev}`)
+    : '$';
+  lines.push(`#${siteId}=IFCSITE('0SynthSite0000000000${String(siteId).padStart(2, '0')}',$,'Site',$,$,#${sitePlacementId},$,$,.ELEMENT.,${refLat},${refLon},${refElev},$,$);`);
   lines.push(`#${sitePlacementId}=IFCLOCALPLACEMENT($,#${axisId});`);
+  if (mapConversion) {
+    // IFC4 IfcMapConversion ties the project's local engineering coords
+    // (SourceCRS = the model's own geometric representation context) to an
+    // IfcProjectedCRS (TargetCRS) — read by extractSpatialHierarchy via
+    // GetLineIDsWithType(IFCMAPCONVERSION), independent of the compound
+    // RefLatitude/RefLongitude path above.
+    const crsId = next();
+    const mcId = next();
+    lines.push(`#${crsId}=IFCPROJECTEDCRS('${mapConversion.epsg || 'RD_New'}',$,$,$,$,$,$);`);
+    lines.push(`#${mcId}=IFCMAPCONVERSION(#${geomCtxId},#${crsId},${(mapConversion.eastings || 0)}.,${(mapConversion.northings || 0)}.,0.,0.999,0.001,1.);`);
+  }
 
   const buildingId = next();
   const buildingPlacementId = next();
@@ -96,6 +131,24 @@ function generateSyntheticIfc(opts) {
       lines.push(`#${extrudeId}=IFCEXTRUDEDAREASOLID(#${profileId},#${wallAxisId},#${extrudeDirId},${storeyHeight}.);`);
       lines.push(`#${wallId}=IFCWALL('${wallGuid}',$,'Wall S${s}W${w}',$,$,#${wallPlacementId},#${shapeId},$,$);`);
       wallIds.push(wallId);
+      if (withQuantities) {
+        const qLenId = next(), qAreaId = next(), qtoId = next(), relId = next();
+        lines.push(`#${qLenId}=IFCQUANTITYLENGTH('Length',$,$,${storeyHeight}.,$);`);
+        lines.push(`#${qAreaId}=IFCQUANTITYAREA('GrossArea',$,$,1.2,$);`);
+        lines.push(`#${qtoId}=IFCELEMENTQUANTITY('3SynthQto000000000${qtoId}',$,'BaseQuantities',$,$,(#${qLenId},#${qAreaId}));`);
+        lines.push(`#${relId}=IFCRELDEFINESBYPROPERTIES('4SynthRelQ00000000${relId}',$,$,$,(#${wallId}),#${qtoId});`);
+      }
+      if (withPsets) {
+        // One real value + one deliberately null-valued ("degenerate")
+        // property in the same set — a spec-valid record with no value,
+        // exercising extractProperties'/safeStr's null-handling identically
+        // on both the worker and main-thread-fallback parse paths.
+        const propFireId = next(), propNullId = next(), psetId = next(), relPsetId = next();
+        lines.push(`#${propFireId}=IFCPROPERTYSINGLEVALUE('FireRating',$,IFCLABEL('60min'),$);`);
+        lines.push(`#${propNullId}=IFCPROPERTYSINGLEVALUE('DegenerateProp',$,$,$);`);
+        lines.push(`#${psetId}=IFCPROPERTYSET('5SynthPset000000000${psetId}',$,'Pset_WallCommon',$,(#${propFireId},#${propNullId}));`);
+        lines.push(`#${relPsetId}=IFCRELDEFINESBYPROPERTIES('6SynthRelP00000000${relPsetId}',$,$,$,(#${wallId}),#${psetId});`);
+      }
     }
     lines.push(`#${next()}=IFCRELCONTAINEDINSPATIALSTRUCTURE('2SynthRelCont00000000${id}',$,$,$,(${wallIds.map((w) => '#' + w).join(',')}),#${storeyId});`);
   }

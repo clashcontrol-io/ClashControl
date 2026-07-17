@@ -52,9 +52,25 @@ const MIME = {
   '.svg': 'image/svg+xml', '.ifc': 'application/octet-stream', '.css': 'text/css',
 };
 
+// Real-model corpus support (see tests/fixtures/CORPUS_MANIFEST.md) — an
+// operator-controlled absolute path OUTSIDE the repo, served under one
+// fixed URL rather than joined against `root`. Deliberately NOT reachable
+// through the generic file route above (which is intentionally confined to
+// `root` by the containment check) — this is a second, narrower route that
+// only exists when the env var is set, reads exactly one path chosen by
+// whoever launched the harness, and is never derived from request input.
+const corpusFixturePath = process.env.CC_PERF_FIXTURE_PATH || null;
+const corpusFixtureUrl = '/tests/fixtures/smoke-clash.ifc';
+const fixtureUrl = corpusFixturePath ? '/__corpus-fixture__.ifc' : corpusFixtureUrl;
+
 const server = createServer(async (req, res) => {
   try {
     const path = decodeURIComponent(new URL(req.url, 'http://x').pathname);
+    if (corpusFixturePath && path === '/__corpus-fixture__.ifc') {
+      const body = await readFile(corpusFixturePath);
+      res.writeHead(200, { 'content-type': 'application/octet-stream' });
+      return res.end(body);
+    }
     const rel = path === '/' ? 'index.html' : path.slice(1);
     const file = normalize(join(root, rel));
     if (!file.startsWith(normalize(root))) { res.writeHead(403); return res.end(); }
@@ -130,16 +146,22 @@ try {
     const bootMs = performance.now() - wallStart;
 
     const loadStart = performance.now();
-    await page.evaluate(async () => {
-      const buffer = await (await fetch('/tests/fixtures/smoke-clash.ifc')).arrayBuffer();
+    await page.evaluate(async (url) => {
+      const buffer = await (await fetch(url)).arrayBuffer();
       window.ClashControl.loadFiles([new File([buffer], 'perf-smoke.ifc')]);
-    });
+    }, fixtureUrl);
+    // Real corpus files (see CORPUS_MANIFEST.md) can legitimately take much
+    // longer than the tiny built-in fixture — a fixed 120s ceiling would
+    // fail large-tier runs outright rather than measure them. Scale the
+    // wait budget when a real corpus file is in use; keep the tight default
+    // for the fast, CI-run built-in fixture.
+    const loadTimeoutMs = corpusFixturePath ? Number(process.env.CC_PERF_LOAD_TIMEOUT_MS || 600_000) : 120_000;
     await page.waitForFunction(() => {
       const s = window._ccLatestState;
       return s && s.models.length === 1 && (s.models[0].elements || []).length >= 2;
-    }, null, { timeout: 120_000 });
+    }, null, { timeout: loadTimeoutMs });
     const geometryReadyMs = performance.now() - loadStart;
-    await page.waitForFunction(() => window._ccModelLoading === false, null, { timeout: 120_000 });
+    await page.waitForFunction(() => window._ccModelLoading === false, null, { timeout: loadTimeoutMs });
     const completeMs = performance.now() - loadStart;
 
     const detectStart = performance.now();
@@ -153,6 +175,11 @@ try {
     const metrics = await page.evaluate(() => {
       const resources = performance.getEntriesByType('resource');
       const model = window._ccLatestState.models[0];
+      // window._ccDetectProfile is set at the end of every detection run
+      // (index.html) — carries the candidate-count / estimated-candidate-
+      // memory / confirmed-clash figures the browser-first large-model plan
+      // review (2026-07-17) flagged as needed alongside load-phase timing.
+      const detectProfile = window._ccDetectProfile || {};
       return {
         fcpMs: performance.getEntriesByName('first-contentful-paint')[0]?.startTime || null,
         resourceCount: resources.length,
@@ -164,6 +191,10 @@ try {
         elementsWithPsets: (model.elements || []).filter((e) => e.props && e.props.psets && Object.keys(e.props.psets).length).length,
         storeys: (model.storeys || []).length,
         clashes: window._ccLatestState.clashes.length,
+        candidates: detectProfile.candidates ?? null,
+        candidatesEstBytes: detectProfile.candidates_est_bytes ?? null,
+        sweepAndPruneMs: detectProfile.sweep_and_prune_ms ?? null,
+        bvhBuildMs: detectProfile.bvh_build_ms ?? null,
       };
     });
 
@@ -180,7 +211,7 @@ try {
   server.close();
 }
 
-const numericKeys = ['bootMs', 'geometryReadyMs', 'completeMs', 'detectionMs', 'totalMs', 'fcpMs', 'resourceCount', 'encodedBytes', 'decodedBytes', 'heapBytes', 'domNodes', 'rssBytes'];
+const numericKeys = ['bootMs', 'geometryReadyMs', 'completeMs', 'detectionMs', 'totalMs', 'fcpMs', 'resourceCount', 'encodedBytes', 'decodedBytes', 'heapBytes', 'domNodes', 'rssBytes', 'candidates', 'candidatesEstBytes', 'sweepAndPruneMs', 'bvhBuildMs'];
 function median(values) {
   const sorted = values.filter(Number.isFinite).toSorted((a, b) => a - b);
   if (!sorted.length) return null;
@@ -192,6 +223,7 @@ const result = {
   generatedAt: new Date().toISOString(),
   node: process.version,
   runs,
+  fixture: corpusFixturePath || 'tests/fixtures/smoke-clash.ifc (built-in)',
   isolation: 'fresh Chromium process and context; service worker blocked; offline dependency mirror',
   medians,
   samples,

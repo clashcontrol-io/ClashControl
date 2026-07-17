@@ -185,6 +185,143 @@ Things to be careful about. Do not remove without a good reason — add a note i
 Update this section at the start and end of each session.
 Mark completed items with ~~strikethrough~~ and date, then let the daily sync archive them.
 
+~~**Browser-first large-model plan, Phase 1 completed: IFC worker protocol v2 (packed
+rawEls)** (branch `claude/cc-claims-review-myhp9f`, 2026-07-17)~~ — same-session follow-up
+to the tranche below, completing Phase 1 of the plan (the dominant measured cost: ~73%-of-
+Scene-build `transferGap`, per prior-session `sceneSub` instrumentation). Replaced the IFC
+worker's `rawEls` wire format — v1 was one JS object per element (`{expressId, geos:[...],
+props:{...}}`, each geometry placement its own nested object) sent over `postMessage` and
+structured-cloned in full — with `packedEls`: a structure-of-arrays encoding (element-parallel
+typed arrays for expressId/geoCount/typeId/axis; placement-flat typed arrays for
+geoId/color/16-float transforms, fed straight into `THREE.Matrix4.fromArray(arr, offset)` with
+no per-placement copy; a deduplicated string table + index arrays for the three highly
+repetitive per-element string fields — ifcType/storey/material — with globalId/name/
+description/objectType left as plain flat string arrays since those are near-unique per
+element and interning would only add index-indirection overhead there). Quantities/psets are
+deliberately NOT encoded — traced and confirmed the worker's primary streaming path always
+had `propMap` empty at that point (`if(pm){...}` was provably dead code, always false; the real
+psets/quantities arrive later via the separate lazy "Phase 2" `buildPropertyMap` message,
+unchanged) — the decoder reconstructs `quantities:{}, psets:{}` directly, identical to what
+that always-false branch left in place. `IFC_WORKER_PROTOCOL_VERSION` bumped 1→2. **Measured
+improvement** (same 25k-element synthetic fixture, before/after via `git stash` on `index.html`
+only, same sandbox, same run): `sceneSub.transferGap` 4128ms→2218ms (**46% reduction**), total
+load time 7663ms→5972ms (**22% reduction**, ~1.7s saved). Residual `transferGap` is now
+dominated by `geoTable`'s own one-object-per-unique-geometry shape (unchanged this pass, and
+this particular fixture is a worst case with zero geometry reuse — 25,000/25,000 unique) — a
+separate, already-known concern, not `rawEls`. Verified: 606/606 unit tests, full `smoke.mjs`
+green, and critically **all 7 differential-harness cases (the 6-fixture matrix + cancellation)
+still fingerprint-identical between worker and fallback** after the rewrite — re-run twice,
+once against the new code directly and once again after a stash/pop round-trip to confirm the
+comparison methodology itself was sound. **Not done this session (explicitly deferred, matches
+the plan's own phase gates):** Phase 2 (progressive chunked loading with backpressure, honest
+storey-scope preflight), Phase 3 (eliminate the dual scene representation — BatchedMesh as
+sole authoritative render source, rewrite selection/visibility/coloring/section/serialization/
+clash adapters to use handles instead of retained off-scene meshes), Phase 4 (move the clash
+hot path into the Rust/WASM kernel — the crate lives in-repo at `engine/` [`clashcontrol-engine`,
+~720 lines across `lib.rs`/`bvh.rs`/`tri_tri.rs`/`spatial_hash.rs`], so this is technically
+in-scope for a future session, just not attempted here), Phase 5 (COOP/COEP — confirmed
+`vercel.json` has no `headers` block at all; ~18 external CDN references in `index.html` alone
+would need self-hosting/pinning audit first), Phases 6-7. Each has its own explicit
+measurement/oracle-comparison gate in the plan and is sequenced for its own session, not a
+same-session follow-on to Phase 1.
+
+~~**Browser-first large-model plan, first implementation tranche: harness extension +
+zero-copy input-buffer transfer** (branch `claude/cc-claims-review-myhp9f`, 2026-07-17)~~ —
+same-session follow-up to the plan review below, executed in the order that review's
+adjustment #4 called for (expand differential coverage *before* touching the loader's
+transfer protocol, per `REDUCER_DECOMPOSITION_PLAN.md`'s loader-area high-risk/last
+sequencing). All four pieces of the recommended first step, plus the harness extension the
+review's adjustment #3 called for:
+- **Worker/fallback differential coverage expanded** — `ifc-worker-fallback-differential.mjs`
+  went from one hardcoded two-wall fixture to a 6-case matrix (baseline, multi-storey,
+  quantities, millimetre unit conversion, IFC4 georeferencing, a deliberately null-valued
+  "degenerate" property record) via new opt-in `generate-synthetic-ifc.js` extensions
+  (`withQuantities`, `withPsets`, `lengthUnit`, `geo`, `mapConversion` — all default-off,
+  verified byte-identical output when omitted). Caught and fixed two real bugs while building
+  this: (1) a malformed STEP real-number literal in the elevation field (`10.5.` — double
+  decimal point, invalid EXPRESS/STEP syntax) in the generator itself, and (2) the comparison
+  only checked `modelFingerprint()`, which doesn't cover unit scale/georef/mapConversion at
+  all — a worker/fallback divergence limited to those fields would have passed silently.
+  Extended the comparison to the full result payload. **Open finding, not investigated
+  further (out of scope for this session, flagged for later):** the georeferencing case's
+  `RefLatitude`/`RefLongitude` compound values come back as `null` from `extractSpatialHierarchy`
+  on BOTH the worker and fallback paths (identically — so parity holds, this is not a
+  divergence) — could be a fixture-format mismatch or a real latent bug in `_compoundToDeg`;
+  `RefElevation` (a plain REAL, not compound) parses correctly. All 6 cases green.
+- **Candidate-count / peak-candidate-memory metrics** — `profile.candidates` (element-pair
+  count) already existed; added `candidates_est_bytes` (documented ~96B/candidate estimate,
+  `_CANDIDATE_EST_BYTES` in index.html — explicitly labelled an approximation, not a measured
+  value) and surfaced both plus `sweepAndPruneMs`/`bvhBuildMs` into `perf-local.mjs`'s captured
+  metrics, closing the plan's Phase 0 "candidate count" measurement ask without a new harness.
+- **Corpus manifest + real-file plumbing** — `tests/fixtures/CORPUS_MANIFEST.md` documents the
+  plan's 50/150/300/500/750+MB tiers, the never-commit-real-IFC-files rule, and how to point
+  `perf-local.mjs`/`memory-local.mjs` at a real external file via new `CC_PERF_FIXTURE_PATH`
+  (served from a fixed, narrow, operator-controlled route — not the containment-guarded generic
+  file server, never derived from request input) with an auto-scaled load timeout
+  (`CC_PERF_LOAD_TIMEOUT_MS`, default 600s for corpus files). Verified against a synthetic
+  100-element fixture through the real plumbing (not just code review).
+- **`load-cancel-load-loop.mjs`** — new harness covering the plan's Phase 0 ask for
+  load-cancel-load + model-removal loop tests with a memory-plateau assertion (heap +
+  whole-process RSS via `/proc`, forced GC between samples). 5 cycles on a single persistent
+  page (not fresh-browser-per-cycle, so it can actually see a leak accumulate). Caught and
+  fixed a real bug while writing it: the Worker-stub restoration used `delete window.Worker`
+  expecting a prototype-chain fallback that browser globals don't have — every cycle after the
+  first would have silently kept using the broken stub. Fixed by saving the real constructor
+  once before the loop. Verified plateau: heap 1.02-1.03x, RSS 1.01-1.02x cycle-1→cycle-4 (well
+  under the 1.5x threshold). Repeated-federation and five-consecutive-project-opens (the plan's
+  other two Phase 0 asks) are explicitly NOT covered — documented as a gap in
+  `CORPUS_MANIFEST.md`, not silently subsumed.
+- **Zero-copy transfer for the IFC input buffer** (Phase 1, item 1 of the plan's recommended
+  first tranche) — `worker.postMessage({buffer,...}, [buffer])` now transfers instead of
+  structured-clones the input `ArrayBuffer` (`index.html` `loadIFCWorker`). Handled the
+  necessary consequence the plan itself flagged ("a transferred buffer is detached"): the
+  outer `buf` is used THREE times after the worker call in the caller (main-thread fallback
+  re-parse, `idbSaveFile` persistence, and a `fileSize` fallback read) — all three now
+  reacquire fresh bytes from the source `File` (`f.arrayBuffer()`, a local re-read, not a
+  network fetch) instead of touching the now-detached `buf`. Verified via the expanded
+  6-case differential harness (fingerprint-identical worker vs. fallback on every case,
+  including the forced-fallback path that exercises the reacquisition code directly) plus
+  full `smoke.mjs` (including its own pre-existing "expected worker failure falls back"
+  case) and 606/606 unit tests — all green.
+- Explicitly NOT attempted this session (deferred per the plan's own gating and
+  `REDUCER_DECOMPOSITION_PLAN.md`'s risk ordering): the `rawEls` protocol-v2 packed-typed-array
+  change (the dominant ~73%-of-Scene-build cost) and anything from Phase 2 onward. Those need
+  their own session with the now-wider differential net as the safety gate, not a same-session
+  follow-on to building that gate.
+
+~~**External browser-first large-model plan verified against code + history** (branch
+`claude/cc-claims-review-myhp9f`, 2026-07-17)~~ — a user-supplied external plan
+("ClashControl browser-first IFC and clash-engine plan", reviewed at `23bde34`/v7.2.1) was
+claim-checked line-by-line against `index.html`, the addons, tests, `vercel.json`, and git
+history. **Verdict: overwhelmingly accurate — adopt with four adjustments.** Every loading
+pressure point confirmed in code: input buffer `postMessage` at index.html:4441 has NO transfer
+list (structured clone); worker returns geometry buffers as Transferables but `rawEls` (one JS
+object per element) is structured-cloned (the measured ~73%-of-Scene-build cost); per-element
+`THREE.Mesh` objects are retained off-scene in `element.meshes[]` AFTER Instanced/BatchedMesh
+build (explicit design comment ~index.html:3365) — dual representation confirmed; storey-scan
+512MB ceiling + `truncated` picker lock confirmed. Clash side confirmed: broad phase
+(`_sweepAndPrune`) is main-thread with `.filter()` active arrays and a fully-materialized
+candidate array; `_DETECT_CHUNK_SIZE=80` setTimeout chunking; per-element (not per-unique-
+geometry) world-space tri copies + BVHs in the adaptive `_bvhLRU`; WASM batch path concat-copies
+triangles (`_runBatch` → `allTris.set`); local-engine bridge POSTs plain-number JSON verts.
+**Adjustments to the plan:** (1) its "BVHs are rebuilt too often" is overstated — BVHs are
+LRU-cached and the WASM hard path uses no BVH at all; the real per-call cost is the concat
+copies + per-element world-tri duplication. (2) Its "full properties assembled into a large map"
+is only eager on the FALLBACK path — the worker path already defers `buildPropertyMap` to a
+post-render Phase 2 and merges per-element. (3) Phase 0 "build the harness" should be "EXTEND
+the harness" — perf-local.mjs (phases+RSS), memory-local.mjs (plateaus, forced GC),
+`modelFingerprint`/`clashFingerprint`, and the worker/fallback differential harness already
+exist; missing pieces are a real-model corpus, candidate-count metrics, and load-cancel-load
+loop tests. (4) Its protocol-v2 work must be reconciled with the `.toString()`-assembled worker
+(see the 2026-07-17 static-file-extraction Known Issue) and REDUCER_DECOMPOSITION_PLAN.md's
+loader-area high-risk/last sequencing — expand differential coverage FIRST. **Doc drift found
+and fixed: CLAUDE.md claimed `vercel.json` sets COOP/COEP headers — verified FALSE (no `headers`
+block at all; no COOP/COEP anywhere; three.js/web-ifc load from jsdelivr via dynamic ESM with no
+SRI; sw.js deliberately skips web-ifc interception citing CORP/COEP). The app is NOT
+cross-origin isolated in production; SharedArrayBuffer/threaded WASM would be genuinely new
+deployment work, exactly as the external plan says.** 606/606 unit tests green at review time;
+no app code changed this session (docs only).
+
 ~~**External-review follow-up: grouped conflict-list memoization, storey-scan completeness,
 large-model profiling correction** (branch `claude/findings-and-plan`, 2026-07-17)~~ — a second
 external review of the merged PR #692 correctly identified two real, verified bugs and asked for

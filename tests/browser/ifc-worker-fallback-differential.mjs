@@ -14,20 +14,62 @@
 // type per element, order-independent) already exists precisely for this
 // kind of before/after equivalence check — see safety-migrations.js.
 //
+// Coverage: an external review of the browser-first large-model plan
+// (2026-07-17) flagged that this harness only ever exercised one small
+// two-wall fixture — not enough to trust before touching the loader's
+// worker-transfer protocol (see the zero-copy input-buffer transfer change
+// in the same commit as this expansion). Runs a case matrix instead of one
+// fixture: the original two-wall smoke case, the committed multi-storey
+// fixture, and four cases generated on the fly via
+// generate-synthetic-ifc.js's opt-in extensions — quantities (IfcElement
+// Quantity), unit conversion (millimetre IfcSIUnit — exercises geoFactor),
+// IFC4 georeferencing (IfcSite RefLatitude/Longitude compound values +
+// IfcMapConversion/IfcProjectedCRS), and a deliberately null-valued
+// ("degenerate") property record — spec-valid STEP, not invalid syntax
+// that could make the two parse paths crash differently instead of
+// diverge measurably.
+//
 // Usage: CC_CHROMIUM_EXECUTABLE=/path node tests/browser/ifc-worker-fallback-differential.mjs
 import { chromium } from 'playwright';
 import { createServer } from 'node:http';
-import { readFile } from 'node:fs/promises';
+import { readFile, writeFile, mkdir, rm } from 'node:fs/promises';
 import { join, dirname, normalize } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { generateSyntheticIfc } from '../fixtures/generate-synthetic-ifc.js';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
 const offline = process.env.CC_BROWSER_OFFLINE_DEPS === '1';
+const generatedDir = join(root, 'tests', 'fixtures', '_generated-differential');
 
 function fail(msg) {
   console.error('DIFFERENTIAL FAIL: ' + msg);
-  process.exit(1);
+  process.exitCode = 1;
 }
+
+const CASES = [
+  { name: 'baseline (two-wall smoke)', url: '/tests/fixtures/smoke-clash.ifc' },
+  { name: 'multi-storey', url: '/tests/fixtures/multi-storey-smoke.ifc' },
+  {
+    name: 'quantities (IfcElementQuantity)',
+    generate: { storeyCount: 1, wallsPerStorey: 2, withQuantities: true },
+  },
+  {
+    name: 'unit conversion (millimetre IfcSIUnit)',
+    generate: { storeyCount: 1, wallsPerStorey: 2, lengthUnit: 'MILLIMETRE' },
+  },
+  {
+    name: 'georeferencing (RefLat/Lon + IfcMapConversion)',
+    generate: {
+      storeyCount: 1, wallsPerStorey: 2,
+      geo: { lat: [52, 5, 0], lon: [4, 18, 0], elev: 10.5 },
+      mapConversion: { eastings: 150000, northings: 450000, epsg: 'RD_New' },
+    },
+  },
+  {
+    name: 'degenerate record (null-valued property)',
+    generate: { storeyCount: 1, wallsPerStorey: 2, withPsets: true },
+  },
+];
 
 const server = createServer(async (req, res) => {
   const p = req.url.split('?')[0];
@@ -55,7 +97,7 @@ const port = server.address().port;
 const browser = await chromium.launch({ executablePath: process.env.CC_CHROMIUM_EXECUTABLE });
 const errors = [];
 
-async function loadAndFingerprint(forceFallback) {
+async function loadAndFingerprint(forceFallback, fixtureUrl) {
   const page = await browser.newPage();
   page.on('pageerror', (e) => errors.push(String(e)));
   page.on('console', (m) => { if (m.type() === 'error') errors.push(m.text()); });
@@ -82,11 +124,11 @@ async function loadAndFingerprint(forceFallback) {
   }
   await page.goto(`http://127.0.0.1:${port}/`, { waitUntil: 'domcontentloaded' });
   await page.waitForFunction(() => window.ClashControl && typeof window._ccDispatch === 'function', null, { timeout: 60_000 });
-  const result = await page.evaluate(async (forceFallbackInner) => {
+  const result = await page.evaluate(async ({ forceFallbackInner, fixtureUrlInner }) => {
     if (forceFallbackInner) {
       window.Worker = class BrokenWorker { constructor() { throw new Error('forced fallback for differential test'); } };
     }
-    const buf = await (await fetch('/tests/fixtures/smoke-clash.ifc')).arrayBuffer();
+    const buf = await (await fetch(fixtureUrlInner)).arrayBuffer();
     window.ClashControl.loadFiles([new File([buf], 'differential.ifc')]);
     await new Promise((resolve, reject) => {
       const t0 = Date.now();
@@ -109,29 +151,175 @@ async function loadAndFingerprint(forceFallback) {
       fingerprint: window._ccSafetyMigrations.modelFingerprint([fixedIdModel]),
       elementCount: (model.elements || []).length,
       meshCount: (model.meshes || []).length,
+      unitScale: (model.stats || {}).unitScale != null ? model.stats.unitScale : null,
+      georef: (model.spatialHierarchy && model.spatialHierarchy.sites && model.spatialHierarchy.sites[0] && model.spatialHierarchy.sites[0].georef) || null,
+      mapConversion: (model.spatialHierarchy && model.spatialHierarchy.mapConversion) || null,
     };
-  }, forceFallback);
+  }, { forceFallbackInner: forceFallback, fixtureUrlInner: fixtureUrl });
   await page.close();
   return result;
 }
 
-try {
-  const workerResult = await loadAndFingerprint(false);
-  console.log('Worker path: ' + workerResult.elementCount + ' elements, ' + workerResult.meshCount + ' meshes');
-  const fallbackResult = await loadAndFingerprint(true);
-  console.log('Fallback path: ' + fallbackResult.elementCount + ' elements, ' + fallbackResult.meshCount + ' meshes');
-
-  const comparison = JSON.stringify(workerResult.fingerprint) === JSON.stringify(fallbackResult.fingerprint);
-  if (!comparison) {
-    console.error('Worker fingerprint:', JSON.stringify(workerResult.fingerprint, null, 1));
-    console.error('Fallback fingerprint:', JSON.stringify(fallbackResult.fingerprint, null, 1));
-    fail('worker and main-thread-fallback IFC parses produced different model fingerprints');
+// Cancellation case — the last of the six named coverage topics from the
+// 2026-07-17 Known Issues note ("expand its coverage (multi-storey,
+// quantities, unit conversion, georeferencing, malformed records,
+// cancellation) before attempting the actual extraction"). Verifies a
+// cancel-then-successful-reload produces the SAME fingerprint as a clean
+// load with no cancellation in its history — i.e. an aborted in-flight
+// load leaves no residue (partial elements, a stale _ccLoadGeneration,
+// leftover worker state) that could silently corrupt the retry.
+async function loadCancelReloadAndFingerprint(fixtureUrl) {
+  const page = await browser.newPage();
+  page.on('pageerror', (e) => errors.push(String(e)));
+  page.on('console', (m) => { if (m.type() === 'error') errors.push(m.text()); });
+  if (offline) {
+    const local = async (route, file, ct) => route.fulfill({
+      status: 200, body: await readFile(join(root, 'node_modules', file)),
+      headers: { 'content-type': ct || 'text/javascript', 'access-control-allow-origin': '*' },
+    });
+    await page.context().route('https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js', (r) => local(r, 'react/umd/react.production.min.js'));
+    await page.context().route('https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js', (r) => local(r, 'react-dom/umd/react-dom.production.min.js'));
+    await page.context().route('https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js', (r) => local(r, 'jszip/dist/jszip.min.js'));
+    await page.context().route('https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js', (r) => local(r, 'pdfjs-dist/build/pdf.min.js'));
+    await page.context().route('https://cdn.jsdelivr.net/npm/three@0.180.0/**', async (route) => {
+      const suffix = new URL(route.request().url()).pathname.split('/three@0.180.0/')[1];
+      await local(route, 'three/' + suffix);
+    });
+    await page.context().route('https://cdn.jsdelivr.net/npm/web-ifc@0.0.77/**', async (route) => {
+      const suffix = new URL(route.request().url()).pathname.split('/web-ifc@0.0.77/')[1];
+      await local(route, 'web-ifc/' + suffix, suffix.endsWith('.wasm') ? 'application/wasm' : 'text/javascript');
+    });
+    await page.context().route('https://fonts.googleapis.com/**', (route) => route.fulfill({ status: 200, body: '', contentType: 'text/css' }));
+    await page.context().route('https://fonts.gstatic.com/**', (route) => route.abort());
+    await page.context().route('https://gc.zgo.at/**', (route) => route.fulfill({ status: 200, body: '', contentType: 'text/javascript' }));
   }
-  if (workerResult.elementCount === 0) fail('worker path parsed zero elements — fixture or harness is broken, not a real pass');
-  if (errors.length) fail('browser emitted uncaught page or console errors: ' + JSON.stringify(errors.slice(0, 10)));
+  await page.goto(`http://127.0.0.1:${port}/`, { waitUntil: 'domcontentloaded' });
+  await page.waitForFunction(() => window.ClashControl && typeof window._ccDispatch === 'function', null, { timeout: 60_000 });
+  const result = await page.evaluate(async (fixtureUrlInner) => {
+    const realWorker = window.Worker;
+    // 1. Start a load that never responds, then cancel it — same technique
+    // smoke.mjs's own cancellation case and load-cancel-load-loop.mjs use.
+    window.Worker = class HangingWorker { postMessage() {} terminate() {} };
+    const buf = await (await fetch(fixtureUrlInner)).arrayBuffer();
+    window.ClashControl.loadFiles([new File([buf], 'cancel-reload.ifc')]);
+    await new Promise((resolve, reject) => {
+      const t0 = Date.now();
+      const iv = setInterval(() => {
+        if (window._ccModelLoading === true) { clearInterval(iv); resolve(); }
+        if (Date.now() - t0 > 10000) { clearInterval(iv); reject(new Error('never entered loading state')); }
+      }, 50);
+    });
+    window._ccAbortLoading();
+    await new Promise((resolve, reject) => {
+      const t0 = Date.now();
+      const iv = setInterval(() => {
+        const coordinator = window._ccRuntime && window._ccRuntime.services.get('loadCoordinator');
+        if (window._ccModelLoading === false && coordinator && coordinator.activeCount() === 0) { clearInterval(iv); resolve(); }
+        if (Date.now() - t0 > 10000) { clearInterval(iv); reject(new Error('cancel never settled')); }
+      }, 50);
+    });
+    // 2. Restore the real Worker and load the SAME fixture for real.
+    window.Worker = realWorker;
+    window.ClashControl.loadFiles([new File([buf], 'cancel-reload.ifc')]);
+    await new Promise((resolve, reject) => {
+      const t0 = Date.now();
+      const iv = setInterval(() => {
+        const s = window._ccLatestState;
+        const m = s && s.models.find((x) => x.name.indexOf('cancel-reload') === 0);
+        if (m && (m.elements || []).length > 0) { clearInterval(iv); resolve(); }
+        if (Date.now() - t0 > 60000) { clearInterval(iv); reject(new Error('timed out waiting for post-cancel reload')); }
+      }, 100);
+    });
+    const model = window._ccLatestState.models.find((x) => x.name.indexOf('cancel-reload') === 0);
+    const fixedIdModel = Object.assign({}, model, { id: 'fixed' });
+    return {
+      fingerprint: window._ccSafetyMigrations.modelFingerprint([fixedIdModel]),
+      elementCount: (model.elements || []).length,
+      unitScale: (model.stats || {}).unitScale != null ? model.stats.unitScale : null,
+      georef: (model.spatialHierarchy && model.spatialHierarchy.sites && model.spatialHierarchy.sites[0] && model.spatialHierarchy.sites[0].georef) || null,
+      mapConversion: (model.spatialHierarchy && model.spatialHierarchy.mapConversion) || null,
+    };
+  }, fixtureUrl);
+  await page.close();
+  return result;
+}
 
-  console.log('DIFFERENTIAL OK — worker and main-thread-fallback IFC parses are fingerprint-identical (' + workerResult.elementCount + ' elements)');
+let allOk = true;
+try {
+  await mkdir(generatedDir, { recursive: true });
+  const resolvedCases = [];
+  for (const c of CASES) {
+    if (c.url) { resolvedCases.push({ name: c.name, url: c.url }); continue; }
+    const fileName = c.name.replace(/[^a-z0-9]+/gi, '-').toLowerCase() + '.ifc';
+    const filePath = join(generatedDir, fileName);
+    await writeFile(filePath, generateSyntheticIfc(c.generate));
+    resolvedCases.push({ name: c.name, url: '/tests/fixtures/_generated-differential/' + fileName });
+  }
+
+  for (const c of resolvedCases) {
+    const workerResult = await loadAndFingerprint(false, c.url);
+    const fallbackResult = await loadAndFingerprint(true, c.url);
+    // modelFingerprint() itself only covers box/mesh/type per element — it
+    // does NOT include unit scale, georeferencing or map-conversion data,
+    // so a worker/fallback divergence limited to those fields would pass
+    // silently if only the fingerprint were compared. Extend parity to the
+    // full result payload for the fields those extra fixture cases exist
+    // to exercise.
+    const workerComparable = { fingerprint: workerResult.fingerprint, unitScale: workerResult.unitScale, georef: workerResult.georef, mapConversion: workerResult.mapConversion };
+    const fallbackComparable = { fingerprint: fallbackResult.fingerprint, unitScale: fallbackResult.unitScale, georef: fallbackResult.georef, mapConversion: fallbackResult.mapConversion };
+    const same = JSON.stringify(workerComparable) === JSON.stringify(fallbackComparable);
+    if (!same) {
+      console.error('Worker result:', JSON.stringify(workerComparable, null, 1));
+      console.error('Fallback result:', JSON.stringify(fallbackComparable, null, 1));
+      fail('[' + c.name + '] worker and main-thread-fallback IFC parses produced different results');
+      allOk = false;
+      continue;
+    }
+    if (workerResult.elementCount === 0) {
+      fail('[' + c.name + '] worker path parsed zero elements — fixture or harness is broken, not a real pass');
+      allOk = false;
+      continue;
+    }
+    console.log('DIFFERENTIAL OK — [' + c.name + '] worker and fallback are fingerprint-identical (' +
+      workerResult.elementCount + ' elements' +
+      (workerResult.unitScale != null ? ', unitScale=' + workerResult.unitScale : '') +
+      (workerResult.georef ? ', georef=' + JSON.stringify(workerResult.georef) : '') +
+      (workerResult.mapConversion ? ', mapConversion=' + JSON.stringify(workerResult.mapConversion) : '') +
+      ')');
+  }
+
+  // Cancellation case, run against the baseline fixture: a cancel-then-
+  // reload must produce the exact same result as a clean load with no
+  // cancellation in its history.
+  {
+    const baselineUrl = resolvedCases[0].url;
+    const cleanResult = await loadAndFingerprint(false, baselineUrl);
+    const cancelReloadResult = await loadCancelReloadAndFingerprint(baselineUrl);
+    const cleanComparable = { fingerprint: cleanResult.fingerprint, unitScale: cleanResult.unitScale, georef: cleanResult.georef, mapConversion: cleanResult.mapConversion };
+    const cancelComparable = { fingerprint: cancelReloadResult.fingerprint, unitScale: cancelReloadResult.unitScale, georef: cancelReloadResult.georef, mapConversion: cancelReloadResult.mapConversion };
+    const same = JSON.stringify(cleanComparable) === JSON.stringify(cancelComparable);
+    if (!same) {
+      console.error('Clean load result:', JSON.stringify(cleanComparable, null, 1));
+      console.error('Cancel-then-reload result:', JSON.stringify(cancelComparable, null, 1));
+      fail('[cancellation] a cancel-then-reload produced a different result than a clean load');
+      allOk = false;
+    } else if (cancelReloadResult.elementCount === 0) {
+      fail('[cancellation] post-cancel reload parsed zero elements');
+      allOk = false;
+    } else {
+      console.log('DIFFERENTIAL OK — [cancellation] cancel-then-reload matches a clean load (' + cancelReloadResult.elementCount + ' elements)');
+    }
+  }
+
+  if (errors.length) {
+    fail('browser emitted uncaught page or console errors: ' + JSON.stringify(errors.slice(0, 10)));
+    allOk = false;
+  }
+
+  if (allOk) console.log('DIFFERENTIAL OK — all ' + resolvedCases.length + ' fixture cases are worker/fallback fingerprint-identical');
 } finally {
   await browser.close();
   server.close();
+  await rm(generatedDir, { recursive: true, force: true });
 }
+if (!allOk) process.exit(1);
