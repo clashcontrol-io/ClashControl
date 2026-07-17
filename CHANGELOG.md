@@ -1,5 +1,8 @@
 # Changelog
 
+## v7.2.4 (2026-07-17)
+- Large-model plan Phases 3-7 checked against history; Phase 4 candidate warning
+
 ## v7.2.3 (2026-07-17)
 - Large-model plan Phase 2, adjusted by project history: storey-scope auto-complete
 
