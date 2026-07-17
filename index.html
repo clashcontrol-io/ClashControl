@@ -653,15 +653,16 @@
 <div id="root"></div>
 
 <!-- Default-off containment and equivalence helpers for high-risk migrations. -->
-<script src="safety-migrations.js"></script>
-<script src="section-clipping.js"></script>
-<script src="renderer-contract.js"></script>
-<script src="clash-discipline-core.js"></script>
-<script src="clash-assignment-core.js"></script>
-<script src="clash-identity-core.js"></script>
-<script src="clash-reconciliation-core.js"></script>
-<script src="clash-classification-core.js"></script>
-<script src="project-codec.js"></script>
+<script src="cc-runtime.js" defer></script>
+<script src="safety-migrations.js" defer></script>
+<script src="section-clipping.js" defer></script>
+<script src="renderer-contract.js" defer></script>
+<script src="clash-discipline-core.js" defer></script>
+<script src="clash-assignment-core.js" defer></script>
+<script src="clash-identity-core.js" defer></script>
+<script src="clash-reconciliation-core.js" defer></script>
+<script src="clash-classification-core.js" defer></script>
+<script src="project-codec.js" defer></script>
 <script>
 window.addEventListener('error', function(e) {
   console.error('[ClashControl] Uncaught error:', e.error || e.message);
@@ -1384,6 +1385,38 @@ function startApp() {
 
   var _ccAddons = {};       // {id: addonDef}
   var _ccAddonActive = {};  // {id: true/false} — persisted in localStorage
+  var _ccAddonFiles = {
+    'training-data':'addons/training-data.js', 'pwa':'addons/pwa.js',
+    'local-engine':'addons/local-engine.js', 'shared-project':'addons/shared-project.js',
+    'revit-bridge':'addons/revit-bridge.js', 'data-quality':'addons/data-quality.js',
+    'smart-bridge':'addons/smart-bridge.js', 'pointcloud':'addons/pointcloud.js',
+    'geoplace':'addons/geoplace.js', 'accessibility':'addons/accessibility.js',
+    'splat':'addons/splat.js', 'align':'addons/align.js',
+    'openaec-bridge':'addons/openaec-bridge.js', 'visibility':'addons/visibility.js',
+    'wasm-engine':'addons/wasm-engine.js', 'tiles':'addons/tiles.js'
+  };
+  // These integrations are inactive by default and carry substantial code.
+  // Keep a lightweight manifest entry so the Integrations panel can list them;
+  // the real definition replaces the placeholder after first activation.
+  var _ccLazyAddonMeta = {
+    'smart-bridge': {
+      name:'Smart Bridge',
+      description:'LLM bridge — connect Claude, ChatGPT, or any AI assistant to control ClashControl with natural language.'
+    },
+    'openaec-bridge': {
+      name:'OpenAEC bridge',
+      description:'Talks to sibling OpenAEC Foundation desktop apps over localhost — Phase 1 targets open-pointcloud-studio so CC can sync views, open scans, and round-trip viewpoints.'
+    }
+  };
+  var _ccAddonScriptLoader = window._ccRuntime && window._ccRuntime.createScriptLoader ?
+    window._ccRuntime.createScriptLoader(_ccAddonFiles) : null;
+  Object.keys(_ccLazyAddonMeta).forEach(function(id) {
+    _ccAddons[id] = Object.freeze({
+      id:id, name:_ccLazyAddonMeta[id].name,
+      description:_ccLazyAddonMeta[id].description,
+      autoActivate:false, lazy:true
+    });
+  });
 
   try {
     var _savedAddonStates = JSON.parse(localStorage.getItem('cc_addons_active') || '{}');
@@ -1424,6 +1457,20 @@ function startApp() {
   window._ccActivateAddon = function(id) {
     var def = _ccAddons[id];
     if (!def) return;
+    if (def.lazy) {
+      window.dispatchEvent(new Event('cc-addons-changed'));
+      // Resolve with the real registered definition so callers (e.g. the
+      // Integrations panel's onEnable hook) can act on it once it exists.
+      return window._ccEnsureAddon(id).then(function(realDef) {
+        window._ccActivateAddon(id);
+        return _ccAddons[id] || realDef;
+      }).catch(function(error) {
+        console.warn('[Addon] lazy load failed:', id, error);
+        if (window._ccToast) window._ccToast('Could not load '+(def.name||id)+'. Check your connection and retry.');
+        window.dispatchEvent(new Event('cc-addons-changed'));
+        return null;
+      });
+    }
     _ccAddonActive[id] = true;
     _saveAddonStates();
     if (def.initState && window._ccDispatch) {
@@ -1447,14 +1494,39 @@ function startApp() {
   window._ccGetAddons = function() { return _ccAddons; };
   window._ccIsAddonActive = function(id) { return !!_ccAddonActive[id]; };
 
+  window._ccEnsureAddon = function(id) {
+    var current = _ccAddons[id];
+    if (current && !current.lazy) return Promise.resolve(current);
+    if (!_ccAddonScriptLoader || !_ccAddonScriptLoader.has(id)) {
+      return Promise.reject(new Error('Addon is unavailable: ' + id));
+    }
+    return _ccAddonScriptLoader.load(id).then(function() {
+      var loaded = _ccAddons[id];
+      if (!loaded || loaded.lazy) throw new Error('Addon did not register: ' + id);
+      return loaded;
+    });
+  };
+
   function _loadAddonScripts() {
-    var addonFiles = ['training-data', 'pwa', 'local-engine', 'shared-project', 'revit-bridge', 'data-quality', 'smart-bridge', 'pointcloud', 'geoplace', 'accessibility', 'splat', 'align', 'openaec-bridge', 'visibility', 'wasm-engine', 'tiles'];
-    addonFiles.forEach(function(name) {
+    function loadOne(id) {
+      if (_ccAddonScriptLoader) {
+        _ccAddonScriptLoader.load(id).catch(function() { /* optional file absent — core remains usable */ });
+        return;
+      }
       var script = document.createElement('script');
-      script.src = 'addons/' + name + '.js';
-      script.async = true;
-      script.onerror = function() { /* addon file not present — that's fine */ };
+      script.src = _ccAddonFiles[id]; script.async = true;
+      script.onerror = function() { /* optional file absent — core remains usable */ };
       document.head.appendChild(script);
+    }
+    // Detection is a primary workflow, so keep its accelerator warm. The two
+    // explicitly lazy integrations below remain absent until requested; all
+    // other established capabilities retain their normal eager registration.
+    loadOne('wasm-engine');
+    Object.keys(_ccAddonFiles).forEach(function(id) {
+      if (id === 'wasm-engine') return;
+      var lazy = Object.prototype.hasOwnProperty.call(_ccLazyAddonMeta, id);
+      if (lazy && !_ccAddonActive[id]) return;
+      loadOne(id);
     });
   }
 
@@ -3437,6 +3509,34 @@ function startApp() {
   // Expose to addons (e.g. the Revit live-link stream) so every load path shares
   // one material per colour — the whole point of the #572 shared cache.
   window._ccGetSharedPhongMat = _ccGetSharedPhongMat;
+
+  // Render-style materials are cached per mesh so switching modes is fast.
+  // They are not necessarily the material active at model unload time, so a
+  // normal scene traversal would never send their Three.js dispose events.
+  function _ccDisposeStyleResources(obj) {
+    if (!obj || !obj.userData) return;
+    var seen = {};
+    function disposeMat(mat) {
+      if (Array.isArray(mat)) { mat.forEach(disposeMat); return; }
+      if (!mat || typeof mat.dispose !== 'function') return;
+      var key = mat.uuid || String(mat.id);
+      if (seen[key]) return;
+      seen[key] = true;
+      try { mat.dispose(); } catch (_) {}
+    }
+    var cache = obj.userData._styleMats;
+    if (cache) {
+      Object.keys(cache).forEach(function(key) { disposeMat(cache[key]); });
+      delete obj.userData._styleMats;
+    }
+    var edges = obj.userData._edges;
+    if (edges) {
+      try { obj.remove(edges); } catch (_) {}
+      try { if (edges.geometry) edges.geometry.dispose(); } catch (_) {}
+      disposeMat(edges.material);
+      obj.userData._edges = null;
+    }
+  }
 
   // ── Survey base-point / nulpunt marker stripping ──  See INTERNALS.md § 21.6
   function _ccIsSurveyMarker(props) {
@@ -13391,7 +13491,7 @@ function startApp() {
       Object.keys(S.map).forEach(function(id){
         if(ids.indexOf(id)===-1){
           if(S._pruneGhostCache) S._pruneGhostCache(S.map[id]);
-          S.map[id].traverse(function(obj){if(obj.isMesh){obj.geometry&&obj.geometry.dispose();if(obj.material){(Array.isArray(obj.material)?obj.material:[obj.material]).forEach(function(m){m.dispose();});}}});
+          S.map[id].traverse(function(obj){if(obj.isMesh){_ccDisposeStyleResources(obj);obj.geometry&&obj.geometry.dispose();if(obj.material){(Array.isArray(obj.material)?obj.material:[obj.material]).forEach(function(m){m.dispose();});}}});
           S.mg.remove(S.map[id]);delete S.map[id];
           if(S._elMapCache) delete S._elMapCache[id];
           if(S._hsCache) delete S._hsCache[id];
@@ -13404,7 +13504,7 @@ function startApp() {
           if (needsSwap) {
             if(S._unghostAll) S._unghostAll(); // clear stale ghost refs before dispose
             if(S._pruneGhostCache) S._pruneGhostCache(existingGrp);
-            existingGrp.traverse(function(obj){if(obj.isMesh){obj.geometry&&obj.geometry.dispose();if(obj.material){(Array.isArray(obj.material)?obj.material:[obj.material]).forEach(function(m){m.dispose();});}}});
+            existingGrp.traverse(function(obj){if(obj.isMesh){_ccDisposeStyleResources(obj);obj.geometry&&obj.geometry.dispose();if(obj.material){(Array.isArray(obj.material)?obj.material:[obj.material]).forEach(function(m){m.dispose();});}}});
             S.mg.remove(existingGrp); delete S.map[model.id];
             if(S._elMapCache) delete S._elMapCache[model.id];
             if(S._hsCache) delete S._hsCache[model.id];
@@ -13500,7 +13600,7 @@ function startApp() {
         S._sectionPlaneVis.traverse(function(o){if(o.geometry)o.geometry.dispose();if(o.material)o.material.dispose();});
         S.scene.remove(S._sectionPlaneVis); S._sectionPlaneVis = null;
       }
-      if (S._sectionCutLines) { S.scene.remove(S._sectionCutLines); if(S._sectionCutLines.geometry)S._sectionCutLines.geometry.dispose(); if(S._sectionCutLines.material)S._sectionCutLines.material.dispose(); S._sectionCutLines=null; }
+      _ccDisposeSectionCutLines(S);
       if (S._sectionHatchMesh) { S.scene.remove(S._sectionHatchMesh); S._sectionHatchMesh.geometry.dispose(); S._sectionHatchMesh.material.dispose(); S._sectionHatchMesh=null; }
       function _makeSectionVis(halfW, halfH, position, quaternion) {
         var grp = new THREE.Group();
@@ -13661,7 +13761,7 @@ function startApp() {
         },300);
       } else {
         var _S2=state3d.current;
-        if(_S2&&_S2._sectionCutLines){ _S2.scene.remove(_S2._sectionCutLines); _S2._sectionCutLines=null; }
+        if(_S2) _ccDisposeSectionCutLines(_S2);
       }
       // Debounced polygon hatch — rebuilt 500ms after movement stops, never during drag
       clearTimeout(S._sectionHatchTimer);
@@ -15195,7 +15295,7 @@ function startApp() {
         ${s.viewpoints.length>0 && html`<div class="cc-overlay-chrome" style=${{padding:'var(--space-1)',maxHeight:160,overflowY:'auto',width:220}}>
           ${s.viewpoints.map(function(vp){return html`<div key=${vp.id} style=${{display:'flex',alignItems:'center',gap:'var(--space-1)',padding:'var(--space-1)',borderBottom:'1px solid var(--border-subtle)',cursor:'pointer'}}
             onClick=${function(){if(_restoreViewpoint)_restoreViewpoint(vp);}}>
-            ${vp.snapshot && html`<img src=${vp.snapshot} style=${{width:40,height:25,borderRadius:'var(--radius-xs)',objectFit:'cover',border:'1px solid var(--border)'}} />`}
+            ${vp.snapshot && html`\x3Cimg src=${vp.snapshot} style=${{width:40,height:25,borderRadius:'var(--radius-xs)',objectFit:'cover',border:'1px solid var(--border)'}} />`}
             <div style=${{flex:1,minWidth:0}}>
               <div style=${{fontSize:'var(--text-xs)',color:'var(--text-primary)',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>${vp.name}</div>
               <div style=${{fontSize:'var(--text-2xs)',color:'var(--text-faint)'}}>${new Date(vp.createdAt).toLocaleTimeString()}</div>
@@ -16904,6 +17004,26 @@ function startApp() {
     var er = useState(''), err=er[0], setErr=er[1];
     var dg = useState(false), dragging=dg[0], setDragging=dg[1];
     var dragCounter = useRef(0);
+    function _finishLoadingStrip(delayMs) {
+      setTimeout(function() {
+        setLoading(false);
+        setLoadMsg('');
+      }, delayMs || 0);
+    }
+    var loadCoordinatorRef = useRef(null);
+    if (!loadCoordinatorRef.current && window._ccRuntime && window._ccRuntime.createLoadCoordinator) {
+      loadCoordinatorRef.current = window._ccRuntime.createLoadCoordinator({
+        emitEvents:false,
+        onIdle:function(last) {
+          var delay = last && last.meta && last.meta.delayMs || 0;
+          _finishLoadingStrip(delay);
+        }
+      });
+      try {
+        window._ccRuntime.services.register('loadCoordinator', loadCoordinatorRef.current,
+          {replace:true, version:1});
+      } catch (_) {}
+    }
 
 
     function _detect2DStorey(filename, storeys, callback) {
@@ -16994,14 +17114,8 @@ function startApp() {
       var errors = [];
       var chain = Promise.resolve();
       var totalIfc = 0, doneIfc = 0;
-      var _lazyWorkersActive = 0;
-      var _chainEndFired = false;
-      function _finishLoadingStrip(delayMs) {
-        setTimeout(function() {
-          setLoading(false);
-          setLoadMsg('');
-        }, delayMs || 0);
-      }
+      var _batchMeta = {files:files.length, delayMs:0};
+      var _loadBatch = loadCoordinatorRef.current ? loadCoordinatorRef.current.begin(_batchMeta) : null;
 
       // ── Group files by base name to detect GLB+IFC pairs ──
       var byBase = {}; // baseName → {glb, ifc, ifcmeta, ifcprops}
@@ -17327,7 +17441,11 @@ function startApp() {
             _onProg('Starting IFC parser 16%');
             var disc='structural', col=DISC[0].c;
             var _lazyPropsTarget = {modelId: null};
-            _lazyWorkersActive++;
+            // The old 500ms cosmetic dwell dominated small-model completion.
+            // Keep a short finish transition without holding the ready state
+            // for half a second after properties have already arrived.
+            _batchMeta.delayMs = 120;
+            var _releaseLazyGate = _loadBatch ? _loadBatch.hold('ifc-properties:'+f.name) : function(){};
             // Release the lazy-props gate exactly once. The worker path
             // releases it from onProps; the sync fallback (below) releases it
             // when loadIFC settles. Every loadIFCWorker rejection path (Worker
@@ -17336,15 +17454,6 @@ function startApp() {
             // and the loading strip / progress modal sticks forever after an
             // otherwise-successful fallback — most likely on big files that
             // trip the watchdog.
-            var _gateReleased = false;
-            function _releaseLazyGate() {
-              if (_gateReleased) return;
-              _gateReleased = true;
-              _lazyWorkersActive--;
-              if (_lazyWorkersActive === 0 && _chainEndFired) {
-                _finishLoadingStrip(500);
-              }
-            }
             // Declared IFC unit — read once from the raw bytes; attached to
             // result.stats below so it persists via the geo-cache and the
             // unit pipeline stops guessing for well-formed files.
@@ -17417,7 +17526,6 @@ function startApp() {
         });
       });
       chain.then(function() {
-        _chainEndFired = true;
         if (errors.length) setErr(errors.join('\n'));
         window._ccNextLoadScope = null; // one-shot: scope applies to a single batch
         if (totalIfc > 0) _gcEvent('ifc-loaded', totalIfc+' file'+(totalIfc>1?'s':''));
@@ -17432,9 +17540,15 @@ function startApp() {
             _gcEvent('memory-guardrail');
           }
         } catch(_) {}
-        if (_lazyWorkersActive === 0) {
-          _finishLoadingStrip(0);
-        }
+        if (_loadBatch) _loadBatch.markChainDone();
+        else _finishLoadingStrip(0);
+      }, function(error) {
+        console.error(error);
+        errors.push(error && error.message || 'File batch failed');
+        setErr(errors.join('\n'));
+        window._ccNextLoadScope = null;
+        if (_loadBatch) _loadBatch.fail();
+        else _finishLoadingStrip(0);
       });
     }
     function onFiles(e) {
@@ -24958,7 +25072,7 @@ function startApp() {
       background:'var(--bg-primary)', border:'1px solid var(--border)', borderRadius:'var(--radius-sm)',
       padding:'.3rem', boxShadow:'var(--shadow-md)'}}>
       <div onClick=${onClick} style=${{position:'relative', width:w, height:w, cursor:'pointer'}}>
-        <img src=${img} style=${{width:w,height:w,display:'block',borderRadius:'var(--radius-xs)',opacity:.85}} alt="Minimap" />
+        \x3Cimg src=${img} style=${{width:w,height:w,display:'block',borderRadius:'var(--radius-xs)',opacity:.85}} alt="Minimap" />
         <svg width=${w} height=${w} style=${{position:'absolute',top:0,left:0,pointerEvents:'none'}}>
           <g transform=${'translate('+px+','+py+') rotate('+( -pos.yaw*180/Math.PI)+')'}>
             <path d="M 0 -7 L -5 5 L 5 5 Z" fill="var(--accent)" stroke="#fff" stroke-width="1" />
@@ -25107,7 +25221,7 @@ function startApp() {
     var fileRef = useRef(null);
 
     return html`<div class="cc-present-overlay"></div>
-      ${brand && html`<img src=${brand} alt="Brand" style=${{position:'fixed',right:'1.1rem',bottom:'1.1rem',maxWidth:'160px',maxHeight:'80px',opacity:.65,zIndex:61,pointerEvents:'none',filter:'drop-shadow(0 2px 6px rgba(0,0,0,.5))'}} />`}
+      ${brand && html`\x3Cimg src=${brand} alt="Brand" style=${{position:'fixed',right:'1.1rem',bottom:'1.1rem',maxWidth:'160px',maxHeight:'80px',opacity:.65,zIndex:61,pointerEvents:'none',filter:'drop-shadow(0 2px 6px rgba(0,0,0,.5))'}} />`}
       <div class="cc-present-controls cc-present-show">
         <span style=${{fontSize:'0.7rem',opacity:.7,letterSpacing:'.04em',textTransform:'uppercase',marginRight:'.4rem'}}>Presenting</span>
         ${viewpoints.length>0 ? html`<${React.Fragment}>
@@ -28128,6 +28242,17 @@ function startApp() {
   // ── Section Cut Line Highlight (Web Worker) ─────────────────────
   var _sectionCutWorker = null;
   var _sectionHatchWorker = null;
+  function _ccDisposeSectionCutLines(S) {
+    if (!S || !S._sectionCutLines) return;
+    var lines = S._sectionCutLines;
+    try { S.scene.remove(lines); } catch (_) {}
+    try { if (lines.geometry) lines.geometry.dispose(); } catch (_) {}
+    try {
+      var mats = Array.isArray(lines.material) ? lines.material : [lines.material];
+      mats.forEach(function(mat) { if (mat && mat.dispose) mat.dispose(); });
+    } catch (_) {}
+    S._sectionCutLines = null;
+  }
   function _getSectionCutWorker() {
     if (_sectionCutWorker) return _sectionCutWorker;
     var code = [
@@ -28164,7 +28289,7 @@ function startApp() {
   }
 
   function _buildSectionCutLines(S, models, axisIdx, cutPos) {
-    if(S._sectionCutLines){ S.scene.remove(S._sectionCutLines); S._sectionCutLines=null; }
+    _ccDisposeSectionCutLines(S);
     if(!models||!models.length) return;
 
     // Collect geometry data into plain typed arrays (copies, not transfers — originals stay in Three.js)
@@ -28204,7 +28329,7 @@ function startApp() {
     var worker=_getSectionCutWorker();
     worker.onmessage=function(e){
       if(e.data.id!==jobId) return; // stale result from a superseded job
-      if(S._sectionCutLines){ S.scene.remove(S._sectionCutLines); S._sectionCutLines=null; }
+      _ccDisposeSectionCutLines(S);
       var positions=new Float32Array(e.data.buf);
       if(!positions.length) return;
       var geo=new THREE.BufferGeometry();
@@ -32835,9 +32960,16 @@ function startApp() {
               : addonBtn(active?'Disable':'Enable', function(){
                   if (active) { window._ccDeactivateAddon(id); }
                   else {
-                    window._ccActivateAddon(id);
-                    var _def = window._ccGetAddons && window._ccGetAddons()[id];
-                    if (_def && _def.onEnable) try { _def.onEnable(d); } catch(_e) { console.warn('[Addon] onEnable error:', id, _e); }
+                    // Lazy integrations (Smart Bridge, OpenAEC) activate async —
+                    // read the def AFTER activation settles or onEnable (which
+                    // kicks off download/connect flows) is silently skipped.
+                    var _fireOnEnable = function(){
+                      var _def = window._ccGetAddons && window._ccGetAddons()[id];
+                      if (_def && !_def.lazy && _def.onEnable) try { _def.onEnable(d); } catch(_e) { console.warn('[Addon] onEnable error:', id, _e); }
+                    };
+                    var _p = window._ccActivateAddon(id);
+                    if (_p && typeof _p.then === 'function') _p.then(function(_ok){ if (_ok) _fireOnEnable(); });
+                    else _fireOnEnable();
                   }
                 }, active ? 'outline' : 'primary')}
           </div>
@@ -33169,7 +33301,7 @@ function startApp() {
               var labelTxt = (m.name && m.name.trim()) ? m.name : (window._ccRelabelMeasurement ? window._ccRelabelMeasurement(m,s) : m.label);
               var valTxt = window._ccRelabelMeasurement ? window._ccRelabelMeasurement(m,s) : m.label;
               return html`<div key=${m.id} style=${{display:'flex',gap:'.4rem',alignItems:'center',padding:'.3rem .35rem',background:'var(--bg-secondary)',border:'1px solid var(--border-subtle)',borderRadius:'var(--radius-xs)',opacity:m.hidden?0.5:1}}>
-                ${m.snapshot && html`<img src=${m.snapshot} style=${{width:36,height:23,objectFit:'cover',borderRadius:3,border:'1px solid var(--border)',flex:'0 0 auto'}}/>`}
+                ${m.snapshot && html`\x3Cimg src=${m.snapshot} style=${{width:36,height:23,objectFit:'cover',borderRadius:3,border:'1px solid var(--border)',flex:'0 0 auto'}}/>`}
                 <div style=${{flex:1,minWidth:0,cursor:'pointer'}}
                   onClick=${function(){if(window._ccFlyToMeasurement)window._ccFlyToMeasurement(m.id);}}
                   onDblClick=${function(){var nv=prompt('Rename', m.name||'');if(nv!=null)d({t:A.UPD_MEASUREMENT,id:m.id,u:{name:nv}});}}

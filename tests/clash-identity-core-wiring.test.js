@@ -28,7 +28,7 @@ function loadAdapter(candidate, enabled) {
 const sample = {uniqueIdA:'revit-b',uniqueIdB:'revit-a',globalIdA:'ifc-a',globalIdB:'ifc-b',elemA:9,elemB:2,point:[1,2,3]};
 
 test('identity helper loads before the app and is available offline', () => {
-  const helper = source.indexOf('<script src="clash-identity-core.js"></script>');
+  const helper = source.indexOf('<script src="clash-identity-core.js" defer></script>');
   const main = source.indexOf('window.onload = function() {');
   assert.ok(helper >= 0 && main > helper);
   assert.match(worker, /'clash-identity-core\.js'/);

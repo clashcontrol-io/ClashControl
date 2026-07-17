@@ -23,7 +23,7 @@ ClashControl is a free, source-available IFC clash detection web app licensed un
 ## Architecture — Single File App + Lazy Addons
 The **core application** lives in `index.html` (~34k lines — check with `wc -l` before quoting an exact count, it grows). There is no build step, no bundler, no node_modules. Just open the file in a browser.
 
-Optional, non-critical features are split into lazy-loaded files under `addons/` (see the Addons section below). These are loaded at runtime via a simple `<script src="addons/<name>.js">` injection and the core app works without them.
+Optional, non-critical features are split into lazy-loaded files under `addons/` (see the Addons section below). These are loaded at runtime via `<script>` injection (deduplicated by `cc-runtime.js`'s script loader) and the core app works without them. Most addons still load eagerly after mount; `smart-bridge` and `openaec-bridge` are genuinely on-demand (lightweight placeholder in the Integrations panel, real code fetched on first activation via `window._ccEnsureAddon(id)`).
 
 ### Tech stack
 - **Preact/React 18** via CDN (UMD) — UI framework
@@ -99,6 +99,8 @@ There are ~280 `window._cc*` globals — do not add to the sprawl casually.
 ## File overview
 ```
 index.html                  — The core application (UI, state, 3D viewer, clash engine)
+cc-runtime.js               — No-build runtime module: service registry, deduplicating addon script loader, load-session coordinator (UMD; also consumed by node:test)
+REWRITE_UI_PLAN.md          — Critical review of the external runtime-rewrite + UI plans; consolidated forward roadmap
 version.json                — Current version numbers
 CHANGELOG.md                — Version history (auto-updated on commit)
 README.md                   — Project readme with version badge
@@ -145,7 +147,7 @@ api/_lib.js                 — Shared serverless helpers (CORS allow-list, rate
 > (tab title, header button, palette entry). "Addon" is the internal/code
 > term only (`addons/` dir, `_ccRegisterAddon`, docs). Don't mix them in UI copy.
 
-Each addon is a plain IIFE loaded at runtime by the core via `addons/<name>.js` (see the `_ccLoadAddon` helper near the top of `index.html`'s main script). They share state with the core by:
+Each addon is a plain IIFE loaded at runtime by the core via `addons/<name>.js` (see `_loadAddonScripts` / `_ccEnsureAddon` near the top of `index.html`'s main script; script fetching is deduplicated by `cc-runtime.js`). They share state with the core by:
 
 - Reading globals the core exposes (e.g. `window._ccDispatch`, `window._ccBakeMesh`, `window._ccUid`)
 - Registering callbacks the core calls into (e.g. `window._ccRunDataQualityChecks`)

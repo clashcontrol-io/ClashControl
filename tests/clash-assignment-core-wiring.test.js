@@ -28,7 +28,7 @@ function sample() { return {_delta:'new',disciplines:['mep','structural'],elemAS
 const rules = [{id:'r',discipline1:'mep',discipline2:'structural',storey:'Level 2',assignee:'alice',priority:'high'}];
 
 test('assignment helper loads before the app and is available offline', () => {
-  const helper = source.indexOf('<script src="clash-assignment-core.js"></script>');
+  const helper = source.indexOf('<script src="clash-assignment-core.js" defer></script>');
   const main = source.indexOf('window.onload = function() {');
   assert.ok(helper >= 0 && main > helper);
   assert.match(worker, /'clash-assignment-core\.js'/);

@@ -35,7 +35,7 @@ function sample() {
 }
 
 test('project codec loads before the app and is available offline', () => {
-  const helper = source.indexOf('<script src="project-codec.js"></script>');
+  const helper = source.indexOf('<script src="project-codec.js" defer></script>');
   const main = source.indexOf('window.onload = function() {');
   assert.ok(helper >= 0 && main > helper);
   assert.match(worker, /'project-codec\.js'/);

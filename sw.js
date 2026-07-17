@@ -13,6 +13,7 @@ var PRECACHE = [
   // Refactor/migration helpers must be available offline. Each has an inline
   // legacy fallback, but precaching lets opted-in validation use the same
   // module after a hard refresh without relying on a network response.
+  'cc-runtime.js',
   'safety-migrations.js',
   'section-clipping.js',
   'renderer-contract.js',
@@ -31,13 +32,11 @@ var PRECACHE = [
   'addons/shared-project.js',
   'addons/revit-bridge.js',
   'addons/data-quality.js',
-  'addons/smart-bridge.js',
   'addons/pointcloud.js',
   'addons/geoplace.js',
   'addons/accessibility.js',
   'addons/splat.js',
   'addons/align.js',
-  'addons/openaec-bridge.js',
   'addons/visibility.js',
   'addons/wasm-engine.js',
   'addons/tiles.js',
@@ -157,7 +156,9 @@ self.addEventListener('fetch', function(e) {
       if (cached) return cached;
       return fetch(e.request).then(function(response) {
         if (e.request.method === 'GET' && response.status === 200) {
-          if (ALLOWED_CDN_HOSTS[host]) {
+          var sameOriginAddon = parsedUrl.origin === self.location.origin &&
+            parsedUrl.pathname.indexOf('/addons/') === 0;
+          if (ALLOWED_CDN_HOSTS[host] || sameOriginAddon) {
             var clone = response.clone();
             caches.open(CACHE).then(function(cache) { cache.put(e.request, clone); });
           }

@@ -35,7 +35,7 @@ test('new helper has an inline legacy fallback for stale offline service workers
 });
 
 test('section clipping helper is loaded before the main application script', () => {
-  const helper = source.indexOf('<script src="section-clipping.js"></script>');
+  const helper = source.indexOf('<script src="section-clipping.js" defer></script>');
   const main = source.indexOf('window.onload = function() {');
   assert.ok(helper >= 0 && main > helper);
 });
