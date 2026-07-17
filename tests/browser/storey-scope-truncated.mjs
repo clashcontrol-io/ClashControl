@@ -65,7 +65,11 @@ if (process.env.CC_BROWSER_OFFLINE_DEPS === '1') {
 function fail(msg) { console.error('STOREY TRUNCATED CHECK FAIL: ' + msg); process.exitCode = 1; }
 
 await page.goto(`http://127.0.0.1:${port}/?ccSafety=ccUiStoreyChooser`, { waitUntil: 'domcontentloaded' });
-await page.waitForFunction(() => window.ClashControl && typeof window._ccDispatch === 'function', null, { timeout: 60_000 });
+// 120s, not the usual 60s: this is the third sequential heavy (real-CDN-
+// fetch + WASM) browser session in the same CI job (after smoke.mjs and
+// windowed-list-scroll-memo.mjs), and CI hit a 60s timeout here once under
+// that accumulated load even though the same wait is reliably fast solo.
+await page.waitForFunction(() => window.ClashControl && typeof window._ccDispatch === 'function', null, { timeout: 120_000 });
 
 // Monkey-patch the pre-scan to simulate a truncated result — the call site
 // goes through window._ccExtractStoreyNamesFromIfcFileIncremental, so this

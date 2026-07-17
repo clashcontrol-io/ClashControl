@@ -72,7 +72,11 @@ if (process.env.CC_BROWSER_OFFLINE_DEPS === '1') {
 function fail(msg) { console.error('WINDOWED SCROLL MEMO CHECK FAIL: ' + msg); process.exitCode = 1; }
 
 await page.goto(`http://127.0.0.1:${port}/?ccSafety=ccUiWindowedConflicts`, { waitUntil: 'domcontentloaded' });
-await page.waitForFunction(() => window.ClashControl && typeof window._ccDispatch === 'function', null, { timeout: 60_000 });
+// 120s, not the usual 60s: this is the second sequential heavy (real-CDN-
+// fetch + WASM) browser session in the same CI job (after smoke.mjs), which
+// measurably slows down under accumulated CI load — this step alone took
+// ~37s in a real CI run, several times its typical solo duration.
+await page.waitForFunction(() => window.ClashControl && typeof window._ccDispatch === 'function', null, { timeout: 120_000 });
 
 // Two fake models so the synthetic clashes' modelAId/modelBId pass the
 // visibleModelIds filter (real detection results always reference a real
