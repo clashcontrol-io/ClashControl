@@ -54,7 +54,17 @@ function generateSyntheticIfc(opts) {
   lines.push(`#${next()}=IFCRELAGGREGATES('0SynthRelAg000000000${id}',$,$,$,#${siteId},(#${buildingId}));`);
 
   const profileId = next();
-  lines.push(`#${profileId}=IFCRECTANGLEPROFILEDEF(.AREA.,$,#${originId},4.,0.3);`);
+  const profilePlacementId = next();
+  const profileOriginId = next();
+  // IfcRectangleProfileDef's Position must be an IfcAxis2Placement2D — NOT
+  // a bare IfcCartesianPoint (found by profiling: passing a 3D point here
+  // made web-ifc's GetAxis2DPlacement() log "unexpected 2D placement type 6"
+  // and fall back to a slow recovery path on every single element, which
+  // had been silently inflating every large-model timing measurement taken
+  // against fixtures from this generator).
+  lines.push(`#${profileId}=IFCRECTANGLEPROFILEDEF(.AREA.,$,#${profilePlacementId},4.,0.3);`);
+  lines.push(`#${profilePlacementId}=IFCAXIS2PLACEMENT2D(#${profileOriginId},$);`);
+  lines.push(`#${profileOriginId}=IFCCARTESIANPOINT((0.,0.));`);
   const extrudeDirId = next();
   lines.push(`#${extrudeDirId}=IFCDIRECTION((0.,0.,1.));`);
 

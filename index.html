@@ -4345,19 +4345,40 @@ function startApp() {
             }
           }
 
+          var _loopEnd = performance.now();
+          var _tStrip = performance.now();
           var _sm = _ccStripSurveyMarkers(elements, meshes); elements = _sm.elements; meshes = _sm.meshes;
+          _tStrip = performance.now() - _tStrip;
+          var _tInstance = performance.now();
           var _instResult = _buildInstancedMeshes(elements, meshes);
           meshes = _instResult.meshes;
+          _tInstance = performance.now() - _tInstance;
+          var _tBatch = performance.now();
           var _batchRes = _ccBatchPathological(elements, meshes, msg.geoUnique || 0);
           meshes = _batchRes.meshes;
+          _tBatch = performance.now() - _tBatch;
 
           var loadTime = Math.round(performance.now() - loadStart);
           var phases = msg.phases || {};
           phases['Scene build'] = performance.now() - loadStart;
+          // transferGap: time between the worker finishing its own 'Geometry
+          // stream' mark (worker-relative clock) and this handler starting to
+          // process the result (_sbStart, main-thread-relative to loadStart)
+          // — structured-clone deserialization + event-loop queueing of the
+          // postMessage payload. Both clocks share the page's time origin, so
+          // the delta is a real (if approximate — sub-millisecond dispatch
+          // latency aside) measurement, not a guess.
+          var _workerGeoStreamMark = (msg.phases && msg.phases['Geometry stream']) || 0;
+          var _transferGap = Math.max(0, (_sbStart - loadStart) - _workerGeoStreamMark);
           var sceneSub = {
             bufferGeo:    Math.round(_tGeoBuild),
             mesh:         Math.round(_tMesh),
-            expandBBox:   Math.round(_tBBox)
+            expandBBox:   Math.round(_tBBox),
+            reconstructLoopTotal: Math.round(_loopEnd - _sbStart),
+            transferGap:  Math.round(_transferGap),
+            stripSurveyMarkers: Math.round(_tStrip),
+            instancing:   Math.round(_tInstance),
+            batching:     Math.round(_tBatch)
           };
           var streamSub = msg.streamSub || null;
           var _gu = msg.geoUnique || Object.keys(geoCache).length, _gr = msg.geoReused || 0;
@@ -4382,9 +4403,14 @@ function startApp() {
               }
               if (name === 'Scene build') {
                 var sbTotal = dt || 1;
+                rows.push({Phase: '  ↳ Worker→main transfer', Time: sceneSub.transferGap + 'ms', Pct: Math.round(sceneSub.transferGap / sbTotal * 100) + '% of phase', Cumulative: ''});
                 rows.push({Phase: '  ↳ BufferGeometry',      Time: sceneSub.bufferGeo  + 'ms', Pct: Math.round(sceneSub.bufferGeo  / sbTotal * 100) + '% of phase', Cumulative: ''});
                 rows.push({Phase: '  ↳ Mesh + material',     Time: sceneSub.mesh       + 'ms', Pct: Math.round(sceneSub.mesh       / sbTotal * 100) + '% of phase', Cumulative: ''});
                 rows.push({Phase: '  ↳ expandByObject bbox', Time: sceneSub.expandBBox + 'ms', Pct: Math.round(sceneSub.expandBBox / sbTotal * 100) + '% of phase', Cumulative: ''});
+                rows.push({Phase: '  ↳ reconstruct loop (total)', Time: sceneSub.reconstructLoopTotal + 'ms', Pct: Math.round(sceneSub.reconstructLoopTotal / sbTotal * 100) + '% of phase', Cumulative: ''});
+                rows.push({Phase: '  ↳ stripSurveyMarkers',  Time: sceneSub.stripSurveyMarkers + 'ms', Pct: Math.round(sceneSub.stripSurveyMarkers / sbTotal * 100) + '% of phase', Cumulative: ''});
+                rows.push({Phase: '  ↳ buildInstancedMeshes', Time: sceneSub.instancing + 'ms', Pct: Math.round(sceneSub.instancing / sbTotal * 100) + '% of phase', Cumulative: ''});
+                rows.push({Phase: '  ↳ batchPathological',   Time: sceneSub.batching + 'ms', Pct: Math.round(sceneSub.batching / sbTotal * 100) + '% of phase', Cumulative: ''});
               }
             });
             rows.push({Phase: 'TOTAL', Time: loadTime+'ms', Pct: '100%', Cumulative: loadTime+'ms'});
