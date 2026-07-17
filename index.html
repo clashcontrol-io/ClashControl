@@ -2071,6 +2071,13 @@ function startApp() {
       var f = files.find(function(x) { return x.id === modelId; });
       if (!f || !f.buffer) { if (window._ccToast) window._ccToast('Original file not found in browser storage — re-add it via + Add.'); return; }
       window._ccNextLoadScope = null;
+      // _ccLoadFiles routes through maybeScopeThenProcess like any other
+      // load trigger — without this, a multi-storey file with the storey
+      // chooser flag on would re-open the SAME scope picker instead of
+      // actually loading in full, defeating the entire point of "reload in
+      // full" (and stalling forever if nothing is listening to confirm it,
+      // as this function's own auto-background-complete caller does not).
+      window._ccSkipScopeCheckOnce = true;
       if (window._ccLoadFiles) window._ccLoadFiles([new File([f.buffer], f.name)]);
     });
   };
@@ -17219,13 +17226,32 @@ function startApp() {
               // `buf` is detached (transferred to the worker) by this point —
               // reacquire fresh bytes from the File for IndexedDB persistence
               // rather than storing an empty detached buffer.
-              f.arrayBuffer().then(function(persistBuf) {
-                idbSaveFile(modelId, f.name, persistBuf, s.activeProject||'default', null, _verMeta);
+              var _persistDone = f.arrayBuffer().then(function(persistBuf) {
+                return idbSaveFile(modelId, f.name, persistBuf, s.activeProject||'default', null, _verMeta);
               });
               // Cache geometry for fast project-switch restore — full loads
               // only: a storey-scoped result would restore as a partial
               // model with no record of what's missing.
-              if (!(result.stats && result.stats.loadedScope)) idbSaveGeoCache(modelId, _geoSerialize(result));
+              if (!(result.stats && result.stats.loadedScope)) {
+                idbSaveGeoCache(modelId, _geoSerialize(result));
+              } else if (window._ccAutoCompleteScopedLoads && window._ccAutoCompleteScopedLoads.has(f.name)) {
+                // "Load selected now, then complete in background" — the
+                // scoped load just settled; auto-trigger the exact same
+                // full reload the manual partial-badge button already
+                // calls (_ccReloadModelFull), which re-reads the stored
+                // file bytes from IndexedDB and re-feeds them through the
+                // normal one-shot pipeline with no scope, REPLACE_MODELing
+                // it in when done. Must wait for _persistDone first —
+                // _ccReloadModelFull reads the file straight back out of
+                // IndexedDB, and firing before idbSaveFile's own write
+                // lands is a real race (found by this session's own
+                // browser test: the reload silently no-ops with "Original
+                // file not found" when triggered synchronously here).
+                window._ccAutoCompleteScopedLoads.delete(f.name);
+                _persistDone.then(function() {
+                  if (window._ccReloadModelFull) window._ccReloadModelFull(modelId);
+                });
+              }
             });
           }).catch(function(er) {
             console.error(er);
@@ -17268,6 +17294,20 @@ function startApp() {
     // window._ccNextLoadScope set), so "Load all" is byte-identical to the
     // pre-Phase-12 path, not a differently-shaped equivalent one.
     function maybeScopeThenProcess(files) {
+      // _ccReloadModelFull (window._ccLoadFiles → 'cc-pending-files' →
+      // here) sets this to mean "load everything, no picker" — found by
+      // this session's own browser test: without it, reloading a
+      // storey-scoped model in full (the manual partial-load badge button,
+      // or the new StoreyScopeModal "load the rest automatically" option)
+      // re-triggers the SAME scope picker on the same multi-storey file
+      // instead of actually loading it in full, silently stalling forever
+      // with the storey chooser flag on. "Full reload" must always mean
+      // the full model, never another interruption.
+      if (window._ccSkipScopeCheckOnce) {
+        window._ccSkipScopeCheckOnce = false;
+        processFiles(files);
+        return;
+      }
       var storeyChooserOn = !!(window._ccSafetyMigrations && window._ccSafetyMigrations.isEnabled('ccUiStoreyChooser'));
       var ifcFile = storeyChooserOn ? files.filter(function(f){ return /\.ifc$/i.test(f.name); })[0] : null;
       if (!ifcFile) { processFiles(files); return; }
@@ -17281,7 +17321,7 @@ function startApp() {
       scan.then(function(result){
         var names = result.names, truncated = result.truncated;
         if (names.length < 2) { processFiles(files); return; } // nothing meaningful to scope
-        setStoreyChooser({ files: files, names: names, truncated: truncated });
+        setStoreyChooser({ files: files, names: names, truncated: truncated, ifcFileName: ifcFile.name });
       }).catch(function(){ processFiles(files); }); // pre-scan is best-effort; never block a real load on it failing
     }
     function onFiles(e) {
@@ -17331,8 +17371,26 @@ function startApp() {
 
       ${storeyChooser && html`<${StoreyScopeModal} storeyNames=${storeyChooser.names} truncated=${!!storeyChooser.truncated}
         onCancel=${function(){ setStoreyChooser(null); }}
-        onConfirm=${function(chosen){
+        onConfirm=${function(chosen, autoComplete){
           var pendingFiles = storeyChooser.files;
+          // Background-complete: reuses the exact same _ccReloadModelFull
+          // path the manual "partial load" badge button already calls (see
+          // the loadedScope check in the per-file load handler below) —
+          // deliberately NOT a new incremental/partial loading state. See
+          // MEMORY.md's chunk-merge history (2026-06-xx, multiple failed
+          // hand-rolled "many things standing in for one thing" attempts,
+          // ~49 setters silently broken, eventually removed entirely and
+          // replaced by native BatchedMesh with a staged rollout) — the
+          // lesson generalizes to any partial/incremental data model, and
+          // model.elements/model.meshes are read far more widely across
+          // this app than the rendering-only concern that history covers.
+          // Chaining two already-proven one-shot loads is the safe
+          // equivalent of "first visible sooner, then complete" without
+          // introducing that risk.
+          if (chosen && autoComplete) {
+            window._ccAutoCompleteScopedLoads = window._ccAutoCompleteScopedLoads || new Set();
+            window._ccAutoCompleteScopedLoads.add(storeyChooser.ifcFileName);
+          }
           setStoreyChooser(null);
           if (chosen) window._ccNextLoadScope = { storeys: chosen };
           processFiles(pendingFiles);
@@ -26037,6 +26095,8 @@ function startApp() {
       return initial;
     });
     var selected = selSt[0], setSelected = selSt[1];
+    var autoSt = useState(false);
+    var autoComplete = autoSt[0], setAutoComplete = autoSt[1];
     var cardRef = useRef(null);
     _ccUseFocusTrap(cardRef, true);
     useEffect(function(){
@@ -26081,11 +26141,15 @@ function startApp() {
               </label>`;
             })}
           </div>
+          ${!truncated && !allChecked && html`<label style=${{display:'flex',alignItems:'center',gap:'.5rem',cursor:'pointer',padding:'.3rem 0',fontSize:'var(--text-sm)',color:'var(--text-muted)'}}>
+            <input type="checkbox" checked=${autoComplete} onChange=${function(){setAutoComplete(!autoComplete);}} />
+            <span>Load the rest automatically in the background once this finishes</span>
+          </label>`}
           <div style=${{display:'flex',justifyContent:'flex-end',gap:'.5rem',marginTop:'.3rem'}}>
             <button onClick=${onCancel} style=${{...S_BTN,background:'var(--bg-tertiary)',color:'var(--text-secondary)'}}>Cancel</button>
             <button onClick=${function(){
                 var chosen = storeyNames.filter(function(n){ return selected[n]; });
-                onConfirm(allChecked ? null : chosen); // null = full load, exact current behavior
+                onConfirm(allChecked ? null : chosen, autoComplete); // null = full load, exact current behavior
               }}
               disabled=${checkedCount===0}
               style=${{...S_BTN,background:'var(--accent)',color:'#fff',opacity:checkedCount===0?0.5:1}}>

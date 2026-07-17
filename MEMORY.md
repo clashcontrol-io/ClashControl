@@ -185,6 +185,74 @@ Things to be careful about. Do not remove without a good reason — add a note i
 Update this section at the start and end of each session.
 Mark completed items with ~~strikethrough~~ and date, then let the daily sync archive them.
 
+~~**Browser-first large-model plan, Phase 2 adjusted by project history + safely-scoped slice
+shipped: storey-scope auto-background-complete** (branch `claude/cc-claims-review-myhp9f`,
+2026-07-17)~~ — same-session follow-up to Phase 1 below. User explicitly asked to check the
+plan against project git/MEMORY history before continuing — this surfaced a directly relevant,
+previously-undocumented-in-this-context precedent: **the chunk-merge saga.** A 2026-06-xx
+attempt to cut draw calls (2,510 elements / 74,772 unique geometries → ~75k meshes, one
+cladding model) by hand-merging many meshes into fewer BufferGeometry "chunks" went through
+multiple emergency-enable/revert cycles (`f6e7a9e` emergency-enable → `d10194f`/`1a43021`
+reverts) before being **removed entirely** (`704837f`) — root cause per MEMORY's own
+retrospective: "hand-rolled chunk-merge on r128 broke identity features — same-material
+elements visually blended, render-style switch no-op on chunks, selection outlines blended,
+hide/color needed index-rebuild registries, ~49 setters never became chunk-aware." It only
+succeeded later, replaced by native `THREE.BatchedMesh` (a primitive that didn't exist during
+the earlier attempts) with an explicit staged rollout (Phase 0 acceptance gates → Phase 1
+narrow trigger → Phase 2 regression-test every historical revert symptom in CI *before* any
+default-on expansion) and by keeping original per-element meshes off-scene as proxies so
+identity-dependent code never had to change. **Applied lesson to Phase 2 of the large-model
+plan:** the plan's actual headline ask — progressive rendering ("render the first safe batch
+immediately... build bounds/Navigator rows as chunks arrive") — means exposing a
+partially-loaded `model.elements`/`model.meshes` to the reducer and every consumer that reads
+it (Navigator, storey list, Issues panel, BCF export preconditions, detection triggers,
+search...) — structurally the SAME "many things must all become aware of a not-yet-complete
+data model" pattern that took this project multiple failed attempts to get right for a
+narrower, rendering-only version of the problem. Separately researched (before this history
+check) that `web-ifc`'s `StreamAllMeshes` has no cooperative-yield hook, so true worker-side
+backpressure would require manually reproducing its element-selection semantics via per-ID
+`GetFlatMesh` calls — a real correctness risk on top of the UI blast-radius risk. **Decision:
+do NOT build a general incremental/partial-loading data model this session.** Instead shipped
+the safe equivalent of Phase 2's "prioritize selected storeys... while allowing complete
+background decode" bullet by chaining two ALREADY-PROVEN one-shot primitives instead of
+inventing a new partial state:
+- `StoreyScopeModal` gets a new opt-in checkbox (shown only for a genuine partial selection,
+  never for "Load all"): "Load the rest automatically in the background once this finishes."
+  When checked, the file's name is registered in `window._ccAutoCompleteScopedLoads`; once the
+  scoped load settles, the existing (already-tested) `window._ccReloadModelFull` — the exact
+  function behind the pre-existing manual "partial load" badge button — is auto-triggered, with
+  no new data-model concept: the user sees the scoped subset immediately (today's existing
+  behavior, unchanged), then a second ordinary one-shot full load runs and `REPLACE_MODEL`s it
+  in when done, exactly as if they'd clicked the manual button themselves.
+- **Two real bugs found and fixed while wiring this, both by the new browser test actually
+  driving the flow rather than trusting the code read** (`tests/browser/storey-scope-auto-
+  complete.mjs`): (1) a race — `_ccReloadModelFull` reads the file straight back out of
+  IndexedDB, but the auto-trigger fired before the scoped load's own `idbSaveFile` write had
+  landed (fire-and-forget promise), so the reload silently no-op'd with "Original file not
+  found." Fixed by chaining the trigger onto the persist promise instead of firing synchronously.
+  (2) A **pre-existing latent bug in `_ccReloadModelFull` itself**, not introduced by this
+  session: `window._ccLoadFiles` routes through `maybeScopeThenProcess` like any other load
+  trigger, so reloading a multi-storey file in full — via EITHER the pre-existing manual badge
+  button OR the new auto-trigger — with the storey-chooser flag on would re-open the SAME scope
+  picker instead of loading in full, silently stalling forever with nothing to confirm it. Fixed
+  generally (not just for the new feature) with a one-shot `window._ccSkipScopeCheckOnce` flag
+  that `_ccReloadModelFull` sets and `maybeScopeThenProcess` consumes. This bug had never
+  manifested because `ccUiStoreyChooser` currently defaults off in production — it was latent,
+  waiting for the flag to ever be exercised.
+- Verified: 610/610 unit tests (4 new + 1 updated in `tests/storey-scope-wiring.test.js`), full
+  `smoke.mjs` green, existing `storey-scope-truncated.mjs` unaffected, the new
+  `storey-scope-auto-complete.mjs` drives the real flow end-to-end in a real browser (partial
+  load appears first with the correct skipped-element count, then the full model auto-replaces
+  it with `loadedScope` cleared, registry consumed exactly once).
+- **Explicitly NOT done, and why:** true progressive/incremental rendering (a partially-loaded
+  model visible to the UI mid-stream) and worker-side backpressure remain unbuilt. If ever
+  attempted, follow the SAME pattern this project's own history proves works: build the
+  primitive first behind an explicit flag, audit every `model.elements`/`model.meshes` consumer
+  first (there could easily be 49+, mirroring the chunk-merge count for a narrower problem),
+  write a regression test for every failure mode BEFORE any default-on rollout, and prefer
+  leaning on a native/existing primitive over hand-rolling incremental-awareness across dozens
+  of call sites.
+
 ~~**Browser-first large-model plan, Phase 1 completed: IFC worker protocol v2 (packed
 rawEls)** (branch `claude/cc-claims-review-myhp9f`, 2026-07-17)~~ — same-session follow-up
 to the tranche below, completing Phase 1 of the plan (the dominant measured cost: ~73%-of-
