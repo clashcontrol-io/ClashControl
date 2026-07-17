@@ -1,5 +1,8 @@
 # Changelog
 
+## v7.2.2 (2026-07-17)
+- Browser-first large-model plan: verification + Phase 1 (harness extension + IFC worker protocol v2)
+
 ## v7.2.1 (2026-07-17)
 - External-review follow-up: grouped-list memoization, storey-scan completeness, large-model profiling correction (#693)
 
