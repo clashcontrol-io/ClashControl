@@ -150,6 +150,24 @@ Things to be careful about. Do not remove without a good reason — add a note i
 Update this section at the start and end of each session.
 Mark completed items with ~~strikethrough~~ and date, then let the daily sync archive them.
 
+~~**Export-view-as-PDF: markup redlines silently missing from the exported popup** (branch
+`claude/findings-and-plan`, 2026-07-17)~~ — found via the user's own live testing on the PR #692 Vercel
+preview (drew a redline rectangle + arrow, exported as PDF, the exported popup showed the clean model with
+no markup at all). Root cause: `window._ccExportViewPDF` (`index.html`) looks for the live markup `<svg>`
+overlay via `renderer.domElement.parentElement.querySelector(':scope > svg')` to clone it into the export
+popup — but the canvas's *immediate* parent is the ref `<div>` Three.js appends into
+(`el.appendChild(renderer.domElement)`, `Viewer`'s mount effect); the markup `<svg>` is a **sibling of that
+div**, one level further up, under `Viewer`'s own outer wrapper. The one-level-shallow lookup always
+resolved to `null`, so `svgMarkup` was always `''` — every PDF export silently dropped redlines, this whole
+time. (The separate "Save Viewpoint" feature was unaffected — `_ccSnapshotWithRedlines` bakes markups
+directly into the raster PNG via canvas 2D drawing, a different, correct mechanism.) Fixed by walking up one
+more level (`renderer.domElement.parentElement.parentElement`) before the `:scope > svg` query. Verified by
+reproducing the bug against the pre-fix code first (confirmed the popup really was missing the markup),
+then confirming the fix resolves it — both via a real-Chromium check that injects a labelled test `<rect>`
+into the live markup SVG, triggers the export, and asserts the popup's DOM contains it. Folded into
+`tests/browser/smoke.mjs` (reusing the already-loaded model rather than a second browser session). 605/605
+unit tests + full smoke green.
+
 ~~**Reducer/state decomposition — Slice 1 (prefs-persistence consolidation) + full write-up of the rest;
 50MB large-model measurement; Claude-Desktop-style tabbed Settings menu** (branch `claude/findings-and-plan`,
 2026-07-17)~~ — same-day follow-up to the entry below. Reducer decomposition: consolidated ~8 duplicated

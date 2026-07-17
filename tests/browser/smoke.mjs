@@ -211,6 +211,39 @@ try {
   if (await page.locator('#cc-settings-title').count()) fail('Escape did not close the settings modal');
   console.log('SMOKE OK — settings modal: all 8 tabs render distinct content, Advanced tab is wired and interactive');
 
+  // ── Export view as PDF: the markup (redline) SVG overlay must survive
+  // into the popup window. _ccExportViewPDF composites a raster screenshot
+  // with a *clone* of the live markup <svg>, found via
+  // renderer.domElement.parentElement.parentElement — the canvas's real
+  // grandparent (canvas -> ref div Three.js appends into -> Viewer's outer
+  // div, which is also the svg's direct parent). A one-level-shallow lookup
+  // silently found nothing and shipped PDFs with the redlines missing.
+  const svgSiblingOk = await page.evaluate(() => {
+    const canvas = document.querySelector('canvas');
+    const root = canvas && canvas.parentElement && canvas.parentElement.parentElement;
+    return !!(root && root.querySelector(':scope > svg'));
+  });
+  if (!svgSiblingOk) fail('markup svg overlay is not two levels up from the canvas — export-PDF svg capture would find nothing');
+  await page.evaluate(() => {
+    const canvas = document.querySelector('canvas');
+    const svg = canvas.parentElement.parentElement.querySelector(':scope > svg');
+    const rect = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
+    rect.setAttribute('x', '50'); rect.setAttribute('y', '50'); rect.setAttribute('width', '120'); rect.setAttribute('height', '80');
+    rect.setAttribute('stroke', '#dc2626'); rect.setAttribute('fill', 'none'); rect.setAttribute('data-test-marker', 'smoke-rect');
+    svg.appendChild(rect);
+  });
+  const [pdfPopup] = await Promise.all([
+    page.waitForEvent('popup'),
+    page.evaluate(() => window._ccExportViewPDF({ title: 'smoke test' })),
+  ]);
+  await pdfPopup.waitForLoadState('domcontentloaded');
+  await page.waitForTimeout(200);
+  if (!(await pdfPopup.evaluate(() => !!document.querySelector('[data-test-marker="smoke-rect"]')))) {
+    fail('export-view-as-PDF popup is missing the markup svg overlay content');
+  }
+  await pdfPopup.close();
+  console.log('SMOKE OK — export view as PDF carries the markup svg overlay into the popup');
+
   // ── Hard-refresh/cache restore: the five-hotfix "spikey model" incident
   // only appeared after reload, never on a fresh parse. Keep the real IDB +
   // geo-cache path in CI and compare element bounds before/after. The

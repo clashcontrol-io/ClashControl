@@ -9023,8 +9023,14 @@ function startApp() {
           var title = opts.title || document.title || 'ClashControl';
           var w = renderer.domElement.width, h = renderer.domElement.height;
           var cssW = renderer.domElement.clientWidth, cssH = renderer.domElement.clientHeight;
-          // Capture markup SVG overlay (if present) at the same size as the canvas
-          var svgEl = renderer.domElement.parentElement && renderer.domElement.parentElement.querySelector(':scope > svg');
+          // Capture markup SVG overlay (if present) at the same size as the canvas.
+          // The canvas's immediate parent is the ref div Three.js appends into
+          // (el.appendChild(renderer.domElement)); the markup <svg> is a sibling
+          // of THAT div, one level further up (see Viewer's JSX: outer div ->
+          // [ref div containing the canvas, markup svg, ...]).
+          var _canvasWrap = renderer.domElement.parentElement;
+          var _viewerRoot = _canvasWrap && _canvasWrap.parentElement;
+          var svgEl = _viewerRoot && _viewerRoot.querySelector(':scope > svg');
           var svgMarkup = '';
           if (svgEl) {
             try {
