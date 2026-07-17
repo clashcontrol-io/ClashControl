@@ -185,6 +185,62 @@ Things to be careful about. Do not remove without a good reason — add a note i
 Update this section at the start and end of each session.
 Mark completed items with ~~strikethrough~~ and date, then let the daily sync archive them.
 
+~~**Browser-first large-model plan, Phases 3-7 checked against project history and adjusted;
+Phase 4 partial slice shipped (candidate-count warning)** (branch `claude/cc-claims-review-myhp9f`,
+2026-07-17)~~ — same-session follow-up completing the "check the whole plan against history"
+pass the user asked for (Phase 2's check covered the chunk-merge saga; this extends that same
+audit through the rest of the plan before writing any more code).
+- **Phase 3 (eliminate the dual scene representation) — REJECTED as specified, not merely
+  deferred.** Re-read the current BatchedMesh architecture: it is deliberately scoped to
+  pathological models only (`geoUnique/elements > 10 OR >20k meshes/model`), and the ORIGINAL
+  per-element meshes are kept off-scene as proxies specifically because that's "the proven
+  Stage 2A pattern" that ended the chunk-merge crisis (`element.meshes[]` stays the source of
+  truth for clash/serialize/outline/selection). Phase 3 of the external plan asks to remove
+  exactly this proxy pattern ("BatchedMesh as sole authoritative render source... rewrite
+  selection/visibility/coloring/section/serialization/clash adapters to use handles instead of
+  retained off-scene meshes") in the name of a claimed 35-50% peak-heap reduction. That is not
+  a neutral architecture change — it is reintroducing the precise failure class (many call
+  sites silently unaware of a non-1:1 element↔mesh mapping) that took this project multiple
+  emergency-enable/revert cycles to escape, for a subsystem this codebase's own history says is
+  correct as built. Do not build this. If peak memory in pathological-batched models genuinely
+  needs to come down further, target it narrowly (e.g. only within the already-batched subset)
+  rather than removing the safety net for every model.
+- **Phase 4 (Rust/WASM clash kernel)** — no negative precedent found (no prior failed attempt
+  at a similar rewrite). The Rust crate (`engine/`, `clashcontrol-engine`, ~720 lines) already
+  lives in this repo, so it's technically reachable. But its real payoff — moving broad-phase/
+  candidate-generation/narrow-phase into Rust with streamed results — means rewriting the
+  tri-tri/BVH intersection math (`_rayTriHit`, `_bvhRayCount`, `_closestPtTriDistSq`,
+  `_bvhClosestDistSq`, etc.) and the WASM boundary contract together. `CLAUDE.md` names this
+  exact code "geometrically sensitive... not to be touched without good reason" — a different,
+  more serious caution than the loader work this session already did (which had the
+  differential-fingerprint harness as a safety net; a numerically-sensitive geometry rewrite
+  needs its own dedicated tolerance/regression-test design, not a same-session add-on). **Built
+  the one genuinely safe, JS-only slice that doesn't touch that math:** `_sweepAndPrune`'s
+  broad-phase output (`candidates`) is still a single fully-materialized JS array (unchanged —
+  eliminating that materialization is itself a real control-flow rewrite of the chunked
+  execution harness, deferred alongside the tri-tri work), but detection now warns (a
+  non-blocking `window._ccToast`, not `confirm()` — detection can fire from non-interactive
+  triggers like AI/NL commands or auto-run, where a blocking dialog nobody's watching for would
+  hang the run) when that array crosses 1,000,000 pairs, reusing the `_CANDIDATE_EST_BYTES`
+  estimate already built this session for the perf harness. Same "tell the user, don't silently
+  do something surprising" principle as the storey-scan truncation lock. Verified: 615/615 unit
+  tests (5 new wiring-lock tests in `tests/large-candidate-warning.test.js`, same source-pattern-
+  matching style as `storey-scope-wiring.test.js` — the check lives deep inside the large
+  detection function alongside real dependencies not worth mocking for five lines), full
+  `smoke.mjs` green (confirms normal-scale detection, below the threshold, is unaffected).
+- **Phase 5 (COOP/COEP + multithreading)** — no negative precedent found (never attempted).
+  Confirmed again this session (see the Phase 1/2 entries below and the original plan-review
+  entry): `vercel.json` has no `headers` block at all, ~18 external CDN references in
+  `index.html` would need a self-hosting/pinning audit first. Real, bounded infrastructure/
+  deployment work — no code-correctness risk once done, but a full asset audit is its own task,
+  not attempted here.
+- **Phase 6 (500MB+ operating mode) and Phase 7 (native fallback)** — both explicitly depend on
+  Phases 2-5 landing first per the plan's own sequencing; nothing new to adjust or build ahead
+  of that.
+- Explicitly did NOT open a new PR-per-slice this time (user feedback after Phases 1/2 each got
+  their own PR+merge in quick succession) — this batch is one commit on the branch, held for a
+  single PR/merge decision rather than an immediate autonomous merge.
+
 ~~**Browser-first large-model plan, Phase 2 adjusted by project history + safely-scoped slice
 shipped: storey-scope auto-background-complete** (branch `claude/cc-claims-review-myhp9f`,
 2026-07-17)~~ — same-session follow-up to Phase 1 below. User explicitly asked to check the
