@@ -129,19 +129,54 @@ Things to be careful about. Do not remove without a good reason — add a note i
   georeferencing, malformed records, cancellation) before attempting the actual extraction, not instead
   of it. Do not attempt this without that expanded coverage — `CLAUDE.md` calls the IFC loader out
   explicitly as complex-but-working, not to be touched without good reason.
-- **50MB-class IFC load: measured, not guessed (2026-07-17).** Generated a synthetic 53.67MB IFC-SPF
-  fixture (`tests/fixtures/generate-synthetic-ifc.js`, `storeyCount:10, wallsPerStorey:14567` → 145,670
-  `IfcWall` elements) and drove a real load through the actual UI in real Chromium (RSS via `/proc/pid/status`,
-  same instrumentation as Phase 11's `perf-local.mjs`/`memory-local.mjs`). Result: **174s dispatch→first-mesh,
-  180s to decode-stable, RSS peaked ~2.56GB (from a 358MB boot baseline), zero console/page errors** — the
-  load completes correctly, just slowly, and stays resident at ~2.4GB after settling (not a leak — flat
-  across a post-settle 2s window). **Caveat, important:** this is a worst-case *entity-count* stress test —
-  145,670 trivial, near-identical wall entities — not a representative real-world 50MB architectural IFC,
-  which would typically carry far fewer (thousands, not hundreds of thousands), richer elements with deeper
-  property sets, and hit a very different part of the cost curve (property/relation graph size vs. element
-  count). Don't quote the 174s/2.5GB numbers as "ClashControl's 50MB performance" without that caveat — they
-  characterize element-count scaling specifically. Re-run via the same fixture generator (params are the
-  only thing to change) for future comparison rather than building a new harness.
+- **CORRECTED 2026-07-17: the original "174s/2.56GB for 145,670 elements" large-model number
+  (below) was measuring a fixture-generator bug, not real app performance — do not cite the old
+  figure.** `tests/fixtures/generate-synthetic-ifc.js` passed a bare `IfcCartesianPoint` as
+  `IfcRectangleProfileDef`'s `Position` instead of an `IfcAxis2Placement2D` (a real IFC schema
+  violation — the hand-written `smoke-clash.ifc` fixture did this correctly and was never
+  compared against). web-ifc's `GetAxis2DPlacement()` logged `unexpected 2D placement type 6`
+  and fell back to a slow per-element recovery path for **every single element** — at 10,000
+  elements this alone made loads take minutes instead of ~4s. Fixed the generator (adds the
+  missing `IfcAxis2Placement2D` + 2D `IfcCartesianPoint`) and regenerated every fixture derived
+  from it, including the committed `tests/fixtures/multi-storey-smoke.ifc` (too small — 9
+  elements — for the bug's cost to have been visible there, but still invalid IFC). Verified:
+  605/605 → 606/606 unit tests (net +1 from unrelated work same day), full smoke green with the
+  regenerated fixture, zero console errors on load (previously: thousands of
+  `GetAxis2DPlacement` error lines per load, silently ignored).
+- **50MB/145k-element IFC load — corrected measurement, external-review-driven follow-up
+  (2026-07-17).** With the fixture bug above fixed, re-measured across scales using the same
+  real-Chromium-UI-driven approach as before, this time reading the load pipeline's own
+  built-in per-phase profiler (`stats.phases`/`streamSub`/`sceneSub` on the loaded model — already
+  built, logged via `console.table` on every real load, just not previously read
+  programmatically for this kind of measurement). Clean results: **10,000 elements loads in
+  ~4.3s.** Scaling from there is markedly **super-linear, not linear** — 25,000 elements measured
+  between 12.6s and 41.6s across repeated runs in this sandbox (high run-to-run variance, likely
+  shared-environment resource contention; the sub-phase *proportions* were consistent across runs
+  even though absolute numbers weren't) — a 2.5× element-count increase should cost ~2.5× more
+  time under linear scaling, not 3–10×. **Root cause, isolated via new instrumentation added this
+  session (`sceneSub.transferGap`, pure additive `performance.now()` deltas around the existing
+  reconstruction/instancing/batching calls, no logic changes):** the dominant cost inside the
+  main-thread "Scene build" phase is neither WASM parsing, property extraction, geometry
+  building, nor instancing/batching (all comparatively small) — it's the **worker→main thread
+  message transfer itself**. At 25k elements, `transferGap` (structured-clone deserialization of
+  the `rawEls` array — one JS object per element carrying `geos`/`props` — arriving via
+  `postMessage`) accounted for ~4.9s of ~6.7s spent in Scene build (~73%). The large binary
+  geometry buffers are already sent as zero-copy `Transferable`s; `rawEls` is not, and structured
+  cloning many small JS objects is a known worse-than-linear cost in JS engines as object count
+  grows — consistent with what was measured. At the original 145,670-element scale, load still
+  exceeded 240s even with the fixture bug fixed, confirming this is a real, unresolved scaling
+  problem at the high end, just a different and now-understood one than originally suspected.
+  **Not attempted this session:** redesigning the worker→main transfer to encode `rawEls` into
+  transferable typed-array buffers instead of a plain object array (the same technique already
+  used for geometry data) is the obvious next step and should meaningfully cut large-model load
+  time, but it's a real change to the IFC worker protocol — exactly the kind of "worker-transfer
+  experiment" the loader's own risk profile (`CLAUDE.md`: complex-but-working, not to be touched
+  without good reason; `REDUCER_DECOMPOSITION_PLAN.md`'s loader/worker lifecycle area: risk
+  "high", sequenced last) says needs its own careful pass with the differential-coverage safety
+  net in place first, not a same-session follow-on to a profiling pass. Re-run via
+  `tests/fixtures/generate-synthetic-ifc.js` (now fixed) at multiple `wallsPerStorey` values for
+  future comparison; read `stats.phases`/`stats.sceneSub` off the loaded model directly rather
+  than parsing the console.table output.
 <!-- END:known-issues -->
 
 <!-- BEGIN:active-work -->
@@ -149,6 +184,27 @@ Things to be careful about. Do not remove without a good reason — add a note i
 
 Update this section at the start and end of each session.
 Mark completed items with ~~strikethrough~~ and date, then let the daily sync archive them.
+
+~~**External-review follow-up: grouped conflict-list memoization, storey-scan completeness,
+large-model profiling correction** (branch `claude/findings-and-plan`, 2026-07-17)~~ — a second
+external review of the merged PR #692 correctly identified two real, verified bugs and asked for
+deeper large-model profiling; see the two 2026-07-17 Known Issues entries above for the profiling
+correction (a genuine fixture-generator bug, not an app performance number, was hiding behind the
+original "174s" figure) and `git log` on this branch for the two code fixes:
+(1) `groupAndSort()` in `VirtualList` (index.html) was called unmemoized in the render body,
+invalidating every downstream `useMemo` (including the offset-table memoization from the earlier
+windowed-list work) on every scroll-driven re-render for grouped/sorted lists — now memoized with
+stable deps, locked with a real-browser test that drives 100 actual scroll updates and asserts
+call counts stay flat (not just that a `useMemo` exists in the source — verified the test catches
+the regression by reverting only the fix and confirming 100/100/100 calls). (2) The storey-scope
+chooser's pre-scan stopped early once a few chunks added nothing new, which could silently miss a
+real storey defined late in a file (IFC-SPF entity order isn't guaranteed) — now always scans the
+full file (bounded-memory regardless of length, so only cost is time not memory), and reports
+`truncated:true` + locks the picker to full-load-only when a file exceeds the (now much larger,
+512MB) byte ceiling, so a user can never silently scope down to an incomplete list. Verified:
+606/606 unit tests, full real-Chromium smoke green throughout (including regenerating the
+committed `multi-storey-smoke.ifc` fixture, which had the same schema defect as the profiling
+bug — too small for the defect's cost to be visible in existing tests, but still invalid IFC).
 
 ~~**Export-view-as-PDF: markup redlines silently missing from the exported popup** (branch
 `claude/findings-and-plan`, 2026-07-17)~~ — found via the user's own live testing on the PR #692 Vercel
