@@ -5986,6 +5986,23 @@ function startApp() {
     _mark('bvh_build_end');
     _prof._nElements = 0; // updated incrementally per chunk
     _prof._nCandidates = candidates.length;
+    // Browser-first large-model plan, Phase 4 ("bounded candidate memory")
+    // — the honest-reporting half achievable without touching the tri-tri/
+    // BVH intersection math itself (CLAUDE.md flags that code as
+    // geometrically sensitive; moving broad-phase into the Rust/WASM
+    // kernel per the plan's full ask is real future work, not this). A
+    // fully-materialized JS candidate array this large is a genuine memory
+    // signal worth surfacing — same "tell the user, don't silently do
+    // something surprising" principle as the storey-scan truncation lock —
+    // without blocking or altering the run itself (detection can fire from
+    // non-interactive triggers — AI/NL commands, auto-run — where a
+    // blocking confirm() would be a real regression, unlike the >500MB
+    // file-size confirm() at load time, which only ever fires from a
+    // direct user file pick).
+    if (candidates.length > 1000000 && window._ccToast) {
+      var _candMB = Math.round(candidates.length * _CANDIDATE_EST_BYTES / (1024*1024));
+      window._ccToast(candidates.length.toLocaleString() + ' candidate pairs to test (~' + _candMB + ' MB) — this may take a while and use significant memory. Consider narrowing rules (discipline matrix, type filters) or scope.', 'info');
+    }
     _phase(candidates.length.toLocaleString() + ' pairs to test');
 
     // ── Per-candidate timing accumulators ─────────────────────────
