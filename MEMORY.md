@@ -185,6 +185,39 @@ Things to be careful about. Do not remove without a good reason — add a note i
 Update this section at the start and end of each session.
 Mark completed items with ~~strikethrough~~ and date, then let the daily sync archive them.
 
+~~**External browser-first large-model plan verified against code + history** (branch
+`claude/cc-claims-review-myhp9f`, 2026-07-17)~~ — a user-supplied external plan
+("ClashControl browser-first IFC and clash-engine plan", reviewed at `23bde34`/v7.2.1) was
+claim-checked line-by-line against `index.html`, the addons, tests, `vercel.json`, and git
+history. **Verdict: overwhelmingly accurate — adopt with four adjustments.** Every loading
+pressure point confirmed in code: input buffer `postMessage` at index.html:4441 has NO transfer
+list (structured clone); worker returns geometry buffers as Transferables but `rawEls` (one JS
+object per element) is structured-cloned (the measured ~73%-of-Scene-build cost); per-element
+`THREE.Mesh` objects are retained off-scene in `element.meshes[]` AFTER Instanced/BatchedMesh
+build (explicit design comment ~index.html:3365) — dual representation confirmed; storey-scan
+512MB ceiling + `truncated` picker lock confirmed. Clash side confirmed: broad phase
+(`_sweepAndPrune`) is main-thread with `.filter()` active arrays and a fully-materialized
+candidate array; `_DETECT_CHUNK_SIZE=80` setTimeout chunking; per-element (not per-unique-
+geometry) world-space tri copies + BVHs in the adaptive `_bvhLRU`; WASM batch path concat-copies
+triangles (`_runBatch` → `allTris.set`); local-engine bridge POSTs plain-number JSON verts.
+**Adjustments to the plan:** (1) its "BVHs are rebuilt too often" is overstated — BVHs are
+LRU-cached and the WASM hard path uses no BVH at all; the real per-call cost is the concat
+copies + per-element world-tri duplication. (2) Its "full properties assembled into a large map"
+is only eager on the FALLBACK path — the worker path already defers `buildPropertyMap` to a
+post-render Phase 2 and merges per-element. (3) Phase 0 "build the harness" should be "EXTEND
+the harness" — perf-local.mjs (phases+RSS), memory-local.mjs (plateaus, forced GC),
+`modelFingerprint`/`clashFingerprint`, and the worker/fallback differential harness already
+exist; missing pieces are a real-model corpus, candidate-count metrics, and load-cancel-load
+loop tests. (4) Its protocol-v2 work must be reconciled with the `.toString()`-assembled worker
+(see the 2026-07-17 static-file-extraction Known Issue) and REDUCER_DECOMPOSITION_PLAN.md's
+loader-area high-risk/last sequencing — expand differential coverage FIRST. **Doc drift found
+and fixed: CLAUDE.md claimed `vercel.json` sets COOP/COEP headers — verified FALSE (no `headers`
+block at all; no COOP/COEP anywhere; three.js/web-ifc load from jsdelivr via dynamic ESM with no
+SRI; sw.js deliberately skips web-ifc interception citing CORP/COEP). The app is NOT
+cross-origin isolated in production; SharedArrayBuffer/threaded WASM would be genuinely new
+deployment work, exactly as the external plan says.** 606/606 unit tests green at review time;
+no app code changed this session (docs only).
+
 ~~**External-review follow-up: grouped conflict-list memoization, storey-scan completeness,
 large-model profiling correction** (branch `claude/findings-and-plan`, 2026-07-17)~~ — a second
 external review of the merged PR #692 correctly identified two real, verified bugs and asked for
