@@ -18,7 +18,7 @@
 import { chromium } from 'playwright';
 import { createServer } from 'node:http';
 import { readFile } from 'node:fs/promises';
-import { join, dirname } from 'node:path';
+import { join, dirname, normalize } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
@@ -32,14 +32,24 @@ function fail(msg) {
 const server = createServer(async (req, res) => {
   const p = req.url.split('?')[0];
   try {
-    const body = await readFile(join(root, p === '/' ? 'index.html' : decodeURIComponent(p.slice(1))));
+    // Same containment guard as the sibling harnesses (smoke.mjs,
+    // perf-local.mjs, memory-local.mjs) — reject any resolved path that
+    // escapes root, since p comes straight from the request URL.
+    const rel = p === '/' ? 'index.html' : decodeURIComponent(p.slice(1));
+    const file = normalize(join(root, rel));
+    if (!file.startsWith(normalize(root))) { res.writeHead(403); return res.end(); }
+    const body = await readFile(file);
     const ct = (p === '/' || p.endsWith('.html')) ? 'text/html'
       : p.endsWith('.wasm') ? 'application/wasm' : 'text/javascript';
     res.writeHead(200, { 'content-type': ct });
     res.end(body);
   } catch { res.writeHead(404); res.end(); }
 });
-await new Promise((r) => server.listen(0, r));
+// Bind explicitly to loopback only — same as every sibling harness — rather
+// than the default all-interfaces bind, which would briefly expose this
+// static file server (and the containment guard above, its only defense)
+// to the network for the life of the test run.
+await new Promise((r) => server.listen(0, '127.0.0.1', r));
 const port = server.address().port;
 
 const browser = await chromium.launch({ executablePath: process.env.CC_CHROMIUM_EXECUTABLE });
