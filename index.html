@@ -750,6 +750,7 @@ function startApp() {
   var h          = React.createElement;
   var useState   = React.useState;
   var useEffect  = React.useEffect;
+  var useLayoutEffect = React.useLayoutEffect;
   var useRef     = React.useRef;
   var useReducer = React.useReducer;
   var useMemo    = React.useMemo;
@@ -35377,9 +35378,19 @@ function startApp() {
     var items = props.items, activeId = props.activeId, renderItem = props.renderItem;
     var moreButtonWidth = props.moreButtonWidth != null ? props.moreButtonWidth : 36;
     var containerRef = useRef(null);
+    var moreBtnRef = useRef(null);
     var wSt = useState(9999), containerWidth = wSt[0], setContainerWidth = wSt[1];
     var openSt = useState(false), moreOpen = openSt[0], setMoreOpen = openSt[1];
-    useEffect(function(){
+    // Measure synchronously before paint (useLayoutEffect, not useEffect) so
+    // the very first commit already reflects the real, post-flex-shrink box
+    // width — the initial containerWidth:9999 fallback never actually
+    // reaches the screen. Still driven by the box's OWN clientWidth (not a
+    // sibling budget calc) because every visible-item combination the fit
+    // algorithm can pick is <= the previously measured width by construction
+    // (`used <= budget` in _ccFitToolbarItems), so this can only shrink
+    // toward a stable value on subsequent passes, never grow back past what
+    // the flex layout actually allotted — no oscillation.
+    useLayoutEffect(function(){
       if (!containerRef.current) return;
       function measure(){ if (containerRef.current) setContainerWidth(containerRef.current.clientWidth); }
       measure();
@@ -35388,19 +35399,49 @@ function startApp() {
       window.addEventListener('resize', measure);
       return function(){ window.removeEventListener('resize', measure); };
     }, []);
+    // This is the bug the earlier attempt hit (REWRITE_UI_PLAN.md Phase 8):
+    // with a bare minWidth:0, `overflow:hidden` lets the flex algorithm shrink
+    // this box arbitrarily thin — down past the point where even the forced-
+    // visible active item or the "More" toggle itself has room, silently
+    // clipping BOTH away and leaving the cluster completely unreachable
+    // (verified via a real-Chromium probe: at a squeeze width the box shrank
+    // to 11px while its child button stayed laid out at its own 32px — no
+    // *visual* overlap since overflow:hidden clips the paint, but no visible
+    // "More" button either, so nothing in the cluster could be reached).
+    //
+    // The floor MUST be a constant derived from `items` alone, NOT from the
+    // current render's `fit` decision — an earlier version of this fix
+    // computed it from fit.visible, which created a closed loop: the CSS
+    // floor constrains what ResizeObserver can ever measure, which
+    // constrains what fit() can ever decide, which locks the floor at
+    // whatever the very first (optimistic, containerWidth:9999) render
+    // happened to pick — permanently disabling shrink. worstCaseFloor is the
+    // most _ccFitToolbarItems can ever force into `visible` when squeezed
+    // (a single forced-active item) plus the "More" toggle — a fixed upper
+    // bound independent of any particular fit outcome, so real shrinking
+    // still works down to that floor, it just never goes THINNER than what
+    // the forced-visible content actually needs.
+    var maxItemWidth = items.reduce(function(m, it){ return Math.max(m, it.width); }, 0);
+    var worstCaseFloor = maxItemWidth + moreButtonWidth;
     var fit = _ccFitToolbarItems(items, containerWidth, moreButtonWidth, activeId);
-    return html`<div ref=${containerRef} style=${{display:'flex',alignItems:'center',gap:'var(--space-1)',minWidth:0,flex:'0 1 auto',overflow:'hidden'}}>
+    // The popover anchors via position:fixed + a measured rect (same pattern
+    // as the Measure/Home-view popovers above), NOT position:absolute — this
+    // row (role="toolbar") sets overflow-y:hidden and this group's own box
+    // sets overflow:hidden to allow shrinking, either of which would clip an
+    // absolutely-positioned descendant popover. position:fixed escapes both.
+    var popRect = moreOpen && moreBtnRef.current ? moreBtnRef.current.getBoundingClientRect() : null;
+    return html`<div ref=${containerRef} data-responsive-tool-group="" style=${{display:'flex',alignItems:'center',gap:'var(--space-1)',minWidth:worstCaseFloor,flex:'0 1 auto',overflow:'hidden'}}>
       ${fit.visible.map(function(id){ return renderItem(id); })}
-      ${fit.overflow.length > 0 && html`<div style=${{position:'relative',display:'inline-flex',flexShrink:0}}>
-        <button aria-label="More tools" title="More tools" data-toolbar-overflow-toggle
+      ${fit.overflow.length > 0 && html`<div style=${{display:'inline-flex',flexShrink:0}}>
+        <button ref=${moreBtnRef} aria-label="More tools" title="More tools" data-toolbar-overflow-toggle
           onClick=${function(e){ e.stopPropagation(); setMoreOpen(function(v){ return !v; }); }}
           style=${{width:36,height:36,display:'inline-flex',alignItems:'center',justifyContent:'center',
             background:moreOpen?'var(--accent-bg)':'none',border:'none',cursor:'pointer',
             color:moreOpen?'var(--accent)':'var(--ink-muted)',borderRadius:'var(--radius-xs)'}}>
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="5" cy="12" r="1.5"/><circle cx="12" cy="12" r="1.5"/><circle cx="19" cy="12" r="1.5"/></svg>
         </button>
-        ${moreOpen && html`<div data-toolbar-overflow-panel onClick=${function(e){ e.stopPropagation(); }}
-          style=${{position:'absolute',top:'110%',right:0,zIndex:9999,background:'var(--bg-primary)',
+        ${popRect && html`<div data-toolbar-overflow-panel onClick=${function(e){ e.stopPropagation(); }}
+          style=${{position:'fixed',top:(popRect.bottom+6)+'px',right:(window.innerWidth-popRect.right)+'px',zIndex:9999,background:'var(--bg-primary)',
             border:'1px solid var(--border)',borderRadius:'var(--radius-sm)',boxShadow:'var(--shadow-md)',
             padding:'.3rem',display:'flex',gap:'var(--space-1)'}}>
           ${fit.overflow.map(function(id){ return renderItem(id); })}
@@ -35409,6 +35450,9 @@ function startApp() {
       </div>`}
     </div>`;
   }
+  // TopToolbar's CAMERA cluster — all four buttons are a fixed 36px (see
+  // btn()'s width:36), so no DOM measurement pass is needed for widths.
+  var CC_CAMERA_ITEMS = [{id:'orbit',width:36},{id:'walk',width:36},{id:'plan',width:36},{id:'ortho',width:36}];
 
   /* ── Desktop top bar — solid paper, no glassmorphism, terracotta Share.
      Layout (left → right):
@@ -35714,6 +35758,51 @@ function startApp() {
     }
     // Walk mode: HUD is rendered inside the Viewer, not in the toolbar subRow
 
+    // ── CAMERA cluster items (ccUiToolbarV2) ──  REWRITE_UI_PLAN.md Phase 8
+    // Single source of each button so the ResponsiveToolGroup path (flag on)
+    // and the flat legacy path (flag off) render byte-identical buttons —
+    // only the wrapping layout differs.
+    var toolbarV2On = !!(window._ccSafetyMigrations && window._ccSafetyMigrations.isEnabled('ccUiToolbarV2'));
+    function _ccOrthoActive(){ var S=window._ccState3d; return !!(S&&S.camera&&S.camera.isOrthographicCamera); }
+    function _ccToggleOrtho(){
+      var S=window._ccState3d; if(!S||!S.camera) return;
+      var isOrtho=S.camera.isOrthographicCamera;
+      var el2=S.renderer.domElement.parentElement;
+      var aspect=el2.clientWidth/el2.clientHeight;
+      if(isOrtho){
+        var nc=new THREE.PerspectiveCamera(55,aspect,0.01,10000);
+        nc.position.copy(S.camera.position); nc.quaternion.copy(S.camera.quaternion);
+        S.camera=nc; S.orbit.camera=nc; S.orbit.sync(); S.orbit.apply();
+      } else {
+        var dist=S.camera.position.distanceTo(S.orbit.target);
+        var hh=dist*Math.tan(THREE.MathUtils.degToRad(55/2));
+        var nc=new THREE.OrthographicCamera(-hh*aspect,hh*aspect,hh,-hh,-10000,10000);
+        nc.position.copy(S.camera.position); nc.quaternion.copy(S.camera.quaternion);
+        nc.zoom=1; nc.updateProjectionMatrix();
+        S.camera=nc; S.orbit.camera=nc; S.orbit.sync(); S.orbit.apply();
+      }
+      invalidate();
+    }
+    function renderCameraItem(id){
+      switch(id){
+        case 'orbit': return btn({k:'orbit', active:activeMode==='orbit', title:'Orbit (O)', label:'Orbit', icon:I.orbit,
+          onClick:function(){ setMode('orbit'); }});
+        case 'walk': return btn({k:'walk', active:activeMode==='walk', title:'Walk (W)', label:'Walk', icon:I.walk,
+          onClick:function(){ if(activeMode==='walk') clearAllModes(); else setMode('walk'); }});
+        case 'plan': return btn({k:'plan', active:activeMode==='plan', title:'2D plan', label:'2D plan', icon:I.plan,
+          onClick:function(){ if(activeMode==='plan') clearAllModes(); else setMode('plan'); }});
+        case 'ortho': return btn({k:'ortho', active:_ccOrthoActive(), title:'Perspective / Orthographic', label:'Toggle projection',
+          icon:'<path d="M5 5l14 0"/><path d="M5 19l14 0"/><path d="M5 5l0 14"/><path d="M19 5l0 14"/>',
+          onClick:_ccToggleOrtho});
+        default: return null;
+      }
+    }
+    // Whichever of the three mutually-exclusive camera modes is current;
+    // 'ortho' is a standalone toggle, not part of this set, so it's never
+    // the forced-visible activeId — it competes for space like any other
+    // lower-priority item instead of pinning itself permanently visible.
+    var cameraActiveId = activeMode==='walk' ? 'walk' : activeMode==='plan' ? 'plan' : 'orbit';
+
     return html`<div class="cc-top-toolbar" style=${{flexShrink:0,background:'var(--surface)',borderBottom:'1px solid var(--hairline)',position:'relative',zIndex:9}}>
       <div role="toolbar" aria-label="Viewer tools" style=${{
         display:'flex',alignItems:'center',height:44,padding:'0 var(--space-3)',gap:'var(--space-1)',
@@ -35856,35 +35945,14 @@ function startApp() {
           </div>`;
         })()}
         ${div()}
-        <!-- CAMERA -->
-        ${btn({k:'orbit', active:activeMode==='orbit', title:'Orbit (O)', label:'Orbit', icon:I.orbit,
-                onClick:function(){ setMode('orbit'); }})}
-        ${btn({k:'walk',  active:activeMode==='walk',  title:'Walk (W)',  label:'Walk', icon:I.walk,
-                onClick:function(){ if(activeMode==='walk') clearAllModes(); else setMode('walk'); }})}
-        ${btn({k:'plan',  active:activeMode==='plan',  title:'2D plan', label:'2D plan', icon:I.plan,
-                onClick:function(){ if(activeMode==='plan') clearAllModes(); else setMode('plan'); }})}
-        ${btn({k:'ortho', active:function(){var S=window._ccState3d;return !!(S&&S.camera&&S.camera.isOrthographicCamera);}(),
-                title:'Perspective / Orthographic', label:'Toggle projection', icon:'<path d="M5 5l14 0"/><path d="M5 19l14 0"/><path d="M5 5l0 14"/><path d="M19 5l0 14"/>',
-                onClick:function(){
-                  var S=window._ccState3d; if(!S||!S.camera) return;
-                  var isOrtho=S.camera.isOrthographicCamera;
-                  var el2=S.renderer.domElement.parentElement;
-                  var aspect=el2.clientWidth/el2.clientHeight;
-                  if(isOrtho){
-                    var nc=new THREE.PerspectiveCamera(55,aspect,0.01,10000);
-                    nc.position.copy(S.camera.position); nc.quaternion.copy(S.camera.quaternion);
-                    S.camera=nc; S.orbit.camera=nc; S.orbit.sync(); S.orbit.apply();
-                  } else {
-                    var dist=S.camera.position.distanceTo(S.orbit.target);
-                    var h=dist*Math.tan(THREE.MathUtils.degToRad(55/2));
-                    var nc=new THREE.OrthographicCamera(-h*aspect,h*aspect,h,-h,-10000,10000);
-                    nc.position.copy(S.camera.position); nc.quaternion.copy(S.camera.quaternion);
-                    nc.zoom=1; nc.updateProjectionMatrix();
-                    S.camera=nc; S.orbit.camera=nc; S.orbit.sync(); S.orbit.apply();
-                  }
-                  invalidate();
-                }
-        })}
+        <!-- CAMERA — behind ccUiToolbarV2 (REWRITE_UI_PLAN.md Phase 8), this
+             cluster collapses into a "More" popover under a ResponsiveToolGroup
+             instead of relying on the toolbar row's raw horizontal scroll.
+             renderCameraItem is the single source of each button so the
+             flag-on and flag-off paths can never drift out of sync. -->
+        ${toolbarV2On
+          ? html`<${ResponsiveToolGroup} items=${CC_CAMERA_ITEMS} activeId=${cameraActiveId} renderItem=${renderCameraItem} />`
+          : html`${renderCameraItem('orbit')}${renderCameraItem('walk')}${renderCameraItem('plan')}${renderCameraItem('ortho')}`}
         ${div()}
         <!-- NOTES -->
         ${btn({k:'note',  active:activeMode==='note',  title:'Drop a pin (N)', label:'Pin', icon:I.pin,
