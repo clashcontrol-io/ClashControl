@@ -10,7 +10,7 @@
 <!-- BEGIN:project-state -->
 ## Project State
 
-**Version:** 6.1.1 (2026-07-16) — daily-sync was silently crashing on MEMORY.md's own prose (see Known Issues); this line was stale for a month as a direct result, now corrected by hand.
+**Version:** 7.1.1 (2026-07-17) — daily-sync was silently crashing on MEMORY.md's own prose (see Known Issues); this line was stale for a month as a direct result, now corrected by hand.
 
 **Live features (all working):**
 - Mesh-based clash detection engine: AABB broad-phase + BVH tri-tri narrow-phase (Möller–Trumbore), optional `_ccWasmIntersect`/`_ccWasmMinDist` WASM accelerators; default clash matrix (skips same-discipline pairs, per-element classification, never skips same-model self-clashes) + N×N matrix UI; rules (discipline filters, clearance, group-by); soft/clearance via spatial-hash vertex distance; hard clashes now report a **real (approximate) penetration depth** (`_estimatePenetrationDepthM` — vertex-inside-mesh ray-parity + true closest-point-on-surface, MTD-style, browser only so far) instead of the old tri-pair SAT chord length; optional escalation to `local-engine.js` for the **same** tri-tri+BVH algorithm at native speed (Numba JIT + multiprocess + scipy KD-tree) — not solid boolean ops, and the Python side doesn't have the new depth estimator yet either (see Known Issues / Active Work)
@@ -238,6 +238,26 @@ instead; two fully-redundant ones (`assignment-rules-resolver.test.js`, `clash-r
 deleted since `clash-assignment-core.test.js`/`clash-reconciliation-core.test.js` already cover the
 same ground against the module. Verified: 601/601 unit tests, full real-Chromium smoke green with the
 six `_ccClash*Core`/`_ccProjectCodec` modules confirmed loaded and zero leftover status/gate objects.
+
+~~**REWRITE_UI_PLAN.md phases 2–12 executed and merged**
+(PR #689, branch `claude/review-rewrite-ui-plan-tfasne`, 2026-07-17)~~ — windowed conflict list
+(`ccUiWindowedConflicts`), truthful empty/filtered states (`ccUiEmptyStates`), `OperationCenter`
+(`ccUiOperationCenter`), six clash-pipeline cores promoted to `defaultEnabled:true` (with real
+opt-out support added to `safety-migrations.js`), IFC worker protocol versioning + differential
+worker/fallback fingerprint harness, shared focus-trap hook applied to `ShortcutsModal`
+(`ccUiModalV2`), true first-use lazy loading for `pointcloud.js`/`splat.js`, browser RSS
+instrumentation in `perf-local.mjs`/`memory-local.mjs`, and a pre-decode storey-scope chooser
+(`ccUiStoreyChooser`). 605/605 unit tests + full real-Chromium smoke green; a CodeQL
+`js/path-injection` finding on the new differential-harness test server was fixed (containment
+guard + loopback-only bind, matching sibling harnesses) before merge. **Not done: Phase 8's
+toolbar retrofit** — a live `ResponsiveToolGroup` integration into the toolbar's CAMERA cluster
+hit a real flexbox shrink/overflow bug (confirmed via `getBoundingClientRect`, genuine DOM overlap
+with an adjacent button) that wasn't resolved in time, so the integration was reverted rather than
+shipped broken. The component itself (`ResponsiveToolGroup`, its pure fitting algorithm, 9 passing
+unit tests) is still in `index.html` as unintegrated infrastructure — pick this up as its own
+follow-up rather than re-deriving it. `REWRITE_UI_PLAN.md` itself was deleted after this merge
+(11/12 items done, content preserved in the PR #688/#689 history) — this paragraph is now the
+only record of the outstanding toolbar item.
 
 ~~**External (GPT) rewrite package reviewed, adjusted, and merged + UI plan critically consolidated**
 (branch `claude/review-rewrite-ui-plan-tfasne`, 2026-07-16)~~ — the user supplied a GPT-authored
@@ -1238,6 +1258,23 @@ On branch `claude/code-review-quality-IjbhT` (2026-05-28) — code-review qualit
 <!-- END:active-work -->
 
 <!-- BEGIN:session-log -->
+### 2026-07-17
+**Summary:** 7 commit(s) landed (no AI summary — set ANTHROPIC_API_KEY secret for richer entries).
+**Changed:** see commits
+**Notable:** —
+
+<details><summary>Commits</summary>
+
+- 2caee59 chore: bump version to 7.1.1
+- c68caf5 Wire the CAMERA cluster's ResponsiveToolGroup into TopToolbar (ccUiToolbarV2)
+- dba7018 chore: bump version to 7.1.0
+- 59c8368 Execute REWRITE_UI_PLAN.md phases 2-12 (windowed list, empty states, operation center, promoted cores, more)
+- 7497334 chore: bump version to 7.0.0
+- 2c3b74a Adopt reviewed runtime/loader rewrite tranche + consolidated rewrite/UI plan
+- 018c679 chore: daily memory sync 2026-07-16
+
+</details>
+
 ### 2026-07-16
 **Summary:** 9 commit(s) landed (no AI summary — set ANTHROPIC_API_KEY secret for richer entries).
 **Changed:** see commits
@@ -2143,20 +2180,12 @@ On branch `claude/code-review-quality-IjbhT` (2026-05-28) — code-review qualit
 - 765c2b2 chore: daily memory sync 2026-05-17
 
 </details>
-
-### 2026-05-17
-**Summary:** 1 commit(s) landed (no AI summary — set ANTHROPIC_API_KEY secret for richer entries).
-**Changed:** see commits
-**Notable:** —
-
-<details><summary>Commits</summary>
-
-- 15546dc chore: daily memory sync 2026-05-16
-
-</details>
 <!-- END:session-log -->
 
 <!-- BEGIN:cleanup-log -->
+### 2026-07-17 — pruned session entry 2026-05-17
+**Reason:** Entry is older than 60 days.
+
 ### 2026-07-16 — pruned session entry 2026-05-16
 **Reason:** Entry is older than 60 days.
 

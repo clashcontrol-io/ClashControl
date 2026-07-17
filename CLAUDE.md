@@ -100,7 +100,6 @@ There are ~280 `window._cc*` globals — do not add to the sprawl casually.
 ```
 index.html                  — The core application (UI, state, 3D viewer, clash engine)
 cc-runtime.js               — No-build runtime module: service registry, deduplicating addon script loader, load-session coordinator (UMD; also consumed by node:test)
-REWRITE_UI_PLAN.md          — Critical review of the external runtime-rewrite + UI plans; consolidated forward roadmap
 version.json                — Current version numbers
 CHANGELOG.md                — Version history (auto-updated on commit)
 README.md                   — Project readme with version badge
