@@ -1,5 +1,8 @@
 # Changelog
 
+## v7.1.1 (2026-07-17)
+- Wire the CAMERA cluster's ResponsiveToolGroup into TopToolbar (ccUiToolbarV2)
+
 ## v7.1.0 (2026-07-17)
 - Execute REWRITE_UI_PLAN.md phases 2-12 (windowed list, empty states, operation center, promoted cores, more)
 
