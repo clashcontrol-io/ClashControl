@@ -10,7 +10,7 @@
 <!-- BEGIN:project-state -->
 ## Project State
 
-**Version:** 7.1.1 (2026-07-17) — daily-sync was silently crashing on MEMORY.md's own prose (see Known Issues); this line was stale for a month as a direct result, now corrected by hand.
+**Version:** 7.2.4 (2026-07-18) — daily-sync was silently crashing on MEMORY.md's own prose (see Known Issues); this line was stale for a month as a direct result, now corrected by hand.
 
 **Live features (all working):**
 - Mesh-based clash detection engine: AABB broad-phase + BVH tri-tri narrow-phase (Möller–Trumbore), optional `_ccWasmIntersect`/`_ccWasmMinDist` WASM accelerators; default clash matrix (skips same-discipline pairs, per-element classification, never skips same-model self-clashes) + N×N matrix UI; rules (discipline filters, clearance, group-by); soft/clearance via spatial-hash vertex distance; hard clashes now report a **real (approximate) penetration depth** (`_estimatePenetrationDepthM` — vertex-inside-mesh ray-parity + true closest-point-on-surface, MTD-style, browser only so far) instead of the old tri-pair SAT chord length; optional escalation to `local-engine.js` for the **same** tri-tri+BVH algorithm at native speed (Numba JIT + multiprocess + scipy KD-tree) — not solid boolean ops, and the Python side doesn't have the new depth estimator yet either (see Known Issues / Active Work)
@@ -1575,6 +1575,34 @@ On branch `claude/code-review-quality-IjbhT` (2026-05-28) — code-review qualit
 <!-- END:active-work -->
 
 <!-- BEGIN:session-log -->
+### 2026-07-18
+**Summary:** 18 commit(s) landed (no AI summary — set ANTHROPIC_API_KEY secret for richer entries).
+**Changed:** see commits
+**Notable:** —
+
+<details><summary>Commits</summary>
+
+- 55797c1 docs: add git/PR workflow convention to CLAUDE.md
+- 877ab1b chore: bump version to 7.2.4
+- 8ce7658 Large-model plan Phases 3-7 checked against history; Phase 4 candidate warning
+- c42b0d6 chore: bump version to 7.2.3
+- 0184791 Large-model plan Phase 2, adjusted by project history: storey-scope auto-complete
+- 78f4a27 chore: bump version to 7.2.2
+- 491f6d7 Browser-first large-model plan: verification + Phase 1 (harness extension + IFC worker protocol v2)
+- 23bde34 chore: bump version to 7.2.1
+- 3d335bf External-review follow-up: grouped-list memoization, storey-scan completeness, large-model profiling correction (#693)
+- ab37da3 chore: bump version to 7.2.0
+- 7d0001c Fix external-review findings, graduate six clash cores, reducer decomposition slice 1, tabbed Settings (#692)
+- d917551 Remove REWRITE_UI_PLAN.md now that phases 2-12 are executed and merged (#690)
+- fac3b9f chore: daily memory sync 2026-07-17
+- 2caee59 chore: bump version to 7.1.1
+- c68caf5 Wire the CAMERA cluster's ResponsiveToolGroup into TopToolbar (ccUiToolbarV2)
+- dba7018 chore: bump version to 7.1.0
+- 59c8368 Execute REWRITE_UI_PLAN.md phases 2-12 (windowed list, empty states, operation center, promoted cores, more)
+- 7497334 chore: bump version to 7.0.0
+
+</details>
+
 ### 2026-07-17
 **Summary:** 7 commit(s) landed (no AI summary — set ANTHROPIC_API_KEY secret for richer entries).
 **Changed:** see commits
@@ -2486,20 +2514,12 @@ On branch `claude/code-review-quality-IjbhT` (2026-05-28) — code-review qualit
 - 2847951 chore: daily memory sync 2026-05-18
 
 </details>
-
-### 2026-05-18
-**Summary:** 1 commit(s) landed (no AI summary — set ANTHROPIC_API_KEY secret for richer entries).
-**Changed:** see commits
-**Notable:** —
-
-<details><summary>Commits</summary>
-
-- 765c2b2 chore: daily memory sync 2026-05-17
-
-</details>
 <!-- END:session-log -->
 
 <!-- BEGIN:cleanup-log -->
+### 2026-07-18 — pruned session entry 2026-05-18
+**Reason:** Entry is older than 60 days.
+
 ### 2026-07-17 — pruned session entry 2026-05-17
 **Reason:** Entry is older than 60 days.
 
