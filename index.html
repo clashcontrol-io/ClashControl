@@ -663,6 +663,7 @@
 <script src="clash-reconciliation-core.js" defer></script>
 <script src="clash-classification-core.js" defer></script>
 <script src="project-codec.js" defer></script>
+<script src="storage-core.js" defer></script>
 <script>
 window.addEventListener('error', function(e) {
   console.error('[ClashControl] Uncaught error:', e.error || e.message);
@@ -1986,6 +1987,16 @@ function startApp() {
   }
 
   // ── IndexedDB persistence for IFC files ──────────────────────── INTERNALS.md §6
+  // Size stamping: every idbSave* stamps a `bytes` estimate on the record so
+  // the storage report (and later, eviction planning) never has to re-walk
+  // buffers. Estimation lives in storage-core.js; guard because the script
+  // tag can fail without taking persistence down with it.
+  function _ccEstimateBytes(v) {
+    try {
+      if (window._ccStorageCore) return window._ccStorageCore.estimateRecordBytes(v);
+    } catch (_) {}
+    return 0;
+  }
   var IDB_NAME = 'ClashControlFiles';
   var IDB_STORE = 'ifcFiles';
   var IDB_PROJSTORE = 'projects';
@@ -2029,6 +2040,7 @@ function startApp() {
           else if (prev.sidecar) record.sidecar = prev.sidecar;
           if (meta) record.meta = meta;
           else if (prev.meta) record.meta = prev.meta;
+          record.bytes = _ccEstimateBytes(record);
           store.put(record);
         };
         tx.oncomplete = function() { resolve(); };
@@ -2102,7 +2114,9 @@ function startApp() {
     return _openIDB().then(function(db) {
       return new Promise(function(resolve, reject) {
         var tx = db.transaction(IDB_PROJSTORE, 'readwrite');
-        tx.objectStore(IDB_PROJSTORE).put(Object.assign({id:projectId||'default'}, data));
+        var record = Object.assign({id:projectId||'default'}, data);
+        record.bytes = _ccEstimateBytes(record);
+        tx.objectStore(IDB_PROJSTORE).put(record);
         tx.oncomplete = function() { resolve(); };
         tx.onerror = function(e) { reject(e.target.error); };
       });
@@ -2151,6 +2165,7 @@ function startApp() {
         var tx = db.transaction(IDB_GEOCACHE, 'readwrite');
         var record = candidate ? {id:cacheKey, sourceId:fileId, schema:8,
           data:data, savedAt:Date.now()} : {id:fileId, data:data, savedAt:Date.now()};
+        record.bytes = _ccEstimateBytes(record);
         tx.objectStore(IDB_GEOCACHE).put(record);
         tx.oncomplete = function() { resolve(); };
         tx.onerror = function(e) { reject(e.target.error); };
@@ -2228,6 +2243,82 @@ function startApp() {
       });
     }).catch(function(e) { /* silent — cleanup is best-effort */ });
   }
+
+  // ── Storage report (quota + per-project inventory) ──────────────
+  // Reads store metadata (never keeps buffers), pairs it with
+  // navigator.storage.estimate()/persisted(), and shapes it through
+  // storage-core's buildStorageReport. On-demand only (Settings, API).
+  window._ccStorageReport = function() {
+    if (!window._ccStorageCore) return Promise.resolve(null);
+    var estP = (navigator.storage && navigator.storage.estimate) ?
+      navigator.storage.estimate().catch(function(){ return null; }) : Promise.resolve(null);
+    var perP = (navigator.storage && navigator.storage.persisted) ?
+      navigator.storage.persisted().catch(function(){ return null; }) : Promise.resolve(null);
+    function readAll(db, storeName) {
+      return new Promise(function(resolve) {
+        try {
+          var tx = db.transaction(storeName, 'readonly');
+          var req = tx.objectStore(storeName).getAll();
+          req.onsuccess = function() { resolve(req.result || []); };
+          req.onerror = function() { resolve([]); };
+        } catch (e) { resolve([]); }
+      });
+    }
+    return _openIDB().then(function(db) {
+      return Promise.all([readAll(db, IDB_STORE), readAll(db, IDB_GEOCACHE), readAll(db, IDB_PROJSTORE)]);
+    }).then(function(stores) {
+      // Map to metadata immediately so the full records (buffers, geometry
+      // payloads) don't outlive this tick. Old records predate `bytes`
+      // stamping — estimate those on the fly.
+      var ifcFiles = stores[0].map(function(f) {
+        return { id: f.id, name: f.name, projectId: f.projectId || 'default',
+          savedAt: f.savedAt || 0, bytes: f.bytes || _ccEstimateBytes(f) };
+      });
+      var geoCache = stores[1].map(function(g) {
+        return { id: g.id, sourceId: g.sourceId, savedAt: g.savedAt || 0,
+          bytes: g.bytes || _ccEstimateBytes(g) };
+      });
+      var projects = stores[2].map(function(p) {
+        return { id: p.id, bytes: p.bytes || _ccEstimateBytes(p) };
+      });
+      var localEntries = [];
+      try {
+        for (var i = 0; i < localStorage.length; i++) {
+          var k = localStorage.key(i);
+          localEntries.push({ key: k, value: localStorage.getItem(k) || '' });
+        }
+      } catch (e) {}
+      return Promise.all([estP, perP]).then(function(env) {
+        var report = window._ccStorageCore.buildStorageReport({
+          estimate: env[0], persisted: env[1],
+          ifcFiles: ifcFiles, geoCache: geoCache, projects: projects,
+          localEntries: localEntries
+        });
+        // Resolve project display names + active flag for the UI.
+        var names = {};
+        getProjects().forEach(function(p) { names[p.id] = p.name; });
+        var activeId = getActiveProjectId();
+        report.perProject.forEach(function(p) {
+          p.name = names[p.projectId] || p.projectId;
+          p.active = p.projectId === activeId;
+        });
+        return report;
+      });
+    }).catch(function(e) { console.warn('Storage report failed:', e); return null; });
+  };
+
+  // Drop every geometry-cache entry. Safe by design: the cache is derived
+  // data — the next model load cold-parses the IFC and rebuilds it.
+  window._ccClearGeoCache = function() {
+    return _openIDB().then(function(db) {
+      return new Promise(function(resolve, reject) {
+        var tx = db.transaction(IDB_GEOCACHE, 'readwrite');
+        tx.objectStore(IDB_GEOCACHE).clear();
+        tx.oncomplete = function() { resolve(); };
+        tx.onerror = function(e) { reject(e.target.error); };
+      });
+    }).catch(function(e) { console.warn('Failed to clear geo cache:', e); });
+  };
 
   // ── Geometry quantization helpers (16-bit positions, 8-bit normals) ── INTERNALS.md §6
   function _quantizePositions(posF32, bbox) {
@@ -10392,6 +10483,10 @@ function startApp() {
           });
         },
         benchEngine:      function(pairLimit){ if (window._ccBenchEngine) return window._ccBenchEngine(pairLimit); },
+        storage: {
+          report:        function(){ return window._ccStorageReport ? window._ccStorageReport() : Promise.resolve(null); },
+          clearGeoCache: function(){ return window._ccClearGeoCache ? window._ccClearGeoCache() : Promise.resolve(); }
+        },
         clashReport:      function(){ if (window._ccClashReport && window._ccLatestState) return window._ccClashReport(window._ccLatestState); },
         addons: {
           register: function(def){ if (window._ccRegisterAddon) return window._ccRegisterAddon(def); },
@@ -26691,6 +26786,7 @@ function startApp() {
     var stRunN = useState(function(){try{return JSON.parse(localStorage.getItem('cc_detection_runs')||'[]').length;}catch(e){return 0;}}), runN=stRunN[0], setRunN=stRunN[1];
     var stDelConfirm = useState(false), showDelConfirm=stDelConfirm[0], setShowDelConfirm=stDelConfirm[1];
     var stFlash = useState(false), sentFlash=stFlash[0], setSentFlash=stFlash[1];
+    var stStorage = useState(null), storageReport=stStorage[0], setStorageReport=stStorage[1];
     var SETTINGS_TABS = [
       {id:'general', label:'General'},
       {id:'measurement', label:'Measurement'},
@@ -26702,6 +26798,18 @@ function startApp() {
       {id:'advanced', label:'Advanced'},
     ];
     var stTab = useState('general'), activeTab=stTab[0], setActiveTab=stTab[1];
+
+    // Storage usage is measured on demand — only when the Privacy & Data
+    // tab is open (the report walks IndexedDB metadata + localStorage).
+    useEffect(function(){
+      if (activeTab !== 'privacy' || storageReport) return;
+      var live = true;
+      if (window._ccStorageReport) window._ccStorageReport().then(function(r){ if (live) setStorageReport(r || false); });
+      return function(){ live = false; };
+    }, [activeTab]);
+    function refreshStorageReport(){
+      if (window._ccStorageReport) window._ccStorageReport().then(function(r){ setStorageReport(r || false); });
+    }
 
     useEffect(function(){
       function onKey(e){if(e.key==='Escape')d({t:A.SETTINGS,v:false});}
@@ -26963,6 +27071,42 @@ function startApp() {
               }} style=${{...S_BTN,fontSize:'0.8rem',padding:'.3rem .6rem',background:'#ef4444',color:'#fff',border:'none'}}>Confirm — delete all?</button>`}
             </div>
           </div>`;
+        }()}
+        <div style=${SEC}>Local storage</div>
+        ${storageReport===null && html`<div style=${TSUB}>Measuring storage…</div>`}
+        ${storageReport===false && html`<div style=${TSUB}>Storage report unavailable in this browser.</div>`}
+        ${storageReport && function(){
+          var fmt = window._ccStorageCore ? window._ccStorageCore.formatBytes : function(n){ return n+' B'; };
+          var quotaPct = (storageReport.quota && storageReport.usage != null) ?
+            Math.min(100, Math.round(storageReport.usage / storageReport.quota * 100)) : null;
+          return html`<${React.Fragment}>
+            <div style=${{padding:'.4rem 0',borderBottom:'1px solid var(--border-subtle)'}}>
+              <div style=${{display:'flex',justifyContent:'space-between',fontSize:'var(--text-xs)',color:'var(--text-muted)',marginBottom:'.35rem'}}>
+                <span>Browser storage: ${fmt(storageReport.usage)} of ${fmt(storageReport.quota)}${quotaPct!=null?' ('+quotaPct+'%)':''}</span>
+                <span>${storageReport.persisted===true?'protected from eviction':storageReport.persisted===false?'evictable under pressure':''}</span>
+              </div>
+              ${quotaPct!=null && html`<div style=${{height:6,borderRadius:3,background:'var(--bg-secondary)',overflow:'hidden'}}>
+                <div style=${{height:'100%',width:quotaPct+'%',background:quotaPct>80?'var(--color-danger)':quotaPct>60?'var(--color-warning)':'var(--accent)',transition:'width .3s'}}></div>
+              </div>`}
+            </div>
+            ${storageReport.perProject.map(function(p){
+              return html`<div key=${p.projectId} style=${TROW}>
+                <div>
+                  <div style=${TLBL}>${p.name}${p.active?html`<span style=${{fontSize:'var(--text-xs)',color:'var(--accent)',marginLeft:'.4rem'}}>active</span>`:''}</div>
+                  <div style=${TSUB}>${p.fileCount} model${p.fileCount!==1?'s':''} · ${fmt(p.ifcBytes)} files · ${fmt(p.geoBytes)} geometry cache · ${fmt(p.sessionBytes)} session</div>
+                </div>
+                <span style=${{fontFamily:'var(--font-mono)',fontSize:'var(--text-sm)',color:'var(--text-secondary)',flexShrink:0}}>${fmt(p.totalBytes)}</span>
+              </div>`;
+            })}
+            <div style=${{...TROW,borderBottom:'none'}}>
+              <div>
+                <div style=${TLBL}>Geometry cache</div>
+                <div style=${TSUB}>Decoded geometry for fast project switching — ${fmt(storageReport.idb.geoBytes)}. Safe to clear; models re-parse on next load.</div>
+              </div>
+              <button onClick=${function(){ if(window._ccClearGeoCache) window._ccClearGeoCache().then(refreshStorageReport); }}
+                style=${{...S_BTN,fontSize:'0.8rem',padding:'.3rem .6rem',background:'var(--bg-secondary)',color:'var(--text-secondary)',border:'1px solid var(--border)',flexShrink:0}}>Clear cache</button>
+            </div>
+          </${React.Fragment}>`;
         }()}
         </${React.Fragment}>`}
         ${activeTab==='shared' && html`<${React.Fragment}>

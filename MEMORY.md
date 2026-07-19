@@ -185,6 +185,14 @@ Things to be careful about. Do not remove without a good reason — add a note i
 Update this section at the start and end of each session.
 Mark completed items with ~~strikethrough~~ and date, then let the daily sync archive them.
 
+**Storage/memory optimization campaign (Loam-inspired "explicit retention"), branch
+`claude/clashcontrol-memory-optimization-jht2yy`, started 2026-07-19.** Phased: P1 accounting
+(`storage-core.js` + `navigator.storage.estimate()` report + Settings UI), P2 IDB budget/eviction
+(geoCache auto-GC, ifcFiles demote-confirm), P3a flagged autosave dirty-gate, P4 localStorage
+hygiene (byte-aware setter, deleteProject consolidation, orphan-key prune), P5a persist-strip of
+`_trainFV`/`aiSignals`, P6 flagged detection-cache tuning, P7 storage registry + wiring test.
+Plan reviewed against #683/#692 flag conventions and REDUCER_DECOMPOSITION_PLAN.md.
+
 ~~**Browser-first large-model plan, Phases 3-7 checked against project history and adjusted;
 Phase 4 partial slice shipped (candidate-count warning)** (branch `claude/cc-claims-review-myhp9f`,
 2026-07-17)~~ — same-session follow-up completing the "check the whole plan against history"
