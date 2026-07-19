@@ -19,9 +19,14 @@
   // entity no longer exists (orphans). tests/storage-registry-wiring.test.js
   // fails when a new cc_* key or IDB store is added without a row here.
   var IDB_REGISTRY = [
-    { store: 'ifcFiles', retention: 'source',  scope: 'per-project' },
-    { store: 'projects', retention: 'source',  scope: 'per-project' },
-    { store: 'geoCache', retention: 'derived', scope: 'per-file' }
+    { store: 'ifcFiles', db: 'ClashControlFiles', retention: 'source',  scope: 'per-project' },
+    { store: 'projects', db: 'ClashControlFiles', retention: 'source',  scope: 'per-project' },
+    { store: 'geoCache', db: 'ClashControlFiles', retention: 'derived', scope: 'per-file' },
+    // One-shot file handoff between / and /tour — written by one page,
+    // consumed and cleared by the next load.
+    { store: 'pending',  db: 'cc-handoff', retention: 'decay', scope: 'global' },
+    // shared-project's persisted FileSystem directory handle.
+    { store: 'handles',  db: 'cc_shared', retention: 'source', scope: 'global' }
   ];
 
   var LS_REGISTRY = [

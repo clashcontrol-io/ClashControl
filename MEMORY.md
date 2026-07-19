@@ -185,13 +185,24 @@ Things to be careful about. Do not remove without a good reason — add a note i
 Update this section at the start and end of each session.
 Mark completed items with ~~strikethrough~~ and date, then let the daily sync archive them.
 
-**Storage/memory optimization campaign (Loam-inspired "explicit retention"), branch
-`claude/clashcontrol-memory-optimization-jht2yy`, started 2026-07-19.** Phased: P1 accounting
-(`storage-core.js` + `navigator.storage.estimate()` report + Settings UI), P2 IDB budget/eviction
-(geoCache auto-GC, ifcFiles demote-confirm), P3a flagged autosave dirty-gate, P4 localStorage
-hygiene (byte-aware setter, deleteProject consolidation, orphan-key prune), P5a persist-strip of
-`_trainFV`/`aiSignals`, P6 flagged detection-cache tuning, P7 storage registry + wiring test.
-Plan reviewed against #683/#692 flag conventions and REDUCER_DECOMPOSITION_PLAN.md.
+~~**Storage/memory optimization campaign (Loam-inspired "explicit retention"), branch
+`claude/clashcontrol-memory-optimization-jht2yy`)** (2026-07-19)~~ — all seven phases landed:
+P1 `storage-core.js` (UMD, registry with explicit retention classes source/derived/decay/prefs,
+byte estimation, report shaping) + `_ccStorageReport()`/`ClashControl.storage.*` + Settings
+Privacy & Data "Local storage" section; P2 budget enforcement (`computeBudget` = min(pref, 80%
+quota), auto-GC of the derived geoCache tier oldest/cold-first, ifcFiles only ever
+user-confirmed proposals, QuotaExceeded evict-and-retry on both IDB writers); P3a
+`storageAutosaveGate` flag (identity-memo skip of clean 2s autosaves; pagehide/switch flush
+forced); P4 `_ccLsSet` quota-aware setter + cc_denied_clashes cap (500) + one
+`_ccDeleteProjectStorage` (both deleteProject copies orphaned chat keys) + boot prune of expired
+typePairMemo/orphan chat keys + revit-bridge hash-cache 20k persist cap; P5a `_trainFV` stripped
+from IDB + .ccproject persist (NOT `_pairResultCache` — changeAware re-emits cached records
+verbatim, slimming them changes detection output); P6 `storageDetectCaches` flag (deviceMemory-
+informed BVH LRU cap where performance.memory is absent — was flat 300 on Safari/FF — plus
+85%-heap between-chunk LRU halving; element-major candidate reordering NOT done, needs profile
+timings first) + unflagged `_flushGeoCache` stale-LRU-key leak fix; P7
+`tests/storage-registry-wiring.test.js` pins every cc_* key + IDB store to the registry. Suite
+640 green; browser smoke extended (storage report + both new flags opted in) and passing.
 
 ~~**Browser-first large-model plan, Phases 3-7 checked against project history and adjusted;
 Phase 4 partial slice shipped (candidate-count warning)** (branch `claude/cc-claims-review-myhp9f`,
