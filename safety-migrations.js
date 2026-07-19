@@ -28,7 +28,12 @@
     ccUiOperationCenter: Object.freeze({ fallback: 'legacy', defaultEnabled: false }),
     ccUiToolbarV2: Object.freeze({ fallback: 'legacy', defaultEnabled: false }),
     ccUiModalV2: Object.freeze({ fallback: 'legacy', defaultEnabled: false }),
-    ccUiStoreyChooser: Object.freeze({ fallback: 'legacy', defaultEnabled: false })
+    ccUiStoreyChooser: Object.freeze({ fallback: 'legacy', defaultEnabled: false }),
+    // Storage-optimization campaign: skip the debounced project autosave
+    // when no serialized state slice changed identity since the last
+    // successful write. Fallback = the current always-write behaviour; the
+    // pagehide/project-switch flushes bypass the gate entirely (force).
+    storageAutosaveGate: Object.freeze({ fallback: 'always-write', defaultEnabled: false })
   });
   var diagnostics = [];
 

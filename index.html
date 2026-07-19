@@ -15810,8 +15810,32 @@ function startApp() {
     return undefined;
   }
 
-  function _saveCurrentProjectData(s) {
+  // Identity memo for the flagged autosave gate (storageAutosaveGate).
+  // Reducer state is immutable — a slice that still has the same object
+  // identity as at the last successful write cannot have changed, so a
+  // fully-clean snapshot needs no write. Any slice missing from the memo
+  // (first save, project switch, flag just enabled) counts as dirty, and
+  // the pagehide/switch flush paths pass force to bypass the gate — a
+  // false skip there would silently lose session data.
+  var _ccAutosaveMemo = null;
+  var _AUTOSAVE_SLICES = ['clashes','issues','rules','floors','viewpoints','measurements','filters',
+    'lastDeltaSummary','runHistory','sheets','activeSheetId','sheetPins','markups',
+    'selectionSets','searchSets','assignmentRules','models'];
+
+  function _saveCurrentProjectData(s, opts) {
     var pid = s.activeProject||'default';
+    var force = !!(opts && opts.force);
+    var gateOn = (typeof window !== 'undefined') &&
+      !!(window._ccSafetyMigrations && window._ccSafetyMigrations.isEnabled('storageAutosaveGate'));
+    if (!force && gateOn && _ccAutosaveMemo && _ccAutosaveMemo.pid === pid) {
+      var dirty = false;
+      for (var si = 0; si < _AUTOSAVE_SLICES.length; si++) {
+        if (s[_AUTOSAVE_SLICES[si]] !== _ccAutosaveMemo.slices[_AUTOSAVE_SLICES[si]]) { dirty = true; break; }
+      }
+      if (!dirty) return Promise.resolve('unchanged');
+    }
+    var snap = {};
+    _AUTOSAVE_SLICES.forEach(function(k){ snap[k] = s[k]; });
     var data = _cloneSafe({
       clashes:s.clashes, issues:s.issues, rules:s.rules, floors:s.floors,
       viewpoints:(s.viewpoints||[]).map(function(v){return Object.assign({},v,{snapshot:undefined})}),
@@ -15830,7 +15854,10 @@ function startApp() {
       selectionSets:s.selectionSets||[], searchSets:s.searchSets||[], assignmentRules:s.assignmentRules||[],
       modelMeta:s.models.map(function(m){return {id:m.id,name:m.name,discipline:m.discipline,color:m.color,visible:m.visible,tag:m.tag||'',georef:m.georef||null};})
     }, 0);
-    return idbSaveProjectData(pid, data);
+    return idbSaveProjectData(pid, data).then(function(r){
+      _ccAutosaveMemo = { pid: pid, slices: snap };
+      return r;
+    });
   }
 
   // ── Project file restoration (standalone, usable from App) ─────
@@ -15977,7 +16004,7 @@ function startApp() {
 
   function _switchProject(newProjId, s, d) {
     d({t:A.SWITCHING_PROJECT, v:true});
-    _saveCurrentProjectData(s);
+    _saveCurrentProjectData(s, {force:true});
     if(window._ccClearScene) window._ccClearScene();
     if(window._ccRemoveActiveClashMarker) window._ccRemoveActiveClashMarker();
     if(_clearClashMarkers) _clearClashMarkers();
@@ -36787,7 +36814,7 @@ function startApp() {
     useEffect(function(){
       function flush() {
         var cur = _latestSRef.current;
-        if(_hasProjectData(cur)) _saveCurrentProjectData(cur);
+        if(_hasProjectData(cur)) _saveCurrentProjectData(cur, {force:true});
         _flushAllViaBeacon(cur && cur.models || []);
         // Persist walk-mode pose so a hard refresh drops back into walk mode at
         // the same spot. Cleared on walk exit; consumed by the boot restore.

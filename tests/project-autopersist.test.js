@@ -22,13 +22,32 @@ function extractFn(name) {
   return src.slice(start, end);
 }
 
-function run(s) {
-  const bundle = extractFn('_cloneSafe') + '\n' + extractFn('_saveCurrentProjectData');
-  let savedPid = null, savedData = null;
-  const idbSaveProjectData = (pid, data) => { savedPid = pid; savedData = data; return Promise.resolve(); };
-  new Function('idbSaveProjectData', 's', bundle + '; _saveCurrentProjectData(s);')(idbSaveProjectData, s);
-  return { pid: savedPid, data: savedData };
+// The autosave-gate memo lives in two module-level vars next to the
+// function — extract them too so the bundle is self-contained.
+function extractGateDecls() {
+  const start = src.indexOf('  var _ccAutosaveMemo');
+  assert.ok(start !== -1, '_ccAutosaveMemo declaration not found');
+  const end = src.indexOf('];', start) + 2;
+  return src.slice(start, end);
 }
+
+function makeRunner(windowStub) {
+  const bundle = extractGateDecls() + '\n' + extractFn('_cloneSafe') + '\n' + extractFn('_saveCurrentProjectData');
+  const calls = [];
+  const idbSaveProjectData = (pid, data) => { calls.push({ pid, data }); return Promise.resolve(); };
+  const save = new Function('idbSaveProjectData', 'window', bundle + '; return _saveCurrentProjectData;')(
+    idbSaveProjectData, windowStub);
+  return { save, calls };
+}
+
+function run(s) {
+  const r = makeRunner(undefined);
+  r.save(s);
+  const last = r.calls[r.calls.length - 1] || { pid: null, data: null };
+  return { pid: last.pid, data: last.data };
+}
+
+const GATE_ON_WINDOW = { _ccSafetyMigrations: { isEnabled: (f) => f === 'storageAutosaveGate' } };
 
 function baseState(extra) {
   return Object.assign({
@@ -64,4 +83,48 @@ test('pre-existing fields (clashes, rules, viewpoints snapshot stripping) are un
   assert.equal(pid, 'proj2');
   assert.deepEqual(data.clashes, [{ id: 'c1' }]);
   assert.equal(data.viewpoints[0].snapshot, undefined, 'snapshots are still stripped before IDB persist');
+});
+
+// ── storageAutosaveGate (flagged, default-off) ─────────────────────
+
+test('gate ON: a fully identity-unchanged state skips the second write', async () => {
+  const r = makeRunner(GATE_ON_WINDOW);
+  const s = baseState({});
+  await r.save(s);
+  const verdict = await r.save(s);
+  assert.equal(r.calls.length, 1, 'second save with unchanged slices must not write');
+  assert.equal(verdict, 'unchanged');
+});
+
+test('gate ON: any changed slice identity writes again', async () => {
+  const r = makeRunner(GATE_ON_WINDOW);
+  const s = baseState({});
+  await r.save(s);
+  await r.save(Object.assign({}, s, { clashes: [{ id: 'c-new' }] }));
+  assert.equal(r.calls.length, 2);
+  assert.deepEqual(r.calls[1].data.clashes, [{ id: 'c-new' }]);
+});
+
+test('gate ON: a different project id never reuses the memo', async () => {
+  const r = makeRunner(GATE_ON_WINDOW);
+  const s = baseState({});
+  await r.save(s);
+  await r.save(Object.assign({}, s, { activeProject: 'proj-other' }));
+  assert.equal(r.calls.length, 2);
+});
+
+test('gate ON: force bypasses the gate (the pagehide/switch flush path)', async () => {
+  const r = makeRunner(GATE_ON_WINDOW);
+  const s = baseState({});
+  await r.save(s);
+  await r.save(s, { force: true });
+  assert.equal(r.calls.length, 2, 'forced flush always writes');
+});
+
+test('gate OFF (default) and no window: every save writes, as before', async () => {
+  const r = makeRunner(undefined);
+  const s = baseState({});
+  await r.save(s);
+  await r.save(s);
+  assert.equal(r.calls.length, 2);
 });
