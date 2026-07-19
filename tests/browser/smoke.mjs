@@ -108,7 +108,7 @@ try {
   // correctness is exercised unconditionally by the rest of this smoke
   // (model load -> discipline/identity classify it, detection -> matrix +
   // reconciliation + classification run, save/load -> projectCodec runs).
-  await page.goto('http://127.0.0.1:8765/?ccSafety=concurrencyV2,geoCacheV8,batchedSectionsV2,rendererV2', { waitUntil: 'domcontentloaded' });
+  await page.goto('http://127.0.0.1:8765/?ccSafety=concurrencyV2,geoCacheV8,batchedSectionsV2,rendererV2,storageAutosaveGate,storageDetectCaches', { waitUntil: 'domcontentloaded' });
 
   // App mounted (CDN deps + main script executed)
   await page.waitForFunction(
@@ -437,6 +437,30 @@ try {
   if (!lazyAddon.placeholder || lazyAddon.beforeScripts !== 0 || lazyAddon.afterScripts !== 1 || !lazyAddon.registered)
     fail('optional integration did not follow placeholder → one script → registered lifecycle');
   console.log('SMOKE OK — inactive integration code loads once, only on demand');
+
+  // ── Storage accounting: the report reflects the models this run loaded,
+  // classifies every cc_* key, and budget enforcement is a no-op on a
+  // healthy (under-budget) session.
+  const storage = await page.evaluate(async () => {
+    const report = await window.ClashControl.storage.report();
+    const plan = await window.ClashControl.storage.enforceBudget();
+    return {
+      hasReport: !!report,
+      projects: report ? report.perProject.length : 0,
+      idbBytes: report ? report.idb.totalBytes : 0,
+      unregistered: report ? report.localStorage.unregistered : ['<no report>'],
+      planOver: plan ? plan.overBy : 0,
+      planActions: plan ? plan.auto.length + plan.proposals.length : 0,
+    };
+  });
+  if (!storage.hasReport) fail('storage report unavailable');
+  if (storage.projects < 1 || storage.idbBytes <= 0)
+    fail('storage report does not reflect the loaded session (projects=' + storage.projects + ', idbBytes=' + storage.idbBytes + ')');
+  if (storage.unregistered.length)
+    fail('unregistered localStorage keys in the live session: ' + storage.unregistered.join(', '));
+  if (storage.planOver !== 0 || storage.planActions !== 0)
+    fail('budget enforcement was not a no-op on a healthy session (overBy=' + storage.planOver + ', actions=' + storage.planActions + ')');
+  console.log('SMOKE OK — storage report reflects the session; every key registered; budget enforcement idle when healthy');
 
   if (errors.length) fail('browser emitted uncaught page or console errors');
   console.log('SMOKE OK — browser completed with no uncaught page or console errors');

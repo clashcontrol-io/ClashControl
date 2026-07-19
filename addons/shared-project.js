@@ -234,7 +234,10 @@
       changelog: state.changelog || [],
       comments: state.comments || []
     };
-    var json = JSON.stringify(data, null, 2);
+    // _trainFV is the per-run training vector — rebuilt on every detection
+    // run, meaningless to teammates, and ~250-350 B per clash in a file
+    // rewritten every 60 s.
+    var json = JSON.stringify(data, function(k, v) { return k === '_trainFV' ? undefined : v; }, 2);
     return _sharedDirHandle.getFileHandle(fn, {create:true}).then(function(fh) {
       _sharedFileHandle = fh;
       return fh.createWritable();

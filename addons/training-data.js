@@ -65,7 +65,8 @@
         keys.sort(function(a,b){return (store[a].ts||0)-(store[b].ts||0);});
         while(keys.length > _CLASH_TRAIN_CAP) { delete store[keys.shift()]; }
       }
-      localStorage.setItem('cc_clash_training_data', JSON.stringify(store));
+      if (typeof window._ccLsSet === 'function') window._ccLsSet('cc_clash_training_data', store);
+      else localStorage.setItem('cc_clash_training_data', JSON.stringify(store));
       window.dispatchEvent(new Event('cc-training-data-change'));
     } catch(e) {}
   }
@@ -106,7 +107,8 @@
       var store = _getNLTrainStore();
       store.push({input:input, output:output, meta:meta});
       while (store.length > _NL_TRAIN_CAP) store.shift();
-      localStorage.setItem('cc_nl_training_data', JSON.stringify(store));
+      if (typeof window._ccLsSet === 'function') window._ccLsSet('cc_nl_training_data', store);
+      else localStorage.setItem('cc_nl_training_data', JSON.stringify(store));
       window.dispatchEvent(new Event('cc-training-data-change'));
     } catch(e) {}
   }
