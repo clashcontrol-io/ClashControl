@@ -15878,7 +15878,11 @@ function startApp() {
       var obj = {};
       for (var k in v) {
         if (!Object.prototype.hasOwnProperty.call(v, k)) continue;
-        if (k === 'meshes' || k === '_wvCache' || k === '_triCache' || k === '_bvhCache') continue;
+        // _trainFV is the per-run training feature vector — rebuilt on every
+        // detection emit, only read while summarizing that same run. At rest
+        // it's ~250-350 B of dead weight on every persisted clash (the
+        // explicit-export serializer already skips it).
+        if (k === 'meshes' || k === '_wvCache' || k === '_triCache' || k === '_bvhCache' || k === '_trainFV') continue;
         var cv = _cloneSafe(v[k], depth + 1);
         if (cv !== undefined) obj[k] = cv;
       }

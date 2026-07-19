@@ -85,6 +85,15 @@ test('pre-existing fields (clashes, rules, viewpoints snapshot stripping) are un
   assert.equal(data.viewpoints[0].snapshot, undefined, 'snapshots are still stripped before IDB persist');
 });
 
+test('_trainFV (per-run training vector) is stripped from persisted clashes', () => {
+  const { data } = run(baseState({
+    clashes: [{ id: 'c1', type: 'hard', distance: -12,
+      _trainFV: { type_pair: 'IfcWall|IfcPipe', pen_depth_mm: 12 } }],
+  }));
+  assert.equal(data.clashes[0]._trainFV, undefined, '_trainFV must not reach IndexedDB');
+  assert.equal(data.clashes[0].distance, -12, 'real fields survive');
+});
+
 // ── storageAutosaveGate (flagged, default-off) ─────────────────────
 
 test('gate ON: a fully identity-unchanged state skips the second write', async () => {
