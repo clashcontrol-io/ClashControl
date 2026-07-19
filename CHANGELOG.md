@@ -1,5 +1,8 @@
 # Changelog
 
+## v7.2.5 (2026-07-19)
+- Storage/memory optimization: explicit retention, budgets, and quota recovery (#699)
+
 ## v7.2.4 (2026-07-17)
 - Large-model plan Phases 3-7 checked against history; Phase 4 candidate warning
 
