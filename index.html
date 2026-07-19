@@ -1335,6 +1335,39 @@ function startApp() {
     avatarMenuOpen:false  // ephemeral, never persisted
   };
   function _ccPersistUI(key,val){ try{ localStorage.setItem('cc_'+key, typeof val==='string'?val:JSON.stringify(val)); }catch(e){} }
+  // Quota-aware localStorage setter for growth-prone keys (also exposed to
+  // addons). On QuotaExceeded it prunes derived/decay-class keys per
+  // storage-core's registry (never source data or prefs) and retries once;
+  // a final failure surfaces one toast instead of vanishing silently.
+  var _ccLsToastShown = false;
+  function _ccLsSet(key, val) {
+    var str = typeof val === 'string' ? val : JSON.stringify(val);
+    try { localStorage.setItem(key, str); return true; }
+    catch (e) {
+      if (_ccIsQuotaError(e) && window._ccStorageCore) {
+        try {
+          var entries = [];
+          for (var i = 0; i < localStorage.length; i++) {
+            var k = localStorage.key(i);
+            if (k !== key) entries.push({ key: k, value: localStorage.getItem(k) || '' });
+          }
+          var scan = window._ccStorageCore.scanLocalStorage(entries);
+          var plan = window._ccStorageCore.planLocalPrune(scan.items, str.length * 2 + 1024);
+          plan.keys.forEach(function(pk) { try { localStorage.removeItem(pk); } catch (_) {} });
+          localStorage.setItem(key, str);
+          console.log('[storage] localStorage quota hit — pruned ' + plan.keys.length + ' derived/decay keys to save ' + key);
+          return true;
+        } catch (e2) { /* fall through */ }
+      }
+      if (!_ccLsToastShown && window._ccToast) {
+        _ccLsToastShown = true;
+        window._ccToast('Browser storage is full — some local data could not be saved. Free up space in Settings → Privacy & Data.');
+      }
+      console.warn('localStorage write failed for ' + key + ':', e);
+      return false;
+    }
+  }
+  window._ccLsSet = _ccLsSet;
   // Persist spatial-tree category visibility so the filter survives a refresh
   // (models rehydrate from IndexedDB; hiddenClasses keys are model-independent).
   function _persistHiddenClasses(hc){ _ccPersistUI('hiddenClasses', hc||{}); }
@@ -2130,6 +2163,17 @@ function startApp() {
     });
   }
 
+  // The one owner of "delete everything a project stored". Two separate
+  // deleteProject UI copies each called the two idbDelete* functions but
+  // both orphaned the project's localStorage keys (chat history) forever.
+  function _ccDeleteProjectStorage(projectId) {
+    try { localStorage.removeItem('cc_chat_msgs_' + projectId); } catch (e) {}
+    return Promise.all([
+      idbDeleteProjectFiles(projectId),
+      idbDeleteProjectData(projectId)
+    ]).catch(function(e) { console.warn('Failed to delete project storage:', e); });
+  }
+
   // ── Project session data (clashes, issues, rules, etc.) ───────
   function idbSaveProjectData(projectId, data) {
     return _openIDB().then(function(db) {
@@ -2411,7 +2455,33 @@ function startApp() {
     _ccBudgetTimer = setTimeout(function() {
       _ccBudgetTimer = null;
       window._ccStorageEnforceBudget();
+      _ccLocalStorageMaintain();
     }, 10000);
+  }
+
+  // Boot-time localStorage maintenance: remove keys that are provably dead —
+  // type-pair memos past their TTL (the read path already ignores them but
+  // never deleted them, one key per model combination forever) and chat
+  // histories of projects that no longer exist.
+  function _ccLocalStorageMaintain() {
+    try {
+      var live = {};
+      getProjects().forEach(function(p) { live[p.id] = true; });
+      var now = Date.now(), remove = [], i, k;
+      for (i = 0; i < localStorage.length; i++) {
+        k = localStorage.key(i);
+        if (!k) continue;
+        if (k.indexOf('cc_typePairMemo:') === 0) {
+          var ts = 0;
+          try { ts = (JSON.parse(localStorage.getItem(k)) || {}).ts || 0; } catch (e) {}
+          if (now - ts > _TP_MEMO_TTL_MS) remove.push(k);
+        } else if (k.indexOf('cc_chat_msgs_') === 0) {
+          if (!live[k.slice('cc_chat_msgs_'.length)]) remove.push(k);
+        }
+      }
+      remove.forEach(function(rk) { try { localStorage.removeItem(rk); } catch (e) {} });
+      if (remove.length) console.log('[storage] pruned ' + remove.length + ' expired/orphaned localStorage keys');
+    } catch (e) {}
   }
 
   // Free at least `needed` bytes of geometry cache (oldest first) — the
@@ -6693,7 +6763,7 @@ function startApp() {
       try { runs = JSON.parse(localStorage.getItem('cc_detection_runs')||'[]'); } catch(e){}
       runs.push(runSummary);
       while (runs.length > 20) runs.shift(); // keep last 20 runs
-      localStorage.setItem('cc_detection_runs', JSON.stringify(runs));
+      _ccLsSet('cc_detection_runs', runs);
       window.dispatchEvent(new Event('cc-training-data-change'));
     } catch(e) { console.warn('[Detect] Failed to save detection run summary:', e); }
 
@@ -6732,7 +6802,7 @@ function startApp() {
       var _runsForProf = JSON.parse(localStorage.getItem('cc_detection_runs')||'[]');
       if (_runsForProf.length > 0) {
         _runsForProf[_runsForProf.length - 1].profile = profile;
-        localStorage.setItem('cc_detection_runs', JSON.stringify(_runsForProf));
+        _ccLsSet('cc_detection_runs', _runsForProf);
       }
     } catch(e) {}
     var _pcts = {};
@@ -6868,7 +6938,14 @@ function startApp() {
       var pair = computeClashPair(clash);
       var p = clash.point||[0,0,0];
       store[pair] = {point:[p[0],p[1],p[2]], ts:Date.now()};
-      localStorage.setItem('cc_denied_clashes', JSON.stringify(store));
+      // Was unbounded — one entry per denied pair forever. Cap by recency:
+      // a denial that old belongs to a model state long since re-detected.
+      var keys = Object.keys(store);
+      if (keys.length > 500) {
+        keys.sort(function(a,b){ return (store[a].ts||0) - (store[b].ts||0); });
+        keys.slice(0, keys.length - 500).forEach(function(k){ delete store[k]; });
+      }
+      _ccLsSet('cc_denied_clashes', store);
     } catch(e) {}
   }
   function _isDeniedClash(clash) {
@@ -16159,8 +16236,7 @@ function startApp() {
       setProjOpen(false); setConfirmDelete(null);
     }
     function deleteProject(id) {
-      idbDeleteProjectFiles(id);
-      idbDeleteProjectData(id);
+      _ccDeleteProjectStorage(id);
       var list = getProjects().filter(function(p){return p.id!==id;});
       if(!list.length) { list = [{id:'default', name:'Default Project', createdAt:Date.now()}]; }
       saveProjects(list);
@@ -35257,8 +35333,7 @@ function startApp() {
       else d({t:A.SET_PROJECT,id:id});
     }
     function deleteProject(id){
-      if (typeof idbDeleteProjectFiles === 'function') try { idbDeleteProjectFiles(id); } catch(e){}
-      if (typeof idbDeleteProjectData === 'function') try { idbDeleteProjectData(id); } catch(e){}
+      if (typeof _ccDeleteProjectStorage === 'function') try { _ccDeleteProjectStorage(id); } catch(e){}
       var list = projects.filter(function(p){ return p.id !== id; });
       if (!list.length) list = [{id:'default', name:'Default Project', createdAt:Date.now()}];
       try { localStorage.setItem('cc_projects', JSON.stringify(list)); } catch(e){}
@@ -36781,7 +36856,7 @@ function startApp() {
           hasFb=true;
         }
       });
-      try{if(hasFb)localStorage.setItem('cc_trainingFeedback',JSON.stringify(fb));
+      try{if(hasFb)_ccLsSet('cc_trainingFeedback',fb);
       else localStorage.removeItem('cc_trainingFeedback');}catch(e){}
     },[s.clashes]);
 

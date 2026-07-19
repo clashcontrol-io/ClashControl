@@ -195,6 +195,23 @@ test('planEviction: ifcFiles are never auto — only proposals, never the active
   assert.ok(!plan.auto.some(a => a.action !== 'delete-geocache'));
 });
 
+test('planLocalPrune: derived before decay, biggest first, never source/prefs', () => {
+  const scan = core.scanLocalStorage([
+    { key: 'cc_typePairMemo:a', value: 'x'.repeat(500) },       // derived
+    { key: 'cc_element_hashes', value: 'x'.repeat(2000) },      // derived — biggest, goes first
+    { key: 'cc_chat_msgs_p1', value: 'x'.repeat(1000) },        // decay
+    { key: 'cc_projects', value: 'x'.repeat(5000) },            // source — untouchable
+    { key: 'cc_showGrid', value: 'true' }                        // prefs — untouchable
+  ]);
+  const plan = core.planLocalPrune(scan.items, 2400);
+  assert.deepEqual(plan.keys, ['cc_element_hashes', 'cc_typePairMemo:a']);
+  assert.ok(plan.freedBytes >= 2400);
+  const bigger = core.planLocalPrune(scan.items, 5000);
+  assert.deepEqual(bigger.keys, ['cc_element_hashes', 'cc_typePairMemo:a', 'cc_chat_msgs_p1']);
+  assert.ok(!bigger.keys.includes('cc_projects'));
+  assert.ok(!bigger.keys.includes('cc_showGrid'));
+});
+
 test('formatBytes renders human-readable sizes', () => {
   assert.equal(core.formatBytes(512), '512 B');
   assert.equal(core.formatBytes(2048), '2.0 KB');

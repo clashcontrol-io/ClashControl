@@ -699,8 +699,19 @@
           _revitBuf._batchGids = batchGids;
         }
         _finalizeModel(msg, d);
-        // Persist element hash cache
-        try { localStorage.setItem('cc_element_hashes', JSON.stringify(_elementHashCache)); } catch(e) {}
+        // Persist element hash cache — capped at the same 20k bound the
+        // send paths already trim to (an unbounded cache only grows the
+        // localStorage quota risk without improving delta sync).
+        try {
+          var _persistHashes = _elementHashCache;
+          var _hashKeys = Object.keys(_elementHashCache);
+          if (_hashKeys.length > 20000) {
+            _persistHashes = {};
+            for (var _hi = 0; _hi < 20000; _hi++) _persistHashes[_hashKeys[_hi]] = _elementHashCache[_hashKeys[_hi]];
+          }
+          if (typeof window._ccLsSet === 'function') window._ccLsSet('cc_element_hashes', _persistHashes);
+          else localStorage.setItem('cc_element_hashes', JSON.stringify(_persistHashes));
+        } catch(e) {}
         break;
 
       case 'model-sync':

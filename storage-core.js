@@ -284,6 +284,27 @@
     return base;
   }
 
+  // Quota-recovery plan for localStorage: which keys to sacrifice so a
+  // write of `needed` bytes can land. Only derived (fully recomputable)
+  // and decay (bounded history) families are candidates — source data and
+  // prefs are never pruned. Derived goes first, biggest first.
+  // items: rows from scanLocalStorage().items.
+  function planLocalPrune(items, needed) {
+    var order = { derived: 0, decay: 1 };
+    var cands = (items || []).filter(function(i) {
+      return i.retention === 'derived' || i.retention === 'decay';
+    });
+    cands.sort(function(a, b) {
+      return (order[a.retention] - order[b.retention]) || (b.bytes - a.bytes);
+    });
+    var keys = [], freed = 0, i;
+    for (i = 0; i < cands.length && freed < needed; i++) {
+      keys.push(cands[i].key);
+      freed += cands[i].bytes;
+    }
+    return { keys: keys, freedBytes: freed };
+  }
+
   function formatBytes(n) {
     if (n == null || isNaN(n)) return '—';
     if (n < 1024) return n + ' B';
@@ -302,6 +323,7 @@
     buildStorageReport: buildStorageReport,
     computeBudget: computeBudget,
     planEviction: planEviction,
+    planLocalPrune: planLocalPrune,
     formatBytes: formatBytes
   });
 }));
