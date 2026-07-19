@@ -2017,6 +2017,10 @@ function startApp() {
     });
   }
 
+  function _ccIsQuotaError(e) {
+    return !!(e && (e.name === 'QuotaExceededError' || e.name === 'QUOTA_EXCEEDED_ERR' || e.code === 22));
+  }
+
   function idbSaveFile(id, name, buffer, projectId, sidecarData, meta) {
     // Models on disk are the offline story — ask the browser to protect
     // them from storage-pressure eviction (one-time, silent if denied).
@@ -2028,25 +2032,42 @@ function startApp() {
         }).catch(function(){});
       }
     } catch (_) {}
-    return _openIDB().then(function(db) {
-      return new Promise(function(resolve, reject) {
-        var tx = db.transaction(IDB_STORE, 'readwrite');
-        var store = tx.objectStore(IDB_STORE);
-        var getReq = store.get(id);
-        getReq.onsuccess = function() {
-          var prev = getReq.result || {};
-          var record = {id:id, name:name, buffer:buffer, projectId:projectId||'default', savedAt:Date.now()};
-          if (sidecarData) record.sidecar = sidecarData;
-          else if (prev.sidecar) record.sidecar = prev.sidecar;
-          if (meta) record.meta = meta;
-          else if (prev.meta) record.meta = prev.meta;
-          record.bytes = _ccEstimateBytes(record);
-          store.put(record);
-        };
-        tx.oncomplete = function() { resolve(); };
-        tx.onerror = function(e) { reject(e.target.error); };
+    function attempt() {
+      return _openIDB().then(function(db) {
+        return new Promise(function(resolve, reject) {
+          var tx = db.transaction(IDB_STORE, 'readwrite');
+          var store = tx.objectStore(IDB_STORE);
+          var getReq = store.get(id);
+          getReq.onsuccess = function() {
+            var prev = getReq.result || {};
+            var record = {id:id, name:name, buffer:buffer, projectId:projectId||'default', savedAt:Date.now()};
+            if (sidecarData) record.sidecar = sidecarData;
+            else if (prev.sidecar) record.sidecar = prev.sidecar;
+            if (meta) record.meta = meta;
+            else if (prev.meta) record.meta = prev.meta;
+            record.bytes = _ccEstimateBytes(record);
+            store.put(record);
+          };
+          tx.oncomplete = function() { resolve(); };
+          tx.onerror = function(e) { reject(e.target.error); };
+        });
       });
-    }).catch(function(e) { console.warn('Failed to save IFC to IndexedDB:', e); });
+    }
+    return attempt().catch(function(e) {
+      // Quota pressure: free derived data (geo cache, oldest first) and
+      // retry once — losing a rebuildable cache beats losing the model.
+      if (!_ccIsQuotaError(e)) throw e;
+      var needed = (buffer && buffer.byteLength ? buffer.byteLength : 0) * 2 || 50 * 1024 * 1024;
+      return _ccEvictGeoCacheBytes(needed).then(function(freed) {
+        if (!freed) throw e;
+        return attempt();
+      });
+    }).then(function() { _ccScheduleBudgetCheck(); }).catch(function(e) {
+      if (_ccIsQuotaError(e) && window._ccToast) {
+        window._ccToast('Browser storage is full — "' + name + '" is loaded but not saved for offline use. Free up space in Settings → Privacy & Data.');
+      }
+      console.warn('Failed to save IFC to IndexedDB:', e);
+    });
   }
 
   function idbDeleteFile(id) {
@@ -2160,17 +2181,28 @@ function startApp() {
   function idbSaveGeoCache(fileId, data) {
     var candidate = _ccGeoCacheV8Enabled();
     var cacheKey = _ccGeoCacheKey(fileId, candidate);
-    return _openIDB().then(function(db) {
-      return new Promise(function(resolve, reject) {
-        var tx = db.transaction(IDB_GEOCACHE, 'readwrite');
-        var record = candidate ? {id:cacheKey, sourceId:fileId, schema:8,
-          data:data, savedAt:Date.now()} : {id:fileId, data:data, savedAt:Date.now()};
-        record.bytes = _ccEstimateBytes(record);
-        tx.objectStore(IDB_GEOCACHE).put(record);
-        tx.oncomplete = function() { resolve(); };
-        tx.onerror = function(e) { reject(e.target.error); };
+    function attempt() {
+      return _openIDB().then(function(db) {
+        return new Promise(function(resolve, reject) {
+          var tx = db.transaction(IDB_GEOCACHE, 'readwrite');
+          var record = candidate ? {id:cacheKey, sourceId:fileId, schema:8,
+            data:data, savedAt:Date.now()} : {id:fileId, data:data, savedAt:Date.now()};
+          record.bytes = _ccEstimateBytes(record);
+          tx.objectStore(IDB_GEOCACHE).put(record);
+          tx.oncomplete = function() { resolve(); };
+          tx.onerror = function(e) { reject(e.target.error); };
+        });
       });
-    }).catch(function(e) { console.warn('Failed to save geo cache:', e); });
+    }
+    return attempt().catch(function(e) {
+      // Quota pressure: evict older cache entries and retry once. Failure
+      // stays non-fatal — the cache is an optimization, not source data.
+      if (!_ccIsQuotaError(e)) throw e;
+      return _ccEvictGeoCacheBytes(_ccEstimateBytes(data) * 2 || 20 * 1024 * 1024).then(function(freed) {
+        if (!freed) throw e;
+        return attempt();
+      });
+    }).then(function() { _ccScheduleBudgetCheck(); }).catch(function(e) { console.warn('Failed to save geo cache:', e); });
   }
 
   function idbGetGeoCache(fileId) {
@@ -2245,15 +2277,11 @@ function startApp() {
   }
 
   // ── Storage report (quota + per-project inventory) ──────────────
-  // Reads store metadata (never keeps buffers), pairs it with
-  // navigator.storage.estimate()/persisted(), and shapes it through
-  // storage-core's buildStorageReport. On-demand only (Settings, API).
-  window._ccStorageReport = function() {
-    if (!window._ccStorageCore) return Promise.resolve(null);
-    var estP = (navigator.storage && navigator.storage.estimate) ?
-      navigator.storage.estimate().catch(function(){ return null; }) : Promise.resolve(null);
-    var perP = (navigator.storage && navigator.storage.persisted) ?
-      navigator.storage.persisted().catch(function(){ return null; }) : Promise.resolve(null);
+  // Reads store metadata (never keeps buffers) for the report and the
+  // budget enforcer. Full records (buffers, geometry payloads) are mapped
+  // to {id, bytes, savedAt, …} immediately so they don't outlive this
+  // tick. Old records predate `bytes` stamping — estimated on the fly.
+  function _ccReadIdbInventory() {
     function readAll(db, storeName) {
       return new Promise(function(resolve) {
         try {
@@ -2267,20 +2295,31 @@ function startApp() {
     return _openIDB().then(function(db) {
       return Promise.all([readAll(db, IDB_STORE), readAll(db, IDB_GEOCACHE), readAll(db, IDB_PROJSTORE)]);
     }).then(function(stores) {
-      // Map to metadata immediately so the full records (buffers, geometry
-      // payloads) don't outlive this tick. Old records predate `bytes`
-      // stamping — estimate those on the fly.
-      var ifcFiles = stores[0].map(function(f) {
-        return { id: f.id, name: f.name, projectId: f.projectId || 'default',
-          savedAt: f.savedAt || 0, bytes: f.bytes || _ccEstimateBytes(f) };
-      });
-      var geoCache = stores[1].map(function(g) {
-        return { id: g.id, sourceId: g.sourceId, savedAt: g.savedAt || 0,
-          bytes: g.bytes || _ccEstimateBytes(g) };
-      });
-      var projects = stores[2].map(function(p) {
-        return { id: p.id, bytes: p.bytes || _ccEstimateBytes(p) };
-      });
+      return {
+        ifcFiles: stores[0].map(function(f) {
+          return { id: f.id, name: f.name, projectId: f.projectId || 'default',
+            savedAt: f.savedAt || 0, bytes: f.bytes || _ccEstimateBytes(f) };
+        }),
+        geoCache: stores[1].map(function(g) {
+          return { id: g.id, sourceId: g.sourceId, savedAt: g.savedAt || 0,
+            bytes: g.bytes || _ccEstimateBytes(g) };
+        }),
+        projects: stores[2].map(function(p) {
+          return { id: p.id, bytes: p.bytes || _ccEstimateBytes(p) };
+        })
+      };
+    });
+  }
+
+  // Shapes the inventory + navigator.storage.estimate()/persisted() through
+  // storage-core's buildStorageReport. On-demand only (Settings, API).
+  window._ccStorageReport = function() {
+    if (!window._ccStorageCore) return Promise.resolve(null);
+    var estP = (navigator.storage && navigator.storage.estimate) ?
+      navigator.storage.estimate().catch(function(){ return null; }) : Promise.resolve(null);
+    var perP = (navigator.storage && navigator.storage.persisted) ?
+      navigator.storage.persisted().catch(function(){ return null; }) : Promise.resolve(null);
+    return _ccReadIdbInventory().then(function(inv) {
       var localEntries = [];
       try {
         for (var i = 0; i < localStorage.length; i++) {
@@ -2291,7 +2330,7 @@ function startApp() {
       return Promise.all([estP, perP]).then(function(env) {
         var report = window._ccStorageCore.buildStorageReport({
           estimate: env[0], persisted: env[1],
-          ifcFiles: ifcFiles, geoCache: geoCache, projects: projects,
+          ifcFiles: inv.ifcFiles, geoCache: inv.geoCache, projects: inv.projects,
           localEntries: localEntries
         });
         // Resolve project display names + active flag for the UI.
@@ -2319,6 +2358,80 @@ function startApp() {
       });
     }).catch(function(e) { console.warn('Failed to clear geo cache:', e); });
   };
+
+  // ── Storage budget enforcement ──────────────────────────────────
+  // Budget = tighter of the cc_storageBudgetMB pref and 80% of the browser
+  // quota (storage-core.computeBudget). Over budget, the derived tier (geo
+  // cache) is freed automatically — cold projects first, oldest first —
+  // while source data (ifcFiles) is only ever *proposed* for removal via a
+  // one-per-session toast pointing at Settings. Runs amortized: once at
+  // boot and debounced 10 s after IDB writes.
+  function _ccStorageBudget(quota) {
+    if (!window._ccStorageCore) return null;
+    var prefBytes = null;
+    try {
+      var v = localStorage.getItem('cc_storageBudgetMB');
+      var mb = v !== null ? Number(v) : NaN;
+      if (isFinite(mb) && mb > 0) prefBytes = Math.floor(mb * 1024 * 1024);
+    } catch (e) {}
+    return window._ccStorageCore.computeBudget(prefBytes, quota);
+  }
+
+  var _ccBudgetToastShown = false;
+  window._ccStorageEnforceBudget = function() {
+    if (!window._ccStorageCore) return Promise.resolve(null);
+    var estP = (navigator.storage && navigator.storage.estimate) ?
+      navigator.storage.estimate().catch(function(){ return null; }) : Promise.resolve(null);
+    return Promise.all([_ccReadIdbInventory(), estP]).then(function(r) {
+      var inv = r[0], est = r[1];
+      var budget = _ccStorageBudget(est && est.quota);
+      if (!budget) return null;
+      var plan = window._ccStorageCore.planEviction(inv, budget, { activeProject: getActiveProjectId() });
+      if (!plan.auto.length && !plan.proposals.length) return plan;
+      return Promise.all(plan.auto.map(function(a) { return idbDeleteGeoCache(a.sourceId); })).then(function() {
+        var fmt = window._ccStorageCore.formatBytes;
+        if (plan.auto.length) {
+          var freed = plan.auto.reduce(function(t, a) { return t + a.bytes; }, 0);
+          console.log('[storage] over budget by ' + fmt(plan.overBy) + ' — freed ' + fmt(freed) + ' of geometry cache');
+        }
+        if (plan.proposals.length && !_ccBudgetToastShown && window._ccToast) {
+          _ccBudgetToastShown = true;
+          var proposed = plan.proposals.reduce(function(t, p) { return t + p.bytes; }, 0);
+          window._ccToast('Browser storage over budget — free up ' + fmt(proposed) +
+            ' from unused projects in Settings → Privacy & Data.');
+        }
+        return plan;
+      });
+    }).catch(function(e) { console.warn('Storage budget check failed:', e); return null; });
+  };
+
+  var _ccBudgetTimer = null;
+  function _ccScheduleBudgetCheck() {
+    if (_ccBudgetTimer) return;
+    _ccBudgetTimer = setTimeout(function() {
+      _ccBudgetTimer = null;
+      window._ccStorageEnforceBudget();
+    }, 10000);
+  }
+
+  // Free at least `needed` bytes of geometry cache (oldest first) — the
+  // QuotaExceeded recovery path for IDB writes. Reuses planEviction with a
+  // synthetic budget of (total − needed) so the eviction ordering has one
+  // owner. Resolves with the number of bytes freed.
+  function _ccEvictGeoCacheBytes(needed) {
+    if (!window._ccStorageCore) return Promise.resolve(0);
+    return _ccReadIdbInventory().then(function(inv) {
+      var total = 0;
+      inv.geoCache.forEach(function(g) { total += g.bytes || 0; });
+      inv.ifcFiles.forEach(function(f) { total += f.bytes || 0; });
+      inv.projects.forEach(function(p) { total += p.bytes || 0; });
+      var plan = window._ccStorageCore.planEviction(inv, Math.max(1, total - needed),
+        { activeProject: getActiveProjectId() });
+      if (!plan.auto.length) return 0;
+      return Promise.all(plan.auto.map(function(a) { return idbDeleteGeoCache(a.sourceId); }))
+        .then(function() { return plan.auto.reduce(function(t, a) { return t + a.bytes; }, 0); });
+    }).catch(function() { return 0; });
+  }
 
   // ── Geometry quantization helpers (16-bit positions, 8-bit normals) ── INTERNALS.md §6
   function _quantizePositions(posF32, bbox) {
@@ -10485,7 +10598,8 @@ function startApp() {
         benchEngine:      function(pairLimit){ if (window._ccBenchEngine) return window._ccBenchEngine(pairLimit); },
         storage: {
           report:        function(){ return window._ccStorageReport ? window._ccStorageReport() : Promise.resolve(null); },
-          clearGeoCache: function(){ return window._ccClearGeoCache ? window._ccClearGeoCache() : Promise.resolve(); }
+          clearGeoCache: function(){ return window._ccClearGeoCache ? window._ccClearGeoCache() : Promise.resolve(); },
+          enforceBudget: function(){ return window._ccStorageEnforceBudget ? window._ccStorageEnforceBudget() : Promise.resolve(null); }
         },
         clashReport:      function(){ if (window._ccClashReport && window._ccLatestState) return window._ccClashReport(window._ccLatestState); },
         addons: {
@@ -26787,6 +26901,7 @@ function startApp() {
     var stDelConfirm = useState(false), showDelConfirm=stDelConfirm[0], setShowDelConfirm=stDelConfirm[1];
     var stFlash = useState(false), sentFlash=stFlash[0], setSentFlash=stFlash[1];
     var stStorage = useState(null), storageReport=stStorage[0], setStorageReport=stStorage[1];
+    var stRmFiles = useState(null), rmFilesConfirm=stRmFiles[0], setRmFilesConfirm=stRmFiles[1];
     var SETTINGS_TABS = [
       {id:'general', label:'General'},
       {id:'measurement', label:'Measurement'},
@@ -27095,7 +27210,16 @@ function startApp() {
                   <div style=${TLBL}>${p.name}${p.active?html`<span style=${{fontSize:'var(--text-xs)',color:'var(--accent)',marginLeft:'.4rem'}}>active</span>`:''}</div>
                   <div style=${TSUB}>${p.fileCount} model${p.fileCount!==1?'s':''} · ${fmt(p.ifcBytes)} files · ${fmt(p.geoBytes)} geometry cache · ${fmt(p.sessionBytes)} session</div>
                 </div>
-                <span style=${{fontFamily:'var(--font-mono)',fontSize:'var(--text-sm)',color:'var(--text-secondary)',flexShrink:0}}>${fmt(p.totalBytes)}</span>
+                <div style=${{display:'flex',alignItems:'center',gap:'.5rem',flexShrink:0}}>
+                  <span style=${{fontFamily:'var(--font-mono)',fontSize:'var(--text-sm)',color:'var(--text-secondary)'}}>${fmt(p.totalBytes)}</span>
+                  ${!p.active && p.fileCount>0 && rmFilesConfirm!==p.projectId && html`<button onClick=${function(){setRmFilesConfirm(p.projectId);}}
+                    title="Remove this project's stored model files from browser storage. Clashes and issues are kept; re-add the IFC files to load models again."
+                    style=${{...S_BTN,fontSize:'0.72rem',padding:'.25rem .5rem',background:'none',color:'var(--text-muted)',border:'1px solid var(--border)'}}>Remove files</button>`}
+                  ${!p.active && rmFilesConfirm===p.projectId && html`<button onClick=${function(){
+                    setRmFilesConfirm(null);
+                    idbDeleteProjectFiles(p.projectId).then(refreshStorageReport);
+                  }} style=${{...S_BTN,fontSize:'0.72rem',padding:'.25rem .5rem',background:'#ef4444',color:'#fff',border:'none'}}>Confirm — remove ${fmt(p.ifcBytes)}?</button>`}
+                </div>
               </div>`;
             })}
             <div style=${{...TROW,borderBottom:'none'}}>
@@ -36604,6 +36728,7 @@ function startApp() {
       window[key] = true;
       _restoreProjectFilesGlobal(s.activeProject, d);
       _idbCleanOrphanedGeoCache(); // background cleanup of orphaned cache entries
+      _ccScheduleBudgetCheck();    // amortized budget check (10s after boot)
     },[]);
     // ── Listen for project-switch events (from project selector) ──
     useEffect(function(){

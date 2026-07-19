@@ -120,6 +120,81 @@ test('buildStorageReport tolerates empty/missing input', () => {
   assert.equal(report.localStorage.totalBytes, 0);
 });
 
+test('computeBudget: tighter of user pref and 80% of quota', () => {
+  assert.equal(core.computeBudget(null, 1000), 800);
+  assert.equal(core.computeBudget(500, 1000), 500);
+  assert.equal(core.computeBudget(2000, 1000), 800);
+  assert.equal(core.computeBudget(300, null), 300);
+  assert.equal(core.computeBudget(null, null), null);
+});
+
+test('planEviction: under budget is a no-op', () => {
+  const plan = core.planEviction({
+    ifcFiles: [{ id: 'f1', projectId: 'p1', savedAt: 1, bytes: 100 }],
+    geoCache: [{ id: 'f1', savedAt: 1, bytes: 50 }],
+    projects: []
+  }, 1000, { activeProject: 'p1' });
+  assert.equal(plan.overBy, 0);
+  assert.deepEqual(plan.auto, []);
+  assert.deepEqual(plan.proposals, []);
+  assert.equal(plan.totalBytes, 150);
+});
+
+test('planEviction: derived tier first — cold projects before active, oldest first', () => {
+  const plan = core.planEviction({
+    ifcFiles: [
+      { id: 'fa', projectId: 'active', savedAt: 500, bytes: 100 },
+      { id: 'fc1', projectId: 'cold', savedAt: 100, bytes: 100 },
+      { id: 'fc2', projectId: 'cold', savedAt: 200, bytes: 100 }
+    ],
+    geoCache: [
+      { id: 'fa', savedAt: 500, bytes: 300 },          // active project — evicted LAST
+      { id: 'fc1', savedAt: 100, bytes: 300 },          // oldest cold — first
+      { id: 'v8:fc2', sourceId: 'fc2', savedAt: 200, bytes: 300 }
+    ],
+    projects: []
+  }, 900, { activeProject: 'active' });
+  // total 1200, budget 900 → overBy 300: one geo group (300 B) suffices.
+  assert.equal(plan.overBy, 300);
+  assert.equal(plan.auto.length, 1);
+  assert.equal(plan.auto[0].sourceId, 'fc1');
+  assert.deepEqual(plan.proposals, []);
+});
+
+test('planEviction: legacy + v8 rows for one file evict as one group', () => {
+  const plan = core.planEviction({
+    ifcFiles: [{ id: 'f1', projectId: 'cold', savedAt: 100, bytes: 10 }],
+    geoCache: [
+      { id: 'f1', savedAt: 100, bytes: 200 },
+      { id: 'v8:f1', sourceId: 'f1', savedAt: 150, bytes: 300 }
+    ],
+    projects: []
+  }, 200, { activeProject: 'active' });
+  assert.equal(plan.auto.length, 1);
+  assert.equal(plan.auto[0].sourceId, 'f1');
+  assert.equal(plan.auto[0].bytes, 500);
+});
+
+test('planEviction: ifcFiles are never auto — only proposals, never the active project', () => {
+  const plan = core.planEviction({
+    ifcFiles: [
+      { id: 'fa', projectId: 'active', savedAt: 900, bytes: 4000 },
+      { id: 'f1', projectId: 'old', savedAt: 100, bytes: 3000 },
+      { id: 'f2', projectId: 'newer', savedAt: 500, bytes: 2000 }
+    ],
+    geoCache: [{ id: 'f1', savedAt: 100, bytes: 100 }],
+    projects: []
+  }, 1000, { activeProject: 'active' });
+  // overBy 8100: geo (100) can't cover it → proposals for cold projects,
+  // least-recently-saved first, active never listed.
+  assert.equal(plan.auto.length, 1);
+  assert.ok(plan.proposals.length >= 1);
+  assert.equal(plan.proposals[0].projectId, 'old');
+  assert.equal(plan.proposals[0].bytes, 3000);
+  assert.ok(!plan.proposals.some(p => p.projectId === 'active'));
+  assert.ok(!plan.auto.some(a => a.action !== 'delete-geocache'));
+});
+
 test('formatBytes renders human-readable sizes', () => {
   assert.equal(core.formatBytes(512), '512 B');
   assert.equal(core.formatBytes(2048), '2.0 KB');

@@ -192,6 +192,98 @@
     };
   }
 
+  // ── Budget + eviction planning ────────────────────────────────────
+  // The effective budget is the tighter of the user's preference and 80% of
+  // the browser quota. Null = no enforceable budget (no quota info, no pref).
+  function computeBudget(prefBytes, quota) {
+    var q = (quota && isFinite(quota)) ? Math.floor(quota * 0.8) : null;
+    var p = (prefBytes && isFinite(prefBytes)) ? prefBytes : null;
+    if (q == null && p == null) return null;
+    if (q == null) return p;
+    if (p == null) return q;
+    return Math.min(p, q);
+  }
+
+  function _geoSourceOf(g) {
+    if (g.sourceId != null) return g.sourceId;
+    return (typeof g.id === 'string' && g.id.indexOf('v8:') === 0) ? g.id.slice(3) : g.id;
+  }
+
+  // Pure eviction plan over IDB inventory metadata. Retention drives the
+  // tiers: geoCache is derived (auto-deletable — cold re-parse rebuilds it),
+  // ifcFiles are source data (returned as user-confirmed proposals ONLY,
+  // never auto, never the active project — the app reads bytes back out of
+  // the active project's files for reload-in-full and storey scoping).
+  // inventory: {ifcFiles:[{id,projectId,savedAt,bytes}],
+  //             geoCache:[{id,sourceId,savedAt,bytes}],
+  //             projects:[{id,bytes}]}
+  function planEviction(inventory, budget, opts) {
+    inventory = inventory || {};
+    opts = opts || {};
+    var active = opts.activeProject || 'default';
+    var ifc = inventory.ifcFiles || [];
+    var geo = inventory.geoCache || [];
+    var proj = inventory.projects || [];
+    var totalBytes = 0;
+    ifc.forEach(function(f) { totalBytes += f.bytes || 0; });
+    geo.forEach(function(g) { totalBytes += g.bytes || 0; });
+    proj.forEach(function(p) { totalBytes += p.bytes || 0; });
+    var base = { totalBytes: totalBytes, budget: budget || null, overBy: 0, auto: [], proposals: [] };
+    if (!budget || !isFinite(budget) || totalBytes <= budget) return base;
+    base.overBy = totalBytes - budget;
+
+    var fileProject = {};
+    ifc.forEach(function(f) { fileProject[f.id] = f.projectId || 'default'; });
+
+    // Tier 1 (auto): geo cache grouped per source file — a legacy row and a
+    // v8: row for the same file die together via idbDeleteGeoCache(sourceId).
+    // Cold (non-active-project) entries go first, oldest savedAt first.
+    var groups = {};
+    geo.forEach(function(g) {
+      var src = _geoSourceOf(g);
+      var grp = groups[src] || (groups[src] = { sourceId: src, bytes: 0, savedAt: Infinity });
+      grp.bytes += g.bytes || 0;
+      var at = g.savedAt || 0;
+      if (at < grp.savedAt) grp.savedAt = at;
+    });
+    var geoGroups = Object.keys(groups).map(function(k) { return groups[k]; });
+    geoGroups.sort(function(a, b) {
+      var aActive = fileProject[a.sourceId] === active;
+      var bActive = fileProject[b.sourceId] === active;
+      if (aActive !== bActive) return aActive ? 1 : -1;
+      return a.savedAt - b.savedAt;
+    });
+    var freed = 0, i;
+    for (i = 0; i < geoGroups.length && freed < base.overBy; i++) {
+      base.auto.push({ action: 'delete-geocache', sourceId: geoGroups[i].sourceId, bytes: geoGroups[i].bytes });
+      freed += geoGroups[i].bytes;
+    }
+
+    // Tier 2 (proposals): whole non-active projects' stored files, least
+    // recently saved first. Listed until the remaining overage is covered.
+    var remaining = base.overBy - freed;
+    if (remaining > 0) {
+      var perProj = {};
+      ifc.forEach(function(f) {
+        var pid = f.projectId || 'default';
+        if (pid === active) return;
+        var row = perProj[pid] || (perProj[pid] = { projectId: pid, bytes: 0, fileCount: 0, lastSavedAt: 0 });
+        row.bytes += f.bytes || 0;
+        row.fileCount++;
+        if ((f.savedAt || 0) > row.lastSavedAt) row.lastSavedAt = f.savedAt || 0;
+      });
+      var rows = Object.keys(perProj).map(function(k) { return perProj[k]; });
+      rows.sort(function(a, b) { return a.lastSavedAt - b.lastSavedAt; });
+      var covered = 0;
+      for (i = 0; i < rows.length && covered < remaining; i++) {
+        base.proposals.push({ action: 'remove-project-files', projectId: rows[i].projectId,
+          bytes: rows[i].bytes, fileCount: rows[i].fileCount, lastSavedAt: rows[i].lastSavedAt });
+        covered += rows[i].bytes;
+      }
+    }
+    return base;
+  }
+
   function formatBytes(n) {
     if (n == null || isNaN(n)) return '—';
     if (n < 1024) return n + ' B';
@@ -208,6 +300,8 @@
     estimateRecordBytes: estimateRecordBytes,
     scanLocalStorage: scanLocalStorage,
     buildStorageReport: buildStorageReport,
+    computeBudget: computeBudget,
+    planEviction: planEviction,
     formatBytes: formatBytes
   });
 }));
