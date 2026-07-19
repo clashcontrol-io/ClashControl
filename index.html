@@ -5122,23 +5122,38 @@ function startApp() {
   }
 
   // ── BVH LRU cache ──  See INTERNALS.md § 21.8
-  var _BVH_CACHE_MAX = (function() {
+  // Cap is computed lazily (first eviction) so the storageDetectCaches
+  // flag — loaded by a deferred script — is readable by then. Legacy
+  // behaviour when the flag is off: 5% of jsHeapSizeLimit at ~50 KB per
+  // element, clamped 300–2500, or a flat 300 where performance.memory
+  // doesn't exist (Safari/Firefox). That 300 thrashes badly on large
+  // models — with the flag on, those browsers use the same 50 KB budget
+  // against navigator.deviceMemory, or a 1500 middle ground when neither
+  // signal exists.
+  var _bvhCacheMaxCached = null;
+  function _BVH_CACHE_MAX_FN() {
+    if (_bvhCacheMaxCached != null) return _bvhCacheMaxCached;
+    var v = 300;
     try {
       var m = (typeof performance !== 'undefined') && performance.memory;
       if (m && m.jsHeapSizeLimit) {
-        var budget = Math.floor(m.jsHeapSizeLimit * 0.05 / (50 * 1024));
-        return Math.max(300, Math.min(2500, budget));
+        v = Math.max(300, Math.min(2500, Math.floor(m.jsHeapSizeLimit * 0.05 / (50 * 1024))));
+      } else if (window._ccSafetyMigrations && window._ccSafetyMigrations.isEnabled('storageDetectCaches')) {
+        var dm = navigator.deviceMemory;
+        v = (dm && isFinite(dm)) ?
+          Math.max(300, Math.min(2500, Math.floor(dm * 1024 * 1024 * 1024 * 0.05 / (50 * 1024)))) : 1500;
       }
     } catch (e) {}
-    return 300;
-  })();
+    _bvhCacheMaxCached = v;
+    return v;
+  }
   var _bvhLRU = new Map(); // element → true, insertion-ordered
 
   function _bvhLRUTouch(el) {
     if (_bvhLRU.delete(el)) _bvhLRU.set(el, true);
   }
   function _bvhLRUEvict() {
-    while (_bvhLRU.size >= _BVH_CACHE_MAX) {
+    while (_bvhLRU.size >= _BVH_CACHE_MAX_FN()) {
       var old = _bvhLRU.keys().next().value;
       _bvhLRU.delete(old);
       delete old._wvCache; delete old._triCache; delete old._bvhCache;
@@ -5150,6 +5165,37 @@ function startApp() {
       _bvhLRU.delete(el);
       delete el._wvCache; delete el._triCache; delete el._bvhCache;
     });
+  }
+
+  // Between-chunk heap-pressure relief (storageDetectCaches, default-off).
+  // Today the only watchdog is a passive 15 s / 5 GB warning that never
+  // throttles a run. With the flag on, every ~2000 candidates (25 chunks)
+  // the run checks the heap and, past 85%, halves the BVH LRU — purely
+  // transient per-element caches, so results are identical; the evicted
+  // elements just re-extract if touched again.
+  var _ccPressureRelieved = false;
+  function _ccDetectPressureRelief(chunkIdx) {
+    try {
+      if (chunkIdx % (25 * _DETECT_CHUNK_SIZE) !== 0) return;
+      if (!(window._ccSafetyMigrations && window._ccSafetyMigrations.isEnabled('storageDetectCaches'))) return;
+      var m = (typeof performance !== 'undefined') && performance.memory;
+      if (!m || !m.jsHeapSizeLimit || m.usedJSHeapSize / m.jsHeapSizeLimit <= 0.85) return;
+      var target = Math.max(150, Math.floor(_bvhLRU.size / 2));
+      var dropped = 0;
+      while (_bvhLRU.size > target) {
+        var old = _bvhLRU.keys().next().value;
+        if (old === undefined) break;
+        _bvhLRU.delete(old);
+        delete old._wvCache; delete old._triCache; delete old._bvhCache;
+        dropped++;
+      }
+      if (dropped && !_ccPressureRelieved) {
+        _ccPressureRelieved = true;
+        console.warn('[detect] heap at ' + Math.round(m.usedJSHeapSize / m.jsHeapSizeLimit * 100) +
+          '% — dropped ' + dropped + ' cached element BVHs to relieve pressure');
+        if (window._ccToast) window._ccToast('Memory is tight — detection continues with reduced caching.');
+      }
+    } catch (e) {}
   }
 
   // ── BVH (Bounding Volume Hierarchy) for triangles ───────────────
@@ -5574,6 +5620,9 @@ function startApp() {
   function _flushGeoCache(models) {
     (models || []).forEach(function(m) {
       (m.elements || []).forEach(function(el) {
+        // Also drop the LRU key — a flushed element left in the Map counts
+        // toward the cap and pushes real entries out early.
+        _bvhLRU.delete(el);
         delete el._wvCache; delete el._triCache; delete el._bvhCache;
       });
     });
@@ -6792,7 +6841,7 @@ function startApp() {
       matrix_skipped: _nMatrixSkipped,
       pair_cache_reemits: _nPairCacheReemit,
       pair_cache_size: _pairResultCache.size,
-      bvh_cache_max: _BVH_CACHE_MAX,
+      bvh_cache_max: _BVH_CACHE_MAX_FN(),
       clashes_found: merged.length
     };
     // Attach the just-computed profile to the most-recent run entry in the
@@ -6873,6 +6922,7 @@ function startApp() {
       }
       _chunkBatchCache = null;
       chunkIdx = end;
+      _ccDetectPressureRelief(chunkIdx);
       if (onProgress) onProgress(chunkIdx, totalCandidates);
       if (chunkIdx < totalCandidates) {
         setTimeout(_runChunk, 0); // yield to UI
