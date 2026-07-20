@@ -1,5 +1,8 @@
 # Changelog
 
+## v7.2.6 (2026-07-20)
+- Rust/WASM broad-phase sweep: ported, tested before/after, kept
+
 ## v7.2.5 (2026-07-19)
 - Storage/memory optimization: explicit retention, budgets, and quota recovery (#699)
 
