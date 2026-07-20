@@ -5737,6 +5737,100 @@ function startApp() {
     return pairs;
   }
 
+  // Rust/WASM-accelerated broad phase (browser-first large-model plan,
+  // Phase 4) — moves the O(n log n + k) sort + sliding-window AABB sweep
+  // into the Rust engine (engine/src/broadphase.rs), keeping this function
+  // as the oracle/fallback: `_detectClashesCore` calls this first and only
+  // falls back to `_sweepAndPrune` when WASM isn't available or this
+  // returns null. The self-clash rule's business logic (`selfClashModels`
+  // vs `selfClashGroup`/`excludeSelf` — three different possible input
+  // shapes) deliberately stays HERE in JS, resolved once per unique model
+  // into a simple `sameModelAllowed[modelIdx]` lookup flag before crossing
+  // into Rust — Rust only ever sees "is same-model allowed for model M",
+  // never the rule shapes themselves, so a subtle port bug in that
+  // business logic isn't possible (there's nothing rule-shaped to port).
+  // Output is decoded back into the EXACT same `{eA,mA,eB,mB,sameModel}`
+  // pair-object array `_sweepAndPrune` returns, so nothing downstream of
+  // the sweep needs to know which path produced it.
+  function _sweepAndPruneWasm(grpA, grpB, rules, maxGapM) {
+    if (typeof window._ccWasmSweepAndPrune !== 'function') return null;
+    var margin = maxGapM;
+
+    var inA = {}, inB = {};
+    grpA.forEach(function(m){ inA[m.id]=true; });
+    grpB.forEach(function(m){ inB[m.id]=true; });
+
+    var exTypes = rules.excludeTypes&&rules.excludeTypes.length ? rules.excludeTypes : null;
+    var seenModels = {}, items = [], modelOrder = [], modelIndexOf = {};
+    grpA.concat(grpB).forEach(function(m) {
+      if (seenModels[m.id]) return; seenModels[m.id]=true;
+      (m.elements||[]).forEach(function(el) {
+        if (!el.box) return;
+        if (exTypes && el.props && exTypes.indexOf(el.props.ifcType)!==-1) return;
+        if (!rules.includeSpaces && el.props && el.props.ifcType === 'IfcSpace') return;
+        if (modelIndexOf[m.id] === undefined) { modelIndexOf[m.id] = modelOrder.length; modelOrder.push(m); }
+        items.push({el:el, m:m});
+      });
+    });
+    var _singleModelScope = Object.keys(seenModels).length === 1;
+    if (items.length < 2) return [];
+
+    var nModels = modelOrder.length;
+    var wasmInA = new Uint8Array(nModels), wasmInB = new Uint8Array(nModels);
+    var sameModelAllowed = new Uint8Array(nModels);
+    for (var mi = 0; mi < nModels; mi++) {
+      var mObj = modelOrder[mi];
+      wasmInA[mi] = inA[mObj.id] ? 1 : 0;
+      wasmInB[mi] = inB[mObj.id] ? 1 : 0;
+      // Exact same self-clash rule resolution as the inline loop in
+      // _sweepAndPrune — see that function for the field-by-field rationale.
+      var scmVal = rules.selfClashModels;
+      var selfAllowed;
+      if (_singleModelScope) {
+        selfAllowed = true;
+      } else if (scmVal !== undefined) {
+        if (scmVal === 'none') { selfAllowed = false; }
+        else if (scmVal === 'all') { selfAllowed = true; }
+        else {
+          var scmIds = Array.isArray(scmVal) ? scmVal : [scmVal];
+          selfAllowed = scmIds.indexOf(mObj.id) !== -1;
+        }
+      } else {
+        var scg = rules.selfClashGroup || (rules.excludeSelf ? 'none' : 'both');
+        selfAllowed = scg !== 'none' && (scg === 'both' || (scg === 'a' && inA[mObj.id]) || (scg === 'b' && inB[mObj.id]));
+      }
+      var proceedsSelfRule = selfAllowed || !!rules.duplicates;
+      var proceedsMembership = !!(inA[mObj.id] || inB[mObj.id]);
+      sameModelAllowed[mi] = (proceedsSelfRule && proceedsMembership) ? 1 : 0;
+    }
+
+    var n = items.length;
+    var boxMin = new Float64Array(n*3), boxMax = new Float64Array(n*3);
+    var modelIdx = new Uint32Array(n);
+    for (var ii = 0; ii < n; ii++) {
+      var b = items[ii].el.box;
+      boxMin[ii*3]=b.min.x; boxMin[ii*3+1]=b.min.y; boxMin[ii*3+2]=b.min.z;
+      boxMax[ii*3]=b.max.x; boxMax[ii*3+1]=b.max.y; boxMax[ii*3+2]=b.max.z;
+      modelIdx[ii] = modelIndexOf[items[ii].m.id];
+    }
+
+    var flat;
+    try {
+      flat = window._ccWasmSweepAndPrune(boxMin, boxMax, modelIdx, wasmInA, wasmInB, sameModelAllowed, margin);
+    } catch (e) {
+      console.warn('[Detect] WASM sweep_and_prune threw, falling back to JS sweep:', e.message);
+      return null;
+    }
+    if (!flat) return null;
+
+    var pairs = new Array(flat.length / 3);
+    for (var pi = 0, wi = 0; wi < flat.length; pi++, wi += 3) {
+      var itA = items[flat[wi]], itB = items[flat[wi+1]];
+      pairs[pi] = {eA:itA.el, mA:itA.m, eB:itB.el, mB:itB.m, sameModel: flat[wi+2] === 1};
+    }
+    return pairs;
+  }
+
   // ── GLB Worker geometry pre-extraction ──────────────────────────
   var _glbGeoWorkerCode = function() {
     // ── GLB binary parser ──
@@ -6304,7 +6398,8 @@ function startApp() {
     // ── L0: Sweep and Prune — O(n log n + k) candidate pairs ───────
     _mark('sweep_start');
     _phase('Finding candidate pairs');
-    var candidates = _sweepAndPrune(grpA, grpB, rules, maxGapM);
+    var candidates = _sweepAndPruneWasm(grpA, grpB, rules, maxGapM);
+    if (candidates === null) candidates = _sweepAndPrune(grpA, grpB, rules, maxGapM);
     _mark('sweep_end');
 
     _mark('bvh_build_end');

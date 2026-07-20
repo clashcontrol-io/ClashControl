@@ -1,10 +1,13 @@
 // ── ClashControl Addon: WASM Clash Engine ───────────────────────
 // Loads the Rust WASM module for hardware-accelerated clash detection.
-// Provides mesh_intersect and mesh_min_distance as drop-in replacements
-// for the JavaScript BVH+Moller engine in index.html.
+// Provides mesh_intersect, mesh_min_distance and sweep_and_prune as
+// drop-in replacements for the JavaScript BVH+Moller engine and broad-phase
+// sweep in index.html.
 //
 // Falls back gracefully to the built-in JS engine if WASM fails to load.
 // The core clash loop checks: typeof window._ccWasmIntersect === 'function'
+// (and separately typeof window._ccWasmSweepAndPrune === 'function' for
+// the broad phase — the two fall back independently).
 
 (function() {
   'use strict';
@@ -30,6 +33,7 @@
     window._ccWasmIntersect = _wasmIntersect;
     window._ccWasmMinDist = _wasmMinDist;
     window._ccWasmBatchIntersect = _wasmBatchIntersect;
+    window._ccWasmSweepAndPrune = _wasmSweepAndPrune;
   }
 
   function _loadWasm() {
@@ -54,7 +58,7 @@
         _publishGlobals();
         _loading = false;
         _loadTime = Math.round(performance.now() - t0);
-        console.log('%c[WASM Engine] Loaded in ' + _loadTime + 'ms (35 KB)', 'color:#22c55e;font-weight:bold');
+        console.log('%c[WASM Engine] Loaded in ' + _loadTime + 'ms (43 KB)', 'color:#22c55e;font-weight:bold');
         return _wasm;
       });
     }).catch(function(e) {
@@ -141,6 +145,32 @@
   };
 
   /**
+   * Broad-phase sweep-and-prune (candidate pair generation), mirroring
+   * index.html's _sweepAndPrune's geometry exactly. The self-clash rule's
+   * business logic (which has several possible input shapes) stays in JS
+   * — this only takes pre-resolved per-model lookup flags.
+   * @param {Float64Array} boxMin - flat [x0,y0,z0, x1,y1,z1, ...] per item
+   * @param {Float64Array} boxMax - flat, same shape as boxMin
+   * @param {Uint32Array} modelIdx - which model (0..M-1) each item belongs to
+   * @param {Uint8Array} inA - per-model (0..M-1): is this model in group A
+   * @param {Uint8Array} inB - per-model: is this model in group B
+   * @param {Uint8Array} sameModelAllowed - per-model: would a same-model
+   *   pair in this model pass the self-clash rule (already resolved in JS)
+   * @param {number} margin - maxGapM, applied on all three axes
+   * @returns {Uint32Array|null} flat [idxA0,idxB0,sameModel0, ...] triples,
+   *   or null if WASM isn't loaded (caller falls back to the JS sweep)
+   */
+  function _wasmSweepAndPrune(boxMin, boxMax, modelIdx, inA, inB, sameModelAllowed, margin) {
+    if (!_wasm) return null;
+    try {
+      return _wasm.sweep_and_prune(boxMin, boxMax, modelIdx, inA, inB, sameModelAllowed, margin);
+    } catch (e) {
+      console.warn('[WASM Engine] sweepAndPrune error:', e.message);
+      return null;
+    }
+  }
+
+  /**
    * Check if WASM engine is loaded and ready.
    * @returns {boolean}
    */
@@ -188,6 +218,7 @@
         delete window._ccWasmIntersect;
         delete window._ccWasmMinDist;
         delete window._ccWasmBatchIntersect;
+        delete window._ccWasmSweepAndPrune;
         if (typeof window._ccDispatch === 'function') {
           try { window._ccDispatch({ t: 'UPD_WASM_ENGINE', u: { active: false } }); } catch (_) {}
         }

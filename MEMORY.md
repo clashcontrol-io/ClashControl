@@ -204,6 +204,50 @@ timings first) + unflagged `_flushGeoCache` stale-LRU-key leak fix; P7
 `tests/storage-registry-wiring.test.js` pins every cc_* key + IDB store to the registry. Suite
 640 green; browser smoke extended (storage report + both new flags opted in) and passing.
 
+~~**Rust/WASM broad-phase sweep (Phase 4, the deferred core) — built, measured before/after,
+kept** (branch `claude/cc-claims-review-myhp9f`, 2026-07-17)~~ — user explicitly directed doing
+the Rust rewrite this session had deferred, with an explicit protocol: "test it locally before
+and after... if it's worse or fails, fix it or revert it." New `engine/src/broadphase.rs`
+(`sweep_and_prune`, +21 Rust unit tests) ports `_sweepAndPrune`'s geometric sweep (axis-variance
+selection, stable sort, sliding-window AABB active-list scan) to Rust — **deliberately not the
+self-clash rule's business logic**, which has three different possible input shapes
+(`selfClashModels`/`selfClashGroup`/`excludeSelf`) and stays in JS, resolved once per unique
+model into a simple `sameModelAllowed[modelIdx]` lookup flag before crossing into Rust; Rust
+only ever sees "same-model pairs in model M: allowed or not," never the rule shapes, so a
+subtle port bug in that business logic isn't structurally possible. Wired as
+`window._ccWasmSweepAndPrune`, called first with the existing `_sweepAndPrune` as fallback/
+oracle when WASM is unavailable — matches the `_ccWasmIntersect` pattern exactly. WASM binary
+43KB (was ~35KB), within the 100KB budget in `scripts/test-wasm-engine.sh` (also updated that
+script's stale export-check list to include the new function).
+**Verified, per the explicit before/after instruction:**
+- New `tests/browser/wasm-sweep-differential.mjs`: runs detection twice per rule configuration
+  in the same page (WASM path, then `window._ccWasmSweepAndPrune` stubbed out to force the JS
+  fallback) across 8 configurations spanning every self-clash rule shape
+  (`selfClashModels:'all'/'none'`, `selfClashGroup:'a'`, legacy `excludeSelf`, `duplicates`),
+  cross-model federation, and type exclusion — **all 8 produce byte-identical clash sets**
+  (order-independent, by element-pair identity). One case (cross-model federation) initially
+  showed both paths agreeing at 0 clashes — investigated rather than assumed-fine: not a WASM
+  bug, both fixtures auto-detect the same discipline and `excludeSameDiscipline` (default true,
+  applied downstream of the sweep) was filtering everything; fixed the test's rule override, re-
+  ran, both paths then agreed at 2 clashes.
+- Performance (ad hoc synthetic-element construction via direct `ADD_MODEL` dispatch, bypassing
+  IFC parsing, to get a genuinely dense candidate-generating cluster — the generator's normal
+  wall spacing doesn't overlap by design): 3000 densely-clustered elements → 63,725 candidates,
+  **identical candidate count between WASM and JS** — `sweep_and_prune_ms` median **22ms (WASM)
+  vs 83ms (JS), a 3.77x speedup**, 5 runs each. Small/sparse case (50 elements, 14 candidates):
+  both sub-millisecond, no measurable regression from WASM call overhead.
+- Full regression: 615/615 Node unit tests, 21/21 Rust unit tests, full `smoke.mjs`, the
+  existing 7-case IFC worker/fallback differential harness, and `scripts/test-wasm-engine.sh`
+  all green.
+**Verdict: kept, not reverted** — correctness matched exactly across every tested configuration
+and performance measurably improved with no regression found at any scale tested. Scope note:
+this moves the expensive geometric PRODUCTION of candidates to Rust; the JS side still decodes
+the flat WASM output back into the same `{eA,mA,eB,mB,sameModel}` pair-object array
+`_sweepAndPrune` always returned, so **this is a real, measured speedup, not (yet) the
+"never materialize all candidates in JavaScript" memory win** the original plan's Phase 4 also
+asks for — that would require changing the candidate-*consuming* code (`_processCandidate`/
+`_runChunk`) to read the flat index arrays directly, a separate, larger follow-up.
+
 ~~**Browser-first large-model plan, Phases 3-7 checked against project history and adjusted;
 Phase 4 partial slice shipped (candidate-count warning)** (branch `claude/cc-claims-review-myhp9f`,
 2026-07-17)~~ — same-session follow-up completing the "check the whole plan against history"

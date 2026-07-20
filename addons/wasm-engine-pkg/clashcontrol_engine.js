@@ -96,6 +96,42 @@ export function mesh_min_distance(verts_a, verts_b, max_dist) {
         wasm.__wbindgen_add_to_stack_pointer(16);
     }
 }
+
+/**
+ * @param {Float64Array} box_min
+ * @param {Float64Array} box_max
+ * @param {Uint32Array} model_idx
+ * @param {Uint8Array} in_a
+ * @param {Uint8Array} in_b
+ * @param {Uint8Array} same_model_allowed
+ * @param {number} margin
+ * @returns {Uint32Array}
+ */
+export function sweep_and_prune(box_min, box_max, model_idx, in_a, in_b, same_model_allowed, margin) {
+    try {
+        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+        const ptr0 = passArrayF64ToWasm0(box_min, wasm.__wbindgen_export);
+        const len0 = WASM_VECTOR_LEN;
+        const ptr1 = passArrayF64ToWasm0(box_max, wasm.__wbindgen_export);
+        const len1 = WASM_VECTOR_LEN;
+        const ptr2 = passArray32ToWasm0(model_idx, wasm.__wbindgen_export);
+        const len2 = WASM_VECTOR_LEN;
+        const ptr3 = passArray8ToWasm0(in_a, wasm.__wbindgen_export);
+        const len3 = WASM_VECTOR_LEN;
+        const ptr4 = passArray8ToWasm0(in_b, wasm.__wbindgen_export);
+        const len4 = WASM_VECTOR_LEN;
+        const ptr5 = passArray8ToWasm0(same_model_allowed, wasm.__wbindgen_export);
+        const len5 = WASM_VECTOR_LEN;
+        wasm.sweep_and_prune(retptr, ptr0, len0, ptr1, len1, ptr2, len2, ptr3, len3, ptr4, len4, ptr5, len5, margin);
+        var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
+        var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
+        var v7 = getArrayU32FromWasm0(r0, r1).slice();
+        wasm.__wbindgen_export2(r0, r1 * 4, 4);
+        return v7;
+    } finally {
+        wasm.__wbindgen_add_to_stack_pointer(16);
+    }
+}
 function __wbg_get_imports() {
     const import0 = {
         __proto__: null,
@@ -109,6 +145,11 @@ function __wbg_get_imports() {
 function getArrayF32FromWasm0(ptr, len) {
     ptr = ptr >>> 0;
     return getFloat32ArrayMemory0().subarray(ptr / 4, ptr / 4 + len);
+}
+
+function getArrayU32FromWasm0(ptr, len) {
+    ptr = ptr >>> 0;
+    return getUint32ArrayMemory0().subarray(ptr / 4, ptr / 4 + len);
 }
 
 let cachedDataViewMemory0 = null;
@@ -127,12 +168,28 @@ function getFloat32ArrayMemory0() {
     return cachedFloat32ArrayMemory0;
 }
 
+let cachedFloat64ArrayMemory0 = null;
+function getFloat64ArrayMemory0() {
+    if (cachedFloat64ArrayMemory0 === null || cachedFloat64ArrayMemory0.byteLength === 0) {
+        cachedFloat64ArrayMemory0 = new Float64Array(wasm.memory.buffer);
+    }
+    return cachedFloat64ArrayMemory0;
+}
+
 let cachedUint32ArrayMemory0 = null;
 function getUint32ArrayMemory0() {
     if (cachedUint32ArrayMemory0 === null || cachedUint32ArrayMemory0.byteLength === 0) {
         cachedUint32ArrayMemory0 = new Uint32Array(wasm.memory.buffer);
     }
     return cachedUint32ArrayMemory0;
+}
+
+let cachedUint8ArrayMemory0 = null;
+function getUint8ArrayMemory0() {
+    if (cachedUint8ArrayMemory0 === null || cachedUint8ArrayMemory0.byteLength === 0) {
+        cachedUint8ArrayMemory0 = new Uint8Array(wasm.memory.buffer);
+    }
+    return cachedUint8ArrayMemory0;
 }
 
 function passArray32ToWasm0(arg, malloc) {
@@ -142,9 +199,23 @@ function passArray32ToWasm0(arg, malloc) {
     return ptr;
 }
 
+function passArray8ToWasm0(arg, malloc) {
+    const ptr = malloc(arg.length * 1, 1) >>> 0;
+    getUint8ArrayMemory0().set(arg, ptr / 1);
+    WASM_VECTOR_LEN = arg.length;
+    return ptr;
+}
+
 function passArrayF32ToWasm0(arg, malloc) {
     const ptr = malloc(arg.length * 4, 4) >>> 0;
     getFloat32ArrayMemory0().set(arg, ptr / 4);
+    WASM_VECTOR_LEN = arg.length;
+    return ptr;
+}
+
+function passArrayF64ToWasm0(arg, malloc) {
+    const ptr = malloc(arg.length * 8, 8) >>> 0;
+    getFloat64ArrayMemory0().set(arg, ptr / 8);
     WASM_VECTOR_LEN = arg.length;
     return ptr;
 }
@@ -158,7 +229,9 @@ function __wbg_finalize_init(instance, module) {
     wasmModule = module;
     cachedDataViewMemory0 = null;
     cachedFloat32ArrayMemory0 = null;
+    cachedFloat64ArrayMemory0 = null;
     cachedUint32ArrayMemory0 = null;
+    cachedUint8ArrayMemory0 = null;
     return wasm;
 }
 
