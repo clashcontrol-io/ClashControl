@@ -193,6 +193,24 @@ Things to be careful about. Do not remove without a good reason — add a note i
   `tests/local-engine-units.test.js`. The Engine repo's `/status` still has no capability/
   protocol-version field to negotiate against, so the gate is a hand-maintained snapshot, not a
   live contract — keep it in sync by hand if the Engine repo's rule-handling changes.
+- **Candidate-pair memory explosion on the Wasm sweep path — FIXED 2026-07-21.** `_sweepAndPruneWasm`
+  (`index.html`) used to expand the Wasm-returned flat index array into a fully-materialized
+  `{eA,mA,eB,mB,sameModel}` object per candidate pair immediately after the broad phase — the
+  `_CANDIDATE_EST_BYTES=96`-per-pair, ~96 MB @ 1M candidates the large-candidate toast warns about.
+  Now returns a compact view (`_makeCompactCandidates`) over `items` (one entry per *element*, not
+  per pair) + the flat array; `{eA,mA,eB,mB,sameModel}` objects are built lazily, one at a time,
+  only for whichever candidate a consumer is actually reading right now, through a single access
+  point (`_candidateAt`) — so at most O(chunk size, currently 80) of them are ever alive together
+  instead of O(candidate count). The `_sweepAndPrune` JS fallback (the oracle path) is deliberately
+  **unchanged** — still a plain Array of eager pair objects, exactly as the large-model plan's
+  Phase 2 asked ("keep the current object-array JS fallback as the oracle initially").
+  `_candidateAt` dispatches on `Array.isArray()` so callers don't need to know which shape
+  `candidates` is in. New test: `tests/candidate-view.test.js`. **Not independently verified in a
+  real browser this session** — this dev sandbox's proxy blocks the CDNs the app needs (same
+  limitation noted elsewhere in this file), so the actual WASM-vs-JS clash-identity differential
+  (`tests/browser/wasm-sweep-differential.mjs`, promoted into CI this same session) has not
+  actually been run against this change yet; it will run on the next real CI push/PR, which is
+  the first real verification this specific fix gets.
 <!-- END:known-issues -->
 
 <!-- BEGIN:active-work -->

@@ -5737,6 +5737,36 @@ function startApp() {
     return pairs;
   }
 
+  // ── Candidate-view abstraction (Phase 2, memory) ────────────────
+  // _sweepAndPrune (JS fallback) returns a plain Array of fully-materialized
+  // {eA,mA,eB,mB,sameModel} objects — ~96 bytes/candidate (_CANDIDATE_EST_BYTES
+  // below), which is the whole candidate set held live at once (can be
+  // millions of pairs). _sweepAndPruneWasm below instead returns a compact
+  // view over its `items` (one entry per ELEMENT, not per pair) and the
+  // Wasm-returned flat index array (3 ints/pair) — {eA,mA,eB,mB,sameModel}
+  // objects are constructed lazily, one at a time, only for the candidate
+  // actually being read, so at most O(chunk size) of them are ever alive
+  // together instead of O(candidate count). _candidateAt is the single
+  // access point every consumer (_warmChunkBatch, _runChunk, the type-pair
+  // memo update, the small-candidate-set direct path) goes through, so this
+  // is the only place that needs to know which representation `candidates`
+  // is in. The JS fallback's plain-Array shape is left exactly as it was
+  // (kept as the oracle per the plan) — Array.isArray() tells the two apart.
+  function _candidateAt(candidates, i) {
+    return Array.isArray(candidates) ? candidates[i] : candidates.at(i);
+  }
+
+  function _makeCompactCandidates(items, flat) {
+    return {
+      length: flat.length / 3,
+      at: function(i) {
+        var wi = i * 3;
+        var itA = items[flat[wi]], itB = items[flat[wi + 1]];
+        return {eA: itA.el, mA: itA.m, eB: itB.el, mB: itB.m, sameModel: flat[wi + 2] === 1};
+      }
+    };
+  }
+
   // Rust/WASM-accelerated broad phase (browser-first large-model plan,
   // Phase 4) — moves the O(n log n + k) sort + sliding-window AABB sweep
   // into the Rust engine (engine/src/broadphase.rs), keeping this function
@@ -5823,12 +5853,11 @@ function startApp() {
     }
     if (!flat) return null;
 
-    var pairs = new Array(flat.length / 3);
-    for (var pi = 0, wi = 0; wi < flat.length; pi++, wi += 3) {
-      var itA = items[flat[wi]], itB = items[flat[wi+1]];
-      pairs[pi] = {eA:itA.el, mA:itA.m, eB:itB.el, mB:itB.m, sameModel: flat[wi+2] === 1};
-    }
-    return pairs;
+    // Compact view — see _makeCompactCandidates above. `items` is O(element
+    // count), `flat` is 3 ints/pair; no per-pair JS object is materialized
+    // here at all (that used to be a `pairs[]` array of one
+    // {eA,mA,eB,mB,sameModel} object per candidate, ~96 bytes each).
+    return _makeCompactCandidates(items, flat);
   }
 
   // ── GLB Worker geometry pre-extraction ──────────────────────────
@@ -6454,7 +6483,7 @@ function startApp() {
       // doesn't waste cycles on pairs that won't be tested.
       var groups = new Map();
       for (var i = startIdx; i < endIdx; i++) {
-        var c = candidates[i];
+        var c = _candidateAt(candidates, i);
         if (rules.changeAware &&
             !changedElements[c.mA.id+':'+c.eA.expressId] &&
             !changedElements[c.mB.id+':'+c.eB.expressId]) continue;
@@ -6786,7 +6815,7 @@ function startApp() {
       });
       var _observedPairs = new Set();
       for (var ci = 0; ci < candidates.length; ci++) {
-        var p = candidates[ci];
+        var p = _candidateAt(candidates, ci);
         if (!p.eA.props || !p.eB.props || !p.eA.props.ifcType || !p.eB.props.ifcType) continue;
         _observedPairs.add(_tpPairKey(p.eA.props.ifcType, p.eB.props.ifcType));
       }
@@ -6991,7 +7020,7 @@ function startApp() {
       _chunkBatchCache = new Map();
       _warmChunkBatch(0, totalCandidates);
       for (var si=0; si<totalCandidates; si++) {
-        var _sc=candidates[si];
+        var _sc=_candidateAt(candidates, si);
         _getBVH(_sc.eA); _getBVH(_sc.eB);
         var _cBefore = clashes.length;
         _processCandidate(_sc);
@@ -7011,7 +7040,7 @@ function startApp() {
       var end = Math.min(chunkIdx + _DETECT_CHUNK_SIZE, totalCandidates);
       var _chunkEls = {};
       for (var bi=chunkIdx; bi<end; bi++) {
-        var _cp=candidates[bi];
+        var _cp=_candidateAt(candidates, bi);
         var _kA=_cp.mA.id+':'+_cp.eA.expressId, _kB=_cp.mB.id+':'+_cp.eB.expressId;
         if (!_chunkEls[_kA]) { _chunkEls[_kA]=_cp.eA; _getBVH(_cp.eA); }
         if (!_chunkEls[_kB]) { _chunkEls[_kB]=_cp.eB; _getBVH(_cp.eB); }
@@ -7021,7 +7050,7 @@ function startApp() {
       _warmChunkBatch(chunkIdx, end);
       for (var i=chunkIdx; i<end; i++) {
         try {
-          var _cp2 = candidates[i];
+          var _cp2 = _candidateAt(candidates, i);
           var _cBef = clashes.length;
           _processCandidate(_cp2);
           if (clashes.length > _cBef) {
