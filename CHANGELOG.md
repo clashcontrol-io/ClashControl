@@ -1,5 +1,8 @@
 # Changelog
 
+## v7.2.7 (2026-07-21)
+- Verified fixes from external review: local-engine unit bug, memory, security, BCF, CI
+
 ## v7.2.6 (2026-07-20)
 - Rust/WASM broad-phase sweep: ported, tested before/after, kept
 
