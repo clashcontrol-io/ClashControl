@@ -232,6 +232,37 @@ Things to be careful about. Do not remove without a good reason — add a note i
   changes every user's first-load experience and needs a first-load-UX decision, not a code fix;
   (2) discipline/search-set-scoped *loading* (as opposed to today's post-load filtering) doesn't
   exist — extending the same atomic pattern to it would be a genuinely new feature, not a gap fix.
+- **BCF orthographic-camera export + a real crash bug — FIXED 2026-07-21.** Investigating the
+  large-model plan's Phase 4 BCF-fidelity ask ("add orthographic camera export/import") surfaced
+  something more urgent than a missing feature: `_captureViewpoint` (index.html) read
+  `S.camera.fov.toFixed(2)` **unconditionally**, but `S.camera` becomes a genuine
+  `THREE.OrthographicCamera` (no `.fov` at all) whenever the app's own orthographic-view toggle
+  (`_ccToggleOrtho`) is active — so saving a viewpoint while in ortho mode threw a `TypeError`.
+  Separately, `exportBCF` always emitted `<PerspectiveCamera>`, even for a genuinely orthographic
+  view, losing that fact entirely. Fixed: `_captureViewpoint` now branches on
+  `S.camera.isOrthographicCamera`, capturing `isOrtho`/`viewToWorldScale` (BCF-XML's
+  `ViewToWorldScale` — "view's visible vertical size in meters", verified against
+  buildingSMART/BCF-XML `release_3_0`'s `visinfo.xsd`) instead of `fov` for ortho viewpoints;
+  `_restoreViewpoint` only touches `.fov`/scale when the live camera's type already matches the
+  viewpoint's (switching camera type mid-restore would need the same camera-rebuild-and-rewire
+  `_ccToggleOrtho` does — out of scope for a restore call, and position/orientation still restore
+  correctly regardless); `exportBCF` emits `<OrthogonalCamera>`/`<ViewToWorldScale>` instead of
+  `<PerspectiveCamera>`/`<FieldOfView>` when the viewpoint says `isOrtho`. **Camera import doesn't
+  exist at all yet** — the BCF importer (`importBCF`) only parses `<Component IfcGuid>` for element
+  identity, never camera data, for either camera type — so "add orthographic import" isn't
+  applicable without building perspective camera import first (a separate, bigger feature, not
+  attempted here). New tests: `tests/bcf-ortho-camera.test.js`,
+  `tests/viewpoint-ortho-crash.test.js`.
+  **Deliberately NOT attempted this session** (each is a separately-scoped feature, not a small
+  gap): IFC-loader structured warnings for skipped/malformed elements (the loader is explicitly
+  flagged in CLAUDE.md as "complex but working — not to be touched without good reason," and no
+  existing warning-collection mechanism was found to extend); promoting `ids-conformance.yml` off
+  `continue-on-error` (needs real historical pass-rate data from actual workflow runs to set the
+  `wrong=0`/baselined-incompletes exit gate correctly — guessing this from source reading alone
+  risks gating on a threshold nobody's verified the corpus actually clears); BCF clipping-plane
+  export, comment threads, and cross-tool round-trip validation against Solibri/BIMcollab (the
+  first two are real, separately-scoped features; the third needs external tools this environment
+  doesn't have).
 <!-- END:known-issues -->
 
 <!-- BEGIN:active-work -->

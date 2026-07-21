@@ -7962,19 +7962,31 @@ function startApp() {
           }
           vpXml += '  </Components>\n';
         }
-        vpXml += '  <PerspectiveCamera>\n';
+        // OrthogonalCamera (visinfo.xsd, buildingSMART BCF-XML release_3_0)
+        // is a CHOICE alternative to PerspectiveCamera — same CameraViewPoint/
+        // CameraDirection/CameraUpVector/AspectRatio, but ViewToWorldScale
+        // ("view's visible vertical size in meters") instead of FieldOfView.
+        // Captured by _captureViewpoint whenever the ortho-view toggle
+        // (_ccToggleOrtho) was active; legacy viewpoints predate this and
+        // have neither field, so they fall through to PerspectiveCamera.
+        var _vpIsOrtho = !!(vp.camera && vp.camera.isOrtho);
+        vpXml += _vpIsOrtho ? '  <OrthogonalCamera>\n' : '  <PerspectiveCamera>\n';
         vpXml += '    <CameraViewPoint><X>'+vp.camera.px.toFixed(6)+'</X><Y>'+vp.camera.py.toFixed(6)+'</Y><Z>'+vp.camera.pz.toFixed(6)+'</Z></CameraViewPoint>\n';
         vpXml += '    <CameraDirection><X>'+vp.camera.dx.toFixed(6)+'</X><Y>'+vp.camera.dy.toFixed(6)+'</Y><Z>'+vp.camera.dz.toFixed(6)+'</Z></CameraDirection>\n';
         vpXml += '    <CameraUpVector><X>'+vp.camera.ux.toFixed(6)+'</X><Y>'+vp.camera.uy.toFixed(6)+'</Y><Z>'+vp.camera.uz.toFixed(6)+'</Z></CameraUpVector>\n';
-        var _vpFov = (vp.camera && vp.camera.fov) || 55; // legacy viewpoints predate fov capture — 55 is the app default
-        vpXml += '    <FieldOfView>'+_vpFov+'</FieldOfView>\n';
+        if (_vpIsOrtho) {
+          vpXml += '    <ViewToWorldScale>'+vp.camera.viewToWorldScale.toFixed(6)+'</ViewToWorldScale>\n';
+        } else {
+          var _vpFov = (vp.camera && vp.camera.fov) || 55; // legacy viewpoints predate fov capture — 55 is the app default
+          vpXml += '    <FieldOfView>'+_vpFov+'</FieldOfView>\n';
+        }
         if (v3) {
           // 3.0 added a required AspectRatio to both camera types.
           var _ar = 16/9;
           try { var _cam = window._ccViewport && window._ccViewport.getCamera && window._ccViewport.getCamera(); if (_cam && _cam.aspect > 0) _ar = _cam.aspect; } catch(_) {}
           vpXml += '    <AspectRatio>'+_ar.toFixed(6)+'</AspectRatio>\n';
         }
-        vpXml += '  </PerspectiveCamera>\n';
+        vpXml += _vpIsOrtho ? '  </OrthogonalCamera>\n' : '  </PerspectiveCamera>\n';
         vpXml += '</VisualizationInfo>';
         f.file(vpGuid+'.bcfv', vpXml);
 
@@ -13273,16 +13285,25 @@ function startApp() {
         if(_st.sectionAxis){ _section = {kind:'axis', axis:_st.sectionAxis, pos:_st.sectionPos, flip:!!_st.sectionFlip}; }
         else if(_st.sectionCustom){ _section = {kind:'custom', custom:_st.sectionCustom, pos:_st.sectionPos, flip:!!_st.sectionFlip}; }
         else if(_st.sectionBox && _st.sectionBox.enabled){ _section = {kind:'box', box:_st.sectionBox}; }
+        // Orthographic cameras (the ortho-view toggle, _ccToggleOrtho) have
+        // no .fov — BCF-XML's OrthogonalCamera carries ViewToWorldScale
+        // ("view's visible vertical size in meters") instead of
+        // FieldOfView (visinfo.xsd, buildingSMART BCF-XML release_3_0).
+        // Reading .fov unconditionally used to throw a TypeError here
+        // whenever a viewpoint was captured while the ortho toggle was on.
+        var _isOrtho = !!S.camera.isOrthographicCamera;
+        var _camFields = _isOrtho
+          ? {isOrtho:true, viewToWorldScale:+((S.camera.top - S.camera.bottom) / (S.camera.zoom || 1)).toFixed(4)}
+          : {isOrtho:false, fov:+S.camera.fov.toFixed(2)};
         return {
           id:uid(), name:name||'Viewpoint', linkedId:linkedId||null,
           createdAt:new Date().toISOString(), snapshot:snapshot,
-          camera:{
+          camera: Object.assign({
             px:+camera.position.x.toFixed(4), py:+camera.position.y.toFixed(4), pz:+camera.position.z.toFixed(4),
             dx:+dir.x.toFixed(4), dy:+dir.y.toFixed(4), dz:+dir.z.toFixed(4),
             ux:+up.x.toFixed(4), uy:+up.y.toFixed(4), uz:+up.z.toFixed(4),
-            tx:+S.orbit.target.x.toFixed(4), ty:+S.orbit.target.y.toFixed(4), tz:+S.orbit.target.z.toFixed(4),
-            fov:+S.camera.fov.toFixed(2)
-          },
+            tx:+S.orbit.target.x.toFixed(4), ty:+S.orbit.target.y.toFixed(4), tz:+S.orbit.target.z.toFixed(4)
+          }, _camFields),
           section:_section
         };
       };
@@ -13292,10 +13313,29 @@ function startApp() {
         camera.position.set(c.px, c.py, c.pz);
         if(c.tx!=null) S.orbit.target.set(c.tx, c.ty, c.tz);
         else S.orbit.target.set(c.px+c.dx*10, c.py+c.dy*10, c.pz+c.dz*10);
-        // Restore captured FOV (legacy viewpoints lack it). Walk mode owns
-        // the FOV while active — don't fight it.
-        if (c.fov && !((window._ccLatestState||{}).walkMode) && S.camera.fov !== c.fov) {
-          S.camera.fov = c.fov; S.camera.updateProjectionMatrix();
+        // Restore captured FOV/orthographic scale (legacy viewpoints lack
+        // both — treated as perspective with whatever fov the live camera
+        // already has, matching pre-existing behavior). Walk mode owns the
+        // FOV while active — don't fight it. Only restores when the LIVE
+        // camera's type already matches the viewpoint's — switching camera
+        // type here would need to rebuild the camera and rewire
+        // S.orbit.camera/S.camera together (see _ccToggleOrtho); out of
+        // scope for a viewpoint restore. Position/orientation are still
+        // restored correctly either way, just at whatever fov/zoom the
+        // live camera already had when the types don't match.
+        if (!((window._ccLatestState||{}).walkMode)) {
+          if (c.isOrtho && S.camera.isOrthographicCamera) {
+            if (c.viewToWorldScale) {
+              var _halfV = c.viewToWorldScale / 2;
+              var _aspect = (S.camera.right - S.camera.left) / (S.camera.top - S.camera.bottom || 1);
+              S.camera.top = _halfV; S.camera.bottom = -_halfV;
+              S.camera.right = _halfV * _aspect; S.camera.left = -_halfV * _aspect;
+              S.camera.zoom = 1;
+              S.camera.updateProjectionMatrix();
+            }
+          } else if (!c.isOrtho && !S.camera.isOrthographicCamera && c.fov && S.camera.fov !== c.fov) {
+            S.camera.fov = c.fov; S.camera.updateProjectionMatrix();
+          }
         }
         S.orbit.sync(); S.orbit.apply();
         // Restore the section state. Older viewpoints predating this field
