@@ -204,7 +204,7 @@ The app is deployed at `www.clashcontrol.io` on Vercel. The backend consists of 
 3. If Groq is over quota/down, the client uses the connected own-LLM (if any), then falls back to built-in offline regex commands. The over-quota message points to the one-click Connector.
 
 ### Shared Issues
-- No login required. Uses shareable project keys (e.g., `MEP-abc123`)
+- No login required. Uses shareable project keys (e.g., `MEP-abc123`) — anyone with the key or share link has full read **and edit** access; there's no read-only sharing or per-person permissions (the UI now says this explicitly, see the Quick Share panel copy)
 - Shared records are minimal (~250 bytes): identity (GlobalIds) + team decisions (status, priority, assignee, title)
 - IFC metadata (types, names, storeys, materials) is derived locally from each user's loaded model
-- Conflict resolution: last-write-wins per issue
+- Conflict resolution: NOT naive last-write-wins — PUT compares each issue's server-authoritative `updated_at` (echoed back by the client as `_updatedAt`) against the current DB value and reports per-issue `conflicts[]` in the response rather than silently overwriting; the client is responsible for merging. DELETE is separately gated by a creator-held `editKey`, stored server-side as a SHA-256 hash (never plaintext, `api/project.js` `hashEditKey`/`editKeyMatches`) — PUT deliberately stays open to anyone with just the project key, that IS the collaboration model. Projects can optionally be created with an expiry (`expiresInDays`, `api/schema.sql` `expires_at`); default is no expiry.
