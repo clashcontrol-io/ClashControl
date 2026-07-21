@@ -1272,7 +1272,7 @@ function startApp() {
   var INIT = {
     models:[], clashes:[], issues:[], activeId:null, showModal:false, showSettings:false, modalElement:null, tab:null, isRecording:false, selectionSets:[], searchSets:[], assignmentRules:[],
     rules:{ modelA:'all', modelB:'all', hard:true, maxGap:50, minGap:0, duplicates:false, changeAware:false, excludeSelf:true, excludeTypes:[], excludeTypePairs:[], minOverlapVolM3:1e-5, toleranceByTypePair:{}, useSemanticFilter:true, includeSpaces:false, excludeSameDiscipline:true },
-    detectionSettings:null, // Captured at detection run time: {clearance_mm, discipline_filters}
+    detectionSettings:null, // Captured at detection run time: {clearance_mm, discipline_filters, scope:{complete, partialModels?}}
     trainingMode:(function(){try{var v=localStorage.getItem('cc_trainingMode');return v===null?true:v==='1';}catch(e){return true;}}()),
     clashGroupBy:(function(){var v=_ccLoadPref('clashGroupBy',[]);return Array.isArray(v)?v:(v&&v!=='none'?[v]:[]);}()), clashSortBy:(function(){var v=_ccLoadPref('clashSortBy',[]);return Array.isArray(v)?v:(v&&v!=='none'?[v]:[]);}()),
     issueGroupBy:(function(){var v=_ccLoadPref('issueGroupBy',[]);return Array.isArray(v)?v:(v&&v!=='none'?[v]:[]);}()), issueSortBy:(function(){var v=_ccLoadPref('issueSortBy',[]);return Array.isArray(v)?v:(v&&v!=='none'?[v]:[]);}()),
@@ -7634,6 +7634,28 @@ function startApp() {
     } };
   }
 
+  // Browser-first large-model plan (bounded storey scopes, not progressive
+  // loading — see CLAUDE.md/MEMORY.md on why partial-model *rendering* was
+  // removed and must not come back). Loading is already atomic (a scoped
+  // load either fully completes or the model isn't installed at all,
+  // index.html loadIFCWorker/loadIFC), but nothing downstream previously
+  // recorded WHICH models a given clash run or export actually covered
+  // when a storey scope narrowed the load — a clash run against a
+  // partially-loaded federation could silently be read as "the whole
+  // building has no clashes". model.stats.loadedScope/scopedOutCount are
+  // already stamped per-model at load time (loadIFCWorker/loadIFC); this
+  // just summarizes them for a specific run/export's model set.
+  function _ccSummarizeModelScope(models) {
+    var partial = [];
+    (models || []).forEach(function(m) {
+      var st = m && m.stats;
+      if (st && st.loadedScope) {
+        partial.push({id: m.id, name: m.name, loadedStoreys: st.loadedScope, scopedOutCount: st.scopedOutCount || 0});
+      }
+    });
+    return partial.length ? {complete: false, partialModels: partial} : {complete: true};
+  }
+
   function exportBCF(items, version, viewpoints, state) {
     if (!items.length) return;
     _gcEvent('bcf-export', 'BCF '+version+' ('+items.length+' items)');
@@ -7665,9 +7687,18 @@ function startApp() {
         });
       }
     }
+    var scopeSummary = _ccSummarizeModelScope((state && state.models) || []);
+    var scopeNote = '';
+    if (!scopeSummary.complete) {
+      scopeNote = '\nNOTE — partial model scope:\n' + scopeSummary.partialModels.map(function(pm) {
+        return '  - ' + pm.name + ': only storeys [' + (pm.loadedStoreys || []).join(', ') + '] were loaded' +
+          (pm.scopedOutCount ? ' (' + pm.scopedOutCount + ' element(s) outside this scope were not loaded)' : '') + '.';
+      }).join('\n') + '\nThese clashes/issues do not cover the full model(s) above — re-run detection with the full model loaded before treating this export as complete.\n';
+    }
     zip.file('README.txt',
       'This BCF file was created with ClashControl' + (ccVer ? ' v' + ccVer : '') + '.\n' +
       'ClashControl is a free, source-available IFC clash detection tool that runs entirely in your browser.\n' +
+      scopeNote +
       '\n' +
       'Learn more or open this file at: ' + ccUrl + '\n');
     // BCF XSDs (2.1 and 3.0) have no target namespace — emit plain XML.
@@ -19943,7 +19974,7 @@ function startApp() {
       if (mA && typeof mA==='string' && mA.indexOf('disc:')===0) discs.push(mA.slice(5));
       if (mB && typeof mB==='string' && mB.indexOf('disc:')===0 && discs.indexOf(mB.slice(5))===-1) discs.push(mB.slice(5));
       if (discs.length===0) discs = ['all'];
-      var ds = { clearance_mm: rules.maxGap > 0 ? rules.maxGap : null, discipline_filters: discs };
+      var ds = { clearance_mm: rules.maxGap > 0 ? rules.maxGap : null, discipline_filters: discs, scope: _ccSummarizeModelScope(s.models) };
       d({t:A.DETECTING}); d({t:A.TAB,v:'clashes'});
       detectClashesAsync(s.models, rules).then(function(result){ _ccCommitDetectionResult(result, d, ds); });
     }
@@ -20036,7 +20067,7 @@ function startApp() {
       if (mA && mA.indexOf('disc:')===0) discs.push(mA.slice(5));
       if (mB && mB.indexOf('disc:')===0 && discs.indexOf(mB.slice(5))===-1) discs.push(mB.slice(5));
       if (discs.length===0) discs = ['all'];
-      return { clearance_mm: rules.maxGap > 0 ? rules.maxGap : null, discipline_filters: discs };
+      return { clearance_mm: rules.maxGap > 0 ? rules.maxGap : null, discipline_filters: discs, scope: _ccSummarizeModelScope(models) };
     }
     function runDetection() {
       if (!canRun) return;

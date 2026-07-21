@@ -211,6 +211,27 @@ Things to be careful about. Do not remove without a good reason — add a note i
   (`tests/browser/wasm-sweep-differential.mjs`, promoted into CI this same session) has not
   actually been run against this change yet; it will run on the next real CI push/PR, which is
   the first real verification this specific fix gets.
+- **Clash runs/exports now stamp model scope/completeness — DONE 2026-07-21.** The browser-first
+  large-model plan's Phase 3 ask ("bounded storey scopes, not progressive loading") turned out to
+  already be substantially built and well-tested (atomic `REPLACE_MODEL`/`ADD_MODEL`, the
+  `StoreyScopeModal`/`ccUiStoreyChooser` picker, `stats.loadedScope`/`scopedOutCount` stamped per
+  model at load time) — confirmed by re-reading the actual code this session rather than trusting
+  the external review's assumption that this needed building from scratch. The one genuine,
+  narrowly-scoped gap: nothing downstream recorded WHICH models a given clash run or BCF export
+  actually covered when a storey scope narrowed the load, so a run against a partially-loaded
+  federation could silently read as "the whole building has no clashes." Added
+  `_ccSummarizeModelScope(models)` (`index.html`, right before `exportBCF`) and wired it into both
+  `detectionSettings` capture sites (`state.detectionSettings.scope`) and the BCF export's
+  `README.txt` (a plain-language note naming which storeys were loaded per model, when incomplete).
+  New test: `tests/model-scope-stamping.test.js`. Also had to fix `tests/bcf-export.test.js`'s
+  narrowest `exportBCF` extraction (it started exactly at `function exportBCF(...)`, missing the
+  new helper declared just above it — the file's other two `exportBCF` sandboxes already started
+  from `_lookupElBox` instead and were unaffected; the narrow one now does too).
+  **Deliberately NOT done, left for the maintainer to decide** (both are product/UX calls, not
+  bugs): (1) `ccUiStoreyChooser` is flag-gated off by default in production — flipping that default
+  changes every user's first-load experience and needs a first-load-UX decision, not a code fix;
+  (2) discipline/search-set-scoped *loading* (as opposed to today's post-load filtering) doesn't
+  exist — extending the same atomic pattern to it would be a genuinely new feature, not a gap fix.
 <!-- END:known-issues -->
 
 <!-- BEGIN:active-work -->
