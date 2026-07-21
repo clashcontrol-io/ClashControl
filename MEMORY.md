@@ -263,6 +263,21 @@ Things to be careful about. Do not remove without a good reason — add a note i
   export, comment threads, and cross-tool round-trip validation against Solibri/BIMcollab (the
   first two are real, separately-scoped features; the third needs external tools this environment
   doesn't have).
+- **Phase 6 (reducer decomposition, next slice) — investigated, deliberately NOT attempted
+  2026-07-21.** `REDUCER_DECOMPOSITION_PLAN.md` already names the next slice precisely: Area 2,
+  cache invalidation (`_clearElCaches` + `_bvhLRURemoveModel`/`_pairCacheClearForModel`), explicitly
+  rated "Risk: low — pure function, no control-flow entanglement, already isolated." That part is
+  genuinely low-risk. But the plan's own **Standing rules** require "real-browser verification
+  after every slice, not just unit tests" — citing slice 1's own history, where unit tests alone
+  would have missed a real runtime timing bug that only a real-browser dispatch-and-read check
+  caught. This dev sandbox's proxy blocks the CDNs (React/Three/web-ifc) the app needs to boot at
+  all in headless Chromium (same limitation `ids-conformance.yml`'s own comment and other entries
+  in this file already document), so that required verification step is not something this session
+  can do. Extracting the slice without it would mean shipping the one thing the plan's rules
+  explicitly warn against — a refactor whose unit tests pass but whose real-browser behavior was
+  never actually checked. Deferred rather than done partially; the next session with real browser
+  access should be able to execute Area 2 directly using the plan's own instructions above, unit
+  tests plus the required real-browser check.
 <!-- END:known-issues -->
 
 <!-- BEGIN:active-work -->
