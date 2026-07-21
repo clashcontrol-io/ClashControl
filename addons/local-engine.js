@@ -582,6 +582,33 @@ clashcontrol-engine --install</pre>
   });
 
   // ── Engine communication ──────────────────────────────────────
+  //
+  // Wire contract (verified against clashcontrol_engine/engine.py on the
+  // Engine repo's main branch, 2026-07-21 — the Engine repo has no /status
+  // capability/protocol-version field to negotiate against, so this is a
+  // hand-verified snapshot, not a live-negotiated contract):
+  //   - `maxGap`/`minGap` sent TO the engine are millimetres (the engine
+  //     itself does `rules.get('maxGap',0)/1000.0` before using them against
+  //     metre-scale vertex coordinates — same convention the browser uses).
+  //   - `distance` returned FROM the engine is ALSO millimetres already
+  //     (`-round(depth*1000)` for penetration, `round(dist_m*1000)` for
+  //     clearance) — NOT metres. A prior version of this file re-multiplied
+  //     the already-mm value by 1000 again (a 10mm penetration was reported
+  //     as 10,000mm). Do not re-introduce that conversion.
+  //   - `volume` is currently always `None`/0 from the engine — it has no
+  //     real intersection-volume computation yet, only a chord-length/AABB
+  //     estimate elsewhere. Never treat `overlapVolM3` from the engine as
+  //     more trustworthy than the browser's own AABB estimate.
+  //   - The engine's rule-handling only reads `mode`, `maxGap`, `minGap`,
+  //     `modelA`, `modelB` — `excludeTypes`, `excludeTypePairs`,
+  //     `toleranceByTypePair`, `duplicates`, `excludeSelf`, `minOverlapVolM3`
+  //     are all sent below (so a future engine version can start honoring
+  //     them without a browser change) but are NOT applied engine-side today.
+  //     `_localEngineCanHandle` + `_applyClientSideRuleFilters` below cover
+  //     the gap: reject the local-engine path outright for rules that can't
+  //     be safely corrected after the fact, and re-apply the rest client-side
+  //     against the resolved elements we already have. See IMPROVEMENT_PLAN.md
+  //     CW-1 and MEMORY.md Known Issues for the fuller history.
 
   function _serializeForLocalEngine(models, rules) {
     var elements = [];
@@ -673,17 +700,18 @@ clashcontrol-engine --install</pre>
       if (cA && cB) pt = [(cA.x+cB.x)/2, (cA.y+cB.y)/2, (cA.z+cB.z)/2];
       else pt = [0, 0, 0];
     }
-    // Distance: engine returns metres for clearance, negative for
-    // penetration. UI uses mm integers throughout.
+    // Distance: the engine already returns millimetres (negative for
+    // penetration, positive for clearance) — see the wire-contract note
+    // above. Do NOT multiply by 1000 here; rawDist IS distMm.
     var type = c.type || (rules.mode === 'soft' ? 'soft' : 'hard');
     var rawDist = (typeof c.distance === 'number') ? c.distance : 0;
     var distMm;
     if (type === 'hard' || type === 'duplicate') {
-      // rawDist < 0 is signed penetration depth in metres; surface
-      // hits get -1 so the clash list still shows "touching".
-      distMm = rawDist < 0 ? Math.round(rawDist * 1000) : -1;
+      // rawDist < 0 is signed penetration depth in mm; surface hits get
+      // -1 so the clash list still shows "touching".
+      distMm = rawDist < 0 ? Math.round(rawDist) : -1;
     } else {
-      distMm = Math.round(Math.abs(rawDist) * 1000);
+      distMm = Math.round(Math.abs(rawDist));
     }
     // Title: reuse the same "Wall × Pipe Segment" format the browser
     // engine emits via _niceClashTitle so the clash list looks
@@ -718,8 +746,82 @@ clashcontrol-engine --install</pre>
       title: title,
       description: description,
       overlapVolM3: c.volume || 0,
-      clearanceMm: (type === 'soft' || type === 'clearance') ? Math.round(Math.abs(rawDist) * 1000) : null
+      clearanceMm: (type === 'soft' || type === 'clearance') ? Math.round(Math.abs(rawDist)) : null
     };
+  }
+
+  // ── Capability gate ────────────────────────────────────────────
+  // Returns {ok:true} when the active ruleset is safe to run on the local
+  // engine (either fully honored, or corrigible client-side by
+  // _applyClientSideRuleFilters below). Returns {ok:false, reason} for rules
+  // the engine silently ignores AND that can't be fixed up after the fact —
+  // callers must fall back to the browser engine rather than show
+  // under-filtered "faster" results.
+  //
+  // `minOverlapVolM3` is gated only above the app's own shipped baseline
+  // epsilon (1e-5, index.html INIT.rules default) — that default exists to
+  // suppress degenerate zero-volume float noise, not as a meaningful user
+  // filter, and gating on it unconditionally would disable the local engine
+  // for every default-configuration run.
+  var _ENGINE_VOL_EPSILON = 1e-5;
+  function _localEngineCanHandle(rules) {
+    rules = rules || {};
+    if (rules.duplicates) {
+      return {ok:false, reason:'Duplicate-geometry detection is not implemented by the local engine yet.'};
+    }
+    if ((rules.minOverlapVolM3||0) > _ENGINE_VOL_EPSILON) {
+      return {ok:false, reason:'The local engine has no real intersection-volume computation, so a configured minimum-overlap-volume filter can’t be honored.'};
+    }
+    return {ok:true, reason:null};
+  }
+
+  // Re-apply, against the engine's own returned clashes, the rule fields the
+  // engine doesn't enforce itself but that we CAN correctly recover from data
+  // already available on the resolved elements (ifcType, storey, sameModel).
+  // toleranceByTypePair can only be TIGHTENED here (a smaller per-pair value
+  // than the global maxGap used for the actual engine run drops now-excluded
+  // pairs); it can't be loosened, since the engine never evaluated distances
+  // beyond the global maxGap for pairs that wanted a larger tolerance. If
+  // that asymmetry applies to this ruleset, we log once so it's visible
+  // rather than silently under-covering those pairs.
+  function _applyClientSideRuleFilters(clashes, rules) {
+    rules = rules || {};
+    var excludeSelf = !!rules.excludeSelf;
+    var excludeTypes = {};
+    (rules.excludeTypes||[]).forEach(function(t){ excludeTypes[t] = true; });
+    var excludeTypePairs = rules.excludeTypePairs || null;
+    var toleranceByTypePair = rules.toleranceByTypePair || null;
+    var minGapMm = rules.minGap||0; // rules.minGap is already mm, same convention as maxGap
+    var maxGapMm = rules.maxGap||0;
+    var _widerPairWarned = false;
+
+    function typePairKey(tA, tB) {
+      return tA < tB ? (tA+':'+tB) : (tB+':'+tA);
+    }
+
+    return clashes.filter(function(cl) {
+      if (!cl) return false;
+      if (excludeSelf && cl.selfClash) return false;
+      if (excludeTypes[cl.elemAType] || excludeTypes[cl.elemBType]) return false;
+      var key = (cl.elemAType && cl.elemBType) ? typePairKey(cl.elemAType, cl.elemBType) : null;
+      if (key && excludeTypePairs && excludeTypePairs[key]) return false;
+      if (cl.type === 'soft') {
+        if (minGapMm > 0 && Math.abs(cl.distance) < minGapMm) return false;
+        if (key && toleranceByTypePair && toleranceByTypePair[key] !== undefined) {
+          var pairTolMm = toleranceByTypePair[key];
+          if (pairTolMm < maxGapMm) {
+            if (Math.abs(cl.distance) > pairTolMm) return false;
+          } else if (pairTolMm > maxGapMm && !_widerPairWarned) {
+            _widerPairWarned = true;
+            console.warn('[LocalEngine] toleranceByTypePair for "' + key + '" (' + pairTolMm +
+              'mm) exceeds this run’s global maxGap (' + maxGapMm + 'mm) — the local engine ' +
+              'never evaluated distances beyond the global maxGap, so soft clashes for that pair ' +
+              'between ' + maxGapMm + 'mm and ' + pairTolMm + 'mm cannot be recovered client-side.');
+          }
+        }
+      }
+      return true;
+    });
   }
 
   function _detectOnLocalEngine(models, rules, onProgress) {
@@ -787,7 +889,7 @@ clashcontrol-engine --install</pre>
         }
         return null;
       }
-      return result.clashes.map(function(c) {
+      var mapped = result.clashes.map(function(c) {
         // Engine (>=0.2.6) sends modelAId/modelBId; c.modelA/B kept first for
         // any fork that emits the short names.
         var rA = resolve(c.modelA || c.modelAId, c.elementA);
@@ -795,6 +897,10 @@ clashcontrol-engine --install</pre>
         if (!rA || !rB) return null;
         return _clashFromEngineResult(c, rA.el, rB.el, rA.model, rB.model, rules);
       }).filter(Boolean);
+      // The engine ignores excludeSelf/excludeTypes/excludeTypePairs/minGap/
+      // toleranceByTypePair itself (see wire-contract note above) — recover
+      // what we safely can now that we have resolved elements to check.
+      return _applyClientSideRuleFilters(mapped, rules);
     })
     .catch(function(err) {
       if (progressWs) try{progressWs.close();}catch(ex){}
@@ -806,4 +912,5 @@ clashcontrol-engine --install</pre>
   window._checkLocalEngine = _checkLocalEngine;
   window._connectLocalEngine = _connectLocalEngine;
   window._detectOnLocalEngine = _detectOnLocalEngine;
+  window._ccLocalEngineCanHandle = _localEngineCanHandle;
 })();

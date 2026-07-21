@@ -6125,6 +6125,19 @@ function startApp() {
     };
     var state = window._ccLatestState;
     var useLocal = state && state.localEngine && state.localEngine.active && state.localEngine.available && window._detectOnLocalEngine;
+    // Capability gate: the local engine silently ignores several rule
+    // fields (see addons/local-engine.js wire-contract note). Refuse the
+    // local-engine path outright for rules it can't honor and can't be
+    // corrected client-side, rather than let it return under-filtered
+    // "faster" results without saying so.
+    if (useLocal && typeof window._ccLocalEngineCanHandle === 'function') {
+      var _leCap = window._ccLocalEngineCanHandle(rules);
+      if (!_leCap.ok) {
+        useLocal = false;
+        if (window._ccToast) window._ccToast('Using browser engine — local engine can’t honor this ruleset (' + _leCap.reason + ')', 'info');
+        else console.log('[Detection] Local engine skipped: ' + _leCap.reason);
+      }
+    }
     var work;
     if (useLocal) {
       work = window._detectOnLocalEngine(models, rules, onProgress).then(function(result) {

@@ -177,6 +177,22 @@ Things to be careful about. Do not remove without a good reason — add a note i
   `tests/fixtures/generate-synthetic-ifc.js` (now fixed) at multiple `wallsPerStorey` values for
   future comparison; read `stats.phases`/`stats.sceneSub` off the loaded model directly rather
   than parsing the console.table output.
+- **Local-engine `distance` mm/metres double-scaling — FIXED 2026-07-21.** An external review
+  flagged, and this session confirmed against the Engine repo's `main` branch source, that
+  `_clashFromEngineResult` (`addons/local-engine.js`) treated the engine's `distance` field as
+  metres and multiplied by 1000 — but the engine already returns millimetres
+  (`-round(depth*1000)`/`round(dist_m*1000)`), so a real 10 mm penetration was reported as
+  10,000 mm. Fixed by removing the redundant `*1000`; `maxGap`/`minGap` (the input side) were
+  double-checked and are NOT affected — both sides already agree those are mm-on-the-wire. Also
+  added a capability gate (`window._ccLocalEngineCanHandle`) and client-side re-filtering
+  (`_applyClientSideRuleFilters`) for the rule fields the Engine repo still doesn't apply
+  server-side (re-verified 2026-07-21: `excludeTypes`/`excludeTypePairs`/`toleranceByTypePair`/
+  `duplicates`/`excludeSelf`/`minOverlapVolM3` are sent but ignored by `engine.py` on `main` —
+  the Wave 0 "Companion change required in ClashControlEngine" from `IMPROVEMENT_PLAN.md` was
+  never picked up in that repo). See `IMPROVEMENT_PLAN.md` Wave 0 item 10 and
+  `tests/local-engine-units.test.js`. The Engine repo's `/status` still has no capability/
+  protocol-version field to negotiate against, so the gate is a hand-maintained snapshot, not a
+  live contract — keep it in sync by hand if the Engine repo's rule-handling changes.
 <!-- END:known-issues -->
 
 <!-- BEGIN:active-work -->

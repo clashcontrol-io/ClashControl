@@ -121,7 +121,7 @@ package.json                — Neon Postgres driver for serverless functions
 addons/accessibility.js     — Deterministic building-code geometry checks (door width, thresholds, ramp slope, corridor/turning) with NL Bbl/NEN defaults
 addons/align.js             — Point-cloud ↔ IFC manual 3-point rigid alignment (as-built verification)
 addons/data-quality.js      — Data quality / BIM / ILS-NL/SfB check engines
-addons/local-engine.js      — Bridge to localhost Python exact-mesh clash engine
+addons/local-engine.js      — Bridge to localhost Python native-speed clash engine (same Möller tri-tri + BVH algorithm as the browser, not solid boolean ops)
 addons/openaec-bridge.js    — Bridge to OpenAEC Foundation sibling apps (Phase 1: open-pointcloud-studio over localhost HTTP)
 addons/geoplace.js          — Real-world basemap placement (IfcSite lat/lon + IFC4 map conversion), tiles via /api/tile
 addons/pointcloud.js        — Load LAS/PLY/PCD/XYZ/PTS/PTX point clouds as reference layers
@@ -164,7 +164,7 @@ Each addon is a plain IIFE loaded at runtime by the core via `addons/<name>.js` 
 ### What each addon does
 - `accessibility.js` — Deterministic building-code geometry checks (door clear width, threshold height, ramp slope, corridor/turning clearance) with NL Bbl/NEN defaults, overridable thresholds. Exposed via `window._ccRunAccessibilityChecks`.
 - `data-quality.js` — All check engines used by the Data Quality panel (BIM basics, ILS, NL-SfB classification checks). Exposed via `window._ccRunDataQualityChecks` et al.
-- `local-engine.js` — Talks to the localhost `clashcontrol-engine` Python server (port 19800) for exact mesh intersection. Transparently falls back to the core AABB+BVH engine when the server isn't running. Version-agnostic — reads the live engine version from `/status` and the latest release tag from GitHub at runtime; not pinned to a specific engine release.
+- `local-engine.js` — Talks to the localhost `clashcontrol-engine` Python server (port 19800) for native-speed mesh intersection — the *same* Möller tri-tri + BVH algorithm as the browser engine (Numba JIT + multiprocess + scipy KD-tree), not true solid boolean ops; escalating to it buys speed, not more-correct geometry. Transparently falls back to the core AABB+BVH engine when the server isn't running, or when the active ruleset includes a rule field the engine can't honor (see `window._ccLocalEngineCanHandle` and the wire-contract note atop the addon file). Version-agnostic — reads the live engine version from `/status` and the latest release tag from GitHub at runtime; not pinned to a specific engine release.
 - `geoplace.js` — Places the loaded model on a real-world raster basemap. Reads `IfcSite` RefLatitude/Longitude (and the IFC4 `IfcMapConversion`/`IfcProjectedCRS` georef the core extracts into `spatialHierarchy.mapConversion`), or accepts a manual lat/lon, then stitches map tiles (via the same-origin `/api/tile` proxy) onto a ground plane. The model never moves — the basemap is positioned in IFC space. No reprojection (proj4js) yet; projected CRS data is read for display + the pre-run placement-sanity check only.
 - `pointcloud.js` — Loads LAS/PLY/PCD/XYZ point clouds as reference layers (e.g. survey scans), recentred near origin for precision. Display-only; not fed to the clash engine.
 - `pwa.js` — Service-worker registration, update polling, and the "install as app" prompt. Everything else in the app works without it.

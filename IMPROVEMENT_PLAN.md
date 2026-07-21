@@ -99,19 +99,60 @@ Each item is an independently committed, verified bug fix:
    BVH algorithm as the browser (faster: Numba JIT, multiprocess). The "true solid
    boolean ops" claim is corrected here and in CLAUDE.md/MEMORY.md until Wave 1
    actually ships boolean volumes.
+10. **Local-engine `distance` mm/metres double-scaling, fixed 2026-07-21** — a much
+    worse bug than item 3's rule-parity gap: `_clashFromEngineResult`
+    (`addons/local-engine.js`) treated the engine's `distance` field as metres and
+    multiplied it by 1000 to get mm. Re-verified against `engine.py` on the Engine
+    repo's `main` branch this session: `distance` is **already millimetres**
+    (`-round(depth*1000)` / `round(dist_m*1000)`) — the browser was re-scaling an
+    already-scaled value, so a real 10 mm penetration was reported as 10,000 mm. Fixed
+    by removing the redundant `*1000`. Verified the companion input fields (`maxGap`/
+    `minGap`) do NOT have this problem — both sides already agree those are mm-on-the-
+    wire, converted to metres engine-side (`rules.get('maxGap',0)/1000.0`) before use
+    against metre-scale vertex coordinates.
+
+    Also added, since item 3's "Companion change required in ClashControlEngine"
+    below was **re-verified this session (2026-07-21) as still not implemented** —
+    `engine.py` on `main` still only reads `mode`/`maxGap`/`minGap`/`modelA`/`modelB`
+    and ignores `excludeTypes`/`excludeTypePairs`/`toleranceByTypePair`/`duplicates`/
+    `excludeSelf`/`minOverlapVolM3` entirely, and has no real intersection-volume
+    computation (`volume` is always `None`):
+    - `window._ccLocalEngineCanHandle(rules)` — a capability gate that refuses the
+      local-engine path outright for rules it can't honor and that can't be recovered
+      after the fact (`duplicates`; a deliberately-configured `minOverlapVolM3` above
+      the app's own default epsilon). `detectClashesAsync` (`index.html` ~6127) now
+      checks this before routing to the local engine and falls back to the browser
+      engine with a toast explaining why.
+    - `_applyClientSideRuleFilters` — re-applies `excludeSelf`, `excludeTypes`,
+      `excludeTypePairs`, `minGap`, and `toleranceByTypePair` (tighten-only — it can
+      drop clashes beyond a smaller per-pair tolerance, but can't recover clashes
+      beyond a *larger* one, since the engine only ever computed distances up to the
+      run's global `maxGap`; a console warning fires once when that asymmetry is hit)
+      against the engine's own returned clashes, using the resolved elements' own
+      `ifcType`/`selfClash` data — no Python-side change needed for these.
+    - This is a mitigation, not the real fix — the real fix is still the companion
+      Engine-repo change described below (a separate repo this branch cannot carry).
+      Regression test: `tests/local-engine-units.test.js`.
 
 **Companion change required in ClashControlEngine** (separate repo, documented here
-because this repo's branch cannot carry it): accept and apply the newly serialized
-rule fields in `engine.py`/`sweep.py` — excludeTypes, toleranceByTypePair,
-minOverlapVolM3, includeSpaces (filter IfcSpace/IfcOpeningElement server-side),
-duplicates, minGap. `mode` itself needed no server-side change — `engine.py` already
+because this repo's branch cannot carry it; **status re-verified 2026-07-21: still not
+done** — `engine.py` on `main` has not picked this up since Wave 0): accept and apply
+the newly serialized rule fields in `engine.py`/`sweep.py` — excludeTypes,
+toleranceByTypePair, minOverlapVolM3 (needs a real intersection-volume computation,
+not just the AABB-overlap estimate — `volume` is currently always `None`), includeSpaces
+(filter IfcSpace/IfcOpeningElement server-side), duplicates, minGap, excludeSelf,
+excludeTypePairs. `mode` itself needed no server-side change — `engine.py` already
 reads it correctly via `rules.get('mode','hard')`; the bug was entirely on the
 browser side never setting it. All fields are read via plain `dict.get(...)` with
 defaults (confirmed in `server.py`/`engine.py`/`protocol.py` — no schema validation
 that would reject unknown keys), so this repo's newly-sent fields are safe against
 older engine versions; parity means the Python side starts *applying* them. Semantic
 filter parity would additionally need `relatedPairs` added to the payload shape and
-new consumer logic — out of scope for this wave.
+new consumer logic — out of scope for this wave. The `/status` endpoint also still has
+no capability/protocol-version field (`{status, version, cores, backends}` only,
+verified 2026-07-21) — until it does, this repo's capability gate above is a
+hand-maintained snapshot of what the engine honors, not a live-negotiated contract;
+keep it in sync by hand whenever the Engine repo's rule-handling changes.
 
 ## Wave 1 — The triage funnel (Coordinate's core: 10,000 → dozens)
 
