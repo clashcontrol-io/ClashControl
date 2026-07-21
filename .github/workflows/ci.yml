@@ -57,3 +57,61 @@ jobs:
 
       - name: Run storey-scope truncated-scan check
         run: node tests/browser/storey-scope-truncated.mjs
+
+  # Path filter for the heavier differential probes below. index.html is the
+  # whole single-file app (loader, engine, UI all in one file), so this can't
+  # narrow down to "only the IFC loader changed" the way a multi-file repo
+  # could — but it does skip the ~250+ round-trip cost of these jobs on PRs
+  # that only touch docs/backend/tests and never touch app code at all.
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      app-code: ${{ steps.filter.outputs.app-code }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Check whether app code changed
+        id: filter
+        run: |
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            git fetch origin "${{ github.base_ref }}" --depth=1
+            CHANGED=$(git diff --name-only "origin/${{ github.base_ref }}...HEAD")
+          else
+            CHANGED=$(git diff --name-only HEAD^ HEAD 2>/dev/null || echo "")
+          fi
+          echo "Changed files:"
+          echo "$CHANGED"
+          if echo "$CHANGED" | grep -qE '^(index\.html|addons/|engine/|clash-discipline-core\.js|cc-runtime\.js)'; then
+            echo "app-code=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "app-code=false" >> "$GITHUB_OUTPUT"
+          fi
+
+  # Differential correctness probes, promoted from local-only scripts per the
+  # 2026-07-17 large-model plan review's Phase 1 ask: these already existed
+  # (ifc-worker-fallback-differential.mjs written for the worker-split
+  # prerequisite; wasm-sweep-differential.mjs written per explicit
+  # "test it locally before and after" instruction for the Rust/WASM sweep,
+  # see MEMORY.md) but only ran ad hoc on a developer's machine, never in CI.
+  browser-differential:
+    needs: changes
+    if: needs.changes.outputs.app-code == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Install Playwright Chromium
+        run: |
+          npm install --no-save playwright@1
+          npx playwright install --with-deps chromium
+
+      - name: Run IFC worker vs. main-thread-fallback fingerprint differential
+        run: node tests/browser/ifc-worker-fallback-differential.mjs
+
+      - name: Run WASM vs. JS broad-phase sweep differential
+        run: node tests/browser/wasm-sweep-differential.mjs

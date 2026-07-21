@@ -5,13 +5,17 @@
 CREATE TABLE IF NOT EXISTS shared_projects (
   id            TEXT PRIMARY KEY,           -- project key, e.g. "MEP-abc123"
   name          TEXT NOT NULL,
-  edit_key      TEXT,                       -- creator-held; required for DELETE (PUT stays open — that's the collaboration model)
+  edit_key      TEXT,                       -- SHA-256 hex hash, not plaintext (api/project.js hashEditKey); creator-held raw value required for DELETE (PUT stays open — that's the collaboration model). Older rows may still hold a raw pre-hashing token — api/project.js's editKeyMatches() handles both.
+  expires_at    TIMESTAMPTZ,                -- optional, set via POST body.expiresInDays; NULL = never expires (default, existing behavior)
   created_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
   last_activity TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
 -- Migration for pre-editKey deployments (idempotent):
 ALTER TABLE shared_projects ADD COLUMN IF NOT EXISTS edit_key TEXT;
+
+-- Migration for pre-expiry deployments (idempotent):
+ALTER TABLE shared_projects ADD COLUMN IF NOT EXISTS expires_at TIMESTAMPTZ;
 
 CREATE TABLE IF NOT EXISTS shared_issues (
   id          TEXT NOT NULL,                -- clash/issue id (client-generated)

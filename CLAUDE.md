@@ -121,7 +121,7 @@ package.json                — Neon Postgres driver for serverless functions
 addons/accessibility.js     — Deterministic building-code geometry checks (door width, thresholds, ramp slope, corridor/turning) with NL Bbl/NEN defaults
 addons/align.js             — Point-cloud ↔ IFC manual 3-point rigid alignment (as-built verification)
 addons/data-quality.js      — Data quality / BIM / ILS-NL/SfB check engines
-addons/local-engine.js      — Bridge to localhost Python exact-mesh clash engine
+addons/local-engine.js      — Bridge to localhost Python native-speed clash engine (same Möller tri-tri + BVH algorithm as the browser, not solid boolean ops)
 addons/openaec-bridge.js    — Bridge to OpenAEC Foundation sibling apps (Phase 1: open-pointcloud-studio over localhost HTTP)
 addons/geoplace.js          — Real-world basemap placement (IfcSite lat/lon + IFC4 map conversion), tiles via /api/tile
 addons/pointcloud.js        — Load LAS/PLY/PCD/XYZ/PTS/PTX point clouds as reference layers
@@ -164,7 +164,7 @@ Each addon is a plain IIFE loaded at runtime by the core via `addons/<name>.js` 
 ### What each addon does
 - `accessibility.js` — Deterministic building-code geometry checks (door clear width, threshold height, ramp slope, corridor/turning clearance) with NL Bbl/NEN defaults, overridable thresholds. Exposed via `window._ccRunAccessibilityChecks`.
 - `data-quality.js` — All check engines used by the Data Quality panel (BIM basics, ILS, NL-SfB classification checks). Exposed via `window._ccRunDataQualityChecks` et al.
-- `local-engine.js` — Talks to the localhost `clashcontrol-engine` Python server (port 19800) for exact mesh intersection. Transparently falls back to the core AABB+BVH engine when the server isn't running. Version-agnostic — reads the live engine version from `/status` and the latest release tag from GitHub at runtime; not pinned to a specific engine release.
+- `local-engine.js` — Talks to the localhost `clashcontrol-engine` Python server (port 19800) for native-speed mesh intersection — the *same* Möller tri-tri + BVH algorithm as the browser engine (Numba JIT + multiprocess + scipy KD-tree), not true solid boolean ops; escalating to it buys speed, not more-correct geometry. Transparently falls back to the core AABB+BVH engine when the server isn't running, or when the active ruleset includes a rule field the engine can't honor (see `window._ccLocalEngineCanHandle` and the wire-contract note atop the addon file). Version-agnostic — reads the live engine version from `/status` and the latest release tag from GitHub at runtime; not pinned to a specific engine release.
 - `geoplace.js` — Places the loaded model on a real-world raster basemap. Reads `IfcSite` RefLatitude/Longitude (and the IFC4 `IfcMapConversion`/`IfcProjectedCRS` georef the core extracts into `spatialHierarchy.mapConversion`), or accepts a manual lat/lon, then stitches map tiles (via the same-origin `/api/tile` proxy) onto a ground plane. The model never moves — the basemap is positioned in IFC space. No reprojection (proj4js) yet; projected CRS data is read for display + the pre-run placement-sanity check only.
 - `pointcloud.js` — Loads LAS/PLY/PCD/XYZ point clouds as reference layers (e.g. survey scans), recentred near origin for precision. Display-only; not fed to the clash engine.
 - `pwa.js` — Service-worker registration, update polling, and the "install as app" prompt. Everything else in the app works without it.
@@ -204,7 +204,7 @@ The app is deployed at `www.clashcontrol.io` on Vercel. The backend consists of 
 3. If Groq is over quota/down, the client uses the connected own-LLM (if any), then falls back to built-in offline regex commands. The over-quota message points to the one-click Connector.
 
 ### Shared Issues
-- No login required. Uses shareable project keys (e.g., `MEP-abc123`)
+- No login required. Uses shareable project keys (e.g., `MEP-abc123`) — anyone with the key or share link has full read **and edit** access; there's no read-only sharing or per-person permissions (the UI now says this explicitly, see the Quick Share panel copy)
 - Shared records are minimal (~250 bytes): identity (GlobalIds) + team decisions (status, priority, assignee, title)
 - IFC metadata (types, names, storeys, materials) is derived locally from each user's loaded model
-- Conflict resolution: last-write-wins per issue
+- Conflict resolution: NOT naive last-write-wins — PUT compares each issue's server-authoritative `updated_at` (echoed back by the client as `_updatedAt`) against the current DB value and reports per-issue `conflicts[]` in the response rather than silently overwriting; the client is responsible for merging. DELETE is separately gated by a creator-held `editKey`, stored server-side as a SHA-256 hash (never plaintext, `api/project.js` `hashEditKey`/`editKeyMatches`) — PUT deliberately stays open to anyone with just the project key, that IS the collaboration model. Projects can optionally be created with an expiry (`expiresInDays`, `api/schema.sql` `expires_at`); default is no expiry.

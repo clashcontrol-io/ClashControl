@@ -177,6 +177,107 @@ Things to be careful about. Do not remove without a good reason — add a note i
   `tests/fixtures/generate-synthetic-ifc.js` (now fixed) at multiple `wallsPerStorey` values for
   future comparison; read `stats.phases`/`stats.sceneSub` off the loaded model directly rather
   than parsing the console.table output.
+- **Local-engine `distance` mm/metres double-scaling — FIXED 2026-07-21.** An external review
+  flagged, and this session confirmed against the Engine repo's `main` branch source, that
+  `_clashFromEngineResult` (`addons/local-engine.js`) treated the engine's `distance` field as
+  metres and multiplied by 1000 — but the engine already returns millimetres
+  (`-round(depth*1000)`/`round(dist_m*1000)`), so a real 10 mm penetration was reported as
+  10,000 mm. Fixed by removing the redundant `*1000`; `maxGap`/`minGap` (the input side) were
+  double-checked and are NOT affected — both sides already agree those are mm-on-the-wire. Also
+  added a capability gate (`window._ccLocalEngineCanHandle`) and client-side re-filtering
+  (`_applyClientSideRuleFilters`) for the rule fields the Engine repo still doesn't apply
+  server-side (re-verified 2026-07-21: `excludeTypes`/`excludeTypePairs`/`toleranceByTypePair`/
+  `duplicates`/`excludeSelf`/`minOverlapVolM3` are sent but ignored by `engine.py` on `main` —
+  the Wave 0 "Companion change required in ClashControlEngine" from `IMPROVEMENT_PLAN.md` was
+  never picked up in that repo). See `IMPROVEMENT_PLAN.md` Wave 0 item 10 and
+  `tests/local-engine-units.test.js`. The Engine repo's `/status` still has no capability/
+  protocol-version field to negotiate against, so the gate is a hand-maintained snapshot, not a
+  live contract — keep it in sync by hand if the Engine repo's rule-handling changes.
+- **Candidate-pair memory explosion on the Wasm sweep path — FIXED 2026-07-21.** `_sweepAndPruneWasm`
+  (`index.html`) used to expand the Wasm-returned flat index array into a fully-materialized
+  `{eA,mA,eB,mB,sameModel}` object per candidate pair immediately after the broad phase — the
+  `_CANDIDATE_EST_BYTES=96`-per-pair, ~96 MB @ 1M candidates the large-candidate toast warns about.
+  Now returns a compact view (`_makeCompactCandidates`) over `items` (one entry per *element*, not
+  per pair) + the flat array; `{eA,mA,eB,mB,sameModel}` objects are built lazily, one at a time,
+  only for whichever candidate a consumer is actually reading right now, through a single access
+  point (`_candidateAt`) — so at most O(chunk size, currently 80) of them are ever alive together
+  instead of O(candidate count). The `_sweepAndPrune` JS fallback (the oracle path) is deliberately
+  **unchanged** — still a plain Array of eager pair objects, exactly as the large-model plan's
+  Phase 2 asked ("keep the current object-array JS fallback as the oracle initially").
+  `_candidateAt` dispatches on `Array.isArray()` so callers don't need to know which shape
+  `candidates` is in. New test: `tests/candidate-view.test.js`. **Not independently verified in a
+  real browser this session** — this dev sandbox's proxy blocks the CDNs the app needs (same
+  limitation noted elsewhere in this file), so the actual WASM-vs-JS clash-identity differential
+  (`tests/browser/wasm-sweep-differential.mjs`, promoted into CI this same session) has not
+  actually been run against this change yet; it will run on the next real CI push/PR, which is
+  the first real verification this specific fix gets.
+- **Clash runs/exports now stamp model scope/completeness — DONE 2026-07-21.** The browser-first
+  large-model plan's Phase 3 ask ("bounded storey scopes, not progressive loading") turned out to
+  already be substantially built and well-tested (atomic `REPLACE_MODEL`/`ADD_MODEL`, the
+  `StoreyScopeModal`/`ccUiStoreyChooser` picker, `stats.loadedScope`/`scopedOutCount` stamped per
+  model at load time) — confirmed by re-reading the actual code this session rather than trusting
+  the external review's assumption that this needed building from scratch. The one genuine,
+  narrowly-scoped gap: nothing downstream recorded WHICH models a given clash run or BCF export
+  actually covered when a storey scope narrowed the load, so a run against a partially-loaded
+  federation could silently read as "the whole building has no clashes." Added
+  `_ccSummarizeModelScope(models)` (`index.html`, right before `exportBCF`) and wired it into both
+  `detectionSettings` capture sites (`state.detectionSettings.scope`) and the BCF export's
+  `README.txt` (a plain-language note naming which storeys were loaded per model, when incomplete).
+  New test: `tests/model-scope-stamping.test.js`. Also had to fix `tests/bcf-export.test.js`'s
+  narrowest `exportBCF` extraction (it started exactly at `function exportBCF(...)`, missing the
+  new helper declared just above it — the file's other two `exportBCF` sandboxes already started
+  from `_lookupElBox` instead and were unaffected; the narrow one now does too).
+  **Deliberately NOT done, left for the maintainer to decide** (both are product/UX calls, not
+  bugs): (1) `ccUiStoreyChooser` is flag-gated off by default in production — flipping that default
+  changes every user's first-load experience and needs a first-load-UX decision, not a code fix;
+  (2) discipline/search-set-scoped *loading* (as opposed to today's post-load filtering) doesn't
+  exist — extending the same atomic pattern to it would be a genuinely new feature, not a gap fix.
+- **BCF orthographic-camera export + a real crash bug — FIXED 2026-07-21.** Investigating the
+  large-model plan's Phase 4 BCF-fidelity ask ("add orthographic camera export/import") surfaced
+  something more urgent than a missing feature: `_captureViewpoint` (index.html) read
+  `S.camera.fov.toFixed(2)` **unconditionally**, but `S.camera` becomes a genuine
+  `THREE.OrthographicCamera` (no `.fov` at all) whenever the app's own orthographic-view toggle
+  (`_ccToggleOrtho`) is active — so saving a viewpoint while in ortho mode threw a `TypeError`.
+  Separately, `exportBCF` always emitted `<PerspectiveCamera>`, even for a genuinely orthographic
+  view, losing that fact entirely. Fixed: `_captureViewpoint` now branches on
+  `S.camera.isOrthographicCamera`, capturing `isOrtho`/`viewToWorldScale` (BCF-XML's
+  `ViewToWorldScale` — "view's visible vertical size in meters", verified against
+  buildingSMART/BCF-XML `release_3_0`'s `visinfo.xsd`) instead of `fov` for ortho viewpoints;
+  `_restoreViewpoint` only touches `.fov`/scale when the live camera's type already matches the
+  viewpoint's (switching camera type mid-restore would need the same camera-rebuild-and-rewire
+  `_ccToggleOrtho` does — out of scope for a restore call, and position/orientation still restore
+  correctly regardless); `exportBCF` emits `<OrthogonalCamera>`/`<ViewToWorldScale>` instead of
+  `<PerspectiveCamera>`/`<FieldOfView>` when the viewpoint says `isOrtho`. **Camera import doesn't
+  exist at all yet** — the BCF importer (`importBCF`) only parses `<Component IfcGuid>` for element
+  identity, never camera data, for either camera type — so "add orthographic import" isn't
+  applicable without building perspective camera import first (a separate, bigger feature, not
+  attempted here). New tests: `tests/bcf-ortho-camera.test.js`,
+  `tests/viewpoint-ortho-crash.test.js`.
+  **Deliberately NOT attempted this session** (each is a separately-scoped feature, not a small
+  gap): IFC-loader structured warnings for skipped/malformed elements (the loader is explicitly
+  flagged in CLAUDE.md as "complex but working — not to be touched without good reason," and no
+  existing warning-collection mechanism was found to extend); promoting `ids-conformance.yml` off
+  `continue-on-error` (needs real historical pass-rate data from actual workflow runs to set the
+  `wrong=0`/baselined-incompletes exit gate correctly — guessing this from source reading alone
+  risks gating on a threshold nobody's verified the corpus actually clears); BCF clipping-plane
+  export, comment threads, and cross-tool round-trip validation against Solibri/BIMcollab (the
+  first two are real, separately-scoped features; the third needs external tools this environment
+  doesn't have).
+- **Phase 6 (reducer decomposition, next slice) — investigated, deliberately NOT attempted
+  2026-07-21.** `REDUCER_DECOMPOSITION_PLAN.md` already names the next slice precisely: Area 2,
+  cache invalidation (`_clearElCaches` + `_bvhLRURemoveModel`/`_pairCacheClearForModel`), explicitly
+  rated "Risk: low — pure function, no control-flow entanglement, already isolated." That part is
+  genuinely low-risk. But the plan's own **Standing rules** require "real-browser verification
+  after every slice, not just unit tests" — citing slice 1's own history, where unit tests alone
+  would have missed a real runtime timing bug that only a real-browser dispatch-and-read check
+  caught. This dev sandbox's proxy blocks the CDNs (React/Three/web-ifc) the app needs to boot at
+  all in headless Chromium (same limitation `ids-conformance.yml`'s own comment and other entries
+  in this file already document), so that required verification step is not something this session
+  can do. Extracting the slice without it would mean shipping the one thing the plan's rules
+  explicitly warn against — a refactor whose unit tests pass but whose real-browser behavior was
+  never actually checked. Deferred rather than done partially; the next session with real browser
+  access should be able to execute Area 2 directly using the plan's own instructions above, unit
+  tests plus the required real-browser check.
 <!-- END:known-issues -->
 
 <!-- BEGIN:active-work -->

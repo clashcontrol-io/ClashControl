@@ -188,7 +188,12 @@ test('BCF 3.0 <Color> wraps its <Component> in a nested <Components> element; 2.
 
 test('no <Coloring> for a single-GUID item (DQ/accessibility issue) — nothing to contrast a color against', () => {
   const html = fs.readFileSync(path.join(__dirname, '..', 'index.html'), 'utf8');
-  const fnSrc = extractFunction(html, 'function exportBCF(items, version, viewpoints, state)');
+  // Start at _lookupElBox (like the other exportBCF sandboxes in this file)
+  // rather than at exportBCF itself, so exportBCF's own dependencies
+  // declared just above it (_ccSummarizeModelScope, the scope-stamping
+  // helper) are included in the extracted source instead of throwing a
+  // ReferenceError.
+  const fnSrc = extractFunction(html, 'function _lookupElBox(models, modelId, expressId)');
   const files = {};
   function makeZip(prefix) {
     return {

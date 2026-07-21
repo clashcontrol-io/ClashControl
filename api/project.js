@@ -16,6 +16,54 @@ function randomToken(len) {
   return out;
 }
 
+// editKey is stored hashed (SHA-256 hex), never in plaintext, so a DB leak
+// doesn't hand out delete capability for every shared project. Rows created
+// before this change still hold the raw 16-char token (from KEY_CHARS, which
+// excludes several hex letters — g/j/k/m/n/q/r/s/t/u/v/w/x/y/z aren't valid
+// hex digits — and is never 64 chars long), so `editKeyMatches` below
+// distinguishes "looks like a sha256 hex digest" from "legacy raw token" and
+// compares accordingly. New projects always get a hash; nothing re-hashes
+// old rows in place (no code-only way to do that without DB access), but
+// they keep working exactly as before under the legacy branch.
+function hashEditKey(key) {
+  return crypto.createHash('sha256').update(key, 'utf8').digest('hex');
+}
+
+var SHA256_HEX_RE = /^[0-9a-f]{64}$/;
+
+function timingSafeStringEqual(a, b) {
+  var bufA = Buffer.from(String(a), 'utf8');
+  var bufB = Buffer.from(String(b), 'utf8');
+  if (bufA.length !== bufB.length) return false;
+  return crypto.timingSafeEqual(bufA, bufB);
+}
+
+function editKeyMatches(provided, stored) {
+  if (!provided || !stored) return false;
+  if (SHA256_HEX_RE.test(stored)) return timingSafeStringEqual(hashEditKey(provided), stored);
+  return timingSafeStringEqual(provided, stored); // legacy plaintext row
+}
+
+// Single project-row loader shared by GET/PUT/DELETE, with a column-existence
+// fallback ladder matching the same "legacy deployment keeps working" pattern
+// as the edit_key insert above — expires_at and edit_key may each be present
+// or absent independently depending on which migrations a deployment has run.
+async function loadProjectRow(sql, projectId) {
+  try {
+    return await sql`SELECT id, name, created_at, last_activity, edit_key, expires_at FROM shared_projects WHERE id = ${projectId}`;
+  } catch (e1) {
+    try {
+      return await sql`SELECT id, name, created_at, last_activity, edit_key FROM shared_projects WHERE id = ${projectId}`;
+    } catch (e2) {
+      return await sql`SELECT id, name, created_at, last_activity FROM shared_projects WHERE id = ${projectId}`;
+    }
+  }
+}
+
+function isExpired(row) {
+  return !!(row && row.expires_at && new Date(row.expires_at).getTime() < Date.now());
+}
+
 // Generate a short project key: PREFIX-XXXXXX
 function generateKey(name) {
   var prefix = (name || 'CC')
@@ -91,14 +139,33 @@ module.exports = async function handler(req, res) {
 
         // editKey: held by the creator only, required for DELETE on this
         // project. PUT stays open to anyone with the project key — that IS
-        // the collaboration model (teammates join with just the key).
-        // Legacy deployments without the edit_key column keep working.
+        // the collaboration model (teammates join with just the key). Only
+        // the hash is stored (see hashEditKey above); the raw value is
+        // returned once here and never persisted. Legacy deployments
+        // without the edit_key column keep working.
         var editKey = randomToken(16);
+        var editKeyHash = hashEditKey(editKey);
+
+        // Optional expiry: body.expiresInDays, a positive integer capped at
+        // a year. Off by default (existing behavior — projects never
+        // expire) so this is purely additive. Legacy deployments without
+        // the expires_at column keep working (caught below like edit_key).
+        var expiresAt = null;
+        var expiresInDays = Number(body.expiresInDays);
+        if (Number.isFinite(expiresInDays) && expiresInDays > 0) {
+          expiresAt = new Date(Date.now() + Math.min(expiresInDays, 365) * 86400000);
+        }
+
         try {
-          await sql`INSERT INTO shared_projects (id, name, edit_key) VALUES (${key}, ${name}, ${editKey})`;
+          if (expiresAt) {
+            await sql`INSERT INTO shared_projects (id, name, edit_key, expires_at) VALUES (${key}, ${name}, ${editKeyHash}, ${expiresAt})`;
+          } else {
+            await sql`INSERT INTO shared_projects (id, name, edit_key) VALUES (${key}, ${name}, ${editKeyHash})`;
+          }
         } catch (colErr) {
           await sql`INSERT INTO shared_projects (id, name) VALUES (${key}, ${name})`;
           editKey = null;
+          expiresAt = null;
         }
 
         // If initial issues are provided, insert them (batched)
@@ -122,16 +189,20 @@ module.exports = async function handler(req, res) {
       case 'GET': {
         if (!projectId) return res.status(400).json({ error: 'Missing project id' });
 
-        var project = await sql`SELECT id, name, created_at, last_activity FROM shared_projects WHERE id = ${projectId}`;
-        if (project.length === 0) return res.status(404).json({ error: 'Project not found' });
+        var project = await loadProjectRow(sql, projectId);
+        if (project.length === 0 || isExpired(project[0])) return res.status(404).json({ error: 'Project not found' });
 
         var issues = await sql`SELECT id, data, updated_by, updated_at FROM shared_issues WHERE project_id = ${projectId} ORDER BY updated_at DESC`;
 
         // Update last_activity
         await sql`UPDATE shared_projects SET last_activity = now() WHERE id = ${projectId}`;
 
+        // edit_key (hash or legacy plaintext) must never leave the server.
+        var publicProject = {id: project[0].id, name: project[0].name, created_at: project[0].created_at, last_activity: project[0].last_activity};
+        if (project[0].expires_at) publicProject.expires_at = project[0].expires_at;
+
         return res.status(200).json({
-          project: project[0],
+          project: publicProject,
           issues: issues.map(function(row) {
             var d = typeof row.data === 'string' ? JSON.parse(row.data) : row.data;
             d._updatedBy = row.updated_by;
@@ -145,8 +216,8 @@ module.exports = async function handler(req, res) {
       case 'PUT': {
         if (!projectId) return res.status(400).json({ error: 'Missing project id' });
 
-        var project = await sql`SELECT id FROM shared_projects WHERE id = ${projectId}`;
-        if (project.length === 0) return res.status(404).json({ error: 'Project not found' });
+        var project = await loadProjectRow(sql, projectId);
+        if (project.length === 0 || isExpired(project[0])) return res.status(404).json({ error: 'Project not found' });
 
         var body = req.body || {};
         var issues = (body.issues || []).filter(validateIssue);
@@ -194,14 +265,12 @@ module.exports = async function handler(req, res) {
         var issueId = req.query.issue;
         if (!issueId) return res.status(400).json({ error: 'Missing issue id' });
 
-        var storedEditKey = null;
-        try {
-          var pRow = await sql`SELECT edit_key FROM shared_projects WHERE id = ${projectId}`;
-          storedEditKey = pRow.length ? pRow[0].edit_key : null;
-        } catch (colErr) { /* column not migrated — legacy open mode */ }
+        var pRow = await loadProjectRow(sql, projectId);
+        if (pRow.length === 0 || isExpired(pRow[0])) return res.status(404).json({ error: 'Project not found' });
+        var storedEditKey = pRow[0].edit_key || null;
         if (storedEditKey) {
           var provided = req.headers['x-cc-edit-key'] || req.query.editKey || '';
-          if (provided !== storedEditKey) return res.status(403).json({ error: 'editKey required to delete' });
+          if (!editKeyMatches(provided, storedEditKey)) return res.status(403).json({ error: 'editKey required to delete' });
         }
 
         await sql`DELETE FROM shared_issues WHERE project_id = ${projectId} AND id = ${issueId}`;
@@ -216,3 +285,12 @@ module.exports = async function handler(req, res) {
     return res.status(500).json({ error: 'Database error' });
   }
 };
+
+// Exposed for direct unit testing (this file has no DOM/browser dependency,
+// unlike the addons/*.js IIFEs, so plain CommonJS exports work here).
+module.exports.hashEditKey = hashEditKey;
+module.exports.editKeyMatches = editKeyMatches;
+module.exports.isExpired = isExpired;
+module.exports.generateKey = generateKey;
+module.exports.validateIssue = validateIssue;
+module.exports.stripToShared = stripToShared;
