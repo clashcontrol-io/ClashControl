@@ -94,7 +94,7 @@ test('autoParkInactive is a persisted pref (default on) with a reducer + action'
 });
 
 test('the auto-park pass only sheds HIDDEN, non-live models and never the active view', () => {
-  const body = sliceFrom('function _ccAutoParkPass()', 1200);
+  const body = sliceFrom('function _ccAutoParkPass()', 1600);
   assert.match(body, /s\.autoParkInactive === false\) return/);          // respects the opt-out
   assert.match(body, /if \(s\.detecting\) return/);                       // never mid-detection
   assert.match(body, /usedJSHeapSize \/ performance\.memory\.jsHeapSizeLimit < _AUTOPARK_RATIO\) return/); // only under pressure
@@ -104,9 +104,17 @@ test('the auto-park pass only sheds HIDDEN, non-live models and never the active
   assert.match(body, /\{ auto: true \}/);                                // parks via the guarded _ccParkModel
 });
 
-test('the auto-park pass targets the largest hidden model first (most memory per park)', () => {
-  const body = sliceFrom('function _ccAutoParkPass()', 1200);
-  assert.match(body, /hidden\.sort\(function\(a,b\)\{ return \(\(b\.elements\|\|\[\]\)\.length\) - \(\(a\.elements\|\|\[\]\)\.length\)/);
+// V7 P6.1: the sort target moved from element count to the byte-accurate
+// residency ledger's reclaimableBytes — a large façade element can carry more
+// triangles than thousands of simple pipes, so element count was a weak proxy.
+// See tests/residency-ledger.test.js for the ledger's own unit coverage.
+test('the auto-park pass targets the model with the largest RECLAIMABLE BYTE footprint first, via the residency ledger', () => {
+  const body = sliceFrom('function _ccAutoParkPass()', 1600);
+  assert.match(body, /_ccComputeResidencyLedger\(hidden\)/);
+  assert.match(body, /hidden\.sort\(function\(a,b\)\{/);
+  assert.match(body, /reclaimableBytes/);
+  assert.doesNotMatch(body, /\(b\.elements\|\|\[\]\)\.length\) - \(\(a\.elements\|\|\[\]\)\.length\)/,
+    'must no longer sort by raw element count now that the byte ledger exists');
 });
 
 test('the heap poller drives the auto-park pass every tick (not one-shot)', () => {

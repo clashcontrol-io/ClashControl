@@ -2255,13 +2255,134 @@ function startApp() {
   // detection, and is gated by the autoParkInactive pref (default on). This is
   // the automatic arm of the manual Park feature; _ccParkModel's restorability
   // guard still applies, so nothing un-restorable is ever auto-parked.
+
+  // ── P6.1: byte-accurate in-memory residency ledger (V7_RELEASE_PLAN.md) ──
+  // Replaces element-count as the proxy for "how much memory would parking
+  // this model reclaim" — one large façade element can carry more triangles
+  // than thousands of simple pipes, and summing element.meshes[] vertex
+  // counts per-PROXY (as the memory report used to) double-counts geometry
+  // shared by an InstancedMesh group. This computes real, dedup-aware byte
+  // estimates instead. Distinct from storage-core.js's IDB_REGISTRY/
+  // LS_REGISTRY (those track DISK persistence retention classes:
+  // source/derived/decay/prefs) — this tracks IN-MEMORY residency; nothing
+  // here is persisted.
+  //
+  // Design requirement mined directly from the BVH-LRU history (`e2c064f`,
+  // 2026-07-19): that commit fixed a real leak where _flushGeoCache removed
+  // entries from geoCache but left their keys counting toward the LRU's
+  // eviction cap, evicting real entries early. Anything that reclaims memory
+  // tracked here must update this ledger in the SAME operation — a
+  // park/flush/evict path must never leave stale bytes counted against a
+  // budget (that's exactly the bug that recurred there).
+  //
+  // Every byte figure below is a documented approximation (same convention
+  // as _CANDIDATE_EST_BYTES elsewhere in this file), not a forensic
+  // measurement — good enough to RANK models and to catch order-of-magnitude
+  // drift, not to bill someone for RAM.
+  function _ccGeometryByteSize(g) {
+    var b = 0;
+    if (!g || !g.attributes) return 0;
+    for (var k in g.attributes) {
+      var attr = g.attributes[k];
+      if (attr && attr.array && attr.array.byteLength) b += attr.array.byteLength;
+    }
+    if (g.index && g.index.array && g.index.array.byteLength) b += g.index.array.byteLength;
+    return b;
+  }
+  // The InstancedMesh's BASE geometry is a SHARED reference with the original
+  // per-element proxy mesh (the instancing rollout keeps them off-scene in
+  // element.meshes[] specifically so consumers can still resolve it) — already
+  // counted once via the per-model geometry dedup below. Only the per-instance
+  // matrix/color arrays are genuinely incremental.
+  function _ccInstancedExtraBytes(mesh) {
+    var b = 0;
+    if (mesh.instanceMatrix && mesh.instanceMatrix.array && mesh.instanceMatrix.array.byteLength) b += mesh.instanceMatrix.array.byteLength;
+    if (mesh.instanceColor && mesh.instanceColor.array && mesh.instanceColor.array.byteLength) b += mesh.instanceColor.array.byteLength;
+    return b;
+  }
+  // ~2n tree nodes for n leaf triangles (see _buildBVHNode — a leaf per <=4
+  // tris), each a small plain object (6 floats + a couple int fields) — a
+  // documented approximation of V8 object overhead, same spirit as
+  // _CANDIDATE_EST_BYTES. The triangle data itself (Float32Array) is counted
+  // separately via el._triCache's byteLength — do not double it here.
+  var _BVH_NODE_EST_BYTES_PER_TRI = 60;
+  // psets/quantities are canonicalized and DEDUPLICATED BY REFERENCE across
+  // elements with the same shape (_ccCanonPsets/_ccCanonQuantities) — many
+  // elements can share the exact same frozen object. Charge each distinct
+  // reference once, not once per element, or this wildly overstates the real
+  // heap cost on any project that actually uses shared type templates.
+  function _ccRoughJSONBytes(o) {
+    try { return JSON.stringify(o).length * 2; } catch (e) { return 0; } // UTF-16 code units, rough
+  }
+  function _ccApproxPropsBytes(props, seenRefs) {
+    if (!props) return 0;
+    var total = 40; // small per-element object overhead
+    ['expressId', 'globalId', 'ifcType', 'name', 'description', 'objectType', 'storey', 'material'].forEach(function (k) {
+      if (props[k] != null) total += String(props[k]).length * 2 + 8;
+    });
+    if (props.psets && !seenRefs.has(props.psets)) { seenRefs.add(props.psets); total += _ccRoughJSONBytes(props.psets); }
+    if (props.quantities && !seenRefs.has(props.quantities)) { seenRefs.add(props.quantities); total += _ccRoughJSONBytes(props.quantities); }
+    return total;
+  }
+
+  // Pure function of `models` — every field it reads (geometry.attributes[k]
+  // .array.byteLength, el._wvCache.byteLength, etc.) is duck-typed rather than
+  // an `instanceof THREE.X` check, so it's testable with plain object
+  // fixtures, no live Three.js/browser required.
+  function _ccComputeResidencyLedger(models) {
+    models = models || [];
+    var perModel = {}, totalBytes = 0, seenPropRefs = new Set();
+    models.forEach(function (m) {
+      var seenGeo = {}; // geometry.uuid -> true, per-model dedup
+      var geoBytes = 0, batchBytes = 0, instBytes = 0, bvhBytes = 0, propBytes = 0, proxyCount = 0;
+      (m.elements || []).forEach(function (el) {
+        (el.meshes || []).forEach(function (pm) {
+          proxyCount++;
+          var g = pm && pm.geometry;
+          if (g && g.uuid && !seenGeo[g.uuid]) { seenGeo[g.uuid] = true; geoBytes += _ccGeometryByteSize(g); }
+        });
+        var triBytes = 0;
+        if (el._wvCache && el._wvCache.byteLength) bvhBytes += el._wvCache.byteLength;
+        if (el._triCache && el._triCache.byteLength) { triBytes = el._triCache.byteLength; bvhBytes += triBytes; }
+        if (el._bvhCache) bvhBytes += Math.round((triBytes / 12 /* Float32Array: 4B × 3 coords */) * 2 * _BVH_NODE_EST_BYTES_PER_TRI);
+        propBytes += _ccApproxPropsBytes(el.props, seenPropRefs);
+      });
+      (m.meshes || []).forEach(function (mm) {
+        if (!mm) return;
+        if (mm.userData && mm.userData._isCCBatch && mm.geometry && mm.geometry.uuid && !seenGeo[mm.geometry.uuid]) {
+          seenGeo[mm.geometry.uuid] = true; batchBytes += _ccGeometryByteSize(mm.geometry);
+        }
+        if (mm.isInstancedMesh) instBytes += _ccInstancedExtraBytes(mm);
+      });
+      var reclaimableBytes = geoBytes + batchBytes + instBytes + bvhBytes + propBytes;
+      perModel[m.id] = {
+        geoBytes: geoBytes, batchBytes: batchBytes, instBytes: instBytes,
+        bvhBytes: bvhBytes, propBytes: propBytes, proxyCount: proxyCount,
+        reclaimableBytes: reclaimableBytes
+      };
+      totalBytes += reclaimableBytes;
+    });
+    return { perModel: perModel, totalBytes: totalBytes };
+  }
+  window._ccComputeResidencyLedger = _ccComputeResidencyLedger;
+
   var _AUTOPARK_RATIO = 0.72;         // start shedding at 72% of the heap limit
+  var _AUTOPARK_LAST_ACTION_MS = 0;   // last park OR restore timestamp
+  var _AUTOPARK_COOLDOWN_MS = 20000;  // ~2-3 poll ticks — let GC settle after a
+                                       // park, and don't immediately re-park a
+                                       // model the user (or smart-reload) just
+                                       // restored (hysteresis: avoids thrashing
+                                       // at the 72% boundary and re-parking a
+                                       // just-touched model before its use is done)
+  function _ccAutoParkNoteAction() { _AUTOPARK_LAST_ACTION_MS = Date.now(); }
+  window._ccAutoParkNoteAction = _ccAutoParkNoteAction; // called by restore too
   function _ccAutoParkPass() {
     try {
       if (!performance.memory || !performance.memory.jsHeapSizeLimit) return;
       var s = window._ccLatestState || {};
       if (s.autoParkInactive === false) return;   // user opted out
       if (s.detecting) return;                     // don't churn caches mid-run
+      if (Date.now() - _AUTOPARK_LAST_ACTION_MS < _AUTOPARK_COOLDOWN_MS) return; // let the last action settle
       if (performance.memory.usedJSHeapSize / performance.memory.jsHeapSizeLimit < _AUTOPARK_RATIO) return;
       var models = s.models || [];
       if (models.length < 2) return;               // don't empty the only view
@@ -2269,7 +2390,13 @@ function startApp() {
         return m.visible === false && !(m.stats && m.stats.source === 'revit-direct');
       });
       if (!hidden.length) return;                  // nothing off-view to shed
-      hidden.sort(function(a,b){ return ((b.elements||[]).length) - ((a.elements||[]).length); });
+      var ledger = _ccComputeResidencyLedger(hidden);
+      hidden.sort(function(a,b){
+        var bb = (ledger.perModel[b.id] && ledger.perModel[b.id].reclaimableBytes) || 0;
+        var ab = (ledger.perModel[a.id] && ledger.perModel[a.id].reclaimableBytes) || 0;
+        return bb - ab; // largest reclaimable footprint first
+      });
+      _ccAutoParkNoteAction();
       window._ccParkModel(hidden[0].id, { auto: true }); // async; next tick re-checks
     } catch(e) {}
   }
@@ -2285,6 +2412,7 @@ function startApp() {
     var s = window._ccLatestState || {};
     var stub = (s.parkedModels || []).find(function(pm){ return pm.id === id; });
     if (!stub) return Promise.resolve(false);
+    if (typeof _ccAutoParkNoteAction === 'function') _ccAutoParkNoteAction(); // don't auto-re-park a just-restored model
     if (typeof _setGlobalLoading === 'function') _setGlobalLoading(true);
     var p = Promise.all([
       idbGetProjectFiles(s.activeProject || 'default'),
@@ -11156,6 +11284,7 @@ function startApp() {
         parkModel:        function(id){ if (window._ccParkModel) return window._ccParkModel(id); },
         restoreModel:     function(id){ if (window._ccRestoreParkedModel) return window._ccRestoreParkedModel(id); },
         isModelParked:    function(id){ return window._ccIsModelParked ? window._ccIsModelParked(id) : false; },
+        residencyLedger:  function(){ var st = window._ccLatestState; return (window._ccComputeResidencyLedger && st) ? window._ccComputeResidencyLedger(st.models || []) : null; },
         addons: {
           register: function(def){ if (window._ccRegisterAddon) return window._ccRegisterAddon(def); },
           activate: function(id){ if (window._ccActivateAddon) return window._ccActivateAddon(id); },
@@ -33751,6 +33880,23 @@ function startApp() {
         });
       });
       if (elMeshes) L.push('- **Retained element.meshes[]**: ' + elMeshes + ' proxy meshes, ' + elGeoVerts.toLocaleString() + ' verts (kept for clash/highlight)');
+    } catch(e){}
+    // Byte-accurate residency ledger (V7_RELEASE_PLAN.md P6.1) — dedups shared
+    // geometry per model (the line above sums per-PROXY, so it double-counts
+    // anything InstancedMesh shares) and adds BatchedMesh/instance/BVH/prop
+    // bytes the line above doesn't see at all.
+    try {
+      if (typeof _ccComputeResidencyLedger === 'function' && s.models && s.models.length) {
+        var _ledger = _ccComputeResidencyLedger(s.models);
+        L.push('- **Residency ledger (dedup-aware estimate)**: ~' + fmtMB(_ledger.totalBytes) + ' reclaimable across ' + s.models.length + ' model(s)');
+        s.models.forEach(function(m) {
+          var pm = _ledger.perModel[m.id];
+          if (!pm) return;
+          L.push('  - ' + m.name + ': ~' + fmtMB(pm.reclaimableBytes) + ' (geo ' + fmtMB(pm.geoBytes) +
+            ', batch ' + fmtMB(pm.batchBytes) + ', instance ' + fmtMB(pm.instBytes) +
+            ', bvh-cache ' + fmtMB(pm.bvhBytes) + ', props ' + fmtMB(pm.propBytes) + ')');
+        });
+      }
     } catch(e){}
     // Clash BVH cache
     try {
