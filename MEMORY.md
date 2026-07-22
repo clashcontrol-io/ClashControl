@@ -330,6 +330,25 @@ bounded detection memory (graduates Wave 6 items 3+5) → property paging, defer
 telemetry), each tied to which historical guardrail it must not repeat. **Not implemented — this
 was a planning-only pass; P6.1 is the recommended starting point (build the ledger before touching
 any element.meshes[] consumer, since P6.2's payoff becomes measurable only once it exists).**
+**Enriched same day** with a deep background history-mining pass (unshallowed the clone, real
+commit hashes verified individually via the GitHub API, not just CHANGELOG version numbers):
+chunk-merge's mechanism precisely ("~49 setters never became chunk-aware" per retrospective
+`c4f9702`); Free RAM's own revert commit (`6a9882b`) already named "chunks-as-source-of-truth...
+query by expressId -> range slice" as the correct fix five weeks before this plan — P6.2 is that
+deferred idea, not a new one; `_instKey` was two parts (an unrelated `matKey` bug, THEN the real
+hash-collision chase) and even the real fix (`2260aae`) needed a follow-up two days later
+(`2c69478`) because a legacy fallback path kept the old broken scheme — added as an explicit
+P6.2 requirement (retire fallback paths in the same change, don't leave zombie code); type-pair
+memo had TWO distinct instant-0 incidents a day apart, not one; and the BVH LRU had a genuine
+leak (`e2c064f`, stale keys not removed by _flushGeoCache, evicting real entries early) that
+directly informs P6.1's ledger design. **Also discovered: `storageDetectCaches` (already in
+safety-migrations.js, defaultEnabled:false) already contains an adaptive BVH cap + heap-pressure
+relief — graduating that flag is now P6.1/P6.4's recommended step zero, cheaper than building
+new.** BatchedMesh/InstancedMesh rollout's 9 follow-on fixes mined for specific failure
+categories (bbox/instanceMatrix composition, serialization-must-read-pre-representation-source,
+section-clip-sweep-must-cover-every-representation-type, picking-must-resolve-instance-not-
+container) added as explicit P6.2 sub-requirements. `V7_RELEASE_PLAN.md` P6 updated accordingly;
+PR #704 (draft).
 
 **v7 release-validation plan (branch `claude/clashcontrol-v7-release-plan-jp5njw`)** (2026-07-22) —
 built `V7_RELEASE_PLAN.md` from an external re-review of v7.2.7/`b195655`, with every
