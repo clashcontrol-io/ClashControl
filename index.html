@@ -5759,6 +5759,11 @@ function startApp() {
   function _makeCompactCandidates(items, flat) {
     return {
       length: flat.length / 3,
+      // One-time element wrapper table size (references, not geometry copies) —
+      // used by _candidateSetBytes so memory diagnostics reflect the compact
+      // representation's real cost, not the eager array's ~96 B/candidate.
+      _nItems: items.length,
+      _compact: true,
       at: function(i) {
         var wi = i * 3;
         var itA = items[flat[wi]], itB = items[flat[wi + 1]];
@@ -6098,6 +6103,23 @@ function startApp() {
   // value — real per-object cost varies by V8 version/build and whether the
   // object is in old-space by measurement time.
   var _CANDIDATE_EST_BYTES = 96;
+  // Compact (Wasm broad-phase) representation cost — see _makeCompactCandidates.
+  // The candidate set is a flat Int32Array of 3 ints/pair (eA-item, eB-item,
+  // sameModel) plus a one-time {el,m} wrapper table of ~one entry per ELEMENT.
+  // So peak candidate memory is ~12 B × pairs + ~32 B × elements, NOT the eager
+  // array's ~96 B × pairs. Reporting 96 B/candidate for the compact path (the
+  // old behavior) overstated peak memory by ~8× on large runs.
+  var _CANDIDATE_COMPACT_BYTES = 12;   // Int32Array: 3 × 4 B per candidate pair
+  var _CANDIDATE_ITEM_EST_BYTES = 32;  // one {el,m} wrapper per element (references, not copies)
+  // Estimate the live heap cost of a candidate set for whichever representation
+  // it is in (eager JS array vs compact Wasm view). Single source of truth for
+  // the >1M-candidate memory toast and the perf-report field so they can't drift.
+  function _candidateSetBytes(candidates) {
+    if (!candidates) return 0;
+    if (Array.isArray(candidates)) return candidates.length * _CANDIDATE_EST_BYTES;
+    return (candidates.length || 0) * _CANDIDATE_COMPACT_BYTES +
+           (candidates._nItems || 0) * _CANDIDATE_ITEM_EST_BYTES;
+  }
   var _ccDetectGeneration = 0; // incremented each detection run to cancel stale async chunks
   var _ccDetectionCoordinator = window._ccSafetyMigrations &&
     window._ccSafetyMigrations.createRunCoordinator ?
@@ -6473,7 +6495,7 @@ function startApp() {
     // file-size confirm() at load time, which only ever fires from a
     // direct user file pick).
     if (candidates.length > 1000000 && window._ccToast) {
-      var _candMB = Math.round(candidates.length * _CANDIDATE_EST_BYTES / (1024*1024));
+      var _candMB = Math.round(_candidateSetBytes(candidates) / (1024*1024));
       window._ccToast(candidates.length.toLocaleString() + ' candidate pairs to test (~' + _candMB + ' MB) — this may take a while and use significant memory. Consider narrowing rules (discipline matrix, type filters) or scope.', 'info');
     }
     _phase(candidates.length.toLocaleString() + ' pairs to test');
@@ -6981,7 +7003,8 @@ function startApp() {
       soft_clash_ms: Math.round(_tSoft),
       merge_and_post_ms: Math.round(Math.max(0, _mergeMs)),
       candidates: _prof._nCandidates,
-      candidates_est_bytes: _prof._nCandidates * _CANDIDATE_EST_BYTES,
+      candidates_est_bytes: _candidateSetBytes(candidates),
+      candidates_representation: (candidates && candidates._compact) ? 'compact-wasm' : 'eager-js',
       elements: _prof._nElements,
       hard_tests: _nHardTests,
       hard_tests_batched: _nHardTestsBatched,

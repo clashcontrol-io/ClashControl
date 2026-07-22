@@ -34,9 +34,24 @@ test('the warning is non-blocking (toast, not confirm/alert) and gated on window
   assert.doesNotMatch(warnBlock, /confirm\(|alert\(/);
 });
 
-test('the estimate reuses _CANDIDATE_EST_BYTES rather than a second hardcoded per-candidate size', () => {
+test('the estimate uses the representation-aware _candidateSetBytes helper, not a flat count × 96 (V7 P0.6/P1.3)', () => {
   const body = sliceAround('_prof._nCandidates = candidates.length;', 1400);
-  assert.match(body, /candidates\.length \* _CANDIDATE_EST_BYTES \/ \(1024\*1024\)/);
+  // The toast must size the candidate set through _candidateSetBytes so the
+  // compact Wasm view (~12 B/pair + one-time item table) isn't reported at the
+  // eager array's ~96 B/pair (an ~8× overstatement on large runs).
+  assert.match(body, /_candidateSetBytes\(candidates\) \/ \(1024\*1024\)/);
+  assert.doesNotMatch(body, /candidates\.length \* _CANDIDATE_EST_BYTES/);
+});
+
+test('_candidateSetBytes distinguishes the eager JS array from the compact Wasm view', () => {
+  const idx = html.indexOf('function _candidateSetBytes(candidates)');
+  assert.ok(idx !== -1, 'expected a _candidateSetBytes helper');
+  const fn = html.slice(idx, html.indexOf('}', html.indexOf('return', idx)) + 1);
+  // Array branch charges the eager per-candidate cost; the compact branch
+  // charges the flat-array (12 B) + item-table cost instead.
+  assert.match(fn, /Array\.isArray\(candidates\)/);
+  assert.match(fn, /_CANDIDATE_EST_BYTES/);
+  assert.match(fn, /_CANDIDATE_COMPACT_BYTES/);
 });
 
 test('_CANDIDATE_EST_BYTES is defined once and documented as an approximation, not a measured value', () => {
