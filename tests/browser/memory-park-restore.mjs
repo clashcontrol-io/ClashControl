@@ -121,6 +121,8 @@ async function sample(label) {
   await settle();
   const inPage = await page.evaluate((name) => {
     const state = window._ccLatestState || {};
+    const renderer = window._ccState3d && window._ccState3d.renderer;
+    const info = renderer && renderer.info;
     return {
       label: name,
       heapBytes: performance.memory ? performance.memory.usedJSHeapSize : null,
@@ -128,6 +130,13 @@ async function sample(label) {
       parkedModels: (state.parkedModels || []).length,
       elements: (state.models || []).reduce((n, m) => n + (m.elements || []).length, 0),
       clashes: (state.clashes || []).length,
+      // Three.js's OWN internal bookkeeping of live GPU-buffer-backed
+      // geometries/textures/programs -- deterministic (not GC-timing-
+      // dependent like performance.memory), so this is a much more precise
+      // signal for "did dispose() actually run" than raw JS heap bytes.
+      rendererGeometries: info && info.memory ? info.memory.geometries : null,
+      rendererTextures: info && info.memory ? info.memory.textures : null,
+      rendererPrograms: info && info.programs ? info.programs.length : null,
     };
   }, label);
   inPage.rssBytes = await readRssBytes(browserPid);
@@ -167,6 +176,19 @@ try {
   }, modelBId);
   if (!ledgerBefore) throw new Error('residency ledger returned nothing for model B');
 
+  // Count model B's OWN distinct scene geometries before parking (same
+  // dedup-by-uuid approach the memory report itself uses) -- the precise,
+  // deterministic number we expect renderer.info.memory.geometries to drop
+  // by after park, if dispose() genuinely ran on all of them.
+  const modelBGeometryCount = await page.evaluate((id) => {
+    const S = window._ccState3d;
+    const group = S && S.map && S.map[id]; // per-model THREE.Group (userData.modelId lives HERE, not per-mesh)
+    if (!group) return null;
+    const seen = new Set();
+    group.traverse((o) => { if (o.isMesh && o.geometry) seen.add(o.geometry.uuid); });
+    return seen.size;
+  }, modelBId);
+
   // Hide model B (the precondition for park/auto-park), sample.
   await page.evaluate((id) => window._ccDispatch({t:'UPD_MODEL', id, u:{visible:false}}), modelBId);
   samples.push(await sample('model-b-hidden'));
@@ -189,6 +211,25 @@ try {
     observedHeapDropMB: mb(heapDrop),
     observedRssDropMB: mb(rssDrop),
     parkReturnedTrue: parked === true,
+  });
+
+  // Deterministic check: does Three.js's own live-geometry counter actually
+  // drop by model B's exact geometry count when parked? This does not depend
+  // on GC timing at all -- renderer.info.memory.geometries only decrements
+  // when geometry.dispose() genuinely runs, so this is a precise yes/no on
+  // whether Park's disposal step works, independent of the noisy heap/RSS
+  // numbers above.
+  const rendererGeomsHidden = samples[samples.length - 2].rendererGeometries;
+  const rendererGeomsParked = samples[samples.length - 1].rendererGeometries;
+  const rendererGeomDrop = (rendererGeomsHidden != null && rendererGeomsParked != null)
+    ? rendererGeomsHidden - rendererGeomsParked : null;
+  findings.push({
+    check: 'park disposes exactly model B\'s own geometries from renderer.info (deterministic, not GC-timing-dependent)',
+    modelBOwnGeometryCount: modelBGeometryCount,
+    rendererGeometriesBeforePark: rendererGeomsHidden,
+    rendererGeometriesAfterPark: rendererGeomsParked,
+    rendererGeometryDrop: rendererGeomDrop,
+    dropMatchesModelBGeometryCount: rendererGeomDrop === modelBGeometryCount,
   });
 
   // Restore model B via the real public API, sample.
