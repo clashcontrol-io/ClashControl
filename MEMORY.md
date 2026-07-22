@@ -350,6 +350,44 @@ section-clip-sweep-must-cover-every-representation-type, picking-must-resolve-in
 container) added as explicit P6.2 sub-requirements. `V7_RELEASE_PLAN.md` P6 updated accordingly;
 PR #704 (draft).
 
+**"Build all" pass, same day** — built everything from P6.1-P6.5 that's safe to ship without
+live-browser verification or a Rust/WASM rebuild, explicit about what stays staged rather than
+faking completeness (per this doc's own guardrail ledger: rushing geometry/rendering changes
+without live verification is exactly what caused the chunk-merge saga):
+- ~~**P6.1 shipped**~~ (2026-07-22): `_ccComputeResidencyLedger` (dedup-aware bytes: geometry,
+  BatchedMesh, InstancedMesh incremental arrays, BVH cache, approx property size charged once
+  per canonicalized reference). Auto-park now sorts by `reclaimableBytes` not element count; added
+  a 20s park/restore cooldown (hysteresis). Did NOT graduate `storageDetectCaches` — that's a live
+  eviction-behavior flag needing real soak, not flippable blind. `tests/residency-ledger.test.js` (16).
+- ~~**P6.2 first slice shipped**~~: `_ccGetElementGeometry(el)` accessor (geometryId=geometry.uuid
+  for now, becomes `geometryExpressID` once a real GeometryStore exists — never a derived hash,
+  per the `_instKey` lesson); migrated exactly `_getWorldVerts`/`_getWorldTris` (clash engine) with
+  numeric parity tests (identity/translation/multi-mesh/indexed cases, THREE stub since `three`
+  isn't a node dep). The other ~39 call sites and dropping `element.meshes[]` are NOT done —
+  staged multi-PR arc, unchanged from the plan. `tests/geometry-handle.test.js` (12).
+- ~~**P6.3 conservative slice shipped**~~: pre-load pressure relief — `_ccLoadFiles` runs
+  `_ccAutoParkPass()` one beat early when queueing a load, flag-gated (`memorySafeLoad`, default
+  off, registered in `safety-migrations.js`). Deliberately does NOT reorder `loadIFCWorker`'s
+  terminate-on-props timing or defer Three.js construction (the loader is explicitly high-care;
+  no live verification possible here). `tests/memory-safe-load-wiring.test.js` (5).
+- ~~**P6.4 safe slice shipped**~~: `_ccCommitDetectionResult(result, dispatch, detectionSettings,
+  opts)` gains opt-in `opts.clearCachesAfter` → flushes BVH/world-vert caches post-run for the
+  non-interactive run-and-export flow; wired through `ClashControl.runDetection(rulesOverride,
+  opts)`. Off by default; verified no pre-existing call site passes a 4th arg. The real ask (a
+  stateful WASM streaming cursor) needs a compiled Rust/WASM engine change — no toolchain, no
+  live browser to verify a rebuild, explicitly NOT attempted. `tests/detection-cache-clear-wiring.test.js` (5).
+- **P6.5 explicitly skipped**: its own gate ("only if P6.1 telemetry shows it's still a top-3
+  contributor after P6.2 lands") is unmet — P6.2 only partially landed and there's zero real
+  telemetry (no live browser ran the ledger against a real project). A reasoned skip, not an
+  oversight.
+
+Full suite 730→768 green across 4 new commits (one per task, per the type-pair-memo "one fix per
+commit" guardrail); `index.html`/`safety-migrations.js` re-parse clean. **Nothing here has been
+exercised in a real browser against a real multi-model project** — that remains the validation
+gate before calling any of it done, same caveat as the original Park/Auto-park work. `V7_RELEASE_PLAN.md`
+P6 gained a full implementation-status table; PR #704 updated from docs-only to include these
+4 commits (still draft, pending CI + live validation).
+
 **v7 release-validation plan (branch `claude/clashcontrol-v7-release-plan-jp5njw`)** (2026-07-22) —
 built `V7_RELEASE_PLAN.md` from an external re-review of v7.2.7/`b195655`, with every
 load-bearing claim re-verified against source. Confirmed the real release blocker is
