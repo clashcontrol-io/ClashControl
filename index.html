@@ -5318,15 +5318,49 @@ function startApp() {
 
   // ── Geometry-accurate narrow-phase clash detection ──────────────
 
+  // ── P6.2 first slice: GeometryHandle accessor (V7_RELEASE_PLAN.md) ───────
+  // A GeometryHandle describes ONE piece of geometry an element owns,
+  // addressable without the caller reaching directly into element.meshes[].
+  // This slice does NOT remove element.meshes[] or migrate every consumer —
+  // that's explicitly staged as its own multi-PR arc (chunk-merge's history
+  // is exactly why: rushing this class of change broke selection/style/hide
+  // for weeks). This is step 1-2 of that staged rollout: the handle is
+  // backed by the SAME proxy meshes as before (dual-write in spirit — no
+  // existing state is removed), but every reader now goes through ONE
+  // function, so a future GeometryStore can change what's behind it without
+  // touching any consumer again. `geometryId` uses the geometry's own
+  // `uuid` for now; once a real GeometryStore exists, this becomes the IFC's
+  // own `geometryExpressID` — never a derived hash (see the `_instKey` saga
+  // in the guardrail ledger: a position/byte-derived hash caused a
+  // five-hotfix collision chase; the eventual fix was to stop hashing and
+  // reuse the canonical upstream id).
+  function _ccGetElementGeometry(el) {
+    var out = [];
+    (el.meshes || []).forEach(function(mesh) {
+      var geo = mesh.geometry;
+      var pos = geo && geo.attributes && geo.attributes.position;
+      if (!pos) return;
+      mesh.updateWorldMatrix(true, false);
+      out.push({
+        geometryId: geo.uuid,
+        renderOwnerId: (mesh.userData && mesh.userData._isCCBatch) ? 'batch' : (mesh.isInstancedMesh ? 'instanced' : 'mesh'),
+        instanceId: (mesh.userData && mesh.userData._instanceRef) ? mesh.userData._instanceRef.instanceIndex : null,
+        transform: mesh.matrixWorld,
+        materialId: (mesh.material && mesh.material.uuid) || null,
+        position: pos,
+        index: geo.index || null,
+      });
+    });
+    return out;
+  }
+  window._ccGetElementGeometry = _ccGetElementGeometry;
+
   function _getWorldVerts(el) {
     if (el._wvCache) { _bvhLRUTouch(el); return el._wvCache; }
     _bvhLRUEvict(); // caps peak memory on the soft/clearance path too
     var all = [];
-    (el.meshes || []).forEach(function(mesh) {
-      var pos = mesh.geometry && mesh.geometry.attributes && mesh.geometry.attributes.position;
-      if (!pos) return;
-      mesh.updateWorldMatrix(true, false);
-      var mat = mesh.matrixWorld;
+    _ccGetElementGeometry(el).forEach(function(h) {
+      var pos = h.position, mat = h.transform;
       var v = new THREE.Vector3();
       for (var i = 0; i < pos.count; i++) {
         v.set(pos.getX(i), pos.getY(i), pos.getZ(i));
@@ -5345,14 +5379,9 @@ function startApp() {
     if (el._triCache) { _bvhLRUTouch(el); return el._triCache; }
     _bvhLRUEvict();
     var tris = [];
-    (el.meshes || []).forEach(function(mesh) {
-      var geo = mesh.geometry;
-      var pos = geo && geo.attributes && geo.attributes.position;
-      if (!pos) return;
-      mesh.updateWorldMatrix(true, false);
-      var mat = mesh.matrixWorld;
+    _ccGetElementGeometry(el).forEach(function(h) {
+      var pos = h.position, mat = h.transform, idx = h.index;
       var va = new THREE.Vector3(), vb = new THREE.Vector3(), vc = new THREE.Vector3();
-      var idx = geo.index;
       var count = idx ? idx.count : pos.count;
       for (var i = 0; i < count; i += 3) {
         var ia = idx ? idx.getX(i) : i;
