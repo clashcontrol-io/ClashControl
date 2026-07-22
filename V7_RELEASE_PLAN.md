@@ -238,6 +238,205 @@ module at a time (see `REDUCER_DECOMPOSITION_PLAN.md`). Not a release blocker.
 
 ---
 
+### P6 — Memory architecture (residency ledger, geometry handles, bounded detection)
+
+Built 2026-07-22 from an external re-review of `main` at `f4733d`/v7.3.0, after this
+session's own Park/Auto-park work (P702/P703 — see MEMORY.md). Every code claim was
+re-verified against source this session; every named historical incident was re-verified
+against `CHANGELOG.md`/`git log` (dates + commit hashes below), not taken on faith. **This
+review's claims all held** — a cleaner pass than the previous round (no factual corrections
+needed), with two precision notes:
+- The BVH LRU cap (`_BVH_CACHE_MAX_FN`, `:5333-5346`) isn't a *naive* element-count budget —
+  it derives an element-count cap from `jsHeapSizeLimit`/`navigator.deviceMemory` at an
+  assumed ~50 KB/element. Still not true per-element byte accounting (P6.1's point stands),
+  but it already reaches for the same signals P6.1 formalizes — reuse this pattern rather
+  than reinvent it.
+- The "10M candidates ≈ 120 MB" figure is exactly right: the compact Wasm path is a flat
+  `Int32Array` at 3 ints (12 B) per pair (`_makeCompactCandidates`, `:5957-5970`).
+
+**Confirmed by direct inspection, not just the review's citations:**
+- `element.meshes[]` is genuinely retained forever while a model is loaded, read by ~40
+  call sites (clash engine, cut-plane, serialization, diff/compare, selection, addons) —
+  this is real breadth, not a narrow patch.
+- The IFC worker does **not** terminate on the `'result'` (geometry) message — it stays
+  alive extracting properties via `onProps`/`'props'` while the **main thread**
+  synchronously builds every `BufferGeometry`/`Mesh`/`matCache` entry from the packed
+  arrays (`loadIFCWorker` `:4806-4925`). The peak-memory overlap P6.3 targets is real and
+  already visible in the current code path, not speculative.
+- BVH build (`_getBVH` `:5431-5442`) works from **world-space** triangles
+  (`_getWorldTris`), so N instances of the same local geometry each get an independent BVH
+  build today — confirming `IMPROVEMENT_PLAN.md` Wave 6 item 3 ("BVH per unique geometry
+  shared across instances") is real, unclaimed work, not a stale roadmap line.
+- Issue #572 (closed 2026-06-06, PR #573) already named `element.meshes[]` retention (~70M
+  verts at the time) as an explicit, deliberately-deferred follow-up ("D2 follow-up") —
+  five weeks ago. This is the oldest unaddressed item in the plan.
+
+#### Historical guardrail ledger (mined from `CHANGELOG.md`/`git log`, not just IMPROVEMENT_PLAN.md's summary)
+
+Every task below cites which of these it must not repeat.
+
+| Saga | Timeline | What happened | Root cause / eventual fix |
+| --- | --- | --- | --- |
+| **Chunk-merge** (hand-rolled geometry merging — the direct ancestor of P6.2's proposal) | Enabled default v5.12.14 (2026-06-04) → reverted v5.17.4 (2026-06-06) → emergency re-enabled v5.19.27 → re-reverted v5.19.28 (both 2026-06-08) → **removed wholesale** v5.19.55 (2026-06-09, `chore: remove chunk-merge subsystem (#5)`) | Merging multiple elements' geometry into one buffer broke per-element identity: selection highlight, ghost/isolate, bulk hide, and per-element color/style switching all had to be **re-implemented on top of** merged chunks (Stage 2A/2B, v5.12.13/.14) and still needed a cache-restore bypass fix (v5.15.3) before the first revert. | Replaced by **instancing/batching that keeps the per-element proxy mesh** (`InstancedMesh`/`BatchedMesh`, current code) specifically so selection/style/hide resolve to a real per-element object. CI now gates this permanently: `tests/browser/smoke.mjs:310-370`, "every symptom that caused the old chunk-merge reverts (`366c7cc`)" — hide, style-swap-reaches-batch, per-instance color, section clipping. |
+| **Free RAM / dehydrate** (a prior, unscoped attempt at exactly what Park/Auto-park does now) | Added v5.17.2 → **reverted the very next version**, v5.17.3, same day (2026-06-06) | Excised, not fixed — the CLAUDE.md guardrail groups it under "no render-path memory experiments" with no salvage. | This session's Park feature (`d5eaeef`, PR #702/#703) is the properly-scoped version of the same idea: geoCache-preserving, same-id restore, fail-closed on non-restorable models, single-model-at-a-time. **Any P6 task that reclaims memory must keep those three guarantees** (restorable-first, same-id, fail-closed) — that discipline, not the idea itself, is what Free RAM lacked. |
+| **`_instKey` hashing** ("five failed hotfixes in one day" per `IMPROVEMENT_PLAN.md`) | All 2026-06-08: v5.19.31 (`matKey was never declared`) → .32 (cache-restore branch missing the call) → .33 (defensive bbox shape detection) → .42/.43 (fingerprint position buffer) → .45 (hash entire position+index buffer, bump cache version) → .46 (kill 32-bit hash collisions) → .47 (collision detector + opt-out) → **.48 (`persist geometryExpressID, use as canonical _instKey`)** | A **position-derived hash** used as the instancing/geo-cache key was scale-invariant and collided across genuinely different geometries — five successive patches tried to harden the hash (bigger fingerprint, whole-buffer hash, collision detection) before the real fix: stop hashing, use the IFC's own canonical `geometryExpressID`. | **Lesson for P6.2/P6.1: don't invent a new identity/hash scheme for geometry when a canonical upstream ID already exists.** `geometryExpressID` is exactly the kind of handle a `GeometryHandle.geometryId` should be keyed on — this saga is direct precedent for that field. |
+| **Type-pair memo → instant-0 regression** | Referenced in `IMPROVEMENT_PLAN.md`/`CHANGELOG.md:157` (`clear stale type-pair memo on bridge runs (instant-0 fix)`, #634) | A stateful detection cache kept a prior ruleset's memo and silently suppressed all pairs on the next run with different rules — clashes went to 0 with no error. | Guardrail now codified: "any rules-shape change versions or invalidates the type-pair memo and pair cache, and lands with `_ccBenchEngine` parity checks. One fix per commit so regressions bisect in minutes." **P6.4 must apply this same discipline to any new candidate-cursor/BVH-sharing cache** — version/invalidate on rules or geometry-identity change, never assume staleness can't happen. |
+
+#### P6.1 — Byte-accurate in-memory residency ledger
+
+Track *reclaimable* bytes per model — not just element count — so parking decisions and
+diagnostics are trustworthy: unique position/normal/index `ArrayBuffer`s (deduped by
+`geometryId`, not summed per-proxy the way today's report does), `BatchedMesh` buffer
+share, instance matrix/color arrays, retained `element.meshes[]` proxy count, `_bvhLRU`
+world-tri cache size, and an approximate property-graph size.
+
+This is a **new, in-memory-residency** concept — distinct from `storage-core.js`'s
+`IDB_REGISTRY`/`LS_REGISTRY` (those track *disk* persistence retention classes:
+source/derived/decay/prefs). Don't conflate the two, but **do** reuse that module's proven
+shape: a single explicit registry + a wiring test that fails when a new heavy structure is
+added without being accounted for (mirrors `storage-registry-wiring.test.js`).
+
+Then: park the hidden model with the largest reclaimable footprint (replacing today's
+`(m.elements||[]).length` sort in `_ccAutoParkPass`, `:2259-2274`); add hysteresis (park
+above 72%, only resume normal operation below ~58%, to stop thrashing at the boundary);
+add a per-model cooldown after a smart-reload restore so a just-touched model isn't
+immediately re-parked; fall back to `navigator.deviceMemory` where `performance.memory`
+is absent (Safari/Firefox) — mirroring the pattern `_BVH_CACHE_MAX_FN` already uses.
+
+*Gate:* the memory report's "Retained element.meshes[]" line and the auto-park decision
+both read from the same ledger (no more double-counting shared geometry); a 10-cycle
+park/restore soak shows <5% ledger drift from actual `performance.memory` deltas.
+
+*Do first* — every other P6 task's "expected effect" claim becomes falsifiable once this
+lands, and it's pure addition (a new accounting layer), not a rewrite of retained state —
+lowest risk, do it before touching any consumer of `element.meshes[]`.
+
+#### P6.2 — `GeometryHandle` / `GeometryStore`, retiring `element.meshes[]`
+
+The real fix for the ~40-call-site retention problem. Element geometry becomes a handle —
+`{geometryId, renderOwnerId, instanceId, transform, materialId}` — resolved through one
+`getElementGeometry(element)` accessor, instead of an array of live off-scene `THREE.Mesh`
+objects. `geometryId` should be the IFC's own `geometryExpressID` (see the `_instKey` row
+above) — not a fresh hash.
+
+**This is explicitly NOT a chunk-merge revival.** Chunk-merge failed because it destroyed
+per-element addressability by merging geometry *buffers*; a `GeometryHandle` keeps
+per-element addressability (every element still resolves to its own transform/material)
+while only changing *what object type* represents that address (a handle vs. a retained
+Mesh). The rollout must prove this distinction empirically, not just architecturally:
+
+1. Add handles **alongside** `element.meshes[]` — dual-write, no removal yet.
+2. Land `getElementGeometry(element)` and migrate exactly one consumer (recommend the
+   clash engine first — it's already isolated behind `_getWorldVerts`/`_getWorldTris`).
+3. Run both paths and diff outputs (clash pair-identity parity, not just "it ran").
+4. Migrate selection outline, serialization (`_geoSerialize`), diff/compare, then addons —
+   one consumer per commit (per the type-pair-memo guardrail: "one fix per commit so
+   regressions bisect in minutes").
+5. Drop proxies for `InstancedMesh` groups first (lowest risk — geometry is already
+   shared, only the wrapper object goes away), then `BatchedMesh` source proxies, only
+   after cache-restore round-trips through the new handle shape.
+6. Remove `element.meshes[]` only once every one of the ~40 call sites is migrated and the
+   CI gate below is green.
+
+*Gate:* `tests/browser/smoke.mjs`'s existing BatchedMesh identity block (hide, style-swap,
+per-instance color, section clipping — the exact "every symptom that caused the old
+chunk-merge reverts" list) stays green throughout, unmodified in intent; add the same
+assertions for the `InstancedMesh` path if not already covered; clash-pair identity parity
+between the old and new geometry-read paths on the existing differential fixture; zero
+retained `THREE.Mesh` objects off-scene for migrated elements, confirmed via P6.1's ledger.
+
+*Sequencing note:* this is the largest, highest-risk item here — Medium-High risk is the
+right label. Land P6.1 first so "did this reduce memory" is measurable, and expect this to
+be its own multi-PR arc (like the instancing rollout was), not one commit.
+
+#### P6.3 — Memory-safe loading mode for large IFC files
+
+Confirmed real: `loadIFCWorker` doesn't terminate its worker on the geometry `'result'`
+message (`:4859-4873`) — the worker stays alive lazily extracting properties from its own
+open web-ifc WASM model while the **main thread**, in the same tick range, synchronously
+builds every `BufferGeometry`/`Mesh` from the packed arrays (`:4886-4925`). That overlap
+(worker's WASM model + transferred raw geometry + new Three.js geometry + prop extraction)
+is the real peak, not a hypothetical one.
+
+Add a pressure-gated mode (triggered by file size or P6.1's ledger showing the load would
+cross a threshold): stage packed geometry without constructing Three.js objects yet, let
+property extraction finish and the worker terminate, auto-park unrelated models via
+`_ccAutoParkPass` if still tight, *then* construct the model off the live scene state and
+commit it atomically (single `ADD_MODEL` dispatch — never a partially-built model in
+`s.models`, which is exactly the failure mode `IMPROVEMENT_PLAN.md`'s "explicitly not
+building" list already rejects: *"progressive partial-model rendering"*). For files large
+enough to warrant it, defer full psets to a background/on-demand pass after commit — psets
+are already canonicalized/deduplicated (`_ccCanonPsets`, `:3262-3271`) so this is a
+sequencing change, not a new dedup mechanism.
+
+*Gate:* peak heap during load of the largest corpus fixture drops measurably (P6.1 makes
+this falsifiable); no partially-committed model is ever visible in `s.models`; load
+correctness (element count, storeys, warnings) is unchanged versus today's path.
+
+#### P6.4 — Bounded-memory clash detection
+
+`_sweepAndPruneWasm` materializes the **entire** flat candidate array in one shot
+(`_makeCompactCandidates`, `:5957-5970`) — confirmed exact math: 10M candidates × 12 B/pair
+(3 × int32) ≈ 120 MB, before narrow phase even starts. This graduates
+`IMPROVEMENT_PLAN.md` Wave 6 item 5 verbatim ("streamed pair processing instead of
+materializing the full candidate array") — **update that document when this lands rather
+than tracking it in two places.**
+
+- A stateful Wasm sweep cursor returning fixed batches (25k-50k pairs), narrow-phase
+  processed before the next batch is requested — keep the existing JS `_sweepAndPrune` as
+  the correctness oracle, exactly as the Wasm broad-phase rollout already does today.
+- Byte-budgeted BVH LRU: reuse `_BVH_CACHE_MAX_FN`'s existing `jsHeapSizeLimit`/
+  `deviceMemory`-derived signal (it already isn't naive) but key the cap on tracked bytes
+  (via P6.1) instead of a flat element-count-under-an-estimate.
+- One local-space BVH per unique `geometryId`, shared across instances via P6.2's handles
+  (`_getBVH` currently rebuilds per-element from world-space triangles, `:5431-5442`,
+  because there's no shared local-space tree to transform queries into) — this graduates
+  Wave 6 item 3. **Sequencing dependency: this sub-item needs P6.2's `geometryId` to exist
+  first**, so it lands after, not alongside.
+- Optional cache clear after detection completes, for the non-interactive "run once and
+  export" flow.
+
+*Gate:* the existing type-pair-memo guardrail applies directly — any change to what the
+cursor/BVH cache keys on must version or invalidate on rules-hash **or** geometry-identity
+change, and land with `_ccBenchEngine` parity checks. Candidate memory footprint stays
+bounded (a fixed multiple of batch size) independent of total candidate count on the large
+federation fixture; exact clash-pair parity with today's engine, not just "similar count."
+
+#### P6.5 — Property paging (do only if telemetry justifies it)
+
+Lowest priority, correctly ranked last by the review: psets/quantities are **already**
+canonicalized and structurally deduplicated (`_ccCanonPsets`/`_ccCanonQuantities`,
+`:3262-3281`) via frozen-shape caches, so this isn't the first target the way it might be
+in a naive IFC viewer. Only revisit if P6.1's ledger shows property-graph size is still
+material after P6.2 lands: keep IDs/type/name/storey/material/classification resident,
+page full psets/quantities from IndexedDB keyed by model+expressId on inspector-open, and
+let IDS/data-quality workers stream blocks instead of hydrating the full graph.
+
+*Gate:* only pursued if P6.1 telemetry shows it's still a top-3 contributor after P6.2 —
+otherwise this is explicitly **not** scheduled, to avoid Medium-High-risk work with no
+measured payoff (the review's own risk rating for this item).
+
+#### Ship gates (both corpora: the 4-model federation from this session + the large
+single-IFC case)
+
+- Zero retained proxy `THREE.Mesh` objects for migrated batched/instanced elements (P6.2).
+- ≥25% lower peak **and** steady-state memory on the federation, measured via P6.1's
+  ledger (not element-count proxies).
+- Candidate memory capped independently of total candidate count (P6.4).
+- <5% retained-memory growth after ten park/restore cycles (extends this session's Park
+  feature soak test).
+- Exact clash-pair identity parity with the current engine throughout (every task above).
+- Selection, outlines, styles, cache restore, and BCF viewpoints stay byte-for-byte
+  identical in behavior — verified by the existing `tests/browser/smoke.mjs` BatchedMesh
+  block plus new equivalents for any newly-migrated path.
+- Camera interaction stays <33 ms p95 frame time after load (existing `_ccRenderReport`).
+
+*If only one thing ships from this section, ship P6.2 (after P6.1 makes it measurable).*
+Auto-parking (already shipped this session) is the safety valve; retiring
+`element.meshes[]` is what changes the app's fundamental memory curve.
+
+---
+
 ## Explicitly NOT doing now (endorsed from the review)
 
 - No progressive partial-model rendering.
@@ -257,3 +456,8 @@ experiment. The safer scaling path stays the atomic storey-scoped model already 
    accounting is a small fix). P1.2 follows in the Engine repo.
 3. **P2** — gated corpus work; the only thing that licenses the 500 MB claim.
 4. **P3 → P4 → P5** — robustness, interop, and storage atomicity, in that order.
+5. **P6.1 → P6.2 → P6.4's BVH-sharing sub-item**, with **P6.3** parallel to P6.2 (loading
+   mode doesn't depend on the geometry-handle migration, only on P6.1's ledger existing)
+   and **P6.5 deferred** pending P6.1 telemetry. This is independent of P0-P5 — no release
+   blocker depends on it — but it's the highest-value work remaining once P0 ships, per the
+   review's own framing ("if you do only one substantial piece next, do this").
