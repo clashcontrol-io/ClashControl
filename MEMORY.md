@@ -388,6 +388,41 @@ gate before calling any of it done, same caveat as the original Park/Auto-park w
 P6 gained a full implementation-status table; PR #704 updated from docs-only to include these
 4 commits (still draft, pending CI + live validation).
 
+~~**Real-browser validation achieved + PR #704 merged (2026-07-22, same day)**~~ — turns out
+live browser testing IS possible here (was wrongly assumed impossible): Chromium is
+pre-installed at `/opt/pw-browsers`; the existing `CC_BROWSER_OFFLINE_DEPS=1` mirror mode
+serves React/Three/JSZip/pdf.js/web-ifc from local npm packages instead of the CDNs this
+sandbox's proxy blocks. Ran the real `smoke.mjs` (13/13 real-browser checks green, including
+the BatchedMesh identity checks that would catch a P6.2 regression) and built a new local
+diagnostic, `tests/browser/memory-park-restore.mjs`, loading a 10,200-element synthetic
+federation and driving real Park/Restore/Detection through the public API. Findings: element
+counts matched exactly across load→park→restore→3 cycles (no data loss); but the ledger's
+14.5MB estimate didn't map to a clean single-action heap delta (GC timing noise dominates at
+that granularity), and the first restore after a park cost ~71MB, which shrank sharply on
+repeated cycles (71→19→0.4MB) — consistent with one-time warm-up, not a compounding leak.
+6 repeated detection runs showed net heap growth of 0 (actually -44MB). **PR #704 merged to
+main** (all 11 CI checks green + this real-browser validation).
+
+**P6.2 continuation, branch `claude/clashcontrol-v7-p6-2-continued`** — surveyed all ~40
+remaining `element.meshes[]` call sites. Key finding: the "one consumer per commit" plan
+undersold the remaining work's shape — most sites are NOT simple accessor swaps like the
+first two. They split into: pure-read/accessor-compatible (now exhausted after clash-engine +
+bbox); rendering-mutation consumers that fundamentally need a real Mesh reference
+(`showModelDiff`/`clearModelDiff` material swap, `exportGLTF`/`exportSidecar` `.clone()`,
+model-removal `.dispose()`) — these need a lazy Mesh-reconstruction GeometryStore, not a
+read-only accessor, a bigger commitment than previously implied; `_geoSerialize` (accessor-
+compatible but dedupes by MESH uuid not geometry uuid, needs local `matrix` not
+`matrixWorld`, plus material color/opacity — getting any wrong silently corrupts the geo-cache,
+deferred to a session that can budget a targeted hard-refresh round-trip test); section-cut
+generation (historically the single most fragile category — "cuts nothing on batched models"
+recurred twice — deferred without a visual/pixel check); and loader-internal/passthrough sites
+(out of scope, not gaps). One real fix landed: NL "hide/isolate `<type>`" handlers
+(`:32160`/`:32169`) redundantly iterated meshes for `mesh.userData.expressId` when
+`el.expressId` already carries it — fixed, zero behavior change (both consumers already fold
+into a set), `tests/nl-hide-isolate-expressid.test.js`. Full suite 774→777 green; re-verified
+in a real browser (smoke.mjs 13/13). `V7_RELEASE_PLAN.md` P6.2 updated with this architectural
+correction.
+
 **v7 release-validation plan (branch `claude/clashcontrol-v7-release-plan-jp5njw`)** (2026-07-22) —
 built `V7_RELEASE_PLAN.md` from an external re-review of v7.2.7/`b195655`, with every
 load-bearing claim re-verified against source. Confirmed the real release blocker is
