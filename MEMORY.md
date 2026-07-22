@@ -286,6 +286,20 @@ Things to be careful about. Do not remove without a good reason — add a note i
 Update this section at the start and end of each session.
 Mark completed items with ~~strikethrough~~ and date, then let the daily sync archive them.
 
+**v7 release-validation plan (branch `claude/clashcontrol-v7-release-plan-jp5njw`)** (2026-07-22) —
+built `V7_RELEASE_PLAN.md` from an external re-review of v7.2.7/`b195655`, with every
+load-bearing claim re-verified against source. Confirmed the real release blocker is
+**local-engine result parity** (capability gate at `local-engine.js:767` doesn't catch:
+raw model-selector forwarding vs. engine exact `model_id` match → silent 0; `useSemanticFilter`
++ `excludeSameDiscipline` defaults neither serialized nor client-re-applied → over-report;
+per-pair tolerance > `maxGap` under-detects; `excludeTypePairs` array-vs-map inconsistency at
+`:1274` vs `:807`). Also confirmed: 96-byte candidate diagnostic mis-applied to the compact
+Wasm path (`:6464`/`:6972`), non-atomic shared-project CAS (`api/project.js:234`), no real IFC
+corpus. **Corrected two review errors:** CI *is* green (run `29866854575` on `e0e356b` — test/
+browser-smoke/browser-differential all ✅; reviewer looked at the bot bump tip `b195655` that the
+`changes` gate skips), and the defaults live at `:1274` not `:1008`. Plan is P0–P5 with binary
+acceptance gates; complements `IMPROVEMENT_PLAN.md`. Next: implement P0.
+
 ~~**Storage/memory optimization campaign (Loam-inspired "explicit retention"), branch
 `claude/clashcontrol-memory-optimization-jht2yy`)** (2026-07-19)~~ — all seven phases landed:
 P1 `storage-core.js` (UMD, registry with explicit retention classes source/derived/decay/prefs,
