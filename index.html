@@ -2309,13 +2309,9 @@ function startApp() {
     return window._ccRestoreParkedModel(id);
   };
 
-  // Public, guarded aliases on the ClashControl namespace.
-  try {
-    window.ClashControl = window.ClashControl || {};
-    window.ClashControl.parkModel = function(id){ return window._ccParkModel(id); };
-    window.ClashControl.restoreModel = function(id){ return window._ccRestoreParkedModel(id); };
-    window.ClashControl.isModelParked = function(id){ return window._ccIsModelParked(id); };
-  } catch(e) {}
+  // Public aliases (parkModel / restoreModel / isModelParked) live on the
+  // canonical window.ClashControl literal near _ccViewport — do NOT create the
+  // namespace here, that pre-empts the `|| {…}` definition and drops its methods.
 
   function idbDeleteProjectFiles(projectId) {
     return idbGetProjectFiles(projectId).then(function(files){
@@ -11114,6 +11110,9 @@ function startApp() {
           enforceBudget: function(){ return window._ccStorageEnforceBudget ? window._ccStorageEnforceBudget() : Promise.resolve(null); }
         },
         clashReport:      function(){ if (window._ccClashReport && window._ccLatestState) return window._ccClashReport(window._ccLatestState); },
+        parkModel:        function(id){ if (window._ccParkModel) return window._ccParkModel(id); },
+        restoreModel:     function(id){ if (window._ccRestoreParkedModel) return window._ccRestoreParkedModel(id); },
+        isModelParked:    function(id){ return window._ccIsModelParked ? window._ccIsModelParked(id) : false; },
         addons: {
           register: function(def){ if (window._ccRegisterAddon) return window._ccRegisterAddon(def); },
           activate: function(id){ if (window._ccActivateAddon) return window._ccActivateAddon(id); },
