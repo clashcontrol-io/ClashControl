@@ -55,8 +55,14 @@ const MIME = {
 // duplicate load" confirm() dialog. B is deliberately the larger one, so
 // there's a real byte delta for the ledger to estimate and for us to check
 // against actual heap/RSS movement.
-const fixtureA = generateSyntheticIfc({ storeyCount: 5, wallsPerStorey: 40 });
-const fixtureB = generateSyntheticIfc({ storeyCount: 25, wallsPerStorey: 400, storeyHeight: 4 });
+//
+// Sizes are production-representative: ~31k total elements, matching the
+// real-world ~30k-element federations this probe is meant to stand in for
+// (the first pass through this harness used a ~10.2k-element fixture, which
+// wasn't quite large enough to separate a real signal from measurement
+// noise for the ledger-vs-observed-delta comparison).
+const fixtureA = generateSyntheticIfc({ storeyCount: 5, wallsPerStorey: 200 });
+const fixtureB = generateSyntheticIfc({ storeyCount: 30, wallsPerStorey: 1000, storeyHeight: 4 });
 
 const server = createServer(async (req, res) => {
   try {
@@ -82,6 +88,12 @@ const browser = await chromium.launch({
     '--enable-precise-memory-info','--js-flags=--expose-gc'],
 });
 const browserPid = await getBrowserPid(browser);
+// Engine-only baseline -- RSS of the single-process Chromium + SwiftShader
+// renderer before any page has been navigated to. Separates "this is just
+// what a headless-Chromium process costs" from "the app's own boot code/WASM
+// costs this much", which the earlier pass conflated into one ~390MB number.
+await new Promise((resolve) => setTimeout(resolve, 300));
+const engineOnlyRssBytes = await readRssBytes(browserPid);
 
 async function local(route, file, contentType='text/javascript') {
   await route.fulfill({status:200, body:await readFile(join(root, 'node_modules', file)),
@@ -148,8 +160,20 @@ const samples = [];
 const findings = [];
 try {
   await page.goto('http://127.0.0.1:8768/', {waitUntil:'domcontentloaded'});
-  await page.waitForFunction(() => window.ClashControl && typeof window._ccDispatch === 'function', null, {timeout:60_000});
+  await page.waitForFunction(() => window.ClashControl && typeof window._ccDispatch === 'function', null, {timeout:180_000});
   samples.push(await sample('boot'));
+
+  // Separate "the app's own boot code/WASM costs this much" from "this is
+  // just what a headless single-process Chromium + SwiftShader renderer
+  // costs before any page navigates" -- the earlier pass only had the
+  // latter folded into one ~390MB number with no baseline to subtract.
+  findings.push({
+    check: 'boot RSS baseline: how much is bare-Chromium-process vs app boot cost',
+    engineOnlyRssMB: mb(engineOnlyRssBytes),
+    appBootRssMB: mb(samples[0].rssBytes),
+    appBootOwnCostMB: (engineOnlyRssBytes != null && samples[0].rssBytes != null)
+      ? mb(samples[0].rssBytes - engineOnlyRssBytes) : null,
+  });
 
   // Load both fixtures as two separate models.
   await page.evaluate(async (urls) => {
@@ -159,7 +183,7 @@ try {
     }));
     window.ClashControl.loadFiles(files);
   }, ['/__fixture-a__.ifc', '/__fixture-b__.ifc']);
-  await page.waitForFunction(() => window._ccLatestState && window._ccLatestState.models.length === 2 && window._ccModelLoading === false, null, {timeout:120_000});
+  await page.waitForFunction(() => window._ccLatestState && window._ccLatestState.models.length === 2 && window._ccModelLoading === false, null, {timeout:400_000});
   samples.push(await sample('both-loaded'));
 
   const modelBId = await page.evaluate(() => {
@@ -195,7 +219,7 @@ try {
 
   // Park model B via the real public API, sample.
   const parked = await page.evaluate((id) => window.ClashControl.parkModel(id), modelBId);
-  await page.waitForFunction(() => (window._ccLatestState.parkedModels||[]).length === 1, null, {timeout:20_000});
+  await page.waitForFunction(() => (window._ccLatestState.parkedModels||[]).length === 1, null, {timeout:180_000});
   samples.push(await sample('model-b-parked'));
 
   const beforeParkHeap = samples[samples.length - 2].heapBytes;
@@ -232,9 +256,17 @@ try {
     dropMatchesModelBGeometryCount: rendererGeomDrop === modelBGeometryCount,
   });
 
+  // Investigate the one-time cost of the FIRST restore specifically: is the
+  // heap/RSS growth explained by shader/program recompilation (a legitimate
+  // one-time warm-up) or by something that should have stayed flat (more
+  // geometries/textures than model B's own footprint)? Captured BEFORE the
+  // restore call so it's the true parked-state baseline, not accidentally
+  // re-reading the post-restore sample.
+  const beforeRestoreSample = samples[samples.length - 1]; // model-b-parked
+
   // Restore model B via the real public API, sample.
   const restored = await page.evaluate((id) => window.ClashControl.restoreModel(id), modelBId);
-  await page.waitForFunction(() => window._ccLatestState.models.length === 2 && (window._ccLatestState.parkedModels||[]).length === 0, null, {timeout:60_000});
+  await page.waitForFunction(() => window._ccLatestState.models.length === 2 && (window._ccLatestState.parkedModels||[]).length === 0, null, {timeout:180_000});
   samples.push(await sample('model-b-restored'));
 
   const restoredElementCount = samples[samples.length - 1].elements;
@@ -250,8 +282,23 @@ try {
   // Re-run detection after restore to confirm the restored model still
   // participates correctly (functional check, not just memory).
   await page.evaluate(() => window.ClashControl.runDetection());
-  await page.waitForFunction(() => window._ccLatestState.detecting === false, null, {timeout:60_000});
+  await page.waitForFunction(() => window._ccLatestState.detecting === false, null, {timeout:180_000});
   samples.push(await sample('after-post-restore-detection'));
+
+  const restoredSample = samples.find((s) => s.label === 'model-b-restored');
+  findings.push({
+    check: 'first restore\'s one-time heap growth — is it program/shader recompilation, or unexplained extra geometry/texture retention?',
+    heapBeforeFirstRestoreMB: mb(beforeRestoreSample.heapBytes),
+    heapAfterFirstRestoreMB: mb(restoredSample.heapBytes),
+    heapGrowthMB: mb(restoredSample.heapBytes - beforeRestoreSample.heapBytes),
+    rendererGeometriesBeforeRestore: beforeRestoreSample.rendererGeometries,
+    rendererGeometriesAfterRestore: restoredSample.rendererGeometries,
+    rendererProgramsBeforeRestore: beforeRestoreSample.rendererPrograms,
+    rendererProgramsAfterRestore: restoredSample.rendererPrograms,
+    rendererTexturesBeforeRestore: beforeRestoreSample.rendererTextures,
+    rendererTexturesAfterRestore: restoredSample.rendererTextures,
+    note: 'geometries returning to the pre-park count with programs/textures flat would mean the extra heap is JS-side (geoCache/property rehydration), not GPU-side',
+  });
 
   // Repeated park<->restore cycles: does each cycle's heap cost compound
   // (a real leak — dangerous, since Park/Restore's whole purpose is being
@@ -261,10 +308,10 @@ try {
   for (let i = 0; i < 3; i++) {
     await page.evaluate((id) => window._ccDispatch({t:'UPD_MODEL', id, u:{visible:false}}), modelBId);
     await page.evaluate((id) => window.ClashControl.parkModel(id), modelBId);
-    await page.waitForFunction(() => (window._ccLatestState.parkedModels||[]).length === 1, null, {timeout:20_000});
+    await page.waitForFunction(() => (window._ccLatestState.parkedModels||[]).length === 1, null, {timeout:180_000});
     const afterPark = await sample('cycle-' + (i + 1) + '-parked');
     await page.evaluate((id) => window.ClashControl.restoreModel(id), modelBId);
-    await page.waitForFunction(() => window._ccLatestState.models.length === 2 && (window._ccLatestState.parkedModels||[]).length === 0, null, {timeout:60_000});
+    await page.waitForFunction(() => window._ccLatestState.models.length === 2 && (window._ccLatestState.parkedModels||[]).length === 0, null, {timeout:180_000});
     const afterRestore = await sample('cycle-' + (i + 1) + '-restored');
     cycleHeaps.push({ cycle: i + 1, parkedHeapMB: mb(afterPark.heapBytes), restoredHeapMB: mb(afterRestore.heapBytes) });
   }
@@ -274,12 +321,29 @@ try {
     note: 'if restoredHeapMB keeps climbing cycle over cycle, that is a real leak; if it plateaus, the cost is one-time warm-up',
   });
 
+  // Open question surfaced by the numbers above: the plateau isn't just
+  // "flat", it's flat at a level several times higher than the ORIGINAL
+  // fresh-load heap for the exact same element count -- i.e. restore's
+  // rebuild-from-geoCache path appears to retain meaningfully more resident
+  // JS heap per element than a fresh IFC parse of the same data. This is not
+  // a leak (it plateaus, doesn't keep climbing) but it is not yet explained,
+  // and is recorded here rather than silently absorbed into "no leak found".
+  const freshLoadHeapMB = mb(samples.find((s) => s.label === 'both-loaded').heapBytes);
+  const plateauHeapMB = cycleHeaps[cycleHeaps.length - 1].restoredHeapMB;
+  findings.push({
+    check: 'OPEN QUESTION: does the park/restore rebuild path cost more resident heap per element than a fresh load of the same data?',
+    freshLoadHeapMB,
+    plateauedRestoreHeapMB: plateauHeapMB,
+    ratio: freshLoadHeapMB ? Math.round((plateauHeapMB / freshLoadHeapMB) * 100) / 100 : null,
+    note: 'both states hold the SAME 31k total elements; if the ratio is well above 1, restore is retaining something a fresh load does not -- worth a follow-up investigation, not resolved by this probe',
+  });
+
   // Repeated-detection memory scenario: run detection N times, check heap
   // doesn't climb run over run (the reviewer's step 3).
   const detectionHeaps = [];
   for (let i = 0; i < 6; i++) {
     await page.evaluate(() => window.ClashControl.runDetection());
-    await page.waitForFunction(() => window._ccLatestState.detecting === false, null, {timeout:60_000});
+    await page.waitForFunction(() => window._ccLatestState.detecting === false, null, {timeout:180_000});
     const s = await sample('detection-run-' + (i + 1));
     detectionHeaps.push(s.heapBytes);
   }
@@ -297,7 +361,7 @@ try {
   const result = {
     generatedAt: new Date().toISOString(),
     scope: 'real Chromium (--single-process --no-zygote), real web-ifc WASM parse, real Park/Restore/Detection public API — not mocked',
-    fixtures: { a: 'synthetic 3 storeys x 6 walls', b: 'synthetic 6 storeys x 14 walls (parked/restored)' },
+    fixtures: { a: 'synthetic 5 storeys x 200 walls (~1k elements)', b: 'synthetic 30 storeys x 1000 walls (~30k elements, parked/restored)' },
     findings,
     samples,
   };
