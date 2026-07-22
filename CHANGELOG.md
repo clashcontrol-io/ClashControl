@@ -1,5 +1,8 @@
 # Changelog
 
+## v7.3.0 (2026-07-22)
+- feat(models): auto-park hidden models under memory pressure + smart reload
+
 ## v7.2.8 (2026-07-22)
 - fix(models): register park aliases on the canonical ClashControl namespace
 
