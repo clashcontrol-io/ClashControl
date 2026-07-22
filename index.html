@@ -1270,7 +1270,7 @@ function startApp() {
   // Restore section state persisted from previous session
   var _savedSection=(function(){try{return JSON.parse(localStorage.getItem('cc_section')||'null');}catch(e){return null;}})();
   var INIT = {
-    models:[], clashes:[], issues:[], activeId:null, showModal:false, showSettings:false, modalElement:null, tab:null, isRecording:false, selectionSets:[], searchSets:[], assignmentRules:[],
+    models:[], parkedModels:[], clashes:[], issues:[], activeId:null, showModal:false, showSettings:false, modalElement:null, tab:null, isRecording:false, selectionSets:[], searchSets:[], assignmentRules:[],
     rules:{ modelA:'all', modelB:'all', hard:true, maxGap:50, minGap:0, duplicates:false, changeAware:false, excludeSelf:true, excludeTypes:[], excludeTypePairs:[], minOverlapVolM3:1e-5, toleranceByTypePair:{}, useSemanticFilter:true, includeSpaces:false, excludeSameDiscipline:true },
     detectionSettings:null, // Captured at detection run time: {clearance_mm, discipline_filters, scope:{complete, partialModels?}}
     trainingMode:(function(){try{var v=localStorage.getItem('cc_trainingMode');return v===null?true:v==='1';}catch(e){return true;}}()),
@@ -1379,6 +1379,7 @@ function startApp() {
   var PERSISTED_PREF_KEYS = ['autoFlyTo','autoHighlight','showGrid','showAxes','showMarkers','hoverHighlight','outlineSelected','defaultPriority','defaultCategory','defaultStatus','defaultMaxGap','resetFiltersOnRun','renderStyle','unitScaleOverride','lightSettings','measureUnits','measurePrecision','measureMagnifier','measureCalibration','homeView','zoomSens'];
   var A = {
     ADD_MODEL:'ADD_MODEL', DEL_MODEL:'DEL_MODEL', REPLACE_MODEL:'REPLACE_MODEL', UPD_MODEL:'UPD_MODEL',
+    PARK_MODEL:'PARK_MODEL', UNPARK_MODEL:'UNPARK_MODEL',
     TOGGLE_ALL_STOREYS:'TOGGLE_ALL_STOREYS',
     SET_CLASHES:'SET_CLASHES', MERGE_CLASHES:'MERGE_CLASHES', ADD_CLASHES:'ADD_CLASHES', DETECTING:'DETECTING', STOP_DETECT:'STOP_DETECT',
     SWITCHING_PROJECT:'SWITCHING_PROJECT',
@@ -1689,10 +1690,35 @@ function startApp() {
             visible: _prevM.visible !== false,
             tag: _prevM.tag || _am.tag || ''
           });
-          return Object.assign({}, s, {models: s.models.map(function(m,i){ return i===_dupIdx ? _merged : m; })});
+          return Object.assign({}, s, {models: s.models.map(function(m,i){ return i===_dupIdx ? _merged : m; }),parkedModels:(s.parkedModels||[]).filter(function(pm){return pm.id!==_am.id;})});
         }
-        return Object.assign({},s,{models:s.models.concat([_am])});
-      case A.DEL_MODEL:   _clearElCaches(s.models.find(function(m){return m.id===a.id})); return Object.assign({},s,{models:s.models.filter(function(m){return m.id!==a.id})});
+        return Object.assign({},s,{models:s.models.concat([_am]),parkedModels:(s.parkedModels||[]).filter(function(pm){return pm.id!==_am.id;})});
+      case A.DEL_MODEL:   _clearElCaches(s.models.find(function(m){return m.id===a.id})); return Object.assign({},s,{models:s.models.filter(function(m){return m.id!==a.id}),parkedModels:(s.parkedModels||[]).filter(function(pm){return pm.id!==a.id})});
+      // PARK_MODEL — move a loaded model to the lightweight `parkedModels` stub
+      // list and drop it from `models`. Removing the id from `models` makes the
+      // scene-sync effect dispose its Three.js group + geometry (the exact same
+      // path as removal), and _clearElCaches frees its BVH/pair caches — but,
+      // unlike DEL_MODEL's UI handler, the geoCache + source file in IndexedDB
+      // are KEPT, so _ccRestoreParkedModel can rebuild it with the SAME id
+      // (preserving every clash/issue reference) without re-parsing. The stub
+      // holds only display metadata (no geometry).
+      case A.PARK_MODEL: {
+        var _pkm = s.models.find(function(m){return m.id===a.id;});
+        if (!_pkm) return s;
+        _clearElCaches(_pkm);
+        var _stub = {
+          id:_pkm.id, name:_pkm.name, discipline:_pkm.discipline, color:_pkm.color,
+          tag:_pkm.tag||'', _version:_pkm._version,
+          elementCount:(_pkm.elements||[]).length, meshCount:(_pkm.meshes||[]).length,
+          stats:_pkm.stats||null, _parkedAt:a.at||0
+        };
+        var _restParked = (s.parkedModels||[]).filter(function(pm){return pm.id!==a.id;});
+        _restParked.push(_stub);
+        return Object.assign({},s,{models:s.models.filter(function(m){return m.id!==a.id;}),parkedModels:_restParked});
+      }
+      // UNPARK_MODEL — drop the stub once the model has been re-added via
+      // ADD_MODEL (the restore orchestration dispatches ADD_MODEL then this).
+      case A.UNPARK_MODEL: return Object.assign({},s,{parkedModels:(s.parkedModels||[]).filter(function(pm){return pm.id!==a.id;})});
       case A.REPLACE_MODEL: _clearElCaches(s.models.find(function(m){return m.id===a.id})); return Object.assign({},s,{models:s.models.map(function(m){return m.id===a.id?a.v:m})});
       case A.UPD_MODEL:   return Object.assign({},s,{models:s.models.map(function(m){return m.id===a.id?Object.assign({},m,a.u):m})});
       case A.TOGGLE_ALL_STOREYS: return Object.assign({},s,{models:s.models.map(function(m){if(m.id!==a.id)return m;return Object.assign({},m,{hiddenStoreys:a.hide?a.storeys.reduce(function(o,st){o[st]=true;return o;},{}):{}}); })});
@@ -2147,6 +2173,149 @@ function startApp() {
       if (window._ccLoadFiles) window._ccLoadFiles([new File([f.buffer], f.name)]);
     });
   };
+
+  // ── Park / restore inactive models (memory relief) ───────────────
+  // "Parking" a model disposes its resident geometry (scene meshes + the large
+  // off-scene element.meshes[] proxy set + BVH caches) but KEEPS its IndexedDB
+  // geoCache + source file, so it can be rebuilt on demand with the SAME model
+  // id — every clash/issue reference stays valid. This is the reverse of the
+  // permanent proxy retention that dominates heap on multi-model projects. See
+  // PARK_MODEL / UNPARK_MODEL in the reducer.
+  //
+  // Module-level twin of the project-loader's nested `_restoreCacheOrColdParse`
+  // (kept in sync by hand — both must apply the same cache-vs-cold-parse policy).
+  function _ccRestoreModelGeometry(entry, cached) {
+    if (!_ccGeoCacheV8Enabled()) {
+      if (cached && cached.v >= 7 && cached.hasPsets) return Promise.resolve(_geoDeserialize(cached));
+      return _ccColdParseParkedEntry(entry);
+    }
+    if (!(cached && cached.v === 8 && cached.hasPsets)) return _ccColdParseParkedEntry(entry);
+    try {
+      var restored = _geoDeserialize(cached);
+      if (!_ccRestoredGeoMatchesCache(cached, restored)) throw new Error('restored geometry failed semantic validation');
+      return Promise.resolve(restored);
+    } catch (error) {
+      try { window._ccSafetyMigrations.record({migration:'geoCacheV8', outcome:'cold-parse-fallback',
+        fileId:String(entry.id), error:String(error && error.message || error)}); } catch(e) {}
+      _idbDeleteGeoCacheKey(_ccGeoCacheKey(entry.id, true));
+      return _ccColdParseParkedEntry(entry);
+    }
+  }
+  function _ccColdParseParkedEntry(entry) {
+    if (!entry || !entry.buffer) return Promise.resolve(null); // no cache AND no source → cannot restore
+    return loadIFC(entry.buffer, DISC[0].c, function(){}).then(function(result) {
+      if (result) idbSaveGeoCache(entry.id, _geoSerialize(result));
+      return result;
+    });
+  }
+
+  // Can this model be parked? Only if it can be provably restored later — a live
+  // Revit-direct model (no stored IFC / geoCache) or one whose caches are gone
+  // would be lost. Returns a Promise<bool>.
+  function _ccModelIsRestorable(model) {
+    if (!model) return Promise.resolve(false);
+    if (model.stats && model.stats.source === 'revit-direct') return Promise.resolve(false);
+    var s = window._ccLatestState || {};
+    return idbGetGeoCache(model.id).then(function(cached) {
+      if (cached) return true;
+      return idbGetProjectFiles(s.activeProject || 'default').then(function(files) {
+        return !!(files || []).find(function(f){ return f.id === model.id && f.buffer; });
+      });
+    }).catch(function(){ return false; });
+  }
+
+  var _ccRestoringModels = {}; // id -> Promise, so concurrent restores dedupe
+
+  window._ccParkModel = function(id) {
+    var s = window._ccLatestState || {};
+    var model = (s.models || []).find(function(m){ return m.id === id; });
+    if (!model) return Promise.resolve(false);
+    return _ccModelIsRestorable(model).then(function(ok) {
+      if (!ok) {
+        if (window._ccToast) window._ccToast('“' + model.name + '” can’t be parked — no cached geometry to restore it from (live or uncached model).', 'warn');
+        return false;
+      }
+      var els = (model.elements || []).length;
+      if (window._ccDispatch) window._ccDispatch({ t: A.PARK_MODEL, id: id, at: Date.now() });
+      if (window._ccToast) window._ccToast('Parked “' + model.name + '” (' + els.toLocaleString() + ' elements) — memory freed. Restore it anytime from the sidebar.', 'success');
+      return true;
+    });
+  };
+
+  window._ccIsModelParked = function(id) {
+    var s = window._ccLatestState || {};
+    return !!(s.parkedModels || []).find(function(pm){ return pm.id === id; });
+  };
+
+  window._ccRestoreParkedModel = function(id) {
+    if (_ccRestoringModels[id]) return _ccRestoringModels[id];
+    var s = window._ccLatestState || {};
+    var stub = (s.parkedModels || []).find(function(pm){ return pm.id === id; });
+    if (!stub) return Promise.resolve(false);
+    if (typeof _setGlobalLoading === 'function') _setGlobalLoading(true);
+    var p = Promise.all([
+      idbGetProjectFiles(s.activeProject || 'default'),
+      idbGetGeoCache(id)
+    ]).then(function(res) {
+      var files = res[0] || [], cached = res[1];
+      var entry = files.find(function(f){ return f.id === id; }) ||
+        { id: id, name: (stub.name || 'model') + '.ifc' };
+      return _ccRestoreModelGeometry(entry, cached).then(function(result) {
+        if (!result) throw new Error('no geometry could be rebuilt');
+        // Re-apply persisted sidecar props exactly like the project loader does.
+        if (entry.sidecar) {
+          var sc = (entry.sidecar.ifcmeta && entry.sidecar.ifcmeta.elements) || null;
+          if (sc) result.elements.forEach(function(el) {
+            var gid = el.props && el.props.globalId;
+            if (gid && sc[gid]) {
+              var rd = sc[gid];
+              ['phase','workset','designOption','hostId','layers','flipState','constraints','hostRelationships'].forEach(function(k){ if (rd[k] !== undefined) el.props[k] = rd[k]; });
+            }
+          });
+        }
+        var restoredModel = {
+          id: id, name: stub.name, discipline: stub.discipline, color: stub.color,
+          tag: stub.tag || '', meshes: result.meshes, elements: result.elements,
+          storeys: result.storeys || [], storeyData: result.storeyData || [],
+          spatialHierarchy: result.spatialHierarchy || {}, relatedPairs: result.relatedPairs || {},
+          stats: result.stats || stub.stats || {}
+        };
+        if (stub._version) restoredModel._version = stub._version;
+        // ADD_MODEL merges persisted modelMeta (visibility/discipline/color) and
+        // clears the parked stub; UNPARK_MODEL is a belt-and-suspenders cleanup.
+        if (window._ccDispatch) { window._ccDispatch({ t: A.ADD_MODEL, v: restoredModel }); window._ccDispatch({ t: A.UNPARK_MODEL, id: id }); }
+        if (typeof invalidate === 'function') invalidate(3);
+        if (window._ccToast) window._ccToast('Restored “' + stub.name + '”.', 'success');
+        return true;
+      });
+    }).catch(function(err) {
+      console.warn('[park] restore failed for ' + id + ':', err);
+      if (window._ccToast) window._ccToast('Couldn’t restore “' + (stub.name || id) + '” — ' + (err && err.message || 'unknown error'), 'error');
+      return false;
+    }).then(function(ok) {
+      if (typeof _setGlobalLoading === 'function') _setGlobalLoading(false);
+      delete _ccRestoringModels[id];
+      return ok;
+    });
+    _ccRestoringModels[id] = p;
+    return p;
+  };
+
+  // Ensure a model is loaded before an action that needs its geometry (fly-to,
+  // isolate, detection scope). Auto-restores a parked model; resolves to true
+  // once it's active (or was never parked), false if restore failed.
+  window._ccEnsureModelActive = function(id) {
+    if (!window._ccIsModelParked(id)) return Promise.resolve(true);
+    return window._ccRestoreParkedModel(id);
+  };
+
+  // Public, guarded aliases on the ClashControl namespace.
+  try {
+    window.ClashControl = window.ClashControl || {};
+    window.ClashControl.parkModel = function(id){ return window._ccParkModel(id); };
+    window.ClashControl.restoreModel = function(id){ return window._ccRestoreParkedModel(id); };
+    window.ClashControl.isModelParked = function(id){ return window._ccIsModelParked(id); };
+  } catch(e) {}
 
   function idbDeleteProjectFiles(projectId) {
     return idbGetProjectFiles(projectId).then(function(files){
@@ -16390,7 +16559,7 @@ function startApp() {
     _underlayImgDataCache = {};
     _cc2DOutlines = null;
     d({t:A.LOAD_PROJECT_STATE, data:{
-      models:[], clashes:[], issues:[], activeId:null, detecting:false,
+      models:[], parkedModels:[], clashes:[], issues:[], activeId:null, detecting:false,
       switchingProject:true, lastDeltaSummary:null,
       sectionAxis:null, sectionPos:0.5, sectionCustom:null, sectionBox:null, sectionStorey:null,
       filters:Object.assign({},INIT_FILTERS), floors:[],
@@ -18050,6 +18219,21 @@ function startApp() {
         ${html`<${_InstallAppBanner} />`}
         ${s.models.length > 0 && s.workspace==='review' && html`<${_QualityScoreChip} s=${s} />`}
         ${s.models.map(function(m){return html`<${ModelCard} key=${m.id} m=${m} d=${d} s=${s} />`})}
+        ${(s.parkedModels||[]).length > 0 && html`<div style=${{marginTop:'.35rem',borderTop:'1px solid var(--hairline)',paddingTop:'.35rem'}}>
+          <div style=${{fontSize:'.65rem',fontWeight:600,color:'var(--text-muted)',textTransform:'uppercase',letterSpacing:'.05em',padding:'0 .2rem',marginBottom:'.25rem',display:'flex',alignItems:'center',gap:'.3rem'}}>
+            <span>Parked (memory freed)</span>
+            <span title="These models are unloaded to save memory. Their geometry is cached — click Restore to reload with all clashes intact." style=${{color:'var(--text-faint)',cursor:'help'}}>ⓘ</span>
+          </div>
+          ${(s.parkedModels||[]).map(function(pm){return html`<div key=${pm.id} style=${{display:'flex',alignItems:'center',gap:'.35rem',padding:'.3rem .5rem',background:'var(--bg-secondary)',border:'1px dashed var(--border)',borderRadius:8,marginBottom:'.18rem',opacity:.85}}>
+            <span style=${{width:10,height:10,borderRadius:'50%',background:pm.color,flexShrink:0,opacity:.6}}></span>
+            <span style=${{color:'var(--text-secondary)',fontSize:'0.82rem',flex:1,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}} title=${pm.name}>${pm.name}</span>
+            <span style=${{fontSize:'0.62rem',color:'var(--text-faint)',flexShrink:0}}>${(pm.elementCount||0).toLocaleString()} el</span>
+            <button onClick=${function(){if(window._ccRestoreParkedModel)window._ccRestoreParkedModel(pm.id);}}
+              title="Reload this model" style=${{...S_BTN,padding:'.1rem .45rem',fontSize:'0.68rem',background:'var(--accent-bg)',color:'var(--accent)',border:'none',borderRadius:6,cursor:'pointer',flexShrink:0}}>Restore</button>
+            <button onClick=${function(){if(!confirm('Remove parked model "'+pm.name+'" and delete its cached geometry?'))return;d({t:A.UNPARK_MODEL,id:pm.id});idbDeleteFile(pm.id);idbDeleteGeoCache(pm.id);}}
+              title="Remove permanently (deletes cache)" style=${{...S_BTN,padding:'0 2px',background:'none',color:'var(--text-faint)',fontSize:'0.69rem',flexShrink:0}}>✕</button>
+          </div>`})}
+        </div>`}
         ${html`<${_SplatLayersSection} />`}
         ${s.underlays.length > 0 && html`<div style=${{marginTop:'.3rem',borderTop:'1px solid var(--hairline)',paddingTop:'.3rem'}}>
           <div style=${{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:'.25rem',padding:'0 .2rem'}}>
@@ -18649,6 +18833,9 @@ function startApp() {
           style=${{fontSize:'0.6rem',padding:'0 .3rem',borderRadius:99,background:'var(--color-warning-bg)',color:'var(--color-warning-fg)',border:'none',cursor:'pointer',flexShrink:0,fontFamily:'var(--font-body)'}}>partial</button>`}
         ${m.stats && m.stats.loadTime && html`<span style=${{fontSize:'0.63rem',color:'var(--text-faint)',flexShrink:0}}>${(m.stats.loadTime/1000).toFixed(1)}s</span>`}
         <button onClick=${function(){setOpen(!open)}} style=${{...S_BTN,padding:'0 2px',background:'none',color:'var(--text-faint)',fontSize:'0.69rem'}}>${open?'▲':'▼'}</button>
+        ${!(m.stats&&m.stats.source==='revit-direct') && html`<button onClick=${function(e){e.stopPropagation();if(window._ccParkModel)window._ccParkModel(m.id);}}
+          title="Park this model — free its memory now, restore with one click later. Nothing is deleted."
+          style=${{...S_BTN,padding:'0 2px',background:'none',color:'var(--text-faint)',fontSize:'0.72rem'}}>⏻</button>`}
         <button onClick=${function(){if(!confirm('Remove "'+m.name+'" from this project?'))return;
           // For a live Revit model, also exclude it from future syncs so a refresh
           // doesn't re-pull it (scoped sync). Re-include via the Revit Bridge panel.
