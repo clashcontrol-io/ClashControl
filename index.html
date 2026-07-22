@@ -4434,44 +4434,69 @@ function startApp() {
   // Direct mutation is safe here because nothing in the state tree uses
   function _mergeLazyProps(modelId, propMap) {
     var s = window._ccLatestState;
-    if (!s || !s.models) return;
     var model = null;
-    for (var mi = 0; mi < s.models.length; mi++) {
-      if (s.models[mi].id === modelId) { model = s.models[mi]; break; }
-    }
-    if (!model || !model.elements) return;
-    var merged = 0;
-    for (var i = 0; i < model.elements.length; i++) {
-      var el = model.elements[i];
-      var pm = propMap[el.expressId];
-      if (pm) {
-        if (pm.quantities) el.props.quantities = _ccCanonQuantities(pm.quantities);
-        if (pm.psets)      el.props.psets      = _ccCanonPsets(pm.psets);
-        merged++;
+    if (s && s.models) {
+      for (var mi = 0; mi < s.models.length; mi++) {
+        if (s.models[mi].id === modelId) { model = s.models[mi]; break; }
       }
     }
-    console.log('%c[IFC] Lazy-merged psets/quantities into ' + merged + ' / ' + model.elements.length + ' elements of "' + model.name + '"', 'color:#94a3b8');
-    if (window._ccDispatch) {
-      try { window._ccDispatch({t:'UPD_MODEL', id:modelId, u:{_propsVersion:Date.now()}}); } catch(e) {}
+    var byEid = null;
+    if (model && model.elements) {
+      byEid = {};
+      var merged = 0;
+      for (var i = 0; i < model.elements.length; i++) {
+        var el = model.elements[i];
+        byEid[el.expressId] = el;
+        var pm = propMap[el.expressId];
+        if (pm) {
+          if (pm.quantities) el.props.quantities = _ccCanonQuantities(pm.quantities);
+          if (pm.psets)      el.props.psets      = _ccCanonPsets(pm.psets);
+          merged++;
+        }
+      }
+      console.log('%c[IFC] Lazy-merged psets/quantities into ' + merged + ' / ' + model.elements.length + ' elements of "' + model.name + '"', 'color:#94a3b8');
+      if (window._ccDispatch) {
+        try { window._ccDispatch({t:'UPD_MODEL', id:modelId, u:{_propsVersion:Date.now()}}); } catch(e) {}
+      }
     }
-    if (merged > 0) {
-      try {
-        idbGetGeoCache(modelId).then(function(cached) {
-          if (!cached || !cached.elData) return;
-          var byEid = {};
-          for (var mi2 = 0; mi2 < model.elements.length; mi2++) {
-            byEid[model.elements[mi2].expressId] = model.elements[mi2];
+    // Patch the geoCache directly, independent of whether `model` is still
+    // live in s.models. A model parked (or auto-parked) WHILE this lazy
+    // Phase 2 extraction was still in flight used to make the block above
+    // a no-op (model gone from s.models -> early return), so the geoCache
+    // never got marked psets-complete and every future restore fell back
+    // to a full cold IFC re-parse FOREVER, even though the real psets data
+    // was sitting right here in propMap the whole time. Found via a
+    // real-browser probe: a large (30k-element) model parked moments after
+    // load -- before its own lazy props phase had landed -- kept
+    // cold-parsing on every restore, plateauing at 3.9x the heap of a
+    // fresh load of the same element count; a smaller model whose lazy
+    // phase won the race used the cheap cached path instead.
+    //
+    // When `model` was live, byEid's elements already carry the
+    // canonicalized props from the loop above -- reuse those verbatim so
+    // both branches converge on identical stored data. When it's gone,
+    // canonicalize straight from propMap here.
+    try {
+      idbGetGeoCache(modelId).then(function(cached) {
+        if (!cached || !cached.elData) return;
+        for (var ei = 0; ei < cached.elData.length; ei++) {
+          var _ed = cached.elData[ei];
+          var _el2 = byEid && byEid[_ed.eid];
+          if (_el2 && _el2.props) {
+            _ed.props = _el2.props;
+          } else {
+            var pm2 = propMap[_ed.eid];
+            if (pm2) {
+              _ed.props = _ed.props || {};
+              if (pm2.quantities) _ed.props.quantities = _ccCanonQuantities(pm2.quantities);
+              if (pm2.psets)      _ed.props.psets      = _ccCanonPsets(pm2.psets);
+            }
           }
-          for (var ei = 0; ei < cached.elData.length; ei++) {
-            var _ed = cached.elData[ei];
-            var _el2 = byEid[_ed.eid];
-            if (_el2 && _el2.props) _ed.props = _el2.props;
-          }
-          cached.hasPsets = true;
-          idbSaveGeoCache(modelId, cached);
-        });
-      } catch(e) { console.warn('[IFC] Failed to refresh geo cache with psets:', e); }
-    }
+        }
+        cached.hasPsets = true;
+        idbSaveGeoCache(modelId, cached);
+      });
+    } catch(e) { console.warn('[IFC] Failed to refresh geo cache with psets:', e); }
   }
 
   // ── IFC Web Worker (off-main-thread parsing) ────────────────── INTERNALS.md §8

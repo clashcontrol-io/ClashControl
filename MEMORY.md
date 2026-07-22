@@ -1976,6 +1976,31 @@ edit, but re-run for safety). Committed and pushed to
 **Next honest step, not yet started:** investigate the 3.91x restore-vs-fresh-load heap ratio —
 likely needs comparing `_geoDeserialize`'s output shapes against the fresh-parse path's output
 shapes directly (byte-for-byte), which is a real code-reading task, not just another browser run.
+
+**Root-caused and fixed the 3.91x ratio, same day** — user asked to find and fix the source.
+Traced it to a real bug via console-log timing instrumentation in the probe, not just static
+reading: `_mergeLazyProps` (`index.html:~4435`) is the callback that runs once a model's async
+Phase 2 property extraction (`loadIFCWorker`'s deferred `onProps`, always separate from the
+synchronous geometry phase) lands — its job includes patching the model's geoCache with
+`hasPsets: true`, the flag `_ccRestoreModelGeometry`'s fast path (`cached.v>=7 && cached.hasPsets`)
+requires to skip a full cold IFC re-parse on restore. The bug: `_mergeLazyProps` looked up the
+live model in `s.models` first and returned immediately if not found — so a model **parked before
+its own Phase 2 landed** (confirmed via console instrumentation: the 30k-element model's
+`"[IFC] Lazy-merged psets..."` log never fired before park, only the small model's did) silently
+lost `hasPsets` forever, and every future restore fell back to `_ccColdParseParkedEntry`'s full
+`loadIFC()` re-parse — permanently, for the rest of that model's session — defeating Park's whole
+point for exactly the large/slow-to-process models it should help most. Verified the theory first
+(giving the test fixture real psets dropped the ratio to 1.36x, since the FIRST cold-parse's own
+`loadIFC()` call resaves the cache with real psets via its own synchronous, non-lazy property
+extraction pass — but a genuinely pset-less model, like the raw fixture, can never self-heal that
+way). **Fix**: decoupled the geoCache patch from the live in-memory model lookup — it now reads/
+writes `cached.elData` directly via `propMap` keyed by `expressId` whenever the live model is
+gone, instead of bailing out. Verified on the *exact same* no-psets fixture (no test changes): the
+ratio dropped from **3.91x → 1.44x**, and cycle-2+ restore deltas shrank from ~150MB to ~1MB —
+direct evidence the fast path is now actually reached. `tests/lazy-props-geocache-patch.test.js`
+(5 tests) locks the structural fix in. Full suite 782/782 green. The residual 1.44x is a smaller,
+more plausible "known cost of rebuilding ~30k individual JS objects from a cache" gap, not
+recorded as fully explained — a genuinely separate, much smaller follow-up if ever revisited.
 <!-- END:active-work -->
 
 <!-- BEGIN:session-log -->
