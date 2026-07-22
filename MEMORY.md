@@ -1933,13 +1933,49 @@ only 0.3MB and RSS actually +4.8MB immediately after park (GC hasn't run yet at 
 point) — expected and already-documented ledger/observed-delta mismatch, not a regression.
 Repeated park↔restore (3 cycles) stays flat (~330MB parked, ~330MB restored, no compounding
 climb); repeated detection (6 runs) nets -44MB not positive growth. Full `node --test` suite
-still 777/777 green. Not yet committed/pushed — next step is to commit this test change and push
-to a fresh continuation of the P6.2 work (branch already has PR #705 merged from it, so per
-CLAUDE.md's fresh-branch-after-merge convention a new branch/PR is warranted once further work is
-ready). Still-open honest items from the P6.2-continued survey: production-scale re-test (this
-env's 10,200-element fixture is ~3x smaller than the user's real ~30k-element federations) and
-investigating the ~390MB RSS boot baseline / ~71MB one-time first-restore cost — proposed, not
-started.
+still 777/777 green. Committed (`c92533a`) and pushed to the correct designated branch
+`claude/clashcontrol-v7-release-plan-jp5njw` (the prior branch, `claude/clashcontrol-v7-p6-2-
+continued`, already had PR #705 merged from it — per CLAUDE.md's fresh-branch-after-merge
+convention, cherry-picked the one still-unmerged commit from it, `feat(nl-commands): use
+el.expressId directly`, onto the designated branch before continuing).
+
+**Production-scale re-test + RSS/first-restore investigation, same day** — user confirmed doing
+all three proposed follow-ups. Scaled `memory-park-restore.mjs`'s synthetic fixtures from
+~10.2k to **~31k total elements** (5x200 + 30x1000 walls), matching the user's real-world
+federation scale; bumped `waitForFunction` timeouts (120s/60s → 400s/180s) for the larger load.
+Re-ran for real in Chromium — the P6.2-continued deterministic dispose() finding holds
+**unchanged at scale**: model B still owns exactly 1 live geometry (batched), and
+`renderer.info.memory.geometries` still drops by exactly 1 on park
+(`dropMatchesModelBGeometryCount: true`). Added two new instrumented findings:
+- **Boot RSS baseline split**: engine-only (bare single-process Chromium+SwiftShader before any
+  page nav) = 148MB; app-boot RSS (page loaded, WASM/React/addons initialized, no model) = 380MB
+  → the app's own boot cost is ~232MB, not the full ~390MB the earlier pass implied was all
+  "baseline". Worth knowing the split for anyone trying to shrink the floor.
+- **First-restore heap-growth attribution**: caught and fixed a self-introduced bug first (the
+  "before restore" sample was accidentally captured AFTER the restore call, comparing
+  restored-vs-restored and showing a false 0MB growth — moved the capture above the restore
+  call). Real numbers: first restore costs **+283MB** heap, while `renderer.info` stays almost
+  flat (geometries 15→16, programs 10→10 unchanged, textures 9→12) — meaning the growth is
+  **JS-side** (props/`element.meshes[]`/BVH rehydration for ~30k elements), not GPU/shader
+  recompilation. Consistent with Park/Restore's known design (park frees the JS object graph,
+  restore rebuilds it from the geoCache).
+- **New open question surfaced, not resolved**: the heap plateaus after repeated park↔restore
+  cycles at ~617MB — but the ORIGINAL fresh two-model load of the exact same 31k elements only
+  used ~158MB. That's a **3.91x** ratio for identical data. Not a leak (cycles 2-3 are flat, no
+  further climbing), but restore's rebuild-from-geoCache path appears to retain meaningfully more
+  resident JS heap per element than a fresh IFC parse of the same data — recorded as an explicit
+  unresolved finding in the test's JSON output rather than silently folded into "no leak found".
+  Candidate causes not yet investigated: geoCache deserialization producing less compact typed
+  arrays/objects than the fresh-parse path, duplicate BVH builds, or property-graph structures
+  not being re-canonicalized identically on restore.
+
+Full `node --test` suite re-confirmed 777/777 after these changes (unrelated to the .mjs-only
+edit, but re-run for safety). Committed and pushed to
+`claude/clashcontrol-v7-release-plan-jp5njw`.
+
+**Next honest step, not yet started:** investigate the 3.91x restore-vs-fresh-load heap ratio —
+likely needs comparing `_geoDeserialize`'s output shapes against the fresh-parse path's output
+shapes directly (byte-for-byte), which is a real code-reading task, not just another browser run.
 <!-- END:active-work -->
 
 <!-- BEGIN:session-log -->
