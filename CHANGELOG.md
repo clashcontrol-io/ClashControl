@@ -1,5 +1,8 @@
 # Changelog
 
+## v7.2.8 (2026-07-22)
+- fix(models): register park aliases on the canonical ClashControl namespace
+
 ## v7.2.7 (2026-07-21)
 - Verified fixes from external review: local-engine unit bug, memory, security, BCF, CI
 
