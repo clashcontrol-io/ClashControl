@@ -224,37 +224,55 @@ module.exports = async function handler(req, res) {
         var user = body.user || 'anonymous';
         var conflicts = [];
 
-        // Two round-trips total instead of 2-per-issue: the old serial loop
-        // hit the 10s function ceiling on large syncs, leaving a partial write.
-        var candidates = issues.map(function(issue) {
-          return { issue: issue, shared: stripToShared(issue) };
+        // Atomic compare-and-swap in a SINGLE statement — no read-then-write
+        // window. The previous version did SELECT updated_at, then compared in
+        // JS, then upserted unconditionally: two writers could both read the
+        // same baseline, both pass the JS check, and both overwrite (a lost
+        // update). Here the timestamp guard lives inside the ON CONFLICT DO
+        // UPDATE, so Postgres decides per-row under the row lock it already
+        // takes for the upsert. A row is written iff it's new OR the DB's
+        // current updated_at has not advanced past what this client last saw
+        // (`_updatedAt`); otherwise it's skipped and reported as a conflict for
+        // the client to merge. `expected` is null for an issue the client has
+        // never synced — a new id inserts (no conflict), and an already-present
+        // id with a null expectation is treated as a conflict (updated_at <=
+        // null is UNKNOWN → not updated).
+        var rows = issues.map(function(issue) {
+          var shared = stripToShared(issue);
+          return {
+            id: shared.id,
+            data: shared,
+            expected: (issue._updatedAt != null ? new Date(issue._updatedAt).toISOString() : null),
+          };
         });
-        var ids = candidates.map(function(c) { return c.shared.id; });
-        var serverTimes = {};
-        if (ids.length) {
-          var existing = await sql`SELECT id, updated_at FROM shared_issues WHERE project_id = ${projectId} AND id = ANY(${ids})`;
-          existing.forEach(function(row) { serverTimes[row.id] = new Date(row.updated_at).getTime(); });
-        }
-        var rows = [];
-        candidates.forEach(function(c) {
-          var serverTime = serverTimes[c.shared.id];
-          if (serverTime != null && c.issue._updatedAt && serverTime > new Date(c.issue._updatedAt).getTime()) {
-            conflicts.push(c.shared.id); // server wins — client merges
-            return;
-          }
-          rows.push({ id: c.shared.id, data: c.shared });
-        });
+        var ids = rows.map(function(r) { return r.id; });
+
+        var written = [];
         if (rows.length) {
-          await sql`INSERT INTO shared_issues (id, project_id, data, updated_by)
-            SELECT r.id, ${projectId}, r.data, ${user}
-            FROM jsonb_to_recordset(${JSON.stringify(rows)}::jsonb) AS r(id text, data jsonb)
+          written = await sql`
+            WITH incoming AS (
+              SELECT * FROM jsonb_to_recordset(${JSON.stringify(rows)}::jsonb)
+                AS r(id text, data jsonb, expected timestamptz)
+            )
+            INSERT INTO shared_issues (id, project_id, data, updated_by)
+            SELECT i.id, ${projectId}, i.data, ${user} FROM incoming i
             ON CONFLICT (project_id, id)
-            DO UPDATE SET data = EXCLUDED.data, updated_by = EXCLUDED.updated_by, updated_at = now()`;
+            DO UPDATE SET data = EXCLUDED.data, updated_by = EXCLUDED.updated_by, updated_at = now()
+            WHERE shared_issues.updated_at <= (
+              SELECT i2.expected FROM incoming i2 WHERE i2.id = shared_issues.id
+            )
+            RETURNING id`;
         }
+
+        var writtenIds = {};
+        written.forEach(function(row) { writtenIds[row.id] = true; });
+        // Anything attempted but not written back existed with a newer (or
+        // unknown-to-this-client) server version — a conflict to merge.
+        conflicts = ids.filter(function(id) { return !writtenIds[id]; });
 
         await sql`UPDATE shared_projects SET last_activity = now() WHERE id = ${projectId}`;
 
-        return res.status(200).json({ synced: rows.length, conflicts: conflicts });
+        return res.status(200).json({ synced: written.length, conflicts: conflicts });
       }
 
       // DELETE — Remove a single issue. Destructive, so unlike PUT it
