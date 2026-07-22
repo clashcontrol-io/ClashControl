@@ -307,8 +307,20 @@ against resolved elements for exact excludeSameDiscipline/disciplineMatrix parit
 changeAware, per-pair tolerance wider than maxGap, semantic filter (only when excludeSelf
 off — default runs stay local), and non-'all'/single scopes; `excludeTypePairs` consumed
 as a Set from the array (was indexed as a map → never fired). Tests 13→27, full suite 699
-green; index.html main script re-parses clean. **Still open: P0.6 fixture-backed golden
-parity suite + branch-protection required checks.**
+green; index.html main script re-parses clean.
+**Continued (same session): P0.6 unit parity suite** `tests/local-engine-parity.test.js`
+(local rule pipeline vs. an independent browser-semantics reference, 11-ruleset matrix +
+anchors); **P1.3** compact-candidate byte accounting — `_candidateSetBytes` distinguishes
+eager (96 B/pair) from compact-Wasm (12 B/pair + item table), report gains
+`candidates_representation`; **P5.1** `api/project.js` now does a single-statement atomic
+CAS (`ON CONFLICT DO UPDATE ... WHERE updated_at <= expected`, conflicts from RETURNING)
+instead of read-then-unconditional-upsert; **P1.1 (Engine repo, PR #26)** `/status` now
+advertises `protocolVersion` + a `capabilities` rule map (honors mode/maxGap/minGap/
+excludeSelf/excludeTypePairs, modelScope 'exact'; everything else False). ClashControl
+suite 699→713 green; engine suite 94 green. ClashControl PR #701, Engine PR #26 (both draft).
+**Still open (documented in V7_RELEASE_PLAN.md): P0.6 e2e geometry fixture, browser half of
+P1.1 (capability consumer), P1.2 engine volume/semantic geometry, P2 real corpus (needs
+licensed IFC), P3 malformed-IFC, P4 BCF import fidelity, P0-infra branch protection.**
 
 ~~**Storage/memory optimization campaign (Loam-inspired "explicit retention"), branch
 `claude/clashcontrol-memory-optimization-jht2yy`)** (2026-07-19)~~ — all seven phases landed:

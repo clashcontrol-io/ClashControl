@@ -70,31 +70,42 @@ honest short-term move is **fail-closed**, not half-wire.
 
 Each item has a binary acceptance gate. Nothing ships as "validated v7" until P0 is green.
 
-### P0 implementation status (2026-07-22)
+### Implementation status (2026-07-22)
 
-**P0.1–P0.5 landed** (browser-side, no Engine dependency):
+Landed this session (ClashControl PR #701, ClashControlEngine PR #26):
 
-- **P0.1** — core `pick()` hoisted to `window._ccResolveModelScope` (single source of
-  truth); `_normalizeModelScope` in the addon resolves each side to `'all'` | single-id
-  | fail-closed; the gate and the serialized payload both use it. `'all'/'all'` (the
-  default) still runs locally.
-- **P0.2** — the local path now re-applies `window._ccMatrixSkipsSameDiscipline` against
-  the resolved elements (the *same* core function the browser engine uses → zero-drift
-  parity for `excludeSameDiscipline` + `disciplineMatrix`), and `_clashFromEngineResult`
-  now classifies discipline per-element (`_ccElementDiscipline`) instead of per-model.
-- **P0.3** — `changeAware` fails closed; `useSemanticFilter` fails closed **only** when
-  self-clashes are kept (`excludeSelf` falsy) — on a default run `excludeSelf:true`
-  already drops the same-model pairs the semantic filter would touch, so default runs
-  stay on the local engine.
-- **P0.4** — a per-pair tolerance wider than the global `maxGap` fails closed in the gate
-  (the narrower/tighten case is still recovered client-side).
-- **P0.5** — `excludeTypePairs` is now consumed as a Set built from the array (the real
-  INIT shape), with a legacy-object fallback; contract-realistic array test added.
+| Item | Status | Where |
+| --- | --- | --- |
+| **P0.1** model-selector normalization | ✅ done | `_ccResolveModelScope` (hoisted, shared) + `_normalizeModelScope`; `'all'`\|single-id\|fail-closed |
+| **P0.2** discipline parity | ✅ done | local path re-applies the shared `_ccMatrixSkipsSameDiscipline`; per-element discipline in `_clashFromEngineResult` |
+| **P0.3** changeAware / semantic fail-closed | ✅ done | gate; semantic only when `excludeSelf` off (default runs stay local) |
+| **P0.4** wider-than-maxGap tolerance | ✅ done | gate fails closed; tighten case still recovered |
+| **P0.5** `excludeTypePairs` array vs map | ✅ done | consumed as a Set from the array; legacy-object fallback |
+| **P0.6** golden parity suite | ◑ unit layer done | `tests/local-engine-parity.test.js` (11-ruleset matrix + anchors); **e2e geometry fixture still open** |
+| **P0-infra** required CI checks | ☐ open | CI runs green today; branch-protection needs repo-admin |
+| **P1.1** engine capability negotiation | ◑ engine half done | `/status` now advertises `protocolVersion` + `capabilities` (Engine PR #26); **browser consumer still open** |
+| **P1.3** compact-candidate byte accounting | ✅ done | `_candidateSetBytes` (eager 96 B vs compact 12 B/pair + item table); report gains `candidates_representation` |
+| **P5.1** atomic issue-sync CAS | ✅ done | `api/project.js` single-statement `ON CONFLICT DO UPDATE ... WHERE`; conflicts from `RETURNING`. Live-DB concurrency test still needs Postgres (node harness has none) |
 
-Tests: `tests/local-engine-units.test.js` extended 13 → 27 (full suite 699 green). **P0.6
-(fixture-backed golden parity suite) and the P0-infra branch-protection wiring are still
-open** — the unit layer locks the rule-application semantics, but an end-to-end
-browser-vs-local geometry parity fixture and required-checks config remain to do.
+**P0.1–P0.5 detail.** The local ("exact") engine no longer silently returns a
+different result set than the browser: selectors resolve to what the engine can address
+(or fall back), the shared discipline-core governs both engines, `changeAware`/semantic
+fail closed when they'd change the result, wide per-pair tolerances fall back, and
+`excludeTypePairs` actually filters. Tests: `local-engine-units.test.js` 13→27,
+`local-engine-parity.test.js` (13 new), full suite **713 green**; `index.html` main
+script re-parses clean.
+
+**Still open — deliberately not rushed** (see the priority table below for the full
+plan): P0.6 end-to-end geometry fixture (needs Playwright + the Python engine); the
+browser half of P1.1 (read `/status` capabilities to drive the gate — changes no
+behavior until the engine grows capabilities, so low-urgency); **P1.2** engine-side
+intersection volume + `relatedPairs` semantic filtering (geometrically sensitive — the
+real fix behind P0.3/P0.4's fail-closes); **P2** a legally-usable real corpus (needs
+licensed IFC files — cannot be produced in this environment); **P3** malformed-IFC
+robustness (touches the IFC loader, which CLAUDE.md flags as high-care); **P4** BCF
+import fidelity + IDS gate (needs external round-trip tooling to validate); and
+**P0-infra / P5.2** branch protection + `index.html` extraction (repo-admin / large,
+respectively).
 
 ### P0 — Local-engine correctness parity  *(release blocker)*
 
