@@ -85,3 +85,53 @@ test('_ccEnsureModelActive auto-restores a parked model before geometry actions'
   assert.match(body, /_ccIsModelParked\(id\)/);
   assert.match(body, /_ccRestoreParkedModel\(id\)/);
 });
+
+// ── Automatic parking under memory pressure ────────────────────────────────
+test('autoParkInactive is a persisted pref (default on) with a reducer + action', () => {
+  assert.match(html, /SET_AUTOPARK:'SET_AUTOPARK'/);
+  assert.match(html, /autoParkInactive:_ccLoadPref\('autoParkInactive',true\)/); // default ON
+  assert.match(html, /case A\.SET_AUTOPARK:.*_ccPersistUI\('autoParkInactive',_ap\)/s);
+});
+
+test('the auto-park pass only sheds HIDDEN, non-live models and never the active view', () => {
+  const body = sliceFrom('function _ccAutoParkPass()', 1200);
+  assert.match(body, /s\.autoParkInactive === false\) return/);          // respects the opt-out
+  assert.match(body, /if \(s\.detecting\) return/);                       // never mid-detection
+  assert.match(body, /usedJSHeapSize \/ performance\.memory\.jsHeapSizeLimit < _AUTOPARK_RATIO\) return/); // only under pressure
+  assert.match(body, /if \(models\.length < 2\) return/);                 // never empty the only view
+  assert.match(body, /m\.visible === false/);                            // only models not in view
+  assert.match(body, /source === 'revit-direct'/);                       // never a live model
+  assert.match(body, /\{ auto: true \}/);                                // parks via the guarded _ccParkModel
+});
+
+test('the auto-park pass targets the largest hidden model first (most memory per park)', () => {
+  const body = sliceFrom('function _ccAutoParkPass()', 1200);
+  assert.match(body, /hidden\.sort\(function\(a,b\)\{ return \(\(b\.elements\|\|\[\]\)\.length\) - \(\(a\.elements\|\|\[\]\)\.length\)/);
+});
+
+test('the heap poller drives the auto-park pass every tick (not one-shot)', () => {
+  const body = sliceFrom('var _MEM_WARN_BYTES = 5', 700);
+  assert.match(body, /window\._ccAutoParkPass\(\)/);
+  // the auto-park call must come before the one-shot _memWarnFiredRef guard,
+  // so it keeps working after the 5 GB modal has fired once.
+  assert.ok(body.indexOf('_ccAutoParkPass()') < body.indexOf('_memWarnFiredRef.current) return'),
+    'auto-park must run before the one-shot warn guard');
+});
+
+test('auto-park is silent on models it cannot restore (skips, no scary toast)', () => {
+  const body = sliceFrom('window._ccParkModel = function', 1100);
+  assert.match(body, /var auto = !!\(opts && opts\.auto\)/);
+  assert.match(body, /if \(!auto && window\._ccToast\)/); // the "can't park" warning is manual-only
+});
+
+test('smart reload: _highlightById auto-restores a parked model before highlighting', () => {
+  const body = sliceFrom('_highlightById = function(expressId, alsoGhost, modelId, keepPivot) {', 1100);
+  assert.match(body, /_ccIsModelParked && window\._ccIsModelParked\(modelId\)/);
+  assert.match(body, /_ccRestoreParkedModel\(modelId\)\.then\(function\(ok\)\{/);
+  assert.match(body, /window\._highlightById\(expressId, alsoGhost, modelId, keepPivot\)/); // re-run after restore
+});
+
+test('the sidebar exposes an auto-park on/off toggle wired to SET_AUTOPARK', () => {
+  assert.match(html, /A\.SET_AUTOPARK,v:e\.target\.checked/);
+  assert.match(html, /Auto-park hidden models under memory pressure/);
+});

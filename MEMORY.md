@@ -299,9 +299,15 @@ but KEEPS the geoCache + source file, so restore rebuilds via the fast geoCache 
 refuses to park a non-restorable model (revit-direct/live or no cache+file). Sidebar Park button
 (hidden for revit-direct) + a "Parked (memory freed)" section with Restore. Tests:
 `tests/park-model-wiring.test.js` (10). Full suite 723 green; index.html re-parses clean.
-**NEEDS IN-BROWSER VALIDATION with real multi-model project** (can't run browser here). v1 =
-manual only; **follow-ups: auto-park under heap pressure; wire `_ccEnsureModelActive` into
-clash fly-to/detection scope; persist parked state across reload.**
+**NEEDS IN-BROWSER VALIDATION with real multi-model project** (can't run browser here).
+Manual park/restore merged as PR #702. **Automatic layer added (2026-07-22):** `_ccAutoParkPass`
+runs from the heap poller (now 8s) — under heap pressure (>72% of jsHeapSizeLimit) it auto-parks
+HIDDEN, restorable, non-live models largest-first, one per tick, never a visible model, never
+mid-detection; gated by the persisted `autoParkInactive` pref (default ON, `SET_AUTOPARK` +
+sidebar toggle). "Smart reload": `_highlightById` auto-restores a parked model before highlighting
+(clash locate passes modelId). Tests now 17 in `park-model-wiring.test.js`; full suite 730 green.
+**Remaining follow-ups: wire `_ccEnsureModelActive` into detection scope; persist parked state
+across reload; per-model last-active timestamps for smarter cold-first ordering.**
 
 **v7 release-validation plan (branch `claude/clashcontrol-v7-release-plan-jp5njw`)** (2026-07-22) —
 built `V7_RELEASE_PLAN.md` from an external re-review of v7.2.7/`b195655`, with every
