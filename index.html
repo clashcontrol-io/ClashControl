@@ -32157,7 +32157,12 @@ function startApp() {
       var resolved = _resolveIfcType(hideTypeMatch[1]);
       if (resolved) {
         var ids = [];
-        s.models.forEach(function(m){(m.elements||[]).forEach(function(el){if(el.props&&el.props.ifcType===resolved)el.meshes.forEach(function(mesh){ids.push(mesh.userData.expressId);});});});
+        // P6.2: el.expressId is the element's own id (same value every mesh's
+        // userData.expressId carries) -- push it once per matching element
+        // instead of once per mesh, removing this reliance on el.meshes[]
+        // entirely (both consumers below immediately fold the array into a
+        // set, so this was always redundant work, never a correctness need).
+        s.models.forEach(function(m){(m.elements||[]).forEach(function(el){if(el.props&&el.props.ifcType===resolved)ids.push(el.expressId);});});
         if (ids.length && window._ccTempHide) { window._ccTempHide(ids); return 'Hidden ' + ids.length + ' ' + resolved.replace('Ifc','') + ' elements. "Show all" to bring them back.'; }
       }
     }
@@ -32166,7 +32171,8 @@ function startApp() {
       var isoType = _resolveIfcType(isolateMatch[1]);
       if (isoType) {
         var isoIds = [];
-        s.models.forEach(function(m){(m.elements||[]).forEach(function(el){if(el.props&&el.props.ifcType===isoType)el.meshes.forEach(function(mesh){isoIds.push(mesh.userData.expressId);});});});
+        // P6.2: same simplification as the hide handler above.
+        s.models.forEach(function(m){(m.elements||[]).forEach(function(el){if(el.props&&el.props.ifcType===isoType)isoIds.push(el.expressId);});});
         if (isoIds.length && window._ccIsolate) { window._ccIsolate(isoIds); return 'Isolated ' + isoIds.length + ' ' + isoType.replace('Ifc','') + ' elements. "Show all" to bring them back.'; }
       }
     }

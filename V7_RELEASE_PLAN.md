@@ -298,7 +298,7 @@ completeness*:
 | Task | Status | What shipped | What's deliberately deferred, and why |
 | --- | --- | --- | --- |
 | **P6.1** | ✅ Shipped | Byte-accurate residency ledger (`_ccComputeResidencyLedger`), replaces the auto-parker's element-count sort, fixes the memory report's double-counting, adds park/restore hysteresis (20s cooldown) | Did **not** graduate `storageDetectCaches` to `defaultEnabled:true` — that's a live memory/eviction-behavior flag flip needing real-browser soak per this repo's own six-clash-cores graduation precedent; recommended as a manual step once there's real usage confirmation. |
-| **P6.2** | ◑ Two consumers shipped | `_ccGetElementGeometry` accessor + `_ccElementWorldBox` (shared world-bbox helper built on it) migrated for **two** consumers: `_getWorldVerts`/`_getWorldTris` (clash engine) and `center(el)` (accessibility-check fly-to/BCF viewpoint bbox-centre) — both with numeric parity tests | The other ~37 call sites, dropping `element.meshes[]` proxies, and removing the array entirely are **NOT done** — explicitly staged as its own multi-PR arc. The 5 loader-internal `expandByObject` sites building `elBox` during parsing were deliberately left untouched (CLAUDE.md flags the loader as high-care). |
+| **P6.2** | ◑ Surveyed + 2 consumers shipped | `_ccGetElementGeometry`/`_ccElementWorldBox` migrated for the clash engine and `center()` (numeric parity tests). **Full call-site survey done this pass** — see the architectural correction below: most of the remaining ~38 sites are NOT simple accessor swaps. Also fixed 2 sites (`:32160`/`:32169`) that redundantly iterated meshes for a value `el.expressId` already carries — a real, verified, zero-risk cleanup. | The read-only-accessor tier is now exhausted (2 consumers is likely close to all of them). What's left needs either a lazy Mesh-reconstruction GeometryStore (for material-mutation/export/dispose consumers) or careful, individually-scoped work on higher-risk sites (`_geoSerialize`, section-cut) — each its own future session, not a same-day slice. |
 | **P6.3** | ◑ Conservative slice shipped | Pre-load pressure relief: park hidden models one beat before a new load starts, flag-gated (`memorySafeLoad`, default off) | Did **not** reorder the IFC worker's terminate-on-props timing or defer Three.js construction — that touches the IFC loader (CLAUDE.md: "complex but working... don't touch without good reason") and this repo's loader-stall bisection history shows loader timing changes need live verification this session cannot provide. |
 | **P6.4** | ◑ Safe slice shipped | Opt-in post-detection cache clear (`opts.clearCachesAfter`) for the non-interactive run-and-export flow, wired through `ClashControl.runDetection()` | The actual ask — a stateful WASM sweep cursor returning fixed batches instead of materializing the full candidate array — needs a compiled Rust/WASM engine change. **Not attempted**: no toolchain to rebuild it, no way to verify a rebuilt binary without a live browser, and the clash algorithm is explicitly flagged as geometrically sensitive. Building this blind would repeat the exact failure mode (unverified geometry-adjacent change) this ledger exists to prevent. |
 | **P6.5** | ☐ Explicitly skipped | — | This task's own gate says "only pursued if P6.1 telemetry shows it's still a top-3 contributor after P6.2 lands." P6.2 only partially landed (one consumer) and there is **zero real telemetry** — no live browser ran the P6.1 ledger against an actual project this session. Building P6.5 now would violate this plan's own stated gate for no measured reason. This is a reasoned skip, not an oversight. |
@@ -374,6 +374,65 @@ Mesh). The rollout must prove this distinction empirically, not just architectur
 4. Migrate selection outline, serialization (`_geoSerialize`), diff/compare, then addons —
    one consumer per commit (per the type-pair-memo guardrail: "one fix per commit so
    regressions bisect in minutes").
+
+**Architectural correction from surveying all ~40 remaining call sites (2026-07-22,
+same day as the P6.1/P6.2-slice-1 PR merged) — this changes what "one consumer per
+commit" actually means for what's left:**
+
+Not every remaining consumer can be migrated to a read-only `getElementGeometry`
+accessor the way `_getWorldVerts`/`_getWorldTris`/`_ccElementWorldBox` were. The
+survey sorts the rest into three real categories, and the split matters for
+sequencing:
+
+- **Pure-read, accessor-compatible (the easy tier — now exhausted).** Two consumers
+  fit this shape (world-space vertex/triangle extraction; world-space bbox) and are
+  done. A third, low-value one remains (`:34038`'s `_instKey` consistency diagnostic,
+  read-only but needs a `userData`/`instKey` field the handle doesn't carry — not
+  worth extending the shape for a one-shot diagnostic with no memory-retention
+  benefit; left alone).
+- **Rendering-mutation consumers — CANNOT become read-only accessor calls.** Several
+  sites fundamentally need a live `THREE.Mesh` reference, not a data snapshot:
+  `showModelDiff`/`clearModelDiff` (`:21510`/`:21528`) mutate `mesh.material` directly;
+  `exportGLTF`/`exportSidecar` (`:22132`/`:22216`) call `mesh.clone()`; the
+  model-removal dispose path (`:4191`) calls `geometry.dispose()` on the real object.
+  **None of these can be "migrated" to `getElementGeometry` — full `element.meshes[]`
+  removal needs a GeometryStore that can *lazily reconstruct* a real Mesh on demand for
+  operations like these, which is a materially bigger commitment than a read-only
+  accessor. This wasn't obvious until the full call-site survey; note it so a future
+  session doesn't assume all ~40 sites reduce to the same "swap the iteration" pattern
+  the first two did.**
+- **Serialization (`_geoSerialize`, `:2904`) — accessor-compatible but needs a shape
+  extension, and is higher-risk than it looks.** It dedupes by *mesh* uuid (not
+  geometry uuid — a shared-geometry `InstancedMesh` source and its sibling still need
+  separate cache entries, each with its own transform), and reads the mesh's *local*
+  `matrix` (not `matrixWorld` — the geo-cache stores local-space quantized positions),
+  plus `material.color`/`opacity` and `userData.expressId`/`_geoExpId`. Getting any of
+  these three fields wrong would silently corrupt the geo-cache — exactly the failure
+  class the `_instKey` saga (five hotfixes) and the geoCacheV8 hardening pass were
+  built to guard against. **Recommend deferring this one until a session that can
+  budget for a real hard-refresh-cache-restore round-trip test in the browser
+  specifically targeting it (the existing smoke check exercises the *current*
+  serializer, not a migrated one) — not a same-day "one more consumer" slice.**
+- **Section-cut generation** (`:29704` typed-array collection, `:29864`
+  `_cutElementAtPlane`) reads position/transform (accessor-compatible in principle) but
+  sits in the single most historically fragile category in this codebase — "sections
+  cut nothing on batched models" recurred *twice* independently (original per-mesh
+  sweep, then section-by-surface). Any change here needs a real visual/pixel check,
+  not just a headless assertion; deliberately not attempted without one.
+- **Loader-internal, passthrough, and existence-check sites are out of scope, not
+  gaps.** The 9 `expandByObject`/`el.meshes.length` sites inside the IFC loader's own
+  construction and cache-restore code stay untouched (CLAUDE.md: high-care). Two sites
+  (`:10610`, `:11904`) return the raw mesh/meshes array to a caller expecting exactly
+  that contract — changing them would be an external-contract break, not a migration.
+
+**One small, real fix landed alongside this survey**: the NL "hide `<type>`"/"isolate
+`<type>`" command handlers (`:32160`/`:32169`) were iterating `el.meshes[]` to collect
+`mesh.userData.expressId` — reading the *same* value `el.expressId` already carries at
+the element level, once per mesh instead of once per element. Both consumers
+(`_ccTempHide`, `_ccIsolate`) immediately fold the id list into a set/lookup, so this
+was always redundant, never a correctness dependency — fixed to read `el.expressId`
+directly, removing two more sites from the `element.meshes[]`-reliance count with zero
+behavior change (locked by `tests/nl-hide-isolate-expressid.test.js`).
 5. Drop proxies for `InstancedMesh` groups first (lowest risk — geometry is already
    shared, only the wrapper object goes away), then `BatchedMesh` source proxies, only
    after cache-restore round-trips through the new handle shape.
