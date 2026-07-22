@@ -286,6 +286,23 @@ Things to be careful about. Do not remove without a good reason — add a note i
 Update this section at the start and end of each session.
 Mark completed items with ~~strikethrough~~ and date, then let the daily sync archive them.
 
+**Park inactive models — memory relief (2026-07-22, branch `claude/clashcontrol-v7-release-plan-jp5njw`)** —
+diagnosed the "viewer stalls a few seconds" + "5.2 GB heap > 4.09 GB limit" reports as the SAME
+root cause: GC pauses from being over the heap limit. Dominant reducible sink = the permanently
+retained off-scene `element.meshes[]` proxy set (report: 73,402 proxies / 35M verts, "kept for
+clash/highlight", never freed while loaded, un-deduped). New feature: **Park/Restore a model** —
+PARK_MODEL/UNPARK_MODEL reducer + `parkedModels[]` state; `window._ccParkModel`/
+`_ccRestoreParkedModel`/`_ccIsModelParked`/`_ccEnsureModelActive`. Parking drops the model from
+`s.models` (existing scene-sync effect disposes its group + geometry, `_clearElCaches` frees BVH)
+but KEEPS the geoCache + source file, so restore rebuilds via the fast geoCache path
+(`idbGetGeoCache`→`_geoDeserialize`) with the SAME id (clash/issue refs stay valid). Guarded:
+refuses to park a non-restorable model (revit-direct/live or no cache+file). Sidebar Park button
+(hidden for revit-direct) + a "Parked (memory freed)" section with Restore. Tests:
+`tests/park-model-wiring.test.js` (10). Full suite 723 green; index.html re-parses clean.
+**NEEDS IN-BROWSER VALIDATION with real multi-model project** (can't run browser here). v1 =
+manual only; **follow-ups: auto-park under heap pressure; wire `_ccEnsureModelActive` into
+clash fly-to/detection scope; persist parked state across reload.**
+
 **v7 release-validation plan (branch `claude/clashcontrol-v7-release-plan-jp5njw`)** (2026-07-22) —
 built `V7_RELEASE_PLAN.md` from an external re-review of v7.2.7/`b195655`, with every
 load-bearing claim re-verified against source. Confirmed the real release blocker is
