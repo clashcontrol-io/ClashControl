@@ -309,6 +309,28 @@ sidebar toggle). "Smart reload": `_highlightById` auto-restores a parked model b
 **Remaining follow-ups: wire `_ccEnsureModelActive` into detection scope; persist parked state
 across reload; per-model last-active timestamps for smarter cold-first ordering.**
 
+**Memory-architecture task list (2026-07-22, planning only — not yet built), `V7_RELEASE_PLAN.md`
+P6:** re-reviewed `main`@`f4733d`/v7.3.0 against a follow-up external review; every claim + every
+named historical incident re-verified against source/CHANGELOG (no factual corrections needed this
+round, unlike the P0 round). Mined the real chunk-merge/Free-RAM/`_instKey`/type-pair-memo sagas
+from `CHANGELOG.md` with dates+hashes (chunk-merge: enabled v5.12.14 2026-06-04 → reverted v5.17.4
+→ emergency-re-enabled+re-reverted v5.19.27/.28 → removed v5.19.55 2026-06-09, replaced by the
+current Instanced/BatchedMesh proxy-preserving approach, permanently CI-gated at
+`tests/browser/smoke.mjs:310-370` citing revert commit `366c7cc`; Free-RAM added-then-reverted same
+day 2026-06-06 — this session's Park feature is the properly-scoped redo of that same idea;
+`_instKey` took 5+ hotfixes on 2026-06-08 before landing on `geometryExpressID` as the canonical
+key instead of a position hash). Confirmed independently: `element.meshes[]` has ~40 call sites;
+`loadIFCWorker` genuinely doesn't terminate its worker on the geometry `'result'` message while the
+main thread builds Three.js objects (`:4806-4925`); `_getBVH` builds per-element from world-space
+tris even for shared instanced geometry (confirms `IMPROVEMENT_PLAN.md` Wave 6 item 3 is real,
+unclaimed work); issue #572 (closed 2026-06-06) already flagged `element.meshes[]` retention as a
+deferred "D2 follow-up" five weeks ago. Task list added as P6.1-P6.5 (byte-accurate residency
+ledger → GeometryHandle/GeometryStore retiring element.meshes[] → memory-safe loading mode →
+bounded detection memory (graduates Wave 6 items 3+5) → property paging, deferred pending
+telemetry), each tied to which historical guardrail it must not repeat. **Not implemented — this
+was a planning-only pass; P6.1 is the recommended starting point (build the ledger before touching
+any element.meshes[] consumer, since P6.2's payoff becomes measurable only once it exists).**
+
 **v7 release-validation plan (branch `claude/clashcontrol-v7-release-plan-jp5njw`)** (2026-07-22) —
 built `V7_RELEASE_PLAN.md` from an external re-review of v7.2.7/`b195655`, with every
 load-bearing claim re-verified against source. Confirmed the real release blocker is
