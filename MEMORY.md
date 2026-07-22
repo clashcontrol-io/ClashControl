@@ -1909,6 +1909,37 @@ On branch `claude/code-review-quality-IjbhT` (2026-05-28) — code-review qualit
 - ~~Testing/CI: added a no-dependency `node:test` suite under `tests/` (CORS allow-list + rate limiter in `_lib.js`; title/nl validation incl. the 413 regression lock), `"test": "node --test"` script, and `.github/workflows/ci.yml` running it on PRs/pushes to main. Added `.gitignore` (none existed).~~ (2026-05-28)
 
 **Deferred (tracked follow-ups, not done this pass):** core reducer/state refactor (287-line reducer / 80+ cases / impure `_saveDeniedClash` inside the reducer / ~50 `window._cc*` globals) — do it only once the test suite covers the pure clash/reducer/BCF logic, which needs those helpers extracted from `index.html` first. Also: a CI check that re-verifies `index.html` SRI hashes against the live CDN, and 3D-canvas keyboard accessibility (no keyboard orbit/pan, no modal focus trap).
+
+**P6.2-continued real-browser verification, deterministic dispose() check (2026-07-22, branch
+`claude/clashcontrol-v7-p6-2-continued`)** — after PR #705 merged (P6.2 slice 2:
+`_ccElementWorldBox`/`center()` migration), evaluated further candidates against the user's
+explicit rule ("small risk high reward → do it; high risk medium reward or less → skip") and
+concluded neither `_geoSerialize` migration (real risk of silent geo-cache corruption, hygiene-
+only reward) nor `storageDetectCaches` graduation (Safari/Firefox-only cap logic, unverifiable —
+no Firefox/WebKit binary in this env, only `chromium`/`chromium-1194`/`chromium_headless_shell`
+under `/opt/pw-browsers/`) clears that bar. Instead extended `tests/browser/memory-park-restore.mjs`
+with a **deterministic, non-GC-noise-dependent check**: read `renderer.info.memory.geometries`
+(Three.js's own live-buffer bookkeeping) before/after parking model B, and independently count
+model B's own distinct scene geometries via `S.map[modelBId].traverse(...)` (per-model
+`THREE.Group`, confirmed `userData.modelId` lives on the group not per-mesh). Ran for real in
+Chromium (`CC_CHROMIUM_EXECUTABLE=/opt/pw-browsers/chromium-1194/chrome-linux/chrome`, 2 synthetic
+models, 10,200 elements total). **Result: model B owns exactly 1 live geometry (its
+elements are batched/instanced under the hood), and `rendererGeometries` drops by exactly 1 on
+park — `dropMatchesModelBGeometryCount: true`.** This is a clean, GC-timing-independent
+confirmation that Park's `dispose()` step frees exactly what it owns, no more/no less — not
+just "heap went down eventually" (the earlier noisy finding). The noisy heap/RSS numbers from
+the same run stay consistent with prior findings: ledger estimate 14.5MB vs observed heap drop
+only 0.3MB and RSS actually +4.8MB immediately after park (GC hasn't run yet at that sample
+point) — expected and already-documented ledger/observed-delta mismatch, not a regression.
+Repeated park↔restore (3 cycles) stays flat (~330MB parked, ~330MB restored, no compounding
+climb); repeated detection (6 runs) nets -44MB not positive growth. Full `node --test` suite
+still 777/777 green. Not yet committed/pushed — next step is to commit this test change and push
+to a fresh continuation of the P6.2 work (branch already has PR #705 merged from it, so per
+CLAUDE.md's fresh-branch-after-merge convention a new branch/PR is warranted once further work is
+ready). Still-open honest items from the P6.2-continued survey: production-scale re-test (this
+env's 10,200-element fixture is ~3x smaller than the user's real ~30k-element federations) and
+investigating the ~390MB RSS boot baseline / ~71MB one-time first-restore cost — proposed, not
+started.
 <!-- END:active-work -->
 
 <!-- BEGIN:session-log -->
