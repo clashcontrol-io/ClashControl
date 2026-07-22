@@ -6499,7 +6499,7 @@ function startApp() {
     if (!_ccConcurrencyV2Enabled()) return true;
     return !!(result && !result._ccSuppressed && result._ccGeneration === _ccDetectGeneration);
   }
-  function _ccCommitDetectionResult(result, dispatch, detectionSettings) {
+  function _ccCommitDetectionResult(result, dispatch, detectionSettings, opts) {
     if (!_ccDetectionResultUsable(result)) {
       try { window._ccSafetyMigrations.record({migration:'concurrencyV2', outcome:'stale-write-blocked',
         reason:result && result._ccSuppressed || 'stale-generation'}); } catch(e) {}
@@ -6510,6 +6510,19 @@ function startApp() {
       var action = {t:A.MERGE_CLASHES, v:result};
       if (detectionSettings !== undefined) action.detectionSettings = detectionSettings;
       dispatch(action);
+    }
+    // V7_RELEASE_PLAN.md P6.4 (safe slice): opt-in cache clear for the
+    // non-interactive "run once and export" flow (batch/API-triggered single
+    // runs, e.g. MCP/Smart-Bridge automation) where the BVH/world-vert caches
+    // built during this run will never be touched again. Off by default —
+    // an interactive session that re-runs detection (tweaking rules, adding
+    // a model) benefits from those caches surviving, so this must never be
+    // the default for UI-triggered runs.
+    if (opts && opts.clearCachesAfter) {
+      try {
+        var st = window._ccLatestState;
+        if (typeof _flushGeoCache === 'function' && st && st.models) _flushGeoCache(st.models);
+      } catch(e) {}
     }
     return true;
   }
@@ -11294,12 +11307,15 @@ function startApp() {
           if (opts && Array.isArray(opts.storeys) && opts.storeys.length) window._ccNextLoadScope = { storeys: opts.storeys.slice() };
           if (window._ccLoadFiles) return window._ccLoadFiles(files);
         },
-        runDetection:     function(rulesOverride){
+        runDetection:     function(rulesOverride, opts){
           var st = window._ccLatestState;
           if (!st || !st.models || !st.models.length) return Promise.resolve(null);
           var r = Object.assign({}, st.rules, rulesOverride || {});
           return detectClashesAsync(st.models, r).then(function(result){
-            _ccCommitDetectionResult(result, window._ccDispatch);
+            // opts.clearCachesAfter: for a one-shot run-and-export automation
+            // flow, drop the BVH/world-vert caches this run built once the
+            // result is committed — they won't be reused (V7 P6.4).
+            _ccCommitDetectionResult(result, window._ccDispatch, undefined, opts);
             return result;
           });
         },
