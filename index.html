@@ -1331,6 +1331,7 @@ function startApp() {
        INSPECTOR_OPEN funnel through it. */
     workspace:(function(){ try { var v=localStorage.getItem('cc_workspace'); return (v==='present'||v==='coordinate'||v==='review')?v:'present'; } catch(e){ return 'present'; } })(),
     diagnostics:_ccLoadPref('diagnostics',false),
+    autoParkInactive:_ccLoadPref('autoParkInactive',true), // auto-park hidden models under heap pressure
     inspectorOpen:_ccLoadPref('inspectorOpen',false),
     avatarMenuOpen:false  // ephemeral, never persisted
   };
@@ -1379,7 +1380,7 @@ function startApp() {
   var PERSISTED_PREF_KEYS = ['autoFlyTo','autoHighlight','showGrid','showAxes','showMarkers','hoverHighlight','outlineSelected','defaultPriority','defaultCategory','defaultStatus','defaultMaxGap','resetFiltersOnRun','renderStyle','unitScaleOverride','lightSettings','measureUnits','measurePrecision','measureMagnifier','measureCalibration','homeView','zoomSens'];
   var A = {
     ADD_MODEL:'ADD_MODEL', DEL_MODEL:'DEL_MODEL', REPLACE_MODEL:'REPLACE_MODEL', UPD_MODEL:'UPD_MODEL',
-    PARK_MODEL:'PARK_MODEL', UNPARK_MODEL:'UNPARK_MODEL',
+    PARK_MODEL:'PARK_MODEL', UNPARK_MODEL:'UNPARK_MODEL', SET_AUTOPARK:'SET_AUTOPARK',
     TOGGLE_ALL_STOREYS:'TOGGLE_ALL_STOREYS',
     SET_CLASHES:'SET_CLASHES', MERGE_CLASHES:'MERGE_CLASHES', ADD_CLASHES:'ADD_CLASHES', DETECTING:'DETECTING', STOP_DETECT:'STOP_DETECT',
     SWITCHING_PROJECT:'SWITCHING_PROJECT',
@@ -1893,6 +1894,7 @@ function startApp() {
         return Object.assign({},s,{workspace:w,tab:null,avatarMenuOpen:false});
       }
       case A.DIAGNOSTICS: { var d=!!a.v; _ccPersistUI('diagnostics',d); return Object.assign({},s,{diagnostics:d}); }
+      case A.SET_AUTOPARK: { var _ap=!!a.v; _ccPersistUI('autoParkInactive',_ap); return Object.assign({},s,{autoParkInactive:_ap}); }
       case 'RECORDING_STATE': return Object.assign({},s,{isRecording:!!a.v});
       case 'ADD_SELSET': {
         var nset = {id:a.v.id||uid(), name:a.v.name||'Selection', refs:a.v.refs||[], color:a.v.color||null, createdAt:new Date().toISOString()};
@@ -2226,21 +2228,52 @@ function startApp() {
 
   var _ccRestoringModels = {}; // id -> Promise, so concurrent restores dedupe
 
-  window._ccParkModel = function(id) {
+  window._ccParkModel = function(id, opts) {
+    var auto = !!(opts && opts.auto);
     var s = window._ccLatestState || {};
     var model = (s.models || []).find(function(m){ return m.id === id; });
     if (!model) return Promise.resolve(false);
     return _ccModelIsRestorable(model).then(function(ok) {
       if (!ok) {
-        if (window._ccToast) window._ccToast('“' + model.name + '” can’t be parked — no cached geometry to restore it from (live or uncached model).', 'warn');
+        // Auto-park stays silent on non-restorable models (it just skips them);
+        // a manual click deserves an explanation.
+        if (!auto && window._ccToast) window._ccToast('“' + model.name + '” can’t be parked — no cached geometry to restore it from (live or uncached model).', 'warn');
         return false;
       }
       var els = (model.elements || []).length;
       if (window._ccDispatch) window._ccDispatch({ t: A.PARK_MODEL, id: id, at: Date.now() });
-      if (window._ccToast) window._ccToast('Parked “' + model.name + '” (' + els.toLocaleString() + ' elements) — memory freed. Restore it anytime from the sidebar.', 'success');
+      if (window._ccToast) window._ccToast(
+        (auto ? 'Auto-parked hidden model “' + model.name + '” to free memory' : 'Parked “' + model.name + '” (' + els.toLocaleString() + ' elements)') +
+        ' — restore it anytime from the sidebar.', auto ? 'info' : 'success');
       return true;
     });
   };
+
+  // Auto-park pass: under heap pressure, shed models that are NOT in the active
+  // view (hidden) — largest first, one per tick so disposal + GC settle before
+  // the next decision. Never touches a visible model, never runs during
+  // detection, and is gated by the autoParkInactive pref (default on). This is
+  // the automatic arm of the manual Park feature; _ccParkModel's restorability
+  // guard still applies, so nothing un-restorable is ever auto-parked.
+  var _AUTOPARK_RATIO = 0.72;         // start shedding at 72% of the heap limit
+  function _ccAutoParkPass() {
+    try {
+      if (!performance.memory || !performance.memory.jsHeapSizeLimit) return;
+      var s = window._ccLatestState || {};
+      if (s.autoParkInactive === false) return;   // user opted out
+      if (s.detecting) return;                     // don't churn caches mid-run
+      if (performance.memory.usedJSHeapSize / performance.memory.jsHeapSizeLimit < _AUTOPARK_RATIO) return;
+      var models = s.models || [];
+      if (models.length < 2) return;               // don't empty the only view
+      var hidden = models.filter(function(m){
+        return m.visible === false && !(m.stats && m.stats.source === 'revit-direct');
+      });
+      if (!hidden.length) return;                  // nothing off-view to shed
+      hidden.sort(function(a,b){ return ((b.elements||[]).length) - ((a.elements||[]).length); });
+      window._ccParkModel(hidden[0].id, { auto: true }); // async; next tick re-checks
+    } catch(e) {}
+  }
+  window._ccAutoParkPass = _ccAutoParkPass;
 
   window._ccIsModelParked = function(id) {
     var s = window._ccLatestState || {};
@@ -10435,6 +10468,16 @@ function startApp() {
       }
       _highlightById = function(expressId, alsoGhost, modelId, keepPivot) {
         if(!expressId||!S.mg) return;
+        // Smart reload: if the target element belongs to a parked (memory-freed)
+        // model, transparently restore it first, then re-run the highlight once
+        // its geometry is back. Only possible when the caller knows the modelId
+        // (clash locate passes it); a null modelId simply finds nothing, as before.
+        if (modelId && window._ccIsModelParked && window._ccIsModelParked(modelId)) {
+          if (window._ccRestoreParkedModel) window._ccRestoreParkedModel(modelId).then(function(ok){
+            if (ok && window._highlightById) window._highlightById(expressId, alsoGhost, modelId, keepPivot);
+          });
+          return;
+        }
         _clearHighlightGroups();
         var found = _findMeshByRef(expressId, modelId);
         if(found){
@@ -18233,6 +18276,11 @@ function startApp() {
               title="Remove permanently (deletes cache)" style=${{...S_BTN,padding:'0 2px',background:'none',color:'var(--text-faint)',fontSize:'0.69rem',flexShrink:0}}>✕</button>
           </div>`})}
         </div>`}
+        ${(s.models.length >= 2 || (s.parkedModels||[]).length > 0) && html`<label style=${{display:'flex',alignItems:'center',gap:'.4rem',padding:'.3rem .35rem',marginTop:'.1rem',cursor:'pointer',color:'var(--text-faint)',fontSize:'.66rem'}}
+          title="When the browser heap gets tight, models you've hidden are automatically parked (unloaded to cache) to keep the viewer responsive, and reloaded when you open one. Turn off to manage memory yourself.">
+          <input type="checkbox" checked=${s.autoParkInactive!==false} onChange=${function(e){d({t:A.SET_AUTOPARK,v:e.target.checked});}} style=${{cursor:'pointer',flexShrink:0}} />
+          <span>Auto-park hidden models under memory pressure</span>
+        </label>`}
         ${html`<${_SplatLayersSection} />`}
         ${s.underlays.length > 0 && html`<div style=${{marginTop:'.3rem',borderTop:'1px solid var(--hairline)',paddingTop:'.3rem'}}>
           <div style=${{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:'.25rem',padding:'0 .2rem'}}>
@@ -37517,12 +37565,16 @@ function startApp() {
       if (!performance.memory) return; // only Chrome/Edge support this API
       var _MEM_WARN_BYTES = 5 * 1024 * 1024 * 1024; // 5 GB
       var timer = setInterval(function(){
+        // Relieve pressure automatically first — parking hidden models is far
+        // less disruptive than the modal, and often keeps the heap below the
+        // warning threshold entirely. Runs every tick (not one-shot).
+        if (typeof window._ccAutoParkPass === 'function') window._ccAutoParkPass();
         if (_memWarnFiredRef.current) return;
         if (performance.memory.usedJSHeapSize >= _MEM_WARN_BYTES) {
           _memWarnFiredRef.current = true;
           setShowMemWarn(true);
         }
-      }, 15000);
+      }, 8000);
       return function(){ clearInterval(timer); };
     }, []);
 
