@@ -70,6 +70,32 @@ honest short-term move is **fail-closed**, not half-wire.
 
 Each item has a binary acceptance gate. Nothing ships as "validated v7" until P0 is green.
 
+### P0 implementation status (2026-07-22)
+
+**P0.1–P0.5 landed** (browser-side, no Engine dependency):
+
+- **P0.1** — core `pick()` hoisted to `window._ccResolveModelScope` (single source of
+  truth); `_normalizeModelScope` in the addon resolves each side to `'all'` | single-id
+  | fail-closed; the gate and the serialized payload both use it. `'all'/'all'` (the
+  default) still runs locally.
+- **P0.2** — the local path now re-applies `window._ccMatrixSkipsSameDiscipline` against
+  the resolved elements (the *same* core function the browser engine uses → zero-drift
+  parity for `excludeSameDiscipline` + `disciplineMatrix`), and `_clashFromEngineResult`
+  now classifies discipline per-element (`_ccElementDiscipline`) instead of per-model.
+- **P0.3** — `changeAware` fails closed; `useSemanticFilter` fails closed **only** when
+  self-clashes are kept (`excludeSelf` falsy) — on a default run `excludeSelf:true`
+  already drops the same-model pairs the semantic filter would touch, so default runs
+  stay on the local engine.
+- **P0.4** — a per-pair tolerance wider than the global `maxGap` fails closed in the gate
+  (the narrower/tighten case is still recovered client-side).
+- **P0.5** — `excludeTypePairs` is now consumed as a Set built from the array (the real
+  INIT shape), with a legacy-object fallback; contract-realistic array test added.
+
+Tests: `tests/local-engine-units.test.js` extended 13 → 27 (full suite 699 green). **P0.6
+(fixture-backed golden parity suite) and the P0-infra branch-protection wiring are still
+open** — the unit layer locks the rule-application semantics, but an end-to-end
+browser-vs-local geometry parity fixture and required-checks config remain to do.
+
 ### P0 — Local-engine correctness parity  *(release blocker)*
 
 The local engine must **never silently return a different result set than the browser**

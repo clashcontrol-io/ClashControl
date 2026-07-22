@@ -36,8 +36,31 @@ function loadApi() {
       clashFromEngineResult: _clashFromEngineResult,
       localEngineCanHandle: _localEngineCanHandle,
       applyClientSideRuleFilters: _applyClientSideRuleFilters,
+      normalizeModelScope: _normalizeModelScope,
     };
   `)();
+}
+
+// A stand-in for index.html's _ccResolveModelScope, so scope-normalization is
+// tested against the real selector semantics without a browser. Mirrors the
+// subset the tests exercise: 'all', exact id/name, and case-insensitive
+// substring on name.
+function makeResolver(models) {
+  return function resolve(_models, id) {
+    if (id === 'all') return _models;
+    if (Array.isArray(id)) {
+      const seen = {}, out = [];
+      id.forEach((sub) => resolve(_models, sub).forEach((m) => { if (!seen[m.id]) { seen[m.id] = true; out.push(m); } }));
+      return out;
+    }
+    const exact = _models.filter((m) => m.id === id || m.name === id);
+    if (exact.length) return exact;
+    if (typeof id === 'string' && id) {
+      const needle = id.toLowerCase();
+      return _models.filter((m) => (m.name || '').toLowerCase().indexOf(needle) >= 0);
+    }
+    return [];
+  };
 }
 
 function makeElement(expressId, ifcType, extra) {
@@ -168,4 +191,115 @@ test('local-engine client-side filters: a wider per-pair tolerance than maxGap i
     toleranceByTypePair: {'IfcDuctSegment:IfcWall': 100},
   });
   assert.equal(out.length, 1, 'must not drop a clash just because the per-pair tolerance is wider than maxGap');
+});
+
+// ── Contract-realistic excludeTypePairs (V7_RELEASE_PLAN P0.5) ─────────────
+// INIT.rules ships excludeTypePairs as an ARRAY of "typeA:typeB" key strings
+// (index.html:1274) and the browser engine consumes it as an array
+// (index.html _exPairSet). A prior filter indexed the array as a map
+// (arr[key]) — always undefined — so it silently never fired.
+test('local-engine client-side filters: excludeTypePairs as an ARRAY (the real INIT shape) drops the matching pair', () => {
+  const api = loadApi();
+  const clashes = [
+    {elemAType: 'IfcDuctSegment', elemBType: 'IfcWall', type: 'hard', distance: -5},
+    {elemAType: 'IfcWall', elemBType: 'IfcDuctSegment', type: 'hard', distance: -5},
+    {elemAType: 'IfcBeam', elemBType: 'IfcWall', type: 'hard', distance: -5},
+  ];
+  const out = api.applyClientSideRuleFilters(clashes, {excludeTypePairs: ['IfcDuctSegment:IfcWall']});
+  assert.equal(out.length, 1, 'array-shaped excludeTypePairs must actually filter');
+  assert.equal(out[0].elemAType, 'IfcBeam');
+});
+
+test('local-engine client-side filters: an empty excludeTypePairs array drops nothing', () => {
+  const api = loadApi();
+  const clashes = [{elemAType: 'IfcWall', elemBType: 'IfcDuctSegment', type: 'hard', distance: -5}];
+  const out = api.applyClientSideRuleFilters(clashes, {excludeTypePairs: []});
+  assert.equal(out.length, 1);
+});
+
+// ── Capability gate: fail-closed cases (V7_RELEASE_PLAN P0.3/P0.4) ─────────
+test('local-engine capability gate: rejects change-aware detection (engine has no per-run hash baseline)', () => {
+  const api = loadApi();
+  assert.equal(api.localEngineCanHandle({changeAware: true}).ok, false);
+});
+
+test('local-engine capability gate: rejects semantic filtering when self-clashes are kept and a model carries relationship data', () => {
+  const api = loadApi();
+  const models = [{id: 'mA', relatedPairs: {}}, {id: 'mB', relatedPairs: {123: [456]}}];
+  // excludeSelf falsy → same-model pairs are kept → the semantic skip can change
+  // the result → must fall back to the browser engine.
+  assert.equal(api.localEngineCanHandle({useSemanticFilter: true, excludeSelf: false}, models).ok, false);
+});
+
+test('local-engine capability gate: allows semantic filtering on a DEFAULT run (excludeSelf on drops the same-model pairs it would affect)', () => {
+  const api = loadApi();
+  const models = [{id: 'mA', relatedPairs: {}}, {id: 'mB', relatedPairs: {123: [456]}}];
+  // The shipped default: excludeSelf:true + useSemanticFilter:true. Same-model
+  // pairs are dropped anyway, so the semantic filter is a no-op → local is safe.
+  assert.equal(api.localEngineCanHandle({useSemanticFilter: true, excludeSelf: true}, models).ok, true);
+});
+
+test('local-engine capability gate: allows semantic filtering when no model carries relationship data (no-op)', () => {
+  const api = loadApi();
+  const models = [{id: 'mA', relatedPairs: {}}, {id: 'mB'}];
+  assert.equal(api.localEngineCanHandle({useSemanticFilter: true}, models).ok, true);
+});
+
+test('local-engine capability gate: rejects a per-pair tolerance wider than the global maxGap', () => {
+  const api = loadApi();
+  const cap = api.localEngineCanHandle({maxGap: 50, toleranceByTypePair: {'IfcDuctSegment:IfcWall': 100}});
+  assert.equal(cap.ok, false);
+});
+
+test('local-engine capability gate: allows a per-pair tolerance narrower than the global maxGap (recoverable)', () => {
+  const api = loadApi();
+  const cap = api.localEngineCanHandle({maxGap: 50, toleranceByTypePair: {'IfcDuctSegment:IfcWall': 10}});
+  assert.equal(cap.ok, true);
+});
+
+// ── Model-scope normalization (V7_RELEASE_PLAN P0.1) ───────────────────────
+// The engine matches modelA/modelB by exact id (or 'all'); the browser resolves
+// arrays/disc:/tag:/names/substrings. Normalize to 'all' | single-id, or fail
+// closed for a multi-model subset the engine can't express.
+test('local-engine scope: "all" normalizes to all with no resolver needed', () => {
+  const api = loadApi();
+  const models = [{id: 'a', name: 'A'}, {id: 'b', name: 'B'}];
+  assert.deepEqual(api.normalizeModelScope(models, 'all', null), {ok: true, value: 'all'});
+  assert.deepEqual(api.normalizeModelScope(models, undefined, null), {ok: true, value: 'all'});
+});
+
+test('local-engine scope: a name selecting exactly one model normalizes to that model id', () => {
+  const api = loadApi();
+  const models = [{id: 'uuid-a', name: '[Link] Constructie.rvt'}, {id: 'uuid-b', name: 'Architectuur.ifc'}];
+  const out = api.normalizeModelScope(models, 'Constructie', makeResolver(models));
+  assert.deepEqual(out, {ok: true, value: 'uuid-a'});
+});
+
+test('local-engine scope: a selector matching every model normalizes to "all"', () => {
+  const api = loadApi();
+  const models = [{id: 'a', name: 'M1'}, {id: 'b', name: 'M2'}];
+  const out = api.normalizeModelScope(models, ['M1', 'M2'], makeResolver(models));
+  assert.deepEqual(out, {ok: true, value: 'all'});
+});
+
+test('local-engine scope: a multi-model subset the engine can\'t express fails closed', () => {
+  const api = loadApi();
+  const models = [{id: 'a', name: 'M1'}, {id: 'b', name: 'M2'}, {id: 'c', name: 'M3'}];
+  const out = api.normalizeModelScope(models, ['M1', 'M2'], makeResolver(models));
+  assert.equal(out.ok, false);
+});
+
+test('local-engine scope: a non-"all" selector with no resolver available fails closed', () => {
+  const api = loadApi();
+  const models = [{id: 'a', name: 'M1'}];
+  assert.equal(api.normalizeModelScope(models, 'M1', null).ok, false);
+});
+
+test('local-engine capability gate: a multi-model-subset scope routes to the browser engine', () => {
+  const api = loadApi();
+  // No window._ccResolveModelScope in node → a non-'all' scope can't be verified
+  // and must fail closed (the runtime always has the resolver; this locks the
+  // conservative fallback).
+  const cap = api.localEngineCanHandle({modelA: 'disc:mep', modelB: 'all'}, [{id: 'a'}, {id: 'b'}]);
+  assert.equal(cap.ok, false);
 });

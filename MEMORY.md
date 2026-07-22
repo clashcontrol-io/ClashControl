@@ -298,7 +298,17 @@ Wasm path (`:6464`/`:6972`), non-atomic shared-project CAS (`api/project.js:234`
 corpus. **Corrected two review errors:** CI *is* green (run `29866854575` on `e0e356b` — test/
 browser-smoke/browser-differential all ✅; reviewer looked at the bot bump tip `b195655` that the
 `changes` gate skips), and the defaults live at `:1274` not `:1008`. Plan is P0–P5 with binary
-acceptance gates; complements `IMPROVEMENT_PLAN.md`. Next: implement P0.
+acceptance gates; complements `IMPROVEMENT_PLAN.md`.
+**P0.1–P0.5 implemented this session** (browser-side, no Engine dependency): core `pick()`
+hoisted to `window._ccResolveModelScope` + addon `_normalizeModelScope` (scopes resolve to
+'all'|single-id|fail-closed); local path re-applies `window._ccMatrixSkipsSameDiscipline`
+against resolved elements for exact excludeSameDiscipline/disciplineMatrix parity;
+`_clashFromEngineResult` now classifies discipline per-element; gate fails closed for
+changeAware, per-pair tolerance wider than maxGap, semantic filter (only when excludeSelf
+off — default runs stay local), and non-'all'/single scopes; `excludeTypePairs` consumed
+as a Set from the array (was indexed as a map → never fired). Tests 13→27, full suite 699
+green; index.html main script re-parses clean. **Still open: P0.6 fixture-backed golden
+parity suite + branch-protection required checks.**
 
 ~~**Storage/memory optimization campaign (Loam-inspired "explicit retention"), branch
 `claude/clashcontrol-memory-optimization-jht2yy`)** (2026-07-19)~~ — all seven phases landed:

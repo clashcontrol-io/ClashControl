@@ -6160,7 +6160,7 @@ function startApp() {
     // corrected client-side, rather than let it return under-filtered
     // "faster" results without saying so.
     if (useLocal && typeof window._ccLocalEngineCanHandle === 'function') {
-      var _leCap = window._ccLocalEngineCanHandle(rules);
+      var _leCap = window._ccLocalEngineCanHandle(rules, models);
       if (!_leCap.ok) {
         useLocal = false;
         if (window._ccToast) window._ccToast('Using browser engine — local engine can’t honor this ruleset (' + _leCap.reason + ')', 'info');
@@ -6217,6 +6217,48 @@ function startApp() {
       window._ccToast(msg);
     } catch(e) {}
   }
+  // Resolve a model-scope selector (modelA/modelB) to the concrete list of
+  // models it selects. This is the single source of truth for scope semantics —
+  // the browser engine's own `pick()` (below) delegates here, and the local
+  // engine addon calls it via `window._ccResolveModelScope` so a scoped run
+  // resolves identically on both engines (the local engine only understands
+  // 'all' or an exact model id, so the addon uses this to decide whether a
+  // scope is expressible locally or must fall back — see local-engine.js).
+  function _ccResolveModelScope(models, id) {
+    models = models || [];
+    if (id === 'all') return models;
+    if (Array.isArray(id)) {
+      var seen = {}, result = [];
+      id.forEach(function(sub) {
+        _ccResolveModelScope(models, sub).forEach(function(m) { if (!seen[m.id]) { seen[m.id] = true; result.push(m); } });
+      });
+      return result;
+    }
+    if (typeof id === 'string' && id.indexOf('disc:') === 0) {
+      var disc = id.slice(5);
+      return models.filter(function(m){ return m.discipline === disc; });
+    }
+    if (typeof id === 'string' && id.indexOf('tag:') === 0) {
+      var tag = id.slice(4).toLowerCase();
+      return models.filter(function(m){ return m.tag && m.tag.toLowerCase() === tag; });
+    }
+    // Resolve by id OR name (see the note at pick() below — the orchestrator
+    // only ever sees model NAMES): exact id/name/rawName, then case-insensitive
+    // substring on name/rawName.
+    var exact = models.filter(function(m){
+      return m.id === id || m.name === id || m.rawName === id;
+    });
+    if (exact.length) return exact;
+    if (typeof id === 'string' && id) {
+      var needle = id.toLowerCase();
+      return models.filter(function(m){
+        var nm = (m.name || '').toLowerCase(), rn = (m.rawName || '').toLowerCase();
+        return nm.indexOf(needle) >= 0 || rn.indexOf(needle) >= 0;
+      });
+    }
+    return [];
+  }
+  window._ccResolveModelScope = _ccResolveModelScope;
   function _browserDetect(models, rules, onProgress, gen) {
     return _preExtractGLBGeometry(models).then(function() {
       return new Promise(function(resolve, reject) {
@@ -6248,43 +6290,13 @@ function startApp() {
       } catch(e) {}
     }
     _phase('Preparing geometry');
-    var pick = function(id) {
-      if (id === 'all') return models;
-      if (Array.isArray(id)) {
-        var seen = {}, result = [];
-        id.forEach(function(sub) {
-          pick(sub).forEach(function(m) { if (!seen[m.id]) { seen[m.id] = true; result.push(m); } });
-        });
-        return result;
-      }
-      if (typeof id === 'string' && id.indexOf('disc:') === 0) {
-        var disc = id.slice(5);
-        return models.filter(function(m){ return m.discipline === disc; });
-      }
-      if (typeof id === 'string' && id.indexOf('tag:') === 0) {
-        var tag = id.slice(4).toLowerCase();
-        return models.filter(function(m){ return m.tag && m.tag.toLowerCase() === tag; });
-      }
-      // Resolve a model reference by id OR name. The orchestrator only sees model
-      // NAMES (get_status/get_clashes never expose the internal UUID id), so a
-      // scoped run_detection passes a name — matching m.id only meant the scope
-      // resolved to nothing and detection returned 0 instantly. Try, in order:
-      // exact id, exact name/rawName, then case-insensitive substring on
-      // name/rawName (so "Constructie" matches "[Link] PIE_HOR_Constructie.rvt"
-      // and "PDR_Horizons_BWK" matches the full arch filename).
-      var exact = models.filter(function(m){
-        return m.id === id || m.name === id || m.rawName === id;
-      });
-      if (exact.length) return exact;
-      if (typeof id === 'string' && id) {
-        var needle = id.toLowerCase();
-        return models.filter(function(m){
-          var nm = (m.name || '').toLowerCase(), rn = (m.rawName || '').toLowerCase();
-          return nm.indexOf(needle) >= 0 || rn.indexOf(needle) >= 0;
-        });
-      }
-      return [];
-    };
+    // Delegates to the hoisted `_ccResolveModelScope` (single source of truth,
+    // also used by the local-engine addon) so the browser and local engines
+    // resolve modelA/modelB scopes identically. The orchestrator only ever sees
+    // model NAMES (get_status/get_clashes never expose the internal UUID id), so
+    // a scoped run_detection passes a name — name/rawName/substring resolution
+    // lives in _ccResolveModelScope.
+    var pick = function(id) { return _ccResolveModelScope(models, id); };
     var grpA = pick(rules.modelA), grpB = pick(rules.modelB);
     var maxGapM = (rules.maxGap||0)/1000;
     var minGapM = (rules.minGap||0)/1000;

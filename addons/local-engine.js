@@ -604,11 +604,27 @@ clashcontrol-engine --install</pre>
   //     `toleranceByTypePair`, `duplicates`, `excludeSelf`, `minOverlapVolM3`
   //     are all sent below (so a future engine version can start honoring
   //     them without a browser change) but are NOT applied engine-side today.
-  //     `_localEngineCanHandle` + `_applyClientSideRuleFilters` below cover
-  //     the gap: reject the local-engine path outright for rules that can't
-  //     be safely corrected after the fact, and re-apply the rest client-side
-  //     against the resolved elements we already have. See IMPROVEMENT_PLAN.md
-  //     CW-1 and MEMORY.md Known Issues for the fuller history.
+  //   - `modelA`/`modelB` are matched by EXACT id (or the literal 'all')
+  //     engine-side — it does not understand the browser's arrays / `disc:` /
+  //     `tag:` / name / substring selectors. `_normalizeModelScope` resolves
+  //     the scope browser-side (via index.html `_ccResolveModelScope`) to 'all'
+  //     or a single id before sending; anything else fails closed.
+  //
+  //   How the browser vs. local result-set gap is closed (V7_RELEASE_PLAN P0):
+  //     · `_localEngineCanHandle` FAILS CLOSED (routes to the browser engine)
+  //       for rules that can't be honored or safely corrected after the fact:
+  //       `duplicates`, a deliberate `minOverlapVolM3`, `changeAware`, semantic
+  //       (host/opening) filtering when relationship data exists, a per-pair
+  //       tolerance wider than `maxGap`, and any non-'all'/non-single scope.
+  //     · The discipline policy (excludeSameDiscipline + disciplineMatrix) is
+  //       re-applied against the resolved elements via the shared core helper
+  //       `window._ccMatrixSkipsSameDiscipline` in `_detectOnLocalEngine` — the
+  //       SAME function the browser engine uses, so no reimplementation drift.
+  //     · `_applyClientSideRuleFilters` re-applies the rest (`excludeSelf`,
+  //       `excludeTypes`, `excludeTypePairs`, `minGap`, tighten-only
+  //       `toleranceByTypePair`) against the resolved elements.
+  //     See V7_RELEASE_PLAN.md P0, IMPROVEMENT_PLAN.md CW-1, and MEMORY.md
+  //     Known Issues for the fuller history.
 
   function _serializeForLocalEngine(models, rules) {
     var elements = [];
@@ -653,8 +669,16 @@ clashcontrol-engine --install</pre>
     // Previously this always fell through to the 'hard' default below, so a
     // soft/clearance-only run silently ran as hard-only on the local engine.
     var mode = rules.hard ? ((rules.maxGap||0) > 0 ? 'both' : 'hard') : 'soft';
+    // Normalize the scope to what the engine understands ('all' | exact id).
+    // The capability gate already rejected any scope that can't be expressed
+    // this way, so both sides resolve here; fall back to 'all' defensively.
+    var _resolve = (typeof window !== 'undefined' && window._ccResolveModelScope) || null;
+    var _scopeA = _normalizeModelScope(models, rules.modelA, _resolve);
+    var _scopeB = _normalizeModelScope(models, rules.modelB, _resolve);
     var r = {
-      modelA: rules.modelA, modelB: rules.modelB, mode: mode,
+      modelA: _scopeA.ok ? _scopeA.value : 'all',
+      modelB: _scopeB.ok ? _scopeB.value : 'all',
+      mode: mode,
       maxGap: rules.maxGap||0, minGap: rules.minGap||0,
       duplicates: !!rules.duplicates, includeSpaces: !!rules.includeSpaces,
       minOverlapVolM3: rules.minOverlapVolM3||0, excludeTypes: rules.excludeTypes||[]
@@ -720,8 +744,16 @@ clashcontrol-engine --install</pre>
     var la = nice(tA), lb = nice(tB);
     var title = (la === lb ? (la + ' vs ' + lb) : (la + ' × ' + lb)) + (sameModel ? ' (self)' : '');
     var description = tA + ': ' + nA + ' (' + mA.name + ') vs ' + tB + ': ' + nB + ' (' + mB.name + ')';
-    var discA = mA.discipline || '';
-    var discB = mB.discipline || '';
+    // Classify discipline per ELEMENT (IfcType → STR/ARC/MEP/CIV, model
+    // discipline as fallback) exactly like the browser engine does at detection
+    // time — an IfcPipe inside an architectural model is MEP. Using the raw
+    // model discipline here would make the discipline shown/filtered on a local
+    // clash differ from the browser's, breaking excludeSameDiscipline /
+    // disciplineMatrix parity. Falls back to model discipline if the core helper
+    // isn't present.
+    var _elDisc = (typeof window !== 'undefined' && window._ccElementDiscipline) || null;
+    var discA = _elDisc ? _elDisc(elA, mA.discipline) : (mA.discipline || '');
+    var discB = _elDisc ? _elDisc(elB, mB.discipline) : (mB.discipline || '');
     return {
       id: c.id || ((elA.expressId||elA.id) + '_' + (elB.expressId||elB.id)),
       source: 'local_engine',
@@ -764,7 +796,33 @@ clashcontrol-engine --install</pre>
   // filter, and gating on it unconditionally would disable the local engine
   // for every default-configuration run.
   var _ENGINE_VOL_EPSILON = 1e-5;
-  function _localEngineCanHandle(rules) {
+
+  // Resolve a modelA/modelB scope selector to what the engine can actually run.
+  // The browser resolves rich selectors (arrays, `disc:`, `tag:`, names,
+  // substrings — see index.html `_ccResolveModelScope`), but Engine v0.3.1 only
+  // compares `modelA`/`modelB` against an exact model id (or the literal 'all'),
+  // so a named/discipline/tag/array/substring scope silently matched nothing and
+  // returned zero. Normalize each side to the only two shapes the engine
+  // understands: {ok:true, value:'all'} or {ok:true, value:<single model id>}.
+  // Anything that resolves to a >1-model subset (or can't be resolved) is
+  // {ok:false} → the caller falls back to the browser engine rather than run a
+  // scope the engine would misinterpret.
+  //   `resolveFn(models, selector)` must be index.html's `_ccResolveModelScope`
+  // (passed in so this stays drift-free and unit-testable); when it's absent a
+  // non-'all' selector can't be verified and is treated as not-expressible.
+  function _normalizeModelScope(models, selector, resolveFn) {
+    if (selector === 'all' || selector == null) return {ok:true, value:'all'};
+    if (typeof resolveFn !== 'function') return {ok:false};
+    var resolved;
+    try { resolved = resolveFn(models, selector); } catch(e) { resolved = null; }
+    if (!resolved) return {ok:false};
+    var total = (models || []).length;
+    if (resolved.length > 0 && resolved.length === total) return {ok:true, value:'all'};
+    if (resolved.length === 1) return {ok:true, value: resolved[0].id};
+    return {ok:false}; // 0 (empty scope) or a multi-model subset the engine can't express
+  }
+
+  function _localEngineCanHandle(rules, models) {
     rules = rules || {};
     if (rules.duplicates) {
       return {ok:false, reason:'Duplicate-geometry detection is not implemented by the local engine yet.'};
@@ -772,7 +830,58 @@ clashcontrol-engine --install</pre>
     if ((rules.minOverlapVolM3||0) > _ENGINE_VOL_EPSILON) {
       return {ok:false, reason:'The local engine has no real intersection-volume computation, so a configured minimum-overlap-volume filter can’t be honored.'};
     }
+    // change-aware detection needs the browser engine's per-run element-hash
+    // baseline (`_prevElementHashes`), which only updates on browser runs — the
+    // engine can't honor it, and it isn't recoverable from returned clashes.
+    if (rules.changeAware) {
+      return {ok:false, reason:'Change-aware detection tracks per-run element hashes the local engine can’t see.'};
+    }
+    // Semantic (host/opening) filtering suppresses HARD clashes for intentional
+    // fits (door-in-wall, hosted families, opening fills) using each model's
+    // relatedPairs map, which isn't in the elements payload — so the engine
+    // would over-report those. Crucially it only ever fires for SAME-MODEL pairs
+    // (index.html: `if (sameModel && _modelRelPairs[mA.id])`). When excludeSelf
+    // is on (the shipped default), every same-model pair is dropped anyway, so
+    // the semantic filter can't change the result set and the local engine is
+    // safe to use. Only fail closed when self-clashes are actually kept
+    // (excludeSelf falsy) AND the filter is on AND some model carries
+    // relationship data.
+    if (rules.useSemanticFilter !== false && !rules.excludeSelf && _anyModelHasRelatedPairs(models)) {
+      return {ok:false, reason:'Semantic filtering (host/opening skip) needs relationship data the local engine can’t see yet.'};
+    }
+    // A per-type-pair tolerance WIDER than the global maxGap can't be recovered
+    // after the fact: the engine only ever computed distances up to maxGap, so
+    // soft clashes for that pair between maxGap and the wider tolerance are
+    // simply absent from the result. Client-side tightening handles the
+    // narrower case (see _applyClientSideRuleFilters); the wider case must fall
+    // back to the browser engine.
+    var _maxGap = rules.maxGap || 0;
+    var _tbp = rules.toleranceByTypePair;
+    if (_tbp && typeof _tbp === 'object') {
+      var _keys = Object.keys(_tbp);
+      for (var _i = 0; _i < _keys.length; _i++) {
+        if ((_tbp[_keys[_i]] || 0) > _maxGap) {
+          return {ok:false, reason:'A per-type tolerance wider than the global max gap can’t be reproduced locally.'};
+        }
+      }
+    }
+    // Model scope: only 'all' or a single exact model id is expressible engine-side.
+    var _resolve = (typeof window !== 'undefined' && window._ccResolveModelScope) || null;
+    var _sa = _normalizeModelScope(models, rules.modelA, _resolve);
+    var _sb = _normalizeModelScope(models, rules.modelB, _resolve);
+    if (!_sa.ok || !_sb.ok) {
+      return {ok:false, reason:'This model scope resolves to something the local engine can’t address (only “all” or a single model).'};
+    }
     return {ok:true, reason:null};
+  }
+
+  function _anyModelHasRelatedPairs(models) {
+    if (!models || !models.length) return false;
+    for (var i = 0; i < models.length; i++) {
+      var rp = models[i] && models[i].relatedPairs;
+      if (rp && typeof rp === 'object' && Object.keys(rp).length > 0) return true;
+    }
+    return false;
   }
 
   // Re-apply, against the engine's own returned clashes, the rule fields the
@@ -789,7 +898,21 @@ clashcontrol-engine --install</pre>
     var excludeSelf = !!rules.excludeSelf;
     var excludeTypes = {};
     (rules.excludeTypes||[]).forEach(function(t){ excludeTypes[t] = true; });
-    var excludeTypePairs = rules.excludeTypePairs || null;
+    // excludeTypePairs is canonically an ARRAY of sorted "typeA:typeB" key
+    // strings (INIT.rules default `[]`, and how the browser engine consumes it
+    // at index.html `_exPairSet`). A previous version indexed the array as a
+    // map (`arr[key]`), which is always undefined for an array — so the filter
+    // silently never fired. Normalize to a lookup set that accepts the array
+    // (canonical) and a legacy `{key:true}` object for safety.
+    var excludeTypePairSet = {};
+    (function() {
+      var etp = rules.excludeTypePairs;
+      if (Array.isArray(etp)) {
+        etp.forEach(function(p) { if (p) excludeTypePairSet[p] = true; });
+      } else if (etp && typeof etp === 'object') {
+        Object.keys(etp).forEach(function(k) { if (etp[k]) excludeTypePairSet[k] = true; });
+      }
+    })();
     var toleranceByTypePair = rules.toleranceByTypePair || null;
     var minGapMm = rules.minGap||0; // rules.minGap is already mm, same convention as maxGap
     var maxGapMm = rules.maxGap||0;
@@ -804,7 +927,7 @@ clashcontrol-engine --install</pre>
       if (excludeSelf && cl.selfClash) return false;
       if (excludeTypes[cl.elemAType] || excludeTypes[cl.elemBType]) return false;
       var key = (cl.elemAType && cl.elemBType) ? typePairKey(cl.elemAType, cl.elemBType) : null;
-      if (key && excludeTypePairs && excludeTypePairs[key]) return false;
+      if (key && excludeTypePairSet[key]) return false;
       if (cl.type === 'soft') {
         if (minGapMm > 0 && Math.abs(cl.distance) < minGapMm) return false;
         if (key && toleranceByTypePair && toleranceByTypePair[key] !== undefined) {
@@ -889,12 +1012,20 @@ clashcontrol-engine --install</pre>
         }
         return null;
       }
+      // The engine applies no discipline policy. Re-apply the browser engine's
+      // EXACT same-discipline / disciplineMatrix skip using the core helper
+      // (window._ccMatrixSkipsSameDiscipline) against the resolved elements — so
+      // excludeSameDiscipline (a browser default) and any custom disciplineMatrix
+      // produce the identical result set on both engines. Guarded: if the core
+      // helper is somehow absent, skip the drop rather than throw.
+      var _matrixSkip = (typeof window !== 'undefined' && window._ccMatrixSkipsSameDiscipline) || null;
       var mapped = result.clashes.map(function(c) {
         // Engine (>=0.2.6) sends modelAId/modelBId; c.modelA/B kept first for
         // any fork that emits the short names.
         var rA = resolve(c.modelA || c.modelAId, c.elementA);
         var rB = resolve(c.modelB || c.modelBId, c.elementB);
         if (!rA || !rB) return null;
+        if (_matrixSkip && _matrixSkip(rA.el, rA.model, rB.el, rB.model, rA.model.id === rB.model.id, rules)) return null;
         return _clashFromEngineResult(c, rA.el, rB.el, rA.model, rB.model, rules);
       }).filter(Boolean);
       // The engine ignores excludeSelf/excludeTypes/excludeTypePairs/minGap/
