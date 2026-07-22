@@ -75,6 +75,10 @@ function loadApi() {
     'function _ccGetElementGeometry(el) {',
     '\n  window._ccGetElementGeometry = _ccGetElementGeometry;'
   );
+  const boxBlock = extract(
+    'function _ccElementWorldBox(el) {',
+    '\n  window._ccElementWorldBox = _ccElementWorldBox;'
+  );
   const wvBlock = extract('function _getWorldVerts(el) {', '\n  function _getWorldTris(el) {');
   const trisBlock = extract('function _getWorldTris(el) {', '\n\n  function _getBVH');
   const three = makeThreeStub();
@@ -83,9 +87,10 @@ function loadApi() {
     function _bvhLRUTouch(){}
     function _bvhLRUEvict(){}
     ${geoBlock}
+    ${boxBlock}
     ${wvBlock}
     ${trisBlock}
-    return { getElementGeometry: _ccGetElementGeometry, getWorldVerts: _getWorldVerts, getWorldTris: _getWorldTris };
+    return { getElementGeometry: _ccGetElementGeometry, elementWorldBox: _ccElementWorldBox, getWorldVerts: _getWorldVerts, getWorldTris: _getWorldTris };
   `);
   return fn(three);
 }
@@ -194,4 +199,47 @@ test('_getWorldVerts and _getWorldTris both read through _ccGetElementGeometry, 
 
 test('_ccGetElementGeometry is exposed on window for addon/future-consumer use', () => {
   assert.match(source, /window\._ccGetElementGeometry = _ccGetElementGeometry/);
+});
+
+// ── _ccElementWorldBox: second consumer of the same GeometryHandle accessor ──
+// Consolidates the Box3.setFromObject(mesh)/expandByObject(mesh) pattern that
+// was independently duplicated across several non-loader call sites.
+test('_ccElementWorldBox computes the exact world-space AABB for a single-mesh element', () => {
+  const api = loadApi();
+  const mesh = mockMesh([[1,2,3],[4,5,6],[-1,0,10]], null, identityMatrix());
+  const box = api.elementWorldBox({ meshes: [mesh] });
+  assert.deepEqual(box, { min: { x: -1, y: 0, z: 3 }, max: { x: 4, y: 5, z: 10 } });
+});
+
+test('_ccElementWorldBox applies the world transform before computing the AABB', () => {
+  const api = loadApi();
+  const mesh = mockMesh([[0,0,0],[1,1,1]], null, translationMatrix(10,20,30));
+  const box = api.elementWorldBox({ meshes: [mesh] });
+  assert.deepEqual(box, { min: { x: 10, y: 20, z: 30 }, max: { x: 11, y: 21, z: 31 } });
+});
+
+test('_ccElementWorldBox unions across multiple meshes on one element', () => {
+  const api = loadApi();
+  const meshA = mockMesh([[0,0,0]], null, identityMatrix());
+  const meshB = mockMesh([[5,5,5]], null, translationMatrix(10,0,0));
+  const box = api.elementWorldBox({ meshes: [meshA, meshB] });
+  assert.deepEqual(box, { min: { x: 0, y: 0, z: 0 }, max: { x: 15, y: 5, z: 5 } });
+});
+
+test('_ccElementWorldBox returns null for an element with no usable geometry', () => {
+  const api = loadApi();
+  assert.equal(api.elementWorldBox({ meshes: [] }), null);
+  assert.equal(api.elementWorldBox({}), null);
+});
+
+test('_ccElementWorldBox is exposed on window', () => {
+  assert.match(source, /window\._ccElementWorldBox = _ccElementWorldBox/);
+});
+
+test('the accessibility-check center(el) helper now routes through _ccElementWorldBox, not its own Box3.setFromObject loop', () => {
+  const idx = source.indexOf('function center(el){');
+  assert.ok(idx !== -1, 'center(el) helper not found');
+  const body = source.slice(idx, source.indexOf('\n    }', idx) + 10);
+  assert.match(body, /window\._ccElementWorldBox\(el\)/);
+  assert.doesNotMatch(body, /setFromObject/, 'must no longer build its own Box3 via setFromObject');
 });

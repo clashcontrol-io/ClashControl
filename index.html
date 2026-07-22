@@ -5355,6 +5355,37 @@ function startApp() {
   }
   window._ccGetElementGeometry = _ccGetElementGeometry;
 
+  // A shared "world-space element bounding box" built on the SAME accessor
+  // (P6.2, second consumer). Several non-loader call sites independently
+  // built a THREE.Box3 via setFromObject(mesh)/expandByObject(mesh) over
+  // el.meshes[] — this consolidates that pattern instead of re-deriving it
+  // at each site. Deliberately does NOT touch the IFC loader's own initial
+  // box-construction call sites (expandByObject during parsing) — those are
+  // high-care code (CLAUDE.md) and out of scope here. Returns a plain
+  // {min:{x,y,z}, max:{x,y,z}} object (not a THREE.Box3 instance) so this
+  // stays testable without a live THREE.js dependency, matching every other
+  // function in this file's test suite; callers that need Box3 methods
+  // (.union(), .isEmpty()) should keep using the inline pattern for now —
+  // this is scoped to the single-element, no-union case first.
+  function _ccElementWorldBox(el) {
+    var minX = Infinity, minY = Infinity, minZ = Infinity, maxX = -Infinity, maxY = -Infinity, maxZ = -Infinity;
+    var any = false;
+    _ccGetElementGeometry(el).forEach(function (h) {
+      var pos = h.position, mat = h.transform;
+      var v = new THREE.Vector3();
+      for (var i = 0; i < pos.count; i++) {
+        v.set(pos.getX(i), pos.getY(i), pos.getZ(i)).applyMatrix4(mat);
+        if (v.x < minX) minX = v.x; if (v.x > maxX) maxX = v.x;
+        if (v.y < minY) minY = v.y; if (v.y > maxY) maxY = v.y;
+        if (v.z < minZ) minZ = v.z; if (v.z > maxZ) maxZ = v.z;
+        any = true;
+      }
+    });
+    if (!any) return null;
+    return { min: { x: minX, y: minY, z: minZ }, max: { x: maxX, y: maxY, z: maxZ } };
+  }
+  window._ccElementWorldBox = _ccElementWorldBox;
+
   function _getWorldVerts(el) {
     if (el._wvCache) { _bvhLRUTouch(el); return el._wvCache; }
     _bvhLRUEvict(); // caps peak memory on the soft/clearance path too
@@ -22279,12 +22310,14 @@ function startApp() {
       invalidate();
     }
     // Element world-bbox centre → [x,y,z] for fly-to + BCF viewpoint.
+    // P6.2: routed through the shared _ccElementWorldBox helper (built on
+    // the same GeometryHandle accessor as the clash engine) instead of a
+    // one-off THREE.Box3.setFromObject loop.
     function center(el){
-      var THREE=window.THREE; if(!THREE||!el||!el.meshes||!el.meshes.length) return null;
-      var box=new THREE.Box3(), tmp=new THREE.Box3(), any=false;
-      el.meshes.forEach(function(m){ if(!m||!m.geometry) return; m.updateWorldMatrix(true,false); tmp.setFromObject(m);
-        if(!tmp.isEmpty()){ if(!any){box.copy(tmp);any=true;} else box.union(tmp);} });
-      if(!any) return null; var c=box.getCenter(new THREE.Vector3()); return [c.x,c.y,c.z];
+      if (!el || typeof window._ccElementWorldBox !== 'function') return null;
+      var box = window._ccElementWorldBox(el);
+      if (!box) return null;
+      return [(box.min.x+box.max.x)/2, (box.min.y+box.max.y)/2, (box.min.z+box.max.z)/2];
     }
     var SEV_TYPE = {door_clear_width:'hard',threshold_height:'hard',ramp_slope:'hard',route_width:'soft',turning_circle:'soft'};
     // Build a single-element clash-style item that renders in the Conflicts tab
