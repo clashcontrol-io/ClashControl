@@ -23,7 +23,7 @@ const ALL_FLAGS = [
   'concurrencyV2', 'geoCacheV8', 'batchedSectionsV2', 'rendererV2',
   'ccUiWindowedConflicts', 'ccUiEmptyStates', 'ccUiOperationCenter',
   'ccUiToolbarV2', 'ccUiModalV2', 'ccUiStoreyChooser',
-  'storageAutosaveGate', 'storageDetectCaches',
+  'storageAutosaveGate', 'storageDetectCaches', 'memorySafeLoad',
 ];
 
 test('manifest is exactly the known set, nothing added or removed silently', () => {

@@ -38204,9 +38204,26 @@ function startApp() {
       if (window._ccOpenModelsPanel) try { window._ccOpenModelsPanel(); } catch(_e){}
       window.dispatchEvent(new CustomEvent('cc-pending-files'));
     }
+    // ── P6.3: pre-load pressure relief (V7_RELEASE_PLAN.md, flag-gated,
+    // conservative slice). The plan's fuller ask — stage packed geometry,
+    // let the IFC worker finish property extraction and terminate BEFORE
+    // constructing Three.js objects, commit atomically — touches the IFC
+    // worker's own lifecycle and the loader's construction sequencing, both
+    // explicitly flagged elsewhere as high-care code this session cannot
+    // live-verify. This does the safer half of the same job from the
+    // outside: before a new load proceeds, if memory is already tight, run
+    // the SAME auto-park pass a heap-pressure poller tick would run, one
+    // beat early — giving the incoming model's geometry headroom to land in
+    // without touching the worker/construction path at all. Default off
+    // (memorySafeLoad) until soaked with real usage, same discipline as
+    // storageDetectCaches.
     window._ccLoadFiles = function(files) {
       if (!files || !files.length) return;
       window._ccPendingFiles = Array.prototype.slice.call(files);
+      try {
+        if (window._ccSafetyMigrations && window._ccSafetyMigrations.isEnabled('memorySafeLoad') &&
+            typeof window._ccAutoParkPass === 'function') window._ccAutoParkPass();
+      } catch(e) {}
       if (window._ccOpenModelsPanel) try { window._ccOpenModelsPanel(); } catch(_e){}
       window.dispatchEvent(new CustomEvent('cc-pending-files'));
     };
