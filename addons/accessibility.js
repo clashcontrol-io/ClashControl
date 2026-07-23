@@ -144,7 +144,13 @@
   // ── Public engine ────────────────────────────────────────────────────────
   // Returns { items:[...per-element results], groups:{check:{label,sev,total,fail,ex}}, thresholds }
   function runAccessibilityChecks(elements, opts) {
-    var TH = Object.assign({}, DEFAULTS, (opts && opts.thresholds) || {});
+    // Precedence: built-in NL Bbl/NEN defaults < active regional preset
+    // (regulations/*.json, follows the model's location) < explicit per-call
+    // override. A region with no registered 'accessibility' preset falls
+    // through to DEFAULTS unchanged.
+    var regionPreset = (typeof window._ccGetRegulationPreset === 'function')
+      ? window._ccGetRegulationPreset(null, 'accessibility') : null;
+    var TH = Object.assign({}, DEFAULTS, regionPreset || {}, (opts && opts.thresholds) || {});
     var items = [];
     (elements || []).forEach(function (el) {
       var p = el.props || {}; var t = p.ifcType || '';

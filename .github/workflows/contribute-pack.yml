@@ -1,0 +1,122 @@
+name: Apply contributed locale/regulation pack
+
+# Issue-ops on-ramp for non-developers: attach a locale/regulation pack file
+# to the matching issue template (.github/ISSUE_TEMPLATE/contribute-*.yml)
+# instead of forking + opening a PR by hand.
+#
+# Deliberately label-gated, not triggered by the raw issue submission — a
+# maintainer must read the attachment and apply `contribution:review-passed`
+# before anything here runs. This is the first line of defense against
+# arbitrary/malicious uploads; the validators below are the second.
+#
+# Token scope: contents+pull-requests+issues write, nothing else. The applied
+# pack is always JSON data (scripts/validate-*.js enforce this), so even a
+# successful run can only ever add a data file + open a PR — never execute
+# anything from the submission.
+#
+# One-time setup: the `contribution:review-passed` label must exist in the
+# repo (Settings → Labels → New label) before this can be applied to an
+# issue — unlike `contribution`/`type:locale`/`type:regulation`, it is not
+# referenced in the issue template's default `labels:`, so GitHub won't
+# auto-create it. That's intentional: it keeps the gating label out of the
+# small set a submitter's issue starts with.
+on:
+  issues:
+    types: [labeled]
+
+permissions:
+  contents: write
+  pull-requests: write
+  issues: write
+
+jobs:
+  apply:
+    if: github.event.label.name == 'contribution:review-passed'
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+      ISSUE: ${{ github.event.issue.number }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Fetch issue details
+        run: gh issue view "$ISSUE" --json body,labels,author -q '.' > issue.json
+
+      - name: Determine pack kind from labels
+        id: kind
+        run: |
+          KIND=$(node -e "
+            const i = require('./issue.json');
+            const l = i.labels.map(x => x.name);
+            console.log(l.includes('type:locale') ? 'locale' : (l.includes('type:regulation') ? 'regulation' : ''));
+          ")
+          if [ -z "$KIND" ]; then
+            gh issue comment "$ISSUE" --body "Couldn't tell whether this is a locale or regulation contribution — missing a \`type:locale\`/\`type:regulation\` label. A maintainer needs to add the right one and re-apply \`contribution:review-passed\`."
+            exit 1
+          fi
+          echo "kind=$KIND" >> "$GITHUB_OUTPUT"
+
+      - name: Extract attachment URL from the issue body
+        id: attach
+        run: |
+          URL=$(node -e "
+            const fs = require('fs');
+            const i = JSON.parse(fs.readFileSync('issue.json', 'utf8'));
+            const m = (i.body || '').match(/https:\/\/github\.com\/user-attachments\/files\/\S+/);
+            if (!m) process.exit(1);
+            process.stdout.write(m[0].replace(/[)\]>'\"]+$/, ''));
+          ")
+          if [ -z "$URL" ]; then
+            gh issue comment "$ISSUE" --body "Couldn't find an attached file in the issue description — please drag-and-drop your \`.json\` file directly into the issue body (not a separate comment) and re-apply \`contribution:review-passed\`."
+            exit 1
+          fi
+          echo "url=$URL" >> "$GITHUB_OUTPUT"
+
+      - name: Download attachment (size-limited)
+        run: curl -sSL --max-filesize 204800 --fail -o pack.json "${{ steps.attach.outputs.url }}"
+
+      - name: Validate + apply
+        id: apply
+        run: |
+          if ! node scripts/apply-contributed-pack.js "${{ steps.kind.outputs.kind }}" pack.json > apply-output.txt 2>&1; then
+            echo "failed=1" >> "$GITHUB_OUTPUT"
+          fi
+          cat apply-output.txt
+
+      - name: Post validation failure back to the issue
+        if: steps.apply.outputs.failed == '1'
+        run: |
+          {
+            echo "Validation failed — please fix and re-attach a corrected file, then a maintainer can re-apply \`contribution:review-passed\`:"
+            echo '```'
+            cat apply-output.txt
+            echo '```'
+          } > comment.md
+          gh issue comment "$ISSUE" --body-file comment.md
+          exit 1
+
+      - name: Create branch, commit, and open PR
+        env:
+          KIND: ${{ steps.kind.outputs.kind }}
+        run: |
+          AUTHOR=$(node -e "console.log(require('./issue.json').author.login)")
+          BRANCH="contrib/${KIND}-issue-${ISSUE}"
+          git config user.name "clashcontrol-bot"
+          git config user.email "actions@users.noreply.github.com"
+          git checkout -b "$BRANCH"
+          git add locales regulations
+          git commit -m "feat(i18n): add contributed ${KIND} pack from issue #${ISSUE}
+
+          Co-authored-by: ${AUTHOR} <${AUTHOR}@users.noreply.github.com>"
+          git push -u origin "$BRANCH"
+          gh pr create --draft \
+            --title "Add contributed ${KIND} pack (issue #${ISSUE})" \
+            --body "Auto-opened from #${ISSUE}, contributed by @${AUTHOR}. Passed automated schema/content validation (\`scripts/validate-${KIND}.js\`) — still needs maintainer review of translation/threshold accuracy before merging.
+
+          Closes #${ISSUE}" \
+            --base main --head "$BRANCH"
+          gh issue comment "$ISSUE" --body "Thanks @${AUTHOR}! Opened a PR with your contribution — it passed automated validation and still needs a maintainer's review before merging."

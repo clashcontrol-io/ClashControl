@@ -286,6 +286,70 @@ Things to be careful about. Do not remove without a good reason — add a note i
 Update this section at the start and end of each session.
 Mark completed items with ~~strikethrough~~ and date, then let the daily sync archive them.
 
+**i18n + regional-regulation packs (2026-07-23, branch `claude/japanese-localization-request-eleplc`)** —
+prompted by a real user (Japanese BIM user) offering to translate the UI. Scoped to a general
+community-addon mechanism, not a one-off translation: two new directories, `locales/` (UI strings)
+and `regulations/` (building-code thresholds), both following the existing lazy-addon loading
+contract but with a stricter rule — contributed files are **pure JSON only, never `.js`**; the only
+executable code is a maintainer-authored `loader.js` per directory (`fetch`+`JSON.parse`, never
+`eval`/`Function`) — closes code-execution as an attack surface for untrusted community uploads.
+~~Core registry in `index.html`: `_cc_t(key, englishFallback, vars?)` + `_ccRegisterLocalePack`/
+`_ccSetLocale`/`_ccGetLocale`; `_ccRegisterRegulationPreset`/`_ccSetRegulationRegion`/
+`_ccGetRegulationPreset(region, engine)`, keyed by target check engine.~~ (2026-07-23)
+~~`accessibility.js` wired to the precedence `DEFAULTS < regionPreset < opts.thresholds`.~~ (2026-07-23)
+~~`locales/loader.js` + `regulations/loader.js`, manifests, `_template.json` for each, READMEs, one
+real starter `locales/ja.json` (needs native-speaker review — flagged as such in its `contributor`
+field).~~ (2026-07-23) `regulations/manifest.json` deliberately ships EMPTY — thresholds are
+safety-relevant (door widths, ramp slopes) and a fabricated/unverified regional preset is worse
+than none; template requires a `source` citation + defaults `verified:false`.
+~~Settings → General: Language + Regional building code dropdowns, manifest-driven (fetch manifest
+on modal mount, individual pack JSON only on pick). `navigator.language`/model-geolocation
+auto-suggest deliberately deferred — would need an eager manifest fetch at app boot, a separate
+tradeoff.~~ (2026-07-23)
+~~`scripts/validate-locale.js`/`validate-regulation.js` — strict JSON shape, 200KB cap, content scan
+rejecting `<script`/`javascript:`/`on*=`/raw HTML in strings; regulation packs additionally require
+a `source` citation + boolean `verified`, flag unrecognized threshold keys as likely typos. Rides
+the existing `npm test` step in `ci.yml` (no workflow changes) via
+`tests/locale-regulation-pack-validation.test.js`, which also re-validates every real pack +
+manifest entry on every run.~~ (2026-07-23)
+~~Label-gated issue-ops pipeline: `.github/ISSUE_TEMPLATE/contribute-{locale,regulation}-pack.yml`
+(drag-and-drop file attachment) + `.github/workflows/contribute-pack.yml`, firing ONLY on a
+maintainer-applied `contribution:review-passed` label (needs one-time manual creation in repo
+Settings — not auto-created like the template's default labels), never the raw submission. Runs
+`scripts/apply-contributed-pack.js` (validates, then writes pack+manifest entry; refuses to touch
+an id that already exists so automation can only create NEW packs, never silently overwrite a
+reviewed one) and opens a draft PR crediting the contributor. Token scoped to
+contents+pull-requests+issues write only. `tests/apply-contributed-pack.test.js` covers
+create/duplicate-refusal/validation-rejection.~~ (2026-07-23)
+PR #708 (draft) tracks all of the above, 801 tests passing. `pull_request: synchronize` events kept
+NOT firing for this PR across the whole session (ci.yml never ran on several consecutive pushes in
+a row — worse than the "occasional" flakiness the workflow's own comments describe); no
+`workflow_dispatch` API access to fix it directly, so repeated empty-commit pushes were used to
+nudge it each time it stalled — worked, but noisy (several `chore: retrigger CI` commits in the
+branch history). **If this keeps recurring on future sessions, worth a maintainer looking at
+whether the GitHub App installation needs a permissions/webhook fix** — this is an infra flake, not
+a code issue, but happened often enough this session to flag explicitly.
+Long-tail retrofit of `index.html`'s hardcoded UI strings to `_cc_t()`, panel by panel, each its own
+commit: ~~toolbar (Views/Present/Open/Save Project/Import/Export BCF/theme+Settings buttons) +
+LeftPanel's shared TITLES map (Models/Conflicts/Issues/Navigator/Data Quality/Accessibility/Tools/
+Integrations/Standards) + Settings modal title.~~ ~~IssuePanel in full: sub-tab bar, all filter
+controls (search, Status, Discipline, Floor, Distance, IFC Type, Storey, Material, Element ID,
+Priority, Category, Assignee, Element Type), empty states, shown-count footer, New Issue/From clash
+buttons, Grouped/All view-mode + Group/Sort dropdowns (both clash and issue variants).~~ ~~Data
+Quality panel: model selector, run/re-check states, pass/issue badge, delta summary, empty state,
+severity legend, section headers.~~ ~~Accessibility panel: model selector, run states, Fail/Pass
+legend, summary line, Add to Conflicts, Isolate failing, both disclaimer paragraphs.~~ ~~New Issue
+modal: all titles, From Clash/Linked Element context, every form label/placeholder/dropdown option,
+Cancel/Create buttons.~~ (all 2026-07-23) `locales/ja.json` kept in sync with every newly-wired key
+each slice — updating tests/dq-reconciliation-wiring.test.js's literal-adjacency assertions once,
+where `_cc_t()`-wrapping changed the exact source shape a wiring test checked against.
+**Remaining (long tail, can proceed independently in future sessions):** Settings modal's other
+tabs (Measurement/Walk/Privacy/Shared/AI/Advanced), Share modal, Smart Views modal, sidebar/Models
+panel, Standards/Tools/Integrations panels, and the rest of `index.html`.
+**Still to do (long tail, can proceed independently):** rest of IssuePanel's filter controls
+(Discipline/Floor/Distance/Priority/Category/Assignee dropdowns, empty states), then Data
+Quality/Accessibility panels, then the rest of `index.html` — each its own reviewable commit.
+
 **Park inactive models — memory relief (2026-07-22, branch `claude/clashcontrol-v7-release-plan-jp5njw`)** —
 diagnosed the "viewer stalls a few seconds" + "5.2 GB heap > 4.09 GB limit" reports as the SAME
 root cause: GC pauses from being over the heap limit. Dominant reducible sink = the permanently
