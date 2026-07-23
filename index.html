@@ -21213,7 +21213,7 @@ function startApp() {
 
     return html`<div style=${{display:'flex',flexDirection:'column',flex:1,overflow:'hidden',minHeight:0}}>
       ${!hideTabBar && html`<div style=${{display:'flex',borderBottom:'1px solid var(--border-subtle)',flexShrink:0,background:'var(--bg-primary)'}} role="tablist">
-        ${[{id:'clashes',label:'Clashes',n:oC},{id:'issues',label:'Issues',n:oI},{id:'navigator',label:'Navigator',n:0}].map(function(t){return html`
+        ${[{id:'clashes',label:_cc_t('panel.clashes.title','Clashes'),n:oC},{id:'issues',label:_cc_t('panel.issues.title','Issues'),n:oI},{id:'navigator',label:_cc_t('panel.navigator.title','Navigator'),n:0}].map(function(t){return html`
           <button key=${t.id} onClick=${function(){d({t:A.TAB,v:t.id})}} role="tab" aria-selected=${s.tab===t.id}
             style=${{...S_BTN,flex:1,background:'none',borderRadius:0,padding:'.7rem .4rem',
               fontFamily:'var(--font-body)',fontSize:'.78rem',fontWeight:s.tab===t.id?500:400,
@@ -21237,7 +21237,7 @@ function startApp() {
             <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" style=${{position:'absolute',left:'.5rem',pointerEvents:'none',flexShrink:0,color:'var(--text-muted)'}}>
               <circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/>
             </svg>
-            <input type="text" placeholder=${isClashTab ? 'Filter… e.g. "hard on floor 2" or "open pipes"' : 'Search…'} value=${f.search}
+            <input type="text" placeholder=${isClashTab ? _cc_t('issues.filter.placeholderClash','Filter… e.g. "hard on floor 2" or "open pipes"') : _cc_t('issues.filter.placeholderSearch','Search…')} value=${f.search}
               onInput=${function(e){d({t:A.UPD_FILTERS,u:{search:e.target.value}})}}
               style=${{...S_INPUT,fontSize:'0.8rem',padding:'.32rem .4rem .32rem 1.85rem',width:'100%',background:f.search?'var(--accent-bg)':'var(--bg-secondary)',border:f.search?'1px solid var(--accent)':'1px solid var(--border)',transition:'all .15s'}} />
             ${f.search && html`<button onClick=${function(){d({t:A.UPD_FILTERS,u:{search:''}})}} style=${{position:'absolute',right:'.4rem',background:'none',border:'none',cursor:'pointer',color:'var(--text-muted)',padding:0,lineHeight:0,display:'inline-flex',alignItems:'center',justifyContent:'center'}}>
@@ -21246,7 +21246,7 @@ function startApp() {
           </div>
           <span style=${{fontFamily:'var(--font-mono)',fontSize:'.68rem',color:items.length<rawItems.length?'var(--accent)':'var(--text-muted)',whiteSpace:'nowrap',flexShrink:0}}>${items.length}${items.length<rawItems.length?' / '+rawItems.length:''}</span>
           <button onClick=${function(){setFiltersOpen(!filtersOpen)}}
-            style=${{...S_BTN,padding:'.3rem .45rem',background:filtersOpen||activeCount>0?'var(--accent-bg)':'var(--bg-secondary)',color:filtersOpen||activeCount>0?'var(--accent)':'var(--text-muted)',border:'1px solid var(--border)',fontSize:'0.75rem',whiteSpace:'nowrap',flexShrink:0,display:'inline-flex',alignItems:'center',gap:'.25rem'}} aria-label="Toggle filters">
+            style=${{...S_BTN,padding:'.3rem .45rem',background:filtersOpen||activeCount>0?'var(--accent-bg)':'var(--bg-secondary)',color:filtersOpen||activeCount>0?'var(--accent)':'var(--text-muted)',border:'1px solid var(--border)',fontSize:'0.75rem',whiteSpace:'nowrap',flexShrink:0,display:'inline-flex',alignItems:'center',gap:'.25rem'}} aria-label=${_cc_t('issues.filter.toggle','Toggle filters')}>
             <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M3 6h18M6 12h12M10 18h4"/></svg>
             ${activeCount>0?html`<span style=${{fontFamily:'var(--font-mono)',fontSize:'.65rem',color:'var(--accent)'}}>${activeCount}</span>`:''}
           </button>
@@ -21254,15 +21254,15 @@ function startApp() {
       </div>`}
       ${!isExplorerTab && !isStandardsTab && filtersOpen && html`<div style=${{padding:'.5rem',borderBottom:'1px solid var(--border-subtle)',flexShrink:0,display:'flex',flexDirection:'column',gap:'.4rem',background:'var(--bg-tertiary)'}}>
         <div style=${{display:'flex',justifyContent:'space-between',alignItems:'center'}}>
-          <span style=${{fontSize:'.78rem',fontWeight:500,color:'var(--text-secondary)'}}>Filters</span>
-          <button onClick=${function(){d({t:A.RESET_FILTERS})}} style=${{...S_BTN,fontSize:'.7rem',padding:'.1rem .3rem',background:'none',color:'var(--text-muted)',textDecoration:'underline',textUnderlineOffset:2}}>Clear all</button>
+          <span style=${{fontSize:'.78rem',fontWeight:500,color:'var(--text-secondary)'}}>${_cc_t('issues.filter.title','Filters')}</span>
+          <button onClick=${function(){d({t:A.RESET_FILTERS})}} style=${{...S_BTN,fontSize:'.7rem',padding:'.1rem .3rem',background:'none',color:'var(--text-muted)',textDecoration:'underline',textUnderlineOffset:2}}>${_cc_t('issues.filter.clearAll','Clear all')}</button>
         </div>
 
         <div>
-          <span style=${FL}>Status</span>
+          <span style=${FL}>${_cc_t('issues.filter.status','Status')}</span>
           <div style=${{display:'flex',gap:'.2rem',flexWrap:'wrap'}}>
             ${['all','open','in_progress','resolved'].map(function(v){return html`<button key=${v} onClick=${function(){d({t:A.UPD_FILTERS,u:{status:v}})}}
-              style=${PILL(f.status===v)}>${v==='all'?'All':v==='in_progress'?'In prog':v.charAt(0).toUpperCase()+v.slice(1)}</button>`})}
+              style=${PILL(f.status===v)}>${v==='all'?_cc_t('issues.filter.statusAll','All'):v==='in_progress'?_cc_t('issues.filter.statusInProgress','In prog'):v.charAt(0).toUpperCase()+v.slice(1)}</button>`})}
           </div>
         </div>
 
