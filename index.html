@@ -36012,13 +36012,13 @@ function startApp() {
 
       <!-- Section / Clipping -->
       <div style=${{padding:'.75rem',borderBottom:'1px solid var(--border-subtle)'}}>
-        <span style=${SEC}>Section / Clipping</span>
+        <span style=${SEC}>${_cc_t('tools.sectionClipping','Section / Clipping')}</span>
         <div style=${{display:'flex',gap:'.2rem',marginBottom:'.3rem'}}>
           ${[{axis:'x',label:'X'},{axis:'z',label:'Y'},{axis:'y',label:'Z'}].map(function(item){return html`<button key=${item.axis}
             onClick=${function(){d({t:A.SECTION_BOX,v:null});d({t:A.SECTION,axis:s.sectionAxis===item.axis?null:item.axis});}}
             style=${{...S_BTN,flex:1,padding:'.3rem',background:s.sectionAxis===item.axis?'var(--accent)':'var(--bg-secondary)',color:s.sectionAxis===item.axis?'#fff':'var(--text-muted)'}}>${item.label}</button>`})}
           <button onClick=${function(){d({t:A.SECTION,axis:null});d({t:A.SECTION_BOX,v:null});}}
-            style=${{...S_BTN,flex:1,padding:'.3rem',background:!sectionActive?'var(--accent)':'var(--bg-secondary)',color:!sectionActive?'#fff':'var(--text-muted)'}}>Off</button>
+            style=${{...S_BTN,flex:1,padding:'.3rem',background:!sectionActive?'var(--accent)':'var(--bg-secondary)',color:!sectionActive?'#fff':'var(--text-muted)'}}>${_cc_t('tools.off','Off')}</button>
         </div>
         ${(s.sectionAxis||s.sectionCustom) && html`<div>
           <input type="range" min="0" max="1" step="0.005" value=${s.sectionPos}
@@ -36031,14 +36031,14 @@ function startApp() {
 
       <!-- View Markers -->
       <div style=${{padding:'.75rem',borderBottom:'1px solid var(--border-subtle)'}}>
-        <span style=${SEC}>Markers</span>
+        <span style=${SEC}>${_cc_t('tools.markers','Markers')}</span>
         <div style=${{display:'flex',flexDirection:'column',gap:'.3rem'}}>
           <button onClick=${function(){d({t:A.UPD_PREFS,u:{showMarkers:!s.prefs.showMarkers}})}}
             style=${{...S_BTN,justifyContent:'space-between',padding:'.4rem .5rem',background:'var(--bg-secondary)',border:'1px solid var(--border)',color:'var(--text-primary)',fontSize:'0.92rem'}}>
-            Markers <span style=${{color:s.prefs.showMarkers?'#22c55e':'#ef4444',fontWeight:600}}>${s.prefs.showMarkers?'On':'Off'}</span>
+            ${_cc_t('tools.markers','Markers')} <span style=${{color:s.prefs.showMarkers?'#22c55e':'#ef4444',fontWeight:600}}>${s.prefs.showMarkers?_cc_t('tools.on','On'):_cc_t('tools.off','Off')}</span>
           </button>
           <div style=${{fontSize:'0.72rem',color:'var(--text-muted)',lineHeight:1.4}}>
-            Clash markers are shown in red/amber, issue markers in green.
+            ${_cc_t('tools.markersSub','Clash markers are shown in red/amber, issue markers in green.')}
           </div>
         </div>
       </div>
@@ -36047,28 +36047,28 @@ function startApp() {
 
       <!-- Export -->
       <div style=${{padding:'.75rem',borderBottom:'1px solid var(--border-subtle)'}}>
-        <span style=${SEC}>Export</span>
-        <${_ExportFlyout} label="Export" icon=${html`<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>`}
+        <span style=${SEC}>${_cc_t('tools.export','Export')}</span>
+        <${_ExportFlyout} label=${_cc_t('tools.export','Export')} icon=${html`<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>`}
           items=${[
-            {label:'Project (.ccproject)', hint:'Clashes, issues, viewpoints, settings', disabled:!s.models.length&&!s.clashes.length&&!s.issues.length, action:function(){saveProject(s);}},
+            {label:_cc_t('tools.exportProject','Project (.ccproject)'), hint:_cc_t('tools.exportProjectHint','Clashes, issues, viewpoints, settings'), disabled:!s.models.length&&!s.clashes.length&&!s.issues.length, action:function(){saveProject(s);}},
             {type:'divider'},
-            {label:'BCF 2.1', hint:'Clashes & issues', disabled:!s.clashes.length&&!s.issues.length, action:function(){var all=s.clashes.concat(s.issues);exportBCF(all,'2.1',s.viewpoints,s);}},
-            {label:'BCF 3.0', hint:'With extensions', disabled:!s.clashes.length&&!s.issues.length, action:function(){var all=s.clashes.concat(s.issues);exportBCF(all,'3.0',s.viewpoints,s);}},
+            {label:'BCF 2.1', hint:_cc_t('tools.exportBcfHint','Clashes & issues'), disabled:!s.clashes.length&&!s.issues.length, action:function(){var all=s.clashes.concat(s.issues);exportBCF(all,'2.1',s.viewpoints,s);}},
+            {label:'BCF 3.0', hint:_cc_t('tools.exportBcf30Hint','With extensions'), disabled:!s.clashes.length&&!s.issues.length, action:function(){var all=s.clashes.concat(s.issues);exportBCF(all,'3.0',s.viewpoints,s);}},
             {type:'divider'},
-            {label:'IFCSidecar (all models)', hint:'GLB + .ifcprops + .ifcmeta', disabled:!s.models.length, action:function(){s.models.forEach(function(m){exportSidecar(m);});}},
-          ].concat(s.models.length>1 ? s.models.map(function(m){return {label:'Sidecar: '+(m.name||m.id), hint:(m.elements||[]).length+' elements', action:function(){exportSidecar(m);}};}) : [])} />
+            {label:_cc_t('tools.exportSidecar','IFCSidecar (all models)'), hint:'GLB + .ifcprops + .ifcmeta', disabled:!s.models.length, action:function(){s.models.forEach(function(m){exportSidecar(m);});}},
+          ].concat(s.models.length>1 ? s.models.map(function(m){return {label:_cc_t('tools.exportSidecarOne','Sidecar: {name}',{name:m.name||m.id}), hint:_cc_t('tools.exportSidecarElements','{n} elements',{n:(m.elements||[]).length}), action:function(){exportSidecar(m);}};}) : [])} />
       </div>
 
       <!-- Import -->
       <div style=${{padding:'.75rem',borderBottom:'1px solid var(--border-subtle)'}}>
-        <span style=${SEC}>Import</span>
+        <span style=${SEC}>${_cc_t('tools.import','Import')}</span>
         <div style=${{display:'flex',flexDirection:'column',gap:'.2rem'}}>
           <button onClick=${function(){loadProject(d);}}
-            style=${{...S_BTN,width:'100%',padding:'.35rem .5rem',fontSize:'0.8rem',background:'var(--bg-secondary)',color:'var(--text-secondary)',border:'1px solid var(--border)'}}>Project (.ccproject)</button>
+            style=${{...S_BTN,width:'100%',padding:'.35rem .5rem',fontSize:'0.8rem',background:'var(--bg-secondary)',color:'var(--text-secondary)',border:'1px solid var(--border)'}}>${_cc_t('tools.exportProject','Project (.ccproject)')}</button>
           <button onClick=${function(){importBCF(d);}}
             style=${{...S_BTN,width:'100%',padding:'.35rem .5rem',fontSize:'0.8rem',background:'var(--bg-secondary)',color:'var(--text-secondary)',border:'1px solid var(--border)'}}>BCF</button>
           <button onClick=${function(){if(window._ccOpen2D)window._ccOpen2D();}}
-            style=${{...S_BTN,width:'100%',padding:'.35rem .5rem',fontSize:'0.8rem',background:'var(--bg-secondary)',color:'var(--text-secondary)',border:'1px solid var(--border)'}}>2D Floor Plan (DXF / PDF / DWG)</button>
+            style=${{...S_BTN,width:'100%',padding:'.35rem .5rem',fontSize:'0.8rem',background:'var(--bg-secondary)',color:'var(--text-secondary)',border:'1px solid var(--border)'}}>${_cc_t('tools.import2D','2D Floor Plan (DXF / PDF / DWG)')}</button>
         </div>
       </div>
 
