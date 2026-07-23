@@ -354,11 +354,13 @@ invert Y, collision, head-bob, footsteps).~~ ~~Settings → Privacy tab in full 
 annotation buttons, recorded-data count summary with separate singular/plural keys — `_cc_t` has no
 plural rules — send/delete buttons, browser-storage usage + per-project rows, geometry cache).~~
 (all 2026-07-23)
-**CI flakiness recurred on #709 too, worse than before** — zero `ci.yml` runs fired across all 4
-pushes to this branch (confirmed via `list_workflow_runs`, not just an assumption from the PR UI).
-Same fix as before (empty-commit nudge); flagging again that this needs a maintainer look at the
-GitHub App installation if it keeps recurring — it's now failed to auto-fire on every single push
-across both PRs this session, not just "occasionally."
+**#709 showing zero CI runs is NOT the same synchronize-event flake as #708** — root-caused it:
+`ci.yml`'s trigger is `pull_request: branches: [main]`, i.e. it only fires for PRs whose BASE is
+`main`. #709's base is deliberately the feature branch (stacked on #708), so `ci.yml` correctly
+never runs here — no empty-commit nudge fixes this, that only ever worked for #708 (base=main).
+This is an expected consequence of the stacked-PR structure, not an infra problem — resolves itself
+once #709 is retargeted to `main` after #708 merges. (The #708 `synchronize`-not-firing flake
+earlier in this doc is real and separate — that one genuinely is a maintainer-follow-up item.)
 **Remaining (long tail, can proceed independently in future sessions):** Settings modal's other
 tabs (Shared/AI/Advanced), Share modal, Smart Views modal, sidebar/Models panel, Standards/Tools/
 Integrations panels, and the rest of `index.html`.
