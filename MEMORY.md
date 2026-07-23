@@ -302,12 +302,29 @@ real starter `locales/ja.json` (needs native-speaker review — flagged as such 
 field).~~ (2026-07-23) `regulations/manifest.json` deliberately ships EMPTY — thresholds are
 safety-relevant (door widths, ramp slopes) and a fabricated/unverified regional preset is worse
 than none; template requires a `source` citation + defaults `verified:false`.
-**Still to do:** Settings panel Language/Regional-code dropdowns (manifest-driven, lazy-load on
-pick); CI validators (`validate-locale.js`/`validate-regulation.js` — schema, size cap, HTML/script
-content-injection scan) gating PRs touching `locales/**`/`regulations/**`; label-gated issue-ops
-Action so non-developers can attach a file to a GitHub issue and get an auto-opened PR instead of
-forking (bot token scoped to PR-branch only, first-time-contributor Action approval left on); the
-long-tail retrofit of `index.html`'s hardcoded strings to `_cc_t()`, panel by panel.
+~~Settings → General: Language + Regional building code dropdowns, manifest-driven (fetch manifest
+on modal mount, individual pack JSON only on pick). `navigator.language`/model-geolocation
+auto-suggest deliberately deferred — would need an eager manifest fetch at app boot, a separate
+tradeoff.~~ (2026-07-23)
+~~`scripts/validate-locale.js`/`validate-regulation.js` — strict JSON shape, 200KB cap, content scan
+rejecting `<script`/`javascript:`/`on*=`/raw HTML in strings; regulation packs additionally require
+a `source` citation + boolean `verified`, flag unrecognized threshold keys as likely typos. Rides
+the existing `npm test` step in `ci.yml` (no workflow changes) via
+`tests/locale-regulation-pack-validation.test.js`, which also re-validates every real pack +
+manifest entry on every run.~~ (2026-07-23)
+~~Label-gated issue-ops pipeline: `.github/ISSUE_TEMPLATE/contribute-{locale,regulation}-pack.yml`
+(drag-and-drop file attachment) + `.github/workflows/contribute-pack.yml`, firing ONLY on a
+maintainer-applied `contribution:review-passed` label (needs one-time manual creation in repo
+Settings — not auto-created like the template's default labels), never the raw submission. Runs
+`scripts/apply-contributed-pack.js` (validates, then writes pack+manifest entry; refuses to touch
+an id that already exists so automation can only create NEW packs, never silently overwrite a
+reviewed one) and opens a draft PR crediting the contributor. Token scoped to
+contents+pull-requests+issues write only. `tests/apply-contributed-pack.test.js` covers
+create/duplicate-refusal/validation-rejection.~~ (2026-07-23)
+PR #708 (draft) tracks all of the above, CI green, 801 tests passing.
+**Still to do (long tail, can proceed independently):** retrofit `index.html`'s hardcoded UI
+strings to `_cc_t()`, panel by panel (toolbar → Issues → Data Quality/Accessibility → rest) — each
+its own reviewable commit.
 
 **Park inactive models — memory relief (2026-07-22, branch `claude/clashcontrol-v7-release-plan-jp5njw`)** —
 diagnosed the "viewer stalls a few seconds" + "5.2 GB heap > 4.09 GB limit" reports as the SAME
