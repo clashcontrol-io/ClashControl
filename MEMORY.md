@@ -371,10 +371,33 @@ tests/assignment-rules-wiring.test.js's literal-text anchor to match the `_cc_t(
 source).~~ ~~Tools panel in full (Section/Clipping, Markers, Export flyout, Import).~~
 ~~Integrations panel top-level chrome (intro, empty state, Enable/Disable, Built-in/Always-on
 badges, Revit connection status line).~~
-**Remaining (long tail, can proceed independently in future sessions):** Settings modal's Shared/AI/
-Advanced tabs, Share modal's Comments tab (`ShareCommentsTab`), Integrations panel's deep per-addon
-expanded states (Revit model-sync detail, Smart Bridge setup, etc.), sidebar/Models panel, and the
-rest of `index.html`.
+PR #709 continued (2026-07-23, after the "keep going — EVERYTHING" instruction): ~~Settings modal's
+Shared/AI/Advanced tabs.~~ ~~Share modal Comments tab (`ShareCommentsTab` + `ShareCommentDraft`).~~
+~~Integrations panel's deep per-addon expanded states (Revit Bridge: Cancel/Pull/Update/Push/
+Disconnect/Connect, linked-models option, Show all integrations).~~ ~~`ModelSidebar` in full: header/
+count, Add/Loading button, empty state, Parked models section + confirm dialog, Auto-park toggle, 2D
+Underlays header, Geo Placement (Clear/Place from CRS/Use IfcSite/Enter lat-lon/Remove 3D context),
+Reference Layers (Size/Opacity labels), Levels section (All on/All off/Show-Hide level/Exit-Open
+plan). PDOK/ion/Google 3D-tiles provider button labels left untranslated on purpose — proper nouns /
+a Dutch-specific service name, not generic UI text.~~ ~~`RunDetectionModal` in full (title, close
+aria, placement-check warning, project-standards disclosure, footer hint, Run/Stop buttons).~~
+~~`ClashRulesPanel` in full: all 6 quick-run preset label/note/desc triples, Saved presets row (Save/
+Cancel/name placeholder/Load/Load & Run/Delete), all 3 detection-type radio labels+descriptions, gap
+threshold labels, filtering-options toggles (×3) with descriptions, Check-within / ignore-overlaps-
+smaller-than labels, engine selector (ClashControlEngine/WASM/Browser labels+hints), Run/Stop
+Detection buttons.~~ (all 2026-07-23) `locales/ja.json` kept in sync every slice; all 801 tests green
+throughout.
+**Remaining (long tail, can proceed independently in future sessions):** `ModelClashMatrix`,
+`ClashHistory`, `ClashToleranceEditor`, `IssueRow`, Walk-mode components (`WalkPegmanLayer`/
+`WalkModeHUD`/`WalkSplineRecorder`/`WalkClashRadar`/`WalkMinimap`), `PresentationOverlay`,
+`StoreyScopeModal`, `ShortcutsModal`, `LoadProgressCard`, `CmdKPalette`, `StoreyPickerModal`,
+`SheetToolbarControls`, `ExportBar`, `ClashSetupCard`, `NLCommandPanel`, `LeftRail`, `PrivacyBanner`,
+`OperationCenter`, `MemoryWarningModal`, `TutorialPortal`, `AIChatPanel`, `ClashChips`,
+`WelcomePopup`, `WorkspaceTabs`, `AvatarMenu`, `ResponsiveToolGroup`, `DesktopTopBar`, `MobileNav`,
+`RevitBridgePanel`, `IDSValidationPanel`, `PropBlock`/`PropDiffView`/`ClashProps`, `VirtualList`,
+`GuidedTour`, `ColorLegend`, `ViewCube`, `SectionBoxUI`, `ModelCard`, `NavigatorPanel`, and more —
+this is genuinely the entire rest of the ~38.7k-line file; partial coverage is safe by design
+(`_cc_t` falls back to the English string for any untranslated key, so the app never breaks).
 
 **Park inactive models — memory relief (2026-07-22, branch `claude/clashcontrol-v7-release-plan-jp5njw`)** —
 diagnosed the "viewer stalls a few seconds" + "5.2 GB heap > 4.09 GB limit" reports as the SAME
