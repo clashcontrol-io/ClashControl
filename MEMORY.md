@@ -343,9 +343,25 @@ modal: all titles, From Clash/Linked Element context, every form label/placehold
 Cancel/Create buttons.~~ (all 2026-07-23) `locales/ja.json` kept in sync with every newly-wired key
 each slice — updating tests/dq-reconciliation-wiring.test.js's literal-adjacency assertions once,
 where `_cc_t()`-wrapping changed the exact source shape a wiring test checked against.
+
+**Split into its own PR partway through**, per explicit direction: PR #708 now covers just the
+foundational scaffold (tasks above through the New Issue modal commit); further retrofit work moved
+to a NEW branch `claude/i18n-string-retrofit` / **PR #709**, based on `claude/japanese-localization-
+request-eleplc` (stacked — retarget to `main` once #708 merges, since this code calls `_cc_t()`
+which only exists once #708 lands). PR #709 so far: ~~Settings → Measurement tab in full (units,
+precision, magnifier, calibrate).~~ ~~Settings → Walk mode tab in full (eye height, sensitivity,
+invert Y, collision, head-bob, footsteps).~~ ~~Settings → Privacy tab in full (anon data sharing,
+annotation buttons, recorded-data count summary with separate singular/plural keys — `_cc_t` has no
+plural rules — send/delete buttons, browser-storage usage + per-project rows, geometry cache).~~
+(all 2026-07-23)
+**CI flakiness recurred on #709 too, worse than before** — zero `ci.yml` runs fired across all 4
+pushes to this branch (confirmed via `list_workflow_runs`, not just an assumption from the PR UI).
+Same fix as before (empty-commit nudge); flagging again that this needs a maintainer look at the
+GitHub App installation if it keeps recurring — it's now failed to auto-fire on every single push
+across both PRs this session, not just "occasionally."
 **Remaining (long tail, can proceed independently in future sessions):** Settings modal's other
-tabs (Measurement/Walk/Privacy/Shared/AI/Advanced), Share modal, Smart Views modal, sidebar/Models
-panel, Standards/Tools/Integrations panels, and the rest of `index.html`.
+tabs (Shared/AI/Advanced), Share modal, Smart Views modal, sidebar/Models panel, Standards/Tools/
+Integrations panels, and the rest of `index.html`.
 **Still to do (long tail, can proceed independently):** rest of IssuePanel's filter controls
 (Discipline/Floor/Distance/Priority/Category/Assignee dropdowns, empty states), then Data
 Quality/Accessibility panels, then the rest of `index.html` — each its own reviewable commit.
