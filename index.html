@@ -22861,27 +22861,27 @@ function startApp() {
         <div style=${{display:'flex',gap:'.3rem',alignItems:'center'}}>
           <select value=${selectedModel} onChange=${function(e){setSelectedModel(e.target.value);}}
             style=${{flex:'1 1 0',minWidth:0,fontSize:'0.72rem',padding:'.25rem .4rem',background:'var(--bg-primary)',color:'var(--text-primary)',border:'1px solid var(--border)',borderRadius:5,fontFamily:'inherit'}}>
-            <option value="all">All models</option>
+            <option value="all">${_cc_t('dq.allModels','All models')}</option>
             ${(s.models||[]).map(function(m){return html`<option key=${m.id} value=${m.id}>${m.name}</option>`})}
           </select>
           ${qc && html`<span style=${{fontSize:'0.63rem',padding:'2px 6px',borderRadius:99,
             background:totalIssues+totalBim+totalIls===0?'#052e16':'#78350f',
             color:totalIssues+totalBim+totalIls===0?'#4ade80':'#fcd34d',fontWeight:600,flexShrink:0}}>
-            ${totalIssues+totalBim+totalIls===0?'All passed':totalIssues+totalBim+totalIls+' issues'}
+            ${totalIssues+totalBim+totalIls===0?_cc_t('dq.allPassed','All passed'):_cc_t('dq.issuesCount','{n} issues',{n:totalIssues+totalBim+totalIls})}
           </span>`}
           <button onClick=${runChecks} disabled=${isRunning || !hasModels}
             style=${{padding:'.25rem .6rem',borderRadius:5,fontSize:'0.72rem',fontWeight:600,cursor:hasModels?'pointer':'not-allowed',border:'none',flexShrink:0,whiteSpace:'nowrap',
               background:isRunning?'var(--bg-tertiary)':'var(--accent)',color:isRunning?'var(--text-faint)':'#fff',fontFamily:'inherit',
               opacity:hasModels?1:0.5}}>
-            ${isRunning ? 'Checking…' : qc ? 'Re-check' : 'Run checks'}
+            ${isRunning ? _cc_t('dq.checking','Checking…') : qc ? _cc_t('dq.recheck','Re-check') : _cc_t('dq.runChecks','Run checks')}
           </button>
         </div>
-        ${lastChecked && html`<span style=${{fontSize:'0.63rem',color:'var(--text-faint)'}}>Last checked: ${Math.round((Date.now()-lastChecked)/60000)} min ago</span>`}
+        ${lastChecked && html`<span style=${{fontSize:'0.63rem',color:'var(--text-faint)'}}>${_cc_t('dq.lastChecked','Last checked: {n} min ago',{n:Math.round((Date.now()-lastChecked)/60000)})}</span>`}
         ${dqDelta && (dqDelta.worse.length>0 || dqDelta.better.length>0) && html`<div>
           <div onClick=${function(){toggleExp('dq_delta');}} style=${{display:'flex',gap:'.35rem',alignItems:'center',fontSize:'0.63rem',cursor:'pointer'}}>
-            <span style=${{color:'var(--text-faint)'}}>Since last run:</span>
-            ${dqDelta.worse.length>0 && html`<span style=${{color:'#f87171',fontWeight:600}}>${dqDelta.worse.length} worse</span>`}
-            ${dqDelta.better.length>0 && html`<span style=${{color:'#4ade80',fontWeight:600}}>${dqDelta.better.length} better</span>`}
+            <span style=${{color:'var(--text-faint)'}}>${_cc_t('dq.sinceLastRun','Since last run:')}</span>
+            ${dqDelta.worse.length>0 && html`<span style=${{color:'#f87171',fontWeight:600}}>${_cc_t('dq.worse','{n} worse',{n:dqDelta.worse.length})}</span>`}
+            ${dqDelta.better.length>0 && html`<span style=${{color:'#4ade80',fontWeight:600}}>${_cc_t('dq.better','{n} better',{n:dqDelta.better.length})}</span>`}
             <span style=${{color:'var(--text-faint)'}}>${expanded['dq_delta']?'▲':'▼'}</span>
           </div>
           ${expanded['dq_delta'] && html`<div style=${{padding:'.2rem 0 0 .3rem',display:'flex',flexDirection:'column',gap:'.1rem'}}>
@@ -22893,18 +22893,18 @@ function startApp() {
             </div>`;})}
           </div>`}
         </div>`}
-        ${!hasModels && html`<span style=${{fontSize:'0.69rem',color:'var(--text-faint)'}}>Load a model to run data quality checks.</span>`}
+        ${!hasModels && html`<span style=${{fontSize:'0.69rem',color:'var(--text-faint)'}}>${_cc_t('dq.loadModel','Load a model to run data quality checks.')}</span>`}
         <div style=${{display:'flex',gap:'.2rem',alignItems:'center',fontSize:'0.63rem',color:'var(--text-faint)'}}>
-          <span style=${{width:7,height:7,borderRadius:'50%',background:'#ef4444',flexShrink:0,display:'inline-block'}}></span> Error
-          <span style=${{width:7,height:7,borderRadius:'50%',background:'#f59e0b',flexShrink:0,display:'inline-block',marginLeft:'.3rem'}}></span> Warning
-          <span style=${{width:7,height:7,borderRadius:'50%',background:'#60a5fa',flexShrink:0,display:'inline-block',marginLeft:'.3rem'}}></span> Info
+          <span style=${{width:7,height:7,borderRadius:'50%',background:'#ef4444',flexShrink:0,display:'inline-block'}}></span> ${_cc_t('dq.error','Error')}
+          <span style=${{width:7,height:7,borderRadius:'50%',background:'#f59e0b',flexShrink:0,display:'inline-block',marginLeft:'.3rem'}}></span> ${_cc_t('dq.warning','Warning')}
+          <span style=${{width:7,height:7,borderRadius:'50%',background:'#60a5fa',flexShrink:0,display:'inline-block',marginLeft:'.3rem'}}></span> ${_cc_t('dq.info','Info')}
         </div>
       </div>
 
       <div style=${{flex:1,overflowY:'auto'}}>
         ${qc && html`<div>
           <div onClick=${function(){toggleSection('general');}} style=${SEC}>
-            <span>General Checks</span>
+            <span>${_cc_t('dq.generalChecks','General Checks')}</span>
             <span style=${{fontSize:'0.57rem',color:'var(--text-faint)'}}>${sections.general?'▲':'▼'}</span>
           </div>
           ${sections.general && renderCheckGroup(qc, ['guidCollision','noGlobalId','proxy','genericName','duplicateName','noMaterial','noStorey','emptyGeometry','zeroLayers','unhostedOpenings','noProperties','noDescription'], 'General')}
@@ -22912,7 +22912,7 @@ function startApp() {
 
         ${bim && html`<div>
           <div onClick=${function(){toggleSection('bim');}} style=${SEC}>
-            <span>BIM Model Checks</span>
+            <span>${_cc_t('dq.bimChecks','BIM Model Checks')}</span>
             <span style=${{fontSize:'0.57rem',color:'var(--text-faint)'}}>${sections.bim?'▲':'▼'}</span>
           </div>
           ${sections.bim && renderCheckGroup(bim, ['thicknessMismatch','noFireRating','noIsExternal','noLoadBearing','missingCommonPset','noClassification','noObjectType','invalidName','missingArea','missingVolume'], 'BIM')}
@@ -22920,7 +22920,7 @@ function startApp() {
 
         ${ils && html`<div>
           <div onClick=${function(){toggleSection('ils');}} style=${SEC}>
-            <span>ILS / NL-SfB</span>
+            <span>${_cc_t('dq.ilsChecks','ILS / NL-SfB')}</span>
             <span style=${{display:'flex',alignItems:'center',gap:'.3rem'}}>
               ${totalIls > 0 ? html`<span style=${{fontSize:'0.57rem',padding:'1px 5px',borderRadius:99,background:'#78350f',color:'#fcd34d',fontWeight:600}}>${totalIls}</span>` : null}
               <span style=${{fontSize:'0.57rem',color:'var(--text-faint)'}}>${sections.ils?'▲':'▼'}</span>
