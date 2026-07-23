@@ -23396,7 +23396,7 @@ function startApp() {
     var dupeTypeCount = data.typeRules.filter(function(_,i){return isTypeDuplicate(i);}).length;
     var dupeDiscCount = data.rules.filter(function(_,i){return isDuplicate(i);}).length;
     return html`<div style=${{flex:1,overflowY:'auto',padding:'.6rem'}}>
-      <div style=${{fontSize:'0.75rem',fontWeight:700,color:'var(--text-muted)',textTransform:'uppercase',letterSpacing:'.06em',marginBottom:'.6rem',paddingBottom:'.4rem',borderBottom:'1px solid var(--border-subtle)'}}>Detection Rules</div>
+      <div style=${{fontSize:'0.75rem',fontWeight:700,color:'var(--text-muted)',textTransform:'uppercase',letterSpacing:'.06em',marginBottom:'.6rem',paddingBottom:'.4rem',borderBottom:'1px solid var(--border-subtle)'}}>${_cc_t('standards.detectionRules','Detection Rules')}</div>
       ${s && d && html`<div style=${{marginBottom:'1rem',paddingBottom:'.8rem',borderBottom:'2px solid var(--border)'}}>
         <${ClashRulesPanel} s=${s} d=${d} />
       </div>`}
@@ -23408,95 +23408,95 @@ function startApp() {
       <div style=${{display:'flex',gap:'.4rem',marginBottom:'.8rem'}}>
         <button onClick=${exportRules}
           style=${{flex:1,fontSize:'0.69rem',padding:'.3rem .5rem',background:'var(--bg-secondary)',color:'var(--text-secondary)',border:'1px solid var(--border)',borderRadius:4,cursor:'pointer',fontWeight:600}}>
-          ↓ Export rules
+          ↓ ${_cc_t('standards.exportRules','Export rules')}
         </button>
         <button onClick=${function(){importRef.current&&importRef.current.click();}}
           style=${{flex:1,fontSize:'0.69rem',padding:'.3rem .5rem',background:'var(--bg-secondary)',color:'var(--text-secondary)',border:'1px solid var(--border)',borderRadius:4,cursor:'pointer',fontWeight:600}}>
-          ↑ Import rules
+          ↑ ${_cc_t('standards.importRules','Import rules')}
         </button>
       </div>
       ${importErrMsg && html`<div style=${{fontSize:'0.63rem',color:'#fca5a5',marginBottom:'.5rem',padding:'.25rem .4rem',background:'rgba(239,68,68,.08)',borderRadius:4}}>${importErrMsg}</div>`}
 
       <div style=${{marginBottom:'.8rem'}}>
-        <span style=${LS}>Default minimum clearance (mm)</span>
+        <span style=${LS}>${_cc_t('standards.defaultClearance','Default minimum clearance (mm)')}</span>
         <input type="number" min="0" step="1" placeholder="e.g. 50"
           value=${data.defaultClearance!=null?data.defaultClearance:''}
           onInput=${function(e){updateDefault(e.target.value);}}
           style=${{fontSize:'0.8rem',padding:'.3rem .4rem',background:'var(--bg-secondary)',border:'1px solid var(--border)',borderRadius:4,color:'var(--text-primary)',width:'100%',boxSizing:'border-box'}} />
-        <span style=${{fontSize:'0.63rem',color:'var(--text-faint)',marginTop:'.15rem',display:'block'}}>Used for any pair not listed below</span>
+        <span style=${{fontSize:'0.63rem',color:'var(--text-faint)',marginTop:'.15rem',display:'block'}}>${_cc_t('standards.defaultClearanceSub','Used for any pair not listed below')}</span>
       </div>
 
       ${s && d && html`<div style=${{marginBottom:'.8rem'}}>
-        <span style=${LS}>Default max gap (mm)</span>
+        <span style=${LS}>${_cc_t('standards.defaultMaxGap','Default max gap (mm)')}</span>
         <input type="number" min="0" max="2000" step="5" placeholder="50"
           value=${(s.prefs&&s.prefs.defaultMaxGap)||50}
           onInput=${function(e){d({t:A.UPD_PREFS,u:{defaultMaxGap:+e.target.value||0}});}}
           style=${{fontSize:'0.8rem',padding:'.3rem .4rem',background:'var(--bg-secondary)',border:'1px solid var(--border)',borderRadius:4,color:'var(--text-primary)',width:'100%',boxSizing:'border-box'}} />
-        <span style=${{fontSize:'0.63rem',color:'var(--text-faint)',marginTop:'.15rem',display:'block'}}>Initial max gap distance for near misses when running a new detection</span>
+        <span style=${{fontSize:'0.63rem',color:'var(--text-faint)',marginTop:'.15rem',display:'block'}}>${_cc_t('standards.defaultMaxGapSub','Initial max gap distance for near misses when running a new detection')}</span>
       </div>
       <label style=${{display:'flex',alignItems:'center',justifyContent:'space-between',gap:'.5rem',marginBottom:'.8rem',cursor:'pointer'}}>
         <div style=${{flex:1,minWidth:0}}>
-          <span style=${LS}>Reset filters after detection</span>
-          <span style=${{fontSize:'0.63rem',color:'var(--text-faint)',display:'block'}}>Clear all filters when running a new clash detection</span>
+          <span style=${LS}>${_cc_t('standards.resetFilters','Reset filters after detection')}</span>
+          <span style=${{fontSize:'0.63rem',color:'var(--text-faint)',display:'block'}}>${_cc_t('standards.resetFiltersSub','Clear all filters when running a new clash detection')}</span>
         </div>
         <input type="checkbox" checked=${(s.prefs&&s.prefs.resetFiltersOnRun)!==false}
           onChange=${function(e){d({t:A.UPD_PREFS,u:{resetFiltersOnRun:e.target.checked}});}}
           style=${{accentColor:'var(--accent)',width:16,height:16,flexShrink:0}} />
       </label>`}
 
-      <div style=${{fontSize:'0.75rem',fontWeight:600,color:'var(--text-muted)',textTransform:'uppercase',letterSpacing:'.05em',marginBottom:'.2rem'}}>IFC type-pair rules</div>
-      <span style=${{fontSize:'0.63rem',color:'var(--text-faint)',display:'block',marginBottom:'.35rem'}}>Highest priority — matched by IFC element type (e.g. IfcPipe vs IfcWall)</span>
+      <div style=${{fontSize:'0.75rem',fontWeight:600,color:'var(--text-muted)',textTransform:'uppercase',letterSpacing:'.05em',marginBottom:'.2rem'}}>${_cc_t('standards.ifcTypeRules','IFC type-pair rules')}</div>
+      <span style=${{fontSize:'0.63rem',color:'var(--text-faint)',display:'block',marginBottom:'.35rem'}}>${_cc_t('standards.ifcTypeRulesSub','Highest priority — matched by IFC element type (e.g. IfcPipe vs IfcWall)')}</span>
 
       ${data.typeRules.length===0 && html`<div style=${{padding:'.6rem',background:'var(--bg-secondary)',borderRadius:6,fontSize:'0.69rem',color:'var(--text-faint)',textAlign:'center',marginBottom:'.5rem'}}>
-        No IFC type rules yet. These take priority over discipline rules.
+        ${_cc_t('standards.noTypeRules','No IFC type rules yet. These take priority over discipline rules.')}
       </div>`}
 
       ${data.typeRules.map(function(r,i){
         var dup=isTypeDuplicate(i);
         return html`<div key=${'t'+i} style=${{padding:'.4rem',background:dup?'rgba(239,68,68,.08)':'var(--bg-secondary)',borderRadius:6,marginBottom:'.35rem',border:dup?'1px solid #ef444466':'1px solid var(--border-subtle)'}}>
-          ${dup && html`<div style=${{fontSize:'0.57rem',color:'#fca5a5',marginBottom:'.2rem',fontWeight:600}}>⚠ Duplicate pair — overridden by earlier rule</div>`}
+          ${dup && html`<div style=${{fontSize:'0.57rem',color:'#fca5a5',marginBottom:'.2rem',fontWeight:600}}>${_cc_t('standards.duplicatePair','⚠ Duplicate pair — overridden by earlier rule')}</div>`}
           <div style=${{display:'flex',gap:'.3rem',alignItems:'center',marginBottom:'.25rem'}}>
-            <input type="text" list="cc-ifc-types" placeholder="IFC Type A (e.g. IfcPipe)" value=${r.ifc_type_a||''}
+            <input type="text" list="cc-ifc-types" placeholder=${_cc_t('standards.ifcTypeAPlaceholder','IFC Type A (e.g. IfcPipe)')} value=${r.ifc_type_a||''}
               onInput=${function(e){updTypeRow(i,'ifc_type_a',e.target.value);}}
               style=${Object.assign({},rowInputStyle,{flex:1})} />
-            <span style=${{fontSize:'0.69rem',color:'var(--text-faint)'}}>vs</span>
-            <input type="text" list="cc-ifc-types" placeholder="IFC Type B (e.g. IfcWall)" value=${r.ifc_type_b||''}
+            <span style=${{fontSize:'0.69rem',color:'var(--text-faint)'}}>${_cc_t('standards.vs','vs')}</span>
+            <input type="text" list="cc-ifc-types" placeholder=${_cc_t('standards.ifcTypeBPlaceholder','IFC Type B (e.g. IfcWall)')} value=${r.ifc_type_b||''}
               onInput=${function(e){updTypeRow(i,'ifc_type_b',e.target.value);}}
               style=${Object.assign({},rowInputStyle,{flex:1})} />
-            <button onClick=${function(){delTypeRow(i);}} title="Remove rule"
+            <button onClick=${function(){delTypeRow(i);}} title=${_cc_t('standards.removeRule','Remove rule')}
               style=${{background:'none',border:'none',color:'#f87171',cursor:'pointer',fontSize:'0.86rem',padding:'0 .2rem',lineHeight:1}}>×</button>
           </div>
           <div style=${{display:'flex',gap:'.4rem',alignItems:'center'}}>
             <div style=${{flex:1}}>
-              <span style=${{fontSize:'0.57rem',color:'var(--text-faint)'}}>Min clearance (mm)</span>
+              <span style=${{fontSize:'0.57rem',color:'var(--text-faint)'}}>${_cc_t('standards.minClearance','Min clearance (mm)')}</span>
               <input type="number" min="0" step="1" value=${r.clearance_mm!=null&&r.clearance_mm!==''?r.clearance_mm:''}
                 onInput=${function(e){updTypeRow(i,'clearance_mm',e.target.value===''?'':Number(e.target.value));}}
                 style=${rowInputStyle} />
             </div>
             <label style=${{display:'flex',alignItems:'center',gap:'.2rem',fontSize:'0.57rem',color:'var(--text-muted)',cursor:'pointer',whiteSpace:'nowrap'}}
-              title="When checked, clashes of this type are always marked as hard clashes regardless of distance">
+              title=${_cc_t('standards.alwaysHardTitle','When checked, clashes of this type are always marked as hard clashes regardless of distance')}>
               <input type="checkbox" checked=${r.hard_always_flagged!==false}
                 onChange=${function(e){updTypeRow(i,'hard_always_flagged',e.target.checked);}}
                 style=${{accentColor:'var(--accent)'}} />
-              Always treat as hard clash
+              ${_cc_t('standards.alwaysHard','Always treat as hard clash')}
             </label>
           </div>
         </div>`})}
 
       <div style=${{display:'flex',gap:'.3rem',marginBottom:'1rem'}}>
         <button onClick=${addTypeRow}
-          style=${{fontSize:'0.69rem',padding:'.3rem .6rem',background:'var(--bg-secondary)',color:'var(--accent)',border:'1px solid var(--accent-subtle)',borderRadius:'var(--radius-xs)',cursor:'pointer',fontWeight:600,flex:1}}>+ Add IFC type rule</button>
-        <button onClick=${exportTypeRules} title="Export IFC type-pair rules"
+          style=${{fontSize:'0.69rem',padding:'.3rem .6rem',background:'var(--bg-secondary)',color:'var(--accent)',border:'1px solid var(--accent-subtle)',borderRadius:'var(--radius-xs)',cursor:'pointer',fontWeight:600,flex:1}}>+ ${_cc_t('standards.addTypeRule','Add IFC type rule')}</button>
+        <button onClick=${exportTypeRules} title=${_cc_t('standards.exportTypeRules','Export IFC type-pair rules')}
           style=${{fontSize:'0.69rem',padding:'.3rem .5rem',background:'var(--bg-secondary)',color:'var(--text-faint)',border:'1px solid var(--border)',borderRadius:4,cursor:'pointer'}}>↓</button>
-        <button onClick=${function(){importTypeRef.current&&importTypeRef.current.click();}} title="Import IFC type-pair rules"
+        <button onClick=${function(){importTypeRef.current&&importTypeRef.current.click();}} title=${_cc_t('standards.importTypeRules','Import IFC type-pair rules')}
           style=${{fontSize:'0.69rem',padding:'.3rem .5rem',background:'var(--bg-secondary)',color:'var(--text-faint)',border:'1px solid var(--border)',borderRadius:4,cursor:'pointer'}}>↑</button>
       </div>
 
-      <div style=${{fontSize:'0.75rem',fontWeight:600,color:'var(--text-muted)',textTransform:'uppercase',letterSpacing:'.05em',marginBottom:'.35rem'}}>Discipline-pair rules</div>
-      <span style=${{fontSize:'0.63rem',color:'var(--text-faint)',display:'block',marginBottom:'.35rem'}}>Fallback when no IFC type rule matches</span>
+      <div style=${{fontSize:'0.75rem',fontWeight:600,color:'var(--text-muted)',textTransform:'uppercase',letterSpacing:'.05em',marginBottom:'.35rem'}}>${_cc_t('standards.disciplinePairRules','Discipline-pair rules')}</div>
+      <span style=${{fontSize:'0.63rem',color:'var(--text-faint)',display:'block',marginBottom:'.35rem'}}>${_cc_t('standards.disciplinePairRulesSub','Fallback when no IFC type rule matches')}</span>
 
       ${data.rules.length===0 && html`<div style=${{padding:'.6rem',background:'var(--bg-secondary)',borderRadius:6,fontSize:'0.69rem',color:'var(--text-faint)',textAlign:'center',marginBottom:'.5rem'}}>
-        No discipline-pair rules configured yet. Rules you set here will pre-fill clash cards automatically.
+        ${_cc_t('standards.noDisciplineRules','No discipline-pair rules configured yet. Rules you set here will pre-fill clash cards automatically.')}
       </div>`}
 
       ${data.rules.map(function(r,i){
@@ -23506,41 +23506,41 @@ function startApp() {
           <div style=${{display:'flex',gap:'.3rem',alignItems:'center',marginBottom:'.25rem'}}>
             <select value=${r.discipline_a} onChange=${function(e){updRow(i,'discipline_a',e.target.value);}}
               style=${selStyle}>
-              <option value="">Discipline A</option>
+              <option value="">${_cc_t('standards.disciplineA','Discipline A')}</option>
               ${STANDARD_DISCIPLINES.map(function(dd){return html`<option key=${dd} value=${dd}>${dd.charAt(0).toUpperCase()+dd.slice(1)}</option>`})}
             </select>
-            <span style=${{fontSize:'0.69rem',color:'var(--text-faint)'}}>vs</span>
+            <span style=${{fontSize:'0.69rem',color:'var(--text-faint)'}}>${_cc_t('standards.vs','vs')}</span>
             <select value=${r.discipline_b} onChange=${function(e){updRow(i,'discipline_b',e.target.value);}}
               style=${selStyle}>
-              <option value="">Discipline B</option>
+              <option value="">${_cc_t('standards.disciplineB','Discipline B')}</option>
               ${STANDARD_DISCIPLINES.map(function(dd){return html`<option key=${dd} value=${dd}>${dd.charAt(0).toUpperCase()+dd.slice(1)}</option>`})}
             </select>
-            <button onClick=${function(){delRow(i);}} title="Remove rule"
+            <button onClick=${function(){delRow(i);}} title=${_cc_t('standards.removeRule','Remove rule')}
               style=${{background:'none',border:'none',color:'#f87171',cursor:'pointer',fontSize:'0.86rem',padding:'0 .2rem',lineHeight:1}}>×</button>
           </div>
           <div style=${{display:'flex',gap:'.4rem',alignItems:'center'}}>
             <div style=${{flex:1}}>
-              <span style=${{fontSize:'0.57rem',color:'var(--text-faint)'}}>Min clearance (mm)</span>
+              <span style=${{fontSize:'0.57rem',color:'var(--text-faint)'}}>${_cc_t('standards.minClearance','Min clearance (mm)')}</span>
               <input type="number" min="0" step="1" value=${r.clearance_mm!=null&&r.clearance_mm!==''?r.clearance_mm:''}
                 onInput=${function(e){updRow(i,'clearance_mm',e.target.value===''?'':Number(e.target.value));}}
                 style=${rowInputStyle} />
             </div>
             <label style=${{display:'flex',alignItems:'center',gap:'.2rem',fontSize:'0.57rem',color:'var(--text-muted)',cursor:'pointer',whiteSpace:'nowrap'}}
-              title="When checked, clashes of this type are always marked as hard clashes regardless of distance">
+              title=${_cc_t('standards.alwaysHardTitle','When checked, clashes of this type are always marked as hard clashes regardless of distance')}>
               <input type="checkbox" checked=${r.hard_always_flagged!==false}
                 onChange=${function(e){updRow(i,'hard_always_flagged',e.target.checked);}}
                 style=${{accentColor:'var(--accent)'}} />
-              Always treat as hard clash
+              ${_cc_t('standards.alwaysHard','Always treat as hard clash')}
             </label>
           </div>
         </div>`})}
 
       <div style=${{display:'flex',gap:'.3rem',marginBottom:'1.5rem'}}>
         <button onClick=${addRow}
-          style=${{fontSize:'0.69rem',padding:'.3rem .6rem',background:'var(--bg-secondary)',color:'var(--accent)',border:'1px solid var(--accent-subtle)',borderRadius:'var(--radius-xs)',cursor:'pointer',fontWeight:600,flex:1}}>+ Add discipline rule</button>
-        <button onClick=${exportDiscRules} title="Export discipline-pair rules"
+          style=${{fontSize:'0.69rem',padding:'.3rem .6rem',background:'var(--bg-secondary)',color:'var(--accent)',border:'1px solid var(--accent-subtle)',borderRadius:'var(--radius-xs)',cursor:'pointer',fontWeight:600,flex:1}}>+ ${_cc_t('standards.addDisciplineRule','Add discipline rule')}</button>
+        <button onClick=${exportDiscRules} title=${_cc_t('standards.exportDisciplineRules','Export discipline-pair rules')}
           style=${{fontSize:'0.69rem',padding:'.3rem .5rem',background:'var(--bg-secondary)',color:'var(--text-faint)',border:'1px solid var(--border)',borderRadius:4,cursor:'pointer'}}>↓</button>
-        <button onClick=${function(){importDiscRef.current&&importDiscRef.current.click();}} title="Import discipline-pair rules"
+        <button onClick=${function(){importDiscRef.current&&importDiscRef.current.click();}} title=${_cc_t('standards.importDisciplineRules','Import discipline-pair rules')}
           style=${{fontSize:'0.69rem',padding:'.3rem .5rem',background:'var(--bg-secondary)',color:'var(--text-faint)',border:'1px solid var(--border)',borderRadius:4,cursor:'pointer'}}>↑</button>
       </div>
 
@@ -23549,12 +23549,12 @@ function startApp() {
         var storeys = [];
         (s.models||[]).forEach(function(m){ (m.storeys||[]).forEach(function(st){ if(st && storeys.indexOf(st)<0) storeys.push(st); }); });
         return html`<div style=${{marginTop:'1.2rem',paddingTop:'.8rem',borderTop:'2px solid var(--border)',marginBottom:'1.5rem'}}>
-          <div style=${{fontSize:'0.75rem',fontWeight:700,color:'var(--text-muted)',textTransform:'uppercase',letterSpacing:'.06em',marginBottom:'.4rem'}}>Assignment rules</div>
+          <div style=${{fontSize:'0.75rem',fontWeight:700,color:'var(--text-muted)',textTransform:'uppercase',letterSpacing:'.06em',marginBottom:'.4rem'}}>${_cc_t('standards.assignmentRules','Assignment rules')}</div>
           <div style=${{fontSize:'0.65rem',color:'var(--text-faint)',marginBottom:'.5rem',lineHeight:1.4}}>
-            Stamp an assignee/priority on newly detected clashes automatically, by discipline pair and (optionally) storey. First matching rule wins. Never overrides an assignee already set on a persisting clash.
+            ${_cc_t('standards.assignmentRulesSub','Stamp an assignee/priority on newly detected clashes automatically, by discipline pair and (optionally) storey. First matching rule wins. Never overrides an assignee already set on a persisting clash.')}
           </div>
           ${arules.length===0 && html`<div style=${{padding:'.6rem',background:'var(--bg-secondary)',borderRadius:6,fontSize:'0.69rem',color:'var(--text-faint)',textAlign:'center',marginBottom:'.5rem'}}>
-            No assignment rules configured yet. New clashes get no automatic assignee.
+            ${_cc_t('standards.noAssignmentRules','No assignment rules configured yet. New clashes get no automatic assignee.')}
           </div>`}
           ${arules.map(function(r){
             return html`<div key=${r.id} style=${{padding:'.4rem',background:'var(--bg-secondary)',borderRadius:6,marginBottom:'.35rem',border:'1px solid var(--border-subtle)'}}>
