@@ -28050,30 +28050,30 @@ function startApp() {
         </div>
         </${React.Fragment}>`}
         ${activeTab==='measurement' && html`<${React.Fragment}>
-        <div style=${SEC}>Measurement</div>
+        <div style=${SEC}>${_cc_t('settings.measurement.section','Measurement')}</div>
         <div style=${TROW}>
           <div>
-            <div style=${TLBL}>Display units</div>
-            <div style=${TSUB}>How measurement values are formatted. Auto detects from the IFC project unit (imperial = feet/inches).</div>
+            <div style=${TLBL}>${_cc_t('settings.measurement.units','Display units')}</div>
+            <div style=${TSUB}>${_cc_t('settings.measurement.unitsSub','How measurement values are formatted. Auto detects from the IFC project unit (imperial = feet/inches).')}</div>
           </div>
           <select value=${p.measureUnits||'auto'}
             onChange=${function(e){d({t:A.UPD_PREFS,u:{measureUnits:e.target.value}})}}
             style=${{background:'var(--bg-tertiary)',color:'var(--text-primary)',border:'1px solid var(--border)',borderRadius:6,padding:'.25rem .5rem',fontSize:'0.8rem'}}>
-            <option value="auto">Auto${' ('+((typeof _ccDetectIfcUnitSystem==='function'?_ccDetectIfcUnitSystem(s.models):'metric')==='imperial'?'Imperial':'Metric')+')'}</option>
-            <option value="metric">Metric (mm / m)</option>
-            <option value="imperial-decimal">Imperial decimal (ft)</option>
-            <option value="imperial-fractional">Imperial fractional (5' 4 3/16")</option>
+            <option value="auto">${_cc_t('settings.auto','Auto')}${' ('+((typeof _ccDetectIfcUnitSystem==='function'?_ccDetectIfcUnitSystem(s.models):'metric')==='imperial'?_cc_t('settings.measurement.imperial','Imperial'):_cc_t('settings.measurement.metric','Metric'))+')'}</option>
+            <option value="metric">${_cc_t('settings.measurement.metricUnit','Metric (mm / m)')}</option>
+            <option value="imperial-decimal">${_cc_t('settings.measurement.imperialDecimal','Imperial decimal (ft)')}</option>
+            <option value="imperial-fractional">${_cc_t('settings.measurement.imperialFractional','Imperial fractional (5\' 4 3/16")')}</option>
           </select>
         </div>
         <div style=${TROW}>
           <div>
-            <div style=${TLBL}>Decimal precision</div>
-            <div style=${TSUB}>Number of decimals shown for metres / feet. mm uses whole numbers; fractional uses 1/16".</div>
+            <div style=${TLBL}>${_cc_t('settings.measurement.precision','Decimal precision')}</div>
+            <div style=${TSUB}>${_cc_t('settings.measurement.precisionSub','Number of decimals shown for metres / feet. mm uses whole numbers; fractional uses 1/16".')}</div>
           </div>
           <select value=${String(p.measurePrecision==null?2:p.measurePrecision)}
             onChange=${function(e){d({t:A.UPD_PREFS,u:{measurePrecision:Number(e.target.value)}})}}
             style=${{background:'var(--bg-tertiary)',color:'var(--text-primary)',border:'1px solid var(--border)',borderRadius:6,padding:'.25rem .5rem',fontSize:'0.8rem'}}>
-            <option value="0">0 (rounded)</option>
+            <option value="0">${_cc_t('settings.measurement.precision0','0 (rounded)')}</option>
             <option value="1">1</option>
             <option value="2">2</option>
             <option value="3">3</option>
@@ -28082,19 +28082,19 @@ function startApp() {
         </div>
         <div style=${TROW}>
           <div>
-            <div style=${TLBL}>PointerLens magnifier</div>
-            <div style=${TSUB}>Hold Z while measuring to show a 4× magnifier near the cursor. Off by default — small extra GPU cost on large models.</div>
+            <div style=${TLBL}>${_cc_t('settings.measurement.magnifier','PointerLens magnifier')}</div>
+            <div style=${TSUB}>${_cc_t('settings.measurement.magnifierSub','Hold Z while measuring to show a 4× magnifier near the cursor. Off by default — small extra GPU cost on large models.')}</div>
           </div>
           <${Toggle} on=${!!p.measureMagnifier} onToggle=${tog('measureMagnifier')} />
         </div>
         <div style=${TROW}>
           <div>
-            <div style=${TLBL}>Calibrate distance</div>
-            <div style=${TSUB}>Rare. Pick two points whose real distance you know to fix mis-scaled imports. The model geometry won't change — only display values do.</div>
+            <div style=${TLBL}>${_cc_t('settings.measurement.calibrate','Calibrate distance')}</div>
+            <div style=${TSUB}>${_cc_t('settings.measurement.calibrateSub','Rare. Pick two points whose real distance you know to fix mis-scaled imports. The model geometry won\'t change — only display values do.')}</div>
           </div>
           <button onClick=${function(){if(window._ccStartCalibration)window._ccStartCalibration();d({t:A.SETTINGS,v:false});}}
             style=${{background:'var(--bg-tertiary)',color:'var(--text-primary)',border:'1px solid var(--border)',borderRadius:6,padding:'.25rem .65rem',fontSize:'0.8rem',cursor:'pointer',fontFamily:'inherit'}}>
-            Calibrate…
+            ${_cc_t('settings.measurement.calibrateBtn','Calibrate…')}
           </button>
         </div>
         </${React.Fragment}>`}
