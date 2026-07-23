@@ -21005,20 +21005,20 @@ function startApp() {
       <button onClick=${function(){ setOpen(!open); }}
         style=${{...S_BTN,width:'100%',display:'flex',alignItems:'center',gap:'.4rem',padding:'.4rem .5rem',
           background:'none',color:'var(--text-secondary)',fontSize:'.74rem',fontWeight:500}}
-        aria-expanded=${open} title="Which models clash with which — coloured by worst severity">
+        aria-expanded=${open} title=${_cc_t('matrix.tooltip','Which models clash with which — coloured by worst severity')}>
         <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"
           style=${{transform:open?'rotate(90deg)':'none',transition:'transform .15s'}}><path d="M9 6l6 6-6 6"/></svg>
-        <span>Model clash matrix</span>
+        <span>${_cc_t('matrix.title','Model clash matrix')}</span>
         <span style=${{fontFamily:'var(--font-mono)',fontSize:'.65rem',color:'var(--text-muted)'}}>${models.length}×${models.length}</span>
         <span style=${{marginLeft:'auto',display:'inline-flex',gap:'.5rem',alignItems:'center',fontSize:'.62rem',color:'var(--text-muted)'}}>
-          <span style=${{display:'inline-flex',alignItems:'center',gap:'.25rem'}}><span style=${{width:9,height:9,borderRadius:2,background:'var(--color-warning-bg)',border:'1px solid var(--color-warning-border)'}}></span>Klein</span>
-          <span style=${{display:'inline-flex',alignItems:'center',gap:'.25rem'}}><span style=${{width:9,height:9,borderRadius:2,background:'var(--color-danger-bg)',border:'1px solid var(--color-danger-border)'}}></span>Kritiek</span>
+          <span style=${{display:'inline-flex',alignItems:'center',gap:'.25rem'}}><span style=${{width:9,height:9,borderRadius:2,background:'var(--color-warning-bg)',border:'1px solid var(--color-warning-border)'}}></span>${_cc_t('matrix.minor','Minor')}</span>
+          <span style=${{display:'inline-flex',alignItems:'center',gap:'.25rem'}}><span style=${{width:9,height:9,borderRadius:2,background:'var(--color-danger-bg)',border:'1px solid var(--color-danger-border)'}}></span>${_cc_t('matrix.critical','Critical')}</span>
         </span>
       </button>
       ${open && html`<div style=${{overflowX:'auto',padding:'0 .5rem .55rem'}}>
         <table style=${{borderCollapse:'separate',borderSpacing:'3px',fontSize:'.7rem'}}>
           <thead><tr>
-            <th style=${{...TH,color:'var(--text-faint)'}}>${total} clash${total===1?'':'es'}</th>
+            <th style=${{...TH,color:'var(--text-faint)'}}>${_cc_t('matrix.clashCount','{n} clash{es}',{n:total,es:total===1?'':'es'})}</th>
             ${models.map(function(m){ return html`<th key=${m.id} style=${{...TH,textAlign:'center',maxWidth:'6rem'}} title=${m.name}>${m.name}</th>`; })}
           </tr></thead>
           <tbody>
@@ -21033,7 +21033,7 @@ function startApp() {
                   style=${{...TD,...cellStyle(cell),
                     cursor: clickable ? 'pointer' : 'default',
                     outline: isActive ? '2px solid var(--accent)' : 'none', outlineOffset:'-2px'}}
-                  title=${(clickable ? (isActive ? 'Clear filter — ' : 'Filter clash list to ') : '') + rm.name+' × '+cm.name+' — '+cell.count+' clash'+(cell.count===1?'':'es')}>
+                  title=${(clickable ? (isActive ? _cc_t('matrix.clearFilterPrefix','Clear filter — ') : _cc_t('matrix.filterToPrefix','Filter clash list to ')) : '') + rm.name+' × '+cm.name+' — '+cell.count+' clash'+(cell.count===1?'':'es')}>
                   ${cell.count === 0
                     ? html`<span style=${{color:'var(--text-faint)'}}>✓</span>`
                     : cell.count}
