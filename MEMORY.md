@@ -361,12 +361,20 @@ never runs here — no empty-commit nudge fixes this, that only ever worked for 
 This is an expected consequence of the stacked-PR structure, not an infra problem — resolves itself
 once #709 is retargeted to `main` after #708 merges. (The #708 `synchronize`-not-firing flake
 earlier in this doc is real and separate — that one genuinely is a maintainer-follow-up item.)
-**Remaining (long tail, can proceed independently in future sessions):** Settings modal's other
-tabs (Shared/AI/Advanced), Share modal, Smart Views modal, sidebar/Models panel, Standards/Tools/
-Integrations panels, and the rest of `index.html`.
-**Still to do (long tail, can proceed independently):** rest of IssuePanel's filter controls
-(Discipline/Floor/Distance/Priority/Category/Assignee dropdowns, empty states), then Data
-Quality/Accessibility panels, then the rest of `index.html` — each its own reviewable commit.
+PR #709 continued (all 2026-07-23): ~~Share modal Overview tab in full (header, Quick Share key
+display/copy/leave/edit-access warning, create/join forms, folder-sync instructions + connected
+state + link/sync/unlink, FS API unavailable notice, Recent collaborators).~~ ~~Smart Views modal
+in full (presets, saved views + capture, empty state, send-to-client card).~~ ~~Standards panel
+(Detection Rules header, export/import, default clearance/max gap, IFC type-pair rules section,
+discipline-pair rules section, Assignment rules subsection — updated
+tests/assignment-rules-wiring.test.js's literal-text anchor to match the `_cc_t()`-wrapped
+source).~~ ~~Tools panel in full (Section/Clipping, Markers, Export flyout, Import).~~
+~~Integrations panel top-level chrome (intro, empty state, Enable/Disable, Built-in/Always-on
+badges, Revit connection status line).~~
+**Remaining (long tail, can proceed independently in future sessions):** Settings modal's Shared/AI/
+Advanced tabs, Share modal's Comments tab (`ShareCommentsTab`), Integrations panel's deep per-addon
+expanded states (Revit model-sync detail, Smart Bridge setup, etc.), sidebar/Models panel, and the
+rest of `index.html`.
 
 **Park inactive models — memory relief (2026-07-22, branch `claude/clashcontrol-v7-release-plan-jp5njw`)** —
 diagnosed the "viewer stalls a few seconds" + "5.2 GB heap > 4.09 GB limit" reports as the SAME
