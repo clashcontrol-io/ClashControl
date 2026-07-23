@@ -25461,26 +25461,26 @@ function startApp() {
     var LBL={fontSize:'var(--text-sm)',color:'var(--text-muted)',display:'block',marginBottom:'var(--space-1)',fontWeight:'var(--weight-medium)'};
     var META_PILL={fontSize:'var(--text-2xs)',background:'var(--color-info-bg)',color:'var(--color-info-fg)',padding:'.1rem var(--space-2)',borderRadius:'var(--radius-pill)',fontWeight:'var(--weight-medium)'};
     var META_NEUTRAL={fontSize:'var(--text-2xs)',background:'var(--bg-secondary)',color:'var(--text-secondary)',padding:'.1rem var(--space-2)',borderRadius:'var(--radius-pill)'};
-    var titleText = fromClash?'New Issue from Clash':hasEl?'New Element Issue':'New Issue';
+    var titleText = fromClash?_cc_t('newIssue.titleFromClash','New Issue from Clash'):hasEl?_cc_t('newIssue.titleFromElement','New Element Issue'):_cc_t('newIssue.title','New Issue');
     var titleId = 'cc-newissue-title';
     return html`<div class="cc-modal-backdrop" style=${S_BACKDROP} role="dialog" aria-modal="true" aria-labelledby=${titleId}><div class="cc-modal-card" style=${{...S_MODAL_CARD,width:440}}>
       <div style=${S_MODAL_HEADER}>
         <span id=${titleId} style=${S_MODAL_TITLE}>${titleText}</span>
-        <button onClick=${function(){d({t:A.MODAL,v:false})}} style=${S_MODAL_CLOSE} aria-label="Close modal">✕</button>
+        <button onClick=${function(){d({t:A.MODAL,v:false})}} style=${S_MODAL_CLOSE} aria-label=${_cc_t('modal.close','Close modal')}>✕</button>
       </div>
       ${fromClash && html`<div style=${{padding:'var(--space-3) var(--space-5)',borderBottom:'1px solid var(--border-subtle)',background:'var(--bg-primary)'}}>
-        <div style=${{fontSize:'var(--text-2xs)',fontWeight:'var(--weight-semibold)',color:'var(--color-info-fg)',marginBottom:'var(--space-1)',textTransform:'uppercase',letterSpacing:'.06em'}}>From Clash</div>
+        <div style=${{fontSize:'var(--text-2xs)',fontWeight:'var(--weight-semibold)',color:'var(--color-info-fg)',marginBottom:'var(--space-1)',textTransform:'uppercase',letterSpacing:'.06em'}}>${_cc_t('newIssue.fromClash','From Clash')}</div>
         <div style=${{display:'flex',flexWrap:'wrap',gap:'var(--space-1)',marginBottom:'var(--space-1)',alignItems:'center'}}>
           ${fromClash.elemAType && html`<span style=${META_PILL}>${fromClash.elemAType}</span>`}
           <span style=${{fontSize:'var(--text-2xs)',color:'var(--text-faint)'}}>vs</span>
           ${fromClash.elemBType && html`<span style=${META_PILL}>${fromClash.elemBType}</span>`}
           ${fromClash.elemAStorey && html`<span style=${META_NEUTRAL}>${fromClash.elemAStorey}</span>`}
-          ${fromClash.distance!=null && isFinite(fromClash.distance) && fromClash.distance>=0 && Math.abs(fromClash.distance)<1e6 && html`<span style=${META_NEUTRAL}>${fromClash.distance===0?'touching':fromClash.distance+'mm gap'}</span>`}
+          ${fromClash.distance!=null && isFinite(fromClash.distance) && fromClash.distance>=0 && Math.abs(fromClash.distance)<1e6 && html`<span style=${META_NEUTRAL}>${fromClash.distance===0?_cc_t('newIssue.touching','touching'):_cc_t('newIssue.gap','{mm}mm gap',{mm:fromClash.distance})}</span>`}
         </div>
         <div style=${{fontSize:'var(--text-2xs)',color:'var(--text-faint)'}}>${fromClash.elemAName||''} · ${fromClash.elemBName||''}</div>
       </div>`}
       ${hasEl && !fromClash && html`<div style=${{padding:'var(--space-3) var(--space-5)',borderBottom:'1px solid var(--border-subtle)',background:'var(--bg-primary)'}}>
-        <div style=${{fontSize:'var(--text-2xs)',fontWeight:'var(--weight-semibold)',color:'var(--color-info-fg)',marginBottom:'var(--space-1)',textTransform:'uppercase',letterSpacing:'.06em'}}>Linked Element</div>
+        <div style=${{fontSize:'var(--text-2xs)',fontWeight:'var(--weight-semibold)',color:'var(--color-info-fg)',marginBottom:'var(--space-1)',textTransform:'uppercase',letterSpacing:'.06em'}}>${_cc_t('newIssue.linkedElement','Linked Element')}</div>
         <div style=${{display:'flex',flexWrap:'wrap',gap:'var(--space-1)'}}>
           ${ep.ifcType && html`<span style=${META_PILL}>${ep.ifcType}</span>`}
           ${ep.name && html`<span style=${META_NEUTRAL}>${ep.name}</span>`}
@@ -25490,33 +25490,33 @@ function startApp() {
         <div style=${{fontSize:'var(--text-2xs)',color:'var(--text-faint)',marginTop:'var(--space-1)'}}>${el.modelName} · #${el.expressId}</div>
       </div>`}
       <form onSubmit=${submit} style=${S_MODAL_BODY}>
-        <div><label style=${LBL}>Title *</label>
-          <input required value=${form.title} onInput=${upd('title')} placeholder="Short description of the issue" style=${S_INPUT} /></div>
-        <div><label style=${LBL}>What is the issue? *</label>
-          <textarea required value=${form.desc} onInput=${upd('desc')} rows="3" placeholder="Describe what the problem is and what needs to be resolved…" style=${{...S_INPUT,resize:'vertical'}} /></div>
+        <div><label style=${LBL}>${_cc_t('newIssue.titleLabel','Title *')}</label>
+          <input required value=${form.title} onInput=${upd('title')} placeholder=${_cc_t('newIssue.titlePlaceholder','Short description of the issue')} style=${S_INPUT} /></div>
+        <div><label style=${LBL}>${_cc_t('newIssue.descLabel','What is the issue? *')}</label>
+          <textarea required value=${form.desc} onInput=${upd('desc')} rows="3" placeholder=${_cc_t('newIssue.descPlaceholder','Describe what the problem is and what needs to be resolved…')} style=${{...S_INPUT,resize:'vertical'}} /></div>
         <div style=${{display:'flex',gap:'var(--space-2)'}}>
-          <div style=${{flex:1}}><label style=${LBL}>Status</label>
+          <div style=${{flex:1}}><label style=${LBL}>${_cc_t('newIssue.status','Status')}</label>
             <select value=${form.status} onChange=${upd('status')} style=${S_INPUT}>
               ${EDITABLE_STATUSES.map(function(k){return html`<option key=${k} value=${k}>${STAT[k].label}</option>`})}
             </select></div>
-          <div style=${{flex:1}}><label style=${LBL}>Priority</label>
+          <div style=${{flex:1}}><label style=${LBL}>${_cc_t('issues.filter.priority','Priority')}</label>
             <select value=${form.priority} onChange=${upd('priority')} style=${S_INPUT}>
-              <option value="critical">Critical</option><option value="high">High</option><option value="normal">Normal</option><option value="low">Low</option>
+              <option value="critical">${_cc_t('newIssue.priorityCritical','Critical')}</option><option value="high">${_cc_t('newIssue.priorityHigh','High')}</option><option value="normal">${_cc_t('newIssue.priorityNormal','Normal')}</option><option value="low">${_cc_t('newIssue.priorityLow','Low')}</option>
             </select></div>
-          <div style=${{flex:1}}><label style=${LBL}>Category</label>
+          <div style=${{flex:1}}><label style=${LBL}>${_cc_t('issues.filter.category','Category')}</label>
             <select value=${form.category} onChange=${upd('category')} style=${S_INPUT}>
-              <option value="design">Design</option><option value="coordination">Coordination</option><option value="constructability">Constructability</option><option value="safety">Safety</option><option value="code_compliance">Code Compliance</option><option value="other">Other</option>
+              <option value="design">${_cc_t('newIssue.categoryDesign','Design')}</option><option value="coordination">${_cc_t('newIssue.categoryCoordination','Coordination')}</option><option value="constructability">${_cc_t('newIssue.categoryConstructability','Constructability')}</option><option value="safety">${_cc_t('newIssue.categorySafety','Safety')}</option><option value="code_compliance">${_cc_t('newIssue.categoryCodeCompliance','Code Compliance')}</option><option value="other">${_cc_t('newIssue.categoryOther','Other')}</option>
             </select></div>
         </div>
         <div style=${{display:'flex',gap:'var(--space-2)'}}>
-          <div style=${{flex:1}}><label style=${LBL}>Assigned to</label>
-            <input value=${form.assignee} onInput=${upd('assignee')} placeholder="Name or team" style=${S_INPUT} /></div>
-          <div style=${{flex:1}}><label style=${LBL}>Due date</label>
+          <div style=${{flex:1}}><label style=${LBL}>${_cc_t('newIssue.assignedTo','Assigned to')}</label>
+            <input value=${form.assignee} onInput=${upd('assignee')} placeholder=${_cc_t('newIssue.assigneePlaceholder','Name or team')} style=${S_INPUT} /></div>
+          <div style=${{flex:1}}><label style=${LBL}>${_cc_t('newIssue.dueDate','Due date')}</label>
             <input type="date" value=${form.dueDate} onInput=${upd('dueDate')} style=${S_INPUT} /></div>
         </div>
         <div style=${{display:'flex',gap:'var(--space-2)',paddingTop:'var(--space-2)'}}>
-          <button class="cc-btn-press" type="button" onClick=${function(){d({t:A.MODAL,v:false})}} style=${{...S_BTN,flex:1,background:'var(--bg-tertiary)',color:'var(--text-primary)',border:'1px solid var(--border)'}}>Cancel</button>
-          <button class="cc-btn-press" type="submit" style=${{...S_BTN,flex:1,background:'var(--accent)',color:'#fff',fontWeight:'var(--weight-semibold)'}}>Create Issue</button>
+          <button class="cc-btn-press" type="button" onClick=${function(){d({t:A.MODAL,v:false})}} style=${{...S_BTN,flex:1,background:'var(--bg-tertiary)',color:'var(--text-primary)',border:'1px solid var(--border)'}}>${_cc_t('newIssue.cancel','Cancel')}</button>
+          <button class="cc-btn-press" type="submit" style=${{...S_BTN,flex:1,background:'var(--accent)',color:'#fff',fontWeight:'var(--weight-semibold)'}}>${_cc_t('newIssue.create','Create Issue')}</button>
         </div>
       </form>
     </div></div>`;
