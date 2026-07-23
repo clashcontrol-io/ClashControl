@@ -34609,14 +34609,14 @@ function startApp() {
     return html`<div style=${{display:'flex',flexDirection:'column',overflowY:'auto',overflowX:'hidden',flex:1}}>
       <div style=${{padding:'1rem 1rem .5rem',borderBottom:'1px solid var(--border-subtle)'}}>
         <div style=${{fontSize:'var(--text-xs)',color:'var(--text-faint)',lineHeight:1.6}}>
-          Integrations extend ClashControl — Revit live link, local clash engine, AI bridge, shared folders and more. Each runs independently; built-in capabilities are always on.
+          ${_cc_t('addons.intro','Integrations extend ClashControl — Revit live link, local clash engine, AI bridge, shared folders and more. Each runs independently; built-in capabilities are always on.')}
         </div>
       </div>
       ${ids.length === 0 && html`<div style=${{padding:'1.5rem 1rem',display:'flex',flexDirection:'column',gap:'.5rem',alignItems:'center',textAlign:'center'}}>
         <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="var(--text-faint)" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2v4m0 12v4M2 12h4m12 0h4"/><circle cx="12" cy="12" r="3"/></svg>
-        <div style=${{fontSize:'var(--text-sm)',color:'var(--text-muted)',lineHeight:1.6}}>No modules loaded</div>
+        <div style=${{fontSize:'var(--text-sm)',color:'var(--text-muted)',lineHeight:1.6}}>${_cc_t('addons.noModules','No modules loaded')}</div>
         <div style=${{fontSize:'var(--text-xs)',color:'var(--text-faint)',lineHeight:1.6}}>
-          Place addon files in the <code style=${{background:'var(--bg-secondary)',padding:'1px 4px',borderRadius:3}}>addons/</code> folder and reload.
+          ${_cc_t('addons.noModulesSub','Place addon files in the')} <code style=${{background:'var(--bg-secondary)',padding:'1px 4px',borderRadius:3}}>addons/</code> ${_cc_t('addons.noModulesSubEnd','folder and reload.')}
         </div>
       </div>`}
       ${ids.map(function(id) {
@@ -34640,8 +34640,8 @@ function startApp() {
               <div style=${{fontSize:'var(--text-xs)',color:'var(--text-muted)',lineHeight:1.5}}>${addon.description||''}</div>
             </div>
             ${addon.alwaysOn || (id==='pwa' && active && window.matchMedia && window.matchMedia('(display-mode: standalone)').matches)
-              ? html`<span style=${{fontSize:'var(--text-2xs)',color:'var(--text-faint)'}}>${addon.alwaysOn ? 'Built in · always on' : 'Always on'}</span>`
-              : addonBtn(active?'Disable':'Enable', function(){
+              ? html`<span style=${{fontSize:'var(--text-2xs)',color:'var(--text-faint)'}}>${addon.alwaysOn ? _cc_t('addons.builtInAlwaysOn','Built in · always on') : _cc_t('addons.alwaysOn','Always on')}</span>`
+              : addonBtn(active?_cc_t('addons.disable','Disable'):_cc_t('addons.enable','Enable'), function(){
                   if (active) { window._ccDeactivateAddon(id); }
                   else {
                     // Lazy integrations (Smart Bridge, OpenAEC) activate async —
@@ -34665,7 +34665,7 @@ function startApp() {
               <span style=${{width:6,height:6,borderRadius:'50%',flexShrink:0,
                 background:connected?'var(--color-success)':reconnecting?'var(--color-warning)':'var(--color-danger)'}}></span>
               <span style=${{fontSize:'var(--text-xs)',color:'var(--text-secondary)',flex:1}}>
-                ${connected ? ('Connected' + (s.revitDirect.documentName ? ' \u2014 ' + s.revitDirect.documentName : '')) : reconnecting ? 'Reconnecting\u2026' : 'Not connected'}
+                ${connected ? (_cc_t('addons.connected','Connected') + (s.revitDirect.documentName ? ' \u2014 ' + s.revitDirect.documentName : '')) : reconnecting ? _cc_t('addons.reconnecting','Reconnecting\u2026') : _cc_t('addons.notConnected','Not connected')}
               </span>
             </div>
 
