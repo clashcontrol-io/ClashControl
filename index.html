@@ -27000,15 +27000,15 @@ function startApp() {
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/></svg>
           </div>
           <div style=${{flex:1}}>
-            <div id="cc-share-title" style=${{fontSize:'1.05rem',fontWeight:700,color:'var(--text-primary)'}}>Share with your team</div>
-            <div style=${{fontSize:'0.74rem',color:'var(--text-muted)'}}>Work together on the same project — no accounts, no uploads</div>
+            <div id="cc-share-title" style=${{fontSize:'1.05rem',fontWeight:700,color:'var(--text-primary)'}}>${_cc_t('share.title','Share with your team')}</div>
+            <div style=${{fontSize:'0.74rem',color:'var(--text-muted)'}}>${_cc_t('share.subtitle','Work together on the same project — no accounts, no uploads')}</div>
           </div>
-          <button onClick=${function(){d({t:A.SHARE,v:false});}} style=${S_MODAL_CLOSE} aria-label="Close">✕</button>
+          <button onClick=${function(){d({t:A.SHARE,v:false});}} style=${S_MODAL_CLOSE} aria-label=${_cc_t('share.closeAria','Close')}>✕</button>
         </div>
 
         <div style=${{display:'flex',gap:'.2rem',padding:'0 1.2rem',borderBottom:'1px solid var(--border-subtle)'}}>
-          ${TabBtn('overview','Overview')}
-          ${TabBtn('comments','Comments', unresolved)}
+          ${TabBtn('overview',_cc_t('share.tabOverview','Overview'))}
+          ${TabBtn('comments',_cc_t('share.tabComments','Comments'), unresolved)}
         </div>
 
         <div style=${{padding:'1rem 1.2rem',overflowY:'auto'}}>
@@ -27016,89 +27016,89 @@ function startApp() {
 
             <!-- Quick share via project key — no upload, no login -->
             ${pKey ? html`<div style=${{padding:'.85rem 1rem',background:'var(--accent-bg)',border:'1px solid var(--accent-subtle)',borderRadius:'var(--radius-md)'}}>
-              <div style=${{fontSize:'0.72rem',color:'var(--accent)',fontWeight:600,textTransform:'uppercase',letterSpacing:'.06em',marginBottom:'.4rem'}}>${pKeyName ? pKeyName : 'Shared project'}</div>
+              <div style=${{fontSize:'0.72rem',color:'var(--accent)',fontWeight:600,textTransform:'uppercase',letterSpacing:'.06em',marginBottom:'.4rem'}}>${pKeyName ? pKeyName : _cc_t('share.sharedProject','Shared project')}</div>
               <div style=${{fontFamily:'var(--font-mono)',fontSize:'1.05rem',fontWeight:600,color:'var(--text-primary)',letterSpacing:'.02em',marginBottom:'.5rem',userSelect:'all'}}>${pKey}</div>
               <div style=${{display:'flex',gap:'.4rem',flexWrap:'wrap'}}>
-                <button onClick=${function(){copy(shareUrl,'url');}} style=${{...btnPrimary,padding:'.4rem .7rem',fontSize:'0.78rem'}}>${copiedKind==='url'?'Copied!':'Copy share link'}</button>
-                <button onClick=${function(){copy(pKey,'key');}} style=${{...btnSecondary,padding:'.4rem .7rem',fontSize:'0.78rem'}}>${copiedKind==='key'?'Copied!':'Copy key'}</button>
-                <button onClick=${leaveKey} style=${{...btnGhost,padding:'.4rem .7rem',fontSize:'0.78rem'}}>Leave</button>
+                <button onClick=${function(){copy(shareUrl,'url');}} style=${{...btnPrimary,padding:'.4rem .7rem',fontSize:'0.78rem'}}>${copiedKind==='url'?_cc_t('share.copied','Copied!'):_cc_t('share.copyLink','Copy share link')}</button>
+                <button onClick=${function(){copy(pKey,'key');}} style=${{...btnSecondary,padding:'.4rem .7rem',fontSize:'0.78rem'}}>${copiedKind==='key'?_cc_t('share.copied','Copied!'):_cc_t('share.copyKey','Copy key')}</button>
+                <button onClick=${leaveKey} style=${{...btnGhost,padding:'.4rem .7rem',fontSize:'0.78rem'}}>${_cc_t('share.leave','Leave')}</button>
               </div>
               <div style=${{marginTop:'.5rem',fontSize:'0.72rem',color:'var(--text-muted)',wordBreak:'break-all',fontFamily:'var(--font-mono)'}}>${shareUrl}</div>
-              <div style=${{marginTop:'.4rem',fontSize:'0.68rem',color:'var(--text-faint)',lineHeight:1.5}}>Anyone with this key or link can view <em>and edit</em> — there's no read-only sharing or per-person access control yet.</div>
+              <div style=${{marginTop:'.4rem',fontSize:'0.68rem',color:'var(--text-faint)',lineHeight:1.5}}>${_cc_t('share.editWarning','Anyone with this key or link can view')} <em>${_cc_t('share.editWarningEmph','and edit')}</em> ${_cc_t('share.editWarningRest','— there\'s no read-only sharing or per-person access control yet.')}</div>
             </div>` : html`<div style=${{padding:'.9rem 1rem',background:'var(--bg-tertiary)',border:'1px dashed var(--border)',borderRadius:'var(--radius-md)'}}>
-              <div style=${{fontSize:'0.85rem',fontWeight:600,color:'var(--text-primary)',marginBottom:'.25rem'}}>Quick share</div>
-              <div style=${{fontSize:'0.78rem',color:'var(--text-secondary)',lineHeight:1.5,marginBottom:'.6rem'}}>Generate a project key in one click. Share the link — your teammate clicks it and instantly sees and can edit the same comments, issues, and clash decisions. No account, no upload, no per-person permissions: anyone with the key or link has full edit access.</div>
+              <div style=${{fontSize:'0.85rem',fontWeight:600,color:'var(--text-primary)',marginBottom:'.25rem'}}>${_cc_t('share.quickShare','Quick share')}</div>
+              <div style=${{fontSize:'0.78rem',color:'var(--text-secondary)',lineHeight:1.5,marginBottom:'.6rem'}}>${_cc_t('share.quickShareSub','Generate a project key in one click. Share the link — your teammate clicks it and instantly sees and can edit the same comments, issues, and clash decisions. No account, no upload, no per-person permissions: anyone with the key or link has full edit access.')}</div>
               ${!createOpen && !joinOpen && html`<div style=${{display:'flex',gap:'.4rem',flexWrap:'wrap'}}>
-                <button onClick=${function(){ setCreateOpen(true); setCreateName(pKeyName || 'Untitled project'); }} style=${{...btnPrimary,padding:'.45rem .8rem',fontSize:'0.8rem'}}>Create shared project</button>
-                <button onClick=${function(){ setJoinOpen(true); }} style=${{...btnSecondary,padding:'.45rem .8rem',fontSize:'0.8rem'}}>Join with a key…</button>
+                <button onClick=${function(){ setCreateOpen(true); setCreateName(pKeyName || _cc_t('share.untitledProject','Untitled project')); }} style=${{...btnPrimary,padding:'.45rem .8rem',fontSize:'0.8rem'}}>${_cc_t('share.createProject','Create shared project')}</button>
+                <button onClick=${function(){ setJoinOpen(true); }} style=${{...btnSecondary,padding:'.45rem .8rem',fontSize:'0.8rem'}}>${_cc_t('share.joinWithKey','Join with a key…')}</button>
               </div>`}
               ${createOpen && html`<div style=${{display:'flex',flexDirection:'column',gap:'.4rem'}}>
-                <div style=${{fontSize:'0.74rem',color:'var(--text-muted)'}}>Project name (visible to teammates)</div>
+                <div style=${{fontSize:'0.74rem',color:'var(--text-muted)'}}>${_cc_t('share.projectNameLabel','Project name (visible to teammates)')}</div>
                 <div style=${{display:'flex',gap:'.4rem'}}>
-                  <input autofocus type="text" value=${createName} placeholder="Untitled project"
+                  <input autofocus type="text" value=${createName} placeholder=${_cc_t('share.untitledProject','Untitled project')}
                     onInput=${function(e){ setCreateName(e.target.value); }}
                     onKeyDown=${function(e){ if(e.key==='Enter') createKey(); if(e.key==='Escape'){ setCreateOpen(false); setCreateName(''); } }}
                     style=${{flex:1,...inputStyle}} />
-                  <button onClick=${createKey} disabled=${creating||!createName.trim()} style=${{...btnPrimary,padding:'.45rem .8rem',fontSize:'0.8rem',opacity:(creating||!createName.trim())?0.5:1}}>${creating?'Creating…':'Create'}</button>
-                  <button onClick=${function(){ setCreateOpen(false); setCreateName(''); }} style=${{...btnGhost,padding:'.45rem .8rem',fontSize:'0.8rem'}}>Cancel</button>
+                  <button onClick=${createKey} disabled=${creating||!createName.trim()} style=${{...btnPrimary,padding:'.45rem .8rem',fontSize:'0.8rem',opacity:(creating||!createName.trim())?0.5:1}}>${creating?_cc_t('share.creating','Creating…'):_cc_t('share.create','Create')}</button>
+                  <button onClick=${function(){ setCreateOpen(false); setCreateName(''); }} style=${{...btnGhost,padding:'.45rem .8rem',fontSize:'0.8rem'}}>${_cc_t('share.cancel','Cancel')}</button>
                 </div>
               </div>`}
               ${joinOpen && html`<div style=${{display:'flex',flexDirection:'column',gap:'.4rem'}}>
-                <div style=${{fontSize:'0.74rem',color:'var(--text-muted)'}}>Paste project key or share link</div>
+                <div style=${{fontSize:'0.74rem',color:'var(--text-muted)'}}>${_cc_t('share.pasteKeyLabel','Paste project key or share link')}</div>
                 <div style=${{display:'flex',gap:'.4rem'}}>
                   <input autofocus type="text" value=${joinKeyVal} placeholder="MEP-abc123 or full URL"
                     onInput=${function(e){ setJoinKeyVal(e.target.value); }}
                     onKeyDown=${function(e){ if(e.key==='Enter') joinByKey(); if(e.key==='Escape'){ setJoinOpen(false); setJoinKeyVal(''); } }}
                     style=${{flex:1,...inputStyle}} />
-                  <button onClick=${joinByKey} disabled=${!joinKeyVal.trim()} style=${{...btnPrimary,padding:'.45rem .8rem',fontSize:'0.8rem',opacity:joinKeyVal.trim()?1:0.5}}>Join</button>
-                  <button onClick=${function(){ setJoinOpen(false); setJoinKeyVal(''); }} style=${{...btnGhost,padding:'.45rem .8rem',fontSize:'0.8rem'}}>Cancel</button>
+                  <button onClick=${joinByKey} disabled=${!joinKeyVal.trim()} style=${{...btnPrimary,padding:'.45rem .8rem',fontSize:'0.8rem',opacity:joinKeyVal.trim()?1:0.5}}>${_cc_t('share.join','Join')}</button>
+                  <button onClick=${function(){ setJoinOpen(false); setJoinKeyVal(''); }} style=${{...btnGhost,padding:'.45rem .8rem',fontSize:'0.8rem'}}>${_cc_t('share.cancel','Cancel')}</button>
                 </div>
               </div>`}
             </div>`}
 
             <div>
-              <label style=${{fontSize:'0.72rem',color:'var(--text-muted)',fontWeight:600,textTransform:'uppercase',letterSpacing:'.04em',display:'block',marginBottom:'.3rem'}}>Your name</label>
-              <input type="text" value=${sp.userName||''} placeholder="Used to attribute your changes"
+              <label style=${{fontSize:'0.72rem',color:'var(--text-muted)',fontWeight:600,textTransform:'uppercase',letterSpacing:'.04em',display:'block',marginBottom:'.3rem'}}>${_cc_t('share.yourName','Your name')}</label>
+              <input type="text" value=${sp.userName||''} placeholder=${_cc_t('share.yourNamePlaceholder','Used to attribute your changes')}
                 onInput=${function(e){setUserName(e.target.value);}}
                 style=${inputStyle} />
             </div>
 
-            <div style=${{fontSize:'0.7rem',color:'var(--text-muted)',fontWeight:600,textTransform:'uppercase',letterSpacing:'.06em',marginTop:'.4rem'}}>Or sync to a shared folder</div>
+            <div style=${{fontSize:'0.7rem',color:'var(--text-muted)',fontWeight:600,textTransform:'uppercase',letterSpacing:'.06em',marginTop:'.4rem'}}>${_cc_t('share.orSyncFolder','Or sync to a shared folder')}</div>
 
             ${!sp.enabled && html`<div style=${{padding:'.9rem 1rem',background:'var(--accent-bg)',border:'1px solid var(--accent-bg-deep)',borderRadius:8,fontSize:'0.85rem',color:'var(--text-secondary)',lineHeight:1.6}}>
-              <div style=${{fontWeight:600,color:'var(--text-primary)',marginBottom:'.4rem'}}>How folder sync works</div>
+              <div style=${{fontWeight:600,color:'var(--text-primary)',marginBottom:'.4rem'}}>${_cc_t('share.howFolderSyncWorks','How folder sync works')}</div>
               <ol style=${{margin:0,paddingLeft:'1.2rem'}}>
-                <li style=${{marginBottom:'.3rem'}}>Choose a folder that you and your teammates can both reach — for example a shared OneDrive, Dropbox, Google Drive, or company network drive.</li>
-                <li style=${{marginBottom:'.3rem'}}>ClashControl saves a small project file in that folder and keeps it up to date automatically (about once a minute).</li>
-                <li>Anyone on your team can open ClashControl, point it at the same folder, and they'll see the same comments, issues, and viewpoints. Changes from everyone show up for everyone.</li>
+                <li style=${{marginBottom:'.3rem'}}>${_cc_t('share.folderSyncStep1','Choose a folder that you and your teammates can both reach — for example a shared OneDrive, Dropbox, Google Drive, or company network drive.')}</li>
+                <li style=${{marginBottom:'.3rem'}}>${_cc_t('share.folderSyncStep2','ClashControl saves a small project file in that folder and keeps it up to date automatically (about once a minute).')}</li>
+                <li>${_cc_t('share.folderSyncStep3','Anyone on your team can open ClashControl, point it at the same folder, and they\'ll see the same comments, issues, and viewpoints. Changes from everyone show up for everyone.')}</li>
               </ol>
               <div style=${{marginTop:'.6rem',padding:'.5rem .65rem',background:'var(--bg-primary)',border:'1px solid var(--border-subtle)',borderRadius:6,fontSize:'0.78rem',color:'var(--text-secondary)'}}>
-                <strong style=${{color:'var(--text-primary)'}}>Your model stays on your computer.</strong> Only the things your team needs to discuss — comments, viewpoints, and clash decisions — are written into the shared folder. Your IFC file is never uploaded anywhere.
+                <strong style=${{color:'var(--text-primary)'}}>${_cc_t('share.modelStaysLocal','Your model stays on your computer.')}</strong> ${_cc_t('share.modelStaysLocalSub','Only the things your team needs to discuss — comments, viewpoints, and clash decisions — are written into the shared folder. Your IFC file is never uploaded anywhere.')}
               </div>
             </div>`}
 
             ${sp.enabled && html`<div style=${{padding:'.8rem 1rem',background:'var(--bg-tertiary)',border:'1px solid var(--border)',borderRadius:8}}>
               <div style=${{display:'flex',alignItems:'center',gap:'.5rem',marginBottom:'.4rem'}}>
                 <span style=${{width:8,height:8,borderRadius:'50%',background:sp.syncing?'#f59e0b':'#22c55e'}}></span>
-                <span style=${{fontSize:'0.8rem',fontWeight:600,color:'var(--text-primary)'}}>${sp.syncing?'Syncing…':'Connected'}</span>
+                <span style=${{fontSize:'0.8rem',fontWeight:600,color:'var(--text-primary)'}}>${sp.syncing?_cc_t('share.syncing','Syncing…'):_cc_t('share.connected','Connected')}</span>
               </div>
               <div style=${{fontSize:'0.78rem',color:'var(--text-secondary)',marginBottom:'.2rem',wordBreak:'break-all'}}>${sp.folderName}/${sp.fileName||'project.ccproject'}</div>
-              ${sp.lastSync && html`<div style=${{fontSize:'0.72rem',color:'var(--text-faint)'}}>Last sync: ${new Date(sp.lastSync).toLocaleTimeString()}</div>`}
+              ${sp.lastSync && html`<div style=${{fontSize:'0.72rem',color:'var(--text-faint)'}}>${_cc_t('share.lastSync','Last sync: {time}',{time:new Date(sp.lastSync).toLocaleTimeString()})}</div>`}
             </div>`}
 
             <div style=${{display:'flex',gap:'.5rem',flexWrap:'wrap'}}>
               ${!sp.enabled && html`<button onClick=${pick} disabled=${!canUse}
-                style=${{...btnPrimary, opacity:canUse?1:0.5, cursor:canUse?'pointer':'not-allowed'}}>Link a shared folder</button>`}
-              ${sp.enabled && html`<button onClick=${syncNow} disabled=${sp.syncing} style=${{...btnSecondary, opacity:sp.syncing?0.5:1}}>Sync now</button>`}
-              ${sp.enabled && html`<button onClick=${unlink} style=${btnDanger}>Unlink folder</button>`}
+                style=${{...btnPrimary, opacity:canUse?1:0.5, cursor:canUse?'pointer':'not-allowed'}}>${_cc_t('share.linkFolder','Link a shared folder')}</button>`}
+              ${sp.enabled && html`<button onClick=${syncNow} disabled=${sp.syncing} style=${{...btnSecondary, opacity:sp.syncing?0.5:1}}>${_cc_t('share.syncNow','Sync now')}</button>`}
+              ${sp.enabled && html`<button onClick=${unlink} style=${btnDanger}>${_cc_t('share.unlinkFolder','Unlink folder')}</button>`}
             </div>
 
             ${!canUse && html`<div style=${{fontSize:'0.74rem',color:'#eab308',padding:'.5rem .7rem',background:'rgba(234,179,8,.08)',borderRadius:6}}>
-              File System Access API not available in this browser. Use Chrome or Edge to link a folder.
+              ${_cc_t('share.fsApiUnavailable','File System Access API not available in this browser. Use Chrome or Edge to link a folder.')}
             </div>`}
 
             ${sp.enabled && collaborators.length>0 && html`<div>
-              <div style=${{fontSize:'0.72rem',color:'var(--text-muted)',fontWeight:600,textTransform:'uppercase',letterSpacing:'.04em',marginBottom:'.4rem'}}>Recent collaborators</div>
+              <div style=${{fontSize:'0.72rem',color:'var(--text-muted)',fontWeight:600,textTransform:'uppercase',letterSpacing:'.04em',marginBottom:'.4rem'}}>${_cc_t('share.recentCollaborators','Recent collaborators')}</div>
               <div style=${{display:'flex',flexWrap:'wrap',gap:'.3rem'}}>
                 ${collaborators.slice(0,8).map(function(name){
                   var initials = name.split(/\s+/).map(function(p){return p[0]||'';}).slice(0,2).join('').toUpperCase();
