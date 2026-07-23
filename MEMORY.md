@@ -343,12 +343,61 @@ modal: all titles, From Clash/Linked Element context, every form label/placehold
 Cancel/Create buttons.~~ (all 2026-07-23) `locales/ja.json` kept in sync with every newly-wired key
 each slice — updating tests/dq-reconciliation-wiring.test.js's literal-adjacency assertions once,
 where `_cc_t()`-wrapping changed the exact source shape a wiring test checked against.
-**Remaining (long tail, can proceed independently in future sessions):** Settings modal's other
-tabs (Measurement/Walk/Privacy/Shared/AI/Advanced), Share modal, Smart Views modal, sidebar/Models
-panel, Standards/Tools/Integrations panels, and the rest of `index.html`.
-**Still to do (long tail, can proceed independently):** rest of IssuePanel's filter controls
-(Discipline/Floor/Distance/Priority/Category/Assignee dropdowns, empty states), then Data
-Quality/Accessibility panels, then the rest of `index.html` — each its own reviewable commit.
+
+**Split into its own PR partway through**, per explicit direction: PR #708 now covers just the
+foundational scaffold (tasks above through the New Issue modal commit); further retrofit work moved
+to a NEW branch `claude/i18n-string-retrofit` / **PR #709**, based on `claude/japanese-localization-
+request-eleplc` (stacked — retarget to `main` once #708 merges, since this code calls `_cc_t()`
+which only exists once #708 lands). PR #709 so far: ~~Settings → Measurement tab in full (units,
+precision, magnifier, calibrate).~~ ~~Settings → Walk mode tab in full (eye height, sensitivity,
+invert Y, collision, head-bob, footsteps).~~ ~~Settings → Privacy tab in full (anon data sharing,
+annotation buttons, recorded-data count summary with separate singular/plural keys — `_cc_t` has no
+plural rules — send/delete buttons, browser-storage usage + per-project rows, geometry cache).~~
+(all 2026-07-23)
+**#709 showing zero CI runs is NOT the same synchronize-event flake as #708** — root-caused it:
+`ci.yml`'s trigger is `pull_request: branches: [main]`, i.e. it only fires for PRs whose BASE is
+`main`. #709's base is deliberately the feature branch (stacked on #708), so `ci.yml` correctly
+never runs here — no empty-commit nudge fixes this, that only ever worked for #708 (base=main).
+This is an expected consequence of the stacked-PR structure, not an infra problem — resolves itself
+once #709 is retargeted to `main` after #708 merges. (The #708 `synchronize`-not-firing flake
+earlier in this doc is real and separate — that one genuinely is a maintainer-follow-up item.)
+PR #709 continued (all 2026-07-23): ~~Share modal Overview tab in full (header, Quick Share key
+display/copy/leave/edit-access warning, create/join forms, folder-sync instructions + connected
+state + link/sync/unlink, FS API unavailable notice, Recent collaborators).~~ ~~Smart Views modal
+in full (presets, saved views + capture, empty state, send-to-client card).~~ ~~Standards panel
+(Detection Rules header, export/import, default clearance/max gap, IFC type-pair rules section,
+discipline-pair rules section, Assignment rules subsection — updated
+tests/assignment-rules-wiring.test.js's literal-text anchor to match the `_cc_t()`-wrapped
+source).~~ ~~Tools panel in full (Section/Clipping, Markers, Export flyout, Import).~~
+~~Integrations panel top-level chrome (intro, empty state, Enable/Disable, Built-in/Always-on
+badges, Revit connection status line).~~
+PR #709 continued (2026-07-23, after the "keep going — EVERYTHING" instruction): ~~Settings modal's
+Shared/AI/Advanced tabs.~~ ~~Share modal Comments tab (`ShareCommentsTab` + `ShareCommentDraft`).~~
+~~Integrations panel's deep per-addon expanded states (Revit Bridge: Cancel/Pull/Update/Push/
+Disconnect/Connect, linked-models option, Show all integrations).~~ ~~`ModelSidebar` in full: header/
+count, Add/Loading button, empty state, Parked models section + confirm dialog, Auto-park toggle, 2D
+Underlays header, Geo Placement (Clear/Place from CRS/Use IfcSite/Enter lat-lon/Remove 3D context),
+Reference Layers (Size/Opacity labels), Levels section (All on/All off/Show-Hide level/Exit-Open
+plan). PDOK/ion/Google 3D-tiles provider button labels left untranslated on purpose — proper nouns /
+a Dutch-specific service name, not generic UI text.~~ ~~`RunDetectionModal` in full (title, close
+aria, placement-check warning, project-standards disclosure, footer hint, Run/Stop buttons).~~
+~~`ClashRulesPanel` in full: all 6 quick-run preset label/note/desc triples, Saved presets row (Save/
+Cancel/name placeholder/Load/Load & Run/Delete), all 3 detection-type radio labels+descriptions, gap
+threshold labels, filtering-options toggles (×3) with descriptions, Check-within / ignore-overlaps-
+smaller-than labels, engine selector (ClashControlEngine/WASM/Browser labels+hints), Run/Stop
+Detection buttons.~~ (all 2026-07-23) `locales/ja.json` kept in sync every slice; all 801 tests green
+throughout.
+**Remaining (long tail, can proceed independently in future sessions):** `ModelClashMatrix`,
+`ClashHistory`, `ClashToleranceEditor`, `IssueRow`, Walk-mode components (`WalkPegmanLayer`/
+`WalkModeHUD`/`WalkSplineRecorder`/`WalkClashRadar`/`WalkMinimap`), `PresentationOverlay`,
+`StoreyScopeModal`, `ShortcutsModal`, `LoadProgressCard`, `CmdKPalette`, `StoreyPickerModal`,
+`SheetToolbarControls`, `ExportBar`, `ClashSetupCard`, `NLCommandPanel`, `LeftRail`, `PrivacyBanner`,
+`OperationCenter`, `MemoryWarningModal`, `TutorialPortal`, `AIChatPanel`, `ClashChips`,
+`WelcomePopup`, `WorkspaceTabs`, `AvatarMenu`, `ResponsiveToolGroup`, `DesktopTopBar`, `MobileNav`,
+`RevitBridgePanel`, `IDSValidationPanel`, `PropBlock`/`PropDiffView`/`ClashProps`, `VirtualList`,
+`GuidedTour`, `ColorLegend`, `ViewCube`, `SectionBoxUI`, `ModelCard`, `NavigatorPanel`, and more —
+this is genuinely the entire rest of the ~38.7k-line file; partial coverage is safe by design
+(`_cc_t` falls back to the English string for any untranslated key, so the app never breaks).
 
 **Park inactive models — memory relief (2026-07-22, branch `claude/clashcontrol-v7-release-plan-jp5njw`)** —
 diagnosed the "viewer stalls a few seconds" + "5.2 GB heap > 4.09 GB limit" reports as the SAME

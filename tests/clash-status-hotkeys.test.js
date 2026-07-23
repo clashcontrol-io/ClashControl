@@ -20,9 +20,9 @@ const hotkeyStart = src.indexOf("e.key==='c'||e.key==='C'||e.key==='d'");
 assert.ok(hotkeyStart !== -1, 'status-hotkey handler (c/d/v key check) not found');
 const hotkeyBlock = src.slice(hotkeyStart, hotkeyStart + 900);
 
-const buttonsStart = src.indexOf('aria-label="Confirm clash"');
+const buttonsStart = src.indexOf("aria-label=${_cc_t('issueRow.confirmClashAria'");
 assert.ok(buttonsStart !== -1, 'Confirm button not found');
-const buttonsEnd = src.indexOf('aria-label="Accept clash and flag for later verification"');
+const buttonsEnd = src.indexOf("aria-label=${_cc_t('issueRow.acceptFlagAria'");
 assert.ok(buttonsEnd !== -1, 'Accept·Check button not found');
 const buttonsBlock = src.slice(buttonsStart, buttonsEnd + 200);
 
