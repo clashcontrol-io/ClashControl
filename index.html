@@ -25194,18 +25194,18 @@ function startApp() {
                   background:fb==='real_clash'?'#166534':fb==='acceptable'?'var(--accent-bg)':'#7f1d1d',
                   color:fb==='real_clash'?'#4ade80':fb==='acceptable'?'var(--accent-subtle)':'#fca5a5'}}>${fb==='real_clash'?'+':fb==='acceptable'?'-':'×'}</span>`}
                 ${!active && html`<button onClick=${function(e){e.stopPropagation();d({t:A.ACTIVE,id:it.id});}}
-                  title="Expand training feedback" style=${{background:'transparent',color:'var(--accent)',border:'none',cursor:'pointer',fontSize:'0.69rem',padding:'1px 4px',borderRadius:'var(--radius-xs)',lineHeight:1}}>▼</button>`}
+                  title=${_cc_t('issueRow.expandTrainingFeedback','Expand training feedback')} style=${{background:'transparent',color:'var(--accent)',border:'none',cursor:'pointer',fontSize:'0.69rem',padding:'1px 4px',borderRadius:'var(--radius-xs)',lineHeight:1}}>▼</button>`}
               </span>`;
             }()}
           </div>
           ${isClash && html`<div style=${{display:'flex',alignItems:'center',gap:'var(--space-1)',marginTop:'2px',flexWrap:'wrap'}}>
             ${it.number != null && html`<span class="cc-status-pill"
-              title="Clash number (stable across runs) — copy or share this to identify the clash"
+              title=${_cc_t('issueRow.clashNumberTip','Clash number (stable across runs) — copy or share this to identify the clash')}
               style=${{background:'var(--bg-secondary)',color:'var(--text-muted)',fontVariantNumeric:'tabular-nums',padding:'.1rem var(--space-2)'}}>#${it.number}</span>`}
             ${typeLabel && html`<span class="cc-status-pill" style=${{background:typeBg,color:typeCol,padding:'.1rem var(--space-2)'}}>${typeLabel}</span>`}
             ${sevLabel && html`<span class="cc-status-pill" style=${{background:sevBg,color:sevCol,padding:'.1rem var(--space-2)'}}>${sevLabel}</span>`}
-            ${it._delta==='new' && html`<span class="cc-status-pill" title="New this run" style=${{background:'var(--color-info-bg)',color:'var(--color-info-fg)'}}>NEW</span>`}
-            ${it._delta==='auto_resolved' && html`<span class="cc-status-pill" title="No longer detected" style=${{background:'var(--bg-secondary)',color:'var(--text-faint)'}}>AUTO</span>`}
+            ${it._delta==='new' && html`<span class="cc-status-pill" title=${_cc_t('issueRow.newThisRun','New this run')} style=${{background:'var(--color-info-bg)',color:'var(--color-info-fg)'}}>${_cc_t('issueRow.newBadge','NEW')}</span>`}
+            ${it._delta==='auto_resolved' && html`<span class="cc-status-pill" title=${_cc_t('issueRow.noLongerDetected','No longer detected')} style=${{background:'var(--bg-secondary)',color:'var(--text-faint)'}}>${_cc_t('issueRow.autoBadge','AUTO')}</span>`}
             ${it.aiProvenance && function(){
               // AI-decided chip — surfaces that this row's title/severity came
               // from an AI model, with the model name + timestamp on hover.
@@ -25215,34 +25215,34 @@ function startApp() {
               var p=it.aiProvenance;
               var when='';
               try { var d=new Date(p.at); if(!isNaN(d)) when=d.toISOString().slice(0,16).replace('T',' '); } catch(_){}
-              var tip='AI-decided · '+(p.model||'unknown')+(when?(' · '+when):'')+(p.source?(' · '+p.source):'');
+              var tip=_cc_t('issueRow.aiDecided','AI-decided · {model}',{model:p.model||_cc_t('issueRow.unknown','unknown')})+(when?(' · '+when):'')+(p.source?(' · '+p.source):'');
               return html`<span class="cc-status-pill" title=${tip}
-                style=${{background:'var(--accent-bg)',color:'var(--accent)',padding:'.1rem var(--space-2)',cursor:'help',fontSize:'var(--text-2xs)',letterSpacing:'.02em'}}>AI</span>`;
+                style=${{background:'var(--accent-bg)',color:'var(--accent)',padding:'.1rem var(--space-2)',cursor:'help',fontSize:'var(--text-2xs)',letterSpacing:'.02em'}}>${_cc_t('issueRow.aiBadge','AI')}</span>`;
             }()}
             ${function(){
               var reasons=it.aiReasons||[];
               var res=it.aiResolution||[]; if(typeof res==='string') res=res?[res]:[];
               var hasFeedback=reasons.length||res.length||it.aiNote;
               if(!hasFeedback) return null;
-              var RES_LABELS={move_a:'Move A',move_b:'Move B',redesign:'Redesign',accept:'Accept'};
+              var RES_LABELS={move_a:_cc_t('issueRow.res.moveA','Move A'),move_b:_cc_t('issueRow.res.moveB','Move B'),redesign:_cc_t('issueRow.res.redesign','Redesign'),accept:_cc_t('issueRow.res.accept','Accept')};
               var resLabels=res.map(function(k){return RES_LABELS[k]||k;});
               var tip=[];
-              if(reasons.length) tip.push('Reasons: '+reasons.join(', '));
-              if(resLabels.length) tip.push('Resolution: '+resLabels.join(', '));
-              if(it.aiNote) tip.push('Note: '+it.aiNote);
+              if(reasons.length) tip.push(_cc_t('issueRow.reasonsPrefix','Reasons: ')+reasons.join(', '));
+              if(resLabels.length) tip.push(_cc_t('issueRow.resolutionPrefix','Resolution: ')+resLabels.join(', '));
+              if(it.aiNote) tip.push(_cc_t('issueRow.notePrefix','Note: ')+it.aiNote);
               return html`<span class="cc-status-pill" title=${tip.join(' — ')}
-                style=${{background:'var(--surface-warm)',color:'var(--ink-secondary)',padding:'.1rem var(--space-2)',cursor:'help',border:'1px solid var(--hairline-strong)'}}>note${(reasons.length||resLabels.length)>0?' '+(reasons.length+resLabels.length):''}</span>`;
+                style=${{background:'var(--surface-warm)',color:'var(--ink-secondary)',padding:'.1rem var(--space-2)',cursor:'help',border:'1px solid var(--hairline-strong)'}}>${_cc_t('issueRow.noteBadge','note')}${(reasons.length||resLabels.length)>0?' '+(reasons.length+resLabels.length):''}</span>`;
             }()}
           </div>`}
           <p style=${{color:'var(--text-faint)',fontSize:'var(--text-xs)',marginTop:'var(--space-1)',lineHeight:'var(--leading-base)'}} class="lc2">${it.description}</p>
           ${isClash && html`<div style=${{display:'flex',gap:'var(--space-1)',marginTop:'var(--space-1)',flexWrap:'wrap',alignItems:'center'}}>
             ${it.distance!=null && it.distance>=0 && html`<span style=${{fontSize:'var(--text-2xs)',color:'var(--ink-secondary)',fontFamily:'var(--font-mono)',padding:'.1rem 0',fontWeight:'var(--weight-regular)',letterSpacing:'.01em'}}>
-              ${it.distance===0?'touching':it.distance+' mm'}
+              ${it.distance===0?_cc_t('issueRow.touching','touching'):it.distance+' mm'}
             </span>`}
             ${storeyLabel && html`<span style=${{fontSize:'var(--text-2xs)',color:'var(--ink-muted)',padding:'.1rem var(--space-2)',borderLeft:'1px solid var(--hairline-strong)'}}>${storeyLabel}</span>`}
-            ${it.selfClash && html`<span class="cc-status-pill" style=${{color:'var(--accent)',background:'var(--accent-bg)'}}>self</span>`}
-            ${it.expectedClash && html`<span class="cc-status-pill" style=${{color:'var(--color-warning-fg)',background:'var(--color-warning-bg)'}}>expected</span>`}
-            ${it.status==='accepted_needs_check' && html`<span class="cc-status-pill" style=${{color:'var(--color-info-fg)',background:'var(--color-info-bg)'}}>needs check</span>`}
+            ${it.selfClash && html`<span class="cc-status-pill" style=${{color:'var(--accent)',background:'var(--accent-bg)'}}>${_cc_t('issueRow.self','self')}</span>`}
+            ${it.expectedClash && html`<span class="cc-status-pill" style=${{color:'var(--color-warning-fg)',background:'var(--color-warning-bg)'}}>${_cc_t('issueRow.expected','expected')}</span>`}
+            ${it.status==='accepted_needs_check' && html`<span class="cc-status-pill" style=${{color:'var(--color-info-fg)',background:'var(--color-info-bg)'}}>${_cc_t('issueRow.needsCheck','needs check')}</span>`}
           </div>`}
           ${!isClash && it.elementType && html`<div style=${{display:'flex',gap:'var(--space-1)',marginTop:'var(--space-1)',flexWrap:'wrap'}}>
             <span class="cc-status-pill" style=${{background:'var(--color-info-bg)',color:'var(--color-info-fg)'}}>${it.elementType}</span>
@@ -25255,23 +25255,23 @@ function startApp() {
           ${isClash && html`<span class="cc-status-pill" style=${{background:'var(--bg-secondary)',color:'var(--text-muted)'}}>${(STAT[it.status||'open']||STAT.open).label}</span>`}
           ${isClash && it.status!=='confirmed' && html`<button class="cc-btn-press" onClick=${function(e){
               e.stopPropagation();
-              var btn=e.currentTarget;btn.style.color='var(--color-success-fg)';btn.style.background='var(--color-success-bg)';btn.style.borderColor='var(--color-success-border)';btn.textContent='Confirmed ✓';
+              var btn=e.currentTarget;btn.style.color='var(--color-success-fg)';btn.style.background='var(--color-success-bg)';btn.style.borderColor='var(--color-success-border)';btn.textContent=_cc_t('issueRow.confirmedCheck','Confirmed ✓');
               var _advId=it.id;if(window._ccPrepareAdvance)window._ccPrepareAdvance(_advId);setTimeout(function(){d({t:A.UPD_CLASH,id:_advId,u:{status:'confirmed'}});setTimeout(function(){if(window._ccAdvanceToNext)window._ccAdvanceToNext(_advId);},50);},600);
             }}
-            style=${{...S_BTN,fontSize:'var(--text-2xs)',padding:'var(--space-1) var(--space-2)',background:'var(--bg-secondary)',color:'var(--color-success-fg)',border:'1px solid var(--color-success-border)',fontWeight:'var(--weight-semibold)'}} aria-label="Confirm clash">Confirm</button>`}
+            style=${{...S_BTN,fontSize:'var(--text-2xs)',padding:'var(--space-1) var(--space-2)',background:'var(--bg-secondary)',color:'var(--color-success-fg)',border:'1px solid var(--color-success-border)',fontWeight:'var(--weight-semibold)'}} aria-label=${_cc_t('issueRow.confirmClashAria','Confirm clash')}>${_cc_t('issueRow.confirm','Confirm')}</button>`}
           ${isClash && it.status!=='confirmed' && html`<button class="cc-btn-press" onClick=${function(e){
               e.stopPropagation();
-              var btn=e.currentTarget;btn.style.color='var(--color-danger-fg)';btn.style.background='var(--color-danger-bg)';btn.style.borderColor='var(--color-danger-border)';btn.textContent='Denied ✗';
+              var btn=e.currentTarget;btn.style.color='var(--color-danger-fg)';btn.style.background='var(--color-danger-bg)';btn.style.borderColor='var(--color-danger-border)';btn.textContent=_cc_t('issueRow.deniedX','Denied ✗');
               var _advId=it.id;if(window._ccPrepareAdvance)window._ccPrepareAdvance(_advId);setTimeout(function(){d({t:A.UPD_CLASH,id:_advId,u:{status:'denied'}});setTimeout(function(){if(window._ccAdvanceToNext)window._ccAdvanceToNext(_advId);},50);},600);
             }}
-            style=${{...S_BTN,fontSize:'var(--text-2xs)',padding:'var(--space-1) var(--space-2)',background:'var(--bg-secondary)',color:'var(--color-danger-fg)',border:'1px solid var(--color-danger-border)',fontWeight:'var(--weight-semibold)'}} aria-label="Deny clash">Deny</button>`}
+            style=${{...S_BTN,fontSize:'var(--text-2xs)',padding:'var(--space-1) var(--space-2)',background:'var(--bg-secondary)',color:'var(--color-danger-fg)',border:'1px solid var(--color-danger-border)',fontWeight:'var(--weight-semibold)'}} aria-label=${_cc_t('issueRow.denyClashAria','Deny clash')}>${_cc_t('issueRow.deny','Deny')}</button>`}
           ${isClash && it.status!=='confirmed' && html`<button class="cc-btn-press" onClick=${function(e){
               e.stopPropagation();
-              var btn=e.currentTarget;btn.style.color='var(--color-info-fg)';btn.style.background='var(--color-info-bg)';btn.style.borderColor='var(--color-info-border)';btn.textContent='Accepted ✓';
+              var btn=e.currentTarget;btn.style.color='var(--color-info-fg)';btn.style.background='var(--color-info-bg)';btn.style.borderColor='var(--color-info-border)';btn.textContent=_cc_t('issueRow.acceptedCheck','Accepted ✓');
               var _advId=it.id;if(window._ccPrepareAdvance)window._ccPrepareAdvance(_advId);setTimeout(function(){d({t:A.UPD_CLASH,id:_advId,u:{status:'accepted_needs_check'}});setTimeout(function(){if(window._ccAdvanceToNext)window._ccAdvanceToNext(_advId);},50);},600);
             }}
-            title="Accept but flag for later verification"
-            style=${{...S_BTN,fontSize:'var(--text-2xs)',padding:'var(--space-1) var(--space-2)',background:'var(--bg-secondary)',color:'var(--color-info-fg)',border:'1px solid var(--color-info-border)',fontWeight:'var(--weight-semibold)'}} aria-label="Accept clash and flag for later verification">Accept · Check</button>`}
+            title=${_cc_t('issueRow.acceptFlagTip','Accept but flag for later verification')}
+            style=${{...S_BTN,fontSize:'var(--text-2xs)',padding:'var(--space-1) var(--space-2)',background:'var(--bg-secondary)',color:'var(--color-info-fg)',border:'1px solid var(--color-info-border)',fontWeight:'var(--weight-semibold)'}} aria-label=${_cc_t('issueRow.acceptFlagAria','Accept clash and flag for later verification')}>${_cc_t('issueRow.acceptCheck','Accept · Check')}</button>`}
           ${isClash && it.point && typeof window._ccHideOccluders==='function' && html`<button class="cc-btn-press" onClick=${function(e){
               e.stopPropagation();
               if(occReveal){
@@ -25284,36 +25284,36 @@ function startApp() {
                 setOccReveal(true);
               }
             }}
-            title="Temporarily hide whatever's between the camera and this clash"
-            style=${{...S_BTN,fontSize:'var(--text-2xs)',padding:'var(--space-1) var(--space-2)',background:occReveal?'var(--accent-bg)':'var(--bg-secondary)',color:occReveal?'var(--accent)':'var(--text-faint)',border:occReveal?'1px solid var(--accent-subtle)':'1px solid var(--border)',fontWeight:'var(--weight-semibold)'}} aria-label="Toggle occluder reveal">${occReveal?'Occluders hidden':'Hide occluders'}</button>`}
+            title=${_cc_t('issueRow.hideOccludersTip',"Temporarily hide whatever's between the camera and this clash")}
+            style=${{...S_BTN,fontSize:'var(--text-2xs)',padding:'var(--space-1) var(--space-2)',background:occReveal?'var(--accent-bg)':'var(--bg-secondary)',color:occReveal?'var(--accent)':'var(--text-faint)',border:occReveal?'1px solid var(--accent-subtle)':'1px solid var(--border)',fontWeight:'var(--weight-semibold)'}} aria-label=${_cc_t('issueRow.toggleOccluderAria','Toggle occluder reveal')}>${occReveal?_cc_t('issueRow.occludersHidden','Occluders hidden'):_cc_t('issueRow.hideOccluders','Hide occluders')}</button>`}
           ${!isClash && EDITABLE_STATUSES.map(function(k){return html`<button class="cc-btn-press" key=${k}
             onClick=${function(e){e.stopPropagation();d({t:A.UPD_ISSUE,id:it.id,u:{status:k}})}}
             style=${{...S_BTN,fontSize:'var(--text-2xs)',padding:'var(--space-1) var(--space-2)',background:it.status===k?STAT[k].bg:'var(--bg-secondary)',color:it.status===k?'#fff':'var(--text-faint)',fontWeight:'var(--weight-medium)'}}>${STAT[k].label}</button>`})}
           <button onClick=${function(e){e.stopPropagation();d({t:A.ACTIVE,id:null});if(_unghostAll)_unghostAll();if(window._ccRemoveActiveClashMarker)window._ccRemoveActiveClashMarker();}}
-            title="Collapse" aria-label="Collapse details" style=${{...S_BTN,marginLeft:'auto',padding:'0 var(--space-1)',background:'none',color:'var(--text-faint)',fontSize:'var(--text-base)',flexShrink:0}}>▲</button>
+            title=${_cc_t('issueRow.collapse','Collapse')} aria-label=${_cc_t('issueRow.collapseDetailsAria','Collapse details')} style=${{...S_BTN,marginLeft:'auto',padding:'0 var(--space-1)',background:'none',color:'var(--text-faint)',fontSize:'var(--text-base)',flexShrink:0}}>▲</button>
         </div>
         ${html`<${ClashProps} item=${it} models=${pr._models||[]} isClash=${isClash} />`}
         <div style=${{display:'flex',gap:'.3rem',alignItems:'center',marginTop:'.3rem',marginBottom:'.2rem'}}>
-          <span style=${{fontSize:'0.63rem',color:'var(--text-muted)',flexShrink:0}}>Assign:</span>
-          <input type="text" value=${it.assignee||''} placeholder="Name or team"
+          <span style=${{fontSize:'0.63rem',color:'var(--text-muted)',flexShrink:0}}>${_cc_t('issueRow.assignLabel','Assign:')}</span>
+          <input type="text" value=${it.assignee||''} placeholder=${_cc_t('issueRow.nameOrTeam','Name or team')}
             onClick=${function(e){e.stopPropagation();}}
             onInput=${function(e){d({t:isClash?'UPD_CLASH':'UPD_ISSUE',id:it.id,u:{assignee:e.target.value}});}}
             style=${{...S_INPUT,fontSize:'0.63rem',padding:'.15rem .3rem',flex:1}} />
         </div>
         ${isClash && html`<${ClashToleranceEditor} item=${it} d=${d} />`}
         ${(isClash ? trainingMode : !!it.clashId) && function(){
-          var CTYPES=[{k:'hard',l:'Hard'},{k:'soft',l:'Soft'},{k:'duplicate',l:'Duplicate'},{k:'no_clash',l:'None'}];
-          var REASONS=['Design error','Within tolerance','Functional clearance','Needs more tolerance','Already resolved','Modelling error','Missing opening','Shared space allowed','Duplicate geometry','Not relevant','Expected clash'];
+          var CTYPES=[{k:'hard',l:_cc_t('issueRow.ctype.hard','Hard')},{k:'soft',l:_cc_t('issueRow.ctype.soft','Soft')},{k:'duplicate',l:_cc_t('issueRow.ctype.duplicate','Duplicate')},{k:'no_clash',l:_cc_t('issueRow.ctype.none','None')}];
+          var REASONS=[_cc_t('issueRow.reason.designError','Design error'),_cc_t('issueRow.reason.withinTolerance','Within tolerance'),_cc_t('issueRow.reason.functionalClearance','Functional clearance'),_cc_t('issueRow.reason.needsMoreTolerance','Needs more tolerance'),_cc_t('issueRow.reason.alreadyResolved','Already resolved'),_cc_t('issueRow.reason.modellingError','Modelling error'),_cc_t('issueRow.reason.missingOpening','Missing opening'),_cc_t('issueRow.reason.sharedSpaceAllowed','Shared space allowed'),_cc_t('issueRow.reason.duplicateGeometry','Duplicate geometry'),_cc_t('issueRow.reason.notRelevant','Not relevant'),_cc_t('issueRow.reason.expectedClash','Expected clash')];
           var curCT=it.clashTypeConfirmed!=null?it.clashTypeConfirmed:it.type;
           var curReasons=it.aiReasons||[];
           var curNote=it.aiNote||'';
           var fb=it.aiFeedback;
           var curRes=it.aiResolution||[]; if(typeof curRes==='string') curRes=curRes?[curRes]:[];
-          var RES_LABELS={move_a:'Move A',move_b:'Move B',redesign:'Redesign',accept:'Accept'};
-          var VERDICT_LABELS={real_clash:'Real clash',acceptable:'Acceptable',false_positive:'False positive'};
-          var VERDICTS=[{k:'real_clash',l:'Real clash',bg:'#166534',col:'#4ade80',brd:'#22c55e44'},
-            {k:'acceptable',l:'Acceptable',bg:'var(--accent-bg)',col:'var(--accent-subtle)',brd:'rgba(26,107,74,.27)'},
-            {k:'false_positive',l:'False positive',bg:'#7f1d1d',col:'#fca5a5',brd:'#ef444444'}];
+          var RES_LABELS={move_a:_cc_t('issueRow.res.moveA','Move A'),move_b:_cc_t('issueRow.res.moveB','Move B'),redesign:_cc_t('issueRow.res.redesign','Redesign'),accept:_cc_t('issueRow.res.accept','Accept')};
+          var VERDICT_LABELS={real_clash:_cc_t('issueRow.verdict.realClash','Real clash'),acceptable:_cc_t('issueRow.verdict.acceptable','Acceptable'),false_positive:_cc_t('issueRow.verdict.falsePositive','False positive')};
+          var VERDICTS=[{k:'real_clash',l:_cc_t('issueRow.verdict.realClash','Real clash'),bg:'#166534',col:'#4ade80',brd:'#22c55e44'},
+            {k:'acceptable',l:_cc_t('issueRow.verdict.acceptable','Acceptable'),bg:'var(--accent-bg)',col:'var(--accent-subtle)',brd:'rgba(26,107,74,.27)'},
+            {k:'false_positive',l:_cc_t('issueRow.verdict.falsePositive','False positive'),bg:'#7f1d1d',col:'#fca5a5',brd:'#ef444444'}];
           function updItem(u){ d(isClash ? {t:A.UPD_CLASH,id:it.id,u:u} : {t:A.UPD_ISSUE,id:it.id,u:u}); }
           function setVerdict(v){ isClash ? d({t:A.AI_FEEDBACK,id:it.id,v:v}) : d({t:A.UPD_ISSUE,id:it.id,u:{aiFeedback:v}}); }
 
@@ -25332,10 +25332,10 @@ function startApp() {
               </div>`;
             }
             return html`<div style=${{marginTop:'.4rem',paddingTop:'.4rem',borderTop:'1px solid var(--border-subtle)',background:'var(--accent-bg)',borderRadius:'var(--radius-sm)',padding:'.45rem .5rem'}}>
-              <div style=${{fontSize:'0.63rem',fontWeight:600,color:'var(--accent)',textTransform:'uppercase',letterSpacing:'.04em',marginBottom:'.3rem'}}>Feedback</div>
-              ${row('Reason', hasReason ? curReasons.join(', ') : null)}
-              ${row('Resolution', hasRes ? rLabels.join(', ') : null)}
-              ${row('Note', hasNote ? curNote : null)}
+              <div style=${{fontSize:'0.63rem',fontWeight:600,color:'var(--accent)',textTransform:'uppercase',letterSpacing:'.04em',marginBottom:'.3rem'}}>${_cc_t('issueRow.feedback','Feedback')}</div>
+              ${row(_cc_t('issueRow.reason','Reason'), hasReason ? curReasons.join(', ') : null)}
+              ${row(_cc_t('issueRow.resolution','Resolution'), hasRes ? rLabels.join(', ') : null)}
+              ${row(_cc_t('issueRow.note','Note'), hasNote ? curNote : null)}
             </div>`;
           }
 
@@ -25344,9 +25344,9 @@ function startApp() {
           // Native disclosure = zero React state, so no risk of reintroducing a
           // conditional-hook (this IIFE deliberately calls no hooks).
           return html`<details style=${{marginTop:'.4rem',borderTop:'1px solid var(--border-subtle)',background:'var(--accent-bg)',borderRadius:'var(--radius-sm)',padding:'.35rem .4rem'}}>
-            <summary onClick=${function(e){e.stopPropagation();}} style=${{fontSize:'0.63rem',fontWeight:600,color:'var(--accent)',textTransform:'uppercase',letterSpacing:'.04em',cursor:'pointer'}}>Train the AI <span style=${{color:'var(--text-faint)',fontWeight:400,textTransform:'none',letterSpacing:0}}>— optional</span></summary>
+            <summary onClick=${function(e){e.stopPropagation();}} style=${{fontSize:'0.63rem',fontWeight:600,color:'var(--accent)',textTransform:'uppercase',letterSpacing:'.04em',cursor:'pointer'}}>${_cc_t('issueRow.trainTheAI','Train the AI')} <span style=${{color:'var(--text-faint)',fontWeight:400,textTransform:'none',letterSpacing:0}}>— ${_cc_t('issueRow.optional','optional')}</span></summary>
             <div style=${{marginTop:'.35rem'}}>
-            <div style=${{fontSize:'0.63rem',fontWeight:600,color:'var(--text-muted)',marginBottom:'.15rem'}}>Verdict</div>
+            <div style=${{fontSize:'0.63rem',fontWeight:600,color:'var(--text-muted)',marginBottom:'.15rem'}}>${_cc_t('issueRow.verdict','Verdict')}</div>
             <div style=${{display:'flex',gap:'.25rem',marginBottom:'.3rem',flexWrap:'wrap'}}>
               ${VERDICTS.map(function(v){var sel=fb===v.k;return html`<button key=${v.k}
                 onClick=${function(e){e.stopPropagation();setVerdict(sel?null:v.k);}}
@@ -25354,16 +25354,16 @@ function startApp() {
                   background:sel?v.bg:'var(--bg-secondary)',color:sel?v.col:'var(--text-faint)',
                   border:'1px solid '+(sel?v.brd:'var(--border)')}}>${v.l}</button>`})}
             </div>
-            <div style=${{fontSize:'0.63rem',fontWeight:600,color:'var(--text-muted)',marginBottom:'.15rem'}}>Clash type</div>
+            <div style=${{fontSize:'0.63rem',fontWeight:600,color:'var(--text-muted)',marginBottom:'.15rem'}}>${_cc_t('issueRow.clashType','Clash type')}</div>
             <div style=${{display:'flex',gap:'.25rem',marginBottom:'.3rem',flexWrap:'wrap'}}>
               ${CTYPES.map(function(ct){var confirmed=it.clashTypeConfirmed!=null;var sel=curCT===ct.k;var isDefault=!confirmed&&it.type===ct.k;return html`<button key=${ct.k}
                 onClick=${function(e){e.stopPropagation();updItem({clashTypeConfirmed:ct.k});}}
                 style=${{...S_BTN,fontSize:'0.63rem',padding:'.1rem .35rem',
                   background:sel||isDefault?'var(--accent-bg)':'var(--bg-secondary)',
                   color:sel||isDefault?'var(--accent-subtle)':'var(--text-faint)',
-                  border:'1px solid '+(sel||isDefault?'var(--accent)':'var(--border)')}}>${ct.l}${isDefault?' (detected)':''}</button>`})}
+                  border:'1px solid '+(sel||isDefault?'var(--accent)':'var(--border)')}}>${ct.l}${isDefault?' '+_cc_t('issueRow.detected','(detected)'):''}</button>`})}
             </div>
-            <div style=${{fontSize:'0.63rem',fontWeight:600,color:'var(--text-muted)',marginBottom:'.15rem'}}>Reason</div>
+            <div style=${{fontSize:'0.63rem',fontWeight:600,color:'var(--text-muted)',marginBottom:'.15rem'}}>${_cc_t('issueRow.reason','Reason')}</div>
             <div style=${{display:'flex',gap:'.2rem',marginBottom:'.3rem',flexWrap:'wrap'}}>
               ${REASONS.map(function(r){var sel=curReasons.indexOf(r)>=0;return html`<span key=${r}
                 onClick=${function(e){e.stopPropagation();var nr=sel?curReasons.filter(function(x){return x!==r}):curReasons.concat([r]);updItem({aiReasons:nr});}}
@@ -25372,7 +25372,7 @@ function startApp() {
                   background:sel?'var(--accent-bg)':'var(--bg-secondary)',
                   color:sel?'var(--accent-subtle)':'var(--text-muted)'}}>${r}</span>`})}
             </div>
-            <div style=${{fontSize:'0.63rem',fontWeight:600,color:'var(--text-muted)',marginBottom:'.15rem'}}>Resolution</div>
+            <div style=${{fontSize:'0.63rem',fontWeight:600,color:'var(--text-muted)',marginBottom:'.15rem'}}>${_cc_t('issueRow.resolution','Resolution')}</div>
             <div style=${{display:'flex',gap:'.2rem',marginBottom:'.3rem',flexWrap:'wrap'}}>
               ${[{k:'move_a',l:'Move A'},{k:'move_b',l:'Move B'},{k:'redesign',l:'Redesign'},{k:'accept',l:'Accept'}].map(function(r){
                 var curRes=it.aiResolution||[];if(typeof curRes==='string')curRes=curRes?[curRes]:[];
@@ -25385,7 +25385,7 @@ function startApp() {
                     color:sel?'var(--accent-subtle)':'var(--text-muted)'}}>${r.l}</span>`;
               })}
             </div>
-            <input type="text" value=${curNote} maxLength="140" placeholder="Optional note \u2014 no project names or locations"
+            <input type="text" value=${curNote} maxLength="140" placeholder=${_cc_t('issueRow.optionalNotePlaceholder','Optional note \u2014 no project names or locations')}
               onClick=${function(e){e.stopPropagation();}}
               onInput=${function(e){updItem({aiNote:e.target.value});}}
               style=${{width:'100%',fontSize:'0.63rem',padding:'.2rem .3rem',background:'var(--bg-secondary)',
@@ -25393,9 +25393,9 @@ function startApp() {
             </div>
           </details>`;
         }()}
-        ${!isClash && it.assignee && html`<div style=${{fontSize:'0.63rem',color:'var(--text-secondary)',marginTop:'.2rem'}}>Assigned: ${it.assignee}</div>`}
-        ${!isClash && it.dueDate && html`<div style=${{fontSize:'0.63rem',color:'var(--text-secondary)'}}>Due: ${it.dueDate}</div>`}
-        ${!isClash && it.category && html`<div style=${{fontSize:'0.63rem',color:'var(--text-muted)'}}>Category: ${it.category}</div>`}
+        ${!isClash && it.assignee && html`<div style=${{fontSize:'0.63rem',color:'var(--text-secondary)',marginTop:'.2rem'}}>${_cc_t('issueRow.assigned','Assigned: {name}',{name:it.assignee})}</div>`}
+        ${!isClash && it.dueDate && html`<div style=${{fontSize:'0.63rem',color:'var(--text-secondary)'}}>${_cc_t('issueRow.due','Due: {date}',{date:it.dueDate})}</div>`}
+        ${!isClash && it.category && html`<div style=${{fontSize:'0.63rem',color:'var(--text-muted)'}}>${_cc_t('issueRow.categoryLabel','Category: {cat}',{cat:it.category})}</div>`}
         ${html`<${ClashHistory} targetId=${it.id} />`}
       </div>`}
     </div>`;
