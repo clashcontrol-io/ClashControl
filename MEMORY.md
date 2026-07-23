@@ -321,10 +321,21 @@ an id that already exists so automation can only create NEW packs, never silentl
 reviewed one) and opens a draft PR crediting the contributor. Token scoped to
 contents+pull-requests+issues write only. `tests/apply-contributed-pack.test.js` covers
 create/duplicate-refusal/validation-rejection.~~ (2026-07-23)
-PR #708 (draft) tracks all of the above, CI green, 801 tests passing.
-**Still to do (long tail, can proceed independently):** retrofit `index.html`'s hardcoded UI
-strings to `_cc_t()`, panel by panel (toolbar → Issues → Data Quality/Accessibility → rest) — each
-its own reviewable commit.
+PR #708 (draft) tracks all of the above, CI green, 801 tests passing. Also fixed a `pull_request:
+synchronize` event that never fired for #708 (ci.yml never ran at all on the first two pushes) —
+this repo's own `ci.yml` comments call out this exact flakiness as "occasional"; `workflow_dispatch`
+API access wasn't available to fix it directly, so an empty commit re-triggered the event and CI
+ran clean.
+Long-tail retrofit of `index.html`'s hardcoded UI strings to `_cc_t()` is underway, panel by panel,
+each its own commit: ~~toolbar (Views/Present/Open/Save Project/Import/Export BCF/theme+Settings
+buttons) + LeftPanel's shared TITLES map (Models/Conflicts/Issues/Navigator/Data Quality/
+Accessibility/Tools/Integrations/Standards) + Settings modal title.~~ (2026-07-23)
+~~IssuePanel's Clashes/Issues/Navigator sub-tab bar + search/filter placeholder, "Toggle filters",
+Filters header/Clear all/Status pills.~~ (2026-07-23) `locales/ja.json` kept in sync with every
+newly-wired key each slice.
+**Still to do (long tail, can proceed independently):** rest of IssuePanel's filter controls
+(Discipline/Floor/Distance/Priority/Category/Assignee dropdowns, empty states), then Data
+Quality/Accessibility panels, then the rest of `index.html` — each its own reviewable commit.
 
 **Park inactive models — memory relief (2026-07-22, branch `claude/clashcontrol-v7-release-plan-jp5njw`)** —
 diagnosed the "viewer stalls a few seconds" + "5.2 GB heap > 4.09 GB limit" reports as the SAME
