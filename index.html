@@ -22466,30 +22466,30 @@ function startApp() {
         <div style=${{display:'flex',gap:'var(--space-2)',alignItems:'center',marginBottom:'var(--space-2)'}}>
           <select value=${selectedModel} onChange=${function(e){setSelectedModel(e.target.value);}}
             style=${{flex:1,minWidth:0,fontSize:'var(--text-xs)',padding:'var(--space-1) var(--space-2)',borderRadius:'var(--radius-sm)',border:'1px solid var(--border)',background:'var(--bg-secondary)',color:'var(--text-primary)'}}>
-            <option value="all">All models</option>
+            <option value="all">${_cc_t('dq.allModels','All models')}</option>
             ${(s.models||[]).map(function(m){return html`<option key=${m.id} value=${m.id}>${m.name}</option>`;})}
           </select>
           <button onClick=${runChecks} disabled=${!hasModels||isRunning||!hasEngine}
             style=${{padding:'var(--space-1) var(--space-3)',borderRadius:'var(--radius-sm)',fontSize:'var(--text-xs)',fontWeight:600,border:'none',cursor:(hasModels&&!isRunning)?'pointer':'not-allowed',background:(hasModels&&!isRunning&&hasEngine)?'var(--accent)':'var(--bg-tertiary)',color:(hasModels&&!isRunning&&hasEngine)?'#fff':'var(--text-faint)'}}>
-            ${isRunning?'Running…':'Run checks'}
+            ${isRunning?_cc_t('a11y.running','Running…'):_cc_t('dq.runChecks','Run checks')}
           </button>
         </div>
         <div style=${{display:'flex',gap:'var(--space-3)',alignItems:'center',fontSize:'var(--text-2xs)',color:'var(--text-faint)'}}>
-          <span><span style=${{display:'inline-block',width:7,height:7,borderRadius:'50%',background:'#ef4444',marginRight:4}}></span>Fail</span>
-          <span><span style=${{display:'inline-block',width:7,height:7,borderRadius:'50%',background:'#22c55e',marginRight:4}}></span>Pass</span>
+          <span><span style=${{display:'inline-block',width:7,height:7,borderRadius:'50%',background:'#ef4444',marginRight:4}}></span>${_cc_t('a11y.fail','Fail')}</span>
+          <span><span style=${{display:'inline-block',width:7,height:7,borderRadius:'50%',background:'#22c55e',marginRight:4}}></span>${_cc_t('a11y.pass','Pass')}</span>
           ${lastChecked && html`<span style=${{marginLeft:'auto'}}>${new Date(lastChecked).toLocaleTimeString()}</span>`}
         </div>
       </div>
 
-      ${!hasEngine && html`<div style=${{padding:'var(--space-4)',fontSize:'var(--text-xs)',color:'var(--text-muted)'}}>Accessibility engine not loaded.</div>`}
+      ${!hasEngine && html`<div style=${{padding:'var(--space-4)',fontSize:'var(--text-xs)',color:'var(--text-muted)'}}>${_cc_t('a11y.engineNotLoaded','Accessibility engine not loaded.')}</div>`}
 
       ${result && html`<div style=${{flex:1,overflowY:'auto'}}>
         <div style=${{padding:'var(--space-2) var(--space-4)',display:'flex',alignItems:'center',justifyContent:'space-between',background:totalFail===0?'var(--color-success-bg)':'var(--color-warning-bg)',borderBottom:'1px solid var(--border-subtle)'}}>
           <span style=${{fontSize:'var(--text-xs)',fontWeight:600,color:totalFail===0?'var(--color-success-fg)':'var(--color-warning-fg)'}}>
-            ${totalEval===0?'No applicable elements':(totalFail===0?'All '+totalEval+' checks pass':totalFail+' of '+totalEval+' fail')}
+            ${totalEval===0?_cc_t('a11y.noApplicable','No applicable elements'):(totalFail===0?_cc_t('a11y.allPass','All {total} checks pass',{total:totalEval}):_cc_t('a11y.someFail','{fail} of {total} fail',{fail:totalFail,total:totalEval}))}
           </span>
-          ${totalFail>0 && html`<button onClick=${addToConflicts} title="Add each failing element to the Conflicts tab (exports to BCF)"
-            style=${{fontSize:'var(--text-2xs)',padding:'var(--space-1) var(--space-2)',borderRadius:'var(--radius-xs)',border:'1px solid var(--border)',background:'var(--bg-primary)',color:'var(--text-primary)',cursor:'pointer'}}>Add to Conflicts</button>`}
+          ${totalFail>0 && html`<button onClick=${addToConflicts} title=${_cc_t('a11y.addToConflictsTitle','Add each failing element to the Conflicts tab (exports to BCF)')}
+            style=${{fontSize:'var(--text-2xs)',padding:'var(--space-1) var(--space-2)',borderRadius:'var(--radius-xs)',border:'1px solid var(--border)',background:'var(--bg-primary)',color:'var(--text-primary)',cursor:'pointer'}}>${_cc_t('a11y.addToConflicts','Add to Conflicts')}</button>`}
         </div>
 
         ${ORDER.map(function(k){
@@ -22503,7 +22503,7 @@ function startApp() {
               <span style=${{fontSize:'var(--text-2xs)',color:'var(--text-muted)',fontFamily:'var(--font-mono)'}}>${g.fail}/${g.total}</span>
             </div>
             ${open && fails.length>0 && html`<div style=${{padding:'0 var(--space-4) var(--space-2)'}}>
-              <button onClick=${function(){highlight(fails);}} style=${{fontSize:'var(--text-2xs)',color:'var(--accent)',background:'none',border:'none',cursor:'pointer',padding:'0 0 var(--space-1)'}}>Isolate failing</button>
+              <button onClick=${function(){highlight(fails);}} style=${{fontSize:'var(--text-2xs)',color:'var(--accent)',background:'none',border:'none',cursor:'pointer',padding:'0 0 var(--space-1)'}}>${_cc_t('a11y.isolateFailing','Isolate failing')}</button>
               ${fails.slice(0,30).map(function(it,ix){ var f=fmt(it);
                 return html`<div key=${ix} style=${{fontSize:'var(--text-2xs)',color:'var(--text-secondary)',padding:'2px 0',borderTop:'1px solid var(--hairline)'}}>
                   <div style=${{display:'flex',justifyContent:'space-between',gap:'var(--space-2)'}}>
@@ -22513,18 +22513,18 @@ function startApp() {
                   <div style=${{color:'var(--text-faint)',fontFamily:'var(--font-mono)'}}>req ${f.req}${it.note?' · '+it.note:''}</div>
                 </div>`;
               })}
-              ${fails.length>30 && html`<div style=${{fontSize:'var(--text-2xs)',color:'var(--text-faint)',paddingTop:2}}>… +${fails.length-30} more</div>`}
+              ${fails.length>30 && html`<div style=${{fontSize:'var(--text-2xs)',color:'var(--text-faint)',paddingTop:2}}>${_cc_t('a11y.moreFails','… +{n} more',{n:fails.length-30})}</div>`}
             </div>`}
           </div>`;
         })}
 
         <div style=${{padding:'var(--space-3) var(--space-4)',fontSize:'var(--text-2xs)',color:'var(--text-faint)',lineHeight:1.5}}>
-          Advisory geometric check — deterministic measurement from IFC quantities and bounding geometry. Verify against the applicable Bbl / NEN articles. Corridor and turning use footprint bounds (approximate for non-rectangular spaces).
+          ${_cc_t('a11y.disclaimer','Advisory geometric check — deterministic measurement from IFC quantities and bounding geometry. Verify against the applicable Bbl / NEN articles. Corridor and turning use footprint bounds (approximate for non-rectangular spaces).')}
         </div>
       </div>`}
 
       ${!result && hasEngine && html`<div style=${{padding:'var(--space-4)',fontSize:'var(--text-xs)',color:'var(--text-muted)',lineHeight:1.6}}>
-        Geometric accessibility checks: door clear width, threshold height, ramp slope, corridor / escape-route width, turning clearance — measured against NL Bbl/NEN thresholds. Failing elements add to the Conflicts tab and export to BCF.
+        ${_cc_t('a11y.intro','Geometric accessibility checks: door clear width, threshold height, ramp slope, corridor / escape-route width, turning clearance — measured against NL Bbl/NEN thresholds. Failing elements add to the Conflicts tab and export to BCF.')}
       </div>`}
     </div>`;
   }
