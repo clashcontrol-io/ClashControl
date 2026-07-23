@@ -1,0 +1,66 @@
+name: "Contribute a regulation pack"
+description: "Add regional building-code thresholds (e.g. door width, ramp slope) for the Accessibility panel."
+title: "[regulations] Add <region> building-code thresholds"
+labels: ["contribution", "type:regulation"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        These numbers are safety-relevant (door widths, ramp slopes, turning clearances), so this
+        contribution path is deliberately stricter than a translation:
+
+        - A **source citation** is required — the specific regulation text/article your thresholds
+          come from, not just "the building code."
+        - Every submitted pack starts `verified: false` and shows an "(unverified)" label in the app
+          until a maintainer or a domain-knowledgeable reviewer confirms the values.
+        - Only include values you can actually cite — leave a threshold out rather than guess.
+
+        1. Copy [`regulations/_template.json`](../../blob/main/regulations/_template.json) and fill
+           in your region's thresholds.
+        2. Fill in the fields below and drag your finished `.json` file into the "Your regulation
+           pack file" box.
+        3. See [`regulations/README.md`](../../blob/main/regulations/README.md) for the full format
+           and requirements.
+  - type: input
+    id: region
+    attributes:
+      label: "Region code"
+      description: "e.g. \"jp\", \"jp-tokyo\" — must match the `region` field in your file."
+      placeholder: "jp"
+    validations:
+      required: true
+  - type: input
+    id: regionname
+    attributes:
+      label: "Region name"
+      description: "Full country/region name — must match the `name` field in your file."
+    validations:
+      required: true
+  - type: input
+    id: contributor
+    attributes:
+      label: "Your name or GitHub handle"
+      description: "Credited in the pack and the resulting PR."
+    validations:
+      required: true
+  - type: input
+    id: source
+    attributes:
+      label: "Source citation"
+      description: "The specific regulation text/article these thresholds come from — must match the `source` field in your file."
+    validations:
+      required: true
+  - type: textarea
+    id: file
+    attributes:
+      label: "Your regulation pack file"
+      description: "Drag and drop your `<region>.json` file directly into this box — do not paste it as text."
+    validations:
+      required: true
+  - type: checkboxes
+    id: confirm
+    attributes:
+      label: "Confirmation"
+      options:
+        - label: "These values are cited from a real, checkable source, and I understand unverifiable submissions will not be merged."
+          required: true

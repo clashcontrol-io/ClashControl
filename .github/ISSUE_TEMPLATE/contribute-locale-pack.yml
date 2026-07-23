@@ -1,0 +1,52 @@
+name: "Contribute a translation (locale pack)"
+description: "Add or improve a UI language pack — no git/GitHub experience required."
+title: "[i18n] Add <language> translation"
+labels: ["contribution", "type:locale"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for helping translate ClashControl! You don't need to know git or open a pull request —
+        just fill this in and attach your file, and a maintainer will take it from there.
+
+        1. Copy [`locales/_template.json`](../../blob/main/locales/_template.json) and translate the
+           `strings` values (partial is fine — anything untranslated just stays in English).
+        2. Fill in the fields below and drag your finished `.json` file into the "Your locale pack
+           file" box (GitHub uploads it automatically and inserts a link).
+        3. See [`locales/README.md`](../../blob/main/locales/README.md) for the full format.
+  - type: input
+    id: lang
+    attributes:
+      label: "Language code"
+      description: "BCP-47 primary subtag, e.g. \"ja\", \"de\", \"pt-BR\" — must match the `lang` field in your file."
+      placeholder: "ja"
+    validations:
+      required: true
+  - type: input
+    id: langname
+    attributes:
+      label: "Language name"
+      description: "The language's own name for itself, e.g. \"日本語\" — must match the `name` field in your file."
+    validations:
+      required: true
+  - type: input
+    id: contributor
+    attributes:
+      label: "Your name or GitHub handle"
+      description: "Credited in the pack and the resulting PR."
+    validations:
+      required: true
+  - type: textarea
+    id: file
+    attributes:
+      label: "Your locale pack file"
+      description: "Drag and drop your `<lang>.json` file directly into this box — do not paste it as text."
+    validations:
+      required: true
+  - type: checkboxes
+    id: confirm
+    attributes:
+      label: "Confirmation"
+      options:
+        - label: "I wrote this translation (or have the right to contribute it) and it follows locales/_template.json's format."
+          required: true
