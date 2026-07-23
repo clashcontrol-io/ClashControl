@@ -18600,7 +18600,7 @@ function startApp() {
         ${html`<${_SplatLayersSection} />`}
         ${s.underlays.length > 0 && html`<div style=${{marginTop:'.3rem',borderTop:'1px solid var(--hairline)',paddingTop:'.3rem'}}>
           <div style=${{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:'.25rem',padding:'0 .2rem'}}>
-            <span style=${{fontSize:'.65rem',fontWeight:600,color:'var(--text-muted)',textTransform:'uppercase',letterSpacing:'.05em'}}>2D Underlays</span>
+            <span style=${{fontSize:'.65rem',fontWeight:600,color:'var(--text-muted)',textTransform:'uppercase',letterSpacing:'.05em'}}>${_cc_t('sidebar.underlays','2D Underlays')}</span>
           </div>
           ${s.underlays.map(function(ul){
             var isActive = s.activeUnderlay===ul.id;
@@ -18625,9 +18625,9 @@ function startApp() {
         </div>`}
         ${s.models.length > 0 && window._ccGeoplaceModel && html`<div style=${{marginTop:'.3rem',borderTop:'1px solid var(--hairline)',paddingTop:'.3rem'}}>
           <div style=${{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:'.25rem',padding:'0 .2rem'}}>
-            <span style=${{fontSize:'.65rem',fontWeight:600,color:'var(--text-muted)',textTransform:'uppercase',letterSpacing:'.05em'}}>Geo Placement</span>
+            <span style=${{fontSize:'.65rem',fontWeight:600,color:'var(--text-muted)',textTransform:'uppercase',letterSpacing:'.05em'}}>${_cc_t('sidebar.geoPlacement','Geo Placement')}</span>
             ${s.modelGeo && html`<button onClick=${function(){window._ccGeoplaceClear && window._ccGeoplaceClear();}}
-              style=${{fontSize:'.6rem',padding:'.08rem .28rem',background:'none',border:'1px solid var(--border)',borderRadius:'var(--radius-xs)',cursor:'pointer',color:'var(--text-muted)'}}>Clear</button>`}
+              style=${{fontSize:'.6rem',padding:'.08rem .28rem',background:'none',border:'1px solid var(--border)',borderRadius:'var(--radius-xs)',cursor:'pointer',color:'var(--text-muted)'}}>${_cc_t('common.clear','Clear')}</button>`}
           </div>
           ${(function(){
             var mcModel = null, mcModelId = null;
@@ -18654,7 +18654,7 @@ function startApp() {
                       .catch(function(err){ alert('CRS placement failed: ' + (err && err.message || err)); });
                   }}
                   title="Reproject the projected E/N to lat/lon (placement-grade, ~1 m — not RDNAPTRANS survey-grade) and drop the basemap there. The model never moves."
-                  style=${{fontSize:'.62rem',padding:'.1rem .4rem',background:'var(--accent)',color:'#fff',border:'none',borderRadius:'var(--radius-xs)',cursor:'pointer',whiteSpace:'nowrap'}}>Place from CRS</button>
+                  style=${{fontSize:'.62rem',padding:'.1rem .4rem',background:'var(--accent)',color:'#fff',border:'none',borderRadius:'var(--radius-xs)',cursor:'pointer',whiteSpace:'nowrap'}}>${_cc_t('sidebar.placeFromCRS','Place from CRS')}</button>
               </div>`}
             </div>`;
           })()}
@@ -18736,7 +18736,7 @@ function startApp() {
                         window._ccGeoplaceModel(detected.modelId, Object.assign({}, detected.georef, {source:'IfcSite'}))
                           .catch(function(err){ alert('Geoplace failed: ' + (err && err.message || err)); });
                       }} style=${{flex:1,fontSize:'.66rem',padding:'.22rem .4rem',background:'var(--accent)',color:'#fff',border:'none',borderRadius:'var(--radius-xs)',cursor:'pointer'}}>
-                        Use IfcSite (${(+detected.georef.refLat).toFixed(3)}, ${(+detected.georef.refLon).toFixed(3)})
+                        ${_cc_t('sidebar.useIfcSite','Use IfcSite ({coords})',{coords:(+detected.georef.refLat).toFixed(3)+', '+(+detected.georef.refLon).toFixed(3)})}
                       </button>`
                     : null;
                 })()}
@@ -18753,7 +18753,7 @@ function startApp() {
                   window._ccGeoplaceModel(firstModelId, {refLat:parts[0], refLon:parts[1], source:'manual'})
                     .catch(function(err){ alert('Geoplace failed: ' + (err && err.message || err)); });
                 }} style=${{flex:1,fontSize:'.66rem',padding:'.22rem .4rem',background:'none',color:'var(--text-primary)',border:'1px solid var(--border)',borderRadius:'var(--radius-xs)',cursor:'pointer'}}>
-                  Enter lat/lon…
+                  ${_cc_t('sidebar.enterLatLon','Enter lat/lon…')}
                 </button>
               </div>`}
           ${window._ccLoadTiles3D && html`<div style=${{display:'flex',gap:'.25rem',marginTop:'.25rem'}}>
@@ -18810,7 +18810,7 @@ function startApp() {
               }
               if (tilesOn) return html`<button onClick=${function(){ window._ccUnloadTiles3D(); }}
                 style=${{flex:1,fontSize:'.66rem',padding:'.22rem .4rem',background:'var(--bg-secondary)',color:'var(--text-primary)',border:'1px solid var(--border)',borderRadius:'var(--radius-xs)',cursor:'pointer'}}>
-                Remove 3D world context</button>`;
+                ${_cc_t('sidebar.remove3dContext','Remove 3D world context')}</button>`;
               return html`<button onClick=${function(){
                   var ll = _tilesLatLon(); if (!ll) return;
                   window._ccLoadTiles3D({ preset:'nl', lat: ll.lat, lon: ll.lon, origin: ll.origin, north: ll.north, offset: ll.offset })
@@ -18911,7 +18911,7 @@ function startApp() {
         </div>`}
         ${(s.referenceLayers && s.referenceLayers.length > 0) && html`<div style=${{marginTop:'.3rem',borderTop:'1px solid var(--hairline)',paddingTop:'.3rem'}}>
           <div style=${{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:'.25rem',padding:'0 .2rem'}}>
-            <span style=${{fontSize:'.65rem',fontWeight:600,color:'var(--text-muted)',textTransform:'uppercase',letterSpacing:'.05em'}}>Reference Layers</span>
+            <span style=${{fontSize:'.65rem',fontWeight:600,color:'var(--text-muted)',textTransform:'uppercase',letterSpacing:'.05em'}}>${_cc_t('sidebar.referenceLayers','Reference Layers')}</span>
           </div>
           ${s.referenceLayers.map(function(rl){
             return html`<div key=${rl.id} style=${{display:'flex',flexDirection:'column',padding:'.25rem .35rem',borderRadius:'var(--radius-xs)',borderLeft:'2px solid #9ec5fe',background:'rgba(158,197,254,0.06)',marginBottom:'.18rem'}}>
@@ -18925,13 +18925,13 @@ function startApp() {
                   style=${{background:'none',border:'none',cursor:'pointer',color:'var(--text-faint)',padding:'0 2px',fontSize:'.7rem',lineHeight:1}} title="Remove">✕</button>
               </div>
               <div style=${{display:'flex',alignItems:'center',gap:'.4rem',marginTop:'.2rem',paddingLeft:'1.1rem'}}>
-                <label style=${{fontSize:'.6rem',color:'var(--text-faint)',minWidth:'2.4rem'}}>Size</label>
+                <label style=${{fontSize:'.6rem',color:'var(--text-faint)',minWidth:'2.4rem'}}>${_cc_t('sidebar.size','Size')}</label>
                 <input type="range" min="0.005" max="0.2" step="0.005" value=${rl.pointSize||0.02}
                   onInput=${function(e){window._ccUpdateReferenceLayer && window._ccUpdateReferenceLayer(rl.id,{pointSize:+e.target.value});}}
                   style=${{flex:1,height:'2px',cursor:'pointer'}} />
               </div>
               <div style=${{display:'flex',alignItems:'center',gap:'.4rem',marginTop:'.15rem',paddingLeft:'1.1rem'}}>
-                <label style=${{fontSize:'.6rem',color:'var(--text-faint)',minWidth:'2.4rem'}}>Opacity</label>
+                <label style=${{fontSize:'.6rem',color:'var(--text-faint)',minWidth:'2.4rem'}}>${_cc_t('sidebar.opacity','Opacity')}</label>
                 <input type="range" min="0.1" max="1" step="0.05" value=${rl.opacity!=null?rl.opacity:1}
                   onInput=${function(e){window._ccUpdateReferenceLayer && window._ccUpdateReferenceLayer(rl.id,{opacity:+e.target.value});}}
                   style=${{flex:1,height:'2px',cursor:'pointer'}} />
@@ -18997,10 +18997,10 @@ function startApp() {
           if(!stKeys.length) return null;
           return html`<div style=${{marginTop:'.3rem',borderTop:'1px solid var(--hairline)',paddingTop:'.3rem'}}>
             <div style=${{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:'.25rem',padding:'0 .2rem'}}>
-              <span style=${{fontSize:'.65rem',fontWeight:600,color:'var(--text-muted)',textTransform:'uppercase',letterSpacing:'.05em'}}>Levels</span>
+              <span style=${{fontSize:'.65rem',fontWeight:600,color:'var(--text-muted)',textTransform:'uppercase',letterSpacing:'.05em'}}>${_cc_t('sidebar.levels','Levels')}</span>
               <div style=${{display:'flex',gap:'.2rem'}}>
-                <button onClick=${function(){s.models.forEach(function(m){d({t:A.TOGGLE_ALL_STOREYS,id:m.id,storeys:(m.storeys||[]).concat(['']),hide:false});});}} style=${{fontSize:'.6rem',padding:'.08rem .28rem',background:'none',border:'1px solid var(--border)',borderRadius:'var(--radius-xs)',cursor:'pointer',color:'var(--text-muted)',fontFamily:'var(--font-body)'}}>All on</button>
-                <button onClick=${function(){s.models.forEach(function(m){d({t:A.TOGGLE_ALL_STOREYS,id:m.id,storeys:(m.storeys||[]).concat(['']),hide:true});});}} style=${{fontSize:'.6rem',padding:'.08rem .28rem',background:'none',border:'1px solid var(--border)',borderRadius:'var(--radius-xs)',cursor:'pointer',color:'var(--text-muted)',fontFamily:'var(--font-body)'}}>All off</button>
+                <button onClick=${function(){s.models.forEach(function(m){d({t:A.TOGGLE_ALL_STOREYS,id:m.id,storeys:(m.storeys||[]).concat(['']),hide:false});});}} style=${{fontSize:'.6rem',padding:'.08rem .28rem',background:'none',border:'1px solid var(--border)',borderRadius:'var(--radius-xs)',cursor:'pointer',color:'var(--text-muted)',fontFamily:'var(--font-body)'}}>${_cc_t('sidebar.allOn','All on')}</button>
+                <button onClick=${function(){s.models.forEach(function(m){d({t:A.TOGGLE_ALL_STOREYS,id:m.id,storeys:(m.storeys||[]).concat(['']),hide:true});});}} style=${{fontSize:'.6rem',padding:'.08rem .28rem',background:'none',border:'1px solid var(--border)',borderRadius:'var(--radius-xs)',cursor:'pointer',color:'var(--text-muted)',fontFamily:'var(--font-body)'}}>${_cc_t('sidebar.allOff','All off')}</button>
               </div>
             </div>
             ${stKeys.map(function(st){
@@ -19009,7 +19009,7 @@ function startApp() {
               var isPlanActive=s.floorPlan&&s.floorPlan.storeyName===st;
               return html`<div key=${st} style=${{display:'flex',alignItems:'center',gap:'.25rem',padding:'.16rem .3rem',borderRadius:'var(--radius-xs)',background:isPlanActive?'var(--accent-bg)':'transparent',borderLeft:isPlanActive?'2px solid var(--accent)':'2px solid transparent',opacity:isHidden?0.45:1,transition:'opacity .1s'}}>
                 <button onClick=${function(){var h=!isHidden;s.models.forEach(function(m){if((m.storeys||[]).indexOf(st)!==-1)d({t:A.TOGGLE_ALL_STOREYS,id:m.id,storeys:[st],hide:h});});}}
-                  title=${isHidden?'Show level':'Hide level'}
+                  title=${isHidden?_cc_t('sidebar.showLevel','Show level'):_cc_t('sidebar.hideLevel','Hide level')}
                   style=${{background:'none',border:'none',cursor:'pointer',color:isHidden?'var(--text-faint)':'var(--text-secondary)',padding:0,lineHeight:0,flexShrink:0}}>
                   <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round">
                     ${isHidden?html`<path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94"/><path d="M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19"/><line x1="1" y1="1" x2="23" y2="23"/>`:html`<path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/>`}
@@ -19017,7 +19017,7 @@ function startApp() {
                 </button>
                 <span style=${{fontSize:'.7rem',color:isPlanActive?'var(--accent)':'var(--text-primary)',flex:1,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',fontWeight:isPlanActive?500:400}} title=${st}>${st}</span>
                 ${hasElev&&html`<span style=${{fontSize:'.6rem',color:'var(--text-faint)',flexShrink:0,fontFamily:'var(--font-mono)'}}>${_ccFormatElev(elev)}</span>`}
-                ${hasElev&&html`<button onClick=${function(e){e.stopPropagation();if(isPlanActive)d({t:A.FLOOR_PLAN,v:null});else d({t:A.FLOOR_PLAN,v:{storeyId:st,storeyName:st,elevation:elev||0,cutHeight:1.2}});}} title=${isPlanActive?'Exit plan':'Open plan'} style=${{background:'none',border:'none',cursor:'pointer',color:isPlanActive?'var(--accent)':'var(--text-faint)',padding:0,lineHeight:0,flexShrink:0}}>
+                ${hasElev&&html`<button onClick=${function(e){e.stopPropagation();if(isPlanActive)d({t:A.FLOOR_PLAN,v:null});else d({t:A.FLOOR_PLAN,v:{storeyId:st,storeyName:st,elevation:elev||0,cutHeight:1.2}});}} title=${isPlanActive?_cc_t('sidebar.exitPlan','Exit plan'):_cc_t('sidebar.openPlan','Open plan')} style=${{background:'none',border:'none',cursor:'pointer',color:isPlanActive?'var(--accent)':'var(--text-faint)',padding:0,lineHeight:0,flexShrink:0}}>
                   <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><rect x="4" y="4" width="16" height="16" rx="1"/><path d="M4 10h16"/><path d="M10 4v16"/></svg>
                 </button>`}
               </div>`;
