@@ -20612,15 +20612,15 @@ function startApp() {
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="6 4 20 12 6 20 6 4"/></svg>
           </div>
           <div style=${{flex:1,minWidth:0}}>
-            <div id="cc-run-detection-title" style=${{fontFamily:'var(--font-display)',fontSize:'var(--text-lg)',fontWeight:'var(--weight-semibold)',color:'var(--text-primary)',lineHeight:'var(--leading-tight)'}}>Run clash detection</div>
+            <div id="cc-run-detection-title" style=${{fontFamily:'var(--font-display)',fontSize:'var(--text-lg)',fontWeight:'var(--weight-semibold)',color:'var(--text-primary)',lineHeight:'var(--leading-tight)'}}>${_cc_t('run.title','Run clash detection')}</div>
             <div style=${{fontSize:'var(--text-xs)',color:'var(--text-muted)',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis',marginTop:'2px'}}>${summary}</div>
           </div>
-          <button onClick=${close} style=${S_MODAL_CLOSE} aria-label="Close Run detection">✕</button>
+          <button onClick=${close} style=${S_MODAL_CLOSE} aria-label=${_cc_t('run.closeAria','Close Run detection')}>✕</button>
         </div>
         ${placementWarnings.length > 0 && html`<div style=${{margin:'var(--space-3) var(--space-4) 0',padding:'var(--space-2) var(--space-3)',background:'var(--color-warning-bg)',border:'1px solid var(--color-warning-border)',borderRadius:'var(--radius-sm)'}}>
           <div style=${{display:'flex',alignItems:'center',gap:'var(--space-2)',marginBottom:'2px'}}>
             <span style=${{color:'var(--color-warning)',fontSize:'var(--text-sm)'}}>⚠</span>
-            <span style=${{fontSize:'var(--text-xs)',fontWeight:'var(--weight-semibold)',color:'var(--color-warning-fg)'}}>Placement check</span>
+            <span style=${{fontSize:'var(--text-xs)',fontWeight:'var(--weight-semibold)',color:'var(--color-warning-fg)'}}>${_cc_t('run.placementCheck','Placement check')}</span>
           </div>
           <ul style=${{margin:0,paddingLeft:'1.1rem',fontSize:'var(--text-2xs)',color:'var(--text-secondary)',lineHeight:'var(--leading-snug)'}}>
             ${placementWarnings.map(function(w){ return html`<li key=${w} style=${{marginBottom:'2px'}}>${w}</li>`; })}
@@ -20635,8 +20635,8 @@ function startApp() {
               aria-expanded=${showStandards}
               style=${{...S_BTN,width:'100%',padding:'var(--space-2) var(--space-3)',background:'none',color:'var(--text-secondary)',
                 display:'flex',alignItems:'center',justifyContent:'space-between',fontSize:'var(--text-sm)'}}>
-              <span style=${{fontWeight:'var(--weight-semibold)'}}>Project standards</span>
-              <span style=${{fontSize:'var(--text-2xs)',color:'var(--text-faint)'}}>${showStandards?'▲':'▼'} default clearance, IFC type pairs, discipline pairs</span>
+              <span style=${{fontWeight:'var(--weight-semibold)'}}>${_cc_t('run.projectStandards','Project standards')}</span>
+              <span style=${{fontSize:'var(--text-2xs)',color:'var(--text-faint)'}}>${showStandards?'▲':'▼'} ${_cc_t('run.projectStandardsDesc','default clearance, IFC type pairs, discipline pairs')}</span>
             </button>
             ${showStandards && html`<div style=${{padding:'0 var(--space-1) var(--space-2)',borderTop:'1px solid var(--border-subtle)'}}>
               <${StandardsPanel} s=${s} d=${d} />
@@ -20645,12 +20645,12 @@ function startApp() {
         </div>
         <!-- Footer: prominent Run button (duplicated from ClashRulesPanel but always visible) -->
         <div style=${{padding:'var(--space-3) var(--space-4)',borderTop:'1px solid var(--border-subtle)',display:'flex',gap:'var(--space-2)',alignItems:'center'}}>
-          <div style=${{flex:1,fontSize:'var(--text-2xs)',color:'var(--text-faint)'}}>${(s.models||[]).length===0?'Load a model first.':'Choose a preset above, or click Run detection with the current rules.'}</div>
+          <div style=${{flex:1,fontSize:'var(--text-2xs)',color:'var(--text-faint)'}}>${(s.models||[]).length===0?_cc_t('run.loadModelFirst','Load a model first.'):_cc_t('run.choosePresetHint','Choose a preset above, or click Run detection with the current rules.')}</div>
           ${s.detecting
             ? html`<button onClick=${function(){if(typeof cancelDetection==='function')cancelDetection();}}
-                style=${{...S_BTN,padding:'var(--space-2) var(--space-4)',background:'var(--color-danger)',color:'#fff',fontWeight:'var(--weight-semibold)',fontSize:'var(--text-sm)',borderRadius:'var(--radius-sm)'}}>Stop detection</button>`
+                style=${{...S_BTN,padding:'var(--space-2) var(--space-4)',background:'var(--color-danger)',color:'#fff',fontWeight:'var(--weight-semibold)',fontSize:'var(--text-sm)',borderRadius:'var(--radius-sm)'}}>${_cc_t('run.stopDetection','Stop detection')}</button>`
             : html`<button onClick=${runNow} disabled=${!canRun}
-                style=${{...S_BTN,padding:'var(--space-2) var(--space-4)',background:canRun?'var(--accent)':'var(--bg-secondary)',color:canRun?'#fff':'var(--text-faint)',fontWeight:'var(--weight-semibold)',fontSize:'var(--text-sm)',borderRadius:'var(--radius-sm)',minWidth:140}}>Run detection</button>`}
+                style=${{...S_BTN,padding:'var(--space-2) var(--space-4)',background:canRun?'var(--accent)':'var(--bg-secondary)',color:canRun?'#fff':'var(--text-faint)',fontWeight:'var(--weight-semibold)',fontSize:'var(--text-sm)',borderRadius:'var(--radius-sm)',minWidth:140}}>${_cc_t('run.runDetection','Run detection')}</button>`}
         </div>
       </div>
     </div>`;
@@ -20669,12 +20669,12 @@ function startApp() {
     var canRun = models.length > 0 && !s.detecting;
 
     var PRESETS = [
-      {label:'Hard clashes',    note:'Elements that physically overlap',                    desc:'Every model against every other — hits where geometry actually intersects.', r:{modelA:'all',modelB:'all',hard:true,maxGap:0,duplicates:false,excludeSelf:false}},
-      {label:'Structure vs MEP',note:'Beams or columns hitting pipes & ducts',               desc:'Structural elements clashing with mechanical / electrical / plumbing.',     r:{modelA:'disc:structural',modelB:'disc:mep',hard:true,maxGap:50,duplicates:false,excludeSelf:false}},
-      {label:'Walls vs MEP',    note:'Pipes & ducts running through walls or floors',        desc:'Architectural elements clashing with MEP runs.',                            r:{modelA:'disc:architectural',modelB:'disc:mep',hard:true,maxGap:50,duplicates:false,excludeSelf:false}},
-      {label:'Cross-model',     note:'Anything from one team’s file hitting another',        desc:'All models, ignore each model’s own internal clashes.',                  r:{modelA:'all',modelB:'all',hard:true,maxGap:0,duplicates:false,excludeSelf:true}},
-      {label:'Near misses',     note:'Things within a clearance distance (e.g. 100 mm)',     desc:'No physical overlap, but elements too close — clearance / tolerance check.', r:{modelA:'all',modelB:'all',hard:false,maxGap:100,duplicates:false,excludeSelf:true}},
-      {label:'Duplicates',      note:'Same element modelled twice in the same place',         desc:'Pure duplicate detection — usually data hygiene, not coordination.',         r:{modelA:'all',modelB:'all',hard:false,maxGap:0,duplicates:true,excludeSelf:false}}
+      {label:_cc_t('run.preset.hard.label','Hard clashes'),    note:_cc_t('run.preset.hard.note','Elements that physically overlap'),                    desc:_cc_t('run.preset.hard.desc','Every model against every other — hits where geometry actually intersects.'), r:{modelA:'all',modelB:'all',hard:true,maxGap:0,duplicates:false,excludeSelf:false}},
+      {label:_cc_t('run.preset.structVsMep.label','Structure vs MEP'),note:_cc_t('run.preset.structVsMep.note','Beams or columns hitting pipes & ducts'),               desc:_cc_t('run.preset.structVsMep.desc','Structural elements clashing with mechanical / electrical / plumbing.'),     r:{modelA:'disc:structural',modelB:'disc:mep',hard:true,maxGap:50,duplicates:false,excludeSelf:false}},
+      {label:_cc_t('run.preset.wallsVsMep.label','Walls vs MEP'),note:_cc_t('run.preset.wallsVsMep.note','Pipes & ducts running through walls or floors'),        desc:_cc_t('run.preset.wallsVsMep.desc','Architectural elements clashing with MEP runs.'),                            r:{modelA:'disc:architectural',modelB:'disc:mep',hard:true,maxGap:50,duplicates:false,excludeSelf:false}},
+      {label:_cc_t('run.preset.crossModel.label','Cross-model'),note:_cc_t('run.preset.crossModel.note','Anything from one team’s file hitting another'),        desc:_cc_t('run.preset.crossModel.desc','All models, ignore each model’s own internal clashes.'),                  r:{modelA:'all',modelB:'all',hard:true,maxGap:0,duplicates:false,excludeSelf:true}},
+      {label:_cc_t('run.preset.nearMisses.label','Near misses'),note:_cc_t('run.preset.nearMisses.note','Things within a clearance distance (e.g. 100 mm)'),     desc:_cc_t('run.preset.nearMisses.desc','No physical overlap, but elements too close — clearance / tolerance check.'), r:{modelA:'all',modelB:'all',hard:false,maxGap:100,duplicates:false,excludeSelf:true}},
+      {label:_cc_t('run.preset.duplicates.label','Duplicates'),note:_cc_t('run.preset.duplicates.note','Same element modelled twice in the same place'),         desc:_cc_t('run.preset.duplicates.desc','Pure duplicate detection — usually data hygiene, not coordination.'),         r:{modelA:'all',modelB:'all',hard:false,maxGap:0,duplicates:true,excludeSelf:false}}
     ];
 
     function applyPreset(preset) {
@@ -20682,7 +20682,7 @@ function startApp() {
     }
     function _confirmIfClashes(cb) {
       if (s.clashes && s.clashes.length > 0) {
-        if (!confirm('Running detection will replace your current ' + s.clashes.length + ' clash result' + (s.clashes.length===1?'':'s') + '. Continue?')) return;
+        if (!confirm(_cc_t('run.confirmReplace','Running detection will replace your current {n} clash result{s}. Continue?',{n:s.clashes.length,s:s.clashes.length===1?'':'s'}))) return;
       }
       cb();
     }
@@ -20726,8 +20726,8 @@ function startApp() {
       <!-- Quick Presets -->
       <div style=${{padding:'.4rem .5rem .35rem'}}>
         <div style=${{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:'.3rem'}}>
-          <span style=${{fontSize:'0.78rem',fontWeight:600,color:'var(--text-muted)',textTransform:'uppercase',letterSpacing:'.05em'}}>Quick Run</span>
-          <button onClick=${function(){setExpanded(!expanded)}} title=${expanded?'Hide advanced':'Show advanced'} style=${{...S_BTN,padding:'2px 4px',background:'none',color:'var(--text-faint)',display:'flex',alignItems:'center',transition:'transform .2s',transform:expanded?'rotate(180deg)':'rotate(0deg)'}}>
+          <span style=${{fontSize:'0.78rem',fontWeight:600,color:'var(--text-muted)',textTransform:'uppercase',letterSpacing:'.05em'}}>${_cc_t('run.quickRun','Quick Run')}</span>
+          <button onClick=${function(){setExpanded(!expanded)}} title=${expanded?_cc_t('run.hideAdvanced','Hide advanced'):_cc_t('run.showAdvanced','Show advanced')} style=${{...S_BTN,padding:'2px 4px',background:'none',color:'var(--text-faint)',display:'flex',alignItems:'center',transition:'transform .2s',transform:expanded?'rotate(180deg)':'rotate(0deg)'}}>
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
           </button>
         </div>
@@ -20743,13 +20743,13 @@ function startApp() {
         </div>
         ${(savedPresets.length>0||showSave) && html`<div style=${{marginTop:'.3rem',borderTop:'1px solid var(--border-subtle)',paddingTop:'.25rem'}}>
           <div style=${{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:'.2rem'}}>
-            <span style=${{fontSize:'0.69rem',fontWeight:600,color:'var(--text-faint)',textTransform:'uppercase',letterSpacing:'.04em'}}>Saved</span>
+            <span style=${{fontSize:'0.69rem',fontWeight:600,color:'var(--text-faint)',textTransform:'uppercase',letterSpacing:'.04em'}}>${_cc_t('run.saved','Saved')}</span>
             <button onClick=${function(){setShowSave(!showSave);setSaveName('')}} style=${{...S_BTN,fontSize:'0.57rem',padding:'0 4px',background:'none',color:'var(--text-faint)'}}>
-              ${showSave?'Cancel':'+ Save current'}
+              ${showSave?_cc_t('common.cancel','Cancel'):_cc_t('run.saveCurrent','+ Save current')}
             </button>
           </div>
           ${showSave && html`<div style=${{display:'flex',gap:'.2rem',marginBottom:'.2rem'}}>
-            <input type="text" value=${saveName} onInput=${function(e){setSaveName(e.target.value)}} placeholder="Preset name…"
+            <input type="text" value=${saveName} onInput=${function(e){setSaveName(e.target.value)}} placeholder=${_cc_t('run.presetNamePlaceholder','Preset name…')}
               style=${{...S_INPUT,fontSize:'0.69rem',padding:'.15rem .3rem',flex:1}} onKeyDown=${function(e){
                 if(e.key==='Enter'&&saveName.trim()){
                   var np={id:Date.now().toString(36),name:saveName.trim(),rules:Object.assign({},rules)};
@@ -20760,12 +20760,12 @@ function startApp() {
               if(!saveName.trim())return;
               var np={id:Date.now().toString(36),name:saveName.trim(),rules:Object.assign({},rules)};
               var list=savedPresets.concat([np]);_saveClashPresets(list);setSavedPresets(list);setShowSave(false);setSaveName('');
-            }} disabled=${!saveName.trim()} style=${{...S_BTN,fontSize:'0.63rem',padding:'1px 6px',background:'var(--accent-bg)',color:'var(--accent-subtle)'}}>Save</button>
+            }} disabled=${!saveName.trim()} style=${{...S_BTN,fontSize:'0.63rem',padding:'1px 6px',background:'var(--accent-bg)',color:'var(--accent-subtle)'}}>${_cc_t('common.save','Save')}</button>
           </div>`}
           <div style=${{display:'flex',gap:'.2rem',flexWrap:'wrap'}}>
             ${savedPresets.map(function(sp){
               return html`<div key=${sp.id} style=${{display:'inline-flex',alignItems:'center',gap:'2px'}}>
-                <button onClick=${function(){d({t:A.UPD_RULES,u:sp.rules})}} title=${'Load: '+sp.name}
+                <button onClick=${function(){d({t:A.UPD_RULES,u:sp.rules})}} title=${_cc_t('run.loadPreset','Load: {name}',{name:sp.name})}
                   style=${{...S_BTN,fontSize:'0.63rem',padding:'.15rem .35rem',background:'var(--bg-tertiary)',color:'var(--text-secondary)',borderRadius:'8px 0 0 8px'}}>
                   ${sp.name}
                 </button>
@@ -20774,12 +20774,12 @@ function startApp() {
                   var merged=Object.assign({},s.rules,sp.rules);
                   d({t:A.UPD_RULES,u:sp.rules});d({t:A.DETECTING});d({t:A.TAB,v:'clashes'});
                   detectClashesAsync(s.models,merged).then(function(result){_ccCommitDetectionResult(result,d);});
-                }} disabled=${!canRun} title="Load & Run"
+                }} disabled=${!canRun} title=${_cc_t('run.loadAndRun','Load & Run')}
                   style=${{...S_BTN,fontSize:'0.63rem',padding:'.15rem .25rem',background:'var(--accent-bg)',color:'var(--accent-subtle)',borderRadius:'0',borderLeft:'1px solid var(--border-subtle)'}}>▶</button>
                 <button onClick=${function(){
                   var list=savedPresets.filter(function(p){return p.id!==sp.id});
                   _saveClashPresets(list);setSavedPresets(list);
-                }} title="Delete preset"
+                }} title=${_cc_t('run.deletePreset','Delete preset')}
                   style=${{...S_BTN,fontSize:'0.57rem',padding:'.15rem .2rem',background:'none',color:'var(--text-faint)',borderRadius:'0 8px 8px 0',borderLeft:'1px solid var(--border-subtle)'}}>✕</button>
               </div>`;
             })}
@@ -20796,15 +20796,15 @@ function startApp() {
 
           <!-- Detection type -->
           <div>
-            <div style=${{fontSize:'0.72rem',fontWeight:600,color:'var(--text-primary)',marginBottom:'.3rem'}}>What type of clashes?</div>
+            <div style=${{fontSize:'0.72rem',fontWeight:600,color:'var(--text-primary)',marginBottom:'.3rem'}}>${_cc_t('run.whatType','What type of clashes?')}</div>
             <div style=${{display:'flex',flexDirection:'column',gap:'.25rem'}}>
               <label style=${{display:'flex',alignItems:'center',gap:'.35rem',cursor:'pointer',padding:'.2rem 0'}}>
                 <input type="radio" name="clashtype" checked=${rules.hard && (rules.maxGap||0)===0}
                   onChange=${function(){d({t:A.UPD_RULES,u:{hard:true,maxGap:0}})}}
                   style=${{margin:0,accentColor:'var(--accent)'}} />
                 <div>
-                  <div style=${{fontSize:'0.72rem',color:'var(--text-primary)'}}>Hard clashes only</div>
-                  <div style=${{fontSize:'0.63rem',color:'var(--text-faint)'}}>Elements that physically intersect each other</div>
+                  <div style=${{fontSize:'0.72rem',color:'var(--text-primary)'}}>${_cc_t('run.hardOnly','Hard clashes only')}</div>
+                  <div style=${{fontSize:'0.63rem',color:'var(--text-faint)'}}>${_cc_t('run.hardOnlyDesc','Elements that physically intersect each other')}</div>
                 </div>
               </label>
               <label style=${{display:'flex',alignItems:'center',gap:'.35rem',cursor:'pointer',padding:'.2rem 0'}}>
@@ -20812,8 +20812,8 @@ function startApp() {
                   onChange=${function(){d({t:A.UPD_RULES,u:{hard:true,maxGap:rules.maxGap||50}})}}
                   style=${{margin:0,accentColor:'var(--accent)'}} />
                 <div>
-                  <div style=${{fontSize:'0.72rem',color:'var(--text-primary)'}}>Hard clashes + near misses</div>
-                  <div style=${{fontSize:'0.63rem',color:'var(--text-faint)'}}>Intersections and elements that are too close</div>
+                  <div style=${{fontSize:'0.72rem',color:'var(--text-primary)'}}>${_cc_t('run.hardPlusNear','Hard clashes + near misses')}</div>
+                  <div style=${{fontSize:'0.63rem',color:'var(--text-faint)'}}>${_cc_t('run.hardPlusNearDesc','Intersections and elements that are too close')}</div>
                 </div>
               </label>
               <label style=${{display:'flex',alignItems:'center',gap:'.35rem',cursor:'pointer',padding:'.2rem 0'}}>
@@ -20821,8 +20821,8 @@ function startApp() {
                   onChange=${function(){d({t:A.UPD_RULES,u:{hard:false,minGap:rules.minGap||0,maxGap:rules.maxGap||100}})}}
                   style=${{margin:0,accentColor:'var(--accent)'}} />
                 <div>
-                  <div style=${{fontSize:'0.72rem',color:'var(--text-primary)'}}>Soft clashes only (clearance check)</div>
-                  <div style=${{fontSize:'0.63rem',color:'var(--text-faint)'}}>Only flag elements within a distance range, no intersections</div>
+                  <div style=${{fontSize:'0.72rem',color:'var(--text-primary)'}}>${_cc_t('run.softOnly','Soft clashes only (clearance check)')}</div>
+                  <div style=${{fontSize:'0.63rem',color:'var(--text-faint)'}}>${_cc_t('run.softOnlyDesc','Only flag elements within a distance range, no intersections')}</div>
                 </div>
               </label>
             </div>
@@ -20830,7 +20830,7 @@ function startApp() {
 
           <!-- Gap settings (conditional) -->
           ${(rules.hard && (rules.maxGap||0)>0) && html`<div style=${{background:'var(--bg-secondary)',borderRadius:6,padding:'.35rem .45rem'}}>
-            <div style=${{fontSize:'0.69rem',color:'var(--text-muted)',marginBottom:'.2rem'}}>Flag near misses within</div>
+            <div style=${{fontSize:'0.69rem',color:'var(--text-muted)',marginBottom:'.2rem'}}>${_cc_t('run.flagNearWithin','Flag near misses within')}</div>
             <div style=${{display:'flex',alignItems:'center',gap:'.3rem'}}>
               <input type="range" min="5" max="500" step="5" value=${rules.maxGap||50}
                 onInput=${function(e){d({t:A.UPD_RULES,u:{maxGap:+e.target.value}})}}
@@ -20843,43 +20843,43 @@ function startApp() {
           </div>`}
 
           ${!rules.hard && html`<div style=${{background:'var(--bg-secondary)',borderRadius:6,padding:'.35rem .45rem'}}>
-            <div style=${{fontSize:'0.69rem',color:'var(--text-muted)',marginBottom:'.25rem'}}>Flag elements with a gap between</div>
+            <div style=${{fontSize:'0.69rem',color:'var(--text-muted)',marginBottom:'.25rem'}}>${_cc_t('run.flagGapBetween','Flag elements with a gap between')}</div>
             <div style=${{display:'flex',alignItems:'center',gap:'.3rem',flexWrap:'wrap'}}>
               <input type="number" min="0" max="2000" value=${rules.minGap||0}
                 onInput=${function(e){var v=+e.target.value;if(v>=0)d({t:A.UPD_RULES,u:{minGap:v}})}}
                 style=${{...S_INPUT,fontSize:'0.72rem',width:48,padding:'.15rem .25rem',textAlign:'right'}} />
               <span style=${{fontSize:'0.69rem',color:'var(--text-faint)'}}>mm</span>
-              <span style=${{fontSize:'0.69rem',color:'var(--text-secondary)'}}>and</span>
+              <span style=${{fontSize:'0.69rem',color:'var(--text-secondary)'}}>${_cc_t('common.and','and')}</span>
               <input type="number" min="1" max="5000" value=${rules.maxGap||100}
                 onInput=${function(e){var v=+e.target.value;if(v>0)d({t:A.UPD_RULES,u:{maxGap:v}})}}
                 style=${{...S_INPUT,fontSize:'0.72rem',width:48,padding:'.15rem .25rem',textAlign:'right'}} />
               <span style=${{fontSize:'0.69rem',color:'var(--text-faint)'}}>mm</span>
             </div>
-            ${(rules.minGap||0)>=(rules.maxGap||100) && html`<div style=${{fontSize:'0.63rem',color:'#ef4444',marginTop:'.2rem'}}>Minimum gap must be less than maximum gap</div>`}
+            ${(rules.minGap||0)>=(rules.maxGap||100) && html`<div style=${{fontSize:'0.63rem',color:'#ef4444',marginTop:'.2rem'}}>${_cc_t('run.minLessThanMax','Minimum gap must be less than maximum gap')}</div>`}
           </div>`}
 
           <!-- Filtering -->
           <div>
-            <div style=${{fontSize:'0.72rem',fontWeight:600,color:'var(--text-primary)',marginBottom:'.3rem'}}>Filtering options</div>
+            <div style=${{fontSize:'0.72rem',fontWeight:600,color:'var(--text-primary)',marginBottom:'.3rem'}}>${_cc_t('run.filteringOptions','Filtering options')}</div>
             <div style=${{display:'flex',flexDirection:'column',gap:'.15rem'}}>
               <div style=${TOGROW}>
                 <div>
-                  <div style=${{fontSize:'0.72rem',color:'var(--text-primary)'}}>Ignore intentional connections</div>
-                  <div style=${{fontSize:'0.63rem',color:'var(--text-faint)'}}>Skip doors in walls, assembly parts, openings</div>
+                  <div style=${{fontSize:'0.72rem',color:'var(--text-primary)'}}>${_cc_t('run.ignoreIntentional','Ignore intentional connections')}</div>
+                  <div style=${{fontSize:'0.63rem',color:'var(--text-faint)'}}>${_cc_t('run.ignoreIntentionalDesc','Skip doors in walls, assembly parts, openings')}</div>
                 </div>
                 <${MiniToggle} on=${rules.useSemanticFilter!==false} onToggle=${function(){d({t:A.UPD_RULES,u:{useSemanticFilter:rules.useSemanticFilter===false?true:false}})}} />
               </div>
               <div style=${TOGROW}>
                 <div>
-                  <div style=${{fontSize:'0.72rem',color:'var(--text-primary)'}}>Include duplicate hits</div>
-                  <div style=${{fontSize:'0.63rem',color:'var(--text-faint)'}}>Same pair clashing in multiple locations</div>
+                  <div style=${{fontSize:'0.72rem',color:'var(--text-primary)'}}>${_cc_t('run.includeDuplicateHits','Include duplicate hits')}</div>
+                  <div style=${{fontSize:'0.63rem',color:'var(--text-faint)'}}>${_cc_t('run.includeDuplicateHitsDesc','Same pair clashing in multiple locations')}</div>
                 </div>
                 <${MiniToggle} on=${rules.duplicates} onToggle=${function(){d({t:A.UPD_RULES,u:{duplicates:!rules.duplicates}})}} />
               </div>
               <div style=${TOGROW}>
                 <div>
-                  <div style=${{fontSize:'0.72rem',color:'var(--text-primary)'}}>Only changed elements</div>
-                  <div style=${{fontSize:'0.63rem',color:'var(--text-faint)'}}>Skip elements unchanged since last run</div>
+                  <div style=${{fontSize:'0.72rem',color:'var(--text-primary)'}}>${_cc_t('run.onlyChanged','Only changed elements')}</div>
+                  <div style=${{fontSize:'0.63rem',color:'var(--text-faint)'}}>${_cc_t('run.onlyChangedDesc','Skip elements unchanged since last run')}</div>
                 </div>
                 <${MiniToggle} on=${rules.changeAware} onToggle=${function(){d({t:A.UPD_RULES,u:{changeAware:!rules.changeAware}})}} />
               </div>
@@ -20888,13 +20888,13 @@ function startApp() {
 
           <!-- Self-clashes -->
           <div style=${{display:'flex',alignItems:'flex-start',gap:'.35rem'}}>
-            <span style=${{fontSize:'0.72rem',color:'var(--text-primary)',whiteSpace:'nowrap',paddingTop:'.25rem'}}>Check within</span>
+            <span style=${{fontSize:'0.72rem',color:'var(--text-primary)',whiteSpace:'nowrap',paddingTop:'.25rem'}}>${_cc_t('run.checkWithin','Check within')}</span>
             ${_selfClashPicker(rules, models, d)}
           </div>
 
           <!-- Min overlap volume -->
           ${rules.hard && html`<div style=${{display:'flex',alignItems:'center',gap:'.35rem'}}>
-            <span style=${{fontSize:'0.72rem',color:'var(--text-primary)',whiteSpace:'nowrap'}}>Ignore overlaps smaller than</span>
+            <span style=${{fontSize:'0.72rem',color:'var(--text-primary)',whiteSpace:'nowrap'}}>${_cc_t('run.ignoreOverlapsSmaller','Ignore overlaps smaller than')}</span>
             <input type="number" min="0" max="500" value=${Math.round((rules.minOverlapVolM3||0)*1e6)}
               onInput=${function(e){d({t:A.UPD_RULES,u:{minOverlapVolM3:+e.target.value/1e6}})}}
               style=${{...S_INPUT,fontSize:'0.72rem',width:48,padding:'.15rem .25rem',textAlign:'right'}} />
@@ -20914,19 +20914,19 @@ function startApp() {
             var engineLabel, engineDot, engineHint, onClickEngine;
             if (le.active && le.available) {
               engineLabel = 'ClashControlEngine'; engineDot = 'var(--color-success)';
-              engineHint = 'Local server · exact mesh intersection';
+              engineHint = _cc_t('run.engineLocalHint','Local server · exact mesh intersection');
               onClickEngine = function(){ try{ if(window._ccDeactivateAddon) window._ccDeactivateAddon('local-engine'); }catch(e){} };
             } else if (we.active) {
-              engineLabel = 'WASM engine'; engineDot = 'var(--color-success)';
-              engineHint = 'Hardware-accelerated · in-browser';
+              engineLabel = _cc_t('run.engineWasm','WASM engine'); engineDot = 'var(--color-success)';
+              engineHint = _cc_t('run.engineWasmHint','Hardware-accelerated · in-browser');
               onClickEngine = function(){ try{ if(window._ccActivateAddon) window._ccActivateAddon('local-engine'); }catch(e){} };
             } else {
-              engineLabel = 'Browser engine'; engineDot = 'var(--text-faint)';
-              engineHint = 'Built-in JavaScript AABB+BVH engine';
+              engineLabel = _cc_t('run.engineBrowser','Browser engine'); engineDot = 'var(--text-faint)';
+              engineHint = _cc_t('run.engineBrowserHint','Built-in JavaScript AABB+BVH engine');
               onClickEngine = function(){ try{ if(window._ccActivateAddon) window._ccActivateAddon('local-engine'); }catch(e){} };
             }
             return html`<button onClick=${onClickEngine}
-              title="Click to switch detection engine"
+              title=${_cc_t('run.clickToSwitchEngine','Click to switch detection engine')}
               style=${{...S_BTN,width:'100%',padding:'.3rem .55rem',marginBottom:'.35rem',
                 background:'var(--bg-secondary)',color:'var(--text-secondary)',border:'1px solid var(--border)',
                 display:'flex',alignItems:'center',gap:'.4rem',fontSize:'.7rem',justifyContent:'flex-start',textAlign:'left'}}>
@@ -20939,10 +20939,10 @@ function startApp() {
           <!-- Run / Stop button -->
           ${s.detecting ? html`<button onClick=${function(){cancelDetection()}}
             style=${{...S_BTN,width:'100%',padding:'.4rem',background:'#dc2626',color:'#fff',fontWeight:600,fontSize:'0.78rem',borderRadius:6}}>
-            Stop Detection
+            ${_cc_t('run.stopDetectionCaps','Stop Detection')}
           </button>` : html`<button onClick=${runDetection} disabled=${!canRun}
             style=${{...S_BTN,width:'100%',padding:'.4rem',background:canRun?'var(--accent)':'var(--bg-secondary)',color:canRun?'#fff':'var(--text-faint)',fontWeight:600,fontSize:'0.78rem',borderRadius:6}}>
-            Run Detection
+            ${_cc_t('run.runDetectionCaps','Run Detection')}
           </button>`}
         </div>
       </div>`}
