@@ -34681,22 +34681,22 @@ function startApp() {
                   <span style=${{fontSize:'var(--text-2xs)',color:'var(--text-muted)',fontFamily:'var(--font-mono)',flexShrink:0}}>
                     ${s.revitDirect.progress > 0 ? Math.round(s.revitDirect.progress*100)+'%' : s.revitDirect.elementCount > 0 ? s.revitDirect.elementCount+' el' : '\u2026'}
                   </span>
-                  ${addonBtn('Cancel', function(){if(window._revitDirectCancelExport) window._revitDirectCancelExport(); d({t:'UPD_REVIT_DIRECT',u:{loading:false,progress:0}});}, 'danger')}
+                  ${addonBtn(_cc_t('addons.cancel','Cancel'), function(){if(window._revitDirectCancelExport) window._revitDirectCancelExport(); d({t:'UPD_REVIT_DIRECT',u:{loading:false,progress:0}});}, 'danger')}
                 </div>`}
                 ${linkedRevitModels.length > 1 && html`<select value=${selected}
                   onChange=${function(e){window._ccRevitUpdateTarget=e.target.value; d({t:'UPD_REVIT_DIRECT',u:{}});}}
                   style=${{padding:'.2rem .35rem',borderRadius:4,fontSize:'var(--text-xs)',background:'var(--bg-primary)',color:'var(--text-primary)',border:'1px solid var(--border)',fontFamily:'inherit'}}>
-                  <option value="all">All linked models (${linkedRevitModels.length})</option>
+                  <option value="all">${_cc_t('addons.allLinkedModels','All linked models ({n})',{n:linkedRevitModels.length})}</option>
                   ${linkedRevitModels.map(function(m){return html`<option key=${m.id} value=${m.name}>${m.name}</option>`})}
                 </select>`}
                 <div style=${{display:'flex',gap:'.35rem',flexWrap:'wrap'}}>
-                  ${addonBtn(linkedRevitModels.length===0?'Pull Model':'Update Model', function(){
+                  ${addonBtn(linkedRevitModels.length===0?_cc_t('addons.pullModel','Pull Model'):_cc_t('addons.updateModel','Update Model'), function(){
                     if(!window._revitDirectExport) return;
                     var target = window._ccRevitUpdateTarget||'all';
                     if(target==='all') window._revitDirectExport(['all']); else window._revitDirectExport(['all'],{name:target});
                   }, 'outline')}
-                  ${addonBtn('Push Clashes', function(){if(window._revitDirectPushClashes) window._revitDirectPushClashes(s,d);}, 'success')}
-                  ${addonBtn('Disconnect', function(){if(window._revitDirectDisconnect) window._revitDirectDisconnect(d);}, 'danger')}
+                  ${addonBtn(_cc_t('addons.pushClashes','Push Clashes'), function(){if(window._revitDirectPushClashes) window._revitDirectPushClashes(s,d);}, 'success')}
+                  ${addonBtn(_cc_t('addons.disconnect','Disconnect'), function(){if(window._revitDirectDisconnect) window._revitDirectDisconnect(d);}, 'danger')}
                 </div>
               </div>`;
             }() : html`<div style=${{display:'flex',gap:'.35rem',alignItems:'center'}}>
@@ -34705,7 +34705,7 @@ function startApp() {
                 style=${{flex:1,padding:'.22rem .35rem',background:'var(--bg-primary)',color:'var(--text-primary)',border:'1px solid var(--border)',borderRadius:4,fontSize:'var(--text-xs)',fontFamily:'inherit'}}>
                 ${(s.projectList||[]).map(function(p){return html`<option key=${p.id} value=${p.id}>${p.name}</option>`})}
               </select>
-              ${addonBtn('Connect', function(){
+              ${addonBtn(_cc_t('addons.connect','Connect'), function(){
                 var port = window._loadDirectPort ? window._loadDirectPort() : 19780;
                 window._ccPullOnConnect = true;
                 if(window._revitDirectConnect) window._revitDirectConnect(port, d);
@@ -34718,7 +34718,7 @@ function startApp() {
         </div>`;
       })}
       ${focusId && addons[focusId] && html`<div style=${{padding:'.6rem 1rem'}}>
-        ${addonBtn('Show all integrations', function(){ window._ccAddonsFocus = null; forceUpdate(function(n){return n+1;}); }, 'ghost')}
+        ${addonBtn(_cc_t('addons.showAll','Show all integrations'), function(){ window._ccAddonsFocus = null; forceUpdate(function(n){return n+1;}); }, 'ghost')}
       </div>`}
     </div>`;
   }
@@ -34787,7 +34787,7 @@ function startApp() {
             width:24,height:24,borderRadius:4,padding:0,transition:'background .15s,color .15s'}}
           onMouseEnter=${function(e){e.currentTarget.style.background='var(--bg-secondary)';e.currentTarget.style.color='var(--text-primary)';}}
           onMouseLeave=${function(e){e.currentTarget.style.background='none';e.currentTarget.style.color='var(--text-muted)';}}
-          title="Close panel">
+          title=${_cc_t('panel.closePanel','Close panel')}>
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg>
         </button>
       </div>
