@@ -27167,41 +27167,41 @@ function startApp() {
 
     return html`<div style=${{display:'flex',flexDirection:'column',gap:'.8rem'}}>
       <div style=${{display:'flex',alignItems:'center',gap:'.4rem',flexWrap:'wrap'}}>
-        <button onClick=${startDropPin} style=${btnPrimary}>+ Drop a pin on the model</button>
+        <button onClick=${startDropPin} style=${btnPrimary}>+ ${_cc_t('share.dropPin','Drop a pin on the model')}</button>
         <div style=${{flex:1}}></div>
-        ${pillBtn('open','Open')} ${pillBtn('resolved','Resolved')} ${pillBtn('all','All')}
+        ${pillBtn('open',_cc_t('share.filterOpen','Open'))} ${pillBtn('resolved',_cc_t('share.filterResolved','Resolved'))} ${pillBtn('all',_cc_t('issues.filter.statusAll','All'))}
       </div>
 
       ${!sp.enabled && html`<div style=${{fontSize:'0.74rem',color:'var(--text-muted)',padding:'.5rem .7rem',background:'var(--accent-bg)',borderRadius:'var(--radius-sm)'}}>
-        Comments stay on your machine until you link a shared folder under <b>Overview</b>.
+        ${_cc_t('share.commentsLocalPre','Comments stay on your machine until you link a shared folder under')} <b>${_cc_t('share.tabOverview','Overview')}</b>${_cc_t('share.commentsLocalPost','.')}
       </div>`}
 
       ${comments.length===0 && html`<div style=${{padding:'1.5rem 1rem',textAlign:'center',color:'var(--text-muted)',fontSize:'0.82rem'}}>
-        No ${filter==='open'?'open':filter==='resolved'?'resolved':''} comments yet.
-        ${filter==='open' && html`<div style=${{marginTop:'.4rem',fontSize:'0.74rem'}}>Use <b>Drop a pin</b> and click any element to start a thread.</div>`}
+        ${filter==='open'?_cc_t('share.noOpenComments','No open comments yet.'):filter==='resolved'?_cc_t('share.noResolvedComments','No resolved comments yet.'):_cc_t('share.noComments','No comments yet.')}
+        ${filter==='open' && html`<div style=${{marginTop:'.4rem',fontSize:'0.74rem'}}>${_cc_t('share.dropPinHintPre','Use')} <b>${_cc_t('share.dropPin','Drop a pin on the model')}</b> ${_cc_t('share.dropPinHintPost','and click any element to start a thread.')}</div>`}
       </div>`}
 
       ${comments.map(function(c){
         var isActive = s.activeCommentId===c.id;
         return html`<div key=${c.id} style=${{padding:'.7rem .8rem',background:isActive?'var(--accent-bg)':'var(--bg-tertiary)',border:'1px solid '+(isActive?'var(--accent-subtle)':'var(--border)'),borderRadius:'var(--radius-md)'}}>
           <div style=${{display:'flex',alignItems:'center',gap:'.4rem',marginBottom:'.3rem'}}>
-            <span style=${{fontSize:'0.78rem',fontWeight:600,color:'var(--text-primary)'}}>${c.author||'Anonymous'}</span>
+            <span style=${{fontSize:'0.78rem',fontWeight:600,color:'var(--text-primary)'}}>${c.author||_cc_t('share.anonymous','Anonymous')}</span>
             <span style=${{fontSize:'0.68rem',color:'var(--text-faint)'}}>${c.ts?new Date(c.ts).toLocaleString():''}</span>
-            ${c.resolved && html`<span style=${{fontSize:'0.66rem',color:'#22c55e',padding:'1px 6px',borderRadius:99,background:'rgba(34,197,94,.1)',border:'1px solid rgba(34,197,94,.3)'}}>Resolved</span>`}
+            ${c.resolved && html`<span style=${{fontSize:'0.66rem',color:'#22c55e',padding:'1px 6px',borderRadius:99,background:'rgba(34,197,94,.1)',border:'1px solid rgba(34,197,94,.3)'}}>${_cc_t('share.filterResolved','Resolved')}</span>`}
             <div style=${{flex:1}}></div>
-            ${c.anchor && c.anchor.point && html`<button onClick=${function(){flyToComment(c);}} style=${btnGhost} title="Fly to pin">📍</button>`}
-            <button onClick=${function(){toggleResolve(c);}} style=${btnGhost}>${c.resolved?'Reopen':'Resolve'}</button>
-            <button onClick=${function(){delComment(c);}} style=${{...btnGhost,color:'#f87171',borderColor:'#ef444466'}} title="Delete">✕</button>
+            ${c.anchor && c.anchor.point && html`<button onClick=${function(){flyToComment(c);}} style=${btnGhost} title=${_cc_t('share.flyToPin','Fly to pin')}>📍</button>`}
+            <button onClick=${function(){toggleResolve(c);}} style=${btnGhost}>${c.resolved?_cc_t('share.reopen','Reopen'):_cc_t('share.resolve','Resolve')}</button>
+            <button onClick=${function(){delComment(c);}} style=${{...btnGhost,color:'#f87171',borderColor:'#ef444466'}} title=${_cc_t('share.delete','Delete')}>✕</button>
           </div>
           ${(!c.text && isActive) ? html`<${ShareCommentDraft} c=${c} sp=${sp} d=${d} />` : html`<div style=${{fontSize:'0.85rem',color:'var(--text-secondary)',whiteSpace:'pre-wrap',lineHeight:1.5}}>${c.text
             ? c.text.split(/(@[A-Za-z0-9_-]+)/).map(function(part,i){
                 if(part.charAt(0)==='@') return html`<span key=${i} style=${{color:'var(--accent)',fontWeight:600,background:'var(--accent-bg)',padding:'0 .15rem',borderRadius:3}}>${part}</span>`;
                 return part;
               })
-            : html`<span style=${{color:'var(--text-faint)',fontStyle:'italic'}}>(no text)</span>`}</div>`}
+            : html`<span style=${{color:'var(--text-faint)',fontStyle:'italic'}}>${_cc_t('share.noText','(no text)')}</span>`}</div>`}
           ${(c.replies||[]).length>0 && html`<div style=${{marginTop:'.5rem',paddingLeft:'.6rem',borderLeft:'2px solid var(--border)',display:'flex',flexDirection:'column',gap:'.4rem'}}>
             ${c.replies.map(function(r){return html`<div key=${r.id} style=${{fontSize:'0.78rem'}}>
-              <span style=${{fontWeight:600,color:'var(--text-primary)'}}>${r.author||'Anonymous'}</span>
+              <span style=${{fontWeight:600,color:'var(--text-primary)'}}>${r.author||_cc_t('share.anonymous','Anonymous')}</span>
               <span style=${{color:'var(--text-faint)',marginLeft:'.4rem',fontSize:'0.68rem'}}>${r.ts?new Date(r.ts).toLocaleString():''}</span>
               <div style=${{color:'var(--text-secondary)',whiteSpace:'pre-wrap',lineHeight:1.5}}>${(r.text||'').split(/(@[A-Za-z0-9_-]+)/).map(function(part,i){
                 if(part.charAt(0)==='@') return html`<span key=${i} style=${{color:'var(--accent)',fontWeight:600,background:'var(--accent-bg)',padding:'0 .15rem',borderRadius:3}}>${part}</span>`;
@@ -27210,15 +27210,15 @@ function startApp() {
             </div>`})}
           </div>`}
           ${isActive && !c.resolved && c.text && html`<div style=${{marginTop:'.5rem',display:'flex',gap:'.4rem'}}>
-            <input type="text" value=${draft} placeholder="Reply…"
+            <input type="text" value=${draft} placeholder=${_cc_t('share.replyPlaceholder','Reply…')}
               onInput=${function(e){setDraft(e.target.value);}}
               onKeyDown=${function(e){if(e.key==='Enter'){addReply(c);}}}
               style=${{flex:1,padding:'.35rem .55rem',background:'var(--input-bg)',color:'var(--text-primary)',border:'1px solid var(--border)',borderRadius:5,fontSize:'0.78rem',fontFamily:'inherit',outline:'none'}} />
-            <button onClick=${function(){addReply(c);}} style=${btnPrimary}>Send</button>
+            <button onClick=${function(){addReply(c);}} style=${btnPrimary}>${_cc_t('share.send','Send')}</button>
           </div>`}
           ${!isActive && html`<button onClick=${function(){d({t:A.SET_ACTIVE_COMMENT,v:c.id});}}
             style=${{marginTop:'.4rem',background:'none',border:'none',cursor:'pointer',color:'var(--text-muted)',fontSize:'0.74rem',padding:0,fontFamily:'inherit'}}>
-            ${(c.replies||[]).length>0 ? 'Reply ('+c.replies.length+' so far)' : 'Reply'}
+            ${(c.replies||[]).length>0 ? _cc_t('share.replyWithCount','Reply ({n} so far)',{n:c.replies.length}) : _cc_t('share.reply','Reply')}
           </button>`}
         </div>`;
       })}
@@ -27236,17 +27236,17 @@ function startApp() {
       d({t:A.UPD_COMMENT, id:c.id, u:{text:t, ts:Date.now(), author:(c.author||sp.userName||'Anonymous')}});
     }
     return html`<div style=${{display:'flex',flexDirection:'column',gap:'.4rem'}}>
-      <textarea ref=${taRef} value=${txt} placeholder="Type your comment…"
+      <textarea ref=${taRef} value=${txt} placeholder=${_cc_t('share.commentPlaceholder','Type your comment…')}
         onInput=${function(e){setTxt(e.target.value);}}
         onKeyDown=${function(e){ if(e.key==='Enter' && (e.ctrlKey||e.metaKey)) { e.preventDefault(); save(); } }}
         style=${{width:'100%',minHeight:60,padding:'.5rem .6rem',background:'var(--input-bg)',color:'var(--text-primary)',
           border:'1px solid var(--accent)',borderRadius:6,fontSize:'0.85rem',fontFamily:'inherit',outline:'none',resize:'vertical',boxSizing:'border-box'}} />
       <div style=${{display:'flex',gap:'.4rem',justifyContent:'flex-end'}}>
         <button onClick=${function(){d({t:A.DEL_COMMENT, id:c.id});}}
-          style=${{padding:'.3rem .6rem',borderRadius:5,fontSize:'0.74rem',cursor:'pointer',border:'1px solid var(--border)',background:'transparent',color:'var(--text-muted)',fontFamily:'inherit'}}>Cancel</button>
+          style=${{padding:'.3rem .6rem',borderRadius:5,fontSize:'0.74rem',cursor:'pointer',border:'1px solid var(--border)',background:'transparent',color:'var(--text-muted)',fontFamily:'inherit'}}>${_cc_t('newIssue.cancel','Cancel')}</button>
         <button onClick=${save} disabled=${!txt.trim()}
           style=${{padding:'.3rem .7rem',borderRadius:5,fontSize:'0.74rem',fontWeight:600,cursor:txt.trim()?'pointer':'not-allowed',
-            border:'none',background:'var(--accent)',color:'#fff',opacity:txt.trim()?1:0.4,fontFamily:'inherit'}}>Save (Ctrl+Enter)</button>
+            border:'none',background:'var(--accent)',color:'#fff',opacity:txt.trim()?1:0.4,fontFamily:'inherit'}}>${_cc_t('share.saveCtrlEnter','Save (Ctrl+Enter)')}</button>
       </div>
     </div>`;
   }
