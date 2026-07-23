@@ -28244,13 +28244,13 @@ function startApp() {
         }()}
         </${React.Fragment}>`}
         ${activeTab==='shared' && html`<${React.Fragment}>
-        <div style=${SEC}>Shared Project</div>
+        <div style=${SEC}>${_cc_t('settings.shared.section','Shared Project')}</div>
         <div style=${TROW}>
           <div style=${{flex:1}}>
-            <div style=${TLBL}>Your name</div>
-            <div style=${TSUB}>Shown in shared issues to identify who made changes</div>
+            <div style=${TLBL}>${_cc_t('share.yourName','Your name')}</div>
+            <div style=${TSUB}>${_cc_t('settings.shared.yourNameSub','Shown in shared issues to identify who made changes')}</div>
           </div>
-          <input type="text" value=${_ccChangelogUser} placeholder="Your name"
+          <input type="text" value=${_ccChangelogUser} placeholder=${_cc_t('share.yourName','Your name')}
             onInput=${function(e){_ccChangelogUser=e.target.value;try{localStorage.setItem('cc_username',e.target.value);}catch(ex){}}}
             style=${{...S_INPUT,width:140,fontSize:'0.8rem',textAlign:'right'}} />
         </div>
@@ -28260,23 +28260,23 @@ function startApp() {
           return html`<div>
             ${spId && html`<div style=${TROW}>
               <div>
-                <div style=${TLBL}>Project Key</div>
-                <div style=${TSUB}>Share this key with your team. Issue status, priority, assignee, title and description sync automatically.</div>
+                <div style=${TLBL}>${_cc_t('settings.shared.projectKey','Project Key')}</div>
+                <div style=${TSUB}>${_cc_t('settings.shared.projectKeySub','Share this key with your team. Issue status, priority, assignee, title and description sync automatically.')}</div>
               </div>
               <div style=${{display:'flex',gap:'.3rem',alignItems:'center',flexShrink:0}}>
                 <code style=${{fontSize:'0.78rem',background:'var(--bg-secondary)',padding:'.2rem .5rem',borderRadius:4,fontFamily:'var(--font-mono)',color:'var(--accent)'}}>${spId}</code>
                 <button onClick=${function(){navigator.clipboard.writeText(spId);}}
-                  style=${{...S_BTN,padding:'.3rem .5rem',background:'var(--bg-secondary)',color:'var(--text-secondary)',fontSize:'0.72rem',border:'1px solid var(--border)',borderRadius:6}}>Copy</button>
+                  style=${{...S_BTN,padding:'.3rem .5rem',background:'var(--bg-secondary)',color:'var(--text-secondary)',fontSize:'0.72rem',border:'1px solid var(--border)',borderRadius:6}}>${_cc_t('settings.shared.copy','Copy')}</button>
                 <button onClick=${function(){if(window._ccSharedPull)window._ccSharedPull();}}
-                  style=${{...S_BTN,padding:'.3rem .5rem',background:'var(--bg-secondary)',color:'var(--text-secondary)',fontSize:'0.72rem',border:'1px solid var(--border)',borderRadius:6}}>Sync now</button>
+                  style=${{...S_BTN,padding:'.3rem .5rem',background:'var(--bg-secondary)',color:'var(--text-secondary)',fontSize:'0.72rem',border:'1px solid var(--border)',borderRadius:6}}>${_cc_t('share.syncNow','Sync now')}</button>
                 <button onClick=${function(){if(window._ccSharedStop)window._ccSharedStop();try{localStorage.removeItem('cc_sharedProjectId');localStorage.removeItem('cc_sharedProjectName');}catch(e){}d({t:A.UPD_PREFS,u:{_sharedRefresh:Date.now()}});}}
-                  style=${{...S_BTN,padding:'.3rem .5rem',background:'var(--bg-secondary)',color:'#f87171',fontSize:'0.72rem',border:'1px solid #ef444444',borderRadius:6}}>Leave</button>
+                  style=${{...S_BTN,padding:'.3rem .5rem',background:'var(--bg-secondary)',color:'#f87171',fontSize:'0.72rem',border:'1px solid #ef444444',borderRadius:6}}>${_cc_t('share.leave','Leave')}</button>
               </div>
             </div>`}
             ${!spId && html`<div style=${TROW}>
               <div>
-                <div style=${TLBL}>Shared project</div>
-                <div style=${TSUB}>Sync clash decisions with your team. No account needed — just share the project key.</div>
+                <div style=${TLBL}>${_cc_t('share.sharedProject','Shared project')}</div>
+                <div style=${TSUB}>${_cc_t('settings.shared.sharedProjectSub','Sync clash decisions with your team. No account needed — just share the project key.')}</div>
               </div>
               <div style=${{display:'flex',gap:'.3rem',flexShrink:0}}>
                 <input type="text" placeholder="e.g. MEP-abc123" id="cc-join-key"
@@ -28291,39 +28291,39 @@ function startApp() {
                       if(window._ccSharedStart)window._ccSharedStart();
                       d({t:A.UPD_PREFS,u:{_sharedRefresh:Date.now()}});
                     })
-                    .catch(function(){alert('Project not found. Check the key and try again.');});
+                    .catch(function(){alert(_cc_t('share.projectNotFound','Project not found. Check the key and try again.'));});
                 }}
-                  style=${{...S_BTN,padding:'.3rem .6rem',background:'var(--bg-secondary)',color:'var(--text-secondary)',fontSize:'0.78rem',fontWeight:500,borderRadius:6,whiteSpace:'nowrap',border:'1px solid var(--border)'}}>Join</button>
+                  style=${{...S_BTN,padding:'.3rem .6rem',background:'var(--bg-secondary)',color:'var(--text-secondary)',fontSize:'0.78rem',fontWeight:500,borderRadius:6,whiteSpace:'nowrap',border:'1px solid var(--border)'}}>${_cc_t('share.join','Join')}</button>
                 <button onClick=${function(){
-                  var name = prompt('Name your shared project:', 'My ClashControl Project');
+                  var name = prompt(_cc_t('settings.shared.namePrompt','Name your shared project:'), _cc_t('settings.shared.namePromptDefault','My ClashControl Project'));
                   if (!name) return;
                   if (!window._ccSharedCreate) return;
                   window._ccSharedCreate(name)
                     .then(function(data){ d({t:A.UPD_PREFS,u:{_sharedRefresh:Date.now()}}); })
-                    .catch(function(){ alert('Could not create shared project. Server may be unavailable.'); });
+                    .catch(function(){ alert(_cc_t('share.createFailed','Could not create shared project. Server may be unavailable.')); });
                 }}
-                  style=${{...S_BTN,padding:'.3rem .6rem',background:'var(--accent)',color:'#fff',fontSize:'0.78rem',fontWeight:600,borderRadius:6,whiteSpace:'nowrap'}}>Create</button>
+                  style=${{...S_BTN,padding:'.3rem .6rem',background:'var(--accent)',color:'#fff',fontSize:'0.78rem',fontWeight:600,borderRadius:6,whiteSpace:'nowrap'}}>${_cc_t('share.create','Create')}</button>
               </div>
             </div>`}
           </div>`;
         }()}
         </${React.Fragment}>`}
         ${activeTab==='ai' && html`<${React.Fragment}>
-        <div style=${SEC}>AI / Natural Language</div>
+        <div style=${SEC}>${_cc_t('settings.ai.section','AI / Natural Language')}</div>
         <div style=${TROW}>
           <div>
-            <div style=${TLBL}>AI Status</div>
+            <div style=${TLBL}>${_cc_t('settings.ai.status','AI Status')}</div>
             <div style=${TSUB}>${(function(){
-              if (!_serverAIAvailable) return 'NL not configured — basic regex commands still work. GROQ_API_KEY isn\'t set on the server, or the health probe is failing.';
+              if (!_serverAIAvailable) return _cc_t('settings.ai.notConfigured','NL not configured — basic regex commands still work. GROQ_API_KEY isn\'t set on the server, or the health probe is failing.');
               // Render the actual configured model rather than a hardcoded
               // name so the copy stays accurate as the backend changes.
               // /api/nl is Groq; /api/title + /api/triage are Gemma.
               var nl = _serverAIModel ? ' (' + _serverAIModel + ')' : '';
-              var tri = _serverTriageModel ? ' Triage + titles run on ' + _serverTriageModel + '.' : '';
-              return 'Connected — ClashControl Coordinator' + nl + '.' + tri + ' No setup needed.';
+              var tri = _serverTriageModel ? ' ' + _cc_t('settings.ai.triageRunsOn','Triage + titles run on {model}.',{model:_serverTriageModel}) : '';
+              return _cc_t('settings.ai.connected','Connected — ClashControl Coordinator{model}.{triage} No setup needed.',{model:nl,triage:tri});
             })()}</div>
           </div>
-          <span style=${{fontSize:'0.8rem',color:_serverAIAvailable?'#4ade80':'#f87171',flexShrink:0}}>${_serverAIAvailable ? '● Connected' : '○ Offline'}</span>
+          <span style=${{fontSize:'0.8rem',color:_serverAIAvailable?'#4ade80':'#f87171',flexShrink:0}}>${_serverAIAvailable ? _cc_t('settings.ai.connectedDot','● Connected') : _cc_t('settings.ai.offlineDot','○ Offline')}</span>
         </div>
         ${function(){
           // Autonomy envelope (Day, AEC Magazine, Apr 2026). What the built-in
@@ -28341,32 +28341,32 @@ function startApp() {
           };
           return html`<div style=${TROW}>
             <div>
-              <div style=${TLBL}>Clash-resolution authority</div>
+              <div style=${TLBL}>${_cc_t('settings.ai.authority','Clash-resolution authority')}</div>
               <div style=${TSUB}>${_env === 'nudge'
-                ? 'Nudge — built-in assistant stays basic; resolve/fix-clash queries route to your own LLM via the Smart Bridge Connector (or show a connect prompt).'
-                : 'Suggest — your own LLM may reason about resolutions and reply with options. ClashControl never auto-dispatches state changes; the architect remains the decision-maker.'}</div>
+                ? _cc_t('settings.ai.nudgeSub','Nudge — built-in assistant stays basic; resolve/fix-clash queries route to your own LLM via the Smart Bridge Connector (or show a connect prompt).')
+                : _cc_t('settings.ai.suggestSub','Suggest — your own LLM may reason about resolutions and reply with options. ClashControl never auto-dispatches state changes; the architect remains the decision-maker.')}</div>
             </div>
             <div style=${{display:'flex',gap:'.3rem',flexShrink:0}}>
-              ${BTN('nudge','Nudge')}
-              ${BTN('suggest','Suggest')}
+              ${BTN('nudge',_cc_t('settings.ai.nudge','Nudge'))}
+              ${BTN('suggest',_cc_t('settings.ai.suggest','Suggest'))}
             </div>
           </div>`;
         }()}
         </${React.Fragment}>`}
         ${activeTab==='issues' && html`<${React.Fragment}>
-        <div style=${SEC}>Issue Defaults</div>
+        <div style=${SEC}>${_cc_t('settings.issues.section','Issue Defaults')}</div>
         <div style=${{display:'flex',gap:'.5rem',padding:'.5rem 0'}}>
-          <div style=${{flex:1}}><label style=${LBL}>Default Priority</label>
+          <div style=${{flex:1}}><label style=${LBL}>${_cc_t('settings.issues.defaultPriority','Default Priority')}</label>
             <select value=${p.defaultPriority||'normal'} onChange=${sel('defaultPriority')} style=${S_INPUT}>
-              <option value="critical">Critical</option><option value="high">High</option><option value="normal">Normal</option><option value="low">Low</option>
+              <option value="critical">${_cc_t('newIssue.priorityCritical','Critical')}</option><option value="high">${_cc_t('newIssue.priorityHigh','High')}</option><option value="normal">${_cc_t('newIssue.priorityNormal','Normal')}</option><option value="low">${_cc_t('newIssue.priorityLow','Low')}</option>
             </select></div>
-          <div style=${{flex:1}}><label style=${LBL}>Default Status</label>
+          <div style=${{flex:1}}><label style=${LBL}>${_cc_t('settings.issues.defaultStatus','Default Status')}</label>
             <select value=${p.defaultStatus||'open'} onChange=${sel('defaultStatus')} style=${S_INPUT}>
               ${Object.keys(STAT).map(function(k){return html`<option key=${k} value=${k}>${STAT[k].label}</option>`})}
             </select></div>
-          <div style=${{flex:1}}><label style=${LBL}>Default Category</label>
+          <div style=${{flex:1}}><label style=${LBL}>${_cc_t('settings.issues.defaultCategory','Default Category')}</label>
             <select value=${p.defaultCategory||'design'} onChange=${sel('defaultCategory')} style=${S_INPUT}>
-              <option value="design">Design</option><option value="coordination">Coordination</option><option value="constructability">Constructability</option><option value="safety">Safety</option><option value="code_compliance">Code Compliance</option><option value="other">Other</option>
+              <option value="design">${_cc_t('newIssue.categoryDesign','Design')}</option><option value="coordination">${_cc_t('newIssue.categoryCoordination','Coordination')}</option><option value="constructability">${_cc_t('newIssue.categoryConstructability','Constructability')}</option><option value="safety">${_cc_t('newIssue.categorySafety','Safety')}</option><option value="code_compliance">${_cc_t('newIssue.categoryCodeCompliance','Code Compliance')}</option><option value="other">${_cc_t('newIssue.categoryOther','Other')}</option>
             </select></div>
         </div>
         </${React.Fragment}>`}
