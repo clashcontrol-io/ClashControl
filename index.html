@@ -17177,40 +17177,41 @@ function startApp() {
           title="Smart Views — one-click presets, saved views, shareable link"
           style=${{...S_BTN,background:'var(--bg-secondary)',color:'var(--text-secondary)',border:'1px solid var(--border)',fontSize:'var(--text-xs)',display:'flex',alignItems:'center',gap:'.35rem'}}>
           <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M12 1v6m0 10v6M5.64 5.64l4.24 4.24m4.24 4.24l4.24 4.24M1 12h6m10 0h6M5.64 18.36l4.24-4.24m4.24-4.24l4.24-4.24"/></svg>
-          Views
+          ${_cc_t('toolbar.views','Views')}
         </button>
         <button class="cc-hide-mobile cc-btn-press" onClick=${function(){d({t:A.PRESENT,v:!s.presenting});}}
           title="Presentation mode (P) — fullscreen, hide chrome, auto-rotate when idle"
           style=${{...S_BTN,background:s.presenting?'var(--accent)':'var(--bg-secondary)',color:s.presenting?'#fff':'var(--text-secondary)',border:'1px solid '+(s.presenting?'var(--accent-hover)':'var(--border)'),fontSize:'var(--text-xs)',display:'flex',alignItems:'center',gap:'.35rem'}}>
           <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="5 3 19 12 5 21 5 3"/></svg>
-          Present
+          ${_cc_t('toolbar.present','Present')}
         </button>
         <button class="cc-hide-mobile cc-btn-press" onClick=${function(){loadProject(d)}}
           style=${{...S_BTN,background:'var(--bg-secondary)',color:'var(--text-secondary)',border:'1px solid var(--border)',fontSize:'var(--text-xs)'}}>
-          Open Project
+          ${_cc_t('toolbar.open','Open Project')}
         </button>
         <button class="cc-hide-mobile cc-btn-press" onClick=${function(){saveProject(s)}} disabled=${!all.length&&!s.models.length}
           style=${{...S_BTN,background:s.models.length||all.length?'var(--accent)':'var(--bg-secondary)',color:s.models.length||all.length?'#fff':'var(--text-faint)',cursor:s.models.length||all.length?'pointer':'not-allowed',fontSize:'var(--text-xs)'}}>
-          Save Project
+          ${_cc_t('toolbar.save','Save Project')}
         </button>
         <button class="cc-hide-mobile cc-btn-press" onClick=${function(){importBCF(d)}}
           style=${{...S_BTN,background:'var(--bg-secondary)',color:'var(--text-secondary)',border:'1px solid var(--border)',fontSize:'var(--text-xs)'}}>
-          ↑ Import BCF
+          ↑ ${_cc_t('toolbar.importBcf','Import BCF')}
         </button>
         <button class="cc-hide-mobile cc-btn-press" onClick=${function(){exportBCF(all, '2.1', s.viewpoints, s)}} disabled=${!all.length}
           style=${{...S_BTN,background:all.length?'var(--accent)':'var(--bg-secondary)',color:all.length?'#fff':'var(--text-faint)',cursor:all.length?'pointer':'not-allowed',fontSize:'var(--text-xs)'}}>
-          ↓ BCF 2.1
+          ↓ ${_cc_t('toolbar.bcf21','BCF 2.1')}
         </button>
         <button class="cc-hide-mobile cc-btn-press" onClick=${function(){exportBCF(all, '3.0', s.viewpoints, s)}} disabled=${!all.length}
           style=${{...S_BTN,background:all.length?'var(--accent)':'var(--bg-secondary)',color:all.length?'#fff':'var(--text-faint)',cursor:all.length?'pointer':'not-allowed',fontSize:'var(--text-xs)'}}>
-          ↓ BCF 3.0
+          ↓ ${_cc_t('toolbar.bcf30','BCF 3.0')}
         </button>
         <button onClick=${function(){d({t:A.UPD_PREFS,u:{theme:isDark?'light':'dark'}})}}
           style=${{...S_BTN,background:'var(--bg-secondary)',color:'var(--text-secondary)',border:'1px solid var(--border)',fontSize:'0.92rem',padding:'.3rem .5rem'}}
-          title=${isDark?'Switch to light mode':'Switch to dark mode'} aria-label=${isDark?'Switch to light mode':'Switch to dark mode'}>${isDark?'☀':'☾'}</button>
+          title=${isDark?_cc_t('toolbar.switchLight','Switch to light mode'):_cc_t('toolbar.switchDark','Switch to dark mode')}
+          aria-label=${isDark?_cc_t('toolbar.switchLight','Switch to light mode'):_cc_t('toolbar.switchDark','Switch to dark mode')}>${isDark?'☀':'☾'}</button>
         <button onClick=${function(){d({t:A.SETTINGS,v:true})}}
           style=${{...S_BTN,background:'var(--bg-secondary)',color:'var(--text-secondary)',border:'1px solid var(--border)',fontSize:'0.98rem',padding:'.3rem .5rem'}}
-          title="Settings" aria-label="Open settings">⚙</button>
+          title=${_cc_t('toolbar.settings','Settings')} aria-label=${_cc_t('toolbar.openSettings','Open settings')}>⚙</button>
       </div>
     </header>`;
   }
@@ -27930,7 +27931,7 @@ function startApp() {
     var NAVBTN = function(on){return {...S_BTN,display:'block',width:'100%',textAlign:'left',background:on?'var(--accent-bg-deep)':'none',color:on?'var(--accent)':'var(--text-secondary)',fontWeight:on?600:400,fontSize:'0.82rem',padding:'.5rem .7rem',borderRadius:'var(--radius-sm)',borderLeft:on?'2px solid var(--accent)':'2px solid transparent'};};
     return html`<div class="cc-modal-backdrop" style=${S_BACKDROP} role="dialog" aria-modal="true" aria-labelledby="cc-settings-title" onClick=${function(){d({t:A.SETTINGS,v:false});}}><div class="cc-modal-card" style=${{...S_MODAL_CARD,width:640,overflow:'hidden',display:'flex',flexDirection:'column'}} onClick=${function(e){e.stopPropagation();}}>
       <div style=${S_MODAL_HEADER}>
-        <span id="cc-settings-title" style=${S_MODAL_TITLE}>Settings</span>
+        <span id="cc-settings-title" style=${S_MODAL_TITLE}>${_cc_t('panel.settings.title','Settings')}</span>
         <button onClick=${function(){d({t:A.SETTINGS,v:false})}} style=${S_MODAL_CLOSE} aria-label="Close settings">✕</button>
       </div>
       <div style=${{padding:'var(--space-2) var(--space-5) 0 var(--space-5)',flexShrink:0}}>
@@ -34755,7 +34756,17 @@ function startApp() {
     if (!tab) return null;
     var projects=s.projectList||[];
     var activeProj=projects.find(function(p){return p.id===s.activeProject;})||projects[0]||{name:'Default'};
-    var TITLES={models:'Models',clashes:'Conflicts',issues:'Issues',navigator:'Navigator',dataquality:'Data Quality',accessibility:'Accessibility',tools:'Tools',addons:'Integrations',standards:'Standards'};
+    var TITLES={
+      models:_cc_t('panel.models.title','Models'),
+      clashes:_cc_t('panel.clashes.title','Conflicts'),
+      issues:_cc_t('panel.issues.title','Issues'),
+      navigator:_cc_t('panel.navigator.title','Navigator'),
+      dataquality:_cc_t('panel.dataquality.title','Data Quality'),
+      accessibility:_cc_t('panel.accessibility.title','Accessibility'),
+      tools:_cc_t('panel.tools.title','Tools'),
+      addons:_cc_t('panel.addons.title','Integrations'),
+      standards:_cc_t('panel.standards.title','Standards')
+    };
     var onResizeDown = _makeResizeHandler(dragRef, setPanelW, 200, 600, false);
     return html`<div class="cc-left-panel" style=${{
       width:panelW,display:'flex',flexDirection:'column',overflow:'hidden',
