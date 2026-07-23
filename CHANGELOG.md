@@ -1,5 +1,8 @@
 # Changelog
 
+## v7.3.1 (2026-07-23)
+- fix(park-restore): patch geoCache psets even after the model is parked
+
 ## v7.3.0 (2026-07-22)
 - feat(models): auto-park hidden models under memory pressure + smart reload
 
