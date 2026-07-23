@@ -28207,8 +28207,8 @@ function startApp() {
           return html`<${React.Fragment}>
             <div style=${{padding:'.4rem 0',borderBottom:'1px solid var(--border-subtle)'}}>
               <div style=${{display:'flex',justifyContent:'space-between',fontSize:'var(--text-xs)',color:'var(--text-muted)',marginBottom:'.35rem'}}>
-                <span>Browser storage: ${fmt(storageReport.usage)} of ${fmt(storageReport.quota)}${quotaPct!=null?' ('+quotaPct+'%)':''}</span>
-                <span>${storageReport.persisted===true?'protected from eviction':storageReport.persisted===false?'evictable under pressure':''}</span>
+                <span>${_cc_t('settings.privacy.browserStorage','Browser storage: {used} of {quota}{pct}',{used:fmt(storageReport.usage),quota:fmt(storageReport.quota),pct:quotaPct!=null?' ('+quotaPct+'%)':''})}</span>
+                <span>${storageReport.persisted===true?_cc_t('settings.privacy.protected','protected from eviction'):storageReport.persisted===false?_cc_t('settings.privacy.evictable','evictable under pressure'):''}</span>
               </div>
               ${quotaPct!=null && html`<div style=${{height:6,borderRadius:3,background:'var(--bg-secondary)',overflow:'hidden'}}>
                 <div style=${{height:'100%',width:quotaPct+'%',background:quotaPct>80?'var(--color-danger)':quotaPct>60?'var(--color-warning)':'var(--accent)',transition:'width .3s'}}></div>
@@ -28217,28 +28217,28 @@ function startApp() {
             ${storageReport.perProject.map(function(p){
               return html`<div key=${p.projectId} style=${TROW}>
                 <div>
-                  <div style=${TLBL}>${p.name}${p.active?html`<span style=${{fontSize:'var(--text-xs)',color:'var(--accent)',marginLeft:'.4rem'}}>active</span>`:''}</div>
-                  <div style=${TSUB}>${p.fileCount} model${p.fileCount!==1?'s':''} · ${fmt(p.ifcBytes)} files · ${fmt(p.geoBytes)} geometry cache · ${fmt(p.sessionBytes)} session</div>
+                  <div style=${TLBL}>${p.name}${p.active?html`<span style=${{fontSize:'var(--text-xs)',color:'var(--accent)',marginLeft:'.4rem'}}>${_cc_t('settings.privacy.active','active')}</span>`:''}</div>
+                  <div style=${TSUB}>${_cc_t('settings.privacy.projectStorageLine','{models} · {ifc} files · {geo} geometry cache · {session} session',{models:p.fileCount===1?_cc_t('settings.privacy.model','{n} model',{n:p.fileCount}):_cc_t('settings.privacy.modelsPlural','{n} models',{n:p.fileCount}),ifc:fmt(p.ifcBytes),geo:fmt(p.geoBytes),session:fmt(p.sessionBytes)})}</div>
                 </div>
                 <div style=${{display:'flex',alignItems:'center',gap:'.5rem',flexShrink:0}}>
                   <span style=${{fontFamily:'var(--font-mono)',fontSize:'var(--text-sm)',color:'var(--text-secondary)'}}>${fmt(p.totalBytes)}</span>
                   ${!p.active && p.fileCount>0 && rmFilesConfirm!==p.projectId && html`<button onClick=${function(){setRmFilesConfirm(p.projectId);}}
-                    title="Remove this project's stored model files from browser storage. Clashes and issues are kept; re-add the IFC files to load models again."
-                    style=${{...S_BTN,fontSize:'0.72rem',padding:'.25rem .5rem',background:'none',color:'var(--text-muted)',border:'1px solid var(--border)'}}>Remove files</button>`}
+                    title=${_cc_t('settings.privacy.removeFilesTitle','Remove this project\'s stored model files from browser storage. Clashes and issues are kept; re-add the IFC files to load models again.')}
+                    style=${{...S_BTN,fontSize:'0.72rem',padding:'.25rem .5rem',background:'none',color:'var(--text-muted)',border:'1px solid var(--border)'}}>${_cc_t('settings.privacy.removeFiles','Remove files')}</button>`}
                   ${!p.active && rmFilesConfirm===p.projectId && html`<button onClick=${function(){
                     setRmFilesConfirm(null);
                     idbDeleteProjectFiles(p.projectId).then(refreshStorageReport);
-                  }} style=${{...S_BTN,fontSize:'0.72rem',padding:'.25rem .5rem',background:'#ef4444',color:'#fff',border:'none'}}>Confirm — remove ${fmt(p.ifcBytes)}?</button>`}
+                  }} style=${{...S_BTN,fontSize:'0.72rem',padding:'.25rem .5rem',background:'#ef4444',color:'#fff',border:'none'}}>${_cc_t('settings.privacy.confirmRemove','Confirm — remove {bytes}?',{bytes:fmt(p.ifcBytes)})}</button>`}
                 </div>
               </div>`;
             })}
             <div style=${{...TROW,borderBottom:'none'}}>
               <div>
-                <div style=${TLBL}>Geometry cache</div>
-                <div style=${TSUB}>Decoded geometry for fast project switching — ${fmt(storageReport.idb.geoBytes)}. Safe to clear; models re-parse on next load.</div>
+                <div style=${TLBL}>${_cc_t('settings.privacy.geoCache','Geometry cache')}</div>
+                <div style=${TSUB}>${_cc_t('settings.privacy.geoCacheSub','Decoded geometry for fast project switching — {bytes}. Safe to clear; models re-parse on next load.',{bytes:fmt(storageReport.idb.geoBytes)})}</div>
               </div>
               <button onClick=${function(){ if(window._ccClearGeoCache) window._ccClearGeoCache().then(refreshStorageReport); }}
-                style=${{...S_BTN,fontSize:'0.8rem',padding:'.3rem .6rem',background:'var(--bg-secondary)',color:'var(--text-secondary)',border:'1px solid var(--border)',flexShrink:0}}>Clear cache</button>
+                style=${{...S_BTN,fontSize:'0.8rem',padding:'.3rem .6rem',background:'var(--bg-secondary)',color:'var(--text-secondary)',border:'1px solid var(--border)',flexShrink:0}}>${_cc_t('settings.privacy.clearCache','Clear cache')}</button>
             </div>
           </${React.Fragment}>`;
         }()}
