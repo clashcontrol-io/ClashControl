@@ -28428,12 +28428,12 @@ function startApp() {
     var filledCount = Object.keys(defaultTols).length;
 
     return html`<div style=${{padding:'.2rem 1.2rem 1rem 1.2rem'}}>
-      <div style=${SEC}>Type-Pair Tolerances</div>
+      <div style=${SEC}>${_cc_t('settings.advanced.section','Type-Pair Tolerances')}</div>
 
       <div style=${TROW}>
         <div>
-          <div style=${TLBL}>Custom tolerances per type pair</div>
-          <div style=${TSUB}>Override the default gap (${defaultGap}mm) for specific IFC type combinations${filledCount?' — '+filledCount+' set':''}</div>
+          <div style=${TLBL}>${_cc_t('settings.advanced.customTolerances','Custom tolerances per type pair')}</div>
+          <div style=${TSUB}>${_cc_t('settings.advanced.customTolerancesSub','Override the default gap ({gap}mm) for specific IFC type combinations{filled}',{gap:defaultGap,filled:filledCount?' — '+_cc_t('settings.advanced.setCount','{n} set',{n:filledCount}):''})}</div>
         </div>
         <div onClick=${toggleEnabled} role="switch" aria-checked=${tolEnabled} tabindex="0"
           style=${{width:38,height:22,borderRadius:11,background:tolEnabled?'var(--accent)':'var(--text-faint)',cursor:'pointer',position:'relative',transition:'background .2s',flexShrink:0}}>
@@ -28447,13 +28447,13 @@ function startApp() {
             background:'var(--bg-primary)',color:'var(--text-secondary)',
             border:'1px solid var(--border)',borderRadius:6,
             display:'flex',justifyContent:'space-between',alignItems:'center'}}>
-          <span>${expanded?'Hide':'Show'} tolerance matrix (${typeList.length} types, ${pairs.length} pairs)</span>
+          <span>${expanded?_cc_t('settings.advanced.hideMatrix','Hide tolerance matrix ({types} types, {pairs} pairs)',{types:typeList.length,pairs:pairs.length}):_cc_t('settings.advanced.showMatrix','Show tolerance matrix ({types} types, {pairs} pairs)',{types:typeList.length,pairs:pairs.length})}</span>
           <span style=${{fontSize:'0.63rem',color:'var(--text-faint)'}}>${expanded?'▲':'▼'}</span>
         </button>
 
         ${expanded && html`<div style=${{marginTop:'.4rem',maxHeight:400,overflowY:'auto',border:'1px solid var(--border)',borderRadius:6,background:'var(--bg-primary)'}}>
           ${typeList.length<2 && html`<div style=${{padding:'1rem',fontSize:'0.75rem',color:'var(--text-faint)',textAlign:'center'}}>
-            Load IFC models to populate the type list, or types from the default set will be shown.
+            ${_cc_t('settings.advanced.loadModelsHint','Load IFC models to populate the type list, or types from the default set will be shown.')}
           </div>`}
           ${typeList.length>=2 && html`<table style=${{width:'100%',borderCollapse:'collapse',fontSize:'0.67rem'}}>
             <tbody>
@@ -28494,11 +28494,11 @@ function startApp() {
         ${expanded && filledCount>0 && html`<button onClick=${applyToRules}
           style=${{...S_BTN,width:'100%',padding:'.35rem',fontSize:'0.75rem',fontWeight:600,marginTop:'.4rem',
             background:'var(--accent)',color:'#fff',border:'none',borderRadius:6}}>
-          Apply ${filledCount} tolerance${filledCount!==1?'s':''} to Current Detection Rules
+          ${_cc_t('settings.advanced.applyTolerances','Apply {n} tolerances to Current Detection Rules',{n:filledCount})}
         </button>`}
 
         <div style=${{fontSize:'0.63rem',color:'var(--text-faint)',lineHeight:1.5,marginTop:'.4rem'}}>
-          Empty cells use the default gap (${defaultGap}mm). Set 0 for hard-clash-only on that pair. Changes are saved automatically.
+          ${_cc_t('settings.advanced.footerHint','Empty cells use the default gap ({gap}mm). Set 0 for hard-clash-only on that pair. Changes are saved automatically.',{gap:defaultGap})}
         </div>
       </div>`}
     </div>`;
