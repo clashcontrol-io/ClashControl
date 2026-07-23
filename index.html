@@ -1436,7 +1436,8 @@ function startApp() {
     'geoplace':'addons/geoplace.js', 'accessibility':'addons/accessibility.js',
     'splat':'addons/splat.js', 'align':'addons/align.js',
     'openaec-bridge':'addons/openaec-bridge.js', 'visibility':'addons/visibility.js',
-    'wasm-engine':'addons/wasm-engine.js', 'tiles':'addons/tiles.js'
+    'wasm-engine':'addons/wasm-engine.js', 'tiles':'addons/tiles.js',
+    'locales':'locales/loader.js', 'regulations':'regulations/loader.js'
   };
   // These integrations are inactive by default and carry substantial code.
   // Keep a lightweight manifest entry so the Integrations panel can list them;
@@ -1591,6 +1592,87 @@ function startApp() {
       loadOne(id);
     });
   }
+
+  // ── Locale Pack Registry ─────────────────────────────────────── i18n plumbing
+  // Locale packs are pure JSON (never executable) — see locales/loader.js.
+  // Core UI calls _cc_t(key, englishFallback[, vars]) everywhere; with no pack
+  // active, or a key missing from an active pack, englishFallback is returned
+  // as-is, so a partial or incorrect community pack can never break the app.
+  var _ccLocalePacks = {};   // {lang: {lang, name, strings}}
+  var _ccActiveLocale = null;
+
+  window._ccRegisterLocalePack = function(pack) {
+    if (!pack || !pack.lang || !pack.strings) return;
+    _ccLocalePacks[pack.lang] = pack;
+    window.dispatchEvent(new Event('cc-locale-changed'));
+  };
+
+  window._ccSetLocale = function(lang) {
+    _ccActiveLocale = (lang && _ccLocalePacks[lang]) ? lang : null;
+    try { localStorage.setItem('cc_locale', _ccActiveLocale || ''); } catch(e){}
+    window.dispatchEvent(new Event('cc-locale-changed'));
+  };
+
+  window._ccGetLocale = function() { return _ccActiveLocale; };
+  window._ccGetLocalePacks = function() { return _ccLocalePacks; };
+
+  window._cc_t = function(key, englishFallback, vars) {
+    var pack = _ccActiveLocale && _ccLocalePacks[_ccActiveLocale];
+    var str = (pack && pack.strings && pack.strings[key] != null) ? pack.strings[key] : englishFallback;
+    if (vars) {
+      Object.keys(vars).forEach(function(k) {
+        str = str.replace(new RegExp('\\{' + k + '\\}', 'g'), vars[k]);
+      });
+    }
+    return str;
+  };
+
+  // Restore the user's chosen language; the pack itself may not be registered
+  // yet (loaded lazily below), so _cc_t falls back to English until it lands.
+  try {
+    var _savedLocale = localStorage.getItem('cc_locale');
+    if (_savedLocale) _ccActiveLocale = _savedLocale;
+  } catch(e){}
+
+  // ── Regulation Preset Registry ───────────────────────────────── i18n plumbing
+  // Regional building-code presets, same pure-JSON contract as locale packs —
+  // see regulations/loader.js. Keyed by the check engine they target (today
+  // just 'accessibility'; 'visibility'/'data-quality' can register presets the
+  // same way) so one region can carry different threshold shapes per engine.
+  // Presets follow the MODEL's location (IfcSite), not the user's — a manual
+  // pick in Settings always overrides whatever was auto-suggested.
+  var _ccRegulationPresets = {};  // {engine: {region: {region, name, engine, thresholds}}}
+  var _ccActiveRegulationRegion = null;
+
+  window._ccRegisterRegulationPreset = function(preset) {
+    if (!preset || !preset.region || !preset.engine || !preset.thresholds) return;
+    if (!_ccRegulationPresets[preset.engine]) _ccRegulationPresets[preset.engine] = {};
+    _ccRegulationPresets[preset.engine][preset.region] = preset;
+    window.dispatchEvent(new Event('cc-regulation-changed'));
+  };
+
+  window._ccSetRegulationRegion = function(region) {
+    _ccActiveRegulationRegion = region || null;
+    try { localStorage.setItem('cc_regulation_region', _ccActiveRegulationRegion || ''); } catch(e){}
+    window.dispatchEvent(new Event('cc-regulation-changed'));
+  };
+
+  window._ccGetRegulationRegion = function() { return _ccActiveRegulationRegion; };
+  window._ccGetRegulationPresets = function() { return _ccRegulationPresets; };
+
+  // Returns the active region's thresholds for an engine, or null (engine
+  // keeps its own built-in defaults) — never throws on an unknown region/engine.
+  window._ccGetRegulationPreset = function(region, engine) {
+    var forEngine = _ccRegulationPresets[engine];
+    var r = region || _ccActiveRegulationRegion;
+    if (!forEngine || !r || !forEngine[r]) return null;
+    return forEngine[r].thresholds;
+  };
+
+  try {
+    var _savedRegion = localStorage.getItem('cc_regulation_region');
+    if (_savedRegion) _ccActiveRegulationRegion = _savedRegion;
+  } catch(e){}
 
   function _itemEids(item) {
     var ids=[];
@@ -11352,6 +11434,9 @@ function startApp() {
         flyToElement:  function(eid){ if (window._fitToElement) return window._fitToElement(eid); },
         runDataQuality:   function(els){ if (window._ccRunDataQualityChecks) return window._ccRunDataQualityChecks(els); },
         runAccessibility: function(els){ if (window._ccRunAccessibilityChecks) return window._ccRunAccessibilityChecks(els); },
+        get locale()   { return window._ccGetLocale ? window._ccGetLocale() : null; },
+        setLocale:     function(lang){ if (window._ccSetLocale) return window._ccSetLocale(lang); },
+        locales:       function(){ return window._ccGetLocalePacks ? window._ccGetLocalePacks() : {}; },
         computeQualityScore: function(els, models){ if (window._ccComputeQualityScore) return window._ccComputeQualityScore(els, models); },
         // Both addons load lazily on first real use (REWRITE_UI_PLAN.md
         // Phase 10) — ensure the script before calling into it so external

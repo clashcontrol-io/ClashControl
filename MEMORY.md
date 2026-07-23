@@ -286,6 +286,29 @@ Things to be careful about. Do not remove without a good reason — add a note i
 Update this section at the start and end of each session.
 Mark completed items with ~~strikethrough~~ and date, then let the daily sync archive them.
 
+**i18n + regional-regulation packs (2026-07-23, branch `claude/japanese-localization-request-eleplc`)** —
+prompted by a real user (Japanese BIM user) offering to translate the UI. Scoped to a general
+community-addon mechanism, not a one-off translation: two new directories, `locales/` (UI strings)
+and `regulations/` (building-code thresholds), both following the existing lazy-addon loading
+contract but with a stricter rule — contributed files are **pure JSON only, never `.js`**; the only
+executable code is a maintainer-authored `loader.js` per directory (`fetch`+`JSON.parse`, never
+`eval`/`Function`) — closes code-execution as an attack surface for untrusted community uploads.
+~~Core registry in `index.html`: `_cc_t(key, englishFallback, vars?)` + `_ccRegisterLocalePack`/
+`_ccSetLocale`/`_ccGetLocale`; `_ccRegisterRegulationPreset`/`_ccSetRegulationRegion`/
+`_ccGetRegulationPreset(region, engine)`, keyed by target check engine.~~ (2026-07-23)
+~~`accessibility.js` wired to the precedence `DEFAULTS < regionPreset < opts.thresholds`.~~ (2026-07-23)
+~~`locales/loader.js` + `regulations/loader.js`, manifests, `_template.json` for each, READMEs, one
+real starter `locales/ja.json` (needs native-speaker review — flagged as such in its `contributor`
+field).~~ (2026-07-23) `regulations/manifest.json` deliberately ships EMPTY — thresholds are
+safety-relevant (door widths, ramp slopes) and a fabricated/unverified regional preset is worse
+than none; template requires a `source` citation + defaults `verified:false`.
+**Still to do:** Settings panel Language/Regional-code dropdowns (manifest-driven, lazy-load on
+pick); CI validators (`validate-locale.js`/`validate-regulation.js` — schema, size cap, HTML/script
+content-injection scan) gating PRs touching `locales/**`/`regulations/**`; label-gated issue-ops
+Action so non-developers can attach a file to a GitHub issue and get an auto-opened PR instead of
+forking (bot token scoped to PR-branch only, first-time-contributor Action approval left on); the
+long-tail retrofit of `index.html`'s hardcoded strings to `_cc_t()`, panel by panel.
+
 **Park inactive models — memory relief (2026-07-22, branch `claude/clashcontrol-v7-release-plan-jp5njw`)** —
 diagnosed the "viewer stalls a few seconds" + "5.2 GB heap > 4.09 GB limit" reports as the SAME
 root cause: GC pauses from being over the heap limit. Dominant reducible sink = the permanently
