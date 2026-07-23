@@ -27855,6 +27855,10 @@ function startApp() {
     var stFlash = useState(false), sentFlash=stFlash[0], setSentFlash=stFlash[1];
     var stStorage = useState(null), storageReport=stStorage[0], setStorageReport=stStorage[1];
     var stRmFiles = useState(null), rmFilesConfirm=stRmFiles[0], setRmFilesConfirm=stRmFiles[1];
+    var stLocalePacks = useState([]), localePacks=stLocalePacks[0], setLocalePacks=stLocalePacks[1];
+    var stRegionPacks = useState([]), regionPacks=stRegionPacks[0], setRegionPacks=stRegionPacks[1];
+    var stLocaleSel = useState(function(){ return (window._ccGetLocale && window._ccGetLocale()) || ''; }), localeSel=stLocaleSel[0], setLocaleSel=stLocaleSel[1];
+    var stRegionSel = useState(function(){ return (window._ccGetRegulationRegion && window._ccGetRegulationRegion()) || ''; }), regionSel=stRegionSel[0], setRegionSel=stRegionSel[1];
     var SETTINGS_TABS = [
       {id:'general', label:'General'},
       {id:'measurement', label:'Measurement'},
@@ -27875,6 +27879,16 @@ function startApp() {
       if (window._ccStorageReport) window._ccStorageReport().then(function(r){ if (live) setStorageReport(r || false); });
       return function(){ live = false; };
     }, [activeTab]);
+
+    // Manifests are tiny (id/name/contributor only) — fetch once on modal
+    // mount, regardless of which tab is open. Individual packs still load
+    // lazily, only when the user actually picks one below.
+    useEffect(function(){
+      var live = true;
+      if (window._ccListLocalePacks) window._ccListLocalePacks().then(function(list){ if (live) setLocalePacks(list||[]); }).catch(function(){});
+      if (window._ccListRegulationPacks) window._ccListRegulationPacks().then(function(list){ if (live) setRegionPacks(list||[]); }).catch(function(){});
+      return function(){ live = false; };
+    }, []);
     function refreshStorageReport(){
       if (window._ccStorageReport) window._ccStorageReport().then(function(r){ setStorageReport(r || false); });
     }
@@ -27989,6 +28003,48 @@ function startApp() {
             <option value="1">Meters</option>
             <option value="100">Centimeters</option>
             <option value="1000">Millimeters</option>
+          </select>
+        </div>
+
+        <div style=${SEC}>Language &amp; Region</div>
+        <div style=${TROW}>
+          <div>
+            <div style=${TLBL}>Language</div>
+            <div style=${TSUB}>Community-contributed UI translation. Anything untranslated stays in English.</div>
+          </div>
+          <select value=${localeSel||''}
+            onChange=${function(e){
+              var lang = e.target.value;
+              setLocaleSel(lang);
+              if (!lang) { if (window._ccSetLocale) window._ccSetLocale(null); return; }
+              if (window._ccLoadLocalePack) {
+                window._ccLoadLocalePack(lang).then(function(){ if (window._ccSetLocale) window._ccSetLocale(lang); })
+                  .catch(function(){ setLocaleSel(''); if (window._ccToast) window._ccToast('Could not load that language pack.'); });
+              }
+            }}
+            style=${{background:'var(--bg-tertiary)',color:'var(--text-primary)',border:'1px solid var(--border)',borderRadius:6,padding:'.25rem .5rem',fontSize:'0.8rem'}}>
+            <option value="">English (default)</option>
+            ${localePacks.map(function(pk){return html`<option key=${pk.lang} value=${pk.lang}>${pk.name}</option>`;})}
+          </select>
+        </div>
+        <div style=${TROW}>
+          <div>
+            <div style=${TLBL}>Regional building code</div>
+            <div style=${TSUB}>Thresholds used by the Accessibility panel (door width, ramp slope, corridor/turning clearance). Defaults to NL Bbl/NEN.</div>
+          </div>
+          <select value=${regionSel||''}
+            onChange=${function(e){
+              var region = e.target.value;
+              setRegionSel(region);
+              if (!region) { if (window._ccSetRegulationRegion) window._ccSetRegulationRegion(null); return; }
+              if (window._ccLoadRegulationPack) {
+                window._ccLoadRegulationPack(region).then(function(){ if (window._ccSetRegulationRegion) window._ccSetRegulationRegion(region); })
+                  .catch(function(){ setRegionSel(''); if (window._ccToast) window._ccToast('Could not load that regulation pack.'); });
+              }
+            }}
+            style=${{background:'var(--bg-tertiary)',color:'var(--text-primary)',border:'1px solid var(--border)',borderRadius:6,padding:'.25rem .5rem',fontSize:'0.8rem'}}>
+            <option value="">NL Bbl/NEN (default)</option>
+            ${regionPacks.map(function(pk){return html`<option key=${pk.region} value=${pk.region}>${pk.name}${pk.verified===false?' (unverified)':''}</option>`;})}
           </select>
         </div>
         </${React.Fragment}>`}
