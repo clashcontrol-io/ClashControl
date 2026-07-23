@@ -24994,23 +24994,23 @@ function startApp() {
     var changelog = (window._ccLatestState && window._ccLatestState.changelog) || [];
     var history = _getHistory(targetId, changelog);
     if (!history.length) return null;
-    var FIELD_LABELS = {status:'Status',assignee:'Assignee',userToleranceMm:'Tolerance',
-      aiFeedback:'AI Feedback',aiReasons:'Reasons',aiResolution:'Resolution',aiNote:'Note',
-      clashTypeConfirmed:'Clash Type',expectedClash:'Expected',priority:'Priority',
-      category:'Category',description:'Description',title:'Title',created:'Created'};
+    var FIELD_LABELS = {status:_cc_t('history.field.status','Status'),assignee:_cc_t('history.field.assignee','Assignee'),userToleranceMm:_cc_t('history.field.tolerance','Tolerance'),
+      aiFeedback:_cc_t('history.field.aiFeedback','AI Feedback'),aiReasons:_cc_t('history.field.reasons','Reasons'),aiResolution:_cc_t('history.field.resolution','Resolution'),aiNote:_cc_t('history.field.note','Note'),
+      clashTypeConfirmed:_cc_t('history.field.clashType','Clash Type'),expectedClash:_cc_t('history.field.expected','Expected'),priority:_cc_t('history.field.priority','Priority'),
+      category:_cc_t('history.field.category','Category'),description:_cc_t('history.field.description','Description'),title:_cc_t('history.field.title','Title'),created:_cc_t('history.field.created','Created')};
     function fmtVal(v) {
       if (v === undefined || v === null) return '–';
       if (Array.isArray(v)) return v.length ? v.join(', ') : '–';
-      if (typeof v === 'boolean') return v ? 'Yes' : 'No';
+      if (typeof v === 'boolean') return v ? _cc_t('common.yes','Yes') : _cc_t('common.no','No');
       return String(v);
     }
     function fmtTime(ts) {
       var d = new Date(ts);
       var now = Date.now();
       var diff = now - ts;
-      if (diff < 60000) return 'just now';
-      if (diff < 3600000) return Math.floor(diff/60000) + 'm ago';
-      if (diff < 86400000) return Math.floor(diff/3600000) + 'h ago';
+      if (diff < 60000) return _cc_t('history.justNow','just now');
+      if (diff < 3600000) return _cc_t('history.minAgo','{n}m ago',{n:Math.floor(diff/60000)});
+      if (diff < 86400000) return _cc_t('history.hourAgo','{n}h ago',{n:Math.floor(diff/3600000)});
       return d.toLocaleDateString() + ' ' + d.toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'});
     }
     return html`<div style=${{marginTop:'.4rem',borderTop:'1px solid var(--border-subtle)',paddingTop:'.3rem'}}>
@@ -25019,7 +25019,7 @@ function startApp() {
         <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
           <circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/>
         </svg>
-        <span style=${{fontSize:'0.63rem',fontWeight:600}}>History</span>
+        <span style=${{fontSize:'0.63rem',fontWeight:600}}>${_cc_t('history.title','History')}</span>
         <span style=${{fontSize:'0.57rem',color:'var(--text-faint)'}}>(${history.length})</span>
         <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
           style=${{marginLeft:'auto',transform:isOpen?'rotate(180deg)':'rotate(0)',transition:'transform .15s'}}>
@@ -25032,8 +25032,8 @@ function startApp() {
           var isCreated = entry.type === 'issue_created' || entry.type === 'detection_run';
           return html`<div key=${entry.id} style=${{display:'flex',gap:'.3rem',padding:'.15rem 0',borderBottom:'1px solid var(--border-subtle)',alignItems:'flex-start',fontSize:'0.6rem'}}>
             <span style=${{color:'var(--text-faint)',whiteSpace:'nowrap',flexShrink:0,minWidth:50}}>${fmtTime(entry.ts)}</span>
-            <span style=${{color:'#60a5fa',fontWeight:600,flexShrink:0,minWidth:55}}>${entry.user || 'anonymous'}</span>
-            ${isCreated ? html`<span style=${{color:'var(--text-secondary)'}}>${entry.type === 'detection_run' ? 'Ran detection' : 'Created issue'}</span>`
+            <span style=${{color:'#60a5fa',fontWeight:600,flexShrink:0,minWidth:55}}>${entry.user || _cc_t('history.anonymous','anonymous')}</span>
+            ${isCreated ? html`<span style=${{color:'var(--text-secondary)'}}>${entry.type === 'detection_run' ? _cc_t('history.ranDetection','Ran detection') : _cc_t('history.createdIssue','Created issue')}</span>`
             : html`<span style=${{color:'var(--text-secondary)'}}>
               ${label}: <span style=${{color:'var(--text-faint)',textDecoration:'line-through'}}>${fmtVal(entry.prev)}</span>
               ${' → '}<span style=${{color:'var(--text-primary)',fontWeight:500}}>${fmtVal(entry.value)}</span>
@@ -25062,8 +25062,8 @@ function startApp() {
     var isExpected=!!it.expectedClash;
     return html`<div style=${{marginTop:'.3rem',paddingTop:'.3rem',borderTop:'1px solid var(--border-subtle)'}}>
       <div style=${{display:'flex',gap:'.3rem',alignItems:'center',marginBottom:'.2rem'}}>
-        <span style=${{fontSize:'0.63rem',color:'var(--text-muted)',flexShrink:0}}>Acceptable min. clearance (mm)</span>
-        <input type="number" min="0" step="1" placeholder="Not set"
+        <span style=${{fontSize:'0.63rem',color:'var(--text-muted)',flexShrink:0}}>${_cc_t('tolEditor.acceptableClearance','Acceptable min. clearance (mm)')}</span>
+        <input type="number" min="0" step="1" placeholder=${_cc_t('tolEditor.notSet','Not set')}
           value=${curVal!=null&&curVal!==''?curVal:''}
           onClick=${function(e){e.stopPropagation();}}
           onInput=${function(e){
@@ -25077,11 +25077,11 @@ function startApp() {
             onClick=${function(e){e.stopPropagation();}}
             onChange=${function(e){d({t:A.UPD_CLASH,id:it.id,u:{expectedClash:e.target.checked}});}}
             style=${{accentColor:'#f59e0b'}} />
-          Expected clash
+          ${_cc_t('tolEditor.expectedClash','Expected clash')}
         </label>
       </div>
       ${changed && tolState.promptAction!=='dismissed' && html`<div style=${{fontSize:'0.57rem',color:'var(--accent-subtle)',background:'#0f172a',padding:'.25rem .4rem',borderRadius:4,marginBottom:'.2rem',display:'flex',alignItems:'center',gap:'.3rem',flexWrap:'wrap'}}>
-        <span>${standardVal!=null?'Update':'Add'} standard for ${typeA&&typeB?typeA+' vs '+typeB:discA+' vs '+discB} to ${curVal}mm?</span>
+        <span>${_cc_t(standardVal!=null?'tolEditor.updateStandard':'tolEditor.addStandard',(standardVal!=null?'Update':'Add')+' standard for {pair} to {val}mm?',{pair:typeA&&typeB?typeA+' vs '+typeB:discA+' vs '+discB,val:curVal})}</span>
         <button onClick=${function(e){e.stopPropagation();
           if(typeA&&typeB){
             var tRules=_getStandardTypePairRules();var found=false;
@@ -25096,11 +25096,11 @@ function startApp() {
           }
           setTolState(function(p){return Object.assign({},p,{promptAction:'updated'});});
         }}
-          style=${{fontSize:'0.57rem',padding:'.1rem .3rem',background:'var(--accent-bg)',color:'var(--accent)',border:'1px solid var(--accent-subtle)',borderRadius:3,cursor:'pointer',fontWeight:600}}>Update</button>
+          style=${{fontSize:'0.57rem',padding:'.1rem .3rem',background:'var(--accent-bg)',color:'var(--accent)',border:'1px solid var(--accent-subtle)',borderRadius:3,cursor:'pointer',fontWeight:600}}>${_cc_t('common.update','Update')}</button>
         <button onClick=${function(e){e.stopPropagation();setTolState(function(p){return Object.assign({},p,{promptAction:'dismissed'});});}}
-          style=${{fontSize:'0.57rem',padding:'.1rem .3rem',background:'var(--bg-secondary)',color:'var(--text-faint)',border:'1px solid var(--border)',borderRadius:3,cursor:'pointer'}}>Keep local</button>
+          style=${{fontSize:'0.57rem',padding:'.1rem .3rem',background:'var(--bg-secondary)',color:'var(--text-faint)',border:'1px solid var(--border)',borderRadius:3,cursor:'pointer'}}>${_cc_t('tolEditor.keepLocal','Keep local')}</button>
       </div>`}
-      ${tolState.promptAction==='updated' && html`<div style=${{fontSize:'0.57rem',color:'#4ade80',marginBottom:'.2rem'}}>Standard updated.</div>`}
+      ${tolState.promptAction==='updated' && html`<div style=${{fontSize:'0.57rem',color:'#4ade80',marginBottom:'.2rem'}}>${_cc_t('tolEditor.standardUpdated','Standard updated.')}</div>`}
     </div>`;
   }
 
