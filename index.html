@@ -21284,17 +21284,17 @@ function startApp() {
         </div>`}
 
         ${isClashTab && html`<div>
-          <span style=${FL}>Discipline</span>
+          <span style=${FL}>${_cc_t('issues.filter.discipline','Discipline')}</span>
           <select value=${f.discipline} onChange=${function(e){d({t:A.UPD_FILTERS,u:{discipline:e.target.value}})}} style=${SELSTYLE}>
-            <option value="all">All disciplines</option>
+            <option value="all">${_cc_t('issues.filter.allDisciplines','All disciplines')}</option>
             ${DISC.slice().sort(function(a,b){return a.label.localeCompare(b.label);}).map(function(p){return html`<option key=${p.id} value=${p.id}>${p.label}</option>`})}
           </select>
         </div>`}
 
         ${isClashTab && s.floors.length>0 && html`<div>
-          <span style=${FL}>Floor / Level</span>
+          <span style=${FL}>${_cc_t('issues.filter.floor','Floor / Level')}</span>
           <select value=${f.floor} onChange=${function(e){d({t:A.UPD_FILTERS,u:{floor:e.target.value}})}} style=${SELSTYLE}>
-            <option value="all">All levels</option>
+            <option value="all">${_cc_t('issues.filter.allLevels','All levels')}</option>
             ${s.floors.map(function(fl){return html`<option key=${fl.id} value=${fl.id}>${fl.label}</option>`})}
           </select>
         </div>`}
@@ -21307,10 +21307,10 @@ function startApp() {
           var pct = (val/maxDist)*100;
           var trackBg = 'linear-gradient(to right, var(--accent) '+pct+'%, var(--bg-primary) '+pct+'%)';
           function onChange(e){var v=+e.target.value;d({t:A.UPD_FILTERS,u:{distMax:v,distMin:0,type:'all'}});}
-          var label = val===0?'Hard only':val>=maxDist?'All (hard+soft)':'0 (hard)–'+val+'mm';
+          var label = val===0?_cc_t('issues.filter.distanceHardOnly','Hard only'):val>=maxDist?_cc_t('issues.filter.distanceAll','All (hard+soft)'):_cc_t('issues.filter.distanceRange','0 (hard)–{max}mm',{max:val});
           return html`<div>
             <div style=${{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:'.15rem'}}>
-              <span style=${FL}>Distance</span>
+              <span style=${FL}>${_cc_t('issues.filter.distance','Distance')}</span>
               <span style=${{fontSize:'0.63rem',color:'var(--text-secondary)'}}>${label}</span>
             </div>
             <div style=${{position:'relative',height:20,marginBottom:'.1rem'}}>
@@ -21327,91 +21327,91 @@ function startApp() {
         }()}
 
         ${isClashTab && html`<div>
-          <span style=${FL}>IFC Type</span>
+          <span style=${FL}>${_cc_t('issues.filter.ifcType','IFC Type')}</span>
           ${typeList.length>0
             ? html`<${MultiSelectDropdown} items=${typeList} excluded=${f.excludedTypes||[]}
                 onToggle=${function(t){var ex=f.excludedTypes||[];d({t:A.UPD_FILTERS,u:{excludedTypes:ex.indexOf(t)===-1?ex.concat(t):ex.filter(function(x){return x!==t;})}});}}
                 onToggleAll=${function(){var ex=f.excludedTypes||[];d({t:A.UPD_FILTERS,u:{excludedTypes:ex.length===0?typeList.slice():[]}});}} />`
-            : html`<div style=${{fontSize:'0.7rem',color:'var(--text-faint)',padding:'.25rem .4rem',background:'var(--bg-secondary)',borderRadius:6,border:'1px dashed var(--border)'}}>No IFC types on current clashes yet — run detection after the model finishes loading.</div>`
+            : html`<div style=${{fontSize:'0.7rem',color:'var(--text-faint)',padding:'.25rem .4rem',background:'var(--bg-secondary)',borderRadius:6,border:'1px dashed var(--border)'}}>${_cc_t('issues.filter.noIfcTypes','No IFC types on current clashes yet — run detection after the model finishes loading.')}</div>`
           }
         </div>`}
 
         ${isClashTab && storeyList.length>0 && html`<div>
-          <span style=${FL}>Storey</span>
+          <span style=${FL}>${_cc_t('issues.filter.storey','Storey')}</span>
           <${MultiSelectDropdown} items=${storeyList} excluded=${f.excludedStoreys||[]}
             onToggle=${function(t){var ex=f.excludedStoreys||[];d({t:A.UPD_FILTERS,u:{excludedStoreys:ex.indexOf(t)===-1?ex.concat(t):ex.filter(function(x){return x!==t;})}});}}
             onToggleAll=${function(){var ex=f.excludedStoreys||[];d({t:A.UPD_FILTERS,u:{excludedStoreys:ex.length===0?storeyList.slice():[]}});}} />
         </div>`}
 
         ${isClashTab && materialList.length>0 && html`<div>
-          <span style=${FL}>Material</span>
+          <span style=${FL}>${_cc_t('issues.filter.material','Material')}</span>
           <${MultiSelectDropdown} items=${materialList} excluded=${f.excludedMaterials||[]}
             onToggle=${function(t){var ex=f.excludedMaterials||[];d({t:A.UPD_FILTERS,u:{excludedMaterials:ex.indexOf(t)===-1?ex.concat(t):ex.filter(function(x){return x!==t;})}});}}
             onToggleAll=${function(){var ex=f.excludedMaterials||[];d({t:A.UPD_FILTERS,u:{excludedMaterials:ex.length===0?materialList.slice():[]}});}} />
         </div>`}
 
         ${isClashTab && html`<div>
-          <span style=${FL}>Element ID</span>
+          <span style=${FL}>${_cc_t('issues.filter.elementId','Element ID')}</span>
           <input type="text" placeholder="e.g. 12345" value=${f.elementId} onInput=${function(e){d({t:A.UPD_FILTERS,u:{elementId:e.target.value}})}}
             style=${{...S_INPUT,fontSize:'0.75rem',padding:'.2rem .3rem'}} />
         </div>`}
 
         ${!isClashTab && html`<div>
-          <span style=${FL}>Priority</span>
+          <span style=${FL}>${_cc_t('issues.filter.priority','Priority')}</span>
           <div style=${{display:'flex',gap:'.2rem',flexWrap:'wrap'}}>
             ${['all','low','normal','high','critical'].map(function(v){return html`<button key=${v} onClick=${function(){d({t:A.UPD_FILTERS,u:{priority:v}})}}
-              style=${PILL(f.priority===v)}>${v==='all'?'All':v.charAt(0).toUpperCase()+v.slice(1)}</button>`})}
+              style=${PILL(f.priority===v)}>${v==='all'?_cc_t('issues.filter.statusAll','All'):v.charAt(0).toUpperCase()+v.slice(1)}</button>`})}
           </div>
         </div>`}
 
         ${!isClashTab && html`<div>
-          <span style=${FL}>Category</span>
+          <span style=${FL}>${_cc_t('issues.filter.category','Category')}</span>
           <div style=${{display:'flex',gap:'.2rem',flexWrap:'wrap'}}>
             ${['all','design','coordination','safety','structural','mep','other'].map(function(v){return html`<button key=${v} onClick=${function(){d({t:A.UPD_FILTERS,u:{category:v}})}}
-              style=${PILL(f.category===v)}>${v==='all'?'All':v.charAt(0).toUpperCase()+v.slice(1)}</button>`})}
+              style=${PILL(f.category===v)}>${v==='all'?_cc_t('issues.filter.statusAll','All'):v.charAt(0).toUpperCase()+v.slice(1)}</button>`})}
           </div>
         </div>`}
 
         ${!isClashTab && filterLists.assignees.length>0 && html`<div>
-          <span style=${FL}>Assignee</span>
+          <span style=${FL}>${_cc_t('issues.filter.assignee','Assignee')}</span>
           <select value=${f.assignee} onChange=${function(e){d({t:A.UPD_FILTERS,u:{assignee:e.target.value}})}} style=${SELSTYLE}>
-            <option value="all">All assignees</option>
+            <option value="all">${_cc_t('issues.filter.allAssignees','All assignees')}</option>
             ${filterLists.assignees.map(function(a){return html`<option key=${a} value=${a}>${a}</option>`})}
           </select>
         </div>`}
 
         ${!isClashTab && filterLists.issueTypes.length>0 && html`<div>
-          <span style=${FL}>Element Type</span>
+          <span style=${FL}>${_cc_t('issues.filter.elementType','Element Type')}</span>
           <select value=${f.issueElementType} onChange=${function(e){d({t:A.UPD_FILTERS,u:{issueElementType:e.target.value}})}} style=${SELSTYLE}>
-            <option value="all">All types</option>
+            <option value="all">${_cc_t('issues.filter.allTypes','All types')}</option>
             ${filterLists.issueTypes.map(function(t){return html`<option key=${t} value=${t}>${t}</option>`})}
           </select>
         </div>`}
 
         ${!isClashTab && filterLists.issueStoreys.length>0 && html`<div>
-          <span style=${FL}>Storey</span>
+          <span style=${FL}>${_cc_t('issues.filter.storey','Storey')}</span>
           <select value=${f.issueStorey} onChange=${function(e){d({t:A.UPD_FILTERS,u:{issueStorey:e.target.value}})}} style=${SELSTYLE}>
-            <option value="all">All storeys</option>
+            <option value="all">${_cc_t('issues.filter.allStoreys','All storeys')}</option>
             ${filterLists.issueStoreys.map(function(t){return html`<option key=${t} value=${t}>${t}</option>`})}
           </select>
         </div>`}
 
-        <div style=${{fontSize:'0.69rem',color:'var(--text-faint)',textAlign:'right'}}>${items.length} / ${rawItems.length} shown</div>
+        <div style=${{fontSize:'0.69rem',color:'var(--text-faint)',textAlign:'right'}}>${_cc_t('issues.filter.shownCount','{shown} / {total} shown',{shown:items.length,total:rawItems.length})}</div>
       </div>`}
       ${s.tab==='issues' && html`<div style=${{padding:'.4rem',borderBottom:'1px solid var(--border-subtle)',flexShrink:0,display:'flex',flexDirection:'column',gap:'.3rem'}}>
         <div style=${{display:'flex',gap:'.3rem'}}>
-          <button onClick=${function(){d({t:A.MODAL,v:true,el:window._ccSelectedEl||undefined})}} style=${{...S_BTN,flex:1,background:'var(--accent)',color:'#fff',fontWeight:600}}>+ New Issue</button>
+          <button onClick=${function(){d({t:A.MODAL,v:true,el:window._ccSelectedEl||undefined})}} style=${{...S_BTN,flex:1,background:'var(--accent)',color:'#fff',fontWeight:600}}>+ ${_cc_t('issues.newIssue','New Issue')}</button>
           ${function(){
             var activeClash = s.activeId ? s.clashes.find(function(c){return c.id===s.activeId;}) : null;
             var hasClash = !!activeClash;
             return html`<button
-              title=${hasClash ? 'Create issue from active clash: '+activeClash.title : 'Select a clash first to promote it to an issue'}
+              title=${hasClash ? _cc_t('issues.fromClashTitle','Create issue from active clash: {title}',{title:activeClash.title}) : _cc_t('issues.fromClashTitleDisabled','Select a clash first to promote it to an issue')}
               onClick=${function(){
                 if(!hasClash) return;
                 d({t:A.MODAL,v:true,el:{_fromClash:activeClash}});
               }}
               style=${{...S_BTN,padding:'.35rem .55rem',background:hasClash?'var(--bg-secondary)':'var(--bg-tertiary)',color:hasClash?'var(--text-secondary)':'var(--text-muted)',border:'1px solid var(--border)',fontSize:'0.72rem',whiteSpace:'nowrap',opacity:hasClash?1:0.5,cursor:hasClash?'pointer':'default'}}>
-              + From clash
+              + ${_cc_t('issues.fromClash','From clash')}
             </button>`;
           }()}
           ${function(){
@@ -21488,19 +21488,19 @@ function startApp() {
             fontWeight:active?'var(--weight-semibold)':'var(--weight-regular)',fontFamily:'var(--font-body)',whiteSpace:'nowrap',
             transition:'background var(--duration-fast) var(--ease-standard), color var(--duration-fast) var(--ease-standard)'};};
           return html`<div style=${{padding:'var(--space-1) var(--space-2)',borderBottom:'1px solid var(--border-subtle)',display:'flex',gap:'var(--space-2)',alignItems:'center',flexShrink:0}}>
-            <div role="group" aria-label="View mode" style=${{display:'inline-flex',gap:0,borderRadius:'var(--radius-xs)',overflow:'hidden'}}>
-              <button onClick=${function(){d({t:grpAction,v:['cluster']});}} aria-pressed=${isGrouped} style=${{...SEG_BTN(isGrouped),borderRadius:'var(--radius-xs) 0 0 var(--radius-xs)'}}>Grouped</button>
-              <button onClick=${function(){d({t:grpAction,v:[]});}} aria-pressed=${!isGrouped} style=${{...SEG_BTN(!isGrouped),borderRadius:'0 var(--radius-xs) var(--radius-xs) 0',borderLeft:'none'}}>All</button>
+            <div role="group" aria-label=${_cc_t('issues.viewMode','View mode')} style=${{display:'inline-flex',gap:0,borderRadius:'var(--radius-xs)',overflow:'hidden'}}>
+              <button onClick=${function(){d({t:grpAction,v:['cluster']});}} aria-pressed=${isGrouped} style=${{...SEG_BTN(isGrouped),borderRadius:'var(--radius-xs) 0 0 var(--radius-xs)'}}>${_cc_t('issues.grouped','Grouped')}</button>
+              <button onClick=${function(){d({t:grpAction,v:[]});}} aria-pressed=${!isGrouped} style=${{...SEG_BTN(!isGrouped),borderRadius:'0 var(--radius-xs) var(--radius-xs) 0',borderLeft:'none'}}>${_cc_t('issues.filter.statusAll','All')}</button>
             </div>
             ${!isGrouped && html`<label style=${{display:'flex',alignItems:'center',gap:'var(--space-1)',flex:1,minWidth:0}}>
-              <span style=${{fontSize:'var(--text-2xs)',color:'var(--text-faint)',whiteSpace:'nowrap'}}>by</span>
+              <span style=${{fontSize:'var(--text-2xs)',color:'var(--text-faint)',whiteSpace:'nowrap'}}>${_cc_t('issues.groupBy','by')}</span>
               <select value=${selGrp==='cluster'?'none':selGrp} style=${{...DS,flex:1,minWidth:0,maxWidth:120}}
                 onChange=${function(e){var v=e.target.value;d({t:grpAction,v:v==='none'?[]:[v]});}}>
                 ${secondaryGrpOpts.map(function(g){return html`<option key=${g[0]} value=${g[0]}>${g[1]}</option>`})}
               </select>
             </label>`}
             <label style=${{display:'flex',alignItems:'center',gap:'var(--space-1)',flex:1,minWidth:0}}>
-              <span style=${{fontSize:'var(--text-2xs)',color:'var(--text-faint)',whiteSpace:'nowrap'}}>Sort</span>
+              <span style=${{fontSize:'var(--text-2xs)',color:'var(--text-faint)',whiteSpace:'nowrap'}}>${_cc_t('issues.sort','Sort')}</span>
               <select value=${selSort} style=${{...DS,flex:1,minWidth:0}}
                 onChange=${function(e){var v=e.target.value;d({t:sortAction,v:v==='none'?[]:[v]});}}>
                 ${sortOptsList.map(function(sv){return html`<option key=${sv[0]} value=${sv[0]}>${sv[1]}</option>`})}
@@ -21510,14 +21510,14 @@ function startApp() {
         }
         return html`<div style=${{padding:'.3rem .5rem',borderBottom:'1px solid var(--border-subtle)',display:'flex',gap:'.5rem',alignItems:'center',flexShrink:0}}>
           <label style=${{display:'flex',alignItems:'center',gap:'.25rem',flex:1,minWidth:0}}>
-            <span style=${{fontSize:'0.69rem',color:'var(--text-faint)',whiteSpace:'nowrap'}}>Group</span>
+            <span style=${{fontSize:'0.69rem',color:'var(--text-faint)',whiteSpace:'nowrap'}}>${_cc_t('issues.group','Group')}</span>
             <select value=${selGrp} style=${{...DS,flex:1,minWidth:0}}
               onChange=${function(e){var v=e.target.value;d({t:grpAction,v:v==='none'?[]:[v]});}}>
               ${secondaryGrpOpts.map(function(g){return html`<option key=${g[0]} value=${g[0]}>${g[1]}</option>`})}
             </select>
           </label>
           <label style=${{display:'flex',alignItems:'center',gap:'.25rem',flex:1,minWidth:0}}>
-            <span style=${{fontSize:'0.69rem',color:'var(--text-faint)',whiteSpace:'nowrap'}}>Sort</span>
+            <span style=${{fontSize:'0.69rem',color:'var(--text-faint)',whiteSpace:'nowrap'}}>${_cc_t('issues.sort','Sort')}</span>
             <select value=${selSort} style=${{...DS,flex:1,minWidth:0}}
               onChange=${function(e){var v=e.target.value;d({t:sortAction,v:v==='none'?[]:[v]});}}>
               ${sortOptsList.map(function(sv){return html`<option key=${sv[0]} value=${sv[0]}>${sv[1]}</option>`})}
