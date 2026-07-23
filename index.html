@@ -28157,49 +28157,49 @@ function startApp() {
         })()}
         </${React.Fragment}>`}
         ${activeTab==='privacy' && html`<${React.Fragment}>
-        <div style=${SEC}>Privacy</div>
+        <div style=${SEC}>${_cc_t('settings.privacy.section','Privacy')}</div>
         <div style=${TROW}>
           <div>
-            <div style=${TLBL}>Anonymous data sharing</div>
-            <div style=${TSUB}>Send anonymous IFC type and geometry metrics to help improve the AI clash classifier. No project names, element names, or coordinates are sent.</div>
+            <div style=${TLBL}>${_cc_t('settings.privacy.anonData','Anonymous data sharing')}</div>
+            <div style=${TSUB}>${_cc_t('settings.privacy.anonDataSub','Send anonymous IFC type and geometry metrics to help improve the AI clash classifier. No project names, element names, or coordinates are sent.')}</div>
           </div>
           <${Toggle} on=${dataConsent} onToggle=${toggleConsent} />
         </div>
         <div style=${TROW}>
           <div>
-            <div style=${TLBL}>Show annotation buttons</div>
-            <div style=${TSUB}>Show thumbs up/down buttons on clash cards to label true vs false positives</div>
+            <div style=${TLBL}>${_cc_t('settings.privacy.annotationButtons','Show annotation buttons')}</div>
+            <div style=${TSUB}>${_cc_t('settings.privacy.annotationButtonsSub','Show thumbs up/down buttons on clash cards to label true vs false positives')}</div>
           </div>
           <${Toggle} on=${!!(s&&s.trainingMode)} onToggle=${function(){d({t:A.TRAINING_MODE});}} />
         </div>
         ${function(){
           var anyData = nlN>0||clashN>0||runN>0;
           var parts=[];
-          if(runN>0) parts.push(runN+' run'+(runN!==1?'s':''));
-          if(clashN>0) parts.push(clashN+' verdict'+(clashN!==1?'s':''));
-          if(nlN>0) parts.push(nlN+' NL command'+(nlN!==1?'s':''));
-          var countText = parts.length ? 'Recorded: '+parts.join(' \u00b7 ') : 'No local data recorded yet';
+          if(runN>0) parts.push(runN===1?_cc_t('settings.privacy.run','{n} run',{n:runN}):_cc_t('settings.privacy.runs','{n} runs',{n:runN}));
+          if(clashN>0) parts.push(clashN===1?_cc_t('settings.privacy.verdict','{n} verdict',{n:clashN}):_cc_t('settings.privacy.verdicts','{n} verdicts',{n:clashN}));
+          if(nlN>0) parts.push(nlN===1?_cc_t('settings.privacy.nlCommand','{n} NL command',{n:nlN}):_cc_t('settings.privacy.nlCommands','{n} NL commands',{n:nlN}));
+          var countText = parts.length ? _cc_t('settings.privacy.recorded','Recorded: {list}',{list:parts.join(' \u00b7 ')}) : _cc_t('settings.privacy.noData','No local data recorded yet');
           return html`<div style=${{padding:'.4rem 0 .3rem',borderBottom:'1px solid var(--border-subtle)'}}>
-            <div style=${{fontSize:'0.75rem',color:'var(--text-muted)',marginBottom:'.4rem'}}>${sentFlash?html`<span style=${{color:'#22c55e'}}>Sent successfully</span>`:countText}</div>
+            <div style=${{fontSize:'0.75rem',color:'var(--text-muted)',marginBottom:'.4rem'}}>${sentFlash?html`<span style=${{color:'#22c55e'}}>${_cc_t('settings.privacy.sentSuccessfully','Sent successfully')}</span>`:countText}</div>
             <div style=${{display:'flex',gap:'.4rem'}}>
               <button onClick=${function(){
                 if(!anyData||!dataConsent) return;
                 try{var cur=window._ccLatestState;if(cur){_beaconSendTrainingData();_beaconSendNLTrainingData(cur.models);}_beaconSendDetectionRuns();}catch(e){}
               }} disabled=${!anyData||!dataConsent}
-                style=${{...S_BTN,fontSize:'0.8rem',padding:'.3rem .6rem',background:anyData&&dataConsent?'var(--accent-bg-deep)':'var(--bg-secondary)',color:anyData&&dataConsent?'var(--accent)':'var(--text-faint)',border:'1px solid '+(anyData&&dataConsent?'var(--accent-subtle)':'var(--border)')}}>Send now</button>
+                style=${{...S_BTN,fontSize:'0.8rem',padding:'.3rem .6rem',background:anyData&&dataConsent?'var(--accent-bg-deep)':'var(--bg-secondary)',color:anyData&&dataConsent?'var(--accent)':'var(--text-faint)',border:'1px solid '+(anyData&&dataConsent?'var(--accent-subtle)':'var(--border)')}}>${_cc_t('settings.privacy.sendNow','Send now')}</button>
               ${!showDelConfirm && html`<button onClick=${function(){if(anyData)setShowDelConfirm(true);}} disabled=${!anyData}
-                style=${{...S_BTN,fontSize:'0.8rem',padding:'.3rem .6rem',background:'none',color:anyData?'var(--text-muted)':'var(--text-faint)',border:'1px solid var(--border)',opacity:anyData?1:0.5}}>Delete all data</button>`}
+                style=${{...S_BTN,fontSize:'0.8rem',padding:'.3rem .6rem',background:'none',color:anyData?'var(--text-muted)':'var(--text-faint)',border:'1px solid var(--border)',opacity:anyData?1:0.5}}>${_cc_t('settings.privacy.deleteAll','Delete all data')}</button>`}
               ${showDelConfirm && html`<button onClick=${function(){
                 d({t:A.CLEAR_TRAINING_DATA});_clearClashTrainStore();_clearNLTrainStore();
                 try{localStorage.removeItem('cc_detection_runs');}catch(e){}
                 setNlN(0);setClashN(0);setRunN(0);setShowDelConfirm(false);
-              }} style=${{...S_BTN,fontSize:'0.8rem',padding:'.3rem .6rem',background:'#ef4444',color:'#fff',border:'none'}}>Confirm — delete all?</button>`}
+              }} style=${{...S_BTN,fontSize:'0.8rem',padding:'.3rem .6rem',background:'#ef4444',color:'#fff',border:'none'}}>${_cc_t('settings.privacy.confirmDelete','Confirm — delete all?')}</button>`}
             </div>
           </div>`;
         }()}
-        <div style=${SEC}>Local storage</div>
-        ${storageReport===null && html`<div style=${TSUB}>Measuring storage…</div>`}
-        ${storageReport===false && html`<div style=${TSUB}>Storage report unavailable in this browser.</div>`}
+        <div style=${SEC}>${_cc_t('settings.privacy.localStorage','Local storage')}</div>
+        ${storageReport===null && html`<div style=${TSUB}>${_cc_t('settings.privacy.measuring','Measuring storage…')}</div>`}
+        ${storageReport===false && html`<div style=${TSUB}>${_cc_t('settings.privacy.unavailable','Storage report unavailable in this browser.')}</div>`}
         ${storageReport && function(){
           var fmt = window._ccStorageCore ? window._ccStorageCore.formatBytes : function(n){ return n+' B'; };
           var quotaPct = (storageReport.quota && storageReport.usage != null) ?
