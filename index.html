@@ -18553,7 +18553,7 @@ function startApp() {
       <!-- Header -->
       <div style=${{padding:'.65rem .85rem .5rem',borderBottom:'1px solid var(--hairline)',flexShrink:0,display:'flex',alignItems:'center',justifyContent:'space-between',gap:'.5rem'}}>
         <span style=${{fontSize:'.72rem',fontWeight:600,color:'var(--text-muted)',textTransform:'uppercase',letterSpacing:'.05em'}}>
-          Models${s.models.length>0?html` <span style=${{fontWeight:400,color:'var(--text-faint)',fontFamily:'var(--font-mono)'}}>${s.models.length}</span>`:''}
+          ${_cc_t('panel.models.title','Models')}${s.models.length>0?html` <span style=${{fontWeight:400,color:'var(--text-faint)',fontFamily:'var(--font-mono)'}}>${s.models.length}</span>`:''}
         </span>
         <button onClick=${function(){setErr('');fileRef.current&&fileRef.current.click();}} disabled=${loading}
           style=${{display:'inline-flex',alignItems:'center',gap:'.3rem',padding:'.22rem .5rem',
@@ -18562,7 +18562,7 @@ function startApp() {
           ${loading
             ? html`<svg class="spin" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12a9 9 0 1 1-6.22-8.56"/></svg>`
             : html`<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>`}
-          ${loading?loadMsg||'Loading…':'Add'}
+          ${loading?loadMsg||_cc_t('sidebar.loading','Loading…'):_cc_t('sidebar.add','Add')}
         </button>
       </div>
       <input ref=${fileRef} type="file" accept=".ifc,.glb,.ifcmeta,.ifcprops,.ply,.pcd,.xyz,.pts,.ptx,.las,.splat,.ksplat,.spz" multiple style=${{display:'none'}} onChange=${onFiles} />
@@ -18571,31 +18571,31 @@ function startApp() {
       <div style=${{flex:1,overflowY:'auto',minHeight:0,padding:'.4rem .45rem',display:'flex',flexDirection:'column',gap:'.18rem'}}>
         ${s.models.length===0 && html`<div style=${{textAlign:'center',padding:'2.5rem 1rem',color:'var(--text-faint)'}}>
           <svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" style=${{margin:'0 auto .65rem',display:'block',opacity:.5}}><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/><path d="M12 2L2 7l10 5 10-5-10-5z"/></svg>
-          <div style=${{fontSize:'.78rem',marginBottom:'.3rem'}}>No models loaded</div>
-          <div style=${{fontSize:'.69rem',lineHeight:1.5,color:'var(--text-faint)'}}>Drop an IFC, GLB, PDF or DXF file here,<br/>or click Add above.</div>
+          <div style=${{fontSize:'.78rem',marginBottom:'.3rem'}}>${_cc_t('sidebar.noModels','No models loaded')}</div>
+          <div style=${{fontSize:'.69rem',lineHeight:1.5,color:'var(--text-faint)'}}>${_cc_t('sidebar.noModelsSub1','Drop an IFC, GLB, PDF or DXF file here,')}<br/>${_cc_t('sidebar.noModelsSub2','or click Add above.')}</div>
         </div>`}
         ${html`<${_InstallAppBanner} />`}
         ${s.models.length > 0 && s.workspace==='review' && html`<${_QualityScoreChip} s=${s} />`}
         ${s.models.map(function(m){return html`<${ModelCard} key=${m.id} m=${m} d=${d} s=${s} />`})}
         ${(s.parkedModels||[]).length > 0 && html`<div style=${{marginTop:'.35rem',borderTop:'1px solid var(--hairline)',paddingTop:'.35rem'}}>
           <div style=${{fontSize:'.65rem',fontWeight:600,color:'var(--text-muted)',textTransform:'uppercase',letterSpacing:'.05em',padding:'0 .2rem',marginBottom:'.25rem',display:'flex',alignItems:'center',gap:'.3rem'}}>
-            <span>Parked (memory freed)</span>
-            <span title="These models are unloaded to save memory. Their geometry is cached — click Restore to reload with all clashes intact." style=${{color:'var(--text-faint)',cursor:'help'}}>ⓘ</span>
+            <span>${_cc_t('sidebar.parked','Parked (memory freed)')}</span>
+            <span title=${_cc_t('sidebar.parkedInfo','These models are unloaded to save memory. Their geometry is cached — click Restore to reload with all clashes intact.')} style=${{color:'var(--text-faint)',cursor:'help'}}>ⓘ</span>
           </div>
           ${(s.parkedModels||[]).map(function(pm){return html`<div key=${pm.id} style=${{display:'flex',alignItems:'center',gap:'.35rem',padding:'.3rem .5rem',background:'var(--bg-secondary)',border:'1px dashed var(--border)',borderRadius:8,marginBottom:'.18rem',opacity:.85}}>
             <span style=${{width:10,height:10,borderRadius:'50%',background:pm.color,flexShrink:0,opacity:.6}}></span>
             <span style=${{color:'var(--text-secondary)',fontSize:'0.82rem',flex:1,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}} title=${pm.name}>${pm.name}</span>
-            <span style=${{fontSize:'0.62rem',color:'var(--text-faint)',flexShrink:0}}>${(pm.elementCount||0).toLocaleString()} el</span>
+            <span style=${{fontSize:'0.62rem',color:'var(--text-faint)',flexShrink:0}}>${_cc_t('sidebar.elCount','{n} el',{n:(pm.elementCount||0).toLocaleString()})}</span>
             <button onClick=${function(){if(window._ccRestoreParkedModel)window._ccRestoreParkedModel(pm.id);}}
-              title="Reload this model" style=${{...S_BTN,padding:'.1rem .45rem',fontSize:'0.68rem',background:'var(--accent-bg)',color:'var(--accent)',border:'none',borderRadius:6,cursor:'pointer',flexShrink:0}}>Restore</button>
-            <button onClick=${function(){if(!confirm('Remove parked model "'+pm.name+'" and delete its cached geometry?'))return;d({t:A.UNPARK_MODEL,id:pm.id});idbDeleteFile(pm.id);idbDeleteGeoCache(pm.id);}}
-              title="Remove permanently (deletes cache)" style=${{...S_BTN,padding:'0 2px',background:'none',color:'var(--text-faint)',fontSize:'0.69rem',flexShrink:0}}>✕</button>
+              title=${_cc_t('sidebar.reloadModel','Reload this model')} style=${{...S_BTN,padding:'.1rem .45rem',fontSize:'0.68rem',background:'var(--accent-bg)',color:'var(--accent)',border:'none',borderRadius:6,cursor:'pointer',flexShrink:0}}>${_cc_t('sidebar.restore','Restore')}</button>
+            <button onClick=${function(){if(!confirm(_cc_t('sidebar.confirmRemoveParked','Remove parked model "{name}" and delete its cached geometry?',{name:pm.name})))return;d({t:A.UNPARK_MODEL,id:pm.id});idbDeleteFile(pm.id);idbDeleteGeoCache(pm.id);}}
+              title=${_cc_t('sidebar.removePermanently','Remove permanently (deletes cache)')} style=${{...S_BTN,padding:'0 2px',background:'none',color:'var(--text-faint)',fontSize:'0.69rem',flexShrink:0}}>✕</button>
           </div>`})}
         </div>`}
         ${(s.models.length >= 2 || (s.parkedModels||[]).length > 0) && html`<label style=${{display:'flex',alignItems:'center',gap:'.4rem',padding:'.3rem .35rem',marginTop:'.1rem',cursor:'pointer',color:'var(--text-faint)',fontSize:'.66rem'}}
-          title="When the browser heap gets tight, models you've hidden are automatically parked (unloaded to cache) to keep the viewer responsive, and reloaded when you open one. Turn off to manage memory yourself.">
+          title=${_cc_t('sidebar.autoParkTitle','When the browser heap gets tight, models you\'ve hidden are automatically parked (unloaded to cache) to keep the viewer responsive, and reloaded when you open one. Turn off to manage memory yourself.')}>
           <input type="checkbox" checked=${s.autoParkInactive!==false} onChange=${function(e){d({t:A.SET_AUTOPARK,v:e.target.checked});}} style=${{cursor:'pointer',flexShrink:0}} />
-          <span>Auto-park hidden models under memory pressure</span>
+          <span>${_cc_t('sidebar.autoPark','Auto-park hidden models under memory pressure')}</span>
         </label>`}
         ${html`<${_SplatLayersSection} />`}
         ${s.underlays.length > 0 && html`<div style=${{marginTop:'.3rem',borderTop:'1px solid var(--hairline)',paddingTop:'.3rem'}}>
