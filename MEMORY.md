@@ -10,7 +10,7 @@
 <!-- BEGIN:project-state -->
 ## Project State
 
-**Version:** 7.2.7 (2026-07-22) — daily-sync was silently crashing on MEMORY.md's own prose (see Known Issues); this line was stale for a month as a direct result, now corrected by hand.
+**Version:** 7.3.1 (2026-07-23) — daily-sync was silently crashing on MEMORY.md's own prose (see Known Issues); this line was stale for a month as a direct result, now corrected by hand.
 
 **Live features (all working):**
 - Mesh-based clash detection engine: AABB broad-phase + BVH tri-tri narrow-phase (Möller–Trumbore), optional `_ccWasmIntersect`/`_ccWasmMinDist` WASM accelerators; default clash matrix (skips same-discipline pairs, per-element classification, never skips same-model self-clashes) + N×N matrix UI; rules (discipline filters, clearance, group-by); soft/clearance via spatial-hash vertex distance; hard clashes now report a **real (approximate) penetration depth** (`_estimatePenetrationDepthM` — vertex-inside-mesh ray-parity + true closest-point-on-surface, MTD-style, browser only so far) instead of the old tri-pair SAT chord length; optional escalation to `local-engine.js` for the **same** tri-tri+BVH algorithm at native speed (Numba JIT + multiprocess + scipy KD-tree) — not solid boolean ops, and the Python side doesn't have the new depth estimator yet either (see Known Issues / Active Work)
@@ -313,17 +313,17 @@ across reload; per-model last-active timestamps for smarter cold-first ordering.
 P6:** re-reviewed `main`@`f4733d`/v7.3.0 against a follow-up external review; every claim + every
 named historical incident re-verified against source/CHANGELOG (no factual corrections needed this
 round, unlike the P0 round). Mined the real chunk-merge/Free-RAM/`_instKey`/type-pair-memo sagas
-from `CHANGELOG.md` with dates+hashes (chunk-merge: enabled v5.12.14 2026-06-04 → reverted v5.17.4
-→ emergency-re-enabled+re-reverted v5.19.27/.28 → removed v5.19.55 2026-06-09, replaced by the
+from `CHANGELOG.md` with dates+hashes (chunk-merge: enabled v5.12.14 2026-06-04 → reverted v5.17.4  **[STALE?]**
+→ emergency-re-enabled+re-reverted v5.19.27/.28 → removed v5.19.55 2026-06-09, replaced by the  **[STALE?]**
 current Instanced/BatchedMesh proxy-preserving approach, permanently CI-gated at
 `tests/browser/smoke.mjs:310-370` citing revert commit `366c7cc`; Free-RAM added-then-reverted same
-day 2026-06-06 — this session's Park feature is the properly-scoped redo of that same idea;
-`_instKey` took 5+ hotfixes on 2026-06-08 before landing on `geometryExpressID` as the canonical
+day 2026-06-06 — this session's Park feature is the properly-scoped redo of that same idea;  **[STALE?]**
+`_instKey` took 5+ hotfixes on 2026-06-08 before landing on `geometryExpressID` as the canonical  **[STALE?]**
 key instead of a position hash). Confirmed independently: `element.meshes[]` has ~40 call sites;
 `loadIFCWorker` genuinely doesn't terminate its worker on the geometry `'result'` message while the
 main thread builds Three.js objects (`:4806-4925`); `_getBVH` builds per-element from world-space
 tris even for shared instanced geometry (confirms `IMPROVEMENT_PLAN.md` Wave 6 item 3 is real,
-unclaimed work); issue #572 (closed 2026-06-06) already flagged `element.meshes[]` retention as a
+unclaimed work); issue #572 (closed 2026-06-06) already flagged `element.meshes[]` retention as a  **[STALE?]**
 deferred "D2 follow-up" five weeks ago. Task list added as P6.1-P6.5 (byte-accurate residency
 ledger → GeometryHandle/GeometryStore retiring element.meshes[] → memory-safe loading mode →
 bounded detection memory (graduates Wave 6 items 3+5) → property paging, deferred pending
@@ -1676,7 +1676,7 @@ Solibri/Navisworks/OSS (IfcOpenShell, ThatOpen, xeokit, Speckle, BIMcollab, Revi
   by name ("re-enable only as opt-in, without SMAA, verified on batched models before any default flip") —
   approach with proportionally more caution.
 
-On branch `claude/codebase-review-optimization-3nltcw` (2026-07-08) — four-repo review sweep (in progress):
+On branch `claude/codebase-review-optimization-3nltcw` (2026-07-08) — four-repo review sweep (in progress):  **[STALE?]**
 
 - Two-round audit of ClashControl + Connector + Engine + SmartBridge (superseded). Fix wave in flight: core dead features (ClashControl.version / _ccFlyToMeasurement / palette Fit), IFC-worker watchdog re-arm, shared-project data-loss merge, JS coplanar NaN guard, WASM-path LRU registration, backend (title/triage model verify, project.js editKey + batched upsert, tile.js validation), daily-sync repair, doc/memory reconciliation. Engine + Connector fixes on same-named branches in their repos (release-pipeline workflow_call fix, all-vs-all dedup, coplanar branch, modelFilter exclude semantics, quantities/description emission).
 
@@ -2004,6 +2004,43 @@ recorded as fully explained — a genuinely separate, much smaller follow-up if 
 <!-- END:active-work -->
 
 <!-- BEGIN:session-log -->
+### 2026-07-23
+**Summary:** 27 commit(s) landed (no AI summary — set ANTHROPIC_API_KEY secret for richer entries).
+**Changed:** see commits
+**Notable:** —
+
+<details><summary>Commits</summary>
+
+- 80a5ae0 chore: bump version to 7.3.1
+- 6b29538 fix(park-restore): patch geoCache psets even after the model is parked
+- 25767c3 test(browser): production-scale park/restore probe + RSS/restore-cost findings
+- 304fa11 test(browser): deterministic renderer.info check for park's dispose()
+- 03d8677 feat(nl-commands): use el.expressId directly; survey remaining P6.2 sites
+- 2ad072f test(browser): real-browser park/restore + repeated-detection memory probe
+- d5662bf docs: update P6.2 status for second migrated consumer
+- 6c5deaf feat(geometry): shared world-bbox helper, migrate second P6.2 consumer
+- 7c64a7d docs: record "build all" implementation status for P6
+- b6aaf6d feat(detection): opt-in post-run cache clear, safe P6.4 slice (V7)
+- 99be257 feat(loading): pre-load pressure relief, flag-gated conservative slice (V7 P6.3)
+- 48cb71c feat(clash-engine): GeometryHandle accessor, migrate first consumer (V7 P6.2 slice 1)
+- 4d10cb1 feat(memory): byte-accurate residency ledger, replaces element-count heuristic (V7 P6.1)
+- 1ec1987 docs: enrich P6 with verified commit hashes + new failure-mode precedents
+- ca21f8c docs: memory-architecture task list (P6), grounded in commit history
+- f4733da chore: bump version to 7.3.0
+- 23a3972 feat(models): auto-park hidden models under memory pressure + smart reload
+- 6fbc809 chore: bump version to 7.2.8
+- 77f5f9b fix(models): register park aliases on the canonical ClashControl namespace
+- d5eaeef feat(models): park inactive models to reclaim memory (stops GC stalls)
+- 1687771 docs: record P0.6/P1.1/P1.3/P5.1 status + honest remaining (V7 plan)
+- c406e71 test(local-engine): golden rule-layer parity suite (V7 P0.6)
+- ae3a231 fix(api/project): atomic compare-and-swap for issue sync (V7 P5.1)
+- 3759964 fix(detection): report compact-candidate memory at real cost, not 96 B/pair (V7 P1.3)
+- 444c5d4 fix(local-engine): close browser-vs-local result-set gaps (V7 P0)
+- 329e997 docs: v7 release-validation plan from re-review of v7.2.7
+- 5178fc3 chore: daily memory sync 2026-07-22
+
+</details>
+
 ### 2026-07-22
 **Summary:** 3 commit(s) landed (no AI summary — set ANTHROPIC_API_KEY secret for richer entries).
 **Changed:** see commits
@@ -2932,24 +2969,12 @@ recorded as fully explained — a genuinely separate, much smaller follow-up if 
 - e9b31af chore: daily memory sync 2026-05-23
 
 </details>
-
-### 2026-05-23
-**Summary:** 5 commit(s) landed (no AI summary — set ANTHROPIC_API_KEY secret for richer entries).
-**Changed:** see commits
-**Notable:** —
-
-<details><summary>Commits</summary>
-
-- 29c06d5 chore: bump version to 5.12.5
-- df2eb44 chore: prune 7 unwired reducer cases
-- 972ac3d chore: daily memory sync 2026-05-22
-- 07a1a84 chore: bump version to 5.12.4
-- cf60b7d chore: trim devtools globals and stale docs
-
-</details>
 <!-- END:session-log -->
 
 <!-- BEGIN:cleanup-log -->
+### 2026-07-23 — pruned session entry 2026-05-23
+**Reason:** Entry is older than 60 days.
+
 ### 2026-07-22 — pruned session entry 2026-05-22
 **Reason:** Entry is older than 60 days.
 
