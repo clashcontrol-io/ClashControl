@@ -2004,6 +2004,22 @@ recorded as fully explained — a genuinely separate, much smaller follow-up if 
 <!-- END:active-work -->
 
 <!-- BEGIN:session-log -->
+### 2026-07-24
+**Summary:** 6 commit(s) landed (no AI summary — set ANTHROPIC_API_KEY secret for richer entries).
+**Changed:** see commits
+**Notable:** —
+
+<details><summary>Commits</summary>
+
+- 128f68c chore: daily memory sync 2026-07-23
+- 80a5ae0 chore: bump version to 7.3.1
+- 6b29538 fix(park-restore): patch geoCache psets even after the model is parked
+- 25767c3 test(browser): production-scale park/restore probe + RSS/restore-cost findings
+- 304fa11 test(browser): deterministic renderer.info check for park's dispose()
+- 03d8677 feat(nl-commands): use el.expressId directly; survey remaining P6.2 sites
+
+</details>
+
 ### 2026-07-23
 **Summary:** 27 commit(s) landed (no AI summary — set ANTHROPIC_API_KEY secret for richer entries).
 **Changed:** see commits
@@ -2958,20 +2974,12 @@ recorded as fully explained — a genuinely separate, much smaller follow-up if 
 - 7be9827 chore: daily memory sync 2026-05-24
 
 </details>
-
-### 2026-05-24
-**Summary:** 1 commit(s) landed (no AI summary — set ANTHROPIC_API_KEY secret for richer entries).
-**Changed:** see commits
-**Notable:** —
-
-<details><summary>Commits</summary>
-
-- e9b31af chore: daily memory sync 2026-05-23
-
-</details>
 <!-- END:session-log -->
 
 <!-- BEGIN:cleanup-log -->
+### 2026-07-24 — pruned session entry 2026-05-24
+**Reason:** Entry is older than 60 days.
+
 ### 2026-07-23 — pruned session entry 2026-05-23
 **Reason:** Entry is older than 60 days.
 
