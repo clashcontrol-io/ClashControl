@@ -33327,16 +33327,16 @@ function startApp() {
           setFeedback(function(prev){ var n=Object.assign({},prev); n[msgIdx]='up'; return n; });
           _sendTrainingData({ type:'nl_command', input: msgs[msgIdx-1] ? msgs[msgIdx-1].text : '', matched: true,
             feedbackType:'thumbs_up', action: msgText.substring(0,60), appVersion: CC_VERSION.v });
-        }} title="Good response" style=${thumbStyle(fb==='up','#4ade80')}>▲</button>
+        }} title=${_cc_t('nl.feedback.goodResponse','Good response')} style=${thumbStyle(fb==='up','#4ade80')}>▲</button>
         <button onClick=${function(){
           setFeedback(function(prev){ var n=Object.assign({},prev); n[msgIdx] = fb==='down_expand' ? 'down' : 'down_expand'; return n; });
           if (fb !== 'down_expand') {
             _sendTrainingData({ type:'nl_command', input: msgs[msgIdx-1] ? msgs[msgIdx-1].text : '', matched: false,
               feedbackType:'thumbs_down', action: msgText.substring(0,60), appVersion: CC_VERSION.v });
           }
-        }} title="Wrong response" style=${thumbStyle(fb==='down'||fb==='down_expand','#f87171')}>▼</button>
+        }} title=${_cc_t('nl.feedback.wrongResponseTitle','Wrong response')} style=${thumbStyle(fb==='down'||fb==='down_expand','#f87171')}>▼</button>
         <button onClick=${function(){ setReplyTo({idx:msgIdx, text:msgText}); if(inputRef.current) inputRef.current.focus(); }}
-          title="Reply to this message" style=${thumbStyle(false, mutedCol)}>↩</button>
+          title=${_cc_t('nl.feedback.replyToMessage','Reply to this message')} style=${thumbStyle(false, mutedCol)}>↩</button>
         ${showCorrection && html`<div style=${{display:'flex',gap:'.2rem',flex:1}}>
           ${[_cc_t('nl.feedback.wrongModels','Wrong models'),_cc_t('nl.feedback.wrongGap','Wrong gap'),_cc_t('nl.feedback.wrongAction','Wrong action'),_cc_t('nl.feedback.gibberish','Gibberish')].map(function(label){
             return html`<button key=${label} onClick=${function(){
