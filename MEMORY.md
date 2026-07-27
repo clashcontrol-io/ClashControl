@@ -553,6 +553,35 @@ retrofit-progress list has now been addressed at least once this session. Partia
 by design (`_cc_t` falls back to the English string for any untranslated key, so the app never
 breaks); a future session can keep sweeping for stragglers without a fixed checklist to work from.
 
+~~Attribute sweep (2026-07-27): grepped the whole file for un-translated `title="..."`/
+`aria-label="..."`/`placeholder="..."` literals as a systematic way to catch stragglers the
+component-by-component pass missed. Found and fixed ~60: 3D viewport overlays (Compare Models
+slider, markup toolbar incl. Line/Arrow/Rectangle/Text label/Freehand tool names, perf stats panel,
+detection-profile panel, exit-3D-section, measurement/viewpoint delete + Save Viewpoint), project
+list rename/delete/confirm, the geoplace panel (IfcMapConversion tooltip, map nudge buttons, CRS
+step selectors, OSM Buildings via Cesium ion, height-step controls) and its point-cloud/splat/tiles
+alignment row (remove/remove-alignment/remove-proximity-colouring), the PWA install banner, the
+splat reference-layers panel, clash-results clear-all/triage-focus controls (incl. its confirm() and
+toast strings), RunDetectionModal's scope selector ("What do you want to check?", All↔All/By
+discipline/By model, Side A/B — this one had been missed by the earlier component pass despite
+RunDetectionModal being marked done), DataQualityPanel's Highlight-in-3D/Create-issue/Print
+report/Export CSV/Create-all-issues row, ClashRulesPanel's Assignment Rules sub-panel (discipline/
+storey/assignee/priority dropdowns, Add assignment rule) and Visibility & coverage checks header,
+Settings modal close/tablist aria-labels, NavigatorPanel row title, floating-panel open/close
+titles, the Workspace tablist and Viewer toolbar aria-labels, the command-palette launcher
+aria-label, the mobile theme toggle, Assign-to/shared-project-join-key placeholders, and
+NLCommandPanel's Good/Wrong-response + Reply-to-message tooltips. Two literal-text test anchors
+broke and were fixed in the same pattern as before:
+`tests/data-quality-report-wiring.test.js` (Print report / Export CSV button labels) and
+`tests/assignment-rules-wiring.test.js` (the "+ Add assignment rule" panel-boundary marker).
+Deliberately left alone: the static SEO `<nav aria-label="ClashControl pages">` (outside the React
+app — pre-boot HTML for crawlers/no-JS, not reachable by `_cc_t`) and the `placeholder="IfcWall"`
+takeoff-panel example (a technical IFC class-name example, not display prose). After this sweep, a
+repo-wide grep for capitalized `title=`/`aria-label=`/`placeholder=` string literals returns
+essentially nothing outside those two deliberate exceptions — the retrofit's low-hanging fruit is
+exhausted; anything left is either template-literal text inside `html\`...\`` markup (not caught by
+this attribute-only grep) or genuinely obscure.~~ (2026-07-27)
+
 **Park inactive models — memory relief (2026-07-22, branch `claude/clashcontrol-v7-release-plan-jp5njw`)** —
 diagnosed the "viewer stalls a few seconds" + "5.2 GB heap > 4.09 GB limit" reports as the SAME
 root cause: GC pauses from being over the heap limit. Dominant reducible sink = the permanently
