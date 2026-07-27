@@ -37435,76 +37435,76 @@ function startApp() {
         ${adv && html`<div style=${{padding:'1rem',overflowY:'auto',flex:1}}>
           ${tab==='direct' && html`<div style=${{display:'flex',flexDirection:'column',gap:'.75rem'}}>
             <div>
-              <div style=${S_LBL}>WebSocket Port</div>
+              <div style=${S_LBL}>${_cc_t('revitBridge.wsPort','WebSocket Port')}</div>
               <div style=${{display:'flex',gap:'.4rem'}}>
                 <input type="number" value=${port} onInput=${function(e){setPort(parseInt(e.target.value,10)||19780)}}
                   style=${{...S_INP,flex:1}} />
                 ${rd.connected ? html`<button onClick=${function(){if(window._revitDirectDisconnect) window._revitDirectDisconnect(d)}}
-                  style=${{...S_BTN2,background:'#7f1d1d',color:'#fca5a5'}}>Disconnect</button>`
+                  style=${{...S_BTN2,background:'#7f1d1d',color:'#fca5a5'}}>${_cc_t('revitBridge.disconnect','Disconnect')}</button>`
                 : html`<button onClick=${function(){if(window._saveDirectPort) window._saveDirectPort(port); if(window._revitDirectConnect) window._revitDirectConnect(port,d)}}
-                  style=${{...S_BTN2,background:'var(--accent)',color:'#fff'}}>Connect</button>`}
+                  style=${{...S_BTN2,background:'var(--accent)',color:'#fff'}}>${_cc_t('revitBridge.connect','Connect')}</button>`}
               </div>
             </div>
 
             <div style=${{display:'flex',alignItems:'center',gap:'.4rem'}}>
               <span style=${{width:8,height:8,borderRadius:'50%',background:rd.connected?'#22c55e':rd.reconnecting?'#eab308':rd.autoDetected?'var(--accent)':'#ef4444'}}></span>
               <span style=${{fontSize:'0.78rem',color:rd.connected?'#4ade80':rd.reconnecting?'#facc15':rd.autoDetected?'var(--accent-subtle)':'var(--text-muted)'}}>
-                ${rd.connected ? 'Connected' + (rd.documentName ? ' \u2014 ' + rd.documentName : '')
-                  : rd.reconnecting ? 'Reconnecting in ' + Math.round((rd.reconnectIn||1000)/1000) + 's\u2026'
-                  : rd.autoDetected ? 'Revit detected \u2014 click Connect'
-                  : 'Not connected'}
+                ${rd.connected ? _cc_t('revitBridge.connected','Connected') + (rd.documentName ? ' \u2014 ' + rd.documentName : '')
+                  : rd.reconnecting ? _cc_t('revitBridge.reconnectingIn','Reconnecting in {n}s\u2026',{n:Math.round((rd.reconnectIn||1000)/1000)})
+                  : rd.autoDetected ? _cc_t('revitBridge.detectedClickConnect','Revit detected \u2014 click Connect')
+                  : _cc_t('revitBridge.notConnected','Not connected')}
               </span>
               ${rd.connected && rd.pluginVersion && html`<span style=${{fontSize:'0.63rem',color:'var(--text-faint)',marginLeft:'.3rem'}}>v${rd.pluginVersion}</span>`}
             </div>
 
             ${excluded.length>0 && html`<div style=${{padding:'.4rem .5rem',background:'var(--bg-secondary)',border:'1px solid var(--border)',borderRadius:6}}>
-              <div style=${{fontSize:'0.69rem',fontWeight:600,color:'var(--text-muted)',marginBottom:'.25rem'}}>Excluded from sync (${excluded.length})</div>
-              <div style=${{fontSize:'0.6rem',color:'var(--text-faint)',marginBottom:'.3rem',lineHeight:1.4}}>These models are skipped on sync (not re-pulled on refresh). Re-include to sync them again.</div>
+              <div style=${{fontSize:'0.69rem',fontWeight:600,color:'var(--text-muted)',marginBottom:'.25rem'}}>${_cc_t('revitBridge.excludedFromSync','Excluded from sync ({n})',{n:excluded.length})}</div>
+              <div style=${{fontSize:'0.6rem',color:'var(--text-faint)',marginBottom:'.3rem',lineHeight:1.4}}>${_cc_t('revitBridge.excludedDesc','These models are skipped on sync (not re-pulled on refresh). Re-include to sync them again.')}</div>
               ${excluded.map(function(nm){return html`<div key=${nm} style=${{display:'flex',alignItems:'center',gap:'.3rem',padding:'.15rem 0'}}>
                 <span style=${{flex:1,fontSize:'0.72rem',color:'var(--text-secondary)',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}} title=${nm}>${nm}</span>
-                <button onClick=${function(){_reincludeModel(nm);}} style=${{...S_BTN2,padding:'.1rem .4rem',fontSize:'0.63rem',background:'var(--accent)',color:'#fff'}}>Re-include</button>
+                <button onClick=${function(){_reincludeModel(nm);}} style=${{...S_BTN2,padding:'.1rem .4rem',fontSize:'0.63rem',background:'var(--accent)',color:'#fff'}}>${_cc_t('revitBridge.reinclude','Re-include')}</button>
               </div>`;})}
-              <div style=${{fontSize:'0.58rem',color:'var(--text-faint)',marginTop:'.25rem'}}>Re-sync (or refresh) after re-including to load them.</div>
+              <div style=${{fontSize:'0.58rem',color:'var(--text-faint)',marginTop:'.25rem'}}>${_cc_t('revitBridge.resyncAfterReinclude','Re-sync (or refresh) after re-including to load them.')}</div>
             </div>`}
 
             ${rd.versionWarning && html`<div style=${{fontSize:'0.69rem',color:'#fbbf24',background:'#422006',padding:'.35rem .5rem',borderRadius:6}}>
-              Protocol mismatch: ${rd.versionWarning}. Some features may not work.
+              ${_cc_t('revitBridge.protocolMismatch','Protocol mismatch: {w}. Some features may not work.',{w:rd.versionWarning})}
             </div>`}
 
             ${rd.reconnectPrompt && html`<div style=${{display:'flex',alignItems:'center',gap:'.4rem',padding:'.4rem .5rem',background:'var(--accent-bg)',borderRadius:6}}>
-              <span style=${{fontSize:'0.72rem',color:'var(--accent-subtle)',flex:1}}>Reconnected to Revit. Pull model again?</span>
+              <span style=${{fontSize:'0.72rem',color:'var(--accent-subtle)',flex:1}}>${_cc_t('revitBridge.reconnectedPullAgain','Reconnected to Revit. Pull model again?')}</span>
               <button onClick=${function(){d({t:'UPD_REVIT_DIRECT',u:{reconnectPrompt:false}}); if(window._revitDirectExport) window._revitDirectExport(['all']);}}
-                style=${{...S_BTN2,background:'var(--accent)',color:'#fff',fontSize:'0.7rem',padding:'.25rem .6rem'}}>Pull</button>
+                style=${{...S_BTN2,background:'var(--accent)',color:'#fff',fontSize:'0.7rem',padding:'.25rem .6rem'}}>${_cc_t('revitBridge.pull','Pull')}</button>
               <button onClick=${function(){d({t:'UPD_REVIT_DIRECT',u:{reconnectPrompt:false}});}}
-                style=${{...S_BTN2,background:'var(--bg-tertiary)',color:'var(--text-muted)',fontSize:'0.7rem',padding:'.25rem .6rem'}}>Dismiss</button>
+                style=${{...S_BTN2,background:'var(--bg-tertiary)',color:'var(--text-muted)',fontSize:'0.7rem',padding:'.25rem .6rem'}}>${_cc_t('common.dismiss','Dismiss')}</button>
             </div>`}
 
             ${rd.connected && html`<div>
-              <div style=${S_LBL}>Target Project</div>
+              <div style=${S_LBL}>${_cc_t('revitBridge.targetProject','Target Project')}</div>
               <select value=${targetProj} onChange=${function(e){setTargetProj(e.target.value)}} style=${S_INP}>
                 ${projects.map(function(p){return html`<option key=${p.id} value=${p.id}>${p.name}</option>`})}
               </select>
-              <div style=${{fontSize:'0.63rem',color:'var(--text-faint)',marginTop:'.2rem'}}>Revit models will be added to this project.</div>
+              <div style=${{fontSize:'0.63rem',color:'var(--text-faint)',marginTop:'.2rem'}}>${_cc_t('revitBridge.modelsAddedTo','Revit models will be added to this project.')}</div>
             </div>`}
 
             ${rd.connected && html`<div style=${{display:'flex',gap:'.4rem'}}>
               <button onClick=${function(){if(window._revitDirectExport) window._revitDirectExport(['all'])}}
                 disabled=${rd.loading}
-                style=${{...S_BTN2,flex:1,background:rd.loading?'var(--bg-tertiary)':'var(--accent-bg)',color:rd.loading?'var(--text-faint)':'var(--accent-subtle)'}}>Export All from Revit</button>
+                style=${{...S_BTN2,flex:1,background:rd.loading?'var(--bg-tertiary)':'var(--accent-bg)',color:rd.loading?'var(--text-faint)':'var(--accent-subtle)'}}>${_cc_t('revitBridge.exportAll','Export All from Revit')}</button>
               <button onClick=${function(){if(window._revitDirectPushClashes) window._revitDirectPushClashes(s,d)}}
-                style=${{...S_BTN2,flex:1,background:'#052e16',color:'#4ade80'}}>Push Clashes to Revit</button>
+                style=${{...S_BTN2,flex:1,background:'#052e16',color:'#4ade80'}}>${_cc_t('revitBridge.pushClashes','Push Clashes to Revit')}</button>
             </div>`}
 
             ${rd.connected && html`<div style=${{display:'flex',gap:'.4rem'}}>
               <button onClick=${function(){if(window._revitClearHighlights) window._revitClearHighlights(); d({t:'BRIDGE_LOG',logType:'info',text:'Cleared Revit highlights.'});}}
-                style=${{...S_BTN2,flex:1,background:'var(--accent-bg-deep)',color:'var(--accent)'}}>Clear Revit Highlights</button>
+                style=${{...S_BTN2,flex:1,background:'var(--accent-bg-deep)',color:'var(--accent)'}}>${_cc_t('revitBridge.clearHighlights','Clear Revit Highlights')}</button>
             </div>`}
 
             ${rd.loading && html`<div>
               <div style=${{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:'.2rem'}}>
-                <span style=${{fontSize:'0.72rem',color:'var(--text-muted)'}}>Loading... ${rd.progress > 0 ? Math.round(rd.progress*100) + '%' : ''}${rd.elementCount ? ' (' + rd.elementCount + ' elements)' : ''}</span>
+                <span style=${{fontSize:'0.72rem',color:'var(--text-muted)'}}>${_cc_t('revitBridge.loadingDots','Loading...')} ${rd.progress > 0 ? Math.round(rd.progress*100) + '%' : ''}${rd.elementCount ? ' (' + _cc_t('revitBridge.elementCount','{n} elements',{n:rd.elementCount}) + ')' : ''}</span>
                 <button onClick=${function(){if(window._revitDirectCancelExport) window._revitDirectCancelExport(); d({t:'UPD_REVIT_DIRECT', u:{loading:false, progress:0}});}}
-                  style=${{background:'none',border:'none',color:'#f87171',fontSize:'0.7rem',fontWeight:600,cursor:'pointer',fontFamily:'inherit',padding:'0 .2rem'}}>Cancel</button>
+                  style=${{background:'none',border:'none',color:'#f87171',fontSize:'0.7rem',fontWeight:600,cursor:'pointer',fontFamily:'inherit',padding:'0 .2rem'}}>${_cc_t('common.cancel','Cancel')}</button>
               </div>
               <div style=${{width:'100%',height:4,background:'var(--bg-primary)',borderRadius:2,overflow:'hidden'}}>
                 <div style=${{width:Math.round((rd.progress||0)*100)+'%',height:'100%',background:'var(--accent)',borderRadius:2,transition:'width .3s'}}></div>
@@ -37512,14 +37512,14 @@ function startApp() {
             </div>`}
 
             ${rd.exportError && html`<div style=${{padding:'.5rem',background:'#450a0a',borderRadius:6,border:'1px solid #7f1d1d'}}>
-              <div style=${{fontSize:'0.75rem',color:'#fca5a5',marginBottom:'.3rem'}}>Export failed: ${rd.exportError}${rd.exportErrorElementsSent > 0 ? ' (' + rd.exportErrorElementsSent + ' elements received)' : ''}</div>
+              <div style=${{fontSize:'0.75rem',color:'#fca5a5',marginBottom:'.3rem'}}>${_cc_t('revitBridge.exportFailed','Export failed: {err}',{err:rd.exportError})}${rd.exportErrorElementsSent > 0 ? ' (' + _cc_t('revitBridge.elementsReceived','{n} elements received',{n:rd.exportErrorElementsSent}) + ')' : ''}</div>
               <div style=${{display:'flex',gap:'.3rem',flexWrap:'wrap'}}>
                 <button onClick=${function(){d({t:'UPD_REVIT_DIRECT',u:{exportError:null,exportErrorElementsSent:0}}); if(window._revitDirectExport) window._revitDirectExport(['all']);}}
-                  style=${{...S_BTN2,background:'var(--accent-bg)',color:'var(--accent-subtle)',fontSize:'0.7rem',padding:'.25rem .5rem'}}>Retry</button>
+                  style=${{...S_BTN2,background:'var(--accent-bg)',color:'var(--accent-subtle)',fontSize:'0.7rem',padding:'.25rem .5rem'}}>${_cc_t('common.retry','Retry')}</button>
                 ${rd.exportErrorElementsSent > 0 && html`<button onClick=${function(){d({t:'UPD_REVIT_DIRECT',u:{exportError:null,exportErrorElementsSent:0}}); if(window._revitKeepPartialModel) window._revitKeepPartialModel(d);}}
-                  style=${{...S_BTN2,background:'#052e16',color:'#4ade80',fontSize:'0.7rem',padding:'.25rem .5rem'}}>Keep partial</button>`}
+                  style=${{...S_BTN2,background:'#052e16',color:'#4ade80',fontSize:'0.7rem',padding:'.25rem .5rem'}}>${_cc_t('revitBridge.keepPartial','Keep partial')}</button>`}
                 ${rd.exportErrorElementsSent > 0 && html`<button onClick=${function(){d({t:'UPD_REVIT_DIRECT',u:{exportError:null,exportErrorElementsSent:0}}); if(window._revitDiscardPartialModel) window._revitDiscardPartialModel(d);}}
-                  style=${{...S_BTN2,background:'#1c1917',color:'#a8a29e',fontSize:'0.7rem',padding:'.25rem .5rem'}}>Discard</button>`}
+                  style=${{...S_BTN2,background:'#1c1917',color:'#a8a29e',fontSize:'0.7rem',padding:'.25rem .5rem'}}>${_cc_t('revitBridge.discard','Discard')}</button>`}
               </div>
             </div>`}
 
@@ -37530,24 +37530,24 @@ function startApp() {
             </div>`}
 
             ${rd.connected && html`<div style=${{display:'flex',flexDirection:'column',gap:'.4rem'}}>
-              <div style=${S_LBL}>Sync Settings</div>
+              <div style=${S_LBL}>${_cc_t('revitBridge.syncSettings','Sync Settings')}</div>
               <label style=${{display:'flex',alignItems:'center',gap:'.4rem',fontSize:'0.72rem',color:'var(--text-muted)',cursor:'pointer'}}>
                 <input type="checkbox" checked=${rd.selectionSyncEnabled||false}
                   onChange=${function(e){var v=e.target.checked; d({t:'UPD_REVIT_DIRECT',u:{selectionSyncEnabled:v}}); if(window._revitSetSelectionSync) window._revitSetSelectionSync(v);}} />
-                Sync selection from Revit
+                ${_cc_t('revitBridge.syncSelection','Sync selection from Revit')}
               </label>
               <label style=${{display:'flex',alignItems:'center',gap:'.4rem',fontSize:'0.72rem',color:'var(--text-muted)',cursor:'pointer'}}>
                 <input type="checkbox" checked=${rd.cameraSyncEnabled||false}
                   onChange=${function(e){var v=e.target.checked; d({t:'UPD_REVIT_DIRECT',u:{cameraSyncEnabled:v}}); if(window._revitSetCameraSync) window._revitSetCameraSync(v);}} />
-                Sync camera to Revit
+                ${_cc_t('revitBridge.syncCamera','Sync camera to Revit')}
               </label>
             </div>`}
 
             <div style=${{fontSize:'0.69rem',color:'var(--text-faint)',lineHeight:1.6,padding:'.5rem .6rem',background:'var(--bg-primary)',borderRadius:6,display:'flex',flexDirection:'column',gap:'.35rem'}}>
               <div>
-                Requires the${' '}<a href="https://github.com/clashcontrol-io/ClashControlConnector" target="_blank" rel="noopener"
-                  style=${{color:'var(--accent)',textDecoration:'none',fontWeight:600}}>ClashControl Connector</a>${' '}Revit plugin.
-                Supports Revit 2024 / 2025 / 2026 / 2027.
+                ${_cc_t('revitBridge.requiresThePrefix','Requires the')}${' '}<a href="https://github.com/clashcontrol-io/ClashControlConnector" target="_blank" rel="noopener"
+                  style=${{color:'var(--accent)',textDecoration:'none',fontWeight:600}}>${_cc_t('revitBridge.connectorName','ClashControl Connector')}</a>${' '}${_cc_t('revitBridge.pluginSuffix','Revit plugin.')}
+                ${_cc_t('revitBridge.supportsVersions','Supports Revit 2024 / 2025 / 2026 / 2027.')}
               </div>
               <div style=${{display:'flex',gap:'.4rem',alignItems:'center',flexWrap:'wrap'}}>
                 <a href="https://github.com/clashcontrol-io/ClashControlConnector/releases/latest/download/ClashControlConnectorInstaller.exe"
@@ -37557,25 +37557,25 @@ function startApp() {
                   <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                     <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/>
                   </svg>
-                  Download installer (.exe)
+                  ${_cc_t('revitBridge.downloadInstallerExe','Download installer (.exe)')}
                 </a>
-                <span style=${{fontSize:'0.63rem',color:'var(--text-faint)'}}>Double-click, tick the Revit version you want, done.</span>
+                <span style=${{fontSize:'0.63rem',color:'var(--text-faint)'}}>${_cc_t('revitBridge.doubleClickTick','Double-click, tick the Revit version you want, done.')}</span>
               </div>
             </div>
           </div>`}
 
           ${tab==='ai' && html`<div style=${{display:'flex',flexDirection:'column',gap:'.75rem'}}>
             <div>
-              <div style=${S_LBL}>AI Provider</div>
+              <div style=${S_LBL}>${_cc_t('revitBridge.aiProvider','AI Provider')}</div>
               <select value=${prov} onChange=${function(e){setProv(e.target.value)}} style=${S_INP}>
-                <option value="">Select provider...</option>
+                <option value="">${_cc_t('revitBridge.selectProvider','Select provider...')}</option>
                 <option value="anthropic">Anthropic (Claude)</option>
                 <option value="openai">OpenAI (GPT-4o)</option>
                 <option value="google">Google (Gemini)</option>
               </select>
             </div>
             <div>
-              <div style=${S_LBL}>API Key</div>
+              <div style=${S_LBL}>${_cc_t('revitBridge.apiKey','API Key')}</div>
               <input type="password" value=${apiKey} onInput=${function(e){setApiKey(e.target.value)}}
                 placeholder="sk-..." style=${S_INP} />
             </div>
@@ -37595,25 +37595,25 @@ function startApp() {
                 d({t:'UPD_BRIDGE', u:cfg});
                 if(window._saveBridgeConfig) window._saveBridgeConfig(cfg);
                 if(window._testBridgeConnection) window._testBridgeConnection(Object.assign({}, br, cfg), d);
-              }} style=${{...S_BTN2,background:'var(--accent)',color:'#fff'}}>Save & Test</button>
+              }} style=${{...S_BTN2,background:'var(--accent)',color:'#fff'}}>${_cc_t('revitBridge.saveAndTest','Save & Test')}</button>
               <button onClick=${function(){if(window._revitBridgePush) window._revitBridgePush(s,d)}}
                 disabled=${br.syncing || !prov || !apiKey}
-                style=${{...S_BTN2,background:'#052e16',color:'#4ade80',opacity:br.syncing||!prov||!apiKey?0.5:1}}>Push</button>
+                style=${{...S_BTN2,background:'#052e16',color:'#4ade80',opacity:br.syncing||!prov||!apiKey?0.5:1}}>${_cc_t('revitBridge.push','Push')}</button>
               <button onClick=${function(){if(window._revitBridgePull) window._revitBridgePull(s,d)}}
                 disabled=${br.syncing || !prov || !apiKey}
-                style=${{...S_BTN2,background:'var(--accent-bg)',color:'var(--accent-subtle)',opacity:br.syncing||!prov||!apiKey?0.5:1}}>Pull</button>
+                style=${{...S_BTN2,background:'var(--accent-bg)',color:'var(--accent-subtle)',opacity:br.syncing||!prov||!apiKey?0.5:1}}>${_cc_t('revitBridge.pull','Pull')}</button>
             </div>
             ${br.connected && html`<div style=${{display:'flex',alignItems:'center',gap:'.3rem'}}>
               <span style=${{width:7,height:7,borderRadius:'50%',background:'#22c55e'}}></span>
-              <span style=${{fontSize:'0.72rem',color:'#4ade80'}}>AI connected (${prov})</span>
+              <span style=${{fontSize:'0.72rem',color:'#4ade80'}}>${_cc_t('revitBridge.aiConnected','AI connected ({p})',{p:prov})}</span>
             </div>`}
           </div>`}
         </div>
 
         ${br.log && br.log.length > 0 && html`<div style=${{borderTop:'1px solid var(--border)',maxHeight:180,overflowY:'auto',padding:'.5rem .75rem',background:'var(--bg-primary)'}}>
           <div style=${{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:'.3rem'}}>
-            <span style=${{fontSize:'0.69rem',fontWeight:600,color:'var(--text-muted)',textTransform:'uppercase'}}>Log</span>
-            <button onClick=${function(){d({t:'CLEAR_BRIDGE_LOG'})}} style=${{fontSize:'0.63rem',background:'none',border:'none',color:'var(--text-faint)',cursor:'pointer'}}>Clear</button>
+            <span style=${{fontSize:'0.69rem',fontWeight:600,color:'var(--text-muted)',textTransform:'uppercase'}}>${_cc_t('revitBridge.log','Log')}</span>
+            <button onClick=${function(){d({t:'CLEAR_BRIDGE_LOG'})}} style=${{fontSize:'0.63rem',background:'none',border:'none',color:'var(--text-faint)',cursor:'pointer'}}>${_cc_t('common.clear','Clear')}</button>
           </div>
           ${br.log.slice().reverse().map(function(entry, i) {
             var col = entry.type==='error' ? '#f87171' : entry.type==='push' ? '#4ade80' : entry.type==='pull' ? 'var(--accent-subtle)' : 'var(--text-faint)';
