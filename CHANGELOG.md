@@ -1,5 +1,8 @@
 # Changelog
 
+## v7.3.2 (2026-07-27)
+- i18n + regional-regulation pack scaffold (#708)
+
 ## v7.3.1 (2026-07-23)
 - fix(park-restore): patch geoCache psets even after the model is parked
 
