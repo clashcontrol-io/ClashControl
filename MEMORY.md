@@ -402,15 +402,34 @@ settings panel, bookmarks, HUD bar, toasts, speed-label text), `WalkPegmanLayer`
 button), `WalkSplineRecorder` (cinematic path controls + flash messages), `WalkClashRadar` (count +
 radius labels), `WalkMinimap` (alt text). `WalkTouchJoystick` has no visible text — skipped.~~ (all
 2026-07-27)
-**Remaining (long tail, can proceed independently in future sessions):** `PresentationOverlay`,
-`StoreyScopeModal`, `ShortcutsModal`, `LoadProgressCard`, `CmdKPalette`, `StoreyPickerModal`,
-`SheetToolbarControls`, `ExportBar`, `ClashSetupCard`, `NLCommandPanel`, `LeftRail`, `PrivacyBanner`,
-`OperationCenter`, `MemoryWarningModal`, `TutorialPortal`, `AIChatPanel`, `ClashChips`,
-`WelcomePopup`, `WorkspaceTabs`, `AvatarMenu`, `ResponsiveToolGroup`, `DesktopTopBar`, `MobileNav`,
-`RevitBridgePanel`, `IDSValidationPanel`, `PropBlock`/`PropDiffView`/`ClashProps`, `VirtualList`,
-`GuidedTour`, `ColorLegend`, `ViewCube`, `SectionBoxUI`, `ModelCard`, `NavigatorPanel`, and more —
-this is genuinely the entire rest of the ~38.7k-line file; partial coverage is safe by design
-(`_cc_t` falls back to the English string for any untranslated key, so the app never breaks).
+~~`PresentationOverlay` in full (brand-logo alt text, Presenting label, prev/next slide + auto-advance
+tooltips, no-viewpoints hint, logo add/remove, Exit button, hotkey hint).~~ ~~`StoreyScopeModal` in
+full (title, file-storey-count blurb, truncated-file warning, Load-all-storeys / auto-complete-rest
+checkboxes, Cancel/Load-N-selected buttons).~~ ~~`ShortcutsModal` in full — every one of its ~50
+shortcut description strings across General/Mouse/View/Navigator/Clash-triage/Walk-mode/
+Presentation sections, rewritten via a whole-array swap (kept the `[key, description]` shape, wrapped
+every description in `_cc_t()`).~~ ~~`LoadProgressCard` in full (default phase text, all 11 rotating
+slow-load flavor messages, Cancel button, elapsed-seconds label).~~ ~~`StoreyPickerModal` in full
+(title, model-units line).~~ ~~`SheetToolbarControls` in full (alerts, confirm-delete, no-sheet
+option, all toolbar button labels+tooltips, the whole Sheet Settings flyout — section plane, paper &
+scale, orientation, title block headers; per-field title-block labels like "Project"/"Author" left
+untranslated since they're derived via JS `charAt(0).toUpperCase()` from object keys, not literal
+strings).~~ ~~`MemoryWarningModal`'s on-screen UI in full (header, memory-usage sentence, help blurb,
+textarea label+placeholder, all 5 "data included" checkboxes, Send/Dismiss buttons) — the generated
+GitHub issue *body* text (`onSend`'s `lines.push(...)` calls) deliberately left in English on
+purpose, since that content goes to `github.com/clashcontrol-io/ClashControl/issues` where
+English-speaking maintainers triage it, not to the end user's screen.~~ (all 2026-07-27)
+CmdKPalette / `_ccBuildCommands` deliberately deferred — its command list (workspace switches, view
+tools, section/measure tools, visibility-check presets, etc.) is very large (~100+ label/keyword
+pairs) and lower priority than user-facing panels; flagged as the next big target.
+**Remaining (long tail, can proceed independently in future sessions):** `CmdKPalette`, `ExportBar`,
+`ClashSetupCard`, `NLCommandPanel`, `LeftRail`, `PrivacyBanner`, `OperationCenter`, `TutorialPortal`,
+`AIChatPanel`, `ClashChips`, `WelcomePopup`, `WorkspaceTabs`, `AvatarMenu`, `ResponsiveToolGroup`,
+`DesktopTopBar`, `MobileNav`, `RevitBridgePanel`, `IDSValidationPanel`,
+`PropBlock`/`PropDiffView`/`ClashProps`, `VirtualList`, `GuidedTour`, `ColorLegend`, `ViewCube`,
+`SectionBoxUI`, `ModelCard`, `NavigatorPanel`, and more — this is genuinely the entire rest of the
+~38.7k-line file; partial coverage is safe by design (`_cc_t` falls back to the English string for
+any untranslated key, so the app never breaks).
 
 **Park inactive models — memory relief (2026-07-22, branch `claude/clashcontrol-v7-release-plan-jp5njw`)** —
 diagnosed the "viewer stalls a few seconds" + "5.2 GB heap > 4.09 GB limit" reports as the SAME
