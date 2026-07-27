@@ -1636,9 +1636,13 @@ function startApp() {
 
   // ── Regulation Preset Registry ───────────────────────────────── i18n plumbing
   // Regional building-code presets, same pure-JSON contract as locale packs —
-  // see regulations/loader.js. Keyed by the check engine they target (today
-  // just 'accessibility'; 'visibility'/'data-quality' can register presets the
-  // same way) so one region can carry different threshold shapes per engine.
+  // see regulations/loader.js. Keyed by the check engine they target — the
+  // registry itself is engine-agnostic (any engine key in a pack's `engines`
+  // object gets registered), but only accessibility.js actually reads it via
+  // its DEFAULTS < regionPreset < opts.thresholds precedence today.
+  // visibility.js is preset/rule-based, not a numeric-threshold dict, and
+  // data-quality.js checks BIM data hygiene rather than physical dimensions —
+  // neither has a natural "regional override" shape to plug into yet.
   // Presets follow the MODEL's location (IfcSite), not the user's — a manual
   // pick in Settings always overrides whatever was auto-suggested.
   var _ccRegulationPresets = {};  // {engine: {region: {region, name, engine, thresholds}}}
