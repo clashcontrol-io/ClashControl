@@ -23656,15 +23656,15 @@ function startApp() {
     var ROW={display:'flex',justifyContent:'space-between',padding:'.1rem 0'};
     return html`<div style=${{background:'var(--bg-primary)',borderRadius:4,padding:'.35rem',marginBottom:'.2rem'}}>
       <div style=${{fontSize:'0.69rem',fontWeight:600,color:'var(--accent-subtle)',marginBottom:'.2rem'}}>${label}</div>
-      ${p.ifcType && html`<div style=${ROW}><span style=${LS}>Type</span><span style=${VS}>${p.ifcType}</span></div>`}
-      ${p.name && html`<div style=${ROW}><span style=${LS}>Name</span><span style=${VS}>${p.name}</span></div>`}
-      ${p.objectType && html`<div style=${ROW}><span style=${LS}>Object Type</span><span style=${VS}>${p.objectType}</span></div>`}
-      ${p.storey && html`<div style=${ROW}><span style=${LS}>Storey</span><span style=${VS}>${p.storey}</span></div>`}
-      ${p.material && html`<div style=${ROW}><span style=${LS}>Material</span><span style=${VS}>${p.material}</span></div>`}
-      ${p.globalId && html`<div style=${ROW}><span style=${LS}>GlobalId</span><span style=${VS}>${p.globalId}</span></div>`}
-      <div style=${ROW}><span style=${LS}>Express ID</span><span style=${VS}>#${p.expressId}</span></div>
+      ${p.ifcType && html`<div style=${ROW}><span style=${LS}>${_cc_t('propBlock.type','Type')}</span><span style=${VS}>${p.ifcType}</span></div>`}
+      ${p.name && html`<div style=${ROW}><span style=${LS}>${_cc_t('propBlock.name','Name')}</span><span style=${VS}>${p.name}</span></div>`}
+      ${p.objectType && html`<div style=${ROW}><span style=${LS}>${_cc_t('propBlock.objectType','Object Type')}</span><span style=${VS}>${p.objectType}</span></div>`}
+      ${p.storey && html`<div style=${ROW}><span style=${LS}>${_cc_t('propBlock.storey','Storey')}</span><span style=${VS}>${p.storey}</span></div>`}
+      ${p.material && html`<div style=${ROW}><span style=${LS}>${_cc_t('propBlock.material','Material')}</span><span style=${VS}>${p.material}</span></div>`}
+      ${p.globalId && html`<div style=${ROW}><span style=${LS}>${_cc_t('propBlock.globalId','GlobalId')}</span><span style=${VS}>${p.globalId}</span></div>`}
+      <div style=${ROW}><span style=${LS}>${_cc_t('propBlock.expressId','Express ID')}</span><span style=${VS}>#${p.expressId}</span></div>
       ${qKeys.length>0 && html`<div style=${{marginTop:'.2rem',borderTop:'1px solid var(--border-subtle)',paddingTop:'.2rem'}}>
-        <div style=${{fontSize:'0.63rem',fontWeight:600,color:'var(--text-muted)',marginBottom:'.1rem'}}>Quantities</div>
+        <div style=${{fontSize:'0.63rem',fontWeight:600,color:'var(--text-muted)',marginBottom:'.1rem'}}>${_cc_t('propBlock.quantities','Quantities')}</div>
         ${qKeys.map(function(k){return html`<div key=${k} style=${ROW}><span style=${LS}>${k}</span><span style=${VS}>${typeof p.quantities[k]==='number'?p.quantities[k].toFixed(3):p.quantities[k]}</span></div>`})}
       </div>`}
       ${psetKeys.map(function(setName){
@@ -23744,7 +23744,7 @@ function startApp() {
     var GRID={display:'grid',gridTemplateColumns:'76px 1fr 1fr',gap:'.3rem',padding:'.15rem 0',borderBottom:'1px solid var(--border-subtle)'};
     return html`<div>
       <div style=${{fontSize:'0.63rem',color:'var(--text-faint)',marginBottom:'.3rem'}}>
-        ${diffRows.length} of ${rows.length} propert${rows.length===1?'y':'ies'} differ
+        ${_cc_t('propDiff.nOfMDiffer','{n} of {m} propert{ies} differ',{n:diffRows.length,m:rows.length,ies:rows.length===1?'y':'ies'})}
       </div>
       <div style=${{...GRID,borderBottom:'1px solid var(--border)'}}>
         <span style=${LS}></span>
@@ -23788,12 +23788,12 @@ function startApp() {
     var pB = detailOpen ? (it.propsB || _lookupElProps(models, it.modelBId, it.elemB)) : null;
     var pEl = detailOpen && isSingle ? (it.elementProps || _lookupElProps(models, it.modelId, it.elementId)) : null;
     function _idChip(label, revitId, expressId, color) {
-      var text = revitId != null ? ('Revit ID ' + revitId) : ('#' + expressId);
+      var text = revitId != null ? _cc_t('clashProps.revitId','Revit ID {id}',{id:revitId}) : ('#' + expressId);
       function copyToClip(ev) {
         ev.stopPropagation();
         try { navigator.clipboard && navigator.clipboard.writeText(String(revitId != null ? revitId : expressId)); } catch(e){}
       }
-      return html`<span title=${'Click to copy — '+(revitId!=null?'Revit element ID for the \"Select by ID\" command':'IFC expressId (no Revit sidecar present)')}
+      return html`<span title=${_cc_t('clashProps.clickToCopyPrefix','Click to copy — ')+(revitId!=null?_cc_t('clashProps.revitElementIdTip','Revit element ID for the "Select by ID" command'):_cc_t('clashProps.ifcExpressIdTip','IFC expressId (no Revit sidecar present)'))}
         onClick=${copyToClip}
         style=${{display:'inline-flex',alignItems:'center',gap:'.2rem',cursor:'copy',
           fontSize:'var(--text-2xs)',fontVariantNumeric:'tabular-nums',
@@ -23805,7 +23805,7 @@ function startApp() {
     }
     return html`<div onClick=${function(e){e.stopPropagation();}}>
       ${(it.number != null || it.revitIdA != null || it.revitIdB != null || (isSingle && (it.elementId != null))) && html`<div style=${{display:'flex',flexWrap:'wrap',gap:'.25rem',alignItems:'center',marginBottom:'.3rem'}}>
-        ${it.number != null && html`<span title="Clash number — stable across detection runs. Click to copy."
+        ${it.number != null && html`<span title=${_cc_t('clashProps.clashNumberCopyTip','Clash number — stable across detection runs. Click to copy.')}
           onClick=${function(ev){ev.stopPropagation();try{navigator.clipboard&&navigator.clipboard.writeText('#'+it.number);}catch(e){}}}
           style=${{display:'inline-flex',alignItems:'center',gap:'.2rem',cursor:'copy',
             background:'var(--color-info-bg)',color:'var(--color-info-fg)',
@@ -23817,28 +23817,28 @@ function startApp() {
       <div style=${{display:'flex',gap:'.2rem',marginBottom:'.2rem'}}>
         ${isSingle ? html`
           <button onClick=${function(){var mid=it.modelId||it.modelAId; if(_fitToElement&&it.elementId)_fitToElement(it.elementId,null,mid); if(_highlightById&&it.elementId)_highlightById(it.elementId,true,mid);}}
-            style=${{...S_BTN,fontSize:'0.57rem',padding:'.1rem .3rem',background:'#0f3a5f',color:'var(--accent-subtle)',flex:1}}>Zoom</button>
+            style=${{...S_BTN,fontSize:'0.57rem',padding:'.1rem .3rem',background:'#0f3a5f',color:'var(--accent-subtle)',flex:1}}>${_cc_t('clashProps.zoom','Zoom')}</button>
           <button onClick=${function(){var mid=it.modelId||it.modelAId; if(_fitToElement&&it.elementId)_fitToElement(it.elementId,null,mid); if(_highlightById&&it.elementId)_highlightById(it.elementId,false,mid); _sboxAroundElements&&_sboxAroundElements([{modelId:mid,expressId:it.elementId}]);}}
-            style=${{...S_BTN,fontSize:'0.57rem',padding:'.1rem .3rem',background:'var(--accent-bg-deep)',color:'var(--accent)',flex:1}} title="Section box around element">Box</button>
+            style=${{...S_BTN,fontSize:'0.57rem',padding:'.1rem .3rem',background:'var(--accent-bg-deep)',color:'var(--accent)',flex:1}} title=${_cc_t('clashProps.sectionBoxElementTip','Section box around element')}>${_cc_t('clashProps.box','Box')}</button>
         ` : html`
           <button onClick=${function(){_zoomToggle(it.elemA,'A');}}
-            style=${{...S_BTN,fontSize:'0.57rem',padding:'.1rem .3rem',background:zoomedTo==='A'?'#1e40af':'#0f3a5f',color:'var(--accent-subtle)',flex:1}}>${zoomedTo==='A'?'Zoom Both':'Zoom A'}</button>
+            style=${{...S_BTN,fontSize:'0.57rem',padding:'.1rem .3rem',background:zoomedTo==='A'?'#1e40af':'#0f3a5f',color:'var(--accent-subtle)',flex:1}}>${zoomedTo==='A'?_cc_t('clashProps.zoomBoth','Zoom Both'):_cc_t('clashProps.zoomA','Zoom A')}</button>
           <button onClick=${function(){_zoomToggle(it.elemB,'B');}}
-            style=${{...S_BTN,fontSize:'0.57rem',padding:'.1rem .3rem',background:zoomedTo==='B'?'#1e40af':'#0f3a5f',color:'var(--accent-subtle)',flex:1}}>${zoomedTo==='B'?'Zoom Both':'Zoom B'}</button>
+            style=${{...S_BTN,fontSize:'0.57rem',padding:'.1rem .3rem',background:zoomedTo==='B'?'#1e40af':'#0f3a5f',color:'var(--accent-subtle)',flex:1}}>${zoomedTo==='B'?_cc_t('clashProps.zoomBoth','Zoom Both'):_cc_t('clashProps.zoomB','Zoom B')}</button>
           <button onClick=${function(){var refs=_itemRefs(it); if(_fitToElement&&it.elemA)_fitToElement(it.elemA,null,it.modelAId); if(refs.length&&_highlightRefs)_highlightRefs(refs,false); _sboxAroundElements&&_sboxAroundElements(refs);}}
-            style=${{...S_BTN,fontSize:'0.57rem',padding:'.1rem .3rem',background:'var(--accent-bg-deep)',color:'var(--accent)',flex:1}} title="Section box around both elements">Box</button>
+            style=${{...S_BTN,fontSize:'0.57rem',padding:'.1rem .3rem',background:'var(--accent-bg-deep)',color:'var(--accent)',flex:1}} title=${_cc_t('clashProps.sectionBoxBothTip','Section box around both elements')}>${_cc_t('clashProps.box','Box')}</button>
         `}
       </div>
       <button onClick=${function(){setDetailOpen(!detailOpen)}}
         style=${{...S_BTN,fontSize:'0.63rem',padding:'.15rem .35rem',background:'var(--bg-primary)',color:'var(--text-muted)',width:'100%',textAlign:'left',border:'1px solid var(--border-subtle)'}}>
-        ${detailOpen?'▼':'▶'} Element Properties
+        ${detailOpen?'▼':'▶'} ${_cc_t('clashProps.elementProperties','Element Properties')}
       </button>
       ${detailOpen && html`<div style=${{marginTop:'.3rem',maxHeight:'300px',overflowY:'auto'}}>
         ${isSingle ? html`
-          <${PropBlock} p=${pEl} label=${'Element: '+(it.elementName||it.elementType||'#'+it.elementId)} />
+          <${PropBlock} p=${pEl} label=${_cc_t('clashProps.elementLabel','Element: {name}',{name:it.elementName||it.elementType||'#'+it.elementId})} />
         ` : html`
-          <${PropBlock} p=${pA} label=${'Element A: '+(it.elemAName||'#'+it.elemA)} />
-          <${PropBlock} p=${pB} label=${'Element B: '+(it.elemBName||'#'+it.elemB)} />
+          <${PropBlock} p=${pA} label=${_cc_t('clashProps.elementALabel','Element A: {name}',{name:it.elemAName||'#'+it.elemA})} />
+          <${PropBlock} p=${pB} label=${_cc_t('clashProps.elementBLabel','Element B: {name}',{name:it.elemBName||'#'+it.elemB})} />
         `}
       </div>`}
     </div>`;
