@@ -503,11 +503,27 @@ block (name prompt, rename prompt+tooltip, no-saved-sets empty state, Isolate/Hi
 per-set buttons), and the whole Search Sets block (+New/Cancel, name placeholder, live-match-count
 text, filter-required alert, default search name, Update/Save button, no-saved-searches empty
 state).~~ (2026-07-27)
-**Remaining (long tail, can proceed independently in future sessions):** `CmdKPalette`,
-`NLCommandPanel`'s deep command-parsing logic, `AIChatPanel`, `RevitBridgePanel`'s Advanced tab,
-`VirtualList`, and more — this is genuinely the entire rest of the ~38.7k-line file; partial
-coverage is safe by design (`_cc_t` falls back to the English string for any untranslated key, so
-the app never breaks).
+~~`VirtualList`'s user-facing strings: Resolve-all-open-in-group confirm, Triage/Re-triage/Triaging
+button, real-clash/false-positive/clear-feedback tooltips, same-discipline-skipped nudge banner +
+its re-run button, Run-detection/Clear-filters/Show-models empty-state action buttons, Resolve-all
+button, Resolution-options header.~~ ~~`AIChatPanel`'s Measure tab and Details tab UI chrome:
+group-title labels (Distances/Angles/Areas/Element quantities/Clearances), Units & precision
+tooltip, all 5 per-mode instruction hints, Takeoff filter header + Run/Export-CSV buttons + result
+lines, no-measurements-yet empty state, rename prompt + click-to-fly tooltip, promote-to-rule/
+Show-Hide/Delete tooltips, Export-CSV/Clear-all buttons, copy-to-clipboard tooltip, click-element-
+for-details empty state, Size (bounding box) header, derived-from-geometry note. Deliberately did
+NOT touch the surrounding property/pset NAME arrays (`'Base Constraint'`, `'IsExternal'`,
+`'LoadBearing'`, etc.) — those are literal IFC/Revit parameter-name lookup keys matched against
+model data, not display prose; translating them would silently break property matching.~~
+(2026-07-27)
+**Remaining (long tail, can proceed independently in future sessions):** `CmdKPalette` (its
+~100+-entry command list, deliberately deferred all session — see earlier note), `NLCommandPanel`'s
+deep regex-based offline-command-parsing logic (~600 lines, not primarily user-facing chrome),
+`RevitBridgePanel`'s Advanced tab (WebSocket port config, AI Bridge provider/key/host fields, sync
+log — behind an explicit opt-in toggle), and whatever remains unnamed across the rest of the
+~38.7k-line file. Partial coverage is safe by design (`_cc_t` falls back to the English string for
+any untranslated key, so the app never breaks) — at this point the vast majority of primary,
+always-visible UI chrome across the whole app has been retrofitted this session.
 
 **Park inactive models — memory relief (2026-07-22, branch `claude/clashcontrol-v7-release-plan-jp5njw`)** —
 diagnosed the "viewer stalls a few seconds" + "5.2 GB heap > 4.09 GB limit" reports as the SAME
