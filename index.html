@@ -27595,46 +27595,46 @@ function startApp() {
     var cmds = [];
     function push(c){ cmds.push(c); }
     var renderStyles = ['standard','shaded','rendered','xray'];
-    var renderLabels = {standard:'Hidden Line',shaded:'Shaded',rendered:'Rendered (lit)',xray:'X-Ray'};
+    var renderLabels = {standard:_cc_t('toolbar.hiddenLine','Hidden Line'),shaded:_cc_t('toolbar.shaded','Shaded'),rendered:_cc_t('cmdk.renderedLit','Rendered (lit)'),xray:_cc_t('toolbar.xray','X-Ray')};
     // r: workspace where this command is most relevant — used to reorder
     // within each group when no search query is active. List & groups are
     // identical regardless of workspace; only ordering changes.
     // Workspaces
-    push({group:'Workspace', label:'Switch to Present',    keywords:'present view show showcase clean architect',
+    push({group:_cc_t('cmdk.group.workspace','Workspace'), label:_cc_t('cmdk.switchToPresent','Switch to Present'),    keywords:'present view show showcase clean architect',
       onSelect:function(){ d({t:A.SET_WORKSPACE,v:'present'}); }});
-    push({group:'Workspace', label:'Switch to Coordinate', keywords:'coordinate clash detection issues bim',
+    push({group:_cc_t('cmdk.group.workspace','Workspace'), label:_cc_t('cmdk.switchToCoordinate','Switch to Coordinate'), keywords:'coordinate clash detection issues bim',
       onSelect:function(){ d({t:A.SET_WORKSPACE,v:'coordinate'}); }});
-    push({group:'Workspace', label:'Switch to Review',     keywords:'review data quality audit diagnostics',
+    push({group:_cc_t('cmdk.group.workspace','Workspace'), label:_cc_t('cmdk.switchToReview','Switch to Review'),     keywords:'review data quality audit diagnostics',
       onSelect:function(){ d({t:A.SET_WORKSPACE,v:'review'}); }});
-    push({group:'Workspace', label:'Toggle diagnostics',   keywords:'diagnostics fps perf', r:'review',
+    push({group:_cc_t('cmdk.group.workspace','Workspace'), label:_cc_t('toolbar.diagnostics','Diagnostics'),   keywords:'diagnostics fps perf', r:'review',
       onSelect:function(){ d({t:A.DIAGNOSTICS,v:!s.diagnostics}); }});
     // View
-    push({group:'View', label:'Fit to view', hint:'F', keywords:'fit zoom extents reset framing',
+    push({group:_cc_t('cmdk.group.view','View'), label:_cc_t('cmdk.fitToView','Fit to view'), hint:'F', keywords:'fit zoom extents reset framing',
       onSelect:function(){ try{ if(window._ccFitAll) window._ccFitAll(); }catch(e){} }});
-    push({group:'View', label:'Toggle floor plan view', keywords:'plan 2d sheet floor underlay',
+    push({group:_cc_t('cmdk.group.view','View'), label:_cc_t('cmdk.toggleFloorPlan','Toggle floor plan view'), keywords:'plan 2d sheet floor underlay',
       onSelect:function(){ d({t:A.FLOOR_PLAN,v:!s.floorPlan}); }});
-    push({group:'View', label:'Walk mode', keywords:'walk wasd fps first person navigate pegman', r:'present',
+    push({group:_cc_t('cmdk.group.view','View'), label:_cc_t('cmdk.walkMode','Walk mode'), keywords:'walk wasd fps first person navigate pegman', r:'present',
       onSelect:function(){ if(s.walkMode){ d({t:A.WALK_MODE,v:false}); } else { d({t:A.WALK_PLACING,v:true}); } }});
     renderStyles.forEach(function(style, i){
-      push({group:'Rendering', label:'Render: '+renderLabels[style], hint:String(i+1),
+      push({group:_cc_t('cmdk.group.rendering','Rendering'), label:_cc_t('cmdk.renderColon','Render: {style}',{style:renderLabels[style]}), hint:String(i+1),
         keywords:'render style material '+style,
         r: style==='rendered' ? 'present' : null,
         onSelect:function(){ d({t:A.UPD_PREFS,u:{renderStyle:style}}); }});
     });
     // Tools
-    push({group:'Tools', label:'Section by surface',
+    push({group:_cc_t('cmdk.group.tools','Tools'), label:_cc_t('cmdk.sectionBySurface','Section by surface'),
       keywords:'section cut slice plane clip',
       onSelect:function(){ d({t:A.SECTION_CUSTOM,v:!s.sectionCustomActive}); }});
-    push({group:'Tools', label:'Section box',
+    push({group:_cc_t('cmdk.group.tools','Tools'), label:_cc_t('cmdk.sectionBox','Section box'),
       keywords:'section box clip volume',
       onSelect:function(){ d({t:A.SECTION_BOX,v:!s.sectionBoxActive}); }});
-    push({group:'Tools', label:'Measure distance',
+    push({group:_cc_t('cmdk.group.tools','Tools'), label:_cc_t('cmdk.measureDistance','Measure distance'),
       keywords:'measure distance dimension',
       onSelect:function(){ d({t:A.MEASURE_MODE,v:s.measureMode==='distance'?null:'distance'}); }});
-    push({group:'Tools', label:'Measure angle',
+    push({group:_cc_t('cmdk.group.tools','Tools'), label:_cc_t('cmdk.measureAngle','Measure angle'),
       keywords:'measure angle',
       onSelect:function(){ d({t:A.MEASURE_MODE,v:s.measureMode==='angle'?null:'angle'}); }});
-    push({group:'Tools', label:'Add comment pin',
+    push({group:_cc_t('cmdk.group.tools','Tools'), label:_cc_t('cmdk.addCommentPin','Add comment pin'),
       keywords:'note comment pin annotation pin',
       onSelect:function(){ d({t:A.COMMENT_MODE,v:!s.commentMode}); }});
     // Visibility checks — third clash category (sight-line obstruction
@@ -27643,8 +27643,8 @@ function startApp() {
     if (typeof window._ccVisibilityPresets === 'function') {
       (window._ccVisibilityPresets() || []).forEach(function(preset){
         var isCoverage = preset.mode === 'coverage';
-        var label = (isCoverage ? 'Coverage check: ' : 'Visibility check: ') + (preset.sampleId || preset.key);
-        push({group:'Visibility', label: label,
+        var label = (isCoverage ? _cc_t('cmdk.coverageCheckPrefix','Coverage check: ') : _cc_t('cmdk.visibilityCheckPrefix','Visibility check: ')) + (preset.sampleId || preset.key);
+        push({group:_cc_t('cmdk.group.visibility','Visibility'), label: label,
           keywords:(isCoverage?'coverage gap surveillance ':'visibility sight line obstruction ') + (preset.sampleId||''),
           onSelect:function(){
             if (window._ccToast) window._ccToast('Running ' + (isCoverage?'coverage':'visibility') + ' check: ' + (preset.sampleId||preset.key) + '…');
@@ -27668,48 +27668,48 @@ function startApp() {
       });
     }
     // Panels & tabs
-    push({group:'Panels', label:'Open Conflicts',
+    push({group:_cc_t('cmdk.group.panels','Panels'), label:_cc_t('cmdk.openConflicts','Open Conflicts'),
       keywords:'conflicts clashes issues list', r:'coordinate',
       onSelect:function(){ d({t:A.TAB,v:'clashes'}); }});
-    push({group:'Panels', label:'Open Issues',
+    push({group:_cc_t('cmdk.group.panels','Panels'), label:_cc_t('cmdk.openIssues','Open Issues'),
       keywords:'issues bcf reports tickets', r:'coordinate',
       onSelect:function(){ d({t:A.TAB,v:'issues'}); }});
-    push({group:'Panels', label:'Open Navigator',
+    push({group:_cc_t('cmdk.group.panels','Panels'), label:_cc_t('cmdk.openNavigator','Open Navigator'),
       keywords:'navigator tree elements explorer browse',
       onSelect:function(){ d({t:A.TAB,v:'navigator'}); }});
-    push({group:'Panels', label:'Open Integrations',
+    push({group:_cc_t('cmdk.group.panels','Panels'), label:_cc_t('cmdk.openIntegrations','Open Integrations'),
       keywords:'integrations addons plugins modules revit bridge engine connector ai',
       onSelect:function(){ d({t:A.TAB,v:'addons'}); }});
-    push({group:'Panels', label:'Run detection / Open rules',
+    push({group:_cc_t('cmdk.group.panels','Panels'), label:_cc_t('cmdk.runDetectionOpenRules','Run detection / Open rules'),
       keywords:'detection clash rules standards ids run setup compliance',
       onSelect:function(){ d({t:A.SHOW_RUN_MODAL,v:true}); }});
-    push({group:'Panels', label:'Toggle Models panel',
+    push({group:_cc_t('cmdk.group.panels','Panels'), label:_cc_t('cmdk.toggleModelsPanel','Toggle Models panel'),
       keywords:'models files ifc list panel',
       onSelect:function(){ try{ if(window._ccToggleModelsPanel) window._ccToggleModelsPanel(); }catch(e){} }});
-    push({group:'Panels', label:'Toggle Inspector',
+    push({group:_cc_t('cmdk.group.panels','Panels'), label:_cc_t('cmdk.toggleInspector','Toggle Inspector'),
       keywords:'inspector details properties drawer',
       onSelect:function(){ d({t:A.INSPECTOR_OPEN,v:!s.inspectorOpen}); }});
     // Files
-    push({group:'Files', label:'Open IFC or GLB file…',
+    push({group:_cc_t('cmdk.group.files','Files'), label:_cc_t('cmdk.openIfcOrGlb','Open IFC or GLB file…'),
       keywords:'open file load import ifc glb',
       onSelect:function(){ try{ if(window._ccOpenIFC) window._ccOpenIFC(); }catch(e){} }});
     // Modals & global
-    push({group:'Project', label:'Run clash detection',
+    push({group:_cc_t('cmdk.group.project','Project'), label:_cc_t('run.runDetection','Run detection'),
       keywords:'detect run clashes coordination check find', r:'coordinate',
       onSelect:function(){ try{ if(window._ccRunDetection) window._ccRunDetection(); }catch(e){} }});
-    push({group:'Project', label:'Share project',
+    push({group:_cc_t('cmdk.group.project','Project'), label:_cc_t('cmdk.shareProject','Share project'),
       keywords:'share collaboration team url link invite send',
       onSelect:function(){ d({t:A.SHARE,v:true}); }});
-    push({group:'Project', label:'Smart Views',
+    push({group:_cc_t('cmdk.group.project','Project'), label:_cc_t('toolbar.smartViews','Smart Views'),
       keywords:'smart views saved viewpoints presets', r:'present',
       onSelect:function(){ d({t:A.SMART_VIEWS,v:true}); }});
-    push({group:'Project', label:'Settings',
+    push({group:_cc_t('cmdk.group.project','Project'), label:_cc_t('cmdk.settings','Settings'),
       keywords:'settings preferences config options',
       onSelect:function(){ d({t:A.SETTINGS,v:true}); }});
-    push({group:'Project', label:'Keyboard shortcuts', hint:'?',
+    push({group:_cc_t('cmdk.group.project','Project'), label:_cc_t('shortcuts.title','Keyboard shortcuts'), hint:'?',
       keywords:'shortcuts keyboard hotkeys help',
       onSelect:function(){ try{ window.dispatchEvent(new CustomEvent('cc-show-shortcuts')); }catch(e){} }});
-    push({group:'Project', label:'Toggle theme (light / dark)',
+    push({group:_cc_t('cmdk.group.project','Project'), label:_cc_t('cmdk.toggleTheme','Toggle theme (light / dark)'),
       keywords:'theme light dark mode color',
       onSelect:function(){
         try {
@@ -27720,7 +27720,7 @@ function startApp() {
           window.dispatchEvent(new CustomEvent('cc-theme-changed',{detail:next}));
         } catch(e){}
       }});
-    push({group:'Assistant', label:'Open AI chat panel',
+    push({group:_cc_t('cmdk.group.assistant','Assistant'), label:_cc_t('cmdk.openAIChatPanel','Open AI chat panel'),
       keywords:'ai assistant chat ask conversation gemma',
       onSelect:function(){ try{ if(window._ccOpenAIPanel) window._ccOpenAIPanel(); }catch(e){} }});
 
@@ -27764,7 +27764,7 @@ function startApp() {
           return aL.localeCompare(bL);
         })
       : cmds;
-    var askEntry = qLow ? {group:'Assistant', label:'Ask the assistant', desc:q, isAsk:true,
+    var askEntry = qLow ? {group:_cc_t('cmdk.group.assistant','Assistant'), label:_cc_t('cmdk.askTheAssistant','Ask the assistant'), desc:q, isAsk:true,
       onSelect:function(){
         try {
           if(window._ccOpenAIPanel) window._ccOpenAIPanel();
@@ -27797,15 +27797,15 @@ function startApp() {
       <div class="cc-modal-card" style=${{...S_MODAL_CARD,width:560,maxHeight:'70vh',display:'flex',flexDirection:'column'}} onClick=${function(e){e.stopPropagation();}}>
         <div style=${{padding:'var(--space-3) var(--space-4)',borderBottom:'1px solid var(--border-subtle)',display:'flex',alignItems:'center',gap:'var(--space-3)'}}>
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--text-muted)" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
-          <input ref=${inputRef} type="text" id="cc-cmdk-title" aria-label="Command or question"
-            placeholder="Type a command or ask anything…"
+          <input ref=${inputRef} type="text" id="cc-cmdk-title" aria-label=${_cc_t('cmdk.commandOrQuestion','Command or question')}
+            placeholder=${_cc_t('cmdk.typeCommandOrAsk','Type a command or ask anything…')}
             value=${q} onInput=${function(e){ setQ(e.target.value); }}
             onKeyDown=${onKey}
             style=${{flex:1,background:'none',border:'none',outline:'none',color:'var(--text-primary)',fontSize:'var(--text-md)',fontFamily:'var(--font-body)',lineHeight:'var(--leading-base)'}} />
-          <span style=${{fontFamily:'var(--font-mono)',fontSize:'var(--text-2xs)',color:'var(--text-muted)',padding:'2px 6px',border:'1px solid var(--border)',borderRadius:'var(--radius-xs)',whiteSpace:'nowrap'}}>Esc</span>
+          <span style=${{fontFamily:'var(--font-mono)',fontSize:'var(--text-2xs)',color:'var(--text-muted)',padding:'2px 6px',border:'1px solid var(--border)',borderRadius:'var(--radius-xs)',whiteSpace:'nowrap'}}>${_cc_t('cmdk.esc','Esc')}</span>
         </div>
         <div style=${{flex:1,overflowY:'auto',padding:'var(--space-2) 0'}}>
-          ${list.length === 0 ? html`<div style=${{padding:'var(--space-5)',textAlign:'center',color:'var(--text-muted)',fontSize:'var(--text-sm)'}}>No matches. Press Enter to ask the assistant.</div>` : null}
+          ${list.length === 0 ? html`<div style=${{padding:'var(--space-5)',textAlign:'center',color:'var(--text-muted)',fontSize:'var(--text-sm)'}}>${_cc_t('cmdk.noMatches','No matches. Press Enter to ask the assistant.')}</div>` : null}
           ${rows.map(function(r){
             if (r.type === 'header') {
               return html`<div key=${r.key} style=${{padding:'var(--space-2) var(--space-4) var(--space-1)',fontFamily:'var(--font-mono)',fontSize:'var(--text-2xs)',fontWeight:'var(--weight-bold)',color:'var(--text-muted)',textTransform:'uppercase',letterSpacing:'.08em'}}>${r.group}</div>`;
@@ -27835,9 +27835,9 @@ function startApp() {
           })}
         </div>
         <div style=${{padding:'var(--space-2) var(--space-4)',borderTop:'1px solid var(--border-subtle)',display:'flex',alignItems:'center',gap:'var(--space-3)',fontSize:'var(--text-2xs)',color:'var(--text-muted)',fontFamily:'var(--font-mono)',letterSpacing:'.04em'}}>
-          <span><span style=${{color:'var(--text-secondary)'}}>↑↓</span> navigate</span>
-          <span><span style=${{color:'var(--text-secondary)'}}>↵</span> run</span>
-          <span style=${{marginLeft:'auto'}}>${list.length} match${list.length===1?'':'es'}</span>
+          <span><span style=${{color:'var(--text-secondary)'}}>↑↓</span> ${_cc_t('cmdk.navigate','navigate')}</span>
+          <span><span style=${{color:'var(--text-secondary)'}}>↵</span> ${_cc_t('cmdk.run','run')}</span>
+          <span style=${{marginLeft:'auto'}}>${_cc_t('cmdk.matchCount','{n} match{es}',{n:list.length,es:list.length===1?'':'es'})}</span>
         </div>
       </div>
     </div>`;
