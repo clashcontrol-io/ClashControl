@@ -45,7 +45,7 @@ test('IssueRow declares local occluder-reveal state and a cleanup effect keyed o
 
 test('the toggle button calls _ccHideOccluders with the clash point and elemA/elemB/elementId as excludeEids', () => {
   const rowSrc = issueRowSrc();
-  const btnStart = rowSrc.indexOf('aria-label="Toggle occluder reveal"');
+  const btnStart = rowSrc.indexOf("aria-label=${_cc_t('issueRow.toggleOccluderAria'");
   assert.ok(btnStart !== -1, 'occluder-reveal button not found');
   const nearby = rowSrc.slice(Math.max(0, btnStart - 1200), btnStart + 100);
   assert.ok(/var excl=\[it\.elemA,it\.elemB,it\.elementId\]\.filter/.test(nearby));
@@ -55,7 +55,7 @@ test('the toggle button calls _ccHideOccluders with the clash point and elemA/el
 
 test('the button only renders for clashes with a known point, and guards on window._ccHideOccluders existing', () => {
   const rowSrc = issueRowSrc();
-  const btnStart = rowSrc.indexOf('aria-label="Toggle occluder reveal"');
+  const btnStart = rowSrc.indexOf("aria-label=${_cc_t('issueRow.toggleOccluderAria'");
   const conditionStart = rowSrc.lastIndexOf('${isClash && it.point', btnStart);
   assert.ok(conditionStart !== -1 && conditionStart < btnStart);
   const condition = rowSrc.slice(conditionStart, btnStart);

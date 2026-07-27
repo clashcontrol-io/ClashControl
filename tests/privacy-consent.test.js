@@ -57,7 +57,7 @@ test('only an explicit allow enables sharing and changes remain reversible', () 
 test('the banner is wired to explicit consent instead of a seeded default', () => {
   assert.match(html, /return !_ccConsentIsExplicit\(\);/);
   assert.doesNotMatch(html, /_ccSeedDefaultConsent/);
-  assert.match(html, />Allow sharing<\/button>/);
+  assert.match(html, /_cc_t\('privacyBanner\.allowSharing','Allow sharing'\)/);
   assert.match(html, /window\._ccLoadAnalytics/);
   assert.doesNotMatch(html, /<script data-goatcounter=/);
 });

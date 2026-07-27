@@ -343,12 +343,244 @@ modal: all titles, From Clash/Linked Element context, every form label/placehold
 Cancel/Create buttons.~~ (all 2026-07-23) `locales/ja.json` kept in sync with every newly-wired key
 each slice — updating tests/dq-reconciliation-wiring.test.js's literal-adjacency assertions once,
 where `_cc_t()`-wrapping changed the exact source shape a wiring test checked against.
-**Remaining (long tail, can proceed independently in future sessions):** Settings modal's other
-tabs (Measurement/Walk/Privacy/Shared/AI/Advanced), Share modal, Smart Views modal, sidebar/Models
-panel, Standards/Tools/Integrations panels, and the rest of `index.html`.
-**Still to do (long tail, can proceed independently):** rest of IssuePanel's filter controls
-(Discipline/Floor/Distance/Priority/Category/Assignee dropdowns, empty states), then Data
-Quality/Accessibility panels, then the rest of `index.html` — each its own reviewable commit.
+
+**Split into its own PR partway through**, per explicit direction: PR #708 now covers just the
+foundational scaffold (tasks above through the New Issue modal commit); further retrofit work moved
+to a NEW branch `claude/i18n-string-retrofit` / **PR #709**, based on `claude/japanese-localization-
+request-eleplc` (stacked — retarget to `main` once #708 merges, since this code calls `_cc_t()`
+which only exists once #708 lands). PR #709 so far: ~~Settings → Measurement tab in full (units,
+precision, magnifier, calibrate).~~ ~~Settings → Walk mode tab in full (eye height, sensitivity,
+invert Y, collision, head-bob, footsteps).~~ ~~Settings → Privacy tab in full (anon data sharing,
+annotation buttons, recorded-data count summary with separate singular/plural keys — `_cc_t` has no
+plural rules — send/delete buttons, browser-storage usage + per-project rows, geometry cache).~~
+(all 2026-07-23)
+**#709 showing zero CI runs is NOT the same synchronize-event flake as #708** — root-caused it:
+`ci.yml`'s trigger is `pull_request: branches: [main]`, i.e. it only fires for PRs whose BASE is
+`main`. #709's base is deliberately the feature branch (stacked on #708), so `ci.yml` correctly
+never runs here — no empty-commit nudge fixes this, that only ever worked for #708 (base=main).
+This is an expected consequence of the stacked-PR structure, not an infra problem — resolves itself
+once #709 is retargeted to `main` after #708 merges. (The #708 `synchronize`-not-firing flake
+earlier in this doc is real and separate — that one genuinely is a maintainer-follow-up item.)
+PR #709 continued (all 2026-07-23): ~~Share modal Overview tab in full (header, Quick Share key
+display/copy/leave/edit-access warning, create/join forms, folder-sync instructions + connected
+state + link/sync/unlink, FS API unavailable notice, Recent collaborators).~~ ~~Smart Views modal
+in full (presets, saved views + capture, empty state, send-to-client card).~~ ~~Standards panel
+(Detection Rules header, export/import, default clearance/max gap, IFC type-pair rules section,
+discipline-pair rules section, Assignment rules subsection — updated
+tests/assignment-rules-wiring.test.js's literal-text anchor to match the `_cc_t()`-wrapped
+source).~~ ~~Tools panel in full (Section/Clipping, Markers, Export flyout, Import).~~
+~~Integrations panel top-level chrome (intro, empty state, Enable/Disable, Built-in/Always-on
+badges, Revit connection status line).~~
+PR #709 continued (2026-07-23, after the "keep going — EVERYTHING" instruction): ~~Settings modal's
+Shared/AI/Advanced tabs.~~ ~~Share modal Comments tab (`ShareCommentsTab` + `ShareCommentDraft`).~~
+~~Integrations panel's deep per-addon expanded states (Revit Bridge: Cancel/Pull/Update/Push/
+Disconnect/Connect, linked-models option, Show all integrations).~~ ~~`ModelSidebar` in full: header/
+count, Add/Loading button, empty state, Parked models section + confirm dialog, Auto-park toggle, 2D
+Underlays header, Geo Placement (Clear/Place from CRS/Use IfcSite/Enter lat-lon/Remove 3D context),
+Reference Layers (Size/Opacity labels), Levels section (All on/All off/Show-Hide level/Exit-Open
+plan). PDOK/ion/Google 3D-tiles provider button labels left untranslated on purpose — proper nouns /
+a Dutch-specific service name, not generic UI text.~~ ~~`RunDetectionModal` in full (title, close
+aria, placement-check warning, project-standards disclosure, footer hint, Run/Stop buttons).~~
+~~`ClashRulesPanel` in full: all 6 quick-run preset label/note/desc triples, Saved presets row (Save/
+Cancel/name placeholder/Load/Load & Run/Delete), all 3 detection-type radio labels+descriptions, gap
+threshold labels, filtering-options toggles (×3) with descriptions, Check-within / ignore-overlaps-
+smaller-than labels, engine selector (ClashControlEngine/WASM/Browser labels+hints), Run/Stop
+Detection buttons.~~ (all 2026-07-23) `locales/ja.json` kept in sync every slice; all 801 tests green
+throughout.
+~~`ModelClashMatrix` in full (title/tooltip, Minor/Critical legend — also fixed a pre-existing bug
+where the legend showed hardcoded Dutch "Klein"/"Kritiek" in an otherwise-English UI, table header,
+filter tooltips).~~ ~~`ClashHistory` in full (field labels, relative-time formatting, anonymous/
+Ran-detection/Created-issue strings).~~ ~~`ClashToleranceEditor` in full (clearance label, Expected
+clash checkbox, Update/Add-standard prompt + buttons).~~ ~~`IssueRow` in full: NEW/AUTO/AI badges +
+tooltips, note-summary tooltip, distance "touching", self/expected/needs-check pills, all
+Confirm/Deny/Accept·Check/occluder-toggle/Collapse button labels+aria-labels, Assign field, the
+whole "Train the AI" panel (verdict/clash-type/reason/resolution chip sets, feedback summary rows),
+Assigned/Due/Category footer lines — updated `tests/clash-status-hotkeys.test.js` and
+`tests/occluder-reveal-wiring.test.js`'s literal `aria-label="..."` anchors to the new
+`_cc_t('key',...)` call shape.~~ ~~Walk-mode components in full: `WalkModeHUD` (help panel, more-
+settings panel, bookmarks, HUD bar, toasts, speed-label text), `WalkPegmanLayer` (drop-in nudge +
+button), `WalkSplineRecorder` (cinematic path controls + flash messages), `WalkClashRadar` (count +
+radius labels), `WalkMinimap` (alt text). `WalkTouchJoystick` has no visible text — skipped.~~ (all
+2026-07-27)
+~~`PresentationOverlay` in full (brand-logo alt text, Presenting label, prev/next slide + auto-advance
+tooltips, no-viewpoints hint, logo add/remove, Exit button, hotkey hint).~~ ~~`StoreyScopeModal` in
+full (title, file-storey-count blurb, truncated-file warning, Load-all-storeys / auto-complete-rest
+checkboxes, Cancel/Load-N-selected buttons).~~ ~~`ShortcutsModal` in full — every one of its ~50
+shortcut description strings across General/Mouse/View/Navigator/Clash-triage/Walk-mode/
+Presentation sections, rewritten via a whole-array swap (kept the `[key, description]` shape, wrapped
+every description in `_cc_t()`).~~ ~~`LoadProgressCard` in full (default phase text, all 11 rotating
+slow-load flavor messages, Cancel button, elapsed-seconds label).~~ ~~`StoreyPickerModal` in full
+(title, model-units line).~~ ~~`SheetToolbarControls` in full (alerts, confirm-delete, no-sheet
+option, all toolbar button labels+tooltips, the whole Sheet Settings flyout — section plane, paper &
+scale, orientation, title block headers; per-field title-block labels like "Project"/"Author" left
+untranslated since they're derived via JS `charAt(0).toUpperCase()` from object keys, not literal
+strings).~~ ~~`MemoryWarningModal`'s on-screen UI in full (header, memory-usage sentence, help blurb,
+textarea label+placeholder, all 5 "data included" checkboxes, Send/Dismiss buttons) — the generated
+GitHub issue *body* text (`onSend`'s `lines.push(...)` calls) deliberately left in English on
+purpose, since that content goes to `github.com/clashcontrol-io/ClashControl/issues` where
+English-speaking maintainers triage it, not to the end user's screen.~~ (all 2026-07-27)
+CmdKPalette / `_ccBuildCommands` deliberately deferred — its command list (workspace switches, view
+tools, section/measure tools, visibility-check presets, etc.) is very large (~100+ label/keyword
+pairs) and lower priority than user-facing panels; flagged as the next big target.
+~~`ExportBar` in full (all alert() messages, 2D Export header, DXF/PNG/PDF/SVG button labels, footer
+hint text).~~ ~~`ClashSetupCard` (embedded in NL chat) in full: All-models/discipline-models option
+labels, card title, self-clash-mode banner, Set A/Set B labels, all 3 clash-type radio
+labels+descriptions (reusing `run.*` keys from `ClashRulesPanel`/`RunDetectionModal` where
+identical), gap-range/max-gap label, filtering toggles, check-within/ignore-overlaps labels, exclude-
+IFC-types disclosure, Cancel/Run Detection buttons.~~ ~~`NLCommandPanel`'s primary visible chat UI:
+greeting message, new-project-loaded message, detection-stopped/found-N-clashes result messages, all
+11 rotating "still running" flavor status lines (both docked and floating render paths — deduped via
+a whole-string swap that verified exact match count first), Stop/Send buttons, input placeholder,
+Thinking/Clear-chat-history/Model-loading text.~~ NLCommandPanel's deep internal NL command-parsing
+logic (the giant regex-based offline-command interpreter later in the same function) deliberately
+NOT touched this pass — it's ~600 more lines of matching logic, not primraily user-facing chrome;
+flagged as a future target alongside CmdKPalette. (all 2026-07-27)
+~~`LeftRail` inspected — confirmed dead code (unconditional `return null` as its first statement,
+everything after unreachable); no retrofit needed, left as-is.~~ ~~`PrivacyBanner` in full (help-
+improve sentence, minimised-metrics bold span, never-uploaded disclaimer, No-thanks/Allow-sharing
+buttons).~~ ~~`OperationCenter` in full (Checking-for-clashes / Loading-model / Reconnecting-Pulling-
+from-Revit labels, slow-load detail hints, pending-count, Cancel button) — fixed
+`tests/privacy-consent.test.js`'s literal `>Allow sharing</button>` anchor to match the new
+`_cc_t()`-wrapped call.~~ ~~`ClashChips` fallback title ("Clash {id}").~~ ~~`GlobalDropZone`'s two
+alert() messages (file-load failure, point-cloud-addon-failed).~~ ~~`FolderWatchBadge` in full
+(Watching label, Stop-watching tooltip).~~ ~~`WelcomePopup` in full — the app's first-run landing
+screen: version tagline, Drop-the-file/Open-a-model headline, subtitle + drag hint, all 4 action rows
+(Choose a file/Open from URL/Watch a folder/Live link to Revit + their sublabels), URL input
+placeholder + Load button, failed-URL-load alert, tour/shared-folder footer links, IFC explainer
+paragraph.~~ (all 2026-07-27)
+~~`WorkspaceTabs` in full (Present/Review/Coordinate tab labels, + Add popover — 3D model/2D drawing/
+Point cloud·splat/Live from Revit/Shared folder/Watch a folder rows + sublabels).~~ ~~`AvatarMenu` in
+full (new-project prompt, account/settings aria-label, local-user fallback, Open model, Project
+section header, rename/delete aria-labels + Delete? confirm, +New project, Integrations flyout +
+its 3 addon names + connected/on hints, Theme/Settings/Install/Search/Enter-presentation/Keyboard-
+shortcuts rows).~~ ~~`ResponsiveToolGroup`'s "More tools" button (aria-label + title).~~
+~~`DesktopTopBar`'s Share button (tooltip + label; wordmark "ClashControl" left as brand name).~~
+~~`TopToolbar` in full — the persistent icon ribbon under the top bar: render-style cluster (Shaded/
+Hidden Line/Rendered/X-Ray), camera cluster (Orbit/Walk/2D plan/Toggle projection), Fit-all/Reset-
+view, section cluster (Make Section/Section Box/Clear Section/section-hatch tooltip), measure-modes
+caret tooltip, notes cluster (Pin/Markup/Compare/Export PDF/Record-Stop recording), viewpoints
+cluster (Save viewpoint/Smart Views/Presentation), Coordinate-workspace cluster (Run clash
+detection/Conflicts/Issues/Detection rules/Navigator), Review-workspace cluster (Run data quality/
+Data Quality/Accessibility/Navigator/Diagnostics), Models button, sun/ambient/exposure/shadow
+lighting-panel labels, Home-view-options and Cmd/Ctrl+K search tooltips — ~70 new keys, the single
+largest retrofit batch this session.~~ (all 2026-07-27)
+~~`MobileNav` in full (search button, all 4 nav items — Models/Conflicts/Issues/Navigator — with
+badges, nav aria-label).~~ ~~`RevitBridgePanel`'s primary simple-dialog UI: header title, connector-
+update banner, idle/connecting/loading/connected/failed connection-phase copy (including the
+troubleshoot checklist), Cancel/Retry/Pull/Re-pull/Done/Get-installer buttons, Advanced-settings
+toggle, Direct-Connector/AI-Bridge tab labels.~~ The Advanced tab's deeper settings (WebSocket port
+config, AI Bridge provider/key/host fields, sync log) intentionally NOT touched — lower priority,
+behind an explicit opt-in toggle most users never open. (all 2026-07-27)
+~~`IDSValidationPanel` in full: validate-description subtitle, Built-in Rule Sets / Custom IDS File
+headers, loaded-specs count, Validating/Run Validation button, Pass/Fail/Total summary chips,
+partially-checked footnote, Hide/Show Failures + Highlight-in-3D + Clear-Highlight + HTML-Report
+buttons, severity filter chips (All/Error/Warning/Info), "+N more results" footer. BCF 2.1/3.0
+export button labels left untranslated on purpose — standard format identifiers, not prose (same
+treatment as PDF/DXF elsewhere).~~ (2026-07-27)
+~~`PropBlock`/`PropDiffView`/`ClashProps` in full: field labels (Type/Name/Object Type/Storey/
+Material/GlobalId/Express ID/Quantities), diff-count summary line, ID-chip copy tooltips
+(Revit-ID/expressId variants), clash-number copy tooltip, Zoom/Zoom A/Zoom B/Zoom Both/Box buttons +
+their section-box tooltips, Element Properties disclosure, Element/Element A/Element B labels.~~
+(2026-07-27)
+~~`ColorLegend` in full (byType/byStorey/byDiscipline/byMaterial view labels, "+N more" footer).~~
+~~`GuidedTour`'s UI chrome (Step N of M, Skip tour, Back, Next/Finish) — `TOUR_STEPS`' own per-step
+title/text prose deliberately left untranslated, same "long-form onboarding content" call as
+`TutorialPortal`'s numbered how-to steps and roadmap paragraphs earlier this session.~~
+~~`ViewCube` inspected — its FRONT/BACK/RIGHT/LEFT/TOP/BOTTOM face labels are baked into fixed-size
+canvas textures via `ctx.fillText`, not React strings; left untranslated on purpose (translated
+words would risk overflow/clipping at the fixed 128×128 texture size, and these read as a CAD-
+convention axis label a Japanese BIM user would recognize regardless, same treatment as the numeric
+Home/keyboard shortcuts).~~ (2026-07-27)
+~~`SectionBoxUI` in full (toggle button on/off states, drag-corner/rotate-ring hint, Corner/Rotate
+legend, Reset Rotation button).~~ ~~`ModelCard` in full (stub badge, partial-load tooltip+badge,
+park tooltip, remove-confirm prompt, Tag/Colour fields+placeholders, tag-usage hint, Version Diff
+header, added/removed/modified/unchanged chips + legend, Show/Clear Diff buttons, levels-count
+footer).~~ ~~`NavigatorPanel` in full: the 6 view-mode tabs (Hierarchy/Flat list/IFC Type/Storey/
+Discipline/Material) + their tooltips, Expand/Collapse aria-labels, Show-all/Hide-all, spatial-tree
+aria-labels, Default Site/Building/Project/Site/Building hierarchy labels, Expand-all/Collapse-all,
+color-by-classification tooltip, empty states, Compare-selected header, the whole Selection Sets
+block (name prompt, rename prompt+tooltip, no-saved-sets empty state, Isolate/Highlight/+/−/Delete
+per-set buttons), and the whole Search Sets block (+New/Cancel, name placeholder, live-match-count
+text, filter-required alert, default search name, Update/Save button, no-saved-searches empty
+state).~~ (2026-07-27)
+~~`VirtualList`'s user-facing strings: Resolve-all-open-in-group confirm, Triage/Re-triage/Triaging
+button, real-clash/false-positive/clear-feedback tooltips, same-discipline-skipped nudge banner +
+its re-run button, Run-detection/Clear-filters/Show-models empty-state action buttons, Resolve-all
+button, Resolution-options header.~~ ~~`AIChatPanel`'s Measure tab and Details tab UI chrome:
+group-title labels (Distances/Angles/Areas/Element quantities/Clearances), Units & precision
+tooltip, all 5 per-mode instruction hints, Takeoff filter header + Run/Export-CSV buttons + result
+lines, no-measurements-yet empty state, rename prompt + click-to-fly tooltip, promote-to-rule/
+Show-Hide/Delete tooltips, Export-CSV/Clear-all buttons, copy-to-clipboard tooltip, click-element-
+for-details empty state, Size (bounding box) header, derived-from-geometry note. Deliberately did
+NOT touch the surrounding property/pset NAME arrays (`'Base Constraint'`, `'IsExternal'`,
+`'LoadBearing'`, etc.) — those are literal IFC/Revit parameter-name lookup keys matched against
+model data, not display prose; translating them would silently break property matching.~~
+(2026-07-27)
+~~`CmdKPalette` in full — every command in `_ccBuildCommands`: all 8 group headers (Workspace/View/
+Rendering/Tools/Visibility/Panels/Files/Project/Assistant), every command label (Switch to Present/
+Coordinate/Review, Fit to view, Toggle floor plan, Walk mode, Render: {style}, Section by surface,
+Section box, Measure distance/angle, Add comment pin, Coverage/Visibility check prefixes, Open
+Conflicts/Issues/Navigator/Integrations, Run detection / Open rules, Toggle Models panel/Inspector,
+Open IFC or GLB file, Share project, Smart Views, Settings, Keyboard shortcuts, Toggle theme, Open
+AI chat panel), plus the palette UI itself (Ask-the-assistant entry, command/question input
+placeholder+aria-label, Esc badge, no-matches empty state, navigate/run key hints, match-count
+footer). Search `keywords` deliberately left in English (they're internal fuzzy-match terms, not
+displayed) — an English or partial-label search still discovers every command regardless of active
+locale.~~ (2026-07-27)
+~~`RevitBridgePanel`'s Advanced tab in full: Direct Connector tab (WebSocket port label, Connect/
+Disconnect, connection-status line incl. reconnecting/auto-detected/not-connected states, excluded-
+models list + re-include, protocol-mismatch warning, reconnect-prompt Pull/Dismiss, Target Project
+label + hint, Export All/Push Clashes/Clear Highlights buttons, loading label, export-failed +
+Retry/Keep partial/Discard, Sync Settings checkboxes, connector-required footer + installer download
++ hint) and AI Bridge tab (AI Provider label + placeholder, API Key label, Save & Test/Push/Pull,
+"AI connected" status) plus the shared Log header/Clear button. Provider option names (Anthropic/
+OpenAI/Google) left untranslated as product names.~~ (2026-07-27)
+~~`NLCommandPanel`'s conversational reply text: the clash-setup dialogue engine (`_clashConverse`/
+`_askNext` — clarifying questions for hard/near-miss type, gap distance, same-model-vs-cross-model,
+the confirm summary with its type/self/extra clause builders, cancel/stopped replies), the AI-status
+backend label ("AI loaded"/"Coordinator"), the 4 correction-feedback buttons (Wrong models/gap/
+action, Gibberish), and the Copy message/Copied tooltip. Deliberately left untouched: the regex
+patterns themselves (`tl.match(...)`, `/\b(?:...)\b/i.test(tl)`) that parse the user's raw English
+input — translating those would require a locale-aware grammar, not a string swap, and is a
+fundamentally different (and much larger) undertaking than the rest of this retrofit; and the
+suggestion chips (`'Load an IFC file'`, `'Run clash detection'`, etc.) since clicking one calls
+`send(sug)`, feeding the literal English text straight into that same English-only parser —
+translating the chip label without also translating the parser would silently break the click.~~
+(2026-07-27)
+**Remaining (long tail, can proceed independently in future sessions):** whatever remains unnamed
+across the rest of the ~38.7k-line file — every component from the original explicitly-tracked
+retrofit-progress list has now been addressed at least once this session. Partial coverage stays safe
+by design (`_cc_t` falls back to the English string for any untranslated key, so the app never
+breaks); a future session can keep sweeping for stragglers without a fixed checklist to work from.
+
+~~Attribute sweep (2026-07-27): grepped the whole file for un-translated `title="..."`/
+`aria-label="..."`/`placeholder="..."` literals as a systematic way to catch stragglers the
+component-by-component pass missed. Found and fixed ~60: 3D viewport overlays (Compare Models
+slider, markup toolbar incl. Line/Arrow/Rectangle/Text label/Freehand tool names, perf stats panel,
+detection-profile panel, exit-3D-section, measurement/viewpoint delete + Save Viewpoint), project
+list rename/delete/confirm, the geoplace panel (IfcMapConversion tooltip, map nudge buttons, CRS
+step selectors, OSM Buildings via Cesium ion, height-step controls) and its point-cloud/splat/tiles
+alignment row (remove/remove-alignment/remove-proximity-colouring), the PWA install banner, the
+splat reference-layers panel, clash-results clear-all/triage-focus controls (incl. its confirm() and
+toast strings), RunDetectionModal's scope selector ("What do you want to check?", All↔All/By
+discipline/By model, Side A/B — this one had been missed by the earlier component pass despite
+RunDetectionModal being marked done), DataQualityPanel's Highlight-in-3D/Create-issue/Print
+report/Export CSV/Create-all-issues row, ClashRulesPanel's Assignment Rules sub-panel (discipline/
+storey/assignee/priority dropdowns, Add assignment rule) and Visibility & coverage checks header,
+Settings modal close/tablist aria-labels, NavigatorPanel row title, floating-panel open/close
+titles, the Workspace tablist and Viewer toolbar aria-labels, the command-palette launcher
+aria-label, the mobile theme toggle, Assign-to/shared-project-join-key placeholders, and
+NLCommandPanel's Good/Wrong-response + Reply-to-message tooltips. Two literal-text test anchors
+broke and were fixed in the same pattern as before:
+`tests/data-quality-report-wiring.test.js` (Print report / Export CSV button labels) and
+`tests/assignment-rules-wiring.test.js` (the "+ Add assignment rule" panel-boundary marker).
+Deliberately left alone: the static SEO `<nav aria-label="ClashControl pages">` (outside the React
+app — pre-boot HTML for crawlers/no-JS, not reachable by `_cc_t`) and the `placeholder="IfcWall"`
+takeoff-panel example (a technical IFC class-name example, not display prose). After this sweep, a
+repo-wide grep for capitalized `title=`/`aria-label=`/`placeholder=` string literals returns
+essentially nothing outside those two deliberate exceptions — the retrofit's low-hanging fruit is
+exhausted; anything left is either template-literal text inside `html\`...\`` markup (not caught by
+this attribute-only grep) or genuinely obscure.~~ (2026-07-27)
 
 **Park inactive models — memory relief (2026-07-22, branch `claude/clashcontrol-v7-release-plan-jp5njw`)** —
 diagnosed the "viewer stalls a few seconds" + "5.2 GB heap > 4.09 GB limit" reports as the SAME
