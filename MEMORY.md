@@ -387,9 +387,22 @@ threshold labels, filtering-options toggles (×3) with descriptions, Check-withi
 smaller-than labels, engine selector (ClashControlEngine/WASM/Browser labels+hints), Run/Stop
 Detection buttons.~~ (all 2026-07-23) `locales/ja.json` kept in sync every slice; all 801 tests green
 throughout.
-**Remaining (long tail, can proceed independently in future sessions):** `ModelClashMatrix`,
-`ClashHistory`, `ClashToleranceEditor`, `IssueRow`, Walk-mode components (`WalkPegmanLayer`/
-`WalkModeHUD`/`WalkSplineRecorder`/`WalkClashRadar`/`WalkMinimap`), `PresentationOverlay`,
+~~`ModelClashMatrix` in full (title/tooltip, Minor/Critical legend — also fixed a pre-existing bug
+where the legend showed hardcoded Dutch "Klein"/"Kritiek" in an otherwise-English UI, table header,
+filter tooltips).~~ ~~`ClashHistory` in full (field labels, relative-time formatting, anonymous/
+Ran-detection/Created-issue strings).~~ ~~`ClashToleranceEditor` in full (clearance label, Expected
+clash checkbox, Update/Add-standard prompt + buttons).~~ ~~`IssueRow` in full: NEW/AUTO/AI badges +
+tooltips, note-summary tooltip, distance "touching", self/expected/needs-check pills, all
+Confirm/Deny/Accept·Check/occluder-toggle/Collapse button labels+aria-labels, Assign field, the
+whole "Train the AI" panel (verdict/clash-type/reason/resolution chip sets, feedback summary rows),
+Assigned/Due/Category footer lines — updated `tests/clash-status-hotkeys.test.js` and
+`tests/occluder-reveal-wiring.test.js`'s literal `aria-label="..."` anchors to the new
+`_cc_t('key',...)` call shape.~~ ~~Walk-mode components in full: `WalkModeHUD` (help panel, more-
+settings panel, bookmarks, HUD bar, toasts, speed-label text), `WalkPegmanLayer` (drop-in nudge +
+button), `WalkSplineRecorder` (cinematic path controls + flash messages), `WalkClashRadar` (count +
+radius labels), `WalkMinimap` (alt text). `WalkTouchJoystick` has no visible text — skipped.~~ (all
+2026-07-27)
+**Remaining (long tail, can proceed independently in future sessions):** `PresentationOverlay`,
 `StoreyScopeModal`, `ShortcutsModal`, `LoadProgressCard`, `CmdKPalette`, `StoreyPickerModal`,
 `SheetToolbarControls`, `ExportBar`, `ClashSetupCard`, `NLCommandPanel`, `LeftRail`, `PrivacyBanner`,
 `OperationCenter`, `MemoryWarningModal`, `TutorialPortal`, `AIChatPanel`, `ClashChips`,
