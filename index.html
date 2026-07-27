@@ -19091,13 +19091,13 @@ function startApp() {
                    display:'flex', alignItems:'center', gap:'.55rem'}}>
       <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style=${{flexShrink:0}}><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
       <div style=${{flex:1, lineHeight:1.2}}>
-        <div style=${{fontSize:'.74rem', fontWeight:600, color:'var(--text-primary)'}}>Install as desktop app</div>
-        <div style=${{fontSize:'.66rem', color:'var(--text-muted)'}}>Offline, no browser tab, drag-drop IFC from Explorer.</div>
+        <div style=${{fontSize:'.74rem', fontWeight:600, color:'var(--text-primary)'}}>${_cc_t('pwa.installAsDesktopApp','Install as desktop app')}</div>
+        <div style=${{fontSize:'.66rem', color:'var(--text-muted)'}}>${_cc_t('pwa.installDesc','Offline, no browser tab, drag-drop IFC from Explorer.')}</div>
       </div>
       <button onClick=${function(){ if(window._ccPwaPromptInstall) window._ccPwaPromptInstall(); }}
         style=${{padding:'.3rem .7rem', borderRadius:'var(--radius-xs)', background:'var(--accent)', color:'#fff',
-                 fontWeight:600, fontSize:'.7rem', border:'none', cursor:'pointer', flexShrink:0}}>Install</button>
-      <button title="Dismiss for this session"
+                 fontWeight:600, fontSize:'.7rem', border:'none', cursor:'pointer', flexShrink:0}}>${_cc_t('pwa.install','Install')}</button>
+      <button title=${_cc_t('pwa.dismissForSession','Dismiss for this session')}
         onClick=${function(){ try { sessionStorage.setItem('cc_install_dismissed','1'); } catch(_){}; setShow(false); }}
         style=${{background:'transparent', border:'none', color:'var(--text-faint)', cursor:'pointer',
                  fontSize:'.8rem', padding:'0 .25rem', flexShrink:0}}>×</button>
@@ -19161,14 +19161,14 @@ function startApp() {
     if (!items.length) return null;
     return html`<div style=${{marginTop:'.3rem',borderTop:'1px solid var(--hairline)',paddingTop:'.3rem'}}>
       <div style=${{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:'.25rem',padding:'0 .2rem'}}>
-        <span style=${{fontSize:'.65rem',fontWeight:600,color:'var(--text-muted)',textTransform:'uppercase',letterSpacing:'.05em'}}>Reference Layers · Splats</span>
-        <button title="Unload all splats" onClick=${function(){ if(window._ccUnloadSplats) window._ccUnloadSplats(); }}
-          style=${{background:'transparent',border:'none',color:'var(--text-faint)',cursor:'pointer',fontSize:'.65rem',padding:'0 .2rem'}}>Clear all</button>
+        <span style=${{fontSize:'.65rem',fontWeight:600,color:'var(--text-muted)',textTransform:'uppercase',letterSpacing:'.05em'}}>${_cc_t('splat.referenceLayersHeader','Reference Layers · Splats')}</span>
+        <button title=${_cc_t('splat.unloadAll','Unload all splats')} onClick=${function(){ if(window._ccUnloadSplats) window._ccUnloadSplats(); }}
+          style=${{background:'transparent',border:'none',color:'var(--text-faint)',cursor:'pointer',fontSize:'.65rem',padding:'0 .2rem'}}>${_cc_t('splat.clearAll','Clear all')}</button>
       </div>
       ${items.map(function(it){
         return html`<div key=${it.id} style=${{display:'flex',alignItems:'center',gap:'.3rem',padding:'.2rem .35rem',borderRadius:'var(--radius-xs)'}}>
           <span style=${{flex:1,fontSize:'.72rem',color:'var(--text-secondary)',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}} title=${it.name}>${it.name}</span>
-          <button title="Unload" onClick=${function(){ if(window._ccUnloadSplats) window._ccUnloadSplats(it.id); }}
+          <button title=${_cc_t('splat.unload','Unload')} onClick=${function(){ if(window._ccUnloadSplats) window._ccUnloadSplats(it.id); }}
             style=${{background:'transparent',border:'1px solid var(--border)',color:'var(--text-faint)',cursor:'pointer',fontSize:'.65rem',padding:'.1rem .35rem',borderRadius:'var(--radius-xs)'}}>×</button>
         </div>`;
       })}
@@ -20103,7 +20103,7 @@ function startApp() {
                 if (focusOn) {
                   if (window._unghostAll) window._unghostAll();
                   window._ccTriageFocusActive = false;
-                  if (window._ccToast) window._ccToast('Triage focus off');
+                  if (window._ccToast) window._ccToast(_cc_t('clashResults.triageFocusOff','Triage focus off'));
                 } else {
                   // Collect refs (Mesh objects + instance refs) for every
                   // element involved in an open clash, across both sides.
@@ -20128,27 +20128,27 @@ function startApp() {
                       }
                     });
                   });
-                  if (!refs.length) { if (window._ccToast) window._ccToast('No open clashes to focus on'); return; }
+                  if (!refs.length) { if (window._ccToast) window._ccToast(_cc_t('clashResults.noOpenClashesToFocus','No open clashes to focus on')); return; }
                   window._ghostOthers(refs);
                   window._ccTriageFocusActive = true;
-                  if (window._ccToast) window._ccToast('Focusing on ' + Object.keys(seen).length + ' element' + (Object.keys(seen).length===1?'':'s') + ' in open clashes');
+                  if (window._ccToast) window._ccToast(_cc_t('clashResults.focusingOnNElements','Focusing on {n} element{s} in open clashes',{n:Object.keys(seen).length,s:Object.keys(seen).length===1?'':'s'}));
                 }
               }}
-              title="Hide all geometry except elements involved in open clashes. Pure visual — toggle off to restore."
+              title=${_cc_t('clashResults.hideGeometryTitle','Hide all geometry except elements involved in open clashes. Pure visual — toggle off to restore.')}
               style=${{...S_BTN,fontSize:'0.67rem',padding:'.15rem .4rem',background:focusOn?'var(--accent)':'none',color:focusOn?'#fff':'var(--accent)',border:'1px solid '+(focusOn?'var(--accent)':'var(--accent-subtle)'),fontWeight:focusOn?'var(--weight-semibold)':'var(--weight-regular)'}}>
-              ${focusOn ? 'Focus on' : 'Triage focus'}
+              ${focusOn ? _cc_t('clashResults.focusOn','Focus on') : _cc_t('clashResults.triageFocus','Triage focus')}
             </button>`;
           })()}
           <button onClick=${function(){
-              if (confirm('Clear all ' + totalCount + ' clash' + (totalCount===1?'':'es') + '? This frees their markers and memory but does not unload any models. You can re-run detection any time.')) {
+              if (confirm(_cc_t('clashResults.clearAllConfirm','Clear all {n} clash{es}? This frees their markers and memory but does not unload any models. You can re-run detection any time.',{n:totalCount,es:totalCount===1?'':'es'}))) {
                 d({t:A.SET_CLASHES, v:[]});
                 if (window._unghostAll && window._ccTriageFocusActive) { window._unghostAll(); window._ccTriageFocusActive = false; }
-                if (window._ccToast) window._ccToast('Cleared ' + totalCount + ' clashes');
+                if (window._ccToast) window._ccToast(_cc_t('clashResults.clearedNClashes','Cleared {n} clashes',{n:totalCount}));
               }
             }}
-            title="Remove all clash results (models stay loaded)"
+            title=${_cc_t('clashResults.removeAllResults','Remove all clash results (models stay loaded)')}
             style=${{...S_BTN,fontSize:'0.67rem',padding:'.15rem .4rem',background:'none',color:'var(--color-danger)',border:'1px solid var(--border)'}}>
-            Clear all
+            ${_cc_t('clashResults.clearAllBtn','Clear all')}
           </button>
         </div>`}
       </div>`;
@@ -20238,7 +20238,7 @@ function startApp() {
               ${i > 0 && html`<span style=${{color:'var(--text-faint)',marginRight:'.1rem'}}>+</span>`}
               ${_modelSelectLabel(id, models)}
               <button onClick=${function(ev){ev.preventDefault();removeId(id);}}
-                title="Remove"
+                title=${_cc_t('common.remove','Remove')}
                 style=${{background:'none',border:'none',color:'var(--text-muted)',cursor:'pointer',
                   fontSize:'0.75rem',lineHeight:1,padding:'0 0 0 .1rem'}}>×</button>
             </span>`;
@@ -20251,9 +20251,9 @@ function startApp() {
         ${addOptions.map(function(o){return html`<option key=${o.id} value=${o.id}>${o.label}</option>`})}
       </select>`}
       ${selected.length > 0 && html`<button onClick=${function(ev){ev.preventDefault();clearAll();}}
-        title="Clear (all models)"
+        title=${_cc_t('clashResults.clearAllModels','Clear (all models)')}
         style=${{background:'none',border:'none',color:'var(--text-faint)',cursor:'pointer',
-          fontSize:'0.62rem',padding:'.1rem .25rem',fontFamily:'inherit'}}>clear</button>`}
+          fontSize:'0.62rem',padding:'.1rem .25rem',fontFamily:'inherit'}}>${_cc_t('clashResults.clearLower','clear')}</button>`}
     </div>`;
   }
   function _modelSelect(value, field, models, d) {
@@ -20317,7 +20317,7 @@ function startApp() {
               ${i > 0 && html`<span style=${{color:'var(--text-faint)',marginRight:'.1rem'}}>+</span>`}
               ${label}
               <button onClick=${function(ev){ev.preventDefault();removeId(id);}}
-                title="Remove"
+                title=${_cc_t('common.remove','Remove')}
                 style=${{background:'none',border:'none',color:'var(--text-muted)',cursor:'pointer',
                   fontSize:'0.75rem',lineHeight:1,padding:'0 0 0 .1rem'}}>×</button>
             </span>`;
@@ -20330,9 +20330,9 @@ function startApp() {
         ${addOptions.map(function(o){return html`<option key=${o.id} value=${o.id}>${o.label}</option>`})}
       </select>`}
       ${selected.length > 0 && html`<button onClick=${function(ev){ev.preventDefault();clearAll();}}
-        title="Clear (no self-clashes)"
+        title=${_cc_t('clashResults.clearNoSelfClashes','Clear (no self-clashes)')}
         style=${{background:'none',border:'none',color:'var(--text-faint)',cursor:'pointer',
-          fontSize:'0.62rem',padding:'.1rem .25rem',fontFamily:'inherit'}}>clear</button>`}
+          fontSize:'0.62rem',padding:'.1rem .25rem',fontFamily:'inherit'}}>${_cc_t('clashResults.clearLower','clear')}</button>`}
     </div>`;
   }
 
