@@ -26553,27 +26553,27 @@ function startApp() {
     var fileRef = useRef(null);
 
     return html`<div class="cc-present-overlay"></div>
-      ${brand && html`\x3Cimg src=${brand} alt="Brand" style=${{position:'fixed',right:'1.1rem',bottom:'1.1rem',maxWidth:'160px',maxHeight:'80px',opacity:.65,zIndex:61,pointerEvents:'none',filter:'drop-shadow(0 2px 6px rgba(0,0,0,.5))'}} />`}
+      ${brand && html`\x3Cimg src=${brand} alt=${_cc_t('present.brandAlt','Brand')} style=${{position:'fixed',right:'1.1rem',bottom:'1.1rem',maxWidth:'160px',maxHeight:'80px',opacity:.65,zIndex:61,pointerEvents:'none',filter:'drop-shadow(0 2px 6px rgba(0,0,0,.5))'}} />`}
       <div class="cc-present-controls cc-present-show">
-        <span style=${{fontSize:'0.7rem',opacity:.7,letterSpacing:'.04em',textTransform:'uppercase',marginRight:'.4rem'}}>Presenting</span>
+        <span style=${{fontSize:'0.7rem',opacity:.7,letterSpacing:'.04em',textTransform:'uppercase',marginRight:'.4rem'}}>${_cc_t('present.presenting','Presenting')}</span>
         ${viewpoints.length>0 ? html`<${React.Fragment}>
-          <button onClick=${function(){step(-1);}} title="Previous slide (←)" style=${btnFaint}>‹</button>
+          <button onClick=${function(){step(-1);}} title=${_cc_t('present.previousSlide','Previous slide (←)')} style=${btnFaint}>‹</button>
           <span style=${{fontSize:'0.74rem',opacity:.9,fontVariantNumeric:'tabular-nums'}}>${vpIdx+1} / ${viewpoints.length}</span>
-          <button onClick=${function(){step(1);}} title="Next slide (→)" style=${btnFaint}>›</button>
+          <button onClick=${function(){step(1);}} title=${_cc_t('present.nextSlide','Next slide (→)')} style=${btnFaint}>›</button>
           <button onClick=${function(){setAutoplay(!autoplay);}}
-            title=${autoplay?'Pause auto-advance (Space)':'Auto-advance every 5.5s (Space)'}
+            title=${autoplay?_cc_t('present.pauseAutoAdvance','Pause auto-advance (Space)'):_cc_t('present.autoAdvance','Auto-advance every 5.5s (Space)')}
             style=${{...btnFaint,background:autoplay?'var(--accent)':btnFaint.background,fontWeight:600}}>
             ${autoplay?'❚❚':'▶'}
           </button>
-        </${React.Fragment}>` : html`<span style=${{fontSize:'0.74rem',opacity:.6}}>No viewpoints saved — use Save Viewpoint, then ← → to navigate</span>`}
+        </${React.Fragment}>` : html`<span style=${{fontSize:'0.74rem',opacity:.6}}>${_cc_t('present.noViewpoints','No viewpoints saved — use Save Viewpoint, then ← → to navigate')}</span>`}
         <span style=${{width:1,height:18,background:'rgba(255,255,255,.15)',margin:'0 .2rem'}}></span>
-        ${brand ? html`<button onClick=${clearLogo} style=${{...btnFaint,fontSize:'0.7rem'}} title="Remove brand logo">Logo ✕</button>`
-                : html`<button onClick=${function(){if(fileRef.current)fileRef.current.click();}} style=${{...btnFaint,fontSize:'0.7rem'}} title="Add brand logo (PNG)">+ Logo</button>`}
+        ${brand ? html`<button onClick=${clearLogo} style=${{...btnFaint,fontSize:'0.7rem'}} title=${_cc_t('present.removeLogo','Remove brand logo')}>${_cc_t('present.logoX','Logo ✕')}</button>`
+                : html`<button onClick=${function(){if(fileRef.current)fileRef.current.click();}} style=${{...btnFaint,fontSize:'0.7rem'}} title=${_cc_t('present.addLogo','Add brand logo (PNG)')}>${_cc_t('present.plusLogo','+ Logo')}</button>`}
         <input ref=${fileRef} type="file" accept="image/*" style=${{display:'none'}}
           onChange=${function(e){ if(e.target.files && e.target.files[0]) uploadLogo(e.target.files[0]); }} />
         <button onClick=${function(){d({t:A.PRESENT,v:false});}}
-          style=${{background:'rgba(239,68,68,.85)',border:'none',color:'#fff',cursor:'pointer',padding:'.3rem .7rem',borderRadius:6,fontSize:'0.78rem',fontWeight:600,marginLeft:'.4rem',fontFamily:'inherit'}}>Exit</button>
-        <span style=${{fontSize:'0.66rem',opacity:.55,marginLeft:'.4rem'}}>Esc / P · ← → · Space</span>
+          style=${{background:'rgba(239,68,68,.85)',border:'none',color:'#fff',cursor:'pointer',padding:'.3rem .7rem',borderRadius:6,fontSize:'0.78rem',fontWeight:600,marginLeft:'.4rem',fontFamily:'inherit'}}>${_cc_t('present.exit','Exit')}</button>
+        <span style=${{fontSize:'0.66rem',opacity:.55,marginLeft:'.4rem'}}>${_cc_t('present.hotkeyHint','Esc / P · ← → · Space')}</span>
       </div>`;
   }
 
