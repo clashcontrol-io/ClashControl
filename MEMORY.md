@@ -535,12 +535,23 @@ Retry/Keep partial/Discard, Sync Settings checkboxes, connector-required footer 
 + hint) and AI Bridge tab (AI Provider label + placeholder, API Key label, Save & Test/Push/Pull,
 "AI connected" status) plus the shared Log header/Clear button. Provider option names (Anthropic/
 OpenAI/Google) left untranslated as product names.~~ (2026-07-27)
-**Remaining (long tail, can proceed independently in future sessions):** `NLCommandPanel`'s deep
-regex-based offline-command-parsing logic (~600 lines, not primarily user-facing chrome), and
-whatever remains unnamed across the rest of the ~38.7k-line file. Partial coverage is safe by design
-(`_cc_t` falls back to the English string for any untranslated key, so the app never breaks) — every
-named component from the original retrofit-progress list has now been addressed at least once this
-session; only this one lower-priority, less-visible pocket remains from the explicitly-tracked list.
+~~`NLCommandPanel`'s conversational reply text: the clash-setup dialogue engine (`_clashConverse`/
+`_askNext` — clarifying questions for hard/near-miss type, gap distance, same-model-vs-cross-model,
+the confirm summary with its type/self/extra clause builders, cancel/stopped replies), the AI-status
+backend label ("AI loaded"/"Coordinator"), the 4 correction-feedback buttons (Wrong models/gap/
+action, Gibberish), and the Copy message/Copied tooltip. Deliberately left untouched: the regex
+patterns themselves (`tl.match(...)`, `/\b(?:...)\b/i.test(tl)`) that parse the user's raw English
+input — translating those would require a locale-aware grammar, not a string swap, and is a
+fundamentally different (and much larger) undertaking than the rest of this retrofit; and the
+suggestion chips (`'Load an IFC file'`, `'Run clash detection'`, etc.) since clicking one calls
+`send(sug)`, feeding the literal English text straight into that same English-only parser —
+translating the chip label without also translating the parser would silently break the click.~~
+(2026-07-27)
+**Remaining (long tail, can proceed independently in future sessions):** whatever remains unnamed
+across the rest of the ~38.7k-line file — every component from the original explicitly-tracked
+retrofit-progress list has now been addressed at least once this session. Partial coverage stays safe
+by design (`_cc_t` falls back to the English string for any untranslated key, so the app never
+breaks); a future session can keep sweeping for stragglers without a fixed checklist to work from.
 
 **Park inactive models — memory relief (2026-07-22, branch `claude/clashcontrol-v7-release-plan-jp5njw`)** —
 diagnosed the "viewer stalls a few seconds" + "5.2 GB heap > 4.09 GB limit" reports as the SAME
