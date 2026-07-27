@@ -435,10 +435,22 @@ Thinking/Clear-chat-history/Model-loading text.~~ NLCommandPanel's deep internal
 logic (the giant regex-based offline-command interpreter later in the same function) deliberately
 NOT touched this pass — it's ~600 more lines of matching logic, not primraily user-facing chrome;
 flagged as a future target alongside CmdKPalette. (all 2026-07-27)
+~~`LeftRail` inspected — confirmed dead code (unconditional `return null` as its first statement,
+everything after unreachable); no retrofit needed, left as-is.~~ ~~`PrivacyBanner` in full (help-
+improve sentence, minimised-metrics bold span, never-uploaded disclaimer, No-thanks/Allow-sharing
+buttons).~~ ~~`OperationCenter` in full (Checking-for-clashes / Loading-model / Reconnecting-Pulling-
+from-Revit labels, slow-load detail hints, pending-count, Cancel button) — fixed
+`tests/privacy-consent.test.js`'s literal `>Allow sharing</button>` anchor to match the new
+`_cc_t()`-wrapped call.~~ ~~`ClashChips` fallback title ("Clash {id}").~~ ~~`GlobalDropZone`'s two
+alert() messages (file-load failure, point-cloud-addon-failed).~~ ~~`FolderWatchBadge` in full
+(Watching label, Stop-watching tooltip).~~ ~~`WelcomePopup` in full — the app's first-run landing
+screen: version tagline, Drop-the-file/Open-a-model headline, subtitle + drag hint, all 4 action rows
+(Choose a file/Open from URL/Watch a folder/Live link to Revit + their sublabels), URL input
+placeholder + Load button, failed-URL-load alert, tour/shared-folder footer links, IFC explainer
+paragraph.~~ (all 2026-07-27)
 **Remaining (long tail, can proceed independently in future sessions):** `CmdKPalette`,
-`NLCommandPanel`'s deep command-parsing logic, `LeftRail`, `PrivacyBanner`, `OperationCenter`,
-`AIChatPanel`, `ClashChips`, `WelcomePopup`, `WorkspaceTabs`, `AvatarMenu`, `ResponsiveToolGroup`,
-`DesktopTopBar`, `MobileNav`, `RevitBridgePanel`, `IDSValidationPanel`,
+`NLCommandPanel`'s deep command-parsing logic, `AIChatPanel`, `WorkspaceTabs`, `AvatarMenu`,
+`ResponsiveToolGroup`, `DesktopTopBar`, `MobileNav`, `RevitBridgePanel`, `IDSValidationPanel`,
 `PropBlock`/`PropDiffView`/`ClashProps`, `VirtualList`, `GuidedTour`, `ColorLegend`, `ViewCube`,
 `SectionBoxUI`, `ModelCard`, `NavigatorPanel`, and more — this is genuinely the entire rest of the
 ~38.7k-line file; partial coverage is safe by design (`_cc_t` falls back to the English string for
