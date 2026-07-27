@@ -16253,7 +16253,7 @@ function startApp() {
     var gKeys = Object.keys(groups).sort(function(a,b){return (groups[b].count||0)-(groups[a].count||0);});
     if (!view || !gKeys.length) return null;
     var CLASS_COLORS = ['#60a5fa','#f87171','#34d399','#fbbf24','#c084fc','#fb923c','#22d3ee','#e879f9','#a3e635','#f472b6','#38bdf8','#facc15','#4ade80','#f97316','#818cf8'];
-    var VIEW_LABELS = {byType:'IFC Type', byStorey:'Storey', byDiscipline:'Discipline', byMaterial:'Material'};
+    var VIEW_LABELS = {byType:_cc_t('legend.ifcType','IFC Type'), byStorey:_cc_t('propBlock.storey','Storey'), byDiscipline:_cc_t('legend.discipline','Discipline'), byMaterial:_cc_t('propBlock.material','Material')};
     var CAP = 10;
     var shown = gKeys.slice(0, CAP);
     var extra = gKeys.length - shown.length;
@@ -16269,7 +16269,7 @@ function startApp() {
             <span style=${{color:'var(--text-faint)',fontFamily:'var(--font-mono)'}}>${grp.count||0}</span>
           </div>`;
         })}
-        ${extra>0 && html`<div style=${{fontSize:'var(--text-2xs)',color:'var(--text-faint)',fontStyle:'italic',marginTop:'2px'}}>+${extra} more</div>`}
+        ${extra>0 && html`<div style=${{fontSize:'var(--text-2xs)',color:'var(--text-faint)',fontStyle:'italic',marginTop:'2px'}}>${_cc_t('legend.extraMore','+{n} more',{n:extra})}</div>`}
       </div>
     </div>`;
   }
@@ -17004,15 +17004,15 @@ function startApp() {
         border:'2px solid var(--accent)',borderRadius:8,pointerEvents:'none',
         boxShadow:'0 0 0 4px rgba(26,107,74,.25)'}}></div>`}
       <div style=${tipStyle}>
-        <div style=${{fontSize:'0.75rem',color:'var(--accent)',marginBottom:'.25rem',fontWeight:600}}>Step ${step+1} of ${total}</div>
+        <div style=${{fontSize:'0.75rem',color:'var(--accent)',marginBottom:'.25rem',fontWeight:600}}>${_cc_t('tour.stepOf','Step {n} of {total}',{n:step+1,total:total})}</div>
         <div style=${{fontSize:'1.01rem',fontWeight:700,color:'var(--text-primary)',marginBottom:'.3rem'}}>${cur.title}</div>
         <div style=${{fontSize:'0.87rem',color:'var(--text-secondary)',lineHeight:1.55,marginBottom:'.75rem'}}>${cur.text}</div>
         <div style=${{display:'flex',justifyContent:'space-between',alignItems:'center'}}>
-          <button onClick=${skip} style=${{...S_BTN,background:'none',border:'none',color:'var(--text-faint)',fontSize:'0.8rem',cursor:'pointer',padding:'.2rem'}}>Skip tour</button>
+          <button onClick=${skip} style=${{...S_BTN,background:'none',border:'none',color:'var(--text-faint)',fontSize:'0.8rem',cursor:'pointer',padding:'.2rem'}}>${_cc_t('tour.skipTour','Skip tour')}</button>
           <div style=${{display:'flex',gap:'.35rem'}}>
-            ${step > 0 && html`<button onClick=${prev} style=${{...S_BTN,padding:'.3rem .65rem',fontSize:'0.83rem',background:'var(--bg-secondary)',color:'var(--text-secondary)',border:'1px solid var(--border)',borderRadius:6,cursor:'pointer'}}>Back</button>`}
+            ${step > 0 && html`<button onClick=${prev} style=${{...S_BTN,padding:'.3rem .65rem',fontSize:'0.83rem',background:'var(--bg-secondary)',color:'var(--text-secondary)',border:'1px solid var(--border)',borderRadius:6,cursor:'pointer'}}>${_cc_t('tour.back','Back')}</button>`}
             <button onClick=${next} style=${{...S_BTN,padding:'.3rem .65rem',fontSize:'0.83rem',background:'var(--accent)',color:'#fff',border:'none',borderRadius:6,cursor:'pointer',fontWeight:600}}>
-              ${step < total-1 ? 'Next' : 'Finish'}
+              ${step < total-1 ? _cc_t('tour.next','Next') : _cc_t('tour.finish','Finish')}
             </button>
           </div>
         </div>
