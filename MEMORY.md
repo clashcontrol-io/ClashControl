@@ -448,13 +448,28 @@ screen: version tagline, Drop-the-file/Open-a-model headline, subtitle + drag hi
 (Choose a file/Open from URL/Watch a folder/Live link to Revit + their sublabels), URL input
 placeholder + Load button, failed-URL-load alert, tour/shared-folder footer links, IFC explainer
 paragraph.~~ (all 2026-07-27)
+~~`WorkspaceTabs` in full (Present/Review/Coordinate tab labels, + Add popover — 3D model/2D drawing/
+Point cloud·splat/Live from Revit/Shared folder/Watch a folder rows + sublabels).~~ ~~`AvatarMenu` in
+full (new-project prompt, account/settings aria-label, local-user fallback, Open model, Project
+section header, rename/delete aria-labels + Delete? confirm, +New project, Integrations flyout +
+its 3 addon names + connected/on hints, Theme/Settings/Install/Search/Enter-presentation/Keyboard-
+shortcuts rows).~~ ~~`ResponsiveToolGroup`'s "More tools" button (aria-label + title).~~
+~~`DesktopTopBar`'s Share button (tooltip + label; wordmark "ClashControl" left as brand name).~~
+~~`TopToolbar` in full — the persistent icon ribbon under the top bar: render-style cluster (Shaded/
+Hidden Line/Rendered/X-Ray), camera cluster (Orbit/Walk/2D plan/Toggle projection), Fit-all/Reset-
+view, section cluster (Make Section/Section Box/Clear Section/section-hatch tooltip), measure-modes
+caret tooltip, notes cluster (Pin/Markup/Compare/Export PDF/Record-Stop recording), viewpoints
+cluster (Save viewpoint/Smart Views/Presentation), Coordinate-workspace cluster (Run clash
+detection/Conflicts/Issues/Detection rules/Navigator), Review-workspace cluster (Run data quality/
+Data Quality/Accessibility/Navigator/Diagnostics), Models button, sun/ambient/exposure/shadow
+lighting-panel labels, Home-view-options and Cmd/Ctrl+K search tooltips — ~70 new keys, the single
+largest retrofit batch this session.~~ (all 2026-07-27)
 **Remaining (long tail, can proceed independently in future sessions):** `CmdKPalette`,
-`NLCommandPanel`'s deep command-parsing logic, `AIChatPanel`, `WorkspaceTabs`, `AvatarMenu`,
-`ResponsiveToolGroup`, `DesktopTopBar`, `MobileNav`, `RevitBridgePanel`, `IDSValidationPanel`,
-`PropBlock`/`PropDiffView`/`ClashProps`, `VirtualList`, `GuidedTour`, `ColorLegend`, `ViewCube`,
-`SectionBoxUI`, `ModelCard`, `NavigatorPanel`, and more — this is genuinely the entire rest of the
-~38.7k-line file; partial coverage is safe by design (`_cc_t` falls back to the English string for
-any untranslated key, so the app never breaks).
+`NLCommandPanel`'s deep command-parsing logic, `AIChatPanel`, `MobileNav`, `RevitBridgePanel`,
+`IDSValidationPanel`, `PropBlock`/`PropDiffView`/`ClashProps`, `VirtualList`, `GuidedTour`,
+`ColorLegend`, `ViewCube`, `SectionBoxUI`, `ModelCard`, `NavigatorPanel`, and more — this is
+genuinely the entire rest of the ~38.7k-line file; partial coverage is safe by design (`_cc_t` falls
+back to the English string for any untranslated key, so the app never breaks).
 
 **Park inactive models — memory relief (2026-07-22, branch `claude/clashcontrol-v7-release-plan-jp5njw`)** —
 diagnosed the "viewer stalls a few seconds" + "5.2 GB heap > 4.09 GB limit" reports as the SAME
