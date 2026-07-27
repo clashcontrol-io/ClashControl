@@ -17124,17 +17124,17 @@ function startApp() {
                     onBlur=${function(){finishRename(p.id)}}
                     style=${{...S_INPUT,fontSize:'0.75rem',padding:'.15rem .3rem',flex:1}} />` :
                   html`<span onClick=${function(){switchTo(p.id)}} style=${{flex:1,fontSize:'0.8rem',color:txtCol,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',cursor:'pointer',display:'flex',alignItems:'center',gap:'.3rem'}}>${p.name}</span>`}
-                  <button onClick=${function(e){e.stopPropagation();startRename(p)}} style=${{...S_BTN,padding:'2px 4px',background:'none',color:mutedCol,fontSize:'0.69rem',lineHeight:1}} title="Rename">✎</button>
+                  <button onClick=${function(e){e.stopPropagation();startRename(p)}} style=${{...S_BTN,padding:'2px 4px',background:'none',color:mutedCol,fontSize:'0.69rem',lineHeight:1}} title=${_cc_t('common.rename','Rename')}>✎</button>
                   <button onClick=${function(e){e.stopPropagation();setConfirmDelete(isConfirming?null:p.id);setRenaming(false);}}
                     style=${{...S_BTN,padding:'2px 5px',background:isConfirming?(isActive?'rgba(255,255,255,.2)':'rgba(239,68,68,.15)'):'none',color:isConfirming?'#ef4444':mutedCol,fontSize:'0.75rem',lineHeight:1,borderRadius:4,border:isConfirming?'1px solid rgba(239,68,68,.4)':'1px solid transparent'}}
-                    title="Delete project">🗑</button>
+                    title=${_cc_t('projects.deleteProject','Delete project')}>🗑</button>
                 </div>
                 ${isConfirming && html`<div style=${{padding:'.35rem .6rem .45rem',borderTop:'1px solid '+(isActive?'rgba(255,255,255,.2)':'var(--border-subtle)'),display:'flex',alignItems:'center',gap:'.4rem',background:isActive?'rgba(0,0,0,.15)':'rgba(239,68,68,.06)'}}>
-                  <span style=${{flex:1,fontSize:'0.71rem',color:isActive?'rgba(255,255,255,.85)':'var(--text-secondary)'}}>Delete "${p.name}"?</span>
+                  <span style=${{flex:1,fontSize:'0.71rem',color:isActive?'rgba(255,255,255,.85)':'var(--text-secondary)'}}>${_cc_t('projects.deleteNamedConfirm','Delete "{name}"?',{name:p.name})}</span>
                   <button onClick=${function(e){e.stopPropagation();deleteProject(p.id)}}
-                    style=${{...S_BTN,padding:'2px 8px',background:'#ef4444',color:'#fff',fontSize:'0.71rem',fontWeight:600}}>Delete</button>
+                    style=${{...S_BTN,padding:'2px 8px',background:'#ef4444',color:'#fff',fontSize:'0.71rem',fontWeight:600}}>${_cc_t('common.delete','Delete')}</button>
                   <button onClick=${function(e){e.stopPropagation();setConfirmDelete(null)}}
-                    style=${{...S_BTN,padding:'2px 8px',background:'none',color:isActive?'rgba(255,255,255,.7)':'var(--text-muted)',fontSize:'0.71rem',border:'1px solid '+(isActive?'rgba(255,255,255,.3)':'var(--border)')}}>Cancel</button>
+                    style=${{...S_BTN,padding:'2px 8px',background:'none',color:isActive?'rgba(255,255,255,.7)':'var(--text-muted)',fontSize:'0.71rem',border:'1px solid '+(isActive?'rgba(255,255,255,.3)':'var(--border)')}}>${_cc_t('common.cancel','Cancel')}</button>
                 </div>`}
               </div>`;
             })}
@@ -18638,7 +18638,7 @@ function startApp() {
             var crsList = (window._ccCRSList && window._ccCRSList()) || [];
             var crsRef = {current:null};
             return html`<div style=${{marginBottom:'.25rem'}}>
-              <div title="IFC4 IfcMapConversion / IfcProjectedCRS read from the model" style=${{padding:'.2rem .35rem',borderRadius:'var(--radius-xs)',background:'rgba(91,141,239,0.06)',fontSize:'.62rem',color:'var(--text-muted)',fontFamily:'var(--font-mono)',lineHeight:1.5}}>
+              <div title=${_cc_t('geoplace.mapConversionTitle','IFC4 IfcMapConversion / IfcProjectedCRS read from the model')} style=${{padding:'.2rem .35rem',borderRadius:'var(--radius-xs)',background:'rgba(91,141,239,0.06)',fontSize:'.62rem',color:'var(--text-muted)',fontFamily:'var(--font-mono)',lineHeight:1.5}}>
                 <span style=${{color:'var(--text-secondary)',fontWeight:600}}>${mcModel.epsg||'Projected CRS'}</span>${(mcModel.epsg&&!detectedKey)?' · unrecognised':''}${mcModel.rotationDeg!=null?' · rot '+mcModel.rotationDeg.toFixed(2)+'°':''}<br/>
                 <span style=${{color:'var(--text-faint)'}}>E ${mcModel.eastings!=null?mcModel.eastings.toFixed(1):'—'}, N ${mcModel.northings!=null?mcModel.northings.toFixed(1):'—'}</span>
               </div>
@@ -18708,9 +18708,9 @@ function startApp() {
                       return html`<button onClick=${function(){_nudge(dr, df);}} title=${tip}
                         style=${{width:20,height:18,padding:0,fontSize:'.6rem',lineHeight:1,background:'var(--bg-secondary)',color:'var(--text-secondary)',border:'1px solid var(--border)',borderRadius:'var(--radius-xs)',cursor:'pointer'}}>${label}</button>`;
                     }
-                    return html`${nbtn('◀',-1,0,'Move map left')}${nbtn('▲',0,1,'Move map away')}${nbtn('▼',0,-1,'Move map toward you')}${nbtn('▶',1,0,'Move map right')}
+                    return html`${nbtn('◀',-1,0,_cc_t('geoplace.moveMapLeft','Move map left'))}${nbtn('▲',0,1,_cc_t('geoplace.moveMapAway','Move map away'))}${nbtn('▼',0,-1,_cc_t('geoplace.moveMapToward','Move map toward you'))}${nbtn('▶',1,0,_cc_t('geoplace.moveMapRight','Move map right'))}
                       <select value=${String(_step())} onChange=${function(e){ try { localStorage.setItem('cc_geo_nudge_step', e.target.value); } catch(_){} }}
-                        title="Nudge step (metres)"
+                        title=${_cc_t('geoplace.nudgeStep','Nudge step (metres)')}
                         style=${{fontSize:'.6rem',padding:'.05rem .1rem',background:'var(--bg-secondary)',color:'var(--text-secondary)',border:'1px solid var(--border)',borderRadius:'var(--radius-xs)',fontFamily:'var(--font-body)'}}>
                         <option value="0.25">0.25 m</option>
                         <option value="0.5">0.5 m</option>
@@ -18719,7 +18719,7 @@ function startApp() {
                         <option value="5">5 m</option>
                         <option value="10">10 m</option>
                       </select>
-                      ${(offX || offZ) ? html`<button onClick=${function(){_apply(0,0);}} title=${'Reset alignment offset (now '+offX.toFixed(1)+' / '+offZ.toFixed(1)+' m)'}
+                      ${(offX || offZ) ? html`<button onClick=${function(){_apply(0,0);}} title=${_cc_t('geoplace.resetOffset','Reset alignment offset (now {x} / {z} m)',{x:offX.toFixed(1),z:offZ.toFixed(1)})}
                         style=${{fontSize:'.6rem',padding:'.05rem .25rem',background:'none',color:'var(--text-muted)',border:'1px solid var(--border)',borderRadius:'var(--radius-xs)',cursor:'pointer'}}>⟲</button>` : null}`;
                   })()}
                 </span>
@@ -18831,7 +18831,7 @@ function startApp() {
                   window._ccLoadTiles3D({ ion: {token: itok.trim()}, lat: ll.lat, lon: ll.lon, origin: ll.origin, north: ll.north, offset: ll.offset })
                     .catch(function(err){ alert('Cesium ion 3D tiles failed: ' + (err && err.message || err)); });
                 }}
-                title="Worldwide OSM Buildings via Cesium ion (free account token)"
+                title=${_cc_t('geoplace.osmBuildingsTitle','Worldwide OSM Buildings via Cesium ion (free account token)')}
                 style=${{fontSize:'.66rem',padding:'.22rem .4rem',background:'none',color:'var(--text-primary)',border:'1px solid var(--border)',borderRadius:'var(--radius-xs)',cursor:'pointer'}}>
                 ion\u2026</button>
               <button onClick=${function(){
@@ -18895,16 +18895,16 @@ function startApp() {
               return html`<span title="Vertical placement of the 3D world context. Auto-aligns to the model floor from the streamed geometry; ▼/▲ override manually." style=${{display:'flex',alignItems:'center',gap:'.15rem'}}>
                 <span style=${{fontSize:'.6rem',color:'var(--text-faint)'}}>height</span>
                 ${hbtn('▼',-1,'Lower context (manual)')}${hbtn('▲',1,'Raise context (manual)')}
-                <span title=${auto?'Auto-aligned to model floor':'Manual height'} style=${{fontSize:'.6rem',color:auto?'var(--color-success, #22c55e)':'var(--text-muted)',fontFamily:'var(--font-mono)',minWidth:'2.6rem',textAlign:'right'}}>${auto ? 'auto' : (h>0?'+':'')+h.toFixed(1)+'m'}</span>
+                <span title=${auto?_cc_t('geoplace.autoAligned','Auto-aligned to model floor'):_cc_t('geoplace.manualHeight','Manual height')} style=${{fontSize:'.6rem',color:auto?'var(--color-success, #22c55e)':'var(--text-muted)',fontFamily:'var(--font-mono)',minWidth:'2.6rem',textAlign:'right'}}>${auto ? 'auto' : (h>0?'+':'')+h.toFixed(1)+'m'}</span>
                 <select value=${String(step())} onChange=${function(e){ try { localStorage.setItem('cc_tiles3d_hstep', e.target.value); } catch(_){} }}
-                  title="Height step (metres)"
+                  title=${_cc_t('geoplace.heightStep','Height step (metres)')}
                   style=${{fontSize:'.58rem',padding:'.05rem .1rem',background:'var(--bg-secondary)',color:'var(--text-secondary)',border:'1px solid var(--border)',borderRadius:'var(--radius-xs)',fontFamily:'var(--font-body)'}}>
                   <option value="0.1">0.1</option>
                   <option value="0.5">0.5</option>
                   <option value="1">1</option>
                   <option value="5">5</option>
                 </select>
-                ${!auto ? html`<button onClick=${function(){ window._ccResetTiles3DHeightAuto && window._ccResetTiles3DHeightAuto(); }} title="Back to auto-align" style=${{fontSize:'.58rem',padding:'.05rem .2rem',background:'none',color:'var(--text-muted)',border:'1px solid var(--border)',borderRadius:'var(--radius-xs)',cursor:'pointer'}}>⟲ auto</button>` : null}
+                ${!auto ? html`<button onClick=${function(){ window._ccResetTiles3DHeightAuto && window._ccResetTiles3DHeightAuto(); }} title=${_cc_t('geoplace.backToAutoAlign','Back to auto-align')} style=${{fontSize:'.58rem',padding:'.05rem .2rem',background:'none',color:'var(--text-muted)',border:'1px solid var(--border)',borderRadius:'var(--radius-xs)',cursor:'pointer'}}>⟲ ${_cc_t('geoplace.autoShort','auto')}</button>` : null}
               </span>`;
             })()}
           </div>`}
@@ -18922,7 +18922,7 @@ function startApp() {
                 <span title=${rl.name} style=${{fontSize:'.7rem',color:'var(--text-primary)',flex:1,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>${rl.name}</span>
                 <span style=${{fontSize:'.6rem',color:'var(--text-faint)',fontFamily:'var(--font-mono)'}}>${rl.pointCount ? (rl.pointCount > 1e6 ? (rl.pointCount/1e6).toFixed(1)+'M' : rl.pointCount > 1e3 ? (rl.pointCount/1e3).toFixed(0)+'K' : rl.pointCount) + ' pts' : ''}</span>
                 <button onClick=${function(e){e.stopPropagation();window._ccRemovePointCloud && window._ccRemovePointCloud(rl.id);}}
-                  style=${{background:'none',border:'none',cursor:'pointer',color:'var(--text-faint)',padding:'0 2px',fontSize:'.7rem',lineHeight:1}} title="Remove">✕</button>
+                  style=${{background:'none',border:'none',cursor:'pointer',color:'var(--text-faint)',padding:'0 2px',fontSize:'.7rem',lineHeight:1}} title=${_cc_t('common.remove','Remove')}>✕</button>
               </div>
               <div style=${{display:'flex',alignItems:'center',gap:'.4rem',marginTop:'.2rem',paddingLeft:'1.1rem'}}>
                 <label style=${{fontSize:'.6rem',color:'var(--text-faint)',minWidth:'2.4rem'}}>${_cc_t('sidebar.size','Size')}</label>
@@ -18943,9 +18943,9 @@ function startApp() {
                   ◇ Align to IFC
                 </button>
                 ${(window._ccAlignClear) && html`<button onClick=${function(){ if(window._ccAlignClear) window._ccAlignClear(rl.id); }}
-                  title="Remove alignment"
+                  title=${_cc_t('geoplace.removeAlignment','Remove alignment')}
                   style=${{fontSize:'.6rem',padding:'.12rem .3rem',background:'none',color:'var(--text-faint)',border:'1px solid var(--border)',borderRadius:'var(--radius-xs)',cursor:'pointer'}}>
-                  Clear
+                  ${_cc_t('common.clear','Clear')}
                 </button>`}
                 ${window._ccDeviationCompute && html`<button onClick=${function(){
                     if(!window._ccDeviationCompute) return;
@@ -18956,9 +18956,9 @@ function startApp() {
                   ▦ Proximity (1st-pass)
                 </button>`}
                 ${window._ccDeviationClear && html`<button onClick=${function(){ if(window._ccDeviationClear) window._ccDeviationClear(rl.id); }}
-                  title="Remove proximity colouring"
+                  title=${_cc_t('geoplace.removeProximityColouring','Remove proximity colouring')}
                   style=${{fontSize:'.6rem',padding:'.12rem .3rem',background:'none',color:'var(--text-faint)',border:'1px solid var(--border)',borderRadius:'var(--radius-xs)',cursor:'pointer'}}>
-                  Reset colour
+                  ${_cc_t('geoplace.resetColour','Reset colour')}
                 </button>`}
                 ${window._ccAlignRefineICP && html`<button onClick=${function(){
                     if(!window._ccAlignRefineICP) return;
