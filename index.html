@@ -27492,7 +27492,7 @@ function startApp() {
     var pct = window._ccParseLoadPct ? window._ccParseLoadPct(msg) : null;
     // Split filename : phase  (msg is typically "filename.ifc: Building property maps")
     var fname = '';
-    var phase = msg || 'Opening model…';
+    var phase = msg || _cc_t('loadCard.openingModel','Opening model…');
     var sep = msg.indexOf(': ');
     if (sep > 0) { fname = msg.slice(0, sep); phase = msg.slice(sep + 2); }
     if (fname.length > 60) fname = '…' + fname.slice(-57);
@@ -27500,24 +27500,24 @@ function startApp() {
     // from the phase text so it isn't displayed twice.
     if (pct != null) {
       phase = phase.replace(/\s*\d+\s*\/\s*\d+\s*$/,'').replace(/\s*\d+\s*%\s*$/,'').replace(/\s+$/,'');
-      if (!phase) phase = 'Opening model…';
+      if (!phase) phase = _cc_t('loadCard.openingModel','Opening model…');
     }
     var elapsed = startedAt ? Math.floor((Date.now() - startedAt) / 1000) : 0;
     // Once we cross the "slow" threshold, rotate a light message every ~5s so a
     // long load feels alive instead of frozen. First line is the honest one;
     // the rest are easter eggs.
     var SLOW_MSGS = [
-      "Taking longer than usual — big model or a slow disk. It’ll keep going.",
-      "Still crunching the geometry…",
-      "Counting all the ducts…",
-      "Untangling the MEP spaghetti…",
-      "Reticulating splines…",
-      "Asking the beams to hold still…",
-      "Negotiating with the IFC schema…",
-      "Bribing the clash engine with coffee…",
-      "Herding stray elements back into their storeys…",
-      "Aligning the chakras of your model…",
-      "Almost there — thanks for your patience."
+      _cc_t('loadCard.slow.0','Taking longer than usual — big model or a slow disk. It’ll keep going.'),
+      _cc_t('loadCard.slow.1','Still crunching the geometry…'),
+      _cc_t('loadCard.slow.2','Counting all the ducts…'),
+      _cc_t('loadCard.slow.3','Untangling the MEP spaghetti…'),
+      _cc_t('loadCard.slow.4','Reticulating splines…'),
+      _cc_t('loadCard.slow.5','Asking the beams to hold still…'),
+      _cc_t('loadCard.slow.6','Negotiating with the IFC schema…'),
+      _cc_t('loadCard.slow.7','Bribing the clash engine with coffee…'),
+      _cc_t('loadCard.slow.8','Herding stray elements back into their storeys…'),
+      _cc_t('loadCard.slow.9','Aligning the chakras of your model…'),
+      _cc_t('loadCard.slow.10','Almost there — thanks for your patience.')
     ];
     var _slowStep = Math.floor((elapsed - 20) / 5);
     var slowMsg = _slowStep <= 0 ? SLOW_MSGS[0] : SLOW_MSGS[1 + ((_slowStep - 1) % (SLOW_MSGS.length - 1))];
@@ -27576,11 +27576,11 @@ function startApp() {
         <button onClick=${function(){ if (window._ccAbortLoading) window._ccAbortLoading(); }}
           style=${{fontSize:'var(--text-2xs)', padding:'.15rem .5rem', background:'none',
             border:'1px solid var(--border)', borderRadius:'var(--radius-pill)', cursor:'pointer',
-            color:'var(--text-muted)', fontFamily:'var(--font-body)'}}>Cancel</button>
+            color:'var(--text-muted)', fontFamily:'var(--font-body)'}}>${_cc_t('common.cancel','Cancel')}</button>
         <span style=${{
           fontFamily:'var(--font-mono)', fontSize:'var(--text-2xs)',
           color:'var(--text-faint)', letterSpacing:'.04em'
-        }}>${elapsed}s elapsed</span>
+        }}>${_cc_t('loadCard.elapsedSeconds','{n}s elapsed',{n:elapsed})}</span>
       </div>
     </div>`;
   }
