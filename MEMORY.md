@@ -471,12 +471,18 @@ troubleshoot checklist), Cancel/Retry/Pull/Re-pull/Done/Get-installer buttons, A
 toggle, Direct-Connector/AI-Bridge tab labels.~~ The Advanced tab's deeper settings (WebSocket port
 config, AI Bridge provider/key/host fields, sync log) intentionally NOT touched — lower priority,
 behind an explicit opt-in toggle most users never open. (all 2026-07-27)
+~~`IDSValidationPanel` in full: validate-description subtitle, Built-in Rule Sets / Custom IDS File
+headers, loaded-specs count, Validating/Run Validation button, Pass/Fail/Total summary chips,
+partially-checked footnote, Hide/Show Failures + Highlight-in-3D + Clear-Highlight + HTML-Report
+buttons, severity filter chips (All/Error/Warning/Info), "+N more results" footer. BCF 2.1/3.0
+export button labels left untranslated on purpose — standard format identifiers, not prose (same
+treatment as PDF/DXF elsewhere).~~ (2026-07-27)
 **Remaining (long tail, can proceed independently in future sessions):** `CmdKPalette`,
 `NLCommandPanel`'s deep command-parsing logic, `AIChatPanel`, `RevitBridgePanel`'s Advanced tab,
-`IDSValidationPanel`, `PropBlock`/`PropDiffView`/`ClashProps`, `VirtualList`, `GuidedTour`,
-`ColorLegend`, `ViewCube`, `SectionBoxUI`, `ModelCard`, `NavigatorPanel`, and more — this is
-genuinely the entire rest of the ~38.7k-line file; partial coverage is safe by design (`_cc_t` falls
-back to the English string for any untranslated key, so the app never breaks).
+`PropBlock`/`PropDiffView`/`ClashProps`, `VirtualList`, `GuidedTour`, `ColorLegend`, `ViewCube`,
+`SectionBoxUI`, `ModelCard`, `NavigatorPanel`, and more — this is genuinely the entire rest of the
+~38.7k-line file; partial coverage is safe by design (`_cc_t` falls back to the English string for
+any untranslated key, so the app never breaks).
 
 **Park inactive models — memory relief (2026-07-22, branch `claude/clashcontrol-v7-release-plan-jp5njw`)** —
 diagnosed the "viewer stalls a few seconds" + "5.2 GB heap > 4.09 GB limit" reports as the SAME
