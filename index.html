@@ -33043,9 +33043,9 @@ function startApp() {
           if (cancelCountRef.current >= 2) {
             cancelCountRef.current = 0;
             d({t:A.SHOW_RUN_MODAL, v:true});
-            return 'Opening the Run detection setup — you can configure everything there.';
+            return _cc_t('nl.converse.openingSetup','Opening the Run detection setup — you can configure everything there.');
           }
-          return 'Setup cancelled. Say "cancel" once more to open the setup tab instead.';
+          return _cc_t('nl.converse.setupCancelled','Setup cancelled. Say "cancel" once more to open the setup tab instead.');
         }
 
         if (ctx.asked === 'type') {
@@ -33071,7 +33071,7 @@ function startApp() {
             ctx.rules.hard = true; ctx._typeExplicit = true; ctx.asked = null;
           }
           else {
-            return 'Just to clarify — **hard clashes only** (physical intersections), or should I also flag **near misses** within some distance?';
+            return _cc_t('nl.converse.clarifyType','Just to clarify — **hard clashes only** (physical intersections), or should I also flag **near misses** within some distance?');
           }
         }
 
@@ -33086,7 +33086,7 @@ function startApp() {
           } else if (/\blarge\b|\bbig\b|\bwide\b/i.test(tl)) {
             ctx.rules.maxGap = 150; ctx._gapExplicit = true; ctx.asked = null;
           } else {
-            return 'How far apart should elements be before I flag them? *(e.g. 50mm, 100mm)*';
+            return _cc_t('nl.converse.howFarApart','How far apart should elements be before I flag them? *(e.g. 50mm, 100mm)*');
           }
         }
 
@@ -33096,7 +33096,7 @@ function startApp() {
           } else if (/\byes\b|\binclude\b|\btoo\b|\bwithin\b|\bon\b|\bboth\b|\bsame\b|\balso\b/i.test(tl)) {
             ctx.rules.excludeSelf = false; ctx.rules.selfClashGroup = 'both'; ctx._selfExplicit = true; ctx.asked = null;
           } else {
-            return 'Should I check clashes **within** each model too, or only **between** different models?';
+            return _cc_t('nl.converse.checkWithinModel','Should I check clashes **within** each model too, or only **between** different models?');
           }
         }
 
@@ -33109,7 +33109,7 @@ function startApp() {
           if (/^\s*(?:no|nope|nah|not\s+now|cancel|stop|abort|never\s*mind|quit)\b/i.test(tl)) {
             clashCtxRef.current = null;
             cancelCountRef.current = 0;
-            return 'Okay — let me know when you want to run it. You can also tweak any setting by name (e.g. "gap 75", "near misses", "include self").';
+            return _cc_t('nl.converse.okayLetMeKnow','Okay — let me know when you want to run it. You can also tweak any setting by name (e.g. "gap 75", "near misses", "include self").');
           }
           var r = ctx.rules, adjC = false;
           if (/\bhard\s*only\b|^hard$/i.test(tl)) { r.hard=true; r.maxGap=0; adjC=true; }
@@ -33155,14 +33155,14 @@ function startApp() {
         ctx.asked = 'type';
         clashCtxRef.current = ctx;
         var modelsStr = ctx.nameA === ctx.nameB ? '**' + ctx.nameA + '**' : '**' + ctx.nameA + '** vs **' + ctx.nameB + '**';
-        return modelsStr + ' — hard clashes only, or near misses too?';
+        return modelsStr + ' — ' + _cc_t('nl.converse.hardOrNearMisses','hard clashes only, or near misses too?');
       }
 
       if ((r.maxGap > 0 || !r.hard) && !ctx._gapExplicit && !ctx._askedGap) {
         ctx._askedGap = true;
         ctx.asked = 'gap';
         clashCtxRef.current = ctx;
-        return 'How close should elements be to flag as a near miss? *(e.g. 50mm, 100mm)*';
+        return _cc_t('nl.converse.howCloseNearMiss','How close should elements be to flag as a near miss? *(e.g. 50mm, 100mm)*');
       }
 
       var bothAll = (r.modelA === 'all' && r.modelB === 'all');
@@ -33171,16 +33171,16 @@ function startApp() {
         ctx._askedSelf = true;
         ctx.asked = 'self';
         clashCtxRef.current = ctx;
-        return 'Should I check clashes within the same model too, or only between different models?';
+        return _cc_t('nl.converse.checkSameModelToo','Should I check clashes within the same model too, or only between different models?');
       }
       if (!ctx._selfExplicit && r.excludeSelf === undefined) r.excludeSelf = true;
 
       ctx.asked = 'confirm';
       clashCtxRef.current = ctx;
-      var typeStr = !r.hard ? 'Soft only (' + (r.maxGap||100) + 'mm range)' : r.maxGap > 0 ? 'Hard + near misses (max ' + r.maxGap + 'mm)' : 'Hard clashes only';
-      var selfStr = r.excludeSelf ? 'cross-model only' : r.selfClashGroup === 'a' ? 'within A only' : r.selfClashGroup === 'b' ? 'within B only' : 'including same-model';
-      var extra = (r.duplicates ? ', duplicates on' : '') + (r.changeAware ? ', changed only' : '') + (r.useSemanticFilter === false ? ', all intersections' : '');
-      return 'Ready: **' + ctx.nameA + '** vs **' + ctx.nameB + '**, ' + typeStr + ', ' + selfStr + extra + '.\n\nRun? *(yes)* Or tell me what to change.';
+      var typeStr = !r.hard ? _cc_t('nl.converse.softOnlyRange','Soft only ({n}mm range)',{n:r.maxGap||100}) : r.maxGap > 0 ? _cc_t('nl.converse.hardPlusNearMisses','Hard + near misses (max {n}mm)',{n:r.maxGap}) : _cc_t('nl.converse.hardClashesOnly','Hard clashes only');
+      var selfStr = r.excludeSelf ? _cc_t('nl.converse.crossModelOnly','cross-model only') : r.selfClashGroup === 'a' ? _cc_t('nl.converse.withinAOnly','within A only') : r.selfClashGroup === 'b' ? _cc_t('nl.converse.withinBOnly','within B only') : _cc_t('nl.converse.includingSameModel','including same-model');
+      var extra = (r.duplicates ? ', ' + _cc_t('nl.converse.duplicatesOn','duplicates on') : '') + (r.changeAware ? ', ' + _cc_t('nl.converse.changedOnly','changed only') : '') + (r.useSemanticFilter === false ? ', ' + _cc_t('nl.converse.allIntersections','all intersections') : '');
+      return _cc_t('nl.converse.readyPrefix','Ready:') + ' **' + ctx.nameA + '** vs **' + ctx.nameB + '**, ' + typeStr + ', ' + selfStr + extra + '.\n\n' + _cc_t('nl.converse.runOrTellMe','Run? *(yes)* Or tell me what to change.');
     }
 
     function send(overrideText) {
@@ -33211,7 +33211,7 @@ function startApp() {
         clashCtxRef.current = null;
         nlFeedbackRef.current = null;
         setLoading(false);
-        setMsgs(function(m){ return m.concat([{role:'assistant', text:'Stopped. What would you like to do?'}]); });
+        setMsgs(function(m){ return m.concat([{role:'assistant', text:_cc_t('nl.converse.stoppedWhatNext','Stopped. What would you like to do?')}]); });
         return;
       }
       var feedbackResult = _checkNLFeedback(text);
@@ -33307,7 +33307,7 @@ function startApp() {
     var _isMobile = window.innerWidth <= 768;
     var isDocked = !!props.docked && !_isMobile;
     var _serverReady = _serverAIAvailable;
-    var backendLabel = window._ccTourActive ? 'AI loaded' : _serverReady ? 'Coordinator' : backend === 'server' ? 'Coordinator' : null;
+    var backendLabel = window._ccTourActive ? _cc_t('nl.aiLoaded','AI loaded') : _serverReady ? _cc_t('nl.coordinator','Coordinator') : backend === 'server' ? _cc_t('nl.coordinator','Coordinator') : null;
     var backendColor = window._ccTourActive ? 'var(--accent)' : _serverReady ? '#22c55e' : mutedCol;
 
     /* The round bottom-right Ask bubble was removed in v6: AI is a peer
@@ -33339,7 +33339,7 @@ function startApp() {
         <button onClick=${function(){ setReplyTo({idx:msgIdx, text:msgText}); if(inputRef.current) inputRef.current.focus(); }}
           title="Reply to this message" style=${thumbStyle(false, mutedCol)}>↩</button>
         ${showCorrection && html`<div style=${{display:'flex',gap:'.2rem',flex:1}}>
-          ${['Wrong models','Wrong gap','Wrong action','Gibberish'].map(function(label){
+          ${[_cc_t('nl.feedback.wrongModels','Wrong models'),_cc_t('nl.feedback.wrongGap','Wrong gap'),_cc_t('nl.feedback.wrongAction','Wrong action'),_cc_t('nl.feedback.gibberish','Gibberish')].map(function(label){
             return html`<button key=${label} onClick=${function(){
               _sendTrainingData({ type:'nl_command', input: msgs[msgIdx-1] ? msgs[msgIdx-1].text : '', matched: false,
                 feedbackType:'correction', correctionIntent: label, appVersion: CC_VERSION.v });
@@ -33398,8 +33398,8 @@ function startApp() {
           ${canCopy && html`<button
             class="cc-chat-copy"
             onClick=${function(e){e.stopPropagation(); copyMsg(i, m.text);}}
-            title=${copiedIdx===i?'Copied':'Copy message'}
-            aria-label=${copiedIdx===i?'Copied':'Copy message'}
+            title=${copiedIdx===i?_cc_t('nl.copied','Copied'):_cc_t('nl.copyMessage','Copy message')}
+            aria-label=${copiedIdx===i?_cc_t('nl.copied','Copied'):_cc_t('nl.copyMessage','Copy message')}
             style=${{
               position:'absolute', top:-8, right:-8,
               width:20, height:20, borderRadius:10,
