@@ -32814,7 +32814,7 @@ function startApp() {
     window._ccNLSetInput = function(text){ setInput(text); };
     window._ccNLSetStatus = function(status, back){ setLLMStatus(status); setBackend(back); };
     var _chatStorageKey = 'cc_chat_msgs_' + (s.activeProject || 'default');
-    var _greeting = {role:'assistant', text:'Hi — I\'m the ClashControl Coordinator. Tell me what you need, or pick a suggestion below. I work best with short, scoped commands like "check walls vs pipes" or "group by storey". For deeper triage, click Triage on any cluster card.'};
+    var _greeting = {role:'assistant', text:_cc_t('nl.greeting','Hi — I\'m the ClashControl Coordinator. Tell me what you need, or pick a suggestion below. I work best with short, scoped commands like "check walls vs pipes" or "group by storey". For deeper triage, click Triage on any cluster card.')};
     var stMsgs = useState(function(){
       try {
         var raw = localStorage.getItem(_chatStorageKey);
@@ -32879,7 +32879,7 @@ function startApp() {
             if (Array.isArray(parsed) && parsed.length) restored = parsed;
           }
         } catch(e) {}
-        setMsgs(restored || [{role:'assistant', text:'New project loaded. What do you need?'}]);
+        setMsgs(restored || [{role:'assistant', text:_cc_t('nl.newProjectLoaded','New project loaded. What do you need?')}]);
       }
       window.addEventListener('cc-project-switch', onSwitch);
       return function(){ window.removeEventListener('cc-project-switch', onSwitch); };
@@ -32919,8 +32919,8 @@ function startApp() {
           setMsgs(function(prev) {
             var idx = detectMsgIdx.current;
             var next = prev.slice();
-            if (idx>=0 && idx<next.length) next[idx]={role:'assistant',text:'Detection stopped.'};
-            else next = next.concat([{role:'assistant',text:'Detection stopped.'}]);
+            if (idx>=0 && idx<next.length) next[idx]={role:'assistant',text:_cc_t('nl.detectionStopped','Detection stopped.')};
+            else next = next.concat([{role:'assistant',text:_cc_t('nl.detectionStopped','Detection stopped.')}]);
             return next;
           });
           detectMsgIdx.current = -1;
@@ -32933,7 +32933,7 @@ function startApp() {
         var breakdown = [];
         if(nHard) breakdown.push(nHard+' hard');
         if(nSoft) breakdown.push(nSoft+' soft');
-        var txt = n===0 ? 'No clashes detected.' : 'Found '+n+' clash'+(n!==1?'es':'')+' ('+breakdown.join(', ')+(breakdown.length?', ':'')+op+' open).';
+        var txt = n===0 ? _cc_t('nl.noClashesDetected','No clashes detected.') : _cc_t('nl.foundNClashes','Found {n} clash{es} ({breakdown}{sep}{op} open).',{n:n,es:n!==1?'es':'',breakdown:breakdown.join(', '),sep:breakdown.length?', ':'',op:op});
         var _pr = window._ccDetectProfile;
         if (_pr && _pr.total_ms) {
           var secs = (_pr.total_ms/1000).toFixed(1);
@@ -33477,7 +33477,7 @@ function startApp() {
             display:'flex', alignItems:'center', gap:'.5rem'
           }}>
             <span class="spin" style=${{display:'inline-block',width:'.7rem',height:'.7rem',borderRadius:'50%',border:'1.5px solid rgba(26,107,74,.25)',borderTopColor:'#1a6b4a',flexShrink:0}}></span>
-            <span style=${{color:'var(--accent-subtle)',fontStyle:'italic'}}>Thinking</span>
+            <span style=${{color:'var(--accent-subtle)',fontStyle:'italic'}}>${_cc_t('nl.thinking','Thinking')}</span>
             <span style=${{display:'inline-flex',gap:'.15rem'}}>
               <span style=${{animation:'nlDots 1.4s ease-in-out infinite',color:'var(--accent-subtle)'}}>.</span>
               <span style=${{animation:'nlDots 1.4s ease-in-out .2s infinite',color:'var(--accent-subtle)'}}>.</span>
@@ -33519,10 +33519,10 @@ function startApp() {
         }()}
         ${_chatTurnCount > 0 && html`<div style=${{display:'flex',justifyContent:'center',paddingBottom:'.3rem'}}>
           <button onClick=${clearChat}
-            title="Clear chat history" aria-label="Clear chat history"
+            title=${_cc_t('nl.clearChatHistory','Clear chat history')} aria-label=${_cc_t('nl.clearChatHistory','Clear chat history')}
             style=${{background:'none',border:'1px solid '+borderCol,cursor:'pointer',
               color:mutedCol,fontSize:'0.66rem',lineHeight:1,padding:'.25rem .8rem',
-              borderRadius:20,fontWeight:500,opacity:.7}}>Clear chat</button>
+              borderRadius:20,fontWeight:500,opacity:.7}}>${_cc_t('nl.clearChat','Clear chat')}</button>
         </div>`}
         <div ref=${bottomRef}></div>
       </div>
@@ -33537,7 +33537,7 @@ function startApp() {
           animation:'none'
         }}>
           <span class="spin" style=${{display:'inline-block',width:'.6rem',height:'.6rem',borderRadius:'50%',border:'1.4px solid rgba(26,107,74,.25)',borderTopColor:'#1a6b4a',flexShrink:0}}></span>
-          <span style=${{fontSize:'0.74rem',color:'var(--accent)',fontWeight:500,flex:1,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>${modelLoadMsg || 'Model loading'}</span>
+          <span style=${{fontSize:'0.74rem',color:'var(--accent)',fontWeight:500,flex:1,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>${modelLoadMsg || _cc_t('nl.modelLoading','Model loading')}</span>
           ${_lp!=null && html`<span style=${{fontSize:'0.72rem',color:'var(--accent)',fontWeight:600,fontVariantNumeric:'tabular-nums',flexShrink:0}}>${_lp}%</span>`}
         </div>`;
       }()}
@@ -33556,13 +33556,13 @@ function startApp() {
           <span style=${{fontSize:'0.85rem',color:'var(--accent)',fontWeight:500,display:'flex',flexDirection:'column',gap:'.1rem'}}>
             <span>${(function(){
               var p=detectPct, t=detectElapsed;
-              if(t>=240) return 'So… what movie are you watching?'+(p>0?' — '+p+'%':'')+'…';
-              if(t>=180) return 'Still going… maybe grab a coffee'+(p>0?' — '+p+'%':'')+'…';
-              if(t>=120) return 'This is a big one, hang in there'+(p>0?' — '+p+'%':'')+'…';
+              if(t>=240) return _cc_t('nl.status.movie','So… what movie are you watching?')+(p>0?' — '+p+'%':'')+'…';
+              if(t>=180) return _cc_t('nl.status.coffee','Still going… maybe grab a coffee')+(p>0?' — '+p+'%':'')+'…';
+              if(t>=120) return _cc_t('nl.status.bigOne','This is a big one, hang in there')+(p>0?' — '+p+'%':'')+'…';
               var msg;
-              if(t<10) msg='Running clash detection';
-              else if(t<30) msg=p<50?'Running clash detection':p<93?'Working hard':'Almost done';
-              else msg=p===0?'Running clash detection':p<15?'Running clash detection':p<30?'Crunching triangles':p<45?'Working hard':p<60?'Running as fast as I can':p<75?'Almost halfway… just kidding, past it':p<85?'So many clashes to check':p<93?'Wrapping things up':'Final stretch';
+              if(t<10) msg=_cc_t('nl.status.running','Running clash detection');
+              else if(t<30) msg=p<50?_cc_t('nl.status.running','Running clash detection'):p<93?_cc_t('nl.status.workingHard','Working hard'):_cc_t('nl.status.almostDone','Almost done');
+              else msg=p===0?_cc_t('nl.status.running','Running clash detection'):p<15?_cc_t('nl.status.running','Running clash detection'):p<30?_cc_t('nl.status.crunching','Crunching triangles'):p<45?_cc_t('nl.status.workingHard','Working hard'):p<60?_cc_t('nl.status.fastAsICan','Running as fast as I can'):p<75?_cc_t('nl.status.almostHalfway','Almost halfway… just kidding, past it'):p<85?_cc_t('nl.status.somany','So many clashes to check'):p<93?_cc_t('nl.status.wrappingUp','Wrapping things up'):_cc_t('nl.status.finalStretch','Final stretch');
               return msg+(p>0?' — '+p+'%':'')+'…';
             }())}</span>
             ${detectPhase && html`<span style=${{fontSize:'0.66rem',color:'var(--accent-subtle)',opacity:0.85,fontWeight:400,fontStyle:'italic'}}>${detectPhase}</span>`}
@@ -33570,7 +33570,7 @@ function startApp() {
         </div>
         <button onClick=${function(){cancelDetection()}}
           style=${{...S_BTN,padding:'.35rem .6rem',background:'#dc2626',color:'#fff',fontSize:'0.72rem',fontWeight:600,borderRadius:6,flexShrink:0}}>
-          Stop</button>
+          ${_cc_t('common.stop','Stop')}</button>
       </div>` : html`<div style=${{
         padding:'.55rem .65rem', borderTop:'1px solid '+borderCol,
         display:'flex', flexDirection:'column', gap:'.3rem', flexShrink:0
@@ -33589,7 +33589,7 @@ function startApp() {
           value=${input}
           onInput=${function(e){ setInput(e.target.value); }}
           onKeyDown=${onKeyDown}
-          placeholder="e.g. structural vs MEP with 50mm gap"
+          placeholder=${_cc_t('nl.inputPlaceholder','e.g. structural vs MEP with 50mm gap')}
           rows=${isDocked ? '3' : '2'}
           style=${{
             flex:1, resize:'none', background:inputBg, border:'1px solid '+borderCol,
@@ -33603,7 +33603,7 @@ function startApp() {
           padding:'.4rem .7rem', cursor:'pointer', fontSize:'0.87rem', fontWeight:500,
           opacity:(!input.trim()||loading)?0.45:1, alignSelf:'flex-end',
           transition:'opacity .15s'
-        }}>Send</button>
+        }}>${_cc_t('common.send','Send')}</button>
         </div>
       </div>`}
     </div>`;
@@ -33686,13 +33686,13 @@ function startApp() {
           <span style=${{fontSize:'0.85rem',color:'var(--accent)',fontWeight:500,display:'flex',flexDirection:'column',gap:'.1rem'}}>
             <span>${(function(){
               var p=detectPct, t=detectElapsed;
-              if(t>=240) return 'So… what movie are you watching?'+(p>0?' — '+p+'%':'')+'…';
-              if(t>=180) return 'Still going… maybe grab a coffee'+(p>0?' — '+p+'%':'')+'…';
-              if(t>=120) return 'This is a big one, hang in there'+(p>0?' — '+p+'%':'')+'…';
+              if(t>=240) return _cc_t('nl.status.movie','So… what movie are you watching?')+(p>0?' — '+p+'%':'')+'…';
+              if(t>=180) return _cc_t('nl.status.coffee','Still going… maybe grab a coffee')+(p>0?' — '+p+'%':'')+'…';
+              if(t>=120) return _cc_t('nl.status.bigOne','This is a big one, hang in there')+(p>0?' — '+p+'%':'')+'…';
               var msg;
-              if(t<10) msg='Running clash detection';
-              else if(t<30) msg=p<50?'Running clash detection':p<93?'Working hard':'Almost done';
-              else msg=p===0?'Running clash detection':p<15?'Running clash detection':p<30?'Crunching triangles':p<45?'Working hard':p<60?'Running as fast as I can':p<75?'Almost halfway… just kidding, past it':p<85?'So many clashes to check':p<93?'Wrapping things up':'Final stretch';
+              if(t<10) msg=_cc_t('nl.status.running','Running clash detection');
+              else if(t<30) msg=p<50?_cc_t('nl.status.running','Running clash detection'):p<93?_cc_t('nl.status.workingHard','Working hard'):_cc_t('nl.status.almostDone','Almost done');
+              else msg=p===0?_cc_t('nl.status.running','Running clash detection'):p<15?_cc_t('nl.status.running','Running clash detection'):p<30?_cc_t('nl.status.crunching','Crunching triangles'):p<45?_cc_t('nl.status.workingHard','Working hard'):p<60?_cc_t('nl.status.fastAsICan','Running as fast as I can'):p<75?_cc_t('nl.status.almostHalfway','Almost halfway… just kidding, past it'):p<85?_cc_t('nl.status.somany','So many clashes to check'):p<93?_cc_t('nl.status.wrappingUp','Wrapping things up'):_cc_t('nl.status.finalStretch','Final stretch');
               return msg+(p>0?' — '+p+'%':'')+'…';
             }())}</span>
             ${detectPhase && html`<span style=${{fontSize:'0.66rem',color:'var(--accent-subtle)',opacity:0.85,fontWeight:400,fontStyle:'italic'}}>${detectPhase}</span>`}
@@ -33700,7 +33700,7 @@ function startApp() {
         </div>
         <button onClick=${function(){cancelDetection()}}
           style=${{...S_BTN,padding:'.35rem .6rem',background:'#dc2626',color:'#fff',fontSize:'0.72rem',fontWeight:600,borderRadius:6,flexShrink:0}}>
-          Stop</button>
+          ${_cc_t('common.stop','Stop')}</button>
       </div>` : html`<div style=${{
         padding:'.55rem .7rem', borderTop:'1px solid '+borderCol,
         display:'flex', gap:'.45rem', alignItems:'flex-end'
@@ -33710,7 +33710,7 @@ function startApp() {
           value=${input}
           onInput=${function(e){ setInput(e.target.value); }}
           onKeyDown=${onKeyDown}
-          placeholder="e.g. structural vs MEP with 50mm gap"
+          placeholder=${_cc_t('nl.inputPlaceholder','e.g. structural vs MEP with 50mm gap')}
           rows="2"
           style=${{
             flex:1, resize:'none', background:inputBg, border:'1px solid '+borderCol,
@@ -33724,7 +33724,7 @@ function startApp() {
           padding:'.4rem .7rem', cursor:'pointer', fontSize:'0.87rem', fontWeight:500,
           opacity:(!input.trim()||loading)?0.45:1, alignSelf:'flex-end',
           transition:'opacity .15s'
-        }}>Send</button>
+        }}>${_cc_t('common.send','Send')}</button>
         </div>
       </div>`}
     </div></div>`;
