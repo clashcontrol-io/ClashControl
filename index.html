@@ -27293,15 +27293,15 @@ function startApp() {
     return html`<div class="cc-modal-backdrop" style=${S_BACKDROP} role="dialog" aria-modal="true" aria-labelledby="cc-storey-scope-title" onClick=${onCancel}>
       <div ref=${cardRef} tabindex="-1" class="cc-modal-card" style=${{...S_MODAL_CARD,width:420,outline:'none'}} onClick=${function(e){e.stopPropagation();}}>
         <div style=${S_MODAL_HEADER}>
-          <h2 id="cc-storey-scope-title" style=${S_MODAL_TITLE}>Choose storeys to load</h2>
-          <button aria-label="Close" style=${S_MODAL_CLOSE} onClick=${onCancel}>×</button>
+          <h2 id="cc-storey-scope-title" style=${S_MODAL_TITLE}>${_cc_t('storeyScope.title','Choose storeys to load')}</h2>
+          <button aria-label=${_cc_t('common.close','Close')} style=${S_MODAL_CLOSE} onClick=${onCancel}>×</button>
         </div>
         <div style=${S_MODAL_BODY}>
           <div style=${{fontSize:'var(--text-sm)',color:'var(--text-muted)'}}>
-            This file has ${storeyNames.length} storey${storeyNames.length===1?'':'s'}. Loading fewer materializes less geometry and finishes faster — you can always reload with a different selection.
+            ${_cc_t('storeyScope.fileHasStoreys','This file has {n} storey{s}. Loading fewer materializes less geometry and finishes faster — you can always reload with a different selection.',{n:storeyNames.length,s:storeyNames.length===1?'':'s'})}
           </div>
           ${truncated && html`<div style=${{fontSize:'var(--text-sm)',color:'var(--color-warning-fg)',background:'var(--color-warning-bg)',border:'1px solid var(--color-warning-border)',borderRadius:6,padding:'.5rem .65rem'}}>
-            This file is larger than the pre-scan can fully cover, so the storey list above may be incomplete. Loading a subset isn't available for this file — use "Load all storeys" to be sure nothing is missed.
+            ${_cc_t('storeyScope.truncatedWarning','This file is larger than the pre-scan can fully cover, so the storey list above may be incomplete. Loading a subset isn\'t available for this file — use "Load all storeys" to be sure nothing is missed.')}
           </div>`}
           <label style=${{display:'flex',alignItems:'center',gap:'.5rem',cursor:truncated?'default':'pointer',padding:'.3rem 0',borderBottom:'1px solid var(--border-subtle)',opacity:truncated?0.7:1}}>
             <input type="checkbox" checked=${allChecked} disabled=${truncated}
@@ -27311,7 +27311,7 @@ function startApp() {
                 storeyNames.forEach(function(n){ next[n] = !allChecked; });
                 setSelected(next);
               }} />
-            <span style=${{fontWeight:600}}>Load all storeys</span>
+            <span style=${{fontWeight:600}}>${_cc_t('storeyScope.loadAllStoreys','Load all storeys')}</span>
           </label>
           <div style=${{maxHeight:260,overflowY:'auto',display:'flex',flexDirection:'column',gap:'.15rem'}}>
             ${storeyNames.map(function(name){
@@ -27323,17 +27323,17 @@ function startApp() {
           </div>
           ${!truncated && !allChecked && html`<label style=${{display:'flex',alignItems:'center',gap:'.5rem',cursor:'pointer',padding:'.3rem 0',fontSize:'var(--text-sm)',color:'var(--text-muted)'}}>
             <input type="checkbox" checked=${autoComplete} onChange=${function(){setAutoComplete(!autoComplete);}} />
-            <span>Load the rest automatically in the background once this finishes</span>
+            <span>${_cc_t('storeyScope.loadRestAutomatically','Load the rest automatically in the background once this finishes')}</span>
           </label>`}
           <div style=${{display:'flex',justifyContent:'flex-end',gap:'.5rem',marginTop:'.3rem'}}>
-            <button onClick=${onCancel} style=${{...S_BTN,background:'var(--bg-tertiary)',color:'var(--text-secondary)'}}>Cancel</button>
+            <button onClick=${onCancel} style=${{...S_BTN,background:'var(--bg-tertiary)',color:'var(--text-secondary)'}}>${_cc_t('common.cancel','Cancel')}</button>
             <button onClick=${function(){
                 var chosen = storeyNames.filter(function(n){ return selected[n]; });
                 onConfirm(allChecked ? null : chosen, autoComplete); // null = full load, exact current behavior
               }}
               disabled=${checkedCount===0}
               style=${{...S_BTN,background:'var(--accent)',color:'#fff',opacity:checkedCount===0?0.5:1}}>
-              ${allChecked ? 'Load all' : 'Load ' + checkedCount + ' selected'}
+              ${allChecked ? _cc_t('storeyScope.loadAll','Load all') : _cc_t('storeyScope.loadNSelected','Load {n} selected',{n:checkedCount})}
             </button>
           </div>
         </div>
@@ -27355,66 +27355,66 @@ function startApp() {
     var cardRef = useRef(null);
     _ccUseFocusTrap(cardRef, modalV2On);
     var sections = [
-      { title: 'General', rows: [
-        ['?',           'Open this shortcuts panel'],
-        ['Esc',         'Close any open modal, menu, or walk mode'],
-        ['Cmd / Ctrl K','Open command palette (find any tool, run AI)'],
+      { title: _cc_t('shortcuts.section.general','General'), rows: [
+        ['?',           _cc_t('shortcuts.general.openPanel','Open this shortcuts panel')],
+        ['Esc',         _cc_t('shortcuts.general.closeModal','Close any open modal, menu, or walk mode')],
+        ['Cmd / Ctrl K',_cc_t('shortcuts.general.commandPalette','Open command palette (find any tool, run AI)')],
       ]},
-      { title: 'Mouse', rows: [
-        ['Left-drag',   'Orbit'],
-        ['Middle-drag / Shift+Left-drag', 'Pan'],
-        ['Scroll',      'Zoom to cursor'],
+      { title: _cc_t('shortcuts.section.mouse','Mouse'), rows: [
+        ['Left-drag',   _cc_t('shortcuts.mouse.orbit','Orbit')],
+        ['Middle-drag / Shift+Left-drag', _cc_t('shortcuts.mouse.pan','Pan')],
+        ['Scroll',      _cc_t('shortcuts.mouse.zoom','Zoom to cursor')],
       ]},
-      { title: 'View', rows: [
-        ['1',           'Standard rendering'],
-        ['2',           'Shaded rendering'],
-        ['3',           'Rendered (lit) view'],
-        ['4',           'X-Ray (semi-transparent)'],
-        ['5',           'Wireframe'],
-        ['Home',        'Fit model to view'],
-        ['R',           'Reset camera'],
-        ['O',           'Orbit mode'],
-        ['W  W',        'Walk mode (press twice)'],
-        ['S',           'Section — smart toggle (selection → box; else floor cut)'],
-        ['B',           'Section box (around selection or full model)'],
-        ['X',           'Section — X axis'],
-        ['Y',           'Section — Y axis'],
-        ['Z',           'Section — Z axis (horizontal floor cut)'],
-        ['F',           'Flip section (or Fit model when no section is active)'],
-        ['Alt + Click', 'Section through the clicked face'],
-        ['M',           'Distance measurement'],
-        ['Shift+M',     'Clear measurements'],
-        ['A',           'Angle measurement (in measure mode)'],
-        ['N',           'Drop a pin'],
-        ['I',           'Isolate selected element'],
-        ['Ctrl+F',      'Find / search elements'],
+      { title: _cc_t('shortcuts.section.view','View'), rows: [
+        ['1',           _cc_t('shortcuts.view.standard','Standard rendering')],
+        ['2',           _cc_t('shortcuts.view.shaded','Shaded rendering')],
+        ['3',           _cc_t('shortcuts.view.rendered','Rendered (lit) view')],
+        ['4',           _cc_t('shortcuts.view.xray','X-Ray (semi-transparent)')],
+        ['5',           _cc_t('shortcuts.view.wireframe','Wireframe')],
+        ['Home',        _cc_t('shortcuts.view.fit','Fit model to view')],
+        ['R',           _cc_t('shortcuts.view.resetCamera','Reset camera')],
+        ['O',           _cc_t('shortcuts.view.orbitMode','Orbit mode')],
+        ['W  W',        _cc_t('shortcuts.view.walkMode','Walk mode (press twice)')],
+        ['S',           _cc_t('shortcuts.view.sectionSmart','Section — smart toggle (selection → box; else floor cut)')],
+        ['B',           _cc_t('shortcuts.view.sectionBox','Section box (around selection or full model)')],
+        ['X',           _cc_t('shortcuts.view.sectionX','Section — X axis')],
+        ['Y',           _cc_t('shortcuts.view.sectionY','Section — Y axis')],
+        ['Z',           _cc_t('shortcuts.view.sectionZ','Section — Z axis (horizontal floor cut)')],
+        ['F',           _cc_t('shortcuts.view.flipSection','Flip section (or Fit model when no section is active)')],
+        ['Alt + Click', _cc_t('shortcuts.view.sectionThroughFace','Section through the clicked face')],
+        ['M',           _cc_t('shortcuts.view.distanceMeasure','Distance measurement')],
+        ['Shift+M',     _cc_t('shortcuts.view.clearMeasurements','Clear measurements')],
+        ['A',           _cc_t('shortcuts.view.angleMeasure','Angle measurement (in measure mode)')],
+        ['N',           _cc_t('shortcuts.view.dropPin','Drop a pin')],
+        ['I',           _cc_t('shortcuts.view.isolate','Isolate selected element')],
+        ['Ctrl+F',      _cc_t('shortcuts.view.find','Find / search elements')],
       ]},
-      { title: 'Navigator', rows: [
-        ['Click',       'Select element'],
-        ['Shift + Click','Add element to selection'],
-        ['Double click','Fly to element'],
+      { title: _cc_t('shortcuts.section.navigator','Navigator'), rows: [
+        ['Click',       _cc_t('shortcuts.navigator.select','Select element')],
+        ['Shift + Click',_cc_t('shortcuts.navigator.addToSelection','Add element to selection')],
+        ['Double click',_cc_t('shortcuts.navigator.flyTo','Fly to element')],
       ]},
-      { title: 'Clash triage', rows: [
-        ['J / K',       'Next / previous clash — frames, isolates, and colors the pair'],
-        ['Tab / Shift+Tab', 'Next / previous group'],
-        ['C',           'Confirm active clash'],
-        ['D',           'Deny active clash (false positive)'],
-        ['V',           'Accept, flag for later verification'],
-        ['T',           'AI-triage the active group'],
-        ['R',           'Resolve all open clashes in the active group'],
-        ['X',           'Expand / collapse the active group'],
-        ['/',           'Focus the filter box'],
+      { title: _cc_t('shortcuts.section.clashTriage','Clash triage'), rows: [
+        ['J / K',       _cc_t('shortcuts.triage.nextPrev','Next / previous clash — frames, isolates, and colors the pair')],
+        ['Tab / Shift+Tab', _cc_t('shortcuts.triage.nextPrevGroup','Next / previous group')],
+        ['C',           _cc_t('shortcuts.triage.confirm','Confirm active clash')],
+        ['D',           _cc_t('shortcuts.triage.deny','Deny active clash (false positive)')],
+        ['V',           _cc_t('shortcuts.triage.accept','Accept, flag for later verification')],
+        ['T',           _cc_t('shortcuts.triage.aiTriage','AI-triage the active group')],
+        ['R',           _cc_t('shortcuts.triage.resolveAll','Resolve all open clashes in the active group')],
+        ['X',           _cc_t('shortcuts.triage.expandCollapse','Expand / collapse the active group')],
+        ['/',           _cc_t('shortcuts.triage.focusFilter','Focus the filter box')],
       ]},
-      { title: 'Walk mode', rows: [
-        ['W A S D',     'Move'],
-        ['Mouse',       'Look around'],
-        ['Scroll',      'Adjust field of view'],
-        ['Shift',       'Sprint'],
-        ['Esc',         'Exit walk mode'],
+      { title: _cc_t('shortcuts.section.walkMode','Walk mode'), rows: [
+        ['W A S D',     _cc_t('shortcuts.walk.move','Move')],
+        ['Mouse',       _cc_t('shortcuts.walk.look','Look around')],
+        ['Scroll',      _cc_t('shortcuts.walk.fov','Adjust field of view')],
+        ['Shift',       _cc_t('shortcuts.walk.sprint','Sprint')],
+        ['Esc',         _cc_t('shortcuts.walk.exit','Exit walk mode')],
       ]},
-      { title: 'Presentation / saved views', rows: [
-        ['Space',       'Toggle auto-advance'],
-        ['← →','Previous / next saved view'],
+      { title: _cc_t('shortcuts.section.presentation','Presentation / saved views'), rows: [
+        ['Space',       _cc_t('shortcuts.present.toggleAutoAdvance','Toggle auto-advance')],
+        ['← →',_cc_t('shortcuts.present.prevNext','Previous / next saved view')],
       ]},
     ];
     var kbdStyle = {fontFamily:'var(--font-mono)',fontSize:'var(--text-xs)',background:'var(--bg-tertiary)',border:'1px solid var(--border)',borderBottom:'2px solid var(--border)',borderRadius:'var(--radius-xs)',padding:'2px 6px',color:'var(--text-primary)',whiteSpace:'nowrap',display:'inline-block',lineHeight:'var(--leading-tight)'};
@@ -27422,8 +27422,8 @@ function startApp() {
       onClick=${onClose}>
       <div ref=${cardRef} tabindex="-1" class="cc-modal-card" style=${{...S_MODAL_CARD,width:560,outline:'none'}} onClick=${function(e){e.stopPropagation();}}>
         <div style=${S_MODAL_HEADER}>
-          <h2 id="cc-shortcuts-title" style=${S_MODAL_TITLE}>Keyboard shortcuts</h2>
-          <button aria-label="Close shortcuts" style=${S_MODAL_CLOSE} onClick=${onClose}>×</button>
+          <h2 id="cc-shortcuts-title" style=${S_MODAL_TITLE}>${_cc_t('shortcuts.title','Keyboard shortcuts')}</h2>
+          <button aria-label=${_cc_t('shortcuts.closeAria','Close shortcuts')} style=${S_MODAL_CLOSE} onClick=${onClose}>×</button>
         </div>
         <div style=${{...S_MODAL_BODY,gap:'var(--space-5)'}}>
           ${sections.map(function(sec){
