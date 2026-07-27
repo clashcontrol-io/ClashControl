@@ -482,12 +482,20 @@ Material/GlobalId/Express ID/Quantities), diff-count summary line, ID-chip copy 
 (Revit-ID/expressId variants), clash-number copy tooltip, Zoom/Zoom A/Zoom B/Zoom Both/Box buttons +
 their section-box tooltips, Element Properties disclosure, Element/Element A/Element B labels.~~
 (2026-07-27)
+~~`ColorLegend` in full (byType/byStorey/byDiscipline/byMaterial view labels, "+N more" footer).~~
+~~`GuidedTour`'s UI chrome (Step N of M, Skip tour, Back, Next/Finish) — `TOUR_STEPS`' own per-step
+title/text prose deliberately left untranslated, same "long-form onboarding content" call as
+`TutorialPortal`'s numbered how-to steps and roadmap paragraphs earlier this session.~~
+~~`ViewCube` inspected — its FRONT/BACK/RIGHT/LEFT/TOP/BOTTOM face labels are baked into fixed-size
+canvas textures via `ctx.fillText`, not React strings; left untranslated on purpose (translated
+words would risk overflow/clipping at the fixed 128×128 texture size, and these read as a CAD-
+convention axis label a Japanese BIM user would recognize regardless, same treatment as the numeric
+Home/keyboard shortcuts).~~ (2026-07-27)
 **Remaining (long tail, can proceed independently in future sessions):** `CmdKPalette`,
 `NLCommandPanel`'s deep command-parsing logic, `AIChatPanel`, `RevitBridgePanel`'s Advanced tab,
-`VirtualList`, `GuidedTour`, `ColorLegend`, `ViewCube`, `SectionBoxUI`, `ModelCard`,
-`NavigatorPanel`, and more — this is genuinely the entire rest of the ~38.7k-line file; partial
-coverage is safe by design (`_cc_t` falls back to the English string for any untranslated key, so
-the app never breaks).
+`VirtualList`, `SectionBoxUI`, `ModelCard`, `NavigatorPanel`, and more — this is genuinely the
+entire rest of the ~38.7k-line file; partial coverage is safe by design (`_cc_t` falls back to the
+English string for any untranslated key, so the app never breaks).
 
 **Park inactive models — memory relief (2026-07-22, branch `claude/clashcontrol-v7-release-plan-jp5njw`)** —
 diagnosed the "viewer stalls a few seconds" + "5.2 GB heap > 4.09 GB limit" reports as the SAME
