@@ -25698,7 +25698,7 @@ function startApp() {
       function onSpeed(e){
         if (!e || !e.detail) return;
         var ratio = e.detail.speed / (1.4 * (e.detail.unit || 1));
-        var lbl = ratio < 0.5 ? 'Slow' : ratio < 1.5 ? 'Normal' : ratio < 4 ? 'Fast' : 'Very fast';
+        var lbl = ratio < 0.5 ? _cc_t('walk.speed.slow','Slow') : ratio < 1.5 ? _cc_t('walk.speed.normal','Normal') : ratio < 4 ? _cc_t('walk.speed.fast','Fast') : _cc_t('walk.speed.veryFast','Very fast');
         setSpeedLabel(lbl);
         if (speedSt._hideTimer) clearTimeout(speedSt._hideTimer);
         speedSt._hideTimer = setTimeout(function(){ setSpeedLabel(null); }, 1500);
@@ -25875,9 +25875,9 @@ function startApp() {
     }
 
     var heightPresets = [
-      {label:'Eye', value:1.7},
-      {label:'Child', value:1.1},
-      {label:'Drone', value:5.0}
+      {label:_cc_t('walk.height.eye','Eye'), value:1.7},
+      {label:_cc_t('walk.height.child','Child'), value:1.1},
+      {label:_cc_t('walk.height.drone','Drone'), value:5.0}
     ];
 
     function bookmarkAdd(){
@@ -25921,13 +25921,13 @@ function startApp() {
           background:'var(--bg-primary)',color:'var(--text-primary)',padding:'.3rem .75rem',borderRadius:'var(--radius-sm)',
           fontSize:'var(--text-sm)',fontWeight:500,border:'1px solid var(--border)',boxShadow:'var(--shadow-md)',
           pointerEvents:'none',zIndex:6,whiteSpace:'nowrap'}}>
-        ${speedLabel} speed
+        ${_cc_t('walk.speedSuffix','{label} speed',{label:speedLabel})}
       </div>`}
       ${altOn && html`<div style=${{position:'absolute',top:'12%',left:'50%',transform:'translateX(-50%)',
           background:'rgba(184,83,58,.12)',color:'var(--accent)',padding:'.25rem .65rem',borderRadius:'var(--radius-xs)',
           fontSize:'var(--text-2xs)',fontWeight:600,border:'1px solid var(--accent)',
           pointerEvents:'none',zIndex:6,whiteSpace:'nowrap',letterSpacing:'.04em',textTransform:'uppercase'}}>
-        ⎇ Alt — passing through walls
+        ⎇ ${_cc_t('walk.altPassingThrough','Alt — passing through walls')}
       </div>`}
       ${teleport && html`<div style=${{position:'absolute',inset:0,pointerEvents:'none',zIndex:6,
           boxShadow:'inset 0 0 60px 12px rgba(184,83,58,0.18)',
@@ -25939,37 +25939,37 @@ function startApp() {
         <span style=${{color:'var(--text-primary)',fontWeight:500}}>${hoverEl.name}</span>
         ${hoverEl.type && html`<span>· ${hoverEl.type}</span>`}
         ${hoverEl.storey && html`<span>· ${hoverEl.storey}</span>`}
-        <span style=${{color:'var(--text-faint)'}}>· F inspect · I issue</span>
+        <span style=${{color:'var(--text-faint)'}}>${_cc_t('walk.fInspectIIssue','· F inspect · I issue')}</span>
       </div>`}
       ${helpOpen && html`<div style=${{position:'absolute',bottom:'5rem',left:'50%',transform:'translateX(-50%)',
           background:'var(--bg-primary)',border:'1px solid var(--border)',borderRadius:'var(--radius-sm)',
           padding:'.55rem .9rem',fontSize:'var(--text-xs)',color:'var(--text-secondary)',
           boxShadow:'var(--shadow-md)',zIndex:6,maxWidth:520,
           display:'grid',gridTemplateColumns:'auto auto',columnGap:'1.2rem',rowGap:'.25rem'}}>
-        <span><b style=${{color:'var(--text-primary)'}}>WASD / Arrows</b></span><span>Move</span>
-        <span><b style=${{color:'var(--text-primary)'}}>Mouse</b></span><span>Look</span>
-        <span><b style=${{color:'var(--text-primary)'}}>Shift</b></span><span>Sprint (×3)</span>
-        <span><b style=${{color:'var(--text-primary)'}}>Scroll</b></span><span>Adjust speed</span>
-        <span><b style=${{color:'var(--text-primary)'}}>Shift + Scroll</b></span><span>Adjust FOV</span>
-        <span><b style=${{color:'var(--text-primary)'}}>Double-click</b></span><span>Teleport to surface</span>
-        <span><b style=${{color:'var(--text-primary)'}}>C</b></span><span>Toggle crouch</span>
-        <span><b style=${{color:'var(--text-primary)'}}>P</b></span><span>Photo (hide HUD + save PNG)</span>
-        <span><b style=${{color:'var(--text-primary)'}}>Hold Alt</b></span><span>Pass through walls</span>
-        <span><b style=${{color:'var(--text-primary)'}}>Space / Q · E</b></span><span>Up · Down (fly)</span>
-        ${!isPresent && html`<${React.Fragment}><span><b style=${{color:'var(--text-primary)'}}>F</b></span><span>Inspect hovered element</span></${React.Fragment}>`}
-        ${!isPresent && html`<${React.Fragment}><span><b style=${{color:'var(--text-primary)'}}>I</b></span><span>Create issue at view</span></${React.Fragment}>`}
-        <span><b style=${{color:'var(--text-primary)'}}>B</b></span><span>Bookmark this view</span>
-        <span><b style=${{color:'var(--text-primary)'}}>V / Shift+V</b></span><span>Save / restore viewpoint</span>
-        ${isCoord && html`<${React.Fragment}><span><b style=${{color:'var(--text-primary)'}}>N</b></span><span>Fly to next open clash</span></${React.Fragment}>`}
-        <span><b style=${{color:'var(--text-primary)'}}>Esc</b></span><span>Exit walk mode</span>
+        <span><b style=${{color:'var(--text-primary)'}}>WASD / Arrows</b></span><span>${_cc_t('walk.help.move','Move')}</span>
+        <span><b style=${{color:'var(--text-primary)'}}>Mouse</b></span><span>${_cc_t('walk.help.look','Look')}</span>
+        <span><b style=${{color:'var(--text-primary)'}}>Shift</b></span><span>${_cc_t('walk.help.sprint','Sprint (×3)')}</span>
+        <span><b style=${{color:'var(--text-primary)'}}>Scroll</b></span><span>${_cc_t('walk.help.adjustSpeed','Adjust speed')}</span>
+        <span><b style=${{color:'var(--text-primary)'}}>Shift + Scroll</b></span><span>${_cc_t('walk.help.adjustFov','Adjust FOV')}</span>
+        <span><b style=${{color:'var(--text-primary)'}}>Double-click</b></span><span>${_cc_t('walk.help.teleport','Teleport to surface')}</span>
+        <span><b style=${{color:'var(--text-primary)'}}>C</b></span><span>${_cc_t('walk.help.crouch','Toggle crouch')}</span>
+        <span><b style=${{color:'var(--text-primary)'}}>P</b></span><span>${_cc_t('walk.help.photo','Photo (hide HUD + save PNG)')}</span>
+        <span><b style=${{color:'var(--text-primary)'}}>Hold Alt</b></span><span>${_cc_t('walk.help.passThrough','Pass through walls')}</span>
+        <span><b style=${{color:'var(--text-primary)'}}>Space / Q · E</b></span><span>${_cc_t('walk.help.upDown','Up · Down (fly)')}</span>
+        ${!isPresent && html`<${React.Fragment}><span><b style=${{color:'var(--text-primary)'}}>F</b></span><span>${_cc_t('walk.help.inspect','Inspect hovered element')}</span></${React.Fragment}>`}
+        ${!isPresent && html`<${React.Fragment}><span><b style=${{color:'var(--text-primary)'}}>I</b></span><span>${_cc_t('walk.help.createIssue','Create issue at view')}</span></${React.Fragment}>`}
+        <span><b style=${{color:'var(--text-primary)'}}>B</b></span><span>${_cc_t('walk.help.bookmark','Bookmark this view')}</span>
+        <span><b style=${{color:'var(--text-primary)'}}>V / Shift+V</b></span><span>${_cc_t('walk.help.saveRestoreViewpoint','Save / restore viewpoint')}</span>
+        ${isCoord && html`<${React.Fragment}><span><b style=${{color:'var(--text-primary)'}}>N</b></span><span>${_cc_t('walk.help.nextClash','Fly to next open clash')}</span></${React.Fragment}>`}
+        <span><b style=${{color:'var(--text-primary)'}}>Esc</b></span><span>${_cc_t('walk.help.exit','Exit walk mode')}</span>
       </div>`}
       ${moreOpen && html`<div style=${{position:'absolute',bottom:'4rem',right:'1rem',
           background:'var(--bg-primary)',border:'1px solid var(--border)',borderRadius:'var(--radius-sm)',
           padding:'.6rem .75rem',boxShadow:'var(--shadow-md)',zIndex:7,minWidth:240,
           display:'flex',flexDirection:'column',gap:'.4rem',pointerEvents:'auto'}}>
-        <div style=${{fontSize:'var(--text-2xs)',textTransform:'uppercase',letterSpacing:'.04em',color:'var(--text-muted)'}}>Movement</div>
+        <div style=${{fontSize:'var(--text-2xs)',textTransform:'uppercase',letterSpacing:'.04em',color:'var(--text-muted)'}}>${_cc_t('walk.movement','Movement')}</div>
         <label style=${{display:'flex',alignItems:'center',gap:'.5rem',fontSize:'var(--text-xs)',color:'var(--text-secondary)'}}>
-          <span style=${{flex:1}}>Mouse sensitivity</span>
+          <span style=${{flex:1}}>${_cc_t('walk.mouseSensitivity','Mouse sensitivity')}</span>
           <input type="range" min="0.25" max="3" step="0.05" value=${flags.sensitivity||1}
             onInput=${function(e){ if(window._ccWalkSetSensitivity) window._ccWalkSetSensitivity(parseFloat(e.target.value)); }}
             style=${{width:90,accentColor:'var(--accent)'}} />
@@ -25977,15 +25977,15 @@ function startApp() {
         </label>
         <label style=${{display:'flex',alignItems:'center',gap:'.5rem',fontSize:'var(--text-xs)',color:'var(--text-secondary)'}}>
           <input type="checkbox" checked=${!!flags.invertY} onChange=${function(e){ if(window._ccWalkSetInvertY) window._ccWalkSetInvertY(e.target.checked); }} />
-          Invert Y axis
+          ${_cc_t('walk.invertY','Invert Y axis')}
         </label>
         ${!isReview && html`<label style=${{display:'flex',alignItems:'center',gap:'.5rem',fontSize:'var(--text-xs)',color:'var(--text-secondary)'}}>
           <input type="checkbox" checked=${!!flags.bob} onChange=${function(e){ if(window._ccWalkSetBob) window._ccWalkSetBob(e.target.checked); }} />
-          Head-bob
+          ${_cc_t('walk.headBob','Head-bob')}
         </label>`}
         ${isPresent && html`<label style=${{display:'flex',alignItems:'center',gap:'.5rem',fontSize:'var(--text-xs)',color:'var(--text-secondary)'}}>
           <input type="checkbox" checked=${!!flags.foot} onChange=${function(e){ if(window._ccWalkSetFootsteps) window._ccWalkSetFootsteps(e.target.checked); }} />
-          Footstep audio
+          ${_cc_t('walk.footstepAudio','Footstep audio')}
         </label>`}
         ${!isReview && (function(){
           var ls = (s.prefs && s.prefs.lightSettings) || {};
@@ -25993,7 +25993,7 @@ function startApp() {
           var hh = Math.floor(tv); var mm = Math.round((tv-hh)*60);
           var clock = (hh<10?'0':'')+hh+':'+(mm<10?'0':'')+mm;
           return html`<div style=${{height:1,background:'var(--border)',margin:'.15rem 0'}}></div>
-            <div style=${{fontSize:'var(--text-2xs)',textTransform:'uppercase',letterSpacing:'.04em',color:'var(--text-muted)'}}>Sun · ${clock}</div>
+            <div style=${{fontSize:'var(--text-2xs)',textTransform:'uppercase',letterSpacing:'.04em',color:'var(--text-muted)'}}>${_cc_t('walk.sunClock','Sun · {clock}',{clock:clock})}</div>
             <input type="range" min="5" max="21" step="0.25" value=${tv}
               onInput=${function(e){
                 var ls2 = Object.assign({sun:1,ambient:1,exposure:1,shadow:1,time:13}, (s.prefs&&s.prefs.lightSettings)||{});
@@ -26004,13 +26004,13 @@ function startApp() {
         })()}
         <div style=${{height:1,background:'var(--border)',margin:'.15rem 0'}}></div>
         <div style=${{fontSize:'var(--text-2xs)',textTransform:'uppercase',letterSpacing:'.04em',color:'var(--text-muted)',display:'flex',justifyContent:'space-between',alignItems:'center'}}>
-          <span>Bookmarks</span>
-          <button onClick=${bookmarkAdd} style=${{padding:'.1rem .35rem',fontSize:'var(--text-2xs)',border:'1px solid var(--border)',background:'var(--bg-secondary)',color:'var(--text-secondary)',borderRadius:'var(--radius-xs)',cursor:'pointer',fontFamily:'inherit'}}>+ B</button>
+          <span>${_cc_t('walk.bookmarks','Bookmarks')}</span>
+          <button onClick=${bookmarkAdd} style=${{padding:'.1rem .35rem',fontSize:'var(--text-2xs)',border:'1px solid var(--border)',background:'var(--bg-secondary)',color:'var(--text-secondary)',borderRadius:'var(--radius-xs)',cursor:'pointer',fontFamily:'inherit'}}>${_cc_t('walk.addBookmark','+ B')}</button>
         </div>
         ${(function(){
           var list = [];
           try { list = JSON.parse(localStorage.getItem('cc_walkBookmarks')||'[]'); } catch(_){}
-          if (!list.length) return html`<div style=${{fontSize:'var(--text-2xs)',color:'var(--text-faint)',padding:'.2rem 0'}}>No bookmarks yet — press B to save current view.</div>`;
+          if (!list.length) return html`<div style=${{fontSize:'var(--text-2xs)',color:'var(--text-faint)',padding:'.2rem 0'}}>${_cc_t('walk.noBookmarksYet','No bookmarks yet — press B to save current view.')}</div>`;
           return html`<div style=${{maxHeight:120,overflowY:'auto',display:'flex',flexDirection:'column',gap:'.2rem'}}>
             ${list.slice().reverse().map(function(bm){
               return html`<div key=${bm.id} style=${{display:'flex',gap:'.3rem',alignItems:'center',fontSize:'var(--text-xs)'}}>
@@ -26028,7 +26028,7 @@ function startApp() {
                     localStorage.setItem('cc_walkBookmarks', JSON.stringify(lst2));
                     setMoreOpen(false); setTimeout(function(){setMoreOpen(true);},0);
                   } catch(_){}
-                }} title="Delete" style=${{padding:'.15rem .35rem',border:'1px solid var(--border)',background:'transparent',color:'var(--text-muted)',borderRadius:'var(--radius-xs)',cursor:'pointer',fontFamily:'inherit'}}>×</button>
+                }} title=${_cc_t('common.delete','Delete')} style=${{padding:'.15rem .35rem',border:'1px solid var(--border)',background:'transparent',color:'var(--text-muted)',borderRadius:'var(--radius-xs)',cursor:'pointer',fontFamily:'inherit'}}>×</button>
               </div>`;
             })}
           </div>`;
@@ -26041,7 +26041,7 @@ function startApp() {
             <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/>
             <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/>
           </svg>
-          Copy share link
+          ${_cc_t('walk.copyShareLink','Copy share link')}
         </button>
         ${isPresent && html`<div style=${{height:1,background:'var(--border)',margin:'.15rem 0'}}></div>
           <${WalkSplineRecorder} d=${d} />`}
@@ -26053,15 +26053,15 @@ function startApp() {
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--text-muted)" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
           <circle cx="12" cy="4.5" r="1.5"/><path d="M9 11l3-2 3 2"/><path d="M10 21l2-7 2 4"/><path d="M14 18l3 3"/>
         </svg>
-        <span style=${{fontSize:'var(--text-xs)',color:'var(--text-muted)',marginRight:'.15rem'}}>Walk</span>
+        <span style=${{fontSize:'var(--text-xs)',color:'var(--text-muted)',marginRight:'.15rem'}}>${_cc_t('walk.walkLabel','Walk')}</span>
         ${SEP}
         ${storeyList.length>0 && html`<select value="" onChange=${function(e){ var i=parseInt(e.target.value); if(!isNaN(i) && storeyList[i]) jumpStorey(storeyList[i]); e.target.value=''; }}
           style=${{fontSize:'var(--text-xs)',padding:'.15rem .3rem',border:'1px solid var(--border)',background:'var(--bg-secondary)',color:'var(--text-secondary)',borderRadius:'var(--radius-xs)',fontFamily:'inherit',cursor:'pointer'}}>
-          <option value="">Floor…</option>
+          <option value="">${_cc_t('walk.floorEllipsis','Floor…')}</option>
           ${storeyList.map(function(st,i){ return html`<option key=${i} value=${i}>${st.name} · ${(st.elevation).toFixed(2)} m</option>`; })}
         </select>`}
         ${storeyList.length>0 && SEP}
-        <span style=${{fontSize:'var(--text-2xs)',color:'var(--text-muted)'}}>Height</span>
+        <span style=${{fontSize:'var(--text-2xs)',color:'var(--text-muted)'}}>${_cc_t('walk.heightLabel','Height')}</span>
         ${heightPresets.map(function(hp){
           var active = Math.abs((flags.height||1.7) - hp.value) < 0.05;
           return html`<button key=${hp.label} onClick=${function(){ if(window._ccWalkSetHeight) window._ccWalkSetHeight(hp.value); }}
@@ -26077,32 +26077,32 @@ function startApp() {
           style=${{width:60,accentColor:'var(--accent)',margin:'0 .15rem'}} />
         <span style=${{fontSize:'var(--text-xs)',color:'var(--text-secondary)',fontFamily:'var(--font-mono)',minWidth:28,textAlign:'right'}}>${Math.round(fov)}°</span>
         ${SEP}
-        ${tog(flags.collision?'Collision On':'Collision Off', flags.collision, function(){ if(window._ccWalkSetCollision) window._ccWalkSetCollision(!flags.collision); })}
-        ${!isPresent && tog(flags.crouch?'Crouching':'Crouch', !!flags.crouch, function(){})}
+        ${tog(flags.collision?_cc_t('walk.collisionOn','Collision On'):_cc_t('walk.collisionOff','Collision Off'), flags.collision, function(){ if(window._ccWalkSetCollision) window._ccWalkSetCollision(!flags.collision); })}
+        ${!isPresent && tog(flags.crouch?_cc_t('walk.crouching','Crouching'):_cc_t('walk.crouch','Crouch'), !!flags.crouch, function(){})}
         ${SEP}
-        <button onClick=${function(){ setHelpOpen(!helpOpen); setMoreOpen(false); }} title="Keyboard shortcuts"
+        <button onClick=${function(){ setHelpOpen(!helpOpen); setMoreOpen(false); }} title=${_cc_t('walk.keyboardShortcuts','Keyboard shortcuts')}
           style=${{padding:'.2rem .4rem',borderRadius:'var(--radius-xs)',cursor:'pointer',fontFamily:'inherit',
           fontSize:'var(--text-xs)',background:helpOpen?'var(--accent-bg)':'transparent',color:helpOpen?'var(--accent)':'var(--text-muted)',border:'1px solid '+(helpOpen?'var(--accent)':'var(--border)')}}>?</button>
-        <button onClick=${function(){ setMoreOpen(!moreOpen); setHelpOpen(false); }} title="More settings"
+        <button onClick=${function(){ setMoreOpen(!moreOpen); setHelpOpen(false); }} title=${_cc_t('walk.moreSettings','More settings')}
           style=${{padding:'.2rem .4rem',borderRadius:'var(--radius-xs)',cursor:'pointer',fontFamily:'inherit',
           fontSize:'var(--text-xs)',background:moreOpen?'var(--accent-bg)':'transparent',color:moreOpen?'var(--accent)':'var(--text-muted)',border:'1px solid '+(moreOpen?'var(--accent)':'var(--border)')}}>⋯</button>
         ${SEP}
         <button onClick=${exit} style=${{padding:'.2rem .5rem',borderRadius:'var(--radius-xs)',cursor:'pointer',
           fontFamily:'inherit',fontSize:'var(--text-xs)',fontWeight:500,
           background:'var(--color-danger-bg)',color:'var(--color-danger-fg)',
-          border:'1px solid var(--color-danger-border)'}}>Esc · Exit</button>
+          border:'1px solid var(--color-danger-border)'}}>${_cc_t('walk.escExit','Esc · Exit')}</button>
       </div>
       ${vpToast && html`<div style=${{position:'absolute',top:'10%',left:'50%',transform:'translateX(-50%)',
           background:'var(--bg-primary)',border:'1px solid var(--border)',borderRadius:'var(--radius-xs)',
           padding:'.3rem .75rem',fontSize:'var(--text-xs)',color:'var(--text-primary)',
           pointerEvents:'none',zIndex:8,boxShadow:'var(--shadow-md)',whiteSpace:'nowrap'}}>
-        Viewpoint saved
+        ${_cc_t('walk.viewpointSaved','Viewpoint saved')}
       </div>`}
       ${shareToast && html`<div style=${{position:'absolute',top:'10%',left:'50%',transform:'translateX(-50%)',
           background:'var(--bg-primary)',border:'1px solid var(--border)',borderRadius:'var(--radius-xs)',
           padding:'.3rem .75rem',fontSize:'var(--text-xs)',color:'var(--text-primary)',
           pointerEvents:'none',zIndex:8,boxShadow:'var(--shadow-md)',whiteSpace:'nowrap'}}>
-        Link copied to clipboard
+        ${_cc_t('walk.linkCopied','Link copied to clipboard')}
       </div>`}
       ${!isPresent && html`<${WalkClashRadar} s=${s} />`}
       ${!isPresent && html`<${WalkMinimap} s=${s} />`}
