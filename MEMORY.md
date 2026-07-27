@@ -477,12 +477,17 @@ partially-checked footnote, Hide/Show Failures + Highlight-in-3D + Clear-Highlig
 buttons, severity filter chips (All/Error/Warning/Info), "+N more results" footer. BCF 2.1/3.0
 export button labels left untranslated on purpose — standard format identifiers, not prose (same
 treatment as PDF/DXF elsewhere).~~ (2026-07-27)
+~~`PropBlock`/`PropDiffView`/`ClashProps` in full: field labels (Type/Name/Object Type/Storey/
+Material/GlobalId/Express ID/Quantities), diff-count summary line, ID-chip copy tooltips
+(Revit-ID/expressId variants), clash-number copy tooltip, Zoom/Zoom A/Zoom B/Zoom Both/Box buttons +
+their section-box tooltips, Element Properties disclosure, Element/Element A/Element B labels.~~
+(2026-07-27)
 **Remaining (long tail, can proceed independently in future sessions):** `CmdKPalette`,
 `NLCommandPanel`'s deep command-parsing logic, `AIChatPanel`, `RevitBridgePanel`'s Advanced tab,
-`PropBlock`/`PropDiffView`/`ClashProps`, `VirtualList`, `GuidedTour`, `ColorLegend`, `ViewCube`,
-`SectionBoxUI`, `ModelCard`, `NavigatorPanel`, and more — this is genuinely the entire rest of the
-~38.7k-line file; partial coverage is safe by design (`_cc_t` falls back to the English string for
-any untranslated key, so the app never breaks).
+`VirtualList`, `GuidedTour`, `ColorLegend`, `ViewCube`, `SectionBoxUI`, `ModelCard`,
+`NavigatorPanel`, and more — this is genuinely the entire rest of the ~38.7k-line file; partial
+coverage is safe by design (`_cc_t` falls back to the English string for any untranslated key, so
+the app never breaks).
 
 **Park inactive models — memory relief (2026-07-22, branch `claude/clashcontrol-v7-release-plan-jp5njw`)** —
 diagnosed the "viewer stalls a few seconds" + "5.2 GB heap > 4.09 GB limit" reports as the SAME
