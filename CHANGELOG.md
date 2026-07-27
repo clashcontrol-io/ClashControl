@@ -1,5 +1,8 @@
 # Changelog
 
+## v7.3.3 (2026-07-27)
+- i18n: long-tail string retrofit to _cc_t() (#709)
+
 ## v7.3.2 (2026-07-27)
 - i18n + regional-regulation pack scaffold (#708)
 
