@@ -35612,7 +35612,7 @@ function startApp() {
                  : active.type === 'soft'      ? 'var(--color-warning)'
                  : active.type === 'duplicate' ? 'var(--text-muted)'
                  : 'var(--accent)';
-    var title = active.aiTitle || active.title || ('Clash ' + active.id);
+    var title = active.aiTitle || active.title || _cc_t('chips.clashN','Clash {id}',{id:active.id});
     if (typeof title === 'string' && title.length > 56) title = title.slice(0, 53) + '…';
     // Suppress the engine's uninitialized sentinel distance (-1.1e10 etc.)
     // so the floating chip doesn't show '-11106492399000 mm' / '-197000 mm'.
@@ -35688,13 +35688,13 @@ function startApp() {
               pcFiles.forEach(function(f){
                 window._ccLoadPointCloud(f).catch(function(err){
                   console.warn('[PointCloud] Failed to load', f.name, err);
-                  alert('Could not load ' + f.name + ': ' + (err && err.message || err));
+                  alert(_cc_t('dropzone.couldNotLoad','Could not load {file}: {err}',{file:f.name,err:(err && err.message || err)}));
                 });
               });
             })
             .catch(function(err){
               console.warn('[PointCloud] addon could not be loaded', err);
-              alert('Point cloud addon could not be loaded.');
+              alert(_cc_t('dropzone.pcAddonFailed','Point cloud addon could not be loaded.'));
             });
         }
       }
@@ -35740,9 +35740,9 @@ function startApp() {
       userSelect:'none'
     }}>
       <span style=${{width:7,height:7,borderRadius:'50%',background:'#22c55e',flexShrink:0,animation:'cc-dot-pulse 2s ease-in-out infinite'}}></span>
-      <span>Watching <b style=${{fontWeight:600}}>${nameRef.current}</b></span>
+      <span>${_cc_t('folderWatch.watching','Watching')} <b style=${{fontWeight:600}}>${nameRef.current}</b></span>
       <button onClick=${function(){ if(window._ccStopFolderWatch) window._ccStopFolderWatch(); }}
-        title="Stop watching"
+        title=${_cc_t('folderWatch.stopWatching','Stop watching')}
         style=${{background:'none',border:'none',color:'var(--ink-faint)',cursor:'pointer',fontSize:'1.1rem',padding:'0 .1rem',lineHeight:1,marginLeft:'.1rem'}}>×</button>
     </div>`;
   }
@@ -35781,7 +35781,7 @@ function startApp() {
         var name = u.split('/').pop().split('?')[0] || 'model.ifc';
         var file = new File([buf], name, {type:'application/octet-stream'});
         if (window._ccLoadFiles) window._ccLoadFiles([file]);
-      }).catch(function(){ alert('Could not load that URL — check the server allows cross-origin requests.'); });
+      }).catch(function(){ alert(_cc_t('welcome.couldNotLoadUrl','Could not load that URL — check the server allows cross-origin requests.')); });
       setUrlOpen(false);
     }
     /* Whole-canvas drop handler — the dashed scrim that used to surround
@@ -35826,7 +35826,7 @@ function startApp() {
             fontFamily:'var(--font-mono)',fontSize:'var(--text-2xs)',
             color:'var(--ink-muted)',letterSpacing:'.12em',textTransform:'uppercase',
             marginBottom:'.6rem'
-          }}>ClashControl · Free & open · v${CC_VERSION.v}</div>
+          }}>${_cc_t('welcome.freeOpen','ClashControl · Free & open · v{v}',{v:CC_VERSION.v})}</div>
           <!-- Welcome headline -->
           <h1 style=${{
             margin:0,padding:0,
@@ -35834,17 +35834,17 @@ function startApp() {
             fontSize:'2.6rem',lineHeight:1.05,letterSpacing:'-.02em',
             color:'var(--ink-primary)',
             fontVariationSettings:"'opsz' 96"
-          }}>${dragging ? 'Drop the file.' : 'Open a model.'}</h1>
+          }}>${dragging ? _cc_t('welcome.dropTheFile','Drop the file.') : _cc_t('welcome.openAModel','Open a model.')}</h1>
           <p style=${{
             marginTop:'.85rem',marginBottom:0,
             fontFamily:'var(--font-body)',fontSize:'var(--text-md)',
             color:'var(--ink-primary)',lineHeight:1.5,maxWidth:'34em',fontWeight:500
-          }}>Clash detection, coordination & presentation for architects and BIM teams.</p>
+          }}>${_cc_t('welcome.tagline','Clash detection, coordination & presentation for architects and BIM teams.')}</p>
           <p style=${{
             marginTop:'.4rem',marginBottom:0,
             fontFamily:'var(--font-body)',fontSize:'var(--text-base)',
             color:'var(--ink-secondary)',lineHeight:1.55,maxWidth:'34em'
-          }}>Drag an IFC or GLB onto the canvas. Or pick from below.</p>
+          }}>${_cc_t('welcome.dragOntoCanvas','Drag an IFC or GLB onto the canvas. Or pick from below.')}</p>
 
           <!-- Flat row links — no chips, no buttons. The accent line on
                the active row is the only colour. -->
@@ -35859,7 +35859,7 @@ function startApp() {
               }}
               onMouseEnter=${function(e){ e.currentTarget.style.color='var(--ink-accent)'; }}
               onMouseLeave=${function(e){ e.currentTarget.style.color='var(--ink-primary)'; }}>
-              <span>Choose a file…</span>
+              <span>${_cc_t('welcome.chooseFile','Choose a file…')}</span>
               <span style=${{color:'var(--ink-faint)',fontSize:'var(--text-xs)',fontFamily:'var(--font-mono)'}}>IFC · GLB</span>
             </button>
 
@@ -35873,11 +35873,11 @@ function startApp() {
               }}
               onMouseEnter=${function(e){ e.currentTarget.style.color='var(--ink-accent)'; }}
               onMouseLeave=${function(e){ e.currentTarget.style.color='var(--ink-primary)'; }}>
-              <span>Open from URL…</span>
-              <span style=${{color:'var(--ink-faint)',fontSize:'var(--text-xs)'}}>Paste an .ifc link</span>
+              <span>${_cc_t('welcome.openFromUrl','Open from URL…')}</span>
+              <span style=${{color:'var(--ink-faint)',fontSize:'var(--text-xs)'}}>${_cc_t('welcome.pasteIfcLink','Paste an .ifc link')}</span>
             </button>`}
             ${urlOpen && html`<div style=${{display:'flex',gap:'.4rem',padding:'.6rem 0',borderTop:'1px solid var(--hairline)',borderBottom:'1px solid var(--hairline)'}}>
-              <input autofocus type="url" placeholder="https://example.com/model.ifc"
+              <input autofocus type="url" placeholder=${_cc_t('welcome.urlPlaceholder','https://example.com/model.ifc')}
                 value=${urlVal}
                 onInput=${function(e){setUrlVal(e.target.value);}}
                 onKeyDown=${function(e){ if(e.key==='Enter') loadUrl(); if(e.key==='Escape') setUrlOpen(false); }}
@@ -35892,7 +35892,7 @@ function startApp() {
                   padding:'.45rem .85rem',background:'var(--ink-primary)',color:'var(--paper-bg)',
                   border:'none',borderRadius:'var(--radius-sm)',cursor:'pointer',
                   fontFamily:'var(--font-body)',fontSize:'var(--text-sm)',fontWeight:500
-                }}>Load</button>
+                }}>${_cc_t('welcome.load','Load')}</button>
             </div>`}
 
             <button onClick=${function(){ if(window._ccStartFolderWatch) window._ccStartFolderWatch(); }}
@@ -35905,8 +35905,8 @@ function startApp() {
               }}
               onMouseEnter=${function(e){ e.currentTarget.style.color='var(--ink-accent)'; }}
               onMouseLeave=${function(e){ e.currentTarget.style.color='var(--ink-primary)'; }}>
-              <span>Watch a folder…</span>
-              <span style=${{color:'var(--ink-faint)',fontSize:'var(--text-xs)'}}>Desktop Connector · ACC</span>
+              <span>${_cc_t('welcome.watchFolder','Watch a folder…')}</span>
+              <span style=${{color:'var(--ink-faint)',fontSize:'var(--text-xs)'}}>${_cc_t('welcome.desktopConnectorAcc','Desktop Connector · ACC')}</span>
             </button>
 
             <button onClick=${function(){ window._ccRevitAutoConnect = true; try { if(window._ccActivateAddon) window._ccActivateAddon('revit-bridge'); } catch(_e){} d({t:'REVIT_BRIDGE',v:true}); }}
@@ -35919,8 +35919,8 @@ function startApp() {
               }}
               onMouseEnter=${function(e){ e.currentTarget.style.color='var(--ink-accent)'; }}
               onMouseLeave=${function(e){ e.currentTarget.style.color='var(--ink-primary)'; }}>
-              <span>Live link to Revit…</span>
-              <span style=${{color:'var(--ink-faint)',fontSize:'var(--text-xs)'}}>Connector · WebSocket sync</span>
+              <span>${_cc_t('welcome.liveLinkRevit','Live link to Revit…')}</span>
+              <span style=${{color:'var(--ink-faint)',fontSize:'var(--text-xs)'}}>${_cc_t('welcome.connectorWebsocketSync','Connector · WebSocket sync')}</span>
             </button>
 
           </div>
@@ -35929,19 +35929,19 @@ function startApp() {
             <a href="/tour/" style=${{
                 fontFamily:'var(--font-body)',fontSize:'var(--text-xs)',
                 color:'var(--ink-faint)',textDecoration:'underline',textUnderlineOffset:'3px',textDecorationThickness:'1px'
-              }}>New here? Take the tour.</a>
+              }}>${_cc_t('welcome.newHereTour','New here? Take the tour.')}</a>
             <button onClick=${function(){ if(window._pickSharedFolder) window._pickSharedFolder(d); }}
               style=${{
                 background:'none',border:'none',cursor:'pointer',padding:0,
                 fontFamily:'var(--font-body)',fontSize:'var(--text-xs)',
                 color:'var(--ink-faint)',textDecoration:'underline',textUnderlineOffset:'3px',textDecorationThickness:'1px'
-              }}>Already shared? Link a folder.</button>
+              }}>${_cc_t('welcome.alreadySharedLinkFolder','Already shared? Link a folder.')}</button>
           </div>
           <p style=${{
             marginTop:'1.6rem',marginBottom:0,
             fontFamily:'var(--font-body)',fontSize:'var(--text-xs)',
             color:'var(--ink-faint)',lineHeight:1.55,maxWidth:'34em'
-          }}>IFC is the open BIM format exported by Revit, Archicad, Tekla and others. No account, no upload — your model stays in the browser.</p>
+          }}>${_cc_t('welcome.ifcExplainer','IFC is the open BIM format exported by Revit, Archicad, Tekla and others. No account, no upload — your model stays in the browser.')}</p>
         </div>
 
         <!-- Hand-drawn isometric ballast — single 1.5px stroke, no fill -->
