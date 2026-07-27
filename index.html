@@ -19338,7 +19338,7 @@ function startApp() {
     var total = keys.reduce(function(sum,k){return sum+(groups[k].count||0)},0);
     var hiddenCount = classView ? keys.filter(function(k){return s.hiddenClasses[classView+':'+k]}).length : 0;
     var CLASS_COLORS = ['#60a5fa','#f87171','#34d399','#fbbf24','#c084fc','#fb923c','#22d3ee','#e879f9','#a3e635','#f472b6','#38bdf8','#facc15','#4ade80','#f97316','#818cf8'];
-    var VIEWS=[{id:'spatial',label:'Hierarchy',title:'Project → Building → Storey'},{id:'tree',label:'Flat list',title:'By storey, alphabetical'},{id:'byType',label:'IFC Type'},{id:'byStorey',label:'Storey'},{id:'byDiscipline',label:'Discipline'},{id:'byMaterial',label:'Material'}];
+    var VIEWS=[{id:'spatial',label:_cc_t('nav.hierarchy','Hierarchy'),title:_cc_t('nav.hierarchyTip','Project → Building → Storey')},{id:'tree',label:_cc_t('nav.flatList','Flat list'),title:_cc_t('nav.flatListTip','By storey, alphabetical')},{id:'byType',label:_cc_t('legend.ifcType','IFC Type')},{id:'byStorey',label:_cc_t('propBlock.storey','Storey')},{id:'byDiscipline',label:_cc_t('legend.discipline','Discipline')},{id:'byMaterial',label:_cc_t('propBlock.material','Material')}];
     var _selProp = useState(null), selectedElProps=_selProp[0], setSelectedElProps=_selProp[1];
     var _ef = useState(null), explorerFocus=_ef[0], setExplorerFocus=_ef[1];
     var _ms = useState([]), multiSel=_ms[0], setMultiSel=_ms[1];
@@ -19459,7 +19459,7 @@ function startApp() {
           title=${opts.title||null}>
           ${hasChildren
             ? html`<button type="button" class=${'cc-tv__toggle'+(expanded?' cc-tv-expanded':'')}
-                aria-label=${expanded?'Collapse':'Expand'}
+                aria-label=${expanded?_cc_t('nav.collapse','Collapse'):_cc_t('nav.expand','Expand')}
                 onClick=${function(e){e.stopPropagation();opts.onToggle&&opts.onToggle();}}>▶</button>`
             : html`<span class="cc-tv__toggle-spacer"></span>`}
           ${opts.icon!=null && html`<span class="cc-tv__icon" style=${opts.iconColor?{color:opts.iconColor}:null}>${opts.icon}</span>`}
@@ -19487,31 +19487,31 @@ function startApp() {
             onInput=${function(e){setTreeSearch(e.target.value);}}
             style=${{...S_INPUT,fontSize:'var(--text-xs)',padding:'var(--space-1) var(--space-2)'}} />
           ${(viewMode==='tree'||viewMode==='spatial') && html`<div style=${{display:'flex',gap:'var(--space-1)'}}>
-            <button class="cc-btn-press" onClick=${expandAll} style=${{...S_BTN,fontSize:'var(--text-xs)',padding:'var(--space-1) var(--space-2)',background:'var(--bg-secondary)',color:'var(--text-secondary)',border:'1px solid var(--border-subtle)'}}>Expand all</button>
-            <button class="cc-btn-press" onClick=${function(){setExpanded({});}} style=${{...S_BTN,fontSize:'var(--text-xs)',padding:'var(--space-1) var(--space-2)',background:'var(--bg-secondary)',color:'var(--text-secondary)',border:'1px solid var(--border-subtle)'}}>Collapse all</button>
+            <button class="cc-btn-press" onClick=${expandAll} style=${{...S_BTN,fontSize:'var(--text-xs)',padding:'var(--space-1) var(--space-2)',background:'var(--bg-secondary)',color:'var(--text-secondary)',border:'1px solid var(--border-subtle)'}}>${_cc_t('nav.expandAll','Expand all')}</button>
+            <button class="cc-btn-press" onClick=${function(){setExpanded({});}} style=${{...S_BTN,fontSize:'var(--text-xs)',padding:'var(--space-1) var(--space-2)',background:'var(--bg-secondary)',color:'var(--text-secondary)',border:'1px solid var(--border-subtle)'}}>${_cc_t('nav.collapseAll','Collapse all')}</button>
           </div>`}
         </div>
         ${classView && total>0 && html`<div style=${{display:'flex',justifyContent:'space-between',alignItems:'center'}}>
           <div style=${{display:'flex',alignItems:'center',gap:'var(--space-2)'}}>
             <button type="button" class=${'cc-tv__check'+(hiddenCount===0?' cc-tv-checked':hiddenCount<keys.length?' cc-tv-indeterminate':'')}
               onClick=${function(){if(hiddenCount>0){d({t:A.SHOW_ALL_CLASSES})}else{d({t:A.HIDE_ALL_CLASSES,view:classView})}}}
-              aria-label=${hiddenCount>0?'Show all':'Hide all'}
-              title=${hiddenCount>0?'Show all':'Hide all'}></button>
+              aria-label=${hiddenCount>0?_cc_t('common.show','Show')+' '+_cc_t('common.all','All').toLowerCase():_cc_t('nav.hideAll','Hide all')}
+              title=${hiddenCount>0?_cc_t('nav.showAll','Show all'):_cc_t('nav.hideAll','Hide all')}></button>
             <span style=${{fontSize:'var(--text-2xs)',color:'var(--text-muted)'}}>${keys.length} groups · ${total} elements</span>
           </div>
           <button class="cc-btn-press" onClick=${function(){d({t:A.COLOR_BY_CLASS,v:classView})}}
             style=${{...S_BTN,fontSize:'var(--text-2xs)',padding:'var(--space-1) var(--space-2)',background:s.colorByClass===classView?'var(--accent)':'var(--bg-secondary)',color:s.colorByClass===classView?'#fff':'var(--text-faint)',fontWeight:'var(--weight-medium)'}}
-            title="Color elements by this classification">Color</button>
+            title=${_cc_t('nav.colorByClassTip','Color elements by this classification')}>${_cc_t('nav.color','Color')}</button>
         </div>`}
         ${classView && hiddenCount>0 && html`<div style=${{fontSize:'var(--text-2xs)',color:'var(--color-warning-fg)'}}>${hiddenCount} group${hiddenCount>1?'s':''} hidden</div>`}
       </div>
-      <div ref=${explorerScrollRef} role=${(viewMode==='spatial'||viewMode==='tree')?'tree':null} aria-label=${viewMode==='spatial'?'Spatial structure':viewMode==='tree'?'Model tree':null} class="cc-tv" style=${{flex:1,overflowY:'auto',overflowX:'auto',padding:'var(--space-1) 0'}}>
-        ${s.models.length===0 && html`<div class="cc-tv__empty">Load models to explore</div>`}
+      <div ref=${explorerScrollRef} role=${(viewMode==='spatial'||viewMode==='tree')?'tree':null} aria-label=${viewMode==='spatial'?_cc_t('nav.spatialStructure','Spatial structure'):viewMode==='tree'?_cc_t('nav.modelTree','Model tree'):null} class="cc-tv" style=${{flex:1,overflowY:'auto',overflowX:'auto',padding:'var(--space-1) 0'}}>
+        ${s.models.length===0 && html`<div class="cc-tv__empty">${_cc_t('nav.loadModelsToExplore','Load models to explore')}</div>`}
         ${viewMode==='spatial' && html`<ul role="group" class="cc-tv__list">${s.models.filter(function(m){return m.visible!==false}).map(function(model){
           var sh = model.spatialHierarchy||{};
           var projName = sh.project ? sh.project.name : model.name;
-          var sites = sh.sites && sh.sites.length ? sh.sites : [{name:'Default Site'}];
-          var buildings = sh.buildings && sh.buildings.length ? sh.buildings : [{name:'Default Building'}];
+          var sites = sh.sites && sh.sites.length ? sh.sites : [{name:_cc_t('nav.defaultSite','Default Site')}];
+          var buildings = sh.buildings && sh.buildings.length ? sh.buildings : [{name:_cc_t('nav.defaultBuilding','Default Building')}];
           var pKey='sp_'+model.id;
           var _mIdx = modelIndexes[model.id] || {storeyGroups:{}, noStorey:[]};
           var q = treeSearch.toLowerCase();
@@ -19533,7 +19533,7 @@ function startApp() {
           return tvNode({
             key:pKey, level:1,
             icon:'⌂', iconColor:'var(--color-info-fg)',
-            label:projName, secondary:'Project',
+            label:projName, secondary:_cc_t('nav.project','Project'),
             hasChildren:true, expanded:!!expanded[pKey],
             selected:explorerFocus===pKey,
             onClick:function(){toggle(pKey);setExplorerFocus(pKey);},
@@ -19543,7 +19543,7 @@ function startApp() {
               return tvNode({
                 key:siKey, level:2,
                 icon:'◉', iconColor:'#22d3ee',
-                label:site.name, secondary:'Site',
+                label:site.name, secondary:_cc_t('nav.site','Site'),
                 hasChildren:true, expanded:!!expanded[siKey],
                 selected:explorerFocus===siKey,
                 onClick:function(){toggle(siKey);setExplorerFocus(siKey);},
@@ -19553,7 +19553,7 @@ function startApp() {
                   return tvNode({
                     key:bKey, level:3,
                     icon:'▤', iconColor:'var(--color-warning-fg)',
-                    label:bld.name, secondary:'Building',
+                    label:bld.name, secondary:_cc_t('nav.building','Building'),
                     hasChildren:true, expanded:!!expanded[bKey],
                     selected:explorerFocus===bKey,
                     onClick:function(){toggle(bKey);setExplorerFocus(bKey);},
@@ -19709,7 +19709,7 @@ function startApp() {
             children:storeyChildren
           });
         })}</ul>`}
-        ${classView && !hasCls && html`<div class="cc-tv__empty">Load models to see classification</div>`}
+        ${classView && !hasCls && html`<div class="cc-tv__empty">${_cc_t('nav.loadModelsToSeeClass','Load models to see classification')}</div>`}
         ${classView && keys.map(function(k, idx){
           var grp = groups[k];
           var pct = total>0 ? Math.round(grp.count/total*100) : 0;
@@ -19734,7 +19734,7 @@ function startApp() {
         })}
       </div>
       ${multiSel.length===2 && html`<div style=${{borderTop:'1px solid var(--border)',padding:'.5rem .6rem',flexShrink:0,background:'var(--bg-secondary)',maxHeight:220,overflowY:'auto'}}>
-        <div style=${{fontSize:'0.69rem',fontWeight:700,color:'var(--text-muted)',textTransform:'uppercase',letterSpacing:'.04em',marginBottom:'.3rem'}}>Compare selected (2)</div>
+        <div style=${{fontSize:'0.69rem',fontWeight:700,color:'var(--text-muted)',textTransform:'uppercase',letterSpacing:'.04em',marginBottom:'.3rem'}}>${_cc_t('nav.compareSelected2','Compare selected (2)')}</div>
         <${PropDiffView}
           pA=${_lookupElProps(s.models, multiSel[0].modelId, multiSel[0].expressId)}
           pB=${_lookupElProps(s.models, multiSel[1].modelId, multiSel[1].expressId)} />
@@ -19742,11 +19742,11 @@ function startApp() {
       ${/* Selection Sets — save & restore named element groups */ ''}
       <div style=${{borderTop:'1px solid var(--border)',padding:'.5rem .6rem',flexShrink:0,background:'var(--bg-secondary)'}}>
         <div style=${{display:'flex',alignItems:'center',gap:'.3rem',marginBottom:'.3rem'}}>
-          <span style=${{fontSize:'0.69rem',fontWeight:700,color:'var(--text-muted)',textTransform:'uppercase',letterSpacing:'.04em',flex:1}}>Selection sets</span>
+          <span style=${{fontSize:'0.69rem',fontWeight:700,color:'var(--text-muted)',textTransform:'uppercase',letterSpacing:'.04em',flex:1}}>${_cc_t('nav.selectionSets','Selection sets')}</span>
           <button onClick=${function(){
             var refs = multiSel.length ? multiSel : (window._ccSelectedExpressId ? [{expressId:window._ccSelectedExpressId, modelId:null}] : []);
             if(!refs.length){ alert('Select one or more elements first (click in 3D, or shift-click in the navigator).'); return; }
-            var name = prompt('Name this selection set:', 'Set '+((s.selectionSets||[]).length+1));
+            var name = prompt(_cc_t('nav.nameThisSelectionSet','Name this selection set:'), _cc_t('nav.setN','Set {n}',{n:(s.selectionSets||[]).length+1}));
             if(!name) return;
             d({t:'ADD_SELSET', v:{id:uid(), name:name, refs:refs}});
           }}
@@ -19755,17 +19755,17 @@ function startApp() {
           </button>
         </div>
         ${(s.selectionSets||[]).length === 0
-          ? html`<div style=${{fontSize:'0.65rem',color:'var(--text-faint)'}}>No saved sets. Multi-select with Shift-click in the navigator, then Save.</div>`
+          ? html`<div style=${{fontSize:'0.65rem',color:'var(--text-faint)'}}>${_cc_t('nav.noSavedSets','No saved sets. Multi-select with Shift-click in the navigator, then Save.')}</div>`
           : html`<div style=${{display:'flex',flexDirection:'column',gap:'.15rem',maxHeight:140,overflowY:'auto'}}>
               ${s.selectionSets.map(function(ss){
                 return html`<div key=${ss.id} style=${{display:'flex',alignItems:'center',gap:'.3rem',padding:'.2rem .3rem',background:'var(--bg-primary)',border:'1px solid var(--border-subtle)',borderRadius:4}}>
-                  <span onClick=${function(){var nm=prompt('Rename selection set:',ss.name);if(nm&&nm.trim())d({t:'REN_SELSET',id:ss.id,name:nm.trim()});}}
-                    title=${ss.name+' ('+ss.refs.length+') — click to rename'} style=${{fontSize:'0.7rem',color:'var(--text-secondary)',flex:1,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',cursor:'pointer'}}>${ss.name}</span>
+                  <span onClick=${function(){var nm=prompt(_cc_t('nav.renameSelectionSet','Rename selection set:'),ss.name);if(nm&&nm.trim())d({t:'REN_SELSET',id:ss.id,name:nm.trim()});}}
+                    title=${_cc_t('nav.clickToRename','{name} ({n}) — click to rename',{name:ss.name,n:ss.refs.length})} style=${{fontSize:'0.7rem',color:'var(--text-secondary)',flex:1,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',cursor:'pointer'}}>${ss.name}</span>
                   <span style=${{fontSize:'0.6rem',color:'var(--text-faint)',flexShrink:0}}>${ss.refs.length}</span>
                   <button onClick=${function(){if(_highlightRefs)_highlightRefs(ss.refs,true);}}
-                    title="Isolate" style=${{background:'none',border:'none',cursor:'pointer',color:'var(--text-muted)',fontSize:'0.65rem',padding:'0 .2rem'}}>◉</button>
+                    title=${_cc_t('nav.isolate','Isolate')} style=${{background:'none',border:'none',cursor:'pointer',color:'var(--text-muted)',fontSize:'0.65rem',padding:'0 .2rem'}}>◉</button>
                   <button onClick=${function(){if(_highlightRefs)_highlightRefs(ss.refs,false);}}
-                    title="Highlight" style=${{background:'none',border:'none',cursor:'pointer',color:'var(--text-muted)',fontSize:'0.65rem',padding:'0 .2rem'}}>★</button>
+                    title=${_cc_t('nav.highlight','Highlight')} style=${{background:'none',border:'none',cursor:'pointer',color:'var(--text-muted)',fontSize:'0.65rem',padding:'0 .2rem'}}>★</button>
                   <button onClick=${function(){
                       var refs = multiSel.length ? multiSel : (window._ccSelectedExpressId ? [{expressId:window._ccSelectedExpressId, modelId:null}] : []);
                       if(!refs.length){ alert('Select one or more elements first (click in 3D, or shift-click in the navigator), then use + / − to edit the set.'); return; }
@@ -19773,16 +19773,16 @@ function startApp() {
                       refs.forEach(function(r){ if(!merged.some(function(m){return m.expressId===r.expressId;})) merged.push(r); });
                       d({t:'UPD_SELSET_REFS',id:ss.id,refs:merged});
                     }}
-                    title="Add current selection to this set" style=${{background:'none',border:'none',cursor:'pointer',color:'var(--text-muted)',fontSize:'0.75rem',padding:'0 .2rem',fontWeight:700}}>+</button>
+                    title=${_cc_t('nav.addCurrentSelToSet','Add current selection to this set')} style=${{background:'none',border:'none',cursor:'pointer',color:'var(--text-muted)',fontSize:'0.75rem',padding:'0 .2rem',fontWeight:700}}>+</button>
                   <button onClick=${function(){
                       var refs = multiSel.length ? multiSel : (window._ccSelectedExpressId ? [{expressId:window._ccSelectedExpressId, modelId:null}] : []);
                       if(!refs.length){ alert('Select one or more elements first, then use + / − to edit the set.'); return; }
                       var remaining = ss.refs.filter(function(m){ return !refs.some(function(r){return r.expressId===m.expressId;}); });
                       d({t:'UPD_SELSET_REFS',id:ss.id,refs:remaining});
                     }}
-                    title="Remove current selection from this set" style=${{background:'none',border:'none',cursor:'pointer',color:'var(--text-muted)',fontSize:'0.75rem',padding:'0 .2rem',fontWeight:700}}>−</button>
+                    title=${_cc_t('nav.removeCurrentSelFromSet','Remove current selection from this set')} style=${{background:'none',border:'none',cursor:'pointer',color:'var(--text-muted)',fontSize:'0.75rem',padding:'0 .2rem',fontWeight:700}}>−</button>
                   <button onClick=${function(){d({t:'DEL_SELSET',id:ss.id});}}
-                    title="Delete" style=${{background:'none',border:'none',cursor:'pointer',color:'#f87171',fontSize:'0.7rem',padding:'0 .2rem'}}>×</button>
+                    title=${_cc_t('common.delete','Delete')} style=${{background:'none',border:'none',cursor:'pointer',color:'#f87171',fontSize:'0.7rem',padding:'0 .2rem'}}>×</button>
                 </div>`;
               })}
             </div>`}
@@ -19792,13 +19792,13 @@ function startApp() {
           unlike a Selection Set's frozen refs[]. */ ''}
       <div style=${{borderTop:'1px solid var(--border)',padding:'.5rem .6rem',flexShrink:0,background:'var(--bg-secondary)'}}>
         <div style=${{display:'flex',alignItems:'center',gap:'.3rem',marginBottom:'.3rem'}}>
-          <span style=${{fontSize:'0.69rem',fontWeight:700,color:'var(--text-muted)',textTransform:'uppercase',letterSpacing:'.04em',flex:1}}>Search sets</span>
+          <span style=${{fontSize:'0.69rem',fontWeight:700,color:'var(--text-muted)',textTransform:'uppercase',letterSpacing:'.04em',flex:1}}>${_cc_t('nav.searchSets','Search sets')}</span>
           <button onClick=${function(){
               if (showSearchForm) { setShowSearchForm(false); setEditingSearchSetId(null); }
               else { setEditingSearchSetId(null); setSearchForm({}); setSearchFormName(''); setShowSearchForm(true); }
             }}
             style=${{fontSize:'0.69rem',padding:'.2rem .45rem',background:'var(--accent-bg)',color:'var(--accent)',border:'1px solid var(--accent-subtle)',borderRadius:4,cursor:'pointer',fontWeight:600,fontFamily:'inherit'}}>
-            ${showSearchForm ? 'Cancel' : '+ New'}
+            ${showSearchForm ? _cc_t('common.cancel','Cancel') : _cc_t('nav.plusNew','+ New')}
           </button>
         </div>
         ${showSearchForm && (function(){
@@ -19809,7 +19809,7 @@ function startApp() {
               style=${{...S_INPUT,fontSize:'0.68rem',padding:'.2rem .35rem',marginBottom:'.25rem'}} />`;
           }
           return html`<div style=${{display:'flex',flexDirection:'column',padding:'.4rem',marginBottom:'.35rem',background:'var(--bg-primary)',border:'1px solid var(--border-subtle)',borderRadius:4}}>
-            <input type="text" placeholder="Name" value=${searchFormName}
+            <input type="text" placeholder=${_cc_t('nav.namePlaceholder','Name')} value=${searchFormName}
               onInput=${function(e){setSearchFormName(e.target.value);}}
               style=${{...S_INPUT,fontSize:'0.68rem',padding:'.2rem .35rem',marginBottom:'.25rem',fontWeight:600}} />
             ${field('ifcType','IFC Type (e.g. IfcDoor)')}
@@ -19819,11 +19819,11 @@ function startApp() {
             ${field('propertyName','Property name (e.g. FireRating)')}
             ${field('propertyValue','Value contains… (optional, needs set+name)')}
             <div style=${{fontSize:'0.63rem',color:'var(--text-faint)',marginBottom:'.3rem'}}>
-              ${_searchFormHasCriteria(searchForm) ? liveCount+' matching element'+(liveCount!==1?'s':'')+' right now' : 'Enter at least one filter above'}
+              ${_searchFormHasCriteria(searchForm) ? _cc_t('nav.matchingElementsNow','{n} matching element{s} right now',{n:liveCount,s:liveCount!==1?'s':''}) : _cc_t('nav.enterAtLeastOneFilter','Enter at least one filter above')}
             </div>
             <button onClick=${function(){
-                if (!_searchFormHasCriteria(searchForm)) { alert('Enter at least one filter (IFC Type, Storey, Material, or a Property).'); return; }
-                var name = searchFormName.trim() || 'Search '+((s.searchSets||[]).length+1);
+                if (!_searchFormHasCriteria(searchForm)) { alert(_cc_t('nav.enterAtLeastOneFilterFull','Enter at least one filter (IFC Type, Storey, Material, or a Property).')); return; }
+                var name = searchFormName.trim() || _cc_t('nav.searchN','Search {n}',{n:(s.searchSets||[]).length+1});
                 if (editingSearchSetId) {
                   d({t:'UPD_SEARCHSET_QUERY', id:editingSearchSetId, query:searchForm});
                   d({t:'REN_SEARCHSET', id:editingSearchSetId, name:name});
@@ -19833,12 +19833,12 @@ function startApp() {
                 setShowSearchForm(false); setEditingSearchSetId(null); setSearchForm({}); setSearchFormName('');
               }}
               style=${{fontSize:'0.68rem',padding:'.25rem .5rem',background:'var(--accent)',color:'var(--bg-primary)',border:'none',borderRadius:4,cursor:'pointer',fontWeight:600,fontFamily:'inherit'}}>
-              ${editingSearchSetId ? 'Update' : 'Save'} search set
+              ${editingSearchSetId ? _cc_t('common.update','Update') : _cc_t('common.save','Save')} ${_cc_t('nav.searchSetLower','search set')}
             </button>
           </div>`;
         })()}
         ${(s.searchSets||[]).length === 0
-          ? html`<div style=${{fontSize:'0.65rem',color:'var(--text-faint)'}}>No saved searches. Define a filter above — membership updates live as the model changes.</div>`
+          ? html`<div style=${{fontSize:'0.65rem',color:'var(--text-faint)'}}>${_cc_t('nav.noSavedSearches','No saved searches. Define a filter above — membership updates live as the model changes.')}</div>`
           : html`<div style=${{display:'flex',flexDirection:'column',gap:'.15rem',maxHeight:140,overflowY:'auto'}}>
               ${s.searchSets.map(function(qs){
                 var refs = _resolveSearchSet(qs.query, s.models);
@@ -19849,11 +19849,11 @@ function startApp() {
                     title=${qs.name+' ('+refs.length+' now matching) — click to edit'} style=${{fontSize:'0.7rem',color:'var(--text-secondary)',flex:1,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',cursor:'pointer'}}>${qs.name}</span>
                   <span style=${{fontSize:'0.6rem',color:'var(--text-faint)',flexShrink:0}}>${refs.length}</span>
                   <button onClick=${function(){if(_highlightRefs)_highlightRefs(refs,true);}}
-                    title="Isolate" style=${{background:'none',border:'none',cursor:'pointer',color:'var(--text-muted)',fontSize:'0.65rem',padding:'0 .2rem'}}>◉</button>
+                    title=${_cc_t('nav.isolate','Isolate')} style=${{background:'none',border:'none',cursor:'pointer',color:'var(--text-muted)',fontSize:'0.65rem',padding:'0 .2rem'}}>◉</button>
                   <button onClick=${function(){if(_highlightRefs)_highlightRefs(refs,false);}}
-                    title="Highlight" style=${{background:'none',border:'none',cursor:'pointer',color:'var(--text-muted)',fontSize:'0.65rem',padding:'0 .2rem'}}>★</button>
+                    title=${_cc_t('nav.highlight','Highlight')} style=${{background:'none',border:'none',cursor:'pointer',color:'var(--text-muted)',fontSize:'0.65rem',padding:'0 .2rem'}}>★</button>
                   <button onClick=${function(){d({t:'DEL_SEARCHSET',id:qs.id});}}
-                    title="Delete" style=${{background:'none',border:'none',cursor:'pointer',color:'#f87171',fontSize:'0.7rem',padding:'0 .2rem'}}>×</button>
+                    title=${_cc_t('common.delete','Delete')} style=${{background:'none',border:'none',cursor:'pointer',color:'#f87171',fontSize:'0.7rem',padding:'0 .2rem'}}>×</button>
                 </div>`;
               })}
             </div>`}
