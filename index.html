@@ -29027,10 +29027,10 @@ function startApp() {
       onClick=${onClose}>
       <div class="cc-modal-card" style=${{...S_MODAL_CARD,width:360,padding:0}} onClick=${function(e){e.stopPropagation();}}>
         <div style=${{padding:'var(--space-4) var(--space-4) var(--space-2)',borderBottom:'1px solid var(--border-subtle)',display:'flex',alignItems:'center',justifyContent:'space-between'}}>
-          <span style=${{fontWeight:700,fontSize:'0.95rem',color:'var(--text-primary)'}}>Select Level</span>
+          <span style=${{fontWeight:700,fontSize:'0.95rem',color:'var(--text-primary)'}}>${_cc_t('storeyPicker.selectLevel','Select Level')}</span>
           <button onClick=${onClose} style=${{...S_BTN,background:'none',color:'var(--text-faint)',fontSize:'1rem',padding:'0 var(--space-1)'}}>✕</button>
         </div>
-        ${unitScale > 1 && html`<div style=${{padding:'var(--space-1) var(--space-4)',fontSize:'0.67rem',color:'var(--text-faint)',background:'var(--bg-tertiary)'}}>Model units: ${unitScale===1000?'mm':'cm'}</div>`}
+        ${unitScale > 1 && html`<div style=${{padding:'var(--space-1) var(--space-4)',fontSize:'0.67rem',color:'var(--text-faint)',background:'var(--bg-tertiary)'}}>${_cc_t('storeyPicker.modelUnits','Model units: {unit}',{unit:unitScale===1000?'mm':'cm'})}</div>`}
         <div style=${{maxHeight:'50vh',overflowY:'auto',padding:'var(--space-2) 0'}}>
           ${storeys.map(function(st, i) {
             return html`<button key=${i} onClick=${function(){pick(st);}}
@@ -29054,7 +29054,7 @@ function startApp() {
     var showTBSt = useState(false), showTB = showTBSt[0], setShowTB = showTBSt[1];
 
     function newSheet() {
-      if (!storeys.length) { alert('Load a model with storey data first.'); return; }
+      if (!storeys.length) { alert(_cc_t('sheet.loadModelFirst','Load a model with storey data first.')); return; }
       if (window._ccShowStoreyPicker) window._ccShowStoreyPicker(true);
     }
 
@@ -29096,12 +29096,12 @@ function startApp() {
         });
       });
       d({ t: A.PINS_SET, sheetId: activeSheet.id, v: pins });
-      if (!pins.length) alert('No clashes or issues found in this storey slab.');
+      if (!pins.length) alert(_cc_t('sheet.noClashesOrIssues','No clashes or issues found in this storey slab.'));
     }
 
     function delSheet() {
       if (!activeSheet) return;
-      if (!confirm('Delete sheet "' + activeSheet.name + '"? This removes its markups and pins.')) return;
+      if (!confirm(_cc_t('sheet.confirmDelete','Delete sheet "{name}"? This removes its markups and pins.',{name:activeSheet.name}))) return;
       d({ t: A.SHEET_DEL, id: activeSheet.id });
     }
 
@@ -29109,34 +29109,34 @@ function startApp() {
     return html`<div style=${{ display: 'flex', gap: '.25rem', alignItems: 'center' }}>
       ${s.sheets && s.sheets.length > 0 && html`<select value=${s.activeSheetId || ''} onChange=${function(e) { d({ t: A.SHEET_SET_ACTIVE, id: e.target.value || null }); }}
         style=${{ ...btn, background: 'var(--overlay-bg)', color: 'var(--text-primary)', maxWidth: 140 }}>
-        <option value="">— No sheet —</option>
+        <option value="">${_cc_t('sheet.noSheet','— No sheet —')}</option>
         ${s.sheets.map(function(sh) { return html`<option key=${sh.id} value=${sh.id}>${sh.name}</option>`; })}
       </select>`}
-      <button onClick=${newSheet} style=${{ ...btn, background: '#065f46', color: '#6ee7b7' }} title="Create a new annotated floor plan from a storey">+ Sheet</button>
-      ${activeSheet && html`<button onClick=${plotClashes} style=${{ ...btn, background: '#7f1d1d', color: '#fca5a5' }} title="Drop pins for every clash/issue whose location falls within this storey">Plot Clashes</button>`}
-      ${activeSheet && html`<button onClick=${function() { setShowTB(!showTB); }} style=${{ ...btn, background: 'var(--overlay-bg)', color: 'var(--text-muted)' }} title="Sheet settings: scale, paper, cut depth, title block">Settings</button>`}
-      ${activeSheet && html`<button onClick=${delSheet} style=${{ ...btn, background: 'var(--overlay-bg)', color: '#ef4444' }} title="Delete this sheet">✕</button>`}
+      <button onClick=${newSheet} style=${{ ...btn, background: '#065f46', color: '#6ee7b7' }} title=${_cc_t('sheet.newSheetTip','Create a new annotated floor plan from a storey')}>${_cc_t('sheet.plusSheet','+ Sheet')}</button>
+      ${activeSheet && html`<button onClick=${plotClashes} style=${{ ...btn, background: '#7f1d1d', color: '#fca5a5' }} title=${_cc_t('sheet.plotClashesTip','Drop pins for every clash/issue whose location falls within this storey')}>${_cc_t('sheet.plotClashes','Plot Clashes')}</button>`}
+      ${activeSheet && html`<button onClick=${function() { setShowTB(!showTB); }} style=${{ ...btn, background: 'var(--overlay-bg)', color: 'var(--text-muted)' }} title=${_cc_t('sheet.settingsTip','Sheet settings: scale, paper, cut depth, title block')}>${_cc_t('sheet.settings','Settings')}</button>`}
+      ${activeSheet && html`<button onClick=${delSheet} style=${{ ...btn, background: 'var(--overlay-bg)', color: '#ef4444' }} title=${_cc_t('sheet.deleteTip','Delete this sheet')}>✕</button>`}
       ${showTB && activeSheet && html`<div style=${{ position: 'absolute', top: '2.2rem', right: 0, background: 'var(--bg-primary)', border: '1px solid var(--border)', borderRadius: 6, padding: '.6rem', zIndex: 20, width: 280, display: 'flex', flexDirection: 'column', gap: '.35rem', maxHeight:'70vh', overflowY:'auto' }}>
-        <div style=${{ fontSize: '.7rem', fontWeight: 600, color: 'var(--text-primary)', marginBottom: '.2rem' }}>Sheet Settings</div>
+        <div style=${{ fontSize: '.7rem', fontWeight: 600, color: 'var(--text-primary)', marginBottom: '.2rem' }}>${_cc_t('sheet.sheetSettings','Sheet Settings')}</div>
 
-        <div style=${{ fontSize: '.6rem', fontWeight: 600, color: 'var(--accent)', marginTop: '.2rem' }}>Section Plane</div>
+        <div style=${{ fontSize: '.6rem', fontWeight: 600, color: 'var(--accent)', marginTop: '.2rem' }}>${_cc_t('sheet.sectionPlane','Section Plane')}</div>
         <label style=${{ fontSize: '.55rem', color: 'var(--text-muted)', display: 'flex', flexDirection: 'column', gap: '.1rem' }}>
-          Cut height above floor (m)
+          ${_cc_t('sheet.cutHeightAboveFloor','Cut height above floor (m)')}
           <input type="number" step="0.1" min="0.1" max="10" value=${activeSheet.cutHeight || 1.2}
             onChange=${function(e) { d({ t: A.SHEET_UPD, id: activeSheet.id, u: { cutHeight: Math.max(0.1, Number(e.target.value) || 1.2) } }); }}
             style=${{ ...S_INPUT, fontSize: '.6rem', padding: '.15rem .3rem' }} />
         </label>
         <label style=${{ fontSize: '.55rem', color: 'var(--text-muted)', display: 'flex', flexDirection: 'column', gap: '.1rem' }}>
-          View depth below floor (m)
+          ${_cc_t('sheet.viewDepthBelowFloor','View depth below floor (m)')}
           <input type="number" step="0.1" min="0" max="20" value=${activeSheet.viewDepth != null ? activeSheet.viewDepth : 0}
             onChange=${function(e) { d({ t: A.SHEET_UPD, id: activeSheet.id, u: { viewDepth: Math.max(0, Number(e.target.value) || 0) } }); }}
             style=${{ ...S_INPUT, fontSize: '.6rem', padding: '.15rem .3rem' }} />
-          <span style=${{ fontSize: '.5rem', color: 'var(--text-faint)' }}>0 = cut plane only, &gt;0 shows elements below the cut</span>
+          <span style=${{ fontSize: '.5rem', color: 'var(--text-faint)' }}>${_cc_t('sheet.cutPlaneHint','0 = cut plane only, >0 shows elements below the cut')}</span>
         </label>
 
-        <div style=${{ fontSize: '.6rem', fontWeight: 600, color: 'var(--accent)', marginTop: '.3rem' }}>Paper & Scale</div>
+        <div style=${{ fontSize: '.6rem', fontWeight: 600, color: 'var(--accent)', marginTop: '.3rem' }}>${_cc_t('sheet.paperAndScale','Paper & Scale')}</div>
         <label style=${{ fontSize: '.55rem', color: 'var(--text-muted)', display: 'flex', flexDirection: 'column', gap: '.1rem' }}>
-          Paper size
+          ${_cc_t('sheet.paperSize','Paper size')}
           <select value=${(activeSheet.paper && activeSheet.paper.size) || 'A3'}
             onChange=${function(e) { d({ t: A.SHEET_UPD, id: activeSheet.id, u: { paper: Object.assign({}, activeSheet.paper || {}, { size: e.target.value }) } }); }}
             style=${{ ...S_INPUT, fontSize: '.6rem', padding: '.15rem .3rem' }}>
@@ -29148,16 +29148,16 @@ function startApp() {
           </select>
         </label>
         <label style=${{ fontSize: '.55rem', color: 'var(--text-muted)', display: 'flex', flexDirection: 'column', gap: '.1rem' }}>
-          Orientation
+          ${_cc_t('sheet.orientation','Orientation')}
           <select value=${(activeSheet.paper && activeSheet.paper.orient) || 'landscape'}
             onChange=${function(e) { d({ t: A.SHEET_UPD, id: activeSheet.id, u: { paper: Object.assign({}, activeSheet.paper || {}, { orient: e.target.value }) } }); }}
             style=${{ ...S_INPUT, fontSize: '.6rem', padding: '.15rem .3rem' }}>
-            <option value="landscape">Landscape</option>
-            <option value="portrait">Portrait</option>
+            <option value="landscape">${_cc_t('sheet.landscape','Landscape')}</option>
+            <option value="portrait">${_cc_t('sheet.portrait','Portrait')}</option>
           </select>
         </label>
         <label style=${{ fontSize: '.55rem', color: 'var(--text-muted)', display: 'flex', flexDirection: 'column', gap: '.1rem' }}>
-          Plotting scale
+          ${_cc_t('sheet.plottingScale','Plotting scale')}
           <select value=${(activeSheet.scale && activeSheet.scale.pxPerMeter) || 100}
             onChange=${function(e) { d({ t: A.SHEET_UPD, id: activeSheet.id, u: { scale: { pxPerMeter: Number(e.target.value) } } }); }}
             style=${{ ...S_INPUT, fontSize: '.6rem', padding: '.15rem .3rem' }}>
@@ -29170,15 +29170,15 @@ function startApp() {
           </select>
         </label>
 
-        <div style=${{ fontSize: '.6rem', fontWeight: 600, color: 'var(--accent)', marginTop: '.3rem' }}>Orientation</div>
+        <div style=${{ fontSize: '.6rem', fontWeight: 600, color: 'var(--accent)', marginTop: '.3rem' }}>${_cc_t('sheet.orientation','Orientation')}</div>
         <label style=${{ fontSize: '.55rem', color: 'var(--text-muted)', display: 'flex', flexDirection: 'column', gap: '.1rem' }}>
-          North rotation (°)
+          ${_cc_t('sheet.northRotation','North rotation (°)')}
           <input type="number" step="1" min="-360" max="360" value=${activeSheet.northDeg || 0}
             onChange=${function(e) { d({ t: A.SHEET_UPD, id: activeSheet.id, u: { northDeg: Number(e.target.value) } }); }}
             style=${{ ...S_INPUT, fontSize: '.6rem', padding: '.15rem .3rem' }} />
         </label>
 
-        <div style=${{ fontSize: '.6rem', fontWeight: 600, color: 'var(--accent)', marginTop: '.3rem' }}>Title Block</div>
+        <div style=${{ fontSize: '.6rem', fontWeight: 600, color: 'var(--accent)', marginTop: '.3rem' }}>${_cc_t('sheet.titleBlock','Title Block')}</div>
         ${['project','author','date','revision','notes'].map(function(k) {
           return html`<label key=${k} style=${{ fontSize: '.55rem', color: 'var(--text-muted)', display: 'flex', flexDirection: 'column', gap: '.1rem' }}>
             ${k.charAt(0).toUpperCase() + k.slice(1)}
@@ -29187,7 +29187,7 @@ function startApp() {
               style=${{ ...S_INPUT, fontSize: '.6rem', padding: '.15rem .3rem' }} />
           </label>`;
         })}
-        <button onClick=${function() { setShowTB(false); }} style=${{ ...btn, marginTop: '.3rem', background: 'var(--accent)', color: '#fff' }}>Close</button>
+        <button onClick=${function() { setShowTB(false); }} style=${{ ...btn, marginTop: '.3rem', background: 'var(--accent)', color: '#fff' }}>${_cc_t('common.close','Close')}</button>
       </div>`}
     </div>`;
   }
