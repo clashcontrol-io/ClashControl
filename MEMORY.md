@@ -527,14 +527,20 @@ placeholder+aria-label, Esc badge, no-matches empty state, navigate/run key hint
 footer). Search `keywords` deliberately left in English (they're internal fuzzy-match terms, not
 displayed) — an English or partial-label search still discovers every command regardless of active
 locale.~~ (2026-07-27)
+~~`RevitBridgePanel`'s Advanced tab in full: Direct Connector tab (WebSocket port label, Connect/
+Disconnect, connection-status line incl. reconnecting/auto-detected/not-connected states, excluded-
+models list + re-include, protocol-mismatch warning, reconnect-prompt Pull/Dismiss, Target Project
+label + hint, Export All/Push Clashes/Clear Highlights buttons, loading label, export-failed +
+Retry/Keep partial/Discard, Sync Settings checkboxes, connector-required footer + installer download
++ hint) and AI Bridge tab (AI Provider label + placeholder, API Key label, Save & Test/Push/Pull,
+"AI connected" status) plus the shared Log header/Clear button. Provider option names (Anthropic/
+OpenAI/Google) left untranslated as product names.~~ (2026-07-27)
 **Remaining (long tail, can proceed independently in future sessions):** `NLCommandPanel`'s deep
-regex-based offline-command-parsing logic (~600 lines, not primarily user-facing chrome),
-`RevitBridgePanel`'s Advanced tab (WebSocket port config, AI Bridge provider/key/host fields, sync
-log — behind an explicit opt-in toggle), and whatever remains unnamed across the rest of the
-~38.7k-line file. Partial coverage is safe by design (`_cc_t` falls back to the English string for
-any untranslated key, so the app never breaks) — every named component from the original
-retrofit-progress list has now been addressed at least once this session; only these two
-lower-priority, less-visible pockets remain from the explicitly-tracked list.
+regex-based offline-command-parsing logic (~600 lines, not primarily user-facing chrome), and
+whatever remains unnamed across the rest of the ~38.7k-line file. Partial coverage is safe by design
+(`_cc_t` falls back to the English string for any untranslated key, so the app never breaks) — every
+named component from the original retrofit-progress list has now been addressed at least once this
+session; only this one lower-priority, less-visible pocket remains from the explicitly-tracked list.
 
 **Park inactive models — memory relief (2026-07-22, branch `claude/clashcontrol-v7-release-plan-jp5njw`)** —
 diagnosed the "viewer stalls a few seconds" + "5.2 GB heap > 4.09 GB limit" reports as the SAME
