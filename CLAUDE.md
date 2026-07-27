@@ -134,6 +134,8 @@ addons/tiles.js              — Streams photorealistic 3D Tiles (Google/Cesium/
 addons/training-data.js     — Training data storage, JSONL export, sharing
 addons/visibility.js        — Visibility (sight-line) clash detection — ray-cast against BVH for viewer/target/obstructer rules + regulation presets
 addons/wasm-engine.js       — Rust WASM clash accelerator (mesh_intersect / mesh_min_distance), JS fallback
+locales/                    — Community-contributed UI translation packs (JSON only, no code). loader.js fetches manifest.json + registers packs via _cc_t(); see locales/README.md
+regulations/                — Community-contributed regional building-code threshold presets (JSON only, no code, each requires a source citation). loader.js registers presets per check engine; see regulations/README.md
 api/health.js               — Health check: AI + DB status
 api/nl.js                   — NL proxy: Groq-only (OpenAI tool-calling). Basic tier; clash-solving nudges to the Connector
 api/training.js             — Training data ingestion (replaces Google Forms)
@@ -175,6 +177,15 @@ Each addon is a plain IIFE loaded at runtime by the core via `addons/<name>.js` 
 - `tiles.js` — Streams photorealistic 3D Tiles (Google Photorealistic, Cesium ion, or any tileset URL) as real-world context around a georeferenced model via NASA-AMMOS 3DTilesRendererJS. The model never moves; the tileset is placed in ENU/ECEF space around the anchor.
 - `training-data.js` — Pure data layer for clash + NL training data: ring-buffer storage (cap 5000 clash / 2000 NL), JSONL export, share helpers.
 - `wasm-engine.js` — Loads the Rust WASM module for hardware-accelerated clash detection, exposing `window._ccWasmIntersect` / `window._ccWasmMinDist` as drop-in replacements for the JS BVH+Möller engine. Falls back to the built-in JS engine if WASM fails to load.
+
+### i18n & regional regulations (locales/, regulations/)
+
+Two community-contribution directories, same lazy-addon loading contract but a stricter rule: **contributed files must be pure JSON, never `.js`** — the only executable code is the maintainer-authored `loader.js` in each directory, which `fetch()`s + `JSON.parse()`s the manifest and pack files (never `eval`/`Function` on their content). This is a deliberate security boundary: a malicious or careless community pack can only ever be bad *data*, never a code-execution vector in every user's browser.
+
+- **Core registry** (`index.html`, near the Addon Registry): `window._cc_t(key, englishFallback, vars?)` for translated strings — falls back to `englishFallback` for any missing key or no active pack, so a partial/incorrect pack never breaks the app. `window._ccRegisterLocalePack`/`_ccSetLocale`/`_ccGetLocale` for language; `window._ccRegisterRegulationPreset`/`_ccSetRegulationRegion`/`_ccGetRegulationPreset(region, engine)` for regional thresholds, keyed by the check engine they target (today: `accessibility`, via `accessibility.js`'s existing `DEFAULTS < regionPreset < opts.thresholds` precedence).
+- **Language follows the user** (default from `navigator.language`, override in Settings); **regulations follow the model's location** (`IfcSite` lat/lon, same extraction `geoplace.js` uses), not the user's — a Tokyo-based user reviewing a Berlin model needs German thresholds, not Japanese ones.
+- Regulation packs require a `source` citation and default `verified: false` — these are safety-relevant numbers (door widths, ramp slopes, turning clearances) and a wrong value is worse than a missing one. `regulations/manifest.json` starts empty on purpose; no region ships until someone with real regulatory knowledge verifies it.
+- Contribution path: PR (see `locales/README.md` / `regulations/README.md`), or the "Contribute a translation / regulation pack" issue-upload flow for non-developers (planned — auto-PR gated behind a maintainer-applied review label, never triggered by a bare upload).
 
 ## Backend (Vercel Serverless + Neon Postgres)
 

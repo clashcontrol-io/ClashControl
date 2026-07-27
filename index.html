@@ -1436,7 +1436,8 @@ function startApp() {
     'geoplace':'addons/geoplace.js', 'accessibility':'addons/accessibility.js',
     'splat':'addons/splat.js', 'align':'addons/align.js',
     'openaec-bridge':'addons/openaec-bridge.js', 'visibility':'addons/visibility.js',
-    'wasm-engine':'addons/wasm-engine.js', 'tiles':'addons/tiles.js'
+    'wasm-engine':'addons/wasm-engine.js', 'tiles':'addons/tiles.js',
+    'locales':'locales/loader.js', 'regulations':'regulations/loader.js'
   };
   // These integrations are inactive by default and carry substantial code.
   // Keep a lightweight manifest entry so the Integrations panel can list them;
@@ -1591,6 +1592,87 @@ function startApp() {
       loadOne(id);
     });
   }
+
+  // ── Locale Pack Registry ─────────────────────────────────────── i18n plumbing
+  // Locale packs are pure JSON (never executable) — see locales/loader.js.
+  // Core UI calls _cc_t(key, englishFallback[, vars]) everywhere; with no pack
+  // active, or a key missing from an active pack, englishFallback is returned
+  // as-is, so a partial or incorrect community pack can never break the app.
+  var _ccLocalePacks = {};   // {lang: {lang, name, strings}}
+  var _ccActiveLocale = null;
+
+  window._ccRegisterLocalePack = function(pack) {
+    if (!pack || !pack.lang || !pack.strings) return;
+    _ccLocalePacks[pack.lang] = pack;
+    window.dispatchEvent(new Event('cc-locale-changed'));
+  };
+
+  window._ccSetLocale = function(lang) {
+    _ccActiveLocale = (lang && _ccLocalePacks[lang]) ? lang : null;
+    try { localStorage.setItem('cc_locale', _ccActiveLocale || ''); } catch(e){}
+    window.dispatchEvent(new Event('cc-locale-changed'));
+  };
+
+  window._ccGetLocale = function() { return _ccActiveLocale; };
+  window._ccGetLocalePacks = function() { return _ccLocalePacks; };
+
+  window._cc_t = function(key, englishFallback, vars) {
+    var pack = _ccActiveLocale && _ccLocalePacks[_ccActiveLocale];
+    var str = (pack && pack.strings && pack.strings[key] != null) ? pack.strings[key] : englishFallback;
+    if (vars) {
+      Object.keys(vars).forEach(function(k) {
+        str = str.replace(new RegExp('\\{' + k + '\\}', 'g'), vars[k]);
+      });
+    }
+    return str;
+  };
+
+  // Restore the user's chosen language; the pack itself may not be registered
+  // yet (loaded lazily below), so _cc_t falls back to English until it lands.
+  try {
+    var _savedLocale = localStorage.getItem('cc_locale');
+    if (_savedLocale) _ccActiveLocale = _savedLocale;
+  } catch(e){}
+
+  // ── Regulation Preset Registry ───────────────────────────────── i18n plumbing
+  // Regional building-code presets, same pure-JSON contract as locale packs —
+  // see regulations/loader.js. Keyed by the check engine they target (today
+  // just 'accessibility'; 'visibility'/'data-quality' can register presets the
+  // same way) so one region can carry different threshold shapes per engine.
+  // Presets follow the MODEL's location (IfcSite), not the user's — a manual
+  // pick in Settings always overrides whatever was auto-suggested.
+  var _ccRegulationPresets = {};  // {engine: {region: {region, name, engine, thresholds}}}
+  var _ccActiveRegulationRegion = null;
+
+  window._ccRegisterRegulationPreset = function(preset) {
+    if (!preset || !preset.region || !preset.engine || !preset.thresholds) return;
+    if (!_ccRegulationPresets[preset.engine]) _ccRegulationPresets[preset.engine] = {};
+    _ccRegulationPresets[preset.engine][preset.region] = preset;
+    window.dispatchEvent(new Event('cc-regulation-changed'));
+  };
+
+  window._ccSetRegulationRegion = function(region) {
+    _ccActiveRegulationRegion = region || null;
+    try { localStorage.setItem('cc_regulation_region', _ccActiveRegulationRegion || ''); } catch(e){}
+    window.dispatchEvent(new Event('cc-regulation-changed'));
+  };
+
+  window._ccGetRegulationRegion = function() { return _ccActiveRegulationRegion; };
+  window._ccGetRegulationPresets = function() { return _ccRegulationPresets; };
+
+  // Returns the active region's thresholds for an engine, or null (engine
+  // keeps its own built-in defaults) — never throws on an unknown region/engine.
+  window._ccGetRegulationPreset = function(region, engine) {
+    var forEngine = _ccRegulationPresets[engine];
+    var r = region || _ccActiveRegulationRegion;
+    if (!forEngine || !r || !forEngine[r]) return null;
+    return forEngine[r].thresholds;
+  };
+
+  try {
+    var _savedRegion = localStorage.getItem('cc_regulation_region');
+    if (_savedRegion) _ccActiveRegulationRegion = _savedRegion;
+  } catch(e){}
 
   function _itemEids(item) {
     var ids=[];
@@ -11352,6 +11434,9 @@ function startApp() {
         flyToElement:  function(eid){ if (window._fitToElement) return window._fitToElement(eid); },
         runDataQuality:   function(els){ if (window._ccRunDataQualityChecks) return window._ccRunDataQualityChecks(els); },
         runAccessibility: function(els){ if (window._ccRunAccessibilityChecks) return window._ccRunAccessibilityChecks(els); },
+        get locale()   { return window._ccGetLocale ? window._ccGetLocale() : null; },
+        setLocale:     function(lang){ if (window._ccSetLocale) return window._ccSetLocale(lang); },
+        locales:       function(){ return window._ccGetLocalePacks ? window._ccGetLocalePacks() : {}; },
         computeQualityScore: function(els, models){ if (window._ccComputeQualityScore) return window._ccComputeQualityScore(els, models); },
         // Both addons load lazily on first real use (REWRITE_UI_PLAN.md
         // Phase 10) — ensure the script before calling into it so external
@@ -17092,40 +17177,41 @@ function startApp() {
           title="Smart Views — one-click presets, saved views, shareable link"
           style=${{...S_BTN,background:'var(--bg-secondary)',color:'var(--text-secondary)',border:'1px solid var(--border)',fontSize:'var(--text-xs)',display:'flex',alignItems:'center',gap:'.35rem'}}>
           <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M12 1v6m0 10v6M5.64 5.64l4.24 4.24m4.24 4.24l4.24 4.24M1 12h6m10 0h6M5.64 18.36l4.24-4.24m4.24-4.24l4.24-4.24"/></svg>
-          Views
+          ${_cc_t('toolbar.views','Views')}
         </button>
         <button class="cc-hide-mobile cc-btn-press" onClick=${function(){d({t:A.PRESENT,v:!s.presenting});}}
           title="Presentation mode (P) — fullscreen, hide chrome, auto-rotate when idle"
           style=${{...S_BTN,background:s.presenting?'var(--accent)':'var(--bg-secondary)',color:s.presenting?'#fff':'var(--text-secondary)',border:'1px solid '+(s.presenting?'var(--accent-hover)':'var(--border)'),fontSize:'var(--text-xs)',display:'flex',alignItems:'center',gap:'.35rem'}}>
           <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="5 3 19 12 5 21 5 3"/></svg>
-          Present
+          ${_cc_t('toolbar.present','Present')}
         </button>
         <button class="cc-hide-mobile cc-btn-press" onClick=${function(){loadProject(d)}}
           style=${{...S_BTN,background:'var(--bg-secondary)',color:'var(--text-secondary)',border:'1px solid var(--border)',fontSize:'var(--text-xs)'}}>
-          Open Project
+          ${_cc_t('toolbar.open','Open Project')}
         </button>
         <button class="cc-hide-mobile cc-btn-press" onClick=${function(){saveProject(s)}} disabled=${!all.length&&!s.models.length}
           style=${{...S_BTN,background:s.models.length||all.length?'var(--accent)':'var(--bg-secondary)',color:s.models.length||all.length?'#fff':'var(--text-faint)',cursor:s.models.length||all.length?'pointer':'not-allowed',fontSize:'var(--text-xs)'}}>
-          Save Project
+          ${_cc_t('toolbar.save','Save Project')}
         </button>
         <button class="cc-hide-mobile cc-btn-press" onClick=${function(){importBCF(d)}}
           style=${{...S_BTN,background:'var(--bg-secondary)',color:'var(--text-secondary)',border:'1px solid var(--border)',fontSize:'var(--text-xs)'}}>
-          ↑ Import BCF
+          ↑ ${_cc_t('toolbar.importBcf','Import BCF')}
         </button>
         <button class="cc-hide-mobile cc-btn-press" onClick=${function(){exportBCF(all, '2.1', s.viewpoints, s)}} disabled=${!all.length}
           style=${{...S_BTN,background:all.length?'var(--accent)':'var(--bg-secondary)',color:all.length?'#fff':'var(--text-faint)',cursor:all.length?'pointer':'not-allowed',fontSize:'var(--text-xs)'}}>
-          ↓ BCF 2.1
+          ↓ ${_cc_t('toolbar.bcf21','BCF 2.1')}
         </button>
         <button class="cc-hide-mobile cc-btn-press" onClick=${function(){exportBCF(all, '3.0', s.viewpoints, s)}} disabled=${!all.length}
           style=${{...S_BTN,background:all.length?'var(--accent)':'var(--bg-secondary)',color:all.length?'#fff':'var(--text-faint)',cursor:all.length?'pointer':'not-allowed',fontSize:'var(--text-xs)'}}>
-          ↓ BCF 3.0
+          ↓ ${_cc_t('toolbar.bcf30','BCF 3.0')}
         </button>
         <button onClick=${function(){d({t:A.UPD_PREFS,u:{theme:isDark?'light':'dark'}})}}
           style=${{...S_BTN,background:'var(--bg-secondary)',color:'var(--text-secondary)',border:'1px solid var(--border)',fontSize:'0.92rem',padding:'.3rem .5rem'}}
-          title=${isDark?'Switch to light mode':'Switch to dark mode'} aria-label=${isDark?'Switch to light mode':'Switch to dark mode'}>${isDark?'☀':'☾'}</button>
+          title=${isDark?_cc_t('toolbar.switchLight','Switch to light mode'):_cc_t('toolbar.switchDark','Switch to dark mode')}
+          aria-label=${isDark?_cc_t('toolbar.switchLight','Switch to light mode'):_cc_t('toolbar.switchDark','Switch to dark mode')}>${isDark?'☀':'☾'}</button>
         <button onClick=${function(){d({t:A.SETTINGS,v:true})}}
           style=${{...S_BTN,background:'var(--bg-secondary)',color:'var(--text-secondary)',border:'1px solid var(--border)',fontSize:'0.98rem',padding:'.3rem .5rem'}}
-          title="Settings" aria-label="Open settings">⚙</button>
+          title=${_cc_t('toolbar.settings','Settings')} aria-label=${_cc_t('toolbar.openSettings','Open settings')}>⚙</button>
       </div>
     </header>`;
   }
@@ -21127,7 +21213,7 @@ function startApp() {
 
     return html`<div style=${{display:'flex',flexDirection:'column',flex:1,overflow:'hidden',minHeight:0}}>
       ${!hideTabBar && html`<div style=${{display:'flex',borderBottom:'1px solid var(--border-subtle)',flexShrink:0,background:'var(--bg-primary)'}} role="tablist">
-        ${[{id:'clashes',label:'Clashes',n:oC},{id:'issues',label:'Issues',n:oI},{id:'navigator',label:'Navigator',n:0}].map(function(t){return html`
+        ${[{id:'clashes',label:_cc_t('panel.clashes.title','Clashes'),n:oC},{id:'issues',label:_cc_t('panel.issues.title','Issues'),n:oI},{id:'navigator',label:_cc_t('panel.navigator.title','Navigator'),n:0}].map(function(t){return html`
           <button key=${t.id} onClick=${function(){d({t:A.TAB,v:t.id})}} role="tab" aria-selected=${s.tab===t.id}
             style=${{...S_BTN,flex:1,background:'none',borderRadius:0,padding:'.7rem .4rem',
               fontFamily:'var(--font-body)',fontSize:'.78rem',fontWeight:s.tab===t.id?500:400,
@@ -21151,7 +21237,7 @@ function startApp() {
             <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" style=${{position:'absolute',left:'.5rem',pointerEvents:'none',flexShrink:0,color:'var(--text-muted)'}}>
               <circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/>
             </svg>
-            <input type="text" placeholder=${isClashTab ? 'Filter… e.g. "hard on floor 2" or "open pipes"' : 'Search…'} value=${f.search}
+            <input type="text" placeholder=${isClashTab ? _cc_t('issues.filter.placeholderClash','Filter… e.g. "hard on floor 2" or "open pipes"') : _cc_t('issues.filter.placeholderSearch','Search…')} value=${f.search}
               onInput=${function(e){d({t:A.UPD_FILTERS,u:{search:e.target.value}})}}
               style=${{...S_INPUT,fontSize:'0.8rem',padding:'.32rem .4rem .32rem 1.85rem',width:'100%',background:f.search?'var(--accent-bg)':'var(--bg-secondary)',border:f.search?'1px solid var(--accent)':'1px solid var(--border)',transition:'all .15s'}} />
             ${f.search && html`<button onClick=${function(){d({t:A.UPD_FILTERS,u:{search:''}})}} style=${{position:'absolute',right:'.4rem',background:'none',border:'none',cursor:'pointer',color:'var(--text-muted)',padding:0,lineHeight:0,display:'inline-flex',alignItems:'center',justifyContent:'center'}}>
@@ -21160,7 +21246,7 @@ function startApp() {
           </div>
           <span style=${{fontFamily:'var(--font-mono)',fontSize:'.68rem',color:items.length<rawItems.length?'var(--accent)':'var(--text-muted)',whiteSpace:'nowrap',flexShrink:0}}>${items.length}${items.length<rawItems.length?' / '+rawItems.length:''}</span>
           <button onClick=${function(){setFiltersOpen(!filtersOpen)}}
-            style=${{...S_BTN,padding:'.3rem .45rem',background:filtersOpen||activeCount>0?'var(--accent-bg)':'var(--bg-secondary)',color:filtersOpen||activeCount>0?'var(--accent)':'var(--text-muted)',border:'1px solid var(--border)',fontSize:'0.75rem',whiteSpace:'nowrap',flexShrink:0,display:'inline-flex',alignItems:'center',gap:'.25rem'}} aria-label="Toggle filters">
+            style=${{...S_BTN,padding:'.3rem .45rem',background:filtersOpen||activeCount>0?'var(--accent-bg)':'var(--bg-secondary)',color:filtersOpen||activeCount>0?'var(--accent)':'var(--text-muted)',border:'1px solid var(--border)',fontSize:'0.75rem',whiteSpace:'nowrap',flexShrink:0,display:'inline-flex',alignItems:'center',gap:'.25rem'}} aria-label=${_cc_t('issues.filter.toggle','Toggle filters')}>
             <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M3 6h18M6 12h12M10 18h4"/></svg>
             ${activeCount>0?html`<span style=${{fontFamily:'var(--font-mono)',fontSize:'.65rem',color:'var(--accent)'}}>${activeCount}</span>`:''}
           </button>
@@ -21168,15 +21254,15 @@ function startApp() {
       </div>`}
       ${!isExplorerTab && !isStandardsTab && filtersOpen && html`<div style=${{padding:'.5rem',borderBottom:'1px solid var(--border-subtle)',flexShrink:0,display:'flex',flexDirection:'column',gap:'.4rem',background:'var(--bg-tertiary)'}}>
         <div style=${{display:'flex',justifyContent:'space-between',alignItems:'center'}}>
-          <span style=${{fontSize:'.78rem',fontWeight:500,color:'var(--text-secondary)'}}>Filters</span>
-          <button onClick=${function(){d({t:A.RESET_FILTERS})}} style=${{...S_BTN,fontSize:'.7rem',padding:'.1rem .3rem',background:'none',color:'var(--text-muted)',textDecoration:'underline',textUnderlineOffset:2}}>Clear all</button>
+          <span style=${{fontSize:'.78rem',fontWeight:500,color:'var(--text-secondary)'}}>${_cc_t('issues.filter.title','Filters')}</span>
+          <button onClick=${function(){d({t:A.RESET_FILTERS})}} style=${{...S_BTN,fontSize:'.7rem',padding:'.1rem .3rem',background:'none',color:'var(--text-muted)',textDecoration:'underline',textUnderlineOffset:2}}>${_cc_t('issues.filter.clearAll','Clear all')}</button>
         </div>
 
         <div>
-          <span style=${FL}>Status</span>
+          <span style=${FL}>${_cc_t('issues.filter.status','Status')}</span>
           <div style=${{display:'flex',gap:'.2rem',flexWrap:'wrap'}}>
             ${['all','open','in_progress','resolved'].map(function(v){return html`<button key=${v} onClick=${function(){d({t:A.UPD_FILTERS,u:{status:v}})}}
-              style=${PILL(f.status===v)}>${v==='all'?'All':v==='in_progress'?'In prog':v.charAt(0).toUpperCase()+v.slice(1)}</button>`})}
+              style=${PILL(f.status===v)}>${v==='all'?_cc_t('issues.filter.statusAll','All'):v==='in_progress'?_cc_t('issues.filter.statusInProgress','In prog'):v.charAt(0).toUpperCase()+v.slice(1)}</button>`})}
           </div>
         </div>
 
@@ -21198,17 +21284,17 @@ function startApp() {
         </div>`}
 
         ${isClashTab && html`<div>
-          <span style=${FL}>Discipline</span>
+          <span style=${FL}>${_cc_t('issues.filter.discipline','Discipline')}</span>
           <select value=${f.discipline} onChange=${function(e){d({t:A.UPD_FILTERS,u:{discipline:e.target.value}})}} style=${SELSTYLE}>
-            <option value="all">All disciplines</option>
+            <option value="all">${_cc_t('issues.filter.allDisciplines','All disciplines')}</option>
             ${DISC.slice().sort(function(a,b){return a.label.localeCompare(b.label);}).map(function(p){return html`<option key=${p.id} value=${p.id}>${p.label}</option>`})}
           </select>
         </div>`}
 
         ${isClashTab && s.floors.length>0 && html`<div>
-          <span style=${FL}>Floor / Level</span>
+          <span style=${FL}>${_cc_t('issues.filter.floor','Floor / Level')}</span>
           <select value=${f.floor} onChange=${function(e){d({t:A.UPD_FILTERS,u:{floor:e.target.value}})}} style=${SELSTYLE}>
-            <option value="all">All levels</option>
+            <option value="all">${_cc_t('issues.filter.allLevels','All levels')}</option>
             ${s.floors.map(function(fl){return html`<option key=${fl.id} value=${fl.id}>${fl.label}</option>`})}
           </select>
         </div>`}
@@ -21221,10 +21307,10 @@ function startApp() {
           var pct = (val/maxDist)*100;
           var trackBg = 'linear-gradient(to right, var(--accent) '+pct+'%, var(--bg-primary) '+pct+'%)';
           function onChange(e){var v=+e.target.value;d({t:A.UPD_FILTERS,u:{distMax:v,distMin:0,type:'all'}});}
-          var label = val===0?'Hard only':val>=maxDist?'All (hard+soft)':'0 (hard)–'+val+'mm';
+          var label = val===0?_cc_t('issues.filter.distanceHardOnly','Hard only'):val>=maxDist?_cc_t('issues.filter.distanceAll','All (hard+soft)'):_cc_t('issues.filter.distanceRange','0 (hard)–{max}mm',{max:val});
           return html`<div>
             <div style=${{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:'.15rem'}}>
-              <span style=${FL}>Distance</span>
+              <span style=${FL}>${_cc_t('issues.filter.distance','Distance')}</span>
               <span style=${{fontSize:'0.63rem',color:'var(--text-secondary)'}}>${label}</span>
             </div>
             <div style=${{position:'relative',height:20,marginBottom:'.1rem'}}>
@@ -21241,91 +21327,91 @@ function startApp() {
         }()}
 
         ${isClashTab && html`<div>
-          <span style=${FL}>IFC Type</span>
+          <span style=${FL}>${_cc_t('issues.filter.ifcType','IFC Type')}</span>
           ${typeList.length>0
             ? html`<${MultiSelectDropdown} items=${typeList} excluded=${f.excludedTypes||[]}
                 onToggle=${function(t){var ex=f.excludedTypes||[];d({t:A.UPD_FILTERS,u:{excludedTypes:ex.indexOf(t)===-1?ex.concat(t):ex.filter(function(x){return x!==t;})}});}}
                 onToggleAll=${function(){var ex=f.excludedTypes||[];d({t:A.UPD_FILTERS,u:{excludedTypes:ex.length===0?typeList.slice():[]}});}} />`
-            : html`<div style=${{fontSize:'0.7rem',color:'var(--text-faint)',padding:'.25rem .4rem',background:'var(--bg-secondary)',borderRadius:6,border:'1px dashed var(--border)'}}>No IFC types on current clashes yet — run detection after the model finishes loading.</div>`
+            : html`<div style=${{fontSize:'0.7rem',color:'var(--text-faint)',padding:'.25rem .4rem',background:'var(--bg-secondary)',borderRadius:6,border:'1px dashed var(--border)'}}>${_cc_t('issues.filter.noIfcTypes','No IFC types on current clashes yet — run detection after the model finishes loading.')}</div>`
           }
         </div>`}
 
         ${isClashTab && storeyList.length>0 && html`<div>
-          <span style=${FL}>Storey</span>
+          <span style=${FL}>${_cc_t('issues.filter.storey','Storey')}</span>
           <${MultiSelectDropdown} items=${storeyList} excluded=${f.excludedStoreys||[]}
             onToggle=${function(t){var ex=f.excludedStoreys||[];d({t:A.UPD_FILTERS,u:{excludedStoreys:ex.indexOf(t)===-1?ex.concat(t):ex.filter(function(x){return x!==t;})}});}}
             onToggleAll=${function(){var ex=f.excludedStoreys||[];d({t:A.UPD_FILTERS,u:{excludedStoreys:ex.length===0?storeyList.slice():[]}});}} />
         </div>`}
 
         ${isClashTab && materialList.length>0 && html`<div>
-          <span style=${FL}>Material</span>
+          <span style=${FL}>${_cc_t('issues.filter.material','Material')}</span>
           <${MultiSelectDropdown} items=${materialList} excluded=${f.excludedMaterials||[]}
             onToggle=${function(t){var ex=f.excludedMaterials||[];d({t:A.UPD_FILTERS,u:{excludedMaterials:ex.indexOf(t)===-1?ex.concat(t):ex.filter(function(x){return x!==t;})}});}}
             onToggleAll=${function(){var ex=f.excludedMaterials||[];d({t:A.UPD_FILTERS,u:{excludedMaterials:ex.length===0?materialList.slice():[]}});}} />
         </div>`}
 
         ${isClashTab && html`<div>
-          <span style=${FL}>Element ID</span>
+          <span style=${FL}>${_cc_t('issues.filter.elementId','Element ID')}</span>
           <input type="text" placeholder="e.g. 12345" value=${f.elementId} onInput=${function(e){d({t:A.UPD_FILTERS,u:{elementId:e.target.value}})}}
             style=${{...S_INPUT,fontSize:'0.75rem',padding:'.2rem .3rem'}} />
         </div>`}
 
         ${!isClashTab && html`<div>
-          <span style=${FL}>Priority</span>
+          <span style=${FL}>${_cc_t('issues.filter.priority','Priority')}</span>
           <div style=${{display:'flex',gap:'.2rem',flexWrap:'wrap'}}>
             ${['all','low','normal','high','critical'].map(function(v){return html`<button key=${v} onClick=${function(){d({t:A.UPD_FILTERS,u:{priority:v}})}}
-              style=${PILL(f.priority===v)}>${v==='all'?'All':v.charAt(0).toUpperCase()+v.slice(1)}</button>`})}
+              style=${PILL(f.priority===v)}>${v==='all'?_cc_t('issues.filter.statusAll','All'):v.charAt(0).toUpperCase()+v.slice(1)}</button>`})}
           </div>
         </div>`}
 
         ${!isClashTab && html`<div>
-          <span style=${FL}>Category</span>
+          <span style=${FL}>${_cc_t('issues.filter.category','Category')}</span>
           <div style=${{display:'flex',gap:'.2rem',flexWrap:'wrap'}}>
             ${['all','design','coordination','safety','structural','mep','other'].map(function(v){return html`<button key=${v} onClick=${function(){d({t:A.UPD_FILTERS,u:{category:v}})}}
-              style=${PILL(f.category===v)}>${v==='all'?'All':v.charAt(0).toUpperCase()+v.slice(1)}</button>`})}
+              style=${PILL(f.category===v)}>${v==='all'?_cc_t('issues.filter.statusAll','All'):v.charAt(0).toUpperCase()+v.slice(1)}</button>`})}
           </div>
         </div>`}
 
         ${!isClashTab && filterLists.assignees.length>0 && html`<div>
-          <span style=${FL}>Assignee</span>
+          <span style=${FL}>${_cc_t('issues.filter.assignee','Assignee')}</span>
           <select value=${f.assignee} onChange=${function(e){d({t:A.UPD_FILTERS,u:{assignee:e.target.value}})}} style=${SELSTYLE}>
-            <option value="all">All assignees</option>
+            <option value="all">${_cc_t('issues.filter.allAssignees','All assignees')}</option>
             ${filterLists.assignees.map(function(a){return html`<option key=${a} value=${a}>${a}</option>`})}
           </select>
         </div>`}
 
         ${!isClashTab && filterLists.issueTypes.length>0 && html`<div>
-          <span style=${FL}>Element Type</span>
+          <span style=${FL}>${_cc_t('issues.filter.elementType','Element Type')}</span>
           <select value=${f.issueElementType} onChange=${function(e){d({t:A.UPD_FILTERS,u:{issueElementType:e.target.value}})}} style=${SELSTYLE}>
-            <option value="all">All types</option>
+            <option value="all">${_cc_t('issues.filter.allTypes','All types')}</option>
             ${filterLists.issueTypes.map(function(t){return html`<option key=${t} value=${t}>${t}</option>`})}
           </select>
         </div>`}
 
         ${!isClashTab && filterLists.issueStoreys.length>0 && html`<div>
-          <span style=${FL}>Storey</span>
+          <span style=${FL}>${_cc_t('issues.filter.storey','Storey')}</span>
           <select value=${f.issueStorey} onChange=${function(e){d({t:A.UPD_FILTERS,u:{issueStorey:e.target.value}})}} style=${SELSTYLE}>
-            <option value="all">All storeys</option>
+            <option value="all">${_cc_t('issues.filter.allStoreys','All storeys')}</option>
             ${filterLists.issueStoreys.map(function(t){return html`<option key=${t} value=${t}>${t}</option>`})}
           </select>
         </div>`}
 
-        <div style=${{fontSize:'0.69rem',color:'var(--text-faint)',textAlign:'right'}}>${items.length} / ${rawItems.length} shown</div>
+        <div style=${{fontSize:'0.69rem',color:'var(--text-faint)',textAlign:'right'}}>${_cc_t('issues.filter.shownCount','{shown} / {total} shown',{shown:items.length,total:rawItems.length})}</div>
       </div>`}
       ${s.tab==='issues' && html`<div style=${{padding:'.4rem',borderBottom:'1px solid var(--border-subtle)',flexShrink:0,display:'flex',flexDirection:'column',gap:'.3rem'}}>
         <div style=${{display:'flex',gap:'.3rem'}}>
-          <button onClick=${function(){d({t:A.MODAL,v:true,el:window._ccSelectedEl||undefined})}} style=${{...S_BTN,flex:1,background:'var(--accent)',color:'#fff',fontWeight:600}}>+ New Issue</button>
+          <button onClick=${function(){d({t:A.MODAL,v:true,el:window._ccSelectedEl||undefined})}} style=${{...S_BTN,flex:1,background:'var(--accent)',color:'#fff',fontWeight:600}}>+ ${_cc_t('issues.newIssue','New Issue')}</button>
           ${function(){
             var activeClash = s.activeId ? s.clashes.find(function(c){return c.id===s.activeId;}) : null;
             var hasClash = !!activeClash;
             return html`<button
-              title=${hasClash ? 'Create issue from active clash: '+activeClash.title : 'Select a clash first to promote it to an issue'}
+              title=${hasClash ? _cc_t('issues.fromClashTitle','Create issue from active clash: {title}',{title:activeClash.title}) : _cc_t('issues.fromClashTitleDisabled','Select a clash first to promote it to an issue')}
               onClick=${function(){
                 if(!hasClash) return;
                 d({t:A.MODAL,v:true,el:{_fromClash:activeClash}});
               }}
               style=${{...S_BTN,padding:'.35rem .55rem',background:hasClash?'var(--bg-secondary)':'var(--bg-tertiary)',color:hasClash?'var(--text-secondary)':'var(--text-muted)',border:'1px solid var(--border)',fontSize:'0.72rem',whiteSpace:'nowrap',opacity:hasClash?1:0.5,cursor:hasClash?'pointer':'default'}}>
-              + From clash
+              + ${_cc_t('issues.fromClash','From clash')}
             </button>`;
           }()}
           ${function(){
@@ -21402,19 +21488,19 @@ function startApp() {
             fontWeight:active?'var(--weight-semibold)':'var(--weight-regular)',fontFamily:'var(--font-body)',whiteSpace:'nowrap',
             transition:'background var(--duration-fast) var(--ease-standard), color var(--duration-fast) var(--ease-standard)'};};
           return html`<div style=${{padding:'var(--space-1) var(--space-2)',borderBottom:'1px solid var(--border-subtle)',display:'flex',gap:'var(--space-2)',alignItems:'center',flexShrink:0}}>
-            <div role="group" aria-label="View mode" style=${{display:'inline-flex',gap:0,borderRadius:'var(--radius-xs)',overflow:'hidden'}}>
-              <button onClick=${function(){d({t:grpAction,v:['cluster']});}} aria-pressed=${isGrouped} style=${{...SEG_BTN(isGrouped),borderRadius:'var(--radius-xs) 0 0 var(--radius-xs)'}}>Grouped</button>
-              <button onClick=${function(){d({t:grpAction,v:[]});}} aria-pressed=${!isGrouped} style=${{...SEG_BTN(!isGrouped),borderRadius:'0 var(--radius-xs) var(--radius-xs) 0',borderLeft:'none'}}>All</button>
+            <div role="group" aria-label=${_cc_t('issues.viewMode','View mode')} style=${{display:'inline-flex',gap:0,borderRadius:'var(--radius-xs)',overflow:'hidden'}}>
+              <button onClick=${function(){d({t:grpAction,v:['cluster']});}} aria-pressed=${isGrouped} style=${{...SEG_BTN(isGrouped),borderRadius:'var(--radius-xs) 0 0 var(--radius-xs)'}}>${_cc_t('issues.grouped','Grouped')}</button>
+              <button onClick=${function(){d({t:grpAction,v:[]});}} aria-pressed=${!isGrouped} style=${{...SEG_BTN(!isGrouped),borderRadius:'0 var(--radius-xs) var(--radius-xs) 0',borderLeft:'none'}}>${_cc_t('issues.filter.statusAll','All')}</button>
             </div>
             ${!isGrouped && html`<label style=${{display:'flex',alignItems:'center',gap:'var(--space-1)',flex:1,minWidth:0}}>
-              <span style=${{fontSize:'var(--text-2xs)',color:'var(--text-faint)',whiteSpace:'nowrap'}}>by</span>
+              <span style=${{fontSize:'var(--text-2xs)',color:'var(--text-faint)',whiteSpace:'nowrap'}}>${_cc_t('issues.groupBy','by')}</span>
               <select value=${selGrp==='cluster'?'none':selGrp} style=${{...DS,flex:1,minWidth:0,maxWidth:120}}
                 onChange=${function(e){var v=e.target.value;d({t:grpAction,v:v==='none'?[]:[v]});}}>
                 ${secondaryGrpOpts.map(function(g){return html`<option key=${g[0]} value=${g[0]}>${g[1]}</option>`})}
               </select>
             </label>`}
             <label style=${{display:'flex',alignItems:'center',gap:'var(--space-1)',flex:1,minWidth:0}}>
-              <span style=${{fontSize:'var(--text-2xs)',color:'var(--text-faint)',whiteSpace:'nowrap'}}>Sort</span>
+              <span style=${{fontSize:'var(--text-2xs)',color:'var(--text-faint)',whiteSpace:'nowrap'}}>${_cc_t('issues.sort','Sort')}</span>
               <select value=${selSort} style=${{...DS,flex:1,minWidth:0}}
                 onChange=${function(e){var v=e.target.value;d({t:sortAction,v:v==='none'?[]:[v]});}}>
                 ${sortOptsList.map(function(sv){return html`<option key=${sv[0]} value=${sv[0]}>${sv[1]}</option>`})}
@@ -21424,14 +21510,14 @@ function startApp() {
         }
         return html`<div style=${{padding:'.3rem .5rem',borderBottom:'1px solid var(--border-subtle)',display:'flex',gap:'.5rem',alignItems:'center',flexShrink:0}}>
           <label style=${{display:'flex',alignItems:'center',gap:'.25rem',flex:1,minWidth:0}}>
-            <span style=${{fontSize:'0.69rem',color:'var(--text-faint)',whiteSpace:'nowrap'}}>Group</span>
+            <span style=${{fontSize:'0.69rem',color:'var(--text-faint)',whiteSpace:'nowrap'}}>${_cc_t('issues.group','Group')}</span>
             <select value=${selGrp} style=${{...DS,flex:1,minWidth:0}}
               onChange=${function(e){var v=e.target.value;d({t:grpAction,v:v==='none'?[]:[v]});}}>
               ${secondaryGrpOpts.map(function(g){return html`<option key=${g[0]} value=${g[0]}>${g[1]}</option>`})}
             </select>
           </label>
           <label style=${{display:'flex',alignItems:'center',gap:'.25rem',flex:1,minWidth:0}}>
-            <span style=${{fontSize:'0.69rem',color:'var(--text-faint)',whiteSpace:'nowrap'}}>Sort</span>
+            <span style=${{fontSize:'0.69rem',color:'var(--text-faint)',whiteSpace:'nowrap'}}>${_cc_t('issues.sort','Sort')}</span>
             <select value=${selSort} style=${{...DS,flex:1,minWidth:0}}
               onChange=${function(e){var v=e.target.value;d({t:sortAction,v:v==='none'?[]:[v]});}}>
               ${sortOptsList.map(function(sv){return html`<option key=${sv[0]} value=${sv[0]}>${sv[1]}</option>`})}
@@ -22380,30 +22466,30 @@ function startApp() {
         <div style=${{display:'flex',gap:'var(--space-2)',alignItems:'center',marginBottom:'var(--space-2)'}}>
           <select value=${selectedModel} onChange=${function(e){setSelectedModel(e.target.value);}}
             style=${{flex:1,minWidth:0,fontSize:'var(--text-xs)',padding:'var(--space-1) var(--space-2)',borderRadius:'var(--radius-sm)',border:'1px solid var(--border)',background:'var(--bg-secondary)',color:'var(--text-primary)'}}>
-            <option value="all">All models</option>
+            <option value="all">${_cc_t('dq.allModels','All models')}</option>
             ${(s.models||[]).map(function(m){return html`<option key=${m.id} value=${m.id}>${m.name}</option>`;})}
           </select>
           <button onClick=${runChecks} disabled=${!hasModels||isRunning||!hasEngine}
             style=${{padding:'var(--space-1) var(--space-3)',borderRadius:'var(--radius-sm)',fontSize:'var(--text-xs)',fontWeight:600,border:'none',cursor:(hasModels&&!isRunning)?'pointer':'not-allowed',background:(hasModels&&!isRunning&&hasEngine)?'var(--accent)':'var(--bg-tertiary)',color:(hasModels&&!isRunning&&hasEngine)?'#fff':'var(--text-faint)'}}>
-            ${isRunning?'Running…':'Run checks'}
+            ${isRunning?_cc_t('a11y.running','Running…'):_cc_t('dq.runChecks','Run checks')}
           </button>
         </div>
         <div style=${{display:'flex',gap:'var(--space-3)',alignItems:'center',fontSize:'var(--text-2xs)',color:'var(--text-faint)'}}>
-          <span><span style=${{display:'inline-block',width:7,height:7,borderRadius:'50%',background:'#ef4444',marginRight:4}}></span>Fail</span>
-          <span><span style=${{display:'inline-block',width:7,height:7,borderRadius:'50%',background:'#22c55e',marginRight:4}}></span>Pass</span>
+          <span><span style=${{display:'inline-block',width:7,height:7,borderRadius:'50%',background:'#ef4444',marginRight:4}}></span>${_cc_t('a11y.fail','Fail')}</span>
+          <span><span style=${{display:'inline-block',width:7,height:7,borderRadius:'50%',background:'#22c55e',marginRight:4}}></span>${_cc_t('a11y.pass','Pass')}</span>
           ${lastChecked && html`<span style=${{marginLeft:'auto'}}>${new Date(lastChecked).toLocaleTimeString()}</span>`}
         </div>
       </div>
 
-      ${!hasEngine && html`<div style=${{padding:'var(--space-4)',fontSize:'var(--text-xs)',color:'var(--text-muted)'}}>Accessibility engine not loaded.</div>`}
+      ${!hasEngine && html`<div style=${{padding:'var(--space-4)',fontSize:'var(--text-xs)',color:'var(--text-muted)'}}>${_cc_t('a11y.engineNotLoaded','Accessibility engine not loaded.')}</div>`}
 
       ${result && html`<div style=${{flex:1,overflowY:'auto'}}>
         <div style=${{padding:'var(--space-2) var(--space-4)',display:'flex',alignItems:'center',justifyContent:'space-between',background:totalFail===0?'var(--color-success-bg)':'var(--color-warning-bg)',borderBottom:'1px solid var(--border-subtle)'}}>
           <span style=${{fontSize:'var(--text-xs)',fontWeight:600,color:totalFail===0?'var(--color-success-fg)':'var(--color-warning-fg)'}}>
-            ${totalEval===0?'No applicable elements':(totalFail===0?'All '+totalEval+' checks pass':totalFail+' of '+totalEval+' fail')}
+            ${totalEval===0?_cc_t('a11y.noApplicable','No applicable elements'):(totalFail===0?_cc_t('a11y.allPass','All {total} checks pass',{total:totalEval}):_cc_t('a11y.someFail','{fail} of {total} fail',{fail:totalFail,total:totalEval}))}
           </span>
-          ${totalFail>0 && html`<button onClick=${addToConflicts} title="Add each failing element to the Conflicts tab (exports to BCF)"
-            style=${{fontSize:'var(--text-2xs)',padding:'var(--space-1) var(--space-2)',borderRadius:'var(--radius-xs)',border:'1px solid var(--border)',background:'var(--bg-primary)',color:'var(--text-primary)',cursor:'pointer'}}>Add to Conflicts</button>`}
+          ${totalFail>0 && html`<button onClick=${addToConflicts} title=${_cc_t('a11y.addToConflictsTitle','Add each failing element to the Conflicts tab (exports to BCF)')}
+            style=${{fontSize:'var(--text-2xs)',padding:'var(--space-1) var(--space-2)',borderRadius:'var(--radius-xs)',border:'1px solid var(--border)',background:'var(--bg-primary)',color:'var(--text-primary)',cursor:'pointer'}}>${_cc_t('a11y.addToConflicts','Add to Conflicts')}</button>`}
         </div>
 
         ${ORDER.map(function(k){
@@ -22417,7 +22503,7 @@ function startApp() {
               <span style=${{fontSize:'var(--text-2xs)',color:'var(--text-muted)',fontFamily:'var(--font-mono)'}}>${g.fail}/${g.total}</span>
             </div>
             ${open && fails.length>0 && html`<div style=${{padding:'0 var(--space-4) var(--space-2)'}}>
-              <button onClick=${function(){highlight(fails);}} style=${{fontSize:'var(--text-2xs)',color:'var(--accent)',background:'none',border:'none',cursor:'pointer',padding:'0 0 var(--space-1)'}}>Isolate failing</button>
+              <button onClick=${function(){highlight(fails);}} style=${{fontSize:'var(--text-2xs)',color:'var(--accent)',background:'none',border:'none',cursor:'pointer',padding:'0 0 var(--space-1)'}}>${_cc_t('a11y.isolateFailing','Isolate failing')}</button>
               ${fails.slice(0,30).map(function(it,ix){ var f=fmt(it);
                 return html`<div key=${ix} style=${{fontSize:'var(--text-2xs)',color:'var(--text-secondary)',padding:'2px 0',borderTop:'1px solid var(--hairline)'}}>
                   <div style=${{display:'flex',justifyContent:'space-between',gap:'var(--space-2)'}}>
@@ -22427,18 +22513,18 @@ function startApp() {
                   <div style=${{color:'var(--text-faint)',fontFamily:'var(--font-mono)'}}>req ${f.req}${it.note?' · '+it.note:''}</div>
                 </div>`;
               })}
-              ${fails.length>30 && html`<div style=${{fontSize:'var(--text-2xs)',color:'var(--text-faint)',paddingTop:2}}>… +${fails.length-30} more</div>`}
+              ${fails.length>30 && html`<div style=${{fontSize:'var(--text-2xs)',color:'var(--text-faint)',paddingTop:2}}>${_cc_t('a11y.moreFails','… +{n} more',{n:fails.length-30})}</div>`}
             </div>`}
           </div>`;
         })}
 
         <div style=${{padding:'var(--space-3) var(--space-4)',fontSize:'var(--text-2xs)',color:'var(--text-faint)',lineHeight:1.5}}>
-          Advisory geometric check — deterministic measurement from IFC quantities and bounding geometry. Verify against the applicable Bbl / NEN articles. Corridor and turning use footprint bounds (approximate for non-rectangular spaces).
+          ${_cc_t('a11y.disclaimer','Advisory geometric check — deterministic measurement from IFC quantities and bounding geometry. Verify against the applicable Bbl / NEN articles. Corridor and turning use footprint bounds (approximate for non-rectangular spaces).')}
         </div>
       </div>`}
 
       ${!result && hasEngine && html`<div style=${{padding:'var(--space-4)',fontSize:'var(--text-xs)',color:'var(--text-muted)',lineHeight:1.6}}>
-        Geometric accessibility checks: door clear width, threshold height, ramp slope, corridor / escape-route width, turning clearance — measured against NL Bbl/NEN thresholds. Failing elements add to the Conflicts tab and export to BCF.
+        ${_cc_t('a11y.intro','Geometric accessibility checks: door clear width, threshold height, ramp slope, corridor / escape-route width, turning clearance — measured against NL Bbl/NEN thresholds. Failing elements add to the Conflicts tab and export to BCF.')}
       </div>`}
     </div>`;
   }
@@ -22775,27 +22861,27 @@ function startApp() {
         <div style=${{display:'flex',gap:'.3rem',alignItems:'center'}}>
           <select value=${selectedModel} onChange=${function(e){setSelectedModel(e.target.value);}}
             style=${{flex:'1 1 0',minWidth:0,fontSize:'0.72rem',padding:'.25rem .4rem',background:'var(--bg-primary)',color:'var(--text-primary)',border:'1px solid var(--border)',borderRadius:5,fontFamily:'inherit'}}>
-            <option value="all">All models</option>
+            <option value="all">${_cc_t('dq.allModels','All models')}</option>
             ${(s.models||[]).map(function(m){return html`<option key=${m.id} value=${m.id}>${m.name}</option>`})}
           </select>
           ${qc && html`<span style=${{fontSize:'0.63rem',padding:'2px 6px',borderRadius:99,
             background:totalIssues+totalBim+totalIls===0?'#052e16':'#78350f',
             color:totalIssues+totalBim+totalIls===0?'#4ade80':'#fcd34d',fontWeight:600,flexShrink:0}}>
-            ${totalIssues+totalBim+totalIls===0?'All passed':totalIssues+totalBim+totalIls+' issues'}
+            ${totalIssues+totalBim+totalIls===0?_cc_t('dq.allPassed','All passed'):_cc_t('dq.issuesCount','{n} issues',{n:totalIssues+totalBim+totalIls})}
           </span>`}
           <button onClick=${runChecks} disabled=${isRunning || !hasModels}
             style=${{padding:'.25rem .6rem',borderRadius:5,fontSize:'0.72rem',fontWeight:600,cursor:hasModels?'pointer':'not-allowed',border:'none',flexShrink:0,whiteSpace:'nowrap',
               background:isRunning?'var(--bg-tertiary)':'var(--accent)',color:isRunning?'var(--text-faint)':'#fff',fontFamily:'inherit',
               opacity:hasModels?1:0.5}}>
-            ${isRunning ? 'Checking…' : qc ? 'Re-check' : 'Run checks'}
+            ${isRunning ? _cc_t('dq.checking','Checking…') : qc ? _cc_t('dq.recheck','Re-check') : _cc_t('dq.runChecks','Run checks')}
           </button>
         </div>
-        ${lastChecked && html`<span style=${{fontSize:'0.63rem',color:'var(--text-faint)'}}>Last checked: ${Math.round((Date.now()-lastChecked)/60000)} min ago</span>`}
+        ${lastChecked && html`<span style=${{fontSize:'0.63rem',color:'var(--text-faint)'}}>${_cc_t('dq.lastChecked','Last checked: {n} min ago',{n:Math.round((Date.now()-lastChecked)/60000)})}</span>`}
         ${dqDelta && (dqDelta.worse.length>0 || dqDelta.better.length>0) && html`<div>
           <div onClick=${function(){toggleExp('dq_delta');}} style=${{display:'flex',gap:'.35rem',alignItems:'center',fontSize:'0.63rem',cursor:'pointer'}}>
-            <span style=${{color:'var(--text-faint)'}}>Since last run:</span>
-            ${dqDelta.worse.length>0 && html`<span style=${{color:'#f87171',fontWeight:600}}>${dqDelta.worse.length} worse</span>`}
-            ${dqDelta.better.length>0 && html`<span style=${{color:'#4ade80',fontWeight:600}}>${dqDelta.better.length} better</span>`}
+            <span style=${{color:'var(--text-faint)'}}>${_cc_t('dq.sinceLastRun','Since last run:')}</span>
+            ${dqDelta.worse.length>0 && html`<span style=${{color:'#f87171',fontWeight:600}}>${_cc_t('dq.worse','{n} worse',{n:dqDelta.worse.length})}</span>`}
+            ${dqDelta.better.length>0 && html`<span style=${{color:'#4ade80',fontWeight:600}}>${_cc_t('dq.better','{n} better',{n:dqDelta.better.length})}</span>`}
             <span style=${{color:'var(--text-faint)'}}>${expanded['dq_delta']?'▲':'▼'}</span>
           </div>
           ${expanded['dq_delta'] && html`<div style=${{padding:'.2rem 0 0 .3rem',display:'flex',flexDirection:'column',gap:'.1rem'}}>
@@ -22807,18 +22893,18 @@ function startApp() {
             </div>`;})}
           </div>`}
         </div>`}
-        ${!hasModels && html`<span style=${{fontSize:'0.69rem',color:'var(--text-faint)'}}>Load a model to run data quality checks.</span>`}
+        ${!hasModels && html`<span style=${{fontSize:'0.69rem',color:'var(--text-faint)'}}>${_cc_t('dq.loadModel','Load a model to run data quality checks.')}</span>`}
         <div style=${{display:'flex',gap:'.2rem',alignItems:'center',fontSize:'0.63rem',color:'var(--text-faint)'}}>
-          <span style=${{width:7,height:7,borderRadius:'50%',background:'#ef4444',flexShrink:0,display:'inline-block'}}></span> Error
-          <span style=${{width:7,height:7,borderRadius:'50%',background:'#f59e0b',flexShrink:0,display:'inline-block',marginLeft:'.3rem'}}></span> Warning
-          <span style=${{width:7,height:7,borderRadius:'50%',background:'#60a5fa',flexShrink:0,display:'inline-block',marginLeft:'.3rem'}}></span> Info
+          <span style=${{width:7,height:7,borderRadius:'50%',background:'#ef4444',flexShrink:0,display:'inline-block'}}></span> ${_cc_t('dq.error','Error')}
+          <span style=${{width:7,height:7,borderRadius:'50%',background:'#f59e0b',flexShrink:0,display:'inline-block',marginLeft:'.3rem'}}></span> ${_cc_t('dq.warning','Warning')}
+          <span style=${{width:7,height:7,borderRadius:'50%',background:'#60a5fa',flexShrink:0,display:'inline-block',marginLeft:'.3rem'}}></span> ${_cc_t('dq.info','Info')}
         </div>
       </div>
 
       <div style=${{flex:1,overflowY:'auto'}}>
         ${qc && html`<div>
           <div onClick=${function(){toggleSection('general');}} style=${SEC}>
-            <span>General Checks</span>
+            <span>${_cc_t('dq.generalChecks','General Checks')}</span>
             <span style=${{fontSize:'0.57rem',color:'var(--text-faint)'}}>${sections.general?'▲':'▼'}</span>
           </div>
           ${sections.general && renderCheckGroup(qc, ['guidCollision','noGlobalId','proxy','genericName','duplicateName','noMaterial','noStorey','emptyGeometry','zeroLayers','unhostedOpenings','noProperties','noDescription'], 'General')}
@@ -22826,7 +22912,7 @@ function startApp() {
 
         ${bim && html`<div>
           <div onClick=${function(){toggleSection('bim');}} style=${SEC}>
-            <span>BIM Model Checks</span>
+            <span>${_cc_t('dq.bimChecks','BIM Model Checks')}</span>
             <span style=${{fontSize:'0.57rem',color:'var(--text-faint)'}}>${sections.bim?'▲':'▼'}</span>
           </div>
           ${sections.bim && renderCheckGroup(bim, ['thicknessMismatch','noFireRating','noIsExternal','noLoadBearing','missingCommonPset','noClassification','noObjectType','invalidName','missingArea','missingVolume'], 'BIM')}
@@ -22834,7 +22920,7 @@ function startApp() {
 
         ${ils && html`<div>
           <div onClick=${function(){toggleSection('ils');}} style=${SEC}>
-            <span>ILS / NL-SfB</span>
+            <span>${_cc_t('dq.ilsChecks','ILS / NL-SfB')}</span>
             <span style=${{display:'flex',alignItems:'center',gap:'.3rem'}}>
               ${totalIls > 0 ? html`<span style=${{fontSize:'0.57rem',padding:'1px 5px',borderRadius:99,background:'#78350f',color:'#fcd34d',fontWeight:600}}>${totalIls}</span>` : null}
               <span style=${{fontSize:'0.57rem',color:'var(--text-faint)'}}>${sections.ils?'▲':'▼'}</span>
@@ -25375,26 +25461,26 @@ function startApp() {
     var LBL={fontSize:'var(--text-sm)',color:'var(--text-muted)',display:'block',marginBottom:'var(--space-1)',fontWeight:'var(--weight-medium)'};
     var META_PILL={fontSize:'var(--text-2xs)',background:'var(--color-info-bg)',color:'var(--color-info-fg)',padding:'.1rem var(--space-2)',borderRadius:'var(--radius-pill)',fontWeight:'var(--weight-medium)'};
     var META_NEUTRAL={fontSize:'var(--text-2xs)',background:'var(--bg-secondary)',color:'var(--text-secondary)',padding:'.1rem var(--space-2)',borderRadius:'var(--radius-pill)'};
-    var titleText = fromClash?'New Issue from Clash':hasEl?'New Element Issue':'New Issue';
+    var titleText = fromClash?_cc_t('newIssue.titleFromClash','New Issue from Clash'):hasEl?_cc_t('newIssue.titleFromElement','New Element Issue'):_cc_t('newIssue.title','New Issue');
     var titleId = 'cc-newissue-title';
     return html`<div class="cc-modal-backdrop" style=${S_BACKDROP} role="dialog" aria-modal="true" aria-labelledby=${titleId}><div class="cc-modal-card" style=${{...S_MODAL_CARD,width:440}}>
       <div style=${S_MODAL_HEADER}>
         <span id=${titleId} style=${S_MODAL_TITLE}>${titleText}</span>
-        <button onClick=${function(){d({t:A.MODAL,v:false})}} style=${S_MODAL_CLOSE} aria-label="Close modal">✕</button>
+        <button onClick=${function(){d({t:A.MODAL,v:false})}} style=${S_MODAL_CLOSE} aria-label=${_cc_t('modal.close','Close modal')}>✕</button>
       </div>
       ${fromClash && html`<div style=${{padding:'var(--space-3) var(--space-5)',borderBottom:'1px solid var(--border-subtle)',background:'var(--bg-primary)'}}>
-        <div style=${{fontSize:'var(--text-2xs)',fontWeight:'var(--weight-semibold)',color:'var(--color-info-fg)',marginBottom:'var(--space-1)',textTransform:'uppercase',letterSpacing:'.06em'}}>From Clash</div>
+        <div style=${{fontSize:'var(--text-2xs)',fontWeight:'var(--weight-semibold)',color:'var(--color-info-fg)',marginBottom:'var(--space-1)',textTransform:'uppercase',letterSpacing:'.06em'}}>${_cc_t('newIssue.fromClash','From Clash')}</div>
         <div style=${{display:'flex',flexWrap:'wrap',gap:'var(--space-1)',marginBottom:'var(--space-1)',alignItems:'center'}}>
           ${fromClash.elemAType && html`<span style=${META_PILL}>${fromClash.elemAType}</span>`}
           <span style=${{fontSize:'var(--text-2xs)',color:'var(--text-faint)'}}>vs</span>
           ${fromClash.elemBType && html`<span style=${META_PILL}>${fromClash.elemBType}</span>`}
           ${fromClash.elemAStorey && html`<span style=${META_NEUTRAL}>${fromClash.elemAStorey}</span>`}
-          ${fromClash.distance!=null && isFinite(fromClash.distance) && fromClash.distance>=0 && Math.abs(fromClash.distance)<1e6 && html`<span style=${META_NEUTRAL}>${fromClash.distance===0?'touching':fromClash.distance+'mm gap'}</span>`}
+          ${fromClash.distance!=null && isFinite(fromClash.distance) && fromClash.distance>=0 && Math.abs(fromClash.distance)<1e6 && html`<span style=${META_NEUTRAL}>${fromClash.distance===0?_cc_t('newIssue.touching','touching'):_cc_t('newIssue.gap','{mm}mm gap',{mm:fromClash.distance})}</span>`}
         </div>
         <div style=${{fontSize:'var(--text-2xs)',color:'var(--text-faint)'}}>${fromClash.elemAName||''} · ${fromClash.elemBName||''}</div>
       </div>`}
       ${hasEl && !fromClash && html`<div style=${{padding:'var(--space-3) var(--space-5)',borderBottom:'1px solid var(--border-subtle)',background:'var(--bg-primary)'}}>
-        <div style=${{fontSize:'var(--text-2xs)',fontWeight:'var(--weight-semibold)',color:'var(--color-info-fg)',marginBottom:'var(--space-1)',textTransform:'uppercase',letterSpacing:'.06em'}}>Linked Element</div>
+        <div style=${{fontSize:'var(--text-2xs)',fontWeight:'var(--weight-semibold)',color:'var(--color-info-fg)',marginBottom:'var(--space-1)',textTransform:'uppercase',letterSpacing:'.06em'}}>${_cc_t('newIssue.linkedElement','Linked Element')}</div>
         <div style=${{display:'flex',flexWrap:'wrap',gap:'var(--space-1)'}}>
           ${ep.ifcType && html`<span style=${META_PILL}>${ep.ifcType}</span>`}
           ${ep.name && html`<span style=${META_NEUTRAL}>${ep.name}</span>`}
@@ -25404,33 +25490,33 @@ function startApp() {
         <div style=${{fontSize:'var(--text-2xs)',color:'var(--text-faint)',marginTop:'var(--space-1)'}}>${el.modelName} · #${el.expressId}</div>
       </div>`}
       <form onSubmit=${submit} style=${S_MODAL_BODY}>
-        <div><label style=${LBL}>Title *</label>
-          <input required value=${form.title} onInput=${upd('title')} placeholder="Short description of the issue" style=${S_INPUT} /></div>
-        <div><label style=${LBL}>What is the issue? *</label>
-          <textarea required value=${form.desc} onInput=${upd('desc')} rows="3" placeholder="Describe what the problem is and what needs to be resolved…" style=${{...S_INPUT,resize:'vertical'}} /></div>
+        <div><label style=${LBL}>${_cc_t('newIssue.titleLabel','Title *')}</label>
+          <input required value=${form.title} onInput=${upd('title')} placeholder=${_cc_t('newIssue.titlePlaceholder','Short description of the issue')} style=${S_INPUT} /></div>
+        <div><label style=${LBL}>${_cc_t('newIssue.descLabel','What is the issue? *')}</label>
+          <textarea required value=${form.desc} onInput=${upd('desc')} rows="3" placeholder=${_cc_t('newIssue.descPlaceholder','Describe what the problem is and what needs to be resolved…')} style=${{...S_INPUT,resize:'vertical'}} /></div>
         <div style=${{display:'flex',gap:'var(--space-2)'}}>
-          <div style=${{flex:1}}><label style=${LBL}>Status</label>
+          <div style=${{flex:1}}><label style=${LBL}>${_cc_t('newIssue.status','Status')}</label>
             <select value=${form.status} onChange=${upd('status')} style=${S_INPUT}>
               ${EDITABLE_STATUSES.map(function(k){return html`<option key=${k} value=${k}>${STAT[k].label}</option>`})}
             </select></div>
-          <div style=${{flex:1}}><label style=${LBL}>Priority</label>
+          <div style=${{flex:1}}><label style=${LBL}>${_cc_t('issues.filter.priority','Priority')}</label>
             <select value=${form.priority} onChange=${upd('priority')} style=${S_INPUT}>
-              <option value="critical">Critical</option><option value="high">High</option><option value="normal">Normal</option><option value="low">Low</option>
+              <option value="critical">${_cc_t('newIssue.priorityCritical','Critical')}</option><option value="high">${_cc_t('newIssue.priorityHigh','High')}</option><option value="normal">${_cc_t('newIssue.priorityNormal','Normal')}</option><option value="low">${_cc_t('newIssue.priorityLow','Low')}</option>
             </select></div>
-          <div style=${{flex:1}}><label style=${LBL}>Category</label>
+          <div style=${{flex:1}}><label style=${LBL}>${_cc_t('issues.filter.category','Category')}</label>
             <select value=${form.category} onChange=${upd('category')} style=${S_INPUT}>
-              <option value="design">Design</option><option value="coordination">Coordination</option><option value="constructability">Constructability</option><option value="safety">Safety</option><option value="code_compliance">Code Compliance</option><option value="other">Other</option>
+              <option value="design">${_cc_t('newIssue.categoryDesign','Design')}</option><option value="coordination">${_cc_t('newIssue.categoryCoordination','Coordination')}</option><option value="constructability">${_cc_t('newIssue.categoryConstructability','Constructability')}</option><option value="safety">${_cc_t('newIssue.categorySafety','Safety')}</option><option value="code_compliance">${_cc_t('newIssue.categoryCodeCompliance','Code Compliance')}</option><option value="other">${_cc_t('newIssue.categoryOther','Other')}</option>
             </select></div>
         </div>
         <div style=${{display:'flex',gap:'var(--space-2)'}}>
-          <div style=${{flex:1}}><label style=${LBL}>Assigned to</label>
-            <input value=${form.assignee} onInput=${upd('assignee')} placeholder="Name or team" style=${S_INPUT} /></div>
-          <div style=${{flex:1}}><label style=${LBL}>Due date</label>
+          <div style=${{flex:1}}><label style=${LBL}>${_cc_t('newIssue.assignedTo','Assigned to')}</label>
+            <input value=${form.assignee} onInput=${upd('assignee')} placeholder=${_cc_t('newIssue.assigneePlaceholder','Name or team')} style=${S_INPUT} /></div>
+          <div style=${{flex:1}}><label style=${LBL}>${_cc_t('newIssue.dueDate','Due date')}</label>
             <input type="date" value=${form.dueDate} onInput=${upd('dueDate')} style=${S_INPUT} /></div>
         </div>
         <div style=${{display:'flex',gap:'var(--space-2)',paddingTop:'var(--space-2)'}}>
-          <button class="cc-btn-press" type="button" onClick=${function(){d({t:A.MODAL,v:false})}} style=${{...S_BTN,flex:1,background:'var(--bg-tertiary)',color:'var(--text-primary)',border:'1px solid var(--border)'}}>Cancel</button>
-          <button class="cc-btn-press" type="submit" style=${{...S_BTN,flex:1,background:'var(--accent)',color:'#fff',fontWeight:'var(--weight-semibold)'}}>Create Issue</button>
+          <button class="cc-btn-press" type="button" onClick=${function(){d({t:A.MODAL,v:false})}} style=${{...S_BTN,flex:1,background:'var(--bg-tertiary)',color:'var(--text-primary)',border:'1px solid var(--border)'}}>${_cc_t('newIssue.cancel','Cancel')}</button>
+          <button class="cc-btn-press" type="submit" style=${{...S_BTN,flex:1,background:'var(--accent)',color:'#fff',fontWeight:'var(--weight-semibold)'}}>${_cc_t('newIssue.create','Create Issue')}</button>
         </div>
       </form>
     </div></div>`;
@@ -27770,6 +27856,10 @@ function startApp() {
     var stFlash = useState(false), sentFlash=stFlash[0], setSentFlash=stFlash[1];
     var stStorage = useState(null), storageReport=stStorage[0], setStorageReport=stStorage[1];
     var stRmFiles = useState(null), rmFilesConfirm=stRmFiles[0], setRmFilesConfirm=stRmFiles[1];
+    var stLocalePacks = useState([]), localePacks=stLocalePacks[0], setLocalePacks=stLocalePacks[1];
+    var stRegionPacks = useState([]), regionPacks=stRegionPacks[0], setRegionPacks=stRegionPacks[1];
+    var stLocaleSel = useState(function(){ return (window._ccGetLocale && window._ccGetLocale()) || ''; }), localeSel=stLocaleSel[0], setLocaleSel=stLocaleSel[1];
+    var stRegionSel = useState(function(){ return (window._ccGetRegulationRegion && window._ccGetRegulationRegion()) || ''; }), regionSel=stRegionSel[0], setRegionSel=stRegionSel[1];
     var SETTINGS_TABS = [
       {id:'general', label:'General'},
       {id:'measurement', label:'Measurement'},
@@ -27790,6 +27880,16 @@ function startApp() {
       if (window._ccStorageReport) window._ccStorageReport().then(function(r){ if (live) setStorageReport(r || false); });
       return function(){ live = false; };
     }, [activeTab]);
+
+    // Manifests are tiny (id/name/contributor only) — fetch once on modal
+    // mount, regardless of which tab is open. Individual packs still load
+    // lazily, only when the user actually picks one below.
+    useEffect(function(){
+      var live = true;
+      if (window._ccListLocalePacks) window._ccListLocalePacks().then(function(list){ if (live) setLocalePacks(list||[]); }).catch(function(){});
+      if (window._ccListRegulationPacks) window._ccListRegulationPacks().then(function(list){ if (live) setRegionPacks(list||[]); }).catch(function(){});
+      return function(){ live = false; };
+    }, []);
     function refreshStorageReport(){
       if (window._ccStorageReport) window._ccStorageReport().then(function(r){ setStorageReport(r || false); });
     }
@@ -27831,7 +27931,7 @@ function startApp() {
     var NAVBTN = function(on){return {...S_BTN,display:'block',width:'100%',textAlign:'left',background:on?'var(--accent-bg-deep)':'none',color:on?'var(--accent)':'var(--text-secondary)',fontWeight:on?600:400,fontSize:'0.82rem',padding:'.5rem .7rem',borderRadius:'var(--radius-sm)',borderLeft:on?'2px solid var(--accent)':'2px solid transparent'};};
     return html`<div class="cc-modal-backdrop" style=${S_BACKDROP} role="dialog" aria-modal="true" aria-labelledby="cc-settings-title" onClick=${function(){d({t:A.SETTINGS,v:false});}}><div class="cc-modal-card" style=${{...S_MODAL_CARD,width:640,overflow:'hidden',display:'flex',flexDirection:'column'}} onClick=${function(e){e.stopPropagation();}}>
       <div style=${S_MODAL_HEADER}>
-        <span id="cc-settings-title" style=${S_MODAL_TITLE}>Settings</span>
+        <span id="cc-settings-title" style=${S_MODAL_TITLE}>${_cc_t('panel.settings.title','Settings')}</span>
         <button onClick=${function(){d({t:A.SETTINGS,v:false})}} style=${S_MODAL_CLOSE} aria-label="Close settings">✕</button>
       </div>
       <div style=${{padding:'var(--space-2) var(--space-5) 0 var(--space-5)',flexShrink:0}}>
@@ -27904,6 +28004,48 @@ function startApp() {
             <option value="1">Meters</option>
             <option value="100">Centimeters</option>
             <option value="1000">Millimeters</option>
+          </select>
+        </div>
+
+        <div style=${SEC}>Language &amp; Region</div>
+        <div style=${TROW}>
+          <div>
+            <div style=${TLBL}>Language</div>
+            <div style=${TSUB}>Community-contributed UI translation. Anything untranslated stays in English.</div>
+          </div>
+          <select value=${localeSel||''}
+            onChange=${function(e){
+              var lang = e.target.value;
+              setLocaleSel(lang);
+              if (!lang) { if (window._ccSetLocale) window._ccSetLocale(null); return; }
+              if (window._ccLoadLocalePack) {
+                window._ccLoadLocalePack(lang).then(function(){ if (window._ccSetLocale) window._ccSetLocale(lang); })
+                  .catch(function(){ setLocaleSel(''); if (window._ccToast) window._ccToast('Could not load that language pack.'); });
+              }
+            }}
+            style=${{background:'var(--bg-tertiary)',color:'var(--text-primary)',border:'1px solid var(--border)',borderRadius:6,padding:'.25rem .5rem',fontSize:'0.8rem'}}>
+            <option value="">English (default)</option>
+            ${localePacks.map(function(pk){return html`<option key=${pk.lang} value=${pk.lang}>${pk.name}</option>`;})}
+          </select>
+        </div>
+        <div style=${TROW}>
+          <div>
+            <div style=${TLBL}>Regional building code</div>
+            <div style=${TSUB}>Thresholds used by the Accessibility panel (door width, ramp slope, corridor/turning clearance). Defaults to NL Bbl/NEN.</div>
+          </div>
+          <select value=${regionSel||''}
+            onChange=${function(e){
+              var region = e.target.value;
+              setRegionSel(region);
+              if (!region) { if (window._ccSetRegulationRegion) window._ccSetRegulationRegion(null); return; }
+              if (window._ccLoadRegulationPack) {
+                window._ccLoadRegulationPack(region).then(function(){ if (window._ccSetRegulationRegion) window._ccSetRegulationRegion(region); })
+                  .catch(function(){ setRegionSel(''); if (window._ccToast) window._ccToast('Could not load that regulation pack.'); });
+              }
+            }}
+            style=${{background:'var(--bg-tertiary)',color:'var(--text-primary)',border:'1px solid var(--border)',borderRadius:6,padding:'.25rem .5rem',fontSize:'0.8rem'}}>
+            <option value="">NL Bbl/NEN (default)</option>
+            ${regionPacks.map(function(pk){return html`<option key=${pk.region} value=${pk.region}>${pk.name}${pk.verified===false?' (unverified)':''}</option>`;})}
           </select>
         </div>
         </${React.Fragment}>`}
@@ -34614,7 +34756,17 @@ function startApp() {
     if (!tab) return null;
     var projects=s.projectList||[];
     var activeProj=projects.find(function(p){return p.id===s.activeProject;})||projects[0]||{name:'Default'};
-    var TITLES={models:'Models',clashes:'Conflicts',issues:'Issues',navigator:'Navigator',dataquality:'Data Quality',accessibility:'Accessibility',tools:'Tools',addons:'Integrations',standards:'Standards'};
+    var TITLES={
+      models:_cc_t('panel.models.title','Models'),
+      clashes:_cc_t('panel.clashes.title','Conflicts'),
+      issues:_cc_t('panel.issues.title','Issues'),
+      navigator:_cc_t('panel.navigator.title','Navigator'),
+      dataquality:_cc_t('panel.dataquality.title','Data Quality'),
+      accessibility:_cc_t('panel.accessibility.title','Accessibility'),
+      tools:_cc_t('panel.tools.title','Tools'),
+      addons:_cc_t('panel.addons.title','Integrations'),
+      standards:_cc_t('panel.standards.title','Standards')
+    };
     var onResizeDown = _makeResizeHandler(dragRef, setPanelW, 200, 600, false);
     return html`<div class="cc-left-panel" style=${{
       width:panelW,display:'flex',flexDirection:'column',overflow:'hidden',

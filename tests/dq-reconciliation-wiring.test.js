@@ -27,8 +27,10 @@ test('a "Since last run" summary renders with expandable worse/better details', 
   const summaryStart = src.indexOf('dqDelta && (dqDelta.worse.length>0', panelStart);
   assert.ok(summaryStart !== -1, 'delta summary block not found');
   const nearby = src.slice(summaryStart, summaryStart + 1200);
+  // Text goes through _cc_t() for i18n — assert the English fallback + key,
+  // not raw literal adjacency to the closing tag.
   assert.ok(/Since last run:/.test(nearby));
-  assert.ok(/worse<\/span>/.test(nearby));
-  assert.ok(/better<\/span>/.test(nearby));
+  assert.ok(/_cc_t\('dq\.worse','\{n\} worse'/.test(nearby));
+  assert.ok(/_cc_t\('dq\.better','\{n\} better'/.test(nearby));
   assert.ok(nearby.indexOf("toggleExp('dq_delta')") !== -1, 'must reuse the existing expanded-section state pattern');
 });
