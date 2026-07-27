@@ -24546,7 +24546,7 @@ function startApp() {
           var gR = currentGroup();
           if (gR) {
             var open = gR.items.filter(function(it){return it.status!=='resolved'&&it.status!=='closed';});
-            if (open.length && confirm('Resolve all '+open.length+' open clashes in this group?')) {
+            if (open.length && confirm(_cc_t('vlist.resolveAllOpenInGroup','Resolve all {n} open clashes in this group?',{n:open.length}))) {
               e.preventDefault();
               window._ccResolveCluster(open, d);
               return;
@@ -24737,11 +24737,11 @@ function startApp() {
             var _sh = Object.keys(_dcnt).filter(function(k){ return _dcnt[k]>=2; });
             if (_sh.length) {
               _emptyNudge = html`<div style=${{margin:'0 1rem',padding:'.65rem .75rem',background:'var(--accent-bg)',border:'1px solid var(--accent-subtle)',borderRadius:8,textAlign:'left',fontSize:'0.75rem',color:'var(--text-secondary)',lineHeight:1.5}}>
-                <strong style=${{color:'var(--text-primary)'}}>Same-discipline pairs were skipped.</strong>
-                ${' You have '+_sh.map(function(k){return _dcnt[k]+' '+k;}).join(', ')+' models. By default ClashControl only checks different disciplines against each other, so models of the same discipline are not compared.'}
+                <strong style=${{color:'var(--text-primary)'}}>${_cc_t('vlist.sameDisciplineSkipped','Same-discipline pairs were skipped.')}</strong>
+                ${' '+_cc_t('vlist.sameDisciplineDetail','You have {models} models. By default ClashControl only checks different disciplines against each other, so models of the same discipline are not compared.',{models:_sh.map(function(k){return _dcnt[k]+' '+k;}).join(', ')})}
                 <button onClick=${function(){ if(window._ccDispatch) window._ccDispatch({t:A.UPD_RULES,u:{excludeSameDiscipline:false}}); if(window._ccRunDetection) window._ccRunDetection({excludeSameDiscipline:false}); }}
                   style=${{display:'block',marginTop:'.55rem',fontSize:'0.72rem',padding:'.35rem .6rem',borderRadius:6,background:'var(--accent)',color:'#fff',border:'none',cursor:'pointer',fontWeight:600}}>
-                  Check same-discipline pairs & re-run
+                  ${_cc_t('vlist.checkSameDisciplineRerun','Check same-discipline pairs & re-run')}
                 </button>
               </div>`;
             }
@@ -24757,13 +24757,13 @@ function startApp() {
         var actionBtn = null;
         if (st.action === 'run') {
           actionBtn = html`<button onClick=${function(){ try{ if(window._ccRunDetection) window._ccRunDetection(); }catch(e){} }}
-            style=${{marginTop:'.6rem',fontSize:'0.75rem',padding:'.4rem .8rem',borderRadius:6,background:'var(--accent)',color:'#fff',border:'none',cursor:'pointer',fontWeight:600}}>Run detection</button>`;
+            style=${{marginTop:'.6rem',fontSize:'0.75rem',padding:'.4rem .8rem',borderRadius:6,background:'var(--accent)',color:'#fff',border:'none',cursor:'pointer',fontWeight:600}}>${_cc_t('run.runDetection','Run detection')}</button>`;
         } else if (st.action === 'clear-filters') {
           actionBtn = html`<button onClick=${function(){ if(window._ccDispatch) window._ccDispatch({t:A.RESET_FILTERS}); }}
-            style=${{marginTop:'.6rem',fontSize:'0.75rem',padding:'.4rem .8rem',borderRadius:6,background:'var(--accent)',color:'#fff',border:'none',cursor:'pointer',fontWeight:600}}>Clear filters</button>`;
+            style=${{marginTop:'.6rem',fontSize:'0.75rem',padding:'.4rem .8rem',borderRadius:6,background:'var(--accent)',color:'#fff',border:'none',cursor:'pointer',fontWeight:600}}>${_cc_t('vlist.clearFilters','Clear filters')}</button>`;
         } else if (st.action === 'show-models') {
           actionBtn = html`<button onClick=${function(){ if(window._ccDispatch) window._ccDispatch({t:A.TAB,v:'models'}); }}
-            style=${{marginTop:'.6rem',fontSize:'0.75rem',padding:'.4rem .8rem',borderRadius:6,background:'var(--accent)',color:'#fff',border:'none',cursor:'pointer',fontWeight:600}}>Show models</button>`;
+            style=${{marginTop:'.6rem',fontSize:'0.75rem',padding:'.4rem .8rem',borderRadius:6,background:'var(--accent)',color:'#fff',border:'none',cursor:'pointer',fontWeight:600}}>${_cc_t('vlist.showModels','Show models')}</button>`;
         }
         return html`<div style=${{flex:1,overflowY:'auto'}}>
           <div data-empty-state=${st.key} style=${{textAlign:'center',color:'var(--text-faint)',fontSize:'0.86rem',padding:'2.5rem 1rem'}}>
@@ -24851,10 +24851,10 @@ function startApp() {
               <button aria-label="Triage cluster with AI" title="Triage with AI (T) — sends cluster to /api/triage"
                 disabled=${triageLoading}
                 onClick=${function(e){e.stopPropagation(); window._ccTriageCluster(g.items, d, g.label);}}
-                style=${{...S_BTN,fontSize:'var(--text-2xs)',padding:'1px var(--space-2)',borderRadius:'var(--radius-xs)',border:'1px solid var(--accent-subtle)',background:'var(--accent-bg)',color:'var(--accent-subtle)',fontWeight:'var(--weight-semibold)',opacity:triageLoading?0.6:1}}>${triageLoading?'Triaging…':(triageResult?'Re-triage':'Triage')}</button>
+                style=${{...S_BTN,fontSize:'var(--text-2xs)',padding:'1px var(--space-2)',borderRadius:'var(--radius-xs)',border:'1px solid var(--accent-subtle)',background:'var(--accent-bg)',color:'var(--accent-subtle)',fontWeight:'var(--weight-semibold)',opacity:triageLoading?0.6:1}}>${triageLoading?_cc_t('vlist.triaging','Triaging…'):(triageResult?_cc_t('vlist.reTriage','Re-triage'):_cc_t('vlist.triage','Triage'))}</button>
               <button aria-label="Resolve all clashes in this group" title="Resolve all in this group (R)"
-                onClick=${function(e){e.stopPropagation(); if (openCount===0 || confirm('Resolve all '+openCount+' open clashes in this group?')) window._ccResolveCluster(g.items.filter(function(it){return it.status!=='resolved'&&it.status!=='closed';}), d);}}
-                style=${{...S_BTN,fontSize:'var(--text-2xs)',padding:'1px var(--space-2)',borderRadius:'var(--radius-xs)',border:'1px solid var(--border)',background:'var(--bg-secondary)',color:'var(--text-secondary)'}}>Resolve all</button>
+                onClick=${function(e){e.stopPropagation(); if (openCount===0 || confirm(_cc_t('vlist.resolveAllOpenInGroup','Resolve all {n} open clashes in this group?',{n:openCount}))) window._ccResolveCluster(g.items.filter(function(it){return it.status!=='resolved'&&it.status!=='closed';}), d);}}
+                style=${{...S_BTN,fontSize:'var(--text-2xs)',padding:'1px var(--space-2)',borderRadius:'var(--radius-xs)',border:'1px solid var(--border)',background:'var(--bg-secondary)',color:'var(--text-secondary)'}}>${_cc_t('vlist.resolveAll','Resolve all')}</button>
             </div>
             <span style=${{fontSize:'var(--text-2xs)',color:'var(--text-faint)',background:'var(--bg-secondary)',padding:'1px var(--space-2)',borderRadius:'var(--radius-pill)',fontFamily:'var(--font-mono)'}}>${g.items.length}</span>
           </div>
@@ -24870,7 +24870,7 @@ function startApp() {
                   ${triageResult.title && html`<div style=${{fontSize:'var(--text-sm)',fontWeight:'var(--weight-semibold)',color:'var(--text-primary)',lineHeight:'var(--leading-tight)'}}>${triageResult.title}</div>`}
                   ${triageResult.explanation && html`<div style=${{fontSize:'var(--text-xs)',color:'var(--text-secondary)',lineHeight:'var(--leading-base)'}}>${triageResult.explanation}</div>`}
                   ${Array.isArray(triageResult.resolution_options) && triageResult.resolution_options.length>0 && html`<div style=${{display:'flex',flexDirection:'column',gap:'var(--space-1)'}}>
-                    <div style=${{fontSize:'var(--text-2xs)',fontWeight:'var(--weight-bold)',textTransform:'uppercase',letterSpacing:'.08em',color:'var(--text-muted)'}}>Resolution options</div>
+                    <div style=${{fontSize:'var(--text-2xs)',fontWeight:'var(--weight-bold)',textTransform:'uppercase',letterSpacing:'.08em',color:'var(--text-muted)'}}>${_cc_t('vlist.resolutionOptions','Resolution options')}</div>
                     ${triageResult.resolution_options.map(function(opt, idx){return html`<div key=${idx} style=${{fontSize:'var(--text-xs)',color:'var(--text-secondary)',padding:'var(--space-1) var(--space-2)',background:'var(--bg-tertiary)',borderRadius:'var(--radius-xs)',borderLeft:'2px solid var(--accent-subtle)'}}>
                       <div style=${{color:'var(--text-primary)',fontWeight:'var(--weight-medium)'}}>${idx+1}. ${opt.option}</div>
                       ${opt.tradeoff && html`<div style=${{fontSize:'var(--text-2xs)',color:'var(--text-faint)',marginTop:'2px'}}>Tradeoff: ${opt.tradeoff}${opt.cost_impact?(' · cost: '+opt.cost_impact):''}</div>`}
@@ -24886,7 +24886,7 @@ function startApp() {
                         g.items.forEach(function(it){ d({t:A.AI_FEEDBACK, id:it.id, v:val}); });
                         if (window._ccToast) window._ccToast('Thanks — feedback recorded');
                       }}
-                      title=${val==='real_clash'?'Mark cluster as a real clash':val==='false_positive'?'Mark cluster as a false positive':'Clear feedback'}
+                      title=${val==='real_clash'?_cc_t('vlist.markRealClash','Mark cluster as a real clash'):val==='false_positive'?_cc_t('vlist.markFalsePositive','Mark cluster as a false positive'):_cc_t('vlist.clearFeedback','Clear feedback')}
                       style=${{...S_BTN,fontSize:'var(--text-2xs)',padding:'1px var(--space-2)',borderRadius:'var(--radius-xs)',border:'1px solid '+(on?'var(--accent-subtle)':'var(--border)'),background:on?'var(--accent-bg)':'var(--bg-secondary)',color:on?'var(--accent-subtle)':'var(--text-secondary)',fontWeight:on?'var(--weight-semibold)':'var(--weight-regular)'}}>${label}</button>`;};
                     return html`<div style=${{display:'flex',alignItems:'center',gap:'var(--space-1)',paddingTop:'var(--space-1)',borderTop:'1px dashed var(--border-subtle)'}}>
                       <span style=${{fontSize:'var(--text-2xs)',color:'var(--text-faint)',marginRight:'var(--space-1)'}}>Was this useful?</span>
