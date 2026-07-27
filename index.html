@@ -34910,7 +34910,7 @@ function startApp() {
       var ms = s.measurements || [];
       var groups = {length:[], angle:[], area:[], element:[], clearance:[]};
       ms.forEach(function(m){ (groups[m.type]||(groups[m.type]=[])).push(m); });
-      var groupTitles = {length:'Distances', angle:'Angles', area:'Areas', element:'Element quantities', clearance:'Clearances'};
+      var groupTitles = {length:_cc_t('aiChat.distances','Distances'), angle:_cc_t('aiChat.angles','Angles'), area:_cc_t('aiChat.areas','Areas'), element:_cc_t('aiChat.elementQuantities','Element quantities'), clearance:_cc_t('aiChat.clearances','Clearances')};
       var unitLabel = (function(){
         var mode = (window._ccLatestState&&window._ccLatestState.prefs&&window._ccLatestState.prefs.measureUnits)||'auto';
         if (mode === 'auto') {
@@ -34952,21 +34952,21 @@ function startApp() {
           <span style=${{fontSize:'var(--text-2xs)',textTransform:'uppercase',letterSpacing:'.06em',color:'var(--text-muted)'}}>${ms.length} measurement${ms.length===1?'':'s'}</span>
           <div style=${{flex:1}}></div>
           <button onClick=${function(){d({t:A.SETTINGS,v:true});}}
-            title="Units & precision" style=${{background:'none',border:'1px solid var(--border)',borderRadius:'var(--radius-xs)',padding:'.15rem .45rem',fontSize:'var(--text-2xs)',color:'var(--text-secondary)',cursor:'pointer',fontFamily:'var(--font-mono)'}}>
+            title=${_cc_t('aiChat.unitsAndPrecision','Units & precision')} style=${{background:'none',border:'1px solid var(--border)',borderRadius:'var(--radius-xs)',padding:'.15rem .45rem',fontSize:'var(--text-2xs)',color:'var(--text-secondary)',cursor:'pointer',fontFamily:'var(--font-mono)'}}>
             ${unitLabel} ⚙
           </button>
         </div>
         <!-- Active mode hint -->
         ${s.measureMode && html`<div style=${{padding:'.3rem .5rem',background:'var(--accent-bg)',border:'1px solid var(--accent)',borderRadius:'var(--radius-xs)',fontSize:'var(--text-xs)',color:'var(--accent)'}}>
-          ${s.measureMode==='length'?'Click 2 points · Shift to lock axis':s.measureMode==='angle'?'Click 3 points: start · vertex · end':s.measureMode==='area'?'Click points · Enter or click first point to close':s.measureMode==='element'?'Click an element to read its quantities':s.measureMode==='clearance'?'Pick element A then element B':'Measuring'}
+          ${s.measureMode==='length'?_cc_t('aiChat.measure.length','Click 2 points · Shift to lock axis'):s.measureMode==='angle'?_cc_t('aiChat.measure.angle','Click 3 points: start · vertex · end'):s.measureMode==='area'?_cc_t('aiChat.measure.area','Click points · Enter or click first point to close'):s.measureMode==='element'?_cc_t('aiChat.measure.element','Click an element to read its quantities'):s.measureMode==='clearance'?_cc_t('aiChat.measure.clearance','Pick element A then element B'):_cc_t('aiChat.measure.measuring','Measuring')}
         </div>`}
         <!-- Mode pickers live in the toolbar Measure caret — keep this panel
              focused on viewing / managing placed measurements. A small helper
              nudge points users at the toolbar caret if no mode is active. -->
-        ${!s.measureMode && html`<div style=${{fontSize:'var(--text-2xs)',color:'var(--text-muted)',padding:'.2rem 0'}}>Pick a mode from the Measure button in the toolbar (or the ▾ caret next to it).</div>`}
+        ${!s.measureMode && html`<div style=${{fontSize:'var(--text-2xs)',color:'var(--text-muted)',padding:'.2rem 0'}}>${_cc_t('aiChat.pickModeHint','Pick a mode from the Measure button in the toolbar (or the ▾ caret next to it).')}</div>`}
         <!-- Takeoff — Review workspace only -->
         ${s.workspace==='review' && html`<div style=${{padding:'.5rem .55rem',background:'var(--bg-secondary)',border:'1px solid var(--border-subtle)',borderRadius:'var(--radius-xs)'}}>
-          <div style=${{fontSize:'var(--text-2xs)',textTransform:'uppercase',letterSpacing:'.06em',color:'var(--text-muted)',marginBottom:'.25rem'}}>Takeoff (filter by IFC type)</div>
+          <div style=${{fontSize:'var(--text-2xs)',textTransform:'uppercase',letterSpacing:'.06em',color:'var(--text-muted)',marginBottom:'.25rem'}}>${_cc_t('aiChat.takeoffFilterByType','Takeoff (filter by IFC type)')}</div>
           <div style=${{display:'flex',gap:'.3rem',alignItems:'center'}}>
             <input id="cc-takeoff-input" placeholder="IfcWall" list="cc-ifctypes" style=${{flex:1,padding:'.2rem .4rem',background:'var(--bg-primary)',color:'var(--text-primary)',border:'1px solid var(--border)',borderRadius:'var(--radius-xs)',fontSize:'var(--text-xs)',fontFamily:'var(--font-body)'}}/>
             <button onClick=${function(){
@@ -34974,18 +34974,18 @@ function startApp() {
               var t = (inp && inp.value || '').trim();
               if (!t || !window._ccComputeTakeoff) return;
               window._ccComputeTakeoff(t);
-            }} style=${{...S_BTN,padding:'.2rem .55rem',fontSize:'var(--text-xs)',background:'var(--accent)',color:'#fff',border:'none',borderRadius:'var(--radius-xs)'}}>Run</button>
+            }} style=${{...S_BTN,padding:'.2rem .55rem',fontSize:'var(--text-xs)',background:'var(--accent)',color:'#fff',border:'none',borderRadius:'var(--radius-xs)'}}>${_cc_t('aiChat.run','Run')}</button>
           </div>
           ${window._ccLastTakeoff && html`<div style=${{marginTop:'.4rem',fontSize:'var(--text-xs)',fontFamily:'var(--font-mono)',color:'var(--text-secondary)'}}>
-            <div>Filter: ${window._ccLastTakeoff.filter}</div>
-            <div>Count: ${window._ccLastTakeoff.count}</div>
-            ${window._ccLastTakeoff.totalLength!=null && html`<div>Total length: ${_ccFmtLength(window._ccLastTakeoff.totalLength,s)}</div>`}
-            ${window._ccLastTakeoff.totalArea!=null && html`<div>Total area: ${_ccFmtArea(window._ccLastTakeoff.totalArea,s)}</div>`}
-            ${window._ccLastTakeoff.totalVolume!=null && html`<div>Total volume: ${_ccFmtVolume(window._ccLastTakeoff.totalVolume,s)}</div>`}
-            <button onClick=${function(){window._ccExportTakeoffCsv&&window._ccExportTakeoffCsv();}} style=${{marginTop:'.3rem',background:'none',border:'1px solid var(--border)',borderRadius:'var(--radius-xs)',padding:'.15rem .45rem',fontSize:'var(--text-2xs)',color:'var(--text-secondary)',cursor:'pointer'}}>Export CSV</button>
+            <div>${_cc_t('aiChat.filterLabel','Filter: {v}',{v:window._ccLastTakeoff.filter})}</div>
+            <div>${_cc_t('aiChat.countLabel','Count: {v}',{v:window._ccLastTakeoff.count})}</div>
+            ${window._ccLastTakeoff.totalLength!=null && html`<div>${_cc_t('aiChat.totalLength','Total length: {v}',{v:_ccFmtLength(window._ccLastTakeoff.totalLength,s)})}</div>`}
+            ${window._ccLastTakeoff.totalArea!=null && html`<div>${_cc_t('aiChat.totalArea','Total area: {v}',{v:_ccFmtArea(window._ccLastTakeoff.totalArea,s)})}</div>`}
+            ${window._ccLastTakeoff.totalVolume!=null && html`<div>${_cc_t('aiChat.totalVolume','Total volume: {v}',{v:_ccFmtVolume(window._ccLastTakeoff.totalVolume,s)})}</div>`}
+            <button onClick=${function(){window._ccExportTakeoffCsv&&window._ccExportTakeoffCsv();}} style=${{marginTop:'.3rem',background:'none',border:'1px solid var(--border)',borderRadius:'var(--radius-xs)',padding:'.15rem .45rem',fontSize:'var(--text-2xs)',color:'var(--text-secondary)',cursor:'pointer'}}>${_cc_t('aiChat.exportCsv','Export CSV')}</button>
           </div>`}
         </div>`}
-        ${ms.length===0 && html`<div style=${{padding:'1rem',textAlign:'center',color:'var(--text-muted)',fontSize:'var(--text-xs)'}}>No measurements yet. Pick a mode above and click in the model.</div>`}
+        ${ms.length===0 && html`<div style=${{padding:'1rem',textAlign:'center',color:'var(--text-muted)',fontSize:'var(--text-xs)'}}>${_cc_t('aiChat.noMeasurementsYet','No measurements yet. Pick a mode above and click in the model.')}</div>`}
         ${['length','angle','area','element','clearance'].map(function(g){
           var rows = groups[g] || [];
           if (!rows.length) return null;
@@ -34998,25 +34998,25 @@ function startApp() {
                 ${m.snapshot && html`\x3Cimg src=${m.snapshot} style=${{width:36,height:23,objectFit:'cover',borderRadius:3,border:'1px solid var(--border)',flex:'0 0 auto'}}/>`}
                 <div style=${{flex:1,minWidth:0,cursor:'pointer'}}
                   onClick=${function(){if(window._ccFlyToMeasurement)window._ccFlyToMeasurement(m.id);}}
-                  onDblClick=${function(){var nv=prompt('Rename', m.name||'');if(nv!=null)d({t:A.UPD_MEASUREMENT,id:m.id,u:{name:nv}});}}
-                  title="Click to fly · double-click to rename">
+                  onDblClick=${function(){var nv=prompt(_cc_t('common.rename','Rename'), m.name||'');if(nv!=null)d({t:A.UPD_MEASUREMENT,id:m.id,u:{name:nv}});}}
+                  title=${_cc_t('aiChat.clickToFlyRename','Click to fly · double-click to rename')}>
                   <div style=${{fontSize:'var(--text-xs)',color:'var(--text-primary)',fontFamily:'var(--font-body)',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>${labelTxt}</div>
                   ${(m.name && m.name.trim()) && html`<div style=${{fontSize:'var(--text-2xs)',color:'var(--text-faint)',fontFamily:'var(--font-mono)'}}>${valTxt}</div>`}
                 </div>
                 ${m.type==='clearance' && html`<button onClick=${function(){if(window._ccPromoteClearanceToRule)window._ccPromoteClearanceToRule(m.id);}}
-                  title="Promote to clash rule" style=${{...S_BTN,padding:'.1rem .3rem',fontSize:'var(--text-2xs)',background:'none',color:'var(--text-secondary)',border:'1px solid var(--border)',borderRadius:'var(--radius-xs)'}}>→ rule</button>`}
+                  title=${_cc_t('aiChat.promoteToClashRule','Promote to clash rule')} style=${{...S_BTN,padding:'.1rem .3rem',fontSize:'var(--text-2xs)',background:'none',color:'var(--text-secondary)',border:'1px solid var(--border)',borderRadius:'var(--radius-xs)'}}>${_cc_t('aiChat.arrowRule','→ rule')}</button>`}
                 <button onClick=${function(){d({t:A.UPD_MEASUREMENT,id:m.id,u:{hidden:!m.hidden}});}}
-                  title=${m.hidden?'Show':'Hide'} style=${{...S_BTN,padding:'.1rem .25rem',fontSize:'var(--text-xs)',background:'none',color:m.hidden?'var(--text-faint)':'var(--text-secondary)',border:'none'}}>${m.hidden?'⌐':'◉'}</button>
+                  title=${m.hidden?_cc_t('common.show','Show'):_cc_t('common.hide','Hide')} style=${{...S_BTN,padding:'.1rem .25rem',fontSize:'var(--text-xs)',background:'none',color:m.hidden?'var(--text-faint)':'var(--text-secondary)',border:'none'}}>${m.hidden?'⌐':'◉'}</button>
                 <button onClick=${function(){if(window._ccDeleteMeasurementGeo)window._ccDeleteMeasurementGeo(m.id);d({t:A.DEL_MEASUREMENT,id:m.id});}}
-                  title="Delete" style=${{...S_BTN,padding:'.1rem .25rem',fontSize:'var(--text-xs)',background:'none',color:'var(--text-faint)',border:'none'}}>✕</button>
+                  title=${_cc_t('common.delete','Delete')} style=${{...S_BTN,padding:'.1rem .25rem',fontSize:'var(--text-xs)',background:'none',color:'var(--text-faint)',border:'none'}}>✕</button>
               </div>`;
             })}
           </div>`;
         })}
         ${ms.length>0 && html`<div style=${{display:'flex',gap:'.3rem',marginTop:'.4rem',justifyContent:'flex-end'}}>
-          <button onClick=${exportCsv} style=${{...S_BTN,padding:'.25rem .6rem',fontSize:'var(--text-xs)',background:'var(--bg-tertiary)',color:'var(--text-secondary)',border:'1px solid var(--border)',borderRadius:'var(--radius-xs)'}}>Export CSV</button>
+          <button onClick=${exportCsv} style=${{...S_BTN,padding:'.25rem .6rem',fontSize:'var(--text-xs)',background:'var(--bg-tertiary)',color:'var(--text-secondary)',border:'1px solid var(--border)',borderRadius:'var(--radius-xs)'}}>${_cc_t('aiChat.exportCsv','Export CSV')}</button>
           <button onClick=${function(){if(confirm('Clear all measurements?')){if(window._ccClearAllMeasurementGeo)window._ccClearAllMeasurementGeo();d({t:A.CLEAR_MEASUREMENTS});}}}
-            style=${{...S_BTN,padding:'.25rem .6rem',fontSize:'var(--text-xs)',background:'var(--bg-tertiary)',color:'var(--text-secondary)',border:'1px solid var(--border)',borderRadius:'var(--radius-xs)'}}>Clear all</button>
+            style=${{...S_BTN,padding:'.25rem .6rem',fontSize:'var(--text-xs)',background:'var(--bg-tertiary)',color:'var(--text-secondary)',border:'1px solid var(--border)',borderRadius:'var(--radius-xs)'}}>${_cc_t('aiChat.clearAll','Clear all')}</button>
         </div>`}
       </div>`;
     }
@@ -35033,7 +35033,7 @@ function startApp() {
       var HDR  = {fontSize:'var(--text-2xs)',fontWeight:'var(--weight-bold)',color:'var(--text-muted)',textTransform:'uppercase',letterSpacing:'.08em',marginBottom:'var(--space-2)'};
       var MONO = {fontFamily:'var(--font-mono)',fontSize:'var(--text-2xs)'};
       function _copyBtn(text, label) {
-        return html`<button onClick=${function(ev){ev.stopPropagation();_ccCopyToClipboard(text,label);}} title=${'Copy '+label} aria-label=${'Copy '+label}
+        return html`<button onClick=${function(ev){ev.stopPropagation();_ccCopyToClipboard(text,label);}} title=${_cc_t('aiChat.copyLabel','Copy {label}',{label:label})} aria-label=${_cc_t('aiChat.copyLabel','Copy {label}',{label:label})}
           style=${{background:'none',border:'none',padding:0,margin:0,cursor:'pointer',color:'var(--text-faint)',display:'inline-flex',flexShrink:0,lineHeight:0}}>
           <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
         </button>`;
@@ -35043,7 +35043,7 @@ function startApp() {
         return html`<div style=${{flex:1,display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',
           padding:'2rem 1.2rem',color:'var(--text-muted)',textAlign:'center',gap:'1rem'}}>
           <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" style=${{opacity:.35}}><rect x="3" y="3" width="18" height="18" rx="4"/><line x1="9" y1="9" x2="15" y2="9"/><line x1="9" y1="13" x2="13" y2="13"/></svg>
-          <div style=${{fontSize:'var(--text-sm)',lineHeight:'var(--leading-base)'}}>Click any element in the model to see its details here.</div>
+          <div style=${{fontSize:'var(--text-sm)',lineHeight:'var(--leading-base)'}}>${_cc_t('aiChat.clickElementForDetails','Click any element in the model to see its details here.')}</div>
         </div>`;
       }
 
@@ -35133,9 +35133,9 @@ function startApp() {
         }
       }
       var bboxCard = bboxDims.length > 0 ? html`<div style=${CARD}>
-        <div style=${HDR}>Size (bounding box)</div>
+        <div style=${HDR}>${_cc_t('aiChat.sizeBoundingBox','Size (bounding box)')}</div>
         ${bboxDims.map(function(d){return html`<div style=${ROW}><span style=${LBL}>${d.l}</span><span style=${{...VAL,...MONO}}>${d.f(d.v)}</span></div>`;})}
-        <div style=${{fontSize:'var(--text-2xs)',color:'var(--text-faint)',fontStyle:'italic',paddingTop:'.2rem'}}>Derived from geometry — this element has no authored quantities.</div>
+        <div style=${{fontSize:'var(--text-2xs)',color:'var(--text-faint)',fontStyle:'italic',paddingTop:'.2rem'}}>${_cc_t('aiChat.derivedFromGeometry','Derived from geometry — this element has no authored quantities.')}</div>
       </div>` : '';
 
       // Collect all psets
