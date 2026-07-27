@@ -464,8 +464,15 @@ detection/Conflicts/Issues/Detection rules/Navigator), Review-workspace cluster 
 Data Quality/Accessibility/Navigator/Diagnostics), Models button, sun/ambient/exposure/shadow
 lighting-panel labels, Home-view-options and Cmd/Ctrl+K search tooltips — ~70 new keys, the single
 largest retrofit batch this session.~~ (all 2026-07-27)
+~~`MobileNav` in full (search button, all 4 nav items — Models/Conflicts/Issues/Navigator — with
+badges, nav aria-label).~~ ~~`RevitBridgePanel`'s primary simple-dialog UI: header title, connector-
+update banner, idle/connecting/loading/connected/failed connection-phase copy (including the
+troubleshoot checklist), Cancel/Retry/Pull/Re-pull/Done/Get-installer buttons, Advanced-settings
+toggle, Direct-Connector/AI-Bridge tab labels.~~ The Advanced tab's deeper settings (WebSocket port
+config, AI Bridge provider/key/host fields, sync log) intentionally NOT touched — lower priority,
+behind an explicit opt-in toggle most users never open. (all 2026-07-27)
 **Remaining (long tail, can proceed independently in future sessions):** `CmdKPalette`,
-`NLCommandPanel`'s deep command-parsing logic, `AIChatPanel`, `MobileNav`, `RevitBridgePanel`,
+`NLCommandPanel`'s deep command-parsing logic, `AIChatPanel`, `RevitBridgePanel`'s Advanced tab,
 `IDSValidationPanel`, `PropBlock`/`PropDiffView`/`ClashProps`, `VirtualList`, `GuidedTour`,
 `ColorLegend`, `ViewCube`, `SectionBoxUI`, `ModelCard`, `NavigatorPanel`, and more — this is
 genuinely the entire rest of the ~38.7k-line file; partial coverage is safe by design (`_cc_t` falls
