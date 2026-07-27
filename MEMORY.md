@@ -491,11 +491,23 @@ canvas textures via `ctx.fillText`, not React strings; left untranslated on purp
 words would risk overflow/clipping at the fixed 128×128 texture size, and these read as a CAD-
 convention axis label a Japanese BIM user would recognize regardless, same treatment as the numeric
 Home/keyboard shortcuts).~~ (2026-07-27)
+~~`SectionBoxUI` in full (toggle button on/off states, drag-corner/rotate-ring hint, Corner/Rotate
+legend, Reset Rotation button).~~ ~~`ModelCard` in full (stub badge, partial-load tooltip+badge,
+park tooltip, remove-confirm prompt, Tag/Colour fields+placeholders, tag-usage hint, Version Diff
+header, added/removed/modified/unchanged chips + legend, Show/Clear Diff buttons, levels-count
+footer).~~ ~~`NavigatorPanel` in full: the 6 view-mode tabs (Hierarchy/Flat list/IFC Type/Storey/
+Discipline/Material) + their tooltips, Expand/Collapse aria-labels, Show-all/Hide-all, spatial-tree
+aria-labels, Default Site/Building/Project/Site/Building hierarchy labels, Expand-all/Collapse-all,
+color-by-classification tooltip, empty states, Compare-selected header, the whole Selection Sets
+block (name prompt, rename prompt+tooltip, no-saved-sets empty state, Isolate/Highlight/+/−/Delete
+per-set buttons), and the whole Search Sets block (+New/Cancel, name placeholder, live-match-count
+text, filter-required alert, default search name, Update/Save button, no-saved-searches empty
+state).~~ (2026-07-27)
 **Remaining (long tail, can proceed independently in future sessions):** `CmdKPalette`,
 `NLCommandPanel`'s deep command-parsing logic, `AIChatPanel`, `RevitBridgePanel`'s Advanced tab,
-`VirtualList`, `SectionBoxUI`, `ModelCard`, `NavigatorPanel`, and more — this is genuinely the
-entire rest of the ~38.7k-line file; partial coverage is safe by design (`_cc_t` falls back to the
-English string for any untranslated key, so the app never breaks).
+`VirtualList`, and more — this is genuinely the entire rest of the ~38.7k-line file; partial
+coverage is safe by design (`_cc_t` falls back to the English string for any untranslated key, so
+the app never breaks).
 
 **Park inactive models — memory relief (2026-07-22, branch `claude/clashcontrol-v7-release-plan-jp5njw`)** —
 diagnosed the "viewer stalls a few seconds" + "5.2 GB heap > 4.09 GB limit" reports as the SAME
