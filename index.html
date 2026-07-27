@@ -25646,11 +25646,11 @@ function startApp() {
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6">
           <circle cx="12" cy="4.5" r="1.8"/><path d="M9 11l3-2 3 2"/><path d="M10 21l2-7 2 4"/>
         </svg>
-        <span><b style=${{color:'var(--text-primary)'}}>Click</b> a floor to drop in</span>
+        <span><b style=${{color:'var(--text-primary)'}}>Click</b> ${_cc_t('pegman.clickToDropIn','a floor to drop in')}</span>
         <span style=${{color:'var(--border)'}}>·</span>
-        <span><b style=${{color:'var(--text-primary)'}}>Shift-drag</b> to set heading</span>
+        <span><b style=${{color:'var(--text-primary)'}}>Shift-drag</b> ${_cc_t('pegman.shiftDragHeading','to set heading')}</span>
         <span style=${{color:'var(--border)'}}>·</span>
-        <span><b style=${{color:'var(--text-primary)'}}>Esc</b> cancel</span>
+        <span><b style=${{color:'var(--text-primary)'}}>Esc</b> ${_cc_t('pegman.cancel','cancel')}</span>
       </div>`}
       <button onClick=${function(){
           var S = window._ccState3d;
@@ -25662,7 +25662,7 @@ function startApp() {
         background:'var(--bg-primary)', border:'1px solid var(--border)', borderRadius:'var(--radius-sm)',
         padding:'.35rem .8rem', fontSize:'var(--text-xs)', color:'var(--text-secondary)',
         boxShadow:'var(--shadow-md)', cursor:'pointer', fontFamily:'inherit'}}>
-        Drop me anywhere · auto-place
+        ${_cc_t('pegman.dropAnywhere','Drop me anywhere · auto-place')}
       </button>
     </div>`;
   }
@@ -26128,7 +26128,7 @@ function startApp() {
         var yaw = (typeof window._ccWalkGetYaw==='function')? window._ccWalkGetYaw() : 0;
         var next = pathRef.current.concat([{pos:[p.x,p.y,p.z], yaw:yaw}]);
         setPath(next);
-        flash('Waypoint '+next.length);
+        flash(_cc_t('spline.waypointN','Waypoint {n}',{n:next.length}));
       } catch(_){}
     }
     var addWaypointRef = useRef(addWaypoint);
@@ -26141,7 +26141,7 @@ function startApp() {
       return function(){ window.removeEventListener('keydown', onKey); };
     },[]);
     function play(record){
-      if (path.length < 2){ flash('Need ≥ 2 waypoints'); return; }
+      if (path.length < 2){ flash(_cc_t('spline.needTwoWaypoints','Need ≥ 2 waypoints')); return; }
       var Sref = window._ccState3d; if (!Sref || !Sref.camera || !Sref.renderer) return;
       setPlaying(true);
       var rec = null, chunks = [];
@@ -26159,7 +26159,7 @@ function startApp() {
           };
           rec.start();
           setRecording(true);
-        } catch(e){ flash('Recording unsupported'); }
+        } catch(e){ flash(_cc_t('spline.recordingUnsupported','Recording unsupported')); }
       }
       // Catmull-Rom-ish interpolation between waypoints with tangent guards
       var perSegment = 1500; // ms per segment
@@ -26205,18 +26205,18 @@ function startApp() {
       }
       requestAnimationFrame(step);
     }
-    function clearPath(){ setPath([]); flash('Path cleared'); }
+    function clearPath(){ setPath([]); flash(_cc_t('spline.pathCleared','Path cleared')); }
     return html`<${React.Fragment}>
       <div style=${{fontSize:'var(--text-2xs)',textTransform:'uppercase',letterSpacing:'.04em',color:'var(--text-muted)',display:'flex',justifyContent:'space-between',alignItems:'center'}}>
-        <span>Cinematic path</span>
-        <span style=${{fontFamily:'var(--font-mono)',color:'var(--text-faint)'}}>${path.length} pts</span>
+        <span>${_cc_t('spline.cinematicPath','Cinematic path')}</span>
+        <span style=${{fontFamily:'var(--font-mono)',color:'var(--text-faint)'}}>${_cc_t('spline.ptsCount','{n} pts',{n:path.length})}</span>
       </div>
       <div style=${{display:'flex',gap:'.3rem'}}>
-        <button onClick=${addWaypoint} style=${{flex:1,padding:'.25rem .4rem',fontSize:'var(--text-xs)',border:'1px solid var(--border)',background:'var(--bg-secondary)',color:'var(--text-primary)',borderRadius:'var(--radius-xs)',cursor:'pointer',fontFamily:'inherit'}}>+ Waypoint (R)</button>
+        <button onClick=${addWaypoint} style=${{flex:1,padding:'.25rem .4rem',fontSize:'var(--text-xs)',border:'1px solid var(--border)',background:'var(--bg-secondary)',color:'var(--text-primary)',borderRadius:'var(--radius-xs)',cursor:'pointer',fontFamily:'inherit'}}>${_cc_t('spline.addWaypoint','+ Waypoint (R)')}</button>
         <button disabled=${path.length<2 || playing} onClick=${function(){play(false);}}
-          style=${{padding:'.25rem .4rem',fontSize:'var(--text-xs)',border:'1px solid var(--border)',background:playing?'var(--accent-bg)':'var(--bg-secondary)',color:playing?'var(--accent)':'var(--text-primary)',borderRadius:'var(--radius-xs)',cursor:path.length<2?'not-allowed':'pointer',fontFamily:'inherit',opacity:path.length<2?0.5:1}}>▶ Play</button>
+          style=${{padding:'.25rem .4rem',fontSize:'var(--text-xs)',border:'1px solid var(--border)',background:playing?'var(--accent-bg)':'var(--bg-secondary)',color:playing?'var(--accent)':'var(--text-primary)',borderRadius:'var(--radius-xs)',cursor:path.length<2?'not-allowed':'pointer',fontFamily:'inherit',opacity:path.length<2?0.5:1}}>▶ ${_cc_t('spline.play','Play')}</button>
         <button disabled=${path.length<2 || playing} onClick=${function(){play(true);}}
-          title="Play and export .webm" style=${{padding:'.25rem .4rem',fontSize:'var(--text-xs)',border:'1px solid var(--border)',background:recording?'var(--color-danger-bg)':'var(--bg-secondary)',color:recording?'var(--color-danger-fg)':'var(--text-primary)',borderRadius:'var(--radius-xs)',cursor:path.length<2?'not-allowed':'pointer',fontFamily:'inherit',opacity:path.length<2?0.5:1}}>● Rec</button>
+          title=${_cc_t('spline.playExportTip','Play and export .webm')} style=${{padding:'.25rem .4rem',fontSize:'var(--text-xs)',border:'1px solid var(--border)',background:recording?'var(--color-danger-bg)':'var(--bg-secondary)',color:recording?'var(--color-danger-fg)':'var(--text-primary)',borderRadius:'var(--radius-xs)',cursor:path.length<2?'not-allowed':'pointer',fontFamily:'inherit',opacity:path.length<2?0.5:1}}>● ${_cc_t('spline.rec','Rec')}</button>
         <button disabled=${!path.length} onClick=${clearPath}
           style=${{padding:'.25rem .4rem',fontSize:'var(--text-xs)',border:'1px solid var(--border)',background:'transparent',color:'var(--text-muted)',borderRadius:'var(--radius-xs)',cursor:!path.length?'not-allowed':'pointer',fontFamily:'inherit',opacity:!path.length?0.5:1}}>✕</button>
       </div>
@@ -26290,7 +26290,7 @@ function startApp() {
     return html`<div style=${{position:'absolute', top:'1rem', right:'1rem', zIndex:6, pointerEvents:'auto',
       background:'var(--bg-primary)', border:'1px solid var(--border)', borderRadius:'var(--radius-sm)',
       padding:'.4rem', boxShadow:'var(--shadow-md)', display:'flex', flexDirection:'column', alignItems:'center', gap:'.2rem'}}>
-      <div style=${{fontSize:'var(--text-2xs)',textTransform:'uppercase',letterSpacing:'.04em',color:'var(--text-muted)'}}>Clashes ${nearby.length}</div>
+      <div style=${{fontSize:'var(--text-2xs)',textTransform:'uppercase',letterSpacing:'.04em',color:'var(--text-muted)'}}>${_cc_t('radar.clashesCount','Clashes {n}',{n:nearby.length})}</div>
       <svg width=${size} height=${size} viewBox=${'-'+size/2+' -'+size/2+' '+size+' '+size}>
         <circle cx="0" cy="0" r=${size/2 - 4} fill="rgba(0,0,0,0.05)" stroke="var(--border)" />
         <line x1="0" y1=${-size/2+4} x2="0" y2=${size/2-4} stroke="var(--border)" stroke-dasharray="2 2" />
@@ -26315,7 +26315,7 @@ function startApp() {
           }}><circle cx=${sx} cy=${sy} r="3.2" fill=${col} stroke="#fff" stroke-width="1" /></g>`;
         })}
       </svg>
-      <div style=${{fontSize:'var(--text-2xs)',color:'var(--text-faint)',fontFamily:'var(--font-mono)'}}>${radius} m radius</div>
+      <div style=${{fontSize:'var(--text-2xs)',color:'var(--text-faint)',fontFamily:'var(--font-mono)'}}>${_cc_t('radar.radiusLabel','{r} m radius',{r:radius})}</div>
     </div>`;
   }
 
@@ -26404,7 +26404,7 @@ function startApp() {
       background:'var(--bg-primary)', border:'1px solid var(--border)', borderRadius:'var(--radius-sm)',
       padding:'.3rem', boxShadow:'var(--shadow-md)'}}>
       <div onClick=${onClick} style=${{position:'relative', width:w, height:w, cursor:'pointer'}}>
-        \x3Cimg src=${img} style=${{width:w,height:w,display:'block',borderRadius:'var(--radius-xs)',opacity:.85}} alt="Minimap" />
+        \x3Cimg src=${img} style=${{width:w,height:w,display:'block',borderRadius:'var(--radius-xs)',opacity:.85}} alt=${_cc_t('minimap.alt','Minimap')} />
         <svg width=${w} height=${w} style=${{position:'absolute',top:0,left:0,pointerEvents:'none'}}>
           <g transform=${'translate('+px+','+py+') rotate('+( -pos.yaw*180/Math.PI)+')'}>
             <path d="M 0 -7 L -5 5 L 5 5 Z" fill="var(--accent)" stroke="#fff" stroke-width="1" />
