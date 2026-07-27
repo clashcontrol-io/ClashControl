@@ -30764,11 +30764,11 @@ function startApp() {
       } else if (s.models.length) {
         elev = 0; cutH = 3;
       } else {
-        alert('Load a model and create a Sheet (or activate a floor plan cut) first.');
+        alert(_cc_t('exportBar.loadModelCreateSheet','Load a model and create a Sheet (or activate a floor plan cut) first.'));
         return;
       }
       var outlines = generate2DOutlines(s.models, elev, cutH);
-      if (outlines.length === 0) { alert('No geometry found at this elevation.'); return; }
+      if (outlines.length === 0) { alert(_cc_t('exportBar.noGeometryAtElevation','No geometry found at this elevation.')); return; }
       if ((s.underlays || []).some(function(u) { return u.visible; })) {
         console.info('[DXF] Visible underlays are not exported to DXF — only vector outlines + sheet annotations.');
       }
@@ -30784,19 +30784,19 @@ function startApp() {
     function doExportPNG() {
       var cvs = window._cc2DCanvas;
       if (cvs) export2DPNG(cvs);
-      else alert('No 2D view canvas found.');
+      else alert(_cc_t('exportBar.no2DCanvas','No 2D view canvas found.'));
     }
 
     function doExportPDF() {
       var cvs = window._cc2DCanvas;
       if (cvs || s.activeSheetId) export2DPDF(cvs, s);
-      else alert('No 2D view canvas found.');
+      else alert(_cc_t('exportBar.no2DCanvas','No 2D view canvas found.'));
     }
 
     function doExportSVG() {
       var sheet = s.activeSheetId && (s.sheets || []).find(function(sh) { return sh.id === s.activeSheetId; });
       if (!sheet && !s.floorPlan && !s.models.length) {
-        alert('Load a model and create a Sheet first.'); return;
+        alert(_cc_t('exportBar.loadModelCreateSheetShort','Load a model and create a Sheet first.')); return;
       }
       var outlines = _cc2DOutlines;
       if (!outlines || !outlines.length) {
@@ -30805,7 +30805,7 @@ function startApp() {
         var cutH = sheet ? (sheet.cutHeight || 1.2) : (s.floorPlan ? (s.floorPlan.cutHeight || 1.2) : 3);
         outlines = generate2DOutlines(s.models, elev, cutH);
       }
-      if (!outlines || !outlines.length) { alert('No geometry found at this elevation.'); return; }
+      if (!outlines || !outlines.length) { alert(_cc_t('exportBar.noGeometryAtElevation','No geometry found at this elevation.')); return; }
       exportSVG(outlines, sheet || null);
     }
 
@@ -30816,12 +30816,12 @@ function startApp() {
 
     var EBTN = Object.assign({}, S_BTN, { fontSize: '.65rem', padding: '.25rem .6rem', border: '1px solid var(--border)' });
     return html`<div style=${{ background: 'var(--bg-primary)', borderTop: '1px solid var(--border-subtle)', padding: '.45rem 1rem', display: 'flex', alignItems: 'center', gap: '.6rem', flexShrink: 0, flexWrap: 'wrap' }}>
-      <span style=${{ fontSize: '.7rem', fontWeight: 600, color: 'var(--text-faint)', textTransform: 'uppercase', letterSpacing: '.05em' }}>2D Export</span>
-      <button onClick=${doExportDXF} style=${{ ...EBTN, background: 'var(--accent-bg)', color: 'var(--accent-subtle)' }}>DXF (AutoCAD)</button>
-      <button onClick=${doExportPNG} style=${{ ...EBTN, background: 'var(--accent-bg)', color: 'var(--accent-subtle)' }}>PNG (Image)</button>
-      <button onClick=${doExportPDF} style=${{ ...EBTN, background: 'var(--accent-bg)', color: 'var(--accent-subtle)' }}>PDF (Print)</button>
-      <button onClick=${doExportSVG} style=${{ ...EBTN, background: 'var(--accent-bg)', color: '#6ee7b7' }}>SVG (Vector)</button>
-      <span style=${{ fontSize: '.55rem', color: 'var(--text-faint)', marginLeft: 'auto' }}>${s.activeSheetId ? 'Exporting active Sheet (layers + markups + pins + title block)' : 'DXF/SVG generate outlines from 3D at the active cut · PNG/PDF exports the live 2D view'}</span>
+      <span style=${{ fontSize: '.7rem', fontWeight: 600, color: 'var(--text-faint)', textTransform: 'uppercase', letterSpacing: '.05em' }}>${_cc_t('exportBar.title','2D Export')}</span>
+      <button onClick=${doExportDXF} style=${{ ...EBTN, background: 'var(--accent-bg)', color: 'var(--accent-subtle)' }}>${_cc_t('exportBar.dxf','DXF (AutoCAD)')}</button>
+      <button onClick=${doExportPNG} style=${{ ...EBTN, background: 'var(--accent-bg)', color: 'var(--accent-subtle)' }}>${_cc_t('exportBar.png','PNG (Image)')}</button>
+      <button onClick=${doExportPDF} style=${{ ...EBTN, background: 'var(--accent-bg)', color: 'var(--accent-subtle)' }}>${_cc_t('exportBar.pdf','PDF (Print)')}</button>
+      <button onClick=${doExportSVG} style=${{ ...EBTN, background: 'var(--accent-bg)', color: '#6ee7b7' }}>${_cc_t('exportBar.svg','SVG (Vector)')}</button>
+      <span style=${{ fontSize: '.55rem', color: 'var(--text-faint)', marginLeft: 'auto' }}>${s.activeSheetId ? _cc_t('exportBar.exportingActiveSheet','Exporting active Sheet (layers + markups + pins + title block)') : _cc_t('exportBar.dxfSvgHint','DXF/SVG generate outlines from 3D at the active cut · PNG/PDF exports the live 2D view')}</span>
     </div>`;
   }
 
@@ -32588,10 +32588,10 @@ function startApp() {
       return Object.keys(types).sort();
     },[s.models]);
 
-    var opts = [{id:'all',label:'All models'}];
+    var opts = [{id:'all',label:_cc_t('setup.allModels','All models')}];
     DISC.forEach(function(dc){
       if(s.models.some(function(m){return m.discipline===dc.id;}))
-        opts.push({id:'disc:'+dc.id, label:dc.label+' models'});
+        opts.push({id:'disc:'+dc.id, label:_cc_t('setup.discModels','{disc} models',{disc:dc.label})});
     });
     s.models.forEach(function(m){ opts.push({id:m.id, label:m.name}); });
 
@@ -32680,47 +32680,47 @@ function startApp() {
 
     return html`<div style=${{maxWidth:'100%',background:'var(--card-bg)',border:'1px solid var(--border)',borderRadius:10,padding:'.65rem .75rem',fontSize:'0.85rem'}}>
       <div style=${{fontWeight:600,marginBottom:'.5rem',color:'var(--text-primary)',display:'flex',alignItems:'center',gap:'.3rem'}}>
-        Clash Detection Setup
+        ${_cc_t('setup.title','Clash Detection Setup')}
       </div>
       ${setup._multiSelf && html`<div style=${{background:'var(--accent-bg)',border:'1px solid var(--accent-subtle)',borderRadius:'var(--radius-sm)',padding:'.35rem .5rem',marginBottom:'.5rem',fontSize:'0.71rem',color:'var(--accent)'}}>
-        Self-clash mode: ${setup._multiSelf.map(function(p){return p.name;}).join(', ')} — each group checked against itself
+        ${_cc_t('setup.selfClashMode','Self-clash mode: {names} — each group checked against itself',{names:setup._multiSelf.map(function(p){return p.name;}).join(', ')})}
       </div>`}
 
       <!-- Sets (multi-select chips — pick one or more per side with "+") -->
       <div style=${{display:'grid',gridTemplateColumns:'1fr 1fr',gap:'.45rem .6rem'}}>
         <div>
-          <div style=${lblSt}>Set A</div>
+          <div style=${lblSt}>${_cc_t('setup.setA','Set A')}</div>
           ${_modelMultiPicker(rules.modelA, function(v){upd('modelA', v);}, s.models)}
         </div>
         <div>
-          <div style=${lblSt}>Set B</div>
+          <div style=${lblSt}>${_cc_t('setup.setB','Set B')}</div>
           ${_modelMultiPicker(rules.modelB, function(v){upd('modelB', v);}, s.models)}
         </div>
       </div>
 
       <!-- Clash type (matches standards tab) -->
       <div style=${{marginTop:'.5rem'}}>
-        <div style=${{fontSize:'0.72rem',fontWeight:600,color:'var(--text-primary)',marginBottom:'.25rem'}}>What type of clashes?</div>
+        <div style=${{fontSize:'0.72rem',fontWeight:600,color:'var(--text-primary)',marginBottom:'.25rem'}}>${_cc_t('run.whatType','What type of clashes?')}</div>
         <div style=${{display:'flex',flexDirection:'column',gap:'.15rem'}}>
           <label style=${chkRow}>
             <input type="radio" name=${'ctype_'+idx} checked=${clashType==='hard'} onChange=${function(){updMany({hard:true,maxGap:0})}} style=${{margin:0,accentColor:'var(--accent)'}} />
             <div>
-              <div style=${{fontSize:'0.72rem',color:'var(--text-primary)'}}>Hard clashes only</div>
-              <div style=${{fontSize:'0.63rem',color:'var(--text-faint)'}}>Elements that physically intersect</div>
+              <div style=${{fontSize:'0.72rem',color:'var(--text-primary)'}}>${_cc_t('run.hardOnly','Hard clashes only')}</div>
+              <div style=${{fontSize:'0.63rem',color:'var(--text-faint)'}}>${_cc_t('setup.hardOnlyDesc','Elements that physically intersect')}</div>
             </div>
           </label>
           <label style=${chkRow}>
             <input type="radio" name=${'ctype_'+idx} checked=${clashType==='mixed'} onChange=${function(){updMany({hard:true,maxGap:rules.maxGap>0?rules.maxGap:50})}} style=${{margin:0,accentColor:'var(--accent)'}} />
             <div>
-              <div style=${{fontSize:'0.72rem',color:'var(--text-primary)'}}>Hard clashes + near misses</div>
-              <div style=${{fontSize:'0.63rem',color:'var(--text-faint)'}}>Intersections and elements too close</div>
+              <div style=${{fontSize:'0.72rem',color:'var(--text-primary)'}}>${_cc_t('run.hardPlusNear','Hard clashes + near misses')}</div>
+              <div style=${{fontSize:'0.63rem',color:'var(--text-faint)'}}>${_cc_t('setup.hardPlusNearDesc','Intersections and elements too close')}</div>
             </div>
           </label>
           <label style=${chkRow}>
             <input type="radio" name=${'ctype_'+idx} checked=${clashType==='soft'} onChange=${function(){updMany({hard:false,maxGap:rules.maxGap>0?rules.maxGap:100})}} style=${{margin:0,accentColor:'var(--accent)'}} />
             <div>
-              <div style=${{fontSize:'0.72rem',color:'var(--text-primary)'}}>Soft clashes only (clearance check)</div>
-              <div style=${{fontSize:'0.63rem',color:'var(--text-faint)'}}>Only flag elements within a distance range</div>
+              <div style=${{fontSize:'0.72rem',color:'var(--text-primary)'}}>${_cc_t('run.softOnly','Soft clashes only (clearance check)')}</div>
+              <div style=${{fontSize:'0.63rem',color:'var(--text-faint)'}}>${_cc_t('setup.softOnlyDesc','Only flag elements within a distance range')}</div>
             </div>
           </label>
         </div>
@@ -32728,7 +32728,7 @@ function startApp() {
 
       <!-- Gap input (shown when near misses or soft) -->
       ${(clashType==='mixed'||clashType==='soft') && html`<div style=${{display:'flex',alignItems:'center',gap:'.4rem',marginTop:'.4rem',background:'var(--bg-secondary)',borderRadius:5,padding:'.3rem .4rem'}}>
-        <span style=${{fontSize:'0.72rem',color:'var(--text-muted)',whiteSpace:'nowrap'}}>${clashType==='soft'?'Gap range':'Max gap'}</span>
+        <span style=${{fontSize:'0.72rem',color:'var(--text-muted)',whiteSpace:'nowrap'}}>${clashType==='soft'?_cc_t('setup.gapRange','Gap range'):_cc_t('setup.maxGap','Max gap')}</span>
         ${clashType==='soft' && html`<input type="number" min="0" max="2000" value=${rules.minGap||0}
           onChange=${function(e){upd('minGap',Math.max(0,parseInt(e.target.value)||0))}}
           style=${numSt} />`}
@@ -32741,30 +32741,30 @@ function startApp() {
 
       <!-- Filtering options (matches standards tab) -->
       <div style=${{marginTop:'.45rem',display:'flex',flexDirection:'column',gap:0}}>
-        <div style=${{fontSize:'0.72rem',fontWeight:600,color:'var(--text-primary)',marginBottom:'.2rem'}}>Filtering</div>
+        <div style=${{fontSize:'0.72rem',fontWeight:600,color:'var(--text-primary)',marginBottom:'.2rem'}}>${_cc_t('run.filteringOptions','Filtering options')}</div>
         <div style=${togRow}>
-          <div style=${{fontSize:'0.72rem',color:'var(--text-secondary)'}}>Ignore intentional connections</div>
+          <div style=${{fontSize:'0.72rem',color:'var(--text-secondary)'}}>${_cc_t('run.ignoreIntentional','Ignore intentional connections')}</div>
           <${Tog} on=${rules.useSemanticFilter!==false} onToggle=${function(){upd('useSemanticFilter',rules.useSemanticFilter===false);}} />
         </div>
         <div style=${togRow}>
-          <div style=${{fontSize:'0.72rem',color:'var(--text-secondary)'}}>Include duplicate hits</div>
+          <div style=${{fontSize:'0.72rem',color:'var(--text-secondary)'}}>${_cc_t('run.includeDuplicateHits','Include duplicate hits')}</div>
           <${Tog} on=${rules.duplicates} onToggle=${function(){upd('duplicates',!rules.duplicates);}} />
         </div>
         <div style=${togRow}>
-          <div style=${{fontSize:'0.72rem',color:'var(--text-secondary)'}}>Only changed elements</div>
+          <div style=${{fontSize:'0.72rem',color:'var(--text-secondary)'}}>${_cc_t('run.onlyChanged','Only changed elements')}</div>
           <${Tog} on=${rules.changeAware} onToggle=${function(){upd('changeAware',!rules.changeAware);}} />
         </div>
       </div>
 
       <!-- Self-clashes (matches standards tab) -->
       <div style=${{display:'flex',alignItems:'flex-start',gap:'.35rem',marginTop:'.35rem'}}>
-        <span style=${{fontSize:'0.72rem',color:'var(--text-primary)',whiteSpace:'nowrap',paddingTop:'.25rem'}}>Check within</span>
+        <span style=${{fontSize:'0.72rem',color:'var(--text-primary)',whiteSpace:'nowrap',paddingTop:'.25rem'}}>${_cc_t('run.checkWithin','Check within')}</span>
         ${_selfClashPicker(rules, allModels, function(upds){ Object.keys(upds).forEach(function(k){upd(k,upds[k]);}); })}
       </div>
 
       <!-- Min overlap volume (hard clashes only, matches standards tab) -->
       ${rules.hard && html`<div style=${{display:'flex',alignItems:'center',gap:'.35rem',marginTop:'.35rem'}}>
-        <span style=${{fontSize:'0.72rem',color:'var(--text-primary)',whiteSpace:'nowrap'}}>Ignore overlaps smaller than</span>
+        <span style=${{fontSize:'0.72rem',color:'var(--text-primary)',whiteSpace:'nowrap'}}>${_cc_t('run.ignoreOverlapsSmaller','Ignore overlaps smaller than')}</span>
         <input type="number" min="0" max="500" value=${Math.round((rules.minOverlapVolM3||0)*1e6)}
           onInput=${function(e){upd('minOverlapVolM3',+e.target.value/1e6)}}
           style=${{...S_INPUT,fontSize:'0.72rem',width:48,padding:'.15rem .25rem',textAlign:'right'}} />
@@ -32775,7 +32775,7 @@ function startApp() {
       ${allIfcTypes.length>0 && html`<div style=${{marginTop:'.45rem'}}>
         <div onClick=${function(){setExOpen(!exOpen)}} style=${{fontSize:'0.75rem',color:'var(--text-muted)',cursor:'pointer',display:'flex',alignItems:'center',gap:'.25rem',userSelect:'none'}}>
           <span style=${{fontSize:'0.57rem',transition:'transform .15s',transform:exOpen?'rotate(90deg)':'rotate(0)'}}>▶</span>
-          Exclude IFC types${rules.excludeTypes&&rules.excludeTypes.length?' ('+rules.excludeTypes.length+')':''}
+          ${_cc_t('setup.excludeIfcTypes','Exclude IFC types')}${rules.excludeTypes&&rules.excludeTypes.length?' ('+rules.excludeTypes.length+')':''}
         </div>
         ${exOpen && html`<div style=${{marginTop:'.3rem',maxHeight:120,overflowY:'auto',border:'1px solid var(--border)',borderRadius:5,background:'var(--input-bg)',padding:'.25rem'}}>
           ${allIfcTypes.map(function(t){
@@ -32792,11 +32792,11 @@ function startApp() {
       </div>`}
 
       <div style=${{display:'flex',gap:'.4rem',marginTop:'.55rem',justifyContent:'flex-end'}}>
-        <button onClick=${function(){setMsgs(function(prev){var n=prev.slice();n[idx]={role:'assistant',text:'Setup cancelled.'};return n;});}}
-          style=${{...S_BTN,padding:'.25rem .6rem',fontSize:'0.78rem',background:'none',color:'var(--text-muted)',border:'1px solid var(--border)'}}>Cancel</button>
+        <button onClick=${function(){setMsgs(function(prev){var n=prev.slice();n[idx]={role:'assistant',text:_cc_t('setup.setupCancelled','Setup cancelled.')};return n;});}}
+          style=${{...S_BTN,padding:'.25rem .6rem',fontSize:'0.78rem',background:'none',color:'var(--text-muted)',border:'1px solid var(--border)'}}>${_cc_t('common.cancel','Cancel')}</button>
         <button onClick=${run} disabled=${!rules.hard&&!(rules.maxGap>0)&&!rules.duplicates}
           style=${{...S_BTN,padding:'.25rem .8rem',fontSize:'0.78rem',background:'var(--accent)',color:'#fff',fontWeight:600,opacity:(!rules.hard&&!(rules.maxGap>0)&&!rules.duplicates)?0.4:1}}>
-          Run Detection
+          ${_cc_t('run.runDetectionCaps','Run Detection')}
         </button>
       </div>
     </div>`;
