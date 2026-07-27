@@ -23160,10 +23160,10 @@ function startApp() {
     }
 
     return html`<div style=${{padding: '.6rem', display: 'flex', flexDirection: 'column', gap: '.6rem', overflowX: 'hidden'}}>
-      <span style=${{fontSize: '0.63rem', color: 'var(--text-faint)', display: 'block'}}>Validate IFC models against Information Delivery Specifications</span>
+      <span style=${{fontSize: '0.63rem', color: 'var(--text-faint)', display: 'block'}}>${_cc_t('ids.validateDesc','Validate IFC models against Information Delivery Specifications')}</span>
 
       <div>
-        <span style=${{fontSize: '0.69rem', color: 'var(--text-muted)', display: 'block', marginBottom: '.25rem'}}>Built-in Rule Sets</span>
+        <span style=${{fontSize: '0.69rem', color: 'var(--text-muted)', display: 'block', marginBottom: '.25rem'}}>${_cc_t('ids.builtInRuleSets','Built-in Rule Sets')}</span>
         ${IDS_BUNDLED_SPECS.map(function(spec, idx) {
           var isSelected = selectedBundled.indexOf(idx) !== -1;
           var tooltip = spec.description + '\n\nRules:\n' + spec.rules.map(function(r){ return '• ' + r.desc + ' (' + (r.severity||'error') + ')'; }).join('\n');
@@ -23179,25 +23179,25 @@ function startApp() {
       </div>
 
       <div>
-        <span style=${{fontSize: '0.69rem', color: 'var(--text-muted)', display: 'block', marginBottom: '.25rem'}}>Custom IDS File</span>
+        <span style=${{fontSize: '0.69rem', color: 'var(--text-muted)', display: 'block', marginBottom: '.25rem'}}>${_cc_t('ids.customIdsFile','Custom IDS File')}</span>
         <input type="file" accept=".ids,.xml" onChange=${handleFileUpload}
           style=${{fontSize: '0.69rem', color: 'var(--text-secondary)'}} />
-        ${customSpecs && html`<div style=${{fontSize: '0.63rem', color: '#4ade80', marginTop: '.15rem'}}>Loaded: ${customSpecs.length} specification${customSpecs.length !== 1 ? 's' : ''}</div>`}
+        ${customSpecs && html`<div style=${{fontSize: '0.63rem', color: '#4ade80', marginTop: '.15rem'}}>${_cc_t('ids.loadedSpecs','Loaded: {n} specification{s}',{n:customSpecs.length,s:customSpecs.length !== 1 ? 's' : ''})}</div>`}
       </div>
 
       <div style=${{display: 'flex', gap: '.3rem'}}>
         <button onClick=${runValidation} disabled=${ids.running || s.models.length === 0 || (selectedBundled.length === 0 && !customSpecs)}
           style=${{...S_BTN, flex: 1, padding: '.35rem', background: ids.running ? 'var(--accent-bg)' : 'var(--accent)', color: '#fff', fontSize: '0.75rem', fontWeight: 600,
             opacity: (ids.running || s.models.length === 0 || (selectedBundled.length === 0 && !customSpecs)) ? 0.5 : 1}}>
-          ${ids.running ? 'Validating…' : 'Run Validation'}
+          ${ids.running ? _cc_t('ids.validating','Validating…') : _cc_t('ids.runValidation','Run Validation')}
         </button>
       </div>
 
       ${ids.summary && html`<div style=${{background: 'var(--bg-secondary)', borderRadius: 6, padding: '.4rem'}}>
         <div style=${{display: 'flex', gap: '.4rem', marginBottom: '.3rem'}}>
-          <span style=${{fontSize: '0.69rem', padding: '2px 6px', borderRadius: 99, background: '#052e16', color: '#4ade80', fontWeight: 600}}>${ids.summary.pass} Pass</span>
-          <span style=${{fontSize: '0.69rem', padding: '2px 6px', borderRadius: 99, background: '#7f1d1d', color: '#fca5a5', fontWeight: 600}}>${ids.summary.fail} Fail</span>
-          <span style=${{fontSize: '0.69rem', padding: '2px 6px', borderRadius: 99, background: 'var(--tag-bg)', color: 'var(--text-secondary)'}}>${ids.summary.total} Total</span>
+          <span style=${{fontSize: '0.69rem', padding: '2px 6px', borderRadius: 99, background: '#052e16', color: '#4ade80', fontWeight: 600}}>${_cc_t('ids.passN','{n} Pass',{n:ids.summary.pass})}</span>
+          <span style=${{fontSize: '0.69rem', padding: '2px 6px', borderRadius: 99, background: '#7f1d1d', color: '#fca5a5', fontWeight: 600}}>${_cc_t('ids.failN','{n} Fail',{n:ids.summary.fail})}</span>
+          <span style=${{fontSize: '0.69rem', padding: '2px 6px', borderRadius: 99, background: 'var(--tag-bg)', color: 'var(--text-secondary)'}}>${_cc_t('ids.totalN','{n} Total',{n:ids.summary.total})}</span>
         </div>
         ${Object.keys(ids.summary.bySpec).map(function(sn) {
           var ss = ids.summary.bySpec[sn];
@@ -23212,7 +23212,7 @@ function startApp() {
               <div style=${{height: '100%', width: pct + '%', background: pct >= 80 ? '#4ade80' : pct >= 50 ? '#fbbf24' : '#f87171', borderRadius: 2}}></div>
             </div>
             ${(ss.note || ss.unchecked > 0) && html`<div style=${{fontSize: '0.57rem', color: 'var(--text-faint)', marginTop: 1}}>
-              ${ss.note}${ss.unchecked > 0 ? ((ss.note ? ' · ' : '') + ss.unchecked + ' element' + (ss.unchecked !== 1 ? 's' : '') + ' partially checked') : ''}
+              ${ss.note}${ss.unchecked > 0 ? ((ss.note ? ' · ' : '') + _cc_t('ids.partiallyChecked','{n} element{s} partially checked',{n:ss.unchecked,s:ss.unchecked !== 1 ? 's' : ''})) : ''}
             </div>`}
           </div>`;
         })}
@@ -23220,16 +23220,16 @@ function startApp() {
         <div style=${{display: 'flex', gap: '.2rem', marginTop: '.4rem', flexWrap: 'wrap'}}>
           <button onClick=${function() { setShowResults(!showResults); }}
             style=${{...S_BTN, fontSize: '0.63rem', padding: '.15rem .3rem', background: showResults ? 'var(--accent-bg)' : 'var(--bg-primary)', color: showResults ? 'var(--accent-subtle)' : 'var(--text-muted)'}}>
-            ${showResults ? 'Hide' : 'Show'} Failures</button>
+            ${showResults ? _cc_t('common.hide','Hide') : _cc_t('common.show','Show')} ${_cc_t('ids.failures','Failures')}</button>
           <button onClick=${function() { highlightValidationFailures(s.models, ids.results); }}
-            style=${{...S_BTN, fontSize: '0.63rem', padding: '.15rem .3rem', background: 'var(--bg-primary)', color: '#f87171'}} title="Ghost passing elements, highlight failures">
-            Highlight in 3D</button>
+            style=${{...S_BTN, fontSize: '0.63rem', padding: '.15rem .3rem', background: 'var(--bg-primary)', color: '#f87171'}} title=${_cc_t('ids.highlight3dTip','Ghost passing elements, highlight failures')}>
+            ${_cc_t('ids.highlightIn3d','Highlight in 3D')}</button>
           <button onClick=${function() { if (_unghostAll) _unghostAll(); invalidate(5); }}
             style=${{...S_BTN, fontSize: '0.63rem', padding: '.15rem .3rem', background: 'var(--bg-primary)', color: 'var(--text-muted)'}}>
-            Clear Highlight</button>
+            ${_cc_t('ids.clearHighlight','Clear Highlight')}</button>
           <button onClick=${downloadReport}
             style=${{...S_BTN, fontSize: '0.63rem', padding: '.15rem .3rem', background: 'var(--bg-primary)', color: '#60a5fa'}}>
-            HTML Report</button>
+            ${_cc_t('ids.htmlReport','HTML Report')}</button>
           <button onClick=${function() { exportValidationBCF(ids.results, '2.1'); }}
             style=${{...S_BTN, fontSize: '0.63rem', padding: '.15rem .3rem', background: 'var(--bg-primary)', color: '#22d3ee'}}>
             BCF 2.1</button>
@@ -23246,7 +23246,7 @@ function startApp() {
             return html`<button key=${f} onClick=${function() { setViewFilter(f); }}
               style=${{...S_BTN, fontSize: '0.63rem', padding: '.1rem .3rem',
                 background: viewFilter === f ? (f === 'error' ? '#7f1d1d' : f === 'warning' ? '#78350f' : 'var(--accent-bg)') : 'var(--bg-primary)',
-                color: viewFilter === f ? '#fff' : 'var(--text-faint)'}}>${f === 'all' ? 'All' : f.charAt(0).toUpperCase() + f.slice(1)} (${count})</button>`;
+                color: viewFilter === f ? '#fff' : 'var(--text-faint)'}}>${f === 'all' ? _cc_t('common.all','All') : (_cc_t('ids.severity.'+f, f.charAt(0).toUpperCase() + f.slice(1)))} (${count})</button>`;
           })}
         </div>
         <div style=${{maxHeight: '300px', overflowY: 'auto'}}>
@@ -23270,7 +23270,7 @@ function startApp() {
               <span style=${{color: 'var(--text-faint)', flexShrink: 0, overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: 80}}>${r.ruleDesc}</span>
             </div>`;
           })}
-          ${filteredResults.length > 200 && html`<div style=${{color: 'var(--text-faint)', padding: '.3rem', textAlign: 'center', fontSize: '0.63rem'}}>+${filteredResults.length - 200} more results</div>`}
+          ${filteredResults.length > 200 && html`<div style=${{color: 'var(--text-faint)', padding: '.3rem', textAlign: 'center', fontSize: '0.63rem'}}>${_cc_t('ids.moreResults','+{n} more results',{n:filteredResults.length - 200})}</div>`}
         </div>
       </div>`}
     </div>`;
