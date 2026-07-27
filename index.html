@@ -34369,57 +34369,57 @@ function startApp() {
           ${hasMem && usedMB > 0 ? html`<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#f87171" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>` : html`<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>`}
           <div>
             <div style=${{fontSize:'1.1rem',fontWeight:700,color:hasMem && usedMB > 0 ? '#f87171' : 'var(--text-primary)',marginBottom:'.2rem'}}>
-              ${hasMem && usedMB > 0 ? 'High Memory Usage Detected' : 'Send Memory Report'}
+              ${hasMem && usedMB > 0 ? _cc_t('memWarn.highMemoryDetected','High Memory Usage Detected') : _cc_t('memWarn.sendReport','Send Memory Report')}
             </div>
             <div style=${{fontSize:'0.88rem',color:'var(--text-secondary)'}}>
               ${hasMem && usedMB > 0
-                ? html`ClashControl is using <b style=${{color:'#fbbf24'}}>${(usedMB/1024).toFixed(1)} GB</b> of memory. This may cause your browser to slow down or crash.`
+                ? html`${_cc_t('memWarn.usingGB','ClashControl is using')} <b style=${{color:'#fbbf24'}}>${(usedMB/1024).toFixed(1)} GB</b> ${_cc_t('memWarn.mayCauseSlowdown','of memory. This may cause your browser to slow down or crash.')}`
                 : hasMem
-                  ? html`Currently using <b>${(usedMB/1024).toFixed(1)} GB</b> of memory.`
-                  : html`Memory stats are not available in this browser, but model and clash data can still be included.`
+                  ? html`${_cc_t('memWarn.currentlyUsing','Currently using')} <b>${(usedMB/1024).toFixed(1)} GB</b> ${_cc_t('memWarn.ofMemory','of memory.')}`
+                  : html`${_cc_t('memWarn.statsUnavailable','Memory stats are not available in this browser, but model and clash data can still be included.')}`
               }
             </div>
           </div>
         </div>
         <div style=${{background:'rgba(248,113,113,.07)',border:'1px solid rgba(248,113,113,.2)',borderRadius:8,padding:'.75rem',marginBottom:'1rem',fontSize:'0.83rem',color:'var(--text-secondary)',lineHeight:1.6}}>
-          <b style=${{color:'var(--text-primary)'}}>Help us improve ClashControl</b> by sending a short diagnostic report. Clicking "Send Report" opens a pre-filled GitHub issue where you can review the data before submitting.
+          <b style=${{color:'var(--text-primary)'}}>${_cc_t('memWarn.helpImprove','Help us improve ClashControl')}</b> ${_cc_t('memWarn.helpImproveRest','by sending a short diagnostic report. Clicking "Send Report" opens a pre-filled GitHub issue where you can review the data before submitting.')}
         </div>
         <div style=${{marginBottom:'.75rem'}}>
-          <label style=${{fontSize:'0.78rem',color:'var(--text-muted)',fontWeight:600,display:'block',marginBottom:'.25rem'}}>What were you doing? (optional)</label>
-          <textarea value=${userMsg} onInput=${function(e){setUserMsg(e.target.value)}} placeholder="e.g. Loaded 3 large Revit models and ran clash detection…" rows="3"
+          <label style=${{fontSize:'0.78rem',color:'var(--text-muted)',fontWeight:600,display:'block',marginBottom:'.25rem'}}>${_cc_t('memWarn.whatWereYouDoing','What were you doing? (optional)')}</label>
+          <textarea value=${userMsg} onInput=${function(e){setUserMsg(e.target.value)}} placeholder=${_cc_t('memWarn.whatWereYouDoingPlaceholder','e.g. Loaded 3 large Revit models and ran clash detection…')} rows="3"
             style=${{width:'100%',padding:'.4rem .6rem',borderRadius:6,border:'1px solid var(--border)',background:'var(--bg-secondary)',color:'var(--text-primary)',fontSize:'0.83rem',fontFamily:'inherit',resize:'vertical',boxSizing:'border-box'}} />
         </div>
-        <div style=${{fontSize:'0.85rem',color:'var(--text-secondary)',marginBottom:'.75rem',fontWeight:600}}>Data that will be included:</div>
+        <div style=${{fontSize:'0.85rem',color:'var(--text-secondary)',marginBottom:'.75rem',fontWeight:600}}>${_cc_t('memWarn.dataIncluded','Data that will be included:')}</div>
         <div style=${{display:'flex',flexDirection:'column',gap:'.4rem',marginBottom:'1rem',fontSize:'0.83rem',color:'var(--text-secondary)'}}>
           <label style=${{display:'flex',alignItems:'center',gap:'.5rem',cursor:'pointer'}}>
             <input type="checkbox" checked disabled style=${{accentColor:'var(--accent)'}} />
-            <span>${hasMem ? html`Memory usage (<b>${(usedMB/1024).toFixed(1)} GB</b> used${limitMB ? ' of ' + (limitMB/1024).toFixed(1) + ' GB limit' : ''})` : 'Memory usage (not available in this browser)'}</span>
+            <span>${hasMem ? html`${_cc_t('memWarn.memoryUsagePrefix','Memory usage (')}<b>${(usedMB/1024).toFixed(1)} GB</b> ${_cc_t('memWarn.usedSuffix','used')}${limitMB ? ' ' + _cc_t('memWarn.ofLimitSuffix','of {limit} GB limit',{limit:(limitMB/1024).toFixed(1)}) : ''})` : _cc_t('memWarn.memoryUsageUnavailable','Memory usage (not available in this browser)')}</span>
           </label>
           <label style=${{display:'flex',alignItems:'center',gap:'.5rem',cursor:'pointer'}}>
             <input type="checkbox" checked disabled style=${{accentColor:'var(--accent)'}} />
-            <span>${(s.models||[]).length} model${(s.models||[]).length!==1?'s':''}, <b>${totalElements}</b> total elements, ${totalMeshes} meshes</span>
+            <span>${_cc_t('memWarn.modelSummary','{n} model{s},',{n:(s.models||[]).length,s:(s.models||[]).length!==1?'s':''})} <b>${totalElements}</b> ${_cc_t('memWarn.totalElementsMeshes','total elements, {meshes} meshes',{meshes:totalMeshes})}</span>
           </label>
           <label style=${{display:'flex',alignItems:'center',gap:'.5rem',cursor:'pointer'}}>
             <input type="checkbox" checked disabled style=${{accentColor:'var(--accent)'}} />
-            <span>Clash count & status breakdown, issue count</span>
+            <span>${_cc_t('memWarn.clashCountBreakdown','Clash count & status breakdown, issue count')}</span>
           </label>
           <label style=${{display:'flex',alignItems:'center',gap:'.5rem'}}>
             <input type="checkbox" checked disabled style=${{accentColor:'var(--accent)'}} />
-            <span>Model names anonymised <span style=${{color:'var(--text-faint)'}}>(sent as "Model 1, Model 2…" — always)</span></span>
+            <span>${_cc_t('memWarn.modelNamesAnonymised','Model names anonymised')} <span style=${{color:'var(--text-faint)'}}>${_cc_t('memWarn.sentAsModelN','(sent as "Model 1, Model 2…" — always)')}</span></span>
           </label>
           <label style=${{display:'flex',alignItems:'center',gap:'.5rem',cursor:'pointer'}} onClick=${function(){setIncludeBrowser(!includeBrowser)}}>
             <input type="checkbox" checked=${includeBrowser} onChange=${function(){}} style=${{accentColor:'var(--accent)'}} />
-            <span>Browser / platform info</span>
+            <span>${_cc_t('memWarn.browserPlatformInfo','Browser / platform info')}</span>
           </label>
         </div>
         <div style=${{display:'flex',gap:'.6rem'}}>
           <button onClick=${onSend}
             style=${{flex:1,padding:'.5rem',borderRadius:7,background:'var(--accent)',color:'#fff',fontWeight:600,fontSize:'0.88rem',border:'none',cursor:'pointer'}}>
-            Send Report
+            ${_cc_t('memWarn.sendReportBtn','Send Report')}
           </button>
           <button onClick=${onDismiss}
             style=${{padding:'.5rem .9rem',borderRadius:7,background:'var(--bg-secondary)',color:'var(--text-secondary)',fontWeight:600,fontSize:'0.88rem',border:'1px solid var(--border)',cursor:'pointer'}}>
-            Dismiss
+            ${_cc_t('common.dismiss','Dismiss')}
           </button>
         </div>
       </div>
