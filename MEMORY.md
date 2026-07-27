@@ -516,14 +516,25 @@ NOT touch the surrounding property/pset NAME arrays (`'Base Constraint'`, `'IsEx
 `'LoadBearing'`, etc.) — those are literal IFC/Revit parameter-name lookup keys matched against
 model data, not display prose; translating them would silently break property matching.~~
 (2026-07-27)
-**Remaining (long tail, can proceed independently in future sessions):** `CmdKPalette` (its
-~100+-entry command list, deliberately deferred all session — see earlier note), `NLCommandPanel`'s
-deep regex-based offline-command-parsing logic (~600 lines, not primarily user-facing chrome),
+~~`CmdKPalette` in full — every command in `_ccBuildCommands`: all 8 group headers (Workspace/View/
+Rendering/Tools/Visibility/Panels/Files/Project/Assistant), every command label (Switch to Present/
+Coordinate/Review, Fit to view, Toggle floor plan, Walk mode, Render: {style}, Section by surface,
+Section box, Measure distance/angle, Add comment pin, Coverage/Visibility check prefixes, Open
+Conflicts/Issues/Navigator/Integrations, Run detection / Open rules, Toggle Models panel/Inspector,
+Open IFC or GLB file, Share project, Smart Views, Settings, Keyboard shortcuts, Toggle theme, Open
+AI chat panel), plus the palette UI itself (Ask-the-assistant entry, command/question input
+placeholder+aria-label, Esc badge, no-matches empty state, navigate/run key hints, match-count
+footer). Search `keywords` deliberately left in English (they're internal fuzzy-match terms, not
+displayed) — an English or partial-label search still discovers every command regardless of active
+locale.~~ (2026-07-27)
+**Remaining (long tail, can proceed independently in future sessions):** `NLCommandPanel`'s deep
+regex-based offline-command-parsing logic (~600 lines, not primarily user-facing chrome),
 `RevitBridgePanel`'s Advanced tab (WebSocket port config, AI Bridge provider/key/host fields, sync
 log — behind an explicit opt-in toggle), and whatever remains unnamed across the rest of the
 ~38.7k-line file. Partial coverage is safe by design (`_cc_t` falls back to the English string for
-any untranslated key, so the app never breaks) — at this point the vast majority of primary,
-always-visible UI chrome across the whole app has been retrofitted this session.
+any untranslated key, so the app never breaks) — every named component from the original
+retrofit-progress list has now been addressed at least once this session; only these two
+lower-priority, less-visible pockets remain from the explicitly-tracked list.
 
 **Park inactive models — memory relief (2026-07-22, branch `claude/clashcontrol-v7-release-plan-jp5njw`)** —
 diagnosed the "viewer stalls a few seconds" + "5.2 GB heap > 4.09 GB limit" reports as the SAME
