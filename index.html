@@ -16573,15 +16573,15 @@ function startApp() {
     return html`<div style=${{marginTop:'.4rem'}}>
       <button onClick=${toggleSectionBox}
         style=${{...S_BTN,width:'100%',padding:'.25rem',background:active?'var(--accent)':'var(--bg-secondary)',color:active?'#fff':'var(--text-muted)',border:'1px solid '+(active?'var(--accent)':'var(--border)'),marginBottom:active?'.4rem':0}}>
-        ${active?'Section Box OFF':'Section Box'}
+        ${active?_cc_t('sectionBox.off','Section Box OFF'):_cc_t('sectionBox.on','Section Box')}
       </button>
       ${active && html`<div style=${{fontSize:'0.63rem',color:'var(--text-muted)',padding:'.2rem 0'}}>
-        <div style=${{marginBottom:'.2rem'}}>Drag corners to resize · Ring to rotate</div>
+        <div style=${{marginBottom:'.2rem'}}>${_cc_t('sectionBox.dragToResize','Drag corners to resize · Ring to rotate')}</div>
         <div style=${{display:'flex',gap:'.3rem',alignItems:'center',flexWrap:'wrap'}}>
-          <span style=${{display:'inline-flex',alignItems:'center',gap:'.15rem'}}><span style=${{width:6,height:6,borderRadius:'50%',background:'#ffffff',display:'inline-block',border:'1px solid #666'}}></span>Corner</span>
-          <span style=${{display:'inline-flex',alignItems:'center',gap:'.15rem'}}><span style=${{width:6,height:6,borderRadius:'50%',background:'#f59e0b',display:'inline-block'}}></span>Rotate</span>
+          <span style=${{display:'inline-flex',alignItems:'center',gap:'.15rem'}}><span style=${{width:6,height:6,borderRadius:'50%',background:'#ffffff',display:'inline-block',border:'1px solid #666'}}></span>${_cc_t('sectionBox.corner','Corner')}</span>
+          <span style=${{display:'inline-flex',alignItems:'center',gap:'.15rem'}}><span style=${{width:6,height:6,borderRadius:'50%',background:'#f59e0b',display:'inline-block'}}></span>${_cc_t('sectionBox.rotate','Rotate')}</span>
         </div>
-        ${sb.rotation ? html`<button onClick=${resetRotation} style=${{...S_BTN,marginTop:'.2rem',padding:'.1rem .3rem',background:'var(--bg-secondary)',color:'#f59e0b',fontSize:'0.63rem',border:'1px solid var(--border)'}}>Reset Rotation (${Math.round((sb.rotation||0)*180/Math.PI)}°)</button>` : null}
+        ${sb.rotation ? html`<button onClick=${resetRotation} style=${{...S_BTN,marginTop:'.2rem',padding:'.1rem .3rem',background:'var(--bg-secondary)',color:'#f59e0b',fontSize:'0.63rem',border:'1px solid var(--border)'}}>${_cc_t('sectionBox.resetRotation','Reset Rotation ({deg}°)',{deg:Math.round((sb.rotation||0)*180/Math.PI)})}</button>` : null}
       </div>`}
     </div>`;
   }
@@ -19189,17 +19189,17 @@ function startApp() {
         <span style=${{width:10,height:10,borderRadius:'50%',background:m.color,flexShrink:0}}></span>
         <span style=${{color:'var(--text-primary)',fontSize:'0.86rem',flex:1,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}} title=${m.name}>${m.name}</span>
         ${m._version>1 && html`<span style=${{fontSize:'0.57rem',color:'var(--accent)',background:'var(--accent-bg)',padding:'.05rem .25rem',borderRadius:3,flexShrink:0,fontWeight:600}}>v${m._version}</span>`}
-        ${m._stub && html`<span style=${{fontSize:'0.63rem',color:'#f59e0b',background:'var(--pill-amber-bg)',padding:'.05rem .3rem',borderRadius:4,flexShrink:0}}>stub</span>`}
+        ${m._stub && html`<span style=${{fontSize:'0.63rem',color:'#f59e0b',background:'var(--pill-amber-bg)',padding:'.05rem .3rem',borderRadius:4,flexShrink:0}}>${_cc_t('modelCard.stub','stub')}</span>`}
         ${m.stats && m.stats.loadType && html`<span style=${{fontSize:'0.57rem',padding:'1px 4px',borderRadius:3,background:'var(--accent-bg)',color:'var(--accent)',fontWeight:600,flexShrink:0}}>${m.stats.loadType}</span>`}
         ${m.stats && m.stats.loadedScope && html`<button onClick=${function(e){e.stopPropagation();if(window._ccReloadModelFull)window._ccReloadModelFull(m.id);}}
-          title=${'Partial load: '+m.stats.loadedScope.join(', ')+' ('+(m.stats.scopedOutCount||0)+' elements skipped). Click to load the full model.'}
-          style=${{fontSize:'0.6rem',padding:'0 .3rem',borderRadius:99,background:'var(--color-warning-bg)',color:'var(--color-warning-fg)',border:'none',cursor:'pointer',flexShrink:0,fontFamily:'var(--font-body)'}}>partial</button>`}
+          title=${_cc_t('modelCard.partialLoadTip','Partial load: {scope} ({n} elements skipped). Click to load the full model.',{scope:m.stats.loadedScope.join(', '),n:m.stats.scopedOutCount||0})}
+          style=${{fontSize:'0.6rem',padding:'0 .3rem',borderRadius:99,background:'var(--color-warning-bg)',color:'var(--color-warning-fg)',border:'none',cursor:'pointer',flexShrink:0,fontFamily:'var(--font-body)'}}>${_cc_t('modelCard.partial','partial')}</button>`}
         ${m.stats && m.stats.loadTime && html`<span style=${{fontSize:'0.63rem',color:'var(--text-faint)',flexShrink:0}}>${(m.stats.loadTime/1000).toFixed(1)}s</span>`}
         <button onClick=${function(){setOpen(!open)}} style=${{...S_BTN,padding:'0 2px',background:'none',color:'var(--text-faint)',fontSize:'0.69rem'}}>${open?'▲':'▼'}</button>
         ${!(m.stats&&m.stats.source==='revit-direct') && html`<button onClick=${function(e){e.stopPropagation();if(window._ccParkModel)window._ccParkModel(m.id);}}
-          title="Park this model — free its memory now, restore with one click later. Nothing is deleted."
+          title=${_cc_t('modelCard.parkTip','Park this model — free its memory now, restore with one click later. Nothing is deleted.')}
           style=${{...S_BTN,padding:'0 2px',background:'none',color:'var(--text-faint)',fontSize:'0.72rem'}}>⏻</button>`}
-        <button onClick=${function(){if(!confirm('Remove "'+m.name+'" from this project?'))return;
+        <button onClick=${function(){if(!confirm(_cc_t('modelCard.confirmRemove','Remove "{name}" from this project?',{name:m.name})))return;
           // For a live Revit model, also exclude it from future syncs so a refresh
           // doesn't re-pull it (scoped sync). Re-include via the Revit Bridge panel.
           if(m.stats&&m.stats.source==='revit-direct'&&window._ccRevitExcludeModel)window._ccRevitExcludeModel(m.rawName||m.name);
@@ -19211,42 +19211,42 @@ function startApp() {
           ${DISC.slice().sort(function(a,b){return a.label.localeCompare(b.label);}).map(function(p){return html`<option key=${p.id} value=${p.id}>${p.label}</option>`})}
         </select>
         <div style=${{display:'flex',alignItems:'center',gap:'.3rem'}}>
-          <span style=${{fontSize:'0.8rem',color:m.discipline==='other'?'var(--text-secondary)':'var(--text-faint)',opacity:m.discipline==='other'?1:0.5}}>Tag</span>
-          <input type="text" value=${m.tag||''} placeholder=${m.discipline==='other'?'e.g. Group A':'Set discipline to Other'} disabled=${m.discipline!=='other'}
+          <span style=${{fontSize:'0.8rem',color:m.discipline==='other'?'var(--text-secondary)':'var(--text-faint)',opacity:m.discipline==='other'?1:0.5}}>${_cc_t('modelCard.tag','Tag')}</span>
+          <input type="text" value=${m.tag||''} placeholder=${m.discipline==='other'?_cc_t('modelCard.tagExample','e.g. Group A'):_cc_t('modelCard.setDisciplineOther','Set discipline to Other')} disabled=${m.discipline!=='other'}
             onChange=${function(e){d({t:A.UPD_MODEL,id:m.id,u:{tag:e.target.value.trim()}})}}
             style=${{...S_INPUT,fontSize:'0.75rem',padding:'.15rem .35rem',width:80,opacity:m.discipline==='other'?1:0.5,cursor:m.discipline==='other'?'text':'not-allowed'}} />
-          <span style=${{fontSize:'0.8rem',color:'var(--text-faint)'}}>Colour</span>
+          <span style=${{fontSize:'0.8rem',color:'var(--text-faint)'}}>${_cc_t('modelCard.colour','Colour')}</span>
           <input type="color" value=${m.color} onChange=${function(e){d({t:A.UPD_MODEL,id:m.id,u:{color:e.target.value}})}} style=${{width:24,height:20,border:'none',padding:0,background:'none',cursor:'pointer'}} />
         </div>
         ${m.discipline==='other' && m.tag && html`<div style=${{fontSize:'0.63rem',color:'var(--accent)',marginTop:'.1rem'}}>
-          Use <code style=${{fontSize:'0.63rem',background:'var(--tag-bg)',padding:'1px 3px',borderRadius:2}}>tag:${m.tag}</code> in clash detection rules
+          ${_cc_t('modelCard.usePrefix','Use')} <code style=${{fontSize:'0.63rem',background:'var(--tag-bg)',padding:'1px 3px',borderRadius:2}}>tag:${m.tag}</code> ${_cc_t('modelCard.inClashRulesSuffix','in clash detection rules')}
         </div>`}
         ${m.stats && m.stats.fileSize && html`<span style=${{fontSize:'0.63rem',color:'var(--text-faint)'}}>${(m.stats.fileSize/1048576).toFixed(1)} MB · ${(m.elements&&m.elements.length||0)} elements · ${(m.meshes&&m.meshes.length||0)} meshes</span>`}
         ${!(m.stats && m.stats.fileSize) && html`<span style=${{fontSize:'0.75rem',color:'var(--text-faint)'}}>${(m.elements&&m.elements.length||0)} elements · ${(m.meshes&&m.meshes.length||0)} meshes</span>`}
         ${m._versionDiff && html`<div style=${{borderTop:'1px solid var(--border)',paddingTop:'.35rem',marginTop:'.1rem'}}>
           <div style=${{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:'.25rem'}}>
-            <span style=${{fontSize:'0.69rem',fontWeight:600,color:'var(--text-muted)',textTransform:'uppercase',letterSpacing:'.03em'}}>Version Diff (v${(m._version-1)||1} → v${m._version})</span>
+            <span style=${{fontSize:'0.69rem',fontWeight:600,color:'var(--text-muted)',textTransform:'uppercase',letterSpacing:'.03em'}}>${_cc_t('modelCard.versionDiff','Version Diff (v{prev} → v{cur})',{prev:(m._version-1)||1,cur:m._version})}</span>
           </div>
           <div style=${{display:'flex',gap:'.25rem',flexWrap:'wrap',marginBottom:'.3rem'}}>
-            ${m._versionDiff.summary.added>0 && html`<span style=${{fontSize:'0.63rem',padding:'1px 5px',borderRadius:99,background:'var(--color-success-bg)',color:'var(--color-success-fg)',fontWeight:600}}>+${m._versionDiff.summary.added} added</span>`}
-            ${m._versionDiff.summary.removed>0 && html`<span style=${{fontSize:'0.63rem',padding:'1px 5px',borderRadius:99,background:'var(--color-danger-bg)',color:'var(--color-danger-fg)',fontWeight:600}}>-${m._versionDiff.summary.removed} removed</span>`}
-            ${m._versionDiff.summary.modified>0 && html`<span style=${{fontSize:'0.63rem',padding:'1px 5px',borderRadius:99,background:'var(--color-warning-bg)',color:'var(--color-warning-fg)',fontWeight:600}}>~${m._versionDiff.summary.modified} modified</span>`}
-            ${m._versionDiff.summary.unchanged>0 && html`<span style=${{fontSize:'0.63rem',padding:'1px 5px',borderRadius:99,background:'var(--tag-bg)',color:'var(--text-faint)'}}>${m._versionDiff.summary.unchanged} unchanged</span>`}
+            ${m._versionDiff.summary.added>0 && html`<span style=${{fontSize:'0.63rem',padding:'1px 5px',borderRadius:99,background:'var(--color-success-bg)',color:'var(--color-success-fg)',fontWeight:600}}>${_cc_t('modelCard.addedN','+{n} added',{n:m._versionDiff.summary.added})}</span>`}
+            ${m._versionDiff.summary.removed>0 && html`<span style=${{fontSize:'0.63rem',padding:'1px 5px',borderRadius:99,background:'var(--color-danger-bg)',color:'var(--color-danger-fg)',fontWeight:600}}>${_cc_t('modelCard.removedN','-{n} removed',{n:m._versionDiff.summary.removed})}</span>`}
+            ${m._versionDiff.summary.modified>0 && html`<span style=${{fontSize:'0.63rem',padding:'1px 5px',borderRadius:99,background:'var(--color-warning-bg)',color:'var(--color-warning-fg)',fontWeight:600}}>${_cc_t('modelCard.modifiedN','~{n} modified',{n:m._versionDiff.summary.modified})}</span>`}
+            ${m._versionDiff.summary.unchanged>0 && html`<span style=${{fontSize:'0.63rem',padding:'1px 5px',borderRadius:99,background:'var(--tag-bg)',color:'var(--text-faint)'}}>${_cc_t('modelCard.unchangedN','{n} unchanged',{n:m._versionDiff.summary.unchanged})}</span>`}
           </div>
           <div style=${{display:'flex',gap:'.2rem'}}>
             <button onClick=${function(){showModelDiff(m);}}
-              style=${{...S_BTN,flex:1,fontSize:'0.63rem',padding:'.15rem .3rem',background:'var(--accent-bg)',color:'var(--accent-subtle)'}}>Show Diff</button>
+              style=${{...S_BTN,flex:1,fontSize:'0.63rem',padding:'.15rem .3rem',background:'var(--accent-bg)',color:'var(--accent-subtle)'}}>${_cc_t('modelCard.showDiff','Show Diff')}</button>
             <button onClick=${function(){clearModelDiff(m);}}
-              style=${{...S_BTN,flex:1,fontSize:'0.63rem',padding:'.15rem .3rem',background:'var(--bg-primary)',color:'var(--text-muted)'}}>Clear Diff</button>
+              style=${{...S_BTN,flex:1,fontSize:'0.63rem',padding:'.15rem .3rem',background:'var(--bg-primary)',color:'var(--text-muted)'}}>${_cc_t('modelCard.clearDiff','Clear Diff')}</button>
           </div>
           <div style=${{display:'flex',gap:'.3rem',marginTop:'.25rem',fontSize:'0.57rem',color:'var(--text-faint)',alignItems:'center'}}>
-            <span style=${{width:8,height:8,borderRadius:'50%',background:'var(--color-success)'}}></span> Added
-            <span style=${{width:8,height:8,borderRadius:'50%',background:'var(--color-warning)',marginLeft:'.2rem'}}></span> Modified
-            <span style=${{width:8,height:8,borderRadius:'50%',background:'var(--border)',marginLeft:'.2rem'}}></span> Unchanged
+            <span style=${{width:8,height:8,borderRadius:'50%',background:'var(--color-success)'}}></span> ${_cc_t('modelCard.added','Added')}
+            <span style=${{width:8,height:8,borderRadius:'50%',background:'var(--color-warning)',marginLeft:'.2rem'}}></span> ${_cc_t('modelCard.modified','Modified')}
+            <span style=${{width:8,height:8,borderRadius:'50%',background:'var(--border)',marginLeft:'.2rem'}}></span> ${_cc_t('modelCard.unchanged','Unchanged')}
           </div>
         </div>`}
         ${m.storeys&&m.storeys.length>0 && html`<div style=${{fontSize:'0.63rem',color:'var(--text-faint)',borderTop:'1px solid var(--border)',paddingTop:'.25rem',marginTop:'.1rem'}}>
-          ${m.storeys.length} level${m.storeys.length===1?'':'s'} — manage in Levels panel below
+          ${_cc_t('modelCard.levelsManage','{n} level{s} — manage in Levels panel below',{n:m.storeys.length,s:m.storeys.length===1?'':'s'})}
         </div>`}
       </div>`}
     </div>`;
