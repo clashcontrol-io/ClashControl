@@ -15943,7 +15943,7 @@ function startApp() {
       </svg>
       ${compare.open && html`<div style=${{position:'absolute',bottom:'var(--space-3)',left:'50%',transform:'translateX(-50%)',background:'var(--bg-primary)',border:'1px solid var(--border)',borderRadius:'var(--radius-sm)',boxShadow:'var(--shadow-md)',zIndex:9,pointerEvents:'auto',padding:'var(--space-2) var(--space-3)',display:'flex',flexDirection:'column',gap:'var(--space-2)',minWidth:380}}>
         <div style=${{display:'flex',alignItems:'center',gap:'var(--space-2)'}}>
-          <span style=${{fontSize:'var(--text-2xs)',fontWeight:'var(--weight-bold)',color:'var(--text-muted)',textTransform:'uppercase',letterSpacing:'.04em',flex:1}}>Compare Models</span>
+          <span style=${{fontSize:'var(--text-2xs)',fontWeight:'var(--weight-bold)',color:'var(--text-muted)',textTransform:'uppercase',letterSpacing:'.04em',flex:1}}>${_cc_t('viewport.compareModels','Compare Models')}</span>
           <button onClick=${function(){setCompare(Object.assign({},compare,{open:false}));}}
             style=${{background:'none',border:'none',color:'var(--text-muted)',cursor:'pointer',fontSize:'var(--text-md)',padding:'0 var(--space-1)',lineHeight:1}}>×</button>
         </div>
@@ -15951,7 +15951,7 @@ function startApp() {
           <span style=${{fontSize:'var(--text-2xs)',color:'var(--text-faint)',width:36,whiteSpace:'nowrap'}}>A</span>
           <select value=${compare.modelA||''} onChange=${function(e){setCompare(Object.assign({},compare,{modelA:e.target.value||null}));}}
             style=${{flex:1,fontSize:'var(--text-xs)',padding:'var(--space-1)',background:'var(--bg-secondary)',color:'var(--text-primary)',border:'1px solid var(--border)',borderRadius:'var(--radius-sm)'}}>
-            <option value="">Model A…</option>
+            <option value="">${_cc_t('viewport.modelAEllipsis','Model A…')}</option>
             ${(s.models||[]).map(function(m){return html`<option key=${m.id} value=${m.id}>${m.name}${m._version>1?' (v'+m._version+')':''}</option>`})}
           </select>
         </div>
@@ -15959,7 +15959,7 @@ function startApp() {
           <span style=${{fontSize:'var(--text-2xs)',color:'var(--text-faint)',width:36,whiteSpace:'nowrap'}}>B</span>
           <select value=${compare.modelB||''} onChange=${function(e){setCompare(Object.assign({},compare,{modelB:e.target.value||null}));}}
             style=${{flex:1,fontSize:'var(--text-xs)',padding:'var(--space-1)',background:'var(--bg-secondary)',color:'var(--text-primary)',border:'1px solid var(--border)',borderRadius:'var(--radius-sm)'}}>
-            <option value="">Model B…</option>
+            <option value="">${_cc_t('viewport.modelBEllipsis','Model B…')}</option>
             ${(s.models||[]).filter(function(m){return m.id!==compare.modelA;}).map(function(m){return html`<option key=${m.id} value=${m.id}>${m.name}${m._version>1?' (v'+m._version+')':''}</option>`})}
           </select>
         </div>
@@ -15973,11 +15973,11 @@ function startApp() {
       </div>`}
       ${(markupTool3D || (markups3D && markups3D.length>0)) && html`<div style=${{position:'absolute',top:'var(--space-2)',left:'50%',transform:'translateX(-50%)',display:'flex',gap:'var(--space-1)',padding:'var(--space-1)',background:'var(--bg-primary)',border:'1px solid var(--border)',borderRadius:'var(--radius-sm)',boxShadow:'var(--shadow-md)',zIndex:9,pointerEvents:'auto',alignItems:'center'}}>
         ${[
-          ['line','╱','Line'],
-          ['arrow','→','Arrow'],
-          ['rect','▭','Rectangle'],
-          ['text','T','Text label'],
-          ['freehand','✎','Freehand']
+          ['line','╱',_cc_t('viewport.markup.line','Line')],
+          ['arrow','→',_cc_t('viewport.markup.arrow','Arrow')],
+          ['rect','▭',_cc_t('viewport.markup.rectangle','Rectangle')],
+          ['text','T',_cc_t('viewport.markup.textLabel','Text label')],
+          ['freehand','✎',_cc_t('viewport.markup.freehand','Freehand')]
         ].map(function(t){
           var active = markupTool3D===t[0];
           return html`<button key=${t[0]} onClick=${function(){setMarkupTool3D(active?null:t[0]);}}
@@ -15985,13 +15985,13 @@ function startApp() {
             style=${{fontSize:'var(--text-xs)',padding:'var(--space-1) var(--space-2)',background:active?'var(--accent)':'var(--bg-secondary)',color:active?'#fff':'var(--text-secondary)',border:'1px solid var(--border)',borderRadius:'var(--radius-sm)',cursor:'pointer',fontFamily:'inherit',minWidth:24}}>${t[1]}</button>`;
         })}
         <input type="color" value=${markupColor3D} onInput=${function(e){setMarkupColor3D(e.target.value);}}
-          title="Color" style=${{width:24,height:24,border:'1px solid var(--border)',borderRadius:'var(--radius-xs)',cursor:'pointer',padding:0,background:'none'}} />
+          title=${_cc_t('viewport.markup.colorTitle','Color')} style=${{width:24,height:24,border:'1px solid var(--border)',borderRadius:'var(--radius-xs)',cursor:'pointer',padding:0,background:'none'}} />
         <span style=${{width:1,height:18,background:'var(--border)',margin:'0 var(--space-1)'}}></span>
         ${markups3D.length>0 && html`<button onClick=${function(){setMarkups3D([]);}}
-          title="Clear all markup"
-          style=${{fontSize:'var(--text-2xs)',padding:'var(--space-1) var(--space-2)',background:'var(--bg-secondary)',color:'var(--text-muted)',border:'1px solid var(--border)',borderRadius:'var(--radius-sm)',cursor:'pointer',fontFamily:'inherit'}}>Clear</button>`}
+          title=${_cc_t('viewport.markup.clearAll','Clear all markup')}
+          style=${{fontSize:'var(--text-2xs)',padding:'var(--space-1) var(--space-2)',background:'var(--bg-secondary)',color:'var(--text-muted)',border:'1px solid var(--border)',borderRadius:'var(--radius-sm)',cursor:'pointer',fontFamily:'inherit'}}>${_cc_t('common.clear','Clear')}</button>`}
         <button onClick=${function(){setMarkupTool3D(null);setMarkups3D([]);}}
-          title="Close markup toolbar"
+          title=${_cc_t('viewport.markup.closeToolbar','Close markup toolbar')}
           style=${{fontSize:'var(--text-2xs)',padding:'var(--space-1) var(--space-2)',background:'none',color:'var(--text-muted)',border:'none',cursor:'pointer',fontFamily:'inherit'}}>×</button>
       </div>`}
       ${s.switchingProject && html`<div style=${{
@@ -16013,8 +16013,8 @@ function startApp() {
       </div>`}
       ${s.workspace==='review' && s.diagnostics && perfOpen && html`<div class="cc-overlay-chrome" style=${{position:'absolute',top:'2.4rem',left:'var(--space-3)',padding:'var(--space-2) var(--space-3)',pointerEvents:'auto',fontSize:'var(--text-2xs)',color:'var(--text-secondary)',minWidth:180}}>
         <div style=${{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:'var(--space-1)'}}>
-          <span style=${{fontWeight:'var(--weight-semibold)',color:'var(--text-primary)',fontSize:'var(--text-xs)',textTransform:'uppercase',letterSpacing:'.06em'}}>Performance</span>
-          <button onClick=${function(){setPerfOpen(false)}} style=${{...S_BTN,padding:'0 var(--space-1)',background:'none',color:'var(--text-faint)',fontSize:'var(--text-xs)'}} aria-label="Close performance stats">✕</button>
+          <span style=${{fontWeight:'var(--weight-semibold)',color:'var(--text-primary)',fontSize:'var(--text-xs)',textTransform:'uppercase',letterSpacing:'.06em'}}>${_cc_t('viewport.perf.title','Performance')}</span>
+          <button onClick=${function(){setPerfOpen(false)}} style=${{...S_BTN,padding:'0 var(--space-1)',background:'none',color:'var(--text-faint)',fontSize:'var(--text-xs)'}} aria-label=${_cc_t('viewport.perf.closeAria','Close performance stats')}>✕</button>
         </div>
         <div style=${{display:'flex',justifyContent:'space-between',padding:'.1rem 0'}}>
           <span>FPS</span>
@@ -16055,8 +16055,8 @@ function startApp() {
       </div>`}
       ${(s.workspace==='coordinate' || s.workspace==='review') && s.diagnostics && detectProfile && detectProfOpen && html`<div class="cc-overlay-chrome" style=${{position:'absolute',top:'2.4rem',left:s.workspace==='review'?'5.5rem':'var(--space-3)',padding:'var(--space-2) var(--space-3)',pointerEvents:'auto',fontSize:'var(--text-2xs)',color:'var(--text-secondary)',minWidth:220}}>
         <div style=${{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:'var(--space-1)'}}>
-          <span style=${{fontWeight:'var(--weight-semibold)',color:'var(--text-primary)',fontSize:'var(--text-xs)',textTransform:'uppercase',letterSpacing:'.06em'}}>Last detection</span>
-          <button onClick=${function(){setDetectProfOpen(false)}} style=${{...S_BTN,padding:'0 var(--space-1)',background:'none',color:'var(--text-faint)',fontSize:'var(--text-xs)'}} aria-label="Close detection profile">✕</button>
+          <span style=${{fontWeight:'var(--weight-semibold)',color:'var(--text-primary)',fontSize:'var(--text-xs)',textTransform:'uppercase',letterSpacing:'.06em'}}>${_cc_t('viewport.perf.lastDetection','Last detection')}</span>
+          <button onClick=${function(){setDetectProfOpen(false)}} style=${{...S_BTN,padding:'0 var(--space-1)',background:'none',color:'var(--text-faint)',fontSize:'var(--text-xs)'}} aria-label=${_cc_t('viewport.perf.closeDetectionProfileAria','Close detection profile')}>✕</button>
         </div>
         <div style=${{display:'flex',justifyContent:'space-between',padding:'.1rem 0'}}>
           <span>Sweep & Prune</span><span style=${{color:'var(--text-primary)',fontFamily:'var(--font-mono)'}}>${detectProfile.sweep_and_prune_ms} ms</span>
@@ -16119,7 +16119,7 @@ function startApp() {
       ${s.floorPlan && html`<div style=${{...P,top:'9.75rem',right:'var(--space-2)',background:'var(--accent)',color:'#fff',pointerEvents:'auto',cursor:'pointer',display:'flex',alignItems:'center',gap:'var(--space-2)'}}
         onClick=${function(){d({t:A.FLOOR_PLAN,v:null})}}>
         <span>3D Section: ${s.floorPlan.storeyName} · ${_ccFormatElev(s.floorPlan.elevation+(s.floorPlan.cutHeight||1.2)/(window._ccPlanGeoFactor||1))}</span>
-        <span style=${{fontSize:'var(--text-xs)',opacity:.7}} title="Exit 3D section" aria-label="Exit floor plan view">✕</span>
+        <span style=${{fontSize:'var(--text-xs)',opacity:.7}} title=${_cc_t('viewport.exit3dSection','Exit 3D section')} aria-label=${_cc_t('viewport.exitFloorPlanAria','Exit floor plan view')}>✕</span>
       </div>`}
 
       ${s.walkMode && html`<div style=${{position:'absolute',inset:0,pointerEvents:'none',display:'flex',alignItems:'center',justifyContent:'center',zIndex:5}}>
@@ -16190,18 +16190,18 @@ function startApp() {
                 title=${m.type+' · click to fly to · double-click to rename'}>${labelTxt}</span>
               <button onClick=${function(e){e.stopPropagation();d({t:A.UPD_MEASUREMENT,id:m.id,u:{hidden:!m.hidden}});}}
                 style=${{...S_BTN,padding:'0 var(--space-1)',background:'none',color:m.hidden?'var(--text-faint)':'var(--text-secondary)',fontSize:'var(--text-2xs)'}}
-                title=${m.hidden?'Show':'Hide'}>${m.hidden?'⌐':'◉'}</button>
+                title=${m.hidden?_cc_t('common.show','Show'):_cc_t('common.hide','Hide')}>${m.hidden?'⌐':'◉'}</button>
               <button onClick=${function(e){e.stopPropagation();if(window._ccDeleteMeasurementGeo)window._ccDeleteMeasurementGeo(m.id);d({t:A.DEL_MEASUREMENT,id:m.id});}}
-                style=${{...S_BTN,padding:'0 var(--space-1)',background:'none',color:'var(--text-faint)',fontSize:'var(--text-2xs)'}} aria-label="Delete measurement">✕</button>
+                style=${{...S_BTN,padding:'0 var(--space-1)',background:'none',color:'var(--text-faint)',fontSize:'var(--text-2xs)'}} aria-label=${_cc_t('viewport.deleteMeasurementAria','Delete measurement')}>✕</button>
             </div>`;
           })}
         </div>`}
         <div style=${{display:'flex',gap:'var(--space-1)'}}>
-          <button onClick=${function(){if(_captureViewpoint){var vp=_captureViewpoint('Viewpoint '+(s.viewpoints.length+1));d({t:A.ADD_VIEWPOINT,v:vp});}}}
+          <button onClick=${function(){if(_captureViewpoint){var vp=_captureViewpoint(_cc_t('viewport.viewpointDefaultName','Viewpoint {n}',{n:s.viewpoints.length+1}));d({t:A.ADD_VIEWPOINT,v:vp});}}}
             style=${{...S_BTN,fontSize:'var(--text-xs)',padding:'var(--space-1) var(--space-2)',background:'var(--overlay-bg)',color:'var(--text-secondary)',border:'1px solid var(--border)',boxShadow:'var(--shadow-sm)'}}>
-            Save Viewpoint
+            ${_cc_t('viewport.saveViewpoint','Save Viewpoint')}
           </button>
-          ${s.viewpoints.length>0 && html`<span style=${{fontSize:'var(--text-2xs)',color:'var(--text-muted)',alignSelf:'center'}}>${s.viewpoints.length} saved</span>`}
+          ${s.viewpoints.length>0 && html`<span style=${{fontSize:'var(--text-2xs)',color:'var(--text-muted)',alignSelf:'center'}}>${_cc_t('viewport.nSaved','{n} saved',{n:s.viewpoints.length})}</span>`}
         </div>
         ${s.viewpoints.length>0 && html`<div class="cc-overlay-chrome" style=${{padding:'var(--space-1)',maxHeight:160,overflowY:'auto',width:220}}>
           ${s.viewpoints.map(function(vp){return html`<div key=${vp.id} style=${{display:'flex',alignItems:'center',gap:'var(--space-1)',padding:'var(--space-1)',borderBottom:'1px solid var(--border-subtle)',cursor:'pointer'}}
@@ -16212,7 +16212,7 @@ function startApp() {
               <div style=${{fontSize:'var(--text-2xs)',color:'var(--text-faint)'}}>${new Date(vp.createdAt).toLocaleTimeString()}</div>
             </div>
             <button onClick=${function(e){e.stopPropagation();d({t:A.DEL_VIEWPOINT,id:vp.id});}}
-              style=${{...S_BTN,padding:'0 var(--space-1)',background:'none',color:'var(--text-faint)',fontSize:'var(--text-2xs)'}} aria-label="Delete viewpoint">✕</button>
+              style=${{...S_BTN,padding:'0 var(--space-1)',background:'none',color:'var(--text-faint)',fontSize:'var(--text-2xs)'}} aria-label=${_cc_t('viewport.deleteViewpointAria','Delete viewpoint')}>✕</button>
           </div>`})}
         </div>`}
       </div>
