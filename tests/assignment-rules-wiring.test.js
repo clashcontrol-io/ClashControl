@@ -102,7 +102,7 @@ test('MERGE_CLASHES applies assignment rules to the merged result before it land
 test('the Assignment Rules panel section exists in StandardsPanel, using DISC (not STANDARD_DISCIPLINES)', () => {
   const panelStart = src.indexOf('<div style=${{fontSize:\'0.75rem\',fontWeight:700,color:\'var(--text-muted)\',textTransform:\'uppercase\',letterSpacing:\'.06em\',marginBottom:\'.4rem\'}}>${_cc_t(\'standards.assignmentRules\',\'Assignment rules\')}</div>');
   assert.ok(panelStart !== -1, 'Assignment rules panel section not found');
-  const panelEnd = src.indexOf('+ Add assignment rule', panelStart);
+  const panelEnd = src.indexOf("_cc_t('rules.addAssignmentRule'", panelStart);
   assert.ok(panelEnd !== -1 && panelEnd > panelStart);
   const panelSrc = src.slice(panelStart - 400, panelEnd + 50);
 

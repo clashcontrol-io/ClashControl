@@ -20521,23 +20521,23 @@ function startApp() {
     var nPairs = pairCount();
     return html`<div>
       <div style=${{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:'var(--space-2)'}}>
-        <span style=${{fontSize:'var(--text-xs)',fontWeight:'var(--weight-semibold)',color:'var(--text-primary)'}}>What do you want to check?</span>
-        <span style=${{fontSize:'var(--text-2xs)',color:'var(--text-faint)',fontFamily:'var(--font-mono)'}}>${nModels} model${nModels===1?'':'s'} loaded${mode!=='all'?(' · ~'+nPairs+' pair'+(nPairs===1?'':'s')):''}</span>
+        <span style=${{fontSize:'var(--text-xs)',fontWeight:'var(--weight-semibold)',color:'var(--text-primary)'}}>${_cc_t('runDetection.whatToCheck','What do you want to check?')}</span>
+        <span style=${{fontSize:'var(--text-2xs)',color:'var(--text-faint)',fontFamily:'var(--font-mono)'}}>${_cc_t('runDetection.nModelsLoaded','{n} model{s} loaded',{n:nModels,s:nModels===1?'':'s'})}${mode!=='all'?(' · '+_cc_t('runDetection.approxPairs','~{n} pair{s}',{n:nPairs,s:nPairs===1?'':'s'})):''}</span>
       </div>
-      <div role="group" aria-label="Test scope" style=${{display:'inline-flex',gap:0,borderRadius:'var(--radius-xs)',overflow:'hidden',marginBottom:'var(--space-2)'}}>
-        <button onClick=${function(){setMode('all');}} aria-pressed=${mode==='all'} style=${{...SEG(mode==='all'),borderRadius:'var(--radius-xs) 0 0 var(--radius-xs)'}}>All ↔ All</button>
-        <button onClick=${function(){setMode('discipline');}} aria-pressed=${mode==='discipline'} style=${{...SEG(mode==='discipline'),borderLeft:'none'}}>By discipline</button>
-        <button onClick=${function(){setMode('model');}} aria-pressed=${mode==='model'} style=${{...SEG(mode==='model'),borderRadius:'0 var(--radius-xs) var(--radius-xs) 0',borderLeft:'none'}}>By model</button>
+      <div role="group" aria-label=${_cc_t('runDetection.testScopeAria','Test scope')} style=${{display:'inline-flex',gap:0,borderRadius:'var(--radius-xs)',overflow:'hidden',marginBottom:'var(--space-2)'}}>
+        <button onClick=${function(){setMode('all');}} aria-pressed=${mode==='all'} style=${{...SEG(mode==='all'),borderRadius:'var(--radius-xs) 0 0 var(--radius-xs)'}}>${_cc_t('runDetection.allVsAll','All ↔ All')}</button>
+        <button onClick=${function(){setMode('discipline');}} aria-pressed=${mode==='discipline'} style=${{...SEG(mode==='discipline'),borderLeft:'none'}}>${_cc_t('runDetection.byDiscipline','By discipline')}</button>
+        <button onClick=${function(){setMode('model');}} aria-pressed=${mode==='model'} style=${{...SEG(mode==='model'),borderRadius:'0 var(--radius-xs) var(--radius-xs) 0',borderLeft:'none'}}>${_cc_t('runDetection.byModel','By model')}</button>
       </div>
       ${mode === 'all'
-        ? html`<div style=${{fontSize:'var(--text-2xs)',color:'var(--text-faint)',padding:'var(--space-1)'}}>Every loaded model is clashed against every other. ${nModels<2?'Load at least 2 models, or enable self-clash below.':''}</div>`
+        ? html`<div style=${{fontSize:'var(--text-2xs)',color:'var(--text-faint)',padding:'var(--space-1)'}}>${_cc_t('runDetection.everyModelClashed','Every loaded model is clashed against every other.')} ${nModels<2?_cc_t('runDetection.loadAtLeast2','Load at least 2 models, or enable self-clash below.'):''}</div>`
         : html`<div style=${{display:'flex',flexDirection:'column',gap:'var(--space-1)'}}>
           <div style=${{display:'flex',alignItems:'center',gap:'var(--space-2)'}}>
-            <span style=${{fontSize:'var(--text-xs)',color:'var(--text-secondary)',whiteSpace:'nowrap',minWidth:48}}>Side A</span>
+            <span style=${{fontSize:'var(--text-xs)',color:'var(--text-secondary)',whiteSpace:'nowrap',minWidth:48}}>${_cc_t('runDetection.sideA','Side A')}</span>
             ${_modelSelect(rules.modelA, 'modelA', models, d)}
           </div>
           <div style=${{display:'flex',alignItems:'center',gap:'var(--space-2)'}}>
-            <span style=${{fontSize:'var(--text-xs)',color:'var(--text-secondary)',whiteSpace:'nowrap',minWidth:48}}>Side B</span>
+            <span style=${{fontSize:'var(--text-xs)',color:'var(--text-secondary)',whiteSpace:'nowrap',minWidth:48}}>${_cc_t('runDetection.sideB','Side B')}</span>
             ${_modelSelect(rules.modelB, 'modelB', models, d)}
           </div>
         </div>`}
@@ -22832,11 +22832,11 @@ function startApp() {
               <span onClick=${ch.count>0?function(){toggleExp(key);}:null}
                 style=${{fontSize:'0.72rem',color:ch.count===0?'var(--text-faint)':'var(--text-secondary)',flex:1,cursor:ch.count>0?'pointer':'default'}}>${ch.label}</span>
               ${ch.count>0 && html`<button onClick=${function(){highlightCheckElements(ch);}}
-                title="Highlight in 3D"
-                style=${{fontSize:'0.57rem',padding:'1px 4px',background:'none',border:'1px solid '+col,borderRadius:3,color:col,cursor:'pointer',lineHeight:1.2,fontFamily:'inherit'}}>3D</button>`}
+                title=${_cc_t('dq.highlightIn3D','Highlight in 3D')}
+                style=${{fontSize:'0.57rem',padding:'1px 4px',background:'none',border:'1px solid '+col,borderRadius:3,color:col,cursor:'pointer',lineHeight:1.2,fontFamily:'inherit'}}>${_cc_t('dq.threeD','3D')}</button>`}
               ${ch.count>0 && html`<button onClick=${function(){createIssueFromCheck(key, ch);}}
-                title="Create issue from this check"
-                style=${{fontSize:'0.57rem',padding:'1px 4px',background:'none',border:'1px solid var(--border)',borderRadius:3,color:'var(--text-muted)',cursor:'pointer',lineHeight:1.2,fontFamily:'inherit'}}>+issue</button>`}
+                title=${_cc_t('dq.createIssueFromCheck','Create issue from this check')}
+                style=${{fontSize:'0.57rem',padding:'1px 4px',background:'none',border:'1px solid var(--border)',borderRadius:3,color:'var(--text-muted)',cursor:'pointer',lineHeight:1.2,fontFamily:'inherit'}}>${_cc_t('dq.plusIssue','+issue')}</button>`}
               ${ch.count>0 && html`<span onClick=${function(){toggleExp(key);}} style=${{fontSize:'0.57rem',color:'var(--text-faint)',cursor:'pointer'}}>${isExp?'▲':'▼'}</span>`}
             </div>
             ${isExp && ch.count>0 && html`<div style=${{padding:'.2rem .6rem .3rem 2.5rem',background:'var(--bg-primary)'}}>
@@ -23074,23 +23074,23 @@ function startApp() {
               ${qc._total} elements · ${totalIssues+totalBim+totalIls} finding${totalIssues+totalBim+totalIls!==1?'s':''}
             </span>
             ${activeDistKey && html`<button onClick=${function(){colorByDistribution(activeDistKey);}}
-              style=${{fontSize:'0.63rem',padding:'.15rem .4rem',background:'var(--bg-secondary)',color:'var(--text-muted)',border:'1px solid var(--border)',borderRadius:4,cursor:'pointer',fontFamily:'inherit'}}>Clear color</button>`}
+              style=${{fontSize:'0.63rem',padding:'.15rem .4rem',background:'var(--bg-secondary)',color:'var(--text-muted)',border:'1px solid var(--border)',borderRadius:4,cursor:'pointer',fontFamily:'inherit'}}>${_cc_t('dq.clearColor','Clear color')}</button>`}
             <button onClick=${function(){if(_unghostAll)_unghostAll();var S=window._ccState3d;if(S&&S._dqOrigColors){S._dqOrigColors.forEach(function(e){if(e.mesh&&e.mesh.material)e.mesh.material.color.copy(e.color);});S._dqOrigColors=null;}setActiveDistKey(null);invalidate();}}
-              style=${{fontSize:'0.63rem',padding:'.15rem .4rem',background:'var(--bg-secondary)',color:'var(--text-muted)',border:'1px solid var(--border)',borderRadius:4,cursor:'pointer',fontFamily:'inherit'}}>Reset view</button>
+              style=${{fontSize:'0.63rem',padding:'.15rem .4rem',background:'var(--bg-secondary)',color:'var(--text-muted)',border:'1px solid var(--border)',borderRadius:4,cursor:'pointer',fontFamily:'inherit'}}>${_cc_t('dq.resetView','Reset view')}</button>
           </div>
           <div style=${{display:'flex',gap:'.3rem',flexWrap:'wrap'}}>
-            <button onClick=${function(){ if (window._ccDataQualityReport) window._ccDataQualityReport(s); }} title="Open a print-ready report (Quality Score, BIM basics, ILS/NL-SfB, RVB BIM Norm, accessibility)"
+            <button onClick=${function(){ if (window._ccDataQualityReport) window._ccDataQualityReport(s); }} title=${_cc_t('dq.printReportTitle','Open a print-ready report (Quality Score, BIM basics, ILS/NL-SfB, RVB BIM Norm, accessibility)')}
               style=${{flex:1,fontSize:'0.69rem',padding:'.3rem .5rem',background:'var(--bg-secondary)',color:'var(--text-secondary)',border:'1px solid var(--border)',borderRadius:4,cursor:'pointer',fontWeight:600,fontFamily:'inherit',whiteSpace:'nowrap'}}>
-              ⎙ Print report
+              ⎙ ${_cc_t('dq.printReport','Print report')}
             </button>
-            <button onClick=${exportCSV} title="Download all findings as CSV"
+            <button onClick=${exportCSV} title=${_cc_t('dq.downloadCsvTitle','Download all findings as CSV')}
               style=${{flex:1,fontSize:'0.69rem',padding:'.3rem .5rem',background:'var(--bg-secondary)',color:'var(--text-secondary)',border:'1px solid var(--border)',borderRadius:4,cursor:'pointer',fontWeight:600,fontFamily:'inherit',whiteSpace:'nowrap'}}>
-              ↓ Export CSV
+              ↓ ${_cc_t('dq.exportCsv','Export CSV')}
             </button>
             ${totalIssues+totalBim+totalIls > 0 && html`<button onClick=${createAllIssues}
-              title=${'Create '+(totalIssues+totalBim+totalIls)+' issues from all failing checks'}
+              title=${_cc_t('dq.createNIssuesTitle','Create {n} issues from all failing checks',{n:totalIssues+totalBim+totalIls})}
               style=${{flex:1,fontSize:'0.69rem',padding:'.3rem .5rem',background:'var(--accent-bg)',color:'var(--accent)',border:'1px solid var(--accent-subtle)',borderRadius:4,cursor:'pointer',fontWeight:600,fontFamily:'inherit',whiteSpace:'nowrap'}}>
-              + Create all issues
+              + ${_cc_t('dq.createAllIssues','Create all issues')}
             </button>`}
           </div>
         </div>`}
@@ -23560,45 +23560,44 @@ function startApp() {
             return html`<div key=${r.id} style=${{padding:'.4rem',background:'var(--bg-secondary)',borderRadius:6,marginBottom:'.35rem',border:'1px solid var(--border-subtle)'}}>
               <div style=${{display:'flex',gap:'.3rem',alignItems:'center',marginBottom:'.25rem'}}>
                 <select value=${r.discipline1} onChange=${function(e){d({t:'UPD_ASSIGN_RULE',id:r.id,u:{discipline1:e.target.value}});}} style=${selStyle}>
-                  <option value="any">Any discipline</option>
+                  <option value="any">${_cc_t('rules.anyDiscipline','Any discipline')}</option>
                   ${DISC.map(function(dd){return html`<option key=${dd.id} value=${dd.id}>${dd.label}</option>`})}
                 </select>
                 <span style=${{fontSize:'0.69rem',color:'var(--text-faint)'}}>×</span>
                 <select value=${r.discipline2} onChange=${function(e){d({t:'UPD_ASSIGN_RULE',id:r.id,u:{discipline2:e.target.value}});}} style=${selStyle}>
-                  <option value="any">Any discipline</option>
+                  <option value="any">${_cc_t('rules.anyDiscipline','Any discipline')}</option>
                   ${DISC.map(function(dd){return html`<option key=${dd.id} value=${dd.id}>${dd.label}</option>`})}
                 </select>
-                <button onClick=${function(){d({t:'DEL_ASSIGN_RULE',id:r.id});}} title="Remove rule"
+                <button onClick=${function(){d({t:'DEL_ASSIGN_RULE',id:r.id});}} title=${_cc_t('rules.removeRule','Remove rule')}
                   style=${{background:'none',border:'none',color:'#f87171',cursor:'pointer',fontSize:'0.86rem',padding:'0 .2rem',lineHeight:1}}>×</button>
               </div>
               <div style=${{display:'flex',gap:'.3rem',alignItems:'center'}}>
-                <select value=${r.storey||'any'} onChange=${function(e){d({t:'UPD_ASSIGN_RULE',id:r.id,u:{storey:e.target.value}});}} style=${selStyle} title="Storey">
-                  <option value="any">Any storey</option>
+                <select value=${r.storey||'any'} onChange=${function(e){d({t:'UPD_ASSIGN_RULE',id:r.id,u:{storey:e.target.value}});}} style=${selStyle} title=${_cc_t('rules.storey','Storey')}>
+                  <option value="any">${_cc_t('rules.anyStorey','Any storey')}</option>
                   ${storeys.map(function(st){return html`<option key=${st} value=${st}>${st}</option>`})}
                 </select>
-                <input type="text" placeholder="Assignee (name/email)" value=${r.assignee||''}
+                <input type="text" placeholder=${_cc_t('rules.assigneePlaceholder','Assignee (name/email)')} value=${r.assignee||''}
                   onInput=${function(e){d({t:'UPD_ASSIGN_RULE',id:r.id,u:{assignee:e.target.value}});}}
                   style=${Object.assign({},rowInputStyle,{flex:1.4})} />
-                <select value=${r.priority||''} onChange=${function(e){d({t:'UPD_ASSIGN_RULE',id:r.id,u:{priority:e.target.value}});}} style=${selStyle} title="Priority">
-                  <option value="">No priority</option>
-                  <option value="critical">Critical</option>
-                  <option value="high">High</option>
-                  <option value="normal">Normal</option>
-                  <option value="low">Low</option>
+                <select value=${r.priority||''} onChange=${function(e){d({t:'UPD_ASSIGN_RULE',id:r.id,u:{priority:e.target.value}});}} style=${selStyle} title=${_cc_t('rules.priority','Priority')}>
+                  <option value="">${_cc_t('rules.noPriority','No priority')}</option>
+                  <option value="critical">${_cc_t('priority.critical','Critical')}</option>
+                  <option value="high">${_cc_t('priority.high','High')}</option>
+                  <option value="normal">${_cc_t('priority.normal','Normal')}</option>
+                  <option value="low">${_cc_t('priority.low','Low')}</option>
                 </select>
               </div>
             </div>`;
           })}
           <button onClick=${function(){d({t:'ADD_ASSIGN_RULE',v:{}});}}
-            style=${{fontSize:'0.69rem',padding:'.3rem .6rem',background:'var(--bg-secondary)',color:'var(--accent)',border:'1px solid var(--accent-subtle)',borderRadius:'var(--radius-xs)',cursor:'pointer',fontWeight:600,width:'100%'}}>+ Add assignment rule</button>
+            style=${{fontSize:'0.69rem',padding:'.3rem .6rem',background:'var(--bg-secondary)',color:'var(--accent)',border:'1px solid var(--accent-subtle)',borderRadius:'var(--radius-xs)',cursor:'pointer',fontWeight:600,width:'100%'}}>+ ${_cc_t('rules.addAssignmentRule','Add assignment rule')}</button>
         </div>`;
       })()}
 
       ${typeof window._ccVisibilityPresets === 'function' && html`<div style=${{marginTop:'1.2rem',paddingTop:'.8rem',borderTop:'2px solid var(--border)'}}>
-        <div style=${{fontSize:'0.75rem',fontWeight:700,color:'var(--text-muted)',textTransform:'uppercase',letterSpacing:'.06em',marginBottom:'.4rem'}}>Visibility & coverage checks</div>
+        <div style=${{fontSize:'0.75rem',fontWeight:700,color:'var(--text-muted)',textTransform:'uppercase',letterSpacing:'.06em',marginBottom:'.4rem'}}>${_cc_t('rules.visibilityCoverageChecks','Visibility & coverage checks')}</div>
         <div style=${{fontSize:'0.65rem',color:'var(--text-faint)',marginBottom:'.5rem',lineHeight:1.4}}>
-          Sight-line obstruction (third clash category — exit signs, signage, line-of-sight) and inverse coverage (camera, sensor, observation gaps).
-          Each preset runs immediately and merges results into the Conflicts panel. ⌘K also exposes the same entries.
+          ${_cc_t('rules.visibilityCoverageDesc','Sight-line obstruction (third clash category — exit signs, signage, line-of-sight) and inverse coverage (camera, sensor, observation gaps). Each preset runs immediately and merges results into the Conflicts panel. \u2318K also exposes the same entries.')}
         </div>
         ${(window._ccVisibilityPresets() || []).map(function(preset){
           var isCov = preset.mode === 'coverage';

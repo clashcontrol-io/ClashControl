@@ -20,7 +20,7 @@ test('DataQualityPanel has a Print report button calling window._ccDataQualityRe
   const panelEnd = src.indexOf('\n  function ', panelStart + 40); // next top-level function after the panel
   const panelSrc = src.slice(panelStart, panelEnd === -1 ? panelStart + 20000 : panelEnd);
   assert.ok(/window\._ccDataQualityReport\(s\)/.test(panelSrc), 'Print report button must call window._ccDataQualityReport(s)');
-  assert.ok(/⎙ Print report/.test(panelSrc));
+  assert.ok(/⎙ \$\{_cc_t\('dq\.printReport','Print report'\)\}/.test(panelSrc));
 });
 
 test('the DQ panel\'s CSV button no longer shares a label with the print report', () => {
@@ -29,7 +29,7 @@ test('the DQ panel\'s CSV button no longer shares a label with the print report'
   // would have been called "Export report", which is exactly the confusion
   // this rename fixes.
   assert.ok(!/↓ Export report/.test(src), 'the CSV button label must not collide with the new print report');
-  assert.ok(/↓ Export CSV/.test(src));
+  assert.ok(/↓ \$\{_cc_t\('dq\.exportCsv','Export CSV'\)\}/.test(src));
 });
 
 test('IssuePanel\'s Export flyout offers both the clash report and the data quality report', () => {
