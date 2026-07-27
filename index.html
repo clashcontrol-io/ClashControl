@@ -33954,12 +33954,12 @@ function startApp() {
     }}>
       <span style=${{fontSize:'1.1rem',color:'var(--accent)',flexShrink:0}}>\u2139</span>
       <span style=${{flex:1}}>
-        Help improve ClashControl by sharing <strong style=${{color:'var(--text-primary)'}}>minimised clash metrics and sanitised command feedback</strong>. Model files and coordinates are never uploaded. Nothing is shared unless you allow it, and you can change this anytime in Settings.
+        ${_cc_t('privacyBanner.helpImprove','Help improve ClashControl by sharing')} <strong style=${{color:'var(--text-primary)'}}>${_cc_t('privacyBanner.minimisedMetrics','minimised clash metrics and sanitised command feedback')}</strong>. ${_cc_t('privacyBanner.neverUploaded','Model files and coordinates are never uploaded. Nothing is shared unless you allow it, and you can change this anytime in Settings.')}
       </span>
       <button onClick=${function(){choose('denied');}}
-        style=${{...S_BTN,padding:'.35rem .55rem',background:'transparent',border:'1px solid var(--border)',borderRadius:6,color:'var(--text-secondary)',fontSize:'0.74rem',whiteSpace:'nowrap',flexShrink:0}}>No thanks</button>
+        style=${{...S_BTN,padding:'.35rem .55rem',background:'transparent',border:'1px solid var(--border)',borderRadius:6,color:'var(--text-secondary)',fontSize:'0.74rem',whiteSpace:'nowrap',flexShrink:0}}>${_cc_t('privacyBanner.noThanks','No thanks')}</button>
       <button onClick=${function(){choose('granted');}}
-        style=${{...S_BTN,padding:'.35rem .65rem',background:'var(--accent)',border:'none',borderRadius:6,color:'#fff',fontSize:'0.74rem',fontWeight:600,whiteSpace:'nowrap',flexShrink:0}}>Allow sharing</button>
+        style=${{...S_BTN,padding:'.35rem .65rem',background:'var(--accent)',border:'none',borderRadius:6,color:'#fff',fontSize:'0.74rem',fontWeight:600,whiteSpace:'nowrap',flexShrink:0}}>${_cc_t('privacyBanner.allowSharing','Allow sharing')}</button>
     </div>`;
   }
 
@@ -34012,20 +34012,20 @@ function startApp() {
     var op;
     if (kind === 'detect') {
       op = {
-        label: 'Checking for clashes…',
-        detail: slow ? 'This is taking longer than usual — large models can take a minute.' : null,
+        label: _cc_t('opCenter.checkingClashes','Checking for clashes…'),
+        detail: slow ? _cc_t('opCenter.detectSlowDetail','This is taking longer than usual — large models can take a minute.') : null,
         onCancel: function(){ try { if (window._ccCancelDetection) window._ccCancelDetection(); else d({t:'STOP_DETECT'}); } catch(e){} },
       };
     } else if (kind === 'load') {
       var pendingCount = (lcSnap && typeof lcSnap.pending === 'number') ? lcSnap.pending : null;
       op = {
-        label: loadMsg || 'Loading model…',
-        detail: (pendingCount ? pendingCount + ' pending' : null) || (slow ? 'Large files can take a while on the first parse.' : null),
+        label: loadMsg || _cc_t('opCenter.loadingModel','Loading model…'),
+        detail: (pendingCount ? _cc_t('opCenter.pendingCount','{n} pending',{n:pendingCount}) : null) || (slow ? _cc_t('opCenter.loadSlowDetail','Large files can take a while on the first parse.') : null),
         onCancel: function(){ try { if (window._ccAbortLoading) window._ccAbortLoading(); } catch(e){} },
       };
     } else {
       op = {
-        label: revit.reconnecting ? 'Reconnecting to Revit…' : 'Pulling from Revit…',
+        label: revit.reconnecting ? _cc_t('opCenter.reconnectingRevit','Reconnecting to Revit…') : _cc_t('opCenter.pullingRevit','Pulling from Revit…'),
         detail: null,
         onCancel: function(){
           try { if (window._revitDirectCancelExport) window._revitDirectCancelExport(); } catch(e){}
@@ -34050,7 +34050,7 @@ function startApp() {
         ${op.detail && html`<div style=${{fontSize:'0.72rem',color:'var(--text-faint)',marginTop:'.1rem'}}>${op.detail}</div>`}
       </span>
       ${op.onCancel && html`<button onClick=${op.onCancel}
-        style=${{...S_BTN,padding:'.3rem .55rem',background:'transparent',border:'1px solid var(--border)',borderRadius:6,color:'var(--text-secondary)',fontSize:'0.72rem',whiteSpace:'nowrap',flexShrink:0}}>Cancel</button>`}
+        style=${{...S_BTN,padding:'.3rem .55rem',background:'transparent',border:'1px solid var(--border)',borderRadius:6,color:'var(--text-secondary)',fontSize:'0.72rem',whiteSpace:'nowrap',flexShrink:0}}>${_cc_t('common.cancel','Cancel')}</button>`}
     </div>`;
   }
 
