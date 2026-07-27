@@ -422,8 +422,21 @@ English-speaking maintainers triage it, not to the end user's screen.~~ (all 202
 CmdKPalette / `_ccBuildCommands` deliberately deferred — its command list (workspace switches, view
 tools, section/measure tools, visibility-check presets, etc.) is very large (~100+ label/keyword
 pairs) and lower priority than user-facing panels; flagged as the next big target.
-**Remaining (long tail, can proceed independently in future sessions):** `CmdKPalette`, `ExportBar`,
-`ClashSetupCard`, `NLCommandPanel`, `LeftRail`, `PrivacyBanner`, `OperationCenter`, `TutorialPortal`,
+~~`ExportBar` in full (all alert() messages, 2D Export header, DXF/PNG/PDF/SVG button labels, footer
+hint text).~~ ~~`ClashSetupCard` (embedded in NL chat) in full: All-models/discipline-models option
+labels, card title, self-clash-mode banner, Set A/Set B labels, all 3 clash-type radio
+labels+descriptions (reusing `run.*` keys from `ClashRulesPanel`/`RunDetectionModal` where
+identical), gap-range/max-gap label, filtering toggles, check-within/ignore-overlaps labels, exclude-
+IFC-types disclosure, Cancel/Run Detection buttons.~~ ~~`NLCommandPanel`'s primary visible chat UI:
+greeting message, new-project-loaded message, detection-stopped/found-N-clashes result messages, all
+11 rotating "still running" flavor status lines (both docked and floating render paths — deduped via
+a whole-string swap that verified exact match count first), Stop/Send buttons, input placeholder,
+Thinking/Clear-chat-history/Model-loading text.~~ NLCommandPanel's deep internal NL command-parsing
+logic (the giant regex-based offline-command interpreter later in the same function) deliberately
+NOT touched this pass — it's ~600 more lines of matching logic, not primraily user-facing chrome;
+flagged as a future target alongside CmdKPalette. (all 2026-07-27)
+**Remaining (long tail, can proceed independently in future sessions):** `CmdKPalette`,
+`NLCommandPanel`'s deep command-parsing logic, `LeftRail`, `PrivacyBanner`, `OperationCenter`,
 `AIChatPanel`, `ClashChips`, `WelcomePopup`, `WorkspaceTabs`, `AvatarMenu`, `ResponsiveToolGroup`,
 `DesktopTopBar`, `MobileNav`, `RevitBridgePanel`, `IDSValidationPanel`,
 `PropBlock`/`PropDiffView`/`ClashProps`, `VirtualList`, `GuidedTour`, `ColorLegend`, `ViewCube`,
