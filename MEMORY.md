@@ -1361,7 +1361,7 @@ main post-#682 and merged the four default-off safety migrations (`concurrencyV2
 `geoCacheV8`, `batchedSectionsV2`, `rendererV2`; see `safety-migrations.js`) plus the
 incident-regression test pack. Full suite green after rebase. See PR #683.
 
-On branch `claude/clashcontrol-competitive-analysis-gra92c` (2026-07-13) — competitive analysis vs
+On branch `claude/clashcontrol-competitive-analysis-gra92c` (2026-07-13) — competitive analysis vs  **[STALE?]**
 Solibri/Navisworks/OSS (IfcOpenShell, ThatOpen, xeokit, Speckle, BIMcollab, Revizto, buildingSMART IDS)
 + Wave-0 correctness fixes:
 
@@ -1430,7 +1430,7 @@ Solibri/Navisworks/OSS (IfcOpenShell, ThatOpen, xeokit, Speckle, BIMcollab, Revi
   (stay on #679 unless a piece of work is large enough to need its own — `ClashControlEngine` is the one
   structural exception, separate repo). Continuing on the same branch/PR:
 - ~~**Wave 1.1-1.3: the default clash matrix (the triage funnel's first, highest-leverage lever)**~~
-  (2026-07-13):
+  (2026-07-13):  **[STALE?]**
   - Per-element discipline classification: `_DISC_TYPE_MAP` (flat IfcType→discipline, extracted from
     `detectDiscipline`'s inline tables, behavior-preserving) + `_ccElementDiscipline(el, modelDiscipline)`
     (discriminating type wins, else falls back to the model's own vote) — closes the per-model-granularity
@@ -1645,7 +1645,7 @@ Solibri/Navisworks/OSS (IfcOpenShell, ThatOpen, xeokit, Speckle, BIMcollab, Revi
     checks as exportable IDS specs — the check ENGINE is done, the export-as-IDS representation is a
     separate, smaller follow-up if wanted.
 - ~~**Check 2: cross-checked CC's BCF handling against `openaec-bcf-platform`'s Rust implementation**~~
-  (2026-07-13). Unblocked the prior sub-path fetch failure by fetching `Cargo.toml` first (revealed the
+  (2026-07-13). Unblocked the prior sub-path fetch failure by fetching `Cargo.toml` first (revealed the  **[STALE?]**
   `crates/bcf-core` + `crates/bcf-server` workspace layout) then `crates/bcf-core/src/{lib,visinfo,
   xml_types}.rs` directly via `raw.githubusercontent.com` — general lesson: when a repo root page works but
   `/tree/<branch>/<path>` 404s, fetch a known-likely file path directly instead of trying to browse.
@@ -2300,6 +2300,21 @@ recorded as fully explained — a genuinely separate, much smaller follow-up if 
 <!-- END:active-work -->
 
 <!-- BEGIN:session-log -->
+### 2026-07-28
+**Summary:** 5 commit(s) landed (no AI summary — set ANTHROPIC_API_KEY secret for richer entries).
+**Changed:** see commits
+**Notable:** —
+
+<details><summary>Commits</summary>
+
+- b155121 chore: daily memory sync 2026-07-27
+- 570ebd8 chore: bump version to 7.3.3
+- b4ff2d5 i18n: long-tail string retrofit to _cc_t() (#709)
+- 0f1556d chore: bump version to 7.3.2
+- 87c4f99 i18n + regional-regulation pack scaffold (#708)
+
+</details>
+
 ### 2026-07-27
 **Summary:** 5 commit(s) landed (no AI summary — set ANTHROPIC_API_KEY secret for richer entries).
 **Changed:** see commits
@@ -3263,20 +3278,12 @@ recorded as fully explained — a genuinely separate, much smaller follow-up if 
 - 48187ef chore: daily memory sync 2026-05-28
 
 </details>
-
-### 2026-05-28
-**Summary:** 1 commit(s) landed (no AI summary — set ANTHROPIC_API_KEY secret for richer entries).
-**Changed:** see commits
-**Notable:** —
-
-<details><summary>Commits</summary>
-
-- 2ef0a47 chore: daily memory sync 2026-05-27
-
-</details>
 <!-- END:session-log -->
 
 <!-- BEGIN:cleanup-log -->
+### 2026-07-28 — pruned session entry 2026-05-28
+**Reason:** Entry is older than 60 days.
+
 ### 2026-07-27 — pruned session entry 2026-05-27
 **Reason:** Entry is older than 60 days.
 
