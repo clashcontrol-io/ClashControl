@@ -1259,7 +1259,7 @@ fetching the literal URL `'+sn.img+'` from the report-builder string on every pa
 Smoke now supports `CC_CHROMIUM_EXECUTABLE` + `CC_BROWSER_OFFLINE_DEPS=1` (context-level routing so the service
 worker's fetches hit the mirror too) for restricted runners.
 
-Post-merge follow-up (branch `claude/task-pending-55wmp1`, restarted from main after #681 merged, 2026-07-14) —
+Post-merge follow-up (branch `claude/task-pending-55wmp1`, restarted from main after #681 merged, 2026-07-14) —  **[STALE?]**
 the three open points from the stress-test report, now done:
 
 - **Exhaustive tool-combination sweep** — drove 40 tool combos + weird combinations (section/walk/2D/measure/
@@ -1283,7 +1283,7 @@ the three open points from the stress-test report, now done:
 Synthetic fixtures live in scratchpad/serve/fixtures (medium ~230 / large ~2.8k / huge ~10k / mega ~41k products,
 plus dense.ifc for cluster testing). All 54 tests/*.test.js pass throughout.
 
-On branch `claude/task-pending-55wmp1` (2026-07-14) — sandboxed stress-testing of the live app
+On branch `claude/task-pending-55wmp1` (2026-07-14) — sandboxed stress-testing of the live app  **[STALE?]**
 (headless Chromium + Playwright, synthetic IFC fixtures up to ~41k products) surfaced and fixed
 three genuine, root-caused, regression-tested bugs:
 
@@ -1306,7 +1306,7 @@ three genuine, root-caused, regression-tested bugs:
   primitive) with a `keepPivot` opt-out for right-click. Now every selection path recentres the pivot (verified
   0.00 m on all paths; was 19.23 m for tree/API). Matches the user's expectation "selected element = centre of rotation".
 
-Follow-up wave (same branch, 2026-07-14) — the "still open" items above, now built + verified:
+Follow-up wave (same branch, 2026-07-14) — the "still open" items above, now built + verified:  **[STALE?]**
 
 - **Federation same-discipline 0-clash trap, FIXED** — two same-discipline models federated returned 0 clashes
   in 0.2s with no explanation (`excludeSameDiscipline` default skips every cross-model pair). Now a toast on
@@ -1336,7 +1336,7 @@ All 54 `tests/*.test.js` pass after every change. PR #681 carries all of the abo
 compare-page "make ClashControl win the 3 verdicts" copy edit — per the owner, those category wins should be
 earned by the product, not spun in marketing copy.
 
-On branch `codex/phase0-trust-hardening` (2026-07-14) — narrowly scoped trust and
+On branch `codex/phase0-trust-hardening` (2026-07-14) — narrowly scoped trust and  **[STALE?]**
 release hardening requested after a codebase review. No geometry, IFC-loader,
 renderer, clash-engine, BCF, or Revit-protocol changes are in scope.
 
@@ -1345,7 +1345,7 @@ renderer, clash-engine, BCF, or Revit-protocol changes are in scope.
   auto-seeded grants are re-prompted.~~ (2026-07-14)
 - ~~`/api/training` now caps request/batch/field/nested JSON sizes, validates known
   record types, clamps numbers, and repeats path/email minimisation server-side.~~
-  (2026-07-14)
+  (2026-07-14)  **[STALE?]**
 - ~~Smart Bridge now implements cached `GET /update`, safely degrades if GitHub is
   unavailable, and links to a manual checksum-published release. Unsigned automatic
   binary replacement was removed; `POST /update` returns manual guidance.~~ (2026-07-14)
@@ -1356,7 +1356,7 @@ renderer, clash-engine, BCF, or Revit-protocol changes are in scope.
   pushes no longer bump the app, issue links use the canonical repo, and the full
   Node suite passes (386/386) plus all standalone JS syntax checks.~~ (2026-07-14)
 
-Follow-up (2026-07-14, this branch) — rebased the above trust-hardening series onto
+Follow-up (2026-07-14, this branch) — rebased the above trust-hardening series onto  **[STALE?]**
 main post-#682 and merged the four default-off safety migrations (`concurrencyV2`,
 `geoCacheV8`, `batchedSectionsV2`, `rendererV2`; see `safety-migrations.js`) plus the
 incident-regression test pack. Full suite green after rebase. See PR #683.
@@ -2300,6 +2300,17 @@ recorded as fully explained — a genuinely separate, much smaller follow-up if 
 <!-- END:active-work -->
 
 <!-- BEGIN:session-log -->
+### 2026-07-29
+**Summary:** 1 commit(s) landed (no AI summary — set ANTHROPIC_API_KEY secret for richer entries).
+**Changed:** see commits
+**Notable:** —
+
+<details><summary>Commits</summary>
+
+- a8c667c chore: daily memory sync 2026-07-28
+
+</details>
+
 ### 2026-07-28
 **Summary:** 5 commit(s) landed (no AI summary — set ANTHROPIC_API_KEY secret for richer entries).
 **Changed:** see commits
@@ -3259,28 +3270,12 @@ recorded as fully explained — a genuinely separate, much smaller follow-up if 
 - 7c82c74 chore: bump version to 5.12.7
 
 </details>
-
-### 2026-05-29
-**Summary:** 9 commit(s) landed (no AI summary — set ANTHROPIC_API_KEY secret for richer entries).
-**Changed:** see commits
-**Notable:** —
-
-<details><summary>Commits</summary>
-
-- ab6fb7c chore: bump version to 5.12.9
-- 243ddcf Section gizmo: constant-size handles, follow plane, fix stuck drag & ring offset
-- a30b9bd chore: bump version to 5.12.8
-- b356ac8 Make section-plane drag track the cursor and easier to grab
-- 7c82c74 chore: bump version to 5.12.7
-- 4348944 Code-review quality pass: bug fix, addon guards, dedup, tests, docs
-- f759f94 chore: bump version to 5.12.6
-- 25826bd Don't block project switching when welcome card is shown
-- 48187ef chore: daily memory sync 2026-05-28
-
-</details>
 <!-- END:session-log -->
 
 <!-- BEGIN:cleanup-log -->
+### 2026-07-29 — pruned session entry 2026-05-29
+**Reason:** Entry is older than 60 days.
+
 ### 2026-07-28 — pruned session entry 2026-05-28
 **Reason:** Entry is older than 60 days.
 
