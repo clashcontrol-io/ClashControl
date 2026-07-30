@@ -2300,6 +2300,17 @@ recorded as fully explained — a genuinely separate, much smaller follow-up if 
 <!-- END:active-work -->
 
 <!-- BEGIN:session-log -->
+### 2026-07-30
+**Summary:** 1 commit(s) landed (no AI summary — set ANTHROPIC_API_KEY secret for richer entries).
+**Changed:** see commits
+**Notable:** —
+
+<details><summary>Commits</summary>
+
+- b0be50e chore: daily memory sync 2026-07-29
+
+</details>
+
 ### 2026-07-29
 **Summary:** 1 commit(s) landed (no AI summary — set ANTHROPIC_API_KEY secret for richer entries).
 **Changed:** see commits
@@ -3254,25 +3265,12 @@ recorded as fully explained — a genuinely separate, much smaller follow-up if 
 - 1e61d1f chore: daily memory sync 2026-05-30
 
 </details>
-
-### 2026-05-30
-**Summary:** 6 commit(s) landed (no AI summary — set ANTHROPIC_API_KEY secret for richer entries).
-**Changed:** see commits
-**Notable:** —
-
-<details><summary>Commits</summary>
-
-- e50d72a chore: daily memory sync 2026-05-29
-- ab6fb7c chore: bump version to 5.12.9
-- 243ddcf Section gizmo: constant-size handles, follow plane, fix stuck drag & ring offset
-- a30b9bd chore: bump version to 5.12.8
-- b356ac8 Make section-plane drag track the cursor and easier to grab
-- 7c82c74 chore: bump version to 5.12.7
-
-</details>
 <!-- END:session-log -->
 
 <!-- BEGIN:cleanup-log -->
+### 2026-07-30 — pruned session entry 2026-05-30
+**Reason:** Entry is older than 60 days.
+
 ### 2026-07-29 — pruned session entry 2026-05-29
 **Reason:** Entry is older than 60 days.
 
