@@ -1070,7 +1070,7 @@ the harness" — perf-local.mjs (phases+RSS), memory-local.mjs (plateaus, forced
 `modelFingerprint`/`clashFingerprint`, and the worker/fallback differential harness already
 exist; missing pieces are a real-model corpus, candidate-count metrics, and load-cancel-load
 loop tests. (4) Its protocol-v2 work must be reconciled with the `.toString()`-assembled worker
-(see the 2026-07-17 static-file-extraction Known Issue) and REDUCER_DECOMPOSITION_PLAN.md's
+(see the 2026-07-17 static-file-extraction Known Issue) and REDUCER_DECOMPOSITION_PLAN.md's  **[STALE?]**
 loader-area high-risk/last sequencing — expand differential coverage FIRST. **Doc drift found
 and fixed: CLAUDE.md claimed `vercel.json` sets COOP/COEP headers — verified FALSE (no `headers`
 block at all; no COOP/COEP anywhere; three.js/web-ifc load from jsdelivr via dynamic ESM with no
@@ -1082,7 +1082,7 @@ no app code changed this session (docs only).
 ~~**External-review follow-up: grouped conflict-list memoization, storey-scan completeness,
 large-model profiling correction** (branch `claude/findings-and-plan`, 2026-07-17)~~ — a second
 external review of the merged PR #692 correctly identified two real, verified bugs and asked for
-deeper large-model profiling; see the two 2026-07-17 Known Issues entries above for the profiling
+deeper large-model profiling; see the two 2026-07-17 Known Issues entries above for the profiling  **[STALE?]**
 correction (a genuine fixture-generator bug, not an app performance number, was hiding behind the
 original "174s" figure) and `git log` on this branch for the two code fixes:
 (1) `groupAndSort()` in `VirtualList` (index.html) was called unmemoized in the render body,
@@ -1133,7 +1133,7 @@ reads, IndexedDB, event wiring, loader/worker lifecycle, then finally the reduce
 written up in `REDUCER_DECOMPOSITION_PLAN.md`, ordered by risk × blast-radius with explicit standing
 rules (characterization tests first, real-browser verification after every slice, don't add a new
 file/abstraction without checking for an existing fit, one area per slice). Large-model measurement:
-see the 2026-07-17 Known Issues entry above — 174s/2.5GB peak RSS for a 145,670-element synthetic
+see the 2026-07-17 Known Issues entry above — 174s/2.5GB peak RSS for a 145,670-element synthetic  **[STALE?]**
 53.67MB fixture, explicitly caveated as entity-count stress testing, not representative of a typical
 real-world 50MB file. **Settings menu retrofit** (a standing, previously-unfulfilled request): `SettingsModal`
 (`index.html`, was one long single-scroll list of ~8 `SEC` groupings) is now a left-sidebar tab rail +
@@ -2300,6 +2300,17 @@ recorded as fully explained — a genuinely separate, much smaller follow-up if 
 <!-- END:active-work -->
 
 <!-- BEGIN:session-log -->
+### 2026-08-01
+**Summary:** 1 commit(s) landed (no AI summary — set ANTHROPIC_API_KEY secret for richer entries).
+**Changed:** see commits
+**Notable:** —
+
+<details><summary>Commits</summary>
+
+- c7ed2e8 chore: daily memory sync 2026-07-31
+
+</details>
+
 ### 2026-07-31
 **Summary:** 1 commit(s) landed (no AI summary — set ANTHROPIC_API_KEY secret for richer entries).
 **Changed:** see commits
@@ -3254,20 +3265,12 @@ recorded as fully explained — a genuinely separate, much smaller follow-up if 
 - c989a56 chore: daily memory sync 2026-06-01
 
 </details>
-
-### 2026-06-01
-**Summary:** 1 commit(s) landed (no AI summary — set ANTHROPIC_API_KEY secret for richer entries).
-**Changed:** see commits
-**Notable:** —
-
-<details><summary>Commits</summary>
-
-- e552c23 chore: daily memory sync 2026-05-31
-
-</details>
 <!-- END:session-log -->
 
 <!-- BEGIN:cleanup-log -->
+### 2026-08-01 — pruned session entry 2026-06-01
+**Reason:** Entry is older than 60 days.
+
 ### 2026-07-31 — pruned session entry 2026-05-31
 **Reason:** Entry is older than 60 days.
 
