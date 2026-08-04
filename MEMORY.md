@@ -2300,6 +2300,17 @@ recorded as fully explained — a genuinely separate, much smaller follow-up if 
 <!-- END:active-work -->
 
 <!-- BEGIN:session-log -->
+### 2026-08-04
+**Summary:** 1 commit(s) landed (no AI summary — set ANTHROPIC_API_KEY secret for richer entries).
+**Changed:** see commits
+**Notable:** —
+
+<details><summary>Commits</summary>
+
+- 0590858 chore: daily memory sync 2026-08-03
+
+</details>
+
 ### 2026-08-03
 **Summary:** 1 commit(s) landed (no AI summary — set ANTHROPIC_API_KEY secret for richer entries).
 **Changed:** see commits
@@ -3244,30 +3255,12 @@ recorded as fully explained — a genuinely separate, much smaller follow-up if 
 - fd0e272 feat(viewer): Stage 2A — selection highlight + ghost/isolate on merged chunks
 
 </details>
-
-### 2026-06-04
-**Summary:** 11 commit(s) landed (no AI summary — set ANTHROPIC_API_KEY secret for richer entries).
-**Changed:** see commits
-**Notable:** —
-
-<details><summary>Commits</summary>
-
-- 051f8f7 chore: bump version to 5.12.13
-- fd0e272 feat(viewer): Stage 2A — selection highlight + ghost/isolate on merged chunks
-- aee3ed3 Potential fix for code scanning alert no. 13: Workflow does not contain permissions
-- 757be37 chore: bump version to 5.12.12
-- a010500 chore(brand): replace stale PWA icons + OG image with current green-square brand
-- 2e716d5 fix(viewer): keep section-plane rotation ring horizontal on vertical planes
-- 9feceef chore: bump version to 5.12.11
-- 0824e5c chore: bump version to 5.12.10
-- c4c062f SEO Phase 2: five high-intent landing pages
-- 1a9fcbd SEO Phase 0+1: canonical, crawlability, structured data
-- f02dd29 chore: daily memory sync 2026-06-03
-
-</details>
 <!-- END:session-log -->
 
 <!-- BEGIN:cleanup-log -->
+### 2026-08-04 — pruned session entry 2026-06-04
+**Reason:** Entry is older than 60 days.
+
 ### 2026-08-03 — pruned session entry 2026-06-03
 **Reason:** Entry is older than 60 days.
 
