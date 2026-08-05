@@ -2300,6 +2300,17 @@ recorded as fully explained — a genuinely separate, much smaller follow-up if 
 <!-- END:active-work -->
 
 <!-- BEGIN:session-log -->
+### 2026-08-05
+**Summary:** 1 commit(s) landed (no AI summary — set ANTHROPIC_API_KEY secret for richer entries).
+**Changed:** see commits
+**Notable:** —
+
+<details><summary>Commits</summary>
+
+- 7402c55 chore: daily memory sync 2026-08-04
+
+</details>
+
 ### 2026-08-04
 **Summary:** 1 commit(s) landed (no AI summary — set ANTHROPIC_API_KEY secret for richer entries).
 **Changed:** see commits
@@ -3236,28 +3247,12 @@ recorded as fully explained — a genuinely separate, much smaller follow-up if 
 - 3fb15de fix(spatial-tree): persist category visibility across refresh
 
 </details>
-
-### 2026-06-05
-**Summary:** 9 commit(s) landed (no AI summary — set ANTHROPIC_API_KEY secret for richer entries).
-**Changed:** see commits
-**Notable:** —
-
-<details><summary>Commits</summary>
-
-- b8b8d86 chore: bump version to 5.13.0
-- c3f901e fix(section-box): stable side-face arrow dragging (robust axis projection)
-- 3fb15de fix(spatial-tree): persist category visibility across refresh
-- a610701 feat(memory-report): add heap breakdown diagnostics
-- 5d52417 chore: bump version to 5.12.14
-- c7f274b feat(viewer): Stage 2B — bulk hide + color on merged chunks; enable chunk-merge by default
-- 1892c6e chore: daily memory sync 2026-06-04
-- 051f8f7 chore: bump version to 5.12.13
-- fd0e272 feat(viewer): Stage 2A — selection highlight + ghost/isolate on merged chunks
-
-</details>
 <!-- END:session-log -->
 
 <!-- BEGIN:cleanup-log -->
+### 2026-08-05 — pruned session entry 2026-06-05
+**Reason:** Entry is older than 60 days.
+
 ### 2026-08-04 — pruned session entry 2026-06-04
 **Reason:** Entry is older than 60 days.
 
