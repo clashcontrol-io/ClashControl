@@ -582,7 +582,7 @@ essentially nothing outside those two deliberate exceptions — the retrofit's l
 exhausted; anything left is either template-literal text inside `html\`...\`` markup (not caught by
 this attribute-only grep) or genuinely obscure.~~ (2026-07-27)
 
-**Park inactive models — memory relief (2026-07-22, branch `claude/clashcontrol-v7-release-plan-jp5njw`)** —
+**Park inactive models — memory relief (2026-07-22, branch `claude/clashcontrol-v7-release-plan-jp5njw`)** —  **[STALE?]**
 diagnosed the "viewer stalls a few seconds" + "5.2 GB heap > 4.09 GB limit" reports as the SAME
 root cause: GC pauses from being over the heap limit. Dominant reducible sink = the permanently
 retained off-scene `element.meshes[]` proxy set (report: 73,402 proxies / 35M verts, "kept for
@@ -596,7 +596,7 @@ refuses to park a non-restorable model (revit-direct/live or no cache+file). Sid
 (hidden for revit-direct) + a "Parked (memory freed)" section with Restore. Tests:
 `tests/park-model-wiring.test.js` (10). Full suite 723 green; index.html re-parses clean.
 **NEEDS IN-BROWSER VALIDATION with real multi-model project** (can't run browser here).
-Manual park/restore merged as PR #702. **Automatic layer added (2026-07-22):** `_ccAutoParkPass`
+Manual park/restore merged as PR #702. **Automatic layer added (2026-07-22):** `_ccAutoParkPass`  **[STALE?]**
 runs from the heap poller (now 8s) — under heap pressure (>72% of jsHeapSizeLimit) it auto-parks
 HIDDEN, restorable, non-live models largest-first, one per tick, never a visible model, never
 mid-detection; gated by the persisted `autoParkInactive` pref (default ON, `SET_AUTOPARK` +
@@ -605,7 +605,7 @@ sidebar toggle). "Smart reload": `_highlightById` auto-restores a parked model b
 **Remaining follow-ups: wire `_ccEnsureModelActive` into detection scope; persist parked state
 across reload; per-model last-active timestamps for smarter cold-first ordering.**
 
-**Memory-architecture task list (2026-07-22, planning only — not yet built), `V7_RELEASE_PLAN.md`
+**Memory-architecture task list (2026-07-22, planning only — not yet built), `V7_RELEASE_PLAN.md`  **[STALE?]**
 P6:** re-reviewed `main`@`f4733d`/v7.3.0 against a follow-up external review; every claim + every
 named historical incident re-verified against source/CHANGELOG (no factual corrections needed this
 round, unlike the P0 round). Mined the real chunk-merge/Free-RAM/`_instKey`/type-pair-memo sagas
@@ -719,7 +719,7 @@ into a set), `tests/nl-hide-isolate-expressid.test.js`. Full suite 774→777 gre
 in a real browser (smoke.mjs 13/13). `V7_RELEASE_PLAN.md` P6.2 updated with this architectural
 correction.
 
-**v7 release-validation plan (branch `claude/clashcontrol-v7-release-plan-jp5njw`)** (2026-07-22) —
+**v7 release-validation plan (branch `claude/clashcontrol-v7-release-plan-jp5njw`)** (2026-07-22) —  **[STALE?]**
 built `V7_RELEASE_PLAN.md` from an external re-review of v7.2.7/`b195655`, with every
 load-bearing claim re-verified against source. Confirmed the real release blocker is
 **local-engine result parity** (capability gate at `local-engine.js:767` doesn't catch:
@@ -2206,7 +2206,7 @@ On branch `claude/code-review-quality-IjbhT` (2026-05-28) — code-review qualit
 
 **Deferred (tracked follow-ups, not done this pass):** core reducer/state refactor (287-line reducer / 80+ cases / impure `_saveDeniedClash` inside the reducer / ~50 `window._cc*` globals) — do it only once the test suite covers the pure clash/reducer/BCF logic, which needs those helpers extracted from `index.html` first. Also: a CI check that re-verifies `index.html` SRI hashes against the live CDN, and 3D-canvas keyboard accessibility (no keyboard orbit/pan, no modal focus trap).
 
-**P6.2-continued real-browser verification, deterministic dispose() check (2026-07-22, branch
+**P6.2-continued real-browser verification, deterministic dispose() check (2026-07-22, branch  **[STALE?]**
 `claude/clashcontrol-v7-p6-2-continued`)** — after PR #705 merged (P6.2 slice 2:
 `_ccElementWorldBox`/`center()` migration), evaluated further candidates against the user's
 explicit rule ("small risk high reward → do it; high risk medium reward or less → skip") and
@@ -2300,6 +2300,17 @@ recorded as fully explained — a genuinely separate, much smaller follow-up if 
 <!-- END:active-work -->
 
 <!-- BEGIN:session-log -->
+### 2026-08-06
+**Summary:** 1 commit(s) landed (no AI summary — set ANTHROPIC_API_KEY secret for richer entries).
+**Changed:** see commits
+**Notable:** —
+
+<details><summary>Commits</summary>
+
+- 37e5ac6 chore: daily memory sync 2026-08-05
+
+</details>
+
 ### 2026-08-05
 **Summary:** 1 commit(s) landed (no AI summary — set ANTHROPIC_API_KEY secret for richer entries).
 **Changed:** see commits
@@ -3233,23 +3244,12 @@ recorded as fully explained — a genuinely separate, much smaller follow-up if 
 - 6effc2b chore: daily memory sync 2026-06-06
 
 </details>
-
-### 2026-06-06
-**Summary:** 4 commit(s) landed (no AI summary — set ANTHROPIC_API_KEY secret for richer entries).
-**Changed:** see commits
-**Notable:** —
-
-<details><summary>Commits</summary>
-
-- 7367304 chore: daily memory sync 2026-06-05
-- b8b8d86 chore: bump version to 5.13.0
-- c3f901e fix(section-box): stable side-face arrow dragging (robust axis projection)
-- 3fb15de fix(spatial-tree): persist category visibility across refresh
-
-</details>
 <!-- END:session-log -->
 
 <!-- BEGIN:cleanup-log -->
+### 2026-08-06 — pruned session entry 2026-06-06
+**Reason:** Entry is older than 60 days.
+
 ### 2026-08-05 — pruned session entry 2026-06-05
 **Reason:** Entry is older than 60 days.
 
