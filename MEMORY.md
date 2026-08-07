@@ -286,7 +286,7 @@ Things to be careful about. Do not remove without a good reason — add a note i
 Update this section at the start and end of each session.
 Mark completed items with ~~strikethrough~~ and date, then let the daily sync archive them.
 
-**i18n + regional-regulation packs (2026-07-23, branch `claude/japanese-localization-request-eleplc`)** —
+**i18n + regional-regulation packs (2026-07-23, branch `claude/japanese-localization-request-eleplc`)** —  **[STALE?]**
 prompted by a real user (Japanese BIM user) offering to translate the UI. Scoped to a general
 community-addon mechanism, not a one-off translation: two new directories, `locales/` (UI strings)
 and `regulations/` (building-code thresholds), both following the existing lazy-addon loading
@@ -353,7 +353,7 @@ precision, magnifier, calibrate).~~ ~~Settings → Walk mode tab in full (eye he
 invert Y, collision, head-bob, footsteps).~~ ~~Settings → Privacy tab in full (anon data sharing,
 annotation buttons, recorded-data count summary with separate singular/plural keys — `_cc_t` has no
 plural rules — send/delete buttons, browser-storage usage + per-project rows, geometry cache).~~
-(all 2026-07-23)
+(all 2026-07-23)  **[STALE?]**
 **#709 showing zero CI runs is NOT the same synchronize-event flake as #708** — root-caused it:
 `ci.yml`'s trigger is `pull_request: branches: [main]`, i.e. it only fires for PRs whose BASE is
 `main`. #709's base is deliberately the feature branch (stacked on #708), so `ci.yml` correctly
@@ -2300,6 +2300,17 @@ recorded as fully explained — a genuinely separate, much smaller follow-up if 
 <!-- END:active-work -->
 
 <!-- BEGIN:session-log -->
+### 2026-08-07
+**Summary:** 1 commit(s) landed (no AI summary — set ANTHROPIC_API_KEY secret for richer entries).
+**Changed:** see commits
+**Notable:** —
+
+<details><summary>Commits</summary>
+
+- 6376700 chore: daily memory sync 2026-08-06
+
+</details>
+
 ### 2026-08-06
 **Summary:** 1 commit(s) landed (no AI summary — set ANTHROPIC_API_KEY secret for richer entries).
 **Changed:** see commits
@@ -3202,51 +3213,12 @@ recorded as fully explained — a genuinely separate, much smaller follow-up if 
 - ee509cf chore: daily memory sync 2026-06-07
 
 </details>
-
-### 2026-06-07
-**Summary:** 32 commit(s) landed (no AI summary — set ANTHROPIC_API_KEY secret for richer entries).
-**Changed:** see commits
-**Notable:** —
-
-<details><summary>Commits</summary>
-
-- 425924e chore: bump version to 5.17.4
-- 1a43021 revert: chunk-merge default OFF — back to per-element rendering
-- a13893d chore: bump version to 5.17.3
-- f573042 revert: remove Free RAM / dehydrate experiment entirely
-- 1cde307 chore: bump version to 5.17.2
-- 2477ada feat(settings): expose Free RAM button in main Settings
-- e0053fe fix(geoplace): same-origin tile proxy + opaque basemap (#579)
-- 2a6dc52 chore: bump version to 5.17.1
-- 6064b37 perf+consent: memoize Conflicts-tab aggregations + default-on consent + suppress banner
-- 3648646 chore: bump version to 5.17.0
-- 251bbc8 feat(triage+viewer): grounded prompt + 👍/👎 + marker fixes + survey-marker strip + memory helpers
-- 9d312b4 chore: bump version to 5.16.2
-- ca62e77 feat: point clouds + IFC geo-placement (v1) (#578)
-- c290f11 chore: bump version to 5.16.1
-- 09e5dfd perf(viewer): PR-A — Int8 normals (~630 MB cut), positions unchanged
-- d5d03bc chore: bump version to 5.16.0
-- 879eb67 fix(loader): race-safe model dedup — 4 files no longer load as 8 (#572)
-- 79a0582 chore: bump version to 5.15.3
-- 9b16e6e perf(loader): fix chunk-merge bypass on cache-restore + Clear all clashes
-- d3f9200 chore: bump version to 5.15.2
-- a941037 perf(viewer): D1b LOD + cross-load material sharing + dup-load guard
-- f61726e chore: bump version to 5.15.1
-- ae8f202 perf(viewer): D1 — Points + per-cluster hotspot markers
-- a1229b4 chore: bump version to 5.15.0
-- 53b4dcc fix(clash-ui): align overhaul with DESIGN.md + workspace gating, wire /api/triage, perf
-- 9b2e9cf chore: bump version to 5.14.0
-- 215d06a feat(clash-ui): Phase C — cluster cards as rows + keyboard triage
-- 76af12c feat(clash-ui): Phase A2 — N-model scope picker (All / discipline / model)
-- 51897d5 feat(clash-ui): Phase B — clashes header cleanup + grouped-by-default
-- 815ac50 feat(clash-ui): Phase A — Run Detection modal + remove Detection Rules tab
-- df7c5aa feat(triage): Week 2 — cluster context packet + prompt + copy button
-- 6effc2b chore: daily memory sync 2026-06-06
-
-</details>
 <!-- END:session-log -->
 
 <!-- BEGIN:cleanup-log -->
+### 2026-08-07 — pruned session entry 2026-06-07
+**Reason:** Entry is older than 60 days.
+
 ### 2026-08-06 — pruned session entry 2026-06-06
 **Reason:** Entry is older than 60 days.
 
