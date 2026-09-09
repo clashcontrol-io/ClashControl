@@ -2300,6 +2300,19 @@ recorded as fully explained — a genuinely separate, much smaller follow-up if 
 <!-- END:active-work -->
 
 <!-- BEGIN:session-log -->
+### 2026-09-09
+**Summary:** 3 commit(s) landed (no AI summary — set ANTHROPIC_API_KEY secret for richer entries).
+**Changed:** see commits
+**Notable:** —
+
+<details><summary>Commits</summary>
+
+- b8e304c chore: daily memory sync 2026-09-08
+- 271f5a8 chore: bump version to 7.5.0
+- 0ac3972 Fix detection data-loss bugs, close browser/local-engine rule parity gaps, remove an unsafe geometry shortcut (#711)
+
+</details>
+
 ### 2026-09-08
 **Summary:** 3 commit(s) landed (no AI summary — set ANTHROPIC_API_KEY secret for richer entries).
 **Changed:** see commits
@@ -3128,22 +3141,12 @@ recorded as fully explained — a genuinely separate, much smaller follow-up if 
 - 0871fcc Add tool governance layer to the Smart Bridge (audit log + confirm gate) (#677)
 
 </details>
-
-### 2026-07-10
-**Summary:** 3 commit(s) landed (no AI summary — set ANTHROPIC_API_KEY secret for richer entries).
-**Changed:** see commits
-**Notable:** —
-
-<details><summary>Commits</summary>
-
-- 0fbe4f6 chore: bump version to 5.21.17
-- 0871fcc Add tool governance layer to the Smart Bridge (audit log + confirm gate) (#677)
-- 616ad35 chore: daily memory sync 2026-07-09
-
-</details>
 <!-- END:session-log -->
 
 <!-- BEGIN:cleanup-log -->
+### 2026-09-09 — pruned session entry 2026-07-10
+**Reason:** Entry is older than 60 days.
+
 ### 2026-09-08 — pruned session entry 2026-07-09
 **Reason:** Entry is older than 60 days.
 
