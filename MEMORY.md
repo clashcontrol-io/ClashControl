@@ -2300,6 +2300,17 @@ recorded as fully explained — a genuinely separate, much smaller follow-up if 
 <!-- END:active-work -->
 
 <!-- BEGIN:session-log -->
+### 2026-09-10
+**Summary:** 1 commit(s) landed (no AI summary — set ANTHROPIC_API_KEY secret for richer entries).
+**Changed:** see commits
+**Notable:** —
+
+<details><summary>Commits</summary>
+
+- 8e5a025 chore: daily memory sync 2026-09-09
+
+</details>
+
 ### 2026-09-09
 **Summary:** 3 commit(s) landed (no AI summary — set ANTHROPIC_API_KEY secret for richer entries).
 **Changed:** see commits
@@ -3127,23 +3138,12 @@ recorded as fully explained — a genuinely separate, much smaller follow-up if 
 - bf83fa3 chore: daily memory sync 2026-07-11
 
 </details>
-
-### 2026-07-11
-**Summary:** 4 commit(s) landed (no AI summary — set ANTHROPIC_API_KEY secret for richer entries).
-**Changed:** see commits
-**Notable:** —
-
-<details><summary>Commits</summary>
-
-- 52a1faa resilience: retry transient LLM upstream failures with backoff (T11) (#678)
-- b7d6c6a chore: daily memory sync 2026-07-10
-- 0fbe4f6 chore: bump version to 5.21.17
-- 0871fcc Add tool governance layer to the Smart Bridge (audit log + confirm gate) (#677)
-
-</details>
 <!-- END:session-log -->
 
 <!-- BEGIN:cleanup-log -->
+### 2026-09-10 — pruned session entry 2026-07-11
+**Reason:** Entry is older than 60 days.
+
 ### 2026-09-09 — pruned session entry 2026-07-10
 **Reason:** Entry is older than 60 days.
 
