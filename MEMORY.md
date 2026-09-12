@@ -2300,6 +2300,17 @@ recorded as fully explained — a genuinely separate, much smaller follow-up if 
 <!-- END:active-work -->
 
 <!-- BEGIN:session-log -->
+### 2026-09-12
+**Summary:** 1 commit(s) landed (no AI summary — set ANTHROPIC_API_KEY secret for richer entries).
+**Changed:** see commits
+**Notable:** —
+
+<details><summary>Commits</summary>
+
+- 254bec2 chore: daily memory sync 2026-09-11
+
+</details>
+
 ### 2026-09-11
 **Summary:** 1 commit(s) landed (no AI summary — set ANTHROPIC_API_KEY secret for richer entries).
 **Changed:** see commits
@@ -3127,20 +3138,12 @@ recorded as fully explained — a genuinely separate, much smaller follow-up if 
 - cecea68 chore: daily memory sync 2026-07-13
 
 </details>
-
-### 2026-07-13
-**Summary:** 1 commit(s) landed (no AI summary — set ANTHROPIC_API_KEY secret for richer entries).
-**Changed:** see commits
-**Notable:** —
-
-<details><summary>Commits</summary>
-
-- dbcd708 chore: daily memory sync 2026-07-12
-
-</details>
 <!-- END:session-log -->
 
 <!-- BEGIN:cleanup-log -->
+### 2026-09-12 — pruned session entry 2026-07-13
+**Reason:** Entry is older than 60 days.
+
 ### 2026-09-11 — pruned session entry 2026-07-12
 **Reason:** Entry is older than 60 days.
 
