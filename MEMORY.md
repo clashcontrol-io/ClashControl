@@ -2300,6 +2300,17 @@ recorded as fully explained — a genuinely separate, much smaller follow-up if 
 <!-- END:active-work -->
 
 <!-- BEGIN:session-log -->
+### 2026-09-13
+**Summary:** 1 commit(s) landed (no AI summary — set ANTHROPIC_API_KEY secret for richer entries).
+**Changed:** see commits
+**Notable:** —
+
+<details><summary>Commits</summary>
+
+- 8113641 chore: daily memory sync 2026-09-12
+
+</details>
+
 ### 2026-09-12
 **Summary:** 1 commit(s) landed (no AI summary — set ANTHROPIC_API_KEY secret for richer entries).
 **Changed:** see commits
@@ -3055,92 +3066,12 @@ recorded as fully explained — a genuinely separate, much smaller follow-up if 
 - 2d7009a chore: bump version to 5.23.0
 
 </details>
-
-### 2026-07-14
-**Summary:** 73 commit(s) landed (no AI summary — set ANTHROPIC_API_KEY secret for richer entries).
-**Changed:** see commits
-**Notable:** —
-
-<details><summary>Commits</summary>
-
-- ac85366 chore: bump version to 5.23.1
-- 2d7009a chore: bump version to 5.23.0
-- 373c52f docs: record occluder-reveal toggle in MEMORY.md
-- 633251e feat: occluder-reveal toggle for clash review (Wave 2.2)
-- 4a9e1d3 docs: record stamp/auto-assignment rules in MEMORY.md, close out Wave 3
-- 85edeb4 feat: stamp/auto-assignment rules for newly detected clashes (Wave 3)
-- cedf824 fix: selectionSets/searchSets survive the IndexedDB auto-persist path
-- 99217ac docs: record auto-synthesized BCF viewpoints in MEMORY.md
-- bca65a9 feat: auto-synthesized default BCF viewpoints for issues with no captured view (Wave 3)
-- 5f7a6ec docs: record dynamic search sets in MEMORY.md, close out Wave 4
-- 9f2088c feat: dynamic search sets — saved queries that re-resolve live (Wave 4)
-- ef266f3 docs: record BCF Visibility/Coloring export in MEMORY.md
-- 5945f31 feat: BCF viewpoint export writes <Visibility> and <Coloring> (Wave 3)
-- 1b724ff docs: record IDS honesty fix + conformance CI job in MEMORY.md
-- f25ee77 feat: IDS conformance CI job against the buildingSMART audit suite (Wave 5, part 2/2)
-- 74de5ce feat: IDS conformance grading logic (Wave 5, part 1/2)
-- f075029 fix: IDS per-spec pass count no longer inflated by unchecked elements
-- ca72949 docs: record DQ re-run reconciliation (Wave 5) in MEMORY.md
-- e4fa73a test: fix stale rvb-panel-wiring assertion after runChecks() refactor
-- 9d475b9 feat: DQ re-run reconciliation (Wave 5)
-- 5378879 docs: record element-vs-element diff, close out Wave 4's smaller items
-- 3d725af feat: element-vs-element property diff for Navigator multi-select
-- 24e2f30 docs: record Selection Sets editing + inspector breadcrumb/hosted elements
-- 63534de feat: containment breadcrumb + hosted elements in the Details inspector
-- b89cd1e feat: rename and +/- editing for Selection Sets
-- afa798e docs: record Wave 4 progress (copyable IDs, Navigator real find)
-- da26294 feat: Navigator search matches GlobalId/properties, works in default view
-- 3eca120 feat: copyable GlobalId/Express ID in the Details inspector
-- 96c6bf5 docs: record the excludeSelf single-model trap fix in MEMORY.md
-- 6d4ed0f fix: single-model projects no longer report 0 clashes by default
-- d049ac8 docs: record Build 3 completion (print-ready Data Quality report)
-- bb8638b feat: add print-ready Data Quality report (Build 3)
-- 426e0d8 docs: record Check 2 findings and Build 3 architecture decision
-- 351f5fe docs: record Build 1 (RVB BIM Norm port) in MEMORY.md
-- a79f434 feat: wire RVB BIM Norm checks into the Data Quality panel and score
-- f691141 feat: add runRVBChecks engine for RVB BIM Norm v1.1 project metadata
-- 7ee8167 feat: extract IfcZone + name/elevation presence flags in the IFC loader
-- a43956e feat: extend IfcSpace completeness check to ObjectType/IsExternal/quantities
-- 41b043a fix: catch furnishing elements miscoded with the wrong NL/SfB group
-- 939693e fix: surface all 16 ILS check buckets in Data Quality panel
-- 42aa6c0 docs: record Wave 1.8, Wave 1 fully shipped bar 1.5
-- 4ab0bba feat(clash): spatial sub-clustering as an opt-in "Location" group-by [Wave 1.8]
-- 9888ace docs: record Wave 1.7/3.1, the PR #679 merge, and the force-push lesson
-- 34dc868 feat(bcf): write <Components><Selection> in exported viewpoints [Wave 3]
-- f63743b feat(clash): show the detection funnel [Wave 1.7]
-- 186ab45 chore: bump version to 5.22.0
-- 3304873 docs: record Wave 1.6/1.9 in MEMORY.md, flag excludeSelf default trap
-- 551011e feat(clash): deterministic severity model, fixes 3 vocabulary bugs found along the way [Wave 1.6]
-- e22301a fix(clash): disciplines field uses per-element classification, not whole-model
-- de28fca docs: update MEMORY.md Active Work + Project State for Wave 1/2 progress
-- e8425ea feat(engine): real (approximate) penetration depth for hard clashes [CW-1a]
-- 46eb1c9 feat(clash-triage): keyboard status hotkeys (C/D/V), document triage keys
-- 77bd6f8 feat(clash-focus): distinct A/B colors for clash pair highlighting
-- bbc5717 feat(viewer): on-canvas color legend for color-by-class views
-- 49a7bc8 feat(camera): Shift+left-drag pan fallback, document mouse controls
-- bd37b37 feat(camera): zoom-out honors the point under the cursor
-- e7c4100 fix(matrix): CRITICAL - discipline matrix must never skip same-model pairs
-- 6ef0e6c feat(matrix): N x N discipline matrix UI in the clash rules panel
-- 1aac245 feat(matrix): default clash matrix skips same-discipline pairs
-- 22bdb80 feat(discipline): per-element classification, foundation for the clash matrix
-- e521550 docs: correct local-engine doc drift + record this session in Active Work
-- fe33b2e fix(viewer): stable discipline colors in byDiscipline color-by mode
-- 55ca009 fix(render): key 5 = wireframe (was a duplicate of xray); walk mode keeps its postFX
-- fcad866 fix(quality-score): fold BIM-basics into the headline score; ILS conditionally
-- e020f1a fix(engine): validate WASM hit points against both AABBs, same as JS
-- ff02b09 fix(clash): carry assignee and priority across re-runs
-- c61a098 docs: correct IMPROVEMENT_PLAN.md wave-0 notes to match what actually shipped
-- 739af54 fix(local-engine): serialize the full rule set to the exact engine
-- 623727a fix(engine): apply the minGap lower bound to soft-clash detection
-- 204a039 fix(viewer): model visibility toggle no longer needs a camera nudge to reappear
-- ab5e5a2 fix(viewer): orbit pivot actually recenters to the clicked element
-- 2e777bd docs: competitive analysis + 6-wave improvement roadmap (IMPROVEMENT_PLAN.md)
-- cecea68 chore: daily memory sync 2026-07-13
-
-</details>
 <!-- END:session-log -->
 
 <!-- BEGIN:cleanup-log -->
+### 2026-09-13 — pruned session entry 2026-07-14
+**Reason:** Entry is older than 60 days.
+
 ### 2026-09-12 — pruned session entry 2026-07-13
 **Reason:** Entry is older than 60 days.
 
