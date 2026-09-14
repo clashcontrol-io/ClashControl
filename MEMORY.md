@@ -2300,6 +2300,17 @@ recorded as fully explained — a genuinely separate, much smaller follow-up if 
 <!-- END:active-work -->
 
 <!-- BEGIN:session-log -->
+### 2026-09-14
+**Summary:** 1 commit(s) landed (no AI summary — set ANTHROPIC_API_KEY secret for richer entries).
+**Changed:** see commits
+**Notable:** —
+
+<details><summary>Commits</summary>
+
+- 33ca79e chore: daily memory sync 2026-09-13
+
+</details>
+
 ### 2026-09-13
 **Summary:** 1 commit(s) landed (no AI summary — set ANTHROPIC_API_KEY secret for richer entries).
 **Changed:** see commits
@@ -3039,36 +3050,12 @@ recorded as fully explained — a genuinely separate, much smaller follow-up if 
 - 1cc3733 chore: daily memory sync 2026-07-15
 
 </details>
-
-### 2026-07-15
-**Summary:** 17 commit(s) landed (no AI summary — set ANTHROPIC_API_KEY secret for richer entries).
-**Changed:** see commits
-**Notable:** —
-
-<details><summary>Commits</summary>
-
-- e4cdd27 chore: bump version to 6.0.0
-- 1e187a1 fix: accept the duplicate-model overlap dialog in browser smoke test
-- 0e84005 diag: log any confirm/alert dialogs during smoke test (temporary)
-- b4a8336 diag: dump state on force-batched load timeout (temporary)
-- cfa7d0f Contain renderer migration behind validated legacy fallback
-- 65c5842 Gate BatchedMesh section clipping with legacy fallback
-- c7e77e3 Isolate v8 geometry cache with cold-parse recovery
-- 714b02a Block stale detection writes behind concurrency gate
-- 87528dc Add default-off safety migration containment
-- 341ec75 Harden trust boundaries and regression gates
-- da7d783 chore: bump version to 5.24.1
-- 4e848e2 perf: O(n²)→O(n) clash clustering (167s→22s at 47k clashes) + palette label fix (#682)
-- 326eada chore: bump version to 5.24.0
-- 5b369ba fix: 6 stress-test findings — crash, stuck loader, pivot, federation, zoom, panel + phone UX (#681)
-- 9b711f7 chore: daily memory sync 2026-07-14
-- ac85366 chore: bump version to 5.23.1
-- 2d7009a chore: bump version to 5.23.0
-
-</details>
 <!-- END:session-log -->
 
 <!-- BEGIN:cleanup-log -->
+### 2026-09-14 — pruned session entry 2026-07-15
+**Reason:** Entry is older than 60 days.
+
 ### 2026-09-13 — pruned session entry 2026-07-14
 **Reason:** Entry is older than 60 days.
 
