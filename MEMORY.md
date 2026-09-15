@@ -2300,6 +2300,17 @@ recorded as fully explained — a genuinely separate, much smaller follow-up if 
 <!-- END:active-work -->
 
 <!-- BEGIN:session-log -->
+### 2026-09-15
+**Summary:** 1 commit(s) landed (no AI summary — set ANTHROPIC_API_KEY secret for richer entries).
+**Changed:** see commits
+**Notable:** —
+
+<details><summary>Commits</summary>
+
+- e127098 chore: daily memory sync 2026-09-14
+
+</details>
+
 ### 2026-09-14
 **Summary:** 1 commit(s) landed (no AI summary — set ANTHROPIC_API_KEY secret for richer entries).
 **Changed:** see commits
@@ -3031,28 +3042,12 @@ recorded as fully explained — a genuinely separate, much smaller follow-up if 
 - 018c679 chore: daily memory sync 2026-07-16
 
 </details>
-
-### 2026-07-16
-**Summary:** 9 commit(s) landed (no AI summary — set ANTHROPIC_API_KEY secret for richer entries).
-**Changed:** see commits
-**Notable:** —
-
-<details><summary>Commits</summary>
-
-- 4322123 chore: bump version to 6.1.1
-- da232d9 Inspector: fix &-entity display bug + bounding-box dimensions fallback (#687)
-- cbbeea2 chore: bump version to 6.1.0
-- 6c20fae Add model×model clash matrix to the Conflicts panel (#686)
-- 8d378bd chore: bump version to 6.0.2
-- 1c530c6 Fix: structural clash severity is case-insensitive on discipline (#685)
-- 440fce5 chore: bump version to 6.0.1
-- 525c059 Guarded core-refactor patch train: six default-off extracted clash-pipeline modules (#684)
-- 1cc3733 chore: daily memory sync 2026-07-15
-
-</details>
 <!-- END:session-log -->
 
 <!-- BEGIN:cleanup-log -->
+### 2026-09-15 — pruned session entry 2026-07-16
+**Reason:** Entry is older than 60 days.
+
 ### 2026-09-14 — pruned session entry 2026-07-15
 **Reason:** Entry is older than 60 days.
 
