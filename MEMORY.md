@@ -2300,6 +2300,17 @@ recorded as fully explained — a genuinely separate, much smaller follow-up if 
 <!-- END:active-work -->
 
 <!-- BEGIN:session-log -->
+### 2026-09-17
+**Summary:** 1 commit(s) landed (no AI summary — set ANTHROPIC_API_KEY secret for richer entries).
+**Changed:** see commits
+**Notable:** —
+
+<details><summary>Commits</summary>
+
+- 5ceb725 chore: daily memory sync 2026-09-16
+
+</details>
+
 ### 2026-09-16
 **Summary:** 1 commit(s) landed (no AI summary — set ANTHROPIC_API_KEY secret for richer entries).
 **Changed:** see commits
@@ -3008,37 +3019,12 @@ recorded as fully explained — a genuinely separate, much smaller follow-up if 
 - ff900df chore: daily memory sync 2026-07-18
 
 </details>
-
-### 2026-07-18
-**Summary:** 18 commit(s) landed (no AI summary — set ANTHROPIC_API_KEY secret for richer entries).
-**Changed:** see commits
-**Notable:** —
-
-<details><summary>Commits</summary>
-
-- 55797c1 docs: add git/PR workflow convention to CLAUDE.md
-- 877ab1b chore: bump version to 7.2.4
-- 8ce7658 Large-model plan Phases 3-7 checked against history; Phase 4 candidate warning
-- c42b0d6 chore: bump version to 7.2.3
-- 0184791 Large-model plan Phase 2, adjusted by project history: storey-scope auto-complete
-- 78f4a27 chore: bump version to 7.2.2
-- 491f6d7 Browser-first large-model plan: verification + Phase 1 (harness extension + IFC worker protocol v2)
-- 23bde34 chore: bump version to 7.2.1
-- 3d335bf External-review follow-up: grouped-list memoization, storey-scan completeness, large-model profiling correction (#693)
-- ab37da3 chore: bump version to 7.2.0
-- 7d0001c Fix external-review findings, graduate six clash cores, reducer decomposition slice 1, tabbed Settings (#692)
-- d917551 Remove REWRITE_UI_PLAN.md now that phases 2-12 are executed and merged (#690)
-- fac3b9f chore: daily memory sync 2026-07-17
-- 2caee59 chore: bump version to 7.1.1
-- c68caf5 Wire the CAMERA cluster's ResponsiveToolGroup into TopToolbar (ccUiToolbarV2)
-- dba7018 chore: bump version to 7.1.0
-- 59c8368 Execute REWRITE_UI_PLAN.md phases 2-12 (windowed list, empty states, operation center, promoted cores, more)
-- 7497334 chore: bump version to 7.0.0
-
-</details>
 <!-- END:session-log -->
 
 <!-- BEGIN:cleanup-log -->
+### 2026-09-17 — pruned session entry 2026-07-18
+**Reason:** Entry is older than 60 days.
+
 ### 2026-09-16 — pruned session entry 2026-07-17
 **Reason:** Entry is older than 60 days.
 
