@@ -2300,6 +2300,17 @@ recorded as fully explained — a genuinely separate, much smaller follow-up if 
 <!-- END:active-work -->
 
 <!-- BEGIN:session-log -->
+### 2026-09-22
+**Summary:** 1 commit(s) landed (no AI summary — set ANTHROPIC_API_KEY secret for richer entries).
+**Changed:** see commits
+**Notable:** —
+
+<details><summary>Commits</summary>
+
+- c1a0db7 chore: daily memory sync 2026-09-21
+
+</details>
+
 ### 2026-09-21
 **Summary:** 1 commit(s) landed (no AI summary — set ANTHROPIC_API_KEY secret for richer entries).
 **Changed:** see commits
@@ -2976,46 +2987,12 @@ recorded as fully explained — a genuinely separate, much smaller follow-up if 
 - 03d8677 feat(nl-commands): use el.expressId directly; survey remaining P6.2 sites
 
 </details>
-
-### 2026-07-23
-**Summary:** 27 commit(s) landed (no AI summary — set ANTHROPIC_API_KEY secret for richer entries).
-**Changed:** see commits
-**Notable:** —
-
-<details><summary>Commits</summary>
-
-- 80a5ae0 chore: bump version to 7.3.1
-- 6b29538 fix(park-restore): patch geoCache psets even after the model is parked
-- 25767c3 test(browser): production-scale park/restore probe + RSS/restore-cost findings
-- 304fa11 test(browser): deterministic renderer.info check for park's dispose()
-- 03d8677 feat(nl-commands): use el.expressId directly; survey remaining P6.2 sites
-- 2ad072f test(browser): real-browser park/restore + repeated-detection memory probe
-- d5662bf docs: update P6.2 status for second migrated consumer
-- 6c5deaf feat(geometry): shared world-bbox helper, migrate second P6.2 consumer
-- 7c64a7d docs: record "build all" implementation status for P6
-- b6aaf6d feat(detection): opt-in post-run cache clear, safe P6.4 slice (V7)
-- 99be257 feat(loading): pre-load pressure relief, flag-gated conservative slice (V7 P6.3)
-- 48cb71c feat(clash-engine): GeometryHandle accessor, migrate first consumer (V7 P6.2 slice 1)
-- 4d10cb1 feat(memory): byte-accurate residency ledger, replaces element-count heuristic (V7 P6.1)
-- 1ec1987 docs: enrich P6 with verified commit hashes + new failure-mode precedents
-- ca21f8c docs: memory-architecture task list (P6), grounded in commit history
-- f4733da chore: bump version to 7.3.0
-- 23a3972 feat(models): auto-park hidden models under memory pressure + smart reload
-- 6fbc809 chore: bump version to 7.2.8
-- 77f5f9b fix(models): register park aliases on the canonical ClashControl namespace
-- d5eaeef feat(models): park inactive models to reclaim memory (stops GC stalls)
-- 1687771 docs: record P0.6/P1.1/P1.3/P5.1 status + honest remaining (V7 plan)
-- c406e71 test(local-engine): golden rule-layer parity suite (V7 P0.6)
-- ae3a231 fix(api/project): atomic compare-and-swap for issue sync (V7 P5.1)
-- 3759964 fix(detection): report compact-candidate memory at real cost, not 96 B/pair (V7 P1.3)
-- 444c5d4 fix(local-engine): close browser-vs-local result-set gaps (V7 P0)
-- 329e997 docs: v7 release-validation plan from re-review of v7.2.7
-- 5178fc3 chore: daily memory sync 2026-07-22
-
-</details>
 <!-- END:session-log -->
 
 <!-- BEGIN:cleanup-log -->
+### 2026-09-22 — pruned session entry 2026-07-23
+**Reason:** Entry is older than 60 days.
+
 ### 2026-09-21 — pruned session entry 2026-07-22
 **Reason:** Entry is older than 60 days.
 
