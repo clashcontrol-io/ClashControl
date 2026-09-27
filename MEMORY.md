@@ -2300,6 +2300,17 @@ recorded as fully explained — a genuinely separate, much smaller follow-up if 
 <!-- END:active-work -->
 
 <!-- BEGIN:session-log -->
+### 2026-09-27
+**Summary:** 1 commit(s) landed (no AI summary — set ANTHROPIC_API_KEY secret for richer entries).
+**Changed:** see commits
+**Notable:** —
+
+<details><summary>Commits</summary>
+
+- b21f05f chore: daily memory sync 2026-09-26
+
+</details>
+
 ### 2026-09-26
 **Summary:** 1 commit(s) landed (no AI summary — set ANTHROPIC_API_KEY secret for richer entries).
 **Changed:** see commits
@@ -2963,24 +2974,12 @@ recorded as fully explained — a genuinely separate, much smaller follow-up if 
 - a8c667c chore: daily memory sync 2026-07-28
 
 </details>
-
-### 2026-07-28
-**Summary:** 5 commit(s) landed (no AI summary — set ANTHROPIC_API_KEY secret for richer entries).
-**Changed:** see commits
-**Notable:** —
-
-<details><summary>Commits</summary>
-
-- b155121 chore: daily memory sync 2026-07-27
-- 570ebd8 chore: bump version to 7.3.3
-- b4ff2d5 i18n: long-tail string retrofit to _cc_t() (#709)
-- 0f1556d chore: bump version to 7.3.2
-- 87c4f99 i18n + regional-regulation pack scaffold (#708)
-
-</details>
 <!-- END:session-log -->
 
 <!-- BEGIN:cleanup-log -->
+### 2026-09-27 — pruned session entry 2026-07-28
+**Reason:** Entry is older than 60 days.
+
 ### 2026-09-26 — pruned session entry 2026-07-27
 **Reason:** Entry is older than 60 days.
 
