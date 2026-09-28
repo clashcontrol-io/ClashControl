@@ -37919,9 +37919,18 @@ function startApp() {
     var _clashesRef = useRef(s.clashes);
     var _selectedRef = useRef(s.selected);
     var _trainingRef = useRef(s.trainingMode);
+    // Full-state ref for the dispatch wrapper below (`d`), which is a
+    // useCallback with an empty dep array — everything it reads off `s`
+    // directly (rather than through a ref) is frozen at mount time forever.
+    // _stateRef.current is always the latest render's state, so UPD_ISSUE /
+    // BATCH_UPD_CLASH / BATCH_UPD_ISSUE's changelog entries and shared-sync
+    // pushes (which need the current s.issues/s.selected) see real data
+    // instead of the initial empty state.
+    var _stateRef = useRef(s);
     _clashesRef.current = s.clashes;
     _selectedRef.current = s.selected;
     _trainingRef.current = s.trainingMode;
+    _stateRef.current = s;
     var d = useCallback(function(a) {
       _rawD(a);
       if (!_trainingRef.current) return;
@@ -37955,7 +37964,7 @@ function startApp() {
       // ── Changelog recording (works both single-user and shared) ──
       if (!a._fromSync && a.t !== A.APPEND_CHANGELOG && a.t !== A.MERGE_CHANGELOG) {
         try {
-          var _clEntry = _buildChangelogEntry(a, _clashesRef.current, s);
+          var _clEntry = _buildChangelogEntry(a, _clashesRef.current, _stateRef.current);
           if (_clEntry) _rawD({t:A.APPEND_CHANGELOG, v:_clEntry});
         } catch(e2) {}
         // ── Shared project sync push (Phase 6F) ──
@@ -37966,17 +37975,17 @@ function startApp() {
               var _c = _clashesRef.current.find(function(c){return c.id===a.id;});
               if (_c) _sharedEnqueue(Object.assign({}, _c, a.u, {_updatedAt:_now}));
             } else if (a.t === A.UPD_ISSUE && a.u) {
-              var _i = (s.issues||[]).find(function(i){return i.id===a.id;});
+              var _i = (_stateRef.current.issues||[]).find(function(i){return i.id===a.id;});
               if (_i) _sharedEnqueue(Object.assign({}, _i, a.u, {_updatedAt:_now}));
             } else if (a.t === A.ADD_ISSUE && a.v) {
               _sharedEnqueue(Object.assign({}, a.v, {_updatedAt:_now}));
             } else if (a.t === A.BATCH_UPD_CLASH && a.u) {
               _clashesRef.current.forEach(function(c){
-                if (s.selected[c.id]) _sharedEnqueue(Object.assign({}, c, a.u, {_updatedAt:_now}));
+                if (_selectedRef.current[c.id]) _sharedEnqueue(Object.assign({}, c, a.u, {_updatedAt:_now}));
               });
             } else if (a.t === A.BATCH_UPD_ISSUE && a.u) {
-              (s.issues||[]).forEach(function(i){
-                if (s.selected[i.id]) _sharedEnqueue(Object.assign({}, i, a.u, {_updatedAt:_now}));
+              (_stateRef.current.issues||[]).forEach(function(i){
+                if (_selectedRef.current[i.id]) _sharedEnqueue(Object.assign({}, i, a.u, {_updatedAt:_now}));
               });
             }
           }
