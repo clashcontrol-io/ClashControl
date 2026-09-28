@@ -116,7 +116,7 @@ sw.js                       — Service worker for offline caching (excludes /ap
 icons/                      — PWA icons (192/512 px, normal + maskable)
 scripts/bump-version.sh     — Pre-commit version bump script
 scripts/generate-sri.js     — Generate SRI hashes for CDN scripts
-vercel.json                 — Vercel config: function durations, redirects (NO headers block — COOP/COEP are NOT set; the app is not cross-origin isolated, so SharedArrayBuffer/multithreaded WASM are unavailable in production)
+vercel.json                 — Vercel config: function durations, redirects, a headers block (X-Content-Type-Options, Referrer-Policy, X-Frame-Options, frame-ancestors CSP, Permissions-Policy — COOP/COEP are deliberately NOT set; the app is not cross-origin isolated, so SharedArrayBuffer/multithreaded WASM are unavailable in production)
 package.json                — Neon Postgres driver for serverless functions
 addons/accessibility.js     — Deterministic building-code geometry checks (door width, thresholds, ramp slope, corridor/turning) with NL Bbl/NEN defaults
 addons/align.js             — Point-cloud ↔ IFC manual 3-point rigid alignment (as-built verification)

@@ -22,7 +22,35 @@ const PROVIDERS = {
     `https://api.maptiler.com/maps/satellite/${z}/${x}/${y}.jpg?key=${encodeURIComponent(key)}`,
 };
 
+// In-memory per-IP rate limiter (best-effort — resets per cold start/edge
+// instance, same tradeoff as api/_lib.js's Node limiter, which this edge
+// runtime can't reuse directly: it's CommonJS and reads req.socket, which
+// doesn't exist on the Edge Request object). Bounds abuse of the upstream
+// tile providers / MAPTILER_KEY quota from any single caller.
+const RATE_LIMIT_PER_MIN = 120;
+const _rateMap = new Map();
+let _lastPrune = 0;
+function _rateLimited(ip) {
+  const now = Date.now();
+  if (now - _lastPrune > 60000) {
+    _lastPrune = now;
+    for (const [k, v] of _rateMap) if (now - v.start > 60000) _rateMap.delete(k);
+  }
+  const bucket = _rateMap.get(ip);
+  if (!bucket || now - bucket.start > 60000) {
+    _rateMap.set(ip, { start: now, count: 1 });
+    return false;
+  }
+  bucket.count++;
+  return bucket.count > RATE_LIMIT_PER_MIN;
+}
+
 export default async function handler(req) {
+  const ip = req.headers.get('x-forwarded-for') || req.headers.get('x-real-ip') || 'unknown';
+  if (_rateLimited(ip)) {
+    return new Response('too many requests', { status: 429, headers: { 'Retry-After': '60' } });
+  }
+
   const url = new URL(req.url);
   const z = url.searchParams.get('z');
   const x = url.searchParams.get('x');
@@ -77,6 +105,9 @@ export default async function handler(req) {
       },
     });
   } catch (err) {
-    return new Response('fetch failed: ' + (err && err.message || err), { status: 502 });
+    // Don't echo err.message to the caller — it can leak internal details
+    // (upstream URLs, network topology). Log server-side only.
+    console.error('[tile] fetch failed:', err && err.message || err);
+    return new Response('upstream fetch failed', { status: 502 });
   }
 }
