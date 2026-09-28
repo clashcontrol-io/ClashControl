@@ -8043,7 +8043,8 @@ function startApp() {
       LOAD_PROJECT_STATE:A.LOAD_PROJECT_STATE, ADD_ISSUE:A.ADD_ISSUE,
       ADD_VIEWPOINT:A.ADD_VIEWPOINT, ADD_MEASUREMENT:A.ADD_MEASUREMENT,
       ADD_SELSET:'ADD_SELSET', ADD_SEARCHSET:'ADD_SEARCHSET',
-      ADD_ASSIGN_RULE:'ADD_ASSIGN_RULE', MERGE_CHANGELOG:A.MERGE_CHANGELOG
+      ADD_ASSIGN_RULE:'ADD_ASSIGN_RULE', MERGE_CHANGELOG:A.MERGE_CHANGELOG,
+      MERGE_COMMENTS:A.MERGE_COMMENTS // Bug 9: comments weren't persisted at all
     };
   }
   function _ccSerializeProject(s, version, savedAt) {
@@ -17219,7 +17220,13 @@ function startApp() {
       measurements:[], measureMode:null, viewpoints:[],
       classifications:{}, hiddenClasses:{}, colorByClass:null,
       floorPlan:null,
-      sheets:[], activeSheetId:null, sheetPins:[], markups:[]
+      sheets:[], activeSheetId:null, sheetPins:[], markups:[],
+      // Bug 9: these were never reset on project switch, so e.g. project
+      // A's assignment rules kept auto-assigning project B's newly
+      // detected clashes, and project A's run history/comments/changelog
+      // bled into project B's UI until the next full page reload.
+      runHistory:[], selectionSets:[], searchSets:[], assignmentRules:[],
+      comments:[], changelog:[]
     }});
     d({t:A.UPD_PREFS, u:{showMarkers:false}});
     d({t:A.SET_PROJECT, id:newProjId});
@@ -17361,7 +17368,12 @@ function startApp() {
       if(!list.length) { list = [{id:'default', name:'Default Project', createdAt:Date.now()}]; }
       saveProjects(list);
       d({t:A.SET_PROJECT_LIST, v:list});
-      _switchProject(list[0].id, s, d);
+      // Bug 10: this used to always switch to list[0], even when deleting
+      // a project other than the active one -- yanking the user away from
+      // whatever project they were actually working in. Only switch when
+      // the deleted project WAS the active one (matches the other
+      // deleteProject in the avatar menu, ~index.html:36589).
+      if (id === s.activeProject) _switchProject(list[0].id, s, d);
       setConfirmDelete(null);
       setProjOpen(false);
     }
