@@ -343,6 +343,33 @@ animation/transition durations to `~0` and disables modal entrances.
   `cc-modal-backdrop` scrim.
 - Below 768px the left rail is hidden and a bottom mobile nav takes over.
 
+### Layers (z-index scale)
+
+Fixed/absolute page-level chrome picks **one** of these `:root` tokens —
+never a hand-picked number. Tiers are strictly increasing so a surface from
+a later tier always wins over an earlier one (e.g. the command palette over
+every modal; a modal backdrop over the right panel).
+
+| Token           | Value | Covers |
+|-----------------|-------|--------|
+| `--z-panel`     | 100   | Persistent side chrome: left rail, left panel, right AI/Details panel, mobile nav |
+| `--z-dropdown`  | 400   | Transient popovers/menus: avatar menu, STYLE menu, context menus, toolbar dropdowns |
+| `--z-overlay`   | 800   | Floating viewer-adjacent overlays above panels: clash chips, presentation-mode chrome, switching-project veil |
+| `--z-modal`     | 2000  | Modal backdrops + cards (`S_BACKDROP`), guided tour, memory-warning dialog |
+| `--z-toast`     | 3000  | Banners/toasts: privacy banner, detection-discoverability banner, what's-new, PWA update, operation center, folder-watch badge |
+| `--z-palette`   | 4000  | Command palette — above every modal/toast |
+| `--z-tooltip`   | 5000  | Custom tooltips, global drag-drop veil, snap marker — must always win |
+
+Within a tier, stack siblings with `calc(var(--z-tier) + N)` (e.g. a
+popover's backdrop at `var(--z-dropdown)` and its menu at
+`calc(var(--z-dropdown) + 1)`) rather than introducing a new tier.
+
+Elements scoped to their own local stacking context — in-canvas viewer
+overlays, sticky list headers, within-panel resize handles — intentionally
+keep small ad-hoc numbers (single digits). They only order siblings inside
+that ancestor and never compete with page-level chrome, so they're not on
+this scale.
+
 ### Accessibility contract
 
 - Every icon-only button **must** have `aria-label`.

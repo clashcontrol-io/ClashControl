@@ -408,6 +408,21 @@
       --hairline-strong:var(--border);
       --shadow-soft:var(--shadow-sm);--shadow-lifted:var(--shadow-md);
       --sev-critical:#b91c1c;--sev-major:#b45309;--sev-minor:#15803d;--sev-info:#737373;
+      /* ── z-index scale (DESIGN.md §Layers) ──
+         Fixed/absolute page-level chrome picks ONE of these tiers; values
+         are theme-independent (same light/dark) so they aren't repeated
+         under [data-theme=dark]. Elements scoped to their own local
+         stacking context (in-canvas viewer overlays, list sticky headers,
+         within-panel resize handles) intentionally keep small ad-hoc
+         numbers — they only order siblings inside that ancestor and never
+         compete with page-level chrome, so they are NOT on this scale. */
+      --z-panel:100;      /* persistent side chrome: left rail/panel, right AI/Details panel, mobile nav */
+      --z-dropdown:400;   /* transient popovers/menus: avatar menu, STYLE menu, context menus, toolbar dropdowns */
+      --z-overlay:800;    /* floating viewer-adjacent overlays above panels: clash chips, present-mode chrome, switching-project veil */
+      --z-modal:2000;     /* modal backdrops + cards, guided tour, memory-warning dialog */
+      --z-toast:3000;     /* banners/toasts: privacy banner, detection-discoverability banner, what's-new, PWA update, operation center, folder-watch badge */
+      --z-palette:4000;   /* command palette (above every modal/toast) */
+      --z-tooltip:5000;   /* custom tooltips, global drag-drop veil, snap marker — must always win */
     }
     [data-theme=dark]{
       --bg-primary:#141414;
@@ -460,8 +475,8 @@
     .cc-content-row{position:relative}
     /* ── Overlay panels (float above canvas, within content-row) ── */
     @media(min-width:769px){
-      .cc-left-rail{position:absolute!important;left:0!important;top:0!important;bottom:0!important;z-index:20!important;border-right:1px solid var(--border);box-shadow:2px 0 6px rgba(0,0,0,.04)}
-      .cc-left-panel{position:absolute!important;left:0!important;top:0!important;bottom:0!important;z-index:15!important;box-shadow:4px 0 16px rgba(0,0,0,.06);border-right:1px solid var(--border)}
+      .cc-left-rail{position:absolute!important;left:0!important;top:0!important;bottom:0!important;z-index:calc(var(--z-panel) + 2)!important;border-right:1px solid var(--border);box-shadow:2px 0 6px rgba(0,0,0,.04)}
+      .cc-left-panel{position:absolute!important;left:0!important;top:0!important;bottom:0!important;z-index:calc(var(--z-panel) + 1)!important;box-shadow:4px 0 16px rgba(0,0,0,.06);border-right:1px solid var(--border)}
     }
     .cc-side-panel{overflow-x:hidden}
     .cc-side-panel>*{min-width:0}
@@ -532,7 +547,7 @@
       *,*::before,*::after{animation-duration:.001ms!important;animation-iteration-count:1!important;transition-duration:.001ms!important}
       .cc-modal-card,.cc-modal-backdrop{animation:none!important}
     }
-    .cc-tip{position:relative}.cc-tip::after{content:attr(data-tip);position:absolute;left:calc(100% + 8px);top:50%;transform:translateY(-50%) translateX(-4px);background:var(--bg-secondary);color:var(--text-primary);border:1px solid var(--border);border-radius:6px;padding:.3rem .6rem;font-size:0.8rem;white-space:pre-line;max-width:420px;pointer-events:none;opacity:0;transition:opacity .15s,transform .15s;z-index:9999;box-shadow:0 4px 12px rgba(0,0,0,.2)}.cc-tip:hover::after{opacity:1;transform:translateY(-50%) translateX(0)}.cc-tip-delay::after{transition-delay:0s}.cc-tip-delay:hover::after{transition-delay:1s}.cc-tip-up::after{left:50%;top:auto;bottom:calc(100% + 7px);transform:translateX(-50%) translateY(4px)}.cc-tip-up:hover::after{transform:translateX(-50%) translateY(0)}.cc-tip-left::after{left:auto;right:calc(100% + 8px);transform:translateY(-50%) translateX(4px)}.cc-tip-left:hover::after{transform:translateY(-50%) translateX(0)}
+    .cc-tip{position:relative}.cc-tip::after{content:attr(data-tip);position:absolute;left:calc(100% + 8px);top:50%;transform:translateY(-50%) translateX(-4px);background:var(--bg-secondary);color:var(--text-primary);border:1px solid var(--border);border-radius:6px;padding:.3rem .6rem;font-size:0.8rem;white-space:pre-line;max-width:420px;pointer-events:none;opacity:0;transition:opacity .15s,transform .15s;z-index:var(--z-tooltip);box-shadow:0 4px 12px rgba(0,0,0,.2)}.cc-tip:hover::after{opacity:1;transform:translateY(-50%) translateX(0)}.cc-tip-delay::after{transition-delay:0s}.cc-tip-delay:hover::after{transition-delay:1s}.cc-tip-up::after{left:50%;top:auto;bottom:calc(100% + 7px);transform:translateX(-50%) translateY(4px)}.cc-tip-up:hover::after{transform:translateX(-50%) translateY(0)}.cc-tip-left::after{left:auto;right:calc(100% + 8px);transform:translateY(-50%) translateX(4px)}.cc-tip-left:hover::after{transform:translateY(-50%) translateX(0)}
     button:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
     input:focus-visible,select:focus-visible,textarea:focus-visible{outline:2px solid var(--accent);outline-offset:0;border-color:var(--accent)}
     [role=switch]:focus-visible{outline:2px solid var(--accent);outline-offset:2px;border-radius:10px}
@@ -544,9 +559,9 @@
     /* ── Responsive / Mobile ───────────────────────────────── */
     @media(max-width:768px){
       .cc-left-rail{display:none!important}
-      .cc-side-panel{position:fixed!important;top:0!important;left:0!important;right:0!important;bottom:56px!important;width:100%!important;z-index:1040!important;border:none!important}
-      .cc-left-panel{position:fixed!important;top:0!important;left:0!important;right:0!important;bottom:56px!important;width:100%!important;z-index:1040!important;border:none!important}
-      .cc-mobile-nav{display:flex!important;z-index:1050!important}
+      .cc-side-panel{position:fixed!important;top:0!important;left:0!important;right:0!important;bottom:56px!important;width:100%!important;z-index:calc(var(--z-panel) + 3)!important;border:none!important}
+      .cc-left-panel{position:fixed!important;top:0!important;left:0!important;right:0!important;bottom:56px!important;width:100%!important;z-index:calc(var(--z-panel) + 3)!important;border:none!important}
+      .cc-mobile-nav{display:flex!important;z-index:calc(var(--z-panel) + 4)!important}
       .cc-header{padding:.35rem .5rem!important}
       .cc-header-actions{gap:.25rem!important}
       .cc-header-actions .cc-hide-mobile{display:none!important}
@@ -572,7 +587,7 @@
     /* ── Desktop top bar ── */
     .cc-desktop-topbar{display:flex;align-items:center;justify-content:space-between;padding:0 var(--space-3);padding-left:var(--space-4);height:44px;flex-shrink:0;
       background:var(--surface);
-      border-bottom:1px solid var(--hairline);gap:var(--space-3);z-index:10;position:relative;}
+      border-bottom:1px solid var(--hairline);gap:var(--space-3);z-index:var(--z-dropdown);position:relative;}
     @media(max-width:768px){.cc-desktop-topbar{display:none!important}}
     @media(max-width:768px){.cc-top-toolbar{display:none!important}}
     body[data-presenting="1"] .cc-desktop-topbar{display:none!important}
@@ -592,9 +607,14 @@
       .cc-welcome-illus{display:none!important;}
     }
     /* ── Mobile floating theme toggle ── */
+    /* Toolbar text labels (e.g. Run detection): icon-only below 1100px,
+       icon+text at desktop widths where there's room — detection
+       discoverability, MEMORY.md. */
+    .cc-btn-text-label{display:none}
+    @media(min-width:1100px){ .cc-btn-text-label{display:inline} }
     .cc-mobile-theme{display:none!important}
     body[data-presenting="1"] .cc-mobile-theme{display:none!important}
-    .cc-mobile-nav{display:none;position:fixed;bottom:0;left:0;right:0;z-index:1050;
+    .cc-mobile-nav{display:none;position:fixed;bottom:0;left:0;right:0;z-index:calc(var(--z-panel) + 4);
       background:var(--surface);border-top:1px solid var(--hairline);
       justify-content:space-around;align-items:center;padding:.25rem 0;padding-bottom:env(safe-area-inset-bottom,.25rem)}
     .cc-mobile-nav button{background:none;border:none;cursor:pointer;color:var(--text-muted);
@@ -610,10 +630,10 @@
     body[data-presenting="1"] .cc-tip[data-tip],
     body[data-presenting="1"] [class*="cc-toast"],
     body[data-presenting="1"] [class*="cc-banner"]{display:none!important}
-    .cc-present-overlay{position:fixed;inset:0;pointer-events:none;z-index:60;
+    .cc-present-overlay{position:fixed;inset:0;pointer-events:none;z-index:var(--z-overlay);
       background:radial-gradient(ellipse at center,transparent 50%,rgba(0,0,0,.45) 100%)}
     .cc-present-controls{position:fixed;bottom:1.4rem;left:50%;transform:translateX(-50%);
-      pointer-events:auto;z-index:62;display:flex;align-items:center;gap:.55rem;
+      pointer-events:auto;z-index:calc(var(--z-overlay) + 2);display:flex;align-items:center;gap:.55rem;
       background:rgba(15,23,42,.92);color:#fff;padding:.5rem .85rem;border-radius:4px;
       border:1px solid rgba(148,163,184,.2);font-size:0.78rem;
       opacity:.4;transition:opacity .25s ease}
@@ -13270,7 +13290,7 @@ function startApp() {
           if (!host) {
             host = document.createElement('div');
             host.id = 'cc-toast-host';
-            host.style.cssText = 'position:fixed;bottom:1.2rem;left:50%;transform:translateX(-50%);z-index:200;display:flex;flex-direction:column;gap:.4rem;align-items:center;pointer-events:none;max-width:min(92vw,480px)';
+            host.style.cssText = 'position:fixed;bottom:1.2rem;left:50%;transform:translateX(-50%);z-index:var(--z-toast);display:flex;flex-direction:column;gap:.4rem;align-items:center;pointer-events:none;max-width:min(92vw,480px)';
             document.body.appendChild(host);
           }
           var t = document.createElement('div');
@@ -13668,7 +13688,7 @@ function startApp() {
           'position:fixed','width:96px','height:96px','border-radius:50%',
           'border:2px solid #b8533a',
           'box-shadow:0 4px 16px rgba(0,0,0,.35)',
-          'pointer-events:none','z-index:9999','display:none','overflow:hidden'
+          'pointer-events:none','z-index:var(--z-tooltip)','display:none','overflow:hidden'
         ].join(';');
         document.body.appendChild(_magCanvas);
         try {
@@ -13860,7 +13880,7 @@ function startApp() {
         if(hud) return hud;
         hud = document.createElement('div');
         hud.id = 'cc-sbox-hud';
-        hud.style.cssText = 'position:fixed;pointer-events:none;z-index:9999;'
+        hud.style.cssText = 'position:fixed;pointer-events:none;z-index:var(--z-tooltip);'
           + 'font-family:var(--font-mono);font-size:var(--text-xs);line-height:var(--leading-tight);'
           + 'background:var(--bg-secondary);color:var(--text-primary);'
           + 'border:1px solid var(--border);'
@@ -17346,7 +17366,7 @@ function startApp() {
             all 3D-anchored to the snap point's screen position (AutoCAD/Revit style).
             Updated each frame inside the renderer tick (see ~line 8040). When no snap
             is found, the cursor itself is the only indicator — no overlapping markers. */ ''}
-      <div id="cc-snap-marker" style=${{position:'fixed',left:0,top:0,width:0,height:0,pointerEvents:'none',zIndex:9997,display:'none'}}>
+      <div id="cc-snap-marker" style=${{position:'fixed',left:0,top:0,width:0,height:0,pointerEvents:'none',zIndex:'var(--z-tooltip)',display:'none'}}>
         <svg id="cc-snap-glyph" width="18" height="18" viewBox="0 0 18 18" style=${{position:'absolute',left:-9,top:-9,overflow:'visible',filter:'drop-shadow(0 1px 2px rgba(0,0,0,.35))'}}></svg>
         <span id="cc-snap-typelabel" style=${{position:'absolute',left:14,top:-10,fontSize:'var(--text-2xs)',color:'var(--accent)',background:'var(--bg-primary)',border:'1px solid var(--accent)',padding:'var(--space-1) var(--space-2)',borderRadius:'var(--radius-xs)',boxShadow:'var(--shadow-sm)',whiteSpace:'nowrap',fontWeight:'var(--weight-semibold)',letterSpacing:'.02em',display:'none'}}></span>
         <span id="cc-snap-chip" style=${{position:'absolute',left:14,top:8,fontFamily:'var(--font-mono)',fontSize:'var(--text-xs)',color:'var(--text-primary)',background:'var(--bg-primary)',border:'1px solid var(--border)',padding:'var(--space-1) var(--space-2)',borderRadius:'var(--radius-xs)',boxShadow:'var(--shadow-sm)',whiteSpace:'nowrap',display:'none'}}></span>
@@ -17354,7 +17374,7 @@ function startApp() {
       ${/* Element-pick mini-menu shown after Measure → Element click (T2.1) */ ''}
       ${window._ccElementMeasureMenu && (function(){
         var em = window._ccElementMeasureMenu;
-        return html`<div style=${{position:'fixed',left:em.x+'px',top:em.y+'px',zIndex:9999,
+        return html`<div style=${{position:'fixed',left:em.x+'px',top:em.y+'px',zIndex:'var(--z-dropdown)',
           background:'var(--bg-primary)',border:'1px solid var(--border)',borderRadius:'var(--radius-sm)',
           boxShadow:'var(--shadow-md)',padding:'.35rem .25rem',minWidth:190,fontSize:'var(--text-xs)',pointerEvents:'auto'}}>
           <div style=${{padding:'var(--space-1) var(--space-3)',color:'var(--text-muted)',fontSize:'var(--text-2xs)',textTransform:'uppercase',letterSpacing:'.06em'}}>${em.elementLabel||'Element'}</div>
@@ -17419,8 +17439,8 @@ function startApp() {
           </div>`})}
         </div>`}
       </div>
-      ${ctxMenu && html`<div onClick=${function(){setCtxMenu(null)}} style=${{position:'absolute',inset:0,zIndex:10}}>
-        <div style=${{position:'absolute',left:ctxMenu.x,top:ctxMenu.y,background:'var(--bg-secondary)',border:'1px solid var(--border)',borderRadius:8,boxShadow:'0 8px 24px rgba(0,0,0,.6)',overflow:'hidden',minWidth:160,zIndex:11}}
+      ${ctxMenu && html`<div onClick=${function(){setCtxMenu(null)}} style=${{position:'absolute',inset:0,zIndex:'var(--z-dropdown)'}}>
+        <div style=${{position:'absolute',left:ctxMenu.x,top:ctxMenu.y,background:'var(--bg-secondary)',border:'1px solid var(--border)',borderRadius:8,boxShadow:'0 8px 24px rgba(0,0,0,.6)',overflow:'hidden',minWidth:160,zIndex:'calc(var(--z-dropdown) + 1)'}}
           onClick=${function(e){e.stopPropagation();}}>
           <button onClick=${function(){d({t:A.SECTION_CUSTOM,v:{normal:ctxMenu.normal,point:ctxMenu.point}});setCtxMenu(null);}}
             style=${{...S_BTN,width:'100%',textAlign:'left',padding:'.5rem .7rem',background:'transparent',color:'var(--text-primary)',fontSize:'0.86rem',borderRadius:0,display:'flex',alignItems:'center',gap:'.5rem'}}>
@@ -17795,7 +17815,7 @@ function startApp() {
   var S_PANELR  = {background:'var(--bg-primary)',borderLeft:'1px solid var(--border-subtle)',display:'flex',flexDirection:'column',flexShrink:0};
   var S_BTN     = {border:'none',cursor:'pointer',fontFamily:'inherit',fontSize:'var(--text-base)',borderRadius:'var(--radius-sm)',padding:'var(--space-2) var(--space-4)',lineHeight:'var(--leading-tight)',transition:'background var(--duration-fast) var(--ease-standard),color var(--duration-fast) var(--ease-standard),border-color var(--duration-fast) var(--ease-standard),transform var(--duration-fast) var(--ease-standard)'};
   var S_INPUT   = {width:'100%',background:'var(--bg-tertiary)',color:'var(--text-primary)',fontSize:'var(--text-md)',borderRadius:'var(--radius-md)',padding:'var(--space-2) var(--space-3)',border:'1px solid var(--border)',outline:'none',transition:'border-color var(--duration-fast) var(--ease-standard),box-shadow var(--duration-fast) var(--ease-standard)'};
-  var S_BACKDROP = {position:'fixed',inset:0,background:'var(--modal-bg)',display:'flex',alignItems:'center',justifyContent:'center',zIndex:50,overflow:'hidden',padding:'var(--space-6) 0'};
+  var S_BACKDROP = {position:'fixed',inset:0,background:'var(--modal-bg)',display:'flex',alignItems:'center',justifyContent:'center',zIndex:'var(--z-modal)',overflow:'hidden',padding:'var(--space-6) 0'};
   var S_MODAL_CARD = {background:'var(--bg-secondary)',border:'1px solid var(--border)',borderRadius:'var(--radius-lg)',maxWidth:'95vw',maxHeight:'85vh',overflowY:'auto',WebkitOverflowScrolling:'touch',boxShadow:'var(--shadow-lg)',flexShrink:0};
   var S_MODAL_HEADER = {display:'flex',alignItems:'center',justifyContent:'space-between',padding:'var(--space-4) var(--space-5)',borderBottom:'1px solid var(--border-subtle)',gap:'var(--space-3)'};
   var S_MODAL_TITLE = {fontFamily:'var(--font-display)',fontWeight:'var(--weight-bold)',fontSize:'var(--text-lg)',color:'var(--text-primary)',lineHeight:'var(--leading-tight)',letterSpacing:'-.01em'};
@@ -18192,12 +18212,12 @@ function startApp() {
     function prev() { if (step > 0) setStep(step-1); }
     function skip() { setStep(null); }
 
-    var tipStyle = {position:'fixed', zIndex:10002, background:'var(--bg-primary)',
+    var tipStyle = {position:'fixed', zIndex:'calc(var(--z-modal) + 2)', background:'var(--bg-primary)',
       border:'1px solid var(--accent)', borderRadius:10, padding:'1rem',
       boxShadow:'0 8px 32px rgba(0,0,0,.5)', width:320, maxWidth:'85vw',
       left:'50%', top:'50%', transform:'translate(-50%,-50%)'};
 
-    var overlayStyle = {position:'fixed',inset:0,zIndex:10001,cursor:'default'};
+    var overlayStyle = {position:'fixed',inset:0,zIndex:'var(--z-modal)',cursor:'default'};
     var clipPath = 'none';
     if (spotPos) {
       var m = 6; // margin around element
@@ -18215,7 +18235,7 @@ function startApp() {
     return html`<div>
       <div style=${overlayStyle} onClick=${skip}></div>
       ${spotPos && html`<div style=${{position:'fixed',left:spotPos.x-6,top:spotPos.y-6,
-        width:spotPos.w+12,height:spotPos.h+12,zIndex:10001,
+        width:spotPos.w+12,height:spotPos.h+12,zIndex:'calc(var(--z-modal) + 1)',
         border:'2px solid var(--accent)',borderRadius:8,pointerEvents:'none',
         boxShadow:'0 0 0 4px rgba(26,107,74,.25)'}}></div>`}
       <div style=${tipStyle}>
@@ -18305,8 +18325,8 @@ function startApp() {
       <div style=${{display:'flex',alignItems:'center',gap:'var(--space-3)'}}>
         <div style=${{position:'relative'}}>
           <div style=${{width:32,height:32,background:'var(--text-primary)',borderRadius:'var(--radius-md)',display:'flex',alignItems:'center',justifyContent:'center',cursor:'pointer'}} title="ClashControl — tap for version info" onClick=${function(){setShowVer(!showVer);}}><span style=${{display:'inline-flex',alignItems:'center',color:'var(--bg-primary)',fontWeight:800,fontSize:10,fontFamily:'var(--font-display)',lineHeight:1}}><span>C</span><span style=${{display:'inline-block',transform:'scaleX(-1)',marginLeft:'-1px'}}>C</span></span></div>
-          ${showVer && html`<div onClick=${function(){setShowVer(false);}} style=${{position:'fixed',inset:0,zIndex:8999,background:'transparent'}}></div>
-          <div style=${{position:'fixed',top:50,left:12,background:'var(--bg-secondary)',border:'1px solid var(--border)',borderRadius:8,padding:'.6rem .8rem',zIndex:9000,minWidth:220,boxShadow:'0 8px 24px rgba(0,0,0,.4)',fontSize:'0.83rem',color:'var(--text-primary)',whiteSpace:'nowrap'}} onClick=${function(e){e.stopPropagation();}}>
+          ${showVer && html`<div onClick=${function(){setShowVer(false);}} style=${{position:'fixed',inset:0,zIndex:'var(--z-dropdown)',background:'transparent'}}></div>
+          <div style=${{position:'fixed',top:50,left:12,background:'var(--bg-secondary)',border:'1px solid var(--border)',borderRadius:8,padding:'.6rem .8rem',zIndex:'calc(var(--z-dropdown) + 1)',minWidth:220,boxShadow:'0 8px 24px rgba(0,0,0,.4)',fontSize:'0.83rem',color:'var(--text-primary)',whiteSpace:'nowrap'}} onClick=${function(e){e.stopPropagation();}}>
             <div style=${{fontWeight:700,marginBottom:'.3rem'}}>ClashControl</div>
             <div style=${{color:'var(--text-muted)'}}>Version <strong>v${CC_VERSION.v}</strong></div>
             <div style=${{color:'var(--text-faint)',marginTop:'.2rem'}}>Build: ${CC_VERSION.hash}</div>
@@ -18329,7 +18349,7 @@ function startApp() {
             style=${{...S_BTN,background:'var(--bg-secondary)',color:'var(--text-primary)',border:'1px solid var(--border)',display:'flex',alignItems:'center',gap:'.3rem',fontSize:'0.8rem',padding:'.3rem .6rem',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>
             ${activeProj.name} <span style=${{fontSize:'0.57rem',color:'var(--text-faint)'}}>${projOpen?'▲':'▼'}</span>
           </button>
-          ${projOpen && html`<div style=${{position:'absolute',top:'100%',left:0,marginTop:4,background:'var(--bg-secondary)',border:'1px solid var(--border)',borderRadius:8,boxShadow:'0 8px 24px rgba(0,0,0,.4)',minWidth:220,zIndex:100,overflowY:'auto',maxHeight:'60vh'}}>
+          ${projOpen && html`<div style=${{position:'absolute',top:'100%',left:0,marginTop:4,background:'var(--bg-secondary)',border:'1px solid var(--border)',borderRadius:8,boxShadow:'0 8px 24px rgba(0,0,0,.4)',minWidth:220,zIndex:'var(--z-dropdown)',overflowY:'auto',maxHeight:'60vh'}}>
             ${projects.map(function(p){
               var isActive = p.id===s.activeProject;
               var isConfirming = confirmDelete===p.id;
@@ -21155,7 +21175,7 @@ function startApp() {
         <span style=${{overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>${summary}</span>
         <span style=${{fontSize:'0.57rem',color:'var(--text-faint)',marginLeft:'.3rem',flexShrink:0}}>${open?'▲':'▼'}</span>
       </button>
-      ${open && html`<div style=${{position:'absolute',top:'100%',left:0,right:0,marginTop:2,background:'var(--bg-secondary)',border:'1px solid var(--border)',borderRadius:6,boxShadow:'0 6px 20px rgba(0,0,0,.35)',zIndex:50,overflow:'hidden',maxHeight:'12rem',display:'flex',flexDirection:'column'}}>
+      ${open && html`<div style=${{position:'absolute',top:'100%',left:0,right:0,marginTop:2,background:'var(--bg-secondary)',border:'1px solid var(--border)',borderRadius:6,boxShadow:'0 6px 20px rgba(0,0,0,.35)',zIndex:'var(--z-dropdown)',overflow:'hidden',maxHeight:'12rem',display:'flex',flexDirection:'column'}}>
         <div style=${{display:'flex',alignItems:'center',justifyContent:'space-between',padding:'.25rem .4rem',borderBottom:'1px solid var(--border-subtle)',flexShrink:0}}>
           <span style=${{fontSize:'0.67rem',color:'var(--text-muted)'}}>${activeCount} selected</span>
           <button onClick=${onToggleAll} style=${{fontSize:'0.63rem',padding:'1px 5px',background:'none',color:allVisible?'var(--text-faint)':'var(--accent)',border:'1px solid var(--border)',borderRadius:3,cursor:'pointer'}}>
@@ -22365,7 +22385,7 @@ function startApp() {
         Export
         <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M6 9l6 6 6-6"/></svg>
       </button>
-      ${exportOpen && html`<div style=${{position:'absolute',right:0,top:'calc(100% + 4px)',background:'var(--bg-secondary)',border:'1px solid var(--border)',borderRadius:'var(--radius-sm)',boxShadow:'var(--shadow-md)',zIndex:200,minWidth:160,overflow:'hidden'}}>
+      ${exportOpen && html`<div style=${{position:'absolute',right:0,top:'calc(100% + 4px)',background:'var(--bg-secondary)',border:'1px solid var(--border)',borderRadius:'var(--radius-sm)',boxShadow:'var(--shadow-md)',zIndex:'var(--z-dropdown)',minWidth:160,overflow:'hidden'}}>
         <button onClick=${function(){exportBCF(bcfItems,'2.1',s.viewpoints,s);setExportOpen(false);}}
           style=${{display:'block',width:'100%',textAlign:'left',padding:'.45rem .7rem',fontSize:'0.75rem',background:'none',border:'none',color:'var(--text-primary)',cursor:'pointer',fontFamily:'var(--font-body)'}}>
           BCF 2.1
@@ -25617,6 +25637,27 @@ function startApp() {
   window._ccFiltersAreActive = _ccFiltersAreActive;
   window._ccConflictEmptyState = _ccConflictEmptyState;
 
+  // ── Detection discoverability banner (ccUiDetectionBanner) ──
+  // Pure decision function (same extraction-test convention as
+  // _ccConflictEmptyState above): after models finish loading, with no
+  // detection ever run yet, nudge the user to run clash detection instead
+  // of leaving them in the Present workspace with no hint. Never shown
+  // while a detection is already running/queued, once clashes already
+  // exist, once a run has completed (even to zero — that's a deliberate
+  // "genuinely clean" result, not a discoverability gap), or once
+  // dismissed/run for the current model set (ctx.dismissedForSignature).
+  function _ccShouldShowDetectionBanner(ctx) {
+    ctx = ctx || {};
+    if (!ctx.hasModels) return false;
+    if (ctx.modelsLoading) return false;
+    if (ctx.detecting) return false;
+    if (ctx.rawCount) return false;
+    if (ctx.ranBefore) return false;
+    if (ctx.dismissedForSignature) return false;
+    return true;
+  }
+  window._ccShouldShowDetectionBanner = _ccShouldShowDetectionBanner;
+
   // ── Responsive toolbar overflow fitting (ccUiToolbarV2) ──  REWRITE_UI_PLAN.md Phase 8
   // Pure "priority+ nav" fitting algorithm, unit-testable without a DOM.
   // Given items in priority order (highest-priority first) with known pixel
@@ -27930,7 +27971,7 @@ function startApp() {
     var fileRef = useRef(null);
 
     return html`<div class="cc-present-overlay"></div>
-      ${brand && html`\x3Cimg src=${brand} alt=${_cc_t('present.brandAlt','Brand')} style=${{position:'fixed',right:'1.1rem',bottom:'1.1rem',maxWidth:'160px',maxHeight:'80px',opacity:.65,zIndex:61,pointerEvents:'none',filter:'drop-shadow(0 2px 6px rgba(0,0,0,.5))'}} />`}
+      ${brand && html`\x3Cimg src=${brand} alt=${_cc_t('present.brandAlt','Brand')} style=${{position:'fixed',right:'1.1rem',bottom:'1.1rem',maxWidth:'160px',maxHeight:'80px',opacity:.65,zIndex:'calc(var(--z-overlay) + 1)',pointerEvents:'none',filter:'drop-shadow(0 2px 6px rgba(0,0,0,.5))'}} />`}
       <div class="cc-present-controls cc-present-show">
         <span style=${{fontSize:'0.7rem',opacity:.7,letterSpacing:'.04em',textTransform:'uppercase',marginRight:'.4rem'}}>${_cc_t('present.presenting','Presenting')}</span>
         ${viewpoints.length>0 ? html`<${React.Fragment}>
@@ -28927,7 +28968,7 @@ function startApp() {
     return html`<div aria-live="polite" role="status"
       style=${{
         position:'fixed', top:'50%', left:'50%', transform:'translate(-50%,-50%)',
-        zIndex:1100, width:340, maxWidth:'90vw',
+        zIndex:'var(--z-toast)', width:340, maxWidth:'90vw',
         background:'var(--surface)', border:'1px solid var(--border)',
         borderRadius:'var(--radius-lg)', boxShadow:'var(--shadow-lg)',
         padding:'var(--space-5)',
@@ -30581,7 +30622,7 @@ function startApp() {
       ${activeSheet && html`<button onClick=${plotClashes} style=${{ ...btn, background: '#7f1d1d', color: '#fca5a5' }} title=${_cc_t('sheet.plotClashesTip','Drop pins for every clash/issue whose location falls within this storey')}>${_cc_t('sheet.plotClashes','Plot Clashes')}</button>`}
       ${activeSheet && html`<button onClick=${function() { setShowTB(!showTB); }} style=${{ ...btn, background: 'var(--overlay-bg)', color: 'var(--text-muted)' }} title=${_cc_t('sheet.settingsTip','Sheet settings: scale, paper, cut depth, title block')}>${_cc_t('sheet.settings','Settings')}</button>`}
       ${activeSheet && html`<button onClick=${delSheet} style=${{ ...btn, background: 'var(--overlay-bg)', color: '#ef4444' }} title=${_cc_t('sheet.deleteTip','Delete this sheet')}>✕</button>`}
-      ${showTB && activeSheet && html`<div style=${{ position: 'absolute', top: '2.2rem', right: 0, background: 'var(--bg-primary)', border: '1px solid var(--border)', borderRadius: 6, padding: '.6rem', zIndex: 20, width: 280, display: 'flex', flexDirection: 'column', gap: '.35rem', maxHeight:'70vh', overflowY:'auto' }}>
+      ${showTB && activeSheet && html`<div style=${{ position: 'absolute', top: '2.2rem', right: 0, background: 'var(--bg-primary)', border: '1px solid var(--border)', borderRadius: 6, padding: '.6rem', zIndex: 'var(--z-dropdown)', width: 280, display: 'flex', flexDirection: 'column', gap: '.35rem', maxHeight:'70vh', overflowY:'auto' }}>
         <div style=${{ fontSize: '.7rem', fontWeight: 600, color: 'var(--text-primary)', marginBottom: '.2rem' }}>${_cc_t('sheet.sheetSettings','Sheet Settings')}</div>
 
         <div style=${{ fontSize: '.6rem', fontWeight: 600, color: 'var(--accent)', marginTop: '.2rem' }}>${_cc_t('sheet.sectionPlane','Section Plane')}</div>
@@ -35241,9 +35282,9 @@ function startApp() {
     // ── Floating mode (original overlay behavior) ──
     var panelAnimation = 'none';
     var panelBorderCol = panelGlow ? 'rgba(96,165,250,.5)' : borderCol;
-    return html`<div style=${{position:'fixed',inset:0,zIndex:1199}} onClick=${function(){setOpen(false);}}><div class="cc-nlpanel" onClick=${function(e){e.stopPropagation();}} style=${{
+    return html`<div style=${{position:'fixed',inset:0,zIndex:'var(--z-palette)'}} onClick=${function(){setOpen(false);}}><div class="cc-nlpanel" onClick=${function(e){e.stopPropagation();}} style=${{
       position:'fixed', bottom:'1rem', left:'50%', transform:'translateX(-50%)',
-      zIndex:1200, width:'min('+panelW+'px, calc(100% - 2rem))',
+      zIndex:'calc(var(--z-palette) + 1)', width:'min('+panelW+'px, calc(100% - 2rem))',
       background:panelBg, border:'1px solid '+panelBorderCol,
       borderRadius:12, boxShadow:'var(--shadow-lg)',
       display:'flex', flexDirection:'column', overflow:'hidden',
@@ -35562,6 +35603,65 @@ function startApp() {
     } catch(e) { /* unload — best effort */ }
   }
 
+  // ── Detection discoverability banner ──
+  // After models finish loading (cc-model-loading → false) with no
+  // detection ever run, shows a dismissible toast with a primary "Run
+  // clash detection" button — the SAME flow the toolbar ▷ button opens
+  // (A.SHOW_RUN_MODAL). Shown at most once per model set: a signature of
+  // the loaded model ids is compared against the last dismissed/actioned
+  // signature (sessionStorage, so it resurfaces for a genuinely new model
+  // set even within the same tab, but not on every re-render of the same
+  // one). See _ccShouldShowDetectionBanner above for the pure decision.
+  function _ccDetectionBannerSignature(models) {
+    return (models || []).map(function(m){ return m.id; }).filter(Boolean).sort().join(',');
+  }
+  window._ccDetectionBannerSignature = _ccDetectionBannerSignature;
+  function DetectionDiscoverabilityBanner(props) {
+    var s = props.s;
+    var mlSt = useState(!!window._ccModelLoading), modelsLoading = mlSt[0], setModelsLoading = mlSt[1];
+    useEffect(function(){
+      function onML(e){ setModelsLoading(!!(e && e.detail && e.detail.loading)); }
+      window.addEventListener('cc-model-loading', onML);
+      return function(){ window.removeEventListener('cc-model-loading', onML); };
+    }, []);
+    var sig = _ccDetectionBannerSignature(s.models);
+    var dSt = useState(function(){
+      try { return sessionStorage.getItem('cc_detect_banner_dismissed_sig') || ''; } catch(e){ return ''; }
+    }), dismissedSig = dSt[0], setDismissedSig = dSt[1];
+    var show = _ccShouldShowDetectionBanner({
+      hasModels: !!sig,
+      modelsLoading: modelsLoading,
+      detecting: !!s.detecting,
+      rawCount: (s.clashes || []).length,
+      ranBefore: !!((s.runHistory || []).length),
+      dismissedForSignature: !!sig && dismissedSig === sig
+    });
+    if (!show) return null;
+    function dismiss() {
+      setDismissedSig(sig);
+      try { sessionStorage.setItem('cc_detect_banner_dismissed_sig', sig); } catch(e){}
+    }
+    function run() {
+      dismiss();
+      if (window._ccDispatch) window._ccDispatch({t:A.SHOW_RUN_MODAL, v:true});
+    }
+    return html`<div role="status" data-detection-banner style=${{
+      position:'fixed', bottom:'1rem', left:'50%', transform:'translateX(-50%)',
+      zIndex:'var(--z-toast)', maxWidth:520, width:'92%',
+      background:'var(--bg-secondary)', border:'1px solid var(--accent-subtle)',
+      borderRadius:'var(--radius-md)', padding:'var(--space-3) var(--space-4)',
+      boxShadow:'var(--shadow-lg)', display:'flex', alignItems:'center',
+      gap:'var(--space-3)', fontSize:'var(--text-sm)', color:'var(--text-secondary)'
+    }}>
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" style=${{flexShrink:0}}><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/></svg>
+      <span style=${{flex:1}}>${_cc_t('detectBanner.msg','Models loaded. Run clash detection to find conflicts.')}</span>
+      <button onClick=${run}
+        style=${{...S_BTN, padding:'.4rem .8rem', background:'var(--accent)', color:'#fff', border:'none', borderRadius:6, fontWeight:600, fontSize:'0.78rem', whiteSpace:'nowrap'}}>${_cc_t('detectBanner.run','Run clash detection')}</button>
+      <button aria-label=${_cc_t('detectBanner.dismissAria','Dismiss')} onClick=${dismiss}
+        style=${{background:'none',border:'none',color:'var(--text-muted)',cursor:'pointer',fontSize:'1.1rem',lineHeight:1,padding:'0 .2rem',flexShrink:0}}>×</button>
+    </div>`;
+  }
+
   function PrivacyBanner(props) {
     var stShow = useState(function(){
       try { return !_ccConsentIsExplicit(); } catch(e){ return false; }
@@ -35574,7 +35674,7 @@ function startApp() {
     }
     return html`<div style=${{
       position:'fixed', bottom:'1rem', left:'50%', transform:'translateX(-50%)',
-      zIndex:1500, maxWidth:520, width:'92%',
+      zIndex:'var(--z-toast)', maxWidth:520, width:'92%',
       background:'var(--bg-secondary)', border:'1px solid var(--border)',
       borderRadius:10, padding:'.75rem .9rem',
       boxShadow:'0 12px 32px rgba(0,0,0,.4)',
@@ -35665,7 +35765,7 @@ function startApp() {
 
     return html`<div role="status" aria-live="polite" data-operation=${kind} style=${{
       position:'fixed', bottom:'4.4rem', left:'50%', transform:'translateX(-50%)',
-      zIndex:1450, minWidth:260, maxWidth:420, width:'92%',
+      zIndex:'var(--z-toast)', minWidth:260, maxWidth:420, width:'92%',
       background:'var(--bg-secondary)', border:'1px solid var(--border)',
       borderRadius:10, padding:'.6rem .8rem',
       boxShadow:'0 12px 32px rgba(0,0,0,.35)',
@@ -35992,7 +36092,7 @@ function startApp() {
       window.open('https://github.com/clashcontrol-io/ClashControl/issues/new?template=memory_report.md&title=' + encodeURIComponent(title) + '&body=' + encodeURIComponent(body), '_blank');
     }
 
-    return html`<div onClick=${function(e){if(e.target===e.currentTarget)onDismiss()}} style=${{position:'fixed',inset:0,background:'rgba(0,0,0,.65)',zIndex:10000,display:'flex',alignItems:'center',justifyContent:'center',padding:'2rem',background:'rgba(0,0,0,.7)'}}>
+    return html`<div onClick=${function(e){if(e.target===e.currentTarget)onDismiss()}} style=${{position:'fixed',inset:0,background:'rgba(0,0,0,.65)',zIndex:'var(--z-modal)',display:'flex',alignItems:'center',justifyContent:'center',padding:'2rem',background:'rgba(0,0,0,.7)'}}>
       <div style=${{background:'var(--bg-primary)',border:'1px solid #f87171',borderRadius:12,padding:'1.5rem',maxWidth:500,width:'100%',boxShadow:'0 16px 48px rgba(0,0,0,.5)'}}>
         <div style=${{display:'flex',alignItems:'flex-start',gap:'.75rem',marginBottom:'1rem'}}>
           ${hasMem && usedMB > 0 ? html`<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#f87171" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>` : html`<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>`}
@@ -36064,7 +36164,7 @@ function startApp() {
     window._ccStartTour = function(){ setShowTutorial(false); setTourStep(0); };
     if (!showTutorial && tourStep == null) return null;
     return html`<div>
-      ${showTutorial && html`<div onClick=${function(e){if(e.target===e.currentTarget)setShowTutorial(false)}} style=${{position:'fixed',inset:0,background:'rgba(0,0,0,.6)',zIndex:9999,display:'flex',alignItems:'center',justifyContent:'center',overflow:'hidden',padding:'2rem 0',background:'rgba(0,0,0,.7)'}}>
+      ${showTutorial && html`<div onClick=${function(e){if(e.target===e.currentTarget)setShowTutorial(false)}} style=${{position:'fixed',inset:0,background:'rgba(0,0,0,.6)',zIndex:'var(--z-modal)',display:'flex',alignItems:'center',justifyContent:'center',overflow:'hidden',padding:'2rem 0',background:'rgba(0,0,0,.7)'}}>
         <div style=${{background:'var(--bg-primary)',border:'1px solid var(--border)',borderRadius:12,padding:'1.5rem',maxWidth:560,width:'90vw',maxHeight:'85vh',overflowY:'auto',WebkitOverflowScrolling:'touch',boxShadow:'0 16px 48px rgba(0,0,0,.5)',flexShrink:0}}>
           <div style=${{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:'1rem'}}>
             <span style=${{fontSize:'1.26rem',fontWeight:700}}>Quick Start Guide</span>
@@ -36448,8 +36548,15 @@ function startApp() {
     }, []);
     // Clamp panel to leave at least 200px of canvas visible
     var effectivePanelW = Math.min(panelW, Math.max(240, vw - 200));
+    // Closed by default on first visit (no stored preference) — the panel
+    // used to open by default and cover the avatar menu / run-detection
+    // dialog on narrower widths. Once the user has explicitly opened or
+    // closed it, their choice is remembered (existing localStorage pattern).
     var collSt=useState(function(){
-      try { return localStorage.getItem('cc_ai_panel_collapsed')==='1'; } catch(e) { return false; }
+      try {
+        var raw = localStorage.getItem('cc_ai_panel_collapsed');
+        return raw==null ? true : raw==='1';
+      } catch(e) { return true; }
     }), collapsed=collSt[0], setCollapsed=collSt[1];
     var tabSt=useState('details'), drawerTab=tabSt[0], setDrawerTab=tabSt[1];
     var elSt=useState(null), drawerEl=elSt[0], setDrawerEl=elSt[1];
@@ -36525,7 +36632,7 @@ function startApp() {
         title=${_cc_t('panel.open','Open panel')}
         style=${{
           position:'absolute', right:0, top:'50%', transform:'translateY(-50%)',
-          zIndex:1100, background:'var(--bg-secondary)', border:'1px solid var(--border)',
+          zIndex:'calc(var(--z-panel) + 5)', background:'var(--bg-secondary)', border:'1px solid var(--border)',
           borderRight:'none', borderRadius:'8px 0 0 8px', padding:'.6rem .35rem',
           cursor:'pointer', color:'var(--text-secondary)', fontSize:'0.78rem',
           writingMode:'vertical-rl', boxShadow:'var(--shadow-md)'
@@ -37159,7 +37266,7 @@ function startApp() {
       background:'var(--bg-primary)', border:'1px solid var(--border)',
       borderRadius:14,
       boxShadow:'0 12px 32px rgba(0,0,0,0.32), 0 4px 12px rgba(0,0,0,0.18)',
-      zIndex:1100
+      zIndex:'calc(var(--z-panel) + 5)'
     }}>
       <div onMouseDown=${onResizeDown} style=${{position:'absolute',left:0,top:0,bottom:0,width:8,cursor:'col-resize',zIndex:10,
         background:'transparent',transition:'background .15s',borderRadius:'14px 0 0 14px'}} onMouseEnter=${function(e){e.currentTarget.style.background='var(--accent-bg-deep)';}} onMouseLeave=${function(e){e.currentTarget.style.background='transparent';}}></div>
@@ -37254,7 +37361,7 @@ function startApp() {
     return html`<div aria-hidden="true" style=${{
       position:'fixed', left:pos.x, top:pos.y,
       transform:'translate(-50%, calc(-100% - 16px))',
-      pointerEvents:'none', zIndex:200,
+      pointerEvents:'none', zIndex:'var(--z-overlay)',
       background:'var(--surface)', border:'1px solid '+sevColor,
       color:'var(--text-primary)', fontFamily:'var(--font-body)',
       fontSize:'var(--text-xs)', fontWeight:'var(--weight-medium)',
@@ -37341,7 +37448,7 @@ function startApp() {
     }, []);
     if (!dragging) return null;
     return html`<div aria-hidden="true" style=${{
-      position:'fixed',inset:'.5rem',zIndex:9999,pointerEvents:'none',
+      position:'fixed',inset:'.5rem',zIndex:'var(--z-tooltip)',pointerEvents:'none',
       border:'2px solid var(--color-success)',borderRadius:'var(--radius-sm)',
       boxShadow:'inset 0 0 0 1px var(--color-success-border)',
       transition:'opacity .15s'
@@ -37361,7 +37468,7 @@ function startApp() {
     }, []);
     if (!active) return null;
     return html`<div style=${{
-      position:'fixed',bottom:'1rem',right:'1rem',zIndex:9998,
+      position:'fixed',bottom:'1rem',right:'1rem',zIndex:'var(--z-toast)',
       background:'var(--surface)',border:'1px solid var(--hairline-strong)',
       borderRadius:10,padding:'.5rem .85rem',
       display:'flex',alignItems:'center',gap:'.55rem',
@@ -37615,7 +37722,7 @@ function startApp() {
         <span style=${{display:'flex',alignItems:'center',gap:'.3rem'}}>${props.icon} ${props.label}</span>
         <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
       </button>
-      ${open && html`<div style=${{position:'absolute',left:0,right:0,top:'100%',zIndex:999,marginTop:2,
+      ${open && html`<div style=${{position:'absolute',left:0,right:0,top:'100%',zIndex:'var(--z-dropdown)',marginTop:2,
           background:'var(--bg-primary)',border:'1px solid var(--border)',borderRadius:8,
           boxShadow:'0 4px 16px rgba(0,0,0,.25)',padding:'.25rem 0',maxHeight:280,overflowY:'auto'}}
         onMouseEnter=${enter} onMouseLeave=${leave}>
@@ -37760,8 +37867,8 @@ function startApp() {
           ${addOpen && html`<span style=${{position:'absolute',left:'.3rem',right:'.3rem',bottom:0,height:2,background:'var(--ink-accent)'}}></span>`}
         </button>
         ${addOpen && html`<div>
-          <div onClick=${function(){setAddOpen(false);}} style=${{position:'fixed',inset:0,zIndex:399}}></div>
-          <div role="menu" style=${{position:'absolute',top:'calc(100% + 6px)',left:0,zIndex:400,minWidth:260,
+          <div onClick=${function(){setAddOpen(false);}} style=${{position:'fixed',inset:0,zIndex:'var(--z-dropdown)'}}></div>
+          <div role="menu" style=${{position:'absolute',top:'calc(100% + 6px)',left:0,zIndex:'calc(var(--z-dropdown) + 1)',minWidth:260,
             background:'var(--surface)',border:'1px solid var(--hairline-strong)',borderRadius:'var(--radius-sm)',
             boxShadow:'var(--shadow-lifted)',padding:'.3rem 0',fontFamily:'var(--font-body)'}}>
             <button onClick=${function(){setAddOpen(false); if(window._ccOpenIFC) window._ccOpenIFC();}}
@@ -37929,9 +38036,9 @@ function startApp() {
           letterSpacing:0,transition:'background var(--duration-fast) var(--ease-standard)'
         }}>${initial}</button>
       ${open && html`<div>
-        <div onClick=${close} style=${{position:'fixed',inset:0,zIndex:399}}></div>
+        <div onClick=${close} style=${{position:'fixed',inset:0,zIndex:'var(--z-dropdown)'}}></div>
         <div role="menu" style=${{
-          position:'absolute',top:'calc(100% + 8px)',right:0,zIndex:400,minWidth:240,
+          position:'absolute',top:'calc(100% + 8px)',right:0,zIndex:'calc(var(--z-dropdown) + 1)',minWidth:240,
           background:'var(--surface)',border:'1px solid var(--hairline-strong)',
           borderRadius:'var(--radius-md)',boxShadow:'var(--shadow-lifted)',padding:'.4rem 0',
           fontFamily:'var(--font-body)'
@@ -38006,7 +38113,7 @@ function startApp() {
               <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style=${{color:'var(--ink-faint)'}}><polyline points="15 18 9 12 15 6"/></svg>
             </button>
             ${connOpen && html`<div style=${{
-              position:'absolute',right:'100%',top:-5,marginRight:2,zIndex:401,minWidth:180,
+              position:'absolute',right:'100%',top:-5,marginRight:2,zIndex:'calc(var(--z-dropdown) + 2)',minWidth:180,
               background:'var(--surface)',border:'1px solid var(--hairline-strong)',
               borderRadius:'var(--radius-md)',boxShadow:'var(--shadow-lifted)',padding:'.3rem 0'}}>
               ${[['revit-bridge',_cc_t('avatar.revitConnector','Revit Connector')],['local-engine',_cc_t('avatar.clashEngine','Clash Engine')],['smart-bridge',_cc_t('avatar.smartBridge','Smart Bridge')]].map(function(it){
@@ -38114,12 +38221,12 @@ function startApp() {
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="5" cy="12" r="1.5"/><circle cx="12" cy="12" r="1.5"/><circle cx="19" cy="12" r="1.5"/></svg>
         </button>
         ${popRect && html`<div data-toolbar-overflow-panel onClick=${function(e){ e.stopPropagation(); }}
-          style=${{position:'fixed',top:(popRect.bottom+6)+'px',right:(window.innerWidth-popRect.right)+'px',zIndex:9999,background:'var(--bg-primary)',
+          style=${{position:'fixed',top:(popRect.bottom+6)+'px',right:(window.innerWidth-popRect.right)+'px',zIndex:'calc(var(--z-dropdown) + 1)',background:'var(--bg-primary)',
             border:'1px solid var(--border)',borderRadius:'var(--radius-sm)',boxShadow:'var(--shadow-md)',
             padding:'.3rem',display:'flex',gap:'var(--space-1)'}}>
           ${fit.overflow.map(function(id){ return renderItem(id); })}
         </div>`}
-        ${moreOpen && html`<div onClick=${function(){ setMoreOpen(false); }} style=${{position:'fixed',inset:0,zIndex:9998,background:'transparent'}}></div>`}
+        ${moreOpen && html`<div onClick=${function(){ setMoreOpen(false); }} style=${{position:'fixed',inset:0,zIndex:'var(--z-dropdown)',background:'transparent'}}></div>`}
       </div>`}
     </div>`;
   }
@@ -38310,11 +38417,18 @@ function startApp() {
     function btn(opts){
       var on = !!opts.active;
       var tipText = opts.label || opts.title || opts.k;
+      // opts.textLabel: a short visible label shown next to the icon at
+      // desktop widths (>=1100px, .cc-btn-text-label CSS rule) — the
+      // toolbar is otherwise icon-only with a hover tooltip (`title` is
+      // intentionally omitted from the DOM). Used for the Run/Detect
+      // clash-detection button so it isn't a bare unlabeled glyph
+      // (detection discoverability — MEMORY.md).
       return html`<button key=${opts.k} onClick=${opts.onClick}
         onContextMenu=${opts.onContextMenu||null}
         aria-label=${tipText} aria-pressed=${on}
         style=${Object.assign({
-          width:36,height:36,display:'inline-flex',alignItems:'center',justifyContent:'center',
+          height:36,minWidth:36,display:'inline-flex',alignItems:'center',justifyContent:'center',
+          gap:'.3rem',padding:opts.textLabel?'0 .55rem 0 .4rem':0,
           background:'none',border:'none',cursor:'pointer',position:'relative',
           color:on?'var(--ink-primary)':'var(--ink-muted)',
           transition:'color var(--duration-fast) var(--ease-standard)'
@@ -38323,7 +38437,9 @@ function startApp() {
         onMouseLeave=${function(e){ if(!on) e.currentTarget.style.color='var(--ink-muted)'; setTtTip(null); }}>
         <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor"
           stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"
+          style=${{flexShrink:0}}
           dangerouslySetInnerHTML=${{__html:opts.icon}}></svg>
+        ${opts.textLabel && html`<span class="cc-btn-text-label" style=${{fontSize:'var(--text-xs)',fontWeight:'var(--weight-medium)',whiteSpace:'nowrap'}}>${opts.textLabel}</span>`}
         ${on && html`<span style=${{position:'absolute',left:6,right:6,bottom:0,height:2,background:'var(--ink-accent)'}}></span>`}
       </button>`;
     }
@@ -38385,7 +38501,7 @@ function startApp() {
        the toolbar (not floating). Same ink palette, no glass. */
     var subRow = null;
     // ── Toolbar popovers — float below their trigger button, never a sticky bar ──
-    var POP_BASE = {position:'absolute',top:'calc(100% + 6px)',zIndex:40,
+    var POP_BASE = {position:'absolute',top:'calc(100% + 6px)',zIndex:'var(--z-dropdown)',
       background:'var(--bg-primary)',border:'1px solid var(--border)',
       borderRadius:'var(--radius-sm)',boxShadow:'var(--shadow-md)',
       display:'flex',alignItems:'center',gap:'.4rem',padding:'.35rem .65rem',
@@ -38489,7 +38605,7 @@ function startApp() {
     // lower-priority item instead of pinning itself permanently visible.
     var cameraActiveId = activeMode==='walk' ? 'walk' : activeMode==='plan' ? 'plan' : 'orbit';
 
-    return html`<div class="cc-top-toolbar" style=${{flexShrink:0,background:'var(--surface)',borderBottom:'1px solid var(--hairline)',position:'relative',zIndex:9}}>
+    return html`<div class="cc-top-toolbar" style=${{flexShrink:0,background:'var(--surface)',borderBottom:'1px solid var(--hairline)',position:'relative',zIndex:'var(--z-dropdown)'}}>
       <div role="toolbar" aria-label=${_cc_t('toolbar.viewerToolsAria','Viewer tools')} style=${{
         display:'flex',alignItems:'center',height:44,padding:'0 var(--space-3)',gap:'var(--space-1)',
         overflowX:'auto',overflowY:'hidden',flexWrap:'nowrap',scrollbarWidth:'thin'
@@ -38515,7 +38631,7 @@ function startApp() {
           var rect = homeCaretRef.current ? homeCaretRef.current.getBoundingClientRect() : {bottom:50, left:120, width:14};
           var anchorX = rect.left + rect.width/2;
           var anchorY = rect.bottom + 6;
-          return html`<div onClick=${function(e){e.stopPropagation();}} style=${{position:'fixed',top:anchorY+'px',left:anchorX+'px',transform:'translateX(-50%)',zIndex:9999,
+          return html`<div onClick=${function(e){e.stopPropagation();}} style=${{position:'fixed',top:anchorY+'px',left:anchorX+'px',transform:'translateX(-50%)',zIndex:'calc(var(--z-dropdown) + 1)',
             background:'var(--bg-primary)',border:'1px solid var(--border)',borderRadius:'var(--radius-sm)',
             boxShadow:'var(--shadow-md)',padding:'.3rem',minWidth:200,fontSize:'var(--text-xs)'}}>
             <div onClick=${function(){_saveHomeView();setHomeMenuOpen(false);}}
@@ -38533,7 +38649,7 @@ function startApp() {
               <span style=${{flex:1}}>Clear home view</span>
             </div>`}
           </div>
-          <div onClick=${function(){setHomeMenuOpen(false);}} style=${{position:'fixed',inset:0,zIndex:9998,background:'transparent'}}></div>`;
+          <div onClick=${function(){setHomeMenuOpen(false);}} style=${{position:'fixed',inset:0,zIndex:'var(--z-dropdown)',background:'transparent'}}></div>`;
         })()}
         ${div()}
         <!-- SECTION -->
@@ -38590,7 +38706,7 @@ function startApp() {
               var rect = caretRef.current ? caretRef.current.getBoundingClientRect() : {bottom:50, left:80, width:14};
               var anchorX = rect.left + rect.width/2;
               var anchorY = rect.bottom + 6;
-              return html`<div onClick=${function(e){e.stopPropagation();}} style=${{position:'fixed',top:anchorY+'px',left:anchorX+'px',transform:'translateX(-50%)',zIndex:9999,
+              return html`<div onClick=${function(e){e.stopPropagation();}} style=${{position:'fixed',top:anchorY+'px',left:anchorX+'px',transform:'translateX(-50%)',zIndex:'calc(var(--z-dropdown) + 1)',
               background:'var(--bg-primary)',border:'1px solid var(--border)',borderRadius:'var(--radius-sm)',
               boxShadow:'var(--shadow-md)',padding:'.3rem',minWidth:230,fontSize:'var(--text-xs)'}}>
               <div onClick=${function(){clearAllModes({sectionBox:true, sectionAxis:true, sectionCustom:true});d({t:A.MEASURE_MODE,v:'length'});setMeasurePopOpen(false);}}
@@ -38633,7 +38749,7 @@ function startApp() {
                 <span style=${{flex:1}}>Clear all</span><span style=${{fontFamily:'var(--font-mono)',color:'var(--text-faint)',fontSize:'var(--text-2xs)'}}>Shift+M</span></div>
             </div>`;
             })()}
-            ${measurePopOpen && html`<div onClick=${function(){setMeasurePopOpen(false);}} style=${{position:'fixed',inset:0,zIndex:9998,background:'transparent'}}></div>`}
+            ${measurePopOpen && html`<div onClick=${function(){setMeasurePopOpen(false);}} style=${{position:'fixed',inset:0,zIndex:'var(--z-dropdown)',background:'transparent'}}></div>`}
           </div>`;
         })()}
         ${div()}
@@ -38695,6 +38811,7 @@ function startApp() {
         <!-- COORDINATE workspace tools: run detection + filter clashes -->
         ${s.workspace === 'coordinate' && html`${div()}
           ${btn({k:'runDetect', active:s.runModalOpen, title:s.detecting?_cc_t('toolbar.runningDetection','Running detection…'):_cc_t('toolbar.runClashDetectionTip','Run clash detection — open setup'), label:_cc_t('toolbar.runClashDetection','Run clash detection'),
+            textLabel:_cc_t('toolbar.runShort','Run'),
             icon:'<polygon points="6 3 20 12 6 21 6 3"/><path d="M6 12h14"/>',
             onClick:function(){ if(s.detecting) return; d({t:A.SHOW_RUN_MODAL, v:true}); }})}
           ${(function(){
@@ -38786,8 +38903,8 @@ function startApp() {
             var _top = _r ? (_r.bottom + 6) : 50;
             var _right = _r ? (window.innerWidth - _r.right) : 16;
             return html`<div>
-            <div onClick=${function(){setStyleOpen(false);}} style=${{position:'fixed',inset:0,zIndex:399}}></div>
-            <div role="menu" style=${{position:'fixed',top:_top+'px',right:_right+'px',zIndex:400,minWidth:240,
+            <div onClick=${function(){setStyleOpen(false);}} style=${{position:'fixed',inset:0,zIndex:'var(--z-dropdown)'}}></div>
+            <div role="menu" style=${{position:'fixed',top:_top+'px',right:_right+'px',zIndex:'calc(var(--z-dropdown) + 1)',minWidth:240,
               background:'var(--surface)',border:'1px solid var(--hairline-strong)',borderRadius:'var(--radius-sm)',
               boxShadow:'var(--shadow-lifted)',padding:'.3rem 0',fontFamily:'var(--font-body)'}}>
               ${styles.map(function(st,i){
@@ -38859,7 +38976,7 @@ function startApp() {
         fontSize:'var(--text-2xs)',letterSpacing:'.01em',fontWeight:500,
         fontFamily:'var(--font-body)',
         boxShadow:'var(--shadow-lifted)',
-        pointerEvents:'none',zIndex:9999,whiteSpace:'nowrap',
+        pointerEvents:'none',zIndex:'var(--z-tooltip)',whiteSpace:'nowrap',
         maxWidth:'min(280px, calc(100vw - 16px))',
         opacity:1,
         animation:'ccTipIn var(--duration-fast) var(--ease-standard)'
@@ -38991,7 +39108,7 @@ function startApp() {
               : rd.reconnecting ? 'connecting'
               : attempted ? 'failed' : 'idle';
 
-    return html`<div style=${{position:'fixed',inset:0,zIndex:9000,background:'rgba(0,0,0,.6)',display:'flex',alignItems:'center',justifyContent:'center'}}
+    return html`<div style=${{position:'fixed',inset:0,zIndex:'var(--z-modal)',background:'rgba(0,0,0,.6)',display:'flex',alignItems:'center',justifyContent:'center'}}
       onClick=${function(e){if(e.target===e.currentTarget)d({t:'REVIT_BRIDGE',v:false})}}>
       <div style=${{background:'var(--bg-secondary)',border:'1px solid var(--border)',borderRadius:12,width:adv?560:420,maxWidth:'95vw',maxHeight:'90vh',display:'flex',flexDirection:'column',overflow:'hidden',boxShadow:'0 8px 32px rgba(0,0,0,.5)'}}>
         <div style=${{display:'flex',alignItems:'center',justifyContent:'space-between',padding:'.75rem 1rem',borderBottom:'1px solid var(--border)'}}>
@@ -40271,7 +40388,7 @@ function startApp() {
       ${s.showShare && html`<${ShareModal} d=${d} s=${s} />`}
       ${s.showSmartViews && html`<${SmartViewsModal} d=${d} s=${s} />`}
       ${s.runModalOpen && html`<${RunDetectionModal} d=${d} s=${s} />`}
-      ${s.commentMode && html`<div style=${{position:'fixed',top:'1rem',left:'50%',transform:'translateX(-50%)',zIndex:9990,
+      ${s.commentMode && html`<div style=${{position:'fixed',top:'1rem',left:'50%',transform:'translateX(-50%)',zIndex:'var(--z-toast)',
         background:'var(--accent)',color:'#fff',padding:'.5rem .9rem',borderRadius:'var(--radius-md)',
         boxShadow:'var(--shadow-md)',display:'flex',alignItems:'center',gap:'.6rem',
         fontSize:'0.82rem',fontWeight:500,fontFamily:'inherit'}}>
@@ -40293,10 +40410,11 @@ function startApp() {
       <${GlobalDropZone} />
       <${WelcomePopup} s=${s} d=${d} />
       <${PrivacyBanner} />
+      <${DetectionDiscoverabilityBanner} s=${s} />
       <${OperationCenter} s=${s} d=${d} />
       <${TutorialPortal} d=${d} />
       ${showMemWarn && html`<${MemoryWarningModal} s=${s} onDismiss=${function(){setShowMemWarn(false);}} />`}
-      ${showWhatsNew && html`<div onMouseEnter=${function(){ clearTimeout(_whatsNewTimer.current); }} onMouseLeave=${function(){ _whatsNewTimer.current = setTimeout(_dismissWhatsNew, 5000); }} style=${{position:'fixed',bottom:'1.2rem',right:'1rem',zIndex:9998,background:'var(--bg-secondary)',border:'1px solid var(--border)',borderRadius:10,padding:'.7rem .9rem',display:'flex',flexDirection:'column',gap:'.35rem',boxShadow:'0 4px 28px rgba(0,0,0,.45)',maxWidth:'270px',width:'calc(100vw - 2rem)'}}>
+      ${showWhatsNew && html`<div onMouseEnter=${function(){ clearTimeout(_whatsNewTimer.current); }} onMouseLeave=${function(){ _whatsNewTimer.current = setTimeout(_dismissWhatsNew, 5000); }} style=${{position:'fixed',bottom:'1.2rem',right:'1rem',zIndex:'var(--z-toast)',background:'var(--bg-secondary)',border:'1px solid var(--border)',borderRadius:10,padding:'.7rem .9rem',display:'flex',flexDirection:'column',gap:'.35rem',boxShadow:'0 4px 28px rgba(0,0,0,.45)',maxWidth:'270px',width:'calc(100vw - 2rem)'}}>
         <div style=${{display:'flex',alignItems:'center',justifyContent:'space-between',gap:'.5rem'}}>
           <span style=${{fontWeight:700,fontSize:'0.8rem',color:'var(--text-primary)'}}>What's new in v${CC_VERSION.v}</span>
           <button onClick=${_dismissWhatsNew} style=${{background:'none',border:'none',color:'var(--text-muted)',cursor:'pointer',fontSize:'1.1rem',lineHeight:1,padding:'0 .15rem',flexShrink:0}}>×</button>
@@ -40307,7 +40425,7 @@ function startApp() {
         <a href="https://github.com/clashcontrol-io/clashcontrol/blob/main/CHANGELOG.md" target="_blank" rel="noopener" style=${{fontSize:'0.69rem',color:'var(--accent)',textDecoration:'none'}}>Full changelog →</a>
       </div>`}
       <${FolderWatchBadge} />
-      ${!pwaDismissed && pwaUpdateAvail && html`<div style=${{position:'fixed',bottom:'1rem',left:'50%',transform:'translateX(-50%)',zIndex:9999,
+      ${!pwaDismissed && pwaUpdateAvail && html`<div style=${{position:'fixed',bottom:'1rem',left:'50%',transform:'translateX(-50%)',zIndex:'var(--z-toast)',
         background:'var(--bg-secondary)',border:'1px solid var(--border)',borderRadius:10,padding:'.6rem 1rem',display:'flex',alignItems:'center',gap:'.75rem',
         boxShadow:'0 4px 24px rgba(0,0,0,.4)',fontSize:'0.85rem',color:'var(--text-primary)',maxWidth:'90vw'}}>
         <span>New version available</span>
