@@ -27,10 +27,29 @@
 const path = require('node:path');
 const Module = require('node:module');
 
+// CI runs `npm test` without `npm install`, so the real package is usually
+// absent. When it can't be resolved, route the bare specifier to a synthetic
+// cache id instead, so the mock works identically with or without
+// node_modules.
+const FAKE_NEON_ID = path.join(__dirname, '__mock_neondatabase_serverless__.js');
+const NEON_SPECIFIER = '@neondatabase/serverless';
+let _origResolve = null;
+
 function resolveNeonPath() {
-  return Module._resolveFilename('@neondatabase/serverless', {
-    paths: Module._nodeModulePaths(path.join(process.cwd(), 'api')),
-  });
+  try {
+    return Module._resolveFilename(NEON_SPECIFIER, {
+      paths: Module._nodeModulePaths(path.join(process.cwd(), 'api')),
+    });
+  } catch (e) {
+    if (!_origResolve) {
+      _origResolve = Module._resolveFilename;
+      Module._resolveFilename = function (request, ...rest) {
+        if (request === NEON_SPECIFIER) return FAKE_NEON_ID;
+        return _origResolve.call(this, request, ...rest);
+      };
+    }
+    return FAKE_NEON_ID;
+  }
 }
 
 function installMockNeon(reactions) {
