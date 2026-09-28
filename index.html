@@ -261,8 +261,19 @@
         return fields[parseInt(n)];
       }
       function ws() { while (i < len && (tpl[i] === ' ' || tpl[i] === '\t' || tpl[i] === '\n' || tpl[i] === '\r')) i++; }
-      function parseChildren() {
+      // Elements whose *direct* children the HTML table/select algorithms
+      // treat specially: a text node there that is only inter-element
+      // formatting whitespace (no visible content) is never meaningful and
+      // real browsers drop/foster-parent it. Since the JSX whitespace rule
+      // (below) now preserves same-line whitespace-only chunks instead of
+      // trimming everything, a same-line space between e.g. `<tr> <td>` or
+      // `<select> <option>` would otherwise become a stray text child - so
+      // for these parents specifically, a whitespace-only chunk (regardless
+      // of newlines) is dropped rather than pushed as a child.
+      var WS_ONLY_DROP_PARENTS = { table: 1, thead: 1, tbody: 1, tfoot: 1, tr: 1, select: 1, optgroup: 1 };
+      function parseChildren(parentTag) {
         var ch = [];
+        var dropWsOnly = parentTag && WS_ONLY_DROP_PARENTS[parentTag];
         while (i < len) {
           if (tpl[i] === '<') {
             if (tpl[i+1] === '/') { while (i < len && tpl[i] !== '>') i++; i++; return ch; }
@@ -276,7 +287,14 @@
           } else {
             var txt = '';
             while (i < len && tpl[i] !== '<' && tpl[i] !== HOLE) txt += tpl[i++];
-            txt = txt.replace(/^\s+|\s+$/g, '');
+            if (dropWsOnly && /^\s*$/.test(txt)) continue;
+            // JSX whitespace semantics, not naive trim: only whitespace runs
+            // that contain a newline are collapsed/dropped. A same-line run
+            // of spaces/tabs (e.g. between a hole and a tag, or two holes)
+            // is preserved as-is, so `${a} ${b}` keeps its separating space.
+            txt = txt.replace(/^[ \t]*\r?\n\s*/, '');
+            txt = txt.replace(/\s*\r?\n[ \t]*$/, '');
+            txt = txt.replace(/[ \t]*\r?\n\s*/g, ' ');
             if (txt) ch.push(txt);
           }
         }
@@ -310,7 +328,7 @@
         var selfClose = false;
         if (tpl[i] === '/') { i++; selfClose = true; }
         if (tpl[i] === '>') i++;
-        var children = selfClose ? [] : parseChildren();
+        var children = selfClose ? [] : parseChildren(typeof tag === 'string' ? tag : null);
         var args = [tag, props];
         for (var c = 0; c < children.length; c++) args.push(children[c]);
         return h.apply(null, args);
