@@ -48,31 +48,30 @@ export function mesh_intersect(tris_a: Float32Array, tris_b: Float32Array, _epsi
 export function mesh_intersect_raw(tris_a: Float32Array, tris_b: Float32Array): Float64Array;
 
 /**
- * Compute minimum vertex-to-vertex distance between two meshes.
- * Bit-identical port of `_meshMinDist`'s JS-fallback spatial-hash walk
- * (same cell size fallback, same ceil-based step, same f64 arithmetic,
- * same tie-breaking via "first strictly smaller wins").
+ * Compute the true minimum mesh-to-mesh distance between two triangle
+ * meshes: point-to-triangle (both directions) + edge-edge, BVH-
+ * accelerated. Bit-identical port of `_meshMinDist`'s JS fallback (see
+ * `mesh_dist.rs` and index.html's `_bvhMinDistTraverse`/`_triTriDistSq`
+ * doc comments) — same BVH shape as `mesh_intersect_raw` (bvh::BvhNode),
+ * same sub-test order, same "first strictly smaller wins" tie-break.
  *
- * `verts_a` and `verts_b` are flat Float32Arrays: [x0,y0,z0, x1,y1,z1, ...].
- * `max_dist` is the threshold (a JS number, so f64) — used ONLY to size the
- * grid cell (falls back to 0.05 when `max_dist` is 0, exactly like JS's
- * `thresholdM || 0.05`), exactly like the JS reference AS ACTUALLY CALLED:
- * index.html's one call site (`_processCandidate`) always passes an
- * `outPair` buffer, and `_meshMinDist`'s own threshold-cutoff early-return
- * (`if (minSq <= tSq && !outPair) return ...`) is therefore DEAD CODE in
- * production — with `outPair` truthy, `_meshMinDist` always returns the
- * real `Math.sqrt(minSq)`, however large, and leaves the threshold
- * comparison to the caller (`geoDist<=pairGapM`). Enforcing our own
- * threshold cutoff here would silently diverge from that real behavior.
+ * Replaces the old vertex-to-vertex spatial-hash walk (`spatial_hash.rs`,
+ * removed), which measured only how close two meshes' VERTICES were — a
+ * point resting mid-face on the other mesh (no nearby vertex) reported
+ * Infinity/far instead of its real (small) distance. See CLAUDE.md task
+ * notes for the verified repro (a small device 0.1m above a 10x10m slab
+ * center).
+ *
+ * `tris_a` and `tris_b` are flat Float32Arrays, 9 floats per triangle
+ * (matching `mesh_intersect_raw`'s wire shape) — NOT raw vertices.
  *
  * Returns [distance, ax, ay, az, bx, by, bz] always — `distance` is
- * `Infinity` (and the pair all zeros, matching JS's zero-initialized
- * outPair) only when NO vertex was found near ANY sampled query point
- * (sparse/disjoint meshes relative to the grid cell size), or when either
- * input is empty (a single-element `[Infinity]`, matching JS's early
- * `if (!vA.length || !vB.length) return Infinity` with no outPair touch).
+ * `Infinity` (single-element `[Infinity]`, no pair) only when either input
+ * is empty; with two non-empty meshes a finite distance and closest-point
+ * pair is always found (unlike the old grid walk, there is no "search
+ * neighborhood" that can come up empty).
  */
-export function mesh_min_distance(verts_a: Float32Array, verts_b: Float32Array, max_dist: number): Float64Array;
+export function mesh_min_distance(tris_a: Float32Array, tris_b: Float32Array): Float64Array;
 
 export function sweep_and_prune(box_min: Float64Array, box_max: Float64Array, model_idx: Uint32Array, in_a: Uint8Array, in_b: Uint8Array, same_model_allowed: Uint8Array, margin: number): Uint32Array;
 
@@ -84,7 +83,7 @@ export interface InitOutput {
     readonly batch_intersect_raw: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => void;
     readonly mesh_intersect: (a: number, b: number, c: number, d: number, e: number, f: number) => void;
     readonly mesh_intersect_raw: (a: number, b: number, c: number, d: number, e: number) => void;
-    readonly mesh_min_distance: (a: number, b: number, c: number, d: number, e: number, f: number) => void;
+    readonly mesh_min_distance: (a: number, b: number, c: number, d: number, e: number) => void;
     readonly sweep_and_prune: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: number, k: number, l: number, m: number, n: number) => void;
     readonly __wbindgen_add_to_stack_pointer: (a: number) => number;
     readonly __wbindgen_export: (a: number, b: number) => number;

@@ -46,13 +46,13 @@
 - `ids-conformance.yml`: weekly or manual, non-blocking.
 - `contribute-pack.yml`, `release-desktop.yml` and `release-smart-bridge.yml`.
 
-**Plan docs:**
-- `IMPROVEMENT_PLAN.md`: Waves 0–6 and the CW-1 depth/volume work.
-- `V7_RELEASE_PLAN.md`: P0–P6, with implementation-status tables.
-- `REDUCER_DECOMPOSITION_PLAN.md`
-- `AS_BUILT_DEVIATION.md`
-- `TAURI.md`: desktop app.
-- `INTERNALS.md` §22: the port/protocol registry.
+**Plan docs (all under `docs/` — see CLAUDE.md's File overview):**
+- `docs/IMPROVEMENT_PLAN.md`: Waves 0–6 and the CW-1 depth/volume work.
+- `docs/V7_RELEASE_PLAN.md`: P0–P6, with implementation-status tables.
+- `docs/REDUCER_DECOMPOSITION_PLAN.md`
+- `docs/AS_BUILT_DEVIATION.md`
+- `docs/TAURI.md`: desktop app.
+- `docs/INTERNALS.md` §22: the port/protocol registry.
 - `tests/fixtures/CORPUS_MANIFEST.md`
 
 ---
@@ -66,7 +66,7 @@ These are permanent. Add rows; don't remove them.
 | founding | Single `index.html` app, no build step | Zero setup; transparency; easy to fork/inspect |
 | founding | Three.js r128 pinned — *superseded 2026-06-08 (next row)* | API stability at the time |
 | 2026-06-08 | Three.js r128 → r180 as ESM via import map (#595, v5.19.12) | Unblocks modern-Three features (splat dedup, BatchedMesh, future WebGPU); post-r155 color mgmt/lighting explicitly re-tuned |
-| founding | In-browser engine = AABB broad-phase + BVH tri-tri narrow-phase (not "OBB"; orientation only via slimline-axis prune). WASM accelerators optional. `local-engine.js` escalates to the Python server running the **identical** Möller tri-tri + BVH algorithm (Numba/multiprocess/KD-tree) — NOT solid boolean ops (corrected 2026-07-13 after reading `intersection.py`) | Tri-tri is the browser sweet spot (kills AABB false positives on rotated members, fast, WASM path). Escalating buys speed, not more-correct geometry — see `IMPROVEMENT_PLAN.md` CW-1 for making it genuinely more exact |
+| founding | In-browser engine = AABB broad-phase + BVH tri-tri narrow-phase (not "OBB"; orientation only via slimline-axis prune). WASM accelerators optional. `local-engine.js` escalates to the Python server running the **identical** Möller tri-tri + BVH algorithm (Numba/multiprocess/KD-tree) — NOT solid boolean ops (corrected 2026-07-13 after reading `intersection.py`) | Tri-tri is the browser sweet spot (kills AABB false positives on rotated members, fast, WASM path). Escalating buys speed, not more-correct geometry — see `docs/IMPROVEMENT_PLAN.md` CW-1 for making it genuinely more exact |
 | founding | CDN deps pinned with SRI hashes | Reproducibility; integrity |
 | founding | Addons pattern (`addons/*.js` IIFE) | Keeps core lean; optional features don't block load |
 | founding | Preact/React via CDN UMD (not ESM) | No bundler; works with inline htm |
@@ -238,12 +238,12 @@ Keep every entry unless it's truly obsolete. Add a note when something gets fixe
 ## Open / deferred items
 
 **Local engine / `ClashControlEngine` repo** (separate repo, needs its own PRs):
-- **Depth (CW-1):** CW-1a Python half (port the depth estimator) and CW-1b `manifold3d` exact-volume tier. See `IMPROVEMENT_PLAN.md` CW-1 / Wave 1.5.
+- **Depth (CW-1):** CW-1a Python half (port the depth estimator) and CW-1b `manifold3d` exact-volume tier. See `docs/IMPROVEMENT_PLAN.md` CW-1 / Wave 1.5.
 - **Rule fields:** apply the ignored rule fields server-side (IMPROVEMENT_PLAN Wave 0 item 10). The single-model `excludeSelf` trap also exists in the engine's own scope code. Semantic-filter (`relatedPairs`) payload parity is deferred.
 - **V7 P1.1 browser half:** consume `/status` `protocolVersion`/`capabilities` (Engine PR #26 added them) instead of the hand-maintained gate. Confirmed that `addons/local-engine.js` doesn't read them yet.
 - **V7 P0.6:** the e2e geometry parity fixture is still open (the unit layer is done).
 
-**V7_RELEASE_PLAN.md (see its status table):**
+**docs/V7_RELEASE_PLAN.md (see its status table):**
 - P0-infra: branch protection (needs a repo admin).
 - P2: real IFC corpus (needs licensed files).
 - P3: malformed-IFC robustness.
@@ -275,7 +275,7 @@ Keep every entry unless it's truly obsolete. Add a note when something gets fixe
 **Reducer decomposition:**
 - Next is Area 2 (cache invalidation: `_clearElCaches`, `_bvhLRURemoveModel`, `_pairCacheClearForModel`; risk low).
 - The plan's rules require real-browser verification per slice, which is now possible here.
-- Only slice 1 is done (`REDUCER_DECOMPOSITION_PLAN.md`).
+- Only slice 1 is done (`docs/REDUCER_DECOMPOSITION_PLAN.md`).
 
 **BCF:**
 - `<ClippingPlanes>` export (also absent in openaec-bcf-platform).
@@ -311,7 +311,7 @@ Keep every entry unless it's truly obsolete. Add a note when something gets fixe
   - RDNAPTRANS survey-grade grids.
   - Georef fixture: `RefLatitude`/`RefLongitude` come back `null` on both the worker and fallback paths (fixture or `_compoundToDeg` bug, uninvestigated).
 - Rules UI: consolidate the scope-picker self-clash control into Off/On-all/On-selected.
-- Point-cloud-vs-BIM deviation (`AS_BUILT_DEVIATION.md`) is not built; waiting for go-ahead.
+- Point-cloud-vs-BIM deviation (`docs/AS_BUILT_DEVIATION.md`) is not built; waiting for go-ahead.
 
 **i18n:**
 - Long-tail string sweep (template-literal text inside `html\`` markup that the attribute grep doesn't catch).

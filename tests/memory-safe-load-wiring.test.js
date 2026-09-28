@@ -1,5 +1,5 @@
 'use strict';
-// Wiring lock for the P6.3 memory-safe loading slice (V7_RELEASE_PLAN.md).
+// Wiring lock for the P6.3 memory-safe loading slice (docs/V7_RELEASE_PLAN.md).
 // Deliberately conservative: this does NOT reorder the IFC worker's own
 // terminate-on-props timing or defer Three.js construction — both touch the
 // IFC loader, which CLAUDE.md flags as "complex but working... don't touch

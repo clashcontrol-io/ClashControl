@@ -114,8 +114,9 @@ version.json                — Current version numbers
 CHANGELOG.md                — Version history (auto-updated on commit)
 README.md                   — Project readme with version badge
 DESIGN.md                   — UI/UX design principles
-AS_BUILT_DEVIATION.md       — Scope/roadmap: point-cloud-vs-BIM surface deviation (status, build plan, Wkb/Bbl Borger framing)
-REDUCER_DECOMPOSITION_PLAN.md — Status + narrow-slices plan for separating the reducer's state transitions from its inline side effects (persistence, analytics, cache invalidation, event wiring, loader lifecycle)
+docs/                       — Internal project docs not part of the product surface (excluded from the Vercel deployment by .vercelignore): AS_BUILT_DEVIATION.md, REDUCER_DECOMPOSITION_PLAN.md, IMPROVEMENT_PLAN.md, V7_RELEASE_PLAN.md, PERFORMANCE_NOTES.md, TAURI.md, INTERNALS.md, BRIDGE_GOVERNANCE.md, CONNECTOR_PROTOCOL.md, MCP_BUILD_GUIDE.md, marketing/
+docs/AS_BUILT_DEVIATION.md  — Scope/roadmap: point-cloud-vs-BIM surface deviation (status, build plan, Wkb/Bbl Borger framing)
+docs/REDUCER_DECOMPOSITION_PLAN.md — Status + narrow-slices plan for separating the reducer's state transitions from its inline side effects (persistence, analytics, cache invalidation, event wiring, loader lifecycle)
 LICENSE                     — License file
 OPEN_SOURCE_COMPONENTS.md   — Third-party library credits
 manifest.json               — PWA manifest for installable app
@@ -168,7 +169,7 @@ mcp-server.js                — MCP server (stdio) implementing Model Context P
 smart-bridge-server.js      — Standalone Smart Bridge binary source — REST/WS bridge that `addons/smart-bridge.js` connects to; distributed via GitHub Releases
 bridge-audit.js, bridge-governance.js, bridge-update.js, bridge-version.json — Smart Bridge binary build/update/governance tooling
 engine/                     — Rust source for the WASM clash accelerator (`addons/wasm-engine-pkg/`) and the native-speed local engine's shared algorithm
-desktop/                    — Tauri desktop app scaffold (see `TAURI.md`)
+desktop/                    — Tauri desktop app scaffold (see `docs/TAURI.md`)
 ```
 
 ## Addons — how they plug in

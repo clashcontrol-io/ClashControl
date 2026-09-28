@@ -20,46 +20,37 @@ async function loadWasm() {
 }
 
 // Extract the JS reference the same way tests elsewhere in this repo do:
-// slice the source region and evaluate it with stub globals.
+// slice the source region and evaluate it with stub globals. Widened (from
+// just _triTriTest..._bvhTraverseAll) to also cover the true mesh-to-mesh
+// min-distance kernel (_closestPtOnTri..._ccJsMeshIntersectRef) added for
+// the point-to-triangle/edge-edge rewrite — _meshesIntersect sits between
+// the two regions but is never called here, so its unresolved globals
+// (window._ccWasmIntersect, _getWorldTris, etc. — lazily referenced only
+// when the function body actually runs) are harmless to leave defined.
 function loadJsReference() {
   const src = fs.readFileSync(path.join(REPO, 'index.html'), 'utf8').split('\n');
-  // _triTriTest .. _bvhTraverseAll (matches the region other scratch tooling
-  // in this repo uses; re-verified against current line numbers below).
   const startMarker = 'var _ttIvalA = new Float64Array(8)';
-  const endMarker = 'function _bvhTraverseAll(nA, trisA, nB, trisB, pts, maxPts, maxDepth, earlyExit)';
+  const endMarker = 'window._ccJsMeshIntersectRef = {';
   const full = src.join('\n');
   const startIdx = full.indexOf(startMarker);
   assert.ok(startIdx !== -1, 'could not locate _ttIvalA in index.html — line-range extraction is stale');
-  const fnEndMarker = '\n  }\n\n  // Scratch buffers reused across pairs';
-  const endIdx = full.indexOf(fnEndMarker, full.indexOf(endMarker));
-  assert.ok(endIdx !== -1, 'could not locate end of _bvhTraverseAll in index.html — extraction is stale');
-  const body = full.slice(startIdx, endIdx + '\n  }'.length);
+  const endMarkerIdx = full.indexOf(endMarker);
+  assert.ok(endMarkerIdx !== -1, 'could not locate _ccJsMeshIntersectRef in index.html — extraction is stale');
+  const fnEndMarker = '\n  };\n\n  // ── Approximate penetration depth';
+  const endIdx = full.indexOf(fnEndMarker, endMarkerIdx);
+  assert.ok(endIdx !== -1, 'could not locate end of _ccJsMeshIntersectRef in index.html — extraction is stale');
+  const body = full.slice(startIdx, endIdx + '\n  };'.length);
 
   const window = { _ccSafetyMigrations: null };
   const _getWorldTris = () => [];
+  const _getBVH = () => null;
   const _bvhLRU = new Map();
   const _DETECT_CHUNK_SIZE = 80;
   const js = new Function(
-    'window', '_DETECT_CHUNK_SIZE', '_getWorldTris', '_bvhLRU',
-    body + '; return {_triTriTest,_buildBVHNode,_bvhTraverseAll};'
-  )(window, _DETECT_CHUNK_SIZE, _getWorldTris, _bvhLRU);
+    'window', '_DETECT_CHUNK_SIZE', '_getWorldTris', '_getBVH', '_bvhLRU',
+    body + '; return {_triTriTest,_buildBVHNode,_bvhTraverseAll,_ccJsMeshIntersectRef:window._ccJsMeshIntersectRef};'
+  )(window, _DETECT_CHUNK_SIZE, _getWorldTris, _getBVH, _bvhLRU);
   return js;
-}
-
-// Extract _meshMinDist's spatial-hash logic (via _SpatialHash), with
-// _getWorldVerts stubbed to identity (the real function reads it internally
-// but this suite calls _meshMinDist with raw vertex arrays directly).
-function loadJsMinDistReference() {
-  const src = fs.readFileSync(path.join(REPO, 'index.html'), 'utf8');
-  const startIdx = src.indexOf('function _SpatialHash(cellSize)');
-  assert.ok(startIdx !== -1, '_SpatialHash not found in index.html');
-  const afterMeshMinDist = src.indexOf('\n  function _meshMinDist', startIdx);
-  assert.ok(afterMeshMinDist !== -1, '_meshMinDist not found in index.html');
-  const bodyEnd = src.indexOf('\n  }\n', src.indexOf('return Math.sqrt(minSq);', afterMeshMinDist));
-  const body = src.slice(startIdx, bodyEnd + '\n  }'.length);
-  const _getWorldVerts = (el) => el;
-  const window = {}; // _meshMinDist checks window._ccWasmMinDist; empty means "JS path"
-  return new Function('_getWorldVerts', 'window', body + '; return _meshMinDist;')(_getWorldVerts, window);
 }
 
 function mulberry32(seed) {
@@ -211,36 +202,49 @@ test('>=2000 seeded-random triangle pairs incl. near-degenerate and coplanar, ex
   assert.ok(n >= 2000, `expected >=2000 cases, ran ${n}`);
 });
 
-test('min-distance parity: exact equality across random and structured cases', async () => {
+test('min-distance parity: exact equality across random and structured triangle-mesh cases', async () => {
   const mod = await loadWasm();
-  const meshMinDist = loadJsMinDistReference();
+  const js = loadJsReference();
   const rnd = mulberry32(99);
   const rndF = (lo, hi) => lo + (hi - lo) * rnd();
+  const rndTri = (scale) => new Float32Array(Array.from({ length: 9 }, () => rndF(-scale, scale)));
 
-  function runCmp(name, vA, vB, threshold) {
-    const outPair = new Float64Array(6);
-    const jDist = meshMinDist(vA, vB, threshold, outPair);
-    // _meshMinDist (with outPair always passed, as index.html's one call
-    // site does) always returns a real distance/Infinity AND leaves outPair
-    // populated (zero-initialized if nothing was found) — WASM's 7-element
-    // shape mirrors this exactly, so compare like-for-like (7 elements).
-    const jResult = [jDist, outPair[0], outPair[1], outPair[2], outPair[3], outPair[4], outPair[5]];
-    const wResult = Array.from(mod.mesh_min_distance(vA, vB, threshold));
+  function runCmp(name, tA, tB) {
+    // trisA/trisB: flat triangle arrays (9 floats/tri) — _meshMinDist's
+    // real wire contract (see index.html/_ccJsMeshIntersectRef.minDist and
+    // engine/src/lib.rs's mesh_min_distance), not raw point clouds.
+    const jResult = js._ccJsMeshIntersectRef.minDist(tA, tB);
+    const wResult = Array.from(mod.mesh_min_distance(tA, tB));
     assert.strictEqual(jResult.length, wResult.length, `${name}: result shape must match`);
     for (let i = 0; i < jResult.length; i++) {
       assert.strictEqual(jResult[i], wResult[i], `${name}: value[${i}] must be EXACTLY equal`);
     }
+    return jResult[0];
   }
 
   for (let i = 0; i < 600; i++) {
-    const n = 3 * (2 + Math.floor(rnd() * 8));
-    const vA = new Float32Array(Array.from({ length: n }, () => rndF(-2, 2)));
-    const vB = new Float32Array(Array.from({ length: n }, () => rndF(-2, 2)));
-    const th = rndF(0.01, 3);
-    runCmp('rand-md' + i, vA, vB, th);
+    const scale = i % 3 === 0 ? 0.01 : i % 3 === 1 ? 1 : 100;
+    runCmp('rand-md' + i, rndTri(scale), rndTri(scale));
   }
-  // structured: exact 3-4-5, zero threshold (falls back to 0.05 cell), single-vertex
-  runCmp('3-4-5', new Float32Array([0, 0, 0]), new Float32Array([3, 4, 0]), 10);
-  runCmp('zero-threshold', new Float32Array([0, 0, 0]), new Float32Array([0.01, 0, 0]), 0);
-  runCmp('far-beyond-threshold', new Float32Array([0, 0, 0]), new Float32Array([1000, 1000, 1000]), 1);
+
+  // structured cases, incl. the specific shapes the task calls out
+  runCmp('touching-tris', new Float32Array([0, 0, 0, 1, 0, 0, 0, 1, 0]), new Float32Array([0, 0, 0, -1, 0, 0, 0, -1, 0]));
+  runCmp('parallel-faces', new Float32Array([0, 0, 0, 2, 0, 0, 0, 2, 0]), new Float32Array([0, 0, 0.3, 2, 0, 0.3, 0, 2, 0.3]));
+  // the verified bug: a small device sitting mid-face above a large slab —
+  // no vertex of either triangle is near a vertex of the other, so the old
+  // vertex-to-vertex spatial hash reported this as far/Infinity instead of
+  // the true 0.1m surface distance.
+  const slab = new Float32Array([-5, -5, 0, 5, -5, 0, -5, 5, 0]);
+  const device = new Float32Array([-0.1, -0.1, 0.1, 0.1, -0.1, 0.1, -0.1, 0.1, 0.1]);
+  const slabDist = runCmp('device-above-slab-center', slab, device);
+  assert.ok(Math.abs(slabDist - 0.1) < 1e-6, `device-above-slab-center: distance should be ~0.1 (f32 rounding), got ${slabDist}`);
+  // edge-edge crossing bars: two thin triangles crossing like a plus sign,
+  // offset in Z — the closest points are both interior to an edge of each
+  // triangle (not at any vertex), so only the edge-edge sub-test finds it.
+  const barA = new Float32Array([-1, 0, 0, 1, 0, 0, 0, 0.001, 0]);
+  const barB = new Float32Array([0, -1, 0.05, 0, 1, 0.05, 0.001, 0, 0.05]);
+  runCmp('edge-edge-crossing-bars', barA, barB);
+  runCmp('far-apart', new Float32Array([0, 0, 0, 1, 0, 0, 0, 1, 0]), new Float32Array([1000, 1000, 1000, 1001, 1000, 1000, 1000, 1001, 1000]));
+  runCmp('empty-a', new Float32Array([]), new Float32Array([0, 0, 0, 1, 0, 0, 0, 1, 0]));
+  runCmp('empty-b', new Float32Array([0, 0, 0, 1, 0, 0, 0, 1, 0]), new Float32Array([]));
 });

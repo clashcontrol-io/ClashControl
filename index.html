@@ -774,7 +774,7 @@ function startApp() {
   var useCallback = React.useCallback;
   var html       = htm.bind(h);
 
-  // ── Constants ────────────────────────────────────────────────── INTERNALS.md §2
+  // ── Constants ────────────────────────────────────────────────── docs/INTERNALS.md §2
 
   var DISC = [
     { id:'structural',    label:'Structural',    c:'#3b82f6', accent:'#1d4ed8' },
@@ -926,7 +926,7 @@ function startApp() {
     return out;
   }
 
-  // ── Chat text renderer ──────────────────────────────────────── INTERNALS.md §2
+  // ── Chat text renderer ──────────────────────────────────────── docs/INTERNALS.md §2
   function renderChatText(text) {
     if (text == null) return '';
     var raw = String(text);
@@ -1042,7 +1042,7 @@ function startApp() {
   window._ccConsentIsExplicit = _ccConsentIsExplicit;
   window._ccSetConsent = _ccSetConsent;
 
-  // ── Pending offer system ────────────────────────────────────── INTERNALS.md §3
+  // ── Pending offer system ────────────────────────────────────── docs/INTERNALS.md §3
   // When the assistant can't fulfill a command because of a missing
   function _setOfferLoadIFC() {
     window._ccPendingOffer = { label:'load ifc', kind:'load_ifc', action: function() {
@@ -1273,7 +1273,7 @@ function startApp() {
     return true;
   };
 
-  // ── Reducer ──────────────────────────────────────────────────── INTERNALS.md §4
+  // ── Reducer ──────────────────────────────────────────────────── docs/INTERNALS.md §4
 
   var INIT_FILTERS = {
     search:'', status:'all', type:'all', discipline:'all',
@@ -1341,7 +1341,7 @@ function startApp() {
     homeView:_ccLoadPref('homeView',null), // {pos:[x,y,z],target:[x,y,z]} — saved home camera; null = fit-all
     // Rendered-mode lighting controls (sliders surfaced in the toolbar Style popover)
     lightSettings:_ccLoadPref('lightSettings',{sun:1.0, ambient:1.0, exposure:1.0, shadow:1.0, time:13}),
-    // Graduated autonomy envelope.  See INTERNALS.md § 21.2
+    // Graduated autonomy envelope.  See docs/INTERNALS.md § 21.2
     aiEnvelope:_ccLoadPref('aiEnvelope',{resolveClashes:'nudge'}),
   };
   // Restore section state persisted from previous session
@@ -1501,7 +1501,7 @@ function startApp() {
     AVATAR_MENU:'AVATAR_MENU'
   };
 
-  // ── Addon Registry ───────────────────────────────────────────── INTERNALS.md §5
+  // ── Addon Registry ───────────────────────────────────────────── docs/INTERNALS.md §5
 
   var _ccAddons = {};       // {id: addonDef}
   var _ccAddonActive = {};  // {id: true/false} — persisted in localStorage
@@ -1866,7 +1866,7 @@ function startApp() {
     var maxDisc = discs.length ? Math.max.apply(null, discs) : 1;
     var depthMm = (typeof c.distance === 'number' && c.distance < 0) ? -c.distance : 0;
     if (depthMm < 10) return 'minor'; // shallow hard clash — likely tolerance/rounding, matches the
-    // industry-convention "hard clash, penetration ≥ 10mm" floor (IMPROVEMENT_PLAN.md §F).
+    // industry-convention "hard clash, penetration ≥ 10mm" floor (docs/IMPROVEMENT_PLAN.md §F).
     if (depthMm >= 50 || (maxDisc >= 3 && depthMm >= 20)) return 'critical'; // deep, or structural + real overlap
     return 'major'; // a genuine ≥10mm hard clash
   }
@@ -1880,7 +1880,7 @@ function startApp() {
   function reducer(s,a) {
     switch(a.t) {
       case A.ADD_MODEL:   var _am=a.v; if(s.modelMeta){var _mm=s.modelMeta.find(function(m){return m.id===_am.id});if(_mm){if(_mm.visible===false)_am=Object.assign({},_am,{visible:false});if(_mm.discipline)_am=Object.assign({},_am,{discipline:_mm.discipline});if(_mm.color)_am=Object.assign({},_am,{color:_mm.color});if(_mm.tag)_am=Object.assign({},_am,{tag:_mm.tag});if(_mm.georef)_am=Object.assign({},_am,{georef:_mm.georef});}}
-        // Race-safe model dedup.  See INTERNALS.md § 21.32
+        // Race-safe model dedup.  See docs/INTERNALS.md § 21.32
         var _dupIdx = -1;
         for (var _di=0; _di<s.models.length; _di++) {
           var _em = s.models[_di];
@@ -2296,7 +2296,7 @@ function startApp() {
     }
   }
 
-  // ── IndexedDB persistence for IFC files ──────────────────────── INTERNALS.md §6
+  // ── IndexedDB persistence for IFC files ──────────────────────── docs/INTERNALS.md §6
   // Size stamping: every idbSave* stamps a `bytes` estimate on the record so
   // the storage report (and later, eviction planning) never has to re-walk
   // buffers. Estimation lives in storage-core.js; guard because the script
@@ -2505,7 +2505,7 @@ function startApp() {
   // the automatic arm of the manual Park feature; _ccParkModel's restorability
   // guard still applies, so nothing un-restorable is ever auto-parked.
 
-  // ── P6.1: byte-accurate in-memory residency ledger (V7_RELEASE_PLAN.md) ──
+  // ── P6.1: byte-accurate in-memory residency ledger (docs/V7_RELEASE_PLAN.md) ──
   // Replaces element-count as the proxy for "how much memory would parking
   // this model reclaim" — one large façade element can carry more triangles
   // than thousands of simple pipes, and summing element.meshes[] vertex
@@ -3089,7 +3089,7 @@ function startApp() {
     }).catch(function() { return 0; });
   }
 
-  // ── Geometry quantization helpers (16-bit positions, 8-bit normals) ── INTERNALS.md §6
+  // ── Geometry quantization helpers (16-bit positions, 8-bit normals) ── docs/INTERNALS.md §6
   function _quantizePositions(posF32, bbox) {
     var minX=bbox[0],minY=bbox[1],minZ=bbox[2],rangeX=bbox[3]-bbox[0],rangeY=bbox[4]-bbox[1],rangeZ=bbox[5]-bbox[2];
     if(rangeX<1e-10) rangeX=1; if(rangeY<1e-10) rangeY=1; if(rangeZ<1e-10) rangeZ=1;
@@ -3136,7 +3136,7 @@ function startApp() {
     return out;
   }
 
-  // ── Int8 normal quantization ──  See INTERNALS.md § 21.9
+  // ── Int8 normal quantization ──  See docs/INTERNALS.md § 21.9
   function _ccQuantizeNormalAttr(geo) {
     if (window._ccQuantizeNormals === false) return;
     if (!geo || !geo.userData || geo.userData._nrmQuantized) return;
@@ -3290,7 +3290,7 @@ function startApp() {
       };
     });
     // Restore-path parity with the live load: strip survey markers, then
-    // instance. See INTERNALS.md § 21.3
+    // instance. See docs/INTERNALS.md § 21.3
     if (typeof _ccStripSurveyMarkers === 'function') {
       var _smR = _ccStripSurveyMarkers(elements, meshes); elements = _smR.elements; meshes = _smR.meshes;
     }
@@ -3370,7 +3370,7 @@ function startApp() {
     return list;
   }
 
-  // ── IFC Loader (web-ifc, lazy) ───────────────────────────────── INTERNALS.md §7
+  // ── IFC Loader (web-ifc, lazy) ───────────────────────────────── docs/INTERNALS.md §7
 
   // GPU instancing constants
   var INST_THRESHOLD = 4; // min identical placements before collapsing to InstancedMesh
@@ -3385,7 +3385,7 @@ function startApp() {
   };
   var _INST_HIDE_MX = typeof THREE !== 'undefined' ? new THREE.Matrix4().makeScale(0,0,0) : null; // hides one instance from its InstancedMesh
 
-  // ── Bake static mesh transforms for rendering perf ──────────── INTERNALS.md §7
+  // ── Bake static mesh transforms for rendering perf ──────────── docs/INTERNALS.md §7
   // World-space normal for a raycast hit. InstancedMesh hits report
   // face.normal in the SOURCE geometry's local space — the instance matrix
   // must be composed or rotated instances give the source orientation.
@@ -3415,7 +3415,7 @@ function startApp() {
   }
   window._ccBakeMesh = _ccBakeMesh;
 
-  // ── WASM-init hang recovery ───────────────────────────────────── INTERNALS.md §7
+  // ── WASM-init hang recovery ───────────────────────────────────── docs/INTERNALS.md §7
   // occasions because a bad web-ifc.wasm was pinned in either the service-
   // users' installed SWs) or the browser HTTP cache (from a transient
   //      SW cache on every page load, and forces the browser HTTP cache
@@ -3623,7 +3623,7 @@ function startApp() {
     return null;
   }
 
-  // ── Pset / Quantities canonicalization ──  See INTERNALS.md § 21.5
+  // ── Pset / Quantities canonicalization ──  See docs/INTERNALS.md § 21.5
   var _ccPsetCanonCache  = window._ccPsetCanonCache  || (window._ccPsetCanonCache  = new Map());
   var _ccPsetInnerCache  = window._ccPsetInnerCache  || (window._ccPsetInnerCache  = new Map());
   var _ccQtoCanonCache   = window._ccQtoCanonCache   || (window._ccQtoCanonCache   = new Map());
@@ -4022,7 +4022,7 @@ function startApp() {
       }
     } catch(e) { console.warn('Property map build failed:', e.message||e); }
 
-    // Type-pset propagation via IfcRelDefinesByType.  See INTERNALS.md § 21.18
+    // Type-pset propagation via IfcRelDefinesByType.  See docs/INTERNALS.md § 21.18
     try {
       var typeRelIds = api.GetLineIDsWithType(modelID, IFC.IFCRELDEFINESBYTYPE);
       for (var ti = 0; ti < typeRelIds.size(); ti++) {
@@ -4180,7 +4180,7 @@ function startApp() {
 
   var _ccLoadGeneration = 0; // bumped by _ccAbortLoading to invalidate in-progress loads; loads snapshot it so concurrent batches coexist
 
-  // ── GPU instancing ──  See INTERNALS.md § 21.10
+  // ── GPU instancing ──  See docs/INTERNALS.md § 21.10
   function _buildInstancedMeshes(elements, meshes) {
     if (!THREE.InstancedMesh) return {meshes:meshes, groups:0, instanced:0};
     var candidates = {}; // instKey → {geo, mat, entries:[{mesh, expressId}]}
@@ -4436,7 +4436,7 @@ function startApp() {
     }
   }
 
-  // ── Survey base-point / nulpunt marker stripping ──  See INTERNALS.md § 21.6
+  // ── Survey base-point / nulpunt marker stripping ──  See docs/INTERNALS.md § 21.6
   function _ccIsSurveyMarker(props) {
     if (!props) return false;
     var t = (props.ifcType || '').toLowerCase();
@@ -4694,7 +4694,7 @@ function startApp() {
     });
   }
 
-  // ── Lazy-props merge helper ──────────────────────────────────── INTERNALS.md §8
+  // ── Lazy-props merge helper ──────────────────────────────────── docs/INTERNALS.md §8
   // Direct mutation is safe here because nothing in the state tree uses
   function _mergeLazyProps(modelId, propMap) {
     var s = window._ccLatestState;
@@ -4763,7 +4763,7 @@ function startApp() {
     } catch(e) { console.warn('[IFC] Failed to refresh geo cache with psets:', e); }
   }
 
-  // ── IFC Web Worker (off-main-thread parsing) ────────────────── INTERNALS.md §8
+  // ── IFC Web Worker (off-main-thread parsing) ────────────────── docs/INTERNALS.md §8
 
   var _ifcWorkerUrl = null;
 
@@ -5493,7 +5493,7 @@ function startApp() {
     });
   }
 
-  // ── Clash Detection ──────────────────────────────────────────── INTERNALS.md §9
+  // ── Clash Detection ──────────────────────────────────────────── docs/INTERNALS.md §9
 
   var _prevElementHashes = {};
   var _underlayImgCache = {};
@@ -5507,7 +5507,7 @@ function startApp() {
             b.max.x.toFixed(3), b.max.y.toFixed(3), b.max.z.toFixed(3)].join('|');
   }
 
-  // ── Type-pair impossibility memo ──  See INTERNALS.md § 21.16
+  // ── Type-pair impossibility memo ──  See docs/INTERNALS.md § 21.16
   var _TP_MEMO_EMPTY_RUNS_THRESHOLD = 3;
   var _TP_MEMO_TTL_MS = 30 * 24 * 60 * 60 * 1000;
   function _tpMemoModelsKey(models) {
@@ -5573,7 +5573,7 @@ function startApp() {
     try { localStorage.removeItem('cc_typePairMemo:' + key); } catch(e) {}
   };
 
-  // ── Pair-result cache (narrow-phase) ──  See INTERNALS.md § 21.19
+  // ── Pair-result cache (narrow-phase) ──  See docs/INTERNALS.md § 21.19
   var _PAIR_CACHE_MAX = 50000;
   var _pairResultCache = new Map();
   function _pairKey(mA, eA, mB, eB) {
@@ -5607,7 +5607,7 @@ function startApp() {
 
   // ── Geometry-accurate narrow-phase clash detection ──────────────
 
-  // ── P6.2 first slice: GeometryHandle accessor (V7_RELEASE_PLAN.md) ───────
+  // ── P6.2 first slice: GeometryHandle accessor (docs/V7_RELEASE_PLAN.md) ───────
   // A GeometryHandle describes ONE piece of geometry an element owns,
   // addressable without the caller reaching directly into element.meshes[].
   // This slice does NOT remove element.meshes[] or migrate every consumer —
@@ -5797,7 +5797,7 @@ function startApp() {
             Math.sqrt(sdx*sdx+sdy*sdy+sdz*sdz)];
   }
 
-  // ── BVH LRU cache ──  See INTERNALS.md § 21.8
+  // ── BVH LRU cache ──  See docs/INTERNALS.md § 21.8
   // Cap is computed lazily (first eviction) so the storageDetectCaches
   // flag — loaded by a deferred script — is readable by then. Legacy
   // behaviour when the flag is off: 5% of jsHeapSizeLimit at ~50 KB per
@@ -6079,82 +6079,210 @@ function startApp() {
     return _postProcessIntersectPoints(pts, maxDepth[0], elA.box, elB.box, _MI_MARGIN);
   }
 
-  // ── Spatial hash for vertex distance (used for soft/clearance clashes) ──
-  function _SpatialHash(cellSize) {
-    this.cs = cellSize; this.inv = 1/cellSize; this.map = new Map();
-  }
-  _SpatialHash.prototype._hkey = function(ix, iy, iz) {
-    return (((ix * 73856093) ^ (iy * 19349663) ^ (iz * 83492791)) | 0);
-  };
-  _SpatialHash.prototype.insert = function(verts) {
-    for (var i = 0; i < verts.length; i += 3) {
-      var k = this._hkey(Math.floor(verts[i] * this.inv), Math.floor(verts[i+1] * this.inv), Math.floor(verts[i+2] * this.inv));
-      var bucket = this.map.get(k);
-      if (!bucket) { bucket = []; this.map.set(k, bucket); }
-      bucket.push(i);
+  // ── True mesh-to-mesh minimum distance (soft/clearance clashes) ──
+  // Replaces the old vertex-to-vertex spatial-hash walk (_SpatialHash,
+  // removed — it measured only how close two meshes' VERTICES were, so a
+  // point sitting mid-face — e.g. a 0.2x0.2x0.2m device 0.1m above the
+  // middle of a 10x10m slab — reported Infinity/far instead of 0.1m; see
+  // CLAUDE.md task notes). This is a real point-to-triangle (both
+  // directions) + edge-edge mesh distance, BVH-accelerated the same way
+  // _meshesIntersect's narrow phase is, with AABB-AABB lower-bound pruning.
+  //
+  // Point-on-triangle closest point (Ericson, "Real-Time Collision
+  // Detection" §5.1.5 — same barycentric-region method as
+  // _closestPtTriDistSq above, but also returns the closest POINT, not just
+  // the squared distance, since the marker/outPair contract needs it).
+  function _closestPtOnTri(px,py,pz, tris, o9, outPt) {
+    var ax=tris[o9],ay=tris[o9+1],az=tris[o9+2];
+    var bx=tris[o9+3],by=tris[o9+4],bz=tris[o9+5];
+    var cx=tris[o9+6],cy=tris[o9+7],cz=tris[o9+8];
+    var abx=bx-ax,aby=by-ay,abz=bz-az;
+    var acx=cx-ax,acy=cy-ay,acz=cz-az;
+    var apx=px-ax,apy=py-ay,apz=pz-az;
+    var d1=abx*apx+aby*apy+abz*apz, d2=acx*apx+acy*apy+acz*apz;
+    if (d1<=0 && d2<=0) { outPt[0]=ax;outPt[1]=ay;outPt[2]=az; return apx*apx+apy*apy+apz*apz; }
+    var bpx=px-bx,bpy=py-by,bpz=pz-bz;
+    var d3=abx*bpx+aby*bpy+abz*bpz, d4=acx*bpx+acy*bpy+acz*bpz;
+    if (d3>=0 && d4<=d3) { outPt[0]=bx;outPt[1]=by;outPt[2]=bz; return bpx*bpx+bpy*bpy+bpz*bpz; }
+    var vc=d1*d4-d3*d2;
+    if (vc<=0 && d1>=0 && d3<=0) {
+      var v=d1/(d1-d3), qx=ax+abx*v, qy=ay+aby*v, qz=az+abz*v;
+      outPt[0]=qx;outPt[1]=qy;outPt[2]=qz;
+      var rx=qx-px,ry=qy-py,rz=qz-pz;
+      return rx*rx+ry*ry+rz*rz;
     }
-  };
-  _SpatialHash.prototype.minDistSq = function(px, py, pz, verts, out) {
-    var best = Infinity;
-    var cx = Math.floor(px * this.inv), cy = Math.floor(py * this.inv), cz = Math.floor(pz * this.inv);
-    for (var dx = -1; dx <= 1; dx++) for (var dy = -1; dy <= 1; dy++) for (var dz = -1; dz <= 1; dz++) {
-      var bucket = this.map.get(this._hkey(cx+dx, cy+dy, cz+dz));
-      if (!bucket) continue;
-      for (var b = 0; b < bucket.length; b++) {
-        var idx = bucket[b];
-        var ex = px - verts[idx], ey = py - verts[idx + 1], ez = pz - verts[idx + 2];
-        var d2 = ex * ex + ey * ey + ez * ez;
-        if (d2 < best) { best = d2; if (out) { out[0]=px; out[1]=py; out[2]=pz; out[3]=verts[idx]; out[4]=verts[idx+1]; out[5]=verts[idx+2]; } }
+    var cpx=px-cx,cpy=py-cy,cpz=pz-cz;
+    var d5=abx*cpx+aby*cpy+abz*cpz, d6=acx*cpx+acy*cpy+acz*cpz;
+    if (d6>=0 && d5<=d6) { outPt[0]=cx;outPt[1]=cy;outPt[2]=cz; return cpx*cpx+cpy*cpy+cpz*cpz; }
+    var vb=d5*d2-d1*d6;
+    if (vb<=0 && d2>=0 && d6<=0) {
+      var w=d2/(d2-d6), qx=ax+acx*w, qy=ay+acy*w, qz=az+acz*w;
+      outPt[0]=qx;outPt[1]=qy;outPt[2]=qz;
+      var rx=qx-px,ry=qy-py,rz=qz-pz;
+      return rx*rx+ry*ry+rz*rz;
+    }
+    var va=d3*d6-d5*d4;
+    if (va<=0 && (d4-d3)>=0 && (d5-d6)>=0) {
+      var w2=(d4-d3)/((d4-d3)+(d5-d6)), qx=bx+(cx-bx)*w2, qy=by+(cy-by)*w2, qz=bz+(cz-bz)*w2;
+      outPt[0]=qx;outPt[1]=qy;outPt[2]=qz;
+      var rx=qx-px,ry=qy-py,rz=qz-pz;
+      return rx*rx+ry*ry+rz*rz;
+    }
+    var denom=1/(va+vb+vc), v2=vb*denom, w3=vc*denom;
+    var qx=ax+abx*v2+acx*w3, qy=ay+aby*v2+acy*w3, qz=az+abz*v2+acz*w3;
+    outPt[0]=qx;outPt[1]=qy;outPt[2]=qz;
+    var rx=qx-px,ry=qy-py,rz=qz-pz;
+    return rx*rx+ry*ry+rz*rz;
+  }
+  // Closest points between two 3D segments (Ericson RTCD 5.1.9,
+  // ClosestPtSegmentSegment) - robust for parallel/degenerate segments.
+  // Writes the closest point on segment 1 into outA, on segment 2 into outB,
+  // returns the squared distance between them.
+  function _segSegDistSq(p1x,p1y,p1z,q1x,q1y,q1z, p2x,p2y,p2z,q2x,q2y,q2z, outA,outB) {
+    var d1x=q1x-p1x,d1y=q1y-p1y,d1z=q1z-p1z;
+    var d2x=q2x-p2x,d2y=q2y-p2y,d2z=q2z-p2z;
+    var rx=p1x-p2x,ry=p1y-p2y,rz=p1z-p2z;
+    var a=d1x*d1x+d1y*d1y+d1z*d1z;
+    var e=d2x*d2x+d2y*d2y+d2z*d2z;
+    var f=d2x*rx+d2y*ry+d2z*rz;
+    var s,t;
+    var EPS=1e-15;
+    if (a<=EPS && e<=EPS) {
+      s=0; t=0;
+    } else if (a<=EPS) {
+      t=f/e; if (t<0) t=0; else if (t>1) t=1; s=0;
+    } else {
+      var c=d1x*rx+d1y*ry+d1z*rz;
+      if (e<=EPS) {
+        t=0; s=-c/a; if (s<0) s=0; else if (s>1) s=1;
+      } else {
+        var b=d1x*d2x+d1y*d2y+d1z*d2z;
+        var denom=a*e-b*b;
+        if (denom!==0) { s=(b*f-c*e)/denom; if (s<0) s=0; else if (s>1) s=1; } else s=0;
+        t=(b*s+f)/e;
+        if (t<0) { t=0; s=-c/a; if (s<0) s=0; else if (s>1) s=1; }
+        else if (t>1) { t=1; s=(b-c)/a; if (s<0) s=0; else if (s>1) s=1; }
       }
     }
+    var c1x=p1x+d1x*s, c1y=p1y+d1y*s, c1z=p1z+d1z*s;
+    var c2x=p2x+d2x*t, c2y=p2y+d2y*t, c2z=p2z+d2z*t;
+    outA[0]=c1x; outA[1]=c1y; outA[2]=c1z;
+    outB[0]=c2x; outB[1]=c2y; outB[2]=c2z;
+    var dx=c1x-c2x, dy=c1y-c2y, dz=c1z-c2z;
+    return dx*dx+dy*dy+dz*dz;
+  }
+  // Minimum distance between two triangles: min over the 6 vertex-to-
+  // opposite-triangle checks (covers a closest point in either triangle's
+  // interior) and the 9 edge-edge segment checks (covers two skew edges
+  // whose closest points are both interior to the edges, e.g. crossing
+  // bars) - the standard decomposition for exact triangle-triangle distance.
+  // Ties resolve to "first strictly smaller wins", in this fixed order -
+  // this exact order is mirrored op-for-op in engine/src/mesh_dist.rs so
+  // the WASM port stays bit-identical on tie-break cases too.
+  var _ttdPtA = new Float64Array(3), _ttdPtB = new Float64Array(3);
+  function _triTriDistSq(trisA, oA9, trisB, oB9, outA, outB) {
+    var a0x=trisA[oA9],a0y=trisA[oA9+1],a0z=trisA[oA9+2];
+    var a1x=trisA[oA9+3],a1y=trisA[oA9+4],a1z=trisA[oA9+5];
+    var a2x=trisA[oA9+6],a2y=trisA[oA9+7],a2z=trisA[oA9+8];
+    var b0x=trisB[oB9],b0y=trisB[oB9+1],b0z=trisB[oB9+2];
+    var b1x=trisB[oB9+3],b1y=trisB[oB9+4],b1z=trisB[oB9+5];
+    var b2x=trisB[oB9+6],b2y=trisB[oB9+7],b2z=trisB[oB9+8];
+    var best = Infinity, d, pa=_ttdPtA, pb=_ttdPtB;
+    d = _closestPtOnTri(a0x,a0y,a0z, trisB,oB9, pb); if (d<best){best=d;outA[0]=a0x;outA[1]=a0y;outA[2]=a0z;outB[0]=pb[0];outB[1]=pb[1];outB[2]=pb[2];}
+    d = _closestPtOnTri(a1x,a1y,a1z, trisB,oB9, pb); if (d<best){best=d;outA[0]=a1x;outA[1]=a1y;outA[2]=a1z;outB[0]=pb[0];outB[1]=pb[1];outB[2]=pb[2];}
+    d = _closestPtOnTri(a2x,a2y,a2z, trisB,oB9, pb); if (d<best){best=d;outA[0]=a2x;outA[1]=a2y;outA[2]=a2z;outB[0]=pb[0];outB[1]=pb[1];outB[2]=pb[2];}
+    d = _closestPtOnTri(b0x,b0y,b0z, trisA,oA9, pa); if (d<best){best=d;outB[0]=b0x;outB[1]=b0y;outB[2]=b0z;outA[0]=pa[0];outA[1]=pa[1];outA[2]=pa[2];}
+    d = _closestPtOnTri(b1x,b1y,b1z, trisA,oA9, pa); if (d<best){best=d;outB[0]=b1x;outB[1]=b1y;outB[2]=b1z;outA[0]=pa[0];outA[1]=pa[1];outA[2]=pa[2];}
+    d = _closestPtOnTri(b2x,b2y,b2z, trisA,oA9, pa); if (d<best){best=d;outB[0]=b2x;outB[1]=b2y;outB[2]=b2z;outA[0]=pa[0];outA[1]=pa[1];outA[2]=pa[2];}
+    d = _segSegDistSq(a0x,a0y,a0z,a1x,a1y,a1z, b0x,b0y,b0z,b1x,b1y,b1z, pa,pb); if(d<best){best=d;outA[0]=pa[0];outA[1]=pa[1];outA[2]=pa[2];outB[0]=pb[0];outB[1]=pb[1];outB[2]=pb[2];}
+    d = _segSegDistSq(a0x,a0y,a0z,a1x,a1y,a1z, b1x,b1y,b1z,b2x,b2y,b2z, pa,pb); if(d<best){best=d;outA[0]=pa[0];outA[1]=pa[1];outA[2]=pa[2];outB[0]=pb[0];outB[1]=pb[1];outB[2]=pb[2];}
+    d = _segSegDistSq(a0x,a0y,a0z,a1x,a1y,a1z, b2x,b2y,b2z,b0x,b0y,b0z, pa,pb); if(d<best){best=d;outA[0]=pa[0];outA[1]=pa[1];outA[2]=pa[2];outB[0]=pb[0];outB[1]=pb[1];outB[2]=pb[2];}
+    d = _segSegDistSq(a1x,a1y,a1z,a2x,a2y,a2z, b0x,b0y,b0z,b1x,b1y,b1z, pa,pb); if(d<best){best=d;outA[0]=pa[0];outA[1]=pa[1];outA[2]=pa[2];outB[0]=pb[0];outB[1]=pb[1];outB[2]=pb[2];}
+    d = _segSegDistSq(a1x,a1y,a1z,a2x,a2y,a2z, b1x,b1y,b1z,b2x,b2y,b2z, pa,pb); if(d<best){best=d;outA[0]=pa[0];outA[1]=pa[1];outA[2]=pa[2];outB[0]=pb[0];outB[1]=pb[1];outB[2]=pb[2];}
+    d = _segSegDistSq(a1x,a1y,a1z,a2x,a2y,a2z, b2x,b2y,b2z,b0x,b0y,b0z, pa,pb); if(d<best){best=d;outA[0]=pa[0];outA[1]=pa[1];outA[2]=pa[2];outB[0]=pb[0];outB[1]=pb[1];outB[2]=pb[2];}
+    d = _segSegDistSq(a2x,a2y,a2z,a0x,a0y,a0z, b0x,b0y,b0z,b1x,b1y,b1z, pa,pb); if(d<best){best=d;outA[0]=pa[0];outA[1]=pa[1];outA[2]=pa[2];outB[0]=pb[0];outB[1]=pb[1];outB[2]=pb[2];}
+    d = _segSegDistSq(a2x,a2y,a2z,a0x,a0y,a0z, b1x,b1y,b1z,b2x,b2y,b2z, pa,pb); if(d<best){best=d;outA[0]=pa[0];outA[1]=pa[1];outA[2]=pa[2];outB[0]=pb[0];outB[1]=pb[1];outB[2]=pb[2];}
+    d = _segSegDistSq(a2x,a2y,a2z,a0x,a0y,a0z, b2x,b2y,b2z,b0x,b0y,b0z, pa,pb); if(d<best){best=d;outA[0]=pa[0];outA[1]=pa[1];outA[2]=pa[2];outB[0]=pb[0];outB[1]=pb[1];outB[2]=pb[2];}
     return best;
-  };
-
+  }
+  // Squared lower-bound distance between two BVH node AABBs - 0 when they
+  // overlap, else the gap along the separating axis/axes.
+  function _aabbAabbDistSq(nA, nB) {
+    var dx = Math.max(nA.mnx-nB.mxx, nB.mnx-nA.mxx, 0);
+    var dy = Math.max(nA.mny-nB.mxy, nB.mny-nA.mxy, 0);
+    var dz = Math.max(nA.mnz-nB.mxz, nB.mnz-nA.mxz, 0);
+    return dx*dx+dy*dy+dz*dz;
+  }
+  // Dual-tree BVH traversal for true minimum mesh distance, pruned by the
+  // running best (AABB-AABB lower bound >= best[0] skips the whole subtree
+  // pair). Split policy mirrors _bvhTraverseAll exactly (split the bigger
+  // node; a leaf can never be the one split) so the two traversals stay
+  // structurally identical - and, ported the same way in Rust, so does
+  // mesh_dist::traverse_min_dist.
+  var _bmdPtA = new Float64Array(3), _bmdPtB = new Float64Array(3);
+  function _bvhMinDistTraverse(nA, trisA, nB, trisB, best, outA, outB) {
+    if (_aabbAabbDistSq(nA, nB) >= best[0]) return;
+    var aLeaf = nA.lo !== undefined;
+    var bLeaf = nB.lo !== undefined;
+    if (aLeaf && bLeaf) {
+      for (var i=nA.lo; i<nA.hi; i++) {
+        for (var j=nB.lo; j<nB.hi; j++) {
+          var d = _triTriDistSq(trisA, nA.idx[i]*9, trisB, nB.idx[j]*9, _bmdPtA, _bmdPtB);
+          if (d < best[0]) {
+            best[0]=d;
+            outA[0]=_bmdPtA[0];outA[1]=_bmdPtA[1];outA[2]=_bmdPtA[2];
+            outB[0]=_bmdPtB[0];outB[1]=_bmdPtB[1];outB[2]=_bmdPtB[2];
+          }
+        }
+      }
+      return;
+    }
+    if (bLeaf || (!aLeaf && (nA.cnt||1) >= (nB.cnt||1))) {
+      _bvhMinDistTraverse(nA.left, trisA, nB, trisB, best, outA, outB);
+      _bvhMinDistTraverse(nA.right, trisA, nB, trisB, best, outA, outB);
+    } else {
+      _bvhMinDistTraverse(nA, trisA, nB.left, trisB, best, outA, outB);
+      _bvhMinDistTraverse(nA, trisA, nB.right, trisB, best, outA, outB);
+    }
+  }
+  var _mmdBest = new Float64Array(1), _mmdOutA = new Float64Array(3), _mmdOutB = new Float64Array(3);
   function _meshMinDist(elA, elB, thresholdM, outPair) {
-    // Try WASM engine first. Measured speedup is pair-shape dependent (own
-    // benchmark, x1.8-x3.4 on the narrow-phase intersect side — see
-    // _meshesIntersect above); min-distance's spatial-hash walk is now a
-    // bit-identical f64 port (engine/src/spatial_hash.rs), same complexity
-    // as the JS fallback, so gains track the same ballpark.
+    // Try WASM engine first. Own benchmark (this machine, 2026-09-28, warm
+    // cache, average of 200 runs per case via BVH-pruned tri-tri leaf pairs):
+    //   48x12 tris  (product 576):       JS 0.21ms  vs WASM 0.06ms  (x3.5)
+    //   400x1200 tris (product 480k):    JS 3.8ms   vs WASM 1.1ms   (x3.5)
+    //   2560x1200 tris (product 3.07M):  JS 9.4ms   vs WASM 2.6ms   (x3.6)
+    // Slower per-pair than mesh intersect (15 sub-tests per triangle pair
+    // here vs 1 tri-tri test there) but the same BVH pruning keeps the pair
+    // count comparable, so the WASM speedup ratio tracks the intersect path.
     if (typeof window._ccWasmMinDist === 'function') {
-      var vA = _getWorldVerts(elA), vB = _getWorldVerts(elB);
-      if (!vA.length || !vB.length) return Infinity;
+      var tA = _getWorldTris(elA), tB = _getWorldTris(elB);
+      if (!tA.length || !tB.length) return Infinity;
       try {
-        return window._ccWasmMinDist(vA, vB, thresholdM, outPair);
+        return window._ccWasmMinDist(tA, tB, thresholdM, outPair);
       } catch (e) {
         console.warn('[clash] WASM minDist failed for this pair, falling back to JS:', e && e.message);
         // fall through to the JS path below for this pair
       }
     }
     // JS fallback
-    var vA = _getWorldVerts(elA), vB = _getWorldVerts(elB);
-    if (!vA.length || !vB.length) return Infinity;
-    var cs = Math.max(thresholdM || 0.05, 0.02);
-    var gridVerts, queryVerts;
-    if (vA.length <= vB.length) { gridVerts=vA; queryVerts=vB; }
-    else { gridVerts=vB; queryVerts=vA; }
-    var grid = new _SpatialHash(cs);
-    grid.insert(gridVerts);
-    var tSq = thresholdM * thresholdM, minSq = Infinity;
-    var step = queryVerts.length > 30000 ? 3 * Math.ceil(queryVerts.length / 30000) : 3;
-    var bq0=0,bq1=0,bq2=0,bg0=0,bg1=0,bg2=0; // best pair as scalars (zero alloc)
-    for (var i = 0; i < queryVerts.length; i += step) {
-      var d2 = grid.minDistSq(queryVerts[i], queryVerts[i + 1], queryVerts[i + 2], gridVerts, outPair);
-      if (d2 < minSq) {
-        minSq = d2;
-        if (outPair) { bq0=outPair[0]; bq1=outPair[1]; bq2=outPair[2]; bg0=outPair[3]; bg1=outPair[4]; bg2=outPair[5]; }
-        if (minSq <= tSq && !outPair) return Math.sqrt(minSq);
-      }
+    var bvhA = _getBVH(elA), bvhB = _getBVH(elB);
+    if (!bvhA || !bvhB) return Infinity;
+    var best = _mmdBest; best[0] = Infinity;
+    _bvhMinDistTraverse(bvhA.root, bvhA.tris, bvhB.root, bvhB.tris, best, _mmdOutA, _mmdOutB);
+    if (best[0] === Infinity) return Infinity; // unreachable with 2 non-empty meshes, kept for symmetry with the empty-input early return above
+    if (outPair) {
+      outPair[0]=_mmdOutA[0]; outPair[1]=_mmdOutA[1]; outPair[2]=_mmdOutA[2];
+      outPair[3]=_mmdOutB[0]; outPair[4]=_mmdOutB[1]; outPair[5]=_mmdOutB[2];
     }
-    if (outPair) { outPair[0]=bq0; outPair[1]=bq1; outPair[2]=bq2; outPair[3]=bg0; outPair[4]=bg1; outPair[5]=bg2; }
-    return Math.sqrt(minSq);
+    return Math.sqrt(best[0]);
   }
 
   // Pure-JS narrow-phase reference, deliberately independent of
   // window._ccWasmIntersect/_ccWasmMinDist (never takes the WASM branch),
   // exposed ONLY so addons/wasm-engine.js's runtime self-check can diff a
   // freshly-loaded WASM binary against the JS engine on a handful of fixed
-  // cases before publishing the WASM globals — internal plumbing, not a
+  // cases before publishing the WASM globals - internal plumbing, not a
   // public API (CLAUDE.md globals discipline).
   window._ccJsMeshIntersectRef = {
     intersectRaw: function(trisA, trisB) {
@@ -6169,25 +6297,19 @@ function startApp() {
       if (!pts.length) return null;
       return { pts: pts.slice(), depth: maxDepth[0] };
     },
-    minDist: function(vertsA, vertsB, thresholdM) {
-      // Matches _meshMinDist EXACTLY as it is actually always called (with
-      // an outPair buffer) — NO threshold cutoff; see _meshMinDist's WASM
-      // branch doc comment / engine/src/lib.rs's mesh_min_distance for why.
-      if (!vertsA || !vertsB || !vertsA.length || !vertsB.length) return [Infinity];
-      var cs = Math.max(thresholdM || 0.05, 0.02);
-      var gridVerts, queryVerts;
-      if (vertsA.length <= vertsB.length) { gridVerts = vertsA; queryVerts = vertsB; }
-      else { gridVerts = vertsB; queryVerts = vertsA; }
-      var grid = new _SpatialHash(cs);
-      grid.insert(gridVerts);
-      var minSq = Infinity;
-      var step = queryVerts.length > 30000 ? 3 * Math.ceil(queryVerts.length / 30000) : 3;
-      var out = new Float64Array(6), best = [0, 0, 0, 0, 0, 0];
-      for (var i = 0; i < queryVerts.length; i += step) {
-        var d2 = grid.minDistSq(queryVerts[i], queryVerts[i + 1], queryVerts[i + 2], gridVerts, out);
-        if (d2 < minSq) { minSq = d2; best = out.slice(); }
-      }
-      return [Math.sqrt(minSq), best[0], best[1], best[2], best[3], best[4], best[5]];
+    // trisA/trisB: flat triangle arrays (9 floats/tri), NOT raw vertices -
+    // matches _meshMinDist's JS-fallback path exactly (own BVH build +
+    // _bvhMinDistTraverse), with an outPair-shaped 7-element return.
+    minDist: function(trisA, trisB) {
+      if (!trisA || !trisB || !trisA.length || !trisB.length) return [Infinity];
+      var na = trisA.length / 9, nb = trisB.length / 9;
+      var idxA = new Int32Array(na); for (var i = 0; i < na; i++) idxA[i] = i;
+      var idxB = new Int32Array(nb); for (var i = 0; i < nb; i++) idxB[i] = i;
+      var rootA = _buildBVHNode(trisA, idxA, 0, na);
+      var rootB = _buildBVHNode(trisB, idxB, 0, nb);
+      var best = [Infinity], outA = [0,0,0], outB = [0,0,0];
+      _bvhMinDistTraverse(rootA, trisA, rootB, trisB, best, outA, outB);
+      return [Math.sqrt(best[0]), outA[0],outA[1],outA[2], outB[0],outB[1],outB[2]];
     }
   };
 
@@ -6841,7 +6963,7 @@ function startApp() {
     });
   }
 
-  // ── Async clash detection with chunked processing ─────────────── INTERNALS.md §9
+  // ── Async clash detection with chunked processing ─────────────── docs/INTERNALS.md §9
   var _DETECT_CHUNK_SIZE = 80; // candidates per chunk before yielding
   // Rough per-candidate heap-size estimate (bytes) for the fully-materialized
   // `candidates` array (_sweepAndPrune builds and returns the complete array
@@ -6946,7 +7068,7 @@ function startApp() {
       if (_coverage) action.coverageModelIds = _coverage;
       dispatch(action);
     }
-    // V7_RELEASE_PLAN.md P6.4 (safe slice): opt-in cache clear for the
+    // docs/V7_RELEASE_PLAN.md P6.4 (safe slice): opt-in cache clear for the
     // non-interactive "run once and export" flow (batch/API-triggered single
     // runs, e.g. MCP/Smart-Bridge automation) where the BVH/world-vert caches
     // built during this run will never be touched again. Off by default —
@@ -7357,7 +7479,7 @@ function startApp() {
     // ── Per-candidate timing accumulators ─────────────────────────
     var _tHard = 0, _tSoft = 0, _tFilters = 0, _nHardTests = 0, _nSoftTests = 0, _nHardTestsBatched = 0;
 
-    // ── WASM batch hard-clash warmup ──  See INTERNALS.md § 21.15
+    // ── WASM batch hard-clash warmup ──  See docs/INTERNALS.md § 21.15
     var _chunkBatchCache = null;
     var _BATCH_MIN_GROUP = 4;        // groups smaller than this stay per-pair
     var _BATCH_MAX_TRIS = 1500000;   // soft cap on triangles per WASM call
@@ -8033,7 +8155,7 @@ function startApp() {
     });
   }
 
-  // ── Clash Identity & Delta Merge ────────────────────────────── INTERNALS.md §9
+  // ── Clash Identity & Delta Merge ────────────────────────────── docs/INTERNALS.md §9
   // computeClashPair/computeClashIdentityKey — clash-identity-core.js (plain
   // same-origin <script defer>, not an addon). Was identityCoreV2, a
   // flagged migration with a boot-time equivalence check against an inline
@@ -8193,7 +8315,7 @@ function startApp() {
   }
 
 
-  // ── AI Auto-Classifier ─────────────────────────────────────────── INTERNALS.md §10
+  // ── AI Auto-Classifier ─────────────────────────────────────────── docs/INTERNALS.md §10
   // classifyClashes — clash-classification-core.js (plain same-origin
   // <script defer>, not an addon). Was classificationCoreV2, a flagged
   // migration with a boot-time equivalence check against an inline legacy
@@ -8308,7 +8430,7 @@ function startApp() {
   var _captureViewpoint = null; // set in Viewer
   var _restoreViewpoint = null;
 
-  // ── BCF Import ────────────────────────────────────────────── INTERNALS.md §11
+  // ── BCF Import ────────────────────────────────────────────── docs/INTERNALS.md §11
 
   function importBCF(d) {
     _gcEvent('bcf-import');
@@ -8674,7 +8796,7 @@ function startApp() {
   var shareAITrainingData = function(c, ds, m, cb, dt, i) { if (window._ccShareAITrainingData) window._ccShareAITrainingData(c, ds, m, cb, dt, i); };
   var _AI_VERDICT_MAP = window._ccAIVerdictMap || {open:'unreviewed', confirmed:'true_clash', denied:'false_positive', in_progress:'true_clash', resolved:'acceptable', closed:'false_positive'};
 
-  // ── BCF Export (supports v2.1 and v3.0) ────────────────────── INTERNALS.md §11
+  // ── BCF Export (supports v2.1 and v3.0) ────────────────────── docs/INTERNALS.md §11
 
   // Element-only lookup (mirrors _lookupElProps' lenient modelId convention
   // without depending on it — that function is extracted standalone in its
@@ -9161,7 +9283,7 @@ function startApp() {
     });
   }
 
-  // ── First-Person Walk Mode (Enscape-style) ──────────────────── INTERNALS.md §12
+  // ── First-Person Walk Mode (Enscape-style) ──────────────────── docs/INTERNALS.md §12
   // WASD + mouse-look. Collision ON by default; gravity + stair step-up on.
   // Pegman drop-in chooses the entry; Esc exits.
   var _walkActive = false;
@@ -9406,7 +9528,7 @@ function startApp() {
     })();
     });});
 
-    // Pointer-lock timing.  See INTERNALS.md § 21.21
+    // Pointer-lock timing.  See docs/INTERNALS.md § 21.21
     invalidate(999);
   }
 
@@ -9624,7 +9746,7 @@ function startApp() {
       _walkBobBaseY = newY;
       invalidate(3);
     }
-    // ── Vertical ground-snap (gravity + stair step-up) ──  See INTERNALS.md § 21.20
+    // ── Vertical ground-snap (gravity + stair step-up) ──  See docs/INTERNALS.md § 21.20
     // Vignette tween: 0..1 based on sprint state
     var vTarget = sprinting && velMoving ? 1 : 0;
     if (_walkVignette !== vTarget){
@@ -9752,7 +9874,7 @@ function startApp() {
     }
   }
 
-  // ── Orbit Controls (inline) ──────────────────────────────────── INTERNALS.md §13
+  // ── Orbit Controls (inline) ──────────────────────────────────── docs/INTERNALS.md §13
 
   var _sboxDragging = false;
   var _orbitDragging = false; // true while left/middle mouse button or touch is held in orbit mode
@@ -10052,7 +10174,7 @@ function startApp() {
     return orbit;
   }
 
-  // ── Three.js Viewer Component ────────────────────────────────── INTERNALS.md §14
+  // ── Three.js Viewer Component ────────────────────────────────── docs/INTERNALS.md §14
 
   var _flyTo = null;
   var _resetView = null;
@@ -10664,7 +10786,7 @@ function startApp() {
       }
       _wlAdd('mousemove', _walkUpdateHover);
 
-      // ── Animated fly-to system ───────────────────────────────────── INTERNALS.md §15
+      // ── Animated fly-to system ───────────────────────────────────── docs/INTERNALS.md §15
       var _flyAnim = null;
       function easeInOut(t){return t<0.5?4*t*t*t:(1-Math.pow(-2*t+2,3)/2);}
       function flyDuration(startTarget, endTarget, startPos, endPos) {
@@ -11525,7 +11647,7 @@ function startApp() {
       }
 
       window._ccShowActiveClashMarker = function(point) {
-        // Active-clash 3D pin removed.  See INTERNALS.md § 21.28
+        // Active-clash 3D pin removed.  See docs/INTERNALS.md § 21.28
         // For visibility clashes we replace it with a sight-line.
         window._ccRemoveActiveClashMarker();
         var st = window._ccLatestState || {};
@@ -11560,7 +11682,7 @@ function startApp() {
         invalidate();
       };
 
-      // ── Clash markers — single Points object ──  See INTERNALS.md § 21.14
+      // ── Clash markers — single Points object ──  See docs/INTERNALS.md § 21.14
       function _ccSevColorRGB(sev, type) {
         // 0xRRGGBB-as-floats
         switch (sev || type) {
@@ -12222,7 +12344,7 @@ function startApp() {
         foundMarkersRef.current = [];
       };
 
-      // ── Snap engine + live measurement preview ──  See INTERNALS.md § 21.29
+      // ── Snap engine + live measurement preview ──  See docs/INTERNALS.md § 21.29
       var _SNAP_PX = 18;
       var _proj = new THREE.Vector3();
       function _projectToPx(p3, w, h){
@@ -13437,7 +13559,7 @@ function startApp() {
           invalidate();
           _sboxHudShow((newRot*180/Math.PI).toFixed(1)+'°', e.clientX, e.clientY);
         } else if(ds.type==='face'){
-          // Closest-point axis drag.  See INTERNALS.md § 21.13
+          // Closest-point axis drag.  See docs/INTERNALS.md § 21.13
           var uF=ds.axis; // unit face normal
           var roF=raycaster.ray.origin, rdF=raycaster.ray.direction; // rdF unit
           var w0x=ds.startPos.x-roF.x, w0y=ds.startPos.y-roF.y, w0z=ds.startPos.z-roF.z;
@@ -13623,7 +13745,7 @@ function startApp() {
           if(_phR){ _pickedHit=_ph; _pickedEid=_phR.eid; _pickedInstId=_phR.instId; break; }
         }
 
-        // ── Alt+click endpoint → area polygon ──  See INTERNALS.md § 21.27
+        // ── Alt+click endpoint → area polygon ──  See docs/INTERNALS.md § 21.27
         if (e.altKey && measureModeRef.current && (!measurePtsRef.current || measurePtsRef.current.length === 0)) {
           var _epClick = _hitMeasureEndpoint(e.clientX, e.clientY);
           if (_epClick && _epClick.type === 'length') {
@@ -13661,7 +13783,7 @@ function startApp() {
           }
         }
 
-        // ── Section pick + Alt-click shortcut ──  See INTERNALS.md § 21.26
+        // ── Section pick + Alt-click shortcut ──  See docs/INTERNALS.md § 21.26
         if ((window._ccSectionPickPending || (e.altKey && !measureModeRef.current)) && hits.length > 0) {
           var spHit = hits[0];
           var nWorld = _ccHitWorldNormal(spHit);
@@ -14172,7 +14294,7 @@ function startApp() {
         }
         return null;
       }
-      // Imperative section-plane drag.  See INTERNALS.md § 21.33
+      // Imperative section-plane drag.  See docs/INTERNALS.md § 21.33
       function _secPlaneLiveMove(newPos) {
         var S2 = state3d.current; if (!S2) return;
         var cs = window._ccCurrentSection; if (!cs) return;
@@ -14546,7 +14668,7 @@ function startApp() {
       window._ccApplyViewpoint = _restoreViewpoint;
       window._ccCaptureViewpoint = _captureViewpoint;
 
-      // Rendered lighting — original intensities (no ×π).  See INTERNALS.md § 21.25
+      // Rendered lighting — original intensities (no ×π).  See docs/INTERNALS.md § 21.25
       S._ambLight = new THREE.HemisphereLight(0xffffff, 0xc0c0c0, 0.55);
       scene.add(S._ambLight);
       // Warm directional sun (slight warm tint, like late-afternoon site visit)
@@ -14800,7 +14922,7 @@ function startApp() {
         }
 
         // Constant-size section-box handles — face arrows AND corner grips, so
-        // both read at the same scale.  See INTERNALS.md § 21.24
+        // both read at the same scale.  See docs/INTERNALS.md § 21.24
         var _sboxScaleAll = [];
         if (S._sboxFaceHandles) _sboxScaleAll = _sboxScaleAll.concat(S._sboxFaceHandles);
         if (S._sboxHandles)     _sboxScaleAll = _sboxScaleAll.concat(S._sboxHandles);
@@ -14815,7 +14937,7 @@ function startApp() {
         if (S._sectionPlaneVis && S._sectionPlaneVis._secHandleGroup) {
           var _giz = S._sectionPlaneVis;
 
-          // Vertical-plane ring reorient.  See INTERNALS.md § 21.35
+          // Vertical-plane ring reorient.  See docs/INTERNALS.md § 21.35
           var _ring = _giz._secRotRing;
           if (_ring) {
             var _wq = _giz.getWorldQuaternion(new THREE.Quaternion());
@@ -14871,7 +14993,7 @@ function startApp() {
         }
         try {
           renderer.setViewport(0,0,el.clientWidth,el.clientHeight);
-          // cc-render-frame timing — before render().  See INTERNALS.md § 21.38
+          // cc-render-frame timing — before render().  See docs/INTERNALS.md § 21.38
           if (window._ccHasSplats || window._ccHasFrameListener) {
             try { window.dispatchEvent(new CustomEvent('cc-render-frame')); } catch(_){}
           }
@@ -15157,7 +15279,7 @@ function startApp() {
         border.renderOrder = 999;
         grp.add(border);
 
-        // Section-plane handle group — constant on-screen size.  See INTERNALS.md § 21.34
+        // Section-plane handle group — constant on-screen size.  See docs/INTERNALS.md § 21.34
         var handleGroup = new THREE.Group();
         handleGroup.userData._sectionPlane = true;
 
@@ -15273,7 +15395,7 @@ function startApp() {
         S.scene.add(vis2);
         S._sectionPlaneVis = vis2;
       }
-      // ── Per-material clipping ──  See INTERNALS.md § 21.36
+      // ── Per-material clipping ──  See docs/INTERNALS.md § 21.36
       S.renderer.clippingPlanes = [];
       S.renderer.localClippingEnabled = true;
       _ccApplySectionMaterialPlanes(S, planes, 'section');
@@ -15751,7 +15873,7 @@ function startApp() {
       var border = new THREE.LineSegments(borderGeo, borderMat);
       border.rotation.x = -Math.PI/2;
       cutGroup.add(border);
-      // Floor-plan cut-plane arrow.  See INTERNALS.md § 21.37
+      // Floor-plan cut-plane arrow.  See docs/INTERNALS.md § 21.37
       var fpHandleGroup = new THREE.Group();
       var shaftLen = 1.8, shaftCylR = 0.03, tipR = 0.12, tipLen = 0.3;
       var arrowMat = new THREE.MeshBasicMaterial({color:0xf59e0b, transparent:true, opacity:0.85, depthTest:false});
@@ -16066,7 +16188,7 @@ function startApp() {
         return {dx:dirX, dy:dirY, dz:dirZ, r:r, g:g, b:b, intensity:intensityMul, alt:altitude};
       }
 
-      // ── Lighting + tone-mapping per style ──  See INTERNALS.md § 21.12
+      // ── Lighting + tone-mapping per style ──  See docs/INTERNALS.md § 21.12
       if (S.renderer) S.renderer.toneMappingExposure = expoMul * (style==='rendered' ? 0.4 : style==='shaded' ? 0.88 : 1.0);
       if (S._sunLight) {
         if (style==='rendered') {
@@ -16202,7 +16324,7 @@ function startApp() {
         });
       });
 
-      // ── Materials per render style ──  See INTERNALS.md § 21.11
+      // ── Materials per render style ──  See docs/INTERNALS.md § 21.11
       function _disposeEdges(obj) {
         if (obj.userData._edges) {
           try { obj.remove(obj.userData._edges); obj.userData._edges.geometry.dispose(); obj.userData._edges.material.dispose(); } catch(e){}
@@ -16254,7 +16376,7 @@ function startApp() {
             transparent: true, opacity: 0.85, side: THREE.FrontSide
           }));
         } else if (style === 'standard') {
-          // Hidden Line — shared Lambert + glass.  See INTERNALS.md § 21.39
+          // Hidden Line — shared Lambert + glass.  See docs/INTERNALS.md § 21.39
           _disposeEdges(obj);
           var _hlMatName  = (obj.userData._ifcMaterial || '').toLowerCase();
           var _hlType     = _eidToType[obj.userData.expressId] || '';
@@ -16324,7 +16446,7 @@ function startApp() {
         } else if (style === 'rendered') {
           _disposeEdges(obj);
           if (!cache.rendered) {
-            // Rendered style — IFC colour respected.  See INTERNALS.md § 21.40
+            // Rendered style — IFC colour respected.  See docs/INTERNALS.md § 21.40
             var _matName = (obj.userData._ifcMaterial || '').toLowerCase();
             var _rdType = _eidToType[obj.userData.expressId] || '';
             var _rdHardFrame = /^Ifc(Member|CurtainWall|Beam|Column|Pile|Footing|Wall|Slab|Roof|Stair|Ramp|Covering|Railing|Rail)/i.test(_rdType);
@@ -19733,7 +19855,7 @@ function startApp() {
     return {_total:(elements||[]).length};
   }
 
-  // ── Splat reference-layers panel + PWA install banner ──  See INTERNALS.md § 21.17
+  // ── Splat reference-layers panel + PWA install banner ──  See docs/INTERNALS.md § 21.17
   /* eslint-disable react-hooks/rules-of-hooks -- these are ordinary
      components, always called unconditionally in the same order, but their
      names are prefixed with `_` per this project's naming convention (see
@@ -21249,7 +21371,7 @@ function startApp() {
     </div>`;
   }
 
-  // ── Run Detection modal + placement sanity ──  See INTERNALS.md § 21.22
+  // ── Run Detection modal + placement sanity ──  See docs/INTERNALS.md § 21.22
   window._ccPlacementWarnings = function(models){
     var out = [];
     try {
@@ -25229,7 +25351,7 @@ function startApp() {
       if (changed) setWinForceTick(function(t){ return t+1; });
     });
 
-    // ── Progressive reveal ──  See INTERNALS.md § 21.41
+    // ── Progressive reveal ──  See docs/INTERNALS.md § 21.41
     // Windowed mode mounts a bounded slice regardless, so the reveal-to-all
     // idle callback (whose whole purpose is bounding first-paint cost before
     // the full set mounts) is unnecessary — items is the full set immediately.
@@ -26205,7 +26327,7 @@ function startApp() {
       </div>`}
     </div>`;
   }
-  // IssueRow memoization.  See INTERNALS.md § 21.42
+  // IssueRow memoization.  See docs/INTERNALS.md § 21.42
   IssueRow = React.memo(IssueRow);
 
 
@@ -31710,7 +31832,7 @@ function startApp() {
 
   // ── ifc-lite Migration Notice ──────────────────────────────────
 
-  // ── Natural Language Command Engine ──────────────────────────── INTERNALS.md §17
+  // ── Natural Language Command Engine ──────────────────────────── docs/INTERNALS.md §17
 
   // ── Server AI health check ───────────────────────────────────────
   var _serverAIAvailable = false;
@@ -32487,7 +32609,7 @@ function startApp() {
       }
     }
 
-    // ── Tiered AI: basic assistant vs. your own LLM ──  See INTERNALS.md § 21.7
+    // ── Tiered AI: basic assistant vs. your own LLM ──  See docs/INTERNALS.md § 21.7
     if (!replyContext) {
       var _solveRx = /\b(resolv\w*|solv\w*|fix(?:ing|es|ed)?|deconflict\w*|mitigat\w*|work[\s-]?around|recommend\w*|suggest\w*|propose\w*)\b/i;
       var _aboutClash = /\b(clash\w*|conflict\w*|collision\w*|overlap\w*|intersect\w*)\b/i;
@@ -33822,7 +33944,7 @@ function startApp() {
     </div>`;
   }
 
-  // ── Natural Language Command Panel ───────────────────────────── INTERNALS.md §17
+  // ── Natural Language Command Panel ───────────────────────────── docs/INTERNALS.md §17
 
   function NLCommandPanel(props) {
     var s = props.s, d = props.d;
@@ -35080,7 +35202,7 @@ function startApp() {
 
   // ── Memory Warning Modal ────────────────────────────────────────
 
-  // ── Memory diagnostic breakdown ──  See INTERNALS.md § 21.23
+  // ── Memory diagnostic breakdown ──  See docs/INTERNALS.md § 21.23
   function _ccMemDiag(s) {
     var L = [];
     var fmtMB = function(b){ return (b/1048576).toFixed(1) + ' MB'; };
@@ -35154,7 +35276,7 @@ function startApp() {
       });
       if (elMeshes) L.push('- **Retained element.meshes[]**: ' + elMeshes + ' proxy meshes, ' + elGeoVerts.toLocaleString() + ' verts (kept for clash/highlight)');
     } catch(e){}
-    // Byte-accurate residency ledger (V7_RELEASE_PLAN.md P6.1) — dedups shared
+    // Byte-accurate residency ledger (docs/V7_RELEASE_PLAN.md P6.1) — dedups shared
     // geometry per model (the line above sums per-PROXY, so it double-counts
     // anything InstancedMesh shares) and adds BatchedMesh/instance/BVH/prop
     // bytes the line above doesn't see at all.
@@ -35218,7 +35340,7 @@ function startApp() {
     });
   };
 
-  // _ccDebugInstancing — usage: _ccDebugInstancing().  See INTERNALS.md § 21.43
+  // _ccDebugInstancing — usage: _ccDebugInstancing().  See docs/INTERNALS.md § 21.43
   window._ccDebugInstancing = function() {
     var s = window._ccLatestState || {};
     // Collect per-key mesh refs so we can detect *real* hash collisions:
@@ -35328,7 +35450,7 @@ function startApp() {
     var usedMB = mem.usedJSHeapSize ? Math.round(mem.usedJSHeapSize / 1048576) : 0;
     var totalMB = mem.totalJSHeapSize ? Math.round(mem.totalJSHeapSize / 1048576) : 0;
     var limitMB = mem.jsHeapSizeLimit ? Math.round(mem.jsHeapSizeLimit / 1048576) : 0;
-    // Memory-report privacy — model names never included.  See INTERNALS.md § 21.44
+    // Memory-report privacy — model names never included.  See docs/INTERNALS.md § 21.44
     var includeNames = false;
     var inclBrowser = useState(true), includeBrowser=inclBrowser[0], setIncludeBrowser=inclBrowser[1];
     var msgSt = useState(''), userMsg=msgSt[0], setUserMsg=msgSt[1];
@@ -35768,7 +35890,7 @@ function startApp() {
     };
   }
 
-  // ── Left Panel (Models, Clashes, Issues, etc.) ───────────────── INTERNALS.md §18
+  // ── Left Panel (Models, Clashes, Issues, etc.) ───────────────── docs/INTERNALS.md §18
 
   function LeftPanel(props) {
     var s=props.s, d=props.d;
@@ -39082,7 +39204,7 @@ function startApp() {
       window._cc2DSnapIndex = _cc2DOutlines ? _ccBuildSnapIndex(_cc2DOutlines) : null;
     }, [s.underlayMode, s.floorPlan, s.models, s.activeSheetId, s.sheets]);
 
-    // ── Global Keyboard Shortcuts (single keys + Revit-style two-key chords) ── INTERNALS.md §19
+    // ── Global Keyboard Shortcuts (single keys + Revit-style two-key chords) ── docs/INTERNALS.md §19
     var _chordRef = useRef({key:null,timer:null});
     useEffect(function(){
       function gk(e){
@@ -39521,7 +39643,7 @@ function startApp() {
       if (window._ccOpenModelsPanel) try { window._ccOpenModelsPanel(); } catch(_e){}
       window.dispatchEvent(new CustomEvent('cc-pending-files'));
     }
-    // ── P6.3: pre-load pressure relief (V7_RELEASE_PLAN.md, flag-gated,
+    // ── P6.3: pre-load pressure relief (docs/V7_RELEASE_PLAN.md, flag-gated,
     // conservative slice). The plan's fuller ask — stage packed geometry,
     // let the IFC worker finish property extraction and terminate BEFORE
     // constructing Three.js objects, commit atomically — touches the IFC
