@@ -546,10 +546,17 @@
       invalidNLSfB:   {label:'Ongeldig NL/SfB formaat',             sev:'error',cat:'nlsfb', count:acc.invalidNLSfB.length,    ex:acc.invalidNLSfB.slice(0,8)},
       mismatchNLSfB:  {label:'NL/SfB komt niet overeen met IFC type',sev:'warn', cat:'nlsfb', count:acc.mismatchNLSfB.length,  ex:acc.mismatchNLSfB.slice(0,8)},
       missingILSProp: {label:'Ontbrekende ILS-verplichte eigenschappen',sev:'warn',cat:'properties',count:acc.missingILSProp.length,ex:acc.missingILSProp.slice(0,8)},
-      noDescription:  {label:'Geen of lege omschrijving',            sev:'info', cat:'naming', count:acc.noDescription.length,   ex:acc.noDescription.slice(0,8)},
-      noMaterial:     {label:'Geen materiaal toegewezen',            sev:'warn', cat:'properties',count:acc.noMaterial.length,   ex:acc.noMaterial.slice(0,8)},
-      noStorey:       {label:'Geen bouwlaag toegewezen',             sev:'warn', cat:'location', count:acc.noStorey.length,      ex:acc.noStorey.slice(0,8)},
-      noObjectType:   {label:'Geen ObjectType gedefinieerd',         sev:'info', cat:'classification',count:acc.noObjectType.length,ex:acc.noObjectType.slice(0,8)},
+      // noDescription/noMaterial/noStorey/noObjectType are deliberately NOT
+      // returned here (they're still tallied into acc above, for this
+      // engine's own ilsCompDist compliance-distribution scoring) — they run
+      // the exact same field test, on the same elements, as
+      // runDataQualityChecks' noDescription/noMaterial/noStorey and
+      // runBIMModelChecks' noObjectType. Surfacing both the English general/
+      // BIM version AND this Dutch-labelled ILS re-run of the identical
+      // check double-counted every one of those findings in the Data
+      // Quality panel's totals/CSV/issue-creation (e.g. 525 findings on a
+      // 46-element model). Dedupe by check id: one englishlabelled source of
+      // truth per underlying test, not one per engine that happens to test it.
       noName:         {label:'Geen elementnaam',                     sev:'warn', cat:'naming', count:acc.noName.length,          ex:acc.noName.slice(0,8)},
       // NL-BIM Basis ILS v2 additions
       storeyNaming:   {label:'Bouwlaag naamgeving (ILS 3.3)',        sev:'info', cat:'naming', count:acc.storeyNaming.length,    ex:acc.storeyNaming.slice(0,8)},

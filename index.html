@@ -572,7 +572,32 @@
       .cc-overlay-top button{font-size:0.67rem!important;padding:.2rem .35rem!important}
       .cc-tip::after{display:none!important}
       .cc-hide-mobile{display:none!important}
-      .cc-header-actions{flex-wrap:wrap!important;overflow:visible!important}
+      /* Was flex-wrap:wrap, which let the remaining (non cc-hide-mobile) action
+         buttons drop to a second row and grow the header's height unpredictably
+         on narrow phones. Keep it to one row and shrink the "Share" label to an
+         icon so everything fits at 390px. */
+      .cc-header{flex-wrap:nowrap!important}
+      .cc-header-actions{flex-wrap:nowrap!important;overflow:visible!important}
+      .cc-header-share-label{display:none!important}
+      /* Toasts (#cc-toast-host, the AI-titles/visibility-check/etc. "_ccToast"
+         conduit) and the PWA update banner are fixed at bottom:1rem, which on
+         a phone sits directly on top of .cc-mobile-nav (56px+ tall) and, since
+         each toast bubble is pointer-events:auto, silently eats every tap on
+         the nav underneath it — including the "Ask AI" button this same fix
+         adds. Push them above the nav bar + safe-area inset on narrow screens. */
+      #cc-toast-host,.cc-bottom-banner{bottom:calc(4.5rem + env(safe-area-inset-bottom, 0px))!important}
+      /* Tap-target floor: the header's icon buttons (theme/settings) and the
+         per-row action buttons in the clash/issue lists were sized for a
+         mouse cursor (desktop's tight ~.3rem/.35rem padding). Below 768px
+         every button/link/checkbox gets a 44x44 hit area (WCAG 2.5.5),
+         padded outward so visuals don't change on wider desktop layouts. */
+      .cc-header-actions button, .cc-header-project button,
+      .cc-side-panel button, .cc-left-panel button {
+        min-width:44px!important; min-height:44px!important;
+      }
+      .cc-side-panel input[type=checkbox], .cc-left-panel input[type=checkbox] {
+        width:20px!important; height:20px!important;
+      }
     }
     @media(max-width:480px){
       .cc-header-brand-text{display:none!important}
@@ -620,7 +645,7 @@
     .cc-mobile-nav button{background:none;border:none;cursor:pointer;color:var(--text-muted);
       display:flex;flex-direction:column;align-items:center;gap:.1rem;padding:.35rem .5rem;
       font-size:0.63rem;font-family:inherit;min-width:44px;min-height:44px;justify-content:center;
-      border-radius:8px;transition:color .15s,background .15s}
+      border-radius:8px;transition:color .15s,background .15s;position:relative}
     .cc-mobile-nav button.active{color:var(--accent-light);background:var(--accent-dim)}
     .cc-mobile-nav button svg{width:20px;height:20px}
     /* ── Presentation / kiosk mode ─────────────────────────────────── */
@@ -2218,7 +2243,16 @@ function startApp() {
       case A.SECTION_CUSTOM: return Object.assign({},s,{sectionAxis:null, sectionCustom:a.v, sectionPos:a.pos!=null?a.pos:0.5, sectionFlip:false});
       case A.SECTION_FLIP:  return Object.assign({},s,{sectionFlip:!s.sectionFlip});
       case A.SECTION_HATCH: return Object.assign({},s,{sectionHatch:!s.sectionHatch});
-      case A.TAB:         var tabUpd={tab:a.v,sectionAxis:null,sectionCustom:null}; if(a.v!==s.tab&&(a.v==='clashes'||a.v==='issues'||s.tab==='clashes'||s.tab==='issues'))tabUpd.activeId=null; return Object.assign({},s,tabUpd);
+      case A.TAB:         var tabUpd={tab:a.v,sectionAxis:null,sectionCustom:null};
+                          // Closing the panel entirely (a.v===null — e.g. tapping a mobile
+                          // nav icon again to dismiss the sheet, or the panel's ✕) must NOT
+                          // drop the selection: the 3D view should keep focusing/ghosting the
+                          // last-selected clash/issue, same as it does while the panel stays
+                          // docked open on desktop. Only clear activeId when actually switching
+                          // to a different tab whose item-id namespace could collide (clashes
+                          // <-> issues <-> another tab).
+                          if(a.v!==null && a.v!==s.tab&&(a.v==='clashes'||a.v==='issues'||s.tab==='clashes'||s.tab==='issues'))tabUpd.activeId=null;
+                          return Object.assign({},s,tabUpd);
       case A.SETTINGS:    return Object.assign({},s,{showSettings:a.v});
       case A.SHARE:       return Object.assign({},s,{showShare:!!a.v});
       case A.SHARE_TAB:   return Object.assign({},s,{shareTab:a.v||'overview'});
@@ -11413,11 +11447,22 @@ function startApp() {
         }
         var box=_elemsBBox();
         var sz=box.getSize(new THREE.Vector3()), ctr=box.getCenter(new THREE.Vector3());
-        var d=Math.max(sz.x,sz.y,sz.z)*1.0;
+        var d=Math.max(sz.x,sz.y,sz.z)*1.0*_ccFitAspectMargin();
         _animateFly(ctr, new THREE.Vector3(ctr.x+d, ctr.y+d*0.6, ctr.z+d));
         if (window._ccUpdateShadowFrustum) window._ccUpdateShadowFrustum();
       };
       window._ccResetView = _resetView;
+
+      // The 1.0x distance multiplier below was tuned against a desktop
+      // (aspect >= 1) viewport. On a narrow/portrait viewport (mobile — e.g.
+      // 390x844, aspect ~0.46) three.js's vertical FOV maps to a much
+      // narrower horizontal frustum, so the same distance that comfortably
+      // frames a model's height clips its width. Scale the fit distance up
+      // as aspect drops below 1 so the whole model stays inside the frame.
+      function _ccFitAspectMargin(){
+        var aspect = (S.camera && S.camera.aspect) || 1;
+        return aspect < 1 ? Math.min(2.5, 1 / aspect) : 1;
+      }
 
       // ── Fit All: context-aware — element selected → fit it; else fit visible geometry ──
       window._ccFitAll = function() {
@@ -11442,7 +11487,7 @@ function startApp() {
         if (box.isEmpty()) return;
         var ctr = box.getCenter(new THREE.Vector3());
         var sz  = box.getSize(new THREE.Vector3());
-        var d   = Math.max(sz.x, sz.y, sz.z) * 1.0;
+        var d   = Math.max(sz.x, sz.y, sz.z) * 1.0 * _ccFitAspectMargin();
         _animateFly(ctr, new THREE.Vector3(ctr.x+d, ctr.y+d*0.6, ctr.z+d));
         if (window._ccUpdateShadowFrustum) window._ccUpdateShadowFrustum();
       };
@@ -18461,7 +18506,7 @@ function startApp() {
             title=${connected?'Shared via '+(sp.folderName||'folder'):'Share this project'}
             style=${{...S_BTN,position:'relative',background:bg,color:'#fff',fontWeight:600,padding:'.35rem .8rem',fontSize:'var(--text-xs)',display:'flex',alignItems:'center',gap:'.4rem',boxShadow:connected?'0 2px 8px rgba(26,107,74,.35)':'0 1px 4px rgba(26,107,74,.25)'}}>
             <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/></svg>
-            <span>Share</span>
+            <span class="cc-header-share-label">Share</span>
             <span style=${{width:7,height:7,borderRadius:'50%',background:dotColor,boxShadow:connected?'0 0 0 2px rgba(255,255,255,.25)':'none'}}></span>
             ${unread>0 && html`<span style=${{position:'absolute',top:-4,right:-4,background:'#ef4444',color:'#fff',fontSize:'0.6rem',fontWeight:700,padding:'1px 5px',borderRadius:99,lineHeight:1.3,minWidth:14,textAlign:'center',boxShadow:'0 1px 3px rgba(0,0,0,.4)'}}>${unread>9?'9+':unread}</span>`}
           </button>`;
@@ -21417,7 +21462,21 @@ function startApp() {
         ${isClash && untitled > 0 && html`<button onClick=${function(){
           if (titlesBusy || !window._ccGenerateAITitles) return;
           setTitlesBusy(true);
-          window._ccGenerateAITitles().then(function(){ setTitlesBusy(false); });
+          window._ccGenerateAITitles().then(function(res){
+            setTitlesBusy(false);
+            // Previously this just resolved silently on failure (offline,
+            // /api/title down, over quota) — the button reset itself but
+            // nothing told the person why nothing happened. Surface the
+            // reason and let them retry.
+            if (res && res.error && window._ccToast) {
+              window._ccToast(_cc_t('titles.generateFailed','Couldn\'t generate AI titles — {reason}. Try again once you\'re back online.',{reason: res.reason || 'the request failed'}));
+            } else if (res && !res.done && !res.skipped && window._ccToast) {
+              window._ccToast(_cc_t('titles.generateNone','No titles were generated.'));
+            }
+          }).catch(function(){
+            setTitlesBusy(false);
+            if (window._ccToast) window._ccToast(_cc_t('titles.generateFailed','Couldn\'t generate AI titles — {reason}. Try again once you\'re back online.',{reason:'the request failed'}));
+          });
         }} disabled=${titlesBusy}
           title=${'Generate human-readable AI titles for the next '+Math.min(untitled,20)+' clash'+(Math.min(untitled,20)===1?'':'es')}
           style=${{marginLeft:'auto',fontSize:'0.65rem',padding:'.1rem .4rem',borderRadius:'var(--radius-pill)',
@@ -23147,6 +23206,8 @@ function startApp() {
     }
     var parser = new DOMParser();
     var doc = parser.parseFromString(xmlText, 'text/xml');
+    var xmlParseError = doc.querySelector('parsererror');
+    if (xmlParseError) throw new Error('The file isn\'t valid XML: ' + (xmlParseError.textContent||'').trim().split('\n')[0]);
     var specs = [];
     var specEls = doc.querySelectorAll('specification');
     for (var i = 0; i < specEls.length; i++) {
@@ -23214,6 +23275,18 @@ function startApp() {
       if (rules.length > 0) {
         specs.push({name: specName, description: '', rules: rules});
       }
+    }
+    // Previously an XML file with no recognizable <specification> content
+    // (missing/renamed elements, wrong schema, a non-IDS XML file) silently
+    // returned an empty array here — the panel then showed a calm green
+    // "Loaded: 0 specifications", indistinguishable from "you uploaded a
+    // valid but genuinely empty IDS file". Surface the actual reason instead
+    // (falling back to the addon engine's own error message when it has one).
+    if (specs.length === 0) {
+      var reason = (typeof window._ccParseIDS === 'function') ? (function(){
+        try { var v2r = window._ccParseIDS(xmlText); return v2r && v2r.error; } catch(_e){ return null; }
+      })() : null;
+      throw new Error(reason || 'No <specification> elements found — this doesn\'t look like a valid IDS 1.0 file.');
     }
     return specs;
   }
@@ -23939,9 +24012,11 @@ function startApp() {
       ${!hasEngine && html`<div style=${{padding:'var(--space-4)',fontSize:'var(--text-xs)',color:'var(--text-muted)'}}>${_cc_t('a11y.engineNotLoaded','Accessibility engine not loaded.')}</div>`}
 
       ${result && html`<div style=${{flex:1,overflowY:'auto'}}>
-        <div style=${{padding:'var(--space-2) var(--space-4)',display:'flex',alignItems:'center',justifyContent:'space-between',background:totalFail===0?'var(--color-success-bg)':'var(--color-warning-bg)',borderBottom:'1px solid var(--border-subtle)'}}>
-          <span style=${{fontSize:'var(--text-xs)',fontWeight:600,color:totalFail===0?'var(--color-success-fg)':'var(--color-warning-fg)'}}>
-            ${totalEval===0?_cc_t('a11y.noApplicable','No applicable elements'):(totalFail===0?_cc_t('a11y.allPass','All {total} checks pass',{total:totalEval}):_cc_t('a11y.someFail','{fail} of {total} fail',{fail:totalFail,total:totalEval}))}
+        <div style=${{padding:'var(--space-2) var(--space-4)',display:'flex',alignItems:'center',justifyContent:'space-between',
+          background:totalEval===0?'var(--bg-tertiary)':(totalFail===0?'var(--color-success-bg)':'var(--color-warning-bg)'),
+          borderBottom:'1px solid var(--border-subtle)'}}>
+          <span style=${{fontSize:'var(--text-xs)',fontWeight:600,color:totalEval===0?'var(--text-muted)':(totalFail===0?'var(--color-success-fg)':'var(--color-warning-fg)')}}>
+            ${totalEval===0?_cc_t('a11y.notApplicable','Not applicable — no elements in this model match these checks'):(totalFail===0?_cc_t('a11y.allPass','All {total} checks pass',{total:totalEval}):_cc_t('a11y.someFail','{fail} of {total} fail',{fail:totalFail,total:totalEval}))}
           </span>
           ${totalFail>0 && html`<button onClick=${addToConflicts} title=${_cc_t('a11y.addToConflictsTitle','Add each failing element to the Conflicts tab (exports to BCF)')}
             style=${{fontSize:'var(--text-2xs)',padding:'var(--space-1) var(--space-2)',borderRadius:'var(--radius-xs)',border:'1px solid var(--border)',background:'var(--bg-primary)',color:'var(--text-primary)',cursor:'pointer'}}>${_cc_t('a11y.addToConflicts','Add to Conflicts')}</button>`}
@@ -24006,7 +24081,12 @@ function startApp() {
     // (storeyNaming..mepNoRenovationStatus) - previously computed by the
     // engine but never rendered/exported/actioned in this panel, so those
     // findings were invisible even though they'd already run.
-    var ILS_KEYS = ['noNLSfB','invalidNLSfB','mismatchNLSfB','missingILSProp','noDescription','noMaterial','noStorey','noObjectType','noName',
+    // noDescription/noMaterial/noStorey/noObjectType deliberately omitted —
+    // they duplicate runDataQualityChecks/runBIMModelChecks' identically-
+    // tested general/BIM checks (see runILSChecks in addons/data-quality.js);
+    // counting both was double-counting the same findings under an English
+    // and a Dutch label.
+    var ILS_KEYS = ['noNLSfB','invalidNLSfB','mismatchNLSfB','missingILSProp','noName',
       'storeyNaming','doorNaming','spaceIncomplete','fireRatingInvalid','extWallNoUValue','loadBearingInvalidMaterial','mepNoRenovationStatus'];
     var RVB_KEYS = ['projectIncomplete','siteIncomplete','buildingIncomplete','zoneIncomplete','storeyNoElevation'];
 
@@ -24559,6 +24639,7 @@ function startApp() {
     var s = props.s, d = props.d;
     var ids = s.idsValidation;
     var _sp = useState(null), customSpecs = _sp[0], setCustomSpecs = _sp[1];
+    var _ipe = useState(null), idsParseError = _ipe[0], setIdsParseError = _ipe[1];
     var _sel = useState([]), selectedBundled = _sel[0], setSelectedBundled = _sel[1];
     var _vf = useState('all'), viewFilter = _vf[0], setViewFilter = _vf[1];
     var _showResults = useState(false), showResults = _showResults[0], setShowResults = _showResults[1];
@@ -24572,9 +24653,13 @@ function startApp() {
         try {
           var parsed = parseIDSXml(ev.target.result);
           setCustomSpecs(parsed);
+          setIdsParseError(null);
           d({t: A.IDS_SET_SPECS, specs: parsed});
         } catch (err) {
           console.error('IDS parse error:', err);
+          setCustomSpecs(null);
+          setIdsParseError((err && err.message) || String(err));
+          if (window._ccToast) window._ccToast(_cc_t('ids.parseFailedToast','Couldn\'t load "{name}" — {reason}',{name:file.name, reason:(err && err.message) || String(err)}));
         }
       };
       reader.readAsText(file);
@@ -24637,7 +24722,8 @@ function startApp() {
         <span style=${{fontSize: '0.69rem', color: 'var(--text-muted)', display: 'block', marginBottom: '.25rem'}}>${_cc_t('ids.customIdsFile','Custom IDS File')}</span>
         <input type="file" accept=".ids,.xml" onChange=${handleFileUpload}
           style=${{fontSize: '0.69rem', color: 'var(--text-secondary)'}} />
-        ${customSpecs && html`<div style=${{fontSize: '0.63rem', color: '#4ade80', marginTop: '.15rem'}}>${_cc_t('ids.loadedSpecs','Loaded: {n} specification{s}',{n:customSpecs.length,s:customSpecs.length !== 1 ? 's' : ''})}</div>`}
+        ${customSpecs && customSpecs.length > 0 && html`<div style=${{fontSize: '0.63rem', color: '#4ade80', marginTop: '.15rem'}}>${_cc_t('ids.loadedSpecs','Loaded: {n} specification{s}',{n:customSpecs.length,s:customSpecs.length !== 1 ? 's' : ''})}</div>`}
+        ${idsParseError && html`<div role="alert" style=${{fontSize: '0.63rem', color: 'var(--color-danger-fg)', background:'var(--color-danger-bg)', border:'1px solid var(--color-danger)', borderRadius:'var(--radius-xs)', padding:'.3rem .45rem', marginTop: '.25rem'}}>${_cc_t('ids.parseFailed','Couldn\'t read this IDS file — {reason}',{reason:idsParseError})}</div>`}
       </div>
 
       <div style=${{display: 'flex', gap: '.3rem'}}>
@@ -25074,13 +25160,18 @@ function startApp() {
                 runner(preset).then(function(res){
                   var sum = res.summary;
                   if (window._ccToast) {
-                    window._ccToast(
-                      (isCov ? 'Coverage ' : 'Visibility ') + (preset.sampleId||preset.key) + ' — ' +
-                      (isCov
-                        ? ((sum && sum.uncovered || 0) + ' gaps of ' + (sum && sum.viewerPoints || 0) + ' points')
-                        : (res.clashes.length + ' blocked of ' + (sum && sum.raysCast || 0) + ' rays')
-                      )
-                    );
+                    var sampleCount = isCov ? (sum && sum.viewerPoints || 0) : (sum && sum.raysCast || 0);
+                    // "0 blocked of 0 rays" / "0 gaps of 0 points" reads exactly
+                    // like a clean pass — it isn't: it means no viewer/target/
+                    // obstructer elements matched this preset, so nothing was
+                    // actually evaluated. Say that explicitly instead.
+                    var resultTxt = sampleCount === 0
+                      ? _cc_t('rules.notApplicable','not applicable — no matching elements to check')
+                      : (isCov
+                        ? ((sum && sum.uncovered || 0) + ' gaps of ' + sampleCount + ' points')
+                        : (res.clashes.length + ' blocked of ' + sampleCount + ' rays')
+                      );
+                    window._ccToast((isCov ? 'Coverage ' : 'Visibility ') + (preset.sampleId||preset.key) + ' — ' + resultTxt);
                   }
                   if (res.clashes.length) d({t:A.TAB, v:'clashes'});
                 }).catch(function(e){ if (window._ccToast) window._ccToast('Check failed: ' + (e.message||e)); });
@@ -29296,12 +29387,17 @@ function startApp() {
             runner(preset).then(function(res){
               var sum = res.summary;
               if (window._ccToast) {
-                if (isCoverage) {
+                var sampleN = isCoverage ? (sum && sum.viewerPoints || 0) : (sum && sum.raysCast || 0);
+                if (sampleN === 0) {
+                  // Same "reads like a pass" issue as the Integrations-panel
+                  // Run button: 0-of-0 is "nothing to check", not "all clear".
+                  window._ccToast((isCoverage?'Coverage ':'Visibility ') + (preset.sampleId||preset.key) + ' — ' + _cc_t('rules.notApplicable','not applicable — no matching elements to check'));
+                } else if (isCoverage) {
                   window._ccToast('Coverage ' + (preset.sampleId||preset.key) + ' done — ' +
-                    (sum && sum.uncovered || 0) + ' gaps of ' + (sum && sum.viewerPoints || 0) + ' sampled points');
+                    (sum && sum.uncovered || 0) + ' gaps of ' + sampleN + ' sampled points');
                 } else {
                   window._ccToast('Visibility ' + (preset.sampleId||preset.key) + ' done — ' +
-                    (res.clashes.length) + ' blocked of ' + (sum && sum.raysCast || 0) + ' rays');
+                    (res.clashes.length) + ' blocked of ' + sampleN + ' rays');
                 }
               }
               if (res.clashes.length) d({t:A.TAB, v:'clashes'});
@@ -29366,17 +29462,32 @@ function startApp() {
     push({group:_cc_t('cmdk.group.project','Project'), label:_cc_t('cmdk.toggleTheme','Toggle theme (light / dark)'),
       keywords:'theme light dark mode color',
       onSelect:function(){
+        // Route through the same UPD_PREFS dispatch the avatar-menu theme
+        // toggle uses (see line ~38130) instead of poking data-theme/
+        // localStorage directly — that path only updates the reducer's
+        // s.prefs.theme, which is what the two useEffects that actually
+        // sync the DOM attribute AND the Three.js scene background/grid
+        // (see ~39512 and ~16575) key off of. Setting the DOM attribute
+        // by hand here left the 3D view dark while the chrome went light.
         try {
-          var cur = document.documentElement.getAttribute('data-theme') || 'light';
-          var next = cur === 'dark' ? 'light' : 'dark';
-          document.documentElement.setAttribute('data-theme', next);
-          try { localStorage.setItem('cc_theme', next); } catch(e){}
-          window.dispatchEvent(new CustomEvent('cc-theme-changed',{detail:next}));
+          var cur = (s.prefs && s.prefs.theme) || 'light';
+          d({t:A.UPD_PREFS, u:{theme: cur === 'dark' ? 'light' : 'dark'}});
         } catch(e){}
       }});
     push({group:_cc_t('cmdk.group.assistant','Assistant'), label:_cc_t('cmdk.openAIChatPanel','Open AI chat panel'),
       keywords:'ai assistant chat ask conversation gemma',
-      onSelect:function(){ try{ if(window._ccOpenAIPanel) window._ccOpenAIPanel(); }catch(e){} }});
+      onSelect:function(){
+        try {
+          // On desktop this uncollapses the docked AI panel; on mobile that
+          // panel is CSS-hidden (.cc-ai-panel display:none below 768px) so
+          // _ccOpenAIPanel alone was a silent no-op there — _ccNLOpen drives
+          // the phone chat overlay MobileNav's own "ai" button uses. Give
+          // React a tick to mount the (previously collapsed) panel before
+          // calling _ccNLOpen, which that mount itself defines.
+          if(window._ccOpenAIPanel) window._ccOpenAIPanel();
+          setTimeout(function(){ if(window._ccNLOpen) window._ccNLOpen(); }, 0);
+        } catch(e){}
+      }});
 
     // Stable sort within each group: items tagged with r === current
     // workspace bubble to the top of their group; everything else keeps
@@ -29421,13 +29532,31 @@ function startApp() {
     var askEntry = qLow ? {group:_cc_t('cmdk.group.assistant','Assistant'), label:_cc_t('cmdk.askTheAssistant','Ask the assistant'), desc:q, isAsk:true,
       onSelect:function(){
         try {
+          // Open the real chat panel (not just the drawer tab) so the input
+          // is visible, then submit through the same pipeline the chat's own
+          // input box uses — this actually posts the query + reply into the
+          // chat, instead of silently running it headless via _ccProcessNLCommand.
+          // _ccOpenAIPanel mounts the docked NLCommandPanel (it's only
+          // rendered while drawerTab==='ai'); window._ccNLOpen and the
+          // 'cc-nl-submit' listener are registered by *that* component's own
+          // effects, so they don't exist yet the instant it was collapsed —
+          // give React a tick to commit the mount before using either.
           if(window._ccOpenAIPanel) window._ccOpenAIPanel();
-          // Submit via existing NL pipeline
-          if(window._ccProcessNLCommand) window._ccProcessNLCommand(q);
-          else window.dispatchEvent(new CustomEvent('cc-nl-submit',{detail:q}));
+          setTimeout(function(){
+            if(window._ccNLOpen) window._ccNLOpen();
+            window.dispatchEvent(new CustomEvent('cc-nl-submit',{detail:q}));
+          }, 0);
         } catch(e){}
       }} : null;
-    var list = askEntry ? [askEntry].concat(matches) : matches;
+    // An exact or prefix label match (e.g. typing "save" when "Save
+    // project…" exists) is what the person is almost certainly after —
+    // it must outrank "Ask the assistant" so Enter runs the command, not
+    // the chat fallback. Only when nothing in the command list matches by
+    // label does the assistant entry lead.
+    var topIsExactOrPrefix = !!(qLow && matches.length && matches[0].label.toLowerCase().indexOf(qLow) === 0);
+    var list = askEntry
+      ? (topIsExactOrPrefix ? matches.concat([askEntry]) : [askEntry].concat(matches))
+      : matches;
     if (idx >= list.length) idx = Math.max(0, list.length-1);
     useEffect(function(){
       if (inputRef.current) inputRef.current.focus();
@@ -29460,17 +29589,19 @@ function startApp() {
             placeholder=${_cc_t('cmdk.typeCommandOrAsk','Type a command or ask anything…')}
             value=${q} onInput=${function(e){ setQ(e.target.value); }}
             onKeyDown=${onKey}
+            role="combobox" aria-expanded="true" aria-controls="cc-cmdk-listbox" aria-autocomplete="list"
+            aria-activedescendant=${list.length ? 'cc-cmdk-opt-'+idx : undefined}
             style=${{flex:1,background:'none',border:'none',outline:'none',color:'var(--text-primary)',fontSize:'var(--text-md)',fontFamily:'var(--font-body)',lineHeight:'var(--leading-base)'}} />
           <span style=${{fontFamily:'var(--font-mono)',fontSize:'var(--text-2xs)',color:'var(--text-muted)',padding:'2px 6px',border:'1px solid var(--border)',borderRadius:'var(--radius-xs)',whiteSpace:'nowrap'}}>${_cc_t('cmdk.esc','Esc')}</span>
         </div>
-        <div style=${{flex:1,overflowY:'auto',padding:'var(--space-2) 0'}}>
+        <div id="cc-cmdk-listbox" role="listbox" aria-label=${_cc_t('cmdk.commandOrQuestion','Command or question')} style=${{flex:1,overflowY:'auto',padding:'var(--space-2) 0'}}>
           ${list.length === 0 ? html`<div style=${{padding:'var(--space-5)',textAlign:'center',color:'var(--text-muted)',fontSize:'var(--text-sm)'}}>${_cc_t('cmdk.noMatches','No matches. Press Enter to ask the assistant.')}</div>` : null}
           ${rows.map(function(r){
             if (r.type === 'header') {
-              return html`<div key=${r.key} style=${{padding:'var(--space-2) var(--space-4) var(--space-1)',fontFamily:'var(--font-mono)',fontSize:'var(--text-2xs)',fontWeight:'var(--weight-bold)',color:'var(--text-muted)',textTransform:'uppercase',letterSpacing:'.08em'}}>${r.group}</div>`;
+              return html`<div key=${r.key} role="presentation" style=${{padding:'var(--space-2) var(--space-4) var(--space-1)',fontFamily:'var(--font-mono)',fontSize:'var(--text-2xs)',fontWeight:'var(--weight-bold)',color:'var(--text-muted)',textTransform:'uppercase',letterSpacing:'.08em'}}>${r.group}</div>`;
             }
             var c = r.cmd;
-            return html`<div key=${r.key}
+            return html`<div key=${r.key} id=${'cc-cmdk-opt-'+r.i} role="option" aria-selected=${r.active}
               onMouseEnter=${function(){ setIdx(r.i); }}
               onClick=${function(){ try{c.onSelect();}catch(_e){} onClose(); }}
               style=${{
@@ -32892,7 +33023,7 @@ function startApp() {
         });
         return { done: data.titles.length };
       })
-      .catch(function(e){ console.warn('[AI titles]', e); return { done:0, error:true }; })
+      .catch(function(e){ console.warn('[AI titles]', e); return { done:0, error:true, reason: (e && e.message) || 'Request failed' }; })
       .then(function(r){ _aiTitlesBusy = false; return r; });
   }
   window._ccGenerateAITitles = _aiGenerateTitles;
@@ -33496,6 +33627,41 @@ function startApp() {
         window.dispatchEvent(new Event('cc-training-data-change'));
       } catch(e) {}
       return 'Thanks! I\'ll learn from this. Your feedback has been saved.';
+    }
+
+    // ── "What is this?" — answered entirely offline from the current
+    // selection (no network round-trip needed for a question the app
+    // already has the answer to locally). Checks the active clash/issue
+    // first (activeId), then the last clicked 3D element.
+    if (/^\s*what(?:'s| is)\s+this\??\s*$/i.test(raw.trim()) || /^\s*what\s+am\s+i\s+(?:looking\s+at|selecting)\??\s*$/i.test(raw.trim())) {
+      var activeClashOrIssue = s.activeId && ((s.clashes||[]).find(function(c){return c.id===s.activeId;}) || (s.issues||[]).find(function(i){return i.id===s.activeId;}));
+      if (activeClashOrIssue) {
+        var isIssueSel = !!activeClashOrIssue.status && activeClashOrIssue.hasOwnProperty('assignee') && !activeClashOrIssue.elemAType;
+        if (activeClashOrIssue.elemAType || activeClashOrIssue.elemBType) {
+          // A clash: describe the colliding pair.
+          var cAT = activeClashOrIssue.elemAType||'element', cAN = activeClashOrIssue.elemAName||'unnamed';
+          var cBT = activeClashOrIssue.elemBType||'element', cBN = activeClashOrIssue.elemBName||'unnamed';
+          var cSt = activeClashOrIssue.elemAStorey || activeClashOrIssue.elemBStorey;
+          return _cc_t('nl.whatIsThisClash','This is a {kind} clash between **{aT} "{aN}"** and **{bT} "{bN}"**{storey}, status **{status}**.',{
+            kind: activeClashOrIssue.type||'hard', aT:cAT, aN:cAN, bT:cBT, bN:cBN,
+            storey: cSt ? (' on ' + cSt) : '', status: activeClashOrIssue.status||'new'
+          });
+        }
+        return _cc_t('nl.whatIsThisIssue','This is issue **"{title}"** — status **{status}**, priority **{priority}**.',{
+          title: activeClashOrIssue.title||'(untitled)', status: activeClashOrIssue.status||'open', priority: activeClashOrIssue.priority||'unset'
+        });
+      }
+      var selEl = window._ccSelectedEl;
+      if (selEl && selEl.props) {
+        var p = selEl.props;
+        var bits = [];
+        bits.push('**'+(p.ifcType||'Element')+'**' + (p.name?(' "'+p.name+'"'):''));
+        if (p.storey) bits.push('on ' + p.storey);
+        if (selEl.modelName) bits.push('in ' + selEl.modelName);
+        if (p.material) bits.push('material ' + p.material);
+        return _cc_t('nl.whatIsThisElement','This is {desc}.',{desc: bits.join(' — ')});
+      }
+      return _cc_t('nl.whatIsThisNone','Nothing is selected right now — click an element in the 3D view, or a row in Clashes/Issues, then ask again.');
     }
 
     // ── Project create / rename / switch / list ───────────────────
@@ -34151,6 +34317,32 @@ function startApp() {
 
     // ── Tab Navigation ───────────────────────────────────────────
     if (/(?:show|open|go\s+to|switch\s+to)\s+(?:the\s+)?models?\s*(?:tab|panel|sidebar)?/.test(text)) { d({t:A.TAB,v:'models'}); return 'Here\'s the Models tab.'; }
+    // "show clashes on level 1" / "show clashes on storey 2" / "clashes on
+    // floor ground" — previously the generic clashes-tab regex below matched
+    // this too (its "tab/panel/sidebar" suffix is optional, and it isn't
+    // anchored), so it opened the tab and silently dropped "on level 1"
+    // without ever filtering. Resolve the trailing level/storey/floor
+    // reference against the *real* storey names on the loaded clashes
+    // (elemAStorey/elemBStorey) rather than assuming a naming scheme —
+    // storeys are frequently named "Level 1", "L1", "Ground Floor", etc.
+    var clashStoreyM = text.match(/clash(?:es)?\s+(?:on|for|at)\s+(?:the\s+)?(?:level|storey|story|floor)\s*#?\s*([\w .-]+)/);
+    if (clashStoreyM) {
+      var wantStorey = clashStoreyM[1].trim().toLowerCase();
+      var knownStoreys = {};
+      (s.clashes||[]).forEach(function(c){ if(c.elemAStorey) knownStoreys[c.elemAStorey]=1; if(c.elemBStorey) knownStoreys[c.elemBStorey]=1; });
+      var storeyNames = Object.keys(knownStoreys);
+      // Prefer an exact (case-insensitive) name match; fall back to a
+      // substring/number match (e.g. "1" → "Level 1", "Storey 01").
+      var matchName = storeyNames.find(function(n){ return n.toLowerCase()===wantStorey; })
+        || storeyNames.find(function(n){ return n.toLowerCase().indexOf(wantStorey)!==-1 || wantStorey.indexOf(n.toLowerCase())!==-1; });
+      d({t:A.TAB,v:'clashes'});
+      if (matchName) {
+        d({t:A.UPD_FILTERS,u:{storey:matchName}});
+        var onStorey = (s.clashes||[]).filter(function(c){return c.elemAStorey===matchName||c.elemBStorey===matchName;}).length;
+        return _cc_t('nl.filteredByStorey','Here\'s the Clashes tab, filtered to **{storey}** ({n} clash{es}).',{storey:matchName,n:onStorey,es:onStorey!==1?'es':''});
+      }
+      return _cc_t('nl.storeyNotFound','I couldn\'t find a storey named "{q}" in the loaded model — the storeys I do have are: {list}.',{q:clashStoreyM[1].trim(),list:storeyNames.length?storeyNames.join(', '):'none loaded yet'});
+    }
     if (/(?:show|open|go\s+to|switch\s+to)\s+(?:the\s+)?clashes?\s*(?:tab|panel|sidebar)?/.test(text)) { d({t:A.TAB,v:'clashes'}); return 'Here\'s the Clashes tab.'; }
     if (/(?:show|open|go\s+to|switch\s+to)\s+(?:the\s+)?issues?\s*(?:tab|panel|sidebar)?/.test(text)) { d({t:A.TAB,v:'issues'}); return 'Here\'s the Issues tab.'; }
     if (/(?:show|open|go\s+to|switch\s+to)\s+(?:the\s+)?(?:explorer?|navigator)\s*(?:tab|panel)?/.test(text)) { d({t:A.TAB,v:'navigator'}); return 'Here\'s the Navigator.'; }
@@ -34249,10 +34441,14 @@ function startApp() {
     if (/(?:show|enable|turn\s+on|display)\s+markers?/.test(text)) { d({t:A.UPD_PREFS,u:{showMarkers:true}}); return 'Markers on.'; }
     if (/(?:hide|disable|turn\s+off|remove)\s+markers?/.test(text)) { d({t:A.UPD_PREFS,u:{showMarkers:false}}); return 'Markers off.'; }
 
-    if (/(?:show|enable|turn\s+on)\s+(?:the\s+)?grid/.test(text)) { d({t:A.UPD_PREFS,u:{showGrid:true}}); return 'Grid on.'; }
-    if (/(?:hide|disable|turn\s+off|remove)\s+(?:the\s+)?grid/.test(text)) { d({t:A.UPD_PREFS,u:{showGrid:false}}); return 'Grid off.'; }
-    if (/(?:show|enable|turn\s+on)\s+(?:the\s+)?axes?/.test(text)) { d({t:A.UPD_PREFS,u:{showAxes:true}}); return 'Axes on.'; }
-    if (/(?:hide|disable|turn\s+off|remove)\s+(?:the\s+)?axes?/.test(text)) { d({t:A.UPD_PREFS,u:{showAxes:false}}); return 'Axes off.'; }
+    // Trailing "<noun> on/off" phrasing (e.g. "grid off", "axes on") is at
+    // least as common as the leading "turn on/off <noun>" form above, but
+    // previously only matched through the low-confidence fuzzy fallback,
+    // which asked "Did you mean…?" instead of just doing it.
+    if (/(?:show|enable|turn\s+on)\s+(?:the\s+)?grid|^\s*grid\s+on\s*$/.test(text)) { d({t:A.UPD_PREFS,u:{showGrid:true}}); return 'Grid on.'; }
+    if (/(?:hide|disable|turn\s+off|remove)\s+(?:the\s+)?grid|^\s*grid\s+off\s*$/.test(text)) { d({t:A.UPD_PREFS,u:{showGrid:false}}); return 'Grid off.'; }
+    if (/(?:show|enable|turn\s+on)\s+(?:the\s+)?axes?|^\s*axes?\s+on\s*$/.test(text)) { d({t:A.UPD_PREFS,u:{showAxes:true}}); return 'Axes on.'; }
+    if (/(?:hide|disable|turn\s+off|remove)\s+(?:the\s+)?axes?|^\s*axes?\s+off\s*$/.test(text)) { d({t:A.UPD_PREFS,u:{showAxes:false}}); return 'Axes off.'; }
 
     if (/(?:unghost|unghostall|clear\s+ghost|show\s+all\s+elements?|restore\s+all)/.test(text)) { if(_unghostAll)_unghostAll(); return 'All elements restored.'; }
 
@@ -34836,7 +35032,7 @@ function startApp() {
           phases.sort(function(a,b){return b[1]-a[1];});
           var top2 = phases.slice(0,2).filter(function(p){return p[1]>50;});
           txt += top2.map(function(p){return p[0]+' '+Math.round(p[1]/10)*10+'ms';}).join(', ');
-          txt += ' (see console for full breakdown)*';
+          txt += ' — the two slowest steps*';
         }
         setMsgs(function(prev) {
           var idx = detectMsgIdx.current;
@@ -35871,7 +36067,7 @@ function startApp() {
       dismiss();
       if (window._ccDispatch) window._ccDispatch({t:A.SHOW_RUN_MODAL, v:true});
     }
-    return html`<div role="status" data-detection-banner style=${{
+    return html`<div role="status" data-detection-banner class="cc-bottom-banner" style=${{
       position:'fixed', bottom:'1rem', left:'50%', transform:'translateX(-50%)',
       zIndex:'var(--z-toast)', maxWidth:520, width:'92%',
       background:'var(--bg-secondary)', border:'1px solid var(--accent-subtle)',
@@ -35898,7 +36094,7 @@ function startApp() {
       _ccSetConsent(consentVal);
       setShow(false);
     }
-    return html`<div style=${{
+    return html`<div class="cc-bottom-banner" style=${{
       position:'fixed', bottom:'1rem', left:'50%', transform:'translateX(-50%)',
       zIndex:'var(--z-toast)', maxWidth:520, width:'92%',
       background:'var(--bg-secondary)', border:'1px solid var(--border)',
@@ -37734,7 +37930,7 @@ function startApp() {
       return function() { window.removeEventListener('cc-folder-watch', onEv); };
     }, []);
     if (!active) return null;
-    return html`<div style=${{
+    return html`<div class="cc-bottom-banner" style=${{
       position:'fixed',bottom:'1rem',right:'1rem',zIndex:'var(--z-toast)',
       background:'var(--surface)',border:'1px solid var(--hairline-strong)',
       borderRadius:10,padding:'.5rem .85rem',
@@ -39269,11 +39465,19 @@ function startApp() {
     var clashN=s.clashes.filter(function(c){var st=c.status||'new';return st!=='resolved'&&st!=='denied';}).length;
     var issueN=s.issues.filter(function(i){var st=i.status||'open';return st!=='resolved'&&st!=='closed';}).length;
     function navBtn(id, svgPath, label, badge) {
-      var active=s.tab===id;
+      var active = id==='ai' ? !!s.chatOpen : s.tab===id;
       return html`<button class=${active?'active':''} aria-label=${label} onClick=${function(){
         if (id==='ai') {
-          if (s.chatOpen) { window._ccNLClose(); }
-          else { if (s.tab) d({t:A.TAB,v:null}); window._ccNLOpen(); }
+          if (s.chatOpen) { if (window._ccNLClose) window._ccNLClose(); return; }
+          if (s.tab) d({t:A.TAB,v:null});
+          // window._ccNLOpen is defined by NLCommandPanel itself, which is
+          // only in the tree once the (desktop-default-collapsed) AI panel
+          // is uncollapsed — on a fresh mobile session that hadn't happened
+          // yet, so this was an unguarded call to `undefined()`, silently
+          // throwing and doing nothing (the bug this button exists to fix).
+          // Uncollapse first, then give React a tick to mount it.
+          if (window._ccOpenAIPanel) window._ccOpenAIPanel();
+          setTimeout(function(){ if (window._ccNLOpen) window._ccNLOpen(); }, 0);
           return;
         }
         if (s.chatOpen && window._ccNLClose) window._ccNLClose();
@@ -39297,6 +39501,7 @@ function startApp() {
       ${navBtn('clashes','<path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/>',_cc_t('toolbar.conflicts','Conflicts'),clashN)}
       ${navBtn('issues','<path d="M4 15s1-1 4-1 5 2 8 2 4-1 4-1V3s-1 1-4 1-5-2-8-2-4 1-4 1z"/><line x1="4" y1="22" x2="4" y2="15"/>',_cc_t('toolbar.issues','Issues'),issueN)}
       ${navBtn('navigator','<rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/>',_cc_t('toolbar.navigator','Navigator'),0)}
+      ${navBtn('ai','<path d="M21 12a8 8 0 0 1-11.5 7.2L4 21l1.8-5.5A8 8 0 1 1 21 12z"/>',_cc_t('mobileNav.askAI','Ask AI'),0)}
     </nav>`;
   }
 
@@ -40699,7 +40904,7 @@ function startApp() {
         <a href="https://github.com/clashcontrol-io/clashcontrol/blob/main/CHANGELOG.md" target="_blank" rel="noopener" style=${{fontSize:'0.69rem',color:'var(--accent)',textDecoration:'none'}}>Full changelog →</a>
       </div>`}
       <${FolderWatchBadge} />
-      ${!pwaDismissed && pwaUpdateAvail && html`<div style=${{position:'fixed',bottom:'1rem',left:'50%',transform:'translateX(-50%)',zIndex:'var(--z-toast)',
+      ${!pwaDismissed && pwaUpdateAvail && html`<div class="cc-bottom-banner" style=${{position:'fixed',bottom:'1rem',left:'50%',transform:'translateX(-50%)',zIndex:'var(--z-toast)',
         background:'var(--bg-secondary)',border:'1px solid var(--border)',borderRadius:10,padding:'.6rem 1rem',display:'flex',alignItems:'center',gap:'.75rem',
         boxShadow:'0 4px 24px rgba(0,0,0,.4)',fontSize:'0.85rem',color:'var(--text-primary)',maxWidth:'90vw'}}>
         <span>New version available</span>
