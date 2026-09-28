@@ -2516,6 +2516,16 @@ function startApp() {
   }
   window._ccAutoParkPass = _ccAutoParkPass;
 
+  // Shared model-loading flag + notification, used by both the parked-model
+  // restore path below and the project-file restoration path further down
+  // (previously duplicated as a function nested inside
+  // _restoreProjectFilesGlobal, which meant _ccRestoreParkedModel's calls to
+  // it below were an undefined-name crash — see typeof-guard dead refs).
+  function _setGlobalLoading(v) {
+    window._ccModelLoading = !!v;
+    window.dispatchEvent(new CustomEvent('cc-model-loading', {detail:{loading:!!v}}));
+  }
+
   window._ccIsModelParked = function(id) {
     var s = window._ccLatestState || {};
     return !!(s.parkedModels || []).find(function(pm){ return pm.id === id; });
@@ -3231,7 +3241,8 @@ function startApp() {
   var INST_THRESHOLD = 4; // min identical placements before collapsing to InstancedMesh
 
   window._ccPerfSnapshot = function(){
-    var s = (typeof S!=='undefined'&&S&&S.perf)?S.perf:null;
+    var _S3d = window._ccState3d;
+    var s = (_S3d && _S3d.perf) ? _S3d.perf : null;
     if(!s){ console.warn('[perf] not ready'); return null; }
     var snap = {fps:s.fps, drawCalls:s.drawCalls, triangles:s.tris, geometries:s.meshCount};
     console.log('%c[perf] fps='+snap.fps+' · drawCalls='+snap.drawCalls+' · tris='+snap.triangles+' · geometries='+snap.geometries, 'color:#34d399;font-weight:bold');
@@ -8856,7 +8867,7 @@ function startApp() {
       for (var h=0; h<hits.length; h++){
         var hh = hits[h];
         if (!hh.object || !hh.object.visible) continue;
-        if (typeof _isGhostMat==='function' && _isGhostMat(hh.object.material)) continue;
+        if (window._ccState3d && window._ccState3d._isGhostMat && window._ccState3d._isGhostMat(hh.object.material)) continue;
         if (Math.abs(hh.point.y - hitPoint.y) <= tolY){ ok = true; break; }
       }
       if (!ok) return false;
@@ -8871,7 +8882,7 @@ function startApp() {
     var unit = _walkResolveUnitScale();
     var models = (window._ccLatestState || {}).models || [];
     var box = null;
-    try { box = (typeof _elemsBBox === 'function') ? _elemsBBox() : null; } catch(e){}
+    try { box = (typeof window._ccElemsBBox === 'function') ? window._ccElemsBBox() : null; } catch(e){}
 
     // XZ: prefer orbit target so re-entry spawns above where the user was looking.
     var cx = 0, cz = 0;
@@ -9390,7 +9401,7 @@ function startApp() {
       for (var i=0;i<hits.length;i++){
         var h = hits[i];
         if (!h.object || !h.object.visible) continue;
-        if (typeof _isGhostMat === 'function' && _isGhostMat(h.object.material)) continue;
+        if (S._isGhostMat && S._isGhostMat(h.object.material)) continue;
         if (planes && planes.length){
           var clipped = false;
           // Small tolerance: triangles straddling the cut plane can have their hit
@@ -10575,6 +10586,7 @@ function startApp() {
       // checks through _isGhostMat(). Anything that must test for ghosted
       S._ghostMat = null;
       S._isGhostMat = _isGhostMat;
+      S._makeGhostClone = _makeGhostClone;
       // When a ref has a modelId, the mesh's parent modelId must match for
       function ghostOthers(targets) {
         unghostAll();
@@ -15498,9 +15510,9 @@ function startApp() {
           obj.visible = true;
         } else {
           var origMat = obj.material;
-          if(!_isGhostMat(origMat)){
+          if(!S._isGhostMat(origMat)){
             saved.push({mesh:obj, origMat:origMat, wasVisible:obj.visible});
-            obj.material = _makeGhostClone(origMat);
+            obj.material = S._makeGhostClone(origMat);
             obj.visible = true;
           }
         }
@@ -16823,6 +16835,13 @@ function startApp() {
   // real layout when only unit-tested in isolation. Call from inside a
   // modal component: _ccUseFocusTrap(containerRef, true) — active is
   // always true for a mounted modal (the modal unmounting IS "closing").
+  /* eslint-disable react-hooks/rules-of-hooks -- this project prefixes every
+     internal helper with `_`/`_cc`, including hook-like ones (see
+     CLAUDE.md's globals discipline); eslint-plugin-react-hooks only
+     recognizes `use*`-named functions as hooks, so it can't see that these
+     hook calls run unconditionally, in the same order, on every render.
+     Renaming would break the `_ccUseFocusTrap` contract other code and
+     tests already depend on. */
   function _ccUseFocusTrap(containerRef, active) {
     var openerRef = useRef(null);
     useEffect(function(){
@@ -16868,6 +16887,7 @@ function startApp() {
       };
     }, [active]);
   }
+  /* eslint-enable react-hooks/rules-of-hooks */
   window._ccUseFocusTrap = _ccUseFocusTrap;
 
   // ── Header ─────────────────────────────────────────────────────
@@ -16967,10 +16987,8 @@ function startApp() {
   // ── Project file restoration (standalone, usable from App) ─────
   function _restoreProjectFilesGlobal(projectId, d) {
     var pid = projectId || 'default';
-    function _setGlobalLoading(v) {
-      window._ccModelLoading = !!v;
-      window.dispatchEvent(new CustomEvent('cc-model-loading', {detail:{loading:!!v}}));
-    }
+    // _setGlobalLoading is the shared top-level function defined near
+    // window._ccAutoParkPass — kept local variable removed to avoid shadowing.
     function _coldParseAndCache(entry) {
       return loadIFC(entry.buffer, DISC[0].c, function(){})
         .then(function(result) {
@@ -19272,6 +19290,11 @@ function startApp() {
   }
 
   // ── Splat reference-layers panel + PWA install banner ──  See INTERNALS.md § 21.17
+  /* eslint-disable react-hooks/rules-of-hooks -- these are ordinary
+     components, always called unconditionally in the same order, but their
+     names are prefixed with `_` per this project's naming convention (see
+     CLAUDE.md's globals discipline), so eslint-plugin-react-hooks' PascalCase
+     heuristic can't recognize them as components. */
   function _InstallAppBanner() {
     var stShow = useState(false);
     var show = stShow[0], setShow = stShow[1];
@@ -19377,6 +19400,7 @@ function startApp() {
       })}
     </div>`;
   }
+  /* eslint-enable react-hooks/rules-of-hooks */
 
   function ModelCard(props) {
     var m=props.m, d=props.d, s=props.s;
@@ -20214,7 +20238,6 @@ function startApp() {
   function ClashStatsBar(props) {
     var items = props.items, isClash = props.isClash, delta = props.delta;
     var stTitlesBusy = useState(false), titlesBusy = stTitlesBusy[0], setTitlesBusy = stTitlesBusy[1];
-    if (!items.length) return null;
     // Single O(N) pass instead of 7 filters — matters at 10k+ clashes.
     var counts = React.useMemo(function(){
       var c = {total:items.length, untitled:0, open:0, inProg:0, resolved:0, hard:0, soft:0, dup:0, vis:0};
@@ -20233,6 +20256,7 @@ function startApp() {
       }
       return c;
     }, [items, isClash]);
+    if (!items.length) return null;
     var total = counts.total, untitled = counts.untitled, open = counts.open, inProg = counts.inProg, resolved = counts.resolved, hard = counts.hard, soft = counts.soft, dup = counts.dup, vis = counts.vis;
     var pct = total > 0 ? Math.round(resolved / total * 100) : 0;
     var barCol = pct >= 80 ? '#22c55e' : pct >= 40 ? '#f59e0b' : '#ef4444';
@@ -21251,6 +21275,66 @@ function startApp() {
     </div>`;
   }
 
+  // Export flyout for the Issues panel toolbar (BCF 2.1/3.0, clash report, data
+  // quality report). Split out into its own component — this used to be an IIFE
+  // invoked inline inside IssuePanel's JSX (`${function(){ ...useState/useRef/
+  // useEffect... }()}`), but that whole block only ran when s.tab==='issues'
+  // (`${s.tab==='issues' && html\`...\`}` short-circuits otherwise), so the
+  // hooks inside it were called conditionally — a real rules-of-hooks
+  // violation that can throw "Rendered fewer hooks than expected" when
+  // switching tabs. As its own component it mounts/unmounts cleanly instead.
+  /* eslint-disable react-hooks/rules-of-hooks -- ordinary component, always
+     called unconditionally in the same order; the `_`-prefixed name (this
+     project's naming convention, see CLAUDE.md) just isn't recognized by
+     eslint-plugin-react-hooks' PascalCase heuristic. */
+  function _BcfExportMenu(props) {
+    var s = props.s;
+    var bcfItems = s.issues && s.issues.length ? s.issues : (s.clashes||[]);
+    var hasItems = bcfItems.length > 0;
+    var source = s.issues && s.issues.length ? 'issues' : 'clashes';
+    var exportRef2 = useRef(null);
+    var eo=useState(false), exportOpen=eo[0], setExportOpen=eo[1];
+    useEffect(function(){
+      if(!exportOpen) return;
+      function onOut(e){if(exportRef2.current&&!exportRef2.current.contains(e.target))setExportOpen(false);}
+      document.addEventListener('mousedown',onOut);
+      return function(){document.removeEventListener('mousedown',onOut);};
+    },[exportOpen]);
+    return html`<div ref=${exportRef2} style=${{position:'relative',flexShrink:0}}>
+      <button
+        title=${hasItems?'Export '+bcfItems.length+' '+source+' to BCF':'Nothing to export yet'}
+        onClick=${function(){if(hasItems)setExportOpen(!exportOpen);}}
+        style=${{...S_BTN,padding:'.35rem .55rem',background:'var(--bg-secondary)',color:hasItems?'var(--text-secondary)':'var(--text-muted)',border:'1px solid var(--border)',fontSize:'0.72rem',fontWeight:600,opacity:hasItems?1:0.5,cursor:hasItems?'pointer':'default',display:'inline-flex',alignItems:'center',gap:'.25rem',whiteSpace:'nowrap'}}>
+        <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+        Export
+        <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M6 9l6 6 6-6"/></svg>
+      </button>
+      ${exportOpen && html`<div style=${{position:'absolute',right:0,top:'calc(100% + 4px)',background:'var(--bg-secondary)',border:'1px solid var(--border)',borderRadius:'var(--radius-sm)',boxShadow:'var(--shadow-md)',zIndex:200,minWidth:160,overflow:'hidden'}}>
+        <button onClick=${function(){exportBCF(bcfItems,'2.1',s.viewpoints,s);setExportOpen(false);}}
+          style=${{display:'block',width:'100%',textAlign:'left',padding:'.45rem .7rem',fontSize:'0.75rem',background:'none',border:'none',color:'var(--text-primary)',cursor:'pointer',fontFamily:'var(--font-body)'}}>
+          BCF 2.1
+          <span style=${{display:'block',fontSize:'0.63rem',color:'var(--text-faint)'}}>Revit, Navisworks, Solibri</span>
+        </button>
+        <button onClick=${function(){exportBCF(bcfItems,'3.0',s.viewpoints,s);setExportOpen(false);}}
+          style=${{display:'block',width:'100%',textAlign:'left',padding:'.45rem .7rem',fontSize:'0.75rem',background:'none',border:'none',color:'var(--text-primary)',cursor:'pointer',fontFamily:'var(--font-body)',borderTop:'1px solid var(--border-subtle)'}}>
+          BCF 3.0
+          <span style=${{display:'block',fontSize:'0.63rem',color:'var(--text-faint)'}}>Extended spec, newer tools</span>
+        </button>
+        <button onClick=${function(){if(window._ccClashReport)window._ccClashReport(s);setExportOpen(false);}}
+          style=${{display:'block',width:'100%',textAlign:'left',padding:'.45rem .7rem',fontSize:'0.75rem',background:'none',border:'none',color:'var(--text-primary)',cursor:'pointer',fontFamily:'var(--font-body)',borderTop:'1px solid var(--border-subtle)'}}>
+          ⎙ Clash report
+          <span style=${{display:'block',fontSize:'0.63rem',color:'var(--text-faint)'}}>Print-ready summary, trend + clusters</span>
+        </button>
+        <button onClick=${function(){if(window._ccDataQualityReport)window._ccDataQualityReport(s);setExportOpen(false);}}
+          style=${{display:'block',width:'100%',textAlign:'left',padding:'.45rem .7rem',fontSize:'0.75rem',background:'none',border:'none',color:'var(--text-primary)',cursor:'pointer',fontFamily:'var(--font-body)',borderTop:'1px solid var(--border-subtle)'}}>
+          ⎙ Data quality report
+          <span style=${{display:'block',fontSize:'0.63rem',color:'var(--text-faint)'}}>Quality Score, BIM basics, ILS, RVB, accessibility</span>
+        </button>
+      </div>`}
+    </div>`;
+  }
+  /* eslint-enable react-hooks/rules-of-hooks */
+
   function IssuePanel(props) {
     var s=props.s, d=props.d, f=s.filters, hideTabBar=props.hideTabBar;
     var fo=useState(false), filtersOpen=fo[0], setFiltersOpen=fo[1];
@@ -21619,51 +21703,7 @@ function startApp() {
               + ${_cc_t('issues.fromClash','From clash')}
             </button>`;
           }()}
-          ${function(){
-            var bcfItems = s.issues && s.issues.length ? s.issues : (s.clashes||[]);
-            var hasItems = bcfItems.length > 0;
-            var source = s.issues && s.issues.length ? 'issues' : 'clashes';
-            var exportRef2 = useRef(null);
-            var eo=useState(false), exportOpen=eo[0], setExportOpen=eo[1];
-            useEffect(function(){
-              if(!exportOpen) return;
-              function onOut(e){if(exportRef2.current&&!exportRef2.current.contains(e.target))setExportOpen(false);}
-              document.addEventListener('mousedown',onOut);
-              return function(){document.removeEventListener('mousedown',onOut);};
-            },[exportOpen]);
-            return html`<div ref=${exportRef2} style=${{position:'relative',flexShrink:0}}>
-              <button
-                title=${hasItems?'Export '+bcfItems.length+' '+source+' to BCF':'Nothing to export yet'}
-                onClick=${function(){if(hasItems)setExportOpen(!exportOpen);}}
-                style=${{...S_BTN,padding:'.35rem .55rem',background:'var(--bg-secondary)',color:hasItems?'var(--text-secondary)':'var(--text-muted)',border:'1px solid var(--border)',fontSize:'0.72rem',fontWeight:600,opacity:hasItems?1:0.5,cursor:hasItems?'pointer':'default',display:'inline-flex',alignItems:'center',gap:'.25rem',whiteSpace:'nowrap'}}>
-                <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
-                Export
-                <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M6 9l6 6 6-6"/></svg>
-              </button>
-              ${exportOpen && html`<div style=${{position:'absolute',right:0,top:'calc(100% + 4px)',background:'var(--bg-secondary)',border:'1px solid var(--border)',borderRadius:'var(--radius-sm)',boxShadow:'var(--shadow-md)',zIndex:200,minWidth:160,overflow:'hidden'}}>
-                <button onClick=${function(){exportBCF(bcfItems,'2.1',s.viewpoints,s);setExportOpen(false);}}
-                  style=${{display:'block',width:'100%',textAlign:'left',padding:'.45rem .7rem',fontSize:'0.75rem',background:'none',border:'none',color:'var(--text-primary)',cursor:'pointer',fontFamily:'var(--font-body)'}}>
-                  BCF 2.1
-                  <span style=${{display:'block',fontSize:'0.63rem',color:'var(--text-faint)'}}>Revit, Navisworks, Solibri</span>
-                </button>
-                <button onClick=${function(){exportBCF(bcfItems,'3.0',s.viewpoints,s);setExportOpen(false);}}
-                  style=${{display:'block',width:'100%',textAlign:'left',padding:'.45rem .7rem',fontSize:'0.75rem',background:'none',border:'none',color:'var(--text-primary)',cursor:'pointer',fontFamily:'var(--font-body)',borderTop:'1px solid var(--border-subtle)'}}>
-                  BCF 3.0
-                  <span style=${{display:'block',fontSize:'0.63rem',color:'var(--text-faint)'}}>Extended spec, newer tools</span>
-                </button>
-                <button onClick=${function(){if(window._ccClashReport)window._ccClashReport(s);setExportOpen(false);}}
-                  style=${{display:'block',width:'100%',textAlign:'left',padding:'.45rem .7rem',fontSize:'0.75rem',background:'none',border:'none',color:'var(--text-primary)',cursor:'pointer',fontFamily:'var(--font-body)',borderTop:'1px solid var(--border-subtle)'}}>
-                  ⎙ Clash report
-                  <span style=${{display:'block',fontSize:'0.63rem',color:'var(--text-faint)'}}>Print-ready summary, trend + clusters</span>
-                </button>
-                <button onClick=${function(){if(window._ccDataQualityReport)window._ccDataQualityReport(s);setExportOpen(false);}}
-                  style=${{display:'block',width:'100%',textAlign:'left',padding:'.45rem .7rem',fontSize:'0.75rem',background:'none',border:'none',color:'var(--text-primary)',cursor:'pointer',fontFamily:'var(--font-body)',borderTop:'1px solid var(--border-subtle)'}}>
-                  ⎙ Data quality report
-                  <span style=${{display:'block',fontSize:'0.63rem',color:'var(--text-faint)'}}>Quality Score, BIM basics, ILS, RVB, accessibility</span>
-                </button>
-              </div>`}
-            </div>`;
-          }()}
+          <${_BcfExportMenu} s=${s} />
         </div>
       </div>`}
       ${!isExplorerTab && !isStandardsTab && items.length>0 && function(){
@@ -24924,6 +24964,35 @@ function startApp() {
       }); });
     }, [activeId]);
 
+    // ── ccUiWindowedConflicts: true bounded mounting ──  REWRITE_UI_PLAN.md Phase 3
+    // Same groups/items as legacy — only which rows get mounted differs.
+    // These two useMemo calls must run unconditionally on every render (rules
+    // of hooks) even though their result is only used when windowedOn is
+    // true — windowedOn is a runtime feature flag that can flip between
+    // renders, so gating the hook call itself on it would desync hook order.
+    // The expensive work is skipped internally instead. They also must sit
+    // above the items.length===0 early return below (isClusterGroup is a
+    // hoisted function declaration, safe to reference before its textual
+    // definition) — hooks declared after an early return are only called on
+    // some renders, which is the same rules-of-hooks violation.
+    var wRows = useMemo(function(){
+      if (!windowedOn) return null;
+      return _ccBuildConflictRows(items, groups, collapsed, groupLimits, isClusterGroup);
+    }, [windowedOn, items, groups, collapsed, groupLimits]);
+    // Prefix-sum offsets over the FULL row list — proportional to total
+    // result count, not the visible window. Previously recomputed on every
+    // render, including every scroll-driven re-render (winScrollTop
+    // changes on scroll), which is real, avoidable CPU work at 50k+
+    // conflicts. heightCacheRef is a mutable ref (real per-row DOM
+    // measurements refine it over time), so its own changes can't be a
+    // useMemo dependency directly — winForceTick is the state variable
+    // that's deliberately bumped exactly when the cache changes (see
+    // above), so depending on it here recomputes offsets only on a real
+    // data or height-measurement change, not on every scroll frame.
+    var wOff = useMemo(function(){
+      if (!windowedOn) return null;
+      return _ccComputeRowOffsets(wRows, heightCacheRef.current);
+    }, [windowedOn, wRows, winForceTick]);
     if(items.length===0) {
       // Same-discipline 0-clash trap (see runDetection): when a federation of
       // same-discipline models returns nothing because cross-model pairs were
@@ -25124,24 +25193,6 @@ function startApp() {
     }
 
     if (windowedOn) {
-      // ── ccUiWindowedConflicts: true bounded mounting ──  REWRITE_UI_PLAN.md Phase 3
-      // Same groups/items as legacy — only which rows get mounted differs.
-      var wRows = useMemo(function(){
-        return _ccBuildConflictRows(items, groups, collapsed, groupLimits, isClusterGroup);
-      }, [items, groups, collapsed, groupLimits]);
-      // Prefix-sum offsets over the FULL row list — proportional to total
-      // result count, not the visible window. Previously recomputed on every
-      // render, including every scroll-driven re-render (winScrollTop
-      // changes on scroll), which is real, avoidable CPU work at 50k+
-      // conflicts. heightCacheRef is a mutable ref (real per-row DOM
-      // measurements refine it over time), so its own changes can't be a
-      // useMemo dependency directly — winForceTick is the state variable
-      // that's deliberately bumped exactly when the cache changes (see
-      // above), so depending on it here recomputes offsets only on a real
-      // data or height-measurement change, not on every scroll frame.
-      var wOff = useMemo(function(){
-        return _ccComputeRowOffsets(wRows, heightCacheRef.current);
-      }, [wRows, winForceTick]);
       var wWin = _ccComputeVisibleRowWindow(wRows, wOff.offsets, winScrollTop, winViewportH, 600);
       var wVisibleRows = wRows.slice(wWin.startIdx, wWin.endIdx);
       return html`<div ref=${scrollRef} onScroll=${onWindowedScroll} style=${{flex:1,overflowY:'auto',position:'relative'}}>
@@ -25751,7 +25802,7 @@ function startApp() {
       for (var i=0; i<hits.length; i++){
         var h = hits[i];
         if (!h.object || !h.object.visible) continue;
-        if (typeof _isGhostMat === 'function' && _isGhostMat(h.object.material)) continue;
+        if (S._isGhostMat && S._isGhostMat(h.object.material)) continue;
         if (!h.face) continue;
         var n = h.face.normal.clone();
         var nm = new THREE.Matrix3().getNormalMatrix(h.object.matrixWorld);
@@ -26534,7 +26585,7 @@ function startApp() {
       // Bake a cheap top-down render once per mount
       try {
         var Sref = window._ccState3d; if (!Sref || !Sref.renderer || !Sref.scene || !Sref.mg) return;
-        var box = (typeof _elemsBBox==='function') ? _elemsBBox() : null;
+        var box = (typeof window._ccElemsBBox==='function') ? window._ccElemsBBox() : null;
         if (!box || box.isEmpty()) return;
         setBbox({minX:box.min.x,minZ:box.min.z,maxX:box.max.x,maxZ:box.max.z});
         var w = 220, h = 220;
@@ -32978,7 +33029,7 @@ function startApp() {
       <!-- Self-clashes (matches standards tab) -->
       <div style=${{display:'flex',alignItems:'flex-start',gap:'.35rem',marginTop:'.35rem'}}>
         <span style=${{fontSize:'0.72rem',color:'var(--text-primary)',whiteSpace:'nowrap',paddingTop:'.25rem'}}>${_cc_t('run.checkWithin','Check within')}</span>
-        ${_selfClashPicker(rules, allModels, function(upds){ Object.keys(upds).forEach(function(k){upd(k,upds[k]);}); })}
+        ${_selfClashPicker(rules, s.models, function(upds){ Object.keys(upds).forEach(function(k){upd(k,upds[k]);}); })}
       </div>
 
       <!-- Min overlap volume (hard clashes only, matches standards tab) -->
@@ -33647,7 +33698,7 @@ function startApp() {
     }}>
       ${llmStatus === 'loading' && html`<span style=${{fontSize:'0.69rem', color:'var(--accent)', display:'flex', alignItems:'center', gap:'.25rem'}}>
         <span class="spin" style=${{display:'inline-block', width:'.55rem', height:'.55rem', borderRadius:'50%', border:'1.5px solid var(--accent-bg)', borderTopColor:'var(--accent)'}}></span>
-        AI loading${llmProgress > 0 ? ' ' + llmProgress + '%' : '...'}
+        AI loading...
       </span>`}
       ${llmStatus === 'ready' && backendLabel && html`<span style=${{fontSize:'0.63rem', color:backendColor, display:'flex', alignItems:'center', gap:'.2rem'}}>
         <span style=${{width:'.4rem', height:'.4rem', borderRadius:'50%', background:backendColor, display:'inline-block'}}></span>
@@ -34748,7 +34799,7 @@ function startApp() {
           <div style=${{borderTop:'1px solid var(--border-subtle)',marginTop:'.8rem',paddingTop:'.8rem',display:'flex',gap:'.5rem',flexWrap:'wrap'}}>
             <a href="#" onClick=${function(e){
               e.preventDefault();
-              var _s = window._ccLatestState || s;
+              var _s = window._ccLatestState || {};
               var models = _s.models || [];
               var totalEls = 0, totalMeshes = 0;
               models.forEach(function(m){ totalEls += (m.elements||[]).length; totalMeshes += (m.meshes||[]).length; });
@@ -36187,6 +36238,10 @@ function startApp() {
 
   // ── Export Flyout (hover submenu for export options) ──────────
 
+  /* eslint-disable react-hooks/rules-of-hooks -- ordinary component, always
+     called unconditionally in the same order; the `_`-prefixed name (this
+     project's naming convention, see CLAUDE.md) just isn't recognized by
+     eslint-plugin-react-hooks' PascalCase heuristic. */
   function _ExportFlyout(props) {
     var _o = useState(false), open = _o[0], setOpen = _o[1];
     var closeTimer = useRef(null);
@@ -36223,6 +36278,7 @@ function startApp() {
       </div>`}
     </div>`;
   }
+  /* eslint-enable react-hooks/rules-of-hooks */
 
   // ── Tools Panel ───────────────────────────────────────────────
   function ToolsPanel(props) {
@@ -36788,9 +36844,13 @@ function startApp() {
      Visible buttons everywhere — every shortcut also has a button. */
   function TopToolbar(props) {
     var s=props.s, d=props.d;
-    if (!s.models || s.models.length === 0) return null;
-    if (s.presenting) return null;
-
+    // NOTE: the early returns below (no models / presenting mode) must come
+    // AFTER every hook call in this component, not before — s.models can
+    // transition between empty and non-empty across renders, and putting an
+    // early return before useState/useRef/useEffect calls made the number of
+    // hooks called vary between renders (a real rules-of-hooks violation that
+    // can throw "Rendered fewer hooks than expected" when a model unloads or
+    // presenting mode toggles).
     var styleSt = useState(false), styleOpen=styleSt[0], setStyleOpen=styleSt[1];
     var styleRef = useRef(null);
     var pickSt  = useState(false), pickOn = pickSt[0], setPickOn = pickSt[1];
@@ -36816,6 +36876,9 @@ function startApp() {
       window.addEventListener('keydown', onKey);
       return function(){ window.removeEventListener('cc-section-pick-end', onEnd); window.removeEventListener('keydown', onKey); };
     }, []);
+
+    if (!s.models || s.models.length === 0) return null;
+    if (s.presenting) return null;
 
     var activeMode = (s.walkMode || s.walkPlacing) ? 'walk'
       : pickOn ? 'slice'

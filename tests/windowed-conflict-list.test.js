@@ -177,9 +177,14 @@ test('offsets table is memoized against a real invalidation signal, not recomput
   // is the correct dependency instead. This locks the fix; a regression
   // back to a bare `_ccComputeRowOffsets(wRows, heightCacheRef.current)`
   // call with no useMemo wrapper would fail this.
+  //
+  // The useMemo call itself must run unconditionally on every render (rules
+  // of hooks — windowedOn is a runtime feature flag that can flip between
+  // renders), so the windowedOn gate lives *inside* the memo callback
+  // instead of around the useMemo call.
   const start = src.indexOf('function VirtualList(props) {');
   assert.ok(start !== -1, 'VirtualList not found');
   const end = src.indexOf('\n  function ', start + 30);
   const body = src.slice(start, end);
-  assert.match(body, /var wOff = useMemo\(function\(\)\{\s*\n\s*return _ccComputeRowOffsets\(wRows, heightCacheRef\.current\);\s*\n\s*\}, \[wRows, winForceTick\]\);/);
+  assert.match(body, /var wOff = useMemo\(function\(\)\{\s*\n\s*if \(!windowedOn\) return null;\s*\n\s*return _ccComputeRowOffsets\(wRows, heightCacheRef\.current\);\s*\n\s*\}, \[windowedOn, wRows, winForceTick\]\);/);
 });
