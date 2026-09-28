@@ -29,14 +29,14 @@ const FILES_WITH_TOOL_COUNT_CLAIMS = [
   'llms.txt',
   'addons/smart-bridge.js',
   'smart-bridge-server.js',
-  'MCP_BUILD_GUIDE.md',
+  'docs/MCP_BUILD_GUIDE.md',
   'mcp-server.js',
   'bridge-governance.js',
-  'BRIDGE_GOVERNANCE.md',
+  'docs/BRIDGE_GOVERNANCE.md',
   '.github/workflows/release-smart-bridge.yml',
 ];
 
-// One deliberate exception: MCP_BUILD_GUIDE.md's worked-examples section
+// One deliberate exception: docs/MCP_BUILD_GUIDE.md's worked-examples section
 // honestly states it only documents a SUBSET of tools ("N of TOTAL
 // documented below") rather than falsely claiming completeness. For that
 // phrasing, TOTAL must still equal TOOLS.length, but N is checked against

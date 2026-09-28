@@ -39,7 +39,7 @@
     // punitive 300-element cap today) + between-chunk heap-pressure
     // shrinking of the same cache. Fallback = current fixed sizing.
     storageDetectCaches: Object.freeze({ fallback: 'legacy', defaultEnabled: false }),
-    // V7_RELEASE_PLAN.md P6.3 (memory-safe loading, conservative slice): run
+    // docs/V7_RELEASE_PLAN.md P6.3 (memory-safe loading, conservative slice): run
     // the SAME auto-park pass a heap-pressure poller tick would run, one beat
     // early, when a new file load is queued and memory is already tight —
     // giving the incoming model's geometry headroom to land in. Deliberately

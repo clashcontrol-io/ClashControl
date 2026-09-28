@@ -10,6 +10,7 @@
 //   * TITLE_CACHE_TTL_MS — soft TTL, expired-on-read entries are deleted
 // Cold starts naturally wipe the cache.
 
+var crypto = require('crypto');
 var { cors, llmGuard, fetchWithRetry } = require('./_lib');
 
 // Overridable without a deploy — if the upstream ever 404s the default id
@@ -25,13 +26,24 @@ var TITLE_CACHE_MAX    = 200;
 var TITLE_CACHE_TTL_MS = 60 * 60 * 1000;
 var _titleCache = new Map();
 
+// The cache key must cover every field that feeds the prompt (see the
+// `toGenerate.map` payload below) — elemAName/elemBName/modelA/modelB/
+// distance all shape the generated text just as much as the type/clashType
+// fields do. Omitting any of them lets one caller's clash metadata (names,
+// model identifiers) leak into another caller's cached response on a warm
+// instance. Hash the full normalized tuple rather than hand-picking fields.
 function _sigForClash(c) {
-  return [
+  return crypto.createHash('sha256').update(JSON.stringify([
     c.elemAType || '',
+    c.elemAName || '',
     c.elemBType || '',
+    c.elemBName || '',
+    c.modelA || '',
+    c.modelB || '',
     c.type || '',
-    c.storey ? '1' : '0'
-  ].join('|');
+    typeof c.distance === 'number' ? c.distance : '',
+    c.storey || ''
+  ])).digest('hex');
 }
 
 function _cacheGet(sig) {

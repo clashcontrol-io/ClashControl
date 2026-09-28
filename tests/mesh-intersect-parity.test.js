@@ -31,8 +31,19 @@ test('a point just past the margin fails, just within it passes', () => {
 });
 
 test('WASM and JS paths in _meshesIntersect are gated by the same function', () => {
-  // Both branches of _meshesIntersect must reference the shared helper, not a
-  // re-inlined copy of the box-margin check - this is what "parity" means here.
-  const body = src.slice(src.indexOf('function _meshesIntersect'), src.indexOf('// JS fallback', src.indexOf('function _meshesIntersect')));
-  assert.ok(body.includes('_pointInBothBoxes'), 'WASM branch must call the shared validator');
+  // Both branches of _meshesIntersect must funnel through ONE shared
+  // post-processing function (_postProcessIntersectPoints), which is itself
+  // gated by _pointInBothBoxes - this is what "parity" means here: a loaded
+  // WASM accelerator can never disagree with the JS fallback about what
+  // counts as a hit, because they run the identical filter+average step.
+  const ppIdx = src.indexOf('function _postProcessIntersectPoints');
+  assert.ok(ppIdx !== -1, '_postProcessIntersectPoints not found');
+  const ppBody = src.slice(ppIdx, src.indexOf('\n  }', ppIdx) + 4);
+  assert.ok(ppBody.includes('_pointInBothBoxes'), 'shared post-processor must call _pointInBothBoxes');
+
+  const miIdx = src.indexOf('function _meshesIntersect');
+  const wasmBranch = src.slice(miIdx, src.indexOf('// JS fallback', miIdx));
+  const jsBranch = src.slice(src.indexOf('// JS fallback', miIdx), src.indexOf('\n  }', src.indexOf('// JS fallback', miIdx)) + 4);
+  assert.ok(wasmBranch.includes('_postProcessIntersectPoints'), 'WASM branch must call the shared post-processor');
+  assert.ok(jsBranch.includes('_postProcessIntersectPoints'), 'JS branch must call the shared post-processor');
 });
