@@ -803,7 +803,40 @@ function startApp() {
 
   function uid()  { return Math.random().toString(36).slice(2,10).toUpperCase(); }
   function guid() { return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g,function(c){var r=Math.random()*16|0;return(c==='x'?r:(r&0x3|0x8)).toString(16)}); }
-  function esc(s) { return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+  // s||'' turns falsy-but-meaningful values (0, false) into '' — 0 must
+  // serialize as the string "0", not be dropped. Only null/undefined (and
+  // '', which is already the empty string) should fall through to ''.
+  function esc(s) { return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+
+  // ── Scene ↔ IFC coordinate conversion (BCF camera export/import) ──────
+  // web-ifc loads IFC geometry (Z-up) into the Three.js scene as Y-up (see
+  // the IFC loader, ~35874, and the section-axis relabeling note, ~39055):
+  // scene X = IFC X, scene Y = IFC Z (vertical), scene Z = -IFC Y. There is
+  // no additional per-model origin/placement offset applied between the two
+  // spaces (no COORDINATE_TO_ORIGIN / model matrix shift was found anywhere
+  // in the loader) — geometry is loaded directly, so this axis swap is the
+  // whole transform. BCF-XML's CameraViewPoint/CameraDirection/CameraUpVector
+  // are IFC-space (Z-up) per the buildingSMART spec; ClashControl's internal
+  // viewpoint objects (_captureViewpoint, _ccSynthesizeViewpoint) are always
+  // scene-space (Y-up). Both directions are simple axis permutations (the
+  // inverse of x,-z,y is x,z,-y — applying it twice is the identity).
+  function _bcfSceneToIfc(v) { return { x: v.x, y: -v.z, z: v.y }; }
+  function _bcfIfcToScene(v) { return { x: v.x, y: v.z, z: -v.y }; }
+
+  // Stable BCF project GUID — was regenerated on every export, which made
+  // BIMcollab/Solibri see a new project each time instead of updating the
+  // same one. Cached once per browser (there's no server-side "project"
+  // concept in ClashControl's own data model to key this off).
+  function _ccGetBcfProjectGuid() {
+    try {
+      var k = 'cc_bcf_project_guid';
+      var existing = localStorage.getItem(k);
+      if (existing) return existing;
+      var g = guid();
+      localStorage.setItem(k, g);
+      return g;
+    } catch (e) { return guid(); }
+  }
 
   // Copy an ID/value to the clipboard with a toast confirmation. Same
   // clipboard-API-with-execCommand-fallback shape as AIChatPanel's copyMsg,
@@ -1438,7 +1471,7 @@ function startApp() {
     UPD_PREFS:'UPD_PREFS',
     MEASURE_MODE:'MEASURE_MODE', ADD_MEASUREMENT:'ADD_MEASUREMENT', UPD_MEASUREMENT:'UPD_MEASUREMENT',
     DEL_MEASUREMENT:'DEL_MEASUREMENT', CLEAR_MEASUREMENTS:'CLEAR_MEASUREMENTS',
-    ADD_VIEWPOINT:'ADD_VIEWPOINT', DEL_VIEWPOINT:'DEL_VIEWPOINT',
+    ADD_VIEWPOINT:'ADD_VIEWPOINT', DEL_VIEWPOINT:'DEL_VIEWPOINT', UPD_VIEWPOINT:'UPD_VIEWPOINT',
     SET_CLASSIFICATIONS:'SET_CLASSIFICATIONS',
     TOGGLE_CLASS_VIS:'TOGGLE_CLASS_VIS', SHOW_ALL_CLASSES:'SHOW_ALL_CLASSES',
     HIDE_ALL_CLASSES:'HIDE_ALL_CLASSES', COLOR_BY_CLASS:'COLOR_BY_CLASS',
@@ -2165,6 +2198,7 @@ function startApp() {
       case A.CLEAR_MEASUREMENTS: return Object.assign({},s,{measurements:[]});
       case A.ADD_VIEWPOINT: return Object.assign({},s,{viewpoints:s.viewpoints.concat([a.v])});
       case A.DEL_VIEWPOINT: return Object.assign({},s,{viewpoints:s.viewpoints.filter(function(v){return v.id!==a.id})});
+      case A.UPD_VIEWPOINT: return Object.assign({},s,{viewpoints:s.viewpoints.map(function(v){return v.id===a.id?Object.assign({},v,a.u):v})});
       case A.SET_CLASSIFICATIONS: return Object.assign({},s,{classifications:a.v});
       case A.SECTION_BOX:  return Object.assign({},s,{sectionBox:a.v, sectionAxis:null, sectionCustom:null, walkMode:a.v?false:s.walkMode});
       case A.TOGGLE_CLASS_VIS: var hc2=Object.assign({},s.hiddenClasses); if(hc2[a.key])delete hc2[a.key];else hc2[a.key]=true; _persistHiddenClasses(hc2); return Object.assign({},s,{hiddenClasses:hc2});
@@ -7951,6 +7985,32 @@ function startApp() {
     return _detectClashesCore(models, rules, null, null);
   }
 
+  // Clash/issue list free-text filter — was a single naive substring match
+  // on the whole query (hay.indexOf(q)), so a query built from the panel's
+  // OWN placeholder examples ("hard on floor 2", "hard on level 1", "open
+  // pipes") mostly returned 0 results: filler words ("on") and a plural
+  // ("pipes" vs the singular "pipe" that actually appears in an IFC type
+  // name) never appear verbatim in the haystack, and "floor"/"storey" never
+  // literally says "level" even when the storey itself does. Tokenizes the
+  // query, drops filler words, treats floor/storey/story as synonyms for
+  // level, and requires every remaining token to match (AND) — via a plain
+  // substring, its singular form, or (for a bare number) the item's stable
+  // display number.
+  var _CC_FILTER_FILLER = {on:1,in:1,at:1,the:1,of:1,for:1,a:1,an:1};
+  function _ccFilterTextMatches(q, hay, itemNumber) {
+    if (!q) return true;
+    var norm = String(q).toLowerCase().replace(/\b(?:storeys?|storys?|floors?)\b/g, 'level');
+    var tokens = norm.split(/\s+/).filter(function(t){ return t && !_CC_FILTER_FILLER[t]; });
+    if (!tokens.length) return true;
+    return tokens.every(function(tok){
+      var bare = tok.charAt(0)==='#' ? tok.slice(1) : tok;
+      if (/^\d+$/.test(bare) && itemNumber != null && String(itemNumber) === bare) return true;
+      if (hay.indexOf(tok) !== -1 || hay.indexOf(bare) !== -1) return true;
+      if (tok.length > 3 && tok.charAt(tok.length-1) === 's' && hay.indexOf(tok.slice(0,-1)) !== -1) return true;
+      return false;
+    });
+  }
+
   function deriveFloors(clashes) {
     if (!clashes.length) return [];
     var ys = clashes.map(function(c){return c.elevation||0}).sort(function(a,b){return a-b});
@@ -8173,12 +8233,23 @@ function startApp() {
   }
 
 
+  var _ccLastProjectSaveAt = 0;
   function saveProject(s) {
+    // Debounce guard — the "save project" NL command was reachable from more
+    // than one caller in the same turn (the fast-regex path and the
+    // server/offline-fallback path can both resolve for the same input in
+    // some Groq-unavailable timings), which fired two downloads for one
+    // click/command. A real second save within the same second is not a
+    // realistic user action, so collapse it here rather than chase every
+    // call site.
+    var now = Date.now();
+    if (now - _ccLastProjectSaveAt < 1000) return;
+    _ccLastProjectSaveAt = now;
     var data = _ccSerializeProject(s, CC_VERSION.v, new Date().toISOString());
     var blob = new Blob([JSON.stringify(data, null, 2)], {type:'application/json'});
     var a = document.createElement('a');
     a.href = URL.createObjectURL(blob);
-    a.download = 'project-'+new Date().toISOString().slice(0,10)+'.json';
+    a.download = 'project-'+new Date().toISOString().slice(0,10)+'.ccproject';
     a.click();
     URL.revokeObjectURL(a.href);
   }
@@ -8287,9 +8358,18 @@ function startApp() {
             // Viewpoint files carry the topic's referenced element IfcGuids
             // (<Components><Component IfcGuid=...>). Collect them so imported
             // issues keep their element identity — the join key for inspection
-            // items (E5) through the GUID spine.
+            // items (E5) through the GUID spine. Also carries the camera
+            // (Perspective/OrthogonalCamera) — parsed back into a scene-space
+            // viewpoint so a round-trip export→import restores the same view.
+            var _vpBase = path.split('/').pop().replace(/\.bcfv$/i, '');
             promises.push(entry.async('text').then(function(xml) {
-              return {kind:'viewpoint', folder: path.split('/')[0], xml: xml};
+              return {kind:'viewpoint', folder: path.split('/')[0], base: _vpBase, xml: xml};
+            }));
+          } else if (path.match(/\.png$/i)) {
+            var _pFolder = path.split('/')[0];
+            var _pBase = path.split('/').pop().replace(/\.png$/i, '');
+            promises.push(entry.async('base64').then(function(b64) {
+              return {kind:'snapshot', folder: _pFolder, base: _pBase, data: 'data:image/png;base64,' + b64};
             }));
           }
         });
@@ -8309,18 +8389,64 @@ function startApp() {
         }
         return Promise.all(promises);
       }).then(function(parts) {
-        // Index referenced IfcGuids per topic folder from the viewpoint files.
-        var vpByFolder = {};
+        // Index referenced IfcGuids + parsed camera per topic folder from the
+        // viewpoint (.bcfv) files. Snapshots are indexed separately by
+        // folder/base so they can be joined to whichever viewpoint shares
+        // their filename stem (BCF always names Snapshot === Viewpoint base).
+        var vpByFolder = {};       // folder -> [{guids, camera, base}]
+        var snapshotsByKey = {};  // 'folder/base' -> data URL
         parts.forEach(function(p) {
+          if (p.kind === 'snapshot') { snapshotsByKey[p.folder + '/' + p.base] = p.data; return; }
           if (p.kind !== 'viewpoint') return;
           try {
             var vdoc = new DOMParser().parseFromString(p.xml, 'text/xml');
             var comps = vdoc.querySelectorAll('Component');
-            var arr = vpByFolder[p.folder] || (vpByFolder[p.folder] = []);
+            var guids = [];
             for (var ci = 0; ci < comps.length; ci++) {
               var g = comps[ci].getAttribute('IfcGuid') || comps[ci].getAttribute('ifcGuid');
-              if (g && arr.indexOf(g) < 0) arr.push(g);
+              if (g && guids.indexOf(g) < 0) guids.push(g);
             }
+            // Camera — BCF-XML vectors are IFC-space (Z-up); convert back to
+            // the app's internal scene-space (Y-up) with _bcfIfcToScene, the
+            // inverse of the mapping exportBCF applies (see _bcfSceneToIfc).
+            var camera = null;
+            var persp = vdoc.querySelector('PerspectiveCamera');
+            var ortho = vdoc.querySelector('OrthogonalCamera');
+            var camEl = persp || ortho;
+            if (camEl) {
+              var _readVec = function(tag) {
+                var n = camEl.querySelector(tag);
+                if (!n) return null;
+                var xn = n.querySelector('X'), yn = n.querySelector('Y'), zn = n.querySelector('Z');
+                if (!xn || !yn || !zn) return null;
+                return { x: parseFloat(xn.textContent), y: parseFloat(yn.textContent), z: parseFloat(zn.textContent) };
+              };
+              var ifcPos = _readVec('CameraViewPoint');
+              var ifcDir = _readVec('CameraDirection');
+              var ifcUp  = _readVec('CameraUpVector');
+              if (ifcPos && ifcDir && ifcUp) {
+                var scenePos = _bcfIfcToScene(ifcPos);
+                var sceneDir = _bcfIfcToScene(ifcDir);
+                var sceneUp  = _bcfIfcToScene(ifcUp);
+                camera = {
+                  px: scenePos.x, py: scenePos.y, pz: scenePos.z,
+                  dx: sceneDir.x, dy: sceneDir.y, dz: sceneDir.z,
+                  ux: sceneUp.x,  uy: sceneUp.y,  uz: sceneUp.z,
+                  tx: scenePos.x + sceneDir.x * 10, ty: scenePos.y + sceneDir.y * 10, tz: scenePos.z + sceneDir.z * 10
+                };
+                if (ortho) {
+                  var scaleNode = camEl.querySelector('ViewToWorldScale');
+                  camera.isOrtho = true;
+                  camera.viewToWorldScale = scaleNode ? parseFloat(scaleNode.textContent) : 10;
+                } else {
+                  var fovNode = camEl.querySelector('FieldOfView');
+                  camera.isOrtho = false;
+                  camera.fov = fovNode ? parseFloat(fovNode.textContent) : 55;
+                }
+              }
+            }
+            var arr = vpByFolder[p.folder] || (vpByFolder[p.folder] = []);
+            arr.push({ guids: guids, camera: camera, base: p.base });
           } catch(_e) {}
         });
         var markups = parts.filter(function(p) { return p.kind === 'markup'; });
@@ -8331,8 +8457,18 @@ function startApp() {
             var doc = parser.parseFromString(m.xml, 'text/xml');
             var topic = doc.querySelector('Topic');
             if (!topic) return;
+            // Direct-child lookup — topic.querySelector('Description') also
+            // matches the <Description> nested inside a <DocumentReference>
+            // (e.g. the point-cloud cc:scanRef payload), and a 3.0 export
+            // omits an empty topic Description entirely, so that mismatch
+            // silently pulled in the wrong text. Only look at Description
+            // elements that are direct children of <Topic> itself.
+            var _directDesc = null;
+            for (var _dci = 0; _dci < topic.children.length; _dci++) {
+              if (topic.children[_dci].tagName === 'Description') { _directDesc = topic.children[_dci]; break; }
+            }
             var title = (topic.querySelector('Title')||{}).textContent || 'Imported topic';
-            var desc = (topic.querySelector('Description')||{}).textContent || '';
+            var desc = (_directDesc||{}).textContent || '';
             var priority = (topic.querySelector('Priority')||{}).textContent || 'normal';
             var status = (topic.getAttribute('TopicStatus')||'').toLowerCase();
             var topicType = (topic.getAttribute('TopicType')||'').toLowerCase();
@@ -8432,7 +8568,10 @@ function startApp() {
             for (var dri = 0; dri < docRefNodes.length; dri++) {
               var dn = docRefNodes[dri];
               var descNode = dn.querySelector('Description');
-              var refNode  = dn.querySelector('ReferencedDocument');
+              // 2.1 writes <ReferencedDocument>; 3.0 renamed it <Url> (see
+              // exportBCF) — accept either so point-cloud references
+              // round-trip from a 3.0-exported BCF, not just 2.1.
+              var refNode  = dn.querySelector('ReferencedDocument') || dn.querySelector('Url');
               if (!descNode || !refNode) continue;
               var descText = (descNode.textContent || '').trim();
               if (descText.indexOf('cc:scanRef=') !== 0) continue;
@@ -8447,7 +8586,9 @@ function startApp() {
             // the viewpoint files, plus any IfcGuid attributes in the markup), and
             // resolve uniqueId/revitId/storey against the loaded model so the
             // imported issue joins through the GUID spine like a native one.
-            var bcfGids = (vpByFolder[m.folder] || []).slice();
+            var _folderVps = vpByFolder[m.folder] || [];
+            var bcfGids = [];
+            _folderVps.forEach(function(fv){ fv.guids.forEach(function(g){ if (bcfGids.indexOf(g)<0) bcfGids.push(g); }); });
             var attrNodes = doc.querySelectorAll('[IfcGuid]');
             for (var ai = 0; ai < attrNodes.length; ai++) {
               var ag = attrNodes[ai].getAttribute('IfcGuid');
@@ -8468,6 +8609,18 @@ function startApp() {
               if (!issuePayload.storey && res.storey) issuePayload.storey = res.storey;
             }
             d({t:A.ADD_ISSUE, v:issuePayload});
+            // Restore the camera viewpoint, if the topic carried one, linked
+            // to the freshly-imported issue — round-trips an exported
+            // viewpoint (see exportBCF) back into a real, selectable
+            // viewpoint instead of dropping camera state on import.
+            var _vpWithCam = _folderVps.filter(function(fv){ return fv.camera; })[0];
+            if (_vpWithCam) {
+              var _snap = snapshotsByKey[m.folder + '/' + _vpWithCam.base] || null;
+              d({t:A.ADD_VIEWPOINT, v:{
+                id: uid(), name: title, linkedId: issuePayload.id,
+                createdAt: creationDate, snapshot: _snap, camera: _vpWithCam.camera, section: null
+              }});
+            }
             imported++;
           } catch(e) { console.warn('BCF parse error:', e); }
         });
@@ -8660,14 +8813,22 @@ function startApp() {
 
     if (v3) {
       zip.file('extensions.xml', '<?xml version="1.0" encoding="UTF-8"?>\n'+attrComment+'<Extensions><TopicTypes><TopicType>Issue</TopicType><TopicType>Warning</TopicType><TopicType>Request</TopicType></TopicTypes><TopicStatuses><TopicStatus>Open</TopicStatus><TopicStatus>In Progress</TopicStatus><TopicStatus>Closed</TopicStatus></TopicStatuses><Priorities><Priority>Critical</Priority><Priority>High</Priority><Priority>Normal</Priority><Priority>Low</Priority></Priorities></Extensions>');
-      zip.file('project.bcfp','<?xml version="1.0" encoding="UTF-8"?>\n'+attrComment+'<ProjectInfo><Project ProjectId="'+guid().toLowerCase()+'"><Name>ClashControl</Name></Project></ProjectInfo>');
+      zip.file('project.bcfp','<?xml version="1.0" encoding="UTF-8"?>\n'+attrComment+'<ProjectInfo><Project ProjectId="'+_ccGetBcfProjectGuid().toLowerCase()+'"><Name>ClashControl</Name></Project></ProjectInfo>');
     } else {
-      zip.file('project.bcfp','<?xml version="1.0" encoding="UTF-8"?>\n'+attrComment+'<ProjectExtension xmlns="http://www.buildingsmart-tech.org/bcf/project/2.1"><Project ProjectId="'+guid()+'"><Name>ClashControl</Name></Project><ExtensionSchema/></ProjectExtension>');
+      zip.file('project.bcfp','<?xml version="1.0" encoding="UTF-8"?>\n'+attrComment+'<ProjectExtension xmlns="http://www.buildingsmart-tech.org/bcf/project/2.1"><Project ProjectId="'+_ccGetBcfProjectGuid()+'"><Name>ClashControl</Name></Project><ExtensionSchema/></ProjectExtension>');
     }
 
     items.forEach(function(it) {
       // 3.0 requires lowercase GUIDs (topic folder name included).
-      var g = it.bcfGuid || guid(); if (v3) g = String(g).toLowerCase();
+      // Persist a stable topic GUID on first export so re-exports UPDATE the
+      // same topic in BIMcollab/Solibri instead of duplicating it.
+      var _isNewGuid = !it.bcfGuid;
+      var g = it.bcfGuid || guid();
+      if (_isNewGuid) {
+        it.bcfGuid = g; // keep this export's own copy in sync too
+        if (it.id && window._ccDispatch) window._ccDispatch({t:A.UPD_ISSUE, id:it.id, u:{bcfGuid:g}});
+      }
+      if (v3) g = String(g).toLowerCase();
       var f = zip.folder(g);
       var type = it.type==='hard'?'Issue':it.type==='soft'?'Warning':'Request';
       var st = it.status==='resolved'||it.status==='closed'?'Closed':it.status==='in_progress'?'In Progress':'Open';
@@ -8688,7 +8849,18 @@ function startApp() {
         var _synth = _ccSynthesizeViewpoint(it, state && state.models);
         if (_synth) vp = { camera: _synth.camera, snapshot: null };
       }
-      var vpGuid = vp ? (v3 ? guid().toLowerCase() : guid()) : null;
+      // Persist a stable viewpoint GUID the same way as the topic GUID above
+      // (only meaningful for a real captured viewpoint — it has a .id;
+      // synthesized default viewpoints are rebuilt fresh every export).
+      var vpGuid = null;
+      if (vp) {
+        vpGuid = vp.bcfGuid || guid();
+        if (!vp.bcfGuid) {
+          vp.bcfGuid = vpGuid;
+          if (vp.id && window._ccDispatch) window._ccDispatch({t:A.UPD_VIEWPOINT, id:vp.id, u:{bcfGuid:vpGuid}});
+        }
+        if (v3) vpGuid = String(vpGuid).toLowerCase();
+      }
 
       // <Components><Selection> — the participating element(s), so the
       // topic actually has something selectable when opened in Solibri/
@@ -8809,12 +8981,21 @@ function startApp() {
       // ── Assemble markup.bcf (no xmlns — the XSDs have no namespace) ──
       var markup = '<?xml version="1.0" encoding="UTF-8"?>\n'+attrComment+'<Markup>\n';
       var hdrDate = it.createdAt||new Date().toISOString();
+      // <Filename> should identify the IFC file(s) the topic is about, not
+      // the authoring tool — BCF readers use it to match the topic back to
+      // the right model. Fall back to the tool name only when no model is
+      // loaded (nothing better to name it after).
+      var hdrFilename = ccTool;
+      if (state && state.models && state.models.length) {
+        var _mNames = state.models.map(function(mm){ return mm && mm.name; }).filter(Boolean);
+        if (_mNames.length) hdrFilename = _mNames.join(', ');
+      }
       if (v3) {
         // 3.0: Files wrapper, IsExternal capitalised; empty IfcProject/
         // IfcSpatialStructureElement attrs are invalid — omit them.
-        markup += '  <Header>\n    <Files>\n      <File IsExternal="true">\n        <Filename>'+esc(ccTool)+'</Filename>\n        <Date>'+hdrDate+'</Date>\n      </File>\n    </Files>\n  </Header>\n';
+        markup += '  <Header>\n    <Files>\n      <File IsExternal="true">\n        <Filename>'+esc(hdrFilename)+'</Filename>\n        <Date>'+hdrDate+'</Date>\n      </File>\n    </Files>\n  </Header>\n';
       } else {
-        markup += '  <Header>\n    <File isExternal="true">\n      <Filename>'+esc(ccTool)+'</Filename>\n      <Date>'+hdrDate+'</Date>\n    </File>\n  </Header>\n';
+        markup += '  <Header>\n    <File isExternal="true">\n      <Filename>'+esc(hdrFilename)+'</Filename>\n      <Date>'+hdrDate+'</Date>\n    </File>\n  </Header>\n';
       }
       // Topic child elements must follow BCF schema order (Title, Priority,
       // Labels, CreationDate/Author, Modified*, DueDate, AssignedTo,
@@ -8922,9 +9103,14 @@ function startApp() {
         // have neither field, so they fall through to PerspectiveCamera.
         var _vpIsOrtho = !!(vp.camera && vp.camera.isOrtho);
         vpXml += _vpIsOrtho ? '  <OrthogonalCamera>\n' : '  <PerspectiveCamera>\n';
-        vpXml += '    <CameraViewPoint><X>'+vp.camera.px.toFixed(6)+'</X><Y>'+vp.camera.py.toFixed(6)+'</Y><Z>'+vp.camera.pz.toFixed(6)+'</Z></CameraViewPoint>\n';
-        vpXml += '    <CameraDirection><X>'+vp.camera.dx.toFixed(6)+'</X><Y>'+vp.camera.dy.toFixed(6)+'</Y><Z>'+vp.camera.dz.toFixed(6)+'</Z></CameraDirection>\n';
-        vpXml += '    <CameraUpVector><X>'+vp.camera.ux.toFixed(6)+'</X><Y>'+vp.camera.uy.toFixed(6)+'</Y><Z>'+vp.camera.uz.toFixed(6)+'</Z></CameraUpVector>\n';
+        // BCF-XML camera vectors are IFC-space (Z-up); vp.camera is always
+        // scene-space (Y-up) — see _bcfSceneToIfc.
+        var _bcfPos = _bcfSceneToIfc({x:vp.camera.px, y:vp.camera.py, z:vp.camera.pz});
+        var _bcfDir = _bcfSceneToIfc({x:vp.camera.dx, y:vp.camera.dy, z:vp.camera.dz});
+        var _bcfUp  = _bcfSceneToIfc({x:vp.camera.ux, y:vp.camera.uy, z:vp.camera.uz});
+        vpXml += '    <CameraViewPoint><X>'+_bcfPos.x.toFixed(6)+'</X><Y>'+_bcfPos.y.toFixed(6)+'</Y><Z>'+_bcfPos.z.toFixed(6)+'</Z></CameraViewPoint>\n';
+        vpXml += '    <CameraDirection><X>'+_bcfDir.x.toFixed(6)+'</X><Y>'+_bcfDir.y.toFixed(6)+'</Y><Z>'+_bcfDir.z.toFixed(6)+'</Z></CameraDirection>\n';
+        vpXml += '    <CameraUpVector><X>'+_bcfUp.x.toFixed(6)+'</X><Y>'+_bcfUp.y.toFixed(6)+'</Y><Z>'+_bcfUp.z.toFixed(6)+'</Z></CameraUpVector>\n';
         if (_vpIsOrtho) {
           vpXml += '    <ViewToWorldScale>'+vp.camera.viewToWorldScale.toFixed(6)+'</ViewToWorldScale>\n';
         } else {
@@ -18967,7 +19153,16 @@ function startApp() {
       e.preventDefault(); e.stopPropagation();
       dragCounter.current = 0; setDragging(false);
       var files = Array.prototype.slice.call(e.dataTransfer.files||[]);
-      if(files.length) maybeScopeThenProcess(files);
+      if (!files.length) return;
+      // BCF files (.bcf/.bcfzip) are a different import path entirely — the
+      // model-load pipeline below doesn't understand them and used to
+      // silently drop them on the floor. Route them to the BCF importer;
+      // anything else in the same drop still goes through the normal model
+      // load flow.
+      var bcfFiles = files.filter(function(f){ return /\.(bcf|bcfzip)$/i.test(f.name); });
+      var otherFiles = files.filter(function(f){ return !/\.(bcf|bcfzip)$/i.test(f.name); });
+      bcfFiles.forEach(function(f){ f.arrayBuffer().then(function(buf){ _runBCFImport(buf, d); }); });
+      if (otherFiles.length) maybeScopeThenProcess(otherFiles);
     }
     function onDragOver(e){e.preventDefault();e.stopPropagation();}
     function onDragEnter(e){e.preventDefault();e.stopPropagation();dragCounter.current++;setDragging(true);}
@@ -21585,7 +21780,14 @@ function startApp() {
       document.addEventListener('mousedown',onOut);
       return function(){document.removeEventListener('mousedown',onOut);};
     },[exportOpen]);
-    return html`<div ref=${exportRef2} style=${{position:'relative',flexShrink:0}}>
+    return html`<div ref=${exportRef2} style=${{position:'relative',flexShrink:0,display:'inline-flex',gap:'.35rem'}}>
+      <button
+        title="Import BCF (.bcf/.bcfzip)"
+        onClick=${function(){ importBCF(window._ccDispatch); }}
+        style=${{...S_BTN,padding:'.35rem .55rem',background:'var(--bg-secondary)',color:'var(--text-secondary)',border:'1px solid var(--border)',fontSize:'0.72rem',fontWeight:600,cursor:'pointer',display:'inline-flex',alignItems:'center',gap:'.25rem',whiteSpace:'nowrap'}}>
+        <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+        Import BCF
+      </button>
       <button
         title=${hasItems?'Export '+bcfItems.length+' '+source+' to BCF':'Nothing to export yet'}
         onClick=${function(){if(hasItems)setExportOpen(!exportOpen);}}
@@ -21742,7 +21944,7 @@ function startApp() {
           if(it.modelBId && !visibleModelIds[it.modelBId]) return false;
         }
         if(f.status!=='all' && it.status!==f.status) return false;
-        if(f.search){var q=f.search.toLowerCase();var hay=isClashTab?[it.title,it.description,it.type,it.elemAStorey,it.elemBStorey,it.elemAType,it.elemBType,it.elemAMaterial,it.elemBMaterial,it.status].filter(Boolean).join(' ').toLowerCase():(it.title||'').toLowerCase()+' '+(it.description||'').toLowerCase();if(hay.indexOf(q)===-1)return false;}
+        if(f.search){var hay=isClashTab?[it.title,it.description,it.type,it.elemAStorey,it.elemBStorey,it.elemAType,it.elemBType,it.elemAMaterial,it.elemBMaterial,it.status].filter(Boolean).join(' ').toLowerCase():(it.title||'').toLowerCase()+' '+(it.description||'').toLowerCase();if(!_ccFilterTextMatches(f.search,hay,it.number))return false;}
         if(isClashTab) {
           if(f.modelPair) {
             var _mpA=it.modelAId, _mpB=it.modelBId||it.modelAId, _mp=f.modelPair;
@@ -21750,10 +21952,12 @@ function startApp() {
           }
           if(f.type!=='all' && it.type!==f.type) return false;
           if(f.discipline!=='all' && it.disciplines && it.disciplines.indexOf(f.discipline)===-1) return false;
-          if(f.floor!=='all') {
-            var fl = s.floors.find(function(x){return x.id===f.floor});
-            if(fl && (it.elevation<fl.yMin||it.elevation>fl.yMax)) return false;
-          }
+          // f.floor holds a real IFC storey NAME (see the Floor/Level select
+          // below, populated from _ccCollectStoreys) — was elevation-band
+          // matching against deriveFloors()'s synthetic, off-by-one "Level N"
+          // clusters, which didn't correspond to any real storey and even
+          // mislabeled IFC's own Level 0 as "Level 1".
+          if(f.floor!=='all' && it.elemAStorey!==f.floor && it.elemBStorey!==f.floor) return false;
           if(f.distMax<9999 && (it.distance||0)>f.distMax) return false;
           if(f.elementId) {
             var eid=f.elementId;
@@ -21870,13 +22074,21 @@ function startApp() {
           </select>
         </div>`}
 
-        ${isClashTab && s.floors.length>0 && html`<div>
+        ${isClashTab && function(){
+          // Real IFC storeys (name + elevation), not deriveFloors()'s
+          // elevation-clustered synthetic "Level N" labels — those didn't
+          // match any actual storey name and even mislabeled Level 0 as
+          // "Level 1" (see the f.floor filter comment above).
+          var _realStoreys = (typeof _ccCollectStoreys === 'function') ? _ccCollectStoreys(s.models || []) : [];
+          if (!_realStoreys.length) return '';
+          return html`<div>
           <span style=${FL}>${_cc_t('issues.filter.floor','Floor / Level')}</span>
           <select value=${f.floor} onChange=${function(e){d({t:A.UPD_FILTERS,u:{floor:e.target.value}})}} style=${SELSTYLE}>
             <option value="all">${_cc_t('issues.filter.allLevels','All levels')}</option>
-            ${s.floors.map(function(fl){return html`<option key=${fl.id} value=${fl.id}>${fl.label}</option>`})}
+            ${_realStoreys.map(function(st){return html`<option key=${st.name} value=${st.name}>${st.name}${' ('+st.elevation.toFixed(1)+'m)'}</option>`})}
           </select>
-        </div>`}
+        </div>`;
+        }()}
 
         ${isClashTab && function(){
           var maxDist = 500;
@@ -22472,12 +22684,17 @@ function startApp() {
     var projName = (s.activeProject && s.activeProject !== 'default') ? s.activeProject
       : (s.models && s.models.length ? s.models.map(function(m){return m.name;}).join(' + ').slice(0, 80) : 'Untitled project');
 
-    var counts = { open:0, inProg:0, resolved:0, autoRes:0, hard:0, soft:0, dup:0, vis:0 };
+    // "other" catches every status STAT defines besides the four buckets
+    // broken out below (confirmed, denied, accepted_needs_check, and any
+    // future addition) — without it, open+inProg+resolved+autoRes didn't
+    // add up to the total whenever a clash carried one of those statuses.
+    var counts = { open:0, inProg:0, resolved:0, autoRes:0, other:0, hard:0, soft:0, dup:0, vis:0 };
     clashes.forEach(function(c){
       if (c.status==='open') counts.open++;
       else if (c.status==='in_progress') counts.inProg++;
       else if (c.status==='auto_resolved') counts.autoRes++;
       else if (c.status==='resolved'||c.status==='closed') counts.resolved++;
+      else counts.other++; // confirmed / denied / accepted_needs_check / unknown
       if (c.type==='hard') counts.hard++; else if (c.type==='soft') counts.soft++;
       else if (c.type==='duplicate') counts.dup++; else if (c.type==='visibility') counts.vis++;
     });
@@ -22492,19 +22709,35 @@ function startApp() {
     var SEV_RANK = { critical:4, major:3, minor:2, info:1 };
     var rows = order.map(function(k){
       var items = clusters[k];
+      // "Open" here means the status column literally called Open — was
+      // folding in_progress into the same count, so an in-progress clash
+      // was double counted (once here, once in its own status card) and
+      // this column's number never matched what "open" meant anywhere else
+      // in the report.
       var open = 0, sev = '', sevR = 0, assignees = {};
       items.forEach(function(c){
-        if (c.status==='open'||c.status==='in_progress') open++;
+        if (c.status==='open') open++;
         var cSev = c.aiSeverity || _ccDeterministicSeverity(c);
         var r = SEV_RANK[(cSev||'').toLowerCase()]||0;
         if (r > sevR) { sevR = r; sev = cSev; }
         if (c.assignee) assignees[c.assignee] = true;
       });
       var first = items[0];
+      // Clashes carry their storey on elemAStorey/elemBStorey (c.storey is
+      // an ISSUE field, not a clash field — this always read undefined for
+      // every clash row, hence "—" on every row).
+      var _rowStorey = first.elemAStorey || first.elemBStorey || first.storey || first.storeyName || '';
+      var _rowLabel = first.aiTitle || first.title || (window._ccClusterLabelFor ? window._ccClusterLabelFor(first) : 'Clash');
+      // A generic fallback label (no title, no element names — e.g. a
+      // visibility clash, whose fields don't fit _ccClusterLabelFor's
+      // elemA/elemB shape) can come out identical for many single-clash
+      // clusters. Append the clash's own stable display number so rows
+      // stay distinguishable even when the label itself is generic.
+      if (!first.aiTitle && !first.title && first.number != null) _rowLabel += ' #' + first.number;
       return {
-        label: first.aiTitle || first.title || (window._ccClusterLabelFor ? window._ccClusterLabelFor(first) : 'Clash'),
+        label: _rowLabel,
         count: items.length, open: open, sev: sev,
-        storey: first.storey || first.storeyName || '',
+        storey: _rowStorey,
         assignees: Object.keys(assignees).join(', '),
       };
     }).sort(function(a,b){ return b.open - a.open || b.count - a.count; });
@@ -22570,6 +22803,7 @@ function startApp() {
       +   '<div class="card"><b style="color:#dc2626">'+counts.open+'</b><span>open</span></div>'
       +   '<div class="card"><b style="color:#d97706">'+counts.inProg+'</b><span>in progress</span></div>'
       +   '<div class="card"><b style="color:#16a34a">'+(counts.resolved+counts.autoRes)+'</b><span>resolved'+(counts.autoRes?' ('+counts.autoRes+' auto)':'')+'</span></div>'
+      +   (counts.other ? '<div class="card"><b style="color:#0f766e">'+counts.other+'</b><span>confirmed / denied / other</span></div>' : '')
       +   '<div class="card"><b>'+rows.length+(truncated?'+':'')+'</b><span>clusters</span></div>'
       + '</div>'
       + '<div class="sub">Hard '+counts.hard+' · Soft/clearance '+counts.soft+' · Duplicates '+counts.dup+(counts.vis?' · Sight-line '+counts.vis:'')+'</div>'
@@ -28299,6 +28533,18 @@ function startApp() {
     push({group:_cc_t('cmdk.group.project','Project'), label:_cc_t('cmdk.shareProject','Share project'),
       keywords:'share collaboration team url link invite send',
       onSelect:function(){ d({t:A.SHARE,v:true}); }});
+    push({group:_cc_t('cmdk.group.project','Project'), label:_cc_t('cmdk.saveProject','Save project…'),
+      keywords:'save project ccproject export download file',
+      onSelect:function(){ try{ saveProject(s); }catch(e){} }});
+    push({group:_cc_t('cmdk.group.project','Project'), label:_cc_t('cmdk.openProject','Open project…'),
+      keywords:'open project ccproject import load file',
+      onSelect:function(){ try{ loadProject(d); }catch(e){} }});
+    push({group:_cc_t('cmdk.group.project','Project'), label:_cc_t('cmdk.importBcf','Import BCF…'),
+      keywords:'import bcf bcfzip topics issues viewpoints',
+      onSelect:function(){ try{ importBCF(d); }catch(e){} }});
+    push({group:_cc_t('cmdk.group.project','Project'), label:_cc_t('cmdk.exportBcf','Export BCF (2.1)'),
+      keywords:'export bcf bcfzip topics issues viewpoints', r:'coordinate',
+      onSelect:function(){ try{ var all=(s.clashes||[]).concat(s.issues||[]); if(all.length) exportBCF(all,'2.1',s.viewpoints,s); }catch(e){} }});
     push({group:_cc_t('cmdk.group.project','Project'), label:_cc_t('toolbar.smartViews','Smart Views'),
       keywords:'smart views saved viewpoints presets', r:'present',
       onSelect:function(){ d({t:A.SMART_VIEWS,v:true}); }});
@@ -32406,6 +32652,14 @@ function startApp() {
           return 'Renamed to **' + rnName + '**.';
         } catch(e) { return 'Couldn\'t rename: ' + (e.message||e); }
       }
+    }
+    // "open/load project [file]" (no project NAME given) means open the
+    // .ccproject FILE PICKER, not "switch to a saved project named 'file'" —
+    // the swProjMatch regex just below used to greedily capture a trailing
+    // "file" as the project name and report "No project named \"file\"."
+    if (/^\s*(?:open|load)\s+(?:the\s+)?project(?:\s+file)?\s*$/i.test(raw)) {
+      if (typeof loadProject === 'function') loadProject(d);
+      return 'Project picker opened.';
     }
     var swProjMatch = raw.match(/^\s*(?:switch|change|go|open|load)\s+(?:to\s+)?(?:the\s+)?project\s+["']?(.+?)["']?\s*$/i);
     if (swProjMatch) {
@@ -37080,6 +37334,8 @@ function startApp() {
             <div style=${{fontSize:'var(--text-xs)',color:'var(--ink-muted)',marginTop:1}}>${activeProj.name}</div>
           </div>
           ${row(_cc_t('avatar.openModel','Open model…'), function(){ if(window._ccOpenIFC) window._ccOpenIFC(); }, 'O')}
+          ${row(_cc_t('avatar.saveProject','Save project…'), function(){ saveProject(s); })}
+          ${row(_cc_t('avatar.openProject','Open project…'), function(){ loadProject(d); })}
           <div style=${{height:1,background:'var(--hairline)',margin:'.3rem 0'}}></div>
           <div style=${{padding:'.25rem .8rem',fontSize:'var(--text-2xs)',textTransform:'uppercase',letterSpacing:'.08em',color:'var(--ink-muted)',fontWeight:500}}>${_cc_t('avatar.project','Project')}</div>
           ${projects.map(function(p){

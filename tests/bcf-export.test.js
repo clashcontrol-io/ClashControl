@@ -54,6 +54,9 @@ function runExport(version, extraModels) {
     _ccChangelogUser: 'Tester',
     _ccRenderSheetToCanvas: () => null,
     window: { CC_VERSION: { v: 'test' }, _ccViewport: { getCamera: () => ({ aspect: 1.5 }) } },
+    _ccGetBcfProjectGuid: () => 'PROJECT-GUID',
+    _bcfSceneToIfc: (v) => ({ x: v.x, y: -v.z, z: v.y }),
+    A: { UPD_ISSUE: 'UPD_ISSUE', UPD_VIEWPOINT: 'UPD_VIEWPOINT' },
     confirm: () => false,
   };
   const fn = new Function(...Object.keys(sandbox), fnSrc + '; return exportBCF;')(...Object.values(sandbox));
@@ -208,6 +211,9 @@ test('no <Coloring> for a single-GUID item (DQ/accessibility issue) — nothing 
     esc: (s) => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;'),
     _gcEvent: () => {}, _ccChangelogUser: 'Tester', _ccRenderSheetToCanvas: () => null,
     window: { CC_VERSION: { v: 'test' }, _ccViewport: { getCamera: () => ({ aspect: 1.5 }) } },
+    _ccGetBcfProjectGuid: () => 'PROJECT-GUID',
+    _bcfSceneToIfc: (v) => ({ x: v.x, y: -v.z, z: v.y }),
+    A: { UPD_ISSUE: 'UPD_ISSUE', UPD_VIEWPOINT: 'UPD_VIEWPOINT' },
     confirm: () => false,
   };
   const fn = new Function(...Object.keys(sandbox), fnSrc + '; return exportBCF;')(...Object.values(sandbox));
@@ -277,6 +283,9 @@ function runExportNoViewpoints(version, items, models) {
     esc: (s) => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;'),
     _gcEvent: () => {}, _ccChangelogUser: 'Tester', _ccRenderSheetToCanvas: () => null,
     window: { CC_VERSION: { v: 'test' }, _ccViewport: { getCamera: () => ({ aspect: 1.5 }) } },
+    _ccGetBcfProjectGuid: () => 'PROJECT-GUID',
+    _bcfSceneToIfc: (v) => ({ x: v.x, y: -v.z, z: v.y }),
+    A: { UPD_ISSUE: 'UPD_ISSUE', UPD_VIEWPOINT: 'UPD_VIEWPOINT' },
     confirm: () => false,
   };
   const fn = new Function(...Object.keys(sandbox), fnSrc + '; return exportBCF;')(...Object.values(sandbox));
