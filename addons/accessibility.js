@@ -195,10 +195,13 @@
   // fallback). Exposed for the panel's future "clearance to nearest obstacle"
   // refinement — the kernel fits element-to-element clearance, which most of
   // the v1 dimensional checks above are not, so they stay quantity/bbox-based.
-  window._ccAccessibilityClearance = function (vertsA, vertsB, maxDistM) {
+  // NOTE: takes TRIANGLE arrays (9 floats/tri), not raw vertices — the
+  // min-distance kernel is a true point-to-triangle + edge-edge mesh
+  // distance now, not vertex-to-vertex (see index.html's _meshMinDist).
+  window._ccAccessibilityClearance = function (trisA, trisB, maxDistM) {
     if (typeof window._ccWasmMinDist === 'function') {
       var out = new Float32Array(6);
-      var d = window._ccWasmMinDist(vertsA, vertsB, maxDistM || 5, out);
+      var d = window._ccWasmMinDist(trisA, trisB, maxDistM || 5, out);
       return { dist: d, pair: out };
     }
     return null; // core soft-clash path is the fallback when wired in the panel

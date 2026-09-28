@@ -2,19 +2,23 @@
 
 /**
  * Batch intersection test: test one mesh against many.
- * `tris_a` is the reference mesh. `all_tris` is a flat array of ALL triangle data
- * for multiple meshes. `offsets` is [start0, end0, start1, end1, ...] indexing into all_tris
- * (in floats, not triangles). Each pair (start, end) defines one mesh.
+ * Legacy/back-compat entry point (pre-averaged centroids, no AABB filter).
+ * Prefer `batch_intersect_raw` for parity with the JS reference.
  *
- * Returns a flat array of results: [meshIdx, cx, cy, cz, depth, meshIdx, cx, cy, cz, depth, ...]
+ * `tris_a` is the reference mesh. `all_tris` is a flat array of ALL triangle
+ * data for multiple meshes. `offsets` is [start0, end0, start1, end1, ...]
+ * indexing into all_tris (in floats, not triangles). Each pair (start, end)
+ * defines one mesh.
+ *
+ * Returns a flat array of results: [meshIdx, cx, cy, cz, depth, ...]
  * Only includes meshes that intersect.
  * @param {Float32Array} tris_a
  * @param {Float32Array} all_tris
  * @param {Uint32Array} offsets
- * @param {number} epsilon
+ * @param {number} _epsilon
  * @returns {Float32Array}
  */
-export function batch_intersect(tris_a, all_tris, offsets, epsilon) {
+export function batch_intersect(tris_a, all_tris, offsets, _epsilon) {
     try {
         const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
         const ptr0 = passArrayF32ToWasm0(tris_a, wasm.__wbindgen_export);
@@ -23,7 +27,7 @@ export function batch_intersect(tris_a, all_tris, offsets, epsilon) {
         const len1 = WASM_VECTOR_LEN;
         const ptr2 = passArray32ToWasm0(offsets, wasm.__wbindgen_export);
         const len2 = WASM_VECTOR_LEN;
-        wasm.batch_intersect(retptr, ptr0, len0, ptr1, len1, ptr2, len2, epsilon);
+        wasm.batch_intersect(retptr, ptr0, len0, ptr1, len1, ptr2, len2, _epsilon);
         var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
         var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
         var v4 = getArrayF32FromWasm0(r0, r1).slice();
@@ -35,26 +39,57 @@ export function batch_intersect(tris_a, all_tris, offsets, epsilon) {
 }
 
 /**
+ * Batch intersection, raw-point variant for parity with `_runBatch`'s JS
+ * path: same BVH traversal/cap as `mesh_intersect_raw`, but for every mesh
+ * in `offsets` (even ones with zero hits, so the caller can populate a
+ * pair-result cache with confirmed misses, not just hits).
+ *
+ * Returns a flat f64 array of records, one per valid mesh (invalid offset
+ * ranges are skipped, matching `mesh_intersect_raw`'s empty-input miss):
+ *   [meshIdx, maxDepth, nPtsFloats, x0,y0,z0, x1,y1,z1, ...]
+ * repeated per mesh. `nPtsFloats` is 0 for a confirmed BVH-level miss.
+ * @param {Float32Array} tris_a
+ * @param {Float32Array} all_tris
+ * @param {Uint32Array} offsets
+ * @returns {Float64Array}
+ */
+export function batch_intersect_raw(tris_a, all_tris, offsets) {
+    try {
+        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+        const ptr0 = passArrayF32ToWasm0(tris_a, wasm.__wbindgen_export);
+        const len0 = WASM_VECTOR_LEN;
+        const ptr1 = passArrayF32ToWasm0(all_tris, wasm.__wbindgen_export);
+        const len1 = WASM_VECTOR_LEN;
+        const ptr2 = passArray32ToWasm0(offsets, wasm.__wbindgen_export);
+        const len2 = WASM_VECTOR_LEN;
+        wasm.batch_intersect_raw(retptr, ptr0, len0, ptr1, len1, ptr2, len2);
+        var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
+        var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
+        var v4 = getArrayF64FromWasm0(r0, r1).slice();
+        wasm.__wbindgen_export2(r0, r1 * 8, 8);
+        return v4;
+    } finally {
+        wasm.__wbindgen_add_to_stack_pointer(16);
+    }
+}
+
+/**
  * Test if two triangle meshes intersect (hard clash detection).
- *
- * `tris_a` and `tris_b` are flat Float32Arrays: [x0,y0,z0, x1,y1,z1, x2,y2,z2, ...].
- * Length must be divisible by 9 (3 vertices × 3 coords per triangle).
- *
- * Returns a Float32Array of [cx, cy, cz, depth] if intersecting, or empty if not.
- * cx/cy/cz = centroid of intersection points, depth = max penetration.
+ * Legacy/back-compat entry point — pre-averaged centroid, no AABB filter.
+ * Prefer `mesh_intersect_raw` for parity with the JS reference.
  * @param {Float32Array} tris_a
  * @param {Float32Array} tris_b
- * @param {number} epsilon
+ * @param {number} _epsilon
  * @returns {Float32Array}
  */
-export function mesh_intersect(tris_a, tris_b, epsilon) {
+export function mesh_intersect(tris_a, tris_b, _epsilon) {
     try {
         const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
         const ptr0 = passArrayF32ToWasm0(tris_a, wasm.__wbindgen_export);
         const len0 = WASM_VECTOR_LEN;
         const ptr1 = passArrayF32ToWasm0(tris_b, wasm.__wbindgen_export);
         const len1 = WASM_VECTOR_LEN;
-        wasm.mesh_intersect(retptr, ptr0, len0, ptr1, len1, epsilon);
+        wasm.mesh_intersect(retptr, ptr0, len0, ptr1, len1, _epsilon);
         var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
         var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
         var v3 = getArrayF32FromWasm0(r0, r1).slice();
@@ -66,31 +101,74 @@ export function mesh_intersect(tris_a, tris_b, epsilon) {
 }
 
 /**
- * Compute minimum vertex-to-vertex distance between two meshes.
- *
- * `verts_a` and `verts_b` are flat Float32Arrays: [x0,y0,z0, x1,y1,z1, ...].
- * Length must be divisible by 3.
- * `max_dist` is the threshold — returns f32::INFINITY if meshes are farther apart.
- *
- * Returns a Float32Array of [distance, ax, ay, az, bx, by, bz] with the closest pair,
- * or [Infinity] if beyond threshold.
- * @param {Float32Array} verts_a
- * @param {Float32Array} verts_b
- * @param {number} max_dist
- * @returns {Float32Array}
+ * Test if two triangle meshes intersect, mirroring the JS reference's
+ * `_bvhTraverseAll` collection pass EXACTLY (max 8 points, i.e. `pts.length
+ * < 24` floats). Returns the RAW point list with `max_depth` appended as
+ * the last element, or an empty Vec if there is no BVH-level hit at all.
+ * index.html must run the same `_pointInBothBoxes` filter + averaging over
+ * this that it runs over the JS-collected points (see
+ * `_postProcessIntersectPoints` in index.html).
+ * @param {Float32Array} tris_a
+ * @param {Float32Array} tris_b
+ * @returns {Float64Array}
  */
-export function mesh_min_distance(verts_a, verts_b, max_dist) {
+export function mesh_intersect_raw(tris_a, tris_b) {
     try {
         const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
-        const ptr0 = passArrayF32ToWasm0(verts_a, wasm.__wbindgen_export);
+        const ptr0 = passArrayF32ToWasm0(tris_a, wasm.__wbindgen_export);
         const len0 = WASM_VECTOR_LEN;
-        const ptr1 = passArrayF32ToWasm0(verts_b, wasm.__wbindgen_export);
+        const ptr1 = passArrayF32ToWasm0(tris_b, wasm.__wbindgen_export);
         const len1 = WASM_VECTOR_LEN;
-        wasm.mesh_min_distance(retptr, ptr0, len0, ptr1, len1, max_dist);
+        wasm.mesh_intersect_raw(retptr, ptr0, len0, ptr1, len1);
         var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
         var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
-        var v3 = getArrayF32FromWasm0(r0, r1).slice();
-        wasm.__wbindgen_export2(r0, r1 * 4, 4);
+        var v3 = getArrayF64FromWasm0(r0, r1).slice();
+        wasm.__wbindgen_export2(r0, r1 * 8, 8);
+        return v3;
+    } finally {
+        wasm.__wbindgen_add_to_stack_pointer(16);
+    }
+}
+
+/**
+ * Compute the true minimum mesh-to-mesh distance between two triangle
+ * meshes: point-to-triangle (both directions) + edge-edge, BVH-
+ * accelerated. Bit-identical port of `_meshMinDist`'s JS fallback (see
+ * `mesh_dist.rs` and index.html's `_bvhMinDistTraverse`/`_triTriDistSq`
+ * doc comments) — same BVH shape as `mesh_intersect_raw` (bvh::BvhNode),
+ * same sub-test order, same "first strictly smaller wins" tie-break.
+ *
+ * Replaces the old vertex-to-vertex spatial-hash walk (`spatial_hash.rs`,
+ * removed), which measured only how close two meshes' VERTICES were — a
+ * point resting mid-face on the other mesh (no nearby vertex) reported
+ * Infinity/far instead of its real (small) distance. See CLAUDE.md task
+ * notes for the verified repro (a small device 0.1m above a 10x10m slab
+ * center).
+ *
+ * `tris_a` and `tris_b` are flat Float32Arrays, 9 floats per triangle
+ * (matching `mesh_intersect_raw`'s wire shape) — NOT raw vertices.
+ *
+ * Returns [distance, ax, ay, az, bx, by, bz] always — `distance` is
+ * `Infinity` (single-element `[Infinity]`, no pair) only when either input
+ * is empty; with two non-empty meshes a finite distance and closest-point
+ * pair is always found (unlike the old grid walk, there is no "search
+ * neighborhood" that can come up empty).
+ * @param {Float32Array} tris_a
+ * @param {Float32Array} tris_b
+ * @returns {Float64Array}
+ */
+export function mesh_min_distance(tris_a, tris_b) {
+    try {
+        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+        const ptr0 = passArrayF32ToWasm0(tris_a, wasm.__wbindgen_export);
+        const len0 = WASM_VECTOR_LEN;
+        const ptr1 = passArrayF32ToWasm0(tris_b, wasm.__wbindgen_export);
+        const len1 = WASM_VECTOR_LEN;
+        wasm.mesh_min_distance(retptr, ptr0, len0, ptr1, len1);
+        var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
+        var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
+        var v3 = getArrayF64FromWasm0(r0, r1).slice();
+        wasm.__wbindgen_export2(r0, r1 * 8, 8);
         return v3;
     } finally {
         wasm.__wbindgen_add_to_stack_pointer(16);
@@ -145,6 +223,11 @@ function __wbg_get_imports() {
 function getArrayF32FromWasm0(ptr, len) {
     ptr = ptr >>> 0;
     return getFloat32ArrayMemory0().subarray(ptr / 4, ptr / 4 + len);
+}
+
+function getArrayF64FromWasm0(ptr, len) {
+    ptr = ptr >>> 0;
+    return getFloat64ArrayMemory0().subarray(ptr / 8, ptr / 8 + len);
 }
 
 function getArrayU32FromWasm0(ptr, len) {
@@ -237,11 +320,15 @@ function __wbg_finalize_init(instance, module) {
 
 async function __wbg_load(module, imports) {
     if (typeof Response === 'function' && module instanceof Response) {
+        if (!module.ok) {
+            throw new Error(`failed to fetch Wasm: ${module.status} ${module.statusText} fetching '${module.url}'`);
+        }
+
         if (typeof WebAssembly.instantiateStreaming === 'function') {
             try {
                 return await WebAssembly.instantiateStreaming(module, imports);
             } catch (e) {
-                const validResponse = module.ok && expectedResponseType(module.type);
+                const validResponse = expectedResponseType(module.type);
 
                 if (validResponse && module.headers.get('Content-Type') !== 'application/wasm') {
                     console.warn("`WebAssembly.instantiateStreaming` failed because your server does not serve Wasm with `application/wasm` MIME type. Falling back to `WebAssembly.instantiate` which is slower. Original error:\n", e);

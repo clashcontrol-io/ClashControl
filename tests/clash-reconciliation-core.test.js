@@ -65,15 +65,45 @@ test('an auto-resolved clash reopens when the same identity returns', () => {
   assert.equal(out._delta, 'persisting');
 });
 
-test('adjacent 0.5m buckets reconcile only within 300mm', () => {
+test('adjacent 0.5m buckets reconcile within 300mm via the point tiebreak', () => {
   const prev = clash('stable','a','b',[0.24,0,0],{number:4});
   const near = core.mergeDetectionResults([clash('near','a','b',[0.26,0,0])], [prev], deps());
   assert.equal(near.clashes[0].id, 'stable');
   assert.equal(near.clashes[0]._delta, 'persisting');
+});
 
-  const far = core.mergeDetectionResults([clash('far','a','b',[0.74,0,0])], [prev], deps());
-  assert.equal(far.clashes.find((c)=>c.id==='far')._delta, 'new');
-  assert.equal(far.clashes.find((c)=>c.id==='stable')._delta, 'auto_resolved');
+// Bug 5: identity is element-pair based, with the point only used as a
+// tiebreak when a pair genuinely has MULTIPLE clash instances. An
+// unambiguous single clash for a pair (one on each side) must reconcile
+// even if its hit point moved far (engine swap, precision differences) --
+// otherwise engine switches spuriously duplicate clashes.
+test('an unambiguous single clash per pair reconciles even when its point moved far', () => {
+  const prev = clash('stable','a','b',[0.24,0,0],{number:4});
+  const far = core.mergeDetectionResults([clash('far','a','b',[5,5,5])], [prev], deps());
+  assert.equal(far.clashes.length, 1);
+  assert.equal(far.clashes[0].id, 'stable');
+  assert.equal(far.clashes[0]._delta, 'persisting');
+  assert.equal(far.clashes[0].number, 4);
+});
+
+// When a pair genuinely has multiple clash instances (e.g. a long duct
+// crossing a beam at two points), the point/spatial-cell IS needed as a
+// tiebreak -- an ambiguous pair must not collapse to a single record, and
+// unmatched prior instances of that pair still auto-resolve normally.
+test('a pair with genuinely multiple clash instances still uses the point as a tiebreak', () => {
+  const prevA = clash('pair-1','a','b',[0,0,0],{number:1});
+  const prevB = clash('pair-2','a','b',[5,0,0],{number:2});
+  const out = core.mergeDetectionResults(
+    [clash('new-near-1','a','b',[0.1,0,0])],
+    [prevA, prevB],
+    deps()
+  );
+  const persisting = out.clashes.filter((c) => c._delta === 'persisting');
+  assert.equal(persisting.length, 1);
+  assert.equal(persisting[0].id, 'pair-1');
+  const resolved = out.clashes.filter((c) => c._delta === 'auto_resolved');
+  assert.equal(resolved.length, 1);
+  assert.equal(resolved[0].id, 'pair-2');
 });
 
 test('cached identity keys are ignored and recomputed after an identity migration', () => {
@@ -148,4 +178,39 @@ test('stable numbers are reused and new clashes fill the lowest gaps', () => {
   assert.equal(out.find((c)=>c.id==='one').number, 1);
   assert.equal(out.find((c)=>c.id==='three').number, 3);
   assert.equal(out.find((c)=>c.id==='brand-new').number, 2);
+});
+
+// Bug 2: an out-of-coverage clash of ANY status (not just open/in_progress)
+// must be preserved untouched as 'not_checked', never silently dropped.
+test('out-of-coverage clashes are preserved regardless of status (resolved/closed/accepted/denied)', () => {
+  const prev = [
+    clash('open-oos','a','b',[0,0,0],{status:'open'}),
+    clash('resolved-oos','c','d',[1,0,0],{status:'resolved'}),
+    clash('closed-oos','e','f',[2,0,0],{status:'closed'}),
+    clash('accepted-oos','g','h',[3,0,0],{status:'accepted'}),
+  ];
+  // This run's coverage never touches any of these pairs.
+  const out = core.mergeDetectionResults([], prev, deps({coverage: () => false}));
+  assert.equal(out.clashes.length, 4);
+  out.clashes.forEach((c) => {
+    assert.equal(c._delta, 'not_checked');
+  });
+  assert.equal(out.clashes.find((c)=>c.id==='resolved-oos').status, 'resolved');
+  assert.equal(out.clashes.find((c)=>c.id==='closed-oos').status, 'closed');
+  assert.equal(out.clashes.find((c)=>c.id==='accepted-oos').status, 'accepted');
+  assert.equal(out.deltaSummary.notChecked, 4);
+});
+
+// Bug 3: when a match is only found via the neighbouring-grid-cell fallback
+// (point shifted just enough to cross a 0.5m cell boundary), the clash must
+// keep its existing number, not get renumbered as if new.
+test('a neighbouring-grid-cell fallback match keeps the previous clash number', () => {
+  const prev = [clash('orig','a','b',[0.24,0,0],{number:7})];
+  // Shift the point just past the 0.5m grid boundary so the exact identity
+  // key no longer matches, but it's still within the 300mm fallback radius.
+  const next = [clash('orig-run2','a','b',[0.26,0,0])];
+  const out = core.mergeDetectionResults(next, prev, deps()).clashes;
+  assert.equal(out.length, 1);
+  assert.equal(out[0]._delta, 'persisting');
+  assert.equal(out[0].number, 7);
 });

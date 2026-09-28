@@ -1,6 +1,22 @@
 //! BVH (Bounding Volume Hierarchy) for triangle meshes.
-//! Direct Rust port of ClashControl's _buildBVHNode / _bvhTraverseAll.
-//! Uses AABB nodes with median-split on the longest axis.
+//! Operation-for-operation Rust port of ClashControl's `_buildBVHNode` /
+//! `_bvhTraverseAll` (index.html, near lines 5729 and 5827).
+//!
+//! Faithfulness details that matter for bit-identical parity with JS:
+//! - Leaf size <= 4 (LEAF_SIZE), matching `hi-lo <= 4`.
+//! - The per-node sort is a STABLE sort on centroid-sum, matching V8's
+//!   Array.prototype.sort (spec-guaranteed stable since ES2019). A ties
+//!   between equal centroid sums must preserve prior (parent-level) order,
+//!   or traversal — and therefore which points get collected first under
+//!   the point-count cap — silently diverges from JS.
+//! - `traverse_pair`'s `max_pts` is a RAW FLOAT COUNT (mirrors JS's
+//!   `pts.length >= maxPts`, where each hit pushes 3 floats), not a point
+//!   count. The JS call sites pass 3 (probe) and 24 (collect) — i.e. an
+//!   8-point cap for the real collection pass, not 24 points.
+//! - Split priority: leaf-vs-leaf pairs are fully tested; otherwise a leaf
+//!   node is never the one split (it can't be), and between two inner
+//!   nodes the one with the larger `cnt` is split, exactly mirroring
+//!   `(nA.cnt||1) >= (nB.cnt||1)`.
 
 use crate::tri_tri;
 
@@ -69,9 +85,12 @@ impl BvhNode {
             2
         };
 
-        // Sort the sub-range by triangle centroid on split axis
+        // Sort the sub-range by triangle centroid-sum on the split axis.
+        // STABLE sort — must match V8's stable Array.prototype.sort so
+        // that ties (equal centroid sum) preserve incoming order exactly
+        // as the JS reference's `indices.subarray(lo, hi).sort(...)` does.
         let sub = &mut indices[lo..hi];
-        sub.sort_unstable_by(|&a, &b| {
+        sub.sort_by(|&a, &b| {
             let ca = tris[a * 9 + axis] + tris[a * 9 + 3 + axis] + tris[a * 9 + 6 + axis];
             let cb = tris[b * 9 + axis] + tris[b * 9 + 3 + axis] + tris[b * 9 + 6 + axis];
             ca.partial_cmp(&cb).unwrap_or(std::cmp::Ordering::Equal)
@@ -96,75 +115,86 @@ impl BvhNode {
 /// Test if two AABBs overlap.
 #[inline(always)]
 fn aabb_overlap(a: &BvhNode, b: &BvhNode) -> bool {
-    a.mn[0] <= b.mx[0] && a.mx[0] >= b.mn[0]
-        && a.mn[1] <= b.mx[1] && a.mx[1] >= b.mn[1]
-        && a.mn[2] <= b.mx[2] && a.mx[2] >= b.mn[2]
+    !(a.mn[0] > b.mx[0] || a.mx[0] < b.mn[0]
+        || a.mn[1] > b.mx[1] || a.mx[1] < b.mn[1]
+        || a.mn[2] > b.mx[2] || a.mx[2] < b.mn[2])
 }
 
 /// Dual-tree BVH traversal. Finds intersection points between two triangle meshes.
-/// Results are pushed into `pts` as [x, y, z, x, y, z, ...].
-/// `max_depth` tracks the maximum penetration depth.
-/// `max_pts` limits the number of contact points collected (in coordinate count, i.e. pts.len()/3).
+/// Results are pushed into `pts` as [x, y, z, x, y, z, ...] (f64, matching the
+/// JS reference's world-space doubles).
+/// `max_depth` tracks the maximum SAT-overlap length (`_triTriTest`'s 4th
+/// return value), not true penetration depth — same semantics as JS.
+/// `max_pts` is a RAW FLOAT COUNT cap on `pts.len()`, exactly like JS's
+/// `pts.length >= maxPts` (NOT a point count — divide by 3 for that).
 pub fn traverse_pair(
     na: &BvhNode,
     tris_a: &[f32],
     nb: &BvhNode,
     tris_b: &[f32],
-    eps: f32,
-    pts: &mut Vec<f32>,
-    max_depth: &mut f32,
+    pts: &mut Vec<f64>,
+    max_depth: &mut f64,
     max_pts: usize,
+    early_exit: bool,
 ) {
-    if pts.len() / 3 >= max_pts {
+    if pts.len() >= max_pts {
         return;
     }
     if !aabb_overlap(na, nb) {
         return;
     }
 
-    match (&na.kind, &nb.kind) {
-        (BvhKind::Leaf { indices: idx_a }, BvhKind::Leaf { indices: idx_b }) => {
-            // Both leaves: test all triangle pairs
-            for &ia in idx_a {
-                if pts.len() / 3 >= max_pts {
+    let a_leaf = matches!(na.kind, BvhKind::Leaf { .. });
+    let b_leaf = matches!(nb.kind, BvhKind::Leaf { .. });
+
+    if a_leaf && b_leaf {
+        let idx_a = match &na.kind { BvhKind::Leaf { indices } => indices, _ => unreachable!() };
+        let idx_b = match &nb.kind { BvhKind::Leaf { indices } => indices, _ => unreachable!() };
+        for &ia in idx_a {
+            if pts.len() >= max_pts {
+                return;
+            }
+            for &ib in idx_b {
+                if pts.len() >= max_pts {
                     return;
                 }
-                for &ib in idx_b {
-                    if pts.len() / 3 >= max_pts {
-                        return;
+                if let Some((cx, cy, cz, depth)) =
+                    tri_tri::tri_tri_test(tris_a, ia * 9, tris_b, ib * 9, 1e-6)
+                {
+                    pts.push(cx);
+                    pts.push(cy);
+                    pts.push(cz);
+                    if depth > *max_depth {
+                        *max_depth = depth;
                     }
-                    if let Some((cx, cy, cz, depth)) =
-                        tri_tri::tri_tri_test(tris_a, ia * 9, tris_b, ib * 9, eps)
-                    {
-                        pts.push(cx);
-                        pts.push(cy);
-                        pts.push(cz);
-                        if depth > *max_depth {
-                            *max_depth = depth;
-                        }
+                    if early_exit {
+                        return;
                     }
                 }
             }
         }
-        (BvhKind::Inner { left: la, right: ra, count: ca }, _)
-            if matches!(nb.kind, BvhKind::Leaf { .. }) || {
-                if let BvhKind::Inner { count: cb, .. } = &nb.kind {
-                    *ca >= *cb
-                } else {
-                    true
-                }
-            } =>
-        {
-            // Split the larger node (A)
-            traverse_pair(la, tris_a, nb, tris_b, eps, pts, max_depth, max_pts);
-            traverse_pair(ra, tris_a, nb, tris_b, eps, pts, max_depth, max_pts);
+        return;
+    }
+
+    let count_a = match &na.kind { BvhKind::Inner { count, .. } => *count, _ => 1 };
+    let count_b = match &nb.kind { BvhKind::Inner { count, .. } => *count, _ => 1 };
+
+    if b_leaf || (!a_leaf && count_a >= count_b) {
+        // Split the larger node (A) — B is a leaf and can't be split, or A
+        // is at least as big as B.
+        let (la, ra) = match &na.kind { BvhKind::Inner { left, right, .. } => (left, right), _ => unreachable!() };
+        traverse_pair(la, tris_a, nb, tris_b, pts, max_depth, max_pts, early_exit);
+        if early_exit && !pts.is_empty() {
+            return;
         }
-        (_, BvhKind::Inner { left: lb, right: rb, .. }) => {
-            // Split node B
-            traverse_pair(na, tris_a, lb, tris_b, eps, pts, max_depth, max_pts);
-            traverse_pair(na, tris_a, rb, tris_b, eps, pts, max_depth, max_pts);
+        traverse_pair(ra, tris_a, nb, tris_b, pts, max_depth, max_pts, early_exit);
+    } else {
+        let (lb, rb) = match &nb.kind { BvhKind::Inner { left, right, .. } => (left, right), _ => unreachable!() };
+        traverse_pair(na, tris_a, lb, tris_b, pts, max_depth, max_pts, early_exit);
+        if early_exit && !pts.is_empty() {
+            return;
         }
-        _ => {} // shouldn't happen
+        traverse_pair(na, tris_a, rb, tris_b, pts, max_depth, max_pts, early_exit);
     }
 }
 
@@ -194,5 +224,25 @@ mod tests {
             BvhKind::Inner { count, .. } => assert_eq!(*count, 10),
             _ => panic!("Expected inner node for 10 triangles"),
         }
+    }
+
+    #[test]
+    fn test_traverse_max_pts_is_float_count_not_point_count() {
+        // 20 triangles all mutually intersecting in a small overlapping bundle;
+        // with max_pts=24 (float count) the collector must cap at 8 points (24
+        // floats), not 24 points — this is the JS semantics being mirrored.
+        let mut a_tris = Vec::new();
+        let mut b_tris = Vec::new();
+        for i in 0..20 {
+            let x = i as f32 * 0.001;
+            a_tris.extend_from_slice(&[x, 0.0, -1.0, x + 0.5, 0.0, -1.0, x, 0.5, 1.0]);
+            b_tris.extend_from_slice(&[x, 0.0, -1.0, x + 0.5, 0.0, 1.0, x, 0.5, -1.0]);
+        }
+        let bvh_a = BvhNode::build(&a_tris);
+        let bvh_b = BvhNode::build(&b_tris);
+        let mut pts = Vec::new();
+        let mut depth = 0.0;
+        traverse_pair(&bvh_a, &a_tris, &bvh_b, &b_tris, &mut pts, &mut depth, 24, false);
+        assert!(pts.len() <= 24, "pts (floats) must be capped at max_pts=24, got {}", pts.len());
     }
 }

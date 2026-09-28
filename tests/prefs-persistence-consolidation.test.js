@@ -63,6 +63,7 @@ test('PERSISTED_PREF_KEYS is exactly the set the UPD_PREFS reducer case iterates
     'defaultStatus', 'defaultMaxGap', 'resetFiltersOnRun', 'renderStyle',
     'unitScaleOverride', 'lightSettings', 'measureUnits', 'measurePrecision',
     'measureMagnifier', 'measureCalibration', 'homeView', 'zoomSens',
+    'smoothNav', 'navInputMode',
   ]);
 });
 

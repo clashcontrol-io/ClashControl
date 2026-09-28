@@ -2062,7 +2062,30 @@
           // Binary already in Downloads: skip re-download, try URL scheme + fast poll
           _connectBridge(dispatch);
         } else {
-          // First time: download binary + long poll
+          // First time: this immediately fetches an executable from GitHub —
+          // confirm with the user first (what, from where) rather than firing
+          // a download the instant they flip the toggle on.
+          var os = _detectOS();
+          var dl = _downloads[os] || {};
+          var fileName = (dl.url || '').split('/').pop() || 'the Smart Bridge installer';
+          var ok = true;
+          try {
+            ok = window.confirm(
+              'Enable Smart Bridge?\n\n' +
+              'This will download an executable — ' + fileName + ' — from ' +
+              'GitHub Releases (github.com/clashcontrol-io/ClashControl), ' +
+              'a program that runs on your machine and lets AI assistants ' +
+              '(Claude, ChatGPT, etc.) drive ClashControl over a local ' +
+              'connection. Nothing is installed automatically; you run it ' +
+              'yourself after it downloads.\n\n' +
+              'Continue?'
+            );
+          } catch (e) { ok = true; } // no confirm() available — don't block headless/test contexts
+          if (!ok) {
+            if (dispatch) dispatch({t:'UPD_SMART_BRIDGE', u:{connecting:false, installing:false, failed:false}});
+            return;
+          }
+          // Download binary + long poll
           _triggerDownload();
           try { localStorage.setItem('cc_sb_downloaded', '1'); } catch (e) {}
           _connectBridge(dispatch, {installing: true});

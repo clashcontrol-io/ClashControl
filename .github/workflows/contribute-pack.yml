@@ -70,19 +70,24 @@ jobs:
             if (!m) process.exit(1);
             process.stdout.write(m[0].replace(/[)\]>'\"]+$/, ''));
           ")
-          if [ -z "$URL" ]; then
-            gh issue comment "$ISSUE" --body "Couldn't find an attached file in the issue description — please drag-and-drop your \`.json\` file directly into the issue body (not a separate comment) and re-apply \`contribution:review-passed\`."
+          # Strict allow-list: scheme/host/path shape only, no shell metacharacters possible.
+          if [ -z "$URL" ] || ! [[ "$URL" =~ ^https://github\.com/user-attachments/files/[0-9]+/[A-Za-z0-9._-]+$ ]]; then
+            gh issue comment "$ISSUE" --body "Couldn't find a valid attached file URL in the issue description — please drag-and-drop your \`.json\` file directly into the issue body (not a separate comment) and re-apply \`contribution:review-passed\`."
             exit 1
           fi
           echo "url=$URL" >> "$GITHUB_OUTPUT"
 
       - name: Download attachment (size-limited)
-        run: curl -sSL --max-filesize 204800 --fail -o pack.json "${{ steps.attach.outputs.url }}"
+        env:
+          ATTACHMENT_URL: ${{ steps.attach.outputs.url }}
+        run: curl -sSL --max-filesize 204800 --fail -o pack.json "$ATTACHMENT_URL"
 
       - name: Validate + apply
         id: apply
+        env:
+          KIND: ${{ steps.kind.outputs.kind }}
         run: |
-          if ! node scripts/apply-contributed-pack.js "${{ steps.kind.outputs.kind }}" pack.json > apply-output.txt 2>&1; then
+          if ! node scripts/apply-contributed-pack.js "$KIND" pack.json > apply-output.txt 2>&1; then
             echo "failed=1" >> "$GITHUB_OUTPUT"
           fi
           cat apply-output.txt

@@ -16,7 +16,7 @@
 // than guessing (see runIDSSpecs' elUnchecked/note handling in
 // addons/data-quality.js). A naive pass-rate gate would count every
 // honestly-incomplete case as "wrong", which is exactly the kind of
-// dishonest number IMPROVEMENT_PLAN.md's Wave 0 was about eliminating. So
+// dishonest number docs/IMPROVEMENT_PLAN.md's Wave 0 was about eliminating. So
 // the real gate is "CC never asserts an incorrect verdict" — "couldn't
 // verify" is tracked and reported as its own bucket, not folded into either
 // pass or fail.

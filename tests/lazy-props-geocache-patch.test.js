@@ -1,5 +1,5 @@
 'use strict';
-// Regression lock for a real-browser-probe finding (V7_RELEASE_PLAN.md P6.2-
+// Regression lock for a real-browser-probe finding (docs/V7_RELEASE_PLAN.md P6.2-
 // continued): a model parked (or auto-parked) WHILE its lazy Phase 2 property
 // extraction was still in flight used to permanently lose eligibility for
 // Park/Restore's fast cache-based rebuild (_geoDeserialize) -- every future

@@ -2,7 +2,7 @@
 
 Wraps the exact same `index.html` the website ships in a system WebView.
 No fork: desktop capabilities arrive later via `addons/tauri-bridge.js`
-(capability-detected, per TAURI.md). Phase 0 = shell + installers only.
+(capability-detected, per docs/TAURI.md). Phase 0 = shell + installers only.
 
 Build locally (needs Rust + platform WebView deps, see Tauri v2 docs):
 

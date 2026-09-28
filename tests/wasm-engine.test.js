@@ -40,16 +40,28 @@ test('wasm pkg: degenerate input is safe, never throws', async () => {
   ];
   for (const b of bad) {
     assert.doesNotThrow(() => mod.mesh_intersect(b, tri, 1e-6));
-    assert.doesNotThrow(() => mod.mesh_min_distance(b, tri, 1));
+    assert.doesNotThrow(() => mod.mesh_min_distance(b, tri));
   }
 });
 
-test('wasm pkg: min_distance returns the metric distance and Infinity beyond threshold', async () => {
+test('wasm pkg: min_distance is a true triangle-mesh distance (point-to-triangle + edge-edge), no threshold cutoff', async () => {
+  // mesh_min_distance takes TRIANGLE arrays (9 floats/tri), not raw points —
+  // see engine/src/lib.rs and index.html's _meshMinDist doc comments. There
+  // is no threshold-cutoff concept any more (the real minimum is always
+  // computed via BVH); callers compare the returned distance to their own
+  // gap threshold.
   const mod = await loadWasm();
-  const a = new Float32Array([0, 0, 0]);
-  const b = new Float32Array([3, 4, 0]); // 3-4-5
-  const near = mod.mesh_min_distance(a, b, 10);
-  assert.ok(Math.abs(near[0] - 5) < 1e-5, 'expected 5, got ' + near[0]);
-  const beyond = mod.mesh_min_distance(a, b, 0.5);
-  assert.ok(beyond.length === 0 || beyond[0] === Infinity, 'beyond threshold must be Infinity/empty');
+  const a = new Float32Array([0, 0, 0, 3, 0, 0, 0, 4, 0]);
+  const b = new Float32Array([0, 4, 0, 6, 4, 0, 0, 8, 0]);
+  const touching = mod.mesh_min_distance(a, b); // shares vertex (0,4,0) -> 0
+  assert.ok(Math.abs(touching[0]) < 1e-5, 'expected ~0 (shared vertex), got ' + touching[0]);
+
+  // The verified bug this kernel fixes: a small device sitting mid-face
+  // 0.1m above a large slab's center. No vertex of either triangle is near
+  // a vertex of the other — the OLD vertex-to-vertex spatial hash reported
+  // this as far/Infinity.
+  const slab = new Float32Array([-5, -5, 0, 5, -5, 0, -5, 5, 0]);
+  const device = new Float32Array([-0.1, -0.1, 0.1, 0.1, -0.1, 0.1, -0.1, 0.1, 0.1]);
+  const clearance = mod.mesh_min_distance(slab, device);
+  assert.ok(Math.abs(clearance[0] - 0.1) < 1e-5, 'expected ~0.1, got ' + clearance[0]);
 });
