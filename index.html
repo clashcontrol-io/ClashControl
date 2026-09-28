@@ -1007,6 +1007,60 @@ function startApp() {
   }
   window._ccReadFileWithProgress = _readFileWithProgress;
 
+  // ── Fast pre-parse validation for IFC/STEP files ────────────────────
+  // web-ifc (the WASM parser) has no graceful failure mode for garbage
+  // input: a 0-byte file faults almost immediately with a low-level
+  // "memory access out of bounds", while any non-STEP file renamed .ifc (or
+  // a truncated export/download) runs away allocating memory for many
+  // seconds — climbing into the gigabytes — before finally aborting. All of
+  // that is avoidable: a real STEP/IFC file is cheap to sanity-check from
+  // its raw bytes before ever handing them to the parser. This runs in
+  // well under a millisecond even on a large buffer (only small slices at
+  // the head/tail are scanned) and fails fast with a clear, specific
+  // message instead of a multi-minute runaway allocation.
+  function _ccValidateIfcPreParse(buf, fileName) {
+    var name = fileName || 'File';
+    if (!buf || !buf.byteLength) {
+      return { ok: false, error: name + ' is empty (0 bytes) — not a valid IFC file.' };
+    }
+    function sliceText(start, len) {
+      var bytes = new Uint8Array(buf, start, len);
+      var out = '';
+      // Chunked to avoid blowing the call stack on String.fromCharCode.apply
+      // for larger slices; this is only ever a few KB either way.
+      for (var i = 0; i < bytes.length; i += 4096) {
+        out += String.fromCharCode.apply(null, bytes.subarray(i, Math.min(i + 4096, bytes.length)));
+      }
+      return out;
+    }
+    var headLen = Math.min(buf.byteLength, 4096);
+    var head = sliceText(0, headLen);
+    if (!/ISO-10303-21/i.test(head)) {
+      return { ok: false, error: name + ' does not look like an IFC/STEP file (missing the "ISO-10303-21" header marker).' };
+    }
+    if (!/HEADER\s*;/i.test(head)) {
+      return { ok: false, error: name + ' is missing a HEADER; section — not a valid STEP file.' };
+    }
+    // DATA; can sit further in on files with an unusually long header —
+    // scan a bigger (still cheap) slice for it.
+    var dataLen = Math.min(buf.byteLength, 65536);
+    var dataHead = dataLen === headLen ? head : sliceText(0, dataLen);
+    if (!/DATA\s*;/i.test(dataHead)) {
+      return { ok: false, error: name + ' is missing a DATA; section — not a valid STEP file.' };
+    }
+    // Completeness: a well-formed STEP file ends with ENDSEC; then
+    // END-ISO-10303-21;. A file that just stops mid-entity (an interrupted
+    // download or export) trips the same runaway-allocation failure mode
+    // in the WASM parser as outright garbage input.
+    var tailLen = Math.min(buf.byteLength, 4096);
+    var tail = sliceText(buf.byteLength - tailLen, tailLen);
+    if (!/ENDSEC\s*;/i.test(tail) || !/END-ISO-10303-21\s*;/i.test(tail)) {
+      return { ok: false, error: name + ' looks truncated (no ENDSEC;/END-ISO-10303-21; at the end) — it may not have finished downloading or exporting.' };
+    }
+    return { ok: true };
+  }
+  window._ccValidateIfcPreParse = _ccValidateIfcPreParse;
+
   var _CC_CONSENT_VERSION = '1';
   function _ccConsentIsExplicit() {
     try { return localStorage.getItem('cc_data_consent_explicit') === _CC_CONSENT_VERSION; }
@@ -19435,6 +19489,11 @@ function startApp() {
             var _rpct = total > 0 ? Math.round(loaded / total * 15) : 0;
             _onProg('Reading file ' + _rpct + '%');
           }).then(function(buf) {
+            var _preCheck = _ccValidateIfcPreParse(buf, f.name);
+            if (!_preCheck.ok) {
+              errors.push(_preCheck.error);
+              return;
+            }
             _onProg('Starting IFC parser 16%');
             var disc='structural', col=DISC[0].c;
             var _lazyPropsTarget = {modelId: null};
@@ -32849,7 +32908,32 @@ function startApp() {
     return _nlFastStats;
   };
 
+  // ── Dispatch-level exactly-once guard ──────────────────────────────
+  // A single user action (Enter key, click) can end up calling
+  // processNLCommandWithLLM more than once for the identical command text —
+  // e.g. a duplicate keydown/composition event, or a re-render that rebinds
+  // the same handler before the first invocation has settled. Each
+  // individual command used to have to defend itself (see saveProject's own
+  // debounce below) which doesn't scale. This wraps every call: a second
+  // call with the same (raw, replyContext) within the guard window returns
+  // the *same* in-flight/just-settled promise instead of re-running the
+  // command (and its side effects — dispatches, downloads, fetches) again.
+  var _nlDispatchGuard = null; // {key, ts, promise}
+  var NL_DISPATCH_GUARD_MS = 700;
   function processNLCommandWithLLM(raw, s, d, replyContext) {
+    var _dgKey = String(raw) + '\u0000' + (replyContext ? String(replyContext) : '');
+    var _dgNow = Date.now();
+    if (_nlDispatchGuard && _nlDispatchGuard.key === _dgKey && (_dgNow - _nlDispatchGuard.ts) < NL_DISPATCH_GUARD_MS) {
+      return _nlDispatchGuard.promise;
+    }
+    var _dgEntry = { key: _dgKey, ts: _dgNow, promise: null };
+    _nlDispatchGuard = _dgEntry;
+    var _dgResult = _processNLCommandWithLLMImpl(raw, s, d, replyContext);
+    _dgEntry.promise = _dgResult;
+    return _dgResult;
+  }
+
+  function _processNLCommandWithLLMImpl(raw, s, d, replyContext) {
     function _captureNL(result, path) {
       try {
         var action = null;
@@ -39529,6 +39613,11 @@ function startApp() {
         // warning threshold entirely. Runs every tick (not one-shot).
         if (typeof window._ccAutoParkPass === 'function') window._ccAutoParkPass();
         if (_memWarnFiredRef.current) return;
+        // Only meaningful when there's something to unload — a heap spike
+        // while parsing a broken/garbage IFC file (before any model has
+        // actually loaded) used to pop the "unload models" modal with
+        // nothing for it to offer, which reads as nonsensical.
+        if (!_latestSRef.current.models.length) return;
         if (performance.memory.usedJSHeapSize >= _MEM_WARN_BYTES) {
           _memWarnFiredRef.current = true;
           setShowMemWarn(true);
