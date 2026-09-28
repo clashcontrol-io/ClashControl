@@ -50,6 +50,9 @@ function runExport(camera) {
     _ccChangelogUser: 'Tester',
     _ccRenderSheetToCanvas: () => null,
     window: { CC_VERSION: { v: 'test' }, _ccViewport: { getCamera: () => ({ aspect: 1.5 }) } },
+    _ccGetBcfProjectGuid: () => 'PROJECT-GUID',
+    _bcfSceneToIfc: (v) => ({ x: v.x, y: -v.z, z: v.y }),
+    A: { UPD_ISSUE: 'UPD_ISSUE', UPD_VIEWPOINT: 'UPD_VIEWPOINT' },
     confirm: () => false,
   };
   const fn = new Function(...Object.keys(sandbox), fnSrc + '; return exportBCF;')(...Object.values(sandbox));
