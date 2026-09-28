@@ -23142,29 +23142,27 @@ function startApp() {
     },[exportOpen]);
     return html`<div ref=${exportRef2} style=${{position:'relative',flexShrink:0,display:'inline-flex',gap:'.35rem'}}>
       <button
-        title="Import BCF (.bcf/.bcfzip)"
-        onClick=${function(){ importBCF(window._ccDispatch); }}
+        title=${hasItems?'BCF: import or export '+bcfItems.length+' '+source:'BCF: import (nothing to export yet)'}
+        onClick=${function(){setExportOpen(!exportOpen);}}
         style=${{...S_BTN,padding:'.35rem .55rem',background:'var(--bg-secondary)',color:'var(--text-secondary)',border:'1px solid var(--border)',fontSize:'0.72rem',fontWeight:600,cursor:'pointer',display:'inline-flex',alignItems:'center',gap:'.25rem',whiteSpace:'nowrap'}}>
-        <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
-        Import BCF
-      </button>
-      <button
-        title=${hasItems?'Export '+bcfItems.length+' '+source+' to BCF':'Nothing to export yet'}
-        onClick=${function(){if(hasItems)setExportOpen(!exportOpen);}}
-        style=${{...S_BTN,padding:'.35rem .55rem',background:'var(--bg-secondary)',color:hasItems?'var(--text-secondary)':'var(--text-muted)',border:'1px solid var(--border)',fontSize:'0.72rem',fontWeight:600,opacity:hasItems?1:0.5,cursor:hasItems?'pointer':'default',display:'inline-flex',alignItems:'center',gap:'.25rem',whiteSpace:'nowrap'}}>
         <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
-        Export
+        BCF
         <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M6 9l6 6 6-6"/></svg>
       </button>
       ${exportOpen && html`<div style=${{position:'absolute',right:0,top:'calc(100% + 4px)',background:'var(--bg-secondary)',border:'1px solid var(--border)',borderRadius:'var(--radius-sm)',boxShadow:'var(--shadow-md)',zIndex:'var(--z-dropdown)',minWidth:160,overflow:'hidden'}}>
-        <button onClick=${function(){exportBCF(bcfItems,'2.1',s.viewpoints,s);setExportOpen(false);}}
+        <button onClick=${function(){setExportOpen(false);importBCF(window._ccDispatch);}}
           style=${{display:'block',width:'100%',textAlign:'left',padding:'.45rem .7rem',fontSize:'0.75rem',background:'none',border:'none',color:'var(--text-primary)',cursor:'pointer',fontFamily:'var(--font-body)'}}>
-          BCF 2.1
+          Import BCF
+          <span style=${{display:'block',fontSize:'0.63rem',color:'var(--text-faint)'}}>.bcf / .bcfzip</span>
+        </button>
+        <button disabled=${!hasItems} onClick=${function(){if(!hasItems)return;exportBCF(bcfItems,'2.1',s.viewpoints,s);setExportOpen(false);}}
+          style=${{display:'block',width:'100%',textAlign:'left',padding:'.45rem .7rem',fontSize:'0.75rem',background:'none',border:'none',color:hasItems?'var(--text-primary)':'var(--text-muted)',cursor:hasItems?'pointer':'default',opacity:hasItems?1:0.5,fontFamily:'var(--font-body)',borderTop:'1px solid var(--border-subtle)'}}>
+          Export BCF 2.1
           <span style=${{display:'block',fontSize:'0.63rem',color:'var(--text-faint)'}}>Revit, Navisworks, Solibri</span>
         </button>
-        <button onClick=${function(){exportBCF(bcfItems,'3.0',s.viewpoints,s);setExportOpen(false);}}
-          style=${{display:'block',width:'100%',textAlign:'left',padding:'.45rem .7rem',fontSize:'0.75rem',background:'none',border:'none',color:'var(--text-primary)',cursor:'pointer',fontFamily:'var(--font-body)',borderTop:'1px solid var(--border-subtle)'}}>
-          BCF 3.0
+        <button disabled=${!hasItems} onClick=${function(){if(!hasItems)return;exportBCF(bcfItems,'3.0',s.viewpoints,s);setExportOpen(false);}}
+          style=${{display:'block',width:'100%',textAlign:'left',padding:'.45rem .7rem',fontSize:'0.75rem',background:'none',border:'none',color:hasItems?'var(--text-primary)':'var(--text-muted)',cursor:hasItems?'pointer':'default',opacity:hasItems?1:0.5,fontFamily:'var(--font-body)',borderTop:'1px solid var(--border-subtle)'}}>
+          Export BCF 3.0
           <span style=${{display:'block',fontSize:'0.63rem',color:'var(--text-faint)'}}>Extended spec, newer tools</span>
         </button>
         <button onClick=${function(){if(window._ccClashReport)window._ccClashReport(s);setExportOpen(false);}}
@@ -23574,8 +23572,8 @@ function startApp() {
         <div style=${{fontSize:'0.69rem',color:'var(--text-faint)',textAlign:'right'}}>${_cc_t('issues.filter.shownCount','{shown} / {total} shown',{shown:items.length,total:rawItems.length})}</div>
       </div>`}
       ${s.tab==='issues' && html`<div style=${{padding:'.4rem',borderBottom:'1px solid var(--border-subtle)',flexShrink:0,display:'flex',flexDirection:'column',gap:'.3rem'}}>
-        <div style=${{display:'flex',gap:'.3rem'}}>
-          <button onClick=${function(){d({t:A.MODAL,v:true,el:window._ccSelectedEl||undefined})}} style=${{...S_BTN,flex:1,background:'var(--accent)',color:'var(--accent-contrast)',fontWeight:600}}>+ ${_cc_t('issues.newIssue','New Issue')}</button>
+        <div style=${{display:'flex',flexWrap:'wrap',gap:'.3rem'}}>
+          <button onClick=${function(){d({t:A.MODAL,v:true,el:window._ccSelectedEl||undefined})}} style=${{...S_BTN,flex:'1 1 auto',minWidth:'6rem',background:'var(--accent)',color:'var(--accent-contrast)',fontWeight:600}}>+ ${_cc_t('issues.newIssue','New Issue')}</button>
           ${function(){
             // Prefer the currently-active item when it IS a clash; otherwise
             // fall back to the last clash that was active before the Issues
