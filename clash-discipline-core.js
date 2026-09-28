@@ -39,7 +39,43 @@
     return !disciplinePairEnabled(dA, dB, rules);
   }
 
+  // File-name hint tokens, checked as a whole-*word prefix* (not an
+  // anywhere-substring): "architecture" matches the "arch"/"archi"/
+  // "architect" tokens because the word "architecture" *starts with* them,
+  // but an unrelated word like "mark" does NOT match the "ark" token,
+  // because "mark" doesn't start with "ark". Hyphenated tokens (w-inst,
+  // e-inst) are matched against the raw (unsplit) name instead, since
+  // splitting on '-' would tear them apart.
+  var NAME_HINTS = {
+    architectural: ['arch','archi','architect','bouwkundig','ark'],
+    mep: ['mep','hvac','w-inst','e-inst','installatie','sanitair','elektra','plumbing','electrical'],
+    structural: ['str','struct','constr','constructie','beton'],
+    civil: ['civi','terrein','infra','wegen','bridge','gww','maaiveld']
+  };
+
+  function _nameHintMatches(nm, words, tokens) {
+    return tokens.some(function(tok) {
+      if (tok.indexOf('-') >= 0) return nm.indexOf(tok) >= 0;
+      return words.some(function(w) { return w.lastIndexOf(tok, 0) === 0; }); // w.startsWith(tok)
+    });
+  }
+
+  // File-name hints are checked BEFORE the element-class ratio (below):
+  // a model named "Architecture.ifc" that happens to be dominated by shared
+  // types (walls/slabs) with only a handful of typed elements should not
+  // get out-voted into 'structural' by a handful of IfcColumn/IfcBeam
+  // instances — the author's own naming is the stronger signal. The ratio
+  // heuristic is the fallback for files with no recognizable naming
+  // convention at all.
   function detectDiscipline(elements, name) {
+    var nm = (name||'').toLowerCase();
+    if (nm) {
+      var words = nm.split(/[^a-z0-9]+/).filter(Boolean);
+      if (_nameHintMatches(nm, words, NAME_HINTS.architectural)) return 'architectural';
+      if (_nameHintMatches(nm, words, NAME_HINTS.mep))           return 'mep';
+      if (_nameHintMatches(nm, words, NAME_HINTS.structural))    return 'structural';
+      if (_nameHintMatches(nm, words, NAME_HINTS.civil))         return 'civil';
+    }
     var mep=0, str=0, arc=0, civ=0;
     (elements||[]).forEach(function(el){
       var t=(el.props&&el.props.ifcType)||'';
@@ -49,13 +85,6 @@
     var total = mep+str+arc+civ;
     function lead(){ var m=Math.max(mep,str,arc,civ); return m===0?null:(m===mep?'mep':m===str?'structural':m===civ?'civil':'architectural'); }
     if (total >= 5 && Math.max(mep,str,arc,civ) >= total*0.5) return lead();
-    var nm = (name||'').toLowerCase();
-    if (nm) {
-      if (/installat|ventilat|klimaat|sanitair|riool|verwarm|elektr|electr|hvac|\bmep\b|mechanic|plumb|piping|\bduct|\bhv\b/.test(nm)) return 'mep';
-      if (/constructi|structur|draagc|fundering|wapening|beton|staalc|framing|rebar|\bstr\b|[\-_]str[\-_]/.test(nm)) return 'structural';
-      if (/bouwkundig|architect|gevel|interieur|afbouw|\barch\b|\bark\b|\bbk\b/.test(nm)) return 'architectural';
-      if (/\bcivi|terrein|infra|wegen|bridge|\bgww\b|maaiveld/.test(nm)) return 'civil';
-    }
     return lead() || 'architectural';
   }
 

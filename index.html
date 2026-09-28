@@ -1421,7 +1421,7 @@ function startApp() {
   // Restore section state persisted from previous session
   var _savedSection=(function(){try{return JSON.parse(localStorage.getItem('cc_section')||'null');}catch(e){return null;}})();
   var INIT = {
-    models:[], parkedModels:[], clashes:[], issues:[], activeId:null, showModal:false, showSettings:false, modalElement:null, tab:null, isRecording:false, selectionSets:[], searchSets:[], assignmentRules:[],
+    models:[], parkedModels:[], clashes:[], issues:[], activeId:null, lastActiveClashId:null, showModal:false, showSettings:false, modalElement:null, tab:null, isRecording:false, selectionSets:[], searchSets:[], assignmentRules:[],
     rules:{ modelA:'all', modelB:'all', hard:true, maxGap:50, minGap:0, duplicates:false, changeAware:false, excludeSelf:true, excludeTypes:[], excludeTypePairs:[], minOverlapVolM3:1e-5, toleranceByTypePair:{}, useSemanticFilter:true, includeSpaces:false, excludeSameDiscipline:true },
     detectionSettings:null, // Captured at detection run time: {clearance_mm, discipline_filters, scope:{complete, partialModels?}}
     trainingMode:(function(){try{var v=localStorage.getItem('cc_trainingMode');return v===null?true:v==='1';}catch(e){return true;}}()),
@@ -1535,7 +1535,7 @@ function startApp() {
     TOGGLE_ALL_STOREYS:'TOGGLE_ALL_STOREYS',
     SET_CLASHES:'SET_CLASHES', MERGE_CLASHES:'MERGE_CLASHES', ADD_CLASHES:'ADD_CLASHES', DETECTING:'DETECTING', STOP_DETECT:'STOP_DETECT',
     SWITCHING_PROJECT:'SWITCHING_PROJECT',
-    ADD_ISSUE:'ADD_ISSUE', UPD_ISSUE:'UPD_ISSUE', BATCH_UPD_ISSUE:'BATCH_UPD_ISSUE',
+    ADD_ISSUE:'ADD_ISSUE', UPD_ISSUE:'UPD_ISSUE', BATCH_UPD_ISSUE:'BATCH_UPD_ISSUE', DEL_ISSUE:'DEL_ISSUE',
     AI_FEEDBACK:'AI_FEEDBACK', CLEAR_TRAINING_DATA:'CLEAR_TRAINING_DATA',
     UPD_CLASH:'UPD_CLASH', BATCH_UPD_CLASH:'BATCH_UPD_CLASH',
     ACTIVE:'ACTIVE', MODAL:'MODAL',
@@ -2057,6 +2057,17 @@ function startApp() {
         }
         return Object.assign({},s,{issues:s.issues.concat([a.v]),clashes:aiClashes});
       case A.UPD_ISSUE:   return Object.assign({},s,{issues:s.issues.map(function(i){return i.id===a.id?Object.assign({},i,a.u):i})});
+      case A.DEL_ISSUE:
+        // Deleting an issue clears the clash-side link (linkedIssueId) so the
+        // clash goes back to being unpromoted, and drops any viewpoint
+        // captured for this issue (viewpoints are addressed by linkedId).
+        return Object.assign({},s,{
+          issues: s.issues.filter(function(i){return i.id!==a.id;}),
+          clashes: s.clashes.map(function(c){return c.linkedIssueId===a.id?Object.assign({},c,{linkedIssueId:null}):c;}),
+          viewpoints: (s.viewpoints||[]).filter(function(v){return v.linkedId!==a.id;}),
+          activeId: s.activeId===a.id?null:s.activeId,
+          selected: (function(){ if(!s.selected||!s.selected[a.id]) return s.selected; var n=Object.assign({},s.selected); delete n[a.id]; return n; })()
+        });
       case A.AI_FEEDBACK: return Object.assign({},s,{clashes:s.clashes.map(function(c){
         if(c.id!==a.id) return c;
         var upd2 = {aiFeedback:a.v};
@@ -2162,7 +2173,16 @@ function startApp() {
         }
         return upd;
       })});
-      case A.ACTIVE:      return Object.assign({},s,{activeId:a.id,sectionAxis:null,sectionCustom:null});
+      case A.ACTIVE:
+        // Issues tab auto-selects its first issue on open (see the App-level
+        // "clean up 3D state when switching tabs" effect), which overwrites
+        // activeId and made "+ From clash" go dead the moment a clash's own
+        // activeId got superseded by an issue's. Track the most recent
+        // *clash* id separately so "+ From clash" keeps working across tab
+        // switches regardless of what's currently active.
+        var _isClashId = a.id!=null && s.clashes.some(function(c){return c.id===a.id;});
+        return Object.assign({},s,{activeId:a.id,sectionAxis:null,sectionCustom:null,
+          lastActiveClashId:_isClashId?a.id:s.lastActiveClashId});
       case A.MODAL:       return Object.assign({},s,{showModal:a.v, modalElement:a.el||null});
       case A.UPD_RULES:   return Object.assign({},s,{rules:Object.assign({},s.rules,a.u)});
       case A.SHOW_RUN_MODAL: return Object.assign({},s,{runModalOpen:!!a.v});
@@ -8782,6 +8802,24 @@ function startApp() {
                 source: aiSource || null,
                 at:     aiAt     || null };
             }
+            // <Comment> elements live at Markup level (siblings of <Topic>),
+            // not nested inside it — see exportBCF. Recover them as the
+            // issue's comment thread so BCF round-trips comments instead of
+            // silently dropping them.
+            var commentNodes = doc.querySelectorAll('Markup > Comment');
+            if (commentNodes.length) {
+              var importedComments = [];
+              for (var cmi = 0; cmi < commentNodes.length; cmi++) {
+                var cn = commentNodes[cmi];
+                var cText = (cn.querySelector('Comment')||{}).textContent || '';
+                if (!cText) continue;
+                var cAuthorTxt = (cn.querySelector('Author')||{}).textContent || 'Imported';
+                var cDateTxt = (cn.querySelector('Date')||{}).textContent || new Date().toISOString();
+                var cTs = Date.parse(cDateTxt); if (isNaN(cTs)) cTs = Date.now();
+                importedComments.push({ id: cn.getAttribute('Guid') || uid(), author: cAuthorTxt, text: cText, ts: cTs });
+              }
+              if (importedComments.length) issuePayload.comments = importedComments;
+            }
             // Visibility clash reconstitution. cc:visType marks the
             // topic as a sight-line obstruction; the From/To vectors
             // and blocker id let the 3D viewer redraw the line when
@@ -9296,6 +9334,21 @@ function startApp() {
         markup += '      </ViewPoint>\n    </Viewpoints>\n';
       }
       markup += '  </Topic>\n';
+      // <Comment> — Markup-level siblings of <Topic> in both 2.1 and 3.0.
+      // Recovered on import via `Markup > Comment` (see _runBCFImport).
+      if (it.comments && it.comments.length) {
+        it.comments.forEach(function(cm){
+          if (!cm || !cm.text) return;
+          var cGuid = cm.bcfGuid || guid();
+          if (v3) cGuid = String(cGuid).toLowerCase();
+          var cDate = cm.ts ? new Date(cm.ts).toISOString() : new Date().toISOString();
+          markup += '  <Comment Guid="'+cGuid+'">\n';
+          markup += '    <Date>'+cDate+'</Date>\n';
+          markup += '    <Author>'+esc(cm.author || realAuthor)+'</Author>\n';
+          markup += '    <Comment>'+esc(cm.text)+'</Comment>\n';
+          markup += '  </Comment>\n';
+        });
+      }
       if (!v3 && vp && vpGuid) {
         // 2.1: viewpoints are repeated Markup-level <Viewpoints Guid> elements.
         markup += '  <Viewpoints Guid="'+vpGuid+'">\n';
@@ -20428,6 +20481,18 @@ function startApp() {
         </span>
         <span style=${{width:10,height:10,borderRadius:'50%',background:m.color,flexShrink:0}}></span>
         <span style=${{color:'var(--text-primary)',fontSize:'0.86rem',flex:1,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}} title=${m.name}>${m.name}</span>
+        ${function(){
+          // Task C: the discipline was only visible after expanding the
+          // model row (the <select> further down), which is how
+          // "Architecture.ifc" sat mis-classified as 'structural' for a
+          // whole session before anyone noticed — nothing on the collapsed
+          // row hinted at it. A small always-visible chip, clicking it opens
+          // the same discipline selector this card already has.
+          var discObj = DISC.find(function(x){return x.id===m.discipline;}) || DISC[DISC.length-1];
+          return html`<button onClick=${function(e){e.stopPropagation();setOpen(true);}}
+            title=${_cc_t('modelCard.disciplineChipTip','Discipline: {d} — click to change',{d:discObj.label})}
+            style=${{fontSize:'0.6rem',padding:'.05rem .35rem',borderRadius:99,border:'1px solid '+discObj.c+'55',background:discObj.c+'22',color:discObj.c,fontWeight:600,flexShrink:0,cursor:'pointer',whiteSpace:'nowrap'}}>${discObj.label}</button>`;
+        }()}
         ${m._version>1 && html`<span style=${{fontSize:'0.57rem',color:'var(--accent)',background:'var(--accent-bg)',padding:'.05rem .25rem',borderRadius:3,flexShrink:0,fontWeight:600}}>v${m._version}</span>`}
         ${m._stub && html`<span style=${{fontSize:'0.63rem',color:'#f59e0b',background:'var(--pill-amber-bg)',padding:'.05rem .3rem',borderRadius:4,flexShrink:0}}>${_cc_t('modelCard.stub','stub')}</span>`}
         ${m.stats && m.stats.loadType && html`<span style=${{fontSize:'0.57rem',padding:'1px 4px',borderRadius:3,background:'var(--accent-bg)',color:'var(--accent)',fontWeight:600,flexShrink:0}}>${m.stats.loadType}</span>`}
@@ -21933,6 +21998,22 @@ function startApp() {
     </div>`;
   }
 
+  // Task C.3: which of a preset's disc:X model filters (modelA/modelB)
+  // have no loaded, visible model classified that way — used to warn
+  // in the Quick Run preset grid before a run silently returns 0 clashes.
+  function _ccPresetMissingDisciplines(preset, models) {
+    var loaded = {};
+    (models||[]).forEach(function(m){ if (m && m.visible!==false) loaded[m.discipline] = true; });
+    var missing = [];
+    [preset.r.modelA, preset.r.modelB].forEach(function(v){
+      if (v && v.indexOf('disc:')===0) {
+        var disc = v.slice(5);
+        if (!loaded[disc] && missing.indexOf(disc)===-1) missing.push(disc);
+      }
+    });
+    return missing;
+  }
+
   // ── Clash Rules Panel (Classical UI) ────────────────────────────
   function ClashRulesPanel(props) {
     var s = props.s, d = props.d;
@@ -22010,11 +22091,21 @@ function startApp() {
         </div>
         <div style=${{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(150px,1fr))',gap:'.3rem'}}>
           ${PRESETS.map(function(p) {
-            return html`<button key=${p.label} onClick=${function(){applyAndRun(p)}} disabled=${!canRun} title=${p.desc}
+            // Task C.3: a preset's disc:X filter silently found 0 clashes
+            // when no loaded (visible) model was classified as X — e.g.
+            // "Walls vs MEP" against a model mis-classified as 'structural'
+            // instead of 'architectural'. Surface that up front instead of
+            // letting it run and land on an empty result with no clue why.
+            var missingDiscs = _ccPresetMissingDisciplines(p, models);
+            return html`<button key=${p.label} onClick=${function(){applyAndRun(p)}} disabled=${!canRun} title=${missingDiscs.length?_cc_t('run.presetMissingDisciplineTip','No loaded model is classified as {discs} — this preset will find 0 clashes. Change a model\'s discipline (chip on its row) or pick a different preset.',{discs:missingDiscs.join(', ')}):p.desc}
               style=${{...S_BTN,padding:'var(--space-2) var(--space-3)',background:'var(--accent-bg)',color:'var(--text-primary)',
-                opacity:canRun?1:.5,transition:'background .15s',display:'flex',flexDirection:'column',alignItems:'flex-start',gap:'2px',textAlign:'left',lineHeight:'var(--leading-tight)',border:'1px solid var(--accent-subtle)'}}>
+                opacity:canRun?1:.5,transition:'background .15s',display:'flex',flexDirection:'column',alignItems:'flex-start',gap:'2px',textAlign:'left',lineHeight:'var(--leading-tight)',
+                border:'1px solid '+(missingDiscs.length?'var(--color-warning-border)':'var(--accent-subtle)')}}>
               <span style=${{fontSize:'var(--text-xs)',fontWeight:'var(--weight-semibold)',color:'var(--accent)'}}>${p.label}</span>
               <span style=${{fontSize:'var(--text-2xs)',color:'var(--text-secondary)',whiteSpace:'normal'}}>${p.note}</span>
+              ${missingDiscs.length>0 && html`<span style=${{fontSize:'var(--text-2xs)',color:'var(--color-warning-fg)',whiteSpace:'normal',display:'flex',alignItems:'center',gap:'3px',marginTop:'1px'}}>
+                ⚠ ${_cc_t('run.presetMissingDisciplineShort','No model classified as {disc}',{disc:missingDiscs[0]})}
+              </span>`}
             </button>`;
           })}
         </div>
@@ -22762,7 +22853,13 @@ function startApp() {
         <div style=${{display:'flex',gap:'.3rem'}}>
           <button onClick=${function(){d({t:A.MODAL,v:true,el:window._ccSelectedEl||undefined})}} style=${{...S_BTN,flex:1,background:'var(--accent)',color:'#fff',fontWeight:600}}>+ ${_cc_t('issues.newIssue','New Issue')}</button>
           ${function(){
+            // Prefer the currently-active item when it IS a clash; otherwise
+            // fall back to the last clash that was active before the Issues
+            // tab's auto-select-first-issue effect took over activeId (see
+            // A.ACTIVE / lastActiveClashId) — this is what keeps the button
+            // usable after simply opening the Issues tab.
             var activeClash = s.activeId ? s.clashes.find(function(c){return c.id===s.activeId;}) : null;
+            if (!activeClash && s.lastActiveClashId) activeClash = s.clashes.find(function(c){return c.id===s.lastActiveClashId;});
             var hasClash = !!activeClash;
             return html`<button
               title=${hasClash ? _cc_t('issues.fromClashTitle','Create issue from active clash: {title}',{title:activeClash.title}) : _cc_t('issues.fromClashTitleDisabled','Select a clash first to promote it to an issue')}
@@ -26478,6 +26575,109 @@ function startApp() {
     </div>`;
   }
 
+  // Issue detail editing (Task A) — title/priority/description/due date,
+  // a comments thread, "Attach current view", and "Delete issue". Split
+  // out from IssueRow's active-row template for the same reason as
+  // ClashToleranceEditor above: this needs its own useState hooks, and an
+  // IIFE inside a conditionally-rendered branch would change hook count
+  // between renders and crash React (error #310).
+  function IssueDetailEditor(props) {
+    var it = props.item, d = props.d;
+    var tSt = useState(it.title || ''); var titleDraft = tSt[0], setTitleDraft = tSt[1];
+    var dSt = useState(it.description || ''); var descDraft = dSt[0], setDescDraft = dSt[1];
+    var cSt = useState(''); var commentDraft = cSt[0], setCommentDraft = cSt[1];
+    // Re-seed the drafts when the selected issue changes (row reused across
+    // different issues via IssueRow's React.memo + shared component tree).
+    useEffect(function(){ setTitleDraft(it.title || ''); setDescDraft(it.description || ''); }, [it.id]);
+    function upd(u) { d({t:A.UPD_ISSUE, id:it.id, u:u}); }
+    var userName = (typeof _ccChangelogUser === 'string' && _ccChangelogUser.trim()) ? _ccChangelogUser.trim() : 'Anonymous';
+    var LBL = {fontSize:'0.63rem',color:'var(--text-muted)',flexShrink:0};
+    var FIELD = {...S_INPUT,fontSize:'0.72rem',padding:'.25rem .35rem',flex:1};
+    function addComment() {
+      var txt = commentDraft.trim();
+      if (!txt) return;
+      var comment = {id:uid(), author:userName, text:txt, ts:Date.now()};
+      upd({comments:(it.comments||[]).concat([comment])});
+      setCommentDraft('');
+    }
+    function deleteComment(cid) {
+      upd({comments:(it.comments||[]).filter(function(c){return c.id!==cid;})});
+    }
+    function attachView() {
+      if (typeof _captureViewpoint !== 'function') return;
+      var vp = _captureViewpoint(it.title || 'Viewpoint', it.id);
+      if (vp && window._ccDispatch) window._ccDispatch({t:A.ADD_VIEWPOINT, v:vp});
+    }
+    function deleteIssue() {
+      if (!confirm(_cc_t('issueRow.confirmDelete','Delete this issue? This cannot be undone.'))) return;
+      d({t:A.DEL_ISSUE, id:it.id});
+    }
+    var comments = it.comments || [];
+    return html`<div style=${{marginTop:'.4rem',paddingTop:'.4rem',borderTop:'1px solid var(--border-subtle)',display:'flex',flexDirection:'column',gap:'.35rem'}} onClick=${function(e){e.stopPropagation();}}>
+      <div style=${{display:'flex',flexDirection:'column',gap:'.15rem'}}>
+        <span style=${LBL}>${_cc_t('issueRow.titleLabel','Title')}</span>
+        <input type="text" value=${titleDraft}
+          onInput=${function(e){setTitleDraft(e.target.value);}}
+          onBlur=${function(){ if (titleDraft.trim() && titleDraft !== it.title) upd({title:titleDraft.trim()}); }}
+          style=${FIELD} />
+      </div>
+      <div style=${{display:'flex',gap:'.3rem',alignItems:'center'}}>
+        <span style=${LBL}>${_cc_t('issueRow.priorityLabel','Priority')}</span>
+        <select value=${it.priority||'normal'} onChange=${function(e){upd({priority:e.target.value});}} style=${{fontSize:'0.72rem',padding:'.2rem .3rem',borderRadius:4,background:'var(--bg-secondary)',color:'var(--text-secondary)',border:'1px solid var(--border)',flex:1}}>
+          ${['low','normal','high','critical'].map(function(p){return html`<option key=${p} value=${p}>${p.charAt(0).toUpperCase()+p.slice(1)}</option>`})}
+        </select>
+        <span style=${LBL}>${_cc_t('issueRow.dueLabel','Due')}</span>
+        <input type="date" value=${it.dueDate||''} onChange=${function(e){upd({dueDate:e.target.value});}}
+          style=${{...S_INPUT,fontSize:'0.72rem',padding:'.2rem .3rem'}} />
+      </div>
+      <div style=${{display:'flex',flexDirection:'column',gap:'.15rem'}}>
+        <span style=${LBL}>${_cc_t('issueRow.descriptionLabel','Description')}</span>
+        <textarea rows="3" value=${descDraft}
+          onInput=${function(e){setDescDraft(e.target.value);}}
+          onBlur=${function(){ if (descDraft !== it.description) upd({description:descDraft}); }}
+          style=${{...FIELD,resize:'vertical',fontFamily:'inherit',lineHeight:1.4}} />
+      </div>
+      <div style=${{display:'flex',gap:'.3rem'}}>
+        <button class="cc-btn-press" onClick=${attachView}
+          style=${{...S_BTN,fontSize:'var(--text-2xs)',padding:'var(--space-1) var(--space-2)',background:'var(--bg-secondary)',color:'var(--text-secondary)',border:'1px solid var(--border)'}}>
+          📷 ${_cc_t('issueRow.attachView','Attach current view')}
+        </button>
+        <button class="cc-btn-press" onClick=${deleteIssue}
+          style=${{...S_BTN,fontSize:'var(--text-2xs)',padding:'var(--space-1) var(--space-2)',marginLeft:'auto',background:'var(--color-danger-bg)',color:'var(--color-danger-fg)',border:'1px solid var(--color-danger-border)',fontWeight:'var(--weight-semibold)'}}>
+          ${_cc_t('issueRow.deleteIssue','Delete issue')}
+        </button>
+      </div>
+      <div style=${{display:'flex',flexDirection:'column',gap:'.3rem',marginTop:'.15rem',paddingTop:'.3rem',borderTop:'1px solid var(--border-subtle)'}}>
+        <span style=${{...LBL,fontWeight:600,textTransform:'uppercase',letterSpacing:'.04em',fontSize:'0.6rem'}}>${_cc_t('issueRow.comments','Comments')}${comments.length?' ('+comments.length+')':''}</span>
+        ${comments.map(function(c){
+          var mine = c.author === userName;
+          var ts = c.ts ? new Date(c.ts).toLocaleString() : '';
+          return html`<div key=${c.id} style=${{fontSize:'0.68rem',background:'var(--bg-secondary)',borderRadius:'var(--radius-xs)',padding:'.3rem .4rem'}}>
+            <div style=${{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:'.1rem'}}>
+              <span style=${{fontWeight:600,color:'var(--text-primary)'}}>${c.author||'Anonymous'}</span>
+              <span style=${{display:'flex',alignItems:'center',gap:'.3rem'}}>
+                <span style=${{color:'var(--text-faint)',fontSize:'0.6rem'}}>${ts}</span>
+                ${mine && html`<button onClick=${function(){deleteComment(c.id);}} title=${_cc_t('issueRow.deleteComment','Delete comment')}
+                  style=${{background:'none',border:'none',color:'var(--text-faint)',cursor:'pointer',fontSize:'0.68rem',padding:0}}>✕</button>`}
+              </span>
+            </div>
+            <div style=${{color:'var(--text-secondary)',whiteSpace:'pre-wrap'}}>${c.text}</div>
+          </div>`;
+        })}
+        <div style=${{display:'flex',gap:'.25rem'}}>
+          <input type="text" value=${commentDraft} placeholder=${_cc_t('issueRow.addCommentPlaceholder','Add a comment…')}
+            onInput=${function(e){setCommentDraft(e.target.value);}}
+            onKeyDown=${function(e){ if (e.key==='Enter') addComment(); }}
+            style=${FIELD} />
+          <button class="cc-btn-press" onClick=${addComment} disabled=${!commentDraft.trim()}
+            style=${{...S_BTN,fontSize:'var(--text-2xs)',padding:'var(--space-1) var(--space-3)',background:'var(--accent)',color:'#fff',opacity:commentDraft.trim()?1:0.5}}>
+            ${_cc_t('issueRow.post','Post')}
+          </button>
+        </div>
+      </div>
+    </div>`;
+  }
+
   function IssueRow(props) {
     var it=props.item, active=props.active, d=props.d, isClash=props.isClash, pr=props.prefs||{}; pr._models=props.models||[];
     var selectMode=props.selectMode, isSelected=props.isSelected;
@@ -26767,9 +26967,8 @@ function startApp() {
             </div>
           </details>`;
         }()}
-        ${!isClash && it.assignee && html`<div style=${{fontSize:'0.63rem',color:'var(--text-secondary)',marginTop:'.2rem'}}>${_cc_t('issueRow.assigned','Assigned: {name}',{name:it.assignee})}</div>`}
-        ${!isClash && it.dueDate && html`<div style=${{fontSize:'0.63rem',color:'var(--text-secondary)'}}>${_cc_t('issueRow.due','Due: {date}',{date:it.dueDate})}</div>`}
         ${!isClash && it.category && html`<div style=${{fontSize:'0.63rem',color:'var(--text-muted)'}}>${_cc_t('issueRow.categoryLabel','Category: {cat}',{cat:it.category})}</div>`}
+        ${!isClash && html`<${IssueDetailEditor} item=${it} d=${d} />`}
         ${html`<${ClashHistory} targetId=${it.id} />`}
       </div>`}
     </div>`;
@@ -30015,6 +30214,11 @@ function startApp() {
       return {id:_clId(), ts:ts, user:user, type:'issue_created', targetId:a.v.id,
         field:'created', value:a.v.title || 'New issue', prev:undefined};
     }
+    if (a.t === A.DEL_ISSUE) {
+      var delI = state.issues.find(function(i){return i.id===a.id;});
+      return {id:_clId(), ts:ts, user:user, type:'issue_deleted', targetId:a.id,
+        field:'deleted', value:delI ? (delI.title||'Issue') : 'Issue', prev:undefined};
+    }
     if (a.t === A.MERGE_CLASHES || a.t === A.SET_CLASHES) {
       return {id:_clId(), ts:ts, user:user, type:'detection_run', targetId:null,
         field:'clashes', value:(a.v||[]).length, prev:clashes.length};
@@ -32573,11 +32777,33 @@ function startApp() {
       .catch(function(){ return false; });
   }
 
+  // Deletes a single synced issue from the shared project (api/project.js
+  // DELETE ?issue=<id>, same editKey gate as _sharedDeleteProject). Used by
+  // the Issues panel's Delete Issue flow (see A.DEL_ISSUE) to keep teammates'
+  // shared copies in sync instead of only removing the issue locally.
+  // Resolves false (never rejects) when there's no shared project, no
+  // editKey (not the creator), or the request fails — the caller treats that
+  // as "not synced" and the local delete still goes through.
+  function _sharedDeleteIssue(issueId) {
+    var key = _sharedProjectId();
+    if (!key || !issueId) return Promise.resolve(false);
+    var editKey = null;
+    try { editKey = localStorage.getItem('cc_sharedProjectEditKey'); } catch(e) {}
+    if (!editKey) return Promise.resolve(false);
+    return fetch('/api/project?id=' + encodeURIComponent(key) + '&issue=' + encodeURIComponent(issueId), {
+      method: 'DELETE',
+      headers: { 'X-CC-Edit-Key': editKey },
+    })
+      .then(function(r){ return r.ok; })
+      .catch(function(){ return false; });
+  }
+
   window._ccSharedCreate = _sharedCreateProject;
   window._ccSharedPull = _sharedPull;
   window._ccSharedStart = _sharedStartPolling;
   window._ccSharedStop = _sharedStopPolling;
   window._ccSharedDeleteProject = _sharedDeleteProject;
+  window._ccSharedDeleteIssue = _sharedDeleteIssue;
 
   // ── AI clash titles (Phase 5) ────────────────────────────────────
   var _aiTitlesBusy = false;
@@ -36952,6 +37178,12 @@ function startApp() {
 
         var descQuote = (ep && ep.description) ? html`<p style=${{fontSize:'var(--text-sm)',fontStyle:'italic',borderLeft:'2px solid var(--accent-subtle)',paddingLeft:'.7rem',color:'var(--text-muted)',margin:'.6rem 0 0',lineHeight:'var(--leading-base)'}}>${ep.description}</p>` : null;
 
+        // Task B: Present used to show only a handful of derived rows
+        // (Type/Level/Model/External) — GlobalId, FireRating, LoadBearing
+        // and the rest of the psets only appeared once you switched to
+        // Coordinate. Present stays visually lighter (breadcrumb + full
+        // pset dump are collapsed by default, unlike Coordinate/Review)
+        // but the same data is reachable everywhere.
         return html`<div style=${WRAP}>
           ${headerCard}
           <div style=${{padding:'.5rem .1rem .2rem'}}>
@@ -36961,9 +37193,30 @@ function startApp() {
                 <span style=${VALUE_STYLE}>${row.value}</span>
               </div>`;
             })}
+            ${ep&&ep.globalId && html`<div style=${ROW_STYLE}>
+              <span style=${LABEL_STYLE}>${_cc_t('details.globalId','GlobalId')}</span>
+              <span style=${{...VALUE_STYLE,...MONO,fontSize:'var(--text-xs)',display:'flex',alignItems:'center',gap:'.35rem',minWidth:0}}>
+                <span style=${{overflow:'hidden',textOverflow:'ellipsis'}}>${ep.globalId}</span>${_copyBtn(ep.globalId,'GlobalId')}
+              </span>
+            </div>`}
             ${ctxBadges}
             ${descQuote}
           </div>
+          ${breadcrumb.length>0 && html`<details style=${{marginTop:'.5rem'}}>
+            <summary style=${{cursor:'pointer',fontSize:'var(--text-2xs)',color:'var(--text-muted)',textTransform:'uppercase',letterSpacing:'.06em',fontWeight:'var(--weight-semibold)'}}>${_cc_t('details.location','Location')}</summary>
+            <div style=${{fontSize:'var(--text-sm)',color:'var(--text-secondary)',padding:'.3rem 0 0'}} title=${breadcrumb.join(' › ')}>${breadcrumb.join(' › ')}</div>
+          </details>`}
+          ${allPsets.length>0 && html`<details style=${{marginTop:'.5rem'}}>
+            <summary style=${{cursor:'pointer',fontSize:'var(--text-2xs)',color:'var(--text-muted)',textTransform:'uppercase',letterSpacing:'.06em',fontWeight:'var(--weight-semibold)'}}>${_cc_t('details.propertySets','Property Sets ({n})',{n:psetCount})}</summary>
+            <div style=${{padding:'.3rem 0 0'}}>
+              ${allPsets.map(function(sec){return html`<details key=${sec.raw} style=${{marginBottom:'.3rem'}}>
+                <summary style=${{cursor:'pointer',fontSize:'.68rem',fontWeight:600,color:'var(--accent)',textTransform:'uppercase',letterSpacing:'.03em'}}>${sec.name}</summary>
+                <div style=${{padding:'.15rem 0 0 .3rem'}}>
+                  ${sec.props.map(function(p){return html`<div style=${ROW}><span style=${LBL}>${p.k}</span><span style=${VAL}>${p.v}</span></div>`;})}
+                </div>
+              </details>`;})}
+            </div>
+          </details>`}
         </div>`;
       }
 
@@ -37107,12 +37360,26 @@ function startApp() {
         <!-- Quick identity -->
         <div style=${CARD}>
           <div style=${HDR}>Identity</div>
-          ${storey             && html`<div style=${ROW}><span style=${LBL}>Floor</span><span style=${VAL}>${storey}</span></div>`}
+          ${breadcrumb.length>0
+            ? html`<div style=${ROW}><span style=${LBL}>Location</span><span style=${VAL} title=${breadcrumb.join(' › ')}>${breadcrumb.join(' › ')}</span></div>`
+            : storey && html`<div style=${ROW}><span style=${LBL}>Floor</span><span style=${VAL}>${storey}</span></div>`}
           ${ep&&ep.material    && html`<div style=${ROW}><span style=${LBL}>Material</span><span style=${VAL}>${ep.material}</span></div>`}
           ${ep&&ep.objectType  && html`<div style=${ROW}><span style=${LBL}>Object type</span><span style=${VAL}>${ep.objectType}</span></div>`}
           ${ep&&ep.description && html`<div style=${ROW}><span style=${LBL}>Description</span><span style=${VAL}>${ep.description}</span></div>`}
           ${ep&&ep.globalId    && html`<div style=${ROW}><span style=${LBL}>GlobalId</span><span style=${{...VAL,...MONO,opacity:.65,display:'flex',alignItems:'center',gap:'.35rem'}}><span>${ep.globalId.slice(0,16)}…</span>${_copyBtn(ep.globalId,'GlobalId')}</span></div>`}
         </div>
+        <!-- Full property sets (Task B: "Properties everywhere" — every
+             workspace shows the complete pset dump, not just Present's
+             derived summary or this workspace's structural-flag subset) -->
+        ${allPsets.length>0 && html`<div style=${CARD}>
+          <div style=${HDR}>Property Sets (${psetCount})</div>
+          ${allPsets.map(function(sec){return html`<details key=${sec.raw} open style=${{marginBottom:'.4rem'}}>
+            <summary style=${{cursor:'pointer',fontSize:'.65rem',fontWeight:700,color:'var(--accent)',textTransform:'uppercase',letterSpacing:'.03em'}}>${sec.name}</summary>
+            <div style=${{padding:'.1rem 0 0 .2rem'}}>
+              ${sec.props.map(function(p){return html`<div style=${ROW}><span style=${LBL}>${p.k}</span><span style=${VAL}>${p.v}</span></div>`;})}
+            </div>
+          </details>`;})}
+        </div>`}
         <!-- Dimensions & Constraints -->
         ${hasConstraints && html`<div style=${CARD}>
           <div style=${HDR}>Dimensions & Constraints</div>
@@ -39359,6 +39626,13 @@ function startApp() {
               (_stateRef.current.issues||[]).forEach(function(i){
                 if (_selectedRef.current[i.id]) _sharedEnqueue(Object.assign({}, i, a.u, {_updatedAt:_now}));
               });
+            } else if (a.t === A.DEL_ISSUE && a.id) {
+              // The sync layer does support per-issue deletion (api/project.js
+              // DELETE ?issue=<id>) but it's gated by the creator-held
+              // editKey — _sharedDeleteIssue itself resolves false (no-op)
+              // when this browser isn't the project creator, which is the
+              // expected "can't sync this deletion" case, not an error.
+              if (typeof _sharedDeleteIssue === 'function') _sharedDeleteIssue(a.id);
             }
           }
         } catch(e3) {}
