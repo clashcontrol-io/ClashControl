@@ -1,5 +1,5 @@
 'use strict';
-// Unit + parity lock for the P6.2 first slice (V7_RELEASE_PLAN.md):
+// Unit + parity lock for the P6.2 first slice (docs/V7_RELEASE_PLAN.md):
 // _ccGetElementGeometry, a single accessor the clash engine's
 // _getWorldVerts/_getWorldTris now go through instead of reaching into
 // element.meshes[] directly. This is explicitly NOT a chunk-merge revival —

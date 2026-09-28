@@ -774,7 +774,7 @@ function startApp() {
   var useCallback = React.useCallback;
   var html       = htm.bind(h);
 
-  // ── Constants ────────────────────────────────────────────────── INTERNALS.md §2
+  // ── Constants ────────────────────────────────────────────────── docs/INTERNALS.md §2
 
   var DISC = [
     { id:'structural',    label:'Structural',    c:'#3b82f6', accent:'#1d4ed8' },
@@ -893,7 +893,7 @@ function startApp() {
     return out;
   }
 
-  // ── Chat text renderer ──────────────────────────────────────── INTERNALS.md §2
+  // ── Chat text renderer ──────────────────────────────────────── docs/INTERNALS.md §2
   function renderChatText(text) {
     if (text == null) return '';
     var raw = String(text);
@@ -1009,7 +1009,7 @@ function startApp() {
   window._ccConsentIsExplicit = _ccConsentIsExplicit;
   window._ccSetConsent = _ccSetConsent;
 
-  // ── Pending offer system ────────────────────────────────────── INTERNALS.md §3
+  // ── Pending offer system ────────────────────────────────────── docs/INTERNALS.md §3
   // When the assistant can't fulfill a command because of a missing
   function _setOfferLoadIFC() {
     window._ccPendingOffer = { label:'load ifc', kind:'load_ifc', action: function() {
@@ -1240,7 +1240,7 @@ function startApp() {
     return true;
   };
 
-  // ── Reducer ──────────────────────────────────────────────────── INTERNALS.md §4
+  // ── Reducer ──────────────────────────────────────────────────── docs/INTERNALS.md §4
 
   var INIT_FILTERS = {
     search:'', status:'all', type:'all', discipline:'all',
@@ -1308,7 +1308,7 @@ function startApp() {
     homeView:_ccLoadPref('homeView',null), // {pos:[x,y,z],target:[x,y,z]} — saved home camera; null = fit-all
     // Rendered-mode lighting controls (sliders surfaced in the toolbar Style popover)
     lightSettings:_ccLoadPref('lightSettings',{sun:1.0, ambient:1.0, exposure:1.0, shadow:1.0, time:13}),
-    // Graduated autonomy envelope.  See INTERNALS.md § 21.2
+    // Graduated autonomy envelope.  See docs/INTERNALS.md § 21.2
     aiEnvelope:_ccLoadPref('aiEnvelope',{resolveClashes:'nudge'}),
   };
   // Restore section state persisted from previous session
@@ -1468,7 +1468,7 @@ function startApp() {
     AVATAR_MENU:'AVATAR_MENU'
   };
 
-  // ── Addon Registry ───────────────────────────────────────────── INTERNALS.md §5
+  // ── Addon Registry ───────────────────────────────────────────── docs/INTERNALS.md §5
 
   var _ccAddons = {};       // {id: addonDef}
   var _ccAddonActive = {};  // {id: true/false} — persisted in localStorage
@@ -1833,7 +1833,7 @@ function startApp() {
     var maxDisc = discs.length ? Math.max.apply(null, discs) : 1;
     var depthMm = (typeof c.distance === 'number' && c.distance < 0) ? -c.distance : 0;
     if (depthMm < 10) return 'minor'; // shallow hard clash — likely tolerance/rounding, matches the
-    // industry-convention "hard clash, penetration ≥ 10mm" floor (IMPROVEMENT_PLAN.md §F).
+    // industry-convention "hard clash, penetration ≥ 10mm" floor (docs/IMPROVEMENT_PLAN.md §F).
     if (depthMm >= 50 || (maxDisc >= 3 && depthMm >= 20)) return 'critical'; // deep, or structural + real overlap
     return 'major'; // a genuine ≥10mm hard clash
   }
@@ -1847,7 +1847,7 @@ function startApp() {
   function reducer(s,a) {
     switch(a.t) {
       case A.ADD_MODEL:   var _am=a.v; if(s.modelMeta){var _mm=s.modelMeta.find(function(m){return m.id===_am.id});if(_mm){if(_mm.visible===false)_am=Object.assign({},_am,{visible:false});if(_mm.discipline)_am=Object.assign({},_am,{discipline:_mm.discipline});if(_mm.color)_am=Object.assign({},_am,{color:_mm.color});if(_mm.tag)_am=Object.assign({},_am,{tag:_mm.tag});if(_mm.georef)_am=Object.assign({},_am,{georef:_mm.georef});}}
-        // Race-safe model dedup.  See INTERNALS.md § 21.32
+        // Race-safe model dedup.  See docs/INTERNALS.md § 21.32
         var _dupIdx = -1;
         for (var _di=0; _di<s.models.length; _di++) {
           var _em = s.models[_di];
@@ -2262,7 +2262,7 @@ function startApp() {
     }
   }
 
-  // ── IndexedDB persistence for IFC files ──────────────────────── INTERNALS.md §6
+  // ── IndexedDB persistence for IFC files ──────────────────────── docs/INTERNALS.md §6
   // Size stamping: every idbSave* stamps a `bytes` estimate on the record so
   // the storage report (and later, eviction planning) never has to re-walk
   // buffers. Estimation lives in storage-core.js; guard because the script
@@ -2471,7 +2471,7 @@ function startApp() {
   // the automatic arm of the manual Park feature; _ccParkModel's restorability
   // guard still applies, so nothing un-restorable is ever auto-parked.
 
-  // ── P6.1: byte-accurate in-memory residency ledger (V7_RELEASE_PLAN.md) ──
+  // ── P6.1: byte-accurate in-memory residency ledger (docs/V7_RELEASE_PLAN.md) ──
   // Replaces element-count as the proxy for "how much memory would parking
   // this model reclaim" — one large façade element can carry more triangles
   // than thousands of simple pipes, and summing element.meshes[] vertex
@@ -3055,7 +3055,7 @@ function startApp() {
     }).catch(function() { return 0; });
   }
 
-  // ── Geometry quantization helpers (16-bit positions, 8-bit normals) ── INTERNALS.md §6
+  // ── Geometry quantization helpers (16-bit positions, 8-bit normals) ── docs/INTERNALS.md §6
   function _quantizePositions(posF32, bbox) {
     var minX=bbox[0],minY=bbox[1],minZ=bbox[2],rangeX=bbox[3]-bbox[0],rangeY=bbox[4]-bbox[1],rangeZ=bbox[5]-bbox[2];
     if(rangeX<1e-10) rangeX=1; if(rangeY<1e-10) rangeY=1; if(rangeZ<1e-10) rangeZ=1;
@@ -3102,7 +3102,7 @@ function startApp() {
     return out;
   }
 
-  // ── Int8 normal quantization ──  See INTERNALS.md § 21.9
+  // ── Int8 normal quantization ──  See docs/INTERNALS.md § 21.9
   function _ccQuantizeNormalAttr(geo) {
     if (window._ccQuantizeNormals === false) return;
     if (!geo || !geo.userData || geo.userData._nrmQuantized) return;
@@ -3256,7 +3256,7 @@ function startApp() {
       };
     });
     // Restore-path parity with the live load: strip survey markers, then
-    // instance. See INTERNALS.md § 21.3
+    // instance. See docs/INTERNALS.md § 21.3
     if (typeof _ccStripSurveyMarkers === 'function') {
       var _smR = _ccStripSurveyMarkers(elements, meshes); elements = _smR.elements; meshes = _smR.meshes;
     }
@@ -3336,7 +3336,7 @@ function startApp() {
     return list;
   }
 
-  // ── IFC Loader (web-ifc, lazy) ───────────────────────────────── INTERNALS.md §7
+  // ── IFC Loader (web-ifc, lazy) ───────────────────────────────── docs/INTERNALS.md §7
 
   // GPU instancing constants
   var INST_THRESHOLD = 4; // min identical placements before collapsing to InstancedMesh
@@ -3351,7 +3351,7 @@ function startApp() {
   };
   var _INST_HIDE_MX = typeof THREE !== 'undefined' ? new THREE.Matrix4().makeScale(0,0,0) : null; // hides one instance from its InstancedMesh
 
-  // ── Bake static mesh transforms for rendering perf ──────────── INTERNALS.md §7
+  // ── Bake static mesh transforms for rendering perf ──────────── docs/INTERNALS.md §7
   // World-space normal for a raycast hit. InstancedMesh hits report
   // face.normal in the SOURCE geometry's local space — the instance matrix
   // must be composed or rotated instances give the source orientation.
@@ -3381,7 +3381,7 @@ function startApp() {
   }
   window._ccBakeMesh = _ccBakeMesh;
 
-  // ── WASM-init hang recovery ───────────────────────────────────── INTERNALS.md §7
+  // ── WASM-init hang recovery ───────────────────────────────────── docs/INTERNALS.md §7
   // occasions because a bad web-ifc.wasm was pinned in either the service-
   // users' installed SWs) or the browser HTTP cache (from a transient
   //      SW cache on every page load, and forces the browser HTTP cache
@@ -3589,7 +3589,7 @@ function startApp() {
     return null;
   }
 
-  // ── Pset / Quantities canonicalization ──  See INTERNALS.md § 21.5
+  // ── Pset / Quantities canonicalization ──  See docs/INTERNALS.md § 21.5
   var _ccPsetCanonCache  = window._ccPsetCanonCache  || (window._ccPsetCanonCache  = new Map());
   var _ccPsetInnerCache  = window._ccPsetInnerCache  || (window._ccPsetInnerCache  = new Map());
   var _ccQtoCanonCache   = window._ccQtoCanonCache   || (window._ccQtoCanonCache   = new Map());
@@ -3988,7 +3988,7 @@ function startApp() {
       }
     } catch(e) { console.warn('Property map build failed:', e.message||e); }
 
-    // Type-pset propagation via IfcRelDefinesByType.  See INTERNALS.md § 21.18
+    // Type-pset propagation via IfcRelDefinesByType.  See docs/INTERNALS.md § 21.18
     try {
       var typeRelIds = api.GetLineIDsWithType(modelID, IFC.IFCRELDEFINESBYTYPE);
       for (var ti = 0; ti < typeRelIds.size(); ti++) {
@@ -4146,7 +4146,7 @@ function startApp() {
 
   var _ccLoadGeneration = 0; // bumped by _ccAbortLoading to invalidate in-progress loads; loads snapshot it so concurrent batches coexist
 
-  // ── GPU instancing ──  See INTERNALS.md § 21.10
+  // ── GPU instancing ──  See docs/INTERNALS.md § 21.10
   function _buildInstancedMeshes(elements, meshes) {
     if (!THREE.InstancedMesh) return {meshes:meshes, groups:0, instanced:0};
     var candidates = {}; // instKey → {geo, mat, entries:[{mesh, expressId}]}
@@ -4402,7 +4402,7 @@ function startApp() {
     }
   }
 
-  // ── Survey base-point / nulpunt marker stripping ──  See INTERNALS.md § 21.6
+  // ── Survey base-point / nulpunt marker stripping ──  See docs/INTERNALS.md § 21.6
   function _ccIsSurveyMarker(props) {
     if (!props) return false;
     var t = (props.ifcType || '').toLowerCase();
@@ -4660,7 +4660,7 @@ function startApp() {
     });
   }
 
-  // ── Lazy-props merge helper ──────────────────────────────────── INTERNALS.md §8
+  // ── Lazy-props merge helper ──────────────────────────────────── docs/INTERNALS.md §8
   // Direct mutation is safe here because nothing in the state tree uses
   function _mergeLazyProps(modelId, propMap) {
     var s = window._ccLatestState;
@@ -4729,7 +4729,7 @@ function startApp() {
     } catch(e) { console.warn('[IFC] Failed to refresh geo cache with psets:', e); }
   }
 
-  // ── IFC Web Worker (off-main-thread parsing) ────────────────── INTERNALS.md §8
+  // ── IFC Web Worker (off-main-thread parsing) ────────────────── docs/INTERNALS.md §8
 
   var _ifcWorkerUrl = null;
 
@@ -5459,7 +5459,7 @@ function startApp() {
     });
   }
 
-  // ── Clash Detection ──────────────────────────────────────────── INTERNALS.md §9
+  // ── Clash Detection ──────────────────────────────────────────── docs/INTERNALS.md §9
 
   var _prevElementHashes = {};
   var _underlayImgCache = {};
@@ -5473,7 +5473,7 @@ function startApp() {
             b.max.x.toFixed(3), b.max.y.toFixed(3), b.max.z.toFixed(3)].join('|');
   }
 
-  // ── Type-pair impossibility memo ──  See INTERNALS.md § 21.16
+  // ── Type-pair impossibility memo ──  See docs/INTERNALS.md § 21.16
   var _TP_MEMO_EMPTY_RUNS_THRESHOLD = 3;
   var _TP_MEMO_TTL_MS = 30 * 24 * 60 * 60 * 1000;
   function _tpMemoModelsKey(models) {
@@ -5539,7 +5539,7 @@ function startApp() {
     try { localStorage.removeItem('cc_typePairMemo:' + key); } catch(e) {}
   };
 
-  // ── Pair-result cache (narrow-phase) ──  See INTERNALS.md § 21.19
+  // ── Pair-result cache (narrow-phase) ──  See docs/INTERNALS.md § 21.19
   var _PAIR_CACHE_MAX = 50000;
   var _pairResultCache = new Map();
   function _pairKey(mA, eA, mB, eB) {
@@ -5573,7 +5573,7 @@ function startApp() {
 
   // ── Geometry-accurate narrow-phase clash detection ──────────────
 
-  // ── P6.2 first slice: GeometryHandle accessor (V7_RELEASE_PLAN.md) ───────
+  // ── P6.2 first slice: GeometryHandle accessor (docs/V7_RELEASE_PLAN.md) ───────
   // A GeometryHandle describes ONE piece of geometry an element owns,
   // addressable without the caller reaching directly into element.meshes[].
   // This slice does NOT remove element.meshes[] or migrate every consumer —
@@ -5763,7 +5763,7 @@ function startApp() {
             Math.sqrt(sdx*sdx+sdy*sdy+sdz*sdz)];
   }
 
-  // ── BVH LRU cache ──  See INTERNALS.md § 21.8
+  // ── BVH LRU cache ──  See docs/INTERNALS.md § 21.8
   // Cap is computed lazily (first eviction) so the storageDetectCaches
   // flag — loaded by a deferred script — is readable by then. Legacy
   // behaviour when the flag is off: 5% of jsHeapSizeLimit at ~50 KB per
@@ -6929,7 +6929,7 @@ function startApp() {
     });
   }
 
-  // ── Async clash detection with chunked processing ─────────────── INTERNALS.md §9
+  // ── Async clash detection with chunked processing ─────────────── docs/INTERNALS.md §9
   var _DETECT_CHUNK_SIZE = 80; // candidates per chunk before yielding
   // Rough per-candidate heap-size estimate (bytes) for the fully-materialized
   // `candidates` array (_sweepAndPrune builds and returns the complete array
@@ -7034,7 +7034,7 @@ function startApp() {
       if (_coverage) action.coverageModelIds = _coverage;
       dispatch(action);
     }
-    // V7_RELEASE_PLAN.md P6.4 (safe slice): opt-in cache clear for the
+    // docs/V7_RELEASE_PLAN.md P6.4 (safe slice): opt-in cache clear for the
     // non-interactive "run once and export" flow (batch/API-triggered single
     // runs, e.g. MCP/Smart-Bridge automation) where the BVH/world-vert caches
     // built during this run will never be touched again. Off by default —
@@ -7445,7 +7445,7 @@ function startApp() {
     // ── Per-candidate timing accumulators ─────────────────────────
     var _tHard = 0, _tSoft = 0, _tFilters = 0, _nHardTests = 0, _nSoftTests = 0, _nHardTestsBatched = 0;
 
-    // ── WASM batch hard-clash warmup ──  See INTERNALS.md § 21.15
+    // ── WASM batch hard-clash warmup ──  See docs/INTERNALS.md § 21.15
     var _chunkBatchCache = null;
     var _BATCH_MIN_GROUP = 4;        // groups smaller than this stay per-pair
     var _BATCH_MAX_TRIS = 1500000;   // soft cap on triangles per WASM call
@@ -8095,7 +8095,7 @@ function startApp() {
     });
   }
 
-  // ── Clash Identity & Delta Merge ────────────────────────────── INTERNALS.md §9
+  // ── Clash Identity & Delta Merge ────────────────────────────── docs/INTERNALS.md §9
   // computeClashPair/computeClashIdentityKey — clash-identity-core.js (plain
   // same-origin <script defer>, not an addon). Was identityCoreV2, a
   // flagged migration with a boot-time equivalence check against an inline
@@ -8255,7 +8255,7 @@ function startApp() {
   }
 
 
-  // ── AI Auto-Classifier ─────────────────────────────────────────── INTERNALS.md §10
+  // ── AI Auto-Classifier ─────────────────────────────────────────── docs/INTERNALS.md §10
   // classifyClashes — clash-classification-core.js (plain same-origin
   // <script defer>, not an addon). Was classificationCoreV2, a flagged
   // migration with a boot-time equivalence check against an inline legacy
@@ -8359,7 +8359,7 @@ function startApp() {
   var _captureViewpoint = null; // set in Viewer
   var _restoreViewpoint = null;
 
-  // ── BCF Import ────────────────────────────────────────────── INTERNALS.md §11
+  // ── BCF Import ────────────────────────────────────────────── docs/INTERNALS.md §11
 
   function importBCF(d) {
     _gcEvent('bcf-import');
@@ -8643,7 +8643,7 @@ function startApp() {
   var shareAITrainingData = function(c, ds, m, cb, dt, i) { if (window._ccShareAITrainingData) window._ccShareAITrainingData(c, ds, m, cb, dt, i); };
   var _AI_VERDICT_MAP = window._ccAIVerdictMap || {open:'unreviewed', confirmed:'true_clash', denied:'false_positive', in_progress:'true_clash', resolved:'acceptable', closed:'false_positive'};
 
-  // ── BCF Export (supports v2.1 and v3.0) ────────────────────── INTERNALS.md §11
+  // ── BCF Export (supports v2.1 and v3.0) ────────────────────── docs/INTERNALS.md §11
 
   // Element-only lookup (mirrors _lookupElProps' lenient modelId convention
   // without depending on it — that function is extracted standalone in its
@@ -9097,7 +9097,7 @@ function startApp() {
     });
   }
 
-  // ── First-Person Walk Mode (Enscape-style) ──────────────────── INTERNALS.md §12
+  // ── First-Person Walk Mode (Enscape-style) ──────────────────── docs/INTERNALS.md §12
   // WASD + mouse-look. Collision ON by default; gravity + stair step-up on.
   // Pegman drop-in chooses the entry; Esc exits.
   var _walkActive = false;
@@ -9342,7 +9342,7 @@ function startApp() {
     })();
     });});
 
-    // Pointer-lock timing.  See INTERNALS.md § 21.21
+    // Pointer-lock timing.  See docs/INTERNALS.md § 21.21
     invalidate(999);
   }
 
@@ -9560,7 +9560,7 @@ function startApp() {
       _walkBobBaseY = newY;
       invalidate(3);
     }
-    // ── Vertical ground-snap (gravity + stair step-up) ──  See INTERNALS.md § 21.20
+    // ── Vertical ground-snap (gravity + stair step-up) ──  See docs/INTERNALS.md § 21.20
     // Vignette tween: 0..1 based on sprint state
     var vTarget = sprinting && velMoving ? 1 : 0;
     if (_walkVignette !== vTarget){
@@ -9688,7 +9688,7 @@ function startApp() {
     }
   }
 
-  // ── Orbit Controls (inline) ──────────────────────────────────── INTERNALS.md §13
+  // ── Orbit Controls (inline) ──────────────────────────────────── docs/INTERNALS.md §13
 
   var _sboxDragging = false;
   var _orbitDragging = false; // true while left/middle mouse button or touch is held in orbit mode
@@ -9988,7 +9988,7 @@ function startApp() {
     return orbit;
   }
 
-  // ── Three.js Viewer Component ────────────────────────────────── INTERNALS.md §14
+  // ── Three.js Viewer Component ────────────────────────────────── docs/INTERNALS.md §14
 
   var _flyTo = null;
   var _resetView = null;
@@ -10600,7 +10600,7 @@ function startApp() {
       }
       _wlAdd('mousemove', _walkUpdateHover);
 
-      // ── Animated fly-to system ───────────────────────────────────── INTERNALS.md §15
+      // ── Animated fly-to system ───────────────────────────────────── docs/INTERNALS.md §15
       var _flyAnim = null;
       function easeInOut(t){return t<0.5?4*t*t*t:(1-Math.pow(-2*t+2,3)/2);}
       function flyDuration(startTarget, endTarget, startPos, endPos) {
@@ -11461,7 +11461,7 @@ function startApp() {
       }
 
       window._ccShowActiveClashMarker = function(point) {
-        // Active-clash 3D pin removed.  See INTERNALS.md § 21.28
+        // Active-clash 3D pin removed.  See docs/INTERNALS.md § 21.28
         // For visibility clashes we replace it with a sight-line.
         window._ccRemoveActiveClashMarker();
         var st = window._ccLatestState || {};
@@ -11496,7 +11496,7 @@ function startApp() {
         invalidate();
       };
 
-      // ── Clash markers — single Points object ──  See INTERNALS.md § 21.14
+      // ── Clash markers — single Points object ──  See docs/INTERNALS.md § 21.14
       function _ccSevColorRGB(sev, type) {
         // 0xRRGGBB-as-floats
         switch (sev || type) {
@@ -12158,7 +12158,7 @@ function startApp() {
         foundMarkersRef.current = [];
       };
 
-      // ── Snap engine + live measurement preview ──  See INTERNALS.md § 21.29
+      // ── Snap engine + live measurement preview ──  See docs/INTERNALS.md § 21.29
       var _SNAP_PX = 18;
       var _proj = new THREE.Vector3();
       function _projectToPx(p3, w, h){
@@ -13373,7 +13373,7 @@ function startApp() {
           invalidate();
           _sboxHudShow((newRot*180/Math.PI).toFixed(1)+'°', e.clientX, e.clientY);
         } else if(ds.type==='face'){
-          // Closest-point axis drag.  See INTERNALS.md § 21.13
+          // Closest-point axis drag.  See docs/INTERNALS.md § 21.13
           var uF=ds.axis; // unit face normal
           var roF=raycaster.ray.origin, rdF=raycaster.ray.direction; // rdF unit
           var w0x=ds.startPos.x-roF.x, w0y=ds.startPos.y-roF.y, w0z=ds.startPos.z-roF.z;
@@ -13559,7 +13559,7 @@ function startApp() {
           if(_phR){ _pickedHit=_ph; _pickedEid=_phR.eid; _pickedInstId=_phR.instId; break; }
         }
 
-        // ── Alt+click endpoint → area polygon ──  See INTERNALS.md § 21.27
+        // ── Alt+click endpoint → area polygon ──  See docs/INTERNALS.md § 21.27
         if (e.altKey && measureModeRef.current && (!measurePtsRef.current || measurePtsRef.current.length === 0)) {
           var _epClick = _hitMeasureEndpoint(e.clientX, e.clientY);
           if (_epClick && _epClick.type === 'length') {
@@ -13597,7 +13597,7 @@ function startApp() {
           }
         }
 
-        // ── Section pick + Alt-click shortcut ──  See INTERNALS.md § 21.26
+        // ── Section pick + Alt-click shortcut ──  See docs/INTERNALS.md § 21.26
         if ((window._ccSectionPickPending || (e.altKey && !measureModeRef.current)) && hits.length > 0) {
           var spHit = hits[0];
           var nWorld = _ccHitWorldNormal(spHit);
@@ -14108,7 +14108,7 @@ function startApp() {
         }
         return null;
       }
-      // Imperative section-plane drag.  See INTERNALS.md § 21.33
+      // Imperative section-plane drag.  See docs/INTERNALS.md § 21.33
       function _secPlaneLiveMove(newPos) {
         var S2 = state3d.current; if (!S2) return;
         var cs = window._ccCurrentSection; if (!cs) return;
@@ -14482,7 +14482,7 @@ function startApp() {
       window._ccApplyViewpoint = _restoreViewpoint;
       window._ccCaptureViewpoint = _captureViewpoint;
 
-      // Rendered lighting — original intensities (no ×π).  See INTERNALS.md § 21.25
+      // Rendered lighting — original intensities (no ×π).  See docs/INTERNALS.md § 21.25
       S._ambLight = new THREE.HemisphereLight(0xffffff, 0xc0c0c0, 0.55);
       scene.add(S._ambLight);
       // Warm directional sun (slight warm tint, like late-afternoon site visit)
@@ -14736,7 +14736,7 @@ function startApp() {
         }
 
         // Constant-size section-box handles — face arrows AND corner grips, so
-        // both read at the same scale.  See INTERNALS.md § 21.24
+        // both read at the same scale.  See docs/INTERNALS.md § 21.24
         var _sboxScaleAll = [];
         if (S._sboxFaceHandles) _sboxScaleAll = _sboxScaleAll.concat(S._sboxFaceHandles);
         if (S._sboxHandles)     _sboxScaleAll = _sboxScaleAll.concat(S._sboxHandles);
@@ -14751,7 +14751,7 @@ function startApp() {
         if (S._sectionPlaneVis && S._sectionPlaneVis._secHandleGroup) {
           var _giz = S._sectionPlaneVis;
 
-          // Vertical-plane ring reorient.  See INTERNALS.md § 21.35
+          // Vertical-plane ring reorient.  See docs/INTERNALS.md § 21.35
           var _ring = _giz._secRotRing;
           if (_ring) {
             var _wq = _giz.getWorldQuaternion(new THREE.Quaternion());
@@ -14807,7 +14807,7 @@ function startApp() {
         }
         try {
           renderer.setViewport(0,0,el.clientWidth,el.clientHeight);
-          // cc-render-frame timing — before render().  See INTERNALS.md § 21.38
+          // cc-render-frame timing — before render().  See docs/INTERNALS.md § 21.38
           if (window._ccHasSplats || window._ccHasFrameListener) {
             try { window.dispatchEvent(new CustomEvent('cc-render-frame')); } catch(_){}
           }
@@ -15093,7 +15093,7 @@ function startApp() {
         border.renderOrder = 999;
         grp.add(border);
 
-        // Section-plane handle group — constant on-screen size.  See INTERNALS.md § 21.34
+        // Section-plane handle group — constant on-screen size.  See docs/INTERNALS.md § 21.34
         var handleGroup = new THREE.Group();
         handleGroup.userData._sectionPlane = true;
 
@@ -15209,7 +15209,7 @@ function startApp() {
         S.scene.add(vis2);
         S._sectionPlaneVis = vis2;
       }
-      // ── Per-material clipping ──  See INTERNALS.md § 21.36
+      // ── Per-material clipping ──  See docs/INTERNALS.md § 21.36
       S.renderer.clippingPlanes = [];
       S.renderer.localClippingEnabled = true;
       _ccApplySectionMaterialPlanes(S, planes, 'section');
@@ -15687,7 +15687,7 @@ function startApp() {
       var border = new THREE.LineSegments(borderGeo, borderMat);
       border.rotation.x = -Math.PI/2;
       cutGroup.add(border);
-      // Floor-plan cut-plane arrow.  See INTERNALS.md § 21.37
+      // Floor-plan cut-plane arrow.  See docs/INTERNALS.md § 21.37
       var fpHandleGroup = new THREE.Group();
       var shaftLen = 1.8, shaftCylR = 0.03, tipR = 0.12, tipLen = 0.3;
       var arrowMat = new THREE.MeshBasicMaterial({color:0xf59e0b, transparent:true, opacity:0.85, depthTest:false});
@@ -16002,7 +16002,7 @@ function startApp() {
         return {dx:dirX, dy:dirY, dz:dirZ, r:r, g:g, b:b, intensity:intensityMul, alt:altitude};
       }
 
-      // ── Lighting + tone-mapping per style ──  See INTERNALS.md § 21.12
+      // ── Lighting + tone-mapping per style ──  See docs/INTERNALS.md § 21.12
       if (S.renderer) S.renderer.toneMappingExposure = expoMul * (style==='rendered' ? 0.4 : style==='shaded' ? 0.88 : 1.0);
       if (S._sunLight) {
         if (style==='rendered') {
@@ -16138,7 +16138,7 @@ function startApp() {
         });
       });
 
-      // ── Materials per render style ──  See INTERNALS.md § 21.11
+      // ── Materials per render style ──  See docs/INTERNALS.md § 21.11
       function _disposeEdges(obj) {
         if (obj.userData._edges) {
           try { obj.remove(obj.userData._edges); obj.userData._edges.geometry.dispose(); obj.userData._edges.material.dispose(); } catch(e){}
@@ -16190,7 +16190,7 @@ function startApp() {
             transparent: true, opacity: 0.85, side: THREE.FrontSide
           }));
         } else if (style === 'standard') {
-          // Hidden Line — shared Lambert + glass.  See INTERNALS.md § 21.39
+          // Hidden Line — shared Lambert + glass.  See docs/INTERNALS.md § 21.39
           _disposeEdges(obj);
           var _hlMatName  = (obj.userData._ifcMaterial || '').toLowerCase();
           var _hlType     = _eidToType[obj.userData.expressId] || '';
@@ -16260,7 +16260,7 @@ function startApp() {
         } else if (style === 'rendered') {
           _disposeEdges(obj);
           if (!cache.rendered) {
-            // Rendered style — IFC colour respected.  See INTERNALS.md § 21.40
+            // Rendered style — IFC colour respected.  See docs/INTERNALS.md § 21.40
             var _matName = (obj.userData._ifcMaterial || '').toLowerCase();
             var _rdType = _eidToType[obj.userData.expressId] || '';
             var _rdHardFrame = /^Ifc(Member|CurtainWall|Beam|Column|Pile|Footing|Wall|Slab|Roof|Stair|Ramp|Covering|Railing|Rail)/i.test(_rdType);
@@ -19660,7 +19660,7 @@ function startApp() {
     return {_total:(elements||[]).length};
   }
 
-  // ── Splat reference-layers panel + PWA install banner ──  See INTERNALS.md § 21.17
+  // ── Splat reference-layers panel + PWA install banner ──  See docs/INTERNALS.md § 21.17
   /* eslint-disable react-hooks/rules-of-hooks -- these are ordinary
      components, always called unconditionally in the same order, but their
      names are prefixed with `_` per this project's naming convention (see
@@ -21176,7 +21176,7 @@ function startApp() {
     </div>`;
   }
 
-  // ── Run Detection modal + placement sanity ──  See INTERNALS.md § 21.22
+  // ── Run Detection modal + placement sanity ──  See docs/INTERNALS.md § 21.22
   window._ccPlacementWarnings = function(models){
     var out = [];
     try {
@@ -25117,7 +25117,7 @@ function startApp() {
       if (changed) setWinForceTick(function(t){ return t+1; });
     });
 
-    // ── Progressive reveal ──  See INTERNALS.md § 21.41
+    // ── Progressive reveal ──  See docs/INTERNALS.md § 21.41
     // Windowed mode mounts a bounded slice regardless, so the reveal-to-all
     // idle callback (whose whole purpose is bounding first-paint cost before
     // the full set mounts) is unnecessary — items is the full set immediately.
@@ -26093,7 +26093,7 @@ function startApp() {
       </div>`}
     </div>`;
   }
-  // IssueRow memoization.  See INTERNALS.md § 21.42
+  // IssueRow memoization.  See docs/INTERNALS.md § 21.42
   IssueRow = React.memo(IssueRow);
 
 
@@ -31586,7 +31586,7 @@ function startApp() {
 
   // ── ifc-lite Migration Notice ──────────────────────────────────
 
-  // ── Natural Language Command Engine ──────────────────────────── INTERNALS.md §17
+  // ── Natural Language Command Engine ──────────────────────────── docs/INTERNALS.md §17
 
   // ── Server AI health check ───────────────────────────────────────
   var _serverAIAvailable = false;
@@ -32363,7 +32363,7 @@ function startApp() {
       }
     }
 
-    // ── Tiered AI: basic assistant vs. your own LLM ──  See INTERNALS.md § 21.7
+    // ── Tiered AI: basic assistant vs. your own LLM ──  See docs/INTERNALS.md § 21.7
     if (!replyContext) {
       var _solveRx = /\b(resolv\w*|solv\w*|fix(?:ing|es|ed)?|deconflict\w*|mitigat\w*|work[\s-]?around|recommend\w*|suggest\w*|propose\w*)\b/i;
       var _aboutClash = /\b(clash\w*|conflict\w*|collision\w*|overlap\w*|intersect\w*)\b/i;
@@ -33690,7 +33690,7 @@ function startApp() {
     </div>`;
   }
 
-  // ── Natural Language Command Panel ───────────────────────────── INTERNALS.md §17
+  // ── Natural Language Command Panel ───────────────────────────── docs/INTERNALS.md §17
 
   function NLCommandPanel(props) {
     var s = props.s, d = props.d;
@@ -34948,7 +34948,7 @@ function startApp() {
 
   // ── Memory Warning Modal ────────────────────────────────────────
 
-  // ── Memory diagnostic breakdown ──  See INTERNALS.md § 21.23
+  // ── Memory diagnostic breakdown ──  See docs/INTERNALS.md § 21.23
   function _ccMemDiag(s) {
     var L = [];
     var fmtMB = function(b){ return (b/1048576).toFixed(1) + ' MB'; };
@@ -35022,7 +35022,7 @@ function startApp() {
       });
       if (elMeshes) L.push('- **Retained element.meshes[]**: ' + elMeshes + ' proxy meshes, ' + elGeoVerts.toLocaleString() + ' verts (kept for clash/highlight)');
     } catch(e){}
-    // Byte-accurate residency ledger (V7_RELEASE_PLAN.md P6.1) — dedups shared
+    // Byte-accurate residency ledger (docs/V7_RELEASE_PLAN.md P6.1) — dedups shared
     // geometry per model (the line above sums per-PROXY, so it double-counts
     // anything InstancedMesh shares) and adds BatchedMesh/instance/BVH/prop
     // bytes the line above doesn't see at all.
@@ -35086,7 +35086,7 @@ function startApp() {
     });
   };
 
-  // _ccDebugInstancing — usage: _ccDebugInstancing().  See INTERNALS.md § 21.43
+  // _ccDebugInstancing — usage: _ccDebugInstancing().  See docs/INTERNALS.md § 21.43
   window._ccDebugInstancing = function() {
     var s = window._ccLatestState || {};
     // Collect per-key mesh refs so we can detect *real* hash collisions:
@@ -35196,7 +35196,7 @@ function startApp() {
     var usedMB = mem.usedJSHeapSize ? Math.round(mem.usedJSHeapSize / 1048576) : 0;
     var totalMB = mem.totalJSHeapSize ? Math.round(mem.totalJSHeapSize / 1048576) : 0;
     var limitMB = mem.jsHeapSizeLimit ? Math.round(mem.jsHeapSizeLimit / 1048576) : 0;
-    // Memory-report privacy — model names never included.  See INTERNALS.md § 21.44
+    // Memory-report privacy — model names never included.  See docs/INTERNALS.md § 21.44
     var includeNames = false;
     var inclBrowser = useState(true), includeBrowser=inclBrowser[0], setIncludeBrowser=inclBrowser[1];
     var msgSt = useState(''), userMsg=msgSt[0], setUserMsg=msgSt[1];
@@ -35636,7 +35636,7 @@ function startApp() {
     };
   }
 
-  // ── Left Panel (Models, Clashes, Issues, etc.) ───────────────── INTERNALS.md §18
+  // ── Left Panel (Models, Clashes, Issues, etc.) ───────────────── docs/INTERNALS.md §18
 
   function LeftPanel(props) {
     var s=props.s, d=props.d;
@@ -38948,7 +38948,7 @@ function startApp() {
       window._cc2DSnapIndex = _cc2DOutlines ? _ccBuildSnapIndex(_cc2DOutlines) : null;
     }, [s.underlayMode, s.floorPlan, s.models, s.activeSheetId, s.sheets]);
 
-    // ── Global Keyboard Shortcuts (single keys + Revit-style two-key chords) ── INTERNALS.md §19
+    // ── Global Keyboard Shortcuts (single keys + Revit-style two-key chords) ── docs/INTERNALS.md §19
     var _chordRef = useRef({key:null,timer:null});
     useEffect(function(){
       function gk(e){
@@ -39387,7 +39387,7 @@ function startApp() {
       if (window._ccOpenModelsPanel) try { window._ccOpenModelsPanel(); } catch(_e){}
       window.dispatchEvent(new CustomEvent('cc-pending-files'));
     }
-    // ── P6.3: pre-load pressure relief (V7_RELEASE_PLAN.md, flag-gated,
+    // ── P6.3: pre-load pressure relief (docs/V7_RELEASE_PLAN.md, flag-gated,
     // conservative slice). The plan's fuller ask — stage packed geometry,
     // let the IFC worker finish property extraction and terminate BEFORE
     // constructing Three.js objects, commit atomically — touches the IFC

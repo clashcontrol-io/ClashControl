@@ -1,4 +1,4 @@
-# INTERNALS.md — Architecture & Code Reference
+# docs/INTERNALS.md — Architecture & Code Reference
 
 This document replaces the inline comments that were stripped from `index.html`. Each section corresponds to a `// ── Section Name ──` header in the code. Use Ctrl+F in `index.html` to find the matching header.
 
@@ -6,7 +6,7 @@ This document replaces the inline comments that were stripped from `index.html`.
 
 ## 1. Boot & Initialization
 
-**Code section:** `// See INTERNALS.md` (top of `<script>`)
+**Code section:** `// See docs/INTERNALS.md` (top of `<script>`)
 
 The app boots in `window.onload → startApp()`. Before anything runs, CDN dependencies are verified (React, Three.js, htm, JSZip). If any are missing, boot fails with an error message.
 
@@ -224,7 +224,7 @@ Mount uses `ReactDOM.createRoot` (React 18) with `ErrorBoundary` fallback. Addon
 
 ## 21. Extracted Code Rationale
 
-Long-form rationale blocks that used to live inline in `index.html`. Each subsection corresponds to a `// See INTERNALS.md § 21.x` reference in the code.
+Long-form rationale blocks that used to live inline in `index.html`. Each subsection corresponds to a `// See docs/INTERNALS.md § 21.x` reference in the code.
 
 ### 21.1 Three.js bump-prep harness
 

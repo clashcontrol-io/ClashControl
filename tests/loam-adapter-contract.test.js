@@ -7,7 +7,7 @@ const path = require('node:path');
 const ROOT = path.join(__dirname, '..');
 const addon = fs.readFileSync(path.join(ROOT, 'addons', 'smart-bridge.js'), 'utf8');
 const mcp = fs.readFileSync(path.join(ROOT, 'mcp-server.js'), 'utf8');
-const protocol = fs.readFileSync(path.join(ROOT, 'CONNECTOR_PROTOCOL.md'), 'utf8');
+const protocol = fs.readFileSync(path.join(ROOT, 'docs', 'CONNECTOR_PROTOCOL.md'), 'utf8');
 
 test('the external-orchestrator adapter keeps the connective-spine join fields', () => {
   assert.match(addon, /projectKey:\s*_projectKey\(s\)/);
