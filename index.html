@@ -20819,6 +20819,9 @@ function startApp() {
       window.addEventListener('keydown', onKey);
       return function(){ window.removeEventListener('keydown', onKey); };
     }, []);
+    // Task D: role="dialog" aria-modal="true" modals must trap/move focus.
+    var cardRef = useRef(null);
+    _ccUseFocusTrap(cardRef, true);
     function runNow(){
       if (!canRun) return;
       var rules = s.rules;
@@ -20833,7 +20836,7 @@ function startApp() {
     }
     return html`<div class="cc-modal-backdrop" style=${S_BACKDROP} role="dialog" aria-modal="true" aria-labelledby="cc-run-detection-title"
       onClick=${close}>
-      <div class="cc-modal-card" style=${{...S_MODAL_CARD,width:720,padding:0,display:'flex',flexDirection:'column'}} onClick=${function(e){e.stopPropagation();}}>
+      <div ref=${cardRef} tabindex="-1" class="cc-modal-card" style=${{...S_MODAL_CARD,width:720,padding:0,display:'flex',flexDirection:'column',outline:'none'}} onClick=${function(e){e.stopPropagation();}}>
         <!-- Header -->
         <div style=${{padding:'var(--space-4) var(--space-5) var(--space-3)',display:'flex',alignItems:'center',gap:'var(--space-3)',borderBottom:'1px solid var(--border-subtle)'}}>
           <div style=${{width:32,height:32,borderRadius:'var(--radius-md)',background:'var(--accent-bg)',display:'flex',alignItems:'center',justifyContent:'center',color:'var(--accent)',flexShrink:0}}>
@@ -24786,7 +24789,10 @@ function startApp() {
         if (isClash && (e.key==='t'||e.key==='T') && groups && groups.length) {
           var g = currentGroup(); if (g && window._ccTriageCluster) { e.preventDefault(); window._ccTriageCluster(g.items); return; }
         }
-        if (isClash && (e.key==='r'||e.key==='R') && groups && groups.length) {
+        // Shift+R (not plain R — R alone is the global "reset camera" key,
+        // handled by a separate window-level handler; both used to fire on
+        // every plain R press since they're independent listeners).
+        if (isClash && e.shiftKey && (e.key==='r'||e.key==='R') && groups && groups.length) {
           var gR = currentGroup();
           if (gR) {
             var open = gR.items.filter(function(it){return it.status!=='resolved'&&it.status!=='closed';});
@@ -24797,7 +24803,11 @@ function startApp() {
             }
           }
         }
-        if (isClash && (e.key==='x'||e.key==='X') && groups && groups.length) {
+        // Shift+X (not plain X — X alone is the global "toggle section
+        // plane on the X axis" key, handled by a separate window-level
+        // handler; both used to fire on every plain X press since they're
+        // independent listeners).
+        if (isClash && e.shiftKey && (e.key==='x'||e.key==='X') && groups && groups.length) {
           var gX = currentGroup();
           if (gX) {
             e.preventDefault();
@@ -24817,6 +24827,11 @@ function startApp() {
           for (var cdvI=0; cdvI<flatItems.length; cdvI++) { if (flatItems[cdvI].id===activeId) { itCDV = flatItems[cdvI]; break; } }
           if (itCDV && itCDV.status!=='confirmed') {
             e.preventDefault();
+            // stopPropagation so V doesn't also reach WalkModeHUD's
+            // window-level 'v'-saves-a-viewpoint handler when walk mode is
+            // active alongside the clash panel — V here must ONLY set the
+            // clash status, not silently save a viewpoint too.
+            e.stopPropagation();
             var cdvStatus = (e.key==='c'||e.key==='C') ? 'confirmed' : (e.key==='d'||e.key==='D') ? 'denied' : 'accepted_needs_check';
             if (window._ccPrepareAdvance) window._ccPrepareAdvance(activeId);
             d({t:A.UPD_CLASH, id:activeId, u:{status:cdvStatus}});
@@ -24826,6 +24841,14 @@ function startApp() {
         }
         if(e.key!=='ArrowDown'&&e.key!=='ArrowUp'&&e.key!=='Tab'&&e.key!=='j'&&e.key!=='J'&&e.key!=='k'&&e.key!=='K') return;
         if(flatItems.length===0) return;
+        // Tab/Shift+Tab only means "jump to next/prev group" while focus is
+        // already somewhere inside the clash list (e.g. a row's own button)
+        // — otherwise this global document-level handler hijacked every Tab
+        // press on the page the moment any clash existed, trapping keyboard
+        // users on document.body with nowhere to Tab to (verified: 40 Tabs
+        // stuck on body). Outside the list, Tab keeps its normal browser
+        // meaning; only Arrow/J/K stay global here.
+        if(e.key==='Tab' && !(scrollRef.current && scrollRef.current.contains(document.activeElement))) return;
         e.preventDefault();
         if (e.key==='j'||e.key==='J') e = {key:'ArrowDown', shiftKey:e.shiftKey};
         else if (e.key==='k'||e.key==='K') e = {key:'ArrowUp', shiftKey:e.shiftKey};
@@ -25680,6 +25703,9 @@ function startApp() {
       window.addEventListener('keydown',onKey);
       return function(){window.removeEventListener('keydown',onKey);};
     },[]);
+    // Task D: role="dialog" aria-modal="true" modals must trap/move focus.
+    var cardRef = useRef(null);
+    _ccUseFocusTrap(cardRef, true);
     function upd(k){return function(e){setForm(function(prev){var n=Object.assign({},prev);n[k]=e.target.value;return n;})}}
     function submit(e){
       e.preventDefault();
@@ -25718,7 +25744,7 @@ function startApp() {
     var META_NEUTRAL={fontSize:'var(--text-2xs)',background:'var(--bg-secondary)',color:'var(--text-secondary)',padding:'.1rem var(--space-2)',borderRadius:'var(--radius-pill)'};
     var titleText = fromClash?_cc_t('newIssue.titleFromClash','New Issue from Clash'):hasEl?_cc_t('newIssue.titleFromElement','New Element Issue'):_cc_t('newIssue.title','New Issue');
     var titleId = 'cc-newissue-title';
-    return html`<div class="cc-modal-backdrop" style=${S_BACKDROP} role="dialog" aria-modal="true" aria-labelledby=${titleId}><div class="cc-modal-card" style=${{...S_MODAL_CARD,width:440}}>
+    return html`<div class="cc-modal-backdrop" style=${S_BACKDROP} role="dialog" aria-modal="true" aria-labelledby=${titleId}><div ref=${cardRef} tabindex="-1" class="cc-modal-card" style=${{...S_MODAL_CARD,width:440,outline:'none'}}>
       <div style=${S_MODAL_HEADER}>
         <span id=${titleId} style=${S_MODAL_TITLE}>${titleText}</span>
         <button onClick=${function(){d({t:A.MODAL,v:false})}} style=${S_MODAL_CLOSE} aria-label=${_cc_t('modal.close','Close modal')}>✕</button>
@@ -27022,6 +27048,9 @@ function startApp() {
       window.addEventListener('keydown', onKey);
       return function(){ window.removeEventListener('keydown', onKey); };
     }, []);
+    // Task D: role="dialog" aria-modal="true" modals must trap/move focus.
+    var cardRef = useRef(null);
+    _ccUseFocusTrap(cardRef, true);
 
     function captureCurrent() {
       var n = (name||'').trim() || 'View ' + ((s.smartViews||[]).filter(function(v){return !v.isPreset;}).length+1);
@@ -27069,7 +27098,7 @@ function startApp() {
 
     return html`<div class="cc-modal-backdrop" style=${S_BACKDROP} role="dialog" aria-modal="true"
       onClick=${function(){d({t:A.SMART_VIEWS,v:false});}}>
-      <div class="cc-modal-card" style=${{...S_MODAL_CARD,width:680,padding:0,display:'flex',flexDirection:'column'}} onClick=${function(e){e.stopPropagation();}}>
+      <div ref=${cardRef} tabindex="-1" class="cc-modal-card" style=${{...S_MODAL_CARD,width:680,padding:0,display:'flex',flexDirection:'column',outline:'none'}} onClick=${function(e){e.stopPropagation();}}>
         <div style=${{padding:'1rem 1.2rem .6rem',display:'flex',alignItems:'center',gap:'.6rem'}}>
           <div style=${{width:32,height:32,borderRadius:'var(--radius-md)',background:'var(--accent-bg)',display:'flex',alignItems:'center',justifyContent:'center',color:'var(--accent)'}}>
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M12 1v6m0 10v6M5.64 5.64l4.24 4.24m4.24 4.24l4.24 4.24M1 12h6m10 0h6M5.64 18.36l4.24-4.24m4.24-4.24l4.24-4.24"/></svg>
@@ -27145,6 +27174,9 @@ function startApp() {
       window.addEventListener('keydown', onKey);
       return function(){ window.removeEventListener('keydown', onKey); };
     }, []);
+    // Task D: role="dialog" aria-modal="true" modals must trap/move focus.
+    var cardRef = useRef(null);
+    _ccUseFocusTrap(cardRef, true);
 
     var collaborators = (function(){
       var seen = {};
@@ -27249,7 +27281,7 @@ function startApp() {
 
     return html`<div class="cc-modal-backdrop" style=${S_BACKDROP} role="dialog" aria-modal="true" aria-labelledby="cc-share-title"
       onClick=${function(){d({t:A.SHARE,v:false});}}>
-      <div class="cc-modal-card" style=${{...S_MODAL_CARD,width:560,padding:0,display:'flex',flexDirection:'column'}} onClick=${function(e){e.stopPropagation();}}>
+      <div ref=${cardRef} tabindex="-1" class="cc-modal-card" style=${{...S_MODAL_CARD,width:560,padding:0,display:'flex',flexDirection:'column',outline:'none'}} onClick=${function(e){e.stopPropagation();}}>
         <div style=${{padding:'1rem 1.2rem .6rem',display:'flex',alignItems:'center',gap:'.6rem'}}>
           <div style=${{width:32,height:32,borderRadius:8,background:'var(--accent-bg)',display:'flex',alignItems:'center',justifyContent:'center',color:'var(--accent)'}}>
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/></svg>
@@ -27603,12 +27635,15 @@ function startApp() {
       window.addEventListener('keydown', onKey);
       return function(){ window.removeEventListener('keydown', onKey); };
     }, []);
-    // REWRITE_UI_PLAN.md Phase 9 — first verified integration of the shared
-    // focus-trap primitive. Flag-gated; the modal's existing Escape handler
-    // and DOM structure above/below are completely unchanged either way.
+    // REWRITE_UI_PLAN.md Phase 9 — the shared focus-trap primitive, applied
+    // unconditionally (was flag-gated behind ccUiModalV2, defaultEnabled:
+    // false, during its first verified rollout — this modal is role="dialog"
+    // aria-modal="true" and should always trap focus, not only when that
+    // flag happens to be on). The modal's existing Escape handler and DOM
+    // structure above/below are unchanged.
     var modalV2On = !!(window._ccSafetyMigrations && window._ccSafetyMigrations.isEnabled('ccUiModalV2'));
     var cardRef = useRef(null);
-    _ccUseFocusTrap(cardRef, modalV2On);
+    _ccUseFocusTrap(cardRef, true);
     var sections = [
       { title: _cc_t('shortcuts.section.general','General'), rows: [
         ['?',           _cc_t('shortcuts.general.openPanel','Open this shortcuts panel')],
@@ -27621,8 +27656,8 @@ function startApp() {
         ['Scroll',      _cc_t('shortcuts.mouse.zoom','Zoom to cursor')],
       ]},
       { title: _cc_t('shortcuts.section.view','View'), rows: [
-        ['1',           _cc_t('shortcuts.view.standard','Standard rendering')],
-        ['2',           _cc_t('shortcuts.view.shaded','Shaded rendering')],
+        ['1',           _cc_t('shortcuts.view.shaded','Shaded rendering')],
+        ['2',           _cc_t('shortcuts.view.standard','Hidden Line rendering')],
         ['3',           _cc_t('shortcuts.view.rendered','Rendered (lit) view')],
         ['4',           _cc_t('shortcuts.view.xray','X-Ray (semi-transparent)')],
         ['5',           _cc_t('shortcuts.view.wireframe','Wireframe')],
@@ -27651,13 +27686,13 @@ function startApp() {
       ]},
       { title: _cc_t('shortcuts.section.clashTriage','Clash triage'), rows: [
         ['J / K',       _cc_t('shortcuts.triage.nextPrev','Next / previous clash — frames, isolates, and colors the pair')],
-        ['Tab / Shift+Tab', _cc_t('shortcuts.triage.nextPrevGroup','Next / previous group')],
+        ['Tab / Shift+Tab', _cc_t('shortcuts.triage.nextPrevGroup','Next / previous group (while focus is inside the clash list)')],
         ['C',           _cc_t('shortcuts.triage.confirm','Confirm active clash')],
         ['D',           _cc_t('shortcuts.triage.deny','Deny active clash (false positive)')],
         ['V',           _cc_t('shortcuts.triage.accept','Accept, flag for later verification')],
         ['T',           _cc_t('shortcuts.triage.aiTriage','AI-triage the active group')],
-        ['R',           _cc_t('shortcuts.triage.resolveAll','Resolve all open clashes in the active group')],
-        ['X',           _cc_t('shortcuts.triage.expandCollapse','Expand / collapse the active group')],
+        ['Shift+R',     _cc_t('shortcuts.triage.resolveAll','Resolve all open clashes in the active group')],
+        ['Shift+X',     _cc_t('shortcuts.triage.expandCollapse','Expand / collapse the active group')],
         ['/',           _cc_t('shortcuts.triage.focusFilter','Focus the filter box')],
       ]},
       { title: _cc_t('shortcuts.section.walkMode','Walk mode'), rows: [
@@ -28034,6 +28069,11 @@ function startApp() {
       if (inputRef.current) inputRef.current.focus();
     }, []);
     useEffect(function(){ setIdx(0); }, [q]);
+    // Task D: role="dialog" aria-modal="true" modals must trap/move focus.
+    // The input's own autofocus above already covers "move focus in"; this
+    // adds Tab-containment and focus-restore-on-close.
+    var cardRef = useRef(null);
+    _ccUseFocusTrap(cardRef, true);
     function onKey(e){
       if (e.key === 'Escape') { e.preventDefault(); onClose(); return; }
       if (e.key === 'ArrowDown') { e.preventDefault(); setIdx(Math.min(list.length-1, idx+1)); return; }
@@ -28049,7 +28089,7 @@ function startApp() {
     });
     return html`<div class="cc-modal-backdrop" style=${{...S_BACKDROP,alignItems:'flex-start',paddingTop:'10vh'}} role="dialog" aria-modal="true" aria-labelledby="cc-cmdk-title"
       onClick=${onClose} onKeyDown=${onKey}>
-      <div class="cc-modal-card" style=${{...S_MODAL_CARD,width:560,maxHeight:'70vh',display:'flex',flexDirection:'column'}} onClick=${function(e){e.stopPropagation();}}>
+      <div ref=${cardRef} tabindex="-1" class="cc-modal-card" style=${{...S_MODAL_CARD,width:560,maxHeight:'70vh',display:'flex',flexDirection:'column',outline:'none'}} onClick=${function(e){e.stopPropagation();}}>
         <div style=${{padding:'var(--space-3) var(--space-4)',borderBottom:'1px solid var(--border-subtle)',display:'flex',alignItems:'center',gap:'var(--space-3)'}}>
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--text-muted)" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
           <input ref=${inputRef} type="text" id="cc-cmdk-title" aria-label=${_cc_t('cmdk.commandOrQuestion','Command or question')}
@@ -28165,6 +28205,9 @@ function startApp() {
         window.removeEventListener('cc-training-sent', flashSent);
       };
     },[]);
+    // Task D: role="dialog" aria-modal="true" modals must trap/move focus.
+    var cardRef = useRef(null);
+    _ccUseFocusTrap(cardRef, true);
     function toggleConsent() {
       var nv = !dataConsent;
       setDataConsent(nv);
@@ -28184,7 +28227,7 @@ function startApp() {
       </div>`;
     }
     var NAVBTN = function(on){return {...S_BTN,display:'block',width:'100%',textAlign:'left',background:on?'var(--accent-bg-deep)':'none',color:on?'var(--accent)':'var(--text-secondary)',fontWeight:on?600:400,fontSize:'0.82rem',padding:'.5rem .7rem',borderRadius:'var(--radius-sm)',borderLeft:on?'2px solid var(--accent)':'2px solid transparent'};};
-    return html`<div class="cc-modal-backdrop" style=${S_BACKDROP} role="dialog" aria-modal="true" aria-labelledby="cc-settings-title" onClick=${function(){d({t:A.SETTINGS,v:false});}}><div class="cc-modal-card" style=${{...S_MODAL_CARD,width:640,overflow:'hidden',display:'flex',flexDirection:'column'}} onClick=${function(e){e.stopPropagation();}}>
+    return html`<div class="cc-modal-backdrop" style=${S_BACKDROP} role="dialog" aria-modal="true" aria-labelledby="cc-settings-title" onClick=${function(){d({t:A.SETTINGS,v:false});}}><div ref=${cardRef} tabindex="-1" class="cc-modal-card" style=${{...S_MODAL_CARD,width:640,overflow:'hidden',display:'flex',flexDirection:'column',outline:'none'}} onClick=${function(e){e.stopPropagation();}}>
       <div style=${S_MODAL_HEADER}>
         <span id="cc-settings-title" style=${S_MODAL_TITLE}>${_cc_t('panel.settings.title','Settings')}</span>
         <button onClick=${function(){d({t:A.SETTINGS,v:false})}} style=${S_MODAL_CLOSE} aria-label=${_cc_t('settings.closeAria','Close settings')}>✕</button>
@@ -29278,9 +29321,12 @@ function startApp() {
       d({ t: 'UNDERLAY_MODE', v: 'view2d' });
       onClose();
     }
+    // Task D: role="dialog" aria-modal="true" modals must trap/move focus.
+    var cardRef = useRef(null);
+    _ccUseFocusTrap(cardRef, true);
     return html`<div class="cc-modal-backdrop" style=${S_BACKDROP} role="dialog" aria-modal="true"
       onClick=${onClose}>
-      <div class="cc-modal-card" style=${{...S_MODAL_CARD,width:360,padding:0}} onClick=${function(e){e.stopPropagation();}}>
+      <div ref=${cardRef} tabindex="-1" class="cc-modal-card" style=${{...S_MODAL_CARD,width:360,padding:0,outline:'none'}} onClick=${function(e){e.stopPropagation();}}>
         <div style=${{padding:'var(--space-4) var(--space-4) var(--space-2)',borderBottom:'1px solid var(--border-subtle)',display:'flex',alignItems:'center',justifyContent:'space-between'}}>
           <span style=${{fontWeight:700,fontSize:'0.95rem',color:'var(--text-primary)'}}>${_cc_t('storeyPicker.selectLevel','Select Level')}</span>
           <button onClick=${onClose} style=${{...S_BTN,background:'none',color:'var(--text-faint)',fontSize:'1rem',padding:'0 var(--space-1)'}}>✕</button>
@@ -37010,10 +37056,16 @@ function startApp() {
       {id:'shaded',    label:_cc_t('toolbar.shaded','Shaded')},
       {id:'standard',  label:_cc_t('toolbar.hiddenLine','Hidden Line')},
       {id:'rendered',  label:_cc_t('toolbar.rendered','Rendered')},
-      {id:'xray',      label:_cc_t('toolbar.xray','X-Ray')}
+      {id:'xray',      label:_cc_t('toolbar.xray','X-Ray')},
+      {id:'wireframe', label:_cc_t('toolbar.wireframe','Wireframe')}
     ];
     var curStyle = s.prefs.renderStyle || 'shaded';
-    var curStyleLabel = (styles.find(function(x){return x.id===curStyle;})||styles[2]).label;
+    // Falls back to styles[0] (Shaded, the actual default renderStyle pref)
+    // rather than an arbitrary index — wireframe used to be reachable only
+    // via hotkey 5 / NL command and wasn't in this array at all, so its
+    // label silently fell back to whatever styles[2] happened to be
+    // ("Rendered") instead of "Wireframe".
+    var curStyleLabel = (styles.find(function(x){return x.id===curStyle;})||styles[0]).label;
 
     /* Section sub-row only appears when a slice plane exists, anchored under
        the toolbar (not floating). Same ink palette, no glass. */
@@ -38490,9 +38542,12 @@ function startApp() {
         }
 
         // ── Single-key shortcuts (non-chord keys) ──
+        // Numbers match the STYLE menu's own order/numbering exactly
+        // (Shaded, Hidden Line, Rendered, X-Ray, Wireframe — see the
+        // `styles` array + its `${i+1}` hotkey hints in TopToolbar).
         if(!ctrl && !e.altKey && !e.shiftKey){
-          if(e.key==='1'){ d({t:A.UPD_PREFS,u:{renderStyle:'standard'}}); return; }
-          if(e.key==='2'){ d({t:A.UPD_PREFS,u:{renderStyle:'shaded'}}); return; }
+          if(e.key==='1'){ d({t:A.UPD_PREFS,u:{renderStyle:'shaded'}}); return; }
+          if(e.key==='2'){ d({t:A.UPD_PREFS,u:{renderStyle:'standard'}}); return; }
           if(e.key==='3'){ d({t:A.UPD_PREFS,u:{renderStyle:'rendered'}}); return; }
           if(e.key==='4'){ d({t:A.UPD_PREFS,u:{renderStyle:'xray'}}); return; }
           if(e.key==='5'){ d({t:A.UPD_PREFS,u:{renderStyle:'wireframe'}}); return; }
@@ -38514,6 +38569,17 @@ function startApp() {
           if(window._ccUndoMeasurement && window._ccUndoMeasurement()) { e.preventDefault(); return; }
         }
         if(e.key==='/'&&!ctrl){ e.preventDefault(); if(window._ccNLOpen) window._ccNLOpen(); return; }
+        // Ctrl+F: listed in the shortcuts sheet ("Find / search elements")
+        // but previously unhandled — focuses whichever filter/search input is
+        // currently visible (clash/issue filter, or the Explorer tree's
+        // "Search elements…" box), instead of falling through to the
+        // browser's own Find bar.
+        if((e.key==='f'||e.key==='F')&&ctrl){
+          var _findInp = document.querySelector(
+            'input[type="text"][placeholder^="Filter"],input[type="text"][placeholder^="Search"]'
+          );
+          if(_findInp){ e.preventDefault(); _findInp.focus(); _findInp.select(); return; }
+        }
         // F flips the active section's kept side. With no active section it
         // falls back to fit-to-model so the old habit still works. Home and
         // the Z-F chord also fit, so this is just the friendlier default.

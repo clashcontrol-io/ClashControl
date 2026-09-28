@@ -18,7 +18,7 @@ const src = fs.readFileSync(path.join(__dirname, '..', 'index.html'), 'utf8');
 
 const hotkeyStart = src.indexOf("e.key==='c'||e.key==='C'||e.key==='d'");
 assert.ok(hotkeyStart !== -1, 'status-hotkey handler (c/d/v key check) not found');
-const hotkeyBlock = src.slice(hotkeyStart, hotkeyStart + 900);
+const hotkeyBlock = src.slice(hotkeyStart, hotkeyStart + 1100);
 
 const buttonsStart = src.indexOf("aria-label=${_cc_t('issueRow.confirmClashAria'");
 assert.ok(buttonsStart !== -1, 'Confirm button not found');

@@ -39,12 +39,11 @@ test('ccUiModalV2 flag exists and defaults off (same convention as every other U
   assert.match(safety, /ccUiModalV2: Object\.freeze\({ fallback: 'legacy', defaultEnabled: false }\)/);
 });
 
-test('ShortcutsModal calls the trap behind the ccUiModalV2 flag, without touching its existing Escape handler', () => {
+test('ShortcutsModal calls the trap unconditionally (task D: role="dialog" modals must always trap focus), without touching its existing Escape handler', () => {
   const start = html.indexOf('function ShortcutsModal(props) {');
   const end = html.indexOf('\n  function ', start + 10);
   const body = html.slice(start, end);
-  assert.match(body, /isEnabled\('ccUiModalV2'\)/);
-  assert.match(body, /_ccUseFocusTrap\(cardRef, modalV2On\)/);
+  assert.match(body, /_ccUseFocusTrap\(cardRef, true\)/);
   // The pre-existing Escape-to-close effect is untouched.
   assert.match(body, /if \(e\.key === 'Escape'\) onClose\(\);/);
   assert.match(body, /ref=\$\{cardRef\}/);
