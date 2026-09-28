@@ -1747,6 +1747,48 @@ function startApp() {
       linkedClashId: c.id || null
     };
   }
+  // Bug 4/6: shared by the single Confirm action (UPD_CLASH status:
+  // 'confirmed') and the batch "Set status... Confirmed" action
+  // (BATCH_UPD_CLASH) so both behave identically -- promote the clash to
+  // an issue (so it survives being confirmed and carries full element
+  // identity via _issueIdentityFromClash for BCF <Components> export)
+  // instead of one path silently creating an issue and the other just
+  // flipping a status string on the clash object.
+  function _ccBuildConfirmIssue(cClash) {
+    return Object.assign({
+      id:'iss_'+Date.now()+'_'+Math.random().toString(36).substr(2,6),
+      title:cClash.title,
+      description:cClash.description,
+      status:'open',
+      priority:cClash.priority||'normal',
+      source:'clash',
+      clashId:cClash.id,
+      type:cClash.type,
+      elemA:cClash.elemA, elemB:cClash.elemB,
+      elemAType:cClash.elemAType, elemBType:cClash.elemBType,
+      elemAName:cClash.elemAName, elemBName:cClash.elemBName,
+      elemAStorey:cClash.elemAStorey, elemBStorey:cClash.elemBStorey,
+      elemAMaterial:cClash.elemAMaterial, elemBMaterial:cClash.elemBMaterial,
+      modelAId:cClash.modelAId, modelBId:cClash.modelBId,
+      modelAName:cClash.modelAName, modelBName:cClash.modelBName,
+      point:cClash.point, distance:cClash.distance,
+      assignee:cClash.assignee||'',
+      aiFeedback:cClash.aiFeedback||null,
+      aiReasons:cClash.aiReasons||[],
+      aiResolution:cClash.aiResolution||[],
+      aiNote:cClash.aiNote||'',
+      aiSignals:cClash.aiSignals||[],
+      clashTypeConfirmed:cClash.clashTypeConfirmed||null,
+      overlapVolM3:cClash.overlapVolM3,
+      clearanceMm:cClash.clearanceMm,
+      bboxA:cClash.bboxA, bboxB:cClash.bboxB,
+      disciplines:cClash.disciplines,
+      objectTypeA:cClash.objectTypeA, objectTypeB:cClash.objectTypeB,
+      userToleranceMm:cClash.userToleranceMm||null,
+      expectedClash:cClash.expectedClash||false,
+      created:Date.now()
+    }, _issueIdentityFromClash(cClash));
+  }
   // Deterministic severity fallback — Wave 1.6. AI triage (_ccBuildTriagePrompt
   // / api/title.js) writes aiSeverity, but that's an opt-in per-cluster/batch
   // action; most clashes in most projects never get it, and every existing
@@ -1797,6 +1839,28 @@ function startApp() {
         }
         if (_dupIdx !== -1) {
           var _prevM = s.models[_dupIdx];
+          // Bug 1: a project-file restore dispatches ADD_MODEL with a
+          // placeholder model (meshes:[], elements:[], _stub:true) for
+          // every saved model, even ones already loaded with real
+          // geometry in this session. Without this guard the dedup merge
+          // below took the placeholder as its base and the loaded
+          // model's meshes/elements were wiped to empty -- 0 elements,
+          // duplicated issues/selection sets on next merge, and the next
+          // detection run treating every clash as auto-resolved (no
+          // elements left to re-detect). A stub restore must only ever
+          // merge display/organizational metadata onto an already-loaded
+          // model, never its geometry.
+          var _amIsStub = _am._stub === true || (!((_am.meshes||[]).length) && !((_am.elements||[]).length));
+          var _prevHasGeometry = ((_prevM.meshes||[]).length) || ((_prevM.elements||[]).length);
+          if (_amIsStub && _prevHasGeometry) {
+            var _metaMerged = Object.assign({}, _prevM, {
+              discipline: _am.discipline || _prevM.discipline,
+              color: _am.color || _prevM.color,
+              tag: _am.tag || _prevM.tag || '',
+              visible: _prevM.visible !== false
+            });
+            return Object.assign({},s,{models: s.models.map(function(m,i){ return i===_dupIdx ? _metaMerged : m; }),parkedModels:(s.parkedModels||[]).filter(function(pm){return pm.id!==_am.id;})});
+          }
           _clearElCaches(_prevM);
           var _merged = Object.assign({}, _am, {
             id: _prevM.id, // keep the stable id so refs/markers/issues stay valid
@@ -1851,6 +1915,13 @@ function startApp() {
       case A.STOP_DETECT: return Object.assign({},s,{detecting:false});
       case A.SWITCHING_PROJECT: return Object.assign({},s,{switchingProject:!!a.v});
       case A.ADD_ISSUE:
+        // Bug 1: dedupe by id (project-file restore re-dispatches ADD_ISSUE
+        // for every saved issue -- ADD_ISSUE never deduped, so reopening a
+        // saved project doubled the issue count), then by bcfGuid (BCF
+        // re-import assigns each topic a fresh local id via uid(), so id
+        // dedup alone doesn't catch a re-import of the same BCF).
+        if (a.v && a.v.id && s.issues.some(function(i){return i.id===a.v.id;})) return s;
+        if (a.v && a.v.bcfGuid && s.issues.some(function(i){return i.bcfGuid && i.bcfGuid===a.v.bcfGuid;})) return s;
         _gcEvent('issue-created');
         var aiClashes=s.clashes;
         if(a.v&&a.v.clashId){
@@ -1890,13 +1961,20 @@ function startApp() {
         if(a.u&&a.u.status==='denied'){
           var dClash=s.clashes.find(function(c){return c.id===a.id;});
           if(dClash) _saveDeniedClash(dClash);
-          var dVisible=s.clashes.filter(function(c){return c.id!==a.id&&c.status!=='denied';});
+          var dAllVisible=s.clashes.filter(function(c){return c.status!=='denied';});
           var _dSortArr=Array.isArray(s.clashSortBy)?s.clashSortBy:(s.clashSortBy&&s.clashSortBy!=='none'?[s.clashSortBy]:[]);
           var dSortFn=_dSortArr.length?function(a,b){for(var _i=0;_i<_dSortArr.length;_i++){var _f=SORT_FNS[_dSortArr[_i]];if(!_f)continue;var _r=_f(a,b);if(_r!==0)return _r;}return 0;}:null;
-          if(dSortFn) dVisible=dVisible.slice().sort(dSortFn);
+          if(dSortFn) dAllVisible=dAllVisible.slice().sort(dSortFn);
+          var dVisible=dAllVisible.filter(function(c){return c.id!==a.id;});
           if(dClash){
-            var dIdx=dVisible.indexOf(dClash);if(dIdx<0)dIdx=0;
-            var dNext=dVisible[Math.min(dIdx,dVisible.length-1)]||null;
+            // Bug 7: dVisible used to already exclude dClash, so
+            // dVisible.indexOf(dClash) was always -1 and Deny->Next always
+            // jumped to the first clash (dIdx forced to 0) instead of the
+            // actual next one. Find dClash's position in the list that
+            // still contains it (dAllVisible), then step to the item right
+            // after it; fall back to the new last item if it was last.
+            var dOrigIdx=dAllVisible.indexOf(dClash);
+            var dNext=(dOrigIdx>=0 && dOrigIdx+1<dAllVisible.length) ? dAllVisible[dOrigIdx+1] : (dVisible.length?dVisible[dVisible.length-1]:null);
             var dNextId=dNext?dNext.id:null;
             if(dNext) setTimeout(function(){
               var dRefs=_itemRefs(dNext);
@@ -1915,39 +1993,11 @@ function startApp() {
             return true;
           });
           if(cClash){
-            var newIssue={
-              id:'iss_'+Date.now()+'_'+Math.random().toString(36).substr(2,6),
-              title:cClash.title,
-              description:cClash.description,
-              status:'open',
-              priority:cClash.priority||'normal',
-              source:'clash',
-              clashId:cClash.id,
-              type:cClash.type,
-              elemA:cClash.elemA, elemB:cClash.elemB,
-              elemAType:cClash.elemAType, elemBType:cClash.elemBType,
-              elemAName:cClash.elemAName, elemBName:cClash.elemBName,
-              elemAStorey:cClash.elemAStorey, elemBStorey:cClash.elemBStorey,
-              elemAMaterial:cClash.elemAMaterial, elemBMaterial:cClash.elemBMaterial,
-              modelAId:cClash.modelAId, modelBId:cClash.modelBId,
-              modelAName:cClash.modelAName, modelBName:cClash.modelBName,
-              point:cClash.point, distance:cClash.distance,
-              assignee:cClash.assignee||'',
-              aiFeedback:cClash.aiFeedback||null,
-              aiReasons:cClash.aiReasons||[],
-              aiResolution:cClash.aiResolution||[],
-              aiNote:cClash.aiNote||'',
-              aiSignals:cClash.aiSignals||[],
-              clashTypeConfirmed:cClash.clashTypeConfirmed||null,
-              overlapVolM3:cClash.overlapVolM3,
-              clearanceMm:cClash.clearanceMm,
-              bboxA:cClash.bboxA, bboxB:cClash.bboxB,
-              disciplines:cClash.disciplines,
-              objectTypeA:cClash.objectTypeA, objectTypeB:cClash.objectTypeB,
-              userToleranceMm:cClash.userToleranceMm||null,
-              expectedClash:cClash.expectedClash||false,
-              created:Date.now()
-            };
+            // Bug 6: full element identity (globalIdA/B, uniqueIdA/B,
+            // revitIdA/B, storey, ...) via the shared helper, so a
+            // confirm-created issue exports <Components> in BCF just like
+            // a manually-created one.
+            var newIssue=_ccBuildConfirmIssue(cClash);
             var _cSortArr=Array.isArray(s.clashSortBy)?s.clashSortBy:(s.clashSortBy&&s.clashSortBy!=='none'?[s.clashSortBy]:[]);
             var cSortFn=_cSortArr.length?function(a,b){for(var _i=0;_i<_cSortArr.length;_i++){var _f=SORT_FNS[_cSortArr[_i]];if(!_f)continue;var _r=_f(a,b);if(_r!==0)return _r;}return 0;}:null;
             var sortedRemain = cSortFn ? remainClashes.slice().sort(cSortFn) : remainClashes;
@@ -1964,7 +2014,18 @@ function startApp() {
               if(nextClash.point&&window._ccShowActiveClashMarker) window._ccShowActiveClashMarker(nextClash.point);
               if(_flyToElements&&nRefs.length) _flyToElements(nRefs, nextClash.point);
             },100);
-            return Object.assign({},s,{clashes:remainClashes,issues:s.issues.concat([newIssue]),activeId:nextId});
+            // Bug 4: keep the confirmed clash in state.clashes (status
+            // 'confirmed', linked to the new issue) instead of deleting
+            // it. Deleting it meant the next detection run's reconciliation
+            // never saw a prior record for that element pair, so the same
+            // physical clash came back as brand-new ("new") even though
+            // its issue still existed. remainClashes/nextId above are only
+            // used to pick where the UI navigates next -- confirmed
+            // clashes are "handled", so the list still advances past them.
+            var confirmedClashes=s.clashes.map(function(c){
+              return c.id===a.id ? Object.assign({},c,{status:'confirmed',linkedIssueId:newIssue.id}) : c;
+            });
+            return Object.assign({},s,{clashes:confirmedClashes,issues:s.issues.concat([newIssue]),activeId:nextId});
           }
         }
         return Object.assign({},s,{clashes:s.clashes.map(function(c){
@@ -2011,6 +2072,10 @@ function startApp() {
       case A.SET_AUTOPARK: { var _ap=!!a.v; _ccPersistUI('autoParkInactive',_ap); return Object.assign({},s,{autoParkInactive:_ap}); }
       case 'RECORDING_STATE': return Object.assign({},s,{isRecording:!!a.v});
       case 'ADD_SELSET': {
+        // Bug 1: project-file restore re-dispatches ADD_SELSET for every
+        // saved selection set on every reopen -- dedupe by id so reopening
+        // a project doesn't double them up.
+        if (a.v && a.v.id && (s.selectionSets||[]).some(function(x){return x.id===a.v.id;})) return s;
         var nset = {id:a.v.id||uid(), name:a.v.name||'Selection', refs:a.v.refs||[], color:a.v.color||null, createdAt:new Date().toISOString()};
         return Object.assign({},s,{selectionSets:(s.selectionSets||[]).concat([nset])});
       }
@@ -2023,6 +2088,8 @@ function startApp() {
       // stays correct as the model changes (or is re-loaded) instead of
       // thawing into stale expressIds like a Selection Set's refs would.
       case 'ADD_SEARCHSET': {
+        // Bug 1: same restore-time dedupe as ADD_SELSET above.
+        if (a.v && a.v.id && (s.searchSets||[]).some(function(x){return x.id===a.v.id;})) return s;
         var nqset = {id:a.v.id||uid(), name:a.v.name||'Search', query:a.v.query||{}, color:a.v.color||null, createdAt:new Date().toISOString()};
         return Object.assign({},s,{searchSets:(s.searchSets||[]).concat([nqset])});
       }
@@ -2126,7 +2193,25 @@ function startApp() {
       case A.SELECT_ALL:     var sa={}; (a.ids||[]).forEach(function(id){sa[id]=true;}); return Object.assign({},s,{selected:sa});
       case A.SELECT_NONE:    return Object.assign({},s,{selected:{}});
       case A.SELECT_MODE:    return Object.assign({},s,{selectMode:a.v,selected:a.v?s.selected:{}});
-      case A.BATCH_UPD_CLASH:  return Object.assign({},s,{clashes:s.clashes.map(function(c){
+      case A.BATCH_UPD_CLASH:
+        // Bug 4: batch "Set status... Confirmed" used to just flip the
+        // status string, unlike the single Confirm action (C key / Confirm
+        // button) which promotes the clash to a full issue. Route batch
+        // confirm through the exact same _ccBuildConfirmIssue helper so
+        // both create an issue with element identity and keep the clash
+        // record (status:'confirmed', linkedIssueId) instead of one path
+        // silently creating an issue while the other doesn't.
+        if (a.u && a.u.status === 'confirmed') {
+          var _batchNewIssues=[];
+          var _batchClashes=s.clashes.map(function(c){
+            if(!s.selected[c.id] || c.status==='confirmed') return c;
+            var _issue=_ccBuildConfirmIssue(c);
+            _batchNewIssues.push(_issue);
+            return Object.assign({},c,{status:'confirmed',linkedIssueId:_issue.id});
+          });
+          return Object.assign({},s,{clashes:_batchClashes,issues:s.issues.concat(_batchNewIssues),selected:{}});
+        }
+        return Object.assign({},s,{clashes:s.clashes.map(function(c){
         if(!s.selected[c.id]) return c;
         var upd=Object.assign({},c,a.u);
         if(a.u&&a.u.status&&a.u.status!==c.status){
@@ -7957,8 +8042,16 @@ function startApp() {
   function _ccCoverageModelIds(rules, models) {
     try {
       var a = {}, b = {};
-      _ccResolveModelScope(models, rules && rules.modelA).forEach(function(m){ a[m.id]=true; });
-      _ccResolveModelScope(models, rules && rules.modelB).forEach(function(m){ b[m.id]=true; });
+      // Bug 1: a model with no elements/meshes loaded (e.g. right after a
+      // project-file restore's placeholder ADD_MODEL, before the user
+      // re-loads the actual IFC) cannot have actually been geometrically
+      // re-checked, even though it's nominally "in scope". Excluding it
+      // here means a clash referencing it reads as out-of-coverage
+      // (_delta:'not_checked') rather than auto-resolved -- an unloaded
+      // model must never make a real prior clash look resolved.
+      var hasGeometry = function(m) { return ((m.elements||[]).length) || ((m.meshes||[]).length); };
+      _ccResolveModelScope(models, rules && rules.modelA).forEach(function(m){ if (hasGeometry(m)) a[m.id]=true; });
+      _ccResolveModelScope(models, rules && rules.modelB).forEach(function(m){ if (hasGeometry(m)) b[m.id]=true; });
       return {a: Object.keys(a), b: Object.keys(b)};
     } catch(e) { return null; }
   }
@@ -8045,7 +8138,8 @@ function startApp() {
       LOAD_PROJECT_STATE:A.LOAD_PROJECT_STATE, ADD_ISSUE:A.ADD_ISSUE,
       ADD_VIEWPOINT:A.ADD_VIEWPOINT, ADD_MEASUREMENT:A.ADD_MEASUREMENT,
       ADD_SELSET:'ADD_SELSET', ADD_SEARCHSET:'ADD_SEARCHSET',
-      ADD_ASSIGN_RULE:'ADD_ASSIGN_RULE', MERGE_CHANGELOG:A.MERGE_CHANGELOG
+      ADD_ASSIGN_RULE:'ADD_ASSIGN_RULE', MERGE_CHANGELOG:A.MERGE_CHANGELOG,
+      MERGE_COMMENTS:A.MERGE_COMMENTS // Bug 9: comments weren't persisted at all
     };
   }
   function _ccSerializeProject(s, version, savedAt) {
@@ -17228,7 +17322,13 @@ function startApp() {
       measurements:[], measureMode:null, viewpoints:[],
       classifications:{}, hiddenClasses:{}, colorByClass:null,
       floorPlan:null,
-      sheets:[], activeSheetId:null, sheetPins:[], markups:[]
+      sheets:[], activeSheetId:null, sheetPins:[], markups:[],
+      // Bug 9: these were never reset on project switch, so e.g. project
+      // A's assignment rules kept auto-assigning project B's newly
+      // detected clashes, and project A's run history/comments/changelog
+      // bled into project B's UI until the next full page reload.
+      runHistory:[], selectionSets:[], searchSets:[], assignmentRules:[],
+      comments:[], changelog:[]
     }});
     d({t:A.UPD_PREFS, u:{showMarkers:false}});
     d({t:A.SET_PROJECT, id:newProjId});
@@ -17370,7 +17470,12 @@ function startApp() {
       if(!list.length) { list = [{id:'default', name:'Default Project', createdAt:Date.now()}]; }
       saveProjects(list);
       d({t:A.SET_PROJECT_LIST, v:list});
-      _switchProject(list[0].id, s, d);
+      // Bug 10: this used to always switch to list[0], even when deleting
+      // a project other than the active one -- yanking the user away from
+      // whatever project they were actually working in. Only switch when
+      // the deleted project WAS the active one (matches the other
+      // deleteProject in the avatar menu, ~index.html:36589).
+      if (id === s.activeProject) _switchProject(list[0].id, s, d);
       setConfirmDelete(null);
       setProjOpen(false);
     }
@@ -20324,9 +20429,17 @@ function startApp() {
     var stTitlesBusy = useState(false), titlesBusy = stTitlesBusy[0], setTitlesBusy = stTitlesBusy[1];
     // Single O(N) pass instead of 7 filters — matters at 10k+ clashes.
     var counts = React.useMemo(function(){
-      var c = {total:items.length, untitled:0, open:0, inProg:0, resolved:0, hard:0, soft:0, dup:0, vis:0};
+      // Bug 8: IDS/data-quality validation failures are folded into the
+      // clash list (rawItems.concat(idsItems), tagged _idsValidation) so
+      // they show up alongside real geometric clashes in the same panel --
+      // but they are not clashes, and must not count toward Total/Hard/
+      // Soft. Without this guard, "Total 21 / Hard 21" could report even
+      // when only 12 were genuine geometric hard clashes.
+      var c = {total:0, untitled:0, open:0, inProg:0, resolved:0, hard:0, soft:0, dup:0, vis:0, dataQuality:0};
       for (var i=0; i<items.length; i++) {
         var it = items[i];
+        if (isClash && it._idsValidation) { c.dataQuality++; continue; }
+        c.total++;
         if (isClash && !it.aiTitle) c.untitled++;
         if (it.status==='open') c.open++;
         else if (it.status==='in_progress') c.inProg++;
@@ -21433,7 +21546,12 @@ function startApp() {
     // adding ~30-80 ms to tab-switch latency. Stable identity here also lets
     // downstream useMemos (ClashStatsBar/ClashAISummary/groupAndSort) stay hot.
     var rawItems = React.useMemo(function(){
-      var base = isClashTab ? s.clashes.filter(function(c){return c.status!=='denied';}) : s.issues;
+      // Bug 8: denied clashes used to be unconditionally stripped out here,
+      // so even selecting the new "Denied" status filter pill showed
+      // nothing -- there was no way to review or undo a deny. Keep the
+      // existing declutter default (hidden under every other filter
+      // value) but let them through when the Denied filter is active.
+      var base = isClashTab ? s.clashes.filter(function(c){return f.status==='denied' || c.status!=='denied';}) : s.issues;
       if (!isClashTab || !s.idsValidation || !s.idsValidation.results || !s.idsValidation.results.length) return base;
       var idsItems = s.idsValidation.results.map(function(r, i) {
         return {
@@ -21455,7 +21573,7 @@ function startApp() {
         };
       });
       return base.concat(idsItems);
-    }, [isClashTab, s.clashes, s.issues, s.idsValidation]);
+    }, [isClashTab, s.clashes, s.issues, s.idsValidation, f.status]);
 
 
     var visibleModelIds = useMemo(function(){
@@ -21637,7 +21755,7 @@ function startApp() {
         <div>
           <span style=${FL}>${_cc_t('issues.filter.status','Status')}</span>
           <div style=${{display:'flex',gap:'.2rem',flexWrap:'wrap'}}>
-            ${['all','open','in_progress','resolved'].map(function(v){return html`<button key=${v} onClick=${function(){d({t:A.UPD_FILTERS,u:{status:v}})}}
+            ${(isClashTab?['all','open','in_progress','resolved','denied']:['all','open','in_progress','resolved']).map(function(v){return html`<button key=${v} onClick=${function(){d({t:A.UPD_FILTERS,u:{status:v}})}}
               style=${PILL(f.status===v)}>${v==='all'?_cc_t('issues.filter.statusAll','All'):v==='in_progress'?_cc_t('issues.filter.statusInProgress','In prog'):v.charAt(0).toUpperCase()+v.slice(1)}</button>`})}
           </div>
         </div>
@@ -24187,8 +24305,14 @@ function startApp() {
     // triage, instead of every one of them tying at the same default rank.
     // Explicit null checks, not `||`, because 'critical' ranks 0 - falsy,
     // so `o[x]||2` was silently treating every critical clash as rank 2.
-    severity_asc: function(a,b){ var o={critical:0,major:1,minor:2,info:3}; var ra=o[a.aiSeverity||_ccDeterministicSeverity(a)], rb=o[b.aiSeverity||_ccDeterministicSeverity(b)]; return (ra==null?2:ra)-(rb==null?2:rb); },
-    severity_desc: function(a,b){ var o={critical:0,major:1,minor:2,info:3}; var ra=o[a.aiSeverity||_ccDeterministicSeverity(a)], rb=o[b.aiSeverity||_ccDeterministicSeverity(b)]; return (rb==null?2:rb)-(ra==null?2:ra); },
+    // Bug 8: o's rank is 0 for critical (most severe) up to 3 for info
+    // (least severe), so ASCENDING rank order (ra-rb) puts critical FIRST
+    // -- that's "high first", i.e. severity_desc, not severity_asc. These
+    // two were swapped: "Severity (high first)" was sorting info before
+    // critical. Fixed by using the rank order that actually matches each
+    // label instead of its name.
+    severity_asc: function(a,b){ var o={critical:0,major:1,minor:2,info:3}; var ra=o[a.aiSeverity||_ccDeterministicSeverity(a)], rb=o[b.aiSeverity||_ccDeterministicSeverity(b)]; return (rb==null?2:rb)-(ra==null?2:ra); },
+    severity_desc: function(a,b){ var o={critical:0,major:1,minor:2,info:3}; var ra=o[a.aiSeverity||_ccDeterministicSeverity(a)], rb=o[b.aiSeverity||_ccDeterministicSeverity(b)]; return (ra==null?2:ra)-(rb==null?2:rb); },
     type_asc: function(a,b){ var o={hard:0,'near-miss':1,soft:2,duplicate:3}; return (o[a.type]||0)-(o[b.type]||0); },
     type_desc: function(a,b){ var o={hard:0,'near-miss':1,soft:2,duplicate:3}; return (o[b.type]||0)-(o[a.type]||0); },
     storey_asc: function(a,b){ return (a.elemAStorey||a.elemBStorey||'').localeCompare(b.elemAStorey||b.elemBStorey||''); },

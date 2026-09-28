@@ -42,20 +42,36 @@
     }
     var now = options.now != null ? options.now : Date.now();
     var prevByKey = {};
+    // Bug 5: identity is element-pair based, with the point/spatial-cell
+    // used only as a tiebreak when a pair genuinely has multiple distinct
+    // clash locations (e.g. a long duct crossing a beam at 2+ points).
+    // Group prior clashes by their element pair so an unambiguous 1:1 pair
+    // match (both sides have exactly one clash for that pair) is stable
+    // across engines/tiny point shifts, without needing the point at all.
+    var prevByPair = {};
     prevClashes.forEach(function(c) {
       var key = identityKey(c);
       prevByKey[key] = c;
+      var pair = clashPair(c);
+      (prevByPair[pair] = prevByPair[pair] || []).push(c);
+    });
+    var newPairCount = {};
+    newClashes.forEach(function(c) {
+      var pair = clashPair(c);
+      newPairCount[pair] = (newPairCount[pair] || 0) + 1;
     });
 
     var newKeys = {};
+    var consumedPrevIds = {};
+    var prevIdToNumber = {};
     var merged = newClashes.map(function(c) {
       var key = identityKey(c);
       newKeys[key] = true;
       var prev = prevByKey[key];
+      var pair = clashPair(c);
       if (!prev) {
         var p = c.point || [0,0,0];
         var gx = Math.round(p[0]/0.5), gy = Math.round(p[1]/0.5), gz = Math.round(p[2]/0.5);
-        var pair = clashPair(c);
         outer: for (var dx=-1; dx<=1; dx++) { for (var dy=-1; dy<=1; dy++) { for (var dz=-1; dz<=1; dz++) {
           if (dx===0 && dy===0 && dz===0) continue;
           var adjKey = pair+'@'+(gx+dx)+','+(gy+dy)+','+(gz+dz);
@@ -67,7 +83,26 @@
           }
         }}}
       }
+      if (!prev && newPairCount[pair] === 1 && (prevByPair[pair] || []).length === 1) {
+        // Unambiguous on both sides: exactly one clash for this element
+        // pair in each of the old and new result sets, regardless of how
+        // far the hit point moved (engine swap, precision differences).
+        // Genuinely multiple clashes between the same pair (either side
+        // has >1) still fall through to the point-based matching above.
+        var onlyPrev = prevByPair[pair][0];
+        if (!consumedPrevIds[onlyPrev.id]) {
+          prev = onlyPrev;
+          newKeys[identityKey(onlyPrev)] = true;
+          consumedPrevIds[onlyPrev.id] = true;
+        }
+      }
       if (prev) {
+        // Bug 3: the matched previous clash may have been found via the
+        // neighbouring-grid-cell fallback above (adjKey), so prevByKey[key]
+        // (the NEW point's key) would miss it. Track the matched prev's
+        // number directly (by the resulting id, which is set to prev.id)
+        // instead of re-deriving it from _identityKey later.
+        prevIdToNumber[prev.id] = prev.number;
         return Object.assign({}, c, {
           id: prev.id,
           _identityKey: key,
@@ -100,16 +135,21 @@
     var arCount = 0, arOverflow = 0, notChecked = 0;
     prevClashes.forEach(function(c) {
       var key = identityKey(c);
-      if (newKeys[key] || !(c.status==='open' || c.status==='in_progress')) return;
+      if (newKeys[key]) return;
       if (!_inCoverage(options, c)) {
         // This run's scope never touched this clash -- it wasn't
         // rediscovered because it was never checked, not because it went
         // away. Preserve it exactly (status untouched) so it stays
         // addressable, distinguishable from a genuine auto-resolve.
+        // Bug 2: this must run for EVERY status (resolved/closed/accepted/
+        // denied too), not just open/in_progress -- an out-of-coverage
+        // clash of any status was previously dropped entirely by the
+        // status guard below running first.
         notChecked++;
         merged.push(Object.assign({}, c, {_identityKey:key, _delta:'not_checked'}));
         return;
       }
+      if (!(c.status==='open' || c.status==='in_progress')) return;
       if (arCount >= AUTO_RESOLVE_CAP) {
         // Cap how many auto-resolve per run, but never drop the record --
         // it keeps its prior status (assignee/comments/history intact) and
@@ -132,10 +172,20 @@
 
     var usedNums = {};
     merged.forEach(function(c){
-      var prev = prevByKey[c._identityKey];
-      if (prev && prev.number != null) {
-        c.number = prev.number;
-        usedNums[prev.number] = true;
+      // Bug 3: prefer the number captured from the actually-matched prev
+      // clash (handles the neighbouring-grid-cell fallback match, where
+      // c._identityKey is the NEW point's key and wouldn't find the prev
+      // record in prevByKey). Fall back to a direct key lookup for records
+      // that were preserved as-is (not_checked / auto_resolved / capped),
+      // whose _identityKey IS the prev's own key.
+      var num = prevIdToNumber.hasOwnProperty(c.id) ? prevIdToNumber[c.id] : undefined;
+      if (num == null) {
+        var prev = prevByKey[c._identityKey];
+        if (prev) num = prev.number;
+      }
+      if (num != null) {
+        c.number = num;
+        usedNums[num] = true;
       }
     });
     var nextNum = 1;
