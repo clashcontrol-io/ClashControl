@@ -14,8 +14,8 @@ const path = require('node:path');
 const { generateConflicts } = require('./fixtures/synthetic-conflicts');
 
 const src = fs.readFileSync(path.join(__dirname, '..', 'index.html'), 'utf8');
-const start = src.indexOf('function _groupKeyFor(it, groupKey, modelsById, spatialMap) {');
-assert.ok(start !== -1, '_groupKeyFor not found');
+const start = src.indexOf('function _ccElemKeyFor(modelId, expressId, globalId) {');
+assert.ok(start !== -1, '_ccElemKeyFor (root-cause grouping) not found');
 const end = src.indexOf('window._ccComputeVisibleRowWindow = _ccComputeVisibleRowWindow;', start);
 assert.ok(end !== -1, 'windowing helpers not found');
 const endLineEnd = src.indexOf('\n', end) + 1;
