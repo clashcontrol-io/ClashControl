@@ -21,10 +21,26 @@ function cors(req, res, methods) {
   return false;
 }
 
-// In-memory rate limiter — resets per cold start, good enough for abuse prevention
+// In-memory rate limiter — resets per cold start, good enough for abuse prevention.
+// Never pruned before: every distinct IP that ever hit an endpoint kept a
+// bucket alive for the lifetime of the warm serverless instance, an
+// unbounded-growth leak on a busy deployment. Prune stale (>60s old)
+// buckets opportunistically on each call instead of adding a timer.
 var rateMap = {};
+var _rateMapLastPrune = 0;
+var RATE_PRUNE_INTERVAL = 60000;
+
+function _pruneRateMap(now) {
+  if (now - _rateMapLastPrune < RATE_PRUNE_INTERVAL) return;
+  _rateMapLastPrune = now;
+  for (var ip in rateMap) {
+    if (now - rateMap[ip].start > 60000) delete rateMap[ip];
+  }
+}
+
 function rateLimit(ip, limit) {
   var now = Date.now();
+  _pruneRateMap(now);
   var bucket = rateMap[ip];
   if (!bucket || now - bucket.start > 60000) {
     rateMap[ip] = { start: now, count: 1 };
@@ -113,3 +129,6 @@ async function fetchWithRetry(url, options, maxAttempts) {
 }
 
 module.exports = { cors, rateLimit, clientIp, dbUrl, llmGuard, fetchWithRetry };
+// Test-only introspection — not used by any endpoint, just lets the pruning
+// regression test assert the map actually shrinks instead of only growing.
+module.exports._rateMapSizeForTest = function() { return Object.keys(rateMap).length; };
