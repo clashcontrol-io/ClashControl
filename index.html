@@ -5865,18 +5865,55 @@ function startApp() {
            py >= boxB.min.y-margin && py <= boxB.max.y+margin &&
            pz >= boxB.min.z-margin && pz <= boxB.max.z+margin;
   }
+  // Shared post-processing for a RAW intersection-point list (flat [x,y,z,...],
+  // any array-like incl. Float64Array) — filters through _pointInBothBoxes and
+  // averages the survivors into a single centroid + depth. Both the JS BVH
+  // path and the WASM path (single-pair and batch) funnel through this ONE
+  // function so they can never silently disagree on what counts as a hit.
+  function _postProcessIntersectPoints(pts, maxDepth, boxA, boxB, margin) {
+    if (!pts || !pts.length) return false;
+    var valid = _miValid;
+    valid.length = 0;
+    for (var i=0; i<pts.length; i+=3) {
+      if (_pointInBothBoxes(pts[i], pts[i+1], pts[i+2], boxA, boxB, margin)) {
+        valid.push(pts[i], pts[i+1], pts[i+2]);
+      }
+    }
+    if (!valid.length) return false;
+    var sx=0, sy=0, sz=0, n=valid.length/3;
+    for (var i=0; i<valid.length; i+=3) { sx+=valid[i]; sy+=valid[i+1]; sz+=valid[i+2]; }
+    return [sx/n, sy/n, sz/n, maxDepth];
+  }
   function _meshesIntersect(elA, elB) {
-    // Try WASM engine first (4-8x faster)
+    // Try WASM engine first. Measured (own benchmark, corrected 8-point
+    // collect cap — see engine/src/bvh.rs traverse_pair doc comment):
+    //   48x12 tris  (product 576):        JS 0.033ms vs WASM 0.018ms  (x1.8)
+    //   400x1200 tris (product 480k):     JS 1.77ms  vs WASM 0.76ms   (x2.3)
+    //   2560x1200 tris (product 3.07M):   JS 4.12ms  vs WASM 1.53ms   (x2.7)
+    //   25600x1200 tris (product 30.7M):  JS 47.6ms  vs WASM 13.9ms   (x3.4)
+    // Unlike the pre-fix engine (72-point/216-float collect cap), the
+    // corrected 8-point cap makes WASM win even on small pairs — no
+    // triangle-count routing threshold is needed; always prefer WASM when
+    // loaded and let the per-pair safety net below fall back to JS on error.
     if (typeof window._ccWasmIntersect === 'function') {
       var tA = _getWorldTris(elA), tB = _getWorldTris(elB);
-      if (!tA.length || !tB.length) return false;
-      var r = window._ccWasmIntersect(tA, tB);
-      if (!r) return false;
-      // WASM returns one raw point with no AABB validation of its own - apply the
-      // same check the JS path uses below so a loaded WASM accelerator can't
-      // report hits (or miss real hits) the JS fallback wouldn't agree with.
-      if (!_pointInBothBoxes(r[0], r[1], r[2], elA.box, elB.box, _MI_MARGIN)) return false;
-      return r;
+      if (tA.length && tB.length) {
+        try {
+          // Raw point list with depth appended as the last element — the
+          // SAME shape _bvhTraverseAll's collect pass produces, so it can
+          // run through the identical post-processing function below.
+          var raw = window._ccWasmIntersect(tA, tB);
+          if (!raw || !raw.length) return false;
+          var depth = raw[raw.length - 1];
+          var rawPts = raw.subarray ? raw.subarray(0, raw.length - 1) : raw.slice(0, raw.length - 1);
+          return _postProcessIntersectPoints(rawPts, depth, elA.box, elB.box, _MI_MARGIN);
+        } catch (e) {
+          console.warn('[clash] WASM intersect failed for this pair, falling back to JS:', e && e.message);
+          // fall through to the JS path below for this pair
+        }
+      } else {
+        return false;
+      }
     }
     // JS fallback
     var bA = _getBVH(elA), bB = _getBVH(elB);
@@ -5889,18 +5926,7 @@ function startApp() {
     pts.length = 0; maxDepth[0] = 0;
     _bvhTraverseAll(bA.root, bA.tris, bB.root, bB.tris, pts, 24, maxDepth, false);
     if (!pts.length) return false;
-    var boxA = elA.box, boxB = elB.box;
-    var valid = _miValid;
-    valid.length = 0;
-    for (var i=0; i<pts.length; i+=3) {
-      if (_pointInBothBoxes(pts[i], pts[i+1], pts[i+2], boxA, boxB, _MI_MARGIN)) {
-        valid.push(pts[i], pts[i+1], pts[i+2]);
-      }
-    }
-    if (!valid.length) return false;
-    var sx=0, sy=0, sz=0, n=valid.length/3;
-    for (var i=0; i<valid.length; i+=3) { sx+=valid[i]; sy+=valid[i+1]; sz+=valid[i+2]; }
-    return [sx/n, sy/n, sz/n, maxDepth[0]];
+    return _postProcessIntersectPoints(pts, maxDepth[0], elA.box, elB.box, _MI_MARGIN);
   }
 
   // ── Spatial hash for vertex distance (used for soft/clearance clashes) ──
@@ -5935,11 +5961,20 @@ function startApp() {
   };
 
   function _meshMinDist(elA, elB, thresholdM, outPair) {
-    // Try WASM engine first (4-8x faster)
+    // Try WASM engine first. Measured speedup is pair-shape dependent (own
+    // benchmark, x1.8-x3.4 on the narrow-phase intersect side — see
+    // _meshesIntersect above); min-distance's spatial-hash walk is now a
+    // bit-identical f64 port (engine/src/spatial_hash.rs), same complexity
+    // as the JS fallback, so gains track the same ballpark.
     if (typeof window._ccWasmMinDist === 'function') {
       var vA = _getWorldVerts(elA), vB = _getWorldVerts(elB);
       if (!vA.length || !vB.length) return Infinity;
-      return window._ccWasmMinDist(vA, vB, thresholdM, outPair);
+      try {
+        return window._ccWasmMinDist(vA, vB, thresholdM, outPair);
+      } catch (e) {
+        console.warn('[clash] WASM minDist failed for this pair, falling back to JS:', e && e.message);
+        // fall through to the JS path below for this pair
+      }
     }
     // JS fallback
     var vA = _getWorldVerts(elA), vB = _getWorldVerts(elB);
@@ -5964,6 +5999,47 @@ function startApp() {
     if (outPair) { outPair[0]=bq0; outPair[1]=bq1; outPair[2]=bq2; outPair[3]=bg0; outPair[4]=bg1; outPair[5]=bg2; }
     return Math.sqrt(minSq);
   }
+
+  // Pure-JS narrow-phase reference, deliberately independent of
+  // window._ccWasmIntersect/_ccWasmMinDist (never takes the WASM branch),
+  // exposed ONLY so addons/wasm-engine.js's runtime self-check can diff a
+  // freshly-loaded WASM binary against the JS engine on a handful of fixed
+  // cases before publishing the WASM globals — internal plumbing, not a
+  // public API (CLAUDE.md globals discipline).
+  window._ccJsMeshIntersectRef = {
+    intersectRaw: function(trisA, trisB) {
+      if (!trisA || !trisB || !trisA.length || !trisB.length) return null;
+      var na = trisA.length / 9, nb = trisB.length / 9;
+      var idxA = new Int32Array(na); for (var i = 0; i < na; i++) idxA[i] = i;
+      var idxB = new Int32Array(nb); for (var i = 0; i < nb; i++) idxB[i] = i;
+      var rootA = _buildBVHNode(trisA, idxA, 0, na);
+      var rootB = _buildBVHNode(trisB, idxB, 0, nb);
+      var pts = [], maxDepth = [0];
+      _bvhTraverseAll(rootA, trisA, rootB, trisB, pts, 24, maxDepth, false);
+      if (!pts.length) return null;
+      return { pts: pts.slice(), depth: maxDepth[0] };
+    },
+    minDist: function(vertsA, vertsB, thresholdM) {
+      // Matches _meshMinDist EXACTLY as it is actually always called (with
+      // an outPair buffer) — NO threshold cutoff; see _meshMinDist's WASM
+      // branch doc comment / engine/src/lib.rs's mesh_min_distance for why.
+      if (!vertsA || !vertsB || !vertsA.length || !vertsB.length) return [Infinity];
+      var cs = Math.max(thresholdM || 0.05, 0.02);
+      var gridVerts, queryVerts;
+      if (vertsA.length <= vertsB.length) { gridVerts = vertsA; queryVerts = vertsB; }
+      else { gridVerts = vertsB; queryVerts = vertsA; }
+      var grid = new _SpatialHash(cs);
+      grid.insert(gridVerts);
+      var minSq = Infinity;
+      var step = queryVerts.length > 30000 ? 3 * Math.ceil(queryVerts.length / 30000) : 3;
+      var out = new Float64Array(6), best = [0, 0, 0, 0, 0, 0];
+      for (var i = 0; i < queryVerts.length; i += step) {
+        var d2 = grid.minDistSq(queryVerts[i], queryVerts[i + 1], queryVerts[i + 2], gridVerts, out);
+        if (d2 < minSq) { minSq = d2; best = out.slice(); }
+      }
+      return [Math.sqrt(minSq), best[0], best[1], best[2], best[3], best[4], best[5]];
+    }
+  };
 
   // ── Approximate penetration depth for confirmed hard clashes ────
   // CW-1a. What _triTriTest's [3] ("depth") actually measures is the length
@@ -7203,21 +7279,29 @@ function startApp() {
       try { hits = window._ccWasmBatchIntersect(trisA, allTris, offsets); }
       catch(e) { return; } // bail this sub; single-pair fallback will run
 
-      // Populate cache for every valid item — hits AND confirmed misses.
+      // Decode the raw per-mesh records — same shared post-processing
+      // (_pointInBothBoxes filter + averaging) the single-pair JS/WASM path
+      // uses in _meshesIntersect, so a cached batch result is never allowed
+      // to disagree with what re-running the pair individually would give.
+      // hitByIdx[i] is populated for EVERY valid item (hit -> array, confirmed
+      // miss -> false) so the cache always records a definite result, never
+      // leaves a pair as "untested".
       var hitByIdx = {};
       if (hits && hits.length) {
+        var boxA = group.eA.box;
+        for (var i = 0; i < valid.length; i++) { hitByIdx[i] = false; }
         for (var h = 0; h < hits.length; h++) {
-          var hi = hits[h];
-          if (hi && hi.meshIdx >= 0 && hi.meshIdx < valid.length) {
-            hitByIdx[hi.meshIdx] = [hi.point[0], hi.point[1], hi.point[2], hi.depth];
-          }
+          var meshIdx = hits[h].meshIdx;
+          if (meshIdx < 0 || meshIdx >= valid.length) continue;
+          var boxB = group.items[valid[meshIdx].orig].eB.box;
+          hitByIdx[meshIdx] = _postProcessIntersectPoints(hits[h].points, hits[h].depth, boxA, boxB, _MI_MARGIN);
         }
       }
       for (var i = 0; i < valid.length; i++) {
         var origIdx = valid[i].orig;
         var pk = group.mA.id + ':' + group.eA.expressId + '|' +
                  group.items[origIdx].mB.id + ':' + group.items[origIdx].eB.expressId;
-        _chunkBatchCache.set(pk, hitByIdx[i] || null);
+        _chunkBatchCache.set(pk, hitByIdx[i] || false);
       }
     }
 
