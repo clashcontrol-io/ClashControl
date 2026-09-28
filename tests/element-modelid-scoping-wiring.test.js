@@ -74,13 +74,17 @@ test('hide (hh) / isolate (hi) chord hotkeys build model-scoped refs, not bare e
   assert.match(body, /var hiRefs=getActiveRefs\(\);/);
 });
 
-test("the plain 'i' isolate hotkey passes modelId too", () => {
-  const body = sliceFrom("if(e.key==='i'&&!ctrl){", 300);
-  assert.match(body, /window\._ccIsolate\(\[\{expressId:_iId, modelId:window\._ccSelectedModelId\|\|null\}\]\)/);
+test("the plain 'i' isolate hotkey passes modelId too (and is now a real toggle via window._ccIsIsolated)", () => {
+  const body = sliceFrom("if(e.key==='i'&&!ctrl){", 700);
+  assert.match(body, /window\._ccIsIsolated/);
+  assert.match(body, /_iRefs = \[\{expressId: window\._ccSelectedExpressId, modelId: window\._ccSelectedModelId\|\|null\}\]/);
+  assert.match(body, /window\._ccIsolate\(_iRefs\)/);
 });
 
-test('_ccTempHide accepts {expressId,modelId} refs and only hides meshes whose modelId matches a scoped ref', () => {
-  const body = sliceFrom('window._ccTempHide = function(targets) {', 1400);
+test('_ccTempHideCore accepts {expressId,modelId} refs and only hides meshes whose modelId matches a scoped ref', () => {
+  // The scoping logic lives in _ccTempHideCore now; window._ccTempHide is a
+  // thin wrapper that snapshots state and pushes an undo entry around it.
+  const body = sliceFrom('function _ccTempHideCore(targets) {', 1600);
   assert.match(body, /var meshModelId = obj\.parent && obj\.parent\.userData && obj\.parent\.userData\.modelId;/);
   assert.match(body, /var match = idAny\[eid\] \|\| \(idScoped\[eid\] && meshModelId && idScoped\[eid\]\[meshModelId\]\);/);
 });

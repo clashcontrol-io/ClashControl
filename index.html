@@ -1997,6 +1997,15 @@ function startApp() {
   }
 
   function reducer(s,a) {
+    // Track section-plane/box changes onto the unified undo stack generically
+    // (see _ccBuildUndoEntry near invalidate()) — this is the one place that
+    // sees every dispatch, including the dozen+ call sites (drag-commit,
+    // context menu, toolbar, chords) that touch these action types. Guarded
+    // by _ccReplay so undo/redo's own redispatch never re-tracks itself.
+    if (typeof _ccBuildUndoEntry === 'function' && typeof _ccPushUndoable === 'function') {
+      var _ccUndoEntry = _ccBuildUndoEntry(s, a);
+      if (_ccUndoEntry) _ccPushUndoable(_ccUndoEntry);
+    }
     switch(a.t) {
       case A.ADD_MODEL:   var _am=a.v; if(s.modelMeta){var _mm=s.modelMeta.find(function(m){return m.id===_am.id});if(_mm){if(_mm.visible===false)_am=Object.assign({},_am,{visible:false});if(_mm.discipline)_am=Object.assign({},_am,{discipline:_mm.discipline});if(_mm.color)_am=Object.assign({},_am,{color:_mm.color});if(_mm.tag)_am=Object.assign({},_am,{tag:_mm.tag});if(_mm.georef)_am=Object.assign({},_am,{georef:_mm.georef});}}
         // Race-safe model dedup.  See docs/INTERNALS.md § 21.32
@@ -10118,6 +10127,96 @@ function startApp() {
   function invalidate(frames) { _needsRender = Math.max(_needsRender, frames||2); }
   window._ccInvalidate = invalidate;
 
+  // ── Unified undo/redo (bounded, 50 entries) ─────────────────────
+  // Covers visibility changes (hide / isolate / show all — wired from
+  // window._ccTempHide/_ccIsolate/_ccTempUnhide/_ccUnisolate) and section
+  // plane/box changes (wired generically from the reducer — see
+  // _ccBuildUndoEntry below, called from reducer()). Measurement add/remove
+  // deliberately keeps its own existing window._ccUndoMeasurement toggle
+  // (Ctrl+Z tries that first) rather than being folded in here, so this
+  // stack and that one never double-track the same dispatch.
+  // Each stack entry is a plain {undo, redo} command; entries with the same
+  // coalesceKey created within COALESCE_MS of each other merge into one —
+  // this is what keeps a slider drag (which can dispatch dozens of section
+  // updates) from flooding the stack with one entry per pixel.
+  var CC_UNDO_CAP = 50;
+  var CC_UNDO_COALESCE_MS = 700;
+  window._ccUndoStack = [];
+  window._ccRedoStack = [];
+  function _ccUndoChanged(){ try { window.dispatchEvent(new CustomEvent('cc-undo-change')); } catch(e) {} }
+  function _ccPushUndoable(entry) {
+    if (!entry) return;
+    var top = window._ccUndoStack[window._ccUndoStack.length - 1];
+    var now = Date.now();
+    if (top && entry.coalesceKey && top.coalesceKey === entry.coalesceKey && (now - (top._ts||0)) < CC_UNDO_COALESCE_MS) {
+      top.redo = entry.redo; // keep the original (oldest) undo, adopt the latest redo
+      top._ts = now;
+    } else {
+      entry._ts = now;
+      window._ccUndoStack.push(entry);
+      if (window._ccUndoStack.length > CC_UNDO_CAP) window._ccUndoStack.shift();
+    }
+    window._ccRedoStack.length = 0;
+    _ccUndoChanged();
+  }
+  window._ccPushUndoable = _ccPushUndoable;
+  window._ccUndo = function() {
+    var entry = window._ccUndoStack.pop();
+    if (!entry) return false;
+    try { entry.undo(); } catch(e) { console.warn('[undo] failed:', e); }
+    window._ccRedoStack.push(entry);
+    _ccUndoChanged();
+    return true;
+  };
+  window._ccRedo = function() {
+    var entry = window._ccRedoStack.pop();
+    if (!entry) return false;
+    try { entry.redo(); } catch(e) { console.warn('[redo] failed:', e); }
+    window._ccUndoStack.push(entry);
+    _ccUndoChanged();
+    return true;
+  };
+  window._ccUndoInfo = function() {
+    return {canUndo: window._ccUndoStack.length > 0, canRedo: window._ccRedoStack.length > 0};
+  };
+  // Section-plane/box dispatches are tracked generically from inside
+  // reducer() (see its first line) rather than at each of the dozen+ call
+  // sites that dispatch A.SECTION/A.SECTION_CUSTOM/A.SECTION_BOX — that's
+  // the only way to also catch drag-commit paths (TransformControls
+  // objectChange, section-box corner drag, the toolbar cut slider) without
+  // touching each one individually. undo/redo replay their own redispatch
+  // with `_ccReplay:true` so this never re-tracks its own restore as a new
+  // undoable action. Measurement actions (ADD_MEASUREMENT/DEL_MEASUREMENT)
+  // are deliberately NOT tracked here — see the block comment above.
+  function _ccBuildUndoEntry(prevState, a) {
+    if (!a || a._ccReplay || !window._ccDispatch) return null;
+    function replay(action) { window._ccDispatch(Object.assign({}, action, {_ccReplay:true})); }
+    switch (a.t) {
+      case A.SECTION: {
+        var oldSection = {t:A.SECTION, axis:prevState.sectionAxis, pos:prevState.sectionPos, storeyName:prevState.sectionStorey};
+        return {label:'Section', coalesceKey:'section', undo:function(){replay(oldSection);}, redo:function(){replay(a);}};
+      }
+      case A.SECTION_CUSTOM: {
+        var oldCustom = {t:A.SECTION_CUSTOM, v:prevState.sectionCustom, pos:prevState.sectionPos};
+        return {label:'Section', coalesceKey:'section', undo:function(){replay(oldCustom);}, redo:function(){replay(a);}};
+      }
+      case A.SECTION_BOX: {
+        var oldBox = {t:A.SECTION_BOX, v:prevState.sectionBox};
+        return {label:'Section box', coalesceKey:'section-box', undo:function(){replay(oldBox);}, redo:function(){replay(a);}};
+      }
+    }
+    return null;
+  }
+
+  // How close the orbit's polar angle (sph.phi, in orbit.apply()) is allowed
+  // to get to the true poles (straight up/down). Was 0.05 rad (~2.9°)
+  // everywhere — fine for interactive dragging (_ccOrbitDragStep has its
+  // own separate soft clamp for that) but meant the view cube's TOP/BOTTOM
+  // click could never land on an exact top/bottom view, landing ~3° off
+  // instead. Tightened so the view cube's programmatic snaps
+  // (ViewCube.flyToDir) read as (effectively) exact.
+  var _ORBIT_POLE_EPS = 0.0005;
+
   // ── Pure orbit-navigation math ──────────────────────────────────────────
   // Kept outside makeOrbit's THREE-bound closure (plain {x,y,z} objects, no
   // THREE dependency) so it is directly unit-testable — see
@@ -10301,7 +10400,7 @@ function startApp() {
       sph.theta = Math.atan2(o.x,o.z);
     }
     function apply() {
-      sph.phi = Math.max(0.05, Math.min(Math.PI-0.05, sph.phi));
+      sph.phi = Math.max(_ORBIT_POLE_EPS, Math.min(Math.PI-_ORBIT_POLE_EPS, sph.phi));
       sph.r   = Math.max(0.5, Math.min(5000, sph.r));
       camera.position.set(
         target.x + sph.r*Math.sin(sph.phi)*Math.sin(sph.theta),
@@ -10630,7 +10729,7 @@ function startApp() {
     var orbit = {target:target, sync:sync, apply:apply, sph:sph, camera:camera};
     orbit.apply = function() {
       camera = orbit.camera; // keep local camera in sync
-      sph.phi = Math.max(0.05, Math.min(Math.PI-0.05, sph.phi));
+      sph.phi = Math.max(_ORBIT_POLE_EPS, Math.min(Math.PI-_ORBIT_POLE_EPS, sph.phi));
       sph.r   = Math.max(0.5, Math.min(5000, sph.r));
       camera.position.set(
         target.x + sph.r*Math.sin(sph.phi)*Math.sin(sph.theta),
@@ -11883,12 +11982,41 @@ function startApp() {
       window._unghostAll = unghostAll;
 
       var _tempHiddenMeshes = [];
+      // Exact-restore snapshot of the "temp hide" system (the shared
+      // _ccBatchHidden.temp dict plus the plain-mesh visibility list), used
+      // by undo/redo below so Hide/Show-all round-trip precisely regardless
+      // of which refs were involved.
+      function _ccSnapshotTempHide() {
+        return {
+          temp: Object.assign({}, _ccBatchHidden.temp),
+          meshRefs: _tempHiddenMeshes.map(function(m){
+            return {modelId: (m.parent && m.parent.userData && m.parent.userData.modelId) || null, expressId: m.userData.expressId};
+          })
+        };
+      }
+      function _ccRestoreTempHide(snap) {
+        _tempHiddenMeshes.forEach(function(m){ m.visible = true; });
+        _tempHiddenMeshes = [];
+        _ccBatchHidden.temp = snap ? Object.assign({}, snap.temp) : {};
+        _ccBatchApplyVisibility(S.mg);
+        if (snap && snap.meshRefs && snap.meshRefs.length && S.mg) {
+          var want = {};
+          snap.meshRefs.forEach(function(r){ want[(r.modelId||'')+'_'+r.expressId] = true; });
+          S.mg.traverse(function(obj){
+            if(!obj.isMesh) return;
+            var eid = obj.userData.expressId; if(eid==null) return;
+            var mid = obj.parent && obj.parent.userData && obj.parent.userData.modelId;
+            if (want[(mid||'')+'_'+eid] && obj.visible) { obj.visible = false; _tempHiddenMeshes.push(obj); }
+          });
+        }
+        invalidate();
+      }
       // Accepts either bare expressIds (any model — legacy/ambiguous, kept
       // for callers that genuinely mean "every model") or {expressId,
       // modelId} refs (see window._ccSelectedRefs / _itemRefs) to scope the
       // hide to one model when two models share an expressId.
-      window._ccTempHide = function(targets) {
-        if(!targets||!targets.length) return;
+      function _ccTempHideCore(targets) {
+        if(!targets||!targets.length) return false;
         var idAny = {}; var idScoped = {};
         targets.forEach(function(t){
           if (t == null) return;
@@ -11906,33 +12034,67 @@ function startApp() {
           Object.keys(idScoped[id]).forEach(function(mid){ _ccBatchHidden.temp[mid + '_' + id] = true; });
         });
         _ccBatchApplyVisibility(S.mg);
-        if(!S.mg) return;
-        S.mg.traverse(function(obj){
-          if(!obj.isMesh) return;
-          var eid = obj.userData.expressId;
-          if (eid == null) return;
-          var meshModelId = obj.parent && obj.parent.userData && obj.parent.userData.modelId;
-          var match = idAny[eid] || (idScoped[eid] && meshModelId && idScoped[eid][meshModelId]);
-          if(match && obj.visible){
-            obj.visible = false;
-            _tempHiddenMeshes.push(obj);
-          }
-        });
+        if(S.mg) {
+          S.mg.traverse(function(obj){
+            if(!obj.isMesh) return;
+            var eid = obj.userData.expressId;
+            if (eid == null) return;
+            var meshModelId = obj.parent && obj.parent.userData && obj.parent.userData.modelId;
+            var match = idAny[eid] || (idScoped[eid] && meshModelId && idScoped[eid][meshModelId]);
+            if(match && obj.visible){
+              obj.visible = false;
+              _tempHiddenMeshes.push(obj);
+            }
+          });
+        }
         invalidate();
+        return true;
+      }
+      window._ccTempHide = function(targets) {
+        var before = _ccSnapshotTempHide();
+        if (!_ccTempHideCore(targets)) return;
+        if (window._ccPushUndoable) window._ccPushUndoable({label:'Hide', undo:function(){_ccRestoreTempHide(before);}, redo:function(){_ccTempHideCore(targets);}});
       };
-      window._ccTempUnhide = function() {
+      function _ccTempUnhideCore() {
         _tempHiddenMeshes.forEach(function(m){ m.visible = true; });
         _tempHiddenMeshes = [];
         _ccBatchHidden.temp = {};
         _ccBatchApplyVisibility(S.mg);
         invalidate();
+      }
+      window._ccTempUnhide = function() {
+        var before = _ccSnapshotTempHide();
+        var hadHidden = before.meshRefs.length || Object.keys(before.temp).length;
+        _ccTempUnhideCore();
+        if (hadHidden && window._ccPushUndoable) window._ccPushUndoable({label:'Show hidden', undo:function(){_ccRestoreTempHide(before);}, redo:function(){_ccTempUnhideCore();}});
       };
+      // ghostOthers() already understands both ref shapes (bare id / {expressId,
+      // modelId}) — pass targets straight through so Isolate stays model-scoped
+      // the same way Hide is above. window._ccIsIsolated is the toggle state
+      // the I key / context-menu / Details-panel buttons read.
+      function _ccIsolateCore(targets) {
+        ghostOthers(targets);
+        window._ccIsIsolated = true;
+        window._ccLastIsolateRefs = targets;
+      }
+      function _ccUnisolateCore() {
+        unghostAll();
+        window._ccIsIsolated = false;
+        window._ccLastIsolateRefs = null;
+      }
       window._ccIsolate = function(expressIds) {
         if(!expressIds||!expressIds.length) return;
-        ghostOthers(expressIds);
+        var wasIsolated = !!window._ccIsIsolated;
+        var prevRefs = window._ccLastIsolateRefs;
+        _ccIsolateCore(expressIds);
+        if (window._ccPushUndoable) window._ccPushUndoable({label:'Isolate', undo:function(){ if (wasIsolated && prevRefs) _ccIsolateCore(prevRefs); else _ccUnisolateCore(); }, redo:function(){_ccIsolateCore(expressIds);}});
       };
       window._ccUnisolate = function() {
-        unghostAll();
+        var wasIsolated = !!window._ccIsIsolated;
+        var prevRefs = window._ccLastIsolateRefs;
+        if (!wasIsolated) { _ccUnisolateCore(); return; }
+        _ccUnisolateCore();
+        if (window._ccPushUndoable) window._ccPushUndoable({label:'Unisolate', undo:function(){_ccIsolateCore(prevRefs);}, redo:function(){_ccUnisolateCore();}});
       };
 
       function _clearHlRef() {
@@ -14702,7 +14864,9 @@ function startApp() {
                 var fc2 = _p.geo.index ? _p.geo.index.count/3 : (_p.geo.attributes.position?_p.geo.attributes.position.count/3:0);
                 if(fc2 >= 50000) return;
                 var edgeGeo2 = new THREE.EdgesGeometry(_p.geo, 50);
-                var edgeMat2 = new THREE.LineBasicMaterial({color:clickDiscColor, transparent:true, opacity:0.4, depthTest:false});
+                // opacity bumped 0.4 → 0.9 — the previous value read as
+                // "very faint" against most model colors/lighting.
+                var edgeMat2 = new THREE.LineBasicMaterial({color:clickDiscColor, transparent:true, opacity:0.9, depthTest:false});
                 var edgeLines2 = new THREE.LineSegments(edgeGeo2, edgeMat2);
                 edgeLines2.applyMatrix4(_p.mx);
                 edgeLines2.renderOrder = 999;
@@ -14760,12 +14924,15 @@ function startApp() {
             } catch(pickErr) { console.warn('Element pick failed:', pickErr.message||pickErr); }
           }
         } else if (hits.length === 0) {
-          // Empty click (no geometry hit at all) — clear selection
+          // Empty click (no geometry hit at all) — clear selection only.
+          // Isolation is a deliberate, separate mode (toggled by I / the
+          // context menu / Details-panel buttons) and must survive clicking
+          // empty space — this used to call unghostAll() here too, silently
+          // ending isolation on every stray background click.
           if (!(e.ctrlKey || e.metaKey)) {
             selectedRefsRef.current = [];
             window._ccSelectedRefs = selectedRefsRef.current;
             _clearHighlightGroups();
-            unghostAll();
             setSelectedEl(null);
           }
         }
@@ -14794,13 +14961,15 @@ function startApp() {
           var faceNormal = _ccHitWorldNormal(hit);
           var pt = hit.point;
           var ctxEid = hit.object.userData.expressId;
+          var ctxModelId = (hit.object.parent && hit.object.parent.userData && hit.object.parent.userData.modelId) || null;
           if (ctxEid && _highlightById) _highlightById(ctxEid, false, null, true); // keepPivot: right-click opens a menu, don't move rotation centre
           setCtxMenu({
             x: e.clientX - rect.left,
             y: e.clientY - rect.top,
             normal: [faceNormal.x, faceNormal.y, faceNormal.z],
             point: [pt.x, pt.y, pt.z],
-            expressId: ctxEid
+            expressId: ctxEid,
+            modelId: ctxModelId
           });
         } else {
           setCtxMenu(null);
@@ -17550,6 +17719,32 @@ function startApp() {
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="4" width="16" height="16" stroke-dasharray="3 2"/></svg>
             Section Box
           </button>`}
+          ${ctxMenu.expressId!=null && function(){
+            // Model-scoped: if the right-clicked element is part of the
+            // current multi-selection, act on the whole selection; otherwise
+            // just this one element. Always {modelId,expressId} refs so a
+            // shared expressId across two federated models can't cross-hide.
+            var sel = window._ccSelectedRefs || [];
+            var inSel = sel.some(function(r){return r.expressId===ctxMenu.expressId && r.modelId===ctxMenu.modelId;});
+            var ctxRefs = inSel ? sel : [{modelId: ctxMenu.modelId, expressId: ctxMenu.expressId}];
+            return html`<div>
+            <button onClick=${function(){if(window._ccTempHide)window._ccTempHide(ctxRefs);setCtxMenu(null);}}
+              style=${{...S_BTN,width:'100%',textAlign:'left',padding:'.5rem .7rem',background:'transparent',color:'var(--text-primary)',fontSize:'0.86rem',borderRadius:0,borderTop:'1px solid var(--border)',display:'flex',alignItems:'center',gap:'.5rem'}}>
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7z" stroke-dasharray="3 2"/><line x1="4" y1="4" x2="20" y2="20"/></svg>
+              Hide
+            </button>
+            <button onClick=${function(){if(window._ccIsolate)window._ccIsolate(ctxRefs);setCtxMenu(null);}}
+              style=${{...S_BTN,width:'100%',textAlign:'left',padding:'.5rem .7rem',background:'transparent',color:'var(--text-primary)',fontSize:'0.86rem',borderRadius:0,borderTop:'1px solid var(--border)',display:'flex',alignItems:'center',gap:'.5rem'}}>
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7z"/></svg>
+              Isolate
+            </button>
+            </div>`;
+          }()}
+          <button onClick=${function(){if(window._ccTempUnhide)window._ccTempUnhide();if(window._ccUnisolate)window._ccUnisolate();setCtxMenu(null);}}
+            style=${{...S_BTN,width:'100%',textAlign:'left',padding:'.5rem .7rem',background:'transparent',color:'var(--text-primary)',fontSize:'0.86rem',borderRadius:0,borderTop:'1px solid var(--border)',display:'flex',alignItems:'center',gap:'.5rem'}}>
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M8 12h8"/></svg>
+            Show All
+          </button>
           <button onClick=${function(){d({t:A.SECTION_BOX,v:null});d({t:A.SECTION,axis:null});setCtxMenu(null);}}
             style=${{...S_BTN,width:'100%',textAlign:'left',padding:'.5rem .7rem',background:'transparent',color:'var(--text-secondary)',fontSize:'0.86rem',borderRadius:0,borderTop:'1px solid var(--border)',display:'flex',alignItems:'center',gap:'.5rem'}}>
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><line x1="6" y1="6" x2="18" y2="18"/><line x1="18" y1="6" x2="6" y2="18"/></svg>
@@ -17602,6 +17797,28 @@ function startApp() {
     var theme = props.theme || 'dark';
     var canvasRef = useRef(null);
     var vcState = useRef(null);
+    // Wrapper CSS-px size. Bumped from 74 → 100: at 74px, the 21px-in-128px
+    // face-label texture rendered at ~6.4 CSS px on screen (the "~5px labels"
+    // bug) — too small to read. At 100px with the font bump below, labels
+    // render at ~14 CSS px (>= the 11px floor).
+    var CUBE_SIZE = 100;
+    // How far right the cube sits, offset further left whenever the Details/
+    // Ask AI panel is open so the panel never covers it (was fixed at
+    // '1rem', which the panel — a higher stacking tier, --z-panel — simply
+    // painted over).
+    var panelOffSt = useState(0), panelOff = panelOffSt[0], setPanelOff = panelOffSt[1];
+    useEffect(function(){
+      function sync(){ setPanelOff(window._ccRightPanelOpenWidth || 0); }
+      sync();
+      window.addEventListener('cc-panel-resize', sync);
+      window.addEventListener('resize', sync);
+      var iv = setInterval(sync, 400); // cheap fallback if the event is ever missed
+      return function(){
+        window.removeEventListener('cc-panel-resize', sync);
+        window.removeEventListener('resize', sync);
+        clearInterval(iv);
+      };
+    }, []);
     // Face definitions: label + normal. Order MUST stay fixed (BOX_FACE_MAP depends on it).
     var FACES = [
       {label:'FRONT',  normal:[0,0,1]},
@@ -17622,7 +17839,7 @@ function startApp() {
       if(S.mg&&S.mg.children.length>0 && typeof window._ccElemsBBox === 'function') window._ccElemsBBox().getCenter(ctr);
       var d=new THREE.Vector3(dir[0],dir[1],dir[2]).normalize();
       var targetTheta=Math.atan2(d.x,d.z);
-      var targetPhi=Math.max(0.05,Math.min(Math.PI-0.05,Math.acos(d.y)));
+      var targetPhi=Math.max(_ORBIT_POLE_EPS,Math.min(Math.PI-_ORBIT_POLE_EPS,Math.acos(d.y)));
       var startTheta=S.orbit.sph.theta, startPhi=S.orbit.sph.phi;
       var dTheta=targetTheta-startTheta;
       while(dTheta>Math.PI) dTheta-=2*Math.PI;
@@ -17642,6 +17859,30 @@ function startApp() {
       step();
     }
 
+    // Discoverable 90°-step rotate arrows around the cube — the raycasting
+    // edge/corner hit zones in getHitZone() below already let a click near
+    // the cube's boundary reach an adjacent face, but that's not obvious
+    // when (e.g. in a straight-down TOP view) every other face is edge-on
+    // and effectively invisible. These four buttons are a guaranteed,
+    // always-visible way to reach any face without relying on a precise
+    // click near a tiny/foreshortened edge.
+    function stepRotate(dTheta, dPhi) {
+      var S=state3d.current; if(!S||!S.orbit) return;
+      var startTheta=S.orbit.sph.theta, startPhi=S.orbit.sph.phi;
+      var targetTheta=startTheta+dTheta;
+      var targetPhi=Math.max(_ORBIT_POLE_EPS,Math.min(Math.PI-_ORBIT_POLE_EPS,startPhi+dPhi));
+      var t0=performance.now(), dur=400;
+      function step(){
+        var t=Math.min((performance.now()-t0)/dur,1);
+        var e=t<0.5?2*t*t:-1+(4-2*t)*t;
+        S.orbit.sph.theta=startTheta+(targetTheta-startTheta)*e;
+        S.orbit.sph.phi=startPhi+(targetPhi-startPhi)*e;
+        S.orbit.apply(); invalidate();
+        if(t<1) requestAnimationFrame(step);
+      }
+      step();
+    }
+
     function makeFaceTexture(label, isHovered) {
       var c = document.createElement('canvas');
       c.width=128; c.height=128;
@@ -17649,7 +17890,15 @@ function startApp() {
       ctx.clearRect(0,0,128,128);
       var light = theme==='light';
       ctx.fillStyle = isHovered ? (light ? '#1e293b' : '#ffffff') : (light ? 'rgba(15,23,42,0.85)' : 'rgba(226,232,240,0.88)');
-      ctx.font = 'bold 21px system-ui,sans-serif';
+      // Font bumped 21px → up to 34px (shrinking to fit "BOTTOM", the widest
+      // label, within the texture) — at CUBE_SIZE=100 this renders on screen
+      // at roughly fontPx * (100/1.9)/128 CSS px, i.e. ~11-14px, clearing the
+      // <=11px-equivalent bug (previously ~6.4px at the old 74px/21px combo).
+      var fontPx = 34;
+      ctx.font = 'bold '+fontPx+'px system-ui,sans-serif';
+      var textW = ctx.measureText(label).width;
+      var maxW = 112;
+      if (textW > maxW) { fontPx = Math.max(22, Math.floor(fontPx*maxW/textW)); ctx.font = 'bold '+fontPx+'px system-ui,sans-serif'; }
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
       ctx.fillText(label, 64, 64);
@@ -17662,7 +17911,7 @@ function startApp() {
       var canvas = canvasRef.current;
       if(!canvas || vcState.current) return;
 
-      var size = 74;
+      var size = CUBE_SIZE;
       var renderer = new THREE.WebGLRenderer({canvas:canvas, alpha:true, antialias:true});
       renderer.setSize(size, size);
       renderer.setPixelRatio(window.devicePixelRatio);
@@ -17863,8 +18112,33 @@ function startApp() {
       vc.dirty = true;
     }, [theme]);
 
-    return html`<div class="cc-viewcube-wrap" style=${{position:'absolute',top:'1rem',right:'1rem',pointerEvents:'auto',width:74,height:74,overflow:'hidden'}}>
-      <canvas ref=${canvasRef} style=${{cursor:'pointer',display:'block',width:74,height:74}} />
+    var _arrowBtn = {position:'absolute',display:'flex',alignItems:'center',justifyContent:'center',
+      width:20,height:20,padding:0,border:'1px solid var(--vc-border)',borderRadius:'50%',
+      background:'var(--vc-bg)',color:'var(--vc-text)',cursor:'pointer',boxShadow:'var(--shadow-sm)',
+      zIndex:1};
+    return html`<div class="cc-viewcube-wrap" style=${{position:'absolute',top:'1rem',
+      right:'calc(1rem + '+panelOff+'px)',pointerEvents:'auto',width:CUBE_SIZE,height:CUBE_SIZE,overflow:'visible'}}>
+      <canvas ref=${canvasRef} style=${{cursor:'pointer',display:'block',width:CUBE_SIZE,height:CUBE_SIZE,overflow:'hidden',borderRadius:6}} />
+      <button type="button" title=${_cc_t('viewcube.rotateUp','Tilt up 90°')} aria-label=${_cc_t('viewcube.rotateUp','Tilt up 90°')}
+        onClick=${function(){stepRotate(0,-Math.PI/2);}}
+        style=${{..._arrowBtn,left:'50%',top:-10,transform:'translateX(-50%)'}}>
+        <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M18 15l-6-6-6 6"/></svg>
+      </button>
+      <button type="button" title=${_cc_t('viewcube.rotateDown','Tilt down 90°')} aria-label=${_cc_t('viewcube.rotateDown','Tilt down 90°')}
+        onClick=${function(){stepRotate(0,Math.PI/2);}}
+        style=${{..._arrowBtn,left:'50%',bottom:-10,transform:'translateX(-50%)'}}>
+        <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></svg>
+      </button>
+      <button type="button" title=${_cc_t('viewcube.rotateLeft','Rotate left 90°')} aria-label=${_cc_t('viewcube.rotateLeft','Rotate left 90°')}
+        onClick=${function(){stepRotate(-Math.PI/2,0);}}
+        style=${{..._arrowBtn,top:'50%',left:-10,transform:'translateY(-50%)'}}>
+        <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg>
+      </button>
+      <button type="button" title=${_cc_t('viewcube.rotateRight','Rotate right 90°')} aria-label=${_cc_t('viewcube.rotateRight','Rotate right 90°')}
+        onClick=${function(){stepRotate(Math.PI/2,0);}}
+        style=${{..._arrowBtn,top:'50%',right:-10,transform:'translateY(-50%)'}}>
+        <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M9 6l6 6-6 6"/></svg>
+      </button>
     </div>`;
   }
 
@@ -29092,6 +29366,8 @@ function startApp() {
         ['?',           _cc_t('shortcuts.general.openPanel','Open this shortcuts panel')],
         ['Esc',         _cc_t('shortcuts.general.closeModal','Close any open modal, menu, or walk mode')],
         ['Cmd / Ctrl K',_cc_t('shortcuts.general.commandPalette','Open command palette (find any tool, run AI)')],
+        ['Cmd / Ctrl Z',_cc_t('shortcuts.general.undo','Undo (visibility, section changes, measurements)')],
+        ['Cmd / Ctrl Shift Z, Cmd / Ctrl Y', _cc_t('shortcuts.general.redo','Redo')],
       ]},
       { title: _cc_t('shortcuts.section.mouse','Mouse'), rows: [
         ['Left-drag',   _cc_t('shortcuts.mouse.orbit','Orbit')],
@@ -29119,7 +29395,10 @@ function startApp() {
         ['Shift+M',     _cc_t('shortcuts.view.clearMeasurements','Clear measurements')],
         ['A',           _cc_t('shortcuts.view.angleMeasure','Angle measurement (in measure mode)')],
         ['N',           _cc_t('shortcuts.view.dropPin','Drop a pin')],
-        ['I',           _cc_t('shortcuts.view.isolate','Isolate selected element')],
+        ['I',           _cc_t('shortcuts.view.isolate','Isolate selected element (press again to restore)')],
+        ['H  H',        _cc_t('shortcuts.view.hide','Hide selected element(s) (press H, then H)')],
+        ['H  I',        _cc_t('shortcuts.view.isolateChord','Isolate selected element(s) (press H, then I)')],
+        ['H  R',        _cc_t('shortcuts.view.showAllChord','Show all — restore hidden/isolated elements (press H, then R)')],
         ['Ctrl+F',      _cc_t('shortcuts.view.find','Find / search elements')],
       ]},
       { title: _cc_t('shortcuts.section.navigator','Navigator'), rows: [
@@ -37048,6 +37327,17 @@ function startApp() {
       };
     }, [collapsed, drawerTab]);
 
+    // Publish how much horizontal space this panel currently occupies on the
+    // right, so overlay widgets that live over the canvas (the view cube)
+    // can shift out from under it instead of being covered. 0 when
+    // collapsed / no model loaded.
+    var _panelHasModel = !!(s.models && s.models.length);
+    useEffect(function(){
+      window._ccRightPanelOpenWidth = (collapsed || !_panelHasModel) ? 0 : (effectivePanelW + 16);
+      try { window.dispatchEvent(new CustomEvent('cc-panel-resize')); } catch(e) {}
+      return function(){ window._ccRightPanelOpenWidth = 0; };
+    }, [collapsed, effectivePanelW, _panelHasModel]);
+
     // Collapsed: thin tab on the right edge
     if (collapsed) {
       return html`<button class="cc-ai-collapsed-tab" onClick=${function(){ setCollapsed(false); try{localStorage.setItem('cc_ai_panel_collapsed','0');}catch(e){} }}
@@ -37713,6 +38003,21 @@ function startApp() {
               fontSize:'var(--text-xs)',color:'var(--text-muted)',textDecoration:'underline',textDecorationColor:'var(--border)'}}>
             Switch to Data Quality for element checks →
           </button>
+        </div>
+        <!-- Visibility actions — model-scoped (window._ccSelectedRefs when
+             available, so a shared expressId across two federated models
+             can't cross-hide; falls back to the bare expressId otherwise). -->
+        <div style=${{display:'flex',gap:'.4rem',flexWrap:'wrap'}}>
+          ${(function(){
+            var vRefs = (window._ccSelectedRefs && window._ccSelectedRefs.length) ? window._ccSelectedRefs
+              : (el && el.expressId!=null ? [{expressId: el.expressId, modelId: window._ccSelectedModelId||null}] : null);
+            var vBtn = {flex:1,padding:'.35rem .5rem',borderRadius:'var(--radius-sm)',background:'var(--bg-tertiary)',color:'var(--text-primary)',border:'1px solid var(--border)',fontSize:'.72rem',fontWeight:500,cursor:'pointer',fontFamily:'inherit'};
+            return html`<div style=${{display:'flex',gap:'.35rem',width:'100%'}}>
+              <button disabled=${!vRefs} onClick=${function(){if(vRefs&&window._ccTempHide)window._ccTempHide(vRefs);}} title=${_cc_t('shortcuts.view.hide','Hide selected element(s)')} style=${{...vBtn,opacity:vRefs?1:.5}}>Hide</button>
+              <button disabled=${!vRefs} onClick=${function(){if(vRefs&&window._ccIsolate)window._ccIsolate(vRefs);}} title=${_cc_t('shortcuts.view.isolate','Isolate selected element')} style=${{...vBtn,opacity:vRefs?1:.5}}>Isolate</button>
+              <button onClick=${function(){if(window._ccTempUnhide)window._ccTempUnhide();if(window._ccUnisolate)window._ccUnisolate();}} title=${_cc_t('shortcuts.view.showAll','Show all — restore hidden/isolated elements')} style=${vBtn}>Show all</button>
+            </div>`;
+          })()}
         </div>
         <!-- Actions -->
         <div style=${{display:'flex',gap:'.4rem',flexWrap:'wrap'}}>
@@ -38783,6 +39088,43 @@ function startApp() {
     // presenting mode toggles).
     var styleSt = useState(false), styleOpen=styleSt[0], setStyleOpen=styleSt[1];
     var styleRef = useRef(null);
+    var styleMenuRef = useRef(null);
+    // Undo/redo toolbar buttons — window._ccUndo/_ccRedo/_ccUndoInfo live
+    // near invalidate(); this just mirrors their enabled state into local
+    // state so the buttons re-render (disabled/enabled) on every stack change.
+    var undoInfoSt = useState(function(){ return (window._ccUndoInfo && window._ccUndoInfo()) || {canUndo:false,canRedo:false}; });
+    var undoInfo = undoInfoSt[0], setUndoInfo = undoInfoSt[1];
+    useEffect(function(){
+      function sync(){ if (window._ccUndoInfo) setUndoInfo(window._ccUndoInfo()); }
+      sync();
+      window.addEventListener('cc-undo-change', sync);
+      return function(){ window.removeEventListener('cc-undo-change', sync); };
+    }, []);
+    // Esc closes the menu, and a pointerdown anywhere outside it closes it too —
+    // WITHOUT the full-screen backdrop <div> this used to render, which sat on
+    // top of everything (incl. the view cube) and ate the very click meant to
+    // reach whatever was underneath it, even though it never called
+    // stopPropagation — a backdrop covering the viewport is itself the
+    // topmost hit-test target at that point, so nothing below it ever saw
+    // the click at all.
+    useEffect(function(){
+      if (!styleOpen) return;
+      function onKey(e){ if (e.key === 'Escape') { setStyleOpen(false); } }
+      function onDocPointerDown(e){
+        var menu = styleMenuRef.current, btn = styleRef.current;
+        if (menu && menu.contains(e.target)) return;
+        if (btn && btn.contains(e.target)) return;
+        setStyleOpen(false);
+        // deliberately no preventDefault/stopPropagation — let this same
+        // pointerdown continue on to its real target underneath.
+      }
+      document.addEventListener('keydown', onKey);
+      document.addEventListener('pointerdown', onDocPointerDown);
+      return function(){
+        document.removeEventListener('keydown', onKey);
+        document.removeEventListener('pointerdown', onDocPointerDown);
+      };
+    }, [styleOpen]);
     var pickSt  = useState(false), pickOn = pickSt[0], setPickOn = pickSt[1];
     var measureSt = useState(false), measurePopOpen=measureSt[0], setMeasurePopOpen=measureSt[1];
     var caretRef = useRef(null);
@@ -39347,6 +39689,28 @@ function startApp() {
           <span style=${{fontFamily:'var(--font-mono)',fontSize:'var(--text-2xs)',color:'var(--ink-muted)',padding:'1px 5px',border:'1px solid var(--hairline)',borderRadius:'var(--radius-xs)',marginLeft:'.15rem'}}>⌘K</span>
         </button>
 
+        <!-- Undo / redo (visibility, section changes; measurement undo stays on its own toggle, see Ctrl+Z handling) -->
+        <button onClick=${function(){if(window._ccUndo)window._ccUndo();}} disabled=${!undoInfo.canUndo}
+          title=${_cc_t('toolbar.undoTip','Undo (Ctrl/Cmd+Z)')} aria-label=${_cc_t('toolbar.undoAria','Undo')}
+          style=${{
+            display:'inline-flex',alignItems:'center',justifyContent:'center',width:32,height:36,padding:0,
+            background:'none',border:'1px solid var(--hairline-strong)',borderRadius:'var(--radius-sm)',
+            cursor:undoInfo.canUndo?'pointer':'not-allowed',color:undoInfo.canUndo?'var(--ink-secondary)':'var(--ink-faint)',
+            opacity:undoInfo.canUndo?1:.5,marginRight:'.25rem'
+          }}>
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M9 14L4 9l5-5"/><path d="M4 9h10.5a5.5 5.5 0 0 1 0 11H11"/></svg>
+        </button>
+        <button onClick=${function(){if(window._ccRedo)window._ccRedo();}} disabled=${!undoInfo.canRedo}
+          title=${_cc_t('toolbar.redoTip','Redo (Ctrl/Cmd+Shift+Z or Ctrl/Cmd+Y)')} aria-label=${_cc_t('toolbar.redoAria','Redo')}
+          style=${{
+            display:'inline-flex',alignItems:'center',justifyContent:'center',width:32,height:36,padding:0,
+            background:'none',border:'1px solid var(--hairline-strong)',borderRadius:'var(--radius-sm)',
+            cursor:undoInfo.canRedo?'pointer':'not-allowed',color:undoInfo.canRedo?'var(--ink-secondary)':'var(--ink-faint)',
+            opacity:undoInfo.canRedo?1:.5,marginRight:'.4rem'
+          }}>
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M15 14l5-5-5-5"/><path d="M20 9H9.5a5.5 5.5 0 0 0 0 11H13"/></svg>
+        </button>
+
         <!-- STYLE popover (visible button — never hotkey-only) -->
         <div style=${{position:'relative'}}>
           <button ref=${styleRef} onClick=${function(){setStyleOpen(!styleOpen);}}
@@ -39366,8 +39730,7 @@ function startApp() {
             var _top = _r ? (_r.bottom + 6) : 50;
             var _right = _r ? (window.innerWidth - _r.right) : 16;
             return html`<div>
-            <div onClick=${function(){setStyleOpen(false);}} style=${{position:'fixed',inset:0,zIndex:'var(--z-dropdown)'}}></div>
-            <div role="menu" style=${{position:'fixed',top:_top+'px',right:_right+'px',zIndex:'calc(var(--z-dropdown) + 1)',minWidth:240,
+            <div ref=${styleMenuRef} role="menu" style=${{position:'fixed',top:_top+'px',right:_right+'px',zIndex:'calc(var(--z-dropdown) + 1)',minWidth:240,
               background:'var(--surface)',border:'1px solid var(--hairline-strong)',borderRadius:'var(--radius-sm)',
               boxShadow:'var(--shadow-lifted)',padding:'.3rem 0',fontFamily:'var(--font-body)'}}>
               ${styles.map(function(st,i){
@@ -40504,8 +40867,18 @@ function startApp() {
             return;
           }
         }
+        // Unified undo/redo (visibility, section plane/box — see the
+        // window._ccUndo/_ccRedo manager near invalidate()). Ctrl/Cmd+Z
+        // tries the existing measurement undo toggle first (unchanged
+        // behaviour), then falls back to the unified stack; Ctrl/Cmd+Shift+Z
+        // and Ctrl/Cmd+Y redo. Already past the inInput guard above, so
+        // neither fires while typing in a text field.
         if(ctrl && (e.key==='z'||e.key==='Z') && !e.shiftKey){
           if(window._ccUndoMeasurement && window._ccUndoMeasurement()) { e.preventDefault(); return; }
+          if(window._ccUndo && window._ccUndo()) { e.preventDefault(); return; }
+        }
+        if(ctrl && ((e.key==='z'||e.key==='Z') && e.shiftKey || e.key==='y'||e.key==='Y')){
+          if(window._ccRedo && window._ccRedo()) { e.preventDefault(); return; }
         }
         if(e.key==='/'&&!ctrl){ e.preventDefault(); if(window._ccNLOpen) window._ccNLOpen(); return; }
         // Ctrl+F: listed in the shortcuts sheet ("Find / search elements")
@@ -40532,8 +40905,15 @@ function startApp() {
         if(e.key==='o'&&!ctrl){ d({t:A.WALK_MODE,v:false}); d({t:A.MEASURE_MODE,v:false}); d({t:A.COMMENT_MODE,v:false}); d({t:A.FLOOR_PLAN,v:null}); return; }
         if(e.key==='n'&&!ctrl){ d({t:A.COMMENT_MODE,v:!s.commentMode}); return; }
         if(e.key==='i'&&!ctrl){
-          var _iId=window._ccSelectedExpressId;
-          if(_iId&&window._ccIsolate) window._ccIsolate([{expressId:_iId, modelId:window._ccSelectedModelId||null}]);
+          // Real toggle: already isolated → I restores; otherwise I isolates
+          // the current selection (model-scoped refs when available).
+          if (window._ccIsIsolated) {
+            if (window._ccUnisolate) window._ccUnisolate();
+            return;
+          }
+          var _iRefs = (window._ccSelectedRefs && window._ccSelectedRefs.length) ? window._ccSelectedRefs : null;
+          if (!_iRefs && window._ccSelectedExpressId!=null) _iRefs = [{expressId: window._ccSelectedExpressId, modelId: window._ccSelectedModelId||null}];
+          if(_iRefs&&window._ccIsolate) window._ccIsolate(_iRefs);
           else if(window._ccUnisolate) window._ccUnisolate();
           return;
         }
