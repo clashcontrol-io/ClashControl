@@ -23,7 +23,7 @@ test('rawItems only unconditionally strips denied clashes when the Denied filter
   const start = src.indexOf('var rawItems = React.useMemo(function(){');
   assert.ok(start !== -1);
   const region = src.slice(start, start + 700);
-  assert.ok(region.includes("f.status==='denied' || c.status!=='denied'"), 'expected the denied-filter-aware base list guard');
+  assert.ok(region.includes("f.status==='denied' || f.showHandled || c.status!=='denied'"), 'expected the denied-filter-aware base list guard (also open when the "Show resolved/denied" toggle is on)');
   assert.ok(region.includes('f.status'), 'rawItems memo must depend on f.status now that it affects the base list');
 });
 

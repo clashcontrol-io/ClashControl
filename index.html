@@ -1444,7 +1444,8 @@ function startApp() {
     ifcType:'all', storey:'all', material:'all', excludedTypes:[], excludedStoreys:[], excludedMaterials:[],
     deltaState:'all', // 'all','new','persisting','auto_resolved'
     priority:'all', category:'all', assignee:'all', issueElementType:'all', issueStorey:'all',
-    modelPair:null // {a:modelId, b:modelId} set by clicking a Model clash matrix cell
+    modelPair:null, // {a:modelId, b:modelId} set by clicking a Model clash matrix cell
+    showHandled:false // "Show resolved/denied" toggle — default OFF, see ccUiClashListSummary
   };
   var _ccLoadPref = function(key,fallback){try{var v=localStorage.getItem('cc_'+key);return v!==null?JSON.parse(v):fallback;}catch(e){return fallback;}};
 
@@ -2125,7 +2126,7 @@ function startApp() {
       case A.UPD_MODEL:   return Object.assign({},s,{models:s.models.map(function(m){return m.id===a.id?Object.assign({},m,a.u):m})});
       case A.TOGGLE_ALL_STOREYS: return Object.assign({},s,{models:s.models.map(function(m){if(m.id!==a.id)return m;return Object.assign({},m,{hiddenStoreys:a.hide?a.storeys.reduce(function(o,st){o[st]=true;return o;},{}):{}}); })});
       case A.SET_CLASHES: /* falls through to MERGE_CLASHES with no prev clashes */
-      case A.MERGE_CLASHES: var _mr=mergeDetectionResults(a.v, a.t===A.MERGE_CLASHES?s.clashes:[], a.coverageModelIds); _mr.clashes=_ccApplyAssignmentRules(_mr.clashes, s.assignmentRules); _gcEvent('clash-detection', _mr.clashes.length+' clashes'); var _st={clashes:_mr.clashes,detecting:false,activeId:null,floors:deriveFloors(_mr.clashes),lastDeltaSummary:_mr.deltaSummary}; var _rhOpen=0; _mr.clashes.forEach(function(c){if(c.status==='open'||c.status==='in_progress')_rhOpen++;}); _st.runHistory=(s.runHistory||[]).concat([{ts:_mr.deltaSummary.ts,total:_mr.clashes.length,open:_rhOpen,newCount:_mr.deltaSummary.newCount,persisting:_mr.deltaSummary.persisting,autoResolved:_mr.deltaSummary.autoResolved}]).slice(-100); if(a.detectionSettings)_st.detectionSettings=a.detectionSettings; if(s.prefs.resetFiltersOnRun!==false)_st.filters=Object.assign({},INIT_FILTERS); /* Default to Grouped only when the user has nothing chosen AND the result is small enough that thousands of sticky-positioned cluster headers won't tax the browser. Never write localStorage here — that's the user-facing CLASH_GROUP_BY dispatch's job. */ if((!Array.isArray(s.clashGroupBy)||s.clashGroupBy.length===0) && _mr.clashes.length>0 && _mr.clashes.length<=2000) { _st.clashGroupBy=['cluster']; }
+      case A.MERGE_CLASHES: var _mr=mergeDetectionResults(a.v, a.t===A.MERGE_CLASHES?s.clashes:[], a.coverageModelIds); _mr.clashes=_ccApplyAssignmentRules(_mr.clashes, s.assignmentRules); _gcEvent('clash-detection', _mr.clashes.length+' clashes'); var _st={clashes:_mr.clashes,detecting:false,activeId:null,floors:deriveFloors(_mr.clashes),lastDeltaSummary:_mr.deltaSummary}; var _rhOpen=0; _mr.clashes.forEach(function(c){if(c.status==='open'||c.status==='in_progress')_rhOpen++;}); _st.runHistory=(s.runHistory||[]).concat([{ts:_mr.deltaSummary.ts,total:_mr.clashes.length,open:_rhOpen,newCount:_mr.deltaSummary.newCount,persisting:_mr.deltaSummary.persisting,autoResolved:_mr.deltaSummary.autoResolved}]).slice(-100); if(a.detectionSettings)_st.detectionSettings=a.detectionSettings; if(s.prefs.resetFiltersOnRun!==false)_st.filters=Object.assign({},INIT_FILTERS); /* Default to Grouped (by root-cause element — "one row = one thing to fix", see _ccRootCauseKeyFor) only when the user has nothing chosen AND the result is small enough that thousands of sticky-positioned group headers won't tax the browser. Never write localStorage here — that's the user-facing CLASH_GROUP_BY dispatch's job. */ if((!Array.isArray(s.clashGroupBy)||s.clashGroupBy.length===0) && _mr.clashes.length>0 && _mr.clashes.length<=2000) { _st.clashGroupBy=['element']; }
         return Object.assign({},s,_st);
       case A.ADD_CLASHES: { /* additive, non-destructive append (does NOT auto-resolve existing clashes like MERGE_CLASHES). Used by the accessibility panel. */
         var _addc=(a.v||[]).filter(Boolean); if(!_addc.length) return s;
@@ -7603,6 +7604,11 @@ function startApp() {
       var core = a === b ? (a + ' vs ' + b) : (a + ' × ' + b);
       return sameModel ? (core + ' (self)') : core;
     }
+    // Exposed so the clash-list grouping/row UI (window._cc* plumbing, far
+    // below in the same startApp closure but nested in a sibling function —
+    // see CLAUDE.md globals discipline) can reuse the same IFC-type→human-
+    // words mapping instead of growing a second copy.
+    window._ccNiceTypeLabel = _niceTypeLabel;
 
     function _buildClashBase(eA, eB, mA, mB, point, sameModel) {
       var pA=eA.props||{}, pB=eB.props||{};
@@ -21900,6 +21906,7 @@ function startApp() {
 
   function ClashStatsBar(props) {
     var items = props.items, isClash = props.isClash, delta = props.delta;
+    var handledHiddenCount = props.handledHiddenCount || 0, showHandled = !!props.showHandled, d = props.d;
     var stTitlesBusy = useState(false), titlesBusy = stTitlesBusy[0], setTitlesBusy = stTitlesBusy[1];
     // Single O(N) pass instead of 7 filters — matters at 10k+ clashes.
     var counts = React.useMemo(function(){
@@ -21935,7 +21942,26 @@ function startApp() {
     var CHIP = function(label, n, bg, fg) {
       return html`<span style=${{fontSize:'0.67rem',padding:'1px 5px',borderRadius:99,background:bg,color:fg,fontWeight:600,whiteSpace:'nowrap'}}>${label} ${n}</span>`;
     };
+    // One-line summary ("56 clashes · 56 open · 0 resolved") replacing the
+    // chip cluster as the at-a-glance headline — the per-type/delta chips
+    // below stay available as detail, not the first thing read.
+    var noun = isClash ? _cc_t('statsBar.clash','clash') : _cc_t('statsBar.issue','issue');
+    var nounPl = isClash ? _cc_t('statsBar.clashes','clashes') : _cc_t('statsBar.issues','issues');
+    var summaryLine = total + ' ' + (total===1?noun:nounPl)
+      + ' · ' + open + ' ' + _cc_t('statsBar.open','open')
+      + (inProg>0 ? (' · ' + inProg + ' ' + _cc_t('statsBar.inProgress','in progress')) : '')
+      + ' · ' + resolved + ' ' + _cc_t('statsBar.resolved','resolved');
     return html`<div style=${{padding:'.35rem .5rem',borderBottom:'1px solid var(--border-subtle)',flexShrink:0,background:'var(--bg-tertiary)'}}>
+      <!-- Summary line -->
+      <div style=${{display:'flex',alignItems:'center',gap:'.5rem',marginBottom:'.25rem',flexWrap:'wrap'}}>
+        <span style=${{fontSize:'0.75rem',fontWeight:600,color:'var(--text-primary)'}}>${summaryLine}</span>
+        ${isClash && handledHiddenCount > 0 && html`<label style=${{display:'flex',alignItems:'center',gap:'.25rem',fontSize:'0.65rem',color:'var(--text-faint)',whiteSpace:'nowrap',cursor:'pointer',marginLeft:'auto'}}>
+          <input type="checkbox" checked=${showHandled}
+            onChange=${function(e){ if (d) d({t:A.UPD_FILTERS,u:{showHandled:e.target.checked}}); }}
+            style=${{accentColor:'var(--accent)'}} />
+          ${_cc_t('statsBar.showHandled','Show resolved/denied')} <span style=${{opacity:.75}}>(${handledHiddenCount} ${_cc_t('statsBar.hidden','hidden')})</span>
+        </label>`}
+      </div>
       <!-- Progress bar -->
       <div style=${{display:'flex',alignItems:'center',gap:'.4rem',marginBottom:'.3rem'}}>
         <div style=${{flex:1,height:4,borderRadius:2,background:'var(--border)',overflow:'hidden'}}>
@@ -21943,12 +21969,9 @@ function startApp() {
         </div>
         <span style=${{fontSize:'0.69rem',fontWeight:600,color:barCol,minWidth:28,textAlign:'right'}}>${pct}%</span>
       </div>
-      <!-- Chips row -->
+      <!-- Chips row (detail — hard/soft/dup/vis breakdown, delta, AI titles;
+           Total/Open/Resolved now live in the summary line above) -->
       <div style=${{display:'flex',gap:'.25rem',flexWrap:'wrap',alignItems:'center'}}>
-        ${CHIP('Total', total, 'var(--tag-bg)', 'var(--text-secondary)')}
-        ${CHIP('Open', open, '#7f1d1d', '#fca5a5')}
-        ${inProg > 0 && CHIP('In Prog', inProg, '#78350f', '#fcd34d')}
-        ${CHIP('Resolved', resolved, '#052e16', '#4ade80')}
         ${isClash && hard > 0 && html`<span style=${{width:1,height:12,background:'var(--border)',margin:'0 .1rem'}}></span>`}
         ${isClash && hard > 0 && CHIP('Hard', hard, '#7f1d1d', '#fca5a5')}
         ${isClash && soft > 0 && CHIP('Soft', soft, '#78350f', '#fcd34d')}
@@ -23072,7 +23095,7 @@ function startApp() {
       // nothing -- there was no way to review or undo a deny. Keep the
       // existing declutter default (hidden under every other filter
       // value) but let them through when the Denied filter is active.
-      var base = isClashTab ? s.clashes.filter(function(c){return f.status==='denied' || c.status!=='denied';}) : s.issues;
+      var base = isClashTab ? s.clashes.filter(function(c){return f.status==='denied' || f.showHandled || c.status!=='denied';}) : s.issues;
       if (!isClashTab || !s.idsValidation || !s.idsValidation.results || !s.idsValidation.results.length) return base;
       var idsItems = s.idsValidation.results.map(function(r, i) {
         return {
@@ -23094,7 +23117,7 @@ function startApp() {
         };
       });
       return base.concat(idsItems);
-    }, [isClashTab, s.clashes, s.issues, s.idsValidation, f.status]);
+    }, [isClashTab, s.clashes, s.issues, s.idsValidation, f.status, f.showHandled]);
 
 
     var visibleModelIds = useMemo(function(){
@@ -23171,6 +23194,23 @@ function startApp() {
         return true;
       });
     }, [rawItems, isClashTab, visibleModelIds]);
+
+    // Count of resolved/closed/denied clashes among currently visible
+    // models — independent of f.showHandled/f.status so the "Show
+    // resolved/denied (N hidden)" toggle's count is always the true total,
+    // whether the toggle is currently hiding them or not.
+    var handledHiddenCount = useMemo(function(){
+      if (!isClashTab) return 0;
+      var n = 0;
+      for (var i=0;i<s.clashes.length;i++) {
+        var c = s.clashes[i];
+        if (c.modelAId && !visibleModelIds[c.modelAId]) continue;
+        if (c.modelBId && !visibleModelIds[c.modelBId]) continue;
+        if (c.status==='resolved' || c.status==='closed' || c.status==='denied') n++;
+      }
+      return n;
+    }, [s.clashes, isClashTab, visibleModelIds]);
+
     var items = useMemo(function(){
       return rawItems.filter(function(it){
         if(isClashTab && (it.modelAId || it.modelBId)) {
@@ -23178,6 +23218,12 @@ function startApp() {
           if(it.modelBId && !visibleModelIds[it.modelBId]) return false;
         }
         if(f.status!=='all' && it.status!==f.status) return false;
+        // "Show resolved/denied" toggle (default off): with no specific
+        // status pill selected, resolved/closed clashes stay hidden too
+        // (denied is already excluded upstream in rawItems unless
+        // f.showHandled/f.status==='denied') so the list opens on what
+        // still needs attention, not a mix of open + already-handled work.
+        if(isClashTab && f.status==='all' && !f.showHandled && (it.status==='resolved'||it.status==='closed')) return false;
         if(f.search){var hay=isClashTab?[it.title,it.description,it.type,it.elemAStorey,it.elemBStorey,it.elemAType,it.elemBType,it.elemAMaterial,it.elemBMaterial,it.status].filter(Boolean).join(' ').toLowerCase():(it.title||'').toLowerCase()+' '+(it.description||'').toLowerCase();if(!_ccFilterTextMatches(f.search,hay,it.number))return false;}
         if(isClashTab) {
           if(f.modelPair) {
@@ -23243,7 +23289,8 @@ function startApp() {
       </div>`}
 
       ${isClashTab && rawItems.length > 0 && rawItems.some(function(c){return c.aiSeverity;}) && html`<${ClashAISummary} items=${rawItems} />`}
-      ${!isExplorerTab && !isStandardsTab && rawItems.length > 0 && html`<${ClashStatsBar} items=${rawItems} isClash=${isClashTab} delta=${isClashTab ? s.lastDeltaSummary : null} history=${isClashTab ? (s.runHistory||null) : null} />`}
+      ${!isExplorerTab && !isStandardsTab && rawItems.length > 0 && html`<${ClashStatsBar} items=${rawItems} isClash=${isClashTab} delta=${isClashTab ? s.lastDeltaSummary : null} history=${isClashTab ? (s.runHistory||null) : null}
+        handledHiddenCount=${isClashTab ? handledHiddenCount : 0} showHandled=${!!f.showHandled} d=${d} />`}
       ${isClashTab && rawItems.length > 0 && (s.models||[]).length >= 2 && html`<${ModelClashMatrix} s=${s} d=${d} items=${rawItems} />`}
 
       ${s.tab==='navigator' && html`<${NavigatorPanel} s=${s} d=${d} />`}
@@ -23466,23 +23513,34 @@ function startApp() {
           : [['none','None'],['priority_desc','Priority (high first)'],['priority_asc','Priority (low first)'],['date_desc','Date (newest)'],['date_asc','Date (oldest)'],['due_asc','Due date']];
         var DS={fontSize:'0.72rem',padding:'.22rem .3rem',borderRadius:4,background:'var(--bg-secondary)',color:'var(--text-secondary)',border:'1px solid var(--border)',cursor:'pointer'};
         // For clashes: a 2-button segmented control (Grouped | All) replaces
-        // the 9-option Group dropdown. Grouped = cluster de-dupe (the Week-1
-        // smart group). All = flat. A secondary "Group rows by" dropdown
-        // shows only in All mode, exposing the other axes (storey, etc).
+        // the 9-option Group dropdown. Grouped defaults to 'element' (root-
+        // cause: the element touching the most other elements — "one row =
+        // one thing to fix") but a secondary dropdown lets it switch to
+        // 'cluster' (exact element-pair identity) too. All = flat, with its
+        // own secondary dropdown for the remaining axes (storey, etc).
         if (isClashTab) {
-          var isGrouped = selGrp === 'cluster';
+          var SMART_GROUPS = ['element','cluster'];
+          var isGrouped = SMART_GROUPS.indexOf(selGrp) !== -1;
+          var smartGrpOpts = [['element',_cc_t('issues.groupByElement','By element')],['cluster',_cc_t('issues.groupByPair','Element pair')]];
           var SEG_BTN = function(active){return {fontSize:'var(--text-xs)',padding:'var(--space-1) var(--space-3)',borderRadius:'var(--radius-xs)',border:'1px solid var(--border)',cursor:'pointer',
             background:active?'var(--accent)':'var(--bg-secondary)',color:active?'var(--accent-contrast)':'var(--text-secondary)',
             fontWeight:active?'var(--weight-semibold)':'var(--weight-regular)',fontFamily:'var(--font-body)',whiteSpace:'nowrap',
             transition:'background var(--duration-fast) var(--ease-standard), color var(--duration-fast) var(--ease-standard)'};};
           return html`<div style=${{padding:'var(--space-1) var(--space-2)',borderBottom:'1px solid var(--border-subtle)',display:'flex',gap:'var(--space-2)',alignItems:'center',flexShrink:0}}>
             <div role="group" aria-label=${_cc_t('issues.viewMode','View mode')} style=${{display:'inline-flex',gap:0,borderRadius:'var(--radius-xs)',overflow:'hidden'}}>
-              <button onClick=${function(){d({t:grpAction,v:['cluster']});}} aria-pressed=${isGrouped} style=${{...SEG_BTN(isGrouped),borderRadius:'var(--radius-xs) 0 0 var(--radius-xs)'}}>${_cc_t('issues.grouped','Grouped')}</button>
+              <button onClick=${function(){d({t:grpAction,v:['element']});}} aria-pressed=${isGrouped} style=${{...SEG_BTN(isGrouped),borderRadius:'var(--radius-xs) 0 0 var(--radius-xs)'}}>${_cc_t('issues.grouped','Grouped')}</button>
               <button onClick=${function(){d({t:grpAction,v:[]});}} aria-pressed=${!isGrouped} style=${{...SEG_BTN(!isGrouped),borderRadius:'0 var(--radius-xs) var(--radius-xs) 0',borderLeft:'none'}}>${_cc_t('issues.filter.statusAll','All')}</button>
             </div>
+            ${isGrouped && html`<label style=${{display:'flex',alignItems:'center',gap:'var(--space-1)',flex:1,minWidth:0}}>
+              <span style=${{fontSize:'var(--text-2xs)',color:'var(--text-faint)',whiteSpace:'nowrap'}}>${_cc_t('issues.groupBy','by')}</span>
+              <select value=${selGrp} style=${{...DS,flex:1,minWidth:0,maxWidth:120}}
+                onChange=${function(e){var v=e.target.value;d({t:grpAction,v:[v]});}}>
+                ${smartGrpOpts.map(function(g){return html`<option key=${g[0]} value=${g[0]}>${g[1]}</option>`})}
+              </select>
+            </label>`}
             ${!isGrouped && html`<label style=${{display:'flex',alignItems:'center',gap:'var(--space-1)',flex:1,minWidth:0}}>
               <span style=${{fontSize:'var(--text-2xs)',color:'var(--text-faint)',whiteSpace:'nowrap'}}>${_cc_t('issues.groupBy','by')}</span>
-              <select value=${selGrp==='cluster'?'none':selGrp} style=${{...DS,flex:1,minWidth:0,maxWidth:120}}
+              <select value=${selGrp==='cluster'||selGrp==='element'?'none':selGrp} style=${{...DS,flex:1,minWidth:0,maxWidth:120}}
                 onChange=${function(e){var v=e.target.value;d({t:grpAction,v:v==='none'?[]:[v]});}}>
                 ${secondaryGrpOpts.map(function(g){return html`<option key=${g[0]} value=${g[0]}>${g[1]}</option>`})}
               </select>
@@ -26211,7 +26269,107 @@ function startApp() {
     return map;
   }
 
-  function _groupKeyFor(it, groupKey, modelsById, spatialMap) {
+  // \u2500\u2500 Root-cause ("By element") grouping \u2500\u2500
+  // Groups clashes by whichever of the two participating elements is
+  // involved in the most clashes overall \u2014 typically the MEP run crossing
+  // several walls/beams \u2014 so "one row = one thing to fix", matching how
+  // BIMcollab/Revizto/Dalux/Solibri group clash lists. Deliberately separate
+  // from 'cluster' above (which keys on the specific PAIR of elements: same
+  // duct crossing the same wall at 3 points collapses to one group, but a
+  // duct crossing 3 different walls stays 3 separate cluster groups). Pure,
+  // dependency-free (only reads clash fields) so it's unit-testable without
+  // a DOM \u2014 see tests/root-cause-grouping.test.js.
+  function _ccElemKeyFor(modelId, expressId, globalId) {
+    return (globalId && globalId !== '') ? ('g:' + globalId) : ('m' + (modelId || '') + ':' + expressId);
+  }
+  // MEP run types are the more useful tie-break "root cause" than the
+  // structural/architectural elements they cross, when both sides of a
+  // clash happen to touch the same number of other elements.
+  var _CC_MEP_TYPE_RE = /Duct|Pipe|Cable|Conduit|Flow|Fire|Sprinkler/i;
+  function _ccIsLikelyMepType(t) { return _CC_MEP_TYPE_RE.test(t || '') ? 1 : 0; }
+  function _ccBuildElementDegreeMap(items) {
+    var deg = {};
+    (items || []).forEach(function(it) {
+      var kA = _ccElemKeyFor(it.modelAId, it.elemA, it.globalIdA);
+      var kB = _ccElemKeyFor(it.modelBId, it.elemB, it.globalIdB);
+      deg[kA] = (deg[kA] || 0) + 1;
+      deg[kB] = (deg[kB] || 0) + 1;
+    });
+    return deg;
+  }
+  // Which side ('A' or 'B') of a clash is the "root cause" element: the one
+  // touching more other elements across the whole item set; ties broken by
+  // MEP-likeliness, then a stable key comparison so the choice never flips
+  // between renders of the same data.
+  function _ccRootCauseSideFor(it, degMap) {
+    degMap = degMap || {};
+    var kA = _ccElemKeyFor(it.modelAId, it.elemA, it.globalIdA);
+    var kB = _ccElemKeyFor(it.modelBId, it.elemB, it.globalIdB);
+    var dA = degMap[kA] || 0, dB = degMap[kB] || 0;
+    if (dA !== dB) return dA > dB ? 'A' : 'B';
+    var mepDiff = _ccIsLikelyMepType(it.elemAType) - _ccIsLikelyMepType(it.elemBType);
+    if (mepDiff !== 0) return mepDiff > 0 ? 'A' : 'B';
+    return kA <= kB ? 'A' : 'B';
+  }
+  function _ccRootCauseKeyFor(it, degMap) {
+    return _ccRootCauseSideFor(it, degMap) === 'A'
+      ? _ccElemKeyFor(it.modelAId, it.elemA, it.globalIdA)
+      : _ccElemKeyFor(it.modelBId, it.elemB, it.globalIdB);
+  }
+  function _ccPluralizeWord(w) {
+    if (!w) return w;
+    if (/(s|x|z|ch|sh)$/i.test(w)) return w + 'es';
+    if (/[^aeiou]y$/i.test(w)) return w.slice(0, -1) + 'ies';
+    return w + 's';
+  }
+  // Builds the "By element" group header's display data straight from a
+  // group's items (no side-channel map to keep in sync, unlike
+  // window._ccClusterDisplay) \u2014 title = root element's name + human type,
+  // subtitle = counts of what it hits by human type, storey, worst severity.
+  function _ccElementGroupSummary(items) {
+    if (!items || !items.length) return null;
+    var degMap = _ccBuildElementDegreeMap(items);
+    var rootInfo = null;
+    var otherTypeCounts = {}, storeys = {}, worstSev = null;
+    var SEV_ORDER = { critical: 3, major: 2, minor: 1, info: 0 };
+    var niceType = function(t) { return (typeof window._ccNiceTypeLabel === 'function') ? window._ccNiceTypeLabel(t) : (t || 'Element'); };
+    items.forEach(function(it) {
+      var side = _ccRootCauseSideFor(it, degMap);
+      if (!rootInfo) {
+        rootInfo = side === 'A'
+          ? { name: it.elemAName, type: it.elemAType }
+          : { name: it.elemBName, type: it.elemBType };
+      }
+      var otherType = niceType(side === 'A' ? it.elemBType : it.elemAType).toLowerCase();
+      otherTypeCounts[otherType] = (otherTypeCounts[otherType] || 0) + 1;
+      var st = side === 'A' ? it.elemAStorey : it.elemBStorey;
+      if (st) storeys[st] = true;
+      var sev = it.aiSeverity || (typeof _ccDeterministicSeverity === 'function' ? _ccDeterministicSeverity(it) : 'info');
+      if (worstSev == null || (SEV_ORDER[sev] || 0) > (SEV_ORDER[worstSev] || 0)) worstSev = sev;
+    });
+    var otherKeys = Object.keys(otherTypeCounts).sort(function(a, b) { return otherTypeCounts[b] - otherTypeCounts[a]; });
+    var subtitle = otherKeys.map(function(t) {
+      var c = otherTypeCounts[t];
+      return c + ' ' + (c === 1 ? t : _ccPluralizeWord(t));
+    }).join(' \u00b7 ');
+    var storeyKeys = Object.keys(storeys);
+    var niceRootType = niceType(rootInfo.type);
+    return {
+      title: (rootInfo.name || niceRootType) + ' (' + niceRootType + ')',
+      subtitle: subtitle ? ('crosses ' + subtitle) : '',
+      storey: storeyKeys.length === 1 ? storeyKeys[0] : (storeyKeys.length > 1 ? (storeyKeys.length + ' storeys') : ''),
+      severity: worstSev || 'info'
+    };
+  }
+  window._ccElemKeyFor = _ccElemKeyFor;
+  window._ccIsLikelyMepType = _ccIsLikelyMepType;
+  window._ccBuildElementDegreeMap = _ccBuildElementDegreeMap;
+  window._ccRootCauseSideFor = _ccRootCauseSideFor;
+  window._ccRootCauseKeyFor = _ccRootCauseKeyFor;
+  window._ccPluralizeWord = _ccPluralizeWord;
+  window._ccElementGroupSummary = _ccElementGroupSummary;
+
+  function _groupKeyFor(it, groupKey, modelsById, spatialMap, elementDegreeMap) {
     switch(groupKey) {
       case 'storey': return it.elemAStorey || it.elemBStorey || it.storey || 'Unknown';
       case 'discipline': return (it.disciplines||[]).sort().join(' \u2194 ') || 'Unknown';
@@ -26222,6 +26380,7 @@ function startApp() {
       case 'assignee': return it.assignee || 'Unassigned';
       case 'severity': return it.aiSeverity || _ccDeterministicSeverity(it);
       case 'nearby': return (spatialMap && spatialMap.get(it.id)) || 'Unlocated';
+      case 'element': return _ccRootCauseKeyFor(it, elementDegreeMap);
       case 'cluster': {
         var ck = window._ccClusterKeyFor(it);
         if (!window._ccClusterDisplay) window._ccClusterDisplay = {};
@@ -26265,9 +26424,13 @@ function startApp() {
     // other groupBy dimension which only looks at the item itself — compute
     // it once here rather than per-item inside _groupKeyFor.
     var spatialMap = groupByArr.indexOf('nearby') !== -1 ? _ccSpatialClusterMap(items) : null;
+    // 'element' (root-cause grouping) needs every item's degree at once too
+    // (which element touches the most others), computed once for the same
+    // reason as spatialMap above.
+    var elementDegreeMap = groupByArr.indexOf('element') !== -1 ? _ccBuildElementDegreeMap(items) : null;
     var groupMap = {};
     items.forEach(function(it) {
-      var parts = groupByArr.map(function(g){ return _groupKeyFor(it, g, modelsById, spatialMap); });
+      var parts = groupByArr.map(function(g){ return _groupKeyFor(it, g, modelsById, spatialMap, elementDegreeMap); });
       var k = parts.join(' \u2502 '); // use │ as separator (visually distinct, rare in names)
       if (!groupMap[k]) groupMap[k] = [];
       groupMap[k].push(it);
@@ -26460,6 +26623,8 @@ function startApp() {
     var rawItemsProp=props.items, activeId=props.activeId, d=props.d, isClash=props.isClash, prefs=props.prefs, models=props.models||[];
     var triageResults = props.triageResults || {};
     var groupBy = props.groupBy || 'none';
+    var groupByPrimary = Array.isArray(groupBy) ? groupBy[0] : groupBy;
+    var isElementGroupMode = isClash && groupByPrimary === 'element';
     var sortBy = props.sortBy || 'none';
     var selectMode=props.selectMode, selected=props.selected||{};
     var trainingMode=props.trainingMode;
@@ -26933,7 +27098,33 @@ function startApp() {
     // the header (+ cluster triage panel); items/"show more" are separate
     // rows so the windowed path can mount them independently.
     function renderHeaderRow(g) {
+      // A group of exactly one clash adds noise, not structure — render it
+      // as a plain row with no header at all (matches how Solibri/BIMcollab/
+      // Revizto/Dalux only show a group card once there's actually more
+      // than one thing under it).
+      if (g.items.length === 1) return null;
       var isOpen = !collapsed[g.label];
+      if (isElementGroupMode) {
+        // ── "By element" (root-cause) header ──
+        var summary = _ccElementGroupSummary(g.items) || {};
+        var sevCol2 = SEV_COLOR[summary.severity] || 'var(--text-muted)';
+        var openCount2 = g.items.filter(function(it){return it.status!=='resolved'&&it.status!=='closed'&&it.status!=='denied';}).length;
+        var resolved2 = g.items.length - openCount2;
+        return html`<div key=${g.label} data-element-group-key=${g.label}
+          onClick=${function(){toggleGroup(g.label)}}
+          style=${{display:'flex',alignItems:'center',gap:'var(--space-2)',padding:'var(--space-2) var(--space-2) var(--space-2) var(--space-1)',cursor:'pointer',background:'var(--bg-tertiary)',borderBottom:'1px solid var(--border-subtle)',borderLeft:'3px solid '+sevCol2,position:'sticky',top:0,zIndex:1}}>
+          <span style=${{fontSize:'var(--text-2xs)',color:'var(--text-faint)',width:10}}>${isOpen?'▼':'▶'}</span>
+          <div style=${{flex:1,minWidth:0,display:'flex',flexDirection:'column',gap:'2px'}}>
+            <span style=${{fontSize:'var(--text-sm)',fontWeight:'var(--weight-semibold)',color:'var(--text-primary)',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis',lineHeight:'var(--leading-tight)'}}>${summary.title}</span>
+            <div style=${{display:'flex',gap:'var(--space-1)',flexWrap:'wrap',alignItems:'center'}}>
+              ${summary.subtitle && html`<span style=${{fontSize:'var(--text-2xs)',color:'var(--text-secondary)'}}>${summary.subtitle}</span>`}
+              ${summary.storey && html`<span class="cc-status-pill" style=${{padding:'1px var(--space-2)',background:'var(--bg-secondary)',color:'var(--text-secondary)',textTransform:'none',letterSpacing:0}}>${summary.storey}</span>`}
+              <span style=${{fontSize:'var(--text-2xs)',color:'var(--text-faint)'}}>${openCount2} open${resolved2?(' · '+resolved2+' resolved'):''}</span>
+            </div>
+          </div>
+          <span style=${{fontSize:'var(--text-2xs)',color:'var(--text-faint)',background:'var(--bg-secondary)',padding:'1px var(--space-2)',borderRadius:'var(--radius-pill)',fontFamily:'var(--font-mono)'}}>${g.items.length}</span>
+        </div>`;
+      }
       if (isClusterGroup(g)) {
         // ── Sentry/Linear-style cluster card ──
         var sev = window._ccClusterSeverity(g.items);
@@ -26942,7 +27133,11 @@ function startApp() {
         var c0 = g.items[0]||{};
         var storey = c0.elemAStorey || c0.elemBStorey || '';
         var mA = modelById[c0.modelAId], mB = modelById[c0.modelBId];
-        var modelPair = (mA||mB) ? ((mA?mA.name:'?') + ' ↔ ' + (mB?mB.name:'?')) : '';
+        // Every group repeating the same "office-architecture ↔ office-mep"
+        // chip is noise when there are only 2 models loaded (it's the same
+        // pair every time) — only worth a chip once there's real ambiguity
+        // about which models are involved (>2 loaded).
+        var modelPair = (models.length > 2 && (mA||mB)) ? ((mA?mA.name:'?') + ' ↔ ' + (mB?mB.name:'?')) : '';
         var crossModel = mA && mB && mA.id !== mB.id;
         var openCount = g.items.filter(function(it){return it.status!=='resolved'&&it.status!=='closed';}).length;
         var resolved = g.items.length - openCount;
@@ -27316,6 +27511,11 @@ function startApp() {
     // returned so it can be handed back to _ccRevealOccluders verbatim.
     var orv=useState(false), occReveal=orv[0], setOccReveal=orv[1];
     var occTrackedRef=useRef([]);
+    // Compact rows (ccUiCompactClashRows): the description/detail line only
+    // earns its space on hover or when the row is selected/active — at rest
+    // the list reads as one scannable line per clash, not three.
+    var hovSt=useState(false), rowHovered=hovSt[0], setRowHovered=hovSt[1];
+    var showSecondary = active || rowHovered || isSelected;
     useEffect(function(){
       if(!active && occReveal){
         if(typeof window._ccRevealOccluders==='function') window._ccRevealOccluders(occTrackedRef.current);
@@ -27379,6 +27579,8 @@ function startApp() {
           else if(it.point && _flyTo) _flyTo(it.point);
         }
       }}
+      onMouseEnter=${function(){setRowHovered(true);}}
+      onMouseLeave=${function(){setRowHovered(false);}}
       data-item-id=${it.id}
       class=${active?'cc-list-row-active':'cc-list-row'}
       style=${active?S_LIST_ROW_ACTIVE:S_LIST_ROW}>
@@ -27388,6 +27590,8 @@ function startApp() {
         ${!isClash && html`<span style=${{fontSize:'var(--text-md)',flexShrink:0}}>${icon}</span>`}
         <div style=${{flex:1,minWidth:0}}>
           <div style=${{display:'flex',alignItems:'center',gap:'var(--space-2)',minWidth:0}}>
+            ${isClash && it.number != null && html`<span title=${_cc_t('issueRow.clashNumberTip','Clash number (stable across runs) — copy or share this to identify the clash')}
+              style=${{color:'var(--text-faint)',fontSize:'var(--text-2xs)',fontVariantNumeric:'tabular-nums',flexShrink:0}}>#${it.number}</span>`}
             <span title=${it.title} style=${{color:'var(--text-primary)',fontSize:'var(--text-sm)',fontWeight:'var(--weight-semibold)',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis',flex:1,minWidth:0,lineHeight:'var(--leading-base)'}}>${it.title}</span>
             <span class="cc-status-pill" style=${{background:stEntry.tintBg||(stBg+'22'),color:stEntry.fg||stBg,flexShrink:0}}>${stEntry.label}</span>
             ${isClash && trainingMode && function(){
@@ -27402,9 +27606,6 @@ function startApp() {
             }()}
           </div>
           ${isClash && html`<div style=${{display:'flex',alignItems:'center',gap:'var(--space-1)',marginTop:'2px',flexWrap:'wrap'}}>
-            ${it.number != null && html`<span class="cc-status-pill"
-              title=${_cc_t('issueRow.clashNumberTip','Clash number (stable across runs) — copy or share this to identify the clash')}
-              style=${{background:'var(--bg-secondary)',color:'var(--text-muted)',fontVariantNumeric:'tabular-nums',padding:'.1rem var(--space-2)'}}>#${it.number}</span>`}
             ${typeLabel && html`<span class="cc-status-pill" style=${{background:typeBg,color:typeCol,padding:'.1rem var(--space-2)'}}>${typeLabel}</span>`}
             ${sevLabel && html`<span class="cc-status-pill" style=${{background:sevBg,color:sevCol,padding:'.1rem var(--space-2)'}}>${sevLabel}</span>`}
             ${it._delta==='new' && html`<span class="cc-status-pill" title=${_cc_t('issueRow.newThisRun','New this run')} style=${{background:'var(--color-info-bg)',color:'var(--color-info-fg)'}}>${_cc_t('issueRow.newBadge','NEW')}</span>`}
@@ -27437,15 +27638,23 @@ function startApp() {
                 style=${{background:'var(--surface-warm)',color:'var(--ink-secondary)',padding:'.1rem var(--space-2)',cursor:'help',border:'1px solid var(--hairline-strong)'}}>${_cc_t('issueRow.noteBadge','note')}${(reasons.length||resLabels.length)>0?' '+(reasons.length+resLabels.length):''}</span>`;
             }()}
           </div>`}
-          <p style=${{color:'var(--text-faint)',fontSize:'var(--text-xs)',marginTop:'var(--space-1)',lineHeight:'var(--leading-base)'}} class="lc2">${it.description}</p>
-          ${isClash && html`<div style=${{display:'flex',gap:'var(--space-1)',marginTop:'var(--space-1)',flexWrap:'wrap',alignItems:'center'}}>
-            ${it.distance!=null && it.distance>=0 && html`<span style=${{fontSize:'var(--text-2xs)',color:'var(--ink-secondary)',fontFamily:'var(--font-mono)',padding:'.1rem 0',fontWeight:'var(--weight-regular)',letterSpacing:'.01em'}}>
-              ${it.distance===0?_cc_t('issueRow.touching','touching'):it.distance+' mm'}
-            </span>`}
-            ${storeyLabel && html`<span style=${{fontSize:'var(--text-2xs)',color:'var(--ink-muted)',padding:'.1rem var(--space-2)',borderLeft:'1px solid var(--hairline-strong)'}}>${storeyLabel}</span>`}
-            ${it.selfClash && html`<span class="cc-status-pill" style=${{color:'var(--accent)',background:'var(--accent-bg)'}}>${_cc_t('issueRow.self','self')}</span>`}
-            ${it.expectedClash && html`<span class="cc-status-pill" style=${{color:'var(--color-warning-fg)',background:'var(--color-warning-bg)'}}>${_cc_t('issueRow.expected','expected')}</span>`}
-            ${it.status==='accepted_needs_check' && html`<span class="cc-status-pill" style=${{color:'var(--color-info-fg)',background:'var(--color-info-bg)'}}>${_cc_t('issueRow.needsCheck','needs check')}</span>`}
+          ${!isClash && html`<p style=${{color:'var(--text-faint)',fontSize:'var(--text-xs)',marginTop:'var(--space-1)',lineHeight:'var(--leading-base)'}} class="lc2">${it.description}</p>`}
+          ${
+            // Compact rows: the description + gap/storey/self/expected chips
+            // only earn their line on hover, selection, or once the row is
+            // active — the collapsed row is one scannable line (title +
+            // status pill), not three (see ccUiCompactClashRows above).
+            isClash && showSecondary && html`<div style=${{marginTop:'var(--space-1)'}}>
+            <p style=${{color:'var(--text-faint)',fontSize:'var(--text-xs)',lineHeight:'var(--leading-base)',margin:0}} class="lc2">${it.description}</p>
+            <div style=${{display:'flex',gap:'var(--space-1)',marginTop:'var(--space-1)',flexWrap:'wrap',alignItems:'center'}}>
+              ${it.distance!=null && it.distance>=0 && html`<span style=${{fontSize:'var(--text-2xs)',color:'var(--ink-secondary)',fontFamily:'var(--font-mono)',padding:'.1rem 0',fontWeight:'var(--weight-regular)',letterSpacing:'.01em'}}>
+                ${it.distance===0?_cc_t('issueRow.touching','touching'):it.distance+' mm'}
+              </span>`}
+              ${storeyLabel && html`<span style=${{fontSize:'var(--text-2xs)',color:'var(--ink-muted)',padding:'.1rem var(--space-2)',borderLeft:'1px solid var(--hairline-strong)'}}>${storeyLabel}</span>`}
+              ${it.selfClash && html`<span class="cc-status-pill" style=${{color:'var(--accent)',background:'var(--accent-bg)'}}>${_cc_t('issueRow.self','self')}</span>`}
+              ${it.expectedClash && html`<span class="cc-status-pill" style=${{color:'var(--color-warning-fg)',background:'var(--color-warning-bg)'}}>${_cc_t('issueRow.expected','expected')}</span>`}
+              ${it.status==='accepted_needs_check' && html`<span class="cc-status-pill" style=${{color:'var(--color-info-fg)',background:'var(--color-info-bg)'}}>${_cc_t('issueRow.needsCheck','needs check')}</span>`}
+            </div>
           </div>`}
           ${!isClash && it.elementType && html`<div style=${{display:'flex',gap:'var(--space-1)',marginTop:'var(--space-1)',flexWrap:'wrap'}}>
             <span class="cc-status-pill" style=${{background:'var(--color-info-bg)',color:'var(--color-info-fg)'}}>${it.elementType}</span>

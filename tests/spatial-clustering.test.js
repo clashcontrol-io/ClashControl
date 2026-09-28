@@ -17,9 +17,12 @@ const path = require('node:path');
 const src = fs.readFileSync(path.join(__dirname, '..', 'index.html'), 'utf8');
 const start = src.indexOf('var _SPATIAL_CLUSTER_RADIUS_M = 1.5;');
 assert.ok(start !== -1, '_SPATIAL_CLUSTER_RADIUS_M not found');
-const end = src.indexOf('\n  function _groupKeyFor', start);
+const end = src.indexOf('\n  function _ccElemKeyFor', start);
 assert.ok(end !== -1, '_ccSpatialClusterMap closing point not found');
-const _ccSpatialClusterMap = new Function(src.slice(start, end) + '; return _ccSpatialClusterMap;')();
+// Leading newline matters: the slice now ends mid-way through a trailing //
+// comment (the root-cause-grouping doc block right before _ccElemKeyFor),
+// so appending code on the same line would get swallowed by that comment.
+const _ccSpatialClusterMap = new Function(src.slice(start, end) + '\n; return _ccSpatialClusterMap;')();
 assert.equal(typeof _ccSpatialClusterMap, 'function');
 
 function clash(id, point) { return { id: id, point: point }; }
