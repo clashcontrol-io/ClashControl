@@ -4229,7 +4229,11 @@ function startApp() {
   function _ccBatchApplyVisibility(root) {
     _ccForEachBatchInstance(root, function(b, i, eid, mid) {
       var k = (mid || '') + '_' + eid;
-      var hidden = !!(_ccBatchHidden.class[k] || _ccBatchHidden.storey[k] || _ccBatchHidden.temp[eid]);
+      // temp (hide hotkey) supports both a bare-eid entry (any model — set
+      // by a caller with no modelId, e.g. a legacy/ambiguous selection) and
+      // a model-scoped `k` entry, same composite-key convention as class/
+      // storey above — see window._ccTempHide.
+      var hidden = !!(_ccBatchHidden.class[k] || _ccBatchHidden.storey[k] || _ccBatchHidden.temp[eid] || _ccBatchHidden.temp[k]);
       try { b.setVisibleAt(i, !hidden); } catch (_) {}
     });
   }
@@ -9742,6 +9746,10 @@ function startApp() {
     var state3d = useRef({scene:null,camera:null,renderer:null,orbit:null,mg:null,map:{},raf:null});
     var se = useState(null), selectedEl=se[0], setSelectedEl=se[1];
     window._ccSelectedExpressId = selectedEl ? selectedEl.expressId : null;
+    // modelId sibling for _ccSelectedExpressId — bare expressId alone is
+    // ambiguous whenever two loaded models happen to share one (see
+    // window._ccSelectedRefs, the same shape already used by multi-select).
+    window._ccSelectedModelId = selectedEl ? (selectedEl.modelId || null) : null;
     window._ccSelectedEl = selectedEl || null;
     var cm = useState(null), ctxMenu=cm[0], setCtxMenu=cm[1];
     var hlRef = useRef(null); // highlighted mesh outline
@@ -10842,16 +10850,37 @@ function startApp() {
       window._unghostAll = unghostAll;
 
       var _tempHiddenMeshes = [];
-      window._ccTempHide = function(expressIds) {
-        (expressIds || []).forEach(function(id){ _ccBatchHidden.temp[id] = true; });
+      // Accepts either bare expressIds (any model — legacy/ambiguous, kept
+      // for callers that genuinely mean "every model") or {expressId,
+      // modelId} refs (see window._ccSelectedRefs / _itemRefs) to scope the
+      // hide to one model when two models share an expressId.
+      window._ccTempHide = function(targets) {
+        if(!targets||!targets.length) return;
+        var idAny = {}; var idScoped = {};
+        targets.forEach(function(t){
+          if (t == null) return;
+          if (typeof t === 'object') {
+            if (t.expressId == null) return;
+            if (!t.modelId) { idAny[t.expressId] = true; return; }
+            if (!idScoped[t.expressId]) idScoped[t.expressId] = {};
+            idScoped[t.expressId][t.modelId] = true;
+          } else {
+            idAny[t] = true;
+          }
+        });
+        Object.keys(idAny).forEach(function(id){ _ccBatchHidden.temp[id] = true; });
+        Object.keys(idScoped).forEach(function(id){
+          Object.keys(idScoped[id]).forEach(function(mid){ _ccBatchHidden.temp[mid + '_' + id] = true; });
+        });
         _ccBatchApplyVisibility(S.mg);
-        if(!expressIds||!expressIds.length||!S.mg) return;
-        var idSet = {};
-        expressIds.forEach(function(id){idSet[id]=true;});
+        if(!S.mg) return;
         S.mg.traverse(function(obj){
           if(!obj.isMesh) return;
           var eid = obj.userData.expressId;
-          if(eid!=null && idSet[eid] && obj.visible){
+          if (eid == null) return;
+          var meshModelId = obj.parent && obj.parent.userData && obj.parent.userData.modelId;
+          var match = idAny[eid] || (idScoped[eid] && meshModelId && idScoped[eid][meshModelId]);
+          if(match && obj.visible){
             obj.visible = false;
             _tempHiddenMeshes.push(obj);
           }
@@ -13589,7 +13618,7 @@ function startApp() {
                   }
                 }
                 if (lastFound) {
-                  setSelectedEl({props:lastFound.el.props||{}, modelName:lastFound.model.name, expressId:lastRef.expressId, point:null, box:null, normal:null});
+                  setSelectedEl({props:lastFound.el.props||{}, modelName:lastFound.model.name, modelId:lastFound.model.id, expressId:lastRef.expressId, point:null, box:null, normal:null});
                 }
               }
               invalidate();
@@ -13675,7 +13704,7 @@ function startApp() {
               fn.transformDirection(_hitWorldMx);
               hitNormal = [fn.x, fn.y, fn.z];
             }
-            setSelectedEl(found ? {props:found.el.props||{}, modelName:found.model.name, expressId:eid, point:hitPt, box:hitBox, normal:hitNormal} : {props:{expressId:eid}, modelName:'Unknown', expressId:eid, point:hitPt, box:hitBox, normal:hitNormal});
+            setSelectedEl(found ? {props:found.el.props||{}, modelName:found.model.name, modelId:_hitModelId, expressId:eid, point:hitPt, box:hitBox, normal:hitNormal} : {props:{expressId:eid}, modelName:'Unknown', modelId:_hitModelId, expressId:eid, point:hitPt, box:hitBox, normal:hitNormal});
             window.dispatchEvent(new CustomEvent('cc-element-selected'));
             if(outlineRef.current){scene.remove(outlineRef.current);outlineRef.current=null;}
             // Workspace gating for click-to-fly:
@@ -15417,8 +15446,23 @@ function startApp() {
       var hiddenIds = new Set();
       hiddenKeys.forEach(function(key){
         var parts=key.split(':'); var view=parts[0]; var grpKey=parts.slice(1).join(':');
+        // Per-model storey-hide (Navigator tree's individual storey row —
+        // 'byStorey:<modelId>::<storeyName>') is scoped to ONE model, unlike
+        // every other hiddenClasses key which is model-independent by design
+        // (see the Classification tab's aggregated-by-name grouping, which
+        // intentionally treats e.g. "Level 1" in two models as one row).
+        // Split it back out and only hide that model's matching items.
+        var scopedModelId = null;
+        if (view === 'byStorey' && grpKey.indexOf('::') !== -1) {
+          var sp = grpKey.split('::');
+          scopedModelId = sp[0];
+          grpKey = sp.slice(1).join('::');
+        }
         var grp = cls[view]&&cls[view][grpKey];
-        if(grp&&grp.items) grp.items.forEach(function(it){hiddenIds.add(it.modelId+'_'+it.expressId);});
+        if(grp&&grp.items) grp.items.forEach(function(it){
+          if (scopedModelId && it.modelId !== scopedModelId) return;
+          hiddenIds.add(it.modelId+'_'+it.expressId);
+        });
       });
       S.mg.traverse(function(obj){
         if(!obj.isMesh) return;
@@ -19546,10 +19590,16 @@ function startApp() {
     var _ef = useState(null), explorerFocus=_ef[0], setExplorerFocus=_ef[1];
     var _ms = useState([]), multiSel=_ms[0], setMultiSel=_ms[1];
     var explorerScrollRef = useRef(null);
-    function _elClick(e, el, p, eKey) {
+    function _elClick(e, el, p, eKey, modelId) {
+      // `modelId` is the containing model's id from the tree render closure
+      // (el itself never carries one) — required so two models sharing an
+      // expressId (e.g. MEP duct #227 and an Architecture column #227)
+      // select/highlight the right element instead of whichever model's
+      // scene traversal happens to hit that expressId first.
+      modelId = modelId || el.modelId || null;
       if (e && e.shiftKey) {
-        var ref = {expressId: el.expressId, modelId: el.modelId || null};
-        var exists = multiSel.findIndex(function(r){return r.expressId===ref.expressId;});
+        var ref = {expressId: el.expressId, modelId: modelId};
+        var exists = multiSel.findIndex(function(r){return r.expressId===ref.expressId && r.modelId===ref.modelId;});
         var next;
         if (exists >= 0) {
           next = multiSel.filter(function(_,i){return i!==exists;});
@@ -19563,7 +19613,7 @@ function startApp() {
         else if (_unghostAll) _unghostAll();
       } else {
         setMultiSel([]);
-        if (_highlightById) _highlightById(el.expressId, false);
+        if (_highlightById) _highlightById(el.expressId, false, modelId);
         setExplorerFocus(eKey);
         setSelectedElProps(p);
       }
@@ -19596,7 +19646,7 @@ function startApp() {
             nodes.push({key:sKey,type:'storey',model:model,storey:st});
             if(!expanded[sKey]) return;
             filtered.slice(0,q?1000:200).forEach(function(el){
-              nodes.push({key:'e_'+el.expressId,type:'element',model:model,element:el});
+              nodes.push({key:'e_'+model.id+'_'+el.expressId,type:'element',model:model,element:el});
             });
           });
           if(noStorey.length>0){
@@ -19604,7 +19654,7 @@ function startApp() {
             nodes.push({key:nsKey,type:'storey',model:model,storey:'(No storey)'});
             if(expanded[nsKey]){
               noStorey.filter(function(el){return _elMatchesSearch(el,q);}).slice(0,q?500:100).forEach(function(el){
-                nodes.push({key:'e_'+el.expressId,type:'element',model:model,element:el});
+                nodes.push({key:'e_'+model.id+'_'+el.expressId,type:'element',model:model,element:el});
               });
             }
           }
@@ -19628,15 +19678,15 @@ function startApp() {
           var n=nodes[curIdx];
           if(n.type==='model'||n.type==='storey') toggle(n.key);
           else if(n.type==='element'){
-            if(_fitToElement){var p2=n.element.props||{};var isFloor=(p2.ifcType||'').match(/slab|floor/i);_fitToElement(n.element.expressId,isFloor?{normal:[0,1,0]}:null);}
-            if(_highlightById) _highlightById(n.element.expressId);
+            if(_fitToElement){var p2=n.element.props||{};var isFloor=(p2.ifcType||'').match(/slab|floor/i);_fitToElement(n.element.expressId,isFloor?{normal:[0,1,0]}:null,n.model.id);}
+            if(_highlightById) _highlightById(n.element.expressId,false,n.model.id);
           }
           return;
         }
         if(nextIdx!==curIdx||curIdx===-1){
           var nk=nodes[nextIdx].key;
           setExplorerFocus(nk);
-          if(nodes[nextIdx].type==='element'&&_highlightById) _highlightById(nodes[nextIdx].element.expressId,false);
+          if(nodes[nextIdx].type==='element'&&_highlightById) _highlightById(nodes[nextIdx].element.expressId,false,nodes[nextIdx].model.id);
           requestAnimationFrame(function(){
             if(!explorerScrollRef.current) return;
             var el=explorerScrollRef.current.querySelector('[data-tree-key="'+nk+'"]');
@@ -19720,7 +19770,11 @@ function startApp() {
           var q = treeSearch.toLowerCase();
           function _elNode(el, level) {
             var p=el.props||{};
-            var eKey='e_'+el.expressId;
+            // model-scoped key: two models can share a bare expressId (e.g.
+            // MEP duct #227 and an unrelated Architecture element #227) —
+            // an unscoped 'e_'+expressId key would make selecting one also
+            // light up the other model's identically-numbered row.
+            var eKey='e_'+model.id+'_'+el.expressId;
             return tvNode({
               key:eKey, level:level,
               icon:'▪', iconColor:'#c084fc',
@@ -19728,9 +19782,9 @@ function startApp() {
               secondary:p.ifcType||'Element',
               hasChildren:false,
               selected:explorerFocus===eKey,
-              multiSelected:multiSel.some(function(r){return r.expressId===el.expressId;}),
-              onClick:function(e){_elClick(e,el,p,eKey);},
-              onDblClick:function(e){e.stopPropagation();if(_fitToElement){var isFloor=(p.ifcType||'').match(/slab|floor/i);_fitToElement(el.expressId,isFloor?{normal:[0,1,0]}:null);}if(_highlightById)_highlightById(el.expressId);}
+              multiSelected:multiSel.some(function(r){return r.expressId===el.expressId && r.modelId===model.id;}),
+              onClick:function(e){_elClick(e,el,p,eKey,model.id);},
+              onDblClick:function(e){e.stopPropagation();if(_fitToElement){var isFloor=(p.ifcType||'').match(/slab|floor/i);_fitToElement(el.expressId,isFloor?{normal:[0,1,0]}:null,model.id);}if(_highlightById)_highlightById(el.expressId,false,model.id);}
             });
           }
           return tvNode({
@@ -19766,7 +19820,13 @@ function startApp() {
                         var stKey='st_'+model.id+'_'+sd.name;
                         var stEls = q ? (_mIdx.storeyGroups[sd.name]||[]).filter(function(el){return _elMatchesSearch(el,q);}) : (_mIdx.storeyGroups[sd.name] || []);
                         var stIsOpen = !!expanded[stKey];
-                        var stHidden = !!s.hiddenClasses['byStorey:'+sd.name];
+                        // Model-scoped key — see the visibility-application
+                        // effect's 'byStorey:<modelId>::<name>' handling.
+                        // Hiding this model's "Level 1" row must not also
+                        // hide a different model's identically-named storey
+                        // (tour C-11).
+                        var stHiddenKey = 'byStorey:'+model.id+'::'+sd.name;
+                        var stHidden = !!s.hiddenClasses[stHiddenKey];
                         var _stCap = q ? 1000 : 200;
                         return tvNode({
                           key:stKey, level:4,
@@ -19776,7 +19836,7 @@ function startApp() {
                           hasChildren:stEls.length>0, expanded:stIsOpen,
                           selected:explorerFocus===stKey,
                           visHidden:stHidden,
-                          onToggleVis:function(){d({t:A.TOGGLE_CLASS_VIS,key:'byStorey:'+sd.name});},
+                          onToggleVis:function(){d({t:A.TOGGLE_CLASS_VIS,key:stHiddenKey});},
                           onClick:function(){toggle(stKey);setExplorerFocus(stKey);},
                           onToggle:function(){toggle(stKey);setExplorerFocus(stKey);},
                           children:stIsOpen ? [].concat(
@@ -19821,8 +19881,9 @@ function startApp() {
           var q = treeSearch.toLowerCase();
           function _elNode(el, level) {
             var p=el.props||{};
-            var eKey='e_'+el.expressId;
-            var cKey='ec_'+el.expressId;
+            // model-scoped keys — see the spatial-view _elNode above for why.
+            var eKey='e_'+model.id+'_'+el.expressId;
+            var cKey='ec_'+model.id+'_'+el.expressId;
             var elChildren=_childrenMap[el.expressId]||[];
             var hasChildren=elChildren.length>0;
             return tvNode({
@@ -19833,13 +19894,13 @@ function startApp() {
               count:hasChildren?elChildren.length:undefined,
               hasChildren:hasChildren, expanded:!!expanded[cKey],
               selected:explorerFocus===eKey,
-              multiSelected:multiSel.some(function(r){return r.expressId===el.expressId;}),
-              onClick:function(e){_elClick(e,el,p,eKey);},
-              onDblClick:function(e){e.stopPropagation();if(_fitToElement){var isFloor=(p.ifcType||'').match(/slab|floor/i);_fitToElement(el.expressId,isFloor?{normal:[0,1,0]}:null);}if(_highlightById)_highlightById(el.expressId);},
+              multiSelected:multiSel.some(function(r){return r.expressId===el.expressId && r.modelId===model.id;}),
+              onClick:function(e){_elClick(e,el,p,eKey,model.id);},
+              onDblClick:function(e){e.stopPropagation();if(_fitToElement){var isFloor=(p.ifcType||'').match(/slab|floor/i);_fitToElement(el.expressId,isFloor?{normal:[0,1,0]}:null,model.id);}if(_highlightById)_highlightById(el.expressId,false,model.id);},
               onToggle:function(){toggle(cKey);setExplorerFocus(eKey);},
               children:elChildren.map(function(child){
                 var cp=child.props||{};
-                var ceKey='e_'+child.expressId;
+                var ceKey='e_'+model.id+'_'+child.expressId;
                 return tvNode({
                   key:ceKey, level:level+1,
                   icon:'▫', iconColor:'var(--text-muted)',
@@ -19847,9 +19908,9 @@ function startApp() {
                   secondary:cp.ifcType||'El',
                   hasChildren:false,
                   selected:explorerFocus===ceKey,
-                  multiSelected:multiSel.some(function(r){return r.expressId===child.expressId;}),
-                  onClick:function(e){_elClick(e,child,cp,ceKey);},
-                  onDblClick:function(e){e.stopPropagation();if(_fitToElement){var isFloor=(cp.ifcType||'').match(/slab|floor/i);_fitToElement(child.expressId,isFloor?{normal:[0,1,0]}:null);}if(_highlightById)_highlightById(child.expressId);}
+                  multiSelected:multiSel.some(function(r){return r.expressId===child.expressId && r.modelId===model.id;}),
+                  onClick:function(e){_elClick(e,child,cp,ceKey,model.id);},
+                  onDblClick:function(e){e.stopPropagation();if(_fitToElement){var isFloor=(cp.ifcType||'').match(/slab|floor/i);_fitToElement(child.expressId,isFloor?{normal:[0,1,0]}:null,model.id);}if(_highlightById)_highlightById(child.expressId,false,model.id);}
                 });
               })
             });
@@ -19864,7 +19925,9 @@ function startApp() {
               if(q && filtered.length===0) return;
               var sIsOpen = !!expanded[sKey];
               var topLevel = sIsOpen ? filtered.filter(function(el){ return !_hasParent[el.expressId]; }) : null;
-              var sHiddenT = !!s.hiddenClasses['byStorey:'+st];
+              // Model-scoped — see the spatial-view storey node above.
+              var sHiddenTKey = 'byStorey:'+model.id+'::'+st;
+              var sHiddenT = !!s.hiddenClasses[sHiddenTKey];
               var _sCap = q ? 1000 : 200;
               storeyChildren.push(tvNode({
                 key:sKey, level:2,
@@ -19873,7 +19936,7 @@ function startApp() {
                 hasChildren:filtered.length>0, expanded:sIsOpen,
                 selected:explorerFocus===sKey,
                 visHidden:sHiddenT,
-                onToggleVis:function(){d({t:A.TOGGLE_CLASS_VIS,key:'byStorey:'+st});},
+                onToggleVis:function(){d({t:A.TOGGLE_CLASS_VIS,key:sHiddenTKey});},
                 onClick:function(){toggle(sKey);setExplorerFocus(sKey);},
                 onToggle:function(){toggle(sKey);setExplorerFocus(sKey);},
                 children:sIsOpen ? [].concat(
@@ -19947,7 +20010,7 @@ function startApp() {
         <div style=${{display:'flex',alignItems:'center',gap:'.3rem',marginBottom:'.3rem'}}>
           <span style=${{fontSize:'0.69rem',fontWeight:700,color:'var(--text-muted)',textTransform:'uppercase',letterSpacing:'.04em',flex:1}}>${_cc_t('nav.selectionSets','Selection sets')}</span>
           <button onClick=${function(){
-            var refs = multiSel.length ? multiSel : (window._ccSelectedExpressId ? [{expressId:window._ccSelectedExpressId, modelId:null}] : []);
+            var refs = multiSel.length ? multiSel : (window._ccSelectedExpressId ? [{expressId:window._ccSelectedExpressId, modelId:window._ccSelectedModelId||null}] : []);
             if(!refs.length){ alert('Select one or more elements first (click in 3D, or shift-click in the navigator).'); return; }
             var name = prompt(_cc_t('nav.nameThisSelectionSet','Name this selection set:'), _cc_t('nav.setN','Set {n}',{n:(s.selectionSets||[]).length+1}));
             if(!name) return;
@@ -19970,17 +20033,23 @@ function startApp() {
                   <button onClick=${function(){if(_highlightRefs)_highlightRefs(ss.refs,false);}}
                     title=${_cc_t('nav.highlight','Highlight')} style=${{background:'none',border:'none',cursor:'pointer',color:'var(--text-muted)',fontSize:'0.65rem',padding:'0 .2rem'}}>★</button>
                   <button onClick=${function(){
-                      var refs = multiSel.length ? multiSel : (window._ccSelectedExpressId ? [{expressId:window._ccSelectedExpressId, modelId:null}] : []);
+                      var refs = multiSel.length ? multiSel : (window._ccSelectedExpressId ? [{expressId:window._ccSelectedExpressId, modelId:window._ccSelectedModelId||null}] : []);
                       if(!refs.length){ alert('Select one or more elements first (click in 3D, or shift-click in the navigator), then use + / − to edit the set.'); return; }
                       var merged = ss.refs.slice();
-                      refs.forEach(function(r){ if(!merged.some(function(m){return m.expressId===r.expressId;})) merged.push(r); });
+                      // Match by (expressId, modelId) when the incoming ref
+                      // has a modelId — otherwise two different elements
+                      // that share an expressId across models would look
+                      // like the same "already in the set" entry and one
+                      // would silently fail to get added. A legacy ref with
+                      // no modelId still matches by expressId alone.
+                      refs.forEach(function(r){ if(!merged.some(function(m){return m.expressId===r.expressId && (!r.modelId || !m.modelId || m.modelId===r.modelId);})) merged.push(r); });
                       d({t:'UPD_SELSET_REFS',id:ss.id,refs:merged});
                     }}
                     title=${_cc_t('nav.addCurrentSelToSet','Add current selection to this set')} style=${{background:'none',border:'none',cursor:'pointer',color:'var(--text-muted)',fontSize:'0.75rem',padding:'0 .2rem',fontWeight:700}}>+</button>
                   <button onClick=${function(){
-                      var refs = multiSel.length ? multiSel : (window._ccSelectedExpressId ? [{expressId:window._ccSelectedExpressId, modelId:null}] : []);
+                      var refs = multiSel.length ? multiSel : (window._ccSelectedExpressId ? [{expressId:window._ccSelectedExpressId, modelId:window._ccSelectedModelId||null}] : []);
                       if(!refs.length){ alert('Select one or more elements first, then use + / − to edit the set.'); return; }
-                      var remaining = ss.refs.filter(function(m){ return !refs.some(function(r){return r.expressId===m.expressId;}); });
+                      var remaining = ss.refs.filter(function(m){ return !refs.some(function(r){return r.expressId===m.expressId && (!r.modelId || !m.modelId || m.modelId===r.modelId);}); });
                       d({t:'UPD_SELSET_REFS',id:ss.id,refs:remaining});
                     }}
                     title=${_cc_t('nav.removeCurrentSelFromSet','Remove current selection from this set')} style=${{background:'none',border:'none',cursor:'pointer',color:'var(--text-muted)',fontSize:'0.75rem',padding:'0 .2rem',fontWeight:700}}>−</button>
@@ -27130,6 +27199,7 @@ function startApp() {
     var stCreateName = useState(''); var createName=stCreateName[0], setCreateName=stCreateName[1];
     var stJoinOpen = useState(false); var joinOpen=stJoinOpen[0], setJoinOpen=stJoinOpen[1];
     var stJoinKey = useState(''); var joinKeyVal=stJoinKey[0], setJoinKeyVal=stJoinKey[1];
+    var stJoinErr = useState(''); var joinError=stJoinErr[0], setJoinError=stJoinErr[1];
     var shareUrl = pKey ? (window.location.origin + window.location.pathname + '?p=' + encodeURIComponent(pKey)) : '';
     function createKey(){
       if (creating) return;
@@ -27164,8 +27234,9 @@ function startApp() {
       // also accept full URL — strip everything but the ?p= value
       var m = key.match(/[?&]p=([^&#]+)/);
       if (m) key = decodeURIComponent(m[1]);
+      setJoinError('');
       fetch('/api/project?id=' + encodeURIComponent(key))
-        .then(function(r){ if(!r.ok) throw new Error(); return r.json(); })
+        .then(function(r){ if(!r.ok){ var e=new Error(); e.status=r.status; throw e; } return r.json(); })
         .then(function(data){
           try {
             localStorage.setItem('cc_sharedProjectId', key);
@@ -27177,7 +27248,20 @@ function startApp() {
           setJoinKeyVal('');
           if (window._ccSharedStart) window._ccSharedStart();
         })
-        .catch(function(){ alert('Project not found. Check the key and try again.'); });
+        .catch(function(err){
+          // A real 404 (bad/unknown key) vs. offline/network failure (fetch
+          // rejects with no `.status` — no HTTP response was ever received)
+          // need different messages: "check the key" is actively wrong
+          // advice when the real problem is no connection. Inline, not
+          // alert() — a blocking dialog for a form validation error is
+          // disproportionate and the app's own toast/inline-error pattern is
+          // used everywhere else in this panel.
+          if (err && err.status) {
+            setJoinError(_cc_t('share.projectNotFound','Project not found. Check the key and try again.'));
+          } else {
+            setJoinError(_cc_t('share.joinNetworkError','Could not reach the server — check your connection and try again.'));
+          }
+        });
     }
     function leaveKey(){
       try { localStorage.removeItem('cc_sharedProjectId'); localStorage.removeItem('cc_sharedProjectName'); } catch(e){}
@@ -27251,12 +27335,13 @@ function startApp() {
                 <div style=${{fontSize:'0.74rem',color:'var(--text-muted)'}}>${_cc_t('share.pasteKeyLabel','Paste project key or share link')}</div>
                 <div style=${{display:'flex',gap:'.4rem'}}>
                   <input autofocus type="text" value=${joinKeyVal} placeholder=${_cc_t('sharedProject.joinKeyPlaceholder','MEP-abc123 or full URL')}
-                    onInput=${function(e){ setJoinKeyVal(e.target.value); }}
-                    onKeyDown=${function(e){ if(e.key==='Enter') joinByKey(); if(e.key==='Escape'){ setJoinOpen(false); setJoinKeyVal(''); } }}
+                    onInput=${function(e){ setJoinKeyVal(e.target.value); setJoinError(''); }}
+                    onKeyDown=${function(e){ if(e.key==='Enter') joinByKey(); if(e.key==='Escape'){ setJoinOpen(false); setJoinKeyVal(''); setJoinError(''); } }}
                     style=${{flex:1,...inputStyle}} />
                   <button onClick=${joinByKey} disabled=${!joinKeyVal.trim()} style=${{...btnPrimary,padding:'.45rem .8rem',fontSize:'0.8rem',opacity:joinKeyVal.trim()?1:0.5}}>${_cc_t('share.join','Join')}</button>
-                  <button onClick=${function(){ setJoinOpen(false); setJoinKeyVal(''); }} style=${{...btnGhost,padding:'.45rem .8rem',fontSize:'0.8rem'}}>${_cc_t('share.cancel','Cancel')}</button>
+                  <button onClick=${function(){ setJoinOpen(false); setJoinKeyVal(''); setJoinError(''); }} style=${{...btnGhost,padding:'.45rem .8rem',fontSize:'0.8rem'}}>${_cc_t('share.cancel','Cancel')}</button>
                 </div>
+                ${joinError && html`<div style=${{fontSize:'0.72rem',color:'var(--color-danger)'}}>${joinError}</div>`}
               </div>`}
             </div>`}
 
@@ -28475,6 +28560,25 @@ function startApp() {
                   style=${{...S_BTN,padding:'.3rem .5rem',background:'var(--bg-secondary)',color:'var(--text-secondary)',fontSize:'0.72rem',border:'1px solid var(--border)',borderRadius:6}}>${_cc_t('share.syncNow','Sync now')}</button>
                 <button onClick=${function(){if(window._ccSharedStop)window._ccSharedStop();try{localStorage.removeItem('cc_sharedProjectId');localStorage.removeItem('cc_sharedProjectName');}catch(e){}d({t:A.UPD_PREFS,u:{_sharedRefresh:Date.now()}});}}
                   style=${{...S_BTN,padding:'.3rem .5rem',background:'var(--bg-secondary)',color:'#f87171',fontSize:'0.72rem',border:'1px solid #ef444444',borderRadius:6}}>${_cc_t('share.leave','Leave')}</button>
+                ${function(){
+                  // Only the creator's browser holds the editKey (set once,
+                  // at creation — see _sharedCreateProject) so this is
+                  // naturally creator-only: nobody who only joined by key
+                  // ever sees this button. The stored editKey was otherwise
+                  // completely unused by the client.
+                  var editKey = null;
+                  try { editKey = localStorage.getItem('cc_sharedProjectEditKey'); } catch(e) {}
+                  if (!editKey) return null;
+                  return html`<button onClick=${function(){
+                    if (!confirm(_cc_t('share.deleteConfirm','Delete this shared project for everyone? This removes every synced issue and cannot be undone.'))) return;
+                    if (window._ccSharedDeleteProject) {
+                      window._ccSharedDeleteProject().then(function(ok){
+                        if (!ok) alert(_cc_t('share.deleteFailed','Could not delete the shared project. Server may be unavailable.'));
+                      });
+                    }
+                  }}
+                    style=${{...S_BTN,padding:'.3rem .5rem',background:'var(--bg-secondary)',color:'#f87171',fontSize:'0.72rem',border:'1px solid #ef444444',borderRadius:6}}>${_cc_t('share.deleteProject','Delete project')}</button>`;
+                }()}
               </div>
             </div>`}
             ${!spId && html`<div style=${TROW}>
@@ -28489,13 +28593,21 @@ function startApp() {
                   var key = document.getElementById('cc-join-key').value.trim();
                   if (!key) return;
                   fetch('/api/project?id='+encodeURIComponent(key))
-                    .then(function(r){if(!r.ok)throw new Error();return r.json();})
+                    .then(function(r){if(!r.ok){var e=new Error();e.status=r.status;throw e;}return r.json();})
                     .then(function(data){
                       try{localStorage.setItem('cc_sharedProjectId',key);localStorage.setItem('cc_sharedProjectName',data.project.name);}catch(e){}
                       if(window._ccSharedStart)window._ccSharedStart();
                       d({t:A.UPD_PREFS,u:{_sharedRefresh:Date.now()}});
                     })
-                    .catch(function(){alert(_cc_t('share.projectNotFound','Project not found. Check the key and try again.'));});
+                    .catch(function(err){
+                      // See the Quick Share panel's joinByKey for why this
+                      // distinguishes a real 404 from an offline/network
+                      // failure instead of always blaming "the key". Toast,
+                      // not alert() — this settings row has no inline error
+                      // slot and a blocking dialog is disproportionate here.
+                      var msg = err && err.status ? _cc_t('share.projectNotFound','Project not found. Check the key and try again.') : _cc_t('share.joinNetworkError','Could not reach the server — check your connection and try again.');
+                      if (typeof window._ccToast === 'function') window._ccToast(msg); else alert(msg);
+                    });
                 }}
                   style=${{...S_BTN,padding:'.3rem .6rem',background:'var(--bg-secondary)',color:'var(--text-secondary)',fontSize:'0.78rem',fontWeight:500,borderRadius:6,whiteSpace:'nowrap',border:'1px solid var(--border)'}}>${_cc_t('share.join','Join')}</button>
                 <button onClick=${function(){
@@ -31081,6 +31193,18 @@ function startApp() {
   var SHARED_PUSH_DEBOUNCE = 3000;
   var SHARED_PULL_INTERVAL = 30000;
 
+  // Per-record last-seen SERVER updated_at (from a pull, or a push response's
+  // `updatedAt` map). The server's optimistic-concurrency check on PUT
+  // compares its own `updated_at` column against whatever `_updatedAt` the
+  // client sends back as `expected` — that only works if the client is
+  // echoing a timestamp the server itself produced. Stamping the client's
+  // own edit-time clock there (the old behaviour) meant a slow/skewed local
+  // clock could look "older" than the true server row and get silently
+  // rejected, or "newer" and silently steamroll a teammate's edit that
+  // landed in between. Never persisted — rebuilt from the next pull if lost
+  // (tab reload, etc.), which just means one extra conflict round-trip.
+  var _sharedLastSeen = {}; // id -> ISO string
+
   function _sharedProjectId() {
     try { return localStorage.getItem('cc_sharedProjectId') || null; } catch(e) { return null; }
   }
@@ -31095,14 +31219,22 @@ function startApp() {
       distance: item.distance != null ? item.distance : null,
       status: item.status || 'open',
       priority: item.priority || 'normal',
-      assignee: item.assignee || null,
+      // `!= null` (not `||`): an explicit '' (cleared by the user) must
+      // round-trip as '' so a teammate's hydrate can tell "cleared" from
+      // "never set" apart — see _sharedHydrate.
+      assignee: item.assignee != null ? item.assignee : null,
       title: item.title || '',
-      description: item.description || null,
-      category: item.category || null,
-      dueDate: item.dueDate || null,
+      description: item.description != null ? item.description : null,
+      category: item.category != null ? item.category : null,
+      dueDate: item.dueDate != null ? item.dueDate : null,
       source: item.source || null,
       createdAt: item.createdAt || null,
-      _updatedAt: item._updatedAt || new Date().toISOString(),
+      // The server is authoritative for `_updatedAt` — send back the last
+      // value WE SAW FROM THE SERVER for this id (pull or prior push), never
+      // our own edit-time clock. `undefined` (never synced) becomes `null`,
+      // which the server treats as "no baseline, insert fresh" — correct for
+      // a record it has never seen from us before.
+      _updatedAt: _sharedLastSeen[item.id] || null,
     };
   }
 
@@ -31112,6 +31244,14 @@ function startApp() {
     _sharedPushQueue[item.id] = _sharedStrip(item);
     if (_sharedPushTimer) return;
     _sharedPushTimer = setTimeout(_sharedFlushPush, SHARED_PUSH_DEBOUNCE);
+  }
+
+  // Non-blocking toast for sync conflicts — falls back to console when the
+  // app's toast system isn't available (e.g. under test) rather than an
+  // `alert()`, which would block the tab on every conflicted sync.
+  function _sharedToast(msg) {
+    if (typeof window._ccToast === 'function') { window._ccToast(msg, 'warn'); return; }
+    console.warn('[shared-project]', msg);
   }
 
   function _sharedFlushPush() {
@@ -31126,7 +31266,27 @@ function startApp() {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ issues: items, user: user }),
-    }).catch(function(){ /* offline — silent, next push will retry these if re-edited */ });
+    })
+      .then(function(r){ return r.ok ? r.json() : null; })
+      .then(function(data){
+        if (!data) return;
+        if (data.updatedAt) {
+          Object.keys(data.updatedAt).forEach(function(id){ _sharedLastSeen[id] = data.updatedAt[id]; });
+        }
+        // Rejected edits used to just vanish — the client never looked at
+        // `conflicts[]`. Re-pull so the local copy reflects whatever won on
+        // the server, then surface which items were dropped so the user can
+        // decide to re-apply their edit instead of silently losing it.
+        if (data.conflicts && data.conflicts.length) {
+          _sharedPull();
+          var names = data.conflicts.map(function(id){
+            var it = (window._ccLatestState && ((window._ccLatestState.clashes||[]).concat(window._ccLatestState.issues||[])).find(function(x){return x.id===id;}));
+            return (it && it.title) || id;
+          });
+          _sharedToast('Sync conflict on ' + data.conflicts.length + ' item' + (data.conflicts.length===1?'':'s') + ' (' + names.slice(0,3).join(', ') + (names.length>3?'…':'') + ') — a teammate changed it first. Your edit was not applied; re-check and re-apply if needed.');
+        }
+      })
+      .catch(function(){ /* offline — silent, next push will retry these if re-edited */ });
   }
 
   function _sharedHydrate(records) {
@@ -31137,19 +31297,47 @@ function startApp() {
     (s.clashes || []).forEach(function(c){ clashById[c.id] = c; });
     var issueById = {};
     (s.issues || []).forEach(function(i){ issueById[i.id] = i; });
+    // Identity fallback for records whose `id` (a per-user uid()) never
+    // matched anything locally: a teammate's own random id for the SAME
+    // element pair otherwise means their decisions never apply locally and
+    // their issues never appear. Match by the same globalId-pair identity
+    // the clash pipeline itself uses (clash-identity-core.js computeClashPair)
+    // when the ids differ but the underlying elements are the same.
+    function pairKey(a, b) { return a && b ? (a < b ? a + '|' + b : b + '|' + a) : null; }
+    var byPair = {};
+    (s.clashes || []).forEach(function(c){ var k = pairKey(c.globalIdA, c.globalIdB); if (k && !byPair[k]) byPair[k] = c; });
+    (s.issues || []).forEach(function(i){ var k = pairKey(i.globalIdA, i.globalIdB); if (k && !byPair[k]) byPair[k] = i; });
+
     var SHARED_FIELDS = ['status','priority','assignee','title','description','category','dueDate'];
     records.forEach(function(rec) {
       if (!rec || !rec.id) return;
-      var localUpdatedAt = (clashById[rec.id] && clashById[rec.id]._updatedAt) || (issueById[rec.id] && issueById[rec.id]._updatedAt);
+      if (rec._updatedAt) _sharedLastSeen[rec.id] = rec._updatedAt;
+      var target = clashById[rec.id] || issueById[rec.id];
+      var targetKind = clashById[rec.id] ? 'clash' : (issueById[rec.id] ? 'issue' : null);
+      if (!target) {
+        var byPairMatch = byPair[pairKey(rec.globalIdA, rec.globalIdB)];
+        if (byPairMatch) { target = byPairMatch; targetKind = clashById[byPairMatch.id] ? 'clash' : 'issue'; }
+      }
+      var localUpdatedAt = target && target._updatedAt;
       if (localUpdatedAt && rec._updatedAt && new Date(localUpdatedAt) > new Date(rec._updatedAt)) return;
       var u = {};
-      SHARED_FIELDS.forEach(function(f){ if (rec[f] != null) u[f] = rec[f]; });
+      // `!== undefined` (not `!= null`): a field the server round-tripped as
+      // an explicit '' (the user cleared it) must still be applied locally —
+      // `!= null` used to skip both null AND '' alike, so a cleared field
+      // never synced to teammates. See api/project.js stripToShared for the
+      // matching '' vs null fix on the write side.
+      SHARED_FIELDS.forEach(function(f){ if (rec[f] !== undefined) u[f] = rec[f]; });
       u._updatedAt = rec._updatedAt;
       u._updatedBy = rec._updatedBy;
-      if (clashById[rec.id]) {
-        d({ t: A.UPD_CLASH, id: rec.id, u: u, _fromSync: true });
-      } else if (issueById[rec.id]) {
-        d({ t: A.UPD_ISSUE, id: rec.id, u: u, _fromSync: true });
+      if (target && targetKind === 'clash') {
+        d({ t: A.UPD_CLASH, id: target.id, u: u, _fromSync: true });
+      } else if (target && targetKind === 'issue') {
+        d({ t: A.UPD_ISSUE, id: target.id, u: u, _fromSync: true });
+      } else {
+        // Genuinely new to this client — a teammate created it. Add it
+        // locally as an issue (we have no model geometry to reconstruct a
+        // clash from a bare shared record).
+        d({ t: A.ADD_ISSUE, v: Object.assign({}, rec, { id: rec.id }) });
       }
     });
   }
@@ -31158,21 +31346,28 @@ function startApp() {
     var key = _sharedProjectId();
     if (!key) return Promise.resolve();
     return fetch('/api/project?id=' + encodeURIComponent(key))
-      .then(function(r){ if (!r.ok) throw new Error('pull failed'); return r.json(); })
+      .then(function(r){
+        if (!r.ok) { var e = new Error('pull failed'); e.status = r.status; throw e; }
+        return r.json();
+      })
       .then(function(data){
         _sharedLastPullAt = Date.now();
         if (data && data.issues) _sharedHydrate(data.issues);
-      })
-      .catch(function(){ /* silent */ });
+        return data;
+      });
+      // Deliberately no .catch() here — callers (poll timer vs. explicit
+      // Join-flow pull) need to tell "offline/network error" apart from
+      // "404 project not found" differently; see _sharedCreateProject /
+      // the Join panel and _sharedStartPolling's own catch below.
   }
 
   function _sharedStartPolling() {
     if (_sharedPullTimer) return;
     if (!_sharedProjectId()) return;
-    _sharedPull(); // initial pull
+    _sharedPull().catch(function(){ /* silent — background poll, next tick retries */ }); // initial pull
     _sharedPullTimer = setInterval(function(){
       if (!_sharedProjectId()) { _sharedStopPolling(); return; }
-      _sharedPull();
+      _sharedPull().catch(function(){ /* silent — background poll, next tick retries */ });
     }, SHARED_PULL_INTERVAL);
   }
 
@@ -31199,10 +31394,41 @@ function startApp() {
       });
   }
 
+  // Deletes the whole shared project (every synced issue + the project row
+  // itself) — gated server-side by the creator-held editKey, which was
+  // stored on creation but never actually used by the client until now.
+  // Resolves false (never rejects) so the caller can show one message
+  // without a try/catch.
+  function _sharedDeleteProject() {
+    var key = _sharedProjectId();
+    if (!key) return Promise.resolve(false);
+    var editKey = null;
+    try { editKey = localStorage.getItem('cc_sharedProjectEditKey'); } catch(e) {}
+    if (!editKey) return Promise.resolve(false);
+    return fetch('/api/project?id=' + encodeURIComponent(key) + '&scope=project', {
+      method: 'DELETE',
+      headers: { 'X-CC-Edit-Key': editKey },
+    })
+      .then(function(r){ return r.ok; })
+      .then(function(ok){
+        if (ok) {
+          _sharedStopPolling();
+          try {
+            localStorage.removeItem('cc_sharedProjectId');
+            localStorage.removeItem('cc_sharedProjectName');
+            localStorage.removeItem('cc_sharedProjectEditKey');
+          } catch(e) {}
+        }
+        return ok;
+      })
+      .catch(function(){ return false; });
+  }
+
   window._ccSharedCreate = _sharedCreateProject;
   window._ccSharedPull = _sharedPull;
   window._ccSharedStart = _sharedStartPolling;
   window._ccSharedStop = _sharedStopPolling;
+  window._ccSharedDeleteProject = _sharedDeleteProject;
 
   // ── AI clash titles (Phase 5) ────────────────────────────────────
   var _aiTitlesBusy = false;
@@ -38326,6 +38552,25 @@ function startApp() {
             }
             return ids.length?ids:null;
           }
+          // Model-scoped counterpart of getActiveEids — {expressId,modelId}
+          // refs via _itemRefs, so hide/isolate hotkeys don't hit the wrong
+          // model's element when two loaded models share an expressId.
+          function getActiveRefs(){
+            var all=s.clashes.concat(s.issues);
+            var refs=[];
+            var selKeys=Object.keys(s.selected||{});
+            if(selKeys.length>0){
+              selKeys.forEach(function(sid){
+                var it=all.find(function(c){return c.id===sid;});
+                if(it) _itemRefs(it).forEach(function(r){refs.push(r);});
+              });
+            }
+            if(!refs.length && s.activeId){
+              var item=all.find(function(c){return c.id===s.activeId;});
+              if(item) refs=_itemRefs(item);
+            }
+            return refs.length?refs:null;
+          }
 
           if(chord==='bx'){
             // Priority: clash/issue multi-selection → single 3D-canvas
@@ -38362,15 +38607,15 @@ function startApp() {
           if(chord==='wt'){ d({t:A.UPD_PREFS,u:{renderStyle:s.prefs.renderStyle==='xray'?'standard':'xray'}}); return; }
           if(chord==='ww'){ if(s.walkMode){ d({t:A.WALK_MODE,v:false}); } else { d({t:A.WALK_PLACING,v:!s.walkPlacing}); } return; }
           if(chord==='hh'){
-            var hhIds=getActiveEids();
-            if(!hhIds && window._ccSelectedExpressId) hhIds=[window._ccSelectedExpressId];
-            if(hhIds && window._ccTempHide) window._ccTempHide(hhIds);
+            var hhRefs=getActiveRefs();
+            if(!hhRefs && window._ccSelectedExpressId) hhRefs=[{expressId:window._ccSelectedExpressId, modelId:window._ccSelectedModelId||null}];
+            if(hhRefs && window._ccTempHide) window._ccTempHide(hhRefs);
             return;
           }
           if(chord==='hi'){
-            var hiIds=getActiveEids();
-            if(!hiIds && window._ccSelectedExpressId) hiIds=[window._ccSelectedExpressId];
-            if(hiIds && window._ccIsolate) window._ccIsolate(hiIds);
+            var hiRefs=getActiveRefs();
+            if(!hiRefs && window._ccSelectedExpressId) hiRefs=[{expressId:window._ccSelectedExpressId, modelId:window._ccSelectedModelId||null}];
+            if(hiRefs && window._ccIsolate) window._ccIsolate(hiRefs);
             return;
           }
           if(chord==='hr'){
@@ -38456,7 +38701,7 @@ function startApp() {
         if(e.key==='n'&&!ctrl){ d({t:A.COMMENT_MODE,v:!s.commentMode}); return; }
         if(e.key==='i'&&!ctrl){
           var _iId=window._ccSelectedExpressId;
-          if(_iId&&window._ccIsolate) window._ccIsolate([_iId]);
+          if(_iId&&window._ccIsolate) window._ccIsolate([{expressId:_iId, modelId:window._ccSelectedModelId||null}]);
           else if(window._ccUnisolate) window._ccUnisolate();
           return;
         }
