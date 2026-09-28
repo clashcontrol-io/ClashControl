@@ -24,7 +24,13 @@
     // equivalence migrations — no guardedAsync comparison, just a render-time
     // isEnabled() branch. Each keeps its legacy path fully intact.
     ccUiWindowedConflicts: Object.freeze({ fallback: 'legacy', defaultEnabled: false }),
-    ccUiEmptyStates: Object.freeze({ fallback: 'legacy', defaultEnabled: false }),
+    // Promoted (defaultEnabled:true): the truthful empty-state decision tree
+    // (_ccConflictEmptyState) is what puts a labelled "Run clash detection"
+    // button in the empty clash-list state on both desktop and mobile —
+    // detection-discoverability fix, see MEMORY.md. Legacy fallback ('No
+    // clashes found yet' with no action) stays fully intact and reachable
+    // via ?ccSafety=-ccUiEmptyStates.
+    ccUiEmptyStates: Object.freeze({ fallback: 'legacy', defaultEnabled: true }),
     ccUiOperationCenter: Object.freeze({ fallback: 'legacy', defaultEnabled: false }),
     ccUiToolbarV2: Object.freeze({ fallback: 'legacy', defaultEnabled: false }),
     ccUiModalV2: Object.freeze({ fallback: 'legacy', defaultEnabled: false }),
