@@ -9,12 +9,15 @@
 //! 2. Low-level: `Engine` struct — pre-build BVH, reuse across multiple queries
 //!
 //! ── Parity contract ──────────────────────────────────────────────────
-//! `mesh_intersect_raw` / `batch_intersect_raw` / `mesh_min_distance` are
-//! ports of the JS reference (`_triTriTest`/`_buildBVHNode`/`_bvhTraverseAll`
-//! in index.html) designed for bit-identical output: same f64 arithmetic
-//! order, same BVH shape, same point cap semantics. They return the RAW
-//! point list (or, for min-distance, the raw closest pair) so index.html can
-//! run the *same* JS post-processing function (`_pointInBothBoxes` filter +
+//! `mesh_intersect_raw` / `batch_intersect_raw` are ports of the JS
+//! reference (`_triTriTest`/`_buildBVHNode`/`_bvhTraverseAll` in
+//! index.html); `mesh_min_distance` is a port of `_meshMinDist`'s JS
+//! fallback (`_closestPtOnTri`/`_segSegDistSq`/`_triTriDistSq`/
+//! `_bvhMinDistTraverse`, see `mesh_dist.rs`) — all designed for
+//! bit-identical output: same f64 arithmetic order, same BVH shape, same
+//! point cap / sub-test-order semantics. Intersect returns the RAW point
+//! list (or, for min-distance, the raw closest pair) so index.html can run
+//! the *same* JS post-processing function (`_pointInBothBoxes` filter +
 //! averaging) over both the JS-collected and WASM-collected points — see
 //! `_meshesIntersect` / `_postProcessIntersectPoints` in index.html.
 //!
@@ -27,11 +30,10 @@ use wasm_bindgen::prelude::*;
 
 mod bvh;
 mod tri_tri;
-mod spatial_hash;
+mod mesh_dist;
 mod broadphase;
 
 use bvh::BvhNode;
-use spatial_hash::SpatialHash;
 
 pub use broadphase::sweep_and_prune;
 
@@ -107,87 +109,43 @@ pub fn mesh_intersect_raw(tris_a: &[f32], tris_b: &[f32]) -> Vec<f64> {
     pts
 }
 
-/// Compute minimum vertex-to-vertex distance between two meshes.
-/// Bit-identical port of `_meshMinDist`'s JS-fallback spatial-hash walk
-/// (same cell size fallback, same ceil-based step, same f64 arithmetic,
-/// same tie-breaking via "first strictly smaller wins").
+/// Compute the true minimum mesh-to-mesh distance between two triangle
+/// meshes: point-to-triangle (both directions) + edge-edge, BVH-
+/// accelerated. Bit-identical port of `_meshMinDist`'s JS fallback (see
+/// `mesh_dist.rs` and index.html's `_bvhMinDistTraverse`/`_triTriDistSq`
+/// doc comments) — same BVH shape as `mesh_intersect_raw` (bvh::BvhNode),
+/// same sub-test order, same "first strictly smaller wins" tie-break.
 ///
-/// `verts_a` and `verts_b` are flat Float32Arrays: [x0,y0,z0, x1,y1,z1, ...].
-/// `max_dist` is the threshold (a JS number, so f64) — used ONLY to size the
-/// grid cell (falls back to 0.05 when `max_dist` is 0, exactly like JS's
-/// `thresholdM || 0.05`), exactly like the JS reference AS ACTUALLY CALLED:
-/// index.html's one call site (`_processCandidate`) always passes an
-/// `outPair` buffer, and `_meshMinDist`'s own threshold-cutoff early-return
-/// (`if (minSq <= tSq && !outPair) return ...`) is therefore DEAD CODE in
-/// production — with `outPair` truthy, `_meshMinDist` always returns the
-/// real `Math.sqrt(minSq)`, however large, and leaves the threshold
-/// comparison to the caller (`geoDist<=pairGapM`). Enforcing our own
-/// threshold cutoff here would silently diverge from that real behavior.
+/// Replaces the old vertex-to-vertex spatial-hash walk (`spatial_hash.rs`,
+/// removed), which measured only how close two meshes' VERTICES were — a
+/// point resting mid-face on the other mesh (no nearby vertex) reported
+/// Infinity/far instead of its real (small) distance. See CLAUDE.md task
+/// notes for the verified repro (a small device 0.1m above a 10x10m slab
+/// center).
+///
+/// `tris_a` and `tris_b` are flat Float32Arrays, 9 floats per triangle
+/// (matching `mesh_intersect_raw`'s wire shape) — NOT raw vertices.
 ///
 /// Returns [distance, ax, ay, az, bx, by, bz] always — `distance` is
-/// `Infinity` (and the pair all zeros, matching JS's zero-initialized
-/// outPair) only when NO vertex was found near ANY sampled query point
-/// (sparse/disjoint meshes relative to the grid cell size), or when either
-/// input is empty (a single-element `[Infinity]`, matching JS's early
-/// `if (!vA.length || !vB.length) return Infinity` with no outPair touch).
+/// `Infinity` (single-element `[Infinity]`, no pair) only when either input
+/// is empty; with two non-empty meshes a finite distance and closest-point
+/// pair is always found (unlike the old grid walk, there is no "search
+/// neighborhood" that can come up empty).
 #[wasm_bindgen]
-pub fn mesh_min_distance(verts_a: &[f32], verts_b: &[f32], max_dist: f64) -> Vec<f64> {
-    if verts_a.len() < 3 || verts_b.len() < 3 {
+pub fn mesh_min_distance(tris_a: &[f32], tris_b: &[f32]) -> Vec<f64> {
+    if tris_a.len() < 9 || tris_b.len() < 9 {
         return vec![f64::INFINITY];
     }
-
-    // JS `thresholdM || 0.05`: NaN is falsy in JS (unlike Rust's `!= 0.0`,
-    // under which NaN != 0.0 is true), so a NaN threshold must also fall
-    // back to 0.05 here to match.
-    let cs = (if max_dist != 0.0 && !max_dist.is_nan() { max_dist } else { 0.05 }).max(0.02);
-
-    // Insert the smaller mesh into the spatial hash, query the larger —
-    // matches JS's `vA.length <= vB.length` selection exactly.
-    let (grid_verts, query_verts) = if verts_a.len() <= verts_b.len() {
-        (verts_a, verts_b)
-    } else {
-        (verts_b, verts_a)
-    };
-
-    let mut grid = SpatialHash::new(cs);
-    grid.insert(grid_verts);
-
-    let mut min_sq: f64 = f64::INFINITY;
-    let mut best_q = [0.0f64; 3];
-    let mut best_g = [0.0f64; 3];
-
-    // `queryVerts.length > 30000 ? 3 * Math.ceil(queryVerts.length / 30000) : 3`
-    let step: usize = if query_verts.len() > 30000 {
-        3 * ((query_verts.len() + 29999) / 30000)
-    } else {
-        3
-    };
-
-    let mut i = 0usize;
-    while i < query_verts.len() {
-        if i + 2 >= query_verts.len() {
-            break;
-        }
-        let px = query_verts[i] as f64;
-        let py = query_verts[i + 1] as f64;
-        let pz = query_verts[i + 2] as f64;
-        if let Some((d2, gx, gy, gz)) = grid.min_dist_sq(px, py, pz, grid_verts) {
-            if d2 < min_sq {
-                min_sq = d2;
-                best_q = [px, py, pz];
-                best_g = [gx, gy, gz];
-            }
-        }
-        i += step;
-    }
-
-    // Always 7 elements — `min_sq.sqrt()` is already Infinity when nothing
-    // was found (best_q/best_g stay at their zero-initialized default, same
-    // as JS's outPair). No threshold cutoff — see the doc comment above.
+    let bvh_a = BvhNode::build(tris_a);
+    let bvh_b = BvhNode::build(tris_b);
+    let mut best = f64::INFINITY;
+    let mut out_a = [0.0f64; 3];
+    let mut out_b = [0.0f64; 3];
+    mesh_dist::traverse_min_dist(&bvh_a, tris_a, &bvh_b, tris_b, &mut best, &mut out_a, &mut out_b);
     vec![
-        min_sq.sqrt(),
-        best_q[0], best_q[1], best_q[2],
-        best_g[0], best_g[1], best_g[2],
+        best.sqrt(),
+        out_a[0], out_a[1], out_a[2],
+        out_b[0], out_b[1], out_b[2],
     ]
 }
 
@@ -341,43 +299,29 @@ mod tests {
 
     #[test]
     fn test_min_distance_close() {
-        let verts_a = vec![0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0, 0.0];
-        let verts_b = vec![0.0, 0.0, 0.1, 1.0, 0.0, 0.1, 0.0, 1.0, 0.1];
-        let result = mesh_min_distance(&verts_a, &verts_b, 1.0);
+        let tri_a = vec![0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0, 0.0];
+        let tri_b = vec![0.0, 0.0, 0.1, 1.0, 0.0, 0.1, 0.0, 1.0, 0.1];
+        let result = mesh_min_distance(&tri_a, &tri_b);
         assert!(result.len() == 7);
-        assert!((result[0] - 0.1).abs() < 0.01, "Distance should be ~0.1, got {}", result[0]);
+        assert!((result[0] - 0.1).abs() < 1e-6, "Distance should be 0.1, got {}", result[0]);
     }
 
     #[test]
-    fn test_min_distance_far() {
-        // JS `_meshMinDist`, as actually called (outPair always passed), has
-        // NO threshold cutoff — a pair the grid genuinely can't find within
-        // its 3x3x3 cell neighborhood still returns Infinity, but because
-        // nothing was found, not because of an explicit distance check.
-        let verts_a = vec![0.0, 0.0, 0.0];
-        let verts_b = vec![100.0, 100.0, 100.0];
-        let result = mesh_min_distance(&verts_a, &verts_b, 1.0);
+    fn test_min_distance_device_above_slab() {
+        // The verified bug this whole module fixes: vertex-to-vertex
+        // distance would report this as far/Infinity since no vertex of
+        // either triangle is near a vertex of the other.
+        let slab = vec![-5.0, -5.0, 0.0, 5.0, -5.0, 0.0, -5.0, 5.0, 0.0];
+        let device = vec![-0.1, -0.1, 0.1, 0.1, -0.1, 0.1, -0.1, 0.1, 0.1];
+        let result = mesh_min_distance(&slab, &device);
         assert_eq!(result.len(), 7);
-        assert!(result[0].is_infinite(), "Should be beyond the grid's search neighborhood");
-    }
-
-    #[test]
-    fn test_min_distance_zero_threshold_falls_back_to_005_cell() {
-        // JS: `thresholdM || 0.05` — max_dist=0 must not divide-by-zero the
-        // cell size. With no threshold cutoff (see mesh_min_distance's doc
-        // comment), a close pair is still found and its real distance
-        // returned — the 0.05 fallback only affects the grid cell size, not
-        // whether a result is reported.
-        let verts_a = vec![0.0, 0.0, 0.0];
-        let verts_b = vec![0.01, 0.0, 0.0];
-        let result = mesh_min_distance(&verts_a, &verts_b, 0.0);
-        assert_eq!(result.len(), 7);
-        assert!((result[0] - 0.01).abs() < 1e-9, "expected ~0.01, got {}", result[0]);
+        assert!((result[0] - 0.1).abs() < 1e-6, "expected 0.1, got {}", result[0]);
     }
 
     #[test]
     fn test_empty_input() {
         assert!(mesh_intersect(&[], &[0.0; 9], 1e-6).is_empty());
-        assert!(mesh_min_distance(&[], &[0.0; 3], 1.0)[0].is_infinite());
+        assert!(mesh_min_distance(&[], &[0.0; 9])[0].is_infinite());
+        assert!(mesh_min_distance(&[0.0; 9], &[0.0; 3])[0].is_infinite());
     }
 }

@@ -102,17 +102,26 @@
         }
       }
     }
-    // Min-distance: same duct/wall verts, a couple of thresholds.
+    // Min-distance: now a true triangle-mesh distance (point-to-triangle +
+    // edge-edge, BVH-accelerated) — see index.html's _meshMinDist doc
+    // comment. Cases are triangle soups (9 floats/tri), not raw point
+    // clouds. Includes the verified-bug repro: a small device triangle
+    // sitting 0.1m above the middle of a 10x10m slab face — the OLD
+    // vertex-to-vertex spatial hash reported this as far/Infinity because
+    // no vertex of the device is near any vertex of the slab.
+    var slabTri = new Float32Array([-5,-5,0, 5,-5,0, -5,5,0]); // 10x10 slab quad's first tri
+    var deviceTri = new Float32Array([-0.1,-0.1,0.1, 0.1,-0.1,0.1, -0.1,0.1,0.1]); // 0.2x0.2 device face, 0.1m above slab center
     var mdCases = [
-      { a: _box(-1, 21, 2.5, 2.9, -6.9, -6.1), b: _box(9.925, 10.075, 0, 3.2, -11.85, -0.15), t: 0.5 },
-      { a: new Float32Array([0,0,0]), b: new Float32Array([3,4,0]), t: 10 },
-      { a: new Float32Array([0,0,0]), b: new Float32Array([50,50,50]), t: 1 }
+      { a: _box(-1, 21, 2.5, 2.9, -6.9, -6.1), b: _box(9.925, 10.075, 0, 3.2, -11.85, -0.15) },
+      { a: new Float32Array([0,0,0, 3,0,0, 0,4,0]), b: new Float32Array([3,4,0, 6,4,0, 3,8,0]) },
+      { a: new Float32Array([0,0,0, 1,0,0, 0,1,0]), b: new Float32Array([50,50,50, 51,50,50, 50,51,50]) },
+      { a: slabTri, b: deviceTri }
     ];
     for (var j = 0; j < mdCases.length; j++) {
       var mc = mdCases[j];
-      var jsMd = ref.minDist(mc.a, mc.b, mc.t);
+      var jsMd = ref.minDist(mc.a, mc.b);
       var wasmMd;
-      try { wasmMd = _wasm.mesh_min_distance(mc.a, mc.b, mc.t); } catch (e) { return false; }
+      try { wasmMd = _wasm.mesh_min_distance(mc.a, mc.b); } catch (e) { return false; }
       if (!_flatEq(jsMd, Array.prototype.slice.call(wasmMd))) {
         console.warn('[WASM Engine] self-check FAILED (min-distance mismatch), case ' + j);
         return false;
@@ -205,7 +214,7 @@
         _publishGlobals();
         _loading = false;
         _loadTime = Math.round(performance.now() - t0);
-        console.log('%c[WASM Engine] Loaded in ' + _loadTime + 'ms (43 KB)' + (_selfCheckFailed ? ' — narrow-phase self-check FAILED, JS fallback in use' : ''), 'color:#22c55e;font-weight:bold');
+        console.log('%c[WASM Engine] Loaded in ' + _loadTime + 'ms (47 KB)' + (_selfCheckFailed ? ' — narrow-phase self-check FAILED, JS fallback in use' : ''), 'color:#22c55e;font-weight:bold');
         return _wasm;
       });
     }).catch(function(e) {
@@ -248,17 +257,23 @@
   };
 
   /**
-   * Compute minimum vertex distance between two meshes.
-   * @param {Float32Array} vertsA - flat xyz vertices
-   * @param {Float32Array} vertsB - flat xyz vertices
-   * @param {number} threshold - max distance in model units
+   * Compute the true minimum mesh-to-mesh distance between two triangle
+   * meshes (point-to-triangle both directions + edge-edge, BVH-accelerated
+   * — see index.html's _meshMinDist/_bvhMinDistTraverse doc comments). This
+   * is NOT vertex-to-vertex: a point resting mid-face on the other mesh is
+   * measured correctly.
+   * @param {Float32Array} trisA - flat xyz, 9 floats per triangle
+   * @param {Float32Array} trisB - flat xyz, 9 floats per triangle
+   * @param {number} threshold - unused (kept for call-site compatibility;
+   *   there is no cell-size/cutoff concept in the BVH traversal — the real
+   *   minimum is always computed, same as the JS fallback)
    * @param {Float64Array} [outPair] - optional 6-element buffer [ax,ay,az, bx,by,bz]
-   * @returns {number} distance, or Infinity if beyond threshold
+   * @returns {number} distance, or Infinity if either mesh is empty
    */
-  function _wasmMinDist(vertsA, vertsB, threshold, outPair) {
+  function _wasmMinDist(trisA, trisB, threshold, outPair) {
     if (!_wasm) return Infinity;
     try {
-      var result = _wasm.mesh_min_distance(vertsA, vertsB, threshold);
+      var result = _wasm.mesh_min_distance(trisA, trisB);
       if (!result || result.length === 0 || result[0] === Infinity) return Infinity;
       if (outPair && result.length >= 7) {
         outPair[0]=result[1]; outPair[1]=result[2]; outPair[2]=result[3];
