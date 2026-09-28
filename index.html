@@ -10944,6 +10944,7 @@ function startApp() {
   function Viewer(props) {
     var s = props.s, d = props.d;
     var ref = useRef(null);
+    var planOverlayRef = useRef(null); // 2D canvas overlay for the floor-plan cut poché — see _ccDrawPlanOverlay
     var state3d = useRef({scene:null,camera:null,renderer:null,orbit:null,mg:null,map:{},raf:null});
     var se = useState(null), selectedEl=se[0], setSelectedEl=se[1];
     window._ccSelectedExpressId = selectedEl ? selectedEl.expressId : null;
@@ -11087,6 +11088,7 @@ function startApp() {
       renderer.domElement.setAttribute('role', 'application');
       renderer.domElement.setAttribute('aria-label', 'Interactive 3D model viewer');
       S.renderer = renderer;
+      S._floorPlanOverlayCanvas = planOverlayRef.current;
       window._ccState3d = S;
 
       /* Project a 3D point to viewport screen coordinates so DOM overlays
@@ -15823,6 +15825,22 @@ function startApp() {
             window._ccPendingScreenshot = null;
             try { _cb(renderer.domElement.toDataURL('image/png')); } catch(e){}
           }
+          // ── Floor-plan cut poché overlay — re-projects cached world-space
+          // chains (window._ccPlanChainsWorld, computed once per storey/cut
+          // change) through the current camera every frame so panning/zooming
+          // the plan keeps the dark cut outlines/fill aligned. See
+          // _ccDrawPlanOverlay.
+          if (S._floorPlanOverlayCanvas) {
+            if (window._ccFloorPlanActive) {
+              var _pcv = S._floorPlanOverlayCanvas;
+              var _pdpr = window.devicePixelRatio || 1;
+              var _pw = Math.round(el.clientWidth * _pdpr), _ph = Math.round(el.clientHeight * _pdpr);
+              if (_pcv.width !== _pw || _pcv.height !== _ph) { _pcv.width = _pw; _pcv.height = _ph; }
+              _ccDrawPlanOverlay(_pcv, S.camera, window._ccPlanChainsWorld, ((prefsRef.current||{}).theme||'light')==='light');
+            } else if (S._floorPlanOverlayCanvas.width || S._floorPlanOverlayCanvas.height) {
+              S._floorPlanOverlayCanvas.getContext('2d').clearRect(0,0,S._floorPlanOverlayCanvas.width,S._floorPlanOverlayCanvas.height);
+            }
+          }
           // ── PointerLens magnifier (T3.2) — re-renders the scene at 4× zoom
           //    into a small circular canvas near the cursor. Costs one extra
           //    render per frame while active; gated by prefs.measureMagnifier.
@@ -16765,12 +16783,50 @@ function startApp() {
       // the old code only ever set the camera inside the `if(!floorPlanCamRef
       // .current)` guard above, so a later storey switch moved the cut plane
       // but left the oblique camera exactly where it was.
+      //
+      // Framed on the STOREY's own elements (same y-range test generate2D
+      // Outlines uses: box.min.y<=cutAt && box.max.y>=cutElev), not every
+      // loaded model — a federated project's full-building bbox would zoom
+      // the plan out far past the one storey being viewed. Falls back to the
+      // whole-model box (already computed above as `box`/`sz`) if nothing
+      // matches (e.g. no per-element boxes yet).
+      var storeyBox = new THREE.Box3();
+      (s.models||[]).forEach(function(m){
+        if (m.visible === false) return;
+        (m.elements||[]).forEach(function(el){
+          var b = el.box; if (!b || (b.isEmpty && b.isEmpty())) return;
+          var ifcType = el.props && el.props.ifcType;
+          if (ifcType && _NON_PHYSICAL_TYPES && _NON_PHYSICAL_TYPES[ifcType]) return;
+          if (b.min.y > cutAt || b.max.y < cutElev) return;
+          storeyBox.union(b);
+        });
+      });
+      var frameBox = storeyBox.isEmpty() ? box : storeyBox;
+      var frameCtr = storeyBox.isEmpty() ? ctr : frameBox.getCenter(new THREE.Vector3());
+      var frameSz = frameBox.getSize(new THREE.Vector3());
+
       var el2 = S.renderer.domElement.parentElement;
-      var aspect = el2 ? (el2.clientWidth / Math.max(1, el2.clientHeight)) : 1;
-      var halfW = Math.max(sz.x, 0.5) / 2 * 1.15;
-      var halfD = Math.max(sz.z, 0.5) / 2 * 1.15;
-      var halfV = Math.max(halfW / Math.max(aspect, 0.01), halfD);
-      var halfH2 = halfV * aspect;
+      var fullW = el2 ? el2.clientWidth : 1;
+      var fullH = el2 ? Math.max(1, el2.clientHeight) : 1;
+      var aspect = fullW / fullH;
+      // Chrome that overlays the viewport WITHOUT shrinking it (so clientWidth/
+      // Height alone don't account for it): the right Details/AI panel
+      // (window._ccRightPanelOpenWidth, an absolute overlay) and the top
+      // toolbar + floor-picker popover strip. Both eat into the space the
+      // storey needs to be actually visible in, not just rendered.
+      var rightPanelPx = window._ccRightPanelOpenWidth || 0;
+      var topChromePx = 140; // toolbar + "Floor" popover row, roughly
+      var visW = Math.max(80, fullW - rightPanelPx);
+      var visH = Math.max(80, fullH - topChromePx);
+      var halfW = Math.max(frameSz.x, 0.5) / 2 * 1.15;
+      var halfD = Math.max(frameSz.z, 0.5) / 2 * 1.15;
+      // World-units-per-pixel needed to fit the storey (+ margin) inside the
+      // UNOBSTRUCTED area, then size the full ortho frustum at that same
+      // scale (so the frustum keeps the canvas's true aspect ratio — only
+      // its center gets biased below, not its shape).
+      var wpp = Math.max((halfW*2) / visW, (halfD*2) / visH);
+      var halfV = wpp * fullH / 2;
+      var halfH2 = wpp * fullW / 2;
       if(!S.camera.isOrthographicCamera){
         var ncTop = new THREE.OrthographicCamera(-halfH2, halfH2, halfV, -halfV, -10000, 10000);
         S.camera = ncTop; S.orbit.camera = ncTop;
@@ -16778,16 +16834,34 @@ function startApp() {
         S.camera.left = -halfH2; S.camera.right = halfH2;
         S.camera.top = halfV; S.camera.bottom = -halfV; S.camera.zoom = 1;
       }
-      S.orbit.target.set(ctr.x, cutAt, ctr.z);
+      S.orbit.target.set(frameCtr.x, cutAt, frameCtr.z);
       // Near-vertical (apply() clamps phi to a 0.05rad min — true 0 would be a
       // gimbal singularity for lookAt) — reads as top-down on screen either way.
       S.orbit.sph.phi = 0.001;
       S.orbit.sph.theta = 0;
-      S.orbit.sph.r = Math.max(sz.x, sz.z, 5) * 1.2;
+      S.orbit.sph.r = Math.max(frameSz.x, frameSz.z, 5) * 1.2;
       S.orbit.apply();
       S.camera.updateProjectionMatrix();
+      // Bias the frustum center so the storey lands in the unobstructed area
+      // rather than dead-center of the full canvas (which the right panel and
+      // top chrome would then cover part of). Computed via the camera's own
+      // world-space right/up axes (post-apply) rather than assumed world
+      // axes, since it must hold for any orbit theta/phi this ever runs at.
+      if (rightPanelPx > 0 || topChromePx > 0) {
+        S.camera.updateMatrixWorld(true);
+        var visCenterPxX = visW / 2;
+        var visCenterPxY = topChromePx + visH / 2;
+        var ndcX = (visCenterPxX / fullW) * 2 - 1;
+        var ndcY = 1 - (visCenterPxY / fullH) * 2;
+        var camRight = new THREE.Vector3().setFromMatrixColumn(S.camera.matrixWorld, 0);
+        var camUp = new THREE.Vector3().setFromMatrixColumn(S.camera.matrixWorld, 1);
+        var shift = camRight.multiplyScalar(-ndcX * halfH2).add(camUp.multiplyScalar(-ndcY * halfV));
+        S.orbit.target.add(shift);
+        S.orbit.apply();
+        S.camera.updateProjectionMatrix();
+      }
       // Scale bar (world metres per screen pixel) — read by the ScalBar overlay.
-      window._ccPlanScaleBar = { metersPerPx: (2*halfV) / Math.max(1, (el2?el2.clientHeight:1)) };
+      window._ccPlanScaleBar = { metersPerPx: (2*halfV) / fullH };
       invalidate();
     }, [s.floorPlan]);
 
@@ -17029,6 +17103,14 @@ function startApp() {
       var S = state3d.current;
       if(!S.mg) return;
       var style = s.prefs.renderStyle || 'shaded';
+      // Floor-plan mode overrides the chosen renderStyle with a flat, unlit
+      // "below cut" look for every mesh (the actual cut geometry — dark
+      // outlines + poché fill — is drawn on top by the 2D overlay canvas;
+      // see _ccDrawPlanOverlay). Without this, the top-down camera showed
+      // whatever style was active with ordinary lighting, which reads as an
+      // undifferentiated flat grey slab (walls, floor and furniture all lit
+      // the same from directly above).
+      var isPlan = !!s.floorPlan;
       var light = (s.prefs.theme||'light')==='light';
       var ls = (s.prefs.lightSettings) || {};
       var sunMul = (typeof ls.sun === 'number') ? ls.sun : 1.0;
@@ -17233,6 +17315,18 @@ function startApp() {
         _standardMat.color.set(light ? 0xe8e8e8 : 0x3a3a3a);
       }
 
+      // Floor-plan "below cut" material: one shared, fully unlit flat grey
+      // so the background under the poché overlay reads as a light backdrop
+      // regardless of camera angle/light rig, never a shaded/lit surface.
+      var _planMat = null;
+      if (isPlan) {
+        if (!S._sharedPlanMat) {
+          S._sharedPlanMat = new THREE.MeshBasicMaterial({ color: 0xdde3ea, side: THREE.FrontSide });
+        }
+        _planMat = S._sharedPlanMat;
+        _planMat.color.set(light ? 0xdde3ea : 0x27313f);
+      }
+
       for (var _mi = 0; _mi < meshList.length; _mi++) {
         var obj = meshList[_mi];
         if (obj.userData._isGround) continue;
@@ -17248,7 +17342,10 @@ function startApp() {
         var origRef = Array.isArray(orig) ? (orig[0] || orig) : orig;
         var origColor = origRef.color ? origRef.color.clone() : new THREE.Color(0xcccccc);
         var mat;
-        if (style === 'xray') {
+        if (isPlan) {
+          _disposeEdges(obj);
+          mat = _planMat;
+        } else if (style === 'xray') {
           _disposeEdges(obj);
           mat = cache.xray || (cache.xray = new THREE.MeshBasicMaterial({
             color: origColor, transparent: true, opacity: 0.22, side: THREE.DoubleSide, depthWrite: false
@@ -17395,7 +17492,7 @@ function startApp() {
         }
       }
       invalidate();
-    }, [s.prefs.renderStyle, s.prefs.theme, s.models, s.prefs.lightSettings]);
+    }, [s.prefs.renderStyle, s.prefs.theme, s.models, s.prefs.lightSettings, !!s.floorPlan]);
 
     var hcSt = useState(0), hcTick = hcSt[0], setHcTick = hcSt[1];
     useEffect(function(){ window._ccHoverCoordTick = function(){ setHcTick(function(x){return (x+1)%1000;}); }; return function(){window._ccHoverCoordTick=null;}; }, []);
@@ -17579,6 +17676,12 @@ function startApp() {
     }
     return html`<div style=${{flex:1,position:'relative',overflow:'hidden'}}>
       <div ref=${ref} style=${{width:'100%',height:'100%'}}></div>
+      ${/* Floor-plan cut poché overlay — dark cut outlines + fill, drawn each
+           frame from cached world-space chains (window._ccPlanChainsWorld),
+           projected through the live top-down ortho camera. See
+           _ccDrawPlanOverlay. Always mounted (display toggled) so its ref is
+           stable for the render-loop closure set up once on mount. */ ''}
+      <canvas ref=${planOverlayRef} style=${{position:'absolute',inset:0,width:'100%',height:'100%',pointerEvents:'none',zIndex:7,display:s.floorPlan?'block':'none'}}></canvas>
       ${/* 3D markup SVG overlay — captures pointer events only when a tool is active */ ''}
       <svg aria-hidden="true" style=${{position:'absolute',inset:0,width:'100%',height:'100%',pointerEvents:markupTool3D?'auto':'none',cursor:markupTool3D==='text'?'text':'crosshair',zIndex:8}}
         onMouseDown=${_markup3DStart} onMouseMove=${_markup3DMove} onMouseUp=${_markup3DEnd}>
@@ -32546,18 +32649,21 @@ function startApp() {
   // ── Polygon chaining: merge line segments into polylines / closed polygons ──
   // segs: [[worldX1,worldZ1,worldX2,worldZ2,layer], ...]  (same as _cc2DOutlines)
   // Returns: [{pts:[canvasX1,canvasZ1,...], closed:bool, layer:string}, ...]
-  // Canvas coords: canvasX = -worldX, canvasZ = worldZ
-  function _chainSegments(segs, eps) {
+  // Canvas coords: canvasX = -worldX, canvasZ = worldZ (unless noMirror, used by
+  // _ccChainSegmentsWorld below for the 3D floor-plan overlay, which projects
+  // true world coords through the Three.js camera instead of a 2D canvas).
+  function _chainSegments(segs, eps, noMirror) {
     if (!segs || !segs.length) return [];
     eps = eps == null ? 1e-4 : eps;
+    var sign = noMirror ? 1 : -1;
     function key(x, z) { return Math.round(x / eps) + '|' + Math.round(z / eps); }
     // adj[key] = [[segIdx, side], ...]  side 0=segment start, 1=segment end (canvas coords)
     var adj = {};
     function addAdj(k, si, side) { if (!adj[k]) adj[k] = []; adj[k].push([si, side]); }
     for (var i = 0; i < segs.length; i++) {
       var s = segs[i];
-      addAdj(key(-s[0], s[1]), i, 0);
-      addAdj(key(-s[2], s[3]), i, 1);
+      addAdj(key(sign*s[0], s[1]), i, 0);
+      addAdj(key(sign*s[2], s[3]), i, 1);
     }
     var visited = new Uint8Array(segs.length);
     var chains = [];
@@ -32569,8 +32675,8 @@ function startApp() {
       while (true) {
         var cs = segs[curIdx];
         var ex, ez; // exit point (opposite end from entry)
-        if (curEnter === 0) { ex = -cs[2]; ez = cs[3]; }
-        else                 { ex = -cs[0]; ez = cs[1]; }
+        if (curEnter === 0) { ex = sign*cs[2]; ez = cs[3]; }
+        else                 { ex = sign*cs[0]; ez = cs[1]; }
         pts.push(ex, ez);
         var k = key(ex, ez);
         var nb = adj[k] || [];
@@ -32602,8 +32708,8 @@ function startApp() {
       // Assemble: reverse(backPts) + s0.start + s0.end + fwdPts
       var pts = [];
       for (var j = backPts.length - 2; j >= 0; j -= 2) pts.push(backPts[j], backPts[j + 1]);
-      pts.push(-s0[0], s0[1]); // s0 start
-      pts.push(-s0[2], s0[3]); // s0 end
+      pts.push(sign*s0[0], s0[1]); // s0 start
+      pts.push(sign*s0[2], s0[3]); // s0 end
       for (var j = 0; j < fwdPts.length; j++) pts.push(fwdPts[j]);
       var closed = pts.length >= 6 &&
         Math.abs(pts[0] - pts[pts.length - 2]) < eps * 2 &&
@@ -32611,6 +32717,70 @@ function startApp() {
       chains.push({ pts: pts, closed: closed, layer: layer });
     }
     return chains;
+  }
+
+  // ── 3D floor-plan overlay ── reuses _chainSegments (noMirror=true, so pts
+  // stay in true world X/Z) to turn the same cut-plane segments the 2D sheet
+  // uses into closed poché polygons for the top-down 3D plan view.
+  function _ccChainSegmentsWorld(segs, eps) {
+    return _chainSegments(segs, eps, true);
+  }
+
+  var _CC_PLAN_LAYER_FILL_LIGHT = {
+    wall:      'rgba(15,23,42,0.55)',
+    structure: 'rgba(15,23,42,0.38)',
+    opening:   'rgba(59,130,246,0.14)',
+    mep:       'rgba(234,88,12,0.16)',
+    furniture: 'rgba(15,23,42,0.10)'
+  };
+  var _CC_PLAN_LAYER_FILL_DARK = {
+    wall:      'rgba(226,232,240,0.55)',
+    structure: 'rgba(226,232,240,0.38)',
+    opening:   'rgba(147,197,253,0.16)',
+    mep:       'rgba(251,146,60,0.18)',
+    furniture: 'rgba(226,232,240,0.10)'
+  };
+  var _CC_PLAN_LAYER_WIDTH = { wall:2.6, structure:2.2, opening:1.4, mep:1.4, furniture:1.0 };
+
+  // Draws cached world-space cut chains (see _ccChainSegmentsWorld) onto a 2D
+  // overlay canvas, projected through the live 3D camera every frame. The
+  // polygon data itself is cached once per storey/cut-height change (see the
+  // App-level effect that sets window._ccPlanChainsWorld); this function only
+  // re-projects cached points, so it's cheap enough to run every render tick.
+  function _ccDrawPlanOverlay(canvas, camera, pack, light) {
+    if (!canvas) return;
+    var W = canvas.width, H = canvas.height;
+    if (W <= 0 || H <= 0) return;
+    var ctx = canvas.getContext('2d');
+    if (!pack || !camera || !pack.chains || !pack.chains.length) { ctx.clearRect(0,0,W,H); return; }
+    ctx.clearRect(0,0,W,H);
+    var FILL = light ? _CC_PLAN_LAYER_FILL_LIGHT : _CC_PLAN_LAYER_FILL_DARK;
+    var strokeColor = light ? '#0f172a' : '#e2e8f0';
+    var y = pack.y;
+    var v3 = new THREE.Vector3();
+    function proj(x, z) {
+      v3.set(x, y, z).project(camera);
+      return [(v3.x*0.5+0.5)*W, (1-(v3.y*0.5+0.5))*H];
+    }
+    ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+    for (var ci = 0; ci < pack.chains.length; ci++) {
+      var chain = pack.chains[ci];
+      var pts = chain.pts;
+      if (pts.length < 4) continue;
+      var layer = chain.layer || 'wall';
+      ctx.beginPath();
+      var p0 = proj(pts[0], pts[1]);
+      ctx.moveTo(p0[0], p0[1]);
+      for (var pi = 2; pi < pts.length; pi += 2) {
+        var p = proj(pts[pi], pts[pi+1]);
+        ctx.lineTo(p[0], p[1]);
+      }
+      if (chain.closed) ctx.closePath();
+      if (chain.closed && FILL[layer]) { ctx.fillStyle = FILL[layer]; ctx.fill(); }
+      ctx.strokeStyle = strokeColor;
+      ctx.lineWidth = _CC_PLAN_LAYER_WIDTH[layer] || 1.5;
+      ctx.stroke();
+    }
   }
 
   function generate2DOutlines(models, elevation, cutHeight, viewDepth) {
@@ -40947,6 +41117,23 @@ function startApp() {
       }
       window._cc2DSnapIndex = _cc2DOutlines ? _ccBuildSnapIndex(_cc2DOutlines) : null;
     }, [s.underlayMode, s.floorPlan, s.models, s.activeSheetId, s.sheets]);
+
+    // ── 3D floor-plan cut poché cache ── computed once per storey/cut-height
+    // change (not per frame — see _ccDrawPlanOverlay, which only re-projects
+    // these cached world-space chains through the live camera every tick).
+    // Reuses generate2DOutlines/_ccChainSegmentsWorld (the same polygon-face
+    // section-cut code the 2D sheet uses), with the storey→geometry unit
+    // factor applied the same way the floorPlan camera/clip-plane effect
+    // applies it (see index.html's floorPlanCamRef effect).
+    useEffect(function() {
+      if (!s.floorPlan || !s.models.length) { window._ccPlanChainsWorld = null; return; }
+      var gf = 1;
+      try { gf = _ccStoreyToGeoFactor(s.models) || 1; } catch(e) {}
+      var cutElev = (Number(s.floorPlan.elevation) || 0) * gf;
+      var cutHeight = s.floorPlan.cutHeight || 1.2;
+      var outlines = generate2DOutlines(s.models, cutElev, cutHeight);
+      window._ccPlanChainsWorld = { y: cutElev + cutHeight, chains: _ccChainSegmentsWorld(outlines) };
+    }, [s.floorPlan, s.models]);
 
     // ── Global Keyboard Shortcuts (single keys + Revit-style two-key chords) ── docs/INTERNALS.md §19
     var _chordRef = useRef({key:null,timer:null});
