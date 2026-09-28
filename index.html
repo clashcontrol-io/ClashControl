@@ -1747,6 +1747,48 @@ function startApp() {
       linkedClashId: c.id || null
     };
   }
+  // Bug 4/6: shared by the single Confirm action (UPD_CLASH status:
+  // 'confirmed') and the batch "Set status... Confirmed" action
+  // (BATCH_UPD_CLASH) so both behave identically -- promote the clash to
+  // an issue (so it survives being confirmed and carries full element
+  // identity via _issueIdentityFromClash for BCF <Components> export)
+  // instead of one path silently creating an issue and the other just
+  // flipping a status string on the clash object.
+  function _ccBuildConfirmIssue(cClash) {
+    return Object.assign({
+      id:'iss_'+Date.now()+'_'+Math.random().toString(36).substr(2,6),
+      title:cClash.title,
+      description:cClash.description,
+      status:'open',
+      priority:cClash.priority||'normal',
+      source:'clash',
+      clashId:cClash.id,
+      type:cClash.type,
+      elemA:cClash.elemA, elemB:cClash.elemB,
+      elemAType:cClash.elemAType, elemBType:cClash.elemBType,
+      elemAName:cClash.elemAName, elemBName:cClash.elemBName,
+      elemAStorey:cClash.elemAStorey, elemBStorey:cClash.elemBStorey,
+      elemAMaterial:cClash.elemAMaterial, elemBMaterial:cClash.elemBMaterial,
+      modelAId:cClash.modelAId, modelBId:cClash.modelBId,
+      modelAName:cClash.modelAName, modelBName:cClash.modelBName,
+      point:cClash.point, distance:cClash.distance,
+      assignee:cClash.assignee||'',
+      aiFeedback:cClash.aiFeedback||null,
+      aiReasons:cClash.aiReasons||[],
+      aiResolution:cClash.aiResolution||[],
+      aiNote:cClash.aiNote||'',
+      aiSignals:cClash.aiSignals||[],
+      clashTypeConfirmed:cClash.clashTypeConfirmed||null,
+      overlapVolM3:cClash.overlapVolM3,
+      clearanceMm:cClash.clearanceMm,
+      bboxA:cClash.bboxA, bboxB:cClash.bboxB,
+      disciplines:cClash.disciplines,
+      objectTypeA:cClash.objectTypeA, objectTypeB:cClash.objectTypeB,
+      userToleranceMm:cClash.userToleranceMm||null,
+      expectedClash:cClash.expectedClash||false,
+      created:Date.now()
+    }, _issueIdentityFromClash(cClash));
+  }
   // Deterministic severity fallback — Wave 1.6. AI triage (_ccBuildTriagePrompt
   // / api/title.js) writes aiSeverity, but that's an opt-in per-cluster/batch
   // action; most clashes in most projects never get it, and every existing
@@ -1890,13 +1932,20 @@ function startApp() {
         if(a.u&&a.u.status==='denied'){
           var dClash=s.clashes.find(function(c){return c.id===a.id;});
           if(dClash) _saveDeniedClash(dClash);
-          var dVisible=s.clashes.filter(function(c){return c.id!==a.id&&c.status!=='denied';});
+          var dAllVisible=s.clashes.filter(function(c){return c.status!=='denied';});
           var _dSortArr=Array.isArray(s.clashSortBy)?s.clashSortBy:(s.clashSortBy&&s.clashSortBy!=='none'?[s.clashSortBy]:[]);
           var dSortFn=_dSortArr.length?function(a,b){for(var _i=0;_i<_dSortArr.length;_i++){var _f=SORT_FNS[_dSortArr[_i]];if(!_f)continue;var _r=_f(a,b);if(_r!==0)return _r;}return 0;}:null;
-          if(dSortFn) dVisible=dVisible.slice().sort(dSortFn);
+          if(dSortFn) dAllVisible=dAllVisible.slice().sort(dSortFn);
+          var dVisible=dAllVisible.filter(function(c){return c.id!==a.id;});
           if(dClash){
-            var dIdx=dVisible.indexOf(dClash);if(dIdx<0)dIdx=0;
-            var dNext=dVisible[Math.min(dIdx,dVisible.length-1)]||null;
+            // Bug 7: dVisible used to already exclude dClash, so
+            // dVisible.indexOf(dClash) was always -1 and Deny->Next always
+            // jumped to the first clash (dIdx forced to 0) instead of the
+            // actual next one. Find dClash's position in the list that
+            // still contains it (dAllVisible), then step to the item right
+            // after it; fall back to the new last item if it was last.
+            var dOrigIdx=dAllVisible.indexOf(dClash);
+            var dNext=(dOrigIdx>=0 && dOrigIdx+1<dAllVisible.length) ? dAllVisible[dOrigIdx+1] : (dVisible.length?dVisible[dVisible.length-1]:null);
             var dNextId=dNext?dNext.id:null;
             if(dNext) setTimeout(function(){
               var dRefs=_itemRefs(dNext);
@@ -1915,39 +1964,11 @@ function startApp() {
             return true;
           });
           if(cClash){
-            var newIssue={
-              id:'iss_'+Date.now()+'_'+Math.random().toString(36).substr(2,6),
-              title:cClash.title,
-              description:cClash.description,
-              status:'open',
-              priority:cClash.priority||'normal',
-              source:'clash',
-              clashId:cClash.id,
-              type:cClash.type,
-              elemA:cClash.elemA, elemB:cClash.elemB,
-              elemAType:cClash.elemAType, elemBType:cClash.elemBType,
-              elemAName:cClash.elemAName, elemBName:cClash.elemBName,
-              elemAStorey:cClash.elemAStorey, elemBStorey:cClash.elemBStorey,
-              elemAMaterial:cClash.elemAMaterial, elemBMaterial:cClash.elemBMaterial,
-              modelAId:cClash.modelAId, modelBId:cClash.modelBId,
-              modelAName:cClash.modelAName, modelBName:cClash.modelBName,
-              point:cClash.point, distance:cClash.distance,
-              assignee:cClash.assignee||'',
-              aiFeedback:cClash.aiFeedback||null,
-              aiReasons:cClash.aiReasons||[],
-              aiResolution:cClash.aiResolution||[],
-              aiNote:cClash.aiNote||'',
-              aiSignals:cClash.aiSignals||[],
-              clashTypeConfirmed:cClash.clashTypeConfirmed||null,
-              overlapVolM3:cClash.overlapVolM3,
-              clearanceMm:cClash.clearanceMm,
-              bboxA:cClash.bboxA, bboxB:cClash.bboxB,
-              disciplines:cClash.disciplines,
-              objectTypeA:cClash.objectTypeA, objectTypeB:cClash.objectTypeB,
-              userToleranceMm:cClash.userToleranceMm||null,
-              expectedClash:cClash.expectedClash||false,
-              created:Date.now()
-            };
+            // Bug 6: full element identity (globalIdA/B, uniqueIdA/B,
+            // revitIdA/B, storey, ...) via the shared helper, so a
+            // confirm-created issue exports <Components> in BCF just like
+            // a manually-created one.
+            var newIssue=_ccBuildConfirmIssue(cClash);
             var _cSortArr=Array.isArray(s.clashSortBy)?s.clashSortBy:(s.clashSortBy&&s.clashSortBy!=='none'?[s.clashSortBy]:[]);
             var cSortFn=_cSortArr.length?function(a,b){for(var _i=0;_i<_cSortArr.length;_i++){var _f=SORT_FNS[_cSortArr[_i]];if(!_f)continue;var _r=_f(a,b);if(_r!==0)return _r;}return 0;}:null;
             var sortedRemain = cSortFn ? remainClashes.slice().sort(cSortFn) : remainClashes;
@@ -1964,7 +1985,18 @@ function startApp() {
               if(nextClash.point&&window._ccShowActiveClashMarker) window._ccShowActiveClashMarker(nextClash.point);
               if(_flyToElements&&nRefs.length) _flyToElements(nRefs, nextClash.point);
             },100);
-            return Object.assign({},s,{clashes:remainClashes,issues:s.issues.concat([newIssue]),activeId:nextId});
+            // Bug 4: keep the confirmed clash in state.clashes (status
+            // 'confirmed', linked to the new issue) instead of deleting
+            // it. Deleting it meant the next detection run's reconciliation
+            // never saw a prior record for that element pair, so the same
+            // physical clash came back as brand-new ("new") even though
+            // its issue still existed. remainClashes/nextId above are only
+            // used to pick where the UI navigates next -- confirmed
+            // clashes are "handled", so the list still advances past them.
+            var confirmedClashes=s.clashes.map(function(c){
+              return c.id===a.id ? Object.assign({},c,{status:'confirmed',linkedIssueId:newIssue.id}) : c;
+            });
+            return Object.assign({},s,{clashes:confirmedClashes,issues:s.issues.concat([newIssue]),activeId:nextId});
           }
         }
         return Object.assign({},s,{clashes:s.clashes.map(function(c){
@@ -2126,7 +2158,25 @@ function startApp() {
       case A.SELECT_ALL:     var sa={}; (a.ids||[]).forEach(function(id){sa[id]=true;}); return Object.assign({},s,{selected:sa});
       case A.SELECT_NONE:    return Object.assign({},s,{selected:{}});
       case A.SELECT_MODE:    return Object.assign({},s,{selectMode:a.v,selected:a.v?s.selected:{}});
-      case A.BATCH_UPD_CLASH:  return Object.assign({},s,{clashes:s.clashes.map(function(c){
+      case A.BATCH_UPD_CLASH:
+        // Bug 4: batch "Set status... Confirmed" used to just flip the
+        // status string, unlike the single Confirm action (C key / Confirm
+        // button) which promotes the clash to a full issue. Route batch
+        // confirm through the exact same _ccBuildConfirmIssue helper so
+        // both create an issue with element identity and keep the clash
+        // record (status:'confirmed', linkedIssueId) instead of one path
+        // silently creating an issue while the other doesn't.
+        if (a.u && a.u.status === 'confirmed') {
+          var _batchNewIssues=[];
+          var _batchClashes=s.clashes.map(function(c){
+            if(!s.selected[c.id] || c.status==='confirmed') return c;
+            var _issue=_ccBuildConfirmIssue(c);
+            _batchNewIssues.push(_issue);
+            return Object.assign({},c,{status:'confirmed',linkedIssueId:_issue.id});
+          });
+          return Object.assign({},s,{clashes:_batchClashes,issues:s.issues.concat(_batchNewIssues),selected:{}});
+        }
+        return Object.assign({},s,{clashes:s.clashes.map(function(c){
         if(!s.selected[c.id]) return c;
         var upd=Object.assign({},c,a.u);
         if(a.u&&a.u.status&&a.u.status!==c.status){
