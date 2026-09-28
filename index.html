@@ -1325,7 +1325,9 @@ function startApp() {
   }
 
   var INIT_PREFS = {
-    autoFlyTo:_ccLoadPref('autoFlyTo',true), autoHighlight:_ccLoadPref('autoHighlight',true), showGrid:_ccLoadPref('showGrid',true), showAxes:_ccLoadPref('showAxes',true), zoomSens:_ccLoadPref('zoomSens',1),
+    autoFlyTo:_ccLoadPref('autoFlyTo',false), autoHighlight:_ccLoadPref('autoHighlight',true), showGrid:_ccLoadPref('showGrid',true), showAxes:_ccLoadPref('showAxes',true), zoomSens:_ccLoadPref('zoomSens',1),
+    smoothNav:_ccLoadPref('smoothNav',true), // damped rotate/pan/zoom inertia after release
+    navInputMode:_ccLoadPref('navInputMode','auto'), // 'auto'|'mouse'|'trackpad' — how wheel/two-finger-scroll is interpreted
     showMarkers:_ccLoadPref('showMarkers',false), hoverHighlight:_ccLoadPref('hoverHighlight',true), outlineSelected:_ccLoadPref('outlineSelected',true),
     defaultPriority:_ccLoadPref('defaultPriority','normal'), defaultCategory:_ccLoadPref('defaultCategory','design'), defaultStatus:_ccLoadPref('defaultStatus','open'),
     defaultMaxGap:_ccLoadPref('defaultMaxGap',50), resetFiltersOnRun:_ccLoadPref('resetFiltersOnRun',true),
@@ -1454,7 +1456,7 @@ function startApp() {
   // action's `u` payload. Was an inline array literal recreated on every
   // UPD_PREFS dispatch; named here so it can't silently drift from what it
   // actually does.
-  var PERSISTED_PREF_KEYS = ['autoFlyTo','autoHighlight','showGrid','showAxes','showMarkers','hoverHighlight','outlineSelected','defaultPriority','defaultCategory','defaultStatus','defaultMaxGap','resetFiltersOnRun','renderStyle','unitScaleOverride','lightSettings','measureUnits','measurePrecision','measureMagnifier','measureCalibration','homeView','zoomSens'];
+  var PERSISTED_PREF_KEYS = ['autoFlyTo','autoHighlight','showGrid','showAxes','showMarkers','hoverHighlight','outlineSelected','defaultPriority','defaultCategory','defaultStatus','defaultMaxGap','resetFiltersOnRun','renderStyle','unitScaleOverride','lightSettings','measureUnits','measurePrecision','measureMagnifier','measureCalibration','homeView','zoomSens','smoothNav','navInputMode'];
   var A = {
     ADD_MODEL:'ADD_MODEL', DEL_MODEL:'DEL_MODEL', REPLACE_MODEL:'REPLACE_MODEL', UPD_MODEL:'UPD_MODEL',
     PARK_MODEL:'PARK_MODEL', UNPARK_MODEL:'UNPARK_MODEL', SET_AUTOPARK:'SET_AUTOPARK',
@@ -9932,25 +9934,143 @@ function startApp() {
   // ── Orbit Controls (inline) ──────────────────────────────────── docs/INTERNALS.md §13
 
   var _sboxDragging = false;
-  var _orbitDragging = false; // true while left/middle mouse button or touch is held in orbit mode
+  var _orbitDragging = false; // true while left/middle/right mouse button or touch is held in orbit mode
   var _needsRender = 2; // start with a couple frames to initialize
   function invalidate(frames) { _needsRender = Math.max(_needsRender, frames||2); }
   window._ccInvalidate = invalidate;
 
+  // ── Pure orbit-navigation math ──────────────────────────────────────────
+  // Kept outside makeOrbit's THREE-bound closure (plain {x,y,z} objects, no
+  // THREE dependency) so it is directly unit-testable — see
+  // tests/orbit-math.test.js, which extracts this region by marker.
+  // ORBIT_MATH_START
+
+  // Rotates vector v by `angle` radians around the unit axis (ax,ay,az)
+  // (Rodrigues' rotation formula).
+  function _ccRotateAroundAxis(v, ax, ay, az, angle) {
+    var cos = Math.cos(angle), sin = Math.sin(angle);
+    var dot = v.x*ax + v.y*ay + v.z*az;
+    var crossX = ay*v.z - az*v.y, crossY = az*v.x - ax*v.z, crossZ = ax*v.y - ay*v.x;
+    return {
+      x: v.x*cos + crossX*sin + ax*dot*(1-cos),
+      y: v.y*cos + crossY*sin + ay*dot*(1-cos),
+      z: v.z*cos + crossZ*sin + az*dot*(1-cos)
+    };
+  }
+
+  // Orbit-drag step: rotates the camera position around a fixed pivot point
+  // AND the camera's actual current VIEW DIRECTION (its forward unit
+  // vector — not the orbit `target`, which the caller may have set
+  // somewhere the camera wasn't yet looking, e.g. a just-clicked element's
+  // bbox centre) by the identical (yaw, pitch) rotation derived from a
+  // (dx,dy) pixel delta, then applies a soft polar clamp so the view can
+  // approach the pole smoothly instead of freezing dead.
+  //
+  // This is a rigid rotation of the camera (as a physical object: position
+  // + orientation) about the pivot. For any fixed point P, its camera-local
+  // (view-space) coordinates are provably unchanged by such a rotation
+  // regardless of whether the camera was originally looking at P — so the
+  // pivot stays exactly fixed on screen, AND the view direction changes
+  // smoothly by exactly the drag's rotation, with no snap. The old code
+  // instead rotated the orbit `target` and re-derived orientation via
+  // camera.lookAt(target); when `target` had just been moved off the
+  // camera's actual view ray (e.g. by a click-to-select pivot shift) that
+  // lookAt() itself performed a hard reorientation — measured at ~18° for a
+  // single 2px drag right after such a shift. Operating on the true current
+  // forward vector instead of `target` fixes this at the source: the
+  // caller reconstructs `target` afterwards from the corrected forward
+  // vector, so it's always consistent with what lookAt() will reproduce.
+  function _ccOrbitDragStep(camPos, forward, pivot, dx, dy, sens, minPhi, maxPhi) {
+    sens = sens == null ? 0.007 : sens;
+    minPhi = minPhi == null ? 0.05 : minPhi;
+    maxPhi = maxPhi == null ? Math.PI - 0.05 : maxPhi;
+    var yaw = -dx * sens, pitch = -dy * sens;
+    var offset = { x: camPos.x-pivot.x, y: camPos.y-pivot.y, z: camPos.z-pivot.z };
+    var fwd = { x: forward.x, y: forward.y, z: forward.z };
+    function rotBoth(ax, ay, az, angle) {
+      offset = _ccRotateAroundAxis(offset, ax, ay, az, angle);
+      fwd = _ccRotateAroundAxis(fwd, ax, ay, az, angle);
+    }
+    // Yaw around world up.
+    rotBoth(0, 1, 0, yaw);
+    // Pitch around the current horizontal "right" axis (forward × up).
+    var flen = Math.sqrt(fwd.x*fwd.x+fwd.y*fwd.y+fwd.z*fwd.z) || 1;
+    var fx = fwd.x/flen, fy = fwd.y/flen, fz = fwd.z/flen;
+    var rx = fy*0-fz*1, ry = fz*0-fx*0, rz = fx*1-fy*0; // forward × (0,1,0)
+    var rlen = Math.sqrt(rx*rx+ry*ry+rz*rz);
+    if (rlen < 1e-8) { rx=1; ry=0; rz=0; } else { rx/=rlen; ry/=rlen; rz/=rlen; }
+    rotBoth(rx, ry, rz, pitch);
+    // Soft polar clamp: phi = angle of the camera→target direction (-forward)
+    // from +Y, matching the original sph.phi semantics, kept in [minPhi,maxPhi].
+    var flen2 = Math.sqrt(fwd.x*fwd.x+fwd.y*fwd.y+fwd.z*fwd.z) || 1;
+    var ny = fwd.y/flen2;
+    var phi = Math.acos(Math.max(-1, Math.min(1, -ny)));
+    if (phi < minPhi || phi > maxPhi) {
+      var clamped = Math.max(minPhi, Math.min(maxPhi, phi));
+      var horiz = Math.sqrt(Math.max(0, flen2*flen2 - fwd.y*fwd.y));
+      var hx = horiz > 1e-6 ? fwd.x/horiz : 1, hz = horiz > 1e-6 ? fwd.z/horiz : 0;
+      var newNy = -Math.cos(clamped);
+      var newHoriz = Math.sqrt(Math.max(0, 1 - newNy*newNy));
+      fwd = { x: hx*newHoriz, y: newNy, z: hz*newHoriz };
+    } else {
+      fwd = { x: fwd.x/flen2, y: fwd.y/flen2, z: fwd.z/flen2 };
+    }
+    return { camPos: { x: pivot.x+offset.x, y: pivot.y+offset.y, z: pivot.z+offset.z }, forward: fwd };
+  }
+
+  // Uniformly scales camPos & target toward/away from `anchor` by `factor`.
+  // Because BOTH points move toward the same anchor by the same factor, the
+  // anchor point itself never moves — dollying "along the ray through the
+  // cursor" — and the operation is exactly reversible: applying `factor`
+  // then `1/factor` returns both points to their exact starting values (up
+  // to floating point), unlike the old camera-forward-advance approach
+  // (whose in/out steps used different formulas and drifted).
+  function _ccZoomDollyStep(camPos, tgt, anchor, factor) {
+    return {
+      camPos: { x: anchor.x+(camPos.x-anchor.x)*factor, y: anchor.y+(camPos.y-anchor.y)*factor, z: anchor.z+(camPos.z-anchor.z)*factor },
+      tgt:    { x: anchor.x+(tgt.x-anchor.x)*factor,    y: anchor.y+(tgt.y-anchor.y)*factor,    z: anchor.z+(tgt.z-anchor.z)*factor }
+    };
+  }
+
+  // World units per screen pixel at a given depth (perspective camera
+  // vertical FOV), used so a pan drag keeps the grabbed point under the
+  // cursor regardless of zoom level, instead of the old flat
+  // `sph.r * 0.0008` approximation (which under/over-panned depending on
+  // how far `r` was from the actual depth of the thing being panned).
+  function _ccPanWorldPerPixel(depth, viewportHeightPx, vFovDeg) {
+    var vFovRad = vFovDeg * Math.PI / 180;
+    return 2 * depth * Math.tan(vFovRad / 2) / Math.max(1, viewportHeightPx);
+  }
+  // ORBIT_MATH_END
+
   function makeOrbit(camera, el, _wlAdd) {
     var target = new THREE.Vector3();
     var sph = { r:60, phi:Math.PI/4, theta:Math.PI/4 };
-    var dragging=false, panning=false, lx=0, ly=0;
+    var dragging=false, panning=false, rightPanning=false, lx=0, ly=0;
     var _tmpVec = new THREE.Vector3();
+    var _tmpVec2 = new THREE.Vector3();
     var _tmpDir = new THREE.Vector3();
     var _tmpRight = new THREE.Vector3();
     var _tmpUp = new THREE.Vector3();
     var _up = new THREE.Vector3(0,1,0);
     var _zoomRay = new THREE.Raycaster();
-    // Nearest VISIBLE surface point under the cursor, for zoom-to-cursor. Honours
-    // active section clipping planes (Raycaster ignores clipping on its own) so we
-    // never aim the zoom at geometry the section has hidden. Null over empty space.
-    function _zoomPickPoint(e){
+    var _dragPivot = new THREE.Vector3();  // rotate-drag pivot, picked fresh at each mousedown
+    var _panDepth = 20;                    // world-space depth of the grabbed point, for pan scale
+    var _dragMoved = false;                // true once the current gesture has actually moved the camera
+    var _lastMoveT = 0;                    // for inertia velocity sampling
+    var _vel = { theta:0, phi:0, panX:0, panY:0 }; // rad/s, world-units/s — rotate/pan inertia only, see tickInertia
+
+    function _navPrefs() {
+      return (window._ccLatestState && window._ccLatestState.prefs) || {};
+    }
+    function _smoothNavOn() { return _navPrefs().smoothNav !== false; }
+
+    // Nearest VISIBLE surface point under the cursor. Honours active section
+    // clipping planes (Raycaster ignores clipping on its own) so we never
+    // pick geometry the section has hidden, and skips ghosted meshes. Used
+    // for zoom-to-cursor, the rotate-drag pivot, and the pan grab depth.
+    // Null over empty space / no model.
+    function _pickSurfacePoint(e){
       var S = window._ccState3d;
       if(!S || !S.mg || !S.mg.children || !S.mg.children.length) return null;
       var rect = el.getBoundingClientRect();
@@ -9974,38 +10094,25 @@ function startApp() {
       }
       return null;
     }
+    var _zoomPickPoint = _pickSurfacePoint; // kept alias — same helper, used at the wheel call sites below
 
-    // Cached model bounds for zoom clamping — _elemsBBox() is O(elements),
-    // far too heavy to call on every wheel notch, so recompute only when the
-    // model set (ids × element counts) actually changes.
-    // makeOrbit is a top-level helper (sibling of the App component), so the
-    // component's modelsRef / _elemsBBox are NOT in scope here — reach the
-    // model bounds through the globals the component publishes instead.
-    // getBounds() returns {min:[x,y,z], max:[x,y,z], center, size} (arrays).
-    var _zoomBBoxCache = { sig: null, box: null };
-    function _zoomModelBBox() {
-      var mdls = (window._ccLatestState && window._ccLatestState.models) || [];
-      var sig = mdls.map(function(m){ return m.id + ':' + ((m.elements||[]).length); }).join('|');
-      if (_zoomBBoxCache.sig !== sig) {
-        try { _zoomBBoxCache.box = (window._ccViewport && window._ccViewport.getBounds) ? window._ccViewport.getBounds() : null; }
-        catch(_) { _zoomBBoxCache.box = null; }
-        _zoomBBoxCache.sig = sig;
-      }
-      return _zoomBBoxCache.box;
-    }
-    // Keep the orbit target inside the model bounds + a half-size margin so
-    // zoom-in (which advances the target toward the cursor / drives it forward
-    // through empty gaps) can't march the camera off into the infinite void —
-    // the "20 notches and the screen goes blank" bug. The margin still lets you
-    // step a bit outside the model; it only stops the runaway.
-    function _clampZoomTarget(t) {
-      var bb = _zoomModelBBox();
-      if (!bb || !bb.min || !bb.max) return;
-      var m = Math.max(bb.max[0]-bb.min[0], bb.max[1]-bb.min[1], bb.max[2]-bb.min[2]) * 0.5;
-      if (!(m > 0)) return;
-      t.x = Math.max(bb.min[0]-m, Math.min(bb.max[0]+m, t.x));
-      t.y = Math.max(bb.min[1]-m, Math.min(bb.max[1]+m, t.y));
-      t.z = Math.max(bb.min[2]-m, Math.min(bb.max[2]+m, t.z));
+    // Empty-space fallback anchor for zoom/rotate: the point where the
+    // cursor's ray crosses the plane through `target` perpendicular to the
+    // camera's forward axis. Always resolves to a real point (unlike the old
+    // "advance along camera-forward" approach), so zoom stays reversible and
+    // rotate never needs to fall back further than the current target.
+    function _rayPlaneAnchor(e){
+      var rect = el.getBoundingClientRect();
+      var nx = ((e.clientX-rect.left)/rect.width)*2-1;
+      var ny = -((e.clientY-rect.top)/rect.height)*2+1;
+      _zoomRay.setFromCamera({x:nx,y:ny}, camera);
+      camera.getWorldDirection(_tmpDir);
+      var camToTarget = _tmpVec.copy(target).sub(camera.position);
+      var planeDist = camToTarget.dot(_tmpDir);
+      var denom = _zoomRay.ray.direction.dot(_tmpDir);
+      var t = Math.abs(denom) > 1e-6 ? planeDist/denom : sph.r;
+      if (!(t > 0)) t = sph.r;
+      return _zoomRay.ray.origin.clone().addScaledVector(_zoomRay.ray.direction, t);
     }
 
     function sync() {
@@ -10025,43 +10132,147 @@ function startApp() {
     }
     sync();
 
+    // ── Small pivot indicator, shown while rotate-dragging ──
+    var _pivotEl = null;
+    function _ensurePivotEl(){
+      if (_pivotEl) return _pivotEl;
+      var d = document.createElement('div');
+      d.style.cssText = 'position:fixed;width:9px;height:9px;margin:-4.5px 0 0 -4.5px;border-radius:50%;'
+        + 'background:rgba(255,255,255,0.95);border:1.5px solid rgba(0,0,0,0.6);'
+        + 'box-shadow:0 0 0 1px rgba(255,255,255,0.5),0 1px 3px rgba(0,0,0,0.4);'
+        + 'pointer-events:none;z-index:2147483000;display:none;';
+      document.body.appendChild(d);
+      _pivotEl = d;
+      return d;
+    }
+    function _showPivotIndicator(){
+      try {
+        var d = _ensurePivotEl();
+        d.style.display = 'block';
+        _updatePivotIndicator();
+      } catch(_e){}
+    }
+    function _updatePivotIndicator(){
+      if (!_pivotEl || _pivotEl.style.display==='none') return;
+      try {
+        var p = _tmpVec2.copy(_dragPivot).project(camera);
+        if (p.z > 1 || p.z < -1) { _pivotEl.style.display='none'; return; }
+        var rect = el.getBoundingClientRect();
+        _pivotEl.style.left = (rect.left + (p.x+1)/2*rect.width) + 'px';
+        _pivotEl.style.top = (rect.top + (1-p.y)/2*rect.height) + 'px';
+      } catch(_e){}
+    }
+    function _hidePivotIndicator(){
+      if (_pivotEl) _pivotEl.style.display='none';
+    }
+
+    // World-space depth of the point under the cursor along the camera's
+    // forward axis (falls back to the distance to the current target when
+    // nothing is hit) — used to scale a pan drag so the grabbed point stays
+    // under the cursor regardless of zoom level.
+    function _pickPanDepth(e){
+      var hit = _pickSurfacePoint(e);
+      if (hit) {
+        camera.getWorldDirection(_tmpDir);
+        var d = _tmpDir.dot(_tmpVec.copy(hit).sub(camera.position));
+        if (d > 0) return d;
+      }
+      return camera.position.distanceTo(target) || sph.r;
+    }
+
+    function _beginRotateDrag(e){
+      dragging = true; _orbitDragging = true; _dragMoved = false;
+      var hit = _pickSurfacePoint(e);
+      _dragPivot.copy(hit || target);
+      _showPivotIndicator();
+    }
+    function _beginPanDrag(e){
+      panning = true; _orbitDragging = true; _dragMoved = false;
+      _panDepth = _pickPanDepth(e);
+    }
+
     el.addEventListener('mousedown', function(e) {
       if(_sboxDragging || _walkActive || window._ccSectionDragging) return; // don't orbit while dragging section box / plane handles or in walk mode
       // Shift+left = pan fallback for trackpad/no-middle-button users (real
       // middle-mouse-button pan below is unaffected). Ctrl/Cmd is multi-select
       // on click elsewhere in the app, so Shift is free here.
-      if (e.button===0 && e.shiftKey) { panning=true; _orbitDragging=true; e.preventDefault(); el.style.cursor='move'; var _s3d3=window._ccState3d; if(_s3d3&&_s3d3._sectionCutLines) _s3d3._sectionCutLines.visible=false; }
-      else if (e.button===0) { dragging=true; _orbitDragging=true; var _s3d=window._ccState3d; if(_s3d&&_s3d._sectionCutLines) _s3d._sectionCutLines.visible=false; }
-      if (e.button===1) { panning=true; _orbitDragging=true; e.preventDefault(); el.style.cursor='move'; var _s3d2=window._ccState3d; if(_s3d2&&_s3d2._sectionCutLines) _s3d2._sectionCutLines.visible=false; }
-      if (e.button===2) return; // reserved for context menu
+      _vel.theta=0; _vel.phi=0; _vel.panX=0; _vel.panY=0; // grabbing the view kills any in-flight inertia
+      if (e.button===0 && e.shiftKey) { _beginPanDrag(e); e.preventDefault(); el.style.cursor='move'; }
+      else if (e.button===0) { _beginRotateDrag(e); }
+      if (e.button===1) { _beginPanDrag(e); e.preventDefault(); el.style.cursor='move'; }
+      if (e.button===2 && !(e.ctrlKey||e.metaKey)) {
+        // Right-drag pans (Navisworks/Solibri/BIMcollab convention); a plain
+        // right-CLICK (no movement) still opens the context menu — see the
+        // 'contextmenu' listener, which checks _dragMoved. Ctrl/Cmd+right-
+        // drag is left alone — that's the existing "drag to move the active
+        // section plane" gesture, which must keep sole ownership of it.
+        rightPanning = true; _orbitDragging = true; _dragMoved = false;
+        _panDepth = _pickPanDepth(e);
+      }
       lx=e.clientX; ly=e.clientY; e.preventDefault();
     });
     _wlAdd('mousemove', function(e) {
-      if(!dragging&&!panning) return;
+      if(!dragging&&!panning&&!rightPanning) return;
       // If walk mode activated while orbit drag was held, clear the drag state
-      if(_walkActive){ dragging=false; panning=false; el.style.cursor=''; _orbitDragging=false; return; }
+      if(_walkActive){ dragging=false; panning=false; rightPanning=false; el.style.cursor=''; _orbitDragging=false; _hidePivotIndicator(); return; }
       // A section-plane / section-box / floor-plan handle drag owns the gesture —
       // never orbit at the same time (was: camera rotated while dragging a handle).
-      if(window._ccSectionDragging || _sboxDragging){ dragging=false; panning=false; el.style.cursor=''; _orbitDragging=false; return; }
+      if(window._ccSectionDragging || _sboxDragging){ dragging=false; panning=false; rightPanning=false; el.style.cursor=''; _orbitDragging=false; _hidePivotIndicator(); return; }
       var dx=e.clientX-lx, dy=e.clientY-ly; lx=e.clientX; ly=e.clientY;
-      if(dragging){ sph.theta-=dx*0.007; sph.phi-=dy*0.007; orbit.apply(); invalidate(); }
-      if(panning){
-        var sp=sph.r*0.0008;
-        orbit.camera.getWorldDirection(_tmpDir);
+      if (dx===0 && dy===0) return;
+      var now = performance.now();
+      var dtSec = _lastMoveT ? Math.max(0.001, Math.min(0.1, (now-_lastMoveT)/1000)) : 0.016;
+      _lastMoveT = now; _dragMoved = true;
+      if(dragging){
+        // Use the camera's TRUE current forward direction, not `target` —
+        // target may have just been moved off the camera's actual view ray
+        // (e.g. by a click-to-select pivot shift) without the camera having
+        // reoriented yet; rotating that stale target instead of the real
+        // forward vector is exactly what caused the ~18°-per-2px snap bug.
+        camera.getWorldDirection(_tmpDir);
+        var _targetDist = camera.position.distanceTo(target) || sph.r;
+        var stepped = _ccOrbitDragStep(
+          {x:camera.position.x,y:camera.position.y,z:camera.position.z},
+          {x:_tmpDir.x,y:_tmpDir.y,z:_tmpDir.z},
+          {x:_dragPivot.x,y:_dragPivot.y,z:_dragPivot.z},
+          dx, dy, 0.007, 0.05, Math.PI-0.05
+        );
+        camera.position.set(stepped.camPos.x, stepped.camPos.y, stepped.camPos.z);
+        target.set(camera.position.x + stepped.forward.x*_targetDist, camera.position.y + stepped.forward.y*_targetDist, camera.position.z + stepped.forward.z*_targetDist);
+        camera.lookAt(target);
+        sync();
+        _vel.theta = (-dx*0.007)/dtSec; _vel.phi = (-dy*0.007)/dtSec;
+        _updatePivotIndicator();
+        invalidate();
+      }
+      if(panning||rightPanning){
+        var vh = el.clientHeight || el.getBoundingClientRect().height || 1;
+        var sp = camera.isOrthographicCamera
+          ? ((camera.top-camera.bottom)/(camera.zoom||1))/vh
+          : _ccPanWorldPerPixel(_panDepth, vh, camera.fov||55);
+        camera.getWorldDirection(_tmpDir);
         _tmpRight.crossVectors(_tmpDir, _up);
         if(_tmpRight.lengthSq()<0.0001){ _tmpRight.set(Math.cos(sph.theta),0,-Math.sin(sph.theta)); }
         else { _tmpRight.normalize(); }
         _tmpUp.crossVectors(_tmpRight,_tmpDir).normalize();
         target.addScaledVector(_tmpRight,-dx*sp);
         target.addScaledVector(_tmpUp,dy*sp);
-        orbit.apply(); invalidate();
+        orbit.apply();
+        _vel.panX = (dx*sp)/dtSec; _vel.panY = (-dy*sp)/dtSec;
+        invalidate();
       }
     });
     _wlAdd('mouseup', function(){
-      var wasActive=dragging||panning;
-      dragging=false;if(panning){panning=false;el.style.cursor='';}
+      // Recorded before we clear rightPanning/_dragMoved below: the
+      // 'contextmenu' event fires right after this mouseup, and needs to
+      // know whether the just-finished right-button gesture actually
+      // dragged (pan) vs. stayed put (plain right-click → open the menu).
+      orbit._lastRightDragMoved = rightPanning && _dragMoved;
+      dragging=false; panning=false; rightPanning=false; el.style.cursor='';
       _orbitDragging=false;
-      if(wasActive){var _s3d=window._ccState3d;if(_s3d&&_s3d._sectionCutLines){_s3d._sectionCutLines.visible=true;invalidate();}}
+      _hidePivotIndicator();
+      if (!_smoothNavOn()) { _vel.theta=0; _vel.phi=0; _vel.panX=0; _vel.panY=0; }
+      invalidate(3);
     });
     el.addEventListener('wheel', function(e){
       if (_walkActive) return; // Don't orbit-zoom in walk mode — wheel handled by walk speed adjuster
@@ -10094,74 +10305,70 @@ function startApp() {
           return;
         }
       }
+      // Trackpad two-finger scroll (small/fractional deltaY and/or non-zero
+      // deltaX, no ctrlKey) pans instead of zooming — ctrl+wheel is always a
+      // pinch-zoom (browsers synthesize ctrlKey for the trackpad pinch
+      // gesture) and keeps the existing section-plane behaviour above when a
+      // section is active.
+      var navMode = _navPrefs().navInputMode || 'auto';
+      var looksTrackpad = e.deltaX !== 0 || (e.deltaMode===0 && Math.abs(e.deltaY) > 0 && Math.abs(e.deltaY) < 50 && (Math.abs(e.deltaY) % 1 !== 0 || Math.abs(e.deltaY) <= 12));
+      if (!e.ctrlKey && (navMode==='trackpad' || (navMode==='auto' && looksTrackpad))) {
+        e.preventDefault();
+        var vhP = el.clientHeight || el.getBoundingClientRect().height || 1;
+        var spP = camera.isOrthographicCamera
+          ? ((camera.top-camera.bottom)/(camera.zoom||1))/vhP
+          : _ccPanWorldPerPixel(_panDepth || camera.position.distanceTo(target) || sph.r, vhP, camera.fov||55);
+        camera.getWorldDirection(_tmpDir);
+        _tmpRight.crossVectors(_tmpDir, _up);
+        if(_tmpRight.lengthSq()<0.0001){ _tmpRight.set(Math.cos(sph.theta),0,-Math.sin(sph.theta)); } else { _tmpRight.normalize(); }
+        _tmpUp.crossVectors(_tmpRight,_tmpDir).normalize();
+        target.addScaledVector(_tmpRight, e.deltaX*spP);
+        target.addScaledVector(_tmpUp, e.deltaY*spP);
+        orbit.apply(); invalidate();
+        return;
+      }
       // Normalize across deltaMode (pixel=0, line=1, page=2) and apply user sensitivity.
-      // Old coefficient was 0.0008 which gave 8% per 100px-notch — too fast.
       var _zd = e.deltaMode === 1 ? e.deltaY * 33 : e.deltaMode === 2 ? e.deltaY * 800 : e.deltaY;
-      var zoomFactor = 1 + _zd * 0.0004 * (window._ccZoomSens != null ? window._ccZoomSens : 1);
-      // Zoom IN toward the point under the cursor so you can always approach what
-      // you're looking at — e.g. a section cut that isn't at the orbit centre.
-      // Moving the target toward the picked point moves the camera with it
-      // (apply() derives the camera from target+sph), so the sph.r min-distance
-      // floor never blocks the approach (was: zoom dead-stopped "at a certain
-      // depth" around the model centre, very visible with a section plane).
-      if (zoomFactor < 1 && !orbit.camera.isOrthographicCamera) {
-        var _zp = _zoomPickPoint(e);
-        if (_zp) {
-          // Advance the orbit target forward along the camera look axis.
-          // Measuring from camera.position (not target) guarantees distFwd is
-          // always positive — the hit point is always in front of the camera —
-          // so we never accidentally zoom *out* when the cursor rests over
-          // geometry that sits "behind" the orbit centre.
-          camera.getWorldDirection(_tmpDir);
-          var _distFwd = _tmpDir.dot(_tmpVec.copy(_zp).sub(camera.position));
-          if (_distFwd <= 0) { _distFwd = 0; } // safety: should never happen
-          var _advance = _distFwd * Math.min(0.6, (1 - zoomFactor) * 3.5);
-          target.addScaledVector(_tmpDir, _advance);
-          _clampZoomTarget(target);
-          // Shrink the orbit radius too — keeps it proportional to the current
-          // zoom level so orbiting feels right after zooming in, and prevents
-          // the advance from becoming asymptotically tiny at close range.
-          sph.r = Math.max(0.5, sph.r * zoomFactor);
-          orbit.apply(); invalidate(); e.preventDefault();
-          return;
-        }
+      var sens = (window._ccZoomSens != null ? window._ccZoomSens : 1);
+      // Exponential factor: exp(x)*exp(-x)=1 exactly, so scrolling in then
+      // out by the same amount always returns to the exact starting radius
+      // (the old `1 + x` factor wasn't its own inverse, and combined with
+      // the camera-forward-advance target movement below, drifted the
+      // anchor point tens of pixels per notch and never came back).
+      var zoomFactor = Math.exp(_zd * 0.0004 * sens);
+      if (!camera.isOrthographicCamera) {
+        // Dolly along the ray through the cursor: scale BOTH camera.position
+        // and target toward the same anchor point by the same factor, so the
+        // anchor never moves on screen and the step is exactly reversible.
+        var anchor = _zoomPickPoint(e) || _rayPlaneAnchor(e);
+        var clampedFactor = zoomFactor;
+        var newR = sph.r * zoomFactor;
+        if (newR < 0.5) clampedFactor = 0.5 / sph.r;
+        else if (newR > 5000) clampedFactor = 5000 / sph.r;
+        var dollied = _ccZoomDollyStep(
+          {x:camera.position.x,y:camera.position.y,z:camera.position.z},
+          {x:target.x,y:target.y,z:target.z},
+          {x:anchor.x,y:anchor.y,z:anchor.z},
+          clampedFactor
+        );
+        camera.position.set(dollied.camPos.x, dollied.camPos.y, dollied.camPos.z);
+        target.set(dollied.tgt.x, dollied.tgt.y, dollied.tgt.z);
+        camera.lookAt(target);
+        sync();
+        // Deliberately no zoom inertia: wheel notches are discrete, arrive in
+        // rapid succession, and item 3's "exactly reversible, same factor
+        // both ways" requirement doesn't compose cleanly with a continuous
+        // coast between them (rotate/pan inertia is release-triggered, once
+        // per gesture, so it doesn't have this tension).
+        invalidate(); e.preventDefault();
+        return;
       }
-      // Zoom OUT anchored to the point under the cursor too — mirrors the zoom-in
-      // branch above (retreat the target away from the picked point instead of
-      // advancing toward it, grow sph.r instead of shrinking it) so the picked
-      // point recedes along the same ray you scrolled on rather than the view
-      // just scaling around the old, possibly off-screen, orbit target.
-      if (zoomFactor > 1 && !orbit.camera.isOrthographicCamera) {
-        var _zpOut = _zoomPickPoint(e);
-        if (_zpOut) {
-          camera.getWorldDirection(_tmpDir);
-          var _distFwdOut = _tmpDir.dot(_tmpVec.copy(_zpOut).sub(camera.position));
-          if (_distFwdOut <= 0) { _distFwdOut = 0; } // safety: should never happen
-          var _retreatAmt = _distFwdOut * Math.min(0.6, (zoomFactor - 1) * 3.5);
-          target.addScaledVector(_tmpDir, -_retreatAmt);
-          _clampZoomTarget(target);
-          sph.r = Math.min(5000, sph.r * zoomFactor);
-          orbit.apply(); invalidate(); e.preventDefault();
-          return;
-        }
-      }
-      var prevR = sph.r;
-      sph.r *= zoomFactor;
-      // Empty space under the cursor: fall back to the radius zoom, and when the
-      // radius would clamp at the floor (0.5 in apply()), advance the target along
-      // the view direction instead (Blender / Rhino "drive forward" pattern).
-      if (zoomFactor < 1 && sph.r < 0.5 && !orbit.camera.isOrthographicCamera) {
-        var advance = Math.max(0, prevR - sph.r); // how much we wanted to close in by
-        orbit.camera.getWorldDirection(_tmpDir);
-        target.addScaledVector(_tmpDir, advance);
-        _clampZoomTarget(target); // don't let empty-space drive-forward run to infinity
-        sph.r = prevR; // keep camera in place; we moved the target instead
-      }
-      if(orbit.camera.isOrthographicCamera) {
-        orbit.camera.zoom = Math.max(0.01, orbit.camera.zoom / zoomFactor);
-        orbit.camera.updateProjectionMatrix();
-      }
-      orbit.apply();invalidate();e.preventDefault();
+      // Orthographic: no camera dolly (zoom is a frustum-size change), keep
+      // the existing zoom-lens behaviour untouched.
+      sph.r = Math.max(0.5, Math.min(5000, sph.r * zoomFactor));
+      camera.zoom = Math.max(0.01, camera.zoom / zoomFactor);
+      camera.updateProjectionMatrix();
+      orbit.apply(); invalidate(); e.preventDefault();
     },{passive:false});
     // ── Touch support (mobile orbit/pan/pinch-zoom) ──
     var touchState = {type:null, lx:0, ly:0, dist:0};
@@ -10170,15 +10377,18 @@ function startApp() {
       if(_sboxDragging || _walkActive) return;
       e.preventDefault();
       _orbitDragging=true;
-      var _s3d=window._ccState3d; if(_s3d&&_s3d._sectionCutLines) _s3d._sectionCutLines.visible=false;
+      _vel.theta=0; _vel.phi=0; _vel.panX=0; _vel.panY=0;
       var t = e.touches;
       if(t.length===1) {
         touchState.type='rotate'; touchState.lx=t[0].clientX; touchState.ly=t[0].clientY;
+        _dragPivot.copy(target); // no hover on touch — pivot is the current target
+        _lastMoveT = 0;
       } else if(t.length===2) {
         touchState.type='pinch-pan';
         touchState.lx=(t[0].clientX+t[1].clientX)/2;
         touchState.ly=(t[0].clientY+t[1].clientY)/2;
         touchState.dist=Math.hypot(t[1].clientX-t[0].clientX,t[1].clientY-t[0].clientY);
+        _panDepth = camera.position.distanceTo(target) || sph.r;
       }
     },{passive:false});
     el.addEventListener('touchmove', function(e) {
@@ -10188,15 +10398,37 @@ function startApp() {
       if(touchState.type==='rotate' && t.length===1) {
         var dx=t[0].clientX-touchState.lx, dy=t[0].clientY-touchState.ly;
         touchState.lx=t[0].clientX; touchState.ly=t[0].clientY;
-        sph.theta-=dx*0.007; sph.phi-=dy*0.007; orbit.apply(); invalidate();
+        var now = performance.now();
+        var dtSec = _lastMoveT ? Math.max(0.001, Math.min(0.1, (now-_lastMoveT)/1000)) : 0.016;
+        _lastMoveT = now;
+        camera.getWorldDirection(_tmpDir);
+        var _targetDistT = camera.position.distanceTo(target) || sph.r;
+        var stepped = _ccOrbitDragStep(
+          {x:camera.position.x,y:camera.position.y,z:camera.position.z},
+          {x:_tmpDir.x,y:_tmpDir.y,z:_tmpDir.z},
+          {x:_dragPivot.x,y:_dragPivot.y,z:_dragPivot.z},
+          dx, dy, 0.007, 0.05, Math.PI-0.05
+        );
+        camera.position.set(stepped.camPos.x, stepped.camPos.y, stepped.camPos.z);
+        target.set(camera.position.x + stepped.forward.x*_targetDistT, camera.position.y + stepped.forward.y*_targetDistT, camera.position.z + stepped.forward.z*_targetDistT);
+        camera.lookAt(target); sync();
+        _vel.theta = (-dx*0.007)/dtSec; _vel.phi = (-dy*0.007)/dtSec;
+        invalidate();
       } else if(touchState.type==='pinch-pan' && t.length===2) {
         var mx=(t[0].clientX+t[1].clientX)/2, my=(t[0].clientY+t[1].clientY)/2;
         var d=Math.hypot(t[1].clientX-t[0].clientX,t[1].clientY-t[0].clientY);
         var pdx=mx-touchState.lx, pdy=my-touchState.ly;
-        var sp=sph.r*0.0008;
-        orbit.camera.getWorldDirection(_tmpDir);
+        // Screen-space pan (right/up axes), unified with the mouse-pan path
+        // above instead of the old world-Y-only `target.y += pdy*sp`.
+        var vhT = el.clientHeight || el.getBoundingClientRect().height || 1;
+        var spT = camera.isOrthographicCamera
+          ? ((camera.top-camera.bottom)/(camera.zoom||1))/vhT
+          : _ccPanWorldPerPixel(_panDepth || sph.r, vhT, camera.fov||55);
+        camera.getWorldDirection(_tmpDir);
         _tmpRight.crossVectors(_tmpDir, _up).normalize();
-        target.addScaledVector(_tmpRight,-pdx*sp); target.y+=pdy*sp;
+        _tmpUp.crossVectors(_tmpRight,_tmpDir).normalize();
+        target.addScaledVector(_tmpRight,-pdx*spT);
+        target.addScaledVector(_tmpUp,pdy*spT);
         if(touchState.dist>0) {
           var scale=touchState.dist/d;
           sph.r*=scale;
@@ -10210,9 +10442,10 @@ function startApp() {
       }
     },{passive:false});
     el.addEventListener('touchend', function(e) {
-      if(e.touches.length===0) { touchState.type=null; _orbitDragging=false; var _s3d=window._ccState3d; if(_s3d&&_s3d._sectionCutLines){_s3d._sectionCutLines.visible=true;invalidate();} }
+      if(e.touches.length===0) { touchState.type=null; _orbitDragging=false; if(!_smoothNavOn()){_vel.theta=0;_vel.phi=0;_vel.panX=0;_vel.panY=0;} invalidate(3); }
       else if(e.touches.length===1) {
         touchState.type='rotate'; touchState.lx=e.touches[0].clientX; touchState.ly=e.touches[0].clientY;
+        _dragPivot.copy(target); _lastMoveT = 0;
       }
     });
     var orbit = {target:target, sync:sync, apply:apply, sph:sph, camera:camera};
@@ -10225,6 +10458,47 @@ function startApp() {
         target.y + sph.r*Math.cos(sph.phi),
         target.z + sph.r*Math.sin(sph.phi)*Math.cos(sph.theta));
       camera.lookAt(target);
+    };
+    // Whether the render loop should currently run in low-res "drag" mode —
+    // only once a gesture has actually moved the camera, never on a bare
+    // mousedown/click (see the 'Lower resolution while moving' block in the
+    // render loop, which also gates this on measured frame time).
+    orbit.isMotionActive = function(){ return (dragging||panning||rightPanning) && _dragMoved; };
+    // Damped inertia for rotate/pan, called once per render-loop frame with
+    // the frame's delta time in seconds. Only runs between gestures (not
+    // while a button is held) and only while "Smooth navigation" is on.
+    // Deliberately no zoom inertia: wheel notches are discrete and arrive in
+    // rapid succession, and item 3's "exactly reversible, same factor both
+    // ways" requirement doesn't compose cleanly with a continuous coast
+    // between them the way a single mouse-up velocity sample does for a
+    // drag gesture.
+    // Returns true while it's still contributing motion (caller should keep
+    // invalidating/rendering).
+    orbit.tickInertia = function(dtSec){
+      if (dragging || panning || rightPanning) return false;
+      if (!_smoothNavOn()) { _vel.theta=0; _vel.phi=0; _vel.panX=0; _vel.panY=0; return false; }
+      if (!(dtSec > 0)) return false;
+      var EPS_ANG = 0.002, EPS_LIN = 0.0005;
+      var damp = Math.pow(0.05, dtSec); // ~95% decay per second — a quick, controlled coast
+      var active = false;
+      if (Math.abs(_vel.theta) > EPS_ANG || Math.abs(_vel.phi) > EPS_ANG) {
+        sph.theta += _vel.theta*dtSec; sph.phi += _vel.phi*dtSec;
+        apply();
+        _vel.theta *= damp; _vel.phi *= damp;
+        active = true;
+      } else { _vel.theta = 0; _vel.phi = 0; }
+      if (Math.abs(_vel.panX) > EPS_LIN || Math.abs(_vel.panY) > EPS_LIN) {
+        camera.getWorldDirection(_tmpDir);
+        _tmpRight.crossVectors(_tmpDir, _up);
+        if(_tmpRight.lengthSq()<0.0001){ _tmpRight.set(Math.cos(sph.theta),0,-Math.sin(sph.theta)); } else { _tmpRight.normalize(); }
+        _tmpUp.crossVectors(_tmpRight,_tmpDir).normalize();
+        target.addScaledVector(_tmpRight, -_vel.panX*dtSec);
+        target.addScaledVector(_tmpUp, _vel.panY*dtSec);
+        apply();
+        _vel.panX *= damp; _vel.panY *= damp;
+        active = true;
+      } else { _vel.panX = 0; _vel.panY = 0; }
+      return active;
     };
     return orbit;
   }
@@ -14304,6 +14578,11 @@ function startApp() {
 
       renderer.domElement.addEventListener('contextmenu', function(e){
         e.preventDefault();
+        // A right-drag just panned the view (Navisworks/Solibri/BIMcollab
+        // convention, wired up in makeOrbit) — suppress the menu so it
+        // doesn't pop up under the cursor after a pan. A plain right-click
+        // (no movement) still opens it as before.
+        if (S.orbit && S.orbit._lastRightDragMoved) { S.orbit._lastRightDragMoved = false; setCtxMenu(null); return; }
         if(!S.mg) return;
         var rect = renderer.domElement.getBoundingClientRect();
         mouse.x = ((e.clientX-rect.left)/rect.width)*2-1;
@@ -14897,6 +15176,10 @@ function startApp() {
       var cullEvery = 8;
       var cullFrame = 0;
       S._lastCullCamKey = '';
+      // Orbit inertia + adaptive drag-resolution state (persists across tick() calls).
+      var _lastTickT = 0;
+      var _dragFrameTimes = []; // recent frame deltas WHILE a drag is actually moving, for the DPR-drop budget check
+      var _dragLowResLatched = false; // once a drag session drops DPR, stay dropped for the rest of it (no thrash)
       function _camFingerprint() {
         var p = S.camera.position, q = S.camera.quaternion;
         return p.x.toFixed(4)+','+p.y.toFixed(4)+','+p.z.toFixed(4)+','+
@@ -14956,6 +15239,14 @@ function startApp() {
           _walkTick(S);
           if (Object.keys(_walkKeys).length > 0 || _walkPointerLocked) invalidate(3);
         }
+        // Damped rotate/pan/zoom inertia — only between gestures (tickInertia
+        // itself no-ops while a button/touch is actually held), gated on the
+        // "Smooth navigation" preference.
+        if (S.orbit && S.orbit.tickInertia) {
+          var _dtInertia = _lastTickT ? Math.min(0.1, (now-_lastTickT)/1000) : 0;
+          if (S.orbit.tickInertia(_dtInertia)) invalidate(2);
+        }
+        _lastTickT = now;
         if (_orbitDragging || window._ccSectionDragging) invalidate(2);
         if(_needsRender <= 0) return;
         _needsRender--;
@@ -15022,8 +15313,27 @@ function startApp() {
           if (_scF > 0 && isFinite(_scF)) _fpg._fpHandleGroup.scale.setScalar(_scF);
         }
 
-        // Lower resolution while moving: orbit drag → 50%, walk movement → 65%
-        var _isDragFrame = _orbitDragging || window._ccSectionDragging;
+        // Lower resolution while moving — but only once motion has actually
+        // started (never on a plain mousedown/click) AND measured frame time
+        // is genuinely struggling (>24ms average over a few frames), and
+        // then latched for the rest of the drag so it doesn't flip-flop
+        // (repeated setPixelRatio/setSize is a framebuffer realloc). Walk
+        // movement keeps its existing flat reduction — that's a distinct,
+        // already-adaptive-feeling system (see _walkTick).
+        var _orbitMoving = !!(S.orbit && S.orbit.isMotionActive && S.orbit.isMotionActive());
+        if (_orbitMoving) {
+          _dragFrameTimes.push(now - (S._lastFrameForBudget || now));
+          if (_dragFrameTimes.length > 6) _dragFrameTimes.shift();
+          if (!_dragLowResLatched && _dragFrameTimes.length >= 3) {
+            var _avgDragFt = _dragFrameTimes.reduce(function(a,b){return a+b;},0)/_dragFrameTimes.length;
+            if (_avgDragFt > 24) _dragLowResLatched = true;
+          }
+        } else {
+          _dragFrameTimes.length = 0;
+          _dragLowResLatched = false;
+        }
+        S._lastFrameForBudget = now;
+        var _isDragFrame = _dragLowResLatched || window._ccSectionDragging;
         var _isWalkFrame = _walkMovingFrame;
         var _lowResFrame = _isDragFrame || _isWalkFrame;
         var _targetDpr = _isDragFrame ? Math.max(0.75, _baseDpr * 0.5)
@@ -28999,6 +29309,19 @@ function startApp() {
               style=${{width:90,accentColor:'var(--accent)'}} />
             <span style=${{fontFamily:'var(--font-mono)',minWidth:30,fontSize:'var(--text-xs)'}}>${((p.zoomSens!=null?p.zoomSens:1)).toFixed(2)}×</span>
           </div>
+        </div>
+        <div style=${TROW}>
+          <div><div style=${TLBL}>Smooth navigation</div><div style=${TSUB}>Orbit, pan and zoom coast briefly after you let go, instead of stopping dead</div></div>
+          <${Toggle} on=${p.smoothNav!==false} onToggle=${tog('smoothNav')} />
+        </div>
+        <div style=${TROW}>
+          <div><div style=${TLBL}>Pointer device</div><div style=${TSUB}>How scrolling/two-finger gestures are interpreted. Auto detects a trackpad from the scroll pattern.</div></div>
+          <select value=${p.navInputMode||'auto'} onChange=${function(e){ d({t:A.UPD_PREFS,u:{navInputMode:e.target.value}}); }}
+            style=${{background:'var(--bg-secondary)',color:'var(--text-primary)',border:'1px solid var(--border)',borderRadius:'var(--radius-sm)',padding:'.35rem .5rem',fontSize:'var(--text-xs)'}}>
+            <option value="auto">Auto</option>
+            <option value="mouse">Mouse</option>
+            <option value="trackpad">Trackpad</option>
+          </select>
         </div>
         <div style=${TROW}>
           <div><div style=${TLBL}>Show grid</div><div style=${TSUB}>Display the reference grid in the 3D view</div></div>
