@@ -13,6 +13,8 @@
 //! of its real (small) distance.
 
 use crate::bvh::{BvhKind, BvhNode};
+use crate::point_in_mesh::point_in_mesh_bvh;
+use crate::tri_tri::tri_tri_test;
 
 #[inline(always)]
 fn clamp01(x: f64) -> f64 {
@@ -170,6 +172,17 @@ fn seg_seg_dist_sq(
 /// checks + 9 edge-edge checks, "first strictly smaller wins" — same fixed
 /// order as the JS reference's `_triTriDistSq`. Returns (dist_sq, pt_a, pt_b).
 pub fn tri_tri_dist_sq(tris_a: &[f32], oa9: usize, tris_b: &[f32], ob9: usize) -> (f64, [f64; 3], [f64; 3]) {
+    // Intersecting triangles (e.g. an edge of one piercing the other's
+    // face) have true distance 0 — the 15-subtest point/edge distance
+    // below is only valid for NON-intersecting triangles and otherwise
+    // reports a spurious positive gap. Reuse the exact same tri-tri test
+    // the hard-clash narrow phase uses (tri_tri::tri_tri_test), so
+    // "distance 0" and "hard clash" agree on what counts as intersecting
+    // (coplanar overlap policy included — see tri_tri_test's own doc).
+    // Mirrors JS `_triTriDistSq`'s early-out.
+    if let Some((cx, cy, cz, _depth)) = tri_tri_test(tris_a, oa9, tris_b, ob9, 0.0) {
+        return (0.0, [cx, cy, cz], [cx, cy, cz]);
+    }
     let a0 = [tris_a[oa9] as f64, tris_a[oa9 + 1] as f64, tris_a[oa9 + 2] as f64];
     let a1 = [tris_a[oa9 + 3] as f64, tris_a[oa9 + 4] as f64, tris_a[oa9 + 5] as f64];
     let a2 = [tris_a[oa9 + 6] as f64, tris_a[oa9 + 7] as f64, tris_a[oa9 + 8] as f64];
@@ -282,6 +295,48 @@ pub fn traverse_min_dist(
         let (lb, rb) = match &nb.kind { BvhKind::Inner { left, right, .. } => (left, right), _ => unreachable!() };
         traverse_min_dist(na, tris_a, lb, tris_b, best, out_a, out_b);
         traverse_min_dist(na, tris_a, rb, tris_b, best, out_a, out_b);
+    }
+}
+
+/// Post-traversal containment fix: when the BVH-pruned dual-tree walk
+/// (`traverse_min_dist`) found a strictly positive surface distance, check
+/// whether one mesh is fully enclosed inside the other with no triangle
+/// pair actually crossing — e.g. a pipe segment fully inside a column, no
+/// edge pierces a face so `tri_tri_dist_sq`'s intersection short-circuit
+/// above never fires, but the solids still overlap volumetrically. A
+/// closed (manifold) mesh fully inside another has EVERY vertex inside it,
+/// so testing just each side's first triangle's first vertex is enough —
+/// stays O(1) extra work per pair. Same ray-parity point-in-mesh test as
+/// index.html's `_estimatePenetrationDepthM` (`point_in_mesh::point_in_mesh_bvh`).
+/// Mirrors JS `_meshMinDistContainmentFix` exactly.
+pub fn containment_fix(
+    root_a: &BvhNode,
+    tris_a: &[f32],
+    root_b: &BvhNode,
+    tris_b: &[f32],
+    best: &mut f64,
+    out_a: &mut [f64; 3],
+    out_b: &mut [f64; 3],
+) {
+    if *best <= 0.0 {
+        return;
+    }
+    let ax = tris_a[0] as f64;
+    let ay = tris_a[1] as f64;
+    let az = tris_a[2] as f64;
+    if point_in_mesh_bvh(ax, ay, az, root_b, tris_b) {
+        *best = 0.0;
+        *out_a = [ax, ay, az];
+        *out_b = [ax, ay, az];
+        return;
+    }
+    let bx = tris_b[0] as f64;
+    let by = tris_b[1] as f64;
+    let bz = tris_b[2] as f64;
+    if point_in_mesh_bvh(bx, by, bz, root_a, tris_a) {
+        *best = 0.0;
+        *out_a = [bx, by, bz];
+        *out_b = [bx, by, bz];
     }
 }
 

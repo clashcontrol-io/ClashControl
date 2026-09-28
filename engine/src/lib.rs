@@ -31,6 +31,7 @@ use wasm_bindgen::prelude::*;
 mod bvh;
 mod tri_tri;
 mod mesh_dist;
+mod point_in_mesh;
 mod broadphase;
 
 use bvh::BvhNode;
@@ -142,6 +143,7 @@ pub fn mesh_min_distance(tris_a: &[f32], tris_b: &[f32]) -> Vec<f64> {
     let mut out_a = [0.0f64; 3];
     let mut out_b = [0.0f64; 3];
     mesh_dist::traverse_min_dist(&bvh_a, tris_a, &bvh_b, tris_b, &mut best, &mut out_a, &mut out_b);
+    mesh_dist::containment_fix(&bvh_a, tris_a, &bvh_b, tris_b, &mut best, &mut out_a, &mut out_b);
     vec![
         best.sqrt(),
         out_a[0], out_a[1], out_a[2],

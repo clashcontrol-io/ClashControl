@@ -6180,7 +6180,125 @@ function startApp() {
   // this exact order is mirrored op-for-op in engine/src/mesh_dist.rs so
   // the WASM port stays bit-identical on tie-break cases too.
   var _ttdPtA = new Float64Array(3), _ttdPtB = new Float64Array(3);
+  // ── Point-in-mesh ray-parity test (moved up here from just below
+  // _estimatePenetrationDepthM) ────────────────────────────────────
+  // Used both by _estimatePenetrationDepthM (approximate hard-clash
+  // penetration depth) and by _meshMinDistContainmentFix just below
+  // (min-distance containment fix — a closed mesh fully inside another
+  // with no triangle pair actually crossing). See CW-1a's comment above
+  // _estimatePenetrationDepthM for the full rationale.
+  function _rayTriHit(ox,oy,oz, dx,dy,dz, tris, o9) {
+    var v0x=tris[o9],v0y=tris[o9+1],v0z=tris[o9+2];
+    var v1x=tris[o9+3],v1y=tris[o9+4],v1z=tris[o9+5];
+    var v2x=tris[o9+6],v2y=tris[o9+7],v2z=tris[o9+8];
+    var e1x=v1x-v0x,e1y=v1y-v0y,e1z=v1z-v0z;
+    var e2x=v2x-v0x,e2y=v2y-v0y,e2z=v2z-v0z;
+    var px=dy*e2z-dz*e2y, py=dz*e2x-dx*e2z, pz=dx*e2y-dy*e2x;
+    var det=e1x*px+e1y*py+e1z*pz;
+    if (det>-1e-12 && det<1e-12) return -1;
+    var invDet=1/det;
+    var tx=ox-v0x,ty=oy-v0y,tz=oz-v0z;
+    var u=(tx*px+ty*py+tz*pz)*invDet;
+    if (u<-1e-9||u>1+1e-9) return -1;
+    var qx=ty*e1z-tz*e1y, qy=tz*e1x-tx*e1z, qz=tx*e1y-ty*e1x;
+    var v=(dx*qx+dy*qy+dz*qz)*invDet;
+    if (v<-1e-9||u+v>1+1e-9) return -1;
+    return (e2x*qx+e2y*qy+e2z*qz)*invDet;
+  }
+  // Ray directions for the inside/outside parity test below: near-axis but
+  // deliberately NOT exactly axis-aligned. IFC geometry is overwhelmingly
+  // axis-aligned (walls, slabs, beams, ducts), which makes a pure
+  // (1,0,0)/(0,1,0)/(0,0,1) ray the single WORST choice here — it's exactly
+  // the direction most likely to land squarely on a shared edge between two
+  // triangles of a watertight mesh. _rayTriHit's edge tolerance is
+  // inclusive (so a true crossing is never missed at a triangle boundary),
+  // which means a ray landing exactly on a shared edge gets counted by
+  // BOTH triangles that share it — one real crossing double-counted as two,
+  // flipping odd parity to even and turning a true "inside" into a false
+  // "outside" (caught by a unit test: the exact center of a symmetric test
+  // cube, cast along a pure axis, hit precisely on such a shared diagonal
+  // on all 3 axes at once — no majority vote survives that). These fixed
+  // small tilts make an exact graze astronomically unlikely while staying
+  // close enough to axis-aligned for BVH node pruning to still be
+  // effective, and as a side effect every direction component is non-zero,
+  // so the generic slab test below never divides by zero.
+  var _PEN_RAY_DIRS = (function(){
+    var raw = [[1,0.0131,0.0177],[0.0149,1,0.0163],[0.0121,0.0139,1]];
+    return raw.map(function(d){
+      var len = Math.sqrt(d[0]*d[0]+d[1]*d[1]+d[2]*d[2]);
+      return [d[0]/len, d[1]/len, d[2]/len, 1/(d[0]/len), 1/(d[1]/len), 1/(d[2]/len)];
+    });
+  })();
+  function _rayAABBHit(ox,oy,oz, idx,idy,idz, node) {
+    var tx1=(node.mnx-ox)*idx, tx2=(node.mxx-ox)*idx;
+    var tmin=Math.min(tx1,tx2), tmax=Math.max(tx1,tx2);
+    var ty1=(node.mny-oy)*idy, ty2=(node.mxy-oy)*idy;
+    tmin=Math.max(tmin,Math.min(ty1,ty2)); tmax=Math.min(tmax,Math.max(ty1,ty2));
+    var tz1=(node.mnz-oz)*idz, tz2=(node.mxz-oz)*idz;
+    tmin=Math.max(tmin,Math.min(tz1,tz2)); tmax=Math.min(tmax,Math.max(tz1,tz2));
+    return tmax>=Math.max(tmin,0);
+  }
+  function _bvhRayCount(node, tris, ox,oy,oz, dx,dy,dz, idx,idy,idz) {
+    if (!_rayAABBHit(ox,oy,oz,idx,idy,idz,node)) return 0;
+    if (node.lo !== undefined) {
+      var cnt=0;
+      for (var i=node.lo;i<node.hi;i++) { if (_rayTriHit(ox,oy,oz,dx,dy,dz,tris,node.idx[i]*9) > 1e-7) cnt++; }
+      return cnt;
+    }
+    return _bvhRayCount(node.left,tris,ox,oy,oz,dx,dy,dz,idx,idy,idz) + _bvhRayCount(node.right,tris,ox,oy,oz,dx,dy,dz,idx,idy,idz);
+  }
+  function _pointInMeshBVH(px,py,pz, bvh) {
+    if (!bvh || !bvh.root) return false;
+    var votes = 0;
+    for (var i=0; i<3; i++) {
+      var d = _PEN_RAY_DIRS[i];
+      var cnt = _bvhRayCount(bvh.root, bvh.tris, px,py,pz, d[0],d[1],d[2], d[3],d[4],d[5]);
+      if (cnt & 1) votes++;
+    }
+    return votes >= 2;
+  }
+  // Post-traversal containment fix for _meshMinDist/_bvhMinDistTraverse:
+  // when the BVH-pruned dual-tree walk found a strictly positive surface
+  // distance, check whether one mesh is fully enclosed inside the other
+  // with no triangle pair actually crossing — e.g. a pipe segment fully
+  // inside a column, no edge pierces a face so _triTriDistSq's
+  // intersection short-circuit never fires, but the solids still overlap
+  // volumetrically. A closed (manifold) mesh fully inside another has
+  // EVERY vertex inside it, so testing just each side's first triangle's
+  // first vertex is enough — stays O(1) extra work per pair. Mirrored
+  // op-for-op in Rust (engine/src/mesh_dist.rs::containment_fix /
+  // engine/src/point_in_mesh.rs) so the WASM path stays bit-identical.
+  function _meshMinDistContainmentFix(bvhA, bvhB, best, outA, outB) {
+    if (best[0] <= 0) return;
+    var tA = bvhA.tris, tB = bvhB.tris;
+    if (_pointInMeshBVH(tA[0], tA[1], tA[2], bvhB)) {
+      best[0] = 0;
+      outA[0]=tA[0]; outA[1]=tA[1]; outA[2]=tA[2];
+      outB[0]=tA[0]; outB[1]=tA[1]; outB[2]=tA[2];
+      return;
+    }
+    if (_pointInMeshBVH(tB[0], tB[1], tB[2], bvhA)) {
+      best[0] = 0;
+      outA[0]=tB[0]; outA[1]=tB[1]; outA[2]=tB[2];
+      outB[0]=tB[0]; outB[1]=tB[1]; outB[2]=tB[2];
+    }
+  }
+
   function _triTriDistSq(trisA, oA9, trisB, oB9, outA, outB) {
+    // Intersecting triangles (e.g. an edge of one piercing the other's
+    // face) have true distance 0 — the 15-subtest point/edge distance
+    // below is only valid for NON-intersecting triangles and otherwise
+    // reports a spurious positive gap (the verified bug: a duct crossing
+    // a column reported as a small but nonzero "soft clash" gap). Reuse
+    // the exact same tri-tri test the hard-clash narrow phase uses, so
+    // "distance 0" and "hard clash" agree on what counts as intersecting
+    // (coplanar overlap policy included — see _triTriTest's own comment).
+    var hit = _triTriTest(trisA, oA9, trisB, oB9);
+    if (hit) {
+      outA[0]=hit[0]; outA[1]=hit[1]; outA[2]=hit[2];
+      outB[0]=hit[0]; outB[1]=hit[1]; outB[2]=hit[2];
+      return 0;
+    }
     var a0x=trisA[oA9],a0y=trisA[oA9+1],a0z=trisA[oA9+2];
     var a1x=trisA[oA9+3],a1y=trisA[oA9+4],a1z=trisA[oA9+5];
     var a2x=trisA[oA9+6],a2y=trisA[oA9+7],a2z=trisA[oA9+8];
@@ -6271,6 +6389,7 @@ function startApp() {
     var best = _mmdBest; best[0] = Infinity;
     _bvhMinDistTraverse(bvhA.root, bvhA.tris, bvhB.root, bvhB.tris, best, _mmdOutA, _mmdOutB);
     if (best[0] === Infinity) return Infinity; // unreachable with 2 non-empty meshes, kept for symmetry with the empty-input early return above
+    _meshMinDistContainmentFix(bvhA, bvhB, best, _mmdOutA, _mmdOutB);
     if (outPair) {
       outPair[0]=_mmdOutA[0]; outPair[1]=_mmdOutA[1]; outPair[2]=_mmdOutA[2];
       outPair[3]=_mmdOutB[0]; outPair[4]=_mmdOutB[1]; outPair[5]=_mmdOutB[2];
@@ -6309,6 +6428,7 @@ function startApp() {
       var rootB = _buildBVHNode(trisB, idxB, 0, nb);
       var best = [Infinity], outA = [0,0,0], outB = [0,0,0];
       _bvhMinDistTraverse(rootA, trisA, rootB, trisB, best, outA, outB);
+      _meshMinDistContainmentFix({root:rootA,tris:trisA}, {root:rootB,tris:trisB}, best, outA, outB);
       return [Math.sqrt(best[0]), outA[0],outA[1],outA[2], outB[0],outB[1],outB[2]];
     }
   };
@@ -6330,76 +6450,11 @@ function startApp() {
   // vertex actually inside) and fall back to the existing AABB-overlap
   // estimate — this is an approximation, not exact solid geometry (that's
   // CW-1b, the Python manifold3d tier).
-  function _rayTriHit(ox,oy,oz, dx,dy,dz, tris, o9) {
-    var v0x=tris[o9],v0y=tris[o9+1],v0z=tris[o9+2];
-    var v1x=tris[o9+3],v1y=tris[o9+4],v1z=tris[o9+5];
-    var v2x=tris[o9+6],v2y=tris[o9+7],v2z=tris[o9+8];
-    var e1x=v1x-v0x,e1y=v1y-v0y,e1z=v1z-v0z;
-    var e2x=v2x-v0x,e2y=v2y-v0y,e2z=v2z-v0z;
-    var px=dy*e2z-dz*e2y, py=dz*e2x-dx*e2z, pz=dx*e2y-dy*e2x;
-    var det=e1x*px+e1y*py+e1z*pz;
-    if (det>-1e-12 && det<1e-12) return -1;
-    var invDet=1/det;
-    var tx=ox-v0x,ty=oy-v0y,tz=oz-v0z;
-    var u=(tx*px+ty*py+tz*pz)*invDet;
-    if (u<-1e-9||u>1+1e-9) return -1;
-    var qx=ty*e1z-tz*e1y, qy=tz*e1x-tx*e1z, qz=tx*e1y-ty*e1x;
-    var v=(dx*qx+dy*qy+dz*qz)*invDet;
-    if (v<-1e-9||u+v>1+1e-9) return -1;
-    return (e2x*qx+e2y*qy+e2z*qz)*invDet;
-  }
-  // Ray directions for the inside/outside parity test below: near-axis but
-  // deliberately NOT exactly axis-aligned. IFC geometry is overwhelmingly
-  // axis-aligned (walls, slabs, beams, ducts), which makes a pure
-  // (1,0,0)/(0,1,0)/(0,0,1) ray the single WORST choice here — it's exactly
-  // the direction most likely to land squarely on a shared edge between two
-  // triangles of a watertight mesh. _rayTriHit's edge tolerance is
-  // inclusive (so a true crossing is never missed at a triangle boundary),
-  // which means a ray landing exactly on a shared edge gets counted by
-  // BOTH triangles that share it — one real crossing double-counted as two,
-  // flipping odd parity to even and turning a true "inside" into a false
-  // "outside" (caught by a unit test: the exact center of a symmetric test
-  // cube, cast along a pure axis, hit precisely on such a shared diagonal
-  // on all 3 axes at once — no majority vote survives that). These fixed
-  // small tilts make an exact graze astronomically unlikely while staying
-  // close enough to axis-aligned for BVH node pruning to still be
-  // effective, and as a side effect every direction component is non-zero,
-  // so the generic slab test below never divides by zero.
-  var _PEN_RAY_DIRS = (function(){
-    var raw = [[1,0.0131,0.0177],[0.0149,1,0.0163],[0.0121,0.0139,1]];
-    return raw.map(function(d){
-      var len = Math.sqrt(d[0]*d[0]+d[1]*d[1]+d[2]*d[2]);
-      return [d[0]/len, d[1]/len, d[2]/len, 1/(d[0]/len), 1/(d[1]/len), 1/(d[2]/len)];
-    });
-  })();
-  function _rayAABBHit(ox,oy,oz, idx,idy,idz, node) {
-    var tx1=(node.mnx-ox)*idx, tx2=(node.mxx-ox)*idx;
-    var tmin=Math.min(tx1,tx2), tmax=Math.max(tx1,tx2);
-    var ty1=(node.mny-oy)*idy, ty2=(node.mxy-oy)*idy;
-    tmin=Math.max(tmin,Math.min(ty1,ty2)); tmax=Math.min(tmax,Math.max(ty1,ty2));
-    var tz1=(node.mnz-oz)*idz, tz2=(node.mxz-oz)*idz;
-    tmin=Math.max(tmin,Math.min(tz1,tz2)); tmax=Math.min(tmax,Math.max(tz1,tz2));
-    return tmax>=Math.max(tmin,0);
-  }
-  function _bvhRayCount(node, tris, ox,oy,oz, dx,dy,dz, idx,idy,idz) {
-    if (!_rayAABBHit(ox,oy,oz,idx,idy,idz,node)) return 0;
-    if (node.lo !== undefined) {
-      var cnt=0;
-      for (var i=node.lo;i<node.hi;i++) { if (_rayTriHit(ox,oy,oz,dx,dy,dz,tris,node.idx[i]*9) > 1e-7) cnt++; }
-      return cnt;
-    }
-    return _bvhRayCount(node.left,tris,ox,oy,oz,dx,dy,dz,idx,idy,idz) + _bvhRayCount(node.right,tris,ox,oy,oz,dx,dy,dz,idx,idy,idz);
-  }
-  function _pointInMeshBVH(px,py,pz, bvh) {
-    if (!bvh || !bvh.root) return false;
-    var votes = 0;
-    for (var i=0; i<3; i++) {
-      var d = _PEN_RAY_DIRS[i];
-      var cnt = _bvhRayCount(bvh.root, bvh.tris, px,py,pz, d[0],d[1],d[2], d[3],d[4],d[5]);
-      if (cnt & 1) votes++;
-    }
-    return votes >= 2;
-  }
+  // (_rayTriHit / _PEN_RAY_DIRS / _rayAABBHit / _bvhRayCount /
+  // _pointInMeshBVH / _meshMinDistContainmentFix moved up above
+  // _triTriDistSq — _meshMinDist's containment fix needs them too, and the
+  // WASM parity test's JS-reference extraction window ends at
+  // _ccJsMeshIntersectRef, before this comment.)
   // Closest point on a single triangle (Ericson, "Real-Time Collision
   // Detection" §5.1.5 — the standard barycentric-region method) — returns
   // squared distance only, callers don't need the point itself here.
