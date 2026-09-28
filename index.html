@@ -2516,6 +2516,16 @@ function startApp() {
   }
   window._ccAutoParkPass = _ccAutoParkPass;
 
+  // Shared model-loading flag + notification, used by both the parked-model
+  // restore path below and the project-file restoration path further down
+  // (previously duplicated as a function nested inside
+  // _restoreProjectFilesGlobal, which meant _ccRestoreParkedModel's calls to
+  // it below were an undefined-name crash — see typeof-guard dead refs).
+  function _setGlobalLoading(v) {
+    window._ccModelLoading = !!v;
+    window.dispatchEvent(new CustomEvent('cc-model-loading', {detail:{loading:!!v}}));
+  }
+
   window._ccIsModelParked = function(id) {
     var s = window._ccLatestState || {};
     return !!(s.parkedModels || []).find(function(pm){ return pm.id === id; });
@@ -3231,7 +3241,8 @@ function startApp() {
   var INST_THRESHOLD = 4; // min identical placements before collapsing to InstancedMesh
 
   window._ccPerfSnapshot = function(){
-    var s = (typeof S!=='undefined'&&S&&S.perf)?S.perf:null;
+    var _S3d = window._ccState3d;
+    var s = (_S3d && _S3d.perf) ? _S3d.perf : null;
     if(!s){ console.warn('[perf] not ready'); return null; }
     var snap = {fps:s.fps, drawCalls:s.drawCalls, triangles:s.tris, geometries:s.meshCount};
     console.log('%c[perf] fps='+snap.fps+' · drawCalls='+snap.drawCalls+' · tris='+snap.triangles+' · geometries='+snap.geometries, 'color:#34d399;font-weight:bold');
@@ -8940,7 +8951,7 @@ function startApp() {
       for (var h=0; h<hits.length; h++){
         var hh = hits[h];
         if (!hh.object || !hh.object.visible) continue;
-        if (typeof _isGhostMat==='function' && _isGhostMat(hh.object.material)) continue;
+        if (window._ccState3d && window._ccState3d._isGhostMat && window._ccState3d._isGhostMat(hh.object.material)) continue;
         if (Math.abs(hh.point.y - hitPoint.y) <= tolY){ ok = true; break; }
       }
       if (!ok) return false;
@@ -8955,7 +8966,7 @@ function startApp() {
     var unit = _walkResolveUnitScale();
     var models = (window._ccLatestState || {}).models || [];
     var box = null;
-    try { box = (typeof _elemsBBox === 'function') ? _elemsBBox() : null; } catch(e){}
+    try { box = (typeof window._ccElemsBBox === 'function') ? window._ccElemsBBox() : null; } catch(e){}
 
     // XZ: prefer orbit target so re-entry spawns above where the user was looking.
     var cx = 0, cz = 0;
@@ -9474,7 +9485,7 @@ function startApp() {
       for (var i=0;i<hits.length;i++){
         var h = hits[i];
         if (!h.object || !h.object.visible) continue;
-        if (typeof _isGhostMat === 'function' && _isGhostMat(h.object.material)) continue;
+        if (S._isGhostMat && S._isGhostMat(h.object.material)) continue;
         if (planes && planes.length){
           var clipped = false;
           // Small tolerance: triangles straddling the cut plane can have their hit
@@ -10659,6 +10670,7 @@ function startApp() {
       // checks through _isGhostMat(). Anything that must test for ghosted
       S._ghostMat = null;
       S._isGhostMat = _isGhostMat;
+      S._makeGhostClone = _makeGhostClone;
       // When a ref has a modelId, the mesh's parent modelId must match for
       function ghostOthers(targets) {
         unghostAll();
@@ -15582,9 +15594,9 @@ function startApp() {
           obj.visible = true;
         } else {
           var origMat = obj.material;
-          if(!_isGhostMat(origMat)){
+          if(!S._isGhostMat(origMat)){
             saved.push({mesh:obj, origMat:origMat, wasVisible:obj.visible});
-            obj.material = _makeGhostClone(origMat);
+            obj.material = S._makeGhostClone(origMat);
             obj.visible = true;
           }
         }
@@ -16907,6 +16919,13 @@ function startApp() {
   // real layout when only unit-tested in isolation. Call from inside a
   // modal component: _ccUseFocusTrap(containerRef, true) — active is
   // always true for a mounted modal (the modal unmounting IS "closing").
+  /* eslint-disable react-hooks/rules-of-hooks -- this project prefixes every
+     internal helper with `_`/`_cc`, including hook-like ones (see
+     CLAUDE.md's globals discipline); eslint-plugin-react-hooks only
+     recognizes `use*`-named functions as hooks, so it can't see that these
+     hook calls run unconditionally, in the same order, on every render.
+     Renaming would break the `_ccUseFocusTrap` contract other code and
+     tests already depend on. */
   function _ccUseFocusTrap(containerRef, active) {
     var openerRef = useRef(null);
     useEffect(function(){
@@ -16952,6 +16971,7 @@ function startApp() {
       };
     }, [active]);
   }
+  /* eslint-enable react-hooks/rules-of-hooks */
   window._ccUseFocusTrap = _ccUseFocusTrap;
 
   // ── Header ─────────────────────────────────────────────────────
@@ -17051,10 +17071,8 @@ function startApp() {
   // ── Project file restoration (standalone, usable from App) ─────
   function _restoreProjectFilesGlobal(projectId, d) {
     var pid = projectId || 'default';
-    function _setGlobalLoading(v) {
-      window._ccModelLoading = !!v;
-      window.dispatchEvent(new CustomEvent('cc-model-loading', {detail:{loading:!!v}}));
-    }
+    // _setGlobalLoading is the shared top-level function defined near
+    // window._ccAutoParkPass — kept local variable removed to avoid shadowing.
     function _coldParseAndCache(entry) {
       return loadIFC(entry.buffer, DISC[0].c, function(){})
         .then(function(result) {
@@ -19356,6 +19374,11 @@ function startApp() {
   }
 
   // ── Splat reference-layers panel + PWA install banner ──  See INTERNALS.md § 21.17
+  /* eslint-disable react-hooks/rules-of-hooks -- these are ordinary
+     components, always called unconditionally in the same order, but their
+     names are prefixed with `_` per this project's naming convention (see
+     CLAUDE.md's globals discipline), so eslint-plugin-react-hooks' PascalCase
+     heuristic can't recognize them as components. */
   function _InstallAppBanner() {
     var stShow = useState(false);
     var show = stShow[0], setShow = stShow[1];
@@ -19461,6 +19484,7 @@ function startApp() {
       })}
     </div>`;
   }
+  /* eslint-enable react-hooks/rules-of-hooks */
 
   function ModelCard(props) {
     var m=props.m, d=props.d, s=props.s;
@@ -20298,7 +20322,6 @@ function startApp() {
   function ClashStatsBar(props) {
     var items = props.items, isClash = props.isClash, delta = props.delta;
     var stTitlesBusy = useState(false), titlesBusy = stTitlesBusy[0], setTitlesBusy = stTitlesBusy[1];
-    if (!items.length) return null;
     // Single O(N) pass instead of 7 filters — matters at 10k+ clashes.
     var counts = React.useMemo(function(){
       var c = {total:items.length, untitled:0, open:0, inProg:0, resolved:0, hard:0, soft:0, dup:0, vis:0};
@@ -20317,6 +20340,7 @@ function startApp() {
       }
       return c;
     }, [items, isClash]);
+    if (!items.length) return null;
     var total = counts.total, untitled = counts.untitled, open = counts.open, inProg = counts.inProg, resolved = counts.resolved, hard = counts.hard, soft = counts.soft, dup = counts.dup, vis = counts.vis;
     var pct = total > 0 ? Math.round(resolved / total * 100) : 0;
     var barCol = pct >= 80 ? '#22c55e' : pct >= 40 ? '#f59e0b' : '#ef4444';
@@ -20879,6 +20903,9 @@ function startApp() {
       window.addEventListener('keydown', onKey);
       return function(){ window.removeEventListener('keydown', onKey); };
     }, []);
+    // Task D: role="dialog" aria-modal="true" modals must trap/move focus.
+    var cardRef = useRef(null);
+    _ccUseFocusTrap(cardRef, true);
     function runNow(){
       if (!canRun) return;
       var rules = s.rules;
@@ -20893,7 +20920,7 @@ function startApp() {
     }
     return html`<div class="cc-modal-backdrop" style=${S_BACKDROP} role="dialog" aria-modal="true" aria-labelledby="cc-run-detection-title"
       onClick=${close}>
-      <div class="cc-modal-card" style=${{...S_MODAL_CARD,width:720,padding:0,display:'flex',flexDirection:'column'}} onClick=${function(e){e.stopPropagation();}}>
+      <div ref=${cardRef} tabindex="-1" class="cc-modal-card" style=${{...S_MODAL_CARD,width:720,padding:0,display:'flex',flexDirection:'column',outline:'none'}} onClick=${function(e){e.stopPropagation();}}>
         <!-- Header -->
         <div style=${{padding:'var(--space-4) var(--space-5) var(--space-3)',display:'flex',alignItems:'center',gap:'var(--space-3)',borderBottom:'1px solid var(--border-subtle)'}}>
           <div style=${{width:32,height:32,borderRadius:'var(--radius-md)',background:'var(--accent-bg)',display:'flex',alignItems:'center',justifyContent:'center',color:'var(--accent)',flexShrink:0}}>
@@ -21335,6 +21362,66 @@ function startApp() {
     </div>`;
   }
 
+  // Export flyout for the Issues panel toolbar (BCF 2.1/3.0, clash report, data
+  // quality report). Split out into its own component — this used to be an IIFE
+  // invoked inline inside IssuePanel's JSX (`${function(){ ...useState/useRef/
+  // useEffect... }()}`), but that whole block only ran when s.tab==='issues'
+  // (`${s.tab==='issues' && html\`...\`}` short-circuits otherwise), so the
+  // hooks inside it were called conditionally — a real rules-of-hooks
+  // violation that can throw "Rendered fewer hooks than expected" when
+  // switching tabs. As its own component it mounts/unmounts cleanly instead.
+  /* eslint-disable react-hooks/rules-of-hooks -- ordinary component, always
+     called unconditionally in the same order; the `_`-prefixed name (this
+     project's naming convention, see CLAUDE.md) just isn't recognized by
+     eslint-plugin-react-hooks' PascalCase heuristic. */
+  function _BcfExportMenu(props) {
+    var s = props.s;
+    var bcfItems = s.issues && s.issues.length ? s.issues : (s.clashes||[]);
+    var hasItems = bcfItems.length > 0;
+    var source = s.issues && s.issues.length ? 'issues' : 'clashes';
+    var exportRef2 = useRef(null);
+    var eo=useState(false), exportOpen=eo[0], setExportOpen=eo[1];
+    useEffect(function(){
+      if(!exportOpen) return;
+      function onOut(e){if(exportRef2.current&&!exportRef2.current.contains(e.target))setExportOpen(false);}
+      document.addEventListener('mousedown',onOut);
+      return function(){document.removeEventListener('mousedown',onOut);};
+    },[exportOpen]);
+    return html`<div ref=${exportRef2} style=${{position:'relative',flexShrink:0}}>
+      <button
+        title=${hasItems?'Export '+bcfItems.length+' '+source+' to BCF':'Nothing to export yet'}
+        onClick=${function(){if(hasItems)setExportOpen(!exportOpen);}}
+        style=${{...S_BTN,padding:'.35rem .55rem',background:'var(--bg-secondary)',color:hasItems?'var(--text-secondary)':'var(--text-muted)',border:'1px solid var(--border)',fontSize:'0.72rem',fontWeight:600,opacity:hasItems?1:0.5,cursor:hasItems?'pointer':'default',display:'inline-flex',alignItems:'center',gap:'.25rem',whiteSpace:'nowrap'}}>
+        <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+        Export
+        <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M6 9l6 6 6-6"/></svg>
+      </button>
+      ${exportOpen && html`<div style=${{position:'absolute',right:0,top:'calc(100% + 4px)',background:'var(--bg-secondary)',border:'1px solid var(--border)',borderRadius:'var(--radius-sm)',boxShadow:'var(--shadow-md)',zIndex:200,minWidth:160,overflow:'hidden'}}>
+        <button onClick=${function(){exportBCF(bcfItems,'2.1',s.viewpoints,s);setExportOpen(false);}}
+          style=${{display:'block',width:'100%',textAlign:'left',padding:'.45rem .7rem',fontSize:'0.75rem',background:'none',border:'none',color:'var(--text-primary)',cursor:'pointer',fontFamily:'var(--font-body)'}}>
+          BCF 2.1
+          <span style=${{display:'block',fontSize:'0.63rem',color:'var(--text-faint)'}}>Revit, Navisworks, Solibri</span>
+        </button>
+        <button onClick=${function(){exportBCF(bcfItems,'3.0',s.viewpoints,s);setExportOpen(false);}}
+          style=${{display:'block',width:'100%',textAlign:'left',padding:'.45rem .7rem',fontSize:'0.75rem',background:'none',border:'none',color:'var(--text-primary)',cursor:'pointer',fontFamily:'var(--font-body)',borderTop:'1px solid var(--border-subtle)'}}>
+          BCF 3.0
+          <span style=${{display:'block',fontSize:'0.63rem',color:'var(--text-faint)'}}>Extended spec, newer tools</span>
+        </button>
+        <button onClick=${function(){if(window._ccClashReport)window._ccClashReport(s);setExportOpen(false);}}
+          style=${{display:'block',width:'100%',textAlign:'left',padding:'.45rem .7rem',fontSize:'0.75rem',background:'none',border:'none',color:'var(--text-primary)',cursor:'pointer',fontFamily:'var(--font-body)',borderTop:'1px solid var(--border-subtle)'}}>
+          ⎙ Clash report
+          <span style=${{display:'block',fontSize:'0.63rem',color:'var(--text-faint)'}}>Print-ready summary, trend + clusters</span>
+        </button>
+        <button onClick=${function(){if(window._ccDataQualityReport)window._ccDataQualityReport(s);setExportOpen(false);}}
+          style=${{display:'block',width:'100%',textAlign:'left',padding:'.45rem .7rem',fontSize:'0.75rem',background:'none',border:'none',color:'var(--text-primary)',cursor:'pointer',fontFamily:'var(--font-body)',borderTop:'1px solid var(--border-subtle)'}}>
+          ⎙ Data quality report
+          <span style=${{display:'block',fontSize:'0.63rem',color:'var(--text-faint)'}}>Quality Score, BIM basics, ILS, RVB, accessibility</span>
+        </button>
+      </div>`}
+    </div>`;
+  }
+  /* eslint-enable react-hooks/rules-of-hooks */
+
   function IssuePanel(props) {
     var s=props.s, d=props.d, f=s.filters, hideTabBar=props.hideTabBar;
     var fo=useState(false), filtersOpen=fo[0], setFiltersOpen=fo[1];
@@ -21703,51 +21790,7 @@ function startApp() {
               + ${_cc_t('issues.fromClash','From clash')}
             </button>`;
           }()}
-          ${function(){
-            var bcfItems = s.issues && s.issues.length ? s.issues : (s.clashes||[]);
-            var hasItems = bcfItems.length > 0;
-            var source = s.issues && s.issues.length ? 'issues' : 'clashes';
-            var exportRef2 = useRef(null);
-            var eo=useState(false), exportOpen=eo[0], setExportOpen=eo[1];
-            useEffect(function(){
-              if(!exportOpen) return;
-              function onOut(e){if(exportRef2.current&&!exportRef2.current.contains(e.target))setExportOpen(false);}
-              document.addEventListener('mousedown',onOut);
-              return function(){document.removeEventListener('mousedown',onOut);};
-            },[exportOpen]);
-            return html`<div ref=${exportRef2} style=${{position:'relative',flexShrink:0}}>
-              <button
-                title=${hasItems?'Export '+bcfItems.length+' '+source+' to BCF':'Nothing to export yet'}
-                onClick=${function(){if(hasItems)setExportOpen(!exportOpen);}}
-                style=${{...S_BTN,padding:'.35rem .55rem',background:'var(--bg-secondary)',color:hasItems?'var(--text-secondary)':'var(--text-muted)',border:'1px solid var(--border)',fontSize:'0.72rem',fontWeight:600,opacity:hasItems?1:0.5,cursor:hasItems?'pointer':'default',display:'inline-flex',alignItems:'center',gap:'.25rem',whiteSpace:'nowrap'}}>
-                <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
-                Export
-                <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M6 9l6 6 6-6"/></svg>
-              </button>
-              ${exportOpen && html`<div style=${{position:'absolute',right:0,top:'calc(100% + 4px)',background:'var(--bg-secondary)',border:'1px solid var(--border)',borderRadius:'var(--radius-sm)',boxShadow:'var(--shadow-md)',zIndex:200,minWidth:160,overflow:'hidden'}}>
-                <button onClick=${function(){exportBCF(bcfItems,'2.1',s.viewpoints,s);setExportOpen(false);}}
-                  style=${{display:'block',width:'100%',textAlign:'left',padding:'.45rem .7rem',fontSize:'0.75rem',background:'none',border:'none',color:'var(--text-primary)',cursor:'pointer',fontFamily:'var(--font-body)'}}>
-                  BCF 2.1
-                  <span style=${{display:'block',fontSize:'0.63rem',color:'var(--text-faint)'}}>Revit, Navisworks, Solibri</span>
-                </button>
-                <button onClick=${function(){exportBCF(bcfItems,'3.0',s.viewpoints,s);setExportOpen(false);}}
-                  style=${{display:'block',width:'100%',textAlign:'left',padding:'.45rem .7rem',fontSize:'0.75rem',background:'none',border:'none',color:'var(--text-primary)',cursor:'pointer',fontFamily:'var(--font-body)',borderTop:'1px solid var(--border-subtle)'}}>
-                  BCF 3.0
-                  <span style=${{display:'block',fontSize:'0.63rem',color:'var(--text-faint)'}}>Extended spec, newer tools</span>
-                </button>
-                <button onClick=${function(){if(window._ccClashReport)window._ccClashReport(s);setExportOpen(false);}}
-                  style=${{display:'block',width:'100%',textAlign:'left',padding:'.45rem .7rem',fontSize:'0.75rem',background:'none',border:'none',color:'var(--text-primary)',cursor:'pointer',fontFamily:'var(--font-body)',borderTop:'1px solid var(--border-subtle)'}}>
-                  ⎙ Clash report
-                  <span style=${{display:'block',fontSize:'0.63rem',color:'var(--text-faint)'}}>Print-ready summary, trend + clusters</span>
-                </button>
-                <button onClick=${function(){if(window._ccDataQualityReport)window._ccDataQualityReport(s);setExportOpen(false);}}
-                  style=${{display:'block',width:'100%',textAlign:'left',padding:'.45rem .7rem',fontSize:'0.75rem',background:'none',border:'none',color:'var(--text-primary)',cursor:'pointer',fontFamily:'var(--font-body)',borderTop:'1px solid var(--border-subtle)'}}>
-                  ⎙ Data quality report
-                  <span style=${{display:'block',fontSize:'0.63rem',color:'var(--text-faint)'}}>Quality Score, BIM basics, ILS, RVB, accessibility</span>
-                </button>
-              </div>`}
-            </div>`;
-          }()}
+          <${_BcfExportMenu} s=${s} />
         </div>
       </div>`}
       ${!isExplorerTab && !isStandardsTab && items.length>0 && function(){
@@ -24830,7 +24873,10 @@ function startApp() {
         if (isClash && (e.key==='t'||e.key==='T') && groups && groups.length) {
           var g = currentGroup(); if (g && window._ccTriageCluster) { e.preventDefault(); window._ccTriageCluster(g.items); return; }
         }
-        if (isClash && (e.key==='r'||e.key==='R') && groups && groups.length) {
+        // Shift+R (not plain R — R alone is the global "reset camera" key,
+        // handled by a separate window-level handler; both used to fire on
+        // every plain R press since they're independent listeners).
+        if (isClash && e.shiftKey && (e.key==='r'||e.key==='R') && groups && groups.length) {
           var gR = currentGroup();
           if (gR) {
             var open = gR.items.filter(function(it){return it.status!=='resolved'&&it.status!=='closed';});
@@ -24841,7 +24887,11 @@ function startApp() {
             }
           }
         }
-        if (isClash && (e.key==='x'||e.key==='X') && groups && groups.length) {
+        // Shift+X (not plain X — X alone is the global "toggle section
+        // plane on the X axis" key, handled by a separate window-level
+        // handler; both used to fire on every plain X press since they're
+        // independent listeners).
+        if (isClash && e.shiftKey && (e.key==='x'||e.key==='X') && groups && groups.length) {
           var gX = currentGroup();
           if (gX) {
             e.preventDefault();
@@ -24861,6 +24911,11 @@ function startApp() {
           for (var cdvI=0; cdvI<flatItems.length; cdvI++) { if (flatItems[cdvI].id===activeId) { itCDV = flatItems[cdvI]; break; } }
           if (itCDV && itCDV.status!=='confirmed') {
             e.preventDefault();
+            // stopPropagation so V doesn't also reach WalkModeHUD's
+            // window-level 'v'-saves-a-viewpoint handler when walk mode is
+            // active alongside the clash panel — V here must ONLY set the
+            // clash status, not silently save a viewpoint too.
+            e.stopPropagation();
             var cdvStatus = (e.key==='c'||e.key==='C') ? 'confirmed' : (e.key==='d'||e.key==='D') ? 'denied' : 'accepted_needs_check';
             if (window._ccPrepareAdvance) window._ccPrepareAdvance(activeId);
             d({t:A.UPD_CLASH, id:activeId, u:{status:cdvStatus}});
@@ -24870,6 +24925,14 @@ function startApp() {
         }
         if(e.key!=='ArrowDown'&&e.key!=='ArrowUp'&&e.key!=='Tab'&&e.key!=='j'&&e.key!=='J'&&e.key!=='k'&&e.key!=='K') return;
         if(flatItems.length===0) return;
+        // Tab/Shift+Tab only means "jump to next/prev group" while focus is
+        // already somewhere inside the clash list (e.g. a row's own button)
+        // — otherwise this global document-level handler hijacked every Tab
+        // press on the page the moment any clash existed, trapping keyboard
+        // users on document.body with nowhere to Tab to (verified: 40 Tabs
+        // stuck on body). Outside the list, Tab keeps its normal browser
+        // meaning; only Arrow/J/K stay global here.
+        if(e.key==='Tab' && !(scrollRef.current && scrollRef.current.contains(document.activeElement))) return;
         e.preventDefault();
         if (e.key==='j'||e.key==='J') e = {key:'ArrowDown', shiftKey:e.shiftKey};
         else if (e.key==='k'||e.key==='K') e = {key:'ArrowUp', shiftKey:e.shiftKey};
@@ -25008,6 +25071,35 @@ function startApp() {
       }); });
     }, [activeId]);
 
+    // ── ccUiWindowedConflicts: true bounded mounting ──  REWRITE_UI_PLAN.md Phase 3
+    // Same groups/items as legacy — only which rows get mounted differs.
+    // These two useMemo calls must run unconditionally on every render (rules
+    // of hooks) even though their result is only used when windowedOn is
+    // true — windowedOn is a runtime feature flag that can flip between
+    // renders, so gating the hook call itself on it would desync hook order.
+    // The expensive work is skipped internally instead. They also must sit
+    // above the items.length===0 early return below (isClusterGroup is a
+    // hoisted function declaration, safe to reference before its textual
+    // definition) — hooks declared after an early return are only called on
+    // some renders, which is the same rules-of-hooks violation.
+    var wRows = useMemo(function(){
+      if (!windowedOn) return null;
+      return _ccBuildConflictRows(items, groups, collapsed, groupLimits, isClusterGroup);
+    }, [windowedOn, items, groups, collapsed, groupLimits]);
+    // Prefix-sum offsets over the FULL row list — proportional to total
+    // result count, not the visible window. Previously recomputed on every
+    // render, including every scroll-driven re-render (winScrollTop
+    // changes on scroll), which is real, avoidable CPU work at 50k+
+    // conflicts. heightCacheRef is a mutable ref (real per-row DOM
+    // measurements refine it over time), so its own changes can't be a
+    // useMemo dependency directly — winForceTick is the state variable
+    // that's deliberately bumped exactly when the cache changes (see
+    // above), so depending on it here recomputes offsets only on a real
+    // data or height-measurement change, not on every scroll frame.
+    var wOff = useMemo(function(){
+      if (!windowedOn) return null;
+      return _ccComputeRowOffsets(wRows, heightCacheRef.current);
+    }, [windowedOn, wRows, winForceTick]);
     if(items.length===0) {
       // Same-discipline 0-clash trap (see runDetection): when a federation of
       // same-discipline models returns nothing because cross-model pairs were
@@ -25208,24 +25300,6 @@ function startApp() {
     }
 
     if (windowedOn) {
-      // ── ccUiWindowedConflicts: true bounded mounting ──  REWRITE_UI_PLAN.md Phase 3
-      // Same groups/items as legacy — only which rows get mounted differs.
-      var wRows = useMemo(function(){
-        return _ccBuildConflictRows(items, groups, collapsed, groupLimits, isClusterGroup);
-      }, [items, groups, collapsed, groupLimits]);
-      // Prefix-sum offsets over the FULL row list — proportional to total
-      // result count, not the visible window. Previously recomputed on every
-      // render, including every scroll-driven re-render (winScrollTop
-      // changes on scroll), which is real, avoidable CPU work at 50k+
-      // conflicts. heightCacheRef is a mutable ref (real per-row DOM
-      // measurements refine it over time), so its own changes can't be a
-      // useMemo dependency directly — winForceTick is the state variable
-      // that's deliberately bumped exactly when the cache changes (see
-      // above), so depending on it here recomputes offsets only on a real
-      // data or height-measurement change, not on every scroll frame.
-      var wOff = useMemo(function(){
-        return _ccComputeRowOffsets(wRows, heightCacheRef.current);
-      }, [wRows, winForceTick]);
       var wWin = _ccComputeVisibleRowWindow(wRows, wOff.offsets, winScrollTop, winViewportH, 600);
       var wVisibleRows = wRows.slice(wWin.startIdx, wWin.endIdx);
       return html`<div ref=${scrollRef} onScroll=${onWindowedScroll} style=${{flex:1,overflowY:'auto',position:'relative'}}>
@@ -25713,6 +25787,9 @@ function startApp() {
       window.addEventListener('keydown',onKey);
       return function(){window.removeEventListener('keydown',onKey);};
     },[]);
+    // Task D: role="dialog" aria-modal="true" modals must trap/move focus.
+    var cardRef = useRef(null);
+    _ccUseFocusTrap(cardRef, true);
     function upd(k){return function(e){setForm(function(prev){var n=Object.assign({},prev);n[k]=e.target.value;return n;})}}
     function submit(e){
       e.preventDefault();
@@ -25751,7 +25828,7 @@ function startApp() {
     var META_NEUTRAL={fontSize:'var(--text-2xs)',background:'var(--bg-secondary)',color:'var(--text-secondary)',padding:'.1rem var(--space-2)',borderRadius:'var(--radius-pill)'};
     var titleText = fromClash?_cc_t('newIssue.titleFromClash','New Issue from Clash'):hasEl?_cc_t('newIssue.titleFromElement','New Element Issue'):_cc_t('newIssue.title','New Issue');
     var titleId = 'cc-newissue-title';
-    return html`<div class="cc-modal-backdrop" style=${S_BACKDROP} role="dialog" aria-modal="true" aria-labelledby=${titleId}><div class="cc-modal-card" style=${{...S_MODAL_CARD,width:440}}>
+    return html`<div class="cc-modal-backdrop" style=${S_BACKDROP} role="dialog" aria-modal="true" aria-labelledby=${titleId}><div ref=${cardRef} tabindex="-1" class="cc-modal-card" style=${{...S_MODAL_CARD,width:440,outline:'none'}}>
       <div style=${S_MODAL_HEADER}>
         <span id=${titleId} style=${S_MODAL_TITLE}>${titleText}</span>
         <button onClick=${function(){d({t:A.MODAL,v:false})}} style=${S_MODAL_CLOSE} aria-label=${_cc_t('modal.close','Close modal')}>✕</button>
@@ -25835,7 +25912,7 @@ function startApp() {
       for (var i=0; i<hits.length; i++){
         var h = hits[i];
         if (!h.object || !h.object.visible) continue;
-        if (typeof _isGhostMat === 'function' && _isGhostMat(h.object.material)) continue;
+        if (S._isGhostMat && S._isGhostMat(h.object.material)) continue;
         if (!h.face) continue;
         var n = h.face.normal.clone();
         var nm = new THREE.Matrix3().getNormalMatrix(h.object.matrixWorld);
@@ -26618,7 +26695,7 @@ function startApp() {
       // Bake a cheap top-down render once per mount
       try {
         var Sref = window._ccState3d; if (!Sref || !Sref.renderer || !Sref.scene || !Sref.mg) return;
-        var box = (typeof _elemsBBox==='function') ? _elemsBBox() : null;
+        var box = (typeof window._ccElemsBBox==='function') ? window._ccElemsBBox() : null;
         if (!box || box.isEmpty()) return;
         setBbox({minX:box.min.x,minZ:box.min.z,maxX:box.max.x,maxZ:box.max.z});
         var w = 220, h = 220;
@@ -27055,6 +27132,9 @@ function startApp() {
       window.addEventListener('keydown', onKey);
       return function(){ window.removeEventListener('keydown', onKey); };
     }, []);
+    // Task D: role="dialog" aria-modal="true" modals must trap/move focus.
+    var cardRef = useRef(null);
+    _ccUseFocusTrap(cardRef, true);
 
     function captureCurrent() {
       var n = (name||'').trim() || 'View ' + ((s.smartViews||[]).filter(function(v){return !v.isPreset;}).length+1);
@@ -27102,7 +27182,7 @@ function startApp() {
 
     return html`<div class="cc-modal-backdrop" style=${S_BACKDROP} role="dialog" aria-modal="true"
       onClick=${function(){d({t:A.SMART_VIEWS,v:false});}}>
-      <div class="cc-modal-card" style=${{...S_MODAL_CARD,width:680,padding:0,display:'flex',flexDirection:'column'}} onClick=${function(e){e.stopPropagation();}}>
+      <div ref=${cardRef} tabindex="-1" class="cc-modal-card" style=${{...S_MODAL_CARD,width:680,padding:0,display:'flex',flexDirection:'column',outline:'none'}} onClick=${function(e){e.stopPropagation();}}>
         <div style=${{padding:'1rem 1.2rem .6rem',display:'flex',alignItems:'center',gap:'.6rem'}}>
           <div style=${{width:32,height:32,borderRadius:'var(--radius-md)',background:'var(--accent-bg)',display:'flex',alignItems:'center',justifyContent:'center',color:'var(--accent)'}}>
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M12 1v6m0 10v6M5.64 5.64l4.24 4.24m4.24 4.24l4.24 4.24M1 12h6m10 0h6M5.64 18.36l4.24-4.24m4.24-4.24l4.24-4.24"/></svg>
@@ -27178,6 +27258,9 @@ function startApp() {
       window.addEventListener('keydown', onKey);
       return function(){ window.removeEventListener('keydown', onKey); };
     }, []);
+    // Task D: role="dialog" aria-modal="true" modals must trap/move focus.
+    var cardRef = useRef(null);
+    _ccUseFocusTrap(cardRef, true);
 
     var collaborators = (function(){
       var seen = {};
@@ -27282,7 +27365,7 @@ function startApp() {
 
     return html`<div class="cc-modal-backdrop" style=${S_BACKDROP} role="dialog" aria-modal="true" aria-labelledby="cc-share-title"
       onClick=${function(){d({t:A.SHARE,v:false});}}>
-      <div class="cc-modal-card" style=${{...S_MODAL_CARD,width:560,padding:0,display:'flex',flexDirection:'column'}} onClick=${function(e){e.stopPropagation();}}>
+      <div ref=${cardRef} tabindex="-1" class="cc-modal-card" style=${{...S_MODAL_CARD,width:560,padding:0,display:'flex',flexDirection:'column',outline:'none'}} onClick=${function(e){e.stopPropagation();}}>
         <div style=${{padding:'1rem 1.2rem .6rem',display:'flex',alignItems:'center',gap:'.6rem'}}>
           <div style=${{width:32,height:32,borderRadius:8,background:'var(--accent-bg)',display:'flex',alignItems:'center',justifyContent:'center',color:'var(--accent)'}}>
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/></svg>
@@ -27636,12 +27719,15 @@ function startApp() {
       window.addEventListener('keydown', onKey);
       return function(){ window.removeEventListener('keydown', onKey); };
     }, []);
-    // REWRITE_UI_PLAN.md Phase 9 — first verified integration of the shared
-    // focus-trap primitive. Flag-gated; the modal's existing Escape handler
-    // and DOM structure above/below are completely unchanged either way.
+    // REWRITE_UI_PLAN.md Phase 9 — the shared focus-trap primitive, applied
+    // unconditionally (was flag-gated behind ccUiModalV2, defaultEnabled:
+    // false, during its first verified rollout — this modal is role="dialog"
+    // aria-modal="true" and should always trap focus, not only when that
+    // flag happens to be on). The modal's existing Escape handler and DOM
+    // structure above/below are unchanged.
     var modalV2On = !!(window._ccSafetyMigrations && window._ccSafetyMigrations.isEnabled('ccUiModalV2'));
     var cardRef = useRef(null);
-    _ccUseFocusTrap(cardRef, modalV2On);
+    _ccUseFocusTrap(cardRef, true);
     var sections = [
       { title: _cc_t('shortcuts.section.general','General'), rows: [
         ['?',           _cc_t('shortcuts.general.openPanel','Open this shortcuts panel')],
@@ -27654,8 +27740,8 @@ function startApp() {
         ['Scroll',      _cc_t('shortcuts.mouse.zoom','Zoom to cursor')],
       ]},
       { title: _cc_t('shortcuts.section.view','View'), rows: [
-        ['1',           _cc_t('shortcuts.view.standard','Standard rendering')],
-        ['2',           _cc_t('shortcuts.view.shaded','Shaded rendering')],
+        ['1',           _cc_t('shortcuts.view.shaded','Shaded rendering')],
+        ['2',           _cc_t('shortcuts.view.standard','Hidden Line rendering')],
         ['3',           _cc_t('shortcuts.view.rendered','Rendered (lit) view')],
         ['4',           _cc_t('shortcuts.view.xray','X-Ray (semi-transparent)')],
         ['5',           _cc_t('shortcuts.view.wireframe','Wireframe')],
@@ -27684,13 +27770,13 @@ function startApp() {
       ]},
       { title: _cc_t('shortcuts.section.clashTriage','Clash triage'), rows: [
         ['J / K',       _cc_t('shortcuts.triage.nextPrev','Next / previous clash — frames, isolates, and colors the pair')],
-        ['Tab / Shift+Tab', _cc_t('shortcuts.triage.nextPrevGroup','Next / previous group')],
+        ['Tab / Shift+Tab', _cc_t('shortcuts.triage.nextPrevGroup','Next / previous group (while focus is inside the clash list)')],
         ['C',           _cc_t('shortcuts.triage.confirm','Confirm active clash')],
         ['D',           _cc_t('shortcuts.triage.deny','Deny active clash (false positive)')],
         ['V',           _cc_t('shortcuts.triage.accept','Accept, flag for later verification')],
         ['T',           _cc_t('shortcuts.triage.aiTriage','AI-triage the active group')],
-        ['R',           _cc_t('shortcuts.triage.resolveAll','Resolve all open clashes in the active group')],
-        ['X',           _cc_t('shortcuts.triage.expandCollapse','Expand / collapse the active group')],
+        ['Shift+R',     _cc_t('shortcuts.triage.resolveAll','Resolve all open clashes in the active group')],
+        ['Shift+X',     _cc_t('shortcuts.triage.expandCollapse','Expand / collapse the active group')],
         ['/',           _cc_t('shortcuts.triage.focusFilter','Focus the filter box')],
       ]},
       { title: _cc_t('shortcuts.section.walkMode','Walk mode'), rows: [
@@ -28067,6 +28153,11 @@ function startApp() {
       if (inputRef.current) inputRef.current.focus();
     }, []);
     useEffect(function(){ setIdx(0); }, [q]);
+    // Task D: role="dialog" aria-modal="true" modals must trap/move focus.
+    // The input's own autofocus above already covers "move focus in"; this
+    // adds Tab-containment and focus-restore-on-close.
+    var cardRef = useRef(null);
+    _ccUseFocusTrap(cardRef, true);
     function onKey(e){
       if (e.key === 'Escape') { e.preventDefault(); onClose(); return; }
       if (e.key === 'ArrowDown') { e.preventDefault(); setIdx(Math.min(list.length-1, idx+1)); return; }
@@ -28082,7 +28173,7 @@ function startApp() {
     });
     return html`<div class="cc-modal-backdrop" style=${{...S_BACKDROP,alignItems:'flex-start',paddingTop:'10vh'}} role="dialog" aria-modal="true" aria-labelledby="cc-cmdk-title"
       onClick=${onClose} onKeyDown=${onKey}>
-      <div class="cc-modal-card" style=${{...S_MODAL_CARD,width:560,maxHeight:'70vh',display:'flex',flexDirection:'column'}} onClick=${function(e){e.stopPropagation();}}>
+      <div ref=${cardRef} tabindex="-1" class="cc-modal-card" style=${{...S_MODAL_CARD,width:560,maxHeight:'70vh',display:'flex',flexDirection:'column',outline:'none'}} onClick=${function(e){e.stopPropagation();}}>
         <div style=${{padding:'var(--space-3) var(--space-4)',borderBottom:'1px solid var(--border-subtle)',display:'flex',alignItems:'center',gap:'var(--space-3)'}}>
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--text-muted)" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
           <input ref=${inputRef} type="text" id="cc-cmdk-title" aria-label=${_cc_t('cmdk.commandOrQuestion','Command or question')}
@@ -28198,6 +28289,9 @@ function startApp() {
         window.removeEventListener('cc-training-sent', flashSent);
       };
     },[]);
+    // Task D: role="dialog" aria-modal="true" modals must trap/move focus.
+    var cardRef = useRef(null);
+    _ccUseFocusTrap(cardRef, true);
     function toggleConsent() {
       var nv = !dataConsent;
       setDataConsent(nv);
@@ -28217,7 +28311,7 @@ function startApp() {
       </div>`;
     }
     var NAVBTN = function(on){return {...S_BTN,display:'block',width:'100%',textAlign:'left',background:on?'var(--accent-bg-deep)':'none',color:on?'var(--accent)':'var(--text-secondary)',fontWeight:on?600:400,fontSize:'0.82rem',padding:'.5rem .7rem',borderRadius:'var(--radius-sm)',borderLeft:on?'2px solid var(--accent)':'2px solid transparent'};};
-    return html`<div class="cc-modal-backdrop" style=${S_BACKDROP} role="dialog" aria-modal="true" aria-labelledby="cc-settings-title" onClick=${function(){d({t:A.SETTINGS,v:false});}}><div class="cc-modal-card" style=${{...S_MODAL_CARD,width:640,overflow:'hidden',display:'flex',flexDirection:'column'}} onClick=${function(e){e.stopPropagation();}}>
+    return html`<div class="cc-modal-backdrop" style=${S_BACKDROP} role="dialog" aria-modal="true" aria-labelledby="cc-settings-title" onClick=${function(){d({t:A.SETTINGS,v:false});}}><div ref=${cardRef} tabindex="-1" class="cc-modal-card" style=${{...S_MODAL_CARD,width:640,overflow:'hidden',display:'flex',flexDirection:'column',outline:'none'}} onClick=${function(e){e.stopPropagation();}}>
       <div style=${S_MODAL_HEADER}>
         <span id="cc-settings-title" style=${S_MODAL_TITLE}>${_cc_t('panel.settings.title','Settings')}</span>
         <button onClick=${function(){d({t:A.SETTINGS,v:false})}} style=${S_MODAL_CLOSE} aria-label=${_cc_t('settings.closeAria','Close settings')}>✕</button>
@@ -29311,9 +29405,12 @@ function startApp() {
       d({ t: 'UNDERLAY_MODE', v: 'view2d' });
       onClose();
     }
+    // Task D: role="dialog" aria-modal="true" modals must trap/move focus.
+    var cardRef = useRef(null);
+    _ccUseFocusTrap(cardRef, true);
     return html`<div class="cc-modal-backdrop" style=${S_BACKDROP} role="dialog" aria-modal="true"
       onClick=${onClose}>
-      <div class="cc-modal-card" style=${{...S_MODAL_CARD,width:360,padding:0}} onClick=${function(e){e.stopPropagation();}}>
+      <div ref=${cardRef} tabindex="-1" class="cc-modal-card" style=${{...S_MODAL_CARD,width:360,padding:0,outline:'none'}} onClick=${function(e){e.stopPropagation();}}>
         <div style=${{padding:'var(--space-4) var(--space-4) var(--space-2)',borderBottom:'1px solid var(--border-subtle)',display:'flex',alignItems:'center',justifyContent:'space-between'}}>
           <span style=${{fontWeight:700,fontSize:'0.95rem',color:'var(--text-primary)'}}>${_cc_t('storeyPicker.selectLevel','Select Level')}</span>
           <button onClick=${onClose} style=${{...S_BTN,background:'none',color:'var(--text-faint)',fontSize:'1rem',padding:'0 var(--space-1)'}}>✕</button>
@@ -33062,7 +33159,7 @@ function startApp() {
       <!-- Self-clashes (matches standards tab) -->
       <div style=${{display:'flex',alignItems:'flex-start',gap:'.35rem',marginTop:'.35rem'}}>
         <span style=${{fontSize:'0.72rem',color:'var(--text-primary)',whiteSpace:'nowrap',paddingTop:'.25rem'}}>${_cc_t('run.checkWithin','Check within')}</span>
-        ${_selfClashPicker(rules, allModels, function(upds){ Object.keys(upds).forEach(function(k){upd(k,upds[k]);}); })}
+        ${_selfClashPicker(rules, s.models, function(upds){ Object.keys(upds).forEach(function(k){upd(k,upds[k]);}); })}
       </div>
 
       <!-- Min overlap volume (hard clashes only, matches standards tab) -->
@@ -33731,7 +33828,7 @@ function startApp() {
     }}>
       ${llmStatus === 'loading' && html`<span style=${{fontSize:'0.69rem', color:'var(--accent)', display:'flex', alignItems:'center', gap:'.25rem'}}>
         <span class="spin" style=${{display:'inline-block', width:'.55rem', height:'.55rem', borderRadius:'50%', border:'1.5px solid var(--accent-bg)', borderTopColor:'var(--accent)'}}></span>
-        AI loading${llmProgress > 0 ? ' ' + llmProgress + '%' : '...'}
+        AI loading...
       </span>`}
       ${llmStatus === 'ready' && backendLabel && html`<span style=${{fontSize:'0.63rem', color:backendColor, display:'flex', alignItems:'center', gap:'.2rem'}}>
         <span style=${{width:'.4rem', height:'.4rem', borderRadius:'50%', background:backendColor, display:'inline-block'}}></span>
@@ -34832,7 +34929,7 @@ function startApp() {
           <div style=${{borderTop:'1px solid var(--border-subtle)',marginTop:'.8rem',paddingTop:'.8rem',display:'flex',gap:'.5rem',flexWrap:'wrap'}}>
             <a href="#" onClick=${function(e){
               e.preventDefault();
-              var _s = window._ccLatestState || s;
+              var _s = window._ccLatestState || {};
               var models = _s.models || [];
               var totalEls = 0, totalMeshes = 0;
               models.forEach(function(m){ totalEls += (m.elements||[]).length; totalMeshes += (m.meshes||[]).length; });
@@ -36271,6 +36368,10 @@ function startApp() {
 
   // ── Export Flyout (hover submenu for export options) ──────────
 
+  /* eslint-disable react-hooks/rules-of-hooks -- ordinary component, always
+     called unconditionally in the same order; the `_`-prefixed name (this
+     project's naming convention, see CLAUDE.md) just isn't recognized by
+     eslint-plugin-react-hooks' PascalCase heuristic. */
   function _ExportFlyout(props) {
     var _o = useState(false), open = _o[0], setOpen = _o[1];
     var closeTimer = useRef(null);
@@ -36307,6 +36408,7 @@ function startApp() {
       </div>`}
     </div>`;
   }
+  /* eslint-enable react-hooks/rules-of-hooks */
 
   // ── Tools Panel ───────────────────────────────────────────────
   function ToolsPanel(props) {
@@ -36872,9 +36974,13 @@ function startApp() {
      Visible buttons everywhere — every shortcut also has a button. */
   function TopToolbar(props) {
     var s=props.s, d=props.d;
-    if (!s.models || s.models.length === 0) return null;
-    if (s.presenting) return null;
-
+    // NOTE: the early returns below (no models / presenting mode) must come
+    // AFTER every hook call in this component, not before — s.models can
+    // transition between empty and non-empty across renders, and putting an
+    // early return before useState/useRef/useEffect calls made the number of
+    // hooks called vary between renders (a real rules-of-hooks violation that
+    // can throw "Rendered fewer hooks than expected" when a model unloads or
+    // presenting mode toggles).
     var styleSt = useState(false), styleOpen=styleSt[0], setStyleOpen=styleSt[1];
     var styleRef = useRef(null);
     var pickSt  = useState(false), pickOn = pickSt[0], setPickOn = pickSt[1];
@@ -36900,6 +37006,9 @@ function startApp() {
       window.addEventListener('keydown', onKey);
       return function(){ window.removeEventListener('cc-section-pick-end', onEnd); window.removeEventListener('keydown', onKey); };
     }, []);
+
+    if (!s.models || s.models.length === 0) return null;
+    if (s.presenting) return null;
 
     var activeMode = (s.walkMode || s.walkPlacing) ? 'walk'
       : pickOn ? 'slice'
@@ -37031,10 +37140,16 @@ function startApp() {
       {id:'shaded',    label:_cc_t('toolbar.shaded','Shaded')},
       {id:'standard',  label:_cc_t('toolbar.hiddenLine','Hidden Line')},
       {id:'rendered',  label:_cc_t('toolbar.rendered','Rendered')},
-      {id:'xray',      label:_cc_t('toolbar.xray','X-Ray')}
+      {id:'xray',      label:_cc_t('toolbar.xray','X-Ray')},
+      {id:'wireframe', label:_cc_t('toolbar.wireframe','Wireframe')}
     ];
     var curStyle = s.prefs.renderStyle || 'shaded';
-    var curStyleLabel = (styles.find(function(x){return x.id===curStyle;})||styles[2]).label;
+    // Falls back to styles[0] (Shaded, the actual default renderStyle pref)
+    // rather than an arbitrary index — wireframe used to be reachable only
+    // via hotkey 5 / NL command and wasn't in this array at all, so its
+    // label silently fell back to whatever styles[2] happened to be
+    // ("Rendered") instead of "Wireframe".
+    var curStyleLabel = (styles.find(function(x){return x.id===curStyle;})||styles[0]).label;
 
     /* Section sub-row only appears when a slice plane exists, anchored under
        the toolbar (not floating). Same ink palette, no glass. */
@@ -37940,9 +38055,18 @@ function startApp() {
     var _clashesRef = useRef(s.clashes);
     var _selectedRef = useRef(s.selected);
     var _trainingRef = useRef(s.trainingMode);
+    // Full-state ref for the dispatch wrapper below (`d`), which is a
+    // useCallback with an empty dep array — everything it reads off `s`
+    // directly (rather than through a ref) is frozen at mount time forever.
+    // _stateRef.current is always the latest render's state, so UPD_ISSUE /
+    // BATCH_UPD_CLASH / BATCH_UPD_ISSUE's changelog entries and shared-sync
+    // pushes (which need the current s.issues/s.selected) see real data
+    // instead of the initial empty state.
+    var _stateRef = useRef(s);
     _clashesRef.current = s.clashes;
     _selectedRef.current = s.selected;
     _trainingRef.current = s.trainingMode;
+    _stateRef.current = s;
     var d = useCallback(function(a) {
       _rawD(a);
       if (!_trainingRef.current) return;
@@ -37976,7 +38100,7 @@ function startApp() {
       // ── Changelog recording (works both single-user and shared) ──
       if (!a._fromSync && a.t !== A.APPEND_CHANGELOG && a.t !== A.MERGE_CHANGELOG) {
         try {
-          var _clEntry = _buildChangelogEntry(a, _clashesRef.current, s);
+          var _clEntry = _buildChangelogEntry(a, _clashesRef.current, _stateRef.current);
           if (_clEntry) _rawD({t:A.APPEND_CHANGELOG, v:_clEntry});
         } catch(e2) {}
         // ── Shared project sync push (Phase 6F) ──
@@ -37987,17 +38111,17 @@ function startApp() {
               var _c = _clashesRef.current.find(function(c){return c.id===a.id;});
               if (_c) _sharedEnqueue(Object.assign({}, _c, a.u, {_updatedAt:_now}));
             } else if (a.t === A.UPD_ISSUE && a.u) {
-              var _i = (s.issues||[]).find(function(i){return i.id===a.id;});
+              var _i = (_stateRef.current.issues||[]).find(function(i){return i.id===a.id;});
               if (_i) _sharedEnqueue(Object.assign({}, _i, a.u, {_updatedAt:_now}));
             } else if (a.t === A.ADD_ISSUE && a.v) {
               _sharedEnqueue(Object.assign({}, a.v, {_updatedAt:_now}));
             } else if (a.t === A.BATCH_UPD_CLASH && a.u) {
               _clashesRef.current.forEach(function(c){
-                if (s.selected[c.id]) _sharedEnqueue(Object.assign({}, c, a.u, {_updatedAt:_now}));
+                if (_selectedRef.current[c.id]) _sharedEnqueue(Object.assign({}, c, a.u, {_updatedAt:_now}));
               });
             } else if (a.t === A.BATCH_UPD_ISSUE && a.u) {
-              (s.issues||[]).forEach(function(i){
-                if (s.selected[i.id]) _sharedEnqueue(Object.assign({}, i, a.u, {_updatedAt:_now}));
+              (_stateRef.current.issues||[]).forEach(function(i){
+                if (_selectedRef.current[i.id]) _sharedEnqueue(Object.assign({}, i, a.u, {_updatedAt:_now}));
               });
             }
           }
@@ -38502,9 +38626,12 @@ function startApp() {
         }
 
         // ── Single-key shortcuts (non-chord keys) ──
+        // Numbers match the STYLE menu's own order/numbering exactly
+        // (Shaded, Hidden Line, Rendered, X-Ray, Wireframe — see the
+        // `styles` array + its `${i+1}` hotkey hints in TopToolbar).
         if(!ctrl && !e.altKey && !e.shiftKey){
-          if(e.key==='1'){ d({t:A.UPD_PREFS,u:{renderStyle:'standard'}}); return; }
-          if(e.key==='2'){ d({t:A.UPD_PREFS,u:{renderStyle:'shaded'}}); return; }
+          if(e.key==='1'){ d({t:A.UPD_PREFS,u:{renderStyle:'shaded'}}); return; }
+          if(e.key==='2'){ d({t:A.UPD_PREFS,u:{renderStyle:'standard'}}); return; }
           if(e.key==='3'){ d({t:A.UPD_PREFS,u:{renderStyle:'rendered'}}); return; }
           if(e.key==='4'){ d({t:A.UPD_PREFS,u:{renderStyle:'xray'}}); return; }
           if(e.key==='5'){ d({t:A.UPD_PREFS,u:{renderStyle:'wireframe'}}); return; }
@@ -38526,6 +38653,17 @@ function startApp() {
           if(window._ccUndoMeasurement && window._ccUndoMeasurement()) { e.preventDefault(); return; }
         }
         if(e.key==='/'&&!ctrl){ e.preventDefault(); if(window._ccNLOpen) window._ccNLOpen(); return; }
+        // Ctrl+F: listed in the shortcuts sheet ("Find / search elements")
+        // but previously unhandled — focuses whichever filter/search input is
+        // currently visible (clash/issue filter, or the Explorer tree's
+        // "Search elements…" box), instead of falling through to the
+        // browser's own Find bar.
+        if((e.key==='f'||e.key==='F')&&ctrl){
+          var _findInp = document.querySelector(
+            'input[type="text"][placeholder^="Filter"],input[type="text"][placeholder^="Search"]'
+          );
+          if(_findInp){ e.preventDefault(); _findInp.focus(); _findInp.select(); return; }
+        }
         // F flips the active section's kept side. With no active section it
         // falls back to fit-to-model so the old habit still works. Home and
         // the Z-F chord also fit, so this is just the friendlier default.

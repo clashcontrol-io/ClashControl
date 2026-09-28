@@ -30,6 +30,29 @@ jobs:
       - name: Run tests
         run: npm test
 
+  # Extracts the main inline <script> from index.html (scripts/lint-inline.js,
+  # preserving line numbers) and lints it with ESLint 9, restricted to
+  # no-undef (error — catches real "X is not defined" runtime crashes like
+  # colour-by mode's _isGhostMat bug) and react-hooks/rules-of-hooks (error —
+  # catches real conditional-hook bugs). exhaustive-deps runs as a
+  # non-failing warning. eslint itself isn't a runtime dependency of the app
+  # (see CLAUDE.md — no build tooling for index.html), so it's installed
+  # fresh here rather than checked into package.json's main dependencies.
+  lint-inline:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Install lint tooling
+        run: npm install --no-save eslint@9 eslint-plugin-react-hooks@5 globals@17
+
+      - name: Lint extracted inline script
+        run: npm run lint:inline
+
   # Headless-Chromium smoke: boots the real app, loads tests/fixtures/
   # smoke-clash.ifc through the real web-ifc WASM pipeline, runs real
   # clash detection, asserts the two crossing walls clash. Catches the
