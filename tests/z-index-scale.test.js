@@ -13,6 +13,8 @@ const path = require('node:path');
 
 const src = fs.readFileSync(path.join(__dirname, '..', 'index.html'), 'utf8');
 
+function escapeRe(str) { return str.replace(/[.*+?^${}()|[\]\\-]/g, '\\$&'); }
+
 const TOKENS = ['--z-panel', '--z-dropdown', '--z-overlay', '--z-modal', '--z-toast', '--z-palette', '--z-tooltip'];
 
 test('the z-index scale is defined once, as CSS custom properties on :root', () => {
@@ -21,7 +23,7 @@ test('the z-index scale is defined once, as CSS custom properties on :root', () 
   const rootEnd = src.indexOf('\n    }', rootStart);
   const rootBody = src.slice(rootStart, rootEnd);
   for (const token of TOKENS) {
-    assert.match(rootBody, new RegExp(token.replace(/[-]/g, '\\-') + ':\\d+;'), token + ' missing from :root');
+    assert.match(rootBody, new RegExp(escapeRe(token) + ':\\d+;'), token + ' missing from :root');
   }
 });
 
@@ -30,7 +32,7 @@ test('tiers are strictly increasing (panel < dropdown < overlay < modal < toast 
   const rootEnd = src.indexOf('\n    }', rootStart);
   const rootBody = src.slice(rootStart, rootEnd);
   const values = TOKENS.map((t) => {
-    const m = rootBody.match(new RegExp(t.replace(/[-]/g, '\\-') + ':(\\d+);'));
+    const m = rootBody.match(new RegExp(escapeRe(t) + ':(\\d+);'));
     assert.ok(m, t + ' value not found');
     return Number(m[1]);
   });

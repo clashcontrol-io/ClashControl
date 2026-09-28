@@ -28,7 +28,7 @@ test('discipline module loads before the application and is precached for offlin
   const main = source.indexOf('window.onload = function() {');
   assert.ok(helper >= 0 && main > helper);
   for (const file of ['safety-migrations.js', 'section-clipping.js', 'renderer-contract.js', 'clash-discipline-core.js']) {
-    assert.match(worker, new RegExp("'" + file.replace('.', '\\.') + "'"));
+    assert.match(worker, new RegExp("'" + file.replace(/[.*+?^${}()|[\]\\-]/g, '\\$&') + "'"));
   }
   assert.match(worker, /var CACHE = 'clashcontrol-v\d+\.\d+\.\d+/);
 });
