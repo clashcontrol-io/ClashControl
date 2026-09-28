@@ -349,12 +349,28 @@
       --border-subtle:#ebebeb;
       --text-primary:#111111;
       --text-secondary:#404040;
-      --text-muted:#737373;
-      --text-faint:#a3a3a3;
+      --text-muted:#545454;
+      --text-faint:#636363;
+      /* text-muted/text-faint (2026-09-28): darkened from #737373/#a3a3a3,
+         which failed WCAG AA color-contrast (axe) against bg-primary/
+         secondary/tertiary — as low as 2.11:1 on #ebebeb. These pass 4.5:1
+         (small text) against all three light backgrounds; see the matching
+         [data-theme=dark] values below and MEMORY.md. */
       /* THE ACCENT: Forest green — architectural, not blue, not warm */
       --accent:#1a6b4a;
       --accent-hover:#155c3e;
-      --accent-subtle:#6aab8a;
+      /* Text/icon color to put ON TOP of a solid --accent-colored surface
+         (buttons, badges). White passes fine on the light theme's accent
+         (6.47:1); the dark theme's brighter accent green does NOT pass with
+         white (axe measured 3.24-3.25:1), so [data-theme=dark] below flips
+         this to a near-black that passes 6.46:1 on that same green instead
+         of darkening --accent itself (which is also used as plain text on
+         dark backgrounds, where it needs to stay light). */
+      --accent-contrast:#fff;
+      /* Darkened 2026-09-28 from #6aab8a (2.45:1 on --accent-bg, an axe
+         color-contrast failure) — now passes 4.5:1 against --accent-bg and
+         every --bg-* surface it's used as text/border color on. */
+      --accent-subtle:#46715b;
       --accent-bg:#ecf7f2;
       --accent-bg-deep:#d3ede2;
       --accent-light:#4d9e75;
@@ -407,7 +423,12 @@
       --hairline:var(--border-subtle);
       --hairline-strong:var(--border);
       --shadow-soft:var(--shadow-sm);--shadow-lifted:var(--shadow-md);
-      --sev-critical:#b91c1c;--sev-major:#b45309;--sev-minor:#15803d;--sev-info:#737373;
+      --sev-critical:#b91c1c;--sev-major:#b45309;--sev-minor:#15803d;--sev-info:var(--text-muted);
+      /* Progress-bar text/fill (clash-list resolved % stats bar). Original
+         #22c55e/#f59e0b/#ef4444 failed color-contrast as TEXT on
+         --bg-tertiary (as low as 1.80:1 on light's #ebebeb); darkened here
+         for legibility as text, while staying visually "good/warn/bad". */
+      --progress-good:#157a3a;--progress-warn:#935f07;--progress-bad:#bf3636;
       /* ── z-index scale (DESIGN.md §Layers) ──
          Fixed/absolute page-level chrome picks ONE of these tiers; values
          are theme-independent (same light/dark) so they aren't repeated
@@ -432,11 +453,17 @@
       --border-subtle:#262626;
       --text-primary:#f0f0f0;
       --text-secondary:#b0b0b0;
-      --text-muted:#737373;
-      --text-faint:#525252;
+      --text-muted:#a0a0a0;
+      --text-faint:#969696;
+      /* text-muted/text-faint (2026-09-28): lightened from #737373/#525252,
+         which failed WCAG AA color-contrast — as low as 1.83:1 on
+         #2a2a2a/#1f1f1f. These pass 4.5:1 (small text) against all three
+         dark backgrounds; see the matching :root values above. */
       --accent:#4d9e75;
       --accent-hover:#5db086;
-      --accent-subtle:#2a6b4a;
+      --accent-contrast:#0a2015;
+      /* Lightened 2026-09-28 to match — see :root's --accent-subtle note. */
+      --accent-subtle:#46a273;
       --accent-bg:#0d2b1e;
       --accent-bg-deep:#0a2218;
       --accent-light:#6dba8e;
@@ -466,7 +493,11 @@
       --ink-accent:var(--accent);--ink-accent-soft:var(--accent-bg);--ink-accent-deep:var(--accent-hover);
       --hairline:var(--border-subtle);--hairline-strong:var(--border);
       --shadow-soft:var(--shadow-sm);--shadow-lifted:var(--shadow-md);
-      --sev-critical:#ef4444;--sev-major:#f59e0b;--sev-minor:#34d399;--sev-info:#a3a3a3;
+      --sev-critical:#ef4444;--sev-major:#f59e0b;--sev-minor:#34d399;--sev-info:var(--text-muted);
+      /* See :root's --progress-* note. Green/amber already pass 4.5:1 as
+         text on dark's --bg-tertiary (#2a2a2a); only red needed lightening
+         (#ef4444 measured 3.81:1). */
+      --progress-good:#22c55e;--progress-warn:#f59e0b;--progress-bad:#ff5353;
     }
     /* :root is the light theme; [data-theme=dark] above overrides for dark mode */
     .cc-left-panel{overflow-x:hidden!important}
@@ -856,15 +887,26 @@ function startApp() {
   // panel dots) so structural/MEP/etc. read consistently across projects.
   var DISC_COLOR_BY_ID = {};
   DISC.forEach(function(d){ DISC_COLOR_BY_ID[d.id] = d.c; });
+  // `fg`/`tintBg` (2026-09-28): the status pill used to render `color:stBg`
+  // text directly on a `stBg+'22'` (13% opacity) tint of the *same* hue —
+  // guaranteed-low contrast (axe measured as low as 3.16:1 on light,
+  // 3.81:1 on dark) since the foreground and background are the same
+  // color at different opacities. `fg`/`tintBg` are separate, theme-tuned
+  // pairs (CSS custom properties, resolved per the active [data-theme])
+  // used for that text-on-tint chip (index.html ~line 27199); `bg` stays a
+  // flat brand hex for the decorative severity dot and the solid
+  // white-text status-select buttons (~line 27301), where `solidBg` swaps
+  // in a darkened variant of `bg` for statuses whose flat hex fails
+  // 4.5:1 with white text (amber/green/red).
   var STAT = {
-    open:          { label:'Open',          bg:'#ef4444' },
-    confirmed:     { label:'Confirmed',     bg:'#0f766e' },
-    denied:        { label:'Denied',        bg:'#6b7280' },
-    in_progress:   { label:'In progress',   bg:'#f59e0b' },
-    resolved:      { label:'Resolved',      bg:'#22c55e' },
-    auto_resolved: { label:'Auto-resolved', bg:'#475569' },
-    closed:      { label:'Closed',      bg:'#64748b' },
-    accepted_needs_check: { label:'Accepted · Check', bg:'#a16207' },
+    open:          { label:'Open',          bg:'#ef4444', solidBg:'#c53030', tintBg:'var(--color-danger-bg)',  fg:'var(--color-danger-fg)' },
+    confirmed:     { label:'Confirmed',     bg:'#0f766e', solidBg:'#0f766e', tintBg:'var(--color-info-bg)',    fg:'var(--color-info-fg)' },
+    denied:        { label:'Denied',        bg:'#6b7280', solidBg:'#6b7280', tintBg:'var(--bg-tertiary)',      fg:'var(--text-muted)' },
+    in_progress:   { label:'In progress',   bg:'#f59e0b', solidBg:'#a26807', tintBg:'var(--color-warning-bg)', fg:'var(--color-warning-fg)' },
+    resolved:      { label:'Resolved',      bg:'#22c55e', solidBg:'#178640', tintBg:'var(--color-success-bg)', fg:'var(--color-success-fg)' },
+    auto_resolved: { label:'Auto-resolved', bg:'#475569', solidBg:'#475569', tintBg:'var(--bg-tertiary)',      fg:'var(--text-muted)' },
+    closed:      { label:'Closed',      bg:'#64748b', solidBg:'#64748b', tintBg:'var(--bg-tertiary)',      fg:'var(--text-muted)' },
+    accepted_needs_check: { label:'Accepted · Check', bg:'#a16207', solidBg:'#a16207', tintBg:'var(--color-warning-bg)', fg:'var(--color-warning-fg)' },
   };
   var EDITABLE_STATUSES = Object.keys(STAT).filter(function(k){return k!=='auto_resolved'&&k!=='denied'&&k!=='confirmed';});
 
@@ -17610,7 +17652,7 @@ function startApp() {
           var active = markupTool3D===t[0];
           return html`<button key=${t[0]} onClick=${function(){setMarkupTool3D(active?null:t[0]);}}
             title=${t[2]}
-            style=${{fontSize:'var(--text-xs)',padding:'var(--space-1) var(--space-2)',background:active?'var(--accent)':'var(--bg-secondary)',color:active?'#fff':'var(--text-secondary)',border:'1px solid var(--border)',borderRadius:'var(--radius-sm)',cursor:'pointer',fontFamily:'inherit',minWidth:24}}>${t[1]}</button>`;
+            style=${{fontSize:'var(--text-xs)',padding:'var(--space-1) var(--space-2)',background:active?'var(--accent)':'var(--bg-secondary)',color:active?'var(--accent-contrast)':'var(--text-secondary)',border:'1px solid var(--border)',borderRadius:'var(--radius-sm)',cursor:'pointer',fontFamily:'inherit',minWidth:24}}>${t[1]}</button>`;
         })}
         <input type="color" value=${markupColor3D} onInput=${function(e){setMarkupColor3D(e.target.value);}}
           title=${_cc_t('viewport.markup.colorTitle','Color')} style=${{width:24,height:24,border:'1px solid var(--border)',borderRadius:'var(--radius-xs)',cursor:'pointer',padding:0,background:'none'}} />
@@ -17748,13 +17790,13 @@ function startApp() {
           Fit All Clashes
         </button>
         <button class="cc-btn-press" onClick=${function(){d({t:A.UPD_PREFS,u:{showMarkers:!s.prefs.showMarkers}})}}
-          style=${{...S_BTN,background:s.prefs.showMarkers?'var(--accent)':'var(--overlay-bg-strong)',color:s.prefs.showMarkers?'#fff':'var(--text-muted)',border:'1px solid var(--border-subtle)',fontSize:'var(--text-xs)',padding:'var(--space-1) var(--space-3)',border:'1px solid var(--border)'}}>
+          style=${{...S_BTN,background:s.prefs.showMarkers?'var(--accent)':'var(--overlay-bg-strong)',color:s.prefs.showMarkers?'var(--accent-contrast)':'var(--text-muted)',border:'1px solid var(--border-subtle)',fontSize:'var(--text-xs)',padding:'var(--space-1) var(--space-3)',border:'1px solid var(--border)'}}>
           ${s.prefs.showMarkers?'Markers On':'Markers Off'}
         </button>
       </div>`}
       ${html`<${ViewCube} state3d=${state3d} theme=${s.prefs.theme||'light'} />`}
       ${html`<${ColorLegend} s=${s} />`}
-      ${s.floorPlan && html`<div style=${{...P,top:'9.75rem',right:'var(--space-2)',background:'var(--accent)',color:'#fff',pointerEvents:'auto',cursor:'pointer',display:'flex',alignItems:'center',gap:'var(--space-2)'}}
+      ${s.floorPlan && html`<div style=${{...P,top:'9.75rem',right:'var(--space-2)',background:'var(--accent)',color:'var(--accent-contrast)',pointerEvents:'auto',cursor:'pointer',display:'flex',alignItems:'center',gap:'var(--space-2)'}}
         onClick=${function(){d({t:A.FLOOR_PLAN,v:null})}}>
         <span>3D Section: ${s.floorPlan.storeyName} · ${_ccFormatElev(s.floorPlan.elevation+(s.floorPlan.cutHeight||1.2)/(window._ccPlanGeoFactor||1))}</span>
         <span style=${{fontSize:'var(--text-xs)',opacity:.7}} title=${_cc_t('viewport.exit3dSection','Exit 3D section')} aria-label=${_cc_t('viewport.exitFloorPlanAria','Exit floor plan view')}>✕</span>
@@ -18316,7 +18358,7 @@ function startApp() {
     }
     return html`<div style=${{marginTop:'.4rem'}}>
       <button onClick=${toggleSectionBox}
-        style=${{...S_BTN,width:'100%',padding:'.25rem',background:active?'var(--accent)':'var(--bg-secondary)',color:active?'#fff':'var(--text-muted)',border:'1px solid '+(active?'var(--accent)':'var(--border)'),marginBottom:active?'.4rem':0}}>
+        style=${{...S_BTN,width:'100%',padding:'.25rem',background:active?'var(--accent)':'var(--bg-secondary)',color:active?'var(--accent-contrast)':'var(--text-muted)',border:'1px solid '+(active?'var(--accent)':'var(--border)'),marginBottom:active?'.4rem':0}}>
         ${active?_cc_t('sectionBox.off','Section Box OFF'):_cc_t('sectionBox.on','Section Box')}
       </button>
       ${active && html`<div style=${{fontSize:'0.63rem',color:'var(--text-muted)',padding:'.2rem 0'}}>
@@ -18689,28 +18731,47 @@ function startApp() {
   }
 
   // ── Guided Tour ──────────────────────────────────────────────
+  // Rebuilt 2026-09-28: the previous steps targeted a left sidebar that no
+  // longer exists (models/BCF actions moved into the header) and a
+  // `.cc-logo-mark`/`.cc-ifc-load-btn`/`.cc-bcf-actions`/`.cc-nlpanel-closed`
+  // selectors that were never present in the current markup — every step
+  // highlighted nothing. Targets below are real, current selectors
+  // (`data-tour` attributes added at their call sites, or an existing
+  // stable id/class) verified against index.html at the time of writing.
+  // `onEnter(d)` runs once when a step becomes current, so panels that are
+  // conditionally rendered (Coordinate-only toolbar buttons, the Clashes/
+  // Issues tab content) are actually on screen when the step highlights
+  // them, instead of silently failing to spotlight.
   var TOUR_STEPS = [
-    {sel:'.cc-logo-mark', title:'What is ClashControl?',
-      text:'ClashControl is a free, source-available IFC clash detection tool that runs entirely in your browser. No installs or subscriptions — just open and go.'},
-    {sel:'.cc-left-rail', title:'Left Sidebar',
-      text:'Your main navigation. Load models, switch projects, save your session, import/export BCF files, and access settings — all from here.'},
-    {sel:'.cc-ifc-load-btn', title:'Load IFC',
-      text:'Click to load an IFC model.'},
-    {sel:'.cc-bcf-actions', title:'Save, Share & BCF',
-      text:'Save your entire session (clashes, issues, viewpoints) as a .ccproject file to share with teammates. Import/Export BCF for interoperability with Revit, Navisworks, and Solibri.'},
-    {sel:'.cc-left-rail', title:'Side Panel',
-      text:'The side panel gives you access to your models, clashes, issues, model navigator, and clash standards — all in context with the 3D view.'},
-    {sel:'.cc-rail-tabs', title:'Panel Tabs',
-      text:'Switch between Models (loaded files), Clashes (detected conflicts), Issues (tracked problems), Navigator (model tree), and Standards (clash rules).'},
-    {sel:'.cc-nlpanel-closed,.cc-nlpanel', title:'AI Command Line',
-      text:'Press / to open. Type commands like "check structural vs MEP" or "find clashes within 50mm". Type "help" for all available commands.'},
+    {sel:'[data-tour="open-model"]', title:'Load a model',
+      text:'Drag an IFC or GLB file onto the 3D view, or click here to browse for one. No upload — the model stays in your browser.'},
+    {sel:'[data-tour="workspace-tabs"]', title:'Workspaces',
+      text:'Present, Review and Coordinate switch what the app is set up for: presenting a clean model, auditing data quality, or running clash detection.'},
+    {sel:'[data-tour="run-detection"]', title:'Run detection',
+      text:'Runs clash detection between your loaded models using the current rules. The Standards tab next to it edits those rules.',
+      onEnter:function(d){ d({t:A.SET_WORKSPACE, v:'coordinate'}); }},
+    {sel:'[data-tour="clash-list"]', title:'Clashes',
+      text:'Detected clashes show up here as cluster cards — triage them with J/K to move, C/D to confirm/deny, V to cycle severity.',
+      onEnter:function(d){ d({t:A.SET_WORKSPACE, v:'coordinate'}); d({t:A.TAB, v:'clashes'}); }},
+    {sel:'[data-tour="issues-panel"]', title:'Issues',
+      text:'Turn a clash into a tracked issue — assign it, set priority and due date, add comments, and export the set to BCF.',
+      onEnter:function(d){ d({t:A.SET_WORKSPACE, v:'coordinate'}); d({t:A.TAB, v:'issues'}); }},
+    {sel:'.cc-ai-collapsed-tab,.cc-ai-panel', title:'Details & AI',
+      text:'Select an element or clash to see its properties here, or ask the built-in assistant to run a command for you.',
+      onEnter:function(d){ d({t:A.TAB, v:null}); }},
+    {sel:'[data-tour="cmdk-search"]', title:'Search everything',
+      text:'Press ⌘K (Ctrl+K) any time to jump to a command, panel or clash, or ask the assistant a question.'}
   ];
 
   function GuidedTour(props) {
-    var step = props.step, setStep = props.setStep;
+    var step = props.step, setStep = props.setStep, d = props.d;
     var total = TOUR_STEPS.length;
     var cur = TOUR_STEPS[step] || TOUR_STEPS[0];
     var posState = useState(null), spotPos=posState[0], setSpotPos=posState[1];
+
+    useEffect(function() {
+      if (cur.onEnter && d) { try { cur.onEnter(d); } catch(e) {} }
+    }, [step]);
 
     useEffect(function() {
       function update() {
@@ -18724,9 +18785,11 @@ function startApp() {
         var r = el.getBoundingClientRect();
         setSpotPos({x:r.left, y:r.top, w:r.width, h:r.height});
       }
-      update();
+      // onEnter's dispatch commits on the next render, so give it a tick
+      // before the first measurement, then keep polling for layout shifts.
+      var t = setTimeout(update, 30);
       var id = setInterval(update, 300);
-      return function(){ clearInterval(id); };
+      return function(){ clearTimeout(t); clearInterval(id); };
     }, [step]);
 
     function next() { if (step < total-1) setStep(step+1); else setStep(null); }
@@ -18767,7 +18830,7 @@ function startApp() {
           <button onClick=${skip} style=${{...S_BTN,background:'none',border:'none',color:'var(--text-faint)',fontSize:'0.8rem',cursor:'pointer',padding:'.2rem'}}>${_cc_t('tour.skipTour','Skip tour')}</button>
           <div style=${{display:'flex',gap:'.35rem'}}>
             ${step > 0 && html`<button onClick=${prev} style=${{...S_BTN,padding:'.3rem .65rem',fontSize:'0.83rem',background:'var(--bg-secondary)',color:'var(--text-secondary)',border:'1px solid var(--border)',borderRadius:6,cursor:'pointer'}}>${_cc_t('tour.back','Back')}</button>`}
-            <button onClick=${next} style=${{...S_BTN,padding:'.3rem .65rem',fontSize:'0.83rem',background:'var(--accent)',color:'#fff',border:'none',borderRadius:6,cursor:'pointer',fontWeight:600}}>
+            <button onClick=${next} style=${{...S_BTN,padding:'.3rem .65rem',fontSize:'0.83rem',background:'var(--accent)',color:'var(--accent-contrast)',border:'none',borderRadius:6,cursor:'pointer',fontWeight:600}}>
               ${step < total-1 ? _cc_t('tour.next','Next') : _cc_t('tour.finish','Finish')}
             </button>
           </div>
@@ -18854,9 +18917,9 @@ function startApp() {
             <div style=${{color:'var(--text-faint)'}}>${new Date(CC_VERSION.date).toLocaleDateString('en-GB',{day:'numeric',month:'long',year:'numeric'})}</div>
             <div style=${{marginTop:'.5rem',borderTop:'1px solid var(--border-subtle)',paddingTop:'.4rem',display:'flex',flexDirection:'column',gap:'.3rem'}}>
               <button onClick=${function(){setShowVer(false);if(window._ccToggleTutorial)window._ccToggleTutorial();}}
-                style=${{...S_BTN,width:'100%',padding:'.35rem .5rem',background:'var(--accent)',color:'#fff',fontSize:'0.8rem',fontWeight:600,borderRadius:6,textAlign:'center',justifyContent:'center'}}}>Quick Start Guide</button>
+                style=${{...S_BTN,width:'100%',padding:'.35rem .5rem',background:'var(--accent)',color:'var(--accent-contrast)',fontSize:'0.8rem',fontWeight:600,borderRadius:6,textAlign:'center',justifyContent:'center'}}}>Quick Start Guide</button>
               <button onClick=${function(){setShowVer(false);if(window._ccStartTour)window._ccStartTour();}}
-                style=${{...S_BTN,width:'100%',padding:'.35rem .5rem',background:'var(--accent)',color:'#fff',fontSize:'0.8rem',fontWeight:600,borderRadius:6,textAlign:'center',justifyContent:'center'}}}>Interactive Tour</button>
+                style=${{...S_BTN,width:'100%',padding:'.35rem .5rem',background:'var(--accent)',color:'var(--accent-contrast)',fontSize:'0.8rem',fontWeight:600,borderRadius:6,textAlign:'center',justifyContent:'center'}}}>Interactive Tour</button>
             </div>
             <div style=${{marginTop:'.3rem',fontSize:'0.69rem',color:'var(--text-faint)'}}>Free, source-available IFC clash detection</div>
           </div>`}
@@ -18906,7 +18969,7 @@ function startApp() {
                   onKeyDown=${function(e){if(e.key==='Enter')finishCreate();if(e.key==='Escape')setCreating(false);}}
                   style=${{...S_INPUT,fontSize:'0.78rem',padding:'.25rem .4rem',flex:1}} />
                 <button onClick=${finishCreate} disabled=${!createName.trim()}
-                  style=${{...S_BTN,fontSize:'0.69rem',padding:'.2rem .45rem',background:'var(--accent)',color:'#fff',opacity:createName.trim()?1:0.4}}>Create</button>
+                  style=${{...S_BTN,fontSize:'0.69rem',padding:'.2rem .45rem',background:'var(--accent)',color:'var(--accent-contrast)',opacity:createName.trim()?1:0.4}}>Create</button>
                 <button onClick=${function(){setCreating(false)}}
                   style=${{...S_BTN,fontSize:'0.8rem',padding:'.1rem .3rem',background:'none',color:'var(--text-faint)',lineHeight:1}}>✕</button>
               </div>
@@ -18942,7 +19005,7 @@ function startApp() {
         </button>
         <button class="cc-hide-mobile cc-btn-press" onClick=${function(){d({t:A.PRESENT,v:!s.presenting});}}
           title="Presentation mode (P) — fullscreen, hide chrome, auto-rotate when idle"
-          style=${{...S_BTN,background:s.presenting?'var(--accent)':'var(--bg-secondary)',color:s.presenting?'#fff':'var(--text-secondary)',border:'1px solid '+(s.presenting?'var(--accent-hover)':'var(--border)'),fontSize:'var(--text-xs)',display:'flex',alignItems:'center',gap:'.35rem'}}>
+          style=${{...S_BTN,background:s.presenting?'var(--accent)':'var(--bg-secondary)',color:s.presenting?'var(--accent-contrast)':'var(--text-secondary)',border:'1px solid '+(s.presenting?'var(--accent-hover)':'var(--border)'),fontSize:'var(--text-xs)',display:'flex',alignItems:'center',gap:'.35rem'}}>
           <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="5 3 19 12 5 21 5 3"/></svg>
           ${_cc_t('toolbar.present','Present')}
         </button>
@@ -18951,7 +19014,7 @@ function startApp() {
           ${_cc_t('toolbar.open','Open Project')}
         </button>
         <button class="cc-hide-mobile cc-btn-press" onClick=${function(){saveProject(s)}} disabled=${!all.length&&!s.models.length}
-          style=${{...S_BTN,background:s.models.length||all.length?'var(--accent)':'var(--bg-secondary)',color:s.models.length||all.length?'#fff':'var(--text-faint)',cursor:s.models.length||all.length?'pointer':'not-allowed',fontSize:'var(--text-xs)'}}>
+          style=${{...S_BTN,background:s.models.length||all.length?'var(--accent)':'var(--bg-secondary)',color:s.models.length||all.length?'var(--accent-contrast)':'var(--text-faint)',cursor:s.models.length||all.length?'pointer':'not-allowed',fontSize:'var(--text-xs)'}}>
           ${_cc_t('toolbar.save','Save Project')}
         </button>
         <button class="cc-hide-mobile cc-btn-press" onClick=${function(){importBCF(d)}}
@@ -18959,11 +19022,11 @@ function startApp() {
           ↑ ${_cc_t('toolbar.importBcf','Import BCF')}
         </button>
         <button class="cc-hide-mobile cc-btn-press" onClick=${function(){exportBCF(all, '2.1', s.viewpoints, s)}} disabled=${!all.length}
-          style=${{...S_BTN,background:all.length?'var(--accent)':'var(--bg-secondary)',color:all.length?'#fff':'var(--text-faint)',cursor:all.length?'pointer':'not-allowed',fontSize:'var(--text-xs)'}}>
+          style=${{...S_BTN,background:all.length?'var(--accent)':'var(--bg-secondary)',color:all.length?'var(--accent-contrast)':'var(--text-faint)',cursor:all.length?'pointer':'not-allowed',fontSize:'var(--text-xs)'}}>
           ↓ ${_cc_t('toolbar.bcf21','BCF 2.1')}
         </button>
         <button class="cc-hide-mobile cc-btn-press" onClick=${function(){exportBCF(all, '3.0', s.viewpoints, s)}} disabled=${!all.length}
-          style=${{...S_BTN,background:all.length?'var(--accent)':'var(--bg-secondary)',color:all.length?'#fff':'var(--text-faint)',cursor:all.length?'pointer':'not-allowed',fontSize:'var(--text-xs)'}}>
+          style=${{...S_BTN,background:all.length?'var(--accent)':'var(--bg-secondary)',color:all.length?'var(--accent-contrast)':'var(--text-faint)',cursor:all.length?'pointer':'not-allowed',fontSize:'var(--text-xs)'}}>
           ↓ ${_cc_t('toolbar.bcf30','BCF 3.0')}
         </button>
         <button onClick=${function(){d({t:A.UPD_PREFS,u:{theme:isDark?'light':'dark'}})}}
@@ -20332,7 +20395,7 @@ function startApp() {
         </span>
         <button onClick=${function(){setErr('');fileRef.current&&fileRef.current.click();}} disabled=${loading}
           style=${{display:'inline-flex',alignItems:'center',gap:'.3rem',padding:'.22rem .5rem',
-            background:'var(--accent)',color:'#fff',border:'none',borderRadius:'var(--radius-xs)',
+            background:'var(--accent)',color:'var(--accent-contrast)',border:'none',borderRadius:'var(--radius-xs)',
             cursor:loading?'wait':'pointer',fontSize:'.72rem',fontFamily:'var(--font-body)',fontWeight:500,flexShrink:0}}>
           ${loading
             ? html`<svg class="spin" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12a9 9 0 1 1-6.22-8.56"/></svg>`
@@ -20429,7 +20492,7 @@ function startApp() {
                       .catch(function(err){ alert('CRS placement failed: ' + (err && err.message || err)); });
                   }}
                   title="Reproject the projected E/N to lat/lon (placement-grade, ~1 m — not RDNAPTRANS survey-grade) and drop the basemap there. The model never moves."
-                  style=${{fontSize:'.62rem',padding:'.1rem .4rem',background:'var(--accent)',color:'#fff',border:'none',borderRadius:'var(--radius-xs)',cursor:'pointer',whiteSpace:'nowrap'}}>${_cc_t('sidebar.placeFromCRS','Place from CRS')}</button>
+                  style=${{fontSize:'.62rem',padding:'.1rem .4rem',background:'var(--accent)',color:'var(--accent-contrast)',border:'none',borderRadius:'var(--radius-xs)',cursor:'pointer',whiteSpace:'nowrap'}}>${_cc_t('sidebar.placeFromCRS','Place from CRS')}</button>
               </div>`}
             </div>`;
           })()}
@@ -20510,7 +20573,7 @@ function startApp() {
                     ? html`<button onClick=${function(){
                         window._ccGeoplaceModel(detected.modelId, Object.assign({}, detected.georef, {source:'IfcSite'}))
                           .catch(function(err){ alert('Geoplace failed: ' + (err && err.message || err)); });
-                      }} style=${{flex:1,fontSize:'.66rem',padding:'.22rem .4rem',background:'var(--accent)',color:'#fff',border:'none',borderRadius:'var(--radius-xs)',cursor:'pointer'}}>
+                      }} style=${{flex:1,fontSize:'.66rem',padding:'.22rem .4rem',background:'var(--accent)',color:'var(--accent-contrast)',border:'none',borderRadius:'var(--radius-xs)',cursor:'pointer'}}>
                         ${_cc_t('sidebar.useIfcSite','Use IfcSite ({coords})',{coords:(+detected.georef.refLat).toFixed(3)+', '+(+detected.georef.refLon).toFixed(3)})}
                       </button>`
                     : null;
@@ -20592,7 +20655,7 @@ function startApp() {
                     .catch(function(err){ alert('PDOK 3D tiles failed: ' + (err && err.message || err)); });
                 }}
                 title="Free Dutch national 3D buildings (Kadaster 3D Basisvoorziening via PDOK, LoD 2.2 from BAG + AHN) around your georeferenced model — no key needed"
-                style=${{flex:1,fontSize:'.66rem',padding:'.22rem .4rem',background:'var(--accent)',color:'#fff',border:'none',borderRadius:'var(--radius-xs)',cursor:'pointer'}}>
+                style=${{flex:1,fontSize:'.66rem',padding:'.22rem .4rem',background:'var(--accent)',color:'var(--accent-contrast)',border:'none',borderRadius:'var(--radius-xs)',cursor:'pointer'}}>
                 3D omgeving \u2014 NL (PDOK)</button>
               <button onClick=${function(){
                   var ll = _tilesLatLon(); if (!ll) return;
@@ -20875,7 +20938,7 @@ function startApp() {
         <div style=${{fontSize:'.66rem', color:'var(--text-muted)'}}>${_cc_t('pwa.installDesc','Offline, no browser tab, drag-drop IFC from Explorer.')}</div>
       </div>
       <button onClick=${function(){ if(window._ccPwaPromptInstall) window._ccPwaPromptInstall(); }}
-        style=${{padding:'.3rem .7rem', borderRadius:'var(--radius-xs)', background:'var(--accent)', color:'#fff',
+        style=${{padding:'.3rem .7rem', borderRadius:'var(--radius-xs)', background:'var(--accent)', color:'var(--accent-contrast)',
                  fontWeight:600, fontSize:'.7rem', border:'none', cursor:'pointer', flexShrink:0}}>${_cc_t('pwa.install','Install')}</button>
       <button title=${_cc_t('pwa.dismissForSession','Dismiss for this session')}
         onClick=${function(){ try { sessionStorage.setItem('cc_install_dismissed','1'); } catch(_){}; setShow(false); }}
@@ -20977,9 +21040,18 @@ function startApp() {
           // row hinted at it. A small always-visible chip, clicking it opens
           // the same discipline selector this card already has.
           var discObj = DISC.find(function(x){return x.id===m.discipline;}) || DISC[DISC.length-1];
+          // 2026-09-28: was colored text (discObj.c) directly on a 13%-alpha
+          // tint of that same color — guaranteed low contrast (axe: as low
+          // as 3.11:1 light / 3.6:1 dark) since fg and bg share a hue at
+          // different opacities. The discipline color now only marks the
+          // dot + border (non-text, so not contrast-checked); the label
+          // itself uses the theme-tuned --text-secondary token. Font size
+          // bumped from 0.6rem (9.6px, under the 11px UI minimum) to
+          // --text-xs (12px).
           return html`<button onClick=${function(e){e.stopPropagation();setOpen(true);}}
             title=${_cc_t('modelCard.disciplineChipTip','Discipline: {d} — click to change',{d:discObj.label})}
-            style=${{fontSize:'0.6rem',padding:'.05rem .35rem',borderRadius:99,border:'1px solid '+discObj.c+'55',background:discObj.c+'22',color:discObj.c,fontWeight:600,flexShrink:0,cursor:'pointer',whiteSpace:'nowrap'}}>${discObj.label}</button>`;
+            style=${{display:'inline-flex',alignItems:'center',gap:'.3rem',fontSize:'var(--text-xs)',padding:'.05rem .4rem',borderRadius:99,border:'1px solid '+discObj.c+'55',background:'var(--bg-tertiary)',color:'var(--text-secondary)',fontWeight:600,flexShrink:0,cursor:'pointer',whiteSpace:'nowrap'}}>
+            <span aria-hidden="true" style=${{width:6,height:6,borderRadius:'50%',background:discObj.c,flexShrink:0}}></span>${discObj.label}</button>`;
         }()}
         ${m._version>1 && html`<span style=${{fontSize:'0.57rem',color:'var(--accent)',background:'var(--accent-bg)',padding:'.05rem .25rem',borderRadius:3,flexShrink:0,fontWeight:600}}>v${m._version}</span>`}
         ${m._stub && html`<span style=${{fontSize:'0.63rem',color:'#f59e0b',background:'var(--pill-amber-bg)',padding:'.05rem .3rem',borderRadius:4,flexShrink:0}}>${_cc_t('modelCard.stub','stub')}</span>`}
@@ -21279,7 +21351,7 @@ function startApp() {
         <div style=${{display:'flex',gap:'var(--space-1)',flexWrap:'wrap'}}>
           ${VIEWS.map(function(v){return html`<button class="cc-btn-press" key=${v.id} onClick=${function(){setViewMode(v.id)}}
             title=${v.title||v.label}
-            style=${{...S_BTN,fontSize:'var(--text-xs)',padding:'var(--space-1) var(--space-2)',background:viewMode===v.id?'var(--accent)':'var(--bg-secondary)',color:viewMode===v.id?'#fff':'var(--text-secondary)',fontWeight:viewMode===v.id?'var(--weight-semibold)':'var(--weight-medium)'}}>${v.label}</button>`})}
+            style=${{...S_BTN,fontSize:'var(--text-xs)',padding:'var(--space-1) var(--space-2)',background:viewMode===v.id?'var(--accent)':'var(--bg-secondary)',color:viewMode===v.id?'var(--accent-contrast)':'var(--text-secondary)',fontWeight:viewMode===v.id?'var(--weight-semibold)':'var(--weight-medium)'}}>${v.label}</button>`})}
         </div>
         <div style=${{display:'flex',flexDirection:'column',gap:'var(--space-2)'}}>
           <input type="text" placeholder=${classView ? 'Filter groups…' : 'Search elements…'} value=${treeSearch}
@@ -21299,7 +21371,7 @@ function startApp() {
             <span style=${{fontSize:'var(--text-2xs)',color:'var(--text-muted)'}}>${keys.length} groups · ${total} elements</span>
           </div>
           <button class="cc-btn-press" onClick=${function(){d({t:A.COLOR_BY_CLASS,v:classView})}}
-            style=${{...S_BTN,fontSize:'var(--text-2xs)',padding:'var(--space-1) var(--space-2)',background:s.colorByClass===classView?'var(--accent)':'var(--bg-secondary)',color:s.colorByClass===classView?'#fff':'var(--text-faint)',fontWeight:'var(--weight-medium)'}}
+            style=${{...S_BTN,fontSize:'var(--text-2xs)',padding:'var(--space-1) var(--space-2)',background:s.colorByClass===classView?'var(--accent)':'var(--bg-secondary)',color:s.colorByClass===classView?'var(--accent-contrast)':'var(--text-faint)',fontWeight:'var(--weight-medium)'}}
             title=${_cc_t('nav.colorByClassTip','Color elements by this classification')}>${_cc_t('nav.color','Color')}</button>
         </div>`}
         ${classView && hiddenCount>0 && html`<div style=${{fontSize:'var(--text-2xs)',color:'var(--color-warning-fg)'}}>${hiddenCount} group${hiddenCount>1?'s':''} hidden</div>`}
@@ -21858,7 +21930,7 @@ function startApp() {
     if (!items.length) return null;
     var total = counts.total, untitled = counts.untitled, open = counts.open, inProg = counts.inProg, resolved = counts.resolved, hard = counts.hard, soft = counts.soft, dup = counts.dup, vis = counts.vis;
     var pct = total > 0 ? Math.round(resolved / total * 100) : 0;
-    var barCol = pct >= 80 ? '#22c55e' : pct >= 40 ? '#f59e0b' : '#ef4444';
+    var barCol = pct >= 80 ? 'var(--progress-good)' : pct >= 40 ? 'var(--progress-warn)' : 'var(--progress-bad)';
 
     var CHIP = function(label, n, bg, fg) {
       return html`<span style=${{fontSize:'0.67rem',padding:'1px 5px',borderRadius:99,background:bg,color:fg,fontWeight:600,whiteSpace:'nowrap'}}>${label} ${n}</span>`;
@@ -21976,7 +22048,7 @@ function startApp() {
                 }
               }}
               title=${_cc_t('clashResults.hideGeometryTitle','Hide all geometry except elements involved in open clashes. Pure visual — toggle off to restore.')}
-              style=${{...S_BTN,fontSize:'0.67rem',padding:'.15rem .4rem',background:focusOn?'var(--accent)':'none',color:focusOn?'#fff':'var(--accent)',border:'1px solid '+(focusOn?'var(--accent)':'var(--accent-subtle)'),fontWeight:focusOn?'var(--weight-semibold)':'var(--weight-regular)'}}>
+              style=${{...S_BTN,fontSize:'0.67rem',padding:'.15rem .4rem',background:focusOn?'var(--accent)':'none',color:focusOn?'var(--accent-contrast)':'var(--accent)',border:'1px solid '+(focusOn?'var(--accent)':'var(--accent-subtle)'),fontWeight:focusOn?'var(--weight-semibold)':'var(--weight-regular)'}}>
               ${focusOn ? _cc_t('clashResults.focusOn','Focus on') : _cc_t('clashResults.triageFocus','Triage focus')}
             </button>`;
           })()}
@@ -21997,7 +22069,7 @@ function startApp() {
     return html`<div style=${{padding:'.35rem .5rem',borderBottom:'1px solid var(--border-subtle)',flexShrink:0,background:'var(--accent-bg)'}}>
       <div style=${{display:'flex',alignItems:'center',gap:'.3rem',marginBottom:count>0?'.3rem':0}}>
         <button onClick=${function(){var ids=items.map(function(i){return i.id;}); d({t:A.SELECT_ALL,ids:ids})}}
-          style=${{...S_BTN,fontSize:'0.63rem',padding:'.15rem .3rem',background:'var(--accent)',color:'#fff'}}>All</button>
+          style=${{...S_BTN,fontSize:'0.63rem',padding:'.15rem .3rem',background:'var(--accent)',color:'var(--accent-contrast)'}}>All</button>
         <button onClick=${function(){d({t:A.SELECT_NONE})}}
           style=${{...S_BTN,fontSize:'0.63rem',padding:'.15rem .3rem',background:'var(--bg-secondary)',color:'var(--text-secondary)',border:'1px solid var(--border)'}}>None</button>
         <span style=${{flex:1,fontSize:'0.71rem',color:'var(--accent-subtle)',fontWeight:600}}>${count} selected</span>
@@ -22355,7 +22427,7 @@ function startApp() {
       return Math.max(0, n - both);
     }
     var SEG = function(active){return {fontSize:'var(--text-xs)',padding:'var(--space-1) var(--space-2)',border:'1px solid var(--border)',cursor:'pointer',
-      background:active?'var(--accent)':'var(--bg-secondary)',color:active?'#fff':'var(--text-secondary)',
+      background:active?'var(--accent)':'var(--bg-secondary)',color:active?'var(--accent-contrast)':'var(--text-secondary)',
       fontWeight:active?'var(--weight-semibold)':'var(--weight-regular)',fontFamily:'var(--font-body)',whiteSpace:'nowrap',
       transition:'background var(--duration-fast) var(--ease-standard), color var(--duration-fast) var(--ease-standard)'};};
     var nModels = (models||[]).length;
@@ -22494,7 +22566,7 @@ function startApp() {
             ? html`<button onClick=${function(){if(typeof cancelDetection==='function')cancelDetection();}}
                 style=${{...S_BTN,padding:'var(--space-2) var(--space-4)',background:'var(--color-danger)',color:'#fff',fontWeight:'var(--weight-semibold)',fontSize:'var(--text-sm)',borderRadius:'var(--radius-sm)'}}>${_cc_t('run.stopDetection','Stop detection')}</button>`
             : html`<button onClick=${runNow} disabled=${!canRun}
-                style=${{...S_BTN,padding:'var(--space-2) var(--space-4)',background:canRun?'var(--accent)':'var(--bg-secondary)',color:canRun?'#fff':'var(--text-faint)',fontWeight:'var(--weight-semibold)',fontSize:'var(--text-sm)',borderRadius:'var(--radius-sm)',minWidth:140}}>${_cc_t('run.runDetection','Run detection')}</button>`}
+                style=${{...S_BTN,padding:'var(--space-2) var(--space-4)',background:canRun?'var(--accent)':'var(--bg-secondary)',color:canRun?'var(--accent-contrast)':'var(--text-faint)',fontWeight:'var(--weight-semibold)',fontSize:'var(--text-sm)',borderRadius:'var(--radius-sm)',minWidth:140}}>${_cc_t('run.runDetection','Run detection')}</button>`}
         </div>
       </div>
     </div>`;
@@ -22812,7 +22884,7 @@ function startApp() {
             style=${{...S_BTN,width:'100%',padding:'.4rem',background:'#dc2626',color:'#fff',fontWeight:600,fontSize:'0.78rem',borderRadius:6}}>
             ${_cc_t('run.stopDetectionCaps','Stop Detection')}
           </button>` : html`<button onClick=${runDetection} disabled=${!canRun}
-            style=${{...S_BTN,width:'100%',padding:'.4rem',background:canRun?'var(--accent)':'var(--bg-secondary)',color:canRun?'#fff':'var(--text-faint)',fontWeight:600,fontSize:'0.78rem',borderRadius:6}}>
+            style=${{...S_BTN,width:'100%',padding:'.4rem',background:canRun?'var(--accent)':'var(--bg-secondary)',color:canRun?'var(--accent-contrast)':'var(--text-faint)',fontWeight:600,fontSize:'0.78rem',borderRadius:6}}>
             ${_cc_t('run.runDetectionCaps','Run Detection')}
           </button>`}
         </div>
@@ -23153,7 +23225,7 @@ function startApp() {
     }, [s.clashes, s.issues]);
     var oC=counts.oC, oI=counts.oI;
     var FL={fontSize:'0.69rem',color:'var(--text-muted)',marginBottom:'.15rem',display:'block'};
-    var PILL=function(active){return Object.assign({},S_BTN,{fontSize:'0.69rem',padding:'.15rem .35rem',background:active?'var(--accent)':'var(--bg-secondary)',color:active?'#fff':'var(--text-faint)'});};
+    var PILL=function(active){return Object.assign({},S_BTN,{fontSize:'0.69rem',padding:'.15rem .35rem',background:active?'var(--accent)':'var(--bg-secondary)',color:active?'var(--accent-contrast)':'var(--text-faint)'});};
     var SELSTYLE={fontSize:'0.75rem',padding:'.2rem .3rem',borderRadius:4,background:'var(--bg-secondary)',color:'var(--text-secondary)',border:'1px solid var(--border)',width:'100%'};
 
     return html`<div style=${{display:'flex',flexDirection:'column',flex:1,overflow:'hidden',minHeight:0}}>
@@ -23353,7 +23425,7 @@ function startApp() {
       </div>`}
       ${s.tab==='issues' && html`<div style=${{padding:'.4rem',borderBottom:'1px solid var(--border-subtle)',flexShrink:0,display:'flex',flexDirection:'column',gap:'.3rem'}}>
         <div style=${{display:'flex',gap:'.3rem'}}>
-          <button onClick=${function(){d({t:A.MODAL,v:true,el:window._ccSelectedEl||undefined})}} style=${{...S_BTN,flex:1,background:'var(--accent)',color:'#fff',fontWeight:600}}>+ ${_cc_t('issues.newIssue','New Issue')}</button>
+          <button onClick=${function(){d({t:A.MODAL,v:true,el:window._ccSelectedEl||undefined})}} style=${{...S_BTN,flex:1,background:'var(--accent)',color:'var(--accent-contrast)',fontWeight:600}}>+ ${_cc_t('issues.newIssue','New Issue')}</button>
           ${function(){
             // Prefer the currently-active item when it IS a clash; otherwise
             // fall back to the last clash that was active before the Issues
@@ -23365,6 +23437,7 @@ function startApp() {
             var hasClash = !!activeClash;
             return html`<button
               title=${hasClash ? _cc_t('issues.fromClashTitle','Create issue from active clash: {title}',{title:activeClash.title}) : _cc_t('issues.fromClashTitleDisabled','Select a clash first to promote it to an issue')}
+              disabled=${!hasClash}
               onClick=${function(){
                 if(!hasClash) return;
                 d({t:A.MODAL,v:true,el:{_fromClash:activeClash}});
@@ -23399,7 +23472,7 @@ function startApp() {
         if (isClashTab) {
           var isGrouped = selGrp === 'cluster';
           var SEG_BTN = function(active){return {fontSize:'var(--text-xs)',padding:'var(--space-1) var(--space-3)',borderRadius:'var(--radius-xs)',border:'1px solid var(--border)',cursor:'pointer',
-            background:active?'var(--accent)':'var(--bg-secondary)',color:active?'#fff':'var(--text-secondary)',
+            background:active?'var(--accent)':'var(--bg-secondary)',color:active?'var(--accent-contrast)':'var(--text-secondary)',
             fontWeight:active?'var(--weight-semibold)':'var(--weight-regular)',fontFamily:'var(--font-body)',whiteSpace:'nowrap',
             transition:'background var(--duration-fast) var(--ease-standard), color var(--duration-fast) var(--ease-standard)'};};
           return html`<div style=${{padding:'var(--space-1) var(--space-2)',borderBottom:'1px solid var(--border-subtle)',display:'flex',gap:'var(--space-2)',alignItems:'center',flexShrink:0}}>
@@ -24421,7 +24494,7 @@ function startApp() {
             ${(s.models||[]).map(function(m){return html`<option key=${m.id} value=${m.id}>${m.name}</option>`;})}
           </select>
           <button onClick=${runChecks} disabled=${!hasModels||isRunning||!hasEngine}
-            style=${{padding:'var(--space-1) var(--space-3)',borderRadius:'var(--radius-sm)',fontSize:'var(--text-xs)',fontWeight:600,border:'none',cursor:(hasModels&&!isRunning)?'pointer':'not-allowed',background:(hasModels&&!isRunning&&hasEngine)?'var(--accent)':'var(--bg-tertiary)',color:(hasModels&&!isRunning&&hasEngine)?'#fff':'var(--text-faint)'}}>
+            style=${{padding:'var(--space-1) var(--space-3)',borderRadius:'var(--radius-sm)',fontSize:'var(--text-xs)',fontWeight:600,border:'none',cursor:(hasModels&&!isRunning)?'pointer':'not-allowed',background:(hasModels&&!isRunning&&hasEngine)?'var(--accent)':'var(--bg-tertiary)',color:(hasModels&&!isRunning&&hasEngine)?'var(--accent-contrast)':'var(--text-faint)'}}>
             ${isRunning?_cc_t('a11y.running','Running…'):_cc_t('dq.runChecks','Run checks')}
           </button>
         </div>
@@ -24441,8 +24514,8 @@ function startApp() {
           <span style=${{fontSize:'var(--text-xs)',fontWeight:600,color:totalEval===0?'var(--text-muted)':(totalFail===0?'var(--color-success-fg)':'var(--color-warning-fg)')}}>
             ${totalEval===0?_cc_t('a11y.notApplicable','Not applicable — no elements in this model match these checks'):(totalFail===0?_cc_t('a11y.allPass','All {total} checks pass',{total:totalEval}):_cc_t('a11y.someFail','{fail} of {total} fail',{fail:totalFail,total:totalEval}))}
           </span>
-          ${totalFail>0 && html`<button onClick=${addToConflicts} title=${_cc_t('a11y.addToConflictsTitle','Add each failing element to the Conflicts tab (exports to BCF)')}
-            style=${{fontSize:'var(--text-2xs)',padding:'var(--space-1) var(--space-2)',borderRadius:'var(--radius-xs)',border:'1px solid var(--border)',background:'var(--bg-primary)',color:'var(--text-primary)',cursor:'pointer'}}>${_cc_t('a11y.addToConflicts','Add to Conflicts')}</button>`}
+          ${totalFail>0 && html`<button onClick=${addToConflicts} title=${_cc_t('a11y.addToConflictsTitle','Add each failing element to the Clashes tab (exports to BCF)')}
+            style=${{fontSize:'var(--text-2xs)',padding:'var(--space-1) var(--space-2)',borderRadius:'var(--radius-xs)',border:'1px solid var(--border)',background:'var(--bg-primary)',color:'var(--text-primary)',cursor:'pointer'}}>${_cc_t('a11y.addToConflicts','Add to Clashes')}</button>`}
         </div>
 
         ${ORDER.map(function(k){
@@ -24477,7 +24550,7 @@ function startApp() {
       </div>`}
 
       ${!result && hasEngine && html`<div style=${{padding:'var(--space-4)',fontSize:'var(--text-xs)',color:'var(--text-muted)',lineHeight:1.6}}>
-        ${_cc_t('a11y.intro','Geometric accessibility checks: door clear width, threshold height, ramp slope, corridor / escape-route width, turning clearance — measured against NL Bbl/NEN thresholds. Failing elements add to the Conflicts tab and export to BCF.')}
+        ${_cc_t('a11y.intro','Geometric accessibility checks: door clear width, threshold height, ramp slope, corridor / escape-route width, turning clearance — measured against NL Bbl/NEN thresholds. Failing elements add to the Clashes tab and export to BCF.')}
       </div>`}
     </div>`;
   }
@@ -24893,7 +24966,7 @@ function startApp() {
                 <button onClick=${function(){colorByILSDist('nlsfb');}}
                   title=${activeDistKey==='nlsfb'?'Clear coloring':'Color by NL/SfB'}
                   style=${{fontSize:'0.57rem',padding:'1px 5px',background:activeDistKey==='nlsfb'?'var(--accent)':'none',border:'1px solid '+(activeDistKey==='nlsfb'?'var(--accent)':'var(--border)'),borderRadius:3,
-                    color:activeDistKey==='nlsfb'?'#fff':'var(--text-faint)',cursor:'pointer',lineHeight:1.2,fontFamily:'inherit'}}>
+                    color:activeDistKey==='nlsfb'?'var(--accent-contrast)':'var(--text-faint)',cursor:'pointer',lineHeight:1.2,fontFamily:'inherit'}}>
                   ${activeDistKey==='nlsfb'?'Clear':'Color'}
                 </button>
                 <span onClick=${function(){toggleExp('dist_nlsfb');}} style=${{fontSize:'0.57rem',color:'var(--text-faint)',cursor:'pointer'}}>${expanded['dist_nlsfb']?'▲':'▼'}</span>
@@ -24927,7 +25000,7 @@ function startApp() {
                 <button onClick=${function(){colorByILSDist('compliance');}}
                   title=${activeDistKey==='compliance'?'Clear coloring':'Color by compliance'}
                   style=${{fontSize:'0.57rem',padding:'1px 5px',background:activeDistKey==='compliance'?'var(--accent)':'none',border:'1px solid '+(activeDistKey==='compliance'?'var(--accent)':'var(--border)'),borderRadius:3,
-                    color:activeDistKey==='compliance'?'#fff':'var(--text-faint)',cursor:'pointer',lineHeight:1.2,fontFamily:'inherit'}}>
+                    color:activeDistKey==='compliance'?'var(--accent-contrast)':'var(--text-faint)',cursor:'pointer',lineHeight:1.2,fontFamily:'inherit'}}>
                   ${activeDistKey==='compliance'?'Clear':'Color'}
                 </button>
               </div>
@@ -24991,7 +25064,7 @@ function startApp() {
                   <button onClick=${function(){colorByDistribution(dk);}}
                     title=${isActive?'Clear coloring':'Color in 3D by '+dk}
                     style=${{fontSize:'0.57rem',padding:'1px 5px',background:isActive?'var(--accent)':'none',border:'1px solid '+(isActive?'var(--accent)':'var(--border)'),borderRadius:3,
-                      color:isActive?'#fff':'var(--text-faint)',cursor:'pointer',lineHeight:1.2,fontFamily:'inherit'}}>
+                      color:isActive?'var(--accent-contrast)':'var(--text-faint)',cursor:'pointer',lineHeight:1.2,fontFamily:'inherit'}}>
                     ${isActive?'Clear':'Color'}
                   </button>
                   <span onClick=${function(){toggleExp('dist_'+dk);}} style=${{fontSize:'0.57rem',color:'var(--text-faint)',cursor:'pointer'}}>${expanded['dist_'+dk]?'▲':'▼'}</span>
@@ -25561,7 +25634,7 @@ function startApp() {
       ${typeof window._ccVisibilityPresets === 'function' && html`<div style=${{marginTop:'1.2rem',paddingTop:'.8rem',borderTop:'2px solid var(--border)'}}>
         <div style=${{fontSize:'0.75rem',fontWeight:700,color:'var(--text-muted)',textTransform:'uppercase',letterSpacing:'.06em',marginBottom:'.4rem'}}>${_cc_t('rules.visibilityCoverageChecks','Visibility & coverage checks')}</div>
         <div style=${{fontSize:'0.65rem',color:'var(--text-faint)',marginBottom:'.5rem',lineHeight:1.4}}>
-          ${_cc_t('rules.visibilityCoverageDesc','Sight-line obstruction (third clash category — exit signs, signage, line-of-sight) and inverse coverage (camera, sensor, observation gaps). Each preset runs immediately and merges results into the Conflicts panel. \u2318K also exposes the same entries.')}
+          ${_cc_t('rules.visibilityCoverageDesc','Sight-line obstruction (third clash category — exit signs, signage, line-of-sight) and inverse coverage (camera, sensor, observation gaps). Each preset runs immediately and merges results into the Clashes panel. \u2318K also exposes the same entries.')}
         </div>
         ${(window._ccVisibilityPresets() || []).map(function(preset){
           var isCov = preset.mode === 'coverage';
@@ -26239,11 +26312,11 @@ function startApp() {
     if (!ctx.rawCount) {
       if (!ctx.ranBefore) return { key: 'never-run', title: 'No coordination check has been run', hint: 'Run detection to find clashes between your models.', action: 'run' };
       if (ctx.sameDisciplineSkipped) return { key: 'same-discipline-skipped', title: 'Same-discipline pairs were skipped', hint: null, action: 'check-same-discipline' };
-      return { key: 'completed-zero', title: 'No conflicts found with these rules', hint: 'Review your rule summary if this is unexpected.', action: 'review-rules' };
+      return { key: 'completed-zero', title: 'No clashes found with these rules', hint: 'Review your rule summary if this is unexpected.', action: 'review-rules' };
     }
-    if (!ctx.visOnlyCount) return { key: 'hidden-by-visibility', title: 'Results are hidden by model visibility', hint: (ctx.hiddenModelCount||0) + ' model(s) with conflicts are currently hidden.', action: 'show-models' };
+    if (!ctx.visOnlyCount) return { key: 'hidden-by-visibility', title: 'Results are hidden by model visibility', hint: (ctx.hiddenModelCount||0) + ' model(s) with clashes are currently hidden.', action: 'show-models' };
     if (!ctx.filteredCount && ctx.filtersActive) return { key: 'filtered-to-zero', title: '0 of ' + ctx.rawCount + ' shown', hint: 'Your current filters hide every result.', action: 'clear-filters' };
-    return { key: 'completed-zero', title: 'No conflicts found with these rules', hint: null, action: 'review-rules' };
+    return { key: 'completed-zero', title: 'No clashes found with these rules', hint: null, action: 'review-rules' };
   }
   window._ccFiltersAreActive = _ccFiltersAreActive;
   window._ccConflictEmptyState = _ccConflictEmptyState;
@@ -26784,7 +26857,7 @@ function startApp() {
                 <strong style=${{color:'var(--text-primary)'}}>${_cc_t('vlist.sameDisciplineSkipped','Same-discipline pairs were skipped.')}</strong>
                 ${' '+_cc_t('vlist.sameDisciplineDetail','You have {models} models. By default ClashControl only checks different disciplines against each other, so models of the same discipline are not compared.',{models:_sh.map(function(k){return _dcnt[k]+' '+k;}).join(', ')})}
                 <button onClick=${function(){ if(window._ccDispatch) window._ccDispatch({t:A.UPD_RULES,u:{excludeSameDiscipline:false}}); if(window._ccRunDetection) window._ccRunDetection({excludeSameDiscipline:false}); }}
-                  style=${{display:'block',marginTop:'.55rem',fontSize:'0.72rem',padding:'.35rem .6rem',borderRadius:6,background:'var(--accent)',color:'#fff',border:'none',cursor:'pointer',fontWeight:600}}>
+                  style=${{display:'block',marginTop:'.55rem',fontSize:'0.72rem',padding:'.35rem .6rem',borderRadius:6,background:'var(--accent)',color:'var(--accent-contrast)',border:'none',cursor:'pointer',fontWeight:600}}>
                   ${_cc_t('vlist.checkSameDisciplineRerun','Check same-discipline pairs & re-run')}
                 </button>
               </div>`;
@@ -26801,13 +26874,13 @@ function startApp() {
         var actionBtn = null;
         if (st.action === 'run') {
           actionBtn = html`<button onClick=${function(){ try{ if(window._ccRunDetection) window._ccRunDetection(); }catch(e){} }}
-            style=${{marginTop:'.6rem',fontSize:'0.75rem',padding:'.4rem .8rem',borderRadius:6,background:'var(--accent)',color:'#fff',border:'none',cursor:'pointer',fontWeight:600}}>${_cc_t('run.runDetection','Run detection')}</button>`;
+            style=${{marginTop:'.6rem',fontSize:'0.75rem',padding:'.4rem .8rem',borderRadius:6,background:'var(--accent)',color:'var(--accent-contrast)',border:'none',cursor:'pointer',fontWeight:600}}>${_cc_t('run.runDetection','Run detection')}</button>`;
         } else if (st.action === 'clear-filters') {
           actionBtn = html`<button onClick=${function(){ if(window._ccDispatch) window._ccDispatch({t:A.RESET_FILTERS}); }}
-            style=${{marginTop:'.6rem',fontSize:'0.75rem',padding:'.4rem .8rem',borderRadius:6,background:'var(--accent)',color:'#fff',border:'none',cursor:'pointer',fontWeight:600}}>${_cc_t('vlist.clearFilters','Clear filters')}</button>`;
+            style=${{marginTop:'.6rem',fontSize:'0.75rem',padding:'.4rem .8rem',borderRadius:6,background:'var(--accent)',color:'var(--accent-contrast)',border:'none',cursor:'pointer',fontWeight:600}}>${_cc_t('vlist.clearFilters','Clear filters')}</button>`;
         } else if (st.action === 'show-models') {
           actionBtn = html`<button onClick=${function(){ if(window._ccDispatch) window._ccDispatch({t:A.TAB,v:'models'}); }}
-            style=${{marginTop:'.6rem',fontSize:'0.75rem',padding:'.4rem .8rem',borderRadius:6,background:'var(--accent)',color:'#fff',border:'none',cursor:'pointer',fontWeight:600}}>${_cc_t('vlist.showModels','Show models')}</button>`;
+            style=${{marginTop:'.6rem',fontSize:'0.75rem',padding:'.4rem .8rem',borderRadius:6,background:'var(--accent)',color:'var(--accent-contrast)',border:'none',cursor:'pointer',fontWeight:600}}>${_cc_t('vlist.showModels','Show models')}</button>`;
         }
         return html`<div style=${{flex:1,overflowY:'auto'}}>
           <div data-empty-state=${st.key} style=${{textAlign:'center',color:'var(--text-faint)',fontSize:'0.86rem',padding:'2.5rem 1rem'}}>
@@ -26849,7 +26922,7 @@ function startApp() {
     }
     // Severity → semantic color token. Maps to --color-danger/warning/info/text-muted.
     // 'duplicate' is purple (no token exists) — matches the existing inline-statusColors palette below for visual continuity.
-    var SEV_COLOR = {critical:'var(--color-danger)',major:'var(--color-warning)',hard:'var(--color-danger)',soft:'var(--color-warning)',minor:'var(--text-muted)',duplicate:'#8b5cf6',info:'var(--text-faint)'};
+    var SEV_COLOR = {critical:'var(--color-danger)',major:'var(--color-warning)',hard:'var(--color-danger)',soft:'var(--color-warning)',minor:'var(--text-muted)',duplicate:'#8558ec',info:'var(--text-faint)'};
     var statusColors = {open:'#ef4444',in_progress:'#f59e0b',resolved:'#22c55e',closed:'#64748b',hard:'#ef4444',soft:'#f59e0b',duplicate:'#8b5cf6'};
     var modelById = {}; (models||[]).forEach(function(m){modelById[m.id]=m;});
     function isClusterGroup(g) { return !!(isClash && window._ccClusterDisplay && window._ccClusterDisplay[g.label]); }
@@ -26887,7 +26960,7 @@ function startApp() {
               <span style=${{fontSize:'var(--text-sm)',fontWeight:'var(--weight-semibold)',color:'var(--text-primary)',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis',lineHeight:'var(--leading-tight)'}}>${label}</span>
               <div style=${{display:'flex',gap:'var(--space-1)',flexWrap:'wrap',alignItems:'center'}}>
                 ${storey && html`<span class="cc-status-pill" style=${{padding:'1px var(--space-2)',background:'var(--bg-secondary)',color:'var(--text-secondary)',textTransform:'none',letterSpacing:0}}>${storey}</span>`}
-                ${modelPair && html`<span class="cc-status-pill" style=${{padding:'1px var(--space-2)',background:crossModel?'var(--accent-bg)':'var(--bg-secondary)',color:crossModel?'var(--accent-subtle)':'var(--text-secondary)',textTransform:'none',letterSpacing:0}}>${modelPair}</span>`}
+                ${modelPair && html`<span class="cc-status-pill" style=${{padding:'1px var(--space-2)',background:crossModel?'var(--color-info-bg)':'var(--bg-secondary)',color:crossModel?'var(--color-info-fg)':'var(--text-secondary)',textTransform:'none',letterSpacing:0}}>${modelPair}</span>`}
                 <span style=${{fontSize:'var(--text-2xs)',color:'var(--text-faint)'}}>${openCount} open${resolved?(' · '+resolved+' resolved'):''}</span>
               </div>
             </div>
@@ -26947,7 +27020,7 @@ function startApp() {
       return html`<div key=${g.label}
         onClick=${function(){toggleGroup(g.label)}}
         style=${{display:'flex',alignItems:'center',gap:'.3rem',padding:'.35rem .5rem',cursor:'pointer',background:'var(--bg-tertiary)',borderBottom:'1px solid var(--border-subtle)',position:'sticky',top:0,zIndex:1}}>
-        <span style=${{fontSize:'0.63rem',color:'var(--text-faint)'}}>${isOpen?'▼':'▶'}</span>
+        <span style=${{fontSize:'var(--text-xs)',color:'var(--text-faint)'}}>${isOpen?'▼':'▶'}</span>
         <span style=${{width:8,height:8,borderRadius:'50%',background:dotColor,flexShrink:0}}></span>
         <span style=${{fontSize:'0.75rem',fontWeight:600,color:'var(--text-primary)',flex:1}}>${g.label}</span>
         <span style=${{fontSize:'0.69rem',color:'var(--text-faint)',background:'var(--bg-secondary)',padding:'.1rem .35rem',borderRadius:10}}>${g.items.length}</span>
@@ -27225,7 +27298,7 @@ function startApp() {
             onKeyDown=${function(e){ if (e.key==='Enter') addComment(); }}
             style=${FIELD} />
           <button class="cc-btn-press" onClick=${addComment} disabled=${!commentDraft.trim()}
-            style=${{...S_BTN,fontSize:'var(--text-2xs)',padding:'var(--space-1) var(--space-3)',background:'var(--accent)',color:'#fff',opacity:commentDraft.trim()?1:0.5}}>
+            style=${{...S_BTN,fontSize:'var(--text-2xs)',padding:'var(--space-1) var(--space-3)',background:'var(--accent)',color:'var(--accent-contrast)',opacity:commentDraft.trim()?1:0.5}}>
             ${_cc_t('issueRow.post','Post')}
           </button>
         </div>
@@ -27271,7 +27344,8 @@ function startApp() {
       return 'var(--sev-info)';
     })();
     var icon = html`<span aria-hidden="true" style=${{display:'inline-block',width:7,height:7,borderRadius:'50%',background:dotColor,flexShrink:0,marginTop:6}}></span>`;
-    var stBg = (STAT[it.status]||STAT.open).bg;
+    var stEntry = STAT[it.status]||STAT.open;
+    var stBg = stEntry.bg;
     var typeBg = 'transparent', typeCol = 'transparent', typeLabel = null;
     var sevBg = 'transparent', sevCol = 'transparent', sevLabel = null;
     var storeyLabel = (function(){
@@ -27315,11 +27389,11 @@ function startApp() {
         <div style=${{flex:1,minWidth:0}}>
           <div style=${{display:'flex',alignItems:'center',gap:'var(--space-2)',minWidth:0}}>
             <span title=${it.title} style=${{color:'var(--text-primary)',fontSize:'var(--text-sm)',fontWeight:'var(--weight-semibold)',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis',flex:1,minWidth:0,lineHeight:'var(--leading-base)'}}>${it.title}</span>
-            <span class="cc-status-pill" style=${{background:stBg+'22',color:stBg,flexShrink:0}}>${(STAT[it.status]||STAT.open).label}</span>
+            <span class="cc-status-pill" style=${{background:stEntry.tintBg||(stBg+'22'),color:stEntry.fg||stBg,flexShrink:0}}>${stEntry.label}</span>
             ${isClash && trainingMode && function(){
               var fb=it.aiFeedback;
               return html`<span style=${{display:'inline-flex',alignItems:'center',gap:'2px',flexShrink:0}}>
-                ${fb && html`<span style=${{fontSize:'0.63rem',padding:'.02rem .2rem',borderRadius:3,lineHeight:1,fontWeight:700,
+                ${fb && html`<span style=${{fontSize:'var(--text-xs)',padding:'.02rem .2rem',borderRadius:3,lineHeight:1,fontWeight:700,
                   background:fb==='real_clash'?'#166534':fb==='acceptable'?'var(--accent-bg)':'#7f1d1d',
                   color:fb==='real_clash'?'#4ade80':fb==='acceptable'?'var(--accent-subtle)':'#fca5a5'}}>${fb==='real_clash'?'+':fb==='acceptable'?'-':'×'}</span>`}
                 ${!active && html`<button onClick=${function(e){e.stopPropagation();d({t:A.ACTIVE,id:it.id});}}
@@ -27417,17 +27491,17 @@ function startApp() {
             style=${{...S_BTN,fontSize:'var(--text-2xs)',padding:'var(--space-1) var(--space-2)',background:occReveal?'var(--accent-bg)':'var(--bg-secondary)',color:occReveal?'var(--accent)':'var(--text-faint)',border:occReveal?'1px solid var(--accent-subtle)':'1px solid var(--border)',fontWeight:'var(--weight-semibold)'}} aria-label=${_cc_t('issueRow.toggleOccluderAria','Toggle occluder reveal')}>${occReveal?_cc_t('issueRow.occludersHidden','Occluders hidden'):_cc_t('issueRow.hideOccluders','Hide occluders')}</button>`}
           ${!isClash && EDITABLE_STATUSES.map(function(k){return html`<button class="cc-btn-press" key=${k}
             onClick=${function(e){e.stopPropagation();d({t:A.UPD_ISSUE,id:it.id,u:{status:k}})}}
-            style=${{...S_BTN,fontSize:'var(--text-2xs)',padding:'var(--space-1) var(--space-2)',background:it.status===k?STAT[k].bg:'var(--bg-secondary)',color:it.status===k?'#fff':'var(--text-faint)',fontWeight:'var(--weight-medium)'}}>${STAT[k].label}</button>`})}
+            style=${{...S_BTN,fontSize:'var(--text-2xs)',padding:'var(--space-1) var(--space-2)',background:it.status===k?(STAT[k].solidBg||STAT[k].bg):'var(--bg-secondary)',color:it.status===k?'#fff':'var(--text-faint)',fontWeight:'var(--weight-medium)'}}>${STAT[k].label}</button>`})}
           <button onClick=${function(e){e.stopPropagation();d({t:A.ACTIVE,id:null});if(_unghostAll)_unghostAll();if(window._ccRemoveActiveClashMarker)window._ccRemoveActiveClashMarker();}}
             title=${_cc_t('issueRow.collapse','Collapse')} aria-label=${_cc_t('issueRow.collapseDetailsAria','Collapse details')} style=${{...S_BTN,marginLeft:'auto',padding:'0 var(--space-1)',background:'none',color:'var(--text-faint)',fontSize:'var(--text-base)',flexShrink:0}}>▲</button>
         </div>
         ${html`<${ClashProps} item=${it} models=${pr._models||[]} isClash=${isClash} />`}
         <div style=${{display:'flex',gap:'.3rem',alignItems:'center',marginTop:'.3rem',marginBottom:'.2rem'}}>
-          <span style=${{fontSize:'0.63rem',color:'var(--text-muted)',flexShrink:0}}>${_cc_t('issueRow.assignLabel','Assign:')}</span>
+          <span style=${{fontSize:'var(--text-xs)',color:'var(--text-muted)',flexShrink:0}}>${_cc_t('issueRow.assignLabel','Assign:')}</span>
           <input type="text" value=${it.assignee||''} placeholder=${_cc_t('issueRow.nameOrTeam','Name or team')}
             onClick=${function(e){e.stopPropagation();}}
             onInput=${function(e){d({t:isClash?'UPD_CLASH':'UPD_ISSUE',id:it.id,u:{assignee:e.target.value}});}}
-            style=${{...S_INPUT,fontSize:'0.63rem',padding:'.15rem .3rem',flex:1}} />
+            style=${{...S_INPUT,fontSize:'var(--text-xs)',padding:'.15rem .3rem',flex:1}} />
         </div>
         ${isClash && html`<${ClashToleranceEditor} item=${it} d=${d} />`}
         ${(isClash ? trainingMode : !!it.clashId) && function(){
@@ -27455,13 +27529,13 @@ function startApp() {
             if (!hasReason && !hasRes && !hasNote) return null;
             function row(label, value) {
               if (!value) return null;
-              return html`<div style=${{display:'flex',gap:'.4rem',fontSize:'0.68rem',lineHeight:1.5,marginBottom:'.15rem'}}>
+              return html`<div style=${{display:'flex',gap:'.4rem',fontSize:'var(--text-xs)',lineHeight:1.5,marginBottom:'.15rem'}}>
                 <span style=${{color:'var(--text-faint)',minWidth:70,flexShrink:0}}>${label}</span>
                 <span style=${{color:'var(--text-primary)',fontWeight:500}}>${value}</span>
               </div>`;
             }
             return html`<div style=${{marginTop:'.4rem',paddingTop:'.4rem',borderTop:'1px solid var(--border-subtle)',background:'var(--accent-bg)',borderRadius:'var(--radius-sm)',padding:'.45rem .5rem'}}>
-              <div style=${{fontSize:'0.63rem',fontWeight:600,color:'var(--accent)',textTransform:'uppercase',letterSpacing:'.04em',marginBottom:'.3rem'}}>${_cc_t('issueRow.feedback','Feedback')}</div>
+              <div style=${{fontSize:'var(--text-xs)',fontWeight:600,color:'var(--accent)',textTransform:'uppercase',letterSpacing:'.04em',marginBottom:'.3rem'}}>${_cc_t('issueRow.feedback','Feedback')}</div>
               ${row(_cc_t('issueRow.reason','Reason'), hasReason ? curReasons.join(', ') : null)}
               ${row(_cc_t('issueRow.resolution','Resolution'), hasRes ? rLabels.join(', ') : null)}
               ${row(_cc_t('issueRow.note','Note'), hasNote ? curNote : null)}
@@ -27473,42 +27547,42 @@ function startApp() {
           // Native disclosure = zero React state, so no risk of reintroducing a
           // conditional-hook (this IIFE deliberately calls no hooks).
           return html`<details style=${{marginTop:'.4rem',borderTop:'1px solid var(--border-subtle)',background:'var(--accent-bg)',borderRadius:'var(--radius-sm)',padding:'.35rem .4rem'}}>
-            <summary onClick=${function(e){e.stopPropagation();}} style=${{fontSize:'0.63rem',fontWeight:600,color:'var(--accent)',textTransform:'uppercase',letterSpacing:'.04em',cursor:'pointer'}}>${_cc_t('issueRow.trainTheAI','Train the AI')} <span style=${{color:'var(--text-faint)',fontWeight:400,textTransform:'none',letterSpacing:0}}>— ${_cc_t('issueRow.optional','optional')}</span></summary>
+            <summary onClick=${function(e){e.stopPropagation();}} style=${{fontSize:'var(--text-xs)',fontWeight:600,color:'var(--accent)',textTransform:'uppercase',letterSpacing:'.04em',cursor:'pointer'}}>${_cc_t('issueRow.trainTheAI','Train the AI')} <span style=${{color:'var(--text-faint)',fontWeight:400,textTransform:'none',letterSpacing:0}}>— ${_cc_t('issueRow.optional','optional')}</span></summary>
             <div style=${{marginTop:'.35rem'}}>
-            <div style=${{fontSize:'0.63rem',fontWeight:600,color:'var(--text-muted)',marginBottom:'.15rem'}}>${_cc_t('issueRow.verdict','Verdict')}</div>
+            <div style=${{fontSize:'var(--text-xs)',fontWeight:600,color:'var(--text-muted)',marginBottom:'.15rem'}}>${_cc_t('issueRow.verdict','Verdict')}</div>
             <div style=${{display:'flex',gap:'.25rem',marginBottom:'.3rem',flexWrap:'wrap'}}>
               ${VERDICTS.map(function(v){var sel=fb===v.k;return html`<button key=${v.k}
                 onClick=${function(e){e.stopPropagation();setVerdict(sel?null:v.k);}}
-                style=${{...S_BTN,fontSize:'0.63rem',padding:'.1rem .4rem',
+                style=${{...S_BTN,fontSize:'var(--text-xs)',padding:'.1rem .4rem',
                   background:sel?v.bg:'var(--bg-secondary)',color:sel?v.col:'var(--text-faint)',
                   border:'1px solid '+(sel?v.brd:'var(--border)')}}>${v.l}</button>`})}
             </div>
-            <div style=${{fontSize:'0.63rem',fontWeight:600,color:'var(--text-muted)',marginBottom:'.15rem'}}>${_cc_t('issueRow.clashType','Clash type')}</div>
+            <div style=${{fontSize:'var(--text-xs)',fontWeight:600,color:'var(--text-muted)',marginBottom:'.15rem'}}>${_cc_t('issueRow.clashType','Clash type')}</div>
             <div style=${{display:'flex',gap:'.25rem',marginBottom:'.3rem',flexWrap:'wrap'}}>
               ${CTYPES.map(function(ct){var confirmed=it.clashTypeConfirmed!=null;var sel=curCT===ct.k;var isDefault=!confirmed&&it.type===ct.k;return html`<button key=${ct.k}
                 onClick=${function(e){e.stopPropagation();updItem({clashTypeConfirmed:ct.k});}}
-                style=${{...S_BTN,fontSize:'0.63rem',padding:'.1rem .35rem',
+                style=${{...S_BTN,fontSize:'var(--text-xs)',padding:'.1rem .35rem',
                   background:sel||isDefault?'var(--accent-bg)':'var(--bg-secondary)',
                   color:sel||isDefault?'var(--accent-subtle)':'var(--text-faint)',
                   border:'1px solid '+(sel||isDefault?'var(--accent)':'var(--border)')}}>${ct.l}${isDefault?' '+_cc_t('issueRow.detected','(detected)'):''}</button>`})}
             </div>
-            <div style=${{fontSize:'0.63rem',fontWeight:600,color:'var(--text-muted)',marginBottom:'.15rem'}}>${_cc_t('issueRow.reason','Reason')}</div>
+            <div style=${{fontSize:'var(--text-xs)',fontWeight:600,color:'var(--text-muted)',marginBottom:'.15rem'}}>${_cc_t('issueRow.reason','Reason')}</div>
             <div style=${{display:'flex',gap:'.2rem',marginBottom:'.3rem',flexWrap:'wrap'}}>
               ${REASONS.map(function(r){var sel=curReasons.indexOf(r)>=0;return html`<span key=${r}
                 onClick=${function(e){e.stopPropagation();var nr=sel?curReasons.filter(function(x){return x!==r}):curReasons.concat([r]);updItem({aiReasons:nr});}}
-                style=${{fontSize:'0.63rem',padding:'.1rem .35rem',borderRadius:10,cursor:'pointer',whiteSpace:'nowrap',
+                style=${{fontSize:'var(--text-xs)',padding:'.1rem .35rem',borderRadius:10,cursor:'pointer',whiteSpace:'nowrap',
                   border:'1px solid '+(sel?'var(--accent)':'var(--border)'),
                   background:sel?'var(--accent-bg)':'var(--bg-secondary)',
                   color:sel?'var(--accent-subtle)':'var(--text-muted)'}}>${r}</span>`})}
             </div>
-            <div style=${{fontSize:'0.63rem',fontWeight:600,color:'var(--text-muted)',marginBottom:'.15rem'}}>${_cc_t('issueRow.resolution','Resolution')}</div>
+            <div style=${{fontSize:'var(--text-xs)',fontWeight:600,color:'var(--text-muted)',marginBottom:'.15rem'}}>${_cc_t('issueRow.resolution','Resolution')}</div>
             <div style=${{display:'flex',gap:'.2rem',marginBottom:'.3rem',flexWrap:'wrap'}}>
               ${[{k:'move_a',l:'Move A'},{k:'move_b',l:'Move B'},{k:'redesign',l:'Redesign'},{k:'accept',l:'Accept'}].map(function(r){
                 var curRes=it.aiResolution||[];if(typeof curRes==='string')curRes=curRes?[curRes]:[];
                 var sel=curRes.indexOf(r.k)>=0;
                 return html`<span key=${r.k}
                   onClick=${function(e){e.stopPropagation();var nr=sel?curRes.filter(function(x){return x!==r.k}):curRes.concat([r.k]);updItem({aiResolution:nr});}}
-                  style=${{fontSize:'0.63rem',padding:'.1rem .35rem',borderRadius:10,cursor:'pointer',whiteSpace:'nowrap',
+                  style=${{fontSize:'var(--text-xs)',padding:'.1rem .35rem',borderRadius:10,cursor:'pointer',whiteSpace:'nowrap',
                     border:'1px solid '+(sel?'var(--accent)':'var(--border)'),
                     background:sel?'var(--accent-bg)':'var(--bg-secondary)',
                     color:sel?'var(--accent-subtle)':'var(--text-muted)'}}>${r.l}</span>`;
@@ -27517,12 +27591,12 @@ function startApp() {
             <input type="text" value=${curNote} maxLength="140" placeholder=${_cc_t('issueRow.optionalNotePlaceholder','Optional note \u2014 no project names or locations')}
               onClick=${function(e){e.stopPropagation();}}
               onInput=${function(e){updItem({aiNote:e.target.value});}}
-              style=${{width:'100%',fontSize:'0.63rem',padding:'.2rem .3rem',background:'var(--bg-secondary)',
+              style=${{width:'100%',fontSize:'var(--text-xs)',padding:'.2rem .3rem',background:'var(--bg-secondary)',
                 border:'1px solid var(--border)',borderRadius:3,color:'var(--text-primary)',boxSizing:'border-box'}} />
             </div>
           </details>`;
         }()}
-        ${!isClash && it.category && html`<div style=${{fontSize:'0.63rem',color:'var(--text-muted)'}}>${_cc_t('issueRow.categoryLabel','Category: {cat}',{cat:it.category})}</div>`}
+        ${!isClash && it.category && html`<div style=${{fontSize:'var(--text-xs)',color:'var(--text-muted)'}}>${_cc_t('issueRow.categoryLabel','Category: {cat}',{cat:it.category})}</div>`}
         ${!isClash && html`<${IssueDetailEditor} item=${it} d=${d} />`}
         ${html`<${ClashHistory} targetId=${it.id} />`}
       </div>`}
@@ -27647,7 +27721,7 @@ function startApp() {
         </div>
         <div style=${{display:'flex',gap:'var(--space-2)',paddingTop:'var(--space-2)'}}>
           <button class="cc-btn-press" type="button" onClick=${function(){d({t:A.MODAL,v:false})}} style=${{...S_BTN,flex:1,background:'var(--bg-tertiary)',color:'var(--text-primary)',border:'1px solid var(--border)'}}>${_cc_t('newIssue.cancel','Cancel')}</button>
-          <button class="cc-btn-press" type="submit" style=${{...S_BTN,flex:1,background:'var(--accent)',color:'#fff',fontWeight:'var(--weight-semibold)'}}>${_cc_t('newIssue.create','Create Issue')}</button>
+          <button class="cc-btn-press" type="submit" style=${{...S_BTN,flex:1,background:'var(--accent)',color:'var(--accent-contrast)',fontWeight:'var(--weight-semibold)'}}>${_cc_t('newIssue.create','Create Issue')}</button>
         </div>
       </form>
     </div></div>`;
@@ -28922,7 +28996,7 @@ function startApp() {
     var saved = (s.smartViews||[]).filter(function(v){return !v.isPreset;});
 
     var ipt = {width:'100%',padding:'.5rem .65rem',background:'var(--input-bg)',color:'var(--text-primary)',border:'1px solid var(--border)',borderRadius:6,fontSize:'0.85rem',fontFamily:'inherit',outline:'none',boxSizing:'border-box'};
-    var btnPrim = {padding:'.45rem .8rem',borderRadius:7,fontSize:'0.8rem',fontWeight:600,cursor:'pointer',border:'none',background:'var(--accent)',color:'#fff',fontFamily:'inherit'};
+    var btnPrim = {padding:'.45rem .8rem',borderRadius:7,fontSize:'0.8rem',fontWeight:600,cursor:'pointer',border:'none',background:'var(--accent)',color:'var(--accent-contrast)',fontFamily:'inherit'};
     var btnGhost = {padding:'.4rem .65rem',borderRadius:6,fontSize:'0.78rem',fontWeight:500,cursor:'pointer',border:'1px solid var(--border)',background:'var(--bg-secondary)',color:'var(--text-secondary)',fontFamily:'inherit'};
 
     var Card = function(opts){
@@ -29041,7 +29115,7 @@ function startApp() {
     var unresolved = (s.comments||[]).filter(function(c){return !c.resolved;}).length;
     var totalC = (s.comments||[]).length;
 
-    var btnPrimary = {padding:'.5rem .9rem',borderRadius:8,fontSize:'0.82rem',fontWeight:600,cursor:'pointer',border:'none',background:'var(--accent)',color:'#fff',fontFamily:'inherit'};
+    var btnPrimary = {padding:'.5rem .9rem',borderRadius:8,fontSize:'0.82rem',fontWeight:600,cursor:'pointer',border:'none',background:'var(--accent)',color:'var(--accent-contrast)',fontFamily:'inherit'};
     var btnSecondary = {padding:'.5rem .9rem',borderRadius:8,fontSize:'0.82rem',fontWeight:500,cursor:'pointer',border:'1px solid var(--border)',background:'var(--bg-secondary)',color:'var(--text-secondary)',fontFamily:'inherit'};
     var btnGhost = {padding:'.4rem .7rem',borderRadius:6,fontSize:'0.78rem',fontWeight:500,cursor:'pointer',border:'1px solid var(--border)',background:'transparent',color:'var(--text-secondary)',fontFamily:'inherit'};
     var btnDanger = {padding:'.4rem .7rem',borderRadius:6,fontSize:'0.78rem',fontWeight:500,cursor:'pointer',border:'1px solid #ef444466',background:'transparent',color:'#f87171',fontFamily:'inherit'};
@@ -29256,7 +29330,7 @@ function startApp() {
                 ${collaborators.slice(0,8).map(function(name){
                   var initials = name.split(/\s+/).map(function(p){return p[0]||'';}).slice(0,2).join('').toUpperCase();
                   return html`<div key=${name} style=${{display:'flex',alignItems:'center',gap:'.4rem',padding:'.25rem .55rem .25rem .3rem',background:'var(--bg-tertiary)',borderRadius:99,fontSize:'0.74rem',color:'var(--text-secondary)'}}>
-                    <span style=${{width:20,height:20,borderRadius:'50%',background:'var(--accent)',color:'#fff',fontSize:'0.6rem',fontWeight:700,display:'flex',alignItems:'center',justifyContent:'center'}}>${initials||'?'}</span>
+                    <span style=${{width:20,height:20,borderRadius:'50%',background:'var(--accent)',color:'var(--accent-contrast)',fontSize:'0.6rem',fontWeight:700,display:'flex',alignItems:'center',justifyContent:'center'}}>${initials||'?'}</span>
                     ${name}
                   </div>`;
                 })}
@@ -29307,7 +29381,7 @@ function startApp() {
       setDraft('');
     }
 
-    var btnPrimary = {padding:'.45rem .8rem',borderRadius:7,fontSize:'0.78rem',fontWeight:600,cursor:'pointer',border:'none',background:'var(--accent)',color:'#fff',fontFamily:'inherit'};
+    var btnPrimary = {padding:'.45rem .8rem',borderRadius:7,fontSize:'0.78rem',fontWeight:600,cursor:'pointer',border:'none',background:'var(--accent)',color:'var(--accent-contrast)',fontFamily:'inherit'};
     var btnGhost = {padding:'.3rem .55rem',borderRadius:5,fontSize:'0.72rem',fontWeight:500,cursor:'pointer',border:'1px solid var(--border)',background:'transparent',color:'var(--text-secondary)',fontFamily:'inherit'};
     var pillBtn = function(id,label){
       var active=filter===id;
@@ -29399,7 +29473,7 @@ function startApp() {
           style=${{padding:'.3rem .6rem',borderRadius:5,fontSize:'0.74rem',cursor:'pointer',border:'1px solid var(--border)',background:'transparent',color:'var(--text-muted)',fontFamily:'inherit'}}>${_cc_t('newIssue.cancel','Cancel')}</button>
         <button onClick=${save} disabled=${!txt.trim()}
           style=${{padding:'.3rem .7rem',borderRadius:5,fontSize:'0.74rem',fontWeight:600,cursor:txt.trim()?'pointer':'not-allowed',
-            border:'none',background:'var(--accent)',color:'#fff',opacity:txt.trim()?1:0.4,fontFamily:'inherit'}}>${_cc_t('share.saveCtrlEnter','Save (Ctrl+Enter)')}</button>
+            border:'none',background:'var(--accent)',color:'var(--accent-contrast)',opacity:txt.trim()?1:0.4,fontFamily:'inherit'}}>${_cc_t('share.saveCtrlEnter','Save (Ctrl+Enter)')}</button>
       </div>
     </div>`;
   }
@@ -29485,7 +29559,7 @@ function startApp() {
                 onConfirm(allChecked ? null : chosen, autoComplete); // null = full load, exact current behavior
               }}
               disabled=${checkedCount===0}
-              style=${{...S_BTN,background:'var(--accent)',color:'#fff',opacity:checkedCount===0?0.5:1}}>
+              style=${{...S_BTN,background:'var(--accent)',color:'var(--accent-contrast)',opacity:checkedCount===0?0.5:1}}>
               ${allChecked ? _cc_t('storeyScope.loadAll','Load all') : _cc_t('storeyScope.loadNSelected','Load {n} selected',{n:checkedCount})}
             </button>
           </div>
@@ -29494,27 +29568,21 @@ function startApp() {
     </div>`;
   }
 
-  function ShortcutsModal(props) {
-    var onClose = props.onClose;
-    useEffect(function(){
-      function onKey(e){ if (e.key === 'Escape') onClose(); }
-      window.addEventListener('keydown', onKey);
-      return function(){ window.removeEventListener('keydown', onKey); };
-    }, []);
-    // REWRITE_UI_PLAN.md Phase 9 — the shared focus-trap primitive, applied
-    // unconditionally (was flag-gated behind ccUiModalV2, defaultEnabled:
-    // false, during its first verified rollout — this modal is role="dialog"
-    // aria-modal="true" and should always trap focus, not only when that
-    // flag happens to be on). The modal's existing Escape handler and DOM
-    // structure above/below are unchanged.
-    var modalV2On = !!(window._ccSafetyMigrations && window._ccSafetyMigrations.isEnabled('ccUiModalV2'));
-    var cardRef = useRef(null);
-    _ccUseFocusTrap(cardRef, true);
-    var sections = [
+  // Single source of truth for the keyboard-shortcut text shown in both the
+  // "?" ShortcutsModal and the Quick Start Guide (TutorialPortal) — see
+  // MEMORY.md. The two used to be hand-written separately and drifted out
+  // of sync with each other and with the real keydown handlers (~index.html
+  // "Single-key shortcuts" block, search `if(!ctrl && !e.altKey`). Every row
+  // here must correspond to a real handler; Quick Start pulls its condensed
+  // subset from this same array via `_ccShortcutRow` instead of repeating
+  // the text.
+  function _ccShortcutSections() {
+    return [
       { title: _cc_t('shortcuts.section.general','General'), rows: [
         ['?',           _cc_t('shortcuts.general.openPanel','Open this shortcuts panel')],
         ['Esc',         _cc_t('shortcuts.general.closeModal','Close any open modal, menu, or walk mode')],
         ['Cmd / Ctrl K',_cc_t('shortcuts.general.commandPalette','Open command palette (find any tool, run AI)')],
+        ['/',           _cc_t('shortcuts.general.openAiChat','Open the AI command line')],
         ['Cmd / Ctrl Z',_cc_t('shortcuts.general.undo','Undo (visibility, section changes, measurements)')],
         ['Cmd / Ctrl Shift Z, Cmd / Ctrl Y', _cc_t('shortcuts.general.redo','Redo')],
       ]},
@@ -29539,6 +29607,7 @@ function startApp() {
         ['Y',           _cc_t('shortcuts.view.sectionY','Section — Y axis')],
         ['Z',           _cc_t('shortcuts.view.sectionZ','Section — Z axis (horizontal floor cut)')],
         ['F',           _cc_t('shortcuts.view.flipSection','Flip section (or Fit model when no section is active)')],
+        ['G',           _cc_t('shortcuts.view.toggleGrid','Toggle grid')],
         ['Alt + Click', _cc_t('shortcuts.view.sectionThroughFace','Section through the clicked face')],
         ['M',           _cc_t('shortcuts.view.distanceMeasure','Distance measurement')],
         ['Shift+M',     _cc_t('shortcuts.view.clearMeasurements','Clear measurements')],
@@ -29577,7 +29646,42 @@ function startApp() {
         ['Space',       _cc_t('shortcuts.present.toggleAutoAdvance','Toggle auto-advance')],
         ['← →',_cc_t('shortcuts.present.prevNext','Previous / next saved view')],
       ]},
+      { title: _cc_t('shortcuts.section.files','Files & settings'), rows: [
+        ['Cmd / Ctrl O', _cc_t('shortcuts.files.open','Open IFC or GLB file')],
+        ['Cmd / Ctrl ,', _cc_t('shortcuts.files.settings','Open settings')],
+      ]},
     ];
+  }
+  // Looks up a single row's help text out of _ccShortcutSections() by its
+  // key label, so the Quick Start Guide's condensed cheat-sheet can quote
+  // the ShortcutsModal verbatim instead of retyping it (and drifting).
+  function _ccShortcutRow(key) {
+    var sections = _ccShortcutSections();
+    for (var i=0; i<sections.length; i++) {
+      for (var j=0; j<sections[i].rows.length; j++) {
+        if (sections[i].rows[j][0] === key) return sections[i].rows[j][1];
+      }
+    }
+    return '';
+  }
+
+  function ShortcutsModal(props) {
+    var onClose = props.onClose;
+    useEffect(function(){
+      function onKey(e){ if (e.key === 'Escape') onClose(); }
+      window.addEventListener('keydown', onKey);
+      return function(){ window.removeEventListener('keydown', onKey); };
+    }, []);
+    // REWRITE_UI_PLAN.md Phase 9 — the shared focus-trap primitive, applied
+    // unconditionally (was flag-gated behind ccUiModalV2, defaultEnabled:
+    // false, during its first verified rollout — this modal is role="dialog"
+    // aria-modal="true" and should always trap focus, not only when that
+    // flag happens to be on). The modal's existing Escape handler and DOM
+    // structure above/below are unchanged.
+    var modalV2On = !!(window._ccSafetyMigrations && window._ccSafetyMigrations.isEnabled('ccUiModalV2'));
+    var cardRef = useRef(null);
+    _ccUseFocusTrap(cardRef, true);
+    var sections = _ccShortcutSections();
     var kbdStyle = {fontFamily:'var(--font-mono)',fontSize:'var(--text-xs)',background:'var(--bg-tertiary)',border:'1px solid var(--border)',borderBottom:'2px solid var(--border)',borderRadius:'var(--radius-xs)',padding:'2px 6px',color:'var(--text-primary)',whiteSpace:'nowrap',display:'inline-block',lineHeight:'var(--leading-tight)'};
     return html`<div class="cc-modal-backdrop" style=${S_BACKDROP} role="dialog" aria-modal="true" aria-labelledby="cc-shortcuts-title"
       onClick=${onClose}>
@@ -29843,7 +29947,7 @@ function startApp() {
       });
     }
     // Panels & tabs
-    push({group:_cc_t('cmdk.group.panels','Panels'), label:_cc_t('cmdk.openConflicts','Open Conflicts'),
+    push({group:_cc_t('cmdk.group.panels','Panels'), label:_cc_t('cmdk.openConflicts','Open Clashes'),
       keywords:'conflicts clashes issues list', r:'coordinate',
       onSelect:function(){ d({t:A.TAB,v:'clashes'}); }});
     push({group:_cc_t('cmdk.group.panels','Panels'), label:_cc_t('cmdk.openIssues','Open Issues'),
@@ -29896,6 +30000,9 @@ function startApp() {
     push({group:_cc_t('cmdk.group.project','Project'), label:_cc_t('shortcuts.title','Keyboard shortcuts'), hint:'?',
       keywords:'shortcuts keyboard hotkeys help',
       onSelect:function(){ try{ window.dispatchEvent(new CustomEvent('cc-show-shortcuts')); }catch(e){} }});
+    push({group:_cc_t('cmdk.group.project','Project'), label:_cc_t('cmdk.startTour','Start tour'),
+      keywords:'tour guide help onboarding walkthrough getting started',
+      onSelect:function(){ try{ if(window._ccStartTour) window._ccStartTour(); }catch(e){} }});
     push({group:_cc_t('cmdk.group.project','Project'), label:_cc_t('cmdk.toggleTheme','Toggle theme (light / dark)'),
       keywords:'theme light dark mode color',
       onSelect:function(){
@@ -30572,7 +30679,7 @@ function startApp() {
                     .then(function(data){ d({t:A.UPD_PREFS,u:{_sharedRefresh:Date.now()}}); })
                     .catch(function(){ alert(_cc_t('share.createFailed','Could not create shared project. Server may be unavailable.')); });
                 }}
-                  style=${{...S_BTN,padding:'.3rem .6rem',background:'var(--accent)',color:'#fff',fontSize:'0.78rem',fontWeight:600,borderRadius:6,whiteSpace:'nowrap'}}>${_cc_t('share.create','Create')}</button>
+                  style=${{...S_BTN,padding:'.3rem .6rem',background:'var(--accent)',color:'var(--accent-contrast)',fontSize:'0.78rem',fontWeight:600,borderRadius:6,whiteSpace:'nowrap'}}>${_cc_t('share.create','Create')}</button>
               </div>
             </div>`}
           </div>`;
@@ -30763,7 +30870,7 @@ function startApp() {
 
         ${expanded && filledCount>0 && html`<button onClick=${applyToRules}
           style=${{...S_BTN,width:'100%',padding:'.35rem',fontSize:'0.75rem',fontWeight:600,marginTop:'.4rem',
-            background:'var(--accent)',color:'#fff',border:'none',borderRadius:6}}>
+            background:'var(--accent)',color:'var(--accent-contrast)',border:'none',borderRadius:6}}>
           ${_cc_t('settings.advanced.applyTolerances','Apply {n} tolerances to Current Detection Rules',{n:filledCount})}
         </button>`}
 
@@ -30864,7 +30971,7 @@ function startApp() {
           h('p',{style:{color:'var(--text-secondary)',fontSize:'var(--text-md)',marginBottom:'var(--space-4)',maxWidth:400}},String(this.state.error&&this.state.error.message||this.state.error||'Unknown error')),
           h('div',{style:{display:'flex',gap:'var(--space-2)'}},
             h('button',{onClick:function(){self.setState({hasError:false,error:null});},style:{padding:'var(--space-2) var(--space-4)',background:'var(--bg-secondary)',color:'var(--text-secondary)',border:'1px solid var(--border)',borderRadius:'var(--radius-sm)',cursor:'pointer',fontFamily:'inherit',fontSize:'var(--text-base)',fontWeight:'var(--weight-medium)'}},'Try Again'),
-            h('button',{onClick:function(){window.location.reload();},style:{padding:'var(--space-2) var(--space-4)',background:'var(--accent)',color:'#fff',border:'none',borderRadius:'var(--radius-sm)',cursor:'pointer',fontFamily:'inherit',fontSize:'var(--text-base)',fontWeight:'var(--weight-semibold)'}},'Reload App')
+            h('button',{onClick:function(){window.location.reload();},style:{padding:'var(--space-2) var(--space-4)',background:'var(--accent)',color:'var(--accent-contrast)',border:'none',borderRadius:'var(--radius-sm)',cursor:'pointer',fontFamily:'inherit',fontSize:'var(--text-base)',fontWeight:'var(--weight-semibold)'}},'Reload App')
           )
         );
       }
@@ -31465,7 +31572,7 @@ function startApp() {
               style=${{ ...S_INPUT, fontSize: '.6rem', padding: '.15rem .3rem' }} />
           </label>`;
         })}
-        <button onClick=${function() { setShowTB(false); }} style=${{ ...btn, marginTop: '.3rem', background: 'var(--accent)', color: '#fff' }}>${_cc_t('common.close','Close')}</button>
+        <button onClick=${function() { setShowTB(false); }} style=${{ ...btn, marginTop: '.3rem', background: 'var(--accent)', color: 'var(--accent-contrast)' }}>${_cc_t('common.close','Close')}</button>
       </div>`}
     </div>`;
   }
@@ -32044,7 +32151,7 @@ function startApp() {
       </div>
       <div style=${{ position: 'absolute', top: '.5rem', right: '.5rem', display: 'flex', gap: '.3rem', pointerEvents: 'auto', flexWrap: 'wrap', justifyContent: 'flex-end' }}>
         <button onClick=${function() { d({ t: 'UNDERLAY_MODE', v: null }); }}
-          style=${{ ...S_BTN, fontSize: '.6rem', padding: '.2rem .5rem', background: 'var(--accent)', color: '#fff', border: '1px solid var(--accent-hover)' }}>Back to 3D</button>
+          style=${{ ...S_BTN, fontSize: '.6rem', padding: '.2rem .5rem', background: 'var(--accent)', color: 'var(--accent-contrast)', border: '1px solid var(--accent-hover)' }}>Back to 3D</button>
         ${s.floorPlan && html`<button onClick=${function() { d({ t: 'UNDERLAY_MODE', v: s.underlayMode === 'compare' ? 'view2d' : 'compare' }); }}
           style=${{ ...S_BTN, fontSize: '.6rem', padding: '.2rem .5rem',
             background: s.underlayMode === 'compare' ? 'var(--accent)' : 'var(--overlay-bg)',
@@ -35322,7 +35429,7 @@ function startApp() {
         <button onClick=${function(){setMsgs(function(prev){var n=prev.slice();n[idx]={role:'assistant',text:_cc_t('setup.setupCancelled','Setup cancelled.')};return n;});}}
           style=${{...S_BTN,padding:'.25rem .6rem',fontSize:'0.78rem',background:'none',color:'var(--text-muted)',border:'1px solid var(--border)'}}>${_cc_t('common.cancel','Cancel')}</button>
         <button onClick=${run} disabled=${!rules.hard&&!(rules.maxGap>0)&&!rules.duplicates}
-          style=${{...S_BTN,padding:'.25rem .8rem',fontSize:'0.78rem',background:'var(--accent)',color:'#fff',fontWeight:600,opacity:(!rules.hard&&!(rules.maxGap>0)&&!rules.duplicates)?0.4:1}}>
+          style=${{...S_BTN,padding:'.25rem .8rem',fontSize:'0.78rem',background:'var(--accent)',color:'var(--accent-contrast)',fontWeight:600,opacity:(!rules.hard&&!(rules.maxGap>0)&&!rules.duplicates)?0.4:1}}>
           ${_cc_t('run.runDetectionCaps','Run Detection')}
         </button>
       </div>
@@ -36128,7 +36235,7 @@ function startApp() {
           }}
         ></textarea>
         <button onClick=${send} disabled=${!input.trim()||loading} style=${{
-          background:'var(--accent)', color:'#fff', border:'none', borderRadius:8,
+          background:'var(--accent)', color:'var(--accent-contrast)', border:'none', borderRadius:8,
           padding:'.4rem .7rem', cursor:'pointer', fontSize:'0.87rem', fontWeight:500,
           opacity:(!input.trim()||loading)?0.45:1, alignSelf:'flex-end',
           transition:'opacity .15s'
@@ -36249,7 +36356,7 @@ function startApp() {
           }}
         ></textarea>
         <button onClick=${send} disabled=${!input.trim()||loading} style=${{
-          background:'var(--accent)', color:'#fff', border:'none', borderRadius:8,
+          background:'var(--accent)', color:'var(--accent-contrast)', border:'none', borderRadius:8,
           padding:'.4rem .7rem', cursor:'pointer', fontSize:'0.87rem', fontWeight:500,
           opacity:(!input.trim()||loading)?0.45:1, alignSelf:'flex-end',
           transition:'opacity .15s'
@@ -36315,7 +36422,7 @@ function startApp() {
           {id:'navigator',   svg:SVG_EXPLORE,     label:'Navigator'}
         ]
       : [
-          {id:'clashes',  svg:SVG_CLASHES,   label:'Conflicts', badge:clashN},
+          {id:'clashes',  svg:SVG_CLASHES,   label:'Clashes', badge:clashN},
           {id:'issues',   svg:SVG_ISSUES,    label:'Issues',    badge:issueN},
           {id:'standards',svg:SVG_STANDARDS, label:'Clash Rules'}
         ];
@@ -36513,9 +36620,9 @@ function startApp() {
       gap:'var(--space-3)', fontSize:'var(--text-sm)', color:'var(--text-secondary)'
     }}>
       <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" style=${{flexShrink:0}}><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/></svg>
-      <span style=${{flex:1}}>${_cc_t('detectBanner.msg','Models loaded. Run clash detection to find conflicts.')}</span>
+      <span style=${{flex:1}}>${_cc_t('detectBanner.msg','Models loaded. Run clash detection to find clashes.')}</span>
       <button onClick=${run}
-        style=${{...S_BTN, padding:'.4rem .8rem', background:'var(--accent)', color:'#fff', border:'none', borderRadius:6, fontWeight:600, fontSize:'0.78rem', whiteSpace:'nowrap'}}>${_cc_t('detectBanner.run','Run clash detection')}</button>
+        style=${{...S_BTN, padding:'.4rem .8rem', background:'var(--accent)', color:'var(--accent-contrast)', border:'none', borderRadius:6, fontWeight:600, fontSize:'0.78rem', whiteSpace:'nowrap'}}>${_cc_t('detectBanner.run','Run clash detection')}</button>
       <button aria-label=${_cc_t('detectBanner.dismissAria','Dismiss')} onClick=${dismiss}
         style=${{background:'none',border:'none',color:'var(--text-muted)',cursor:'pointer',fontSize:'1.1rem',lineHeight:1,padding:'0 .2rem',flexShrink:0}}>×</button>
     </div>`;
@@ -36547,7 +36654,7 @@ function startApp() {
       <button onClick=${function(){choose('denied');}}
         style=${{...S_BTN,padding:'.35rem .55rem',background:'transparent',border:'1px solid var(--border)',borderRadius:6,color:'var(--text-secondary)',fontSize:'0.74rem',whiteSpace:'nowrap',flexShrink:0}}>${_cc_t('privacyBanner.noThanks','No thanks')}</button>
       <button onClick=${function(){choose('granted');}}
-        style=${{...S_BTN,padding:'.35rem .65rem',background:'var(--accent)',border:'none',borderRadius:6,color:'#fff',fontSize:'0.74rem',fontWeight:600,whiteSpace:'nowrap',flexShrink:0}}>${_cc_t('privacyBanner.allowSharing','Allow sharing')}</button>
+        style=${{...S_BTN,padding:'.35rem .65rem',background:'var(--accent)',border:'none',borderRadius:6,color:'var(--accent-contrast)',fontSize:'0.74rem',fontWeight:600,whiteSpace:'nowrap',flexShrink:0}}>${_cc_t('privacyBanner.allowSharing','Allow sharing')}</button>
     </div>`;
   }
 
@@ -37002,7 +37109,7 @@ function startApp() {
         </div>
         <div style=${{display:'flex',gap:'.6rem'}}>
           <button onClick=${onSend}
-            style=${{flex:1,padding:'.5rem',borderRadius:7,background:'var(--accent)',color:'#fff',fontWeight:600,fontSize:'0.88rem',border:'none',cursor:'pointer'}}>
+            style=${{flex:1,padding:'.5rem',borderRadius:7,background:'var(--accent)',color:'var(--accent-contrast)',fontWeight:600,fontSize:'0.88rem',border:'none',cursor:'pointer'}}>
             ${_cc_t('memWarn.sendReportBtn','Send Report')}
           </button>
           <button onClick=${onDismiss}
@@ -37042,21 +37149,25 @@ function startApp() {
             <div><div style=${{fontWeight:600,color:'var(--text-primary)',marginBottom:'.25rem'}}>4. Create issues & export</div><div>Create issues from clashes. Export as BCF 2.1/3.0 for Revit, Navisworks, Solibri, or BIMcollab.</div></div>
             <div style=${{borderTop:'1px solid var(--border-subtle)',paddingTop:'.7rem'}}>
               <div style=${{fontWeight:600,color:'var(--text-primary)',marginBottom:'.25rem'}}>Keyboard shortcuts</div>
+              <!-- Pulled from _ccShortcutSections() (also used by the "?"
+                   ShortcutsModal) via _ccShortcutRow(key) so this cheat-sheet
+                   can't drift from the real keydown handlers or the full
+                   shortcuts sheet — see MEMORY.md 2026-09-28. -->
               <div style=${{display:'grid',gridTemplateColumns:'auto 1fr',gap:'.2rem .6rem',fontSize:'0.83rem',color:'var(--text-muted)'}}>
-                <kbd style=${{background:'var(--bg-secondary)',padding:'0 .3rem',borderRadius:3,fontFamily:'inherit',fontSize:'0.78rem'}}>/</kbd><span>Open AI chat</span>
-                <kbd style=${{background:'var(--bg-secondary)',padding:'0 .3rem',borderRadius:3,fontFamily:'inherit',fontSize:'0.78rem'}}>1 2 3 4</kbd><span>Switch side panel tabs</span>
-                <kbd style=${{background:'var(--bg-secondary)',padding:'0 .3rem',borderRadius:3,fontFamily:'inherit',fontSize:'0.78rem'}}>M</kbd><span>Measure tool (length)</span>
-                <kbd style=${{background:'var(--bg-secondary)',padding:'0 .3rem',borderRadius:3,fontFamily:'inherit',fontSize:'0.78rem'}}>F</kbd><span>Find elements</span>
-                <kbd style=${{background:'var(--bg-secondary)',padding:'0 .3rem',borderRadius:3,fontFamily:'inherit',fontSize:'0.78rem'}}>X / Y</kbd><span>Toggle section planes</span>
-                <kbd style=${{background:'var(--bg-secondary)',padding:'0 .3rem',borderRadius:3,fontFamily:'inherit',fontSize:'0.78rem'}}>G</kbd><span>Toggle grid</span>
-                <kbd style=${{background:'var(--bg-secondary)',padding:'0 .3rem',borderRadius:3,fontFamily:'inherit',fontSize:'0.78rem'}}>Ctrl O</kbd><span>Open IFC file</span>
-                <kbd style=${{background:'var(--bg-secondary)',padding:'0 .3rem',borderRadius:3,fontFamily:'inherit',fontSize:'0.78rem'}}>Ctrl ,</kbd><span>Settings</span>
+                <kbd style=${{background:'var(--bg-secondary)',padding:'0 .3rem',borderRadius:3,fontFamily:'inherit',fontSize:'0.78rem'}}>/</kbd><span>${_ccShortcutRow('/')}</span>
+                <kbd style=${{background:'var(--bg-secondary)',padding:'0 .3rem',borderRadius:3,fontFamily:'inherit',fontSize:'0.78rem'}}>1–5</kbd><span>Render style: ${_ccShortcutRow('1')} · ${_ccShortcutRow('2')} · ${_ccShortcutRow('3')} · ${_ccShortcutRow('4')} · ${_ccShortcutRow('5')}</span>
+                <kbd style=${{background:'var(--bg-secondary)',padding:'0 .3rem',borderRadius:3,fontFamily:'inherit',fontSize:'0.78rem'}}>M</kbd><span>${_ccShortcutRow('M')}</span>
+                <kbd style=${{background:'var(--bg-secondary)',padding:'0 .3rem',borderRadius:3,fontFamily:'inherit',fontSize:'0.78rem'}}>Ctrl+F</kbd><span>${_ccShortcutRow('Ctrl+F')}</span>
+                <kbd style=${{background:'var(--bg-secondary)',padding:'0 .3rem',borderRadius:3,fontFamily:'inherit',fontSize:'0.78rem'}}>X / Y</kbd><span>${_ccShortcutRow('X')} / ${_ccShortcutRow('Y')}</span>
+                <kbd style=${{background:'var(--bg-secondary)',padding:'0 .3rem',borderRadius:3,fontFamily:'inherit',fontSize:'0.78rem'}}>G</kbd><span>${_ccShortcutRow('G')}</span>
+                <kbd style=${{background:'var(--bg-secondary)',padding:'0 .3rem',borderRadius:3,fontFamily:'inherit',fontSize:'0.78rem'}}>Ctrl O</kbd><span>${_ccShortcutRow('Cmd / Ctrl O')}</span>
+                <kbd style=${{background:'var(--bg-secondary)',padding:'0 .3rem',borderRadius:3,fontFamily:'inherit',fontSize:'0.78rem'}}>Ctrl ,</kbd><span>${_ccShortcutRow('Cmd / Ctrl ,')}</span>
               </div>
             </div>
           </div>
           <button onClick=${function(){setShowTutorial(false);window._ccStartTour&&window._ccStartTour();}}
             style=${{...S_BTN,width:'100%',marginTop:'1.1rem',padding:'.55rem',borderRadius:8,
-              background:'var(--accent)',color:'#fff',fontSize:'0.94rem',fontWeight:600,
+              background:'var(--accent)',color:'var(--accent-contrast)',fontSize:'0.94rem',fontWeight:600,
               border:'none',cursor:'pointer',display:'flex',alignItems:'center',justifyContent:'center',gap:'.4rem'}}>
             ${_cc_t('tutorial.takeTour','Take the Interactive Tour')}
           </button>
@@ -37180,7 +37291,7 @@ function startApp() {
 
     function addonBtn(label, onClick, variant) {
       var styles = {
-        primary: {background:'var(--accent)',color:'#fff',border:'none'},
+        primary: {background:'var(--accent)',color:'var(--accent-contrast)',border:'none'},
         outline: {background:'none',color:'var(--text-secondary)',border:'1px solid var(--border)'},
         ghost:   {background:'none',color:'var(--text-muted)',border:'none'},
         danger:  {background:'var(--color-danger-bg)',color:'var(--color-danger-fg)',border:'1px solid var(--color-danger-border)'},
@@ -37346,7 +37457,7 @@ function startApp() {
     var activeProj=projects.find(function(p){return p.id===s.activeProject;})||projects[0]||{name:'Default'};
     var TITLES={
       models:_cc_t('panel.models.title','Models'),
-      clashes:_cc_t('panel.clashes.title','Conflicts'),
+      clashes:_cc_t('panel.clashes.title','Clashes'),
       issues:_cc_t('panel.issues.title','Issues'),
       navigator:_cc_t('panel.navigator.title','Navigator'),
       dataquality:_cc_t('panel.dataquality.title','Data Quality'),
@@ -37356,7 +37467,8 @@ function startApp() {
       standards:_cc_t('panel.standards.title','Standards')
     };
     var onResizeDown = _makeResizeHandler(dragRef, setPanelW, 200, 600, false);
-    return html`<div class="cc-left-panel" style=${{
+    var panelDataTour = tab==='clashes' ? 'clash-list' : (tab==='issues' ? 'issues-panel' : undefined);
+    return html`<div class="cc-left-panel" data-tour=${panelDataTour} style=${{
       width:panelW,display:'flex',flexDirection:'column',overflow:'hidden',
       background:'var(--bg-primary)',borderRight:'1px solid var(--border-subtle)'
     }}>
@@ -37580,7 +37692,7 @@ function startApp() {
               var t = (inp && inp.value || '').trim();
               if (!t || !window._ccComputeTakeoff) return;
               window._ccComputeTakeoff(t);
-            }} style=${{...S_BTN,padding:'.2rem .55rem',fontSize:'var(--text-xs)',background:'var(--accent)',color:'#fff',border:'none',borderRadius:'var(--radius-xs)'}}>${_cc_t('aiChat.run','Run')}</button>
+            }} style=${{...S_BTN,padding:'.2rem .55rem',fontSize:'var(--text-xs)',background:'var(--accent)',color:'var(--accent-contrast)',border:'none',borderRadius:'var(--radius-xs)'}}>${_cc_t('aiChat.run','Run')}</button>
           </div>
           ${window._ccLastTakeoff && html`<div style=${{marginTop:'.4rem',fontSize:'var(--text-xs)',fontFamily:'var(--font-mono)',color:'var(--text-secondary)'}}>
             <div>${_cc_t('aiChat.filterLabel','Filter: {v}',{v:window._ccLastTakeoff.filter})}</div>
@@ -37922,7 +38034,7 @@ function startApp() {
         var ctxBadges = null;
         if (linkedClashes.length || linkedIssues.length) {
           ctxBadges = html`<div style=${{display:'flex',gap:'.4rem',marginTop:'.6rem',flexWrap:'wrap'}}>
-            ${linkedClashes.length ? html`<span class="cc-status-pill" style=${{background:'var(--color-danger-bg)',color:'var(--color-danger-fg)',border:'1px solid var(--color-danger-border)'}}>${linkedClashes.length} conflict${linkedClashes.length===1?'':'s'}</span>` : null}
+            ${linkedClashes.length ? html`<span class="cc-status-pill" style=${{background:'var(--color-danger-bg)',color:'var(--color-danger-fg)',border:'1px solid var(--color-danger-border)'}}>${linkedClashes.length} clash${linkedClashes.length===1?'':'es'}</span>` : null}
             ${linkedIssues.length  ? html`<span class="cc-status-pill" style=${{background:'var(--accent-bg)',color:'var(--accent)',border:'1px solid var(--border)'}}>${linkedIssues.length} issue${linkedIssues.length===1?'':'s'}</span>` : null}
           </div>`;
         }
@@ -38180,7 +38292,7 @@ function startApp() {
         <!-- Actions -->
         <div style=${{display:'flex',gap:'.4rem',flexWrap:'wrap'}}>
           <button onClick=${function(){d({t:A.MODAL,v:true,el:el});d({t:A.TAB,v:'issues'});}}
-            style=${{flex:1,padding:'.4rem .6rem',borderRadius:'var(--radius-sm)',background:'var(--accent)',color:'#fff',border:'none',fontSize:'.74rem',fontWeight:600,cursor:'pointer',fontFamily:'inherit'}}>+ New issue</button>
+            style=${{flex:1,padding:'.4rem .6rem',borderRadius:'var(--radius-sm)',background:'var(--accent)',color:'var(--accent-contrast)',border:'none',fontSize:'.74rem',fontWeight:600,cursor:'pointer',fontFamily:'inherit'}}>+ New issue</button>
         </div>
       </div>`;
     }
@@ -38512,7 +38624,7 @@ function startApp() {
           <!-- Flat row links — no chips, no buttons. The accent line on
                the active row is the only colour. -->
           <div style=${{marginTop:'1.6rem',display:'flex',flexDirection:'column'}}>
-            <button onClick=${openFile}
+            <button onClick=${openFile} data-tour="open-model"
               style=${{
                 display:'flex',alignItems:'center',justifyContent:'space-between',gap:'1rem',
                 padding:'.7rem 0',background:'none',border:'none',borderTop:'1px solid var(--hairline)',
@@ -38589,10 +38701,15 @@ function startApp() {
           </div>
 
           <div style=${{marginTop:'1.4rem',display:'flex',gap:'1rem',alignItems:'center',flexWrap:'wrap'}}>
-            <a href="/tour/" style=${{
+            <button onClick=${function(){ if(window._ccStartTour) window._ccStartTour(); }} style=${{
+                background:'none',border:'none',cursor:'pointer',padding:0,
                 fontFamily:'var(--font-body)',fontSize:'var(--text-xs)',
                 color:'var(--ink-faint)',textDecoration:'underline',textUnderlineOffset:'3px',textDecorationThickness:'1px'
-              }}>${_cc_t('welcome.newHereTour','New here? Take the tour.')}</a>
+              }}>${_cc_t('welcome.newHereTour','New here? Take the tour.')}</button>
+            <a href="/tour/" target="_blank" rel="noopener" style=${{
+                fontFamily:'var(--font-body)',fontSize:'var(--text-xs)',
+                color:'var(--ink-faint)',textDecoration:'underline',textUnderlineOffset:'3px',textDecorationThickness:'1px'
+              }}>${_cc_t('welcome.tourAndFeaturesPage','Tour & features page')}</a>
             <button onClick=${function(){ if(window._pickSharedFolder) window._pickSharedFolder(d); }}
               style=${{
                 background:'none',border:'none',cursor:'pointer',padding:0,
@@ -38684,9 +38801,9 @@ function startApp() {
         <div style=${{display:'flex',gap:'.2rem',marginBottom:'.3rem'}}>
           ${[{axis:'x',label:'X'},{axis:'z',label:'Y'},{axis:'y',label:'Z'}].map(function(item){return html`<button key=${item.axis}
             onClick=${function(){d({t:A.SECTION_BOX,v:null});d({t:A.SECTION,axis:s.sectionAxis===item.axis?null:item.axis});}}
-            style=${{...S_BTN,flex:1,padding:'.3rem',background:s.sectionAxis===item.axis?'var(--accent)':'var(--bg-secondary)',color:s.sectionAxis===item.axis?'#fff':'var(--text-muted)'}}>${item.label}</button>`})}
+            style=${{...S_BTN,flex:1,padding:'.3rem',background:s.sectionAxis===item.axis?'var(--accent)':'var(--bg-secondary)',color:s.sectionAxis===item.axis?'var(--accent-contrast)':'var(--text-muted)'}}>${item.label}</button>`})}
           <button onClick=${function(){d({t:A.SECTION,axis:null});d({t:A.SECTION_BOX,v:null});}}
-            style=${{...S_BTN,flex:1,padding:'.3rem',background:!sectionActive?'var(--accent)':'var(--bg-secondary)',color:!sectionActive?'#fff':'var(--text-muted)'}}>${_cc_t('tools.off','Off')}</button>
+            style=${{...S_BTN,flex:1,padding:'.3rem',background:!sectionActive?'var(--accent)':'var(--bg-secondary)',color:!sectionActive?'var(--accent-contrast)':'var(--text-muted)'}}>${_cc_t('tools.off','Off')}</button>
         </div>
         ${(s.sectionAxis||s.sectionCustom) && html`<div>
           <input type="range" min="0" max="1" step="0.005" value=${s.sectionPos}
@@ -38760,7 +38877,7 @@ function startApp() {
     var addOpenSt = useState(false), addOpen = addOpenSt[0], setAddOpen = addOpenSt[1];
     function pick(id){ if(id!==w) d({t:A.SET_WORKSPACE,v:id}); }
     return html`<div style=${{display:'flex',alignItems:'stretch',height:'100%',gap:0}}>
-      <div role="tablist" aria-label=${_cc_t('workspace.tablistAria','Workspace')} style=${{display:'flex',alignItems:'stretch',height:'100%',gap:0}}>
+      <div role="tablist" aria-label=${_cc_t('workspace.tablistAria','Workspace')} data-tour="workspace-tabs" style=${{display:'flex',alignItems:'stretch',height:'100%',gap:0}}>
         ${tabs.map(function(t){
           var on = w===t.id;
           return html`<button key=${t.id} role="tab" aria-selected=${on}
@@ -39388,6 +39505,7 @@ function startApp() {
       // (detection discoverability — MEMORY.md).
       return html`<button key=${opts.k} onClick=${opts.onClick}
         onContextMenu=${opts.onContextMenu||null}
+        data-tour=${opts.dataTour||undefined}
         aria-label=${tipText} aria-pressed=${on}
         style=${Object.assign({
           height:36,minWidth:36,display:'inline-flex',alignItems:'center',justifyContent:'center',
@@ -39785,7 +39903,7 @@ function startApp() {
 
         <!-- COORDINATE workspace tools: run detection + filter clashes -->
         ${s.workspace === 'coordinate' && html`${div()}
-          ${btn({k:'runDetect', active:s.runModalOpen, title:s.detecting?_cc_t('toolbar.runningDetection','Running detection…'):_cc_t('toolbar.runClashDetectionTip','Run clash detection — open setup'), label:_cc_t('toolbar.runClashDetection','Run clash detection'),
+          ${btn({k:'runDetect', active:s.runModalOpen, dataTour:'run-detection', title:s.detecting?_cc_t('toolbar.runningDetection','Running detection…'):_cc_t('toolbar.runClashDetectionTip','Run clash detection — open setup'), label:_cc_t('toolbar.runClashDetection','Run clash detection'),
             textLabel:_cc_t('toolbar.runShort','Run'),
             icon:'<polygon points="6 3 20 12 6 21 6 3"/><path d="M6 12h14"/>',
             onClick:function(){ if(s.detecting) return; d({t:A.SHOW_RUN_MODAL, v:true}); }})}
@@ -39802,7 +39920,7 @@ function startApp() {
               <span style=${{fontWeight:600,color:'var(--text-primary)'}}>${lbl}</span>
             </button>`;
           })()}
-          ${btn({k:'conflicts', active:s.tab==='clashes', title:_cc_t('toolbar.conflictsList','Conflicts list'), label:_cc_t('toolbar.conflicts','Conflicts'),
+          ${btn({k:'conflicts', active:s.tab==='clashes', title:_cc_t('toolbar.conflictsList','Clashes list'), label:_cc_t('toolbar.conflicts','Clashes'),
             icon:'<path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/>',
             onClick:function(){ d({t:A.TAB,v:s.tab==='clashes'?null:'clashes'}); }})}
           ${btn({k:'issues', active:s.tab==='issues', title:_cc_t('toolbar.issues','Issues'), label:_cc_t('toolbar.issues','Issues'),
@@ -39846,6 +39964,7 @@ function startApp() {
         <button onClick=${function(){ if(window._ccOpenCmdK) window._ccOpenCmdK(); }}
           title=${_cc_t('toolbar.searchEveryCommand','Search every command — and ask the assistant (Cmd/Ctrl+K)')}
           aria-label=${_cc_t('cmdk.openPaletteAria','Open command palette')}
+          data-tour="cmdk-search"
           style=${{
             display:'inline-flex',alignItems:'center',gap:'.5rem',height:36,padding:'0 .55rem 0 .65rem',
             background:'none',border:'1px solid var(--hairline-strong)',
@@ -40031,7 +40150,7 @@ function startApp() {
     return html`<nav class="cc-mobile-nav" aria-label=${_cc_t('mobileNav.primary','Primary')}>
       ${searchBtn()}
       ${navBtn('models','<path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/><path d="M12 2L2 7l10 5 10-5-10-5z"/>',_cc_t('panel.models.title','Models'),0)}
-      ${navBtn('clashes','<path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/>',_cc_t('toolbar.conflicts','Conflicts'),clashN)}
+      ${navBtn('clashes','<path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/>',_cc_t('toolbar.conflicts','Clashes'),clashN)}
       ${navBtn('issues','<path d="M4 15s1-1 4-1 5 2 8 2 4-1 4-1V3s-1 1-4 1-5-2-8-2-4 1-4 1z"/><line x1="4" y1="22" x2="4" y2="15"/>',_cc_t('toolbar.issues','Issues'),issueN)}
       ${navBtn('navigator','<rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/>',_cc_t('toolbar.navigator','Navigator'),0)}
       ${navBtn('ai','<path d="M21 12a8 8 0 0 1-11.5 7.2L4 21l1.8-5.5A8 8 0 1 1 21 12z"/>',_cc_t('mobileNav.askAI','Ask AI'),0)}
@@ -40139,7 +40258,7 @@ function startApp() {
             <div style=${{fontSize:'0.82rem',color:'var(--text-secondary)',lineHeight:1.5}}>
               ${_cc_t('revitBridge.linkProjectDesc','Link this project to the Revit model open on your machine. Detected clashes update live.')}
             </div>
-            <button onClick=${_doConnect} style=${{...S_BTN2,background:'var(--accent)',color:'#fff',padding:'.6rem',fontSize:'0.9rem'}}>${_cc_t('revitBridge.connectToRevit','Connect to Revit')}</button>
+            <button onClick=${_doConnect} style=${{...S_BTN2,background:'var(--accent)',color:'var(--accent-contrast)',padding:'.6rem',fontSize:'0.9rem'}}>${_cc_t('revitBridge.connectToRevit','Connect to Revit')}</button>
             <div style=${{fontSize:'0.69rem',color:'var(--text-faint)',lineHeight:1.5}}>
               ${_cc_t('revitBridge.makeSurePrefix','Make sure the')}${' '}<a href="https://github.com/clashcontrol-io/ClashControlConnector/releases/latest/download/ClashControlConnectorInstaller.exe" target="_blank" rel="noopener" download style=${{color:'var(--accent)',textDecoration:'none',fontWeight:600}}>${_cc_t('revitBridge.connectorName','ClashControl Connector')}</a>${' '}${_cc_t('revitBridge.pluginRunningSuffix','plugin is running in Revit (2024–2027).')}
             </div>
@@ -40174,11 +40293,11 @@ function startApp() {
             </div>
             ${rd.reconnectPrompt && html`<div style=${{display:'flex',alignItems:'center',gap:'.4rem',padding:'.45rem .55rem',background:'var(--accent-bg)',borderRadius:6}}>
               <span style=${{fontSize:'0.74rem',color:'var(--accent-subtle)',flex:1}}>${_cc_t('revitBridge.reconnectedPullAgain','Reconnected. Pull the model again?')}</span>
-              <button onClick=${function(){d({t:'UPD_REVIT_DIRECT',u:{reconnectPrompt:false}}); if(window._revitDirectExport) window._revitDirectExport(['all']);}} style=${{...S_BTN2,background:'var(--accent)',color:'#fff',fontSize:'0.72rem',padding:'.3rem .7rem'}}>${_cc_t('revitBridge.pull','Pull')}</button>
+              <button onClick=${function(){d({t:'UPD_REVIT_DIRECT',u:{reconnectPrompt:false}}); if(window._revitDirectExport) window._revitDirectExport(['all']);}} style=${{...S_BTN2,background:'var(--accent)',color:'var(--accent-contrast)',fontSize:'0.72rem',padding:'.3rem .7rem'}}>${_cc_t('revitBridge.pull','Pull')}</button>
             </div>`}
             <div style=${{display:'flex',gap:'.4rem'}}>
               <button onClick=${function(){if(window._revitDirectExport) window._revitDirectExport(['all'])}} style=${{...S_BTN2,flex:1,background:'var(--accent-bg)',color:'var(--accent-subtle)'}}>${_cc_t('revitBridge.rePullModel','Re-pull model')}</button>
-              <button onClick=${function(){d({t:'REVIT_BRIDGE',v:false})}} style=${{...S_BTN2,flex:1,background:'var(--accent)',color:'#fff'}}>${_cc_t('revitBridge.done','Done')}</button>
+              <button onClick=${function(){d({t:'REVIT_BRIDGE',v:false})}} style=${{...S_BTN2,flex:1,background:'var(--accent)',color:'var(--accent-contrast)'}}>${_cc_t('revitBridge.done','Done')}</button>
             </div>
           </div>`}
 
@@ -40194,7 +40313,7 @@ function startApp() {
               • ${_cc_t('revitBridge.troubleshoot3','Then retry below. Still stuck? Open Advanced to change the port.')}
             </div>
             <div style=${{display:'flex',gap:'.4rem'}}>
-              <button onClick=${_doConnect} style=${{...S_BTN2,flex:1,background:'var(--accent)',color:'#fff'}}>${_cc_t('common.retry','Retry')}</button>
+              <button onClick=${_doConnect} style=${{...S_BTN2,flex:1,background:'var(--accent)',color:'var(--accent-contrast)'}}>${_cc_t('common.retry','Retry')}</button>
               <a href="https://github.com/clashcontrol-io/ClashControlConnector/releases/latest/download/ClashControlConnectorInstaller.exe" target="_blank" rel="noopener" download style=${{...S_BTN2,flex:1,background:'var(--bg-tertiary)',color:'var(--text-secondary)',textAlign:'center',textDecoration:'none'}}>${_cc_t('revitBridge.getInstaller','Get installer')}</a>
             </div>
           </div>`}
@@ -40220,7 +40339,7 @@ function startApp() {
                 ${rd.connected ? html`<button onClick=${function(){if(window._revitDirectDisconnect) window._revitDirectDisconnect(d)}}
                   style=${{...S_BTN2,background:'#7f1d1d',color:'#fca5a5'}}>${_cc_t('revitBridge.disconnect','Disconnect')}</button>`
                 : html`<button onClick=${function(){if(window._saveDirectPort) window._saveDirectPort(port); if(window._revitDirectConnect) window._revitDirectConnect(port,d)}}
-                  style=${{...S_BTN2,background:'var(--accent)',color:'#fff'}}>${_cc_t('revitBridge.connect','Connect')}</button>`}
+                  style=${{...S_BTN2,background:'var(--accent)',color:'var(--accent-contrast)'}}>${_cc_t('revitBridge.connect','Connect')}</button>`}
               </div>
             </div>
 
@@ -40240,7 +40359,7 @@ function startApp() {
               <div style=${{fontSize:'0.6rem',color:'var(--text-faint)',marginBottom:'.3rem',lineHeight:1.4}}>${_cc_t('revitBridge.excludedDesc','These models are skipped on sync (not re-pulled on refresh). Re-include to sync them again.')}</div>
               ${excluded.map(function(nm){return html`<div key=${nm} style=${{display:'flex',alignItems:'center',gap:'.3rem',padding:'.15rem 0'}}>
                 <span style=${{flex:1,fontSize:'0.72rem',color:'var(--text-secondary)',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}} title=${nm}>${nm}</span>
-                <button onClick=${function(){_reincludeModel(nm);}} style=${{...S_BTN2,padding:'.1rem .4rem',fontSize:'0.63rem',background:'var(--accent)',color:'#fff'}}>${_cc_t('revitBridge.reinclude','Re-include')}</button>
+                <button onClick=${function(){_reincludeModel(nm);}} style=${{...S_BTN2,padding:'.1rem .4rem',fontSize:'0.63rem',background:'var(--accent)',color:'var(--accent-contrast)'}}>${_cc_t('revitBridge.reinclude','Re-include')}</button>
               </div>`;})}
               <div style=${{fontSize:'0.58rem',color:'var(--text-faint)',marginTop:'.25rem'}}>${_cc_t('revitBridge.resyncAfterReinclude','Re-sync (or refresh) after re-including to load them.')}</div>
             </div>`}
@@ -40252,7 +40371,7 @@ function startApp() {
             ${rd.reconnectPrompt && html`<div style=${{display:'flex',alignItems:'center',gap:'.4rem',padding:'.4rem .5rem',background:'var(--accent-bg)',borderRadius:6}}>
               <span style=${{fontSize:'0.72rem',color:'var(--accent-subtle)',flex:1}}>${_cc_t('revitBridge.reconnectedPullAgain','Reconnected to Revit. Pull model again?')}</span>
               <button onClick=${function(){d({t:'UPD_REVIT_DIRECT',u:{reconnectPrompt:false}}); if(window._revitDirectExport) window._revitDirectExport(['all']);}}
-                style=${{...S_BTN2,background:'var(--accent)',color:'#fff',fontSize:'0.7rem',padding:'.25rem .6rem'}}>${_cc_t('revitBridge.pull','Pull')}</button>
+                style=${{...S_BTN2,background:'var(--accent)',color:'var(--accent-contrast)',fontSize:'0.7rem',padding:'.25rem .6rem'}}>${_cc_t('revitBridge.pull','Pull')}</button>
               <button onClick=${function(){d({t:'UPD_REVIT_DIRECT',u:{reconnectPrompt:false}});}}
                 style=${{...S_BTN2,background:'var(--bg-tertiary)',color:'var(--text-muted)',fontSize:'0.7rem',padding:'.25rem .6rem'}}>${_cc_t('common.dismiss','Dismiss')}</button>
             </div>`}
@@ -40331,7 +40450,7 @@ function startApp() {
                 <a href="https://github.com/clashcontrol-io/ClashControlConnector/releases/latest/download/ClashControlConnectorInstaller.exe"
                   target="_blank" rel="noopener" download
                   style=${{display:'inline-flex',alignItems:'center',gap:'.3rem',padding:'.3rem .55rem',borderRadius:5,
-                    background:'var(--accent)',color:'#fff',fontWeight:600,fontSize:'0.68rem',textDecoration:'none'}}>
+                    background:'var(--accent)',color:'var(--accent-contrast)',fontWeight:600,fontSize:'0.68rem',textDecoration:'none'}}>
                   <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                     <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/>
                   </svg>
@@ -40373,7 +40492,7 @@ function startApp() {
                 d({t:'UPD_BRIDGE', u:cfg});
                 if(window._saveBridgeConfig) window._saveBridgeConfig(cfg);
                 if(window._testBridgeConnection) window._testBridgeConnection(Object.assign({}, br, cfg), d);
-              }} style=${{...S_BTN2,background:'var(--accent)',color:'#fff'}}>${_cc_t('revitBridge.saveAndTest','Save & Test')}</button>
+              }} style=${{...S_BTN2,background:'var(--accent)',color:'var(--accent-contrast)'}}>${_cc_t('revitBridge.saveAndTest','Save & Test')}</button>
               <button onClick=${function(){if(window._revitBridgePush) window._revitBridgePush(s,d)}}
                 disabled=${br.syncing || !prov || !apiKey}
                 style=${{...S_BTN2,background:'#052e16',color:'#4ade80',opacity:br.syncing||!prov||!apiKey?0.5:1}}>${_cc_t('revitBridge.push','Push')}</button>
@@ -41397,7 +41516,7 @@ function startApp() {
       <input ref=${_gFile2dRef} type="file" accept=".dxf,.pdf,.dwg" multiple style=${{display:'none'}} onChange=${_gOnFiles} />
       <${DesktopTopBar} s=${s} d=${d} />
       <${TopToolbar} s=${s} d=${d} />
-      <div class="cc-content-row" style=${{flex:1,display:'flex',flexDirection:'row',overflow:'hidden',position:'relative',minHeight:0}}>
+      <main class="cc-content-row" aria-label=${_cc_t('app.mainLandmark','ClashControl workspace')} style=${{flex:1,display:'flex',flexDirection:'row',overflow:'hidden',position:'relative',minHeight:0}}>
         <${LeftRail} s=${s} d=${d} />
         <${LeftPanel} s=${s} d=${d} />
         <div style=${{flex:1,display:'flex',flexDirection:'column',overflow:'hidden',position:'relative',minWidth:0}}>
@@ -41406,7 +41525,7 @@ function startApp() {
           ${is2D && html`<${ExportBar} s=${s} d=${d} />`}
         </div>
         <${AIChatPanel} s=${s} d=${d} />
-      </div>
+      </main>
       ${s.showModal && html`<${NewIssueModal} d=${d} el=${s.modalElement} prefs=${s.prefs} clashes=${s.clashes} activeId=${s.activeId} />`}
       ${storeyPickerOpen && html`<${StoreyPickerModal} s=${s} d=${d} onClose=${function(){setStoreyPickerOpen(false);}} />`}
       ${shortcutsOpen && html`<${ShortcutsModal} onClose=${function(){setShortcutsOpen(false);}} />`}
@@ -41418,7 +41537,7 @@ function startApp() {
       ${s.showSmartViews && html`<${SmartViewsModal} d=${d} s=${s} />`}
       ${s.runModalOpen && html`<${RunDetectionModal} d=${d} s=${s} />`}
       ${s.commentMode && html`<div style=${{position:'fixed',top:'1rem',left:'50%',transform:'translateX(-50%)',zIndex:'var(--z-toast)',
-        background:'var(--accent)',color:'#fff',padding:'.5rem .9rem',borderRadius:'var(--radius-md)',
+        background:'var(--accent)',color:'var(--accent-contrast)',padding:'.5rem .9rem',borderRadius:'var(--radius-md)',
         boxShadow:'var(--shadow-md)',display:'flex',alignItems:'center',gap:'.6rem',
         fontSize:'0.82rem',fontWeight:500,fontFamily:'inherit'}}>
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s-8-4.5-8-12a8 8 0 1 1 16 0c0 7.5-8 12-8 12z"/><circle cx="12" cy="10" r="3"/></svg>
@@ -41459,7 +41578,7 @@ function startApp() {
         boxShadow:'0 4px 24px rgba(0,0,0,.4)',fontSize:'0.85rem',color:'var(--text-primary)',maxWidth:'90vw'}}>
         <span>New version available</span>
         <button onClick=${function(){navigator.serviceWorker.getRegistration().then(function(r){if(r&&r.waiting)r.waiting.postMessage({type:'SKIP_WAITING'});else window.location.reload();});}}
-          style=${{padding:'.3rem .7rem',borderRadius:6,background:'var(--accent)',color:'#fff',fontWeight:600,fontSize:'0.8rem',border:'none',cursor:'pointer',whiteSpace:'nowrap'}}>Update now</button>
+          style=${{padding:'.3rem .7rem',borderRadius:6,background:'var(--accent)',color:'var(--accent-contrast)',fontWeight:600,fontSize:'0.8rem',border:'none',cursor:'pointer',whiteSpace:'nowrap'}}>Update now</button>
         <button onClick=${function(){setPwaDismissed(true);}} style=${{background:'none',border:'none',color:'var(--text-muted)',cursor:'pointer',fontSize:'1rem',padding:'0 .2rem',lineHeight:1}}>×</button>
       </div>`}
     </div>`;
