@@ -32511,11 +32511,37 @@ function startApp() {
   }
 
   // ── Polygon-face section cut ─────────────────────────────────────
-  // For each mesh: detects face boundary loops via crease/boundary edges,
-  // clips each loop against the horizontal cut plane, and returns one segment
-  // per face edge that crosses the plane — far fewer than the triangle approach.
+  // Per-triangle plane intersection: every triangle whose 3 world-space
+  // vertices straddle the horizontal cut plane contributes exactly one
+  // segment (the two points where its edges cross the plane). This is the
+  // standard robust technique for slicing a closed triangle mesh: for any
+  // watertight solid, each *interior* mesh edge is shared by exactly two
+  // triangles, and both triangles compute the same crossing point along
+  // that shared edge (same two endpoint world positions, whether or not
+  // the two triangles happen to reference the same vertex-buffer indices —
+  // web-ifc geometry is frequently non-indexed / has duplicated vertex
+  // instances per face, so index identity can't be relied on here). The
+  // resulting segment soup therefore chains into closed loops purely from
+  // shared endpoint *positions* via _chainSegments's epsilon-keyed walk,
+  // with no dependency on mesh indexing or a crease-classification walk
+  // that breaks at any vertex where more than 2 creased edges meet (e.g.
+  // every corner of a box).
   function _cutElementAtPlane(el, cutY) {
     var segs = [];
+    // Vertices within this distance of the cut plane are treated as exactly
+    // on it and nudged to a deterministic side (symbolic perturbation), so
+    // a cut that passes exactly through a vertex or a whole edge never
+    // produces a zero (dropped) or ambiguous straddle test.
+    var ON_PLANE_EPS = 1e-7;
+    // A triangle with a vertex within ON_PLANE_EPS of the plane produces a
+    // genuine but near-zero-length "sliver" segment right at that vertex
+    // (the perturbation above approximates a single-point touch as a tiny
+    // crossing segment). Left in, its two endpoints can round to different
+    // chaining buckets and fracture an otherwise-closed loop right at the
+    // vertex the cut passes through. Below this length such a segment is
+    // geometrically meaningless (sub-millimeter even for a plan cut through
+    // a vertex) so it's dropped rather than chained.
+    var MIN_SEG_LEN = 1e-5;
     (el.meshes || []).forEach(function(mesh) {
       var geo = mesh.geometry;
       var pos = geo && geo.attributes && geo.attributes.position;
@@ -32525,9 +32551,9 @@ function startApp() {
       var me = mesh.matrixWorld.elements;
       var idx = geo.index;
       var nV = pos.count;
-      var nT = idx ? idx.count / 3 : pos.count / 3;
+      var nT = idx ? Math.floor(idx.count / 3) : Math.floor(nV / 3);
 
-      // ── 1. World-space vertices ──────────────────────────────────
+      // World-space vertices (indexed or not — doesn't matter here).
       var wx = new Float64Array(nV), wy = new Float64Array(nV), wz = new Float64Array(nV);
       for (var i = 0; i < nV; i++) {
         var lx = pos.getX(i), ly = pos.getY(i), lz = pos.getZ(i);
@@ -32541,105 +32567,23 @@ function startApp() {
       for (var i = 0; i < nV; i++) { if (wy[i] < minY) minY = wy[i]; if (wy[i] > maxY) maxY = wy[i]; }
       if (minY >= cutY - 1e-6 || maxY <= cutY + 1e-6) return;
 
-      // ── 2. Flat triangle normals ─────────────────────────────────
-      var tnx = new Float32Array(nT), tny = new Float32Array(nT), tnz = new Float32Array(nT);
+      function sd(vi) {
+        var d = wy[vi] - cutY;
+        if (d >= -ON_PLANE_EPS && d <= ON_PLANE_EPS) d = ON_PLANE_EPS;
+        return d;
+      }
+
       for (var t = 0; t < nT; t++) {
-        var ia = idx ? idx.getX(t*3) : t*3,  ib = idx ? idx.getX(t*3+1) : t*3+1,  ic = idx ? idx.getX(t*3+2) : t*3+2;
-        var ax=wx[ib]-wx[ia], ay=wy[ib]-wy[ia], az=wz[ib]-wz[ia];
-        var bx=wx[ic]-wx[ia], by=wy[ic]-wy[ia], bz=wz[ic]-wz[ia];
-        var nx=ay*bz-az*by, ny=az*bx-ax*bz, nz=ax*by-ay*bx;
-        var len=Math.sqrt(nx*nx+ny*ny+nz*nz);
-        if (len > 1e-10) { tnx[t]=nx/len; tny[t]=ny/len; tnz[t]=nz/len; }
-      }
-
-      // ── 3. Edge → triangle adjacency ────────────────────────────
-      // Canonical undirected key: smaller_idx + '|' + larger_idx
-      var edgeMap = {}; // key → {a, b, tris:[...]}
-      for (var t = 0; t < nT; t++) {
-        var ia = idx ? idx.getX(t*3) : t*3,  ib = idx ? idx.getX(t*3+1) : t*3+1,  ic = idx ? idx.getX(t*3+2) : t*3+2;
-        var ev = [[ia,ib],[ib,ic],[ic,ia]];
-        for (var e = 0; e < 3; e++) {
-          var a=ev[e][0], b=ev[e][1];
-          var k = a < b ? a+'|'+b : b+'|'+a;
-          if (!edgeMap[k]) edgeMap[k] = {a:a, b:b, tris:[]};
-          edgeMap[k].tris.push(t);
-        }
-      }
-
-      // ── 4. Classify crease / boundary edges ──────────────────────
-      // Crease: adjacent triangles whose normals diverge by > ~10°  (dot < 0.985)
-      // Boundary: edge belongs to only one triangle (open mesh)
-      // These edges form the face boundary polygon loops.
-      var CREASE_DOT = 0.985;
-      var creaseEdges = [];
-      var creaseAdj = {}; // vertIdx → [neighbour vertIdx, ...]
-      var edgeKeys = Object.keys(edgeMap);
-      for (var ei = 0; ei < edgeKeys.length; ei++) {
-        var e = edgeMap[edgeKeys[ei]];
-        var crease = e.tris.length === 1; // boundary edge
-        if (!crease && e.tris.length >= 2) {
-          var t1=e.tris[0], t2=e.tris[1];
-          crease = (tnx[t1]*tnx[t2] + tny[t1]*tny[t2] + tnz[t1]*tnz[t2]) < CREASE_DOT;
-        }
-        if (crease) {
-          creaseEdges.push(e);
-          if (!creaseAdj[e.a]) creaseAdj[e.a] = [];
-          if (!creaseAdj[e.b]) creaseAdj[e.b] = [];
-          creaseAdj[e.a].push(e.b);
-          creaseAdj[e.b].push(e.a);
-        }
-      }
-
-      // ── 5. Walk closed loops in the crease-edge graph ────────────
-      // Each loop is a planar face boundary polygon. Clip it against cutY.
-      var edgeUsed = {}; // undirected canonical key → 1
-      for (var ci = 0; ci < creaseEdges.length; ci++) {
-        var se = creaseEdges[ci];
-        var sk = se.a < se.b ? se.a+'|'+se.b : se.b+'|'+se.a;
-        if (edgeUsed[sk]) continue;
-        edgeUsed[sk] = 1;
-
-        // Walk: start at se.a, go to se.b, follow unvisited crease edges until we return
-        var loop = [se.a, se.b];
-        var prev = se.a, curr = se.b;
-        var maxLen = creaseEdges.length + 2;
-        while (loop.length < maxLen) {
-          var nb = creaseAdj[curr] || [];
-          var next = -1;
-          for (var ni = 0; ni < nb.length; ni++) {
-            var c = nb[ni];
-            if (c === prev) continue;
-            var nk = c < curr ? c+'|'+curr : curr+'|'+c;
-            if (edgeUsed[nk]) continue;
-            next = c; break;
-          }
-          if (next < 0) break; // open / malformed chain
-          var nk2 = next < curr ? next+'|'+curr : curr+'|'+next;
-          edgeUsed[nk2] = 1;
-          if (next === se.a) break; // loop closed
-          loop.push(next);
-          prev = curr; curr = next;
-        }
-        if (loop.length < 3) continue;
-
-        // ── 6. Clip loop against Y = cutY ───────────────────────────
-        // Walk vertices in order; each straddle edge gives one intersection point.
-        // Consecutive pairs of intersection points form section segments
-        // (Jordan curve theorem: a planar polygon enters/exits the cut plane alternately).
-        var xings = [];
-        var n = loop.length;
-        for (var li = 0; li < n; li++) {
-          var va = loop[li], vb = loop[(li+1) % n];
-          var ya = wy[va], yb = wy[vb];
-          var da = ya - cutY, db = yb - cutY;
-          if (da * db < 0) { // straddles
-            var tt = da / (da - db);
-            xings.push({ x: wx[va]+tt*(wx[vb]-wx[va]), z: wz[va]+tt*(wz[vb]-wz[va]) });
-          }
-        }
-        // Pair up consecutive intersection points → segments
-        for (var xi = 0; xi + 1 < xings.length; xi += 2) {
-          segs.push([xings[xi].x, xings[xi].z, xings[xi+1].x, xings[xi+1].z]);
+        var ia = idx ? idx.getX(t*3) : t*3, ib = idx ? idx.getX(t*3+1) : t*3+1, ic = idx ? idx.getX(t*3+2) : t*3+2;
+        var da = sd(ia), db = sd(ib), dc = sd(ic);
+        // A triangle crosses the plane along exactly 0 or 2 of its edges
+        // (never 1 or 3, once no vertex sits exactly on the plane).
+        var pts = [];
+        if (da * db < 0) { var t1 = da / (da - db); pts.push(wx[ia]+t1*(wx[ib]-wx[ia]), wz[ia]+t1*(wz[ib]-wz[ia])); }
+        if (db * dc < 0) { var t2 = db / (db - dc); pts.push(wx[ib]+t2*(wx[ic]-wx[ib]), wz[ib]+t2*(wz[ic]-wz[ib])); }
+        if (dc * da < 0) { var t3 = dc / (dc - da); pts.push(wx[ic]+t3*(wx[ia]-wx[ic]), wz[ic]+t3*(wz[ia]-wz[ic])); }
+        if (pts.length === 4 && Math.hypot(pts[2]-pts[0], pts[3]-pts[1]) > MIN_SEG_LEN) {
+          segs.push([pts[0], pts[1], pts[2], pts[3]]);
         }
       }
     });
@@ -32660,38 +32604,43 @@ function startApp() {
     // adj[key] = [[segIdx, side], ...]  side 0=segment start, 1=segment end (canvas coords)
     var adj = {};
     function addAdj(k, si, side) { if (!adj[k]) adj[k] = []; adj[k].push([si, side]); }
+    // P[i] = [x0,z0,x1,z1] in canvas/output space (sign already applied), so
+    // the walk below never has to re-derive a segment's own endpoints.
+    var P = new Array(segs.length);
     for (var i = 0; i < segs.length; i++) {
       var s = segs[i];
-      addAdj(key(sign*s[0], s[1]), i, 0);
-      addAdj(key(sign*s[2], s[3]), i, 1);
+      var x0 = sign*s[0], z0 = s[1], x1 = sign*s[2], z1 = s[3];
+      P[i] = [x0, z0, x1, z1];
+      addAdj(key(x0, z0), i, 0);
+      addAdj(key(x1, z1), i, 1);
     }
     var visited = new Uint8Array(segs.length);
     var chains = [];
 
-    // Walk from a given segment end, returning array of subsequent [x,z] pairs
-    function walkDir(startSegIdx, enterSide, layer) {
+    // Walk outward from a given point (x,z) through unvisited, same-layer
+    // segments that touch it, returning the ordered points reached — NOT
+    // including (x,z) itself, which the caller already has. Each step
+    // consumes exactly one new segment and advances to its *other* end.
+    function walk(x, z, layer) {
       var pts = [];
-      var curIdx = startSegIdx, curEnter = enterSide;
+      var curX = x, curZ = z;
       while (true) {
-        var cs = segs[curIdx];
-        var ex, ez; // exit point (opposite end from entry)
-        if (curEnter === 0) { ex = sign*cs[2]; ez = cs[3]; }
-        else                 { ex = sign*cs[0]; ez = cs[1]; }
-        pts.push(ex, ez);
-        var k = key(ex, ez);
-        var nb = adj[k] || [];
-        var found = false;
+        var nb = adj[key(curX, curZ)] || [];
+        var chosen = -1, chosenSide = -1;
         for (var j = 0; j < nb.length; j++) {
           var ni = nb[j][0], ns = nb[j][1];
           if (visited[ni]) continue;
           if ((segs[ni][4] || 'wall') !== layer) continue;
-          visited[ni] = 1;
-          curIdx = ni; curEnter = ns; // enter ni at side ns, exit at 1-ns
-          curEnter = 1 - ns;
-          found = true;
-          break;
+          chosen = ni; chosenSide = ns; break;
         }
-        if (!found) break;
+        if (chosen < 0) break;
+        visited[chosen] = 1;
+        var p = P[chosen];
+        // Exit at the end of the chosen segment opposite the one we matched.
+        var ex = chosenSide === 0 ? p[2] : p[0];
+        var ez = chosenSide === 0 ? p[3] : p[1];
+        pts.push(ex, ez);
+        curX = ex; curZ = ez;
       }
       return pts;
     }
@@ -32699,17 +32648,16 @@ function startApp() {
     for (var i = 0; i < segs.length; i++) {
       if (visited[i]) continue;
       visited[i] = 1;
-      var s0 = segs[i];
-      var layer = s0[4] || 'wall';
-      // Walk backward from start of s0 (entering at side 0, so we exit back)
-      var backPts = walkDir(i, 0, layer);
-      // Walk forward from end of s0 (entering at side 1, so we exit forward)
-      var fwdPts = walkDir(i, 1, layer);
+      var layer = segs[i][4] || 'wall';
+      var p0 = P[i];
+      // Walk backward from s0's start, and forward from s0's end.
+      var backPts = walk(p0[0], p0[1], layer);
+      var fwdPts = walk(p0[2], p0[3], layer);
       // Assemble: reverse(backPts) + s0.start + s0.end + fwdPts
       var pts = [];
       for (var j = backPts.length - 2; j >= 0; j -= 2) pts.push(backPts[j], backPts[j + 1]);
-      pts.push(sign*s0[0], s0[1]); // s0 start
-      pts.push(sign*s0[2], s0[3]); // s0 end
+      pts.push(p0[0], p0[1]); // s0 start
+      pts.push(p0[2], p0[3]); // s0 end
       for (var j = 0; j < fwdPts.length; j++) pts.push(fwdPts[j]);
       var closed = pts.length >= 6 &&
         Math.abs(pts[0] - pts[pts.length - 2]) < eps * 2 &&
