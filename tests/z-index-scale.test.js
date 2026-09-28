@@ -70,6 +70,21 @@ test('the command palette is on its own tier, above modals and toasts', () => {
   assert.match(src, /zIndex:'calc\(var\(--z-palette\) \+ 1\)'/);
 });
 
+test('the desktop topbar and toolbar (ancestors of the avatar/STYLE/home menus) are themselves on the dropdown tier', () => {
+  // .cc-desktop-topbar and .cc-top-toolbar are position:relative with an
+  // explicit z-index, which makes each its OWN stacking context — any
+  // z-index inside them (e.g. the avatar menu's 401) is compared against
+  // OUTSIDE content using the ANCESTOR's z-index, not the descendant's own
+  // value. They used to be hardcoded 10/9, which trapped every dropdown
+  // nested in them (avatar menu, STYLE menu, home-view menu, +Add menu,
+  // toolbar popovers) below the right panel regardless of the dropdown's
+  // own z-index. Both must be raised onto the scale too.
+  assert.match(src, /\.cc-desktop-topbar\{[^}]*z-index:var\(--z-dropdown\)/);
+  assert.match(src, /class="cc-top-toolbar" style=\$\{\{[^}]*zIndex:'var\(--z-dropdown\)'/);
+  assert.doesNotMatch(src, /z-index:10;position:relative/);
+  assert.doesNotMatch(src, /position:'relative',zIndex:9\}/);
+});
+
 test('no page-level surface still carries the old ad-hoc 9998/9999/10000+ values this story targeted', () => {
   // These specific raw values named in the bug report (avatar/STYLE/home
   // menus, modal backdrops, tutorial/tour, toasts) must all have been
