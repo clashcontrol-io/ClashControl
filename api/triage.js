@@ -6,6 +6,7 @@
 // counts + cross-model) so a project's repeated cluster patterns collapse
 // to a handful of LLM calls. Cold starts wipe the cache.
 
+var crypto = require('crypto');
 var { cors, llmGuard, fetchWithRetry } = require('./_lib');
 
 // Overridable without a deploy — if the upstream ever 404s the default id
@@ -16,27 +17,15 @@ var TRIAGE_CACHE_MAX    = 100;
 var TRIAGE_CACHE_TTL_MS = 60 * 60 * 1000;
 var _triageCache = new Map();
 
+// The prompt embeds the WHOLE ctx object verbatim (JSON.stringify(ctx, null,
+// 2) below), including any free-text/notes/name fields a caller sends — not
+// just the handful of fields this signature used to hand-pick. A key that
+// omits any prompt-affecting field lets one caller's context (which can
+// include element/project names and free text) poison the cached response
+// served to a different caller on the same warm instance. Hash the exact
+// canonical JSON that goes into the prompt instead of a curated subset.
 function _sigForContext(ctx) {
-  var A = ctx.element_A || {}, B = ctx.element_B || {};
-  var c = ctx.counts || {};
-  // Standards are part of the grounding, so different tolerances must not
-  // collide in the cache. Compact serialisation keeps the key short.
-  var s = ctx.project_standards;
-  var stdSig = '';
-  if (s) {
-    stdSig = (s.default_clearance_mm != null ? 'D' + s.default_clearance_mm : '')
-      + (s.discipline_pair ? '|DP' + s.discipline_pair.clearance_mm : '')
-      + (s.ifc_type_pair    ? '|TP' + s.ifc_type_pair.clearance_mm    : '');
-  }
-  return [
-    A.ifcType || '', B.ifcType || '',
-    A.objectType || '', B.objectType || '',
-    ctx.storey || '',
-    ctx.cross_model ? '1' : '0',
-    (ctx.disciplines || []).slice().sort().join('+'),
-    (c.hard||0) + '/' + (c.soft||0) + '/' + (c.duplicate||0),
-    stdSig
-  ].join('|');
+  return crypto.createHash('sha256').update(JSON.stringify(ctx)).digest('hex');
 }
 
 function _cacheGet(sig) {

@@ -143,7 +143,23 @@
   <!-- Includes localhost:* and 127.0.0.1:* for addon servers (Smart Bridge, Revit Bridge, LocalEngine). -->
   <!-- NOTE: IPv6 literals ([::1]) are intentionally absent — Chrome's CSP engine treats them as
        "invalid source" and ignores them, so they can never be whitelisted. Addons must use 127.0.0.1. -->
-  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval' 'wasm-unsafe-eval' https://cdnjs.cloudflare.com https://cdn.jsdelivr.net https://gc.zgo.at; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com data:; connect-src 'self' https://cdn.jsdelivr.net https://cdnjs.cloudflare.com https://tile.googleapis.com https://api.pdok.nl https://*.goatcounter.com https://huggingface.co https://cdn-lfs.huggingface.co https://cdn-lfs-us-1.huggingface.co https://*.hf.co https://sparkjs.dev http://localhost:11434 https://api.anthropic.com https://api.openai.com https://generativelanguage.googleapis.com https://api.github.com http://localhost:* ws://localhost:* http://127.0.0.1:* ws://127.0.0.1:* blob: data:; worker-src 'self' blob:; img-src 'self' blob: data:;">
+  <!-- 'unsafe-eval' in script-src: kept deliberately. Our own code (the htm
+       parser, addons, index.html) has no eval()/new Function() of its own
+       (grepped clean), but pdf.js (precached at v3.11.174, used for the
+       Issues panel PDF overlay) and web-ifc's WASM glue can invoke eval-like
+       code paths internally depending on build; removing this without
+       pinning + auditing those exact vendored builds risks a silent PDF/IFC
+       load breakage that's hard to repro. Left in place until someone can
+       prove neither dependency needs it for the exact versions in use. -->
+  <!-- connect-src includes fonts.googleapis.com/fonts.gstatic.com because the
+       <link rel="preconnect"> hints below for Google Fonts are themselves
+       subject to connect-src (not just style-src/font-src) — without these
+       hosts every boot logged a CSP console error for the preconnect. -->
+  <!-- connect-src also includes api.cesium.com/assets.cesium.com: addons/tiles.js
+       supports Cesium ion as a 3D Tiles source (CesiumIonAuthPlugin talks to
+       api.cesium.com for the token exchange, then streams tiles from
+       assets.cesium.com) when a user supplies their own ion token. -->
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval' 'wasm-unsafe-eval' https://cdnjs.cloudflare.com https://cdn.jsdelivr.net https://gc.zgo.at; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com data:; connect-src 'self' https://cdn.jsdelivr.net https://cdnjs.cloudflare.com https://tile.googleapis.com https://api.pdok.nl https://*.goatcounter.com https://huggingface.co https://cdn-lfs.huggingface.co https://cdn-lfs-us-1.huggingface.co https://*.hf.co https://sparkjs.dev http://localhost:11434 https://api.anthropic.com https://api.openai.com https://generativelanguage.googleapis.com https://api.github.com https://fonts.googleapis.com https://fonts.gstatic.com https://api.cesium.com https://assets.cesium.com http://localhost:* ws://localhost:* http://127.0.0.1:* ws://127.0.0.1:* blob: data:; worker-src 'self' blob:; img-src 'self' blob: data:;">
 
 
   <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -3156,7 +3172,7 @@ function startApp() {
         props: el.props
       };
     });
-    return {v:_ccGeoCacheV8Enabled()?8:7, hasPsets:hasPsets, meshData:meshData, elData:elData, storeys:result.storeys, storeyData:result.storeyData, relatedPairs:result.relatedPairs||{}, stats:result.stats};
+    return {v:_ccGeoCacheV8Enabled()?8:7, hasPsets:hasPsets, meshData:meshData, elData:elData, storeys:result.storeys, storeyData:result.storeyData, spatialHierarchy:result.spatialHierarchy||{}, relatedPairs:result.relatedPairs||{}, stats:result.stats};
   }
 
 
@@ -3265,7 +3281,7 @@ function startApp() {
         catch(e){ console.warn('[restore] instancing skipped:', e); }
       }
     }
-    return {meshes:meshes, elements:elements, storeys:cached.storeys, storeyData:cached.storeyData, relatedPairs:cached.relatedPairs||{}, stats:cached.stats};
+    return {meshes:meshes, elements:elements, storeys:cached.storeys, storeyData:cached.storeyData, spatialHierarchy:cached.spatialHierarchy||{}, relatedPairs:cached.relatedPairs||{}, stats:cached.stats};
   }
 
   function _ccRestoredGeoMatchesCache(cached, result) {
@@ -35866,7 +35882,8 @@ function startApp() {
       // Dimensions panel empty. When there are no authored length quantities,
       // derive Width/Depth/Height from the element's world bounding box so
       // the panel still says something. Labelled "(bbox)" so it's never
-      // mistaken for authored data. App keeps IFC Z-up → height is the Z span.
+      // mistaken for authored data. web-ifc loads IFC (Z-up) into the
+      // Three.js scene as Y-up (see below) → height is the Y span, not Z.
       var bboxDims = [];
       if (dims.length === 0 && _latestEl && _latestEl.box && _latestEl.box.min && _latestEl.box.max) {
         var _bb = _latestEl.box, _mn = _bb.min, _mx = _bb.max;
