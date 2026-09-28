@@ -22668,12 +22668,17 @@ function startApp() {
     var projName = (s.activeProject && s.activeProject !== 'default') ? s.activeProject
       : (s.models && s.models.length ? s.models.map(function(m){return m.name;}).join(' + ').slice(0, 80) : 'Untitled project');
 
-    var counts = { open:0, inProg:0, resolved:0, autoRes:0, hard:0, soft:0, dup:0, vis:0 };
+    // "other" catches every status STAT defines besides the four buckets
+    // broken out below (confirmed, denied, accepted_needs_check, and any
+    // future addition) — without it, open+inProg+resolved+autoRes didn't
+    // add up to the total whenever a clash carried one of those statuses.
+    var counts = { open:0, inProg:0, resolved:0, autoRes:0, other:0, hard:0, soft:0, dup:0, vis:0 };
     clashes.forEach(function(c){
       if (c.status==='open') counts.open++;
       else if (c.status==='in_progress') counts.inProg++;
       else if (c.status==='auto_resolved') counts.autoRes++;
       else if (c.status==='resolved'||c.status==='closed') counts.resolved++;
+      else counts.other++; // confirmed / denied / accepted_needs_check / unknown
       if (c.type==='hard') counts.hard++; else if (c.type==='soft') counts.soft++;
       else if (c.type==='duplicate') counts.dup++; else if (c.type==='visibility') counts.vis++;
     });
@@ -22688,19 +22693,35 @@ function startApp() {
     var SEV_RANK = { critical:4, major:3, minor:2, info:1 };
     var rows = order.map(function(k){
       var items = clusters[k];
+      // "Open" here means the status column literally called Open — was
+      // folding in_progress into the same count, so an in-progress clash
+      // was double counted (once here, once in its own status card) and
+      // this column's number never matched what "open" meant anywhere else
+      // in the report.
       var open = 0, sev = '', sevR = 0, assignees = {};
       items.forEach(function(c){
-        if (c.status==='open'||c.status==='in_progress') open++;
+        if (c.status==='open') open++;
         var cSev = c.aiSeverity || _ccDeterministicSeverity(c);
         var r = SEV_RANK[(cSev||'').toLowerCase()]||0;
         if (r > sevR) { sevR = r; sev = cSev; }
         if (c.assignee) assignees[c.assignee] = true;
       });
       var first = items[0];
+      // Clashes carry their storey on elemAStorey/elemBStorey (c.storey is
+      // an ISSUE field, not a clash field — this always read undefined for
+      // every clash row, hence "—" on every row).
+      var _rowStorey = first.elemAStorey || first.elemBStorey || first.storey || first.storeyName || '';
+      var _rowLabel = first.aiTitle || first.title || (window._ccClusterLabelFor ? window._ccClusterLabelFor(first) : 'Clash');
+      // A generic fallback label (no title, no element names — e.g. a
+      // visibility clash, whose fields don't fit _ccClusterLabelFor's
+      // elemA/elemB shape) can come out identical for many single-clash
+      // clusters. Append the clash's own stable display number so rows
+      // stay distinguishable even when the label itself is generic.
+      if (!first.aiTitle && !first.title && first.number != null) _rowLabel += ' #' + first.number;
       return {
-        label: first.aiTitle || first.title || (window._ccClusterLabelFor ? window._ccClusterLabelFor(first) : 'Clash'),
+        label: _rowLabel,
         count: items.length, open: open, sev: sev,
-        storey: first.storey || first.storeyName || '',
+        storey: _rowStorey,
         assignees: Object.keys(assignees).join(', '),
       };
     }).sort(function(a,b){ return b.open - a.open || b.count - a.count; });
@@ -22766,6 +22787,7 @@ function startApp() {
       +   '<div class="card"><b style="color:#dc2626">'+counts.open+'</b><span>open</span></div>'
       +   '<div class="card"><b style="color:#d97706">'+counts.inProg+'</b><span>in progress</span></div>'
       +   '<div class="card"><b style="color:#16a34a">'+(counts.resolved+counts.autoRes)+'</b><span>resolved'+(counts.autoRes?' ('+counts.autoRes+' auto)':'')+'</span></div>'
+      +   (counts.other ? '<div class="card"><b style="color:#0f766e">'+counts.other+'</b><span>confirmed / denied / other</span></div>' : '')
       +   '<div class="card"><b>'+rows.length+(truncated?'+':'')+'</b><span>clusters</span></div>'
       + '</div>'
       + '<div class="sub">Hard '+counts.hard+' · Soft/clearance '+counts.soft+' · Duplicates '+counts.dup+(counts.vis?' · Sight-line '+counts.vis:'')+'</div>'
