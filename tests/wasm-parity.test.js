@@ -248,3 +248,48 @@ test('min-distance parity: exact equality across random and structured triangle-
   runCmp('empty-a', new Float32Array([]), new Float32Array([0, 0, 0, 1, 0, 0, 0, 1, 0]));
   runCmp('empty-b', new Float32Array([0, 0, 0, 1, 0, 0, 0, 1, 0]), new Float32Array([]));
 });
+
+test('min-distance parity: intersecting/contained meshes must report EXACTLY 0 in both engines', async () => {
+  // Verified bug (CLAUDE.md task notes): _triTriDistSq's 15-subtest
+  // point/edge distance is only valid for NON-intersecting triangles — when
+  // one triangle actually pierces the other, or one mesh is fully enclosed
+  // in the other with no crossing triangle pair at all, the old code
+  // reported a small but nonzero gap instead of the true 0. Both the
+  // tri-tri intersection short-circuit AND the point-in-mesh containment
+  // fix must be exercised here, in both the JS reference and WASM.
+  const mod = await loadWasm();
+  const js = loadJsReference();
+
+  function runCmp(name, tA, tB) {
+    const jResult = js._ccJsMeshIntersectRef.minDist(tA, tB);
+    const wResult = Array.from(mod.mesh_min_distance(tA, tB));
+    assert.strictEqual(jResult.length, wResult.length, `${name}: result shape must match`);
+    for (let i = 0; i < jResult.length; i++) {
+      assert.strictEqual(jResult[i], wResult[i], `${name}: value[${i}] must be EXACTLY equal`);
+    }
+    assert.strictEqual(jResult[0], 0, `${name}: JS distance must be exactly 0, got ${jResult[0]}`);
+    assert.strictEqual(wResult[0], 0, `${name}: WASM distance must be exactly 0, got ${wResult[0]}`);
+  }
+
+  // Two triangles that actually cross (edge of one pierces the face of the
+  // other) — the classic "surface-crossing" case.
+  runCmp('crossing-triangles', new Float32Array([-1, -1, 0, 1, -1, 0, 0, 1, 0]), new Float32Array([0, 0, -1, 0, 0, 1, 0, 2, 0]));
+  runCmp('crossing-triangles (reversed)', new Float32Array([0, 0, -1, 0, 0, 1, 0, 2, 0]), new Float32Array([-1, -1, 0, 1, -1, 0, 0, 1, 0]));
+
+  // Duct-through-column: a long thin box (duct) crossing straight through a
+  // squat box (column) — mirrors the real repro (Return duct through
+  // Column 5/3, etc.) at mesh scale, not single-triangle scale.
+  const duct = box(-1, 21, 2.4, 2.6, -0.1, 0.1);
+  const column = box(9, 11, -1, 5, -1, 1);
+  runCmp('duct-through-column', duct, column);
+  runCmp('duct-through-column (reversed)', column, duct);
+
+  // Fully contained: a small box entirely inside a bigger one, with no
+  // face of the small box crossing a face of the big one at all — the
+  // containment fix (point-in-mesh), not the tri-tri short-circuit, is
+  // what must catch this.
+  const bigBox = box(-5, 5, -5, 5, -5, 5);
+  const smallBoxInside = box(-1, 1, -1, 1, -1, 1);
+  runCmp('fully-contained-box', bigBox, smallBoxInside);
+  runCmp('fully-contained-box (reversed)', smallBoxInside, bigBox);
+});

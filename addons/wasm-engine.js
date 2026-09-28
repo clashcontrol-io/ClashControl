@@ -111,11 +111,18 @@
     // no vertex of the device is near any vertex of the slab.
     var slabTri = new Float32Array([-5,-5,0, 5,-5,0, -5,5,0]); // 10x10 slab quad's first tri
     var deviceTri = new Float32Array([-0.1,-0.1,0.1, 0.1,-0.1,0.1, -0.1,0.1,0.1]); // 0.2x0.2 device face, 0.1m above slab center
+    // Crossing case (verified bug: a duct actually piercing a column
+    // reported a small nonzero gap instead of the true 0) — must land on
+    // exactly 0 in both engines. See _triTriDistSq's intersection
+    // short-circuit and mesh_dist::tri_tri_dist_sq's mirror in Rust.
+    var crossA = _box(-1, 21, 2.4, 2.6, -0.1, 0.1);
+    var crossB = _box(9, 11, -1, 5, -1, 1);
     var mdCases = [
       { a: _box(-1, 21, 2.5, 2.9, -6.9, -6.1), b: _box(9.925, 10.075, 0, 3.2, -11.85, -0.15) },
       { a: new Float32Array([0,0,0, 3,0,0, 0,4,0]), b: new Float32Array([3,4,0, 6,4,0, 3,8,0]) },
       { a: new Float32Array([0,0,0, 1,0,0, 0,1,0]), b: new Float32Array([50,50,50, 51,50,50, 50,51,50]) },
-      { a: slabTri, b: deviceTri }
+      { a: slabTri, b: deviceTri },
+      { a: crossA, b: crossB }
     ];
     for (var j = 0; j < mdCases.length; j++) {
       var mc = mdCases[j];
