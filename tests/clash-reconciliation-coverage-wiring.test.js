@@ -45,7 +45,11 @@ function loadCoverageHelpers() {
   return new Function('window', body)(window);
 }
 
-function model(id, name) { return {id, name}; }
+// Bug 1: _ccCoverageModelIds now excludes a model with no loaded geometry
+// (elements/meshes both empty) from coverage, so give these fixture models
+// a non-empty elements array -- they represent normally-loaded models, not
+// the empty-geometry restore-stub case a dedicated test below covers.
+function model(id, name) { return {id, name, elements: [{}]}; }
 
 test('_ccCoverageModelIds resolves modelA/modelB through the real _ccResolveModelScope, keeping the two sides SEPARATE', () => {
   // R3 follow-up: this used to return one merged array, which let
@@ -67,6 +71,22 @@ test('_ccCoverageModelIds resolves modelA/modelB through the real _ccResolveMode
   // C and D are never mentioned by an A-B scoped rule set.
   assert.equal(scoped.a.includes('C'), false);
   assert.equal(scoped.b.includes('D'), false);
+});
+
+// Bug 1: a model restored from a project file (placeholder, no geometry
+// loaded yet) must not count as "covered" -- otherwise a clash referencing
+// it looks like it was genuinely re-checked and gets auto-resolved just
+// because the model is nominally in scope, even though it was never
+// geometrically examined this run.
+test('_ccCoverageModelIds excludes a model with no loaded geometry (elements/meshes both empty)', () => {
+  const { _ccCoverageModelIds } = loadCoverageHelpers();
+  const loaded = {id: 'A', name: 'Arch', elements: [{}], meshes: [{}]};
+  const stub = {id: 'B', name: 'Struct', elements: [], meshes: []};
+  const models = [loaded, stub];
+
+  const scoped = _ccCoverageModelIds({modelA: 'A', modelB: 'B'}, models);
+  assert.deepEqual(scoped.a, ['A']);
+  assert.deepEqual(scoped.b, [], 'a model with no elements/meshes must not be covered');
 });
 
 test('_ccCoverageModelIds never throws on missing rules/models', () => {

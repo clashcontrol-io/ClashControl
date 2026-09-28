@@ -1839,6 +1839,28 @@ function startApp() {
         }
         if (_dupIdx !== -1) {
           var _prevM = s.models[_dupIdx];
+          // Bug 1: a project-file restore dispatches ADD_MODEL with a
+          // placeholder model (meshes:[], elements:[], _stub:true) for
+          // every saved model, even ones already loaded with real
+          // geometry in this session. Without this guard the dedup merge
+          // below took the placeholder as its base and the loaded
+          // model's meshes/elements were wiped to empty -- 0 elements,
+          // duplicated issues/selection sets on next merge, and the next
+          // detection run treating every clash as auto-resolved (no
+          // elements left to re-detect). A stub restore must only ever
+          // merge display/organizational metadata onto an already-loaded
+          // model, never its geometry.
+          var _amIsStub = _am._stub === true || (!((_am.meshes||[]).length) && !((_am.elements||[]).length));
+          var _prevHasGeometry = ((_prevM.meshes||[]).length) || ((_prevM.elements||[]).length);
+          if (_amIsStub && _prevHasGeometry) {
+            var _metaMerged = Object.assign({}, _prevM, {
+              discipline: _am.discipline || _prevM.discipline,
+              color: _am.color || _prevM.color,
+              tag: _am.tag || _prevM.tag || '',
+              visible: _prevM.visible !== false
+            });
+            return Object.assign({},s,{models: s.models.map(function(m,i){ return i===_dupIdx ? _metaMerged : m; }),parkedModels:(s.parkedModels||[]).filter(function(pm){return pm.id!==_am.id;})});
+          }
           _clearElCaches(_prevM);
           var _merged = Object.assign({}, _am, {
             id: _prevM.id, // keep the stable id so refs/markers/issues stay valid
@@ -1893,6 +1915,13 @@ function startApp() {
       case A.STOP_DETECT: return Object.assign({},s,{detecting:false});
       case A.SWITCHING_PROJECT: return Object.assign({},s,{switchingProject:!!a.v});
       case A.ADD_ISSUE:
+        // Bug 1: dedupe by id (project-file restore re-dispatches ADD_ISSUE
+        // for every saved issue -- ADD_ISSUE never deduped, so reopening a
+        // saved project doubled the issue count), then by bcfGuid (BCF
+        // re-import assigns each topic a fresh local id via uid(), so id
+        // dedup alone doesn't catch a re-import of the same BCF).
+        if (a.v && a.v.id && s.issues.some(function(i){return i.id===a.v.id;})) return s;
+        if (a.v && a.v.bcfGuid && s.issues.some(function(i){return i.bcfGuid && i.bcfGuid===a.v.bcfGuid;})) return s;
         _gcEvent('issue-created');
         var aiClashes=s.clashes;
         if(a.v&&a.v.clashId){
@@ -2043,6 +2072,10 @@ function startApp() {
       case A.SET_AUTOPARK: { var _ap=!!a.v; _ccPersistUI('autoParkInactive',_ap); return Object.assign({},s,{autoParkInactive:_ap}); }
       case 'RECORDING_STATE': return Object.assign({},s,{isRecording:!!a.v});
       case 'ADD_SELSET': {
+        // Bug 1: project-file restore re-dispatches ADD_SELSET for every
+        // saved selection set on every reopen -- dedupe by id so reopening
+        // a project doesn't double them up.
+        if (a.v && a.v.id && (s.selectionSets||[]).some(function(x){return x.id===a.v.id;})) return s;
         var nset = {id:a.v.id||uid(), name:a.v.name||'Selection', refs:a.v.refs||[], color:a.v.color||null, createdAt:new Date().toISOString()};
         return Object.assign({},s,{selectionSets:(s.selectionSets||[]).concat([nset])});
       }
@@ -2055,6 +2088,8 @@ function startApp() {
       // stays correct as the model changes (or is re-loaded) instead of
       // thawing into stale expressIds like a Selection Set's refs would.
       case 'ADD_SEARCHSET': {
+        // Bug 1: same restore-time dedupe as ADD_SELSET above.
+        if (a.v && a.v.id && (s.searchSets||[]).some(function(x){return x.id===a.v.id;})) return s;
         var nqset = {id:a.v.id||uid(), name:a.v.name||'Search', query:a.v.query||{}, color:a.v.color||null, createdAt:new Date().toISOString()};
         return Object.assign({},s,{searchSets:(s.searchSets||[]).concat([nqset])});
       }
@@ -7912,8 +7947,16 @@ function startApp() {
   function _ccCoverageModelIds(rules, models) {
     try {
       var a = {}, b = {};
-      _ccResolveModelScope(models, rules && rules.modelA).forEach(function(m){ a[m.id]=true; });
-      _ccResolveModelScope(models, rules && rules.modelB).forEach(function(m){ b[m.id]=true; });
+      // Bug 1: a model with no elements/meshes loaded (e.g. right after a
+      // project-file restore's placeholder ADD_MODEL, before the user
+      // re-loads the actual IFC) cannot have actually been geometrically
+      // re-checked, even though it's nominally "in scope". Excluding it
+      // here means a clash referencing it reads as out-of-coverage
+      // (_delta:'not_checked') rather than auto-resolved -- an unloaded
+      // model must never make a real prior clash look resolved.
+      var hasGeometry = function(m) { return ((m.elements||[]).length) || ((m.meshes||[]).length); };
+      _ccResolveModelScope(models, rules && rules.modelA).forEach(function(m){ if (hasGeometry(m)) a[m.id]=true; });
+      _ccResolveModelScope(models, rules && rules.modelB).forEach(function(m){ if (hasGeometry(m)) b[m.id]=true; });
       return {a: Object.keys(a), b: Object.keys(b)};
     } catch(e) { return null; }
   }
