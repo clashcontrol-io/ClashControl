@@ -7969,6 +7969,32 @@ function startApp() {
     return _detectClashesCore(models, rules, null, null);
   }
 
+  // Clash/issue list free-text filter — was a single naive substring match
+  // on the whole query (hay.indexOf(q)), so a query built from the panel's
+  // OWN placeholder examples ("hard on floor 2", "hard on level 1", "open
+  // pipes") mostly returned 0 results: filler words ("on") and a plural
+  // ("pipes" vs the singular "pipe" that actually appears in an IFC type
+  // name) never appear verbatim in the haystack, and "floor"/"storey" never
+  // literally says "level" even when the storey itself does. Tokenizes the
+  // query, drops filler words, treats floor/storey/story as synonyms for
+  // level, and requires every remaining token to match (AND) — via a plain
+  // substring, its singular form, or (for a bare number) the item's stable
+  // display number.
+  var _CC_FILTER_FILLER = {on:1,in:1,at:1,the:1,of:1,for:1,a:1,an:1};
+  function _ccFilterTextMatches(q, hay, itemNumber) {
+    if (!q) return true;
+    var norm = String(q).toLowerCase().replace(/\b(?:storeys?|storys?|floors?)\b/g, 'level');
+    var tokens = norm.split(/\s+/).filter(function(t){ return t && !_CC_FILTER_FILLER[t]; });
+    if (!tokens.length) return true;
+    return tokens.every(function(tok){
+      var bare = tok.charAt(0)==='#' ? tok.slice(1) : tok;
+      if (/^\d+$/.test(bare) && itemNumber != null && String(itemNumber) === bare) return true;
+      if (hay.indexOf(tok) !== -1 || hay.indexOf(bare) !== -1) return true;
+      if (tok.length > 3 && tok.charAt(tok.length-1) === 's' && hay.indexOf(tok.slice(0,-1)) !== -1) return true;
+      return false;
+    });
+  }
+
   function deriveFloors(clashes) {
     if (!clashes.length) return [];
     var ys = clashes.map(function(c){return c.elevation||0}).sort(function(a,b){return a-b});
@@ -21902,7 +21928,7 @@ function startApp() {
           if(it.modelBId && !visibleModelIds[it.modelBId]) return false;
         }
         if(f.status!=='all' && it.status!==f.status) return false;
-        if(f.search){var q=f.search.toLowerCase();var hay=isClashTab?[it.title,it.description,it.type,it.elemAStorey,it.elemBStorey,it.elemAType,it.elemBType,it.elemAMaterial,it.elemBMaterial,it.status].filter(Boolean).join(' ').toLowerCase():(it.title||'').toLowerCase()+' '+(it.description||'').toLowerCase();if(hay.indexOf(q)===-1)return false;}
+        if(f.search){var hay=isClashTab?[it.title,it.description,it.type,it.elemAStorey,it.elemBStorey,it.elemAType,it.elemBType,it.elemAMaterial,it.elemBMaterial,it.status].filter(Boolean).join(' ').toLowerCase():(it.title||'').toLowerCase()+' '+(it.description||'').toLowerCase();if(!_ccFilterTextMatches(f.search,hay,it.number))return false;}
         if(isClashTab) {
           if(f.modelPair) {
             var _mpA=it.modelAId, _mpB=it.modelBId||it.modelAId, _mp=f.modelPair;
@@ -21910,10 +21936,12 @@ function startApp() {
           }
           if(f.type!=='all' && it.type!==f.type) return false;
           if(f.discipline!=='all' && it.disciplines && it.disciplines.indexOf(f.discipline)===-1) return false;
-          if(f.floor!=='all') {
-            var fl = s.floors.find(function(x){return x.id===f.floor});
-            if(fl && (it.elevation<fl.yMin||it.elevation>fl.yMax)) return false;
-          }
+          // f.floor holds a real IFC storey NAME (see the Floor/Level select
+          // below, populated from _ccCollectStoreys) — was elevation-band
+          // matching against deriveFloors()'s synthetic, off-by-one "Level N"
+          // clusters, which didn't correspond to any real storey and even
+          // mislabeled IFC's own Level 0 as "Level 1".
+          if(f.floor!=='all' && it.elemAStorey!==f.floor && it.elemBStorey!==f.floor) return false;
           if(f.distMax<9999 && (it.distance||0)>f.distMax) return false;
           if(f.elementId) {
             var eid=f.elementId;
@@ -22030,13 +22058,21 @@ function startApp() {
           </select>
         </div>`}
 
-        ${isClashTab && s.floors.length>0 && html`<div>
+        ${isClashTab && function(){
+          // Real IFC storeys (name + elevation), not deriveFloors()'s
+          // elevation-clustered synthetic "Level N" labels — those didn't
+          // match any actual storey name and even mislabeled Level 0 as
+          // "Level 1" (see the f.floor filter comment above).
+          var _realStoreys = (typeof _ccCollectStoreys === 'function') ? _ccCollectStoreys(s.models || []) : [];
+          if (!_realStoreys.length) return '';
+          return html`<div>
           <span style=${FL}>${_cc_t('issues.filter.floor','Floor / Level')}</span>
           <select value=${f.floor} onChange=${function(e){d({t:A.UPD_FILTERS,u:{floor:e.target.value}})}} style=${SELSTYLE}>
             <option value="all">${_cc_t('issues.filter.allLevels','All levels')}</option>
-            ${s.floors.map(function(fl){return html`<option key=${fl.id} value=${fl.id}>${fl.label}</option>`})}
+            ${_realStoreys.map(function(st){return html`<option key=${st.name} value=${st.name}>${st.name}${' ('+st.elevation.toFixed(1)+'m)'}</option>`})}
           </select>
-        </div>`}
+        </div>`;
+        }()}
 
         ${isClashTab && function(){
           var maxDist = 500;
