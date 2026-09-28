@@ -137,10 +137,16 @@ async function runDetectionInPage(page, rulesOverride, disableWasmNarrowPhase) {
       }
     }
     return (result || []).map((c) => {
-      const a = c.eA ? c.eA.expressId : (c.elA && c.elA.expressId);
-      const b = c.eB ? c.eB.expressId : (c.elB && c.elB.expressId);
-      const ids = [a, b].sort((x, y) => x - y);
-      return { key: ids[0] + ':' + ids[1] + ':' + c.type + ':' + (c.sameModel ? 1 : 0), type: c.type, clearanceMm: c.clearanceMm };
+      // Real clash-object shape (see index.html's _buildClashBase): element
+      // identity is elemA/elemB (expressId) + modelAId/modelBId, not eA/eB —
+      // this also disambiguates express IDs that repeat across the two
+      // loaded IFC files. Model+element pairs are sorted together so order
+      // doesn't matter, matching how sameModel/selfClash makes the pair
+      // identity symmetric.
+      const pair = [[c.modelAId, c.elemA], [c.modelBId, c.elemB]].sort((x, y) =>
+        x[0] === y[0] ? x[1] - y[1] : (x[0] < y[0] ? -1 : 1));
+      const pairKey = pair[0][0] + ':' + pair[0][1] + ':' + pair[1][0] + ':' + pair[1][1] + ':' + (c.selfClash ? 1 : 0);
+      return { key: pairKey + ':' + c.type, pairKey, type: c.type, clearanceMm: c.clearanceMm, distance: c.distance };
     });
   }, { rules: rulesOverride, disableWasm: disableWasmNarrowPhase });
 }
@@ -193,6 +199,12 @@ try {
   const softRules = { excludeSameDiscipline: false, selfClashModels: 'none', hard: false, minGap: 0, maxGap: 100 };
   const wasmSoft = await runDetectionInPage(page2, softRules, false);
   const jsSoft = await runDetectionInPage(page2, softRules, true);
+  // Also run the SAME hard-only rules on page2 (not page1's wasmHard) to
+  // get a hard-clash pairKey set under page2's own model ids — each fresh
+  // page load re-parses the IFC files and mints new model UUIDs, so a
+  // pairKey computed on page1 never matches one computed on page2 even for
+  // the identical element pair.
+  const wasmHardOnPage2 = await runDetectionInPage(page2, wasmRules, false);
   await page2.close();
 
   const wasmSoftKeys = wasmSoft.map((c) => c.key).sort();
@@ -211,6 +223,61 @@ try {
     fail('100mm soft-clearance run did not find the device-under-slab proximity the fixture adds for this (this is exactly the vertex-to-vertex bug this fixture regression-tests)');
   } else {
     console.log('DEVICE/SLAB OK — the mid-face device-to-slab clearance was found by the true point-to-triangle min-distance kernel');
+  }
+
+  // ── Case 4: pairs that are hard clashes must show 0 clearance in a
+  // soft-only run (the _triTriDistSq / containment-fix regression) ──
+  //
+  // How hard and soft combine (read from index.html's detection loop,
+  // around `_wantsSoft`/`isSoft`/`hardPt`): they are NOT run together and
+  // then merged/deduped — which one(s) run is entirely rules-driven.
+  // `hardPt` is only ever computed when `rules.hard` is true; with
+  // `rules.hard:false` (this soft-only run) `hardPt` stays `false` for
+  // EVERY pair, so `_meshMinDist` runs unconditionally and a pair that
+  // would have been a hard clash is NOT excluded and NOT reclassified —
+  // it is emitted as an ordinary `type:'soft'` clash, with `clearanceMm`/
+  // `distance` now correctly 0 (the whole point of this fix: before it,
+  // truly-intersecting pairs surfaced as a small nonzero soft gap instead).
+  // So the correct assertion here is "0 clearance", not "excluded", and
+  // the soft-clash presentation for a distance-0 pair is unchanged by this
+  // fix (still `type:'soft'`) — it is NOT reclassified as hard, since hard
+  // classification requires a `rules.hard:true` run that never happened
+  // here. Whether a distance-0 soft clash *should* instead be presented as
+  // hard is a product/UX question outside this fix's scope, not decided
+  // here.
+  const hardPairKeys = new Set(wasmHardOnPage2.map((c) => c.pairKey));
+
+  const softByPair = new Map(wasmSoft.map((c) => [c.pairKey, c]));
+  let zeroClearanceChecked = 0;
+  for (const pairKey of hardPairKeys) {
+    const softMatch = softByPair.get(pairKey);
+    if (!softMatch) continue; // outside the 100mm soft-run's maxGap window entirely — not a contradiction
+    zeroClearanceChecked++;
+    if (softMatch.clearanceMm !== 0 || softMatch.distance !== 0) {
+      fail('pair ' + pairKey + ' is a hard clash but the 100mm soft-only run reported clearanceMm=' +
+        softMatch.clearanceMm + ' distance=' + softMatch.distance + ' (expected exactly 0)');
+    }
+  }
+  if (zeroClearanceChecked === 0) {
+    fail('no hard-clash pair also appeared in the 100mm soft-only run — the hard/soft overlap check above is vacuous, widen maxGap or investigate');
+  } else {
+    console.log('ZERO-CLEARANCE OK — all ' + zeroClearanceChecked + ' hard-clash pairs that also appear in the 100mm soft-only run report exactly 0 clearance (WASM)');
+  }
+  // Same check against the JS fallback run, so this also regression-tests
+  // the JS side of the fix, not just WASM.
+  const jsSoftByPair = new Map(jsSoft.map((c) => [c.pairKey, c]));
+  let jsZeroClearanceChecked = 0;
+  for (const pairKey of hardPairKeys) {
+    const jsMatch = jsSoftByPair.get(pairKey);
+    if (!jsMatch) continue;
+    jsZeroClearanceChecked++;
+    if (jsMatch.clearanceMm !== 0 || jsMatch.distance !== 0) {
+      fail('pair ' + pairKey + ' is a hard clash but the 100mm JS soft-only run reported clearanceMm=' +
+        jsMatch.clearanceMm + ' distance=' + jsMatch.distance + ' (expected exactly 0)');
+    }
+  }
+  if (jsZeroClearanceChecked > 0) {
+    console.log('ZERO-CLEARANCE OK — same holds for the JS fallback engine (' + jsZeroClearanceChecked + ' pairs)');
   }
 
   if (errors.length) fail('browser emitted uncaught page or console errors: ' + JSON.stringify(errors.slice(0, 10)));
