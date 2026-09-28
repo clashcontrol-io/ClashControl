@@ -3172,7 +3172,7 @@ function startApp() {
         props: el.props
       };
     });
-    return {v:_ccGeoCacheV8Enabled()?8:7, hasPsets:hasPsets, meshData:meshData, elData:elData, storeys:result.storeys, storeyData:result.storeyData, relatedPairs:result.relatedPairs||{}, stats:result.stats};
+    return {v:_ccGeoCacheV8Enabled()?8:7, hasPsets:hasPsets, meshData:meshData, elData:elData, storeys:result.storeys, storeyData:result.storeyData, spatialHierarchy:result.spatialHierarchy||{}, relatedPairs:result.relatedPairs||{}, stats:result.stats};
   }
 
 
@@ -3281,7 +3281,7 @@ function startApp() {
         catch(e){ console.warn('[restore] instancing skipped:', e); }
       }
     }
-    return {meshes:meshes, elements:elements, storeys:cached.storeys, storeyData:cached.storeyData, relatedPairs:cached.relatedPairs||{}, stats:cached.stats};
+    return {meshes:meshes, elements:elements, storeys:cached.storeys, storeyData:cached.storeyData, spatialHierarchy:cached.spatialHierarchy||{}, relatedPairs:cached.relatedPairs||{}, stats:cached.stats};
   }
 
   function _ccRestoredGeoMatchesCache(cached, result) {
@@ -35882,7 +35882,8 @@ function startApp() {
       // Dimensions panel empty. When there are no authored length quantities,
       // derive Width/Depth/Height from the element's world bounding box so
       // the panel still says something. Labelled "(bbox)" so it's never
-      // mistaken for authored data. App keeps IFC Z-up → height is the Z span.
+      // mistaken for authored data. web-ifc loads IFC (Z-up) into the
+      // Three.js scene as Y-up (see below) → height is the Y span, not Z.
       var bboxDims = [];
       if (dims.length === 0 && _latestEl && _latestEl.box && _latestEl.box.min && _latestEl.box.max) {
         var _bb = _latestEl.box, _mn = _bb.min, _mx = _bb.max;

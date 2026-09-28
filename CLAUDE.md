@@ -4,9 +4,12 @@
 
 **Before doing any work, read `MEMORY.md`.** It contains the live project state,
 recent session history, active work in progress, and architecture decisions that
-are not in this file. It is updated automatically every 24 hours by
-`.github/workflows/daily-sync.yml` and should be updated by you at the end of
-each session (Active Work and Project State sections).
+are not in this file. It is **hand-maintained, not auto-synced** — there used to
+be a `.github/workflows/daily-sync.yml` that condensed it automatically every 24
+hours, but that workflow (and `scripts/update-memory.py`) was removed on
+2026-09-28 in favor of keeping it short and updated by whoever is working in it.
+Update it yourself at the end of each session (Active Work and Project State
+sections, and a short note under Recently completed — not a full write-up).
 
 After reading, update the `Active Work` section in `MEMORY.md` with what you
 are about to do. When you finish, mark completed items with ~~strikethrough~~ + date.
@@ -23,7 +26,7 @@ ClashControl is a free, source-available IFC clash detection web app licensed un
 ## Architecture — Single File App + Lazy Addons
 The **core application** lives in `index.html` (~34k lines — check with `wc -l` before quoting an exact count, it grows). There is no build step, no bundler, no node_modules. Just open the file in a browser.
 
-Optional, non-critical features are split into lazy-loaded files under `addons/` (see the Addons section below). These are loaded at runtime via `<script>` injection (deduplicated by `cc-runtime.js`'s script loader) and the core app works without them. Most addons still load eagerly after mount; `smart-bridge` and `openaec-bridge` are genuinely on-demand (lightweight placeholder in the Integrations panel, real code fetched on first activation via `window._ccEnsureAddon(id)`).
+Optional, non-critical features are split into lazy-loaded files under `addons/` (see the Addons section below). These are loaded at runtime via `<script>` injection (deduplicated by `cc-runtime.js`'s script loader) and the core app works without them. Most addons still load eagerly after mount; `smart-bridge`, `openaec-bridge`, `pointcloud` and `splat` are genuinely on-demand (real code fetched on first activation via `window._ccEnsureAddon(id)`; `smart-bridge`/`openaec-bridge` show a lightweight placeholder in the Integrations panel first).
 
 ### Tech stack
 - **Preact/React 18** via CDN (UMD) — UI framework
@@ -60,18 +63,18 @@ The file follows this layout top to bottom:
 - **Material swapping**: Render styles (standard/shaded/rendered/wireframe) swap mesh materials. Original saved as `mesh._origMaterial`.
 - **Ghost material**: Shared `MeshBasicMaterial({color:0x334155, opacity:0.08})` replaces mesh materials for transparency effect.
 - **State management**: Single `useReducer` with action types like `{t:'LOAD_MODEL', ...}`. Dispatch available globally as `window._ccDispatch`.
-- **CSS custom properties**: `:root` = dark theme, `[data-theme=light]` = light theme.
+- **CSS custom properties**: `:root` = light theme (the default), `[data-theme=dark]` overrides for dark mode.
 
 ## Important conventions
 
 ### Versioning
 - Version lives in `version.json` (major.minor.patch)
-- `scripts/bump-version.sh` runs as a pre-commit hook when `index.html` is staged
-- It auto-increments patch, updates `version.json`, injects version into `index.html`, updates `README.md` version badge, and appends commit message to `CHANGELOG.md`
+- `scripts/bump-version.sh` runs in CI (`.github/workflows/version-bump.yml`, `CI_VERSION_BUMP=1`) on pushes to `main` that touch `index.html` or `addons/*.js` — there is no locally-installed pre-commit hook (`.git/hooks/pre-commit` is unset); the script also supports a pre-commit-mode code path (staged-diff based) for anyone who wires it up locally, but that's not how it runs by default here
+- It auto-increments patch, updates `version.json`, injects version into `index.html`, updates `README.md` version badge, `sw.js`'s cache name, and appends commit message to `CHANGELOG.md`
 - Current version: check `version.json`
 
 ### Globals discipline
-There are ~280 `window._cc*` globals — do not add to the sprawl casually.
+There are ~400 `window._cc*` names referenced (~320 assigned) in `index.html` — do not add to the sprawl casually. (Check with a quick grep before quoting an exact count; it grows.)
 - `window._cc*` is for **internal plumbing only** (core ↔ addon contracts). Always guard calls with `typeof window._ccFoo === 'function'`.
 - Anything meant for users, automation, or external tools goes on the **`window.ClashControl.*` namespace** (defined near `_ccViewport` in index.html) as a thin guarded alias — follow the existing pattern there.
 - Before adding a new global, check whether an existing one already covers it.
@@ -85,19 +88,23 @@ There are ~280 `window._cc*` globals — do not add to the sprawl casually.
 - **Don't add new files** unless absolutely necessary — this is a single-file app by design
 - **Don't add npm/build tooling** — the app runs directly in the browser
 - **Keep the CHANGELOG.md updated** — the bump script handles this automatically on commit
-- **Test by opening index.html** in a browser after changes
+- **Test before calling anything done:**
+  - `node --test tests/*.test.js` — unit/wiring tests
+  - `npm run lint:inline` — ESLint over the extracted inline `<script>` (0 errors expected; warnings are pre-existing and non-blocking)
+  - `CC_CHROMIUM_EXECUTABLE=<path> CC_BROWSER_OFFLINE_DEPS=1 node tests/browser/smoke.mjs` (plus the other `tests/browser/*.mjs`) for real-browser checks — `CC_BROWSER_OFFLINE_DEPS=1` serves React/Three/JSZip/pdf.js/web-ifc from local `node_modules` when the sandbox can't reach the CDNs
+  - Also just open `index.html` directly in a browser for quick manual checks
 
 ### Things NOT to touch without good reason
 - The htm parser at the top of the script — it's hand-written and tested
 - The IFC loader (web-ifc integration) — complex but working, handles property/material extraction
-- The clash detection engine (AABB broad-phase + BVH tri-tri narrow-phase) — geometrically sensitive code
+- The clash detection engine (AABB broad-phase + BVH tri-tri narrow-phase) — geometrically sensitive code. The Rust/WASM narrow-phase accelerator (`addons/wasm-engine-pkg/`) is guaranteed **bit-identical** to the JS reference (hit/no-hit, every point, depth, min-distance) — enforced by `tests/wasm-parity.test.js` plus a runtime self-check the addon runs before trusting the WASM path (see `addons/wasm-engine.js`). Any future drift between them is a regression, not an accepted approximation.
 - The render-on-demand system (`_needsRender` / `invalidate`) — breaking this causes either no rendering or constant GPU waste
 
 ### Known quirks
 - Three.js r180 is loaded as ESM via an import map (bumped from UMD r128 in v5.19.12) — use r180 docs; post-r155 color management / lighting defaults are explicitly tuned in the renderer setup, don't "fix" them back
 - The view cube uses quaternion inversion (`cubeGroup.quaternion.copy(camera.quaternion).invert()`) — don't switch to camera-position approach, it causes mirroring
 - Fly-to auto-detects whether to preserve camera angle or re-orient based on travel distance vs current camera distance
-- The pre-commit hook only triggers when `index.html` is in the staged files
+- The CI version-bump job only triggers when `index.html` or an `addons/*.js` file changed on that push to `main` (see Versioning above — there is no local pre-commit hook)
 
 ## File overview
 ```
@@ -144,6 +151,24 @@ api/title.js                — AI clash title generation (batch, Gemma 4)
 api/triage.js               — AI clash triage (cluster context → severity / explanation / resolution)
 api/tile.js                 — Map-tile proxy for the geoplace basemap (MapTiler when keyed, else OSM)
 api/_lib.js                 — Shared serverless helpers (CORS allow-list, rate limiter)
+eslint.config.mjs           — ESLint 9 flat config used by `npm run lint:inline`
+scripts/lint-inline.js      — Extracts the main inline <script> from index.html (preserving line numbers) for ESLint
+clash-assignment-core.js    — Non-addon core module: assignment rules (discipline-pair × storey → assignee/priority)
+clash-classification-core.js — Non-addon core module: clash classification (spatial-hash clustering)
+clash-discipline-core.js    — Non-addon core module: discipline detection/matrix logic
+clash-identity-core.js      — Non-addon core module: stable clash identity across re-runs
+clash-reconciliation-core.js — Non-addon core module: merges new detection results with prior status/assignment
+storage-core.js             — Non-addon core module: local storage registry, budget and GC (`ClashControl.storage.*`)
+project-codec.js            — Non-addon core module: project state encode/decode for persistence
+safety-migrations.js        — Non-addon core module: feature-flag gate + migration/self-check plumbing (`window._ccSafetyMigrations`)
+renderer-contract.js        — Non-addon core module: pinned r180 renderer contract, checked by `tests/browser/smoke.mjs`
+section-clipping.js         — Non-addon core module: section plane/box clipping helpers
+analytics-consent.js        — Non-addon core module: consent-gated analytics, loaded by every SEO landing page too
+mcp-server.js                — MCP server (stdio) implementing Model Context Protocol for Claude Desktop/Code — distributed via GitHub Releases, not served from clashcontrol.io
+smart-bridge-server.js      — Standalone Smart Bridge binary source — REST/WS bridge that `addons/smart-bridge.js` connects to; distributed via GitHub Releases
+bridge-audit.js, bridge-governance.js, bridge-update.js, bridge-version.json — Smart Bridge binary build/update/governance tooling
+engine/                     — Rust source for the WASM clash accelerator (`addons/wasm-engine-pkg/`) and the native-speed local engine's shared algorithm
+desktop/                    — Tauri desktop app scaffold (see `TAURI.md`)
 ```
 
 ## Addons — how they plug in
@@ -183,7 +208,7 @@ Each addon is a plain IIFE loaded at runtime by the core via `addons/<name>.js` 
 Two community-contribution directories, same lazy-addon loading contract but a stricter rule: **contributed files must be pure JSON, never `.js`** — the only executable code is the maintainer-authored `loader.js` in each directory, which `fetch()`s + `JSON.parse()`s the manifest and pack files (never `eval`/`Function` on their content). This is a deliberate security boundary: a malicious or careless community pack can only ever be bad *data*, never a code-execution vector in every user's browser.
 
 - **Core registry** (`index.html`, near the Addon Registry): `window._cc_t(key, englishFallback, vars?)` for translated strings — falls back to `englishFallback` for any missing key or no active pack, so a partial/incorrect pack never breaks the app. `window._ccRegisterLocalePack`/`_ccSetLocale`/`_ccGetLocale` for language; `window._ccRegisterRegulationPreset`/`_ccSetRegulationRegion`/`_ccGetRegulationPreset(region, engine)` for regional thresholds. The registry itself is engine-agnostic — any `engines` key in a regulation pack gets registered — but only `accessibility.js` actually consumes it today, via its `DEFAULTS < regionPreset < opts.thresholds` precedence. `visibility.js` (rule/preset-based, not a numeric-threshold dict) and `data-quality.js` (BIM data hygiene, not physical dimensions) don't have a natural "regional override" shape to plug into yet — this is a real gap for those two engines specifically, not a documentation lag.
-- **Language follows the user** (default from `navigator.language`, override in Settings); **regulations follow the model's location** (`IfcSite` lat/lon, same extraction `geoplace.js` uses), not the user's — a Tokyo-based user reviewing a Berlin model needs German thresholds, not Japanese ones.
+- **Language follows the user**, stored per-browser (`localStorage` key `cc_locale`, set via `_ccSetLocale`/read via `_ccGetLocale`) and changed in Settings. There is currently **no `navigator.language` auto-detect** — a first-time visitor stays on English until they pick a language themselves (verified: no `navigator.language` reference anywhere in `index.html` or `locales/loader.js`); this is a known gap, not a shipped default. **Regulations follow the model's location** (`IfcSite` lat/lon, same extraction `geoplace.js` uses), not the user's — a Tokyo-based user reviewing a Berlin model needs German thresholds, not Japanese ones.
 - Regulation packs require a `source` citation and default `verified: false` — these are safety-relevant numbers (door widths, ramp slopes, turning clearances) and a wrong value is worse than a missing one. `regulations/manifest.json` starts empty on purpose; no region ships until someone with real regulatory knowledge verifies it.
 - Contribution path: a normal PR (see `locales/README.md` / `regulations/README.md`), or the issue-upload flow for non-developers — attach a `.json` pack to the `contribute-locale-pack.yml`/`contribute-regulation-pack.yml` issue template; once a maintainer applies the `contribution:review-passed` label, `.github/workflows/contribute-pack.yml` runs `scripts/apply-contributed-pack.js` (same validators as CI) and opens a draft PR automatically. Both `lang`/`region` schemas and BCP-47/region-code formats are generic — no code changes are needed to add a new language or region, only a new JSON file + manifest entry.
 
