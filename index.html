@@ -20322,9 +20322,17 @@ function startApp() {
     if (!items.length) return null;
     // Single O(N) pass instead of 7 filters — matters at 10k+ clashes.
     var counts = React.useMemo(function(){
-      var c = {total:items.length, untitled:0, open:0, inProg:0, resolved:0, hard:0, soft:0, dup:0, vis:0};
+      // Bug 8: IDS/data-quality validation failures are folded into the
+      // clash list (rawItems.concat(idsItems), tagged _idsValidation) so
+      // they show up alongside real geometric clashes in the same panel --
+      // but they are not clashes, and must not count toward Total/Hard/
+      // Soft. Without this guard, "Total 21 / Hard 21" could report even
+      // when only 12 were genuine geometric hard clashes.
+      var c = {total:0, untitled:0, open:0, inProg:0, resolved:0, hard:0, soft:0, dup:0, vis:0, dataQuality:0};
       for (var i=0; i<items.length; i++) {
         var it = items[i];
+        if (isClash && it._idsValidation) { c.dataQuality++; continue; }
+        c.total++;
         if (isClash && !it.aiTitle) c.untitled++;
         if (it.status==='open') c.open++;
         else if (it.status==='in_progress') c.inProg++;
@@ -21367,7 +21375,12 @@ function startApp() {
     // adding ~30-80 ms to tab-switch latency. Stable identity here also lets
     // downstream useMemos (ClashStatsBar/ClashAISummary/groupAndSort) stay hot.
     var rawItems = React.useMemo(function(){
-      var base = isClashTab ? s.clashes.filter(function(c){return c.status!=='denied';}) : s.issues;
+      // Bug 8: denied clashes used to be unconditionally stripped out here,
+      // so even selecting the new "Denied" status filter pill showed
+      // nothing -- there was no way to review or undo a deny. Keep the
+      // existing declutter default (hidden under every other filter
+      // value) but let them through when the Denied filter is active.
+      var base = isClashTab ? s.clashes.filter(function(c){return f.status==='denied' || c.status!=='denied';}) : s.issues;
       if (!isClashTab || !s.idsValidation || !s.idsValidation.results || !s.idsValidation.results.length) return base;
       var idsItems = s.idsValidation.results.map(function(r, i) {
         return {
@@ -21389,7 +21402,7 @@ function startApp() {
         };
       });
       return base.concat(idsItems);
-    }, [isClashTab, s.clashes, s.issues, s.idsValidation]);
+    }, [isClashTab, s.clashes, s.issues, s.idsValidation, f.status]);
 
 
     var visibleModelIds = useMemo(function(){
@@ -21571,7 +21584,7 @@ function startApp() {
         <div>
           <span style=${FL}>${_cc_t('issues.filter.status','Status')}</span>
           <div style=${{display:'flex',gap:'.2rem',flexWrap:'wrap'}}>
-            ${['all','open','in_progress','resolved'].map(function(v){return html`<button key=${v} onClick=${function(){d({t:A.UPD_FILTERS,u:{status:v}})}}
+            ${(isClashTab?['all','open','in_progress','resolved','denied']:['all','open','in_progress','resolved']).map(function(v){return html`<button key=${v} onClick=${function(){d({t:A.UPD_FILTERS,u:{status:v}})}}
               style=${PILL(f.status===v)}>${v==='all'?_cc_t('issues.filter.statusAll','All'):v==='in_progress'?_cc_t('issues.filter.statusInProgress','In prog'):v.charAt(0).toUpperCase()+v.slice(1)}</button>`})}
           </div>
         </div>
@@ -24165,8 +24178,14 @@ function startApp() {
     // triage, instead of every one of them tying at the same default rank.
     // Explicit null checks, not `||`, because 'critical' ranks 0 - falsy,
     // so `o[x]||2` was silently treating every critical clash as rank 2.
-    severity_asc: function(a,b){ var o={critical:0,major:1,minor:2,info:3}; var ra=o[a.aiSeverity||_ccDeterministicSeverity(a)], rb=o[b.aiSeverity||_ccDeterministicSeverity(b)]; return (ra==null?2:ra)-(rb==null?2:rb); },
-    severity_desc: function(a,b){ var o={critical:0,major:1,minor:2,info:3}; var ra=o[a.aiSeverity||_ccDeterministicSeverity(a)], rb=o[b.aiSeverity||_ccDeterministicSeverity(b)]; return (rb==null?2:rb)-(ra==null?2:ra); },
+    // Bug 8: o's rank is 0 for critical (most severe) up to 3 for info
+    // (least severe), so ASCENDING rank order (ra-rb) puts critical FIRST
+    // -- that's "high first", i.e. severity_desc, not severity_asc. These
+    // two were swapped: "Severity (high first)" was sorting info before
+    // critical. Fixed by using the rank order that actually matches each
+    // label instead of its name.
+    severity_asc: function(a,b){ var o={critical:0,major:1,minor:2,info:3}; var ra=o[a.aiSeverity||_ccDeterministicSeverity(a)], rb=o[b.aiSeverity||_ccDeterministicSeverity(b)]; return (rb==null?2:rb)-(ra==null?2:ra); },
+    severity_desc: function(a,b){ var o={critical:0,major:1,minor:2,info:3}; var ra=o[a.aiSeverity||_ccDeterministicSeverity(a)], rb=o[b.aiSeverity||_ccDeterministicSeverity(b)]; return (ra==null?2:ra)-(rb==null?2:rb); },
     type_asc: function(a,b){ var o={hard:0,'near-miss':1,soft:2,duplicate:3}; return (o[a.type]||0)-(o[b.type]||0); },
     type_desc: function(a,b){ var o={hard:0,'near-miss':1,soft:2,duplicate:3}; return (o[b.type]||0)-(o[a.type]||0); },
     storey_asc: function(a,b){ return (a.elemAStorey||a.elemBStorey||'').localeCompare(b.elemAStorey||b.elemBStorey||''); },
