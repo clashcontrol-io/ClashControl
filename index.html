@@ -1492,7 +1492,6 @@ function startApp() {
 
   var INIT_PREFS = {
     autoFlyTo:_ccLoadPref('autoFlyTo',false), autoHighlight:_ccLoadPref('autoHighlight',true), showGrid:_ccLoadPref('showGrid',true), showAxes:_ccLoadPref('showAxes',true), zoomSens:_ccLoadPref('zoomSens',1),
-    smoothNav:_ccLoadPref('smoothNav',true), // damped rotate/pan/zoom inertia after release
     navInputMode:_ccLoadPref('navInputMode','auto'), // 'auto'|'mouse'|'trackpad' — how wheel/two-finger-scroll is interpreted
     showMarkers:_ccLoadPref('showMarkers',false), hoverHighlight:_ccLoadPref('hoverHighlight',true), outlineSelected:_ccLoadPref('outlineSelected',true),
     defaultPriority:_ccLoadPref('defaultPriority','normal'), defaultCategory:_ccLoadPref('defaultCategory','design'), defaultStatus:_ccLoadPref('defaultStatus','open'),
@@ -1622,7 +1621,7 @@ function startApp() {
   // action's `u` payload. Was an inline array literal recreated on every
   // UPD_PREFS dispatch; named here so it can't silently drift from what it
   // actually does.
-  var PERSISTED_PREF_KEYS = ['autoFlyTo','autoHighlight','showGrid','showAxes','showMarkers','hoverHighlight','outlineSelected','defaultPriority','defaultCategory','defaultStatus','defaultMaxGap','resetFiltersOnRun','renderStyle','unitScaleOverride','lightSettings','measureUnits','measurePrecision','measureMagnifier','measureCalibration','homeView','zoomSens','smoothNav','navInputMode'];
+  var PERSISTED_PREF_KEYS = ['autoFlyTo','autoHighlight','showGrid','showAxes','showMarkers','hoverHighlight','outlineSelected','defaultPriority','defaultCategory','defaultStatus','defaultMaxGap','resetFiltersOnRun','renderStyle','unitScaleOverride','lightSettings','measureUnits','measurePrecision','measureMagnifier','measureCalibration','homeView','zoomSens','navInputMode'];
   var A = {
     ADD_MODEL:'ADD_MODEL', DEL_MODEL:'DEL_MODEL', REPLACE_MODEL:'REPLACE_MODEL', UPD_MODEL:'UPD_MODEL',
     PARK_MODEL:'PARK_MODEL', UNPARK_MODEL:'UNPARK_MODEL', SET_AUTOPARK:'SET_AUTOPARK',
@@ -11314,13 +11313,10 @@ function startApp() {
     var _dragPivot = new THREE.Vector3();  // rotate-drag pivot, picked fresh at each mousedown
     var _panDepth = 20;                    // world-space depth of the grabbed point, for pan scale
     var _dragMoved = false;                // true once the current gesture has actually moved the camera
-    var _lastMoveT = 0;                    // for inertia velocity sampling
-    var _vel = { theta:0, phi:0, panX:0, panY:0 }; // rad/s, world-units/s — rotate/pan inertia only, see tickInertia
 
     function _navPrefs() {
       return (window._ccLatestState && window._ccLatestState.prefs) || {};
     }
-    function _smoothNavOn() { return _navPrefs().smoothNav !== false; }
 
     // Nearest VISIBLE surface point under the cursor. Honours active section
     // clipping planes (Raycaster ignores clipping on its own) so we never
@@ -11453,7 +11449,6 @@ function startApp() {
       // Shift+left = pan fallback for trackpad/no-middle-button users (real
       // middle-mouse-button pan below is unaffected). Ctrl/Cmd is multi-select
       // on click elsewhere in the app, so Shift is free here.
-      _vel.theta=0; _vel.phi=0; _vel.panX=0; _vel.panY=0; // grabbing the view kills any in-flight inertia
       if (e.button===0 && e.shiftKey) { _beginPanDrag(e); e.preventDefault(); el.style.cursor='move'; }
       else if (e.button===0) { _beginRotateDrag(e); }
       if (e.button===1) { _beginPanDrag(e); e.preventDefault(); el.style.cursor='move'; }
@@ -11477,9 +11472,7 @@ function startApp() {
       if(window._ccSectionDragging || _sboxDragging){ dragging=false; panning=false; rightPanning=false; el.style.cursor=''; _orbitDragging=false; _hidePivotIndicator(); return; }
       var dx=e.clientX-lx, dy=e.clientY-ly; lx=e.clientX; ly=e.clientY;
       if (dx===0 && dy===0) return;
-      var now = performance.now();
-      var dtSec = _lastMoveT ? Math.max(0.001, Math.min(0.1, (now-_lastMoveT)/1000)) : 0.016;
-      _lastMoveT = now; _dragMoved = true;
+      _dragMoved = true;
       if(dragging){
         // Use the camera's TRUE current forward direction, not `target` —
         // target may have just been moved off the camera's actual view ray
@@ -11498,7 +11491,6 @@ function startApp() {
         target.set(camera.position.x + stepped.forward.x*_targetDist, camera.position.y + stepped.forward.y*_targetDist, camera.position.z + stepped.forward.z*_targetDist);
         camera.lookAt(target);
         sync();
-        _vel.theta = (-dx*0.007)/dtSec; _vel.phi = (-dy*0.007)/dtSec;
         _updatePivotIndicator();
         invalidate();
       }
@@ -11515,7 +11507,6 @@ function startApp() {
         target.addScaledVector(_tmpRight,-dx*sp);
         target.addScaledVector(_tmpUp,dy*sp);
         orbit.apply();
-        _vel.panX = (dx*sp)/dtSec; _vel.panY = (-dy*sp)/dtSec;
         invalidate();
       }
     });
@@ -11528,7 +11519,6 @@ function startApp() {
       dragging=false; panning=false; rightPanning=false; el.style.cursor='';
       _orbitDragging=false;
       _hidePivotIndicator();
-      if (!_smoothNavOn()) { _vel.theta=0; _vel.phi=0; _vel.panX=0; _vel.panY=0; }
       invalidate(3);
     });
     el.addEventListener('wheel', function(e){
@@ -11612,11 +11602,9 @@ function startApp() {
         target.set(dollied.tgt.x, dollied.tgt.y, dollied.tgt.z);
         camera.lookAt(target);
         sync();
-        // Deliberately no zoom inertia: wheel notches are discrete, arrive in
-        // rapid succession, and item 3's "exactly reversible, same factor
-        // both ways" requirement doesn't compose cleanly with a continuous
-        // coast between them (rotate/pan inertia is release-triggered, once
-        // per gesture, so it doesn't have this tension).
+        // No inertia anywhere in navigation (removed 2026-09-29 — users found
+        // the post-release coast annoying): the camera stops the instant the
+        // gesture stops.
         invalidate(); e.preventDefault();
         return;
       }
@@ -11634,12 +11622,10 @@ function startApp() {
       if(_sboxDragging || _walkActive) return;
       e.preventDefault();
       _orbitDragging=true;
-      _vel.theta=0; _vel.phi=0; _vel.panX=0; _vel.panY=0;
       var t = e.touches;
       if(t.length===1) {
         touchState.type='rotate'; touchState.lx=t[0].clientX; touchState.ly=t[0].clientY;
         _dragPivot.copy(target); // no hover on touch — pivot is the current target
-        _lastMoveT = 0;
       } else if(t.length===2) {
         touchState.type='pinch-pan';
         touchState.lx=(t[0].clientX+t[1].clientX)/2;
@@ -11655,9 +11641,6 @@ function startApp() {
       if(touchState.type==='rotate' && t.length===1) {
         var dx=t[0].clientX-touchState.lx, dy=t[0].clientY-touchState.ly;
         touchState.lx=t[0].clientX; touchState.ly=t[0].clientY;
-        var now = performance.now();
-        var dtSec = _lastMoveT ? Math.max(0.001, Math.min(0.1, (now-_lastMoveT)/1000)) : 0.016;
-        _lastMoveT = now;
         camera.getWorldDirection(_tmpDir);
         var _targetDistT = camera.position.distanceTo(target) || sph.r;
         var stepped = _ccOrbitDragStep(
@@ -11669,7 +11652,6 @@ function startApp() {
         camera.position.set(stepped.camPos.x, stepped.camPos.y, stepped.camPos.z);
         target.set(camera.position.x + stepped.forward.x*_targetDistT, camera.position.y + stepped.forward.y*_targetDistT, camera.position.z + stepped.forward.z*_targetDistT);
         camera.lookAt(target); sync();
-        _vel.theta = (-dx*0.007)/dtSec; _vel.phi = (-dy*0.007)/dtSec;
         invalidate();
       } else if(touchState.type==='pinch-pan' && t.length===2) {
         var mx=(t[0].clientX+t[1].clientX)/2, my=(t[0].clientY+t[1].clientY)/2;
@@ -11699,10 +11681,10 @@ function startApp() {
       }
     },{passive:false});
     el.addEventListener('touchend', function(e) {
-      if(e.touches.length===0) { touchState.type=null; _orbitDragging=false; if(!_smoothNavOn()){_vel.theta=0;_vel.phi=0;_vel.panX=0;_vel.panY=0;} invalidate(3); }
+      if(e.touches.length===0) { touchState.type=null; _orbitDragging=false; invalidate(3); }
       else if(e.touches.length===1) {
         touchState.type='rotate'; touchState.lx=e.touches[0].clientX; touchState.ly=e.touches[0].clientY;
-        _dragPivot.copy(target); _lastMoveT = 0;
+        _dragPivot.copy(target);
       }
     });
     var orbit = {target:target, sync:sync, apply:apply, sph:sph, camera:camera};
@@ -11721,42 +11703,6 @@ function startApp() {
     // mousedown/click (see the 'Lower resolution while moving' block in the
     // render loop, which also gates this on measured frame time).
     orbit.isMotionActive = function(){ return (dragging||panning||rightPanning) && _dragMoved; };
-    // Damped inertia for rotate/pan, called once per render-loop frame with
-    // the frame's delta time in seconds. Only runs between gestures (not
-    // while a button is held) and only while "Smooth navigation" is on.
-    // Deliberately no zoom inertia: wheel notches are discrete and arrive in
-    // rapid succession, and item 3's "exactly reversible, same factor both
-    // ways" requirement doesn't compose cleanly with a continuous coast
-    // between them the way a single mouse-up velocity sample does for a
-    // drag gesture.
-    // Returns true while it's still contributing motion (caller should keep
-    // invalidating/rendering).
-    orbit.tickInertia = function(dtSec){
-      if (dragging || panning || rightPanning) return false;
-      if (!_smoothNavOn()) { _vel.theta=0; _vel.phi=0; _vel.panX=0; _vel.panY=0; return false; }
-      if (!(dtSec > 0)) return false;
-      var EPS_ANG = 0.002, EPS_LIN = 0.0005;
-      var damp = Math.pow(0.05, dtSec); // ~95% decay per second — a quick, controlled coast
-      var active = false;
-      if (Math.abs(_vel.theta) > EPS_ANG || Math.abs(_vel.phi) > EPS_ANG) {
-        sph.theta += _vel.theta*dtSec; sph.phi += _vel.phi*dtSec;
-        apply();
-        _vel.theta *= damp; _vel.phi *= damp;
-        active = true;
-      } else { _vel.theta = 0; _vel.phi = 0; }
-      if (Math.abs(_vel.panX) > EPS_LIN || Math.abs(_vel.panY) > EPS_LIN) {
-        camera.getWorldDirection(_tmpDir);
-        _tmpRight.crossVectors(_tmpDir, _up);
-        if(_tmpRight.lengthSq()<0.0001){ _tmpRight.set(Math.cos(sph.theta),0,-Math.sin(sph.theta)); } else { _tmpRight.normalize(); }
-        _tmpUp.crossVectors(_tmpRight,_tmpDir).normalize();
-        target.addScaledVector(_tmpRight, -_vel.panX*dtSec);
-        target.addScaledVector(_tmpUp, _vel.panY*dtSec);
-        apply();
-        _vel.panX *= damp; _vel.panY *= damp;
-        active = true;
-      } else { _vel.panX = 0; _vel.panY = 0; }
-      return active;
-    };
     return orbit;
   }
 
@@ -16560,8 +16506,7 @@ function startApp() {
       var cullEvery = 8;
       var cullFrame = 0;
       S._lastCullCamKey = '';
-      // Orbit inertia + adaptive drag-resolution state (persists across tick() calls).
-      var _lastTickT = 0;
+      // Adaptive drag-resolution state (persists across tick() calls).
       var _dragFrameTimes = []; // recent frame deltas WHILE a drag is actually moving, for the DPR-drop budget check
       var _dragLowResLatched = false; // once a drag session drops DPR, stay dropped for the rest of it (no thrash)
       function _camFingerprint() {
@@ -16623,14 +16568,6 @@ function startApp() {
           _walkTick(S);
           if (Object.keys(_walkKeys).length > 0 || _walkPointerLocked) invalidate(3);
         }
-        // Damped rotate/pan/zoom inertia — only between gestures (tickInertia
-        // itself no-ops while a button/touch is actually held), gated on the
-        // "Smooth navigation" preference.
-        if (S.orbit && S.orbit.tickInertia) {
-          var _dtInertia = _lastTickT ? Math.min(0.1, (now-_lastTickT)/1000) : 0;
-          if (S.orbit.tickInertia(_dtInertia)) invalidate(2);
-        }
-        _lastTickT = now;
         if (_orbitDragging || window._ccSectionDragging) invalidate(2);
         if(_needsRender <= 0) return;
         _needsRender--;
@@ -31703,10 +31640,6 @@ function startApp() {
               style=${{width:90,accentColor:'var(--accent)'}} />
             <span style=${{fontFamily:'var(--font-mono)',minWidth:30,fontSize:'var(--text-xs)'}}>${((p.zoomSens!=null?p.zoomSens:1)).toFixed(2)}×</span>
           </div>
-        </div>
-        <div style=${TROW}>
-          <div><div style=${TLBL}>Smooth navigation</div><div style=${TSUB}>Orbit, pan and zoom coast briefly after you let go, instead of stopping dead</div></div>
-          <${Toggle} on=${p.smoothNav!==false} onToggle=${tog('smoothNav')} />
         </div>
         <div style=${TROW}>
           <div><div style=${TLBL}>Pointer device</div><div style=${TSUB}>How scrolling/two-finger gestures are interpreted. Auto detects a trackpad from the scroll pattern.</div></div>
