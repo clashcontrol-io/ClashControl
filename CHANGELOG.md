@@ -1,5 +1,8 @@
 # Changelog
 
+## v7.6.2 (2026-09-29)
+- Section planes follow the building's plan grid (not world axes)
+
 ## v7.6.1 (2026-09-29)
 - MEMORY.md: native desktop engine state + open items; Active Work closed
 
