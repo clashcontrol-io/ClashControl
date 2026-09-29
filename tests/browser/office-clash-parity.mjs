@@ -21,13 +21,26 @@
 //      generate-office-ifc.js's "Sensor device" comment) — both engines
 //      agree on it too.
 //
+//   5. (narrow-phase PATHS) the same runs through EVERY narrow-phase path —
+//      main-thread JS, main-thread stateless WASM, main-thread cached-BVH
+//      Engine, and the Web Worker pool (workers on WASM+Engine, workers on
+//      the JS reference) — must produce the IDENTICAL, identically ORDERED
+//      clash list, field for field (points, depths, distances), on the office
+//      fixture, on a larger generated model (nlev=40) and on a dense-mesh
+//      scenario built on top of it. Worker-pool cancellation and forced
+//      worker failure (spawn-time and mid-run) must also end in that same
+//      result. Timings per path are printed.
+//
 // Run:  CC_CHROMIUM_EXECUTABLE=... CC_BROWSER_OFFLINE_DEPS=1 \
 //       node tests/browser/office-clash-parity.mjs
 import { createServer } from 'node:http';
 import { readFile } from 'node:fs/promises';
 import { extname, join, normalize } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { createRequire } from 'node:module';
 import { chromium } from 'playwright';
+
+const require = createRequire(import.meta.url);
 
 const root = fileURLToPath(new URL('../..', import.meta.url));
 const MIME = {
@@ -39,9 +52,15 @@ const MIME = {
 let allOk = true;
 function fail(msg) { console.error('OFFICE PARITY FAIL: ' + msg); allOk = false; }
 
+// In-memory files (generated fixtures) served next to the real repo files.
+const virtualFiles = new Map();
 const server = createServer(async (req, res) => {
   try {
     const urlPath = decodeURIComponent(new URL(req.url, 'http://x').pathname);
+    if (virtualFiles.has(urlPath)) {
+      res.writeHead(200, { 'Content-Type': 'application/octet-stream' });
+      return res.end(virtualFiles.get(urlPath));
+    }
     const rel = urlPath === '/' ? 'index.html' : urlPath.slice(1);
     const file = normalize(join(root, rel));
     if (!file.startsWith(normalize(root))) { res.writeHead(403); return res.end(); }
@@ -63,7 +82,7 @@ const localChromium = process.env.CC_CHROMIUM_EXECUTABLE;
 const browser = await chromium.launch({ executablePath: localChromium });
 const errors = [];
 
-async function newPage() {
+async function newPage(query = '') {
   const page = await browser.newPage();
   page.on('pageerror', (e) => errors.push('pageerror: ' + e.message));
   page.on('console', (m) => { if (m.type() === 'error') errors.push('console: ' + m.text()); });
@@ -91,16 +110,16 @@ async function newPage() {
     await page.context().route('https://fonts.gstatic.com/**', (route) => route.abort());
     await page.context().route('https://gc.zgo.at/**', (route) => route.fulfill({ status: 200, body: '', contentType: 'text/javascript' }));
   }
-  await page.goto(`http://127.0.0.1:${port}/`, { waitUntil: 'domcontentloaded' });
+  await page.goto(`http://127.0.0.1:${port}/${query}`, { waitUntil: 'domcontentloaded' });
   await page.waitForFunction(() => window.ClashControl && typeof window._ccDispatch === 'function', null, { timeout: 60_000 });
   return page;
 }
 
-async function loadFixtures(page) {
-  await page.evaluate(async () => {
+async function loadFixtures(page, archUrl = '/tests/fixtures/office-architecture.ifc', mepUrl = '/tests/fixtures/office-mep.ifc') {
+  await page.evaluate(async ({ archUrl, mepUrl }) => {
     const [archBuf, mepBuf] = await Promise.all([
-      fetch('/tests/fixtures/office-architecture.ifc').then((r) => r.arrayBuffer()),
-      fetch('/tests/fixtures/office-mep.ifc').then((r) => r.arrayBuffer()),
+      fetch(archUrl).then((r) => r.arrayBuffer()),
+      fetch(mepUrl).then((r) => r.arrayBuffer()),
     ]);
     const files = [
       new File([archBuf], 'office-architecture.ifc'),
@@ -110,7 +129,7 @@ async function loadFixtures(page) {
     // what the app's <input type="file"> handler calls with the FileList
     // it receives — there is no separate "test-only" load API.
     window.ClashControl.loadFiles(files);
-  });
+  }, { archUrl, mepUrl });
   await page.waitForFunction(() => {
     const s = window._ccLatestState;
     return s && s.models.length === 2 && s.models.every((m) => (m.elements || []).length > 0) && window._ccModelLoading === false;
@@ -123,8 +142,9 @@ async function runDetectionInPage(page, rulesOverride, disableWasmNarrowPhase) {
     if (disableWasm) {
       saved = {
         intersect: window._ccWasmIntersect, minDist: window._ccWasmMinDist, batch: window._ccWasmBatchIntersect,
+        engine: window._ccWasmEngine,
       };
-      delete window._ccWasmIntersect; delete window._ccWasmMinDist; delete window._ccWasmBatchIntersect;
+      delete window._ccWasmIntersect; delete window._ccWasmMinDist; delete window._ccWasmBatchIntersect; delete window._ccWasmEngine;
     }
     let result;
     try {
@@ -134,6 +154,7 @@ async function runDetectionInPage(page, rulesOverride, disableWasmNarrowPhase) {
         if (saved.intersect) window._ccWasmIntersect = saved.intersect;
         if (saved.minDist) window._ccWasmMinDist = saved.minDist;
         if (saved.batch) window._ccWasmBatchIntersect = saved.batch;
+        if (saved.engine) window._ccWasmEngine = saved.engine;
       }
     }
     return (result || []).map((c) => {
@@ -146,7 +167,16 @@ async function runDetectionInPage(page, rulesOverride, disableWasmNarrowPhase) {
       const pair = [[c.modelAId, c.elemA], [c.modelBId, c.elemB]].sort((x, y) =>
         x[0] === y[0] ? x[1] - y[1] : (x[0] < y[0] ? -1 : 1));
       const pairKey = pair[0][0] + ':' + pair[0][1] + ':' + pair[1][0] + ':' + pair[1][1] + ':' + (c.selfClash ? 1 : 0);
-      return { key: pairKey + ':' + c.type, pairKey, type: c.type, clearanceMm: c.clearanceMm, distance: c.distance };
+      return {
+        key: pairKey + ':' + c.type, pairKey, type: c.type, clearanceMm: c.clearanceMm, distance: c.distance,
+        // Smart-clash fields (openings / severity) + a stable identity for the
+        // change-aware equality checks below (ids and timestamps are minted
+        // fresh per run, everything else must be reproduced exactly).
+        opening: c.opening || null, nameA: c.elemAName, nameB: c.elemBName, severity: c.aiSeverity,
+        roleA: c.roleA, roleB: c.roleB, title: c.title, titleAuto: c.titleAuto,
+        sig: [pairKey, c.type, c.distance, c.clearanceMm, (c.point || []).map((v) => Math.round(v * 1000)).join(','),
+          c.opening || '', c.aiSeverity, c.aiCategory, c.roleA, c.roleB, c.mergedCount, c.description, c.title].join('~'),
+      };
     });
   }, { rules: rulesOverride, disableWasm: disableWasmNarrowPhase });
 }
@@ -183,7 +213,16 @@ try {
   // update EXPECTED_HARD_COUNT to N only after confirming the new number is
   // geometrically correct (e.g. an intentional fixture or rule change), not
   // just "the assertion failed so I copied the new number in".
-  const EXPECTED_HARD_COUNT = 56;
+  // 56 -> 54 with the "provision for void" fixture: the architecture model now
+  // carries three IfcOpeningElement/IfcRelVoidsElement voids on level 0 (see
+  // generate-office-ifc.js). web-ifc cuts them into the host meshes, so the two
+  // ducts/pipes that pass CLEANLY through an opening sized for them (Supply duct
+  // x Corridor wall L0, Sprinkler main x Facade South L0) no longer touch the
+  // wall solid: -2 hard clashes (they become 30 mm / 20 mm clearance clashes,
+  // i.e. soft, and are classified 'provided' below). The third opening is
+  // UNDERSIZED (0.6x0.3 for a 0.8x0.4 duct) so Supply duct x Facade West L0 is
+  // still a hard clash (classified 'partial'). 56 - 2 = 54.
+  const EXPECTED_HARD_COUNT = 54;
   if (wasmHard.length !== EXPECTED_HARD_COUNT) {
     fail('expected exactly ' + EXPECTED_HARD_COUNT + ' hard clashes with default rules, got ' + wasmHard.length);
   } else {
@@ -278,6 +317,476 @@ try {
   }
   if (jsZeroClearanceChecked > 0) {
     console.log('ZERO-CLEARANCE OK — same holds for the JS fallback engine (' + jsZeroClearanceChecked + ' pairs)');
+  }
+
+  // ── Case 5: provision for void — clashes through IFC openings ──
+  const page3 = await newPage();
+  await loadFixtures(page3);
+  const openRules = { excludeSameDiscipline: false, selfClashModels: 'none', hard: true, minGap: 0, maxGap: 50 };
+  const openRun = await runDetectionInPage(page3, openRules, false);
+  const pairName = (c) => [c.nameA, c.nameB].sort().join(' | ');
+  const provided = openRun.filter((c) => c.opening === 'provided').map((c) => pairName(c) + ' [' + c.type + ']').sort();
+  const partial = openRun.filter((c) => c.opening === 'partial').map((c) => pairName(c) + ' [' + c.type + ']').sort();
+  const expectProvided = [
+    'Corridor wall L0 | Supply duct L0 [soft]',
+    'Facade South L0 | Sprinkler main L0 [soft]',
+  ];
+  const expectPartial = ['Facade West L0 | Supply duct L0 [hard]'];
+  if (JSON.stringify(provided) !== JSON.stringify(expectProvided)) {
+    fail('provided-opening clashes: expected ' + JSON.stringify(expectProvided) + ' got ' + JSON.stringify(provided));
+  } else {
+    console.log('OPENINGS OK — ' + provided.length + ' clashes classified as passing through provided openings: ' + provided.join('; '));
+  }
+  if (JSON.stringify(partial) !== JSON.stringify(expectPartial)) {
+    fail('partial-opening clashes: expected ' + JSON.stringify(expectPartial) + ' got ' + JSON.stringify(partial));
+  } else {
+    console.log('OPENINGS OK — undersized opening classified partial ("Opening too small"): ' + partial.join('; '));
+  }
+  // Severity inputs: element roles are stamped on every clash (structural /
+  // MEP run / architectural ...; LoadBearing pset read for walls and slabs).
+  const roleOf = (c, nm) => (c.nameA === nm ? c.roleA : c.nameB === nm ? c.roleB : undefined);
+  const roleChecks = [['Floor slab L0', 'structural'], ['Column 5/3 L0', 'structural'], ['Facade West L0', 'architectural'], ['Supply duct L0', 'mep-main']];
+  for (const [nm, want] of roleChecks) {
+    const rows = openRun.filter((c) => roleOf(c, nm) !== undefined);
+    if (!rows.length || rows.some((c) => roleOf(c, nm) !== want)) fail('element role of ' + nm + ' should be ' + want + ', got ' + JSON.stringify([...new Set(rows.map((c) => roleOf(c, nm)))]));
+  }
+  console.log('SEVERITY OK — element roles stamped on clashes (slab/column structural, non-load-bearing facade architectural, duct mep-main)');
+  // Default titles: specific + human (names, opening classification), not the bare type pair.
+  const titleOf = (nmA, nmB) => (openRun.find((c) => pairName(c) === [nmA, nmB].sort().join(' | ')) || {}).title;
+  const expectTitles = [
+    [['Facade West L0', 'Supply duct L0'], 'Supply duct L0 through Facade West L0 — opening too small'],
+    [['Corridor wall L0', 'Supply duct L0'], 'Supply duct L0 through Corridor wall L0 — provided opening'],
+    [['Column 5/3 L0', 'Sprinkler main L0'], 'Sprinkler main L0 crosses Column 5/3 L0'],
+    [['Facade North L0', 'Sprinkler main L0'], 'Sprinkler main L0 crosses Facade North L0'],
+  ];
+  for (const [pair, want] of expectTitles) {
+    const got = titleOf(pair[0], pair[1]);
+    if (got !== want) fail('default title for ' + pair.join(' + ') + ': expected "' + want + '" got "' + got + '"');
+  }
+  const legacyTitled = openRun.filter((c) => / × | vs /.test(c.title || '') || !c.title || c.titleAuto !== c.title);
+  if (legacyTitled.length) fail('clashes still carry a type-pair/legacy title: ' + JSON.stringify(legacyTitled.slice(0, 3).map((c) => c.title)));
+  else console.log('TITLES OK — all ' + openRun.length + ' default titles are specific (names + opening classification), e.g. "' + expectTitles[0][1] + '"');
+  const stray = openRun.filter((c) => c.opening && c.opening !== 'provided' && c.opening !== 'partial');
+  if (stray.length) fail('unexpected opening status values: ' + JSON.stringify(stray.slice(0, 3)));
+  // The un-opened level-1/2 copies of the same walls and ducts must NOT be classified.
+  const l1 = openRun.filter((c) => c.opening && /L[12]/.test(c.nameA + c.nameB));
+  if (l1.length) fail('clashes on levels without openings were classified: ' + JSON.stringify(l1.slice(0, 3)));
+
+  // The loader stored the openings on the host elements (flat oriented boxes).
+  const hostInfo = await page3.evaluate(() => {
+    const arch = window._ccLatestState.models.find((m) => /architecture/i.test(m.name));
+    return arch.elements.filter((e) => e.props.openings && e.props.openings.length)
+      .map((e) => ({ name: e.props.name, n: e.props.openings.length / 15, box: e.props.openings.slice(0, 3) }));
+  });
+  if (hostInfo.length !== 3 || hostInfo.some((h) => h.n !== 1)) fail('expected 3 host walls with 1 opening each, got ' + JSON.stringify(hostInfo));
+  else console.log('OPENINGS OK — loader extracted ' + hostInfo.length + ' host walls with 1 opening each: ' + hostInfo.map((h) => h.name).join(', '));
+
+  // Default hides provided clashes from the list and says so; nothing is dropped.
+  const uiState = await page3.evaluate(async () => {
+    const s = window._ccLatestState;
+    const total = s.clashes.length;
+    const prov = s.clashes.filter((c) => c.opening === 'provided').length;
+    window._ccDispatch({ t: 'TAB', v: 'clashes' });
+    await new Promise((r) => setTimeout(r, 600));
+    return { total, prov, hideRule: s.rules.hideProvidedOpenings, text: document.body.innerText };
+  });
+  if (uiState.hideRule === false) fail('hideProvidedOpenings must default to true/undefined, got ' + uiState.hideRule);
+  if (uiState.prov !== 2 || uiState.total !== openRun.length) {
+    fail('state must keep every clash (provided ones included): total=' + uiState.total + ' provided=' + uiState.prov + ' run=' + openRun.length);
+  }
+  if (!/2 pass through provided openings/.test(uiState.text)) fail('clash list is missing the "2 pass through provided openings" notice');
+  else console.log('OPENINGS OK — list shows the "2 pass through provided openings" notice; all ' + uiState.total + ' clashes remain in state');
+
+  // A HARD clash inside a provided opening (host mesh NOT cut — the "provision
+  // for void" case where the architect's wall still carries the solid): give the
+  // uncut Facade East L0 an opening box sized for the Supply duct crossing it and
+  // re-run. Editing the host's openings must also invalidate the smart re-run
+  // baseline for its pairs (the hash covers them).
+  await page3.evaluate(() => {
+    const arch = window._ccLatestState.models.find((m) => /architecture/i.test(m.name));
+    const wall = arch.elements.find((e) => e.props.name === 'Facade East L0');
+    // scene space (Y up): duct centre x=20, y=2.7 (IFC z), z=-6.5 (IFC -y); 0.86 wide x 0.46 high x 0.4 deep
+    wall.props.openings = [20, 2.7, -6.5, 1, 0, 0, 0, 1, 0, 0, 0, 1, 0.2, 0.23, 0.43];
+  });
+  const uncut = await runDetectionInPage(page3, openRules, false);
+  const eastSupply = uncut.filter((c) => pairName(c) === 'Facade East L0 | Supply duct L0');
+  if (eastSupply.length !== 1 || eastSupply[0].type !== 'hard' || eastSupply[0].opening !== 'provided') {
+    fail('a hard clash whose whole intersection lies inside an opening of the uncut host should be provided, got ' + JSON.stringify(eastSupply.map((c) => [c.type, c.opening])));
+  } else {
+    console.log('OPENINGS OK — hard clash (uncut host, ' + eastSupply[0].distance + ' mm deep) whose region lies inside its opening is classified provided');
+  }
+  const eastReturn = uncut.filter((c) => pairName(c) === 'Facade East L0 | Return duct L0');
+  if (eastReturn.length !== 1 || eastReturn[0].opening) fail('the Return duct crosses the same wall away from the opening and must stay unclassified');
+
+  // ── Case 6: change-aware ("smart") re-runs are exactly equal to full runs ──
+  const smartRules = { excludeSameDiscipline: false, selfClashModels: 'none', hard: true, minGap: 0, maxGap: 50 };
+  async function detect(rules, disableWasm) {
+    const rows = await runDetectionInPage(page3, rules, !!disableWasm);
+    const prof = await page3.evaluate(() => Object.assign({}, window._ccDetectProfile));
+    return { rows, prof, sigs: rows.map((c) => c.sig).sort() };
+  }
+  const sameSet = (a, b) => JSON.stringify(a.sigs) === JSON.stringify(b.sigs);
+  const full0 = await detect({ ...smartRules, fullRerun: true });
+  const run1 = await detect(smartRules); // memo was just committed by the full run -> already a smart run
+  if (!run1.prof.smart_rerun || run1.prof.changed_elements !== 0 || run1.prof.hard_tests !== 0) {
+    fail('an unchanged re-run should be smart with 0 changed elements and 0 hard tests, got ' + JSON.stringify({ s: run1.prof.smart_rerun, c: run1.prof.changed_elements, h: run1.prof.hard_tests }));
+  }
+  if (!sameSet(full0, run1)) fail('unchanged smart re-run differs from the full run (' + run1.rows.length + ' vs ' + full0.rows.length + ')');
+  else console.log('SMART OK — unchanged re-run: 0 elements recomputed, all ' + run1.rows.length + ' clashes carried over, identical to the full run');
+
+  // Modify ONE element: lift "Sensor device L0" 0.2 m so it now penetrates its floor slab.
+  await page3.evaluate(() => {
+    const mep = window._ccLatestState.models.find((m) => /mep/i.test(m.name));
+    const el = mep.elements.find((e) => e.props.name === 'Sensor device L0');
+    const dy = 0.2; // scene Y is up
+    el.meshes.forEach((m) => { m.matrix.elements[13] += dy; m.matrixWorld.elements[13] += dy; m.position.y += dy; });
+    el.box.min.y += dy; el.box.max.y += dy;
+    delete el._wvCache; delete el._triCache; delete el._bvhCache;
+  });
+  const smart2 = await detect(smartRules);
+  const full2 = await detect({ ...smartRules, fullRerun: true });
+  if (!smart2.prof.smart_rerun) fail('the re-run after a single-element edit should have been smart');
+  if (smart2.prof.changed_elements !== 1) fail('expected exactly 1 changed element, got ' + smart2.prof.changed_elements);
+  if (!(smart2.prof.hard_tests < full2.prof.hard_tests)) fail('smart re-run should test fewer pairs than the full run (' + smart2.prof.hard_tests + ' vs ' + full2.prof.hard_tests + ')');
+  if (!sameSet(smart2, full2)) {
+    const a = new Set(smart2.sigs), b = new Set(full2.sigs);
+    console.error('only in smart:', smart2.sigs.filter((x) => !b.has(x)), 'only in full:', full2.sigs.filter((x) => !a.has(x)));
+    fail('smart re-run after editing one element is NOT identical to the full run');
+  } else console.log('SMART OK — after editing 1 element: smart re-run (' + smart2.prof.hard_tests + ' hard tests, ' + smart2.prof.pair_cache_reemits + ' carried) == full re-run (' + full2.prof.hard_tests + ' hard tests): ' + full2.rows.length + ' clashes');
+  if (sameSet(full0, full2)) fail('editing the element should have changed the result set (the check above would be vacuous)');
+  const newHard = full2.rows.filter((c) => c.type === 'hard' && /Sensor device L0/.test(c.nameA + c.nameB));
+  if (newHard.length !== 1) fail('the lifted sensor should now hard-clash with its slab, got ' + newHard.length);
+  else console.log('SMART OK — the edit is reflected: Sensor device L0 x slab is now a hard clash (' + newHard[0].distance + ' mm)');
+
+  // Full invalidation: a rules change, an engine change and a model-set change each force a full run.
+  const ruleChange = await detect({ ...smartRules, maxGap: 80 });
+  if (ruleChange.prof.smart_rerun) fail('changing maxGap must invalidate the smart re-run baseline');
+  const ruleBack = await detect({ ...smartRules, maxGap: 80 });
+  if (!ruleBack.prof.smart_rerun) fail('an identical follow-up run after a rules change should be smart again');
+  const engineChange = await detect({ ...smartRules, maxGap: 80 }, true); // WASM removed = different engine
+  if (engineChange.prof.smart_rerun) fail('switching engine (WASM -> JS) must invalidate the smart re-run baseline');
+  if (!sameSet(ruleBack, engineChange)) fail('WASM and JS engines disagree after invalidation');
+  // model-set change: park the MEP model (the run then sees a different model set)
+  const mepId = await page3.evaluate(() => window._ccLatestState.models.find((m) => /mep/i.test(m.name)).id);
+  await page3.evaluate((id) => window.ClashControl.parkModel(id), mepId);
+  await page3.waitForFunction((id) => window.ClashControl.isModelParked(id), mepId, { timeout: 30_000 });
+  const parkedRun = await detect({ ...smartRules, maxGap: 80 });
+  const modelChange = { smart: parkedRun.prof.smart_rerun };
+  if (modelChange.smart) fail('changing the model set must invalidate the smart re-run baseline');
+  console.log('SMART OK — a rules change, an engine change (WASM->JS)' + (modelChange ? ' and a model-set change' : '') + ' each forced a full run; identical follow-ups were smart again');
+
+  // A default run with the shipped rules (no explicit fullRerun) is smart by default.
+  const defaultRules = await page3.evaluate(() => ({ full: window._ccLatestState.rules.fullRerun, hide: window._ccLatestState.rules.hideProvidedOpenings }));
+  if (defaultRules.full) fail('fullRerun must default to off (smart re-runs are the default)');
+  await page3.close();
+
+  // ════════════════════════════════════════════════════════════════════
+  // Case 5-7: every narrow-phase PATH must produce the identical result.
+  // ════════════════════════════════════════════════════════════════════
+  // 'native' = the desktop path: the REAL addons/tauri-bridge.js against an
+  // in-page mock of the Tauri commands (same wire format; backed by the WASM
+  // Engine, i.e. the same Rust code the native commands run). It exercises the
+  // core's native-pool hook end to end, incl. the bridge's self-check gate.
+  const MODES = ['js', 'wasm', 'engine', 'pool-wasm', 'pool-js', 'native'];
+  // Installed once per page. setMode() restores every WASM global first, then
+  // removes what the mode excludes; the pool is off except for pool-* modes
+  // (minCandidates 0 so even the tiny office fixture goes through workers).
+  async function installHarness(page) {
+    const bridgeSrc = await readFile(join(root, 'addons', 'tauri-bridge.js'), 'utf8');
+    await page.evaluate(async (bridgeSrc) => {
+      // ── mock Tauri commands + the real bridge addon (published after its self-check) ──
+      let natErr = null;
+      try {
+        const urls = window._ccWasmModuleUrls();
+        const mod = await import(urls.js);
+        await mod.default({ module_or_path: urls.wasm });
+        const eng = new mod.Engine();
+        const enc = (rs) => { const o = [rs.length]; rs.forEach((r) => { if (r === undefined) o.push(-1); else { o.push(r.length); for (const x of r) o.push(x); } }); return new Float64Array(o).buffer; };
+        window.__natCalls = { register: 0, intersect: 0, mindist: 0 };
+        window.__TAURI_INTERNALS__ = { invoke: async (cmd, args) => {
+          if (cmd === 'engine_info') return { api: 1, threads: 4, meshes: 0, floats: 0 };
+          if (cmd === 'register_meshes') {
+            window.__natCalls.register++;
+            const dv = new DataView(args.buffer, args.byteOffset, args.byteLength), n = dv.getUint32(0, true);
+            let off = 4 + 8 * n;
+            for (let i = 0; i < n; i++) { const id = dv.getUint32(4 + 8 * i, true), len = dv.getUint32(8 + 8 * i, true); eng.register(id, new Float32Array(args.buffer.slice(args.byteOffset + off, args.byteOffset + off + len * 4))); off += len * 4; }
+            return n;
+          }
+          if (cmd === 'unregister_mesh') return eng.unregister(args.id);
+          if (cmd === 'clear_meshes') { eng.clear(); return null; }
+          if (cmd === 'intersect_batch' || cmd === 'min_dist_batch') {
+            window.__natCalls[cmd === 'intersect_batch' ? 'intersect' : 'mindist']++;
+            const u = new Uint32Array(args.buffer.slice(args.byteOffset, args.byteOffset + args.byteLength)), out = [];
+            for (let i = 0; i < u.length; i += 2) out.push(cmd === 'intersect_batch' ? eng.intersect(u[i], u[i + 1]) : eng.min_distance(u[i], u[i + 1]));
+            return enc(out);
+          }
+          throw new Error('command not allowed: ' + cmd);
+        } };
+        (0, eval)(bridgeSrc);
+        for (let i = 0; i < 200 && !window._ccNativeNarrow; i++) await new Promise((r) => setTimeout(r, 50));
+        if (!window._ccNativeNarrow) natErr = 'bridge did not publish the native path (self-check failed?)';
+      } catch (e) { natErr = String((e && e.message) || e); }
+      window.__natErr = natErr;
+    }, bridgeSrc);
+    const natErr = await page.evaluate(() => window.__natErr);
+    if (natErr) fail('native mock setup: ' + natErr);
+    await page.evaluate(() => {
+      const orig = {
+        _ccWasmIntersect: window._ccWasmIntersect, _ccWasmMinDist: window._ccWasmMinDist,
+        _ccWasmBatchIntersect: window._ccWasmBatchIntersect, _ccWasmEngine: window._ccWasmEngine,
+        _ccWasmModuleUrls: window._ccWasmModuleUrls,
+      };
+      const nat = window._ccNativeNarrow;
+      const T = window.__ccT = {
+        orig,
+        setMode(mode) {
+          for (const k of Object.keys(orig)) { if (orig[k]) window[k] = orig[k]; else delete window[k]; }
+          const P = window._ccNarrowPool;
+          P.disabled = !(mode.startsWith('pool') || mode === 'native'); P.minCandidates = 0; P.minCandidatesHardOnly = 0; P.nativeMinCandidates = 0; P.forceJs = false; P.maxWorkers = 0;
+          if (mode === 'native') { if (nat) window._ccNativeNarrow = nat; } else delete window._ccNativeNarrow;
+          if (mode === 'js' || mode === 'pool-js') {
+            for (const k of Object.keys(orig)) delete window[k];
+            P.forceJs = mode === 'pool-js';
+          } else if (mode === 'wasm') delete window._ccWasmEngine;
+        },
+        // Deterministically replace every element's geometry with a dense
+        // tessellated mesh at a seeded pseudo-random position (real el.meshes
+        // geometry, so cache flushes/evictions rebuild identical triangles).
+        dense(volume, sub) {
+          let a = 20240929;
+          const rnd = () => { a = (a + 0x6d2b79f5) | 0; let t = Math.imul(a ^ (a >>> 15), 1 | a); t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; return ((t ^ (t >>> 14)) >>> 0) / 4294967296; };
+          const boxTris = (cx, cy, cz, sx, sy, sz) => {
+            const t = [], L = (lo, hi, u) => lo + (hi - lo) * u;
+            const x0 = cx - sx, x1 = cx + sx, y0 = cy - sy, y1 = cy + sy, z0 = cz - sz, z1 = cz + sz;
+            const quad = (P) => { for (let i = 0; i < sub; i++) for (let j = 0; j < sub; j++) { const f = (u, v) => P(u / sub, v / sub); t.push(...f(i, j), ...f(i + 1, j), ...f(i + 1, j + 1), ...f(i, j), ...f(i + 1, j + 1), ...f(i, j + 1)); } };
+            quad((u, v) => [L(x0, x1, u), L(y0, y1, v), z0]); quad((u, v) => [L(x0, x1, u), L(y0, y1, v), z1]);
+            quad((u, v) => [L(x0, x1, u), y0, L(z0, z1, v)]); quad((u, v) => [L(x0, x1, u), y1, L(z0, z1, v)]);
+            quad((u, v) => [x0, L(y0, y1, u), L(z0, z1, v)]); quad((u, v) => [x1, L(y0, y1, u), L(z0, z1, v)]);
+            return new Float32Array(t);
+          };
+          // Cylinder of half-length `len` and radius r along a unit direction d.
+          // Diagonal pipes/ducts have big overlapping AABBs but rarely touch:
+          // exactly the "many candidates, few real hits" shape of real BIM data.
+          const cylTris = (cx, cy, cz, len, r, d) => {
+            const seg = sub * 3, rings = sub * 2, t = [];
+            const h = Math.abs(d[0]) < 0.9 ? [1, 0, 0] : [0, 1, 0];
+            let u = [d[1] * h[2] - d[2] * h[1], d[2] * h[0] - d[0] * h[2], d[0] * h[1] - d[1] * h[0]];
+            const ul = Math.hypot(...u); u = u.map((c) => c / ul);
+            const v = [d[1] * u[2] - d[2] * u[1], d[2] * u[0] - d[0] * u[2], d[0] * u[1] - d[1] * u[0]];
+            const P = (x, ang) => { const a = r * Math.cos(ang), b = r * Math.sin(ang); return [cx + d[0] * x + u[0] * a + v[0] * b, cy + d[1] * x + u[1] * a + v[1] * b, cz + d[2] * x + u[2] * a + v[2] * b]; };
+            for (let k = 0; k < rings; k++) {
+              const xa = -len + 2 * len * (k / rings), xb = -len + 2 * len * ((k + 1) / rings);
+              for (let s = 0; s < seg; s++) { const p = (2 * Math.PI * s) / seg, q = (2 * Math.PI * (s + 1)) / seg; t.push(...P(xa, p), ...P(xb, p), ...P(xb, q), ...P(xa, p), ...P(xb, q), ...P(xa, q)); }
+            }
+            return new Float32Array(t);
+          };
+          let n = 0;
+          for (const m of window._ccLatestState.models) {
+            for (const el of (m.elements || [])) {
+              const cx = rnd() * volume, cy = rnd() * volume, cz = rnd() * volume;
+              let tris;
+              if (n % 4 === 3) {
+                tris = boxTris(cx, cy, cz, 0.3 + rnd() * 1.2, 0.3 + rnd() * 1.2, 0.3 + rnd() * 1.2);
+              } else {
+                let d = [rnd() - 0.5, rnd() - 0.5, (rnd() - 0.5) * 0.3];
+                const dl = Math.hypot(...d); d = d.map((c) => c / dl);
+                tris = cylTris(cx, cy, cz, 2 + rnd() * 3, 0.12 + rnd() * 0.25, d);
+              }
+              // Real geometry (not a bare cache injection): the detection LRU may evict
+              // an element's cached triangles at any time, and _getWorldTris must then
+              // rebuild the SAME mesh from el.meshes — an injected-only cache would
+              // silently fall back to the original IFC geometry mid-run.
+              const geo = new window.THREE.BufferGeometry();
+              geo.setAttribute('position', new window.THREE.Float32BufferAttribute(tris, 3));
+              el.meshes = [new window.THREE.Mesh(geo)];
+              delete el._triCache; delete el._wvCache; delete el._bvhCache;
+              const wt = window._ccGetWorldTris(el);
+              const mn = [Infinity, Infinity, Infinity], mx = [-Infinity, -Infinity, -Infinity];
+              for (let i = 0; i < wt.length; i += 3) for (let c = 0; c < 3; c++) { if (wt[i + c] < mn[c]) mn[c] = wt[i + c]; if (wt[i + c] > mx[c]) mx[c] = wt[i + c]; }
+              el.box = new window.THREE.Box3(new window.THREE.Vector3(mn[0], mn[1], mn[2]), new window.THREE.Vector3(mx[0], mx[1], mx[2]));
+              n++;
+            }
+          }
+          return n;
+        },
+        // Full normalized, ORDER-PRESERVING serialization of a run's clashes
+        // (every field except the per-run random id / wall-clock stamp).
+        async run(rules, opts) {
+          if (opts && opts.dense) T.dense(opts.dense.volume, opts.dense.sub);
+          const t0 = performance.now();
+          // fullRerun: every mode must actually execute its narrow-phase path;
+          // with smart re-runs (the default) an unchanged model set would carry
+          // every pair from the previous mode's run and test nothing.
+          const res = await window.ClashControl.runDetection(Object.assign({}, rules, { fullRerun: true }));
+          const ms = performance.now() - t0;
+          const clashes = (res || []).map((c) => JSON.stringify(c, (k, v) => (k === 'id' || k === 'createdAt' ? undefined : v)));
+          const prof = window._ccDetectProfile || {};
+          return { ms, clashes, outcome: res && res._ccOutcome, pool: window._ccNarrowPool.last, candidates: prof.candidates, hardPooled: prof.hard_tests_pooled, softPooled: prof.soft_tests_pooled,
+            phases: { sweep: prof.sweep_and_prune_ms, hard: prof.hard_clash_ms, soft: prof.soft_clash_ms, rest: prof.merge_and_post_ms },
+            engineStats: window._ccWasmEngine ? window._ccWasmEngine.stats() : null };
+        },
+      };
+    });
+  }
+
+  const fmt = (x) => (Math.round(x * 10) / 10).toFixed(1).padStart(8);
+  async function comparePaths(label, page, rules, opts, reps) {
+    const baseline = {};
+    const table = [];
+    let ref = null, differs = false;
+    for (const mode of MODES) {
+      const times = [];
+      let last = null;
+      for (let r = 0; r < (reps || 1); r++) {
+        await page.evaluate((m) => window.__ccT.setMode(m), mode);
+        last = await page.evaluate(({ rules, opts }) => window.__ccT.run(rules, opts), { rules, opts });
+        times.push(last.ms);
+        if (last.outcome !== 'complete') fail(label + ' [' + mode + ']: run outcome ' + last.outcome);
+      }
+      if (mode === 'native' && last.candidates > 80) {
+        const pl = last.pool;
+        if (!pl || !pl.used || !pl.native || pl.fellBack || !(pl.pairsDone > 0)) fail(label + ' [native]: native pool did not do the narrow phase: ' + JSON.stringify(pl));
+        const calls = await page.evaluate(() => window.__natCalls);
+        if (!(calls.intersect > 0) && rules.hard) fail(label + ' [native]: no intersect_batch IPC calls seen');
+      } else if (mode.startsWith('pool') && last.candidates > 80) { // <=80 candidates take the (synchronous) single-chunk path, which never pools
+        const pl = last.pool;
+        if (!pl || !pl.used || pl.fellBack || !(pl.pairsDone > 0)) fail(label + ' [' + mode + ']: worker pool did not do the narrow phase: ' + JSON.stringify(pl));
+        else if (mode === 'pool-wasm' && !(pl.wasmWorkers === pl.workers && pl.engineWorkers === pl.workers)) fail(label + ' [pool-wasm]: workers not on WASM+Engine: ' + JSON.stringify(pl));
+        else if (mode === 'pool-js' && pl.wasmWorkers !== 0) fail(label + ' [pool-js]: workers unexpectedly on WASM: ' + JSON.stringify(pl));
+      } else if (!mode.startsWith('pool') && mode !== 'native' && last.pool && last.pool.used) fail(label + ' [' + mode + ']: pool ran although disabled');
+      if (mode === 'engine' && !(last.engineStats && last.engineStats.queries > 0)) fail(label + ' [engine]: cached engine served no queries');
+      if (ref === null) ref = { mode, clashes: last.clashes };
+      else if (JSON.stringify(last.clashes) !== JSON.stringify(ref.clashes)) {
+        const i = last.clashes.findIndex((c, k) => c !== ref.clashes[k]);
+        const A = JSON.parse(last.clashes[i] || 'null') || {}, B = JSON.parse(ref.clashes[i] || 'null') || {};
+        const diffKeys = [...new Set([...Object.keys(A), ...Object.keys(B)])].filter((k) => JSON.stringify(A[k]) !== JSON.stringify(B[k]));
+        fail(label + ': path "' + mode + '" differs from "' + ref.mode + '" (' + last.clashes.length + ' vs ' + ref.clashes.length + ' clashes; first diff at #' + i + '): ' + diffKeys.map((k) => k + ' ' + JSON.stringify(A[k]) + ' vs ' + JSON.stringify(B[k])).join('; '));
+        differs = true;
+      }
+      table.push({ mode, first: times[0], best: Math.min(...times), n: last.clashes.length, cand: last.candidates, pooled: (last.hardPooled || 0) + (last.softPooled || 0), pool: last.pool, phases: last.phases });
+    }
+    console.log('\n' + label + ' — ' + ref.clashes.length + ' clashes' + (differs ? ' (PATHS DIFFER, see failures)' : ', identical (ordered, every field) across ' + MODES.join(' / ')));
+    console.log('  path        first ms   best ms  candidates  pooled-tests   main-thread ms: hard/soft/other');
+    for (const r of table) console.log('  ' + r.mode.padEnd(10) + fmt(r.first) + fmt(r.best) + String(r.cand).padStart(11) + String(r.pooled).padStart(13) + '   ' + [r.phases.hard, r.phases.soft, r.phases.rest].join('/').padEnd(14) + (r.pool && r.pool.used ? (r.pool.native ? '   native' : '') + '   workers=' + r.pool.workers + ' jobs=' + r.pool.jobs + ' copiedMB=' + r.pool.copiedMB + ' init=' + r.pool.initMs + 'ms' : ''));
+    return { ref, table };
+  }
+
+  const FLAG = '?ccSafety=detectWorkerPool';
+  const hardR = { hard: true, maxGap: 0, excludeSameDiscipline: false, selfClashModels: 'none' };
+  const softR = { hard: false, minGap: 0, maxGap: 100, excludeSameDiscipline: false, selfClashModels: 'none' };
+  const bothR = { hard: true, minGap: 0, maxGap: 50, excludeSameDiscipline: false, selfClashModels: 'none' };
+  const tolR = { hard: true, minGap: 0, maxGap: 30, excludeSameDiscipline: false, selfClashModels: 'none', toleranceByTypePair: { 'IfcBeam:IfcDuctSegment': 200 } };
+
+  // ── Case 5: office fixture, all rule shapes ──
+  {
+    const page = await newPage(FLAG);
+    await loadFixtures(page);
+    await page.waitForFunction(() => typeof window._ccWasmIntersect === 'function' && window._ccWasmEngine, null, { timeout: 30_000 })
+      .catch(() => fail('WASM narrow phase / cached engine never became ready for the path comparison'));
+    await installHarness(page);
+    const flagOn = await page.evaluate(() => window._ccSafetyMigrations.isEnabled('detectWorkerPool'));
+    if (!flagOn) fail('detectWorkerPool flag did not turn on via ?ccSafety=detectWorkerPool');
+    for (const [name, rules] of [['hard', hardR], ['soft100', softR], ['hard+soft50', bothR], ['hard+tolerance', tolR]]) {
+      const { ref } = await comparePaths('office/' + name, page, rules, null, 2);
+      if (name === 'hard' && ref.clashes.length !== EXPECTED_HARD_COUNT) fail('office/hard: expected ' + EXPECTED_HARD_COUNT + ' clashes on every path, got ' + ref.clashes.length);
+    }
+    await page.close();
+  }
+
+  // ── Case 6: larger generated model (nlev=40 -> ~640 elements) + dense-mesh scenario ──
+  {
+    const { generate } = require('../fixtures/generate-office-ifc.js');
+    const g = generate({ nlev: 40 });
+    virtualFiles.set('/__gen/big-arch.ifc', Buffer.from(g.architecture));
+    virtualFiles.set('/__gen/big-mep.ifc', Buffer.from(g.mep));
+    const page = await newPage(FLAG);
+    await loadFixtures(page, '/__gen/big-arch.ifc', '/__gen/big-mep.ifc');
+    await page.waitForFunction(() => typeof window._ccWasmIntersect === 'function' && window._ccWasmEngine, null, { timeout: 30_000 }).catch(() => fail('WASM never ready (large model)'));
+    await installHarness(page);
+    const nEls = await page.evaluate(() => window._ccLatestState.models.reduce((n, m) => n + (m.elements || []).length, 0));
+    console.log('\nlarge generated model: ' + nEls + ' elements');
+    await comparePaths('generated-nlev40/hard+soft50', page, bothR, null, 2);
+    const DENSE_VOLUME = Number(process.env.CC_DENSE_VOLUME || 34); // smaller = more overlapping candidates (exploration knob)
+    const dense = { dense: { volume: DENSE_VOLUME, sub: 6 } };
+    const dres = await comparePaths('dense-meshes/hard', page, hardR, dense, 2);
+    await comparePaths('dense-meshes/hard+soft50', page, bothR, dense, 1);
+    // rule variants that change which pairs reach the narrow phase / which results are consumed
+    await comparePaths('dense-meshes/hard+minOverlap+soft', page, { ...bothR, minOverlapVolM3: 0.05 }, dense, 1);
+    await comparePaths('dense-meshes/hard+tolerance+duplicates', page, { ...tolR, duplicates: true }, dense, 1);
+    if (dres.ref.clashes.length < 20) fail('dense scenario must produce some clashes (got ' + dres.ref.clashes.length + ')');
+
+    // ── Case 7: cancellation + forced failures, all on the dense scenario ──
+    const baseline = dres.ref.clashes;
+    // 7-0. default engage thresholds: a hard-only run this small must NOT spin up workers
+    const small = await page.evaluate(async ({ rules, opts }) => {
+      window.__ccT.setMode('engine');
+      const P = window._ccNarrowPool; P.disabled = false; P.minCandidates = 800; P.minCandidatesHardOnly = 20000;
+      return window.__ccT.run(rules, opts);
+    }, { rules: hardR, opts: dense });
+    if (small.pool && small.pool.used) fail('hard-only run below minCandidatesHardOnly must not use the pool: ' + JSON.stringify(small.pool));
+    else if (JSON.stringify(small.clashes) !== JSON.stringify(baseline)) fail('default-threshold run differs from the baseline');
+    else console.log('THRESHOLD OK — hard-only run below the default engage threshold stays on the main thread (' + JSON.stringify(small.pool) + ')');
+    // 7-1. kill switch: ?ccSafety=-detectWorkerPool must keep detection on the main thread even when forced
+    const killed = await page.evaluate(async ({ rules, opts }) => {
+      const S = window._ccSafetyMigrations;
+      S._setFlagsForTest(S.readFlags({ search: '?ccSafety=-detectWorkerPool', storage: null }));
+      window.__ccT.setMode('pool-wasm');
+      try { return await window.__ccT.run(rules, opts); } finally { S._setFlagsForTest(S.readFlags({ search: '', storage: null })); }
+    }, { rules: hardR, opts: dense });
+    if (!killed.pool || killed.pool.used !== false || killed.pool.reason !== 'flag-off') fail('kill switch did not keep the pool off: ' + JSON.stringify(killed.pool));
+    else if (JSON.stringify(killed.clashes) !== JSON.stringify(baseline)) fail('kill-switch run differs from the baseline');
+    else console.log('KILL-SWITCH OK — ?ccSafety=-detectWorkerPool keeps detection on the main thread');
+    // 7a. cancel mid-run with the pool active: run is tagged cancelled, workers stopped, no clashes committed
+    await page.evaluate(() => window.__ccT.setMode('pool-wasm'));
+    const cancelled = await page.evaluate(async (vol) => {
+      window.__ccT.dense(vol, 6);
+      let fired = false;
+      const onProg = () => { const p = window._ccDetectProgress; if (!fired && p && p.done > 0 && p.done < p.total) { fired = true; window._ccCancelDetection(); } };
+      window.addEventListener('cc-detect-progress', onProg);
+      const res = await window.ClashControl.runDetection({ hard: true, maxGap: 0, excludeSameDiscipline: false, selfClashModels: 'none', fullRerun: true });
+      window.removeEventListener('cc-detect-progress', onProg);
+      return { fired, outcome: res && res._ccOutcome, n: res ? res.length : null, pool: window._ccNarrowPool.last };
+    }, DENSE_VOLUME);
+    if (!cancelled.fired) fail('cancel test never observed mid-run progress (run finished in one step?)');
+    else if (cancelled.outcome !== 'cancelled') fail('cancelled pool run must be tagged cancelled, got ' + cancelled.outcome);
+    else if (!cancelled.pool || cancelled.pool.used !== true || cancelled.pool.reason !== 'cancelled') fail('cancelled run must have stopped the pool: ' + JSON.stringify(cancelled.pool));
+    else console.log('CANCEL OK — mid-run cancel tagged "cancelled", pool terminated (jobsDone=' + cancelled.pool.jobsDone + '/' + cancelled.pool.jobs + ')');
+    // a fresh run afterwards is complete and identical to the baseline
+    const after = await page.evaluate(({ rules, opts }) => window.__ccT.run(rules, opts), { rules: hardR, opts: dense });
+    if (after.outcome !== 'complete' || JSON.stringify(after.clashes) !== JSON.stringify(baseline)) fail('run after a cancelled pool run differs from the baseline');
+    else console.log('CANCEL OK — the next run is complete and identical to the baseline (' + after.clashes.length + ' clashes)');
+
+    // 7b. every worker dies at spawn time: pool drops, main thread finishes, same result
+    const spawnFail = await page.evaluate(async ({ rules, opts }) => {
+      const Real = window.Worker;
+      window.Worker = function () { throw new Error('injected spawn failure'); };
+      try { return await window.__ccT.run(rules, opts); } finally { window.Worker = Real; }
+    }, { rules: hardR, opts: dense });
+    if (spawnFail.outcome !== 'complete' || JSON.stringify(spawnFail.clashes) !== JSON.stringify(baseline)) fail('spawn-failure fallback result differs from the baseline');
+    else if (!spawnFail.pool || spawnFail.pool.used !== false) console.log('SPAWN-FAIL OK — no pool, main thread result identical (' + JSON.stringify(spawnFail.pool) + ')');
+    else console.log('SPAWN-FAIL OK — ' + JSON.stringify(spawnFail.pool));
+
+    // 7c. worker crashes mid-run: remaining pairs finish on the main thread, same result
+    const midFail = await page.evaluate(async ({ rules, opts }) => {
+      const Real = window.Worker;
+      let n = 0;
+      window.Worker = function (u) {
+        const w = new Real(u);
+        const post = w.postMessage.bind(w);
+        // Deterministic crash: the 5th job message ever posted takes its worker down.
+        w.postMessage = function (m, x) {
+          if (m && m.t === 'job' && ++n === 5) setTimeout(() => w.dispatchEvent(new ErrorEvent('error', { message: 'injected mid-run crash' })), 0);
+          return post(m, x);
+        };
+        return w;
+      };
+      window._ccNarrowPool.disabled = false;
+      try { return await window.__ccT.run(rules, opts); } finally { window.Worker = Real; }
+    }, { rules: hardR, opts: dense });
+    if (midFail.outcome !== 'complete' || JSON.stringify(midFail.clashes) !== JSON.stringify(baseline)) fail('mid-run worker crash: result differs from the baseline');
+    else if (!midFail.pool || !midFail.pool.fellBack) fail('mid-run crash test did not exercise the fallback (run finished before the injected crash?): ' + JSON.stringify(midFail.pool));
+    else console.log('MID-RUN-FAIL OK — pool dropped after ' + midFail.pool.jobsDone + '/' + midFail.pool.jobs + ' jobs (' + midFail.pool.reason + '), main thread finished, result identical');
+    await page.close();
   }
 
   if (errors.length) fail('browser emitted uncaught page or console errors: ' + JSON.stringify(errors.slice(0, 10)));

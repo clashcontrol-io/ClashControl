@@ -121,7 +121,7 @@ try {
     assignment: !!(window._ccClashAssignmentCore && window._ccClashAssignmentCore.contractVersion === 1),
     identity: !!(window._ccClashIdentityCore && window._ccClashIdentityCore.contractVersion === 1),
     reconciliation: !!(window._ccClashReconciliationCore && window._ccClashReconciliationCore.contractVersion === 2),
-    classification: !!(window._ccClashClassificationCore && window._ccClashClassificationCore.contractVersion === 1),
+    classification: !!(window._ccClashClassificationCore && window._ccClashClassificationCore.contractVersion === 2),
     projectCodec: !!(window._ccProjectCodec && window._ccProjectCodec.contractVersion === 1),
     // No flag/status/validation object should exist for any of the six —
     // graduation means there's nothing left to gate.

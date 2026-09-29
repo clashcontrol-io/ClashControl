@@ -1,4 +1,5 @@
-(function(root, factory) {
+// @ts-check
+(function(/** @type {any} */ root, factory) {
   var api = factory(root);
   if (typeof module === 'object' && module.exports) module.exports = api;
   root._ccSafetyMigrations = api;
@@ -54,7 +55,20 @@
     // elsewhere as "complex but working -- don't touch without good reason",
     // and needs live-browser verification). Fallback = today's unconditional
     // proceed-immediately behavior.
-    memorySafeLoad: Object.freeze({ fallback: 'legacy', defaultEnabled: false })
+    memorySafeLoad: Object.freeze({ fallback: 'legacy', defaultEnabled: false }),
+    // Browser detection: run the narrow phase (BVH build + tri-tri / min-distance)
+    // for candidate pairs in a Web Worker pool instead of chunked on the main
+    // thread. Workers only pre-compute per-pair results with the same kernel
+    // (WASM Engine or the serialized JS reference); _processCandidate still
+    // consumes them in candidate order, so output is identical. Any worker
+    // failure drops the pool and finishes on the main thread. Fallback = the
+    // main-thread chunk loop, reachable via ?ccSafety=-detectWorkerPool.
+    // Promoted (defaultEnabled:true) because tests/browser/office-clash-parity.mjs
+    // proves the pooled result identical (ordered, every field) to the
+    // main-thread JS / stateless-WASM / cached-Engine paths, including under
+    // cancellation and injected worker failure; small runs never engage it
+    // (see _ccNarrowPool thresholds in index.html).
+    detectWorkerPool: Object.freeze({ fallback: 'main-thread', defaultEnabled: true })
   });
   var diagnostics = [];
 

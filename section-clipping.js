@@ -1,4 +1,5 @@
-(function(root, factory) {
+// @ts-check
+(function(/** @type {any} */ root, factory) {
   var api = factory();
   if (typeof module === 'object' && module.exports) module.exports = api;
   root._ccSectionClipping = api;

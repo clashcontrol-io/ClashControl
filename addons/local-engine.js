@@ -302,6 +302,14 @@
     return tick();
   }
 
+  // Inside the ClashControl desktop app the verified native (Rust, multi-core)
+  // engine — published by addons/tauri-bridge.js as window._ccNativeNarrow —
+  // replaces this Python server, so we must not push users to install it.
+  // Explicitly connecting to an already-running server stays possible.
+  function _nativeEngineActive() {
+    return !!(window._ccNativeNarrow && typeof window._ccNativeNarrow.createPool === 'function');
+  }
+
   // Guard per addon convention: the core must define this before the addon loads.
   (typeof window._ccRegisterAddon === 'function' ? window._ccRegisterAddon : function(){})({
     id: 'local-engine',
@@ -359,7 +367,8 @@
       var le = (state && state.localEngine) || {};
       var knownInstalled = !!(le.wasInstalled || le.available);
 
-      if (knownInstalled) {
+      if (knownInstalled || _nativeEngineActive()) {
+        // (native desktop engine active: never start the installer download)
         _connectLocalEngine(dispatch).catch(function(err) {
           console.log('[LocalEngine] onEnable connect failed:', err && err.message || err);
         });
@@ -474,6 +483,23 @@
             }} style=${{padding:'.3rem .55rem',borderRadius:5,fontSize:'0.7rem',fontWeight:600,cursor:'pointer',border:'1px solid var(--border)',
               background:'var(--bg-secondary)',color:'var(--text-secondary)',fontFamily:'inherit'}}>Cancel</button>
           </div>
+        </div>`;
+      }
+
+      // ── Desktop app with the native engine active: no install prompts ──
+      if (_nativeEngineActive()) {
+        return html`<div style=${{padding:'.5rem 0',fontSize:'0.78rem',color:'var(--text-secondary)',lineHeight:1.7}}>
+          <div style=${{display:'flex',alignItems:'center',gap:'.4rem',marginBottom:'.45rem'}}>
+            <span style=${{width:7,height:7,borderRadius:'50%',background:'#22c55e',display:'inline-block'}}></span>
+            <span>Native engine active \u2014 the Python engine isn\u2019t needed</span>
+          </div>
+          <div style=${{fontSize:'0.66rem',color:'var(--text-faint)',lineHeight:1.6,marginBottom:'.45rem'}}>
+            The desktop app runs the clash narrow phase on all CPU cores natively. If you already run the Python engine on this machine you can still connect to it.${le.failed ? ' No engine was found on localhost.' : ''}
+          </div>
+          <button onClick=${function(){
+            _connectLocalEngine(d).catch(function(err){ console.log('[LocalEngine] Connect failed:', err && err.message || err); });
+          }} style=${{padding:'.3rem .55rem',borderRadius:5,fontSize:'0.7rem',fontWeight:600,cursor:'pointer',border:'1px solid var(--border)',
+            background:'var(--bg-secondary)',color:'var(--text-secondary)',fontFamily:'inherit'}}>Connect to a running engine</button>
         </div>`;
       }
 
@@ -743,12 +769,13 @@ clashcontrol-engine --install</pre>
     } else {
       distMm = Math.round(Math.abs(rawDist));
     }
-    // Title: reuse the same "Wall × Pipe Segment" format the browser
-    // engine emits via _niceClashTitle so the clash list looks
-    // identical between backends.
-    function nice(t){ if(!t) return 'Element'; return String(t).replace(/^Ifc/i,'').replace(/([a-z])([A-Z])/g,'$1 $2')||'Element'; }
-    var la = nice(tA), lb = nice(tB);
-    var title = (la === lb ? (la + ' vs ' + lb) : (la + ' × ' + lb)) + (sameModel ? ' (self)' : '');
+    // Title: placeholder type pair ("Wall × Pipe Segment") from the shared
+    // clash-classification-core — the SAME implementation the browser engine
+    // uses — replaced below by the specific default title (element names,
+    // storey, opening). _ccAnnotateClashes regenerates it once roles + opening
+    // status are known, so both engines title a pair identically.
+    var _cls = (typeof window !== 'undefined' && window._ccClashClassificationCore) || null;
+    var title = _cls && _cls.typePairTitle ? _cls.typePairTitle(tA, tB, sameModel) : (tA + ' × ' + tB + (sameModel ? ' (self)' : ''));
     var description = tA + ': ' + nA + ' (' + mA.name + ') vs ' + tB + ': ' + nB + ' (' + mB.name + ')';
     // Classify discipline per ELEMENT (IfcType → STR/ARC/MEP/CIV, model
     // discipline as fallback) exactly like the browser engine does at detection
@@ -760,7 +787,7 @@ clashcontrol-engine --install</pre>
     var _elDisc = (typeof window !== 'undefined' && window._ccElementDiscipline) || null;
     var discA = _elDisc ? _elDisc(elA, mA.discipline) : (mA.discipline || '');
     var discB = _elDisc ? _elDisc(elB, mB.discipline) : (mB.discipline || '');
-    return {
+    var out = {
       id: c.id || ((elA.expressId||elA.id) + '_' + (elB.expressId||elB.id)),
       source: 'local_engine',
       status: 'open',
@@ -786,6 +813,8 @@ clashcontrol-engine --install</pre>
       overlapVolM3: c.volume || 0,
       clearanceMm: (type === 'soft' || type === 'clearance') ? Math.round(Math.abs(rawDist)) : null
     };
+    if (_cls && _cls.applyDefaultTitle) _cls.applyDefaultTitle(out);
+    return out;
   }
 
   // ── Capability gate ────────────────────────────────────────────

@@ -82,7 +82,7 @@ test('the desktop topbar and toolbar (ancestors of the avatar/STYLE/home menus) 
   // toolbar popovers) below the right panel regardless of the dropdown's
   // own z-index. Both must be raised onto the scale too.
   assert.match(src, /\.cc-desktop-topbar\{[^}]*z-index:var\(--z-dropdown\)/);
-  assert.match(src, /class="cc-top-toolbar" style=\$\{\{[^}]*zIndex:'var\(--z-dropdown\)'/);
+  assert.match(src, /class="cc-top-toolbar"[^>]*? style=\$\{\{[^}]*zIndex:'var\(--z-dropdown\)'/);
   assert.doesNotMatch(src, /z-index:10;position:relative/);
   assert.doesNotMatch(src, /position:'relative',zIndex:9\}/);
 });

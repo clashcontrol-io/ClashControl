@@ -2,6 +2,56 @@
 /* eslint-disable */
 
 /**
+ * Registry of meshes whose triangle data and BVH are built ONCE and reused
+ * across many pair queries. Every query goes through exactly the same
+ * internals as the stateless `mesh_intersect_raw` / `mesh_min_distance`
+ * (`intersect_raw_prebuilt` / `min_distance_prebuilt`), and `BvhNode::build`
+ * is a pure function of the triangle data, so results are bit-identical to
+ * the free functions (and therefore to the JS reference).
+ */
+export class Engine {
+    free(): void;
+    [Symbol.dispose](): void;
+    /**
+     * Drop every registered mesh.
+     */
+    clear(): void;
+    has(id: number): boolean;
+    /**
+     * Same return value as `mesh_intersect_raw(tris(id_a), tris(id_b))`:
+     * the raw point list with `max_depth` appended, or an empty Vec on a
+     * miss / empty mesh. `None` (JS `undefined`) when either id is not
+     * registered, so a caller bug can never masquerade as "no clash".
+     */
+    intersect(id_a: number, id_b: number): Float64Array | undefined;
+    is_empty(): boolean;
+    /**
+     * Number of registered meshes.
+     */
+    len(): number;
+    /**
+     * Same return value as `mesh_min_distance(tris(id_a), tris(id_b))`
+     * (`[distance, ax,ay,az, bx,by,bz]`, or `[Infinity]` for an empty
+     * mesh). `None` when either id is not registered.
+     */
+    min_distance(id_a: number, id_b: number): Float64Array | undefined;
+    constructor();
+    /**
+     * Register (or replace) mesh `id`: copies `tris` (9 floats/triangle) and
+     * builds its BVH with the same code the free functions use.
+     */
+    register(id: number, tris: Float32Array): void;
+    /**
+     * Total registered triangle floats (for the JS side's memory budget).
+     */
+    total_floats(): number;
+    /**
+     * Drop mesh `id`. Returns whether it was registered.
+     */
+    unregister(id: number): boolean;
+}
+
+/**
  * Batch intersection test: test one mesh against many.
  * Legacy/back-compat entry point (pre-averaged centroids, no AABB filter).
  * Prefer `batch_intersect_raw` for parity with the JS reference.
@@ -79,8 +129,19 @@ export type InitInput = RequestInfo | URL | Response | BufferSource | WebAssembl
 
 export interface InitOutput {
     readonly memory: WebAssembly.Memory;
+    readonly __wbg_engine_free: (a: number, b: number) => void;
     readonly batch_intersect: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number) => void;
     readonly batch_intersect_raw: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => void;
+    readonly engine_clear: (a: number) => void;
+    readonly engine_has: (a: number, b: number) => number;
+    readonly engine_intersect: (a: number, b: number, c: number, d: number) => void;
+    readonly engine_is_empty: (a: number) => number;
+    readonly engine_len: (a: number) => number;
+    readonly engine_min_distance: (a: number, b: number, c: number, d: number) => void;
+    readonly engine_new: () => number;
+    readonly engine_register: (a: number, b: number, c: number, d: number) => void;
+    readonly engine_total_floats: (a: number) => number;
+    readonly engine_unregister: (a: number, b: number) => number;
     readonly mesh_intersect: (a: number, b: number, c: number, d: number, e: number, f: number) => void;
     readonly mesh_intersect_raw: (a: number, b: number, c: number, d: number, e: number) => void;
     readonly mesh_min_distance: (a: number, b: number, c: number, d: number, e: number) => void;

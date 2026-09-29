@@ -45,5 +45,12 @@ test('WASM and JS paths in _meshesIntersect are gated by the same function', () 
   const wasmBranch = src.slice(miIdx, src.indexOf('// JS fallback', miIdx));
   const jsBranch = src.slice(src.indexOf('// JS fallback', miIdx), src.indexOf('\n  }', src.indexOf('// JS fallback', miIdx)) + 4);
   assert.ok(wasmBranch.includes('_postProcessIntersectPoints'), 'WASM branch must call the shared post-processor');
-  assert.ok(jsBranch.includes('_postProcessIntersectPoints'), 'JS branch must call the shared post-processor');
+  // The JS branch delegates to _jsIntersectBVH (shared verbatim with the
+  // narrow-phase worker kernel), which owns the call to the post-processor.
+  assert.ok(jsBranch.includes('_jsIntersectBVH'), 'JS branch must call the shared BVH kernel');
+  const jkIdx = src.indexOf('function _jsIntersectBVH');
+  assert.ok(jkIdx !== -1, '_jsIntersectBVH not found');
+  const jkBody = src.slice(jkIdx, src.indexOf('\n  }', jkIdx) + 4);
+  assert.ok(jkBody.includes('_postProcessIntersectPoints'), 'JS kernel must call the shared post-processor');
+  assert.ok(wasmBranch.includes('_wEng.intersect') && wasmBranch.indexOf('_postProcessIntersectPoints') !== -1, 'engine branch must use the shared post-processor');
 });

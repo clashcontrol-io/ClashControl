@@ -59,7 +59,7 @@ Analysis of GPU instancing feasibility (prompted by comparison with Fragments .f
 **Risk:** Low, self-contained in the worker.
 
 ### 4. Persistent BVH cache across detection runs — ✅ implemented
-**Status:** An adaptive `_BVH_CACHE_MAX` (sized to a heap budget) and a bounded LRU `_pairResultCache` keyed by `(mA:eidA|mB:eidB|rulesHash)` persist geometry/BVH work across detection runs; both are cleared per-model on `DEL_MODEL`/`REPLACE_MODEL`.
+**Status:** An adaptive `_BVH_CACHE_MAX` (sized to a heap budget) persists geometry/BVH work across detection runs, and the smart re-run memo (`_ccRunMemo`, see INTERNALS §21.19) carries unchanged pairs' results so re-runs only recompute changed elements; all are cleared per-model on `DEL_MODEL`/`REPLACE_MODEL`.
 
 ### 5. GPU instancing via `THREE.InstancedMesh` — ✅ implemented (IFC path)
 **Status:** A post-streaming pass (`_buildInstancedMeshes`) groups by `(geoExpId, matKey)` and emits `InstancedMesh` for repeated geometry; raycast/hover/ghost/culling map `instanceId → expressId`. The GLB path is not instanced (it needs gap #3 first). For pathological non-repetitive models (many unique geometries, e.g. cladding), `_ccBatchPathological` uses `THREE.BatchedMesh` instead — see MEMORY.md "sixth batch" for the trigger constants and identity-feature parity work.

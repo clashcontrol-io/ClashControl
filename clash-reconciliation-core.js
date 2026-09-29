@@ -1,4 +1,5 @@
-(function(root, factory) {
+// @ts-check
+(function(/** @type {any} */ root, factory) {
   var api = factory();
   if (typeof module === 'object' && module.exports) module.exports = api;
   root._ccClashReconciliationCore = api;
@@ -103,7 +104,32 @@
         // number directly (by the resulting id, which is set to prev.id)
         // instead of re-deriving it from _identityKey later.
         prevIdToNumber[prev.id] = prev.number;
-        return Object.assign({}, c, {
+        // A severity the rule model derived (clash-classification-core.js stamps
+        // _sevSource:'rule') is a pure function of the clash's current depth /
+        // gap / roles, so a re-run must re-derive it from the fresh geometry —
+        // carrying the previous verdict forward would leave a clash that got
+        // deeper (or was fixed to a graze) at its stale severity. Only human /
+        // AI-authored verdicts (_sevSource:'ai', or legacy records with no
+        // marker) are carried.
+        var carrySev = prev._sevSource !== 'rule';
+        var sevCarry = carrySev ? {
+          aiSeverity: prev.aiSeverity,
+          aiCategory: prev.aiCategory,
+          aiReason: prev.aiReason,
+          _sevSource: prev._sevSource
+        } : {};
+        // Titles: an AI title (aiTitle) or a user-edited title belongs to the
+        // clash, not to the run — carry it. A default title (the engine's own
+        // "Supply duct through Wall" text) is regenerated from the fresh run.
+        // options.isDefaultTitle (clash-classification-core) tells them apart;
+        // without it only AI titles are carried.
+        var titleCarry = {};
+        if (prev.aiTitle) {
+          titleCarry = { aiTitle: prev.aiTitle, title: prev.title, aiProvenance: prev.aiProvenance };
+        } else if (typeof options.isDefaultTitle === 'function' && prev.title && !options.isDefaultTitle(prev)) {
+          titleCarry = { title: prev.title };
+        }
+        return Object.assign({}, c, sevCarry, titleCarry, {
           id: prev.id,
           _identityKey: key,
           _delta: 'persisting',
@@ -120,9 +146,6 @@
           aiReasons: prev.aiReasons,
           aiResolution: prev.aiResolution,
           aiNote: prev.aiNote,
-          aiSeverity: prev.aiSeverity,
-          aiCategory: prev.aiCategory,
-          aiReason: prev.aiReason,
           _clusterGroup: prev._clusterGroup,
           _clusterSize: prev._clusterSize,
           clashTypeConfirmed: prev.clashTypeConfirmed,

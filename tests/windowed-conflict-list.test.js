@@ -186,5 +186,5 @@ test('offsets table is memoized against a real invalidation signal, not recomput
   assert.ok(start !== -1, 'VirtualList not found');
   const end = src.indexOf('\n  function ', start + 30);
   const body = src.slice(start, end);
-  assert.match(body, /var wOff = useMemo\(function\(\)\{\s*\n\s*if \(!windowedOn\) return null;\s*\n\s*return _ccComputeRowOffsets\(wRows, heightCacheRef\.current\);\s*\n\s*\}, \[windowedOn, wRows, winForceTick\]\);/);
+  assert.match(body, /var wOff = useMemo\(function\(\)\{\s*\n\s*if \(!windowedOn\) return null;\s*\n\s*return _ccComputeRowOffsets\(wRows, heightCacheRef\.current\);\s*\n\s*(?:\/\/[^\n]*\n\s*)?\}, \[windowedOn, wRows, winForceTick\]\);/);
 });

@@ -293,3 +293,160 @@ test('min-distance parity: intersecting/contained meshes must report EXACTLY 0 i
   runCmp('fully-contained-box', bigBox, smallBoxInside);
   runCmp('fully-contained-box (reversed)', smallBoxInside, bigBox);
 });
+
+// ── Cached-BVH Engine (engine/src/lib.rs `Engine`) ───────────────────
+// Engine.intersect / Engine.min_distance must equal the stateless free
+// functions AND the JS reference on the same pairs, EXACTLY (===), including
+// after register / unregister / re-register cycles and repeated queries.
+function eqArr(a, b) {
+  if (a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) return false;
+  return true;
+}
+
+function buildEnginePairs() {
+  const rnd = mulberry32(1337);
+  const rndF = (lo, hi) => lo + (hi - lo) * rnd();
+  const rndTri = (scale) => new Float32Array(Array.from({ length: 9 }, () => rndF(-scale, scale)));
+  const pairs = [];
+  for (let i = 0; i < 2400; i++) {
+    const scale = i % 3 === 0 ? 0.001 : i % 3 === 1 ? 1 : 1000;
+    pairs.push([rndTri(scale), rndTri(scale)]);
+  }
+  for (let i = 0; i < 300; i++) {
+    const a = new Float32Array([0, 0, 0, rndF(-1e-7, 1e-7), rndF(-1e-7, 1e-7), 0, rndF(0, 1), rndF(0, 1), 0]);
+    pairs.push([a, rndTri(1)]);
+  }
+  for (let i = 0; i < 300; i++) {
+    const nx = rndF(-1, 1), ny = rndF(-1, 1), nz = rndF(-1, 1);
+    const len = Math.hypot(nx, ny, nz) || 1;
+    const ux = nx / len, uy = ny / len, uz = nz / len;
+    const ax = uy - uz, ay = uz - ux, az = ux - uy;
+    const bx = uy * az - uz * ay, by = uz * ax - ux * az, bz = ux * ay - uy * ax;
+    const pt = (s, t) => [s * ax + t * bx, s * ay + t * by, s * az + t * bz];
+    const a = new Float32Array([...pt(0, 0), ...pt(1, 0), ...pt(0, 1)]);
+    const b = new Float32Array([...pt(rndF(-1, 1), rndF(-1, 1)), ...pt(rndF(-1, 1), rndF(-1, 1)), ...pt(rndF(-1, 1), rndF(-1, 1))]);
+    pairs.push([a, b]);
+  }
+  // multi-triangle meshes so the BVH is really exercised (not single-tri leaves)
+  pairs.push([box(-1, 21, 2.5, 2.9, -6.9, -6.1, 4), box(9.925, 10.075, 0, 3.2, -11.85, -0.15, 4)]);
+  pairs.push([cyl(-1, 21, 6.5, 2.7, 0.3, 24, 8), cyl(-1, 21, 6.6, 2.8, 0.3, 24, 8)]);
+  pairs.push([box(-5, 5, -5, 5, -5, 5, 3), box(-1, 1, -1, 1, -1, 1, 3)]);
+  pairs.push([box(-1, 21, 2.4, 2.6, -0.1, 0.1, 2), box(9, 11, -1, 5, -1, 1, 2)]);
+  return pairs;
+}
+
+test('Engine.intersect === mesh_intersect_raw === JS reference on 3,000+ pairs (exact), incl. repeat + unregister/re-register', async () => {
+  const mod = await loadWasm();
+  const js = loadJsReference();
+  const pairs = buildEnginePairs();
+  assert.ok(pairs.length >= 3000, `expected >=3000 pairs, got ${pairs.length}`);
+  const eng = new mod.Engine();
+  const raw = (r) => Array.from(r);
+  let hits = 0;
+  const check = (label, i, ia, ib) => {
+    const [tA, tB] = pairs[i];
+    const free = raw(mod.mesh_intersect_raw(tA, tB));
+    const got = eng.intersect(ia, ib);
+    assert.ok(got !== undefined, `${label}${i}: registered ids must resolve`);
+    assert.ok(eqArr(raw(got), free), `${label}${i}: Engine.intersect must equal the free function exactly`);
+    const j = jsIntersectRaw(js, tA, tB);
+    assert.strictEqual(j.pts.length > 0, free.length > 0, `${label}${i}: hit/no-hit vs JS reference`);
+    if (free.length) {
+      hits++;
+      assert.ok(eqArr(j.pts, free.slice(0, -1)), `${label}${i}: points vs JS reference`);
+      assert.strictEqual(j.depth, free[free.length - 1], `${label}${i}: depth vs JS reference`);
+    }
+  };
+  pairs.forEach(([tA, tB], i) => { eng.register(2 * i, tA); eng.register(2 * i + 1, tB); });
+  assert.strictEqual(eng.len(), pairs.length * 2);
+  pairs.forEach((_, i) => check('first', i, 2 * i, 2 * i + 1));
+  pairs.forEach((_, i) => check('repeat', i, 2 * i, 2 * i + 1)); // cached BVHs reused: must not drift
+  // unregister every 3rd pair's B mesh -> unknown id must read undefined, never "no hit"
+  for (let i = 0; i < pairs.length; i += 3) {
+    assert.strictEqual(eng.unregister(2 * i + 1), true);
+    assert.strictEqual(eng.intersect(2 * i, 2 * i + 1), undefined, `pair ${i}: unregistered id must be undefined`);
+    assert.strictEqual(eng.unregister(2 * i + 1), false);
+  }
+  // re-register and requery
+  for (let i = 0; i < pairs.length; i += 3) eng.register(2 * i + 1, pairs[i][1]);
+  pairs.forEach((_, i) => check('rereg', i, 2 * i, 2 * i + 1));
+  // swapped argument order through the engine matches the free function too
+  for (let i = 0; i < 300; i++) {
+    const [tA, tB] = pairs[i];
+    assert.ok(eqArr(Array.from(eng.intersect(2 * i + 1, 2 * i)), Array.from(mod.mesh_intersect_raw(tB, tA))), `swap${i}`);
+  }
+  // replacing an id's mesh must replace its BVH (no stale tree)
+  eng.register(0, pairs[1][0]);
+  assert.ok(eqArr(Array.from(eng.intersect(0, 1)), Array.from(mod.mesh_intersect_raw(pairs[1][0], pairs[0][1]))));
+  eng.clear();
+  assert.strictEqual(eng.len(), 0);
+  assert.strictEqual(eng.intersect(0, 1), undefined);
+  eng.free();
+  assert.ok(hits > 100, `fixture must produce real hits (${hits})`);
+});
+
+test('Engine.min_distance === mesh_min_distance === JS reference (exact), incl. repeat + re-register', async () => {
+  const mod = await loadWasm();
+  const js = loadJsReference();
+  const pairs = buildEnginePairs();
+  const eng = new mod.Engine();
+  const N = 900; // covers all three scale regimes, near-degenerate and coplanar starts, plus the structured meshes below
+  const sel = pairs.slice(0, N).concat(pairs.slice(-4));
+  sel.forEach(([tA, tB], i) => { eng.register(2 * i, tA); eng.register(2 * i + 1, tB); });
+  const run = (label) => sel.forEach(([tA, tB], i) => {
+    const free = Array.from(mod.mesh_min_distance(tA, tB));
+    const got = eng.min_distance(2 * i, 2 * i + 1);
+    assert.ok(got !== undefined && eqArr(Array.from(got), free), `${label}${i}: Engine.min_distance must equal the free function exactly`);
+    const jr = js._ccJsMeshIntersectRef.minDist(tA, tB);
+    assert.ok(eqArr(jr, free), `${label}${i}: min-distance vs JS reference`);
+  });
+  run('first');
+  run('repeat');
+  for (let i = 0; i < sel.length; i += 2) { eng.unregister(2 * i); assert.strictEqual(eng.min_distance(2 * i, 2 * i + 1), undefined); eng.register(2 * i, sel[i][0]); }
+  run('rereg');
+  // empty / sub-triangle meshes behave like the free functions
+  eng.register(900001, new Float32Array(0));
+  eng.register(900002, sel[0][0]);
+  assert.ok(eqArr(Array.from(eng.min_distance(900001, 900002)), Array.from(mod.mesh_min_distance(new Float32Array(0), sel[0][0]))));
+  assert.strictEqual(eng.intersect(900001, 900002).length, 0);
+  eng.free();
+});
+
+// ── Dense tessellated meshes (regression: BVH split sort key in f32) ─────
+// The Rust BVH build used to sum each triangle's centroid coordinate — and
+// compute the split-axis extents — in f32, while the JS reference adds the
+// Float32-derived DOUBLES. On grid-tessellated meshes (many near-equal
+// centroids) that reordered triangles / flipped the axis on near-ties, so the
+// two BVHs had different shapes and the 8-point collect cap saw different
+// points first (~1.25% of dense pairs disagreed on the reported point). The
+// small/structured cases above never hit it. Both engines must agree exactly.
+test('dense tessellated box/cylinder pairs: intersect + min-distance EXACTLY equal (BVH build must use f64 keys like JS)', async () => {
+  const mod = await loadWasm();
+  const js = loadJsReference();
+  const rnd = mulberry32(20240929);
+  const jitter = () => rnd();
+  let compared = 0, hits = 0;
+  const eng = new mod.Engine();
+  for (let i = 0; i < 900; i++) {
+    const V = 22;
+    const ax = jitter() * V, ay = jitter() * V, az = jitter() * V;
+    const bo = (h) => 0.3 + jitter() * h;
+    const a = box(ax - bo(1.6), ax + bo(1.6), ay - bo(1.6), ay + bo(1.6), az - bo(1.6), az + bo(1.6), 8);
+    const bx = ax + jitter() * 3, by = ay + jitter() * 3, bz = az + jitter() * 3;
+    const b = i % 4 === 0
+      ? cyl(bx - 2, bx + 2, by, bz, 0.2 + jitter() * 0.6, 24, 8)
+      : box(bx - bo(1.6), bx + bo(1.6), by - bo(1.6), by + bo(1.6), bz - bo(1.6), bz + bo(1.6), 8);
+    assertIntersectParity(js, mod, 'dense' + i, a, b);
+    const jm = js._ccJsMeshIntersectRef.minDist(a, b);
+    const wm = Array.from(mod.mesh_min_distance(a, b));
+    assert.ok(eqArr(jm, wm), `dense${i}: min-distance must be EXACTLY equal`);
+    eng.register(1, a); eng.register(2, b);
+    assert.ok(eqArr(Array.from(eng.intersect(1, 2)), Array.from(mod.mesh_intersect_raw(a, b))), `dense${i}: Engine.intersect`);
+    assert.ok(eqArr(Array.from(eng.min_distance(1, 2)), wm), `dense${i}: Engine.min_distance`);
+    compared++;
+    if (mod.mesh_intersect_raw(a, b).length) hits++;
+  }
+  eng.free();
+  assert.ok(hits > 250, `fixture must produce many real hits (${hits}/${compared})`);
+});

@@ -74,9 +74,13 @@ impl BvhNode {
         }
 
         // Split on longest axis via median
-        let dx = mx[0] - mn[0];
-        let dy = mx[1] - mn[1];
-        let dz = mx[2] - mn[2];
+        // f64 like the JS reference (`dx=mxx-mnx` on Float32-derived doubles):
+        // an f32 subtraction rounds differently and can flip the axis choice
+        // on near-ties, which changes the BVH shape and therefore which
+        // points the 8-point collect cap sees first.
+        let dx = mx[0] as f64 - mn[0] as f64;
+        let dy = mx[1] as f64 - mn[1] as f64;
+        let dz = mx[2] as f64 - mn[2] as f64;
         let axis = if dx >= dy && dx >= dz {
             0
         } else if dy >= dz {
@@ -91,8 +95,11 @@ impl BvhNode {
         // as the JS reference's `indices.subarray(lo, hi).sort(...)` does.
         let sub = &mut indices[lo..hi];
         sub.sort_by(|&a, &b| {
-            let ca = tris[a * 9 + axis] + tris[a * 9 + 3 + axis] + tris[a * 9 + 6 + axis];
-            let cb = tris[b * 9 + axis] + tris[b * 9 + 3 + axis] + tris[b * 9 + 6 + axis];
+            // f64 sum (JS adds Float32-derived doubles). Summing in f32 rounds
+            // each partial sum, turning strictly ordered centroids into ties
+            // (or reversing them) — a different partition than the JS BVH.
+            let ca = tris[a * 9 + axis] as f64 + tris[a * 9 + 3 + axis] as f64 + tris[a * 9 + 6 + axis] as f64;
+            let cb = tris[b * 9 + axis] as f64 + tris[b * 9 + 3 + axis] as f64 + tris[b * 9 + 6 + axis] as f64;
             ca.partial_cmp(&cb).unwrap_or(std::cmp::Ordering::Equal)
         });
 

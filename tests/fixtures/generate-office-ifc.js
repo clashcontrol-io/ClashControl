@@ -35,17 +35,23 @@ function generate(opts) {
   opts = opts || {};
   const nlev = opts.nlev || 3;
   const rnd = mulberry32(opts.seed || 1337);
+  // Separate stream for opening/void GUIDs so adding openings to the
+  // architecture model never shifts the GUIDs of the pre-existing elements
+  // (nor the MEP file, which continues the main stream).
+  const rndOpen = mulberry32((opts.seed || 1337) ^ 0x5bd1e995);
 
   function mkIfc(name, build) {
     let id = 100;
     const L = [];
     const n = () => ++id;
     const GUID_CHARS = '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz_$';
-    const g = () => {
+    const gFrom = (r) => () => {
       let s = '';
-      for (let i = 0; i < 22; i++) s += GUID_CHARS[Math.floor(rnd() * 64)];
+      for (let i = 0; i < 22; i++) s += GUID_CHARS[Math.floor(r() * 64)];
       return s;
     };
+    const g = gFrom(rnd);
+    const gOpen = gFrom(rndOpen);
     const P = (...a) => { const i = n(); L.push(`#${i}=IFCCARTESIANPOINT((${a.map((v) => v.toFixed(3)).join(',')}));`); return i; };
     const D = (...a) => { const i = n(); L.push(`#${i}=IFCDIRECTION((${a.map((v) => v.toFixed(3)).join(',')}));`); return i; };
     const A3 = (o, z, x) => { const i = n(); L.push(`#${i}=IFCAXIS2PLACEMENT3D(#${o},${z ? '#' + z : '$'},${x ? '#' + x : '$'});`); return i; };
@@ -101,8 +107,27 @@ function generate(opts) {
         const pset = n(); L.push(`#${pset}=IFCPROPERTYSET('${g()}',$,'${psetName}',$,(${ps.map((i) => '#' + i).join(',')}));`);
         L.push(`#${n()}=IFCRELDEFINESBYPROPERTIES('${g()}',$,$,$,(#${e}),#${pset});`);
       }
+      return e;
     }
-    build(storeys, el);
+    // IfcOpeningElement (void cutter) + the IfcRelVoidsElement that makes it a
+    // hole in `host`. Same swept-solid placement scheme as el(); the opening
+    // is NOT added to the storey containment (real exporters relate it to its
+    // host only), which is what the loader's opening extraction relies on.
+    function opening(host, nm, st, o, axis, ref, prof, depth) {
+      const pt = P(...o);
+      const ax = A3(pt, axis ? D(...axis) : null, ref ? D(...ref) : null);
+      const pl = n(); L.push(`#${pl}=IFCLOCALPLACEMENT(#${st.pl},#${ax});`);
+      const pr = n(); L.push(`#${pr}=IFCRECTANGLEPROFILEDEF(.AREA.,$,#${A2},${prof.rect[0]},${prof.rect[1]});`);
+      const sp = A3(ORIG);
+      const so = n(); L.push(`#${so}=IFCEXTRUDEDAREASOLID(#${pr},#${sp},#${EXT},${depth});`);
+      const rep = n(); L.push(`#${rep}=IFCSHAPEREPRESENTATION(#${CTX},'Body','SweptSolid',(#${so}));`);
+      const pds = n(); L.push(`#${pds}=IFCPRODUCTDEFINITIONSHAPE($,$,(#${rep}));`);
+      const e = n();
+      L.push(`#${e}=IFCOPENINGELEMENT('${gOpen()}',$,'${nm}',$,$,#${pl},#${pds},$,.OPENING.);`);
+      L.push(`#${n()}=IFCRELVOIDSELEMENT('${gOpen()}',$,$,$,#${host},#${e});`);
+      return e;
+    }
+    build(storeys, el, opening);
     storeys.forEach((s) => { if (s.els.length) L.push(`#${n()}=IFCRELCONTAINEDINSPATIALSTRUCTURE('${g()}',$,$,$,(${s.els.map((e) => '#' + e).join(',')}),#${s.id});`); });
     return `ISO-10303-21;\nHEADER;\nFILE_DESCRIPTION(('ViewDefinition [DesignTransferView]'),'2;1');\nFILE_NAME('${name}','2026-09-28T00:00:00',('Test'),('Test'),'','','');\nFILE_SCHEMA(('IFC4'));\nENDSEC;\nDATA;\n${L.join('\n')}\nENDSEC;\nEND-ISO-10303-21;\n`;
   }
@@ -110,14 +135,30 @@ function generate(opts) {
   const alongX = [[1, 0, 0], [0, 1, 0]];
   const alongY = [[0, 1, 0], [-1, 0, 0]];
 
-  const architecture = mkIfc('Architecture.ifc', (st, el) => {
+  const architecture = mkIfc('Architecture.ifc', (st, el, opening) => {
     st.forEach((s, k) => {
       el('IFCSLAB', `Floor slab L${k}`, s, [10, 6, -0.25], null, null, { rect: [20.4, 12.4] }, 0.25, { IsExternal: false, LoadBearing: true, FireRating: 'REI 90' }, '.FLOOR.');
-      el('IFCWALL', `Facade South L${k}`, s, [10, 0, 0], null, null, { rect: [20, 0.3] }, 3.2, { IsExternal: true, LoadBearing: false, FireRating: 'EI 60' }, '.STANDARD.');
+      const southWall = el('IFCWALL', `Facade South L${k}`, s, [10, 0, 0], null, null, { rect: [20, 0.3] }, 3.2, { IsExternal: true, LoadBearing: false, FireRating: 'EI 60' }, '.STANDARD.');
       el('IFCWALL', `Facade North L${k}`, s, [10, 12, 0], null, null, { rect: [20, 0.3] }, 3.2, { IsExternal: true, LoadBearing: false }, '.STANDARD.');
-      el('IFCWALL', `Facade West L${k}`, s, [0, 6, 0], null, null, { rect: [0.3, 12] }, 3.2, { IsExternal: true }, '.STANDARD.');
+      const westWall = el('IFCWALL', `Facade West L${k}`, s, [0, 6, 0], null, null, { rect: [0.3, 12] }, 3.2, { IsExternal: true }, '.STANDARD.');
       el('IFCWALL', `Facade East L${k}`, s, [20, 6, 0], null, null, { rect: [0.3, 12] }, 3.2, { IsExternal: true }, '.STANDARD.');
-      el('IFCWALL', `Corridor wall L${k}`, s, [10, 6, 0], null, null, { rect: [0.15, 11.7] }, 3.2, { IsExternal: false, FireRating: 'EI 30' }, '.PARTITIONING.');
+      const corridorWall = el('IFCWALL', `Corridor wall L${k}`, s, [10, 6, 0], null, null, { rect: [0.15, 11.7] }, 3.2, { IsExternal: false, FireRating: 'EI 30' }, '.PARTITIONING.');
+      // Level 0 only — "provision for void" cases for the MEP fixture:
+      //  1. Corridor wall, opening 0.86 x 0.46 around the 0.8 x 0.4 Supply
+      //     duct (centre y=6.5, z=2.7): the duct passes CLEANLY through with a
+      //     30 mm gap on every side -> a provided opening.
+      //  2. Facade South, opening 0.14 x 0.14 around the DN100 Sprinkler main
+      //     (r=0.05 at x=5, z=3.0): 20 mm of gap all round -> provided.
+      //  3. Facade West, opening 0.6 x 0.3 for the same Supply duct
+      //     (0.8 x 0.4 at y=6.5, z=2.7): UNDERSIZED — the duct still cuts into
+      //     the wall around the hole -> "opening too small".
+      // The openings are cut into the wall meshes by web-ifc (IfcRelVoids-
+      // Element), exactly like a real architectural model.
+      if (k === 0) {
+        opening(corridorWall, 'Opening: supply duct', s, [9.8, 6.5, 2.7], ...alongX, { rect: [0.86, 0.46] }, 0.4);
+        opening(southWall, 'Opening: sprinkler', s, [5, -0.2, 3.0], ...alongY, { rect: [0.14, 0.14] }, 0.4);
+        opening(westWall, 'Opening: undersized', s, [-0.2, 6.5, 2.7], ...alongX, { rect: [0.6, 0.3] }, 0.4);
+      }
       for (const x of [5, 15]) for (const y of [3, 9]) el('IFCCOLUMN', `Column ${x}/${y} L${k}`, s, [x, y, 0], null, null, { rect: [0.4, 0.4] }, 3.25, { LoadBearing: true }, '.COLUMN.');
       el('IFCBEAM', `Beam grid 3 L${k}`, s, [0, 3, 2.95], ...alongX, { rect: [0.3, 0.5] }, 20, { LoadBearing: true }, '.BEAM.');
     });

@@ -48,6 +48,9 @@ function fail(msg) {
 
 const CASES = [
   { name: 'baseline (two-wall smoke)', url: '/tests/fixtures/smoke-clash.ifc' },
+  // Provision for void: the office architecture model carries IfcOpeningElement /
+  // IfcRelVoidsElement voids; both load paths must extract identical opening boxes.
+  { name: 'openings (IfcRelVoidsElement)', url: '/tests/fixtures/office-architecture.ifc', expectOpenings: 3 },
   { name: 'multi-storey', url: '/tests/fixtures/multi-storey-smoke.ifc' },
   {
     name: 'quantities (IfcElementQuantity)',
@@ -154,6 +157,8 @@ async function loadAndFingerprint(forceFallback, fixtureUrl) {
       unitScale: (model.stats || {}).unitScale != null ? model.stats.unitScale : null,
       georef: (model.spatialHierarchy && model.spatialHierarchy.sites && model.spatialHierarchy.sites[0] && model.spatialHierarchy.sites[0].georef) || null,
       mapConversion: (model.spatialHierarchy && model.spatialHierarchy.mapConversion) || null,
+      openings: model.elements.filter((e) => e.props && e.props.openings && e.props.openings.length)
+        .map((e) => [e.expressId, e.props.openings]).sort((a, b) => a[0] - b[0]),
     };
   }, { forceFallbackInner: forceFallback, fixtureUrlInner: fixtureUrl });
   await page.close();
@@ -265,8 +270,8 @@ try {
     // silently if only the fingerprint were compared. Extend parity to the
     // full result payload for the fields those extra fixture cases exist
     // to exercise.
-    const workerComparable = { fingerprint: workerResult.fingerprint, unitScale: workerResult.unitScale, georef: workerResult.georef, mapConversion: workerResult.mapConversion };
-    const fallbackComparable = { fingerprint: fallbackResult.fingerprint, unitScale: fallbackResult.unitScale, georef: fallbackResult.georef, mapConversion: fallbackResult.mapConversion };
+    const workerComparable = { fingerprint: workerResult.fingerprint, unitScale: workerResult.unitScale, georef: workerResult.georef, mapConversion: workerResult.mapConversion, openings: workerResult.openings };
+    const fallbackComparable = { fingerprint: fallbackResult.fingerprint, unitScale: fallbackResult.unitScale, georef: fallbackResult.georef, mapConversion: fallbackResult.mapConversion, openings: fallbackResult.openings };
     const same = JSON.stringify(workerComparable) === JSON.stringify(fallbackComparable);
     if (!same) {
       console.error('Worker result:', JSON.stringify(workerComparable, null, 1));
@@ -280,9 +285,15 @@ try {
       allOk = false;
       continue;
     }
+    if (c.expectOpenings != null && workerResult.openings.length !== c.expectOpenings) {
+      fail('[' + c.name + '] expected ' + c.expectOpenings + ' host elements with openings, got ' + workerResult.openings.length);
+      allOk = false;
+      continue;
+    }
     console.log('DIFFERENTIAL OK — [' + c.name + '] worker and fallback are fingerprint-identical (' +
       workerResult.elementCount + ' elements' +
       (workerResult.unitScale != null ? ', unitScale=' + workerResult.unitScale : '') +
+      (workerResult.openings.length ? ', ' + workerResult.openings.length + ' hosts with openings' : '') +
       (workerResult.georef ? ', georef=' + JSON.stringify(workerResult.georef) : '') +
       (workerResult.mapConversion ? ', mapConversion=' + JSON.stringify(workerResult.mapConversion) : '') +
       ')');
