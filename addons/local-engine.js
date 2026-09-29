@@ -302,6 +302,14 @@
     return tick();
   }
 
+  // Inside the ClashControl desktop app the verified native (Rust, multi-core)
+  // engine — published by addons/tauri-bridge.js as window._ccNativeNarrow —
+  // replaces this Python server, so we must not push users to install it.
+  // Explicitly connecting to an already-running server stays possible.
+  function _nativeEngineActive() {
+    return !!(window._ccNativeNarrow && typeof window._ccNativeNarrow.createPool === 'function');
+  }
+
   // Guard per addon convention: the core must define this before the addon loads.
   (typeof window._ccRegisterAddon === 'function' ? window._ccRegisterAddon : function(){})({
     id: 'local-engine',
@@ -359,7 +367,8 @@
       var le = (state && state.localEngine) || {};
       var knownInstalled = !!(le.wasInstalled || le.available);
 
-      if (knownInstalled) {
+      if (knownInstalled || _nativeEngineActive()) {
+        // (native desktop engine active: never start the installer download)
         _connectLocalEngine(dispatch).catch(function(err) {
           console.log('[LocalEngine] onEnable connect failed:', err && err.message || err);
         });
@@ -474,6 +483,23 @@
             }} style=${{padding:'.3rem .55rem',borderRadius:5,fontSize:'0.7rem',fontWeight:600,cursor:'pointer',border:'1px solid var(--border)',
               background:'var(--bg-secondary)',color:'var(--text-secondary)',fontFamily:'inherit'}}>Cancel</button>
           </div>
+        </div>`;
+      }
+
+      // ── Desktop app with the native engine active: no install prompts ──
+      if (_nativeEngineActive()) {
+        return html`<div style=${{padding:'.5rem 0',fontSize:'0.78rem',color:'var(--text-secondary)',lineHeight:1.7}}>
+          <div style=${{display:'flex',alignItems:'center',gap:'.4rem',marginBottom:'.45rem'}}>
+            <span style=${{width:7,height:7,borderRadius:'50%',background:'#22c55e',display:'inline-block'}}></span>
+            <span>Native engine active \u2014 the Python engine isn\u2019t needed</span>
+          </div>
+          <div style=${{fontSize:'0.66rem',color:'var(--text-faint)',lineHeight:1.6,marginBottom:'.45rem'}}>
+            The desktop app runs the clash narrow phase on all CPU cores natively. If you already run the Python engine on this machine you can still connect to it.${le.failed ? ' No engine was found on localhost.' : ''}
+          </div>
+          <button onClick=${function(){
+            _connectLocalEngine(d).catch(function(err){ console.log('[LocalEngine] Connect failed:', err && err.message || err); });
+          }} style=${{padding:'.3rem .55rem',borderRadius:5,fontSize:'0.7rem',fontWeight:600,cursor:'pointer',border:'1px solid var(--border)',
+            background:'var(--bg-secondary)',color:'var(--text-secondary)',fontFamily:'inherit'}}>Connect to a running engine</button>
         </div>`;
       }
 
