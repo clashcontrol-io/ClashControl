@@ -17,7 +17,7 @@
 - **Clash review:** grouped by root-cause element, compact rows, cluster cards, J/K/C/D/V triage, A/B colours, assignment rules, issue editing (title/priority/description/due date/comments/viewpoints), unified undo/redo.
 - **BCF 2.1/3.0:** Z-up cameras (export + import), stable GUIDs, components/selection/visibility/coloring, comments, orthographic viewpoints. Print-to-PDF clash and data-quality reports.
 - **IFC loading:** web-ifc 0.0.77 in a worker (protocol v2) with a main-thread fallback; fast pre-parse validation; storey-scoped loading (`ccUiStoreyChooser`, off by default); Park/Restore; opening boxes per host element (`props.openings`).
-- **Viewer:** Three.js r180 ESM; cursor-pivot orbit with inertia, zoom-to-cursor, 1:1 pan; BatchedMesh for pathological models; 2D floor plan with poché and closed section loops; sheet view.
+- **Viewer:** Three.js r180 ESM; cursor-pivot orbit (no inertia — removed 2026-09-29, the camera stops when the gesture stops), zoom-to-cursor, 1:1 pan; BatchedMesh for pathological models; 2D floor plan with poché and closed section loops; sheet view.
 - **Data Quality addon:** BIM basics, ILS v2 / NL-SfB (applicability-gated), RVB, IDS 1.0 engine. **Accessibility** and **visibility** addons.
 - **Geo:** IfcSite/IfcMapConversion placement, proj4 reprojection, 3D Tiles, basemap, point clouds, splats, 3-point alignment.
 - **Navigator:** search, model-scoped selection sets (with a resolver for legacy ambiguous entries), search sets, property diff, breadcrumb.
@@ -91,6 +91,7 @@ Keep every entry unless it's truly obsolete. Add a note when something gets fixe
   - BatchedMesh: `setVisibleAt`
 
   `_ccTempHide` has no InstancedMesh branch. Never call `ghostOthers`/`unghostAll` from occluder code.
+- **Section planes follow the building grid.** Axis sections (X/Y/Z), their outline, cut lines, drag gizmo and the whole-model section box use `_ccPlanFrame()` (dominant wall direction via `_ccSectionClipping.dominantPlanAngle`, cached per model set). Angle 0 (world-aligned or no clear grid) is exactly the old world-axis behaviour. Don't reintroduce `box.min[axis]`-style world-axis math for sections — go through `frame.cut(axis,pos)` / `frame.posOf` (`tests/browser/section-plane-alignment.mjs`).
 - **Clipping:** the core turns `renderer.localClippingEnabled` off when no section is active. `tiles.js` site-clearing re-asserts it each frame.
 - **North/georef sign:** the applied rotation was negated after a live test. If a model rotates the wrong way, suspect a per-authoring-tool sign difference and add a flip toggle. Georef is context/QA only; the clash engine uses local coordinates.
 - **3D Tiles ENU→Y-up sign** is unverified with Google tiles. If the city is mirrored or under the model, flip the rotX sign.
