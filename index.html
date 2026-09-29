@@ -11256,6 +11256,7 @@ function startApp() {
       tick();
       var iv = setInterval(tick, 200);
       return function(){ clearInterval(iv); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- setInfo is a useState setter (stable identity; the lint cannot see through the `var st = useState()` destructuring)
     }, []);
     if (!info) return null;
     return html`<div class="cc-overlay-chrome" style=${{position:'absolute',bottom:'var(--space-3)',left:'var(--space-3)',pointerEvents:'none',padding:'var(--space-1) var(--space-2)',display:'flex',flexDirection:'column',alignItems:'center',gap:2,zIndex:6}}>
@@ -16287,6 +16288,7 @@ function startApp() {
       obs.observe(el);
 
       return function(){cancelAnimationFrame(S.raf);obs.disconnect();_wlRemoveAll();renderer.dispose();if(el.contains(renderer.domElement))el.removeChild(renderer.domElement);};
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- mount-only three.js scene bootstrap; d and the useState setters are stable and live state is read through state3d/window refs inside the render loop
     }, []);
 
     useEffect(function() {
@@ -16387,6 +16389,7 @@ function startApp() {
         S.orbit.sync(); S.orbit.apply();
       }
       invalidate();
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- keyed on s.models; s.prefs.renderStyle is only sampled to size the ground plane at that moment, render-style changes have their own effect below
     }, [s.models]);
 
     // Connect s.walkMode state to the actual 3D walk enter/exit functions
@@ -16399,6 +16402,7 @@ function startApp() {
       } else {
         if (window._ccWalkExit) window._ccWalkExit();
       }
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- keyed on walkMode; walkEntry is set by the same WALK_MODE reducer action, so it is current when the enter transition runs
     }, [s.walkMode]);
 
     useEffect(function(){
@@ -16587,6 +16591,7 @@ function startApp() {
         }, 500);
       }
       invalidate();
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- plane rebuild keyed on the plane params; sectionBox.enabled is only read to decide clipping ownership (the section-box effect re-applies on its own toggle); the renderStyle term is a deliberate composite dep
     }, [s.sectionAxis, s.sectionPos, s.sectionCustom, s.sectionFlip, s.sectionHatch, s.models, s.prefs&&s.prefs.renderStyle]);
 
     // ── TransformControls section gizmo (PR-A) ─────────────────
@@ -16952,6 +16957,7 @@ function startApp() {
       // freshly-added section-box helpers.
       if (S.renderer && S.renderer.shadowMap) S.renderer.shadowMap.needsUpdate = true;
       invalidate(2);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- sectionAxis/sectionCustom are only read when the box is disabled, to avoid clearing an active section plane; the plane effect re-applies its own planes when they change
     }, [s.sectionBox, s.models, s.prefs&&s.prefs.renderStyle]);
 
     // Persist section state so it survives page refresh
@@ -17186,6 +17192,7 @@ function startApp() {
       // Scale bar (world metres per screen pixel) — read by the ScalBar overlay.
       window._ccPlanScaleBar = { metersPerPx: (2*halfV) / fullH };
       invalidate();
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- one-shot floor-plan camera framing keyed on s.floorPlan; models/section state are sampled at entry and must not re-frame the camera when they change
     }, [s.floorPlan]);
 
     useEffect(function(){
@@ -17420,6 +17427,7 @@ function startApp() {
         S.scene.add(S.grid);
       }
       invalidate();
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- theme-only sky/grid rebuild; grid visibility is applied by the showGrid effect above and the render-style effect below
     }, [s.prefs.theme]);
 
     useEffect(function(){
@@ -17815,9 +17823,11 @@ function startApp() {
         }
       }
       invalidate();
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- re-runs on style/theme/models/lights and on plan-mode truthiness (!!s.floorPlan is deliberate: only on/off matters); showGrid is owned by its own effect
     }, [s.prefs.renderStyle, s.prefs.theme, s.models, s.prefs.lightSettings, !!s.floorPlan]);
 
     var hcSt = useState(0), hcTick = hcSt[0], setHcTick = hcSt[1];
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- setHcTick is a useState setter (stable identity; the lint cannot see through the `var st = useState()` destructuring)
     useEffect(function(){ window._ccHoverCoordTick = function(){ setHcTick(function(x){return (x+1)%1000;}); }; return function(){window._ccHoverCoordTick=null;}; }, []);
     var ps = useState(false), perfOpen=ps[0], setPerfOpen=ps[1];
     var pd = useState({fps:0,tris:0,meshCount:0,drawCalls:0}), perfData=pd[0], setPerfData=pd[1];
@@ -17827,6 +17837,7 @@ function startApp() {
       function onDP(){ setDetectProfile(window._ccDetectProfile || null); }
       window.addEventListener('cc-detect-profile', onDP);
       return function(){ window.removeEventListener('cc-detect-profile', onDP); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- setDetectProfile is a useState setter (stable identity; the lint cannot see through the `var st = useState()` destructuring)
     }, []);
     useEffect(function(){
       var iv = setInterval(function(){
@@ -17849,6 +17860,7 @@ function startApp() {
         });
       }, 1000);
       return function(){clearInterval(iv);};
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- setPerfData is a useState setter (stable identity; the lint cannot see through the `var st = useState()` destructuring)
     }, [perfOpen]);
 
     var fs = useState(''), findQuery=fs[0], setFindQuery=fs[1];
@@ -17924,6 +17936,7 @@ function startApp() {
         setMarkupTool3D(function(cur){return cur ? null : 'arrow';});
       };
       return function(){ window._ccToggleMarkup3D = null; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- setMarkupTool3D is a useState setter (stable identity; the lint cannot see through the `var st = useState()` destructuring)
     }, []);
 
     // ── Design option compare ──
@@ -17949,6 +17962,7 @@ function startApp() {
         });
       };
       return function(){ window._ccToggleCompare = null; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- setCompare is a useState setter (stable identity; the lint cannot see through the `var st = useState()` destructuring)
     }, []);
     useEffect(function(){
       // Apply compare visibility/opacity
@@ -17981,6 +17995,7 @@ function startApp() {
         modelGroup.traverse(function(o){if(o.isMesh && o.material){o.material.opacity = 1; o.material.transparent = !!o.material._wasTransparent;}});
       });
       invalidate();
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- restore-on-close only; s.models is sampled at the moment compare closes
     }, [compare.open]);
 
     function doFind(q) {
@@ -18435,6 +18450,7 @@ function startApp() {
         window.removeEventListener('resize', sync);
         clearInterval(iv);
       };
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- setPanelOff is a useState setter (stable identity; the lint cannot see through the `var st = useState()` destructuring)
     }, []);
     // Face definitions: label + normal. Order MUST stay fixed (BOX_FACE_MAP depends on it).
     var FACES = [
@@ -18446,9 +18462,12 @@ function startApp() {
       {label:'BOTTOM', normal:[0,-1,0]}
     ];
     var BOX_FACE_MAP = [2, 3, 4, 5, 0, 1]; // boxGeo slot → FACES index
-    var FACE_CLR = theme==='light'
-      ? {FRONT:0x8494a7, BACK:0x7a8a9d, RIGHT:0x8494a7, LEFT:0x7a8a9d, TOP:0x8ea0b5, BOTTOM:0x708090}
-      : {FRONT:0x3a5f8a, BACK:0x34537a, RIGHT:0x3a5f8a, LEFT:0x34537a, TOP:0x406690, BOTTOM:0x2e4a6e};
+    // themeRef: the cube's mount-only effect (pointer handlers, hover repaint)
+    // must see the CURRENT theme, not the one it mounted under.
+    var themeRef = useRef(theme); themeRef.current = theme;
+    var FACE_CLR_LIGHT = {FRONT:0x8494a7, BACK:0x7a8a9d, RIGHT:0x8494a7, LEFT:0x7a8a9d, TOP:0x8ea0b5, BOTTOM:0x708090};
+    var FACE_CLR_DARK = {FRONT:0x3a5f8a, BACK:0x34537a, RIGHT:0x3a5f8a, LEFT:0x34537a, TOP:0x406690, BOTTOM:0x2e4a6e};
+    function faceClr() { return themeRef.current === 'light' ? FACE_CLR_LIGHT : FACE_CLR_DARK; }
 
     function flyToDir(dir) {
       var S=state3d.current; if(!S||!S.orbit) return;
@@ -18505,7 +18524,7 @@ function startApp() {
       c.width=128; c.height=128;
       var ctx=c.getContext('2d');
       ctx.clearRect(0,0,128,128);
-      var light = theme==='light';
+      var light = themeRef.current==='light';
       ctx.fillStyle = isHovered ? (light ? '#1e293b' : '#ffffff') : (light ? 'rgba(15,23,42,0.85)' : 'rgba(226,232,240,0.88)');
       // Font bumped 21px → up to 34px (shrinking to fit "BOTTOM", the widest
       // label, within the texture) — at CUBE_SIZE=100 this renders on screen
@@ -18552,7 +18571,7 @@ function startApp() {
         var f = FACES[fi];
         return new THREE.MeshPhongMaterial({
           map: makeFaceTexture(f.label, false),
-          color: new THREE.Color(FACE_CLR[f.label] || 0x2a4a6b),
+          color: new THREE.Color(faceClr()[f.label] || 0x2a4a6b),
           transparent: true,
           shininess: 50,
           specular: new THREE.Color(0x3a5a7a)
@@ -18658,7 +18677,7 @@ function startApp() {
           if (mat.map) mat.map.dispose();
           mat.map = makeFaceTexture(FACES[fi].label, isHov);
           mat.map.needsUpdate = true;
-          mat.color.setHex(isHov ? 0x1a6b4a : (FACE_CLR[FACES[fi].label]||0x3a5f8a));
+          mat.color.setHex(isHov ? 0x1a6b4a : (faceClr()[FACES[fi].label]||0x3a5f8a));
         });
         vc.dirty = true;
       }
@@ -18709,6 +18728,7 @@ function startApp() {
       }, {passive:false});
 
       return function(){ cancelAnimationFrame(animId); renderer.dispose(); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- mount-only cube setup: FACES/BOX_FACE_MAP/CUBE_SIZE are constants, state3d is a ref, and theme-dependent helpers read themeRef.current (theme changes are re-applied by the [theme] effect below)
     }, []);
 
     useEffect(function(){
@@ -18727,6 +18747,7 @@ function startApp() {
       // Update edge color
       if(vc.edgeLines) vc.edgeLines.material.color.setHex(light ? 0x64748b : 0x94a3b8);
       vc.dirty = true;
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- theme-keyed recolour; BOX_FACE_MAP/FACES are constants and makeFaceTexture reads themeRef.current
     }, [theme]);
 
     var _arrowBtn = {position:'absolute',display:'flex',alignItems:'center',justifyContent:'center',
@@ -18882,6 +18903,7 @@ function startApp() {
           try { opener.focus(); } catch(_) {}
         }
       };
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- containerRef is a ref (stable identity)
     }, [active]);
   }
   /* eslint-enable react-hooks/rules-of-hooks */
@@ -19197,6 +19219,7 @@ function startApp() {
 
     useEffect(function() {
       if (cur.onEnter && d) { try { cur.onEnter(d); } catch(e) {} }
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- keyed on step; cur is derived from step and d is stable
     }, [step]);
 
     useEffect(function() {
@@ -19216,6 +19239,7 @@ function startApp() {
       var t = setTimeout(update, 30);
       var id = setInterval(update, 300);
       return function(){ clearTimeout(t); clearInterval(id); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- keyed on step; cur.sel is derived from step and setSpotPos is a useState setter
     }, [step]);
 
     function next() { if (step < total-1) setStep(step+1); else setStep(null); }
@@ -19281,6 +19305,7 @@ function startApp() {
       function close(){setShowVer(false);}
       document.addEventListener('click', close);
       return function(){document.removeEventListener('click', close);};
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- setShowVer is a useState setter (stable identity; the lint cannot see through the `var st = useState()` destructuring)
     }, [showVer]);
     var cf = useState(null), confirmDelete=cf[0], setConfirmDelete=cf[1];
     var tut = useState(false), showTutorial=tut[0], setShowTutorial=tut[1]; // kept for hook order
@@ -20737,11 +20762,16 @@ function startApp() {
       maybeScopeThenProcess(Array.prototype.slice.call(e.target.files||[]));
       e.target.value='';
     }
+    // The 'cc-pending-files' listener below is mount-only; route through a ref so
+    // drag-drop / ClashControl.loadFiles see the CURRENT models/activeProject
+    // (processFiles closes over `s` for overlap warnings, storeys, project id).
+    var maybeScopeRef = useRef(null);
+    maybeScopeRef.current = maybeScopeThenProcess;
     useEffect(function(){
       function onPending(){
         if(window._ccPendingFiles){
           var f=window._ccPendingFiles; window._ccPendingFiles=null;
-          maybeScopeThenProcess(f);
+          maybeScopeRef.current(f);
         }
       }
       onPending();
@@ -21353,6 +21383,7 @@ function startApp() {
       window.addEventListener('beforeinstallprompt', refresh);
       var t = setInterval(refresh, 2000); // pick up late prompts
       return function(){ window.removeEventListener('beforeinstallprompt', refresh); clearInterval(t); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- setShow is a useState setter (stable identity; the lint cannot see through the `var st = useState()` destructuring)
     }, []);
     if (!show) return null;
     return html`<div style=${{margin:'.4rem 0 .35rem', padding:'.55rem .7rem', borderRadius:'var(--radius-xs)',
@@ -21394,6 +21425,7 @@ function startApp() {
         catch(e){ console.warn('[quality-score]', e); setEntry(null); }
       }, 100);
       return function(){ clearTimeout(t); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- keyed on sig, a fingerprint of the element data, so the score recomputes only on real data changes; s.models is read for the same data
     }, [sig]);
     if (!entry || entry.score == null) return null;
     var color = entry.score >= 80 ? 'var(--accent)' : entry.score >= 60 ? '#eab308' : '#f87171';
@@ -21426,6 +21458,7 @@ function startApp() {
       window.addEventListener('cc-splats-changed', refresh);
       refresh();
       return function(){ window.removeEventListener('cc-splats-changed', refresh); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- setItems is a useState setter (stable identity; the lint cannot see through the `var st = useState()` destructuring)
     }, []);
     if (!items.length) return null;
     return html`<div style=${{marginTop:'.3rem',borderTop:'1px solid var(--hairline)',paddingTop:'.3rem'}}>
@@ -21621,6 +21654,7 @@ function startApp() {
       if(sig===lastClassifyRef.current) return;
       lastClassifyRef.current = sig;
       d({t:A.SET_CLASSIFICATIONS,v:classifyModels(vis)});
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- keyed on s.models; d is stable
     }, [s.models]);
     var hasCls = cls && Object.keys(cls).length>0;
     var classView = viewMode!=='tree' && viewMode!=='spatial' ? viewMode : null;
@@ -21742,6 +21776,7 @@ function startApp() {
       }
       document.addEventListener('keydown', onKey);
       return function(){document.removeEventListener('keydown', onKey);};
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- toggle uses a functional setExpanded (identity does not matter) and every other value the handler reads is in the deps
     },[s.tab, viewMode, s.models, expanded, treeSearch, explorerFocus]);
 
     // ── PatternFly tree-view node helper ──
@@ -22220,6 +22255,7 @@ function startApp() {
       function handler(e){ if(ref.current && !ref.current.contains(e.target)) setOpen(false); }
       document.addEventListener('mousedown', handler);
       return function(){ document.removeEventListener('mousedown', handler); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- setOpen is a useState setter (stable identity; the lint cannot see through the `var st = useState()` destructuring)
     },[open]);
 
     return html`<div ref=${ref} style=${{position:'relative'}}>
@@ -22961,6 +22997,7 @@ function startApp() {
       if (typeof window._ccPlacementWarnings === 'function') {
         try { setPlacementWarnings(window._ccPlacementWarnings(s.models) || []); } catch(e){}
       }
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- modal-open snapshot: placement warnings are computed once when the modal mounts
     }, []);
     var canRun = (s.models||[]).length > 0 && !s.detecting;
     function close(){ d({t:A.SHOW_RUN_MODAL, v:false}); }
@@ -22968,6 +23005,7 @@ function startApp() {
       function onKey(e){ if (e.key === 'Escape') { e.stopPropagation(); close(); } }
       window.addEventListener('keydown', onKey);
       return function(){ window.removeEventListener('keydown', onKey); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- close() only dispatches through the stable d
     }, []);
     // Task D: role="dialog" aria-modal="true" modals must trap/move focus.
     var cardRef = useRef(null);
@@ -23485,6 +23523,7 @@ function startApp() {
       function onOut(e){if(exportRef2.current&&!exportRef2.current.contains(e.target))setExportOpen(false);}
       document.addEventListener('mousedown',onOut);
       return function(){document.removeEventListener('mousedown',onOut);};
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- setExportOpen is a useState setter (stable identity; the lint cannot see through the `var st = useState()` destructuring)
     },[exportOpen]);
     return html`<div ref=${exportRef2} style=${{position:'relative',flexShrink:0,display:'inline-flex',gap:'.35rem'}}>
       <button
@@ -23727,7 +23766,7 @@ function startApp() {
         }
         return true;
       });
-    }, [rawItems, f, isClashTab, s.floors, visibleModelIds]);
+    }, [rawItems, f, isClashTab, visibleModelIds]);
 
     var counts = useMemo(function(){
       return {
@@ -27114,8 +27153,9 @@ function startApp() {
   window._ccComputeRowOffsets = _ccComputeRowOffsets;
   window._ccComputeVisibleRowWindow = _ccComputeVisibleRowWindow;
 
+  var _VL_NO_MODELS = []; // shared empty fallback so `props.models||[]` doesn't mint a new array (and bust the groups memo) every render
   function VirtualList(props) {
-    var rawItemsProp=props.items, activeId=props.activeId, d=props.d, isClash=props.isClash, prefs=props.prefs, models=props.models||[];
+    var rawItemsProp=props.items, activeId=props.activeId, d=props.d, isClash=props.isClash, prefs=props.prefs, models=props.models||_VL_NO_MODELS;
     var triageResults = props.triageResults || {};
     var groupBy = props.groupBy || 'none';
     var groupByPrimary = Array.isArray(groupBy) ? groupBy[0] : groupBy;
@@ -27140,6 +27180,7 @@ function startApp() {
       function onML(e){ setModelsLoadingFlag(!!(e && e.detail && e.detail.loading)); }
       window.addEventListener('cc-model-loading', onML);
       return function(){ window.removeEventListener('cc-model-loading', onML); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- setModelsLoadingFlag is a useState setter (stable identity; the lint cannot see through the `var st = useState()` destructuring)
     }, []);
     var heightCacheRef = useRef({});
     var scrollRafRef = useRef(null);
@@ -27162,6 +27203,7 @@ function startApp() {
       if (RO) { var ro = new RO(measure); ro.observe(scrollRef.current); return function(){ ro.disconnect(); }; }
       window.addEventListener('resize', measure);
       return function(){ window.removeEventListener('resize', measure); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- setWinViewportH is a useState setter (stable identity; the lint cannot see through the `var st = useState()` destructuring)
     }, [windowedOn]);
     // Refine the height cache from real DOM measurements of whatever is
     // currently mounted. Cheap: bounded by the overscan window, not the
@@ -27196,11 +27238,13 @@ function startApp() {
       var cic = window.cancelIdleCallback || clearTimeout;
       var h = ric(function(){ setReveal(rawItemsProp.length); });
       return function(){ cic(h); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- setReveal is a useState setter (stable identity; the lint cannot see through the `var st = useState()` destructuring)
     }, [rawItemsProp, reveal, windowedOn]);
     // When items prop identity changes (new filter, new detection), reset
     // the reveal cap so we don't paint a stale tail.
     useEffect(function(){
       setReveal(Math.min(INITIAL_REVEAL, rawItemsProp.length));
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- setReveal is a useState setter (stable identity; the lint cannot see through the `var st = useState()` destructuring)
     }, [rawItemsProp]);
     var items = windowedOn ? rawItemsProp : (reveal >= rawItemsProp.length ? rawItemsProp : rawItemsProp.slice(0, reveal));
 
@@ -27369,6 +27413,7 @@ function startApp() {
       }
       document.addEventListener('keydown', onKey);
       return function(){document.removeEventListener('keydown', onKey);};
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- d and setCollapsed are stable; groups is memoised and only changes together with flatItems/groupStarts (both listed); isClash is fixed for a mounted list
     }, [flatItems, activeId, groupStarts]);
 
     window._ccPrepareAdvance = function(currentId) {
@@ -27466,6 +27511,7 @@ function startApp() {
         var row = scrollRef.current.querySelector('[data-item-id="'+activeId+'"]');
         if(row) row.scrollIntoView({block:'center',behavior:'smooth'});
       }); });
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- scroll-to-active must run only when activeId changes (re-running on collapsed/groupLimits would fight the user's scroll); the other values are sampled at that moment
     }, [activeId]);
 
     // ── ccUiWindowedConflicts: true bounded mounting ──  REWRITE_UI_PLAN.md Phase 3
@@ -27482,6 +27528,7 @@ function startApp() {
     var wRows = useMemo(function(){
       if (!windowedOn) return null;
       return _ccBuildConflictRows(items, groups, collapsed, groupLimits, isClusterGroup);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- isClusterGroup is recreated every render and only reads window._ccClusterDisplay, which changes together with items/groups (both listed)
     }, [windowedOn, items, groups, collapsed, groupLimits]);
     // Prefix-sum offsets over the FULL row list — proportional to total
     // result count, not the visible window. Previously recomputed on every
@@ -27496,6 +27543,7 @@ function startApp() {
     var wOff = useMemo(function(){
       if (!windowedOn) return null;
       return _ccComputeRowOffsets(wRows, heightCacheRef.current);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- winForceTick is a deliberate invalidation counter bumped after a row's real height is measured
     }, [windowedOn, wRows, winForceTick]);
     if(items.length===0) {
       // Same-discipline 0-clash trap (see runDetection): when a federation of
@@ -27906,6 +27954,7 @@ function startApp() {
     var cSt = useState(''); var commentDraft = cSt[0], setCommentDraft = cSt[1];
     // Re-seed the drafts when the selected issue changes (row reused across
     // different issues via IssueRow's React.memo + shared component tree).
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- reset drafts only when switching to another item (it.id); depending on title/description would clobber in-progress edits
     useEffect(function(){ setTitleDraft(it.title || ''); setDescDraft(it.description || ''); }, [it.id]);
     function upd(u) { d({t:A.UPD_ISSUE, id:it.id, u:u}); }
     var userName = (typeof _ccChangelogUser === 'string' && _ccChangelogUser.trim()) ? _ccChangelogUser.trim() : 'Anonymous';
@@ -28017,6 +28066,7 @@ function startApp() {
         occTrackedRef.current=[];
         setOccReveal(false);
       }
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- only reacts to the active -> false transition; occReveal is read as a guard
     }, [active]);
     /* Severity dot — the row's only colour. Maps the existing aiSeverity /
        type signal to the desaturated --sev-* tokens. The previous emoji
@@ -28332,6 +28382,7 @@ function startApp() {
       function onKey(e){if(e.key==='Escape')d({t:A.MODAL,v:false});}
       window.addEventListener('keydown',onKey);
       return function(){window.removeEventListener('keydown',onKey);};
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- d is App's useCallback([]) dispatch (stable identity)
     },[]);
     // Task D: role="dialog" aria-modal="true" modals must trap/move focus.
     var cardRef = useRef(null);
@@ -28444,6 +28495,7 @@ function startApp() {
     useEffect(function(){
       var t = setTimeout(function(){ setNudge(false); }, 4500);
       return function(){ clearTimeout(t); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- setNudge is a useState setter (stable identity; the lint cannot see through the `var st = useState()` destructuring)
     },[]);
     function raycastFloor(e){
       var S = window._ccState3d; if(!S || !S.renderer || !S.camera || !S.mg) return null;
@@ -28527,6 +28579,7 @@ function startApp() {
     useEffect(function(){
       window.addEventListener('keydown', onKey);
       return function(){ window.removeEventListener('keydown', onKey); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- onKey only closes over the stable d, so re-subscribing on hit/aim is harmless and not needed
     },[hit, aim]);
     var reticle = null;
     if (hit && hit.screen){
@@ -28637,6 +28690,7 @@ function startApp() {
         window.removeEventListener('keydown', onAlt);
         window.removeEventListener('keyup', onAltUp);
       };
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- mount-only walk HUD wiring; setters are stable and speedSt is only a per-mount holder for the hide timer
     }, []);
 
     // Hover element label (Coordinate + Review only) — throttled 4 Hz
@@ -28654,6 +28708,7 @@ function startApp() {
         } catch(e){}
       }, 250);
       return function(){ clearInterval(iv); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- setHoverEl is a useState setter (stable identity; the lint cannot see through the `var st = useState()` destructuring)
     }, [isPresent]);
 
     // Workspace-gated F (inspector) and I (issue) hotkeys
@@ -28735,6 +28790,7 @@ function startApp() {
       }
       window.addEventListener('keydown', onKey);
       return function(){ window.removeEventListener('keydown', onKey); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- setVpToast is a useState setter (stable identity; the lint cannot see through the `var st = useState()` destructuring)
     }, []);
 
     function applyFov(v){ if (window._ccWalkSetFov) window._ccWalkSetFov(v); }
@@ -29186,6 +29242,7 @@ function startApp() {
         } catch(e){}
       }, 400);
       return function(){ clearInterval(iv); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- setPos is a useState setter (stable identity; the lint cannot see through the `var st = useState()` destructuring)
     },[]);
     var clashes = (s.clashes||[]).filter(function(c){ return c.status !== 'resolved' && c.point; });
     var radius = 12; // metres
@@ -29277,6 +29334,7 @@ function startApp() {
         setImg(cv.toDataURL('image/png'));
         rt.dispose();
       } catch(e){}
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- setBbox, setImg are useState setters (stable identity; the lint cannot see through the `var st = useState()` destructuring)
     },[]);
     useEffect(function(){
       var iv = setInterval(function(){
@@ -29290,6 +29348,7 @@ function startApp() {
         } catch(e){}
       }, 250);
       return function(){ clearInterval(iv); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- setPos is a useState setter (stable identity; the lint cannot see through the `var st = useState()` destructuring)
     },[]);
     if (!img || !bbox) return null;
     var w = 160;
@@ -29365,6 +29424,7 @@ function startApp() {
       }
       document.addEventListener('fullscreenchange', onFs);
       return function(){ document.removeEventListener('fullscreenchange', onFs); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- d is App's useCallback([]) dispatch (stable identity)
     }, [s.presenting]);
 
     // Idle detection → auto-rotate
@@ -29434,6 +29494,7 @@ function startApp() {
       }
       window.addEventListener('keydown', onK);
       return function(){ window.removeEventListener('keydown', onK); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- step is recreated every render from viewpoints/vpIdx, which are exactly the deps listed (length + index)
     }, [viewpoints.length, vpIdx]);
 
     // Auto-advance loop
@@ -29443,6 +29504,7 @@ function startApp() {
         autoplayTimerRef.current = setInterval(function(){ step(1); }, 5500);
       }
       return function(){ if (autoplayTimerRef.current) clearInterval(autoplayTimerRef.current); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- step is recreated every render from viewpoints/vpIdx, which are exactly the deps listed (length + index)
     }, [autoplay, viewpoints.length, vpIdx]);
 
     function uploadLogo(file){
@@ -29677,6 +29739,7 @@ function startApp() {
       function onKey(e){ if (e.key==='Escape') d({t:A.SMART_VIEWS, v:false}); }
       window.addEventListener('keydown', onKey);
       return function(){ window.removeEventListener('keydown', onKey); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- d is App's useCallback([]) dispatch (stable identity)
     }, []);
     // Task D: role="dialog" aria-modal="true" modals must trap/move focus.
     var cardRef = useRef(null);
@@ -29803,6 +29866,7 @@ function startApp() {
       function onKey(e){ if(e.key==='Escape') d({t:A.SHARE,v:false}); }
       window.addEventListener('keydown', onKey);
       return function(){ window.removeEventListener('keydown', onKey); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- d is App's useCallback([]) dispatch (stable identity)
     }, []);
     // Task D: role="dialog" aria-modal="true" modals must trap/move focus.
     var cardRef = useRef(null);
@@ -30216,6 +30280,7 @@ function startApp() {
       function onKey(e){ if (e.key === 'Escape') onCancel(); }
       window.addEventListener('keydown', onKey);
       return function(){ window.removeEventListener('keydown', onKey); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- onCancel is the parent's setStoreyChooser(null) wrapper (setter only); Escape listener is mount-only
     }, []);
     function toggle(name) {
       if (truncated) return;
@@ -30377,6 +30442,7 @@ function startApp() {
       function onKey(e){ if (e.key === 'Escape') onClose(); }
       window.addEventListener('keydown', onKey);
       return function(){ window.removeEventListener('keydown', onKey); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- onClose is the parent's setShortcutsOpen(false) wrapper (setter only); Escape listener is mount-only
     }, []);
     // REWRITE_UI_PLAN.md Phase 9 — the shared focus-trap primitive, applied
     // unconditionally (was flag-gated behind ccUiModalV2, defaultEnabled:
@@ -30447,6 +30513,7 @@ function startApp() {
       }
       window.addEventListener('cc-model-loading', onLoad);
       return function(){ window.removeEventListener('cc-model-loading', onLoad); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- setLoading, setMsg, setSlow, setStartedAt are useState setters (stable identity; the lint cannot see through the `var st = useState()` destructuring)
     }, [startedAt]);
 
     // Tick every second while loading to refresh elapsed + slow hint
@@ -30457,6 +30524,7 @@ function startApp() {
         if (startedAt && Date.now() - startedAt > 20000) setSlow(true);
       }, 1000);
       return function(){ clearInterval(t); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- setSlow, setTick are useState setters (stable identity; the lint cannot see through the `var st = useState()` destructuring)
     }, [loading, startedAt]);
 
     if (!loading) return null;
@@ -30811,6 +30879,7 @@ function startApp() {
     useEffect(function(){
       if (inputRef.current) inputRef.current.focus();
     }, []);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- setIdx is a useState setter (stable identity; the lint cannot see through the `var st = useState()` destructuring)
     useEffect(function(){ setIdx(0); }, [q]);
     // Task D: role="dialog" aria-modal="true" modals must trap/move focus.
     // The input's own autofocus above already covers "move focus in"; this
@@ -30919,6 +30988,7 @@ function startApp() {
       var live = true;
       if (window._ccStorageReport) window._ccStorageReport().then(function(r){ if (live) setStorageReport(r || false); });
       return function(){ live = false; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- storageReport is only a fetch-once guard; re-fetching on report change would loop
     }, [activeTab]);
 
     // Manifests are tiny (id/name/contributor only) — fetch once on modal
@@ -30929,6 +30999,7 @@ function startApp() {
       if (window._ccListLocalePacks) window._ccListLocalePacks().then(function(list){ if (live) setLocalePacks(list||[]); }).catch(function(){});
       if (window._ccListRegulationPacks) window._ccListRegulationPacks().then(function(list){ if (live) setRegionPacks(list||[]); }).catch(function(){});
       return function(){ live = false; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- setLocalePacks, setRegionPacks are useState setters (stable identity; the lint cannot see through the `var st = useState()` destructuring)
     }, []);
     function refreshStorageReport(){
       if (window._ccStorageReport) window._ccStorageReport().then(function(r){ setStorageReport(r || false); });
@@ -30949,6 +31020,7 @@ function startApp() {
         window.removeEventListener('cc-training-data-change', syncData);
         window.removeEventListener('cc-training-sent', flashSent);
       };
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- mount-only settings init; d and the setters are stable
     },[]);
     // Task D: role="dialog" aria-modal="true" modals must trap/move focus.
     var cardRef = useRef(null);
@@ -32710,8 +32782,13 @@ function startApp() {
       var ids = s.underlays.reduce(function(acc, u) { acc[u.id] = true; return acc; }, {});
       Object.keys(_underlayImgCache).forEach(function(k) { if (!ids[k]) { delete _underlayImgCache[k]; delete _underlayImgDataCache[k]; } });
       redraw();
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- redraw is recreated every render and closes over the same s.* fields listed here
     }, [s.underlays, s.activeUnderlay, s.markups, s.markupTool, s.underlayMode, s.floorPlan, s.activeSheetId, s.sheets, s.sheetPins]);
 
+    // The ResizeObserver below is mount-only; call redraw through a ref so a
+    // resize repaints the CURRENT markups/sheets, not the mount-time snapshot.
+    var redrawRef = useRef(null);
+    redrawRef.current = redraw;
     useEffect(function() {
       var cvs = canvasRef.current; if (!cvs) return;
       window._cc2DCanvas = cvs;
@@ -32720,7 +32797,7 @@ function startApp() {
         var dpr = window.devicePixelRatio || 1;
         cvs.width = Math.round(el.clientWidth * dpr);
         cvs.height = Math.round(el.clientHeight * dpr);
-        redraw();
+        redrawRef.current();
       }
       resize();
       var obs = new ResizeObserver(resize);
@@ -36191,10 +36268,15 @@ function startApp() {
         localStorage.setItem(_chatStorageKey, JSON.stringify(serialisable));
       } catch(e) { /* quota exceeded — drop the cache silently */ }
     }, [msgs, _chatStorageKey]);
+    // Mount-only listener: go through a ref so a Cmd-K / external submit runs
+    // send() with the CURRENT state (models, clashes, chat context), not the
+    // mount-time closure.
+    var sendRef = useRef(null);
+    sendRef.current = send;
     useEffect(function(){
       function onNLSubmit(e){
         var text = e && e.detail ? String(e.detail) : '';
-        if (text) send(text);
+        if (text) sendRef.current(text);
       }
       window.addEventListener('cc-nl-submit', onNLSubmit);
       return function(){ window.removeEventListener('cc-nl-submit', onNLSubmit); };
@@ -36220,7 +36302,9 @@ function startApp() {
       function onDone() { setDetectPct(0); setDetectPhase(''); window._ccDetectProgress = null; }
       window.addEventListener('cc-detect-progress', onProg);
       return function() { window.removeEventListener('cc-detect-progress', onProg); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- setDetectPct, setDetectPhase are useState setters (stable identity; the lint cannot see through the `var st = useState()` destructuring)
     }, []);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- setDetectPct, setDetectPhase are useState setters (stable identity; the lint cannot see through the `var st = useState()` destructuring)
     useEffect(function() { if (!s.detecting) { setDetectPct(0); setDetectPhase(''); window._ccDetectProgress = null; } }, [s.detecting]);
     useEffect(function() {
       function onSwitch() {
@@ -36238,6 +36322,7 @@ function startApp() {
       }
       window.addEventListener('cc-project-switch', onSwitch);
       return function(){ window.removeEventListener('cc-project-switch', onSwitch); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- setMsgs is a useState setter (stable identity; the lint cannot see through the `var st = useState()` destructuring)
     }, [s.activeProject]);
     var stLoadMsg = useState(''), modelLoadMsg = stLoadMsg[0], setModelLoadMsg = stLoadMsg[1];
     useEffect(function() {
@@ -36249,6 +36334,7 @@ function startApp() {
       }
       window.addEventListener('cc-model-loading', onModelLoad);
       return function() { window.removeEventListener('cc-model-loading', onModelLoad); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- setModelLoadMsg, setModelLoading are useState setters (stable identity; the lint cannot see through the `var st = useState()` destructuring)
     }, []);
 
     var detectStartRef = useRef(0);
@@ -36258,6 +36344,7 @@ function startApp() {
       if (!detectStartRef.current) detectStartRef.current = Date.now();
       var timer = setInterval(function(){ setDetectElapsed(Math.floor((Date.now()-detectStartRef.current)/1000)); }, 1000);
       return function(){ clearInterval(timer); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- setDetectElapsed is a useState setter (stable identity; the lint cannot see through the `var st = useState()` destructuring)
     }, [s.detecting]);
     useEffect(function() {
       var was = prevDetecting.current;
@@ -36308,6 +36395,7 @@ function startApp() {
         });
         detectMsgIdx.current = -1;
       }
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- fires when detection ends; s.clashes is sampled at that moment. setOpen is a wrapper around a useState setter plus the stable d
     }, [s.detecting]);
 
     useEffect(function() {
@@ -36331,6 +36419,7 @@ function startApp() {
       }
       window.addEventListener('keydown', onKey);
       return function() { window.removeEventListener('keydown', onKey); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- setOpen is a wrapper around a useState setter plus the stable d (identity irrelevant)
     }, [open]);
 
     useEffect(function() {
@@ -36346,6 +36435,7 @@ function startApp() {
         setBackend(_nlBackend);
         setLLMStatus(_nlModelStatus);
       });
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- setBackend, setLLMStatus are useState setters (stable identity; the lint cannot see through the `var st = useState()` destructuring)
     }, [open, isDocked]);
 
     useEffect(function() {
@@ -37310,6 +37400,7 @@ function startApp() {
       function onML(e){ setModelsLoading(!!(e && e.detail && e.detail.loading)); }
       window.addEventListener('cc-model-loading', onML);
       return function(){ window.removeEventListener('cc-model-loading', onML); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- setModelsLoading is a useState setter (stable identity; the lint cannot see through the `var st = useState()` destructuring)
     }, []);
     var sig = _ccDetectionBannerSignature(s.models);
     var dSt = useState(function(){
@@ -37406,11 +37497,13 @@ function startApp() {
         window.removeEventListener('cc-model-loading', onLoading);
         window.removeEventListener('cc-load-session', onSession);
       };
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- setLcSnap, setLoadMsg, setLoading are useState setters (stable identity; the lint cannot see through the `var st = useState()` destructuring)
     }, [on]);
     useEffect(function(){
       if (!on) return;
       var iv = setInterval(function(){ setTick(function(t){ return (t+1)%100000; }); }, 1000);
       return function(){ clearInterval(iv); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- setTick is a useState setter (stable identity; the lint cannot see through the `var st = useState()` destructuring)
     }, [on]);
     if (!on) return null;
 
@@ -38000,6 +38093,7 @@ function startApp() {
       function onChanged(){ forceUpdate(function(n){return n+1;}); }
       window.addEventListener('cc-addons-changed', onChanged);
       return function(){ window.removeEventListener('cc-addons-changed', onChanged); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- forceUpdate is a useState setter (stable)
     },[]);
     var addons = window._ccGetAddons ? window._ccGetAddons() : {};
     var ids = Object.keys(addons);
@@ -38237,6 +38331,7 @@ function startApp() {
       function onResize(){ setVw(window.innerWidth); }
       window.addEventListener('resize', onResize);
       return function(){ window.removeEventListener('resize', onResize); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- setVw is a useState setter (stable identity; the lint cannot see through the `var st = useState()` destructuring)
     }, []);
     // Clamp panel to leave at least 200px of canvas visible
     var effectivePanelW = Math.min(panelW, Math.max(240, vw - 200));
@@ -38286,6 +38381,7 @@ function startApp() {
         window.removeEventListener('cc-element-selected', onElSelected);
         clearInterval(t);
       };
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- setCollapsed, setDrawerEl, setDrawerTab are useState setters (stable identity; the lint cannot see through the `var st = useState()` destructuring)
     }, []);
 
     // Expose global openers so toolbar buttons can switch tabs / uncollapse.
@@ -38316,6 +38412,7 @@ function startApp() {
         if (window._ccToggleModelsPanel) window._ccToggleModelsPanel = null;
         if (window._ccOpenModelsPanel) window._ccOpenModelsPanel = null;
       };
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- setCollapsed, setDrawerTab are useState setters (stable identity; the lint cannot see through the `var st = useState()` destructuring)
     }, [collapsed, drawerTab]);
 
     // Publish how much horizontal space this panel currently occupies on the
@@ -39080,7 +39177,7 @@ function startApp() {
     // those modes' own controls and isn't useful in 2D anyway.
     var hide = s.presenting || s.walkMode || s.underlayMode === 'view2d' || s.underlayMode === 'compare';
     var active = (!hide && s.activeId && (s.clashes||[]).find(function(c){return c.id===s.activeId;})) || null;
-    var key = active ? active.id : '';
+    var key = active ? active.id + '|' + (active.point ? active.point.join(',') : '') : '';
 
     useEffect(function(){
       cancelAnimationFrame(rafRef.current);
@@ -39100,6 +39197,7 @@ function startApp() {
       }
       rafRef.current = requestAnimationFrame(tick);
       return function(){ cancelAnimationFrame(rafRef.current); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- keyed on the active item's id+point; setPos is a useState setter and active is derived from that key
     }, [key]);
 
     if (!active || !pos || !pos.visible) return null;
@@ -39204,6 +39302,7 @@ function startApp() {
         document.removeEventListener('dragleave', onDragLeave);
         document.removeEventListener('drop',      onDrop);
       };
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- setDragging is a useState setter (stable identity; the lint cannot see through the `var st = useState()` destructuring)
     }, []);
     if (!dragging) return null;
     return html`<div aria-hidden="true" style=${{
@@ -39224,6 +39323,7 @@ function startApp() {
       }
       window.addEventListener('cc-folder-watch', onEv);
       return function() { window.removeEventListener('cc-folder-watch', onEv); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- setActive is a useState setter (stable identity; the lint cannot see through the `var st = useState()` destructuring)
     }, []);
     if (!active) return null;
     return html`<div class="cc-bottom-banner" role="region" aria-live="polite" aria-label=${_cc_t('banner.folderWatchLabel','Shared folder sync')} style=${{
@@ -39253,11 +39353,13 @@ function startApp() {
     var stLoading = useState(!!window._ccModelLoading);
     var loading = stLoading[0], setLoading = stLoading[1];
 
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- setVis is a useState setter (stable identity; the lint cannot see through the `var st = useState()` destructuring)
     useEffect(function(){ requestAnimationFrame(function(){ setVis(true); }); }, []);
     useEffect(function(){
       function onLoad(e){ setLoading(!!(e.detail && e.detail.loading)); }
       window.addEventListener('cc-model-loading', onLoad);
       return function(){ window.removeEventListener('cc-model-loading', onLoad); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- setLoading is a useState setter (stable identity; the lint cannot see through the `var st = useState()` destructuring)
     }, []);
 
     // Early-return AFTER all hooks are registered.
@@ -39942,6 +40044,7 @@ function startApp() {
       if (RO) { var ro = new RO(measure); ro.observe(containerRef.current); return function(){ ro.disconnect(); }; }
       window.addEventListener('resize', measure);
       return function(){ window.removeEventListener('resize', measure); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- setContainerWidth is a useState setter (stable identity; the lint cannot see through the `var st = useState()` destructuring)
     }, []);
     // This is the bug the earlier attempt hit (REWRITE_UI_PLAN.md Phase 8):
     // with a bare minWidth:0, `overflow:hidden` lets the flex algorithm shrink
@@ -40095,6 +40198,7 @@ function startApp() {
       sync();
       window.addEventListener('cc-undo-change', sync);
       return function(){ window.removeEventListener('cc-undo-change', sync); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- setUndoInfo is a useState setter (stable identity; the lint cannot see through the `var st = useState()` destructuring)
     }, []);
     // Esc closes the menu, and a pointerdown anywhere outside it closes it too —
     // WITHOUT the full-screen backdrop <div> this used to render, which sat on
@@ -40120,6 +40224,7 @@ function startApp() {
         document.removeEventListener('keydown', onKey);
         document.removeEventListener('pointerdown', onDocPointerDown);
       };
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- setStyleOpen is a useState setter (stable identity; the lint cannot see through the `var st = useState()` destructuring)
     }, [styleOpen]);
     var pickSt  = useState(false), pickOn = pickSt[0], setPickOn = pickSt[1];
     var measureSt = useState(false), measurePopOpen=measureSt[0], setMeasurePopOpen=measureSt[1];
@@ -40143,6 +40248,7 @@ function startApp() {
       function onKey(e){ if (e.key === 'Escape' && window._ccSectionPickPending) { window._ccSectionPickPending = false; setPickOn(false); } }
       window.addEventListener('keydown', onKey);
       return function(){ window.removeEventListener('cc-section-pick-end', onEnd); window.removeEventListener('keydown', onKey); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- setPickOn is a useState setter (stable identity; the lint cannot see through the `var st = useState()` destructuring)
     }, []);
 
     if (!s.models || s.models.length === 0) return null;
@@ -40914,6 +41020,7 @@ function startApp() {
         }
       }
       if (window._loadDirectPort) setPort(window._loadDirectPort());
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- setApiKey, setMcpHost, setMcpPort, setPort, setProv are useState setters (stable identity; the lint cannot see through the `var st = useState()` destructuring)
     }, []);
 
     // One-click connect to the Revit model open on this machine. The Connector
@@ -40933,6 +41040,7 @@ function startApp() {
         window._ccRevitAutoConnect = false;
         _doConnect();
       }
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- mount-only Revit auto-connect
     }, []);
 
     var projects = s.projectList || [];
@@ -41332,6 +41440,7 @@ function startApp() {
           }
         } catch(e3) {}
       }
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- _rawD is the useReducer dispatch (stable identity)
     }, []);
     window._ccDispatch = d;
     window._ccLatestState = s;
@@ -41381,6 +41490,7 @@ function startApp() {
         if (eids.indexOf(el.expressId) >= 0 && el.props.globalId) gids.push(el.props.globalId);
       }); });
       if (gids.length && window._revitHighlight) window._revitHighlight(gids);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- keyed on activeId/connection: the element lookup samples the current items only when the selection changes
     }, [s.activeId, s.revitDirect && s.revitDirect.connected]);
     // ── Clean up 3D state when switching tabs ──
     useEffect(function(){
@@ -41396,6 +41506,7 @@ function startApp() {
         if(_flyToElements&&firstRefs.length) _flyToElements(firstRefs,first.point);
         else if(first.point&&_flyTo) _flyTo(first.point);
       }
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- keyed on the tab switch; selects the first issue only if none is active, sampling current state at that moment. d is App's useCallback([]) dispatch (stable identity)
     }, [s.tab]);
     // ── Restore project files on initial load (runs once, before any tab is opened) ──
     useEffect(function(){
@@ -41405,6 +41516,7 @@ function startApp() {
       _restoreProjectFilesGlobal(s.activeProject, d);
       _idbCleanOrphanedGeoCache(); // background cleanup of orphaned cache entries
       _ccScheduleBudgetCheck();    // amortized budget check (10s after boot)
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- one-shot per-project restore guarded by a window flag. d is App's useCallback([]) dispatch (stable identity)
     },[]);
     // ── Listen for project-switch events (from project selector) ──
     useEffect(function(){
@@ -41417,6 +41529,7 @@ function startApp() {
       }
       window.addEventListener('cc-project-switch', onSwitch);
       return function(){ window.removeEventListener('cc-project-switch', onSwitch); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- d is App's useCallback([]) dispatch (stable identity); handler reads the target project from window._ccProjectSwitch
     },[]);
     var _latestSRef = useRef(s);
     _latestSRef.current = s;
@@ -41451,6 +41564,7 @@ function startApp() {
           d({t:A.LOAD_PROJECT_STATE,data:{clashes:restored}});
         }
       }catch(e){}
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- keyed on clash count: the restore dispatches LOAD_PROJECT_STATE, and depending on s.clashes would loop. d is App's useCallback([]) dispatch (stable identity)
     },[s.clashes.length]);
 
     useEffect(function(){
@@ -41458,6 +41572,7 @@ function startApp() {
         if(_hasProjectData(s)) _saveCurrentProjectData(s);
       }, 2000);
       return function(){ clearTimeout(timer); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- persist keyed on the data fields that matter; depending on the whole state would save on every hover/selection change
     }, [s.clashes, s.issues, s.viewpoints, s.measurements, s.rules, s.models]);
     // on pagehide and on visibilitychange→hidden because beforeunload is
     useEffect(function(){
@@ -41514,6 +41629,7 @@ function startApp() {
     var _whatsNew = useState(false), showWhatsNew=_whatsNew[0], setShowWhatsNew=_whatsNew[1];
     useEffect(function() {
       try { if (!localStorage.getItem('cc_setup_seen')) return; if (localStorage.getItem('cc_seen_version') !== CC_VERSION.v) setShowWhatsNew(true); } catch(e) {}
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- setShowWhatsNew is a useState setter (stable identity; the lint cannot see through the `var st = useState()` destructuring)
     }, []);
     var _whatsNewTimer = useRef(null);
     function _dismissWhatsNew() { try{localStorage.setItem('cc_seen_version',CC_VERSION.v);}catch(e){} setShowWhatsNew(false); }
@@ -41542,11 +41658,13 @@ function startApp() {
         }
         if (items.length) setWhatsNewItems(items);
       }).catch(function(){});
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- setWhatsNewItems is a useState setter (stable identity; the lint cannot see through the `var st = useState()` destructuring)
     }, [showWhatsNew]);
     useEffect(function(){
       if (!showWhatsNew) return;
       _whatsNewTimer.current = setTimeout(_dismissWhatsNew, 5000);
       return function(){ clearTimeout(_whatsNewTimer.current); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- _dismissWhatsNew only writes localStorage and calls a useState setter (no stale state)
     }, [showWhatsNew]);
     var _storeyPicker = useState(false), storeyPickerOpen=_storeyPicker[0], setStoreyPickerOpen=_storeyPicker[1];
     window._ccShowStoreyPicker = setStoreyPickerOpen;
@@ -41580,6 +41698,7 @@ function startApp() {
         window.removeEventListener('cc-show-shortcuts', onShow);
         window.removeEventListener('keydown', onKey);
       };
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- setCmdkOpen, setShortcutsOpen are useState setters (stable identity; the lint cannot see through the `var st = useState()` destructuring)
     }, []);
     useEffect(function(){
       function onUpdate(){ setPwaUpdateAvail(true); }
@@ -41587,6 +41706,7 @@ function startApp() {
       window.addEventListener('cc-update-available', onUpdate);
       window.addEventListener('cc-install-available', onInstall);
       return function(){ window.removeEventListener('cc-update-available', onUpdate); window.removeEventListener('cc-install-available', onInstall); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- setPwaInstallAvail, setPwaUpdateAvail are useState setters (stable identity; the lint cannot see through the `var st = useState()` destructuring)
     }, []);
     // ── Shared project auto-reconnect on startup ──
     useEffect(function(){
@@ -41600,6 +41720,7 @@ function startApp() {
           }
         }).catch(function(){});
       });
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- mount-only shared-project restore. d is App's useCallback([]) dispatch (stable identity)
     }, []);
     var _memWarnFiredRef = useRef(false);
     useEffect(function(){
@@ -41622,6 +41743,7 @@ function startApp() {
         }
       }, 8000);
       return function(){ clearInterval(timer); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- setShowMemWarn is a useState setter (stable identity; the lint cannot see through the `var st = useState()` destructuring)
     }, []);
 
     // ── Periodic memory cleanup (runs every 2 minutes) ──
@@ -41667,6 +41789,7 @@ function startApp() {
         _cc2DOutlines = null;
       }
       window._cc2DSnapIndex = _cc2DOutlines ? _ccBuildSnapIndex(_cc2DOutlines) : null;
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- d is App's useCallback([]) dispatch (stable identity)
     }, [s.underlayMode, s.floorPlan, s.models, s.activeSheetId, s.sheets]);
 
     // ── 3D floor-plan cut poché cache ── computed once per storey/cut-height
@@ -41942,7 +42065,8 @@ function startApp() {
       }
       window.addEventListener('keydown', gk);
       return function(){window.removeEventListener('keydown', gk);};
-    },[s.showSettings, s.showModal, s.showRevitBridge, s.measureMode, s.sectionAxis, s.sectionCustom, s.sectionBox, s.walkMode, s.commentMode, s.showShare, s.presenting, s.prefs.showGrid, s.prefs.renderStyle, s.viewpoints, s.measurements, s.activeId, s.floorPlan, s.clashes, s.issues]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- d is App's useCallback([]) dispatch (stable identity); every state field the handler reads is listed
+    },[s.showSettings, s.showModal, s.showRevitBridge, s.measureMode, s.sectionAxis, s.sectionCustom, s.sectionBox, s.walkMode, s.commentMode, s.showShare, s.presenting, s.prefs.showGrid, s.prefs.renderStyle, s.viewpoints, s.measurements, s.activeId, s.floorPlan, s.clashes, s.issues, s.selected, s.walkPlacing]);
 
     // ── Modifier-key tracking for measure axis-lock (Shift) and Alt-hover instant
     //    distance (T2.3). These flags are read by the click handler and cursor
@@ -42107,6 +42231,7 @@ function startApp() {
         window._ccUndoMeasurement = null;
         window._ccPromoteClearanceToRule = null;
       };
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- d is App's useCallback([]) dispatch (stable identity)
     }, [s.measureMode, s.measurements, s.rules]);
 
     // ── Persistent file picker (always mounted so _ccOpenIFC works from any tab) ──
