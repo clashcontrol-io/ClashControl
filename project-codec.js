@@ -26,6 +26,7 @@
       searchSets: state.searchSets || [],
       assignmentRules: state.assignmentRules || [],
       changelog: state.changelog || [],
+      comments: state.comments || [],
     };
   }
 
@@ -50,6 +51,7 @@
     if (data.searchSets) data.searchSets.forEach(function(searchSet) { dispatch({t:actions.ADD_SEARCHSET, v:searchSet}); });
     if (data.assignmentRules) data.assignmentRules.forEach(function(rule) { dispatch({t:actions.ADD_ASSIGN_RULE, v:rule}); });
     if (data.changelog && data.changelog.length) dispatch({t:actions.MERGE_CHANGELOG, v:data.changelog});
+    if (data.comments && data.comments.length && actions.MERGE_COMMENTS) dispatch({t:actions.MERGE_COMMENTS, v:data.comments});
   }
 
   return Object.freeze({

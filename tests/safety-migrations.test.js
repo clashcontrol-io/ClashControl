@@ -14,29 +14,39 @@ test.afterEach(() => safety._setFlagsForTest({}));
 // from index.html, and these six flags are gone from the manifest entirely,
 // not left around as dead entries. See MEMORY.md Architecture Decisions.
 //
-// No flag currently defaults to on — the promotion mechanism itself
-// (defaultEnabled:true seeding + the "-name" opt-out token) stays as
-// general, reusable infrastructure for a future migration, so it's still
-// exercised below using an explicit opt-in/opt-out pair rather than a
-// real promoted flag, since none exists right now.
+// ccUiEmptyStates is the first UI-package flag to graduate to promoted
+// (defaultEnabled:true) — it's what puts a labelled "Run clash detection"
+// button in the empty clash-list state by default (detection-discoverability
+// fix, see MEMORY.md). Its legacy path stays fully intact and reachable via
+// ?ccSafety=-ccUiEmptyStates. Every other flag stays closed by default; the
+// promotion mechanism itself (defaultEnabled:true seeding + the "-name"
+// opt-out token) is otherwise still exercised below using an explicit
+// opt-in/opt-out pair since none of the rest are promoted right now.
 const ALL_FLAGS = [
   'concurrencyV2', 'geoCacheV8', 'batchedSectionsV2', 'rendererV2',
   'ccUiWindowedConflicts', 'ccUiEmptyStates', 'ccUiOperationCenter',
   'ccUiToolbarV2', 'ccUiModalV2', 'ccUiStoreyChooser',
   'storageAutosaveGate', 'storageDetectCaches', 'memorySafeLoad',
 ];
+const PROMOTED_FLAGS = ['ccUiEmptyStates'];
 
 test('manifest is exactly the known set, nothing added or removed silently', () => {
   assert.deepEqual(Object.keys(safety.manifest), ALL_FLAGS);
 });
 
-test('every migration stays closed by default — nothing is promoted right now', () => {
+test('only the known promoted flag(s) default to on; everything else stays closed', () => {
   safety._setFlagsForTest(safety.readFlags({ search: '', storage: null }));
   for (const name of ALL_FLAGS) {
-    assert.equal(safety.manifest[name].defaultEnabled, false, name + ' should not be promoted');
-    assert.equal(safety.isEnabled(name), false, name + ' should stay off with zero explicit flags');
+    const shouldBePromoted = PROMOTED_FLAGS.includes(name);
+    assert.equal(safety.manifest[name].defaultEnabled, shouldBePromoted, name + ' promotion state changed unexpectedly');
+    assert.equal(safety.isEnabled(name), shouldBePromoted, name + ' should ' + (shouldBePromoted ? '' : 'not ') + 'be on with zero explicit flags');
   }
   assert.equal(safety.isEnabled('unknownMigration'), false);
+});
+
+test('a promoted flag can still be explicitly opted out via a "-name" token', () => {
+  const flags = safety.readFlags({ search: '?ccSafety=-ccUiEmptyStates', storage: null });
+  assert.equal(flags.ccUiEmptyStates, undefined);
 });
 
 test('only known explicit query or storage flags can opt a migration in', () => {
@@ -44,7 +54,7 @@ test('only known explicit query or storage flags can opt a migration in', () => 
   const flags = safety.readFlags({
     search: '?ccSafety=concurrencyV2,unknownMigration', storage
   });
-  assert.deepEqual(flags, { concurrencyV2: true, geoCacheV8: true });
+  assert.deepEqual(flags, { concurrencyV2: true, geoCacheV8: true, ccUiEmptyStates: true });
 });
 
 test('a leading "-" token explicitly cancels an earlier bare opt-in token in the same query string', () => {

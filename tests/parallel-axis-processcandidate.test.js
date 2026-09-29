@@ -43,7 +43,7 @@ const kernelStart = src.indexOf('function _getWorldVerts(el) {');
 assert.notEqual(kernelStart, -1, '_getWorldVerts not found');
 const kernelFnStart = src.indexOf('function _meshesIntersect(elA, elB) {', kernelStart);
 assert.notEqual(kernelFnStart, -1, '_meshesIntersect not found');
-const kernelRet = src.indexOf('return [sx/n, sy/n, sz/n, maxDepth[0]];', kernelFnStart);
+const kernelRet = src.indexOf('return _postProcessIntersectPoints(pts, maxDepth[0], elA.box, elB.box, _MI_MARGIN);', kernelFnStart);
 assert.notEqual(kernelRet, -1, '_meshesIntersect body not found');
 const kernelEnd = src.indexOf('\n  }', kernelRet) + '\n  }'.length;
 const kernelBlock = src.slice(kernelStart, kernelEnd);

@@ -42,7 +42,7 @@
  * Every tool call — via /call/{tool} or the /chat agent loop — is classified
  * (bridge-governance.js) and appended to a hash-chained audit ledger under
  * ~/.clashcontrol/audit/YYYY-MM-DD.jsonl (bridge-audit.js) before it reaches
- * the browser. See BRIDGE_GOVERNANCE.md.
+ * the browser. See docs/BRIDGE_GOVERNANCE.md.
  *
  * Both files are bundled into the same binary by pkg.
  * Requires: ws (npm)

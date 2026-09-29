@@ -135,8 +135,20 @@ self.addEventListener('fetch', function(e) {
   var isNav = e.request.mode === 'navigate';
   var isHTML = url.indexOf('index.html') !== -1 || url.endsWith('/');
 
-  // Network-first for HTML / navigation — always get the latest app version
-  if (isNav || isHTML) {
+  // Same-origin JS/WASM (core modules under the repo root, and addon
+  // scripts/wasm) must never be served cache-first: the SW's CACHE name only
+  // rotates when bump-version.sh runs, which is gated on index.html/addons
+  // changing — a deploy that only touches e.g. storage-core.js or
+  // wasm-engine-pkg/*.wasm would otherwise leave returning users on a fresh
+  // index.html paired with a stale precached module. Network-first with a
+  // cache fallback (same strategy as HTML) keeps them in lockstep while
+  // still working offline once cached at least once.
+  var isSameOriginCoreAsset = parsedUrl.origin === self.location.origin &&
+    /\.(js|mjs|wasm)$/i.test(parsedUrl.pathname);
+
+  // Network-first for HTML / navigation / same-origin core JS+WASM — always
+  // get the latest app version, falling back to cache when offline.
+  if (isNav || isHTML || isSameOriginCoreAsset) {
     e.respondWith(
       fetch(e.request).then(function(response) {
         if (response.status === 200) {

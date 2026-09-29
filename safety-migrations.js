@@ -24,7 +24,13 @@
     // equivalence migrations — no guardedAsync comparison, just a render-time
     // isEnabled() branch. Each keeps its legacy path fully intact.
     ccUiWindowedConflicts: Object.freeze({ fallback: 'legacy', defaultEnabled: false }),
-    ccUiEmptyStates: Object.freeze({ fallback: 'legacy', defaultEnabled: false }),
+    // Promoted (defaultEnabled:true): the truthful empty-state decision tree
+    // (_ccConflictEmptyState) is what puts a labelled "Run clash detection"
+    // button in the empty clash-list state on both desktop and mobile —
+    // detection-discoverability fix, see MEMORY.md. Legacy fallback ('No
+    // clashes found yet' with no action) stays fully intact and reachable
+    // via ?ccSafety=-ccUiEmptyStates.
+    ccUiEmptyStates: Object.freeze({ fallback: 'legacy', defaultEnabled: true }),
     ccUiOperationCenter: Object.freeze({ fallback: 'legacy', defaultEnabled: false }),
     ccUiToolbarV2: Object.freeze({ fallback: 'legacy', defaultEnabled: false }),
     ccUiModalV2: Object.freeze({ fallback: 'legacy', defaultEnabled: false }),
@@ -39,7 +45,7 @@
     // punitive 300-element cap today) + between-chunk heap-pressure
     // shrinking of the same cache. Fallback = current fixed sizing.
     storageDetectCaches: Object.freeze({ fallback: 'legacy', defaultEnabled: false }),
-    // V7_RELEASE_PLAN.md P6.3 (memory-safe loading, conservative slice): run
+    // docs/V7_RELEASE_PLAN.md P6.3 (memory-safe loading, conservative slice): run
     // the SAME auto-park pass a heap-pressure poller tick would run, one beat
     // early, when a new file load is queued and memory is already tight —
     // giving the incoming model's geometry headroom to land in. Deliberately

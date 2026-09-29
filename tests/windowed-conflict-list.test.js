@@ -14,8 +14,8 @@ const path = require('node:path');
 const { generateConflicts } = require('./fixtures/synthetic-conflicts');
 
 const src = fs.readFileSync(path.join(__dirname, '..', 'index.html'), 'utf8');
-const start = src.indexOf('function _groupKeyFor(it, groupKey, modelsById, spatialMap) {');
-assert.ok(start !== -1, '_groupKeyFor not found');
+const start = src.indexOf('function _ccElemKeyFor(modelId, expressId, globalId) {');
+assert.ok(start !== -1, '_ccElemKeyFor (root-cause grouping) not found');
 const end = src.indexOf('window._ccComputeVisibleRowWindow = _ccComputeVisibleRowWindow;', start);
 assert.ok(end !== -1, 'windowing helpers not found');
 const endLineEnd = src.indexOf('\n', end) + 1;
@@ -177,9 +177,14 @@ test('offsets table is memoized against a real invalidation signal, not recomput
   // is the correct dependency instead. This locks the fix; a regression
   // back to a bare `_ccComputeRowOffsets(wRows, heightCacheRef.current)`
   // call with no useMemo wrapper would fail this.
+  //
+  // The useMemo call itself must run unconditionally on every render (rules
+  // of hooks — windowedOn is a runtime feature flag that can flip between
+  // renders), so the windowedOn gate lives *inside* the memo callback
+  // instead of around the useMemo call.
   const start = src.indexOf('function VirtualList(props) {');
   assert.ok(start !== -1, 'VirtualList not found');
   const end = src.indexOf('\n  function ', start + 30);
   const body = src.slice(start, end);
-  assert.match(body, /var wOff = useMemo\(function\(\)\{\s*\n\s*return _ccComputeRowOffsets\(wRows, heightCacheRef\.current\);\s*\n\s*\}, \[wRows, winForceTick\]\);/);
+  assert.match(body, /var wOff = useMemo\(function\(\)\{\s*\n\s*if \(!windowedOn\) return null;\s*\n\s*return _ccComputeRowOffsets\(wRows, heightCacheRef\.current\);\s*\n\s*\}, \[windowedOn, wRows, winForceTick\]\);/);
 });

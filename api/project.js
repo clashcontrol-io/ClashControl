@@ -73,13 +73,32 @@ function generateKey(name) {
   return prefix + '-' + randomToken(6);
 }
 
+// Field length caps — these are safety/abuse limits, not UX limits (the
+// client already keeps well under them); a wrong or hostile client can't
+// blow up a Postgres text column or the 256KB payload cap via one field.
+var FIELD_CAPS = { id: 200, title: 500, description: 5000, assignee: 200, category: 100, source: 100, globalId: 100 };
+
+function isValidStr(v, cap) {
+  return typeof v === 'string' && v.length <= cap;
+}
+
 // Validate the minimal shared issue shape
 function validateIssue(issue) {
   if (!issue || typeof issue !== 'object') return false;
-  if (!issue.id || typeof issue.id !== 'string') return false;
+  if (!isValidStr(issue.id, FIELD_CAPS.id)) return false;
   // Must have at least identity (globalIds or title) + status
-  if (!issue.status) return false;
+  if (!issue.status || typeof issue.status !== 'string') return false;
   if (!issue.globalIdA && !issue.globalIdB && !(issue.title && String(issue.title).trim())) return false;
+  if (issue.title != null && !isValidStr(String(issue.title), FIELD_CAPS.title)) return false;
+  if (issue.description != null && !isValidStr(String(issue.description), FIELD_CAPS.description)) return false;
+  if (issue.assignee != null && !isValidStr(String(issue.assignee), FIELD_CAPS.assignee)) return false;
+  if (issue.globalIdA != null && !isValidStr(String(issue.globalIdA), FIELD_CAPS.globalId)) return false;
+  if (issue.globalIdB != null && !isValidStr(String(issue.globalIdB), FIELD_CAPS.globalId)) return false;
+  if (issue.distance != null && !Number.isFinite(Number(issue.distance))) return false;
+  // _updatedAt, when present, must be a value Date can parse — an invalid
+  // one would otherwise blow up as an uncaught 500 in the PUT handler's
+  // toISOString() call further down.
+  if (issue._updatedAt != null && isNaN(new Date(issue._updatedAt).getTime())) return false;
   return true;
 }
 
@@ -91,15 +110,20 @@ function stripToShared(issue) {
     globalIdB: issue.globalIdB || null,
     point: issue.point || null,
     type: issue.type || null,
-    distance: issue.distance || null,
+    distance: issue.distance != null ? issue.distance : null, // 0mm is a real distance, not "absent"
     status: issue.status || 'open',
     priority: issue.priority || 'normal',
-    assignee: issue.assignee || null,
+    // `!= null` (not `||`) for every clearable free-text field: an explicit
+    // '' (user cleared the assignee/description/etc.) must round-trip as ''
+    // so a teammate's hydrate can tell "cleared" from "field never set" —
+    // `||` would collapse both to null and the clear would silently never
+    // sync (see client _sharedStrip / _sharedHydrate for the other half).
+    assignee: issue.assignee != null ? issue.assignee : null,
     title: issue.title || '',
-    description: issue.description || null,
-    category: issue.category || null,
-    dueDate: issue.dueDate || null,
-    source: issue.source || null,
+    description: issue.description != null ? issue.description : null,
+    category: issue.category != null ? issue.category : null,
+    dueDate: issue.dueDate != null ? issue.dueDate : null,
+    source: issue.source != null ? issue.source : null,
     createdAt: issue.createdAt || null,
   };
 }
@@ -163,6 +187,15 @@ module.exports = async function handler(req, res) {
             await sql`INSERT INTO shared_projects (id, name, edit_key) VALUES (${key}, ${name}, ${editKeyHash})`;
           }
         } catch (colErr) {
+          // Only fall back (drop editKey/expiry and insert the bare row) for
+          // the specific "column doesn't exist" case (a legacy deployment
+          // that hasn't run the edit_key/expires_at migration) — Postgres
+          // undefined_column is SQLSTATE 42703. Any other error (duplicate
+          // key, connection drop, constraint violation, ...) must surface
+          // as a real failure instead of silently creating an editKey-less
+          // project that masks the actual problem.
+          var isMissingColumn = colErr && (colErr.code === '42703' || /column .* does not exist/i.test(String(colErr.message || '')));
+          if (!isMissingColumn) throw colErr;
           await sql`INSERT INTO shared_projects (id, name) VALUES (${key}, ${name})`;
           editKey = null;
           expiresAt = null;
@@ -221,8 +254,23 @@ module.exports = async function handler(req, res) {
 
         var body = req.body || {};
         var issues = (body.issues || []).filter(validateIssue);
-        var user = body.user || 'anonymous';
+        var user = isValidStr(body.user, FIELD_CAPS.assignee) ? body.user : 'anonymous';
         var conflicts = [];
+
+        // Dedupe by id (last one wins) — a batch with two entries for the
+        // same id makes the jsonb_to_recordset() UPSERT try to affect the
+        // same row twice in one statement, which Postgres rejects outright
+        // ("ON CONFLICT DO UPDATE command cannot affect row a second time").
+        // The debounced client queue is keyed by id so this shouldn't
+        // normally happen, but a malformed/duplicated batch must degrade to
+        // "last wins", not a 500.
+        var dedupedById = {};
+        var dedupedOrder = [];
+        issues.forEach(function(issue) {
+          if (!(issue.id in dedupedById)) dedupedOrder.push(issue.id);
+          dedupedById[issue.id] = issue;
+        });
+        issues = dedupedOrder.map(function(id) { return dedupedById[id]; });
 
         // Atomic compare-and-swap in a SINGLE statement — no read-then-write
         // window. The previous version did SELECT updated_at, then compared in
@@ -261,34 +309,51 @@ module.exports = async function handler(req, res) {
             WHERE shared_issues.updated_at <= (
               SELECT i2.expected FROM incoming i2 WHERE i2.id = shared_issues.id
             )
-            RETURNING id`;
+            RETURNING id, updated_at`;
         }
 
         var writtenIds = {};
-        written.forEach(function(row) { writtenIds[row.id] = true; });
+        // updatedAt lets the client remember exactly what server timestamp
+        // each successfully-written record now has, so its NEXT push sends
+        // that as `_updatedAt` instead of its own write-time clock — see
+        // client _sharedLastSeen. Without this the client's own next edit
+        // races the compare-and-swap above using a stale expectation.
+        var updatedAt = {};
+        written.forEach(function(row) { writtenIds[row.id] = true; updatedAt[row.id] = row.updated_at; });
         // Anything attempted but not written back existed with a newer (or
         // unknown-to-this-client) server version — a conflict to merge.
         conflicts = ids.filter(function(id) { return !writtenIds[id]; });
 
         await sql`UPDATE shared_projects SET last_activity = now() WHERE id = ${projectId}`;
 
-        return res.status(200).json({ synced: written.length, conflicts: conflicts });
+        return res.status(200).json({ synced: written.length, conflicts: conflicts, updatedAt: updatedAt });
       }
 
-      // DELETE — Remove a single issue. Destructive, so unlike PUT it
-      // requires the creator's editKey on projects that have one (legacy
-      // projects and legacy deployments without the column stay open).
+      // DELETE — Remove a single issue, or (scope=project) the whole shared
+      // project and every synced issue in it. Destructive either way, so
+      // unlike PUT it requires the creator's editKey on projects that have
+      // one (legacy projects and legacy deployments without the column stay
+      // open). editKey is accepted via the X-CC-Edit-Key header (preferred —
+      // query strings end up in logs/proxies/browser history) or the
+      // `editKey` query param, kept only for back-compat with older clients.
       case 'DELETE': {
         if (!projectId) return res.status(400).json({ error: 'Missing project id' });
         var issueId = req.query.issue;
-        if (!issueId) return res.status(400).json({ error: 'Missing issue id' });
+        var wholeProject = req.query.scope === 'project';
+        if (!issueId && !wholeProject) return res.status(400).json({ error: 'Missing issue id (or scope=project to delete the whole project)' });
 
         var pRow = await loadProjectRow(sql, projectId);
         if (pRow.length === 0 || isExpired(pRow[0])) return res.status(404).json({ error: 'Project not found' });
         var storedEditKey = pRow[0].edit_key || null;
         if (storedEditKey) {
-          var provided = req.headers['x-cc-edit-key'] || req.query.editKey || '';
+          var provided = req.headers['x-cc-edit-key'] || req.body && req.body.editKey || req.query.editKey || '';
           if (!editKeyMatches(provided, storedEditKey)) return res.status(403).json({ error: 'editKey required to delete' });
+        }
+
+        if (wholeProject) {
+          await sql`DELETE FROM shared_issues WHERE project_id = ${projectId}`;
+          await sql`DELETE FROM shared_projects WHERE id = ${projectId}`;
+          return res.status(200).json({ ok: true, deletedProject: true });
         }
 
         await sql`DELETE FROM shared_issues WHERE project_id = ${projectId} AND id = ${issueId}`;

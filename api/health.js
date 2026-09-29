@@ -5,7 +5,7 @@
 //   /api/title + /api/triage.
 // ?test=1 → actually call Groq and surface the raw response for diagnostics.
 
-var { cors, dbUrl } = require('./_lib');
+var { cors, dbUrl, rateLimit, clientIp } = require('./_lib');
 
 module.exports = async function handler(req, res) {
   if (cors(req, res, 'GET')) return;
@@ -24,24 +24,33 @@ module.exports = async function handler(req, res) {
     titleTriage: { configured: !!geminiKey, model: geminiKey ? (process.env.GEMMA_MODEL || 'gemma-4-31b-it') : null },
   };
 
-  // Optional: actually call Groq and surface the raw response so we can
+  // Optional: actually call Groq and report whether it succeeded so we can
   // diagnose "doesn't work" errors. Hit /api/health?test=1 in a browser.
+  // Unauthenticated and costs a real upstream call, so it's rate-limited
+  // like the other LLM-backed endpoints, and never echoes the raw upstream
+  // body back to the caller (it may carry account/quota details we don't
+  // want exposed to anyone who can reach this public endpoint).
   if (groqKey && req.query && req.query.test) {
-    try {
-      var tr = await fetch('https://api.groq.com/openai/v1/chat/completions', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + groqKey },
-        body: JSON.stringify({
-          model: groqModel,
-          messages: [{ role: 'user', content: 'Reply with just the word OK.' }],
-          max_tokens: 8,
-          temperature: 0,
-        }),
-      });
-      var tdata = await tr.json();
-      status.test = { model: groqModel, httpStatus: tr.status, ok: tr.ok, response: tdata };
-    } catch (e) {
-      status.test = { model: groqModel, error: String(e && e.message || e) };
+    if (rateLimit(clientIp(req), 5)) {
+      res.setHeader('Retry-After', '60');
+      status.test = { model: groqModel, error: 'rate_limited' };
+    } else {
+      var t0 = Date.now();
+      try {
+        var tr = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + groqKey },
+          body: JSON.stringify({
+            model: groqModel,
+            messages: [{ role: 'user', content: 'Reply with just the word OK.' }],
+            max_tokens: 8,
+            temperature: 0,
+          }),
+        });
+        status.test = { model: groqModel, httpStatus: tr.status, ok: tr.ok, latencyMs: Date.now() - t0 };
+      } catch (e) {
+        status.test = { model: groqModel, ok: false, error: 'request_failed' };
+      }
     }
   }
 

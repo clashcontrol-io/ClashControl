@@ -1,5 +1,5 @@
 'use strict';
-// Wiring lock for the P6.4 safe slice (V7_RELEASE_PLAN.md): opt-in cache
+// Wiring lock for the P6.4 safe slice (docs/V7_RELEASE_PLAN.md): opt-in cache
 // clear for the non-interactive "run once and export" flow.
 //
 // This is NOT the plan's full P6.4 ask. A genuine stateful streaming Wasm

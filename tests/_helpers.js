@@ -12,6 +12,7 @@ function makeReq(opts) {
     // across tests.
     socket: { remoteAddress: opts.ip || ('ip-' + Math.random().toString(36).slice(2)) },
     body: opts.body,
+    query: opts.query || {},
   };
 }
 

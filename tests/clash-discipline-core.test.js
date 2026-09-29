@@ -40,7 +40,32 @@ function refMatrixSkipsSameDiscipline(eA, mA, eB, mB, sameModel, rules) {
   var dB = refElementDiscipline(eB, mB && mB.discipline);
   return !refDisciplinePairEnabled(dA, dB, rules);
 }
+// Name-hint tokens are checked BEFORE the element-class ratio, and as a
+// whole-word *prefix* (not an anywhere substring) — see clash-discipline-
+// core.js's detectDiscipline doc comment for why ("Architecture.ifc" being
+// out-voted into 'structural' by a handful of IfcColumn/IfcBeam instances
+// was the actual bug this reordering fixes).
+var REF_NAME_HINTS = {
+  architectural: ['arch','archi','architect','bouwkundig','ark'],
+  mep: ['mep','hvac','w-inst','e-inst','installatie','sanitair','elektra','plumbing','electrical'],
+  structural: ['str','struct','constr','constructie','beton'],
+  civil: ['civi','terrein','infra','wegen','bridge','gww','maaiveld']
+};
+function refNameHintMatches(nm, words, tokens) {
+  return tokens.some(function(tok) {
+    if (tok.indexOf('-') >= 0) return nm.indexOf(tok) >= 0;
+    return words.some(function(w) { return w.lastIndexOf(tok, 0) === 0; });
+  });
+}
 function refDetectDiscipline(elements, name) {
+  var nm = (name||'').toLowerCase();
+  if (nm) {
+    var words = nm.split(/[^a-z0-9]+/).filter(Boolean);
+    if (refNameHintMatches(nm, words, REF_NAME_HINTS.architectural)) return 'architectural';
+    if (refNameHintMatches(nm, words, REF_NAME_HINTS.mep))           return 'mep';
+    if (refNameHintMatches(nm, words, REF_NAME_HINTS.structural))    return 'structural';
+    if (refNameHintMatches(nm, words, REF_NAME_HINTS.civil))         return 'civil';
+  }
   var mep=0, str=0, arc=0, civ=0;
   (elements||[]).forEach(function(el){
     var t=(el.props&&el.props.ifcType)||'';
@@ -50,13 +75,6 @@ function refDetectDiscipline(elements, name) {
   var total = mep+str+arc+civ;
   function lead(){ var m=Math.max(mep,str,arc,civ); return m===0?null:(m===mep?'mep':m===str?'structural':m===civ?'civil':'architectural'); }
   if (total >= 5 && Math.max(mep,str,arc,civ) >= total*0.5) return lead();
-  var nm = (name||'').toLowerCase();
-  if (nm) {
-    if (/installat|ventilat|klimaat|sanitair|riool|verwarm|elektr|electr|hvac|\bmep\b|mechanic|plumb|piping|\bduct|\bhv\b/.test(nm)) return 'mep';
-    if (/constructi|structur|draagc|fundering|wapening|beton|staalc|framing|rebar|\bstr\b|[\-_]str[\-_]/.test(nm)) return 'structural';
-    if (/bouwkundig|architect|gevel|interieur|afbouw|\barch\b|\bark\b|\bbk\b/.test(nm)) return 'architectural';
-    if (/\bcivi|terrein|infra|wegen|bridge|\bgww\b|maaiveld/.test(nm)) return 'civil';
-  }
   return lead() || 'architectural';
 }
 
@@ -124,6 +142,51 @@ test('matrix policy matches the reference oracle across precedence combinations'
       }
     }
   }
+});
+
+// Task C fixture-name regression: "Architecture.ifc" (and this repo's real
+// tests/fixtures/office-architecture.ifc) used to auto-classify as
+// 'structural' because the element-class ratio ran before the file-name
+// hint, and a handful of IfcColumn/IfcBeam instances out-voted the (weak,
+// shared-type) architectural signal — which silently zeroed a "Walls vs
+// MEP" preset. File-name hints now run first.
+test('file-name hints win over a misleading element-class ratio (fixture names)', () => {
+  // A handful of structural-typed elements (columns/beams) alongside mostly
+  // shared types (walls) — exactly the "Architecture.ifc → structural"
+  // mis-classification this fix targets.
+  const structDominantElements = [el('IfcBeam'), el('IfcBeam'), el('IfcColumn'), el('IfcBeam'), el('IfcColumn')];
+  const fixtures = [
+    ['office-architecture.ifc', 'architectural'],
+    ['office-architecture', 'architectural'],
+    ['Architecture.ifc', 'architectural'],
+    ['ARK_bouwkundig_model.ifc', 'architectural'],
+    ['project-archi-v3.ifc', 'architectural'],
+    ['office-mep.ifc', 'mep'],
+    ['HVAC_installatie.ifc', 'mep'],
+    ['w-inst-01.ifc', 'mep'],
+    ['e-inst-riser.ifc', 'mep'],
+    ['sanitair_plan.ifc', 'mep'],
+    ['elektra_verdieping1.ifc', 'mep'],
+    ['plumbing-basement.ifc', 'mep'],
+    ['electrical-mainboard.ifc', 'mep'],
+    ['struct-model.ifc', 'structural'],
+    ['constructie_fundering.ifc', 'structural'],
+    ['beton_kelder.ifc', 'structural'],
+    ['constr-v2.ifc', 'structural'],
+  ];
+  for (const [name, expected] of fixtures) {
+    assert.equal(core.detectDiscipline(structDominantElements, name), expected, name);
+    assert.equal(core.detectDiscipline(structDominantElements, name), refDetectDiscipline(structDominantElements, name), name);
+  }
+});
+
+test('file-name hints do not false-positive on unrelated words containing a short token', () => {
+  // "mark" contains "ark" as a substring but is not a whole-word *prefix*
+  // match for the "ark" (architectural) hint, so a clearly MEP-dominated
+  // model named "mark-revision-2.ifc" still classifies as mep via the
+  // element-class ratio, not architectural via a spurious "ark" hit.
+  const mepDominant = [el('IfcDuctSegment'), el('IfcDuctSegment'), el('IfcDuctSegment'), el('IfcDuctSegment'), el('IfcDuctSegment')];
+  assert.equal(core.detectDiscipline(mepDominant, 'mark-revision-2.ifc'), 'mep');
 });
 
 test('pair-cell policy matches the reference oracle and does not mutate rules', () => {

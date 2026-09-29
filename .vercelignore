@@ -1,0 +1,49 @@
+# Files/dirs excluded from the Vercel deployment (not publicly served).
+# Everything the app or SEO/landing pages actually fetch at runtime must stay
+# OUT of this list — verified by grepping every same-origin URL referenced
+# from index.html, sw.js, the SEO landing pages (best-free-ifc-viewer/,
+# free-*-alternative/, ids-validation-online/, data-quality-checker-online/,
+# ifc-clash-detection-online/, tour/, developers/, security/) and
+# addons/smart-bridge.js (its binary downloads point at GitHub Releases, not
+# this site — mcp-server.js / smart-bridge-server.js / bridge-*.js are only
+# ever linked to on GitHub, never fetched from clashcontrol.io).
+#
+# Kept (do NOT add here): index.html, addons/, locales/, regulations/,
+# icons/, cc-runtime.js, clash-*-core.js, project-codec.js, storage-core.js,
+# renderer-contract.js, safety-migrations.js, section-clipping.js,
+# analytics-consent.js (loaded by every SEO landing page), sw.js,
+# manifest.json, all SEO landing dirs, llms.txt, robots.txt, sitemap.xml,
+# og-image.png, version.json, README.md, LICENSE, OPEN_SOURCE_COMPONENTS.md.
+
+# Internal project docs — not part of the product surface. IMPROVEMENT_PLAN.md,
+# V7_RELEASE_PLAN.md, REDUCER_DECOMPOSITION_PLAN.md, AS_BUILT_DEVIATION.md,
+# PERFORMANCE_NOTES.md, TAURI.md, INTERNALS.md, BRIDGE_GOVERNANCE.md,
+# CONNECTOR_PROTOCOL.md, MCP_BUILD_GUIDE.md and marketing/ all live under
+# docs/ now — nothing the app or a public page links to lives there (verified
+# by the grep this comment block describes above), so the whole directory is
+# excluded rather than listed file-by-file.
+MEMORY.md
+CLAUDE.md
+docs/
+
+# Content/tooling never served to end users
+tests/
+scripts/
+engine/
+desktop/
+.github/
+eslint.config.mjs
+
+# Distribution sources for the optional local companion binaries — these
+# are built into GitHub Releases (see addons/smart-bridge.js _buildDownloads
+# and developers/index.html), never downloaded from clashcontrol.io itself.
+mcp-server.js
+smart-bridge-server.js
+bridge-audit.js
+bridge-governance.js
+bridge-update.js
+bridge-version.json
+
+# Misc dev-only
+.gitignore
+node_modules/

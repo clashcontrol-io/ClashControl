@@ -8,7 +8,8 @@ const actions = {
   LOAD_PROJECT_STATE:'LOAD_PROJECT_STATE', ADD_ISSUE:'ADD_ISSUE',
   ADD_VIEWPOINT:'ADD_VIEWPOINT', ADD_MEASUREMENT:'ADD_MEASUREMENT',
   ADD_SELSET:'ADD_SELSET', ADD_SEARCHSET:'ADD_SEARCHSET',
-  ADD_ASSIGN_RULE:'ADD_ASSIGN_RULE', MERGE_CHANGELOG:'MERGE_CHANGELOG'
+  ADD_ASSIGN_RULE:'ADD_ASSIGN_RULE', MERGE_CHANGELOG:'MERGE_CHANGELOG',
+  MERGE_COMMENTS:'MERGE_COMMENTS'
 };
 
 function state(extra) {
@@ -86,6 +87,26 @@ test('minimal legacy exports still emit only model and rules actions', () => {
   const emitted = [];
   codec.restoreProject({_cc:'ClashControl',models:[],rules:{}}, (action)=>emitted.push(action), actions);
   assert.deepEqual(emitted, [{t:'UPD_RULES',u:{}}]);
+});
+
+// Bug 9: comments were never included in the serialized project file, so
+// reopening a saved project silently dropped every comment thread.
+test('serialization includes comments, and restore round-trips them via MERGE_COMMENTS', () => {
+  const out = codec.serializeProject(state({comments:[{id:'c1',text:'hello',ts:1}]}), 'v', 't');
+  assert.deepEqual(out.comments, [{id:'c1',text:'hello',ts:1}]);
+
+  const emitted = [];
+  codec.restoreProject(out, (action)=>emitted.push(action), actions);
+  const mergeComments = emitted.find((action)=>action.t==='MERGE_COMMENTS');
+  assert.ok(mergeComments, 'expected a MERGE_COMMENTS dispatch on restore');
+  assert.deepEqual(mergeComments.v, [{id:'c1',text:'hello',ts:1}]);
+});
+
+test('restore never dispatches MERGE_COMMENTS when there are no comments', () => {
+  const out = codec.serializeProject(state(), 'v', 't');
+  const emitted = [];
+  codec.restoreProject(out, (action)=>emitted.push(action), actions);
+  assert.equal(emitted.some((action)=>action.t==='MERGE_COMMENTS'), false);
 });
 
 test('dispatch failures stop restoration at the same action boundary', () => {

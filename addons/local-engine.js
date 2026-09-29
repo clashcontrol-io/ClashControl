@@ -629,7 +629,7 @@ clashcontrol-engine --install</pre>
   //     · `_applyClientSideRuleFilters` re-applies the rest (`excludeSelf`,
   //       `excludeTypes`, `excludeTypePairs`, `minGap`, tighten-only
   //       `toleranceByTypePair`) against the resolved elements.
-  //     See V7_RELEASE_PLAN.md P0, IMPROVEMENT_PLAN.md CW-1, and MEMORY.md
+  //     See docs/V7_RELEASE_PLAN.md P0, docs/IMPROVEMENT_PLAN.md CW-1, and MEMORY.md
   //     Known Issues for the fuller history.
 
   function _serializeForLocalEngine(models, rules) {
@@ -696,7 +696,7 @@ clashcontrol-engine --install</pre>
     // serialized - it depends on each model's relatedPairs map, which isn't part
     // of the elements payload today. Wiring it needs both a payload-shape change
     // here and matching consumer logic in the Python engine; deferred, tracked
-    // in IMPROVEMENT_PLAN.md rather than half-wired into this fix.
+    // in docs/IMPROVEMENT_PLAN.md rather than half-wired into this fix.
     return {elements:elements, rules:r};
   }
 

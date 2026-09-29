@@ -1,5 +1,5 @@
 'use strict';
-// Unit lock for the P6.1 byte-accurate residency ledger (V7_RELEASE_PLAN.md).
+// Unit lock for the P6.1 byte-accurate residency ledger (docs/V7_RELEASE_PLAN.md).
 // Replaces element-count as the proxy for "how much memory would parking this
 // model reclaim" and fixes the memory report's per-proxy vertex sum, which
 // double-counts geometry shared by an InstancedMesh group. Every function

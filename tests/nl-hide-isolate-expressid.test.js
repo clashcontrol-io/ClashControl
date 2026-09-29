@@ -24,12 +24,21 @@ test('the "isolate <type>" NL handler collects el.expressId once per element, no
 });
 
 test('both consumers of these id lists fold the array into a lookup, confirming duplicates were never load-bearing', () => {
-  const hideBody = html.slice(html.indexOf('window._ccTempHide = function(expressIds) {'), html.indexOf('window._ccTempUnhide'));
-  assert.match(hideBody, /expressIds\.forEach\(function\(id\)\{idSet\[id\]=true;\}\)/);
-  // _ccIsolate delegates to ghostOthers, which is exercised elsewhere; this
-  // test only needs to confirm _ccTempHide's own fold, already shown above,
-  // plus that _ccIsolate exists and is a thin delegate (no per-item logic
-  // of its own that could be sensitive to duplicates).
-  const isolateBody = html.slice(html.indexOf('window._ccIsolate = function(expressIds) {'), html.indexOf('window._ccUnisolate'));
-  assert.match(isolateBody, /ghostOthers\(expressIds\)/);
+  // window._ccTempHide/_ccIsolate are now thin wrappers (pushing an undo
+  // entry) around _ccTempHideCore/_ccIsolateCore, which hold the actual
+  // per-item logic. _ccTempHideCore's param is `targets` (bare expressIds
+  // OR {expressId, modelId} refs — see the element-modelid-scoping-wiring
+  // tests for why: two loaded models can share a bare expressId, so hide/
+  // isolate needed a model-scoped form). It still folds everything into id
+  // lookup objects (idAny/idScoped) before ever touching the scene graph,
+  // so a duplicate id in the incoming array is still harmless.
+  const hideCoreBody = html.slice(html.indexOf('function _ccTempHideCore(targets) {'), html.indexOf('window._ccTempHide = function'));
+  assert.match(hideCoreBody, /idAny\[t\] = true;/);
+  assert.match(hideCoreBody, /idScoped\[t\.expressId\]\[t\.modelId\] = true;/);
+  // _ccIsolateCore delegates to ghostOthers, which is exercised elsewhere;
+  // this test only needs to confirm _ccTempHideCore's own fold, already
+  // shown above, plus that _ccIsolateCore exists and is a thin delegate (no
+  // per-item logic of its own that could be sensitive to duplicates).
+  const isolateCoreBody = html.slice(html.indexOf('function _ccIsolateCore(targets) {'), html.indexOf('function _ccUnisolateCore'));
+  assert.match(isolateCoreBody, /ghostOthers\(targets\)/);
 });
