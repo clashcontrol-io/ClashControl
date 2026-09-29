@@ -91,6 +91,7 @@ There are ~400 `window._cc*` names referenced (~320 assigned) in `index.html` �
 - **Test before calling anything done:**
   - `node --test tests/*.test.js` — unit/wiring tests
   - `npm run lint:inline` — ESLint over the extracted inline `<script>` (0 errors expected; warnings are pre-existing and non-blocking)
+  - `npm run typecheck` — `// @ts-check` (TypeScript, non-strict + strictNullChecks, no emit) over the standalone UMD modules (`cc-runtime.js`, `*-core.js`, `project-codec.js`, `safety-migrations.js`, …). New standalone modules: add `// @ts-check` and append the file to the script's list
   - `CC_CHROMIUM_EXECUTABLE=<path> CC_BROWSER_OFFLINE_DEPS=1 node tests/browser/smoke.mjs` (plus the other `tests/browser/*.mjs`) for real-browser checks — `CC_BROWSER_OFFLINE_DEPS=1` serves React/Three/JSZip/pdf.js/web-ifc from local `node_modules` when the sandbox can't reach the CDNs
   - Also just open `index.html` directly in a browser for quick manual checks
 

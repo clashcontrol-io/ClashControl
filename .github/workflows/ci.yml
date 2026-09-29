@@ -53,6 +53,24 @@ jobs:
       - name: Lint extracted inline script
         run: npm run lint:inline
 
+  # // @ts-check over the standalone UMD modules (cc-runtime.js, *-core.js,
+  # project-codec.js, …) — non-strict + strictNullChecks, JSDoc-typed, no
+  # build step: the files ship exactly as written.
+  typecheck:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Install type-check tooling
+        run: npm install --no-save typescript@6 @types/node@22
+
+      - name: Type-check standalone modules
+        run: npm run typecheck
+
   # Headless-Chromium smoke: boots the real app, loads tests/fixtures/
   # smoke-clash.ifc through the real web-ifc WASM pipeline, runs real
   # clash detection, asserts the two crossing walls clash. Catches the

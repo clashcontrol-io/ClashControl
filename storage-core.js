@@ -1,4 +1,5 @@
-(function(root, factory) {
+// @ts-check
+(function(/** @type {any} */ root, factory) {
   var api = factory();
   if (typeof module === 'object' && module.exports) module.exports = api;
   root._ccStorageCore = api;
@@ -233,7 +234,7 @@
     ifc.forEach(function(f) { totalBytes += f.bytes || 0; });
     geo.forEach(function(g) { totalBytes += g.bytes || 0; });
     proj.forEach(function(p) { totalBytes += p.bytes || 0; });
-    var base = { totalBytes: totalBytes, budget: budget || null, overBy: 0, auto: [], proposals: [] };
+    var base = { totalBytes: totalBytes, budget: budget || null, overBy: 0, auto: /** @type {any[]} */ ([]), proposals: /** @type {any[]} */ ([]) };
     if (!budget || !isFinite(budget) || totalBytes <= budget) return base;
     base.overBy = totalBytes - budget;
 
