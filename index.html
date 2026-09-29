@@ -703,9 +703,10 @@
 <body>
 
 <!-- Crawler / no-JS content. Hidden visually; present in the static HTML so search engines
-     and LLM scrapers (which don't execute JS) see what this page is about. The real UI mounts
-     into #root and replaces this on load. -->
-<div style="position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);clip-path:inset(50%);white-space:nowrap;border:0">
+     and LLM scrapers (which don't execute JS) see what this page is about. The mount code
+     removes it once the real UI renders into #root (it sits outside #root, so without that
+     screen readers would read a second, hidden h1 outside any landmark). -->
+<div id="cc-crawler-content" style="position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);clip-path:inset(50%);white-space:nowrap;border:0">
   <h1>Free, source-available IFC clash detection in your browser</h1>
   <p>ClashControl is a free, source-available BIM clash detection web app. Load IFC building models,
      detect hard and soft (clearance) clashes between disciplines, review every collision in 3D
@@ -37030,7 +37031,7 @@ function startApp() {
       dismiss();
       if (window._ccDispatch) window._ccDispatch({t:A.SHOW_RUN_MODAL, v:true});
     }
-    return html`<div role="status" data-detection-banner class="cc-bottom-banner" style=${{
+    return html`<div role="region" aria-live="polite" aria-label=${_cc_t('banner.detectionLabel','Run clash detection')} data-detection-banner class="cc-bottom-banner" style=${{
       position:'fixed', bottom:'1rem', left:'50%', transform:'translateX(-50%)',
       zIndex:'var(--z-toast)', maxWidth:520, width:'92%',
       background:'var(--bg-secondary)', border:'1px solid var(--accent-subtle)',
@@ -37057,7 +37058,7 @@ function startApp() {
       _ccSetConsent(consentVal);
       setShow(false);
     }
-    return html`<div class="cc-bottom-banner" style=${{
+    return html`<div class="cc-bottom-banner" role="region" aria-label=${_cc_t('banner.consentLabel','Usage data choice')} style=${{
       position:'fixed', bottom:'1rem', left:'50%', transform:'translateX(-50%)',
       zIndex:'var(--z-toast)', maxWidth:520, width:'92%',
       background:'var(--bg-secondary)', border:'1px solid var(--border)',
@@ -38924,7 +38925,7 @@ function startApp() {
       return function() { window.removeEventListener('cc-folder-watch', onEv); };
     }, []);
     if (!active) return null;
-    return html`<div class="cc-bottom-banner" style=${{
+    return html`<div class="cc-bottom-banner" role="region" aria-live="polite" aria-label=${_cc_t('banner.folderWatchLabel','Shared folder sync')} style=${{
       position:'fixed',bottom:'1rem',right:'1rem',zIndex:'var(--z-toast)',
       background:'var(--surface)',border:'1px solid var(--hairline-strong)',
       borderRadius:10,padding:'.5rem .85rem',
@@ -39720,7 +39721,7 @@ function startApp() {
     }
     var modelName = getHeaderTitle();
 
-    return html`<div class="cc-desktop-topbar">
+    return html`<header class="cc-desktop-topbar">
       <!-- Brand wordmark -->
       <div style=${{display:'flex',alignItems:'center',gap:'var(--space-2)',flexShrink:0,height:'100%'}}>
         <svg width="20" height="20" viewBox="0 0 48 48" aria-hidden="true" style=${{display:'block'}}>
@@ -39762,7 +39763,7 @@ function startApp() {
         </button>
         <${AvatarMenu} s=${s} d=${d} />
       </div>
-    </div>`;
+    </header>`;
   }
 
   /* ── Top toolbar (xeokit-bim-viewer style horizontal ribbon) ──────
@@ -40117,7 +40118,7 @@ function startApp() {
     // lower-priority item instead of pinning itself permanently visible.
     var cameraActiveId = activeMode==='walk' ? 'walk' : activeMode==='plan' ? 'plan' : 'orbit';
 
-    return html`<div class="cc-top-toolbar" style=${{flexShrink:0,background:'var(--surface)',borderBottom:'1px solid var(--hairline)',position:'relative',zIndex:'var(--z-dropdown)'}}>
+    return html`<div class="cc-top-toolbar" role="region" aria-label=${_cc_t('toolbar.regionLabel','Viewer toolbar')} style=${{flexShrink:0,background:'var(--surface)',borderBottom:'1px solid var(--hairline)',position:'relative',zIndex:'var(--z-dropdown)'}}>
       <div role="toolbar" aria-label=${_cc_t('toolbar.viewerToolsAria','Viewer tools')} style=${{
         display:'flex',alignItems:'center',height:44,padding:'0 var(--space-3)',gap:'var(--space-1)',
         overflowX:'auto',overflowY:'hidden',flexWrap:'nowrap',scrollbarWidth:'thin'
@@ -41937,6 +41938,8 @@ function startApp() {
       <${DesktopTopBar} s=${s} d=${d} />
       <${TopToolbar} s=${s} d=${d} />
       <main class="cc-content-row" aria-label=${_cc_t('app.mainLandmark','ClashControl workspace')} style=${{flex:1,display:'flex',flexDirection:'row',overflow:'hidden',position:'relative',minHeight:0}}>
+        ${/* The page's single h1 (the crawler block's h1 is removed on mount). Visually hidden — the brand wordmark in the topbar is the visible title. */ ''}
+        <h1 style=${{position:'absolute',width:1,height:1,padding:0,margin:-1,overflow:'hidden',clip:'rect(0 0 0 0)',whiteSpace:'nowrap',border:0}}>${_cc_t('app.heading','ClashControl — IFC clash detection')}</h1>
         <${LeftRail} s=${s} d=${d} />
         <${LeftPanel} s=${s} d=${d} />
         <div style=${{flex:1,display:'flex',flexDirection:'column',overflow:'hidden',position:'relative',minWidth:0}}>
@@ -41993,7 +41996,7 @@ function startApp() {
         <a href="https://github.com/clashcontrol-io/clashcontrol/blob/main/CHANGELOG.md" target="_blank" rel="noopener" style=${{fontSize:'0.69rem',color:'var(--accent)',textDecoration:'none'}}>Full changelog →</a>
       </div>`}
       <${FolderWatchBadge} />
-      ${!pwaDismissed && pwaUpdateAvail && html`<div class="cc-bottom-banner" style=${{position:'fixed',bottom:'1rem',left:'50%',transform:'translateX(-50%)',zIndex:'var(--z-toast)',
+      ${!pwaDismissed && pwaUpdateAvail && html`<div class="cc-bottom-banner" role="region" aria-label=${_cc_t('banner.updateLabel','App update')} style=${{position:'fixed',bottom:'1rem',left:'50%',transform:'translateX(-50%)',zIndex:'var(--z-toast)',
         background:'var(--bg-secondary)',border:'1px solid var(--border)',borderRadius:10,padding:'.6rem 1rem',display:'flex',alignItems:'center',gap:'.75rem',
         boxShadow:'0 4px 24px rgba(0,0,0,.4)',fontSize:'0.85rem',color:'var(--text-primary)',maxWidth:'90vw'}}>
         <span>New version available</span>
@@ -42007,6 +42010,8 @@ function startApp() {
   // ── Mount ──────────────────────────────────────────────────────
 
   document.getElementById('boot').style.display = 'none';
+  var _crawlerEl = document.getElementById('cc-crawler-content');
+  if (_crawlerEl && _crawlerEl.parentNode) _crawlerEl.parentNode.removeChild(_crawlerEl);
   var rootEl = document.getElementById('root');
   var root = ReactDOM.createRoot ? ReactDOM.createRoot(rootEl) : null;
   if (root) { root.render(h(ErrorBoundary, null, h(App, null))); }
