@@ -13,7 +13,7 @@
 `index.html` is ~43k lines (check with `wc -l`).
 
 **Live features:**
-- **Clash engine:** AABB broad phase (JS or Rust/WASM sweep) → BVH + Möller tri-tri narrow phase, run on JS, stateless WASM, a stateful WASM `Engine` with cached per-element BVHs (`window._ccWasmEngine`) or a Web Worker pool (`_ccNarrowPool`, flag `detectWorkerPool`; engages on large clearance-heavy runs) — all proven identical. Clearance is true mesh distance (point-triangle + edge-edge; 0 for intersecting/contained meshes). Hard clashes get an approximate penetration depth. Default clash matrix; rules (discipline filters, `[minGap,maxGap]`, tolerances); smart re-runs by default; provision-for-void (openings) classification; role-aware deterministic severity; specific clash titles. Optional local Python engine (same algorithm, native speed).
+- **Clash engine:** AABB broad phase (JS or Rust/WASM sweep) → BVH + Möller tri-tri narrow phase, run on JS, stateless WASM, a stateful WASM `Engine` with cached per-element BVHs (`window._ccWasmEngine`) or a Web Worker pool (`_ccNarrowPool`, flag `detectWorkerPool`; engages on large clearance-heavy runs); in the Tauri desktop app a multi-core native Rust engine (`addons/tauri-bridge.js` → `window._ccNativeNarrow`, self-checked before use) — all proven identical. Clearance is true mesh distance (point-triangle + edge-edge; 0 for intersecting/contained meshes). Hard clashes get an approximate penetration depth. Default clash matrix; rules (discipline filters, `[minGap,maxGap]`, tolerances); smart re-runs by default; provision-for-void (openings) classification; role-aware deterministic severity; specific clash titles. Optional local Python engine (same algorithm, native speed).
 - **Clash review:** grouped by root-cause element, compact rows, cluster cards, J/K/C/D/V triage, A/B colours, assignment rules, issue editing (title/priority/description/due date/comments/viewpoints), unified undo/redo.
 - **BCF 2.1/3.0:** Z-up cameras (export + import), stable GUIDs, components/selection/visibility/coloring, comments, orthographic viewpoints. Print-to-PDF clash and data-quality reports.
 - **IFC loading:** web-ifc 0.0.77 in a worker (protocol v2) with a main-thread fallback; fast pre-parse validation; storey-scoped loading (`ccUiStoreyChooser`, off by default); Park/Restore; opening boxes per host element (`props.openings`).
@@ -25,7 +25,7 @@
 - **Collaboration:** shared projects (Neon, CAS PUT, `conflicts[]`, edit-key-gated DELETE), folder sync.
 - **Other:** walk mode, section planes/box, PWA, i18n (`_cc_t`, `locales/ja.json`, browser-language auto-detect that is never persisted), regulation packs (manifest intentionally empty), WCAG-AA tokens (axe: 0 violations light/dark/mobile on the main screens).
 
-**Addons (`addons/`):** accessibility, align, data-quality, geoplace, local-engine, openaec-bridge, pointcloud, pwa, revit-bridge, shared-project, smart-bridge, splat, tiles, training-data, visibility, wasm-engine (+ `wasm-engine-pkg/`).
+**Addons (`addons/`):** accessibility, align, data-quality, geoplace, local-engine, openaec-bridge, pointcloud, pwa, revit-bridge, shared-project, smart-bridge, splat, tiles, tauri-bridge (desktop only, inert in the browser), training-data, visibility, wasm-engine (+ `wasm-engine-pkg/`).
 
 **Non-addon core modules** (plain `<script defer>`, required, all `// @ts-check`): `cc-runtime.js`, `safety-migrations.js`, `storage-core.js`, `clash-{discipline,assignment,identity,reconciliation,classification}-core.js`, `project-codec.js`, `section-clipping.js`, `renderer-contract.js`, `analytics-consent.js`.
 
@@ -196,7 +196,7 @@ Keep every entry unless it's truly obsolete. Add a note when something gets fixe
 ## Recently completed (details in git history)
 - 2026-07 (Waves 0–5, V7 P0–P6 slices, i18n infra, storage campaign, IFC worker protocol v2): see `git show 0f08459:MEMORY.md`.
 - **2026-09-28 — PR #712** (review + human walkthrough): bit-identical WASM narrow phase; true mesh clearance; reconciliation, project-restore, cross-model `expressId` scoping, shared-sync and BCF fixes; security pass; lint CI job; keyboard/a11y/viewer/floor-plan/clash-list overhaul; daily memory sync removed.
-- **2026-09-29:** cached-BVH WASM `Engine` + worker-pool narrow phase + f64 BVH split parity fix; openings, role-aware severity, smart re-runs by default, specific clash titles; `// @ts-check` + typecheck CI; exhaustive-deps 116→0 (7 real stale-closure bugs fixed); design-token pass (0 axe violations); locale auto-detect + saved-pack loading; legacy selection-set resolver; ILS applicability gating; NL Ctrl+/ state fix; Python engine distance/depth parity (ClashControlEngine PR #28).
+- **2026-09-29:** cached-BVH WASM `Engine` + worker-pool narrow phase + f64 BVH split parity fix; openings, role-aware severity, smart re-runs by default, specific clash titles; `// @ts-check` + typecheck CI; exhaustive-deps 116→0 (7 real stale-closure bugs fixed); design-token pass (0 axe violations); locale auto-detect + saved-pack loading; legacy selection-set resolver; ILS applicability gating; NL Ctrl+/ state fix; Python engine distance/depth parity (ClashControlEngine PR #28); native Rust narrow phase in the Tauri desktop app (`native` cargo feature, rayon `NativeEngine`, raw-byte IPC commands, allow-listed capability).
 
 ---
 
@@ -226,6 +226,8 @@ Keep every entry unless it's truly obsolete. Add a note when something gets fixe
 
 **i18n:** long-tail string sweep; `ja.json` native-speaker review; `contribution:review-passed` label (unverified); model-location regulation auto-suggest.
 
+**Desktop (Tauri):** native engine not yet benchmarked on a real 10k+ element federation (TAURI.md Phase 2 exit criterion); only Linux WebKitGTK verified; `release-desktop.yml` doesn't run the desktop cargo tests; triangles are duplicated in Rust memory (registry resets above ~384 MB).
+
 **Off-repo:** Search Console sitemap; directory listings; publish `desktop-v0.1.0` (unverified); stale remote branches; Revit Connector `modelFilter`.
 
 ---
@@ -234,4 +236,4 @@ Keep every entry unless it's truly obsolete. Add a note when something gets fixe
 
 Update at the start and end of every session; strike (~~…~~ + date) when done and delete struck items after ~30 days.
 
-- 2026-09-29: finishing the modernisation plan on `claude/pensive-faraday-v6t6wh` — native Rust clash engine in the Tauri desktop app in progress; then PR + merge, and merge ClashControlEngine PR #28.
+- ~~2026-09-29: modernisation plan items 2–4 + memory cleanup on `claude/pensive-faraday-v6t6wh` (engine/worker/native perf, smarter clashes, UI/a11y/lint leftovers); PR + merge; ClashControlEngine PR #28.~~ (2026-09-29)
