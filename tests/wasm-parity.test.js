@@ -412,3 +412,41 @@ test('Engine.min_distance === mesh_min_distance === JS reference (exact), incl. 
   assert.strictEqual(eng.intersect(900001, 900002).length, 0);
   eng.free();
 });
+
+// ── Dense tessellated meshes (regression: BVH split sort key in f32) ─────
+// The Rust BVH build used to sum each triangle's centroid coordinate — and
+// compute the split-axis extents — in f32, while the JS reference adds the
+// Float32-derived DOUBLES. On grid-tessellated meshes (many near-equal
+// centroids) that reordered triangles / flipped the axis on near-ties, so the
+// two BVHs had different shapes and the 8-point collect cap saw different
+// points first (~1.25% of dense pairs disagreed on the reported point). The
+// small/structured cases above never hit it. Both engines must agree exactly.
+test('dense tessellated box/cylinder pairs: intersect + min-distance EXACTLY equal (BVH build must use f64 keys like JS)', async () => {
+  const mod = await loadWasm();
+  const js = loadJsReference();
+  const rnd = mulberry32(20240929);
+  const jitter = () => rnd();
+  let compared = 0, hits = 0;
+  const eng = new mod.Engine();
+  for (let i = 0; i < 900; i++) {
+    const V = 22;
+    const ax = jitter() * V, ay = jitter() * V, az = jitter() * V;
+    const bo = (h) => 0.3 + jitter() * h;
+    const a = box(ax - bo(1.6), ax + bo(1.6), ay - bo(1.6), ay + bo(1.6), az - bo(1.6), az + bo(1.6), 8);
+    const bx = ax + jitter() * 3, by = ay + jitter() * 3, bz = az + jitter() * 3;
+    const b = i % 4 === 0
+      ? cyl(bx - 2, bx + 2, by, bz, 0.2 + jitter() * 0.6, 24, 8)
+      : box(bx - bo(1.6), bx + bo(1.6), by - bo(1.6), by + bo(1.6), bz - bo(1.6), bz + bo(1.6), 8);
+    assertIntersectParity(js, mod, 'dense' + i, a, b);
+    const jm = js._ccJsMeshIntersectRef.minDist(a, b);
+    const wm = Array.from(mod.mesh_min_distance(a, b));
+    assert.ok(eqArr(jm, wm), `dense${i}: min-distance must be EXACTLY equal`);
+    eng.register(1, a); eng.register(2, b);
+    assert.ok(eqArr(Array.from(eng.intersect(1, 2)), Array.from(mod.mesh_intersect_raw(a, b))), `dense${i}: Engine.intersect`);
+    assert.ok(eqArr(Array.from(eng.min_distance(1, 2)), wm), `dense${i}: Engine.min_distance`);
+    compared++;
+    if (mod.mesh_intersect_raw(a, b).length) hits++;
+  }
+  eng.free();
+  assert.ok(hits > 250, `fixture must produce many real hits (${hits}/${compared})`);
+});
