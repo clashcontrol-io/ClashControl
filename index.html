@@ -7107,6 +7107,7 @@ function startApp() {
     self.onmessage = function(e) {
       var models = e.data.models; // [{id, buffer, globalIdMap}]
       var results = {}; // modelId → { globalId → { wv: Float32Array, tris: Float32Array } }
+      var transferList = []; // every wv/tris buffer below is freshly built here and never reused by the worker
       models.forEach(function(modelData) {
         var gltf = parseGLB(modelData.buffer);
         if (!gltf || !gltf.json) return;
@@ -7152,7 +7153,6 @@ function startApp() {
         });
 
         var finalResult = {};
-        var transferList = [];
         Object.keys(modelResult).forEach(function(gid) {
           var r = modelResult[gid];
           var wv = new Float32Array(r.verts);
@@ -7162,7 +7162,7 @@ function startApp() {
         });
         results[modelData.id] = finalResult;
       });
-      self.postMessage({results: results});
+      self.postMessage({results: results}, transferList);
     };
   }.toString();
   var _glbGeoWorkerSrc = _glbGeoWorkerCode.slice(_glbGeoWorkerCode.indexOf('{') + 1, _glbGeoWorkerCode.lastIndexOf('}'));
