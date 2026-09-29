@@ -390,6 +390,42 @@ mod tests {
         assert!(eng.is_empty());
     }
 
+    /// Manual benchmark (not part of the normal run):
+    /// `cargo test --release --features native bench_parallel -- --ignored --nocapture`
+    #[test]
+    #[ignore]
+    fn bench_parallel_speedup() {
+        use std::time::Instant;
+        let mut rng = Lcg(0xACE);
+        let meshes: Vec<Vec<f32>> = (0..48).map(|i| soup(&mut rng, 400 + (i % 5) * 60, 0.0, 6.0, 1.0)).collect();
+        let mut pairs = Vec::new();
+        for a in 0..meshes.len() as u32 {
+            for b in (a + 1)..meshes.len() as u32 {
+                pairs.push((a, b));
+            }
+        }
+        let t = Instant::now();
+        let seq_h: Vec<Vec<f64>> = pairs.iter().map(|&(a, b)| mesh_intersect_raw(&meshes[a as usize], &meshes[b as usize])).collect();
+        let seq_ms = t.elapsed().as_secs_f64() * 1e3;
+        println!("pairs={} sequential free fns (BVH rebuilt per pair): {:.0} ms", pairs.len(), seq_ms);
+        for threads in [1usize, 2, 0] {
+            let mut eng = NativeEngine::new(threads).unwrap();
+            let t = Instant::now();
+            eng.register_many(meshes.iter().enumerate().map(|(i, m)| (i as u32, m.clone())).collect());
+            let reg = t.elapsed().as_secs_f64() * 1e3;
+            let t = Instant::now();
+            let h = eng.detect_pairs(&pairs, Mode::Hard);
+            let hard_ms = t.elapsed().as_secs_f64() * 1e3;
+            let t = Instant::now();
+            let _d = eng.detect_pairs(&pairs, Mode::MinDist);
+            let md_ms = t.elapsed().as_secs_f64() * 1e3;
+            for (i, r) in h.iter().enumerate() {
+                same_bits(&seq_h[i], r.as_ref().unwrap(), "bench parity");
+            }
+            println!("threads={} register {:.0} ms | hard {:.0} ms | mindist {:.0} ms", eng.threads(), reg, hard_ms, md_ms);
+        }
+    }
+
     #[test]
     fn wire_round_trip() {
         let m1: Vec<f32> = vec![0., 0., 0., 1., 0., 0., 0., 1., 0.];
