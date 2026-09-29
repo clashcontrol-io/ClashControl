@@ -17,8 +17,13 @@ async function loadWasm() {
 
 test('wasm pkg: exports exist and a piercing pair is detected with depth', async () => {
   const mod = await loadWasm();
-  for (const fn of ['mesh_intersect', 'mesh_min_distance', 'batch_intersect']) {
+  for (const fn of ['mesh_intersect', 'mesh_min_distance', 'batch_intersect', 'mesh_intersect_raw', 'batch_intersect_raw', 'sweep_and_prune']) {
     assert.equal(typeof mod[fn], 'function', fn + ' export missing');
+  }
+  // cached-BVH engine (addons/wasm-engine.js `_ccWasmEngine` builds on this)
+  assert.equal(typeof mod.Engine, 'function', 'Engine class export missing');
+  for (const m of ['register', 'unregister', 'clear', 'intersect', 'min_distance', 'has', 'len']) {
+    assert.equal(typeof mod.Engine.prototype[m], 'function', 'Engine.' + m + ' missing');
   }
   const triA = new Float32Array([0, 0, 0, 1, 0, 0, 0, 1, 0]);
   const pierce = new Float32Array([0.2, 0.2, -1, 0.3, 0.2, 1, 0.2, 0.3, 1]);

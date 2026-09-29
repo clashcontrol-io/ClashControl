@@ -26,6 +26,7 @@
 //! (now-correct) tri-tri + BVH code, but pre-averaged into a centroid with
 //! no AABB-margin filtering (the original, pre-fix contract of this crate).
 
+use std::collections::HashMap;
 use wasm_bindgen::prelude::*;
 
 mod bvh;
@@ -98,10 +99,16 @@ pub fn mesh_intersect_raw(tris_a: &[f32], tris_b: &[f32]) -> Vec<f64> {
     }
     let bvh_a = BvhNode::build(tris_a);
     let bvh_b = BvhNode::build(tris_b);
+    intersect_raw_prebuilt(&bvh_a, tris_a, &bvh_b, tris_b)
+}
 
+/// Shared body of `mesh_intersect_raw` / `Engine::intersect`: the traversal
+/// over two ALREADY-BUILT BVHs. Both entry points funnel through this one
+/// function so the stateless and the cached-BVH paths cannot diverge.
+fn intersect_raw_prebuilt(bvh_a: &BvhNode, tris_a: &[f32], bvh_b: &BvhNode, tris_b: &[f32]) -> Vec<f64> {
     let mut pts: Vec<f64> = Vec::new();
     let mut max_depth: f64 = 0.0;
-    bvh::traverse_pair(&bvh_a, tris_a, &bvh_b, tris_b, &mut pts, &mut max_depth, JS_COLLECT_MAX_PTS_FLOATS, false);
+    bvh::traverse_pair(bvh_a, tris_a, bvh_b, tris_b, &mut pts, &mut max_depth, JS_COLLECT_MAX_PTS_FLOATS, false);
 
     if pts.is_empty() {
         return Vec::new();
@@ -139,11 +146,17 @@ pub fn mesh_min_distance(tris_a: &[f32], tris_b: &[f32]) -> Vec<f64> {
     }
     let bvh_a = BvhNode::build(tris_a);
     let bvh_b = BvhNode::build(tris_b);
+    min_distance_prebuilt(&bvh_a, tris_a, &bvh_b, tris_b)
+}
+
+/// Shared body of `mesh_min_distance` / `Engine::min_distance` over two
+/// ALREADY-BUILT BVHs (see `intersect_raw_prebuilt`).
+fn min_distance_prebuilt(bvh_a: &BvhNode, tris_a: &[f32], bvh_b: &BvhNode, tris_b: &[f32]) -> Vec<f64> {
     let mut best = f64::INFINITY;
     let mut out_a = [0.0f64; 3];
     let mut out_b = [0.0f64; 3];
-    mesh_dist::traverse_min_dist(&bvh_a, tris_a, &bvh_b, tris_b, &mut best, &mut out_a, &mut out_b);
-    mesh_dist::containment_fix(&bvh_a, tris_a, &bvh_b, tris_b, &mut best, &mut out_a, &mut out_b);
+    mesh_dist::traverse_min_dist(bvh_a, tris_a, bvh_b, tris_b, &mut best, &mut out_a, &mut out_b);
+    mesh_dist::containment_fix(bvh_a, tris_a, bvh_b, tris_b, &mut best, &mut out_a, &mut out_b);
     vec![
         best.sqrt(),
         out_a[0], out_a[1], out_a[2],
@@ -237,6 +250,101 @@ pub fn batch_intersect_raw(tris_a: &[f32], all_tris: &[f32], offsets: &[u32]) ->
     out
 }
 
+// ── Stateful API: registered meshes with cached BVHs ─────────────────
+
+struct RegisteredMesh {
+    tris: Vec<f32>,
+    /// `None` when the mesh has fewer than 9 floats (no triangle) — the free
+    /// functions treat that as an empty input (no hit / Infinity distance),
+    /// so registered-empty meshes behave identically.
+    bvh: Option<BvhNode>,
+}
+
+/// Registry of meshes whose triangle data and BVH are built ONCE and reused
+/// across many pair queries. Every query goes through exactly the same
+/// internals as the stateless `mesh_intersect_raw` / `mesh_min_distance`
+/// (`intersect_raw_prebuilt` / `min_distance_prebuilt`), and `BvhNode::build`
+/// is a pure function of the triangle data, so results are bit-identical to
+/// the free functions (and therefore to the JS reference).
+#[wasm_bindgen]
+pub struct Engine {
+    meshes: HashMap<u32, RegisteredMesh>,
+}
+
+#[wasm_bindgen]
+impl Engine {
+    #[wasm_bindgen(constructor)]
+    pub fn new() -> Engine {
+        Engine { meshes: HashMap::new() }
+    }
+
+    /// Register (or replace) mesh `id`: copies `tris` (9 floats/triangle) and
+    /// builds its BVH with the same code the free functions use.
+    pub fn register(&mut self, id: u32, tris: &[f32]) {
+        let bvh = if tris.len() < 9 { None } else { Some(BvhNode::build(tris)) };
+        self.meshes.insert(id, RegisteredMesh { tris: tris.to_vec(), bvh });
+    }
+
+    /// Drop mesh `id`. Returns whether it was registered.
+    pub fn unregister(&mut self, id: u32) -> bool {
+        self.meshes.remove(&id).is_some()
+    }
+
+    /// Drop every registered mesh.
+    pub fn clear(&mut self) {
+        self.meshes.clear();
+    }
+
+    pub fn has(&self, id: u32) -> bool {
+        self.meshes.contains_key(&id)
+    }
+
+    /// Number of registered meshes.
+    pub fn len(&self) -> u32 {
+        self.meshes.len() as u32
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.meshes.is_empty()
+    }
+
+    /// Total registered triangle floats (for the JS side's memory budget).
+    pub fn total_floats(&self) -> f64 {
+        self.meshes.values().map(|m| m.tris.len() as f64).sum()
+    }
+
+    /// Same return value as `mesh_intersect_raw(tris(id_a), tris(id_b))`:
+    /// the raw point list with `max_depth` appended, or an empty Vec on a
+    /// miss / empty mesh. `None` (JS `undefined`) when either id is not
+    /// registered, so a caller bug can never masquerade as "no clash".
+    pub fn intersect(&self, id_a: u32, id_b: u32) -> Option<Vec<f64>> {
+        let a = self.meshes.get(&id_a)?;
+        let b = self.meshes.get(&id_b)?;
+        match (&a.bvh, &b.bvh) {
+            (Some(ba), Some(bb)) => Some(intersect_raw_prebuilt(ba, &a.tris, bb, &b.tris)),
+            _ => Some(Vec::new()),
+        }
+    }
+
+    /// Same return value as `mesh_min_distance(tris(id_a), tris(id_b))`
+    /// (`[distance, ax,ay,az, bx,by,bz]`, or `[Infinity]` for an empty
+    /// mesh). `None` when either id is not registered.
+    pub fn min_distance(&self, id_a: u32, id_b: u32) -> Option<Vec<f64>> {
+        let a = self.meshes.get(&id_a)?;
+        let b = self.meshes.get(&id_b)?;
+        match (&a.bvh, &b.bvh) {
+            (Some(ba), Some(bb)) => Some(min_distance_prebuilt(ba, &a.tris, bb, &b.tris)),
+            _ => Some(vec![f64::INFINITY]),
+        }
+    }
+}
+
+impl Default for Engine {
+    fn default() -> Self {
+        Engine::new()
+    }
+}
+
 // ── Tests ───────────────────────────────────────────────────────────
 
 #[cfg(test)]
@@ -318,6 +426,120 @@ mod tests {
         let result = mesh_min_distance(&slab, &device);
         assert_eq!(result.len(), 7);
         assert!((result[0] - 0.1).abs() < 1e-6, "expected 0.1, got {}", result[0]);
+    }
+
+    // ── Engine (cached-BVH) parity with the free functions ──────────
+
+    struct Lcg(u64);
+    impl Lcg {
+        fn next(&mut self) -> f32 {
+            self.0 = self.0.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+            ((self.0 >> 40) as f32) / ((1u64 << 24) as f32)
+        }
+    }
+
+    /// Triangle soup of `n` small triangles scattered in a `spread` cube at
+    /// offset `off` (enough overlap between meshes to give hits AND misses).
+    fn soup(rng: &mut Lcg, n: usize, off: f32, spread: f32) -> Vec<f32> {
+        let mut t = Vec::with_capacity(n * 9);
+        for _ in 0..n {
+            let cx = off + rng.next() * spread;
+            let cy = off + rng.next() * spread;
+            let cz = off + rng.next() * spread;
+            for _ in 0..3 {
+                t.push(cx + (rng.next() - 0.5) * 0.8);
+                t.push(cy + (rng.next() - 0.5) * 0.8);
+                t.push(cz + (rng.next() - 0.5) * 0.8);
+            }
+        }
+        t
+    }
+
+    #[test]
+    fn engine_matches_free_functions_bit_for_bit() {
+        let mut rng = Lcg(0xC1A5);
+        let mut eng = Engine::new();
+        let mut meshes: Vec<Vec<f32>> = Vec::new();
+        for i in 0..12u32 {
+            let n = 3 + (i as usize * 7) % 40;
+            let m = soup(&mut rng, n, (i % 4) as f32 * 0.7, 3.0);
+            eng.register(i, &m);
+            meshes.push(m);
+        }
+        let mut hits = 0;
+        for a in 0..12u32 {
+            for b in 0..12u32 {
+                let (ta, tb) = (&meshes[a as usize], &meshes[b as usize]);
+                let want_i = mesh_intersect_raw(ta, tb);
+                let got_i = eng.intersect(a, b).expect("registered");
+                assert_eq!(want_i.len(), got_i.len());
+                for (x, y) in want_i.iter().zip(got_i.iter()) {
+                    assert_eq!(x.to_bits(), y.to_bits(), "intersect {a}x{b}");
+                }
+                if !want_i.is_empty() { hits += 1; }
+                let want_d = mesh_min_distance(ta, tb);
+                let got_d = eng.min_distance(a, b).expect("registered");
+                assert_eq!(want_d.len(), got_d.len());
+                for (x, y) in want_d.iter().zip(got_d.iter()) {
+                    assert_eq!(x.to_bits(), y.to_bits(), "min_distance {a}x{b}");
+                }
+            }
+        }
+        assert!(hits > 10, "fixture must produce real hits, got {hits}");
+    }
+
+    #[test]
+    fn engine_repeated_queries_are_stable_and_lifecycle_works() {
+        let mut eng = Engine::new();
+        assert!(eng.is_empty());
+        eng.register(1, &unit_tri_a());
+        eng.register(2, &unit_tri_b_intersecting());
+        eng.register(3, &unit_tri_b_separate());
+        assert_eq!(eng.len(), 3);
+        let first = eng.intersect(1, 2).unwrap();
+        assert!(!first.is_empty());
+        for _ in 0..5 {
+            assert_eq!(eng.intersect(1, 2).unwrap(), first, "repeat query must not drift");
+        }
+        assert!(eng.intersect(1, 3).unwrap().is_empty());
+        // unregister -> unknown id is None (never a silent "no clash")
+        assert!(eng.unregister(2));
+        assert!(!eng.unregister(2));
+        assert!(!eng.has(2));
+        assert!(eng.intersect(1, 2).is_none());
+        assert!(eng.min_distance(2, 1).is_none());
+        // re-register under the same id with DIFFERENT data replaces it
+        eng.register(2, &unit_tri_b_separate());
+        assert!(eng.intersect(1, 2).unwrap().is_empty());
+        eng.register(2, &unit_tri_b_intersecting());
+        assert_eq!(eng.intersect(1, 2).unwrap(), first);
+        assert_eq!(eng.total_floats(), 27.0);
+        eng.clear();
+        assert!(eng.is_empty());
+        assert!(eng.intersect(1, 3).is_none());
+    }
+
+    #[test]
+    fn engine_empty_mesh_matches_free_function_semantics() {
+        let mut eng = Engine::new();
+        eng.register(1, &[]);
+        eng.register(2, &unit_tri_a());
+        eng.register(3, &[0.0; 6]); // < 9 floats: still "empty"
+        assert!(eng.intersect(1, 2).unwrap().is_empty());
+        assert!(eng.intersect(2, 3).unwrap().is_empty());
+        assert!(eng.min_distance(1, 2).unwrap()[0].is_infinite());
+        assert_eq!(eng.min_distance(1, 2).unwrap().len(), mesh_min_distance(&[], &unit_tri_a()).len());
+        assert!(eng.min_distance(2, 3).unwrap()[0].is_infinite());
+    }
+
+    #[test]
+    fn engine_self_pair_matches_free_function() {
+        let mut rng = Lcg(7);
+        let m = soup(&mut rng, 30, 0.0, 2.0);
+        let mut eng = Engine::new();
+        eng.register(9, &m);
+        assert_eq!(eng.intersect(9, 9).unwrap(), mesh_intersect_raw(&m, &m));
+        assert_eq!(eng.min_distance(9, 9).unwrap(), mesh_min_distance(&m, &m));
     }
 
     #[test]

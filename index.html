@@ -6109,15 +6109,23 @@ function startApp() {
     return node;
   }
 
+  // Pure BVH construction for a flat world-triangle array (null when empty).
+  // Shared by the per-element cache below and by the narrow-phase worker
+  // kernel (_ccBuildNarrowWorkerSource) so both build the identical tree.
+  function _buildBVHForTris(tris) {
+    if (!tris || !tris.length) return null;
+    var n = tris.length/9;
+    var indices = new Int32Array(n);
+    for (var i=0; i<n; i++) indices[i]=i;
+    return { tris:tris, root:_buildBVHNode(tris, indices, 0, n) };
+  }
+
   function _getBVH(el) {
     if (el._bvhCache !== undefined) { _bvhLRUTouch(el); return el._bvhCache; }
     _bvhLRUEvict();
     var tris = _getWorldTris(el);
     if (!tris.length) return (el._bvhCache = null);
-    var n = tris.length/9;
-    var indices = new Int32Array(n);
-    for (var i=0; i<n; i++) indices[i]=i;
-    el._bvhCache = { tris:tris, root:_buildBVHNode(tris, indices, 0, n) };
+    el._bvhCache = _buildBVHForTris(tris);
     _bvhLRU.set(el, true);
     return el._bvhCache;
   }
@@ -6238,7 +6246,41 @@ function startApp() {
     for (var i=0; i<valid.length; i+=3) { sx+=valid[i]; sy+=valid[i+1]; sz+=valid[i+2]; }
     return [sx/n, sy/n, sz/n, maxDepth];
   }
+  // JS reference narrow phase over two ALREADY-BUILT BVHs: probe pass
+  // (early-exit, cap 3) then the collect pass (cap 24 floats), then the
+  // shared post-processing. Used by _meshesIntersect's JS fallback AND, via
+  // Function.prototype.toString, by the narrow-phase worker kernel — one
+  // implementation, two threads.
+  function _jsIntersectBVH(bA, bB, boxA, boxB) {
+    if (!bA || !bB) return false;
+    var probe = _miProbe, probeDepth = _miProbeDepth;
+    probe.length = 0; probeDepth[0] = 0;
+    _bvhTraverseAll(bA.root, bA.tris, bB.root, bB.tris, probe, 3, probeDepth, true);
+    if (!probe.length) return false;
+    var pts = _miPts, maxDepth = _miMaxDepth;
+    pts.length = 0; maxDepth[0] = 0;
+    _bvhTraverseAll(bA.root, bA.tris, bB.root, bB.tris, pts, 24, maxDepth, false);
+    if (!pts.length) return false;
+    return _postProcessIntersectPoints(pts, maxDepth[0], boxA, boxB, _MI_MARGIN);
+  }
   function _meshesIntersect(elA, elB) {
+    // Cached-BVH WASM engine first (addons/wasm-engine.js `_ccWasmEngine`):
+    // each element's triangles are copied into WASM and its BVH built ONCE
+    // (keyed by the identity of el._triCache), instead of on every pair.
+    // Returns false (no hit) / raw points / null (engine error -> fall
+    // through to the stateless WASM path, then JS, for this pair).
+    var _wEng = window._ccWasmEngine;
+    if (_wEng && typeof _wEng.intersect === 'function') {
+      var eA0 = _getWorldTris(elA), eB0 = _getWorldTris(elB);
+      if (!eA0.length || !eB0.length) return false;
+      var eRaw = _wEng.intersect(eA0, eB0);
+      if (eRaw === false) return false;
+      if (eRaw) {
+        var eDepth = eRaw[eRaw.length - 1];
+        return _postProcessIntersectPoints(eRaw.subarray(0, eRaw.length - 1), eDepth, elA.box, elB.box, _MI_MARGIN);
+      }
+      // eRaw === null -> engine trouble; keep going on the per-pair paths below
+    }
     // Try WASM engine first. Measured (own benchmark, corrected 8-point
     // collect cap — see engine/src/bvh.rs traverse_pair doc comment):
     //   48x12 tris  (product 576):        JS 0.033ms vs WASM 0.018ms  (x1.8)
@@ -6270,17 +6312,7 @@ function startApp() {
       }
     }
     // JS fallback
-    var bA = _getBVH(elA), bB = _getBVH(elB);
-    if (!bA || !bB) return false;
-    var probe = _miProbe, probeDepth = _miProbeDepth;
-    probe.length = 0; probeDepth[0] = 0;
-    _bvhTraverseAll(bA.root, bA.tris, bB.root, bB.tris, probe, 3, probeDepth, true);
-    if (!probe.length) return false;
-    var pts = _miPts, maxDepth = _miMaxDepth;
-    pts.length = 0; maxDepth[0] = 0;
-    _bvhTraverseAll(bA.root, bA.tris, bB.root, bB.tris, pts, 24, maxDepth, false);
-    if (!pts.length) return false;
-    return _postProcessIntersectPoints(pts, maxDepth[0], elA.box, elB.box, _MI_MARGIN);
+    return _jsIntersectBVH(_getBVH(elA), _getBVH(elB), elA.box, elB.box);
   }
 
   // ── True mesh-to-mesh minimum distance (soft/clearance clashes) ──
@@ -6568,7 +6600,30 @@ function startApp() {
     }
   }
   var _mmdBest = new Float64Array(1), _mmdOutA = new Float64Array(3), _mmdOutB = new Float64Array(3);
+  // JS reference min-distance over two ALREADY-BUILT BVHs (see _jsIntersectBVH:
+  // shared verbatim with the narrow-phase worker kernel).
+  function _jsMinDistBVH(bvhA, bvhB, outPair) {
+    if (!bvhA || !bvhB) return Infinity;
+    var best = _mmdBest; best[0] = Infinity;
+    _bvhMinDistTraverse(bvhA.root, bvhA.tris, bvhB.root, bvhB.tris, best, _mmdOutA, _mmdOutB);
+    if (best[0] === Infinity) return Infinity; // unreachable with 2 non-empty meshes, kept for symmetry with the empty-input early return
+    _meshMinDistContainmentFix(bvhA, bvhB, best, _mmdOutA, _mmdOutB);
+    if (outPair) {
+      outPair[0]=_mmdOutA[0]; outPair[1]=_mmdOutA[1]; outPair[2]=_mmdOutA[2];
+      outPair[3]=_mmdOutB[0]; outPair[4]=_mmdOutB[1]; outPair[5]=_mmdOutB[2];
+    }
+    return Math.sqrt(best[0]);
+  }
   function _meshMinDist(elA, elB, thresholdM, outPair) {
+    // Cached-BVH WASM engine first (see _meshesIntersect). null = engine
+    // trouble -> per-pair fall-through to the stateless WASM path, then JS.
+    var _wEng = window._ccWasmEngine;
+    if (_wEng && typeof _wEng.minDist === 'function') {
+      var eA0 = _getWorldTris(elA), eB0 = _getWorldTris(elB);
+      if (!eA0.length || !eB0.length) return Infinity;
+      var eD = _wEng.minDist(eA0, eB0, thresholdM, outPair);
+      if (eD !== null && eD !== undefined) return eD;
+    }
     // Try WASM engine first. Own benchmark (this machine, 2026-09-28, warm
     // cache, average of 200 runs per case via BVH-pruned tri-tri leaf pairs):
     //   48x12 tris  (product 576):       JS 0.21ms  vs WASM 0.06ms  (x3.5)
@@ -6588,17 +6643,7 @@ function startApp() {
       }
     }
     // JS fallback
-    var bvhA = _getBVH(elA), bvhB = _getBVH(elB);
-    if (!bvhA || !bvhB) return Infinity;
-    var best = _mmdBest; best[0] = Infinity;
-    _bvhMinDistTraverse(bvhA.root, bvhA.tris, bvhB.root, bvhB.tris, best, _mmdOutA, _mmdOutB);
-    if (best[0] === Infinity) return Infinity; // unreachable with 2 non-empty meshes, kept for symmetry with the empty-input early return above
-    _meshMinDistContainmentFix(bvhA, bvhB, best, _mmdOutA, _mmdOutB);
-    if (outPair) {
-      outPair[0]=_mmdOutA[0]; outPair[1]=_mmdOutA[1]; outPair[2]=_mmdOutA[2];
-      outPair[3]=_mmdOutB[0]; outPair[4]=_mmdOutB[1]; outPair[5]=_mmdOutB[2];
-    }
-    return Math.sqrt(best[0]);
+    return _jsMinDistBVH(_getBVH(elA), _getBVH(elB), outPair);
   }
 
   // Pure-JS narrow-phase reference, deliberately independent of
@@ -7740,6 +7785,14 @@ function startApp() {
     }
     _phase(candidates.length.toLocaleString() + ' pairs to test');
 
+    // True when the WASM narrow phase (cached engine or stateless) handles the
+    // pair tests, so the per-chunk JS BVH pre-build would be pure waste: every
+    // consumer that DOES need a JS BVH (pen-depth on hits, JS fallback on a
+    // WASM error) builds it lazily through _getBVH, so results are unchanged.
+    function _wasmNarrowActive() {
+      return !!(window._ccWasmEngine || typeof window._ccWasmIntersect === 'function');
+    }
+
     // ── Per-candidate timing accumulators ─────────────────────────
     var _tHard = 0, _tSoft = 0, _tFilters = 0, _nHardTests = 0, _nSoftTests = 0, _nHardTestsBatched = 0;
 
@@ -7751,6 +7804,10 @@ function startApp() {
     function _warmChunkBatch(startIdx, endIdx) {
       if (!rules.hard) return;
       if (typeof window._ccWasmBatchIntersect !== 'function') return;
+      // The cached-BVH engine makes the per-pair path strictly cheaper than a
+      // batch call (no per-call triangle copy, every BVH built once per
+      // element, not once per batch) — leave those pairs to _meshesIntersect.
+      if (window._ccWasmEngine) return;
       if (typeof window._ccWasmReady === 'function' && !window._ccWasmReady()) return;
 
       // Group by elA. Pre-filter pairs we'd skip anyway so the batch
@@ -8272,7 +8329,7 @@ function startApp() {
       _pcts[k.replace('_ms','')] = _totalMs>0 ? Math.round(profile[k]/_totalMs*100)+'%' : '0%';
     });
     try {
-      var _engineLabel = (typeof window._ccWasmIntersect === 'function') ? 'WASM' : 'JS';
+      var _engineLabel = window._ccWasmEngine ? 'WASM+cached-BVH' : (typeof window._ccWasmIntersect === 'function') ? 'WASM' : 'JS';
       console.log('%c ClashControl Detection Profile (' + _engineLabel + ' engine) ', 'background:#2563eb;color:#fff;font-weight:bold;padding:2px 8px;border-radius:4px');
       console.table([
         {Phase:'Sweep & Prune',    Time:profile.sweep_and_prune_ms+'ms', Pct:_pcts.sweep_and_prune, Detail:profile.elements+' elements → '+profile.candidates+' candidates'},
@@ -8296,7 +8353,7 @@ function startApp() {
       _warmChunkBatch(0, totalCandidates);
       for (var si=0; si<totalCandidates; si++) {
         var _sc=_candidateAt(candidates, si);
-        _getBVH(_sc.eA); _getBVH(_sc.eB);
+        if (!_wasmNarrowActive()) { _getBVH(_sc.eA); _getBVH(_sc.eB); }
         var _cBefore = clashes.length;
         _processCandidate(_sc);
         if (clashes.length > _cBefore) {
@@ -8317,8 +8374,8 @@ function startApp() {
       for (var bi=chunkIdx; bi<end; bi++) {
         var _cp=_candidateAt(candidates, bi);
         var _kA=_cp.mA.id+':'+_cp.eA.expressId, _kB=_cp.mB.id+':'+_cp.eB.expressId;
-        if (!_chunkEls[_kA]) { _chunkEls[_kA]=_cp.eA; _getBVH(_cp.eA); }
-        if (!_chunkEls[_kB]) { _chunkEls[_kB]=_cp.eB; _getBVH(_cp.eB); }
+        if (!_chunkEls[_kA]) { _chunkEls[_kA]=_cp.eA; if (!_wasmNarrowActive()) _getBVH(_cp.eA); }
+        if (!_chunkEls[_kB]) { _chunkEls[_kB]=_cp.eB; if (!_wasmNarrowActive()) _getBVH(_cp.eB); }
       }
       _prof._nElements += Object.keys(_chunkEls).length;
       _chunkBatchCache = new Map();
